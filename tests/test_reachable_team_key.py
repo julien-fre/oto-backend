@@ -45,7 +45,7 @@ def test_reachable_team_key_none_without_secret(monkeypatch):
 def test_reachable_team_key_none_for_non_shareable(monkeypatch):
     _wire_reachable(monkeypatch)
     # provider hors ORG_SHAREABLE_PROVIDERS (pas de palier équipe) → jamais de hint
-    assert access.reachable_team_key("u1", 35, "zohodesk") is None
+    assert access.reachable_team_key("u1", 35, "silae") is None
 
 
 def test_reachable_team_key_none_without_org(monkeypatch):

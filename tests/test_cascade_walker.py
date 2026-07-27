@@ -8,7 +8,7 @@ want='byo'). Les sondes sont injectées : aucun stub de DB nécessaire.
 Providers réels du registre utilisés comme fixtures de gates :
 - serper        : byo_user + byo_org + platform (tous barreaux)
 - zoho          : byo_user + byo_org, PAS de plateforme (want='byo' vivant)
-- zohodesk      : byo_user seul (non partageable → barreaux groupe/org inertes)
+- silae         : byo_user seul (non partageable → barreaux groupe/org inertes)
 - unipile       : personal_cross_org (barreau cross-org)
 - http          : byo_org seul (pas de barreau membre par construction)
 """
@@ -58,7 +58,7 @@ def test_byo_only_provider_never_reaches_platform():
 
 
 def test_non_shareable_skips_group_and_org():
-    win = access.cascade_winner("u1", "zohodesk", org=1, group=2,
+    win = access.cascade_winner("u1", "silae", org=1, group=2,
                                 probe=probe(group=True, org=True))
     assert win is None
 
