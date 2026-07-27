@@ -147,13 +147,3 @@ def register(mcp: FastMCP) -> None:
     def zohodesk_article(article_id: str) -> dict:
         """Get one Help Center article, including its full HTML body (`answer`)."""
         return _client().get_article(article_id)
-
-    @mcp.tool()
-    def zohodesk_search_articles(
-        search_str: str, from_index: int = 1, limit: int = 50,
-        department_id: Optional[str] = None,
-    ) -> dict:
-        """Full-text search over Help Center articles."""
-        return _client().search_articles(
-            search_str, from_index=from_index, limit=limit,
-            department_id=department_id)
