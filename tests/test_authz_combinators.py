@@ -225,6 +225,43 @@ def test_org_admin_opt_denies_without_active_org(monkeypatch):
     assert _denied(_authz.ORG_ADMIN_OPT("org"), RAW, SimpleNamespace(org=None)).code == "no_active_org"
 
 
+# --- ORG_MEMBER_OPT (lecture self-service par défaut, épinglable par `org`) -
+# Régression oto-backend feedback #278 : `oto_procedure(op=get, slug, org=Y)`
+# ignorait `org` (résolvait dans l'org maison de l'appelant, pas Y). Miroir lecture
+# d'ORG_ADMIN_OPT — l'axe `org=` d'ADR 0038 doit charger une doctrine cross-org.
+
+def test_org_member_opt_falls_back_to_active_when_absent():
+    """Sans `org` → org active (42), sans garde (c'est la sienne) — parité SUB_ONLY."""
+    ctx = _authz.ORG_MEMBER_OPT("org")(RAW, SimpleNamespace(org=None))
+    assert ctx.org_id == 42
+
+
+def test_org_member_opt_pins_explicit_org(monkeypatch):
+    """`org=99` fourni + membre → lit sur 99, PAS l'org active (42)."""
+    monkeypatch.setattr(roles, "is_org_member", lambda sub, org: org == 99)
+    ctx = _authz.ORG_MEMBER_OPT("org")(RAW, SimpleNamespace(org=99))
+    assert ctx.org_id == 99
+
+
+def test_org_member_opt_denies_explicit_org_not_member(monkeypatch):
+    """Org explicite dont on n'est pas membre → refusé (même garde que les autres axes)."""
+    monkeypatch.setattr(roles, "is_org_member", lambda sub, org: org == 42)
+    err = _denied(_authz.ORG_MEMBER_OPT("org"), RAW, SimpleNamespace(org=99))
+    assert err.status == 403 and err.code == "forbidden"
+
+
+def test_org_member_opt_graceful_without_active_org(monkeypatch):
+    """Sans org active ni `org` explicite → `org_id=None` (pas de refus) : le bundle
+    de session (slug omis) reste servi vide hors org."""
+    monkeypatch.setattr(access, "current_org", lambda sub: None)
+    ctx = _authz.ORG_MEMBER_OPT("org")(RAW, SimpleNamespace(org=None))
+    assert ctx.org_id is None
+
+
+def test_org_member_opt_denies_anonymous():
+    assert _denied(_authz.ORG_MEMBER_OPT("org"), ANON, SimpleNamespace(org=None)).status == 401
+
+
 # --- GROUP_MEMBER_OF / GROUP_ADMIN_OF --------------------------------------
 
 def test_group_member_of_injects_parent_org(monkeypatch):

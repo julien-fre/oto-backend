@@ -20,7 +20,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from . import doctrine_library, orgs_instructions
-from ._authz import BY_OP, ORG_ADMIN_OPT, ORG_MEMBER, SUB_ONLY
+from ._authz import BY_OP, ORG_ADMIN_OPT, ORG_MEMBER, ORG_MEMBER_OPT, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
 
@@ -96,7 +96,7 @@ CAPABILITIES += [
     Capability(
         key="org.procedure.console", handler=_procedure, Input=ProcedureInput,
         authz=BY_OP({
-            "get": SUB_ONLY, "list": SUB_ONLY,
+            "get": ORG_MEMBER_OPT("org"), "list": SUB_ONLY,
             "set": ORG_ADMIN_OPT("org"), "delete": ORG_ADMIN_OPT("org"),
             "library_list": SUB_ONLY, "library_get": SUB_ONLY,
             "publish": ORG_MEMBER, "fork": ORG_MEMBER, "unpublish": SUB_ONLY,
@@ -105,7 +105,9 @@ CAPABILITIES += [
             "Your org's procedures (named doctrines / skills) + the public library. The base "
             "doctrine is INJECTED at connect — op=get with `slug` loads ONE skill's full "
             "markdown (`scope=group` targets your active department; `doctrine_id` loads by "
-            "STABLE id, incl. one SHARED to your org) / list (catalog: slug/title/description, "
+            "STABLE id, incl. one SHARED to your org; `org` pins the read to an EXPLICIT org "
+            "id you are a member of — cross-org load of a named skill by slug) / list (catalog: "
+            "slug/title/description, "
             "no body) / set (org_admin write: **OMIT `slug` = your org's README** — the "
             "org-level 'socle' prose injected into every session, shown as « socle de l'org » "
             "in the dashboard; pass a `slug` to write a named skill instead. `from_version` "

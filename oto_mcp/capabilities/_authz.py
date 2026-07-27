@@ -208,6 +208,30 @@ def ORG_ADMIN_OPT(field: str):
     return rule
 
 
+def ORG_MEMBER_OPT(field: str):
+    """Lecture membre **self-service par défaut, épinglable explicitement** — miroir
+    lecture d'`ORG_ADMIN_OPT`.
+
+    Si `input.<field>` (un org_id) est fourni → sémantique `ORG_MEMBER_OF` : garde
+    d'appartenance sur l'org NOMMÉE et l'injecte (lecture cross-org par jeton `org=`,
+    ADR 0038 — un accompagnant hors de l'org cible charge une doctrine nommée par slug).
+    Sinon → org active depuis l'état serveur, **gracieux si absente** (`org_id=None`,
+    comme `SUB_ONLY`) : le bundle de session (slug omis) reste servi vide hors org, et
+    un `get` par slug sans org lève `no_active_org` au handler. Même garde
+    `roles.is_org_member` (escalade platform_admin) → aucun changement de privilège."""
+    def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+        sub = _require_sub(raw)
+        explicit = getattr(inp, field, None) if inp is not None else None
+        if explicit is not None:
+            org_id = int(explicit)
+            if not roles.is_org_member(sub, org_id):
+                raise AuthzDenied(403, "forbidden", f"Réservé aux membres de l'org #{org_id}.")
+            return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
+        return ResolvedCtx(sub=sub, org_id=access.current_org(sub),
+                           role=access.get_user_role(sub))
+    return rule
+
+
 def GROUP_MEMBER_OF(field: str):
     """Lecture d'un groupe désigné par `input.<field>` : membre du groupe, OU
     org_admin du groupe parent, OU platform_admin (escalade descendante `roles`).
