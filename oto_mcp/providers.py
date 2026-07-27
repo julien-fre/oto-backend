@@ -520,6 +520,15 @@ _REGISTRY_LIST = [
     _c("folk", ["folk"], auth_modes={"byo_user", "byo_org"}, keyed=True,
        secret_kind="api_key",
        label="Folk", help="CRM", href="https://app.folk.app"),
+    # checkcrm : wrappe l'API v1 de l'app "enrichment" de Julien (job-change check
+    # LinkedIn + gestion des subsidiaries) — byo-only, chaque org configure sa
+    # propre clé enrichment (voir enrichment/docs/sf-api.md). Nommé "checkcrm" (un
+    # seul token, pas de underscore) : namespace_of prend le 1er token avant "_",
+    # "check_crm" romprait le préfixe des tools check_crm_* (résoudrait "check").
+    _c("checkcrm", ["checkcrm"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
+       label="Check CRM", help="job-change check + subsidiaries (enrichment API)",
+       href="https://enrichment-two.vercel.app"),
     # unipile : LinkedIn hébergé (recherche/scrape/messagerie) via l'API Unipile.
     # La session LinkedIn vit chez Unipile (vrai Chrome + proxy résidentiel) →
     # contourne empreinte TLS + isolation de session du browser local (#5). Keyed
