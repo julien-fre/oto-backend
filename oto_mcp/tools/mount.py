@@ -42,13 +42,16 @@ log = logging.getLogger("oto_mcp.tools.mount")
 CATALOG_TIMEOUT = 20
 
 
-def _build_transport(url: str, token: str) -> StreamableHttpTransport:
-    """URL-embedded token (`?token={token}`) or standard Bearer header. Driven by
-    whether `{token}` appears in the mount_url. Générique — aucun mount keyed vivant
-    aujourd'hui (AI Ark, le pilote #152, requalifié en connecteur classique #160) ;
-    la branche reste pour le prochain mount à clé-dans-l'URL."""
+def _build_transport(url: str, token: str, header: str | None = None) -> StreamableHttpTransport:
+    """URL-embedded token (`?token={token}`), a custom header (`header=`, ex.
+    Lemlist's `X-API-Key` — no Bearer/OAuth support on its official MCP), or the
+    default `Authorization: Bearer`. `header` is `Connector.mount_auth_header` —
+    None preserves the historical Bearer-only behavior for every existing OAuth
+    mount (memento/atlassian/folkmcp) unchanged."""
     if "{token}" in url:
         return StreamableHttpTransport(url.replace("{token}", token))
+    if header:
+        return StreamableHttpTransport(url, headers={header: token})
     return StreamableHttpTransport(url, headers={"Authorization": f"Bearer {token}"})
 
 # Noms d'outils fédérés actuellement enregistrés, par connecteur — pour pouvoir
@@ -191,7 +194,8 @@ def _fetch_catalog(connector: connectors.Connector) -> list:
             return []
 
         async def _list():
-            client = Client(_build_transport(connector.mount_url, token))
+            client = Client(_build_transport(connector.mount_url, token,
+                                             connector.mount_auth_header))
             async with client:
                 return await client.list_tools()
 
@@ -216,8 +220,10 @@ def _make_factory(connector: connectors.Connector):
 
     # Mount keyed (API key) : résolution via resolve_api_key (cascade BYO > platform
     # grant > quota) plutôt que resolve_mount_token (OAuth only). Le token est injecté
-    # dans l'URL si mount_url contient `{token}`, sinon en Bearer. Branche générique
-    # sans consommateur vivant (AI Ark, pilote #152, requalifié classique #160).
+    # dans l'URL si mount_url contient `{token}`, sinon dans `mount_auth_header` si
+    # renseigné (ex. lemlistmcp : "X-API-Key"), sinon en Bearer. Premier consommateur
+    # vivant : lemlistmcp (branche historiquement sans consommateur — AI Ark, pilote
+    # #152, requalifié classique #160).
     if connector.keyed:
         async def factory_keyed() -> Client:
             if current_user_sub_from_token() is None:
@@ -227,7 +233,8 @@ def _make_factory(connector: connectors.Connector):
                              f"stdio local (credential per-user serveur requis)."),
                 ))
             key, _ = access.resolve_api_key(connector.name)
-            return Client(_build_transport(connector.mount_url, key))
+            return Client(_build_transport(connector.mount_url, key,
+                                           connector.mount_auth_header))
         return factory_keyed
 
     async def factory() -> Client:
