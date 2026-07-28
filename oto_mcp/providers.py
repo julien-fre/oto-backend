@@ -271,7 +271,7 @@ _CATEGORY_BY_CONNECTOR = {
     "serper": "Prospection", "hunter": "Prospection", "kaspr": "Prospection",
     "fullenrich": "Prospection", "lemlist": "Prospection", "lemlistmcp": "Prospection",
     "attio": "Prospection",
-    "folk": "Prospection", "crunchbase": "Prospection",
+    "folk": "Prospection", "crunchbase": "Prospection", "dropcontact": "Prospection",
     "unipile": "Prospection", "topograph": "Prospection",
     "sirene": "Data FR", "culture": "Data FR", "droit": "Data FR",
     "foncier": "Data FR", "sante": "Data FR", "frenchtech": "Data FR", "gr": "Data GR",
@@ -304,6 +304,7 @@ _CATEGORY_BY_CONNECTOR = {
 _PUBLISHER_BY_CONNECTOR = {
     "serper": "Serper", "hunter": "Hunter.io", "kaspr": "Kaspr",
     "fullenrich": "FullEnrich", "lemlist": "lemlist", "lemlistmcp": "lemlist", "folk": "Folk",
+    "dropcontact": "Dropcontact",
     "unipile": "Unipile", "pennylane": "Pennylane", "gocardless": "GoCardless",
     "silae": "Silae", "attio": "Attio", "crunchbase": "Crunchbase",
     "slack": "Slack", "whatsapp": "WhatsApp", "google": "Google",
@@ -388,7 +389,7 @@ _DESCRIPTION_BY_CONNECTOR = {
 _LOGO_DOMAIN_BY_CONNECTOR = {
     "serper": "serper.dev", "hunter": "hunter.io", "kaspr": "kaspr.io",
     "fullenrich": "fullenrich.com", "lemlist": "lemlist.com", "lemlistmcp": "lemlist.com",
-    "folk": "folk.app",
+    "folk": "folk.app", "dropcontact": "dropcontact.com",
     "unipile": "unipile.com", "pennylane": "pennylane.com", "pennylaneged": "pennylane.com", "gocardless": "gocardless.com",
     "silae": "silae.fr", "attio": "attio.com", "crunchbase": "crunchbase.com",
     "brevo": "brevo.com", "brevoauto": "brevo.com", "pipedrive": "pipedrive.com",
@@ -506,6 +507,13 @@ _REGISTRY_LIST = [
     _c("fullenrich", ["fullenrich"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        secret_kind="api_key", default_quota=5, platform_key_open=True,
        label="FullEnrich", help="enrichissement waterfall", href="https://app.fullenrich.com"),
+    # dropcontact : enrichissement contact + entreprise (email/téléphone/SIRENE) en
+    # batch async (submit/fetch, même idiome que fullenrich). byo-only (pay-per-
+    # crédit, chacun connecte son compte) — pas de clé plateforme.
+    _c("dropcontact", ["dropcontact"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
+       label="Dropcontact", help="enrichissement contact + entreprise (email/téléphone/SIRENE)",
+       href="https://www.dropcontact.com"),
     # folk : né APRÈS le coffre — pas de colonne legacy users.folk_api_key,
     # le coffre connector_credentials est canonique. byo-only (pas de clé
     # plateforme) ; compte partagé équipe = credential de l'org Otomata.
