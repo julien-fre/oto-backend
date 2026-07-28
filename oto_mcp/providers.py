@@ -866,8 +866,12 @@ _REGISTRY_LIST = [
                            help="1000.XXXXXXXX… (self-client)"),
            CredentialField("client_secret", "Client Secret", secret=True,
                            help="secret du self-client"),
+           # FACULTATIF : en mode « se connecter avec Zoho » (server-based) il n'est
+           # pas collé — le flux de consentement le remplit. Requis seulement si on
+           # pose un self client à la main.
            CredentialField("refresh_token", "Refresh Token", secret=True,
-                           help="1000.xxxxx.yyyyy"),
+                           required=False,
+                           help="1000.xxxxx.yyyyy — laisse vide si tu te connectes via Zoho"),
            CredentialField("data_center", "Data center (com, eu, in, au, jp, ca)",
                            secret=False, reveal=True, help="eu"),
        )),
@@ -879,8 +883,12 @@ _REGISTRY_LIST = [
                            help="1000.XXXXXXXX… (self-client)"),
            CredentialField("client_secret", "Client Secret", secret=True,
                            help="secret du self-client"),
+           # FACULTATIF : en mode « se connecter avec Zoho » (server-based) il n'est
+           # pas collé — le flux de consentement le remplit. Requis seulement si on
+           # pose un self client à la main.
            CredentialField("refresh_token", "Refresh Token", secret=True,
-                           help="1000.xxxxx.yyyyy"),
+                           required=False,
+                           help="1000.xxxxx.yyyyy — laisse vide si tu te connectes via Zoho"),
            # FACULTATIF : les endpoints KB (articles) résolvent le portail depuis le
            # token mono-org — vérifié empiriquement. Et un credential scopé
            # `Desk.articles.READ` seul ne PEUT pas le découvrir (/organizations →
@@ -899,7 +907,10 @@ _REGISTRY_LIST = [
        href="https://analytics.zoho.com", credential_fields=(
            CredentialField("client_id", "Client ID", secret=True),
            CredentialField("client_secret", "Client Secret", secret=True),
-           CredentialField("refresh_token", "Refresh Token", secret=True),
+           # FACULTATIF : rempli par le flux « se connecter avec Zoho » (server-based).
+           CredentialField("refresh_token", "Refresh Token", secret=True,
+                           required=False,
+                           help="laisse vide si tu te connectes via Zoho"),
            CredentialField("org_id", "Org ID", secret=False),
            CredentialField("data_center", "Data center (com, eu, in, au, jp, ca, sa)",
                            secret=False, reveal=True),

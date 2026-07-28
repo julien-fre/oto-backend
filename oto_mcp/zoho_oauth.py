@@ -18,13 +18,18 @@ puisse rien corriger côté serveur. Ici **c'est oto qui les déclare** dans l'U
 d'autorisation. Bénéfice second : plus aucun secret n'a besoin de circuler par
 mail (vécu 28/07, un `client_secret` reçu en clair).
 
-**D'où vient l'app ?** Deux sources, dans cet ordre :
-1. **app de plateforme** (env `ZOHO_OAUTH_CLIENT_ID_<DC>` / `..._SECRET_<DC>`) —
-   le vrai « un clic » : l'utilisateur ne manipule rien. L'app Zoho étant liée à
-   sa région, elle est déclarée PAR data center.
-2. **app de l'org** : l'org a créé sa propre app et posé `client_id`/`client_secret`
-   sur la carte. On pilote quand même les scopes et le token ne transite plus par
-   mail. C'est le repli quand aucune app de plateforme n'existe pour la région.
+**D'où vient l'app ?** Du **coffre**, comme n'importe quel credential — jamais de
+l'environnement. `client_id`/`client_secret` sont posés sur la carte du connecteur
+par l'user, l'équipe, l'org ou la plateforme, et résolus par la **cascade
+habituelle** (`access.resolve_credential_fields` : membre > équipe > org >
+plateforme). Conséquences : chaque org peut apporter la sienne, une clé
+**plateforme** posée par Otomata donne le « un clic » à tout le monde sans rien
+changer au code, et le partage/la gouvernance existants s'appliquent tels quels.
+
+La connexion est donc en **deux temps** (patron `status_hints` déjà en place pour
+unipile/sessions) : (1) poser l'app — `client_id` + `client_secret` + région ;
+(2) consentir, ce qui remplit le `refresh_token`. D'où un `refresh_token`
+FACULTATIF sur la carte : en server-based il n'est pas collé, il est obtenu.
 
 Le `state` est signé HMAC (même schéma que `google_oauth`) : le callback arrive
 du NAVIGATEUR de l'utilisateur, sans en-tête d'auth — c'est lui qui porte « ce
@@ -43,7 +48,7 @@ from typing import Optional
 
 import requests
 
-from . import credentials_store, providers
+from . import access, credentials_store, providers
 
 _STATE_TTL = 600  # 10 min — le temps de lire un écran de consentement
 
@@ -77,29 +82,34 @@ class ZohoOAuthError(ValueError):
 
 # --- app (client_id / client_secret) ----------------------------------------
 
-def platform_app(data_center: str) -> Optional[tuple[str, str]]:
-    """App de plateforme pour cette région, si déclarée en env. `None` sinon."""
-    dc = (data_center or "").strip().lower()
-    cid = os.environ.get(f"ZOHO_OAUTH_CLIENT_ID_{dc.upper()}")
-    sec = os.environ.get(f"ZOHO_OAUTH_CLIENT_SECRET_{dc.upper()}")
-    return (cid, sec) if cid and sec else None
+def app_fields(connector: str, sub: str) -> dict:
+    """Champs du credential résolu pour ce (sub, connecteur) — cascade habituelle
+    (membre > équipe > org > plateforme). `{}` si rien n'est encore posé : c'est
+    l'état NOMINAL d'une première connexion, jamais une erreur."""
+    try:
+        return access.resolve_credential_fields(connector, sub=sub) or {}
+    except Exception:  # noqa: BLE001 — pas encore de credential
+        return {}
 
 
-def resolve_app(data_center: str, org_app: Optional[dict] = None) -> tuple[str, str]:
-    """`(client_id, client_secret)` : app de plateforme d'abord, sinon celle de
-    l'org. Lève un message actionnable si aucune n'est disponible."""
-    app = platform_app(data_center)
-    if app:
-        return app
-    cid = (org_app or {}).get("client_id")
-    sec = (org_app or {}).get("client_secret")
+def resolve_app(fields: Optional[dict]) -> tuple[str, str]:
+    """`(client_id, client_secret)` de l'app à utiliser, pris dans le credential
+    résolu. Lève un message actionnable si l'app n'a pas encore été posée."""
+    cid = (fields or {}).get("client_id")
+    sec = (fields or {}).get("client_secret")
     if cid and sec:
         return cid, sec
     raise ZohoOAuthError(
-        f"Aucune app OAuth Zoho pour la région « {data_center} ». Soit la "
-        f"plateforme en déclare une (ZOHO_OAUTH_CLIENT_ID_{data_center.upper()}), "
-        f"soit ton org renseigne client_id + client_secret sur la carte du "
-        f"connecteur avant de lancer la connexion.")
+        "Aucune app OAuth Zoho disponible. Renseigne d'abord « client id » et "
+        "« client secret » de ton app Zoho sur la carte du connecteur (ou "
+        "demande à ton org / à la plateforme de partager la sienne), puis relance "
+        "la connexion.")
+
+
+def has_app(connector: str, sub: str) -> bool:
+    """Une app est-elle déjà à disposition (à n'importe quel palier) ?"""
+    f = app_fields(connector, sub)
+    return bool(f.get("client_id") and f.get("client_secret"))
 
 
 # --- state signé -------------------------------------------------------------
@@ -164,7 +174,7 @@ def verify_state(state: str) -> Optional[dict]:
 # --- flux --------------------------------------------------------------------
 
 def build_auth_url(sub: str, org_id: int, connector: str, data_center: str,
-                   org_app: Optional[dict] = None) -> str:
+                   app: Optional[dict] = None) -> str:
     """URL de consentement Zoho. `access_type=offline` + `prompt=consent` sont
     REQUIS pour obtenir un refresh_token (sans eux Zoho ne renvoie qu'un access
     token d'une heure, et la connexion meurt silencieusement au bout d'une heure)."""
@@ -175,7 +185,7 @@ def build_auth_url(sub: str, org_id: int, connector: str, data_center: str,
         raise ZohoOAuthError(
             f"Data center Zoho non reconnu : {data_center!r} — l'un de "
             f"{', '.join(_ACCOUNTS)}.")
-    client_id, _ = resolve_app(dc, org_app)
+    client_id, _ = resolve_app(app if app is not None else app_fields(connector, sub))
     q = urllib.parse.urlencode({
         "response_type": "code",
         "client_id": client_id,
@@ -189,10 +199,10 @@ def build_auth_url(sub: str, org_id: int, connector: str, data_center: str,
 
 
 def exchange_code(code: str, data_center: str,
-                  org_app: Optional[dict] = None) -> dict:
+                  app: Optional[dict] = None) -> dict:
     """Code éphémère → tokens. ⚠️ `data=` et jamais `params=` : en query string les
     secrets partiraient dans l'URL, donc dans tout message d'erreur (incident #284)."""
-    client_id, client_secret = resolve_app(data_center, org_app)
+    client_id, client_secret = resolve_app(app)
     r = requests.post(
         f"{_ACCOUNTS[data_center]}/oauth/v2/token",
         data={
@@ -225,12 +235,12 @@ def exchange_code(code: str, data_center: str,
 
 
 def persist(sub: str, org_id: int, connector: str, data_center: str,
-            tokens: dict, org_app: Optional[dict] = None, *,
+            tokens: dict, app: Optional[dict] = None, *,
             entity_type: str = "member") -> None:
     """Range le credential SOUS LA MÊME FORME que le mode Self Client — c'est ce
     qui permet aux deux modes de coexister sans toucher au client ni à la
     résolution. `entity_type='member'` = clé scopée (sub, org) (ADR 0033)."""
-    client_id, client_secret = resolve_app(data_center, org_app)
+    client_id, client_secret = resolve_app(app)
     fields = {
         "client_id": client_id,
         "client_secret": client_secret,

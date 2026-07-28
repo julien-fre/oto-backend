@@ -16,6 +16,8 @@ from oto_mcp import providers
 
 BASE = {"client_id": "1000.X", "client_secret": "s3cr3t",
         "refresh_token": "1000.r", "data_center": "eu"}
+# L'app seule, avant consentement (mode server-based).
+APP_ONLY = {"client_id": "1000.X", "client_secret": "s3cr3t", "data_center": "eu"}
 
 
 def _fields():
@@ -26,10 +28,16 @@ def test_org_id_is_optional():
     assert _fields()["org_id"].required is False
 
 
-@pytest.mark.parametrize("name", ["client_id", "client_secret", "refresh_token",
-                                  "data_center"])
+@pytest.mark.parametrize("name", ["client_id", "client_secret", "data_center"])
 def test_other_fields_stay_required(name):
     assert _fields()[name].required is True
+
+
+def test_refresh_token_is_optional_too():
+    """Connexion en DEUX temps (server-based) : l'app est posée d'abord, le
+    refresh_token est REMPLI par le consentement — donc jamais exigé au formulaire.
+    Un self client, lui, le colle : les deux formes passent."""
+    assert _fields()["refresh_token"].required is False
 
 
 def test_can_post_without_org_id():
@@ -39,13 +47,19 @@ def test_can_post_without_org_id():
         "client_id", "client_secret", "data_center", "refresh_token"]
 
 
+def test_can_post_the_app_alone_before_consent():
+    """Server-based : on pose l'app, le consentement remplira le refresh_token."""
+    packed = cs.secret_from_input("zohodesk", None, dict(APP_ONLY))
+    assert "refresh_token" not in cs.unpack_secret("zohodesk", packed)
+
+
 def test_org_id_still_stored_when_given():
     """Facultatif ≠ ignoré : fourni, il doit être conservé (endpoints tickets)."""
     packed = cs.secret_from_input("zohodesk", None, {**BASE, "org_id": "800123456"})
     assert cs.unpack_secret("zohodesk", packed)["org_id"] == "800123456"
 
 
-@pytest.mark.parametrize("missing", ["client_secret", "refresh_token", "data_center"])
+@pytest.mark.parametrize("missing", ["client_secret", "data_center"])
 def test_missing_required_field_is_refused(missing):
     payload = {k: v for k, v in BASE.items() if k != missing}
     with pytest.raises(ValueError, match="missing_credentials"):

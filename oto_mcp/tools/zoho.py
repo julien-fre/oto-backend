@@ -15,7 +15,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access, connector_verify, status_hints
 
 # Modules CRM standard sondés pour prouver un scope de LECTURE réel (au moins un
 # `ZohoCRM.modules.<m>.READ`). On passe au 1er lisible ; tous en scope-mismatch =
@@ -65,6 +65,33 @@ def _zoho_error_hint(exc: Exception) -> str:
     if "invalid_code" in low or "invalid_grant" in low or "invalid_oauthtoken" in low:
         return "refresh token périmé ou révoqué — régénère-le dans la console Zoho."
     return f"échec de connexion Zoho : {exc}"
+
+
+def _pending_action_for(connector: str):
+    """Fabrique le hook `status_hints` d'un connecteur Zoho — le seam passe
+    `(sub, org, group, entry)` sans le nom du connecteur, on le capture ici.
+
+    Connexion en DEUX temps (mode server-based) : l'app est posée (client_id +
+    client_secret) mais le consentement n'a pas encore été donné → pas de
+    refresh_token. Sans ce hook la carte paraîtrait configurée et échouerait au
+    premier appel ; avec lui, le front affiche l'étape qui manque."""
+    def _hook(sub: str, org, group, entry: dict):  # noqa: ARG001
+        if entry.get("mode") == "forbidden":
+            return None   # rien de posé → le verdict « à connecter » suffit
+        try:
+            f = access.resolve_credential_fields(connector, sub=sub)
+        except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
+            return None
+        if f.get("client_id") and f.get("client_secret") and not f.get("refresh_token"):
+            return "Autorise oto chez Zoho"
+        return None
+    return _hook
+
+
+# Les 3 connecteurs Zoho partagent ce mode de connexion — enregistrés ici, ce
+# module étant chargé inconditionnellement par `register_all`.
+for _c in ("zoho", "zohodesk", "zohoanalytics"):
+    status_hints.register(_c, _pending_action_for(_c))
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)

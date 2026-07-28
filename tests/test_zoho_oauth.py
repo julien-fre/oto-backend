@@ -20,35 +20,35 @@ APP = {"client_id": "1000.ORGAPP", "client_secret": "org-secret"}
 def _env(monkeypatch):
     monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "test-state-secret")
     monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.oto.cx")
-    for k in list(dict(**{})):  # noqa: C416 — lisibilité
-        pass
-    monkeypatch.delenv("ZOHO_OAUTH_CLIENT_ID_EU", raising=False)
-    monkeypatch.delenv("ZOHO_OAUTH_CLIENT_SECRET_EU", raising=False)
 
 
-# --- l'app : plateforme d'abord, org en repli --------------------------------
+# --- l'app vient du COFFRE (cascade), jamais de l'environnement --------------
 
-def test_platform_app_wins_over_org_app(monkeypatch):
-    monkeypatch.setenv("ZOHO_OAUTH_CLIENT_ID_EU", "1000.PLATFORM")
-    monkeypatch.setenv("ZOHO_OAUTH_CLIENT_SECRET_EU", "plat-secret")
-    assert z.resolve_app(DC, APP) == ("1000.PLATFORM", "plat-secret")
-
-
-def test_org_app_used_when_no_platform_app():
-    assert z.resolve_app(DC, APP) == ("1000.ORGAPP", "org-secret")
+def test_app_comes_from_the_resolved_credential():
+    """client_id/secret sont posés sur la carte comme n'importe quel credential —
+    membre, équipe, org ou plateforme : la cascade tranche, pas une variable d'env."""
+    assert z.resolve_app(APP) == ("1000.ORGAPP", "org-secret")
 
 
-def test_no_app_at_all_is_actionable():
-    with pytest.raises(z.ZohoOAuthError, match="client_id"):
-        z.resolve_app(DC, {})
+def test_no_app_yet_is_actionable():
+    with pytest.raises(z.ZohoOAuthError, match="client id"):
+        z.resolve_app({})
 
 
-def test_platform_app_is_per_region(monkeypatch):
-    """L'app Zoho est liée à SA région — une app `.com` ne sert pas `.eu`."""
-    monkeypatch.setenv("ZOHO_OAUTH_CLIENT_ID_COM", "1000.US")
-    monkeypatch.setenv("ZOHO_OAUTH_CLIENT_SECRET_COM", "s")
-    assert z.platform_app("com") is not None
-    assert z.platform_app("eu") is None
+def test_app_fields_reads_the_cascade(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(z.access, "resolve_credential_fields",
+                        lambda con, sub=None: seen.update(con=con, sub=sub) or APP)
+    assert z.app_fields("zohodesk", "u1") == APP
+    assert seen == {"con": "zohodesk", "sub": "u1"}
+
+
+def test_app_fields_is_empty_before_any_credential(monkeypatch):
+    """Première connexion : rien de posé — état NOMINAL, pas une erreur."""
+    monkeypatch.setattr(z.access, "resolve_credential_fields",
+                        lambda con, sub=None: (_ for _ in ()).throw(ValueError("none")))
+    assert z.app_fields("zoho", "u1") == {}
+    assert z.has_app("zoho", "u1") is False
 
 
 # --- state signé -------------------------------------------------------------
@@ -88,7 +88,7 @@ def test_malformed_state_is_rejected(bad):
 def test_auth_url_declares_our_scopes():
     """LE bénéfice du mode : les scopes viennent de NOUS, plus de l'utilisateur —
     trois incidents de scope venaient de là (#190, #202, Desk articles-only)."""
-    url = z.build_auth_url("u1", 35, "zohodesk", DC, org_app=APP)
+    url = z.build_auth_url("u1", 35, "zohodesk", DC, app=APP)
     assert "accounts.zoho.eu/oauth/v2/auth" in url
     assert "Desk.search.READ" in url and "Desk.articles.READ" in url
 
@@ -96,15 +96,15 @@ def test_auth_url_declares_our_scopes():
 def test_auth_url_asks_for_offline_access():
     """Sans `access_type=offline` + `prompt=consent`, Zoho ne renvoie PAS de
     refresh_token → la connexion mourrait au bout d'une heure."""
-    url = z.build_auth_url("u1", 35, "zoho", DC, org_app=APP)
+    url = z.build_auth_url("u1", 35, "zoho", DC, app=APP)
     assert "access_type=offline" in url and "prompt=consent" in url
 
 
 def test_auth_url_uses_the_single_redirect_uri():
     """Une seule URI pour les 3 connecteurs (le connecteur voyage dans le state) :
     une URI doit être enregistrée au byte près côté Zoho."""
-    a = z.build_auth_url("u1", 35, "zoho", DC, org_app=APP)
-    b = z.build_auth_url("u1", 35, "zohodesk", DC, org_app=APP)
+    a = z.build_auth_url("u1", 35, "zoho", DC, app=APP)
+    b = z.build_auth_url("u1", 35, "zohodesk", DC, app=APP)
     assert z.redirect_uri() == "https://mcp.oto.cx/api/zoho/oauth/callback"
     for u in (a, b):
         assert "mcp.oto.cx%2Fapi%2Fzoho%2Foauth%2Fcallback" in u
@@ -112,12 +112,12 @@ def test_auth_url_uses_the_single_redirect_uri():
 
 def test_unknown_region_is_refused():
     with pytest.raises(z.ZohoOAuthError, match="Data center"):
-        z.build_auth_url("u1", 35, "zoho", "xx", org_app=APP)
+        z.build_auth_url("u1", 35, "zoho", "xx", app=APP)
 
 
 def test_unknown_connector_is_refused():
     with pytest.raises(z.ZohoOAuthError):
-        z.build_auth_url("u1", 35, "salesforce", DC, org_app=APP)
+        z.build_auth_url("u1", 35, "salesforce", DC, app=APP)
 
 
 # --- échange du code ---------------------------------------------------------
@@ -139,7 +139,7 @@ def test_exchange_sends_secrets_in_body_not_url(monkeypatch):
     monkeypatch.setattr(z.requests, "post", lambda url, **kw: (
         seen.update(url=url, kw=kw),
         _Resp(200, {"refresh_token": "1000.rt", "access_token": "at"}))[1])
-    z.exchange_code("code123", DC, org_app=APP)
+    z.exchange_code("code123", DC, app=APP)
     assert "params" not in seen["kw"]
     assert seen["kw"]["data"]["client_secret"] == "org-secret"
     assert "org-secret" not in seen["url"]
@@ -149,7 +149,7 @@ def test_expired_code_gives_an_actionable_message(monkeypatch):
     monkeypatch.setattr(z.requests, "post",
                         lambda url, **kw: _Resp(200, {"error": "invalid_code"}))
     with pytest.raises(z.ZohoOAuthError, match="expire"):
-        z.exchange_code("vieux", DC, org_app=APP)
+        z.exchange_code("vieux", DC, app=APP)
 
 
 def test_missing_refresh_token_is_explained(monkeypatch):
@@ -158,14 +158,14 @@ def test_missing_refresh_token_is_explained(monkeypatch):
     monkeypatch.setattr(z.requests, "post",
                         lambda url, **kw: _Resp(200, {"access_token": "at"}))
     with pytest.raises(z.ZohoOAuthError, match="Applications connectées"):
-        z.exchange_code("code", DC, org_app=APP)
+        z.exchange_code("code", DC, app=APP)
 
 
 def test_error_message_carries_no_secret(monkeypatch):
     monkeypatch.setattr(z.requests, "post",
                         lambda url, **kw: _Resp(400, {"error": "invalid_client"}))
     with pytest.raises(z.ZohoOAuthError) as e:
-        z.exchange_code("code", DC, org_app=APP)
+        z.exchange_code("code", DC, app=APP)
     assert "org-secret" not in str(e.value)
 
 
@@ -180,7 +180,7 @@ def test_persist_writes_the_same_fields_as_self_client(monkeypatch):
                             entity_type=et, entity_id=eid, connector=con,
                             secret=secret, meta=kw.get("meta")))
     z.persist("u1", 35, "zohodesk", DC,
-              {"refresh_token": "1000.rt"}, org_app=APP)
+              {"refresh_token": "1000.rt"}, app=APP)
     fields = z.credentials_store.unpack_secret("zohodesk", written["secret"])
     assert fields == {"client_id": "1000.ORGAPP", "client_secret": "org-secret",
                       "refresh_token": "1000.rt", "data_center": "eu"}

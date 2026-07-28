@@ -42,15 +42,6 @@ def make_routes(
     def _app_url() -> str:
         return os.environ.get("OTO_APP_URL", "https://dashboard.oto.ninja").rstrip("/")
 
-    def _org_app(sub: str, connector: str) -> dict:
-        """Repli « app de l'org » : si l'org a déjà posé client_id/client_secret sur
-        la carte, on s'en sert pour piloter quand même les scopes. Best-effort —
-        l'absence de credential est le cas NOMINAL d'une première connexion."""
-        try:
-            return access.resolve_credential_fields(connector, sub=sub) or {}
-        except Exception:  # noqa: BLE001 — pas encore de credential : normal
-            return {}
-
     async def start(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
         if err:
@@ -63,7 +54,8 @@ def make_routes(
         def _build() -> str:
             org_id = access.current_org(sub) or 0
             return zoho_oauth.build_auth_url(
-                sub, org_id, connector, dc, org_app=_org_app(sub, connector))
+                sub, org_id, connector, dc,
+                app=zoho_oauth.app_fields(connector, sub))
 
         try:
             url = await run_in_threadpool(_build)   # DB sync → hors event loop
@@ -83,10 +75,10 @@ def make_routes(
                                     status_code=302)
 
         def _finish() -> None:
-            app = _org_app(parsed["sub"], parsed["connector"])
-            tokens = zoho_oauth.exchange_code(code, parsed["data_center"], org_app=app)
+            app = zoho_oauth.app_fields(parsed["connector"], parsed["sub"])
+            tokens = zoho_oauth.exchange_code(code, parsed["data_center"], app=app)
             zoho_oauth.persist(parsed["sub"], parsed["org"], parsed["connector"],
-                               parsed["data_center"], tokens, org_app=app)
+                               parsed["data_center"], tokens, app=app)
 
         try:
             await run_in_threadpool(_finish)
@@ -101,21 +93,22 @@ def make_routes(
             status_code=302)
 
     async def modes(request: Request) -> JSONResponse:
-        """Ce que le front doit savoir pour afficher le bon écran : le connecteur
-        supporte-t-il le server-based, et une app de plateforme existe-t-elle pour
-        cette région (sinon l'org doit d'abord poser son client_id/secret) ?"""
+        """Ce que le front doit savoir : le connecteur supporte-t-il le
+        server-based, et une app est-elle DÉJÀ à disposition (posée par moi, mon
+        équipe, mon org ou la plateforme — cascade habituelle) ? Sinon il faut
+        d'abord renseigner client_id/client_secret sur la carte."""
         sub, err = await authenticate(request, verifier)
         if err:
             return err
         connector = (request.query_params.get("connector") or "").strip()
-        dc = (request.query_params.get("data_center") or "").strip().lower()
         if not zoho_oauth.supports(connector):
             return json_error(request, 400, "unknown_zoho_connector")
+        has_app = await run_in_threadpool(zoho_oauth.has_app, connector, sub)
         return json_response(request, {
             "connector": connector,
             "self_client": True,          # toujours disponible
             "server_based": True,
-            "platform_app": zoho_oauth.platform_app(dc) is not None,
+            "has_app": has_app,
             "scopes": list(zoho_oauth.SCOPES[connector]),
         })
 
