@@ -88,14 +88,18 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     # 1) auth — refresh brut : valide les 4 champs ET capte le `scope` accordé (le
     # refresh Zoho le renvoie), pour un message de scope actionnable si besoin.
     try:
-        tok = requests.post(f"{accounts_url}/oauth/v2/token", params={
+        # ⚠️ `data=` et JAMAIS `params=` : en query string, client_id/client_secret/
+        # refresh_token atterrissent dans l'URL — donc dans le message de toute
+        # exception requests (ConnectionError, HTTPError…), qui est ici renvoyé à
+        # l'agent et journalisé. Fuite vécue (#284) ; cf. `oto.tools.zoho.auth`.
+        tok = requests.post(f"{accounts_url}/oauth/v2/token", data={
             "grant_type": "refresh_token",
             "client_id": fields.get("client_id"),
             "client_secret": fields.get("client_secret"),
             "refresh_token": fields.get("refresh_token"),
         }, timeout=20).json()
     except Exception as e:  # noqa: BLE001 — réseau / réponse illisible
-        raise ValueError(f"échec de connexion Zoho : {e}") from e
+        raise ValueError(f"échec de connexion Zoho : {type(e).__name__}") from e
     if "access_token" not in tok:
         raise ValueError(_zoho_error_hint(tok.get("error") or tok))
     granted = tok.get("scope", "")

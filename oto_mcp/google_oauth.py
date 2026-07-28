@@ -336,7 +336,9 @@ def revoke(sub: str, account: Optional[str] = None) -> None:
             try:
                 requests.post(
                     "https://oauth2.googleapis.com/revoke",
-                    params={"token": row["refresh_token"]},
+                    # `data=` (corps) et non `params=` : en query string le refresh
+                    # token part dans l'URL → breadcrumbs Sentry, logs de proxy.
+                    data={"token": row["refresh_token"]},
                     timeout=10,
                 )
             except Exception:
