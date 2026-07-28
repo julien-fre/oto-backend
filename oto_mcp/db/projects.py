@@ -30,7 +30,7 @@ from .users import upsert_user
 
 
 # --- Projets (couche d'organisation, owned resource ADR 0030) ----------------
-_PROJECT_COLS = ("id, owner_type, owner_id, context_org_id, name, brief_md, created_by, "
+_PROJECT_COLS = ("id, owner_type, owner_id, context_org_id, name, icon, brief_md, created_by, "
                  "is_template, mcp_slug, mcp_access, mcp_tools, mcp_expose_datastore, "
                  "mcp_expose_datastore_write, archived_at, created_at, updated_at")
 
@@ -176,12 +176,17 @@ def list_all_projects(*, include_archived: bool = False) -> list[dict]:
 
 def update_project(project_id: int, *, name: Optional[str] = None,
                    brief_md: Optional[str] = None,
-                   is_template: Optional[bool] = None) -> None:
+                   is_template: Optional[bool] = None,
+                   icon: Optional[str] = None) -> None:
     sets: list[str] = []
     params: list = []
     if name is not None:
         sets.append("name = %s")
         params.append(name)
+    if icon is not None:
+        # chaîne vide = retirer l'icône (NULL) — on ne stocke pas d'emoji vide
+        sets.append("icon = %s")
+        params.append(icon or None)
     if brief_md is not None:
         sets.append("brief_md = %s")
         params.append(brief_md)

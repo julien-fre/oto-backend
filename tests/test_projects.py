@@ -34,7 +34,7 @@ def seams(monkeypatch):
                         lambda owners, templates_only=False: rec["list_owners"].append(owners) or (
                             [dict(ROW, is_template=True)] if templates_only else [ROW]))
     monkeypatch.setattr(P.db, "update_project",
-                        lambda pid, name=None, brief_md=None, is_template=None: rec["update"].append((pid, name, brief_md, is_template)))
+                        lambda pid, name=None, brief_md=None, is_template=None, icon=None: rec["update"].append((pid, name, brief_md, is_template)))
     rec["copy"] = []
     monkeypatch.setattr(P.db, "duplicate_project",
                         lambda src, name, ot, oid, copied_by=None: rec["copy"].append((src, name, ot, oid, copied_by)) or (8, []))

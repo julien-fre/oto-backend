@@ -178,6 +178,8 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_member_context "
                      "ON projects(owner_id, context_org_id) "
                      "WHERE owner_type = 'user' AND archived_at IS NULL")
+        # Emoji facultatif d'un projet (repère visuel) — additif, NULL par défaut.
+        conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS icon TEXT")
         # Retrait du partage public CHIFFRÉ zero-knowledge (`/p/p`), supplanté par le
         # partage NAVIGABLE live sur `<slug>.share.oto.cx` (share_ui). La table ne stockait
         # que du ciphertext irrécupérable (clé jamais côté serveur) → drop sûr, pas de legacy.

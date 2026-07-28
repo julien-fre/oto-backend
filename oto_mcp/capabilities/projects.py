@@ -38,6 +38,7 @@ class ProjectInput(BaseModel):
     project_id: Optional[int] = None
     stale_days: Optional[int] = None   # lint : seuil « pas retouché depuis » (défaut 90)
     name: Optional[str] = None
+    icon: Optional[str] = None           # update : emoji du projet ("" = retirer)
     brief_md: Optional[str] = None
     is_template: Optional[bool] = None   # update : publier/retirer le projet comme MODÈLE (ADR 0032 §7 B5a)
     # publish_mcp : publier le projet en endpoint MCP dédié `<mcp_slug>.mcp.oto.cx` (ADR 0032, amende #44).
@@ -104,7 +105,8 @@ def _mcp_url(slug: object, access: str) -> object:
 
 def _view(row: dict) -> dict:
     return {
-        "id": row["id"], "name": row["name"], "brief_md": row.get("brief_md", ""),
+        "id": row["id"], "name": row["name"], "icon": row.get("icon"),
+        "brief_md": row.get("brief_md", ""),
         "owner_type": row["owner_type"], "owner_id": row["owner_id"],
         # Org de CONTEXTE d'un projet perso (ADR 0030 amendé) — « moi, org ». NULL sinon.
         "context_org_id": (str(row["context_org_id"])
@@ -553,7 +555,8 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                      "Publier un modèle est réservé au propriétaire / admin.", 403)
         db.update_project(int(inp.project_id),
                           name=(inp.name.strip() if inp.name else None),
-                          brief_md=inp.brief_md, is_template=inp.is_template)
+                          brief_md=inp.brief_md, is_template=inp.is_template,
+                          icon=inp.icon)
         db.log_project_activity(int(inp.project_id), sub, "project.update", inp.name or None)
         return _view(db.get_project_by_id(int(inp.project_id)))
 
@@ -740,7 +743,7 @@ CAPABILITIES += [
             "effective org in `_org`) / list_templates (published MODEL projects you can copy) / "
             "get (project + its links + an `audit` of those links: dead_links / unbound_slots / "
             "inert_procedures — a linked entity that no longer resolves surfaces HERE, act on it) / "
-            "update (name, brief_md, is_template = publish/unpublish "
+            "update (name, icon = an emoji shown in the lists and headers (\"\" clears it), brief_md, is_template = publish/unpublish "
             "as a copyable model) / copy (deep-copy a project you can read — its own or a model "
             "— into a NEW project in your active org: brief + doc tree + links + raw files; "
             "a tableau link stays a POINTER to the same namespace by default (config.provision "
@@ -777,7 +780,7 @@ CAPABILITIES += [
             "op=transfer new_owner_group=<id> hands it to a TEAM so the project and its "
             "connector credentials sit at the SAME level (the team's secrets then resolve "
             "when you open it), new_owner_org=<id> to an org, new_owner_email to a user. "
-            "(op=update only changes name/brief_md/is_template — never the owner; op=copy "
+            "(op=update only changes name/icon/brief_md/is_template — never the owner; op=copy "
             "makes a NEW id.) "
             "inventory = the project's DERIVED surface (union of the linked procedures' "
             "<tool:> refs + tools actually used by the project's runs, plus connectors "

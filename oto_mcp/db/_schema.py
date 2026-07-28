@@ -276,6 +276,9 @@ CREATE TABLE IF NOT EXISTS projects (
     owner_type TEXT NOT NULL DEFAULT 'user',
     owner_id TEXT NOT NULL,
     name TEXT NOT NULL,
+    -- Emoji facultatif : repère visuel du projet (listes, sidebar, en-tête).
+    -- NULL = pas d'icône, l'UI retombe sur son rendu par défaut.
+    icon TEXT,
     brief_md TEXT NOT NULL DEFAULT '',
     created_by TEXT,
     is_template BOOLEAN NOT NULL DEFAULT FALSE,
