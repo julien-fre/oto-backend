@@ -100,7 +100,7 @@ def test_create_releases_archived_personal_slot(monkeypatch):
     assert updates[1] == ("UPDATE orgs SET personal_of = %s WHERE id = %s", ("u1", 42))
 
 
-# ── backfill : migration des ressources user-owned ──────────────────────────
+# ── backfill : garantit l'org perso, SANS toucher aux ressources ────────────
 class _Users:
     def __init__(self, rows):
         self._rows = rows
@@ -116,14 +116,19 @@ class _Users:
         return type("R", (), {"fetchall": lambda s: rows})()
 
 
-def test_backfill_migrates_user_owned(monkeypatch):
+def test_backfill_ne_touche_plus_aux_ressources(monkeypatch):
+    """Le backfill de boot NE DOIT PLUS reparenter les ressources user-owned.
+
+    Régression 2026-07-28 : rejoué à chaque boot, il déplaçait tout projet PERSO
+    (scope membre ADR 0030 §8) vers l'org perso de son auteur → le projet quittait
+    l'org de travail et « disparaissait » de la liste de l'utilisateur."""
     monkeypatch.setattr(org_store, "_connect", lambda: _Users([{"sub": "u1", "email": "a@x.co", "name": "A"}]))
     monkeypatch.setattr(org_store, "ensure_personal_org", lambda sub, e, n: 42)
-    rep = {"ds": [], "pj": []}
+    rep = []
     monkeypatch.setattr(db, "list_datastore_namespaces_for_owners", lambda owners: [{"id": 1}])
-    monkeypatch.setattr(db, "reparent_datastore_namespace", lambda i, t, o: rep["ds"].append((i, t, o)))
+    monkeypatch.setattr(db, "reparent_datastore_namespace", lambda *a, **k: rep.append(a))
     monkeypatch.setattr(db, "list_projects_for_owners", lambda owners, include_archived=False: [{"id": 5}])
-    monkeypatch.setattr(db, "reparent_project", lambda i, t, o: rep["pj"].append((i, t, o)))
+    monkeypatch.setattr(db, "reparent_project", lambda *a, **k: rep.append(a))
     c = org_store.backfill_personal_orgs()
-    assert rep["ds"] == [(1, "org", "42")] and rep["pj"] == [(5, "org", "42")]
-    assert c == {"users": 1, "datastores": 1, "projects": 1}
+    assert rep == [], "le backfill de boot ne doit reparenter AUCUNE ressource"
+    assert c == {"users": 1}

@@ -208,12 +208,23 @@ def archive_project(project_id: int) -> None:
                      "WHERE id = %s", (project_id,))
 
 
-def reparent_project(project_id: int, new_owner_type: str, new_owner_id: str) -> None:
+def reparent_project(project_id: int, new_owner_type: str, new_owner_id: str,
+                     context_org_id: Optional[int] = None) -> None:
+    """Change le DÉTENTEUR d'un projet, et repose son « rangé chez » (`context_org_id`).
+
+    Les deux vont ensemble : un projet perso (`owner_type='user'`) n'est listé que dans
+    SON org de contexte (`list_member_projects`), donc un transfert vers une personne qui
+    laisserait le contexte à NULL rendrait le projet invisible PARTOUT, y compris à son
+    nouveau propriétaire. `context_org_id` est NULL pour un projet non-perso (org/group/
+    platform), dont le contexte se dérive de l'owner. L'appelant (`ownership`) calcule
+    l'org de contexte ; ici on l'écrit."""
     if new_owner_type == "user":
         upsert_user(new_owner_id)
+    ctx = int(context_org_id) if (new_owner_type == "user" and context_org_id) else None
     with _connect() as conn:
-        conn.execute("UPDATE projects SET owner_type = %s, owner_id = %s, updated_at = NOW() "
-                     "WHERE id = %s", (new_owner_type, new_owner_id, project_id))
+        conn.execute("UPDATE projects SET owner_type = %s, owner_id = %s, "
+                     "context_org_id = %s, updated_at = NOW() WHERE id = %s",
+                     (new_owner_type, new_owner_id, ctx, project_id))
 
 
 def get_project_by_mcp_slug(slug: str) -> Optional[dict]:

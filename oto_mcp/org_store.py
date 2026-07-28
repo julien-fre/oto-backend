@@ -710,35 +710,27 @@ def ensure_personal_org(sub: str, email: Optional[str] = None, name: Optional[st
 
 
 def backfill_personal_orgs() -> dict:
-    """One-shot idempotent (boot) : chaque user a une org perso marquée ; ses ressources
-    `owner_type='user'` (datastores/projets) y MIGRENT (owner_type='user' disparaît des
-    données) ; si aucune org active → la perso devient maison. No-op aux boots suivants."""
-    from . import db as _db
-    counts = {"users": 0, "datastores": 0, "projects": 0}
+    """Idempotent (boot) : chaque user a une **org perso** marquée, et une org active
+    (la perso si aucune autre).
+
+    ⚠️ Ne TOUCHE PLUS aux ressources. La migration `owner_type='user'` → org perso qui
+    vivait ici datait de la suppression du perso `org_id=0` ; depuis l'amendement ADR
+    0030 §8 (2026-07-17) `owner_type='user'` n'est plus un vestige à rattraper mais le
+    **scope membre** — un projet PRIVÉ rangé dans le contexte d'une org (`context_org_id`).
+    Rejouée à chaque boot, elle DÉTRUISAIT ce scope : le projet privé quittait l'org de
+    travail pour l'espace perso de son auteur → « mon projet a disparu » côté user (vécu
+    2026-07-28, aucun projet `owner_type='user'` ne survivait en prod)."""
+    counts = {"users": 0}
     with _connect() as conn:
         users = conn.execute("SELECT sub, email, name FROM users").fetchall()
     for u in users:
         sub = u["sub"]
         try:
-            pid = ensure_personal_org(sub, u.get("email"), u.get("name"))
+            ensure_personal_org(sub, u.get("email"), u.get("name"))
         except Exception:
             _log.warning("backfill_personal_orgs: ensure échoué %s", sub, exc_info=True)
             continue
-        for d in _db.list_datastore_namespaces_for_owners([("user", sub)]):
-            try:
-                _db.reparent_datastore_namespace(int(d["id"]), "org", str(pid))
-                counts["datastores"] += 1
-            except Exception:
-                _log.warning("reparent datastore %s échoué", d.get("id"), exc_info=True)
-        for p in _db.list_projects_for_owners([("user", sub)], include_archived=True):
-            try:
-                _db.reparent_project(int(p["id"]), "org", str(pid))
-                counts["projects"] += 1
-            except Exception:
-                _log.warning("reparent project %s échoué", p.get("id"), exc_info=True)
         counts["users"] += 1
-    if counts["datastores"] or counts["projects"]:
-        _log.info("backfill_personal_orgs: %s", counts)
     return counts
 
 

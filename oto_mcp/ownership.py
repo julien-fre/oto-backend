@@ -377,8 +377,34 @@ def _project_owner(rid: str) -> Optional[tuple[str, str]]:
     return (row["owner_type"], row["owner_id"])
 
 
+def _project_context_org(row: dict, new_owner_id: str) -> Optional[int]:
+    """Où RANGER un projet qui devient perso (`owner_type='user'`) — son `context_org_id`.
+
+    Un projet perso n'est listé que dans son org de contexte (`db.list_member_projects`),
+    donc sans ce calcul un transfert vers une personne produit un projet **invisible
+    partout**, y compris pour son nouveau propriétaire. On garde le projet là où il
+    travaillait déjà (org détentrice, org du groupe détenteur, ou contexte courant) si le
+    destinataire y est membre ; sinon on retombe sur SON org perso — jamais NULL."""
+    prev_type, prev_id = row.get("owner_type"), row.get("owner_id")
+    candidate: Optional[int] = None
+    if prev_type == "org" and prev_id:
+        candidate = int(prev_id)
+    elif prev_type == "group" and prev_id:
+        g = group_store.get_group(int(prev_id))
+        candidate = int(g["org_id"]) if g and g.get("org_id") else None
+    elif prev_type == "user" and row.get("context_org_id"):
+        candidate = int(row["context_org_id"])
+    if candidate is not None and roles.is_org_member(new_owner_id, candidate):
+        return candidate
+    return org_store.ensure_personal_org(new_owner_id)
+
+
 def _project_reparent(rid: str, new_owner_type: str, new_owner_id: str) -> None:
-    db.reparent_project(int(rid), new_owner_type, new_owner_id)
+    ctx: Optional[int] = None
+    if new_owner_type == "user":
+        row = db.get_project_by_id(int(rid))
+        ctx = _project_context_org(row or {}, new_owner_id)
+    db.reparent_project(int(rid), new_owner_type, new_owner_id, context_org_id=ctx)
 
 
 register_kind(

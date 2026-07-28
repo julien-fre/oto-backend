@@ -206,6 +206,52 @@ def test_transfer_reparents_and_keeps_previous_owner_write(monkeypatch):
     assert calls["grant"] == (RT, RID, "user", "alice", "write")
 
 
+# --- Transfert d'un PROJET : le « rangé chez » suit le détenteur ---------------
+# Régression 2026-07-28 : `reparent_project` ne touchait pas `context_org_id`, or un
+# projet perso n'est listé que dans SON org de contexte → transférer un projet d'org à
+# une personne le rendait invisible PARTOUT, nouveau propriétaire compris.
+
+def _wire_project(monkeypatch, row, *, member_of=()):
+    monkeypatch.setattr(ownership.db, "get_project_by_id", lambda pid: row)
+    monkeypatch.setattr(ownership.roles, "is_org_member",
+                        lambda sub, oid: oid in member_of)
+    monkeypatch.setattr(ownership.org_store, "ensure_personal_org", lambda sub: 999)
+    seen = {}
+    monkeypatch.setattr(ownership.db, "reparent_project",
+                        lambda pid, nt, ni, context_org_id=None:
+                        seen.update(pid=pid, nt=nt, ni=ni, ctx=context_org_id))
+    return seen
+
+
+def test_project_transfer_to_user_garde_l_org_de_travail(monkeypatch):
+    """Org-owned → personne MEMBRE de cette org : le projet reste rangé chez elle."""
+    seen = _wire_project(monkeypatch, {"owner_type": "org", "owner_id": "35"}, member_of=(35,))
+    ownership._project_reparent("116", "user", "alexandra")
+    assert seen == {"pid": 116, "nt": "user", "ni": "alexandra", "ctx": 35}
+
+
+def test_project_transfer_to_outsider_retombe_sur_son_espace_perso(monkeypatch):
+    """Destinataire NON membre de l'org d'origine : jamais NULL — son espace perso."""
+    seen = _wire_project(monkeypatch, {"owner_type": "org", "owner_id": "35"}, member_of=())
+    ownership._project_reparent("116", "user", "etranger")
+    assert seen["ctx"] == 999
+
+
+def test_project_transfer_depuis_une_equipe_prend_l_org_parente(monkeypatch):
+    seen = _wire_project(monkeypatch, {"owner_type": "group", "owner_id": "4"}, member_of=(35,))
+    monkeypatch.setattr(ownership.group_store, "get_group", lambda gid: {"id": gid, "org_id": 35})
+    ownership._project_reparent("22", "user", "bob")
+    assert seen["ctx"] == 35
+
+
+def test_project_transfer_vers_une_org_efface_le_contexte(monkeypatch):
+    """Non-perso : le contexte se DÉRIVE de l'owner → la colonne repasse à NULL."""
+    seen = _wire_project(monkeypatch, {"owner_type": "user", "owner_id": "clem",
+                                       "context_org_id": 35})
+    ownership._project_reparent("167", "org", "35")
+    assert seen == {"pid": 167, "nt": "org", "ni": "35", "ctx": None}
+
+
 # --- ADR 0049 : cran PLATFORM (bibliothèque) + visibilité contextuelle group ----
 
 def test_platform_owned_readable_by_all_but_not_writable(monkeypatch):
