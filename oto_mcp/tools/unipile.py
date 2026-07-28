@@ -105,6 +105,42 @@ def _canonical_li_identifier(identifier: str) -> str:
     )
 
 
+def _slim(payload, fields: Optional[list[str]] = None,
+          text_max_chars: Optional[int] = None):
+    """Allège une enveloppe de liste Unipile — projection de champs + troncature du texte.
+
+    Pourquoi (signal #281) : `limit=10` sur les posts d'un membre rend 55 à 75 Ko — URLs
+    d'images en triple, urns, jetons de partage — pour un besoin qui est presque toujours
+    « balayer les derniers posts de X et voir si l'un colle ». Le payload basculait en
+    fichier à chaque appel, donc il fallait un second outil (jq) pour trier. Avec une
+    projection et un extrait de texte, le triage tient en UN appel léger.
+
+    Ne touche QUE les items : l'enveloppe (`cursor`, `total_count`) est préservée, sinon
+    la pagination casserait. `fields` garde toujours de quoi ADRESSER l'item ensuite
+    (`id`/`social_id`) — projeter jusqu'à rendre le résultat inutilisable serait pire que
+    de tout renvoyer."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        return payload
+    if not fields and not text_max_chars:
+        return payload
+    keep = set(fields or ()) | {"id", "social_id"} if fields else None
+
+    def _one(it):
+        if not isinstance(it, dict):
+            return it
+        out = {k: v for k, v in it.items() if k in keep} if keep else dict(it)
+        if text_max_chars and isinstance(out.get("text"), str) and len(out["text"]) > text_max_chars:
+            out["text"] = out["text"][:text_max_chars] + "…"
+            out["text_truncated"] = True
+        return out
+
+    payload = dict(payload)
+    payload["items"] = [_one(i) for i in payload["items"]]
+    if "data" in payload and isinstance(payload.get("data"), list):
+        payload["data"] = payload["items"]   # `_norm` aliase les deux : garder cohérent
+    return payload
+
+
 def _feed_ttl_seconds() -> int:
     try:
         return int(os.environ.get("OTO_UNIPILE_FEED_TTL_SECONDS", "600"))
@@ -671,10 +707,24 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def unipile_member_posts(identifier: str, cursor: Optional[str] = None,
-                                   limit: Optional[int] = None) -> dict:
-        """Posts publiés par un membre LinkedIn — `identifier` = provider id ou slug.
-        Pour repérer un post à commenter/liker (social-selling)."""
-        return unipile_client().list_member_posts(identifier, cursor=cursor, limit=limit)
+                                   limit: Optional[int] = None,
+                                   fields: Optional[list[str]] = None,
+                                   text_max_chars: Optional[int] = None) -> dict:
+        """Posts publiés par un membre LinkedIn. Pour repérer un post à commenter/liker.
+
+        `identifier` = **slug public** (`marie-dupont`) ou **URN** (`ACoAA…`). PAS le
+        `member_id` numérique d'unipile_search : l'API v2 le rejette (`400 Invalid User
+        ID`) — passe par le slug, que ce tool résout pour toi.
+
+        POUR TRIER SANS TOUT CHARGER (le brut fait 55-75 Ko pour 10 posts) :
+        `fields=["text","posted_at","social_id"]` + `text_max_chars=400` suffisent à
+        décider quel post ouvrir ; `id`/`social_id` sont toujours conservés pour pouvoir
+        enchaîner (unipile_get_post, unipile_comment). Sans ces deux paramètres, le
+        payload complet est renvoyé — comportement inchangé.
+        """
+        return _slim(
+            unipile_client().list_member_posts(identifier, cursor=cursor, limit=limit),
+            fields, text_max_chars)
 
     @mcp.tool()
     def unipile_get_post(post_id: str) -> dict:
@@ -803,10 +853,17 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def unipile_member_comments(identifier: str, cursor: Optional[str] = None,
-                                      limit: Optional[int] = None) -> dict:
-        """Commentaires laissés par un membre LinkedIn (`identifier` = provider id).
-        Pour repérer ce qu'un prospect engage → accroche social-selling."""
-        return unipile_client().list_member_comments(identifier, cursor=cursor, limit=limit)
+                                      limit: Optional[int] = None,
+                                      fields: Optional[list[str]] = None,
+                                      text_max_chars: Optional[int] = None) -> dict:
+        """Commentaires laissés par un membre LinkedIn — ce qu'un prospect engage.
+
+        `identifier` = **slug public** ou **URN** (`ACoAA…`), même contrat que
+        `unipile_member_posts` (le `member_id` numérique n'est pas accepté par l'API).
+        `fields` / `text_max_chars` allègent le retour de la même façon."""
+        return _slim(
+            unipile_client().list_member_comments(identifier, cursor=cursor, limit=limit),
+            fields, text_max_chars)
 
     @mcp.tool()
     def unipile_member_reactions(identifier: str, cursor: Optional[str] = None,
