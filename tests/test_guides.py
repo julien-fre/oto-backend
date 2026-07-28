@@ -54,10 +54,14 @@ def test_index_lists_guides(monkeypatch):
     assert "bulk-load" in idx and "oto_guide" in idx
 
 
-# ── enregistrement du tool ──
+# ── enregistrement du tool (capacité, ADR 0042 §Convergence des surfaces) ──
 
 def test_tool_registers_on_fastmcp():
     from fastmcp import FastMCP
-    from oto_mcp.tools import guide
+
+    from oto_mcp.capabilities._mcp_adapter import register
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    caps = [c for c in CAPABILITIES if c.mcp == "oto_guide"]
+    assert len(caps) == 1                    # une seule face MCP, plus de tool main-écrit
     mcp = FastMCP("probe")
-    guide.register(mcp)   # ne lève pas ; l'index est ajouté par le middleware, pas ici
+    register(mcp, caps)   # ne lève pas ; l'index est ajouté par le middleware, pas ici

@@ -73,7 +73,7 @@ from . import agent_context  # noqa: F401 — me.agent_context (GET /api/me/agen
 # Agent README personnel (niveau USER du concept agent_readme, cumulable).
 from . import agent_readme  # noqa: F401 — me.agent_readme.{get,set} (GET/PUT /api/me/agent-readme)
 # Guides ON-DEMAND (ADR 0042) — surface REST des how-to (miroir de l'outil MCP oto_guide).
-from . import guides  # noqa: F401 — me.guides.{list,get,set,delete} (/api/me/guides…)
+from . import guides  # noqa: F401 — me.guide (MCP oto_guide) + me.guides.{list,get,set,delete} (REST)
 # Préférence de langue de l'UI dashboard (niveau USER, REST-only).
 from . import user_locale  # noqa: F401 — me.locale.set (PUT /api/me/locale)
 # Fiche profil « situation avec oto » (surface REST de oto_profile, édition dashboard).

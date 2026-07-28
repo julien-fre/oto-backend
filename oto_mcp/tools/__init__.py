@@ -29,11 +29,9 @@ def register_all(mcp: FastMCP) -> None:
     from . import whoami
     whoami.register(mcp)
 
-    # Guides — how-to d'usage d'oto (DB, seeds `guides/*.md`), chargés à la
-    # demande via `oto_guide`. Spine, hors gate, toujours visible (PROTECTED_TOOLS) ;
-    # sa description embarque l'index des guides. Pas de dépendance externe.
-    from . import guide
-    guide.register(mcp)
+    # (Les guides — `oto_guide` — sont une CAPACITÉ depuis le 2026-07-28, montée par
+    # `_mcp_adapter`. Leur index per-(sub, org) enrichit toujours la description au
+    # `tools/list` — `DynamicInstructionsMiddleware`, par NOM de tool.)
 
     # Email — envoi d'un message à contenu libre (rédigé par l'agent) via le mailer
     # Otomata. Brique d'onboarding piloté par l'agent (doctrine + datastore). Spine,

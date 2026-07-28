@@ -576,7 +576,12 @@ la source de vérité des TROIS scopes on-demand (platform/org/user) ; les fichi
 idempotent, n'écrase jamais une ligne DB). Écriture platform = platform_admin
 (MCP `oto_guide op=write scope=platform` / REST `PUT /api/me/guides/platform/{slug}`
 / dashboard `/platform/instructions`). Une édition durable doit AUSSI retoucher le
-fichier seed (sinon un environnement neuf naît avec l'ancien texte).
+fichier seed (sinon un environnement neuf naît avec l'ancien texte). **Surface = UNE
+capacité `me.guide`** (`capabilities/guides.py`, ADR 0042 §Convergence des surfaces,
+2026-07-28) : `oto_guide` op-aware côté MCP + `me.guides.*` côté REST, **mêmes
+handlers, une seule autz de scope** (`_owner_for_write`) — l'ex-`tools/guide.py`
+(qui redéclarait la sienne) est supprimé. `scope` omis à l'écriture = `user`. Le cap
+64 KB et le refus d'un corps vide s'appliquent désormais **aux deux faces**.
 
 ## Conventions
 

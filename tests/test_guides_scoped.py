@@ -78,22 +78,14 @@ def test_set_guide_validates(db):
     assert out["scope"] == "platform"
 
 
-# ── tool oto_guide : autz inline ──
-
-class _FakeMCP:
-    def __init__(self): self.fn = None
-    def tool(self, **kw):
-        def deco(f): self.fn = f; return f
-        return deco
-
+# ── face MCP `oto_guide` : capacité op-aware, autz par scope ──
+# Depuis le 2026-07-28 ce n'est plus un tool écrit à la main mais la capacité `me.guide`
+# (ADR 0042 §Convergence des surfaces) : mêmes handlers que les routes REST.
 
 @pytest.fixture
 def tool(monkeypatch):
-    from oto_mcp.tools import guide
-    monkeypatch.setattr(guide, "current_user_sub_from_token", lambda: "u1")
-    import oto_mcp.access as access
+    import oto_mcp.capabilities.guides as C
     import oto_mcp.roles as roles
-    monkeypatch.setattr(access, "current_org", lambda sub: 42)
     monkeypatch.setattr(roles, "is_org_admin", lambda sub, org: sub == "admin")
     monkeypatch.setattr(roles, "is_platform_admin", lambda sub: False)
     calls = {}
@@ -109,10 +101,16 @@ def tool(monkeypatch):
 
     monkeypatch.setattr(G, "set_guide", _set)
     monkeypatch.setattr(G, "delete_guide", _del)
-    m = _FakeMCP()
-    guide.register(m)
-    m._calls = calls
-    return m
+
+    class _Runner:
+        """Exerce la capacité comme le ferait l'adaptateur MCP (ctx déjà résolu)."""
+        _calls = calls
+
+        def fn(self, **kw):
+            ctx = C.ResolvedCtx(sub="u1", org_id=42)
+            return C._guide_op(ctx, C.GuideOpInput(**kw))
+
+    return _Runner()
 
 
 def test_tool_write_user_scope_is_self(tool):
@@ -121,9 +119,16 @@ def test_tool_write_user_scope_is_self(tool):
     assert tool._calls["set"][0] == ("user", "u1", "mine", "x", "", "")   # owner = sub
 
 
+def test_tool_write_defaults_to_user_scope(tool):
+    """Scope omis à l'écriture = l'utilisateur — un agent n'écrit jamais pour l'org
+    par défaut (elle exigerait org_admin de toute façon)."""
+    out = tool.fn(op="write", slug="mine", body_md="x")
+    assert out["scope"] == "user" and tool._calls["set"][0][1] == "u1"
+
+
 def test_tool_write_org_requires_admin(tool, monkeypatch):
-    from mcp.shared.exceptions import McpError
-    with pytest.raises(McpError):                       # u1 n'est pas admin
+    from oto_mcp.capabilities._types import AuthzDenied
+    with pytest.raises(AuthzDenied):                    # u1 n'est pas admin
         tool.fn(op="write", slug="proc", body_md="x", scope="org")
     monkeypatch.setattr(__import__("oto_mcp.roles", fromlist=["x"]),
                         "is_org_admin", lambda sub, org: True)
@@ -132,8 +137,8 @@ def test_tool_write_org_requires_admin(tool, monkeypatch):
 
 
 def test_tool_write_platform_requires_platform_admin(tool, monkeypatch):
-    from mcp.shared.exceptions import McpError
-    with pytest.raises(McpError):                       # u1 n'est pas platform_admin
+    from oto_mcp.capabilities._types import AuthzDenied
+    with pytest.raises(AuthzDenied):                    # u1 n'est pas platform_admin
         tool.fn(op="write", slug="x", body_md="y", scope="platform")
     monkeypatch.setattr(__import__("oto_mcp.roles", fromlist=["x"]),
                         "is_platform_admin", lambda sub: True)
@@ -142,6 +147,20 @@ def test_tool_write_platform_requires_platform_admin(tool, monkeypatch):
     assert tool._calls["set"][0][1] == G.PLATFORM_OWNER   # owner = 'platform'
 
 
+def test_tool_write_rejects_empty_and_oversized_body(tool):
+    from oto_mcp.capabilities._types import AuthzDenied
+    with pytest.raises(AuthzDenied):
+        tool.fn(op="write", slug="mine", body_md="   ")
+    with pytest.raises(AuthzDenied):                    # cap 64 KB, désormais des DEUX faces
+        tool.fn(op="write", slug="mine", body_md="x" * (64 * 1024 + 1))
+
+
 def test_tool_delete(tool):
     out = tool.fn(op="delete", slug="mine", scope="user")
-    assert out == {"slug": "mine", "scope": "user", "deleted": True}
+    assert out == {"scope": "user", "slug": "mine", "deleted": True}
+
+
+def test_tool_requires_slug(tool):
+    from oto_mcp.capabilities._types import AuthzDenied
+    with pytest.raises(AuthzDenied):
+        tool.fn(op="read")

@@ -10,7 +10,7 @@ Distinct des readmes INIT (delivery='init', injectés au handshake — édités 
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -18,6 +18,8 @@ from .. import guide_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+
+_MAX_BODY_BYTES = 64 * 1024
 
 
 class _NoInput(BaseModel):
@@ -35,6 +37,17 @@ class GuideSetInput(BaseModel):
     body_md: str = ""
     title: str = ""
     description: str = ""
+
+
+class GuideOpInput(BaseModel):
+    """Face MCP op-aware (`oto_guide`). `scope` défaut 'user' à l'écriture — un agent
+    qui rédige sans préciser écrit POUR SON utilisateur, jamais pour l'org/la plateforme."""
+    op: Literal["list", "read", "write", "delete"] = "list"
+    slug: Optional[str] = None
+    scope: Optional[str] = None
+    body_md: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
 
 
 def _owner_for_write(ctx: ResolvedCtx, scope: str) -> str:
@@ -62,14 +75,22 @@ def _list(ctx: ResolvedCtx, inp: _NoInput) -> dict:
 
 
 def _get(ctx: ResolvedCtx, inp: GuideRefInput) -> dict:
-    g = guide_store.read_guide_scoped(inp.slug, scope=inp.scope, org_id=ctx.org_id, sub=ctx.sub)
+    # `scope` vide = pas de filtre : le store cherche plateforme → org → user (1er match).
+    g = guide_store.read_guide_scoped(inp.slug, scope=inp.scope or None,
+                                      org_id=ctx.org_id, sub=ctx.sub)
     if g is None:
-        raise AuthzDenied(404, "not_found", f"Guide `{inp.slug}` (scope {inp.scope}) introuvable.")
+        where = f" (scope {inp.scope})" if inp.scope else ""
+        raise AuthzDenied(404, "not_found",
+                          f"Guide `{inp.slug}`{where} introuvable — liste-les avec op=list.")
     return g
 
 
 def _set(ctx: ResolvedCtx, inp: GuideSetInput) -> dict:
     owner_id = _owner_for_write(ctx, inp.scope)
+    if not (inp.body_md or "").strip():
+        raise AuthzDenied(400, "missing_body", "`body_md` requis.")
+    if len(inp.body_md.encode()) > _MAX_BODY_BYTES:
+        raise AuthzDenied(400, "body_too_large", "`body_md` > 64 KB.")
     try:
         return guide_store.set_guide(inp.scope, owner_id, inp.slug, inp.body_md,
                                      inp.title or "", inp.description or "")
@@ -85,10 +106,41 @@ def _delete(ctx: ResolvedCtx, inp: GuideRefInput) -> dict:
     return {"scope": inp.scope, "slug": inp.slug, "deleted": True}
 
 
-# REST-only : la face MCP est déjà servie par l'outil spine `oto_guide` (tools/guide.py).
-# Autz = SUB_ONLY (authentifié) + garde par SCOPE inline (platform_admin / org_admin / self)
-# — comme l'outil MCP ; le combinateur ne peut pas dériver l'org d'un champ `scope` libre.
+def _guide_op(ctx: ResolvedCtx, inp: GuideOpInput) -> dict:
+    """Dispatch de la face MCP sur les MÊMES handlers que les faces REST."""
+    if inp.op == "list":
+        return _list(ctx, _NoInput())
+    if not inp.slug:
+        raise AuthzDenied(400, "missing_slug", "`slug` requis (cf. op=list).")
+    if inp.op == "read":
+        # Lecture : `scope` est un FILTRE optionnel (le store cherche dans l'ordre
+        # de visibilité user → org → platform quand il est omis).
+        return _get(ctx, GuideRefInput(scope=inp.scope or "", slug=inp.slug))
+    scope = inp.scope or "user"
+    if inp.op == "delete":
+        return _delete(ctx, GuideRefInput(scope=scope, slug=inp.slug))
+    return _set(ctx, GuideSetInput(scope=scope, slug=inp.slug, body_md=inp.body_md or "",
+                                   title=inp.title or "", description=inp.description or ""))
+
+
+# Autz = SUB_ONLY (authentifié) + garde par SCOPE inline (platform_admin / org_admin / self) :
+# le combinateur ne peut pas dériver l'org d'un champ `scope` libre.
+# UNE capacité, deux faces (ADR 0042 §Convergence des surfaces) : `oto_guide` op-aware côté
+# MCP + les routes `/api/me/guides…` côté dashboard, mêmes handlers. Jusqu'au 2026-07-28 la
+# face MCP était un tool écrit à la main (`tools/guide.py`) qui redéclarait sa propre autz.
 CAPABILITIES += [
+    Capability(
+        key="me.guide", handler=_guide_op, Input=GuideOpInput, authz=SUB_ONLY,
+        description=(
+            "Load or author an oto usage guide (a how-to, PROSE — not a procedure) on demand. "
+            "op=list → the catalog you can see (platform ∪ your org ∪ your own) [{slug, scope, "
+            "title, description}] ; op=read (slug, optional scope) → its markdown body ; "
+            "op=write / delete (slug, scope=platform|org|user, body_md, title?, description?) → "
+            "author a guide for the PLATFORM (platform admin), your ORG (org admin) or YOURSELF "
+            "(scope=user, the default). Read the relevant guide BEFORE a non-trivial task "
+            "(e.g. bulk-load)."),
+        mcp="oto_guide",
+    ),
     Capability(
         key="me.guides.list", handler=_list, Input=_NoInput, authz=SUB_ONLY, mcp=None,
         description="List the on-demand guides you can see (platform ∪ your org ∪ your own).",
