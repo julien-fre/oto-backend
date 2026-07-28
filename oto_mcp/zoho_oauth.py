@@ -31,24 +31,17 @@ unipile/sessions) : (1) poser l'app — `client_id` + `client_secret` + région 
 (2) consentir, ce qui remplit le `refresh_token`. D'où un `refresh_token`
 FACULTATIF sur la carte : en server-based il n'est pas collé, il est obtenu.
 
-Le `state` est signé HMAC (même schéma que `google_oauth`) : le callback arrive
-du NAVIGATEUR de l'utilisateur, sans en-tête d'auth — c'est lui qui porte « ce
-retour appartient à tel sub, telle org, tel connecteur ».
+Le transport OAuth (state signé, échange du code, URI de redirection) est délégué
+à **`oauth_flow`**, la fabrique commune — ce module ne garde que ce qui est propre
+à Zoho : régions, scopes par connecteur, origine de l'app, rangement du credential.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
-import os
-import time
 import urllib.parse
 from typing import Optional
 
-import requests
 
-from . import access, credentials_store, providers
+from . import access, credentials_store, oauth_flow, providers
 
 _STATE_TTL = 600  # 10 min — le temps de lire un écran de consentement
 
@@ -117,56 +110,34 @@ def has_app(connector: str, sub: str) -> bool:
     return bool(f.get("client_id") and f.get("client_secret"))
 
 
-# --- state signé -------------------------------------------------------------
+# --- state signé (délégué à la fabrique) --------------------------------------
+#
+# `oauth_flow` porte la mécanique — HMAC, base64url, TTL — et LIE le state à son
+# audience, ce que les implémentations séparées ne faisaient pas : elles signaient
+# toutes avec le même secret, au même format, sans discriminant, si bien qu'un
+# state d'un flux était structurellement acceptable par le callback d'un autre.
 
-def _state_secret() -> bytes:
-    v = os.environ.get("OTO_MCP_OAUTH_STATE_SECRET")
-    if not v:
-        raise ZohoOAuthError("OTO_MCP_OAUTH_STATE_SECRET env var manquante")
-    return v.encode()
-
-
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def _b64url_decode(s: str) -> bytes:
-    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+_AUDIENCE = "zoho"
 
 
 def redirect_uri() -> str:
-    """UNE seule URI pour les trois connecteurs (le connecteur voyage dans le
-    `state`) : une URI de redirection doit être enregistrée au byte près côté
-    Zoho — en avoir une seule évite d'en déclarer trois par app."""
-    base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    return f"{base}/api/zoho/oauth/callback"
+    """UNE seule URI pour les trois connecteurs Zoho (le connecteur voyage dans le
+    `state`) : une URI s'enregistre au byte près côté Zoho — une seule à déclarer
+    par app au lieu de trois."""
+    return oauth_flow.redirect_uri("/api/zoho/oauth/callback")
 
 
 def make_state(sub: str, org_id: int, connector: str, data_center: str) -> str:
-    payload = json.dumps({"sub": sub, "org": org_id, "c": connector,
-                          "dc": data_center, "ts": int(time.time())},
-                         separators=(",", ":")).encode()
-    sig = hmac.new(_state_secret(), payload, hashlib.sha256).digest()
-    return f"{_b64url(payload)}.{_b64url(sig)}"
+    return oauth_flow.sign_state(_AUDIENCE, {"sub": sub, "org": org_id,
+                                             "c": connector, "dc": data_center})
 
 
 def verify_state(state: str) -> Optional[dict]:
-    """`{sub, org, connector, data_center}` si signature valide et non expirée."""
-    if not state or "." not in state:
-        return None
-    p_b64, sig_b64 = state.split(".", 1)
-    try:
-        payload, sig = _b64url_decode(p_b64), _b64url_decode(sig_b64)
-    except Exception:  # noqa: BLE001
-        return None
-    if not hmac.compare_digest(
-            sig, hmac.new(_state_secret(), payload, hashlib.sha256).digest()):
-        return None
-    try:
-        d = json.loads(payload)
-    except Exception:  # noqa: BLE001
-        return None
-    if int(time.time()) - int(d.get("ts", 0)) > _STATE_TTL:
+    """`{sub, org, connector, data_center}` si le state est valide, de CE flux, et
+    non expiré. Les invariants métier (connecteur connu, région connue) restent
+    ici — la fabrique ne connaît que le transport."""
+    d = oauth_flow.read_state(_AUDIENCE, state, ttl=_STATE_TTL)
+    if not d:
         return None
     if d.get("c") not in CONNECTORS or d.get("dc") not in _ACCOUNTS:
         return None
@@ -205,32 +176,21 @@ def build_auth_url(sub: str, org_id: int, connector: str, data_center: str,
 
 def exchange_code(code: str, data_center: str,
                   app: Optional[dict] = None) -> dict:
-    """Code éphémère → tokens. ⚠️ `data=` et jamais `params=` : en query string les
-    secrets partiraient dans l'URL, donc dans tout message d'erreur (incident #284)."""
+    """Code éphémère → tokens, via la fabrique (corps form-encodé, erreurs rédigées).
+    Ne restent ici que les spécificités Zoho : le domaine régional et le diagnostic
+    du refresh_token absent."""
     client_id, client_secret = resolve_app(app)
-    r = requests.post(
-        f"{_ACCOUNTS[data_center]}/oauth/v2/token",
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": redirect_uri(),
-        },
-        timeout=30,
-    )
     try:
-        payload = r.json()
-    except ValueError:
-        raise ZohoOAuthError(
-            f"Réponse illisible du serveur d'autorisation (HTTP {r.status_code}).")
-    # Zoho répond HTTP 200 + {"error": …} sur un code périmé/déjà consommé.
-    if r.status_code >= 400 or "error" in payload:
-        err = payload.get("error", f"HTTP {r.status_code}")
-        raise ZohoOAuthError(
-            f"Échec de l'échange OAuth Zoho : {err}. "
-            + ("Le code d'autorisation expire en quelques minutes — relance la "
-               "connexion." if "code" in str(err) else ""))
+        payload = oauth_flow.exchange_code(
+            f"{_ACCOUNTS[data_center]}/oauth/v2/token",
+            code=code, client_id=client_id, client_secret=client_secret,
+            redirect=redirect_uri())
+    except oauth_flow.OAuthFlowError as e:
+        msg = str(e)
+        if "code" in msg.lower():
+            msg += (" Le code d'autorisation expire en quelques minutes — relance "
+                    "la connexion.")
+        raise ZohoOAuthError(msg)
     if not payload.get("refresh_token"):
         raise ZohoOAuthError(
             "Zoho n'a pas renvoyé de refresh_token : l'autorisation a déjà été "

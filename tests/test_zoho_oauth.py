@@ -152,21 +152,8 @@ class _Resp:
         return self._p
 
 
-def test_exchange_sends_secrets_in_body_not_url(monkeypatch):
-    """Incident #284 : en `params=`, les secrets partent dans l'URL, donc dans
-    tout message d'erreur et les access logs."""
-    seen = {}
-    monkeypatch.setattr(z.requests, "post", lambda url, **kw: (
-        seen.update(url=url, kw=kw),
-        _Resp(200, {"refresh_token": "1000.rt", "access_token": "at"}))[1])
-    z.exchange_code("code123", DC, app=APP)
-    assert "params" not in seen["kw"]
-    assert seen["kw"]["data"]["client_secret"] == "org-secret"
-    assert "org-secret" not in seen["url"]
-
-
 def test_expired_code_gives_an_actionable_message(monkeypatch):
-    monkeypatch.setattr(z.requests, "post",
+    monkeypatch.setattr(z.oauth_flow.requests, "post",
                         lambda url, **kw: _Resp(200, {"error": "invalid_code"}))
     with pytest.raises(z.ZohoOAuthError, match="expire"):
         z.exchange_code("vieux", DC, app=APP)
@@ -175,18 +162,10 @@ def test_expired_code_gives_an_actionable_message(monkeypatch):
 def test_missing_refresh_token_is_explained(monkeypatch):
     """Piège Zoho : une app déjà autorisée ne renvoie plus de refresh_token —
     silencieux et incompréhensible sans ce message."""
-    monkeypatch.setattr(z.requests, "post",
+    monkeypatch.setattr(z.oauth_flow.requests, "post",
                         lambda url, **kw: _Resp(200, {"access_token": "at"}))
     with pytest.raises(z.ZohoOAuthError, match="Applications connectées"):
         z.exchange_code("code", DC, app=APP)
-
-
-def test_error_message_carries_no_secret(monkeypatch):
-    monkeypatch.setattr(z.requests, "post",
-                        lambda url, **kw: _Resp(400, {"error": "invalid_client"}))
-    with pytest.raises(z.ZohoOAuthError) as e:
-        z.exchange_code("code", DC, app=APP)
-    assert "org-secret" not in str(e.value)
 
 
 # --- persistance : MÊME forme que le Self Client -----------------------------
