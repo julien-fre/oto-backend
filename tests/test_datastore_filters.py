@@ -79,7 +79,11 @@ def test_bad_op_and_shape_raise():
 
 
 def test_where_merges_q_and_filters_in_order():
+    from oto_mcp.db.projects import _fold
     where, params = db._ds_where(7, "marseille", [{"field": "statut", "op": "eq", "value": "retenu"}])
-    assert where == ("WHERE ns_id = %s AND data::text ILIKE %s "
-                     "AND data ->> %s = %s")
-    assert params == [7, "%marseille%", "statut", "retenu"]
+    # `q` est ACCENT-INSENSIBLE depuis #67 V2.3 : l'expression de repli est DÉRIVÉE de
+    # `_fold` (source unique index↔requête) — la recopier en dur ici la ferait mentir au
+    # prochain ajustement du jeu de caractères.
+    assert where == (f"WHERE ns_id = %s AND {_fold('data::text')} ILIKE "
+                     f"'%%' || {_fold('%s')} || '%%' AND data ->> %s = %s")
+    assert params == [7, "marseille", "statut", "retenu"]   # les % vivent dans le SQL
