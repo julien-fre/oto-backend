@@ -106,8 +106,12 @@ def test_each_source_gets_its_predicate(monkeypatch):
                         lambda q, pids, limit: rec.setdefault("files_pids", pids) and [])
     monkeypatch.setattr(S.ownership, "active_org_principals",
                         lambda sub, org: [("org", "7"), ("user", "u1")])
-    monkeypatch.setattr(S.db, "list_datastore_namespaces_for_owners", _cap("ds_owners_a"))
-    monkeypatch.setattr(S.db, "list_datastore_namespaces_granted_to", _cap("ds_granted_a"))
+    monkeypatch.setattr(S.db, "list_datastore_namespaces_for_owners",
+                        _cap("ds_owners_a", [{"id": 101, "namespace": "prospects"}]))
+    monkeypatch.setattr(S.db, "list_datastore_namespaces_granted_to",
+                        _cap("ds_granted_a", [{"id": 102, "namespace": "leads"}]))
+    monkeypatch.setattr(S.db, "search_datastore_rows_fts",
+                        lambda q, ns_ids, limit=20: rec.setdefault("rows_ns", ns_ids) and [])
     monkeypatch.setattr(S.db, "project_names", lambda ids: {})
 
     S.search("u1", 7, "prospection")
@@ -121,6 +125,9 @@ def test_each_source_gets_its_predicate(monkeypatch):
     # tableaux : principals du contexte + grants scopés org/groupes
     assert rec["ds_owners_a"][0] == [("org", "7"), ("user", "u1")]
     assert rec["ds_granted_a"] == ("u1", [7], [])
+    # lignes (#67 V2.1) : héritent de l'accès du namespace → scope = ids des
+    # namespaces accessibles (owners ∪ grants), JAMAIS un scope à part
+    assert rec["rows_ns"] == [101, 102]
 
 
 def test_project_scope_restricts_to_one_project(monkeypatch):

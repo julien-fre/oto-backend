@@ -26,6 +26,11 @@ DOCS_TEXT = "coalesce(title,'') || ' ' || coalesce(body_md,'')"
 PROJECTS_TEXT = "coalesce(name,'') || ' ' || coalesce(brief_md,'')"
 INSTR_TEXT = "coalesce(title,'') || ' ' || coalesce(description,'') || ' ' || coalesce(body_md,'')"
 GUIDES_TEXT = "coalesce(title,'') || ' ' || coalesce(description,'') || ' ' || coalesce(body_md,'')"
+# Lignes de datastore (#67 V2.1) : le JSONB entier rendu en texte. `data::text` est
+# IMMUTABLE (jsonb_out) → indexable en expression, comme les autres sources ; même
+# config `french` + repli d'accents. Grain grossier assumé (matche clés + valeurs),
+# raffinable plus tard par colonne dérivée si besoin.
+DATASTORE_ROWS_TEXT = "data::text"
 
 # MaxFragments=2 : deux extraits courts plutôt qu'un long qui coupe en plein
 # tableau markdown (oto-backend#6). Le texte est pré-nettoyé de ses pipes `|`.
@@ -46,6 +51,8 @@ def index_ddl() -> list[str]:
         f"CREATE INDEX IF NOT EXISTS idx_org_instructions_fts ON org_instructions USING GIN ({_vec(INSTR_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_guides_fts ON guides USING GIN ({_vec(GUIDES_TEXT)}) "
         "WHERE delivery = 'on-demand'",
+        # Lignes de datastore (#67 V2.1) — rend les rows trouvables via oto_search.
+        f"CREATE INDEX IF NOT EXISTS idx_datastore_rows_fts ON datastore_rows USING GIN ({_vec(DATASTORE_ROWS_TEXT)})",
     ]
 
 
@@ -207,3 +214,19 @@ def search_files_meta(q: str, project_ids: list[int], *, limit: int = 20) -> lis
     with _connect() as conn:
         rows = conn.execute(sql, (project_ids, q, limit)).fetchall()
         return [dict(r) for r in rows]
+
+
+def search_datastore_rows_fts(q: str, ns_ids: list[int], *, limit: int = 20) -> list[dict]:
+    """Lignes de datastore des namespaces ACCESSIBLES (résolus par le caller, jamais
+    ici — invariant « cherchable ⇔ lisible » : une ligne hérite de l'accès de son
+    namespace) — kind=ligne (#67 V2.1). Même régime FTS que la prose (index GIN
+    d'expression `french` + repli d'accents + fallback OR + repli ILIKE symboles),
+    headline sur le JSON rendu (pipes dépipés). Retour : `ns_id, row_id` (deep-link)
+    + `headline`."""
+    if not ns_ids:
+        return []
+    return _prose_query(
+        "datastore_rows", DATASTORE_ROWS_TEXT,
+        "ns_id, row_id, updated_at, left(data::text, 200) AS excerpt",
+        "data::text",
+        "ns_id = ANY(%s)", (ns_ids,), q, limit)

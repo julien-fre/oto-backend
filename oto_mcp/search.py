@@ -16,9 +16,11 @@ Invariants (plan lot 3 §4.2) :
 - la source connecteurs (registre en mémoire) est INJECTÉE par la capacité
   (`connectors_catalog`) — ce module ne remonte pas dans la couche adaptateur.
 
-Deux familles de hits : **passages** (prose — page/brief/procedure/guide, avec
-fragment surligné) et **conteneurs** (tableau/fichier/connecteur — nom+description,
-pas d'aperçu). Forme : `{kind, ref, title, description?, passage?, project_id?,
+Deux familles de hits : **passages** (prose — page/brief/procedure/guide + ligne de
+datastore, avec fragment surligné) et **conteneurs** (tableau/fichier/connecteur —
+nom+description, pas d'aperçu). La **ligne** (#67 V2.1) est hybride : un enregistrement
+de datastore (`ref={ns_id, row_id}`) matché sur son contenu, rendu avec un fragment
+comme la prose. Forme : `{kind, ref, title, description?, passage?, project_id?,
 project_name?, updated_at?, matched_by:'lexical'}`.
 """
 from __future__ import annotations
@@ -32,7 +34,7 @@ from . import db, ownership
 logger = logging.getLogger(__name__)
 
 _RRF_K = 60
-KINDS = ("page", "brief", "procedure", "guide", "tableau", "fichier", "connecteur")
+KINDS = ("page", "brief", "procedure", "guide", "tableau", "ligne", "fichier", "connecteur")
 
 # Repli d'accents côté Python (miroir de db.projects._fold) — pour les sources
 # matchées en mémoire (tableaux, connecteurs).
@@ -142,6 +144,9 @@ def search(sub: str, org_id: int, q: str, *,
     # ── conteneurs ──────────────────────────────────────────────────────────
     if "tableau" in wanted:
         _add(_match_tableaux(q, sub, org_id), lambda r: r)
+    # ── lignes de datastore (#67 V2.1) — le contenu DANS les tableaux ─────────
+    if "ligne" in wanted:
+        _add(_match_rows(q, sub, org_id), lambda r: r)
     if "fichier" in wanted:
         _add(db.search_files_meta(q, pids, limit=per_source), lambda r: {
             "kind": "fichier", "ref": r["id"],
@@ -194,16 +199,24 @@ def search(sub: str, org_id: int, q: str, *,
     return out
 
 
-def _match_tableaux(q: str, sub: str, org_id: int) -> list[dict]:
-    """Tableaux du CONTEXTE (owners org+moi+mes groupes ∪ grants org/groupe) matchés
-    en mémoire sur nom + labels de colonnes du schéma — parité du listing datastore
-    (mêmes fonctions db, sujet du tripwire). Rang : nom exact > nom partiel > label."""
+def _accessible_namespaces(sub: str, org_id: int) -> list[dict]:
+    """Namespaces datastore du CONTEXTE : owners (org + moi + mes groupes) ∪ grants
+    org/groupe — parité EXACTE du listing datastore (mêmes fonctions db, sujet du
+    tripwire d'étanchéité). Source unique du scoping des sources `tableau` ET `ligne`
+    → l'invariant « cherchable ⇔ lisible » tient au grain ligne par héritage du ns."""
     principals = ownership.active_org_principals(sub, org_id)
     gids = [int(p[1]) for p in principals if p[0] == "group"]
     rows = db.list_datastore_namespaces_for_owners(principals)
     seen = {r["id"] for r in rows}
     rows += [r for r in db.list_datastore_namespaces_granted_to(sub, [org_id], gids)
              if r["id"] not in seen]
+    return rows
+
+
+def _match_tableaux(q: str, sub: str, org_id: int) -> list[dict]:
+    """Tableaux du CONTEXTE matchés en mémoire sur nom + labels de colonnes du schéma.
+    Rang : nom exact > nom partiel > label."""
+    rows = _accessible_namespaces(sub, org_id)
     fq = _fold_py(q)
     scored: list[tuple[int, dict]] = []
     for r in rows:
@@ -224,6 +237,27 @@ def _match_tableaux(q: str, sub: str, org_id: int) -> list[dict]:
             "matched_by": "lexical"}))
     scored.sort(key=lambda t: t[0])
     return [h for _, h in scored]
+
+
+def _match_rows(q: str, sub: str, org_id: int) -> list[dict]:
+    """Lignes de datastore des namespaces accessibles (kind=ligne, #67 V2.1) — rend
+    le CONTENU des tableaux trouvable (ex. « la ligne où figure Sylvie »), pas seulement
+    leur nom. Même FTS que la prose (index d'expression), déjà classé par le SQL.
+    Titre = nom du namespace ; `ref = {ns_id, row_id}` pour deep-linker la ligne ;
+    passage = fragment JSON surligné, à défaut un début de la ligne."""
+    ns = _accessible_namespaces(sub, org_id)
+    if not ns:
+        return []
+    names = {r["id"]: r["namespace"] for r in ns}
+    out: list[dict] = []
+    for r in db.search_datastore_rows_fts(q, list(names.keys())):
+        passage = (r["headline"] if _headline_ok(r.get("headline"))
+                   else _snippet(r.get("excerpt") or "") or None)
+        out.append({
+            "kind": "ligne", "ref": {"ns_id": r["ns_id"], "row_id": r["row_id"]},
+            "title": names.get(r["ns_id"]) or "ligne", "passage": passage,
+            "updated_at": r.get("updated_at"), "matched_by": "lexical"})
+    return out
 
 
 def _match_connectors(q: str, catalog: list[dict]) -> list[dict]:

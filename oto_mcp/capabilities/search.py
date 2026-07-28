@@ -94,13 +94,15 @@ CAPABILITIES += [
         description=(
             "SEARCH across everything readable in the active org — one query, ranked "
             "together: project pages & briefs (passages with highlighted fragment), "
-            "procedures, guides, and containers by name (tableaux, files, connectors). "
+            "procedures, guides, containers by name (tableaux, files, connectors), AND "
+            "datastore ROWS by content (kind=ligne — find the row where a value appears, "
+            "not just the table's name). "
             "Lexical (French stemming, accent-insensitive); reformulate with the exact "
             "words if 0 hits. `scope='project'`+`project=<id>` narrows to one project. "
-            "`kinds` filters (page|brief|procedure|guide|tableau|fichier|connecteur). "
+            "`kinds` filters (page|brief|procedure|guide|tableau|ligne|fichier|connecteur). "
             "SEARCH when you know what you're looking for; NAVIGATE (oto_project op=get "
             "include=['spine']) when the question is structural. Then open the hit: "
-            "oto_doc op=get (page), data_rows (tableau), oto_procedure op=get."),
+            "oto_doc op=get (page), data_rows (tableau/ligne), oto_procedure op=get."),
         mcp="oto_search",
         rest=RestBinding("GET", "/api/me/search"),
     ),
