@@ -204,7 +204,11 @@ def test_persist_writes_the_same_fields_as_self_client(monkeypatch):
     fields = z.credentials_store.unpack_secret("zohodesk", written["secret"])
     assert fields == {"client_id": "1000.ORGAPP", "client_secret": "org-secret",
                       "refresh_token": "1000.rt", "data_center": "eu"}
-    assert written["entity_type"] == "member" and written["entity_id"] == "u1:35"
+    # ⚠️ l'id de membre est (org, sub) — et l'AAD de chiffrement en DÉRIVE : inverser
+    # l'ordre écrit un credential indéchiffrable, invisible de la cascade (vécu 28/07).
+    from oto_mcp import credentials_store as _cs
+    assert written["entity_type"] == "member"
+    assert written["entity_id"] == _cs.member_id(35, "u1") == "35:u1"
     assert written["meta"]["acquired_via"] == "oauth"
 
 
@@ -318,3 +322,16 @@ def test_require_complete_is_a_noop_without_declared_state():
     from oto_mcp import status_hints
     status_hints.require_complete("serper", {})   # ne lève pas
     assert status_hints.credential_state("serper", {}) is None
+
+
+def test_persist_uses_the_canonical_member_id(monkeypatch):
+    """GARDE-FOU : ne jamais RECONSTRUIRE un entity_id à la main. `member_id` est le
+    seul à connaître l'ordre (org, sub), dont dépend l'AAD de chiffrement — un id
+    inversé produit un credential que plus rien ne peut lire."""
+    from oto_mcp import credentials_store as cs
+    seen = {}
+    monkeypatch.setattr(z.credentials_store, "set_credential",
+                        lambda et, eid, con, secret, **kw: seen.update(eid=eid))
+    z.persist("bn01", 2, "zohodesk", "eu", {"refresh_token": "rt"}, app=APP)
+    assert seen["eid"] == cs.member_id(2, "bn01")
+    assert seen["eid"].startswith("2:"), "org d'abord, pas le sub"

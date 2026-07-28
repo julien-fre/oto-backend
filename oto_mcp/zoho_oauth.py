@@ -253,7 +253,12 @@ def persist(sub: str, org_id: int, connector: str, data_center: str,
         "data_center": data_center,
     }
     secret = credentials_store.secret_from_input(connector, None, fields)
-    entity_id = f"{sub}:{org_id}" if entity_type == "member" else str(org_id)
+    # ⚠️ TOUJOURS via `member_id(org, sub)` — l'ordre est (org, sub), et l'**AAD de
+    # chiffrement en dérive** : un id reconstruit à la main dans le mauvais ordre ne
+    # produit pas un credential « mal rangé » mais un credential INDÉCHIFFRABLE, que
+    # la cascade ne verra jamais (vécu au premier consentement réel, 28/07).
+    entity_id = (credentials_store.member_id(org_id, sub)
+                 if entity_type == "member" else str(org_id))
     credentials_store.set_credential(
         entity_type, entity_id, connector, secret, set_by=sub,
         meta={"acquired_via": "oauth"})
