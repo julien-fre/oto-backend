@@ -274,3 +274,47 @@ def test_verify_still_runs_for_a_complete_self_client(monkeypatch):
         zoho_tools._verify({"client_id": "1000.X", "client_secret": "s",
                             "refresh_token": "1000.rt", "data_center": "eu"})
     assert calls, "la sonde doit avoir tenté le refresh (garde non déclenché)"
+
+
+# --- A : UN calcul d'état, plusieurs surfaces --------------------------------
+
+def test_state_is_declared_once_for_the_three_connectors():
+    from oto_mcp import status_hints
+    from oto_mcp.tools import zoho  # noqa: F401 — enregistre à l'import
+    app_only = {"client_id": "1000.X", "client_secret": "s", "data_center": "eu"}
+    for con in ("zoho", "zohodesk", "zohoanalytics"):
+        st = status_hints.credential_state(con, app_only)
+        assert st is not None and not st.complete
+        assert st.missing == ("refresh_token",)
+        assert "Autoriser oto chez Zoho" in st.next_action
+
+
+def test_complete_credential_is_complete():
+    from oto_mcp import status_hints
+    from oto_mcp.tools import zoho  # noqa: F401
+    st = status_hints.credential_state("zoho", {"client_id": "1000.X",
+                                                "client_secret": "s",
+                                                "refresh_token": "1000.rt"})
+    assert st is not None and st.complete
+
+
+def test_probe_and_verdict_share_the_same_text():
+    """LE point de A : la sonde et le verdict ne re-dérivent plus chacun leur
+    diagnostic — ils rendent le MÊME `next_action`. C'est la divergence entre ces
+    deux textes qui a produit « refresh token périmé » face à un consentement
+    simplement pas encore donné."""
+    import pytest as _pytest
+    from oto_mcp import status_hints
+    from oto_mcp.tools import zoho as zoho_tools
+    app_only = {"client_id": "1000.X", "client_secret": "s", "data_center": "eu"}
+    expected = status_hints.credential_state("zoho", app_only).next_action
+    with _pytest.raises(ValueError) as e:
+        zoho_tools._verify(app_only)
+    assert str(e.value) == expected
+
+
+def test_require_complete_is_a_noop_without_declared_state():
+    """Un connecteur qui ne déclare pas d'état n'est pas gêné par le seam."""
+    from oto_mcp import status_hints
+    status_hints.require_complete("serper", {})   # ne lève pas
+    assert status_hints.credential_state("serper", {}) is None

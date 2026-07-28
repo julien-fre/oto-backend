@@ -15,7 +15,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access, connector_verify, status_hints
 
 # Zoho héberge par data center régional : l'API Desk ET le refresh OAuth sont liés à
 # leur région d'émission (un self-client `.eu` tapant `desk.zoho.com`/`accounts.zoho.com`
@@ -73,9 +73,9 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     """
     from oto.tools.zohodesk.client import ZohoDeskClient
 
-    from .zoho import _check_consent_given, _zoho_error_hint  # même famille, source unique
+    from .zoho import _zoho_error_hint  # même famille, source unique du diagnostic
 
-    _check_consent_given(fields)
+    status_hints.require_complete("zohodesk", fields)
     api_domain, accounts_url = _resolve_dc_domains(fields.get("data_center"))
     try:
         tok = requests.post(f"{accounts_url}/oauth/v2/token", data={

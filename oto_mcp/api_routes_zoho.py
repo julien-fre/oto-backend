@@ -1,16 +1,17 @@
-"""Routes REST OAuth Zoho — mode **server-based** (le second mode d'acquisition).
+"""Retour de consentement OAuth Zoho — la SEULE route qui reste écrite à la main.
 
-Une seule paire de routes sert les TROIS connecteurs Zoho (`zoho`, `zohodesk`,
-`zohoanalytics`) : le connecteur voyage dans le `state` signé, ce qui évite
-d'enregistrer trois URI de redirection par app côté Zoho (elles doivent être
-déclarées au byte près).
+Zoho redirige ici le **navigateur** de l'utilisateur : pas d'en-tête d'auth (l'identité
+vient du `state` signé) et la réponse est un **302** vers le dashboard. Un contrat de
+capacité (JSON + autz) ne peut pas exprimer ça — d'où l'exception, déclarée comme telle
+dans `tests/test_rest_modules_are_capabilities.py`.
 
-- `GET /api/zoho/oauth/start?connector=…&data_center=…` (auth) → `{auth_url}`
-- `GET /api/zoho/oauth/callback` (SANS auth — Zoho redirige le navigateur) →
-  échange le code, range le credential, renvoie l'utilisateur au dashboard.
+Les verbes qui l'accompagnent (`start`, `modes`) sont, eux, des **capacités**
+(`capabilities/zoho_connect.py`, ADR 0042 §Convergence des surfaces) : une déclaration,
+deux faces dérivées (REST pour le dashboard, MCP pour l'agent), une seule autz.
 
-Le mode **Self Client** reste intact et reste le défaut : ces routes n'y touchent
-pas, elles ajoutent un chemin. Les deux produisent le même credential.
+Une seule URI de redirection sert les TROIS connecteurs Zoho — le connecteur voyage
+dans le `state` — car une URI s'enregistre au byte près côté Zoho : une seule à
+déclarer par app au lieu de trois.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import access, credentials_store, zoho_oauth
+from . import zoho_oauth
 
 logger = logging.getLogger(__name__)
 
@@ -42,31 +43,7 @@ def make_routes(
     def _app_url() -> str:
         return os.environ.get("OTO_APP_URL", "https://dashboard.oto.ninja").rstrip("/")
 
-    async def start(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        connector = (request.query_params.get("connector") or "").strip()
-        dc = (request.query_params.get("data_center") or "").strip().lower()
-        if not zoho_oauth.supports(connector):
-            return json_error(request, 400, "unknown_zoho_connector")
-
-        def _build() -> str:
-            org_id = access.current_org(sub) or 0
-            return zoho_oauth.build_auth_url(
-                sub, org_id, connector, dc,
-                app=zoho_oauth.app_fields(connector, sub))
-
-        try:
-            url = await run_in_threadpool(_build)   # DB sync → hors event loop
-        except zoho_oauth.ZohoOAuthError as e:
-            return json_error(request, 400, str(e))
-        return json_response(request, {"auth_url": url})
-
     async def callback(request: Request) -> Response:
-        # Zoho redirige le NAVIGATEUR ici : pas d'en-tête d'auth, l'identité vient
-        # du state signé. On repart vers le dashboard dans tous les cas (l'utilisateur
-        # est dans son navigateur, pas dans un client d'API).
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         parsed = zoho_oauth.verify_state(state) if state else None
@@ -81,10 +58,10 @@ def make_routes(
                                parsed["data_center"], tokens, app=app)
 
         try:
-            await run_in_threadpool(_finish)
+            await run_in_threadpool(_finish)   # DB + HTTP sync → hors event loop
         except Exception as e:  # noqa: BLE001
-            # Jamais le détail à l'utilisateur via l'URL (il pourrait porter un
-            # message amont) ; le diagnostic va au journal, sans secret (#284).
+            # Jamais le détail dans l'URL (il pourrait porter un message amont) ;
+            # le diagnostic va au journal, sans secret (#284).
             logger.warning("zoho oauth callback failed: %s", type(e).__name__)
             return RedirectResponse(
                 f"{_app_url()}/console/connectors?zoho=error", status_code=302)
@@ -92,30 +69,4 @@ def make_routes(
             f"{_app_url()}/console/connectors?{parsed['connector']}=connected",
             status_code=302)
 
-    async def modes(request: Request) -> JSONResponse:
-        """Ce que le front doit savoir : le connecteur supporte-t-il le
-        server-based, et une app est-elle DÉJÀ à disposition (posée par moi, mon
-        équipe, mon org ou la plateforme — cascade habituelle) ? Sinon il faut
-        d'abord renseigner client_id/client_secret sur la carte."""
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        connector = (request.query_params.get("connector") or "").strip()
-        if not zoho_oauth.supports(connector):
-            return json_error(request, 400, "unknown_zoho_connector")
-        has_app = await run_in_threadpool(zoho_oauth.has_app, connector, sub)
-        return json_response(request, {
-            "connector": connector,
-            "self_client": True,          # toujours disponible
-            "server_based": True,
-            "has_app": has_app,
-            "scopes": list(zoho_oauth.SCOPES[connector]),
-        })
-
-    return [
-        Route("/api/zoho/oauth/start", start, methods=["GET"]),
-        Route("/api/zoho/oauth/start", options_handler, methods=["OPTIONS"]),
-        Route("/api/zoho/oauth/callback", callback, methods=["GET"]),
-        Route("/api/zoho/oauth/modes", modes, methods=["GET"]),
-        Route("/api/zoho/oauth/modes", options_handler, methods=["OPTIONS"]),
-    ]
+    return [Route("/api/zoho/oauth/callback", callback, methods=["GET"])]

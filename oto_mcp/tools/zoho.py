@@ -56,20 +56,22 @@ def _resolve_dc_domains(data_center: Optional[str]) -> tuple[str, str]:
     return _DC_DOMAINS[dc]
 
 
-def _check_consent_given(fields: dict) -> None:
-    """Lève si l'app est posée mais le consentement pas encore donné.
+def _zoho_credential_state(fields: dict) -> status_hints.CredentialState:
+    """SOURCE UNIQUE de « ce credential Zoho est-il utilisable ? ».
 
-    Sans ce garde, la sonde tente un refresh sans refresh_token : Zoho renvoie une
-    erreur de grant que `_zoho_error_hint` traduit en « refresh token périmé —
-    régénère-le », qui envoie l'utilisateur régénérer quelque chose qui n'existe pas
-    encore (vécu au premier test réel du mode server-based). L'état intermédiaire de
-    la connexion en deux temps est NORMAL : on le nomme."""
+    Connexion en DEUX temps : on pose l'app (client_id + client_secret), puis on
+    consent — et c'est le consentement qui produit le refresh_token. L'état
+    intermédiaire est donc NORMAL, pas une panne. Un seul libellé, rendu tel quel
+    par toutes les surfaces (verdict de la fiche, sonde « tester la connexion »)."""
     if fields.get("client_id") and fields.get("client_secret") \
             and not fields.get("refresh_token"):
-        raise ValueError(
-            "app Zoho enregistrée, mais l'autorisation n'a pas encore été donnée — "
-            "clique « Autoriser oto chez Zoho » sur la fiche du connecteur. "
-            "(Ou colle un refresh token si tu utilises un self client.)")
+        return status_hints.CredentialState(
+            complete=False, missing=("refresh_token",),
+            next_action=("app Zoho enregistrée, mais l'autorisation n'a pas encore "
+                         "été donnée — clique « Autoriser oto chez Zoho » sur la "
+                         "fiche du connecteur. (Ou colle un refresh token si tu "
+                         "utilises un self client.)"))
+    return status_hints.CredentialState(complete=True)
 
 
 def _zoho_error_hint(exc: Exception) -> str:
@@ -102,9 +104,8 @@ def _pending_action_for(connector: str):
                 connector, want="byo", sub=sub, emit_on_failure=False).fields
         except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
             return None
-        if f.get("client_id") and f.get("client_secret") and not f.get("refresh_token"):
-            return "Autorise oto chez Zoho"
-        return None
+        st = _zoho_credential_state(f)
+        return None if st.complete else "Autorise oto chez Zoho"
     return _hook
 
 
@@ -112,6 +113,7 @@ def _pending_action_for(connector: str):
 # module étant chargé inconditionnellement par `register_all`.
 for _c in ("zoho", "zohodesk", "zohoanalytics"):
     status_hints.register(_c, _pending_action_for(_c))
+    status_hints.register_state(_c, _zoho_credential_state)
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
@@ -130,7 +132,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     """
     from oto.tools.zoho.client import ZohoClient
 
-    _check_consent_given(fields)
+    status_hints.require_complete("zoho", fields)
     api_domain, accounts_url = _resolve_dc_domains(fields.get("data_center"))
 
     # 1) auth — refresh brut : valide les 4 champs ET capte le `scope` accordé (le
