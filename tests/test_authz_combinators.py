@@ -293,3 +293,22 @@ def test_group_admin_of_denies_plain_member(monkeypatch):
     monkeypatch.setattr(group_store, "get_group", lambda gid: {"org_id": 7})
     monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: True)  # membre, pas chef
     assert _denied(_authz.GROUP_ADMIN_OF("group_id"), RAW, SimpleNamespace(group_id=3)).status == 403
+
+
+# --- Câblage : les LECTURES de la console procédure honorent toutes `org=` -----
+# Signal #248 : le fix cross-org du 27/07 avait posé ORG_MEMBER_OPT sur `get` mais
+# laissé `list` en SUB_ONLY → `set org=Y` répondait ok, puis `list org=Y` rendait le
+# catalogue de l'org MAISON. Un combinateur correct câblé sur une seule op ne corrige
+# que la moitié du parcours : on verrouille le CÂBLAGE, pas seulement le combinateur.
+
+def test_procedure_console_reads_honor_explicit_org(monkeypatch):
+    from oto_mcp.capabilities import procedure_console  # import tardif (registre)
+
+    monkeypatch.setattr(roles, "is_org_member", lambda sub, org: org == 99)
+    cap = next(c for c in procedure_console.CAPABILITIES
+               if c.key == "org.procedure.console")
+    for op in ("get", "list"):
+        ctx = cap.authz(RAW, SimpleNamespace(op=op, org=99))
+        assert ctx.org_id == 99, (
+            f"`{op}` doit honorer `org=`, sinon la lecture retombe silencieusement "
+            "sur l'org maison")

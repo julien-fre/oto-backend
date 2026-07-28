@@ -96,7 +96,11 @@ CAPABILITIES += [
     Capability(
         key="org.procedure.console", handler=_procedure, Input=ProcedureInput,
         authz=BY_OP({
-            "get": ORG_MEMBER_OPT("org"), "list": SUB_ONLY,
+            # `list` honore `org=` comme `get` (signal #248 : `set org=Y` répondait
+            # ok, puis `list org=Y` rendait toujours le catalogue de l'org MAISON —
+            # l'agent croyait sa procédure perdue). Le fix cross-org du 27/07 n'avait
+            # posé ORG_MEMBER_OPT que sur `get`, laissant la moitié du signal ouverte.
+            "get": ORG_MEMBER_OPT("org"), "list": ORG_MEMBER_OPT("org"),
             "set": ORG_ADMIN_OPT("org"), "delete": ORG_ADMIN_OPT("org"),
             "library_list": SUB_ONLY, "library_get": SUB_ONLY,
             "publish": ORG_MEMBER, "fork": ORG_MEMBER, "unpublish": SUB_ONLY,
