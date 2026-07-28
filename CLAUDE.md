@@ -137,6 +137,11 @@ un seul chemin de code (`search.py` orchestration RRF k=60 · `db/search.py` SQL
 **expressions d'index = source unique index↔requête**, GIN d'expression, config `french` +
 repli d'accents `translate`). Sources : pages/briefs/procédures/guides (passages, ts_headline
 sur la saisie BRUTE) ∪ tableaux/fichiers/connecteurs (conteneurs, matchés en mémoire).
+⚠️ **Conséquence de design** : les **LIGNES d'un tableau ne sont jamais indexées** —
+`_match_tableaux` ne matche que le **nom du namespace + les labels de colonnes** du schéma
+(et un fichier : `filename+title+description`, pas son contenu). Donc un contenu qui doit
+être **retrouvable par une question** vit en **pages** (seules indexées en plein texte ET
+sémantique) ; le datastore sert l'**énumération filtrée** (`data_rows`, filtre exact).
 **Invariant « cherchable ⇔ lisible »** : docs/briefs/fichiers scopés
 `ownership.accessible_project_ids` (factorisation du scoping d'`op=list` — JAMAIS
 `can_access`, cross-org) ; **tripwire par source = critère de merge**
