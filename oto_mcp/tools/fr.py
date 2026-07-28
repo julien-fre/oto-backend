@@ -548,6 +548,8 @@ def register(mcp: FastMCP) -> None:
         sort_by: str = "date",
         sort_dir: str = "desc",
         limit: int = 20,
+        offset: int = 0,
+        tranche_effectifs: Optional[list[str]] = None,
     ) -> dict:
         """Search French company collective agreements (accords d'entreprise, ACCO).
 
@@ -581,12 +583,20 @@ def register(mcp: FastMCP) -> None:
             sort_by: date | date_depot | date_diffusion | date_maj (default date).
             sort_dir: asc (oldest first) | desc (newest first).
             limit: Max results (default 20, max 100).
+            offset: Skip that many rows — page N = offset=(N-1)*limit. THE way to
+                exhaust a result set bigger than `limit`: `total_count` tells you
+                the volume, walk it with offset (do NOT slide `date_from`, which
+                loses rows silently when more than `limit` share the same date).
+            tranche_effectifs: INSEE employee-range codes (TEFEN) of the filing
+                establishment, e.g. ["11","12","21"] — ACCO carries no company
+                size, so this is resolved against the local SIRENE stock. Use it to
+                keep SMEs only instead of post-filtering by hand.
         """
         return fod_fr.search_acco(
             query=query, themes=themes, nature=nature, siren=siren, siret=siret,
             idcc=idcc, departement=departement, date_from=date_from, date_to=date_to,
             latest_per_siret=latest_per_siret, sort_by=sort_by, sort_dir=sort_dir,
-            limit=limit,
+            limit=limit, offset=offset, tranche_effectifs=tranche_effectifs,
         )
 
     @mcp.tool()

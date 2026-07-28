@@ -120,12 +120,13 @@ def get_aide(id_aid: str, raw: bool = False) -> Optional[dict[str, Any]]:
 def search_acco(query=None, themes=None, nature=None, siren=None, siret=None,
                 idcc=None, departement=None, date_from=None, date_to=None,
                 latest_per_siret=False, sort_by="date", sort_dir="desc",
-                limit=50, offset=0) -> dict[str, Any]:
+                limit=50, offset=0, tranche_effectifs=None) -> dict[str, Any]:
     return _post("/api/fr/accords/search", {
         "query": query, "themes": themes, "nature": nature, "siren": siren,
         "siret": siret, "idcc": idcc, "departement": departement,
         "date_from": date_from, "date_to": date_to, "latest_per_siret": latest_per_siret,
         "sort_by": sort_by, "sort_dir": sort_dir, "limit": limit, "offset": offset,
+        "tranche_effectifs": tranche_effectifs,
     })
 
 
