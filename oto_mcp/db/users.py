@@ -307,37 +307,6 @@ def get_account_profile(sub: str) -> dict:
     return {"profile": profile or {}, "updated_at": row["updated_at"]}
 
 
-def get_user_readme(sub: str) -> dict:
-    """Agent README personnel de l'user : {body_md, updated_at}. Jamais None —
-    un sub sans ligne renvoie l'état vide. Lecture seule (ne crée pas la ligne)."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT body_md, updated_at FROM user_agent_readme WHERE sub = %s",
-            (sub,),
-        ).fetchone()
-    if not row:
-        return {"body_md": "", "updated_at": None}
-    return {"body_md": row["body_md"] or "", "updated_at": row["updated_at"]}
-
-
-def set_user_readme(sub: str, body_md: str) -> dict:
-    """Pose l'agent README personnel (upsert ; corps vide = README effacé, la ligne
-    reste). Renvoie l'état résultant."""
-    upsert_user(sub)
-    with _connect() as conn:
-        conn.execute(
-            """
-            INSERT INTO user_agent_readme (sub, body_md, updated_at)
-            VALUES (%s, %s, NOW())
-            ON CONFLICT (sub) DO UPDATE SET
-                body_md = EXCLUDED.body_md,
-                updated_at = NOW()
-            """,
-            (sub, body_md or ""),
-        )
-    return get_user_readme(sub)
-
-
 def update_account_profile(sub: str, fields: Optional[dict] = None) -> dict:
     """Met à jour la fiche « situation avec oto » (upsert). `fields` est **shallow-mergé**
     dans le JSONB `profile` (clés existantes écrasées, les autres conservées). Renvoie

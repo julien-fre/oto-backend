@@ -272,21 +272,6 @@ def list_group_secrets(group_id: int) -> list[dict]:
 # Même modèle versionné que la doctrine d'org : slug réservé BASE_SLUG = base,
 # autres = skills. En clair (prose). normalize_slug/_snippet réutilisés d'org_store.
 
-def _base_readme(group_id: int, version: Optional[int]) -> Optional[dict]:
-    """Le readme d'équipe (`claude_md`) présenté comme une instruction, mais LU dans
-    `guides` (delivery='init', ADR 0042 : le readme n'est plus une procédure — pas de
-    version/slots/historique). None si absent ou version demandée."""
-    if version is not None:
-        return None
-    from . import guide_store
-    st = guide_store.get_init_guide("group", group_id)
-    if st["updated_at"] is None:
-        return None
-    return {"group_id": group_id, "slug": BASE_SLUG, "title": "", "description": "",
-            "body_md": st["body_md"], "version": 1, "set_by": None,
-            "created_at": st["updated_at"], "updated_at": st["updated_at"]}
-
-
 # Chantier procédures (cadrage 10/07, B2) : les procédures d'équipe vivent dans la
 # table UNIFIÉE `org_instructions` (owner_type='group', owner_id=group_id::text,
 # org_id=org parente) — la jumelle org_group_instructions est fusionnée (copie au
@@ -294,9 +279,10 @@ def _base_readme(group_id: int, version: Optional[int]) -> Optional[dict]:
 
 def get_group_instruction(group_id: int, slug: str,
                           version: Optional[int] = None) -> Optional[dict]:
+    """Une PROCÉDURE d'équipe. ⚠️ Ne sert plus le readme (`claude_md`) : il vit dans
+    `guides` et se lit sur la surface guide (`scope='group', delivery='init'`) — ce
+    slug renvoie donc None ici (ADR 0042 §Convergence des surfaces)."""
     slug = normalize_slug(slug)
-    if slug == BASE_SLUG:
-        return _base_readme(group_id, version)
     with _connect() as conn:
         if version is None:
             row = conn.execute(
@@ -362,11 +348,11 @@ def set_group_instruction(group_id: int, slug: str, body_md: str,
         raise ValueError("slug requis")
     if not (body_md or "").strip():
         raise ValueError("body_md requis")
-    # Le readme d'équipe (claude_md) vit dans `guides` (ADR 0042) — prose plate.
+    # Le readme d'équipe s'écrit sur la surface guide : ici, ce sont les PROCÉDURES.
     if slug == BASE_SLUG:
-        from . import guide_store
-        guide_store.set_init_guide("group", group_id, body_md)
-        return 1
+        raise ValueError(
+            f"`{BASE_SLUG}` est le readme d'équipe, pas une procédure — écris-le via la "
+            "surface guide (scope='group', delivery='init').")
     grp = get_group(group_id)
     if grp is None:
         raise ValueError(f"groupe #{group_id} inconnu")

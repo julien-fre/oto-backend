@@ -187,15 +187,6 @@ def test_mcp_face_reaches_init_without_a_slug(init_store):
     assert G._guide_op(_ctx(sub="u1"), G.GuideOpInput(op="read", delivery="init"))["body_md"] == "hop"
 
 
-def test_agent_readme_routes_delegate_to_the_guide(init_store):
-    """Les routes historiques /api/me/agent-readme ne sont plus qu'un alias mince."""
-    from oto_mcp.capabilities import agent_readme as AR
-    AR._set_readme(_ctx(sub="u1"), AR.SetReadmeInput(body_md="verbatim"))
-    assert init_store["set_init"] == ("user", "u1", "verbatim")
-    assert AR._get_readme(_ctx(sub="u1"), AR._NoInput()) == {"body_md": "verbatim",
-                                                             "updated_at": None}
-
-
 def test_init_targets_an_explicit_org_not_the_active_one(init_store, monkeypatch):
     """Une vue qui gère UNE org/équipe passe son id — sinon on éditerait le readme de
     l'org « active » de la session, qui n'est pas ce que l'écran montre."""

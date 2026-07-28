@@ -12,7 +12,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import group_store, org_store, roles
+from .. import group_store, guide_store, org_store, roles
 from ._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -52,11 +52,12 @@ class InstrRevertInput(BaseModel):
 
 
 def _list(ctx: ResolvedCtx, inp: GroupIdInput) -> dict:
-    base = group_store.get_group_instruction(inp.group_id, _BASE)
+    # Readme d'équipe = guide `delivery='init'` (ADR 0042), lu sur sa surface.
+    base_body = guide_store.init_guide_body("group", inp.group_id) or ""
     return {
         "group_id": inp.group_id,
-        "doctrine": (base or {}).get("body_md", "") or "",
-        "doctrine_version": (base or {}).get("version"),
+        "doctrine": base_body,
+        "doctrine_version": 1 if base_body else None,
         "instructions": group_store.list_group_instructions(inp.group_id),
         "can_edit": roles.can_admin_group(ctx.sub, inp.group_id),
     }

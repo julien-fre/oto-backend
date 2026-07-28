@@ -70,8 +70,6 @@ from . import resources  # noqa: F401 — resources.govern (oto_resource)
 from . import capabilities_catalog  # noqa: F401 — admin.capabilities (GET /api/admin/capabilities)
 # Vue de transparence « contexte agent » (otomata-private#49) — ce que Claude reçoit.
 from . import agent_context  # noqa: F401 — me.agent_context (GET /api/me/agent-context)
-# Agent README personnel (niveau USER du concept agent_readme, cumulable).
-from . import agent_readme  # noqa: F401 — me.agent_readme.{get,set} (GET/PUT /api/me/agent-readme)
 # Guides ON-DEMAND (ADR 0042) — surface REST des how-to (miroir de l'outil MCP oto_guide).
 from . import guides  # noqa: F401 — me.guide (MCP oto_guide) + me.guides.{list,get,set,delete} (REST)
 # Préférence de langue de l'UI dashboard (niveau USER, REST-only).

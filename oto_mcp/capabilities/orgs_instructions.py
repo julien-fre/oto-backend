@@ -24,7 +24,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import access, db, group_store, org_store, roles, slots as slots_mod, tool_registry
+from .. import (access, db, group_store, guide_store, org_store, roles,
+                slots as slots_mod, tool_registry)
 from ._authz import ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER, ORG_MEMBER_OF, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -193,7 +194,9 @@ async def _get_doctrine(ctx: ResolvedCtx, inp) -> dict:
             return {"org_id": None, "org": None, "doctrine": "", "group_id": None,
                     "group": None, "group_doctrine": "", "doctrines": [], "referenced_tools": []}
         o = org_store.get_org(org_id)
-        base = org_store.get_instruction(org_id, _BASE)
+        # Le readme d'org/équipe est un GUIDE `delivery='init'` (ADR 0042), plus une
+        # instruction déguisée : on le lit sur sa surface, pas via le store de procédures.
+        base_body = guide_store.init_guide_body("org", org_id) or ""
         index = [{"slug": i["slug"], "title": i["title"],
                   "description": i["description"], "scope": "org"}
                  for i in org_store.list_instructions(org_id)]
@@ -202,12 +205,11 @@ async def _get_doctrine(ctx: ResolvedCtx, inp) -> dict:
         if group_id is not None:
             g = group_store.get_group(group_id)
             group_name = g["name"] if g else None
-            gbase = group_store.get_group_instruction(group_id, _BASE)
-            group_doctrine = (gbase or {}).get("body_md", "") or ""
+            group_doctrine = guide_store.init_guide_body("group", group_id) or ""
             index += [{"slug": i["slug"], "title": i["title"],
                        "description": i["description"], "scope": "group"}
                       for i in group_store.list_group_instructions(group_id)]
-        doctrine_body = (base or {}).get("body_md", "") or ""
+        doctrine_body = base_body
         pi = _project_instance(member_mode)
         return {
             "org_id": org_id, "org": o["name"] if o else None, "doctrine": doctrine_body,
@@ -296,12 +298,13 @@ async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
     if len(body_md.encode()) > 64 * 1024:
         raise AuthzDenied(400, "body_too_large", "body_md > 64 KB.")
     if norm == _BASE:
-        version = org_store.set_instruction(org_id, _BASE, body_md, set_by=ctx.sub,
-                                            slots=slots_in)
-    else:
-        version = org_store.set_instruction(org_id, norm, body_md, title=title,
-                                            description=description, set_by=ctx.sub,
-                                            slots=slots_in)
+        raise AuthzDenied(400, "reserved_slug",
+                          f"`{_BASE}` est le readme d'org (prose injectée), pas une "
+                          "procédure — édite-le sur la surface guide "
+                          "(scope='org', delivery='init').")
+    version = org_store.set_instruction(org_id, norm, body_md, title=title,
+                                        description=description, set_by=ctx.sub,
+                                        slots=slots_in)
     # Slots EFFECTIFS après écriture (None = conservés → relire la row) pour le
     # check croisé <slot:name> ↔ déclaration (ADR 0035, non bloquant comme 0014).
     effective_slots = slots_in
@@ -334,15 +337,16 @@ def _instructions_list(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
                 "doctrine": {"exists": False, "version": 0, "updated_at": None},
                 "instructions": []}
     o = org_store.get_org(org_id)
-    base = org_store.get_instruction(org_id, _BASE)
+    base = guide_store.get_init_guide("org", org_id)      # readme = guide init (ADR 0042)
+    has_readme = bool((base["body_md"] or "").strip())
     return {
         "org_id": org_id,
         "org_name": o["name"] if o else None,
         "can_edit": roles.is_org_admin(ctx.sub, org_id),
         "doctrine": {
-            "exists": base is not None,
-            "version": base["version"] if base else 0,
-            "updated_at": base["updated_at"] if base else None,
+            "exists": has_readme,
+            "version": 1 if has_readme else 0,        # prose plate : pas d'historique
+            "updated_at": base["updated_at"] if has_readme else None,
         },
         "instructions": org_store.list_instructions(org_id),
     }
