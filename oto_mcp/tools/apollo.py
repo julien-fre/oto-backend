@@ -46,21 +46,25 @@ def register(mcp: FastMCP) -> None:
     def apollo_search_people(
         domains: Optional[list[str]] = None,
         org_ids: Optional[list[str]] = None,
-        departments: Optional[list[str]] = None,
         titles: Optional[list[str]] = None,
         seniorities: Optional[list[str]] = None,
         per_page: int = 25,
         page: int = 1,
     ) -> dict:
-        """Search people by company domains/ids, departments, titles, seniorities.
+        """Search people by company domains/ids, titles, seniorities (net-new).
+
+        Returns identities WITHOUT email/phone — reveal a contact with
+        apollo_match_person (which costs an Apollo credit).
 
         Args:
-            departments: e.g. ["engineering", "sales"].
-            seniorities: e.g. ["c_suite", "director", "manager"].
+            domains: company domains, e.g. ["acme.com"].
+            org_ids: Apollo organization ids (from apollo_enrich_organization).
+            titles: job-title keywords, e.g. ["directeur financier", "CFO"].
+            seniorities: e.g. ["c_suite", "founder", "owner", "director", "manager"].
         """
         client, _ = _client()
         return client.search_people(
-            domains=domains, org_ids=org_ids, departments=departments,
+            domains=domains, org_ids=org_ids,
             titles=titles, seniorities=seniorities, per_page=per_page, page=page)
 
     @mcp.tool()

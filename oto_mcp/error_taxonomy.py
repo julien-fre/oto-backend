@@ -54,6 +54,22 @@ def _upstream_status(exc) -> Optional[int]:
     return v if isinstance(v, int) else None
 
 
+def _upstream_retryable(exc) -> Optional[bool]:
+    """Sémantique de réessai DÉCLARÉE par le connecteur amont, sinon None.
+
+    Le statut HTTP seul ment chez certains fournisseurs : Hunter renvoie 429 pour
+    « crédits du plan épuisés » (rien à réessayer) et 403 pour la limite de débit
+    (transitoire) — l'inverse de la convention. Le module connecteur est le seul à
+    savoir ; il le dit via un attribut `retryable` sur son exception, la taxonomie
+    l'honore. Seam générique, spécificité DANS le module (jamais un `if hunter`).
+    """
+    for e in _chain(exc):
+        v = getattr(e, "retryable", None)
+        if isinstance(v, bool):
+            return v
+    return None
+
+
 def upstream_status_in_chain(exc) -> Optional[int]:
     """Premier code HTTP amont trouvé en remontant la chaîne, sinon None."""
     for e in _chain(exc):
@@ -256,9 +272,17 @@ def classify(exc) -> ErrorInfo:
                              "Délai d'attente dépassé côté service amont.",
                              "réessaie dans un instant")
         if sc == 429:
-            return ErrorInfo("rate_limited", True,
-                             "Trop de requêtes côté service amont.",
-                             "réessaie après une courte pause")
+            # Le connecteur peut démentir le statut (Hunter : 429 = crédits du plan
+            # épuisés, pas un débit trop rapide) → son verdict prime, et son message
+            # dit quoi faire à la place.
+            declared = _upstream_retryable(exc)
+            retryable = True if declared is None else declared
+            return ErrorInfo("rate_limited" if retryable else "quota_exhausted",
+                             retryable,
+                             raw or "Trop de requêtes côté service amont.",
+                             "réessaie après une courte pause" if retryable
+                             else "inutile de réessayer : change de source ou fais "
+                                  "monter le plan du connecteur")
         if sc == 404:
             return ErrorInfo("not_found", False,
                              raw or "Ressource introuvable côté service amont.")
