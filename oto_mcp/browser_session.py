@@ -28,7 +28,9 @@ logger = logging.getLogger(__name__)
 
 # verify(session_id) -> bool : True si la session est bel et bien loguée (vérifié sur
 # la session VIVANTE, jamais sur un export de cookie — cf. leçons ADR 0026).
-Verify = Callable[[str], Awaitable[bool]]
+# Variante account-aware (connecteur générique) : verify(session_id, account) — le
+# site à vérifier vient de l'appel, cf. `register(..., account_aware=True)`.
+Verify = Callable[..., Awaitable[bool]]
 
 _REGISTRY: dict[str, Verify] = {}
 
@@ -36,6 +38,10 @@ _REGISTRY: dict[str, Verify] = {}
 # de la Live View (sinon `about:blank`, l'utilisateur ne sait pas où se loguer). Optionnel
 # — un connecteur sans URL enregistrée ouvre une page vierge (comportement historique).
 _LOGIN_URLS: dict[str, str] = {}
+
+# Connecteurs GÉNÉRIQUES (N sites sous un même connecteur) : leur `verify` prend
+# `(session_id, account)` et leur `login_url` vient de l'appel. Cf. `register`.
+_ACCOUNT_AWARE: set[str] = set()
 
 # Sessions ÉMISES par `start()`, liées au `sub` qui les a demandées : `finalize` n'accepte
 # qu'un (context_id, session_id) qu'IL a émis pour CE user (anti-IDOR : empêche de
@@ -58,10 +64,19 @@ def _prune(now: float) -> None:
             _PENDING.pop(k, None)
 
 
-def register(connector: str, verify: Verify, *, login_url: str | None = None) -> None:
+def register(connector: str, verify: Verify, *, login_url: str | None = None,
+             account_aware: bool = False) -> None:
     """Déclare un connecteur à session navigateur + sa vérification de login. `login_url`
-    = page de login vers laquelle ouvrir la Live View (recommandé — évite l'`about:blank`)."""
+    = page de login vers laquelle ouvrir la Live View (recommandé — évite l'`about:blank`).
+
+    `account_aware=True` (connecteur GÉNÉRIQUE, ADR 0026 amendé) : le connecteur n'a pas
+    UN site mais N — sa `login_url` est fournie à l'appel (`start(..., login_url=…)`) et
+    son `verify` reçoit `(session_id, account)` au lieu de `(session_id)`, `account`
+    identifiant le site (host). Les connecteurs à site unique (crunchbase, brevoauto,
+    pennylaneged) restent inchangés."""
     _REGISTRY[connector] = verify
+    if account_aware:
+        _ACCOUNT_AWARE.add(connector)
     if login_url:
         _LOGIN_URLS[connector] = login_url
 
@@ -70,20 +85,21 @@ def is_session_connector(connector: str) -> bool:
     return connector in _REGISTRY
 
 
-def start(sub: str, connector: str | None = None) -> dict:
+def start(sub: str, connector: str | None = None, *,
+          login_url: str | None = None) -> dict:
     """Ouvre un Context + une session keep-alive pour `sub` et renvoie la Live View
-    interactive. Si `connector` a une `login_url` enregistrée, la session est amenée sur
-    cette page avant l'affichage (sinon `about:blank`). La session émise est LIÉE à `sub`
-    (consommée par `finalize`). BLOQUANT (HTTP Browserbase synchrone) → appeler via
-    `asyncio.to_thread` depuis une route async. Lève `SessionError` si Browserbase n'est
-    pas configuré côté plateforme."""
+    interactive. La session est amenée sur `login_url` si fourni (connecteur générique :
+    le site vient de l'appel), sinon sur la `login_url` enregistrée du connecteur, sinon
+    `about:blank`. La session émise est LIÉE à `sub` (consommée par `finalize`). BLOQUANT
+    (HTTP Browserbase synchrone) → appeler via `asyncio.to_thread` depuis une route async.
+    Lève `SessionError` si Browserbase n'est pas configuré côté plateforme."""
     if not browserbase.is_configured():
         raise SessionError("Browserbase non configuré côté plateforme "
                            "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).")
     try:
         context_id = browserbase.create_context()
         sess = browserbase.start_session(context_id, keep_alive=True, timeout=900)
-        login_url = _LOGIN_URLS.get(connector or "")
+        login_url = login_url or _LOGIN_URLS.get(connector or "")
         if login_url:
             # Best-effort : on amène la session sur la page de login. Un échec (nav lente,
             # CDP indispo) ne doit pas rater l'ouverture — l'user peut taper l'URL.
@@ -102,7 +118,7 @@ def start(sub: str, connector: str | None = None) -> dict:
 
 
 def _persist(sub: str, connector: str, context_id: str, session_id: str,
-             scope: str, group_id: "int | None") -> None:
+             scope: str, group_id: "int | None", account: str = "") -> None:
     browserbase.release_session(session_id)        # libère → persiste le Context
     # La session navigateur est un credential comme un autre : elle se pose au
     # niveau MEMBRE (ADR 0033, défaut), ÉQUIPE ou ORG (connecteur org-partageable —
@@ -121,33 +137,49 @@ def _persist(sub: str, connector: str, context_id: str, session_id: str,
             raise SessionError("aucune équipe active — sélectionne une équipe puis réessaie.")
         group_store.set_group_secret(gid, connector, context_id, set_by=sub)
     else:
-        db.set_member_api_key(sub, org_id, connector, context_id)
+        # `account` = le compte du coffre (multi-compte ADR 0011/0024) : vide pour un
+        # connecteur à site unique, le host du site pour le connecteur générique — une
+        # ligne de coffre PAR SITE, jamais un Context fourre-tout.
+        db.set_member_api_key(sub, org_id, connector, context_id, account=account)
 
 
 async def finalize(sub: str, connector: str, context_id: str, session_id: str,
-                   *, scope: str = "member", group_id: "int | None" = None) -> bool:
+                   *, scope: str = "member", group_id: "int | None" = None,
+                   account: str = "", force: bool = False) -> bool:
     """Vérifie le login sur la session vivante ; si OK, persiste le Context (= credential)
     au niveau demandé (`scope` ∈ member|org|group) et renvoie True. False = pas encore
     logué (l'appelant invite à réessayer). ⚠️ Le contrôle des DROITS de pose à un niveau
-    partagé (org_admin / group_admin) incombe à l'appelant (route REST / tool)."""
+    partagé (org_admin / group_admin) incombe à l'appelant (route REST / tool).
+
+    `account` = compte du coffre visé (connecteur générique : le site). `force=True`
+    persiste SANS passer par `verify` : échappatoire des sites dont le login ne laisse
+    aucune trace lisible génériquement (état en localStorage plutôt qu'en cookie) — le
+    verify générique y répondrait « pas logué » à tort et rendrait le site inconnectable.
+    Réservé aux connecteurs account-aware (sur un connecteur à site unique le verify est
+    une vraie sonde d'API : la contourner n'aurait aucune justification)."""
     verify = _REGISTRY.get(connector)
     if verify is None:
         raise SessionError(f"{connector} n'est pas un connecteur à session navigateur.")
     if scope not in ("member", "org", "group"):
         raise SessionError(f"scope inconnu : {scope!r}")
+    if force and connector not in _ACCOUNT_AWARE:
+        raise SessionError("`force` n'est pas recevable pour ce connecteur.")
     # La session DOIT avoir été émise par `start()` pour CE sub (anti-IDOR) : on ne
     # persiste jamais un Context tiers passé à la main.
     key = (sub, context_id, session_id)
     if _PENDING.get(key, 0.0) < time.monotonic():
         _PENDING.pop(key, None)
         raise SessionError("session de connexion inconnue ou expirée — relance « Connecter ».")
-    try:
-        ok = await verify(session_id)
-    except Exception:  # noqa: BLE001 — détail loggué, jamais renvoyé (peut porter l'apiKey)
-        logger.exception("session verify failed for %s", connector)
-        raise SessionError("vérification de la session impossible — réessaie.")
-    if not ok:
-        return False
-    await asyncio.to_thread(_persist, sub, connector, context_id, session_id, scope, group_id)
+    if not force:
+        try:
+            ok = (await verify(session_id, account) if connector in _ACCOUNT_AWARE
+                  else await verify(session_id))
+        except Exception:  # noqa: BLE001 — détail loggué, jamais renvoyé (peut porter l'apiKey)
+            logger.exception("session verify failed for %s", connector)
+            raise SessionError("vérification de la session impossible — réessaie.")
+        if not ok:
+            return False
+    await asyncio.to_thread(_persist, sub, connector, context_id, session_id, scope,
+                            group_id, account)
     _PENDING.pop(key, None)
     return True

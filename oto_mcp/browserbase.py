@@ -160,6 +160,63 @@ async def run_page_eval(context_id: str, app: str, page_function: str,
         release_session(sid)
 
 
+async def fetch_page(context_id: str, url: str, *, as_html: bool = False,
+                     wait_until: str = "domcontentloaded",
+                     timeout: int = 40000) -> dict:
+    """Charge `url` dans une session éphémère du Context et renvoie le **contenu
+    complet** de la page rendue : `{status, final_url, title, content}`.
+
+    C'est le pendant « page » de `run_fetch` (qui, lui, tape une API JSON et
+    tronque son repli texte à 400 caractères — inutilisable pour lire un article).
+    `as_html=False` (défaut) renvoie le texte rendu (`innerText` du body : ce que
+    l'humain lit, sans balises) ; `as_html=True` le DOM sérialisé après rendu.
+
+    `status` = code HTTP de la navigation principale (None si Chrome n'a pas
+    exposé de réponse, ex. redirection interne SPA). La session vivante porte les
+    cookies du Context → une page derrière login rend son contenu logué.
+
+    Note coût : 1 session browser par appel (cf. `run_page_eval`).
+    """
+    from patchright.async_api import async_playwright
+
+    sess = start_session(context_id)
+    sid = sess["id"]
+    try:
+        async with async_playwright() as p:
+            b = await p.chromium.connect_over_cdp(sess["connectUrl"])
+            try:
+                ctx = b.contexts[0] if b.contexts else await b.new_context()
+                pg = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                resp = await pg.goto(url, wait_until=wait_until, timeout=timeout)
+                content = (await pg.content() if as_html
+                           else await pg.evaluate("() => document.body ? document.body.innerText : ''"))
+                return {"status": resp.status if resp is not None else None,
+                        "final_url": pg.url,
+                        "title": await pg.title(),
+                        "content": content or ""}
+            finally:
+                await b.close()
+    finally:
+        release_session(sid)
+
+
+async def host_cookies(session_id: str, url: str) -> int:
+    """Nombre de cookies que la session VIVANTE porte pour `url`. Sonde générique
+    « cette session a-t-elle un état sur ce site ? » — le seul signal de login
+    qu'on puisse lire sans rien savoir du site (cf. `browser_session` §verify
+    générique). 0 = presque toujours « pas logué » ; >0 ne prouve pas le login
+    (un cookie anonyme suffit à faire 1) — d'où l'échappatoire `force` côté tool."""
+    from patchright.async_api import async_playwright
+
+    async with async_playwright() as p:
+        b = await p.chromium.connect_over_cdp(connect_url(session_id))
+        try:
+            ctx = b.contexts[0] if b.contexts else await b.new_context()
+            return len(await ctx.cookies(url))
+        finally:
+            await b.close()
+
+
 # JS partagé : un `fetch(base+path)` same-origin avec headers JSON. `run_fetch`
 # l'instancie pour les connecteurs simples (brevo) ; les connecteurs à headers
 # spécifiques (CSRF tournant…) écrivent leur propre JS et passent par `run_page_eval`.

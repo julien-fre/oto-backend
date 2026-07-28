@@ -254,9 +254,11 @@ class Connector:
 BROWSER_PROVIDERS = frozenset()
 
 # Connecteurs dont le credential est MULTI-COMPTE — N grants liés à une même
-# entité (ADR 0024). Aujourd'hui seul Google (N comptes OAuth) ; les autres
-# sessions/oauth (crunchbase, memento…) restent mono-compte par entité.
-MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho"})
+# entité (ADR 0024). Google (N comptes OAuth), zoho (self-clients FR/US), et
+# `browser` (N sites derrière login : un compte = un host, un Context Browserbase
+# par site — cf. tools/browser.py). Les autres sessions/oauth (crunchbase,
+# memento…) restent mono-compte par entité.
+MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho", "browser"})
 
 # Catégorie d'usage (domaine) par connecteur — CURÉE (pas dérivable), tunable.
 _CATEGORY_BY_CONNECTOR = {
@@ -754,6 +756,17 @@ _REGISTRY_LIST = [
        label="Pennylane GED",
        help="bac documentaire Pennylane (session Browserbase)",
        publisher="Pennylane", href="https://app.pennylane.com"),
+    # browser : connecteur GÉNÉRIQUE de lecture derrière login (oto-private#79). Les
+    # trois précédents sont écrits en dur pour UNE API privée qu'on exploite en
+    # profondeur ; celui-ci sert le besoin inverse — lire N sites (média payant,
+    # intranet, back-office sans API) sans un cycle de dev par site. **Multi-compte** :
+    # un compte du coffre = un site (host), donc un Context Browserbase par site
+    # (sessions isolées, cf. MULTI_ACCOUNT_PROVIDERS). byo_user : une session loguée
+    # est physiologiquement personnelle. Hors socle, installable depuis la library ;
+    # `browser_eval` (JS arbitraire) reste masqué par défaut (DEFAULT_HIDDEN_TOOLS).
+    _c("browser", ["browser"], auth_modes={"byo_user"}, personal_session=True,
+       secret_kind="cookie", label="Navigateur connecté",
+       help="lire un site derrière login — un login par site, session Browserbase"),
     # namespaces = préfixes RÉELS des tools (namespace_of = 1er token avant `_`) :
     # gmail_* / tasks_*. PAS "data" : datastore est un SPINE plateforme (ADR 0016),
     # pas un connecteur Google — chargé explicitement dans register_all, non gaté

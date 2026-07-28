@@ -108,6 +108,11 @@ Context per-user = la session loguée au coffre, Live View pour le login interac
 `run_fetch` same-origin). Connexion = dashboard (`browser_session.py`, un seul corps
 REST+MCP, `login_url` obligatoire au register). LinkedIn = **Unipile** (tools/linkedin
 supprimé) ; l'injection de cookie `li_at` côté serveur déconnecte l'user (#5).
+S'y ajoute le connecteur **générique `browser`** (oto-private#79) : **lire** N sites
+derrière login sans un connecteur par site — **un site = un compte du coffre** (host,
+donc un Context par site), `browser_fetch` rend la page **complète** (≠ `run_fetch`,
+tronqué à 400 c.), verify générique = cookies sur le host (+ échappatoire `force`),
+`browser_eval` masqué par défaut.
 **Détail (substrat, connecteurs, sécu, leçons empiriques) : `docs/browser-automation.md`**.
 
 ## SIRENE stock (DuckDB sur parquet INSEE — lu depuis S3/httpfs)
@@ -755,7 +760,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 - `docs/monitoring.md` — monitoring des appels MCP (tool_call_log + surface admin).
 - `docs/datastore.md` — datastore spine PG (`data_*`) + OAuth Google per-user (setup GCP, scopes).
 - `docs/groups-and-roles.md` — groupes/départements & hiérarchie de droits (ADR 0012).
-- `docs/browser-automation.md` — substrat Browserbase (Context/Live View/run_fetch), connecteurs brevo/crunchbase/pennylaneged, LinkedIn isolation de session.
+- `docs/browser-automation.md` — substrat Browserbase (Context/Live View/run_fetch), connecteurs brevo/crunchbase/pennylaneged, connecteur générique `browser` (N sites derrière login), LinkedIn isolation de session.
 - `docs/projects.md` — projet (liens typés, docs), livraison client cascade, endpoint MCP + partage navigable par projet (`<slug>.{mcp,share}.oto.cx`).
 - `docs/unipile.md` — messagerie hébergée : mode plateforme, DSN, sélecteur d'identité, comptes partagés (#55).
 - `docs/ownership.md` — primitive de ressource possédée (can_access/can_govern, tripwire owner_pairs, abolition du perso).

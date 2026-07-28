@@ -23,7 +23,13 @@ from __future__ import annotations
 # `fr_egapro_declaration` : source de niche (index égalité F-H par SIREN, surtout
 # utile en qualif sociale type Mūcho) — masquée pour ne pas charger la toolbox `fr`
 # par défaut ; activable à la demande (oto_enable_tool fr_egapro_declaration).
-DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset({"email_send", "fr_egapro_declaration"})
+# `browser_eval` : exécute du JS ARBITRAIRE dans une session loguée (oto-private#79).
+# Borné à un connecteur écrit en dur (pennylaneged), ce pouvoir est contenu ; sur le
+# connecteur GÉNÉRIQUE `browser` il devient pointable n'importe où → le geste courant
+# (`browser_fetch`) est exposé, l'échappatoire demande une activation explicite. C'est
+# de la découvrabilité graduée, pas une barrière (le connecteur reste le vrai gate).
+DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
+    {"email_send", "fr_egapro_declaration", "browser_eval"})
 
 # Méta-tools TOUJOURS visibles (anti-lockout) : sans eux l'utilisateur ne peut
 # plus se déverrouiller (lister/activer un tool) — plus l'identité `oto_whoami`

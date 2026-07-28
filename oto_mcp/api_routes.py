@@ -1147,8 +1147,13 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         name = request.path_params["name"]
         if not browser_session.is_session_connector(name):
             return _json_error(request, 404, "not_a_session_connector")
+        # Connecteur GÉNÉRIQUE (`browser`, oto-private#79) : le SITE vient de l'appel —
+        # `?url=` ouvre la Live View sur la page de connexion demandée. Absent (les
+        # connecteurs à site unique) ⇒ la `login_url` enregistrée, comportement inchangé.
+        url = (request.query_params.get("url") or "").strip() or None
         try:
-            out = await asyncio.to_thread(browser_session.start, sub, name)
+            out = await asyncio.to_thread(
+                lambda: browser_session.start(sub, name, login_url=url))
         except browser_session.SessionError as e:
             return _json_error(request, 503, "browserbase_unavailable", str(e))
         return _json(request, out)
@@ -1192,12 +1197,19 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
                     return _json_error(request, 400, "no_group_context")
                 if not roles.can_admin_group(sub, group_id):
                     return _json_error(request, 403, "forbidden")
+        # Compte du coffre visé — connecteur générique : le site (host). `force` =
+        # persister sans la vérification générique de login (refusé par le seam pour
+        # un connecteur à site unique, dont le verify est une vraie sonde d'API).
+        account = ((body or {}).get("account") or "").strip()
+        force = bool((body or {}).get("force"))
         try:
             connected = await browser_session.finalize(
-                sub, name, context_id, session_id, scope=scope, group_id=group_id)
+                sub, name, context_id, session_id, scope=scope, group_id=group_id,
+                account=account, force=force)
         except browser_session.SessionError as e:
             return _json_error(request, 502, "session_verify_failed", str(e))
-        return _json(request, {"connected": connected, "scope": scope})
+        return _json(request, {"connected": connected, "scope": scope,
+                               "account": account})
 
     async def api_key_get(request: Request) -> JSONResponse:
         sub, err = await _authenticate(request, verifier)

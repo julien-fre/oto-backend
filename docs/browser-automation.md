@@ -61,6 +61,49 @@ connecteur d'**API privée cookie-bound**. État réel (2026-06-24) :
     → picker de la carte dashboard sans louer de session ; `identities` au catalogue).
     ⚠️ **Reste à smoker en live** (login Pennylane réel + forme exacte de
     `flow_companies`).
+
+## Connecteur `browser` — générique, N sites derrière login (oto-private#79)
+
+Les trois connecteurs ci-dessus sont écrits **en dur pour un site** : ce coût se justifie
+quand on exploite une API privée en profondeur (la GED Pennylane), pas pour **lire**
+ponctuellement N sources authentifiées (veille : chaque nouveau média payant redemanderait
+un cycle de dev). D'où un connecteur **générique** (`tools/browser.py`, registre `browser`)
+qui expose le substrat tel quel.
+
+- **Un site = un compte du coffre.** `account` = le host normalisé (`www.` retiré, casse et
+  port normalisés) → **un Context Browserbase par site**, sessions isolées, jamais un profil
+  fourre-tout mélangeant les credentials de N sites dans un seul secret. Mécanisme : le
+  multi-compte existant (`providers.MULTI_ACCOUNT_PROVIDERS`, ADR 0011/0024) — donc le
+  picker d'identités du dashboard marche **sans code dédié** (backend keyed générique de
+  `connector_identities`), et un `account` explicite introuvable **lève** côté `access`
+  (jamais de repli muet sur le Context d'un autre site).
+- **Tools** : `browser_connect_start(url)` (Live View sur l'URL demandée) →
+  `browser_connect_status(context_id, session_id, site, force?)` → `browser_sites()` ;
+  lecture `browser_fetch(url, as_html?, max_chars?)` ; échappatoire `browser_eval(url, js)`.
+- **`browser_fetch` ≠ `run_fetch`.** `run_fetch` vise une API JSON et **tronque son repli
+  texte à 400 caractères** — inutilisable pour lire une page. `browserbase.fetch_page()`
+  charge l'URL et renvoie le contenu **complet** (`innerText` rendu, ou DOM si `as_html`),
+  avec `status`/`final_url`/`title` ; la troncature éventuelle est **dite** (`truncated`),
+  jamais silencieuse.
+- **Vérification du login : générique, donc faillible.** Un connecteur dédié sonde une route
+  authentifiée qu'il connaît ; ici on ne sait rien du site. Seul signal lisible partout :
+  « la session porte-t-elle des cookies sur ce host ? » (`browserbase.host_cookies`). 0 ⇒
+  presque sûrement pas logué ; >0 ne prouve rien. D'où **`force=true`** sur
+  `browser_connect_status` (sites dont l'état de login vit en localStorage) — refusé par le
+  seam pour un connecteur à site unique, dont le verify est une vraie sonde.
+- **Seam étendu, pas dupliqué** : `browser_session.register(..., account_aware=True)` (verify
+  `(session_id, account)`), `start(..., login_url=…)` (le site vient de l'appel),
+  `finalize(..., account=…, force=…)`. Les trois connecteurs à site unique sont inchangés.
+  Côté REST, `POST /api/me/connectors/{name}/session/start?url=` et `…/finalize`
+  (`account`/`force` au body) servent la même chose au dashboard. ⚠️ La **carte dashboard**
+  (saisir l'URL d'un site à connecter) reste à faire côté `oto-dashboard`.
+- **`browser_eval` = JS arbitraire sur une session loguée** : contenu tant qu'il est borné à
+  un connecteur écrit en dur, il devient pointable n'importe où sur le générique → **masqué
+  par défaut** (`DEFAULT_HIDDEN_TOOLS`, self-activable). Le vrai gate reste le connecteur.
+- **Coût** : 1 session navigateur **par appel** (hérité du substrat). Adapté au delta de
+  veille (quelques pages) ; un backfill de centaines de pages = autant de sessions →
+  réutiliser une session pour N appels d'un même run reste à faire si le volume le justifie.
+
 - **Leçons empiriques (toujours valides)** : (1) un `httpx`/curl brut est **rejeté
   (403)** — transport obligatoirement **browser-driven** (`page.evaluate(fetch())`) ;
   (2) une session **ne se transplante pas** par export de cookie (le faux négatif « auth
