@@ -1,21 +1,21 @@
-"""Agent README personnel de l'utilisateur — le niveau USER du concept agent_readme.
+"""Note personnelle de l'utilisateur — routes HISTORIQUES `/api/me/agent-readme`.
 
-Un agent_readme = prose markdown libre injectée à chaque session (bloc C des
-instructions), CUMULÉE du général au spécifique : plateforme (bloc A, éditeur admin)
-→ org (`org_instructions` slug `claude_md`) → équipe (`org_group_instructions` slug
-`claude_md`) → user (table `user_agent_readme`, ce module). Les trois premiers niveaux
-ont déjà leur surface ; celui-ci donne la sienne au user.
+⚠️ **En sursis** (ADR 0042 §Convergence des surfaces, barreau 3) : cette note n'est
+qu'un **guide** `scope='user', delivery='init'` — le dernier survivant du vocabulaire
+d'avant (« agent readme »). La surface canonique est désormais
+`GET`/`PUT /api/me/guides/user/readme?delivery=init` (capacité `me.guides.*`).
 
-REST-only (dashboard `/account`) : l'agent entretient déjà la fiche structurée via
-`oto_profile` — le README est la voix VERBATIM de l'utilisateur, pas un canal agent.
+Ce module ne porte donc PLUS d'implémentation : il **délègue** aux handlers de
+`guides.py`, le temps que le dashboard bascule. À supprimer aussitôt après (le seul
+consommateur est `AgentReadmeCard`).
 """
 from __future__ import annotations
 
 from pydantic import BaseModel
 
-from .. import guide_store
 from ._authz import SUB_ONLY
 from ._types import Capability, ResolvedCtx, RestBinding
+from .guides import GuideRefInput, GuideSetInput, _get, _set
 from .registry import CAPABILITIES
 
 
@@ -27,26 +27,33 @@ class SetReadmeInput(BaseModel):
     body_md: str = ""
 
 
+def _readme_ref(**kw) -> dict:
+    return {"scope": "user", "delivery": "init", **kw}
+
+
 def _get_readme(ctx: ResolvedCtx, inp: _NoInput) -> dict:
-    return guide_store.get_init_guide("user", ctx.sub)
+    g = _get(ctx, GuideRefInput(**_readme_ref()))
+    return {"body_md": g["body_md"], "updated_at": g["updated_at"]}
 
 
 def _set_readme(ctx: ResolvedCtx, inp: SetReadmeInput) -> dict:
-    return guide_store.set_init_guide("user", ctx.sub, inp.body_md)
+    g = _set(ctx, GuideSetInput(**_readme_ref(body_md=inp.body_md)))
+    return {"body_md": g["body_md"], "updated_at": g["updated_at"]}
 
 
 CAPABILITIES += [
     Capability(
         key="me.agent_readme.get", handler=_get_readme, Input=_NoInput,
         authz=SUB_ONLY,
-        description="The user's personal agent README (free markdown injected into "
-                    "every session's instructions, after the org and team READMEs).",
+        description="DEPRECATED alias of guide (scope=user, delivery=init) — the user's "
+                    "personal readme, injected into every session after org and team.",
         rest=RestBinding("GET", "/api/me/agent-readme"),
     ),
     Capability(
         key="me.agent_readme.set", handler=_set_readme, Input=SetReadmeInput,
         authz=SUB_ONLY,
-        description="Set the user's personal agent README (`body_md`; empty clears it).",
+        description="DEPRECATED alias of guide (scope=user, delivery=init). "
+                    "`body_md` empty clears the layer.",
         rest=RestBinding("PUT", "/api/me/agent-readme"),
     ),
 ]
