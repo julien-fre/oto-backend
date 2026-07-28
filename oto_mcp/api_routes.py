@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                   Response, StreamingResponse)
 
-from . import access, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_memento, api_routes_sirene, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, memento_oauth, org_store, ownership, tool_registry
+from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_memento, api_routes_sirene, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, memento_oauth, org_store, ownership, tool_registry
 from .capabilities import _rest_adapter as _cap_rest_adapter
 from .capabilities import registry as _cap_registry
 from . import auth_hooks
@@ -1670,6 +1670,14 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         options_handler=options_handler,
     )
 
+    accords_routes = api_routes_accords.make_routes(
+        verifier=verifier,
+        authenticate=_authenticate,
+        json_response=_json,
+        json_error=_json_error,
+        options_handler=options_handler,
+    )
+
     memento_routes = api_routes_memento.make_routes(
         verifier=verifier,
         authenticate=_authenticate,
@@ -1806,6 +1814,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/admin/monitoring/funnel", options_handler, methods=["OPTIONS"]),
         *datastore_routes,
         *sirene_routes,
+        *accords_routes,
         *memento_routes,
         *atlassian_routes,
         *folk_routes,
