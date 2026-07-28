@@ -25,7 +25,13 @@ import re
 from datetime import datetime
 from typing import Any, Optional
 
-SCALAR_TYPES = ("text", "number", "date", "bool", "json")
+# `url`/`email`/`datetime`/`enum` sont des types de PRÉSENTATION : même donnée (une
+# string) qu'un `text`, mais ils disent au client QUEL widget rendre (lien cliquable,
+# sélecteur de date, liste de choix) au lieu de le deviner de la valeur. Leur
+# validation reste volontairement permissive — le schéma guide le rendu, il ne
+# transforme pas le datastore en base contrainte.
+SCALAR_TYPES = ("text", "number", "date", "datetime", "bool", "json",
+                "url", "email", "enum")
 COMPOSITE_TYPES = ("object", "list")
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
@@ -155,7 +161,8 @@ def _is_empty(v: Any) -> bool:
 
 
 def _type_error(value: Any, ftype: str, path: str,
-                fields: Optional[list] = None, of: Optional[dict] = None) -> list[str]:
+                fields: Optional[list] = None, of: Optional[dict] = None,
+                options: Optional[list] = None) -> list[str]:
     """Erreurs de conformité d'UNE valeur à un type déclaré (récursif)."""
     if ftype == "text":
         return [] if isinstance(value, str) else [f"{path}: attendu text, reçu {type(value).__name__}"]
@@ -169,14 +176,30 @@ def _type_error(value: Any, ftype: str, path: str,
         return [f"{path}: attendu number, reçu {value!r}"]
     if ftype == "bool":
         return [] if isinstance(value, bool) else [f"{path}: attendu bool, reçu {value!r}"]
-    if ftype == "date":
+    if ftype in ("date", "datetime"):
         if isinstance(value, str):
             try:
                 datetime.fromisoformat(value.replace("Z", "+00:00"))
                 return []
             except ValueError:
                 pass
-        return [f"{path}: attendu date ISO, reçu {value!r}"]
+        return [f"{path}: attendu {ftype} ISO, reçu {value!r}"]
+    if ftype == "url":
+        if isinstance(value, str) and value.startswith(("http://", "https://")):
+            return []
+        return [f"{path}: attendu une URL http(s), reçu {value!r}"]
+    if ftype == "email":
+        if isinstance(value, str) and "@" in value and " " not in value.strip():
+            return []
+        return [f"{path}: attendu un e-mail, reçu {value!r}"]
+    if ftype == "enum":
+        # `options` absentes ⇒ enum libre (le client rend un select vide, pas d'erreur).
+        if not isinstance(value, str):
+            return [f"{path}: attendu une valeur d'énumération, reçu {value!r}"]
+        allowed = [str(o) for o in (options or [])]
+        if allowed and value not in allowed:
+            return [f"{path}: valeur {value!r} hors options ({', '.join(allowed)})"]
+        return []
     if ftype == "object":
         if not isinstance(value, dict):
             return [f"{path}: attendu object, reçu {type(value).__name__}"]
@@ -197,7 +220,8 @@ def _type_error(value: Any, ftype: str, path: str,
                         [x for x in sub_fields if isinstance(x, dict)], item, ipath))
             elif of.get("type"):
                 errors.extend(_type_error(item, of["type"], ipath,
-                                          of.get("fields"), of.get("of")))
+                                          of.get("fields"), of.get("of"),
+                                          of.get("options")))
         return errors
     return []  # json / type absent : tout passe
 
@@ -221,7 +245,8 @@ def _row_errors(fields: list, data: dict, path: str) -> list[str]:
             continue
         if f.get("type"):
             errors.extend(_type_error(value, f["type"], fpath,
-                                      f.get("fields"), f.get("of")))
+                                      f.get("fields"), f.get("of"),
+                                      f.get("options")))
     return errors
 
 
