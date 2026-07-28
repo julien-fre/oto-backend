@@ -114,6 +114,16 @@ class Connector:
     # descripteur `auth.method` vaut "hosted" → la carte rend le widget dédié sans
     # cas par nom côté front.
     hosted_auth: bool = False
+    # `secret_kind="fields"` MAIS un champ (typiquement un refresh_token/access
+    # token) n'est PAS saisi à la main — il est obtenu par un flow OAuth live
+    # après que le reste des champs a été posé (ex. salesforce : client_id/
+    # client_secret/login_url posés via le formulaire générique, PUIS un bouton
+    # Connecter complète le refresh_token — voir salesforce_oauth.py, premier
+    # connecteur du genre, client OAuth PER-CUSTOMER donc pas réductible au
+    # `secret_kind="oauth"` centralisé de google/atlassian/folkmcp). Posé ici,
+    # `auth.method` vaut "secret_then_oauth" → le front rend le formulaire PUIS
+    # un bouton Connecter, sans cas par nom de connecteur.
+    oauth_followup: bool = False
     # Instance PERSONNELLE cross-org (issue #172, ADR 0033 amendé) : le credential
     # est intrinsèquement PAR-PERSONNE — un compte de messagerie hébergé (unipile :
     # le login LinkedIn/WhatsApp EST l'humain, pas l'appartenance). Sa clé membre
@@ -189,9 +199,10 @@ class Connector:
         """Mécanisme d'obtention du credential (ADR 0024) — DÉRIVÉ. Pilote le
         widget rendu par la `ConnectorCard` (un flux, une carte). Priorité :
         `hosted` (flux hébergé tiers, ex. unipile) > `remote` (bridge ADR 0003,
-        posé par grant d'org) > `oauth`/`cookie`/`none` (flux dédiés / pas de
-        credential) > `secret` (champ(s) à coller : api_key, basic_auth, fields,
-        refresh_token). NB : un MCP fédéré (kind=mount) hérite de son `secret_kind`
+        posé par grant d'org) > `secret_then_oauth` (formulaire PUIS bouton
+        Connecter, ex. salesforce) > `oauth`/`cookie`/`none` (flux dédiés / pas
+        de credential) > `secret` (champ(s) à coller : api_key, basic_auth,
+        fields). NB : un MCP fédéré (kind=mount) hérite de son `secret_kind`
         (planity=basic_auth→secret, memento=oauth→oauth)."""
         if self.hosted_auth:
             return "hosted"
@@ -200,6 +211,8 @@ class Connector:
             # formulaire. Un bridge NOUVEAU modèle (ADR 0034) déclare ses
             # credential_fields → formulaire self-serve standard (method=secret).
             return "remote"
+        if self.oauth_followup:
+            return "secret_then_oauth"
         if self.secret_kind in ("oauth", "cookie", "none"):
             return self.secret_kind
         return "secret"
@@ -416,6 +429,7 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
        publisher="", logo_url=None, kind="tools", mount_url=None,
        mount_strip_prefix=None, mount_auth_header=None,
        credential_fields=(), modules=(), hosted_auth=False,
+       oauth_followup=False,
        personal_cross_org=False) -> Connector:
     return Connector(
         name=name, namespaces=tuple(namespaces), availability=availability,
@@ -428,6 +442,7 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
         mount_auth_header=mount_auth_header,
         credential_fields=tuple(credential_fields),
         modules=tuple(modules), hosted_auth=hosted_auth,
+        oauth_followup=oauth_followup,
         personal_cross_org=personal_cross_org,
     )
 
@@ -972,15 +987,22 @@ _REGISTRY_LIST = [
     # partage une Connected App). Pas de table de région fixe : le refresh Salesforce
     # renvoie l'`instance_url`, `login_url` ne fait que sélectionner prod vs sandbox
     # (ou un My Domain).
+    # salesforce : plus de `refresh_token` posé à la main — le flow OAuth live
+    # (salesforce_oauth.py) est désormais le SEUL chemin pour l'obtenir. Le
+    # formulaire ne collecte que le triplet client_id/client_secret/login_url ;
+    # `oauth_followup=True` signale au front (auth_method="secret_then_oauth")
+    # qu'un bouton Connecter doit suivre la sauvegarde de ce triplet. Le
+    # `client_id`/`client_secret` restent PER-CUSTOMER (chaque org crée sa
+    # propre Connected App) — pas de client Otomata partagé possible ici,
+    # contrairement à google/atlassian/folkmcp (cf. salesforce_oauth.py).
     _c("salesforce", ["salesforce"], auth_modes={"byo_user", "byo_org"},
-       secret_kind="fields", label="Salesforce",
+       secret_kind="fields", oauth_followup=True, label="Salesforce",
        help="CRM Salesforce (Contacts, Accounts/companies, Leads, Opportunities, notes)",
        href="https://login.salesforce.com", credential_fields=(
            CredentialField("client_id", "Consumer Key", secret=True,
                            help="Consumer Key de la Connected App"),
            CredentialField("client_secret", "Consumer Secret", secret=True,
                            help="Consumer Secret de la Connected App"),
-           CredentialField("refresh_token", "Refresh Token", secret=True),
            CredentialField("login_url", "Login URL (prod ou sandbox)",
                            secret=False, reveal=True,
                            help="login.salesforce.com (prod, défaut) ou "

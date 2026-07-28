@@ -26,7 +26,11 @@ def _login_url(login_url: Optional[str]) -> str:
 
 
 def _sf_error_hint(exc: Exception) -> str:
-    """Traduit l'erreur OAuth Salesforce brute en message actionnable pour la sonde."""
+    """Traduit l'erreur OAuth Salesforce brute en message actionnable. Utilisée
+    par la sonde `_verify` (credential déjà posé) ET par le flow OAuth live
+    (`salesforce_oauth.exchange_code`, échec de l'échange authorization_code) —
+    les deux surfaces d'erreur Salesforce partagent le même vocabulaire brut,
+    donc les mêmes branches de correspondance s'appliquent."""
     low = str(exc).lower()
     if "invalid_client" in low or "invalid_client_id" in low:
         return ("client_id / client_secret incorrect — vérifie la Connected App "
@@ -34,6 +38,14 @@ def _sf_error_hint(exc: Exception) -> str:
     if "invalid_grant" in low:
         return ("refresh token périmé/révoqué, ou login_url incorrect (prod "
                 "login.salesforce.com vs sandbox test.salesforce.com) — régénère-le.")
+    if "invalid_scope" in low:
+        return ("les OAuth Scopes de la Connected App n'incluent pas `api` et "
+                "`refresh_token` (ou `offline_access`) — Setup → App Manager → "
+                "ton app → Edit Policies → OAuth Scopes, puis réessaie.")
+    if "redirect_uri_mismatch" in low:
+        return ("Callback URL de la Connected App incorrecte — doit être exactement "
+                "https://mcp.oto.cx/api/salesforce/oauth/callback (vérifie qu'il n'y "
+                "a pas d'espace ni de slash final en trop).")
     return f"échec de connexion Salesforce : {exc}"
 
 
