@@ -383,8 +383,13 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "zoho desk utilise un **self-client oauth2** à 4 secrets. dans la [console développeur zoho api](https://api-console.zoho.com), crée un **self client**, génère un grant token avec les scopes `Desk.*`, puis échange-le contre un refresh token. tu dois fournir à oto :\n"
             "- **client_id** et **client_secret** — du self client\n"
             "- **refresh_token** — issu de l'échange\n"
-            "- **org_id** — l'id de ton organisation desk (en-tête `orgId` requis par l'api)\n"
-            "renseigne ces 4 champs dans oto sur ton compte (`/account`), connecteur **zohodesk**. byo uniquement."
+            "- **org_id** — l'id de ton organisation desk (en-tête `orgId`) — **facultatif** : un token mono-portail résout le portail tout seul, ne le renseigne que si un appel le réclame\n"
+            "\n"
+            "**scopes par surface** — un token peut authentifier avec des scopes PARTIELS (les articles répondent pendant que les tickets rendent `SCOPE_MISMATCH`). demande ceux dont tu as besoin :\n"
+            "- tickets → `Desk.tickets.READ` (+ `.WRITE` pour créer/modifier) · recherche → `Desk.search.READ`\n"
+            "- contacts → `Desk.contacts.READ` (+ `.WRITE`) · départements → `Desk.basic.READ` · articles (KB) → `Desk.articles.READ`\n"
+            "\n"
+            "renseigne ces champs dans oto sur ton compte (`/account`), connecteur **zohodesk**. byo uniquement."
         )),
         DocSection(kind="usage", title="ce que tu peux faire", body_md=(
             "gère le support zoho desk (tickets, threads, contacts) depuis claude.\n"
