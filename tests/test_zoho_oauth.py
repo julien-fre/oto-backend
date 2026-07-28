@@ -248,3 +248,29 @@ def test_no_pending_action_when_nothing_posted():
     from oto_mcp.tools import zoho  # noqa: F401
     assert status_hints.pending_action(
         "zohodesk", "u1", 35, None, {"mode": "forbidden"}) is None
+
+
+# --- la sonde « tester la connexion » connaît l'état intermédiaire ------------
+
+@pytest.mark.parametrize("module_name", ["zoho", "zohodesk"])
+def test_verify_names_the_pending_consent(module_name):
+    """Sans garde, la sonde tente un refresh sans refresh_token → Zoho renvoie une
+    erreur de grant traduite en « refresh token périmé, régénère-le », qui envoie
+    l'utilisateur régénérer ce qui n'existe pas encore (vécu au 1er test réel)."""
+    import importlib
+    mod = importlib.import_module(f"oto_mcp.tools.{module_name}")
+    with pytest.raises(ValueError, match="autorisation n'a pas encore été donnée"):
+        mod._verify({"client_id": "1000.X", "client_secret": "s", "data_center": "eu"})
+
+
+def test_verify_still_runs_for_a_complete_self_client(monkeypatch):
+    """Un credential complet ne doit PAS être arrêté par le garde — il va bien
+    jusqu'au vrai test de connexion."""
+    from oto_mcp.tools import zoho as zoho_tools
+    calls = []
+    monkeypatch.setattr(zoho_tools.requests, "post",
+                        lambda *a, **k: calls.append(1) or _Resp(200, {"error": "x"}))
+    with pytest.raises(ValueError):
+        zoho_tools._verify({"client_id": "1000.X", "client_secret": "s",
+                            "refresh_token": "1000.rt", "data_center": "eu"})
+    assert calls, "la sonde doit avoir tenté le refresh (garde non déclenché)"

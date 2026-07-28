@@ -73,8 +73,9 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     """
     from oto.tools.zohodesk.client import ZohoDeskClient
 
-    from .zoho import _zoho_error_hint  # même famille, source unique du diagnostic
+    from .zoho import _check_consent_given, _zoho_error_hint  # même famille, source unique
 
+    _check_consent_given(fields)
     api_domain, accounts_url = _resolve_dc_domains(fields.get("data_center"))
     try:
         tok = requests.post(f"{accounts_url}/oauth/v2/token", data={

@@ -56,6 +56,22 @@ def _resolve_dc_domains(data_center: Optional[str]) -> tuple[str, str]:
     return _DC_DOMAINS[dc]
 
 
+def _check_consent_given(fields: dict) -> None:
+    """Lève si l'app est posée mais le consentement pas encore donné.
+
+    Sans ce garde, la sonde tente un refresh sans refresh_token : Zoho renvoie une
+    erreur de grant que `_zoho_error_hint` traduit en « refresh token périmé —
+    régénère-le », qui envoie l'utilisateur régénérer quelque chose qui n'existe pas
+    encore (vécu au premier test réel du mode server-based). L'état intermédiaire de
+    la connexion en deux temps est NORMAL : on le nomme."""
+    if fields.get("client_id") and fields.get("client_secret") \
+            and not fields.get("refresh_token"):
+        raise ValueError(
+            "app Zoho enregistrée, mais l'autorisation n'a pas encore été donnée — "
+            "clique « Autoriser oto chez Zoho » sur la fiche du connecteur. "
+            "(Ou colle un refresh token si tu utilises un self client.)")
+
+
 def _zoho_error_hint(exc: Exception) -> str:
     """Traduit l'erreur OAuth Zoho brute en message actionnable pour la sonde."""
     low = str(exc).lower()
@@ -114,6 +130,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
     """
     from oto.tools.zoho.client import ZohoClient
 
+    _check_consent_given(fields)
     api_domain, accounts_url = _resolve_dc_domains(fields.get("data_center"))
 
     # 1) auth — refresh brut : valide les 4 champs ET capte le `scope` accordé (le
