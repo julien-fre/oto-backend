@@ -187,13 +187,11 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
         credentials_store.backfill_member_scope()
     except Exception as e:
         logger.warning("backfill_member_scope at _build_mcp failed: %s", e)
-    # ADR 0044 §F R2 : clés plateforme legacy + grants → instances scope PLATFORM
-    # (credential re-chiffré + accès share_mode/share_down + quota meta.rate_limit*).
-    # Idempotent, re-dérivé chaque boot tant que legacy = vérité (fenêtre R2→R4).
-    try:
-        credentials_store.backfill_platform_scope()
-    except Exception as e:
-        logger.warning("backfill_platform_scope at _build_mcp failed: %s", e)
+    # (Le backfill ADR 0044 §F R2 — clés plateforme legacy → instances scope PLATFORM —
+    # a été RETIRÉ le 2026-07-28 : la fenêtre R2→R4 est close, `platform_keys` est droppée
+    # par les migrations (`db/_init.py`) et les lectures passent par le coffre unifié. Il
+    # ne migrait donc plus rien : il levait « relation platform_keys does not exist » à
+    # CHAQUE boot, allongeant d'autant la fenêtre pendant laquelle le service ne répond pas.)
     # ADR 0033 B4 : unipile_accounts au grain (sub, org, provider) — org de contexte
     # NOT NULL + platform_seat + PK composite. Même fenêtre (org maison garantie).
     try:
