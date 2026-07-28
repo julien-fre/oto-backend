@@ -61,3 +61,21 @@ def test_unrelated_exception_still_internal():
     assert _is_upstream_managed_error(e) is False
     assert _is_expected_error(e) is False
     assert classify(e).code == "internal"
+
+
+def test_identity_mismatch_garde_les_deux_ids(monkeypatch):
+    """Signal #282 : le message d'`identity_mismatch` doit NOMMER les ids comparés.
+
+    `scrub` masque tout jeton ≥20 caractères pour ne pas fuiter d'identifiant interne
+    — mais appliqué ici, il transformait le diagnostic en « profil demandé '[id]',
+    reçu '[id]' » : un message qui affirme une différence sans jamais dire laquelle.
+    Ces messages sont rédigés par NOUS (oto-core), pas relayés de l'amont.
+    """
+    demande, recu = "ACoAAB1234567890abcdefgh", "ACoAAC0987654321zyxwvuts"
+    e = UnipileError(f"Unipile identity_mismatch: profil demandé {demande!r}, "
+                     f"reçu {recu!r} (object='UserProfile'). Réponse rejetée — réessaie.")
+    info = classify(e)
+    assert info.code == "invalid_input"
+    assert demande in info.message and recu in info.message, (
+        "les deux identifiants doivent rester lisibles — c'est TOUT le diagnostic")
+    assert "[id]" not in info.message

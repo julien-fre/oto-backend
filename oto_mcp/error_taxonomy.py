@@ -305,12 +305,21 @@ def classify(exc) -> ErrorInfo:
 
     # (4b) Erreur connecteur amont GÉRÉE sans statut HTTP (UnipileError d'input/config,
     # #90) : son message est agent-utile (« Facette introuvable… », « compte non
-    # connecté ») → on l'écho scrubbé plutôt qu'un « Erreur interne » opaque.
+    # connecté ») → on l'écho TEL QUEL plutôt qu'un « Erreur interne » opaque.
+    #
+    # PAS de `scrub` ici (retiré le 2026-07-28, signal #282) : ces messages sont rédigés
+    # PAR NOUS dans oto-core, pas relayés de l'amont — c'est exactement le cas que la
+    # docstring de `scrub` exclut (« jamais aux McpError qu'on a nous-mêmes curées »).
+    # Les scrubber détruisait leur seule valeur : `identity_mismatch` compare l'id
+    # DEMANDÉ et l'id REÇU, tous deux des identifiants LinkedIn publics de >20 caractères
+    # → `_LONG_ID` rendait « profil demandé '[id]', reçu '[id]' », c'est-à-dire un message
+    # qui dit qu'il y a une différence sans jamais dire laquelle. Les messages VRAIMENT
+    # amont gardent leur scrub : ils passent par le chemin (3), au-dessus.
     if _is_upstream_managed_error(exc):
         for e in _chain(exc):
             if type(e).__name__ == "UnipileError":
                 return ErrorInfo("invalid_input", False,
-                                 scrub(str(e)) or "Requête refusée par le service amont.")
+                                 str(e) or "Requête refusée par le service amont.")
 
     # (5) Reste = bug/erreur interne : PAS d'écho de str(exc) (anti-fuite).
     return ErrorInfo("internal", False, "Erreur interne du serveur.")
