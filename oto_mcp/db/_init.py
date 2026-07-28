@@ -317,12 +317,12 @@ def init_db() -> None:
         conn.execute("DROP TABLE IF EXISTS org_group_instruction_revisions")
         conn.execute("DROP TABLE IF EXISTS org_group_instructions")
         # ADR 0042 §Convergence des surfaces (28/07) — `user_agent_readme`, DERNIER
-        # vestige du vocabulaire « agent readme » : ce LOT retire tout le code qui la
-        # touche (backfill ci-dessus, repointage `migrate_sub`, DDL) ; son DROP part au
-        # lot SUIVANT, une fois celui-ci promu prod. Raison (même danse que les jumelles
-        # ci-dessus) : dropper dans le même déploiement rendrait le ROLLBACK mortel — le
-        # tag précédent porte encore le backfill `INSERT … FROM user_agent_readme`, dont
-        # le boot échouerait sur une table absente. Contrôlée vide (prod ET preprod).
+        # vestige du vocabulaire « agent readme ». Lot final de la danse : le lot
+        # précédent (v1.22.0, PROMU prod) a retiré tout le code qui la touchait — son
+        # backfill de boot, le repointage `migrate_sub`, sa DDL — donc un rollback vers
+        # lui boote sans elle. Le DROP ne peut plus casser en arrière. Table contrôlée
+        # VIDE avant (prod ET preprod : 0 ligne, aucune écriture depuis le gel du 06/07).
+        conn.execute("DROP TABLE IF EXISTS user_agent_readme")
         # ADR 0035 (B2) : un lien peut BINDER un slot par NOM — vocabulaire DU PROJET
         # (deux procédures liées partageant `sortie` partagent le binding). Unicité
         # (projet, slot) = zéro ambiguïté par nommage explicite, refusée au link (409).
