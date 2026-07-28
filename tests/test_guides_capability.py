@@ -121,8 +121,8 @@ def test_capabilities_registered():
     by_key = {c.key: c for c in CAPABILITIES}
     for k in ("me.guides.list", "me.guides.get", "me.guides.set", "me.guides.delete"):
         assert k in by_key and by_key[k].mcp is None
-    rest = by_key["me.guides.set"].rest
-    assert rest.verb == "PUT" and rest.path == "/api/me/guides/{scope}/{slug}"
+    first = by_key["me.guides.set"].rest_bindings()[0]
+    assert first.verb == "PUT" and first.path == "/api/me/guides/{scope}/{slug}"
 
 
 # ── delivery='init' : le readme d'un scope EST un guide (ADR 0042 §Surfaces) ──
@@ -194,3 +194,39 @@ def test_agent_readme_routes_delegate_to_the_guide(init_store):
     assert init_store["set_init"] == ("user", "u1", "verbatim")
     assert AR._get_readme(_ctx(sub="u1"), AR._NoInput()) == {"body_md": "verbatim",
                                                              "updated_at": None}
+
+
+def test_init_targets_an_explicit_org_not_the_active_one(init_store, monkeypatch):
+    """Une vue qui gère UNE org/équipe passe son id — sinon on éditerait le readme de
+    l'org « active » de la session, qui n'est pas ce que l'écran montre."""
+    G._set(_ctx(sub="admin", org=1), G.GuideSetInput(scope="org", delivery="init",
+                                                     owner_id="99", body_md="x"))
+    assert init_store["set_init"] == ("org", "99", "x")     # 99, pas l'org active 1
+
+
+def test_init_read_of_another_org_requires_membership(init_store, monkeypatch):
+    import oto_mcp.roles as roles
+    monkeypatch.setattr(roles, "is_org_member", lambda sub, oid: sub == "membre")
+    with pytest.raises(AuthzDenied) as e:
+        G._get(_ctx(sub="etranger", org=1), G.GuideRefInput(scope="org", delivery="init",
+                                                            owner_id="99"))
+    assert e.value.status == 403
+    assert G._get(_ctx(sub="membre", org=1),
+                  G.GuideRefInput(scope="org", delivery="init", owner_id="99"))["scope"] == "org"
+
+
+def test_init_group_targets_explicit_team(init_store, monkeypatch):
+    import oto_mcp.roles as roles
+    monkeypatch.setattr(roles, "can_admin_group", lambda sub, gid: sub == "chef")
+    G._set(_ctx(sub="chef"), G.GuideSetInput(scope="group", delivery="init",
+                                             owner_id="7", body_md="équipe"))
+    assert init_store["set_init"] == ("group", "7", "équipe")
+
+
+def test_rest_bindings_cover_me_and_by_id():
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    by_key = {c.key: c for c in CAPABILITIES}
+    paths = {b.path for b in by_key["me.guides.set"].rest_bindings()}
+    assert paths == {"/api/me/guides/{scope}/{slug}",
+                     "/api/orgs/{id}/guides/{scope}/{slug}",
+                     "/api/groups/{id}/guides/{scope}/{slug}"}
