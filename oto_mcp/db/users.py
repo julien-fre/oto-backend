@@ -173,12 +173,12 @@ def migrate_sub(old_sub: str, new_sub: str) -> bool:
             {"role": _stronger_role(old["role"], new.get("role")),
              "av": old.get("avatar_url"), "new": new_sub},
         )
-        # 2. user_account_profile + user_agent_readme (PK sub) : retirer le frais du new
-        #    PUIS repointer l'ancien (garde l'historique). DELETE d'abord → pas de conflit PK.
+        # 2. user_account_profile (PK sub) : retirer le frais du new PUIS repointer
+        #    l'ancien (garde l'historique). DELETE d'abord → pas de conflit PK.
+        #    (La NOTE de l'user suit désormais par `("guides", "owner_id")` dans
+        #    `_SUB_COLUMNS` — elle a quitté `user_agent_readme` avec l'ADR 0042.)
         conn.execute("DELETE FROM user_account_profile WHERE sub=%s", (new_sub,))
         conn.execute("UPDATE user_account_profile SET sub=%s WHERE sub=%s", (new_sub, old_sub))
-        conn.execute("DELETE FROM user_agent_readme WHERE sub=%s", (new_sub,))
-        conn.execute("UPDATE user_agent_readme SET sub=%s WHERE sub=%s", (new_sub, old_sub))
         # 3. repointer toutes les colonnes sub.
         for table, col in _SUB_COLUMNS:
             conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s", (new_sub, old_sub))

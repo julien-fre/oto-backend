@@ -172,17 +172,9 @@ CREATE TABLE IF NOT EXISTS user_account_profile (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Agent README PERSONNEL de l'utilisateur : prose markdown libre injectée à chaque
--- session (bloc C), CUMULÉE après les README d'org et d'équipe (plateforme > org >
--- équipe > user, du général au spécifique). Édité depuis le dashboard (/account).
--- En CLAIR (prose, pas un credential). ≠ user_account_profile (data model structuré
--- entretenu par l'agent) : ici c'est la voix de l'utilisateur, verbatim.
-CREATE TABLE IF NOT EXISTS user_agent_readme (
-    sub TEXT PRIMARY KEY,
-    body_md TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- (Ex-`user_agent_readme` : la note personnelle de l'utilisateur est un GUIDE
+-- `scope='user', delivery='init'` depuis l'ADR 0042 — plus une table à elle. La
+-- DDL est retirée ici ; le DROP de la table résiduelle suit au lot d'après.)
 
 
 -- Acceptation des documents légaux par utilisateur (gate frontend LegalGate, ADR

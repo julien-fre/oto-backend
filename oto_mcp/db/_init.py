@@ -216,12 +216,10 @@ def init_db() -> None:
             "       COALESCE(updated_at, NOW()), COALESCE(updated_at, NOW()) "
             "FROM platform_instructions WHERE key = 'secret_sauce' "
             "ON CONFLICT (scope, owner_id, slug) DO NOTHING")
-        conn.execute(
-            "INSERT INTO guides (scope, owner_id, slug, delivery, body_md, created_at, updated_at) "
-            "SELECT 'user', sub, 'readme', 'init', body_md, "
-            "       COALESCE(created_at, NOW()), COALESCE(updated_at, NOW()) "
-            "FROM user_agent_readme WHERE COALESCE(body_md, '') <> '' "
-            "ON CONFLICT (scope, owner_id, slug) DO NOTHING")
+        # (Le backfill jumeau `user_agent_readme` → guides est RETIRÉ avec la table
+        # elle-même — cf. le DROP plus bas. Il a tourné à chaque boot du 06/07 au 28/07 ;
+        # le laisser ferait échouer le premier boot post-drop, exactement le piège noté
+        # au barreau 2 ci-dessous.)
         # Barreau 2 : readmes d'org + d'équipe (slug réservé claude_md) sortis de
         # `*_instructions` vers `guides` — backfills one-shot RETIRÉS (cadrage 10/07,
         # chantier procédures B1) : ils ont tourné en prod à chaque boot depuis le
@@ -318,6 +316,13 @@ def init_db() -> None:
         # no-op permanents, filet des environnements en retard.
         conn.execute("DROP TABLE IF EXISTS org_group_instruction_revisions")
         conn.execute("DROP TABLE IF EXISTS org_group_instructions")
+        # ADR 0042 §Convergence des surfaces (28/07) — `user_agent_readme`, DERNIER
+        # vestige du vocabulaire « agent readme » : ce LOT retire tout le code qui la
+        # touche (backfill ci-dessus, repointage `migrate_sub`, DDL) ; son DROP part au
+        # lot SUIVANT, une fois celui-ci promu prod. Raison (même danse que les jumelles
+        # ci-dessus) : dropper dans le même déploiement rendrait le ROLLBACK mortel — le
+        # tag précédent porte encore le backfill `INSERT … FROM user_agent_readme`, dont
+        # le boot échouerait sur une table absente. Contrôlée vide (prod ET preprod).
         # ADR 0035 (B2) : un lien peut BINDER un slot par NOM — vocabulaire DU PROJET
         # (deux procédures liées partageant `sortie` partagent le binding). Unicité
         # (projet, slot) = zéro ambiguïté par nommage explicite, refusée au link (409).
