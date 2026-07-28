@@ -10,11 +10,12 @@ from __future__ import annotations
 
 from typing import Optional
 
+import requests
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, connector_verify
 
 # Zoho héberge par data center régional : l'API Desk ET le refresh OAuth sont liés à
 # leur région d'émission (un self-client `.eu` tapant `desk.zoho.com`/`accounts.zoho.com`
@@ -48,7 +49,71 @@ def _resolve_dc_domains(data_center: Optional[str]) -> tuple[str, str]:
     return _DC_DOMAINS[dc]
 
 
+# Surface Desk → scope OAuth qui la débloque. Sert la sonde ET le diagnostic : un
+# `SCOPE_MISMATCH` brut de Zoho ne dit PAS quel scope manque (feedback #299), alors
+# que c'est la seule information dont on a besoin pour régénérer le self-client.
+_DESK_SCOPES = (
+    ("départements", "Desk.basic.READ", lambda c: c.list_departments()),
+    ("tickets", "Desk.tickets.READ", lambda c: c.list_tickets(limit=1)),
+    ("contacts", "Desk.contacts.READ", lambda c: c.list_contacts(limit=1)),
+    ("articles (KB)", "Desk.articles.READ", lambda c: c.list_articles(limit=1)),
+)
+
+
+def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (contrat de sonde)
+    """Sonde SANS effet de bord, en deux temps — même patron que le connecteur CRM.
+
+    1. **refresh OAuth** : valide client_id + client_secret + refresh_token + région.
+    2. **lecture réelle de chaque surface Desk** (`per_page`/`limit` = 1) : un token
+       Zoho peut authentifier avec des scopes PARTIELS — cas vécu, les articles
+       répondaient 200 pendant que tickets/contacts/départements rendaient un
+       `SCOPE_MISMATCH` opaque. Aucune surface lisible ⇒ échec, en citant le scope
+       accordé et ceux qui manquent (le credential est inutilisable). Au moins une
+       lisible ⇒ succès : le credential marche, même si restreint.
+    """
+    from oto.tools.zohodesk.client import ZohoDeskClient
+
+    from .zoho import _zoho_error_hint  # même famille, source unique du diagnostic
+
+    api_domain, accounts_url = _resolve_dc_domains(fields.get("data_center"))
+    try:
+        tok = requests.post(f"{accounts_url}/oauth/v2/token", data={
+            "grant_type": "refresh_token",
+            "client_id": fields.get("client_id"),
+            "client_secret": fields.get("client_secret"),
+            "refresh_token": fields.get("refresh_token"),
+        }, timeout=20).json()
+    except Exception as e:  # noqa: BLE001 — réseau / réponse illisible
+        raise ValueError(f"échec de connexion Zoho Desk : {type(e).__name__}") from e
+    if "access_token" not in tok:
+        raise ValueError(_zoho_error_hint(tok.get("error") or tok))
+    granted = tok.get("scope", "")
+
+    client = ZohoDeskClient(
+        client_id=fields.get("client_id"), client_secret=fields.get("client_secret"),
+        refresh_token=fields.get("refresh_token"), org_id=fields.get("org_id"),
+        api_domain=api_domain, accounts_url=accounts_url,
+    )
+    missing: list[str] = []
+    for label, scope, call in _DESK_SCOPES:
+        try:
+            call(client)
+            return  # au moins une surface lisible → credential utilisable
+        except Exception as e:  # noqa: BLE001 — l'erreur provider EST le retour de sonde
+            if "SCOPE" in str(e).upper():
+                missing.append(f"{label} → {scope}")
+    if missing:
+        extra = f" (scope accordé : {granted})" if granted else ""
+        raise ValueError(
+            "le token authentifie mais n'ouvre AUCUNE surface Zoho Desk" + extra
+            + " — scopes attendus : " + " ; ".join(missing)
+            + ". Régénère le self-client Desk avec ces scopes.")
+    raise ValueError("connexion Zoho Desk établie mais aucune surface lisible "
+                     "(org_id erroné, ou départements/tickets inaccessibles).")
+
+
 def register(mcp: FastMCP) -> None:
+    connector_verify.register("zohodesk", _verify)
     from oto.tools.zohodesk.client import ZohoDeskClient
 
     def _client() -> ZohoDeskClient:

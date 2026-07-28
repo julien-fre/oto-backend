@@ -59,6 +59,30 @@ def _decode_cursor(cursor: str) -> str:
         raise InvalidCursor(cursor) from e
 
 
+def _filter_specs(filter: Optional[dict]) -> list[dict]:
+    """`{col: valeur}` ou `{col: {op: valeur}}` → la liste `{field, op, value}` du
+    moteur SQL (ops whitelistés par `db._ds_filter_clauses`, qui lève sur inconnu).
+
+    Une valeur scalaire reste une égalité (contrat historique) ; un dict ouvre les
+    opérateurs déjà servis au dashboard — `contains`, `ne`, `in`, `gt/gte/lt/lte`,
+    `empty`/`not_empty`. Sans ça, une question triviale (« quel post a une autrice
+    prénommée Sylvie ? ») obligeait à dumper tout le namespace et à filtrer en
+    local, alors que le SQL savait le faire.
+    """
+    out: list[dict] = []
+    for k, v in (filter or {}).items():
+        if isinstance(v, dict):
+            if len(v) != 1:
+                raise ValueError(
+                    f"filtre `{k}` : un seul opérateur par colonne "
+                    f"(reçu {sorted(v)!r})")
+            op, value = next(iter(v.items()))
+            out.append({"field": k, "op": str(op), "value": value})
+        else:
+            out.append({"field": k, "op": "eq", "value": v})
+    return out
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -594,27 +618,28 @@ class DatastorePg:
         filter: Optional[dict] = None,
         limit: int = 100,
         cursor: Optional[str] = None,
+        q: Optional[str] = None,
     ) -> dict:
         """Page **keyset** pour l'agent (chemin MCP `data_rows`) : tri stable par
-        `row_id`, filtre exact `{col: val}` poussé en SQL. Renvoie
+        `row_id`, filtre poussé en SQL, recherche plein texte `q`. Renvoie
         `{rows, next_cursor}` — `next_cursor` non nul ⇒ il reste des lignes (repasse-le
         pour la suite). Robuste aux écritures concurrentes (pas d'OFFSET qui dérive)."""
         ns_id = self._resolve(namespace)
-        filters = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
         after = _decode_cursor(cursor) if cursor else None
         rows = db.datastore_list_rows_after(
-            ns_id, after_row_id=after, limit=limit, filters=filters)
+            ns_id, after_row_id=after, limit=limit, q=q,
+            filters=_filter_specs(filter))
         out = [self._row_to_dict(r) for r in rows]
         next_cursor = _encode_cursor(rows[-1]["row_id"]) if len(rows) == limit else None
         return {"rows": out, "next_cursor": next_cursor}
 
-    def count_rows(self, namespace: str, *, filter: Optional[dict] = None) -> int:
-        """Nombre de lignes (filtré exact `{col: val}`), poussé en SQL (`COUNT(*)`)
-        — sans rapatrier les lignes (feedback #191 : stats d'un gros vivier sans
-        charger 300+ lignes en contexte)."""
+    def count_rows(self, namespace: str, *, filter: Optional[dict] = None,
+                   q: Optional[str] = None) -> int:
+        """Nombre de lignes (mêmes `filter`/`q` que `cursor_rows`), poussé en SQL
+        (`COUNT(*)`) — sans rapatrier les lignes (feedback #191 : stats d'un gros
+        vivier sans charger 300+ lignes en contexte)."""
         ns_id = self._resolve(namespace)
-        filters = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
-        return db.datastore_count_rows(ns_id, filters=filters)
+        return db.datastore_count_rows(ns_id, q=q, filters=_filter_specs(filter))
 
     def aggregate(self, namespace: str, *, group_by: Optional[str] = None,
                   metrics: Optional[list] = None, filter: Optional[dict] = None,

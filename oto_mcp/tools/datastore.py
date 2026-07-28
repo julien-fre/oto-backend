@@ -453,10 +453,10 @@ def register(mcp: FastMCP) -> None:
         namespace: str, id: str | None = None,
         filter: Optional[dict] = None, limit: int = 100,
         cursor: str | None = None, fields: Optional[list[str]] = None,
-        count_only: bool = False,
+        count_only: bool = False, q: str | None = None,
     ) -> dict:
         """Read rows. WITH `id` = the single row (by `_id`). WITHOUT `id` = one PAGE
-        of rows (optional exact-match `filter`, `limit`) with a stable cursor.
+        of rows (optional `filter` / free-text `q`, `limit`) with a stable cursor.
 
         List mode returns `{rows, count, next_cursor}`. When `next_cursor` is not null
         there are MORE rows: call again with `cursor=<next_cursor>` (same namespace/
@@ -477,8 +477,16 @@ def register(mcp: FastMCP) -> None:
             namespace: target namespace, or `slot:<name>` = the table bound under
                 that slot name by the ACTIVE project (actionable error if unbound).
             id: `_id` of one row ; omit = list rows.
-            filter: dict `{column: value}` exact match (list mode only),
-                e.g. `{"project": "roundtable"}`.
+            filter: dict `{column: value}` — exact match. A column may instead take
+                ONE operator: `{"posted_at": {"gte": "2026-06-01"}}`,
+                `{"author": {"contains": "sylvie"}}`, `{"status": {"ne": "traité"}}`,
+                `{"idcc": {"in": ["573", "86"]}}`, `{"email": {"not_empty": true}}`.
+                Ops: eq, ne, contains, in, gt, gte, lt, lte, empty, not_empty.
+                Filtering happens in SQL — never pull the whole table to filter it
+                yourself. (list mode only)
+            q: free-text search across the whole row (accent-insensitive substring)
+                — the way to find a row when you don't know WHICH column holds the
+                word. Combines with `filter` (AND). (list mode only)
             limit: page size (default 100, list mode only).
             cursor: opaque `next_cursor` from a previous call = fetch the NEXT page.
             fields: list of column names to keep (projection) — the returned rows
@@ -489,11 +497,12 @@ def register(mcp: FastMCP) -> None:
         namespace = _ns(namespace)
         try:
             if count_only:
-                return {"total": store.count_rows(namespace, filter=filter)}
+                return {"total": store.count_rows(namespace, filter=filter, q=q)}
             if id is not None:
                 row = store.get_row(namespace, id)
                 return _project_row(row, fields) if fields else row
-            page = store.cursor_rows(namespace, filter=filter, limit=limit, cursor=cursor)
+            page = store.cursor_rows(namespace, filter=filter, limit=limit,
+                                     cursor=cursor, q=q)
             rows = [_project_row(r, fields) for r in page["rows"]] if fields else page["rows"]
             out = {"rows": rows, "count": len(rows),
                    "next_cursor": page["next_cursor"]}
@@ -524,6 +533,8 @@ def register(mcp: FastMCP) -> None:
         except RowNotFound:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=_row_not_found_hint(store, namespace, id)))
+        except ValueError as e:  # filtre malformé / opérateur inconnu → actionnable
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
     @mcp.tool()
     def data_aggregate(

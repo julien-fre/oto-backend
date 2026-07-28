@@ -542,8 +542,14 @@ def _ds_filter_clauses(filters: Optional[list]) -> tuple[list[str], list]:
         if not isinstance(f, dict):
             raise ValueError("invalid filter")
         field, op, val = f.get("field"), f.get("op"), f.get("value")
-        if not isinstance(field, str) or not field or op not in _DS_FILTER_OPS:
-            raise ValueError("invalid filter")
+        if not isinstance(field, str) or not field:
+            raise ValueError("invalid filter: `field` manquant ou non textuel")
+        if op not in _DS_FILTER_OPS:
+            # Dire QUELS opérateurs existent : « invalid filter » nu obligeait à
+            # deviner (ou à renoncer et tout rapatrier pour filtrer en local).
+            raise ValueError(
+                f"opérateur de filtre inconnu `{op}` sur la colonne `{field}` — "
+                f"disponibles : {', '.join(sorted(_DS_FILTER_OPS))}")
         if op == "empty":
             clauses.append("(data ->> %s IS NULL OR data ->> %s = '')")
             params.extend([field, field])
