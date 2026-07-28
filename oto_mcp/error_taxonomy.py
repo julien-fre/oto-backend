@@ -160,6 +160,10 @@ class ErrorInfo:
     retryable: bool
     message: str
     hint: Optional[str] = None
+    # Connecteur en cause, quand il est dérivable du nom de l'outil (`tool_not_mounted`).
+    # Le classifieur reste PUR (il ne voit qu'une exception) : c'est l'enveloppe, qui a
+    # le contexte de session, qui s'en sert pour enrichir le hint (instances à portée).
+    connector: Optional[str] = None
 
 
 # net::ERR_* (erreurs Chromium crues) — remplacent tout le message (aucune info utile).
@@ -238,7 +242,8 @@ def classify(exc) -> ErrorInfo:
                 f"`{con}` n'est pas installé dans ta toolbox (ou l'outil y est masqué).",
                 f"appelle-le immédiatement via oto_call(name='{name}', args={{…}}) ; "
                 f"ou installe le connecteur — oto_connector(op='select', name='{con}') "
-                f"— et ouvre une nouvelle conversation pour le voir listé")
+                f"— et ouvre une nouvelle conversation pour le voir listé",
+                connector=con)
         return ErrorInfo("unknown_tool", False, f"Outil `{name}` inconnu.",
                          "vérifie le nom exact avec oto_list_my_tools")
 

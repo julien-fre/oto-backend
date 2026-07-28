@@ -98,6 +98,13 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     selection = connector_selection.list_selection(ctx.sub, org_id)
     recommended = set(org_store.get_org_default_connectors(ctx.org_id) or []) if ctx.org_id else set()
     doc_refs = _doctrine_refs_by_ns(ctx.org_id)
+    # Découvrabilité : une clé peut exister à portée (équipe dont je suis membre,
+    # autre org) sans que la cascade la lise — le connecteur paraît alors « vide »
+    # dans la library alors qu'il est utilisable en épinglant. Jusqu'ici l'info
+    # n'existait qu'APRÈS un appel raté (erreur « rien ne résout »), donc jamais si
+    # le connecteur n'est pas installé (l'appel meurt au dispatch). Une passe
+    # BATCHÉE, hors boucle, pour ne pas payer N×M requêtes.
+    reach = access.reachable_instances_map(ctx.sub, ctx.org_id)
     connectors = []
     for c in _visible_catalog(ctx):
         state = selection.get(c["name"], "not_selected")
@@ -115,14 +122,22 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
         # `option_ok` = SOURCE UNIQUE `access.option_open` (partagée avec status_for) :
         # pas d'option ⟹ ok ; sinon BYO (clé propre) OU has_option. Un seul endroit
         # décide « utilisable » → plus de divergence carte « clé d'org » + « Bloqué ».
-        connectors.append({
+        row = {
             **base,
             "state": state,
             "recommended": c["name"] in recommended,
             "doctrine_ref_count": len(refset),
             "paid_option": opt,
             "option_ok": access.option_open(ctx.sub, c["name"], org=ctx.org_id),
-        })
+        }
+        # Présent SEULEMENT si une instance est à portée → la ligne se distingue au
+        # lieu d'ajouter un champ vide sur 40 lignes. Volontairement distinct de
+        # `recommended` (= baseline de l'org) : surcharger ce dernier ferait mentir
+        # le réglage d'org. C'est de la VISIBILITÉ : le gate dur reste
+        # `require_connector_access` à l'appel.
+        if reach.get(c["name"]):
+            row["reachable_instances"] = reach[c["name"]]
+        connectors.append(row)
     return {"connectors": connectors, "verbose": inp.verbose}
 
 

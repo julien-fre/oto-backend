@@ -1219,6 +1219,63 @@ def reachable_team_key(sub: str, org: Optional[int], provider: str,
     return None
 
 
+def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict]]:
+    """`{provider: [instances à portée]}` en UNE passe — version BATCHÉE de
+    `reachable_instances`, pour annoter un catalogue entier (≈40 connecteurs).
+
+    `reachable_instances` interroge la DB **par provider** (has_group_secret /
+    has_org_secret) : l'appeler en boucle sur le catalogue ferait N×M
+    allers-retours sur un serveur mono-loop. Ici on liste les secrets de chaque
+    entité UNE fois (`list_group_secrets` / `list_org_secrets`) et on inverse en
+    mémoire → coût borné par le nombre d'équipes + d'orgs, pas de providers.
+
+    Limite assumée : ne couvre pas « ma clé MEMBRE dans une autre org » (pas de
+    listing groupé côté `db.has_member_api_key`, qui est per-provider). Le hint
+    d'erreur, lui, la couvre — le catalogue est une surface de découverte, pas
+    l'autorité. Best-effort : ne lève jamais."""
+    out: dict[str, list[dict]] = {}
+
+    def _add(provider: str, item: dict) -> None:
+        out.setdefault(provider, []).append(item)
+
+    try:
+        if org is not None:
+            seen_gids: set = set()
+            groups = list(group_store.list_groups_for_user(sub, org))
+            # #218 : l'org_admin gouverne ses équipes sans en être membre — ses clés
+            # d'équipe lui sont atteignables par escalade (re-gardées à l'appel).
+            from . import roles
+            try:
+                if roles.is_org_admin(sub, org):
+                    known = {g["group_id"] for g in groups}
+                    groups += [{"group_id": g["id"], "name": g["name"]}
+                               for g in group_store.list_groups(org)
+                               if g["id"] not in known]
+            except Exception:
+                pass
+            for g in groups:
+                gid = g["group_id"]
+                if gid in seen_gids:
+                    continue
+                seen_gids.add(gid)
+                for s in group_store.list_group_secrets(gid):
+                    p = s.get("provider")
+                    if p and p in ORG_SHAREABLE_PROVIDERS:
+                        _add(p, {"kind": "group", "id": gid, "name": g["name"]})
+        for o in org_store.list_orgs_for_user(sub):
+            oid = o["org_id"]
+            if oid == org:
+                continue
+            for s in org_store.list_org_secrets(oid):
+                p = s.get("provider")
+                if p and p in ORG_SHAREABLE_PROVIDERS:
+                    _add(p, {"kind": "org", "id": oid,
+                             "name": o.get("name") or f"org {oid}"})
+    except Exception:
+        return out
+    return out
+
+
 def _reachable_hint(sub: str, org: Optional[int], provider: str) -> str:
     """Suffixe actionnable des erreurs « rien ne résout » : remonte les instances
     à portée avec le GESTE de pin pour chacune — jeton d'appel d'abord (`group=`/
