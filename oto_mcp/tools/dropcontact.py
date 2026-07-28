@@ -128,10 +128,16 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
         if not res["done"]:
+            next_step = (
+                "Still processing — call dropcontact_result again in ~20-30s."
+                if res.get("pending")
+                else "Not done, and the reason doesn't match Dropcontact's documented "
+                     "'still processing' state — double-check request_id before retrying."
+            )
             return {
                 "done": False,
                 "reason": res.get("reason", ""),
-                "next_step": "Still processing — call dropcontact_result again in ~20-30s.",
+                "next_step": next_step,
             }
         return {
             "done": True,
