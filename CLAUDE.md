@@ -353,8 +353,14 @@ l'agent l'ouvre (`oto_use_project`) et déroule l'accueil depuis son brief.
 **La fiche « situation avec oto » reste** (qui est l'user, son métier, ses objectifs, son
 CRM, les connecteurs voulus, son ton) — découplée de l'accueil, c'est un data model libre
 relu à chaque session :
-- `tools/profile.py` expose `oto_profile(op="get"|"update", fields=…)` (spine, hors gate,
-  **toujours visible** via `PROTECTED_TOOLS`) — l'agent l'entretient au fil de l'eau.
+- **Capacité `me.profile`** (`capabilities/profile.py`, ADR 0042 §Convergence des surfaces) :
+  UNE implémentation, deux faces — `oto_profile(op="get"|"update", fields=…)` côté MCP
+  (spine, hors gate, **toujours visible** via `PROTECTED_TOOLS`) + `GET`/`PUT /api/me/profile`
+  côté dashboard. ⚠️ Divergence VOULUE entre les faces : `op=update` (agent) **filtre les
+  valeurs vides** — un agent n'efface pas la fiche par mégarde ; le `PUT` (humain) écrit tel
+  quel, donc vider un champ passe. Réponse unique `{profile, updated_at, fields, missing}`.
+  *(Avant le 2026-07-28 : tool écrit à la main `tools/profile.py` **doublé** d'une capacité
+  REST — deux contrats sur une donnée, et l'éditeur dashboard orphelin. Supprimé.)*
 - DB : table `user_account_profile(sub PK, profile jsonb, created_at, updated_at)`
   (`db.get_account_profile` / `db.update_account_profile`). **Injectée au handshake**
   (bloc C, section « Ce que tu sais de l'utilisateur ») → enfin utilisée, plus seulement

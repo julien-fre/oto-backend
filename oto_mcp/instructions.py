@@ -234,7 +234,7 @@ def _format_context(ctx: dict) -> str:
     return "\n".join(lines)
 
 
-# Libellés lisibles des champs connus de la fiche (cf. tools/profile.PROFILE_FIELDS) ;
+# Libellés lisibles des champs connus de la fiche (cf. capabilities/profile.PROFILE_FIELDS) ;
 # une clé libre inconnue est rendue telle quelle.
 _PROFILE_LABELS = {
     "full_name": "Nom", "role": "Rôle", "company": "Entreprise / secteur",
