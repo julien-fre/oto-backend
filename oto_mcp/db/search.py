@@ -41,6 +41,13 @@ def _vec(text_expr: str) -> str:
     return f"to_tsvector('french', {_fold(text_expr)})"
 
 
+def _trgm(text_expr: str) -> str:
+    """Expression d'index TRIGRAMME (#67) sur le texte foldé — rend `ILIKE '%…%'`
+    indexé (substring rapide) en complément de la FTS tokenisée : « syl » retrouve
+    « Sylvie », les fragments/préfixes matchent sans seq-scan. Même `_fold` que la FTS."""
+    return f"({_fold(text_expr)}) gin_trgm_ops"
+
+
 def index_ddl() -> list[str]:
     """DDL des index GIN d'expression (idempotents), consommé par `_init.init_db`.
     `CREATE INDEX` simple (pas CONCURRENTLY : init_db est transactionnel) — tables
@@ -53,6 +60,14 @@ def index_ddl() -> list[str]:
         "WHERE delivery = 'on-demand'",
         # Lignes de datastore (#67 V2.1) — rend les rows trouvables via oto_search.
         f"CREATE INDEX IF NOT EXISTS idx_datastore_rows_fts ON datastore_rows USING GIN ({_vec(DATASTORE_ROWS_TEXT)})",
+        # Index TRIGRAMME (#67) : substring indexé (« syl »→« Sylvie », fragments/préfixes)
+        # en complément de la FTS tokenisée — même repli d'accents. Un par source de prose + rows.
+        f"CREATE INDEX IF NOT EXISTS idx_docs_trgm ON docs USING GIN ({_trgm(DOCS_TEXT)})",
+        f"CREATE INDEX IF NOT EXISTS idx_projects_trgm ON projects USING GIN ({_trgm(PROJECTS_TEXT)})",
+        f"CREATE INDEX IF NOT EXISTS idx_org_instructions_trgm ON org_instructions USING GIN ({_trgm(INSTR_TEXT)})",
+        f"CREATE INDEX IF NOT EXISTS idx_guides_trgm ON guides USING GIN ({_trgm(GUIDES_TEXT)}) "
+        "WHERE delivery = 'on-demand'",
+        f"CREATE INDEX IF NOT EXISTS idx_datastore_rows_trgm ON datastore_rows USING GIN ({_trgm(DATASTORE_ROWS_TEXT)})",
     ]
 
 
@@ -62,12 +77,14 @@ def _prose_query(table: str, text_expr: str, select_cols: str, headline_col: str
     `ts_rank_cd` length-normalized (|32 — une page géante ne domine ni ne disparaît),
     headline sur la saisie brute contre le texte original.
 
-    Trois robustesses (oto-backend#6) via un CTE qui calcule la tsquery UNE fois :
-    - **stopwords/symboles** (« € », « avoir ») : si la requête ne produit aucun
-      lexème (`numnode = 0`), repli ILIKE sur le texte foldé (comme les fichiers) ;
+    Robustesses (oto-backend#6, #67) via un CTE qui calcule la tsquery UNE fois :
+    - **substring toujours actif** (#67) : FTS tokenisée `OR` `ILIKE '%q%'` sur le texte
+      foldé (index TRIGRAMME) → les FRAGMENTS/PRÉFIXES matchent (« syl »→« Sylvie ») en
+      plus des mots/stems, et ça couvre aussi les symboles/stopwords (« € », « avoir » :
+      tsq vide ne matche rien, le substring oui). Rang : ts_rank classe les hits FTS
+      devant, les hits substring-seul (rank 0) en fin ;
     - **fragments** de headline pré-nettoyés des pipes markdown (`_HL_OPTS`) ;
-    - **fallback OR** (traité par le caller `_prose_query`) : si l'AND de tous les
-      termes ne matche rien, on re-tente en OR (au moins un terme)."""
+    - **fallback OR** : si l'AND de tous les termes ne matche rien, on re-tente en OR."""
     vec = _vec(text_expr)
     fold_q = _fold("%s")            # translate(lower(%s), accents…)
     folded_doc = _fold(text_expr)   # le texte du document, foldé (repli ILIKE)
@@ -82,8 +99,11 @@ def _prose_query(table: str, text_expr: str, select_cols: str, headline_col: str
             f"SELECT {select_cols}, ts_rank_cd({vec}, qq.tsq, 32) AS rank, "
             f"ts_headline('french', {hl_text}, qq.tsq, '{_HL_OPTS}') AS headline "
             f"FROM {table}, qq "
-            f"WHERE ((numnode(qq.tsq) > 0 AND {vec} @@ qq.tsq) "
-            f"       OR (numnode(qq.tsq) = 0 AND {folded_doc} ILIKE '%%' || qq.raw || '%%')) "
+            # FTS tokenisée (mots/stems, rangés par ts_rank) OR substring trigramme
+            # (fragments/préfixes « syl »→« Sylvie », rang 0 → en fin). Le substring
+            # couvre AUSSI les symboles/stopwords (numnode=0, tsq vide ne matche rien).
+            f"WHERE ({vec} @@ qq.tsq "
+            f"       OR {folded_doc} ILIKE '%%' || qq.raw || '%%') "
             f"  AND ({where_scope}) "
             "ORDER BY rank DESC LIMIT %s"
         )

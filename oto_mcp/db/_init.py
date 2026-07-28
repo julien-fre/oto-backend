@@ -115,6 +115,9 @@ def init_db() -> None:
         # Lot 3 Ship 1 : index FTS de la recherche transverse (GIN d'expression —
         # PAS de colonne STORED, qui réécrirait la table sous ACCESS EXCLUSIVE).
         # Source unique des expressions : db/search.py (index ↔ requête identiques).
+        # pg_trgm requis par les index TRIGRAMME (#67 : substring indexé « syl »→« Sylvie »
+        # en plus de la FTS tokenisée) → l'extension DOIT précéder.
+        conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
         from . import search as _search
         for ddl in _search.index_ddl():
             conn.execute(ddl)
