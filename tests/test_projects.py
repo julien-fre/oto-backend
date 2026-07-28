@@ -398,10 +398,36 @@ def test_resolve_tableau_id(monkeypatch):
     # id numérique → tel quel ; nom → id du namespace (datastore du propriétaire) ; inconnu → None.
     monkeypatch.setattr(P.db, "get_datastore_namespace",
                         lambda ot, oid, name: {"id": 65} if name == "vivier" else None)
-    assert P._resolve_tableau_id("org", "83", "65") == "65"
-    assert P._resolve_tableau_id("org", "83", "vivier") == "65"
-    assert P._resolve_tableau_id("org", "83", "nope") is None
-    assert P._resolve_tableau_id("org", "83", "") is None
+    org_row = {"owner_type": "org", "owner_id": "83"}
+    assert P._resolve_tableau_id(org_row, "65") == "65"
+    assert P._resolve_tableau_id(org_row, "vivier") == "65"
+    assert P._resolve_tableau_id(org_row, "nope") is None
+    assert P._resolve_tableau_id(org_row, "") is None
+
+
+def test_resolve_tableau_id_projet_perso_cherche_dans_son_org(monkeypatch):
+    """Un projet PERSO appartient à `(user, sub)`, ses tableaux vivent dans l'ORG de travail.
+
+    Signaux #272/#286/#287 : chercher contre le seul owner brut rendait le lien par NOM
+    impossible (la doc promet « id/slug/name », seul l'id marchait)."""
+    seen: list[tuple[str, str]] = []
+
+    def _get_ns(ot, oid, name):
+        seen.append((ot, oid))
+        return {"id": 161} if (ot, oid) == ("org", "2") and name == "leads" else None
+
+    monkeypatch.setattr(P.db, "get_datastore_namespace", _get_ns)
+    row = {"owner_type": "user", "owner_id": "sub1", "context_org_id": 2}
+    assert P._resolve_tableau_id(row, "leads") == "161"
+    assert seen == [("user", "sub1"), ("org", "2")]   # le plus spécifique d'abord
+
+
+def test_resolve_tableau_id_projet_equipe_retombe_sur_l_org_parente(monkeypatch):
+    monkeypatch.setattr(P.db, "get_datastore_namespace",
+                        lambda ot, oid, name: {"id": 7} if (ot, oid) == ("org", "35") else None)
+    monkeypatch.setattr(P.group_store, "get_group", lambda gid: {"id": gid, "org_id": 35})
+    row = {"owner_type": "group", "owner_id": "4"}
+    assert P._resolve_tableau_id(row, "leads") == "7"
 
 
 def test_link(seams):

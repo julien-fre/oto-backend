@@ -158,17 +158,42 @@ def _procedure_ref_to_id(org_id: Optional[int], ref: str) -> str:
     return str(inst["id"]) if inst and inst.get("id") is not None else ref
 
 
-def _resolve_tableau_id(owner_type: object, owner_id: object, ref: str) -> Optional[str]:
+def _tableau_owner_candidates(row: dict) -> list[tuple[str, str]]:
+    """Où CHERCHER un tableau nommé, pour un projet donné — du plus spécifique au plus large.
+
+    Le détenteur d'un projet n'est PAS le détenteur de ses tableaux : un projet PERSO
+    (scope membre, ADR 0030 §8) appartient à `(user, sub)` tandis que ses tableaux naissent
+    dans l'ORG de travail ; un projet d'ÉQUIPE appartient au groupe, mais l'équipe range
+    couramment ses tableaux au niveau de l'org parente. Chercher contre le seul owner brut
+    rendait le lien par NOM impossible dans les deux cas — la doc promet « id/slug/name »,
+    seul l'id marchait (signaux #272 · #286 · #287)."""
+    otype, oid = str(row.get("owner_type") or ""), str(row.get("owner_id") or "")
+    cands: list[tuple[str, str]] = []
+    if otype and oid:
+        cands.append((otype, oid))
+    if otype == "user" and row.get("context_org_id"):
+        cands.append(("org", str(row["context_org_id"])))   # l'org de travail du projet perso
+    elif otype == "group" and oid.isdigit():
+        g = group_store.get_group(int(oid))
+        if g and g.get("org_id"):
+            cands.append(("org", str(g["org_id"])))          # l'org parente de l'équipe
+    return cands
+
+
+def _resolve_tableau_id(row: dict, ref: str) -> Optional[str]:
     """Réf de tableau → l'ID NUMÉRIQUE stable du namespace (comme les procédures). Accepte
-    un id (chiffres, renvoyé tel quel) OU un nom de namespace, résolu contre le datastore du
-    PROPRIÉTAIRE du projet. Renvoie None si un nom ne résout pas (namespace inexistant) — le
+    un id (chiffres, renvoyé tel quel) OU un nom de namespace, résolu contre les scopes du
+    projet (`_tableau_owner_candidates`). Renvoie None si un nom ne résout nulle part — le
     caller décide (erreur au link, ref brute conservée à l'unlink). Stocker l'id garde la
     résolution cohérente (audit, list_project_links, share_ui l'attendent numérique)."""
     ref = str(ref or "").strip()
     if not ref or ref.isdigit():
         return ref or None
-    ns = db.get_datastore_namespace(str(owner_type or ""), str(owner_id or ""), ref)
-    return str(ns["id"]) if ns and ns.get("id") is not None else None
+    for otype, oid in _tableau_owner_candidates(row):
+        ns = db.get_datastore_namespace(otype, oid, ref)
+        if ns and ns.get("id") is not None:
+            return str(ns["id"])
+    return None
 
 
 def _mcp_unresolvable_tools(row: dict, tools: list[str],
@@ -589,7 +614,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             # Normalise nom→id (le datastore du propriétaire du projet). Stocker l'id garde
             # la résolution cohérente ; un nom introuvable au LINK = erreur (pas de lien mort
             # silencieux), mais un unlink d'une réf legacy/supprimée passe avec la réf brute.
-            resolved = _resolve_tableau_id(row.get("owner_type"), row.get("owner_id"), target_ref)
+            resolved = _resolve_tableau_id(row, target_ref)
             if resolved is not None:
                 target_ref = resolved
             elif inp.op == "link":
