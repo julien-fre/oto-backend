@@ -256,13 +256,31 @@ def register(mcp: FastMCP) -> None:
 
         A typed namespace renders as readable cards/records instead of a flat table.
         `schema` = {"fields": [{"key": str, "label"?: str, "type"?: "text|number|date|
-        bool|json|object|list", "role"?: "title|badge|metric|status|qualif|note"}],
+        datetime|bool|json|object|list|url|email|enum",
+        "role"?: "title|badge|metric|status|qualif|note"}],
         "key"?: str, "strict"?: bool}.
         The optional top-level `"key"` names the field that is the row's BUSINESS KEY
         (e.g. "email", "siren"): batch writes (`data_write` rows=…, `oto_upload_url`)
         then UPSERT on it — same key value updates the existing row instead of
         duplicating. Default is SOFT (rendering/dedup only, no write validation).
         Pass schema=null to switch back to free-table mode.
+
+        PRESENTATION — the schema also DRIVES THE UI (there is no visual editor:
+        this tool IS the way to configure how a table looks):
+        - field ORDER in the record view = the order of `fields` here. Reorder the
+          list to reorder the form.
+        - `type` picks the WIDGET: `date`/`datetime` → date picker (readable, not a
+          raw ISO string), `url` → compact field + open link (never a giant text
+          box), `email` → mail field, `enum` (+ `options: [...]`) → dropdown,
+          `bool` → true/false, `number` → numeric. Untyped fields fall back to a
+          plain text box, so DECLARE the type when the rendering matters.
+        - `width: "half"|"full"` = the field's width in the record form. Without it
+          the width is derived from the widget — declare it to keep a stable layout.
+        - `hidden: true` = keep the field OUT of the table columns by default (still
+          editable in the record). Use it for opaque ids and technical fields.
+        - `role` also ranks table columns: role-bearing fields (title, status,
+          badge, metric, qualif) are the ones shown by default when a schema has
+          many fields — the rest stays one click away in the column picker.
 
         STRUCTURED RECORDS (ADR 0046 — every layer opt-in):
         - nested types: `type:"object"` + `fields:[…]` (sub-record, e.g. occupant);
