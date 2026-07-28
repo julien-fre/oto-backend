@@ -191,3 +191,40 @@ def test_persist_writes_the_same_fields_as_self_client(monkeypatch):
 def test_supports_only_the_three_zoho_connectors():
     assert z.supports("zoho") and z.supports("zohodesk") and z.supports("zohoanalytics")
     assert not z.supports("salesforce")
+
+
+# --- l'étape manquante remonte au front (seam status_hints) ------------------
+
+def test_pending_action_when_app_posted_but_no_consent(monkeypatch):
+    """Connexion en deux temps : app posée, consentement pas donné → le front doit
+    pouvoir afficher l'étape suivante. Sans ça la carte paraît configurée et
+    échoue au premier appel (et l'encart OAuth disparaîtrait de l'écran)."""
+    from oto_mcp import status_hints
+    from oto_mcp.tools import zoho as zoho_tools  # enregistre les hooks à l'import
+    assert status_hints.has_hook("zohodesk")
+
+    monkeypatch.setattr(zoho_tools.access, "resolve_credential_fields",
+                        lambda con, sub=None: {"client_id": "1000.X",
+                                               "client_secret": "s",
+                                               "data_center": "eu"})
+    action = status_hints.pending_action("zohodesk", "u1", 35, None, {"mode": "user"})
+    assert action == "Autorise oto chez Zoho"
+
+
+def test_no_pending_action_once_consent_given(monkeypatch):
+    from oto_mcp import status_hints
+    from oto_mcp.tools import zoho as zoho_tools
+    monkeypatch.setattr(zoho_tools.access, "resolve_credential_fields",
+                        lambda con, sub=None: {"client_id": "1000.X",
+                                               "client_secret": "s",
+                                               "refresh_token": "1000.rt",
+                                               "data_center": "eu"})
+    assert status_hints.pending_action("zohodesk", "u1", 35, None, {"mode": "user"}) is None
+
+
+def test_no_pending_action_when_nothing_posted():
+    """Rien de posé → le verdict « à connecter » suffit, pas de double message."""
+    from oto_mcp import status_hints
+    from oto_mcp.tools import zoho  # noqa: F401
+    assert status_hints.pending_action(
+        "zohodesk", "u1", 35, None, {"mode": "forbidden"}) is None
