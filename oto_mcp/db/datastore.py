@@ -585,8 +585,14 @@ def _ds_where(ns_id: int, q: Optional[str], filters: Optional[list]) -> tuple[st
     where = "WHERE ns_id = %s"
     params: list = [ns_id]
     if q:
-        where += " AND data::text ILIKE %s"
-        params.append(f"%{q}%")
+        # Recherche plein-texte sur tout le JSON. ACCENT-INSENSIBLE (#67 V2.3) :
+        # même repli d'accents `_fold` qu'`oto_search` → « café » trouve « cafe » et
+        # inversement (fin de la divergence « sans accents repliés »). Reste un substring
+        # (matching partiel conservé, choix de la file feed) — l'alignement en tsquery
+        # tokenisée est un arbitrage distinct.
+        from .projects import _fold  # lazy : projects importe datastore (évite le cycle)
+        where += f" AND {_fold('data::text')} ILIKE '%%' || {_fold('%s')} || '%%'"
+        params.append(q)
     fclauses, fparams = _ds_filter_clauses(filters)
     for c in fclauses:
         where += f" AND {c}"
@@ -599,7 +605,8 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
                         q: Optional[str] = None, filters: Optional[list] = None) -> list[dict]:
     """Page de rows d'un namespace. `order_by` : `_created_at`/`_updated_at`/`_id`
     (colonnes méta) ou un nom de champ user → `data->>field`. `q` : recherche
-    plein-texte sur tout le JSON (`data::text ILIKE`). `filters` : filtres par
+    plein-texte sur tout le JSON (substring ACCENT-INSENSIBLE, aligné sur oto_search).
+    `filters` : filtres par
     colonne (liste `{field, op, value}`, combinés AND — cf. `_ds_filter_clauses`).
     Tri/pagination/recherche/filtres côté SQL (server-side, ADR 0016). `limit=None`
     = toutes les rows (compat `store.list_rows` / MCP `data_rows`)."""
