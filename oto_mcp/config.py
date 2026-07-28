@@ -18,7 +18,20 @@ def project_domain() -> str:
     PREPROD = `oto.ninja`** (cutover ADR 0040) : sans ça le routing par Host et les URLs
     dérivées restaient figés sur la prod (`.oto.cx`), rendant les endpoints de projet
     injoignables en preprod. Env `OTO_PROJECT_DOMAIN` (défaut `oto.cx`)."""
-    return os.environ.get("OTO_PROJECT_DOMAIN", "oto.cx").strip().lower().lstrip(".")
+    return os.environ.get("OTO_PROJECT_DOMAIN", _PROD_PROJECT_DOMAIN).strip().lower().lstrip(".")
+
+
+# Domaine de projet de PRODUCTION : le seul dont les sous-domaines obtiennent un vrai
+# certificat (Caddy ACME on-demand sur `*.mcp.oto.cx` / `*.share.oto.cx`). Hors prod,
+# Caddy sert sa CA interne — pratique pour tester, rejeté par tout client MCP réel.
+_PROD_PROJECT_DOMAIN = "oto.cx"
+
+
+def project_domain_is_production() -> bool:
+    """L'URL d'un projet publié ici est-elle distribuable à un tiers ? Faux en preprod :
+    le certificat de `*.share.<D>` y est interne, donc un lien envoyé à un client sera
+    refusé par son client MCP (feedback #308 — découvert en livrant un vrai client)."""
+    return project_domain() == _PROD_PROJECT_DOMAIN
 
 
 def mcp_audience_alts() -> frozenset[str]:

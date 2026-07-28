@@ -256,6 +256,18 @@ def list_published_mcp_projects() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def set_project_mcp_instructions(project_id: int, instructions_md: Optional[str]) -> None:
+    """Prose SERVIE AU DESTINATAIRE d'un endpoint publié (ADR 0032). Distincte du
+    `brief_md` : celui-ci est INTERNE (gotchas, arbitrages, noms de contacts, numéros
+    de feedback) et ne doit pas partir chez un tiers. Vide/None = pas de prose publiée
+    (l'endpoint sert alors un minimum, jamais les instructions de la plateforme)."""
+    body = (instructions_md or "").strip() or None
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE projects SET mcp_instructions_md = %s, updated_at = NOW() "
+            "WHERE id = %s", (body, project_id))
+
+
 def set_project_mcp_publication(project_id: int, *, slug: Optional[str],
                                 access: str, tools: list[str],
                                 expose_datastore: bool = False,

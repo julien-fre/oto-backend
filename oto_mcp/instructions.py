@@ -361,6 +361,37 @@ def compose_session(sub: str | None, org_id: int | None) -> str:
     return "\n\n".join(l["body"] for l in session_layers(sub, org_id) if l["body"])
 
 
+def compose_published_project(project_id: int) -> str | None:
+    """L'artefact servi au DESTINATAIRE d'un endpoint de projet publié (ADR 0032).
+
+    Ce n'est PAS `compose_session` : le destinataire est un tiers sans compte. Lui
+    injecter le socle plateforme lui sert un mode d'emploi d'outils qu'il n'a pas (et
+    nous expose ~12 Ko de vocabulaire interne, feedback #309), pendant qu'il n'a AUCUN
+    chemin vers ce que le projet contient — ni poussé, ni tiré (`oto_doc`/`oto_search`
+    ne résolvent pas sans `sub`). On sert donc la prose publiée du projet, et rien
+    d'autre. `brief_md` n'est jamais servi : il est interne par construction.
+
+    None = pas de prose publiée → l'appelant laisse la surface statique en place.
+    """
+    try:
+        from . import db
+        row = db.get_project_by_id(int(project_id)) or {}
+    except Exception:  # noqa: BLE001 — fail-open, surface statique
+        return None
+    if not row:
+        return None
+    name = (row.get("name") or "").strip()
+    header = f"# {name}\n\n" if name else ""
+    body = (row.get("mcp_instructions_md") or "").strip()
+    if body:
+        return header + body
+    # Rien de publié : on sert le strict minimum plutôt que le socle plateforme —
+    # 12 Ko de vocabulaire interne chez un tiers, pour des outils qu'il n'a pas.
+    return (header + "Cet espace a été partagé avec toi. Les outils listés ci-dessous "
+            "sont les seuls disponibles : appelle-les pour découvrir ce qu'il contient. "
+            "Son propriétaire n'a pas publié de mode d'emploi.")
+
+
 def default_block(key: str) -> str:
     """Le défaut (seed constant) du bloc plateforme — sert la surface admin à afficher
     le contenu effectif quand la DB n'a pas (encore) de ligne."""

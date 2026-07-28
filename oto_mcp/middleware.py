@@ -73,6 +73,20 @@ class DynamicInstructionsMiddleware(Middleware):
         result = await call_next(context)
         if result is None or not getattr(result, "instructions", None):
             return result
+        # Endpoint de PROJET publié : le client est un tiers sans compte. Il reçoit la
+        # prose du projet, jamais le socle plateforme (feedback #309) — cf.
+        # `instructions.compose_published_project`.
+        try:
+            from . import instructions, subdomain_project
+            pid = subdomain_project.current_anon_project_id()
+            if pid:
+                body = instructions.compose_published_project(pid)
+                if body:
+                    result.instructions = body
+                return result
+        except Exception:
+            logger.warning("instructions de projet publié échouées (fail-open)",
+                           exc_info=True)
         try:
             sub = current_user_sub_from_token()
         except Exception:

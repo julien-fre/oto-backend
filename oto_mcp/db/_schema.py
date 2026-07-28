@@ -289,6 +289,10 @@ CREATE TABLE IF NOT EXISTS projects (
     -- Opt-in ADDITIONNEL, séparé de la lecture (#193) : autoriser l'ÉCRITURE du datastore
     -- (data_write/data_set_schema) sur l'endpoint partagé. Défaut FALSE (lecture seule).
     mcp_expose_datastore_write BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Prose servie au DESTINATAIRE de l'endpoint publié (le client qui branche l'URL).
+    -- Distincte de `brief_md`, qui est interne (gotchas, arbitrages, noms) : publier le
+    -- brief tel quel serait une fuite. NULL = pas de guidage publié.
+    mcp_instructions_md TEXT,
     -- Projet forké depuis un partage public (« Ajouter à mon Oto ») : pointeur vers la
     -- source, pour un import IDEMPOTENT par org (idx_projects_copied_from, créé dans `_init`
     -- après l'ADD COLUMN — même gotcha que is_template sur une table préexistante).

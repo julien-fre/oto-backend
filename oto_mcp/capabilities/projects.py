@@ -47,6 +47,7 @@ class ProjectInput(BaseModel):
     mcp_tools: Optional[list[str]] = None  # allowlist figée du preset (les seuls tools exposés sur le sous-domaine)
     mcp_expose_datastore: Optional[bool] = None  # `secret` uniquement : exposer les tools data_* en LECTURE (tableaux liés au projet, sous l'autorité de l'org). None = DÉFAUT exposé au partage secret (#193) ; passer False pour refermer
     mcp_expose_datastore_write: Optional[bool] = None  # opt-in ADDITIONNEL (#193) : autoriser l'ÉCRITURE (data_write/data_set_schema) ; sans objet si la lecture n'est pas exposée — défaut False (lecture seule)
+    mcp_instructions_md: Optional[str] = None  # prose SERVIE AU DESTINATAIRE de l'endpoint (ce que son agent lit au branchement) — ≠ brief_md, qui reste interne. "" efface.
     # create : SCOPE owner du projet (ADR 0049 — échelle platform/org/group/user).
     # 'user' (défaut) résout sur l'org ACTIVE ; 'org' = une org dont je suis membre ;
     # 'group' = un pôle/équipe (cloisonne le projet à ses membres + admins d'org) ;
@@ -119,6 +120,8 @@ def _view(row: dict) -> dict:
         "mcp_tools": list(row.get("mcp_tools") or []),
         "mcp_expose_datastore": bool(row.get("mcp_expose_datastore")),
         "mcp_expose_datastore_write": bool(row.get("mcp_expose_datastore_write")),
+        # Prose servie au DESTINATAIRE de l'endpoint — ≠ `brief_md`, qui reste interne.
+        "mcp_instructions_md": row.get("mcp_instructions_md") or "",
         "mcp_url": _mcp_url(row.get("mcp_slug"), row.get("mcp_access") or "off"),
         # Base de PARTAGE navigable (lecture seule, humain) — mode `secret` uniquement.
         "share_url": (f"https://{row['mcp_slug']}.share.{config.project_domain()}"
@@ -248,7 +251,8 @@ def unpublish_project_mcp(sub: str, project_id: int) -> dict:
 def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
                         mcp_slug: Optional[str], mcp_tools: Optional[list[str]],
                         expose_datastore: Optional[bool] = None,
-                        expose_datastore_write: Optional[bool] = None) -> dict:
+                        expose_datastore_write: Optional[bool] = None,
+                        instructions_md: Optional[str] = None) -> dict:
     """Cœur de la publication MCP d'un projet (ADR 0032). AUCUN contrôle d'autz (le
     caller a déjà gaté `can_govern`) — partagé par la capacité `oto_project` et par le
     « Partager » unifié (`oto_resource` audience public/secret/org, ADR 0048 B3). Lève
@@ -300,12 +304,31 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
             import logging
             logging.getLogger(__name__).exception("ensure_api_resource échoué pour %s", slug)
             resource_registered = False
+    if instructions_md is not None:
+        db.set_project_mcp_instructions(project_id, instructions_md)
     db.log_project_activity(project_id, sub, "project.publish_mcp", f"{access_mode}:{slug}")
     out = _view(db.get_project_by_id(project_id))
     if resource_registered is not None:
         out["logto_resource_registered"] = resource_registered
     if unresolvable:
         out["mcp_unresolvable_tools"] = unresolvable
+    warnings = []
+    if not config.project_domain_is_production():
+        # Les sous-domaines de projet hors prod n'ont PAS de certificat public (cert
+        # interne Caddy) : l'URL est parfaitement fonctionnelle pour tester, et
+        # REJETÉE par tout client MCP réel. Le dire ICI, pas au client à qui on
+        # vient d'envoyer le lien (vécu, feedback #308).
+        warnings.append(
+            f"URL d'environnement de TEST ({config.project_domain()}) : son certificat "
+            "TLS n'est pas reconnu publiquement, un client MCP refusera la connexion. "
+            "Ne la transmets pas à un tiers — republie depuis la production.")
+    if not (db.get_project_by_id(project_id) or {}).get("mcp_instructions_md"):
+        warnings.append(
+            "aucune instruction publiée : l'agent du destinataire se branchera sans "
+            "savoir ce que contient ce projet ni comment le lire. Passe "
+            "`mcp_instructions_md` (≠ le brief interne).")
+    if warnings:
+        out["warnings"] = warnings
     return out
 
 
@@ -747,7 +770,8 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         return publish_project_mcp(
             sub, row, access_mode=inp.mcp_access or "anonymous", mcp_slug=inp.mcp_slug,
             mcp_tools=inp.mcp_tools, expose_datastore=inp.mcp_expose_datastore,
-            expose_datastore_write=inp.mcp_expose_datastore_write)
+            expose_datastore_write=inp.mcp_expose_datastore_write,
+            instructions_md=inp.mcp_instructions_md)
 
     # archive
     _require(ownership.can_govern(sub, RTYPE, rid), "forbidden",

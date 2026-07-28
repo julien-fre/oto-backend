@@ -157,6 +157,8 @@ def init_db() -> None:
         # Opt-in ADDITIONNEL, séparé de la lecture (#193) : l'ÉCRITURE du datastore
         # (data_write/data_set_schema) sur l'endpoint partagé. Défaut FALSE (lecture seule).
         conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS mcp_expose_datastore_write BOOLEAN NOT NULL DEFAULT FALSE")
+        # Prose servie au destinataire d'un endpoint publié — ≠ brief_md (interne).
+        conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS mcp_instructions_md TEXT")
         # ADR 0043 : id du mandat (mdt_xxx Mollie) sur l'abonnement — la table
         # existait déjà (B1) quand la colonne est arrivée.
         conn.execute("ALTER TABLE org_subscriptions ADD COLUMN IF NOT EXISTS mandate_id TEXT")
