@@ -144,9 +144,13 @@ def search(sub: str, org_id: int, q: str, *,
     # ── conteneurs ──────────────────────────────────────────────────────────
     if "tableau" in wanted:
         _add(_match_tableaux(q, sub, org_id), lambda r: r)
-    # ── lignes de datastore (#67 V2.1) — le contenu DANS les tableaux ─────────
+    # ── lignes de datastore (#67 V2.1/V2.2) — le contenu DANS les tableaux ────
     if "ligne" in wanted:
         _add(_match_rows(q, sub, org_id), lambda r: r)
+        # Sémantique (V2.2) : lignes des namespaces OPT-IN proches du sens de la
+        # requête, fusionnées au lexical par RRF (comme les pages).
+        if query_embedding is not None:
+            _add(_match_rows_semantic(q, sub, org_id, query_embedding), lambda r: r)
     if "fichier" in wanted:
         _add(db.search_files_meta(q, pids, limit=per_source), lambda r: {
             "kind": "fichier", "ref": r["id"],
@@ -239,25 +243,44 @@ def _match_tableaux(q: str, sub: str, org_id: int) -> list[dict]:
     return [h for _, h in scored]
 
 
-def _match_rows(q: str, sub: str, org_id: int) -> list[dict]:
-    """Lignes de datastore des namespaces accessibles (kind=ligne, #67 V2.1) — rend
-    le CONTENU des tableaux trouvable (ex. « la ligne où figure Sylvie »), pas seulement
-    leur nom. Même FTS que la prose (index d'expression), déjà classé par le SQL.
-    Titre = nom du namespace ; `ref = {ns_id, row_id}` pour deep-linker la ligne ;
-    passage = fragment JSON surligné, à défaut un début de la ligne."""
-    ns = _accessible_namespaces(sub, org_id)
-    if not ns:
-        return []
-    names = {r["id"]: r["namespace"] for r in ns}
+def _row_hits(rows: list[dict], names: dict[int, str], matched_by: str) -> list[dict]:
+    """Forme commune d'un hit `ligne` (lexical ou sémantique). Titre = nom du namespace ;
+    `ref = {ns_id, row_id}` pour deep-linker la ligne ; passage = fragment JSON surligné
+    (lexical), à défaut un début de la ligne."""
     out: list[dict] = []
-    for r in db.search_datastore_rows_fts(q, list(names.keys())):
+    for r in rows:
         passage = (r["headline"] if _headline_ok(r.get("headline"))
                    else _snippet(r.get("excerpt") or "") or None)
         out.append({
             "kind": "ligne", "ref": {"ns_id": r["ns_id"], "row_id": r["row_id"]},
             "title": names.get(r["ns_id"]) or "ligne", "passage": passage,
-            "updated_at": r.get("updated_at"), "matched_by": "lexical"})
+            "updated_at": r.get("updated_at"), "matched_by": matched_by})
     return out
+
+
+def _match_rows(q: str, sub: str, org_id: int) -> list[dict]:
+    """Lignes de datastore des namespaces accessibles, en LEXICAL (kind=ligne, #67 V2.1) —
+    rend le CONTENU des tableaux trouvable (ex. « la ligne où figure Sylvie »), pas
+    seulement leur nom. Même FTS que la prose (index d'expression), déjà classé par le SQL."""
+    ns = _accessible_namespaces(sub, org_id)
+    if not ns:
+        return []
+    names = {r["id"]: r["namespace"] for r in ns}
+    return _row_hits(db.search_datastore_rows_fts(q, list(names.keys())), names, "lexical")
+
+
+def _match_rows_semantic(q: str, sub: str, org_id: int,
+                         query_embedding: list[float]) -> list[dict]:
+    """Lignes SÉMANTIQUEMENT proches (#67 V2.2) — seuls les namespaces opt-in ont des
+    embeddings (les autres sont naturellement absents). Scope IDENTIQUE au lexical
+    (mêmes namespaces accessibles → invariant « cherchable ⇔ lisible »)."""
+    ns = _accessible_namespaces(sub, org_id)
+    if not ns:
+        return []
+    names = {r["id"]: r["namespace"] for r in ns}
+    from .embeddings import to_pg
+    rows = db.search_datastore_rows_semantic(to_pg(query_embedding), list(names.keys()))
+    return _row_hits(rows, names, "semantic")
 
 
 def _match_connectors(q: str, catalog: list[dict]) -> list[dict]:

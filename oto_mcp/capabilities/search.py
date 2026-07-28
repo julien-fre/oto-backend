@@ -75,9 +75,11 @@ async def _search(ctx: ResolvedCtx, inp: SearchInput) -> dict:
         pass
 
     # Vecteur de requête (fusion sémantique) — None si désactivé/échec → lexical seul.
-    want_pages = not inp.kinds or "page" in inp.kinds
+    # Calculé dès qu'UNE source à sémantique est demandée : page/brief/guide + ligne (#67 V2.2).
+    _semantic_kinds = {"page", "brief", "guide", "ligne"}
+    want_semantic = not inp.kinds or bool(_semantic_kinds & set(inp.kinds))
     from .. import embeddings
-    qvec = await embeddings.embed_query(q) if want_pages else None
+    qvec = await embeddings.embed_query(q) if want_semantic else None
 
     return search_mod.search(
         ctx.sub, ctx.org_id, q, scope=inp.scope, project_id=inp.project,

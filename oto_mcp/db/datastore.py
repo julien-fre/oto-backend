@@ -70,6 +70,23 @@ def set_datastore_schema(ns_id: int, schema: Optional[dict]) -> None:
                      (cfg, ns_id))
 
 
+def set_datastore_semantic(ns_id: int, enabled: bool) -> int:
+    """Active/désactive la recherche SÉMANTIQUE d'un namespace (#67 V2.2, opt-in). À
+    l'ACTIVATION, marque toutes ses rows dirty (le worker les indexe) et renvoie leur
+    nombre ; à la DÉSACTIVATION, purge les embeddings + lève le dirty (renvoie 0)."""
+    with _connect() as conn:
+        conn.execute("UPDATE user_datastores SET semantic_search = %s WHERE id = %s",
+                     (enabled, ns_id))
+        if enabled:
+            return conn.execute(
+                "UPDATE datastore_rows SET embed_dirty = TRUE WHERE ns_id = %s",
+                (ns_id,)).rowcount or 0
+        conn.execute("DELETE FROM datastore_row_embeddings WHERE ns_id = %s", (ns_id,))
+        conn.execute("UPDATE datastore_rows SET embed_dirty = FALSE "
+                     "WHERE ns_id = %s AND embed_dirty", (ns_id,))
+        return 0
+
+
 def list_datastore_namespaces_for_owners(owners: list[tuple[str, str]]) -> list[dict]:
     """Namespaces possédés par l'un des `(owner_type, owner_id)` fournis."""
     if not owners:
@@ -330,10 +347,12 @@ def datastore_insert_row(ns_id: int, row_id: str, data: dict,
     backfill ; sinon NOW())."""
     with _connect() as conn:
         row = conn.execute(
-            "INSERT INTO datastore_rows (ns_id, row_id, data, created_at, updated_at) "
-            "VALUES (%s, %s, %s::jsonb, COALESCE(%s::timestamptz, NOW()), COALESCE(%s::timestamptz, NOW())) "
+            "INSERT INTO datastore_rows (ns_id, row_id, data, created_at, updated_at, embed_dirty) "
+            "VALUES (%s, %s, %s::jsonb, COALESCE(%s::timestamptz, NOW()), COALESCE(%s::timestamptz, NOW()), "
+            # dirty ⟺ le namespace est opt-in sémantique (#67 V2.2) — sinon jamais embedé.
+            "        (SELECT semantic_search FROM user_datastores WHERE id = %s)) "
             "RETURNING row_id, created_at, updated_at, data",
-            (ns_id, row_id, json.dumps(data), created_at, updated_at),
+            (ns_id, row_id, json.dumps(data), created_at, updated_at, ns_id),
         ).fetchone()
         return dict(row)
 
@@ -345,11 +364,14 @@ def datastore_upsert_row(ns_id: int, row_id: str, data: dict) -> tuple[dict, boo
     `inserted` est True si la row n'existait pas (ON CONFLICT non déclenché)."""
     with _connect() as conn:
         row = conn.execute(
-            "INSERT INTO datastore_rows (ns_id, row_id, data, created_at, updated_at) "
-            "VALUES (%s, %s, %s::jsonb, NOW(), NOW()) "
-            "ON CONFLICT (ns_id, row_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW() "
+            "INSERT INTO datastore_rows (ns_id, row_id, data, created_at, updated_at, embed_dirty) "
+            "VALUES (%s, %s, %s::jsonb, NOW(), NOW(), "
+            "        (SELECT semantic_search FROM user_datastores WHERE id = %s)) "
+            # data change ⟹ re-dirty ⟺ namespace opt-in sémantique (#67 V2.2).
+            "ON CONFLICT (ns_id, row_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW(), "
+            "  embed_dirty = (SELECT semantic_search FROM user_datastores WHERE id = datastore_rows.ns_id) "
             "RETURNING row_id, created_at, updated_at, data, (xmax = 0) AS inserted",
-            (ns_id, row_id, json.dumps(data)),
+            (ns_id, row_id, json.dumps(data), ns_id),
         ).fetchone()
         inserted = bool(row.pop("inserted"))
         return dict(row), inserted

@@ -106,6 +106,40 @@ def _index_aux_batch() -> int:
     return skipped + done
 
 
+def _index_rows_batch() -> int:
+    """Miroir de `_index_aux_batch` pour les LIGNES de datastore des namespaces opt-in
+    sémantique (#67 V2.2) : draine `list_dirty_rows`, ré-embed sur changement de sha,
+    upsert dans `datastore_row_embeddings`. Une ligne = un vecteur (pas de chunking :
+    une row est petite). Best-effort par ligne."""
+    rows = db.list_dirty_rows(_BATCH)
+    if not rows:
+        return 0
+    to_embed = []
+    skipped = 0
+    for r in rows:
+        sha = _sha(r["text"])
+        if db.get_row_embedding_sha(r["ns_id"], r["row_id"]) == sha:
+            db.clear_row_dirty(r["ns_id"], r["row_id"])
+            skipped += 1
+        else:
+            to_embed.append((r["ns_id"], r["row_id"], r["text"], sha))
+    if not to_embed:
+        return skipped
+    try:
+        vectors = embeddings.embed_texts([t for _, _, t, _ in to_embed])
+    except Exception as e:  # noqa: BLE001
+        logger.warning("embed_worker: batch rows échoué (re-tenté) : %s", e)
+        return 0
+    done = 0
+    for (ns_id, row_id, _text, sha), vec in zip(to_embed, vectors):
+        try:
+            db.upsert_row_embedding(ns_id, row_id, sha, embeddings.to_pg(vec), embeddings.MODEL)
+            done += 1
+        except Exception as e:  # noqa: BLE001
+            logger.warning("embed_worker: upsert row %s/%s échoué : %s", ns_id, row_id, e)
+    return skipped + done
+
+
 async def run_embed_loop(interval: int = _POLL_S) -> None:
     if not embeddings.enabled():
         logger.info("embed_worker: MISTRAL_API_KEY absent → sémantique inerte, worker off.")
@@ -115,8 +149,10 @@ async def run_embed_loop(interval: int = _POLL_S) -> None:
         try:
             n = await run_in_threadpool(_index_batch)
             na = await run_in_threadpool(_index_aux_batch)   # briefs + guides (#6 C)
-            if n or na:
-                logger.info("embed_worker: %d page(s) + %d brief/guide indexé(s).", n, na)
+            nr = await run_in_threadpool(_index_rows_batch)  # lignes datastore opt-in (#67 V2.2)
+            if n or na or nr:
+                logger.info("embed_worker: %d page(s) + %d brief/guide + %d ligne(s) indexé(s).",
+                            n, na, nr)
         except Exception as e:  # noqa: BLE001
             logger.warning("embed_worker: tour en échec : %s", e)
         await asyncio.sleep(interval)

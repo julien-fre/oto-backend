@@ -405,6 +405,15 @@ class DatastorePg:
             db.datastore_drop_key_index(ns_id)
         return {"namespace": namespace, "schema": schema}
 
+    def set_semantic(self, namespace: str, enabled: bool) -> dict:
+        """Active/désactive la recherche SÉMANTIQUE des lignes du namespace (#67 V2.2,
+        opt-in — coût d'embedding). Exige le droit d'écriture. À l'activation, les rows
+        sont mises en file d'indexation (worker) ; à la désactivation, leurs embeddings
+        sont purgés."""
+        ns_id = self._resolve(namespace, write=True)
+        queued = db.set_datastore_semantic(ns_id, bool(enabled))
+        return {"namespace": namespace, "semantic_search": bool(enabled), "rows_queued": queued}
+
     # --- row ops -------------------------------------------------------------
 
     def append_row(self, namespace: str, data: dict) -> dict:

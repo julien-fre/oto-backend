@@ -78,6 +78,15 @@ def init_db() -> None:
                      "WHERE embed_dirty = FALSE AND id NOT IN (SELECT ref FROM aux_embeddings WHERE kind='brief')")
         conn.execute("UPDATE guides SET embed_dirty = TRUE "
                      "WHERE embed_dirty = FALSE AND id NOT IN (SELECT ref FROM aux_embeddings WHERE kind='guide')")
+        # Sémantique OPT-IN des LIGNES de datastore (#67 V2.2) : flag par namespace
+        # (`semantic_search`, défaut FALSE = jamais systématique — coût variable maîtrisé)
+        # + outbox `embed_dirty` sur les rows (défaut FALSE, PAS de backfill massif : une
+        # row n'est marquée qu'à l'écriture dans un namespace opt-in, ou au passage du flag
+        # à ON qui re-dirty ses rows). Index partiel sur les seules rows dirty.
+        conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS semantic_search BOOLEAN NOT NULL DEFAULT FALSE")
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS embed_dirty BOOLEAN NOT NULL DEFAULT FALSE")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_datastore_rows_embed_dirty "
+                     "ON datastore_rows(ns_id, row_id) WHERE embed_dirty")
         # Lot 3 Ship 3 : propositions de CRÉATION (doc_id nullable + project_id +
         # emplacement proposé + CHECK). Le CHECK valide sur l'existant (toutes les
         # lignes ont doc_id). Idempotent.

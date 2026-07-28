@@ -251,7 +251,8 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
     @mcp.tool()
-    def data_set_schema(namespace: str, schema: Optional[dict] = None) -> dict:
+    def data_set_schema(namespace: str, schema: Optional[dict] = None,
+                        semantic_search: Optional[bool] = None) -> dict:
         """Declare (or clear with schema=null) a namespace's TYPED schema (ADR 0032 §6).
 
         A typed namespace renders as readable cards/records instead of a flat table.
@@ -295,14 +296,28 @@ def register(mcp: FastMCP) -> None:
           transition is refused; entering a terminal state auto-releases the row's
           work-queue claim (cf. data_claim_next).
 
+        SEMANTIC SEARCH (#67 V2.2 — opt-in per namespace): pass `semantic_search=true`
+        to make this namespace's ROWS findable by MEANING via oto_search (not just exact
+        words), embedding each row (has a per-row cost → off by default; enable it on the
+        tables you actually search by concept). `false` turns it off and purges the
+        embeddings. Passing ONLY `semantic_search` leaves the schema untouched.
+
         Args:
             namespace: target namespace (must exist; you must have write access).
             schema: the schema object, or null to clear it.
+            semantic_search: true/false to toggle semantic row search; null = leave as is.
         """
         store = _acting_store()
         namespace = _ns(namespace)
         try:
-            return store.set_schema(namespace, schema)
+            out: dict = {}
+            # Schéma posé/effacé — sauf si l'appel ne vise QUE le toggle sémantique
+            # (schema omis + semantic fourni) : on ne veut pas effacer le schéma alors.
+            if schema is not None or semantic_search is None:
+                out = store.set_schema(namespace, schema)
+            if semantic_search is not None:
+                out.update(store.set_semantic(namespace, semantic_search))
+            return out or {"namespace": namespace}
         except NamespaceNotFound:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
         except NamespaceReadOnly:

@@ -34,6 +34,7 @@ from . import (
     legal,
     search,
     aux_embed,
+    datastore_embed,
 )
 
 # Ré-export plat (publics + privés à un underscore). Les noms dunder restent au
@@ -43,6 +44,7 @@ _MODULES = (
     _conn, _schema, _init, users, unipile, connector_grants, keys, usage,
     platform_instructions, visibility, emails, google, datastore, projects,
     tokens, upload_tokens, billing, guides, legal, search, aux_embed,
+    datastore_embed,
 )
 _g = globals()
 for _mod in _MODULES:

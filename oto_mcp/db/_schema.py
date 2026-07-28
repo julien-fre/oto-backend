@@ -454,6 +454,23 @@ CREATE TABLE IF NOT EXISTS doc_chunk_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_doc_chunk_embeddings_hnsw
     ON doc_chunk_embeddings USING hnsw (embedding halfvec_cosine_ops);
+
+-- Embeddings des LIGNES de datastore (#67 V2.2) — sémantique OPT-IN par namespace
+-- (flag `user_datastores.semantic_search`). Une ligne = un vecteur (JSON rendu), même
+-- modèle 1024d. Le worker draine `datastore_rows.embed_dirty` des namespaces opt-in.
+-- Table NEUVE → HNSW sûr ici. CASCADE sur la row (FK composite sur sa PK).
+CREATE TABLE IF NOT EXISTS datastore_row_embeddings (
+    ns_id BIGINT NOT NULL,
+    row_id TEXT NOT NULL,
+    content_sha TEXT NOT NULL,
+    embedding halfvec(1024) NOT NULL,
+    model TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (ns_id, row_id),
+    FOREIGN KEY (ns_id, row_id) REFERENCES datastore_rows(ns_id, row_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_datastore_row_embeddings_hnsw
+    ON datastore_row_embeddings USING hnsw (embedding halfvec_cosine_ops);
 CREATE INDEX IF NOT EXISTS idx_doc_change_requests_doc ON doc_change_requests(doc_id, status, created_at DESC);
 
 -- Journal d'activité d'un projet (incrément 5) : qui a fait quoi, quand. Alimenté
