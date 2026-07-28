@@ -278,7 +278,7 @@ _CATEGORY_BY_CONNECTOR = {
     "atlassian": "Métier",
     "hubspot": "Prospection", "apollo": "Prospection", "zerobounce": "Prospection",
     "hithorizons": "Prospection", "phantombuster": "Prospection", "zoho": "Prospection",
-    "brevo": "Prospection", "salesforce": "Prospection",
+    "brevo": "Prospection", "salesforce": "Prospection", "pipedrive": "Prospection",
     "figma": "Design", "supabase": "Dev",
     # recherche web / scraping
     "aiark": "Prospection", "cognism": "Prospection",
@@ -305,7 +305,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
-    "salesforce": "Salesforce",
+    "salesforce": "Salesforce", "pipedrive": "Pipedrive",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
     "aiark": "AI Ark", "cognism": "Cognism", "lighton": "LightOn",
     "recruitee": "Recruitee", "teamtailor": "Teamtailor", "serpapi": "SerpApi",
@@ -383,7 +383,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "fullenrich": "fullenrich.com", "lemlist": "lemlist.com", "folk": "folk.app",
     "unipile": "unipile.com", "pennylane": "pennylane.com", "pennylaneged": "pennylane.com", "gocardless": "gocardless.com",
     "silae": "silae.fr", "attio": "attio.com", "crunchbase": "crunchbase.com",
-    "brevo": "brevo.com", "brevoauto": "brevo.com",
+    "brevo": "brevo.com", "brevoauto": "brevo.com", "pipedrive": "pipedrive.com",
     "slack": "slack.com", "whatsapp": "whatsapp.com", "google": "google.com",
     "memento": "mento.cc", "planity": "planity.com", "topograph": "topograph.co",
     "atlassian": "atlassian.com",
@@ -922,6 +922,20 @@ _REGISTRY_LIST = [
                            secret=False, reveal=True,
                            help="login.salesforce.com (prod, défaut) ou "
                                 "test.salesforce.com (sandbox)"),
+       )),
+    # pipedrive : token API personnel (1 secret) + `company_domain` FACULTATIF non
+    # secret (route la requête vers le data center du compte — recommandé par
+    # Pipedrive pour la latence, jamais requis pour l'auth) → credential
+    # multi-champs (ADR 0011), resolve_credential_fields, pas keyed.
+    _c("pipedrive", ["pipedrive"], auth_modes={"byo_user", "byo_org"},
+       secret_kind="fields", label="Pipedrive",
+       help="CRM (deals, personnes, organisations, activités, notes, leads)",
+       href="https://app.pipedrive.com", credential_fields=(
+           CredentialField("api_token", "Token API", secret=True, reveal=True,
+                           help="Pipedrive → Paramètres personnels → API"),
+           CredentialField("company_domain", "Sous-domaine du compte",
+                           secret=False, reveal=True, required=False,
+                           help="acme pour acme.pipedrive.com — facultatif"),
        )),
 
     # --- ATS / talent sourcing (RH) — câblés 2026-06-20 ----------------------
