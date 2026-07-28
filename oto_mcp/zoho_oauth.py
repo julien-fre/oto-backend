@@ -86,8 +86,13 @@ def app_fields(connector: str, sub: str) -> dict:
     """Champs du credential résolu pour ce (sub, connecteur) — cascade habituelle
     (membre > équipe > org > plateforme). `{}` si rien n'est encore posé : c'est
     l'état NOMINAL d'une première connexion, jamais une erreur."""
+    # ⚠️ `resolve_credential(..., sub=…)` et NON `resolve_credential_fields`, qui
+    # n'a pas de paramètre `sub` : on est dans une route REST, hors contexte MCP, où
+    # le sub ambiant n'existe pas. `emit_on_failure=False` — c'est une SONDE qui avale
+    # l'échec, elle ne doit pas polluer le signal d'usage (ADR 0017).
     try:
-        return access.resolve_credential_fields(connector, sub=sub) or {}
+        return access.resolve_credential(
+            connector, want="byo", sub=sub, emit_on_failure=False).fields or {}
     except Exception:  # noqa: BLE001 — pas encore de credential
         return {}
 

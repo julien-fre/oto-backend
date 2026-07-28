@@ -79,7 +79,11 @@ def _pending_action_for(connector: str):
         if entry.get("mode") == "forbidden":
             return None   # rien de posé → le verdict « à connecter » suffit
         try:
-            f = access.resolve_credential_fields(connector, sub=sub)
+            # `resolve_credential(sub=…)` : le hook tourne depuis /api/me (REST),
+            # hors contexte MCP → le sub doit être EXPLICITE. `emit_on_failure=False`
+            # (sonde d'affichage, ne fausse pas le signal d'usage).
+            f = access.resolve_credential(
+                connector, want="byo", sub=sub, emit_on_failure=False).fields
         except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
             return None
         if f.get("client_id") and f.get("client_secret") and not f.get("refresh_token"):

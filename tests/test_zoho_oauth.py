@@ -35,20 +35,40 @@ def test_no_app_yet_is_actionable():
         z.resolve_app({})
 
 
+class _Resolved:
+    def __init__(self, fields): self.fields = fields
+
+
 def test_app_fields_reads_the_cascade(monkeypatch):
     seen = {}
-    monkeypatch.setattr(z.access, "resolve_credential_fields",
-                        lambda con, sub=None: seen.update(con=con, sub=sub) or APP)
+    monkeypatch.setattr(z.access, "resolve_credential",
+                        lambda con, want=None, sub=None, emit_on_failure=True, **kw:
+                        seen.update(con=con, want=want, sub=sub,
+                                    emit=emit_on_failure) or _Resolved(APP))
     assert z.app_fields("zohodesk", "u1") == APP
-    assert seen == {"con": "zohodesk", "sub": "u1"}
+    # sub EXPLICITE (route REST, hors contexte MCP) + sonde silencieuse
+    assert seen == {"con": "zohodesk", "want": "byo", "sub": "u1", "emit": False}
 
 
 def test_app_fields_is_empty_before_any_credential(monkeypatch):
     """Première connexion : rien de posé — état NOMINAL, pas une erreur."""
-    monkeypatch.setattr(z.access, "resolve_credential_fields",
-                        lambda con, sub=None: (_ for _ in ()).throw(ValueError("none")))
+    monkeypatch.setattr(z.access, "resolve_credential",
+                        lambda *a, **k: (_ for _ in ()).throw(ValueError("none")))
     assert z.app_fields("zoho", "u1") == {}
     assert z.has_app("zoho", "u1") is False
+
+
+def test_we_call_an_api_that_actually_accepts_sub():
+    """GARDE-FOU. Un stub de test accepte n'importe quelle signature — il a masqué
+    le vrai bug (28/07) : `resolve_credential_fields` n'a PAS de paramètre `sub`,
+    l'appel levait un TypeError avalé par le except, et la connexion server-based
+    était muette. On vérifie donc la signature RÉELLE de la fonction appelée."""
+    import inspect
+    params = inspect.signature(z.access.resolve_credential).parameters
+    assert "sub" in params, "resolve_credential doit accepter un sub explicite (route REST)"
+    assert "emit_on_failure" in params
+    # et la fonction SANS sub reste bien inadaptée à notre usage
+    assert "sub" not in inspect.signature(z.access.resolve_credential_fields).parameters
 
 
 # --- state signé -------------------------------------------------------------
@@ -203,10 +223,10 @@ def test_pending_action_when_app_posted_but_no_consent(monkeypatch):
     from oto_mcp.tools import zoho as zoho_tools  # enregistre les hooks à l'import
     assert status_hints.has_hook("zohodesk")
 
-    monkeypatch.setattr(zoho_tools.access, "resolve_credential_fields",
-                        lambda con, sub=None: {"client_id": "1000.X",
-                                               "client_secret": "s",
-                                               "data_center": "eu"})
+    monkeypatch.setattr(zoho_tools.access, "resolve_credential",
+                        lambda *a, **k: _Resolved({"client_id": "1000.X",
+                                                   "client_secret": "s",
+                                                   "data_center": "eu"}))
     action = status_hints.pending_action("zohodesk", "u1", 35, None, {"mode": "user"})
     assert action == "Autorise oto chez Zoho"
 
@@ -214,11 +234,11 @@ def test_pending_action_when_app_posted_but_no_consent(monkeypatch):
 def test_no_pending_action_once_consent_given(monkeypatch):
     from oto_mcp import status_hints
     from oto_mcp.tools import zoho as zoho_tools
-    monkeypatch.setattr(zoho_tools.access, "resolve_credential_fields",
-                        lambda con, sub=None: {"client_id": "1000.X",
-                                               "client_secret": "s",
-                                               "refresh_token": "1000.rt",
-                                               "data_center": "eu"})
+    monkeypatch.setattr(zoho_tools.access, "resolve_credential",
+                        lambda *a, **k: _Resolved({"client_id": "1000.X",
+                                                   "client_secret": "s",
+                                                   "refresh_token": "1000.rt",
+                                                   "data_center": "eu"}))
     assert status_hints.pending_action("zohodesk", "u1", 35, None, {"mode": "user"}) is None
 
 
