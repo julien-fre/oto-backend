@@ -551,10 +551,13 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
     ),
     "reddit": (
         DocSection(kind="usage", title="recherche & lecture reddit", body_md=(
-            "api publique reddit, sans clé.\n"
-            "- `reddit_search` / `reddit_subreddit` — recherche de posts et lecture d'un subreddit\n"
-            "- `reddit_search_subreddits` — trouve les subreddits pertinents pour un sujet\n"
-            "- `reddit_post` — lit un post et son arbre de commentaires"
+            "lecture reddit avec **métriques d'engagement** (score, nb de commentaires, "
+            "ratio de votes, date de publication) via la passerelle redditapis.com — "
+            "clé plateforme partagée par défaut (BYO possible).\n"
+            "- `reddit_subreddit` — posts d'un subreddit (sort hot/new/top/rising), triables par traction ; pagination via `after`\n"
+            "- `reddit_search` — recherche de posts, globale ou dans un subreddit\n"
+            "- `reddit_search_subreddits` — trouve les subreddits pertinents pour un sujet (avec nb d'abonnés)\n"
+            "- `reddit_post` — lit un post et son **arbre de commentaires imbriqué**"
         )),
     ),
     # ── recrutement (ATS) ───────────────────────────────────────────────────

@@ -431,6 +431,17 @@ _REGISTRY_LIST = [
     _c("hunter", ["hunter"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        secret_kind="api_key", default_quota=5, platform_key_open=True,
        label="Hunter.io", help="emails", href="https://hunter.io"),
+    # reddit : lecture posts/subreddits/commentaires AVEC métriques (score,
+    # num_comments, upvote_ratio, pagination, arbre imbriqué) via la passerelle
+    # REST redditapis.com. L'API Reddit officielle est fermée en self-serve
+    # (Responsible Builder Policy fin 2025) et le JSON anonyme est bloqué (403
+    # IP datacenter) → l'ancien connecteur RSS (sans métriques) est remplacé.
+    # Clé plateforme partagée (Otomata paie l'usage) + quota/jour pour borner le
+    # coût ; BYO possible (l'org pose sa propre clé redditapis).
+    _c("reddit", ["reddit"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       secret_kind="api_key", default_quota=100, platform_key_open=True,
+       label="Reddit", help="posts, subreddits & commentaires avec votes/métriques",
+       href="https://redditapis.com"),
     # `fr` (APIs live SIRENE/Recherche Entreprises/INPI/BODACC/BOAMP) + `fr_stock`
     # (stock SIRENE parquet, ex-connecteur `sirene_stock`, fusionné 2026-06-22 :
     # même domaine entreprises FR, namespace fr_stock_* → namespace_of="fr").
@@ -754,16 +765,14 @@ _REGISTRY_LIST = [
        modules=("gmail", "tasks", "calendar", "sheets", "drive", "chat")),
 
     # --- open-data / sans credential ----------------------------------------
-    # Deux sources publiques SANS RAPPORT → deux connecteurs distincts (ex-`fr_open`
-    # qui les fusionnait : un sac « open data » incohérent, activer l'un activait
-    # l'autre). namespace = préfixe réel : culture_spectacle_* → `culture`
-    # (namespace_of = 1er token), reddit_* → `reddit`. Déclarer "culture", PAS
-    # "culture_spectacle" (jamais matché → fail-open du gate, #24).
+    # Sources publiques sans rapport → connecteurs distincts (ex-`fr_open` qui les
+    # fusionnait : un sac « open data » incohérent, activer l'un activait l'autre).
+    # namespace = préfixe réel : culture_spectacle_* → `culture` (namespace_of =
+    # 1er token). Déclarer "culture", PAS "culture_spectacle" (jamais matché →
+    # fail-open du gate, #24).
     _c("culture", ["culture"], secret_kind="none",
        label="Culture (open data)",
        help="entreprises du spectacle vivant — open data Ministère de la Culture"),
-    _c("reddit", ["reddit"], secret_kind="none",
-       label="Reddit", help="recherche & lecture de posts/subreddits (API publique)"),
     # Grèce : lookup entité via registre GEMI (autocomplete) + VIES. Open data,
     # sans clé. Inerte tant que non activé en DB (deny-by-default), comme foncier/sante.
     _c("gr", ["gr"], secret_kind="none",

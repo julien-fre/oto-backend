@@ -1,8 +1,11 @@
-"""Reddit read-only — flux RSS publics (no auth, no app).
+"""Reddit read-only — posts, subreddits & comments with engagement metrics.
 
-Reddit a fermé l'API JSON publique (`www.reddit.com/*.json` → 403). Lecture via les
-flux `*.rss` (Atom), servis sans authentification. Best-effort : rate-limité serré par
-IP (429 → erreur claire) et sans score/votes/num_comments/arbre de commentaires.
+Backed by the **redditapis.com** REST proxy (bearer token) : score, num_comments,
+upvote_ratio, real publication date, working `after` pagination, and the native
+nested comment tree. Reddit's official Data API is closed to self-serve
+registration (Responsible Builder Policy, late 2025) and the anonymous JSON is
+IP-blocked — this proxy is the working path. Key resolved per call : member/org
+key first, else the shared platform key (metered by daily quota).
 """
 from __future__ import annotations
 
@@ -10,11 +13,15 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
+from .. import access
+
 
 def register(mcp: FastMCP) -> None:
     from oto.tools.reddit import RedditClient
 
-    client = RedditClient()
+    def _client() -> tuple[RedditClient, bool]:
+        key, is_platform = access.resolve_api_key("reddit")
+        return RedditClient(api_key=key), is_platform
 
     @mcp.tool()
     def reddit_subreddit(
@@ -24,16 +31,23 @@ def register(mcp: FastMCP) -> None:
         time: Optional[str] = None,
         after: Optional[str] = None,
     ) -> dict:
-        """List posts from a subreddit.
+        """List posts from a subreddit, with votes and comment counts.
 
         Args:
             name: Subreddit name (without /r/).
             sort: hot|new|top|rising|controversial.
             limit: Max posts (capped at 100).
             time: hour|day|week|month|year|all (only with sort=top|controversial).
-            after: Pagination cursor returned by a previous call.
+            after: Pagination cursor from a previous call's `after`.
+
+        Returns items with score, num_comments, upvote_ratio, created (ISO), and
+        a top-level `after` cursor (null when there is no further page).
         """
-        return client.subreddit(name, sort=sort, limit=limit, time=time, after=after)
+        client, is_platform = _client()
+        result = client.subreddit(name, sort=sort, limit=limit, time=time, after=after)
+        if is_platform:
+            access.record_platform_usage("reddit")
+        return result
 
     @mcp.tool()
     def reddit_search(
@@ -52,16 +66,28 @@ def register(mcp: FastMCP) -> None:
             sort: relevance|hot|top|new|comments.
             time: hour|day|week|month|year|all.
             limit: Max results (capped at 100).
-            after: Pagination cursor.
+            after: Pagination cursor from a previous call's `after`.
         """
-        return client.search(
+        client, is_platform = _client()
+        result = client.search(
             query, subreddit=subreddit, sort=sort, time=time, limit=limit, after=after
         )
+        if is_platform:
+            access.record_platform_usage("reddit")
+        return result
 
     @mcp.tool()
     def reddit_search_subreddits(query: str, limit: int = 25) -> dict:
-        """Discover subreddits by name/description match."""
-        return client.search_subreddits(query, limit=limit)
+        """Discover subreddits by name/description match, with subscriber counts.
+
+        Returns items with name, title, description, and `subscribers` (to filter
+        out low-signal communities).
+        """
+        client, is_platform = _client()
+        result = client.search_subreddits(query, limit=limit)
+        if is_platform:
+            access.record_platform_usage("reddit")
+        return result
 
     @mcp.tool()
     def reddit_post(
@@ -69,11 +95,17 @@ def register(mcp: FastMCP) -> None:
         comment_limit: int = 100,
         depth: int = 5,
     ) -> dict:
-        """Fetch a Reddit post and its comments tree.
+        """Fetch a Reddit post and its nested comment tree.
 
         Args:
             url_or_id: Full reddit URL, /r/sub/comments/... permalink, or bare post id.
             comment_limit: Max number of comments to return.
-            depth: Max depth of the comment tree.
+            depth: Max depth of the reply tree walked (0 = top-level comments only).
+
+        Comments come back nested (each with its `replies`), with score and author.
         """
-        return client.post(url_or_id, comment_limit=comment_limit, depth=depth)
+        client, is_platform = _client()
+        result = client.post(url_or_id, comment_limit=comment_limit, depth=depth)
+        if is_platform:
+            access.record_platform_usage("reddit")
+        return result
