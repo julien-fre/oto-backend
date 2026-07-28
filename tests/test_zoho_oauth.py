@@ -335,3 +335,27 @@ def test_persist_uses_the_canonical_member_id(monkeypatch):
     z.persist("bn01", 2, "zohodesk", "eu", {"refresh_token": "rt"}, app=APP)
     assert seen["eid"] == cs.member_id(2, "bn01")
     assert seen["eid"].startswith("2:"), "org d'abord, pas le sub"
+
+
+def test_verify_capability_returns_pending_not_failure(monkeypatch):
+    """La SONDE rend l'état au lieu d'un verdict d'échec quand le credential est
+    volontairement incomplet. Sans ce `pending`, le dialogue du dashboard reste
+    ouvert sur une correction impossible — « connecter ne fait rien » (vécu 28/07)."""
+    from oto_mcp.capabilities import connectors_verify as cv
+    from oto_mcp.tools import zoho  # noqa: F401 — déclare l'état
+    import asyncio
+
+    monkeypatch.setattr(cv, "_fields_config_scope",
+                        lambda ctx, inp: ({"client_id": "1000.X", "client_secret": "s",
+                                           "data_center": "eu"}, {}, None))
+    monkeypatch.setattr(cv.connector_verify, "supports", lambda p: True)
+    def _never(*a, **k):
+        raise AssertionError("la sonde ne doit PAS être EXÉCUTÉE sur un credential incomplet")
+    monkeypatch.setattr(cv.connector_verify, "probe_for", lambda p: _never,
+                        raising=False)
+
+    class _Inp:
+        provider, level = "zohodesk", "auto"
+    out = asyncio.run(cv._verify(object(), _Inp()))
+    assert out["ok"] is False and out["pending"] is True
+    assert "Autoriser oto chez Zoho" in out["error"]

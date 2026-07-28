@@ -15,7 +15,7 @@ from typing import Literal
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel
 
-from .. import access, connector_verify, credentials_store
+from .. import access, connector_verify, credentials_store, status_hints
 from ._authz import ORG_ADMIN, ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 
@@ -74,6 +74,16 @@ async def _verify(ctx: ResolvedCtx, inp: VerifyInput) -> dict:
         raise AuthzDenied(400, "verify_unavailable",
                           f"pas de test de connexion pour « {inp.provider} ».")
     fields, config, scope = _fields_config_scope(ctx, inp)
+    # Connexion en DEUX temps : un credential VOLONTAIREMENT incomplet (app posée,
+    # consentement à venir) n'est pas une erreur de saisie — sonder le renverrait un
+    # échec, et le formulaire du dashboard resterait ouvert sur une correction
+    # impossible (« connecter ne fait rien », vécu 28/07). On rend l'ÉTAT, pas un
+    # verdict : `pending=True` dit au front « c'est enregistré, l'étape suivante est
+    # ailleurs ». Même source que le verdict de la fiche (`status_hints`).
+    st = status_hints.credential_state(inp.provider, fields)
+    if st is not None and not st.complete:
+        return {"ok": False, "pending": True, "provider": inp.provider,
+                "error": st.next_action, "elapsed_ms": 0}
     started = time.monotonic()
     ok, error = True, None
     try:
