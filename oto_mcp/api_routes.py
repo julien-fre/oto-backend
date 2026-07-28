@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                   Response, StreamingResponse)
 
-from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_memento, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, memento_oauth, org_store, ownership, tool_registry
+from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_memento, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, memento_oauth, org_store, ownership, tool_registry
 from .capabilities import _rest_adapter as _cap_rest_adapter
 from .capabilities import registry as _cap_registry
 from . import auth_hooks
@@ -1733,6 +1733,14 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         options_handler=options_handler,
     )
 
+    salesforce_oauth_routes = api_routes_salesforce.make_routes(
+        verifier=verifier,
+        authenticate=_authenticate,
+        json_response=_json,
+        json_error=_json_error,
+        options_handler=options_handler,
+    )
+
     # Couche capacité (ADR 0009) : routes REST dérivées du registre (no-op tant
     # qu'il est vide — canari). Même séquence autz→validation→handler que MCP.
     capability_routes = _cap_rest_adapter.make_routes(
@@ -1850,6 +1858,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         *atlassian_routes,
         *folk_routes,
         *zoho_routes,
+        *salesforce_oauth_routes,
         *capability_routes,
         *connectors_routes,
         *contact_routes,

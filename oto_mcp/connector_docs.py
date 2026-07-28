@@ -133,6 +133,31 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "- « partage ce dossier Drive en lecture à julien@… »"
         )),
     ),
+    "salesforce": (
+        DocSection(kind="prerequisite", title="créer une connected app salesforce", body_md=(
+            "Salesforce n'a pas de client OAuth partagé entre clients (contrairement à Google) — "
+            "chaque org Salesforce doit créer sa propre **Connected App** :\n"
+            "- Setup → App Manager → **New Connected App**\n"
+            "- coche **Enable OAuth Settings**\n"
+            "- **Callback URL** : `https://mcp.oto.cx/api/salesforce/oauth/callback` (exactement — "
+            "espace ou slash final en trop = échec)\n"
+            "- **OAuth Scopes** : ajoute `Manage user data via APIs (api)` et "
+            "`Perform requests at any time (refresh_token, offline_access)`\n"
+            "- une fois enregistrée, copie le **Consumer Key** et le **Consumer Secret** "
+            "(Manage Consumer Details)\n"
+            "- colle Consumer Key / Consumer Secret / Login URL dans oto (page compte / connecteurs), "
+            "puis clique **Connecter** — c'est le SEUL moyen d'obtenir le jeton d'accès désormais, "
+            "il n'y a plus de champ Refresh Token à remplir à la main ni de code d'autorisation à copier"
+        )),
+        DocSection(kind="usage", title="contacts, comptes, leads, opportunités", body_md=(
+            "CRUD générique par sObject (Contact, Account = « companies », Lead, Opportunity, "
+            "objets custom) + SOQL/SOSL brut.\n"
+            "- « liste les contacts de l'account Acme »\n"
+            "- « crée un contact Ada Lovelace chez Acme Corp »\n"
+            "- « cherche les opportunités ouvertes de plus de 50k€ »\n"
+            "- « ajoute une note à ce compte »"
+        )),
+    ),
     # ── prospection & enrichissement ────────────────────────────────────────
     "serper": (
         DocSection(kind="prerequisite", title="obtenir une clé serper", body_md=(
