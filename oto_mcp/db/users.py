@@ -93,9 +93,16 @@ def get_user(sub: str) -> Optional[dict]:
 
 
 # --- Bascule de tenant Logto (B1, otomata#35) -------------------------------
+# Tables d'APPARTENANCE `(scope_id, sub)` portant un `is_active` unique par sub
+# (index partiel `*_one_active`) : elles ne peuvent PAS passer par l'UPDATE nu de
+# `_SUB_COLUMNS` — cf. l'étape 2 bis de `migrate_sub`. Toute nouvelle table de ce
+# genre s'ajoute ICI (garde-fou : `tests/test_migrate_sub_inventory.py`).
+_MEMBERSHIP_TABLES = (("org_members", "org_id"), ("org_group_members", "group_id"))
+
 # Inventaire des colonnes keyed-by-sub à repointer (issue oto-backend#56). Plain
 # UPDATE : le nouveau sub est frais → aucun conflit de PK, SAUF user_account_profile
-# (PK sub) et connector_credentials (coffre user), traités à part.
+# (PK sub), les appartenances ci-dessus et connector_credentials (coffre user),
+# traités à part.
 _SUB_COLUMNS = [
     # ⚠️ Chaque entrée DOIT exister en DB : la boucle fait des UPDATE nus dans UNE
     # transaction — une table absente fait échouer TOUT le merge (vécu : `user_grants`,
@@ -179,6 +186,29 @@ def migrate_sub(old_sub: str, new_sub: str) -> bool:
         #    `_SUB_COLUMNS` — elle a quitté `user_agent_readme` avec l'ADR 0042.)
         conn.execute("DELETE FROM user_account_profile WHERE sub=%s", (new_sub,))
         conn.execute("UPDATE user_account_profile SET sub=%s WHERE sub=%s", (new_sub, old_sub))
+        # 2 bis. APPARTENANCES (org_members / org_group_members) : elles ne se repointent
+        #    pas en bloc, à cause de DEUX invariants que l'`UPDATE … SET sub=` de l'étape 3
+        #    violerait. Vécu prod 2026-07-28 (julien@folk.app, 2 comptes) : merge en échec
+        #    à CHAQUE requête de l'user, donc jamais fusionné + un round-trip Logto et un
+        #    traceback par appel.
+        #    (a) PK (org_id, sub) : si les deux comptes sont dans la MÊME org, repointer
+        #        crée un doublon → on garde la ligne du compte canonique (le new, dont le
+        #        rôle vient d'être fusionné au plus fort) et on jette celle de l'ancien.
+        #    (b) index partiel `*_one_active` (≤ 1 appartenance ACTIVE par sub) : l'ancien
+        #        apporte SA ligne active → deux actives après repointage. Le contexte
+        #        courant appartient au compte canonique : les appartenances reprises
+        #        arrivent INACTIVES (elles restent accessibles via `oto_use_org`).
+        #        ⚠️ Désactivation CONDITIONNELLE : si le new n'a AUCUNE active (stub frais),
+        #        celle de l'ancien est la seule → la garder, sinon le compte fusionné se
+        #        retrouverait sans org maison.
+        for table, key in _MEMBERSHIP_TABLES:
+            conn.execute(
+                f"DELETE FROM {table} WHERE sub=%s AND {key} IN "
+                f"(SELECT {key} FROM {table} WHERE sub=%s)", (old_sub, new_sub))
+            conn.execute(
+                f"UPDATE {table} SET is_active=FALSE WHERE sub=%s "
+                f"AND EXISTS (SELECT 1 FROM {table} WHERE sub=%s AND is_active)",
+                (old_sub, new_sub))
         # 3. repointer toutes les colonnes sub.
         for table, col in _SUB_COLUMNS:
             conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s", (new_sub, old_sub))

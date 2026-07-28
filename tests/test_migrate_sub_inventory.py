@@ -50,3 +50,27 @@ def test_sub_columns_inventory_matches_ddl():
         + "\n  ".join(problems)
         + "\nRetirer l'entrée de l'inventaire (ou restaurer la colonne)."
     )
+
+
+def test_active_membership_tables_are_pre_treated():
+    """Une table `(scope, sub)` avec un `is_active` UNIQUE par sub ne peut pas passer
+    par l'UPDATE nu de `_SUB_COLUMNS`.
+
+    Vécu prod 2026-07-28 (julien@folk.app) : `UPDATE org_members SET sub=new` a fait
+    porter DEUX appartenances actives au même sub → `UniqueViolation
+    org_members_one_active`. Le merge échouait à CHAQUE requête de l'utilisateur (donc
+    jamais fusionné, plus un round-trip Logto et un traceback par appel). Ces tables
+    doivent être listées dans `_MEMBERSHIP_TABLES` et traitées AVANT la boucle.
+    """
+    from oto_mcp.db.users import _MEMBERSHIP_TABLES
+    declared = {t for t, _ in _MEMBERSHIP_TABLES}
+    # Source de vérité = le DDL : tout index unique partiel `ON <table>(sub) WHERE is_active`.
+    in_ddl = set(re.findall(
+        r"CREATE UNIQUE INDEX IF NOT EXISTS \w+\s*\n?\s*ON (\w+)\(sub\) WHERE is_active",
+        _SCHEMA))
+    assert in_ddl, "le parse du DDL ne trouve plus les index `one_active` — test à réparer"
+    manquantes = in_ddl - declared
+    assert not manquantes, (
+        f"tables à `is_active` unique non pré-traitées par migrate_sub : {sorted(manquantes)}. "
+        "Les ajouter à `_MEMBERSHIP_TABLES` (sinon le merge de comptes lève "
+        "UniqueViolation en prod, en silence côté CI).")
