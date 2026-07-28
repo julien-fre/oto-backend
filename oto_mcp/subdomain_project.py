@@ -83,6 +83,16 @@ def valid_org_audience(aud: object) -> bool:
 DATASTORE_READ_TOOLS = frozenset({"data_list_namespaces", "data_rows"})
 DATASTORE_WRITE_TOOLS = frozenset({"data_write", "data_set_schema"})
 
+# Pages du projet (`oto_doc` en LECTURE), même couplage flag↔visibilité que le
+# datastore : sans l'opt-in `mcp_expose_docs`, le tool est RETIRÉ de la liste au lieu
+# d'y figurer et d'échouer à chaque appel (feedback #310).
+DOCS_READ_TOOLS = frozenset({"oto_doc"})
+# Jamais servis sans `sub`, quoi que porte l'allowlist du preset : `oto_search` balaie
+# des sources qui débordent le projet, `oto_doc_app` est une surface de rendu qui n'a
+# pas de chemin anonyme. Les laisser listés = un outil qui plante à 100 % chez le
+# destinataire (le symptôme même de #310).
+NEVER_ANON_TOOLS = frozenset({"oto_search", "oto_doc_app"})
+
 
 @dataclass(frozen=True)
 class AnonContext:
@@ -92,6 +102,7 @@ class AnonContext:
     tools: frozenset               # allowlist figée du preset (les seuls tools exposés)
     datastore_exposed: bool = False  # opt-in `secret` : data_* LECTURE sous l'org, scopé aux tableaux LIÉS au projet
     datastore_writable: bool = False  # opt-in additionnel : écriture (data_write/data_set_schema)
+    docs_exposed: bool = False       # opt-in `secret` : oto_doc en LECTURE, scopé aux pages DU projet
 
 
 # Contexte anonyme : contextvar (même requête, ex. l'initialize qui calcule la
@@ -218,11 +229,12 @@ def current_allowlist() -> Optional[frozenset]:
     ctx = current_anon_context()
     if ctx is None:
         return None
-    allow = ctx.tools
+    allow = ctx.tools - NEVER_ANON_TOOLS
     if ctx.datastore_exposed and ctx.org_id is not None:
         allow = allow | DATASTORE_READ_TOOLS
         if ctx.datastore_writable:
             allow = allow | DATASTORE_WRITE_TOOLS
+    allow = (allow | DOCS_READ_TOOLS) if ctx.docs_exposed else (allow - DOCS_READ_TOOLS)
     return allow
 
 
@@ -231,6 +243,13 @@ def current_anon_datastore_exposed() -> bool:
     False hors endpoint anonyme (seam pour les tools data_*)."""
     ctx = current_anon_context()
     return bool(ctx and ctx.datastore_exposed and ctx.org_id is not None)
+
+
+def current_anon_docs_exposed() -> bool:
+    """L'endpoint anonyme/secret courant expose-t-il les PAGES du projet (opt-in) ?
+    False hors endpoint anonyme (seam pour la capacité `oto_doc`)."""
+    ctx = current_anon_context()
+    return bool(ctx and ctx.docs_exposed)
 
 
 def current_anon_datastore_writable() -> bool:
@@ -348,6 +367,10 @@ class HostDispatch:
             # non devinable — deux propriétés portées côté publication, transparentes ici.
             ds_exposed = (access_mode == "secret" and bool(proj.get("mcp_expose_datastore")))
             ds_writable = ds_exposed and bool(proj.get("mcp_expose_datastore_write"))
+            # Pages : opt-in EXPLICITE, `secret` seulement. Les pages d'un projet portent
+            # typiquement des notes internes (arbitrages, contacts, gotchas) — les exposer
+            # par défaut serait une fuite par surprise.
+            docs_exposed = (access_mode == "secret" and bool(proj.get("mcp_expose_docs")))
             # Navigateur (GET, Accept: text/html) → UI NAVIGABLE server-side (lecture seule) :
             # la MÊME URL sert l'UI (racine + /procedures//data//docs) ET le serveur MCP.
             # `build_page` fait des lectures DB SYNC → threadpool (serveur mono-loop). Il rend
@@ -369,7 +392,8 @@ class HostDispatch:
                               # opt-in datastore : honoré uniquement en `secret` (jamais
                               # `anonymous` public) — cf. set_project_mcp_publication.
                               datastore_exposed=ds_exposed,
-                              datastore_writable=ds_writable)
+                              datastore_writable=ds_writable,
+                              docs_exposed=docs_exposed)
             tok = _CTX.set(ctx)
             if sid:
                 _store_ctx(sid, ctx)

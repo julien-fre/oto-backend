@@ -47,6 +47,7 @@ class ProjectInput(BaseModel):
     mcp_tools: Optional[list[str]] = None  # allowlist figée du preset (les seuls tools exposés sur le sous-domaine)
     mcp_expose_datastore: Optional[bool] = None  # `secret` uniquement : exposer les tools data_* en LECTURE (tableaux liés au projet, sous l'autorité de l'org). None = DÉFAUT exposé au partage secret (#193) ; passer False pour refermer
     mcp_expose_datastore_write: Optional[bool] = None  # opt-in ADDITIONNEL (#193) : autoriser l'ÉCRITURE (data_write/data_set_schema) ; sans objet si la lecture n'est pas exposée — défaut False (lecture seule)
+    mcp_expose_docs: Optional[bool] = None  # `secret` uniquement : exposer les PAGES du projet (oto_doc en LECTURE) au destinataire. Défaut False — les pages portent des notes internes, les exposer par défaut serait une fuite par surprise.
     mcp_instructions_md: Optional[str] = None  # prose SERVIE AU DESTINATAIRE de l'endpoint (ce que son agent lit au branchement) — ≠ brief_md, qui reste interne. "" efface.
     # create : SCOPE owner du projet (ADR 0049 — échelle platform/org/group/user).
     # 'user' (défaut) résout sur l'org ACTIVE ; 'org' = une org dont je suis membre ;
@@ -120,6 +121,7 @@ def _view(row: dict) -> dict:
         "mcp_tools": list(row.get("mcp_tools") or []),
         "mcp_expose_datastore": bool(row.get("mcp_expose_datastore")),
         "mcp_expose_datastore_write": bool(row.get("mcp_expose_datastore_write")),
+        "mcp_expose_docs": bool(row.get("mcp_expose_docs")),
         # Prose servie au DESTINATAIRE de l'endpoint — ≠ `brief_md`, qui reste interne.
         "mcp_instructions_md": row.get("mcp_instructions_md") or "",
         "mcp_url": _mcp_url(row.get("mcp_slug"), row.get("mcp_access") or "off"),
@@ -252,6 +254,7 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
                         mcp_slug: Optional[str], mcp_tools: Optional[list[str]],
                         expose_datastore: Optional[bool] = None,
                         expose_datastore_write: Optional[bool] = None,
+                        expose_docs: Optional[bool] = None,
                         instructions_md: Optional[str] = None) -> dict:
     """Cœur de la publication MCP d'un projet (ADR 0032). AUCUN contrôle d'autz (le
     caller a déjà gaté `can_govern`) — partagé par la capacité `oto_project` et par le
@@ -274,6 +277,12 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
              "`anonymous` est public, un endpoint `org` résout déjà data_* via le "
              "membre authentifié).", 400)
     expose_ds_write = bool(expose_datastore_write) and expose_ds
+    # Pages : opt-in EXPLICITE (jamais un défaut), `secret` seulement — cf. #310.
+    expose_docs_eff = bool(expose_docs) and access_mode == "secret"
+    _require(not (expose_docs and access_mode != "secret"), "docs_secret_only",
+             "mcp_expose_docs est réservé à l'accès `secret` (un endpoint "
+             "`anonymous` est public ; un endpoint `org` résout oto_doc via le "
+             "membre authentifié).", 400)
     # Slug effectif : `secret` → non devinable (réutilise l'existant pour ne pas casser
     # l'URL déjà distribuée) ; anonymous/org → slug saisi requis.
     if access_mode == "secret":
@@ -287,7 +296,8 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
     try:
         db.set_project_mcp_publication(project_id, slug=slug, access=access_mode, tools=tools,
                                        expose_datastore=expose_ds,
-                                       expose_datastore_write=expose_ds_write)
+                                       expose_datastore_write=expose_ds_write,
+                                       expose_docs=expose_docs_eff)
     except ValueError as e:
         code = "slug_taken" if str(e).startswith("slug_taken") else "bad_slug"
         _require(False, code, str(e), 409 if code == "slug_taken" else 400)
@@ -771,6 +781,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             sub, row, access_mode=inp.mcp_access or "anonymous", mcp_slug=inp.mcp_slug,
             mcp_tools=inp.mcp_tools, expose_datastore=inp.mcp_expose_datastore,
             expose_datastore_write=inp.mcp_expose_datastore_write,
+            expose_docs=inp.mcp_expose_docs,
             instructions_md=inp.mcp_instructions_md)
 
     # archive

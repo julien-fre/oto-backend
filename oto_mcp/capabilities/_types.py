@@ -30,7 +30,10 @@ class ResolvedCtx:
     """Contexte enrichi produit par la règle d'autz, passé au handler.
     `org_id`/`group_id` sont injectés par la règle (jamais acceptés d'un param
     client → verrou IDOR par construction)."""
-    sub: str
+    # `None` = destinataire d'un projet publié sans login (ADR 0032, règle
+    # `PROJECT_SHARED_READ`) — le handler doit alors se borner à la lecture du projet
+    # publié. Toute autre règle exige un `sub` et ne produit jamais None.
+    sub: Optional[str]
     org_id: Optional[int] = None
     role: Optional[str] = None
     group_id: Optional[int] = None

@@ -271,7 +271,8 @@ def set_project_mcp_instructions(project_id: int, instructions_md: Optional[str]
 def set_project_mcp_publication(project_id: int, *, slug: Optional[str],
                                 access: str, tools: list[str],
                                 expose_datastore: bool = False,
-                                expose_datastore_write: bool = False) -> None:
+                                expose_datastore_write: bool = False,
+                                expose_docs: bool = False) -> None:
     """Publie/dé-publie un projet en endpoint MCP. `access='off'` retire le slug
     (rend le sous-domaine inerte). Valide le format de slug et l'énumération d'accès —
     la GARDE métier (allowlist credential-safe) est appliquée en amont dans la capacité.
@@ -287,6 +288,9 @@ def set_project_mcp_publication(project_id: int, *, slug: Optional[str],
         raise ValueError(f"mcp_access invalide: {access!r} (attendu {_MCP_ACCESS})")
     expose_datastore = bool(expose_datastore) and access == "secret"
     expose_datastore_write = bool(expose_datastore_write) and expose_datastore
+    # Pages : même règle que le datastore — `secret` uniquement (un endpoint
+    # `anonymous` est public ; un endpoint `org` a déjà un membre authentifié).
+    expose_docs = bool(expose_docs) and access == "secret"
     if access == "off":
         slug = None
     else:
@@ -305,9 +309,9 @@ def set_project_mcp_publication(project_id: int, *, slug: Optional[str],
         conn.execute(
             "UPDATE projects SET mcp_slug = %s, mcp_access = %s, mcp_tools = %s, "
             "mcp_expose_datastore = %s, mcp_expose_datastore_write = %s, "
-            "updated_at = NOW() WHERE id = %s",
+            "mcp_expose_docs = %s, updated_at = NOW() WHERE id = %s",
             (slug, access, list(tools or []), expose_datastore,
-             expose_datastore_write, project_id),
+             expose_datastore_write, expose_docs, project_id),
         )
 
 

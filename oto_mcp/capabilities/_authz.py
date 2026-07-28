@@ -36,6 +36,28 @@ def SUB_ONLY(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
                        role=access.get_user_role(sub))
 
 
+def PROJECT_SHARED_READ(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+    """`SUB_ONLY`, PLUS le destinataire d'un projet publié sans login (ADR 0032).
+
+    L'en-tête de ce module dit « plus de branche `sub is None` » — vrai du transport,
+    faux depuis les endpoints de projet publiés, arrivés après. Le cas n'avait été
+    traité que pour le datastore, d'où un `oto_doc` listé sur un endpoint partagé et
+    refusé à 100 % des appels (feedback #310).
+
+    Sans `sub` : on n'accepte QUE le contexte anonyme d'un projet dont le propriétaire
+    a explicitement exposé les pages (`mcp_expose_docs`), et le `ResolvedCtx` porte le
+    projet — c'est le handler qui borne ensuite les ops à la lecture ET le périmètre à
+    CE projet. Aucun opt-in ⇒ refus normal. Fail-closed de bout en bout.
+    """
+    if raw.sub:
+        return SUB_ONLY(raw, inp)
+    from .. import subdomain_project
+    pid = subdomain_project.current_anon_project_id()
+    if pid is None or not subdomain_project.current_anon_docs_exposed():
+        raise AuthzDenied(401, "auth_required", "Authentification requise.")
+    return ResolvedCtx(sub=None, org_id=subdomain_project.current_anon_org(), role=None)
+
+
 def ORG_MEMBER(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
     """Membre d'une org active — injecte `org_id` depuis l'état serveur (jamais
     d'un param client). Verrouille l'IDOR cross-org par construction."""

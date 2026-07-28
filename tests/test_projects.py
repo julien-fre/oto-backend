@@ -695,9 +695,11 @@ def test_use_clear_project_registered():
 def _patch_publish(monkeypatch, rec, unresolvable):
     """Câble les seams propres à publish_mcp : record de la pose + sonde contrôlée."""
     monkeypatch.setattr(P.db, "set_project_mcp_publication",
-                        lambda pid, slug, access, tools, expose_datastore=False, expose_datastore_write=False:
+                        lambda pid, slug, access, tools, expose_datastore=False,
+                        expose_datastore_write=False, expose_docs=False, **_:
                         rec.setdefault("pub", []).append(
-                            (pid, slug, access, tools, expose_datastore, expose_datastore_write)))
+                            (pid, slug, access, tools, expose_datastore,
+                             expose_datastore_write, expose_docs)))
     monkeypatch.setattr(P, "_mcp_unresolvable_tools",
                         lambda row, tools, expose_datastore=False: list(unresolvable))
 
@@ -708,7 +710,7 @@ def test_publish_mcp_secret_generates_unguessable_slug(seams, monkeypatch):
     _patch_publish(monkeypatch, rec, unresolvable=[])
     out = P._project(CTX, P.ProjectInput(op="publish_mcp", project_id=7,
                                          mcp_access="secret", mcp_tools=["frenchtech_evenements"]))
-    (pid, slug, access, tools, expose_datastore, expose_write), = rec["pub"]
+    (pid, slug, access, tools, expose_datastore, expose_write, _docs), = rec["pub"]
     assert access == "secret" and pid == 7
     # DÉFAUT au partage `secret` : lecture exposée d'emblée, écriture non (#193).
     assert expose_datastore is True and expose_write is False
@@ -723,7 +725,7 @@ def test_publish_mcp_secret_prefixes_from_typed_slug(seams, monkeypatch):
     _patch_publish(monkeypatch, rec, unresolvable=[])
     P._project(CTX, P.ProjectInput(op="publish_mcp", project_id=7, mcp_slug="Ma Base!!",
                                    mcp_access="secret", mcp_tools=["frenchtech_evenements"]))
-    (_, slug, _, _, _, _), = rec["pub"]
+    (_, slug, _, _, _, _, _), = rec["pub"]
     assert slug.startswith("ma-base-") and _MCP_SLUG_RE.match(slug)
 
 
@@ -754,7 +756,7 @@ def test_publish_mcp_secret_allows_empty_tools(seams, monkeypatch):
     _patch_publish(monkeypatch, rec, unresolvable=[])
     P._project(CTX, P.ProjectInput(op="publish_mcp", project_id=7, mcp_access="secret",
                                    mcp_tools=[]))
-    (_, _, access, tools, _, _), = rec["pub"]
+    (_, _, access, tools, _, _, _), = rec["pub"]
     assert access == "secret" and tools == []
 
 
@@ -775,7 +777,7 @@ def test_publish_mcp_expose_datastore_secret_persists(seams, monkeypatch):
     _patch_publish(monkeypatch, rec, unresolvable=[])
     P._project(CTX, P.ProjectInput(op="publish_mcp", project_id=7, mcp_access="secret",
                                    mcp_tools=["data_write"], mcp_expose_datastore=True))
-    (_, _, access, _, expose_datastore, _), = rec["pub"]
+    (_, _, access, _, expose_datastore, _, _), = rec["pub"]
     assert access == "secret" and expose_datastore is True
 
 
@@ -785,7 +787,7 @@ def test_publish_mcp_secret_can_close_datastore(seams, monkeypatch):
     _patch_publish(monkeypatch, rec, unresolvable=[])
     P._project(CTX, P.ProjectInput(op="publish_mcp", project_id=7, mcp_access="secret",
                                    mcp_tools=["frenchtech_evenements"], mcp_expose_datastore=False))
-    (_, _, _, _, expose_datastore, expose_write), = rec["pub"]
+    (_, _, _, _, expose_datastore, expose_write, _), = rec["pub"]
     assert expose_datastore is False and expose_write is False
 
 
@@ -795,7 +797,7 @@ def test_publish_mcp_datastore_write_optin(seams, monkeypatch):
     _patch_publish(monkeypatch, rec, unresolvable=[])
     P._project(CTX, P.ProjectInput(op="publish_mcp", project_id=7, mcp_access="secret",
                                    mcp_tools=["data_write"], mcp_expose_datastore_write=True))
-    (_, _, _, _, expose_datastore, expose_write), = rec["pub"]
+    (_, _, _, _, expose_datastore, expose_write, _), = rec["pub"]
     assert expose_datastore is True and expose_write is True
 
 

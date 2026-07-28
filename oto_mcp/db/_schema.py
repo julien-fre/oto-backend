@@ -289,6 +289,9 @@ CREATE TABLE IF NOT EXISTS projects (
     -- Opt-in ADDITIONNEL, séparé de la lecture (#193) : autoriser l'ÉCRITURE du datastore
     -- (data_write/data_set_schema) sur l'endpoint partagé. Défaut FALSE (lecture seule).
     mcp_expose_datastore_write BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Opt-in : exposer les PAGES du projet (oto_doc en lecture) sur un endpoint
+    -- `secret`. Séparé du datastore : les pages portent des notes internes.
+    mcp_expose_docs BOOLEAN NOT NULL DEFAULT FALSE,
     -- Prose servie au DESTINATAIRE de l'endpoint publié (le client qui branche l'URL).
     -- Distincte de `brief_md`, qui est interne (gotchas, arbitrages, noms) : publier le
     -- brief tel quel serait une fuite. NULL = pas de guidage publié.
