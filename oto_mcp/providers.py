@@ -881,7 +881,15 @@ _REGISTRY_LIST = [
                            help="secret du self-client"),
            CredentialField("refresh_token", "Refresh Token", secret=True,
                            help="1000.xxxxx.yyyyy"),
-           CredentialField("org_id", "Org ID", secret=False, help="ex. 800123456"),
+           # FACULTATIF : les endpoints KB (articles) résolvent le portail depuis le
+           # token mono-org — vérifié empiriquement. Et un credential scopé
+           # `Desk.articles.READ` seul ne PEUT pas le découvrir (/organizations →
+           # 403 SCOPE_MISMATCH), donc l'exiger rendait le connecteur impossible à
+           # poser pour ce cas. Reste utile aux endpoints qui réclament l'en-tête
+           # `orgId` (tickets…), qui l'exigeront alors côté API.
+           CredentialField("org_id", "Org ID (facultatif)", secret=False,
+                           required=False,
+                           help="ex. 800123456 — inutile pour lire les articles"),
            CredentialField("data_center", "Data center (com, eu, in, au, jp, ca)",
                            secret=False, reveal=True, help="eu"),
        )),
