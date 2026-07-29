@@ -3,8 +3,13 @@ Postman-style refresh-token acquisition (see salesforce_oauth.py's module
 docstring for the per-customer-Connected-App architecture this works around).
 
 Structure mirrors api_routes_folk.py / api_routes_atlassian.py:
-- `GET /api/salesforce/oauth/start`    (auth Logto) → {auth_url} to open
 - `GET /api/salesforce/oauth/callback` (no auth, Salesforce redirects) → exchange + persist
+
+Le `/start` n'est PAS ici : c'est une capacité (`capabilities/salesforce_connect.py`,
+ADR 0042 §Convergence des surfaces) qui en dérive les faces MCP et REST depuis un seul
+descripteur. Seul le callback reste une route écrite à la main — un fournisseur y
+redirige le NAVIGATEUR, sans auth et avec un 302, ce qu'un contrat de capacité ne peut
+pas exprimer.
 
 Unlike Folk/Atlassian/Memento, there is no `/status`/`DELETE` here yet — the
 existing generic `/api/settings/api-keys/salesforce` GET/DELETE already covers
@@ -20,6 +25,7 @@ static-fields form already supports via `/api/settings/api-keys/salesforce`,
 """
 from __future__ import annotations
 
+import logging
 import os
 from typing import Awaitable, Callable
 
@@ -29,6 +35,8 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from . import salesforce_oauth
+
+logger = logging.getLogger(__name__)
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
@@ -44,30 +52,6 @@ def make_routes(
     def _app_url() -> str:
         return os.environ.get("OTO_APP_URL", "https://dashboard.oto.ninja").rstrip("/")
 
-    async def start(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        from mcp.shared.exceptions import McpError
-        from . import access
-        try:
-            access.require_connector_access("salesforce", sub)
-        except McpError as e:
-            return json_error(request, 403, "connector_restricted", e.error.message)
-
-        scope = request.query_params.get("scope", "member")
-        try:
-            auth_url = salesforce_oauth.build_auth_url(sub, scope)
-        except ValueError as e:
-            return json_error(request, 400, "invalid_scope_param", str(e))
-        except PermissionError as e:
-            return json_error(request, 403, "org_admin_required", str(e))
-        except LookupError as e:
-            return json_error(request, 400, "missing_credentials", str(e))
-        except RuntimeError as e:
-            return json_error(request, 400, "oauth_misconfigured", str(e))
-        return json_response(request, {"auth_url": auth_url})
-
     async def callback(request: Request) -> Response:
         # Salesforce redirige ici (pas d'auth Logto) — l'identité + le scope
         # viennent du state signé (voir salesforce_oauth.make_state).
@@ -77,6 +61,20 @@ def make_routes(
         if not code or not parsed:
             return RedirectResponse(f"{_app_url()}/?salesforce=error", status_code=302)
         sub, org_id, scope, verifier_pkce, group_id = parsed
+        # RE-GARDE du droit d'écrire au scope demandé. `build_auth_url` l'a vérifié
+        # au /start, mais le state vit 10 min : entre le clic et le retour, l'auteur
+        # a pu perdre son rôle. Doctrine maison (ADR 0038, ce qui a fermé #108) :
+        # une autorisation se re-vérifie à la RÉSOLUTION, pas seulement à la pose.
+        from . import roles
+        allowed = True
+        if scope == "org":
+            allowed = roles.is_org_admin(sub, org_id)
+        elif scope == "group":
+            allowed = roles.can_admin_group(sub, group_id)
+        if not allowed:
+            logger.warning("salesforce callback refusé : %s n'est plus admin du scope "
+                           "%s (org=%s group=%s)", sub, scope, org_id, group_id)
+            return RedirectResponse(f"{_app_url()}/?salesforce=forbidden", status_code=302)
         try:
             fields = salesforce_oauth.read_saved_fields(sub, org_id, scope, group_id)
             if not fields:
@@ -90,12 +88,13 @@ def make_routes(
             )
             result = await salesforce_oauth.persist_token(sub, org_id, scope, tokens, group_id)
         except Exception:
+            # Le client ne voit qu'un `?salesforce=error` : sans trace ici, un échec de
+            # connexion est INDIAGNOSTICABLE (Sentry ne voit rien, l'exception est
+            # avalée). On journalise le traceback, jamais le `code` ni les tokens.
+            logger.exception("salesforce oauth callback en échec (sub=%s scope=%s org=%s)",
+                             sub, scope, org_id)
             return RedirectResponse(f"{_app_url()}/?salesforce=error", status_code=302)
         status = "connected" if result.get("verified") else "connected_unverified"
         return RedirectResponse(f"{_app_url()}/?salesforce={status}", status_code=302)
 
-    return [
-        Route("/api/salesforce/oauth/start", start, methods=["GET"]),
-        Route("/api/salesforce/oauth/start", options_handler, methods=["OPTIONS"]),
-        Route("/api/salesforce/oauth/callback", callback, methods=["GET"]),
-    ]
+    return [Route("/api/salesforce/oauth/callback", callback, methods=["GET"])]
