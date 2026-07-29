@@ -1031,15 +1031,23 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # credentials_store.pack_secret.
         from . import credentials_store
         fields: dict[str, str] = {}
+        missing: list[str] = []
         for f in c.secret_fields:
             val = credentials_store.clean_field_value(f, body.get(f.name))
             if not val:
                 if f.required:
-                    return _json_error(request, 400, "missing_credentials")
+                    missing.append(f.label or f.name)
                 continue
             fields[f.name] = val
+        # NOMMER le champ manquant : un « missing_credentials » sec oblige à deviner
+        # lequel des cinq champs bloque — vécu 28/07, un `data_center` vide a fait
+        # échouer six tentatives de pose sans que rien ne le dise.
+        if missing:
+            return _json_error(request, 400, "missing_credentials",
+                               "champ(s) requis vide(s) : " + ", ".join(missing))
         if not fields:
-            return _json_error(request, 400, "missing_credentials")
+            return _json_error(request, 400, "missing_credentials",
+                               "aucun champ renseigné.")
         db.upsert_user(sub)
         account = (body.get("account") or "").strip()
         # Scope MEMBRE (ADR 0033) : la clé est posée DANS l'org de contexte (org
