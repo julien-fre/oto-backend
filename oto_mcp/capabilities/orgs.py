@@ -50,7 +50,7 @@ class UseOrgInput(BaseModel):
 def _use_org(ctx: ResolvedCtx, inp: UseOrgInput) -> dict:
     """Hint SANS ÉTAT (ADR 0038 B3 — le bracelet de session est retiré) : valide
     l'appartenance et renvoie le geste fiable. Le scope d'un appel est porté par
-    l'appel (`org=`/`project=`/`group=`) ou retombe sur l'org maison — jamais par
+    l'appel (`_org=`/`_project=`/`_group=`) ou retombe sur l'org maison — jamais par
     un état serveur. `org` = id/nom."""
     try:
         org_id = org_store.resolve_org_for_user(ctx.sub, inp.org)  # garantit l'appartenance
@@ -92,7 +92,7 @@ def _clear_org(ctx: ResolvedCtx, inp: NoInput) -> dict:
     sid = session_org.current_session_id()
     if sid is not None:
         return {"session_state": None,
-                "how_to": ("Aucun état de session à effacer (ADR 0038) : sans `org=`, "
+                "how_to": ("Aucun état de session à effacer (ADR 0038) : sans `_org=`, "
                            "chaque appel résout ton org maison (elle ne se change que "
                            "dans le dashboard).")}
     pid = org_store.ensure_personal_org(ctx.sub)     # REST : maison = org perso
@@ -147,7 +147,7 @@ CAPABILITIES += [
         Input=NoInput,
         authz=SUB_ONLY,
         description=(
-            "No-op hint (ADR 0038: no session state — without an `org=` token "
+            "No-op hint (ADR 0038: no session state — without an `_org=` token "
             "every call already resolves your home org, which is changed in the "
             "dashboard only)."
         ),

@@ -2,7 +2,7 @@
 
 Réunit les 9 tools MCP du domaine doctrine/procédure membre en UN : lecture
 (`get`/`list`, ex-`oto_get_doctrine`/`oto_list_doctrines`), écriture
-(`set`/`delete`, org_admin, épinglable `org=` #69) et bibliothèque publique
+(`set`/`delete`, org_admin, épinglable `_org=` #69) et bibliothèque publique
 (`library_list`/`library_get`/`publish`/`fork`/`unpublish`). Les handlers de
 domaine (`orgs_instructions`, `doctrine_library`) sont réutilisés tels quels ;
 leurs faces REST ne bougent pas.
@@ -96,7 +96,7 @@ CAPABILITIES += [
     Capability(
         key="org.procedure.console", handler=_procedure, Input=ProcedureInput,
         authz=BY_OP({
-            # `list` honore `org=` comme `get` (signal #248 : `set org=Y` répondait
+            # `list` honore `_org=` comme `get` (signal #248 : `set org=Y` répondait
             # ok, puis `list org=Y` rendait toujours le catalogue de l'org MAISON —
             # l'agent croyait sa procédure perdue). Le fix cross-org du 27/07 n'avait
             # posé ORG_MEMBER_OPT que sur `get`, laissant la moitié du signal ouverte.

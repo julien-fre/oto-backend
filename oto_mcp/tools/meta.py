@@ -211,7 +211,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def oto_call(name: str, arguments: Optional[dict] = None,
-                       org: Optional[int] = None, *, ctx: Context):
+                       _org: Optional[int] = None, *, ctx: Context):
         """Call ANY oto tool by name — including one that is NOT listed (hidden by
         default, connector not activated, FOD…), for a single call, WITHOUT adding it
         durably to your toolbox.
@@ -229,17 +229,23 @@ def register(mcp: FastMCP) -> None:
         Args:
             name: Exact target tool name (e.g. `fr_ccn_search`).
             arguments: Argument object passed to the target tool. `{}` if none.
-            org: run the target tool under THIS organization (id) — resolves its
+            _org: run the target tool under THIS organization (id) — resolves its
                 credentials/visibility/data for that org (ADR 0038 call token,
-                same membership guard as the flat `org=` axis). Omit for your
+                same membership guard as the flat `_org=` axis). Omit for your
                 current org.
 
-        Call-context axes (ADR 0038) — `group`, `project`, `instance`, `account`,
-        `run_id` — may be included INSIDE `arguments`: they route the CALL CONTEXT
-        (which org/team/credential-instance the target resolves under), are guarded
-        exactly like on a listed tool, and are stripped before the target sees them.
-        E.g. reach a team-scoped connector via `arguments={..., "group": 3}`, or a
-        pinned instance via `"instance": "<ref from oto_instance>"`.
+        Call-context tokens (ADR 0038) are PREFIXED `_` — `_group`, `_project`,
+        `_instance`, `_account`, `_run_id` — and may be included INSIDE `arguments`:
+        they route the CALL CONTEXT (which org/team/credential-instance the target
+        resolves under), are guarded exactly like on a listed tool, and are stripped
+        before the target sees them. E.g. reach a team-scoped connector via
+        `arguments={..., "_group": 3}`, or pin an instance via
+        `"_instance": "<ref from oto_instance>"`.
+
+        The prefix keeps them out of the tools' own argument space: an unprefixed
+        `account`/`org`/`project` in `arguments` is a BUSINESS argument of the target
+        (e.g. `aiark_company_search(account=…)` is AI Ark's company filter) and is
+        passed through untouched.
         """
         # Identité ambiante : le sub du JWT porte déjà l'appel (le handler cible
         # résout ses propres credentials dessus). Soft — sur stdio local il n'y a pas
@@ -267,13 +273,14 @@ def register(mcp: FastMCP) -> None:
         # axes des tools plats (org/group/project/instance/account/run_id) ne sont pas
         # posés pour nous. On rejoue NOUS-MÊMES la boucle applies-gated du middleware
         # plat (`call_axes.axes_for`, ordre AXES → le plus spécifique co-pose son org) :
-        # chaque axe présent dans `arguments` (ou le param top-level `org=`, folded
+        # chaque axe présent dans `arguments` (ou le param top-level `_org=`, folded
         # ci-dessous) est GARDÉ+POSÉ puis RETIRÉ des args. Posé AVANT le try de run pour
         # qu'un refus de garde PROPAGE (McpError) au lieu d'être capturé comme une erreur
         # de la cible. Ferme #228 (instance/groupe d'un connecteur injoignable via
-        # oto_call — seul `org=` était honoré).
-        if org is not None:
-            args.setdefault("org", org)
+        # oto_call — seul `_org=` était honoré).
+        if _org is not None:
+            args.setdefault("_org", _org)
+        call_axes.reject_legacy_axis_names(args, getattr(tool, "parameters", None))
         undo: list = []
         try:
             for axis in call_axes.axes_for(name):
@@ -283,12 +290,12 @@ def register(mcp: FastMCP) -> None:
             for _reset, _tok in reversed(undo):
                 _reset(_tok)
             raise
-        # Un axe passé pour un tool qui ne le supporte PAS (ex. instance= sur data_*,
-        # org= sur un tool non org-scopable) = jeton de contexte sans effet → écarté des
-        # args, pour ne pas casser sa validation. GARDÉ sur ce que la cible déclare :
-        # un paramètre métier qui porte le nom d'un axe (aiark `account` = le filtre
-        # société) n'est PAS de l'adressage et doit passer intact.
-        call_axes.strip_unconsumed_axes(args, getattr(tool, "parameters", None))
+        # Un jeton passé pour un tool qui ne le supporte PAS (ex. `_instance` sur data_*,
+        # `_org` sur un tool non org-scopable) = contexte sans effet → écarté des args,
+        # pour ne pas casser sa validation. Sûr parce que les jetons sont préfixés `_` :
+        # un argument MÉTIER homonyme (aiark `account` = le filtre société) ne porte pas
+        # le préfixe et n'est donc jamais touché (issue #250).
+        call_axes.strip_unconsumed_axes(args)
         started = time.monotonic()
         ok, err = True, None
         try:

@@ -32,10 +32,12 @@ def test_capability_tools_have_flat_schema():
             assert s is not None, cap.mcp
             props = set(s.get("properties", {}).keys())
             expected = set(cap.Input.model_fields.keys())
-            # Axe-contexte `org=` (jeton d'appel, modèle sans état de session #108/#112)
-            # injecté à plat sur les caps org-scopées qui ne déclarent pas déjà un `org`.
+            # Jeton de contexte `_org` (modèle sans état de session #108/#112) injecté à
+            # plat sur toute cap exposée en MCP. Préfixé `_` depuis l'issue #250 : il
+            # COEXISTE désormais avec un champ métier `org` (oto_use_org.org = l'org
+            # CIBLE) au lieu de se marcher dessus.
             if _mcp_adapter._org_param_reserved(cap):
-                expected.add("org")
+                expected.add("_org")
             assert props == expected, cap.mcp                            # plat
             assert "$defs" not in s, cap.mcp                              # pas imbriqué
 

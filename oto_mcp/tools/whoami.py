@@ -56,8 +56,8 @@ def register(mcp: FastMCP) -> None:
         `knowledge` (KB native oto_kb : ancre kb_project_id), `connectors` (résumé des connecteurs
         configurés), et un `summary` lisible. Lecture seule.
 
-        Pour agir sous une autre org/équipe/projet : passe le jeton `org=` /
-        `group=` / `project=` directement sur chaque appel de travail (aucun état
+        Pour agir sous une autre org/équipe/projet : passe le jeton `_org=` /
+        `_group=` / `_project=` directement sur chaque appel de travail (aucun état
         de session, ADR 0038) — `oto_whoami(org=X)` montre le contexte résultant.
         L'org/équipe PAR DÉFAUT (maison) ne se change que dans le dashboard —
         l'agent ne mute jamais le défaut.

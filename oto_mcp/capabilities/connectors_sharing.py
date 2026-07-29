@@ -1,7 +1,7 @@
 """Capacité de PARTAGE d'instance (ADR 0044) — surface d'ÉCRITURE de `share_side`.
 
 `share_side` = EXTENSION : un membre prête SON instance (sa clé dans l'org courante)
-à un pair nommé. L'usage se fait ensuite en pinnant l'instance (`instance=`) ; la
+à un pair nommé. L'usage se fait ensuite en pinnant l'instance (`_instance=`) ; la
 garde `access.guard_instance_access` autorise le bénéficiaire (emprunte la clé, garde
 son PROPRE contexte d'org — cross-org OK, le prêt nominatif est le consentement).
 Owner-scopé : `SUB_ONLY`, le handler ne touche QUE la ligne du coffre du caller

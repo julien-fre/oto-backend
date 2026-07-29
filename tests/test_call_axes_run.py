@@ -17,17 +17,17 @@ def _params(name):
 def test_run_axis_applies_to_work_tools():
     for name in ("folk_search", "gmail_search", "data_write", "serper_web_search",
                  "pennylane_company"):
-        assert "run_id" in _params(name), name
+        assert "_run_id" in _params(name), name
 
 
 def test_run_axis_excludes_spine_meta_loop():
     # corréler la machinerie de la boucle d'usage / l'identité à un run n'a pas de sens
     for name in ("run_start", "run_finish", "feedback", "oto_whoami", "oto_create_org"):
-        assert "run_id" not in _params(name), name
+        assert "_run_id" not in _params(name), name
 
 
 def _run_axis():
-    return next(a for a in call_axes.AXES if a.param == "run_id")
+    return next(a for a in call_axes.AXES if a.param == "_run_id")
 
 
 @pytest.mark.asyncio
@@ -84,6 +84,6 @@ def test_run_axis_includes_project_spine_tools():
     # feedback #168 : un agent qui propage run_id (comme prescrit par run_start)
     # ne doit pas être rejeté par les tools spine de la surface de travail.
     for name in ("oto_project", "oto_project_files", "oto_doc", "oto_resource"):
-        assert "run_id" in _params(name), name
+        assert "_run_id" in _params(name), name
         # SEUL run_id : org= reste injecté par _mcp_adapter (pas de double-traitement)
-        assert "org" not in _params(name), name
+        assert "_org" not in _params(name), name

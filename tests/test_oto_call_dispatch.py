@@ -221,7 +221,7 @@ def test_dispatch_pins_org_during_run_then_resets(oto_call_fn, monkeypatch):
     target = _OrgCapturingTool("zoho_records")
     assert session_org.current_call_org() is None            # propre avant
     _call(oto_call_fn, [target], name="zoho_records",
-          arguments={"module": "Contacts"}, org=167)
+          arguments={"module": "Contacts"}, _org=167)
 
     assert target.org_during_run == 167                      # le tool a vu l'org 167
     assert session_org.current_call_org() is None            # reset après (pas de fuite)
@@ -248,7 +248,7 @@ def test_dispatch_org_refused_raises_before_run(oto_call_fn, monkeypatch):
 
     target = _OrgCapturingTool("zoho_records")
     with pytest.raises(McpError):
-        _call(oto_call_fn, [target], name="zoho_records", arguments={}, org=999)
+        _call(oto_call_fn, [target], name="zoho_records", arguments={}, _org=999)
     assert target.org_during_run is None                     # dispatch jamais atteint
     assert session_org.current_call_org() is None
 
@@ -267,7 +267,7 @@ class _ArgsCapturingTool(_OrgCapturingTool):
 
 
 def test_dispatch_org_axis_in_arguments(oto_call_fn, monkeypatch):
-    """#228 : un axe passé DANS `arguments` (ici org=, sans le param top-level) est
+    """#228 : un jeton passé DANS `arguments` (ici `_org`, sans le param top-level) est
     routé au contexte d'appel via la boucle d'axes ET retiré des args de la cible."""
     from oto_mcp import call_axes, session_org
     monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
@@ -278,18 +278,21 @@ def test_dispatch_org_axis_in_arguments(oto_call_fn, monkeypatch):
 
     target = _ArgsCapturingTool("zoho_records")
     _call(oto_call_fn, [target], name="zoho_records",
-          arguments={"module": "Contacts", "org": 167})
+          arguments={"module": "Contacts", "_org": 167})
 
-    assert target.org_during_run == 167              # org routée (axe dans arguments)
-    assert target.args_seen == {"module": "Contacts"}  # axe org RETIRÉ des args cible
+    assert target.org_during_run == 167              # org routée (jeton dans arguments)
+    assert target.args_seen == {"module": "Contacts"}  # jeton `_org` RETIRÉ des args cible
     assert session_org.current_call_org() is None
 
 
 def test_dispatch_strips_nonapplicable_axis(oto_call_fn, monkeypatch):
-    """Un axe qui ne s'applique pas à la cible (ex. account= sur zoho, non multi-compte)
-    est ÉCARTÉ des args — pas posé, pas passé au tool (sinon sa validation casserait)."""
+    """Un jeton qui ne s'applique pas à la cible est ÉCARTÉ des args — pas posé, pas
+    passé au tool (sinon sa validation casserait). Le préfixe `_` garantit qu'on n'écarte
+    jamais un argument métier au passage (issue #250)."""
     monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
-    target = _ArgsCapturingTool("zoho_records")
-    _call(oto_call_fn, [target], name="zoho_records",
-          arguments={"module": "X", "account": "nope"})
-    assert target.args_seen == {"module": "X"}       # account= écarté, cible propre
+    # folk n'est ni multi-credential ni porteur d'identités → `_account` ne s'y applique
+    # pas : rien ne le consomme, le balayage doit l'écarter avant le dispatch.
+    target = _ArgsCapturingTool("folk_search")
+    _call(oto_call_fn, [target], name="folk_search",
+          arguments={"query": "acme", "_account": "nope"})
+    assert target.args_seen == {"query": "acme"}     # `_account` écarté, cible propre

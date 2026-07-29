@@ -16,17 +16,17 @@ def _params(name):
 def test_project_axis_applies_to_work_tools():
     # ADR 0038 B3b : `project=` = jeton PRIMAIRE sur TOUTE la surface de travail
     # (data_* + connecteurs — le bracelet oto_use_project n'existe plus).
-    assert "project" in _params("data_write")
-    assert "project" in _params("data_rows")
-    assert "project" in _params("zoho_get")
-    assert "project" in _params("folk_search")
+    assert "_project" in _params("data_write")
+    assert "_project" in _params("data_rows")
+    assert "_project" in _params("zoho_get")
+    assert "_project" in _params("folk_search")
     # spine : hors surface de travail.
-    assert "project" not in _params("oto_whoami")
-    assert "project" not in _params("run_start")
+    assert "_project" not in _params("oto_whoami")
+    assert "_project" not in _params("run_start")
 
 
 def _project_axis():
-    return next(a for a in call_axes.AXES if a.param == "project")
+    return next(a for a in call_axes.AXES if a.param == "_project")
 
 
 @pytest.mark.asyncio

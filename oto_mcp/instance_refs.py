@@ -1,7 +1,7 @@
 """Grammaire de ref stable des « instances de connecteur » (ADR 0038 §B, barreau 4).
 
 Domicile UNIQUE du format de ref — B5 (bindings slot→instance) et B6 (axe
-`instance=`) l'importeront sans tirer la capacité de projection. Le ref projette
+`_instance=`) l'importeront sans tirer la capacité de projection. Le ref projette
 1:1 la clé primaire du coffre `connector_credentials`
 `(entity_type, entity_id, connector, account)` : il est stable exactement la
 durée de vie de la ligne (un `rename_account` change le ref — cohérent avec

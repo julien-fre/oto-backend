@@ -813,7 +813,7 @@ CAPABILITIES += [
             "ANOTHER org is re-provisioned EMPTY (never a pointer to the source's private data), "
             "and links whose namespace no longer resolves are skipped — both surfaced in the "
             "response `warnings`. Pass project_id = source + name = target) / handoff (a copy-paste « resume in Claude » blob "
-            "that pre-writes the per-call `project=` token for this project) / archive / link & unlink "
+            "that pre-writes the per-call `_project=` token for this project) / archive / link & unlink "
             "(attach an entity: "
             "target_type tableau|procedure|connecteur + target_ref = its id/slug/name, "
             "optional label + optional "
@@ -871,7 +871,7 @@ CAPABILITIES += [
 
 # ── « Projet actif » = jeton d'appel (ADR 0038 B3b — le bracelet est retiré) ──
 # `oto_use_project` ne pose PLUS d'état de session : le contexte projet est porté
-# par le jeton `project=` de CHAQUE appel de travail (l'axe co-pose l'org du projet,
+# par le jeton `_project=` de CHAQUE appel de travail (l'axe co-pose l'org du projet,
 # résout les slots et épingle les identités connecteur préfaites). Ce tool valide
 # l'accès et renvoie le geste fiable + les surcharges préfaites (informatif).
 
@@ -886,7 +886,7 @@ class NoInput(BaseModel):
 
 def _use_project(ctx: ResolvedCtx, inp: UseProjectInput) -> dict:
     """Hint SANS ÉTAT (ADR 0038 B3b) : valide l'accès au projet et renvoie le geste
-    fiable (`project=` par appel) + ses surcharges connecteur préfaites."""
+    fiable (`_project=` par appel) + ses surcharges connecteur préfaites."""
     row = db.get_project_by_id(inp.project_id)
     _require(row is not None, "unknown_project", f"Projet #{inp.project_id} inconnu.", 404)
     _require_active_org_visible(ctx, row)
@@ -907,10 +907,10 @@ def _use_project(ctx: ResolvedCtx, inp: UseProjectInput) -> dict:
 
 
 def _clear_project(ctx: ResolvedCtx, inp: NoInput) -> dict:
-    """Hint sans état (ADR 0038 B3b) : hors projet = simplement ne pas passer `project=`."""
+    """Hint sans état (ADR 0038 B3b) : hors projet = simplement ne pas passer `_project=`."""
     return {"session_state": None,
             "how_to": ("Aucun état de session à effacer (ADR 0038) : un appel sans "
-                       "`project=` est hors projet par construction.")}
+                       "`_project=` est hors projet par construction.")}
 
 
 # ── « Ajouter à mon Oto » : forker un projet PUBLIÉ par slug (canal d'acquisition) ──
@@ -981,7 +981,7 @@ CAPABILITIES += [
     Capability(
         key="me.clear_project", handler=_clear_project, Input=NoInput, authz=SUB_ONLY,
         description=("No-op hint (ADR 0038: no session state — a call without "
-                     "`project=` is out of any project by construction)."),
+                     "`_project=` is out of any project by construction)."),
         mcp="oto_clear_project",
     ),
 ]

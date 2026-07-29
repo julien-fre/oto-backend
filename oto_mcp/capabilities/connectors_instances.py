@@ -187,7 +187,7 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
         # la garde de résolution) : mes groupes, et TOUS les groupes de l'org pour
         # un org_admin (escalade roles.py — « un connecteur par département, vu au
         # niveau org » : l'admin voit et administre chaque instance départementale).
-        # Depuis B3, `group=` est un jeton d'appel → toute instance listée ici est
+        # Depuis B3, `_group=` est un jeton d'appel → toute instance listée ici est
         # atteignable = visible au sens §C.
         from .. import roles as _roles
         try:

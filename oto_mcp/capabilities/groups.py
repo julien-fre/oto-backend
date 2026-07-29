@@ -105,7 +105,7 @@ def _list_my_groups(ctx: ResolvedCtx, inp: NoInput) -> dict:
 
 def _use_group(ctx: ResolvedCtx, inp: UseGroupInput) -> dict:
     """MCP = hint SANS ÉTAT (ADR 0038 B3 — le bracelet de session est retiré) :
-    valide l'appartenance et renvoie le geste fiable (`group=` par appel, qui
+    valide l'appartenance et renvoie le geste fiable (`_group=` par appel, qui
     co-pose l'org parente). REST = pose l'équipe MAISON persistante."""
     g = group_store.get_group(inp.group_id)
     if not g:
@@ -134,7 +134,7 @@ def _clear_group(ctx: ResolvedCtx, inp: NoInput) -> dict:
     sid = session_org.current_session_id()
     if sid is not None:
         return {"session_state": None,
-                "how_to": ("Aucun état de session à effacer (ADR 0038). Sans `group=`, "
+                "how_to": ("Aucun état de session à effacer (ADR 0038). Sans `_group=`, "
                            "l'appel est au niveau org (ton équipe maison ne s'applique "
                            "que dans ton org maison) — le défaut durable se change dans "
                            "le dashboard.")}
@@ -208,7 +208,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="group.clear", handler=_clear_group, Input=NoInput, authz=SUB_ONLY,
-        description=("No-op hint (ADR 0038: no session state). Without a `group=` "
+        description=("No-op hint (ADR 0038: no session state). Without a `_group=` "
                      "token a call is at org level; the durable default is changed "
                      "in the dashboard only."),
         mcp="oto_clear_group",

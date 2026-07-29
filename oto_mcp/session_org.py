@@ -5,7 +5,7 @@
 `access.current_org`/`current_group`. Raisons : claude.ai renouvelle le
 `Mcp-Session-Id` à CHAQUE appel (bracelet jamais relu, #72) et un session_id
 recyclé cross-compte faisait hériter le scope (#108). Le scope est porté par
-l'appel (`org=`/`project=`/`group=`, contextvars `_CALL_*` ci-dessous) ou retombe
+l'appel (`_org=`/`_project=`/`_group=`, contextvars `_CALL_*` ci-dessous) ou retombe
 sur la maison. Les stores `_OVERRIDES`/`_GROUP_OVERRIDES`/`_PROJECT_OVERRIDES`
 (B3b) et leurs fonctions sont **conservés transitoirement** (WIP en vol les
 importe) — à supprimer au prochain nettoyage.
@@ -46,7 +46,7 @@ def current_view_org() -> Optional[int]:
 
 
 # ── Org de l'APPEL (jeton explicite per-requête — modèle sans état de session) ─
-# Override porté par un PARAMÈTRE d'appel (`org=`), PAS par un état de session :
+# Override porté par un PARAMÈTRE d'appel (`_org=`), PAS par un état de session :
 # celui-ci ne survit pas chez claude.ai (un Mcp-Session-Id neuf est frappé à CHAQUE
 # tool call → un override keyé session_id n'est jamais relu par l'appel suivant).
 # Contextvar PER-REQUÊTE (isolé par tâche Starlette) posé par l'adaptateur capacité
@@ -68,7 +68,7 @@ def reset_call_org(token: contextvars.Token) -> None:
 
 
 def current_call_org() -> Optional[int]:
-    """Org épinglée par le paramètre `org=` de l'appel courant, ou None. Déjà gardée
+    """Org épinglée par le paramètre `_org=` de l'appel courant, ou None. Déjà gardée
     (is_org_member) à la pose par l'adaptateur → `current_org` la rend telle quelle."""
     return _CALL_ORG.get()
 
@@ -96,7 +96,7 @@ def reset_call_project(token: contextvars.Token) -> None:
 
 
 def current_call_project() -> Optional[int]:
-    """Projet épinglé par `project=` de l'appel courant (déjà gardé can_access), ou None."""
+    """Projet épinglé par `_project=` de l'appel courant (déjà gardé can_access), ou None."""
     return _CALL_PROJECT.get()
 
 
@@ -109,7 +109,7 @@ def reset_call_group(token: contextvars.Token) -> None:
 
 
 def current_call_group() -> Optional[int]:
-    """Groupe épinglé par `group=` de l'appel courant (déjà gardé can_read_group), ou None."""
+    """Groupe épinglé par `_group=` de l'appel courant (déjà gardé can_read_group), ou None."""
     return _CALL_GROUP.get()
 
 
@@ -132,7 +132,7 @@ _CALL_INSTANCE: contextvars.ContextVar[Optional[object]] = contextvars.ContextVa
 
 def set_call_instance(ref: object) -> contextvars.Token:
     """Épingle l'instance de connecteur de l'appel courant (un `InstanceRef` parsé,
-    ADR 0038 B6 — déjà gardé par niveau à la pose par l'axe `instance=`)."""
+    ADR 0038 B6 — déjà gardé par niveau à la pose par l'axe `_instance=`)."""
     return _CALL_INSTANCE.set(ref)
 
 
@@ -141,7 +141,7 @@ def reset_call_instance(token: contextvars.Token) -> None:
 
 
 def current_call_instance() -> Optional[object]:
-    """`InstanceRef` épinglé par `instance=` de l'appel courant, ou None. Lu par
+    """`InstanceRef` épinglé par `_instance=` de l'appel courant, ou None. Lu par
     `access._resolve_credential_impl` : résolution EN DUR de cette ligne du coffre,
     jamais de fallback (§C ADR 0038)."""
     return _CALL_INSTANCE.get()

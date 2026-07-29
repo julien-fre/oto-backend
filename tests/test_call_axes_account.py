@@ -1,4 +1,4 @@
-"""Keystone des axes-contexte d'appel sur tools plats (#108/#112) — axe `account=`.
+"""Keystone des axes-contexte d'appel sur tools plats (#108/#112) — axe `_account=`.
 
 Trois contrats : exposition SÉLECTIVE du schéma (dérivée du registre), strip+pose de
 la ContextVar par le middleware, lecture par le seam de résolution (`resolve_credential`
@@ -24,23 +24,23 @@ def _params(name):
 
 def test_account_axis_applies_to_identity_bearing_tools():
     # ADR 0051 : unipile (1 clé partagée → N identités opérées) porte l'axe
-    # account=/identity= pour épingler le compte LinkedIn/messagerie à opérer.
-    assert "account" in _params("unipile_search")
-    assert "account" in _params("whatsapp_send_message")
+    # _account= pour épingler le compte LinkedIn/messagerie à opérer.
+    assert "_account" in _params("unipile_search")
+    assert "_account" in _params("whatsapp_send_message")
 
 
 def test_account_axis_excludes_single_and_spine():
     for name in ("folk_search", "serper_web_search", "pennylane_company",
                  "oto_create_org", "oto_whoami", "data_write"):
-        assert "account" not in _params(name), name
+        assert "_account" not in _params(name), name
 
 
 def test_inject_schema_adds_optional_account_property():
     base = {"type": "object", "additionalProperties": False,
             "properties": {"id": {"type": "string"}}, "required": ["id"]}
     out = call_axes.inject_schema(base, call_axes.axes_for("zoho_get"))
-    assert out["properties"]["account"]["type"] == "string"
-    assert "account" not in out.get("required", [])       # jamais requis
+    assert out["properties"]["_account"]["type"] == "string"
+    assert "_account" not in out.get("required", [])       # jamais requis
     assert out["additionalProperties"] is False           # inchangé
     assert base["properties"] == {"id": {"type": "string"}}  # copie, pas de mutation
 
@@ -81,14 +81,14 @@ async def test_on_list_tools_advertises_only_where_applicable():
 
     out = await mw.on_list_tools(_Ctx(_Msg("tools/list", {})), _next)
     by = {t.name: t for t in out}
-    assert "account" in by["zoho_get"].parameters["properties"]
-    assert "account" not in by["folk_search"].parameters["properties"]
+    assert "_account" in by["zoho_get"].parameters["properties"]
+    assert "_account" not in by["folk_search"].parameters["properties"]
 
 
 @pytest.mark.asyncio
 async def test_on_call_tool_strips_axis_and_poses_contextvar():
     mw = CallContextMiddleware(reserved_org_tools=set())
-    args = {"id": "42", "account": "boulot"}
+    args = {"id": "42", "_account": "boulot"}
     seen = {}
 
     async def _next(ctx):
@@ -100,7 +100,7 @@ async def test_on_call_tool_strips_axis_and_poses_contextvar():
 
     ctx = _Ctx(_Msg("zoho_get", args))
     assert await mw.on_call_tool(ctx, _next) == "ok"
-    assert seen["args"] == {"id": "42"}          # account strippé
+    assert seen["args"] == {"id": "42"}          # _account strippé
     assert seen["account"] == "boulot"           # posé pendant l'appel
     assert session_org.current_call_account() is None  # reset après (finally)
 
@@ -108,14 +108,14 @@ async def test_on_call_tool_strips_axis_and_poses_contextvar():
 @pytest.mark.asyncio
 async def test_on_call_tool_ignores_axis_on_non_applicable_tool():
     mw = CallContextMiddleware(reserved_org_tools=set())
-    args = {"query": "x", "account": "boulot"}   # folk n'expose pas account=
+    args = {"query": "x", "_account": "boulot"}  # folk n'expose pas _account=
 
     async def _next(ctx):
         # non applicable → l'axe n'est PAS strippé (resterait un arg métier si déclaré)
         return dict(ctx.message.arguments)
 
     out = await mw.on_call_tool(_Ctx(_Msg("folk_search", args)), _next)
-    assert out == {"query": "x", "account": "boulot"}
+    assert out == {"query": "x", "_account": "boulot"}
     assert session_org.current_call_account() is None
 
 

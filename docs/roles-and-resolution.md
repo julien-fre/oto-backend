@@ -54,11 +54,11 @@ qui ne déchiffre que le gagnant). Les 6 consommateurs (`_resolve_credential_imp
 `connector_resolvable_for_org`) en sont des traductions minces — **ne jamais
 recopier la cascade dans un call-site** : chaque copie divergeait et faisait
 mentir une surface (vécu 16/07). Contrat gardé par `tests/test_cascade_walker.py`
-(ordre des barreaux, gates, accord présence/fetch). Les pins (`instance=`/
-`project=`, ADR 0038) court-circuitent AVANT la marche ; `group` se passe en
+(ordre des barreaux, gates, accord présence/fetch). Les pins (`_instance=`/
+`_project=`, ADR 0038) court-circuitent AVANT la marche ; `_group` se passe en
 lazy (callable) côté fetch. Échec « rien ne résout » : l'erreur remonte les
 **instances à portée** (`access.reachable_instances` — équipes dont le sub est
-membre, autres orgs) avec le geste per-call en tête (`group=`/`org=`/`instance=`) ;
+membre, autres orgs) avec le geste per-call en tête (`_group=`/`_org=`/`_instance=`) ;
 le drawer reçoit le même signal via `status_for.team_key_group`.
 
 Quota daily per-grant : colonne `user_grants.daily_quota` (posé par l'admin

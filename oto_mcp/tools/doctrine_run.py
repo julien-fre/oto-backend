@@ -74,7 +74,7 @@ def register(mcp: FastMCP) -> None:
         await dr.push_run(ctx, run_id, label, doctrine)
         # Axe d'appel run_id (#108) : pose SANS reset — la ContextVar meurt avec la
         # requête, mais stampe le tool_call de run_start lui-même sous son run, et
-        # amorce l'axe pour l'agent (qui le repasse ensuite via `run_id=`).
+        # amorce l'axe pour l'agent (qui le repasse ensuite via `_run_id=`).
         from .. import session_org
         session_org.set_call_run(run_id)
         await _persist_open(run_id, label, doctrine)

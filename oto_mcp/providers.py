@@ -112,7 +112,7 @@ class Connector:
     # est intrinsèquement PAR-PERSONNE — un compte de messagerie hébergé (unipile :
     # le login LinkedIn/WhatsApp EST l'humain, pas l'appartenance). Sa clé membre
     # posée dans UNE org suit alors le `sub` dans TOUTES ses orgs (résolution de
-    # proximité, pas seulement pin `instance=`) : « même email = instance dispo dans
+    # proximité, pas seulement pin `_instance=`) : « même email = instance dispo dans
     # chaque org ». Sans ce flag, un credential membre reste strictement `(sub, org)`
     # (ADR 0033) — la valeur par défaut ne change rien pour les ~autres connecteurs.
     personal_cross_org: bool = False

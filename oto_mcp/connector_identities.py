@@ -103,7 +103,7 @@ def _own_unipile_account_id(sub: str, provider: str) -> str | None:
 
 def _own_account_ids(sub: str, provider: str) -> set[str]:
     """Tous les `account_id` VIVANTS propres au sub sur ce canal (toutes orgs) — set
-    de garde du pin `account=`/`identity=` (le sien, en plus des comptes accordés)."""
+    de garde du pin `_account=` (le sien, en plus des comptes accordés)."""
     from . import db
     p = provider.upper()
     return {a["account_id"] for a in db.list_unipile_accounts(sub)
@@ -113,7 +113,7 @@ def _own_account_ids(sub: str, provider: str) -> set[str]:
 def resolve_operated_account_id(sub: str, provider: str) -> str | None:
     """Compte Unipile opéré par `sub` sur ce canal (LE point de résolution #55/0051).
 
-    **Pin d'appel `account=`/`identity=` (ADR 0051)** : identité opérée épinglée POUR
+    **Pin d'appel `_account=` (ADR 0051)** : identité opérée épinglée POUR
     CET APPEL — prime sur le pointeur maison, ÉPHÉMÈRE (aucun état écrit). Gardé :
     compte ACCORDÉ (#55 vivant) OU compte PROPRE du sub ; un pin non opérable LÈVE
     (jamais de repli muet sur une autre identité).
@@ -131,7 +131,7 @@ def resolve_operated_account_id(sub: str, provider: str) -> str | None:
         if pin in db.granted_accounts_for(sub, provider) or pin in _own_account_ids(sub, provider):
             return pin
         raise ValueError(
-            f"Le compte {provider.title()} épinglé (`account=`/`identity=`) n'est ni le "
+            f"Le compte {provider.title()} épinglé (`_account=`) n'est ni le "
             "tien ni un compte qui t'est accordé — ou il n'est plus opérable. Liste les "
             "identités opérables avec oto_identity(op='list').")
     op = db.get_operated_account(sub, provider)

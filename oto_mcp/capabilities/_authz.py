@@ -235,7 +235,7 @@ def ORG_MEMBER_OPT(field: str):
     lecture d'`ORG_ADMIN_OPT`.
 
     Si `input.<field>` (un org_id) est fourni → sémantique `ORG_MEMBER_OF` : garde
-    d'appartenance sur l'org NOMMÉE et l'injecte (lecture cross-org par jeton `org=`,
+    d'appartenance sur l'org NOMMÉE et l'injecte (lecture cross-org par jeton `_org=`,
     ADR 0038 — un accompagnant hors de l'org cible charge une doctrine nommée par slug).
     Sinon → org active depuis l'état serveur, **gracieux si absente** (`org_id=None`,
     comme `SUB_ONLY`) : le bundle de session (slug omis) reste servi vide hors org, et

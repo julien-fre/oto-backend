@@ -191,7 +191,7 @@ def _observe_schema(service: str, payload) -> None:
 
 
 class CallContextMiddleware(Middleware):
-    """Pose le contexte d'appel (`org=`) AVANT toute la chaîne middleware, pour que la
+    """Pose le contexte d'appel (`_org=`) AVANT toute la chaîne middleware, pour que la
     résolution du handler ET les hooks post-tool (rédaction de champs, calllog) voient
     la MÊME org que l'appel — pas l'org maison (modèle sans état de session, #108/#112).
 
@@ -200,20 +200,20 @@ class CallContextMiddleware(Middleware):
     posée pendant qu'ils relisent `current_org` (sinon reset trop tôt = rédaction/audit
     sous la maison). ContextVar per-tâche (isolée par appel) ; reset en `finally`.
 
-    Garde d'appartenance au point d'entrée : `org=` dont le sub n'est pas membre lève un
+    Garde d'appartenance au point d'entrée : `_org=` dont le sub n'est pas membre lève un
     McpError **actionnable**, jamais un repli silencieux vers une autre org. Ne s'active
-    que pour les tools où `org` est le paramètre RÉSERVÉ d'axe-contexte (pas un champ
-    métier homonyme comme `oto_use_org.org`) — l'ensemble est fourni par l'adaptateur.
+    que pour les tools de capacité, où `_org` est injecté au schéma par l'adaptateur
+    (le préfixe `_` écarte toute collision avec un champ métier `org`, issue #250).
     """
 
     def __init__(self, reserved_org_tools):
         self._org = frozenset(reserved_org_tools)
 
     async def on_list_tools(self, context, call_next):
-        """Advertise les axes-contexte plats (`account=`, …) dans le schéma des tools
+        """Advertise les axes-contexte plats (`_account=`, …) dans le schéma des tools
         CONCERNÉS (sélectif, `call_axes.axes_for`) → claude.ai sait les envoyer. Sans
         ça, `additionalProperties:false` ferait rejeter l'axe côté client. Les tools
-        de capacité (`org=`) sont schématisés par `_mcp_adapter`, pas ici."""
+        de capacité (`_org=`) sont schématisés par `_mcp_adapter`, pas ici."""
         tools = await call_next(context)
         out = []
         for t in tools:
@@ -232,10 +232,14 @@ class CallContextMiddleware(Middleware):
         # ultérieure lève (les tokens déjà posés sont toujours nettoyés).
         undo: list = []
         try:
-            # `org=` (tools de capacité) : posé ici, retiré des kwargs par `_make_tool`.
-            if name in self._org and args.get("org") is not None:
-                undo.append((session_org.reset_call_org, await self._pin_org(args["org"])))
-            # Axes plats (`account=`, … — connecteurs/data) : lus des args BRUTS, posés,
+            # Relevé de résolution : posé EN PREMIER (donc reset EN DERNIER, LIFO) pour
+            # que les seams l'aient pendant tout le handler ET que le calllog le relise
+            # après. Inerte si rien ne le remplit — un dict vide n'ajoute aucune ligne.
+            undo.append((session_org.reset_call_trace, session_org.set_call_trace({})))
+            # `_org=` (tools de capacité) : posé ici, retiré des kwargs par `_make_tool`.
+            if name in self._org and args.get("_org") is not None:
+                undo.append((session_org.reset_call_org, await self._pin_org(args["_org"])))
+            # Axes plats (`_account=`, … — connecteurs/data) : lus des args BRUTS, posés,
             # puis RETIRÉS des arguments avant le dispatch (la fonction du tool ne les
             # déclare pas → elle validerait en erreur sinon). Les seams de résolution
             # existants (resolve_credential…) lisent la ContextVar.
@@ -251,7 +255,7 @@ class CallContextMiddleware(Middleware):
     async def _pin_org(org):
         # Garde partagée (`resolve_org_guarded`) = MÊME résolution qu'`oto_use_org` +
         # McpError propre (ce middleware est outermost → une exception opaque serait
-        # invisible à Sentry, vécu prod 2026-07-04). Idem l'axe plat `org=` et oto_call.
+        # invisible à Sentry, vécu prod 2026-07-04). Idem l'axe plat `_org=` et oto_call.
         return session_org.set_call_org(await call_axes.resolve_org_guarded(org))
 
 

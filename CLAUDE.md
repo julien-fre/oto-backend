@@ -589,6 +589,19 @@ handlers, une seule autz de scope** (`_owner_for_write`) — l'ex-`tools/guide.p
 
 ## Conventions
 
+- **Jetons de contexte d'appel = noms RÉSERVÉS, préfixés `_`** (ADR 0038 amendée 29/07,
+  oto-backend#250) : `_org`, `_project`, `_group`, `_account`, `_instance`, `_run_id`
+  (`call_axes.py`). Ils sont advertisés sélectivement au schéma des tools concernés, lus
+  des args bruts, posés en ContextVar, puis **retirés avant le dispatch**. Le préfixe est
+  ce qui rend ce retrait sûr : un tool peut déclarer `account`/`org`/`project` en argument
+  MÉTIER sans risque. Tant qu'ils portaient les noms NUS, le retrait mangeait de vrais
+  arguments **en silence** — `oto_use_org(org=)` (l'org cible, 04/07) puis
+  `aiark_company_search(account=)` (le filtre société, 28/07 : AI Ark renvoyait sa base
+  entière, 72M lignes, sans la moindre erreur). Ne JAMAIS nommer un argument de tool
+  `_<quelque chose>` (tripwire `test_call_axes_business_param_collision.py`). ⚠️ La prose
+  du bloc A prescrit ces jetons : elle vit dans `instructions.py` **ET** en DB
+  (`platform_instructions['secret_sauce']`) — mettre les deux à jour, la DB **après** le
+  déploiement prod, sinon l'agent reçoit une consigne que le serveur ne sait pas honorer.
 - Nouveau connecteur = (1) un fichier `tools/<service>.py` exposant `register(mcp)`,
   (2) une **entrée au registre `providers.py`**. `register_all` (`tools/__init__.py`)
   **DÉRIVE le chargement du registre** (#24, fin de la liste hardcodée) : il boucle

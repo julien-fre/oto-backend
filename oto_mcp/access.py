@@ -103,7 +103,7 @@ def current_org(sub: str | None) -> Optional[int]:
     l'org persistée (`org_store.get_active_org`, qui devient l'« org maison »).
 
     Résout `jeton d'appel ?? consultation ?? maison` (ADR 0038, amende 0023) :
-    - **jeton d'appel** (MCP) — `org=`/`project=`/`group=` posés déjà gardés par
+    - **jeton d'appel** (MCP) — `_org=`/`_project=`/`_group=` posés déjà gardés par
       les axes/adaptateurs (contextvar per-requête) ; AUCUN état de session ;
     - **org de consultation** (REST) — view-as du dashboard, contextvar per-requête
       posé APRÈS validation d'appartenance par l'adaptateur REST ;
@@ -125,7 +125,7 @@ def current_org(sub: str | None) -> Optional[int]:
         from . import roles
         if roles.is_org_member(sub, cand):
             return cand
-    # Jeton explicite de l'appel (`org=`, modèle sans état de session) : posé par
+    # Jeton explicite de l'appel (`_org=`, modèle sans état de session) : posé par
     # l'adaptateur capacité APRÈS validation d'appartenance → rendu tel quel. Prime
     # sur l'override de session (qui, lui, ne survit pas au stateless claude.ai).
     call = session_org.current_call_org()
@@ -134,7 +134,7 @@ def current_org(sub: str | None) -> Optional[int]:
     # Le BRACELET de session (`oto_use_org`, dict keyé Mcp-Session-Id) n'est PLUS lu
     # (ADR 0038 B3) : claude.ai renouvelle le session_id à chaque appel (jamais relu)
     # et un session_id recyclé cross-compte faisait fuiter le scope (#108). Le scope
-    # est porté par l'appel (`org=`/`project=`/`group=`, ci-dessus) ou retombe maison.
+    # est porté par l'appel (`_org=`/`_project=`/`_group=`, ci-dessus) ou retombe maison.
     view = session_org.current_view_org()
     if view is not None:
         return None if view == 0 else view
@@ -219,7 +219,7 @@ def current_group(sub: str | None) -> Optional[int]:
         if ag is not None and (group_store.get_group(ag) or {}).get("org_id") == cand:
             return ag
         return None
-    # Jeton d'appel `group=` : déjà gardé à la pose (can_read_group + org co-posée
+    # Jeton d'appel `_group=` : déjà gardé à la pose (can_read_group + org co-posée
     # par l'axe, invariant par construction) → rendu tel quel. Le BRACELET de session
     # (`oto_use_group`) n'est plus lu (ADR 0038 B3, même raison que current_org).
     call_g = session_org.current_call_group()
@@ -233,7 +233,7 @@ def current_group(sub: str | None) -> Optional[int]:
     ag = group_store.get_active_group(sub)  # maison
     if ag is None:
         return None
-    # Jeton d'org (`org=`/`project=`) SANS groupe : le home_group n'est rendu que
+    # Jeton d'org (`_org=`/`_project=`) SANS groupe : le home_group n'est rendu que
     # s'il appartient à l'org épinglée (invariant groupe ⊂ org — jamais le
     # home_group d'une AUTRE org sous une org de jeton).
     call_org = session_org.current_call_org()
@@ -245,7 +245,7 @@ def current_group(sub: str | None) -> Optional[int]:
 
 
 def current_project() -> Optional[int]:
-    """Projet de l'APPEL courant (ADR 0038) = jeton `project=` — posé déjà gardé
+    """Projet de l'APPEL courant (ADR 0038) = jeton `_project=` — posé déjà gardé
     (`can_access` + org dérivée co-posée) par l'axe d'appel. Le BRACELET de session
     (`oto_use_project`) n'est plus lu (B3b — même raison que org/groupe : claude.ai
     renouvelle le session_id à chaque appel, et un session_id recyclé cross-compte
@@ -259,7 +259,7 @@ def project_pinned_identity(connector: str, project_id: Optional[int] = None) ->
     """Identité (account) ÉPINGLÉE par le projet actif pour `connector`, ou None ⇒ la
     résolution retombe sur le défaut user. Lit la clé de BINDING `project_links.identity_ref`
     (ADR 0032 §4 amendé, #57). Multiplicité : **un seul** binding avec identité ⇒ on l'épingle ;
-    **plusieurs** ⇒ None (ambigu → l'agent doit préciser `account=` à l'appel). `project_id`
+    **plusieurs** ⇒ None (ambigu → l'agent doit préciser `_account=` à l'appel). `project_id`
     omis ⇒ projet de session (`current_project`). **Fail-soft** : toute erreur ⇒ None
     (jamais de plantage de la résolution d'un tool sur ce chemin)."""
     pid = current_project() if project_id is None else project_id
@@ -744,7 +744,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # (département/user). Avant toute résolution → couvre keyed/fields/BYO.
     require_connector_access(provider, sub)
 
-    # Instance EXPLICITE de l'appel (`instance=`, ADR 0038 §C/B6) : si le ref épinglé
+    # Instance EXPLICITE de l'appel (`_instance=`, ADR 0038 §C/B6) : si le ref épinglé
     # vise CE provider, on résout EXACTEMENT cette ligne du coffre — jamais de
     # fallback (une instance demandée qui ne résout pas = erreur actionnable, pas
     # une autre identité). Un ref d'un AUTRE provider est ignoré ici (il ne visait
@@ -753,10 +753,10 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     if pinned is not None and getattr(pinned, "connector", None) == provider:
         return _resolve_pinned_instance(provider, sub, pinned)
 
-    # Binding de PROJET (ADR 0038 B5) : le projet de l'appel (`project=`) binde une
+    # Binding de PROJET (ADR 0038 B5) : le projet de l'appel (`_project=`) binde une
     # instance pour ce provider → résolution EN DUR, RE-GARDÉE pour l'APPELANT (le
     # binding a été gardé pour celui qui l'a posé ; l'appelant d'un projet partagé
-    # peut être un autre membre). `instance=` explicite (ci-dessus) prime — le jeton
+    # peut être un autre membre). `_instance=` explicite (ci-dessus) prime — le jeton
     # le plus spécifique de l'appel.
     bound = project_pinned_instance(provider)
     if bound is not None:
@@ -771,7 +771,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
 
     def _member_fetch(msub: str, morg: int, mprov: str) -> Optional[tuple]:
         """Sonde MEMBRE du fetch : sélection du compte en multi-compte (« 2 Zoho ») =
-        account explicite (param) > axe d'appel `account=` (#108) > épinglage projet
+        account explicite (param) > axe d'appel `_account=` (#108) > épinglage projet
         > compte unique auto > McpError — jamais de repli muet vers un autre compte/
         l'org/la plateforme (anti-usurpation). '' = mono-compte legacy. Un compte
         explicite/épinglé introuvable LÈVE (on n'agit pas sous une autre identité)."""
@@ -920,7 +920,7 @@ def guard_instance_access(sub: str, ref) -> Optional[int]:
     membre ; group = groupe dont je suis lecteur ; org = org dont je suis membre ;
     platform = refusé (le grant se résout déjà en dernier palier). Renvoie l'org de
     l'instance (à co-poser). McpError actionnable sinon. Chemin DB sync — appelants
-    inbound chauds : threadpool. Partagée par l'axe `instance=` (pose) et la
+    inbound chauds : threadpool. Partagée par l'axe `_instance=` (pose) et la
     résolution d'un binding de projet (re-garde pour l'APPELANT, qui n'est pas
     forcément celui qui a bindé)."""
     from . import group_store, roles
@@ -947,7 +947,7 @@ def guard_instance_access(sub: str, ref) -> Optional[int]:
     if ref.level == "group":
         # Lecteur du groupe = membre OU admin de l'org (escalade `can_read_group`,
         # roles.py) — c'est le chemin par lequel un org_admin utilise l'instance
-        # d'une équipe de son org (pin `instance=` / binding projet).
+        # d'une équipe de son org (pin `_instance=` / binding projet).
         if not roles.can_read_group(sub, ref.group_id):
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
@@ -971,7 +971,7 @@ def project_pinned_instance(provider: str, project_id: Optional[int] = None):
     (`project_links.config.instance_ref`, ADR 0038 B5), ou None ⇒ cascade normale.
     **Un seul** binding à instance ⇒ son ref (parsé) ; **plusieurs** ⇒ McpError
     actionnable (identité d'action en jeu — jamais de choix silencieux : l'agent
-    précise `instance=`). Lecture des liens fail-soft (DB en hoquet ⇒ None, comme
+    précise `_instance=`). Lecture des liens fail-soft (DB en hoquet ⇒ None, comme
     `project_pinned_identity`) ; un ref STOCKÉ inparsable lève (validé au link —
     corruption = erreur, pas un repli muet)."""
     pid = current_project() if project_id is None else project_id
@@ -992,13 +992,13 @@ def project_pinned_instance(provider: str, project_id: Optional[int] = None):
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
             message=(f"Le projet #{pid} binde PLUSIEURS instances `{provider}` — "
-                     f"précise laquelle avec `instance=` ({', '.join(refs)}).")))
+                     f"précise laquelle avec `_instance=` ({', '.join(refs)}).")))
     from . import instance_refs
     return instance_refs.parse_ref(refs[0])
 
 
 def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential:
-    """Résolution EN DUR d'une instance explicite (`instance=` OU binding de projet,
+    """Résolution EN DUR d'une instance explicite (`_instance=` OU binding de projet,
     ADR 0038 B6/B5) : lit exactement la ligne du coffre que le ref désigne. L'ACCÈS
     a été gardé par `guard_instance_access` (à la pose pour l'axe ; re-gardé pour
     l'APPELANT sur le chemin binding) ; le RBAC connecteur (ADR 0025) a été rejoué
@@ -1016,7 +1016,7 @@ def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential
     else:  # platform — refusé dès la pose par l'axe ; défense en profondeur ici.
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message="Ref d'instance `platform:` non résoluble en `instance=` (B6)."))
+            message="Ref d'instance `platform:` non résoluble en `_instance=` (B6)."))
     secret = credentials_store.get_credential(etype, eid, provider, ref.account)
     if not secret:
         raise McpError(ErrorData(
@@ -1156,7 +1156,7 @@ def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dic
     """Instances `provider` utilisables dans un AUTRE contexte que l'ambiant :
     équipes de `org` dont `sub` est MEMBRE (secret présent, équipe pas forcément
     active) + ses AUTRES orgs (clé d'org partagée, ou sa clé membre là-bas). La
-    cascade ne les lit pas — mais un jeton d'appel (`group=`/`org=`/`instance=`)
+    cascade ne les lit pas — mais un jeton d'appel (`_group=`/`_org=`/`_instance=`)
     les atteint légitimement (mêmes gardes d'appartenance). Nourrit l'erreur
     « rien ne résout » : on REMONTE les choix pour que l'agent pinne explicitement,
     jamais de choix silencieux entre identités. Best-effort : ne lève jamais,
@@ -1278,8 +1278,8 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
 
 def _reachable_hint(sub: str, org: Optional[int], provider: str) -> str:
     """Suffixe actionnable des erreurs « rien ne résout » : remonte les instances
-    à portée avec le GESTE de pin pour chacune — jeton d'appel d'abord (`group=`/
-    `org=`, per-call, sans état), `instance=` pour le grain fin. Chaîne vide si
+    à portée avec le GESTE de pin pour chacune — jeton d'appel d'abord (`_group=`/
+    `_org=`, per-call, sans état), `_instance=` pour le grain fin. Chaîne vide si
     rien à portée."""
     items = reachable_instances(sub, org, provider)
     if not items:

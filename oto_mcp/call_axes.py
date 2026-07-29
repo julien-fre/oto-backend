@@ -4,7 +4,7 @@
 claude.ai renouvelle le `Mcp-Session-Id` à CHAQUE appel → tout état de session serveur
 (compte de connecteur actif, projet actif, run en cours) est perdu d'un appel au
 suivant. La parade : porter le contexte en **identifiants d'appel** explicites plutôt
-qu'en bracelet serveur. Pour les tools de capacité, `org=` est injecté par
+qu'en bracelet serveur. Pour les tools de capacité, `_org=` est injecté par
 `_mcp_adapter` ; pour les tools **plats** (connecteurs, `data_*`), les axes vivent ici.
 
 Mécanisme (zéro modification des fonctions de tools) :
@@ -20,6 +20,15 @@ Mécanisme (zéro modification des fonctions de tools) :
 
 Exposition SÉLECTIVE (pas sur toute la surface — coût tokens de `tools/list`) : chaque
 axe porte un prédicat `applies` dérivé du registre.
+
+**Les jetons sont NAMESPACÉS `_` (issue #250)** : `_org`, `_project`, `_group`,
+`_account`, `_instance`, `_run_id`. Ils occupaient auparavant les noms NUS, dans le même
+espace plat que les arguments métier des tools — or `account`, `org`, `group`, `project`
+sont le vocabulaire courant d'une API B2B. Deux collisions vécues en prod (`oto_use_org`
+2026-07-04 : l'org cible mangée ; `aiark_company_search` 2026-07-28 : le filtre société
+mangé, AI Ark renvoyant sa base entière sans la moindre erreur) avant qu'on préfixe. Le
+préfixe `_` est la convention méta déjà en vigueur en SORTIE (`_mcp_adapter` injecte
+l'écho `_org` dans les payloads) : `_org` entre, `_org` sort.
 """
 from __future__ import annotations
 
@@ -48,9 +57,9 @@ class CallAxis:
     de la propriété (optionnelle) ajoutée. `applies(name)` décide, tool par tool, si
     l'axe est advertisé/lu. `pin(value)` garde/pose la/les ContextVar(s) et renvoie la
     LISTE d'entrées d'annulation (vide si l'axe est inerte pour cette valeur ; plusieurs
-    si l'axe co-pose — ex. project= pose projet + org dérivée). `pin_named(value, name)`
+    si l'axe co-pose — ex. _project= pose projet + org dérivée). `pin_named(value, name)`
     = variante qui reçoit AUSSI le nom du tool (garde dépendante du tool, ex. le match
-    connecteur d'`instance=`) — prime sur `pin` si présent."""
+    connecteur d'`_instance=`) — prime sur `pin` si présent."""
     param: str
     schema: dict
     applies: Callable[[str], bool]
@@ -64,7 +73,7 @@ class CallAxis:
         return await self.pin(value)  # type: ignore[misc]
 
 
-# ── Helpers partagés (aussi utilisés par le middleware pour `org=`) ───────────
+# ── Helpers partagés (aussi utilisés par le middleware pour `_org=`) ───────────
 
 def require_axis_int(value: object, axis: str) -> int:
     """Convertit un axe-contexte d'appel en id entier ou lève un McpError actionnable."""
@@ -93,32 +102,32 @@ def require_axis_sub(axis: str) -> str:
 
 
 async def resolve_org_guarded(org: object) -> int:
-    """Résout un `org=` (id ou nom) → org_id, gardé par la MÊME résolution qu'`oto_use_org`
+    """Résout un `_org=` (id ou nom) → org_id, gardé par la MÊME résolution qu'`oto_use_org`
     (`org_store.resolve_org_for_user` : appartenance réelle du sub). McpError PROPRE en cas
     d'échec — jamais une exception opaque. Partagé par le middleware (org= des capacités,
-    `CallContextMiddleware._pin_org`), l'axe plat `org=` et `oto_call(org=)`. DB en
+    `CallContextMiddleware._pin_org`), l'axe plat `_org=` et `oto_call(_org=)`. DB en
     threadpool (chemin inbound chaud, mono-loop)."""
-    org_id = require_axis_int(org, "org")
-    sub = require_axis_sub("org")
+    org_id = require_axis_int(org, "_org")
+    sub = require_axis_sub("_org")
     from . import org_store
     try:
         return await run_in_threadpool(org_store.resolve_org_for_user, sub, str(org_id))
     except ValueError:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=f"Paramètre `org`={org_id} refusé : tu n'es membre d'aucune "
+            message=f"Paramètre `_org`={org_id} refusé : tu n'es membre d'aucune "
                     f"org #{org_id}. Vérifie avec oto_list_orgs."))
     except McpError:
         raise
     except Exception:
-        logger.exception("garde `org=` a levé pour sub=%s org=%s", sub, org_id)
+        logger.exception("garde `_org=` a levé pour sub=%s org=%s", sub, org_id)
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
             message=f"Impossible de vérifier ton accès à l'org #{org_id} "
                     f"(erreur interne). Réessaie."))
 
 
-# ── Axe account= (connecteurs multi-compte) ──────────────────────────────────
+# ── Axe _account= (connecteurs multi-compte) ──────────────────────────────────
 
 def _has_account_axis(name: str) -> bool:
     """Le tool porte-t-il un CHOIX de compte/identité ? Deux familles (ADR 0024/0051) :
@@ -141,7 +150,7 @@ async def _pin_account(value: object) -> list[UndoEntry]:
 
 
 ACCOUNT = CallAxis(
-    param="account",
+    param="_account",
     schema={
         "type": "string",
         "title": "Account",
@@ -159,10 +168,10 @@ ACCOUNT = CallAxis(
 )
 
 
-# ── Axe project= (slots de tableau — enforcement serveur ADR 0035) ────────────
+# ── Axe _project= (slots de tableau — enforcement serveur ADR 0035) ────────────
 
 def _is_project_scopable_tool(name: str) -> bool:
-    """Tool de TRAVAIL (connecteurs + `data_*`) : `project=` est le jeton PRIMAIRE
+    """Tool de TRAVAIL (connecteurs + `data_*`) : `_project=` est le jeton PRIMAIRE
     du modèle sans état (ADR 0038 §A — l'org en dérive, les slots `slot:<name>` s'y
     résolvent, l'identité connecteur préfaite du projet s'y épingle). Élargi de
     `data_*` seul à toute la surface de travail au retrait du bracelet
@@ -235,8 +244,8 @@ async def _pin_project(value: object) -> list[UndoEntry]:
     threadpool (DB sur le chemin inbound chaud)."""
     if value is None:
         return []
-    pid = require_axis_int(value, "project")
-    sub = require_axis_sub("project")
+    pid = require_axis_int(value, "_project")
+    sub = require_axis_sub("_project")
     cand = session_org.current_subdomain_candidate()
     org, group = await run_in_threadpool(_resolve_project_context_guarded, sub, pid, cand)
     undo: list[UndoEntry] = []
@@ -249,7 +258,7 @@ async def _pin_project(value: object) -> list[UndoEntry]:
 
 
 PROJECT = CallAxis(
-    param="project",
+    param="_project",
     schema={
         "type": "integer",
         "title": "Project",
@@ -267,7 +276,7 @@ PROJECT = CallAxis(
 )
 
 
-# ── Axe run_id= (corrélation d'un appel à un déroulé — ADR 0017) ──────────────
+# ── Axe _run_id= (corrélation d'un appel à un déroulé — ADR 0017) ──────────────
 
 def _is_work_tool(name: str) -> bool:
     """Le tool fait-il un TRAVAIL qu'on voudrait rattacher à un run ? = tool d'un
@@ -306,7 +315,7 @@ async def _pin_run(value: object) -> list[UndoEntry]:
 
 
 RUN = CallAxis(
-    param="run_id",
+    param="_run_id",
     schema={
         "type": "string",
         "title": "Run Id",
@@ -323,12 +332,12 @@ RUN = CallAxis(
 )
 
 
-# ── Axe org= (org d'exécution de l'appel — connecteurs + data + whoami) ───────
+# ── Axe _org= (org d'exécution de l'appel — connecteurs + data + whoami) ───────
 
 def _is_org_scopable_tool(name: str) -> bool:
     """Tool PLAT dont l'action dépend de l'org (résolution de credential/visibilité/
     données) : tools de TRAVAIL (connecteurs + `data_*`) + `oto_whoami` (lecture de
-    l'identité effective). Les CAPACITÉS reçoivent déjà `org=` par `_mcp_adapter` (elles
+    l'identité effective). Les CAPACITÉS reçoivent déjà `_org=` par `_mcp_adapter` (elles
     ne sont pas des tools de travail → exclues ici, pas de double-traitement)."""
     return _is_work_tool(name) or name == "oto_whoami"
 
@@ -344,7 +353,7 @@ async def _pin_org_flat(value: object) -> list[UndoEntry]:
 
 
 ORG = CallAxis(
-    param="org",
+    param="_org",
     schema={
         "type": "integer",
         "title": "Org",
@@ -359,7 +368,7 @@ ORG = CallAxis(
 )
 
 
-# ── Axe group= (équipe d'exécution de l'appel — ADR 0038 B3) ──────────────────
+# ── Axe _group= (équipe d'exécution de l'appel — ADR 0038 B3) ──────────────────
 
 def _resolve_group_guarded(sub: str, gid: int) -> dict:
     """Garde de lecture du groupe (chemin DB sync, appelé en threadpool). Même garde
@@ -369,23 +378,23 @@ def _resolve_group_guarded(sub: str, gid: int) -> dict:
     g = group_store.get_group(gid)
     if not g:
         raise McpError(ErrorData(
-            code=INVALID_PARAMS, message=f"Paramètre `group`={gid} : groupe inconnu."))
+            code=INVALID_PARAMS, message=f"Paramètre `_group`={gid} : groupe inconnu."))
     if not roles.can_read_group(sub, gid):
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"Paramètre `group`={gid} refusé : tu n'es pas membre de ce "
+            message=(f"Paramètre `_group`={gid} refusé : tu n'es pas membre de ce "
                      "groupe. Vérifie avec oto_group(op='list').")))
     return g
 
 
 async def _pin_group(value: object) -> list[UndoEntry]:
     """Épingle l'équipe de l'appel + co-pose l'org PARENTE du groupe (invariant
-    « groupe ⊂ org » par construction — comme `project=` co-pose l'org du projet).
-    Si `org=` est aussi passé, l'org du groupe prime (le jeton le plus spécifique)."""
+    « groupe ⊂ org » par construction — comme `_project=` co-pose l'org du projet).
+    Si `_org=` est aussi passé, l'org du groupe prime (le jeton le plus spécifique)."""
     if value is None:
         return []
-    gid = require_axis_int(value, "group")
-    sub = require_axis_sub("group")
+    gid = require_axis_int(value, "_group")
+    sub = require_axis_sub("_group")
     g = await run_in_threadpool(_resolve_group_guarded, sub, gid)
     undo: list[UndoEntry] = []
     org = g.get("org_id")
@@ -396,7 +405,7 @@ async def _pin_group(value: object) -> list[UndoEntry]:
 
 
 GROUP = CallAxis(
-    param="group",
+    param="_group",
     schema={
         "type": "integer",
         "title": "Group",
@@ -411,7 +420,7 @@ GROUP = CallAxis(
 )
 
 
-# ── Axe instance= (instance de connecteur explicite — ADR 0038 §C / B6) ───────
+# ── Axe _instance= (instance de connecteur explicite — ADR 0038 §C / B6) ───────
 
 def _is_instance_scopable_tool(name: str) -> bool:
     """Tool d'un connecteur du REGISTRE (le ref d'instance projette le coffre, qui
@@ -421,7 +430,7 @@ def _is_instance_scopable_tool(name: str) -> bool:
 
 
 async def _pin_instance(value: object, tool_name: str) -> list[UndoEntry]:
-    """Épingle l'instance explicite de l'appel (§C : `instance=` prime sur la
+    """Épingle l'instance explicite de l'appel (§C : `_instance=` prime sur la
     préférence de proximité, jamais de fallback si elle ne résout pas) + co-pose
     son org. Gardes : ref bien formé, connecteur du ref = connecteur du TOOL
     (anti-confusion), accès par niveau."""
@@ -433,14 +442,14 @@ async def _pin_instance(value: object, tool_name: str) -> list[UndoEntry]:
     except ValueError:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"Paramètre `instance` invalide : {value!r}. Un ref s'obtient "
+            message=(f"Paramètre `_instance` invalide : {value!r}. Un ref s'obtient "
                      "via oto_instance(op='list') (opaque, à repasser tel quel).")))
-    sub = require_axis_sub("instance")
+    sub = require_axis_sub("_instance")
     con = providers.connector_for_namespace(namespace_of(tool_name))
     if con is not None and ref.connector is not None and ref.connector != con.name:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
-            message=(f"Paramètre `instance` refusé : ce ref est une instance "
+            message=(f"Paramètre `_instance` refusé : ce ref est une instance "
                      f"`{ref.connector}`, pas `{con.name}` (le connecteur de ce tool).")))
     from . import access
     org = await run_in_threadpool(access.guard_instance_access, sub, ref)
@@ -452,7 +461,7 @@ async def _pin_instance(value: object, tool_name: str) -> list[UndoEntry]:
 
 
 INSTANCE = CallAxis(
-    param="instance",
+    param="_instance",
     schema={
         "type": "string",
         "title": "Instance",
@@ -479,25 +488,44 @@ def axes_for(name: str) -> list[CallAxis]:
     return [a for a in AXES if a.applies(name)]
 
 
-def strip_unconsumed_axes(args: dict, parameters: Optional[dict]) -> None:
-    """Retire des arguments les noms d'axe que la cible NE DÉCLARE PAS (mutation en place).
+# Ancien nom NU → jeton namespacé (issue #250). Dérivé des axes : rien à tenir à jour.
+LEGACY_PARAM_RENAMES: dict[str, str] = {a.param.lstrip("_"): a.param for a in AXES}
+
+
+def reject_legacy_axis_names(args: dict, parameters: Optional[dict]) -> None:
+    """Lève si un ANCIEN nom nu (`org`, `project`, `account`…) est passé à un tool qui ne
+    le déclare pas comme argument métier.
+
+    Pas d'alias — le nom nu appartient désormais aux tools (ADR 0047 : on assume les
+    ruptures de surface MCP). Mais surtout **pas de retrait silencieux** : un `org=3`
+    avalé sans bruit ferait tourner l'appel sous une AUTRE org que celle demandée, et
+    c'est précisément le mode de panne que ce renommage corrige. Un refus qui NOMME le
+    nouveau jeton est la seule sortie honnête."""
+    declared = set((parameters or {}).get("properties") or {})
+    for legacy, param in LEGACY_PARAM_RENAMES.items():
+        if legacy in args and legacy not in declared:
+            raise McpError(ErrorData(
+                code=INVALID_PARAMS,
+                message=(
+                    f"`{legacy}` n'est plus un jeton de contexte d'appel : utilise "
+                    f"`{param}`. Les jetons de plateforme sont préfixés `_` (issue #250) "
+                    "— le nom nu est réservé aux arguments métier des tools.")))
+
+
+def strip_unconsumed_axes(args: dict) -> None:
+    """Retire des arguments les jetons de contexte restants (mutation en place).
 
     À appeler APRÈS la boucle de pose (`axes_for` + `pin_for`, qui consomme déjà les axes
-    applicables). Ce qui reste est un jeton de contexte **sans effet** — `instance=` sur un
-    `data_*`, `org=` sur un tool non org-scopable — et le laisser ferait échouer la
+    applicables). Ce qui reste est un jeton **sans effet pour cette cible** — `_instance=`
+    sur un `data_*`, `_org=` sur un tool non org-scopable — et le laisser ferait échouer la
     validation de la cible, qui ne le déclare pas.
 
-    ⚠️ La garde `not in declared` est le cœur : un tool peut légitimement déclarer un
-    paramètre qui PORTE le nom d'un axe sans que l'axe s'applique à lui. C'est alors un
-    argument **métier**, pas de l'adressage — `aiark_company_search(account=…)` est le
-    filtre firmographique d'AI Ark, pas un choix de compte de connecteur. Le balayer
-    silencieusement fait exécuter le tool SANS cet argument, donc sans erreur et avec un
-    résultat faux (vécu 2026-07-28 : filtre société jeté → AI Ark renvoyait la base
-    entière, 72M sociétés, sur toute recherche passée par `oto_call`)."""
-    declared = set((parameters or {}).get("properties") or {})
+    Le balayage est sans condition, et c'est le préfixe `_` qui le rend sûr : aucun tool
+    n'a d'argument métier nommé `_org`/`_account`. Tant que les jetons portaient les noms
+    NUS, ce même balayage mangeait de vrais arguments (`aiark_company_search(account=…)`,
+    le filtre société) — sans erreur, avec un résultat faux. Cf. issue #250."""
     for param in (a.param for a in AXES):
-        if param not in declared:
-            args.pop(param, None)
+        args.pop(param, None)
 
 
 def inject_schema(parameters: Optional[dict], axes: list[CallAxis]) -> dict:

@@ -41,14 +41,19 @@ def _org_echo(org_id: int) -> dict:
 
 
 def _org_param_reserved(cap: Capability) -> bool:
-    """`org=` est un axe-contexte RÉSERVÉ pour cette cap ssi elle NE déclare PAS déjà un
-    champ `org` métier (ex. `UseOrgInput.org` = l'org CIBLE d'`oto_use_org`, pas le contexte
-    d'appel) : ces caps « possèdent » le nom, l'axe-contexte n'y a pas de sens."""
-    return cap.mcp is not None and "org" not in cap.Input.model_fields
+    """`_org=` (jeton de contexte d'appel) est injecté sur toute cap exposée en MCP.
+
+    Le préfixe `_` (issue #250) supprime la question qui se posait avant : `org=` NU
+    entrait en collision avec un champ métier homonyme (`UseOrgInput.org` = l'org CIBLE
+    d'`oto_use_org`, pas le contexte), et retirer l'un mangeait l'autre — régression prod
+    du 2026-07-04. Une cap peut désormais déclarer `org` sans que ça concerne le contexte.
+    Le test sur `_org` ne reste que pour échouer FORT (paramètre dupliqué au boot) si une
+    cap venait un jour à s'approprier le nom réservé."""
+    return cap.mcp is not None and "_org" not in cap.Input.model_fields
 
 
 def reserved_org_tool_names(capabilities: list[Capability]) -> frozenset:
-    """Noms des tools MCP où `org=` est injecté comme axe-contexte → pilote
+    """Noms des tools MCP où `_org=` est injecté comme axe-contexte → pilote
     `CallContextMiddleware` (pose la ContextVar `_CALL_ORG` autour de toute la chaîne)."""
     return frozenset(cap.mcp for cap in capabilities if _org_param_reserved(cap))
 
@@ -57,14 +62,14 @@ def _make_tool(cap: Capability):
     org_reserved = _org_param_reserved(cap)
 
     async def _tool(**kwargs):
-        # `org=` (axe-contexte, modèle sans état de session) est posé EN AMONT par
+        # `_org=` (axe-contexte, modèle sans état de session) est posé EN AMONT par
         # `CallContextMiddleware` (ContextVar per-appel, lue par `current_org`) → on le
-        # retire des kwargs pour ne pas le passer à l'`Input`. UNIQUEMENT quand `org` est
-        # l'axe RÉSERVÉ : pour une cap qui DÉCLARE `org` en champ métier (oto_use_org.org =
-        # l'org CIBLE), c'est un vrai paramètre à conserver — sinon on droppait l'org cible
-        # → `UseOrgInput.org Field required` (#108 régression, vécu prod 2026-07-04).
+        # retire des kwargs pour ne pas le passer à l'`Input`. Le préfixe `_` le distingue
+        # d'un `org` MÉTIER (oto_use_org.org = l'org CIBLE) qu'on ne doit pas toucher —
+        # avant lui, retirer l'un mangeait l'autre (`UseOrgInput.org Field required`,
+        # régression #108 vécue en prod le 2026-07-04).
         if org_reserved:
-            kwargs.pop("org", None)
+            kwargs.pop("_org", None)
         raw = RawCtx(sub=current_user_sub_from_token())
         try:
             inp = cap.Input(**kwargs)                 # validation (seule source : Input)
@@ -98,16 +103,16 @@ def _make_tool(cap: Capability):
     _tool.__name__ = cap.mcp
     _tool.__doc__ = cap.description or cap.key
     tool = apply_flat_signature(_tool, cap.Input)
-    # Paramètre commun `org=` (axe-contexte per-appel) ajouté au schéma plat SANS toucher
+    # Paramètre commun `_org=` (axe-contexte per-appel) ajouté au schéma plat SANS toucher
     # l'`Input` de chaque capacité. Prime sur l'org maison, robuste au reset/absence de
-    # session (claude.ai) ; inerte pour les caps non org-scopées. (`project=`/`run_id=`
+    # session (claude.ai) ; inerte pour les caps non org-scopées. (`_project=`/`_run_id=`
     # suivront en passe profonde.) La pose/garde de la ContextVar vit dans le middleware.
     if org_reserved:
         sig = tool.__signature__
-        extra = inspect.Parameter("org", inspect.Parameter.KEYWORD_ONLY,
+        extra = inspect.Parameter("_org", inspect.Parameter.KEYWORD_ONLY,
                                   annotation=Optional[int], default=None)
         tool.__signature__ = sig.replace(parameters=[*sig.parameters.values(), extra])
-        tool.__annotations__["org"] = Optional[int]
+        tool.__annotations__["_org"] = Optional[int]
     return tool
 
 
