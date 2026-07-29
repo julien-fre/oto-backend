@@ -479,6 +479,27 @@ def axes_for(name: str) -> list[CallAxis]:
     return [a for a in AXES if a.applies(name)]
 
 
+def strip_unconsumed_axes(args: dict, parameters: Optional[dict]) -> None:
+    """Retire des arguments les noms d'axe que la cible NE DÉCLARE PAS (mutation en place).
+
+    À appeler APRÈS la boucle de pose (`axes_for` + `pin_for`, qui consomme déjà les axes
+    applicables). Ce qui reste est un jeton de contexte **sans effet** — `instance=` sur un
+    `data_*`, `org=` sur un tool non org-scopable — et le laisser ferait échouer la
+    validation de la cible, qui ne le déclare pas.
+
+    ⚠️ La garde `not in declared` est le cœur : un tool peut légitimement déclarer un
+    paramètre qui PORTE le nom d'un axe sans que l'axe s'applique à lui. C'est alors un
+    argument **métier**, pas de l'adressage — `aiark_company_search(account=…)` est le
+    filtre firmographique d'AI Ark, pas un choix de compte de connecteur. Le balayer
+    silencieusement fait exécuter le tool SANS cet argument, donc sans erreur et avec un
+    résultat faux (vécu 2026-07-28 : filtre société jeté → AI Ark renvoyait la base
+    entière, 72M sociétés, sur toute recherche passée par `oto_call`)."""
+    declared = set((parameters or {}).get("properties") or {})
+    for param in (a.param for a in AXES):
+        if param not in declared:
+            args.pop(param, None)
+
+
 def inject_schema(parameters: Optional[dict], axes: list[CallAxis]) -> dict:
     """Copie le schéma d'entrée du tool en y ajoutant les propriétés d'axe (optionnelles,
     jamais `required`). `additionalProperties` inchangé (l'axe est désormais déclaré)."""

@@ -285,9 +285,10 @@ def register(mcp: FastMCP) -> None:
             raise
         # Un axe passé pour un tool qui ne le supporte PAS (ex. instance= sur data_*,
         # org= sur un tool non org-scopable) = jeton de contexte sans effet → écarté des
-        # args (jamais un vrai argument de la cible), pour ne pas casser sa validation.
-        for _p in (a.param for a in call_axes.AXES):
-            args.pop(_p, None)
+        # args, pour ne pas casser sa validation. GARDÉ sur ce que la cible déclare :
+        # un paramètre métier qui porte le nom d'un axe (aiark `account` = le filtre
+        # société) n'est PAS de l'adressage et doit passer intact.
+        call_axes.strip_unconsumed_axes(args, getattr(tool, "parameters", None))
         started = time.monotonic()
         ok, err = True, None
         try:
