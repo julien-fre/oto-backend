@@ -44,15 +44,22 @@ def test_state_roundtrip_carries_group_scope_and_group_id():
 
 
 def test_group_scope_state_without_group_id_is_rejected():
-    # make_state always sets group_id when scope="group" (build_auth_url's
-    # only caller), but verify_state must not trust a payload that skipped it.
-    import hashlib
-    import hmac
-    import json
-    payload = json.dumps({"sub": "s", "org": 1, "scope": "group", "v": "x", "ts": int(__import__("time").time())}).encode()
-    sig = hmac.new(salesforce_oauth._state_secret(), payload, hashlib.sha256).digest()
-    state = f"{salesforce_oauth._b64url(payload)}.{salesforce_oauth._b64url(sig)}"
-    assert salesforce_oauth.verify_state(state) is None
+    # make_state pose toujours group_id en scope "group" (build_auth_url est son seul
+    # appelant), mais verify_state ne doit pas faire confiance à un payload qui l'omet.
+    from oto_mcp import oauth_flow
+    forged = oauth_flow.sign_state("salesforce",
+                                   {"sub": "s", "org": 1, "scope": "group", "v": "x"})
+    assert salesforce_oauth.verify_state(forged) is None
+
+
+def test_state_of_another_flow_is_rejected():
+    """Un state VALIDEMENT signé mais émis pour un AUTRE flux ne passe pas ici —
+    c'est la raison d'être de l'audience (`oauth_flow`) : avant elle, tous les flux
+    signaient au même format avec le même secret."""
+    from oto_mcp import oauth_flow
+    zoho_state = oauth_flow.sign_state("zoho",
+                                       {"sub": "s", "org": 1, "scope": "member", "v": "x"})
+    assert salesforce_oauth.verify_state(zoho_state) is None
 
 
 def test_tampered_state_is_rejected():
@@ -66,20 +73,19 @@ def test_expired_state_is_rejected(monkeypatch):
     state = salesforce_oauth.make_state("sub-1", 1, "member", "v")
     # Fast-forward past the TTL by patching time.time for verify_state's check.
     import time as time_mod
+    from oto_mcp import oauth_flow
     real_time = time_mod.time
-    monkeypatch.setattr(time_mod, "time", lambda: real_time() + salesforce_oauth._STATE_TTL + 1)
+    monkeypatch.setattr(time_mod, "time", lambda: real_time() + oauth_flow.DEFAULT_STATE_TTL + 1)
     assert salesforce_oauth.verify_state(state) is None
 
 
 def test_invalid_scope_in_payload_is_rejected():
-    # A state signed with a bogus scope (shouldn't happen via make_state, but
-    # verify_state must not trust the payload blindly).
-    import json
-    payload = json.dumps({"sub": "s", "org": 1, "scope": "bogus", "v": "x", "ts": 0}).encode()
-    import hmac, hashlib
-    sig = hmac.new(salesforce_oauth._state_secret(), payload, hashlib.sha256).digest()
-    state = f"{salesforce_oauth._b64url(payload)}.{salesforce_oauth._b64url(sig)}"
-    assert salesforce_oauth.verify_state(state) is None
+    # Un state signé avec un scope inventé (impossible via make_state, mais
+    # verify_state ne doit pas faire confiance au payload les yeux fermés).
+    from oto_mcp import oauth_flow
+    forged = oauth_flow.sign_state("salesforce",
+                                   {"sub": "s", "org": 1, "scope": "bogus", "v": "x"})
+    assert salesforce_oauth.verify_state(forged) is None
 
 
 # --- build_auth_url reads PER-CUSTOMER fields, never a global constant --------

@@ -46,46 +46,23 @@ Setup ops:
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
-import os
-import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import credentials_store, oauth2_pkce, org_store
+from . import credentials_store, oauth2_pkce, oauth_flow, org_store
+
+# Audience du state (`oauth_flow.sign_state`) : un state émis pour Salesforce ne vaut
+# QUE pour le callback Salesforce. Avant la fabrique, cinq flux signaient au même
+# format avec le même secret, sans discriminant — un state d'un flux passait chez un
+# autre. C'est exactement ce que ce nom ferme.
+_AUD = "salesforce"
+_CALLBACK_PATH = "/api/salesforce/oauth/callback"
 
 # `api` = REST API access ; `refresh_token` = long-lived refresh token issuance
 # (Salesforce also accepts the synonym `offline_access`, but this is the name
 # used in Salesforce's own docs/UI for the "Perform requests at any time"
 # scope, so it's what we document to the customer).
 SCOPES = "api refresh_token"
-
-_STATE_TTL = 600  # 10 min, matches google_oauth.py
-
-
-def _state_secret() -> bytes:
-    v = os.environ.get("OTO_MCP_OAUTH_STATE_SECRET")
-    if not v:
-        raise RuntimeError("OTO_MCP_OAUTH_STATE_SECRET env var manquante")
-    return v.encode()
-
-
-def _redirect_uri() -> str:
-    base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    return f"{base}/api/salesforce/oauth/callback"
-
-
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def _b64url_decode(s: str) -> bytes:
-    pad = "=" * (-len(s) % 4)
-    return base64.urlsafe_b64decode(s + pad)
-
 
 def _ctx_org(sub: str) -> int:
     from . import access  # lazy: avoid any import cycle at boot
@@ -111,42 +88,26 @@ def _ctx_group(sub: str) -> int:
 
 def make_state(sub: str, org_id: int, scope: str, verifier: str,
                group_id: Optional[int] = None) -> str:
-    """HMAC-signed state: `<b64(payload)>.<b64(sig)>`, payload = {sub, org,
-    scope, v, ts, group?}. `scope` ("member" | "org" | "group") travels here
-    so the callback — which arrives from Salesforce with zero auth headers —
-    knows which row to merge the refresh_token into without re-deriving it
-    from a live session. `group_id` is baked in the SAME way `org_id` is (not
-    re-resolved from `access.current_group(sub)` at callback time): the
-    group active when the user clicked Connect must be the one the callback
-    writes to, even if their active group changed in another tab meanwhile."""
-    payload_dict = {"sub": sub, "org": org_id, "scope": scope, "v": verifier,
-                    "ts": int(time.time())}
+    """State signé, LIÉ à l'audience `salesforce` (`oauth_flow.sign_state`).
+
+    Ce que le payload porte de spécifique : `org` (le credential est scopé (org, sub)),
+    `scope` ("member" | "org" | "group") et, pour une équipe, `group`. Le callback
+    arrive SANS en-tête d'auth : ces valeurs doivent voyager avec lui, pas être
+    re-dérivées d'une session vivante. `group` est gelé ici — l'équipe active au clic
+    est celle où l'on écrit, même si un autre onglet en change entre-temps."""
+    payload = {"sub": sub, "org": org_id, "scope": scope, "v": verifier}
     if group_id is not None:
-        payload_dict["group"] = group_id
-    payload = json.dumps(payload_dict, separators=(",", ":")).encode()
-    sig = hmac.new(_state_secret(), payload, hashlib.sha256).digest()
-    return f"{_b64url(payload)}.{_b64url(sig)}"
+        payload["group"] = group_id
+    return oauth_flow.sign_state(_AUD, payload)
 
 
 def verify_state(state: str) -> Optional[tuple[str, int, str, str, Optional[int]]]:
-    """(sub, org_id, scope, verifier, group_id) if the state is valid and
-    unexpired, else None. `group_id` is None unless `scope == "group"`."""
-    if not state or "." not in state:
-        return None
-    p_b64, sig_b64 = state.split(".", 1)
-    try:
-        payload = _b64url_decode(p_b64)
-        sig = _b64url_decode(sig_b64)
-    except Exception:
-        return None
-    expected = hmac.new(_state_secret(), payload, hashlib.sha256).digest()
-    if not hmac.compare_digest(sig, expected):
-        return None
-    try:
-        data = json.loads(payload)
-    except Exception:
-        return None
-    if int(time.time()) - int(data.get("ts", 0)) > _STATE_TTL:
+    """(sub, org_id, scope, verifier, group_id) si le state est valide, non expiré et
+    émis POUR ce flux ; None sinon. `group_id` n'est renseigné qu'en scope `group` —
+    et un payload `scope="group"` sans `group` est refusé (on ne devine pas l'équipe
+    où écrire un secret)."""
+    data = oauth_flow.read_state(_AUD, state)
+    if not data:
         return None
     sub, org, scope, verifier, group = (data.get("sub"), data.get("org"), data.get("scope"),
                                         data.get("v"), data.get("group"))
@@ -230,7 +191,7 @@ def build_auth_url(sub: str, scope: str = "member") -> str:
     params = {
         "response_type": "code",
         "client_id": fields["client_id"],
-        "redirect_uri": _redirect_uri(),
+        "redirect_uri": oauth_flow.redirect_uri(_CALLBACK_PATH),
         "scope": SCOPES,
         "state": make_state(sub, org_id, scope, verifier, group_id),
         "code_challenge": challenge,
@@ -241,33 +202,21 @@ def build_auth_url(sub: str, scope: str = "member") -> str:
 
 def exchange_code(code: str, client_id: str, client_secret: str, login_url: str,
                   verifier: str) -> dict:
-    """POSTs to this customer's own token endpoint (their `login_url`, not a
-    fixed Otomata one). Raises with the same friendly hints `tools/salesforce.py`'s
-    `connector_verify` probe already uses (`_sf_error_hint`) on failure."""
-    import requests
-
-    r = requests.post(
-        f"{_clean_login_url(login_url)}/services/oauth2/token",
-        data={
-            "grant_type": "authorization_code",
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": _redirect_uri(),
-            "code_verifier": verifier,
-        },
-        timeout=15,
-    )
-    if not r.ok:
-        try:
-            body = r.json()
-        except Exception:
-            body = {"error": r.text[:300]}
-        from .tools.salesforce import _sf_error_hint
-        raise RuntimeError(
-            _sf_error_hint(RuntimeError(f"{body.get('error')}: {body.get('error_description', '')}"))
+    """Échange le code contre les tokens sur le endpoint DE CE CLIENT (son `login_url`,
+    pas une URL Otomata fixe). La danse elle-même vit dans `oauth_flow.exchange_code`
+    (corps form-encodé, jamais de secret en query string, erreur sans URL) ; ici on ne
+    garde que le `code_verifier` PKCE et la traduction du message en indice actionnable
+    (`_sf_error_hint`, partagé avec la sonde)."""
+    from .tools.salesforce import _sf_error_hint
+    try:
+        return oauth_flow.exchange_code(
+            f"{_clean_login_url(login_url)}/services/oauth2/token",
+            code=code, client_id=client_id, client_secret=client_secret,
+            redirect=oauth_flow.redirect_uri(_CALLBACK_PATH),
+            extra={"code_verifier": verifier},
         )
-    return r.json()
+    except oauth_flow.OAuthFlowError as e:
+        raise RuntimeError(_sf_error_hint(e)) from e
 
 
 async def persist_token(sub: str, org_id: int, scope: str, token_response: dict,

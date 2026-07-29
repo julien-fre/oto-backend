@@ -1076,6 +1076,23 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
                 return _json_error(
                     request, 409, "account_required",
                     "Ce connecteur a déjà des comptes nommés — précise `account`.")
+        # Connexion en DEUX temps : le formulaire ne collecte que les PRÉREQUIS, le
+        # champ décisif (refresh_token) arrive par le consentement. Sans reprise, une
+        # simple correction de champ après connexion repackerait un blob SANS lui —
+        # l'UI dirait « enregistré » et le connecteur casserait au 1er appel d'outil.
+        # Gardé sur la MÊME source unique que la sonde ci-dessous (`status_hints`) :
+        # un connecteur qui déclare un état déclare, de fait, que son credential se
+        # complète hors formulaire.
+        from . import status_hints
+        if status_hints.credential_state(provider, fields) is not None:
+            declared = {f.name for f in c.secret_fields}
+            prior = credentials_store.get_credential_with_meta(
+                credentials_store.MEMBER, eid, provider, account=account) or {}
+            if prior.get("secret"):
+                fields = {**{k: v for k, v in
+                             credentials_store.unpack_secret(provider, prior["secret"]).items()
+                             if k not in declared and v},
+                          **fields}
         # Verify-avant-persist (#106) : si le connecteur expose une sonde, on TESTE la
         # connexion avec les champs candidats AVANT d'écrire — un credential qui
         # n'authentifie pas n'est jamais persisté (l'erreur remonte à la SAISIE, pas au

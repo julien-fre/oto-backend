@@ -41,6 +41,7 @@ _KNOWN: dict[str, str] = {
     "/api/memento/oauth/callback": NATURE,
     "/api/folkmcp/oauth/callback": NATURE,
     "/api/atlassian/oauth/callback": NATURE,
+    "/api/salesforce/oauth/callback": NATURE,
     # --- Webhooks : un tiers appelle, non authentifié côté Logto.
     "/api/unipile/webhook": NATURE,
     "/api/billing/webhook": NATURE,

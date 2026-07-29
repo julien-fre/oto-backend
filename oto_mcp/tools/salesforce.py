@@ -18,11 +18,34 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
-from .. import access, connector_verify
+from .. import access, connector_verify, status_hints
 
 
 def _login_url(login_url: Optional[str]) -> str:
     return (login_url or "").strip().rstrip("/") or "https://login.salesforce.com"
+
+
+def _salesforce_credential_state(fields: dict) -> status_hints.CredentialState:
+    """SOURCE UNIQUE de « ce credential Salesforce est-il utilisable ? ».
+
+    Connexion en DEUX temps, comme Zoho : on pose la Connected App (Consumer Key +
+    Secret + Login URL), puis on consent — et c'est le consentement qui produit le
+    refresh_token. L'état intermédiaire est NORMAL, pas une panne : sans cette
+    déclaration, `api_key_save` sonderait un credential incomplet par construction,
+    refuserait la pose, et le bouton Connecter deviendrait injoignable (le blocage
+    circulaire vécu sur Zoho le 28/07). Un seul libellé, rendu tel quel par toutes
+    les surfaces."""
+    if (fields.get("client_id") and fields.get("client_secret")
+            and not fields.get("refresh_token")):
+        return status_hints.CredentialState(
+            complete=False, missing=("refresh_token",),
+            next_action=("Connected App enregistrée, mais l'autorisation n'a pas "
+                         "encore été donnée — clique « Connecter » sur la fiche du "
+                         "connecteur pour ouvrir le consentement Salesforce."))
+    return status_hints.CredentialState(complete=True)
+
+
+status_hints.register_state("salesforce", _salesforce_credential_state)
 
 
 def _sf_error_hint(exc: Exception) -> str:
