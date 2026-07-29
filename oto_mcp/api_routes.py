@@ -1082,9 +1082,19 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # 1er appel d'outil, plus tard et hors contexte). `config` vide : les
         # connecteurs de ce chemin (zoho/brevo…) portent tout dans `fields` ; le dsn
         # unipile passe par un flux dédié, pas api_key_save. Sans sonde → pose directe.
-        from . import connector_verify
+        from . import connector_verify, status_hints
         verified = False
-        if connector_verify.supports(provider):
+        # ⚠️ Connexion en DEUX temps : un credential VOLONTAIREMENT incomplet (app
+        # OAuth posée, consentement à venir) échoue la sonde PAR CONSTRUCTION. Le
+        # refuser ici crée un blocage circulaire — on ne peut pas poser l'app, donc
+        # jamais consentir, donc jamais compléter le credential. Vécu 28/07 : six
+        # tentatives de pose Zoho, toutes rejetées, sans chemin de sortie.
+        # L'état déclaré (`status_hints`, source unique) dit si l'incomplétude est
+        # ATTENDUE ; dans ce cas on saute la sonde et on persiste — l'étape suivante
+        # est portée par le verdict de la fiche.
+        st = status_hints.credential_state(provider, fields)
+        pending = st is not None and not st.complete
+        if connector_verify.supports(provider) and not pending:
             try:
                 await connector_verify.run(provider, fields)
             except McpError as e:
@@ -1101,7 +1111,10 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
             credentials_store.MEMBER, eid, provider, secret, set_by=sub,
             account=account, meta=meta)
         return _json(request, {"ok": True, "provider": provider, "org_id": org_id,
-                               "account": account, "verified": verified})
+                               "account": account, "verified": verified,
+                               # `pending_action` = ce credential est enregistré mais
+                               # demande une étape de plus (consentement OAuth…).
+                               "pending_action": st.next_action if pending else None})
 
     async def api_key_clear(request: Request) -> JSONResponse:
         sub, err = await _authenticate(request, verifier)

@@ -338,3 +338,26 @@ def test_verify_capability_returns_pending_not_failure(monkeypatch):
     out = asyncio.run(cv._verify(object(), _Inp()))
     assert out["ok"] is False and out["pending"] is True
     assert "Autoriser oto chez Zoho" in out["error"]
+
+
+# --- verify-avant-persist : le blocage circulaire ----------------------------
+
+def test_incomplete_credential_skips_the_probe_and_is_persisted():
+    """LA cause racine du 28/07. `api_key_save` teste la connexion AVANT d'écrire
+    (#106) — sain pour un credential complet, mais fatal pour une connexion en deux
+    temps : à l'étape 1 le credential est légitimement incomplet, la sonde échoue par
+    construction, la pose est refusée… donc on ne peut jamais consentir, donc jamais
+    le compléter. Blocage circulaire, six tentatives sans issue.
+
+    Ce test fige la sortie : quand l'état déclaré dit que l'incomplétude est ATTENDUE,
+    la sonde est sautée et le credential est persisté."""
+    from oto_mcp import status_hints
+    from oto_mcp.tools import zoho  # noqa: F401 — déclare l'état
+
+    app_only = {"client_id": "1000.X", "client_secret": "s", "data_center": "eu"}
+    st = status_hints.credential_state("zohodesk", app_only)
+    assert st is not None and not st.complete, "l'état doit voir l'app seule"
+
+    complete = {**app_only, "refresh_token": "1000.rt"}
+    st2 = status_hints.credential_state("zohodesk", complete)
+    assert st2 is not None and st2.complete, "un credential complet reste sondé"
