@@ -100,6 +100,17 @@ grants/quota, platform keys, providers byo-only).
 Endpoints `/api/*` (compte, settings, orgs, admin, datastore…), même
 `JWTVerifier` que `/mcp`. **Inventaire : `docs/rest-api.md`**.
 
+⚠️ **CORS : la liste du code est MORTE en prod comme en preprod.** `_allowed_origins()`
+(`api_routes.py`) n'est qu'un **fallback** — les DEUX box posent `OTO_MCP_CORS_ORIGINS`
+dans leur `.env`, qui **écrase** la liste. Ajouter une origine au code, la déployer et
+constater que rien ne change est un piège vécu (30/07, front Tulina) : le tag prod avait
+été posé pour une raison inexacte. **Ajouter une origine = éditer l'env des deux box +
+restart** (`/opt/oto-mcp/.env`, `/opt/oto-mcp-canari/.env`) ; le code ne sert qu'aux
+environnements neufs. Diagnostic en 1 appel, sans lire le `.env` : `curl -X OPTIONS
+https://mcp.oto.cx/api/mcp/catalog -H 'Origin: <x>'` → l'en-tête `Access-Control-Allow-Origin`
+revient si l'origine passe. ⚠️ Ne pas déduire « c'est la liste du code » du seul fait qu'une
+origine du défaut est acceptée : l'override en contient une copie.
+
 ## Browser automation & LinkedIn — substrat hébergé Browserbase (ADR 0026)
 
 Plus AUCUN browser sur la box : les connecteurs d'**API privée cookie-bound**
