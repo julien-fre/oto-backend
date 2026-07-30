@@ -45,6 +45,25 @@ def test_me_state_filter(monkeypatch):
     assert [c["name"] for c in out["connectors"]] == ["hunter"]
 
 
+# ── #326 : filtre `name` (lecture d'état ciblée, plus d'échec silencieux) ──
+
+def test_me_name_filter_returns_only_that_connector(monkeypatch):
+    _catalog(monkeypatch, [_FAT, {**_FAT, "name": "hunter"}])
+    out = CS._me(ResolvedCtx(sub="u1", org_id=42), CS.MyConnectorsInput(name="hunter"))
+    assert [c["name"] for c in out["connectors"]] == ["hunter"]
+
+
+def test_me_unknown_name_raises_instead_of_returning_everything(monkeypatch):
+    """Le mode d'échec de #326 : `name` ignoré → catalogue entier (~30k tokens en
+    verbose) sans warning. Une liste vide serait tout aussi muette → on lève."""
+    import pytest
+    from oto_mcp.capabilities._types import AuthzDenied
+    _catalog(monkeypatch, [_FAT])
+    with pytest.raises(AuthzDenied) as e:
+        CS._me(ResolvedCtx(sub="u1", org_id=42), CS.MyConnectorsInput(name="zohodesk"))
+    assert e.value.code == "unknown_connector"
+
+
 # ── #111 : guidage d'activation (oto_call comme pont) ──
 
 def test_select_returns_activation_hint(monkeypatch):

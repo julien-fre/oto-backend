@@ -34,9 +34,16 @@ _ID = {"id": "org_id"}
 class MyConnectorsInput(BaseModel):
     """Filtre/projection de `connectors.me`. Défaut = **compact** (identité + état) :
     la vue pleine (doc_sections/auth/credential_fields/…) gonfle le payload à ~90 KB
-    pour 55 connecteurs et dépasse le plafond de tokens MCP (oto-backend#109)."""
+    pour 55 connecteurs et dépasse le plafond de tokens MCP (oto-backend#109).
+
+    `name` = lecture d'état d'UN connecteur. Il était déclaré sur `oto_connector`
+    (pour select/pause/…) mais **ignoré en silence** sur op=list → l'agent qui le
+    passait recevait le catalogue entier (~30k tokens en verbose) sans le moindre
+    warning (feedback #326). Un `name` qui ne matche rien lève, jamais une liste
+    vide : un filtre muet est ce qui a coûté le contexte."""
     verbose: bool = False                # True = payload complet (dashboard / setup credential)
     state: Optional[str] = None          # filtre : not_selected | active | paused
+    name: Optional[str] = None           # filtre : UN connecteur (lecture d'état ciblée)
 
 
 class ConnectorActionInput(BaseModel):
@@ -105,8 +112,17 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     # le connecteur n'est pas installé (l'appel meurt au dispatch). Une passe
     # BATCHÉE, hors boucle, pour ne pas payer N×M requêtes.
     reach = access.reachable_instances_map(ctx.sub, ctx.org_id)
+    catalog = _visible_catalog(ctx)
+    if inp.name:
+        catalog = [c for c in catalog if c["name"] == inp.name]
+        if not catalog:
+            # Même verdict que `_require_exposed` (select/pause) : non exposé pour
+            # l'org active, restreint par le RBAC d'org, ou nom inconnu — indistinguables
+            # côté membre, et tous actionnables par le même message.
+            raise AuthzDenied(404, "unknown_connector",
+                              f"Connecteur `{inp.name}` inconnu ou indisponible pour ton org active.")
     connectors = []
-    for c in _visible_catalog(ctx):
+    for c in catalog:
         state = selection.get(c["name"], "not_selected")
         if inp.state and state != inp.state:
             continue
@@ -213,7 +229,9 @@ CAPABILITIES += [
                     "library and your installed connectors. Returns a COMPACT row per connector "
                     "by default (name/label/family/category/state/…) — pass verbose=true for the "
                     "full card (doc, auth descriptor, credential fields). Filter with state="
-                    "active|paused|not_selected.",
+                    "active|paused|not_selected, or with name=<connector> to read the state of "
+                    "a SINGLE connector (pair it with verbose=true instead of pulling the whole "
+                    "catalog).",
         rest=RestBinding("GET", "/api/me/connectors"),
     ),
     Capability(

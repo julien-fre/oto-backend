@@ -109,6 +109,9 @@ def test_connector_routes(monkeypatch):
     run = lambda inp: asyncio.run(cc._connector(CTX, inp))
     out = run(C(op="list", verbose=True, state="active"))
     assert out["called"] == "_me" and out["inp"].verbose is True and out["inp"].state == "active"
+    # #326 : `name` était déclaré sur l'outil mais perdu ici sur op=list (seuls
+    # select/pause/… le lisaient) → le filtre doit atteindre `_me`, pas la poubelle.
+    assert run(C(op="list", name="zohodesk"))["inp"].name == "zohodesk"
     assert run(C(op="select", name="folk"))["called"] == "_select"
     assert run(C(op="pause", name="folk"))["called"] == "_pause"
     assert run(C(op="unselect", name="folk"))["called"] == "_unselect"

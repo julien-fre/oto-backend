@@ -122,7 +122,7 @@ def _access(ctx: ResolvedCtx, inp: AccessInput) -> dict:
 # ── oto_connector : list / select / pause / unselect · force / recommend ─────
 class ConnectorInput(BaseModel):
     op: Literal["list", "select", "pause", "unselect", "force", "recommend"]
-    name: Optional[str] = None                 # select/pause/unselect/force
+    name: Optional[str] = None                 # list (filtre 1 connecteur) · select/pause/unselect/force
     verbose: bool = False                      # list
     state: Optional[str] = None                # list : not_selected|active|paused
     org_id: Optional[int] = None               # force/recommend
@@ -133,7 +133,11 @@ class ConnectorInput(BaseModel):
 async def _connector(ctx: ResolvedCtx, inp: ConnectorInput) -> dict:
     sel = connectors_selection
     if inp.op == "list":
-        return sel._me(ctx, sel.MyConnectorsInput(verbose=inp.verbose, state=inp.state))
+        # `name` est honoré ICI aussi (feedback #326) : il était déclaré sur l'outil
+        # mais seul select/pause/unselect/force le lisait → passé sur list il partait
+        # à la poubelle en silence et l'agent recevait tout le catalogue.
+        return sel._me(ctx, sel.MyConnectorsInput(
+            verbose=inp.verbose, state=inp.state, name=inp.name))
     if inp.op in ("select", "pause", "unselect"):
         action = sel.ConnectorActionInput(
             name=_need(inp.name, "missing_name", f"`name` (connecteur) requis pour {inp.op}."))
@@ -262,7 +266,8 @@ CAPABILITIES += [
         description=(
             "Your connector marketplace + org-level pushes. op=list (catalog with your "
             "per-workspace state not_selected|active|paused + `recommended`; COMPACT rows by "
-            "default, verbose=true for the full card, filter with `state`) / select (install "
+            "default, verbose=true for the full card, filter with `state` or with `name` to "
+            "read ONE connector — do that instead of pulling the whole catalog) / select (install "
             "`name` — its tools do NOT mount in the current conversation: reach them right "
             "away via oto_call, or open a new one) / pause / unselect. Org admin, on "
             "`org_id`: op=force (push `name` into a `member`'s toolbox — visibility only, "
