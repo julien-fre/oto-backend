@@ -305,7 +305,7 @@ _CATEGORY_BY_CONNECTOR = {
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
     # ATS / talent sourcing (RH)
     "greenhouse": "Recrutement", "lever": "Recrutement", "ashby": "Recrutement",
-    "recruitee": "Recrutement", "teamtailor": "Recrutement",
+    "recruitee": "Recrutement", "teamtailor": "Recrutement", "spott": "Recrutement",
     # automatisation no-code (workflows)
     "n8n": "Automatisation", "make": "Automatisation", "zapier": "Automatisation",
     "brevoauto": "Automatisation",
@@ -329,7 +329,8 @@ _PUBLISHER_BY_CONNECTOR = {
     "salesforce": "Salesforce", "pipedrive": "Pipedrive",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
     "aiark": "AI Ark", "cognism": "Cognism", "lighton": "LightOn",
-    "recruitee": "Recruitee", "teamtailor": "Teamtailor", "serpapi": "SerpApi",
+    "recruitee": "Recruitee", "teamtailor": "Teamtailor", "spott": "Spott",
+    "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
     "n8n": "n8n", "make": "Make", "zapier": "Zapier",
     # open-data FR → éditeur = la source publique
@@ -414,7 +415,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "urba": "geoportail-urbanisme.gouv.fr", "sante": "has-sante.fr",
     "frenchtech": "lafrenchtech.com",
     "greenhouse": "greenhouse.io", "lever": "lever.co", "ashby": "ashbyhq.com",
-    "recruitee": "recruitee.com", "teamtailor": "teamtailor.com",
+    "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
@@ -1052,6 +1053,14 @@ _REGISTRY_LIST = [
            CredentialField("api_token", "API token", secret=True),
            CredentialField("company_id", "Company ID", secret=False),
        )),
+    # spott : ATS **et** CRM des cabinets de recrutement (agences/staffing) — le
+    # candidat ET l'entreprise cliente dans le même produit, d'où un périmètre plus
+    # large que les autres ATS (clients, contacts clients, placements/honoraires).
+    # keyed api_key (header x-api-key), byo-only : chaque cabinet pose SA clé.
+    _c("spott", ["spott"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Spott",
+       help="ATS/CRM recrutement — candidats, jobs, candidatures, clients, placements",
+       href="https://spott.io"),
     # serpapi : recherche multi-moteurs (scope complet — tous les verticaux Google
     # + Bing/YouTube/Walmart/Amazon/eBay/… + Google Jobs). keyed api_key, platform-
     # eligible (clé plateforme + quota daily, comme serper).

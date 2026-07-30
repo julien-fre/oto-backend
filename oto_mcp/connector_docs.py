@@ -689,6 +689,28 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "- « liste mes offres actives » → `recruitee_offers` (`scope` active/archived, `kind` job/talent_pool), détail → `recruitee_offer`"
         )),
     ),
+    "spott": (
+        DocSection(kind="prerequisite", title="ta clé api spott", body_md=(
+            "il te faut une **clé api spott**.\n"
+            "- dans spott, va dans **settings → api keys** et génère une clé\n"
+            "- colle-la dans tes [clés de connecteurs](https://manage.oto.cx/) (ou laisse ton org partager la sienne)\n"
+            "- doc éditeur : [api-docs.spott.io](https://api-docs.spott.io)"
+        )),
+        DocSection(kind="usage", title="ce que tu peux faire", body_md=(
+            "pilote spott, l'ats **et** le crm d'un cabinet de recrutement : le candidat "
+            "d'un côté, l'entreprise cliente de l'autre. un poste = un **job** "
+            "(`vacancy` dans les urls de l'api), un candidat sur un poste = une "
+            "**application** qui avance d'**étape** en étape.\n"
+            "- « est-ce qu'on connaît déjà jean dupont ? » → `spott_people` (cherche candidats **et** contacts clients, flou) — à faire avant de créer quoi que ce soit\n"
+            "- « liste les candidats » → `spott_candidates`, détail → `spott_candidate` ; par critères → `spott_search_candidates`\n"
+            "- « crée un candidat » → `spott_create_candidate` (`firstName`/`lastName` obligatoires), correction → `spott_update_candidate`\n"
+            "- « quels postes sont ouverts ? » → `spott_search_jobs` avec le filtre `vacancy.stage.isOpen` ; la liste brute → `spott_jobs`, détail → `spott_job`\n"
+            "- « où en sont les candidatures du poste X ? » → `spott_applications` (`job_id`, ou `candidate_id` pour l'inverse)\n"
+            "- « fais postuler ce candidat » → `spott_stages` (récupérer l'id d'étape) puis `spott_create_application` ; « passe-le en entretien » → `spott_move_application`\n"
+            "- « note l'appel d'hier » → `spott_create_note` (`links` vers le candidat, `source` phone/inPerson…), relire → `spott_notes`\n"
+            "- côté crm : `spott_clients` (liste, ou recherche si tu passes `filters`), `spott_client`, `spott_client_contacts`, et `spott_placements` pour les placements conclus et leurs honoraires"
+        )),
+    ),
     # ── finance & paie ──────────────────────────────────────────────────────
     "pennylane": (
         DocSection(kind="prerequisite", title="ta clé api pennylane", body_md=(
