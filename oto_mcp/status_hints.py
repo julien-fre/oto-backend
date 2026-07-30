@@ -33,6 +33,14 @@ def has_hook(connector: str) -> bool:
     return connector in _HOOKS
 
 
+def has_state(connector: str) -> bool:
+    """Ce connecteur déclare-t-il COMMENT lire l'état de son credential ?
+
+    Symétrique de `has_hook`, qui manquait : un tripwire ne peut pas exiger la
+    cohérence des deux déclarations sans savoir les lire toutes les deux."""
+    return connector in _STATE_HOOKS
+
+
 # --- état d'un credential : UN calcul, plusieurs surfaces ---------------------
 #
 # Le hook ci-dessus a besoin de la DB (il part d'un `sub`) : seul `/api/me` peut

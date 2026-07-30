@@ -56,7 +56,13 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
             if inspect.isawaitable(result):           # handler async (ex. doctrine + manifeste)
                 result = await result
         except AuthzDenied as d:
-            return json_error(request, d.status, d.code)
+            # `message` EN 4e ARG, sinon il est jeté et le client ne voit qu'un code nu.
+            # Les auteurs de capacités écrivent des refus actionnables (« Enregistre
+            # d'abord le Consumer Key… ») qui n'atteignaient personne : `_json_error`
+            # n'émet `detail` que s'il lui est passé. La face MCP, elle, rendait déjà
+            # `d.message` — les deux surfaces disaient donc des choses différentes du
+            # MÊME refus.
+            return json_error(request, d.status, d.code, d.message or None)
         return json_response(request, result)
     return _handler
 

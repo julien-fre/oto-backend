@@ -33,7 +33,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from . import credentials_store, oauth2_pkce
+from . import oauth_flow, credentials_store, oauth2_pkce
 
 _AUTH_URL = "https://app.folk.app/oauth/authorize"
 _TOKEN_URL = "https://api.stytch.folk.app/v1/oauth2/token"
@@ -177,9 +177,12 @@ def _refresh(refresh_token: str) -> dict:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=15,
     )
-    # Refresh révoqué/expiré → 400/401 invalid_grant : réauth à faire, pas un 5xx.
-    if r.status_code in (400, 401):
-        raise FolkReauthRequired((r.text or "")[:300])
+    # `invalid_grant` SEUL vaut « réauth » : l'appelant PURGE le credential sur cette
+    # exception. Un autre 4xx (invalid_client…) est un incident de config — il doit
+    # remonter, pas effacer un refresh_token valide. Règle unique : `oauth_flow`.
+    body = (r.text or "")[:300]
+    if r.status_code in (400, 401) and oauth_flow.grant_is_dead(r.status_code, body):
+        raise FolkReauthRequired(body)
     r.raise_for_status()
     return r.json()
 

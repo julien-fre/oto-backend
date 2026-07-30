@@ -131,3 +131,27 @@ def exchange_code(token_url: str, *, code: str, client_id: str, client_secret: s
         detail = body.get("error") or body.get("message") or f"HTTP {r.status_code}"
         raise OAuthFlowError(f"Échec de l'échange OAuth ({host}) : {detail}.")
     return body
+
+
+# --- le grant est-il MORT, ou est-ce ma config qui est fausse ? ----------------
+
+def grant_is_dead(status_code: int, body_text: str) -> bool:
+    """`True` seulement si le serveur d'autorisation dit que le GRANT est mort
+    (`invalid_grant`, RFC 6749 §5.2) — donc qu'une ré-autorisation est requise.
+
+    ⚠️ Cette distinction garde une opération DESTRUCTRICE. Les appelants purgent le
+    credential sur « réauth requise » ; or un AS répond 400 aussi pour `invalid_client`,
+    `invalid_request`, `unauthorized_client` — c'est-à-dire pour une CONFIG fausse. Tant
+    que tout 400/401 valait « grant mort », un client_secret mal saisi effaçait
+    irréversiblement un refresh_token parfaitement valide, et l'utilisateur devait tout
+    reconnecter pour une faute de frappe. Un incident de configuration doit remonter,
+    pas détruire.
+
+    Le corps prime sur le code : c'est lui qui porte le verdict de l'AS."""
+    low = (body_text or "").lower()
+    if "invalid_grant" in low:
+        return True
+    # Un 401 NU (sans corps exploitable) reste un rejet d'identifiants côté grant :
+    # les AS qui ne renvoient pas de corps sur refresh révoqué existent. Un 400 nu,
+    # lui, est trop ambigu pour justifier une purge.
+    return status_code == 401 and not low.strip()

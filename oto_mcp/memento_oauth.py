@@ -31,7 +31,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import connectors, credentials_store
+from . import oauth_flow, connectors, credentials_store
 
 _AS = "https://doebdriroupduqpggcsj.supabase.co/auth/v1"
 _AUTH_URL = f"{_AS}/oauth/authorize"
@@ -193,10 +193,11 @@ def _refresh(refresh_token: str) -> dict:
                  "Content-Type": "application/x-www-form-urlencoded"},
         timeout=15,
     )
-    # Refresh token révoqué/expiré → 400 invalid_grant : pas une erreur serveur,
-    # c'est une réauth à faire. On le distingue d'un vrai incident (5xx, réseau).
-    if r.status_code in (400, 401):
-        body = (r.text or "")[:300]
+    # `invalid_grant` SEUL vaut « réauth » : l'appelant PURGE le credential sur cette
+    # exception. Un autre 4xx (invalid_client…) est un incident de config — il doit
+    # remonter, pas effacer un refresh_token valide. Règle unique : `oauth_flow`.
+    body = (r.text or "")[:300]
+    if r.status_code in (400, 401) and oauth_flow.grant_is_dead(r.status_code, body):
         raise MementoReauthRequired(body)
     r.raise_for_status()
     return r.json()
