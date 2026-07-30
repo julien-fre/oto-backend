@@ -17,6 +17,7 @@ Connecteur open-data : pas de credential. Exposé seulement si activé en DB
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from fastmcp import FastMCP
@@ -42,6 +43,15 @@ except Exception:  # pragma: no cover - extra `apps` absent
 # Tailles de page autorisées par l'API DiDo (Sit@del) — inliné (ex-import
 # france_opendata.sitadel, retiré au B4 : plus aucune dép directe à la lib).
 _DIDO_PAGE_SIZES = (10, 20, 50, 100)
+
+# Géocodage — détection « la requête porte un numéro de voie » ("227 rue X"), ce qui
+# rend l'absence de candidat `housenumber` suspecte plutôt que normale.
+_NUMBERED_ADDRESS_RE = re.compile(r"^\s*\d{1,4}\s*(?:bis|ter|quater)?\s+\S", re.I)
+_POSTCODE_RE = re.compile(r"\b\d{5}\b")
+
+
+def _has_housenumber(candidates: list[dict]) -> bool:
+    return any(c.get("type") == "housenumber" for c in candidates)
 
 
 def register(mcp: FastMCP) -> None:
@@ -75,16 +85,39 @@ def register(mcp: FastMCP) -> None:
     ) -> list[dict]:
         """Geocode a French address → coordinates, canonical label, INSEE code.
 
-        Returns candidates (label, score, lat, lon, citycode, postcode), best first.
-        The BAN label is a canonical address key (two spellings converge on one point).
+        Returns candidates (label, score, lat, lon, citycode, postcode, `type`), best
+        first. The BAN label is a canonical address key (two spellings converge on one
+        point). `type` grades the match: housenumber (exact door) > street > locality >
+        municipality — a locality answer to a numbered query is NOT the address.
+
+        Postcode fallback: SIRENE addresses often carry the commune's generic postcode
+        (80000 Amiens) while the BAN indexes the real one for that stretch (80090). The
+        query then yields only a low-score locality. When the query carries a street
+        number and no housenumber comes back, this retries WITHOUT the postcode (both
+        the argument and the one written in the address) — those candidates are tagged
+        `relaxed="postcode"`. If that still finds no housenumber, every candidate is
+        tagged `warning="no_housenumber_match"`: treat them as approximate.
 
         Args:
             adresse: free-form address (e.g. "44 la canebière marseille").
             limit: max candidates (default 5).
             code_postal: restrict to a postcode.
-            code_commune: restrict to an INSEE commune code.
+            code_commune: restrict to an INSEE commune code. Safer than code_postal to
+                narrow a search — a commune code is stable, a postcode is not.
         """
-        return ban.search(adresse, limit=limit, postcode=code_postal, citycode=code_commune)
+        res = ban.search(adresse, limit=limit, postcode=code_postal, citycode=code_commune)
+        if not _NUMBERED_ADDRESS_RE.match(adresse) or _has_housenumber(res):
+            return res
+        # Le code postal se cache à DEUX endroits : l'argument et la chaîne. Mesuré sur
+        # le cas #324 (« 227 rue Saint-Fuscien 80000 Amiens ») — retirer le seul argument
+        # ne change rien, c'est le CP écrit dans le texte qui écrase le tronçon ; sans lui
+        # la BAN rend le bon numéro à 0.98 au lieu d'une locality à 0.57.
+        relaxed = " ".join(_POSTCODE_RE.sub(" ", adresse).split())
+        if relaxed != adresse or code_postal:
+            retry = ban.search(relaxed, limit=limit, postcode=None, citycode=code_commune)
+            if _has_housenumber(retry):
+                return [{**c, "relaxed": "postcode"} for c in retry]
+        return [{**c, "warning": "no_housenumber_match"} for c in res]
 
     @mcp.tool()
     def foncier_reverse(lat: float, lon: float) -> Optional[dict]:
