@@ -18,7 +18,7 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
-from .. import access, connector_verify, status_hints
+from .. import access, connector_flow, connector_verify, status_hints
 
 
 def _login_url(login_url: Optional[str]) -> str:
@@ -71,6 +71,27 @@ def _salesforce_pending_action(sub: str, org, group, entry: dict):  # noqa: ARG0
 
 status_hints.register_state("salesforce", _salesforce_credential_state)
 status_hints.register("salesforce", _salesforce_pending_action)
+
+
+def _start_flow(ctx, values: dict) -> dict:
+    """Point d'entrée du flux générique — délègue au MÊME handler que la capacité
+    `me.salesforce_connect`, pour qu'il n'existe qu'une façon de démarrer."""
+    from ..capabilities import salesforce_connect
+    return salesforce_connect.start_for(ctx, (values.get("scope") or "member"))
+
+
+# Le flux de consentement, déclaré comme celui de Zoho — c'est ce qui fait apparaître le
+# bouton sur la fiche, SANS que le dashboard ait à connaître le nom « salesforce ».
+connector_flow.declare(
+    "salesforce",
+    start=_start_flow,
+    label="Autoriser oto chez Salesforce",
+    params=(connector_flow.FlowParam(
+        name="scope", label="Pour qui ?", default="member", required=False,
+        help="au nom de qui ranger la connexion — org/équipe demandent d'en être admin",
+        options=(("member", "moi"), ("org", "toute l'org"), ("group", "mon équipe"))),
+    ),
+)
 
 
 def _sf_error_hint(exc: Exception) -> str:

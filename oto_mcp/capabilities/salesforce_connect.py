@@ -35,7 +35,10 @@ class SalesforceConnectInput(BaseModel):
     scope: Optional[Literal["member", "org", "group"]] = "member"
 
 
-def _start(ctx: ResolvedCtx, inp: SalesforceConnectInput) -> dict:
+def start_for(ctx: ResolvedCtx, scope: str) -> dict:
+    """URL de consentement à ouvrir, pour le niveau demandé. Partagé avec le flux
+    générique (`connector_flow`, déclaré dans tools/salesforce.py) : une seule façon
+    de démarrer, deux surfaces."""
     from mcp.shared.exceptions import McpError
 
     from .. import access
@@ -44,7 +47,7 @@ def _start(ctx: ResolvedCtx, inp: SalesforceConnectInput) -> dict:
     except McpError as e:
         raise AuthzDenied(403, "connector_restricted", e.error.message)
     try:
-        auth_url = salesforce_oauth.build_auth_url(ctx.sub, inp.scope or "member")
+        auth_url = salesforce_oauth.build_auth_url(ctx.sub, scope or "member")
     except ValueError as e:
         raise AuthzDenied(400, "invalid_scope_param", str(e))
     except PermissionError as e:
@@ -53,7 +56,11 @@ def _start(ctx: ResolvedCtx, inp: SalesforceConnectInput) -> dict:
         raise AuthzDenied(400, "missing_credentials", str(e))
     except RuntimeError as e:
         raise AuthzDenied(400, "oauth_misconfigured", str(e))
-    return {"auth_url": auth_url, "scope": inp.scope or "member"}
+    return {"auth_url": auth_url, "scope": scope or "member"}
+
+
+def _start(ctx: ResolvedCtx, inp: SalesforceConnectInput) -> dict:
+    return start_for(ctx, inp.scope or "member")
 
 
 CAPABILITIES += [

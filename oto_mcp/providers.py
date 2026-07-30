@@ -1344,7 +1344,7 @@ def public_catalog() -> list[dict]:
     """Vue publique (GET /api/connectors) — sans secret, pour le frontend."""
     # Lazy : le registre des backends d'identités se remplit à l'import des modules
     # tools/* (register_all au boot) — on le lit à la demande, jamais à l'import.
-    from . import connector_identities, connector_verify
+    from . import connector_flow, connector_identities, connector_verify
     return [
         {
             "name": c.name,
@@ -1391,6 +1391,11 @@ def public_catalog() -> list[dict]:
             # enregistré un `verify` sans effet de bord (zoho…). La carte affiche alors
             # un bouton « tester la connexion » à côté de l'état « clé posée ».
             "verifiable": connector_verify.supports(c.name),
+            # FORME du geste « connecter » (label + paramètres attendus), ou None
+            # pour les ~56 connecteurs sans flux. Jamais d'URL ni de nom de
+            # capacité : /api/connectors est servie SANS auth, et le chemin est
+            # fixe côté client. Cf. `connector_flow`.
+            "connect": connector_flow.describe(c.name),
         }
         for c in _REGISTRY_LIST
     ]

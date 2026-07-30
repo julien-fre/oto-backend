@@ -15,7 +15,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify, status_hints
+from .. import access, connector_flow, connector_verify, status_hints
 
 # Modules CRM standard sondés pour prouver un scope de LECTURE réel (au moins un
 # `ZohoCRM.modules.<m>.READ`). On passe au 1er lisible ; tous en scope-mismatch =
@@ -111,9 +111,34 @@ def _pending_action_for(connector: str):
 
 # Les 3 connecteurs Zoho partagent ce mode de connexion — enregistrés ici, ce
 # module étant chargé inconditionnellement par `register_all`.
+def _start_flow(ctx, connector: str, values: dict) -> dict:
+    """Point d'entrée du flux générique — même corps que la capacité `me.zoho_connect`,
+    dont il partage le handler pour qu'il n'existe qu'UNE façon de démarrer."""
+    from ..capabilities import zoho_connect
+    return zoho_connect.start_for(ctx, connector, (values.get("data_center") or "").lower())
+
+
 for _c in ("zoho", "zohodesk", "zohoanalytics"):
     status_hints.register(_c, _pending_action_for(_c))
     status_hints.register_state(_c, _zoho_credential_state)
+    # Le flux de consentement, déclaré comme le reste : le front en dérive un select de
+    # région + un bouton, sans savoir que « zoho » existe. Les régions vivent ICI et
+    # nulle part ailleurs — elles étaient recopiées jusque dans un libellé de registre
+    # qui annonçait un data center que le code rejette.
+    connector_flow.declare(
+        _c,
+        start=lambda ctx, values, _c=_c: _start_flow(ctx, _c, values),
+        label="Autoriser oto chez Zoho",
+        params=(connector_flow.FlowParam(
+            name="data_center", label="Région de ton compte Zoho", default="eu",
+            help="l'app OAuth et le jeton sont liés à leur data center",
+            options=tuple((dc, lbl) for dc, lbl in (
+                ("eu", "Europe (zoho.eu)"), ("com", "International (zoho.com)"),
+                ("in", "Inde (zoho.in)"), ("au", "Australie (zoho.com.au)"),
+                ("jp", "Japon (zoho.jp)"), ("ca", "Canada (zohocloud.ca)"),
+            ) if dc in _DC_DOMAINS)),
+        ),
+    )
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
