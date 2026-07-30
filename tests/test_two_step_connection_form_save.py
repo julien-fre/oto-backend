@@ -44,8 +44,10 @@ PREREQ = {"client_id": "3MVG...", "client_secret": "s3cr3t",
 def test_salesforce_declares_prerequisites_only():
     """Le contrat de départ : le champ obtenu par consentement n'est PAS au formulaire."""
     c = providers.REGISTRY["salesforce"]
-    assert c.oauth_followup is True
     assert {f.name for f in c.secret_fields} == {"client_id", "client_secret", "login_url"}
+    # Reste un connecteur à FORMULAIRE : « il manque une étape » se dit par
+    # status_hints, pas par une méthode d'auth à part (cf. le test du dessous).
+    assert c.auth_method == "secret"
 
 
 def test_salesforce_is_wired_to_the_single_source():

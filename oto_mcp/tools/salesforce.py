@@ -45,7 +45,32 @@ def _salesforce_credential_state(fields: dict) -> status_hints.CredentialState:
     return status_hints.CredentialState(complete=True)
 
 
+def _salesforce_pending_action(sub: str, org, group, entry: dict):  # noqa: ARG001
+    """Étape qui manque, pour le verdict de la fiche — le PENDANT d'affichage de
+    `_salesforce_credential_state`.
+
+    Les deux hooks sont nécessaires et ne servent pas au même moment : `register_state`
+    dit à la POSE si l'incomplétude est attendue (sinon la sonde refuse d'écrire),
+    celui-ci dit à la LECTURE ce qu'il reste à faire. Sans lui, la carte paraît
+    configurée — l'app est bien posée — et échoue au premier appel d'outil. Calqué sur
+    `zoho._pending_action_for` : même seam, même fail-open, même libellé unique rendu
+    tel quel par toutes les surfaces."""
+    if entry.get("mode") == "forbidden":
+        return None   # rien de posé → le verdict « à connecter » suffit
+    try:
+        # `resolve_credential(sub=…)` : le hook tourne depuis /api/me (REST), hors
+        # contexte MCP → le sub doit être EXPLICITE. `emit_on_failure=False` : sonde
+        # d'affichage, elle ne doit pas fausser le signal d'usage.
+        fields = access.resolve_credential(
+            "salesforce", want="byo", sub=sub, emit_on_failure=False).fields
+    except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
+        return None
+    st = _salesforce_credential_state(fields)
+    return None if st.complete else "Autorise oto chez Salesforce"
+
+
 status_hints.register_state("salesforce", _salesforce_credential_state)
+status_hints.register("salesforce", _salesforce_pending_action)
 
 
 def _sf_error_hint(exc: Exception) -> str:

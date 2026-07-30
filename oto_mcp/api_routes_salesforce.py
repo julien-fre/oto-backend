@@ -14,7 +14,7 @@ pas exprimer.
 Unlike Folk/Atlassian/Memento, there is no `/status`/`DELETE` here yet — the
 existing generic `/api/settings/api-keys/salesforce` GET/DELETE already covers
 status/disconnect for this connector (it's still `secret_kind="fields"`,
-`auth_method="secret_then_oauth"` — client_id/client_secret/login_url are
+`secret_kind="fields"` — client_id/client_secret/login_url are
 pasted through the normal form, only refresh_token comes from this flow now,
 not pasted at all anymore).
 

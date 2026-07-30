@@ -145,9 +145,11 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "`Perform requests at any time (refresh_token, offline_access)`\n"
             "- une fois enregistrée, copie le **Consumer Key** et le **Consumer Secret** "
             "(Manage Consumer Details)\n"
-            "- colle Consumer Key / Consumer Secret / Login URL dans oto (page compte / connecteurs), "
-            "puis clique **Connecter** — c'est le SEUL moyen d'obtenir le jeton d'accès désormais, "
-            "il n'y a plus de champ Refresh Token à remplir à la main ni de code d'autorisation à copier"
+            "- colle Consumer Key / Consumer Secret / Login URL dans oto (page compte / connecteurs) — "
+            "l'enregistrement est accepté même si la connexion n'est pas encore complète, c'est normal\n"
+            "- puis lance l'autorisation : demande à ton agent « connecte Salesforce », il te rend "
+            "le lien de consentement à ouvrir. C'est le SEUL moyen d'obtenir le jeton désormais — "
+            "il n'y a plus de champ Refresh Token à remplir à la main ni de code à copier"
         )),
         DocSection(kind="usage", title="contacts, comptes, leads, opportunités", body_md=(
             "CRUD générique par sObject (Contact, Account = « companies », Lead, Opportunity, "

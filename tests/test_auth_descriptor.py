@@ -7,7 +7,7 @@ comportement runtime (B1 = additif, no-op).
 """
 from oto_mcp.providers import _REGISTRY_LIST, public_catalog
 
-_METHODS = {"secret", "oauth", "cookie", "remote", "hosted", "none", "secret_then_oauth"}
+_METHODS = {"secret", "oauth", "cookie", "remote", "hosted", "none"}
 
 
 def test_method_in_closed_set():
@@ -28,11 +28,6 @@ def test_method_derivation_matches_kind_and_secret_kind():
             # bridge nouveau modèle (ADR 0034) : credential_fields déclarés →
             # formulaire self-serve standard
             assert m == "secret", c.name
-        elif c.oauth_followup:
-            # formulaire de champs PUIS un flux OAuth live complète un champ non
-            # saisissable à la main (ex. salesforce : refresh_token per-customer,
-            # cf. salesforce_oauth.py) — prime sur le secret_kind="fields" brut.
-            assert m == "secret_then_oauth", c.name
         elif c.secret_kind in ("oauth", "cookie", "none"):
             assert m == c.secret_kind, c.name
         else:
@@ -42,15 +37,15 @@ def test_method_derivation_matches_kind_and_secret_kind():
 
 def test_fields_only_for_secret_or_hosted_method():
     # un schéma de saisie n'a de sens que pour method=secret (formulaire de
-    # champs), hosted (le credential reste une clé résolue en cascade, même si
-    # la connexion user passe par un flux hébergé), OU secret_then_oauth
-    # (formulaire de champs PUIS un bouton Connecter complète un champ non
-    # saisissable à la main, ex. salesforce) ; les flux oauth/cookie/remote/
-    # none sont dédiés, sans formulaire.
+    # champs) OU hosted (le credential reste une clé résolue en cascade, même si
+    # la connexion user passe par un flux hébergé) ; les flux oauth/cookie/
+    # remote/none sont dédiés, sans formulaire. Un credential qui se COMPLÈTE
+    # hors formulaire (salesforce, zoho server-based) reste `secret` : l'étape
+    # restante se dit par `status_hints`, pas par une méthode d'auth de plus.
     for c in _REGISTRY_LIST:
         if c.auth["fields"]:
-            assert c.auth_method in ("secret", "hosted", "secret_then_oauth"), \
-                f"{c.name}: fields hors method secret/hosted/secret_then_oauth"
+            assert c.auth_method in ("secret", "hosted"), \
+                f"{c.name}: fields hors method secret/hosted"
 
 
 def test_hosted_is_unipile_only():

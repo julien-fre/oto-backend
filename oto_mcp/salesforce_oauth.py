@@ -16,10 +16,10 @@ Otomata-owned client). So this flow is a hybrid: the customer still saves
 ALL of what that form collects for Salesforce), and this module's `/start`
 reads THAT already-saved partial credential to build a per-customer authorize
 URL, instead of a module-level constant like `google_oauth.py`'s
-`GOOGLE_WORKSPACE_CLIENT_ID`. `providers.py`'s `oauth_followup=True` flag on
-the registry entry signals this shape to the frontend (`auth_method` derives
-to `"secret_then_oauth"`) so it knows to show a Connect button after the form
-saves, rather than treating this as a plain `secret_kind="fields"` connector.
+`GOOGLE_WORKSPACE_CLIENT_ID`. Que le credential se complète HORS formulaire est dit par `status_hints`
+(`register_state` + `pending_action`, dans tools/salesforce.py) — le seam commun,
+celui que Zoho utilise déjà — et non par une méthode d'auth dédiée : le jeu de
+`auth_method` est fermé et consommé par un switch du dashboard.
 
 State design mirrors `google_oauth.py` specifically (hand-rolled HMAC, not the
 shared `oauth2_pkce.make_state`/`verify_state`): the credential is scoped
