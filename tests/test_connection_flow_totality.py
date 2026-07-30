@@ -47,7 +47,6 @@ _DETTE_DECLARATION: dict[str, str] = {
     # déclaré, un `pending_action` serait aujourd'hui inatteignable. Levée par le barreau
     # « connector_token + 4e boucle de status_for ».
     "google": "status_for maison ; status_for() aveugle aux auth_method=oauth",
-    "memento": "status_for maison ; status_for() aveugle aux auth_method=oauth",
     "atlassian": "status_for maison ; status_for() aveugle aux auth_method=oauth",
     "folkmcp": "status_for maison ; status_for() aveugle aux auth_method=oauth",
     # Les 4 connecteurs à session navigateur passent par browser_session : leur état

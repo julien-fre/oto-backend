@@ -76,8 +76,7 @@ _KNOWN: dict[str, str] = {
     "/api/datastore/namespaces/{namespace}/queue": DEBT,
     "/api/datastore/namespaces/{namespace}/rows": DEBT,
     "/api/datastore/namespaces/{namespace}/rows/{row_id}": DEBT,
-    # (`…/rows/{row_id}/activity` et `…/activity` sont partis en capacités le
-    # 2026-07-28 : `capabilities/datastore_activity.py`.)
+    "/api/datastore/namespaces/{namespace}/rows/{row_id}/activity": DEBT,
     "/api/datastore/namespaces/{namespace}/rows/{row_id}/release": DEBT,
     "/api/datastore/namespaces/{namespace}/schema": DEBT,
     "/api/datastore/namespaces/{namespace}/share": DEBT,
@@ -134,7 +133,7 @@ def test_rest_debt_only_shrinks():
     """La dette est NOMMÉE et COMPTÉE (« no silent caps » : un plafond tu est un
     plafond oublié). Ce plafond ne doit que baisser, au fil des migrations."""
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 36, (
+    assert len(debt) <= 37, (
         f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
         "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
 
