@@ -25,12 +25,14 @@ class _Entreprises:
                commune: Optional[str] = None, employees: Optional[list] = None,
                categorie_entreprise: Optional[str] = None, ca_min: Optional[int] = None,
                ca_max: Optional[int] = None, idcc: Optional[list] = None,
+               nature_juridique: Optional[list] = None,
                page: int = 1, per_page: int = 25) -> dict[str, Any]:
         return _post("/api/fr/entreprises/search", {
             "query": query, "naf": naf, "departement": departement,
             "code_postal": code_postal, "commune": commune, "employees": employees,
             "categorie_entreprise": categorie_entreprise, "ca_min": ca_min, "ca_max": ca_max,
-            "idcc": idcc, "page": page, "per_page": per_page,
+            "idcc": idcc, "nature_juridique": nature_juridique,
+            "page": page, "per_page": per_page,
         })
 
     def get_by_siren(self, siren: str) -> Optional[dict[str, Any]]:

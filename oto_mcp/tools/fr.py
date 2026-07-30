@@ -13,6 +13,39 @@ from mcp.types import INVALID_PARAMS, ErrorData
 
 from .. import access
 
+# Formes juridiques couramment ÉNONCÉES devant le nom (« la SCI Untel »), et les
+# catégories juridiques INSEE correspondantes. Le répertoire, lui, n'inscrit
+# presque jamais la forme dans la dénomination : « SCI ASC » ne ramène que des
+# sociétés littéralement nommées ainsi, et jamais la SCI immatriculée « ASC ».
+# La forme appartient donc à un FILTRE, pas au texte cherché (feedback #325).
+# Codes validés contre la liste que l'API renvoie sur valeur invalide (30/07/2026).
+_LEGAL_FORM_CODES: dict[str, tuple[str, ...]] = {
+    "SCI": ("6540", "6541", "6542", "6543", "6544"),   # famille 654x = sociétés civiles immobilières
+    "SCCV": ("6540", "6541"),
+    "SCM": ("6533",),
+    "SCP": ("6532",),
+    "SARL": ("5499", "5485", "5410"),
+    "EURL": ("5499",),                                  # SARL à associé unique — même catégorie
+    "SAS": ("5710", "5785"),
+    "SASU": ("5710",),
+    "SA": ("5599", "5699"),
+    "SNC": ("5202", "5203"),
+}
+
+
+def _split_legal_form(query: Optional[str]) -> Optional[tuple[str, str]]:
+    """(forme, reste) si `query` commence par une forme juridique suivie d'un nom.
+
+    « SCI ASC » → ("SCI", "ASC"). « SCI » seul → None (pas de nom à chercher),
+    « ASCENSEURS » → None (préfixe non isolé)."""
+    if not query:
+        return None
+    parts = query.strip().split(maxsplit=1)
+    if len(parts) != 2:
+        return None
+    form = parts[0].upper().strip(".")
+    return (form, parts[1].strip()) if form in _LEGAL_FORM_CODES and parts[1].strip() else None
+
 
 def register(mcp: FastMCP) -> None:
     from .. import fod_fr  # données entreprise + INSEE keyé (passthrough) + index BOAMP/ACCO → service FOD
@@ -40,6 +73,7 @@ def register(mcp: FastMCP) -> None:
         ca_min: Optional[int] = None,
         ca_max: Optional[int] = None,
         idcc: Optional[str] = None,
+        nature_juridique: Optional[str] = None,
         page: int = 1,
         per_page: int = 25,
     ) -> dict:
@@ -72,25 +106,60 @@ def register(mcp: FastMCP) -> None:
             ca_min: Minimum turnover in euros.
             ca_max: Maximum turnover in euros.
             idcc: IDCC codes (conventions collectives), comma-separated.
+            nature_juridique: INSEE legal-form codes, comma-separated (e.g. "6540" for
+                SCI, "5710" for SAS). Exact 4-digit codes only — an invalid value makes
+                the API answer with the full list of valid ones.
             page: 1-based page number.
             per_page: Page size (max 25).
+
+        Spoken legal forms: people say "the SCI Untel", but the register rarely writes
+        the form into the name — so a query like "SCI ASC" only matches companies
+        literally NAMED that. On page 1, this tool detects such a prefix and ALSO runs
+        the name alone filtered on that form, appending the extra hits (flagged
+        `matched_by="legal_form"`) and reporting what it did under `legal_form_retry`.
         """
-        res = entreprises.search(
-            query=query,
-            naf=[s.strip() for s in naf.split(",")] if naf else None,
-            departement=departement,
-            code_postal=code_postal,
-            commune=commune,
-            employees=[s.strip() for s in employees.split(",")] if employees else None,
-            categorie_entreprise=categorie_entreprise,
-            ca_min=ca_min, ca_max=ca_max,
-            idcc=[s.strip() for s in idcc.split(",")] if idcc else None,
-            page=page, per_page=per_page,
-        )
+        def _search(q, nj, pg):
+            return entreprises.search(
+                query=q,
+                naf=[s.strip() for s in naf.split(",")] if naf else None,
+                departement=departement,
+                code_postal=code_postal,
+                commune=commune,
+                employees=[s.strip() for s in employees.split(",")] if employees else None,
+                categorie_entreprise=categorie_entreprise,
+                ca_min=ca_min, ca_max=ca_max,
+                idcc=[s.strip() for s in idcc.split(",")] if idcc else None,
+                nature_juridique=nj,
+                page=pg, per_page=per_page,
+            )
+
+        explicit_nj = [s.strip() for s in nature_juridique.split(",")] if nature_juridique else None
+        res = _search(query, explicit_nj, page)
+        # Repêchage par forme juridique — seulement page 1 (c'est là qu'on conclut
+        # « pas trouvée ») et seulement si l'appelant n'a pas déjà tranché la forme.
+        # La recherche littérale reste en tête : les sociétés vraiment nommées
+        # « SCI ASC » existent et sont des réponses légitimes.
+        form = _split_legal_form(query) if page == 1 and not explicit_nj else None
         # Même compactage que fr_get : le payload brut (sièges 30+ champs,
         # matching_etablissements géo intégrale) explose vite (vu 48k chars).
         # Les établissements compactés restent là — test de co-localisation.
+        # Compacter AVANT de marquer : la projection ne garde que des clés connues,
+        # un flag posé plus tôt serait silencieusement perdu.
         res["results"] = [_compact_identity(r) for r in res.get("results", [])]
+        if form:
+            label, name = form
+            codes = list(_LEGAL_FORM_CODES[label])
+            extra = _search(name, codes, 1)
+            seen = {r.get("siren") for r in res["results"]}
+            added = [_compact_identity(r) for r in extra.get("results", [])
+                     if r.get("siren") not in seen]
+            for r in added:
+                r["matched_by"] = "legal_form"
+            res["results"] += added
+            res["legal_form_retry"] = {
+                "form": label, "query": name, "nature_juridique": codes,
+                "total_results": extra.get("total_results"), "added": len(added),
+            }
         return res
 
     # 7 ratios top B2B + métadonnées d'exercice. Le reste (marge_brute, ebit,

@@ -58,10 +58,12 @@ class _Ign:
 class _Sitadel:
     def search(self, kind: str, communes: Optional[str] = None, dept: Optional[str] = None,
                an_min: Optional[int] = None, an_max: Optional[int] = None,
+               siren: Optional[str] = None, siret: Optional[str] = None,
                page: int = 1, page_size: int = 50) -> dict[str, Any]:
         return _post("/api/foncier/sitadel/search",
                      {"kind": kind, "communes": communes, "dept": dept,
-                      "an_min": an_min, "an_max": an_max, "page": page, "page_size": page_size})
+                      "an_min": an_min, "an_max": an_max, "siren": siren, "siret": siret,
+                      "page": page, "page_size": page_size})
 
 
 class _Enedis:

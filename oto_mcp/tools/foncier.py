@@ -202,14 +202,18 @@ def register(mcp: FastMCP) -> None:
         kind: str = "logements",
         annee_min: Optional[int] = None,
         annee_max: Optional[int] = None,
+        siren: Optional[str] = None,
+        siret: Optional[str] = None,
         page: int = 1,
         limit: int = 50,
     ) -> dict:
-        """Building/urbanism permits (Sit@del, SDES) for a commune or department, live.
+        """Building/urbanism permits (Sit@del, SDES) for a commune, department or APPLICANT.
 
         Live query on the DiDo API (server-side filter) — no bulk download. National
         register of urban-planning authorizations (PC/PA/DP) since 2013, monthly refresh.
-        Scope is REQUIRED (`code_commune` or `dept`) — a national scan is huge.
+        A scope is REQUIRED — `code_commune`, `dept` **or** `siren`/`siret` — because a
+        national scan is huge. `siren` needs NO geography: "every permit filed by this
+        company", France-wide, in one query (due diligence on a company's projects).
 
         Three files, pick with `kind`:
           - "logements": permits creating housing (developer/promoteur core).
@@ -228,12 +232,24 @@ def register(mcp: FastMCP) -> None:
             dept: INSEE department code (e.g. "59", "2A"). Use for a whole department.
             kind: "logements" (default) | "locaux" | "amenager".
             annee_min / annee_max: deposit-year bounds (inclusive).
+            siren: applicant's SIREN — server-side filter, combinable with the geography
+                but sufficient on its own. Note ~35 % of permits carry no applicant
+                (natural persons, GDPR diffusion rule): those are out of reach by design,
+                so an empty result is not proof the company filed nothing.
+            siret: applicant's SIRET, same idea at establishment level.
             page: 1-based page.
             limit: max permits per page (snapped to 10/20/50/100, cap 100). `total` in
                 the result is the full server-side count — page through for more.
+
+        To find the permits on a given cadastral PARCEL there is no server-side filter
+        (DiDo stores up to three section/number pairs per permit and ANDs them): scope by
+        commune, then match the `parcelles` key of the returned permits.
         """
-        if not code_commune and not dept:
-            raise ValueError("Renseigner `code_commune` ou `dept` (un scan national est proscrit).")
+        if not code_commune and not dept and not siren and not siret:
+            raise ValueError(
+                "Renseigner `code_commune`, `dept`, `siren` ou `siret` "
+                "(un scan national sans filtre est proscrit)."
+            )
         page_size = _snap_page_size(max(1, limit))
         res = sitadel.search(
             kind,
@@ -241,6 +257,8 @@ def register(mcp: FastMCP) -> None:
             dept=dept or None,
             an_min=annee_min,
             an_max=annee_max,
+            siren=siren or None,
+            siret=siret or None,
             page=page,
             page_size=page_size,
         )
