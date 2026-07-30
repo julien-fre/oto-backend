@@ -3,6 +3,7 @@ name = "oto-mcp"
 version = "0.1.0"
 description = "MCP server exposing selected oto-cli connectors as tools (Streamable HTTP, OAuth 2.1)."
 requires-python = ">=3.10"
+license = "MIT"
 dependencies = [
     "fastmcp[apps]>=3.4.2",  # plancher = dernier (3.4.2) — schéma plat des tools validé dessus (ADR 0009). Extra `apps` = prefab_ui (MCP Apps SEP-1865, UI rendue en iframe) consommé par les tools *_app (cf. tools/foncier.py)
     # lib connecteurs (oto.tools) — PLUS de dép à la CLI (otomata#13). PINNÉ sur un
