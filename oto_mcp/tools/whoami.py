@@ -137,8 +137,7 @@ def register(mcp: FastMCP) -> None:
             logger.warning("whoami: status_for failed: %s", e)
 
         # KB NATIVE (oto_kb) : la base de connaissance vit dans le projet ancré de
-        # l'org (orgs.kb_project_id) — plus l'ancien Memento fédéré (mort). On expose
-        # l'ancre native, pas un « memento_connected: false » qui contredit oto_kb.
+        # l'org (orgs.kb_project_id). On expose cette ancre native.
         kb_project_id = None
         try:
             if active_org is not None:

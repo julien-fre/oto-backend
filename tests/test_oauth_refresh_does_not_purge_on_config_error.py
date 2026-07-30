@@ -2,7 +2,7 @@
 
 Les trois flux OAuth fédérés purgent le credential quand leur `_refresh` lève
 `*ReauthRequired` (`clear_credential` puis `return None`, atlassian_oauth.py ~:196,
-folk_oauth.py ~:207, memento_oauth.py ~:225). C'est juste quand le GRANT est mort —
+folk_oauth.py ~:207). C'est juste quand le GRANT est mort —
 l'utilisateur doit re-consentir de toute façon.
 
 Mais jusqu'ici, TOUT 400/401 levait cette exception. Or un serveur d'autorisation
@@ -79,7 +79,6 @@ def _patch_post(monkeypatch, mod, resp):
 @pytest.mark.parametrize("modname,excname", [
     ("atlassian_oauth", "AtlassianReauthRequired"),
     ("folk_oauth", "FolkReauthRequired"),
-    ("memento_oauth", "MementoReauthRequired"),
 ])
 def test_dead_grant_still_raises_reauth(monkeypatch, modname, excname):
     import importlib
@@ -93,7 +92,6 @@ def test_dead_grant_still_raises_reauth(monkeypatch, modname, excname):
 @pytest.mark.parametrize("modname,excname", [
     ("atlassian_oauth", "AtlassianReauthRequired"),
     ("folk_oauth", "FolkReauthRequired"),
-    ("memento_oauth", "MementoReauthRequired"),
 ])
 def test_config_error_does_NOT_raise_reauth(monkeypatch, modname, excname):
     """TRIPWIRE — le cœur du correctif : sur `invalid_client`, l'exception de réauth

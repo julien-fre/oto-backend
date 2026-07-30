@@ -5,7 +5,7 @@ the browser's address bar, exchange it by hand) is gone: `providers.py`'s
 Salesforce entry no longer declares a `refresh_token` field at all, only
 `client_id`/`client_secret`/`login_url`.
 
-Unlike every other live-OAuth flow oto has (google/atlassian/folkmcp/memento),
+Unlike every other live-OAuth flow oto has (google/atlassian/folkmcp),
 Salesforce's OAuth client — a "Connected App" — is **per-customer**: each
 customer creates their own inside their own org, with their own
 `client_id`/`client_secret`/`login_url`. There is no platform-wide Salesforce

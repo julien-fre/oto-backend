@@ -38,7 +38,7 @@ pas. Économise les crédits d'enrichissement et le temps d'approche.
 
 - Persiste la scorecard : note ATS (`*_add_note`) **ou** un namespace datastore
   (`data_write` sur `screening_<poste>`), pour comparer les candidats côté à côté.
-- Réutilise la base de connaissance : `memento_mem_search` pour retrouver une
+- Réutilise la base de connaissance : `oto_search` pour retrouver une
   qualification passée du même profil (ne refais pas un screening déjà fait).
 
 ## Garde-fous

@@ -924,7 +924,7 @@ def project_spine(project_id: int, *, from_doc: Optional[int] = None,
                   depth: int = 2, max_nodes: int = 200) -> dict:
     """L'ÉPINE d'un projet (Ship 2) — l'arbre des pages dans l'ORDRE CURÉ, borné en
     profondeur ET en nombre de nœuds : la carte que l'agent lit pour se repérer
-    (c'est le `load` de Memento). Chaque nœud = {id, title, description(fallback
+    Chaque nœud = {id, title, description(fallback
     dérivé), children?, more?} ; `more` = nb d'enfants coupés (le DRILL `from_doc`
     descend une branche). Une requête, assemblage Python (arbres petits)."""
     with _connect() as conn:

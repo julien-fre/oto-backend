@@ -198,7 +198,7 @@ class Connector:
         retiré le 29/07 : « il reste une étape » se dit par `status_hints`
         (pending_action), pas par une nouvelle méthode d'auth. NB : un MCP fédéré
         (kind=mount) hérite de son `secret_kind`
-        (planity=basic_auth→secret, memento=oauth→oauth)."""
+        (planity=basic_auth→secret, atlassian=oauth→oauth)."""
         if self.hosted_auth:
             return "hosted"
         if self.kind == "remote" and not self.credential_fields:
@@ -236,7 +236,7 @@ class Connector:
         """Schéma de saisie du credential — SOURCE UNIQUE pour l'UI, l'endpoint REST,
         `status_for` et le packing. Déclaré explicitement (`credential_fields`),
         sinon dérivé des formes simples. Vide = pas de saisie générique : `cookie`
-        (linkedin/crunchbase), `oauth` (google/memento) et `none` (open-data) ont
+        (linkedin/crunchbase), `oauth` (google/atlassian) et `none` (open-data) ont
         des flux dédiés, pas un formulaire de champs."""
         if self.credential_fields:
             return self.credential_fields
@@ -269,7 +269,7 @@ BROWSER_PROVIDERS = frozenset()
 # entité (ADR 0024). Google (N comptes OAuth), zoho (self-clients FR/US), et
 # `browser` (N sites derrière login : un compte = un host, un Context Browserbase
 # par site — cf. tools/browser.py). Les autres sessions/oauth (crunchbase,
-# memento…) restent mono-compte par entité.
+# atlassian…) restent mono-compte par entité.
 MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho", "browser"})
 
 # Catégorie d'usage (domaine) par connecteur — CURÉE (pas dérivable), tunable.
@@ -285,7 +285,7 @@ _CATEGORY_BY_CONNECTOR = {
     "infosec": "Infosec",
     "pennylane": "Finance", "pennylaneged": "Finance", "gocardless": "Finance", "silae": "Finance",
     "slack": "Comms", "google": "Comms", "zohodesk": "Comms",
-    "memento": "Knowledge", "notion": "Knowledge", "zohoanalytics": "Knowledge",
+    "notion": "Knowledge", "zohoanalytics": "Knowledge",
     "lighton": "Knowledge",
     "planity": "Métier",
     "atlassian": "Métier",
@@ -314,7 +314,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "unipile": "Unipile", "pennylane": "Pennylane", "gocardless": "GoCardless",
     "silae": "Silae", "attio": "Attio", "crunchbase": "Crunchbase",
     "slack": "Slack", "whatsapp": "WhatsApp", "google": "Google",
-    "memento": "Memento", "planity": "Planity", "atlassian": "Atlassian",
+    "planity": "Planity", "atlassian": "Atlassian",
     "hubspot": "HubSpot", "apollo": "Apollo", "zerobounce": "ZeroBounce",
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
@@ -401,7 +401,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "silae": "silae.fr", "attio": "attio.com", "crunchbase": "crunchbase.com",
     "brevo": "brevo.com", "brevoauto": "brevo.com", "pipedrive": "pipedrive.com",
     "slack": "slack.com", "whatsapp": "whatsapp.com", "google": "google.com",
-    "memento": "mento.cc", "planity": "planity.com", "topograph": "topograph.co",
+    "planity": "planity.com", "topograph": "topograph.co",
     "atlassian": "atlassian.com",
     "sirene": "insee.fr", "droit": "legifrance.gouv.fr",
     "culture": "culture.gouv.fr", "foncier": "data.gouv.fr",
@@ -621,26 +621,12 @@ _REGISTRY_LIST = [
     # de registre — ADR 0034. L'ex-modèle remote data-driven per-namespace,
     # découvert de `meta.base_url` sans entrée au registre, a été retiré en B4 ;
     # l'identité client vit dans la CONFIG d'org du bridge, jamais en dur.)
-    # memento : MCP fédéré (otomata#16, kind=mount). MCP autonome distant
-    # (mcp.mento.cc) monté via proxy FastMCP (tools/mount.py) ; credential
-    # per-user = token OAuth Supabase (flow memento_oauth.py), injecté par
-    # requête. **Fédération systématique** : `self_serve` (PAS platform_granted)
-    # → visible dans le catalogue de TOUS les users (la carte « federated mcp » du
-    # dashboard les invite à connecter leur compte memento — auto-prompt), et ses
-    # outils sont de droit. Un appel sans compte connecté lève une McpError
-    # actionnable (resolve_mount_token) qui pointe vers le dashboard. Le compte
-    # memento est lui-même provisionné d'office à la création du compte oto
-    # (memento_federation.py). byo_user (chacun connecte SON compte).
-    _c("memento", ["memento"], kind="mount", mount_url="https://mcp.mento.cc/mcp",
-       auth_modes={"byo_user"}, secret_kind="oauth",
-       label="Memento",
-       help="base de connaissance structurée (MCP fédéré)", href="https://mento.cc"),
     # atlassian : MCP fédéré (kind=mount, #40). Le Rovo Remote MCP d'Atlassian
     # (mcp.atlassian.com/v1/mcp, Jira+Confluence) a son propre AS OAuth 2.1 + DCR +
     # PKCE ; client PUBLIC (token_endpoint_auth_method=none, pas de secret), flow web
     # per-user dans atlassian_oauth.py. Le cloudid/site est résolu par l'AS Atlassian.
     # Inerte tant que `atlassian` n'est pas dans OTO_MCP_MOUNTS_ENABLED (défaut =
-    # memento seul) ET que ATLASSIAN_OAUTH_CLIENT_ID n'est pas posé.
+    # aucun mount) ET que ATLASSIAN_OAUTH_CLIENT_ID n'est pas posé.
     _c("atlassian", ["atlassian"], kind="mount",
        mount_url="https://mcp.atlassian.com/v1/mcp",
        auth_modes={"byo_user"}, secret_kind="oauth",
@@ -654,7 +640,7 @@ _REGISTRY_LIST = [
     # AS = Stytch (app.folk.app/oauth/authorize + api.stytch.folk.app), client
     # PUBLIC + DCR + PKCE, flow web per-user dans folk_oauth.py. Le MCP Folk s'auth
     # UNIQUEMENT par OAuth (pas de clé). Inerte tant que `folkmcp` n'est pas dans
-    # OTO_MCP_MOUNTS_ENABLED (défaut = memento seul). Coexistence gérée par la
+    # OTO_MCP_MOUNTS_ENABLED (défaut = aucun mount). Coexistence gérée par la
     # visibilité per-user (ADR 0011/0031) : un user voit soit `folk`, soit `folkmcp`.
     _c("folkmcp", ["folkmcp"], kind="mount",
        mount_url="https://mcp.folk.app/mcp", mount_strip_prefix="folk_",
@@ -678,7 +664,7 @@ _REGISTRY_LIST = [
     # cf. son historique AI Ark #152→#160). byo_org fonctionne à l'identique
     # d'un connecteur `kind="tools"` (`org_shareable` ne dépend que d'`auth_modes`,
     # pas de `kind`). Inerte tant que `lemlistmcp` n'est pas dans
-    # OTO_MCP_MOUNTS_ENABLED (défaut = memento seul) — c'est un nouveau
+    # OTO_MCP_MOUNTS_ENABLED (défaut = aucun mount) — c'est un nouveau
     # connecteur, l'activation explicite est l'onboarding normal, pas une
     # régression pour d'éventuels users déjà sur `lemlist` (inchangé).
     _c("lemlistmcp", ["lemlistmcp"], kind="mount",

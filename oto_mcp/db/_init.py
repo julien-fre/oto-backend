@@ -121,7 +121,7 @@ def init_db() -> None:
         from . import search as _search
         for ddl in _search.index_ddl():
             conn.execute(ddl)
-        # Lot 3 chantier 0.4 : purge du type de lien `doc` (vestige Memento — pointeur
+        # Lot 3 chantier 0.4 : purge du type de lien `doc` (pointeur
         # manuel vers une page, subsumé par les backlinks [[…]] de Ship 4). 4 liens en
         # prod au comptage du 17/07. Idempotent (0 row ensuite).
         conn.execute("DELETE FROM project_links WHERE target_type = 'doc'")

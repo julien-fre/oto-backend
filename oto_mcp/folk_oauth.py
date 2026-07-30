@@ -17,7 +17,7 @@ Le MCP de Folk s'auth UNIQUEMENT par OAuth (pas de clé API — c'est le connect
 natif `folk` qui, lui, tape l'API REST à la clé). Ce module sert donc le connecteur
 fédéré `folkmcp`, distinct et coexistant (per-user visibility, ADR 0011/0031).
 
-Comme atlassian/memento : le refresh_token (long-lived) est le `secret` chiffré du
+Comme atlassian : le refresh_token (long-lived) est le `secret` chiffré du
 coffre ; l'access_token (bearer, dérivé) vit dans `meta`, rafraîchi de façon
 transparente. Le proxy de tools/mount.py l'injecte par requête
 (access.resolve_mount_token → access_token_for).

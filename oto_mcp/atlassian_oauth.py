@@ -10,11 +10,11 @@ Découverte live (2026-06-22, `.well-known/oauth-authorization-server`) :
 
 Client **public** : la DCR rend `token_endpoint_auth_method=none` (pas de
 client_secret) → échange/refresh en `client_id` + `code_verifier`, SANS Basic
-auth (≠ memento qui est confidentiel). Le `client_id` est enregistré une fois par
+auth (client public, pas de secret). Le `client_id` est enregistré une fois par
 DCR et fourni via `ATLASSIAN_OAUTH_CLIENT_ID`. La sélection du site Atlassian
 Cloud (cloudid) est gérée par l'AS Atlassian — rien à porter côté oto.
 
-Comme memento/google : le refresh_token (long-lived) est le `secret` chiffré du
+Comme google : le refresh_token (long-lived) est le `secret` chiffré du
 coffre ; l'access_token (bearer ~1h, dérivé) vit dans `meta` et est rafraîchi de
 façon transparente. Le proxy de tools/mount.py l'injecte par requête
 (access.resolve_mount_token → access_token_for).

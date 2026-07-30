@@ -111,7 +111,7 @@ datastore non plus (spine PG, aucun credential — ADR 0016).
 > — `org_id` = org de CONTEXTE du binding (la facturation des sièges plateforme a sa
 > colonne `platform_seat` ; les BYO ne comptent pas dans le plafond) ; migration PK
 > one-shot `db.backfill_unipile_member_scope()` (⚠️ le cycle de vie du PK lui appartient,
-> pas à `_init.py`). **Seuls les mounts oauth fédérés** (memento/atlassian/folkmcp)
+> pas à `_init.py`). **Seuls les mounts oauth fédérés** (atlassian/folkmcp)
 > restent scope `('user', sub)` ; tripwire `test_member_credential_scope.py` interdit
 > toute autre écriture scope user. Migration coffre = `credentials_store.
 > backfill_member_scope()` au boot (re-chiffrement — l'AAD change, pas d'UPDATE ;

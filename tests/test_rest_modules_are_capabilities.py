@@ -38,7 +38,6 @@ _KNOWN: dict[str, str] = {
     # (302, sans en-tête d'auth). Hors contrat capacité (JSON + autz).
     "/api/zoho/oauth/callback": NATURE,
     "/api/google/oauth/callback": NATURE,
-    "/api/memento/oauth/callback": NATURE,
     "/api/folkmcp/oauth/callback": NATURE,
     "/api/atlassian/oauth/callback": NATURE,
     "/api/salesforce/oauth/callback": NATURE,
@@ -77,7 +76,8 @@ _KNOWN: dict[str, str] = {
     "/api/datastore/namespaces/{namespace}/queue": DEBT,
     "/api/datastore/namespaces/{namespace}/rows": DEBT,
     "/api/datastore/namespaces/{namespace}/rows/{row_id}": DEBT,
-    "/api/datastore/namespaces/{namespace}/rows/{row_id}/activity": DEBT,
+    # (`…/rows/{row_id}/activity` et `…/activity` sont partis en capacités le
+    # 2026-07-28 : `capabilities/datastore_activity.py`.)
     "/api/datastore/namespaces/{namespace}/rows/{row_id}/release": DEBT,
     "/api/datastore/namespaces/{namespace}/schema": DEBT,
     "/api/datastore/namespaces/{namespace}/share": DEBT,
@@ -91,12 +91,6 @@ _KNOWN: dict[str, str] = {
     "/api/me/tokens": DEBT,
     "/api/me/tokens/{token_id}": DEBT,
     # Fédération MCP per-user (mêmes verbes répétés par connecteur fédéré).
-    "/api/memento/oauth/start": DEBT,
-    "/api/memento/oauth/status": DEBT,
-    "/api/memento/oauth": DEBT,
-    "/api/memento/workspaces": DEBT,
-    "/api/memento/pages": DEBT,
-    "/api/memento/document": DEBT,
     "/api/atlassian/oauth/start": DEBT,
     "/api/atlassian/oauth/status": DEBT,
     "/api/atlassian/oauth": DEBT,
@@ -140,7 +134,7 @@ def test_rest_debt_only_shrinks():
     """La dette est NOMMÉE et COMPTÉE (« no silent caps » : un plafond tu est un
     plafond oublié). Ce plafond ne doit que baisser, au fil des migrations."""
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 37, (
+    assert len(debt) <= 36, (
         f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
         "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
 

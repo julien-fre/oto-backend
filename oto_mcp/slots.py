@@ -24,7 +24,7 @@ from .tool_visibility import namespace_of
 
 # Sous-ensemble À INSTANCE de la taxonomie project_links.target_type (ADR 0035
 # arbitrages) : `procedure` ne se binde pas via un slot. `doc` = une page Documents
-# (ex-`base` memento, repointé sur Documents le 2026-07-03).
+# (repointé sur Documents le 2026-07-03).
 SLOT_TYPES = ("tableau", "connecteur", "doc")
 
 # Nom de slot = clé du binding côté projet → même hygiène qu'un slug.

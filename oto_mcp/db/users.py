@@ -25,10 +25,10 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
                 iss: Optional[str] = None) -> None:
     """Create the user row if missing, refresh email/name if known.
 
-    Fédération de compte (otomata#16) : à la **première** création (vrai INSERT),
-    on provisionne le compte memento correspondant par email (best-effort, non
-    bloquant — cf. `memento_federation`). Le `(xmax = 0)` distingue insert/update
-    sans SELECT préalable : 0 sur une ligne fraîchement insérée, ≠ 0 sur un UPDATE.
+    Le `(xmax = 0)` distingue insert/update sans SELECT préalable : 0 sur une ligne
+    fraîchement insérée, ≠ 0 sur un UPDATE — ce qui permet de ne déclencher les
+    effets de première inscription (réconciliation d'invitation, org maison) qu'au
+    vrai INSERT.
     """
     with _connect() as conn:
         row = conn.execute(
@@ -54,10 +54,6 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
             org_store.reconcile_signup_with_invitation(sub, email)
         except Exception:
             pass
-        # Import paresseux : la fédération est optionnelle (no-op sans secret), et
-        # on ne veut pas de dépendance dure au boot. Jamais bloquant / jamais fatal.
-        from .. import memento_federation
-        memento_federation.provision_async(sub, email)
     if row and row.get("inserted"):
         # Suppression du perso (otomata-private) : tout user a TOUJOURS une org maison.
         # Si l'inscription ne l'a pas déjà rattaché à une org (invitation d'org
@@ -90,6 +86,27 @@ def get_user(sub: str) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM users WHERE sub = %s", (sub,)).fetchone()
         return dict(row) if row else None
+
+
+_MAX_EMAILS_BY_SUBS = 200
+
+
+def emails_by_subs(subs: list) -> dict:
+    """`{sub: email}` pour un LOT de subs, en UNE requête.
+
+    Sert les surfaces qui rendent « qui a fait ce geste » à partir d'un journal
+    (`tool_calls.email` n'est pas peuplé à l'insert : le sink ne connaît que le
+    `sub` du JWT). Résoudre à la LECTURE plutôt qu'à l'écriture vaut aussi pour
+    les lignes déjà en base — aucun backfill — et garde le chemin chaud à zéro
+    requête. Un sub inconnu (compte supprimé) est simplement absent. Lot borné."""
+    wanted = [str(s) for s in dict.fromkeys(subs or []) if s][:_MAX_EMAILS_BY_SUBS]
+    if not wanted:
+        return {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT sub, email FROM users WHERE sub = ANY(%s)", (wanted,)
+        ).fetchall()
+        return {r["sub"]: r["email"] for r in rows if r.get("email")}
 
 
 # --- Bascule de tenant Logto (B1, otomata#35) -------------------------------

@@ -2,7 +2,7 @@
 
 Flow web (calqué sur api_routes_atlassian.py) — routes ancrées sur le NOM du
 connecteur `folkmcp` (le widget fédéré du dashboard appelle `/api/<name>/oauth/*`,
-name = `folkmcp`, comme memento/atlassian) :
+name = `folkmcp`, comme atlassian) :
 - `GET    /api/folkmcp/oauth/start`    (auth Logto) → {auth_url} à ouvrir
 - `GET    /api/folkmcp/oauth/callback` (no auth, Folk redirige) → exchange + persist
 - `GET    /api/folkmcp/oauth/status`   (auth) → {connected, set_at}

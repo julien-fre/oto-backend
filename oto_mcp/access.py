@@ -1358,19 +1358,16 @@ def resolve_mount_token(provider: str) -> str:
     (otomata#16) depuis le coffre — entité `user` = sub courant.
 
     Contrairement à un remote (credential d'ORG = token M2M du bridge), un mount
-    fédère un MCP distant déjà authentifié par user (ex. memento, OAuth Supabase) :
+    fédère un MCP distant déjà authentifié par user (ex. atlassian, OAuth Rovo) :
     chaque user porte SON token, résolu par requête et injecté en bearer dans le
     proxy (cf. tools/mount.py). Lève une McpError actionnable si le user n'a pas
     connecté ce service — le proxy traduit ça en « tools non visibles » (le
     ProxyProvider warn+skip), pas en crash de session.
     """
     sub = current_user_sub_or_raise()
-    # OAuth fédéré : token avec refresh transparent (mémento = pilote otomata#16).
+    # OAuth fédéré : token avec refresh transparent.
     # Le résolveur connector-spécifique vit hors d'access (refresh = flow OAuth).
-    if provider == "memento":
-        from . import memento_oauth
-        token = memento_oauth.access_token_for(sub)
-    elif provider == "atlassian":
+    if provider == "atlassian":
         from . import atlassian_oauth
         token = atlassian_oauth.access_token_for(sub)
     elif provider == "folkmcp":

@@ -72,7 +72,7 @@ def register_all(mcp: FastMCP) -> None:
     # modules `tools/<m>.py` (`Connector.modules`, défaut = le nom du provider) et
     # on appelle `register(mcp)`. Le registre `providers.py` est l'UNIQUE source.
     #
-    # - `kind="mount"` (memento/planity) et `kind="remote"` sont EXCLUS : déjà
+    # - `kind="mount"` (atlassian/planity) et `kind="remote"` sont EXCLUS : déjà
     #   gérés par mount.register / remote.register (génériques) ci-dessus.
     # - try/except par module (résilience uniforme) : un connecteur dont une dép
     #   optionnelle manque (oto-cli en retard, duckdb/o-browser absents, parquet

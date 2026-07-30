@@ -1,6 +1,6 @@
 """Embeddings de texte (lot 3, recherche sémantique V2) — client Mistral.
 
-`mistral-embed` (dim 1024, ~0,10 €/M tokens) — même modèle que Memento v3, pour un
+`mistral-embed` (dim 1024, ~0,10 €/M tokens) — pour un
 import sans re-embedding le jour du sunset. Deux surfaces :
 
 - **sync `embed_texts`** : batch pour le WORKER d'indexation (`embed_worker`), appelé

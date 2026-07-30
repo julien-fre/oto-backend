@@ -61,7 +61,7 @@ Enveloppe **AES-256-GCM**, **obligatoire** (`set_credential`/`_pk_encrypt` chiff
 
 `resolve_api_key(provider) -> (api_key, is_platform)` : (1) clé membre scopée (sub, org de contexte) (`get_member_api_key`→coffre, entity `member`/`{org}:{sub}`, ADR 0033) ; (2) org secret (si `byo_org` + org active) ; (3) platform grant + quota ; (4) McpError actionnable. Le connecteur **`bridge`** universel (ADR 0034) se résout par les **champs standard** (`resolve_credential_fields("bridge")` → `base_url`/`token`/`label`, cascade membre > groupe > org), raise actionnable si absent, **jamais de fallback SOPS serveur** — plus de `meta.base_url` (l'ex-`resolve_remote_credential` per-namespace retiré en B4).
 `resolve_credential_fields(provider) -> dict` : credential **multi-champs byo_user** (ex. `silae` : client_id/client_secret/subscription_key) — lit le coffre + `unpack_secret`. **byo-only, pas de platform key ni quota** (le credential EST le grant). Pour les clients in-process s'instanciant avec plusieurs secrets.
-`resolve_mount_token(provider)` : token per-user d'un MCP fédéré `kind="mount"` (OAuth memento, ou base64 basic_auth planity), injecté en bearer par le proxy.
+`resolve_mount_token(provider)` : token per-user d'un MCP fédéré `kind="mount"` (OAuth atlassian, ou base64 basic_auth planity), injecté en bearer par le proxy.
 `status_for` = miroir exact (modes user/org/platform/over_quota/forbidden) — boucle aussi sur les byo_user à `secret_fields` hors `KEY_PROVIDERS` (planity, silae : `user`/`forbidden`). `granted_namespaces_for`/`require_namespace` = gate des namespaces grant-only (deny-by-default), source unique consommée par middleware + meta-tools + REST.
 
 ## Palier org
@@ -75,7 +75,7 @@ Tables `orgs`/`org_members`(index partiel `org_members_one_active`)/`org_entitle
 
 ## Connecteurs remote — bridges (ADR 0003, pilote mm)
 
-`kind="remote"` au registre = **aucun code ni credential client dans oto** : un bridge (service HTTP distant, ex. un bridge back-office client (repo privé)) détient le credential du système client ; oto-mcp = middleware générique `tools/remote.py` (tools `<ns>_describe` + `<ns>_call`, forward bearer M2M + `X-Oto-Sub` pour l'audit côté bridge). Le credential d'org = `secret` = token M2M + `meta.base_url` = endpoint (posé via `oto_admin_set_org_secret(..., base_url=…)`). Gating inchangé : grant-only + `require_namespace` au call-time. Contrat bridge (`/healthz`, `/describe`, `/call`) : ADR 0003 du meta-repo. Le mount MCP-to-MCP (`otomata#16`, memento) = flavor complémentaire pour les remotes déjà-MCP.
+`kind="remote"` au registre = **aucun code ni credential client dans oto** : un bridge (service HTTP distant, ex. un bridge back-office client (repo privé)) détient le credential du système client ; oto-mcp = middleware générique `tools/remote.py` (tools `<ns>_describe` + `<ns>_call`, forward bearer M2M + `X-Oto-Sub` pour l'audit côté bridge). Le credential d'org = `secret` = token M2M + `meta.base_url` = endpoint (posé via `oto_admin_set_org_secret(..., base_url=…)`). Gating inchangé : grant-only + `require_namespace` au call-time. Contrat bridge (`/healthz`, `/describe`, `/call`) : ADR 0003 du meta-repo. Le mount MCP-to-MCP (`otomata#16`) = flavor complémentaire pour les remotes déjà-MCP.
 
 ## Projection instances (ADR 0038 B4)
 
@@ -111,7 +111,7 @@ Pas de framework de tests dans le repo → validation manuelle sur **PG16 jetabl
 #   RESP=$(curl -s -H "X-Auth-Token: $SCW_SECRET_KEY" \
 #     ".../secret-manager/v1beta1/regions/fr-par/secrets/<id>/versions/latest_enabled/access")
 #   export OTO_MCP_MASTER_KEY=$(echo "$RESP" | python3 -c 'import json,sys,base64; print(base64.b64decode(json.load(sys.stdin)["data"]).decode())')
-# Vécu 2026-06-22 (triage Sentry InvalidTag : 1 ligne memento corrompue, écrite
+# Vécu 2026-06-22 (triage Sentry InvalidTag : 1 ligne de mount corrompue, écrite
 # avec une clé ≠ courante — les autres lignes déchiffraient → pas un souci de clé ;
 # fix = purge → re-OAuth). `status_for` doit utiliser `credential_status` (présence
 # sans déchiffrer), jamais `get_credential_with_meta`, pour ne pas 500 /api/me.

@@ -72,7 +72,7 @@ clé MEMBRE (BYO, scopée (sub, org))  >  secret groupe  >  secret org  >  clé 
 > keyed/fields, les sessions browser (Contexts Browserbase), les comptes **Google**
 > (l'org du start OAuth voyage dans le state) et les bindings **unipile**
 > (`unipile_accounts` PK `(sub, org_id, provider)`). Seuls les **mounts oauth fédérés**
-> (memento/atlassian/folkmcp) restent `entity_type='user'`.
+> (atlassian/folkmcp) restent `entity_type='user'`.
 
 Deux notions à ne **pas** confondre :
 - **BYO** (*bring your own*) : l'entité **pose SA propre clé**, stockée chiffrée dans

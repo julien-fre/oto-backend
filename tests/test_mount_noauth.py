@@ -3,7 +3,7 @@
 Un mount `kind="mount"` avec `auth_modes` VIDE (endpoint hébergé public, ex.
 justicelibre.org/mcp) doit forwarder SANS token per-user : ni `resolve_mount_token`,
 ni header `Authorization`, ni exigence d'un sub courant. Contraste avec un mount
-byo_user (memento) dont la factory lève hors requête. On exerce le vrai chemin
+byo_user (atlassian) dont la factory lève hors requête. On exerce le vrai chemin
 (pas de réseau : la Client n'ouvre la connexion qu'à l'entrée du context manager).
 """
 import asyncio
@@ -29,7 +29,7 @@ def test_justicelibre_is_declared_noauth_mount():
 
 def test_noauth_factory_needs_no_token_no_sub():
     """La factory no-auth construit un Client SANS résoudre de token ni exiger un
-    sub — même hors contexte de requête (là où la factory memento lèverait)."""
+    sub — même hors contexte de requête (là où la factory atlassian lèverait)."""
     called = {"resolve": False}
 
     def _boom(_name):  # ne doit JAMAIS être appelé pour un mount no-auth
@@ -49,9 +49,9 @@ def test_noauth_factory_needs_no_token_no_sub():
 
 
 def test_byo_mount_factory_still_gates():
-    """Contraste : un mount byo_user (memento) lève bien hors requête (aucun sub)."""
+    """Contraste : un mount byo_user (atlassian) lève bien hors requête (aucun sub)."""
     from mcp.shared.exceptions import McpError
 
-    factory = mount._make_factory(_connector("memento"))
+    factory = mount._make_factory(_connector("atlassian"))
     with pytest.raises(McpError):
         asyncio.run(factory())

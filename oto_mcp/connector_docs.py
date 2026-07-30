@@ -86,22 +86,6 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "- « montre les dernières activités (ouvertures, clics, réponses) »"
         )),
     ),
-    "memento": (
-        DocSection(kind="prerequisite", title="rien à faire — déjà connecté", body_md=(
-            "memento est **provisionné automatiquement** à la création de ton compte oto "
-            "(un compte oto = un compte [Memento](https://mento.cc), joints par ton email). "
-            "tu n'as **aucune clé à poser** : c'est déjà branché.\n"
-            "- pour des bases privées partagées hors de tes orgs, va sur [mento.cc](https://mento.cc) "
-            "et fais-toi inviter (le connecteur les verra)"
-        )),
-        DocSection(kind="usage", title="interroger et écrire ta base de connaissance", body_md=(
-            "une base de connaissance structurée, sourcée, multi-KB (outils fédérés `mem_*`). cherche, lis, et écris via la boucle propose-valide.\n"
-            "- « cherche `pricing concurrent` dans toutes mes bases »\n"
-            "- « liste mes bases de connaissance et ouvre celle de l'équipe »\n"
-            "- « ajoute ce fait sourcé à la KB produit » (propose puis applique)\n"
-            "- « montre-moi le voisinage de ce document »"
-        )),
-    ),
     "planity": (
         DocSection(kind="prerequisite", title="email + mot de passe planity", body_md=(
             "connecteur fédéré : renseigne l'**email et le mot de passe** de ton compte "

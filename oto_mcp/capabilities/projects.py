@@ -26,7 +26,7 @@ from .registry import CAPABILITIES
 RTYPE = "project"
 
 
-# « doc » RETIRÉ (lot 3 chantier 0.4, vestige Memento) : relier des pages = les
+# « doc » RETIRÉ (lot 3 chantier 0.4) : relier des pages = les
 # backlinks `[[…]]` (Ship 4), pas un pointeur manuel affiché en groupe de rail.
 _LINK_TYPES = ("tableau", "procedure", "connecteur")
 

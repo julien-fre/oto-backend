@@ -155,8 +155,7 @@ seul ne trouvera donc jamais une valeur DANS une ligne — c'est `ligne` qu'il f
 `filename+title+description` (jamais `summary`, colonne morte).
 
 **Sémantique + RRF (20/07, LIVE preprod)** : fusion LEXICAL + SÉMANTIQUE des pages.
-`embeddings.py` = client Mistral `mistral-embed` (1024, même modèle que Memento →
-import sans re-embed au sunset) — **sync `embed_texts`** (worker, batch DÉCOUPÉ sous le
+`embeddings.py` = client Mistral `mistral-embed` (1024) — **sync `embed_texts`** (worker, batch DÉCOUPÉ sous le
 budget de tokens/requête : 400 « too many tokens overall » sinon ; cap ~16k ch/input)
 + **async `embed_query`** (chemin requête). Outbox `docs.embed_dirty` (marqué à
 create/update, coût nul) + `doc_embeddings(halfvec(1024))` + index HNSW cosine ; worker
@@ -175,7 +174,7 @@ réindexe la fratrie ATOMIQUEMENT) + **épine** `oto_project(op=get, include=['s
 depth?)` bornée (N+2, plafond 200, compteurs `more`) — la carte que l'agent lit avant
 `oto_doc(op=get)`, jamais `op=list` de tout. **KB d'org ancrée PAR ID** (`orgs.kb_project_id`,
 claim optimiste anti-doublon, auto-réparation transfert/archive — le nom n'est plus un marqueur).
-Le lien `project_links.target_type='doc'` est RETIRÉ (vestige memento) ; relier des pages =
+Le lien `project_links.target_type='doc'` est RETIRÉ ; relier des pages =
 les **backlinks `[[…]]`** (Ship 4, LIVE) : résolus À L'ÉCRITURE (hook `db.create/update/
 delete_doc` — JAMAIS capacité, `resolve_change` appelle db en direct), précédence projet >
 KB (`db/backlinks.py`), table dérivée `doc_links` (CASCADE 2 côtés), `oto_doc op=backlinks`
@@ -220,8 +219,7 @@ JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
 ## Projet — couche d'organisation (ADR 0030/0032)
 
 Conteneur de travail **possédé** : brief + liens typés (`project_links` : tableau/
-procédure/connecteur/**doc** — `doc` = une page Documents attachée, ex-memento
-base/page retirés le 2026-07-03) + docs en arbre. Capacités `oto_project`/`oto_doc` ;
+procédure/connecteur/**doc** — `doc` = une page Documents attachée) + docs en arbre. Capacités `oto_project`/`oto_doc` ;
 partage/transfert via `oto_resource`. S'y greffent : **livraison client cascade**
 (#52), **endpoint MCP + partage navigable par projet** — un projet publié est servi sur
 son sous-domaine dédié, modes **anonymous** (`<slug>.mcp.oto.cx`, sans login + listé) /
@@ -370,7 +368,7 @@ relu à chaque session :
 d'activation, **toujours visible** via `PROTECTED_TOOLS`) expose `oto_whoami()`
 (lecture) — l'**identité MCP courante** sous laquelle Claude agit : compte (`sub` +
 email + rôle plateforme) × **org active** (id/name/rôle) × **groupe actif**, plus un
-résumé des connecteurs configurés et l'état Memento. C'est le pendant agent du badge
+résumé des connecteurs configurés et l'ancre de la KB d'org. C'est le pendant agent du badge
 « identité MCP » du dashboard ; à appeler pour confirmer le contexte avant une action
 sensible. Pour basculer : `oto_use_org`.
 
@@ -539,10 +537,10 @@ valoir `group`. **Détails : `docs/groups-and-roles.md`.**
 ## Fédération MCP & comptes (otomata#16)
 
 Deux mécanismes : **mount** (MCP distant fédéré, token OAuth per-user, pilote
-memento) vs **remote** (bridge data-driven ADR 0003, token M2M d'org, pilote = un
-connecteur remote client). **Plus aucun mount monté d'office** (memento sorti de
-`_DEFAULT_ENABLED_MOUNTS` le 2026-07-02 — fédération en sommeil, masters
-memento/atlassian/justicelibre OFF en prod) : un mount suit le régime commun
+atlassian) vs **remote** (bridge data-driven ADR 0003, token M2M d'org, pilote = un
+connecteur remote client). **Plus aucun mount monté d'office** (fédération en
+sommeil, masters atlassian/justicelibre OFF en prod ; le connecteur `memento` a été
+RETIRÉ le 2026-07-30 — produit décommissionné, la mémoire est native `oto_kb`) : un mount suit le régime commun
 d'activation (DB `connector_activation` ∪ env `OTO_MCP_MOUNTS_ENABLED`).
 **Détail : `docs/federation.md`**.
 
@@ -705,7 +703,7 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   un nouveau connecteur multi-secrets = une déclaration. Résolution : `resolve_api_key`
   (1 clé keyed + platform/quota) **ou** `resolve_credential_fields` (byo multi-champs
   sans quota, ex. `silae` : client_id/client_secret/subscription_key). `cookie`/`oauth`
-  (linkedin/google/memento) ont des flux dédiés → `secret_fields` vide.
+  (linkedin/google) ont des flux dédiés → `secret_fields` vide.
 - **Sonde « tester la connexion » par connecteur** (`connector_verify.py`, registre
   calqué sur `browser_session.register`) : un connecteur enregistre une `_verify(fields)`
   qui **lève sur échec** (le message d'exception = le retour d'erreur). Capacité unique

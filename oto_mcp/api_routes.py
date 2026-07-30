@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                   Response, StreamingResponse)
 
-from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_memento, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, memento_oauth, org_store, ownership, tool_registry
+from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, org_store, ownership, tool_registry
 from .capabilities import _rest_adapter as _cap_rest_adapter
 from .capabilities import registry as _cap_registry
 from . import auth_hooks
@@ -686,9 +686,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
             "features": {"billing": billing.is_enabled()},
             # crunchbase = connecteur `personal_session` standard → exposé dans
             # `providers` (comme brevo), plus de bloc dédié (ADR 0026).
-            # Fédération MCP (otomata#16) : statut du compte memento fédéré du user
-            # — alimente l'auto-prompt « connecter memento » du dashboard.
-            "memento": memento_oauth.status_for(sub),
             "providers": status["providers"],
         })
 
@@ -697,7 +694,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     # api_key 1 champ, basic_auth 2 champs, silae 3 champs…). Le formulaire, la
     # validation et le packing dérivent du schéma — zéro branche par connecteur.
     # cookie/oauth ont des flux dédiés (crunchbase/brevo via Live View Browserbase,
-    # google/memento via OAuth) → `secret_fields` vide → exclus ici.
+    # google via OAuth) → `secret_fields` vide → exclus ici.
     # --- Avatar user + logo d'org (Object Storage) -------------------------
     # Upload multipart → ne passe PAS par la couche capacité (ADR 0009 = corps
     # JSON pydantic). URL publique persistée en clair (pas un secret).
@@ -997,7 +994,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     # Saisie de credential per-user, GÉNÉRIQUE (dérivée du registre, pas une liste
     # hardcodée) : tout connecteur `byo_user` dont le secret est un "secret simple"
     # — `api_key` (la clé) ou `basic_auth` (base64("email:password"), ex. planity).
-    # cookie/oauth ont des flows dédiés (crunchbase / google / memento) → exclus ici.
+    # cookie/oauth ont des flows dédiés (crunchbase / google) → exclus ici.
     _SETTABLE_KINDS = {"api_key", "basic_auth"}
 
     def _credentialable(provider: str):
@@ -1720,14 +1717,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         options_handler=options_handler,
     )
 
-    memento_routes = api_routes_memento.make_routes(
-        verifier=verifier,
-        authenticate=_authenticate,
-        json_response=_json,
-        json_error=_json_error,
-        options_handler=options_handler,
-    )
-
     atlassian_routes = api_routes_atlassian.make_routes(
         verifier=verifier,
         authenticate=_authenticate,
@@ -1875,7 +1864,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         *datastore_routes,
         *sirene_routes,
         *accords_routes,
-        *memento_routes,
         *atlassian_routes,
         *folk_routes,
         *zoho_routes,

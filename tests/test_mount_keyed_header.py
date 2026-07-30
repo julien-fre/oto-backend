@@ -11,7 +11,7 @@ Bearer-only branch, with zero live consumers (AI Ark, pilot #152, since
 re-qualified to a classic kind="tools" connector, #160). This file locks in the
 new `mount_auth_header` field on `Connector`, that `_build_transport` sends the
 named header instead of Authorization when it's set, and — critically — that
-existing OAuth mounts (memento, planity) stay byte-identical in behavior.
+existing OAuth mounts (atlassian, planity) stay byte-identical in behavior.
 """
 import asyncio
 
@@ -104,13 +104,13 @@ def test_factory_keyed_still_gates_without_sub():
 
 # --- non-régression : les mounts OAuth existants sont inchangés --------------
 
-def test_memento_factory_still_uses_bearer_not_broken_by_new_param():
-    """Contraste : memento (OAuth, mount_auth_header=None par défaut) doit rester
+def test_oauth_mount_factory_still_uses_bearer_not_broken_by_new_param():
+    """Contraste : atlassian (OAuth, mount_auth_header=None par défaut) doit rester
     Bearer-only et gater exactement comme avant — non affecté par le nouveau
     paramètre `header` de _build_transport."""
     from mcp.shared.exceptions import McpError
 
-    c = _connector("memento")
+    c = _connector("atlassian")
     assert c.mount_auth_header is None
     factory = mount._make_factory(c)
     with pytest.raises(McpError):

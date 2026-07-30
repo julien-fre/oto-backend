@@ -1,4 +1,4 @@
-"""Base de connaissance d'org = la zone « Documents » qui remplace Memento (réunion
+"""Base de connaissance d'org = la zone « Documents » (réunion
 30/06, fusion KB↔Document). Une SEULE base par org : un projet dédié « Base de
 connaissance », possédé par l'org active, résolu (et créé paresseusement) ici. La
 zone Documents du dashboard l'ouvre via le composant doc existant — on réutilise
@@ -76,7 +76,7 @@ CAPABILITIES += [
             "Resolve the active org's KNOWLEDGE BASE — a single dedicated project "
             "« Base de connaissance » (created on first use). Returns project_id : its "
             "pages are managed with oto_doc (tree, versions, public share, change "
-            "requests). This is the org-wide Documents space (replaces Memento)."
+            "requests). This is the org-wide Documents space."
         ),
         mcp="oto_kb",
         rest=RestBinding("POST", "/api/me/kb"),

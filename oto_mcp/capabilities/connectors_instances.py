@@ -7,7 +7,7 @@ uniquement : `list_credentials`, grants, `list_platform_keys_meta`). Zéro table
 nouvelle, zéro chemin d'écriture, `resolve_credential`/`status_for` intouchés.
 
 EXCLUSIONS (assumées, documentées) :
-- résidus `entity_type='user'` (mounts oauth fédérés memento/atlassian/folkmcp)
+- résidus `entity_type='user'` (mounts oauth fédérés atlassian/folkmcp)
   — hors cascade de travail by design (ADR 0033) ;
 - grants de compte #55 (`connector_account_grants` = pointeurs d'identité
   satellites, déjà servis par `oto_account_access`) — repliés en

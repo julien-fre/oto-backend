@@ -1,7 +1,7 @@
 """Connecteur universel de fédération MCP (otomata#16) — outils NATIFS.
 
-Monte les outils d'un MCP distant `kind="mount"` (ex. memento) **nativement**
-dans oto : `memento_mem_search`, `memento_mem_get`… avec leurs vrais schémas,
+Monte les outils d'un MCP distant `kind="mount"` (ex. atlassian) **nativement**
+dans oto : `atlassian_search`, `atlassian_getJiraIssue`… avec leurs vrais schémas,
 appelables directement (pas un tunnel describe/call).
 
 Pourquoi PAS `FastMCPProxy.mount()` (incident 2026-06-13) : il ajoute un
@@ -47,7 +47,7 @@ def _build_transport(url: str, token: str, header: str | None = None) -> Streama
     Lemlist's `X-API-Key` — no Bearer/OAuth support on its official MCP), or the
     default `Authorization: Bearer`. `header` is `Connector.mount_auth_header` —
     None preserves the historical Bearer-only behavior for every existing OAuth
-    mount (memento/atlassian/folkmcp) unchanged."""
+    mount (atlassian/folkmcp) unchanged."""
     if "{token}" in url:
         return StreamableHttpTransport(url.replace("{token}", token))
     if header:
@@ -59,8 +59,8 @@ def _build_transport(url: str, token: str, header: str | None = None) -> Streama
 _REGISTERED: dict[str, set[str]] = {}
 
 
-# Plus AUCUN mount monté d'office (memento retiré le 2026-07-02 — fédération en
-# sommeil, on ne s'en sert plus) : tous les mounts suivent le régime commun
+# Plus AUCUN mount monté d'office (fédération en sommeil, on ne s'en sert plus) :
+# tous les mounts suivent le régime commun
 # « la DB gouverne l'exposition » (ADR 0010/0011) — activation au catalogue
 # (`connector_activation`) ou opt-in env `OTO_MCP_MOUNTS_ENABLED`. Le set reste
 # le levier pour re-défauter un mount si un jour il redevient systématique.
@@ -110,10 +110,7 @@ def _run_sync(coro):
 
 def _catalog_token(connector: connectors.Connector, sub: str) -> str | None:
     """Token (d'un user connecté) pour récupérer le catalogue PARTAGÉ au boot.
-    Connector-spécifique pour le refresh OAuth (memento)."""
-    if connector.name == "memento":
-        from .. import memento_oauth
-        return memento_oauth.access_token_for(sub)
+    Connector-spécifique pour le refresh OAuth."""
     if connector.name == "atlassian":
         from .. import atlassian_oauth
         return atlassian_oauth.access_token_for(sub)
@@ -121,31 +118,6 @@ def _catalog_token(connector: connectors.Connector, sub: str) -> str | None:
         from .. import folk_oauth
         return folk_oauth.access_token_for(sub)
     return credentials_store.get_credential("user", sub, connector.name)
-
-
-def _service_catalog(connector: connectors.Connector) -> list | None:
-    """Catalogue via un endpoint **service-à-service** (secret partagé oto↔distant),
-    PAS un token OAuth user — fix durable (otomata#16) : le boot ne dépend plus d'un
-    token personnel révocable, ni du dual-sub. Le catalogue est product-level
-    (mêmes outils pour tous) → un credential de service stable suffit.
-
-    None si non configuré pour ce connecteur (→ fallback au token user). Renvoie des
-    `mcp.types.Tool` (même type que `client.list_tools()`), pour `_register_one`."""
-    if connector.name != "memento":
-        return None
-    url = os.environ.get("MEMENTO_FEDERATION_CATALOG_URL")
-    secret = os.environ.get("MEMENTO_FEDERATION_SECRET")
-    if not url or not secret:
-        return None
-    import requests
-    from mcp.types import Tool
-    r = requests.get(url, headers={"Authorization": f"Bearer {secret}"},
-                     timeout=CATALOG_TIMEOUT)
-    r.raise_for_status()
-    tools = (r.json() or {}).get("tools", [])
-    return [Tool(name=t["name"], description=t.get("description"),
-                 inputSchema=t.get("inputSchema") or {"type": "object"})
-            for t in tools]
 
 
 def _fetch_catalog(connector: connectors.Connector) -> list:
@@ -166,14 +138,7 @@ def _fetch_catalog(connector: connectors.Connector) -> list:
                 async with client:
                     return await client.list_tools()
             return _run_sync(asyncio.wait_for(_list_noauth(), CATALOG_TIMEOUT))
-        # Voie durable (otomata#16) : catalogue via endpoint service (secret partagé),
-        # sans token user. Si configuré (memento + env), on s'en tient là.
-        svc = _service_catalog(connector)
-        if svc is not None:
-            log.info("mount %s : catalogue via endpoint service (%d outils)",
-                     connector.name, len(svc))
-            return svc
-        # Fallback historique : token OAuth d'un user connecté (compte désigné admin).
+        # Token OAuth d'un user connecté (compte désigné admin).
         token = None
         sub = credentials_store.first_entity_with(
             "user", connector.name, prefer=os.environ.get("OTO_MCP_ADMIN_SUB"))
@@ -324,7 +289,7 @@ def register(mcp: FastMCP) -> None:
             "[admin] Re-fetch le catalogue d'un MCP fédéré et re-enregistre ses "
             "outils à chaud, sans restart du serveur (pour qu'un nouvel outil du "
             "MCP distant apparaisse). `connector` = nom du connecteur mount (ex. "
-            "`memento`). Réservé aux admins plateforme."
+            "`atlassian`). Réservé aux admins plateforme."
         ),
     )
     async def refresh_mount(connector: str) -> dict:

@@ -2,7 +2,7 @@
 
 ADR 0042 §Convergence des surfaces : un verbe de plateforme naît **capacité**, pas
 route REST écrite à la main. Ces deux verbes ont été écrits en REST pur le
-2026-07-28 (motif hérité de folk/memento/google, antérieur à la convergence) — ils
+2026-07-28 (motif hérité de folk/google, antérieur à la convergence) — ils
 sont ramenés ici, et gagnent au passage une **face MCP** : l'agent peut fabriquer le
 lien de consentement et le tendre à l'utilisateur, ce qui est précisément le geste
 utile en conversation.

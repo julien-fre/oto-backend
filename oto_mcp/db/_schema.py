@@ -312,7 +312,7 @@ CREATE INDEX IF NOT EXISTS idx_projects_owner ON projects(owner_type, owner_id);
 -- Liens d'un Projet vers les entités qu'il regroupe (incrément 2). Pointeur TYPÉ,
 -- pas un FK cross-store : `target_type` ∈ {tableau, procedure, connecteur, base} et
 -- `target_ref` = l'id/slug/nom dans le store d'origine (datastore.id, doctrine slug,
--- connecteur name, memento workspace). `label` dénormalisé pour l'affichage ; `role`
+-- connecteur name). `label` dénormalisé pour l'affichage ; `role`
 -- = pourquoi cette entité est ici / ce qu'elle apporte au projet — le « pourquoi » vit
 -- sur le LIEN, pas sur l'entité (ADR 0032 §2). Le caractère cross-projet n'est PAS
 -- stocké : il est DÉRIVÉ (même (target_type, target_ref) dans ≥2 projets). `config` =

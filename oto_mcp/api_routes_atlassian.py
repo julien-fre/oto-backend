@@ -1,6 +1,6 @@
 """Routes REST OAuth Atlassian — fédération du Rovo Remote MCP per-user (#40).
 
-Flow web (calqué sur api_routes_memento.py) :
+Flow web :
 - `GET    /api/atlassian/oauth/start`    (auth Logto) → {auth_url} à ouvrir
 - `GET    /api/atlassian/oauth/callback` (no auth, Atlassian redirige) → exchange + persist
 - `GET    /api/atlassian/oauth/status`   (auth) → {connected, set_at}

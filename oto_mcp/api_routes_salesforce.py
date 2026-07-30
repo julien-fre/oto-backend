@@ -11,7 +11,7 @@ descripteur. Seul le callback reste une route écrite à la main — un fourniss
 redirige le NAVIGATEUR, sans auth et avec un 302, ce qu'un contrat de capacité ne peut
 pas exprimer.
 
-Unlike Folk/Atlassian/Memento, there is no `/status`/`DELETE` here yet — the
+Unlike Folk/Atlassian, there is no `/status`/`DELETE` here yet — the
 existing generic `/api/settings/api-keys/salesforce` GET/DELETE already covers
 status/disconnect for this connector (it's still `secret_kind="fields"`,
 `secret_kind="fields"` — client_id/client_secret/login_url are
