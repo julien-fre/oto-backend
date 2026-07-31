@@ -92,6 +92,28 @@ def _scrape(sub: str, fn):
             "déjà vues sont servies du cache — inutile de les relire.")))
 
 
+def _slim_search(res):
+    """Allège une réponse de recherche (feedback #335, coût token ÷~2 en bulk) :
+    - dé-duplique `data`/`items` et `next_cursor`/`cursor` — oto-core `_norm` renvoie les
+      DEUX (même liste) pour la stabilité de l'aval ; l'agent n'a besoin QUE de `items`/`cursor` ;
+    - retire de chaque résultat les URLs d'image (`*picture_url*` : photo + large + fond) =
+      poids mort en recherche (l'agent ne rend pas d'images ; un profil précis → unipile_profile).
+    Ne touche à RIEN d'autre (tous les champs métier restent)."""
+    if not isinstance(res, dict):
+        return res
+    items = res.get("items")
+    if items is None:
+        items = res.get("data") or []
+    for it in items:
+        if isinstance(it, dict):
+            for k in [k for k in it if "picture_url" in k.lower()]:
+                it.pop(k, None)
+    out = {"items": items, "cursor": res.get("cursor") or res.get("next_cursor")}
+    if res.get("total_count") is not None:
+        out["total_count"] = res["total_count"]
+    return out
+
+
 def _canonical_li_identifier(identifier: str) -> str:
     """Canonicalise un `public_identifier` LinkedIn (vanity slug) : LinkedIn le
     génère TOUJOURS en ASCII (translittère les accents à la création, p. ex.
@@ -545,12 +567,12 @@ def register(mcp: FastMCP) -> None:
             cursor: Curseur de pagination renvoyé par un appel précédent.
         """
         sub = access.current_user_sub_or_raise()
-        return _scrape(sub, lambda: unipile_client().search(
+        return _slim_search(_scrape(sub, lambda: unipile_client().search(
             keywords=keywords, category=category, company=company, location=location,
             industry=industry, network_distance=network_distance,
             advanced_keywords=advanced_keywords, skills=skills, url=url, api=api,
             cursor=cursor,
-        ))
+        )))
 
     @mcp.tool()
     def unipile_search_facets(facet_type: str, keywords: str, limit: int = 25) -> dict:
