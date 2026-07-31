@@ -149,3 +149,45 @@ def test_le_client_resout_lentite_et_branche_la_persistance():
     src = inspect.getsource(sf.register)
     assert "resolve_credential(" in src, "l'entité gagnante n'est plus résolue"
     assert "on_refresh=" in src, "la persistance du jeton renouvelé n'est plus branchée"
+
+
+# --- la sonde aussi consomme une rotation : elle doit persister ----------------
+
+def test_la_sonde_branche_la_persistance():
+    """LA régression du 31/07 (deuxième manche). La persistance avait été câblée sur
+    le chemin des outils mais PAS sur la sonde — or c'est la sonde post-écriture qui
+    tourne 500 ms après le consentement, et elle tuait le jeton qu'elle venait de
+    valider. Une sonde qui consomme une rotation sans la persister détruit la
+    connexion qu'elle prétend vérifier."""
+    import inspect
+    from oto_mcp.tools import salesforce as sf
+    assert "on_refresh=" in inspect.getsource(sf._verify), (
+        "la sonde consomme le jeton sans persister son remplaçant")
+
+
+def test_la_sonde_ne_persiste_pas_des_champs_candidats(monkeypatch):
+    """`api_key_save` sonde AVANT d'écrire : les champs testés ne correspondent à
+    aucune ligne. Persister là écrirait dans le credential de quelqu'un d'autre — ou
+    ressusciterait une ligne qu'on s'apprêtait à remplacer."""
+    from oto_mcp import access
+    from oto_mcp.tools import salesforce as sf
+
+    class _RCautre:
+        entity_type, entity_id, account = "member", "2:sub-x", ""
+        fields = {"refresh_token": "RT-DEJA-EN-BASE"}
+
+    monkeypatch.setattr(access, "resolve_credential", lambda *a, **k: _RCautre())
+    assert sf._rotation_writer_for("RT-CANDIDAT") is None
+
+
+def test_la_sonde_hors_contexte_ne_casse_pas(monkeypatch):
+    """CLI, test, pas d'org : la résolution échoue. On retombe sur l'ancien
+    comportement plutôt que de faire échouer la sonde."""
+    from oto_mcp import access
+    from oto_mcp.tools import salesforce as sf
+
+    def _boom(*a, **k):
+        raise RuntimeError("pas de contexte de requête")
+
+    monkeypatch.setattr(access, "resolve_credential", _boom)
+    assert sf._rotation_writer_for("RT-1") is None

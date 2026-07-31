@@ -142,13 +142,21 @@ def _sf_hint_for(low: str) -> str:
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
-    """Sonde SANS effet de bord, en deux temps (auth PUIS accès réel) :
+    """Sonde en deux temps (auth PUIS accès réel) :
 
     1. **refresh du token OAuth** : valide client_id + client_secret + refresh_token +
        login_url d'un coup (échec → message actionnable via `_sf_error_hint`) ;
     2. **lecture réelle** (`SELECT Id FROM Contact LIMIT 1`) : un token peut
        authentifier mais le profil/permission set de la Connected App peut ne pas
        donner accès à l'objet Contact — capté ici plutôt qu'au premier appel agent.
+
+    ⚠️ **Elle n'est plus « sans effet de bord », et ne peut pas l'être.** Sous rotation
+    (RTR, imposée par Salesforce), l'étape 1 consomme le refresh token et en reçoit un
+    neuf : une sonde qui ne persiste pas ce remplaçant DÉTRUIT la connexion qu'elle
+    prétend vérifier. C'est ce qui s'est produit le 31/07 — la sonde post-écriture de
+    `persist_token` tuait le jeton 500 ms après sa pose. Elle branche donc la même
+    persistance que le chemin des outils, quand elle porte sur un credential déjà
+    stocké.
     """
     from oto.tools.salesforce.client import SalesforceClient
 
@@ -157,11 +165,37 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
         client_secret=fields.get("client_secret"),
         refresh_token=fields.get("refresh_token"),
         login_url=_login_url(fields.get("login_url")),
+        on_refresh=_rotation_writer_for(fields.get("refresh_token") or ""),
     )
     try:
         client.query("SELECT Id FROM Contact LIMIT 1")
     except Exception as e:  # noqa: BLE001 — l'erreur provider EST le retour de la sonde
         raise ValueError(_sf_error_hint(e)) from e
+
+
+def _rotation_writer_for(jeton_lu: str):
+    """Le writer de rotation pour la SONDE, qui ne reçoit que des champs — pas l'entité.
+
+    On retrouve l'entité en résolvant la cascade, et on ne branche l'écriture que si le
+    credential résolu porte bien le jeton qu'on s'apprête à consommer. Deux cas où l'on
+    ne persiste rien, volontairement :
+
+    - **sonde avant persistance** (`api_key_save`) : les champs testés sont des
+      candidats, aucune ligne ne les porte encore — il n'y a rien à mettre à jour ;
+    - **hors contexte de requête** (CLI, test) : pas d'org, donc pas de cascade.
+
+    Dans les deux cas on retombe sur l'ancien comportement (aucune écriture), ce qui
+    est correct : on ne peut pas corrompre ce qu'on n'a pas identifié.
+    """
+    from .. import access
+
+    try:
+        rc = access.resolve_credential("salesforce", emit_on_failure=False)
+    except Exception:  # noqa: BLE001 — pas de credential résolu = rien à persister
+        return None
+    if rc.entity_type is None or (rc.fields or {}).get("refresh_token") != jeton_lu:
+        return None
+    return _rotation_writer(rc, jeton_lu)
 
 
 def _rotation_writer(rc, jeton_lu: str):
