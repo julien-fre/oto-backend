@@ -1,22 +1,28 @@
-"""Pennylane — comptabilité (lecture).
+"""Pennylane — comptabilité (lecture + flux facture/avoir supervisé).
 
 Clé résolue par appel via `access.resolve_api_key("pennylane")` : modèle
 clé-per-user (comme Attio), pas de clé plateforme. Chaque utilisateur pose
 sa propre clé Pennylane sur `manage.oto.cx/api-keys` — sa compta n'est
 visible que par lui.
 
-Surface en lecture + lettrage + **écriture du flux avoir** (POC chez un client,
-doctrine d'org dédiée). Les écritures engageantes sont **brouillon-d'abord** : créer
-un avoir produit un draft (supprimable), et **finaliser/envoyer sont des tools
-séparés** que l'agent n'appelle qu'après validation humaine (modèle de
-supervision validée avec un client). Le lettrage (`pennylane_match`) reste exposé : lien de
-rapprochement réversible, pas une écriture.
+**Surface consolidée (ADR 0047 appliqué à un connecteur)** : un tool par OBJET
+métier, le verbe en paramètre `op` — `pennylane_customer`, `pennylane_invoice`
+(ventes), `pennylane_supplier` / `pennylane_supplier_invoice` (achats), plus un
+`pennylane_ref` unique pour les référentiels en lecture seule (société, exercices,
+plan comptable, catégories, modèles de facture, produits). Restent nommés les
+verbes hétérogènes que la fusion ne factoriserait pas : `pennylane_transactions`,
+`pennylane_trial_balance`, `pennylane_match`, `pennylane_upload_file`.
 
-L'**achat** est désormais couvert pour verser une facture fournisseur depuis un
-fichier « côté oto » : `pennylane_upload_file` (poste un PDF désigné par sa source
-oto — Drive/Gmail/URL) puis `pennylane_import_supplier_invoice` (brouillon, champs
-fournis par l'agent qui a lu le PDF). La création de facture **client** standard
-reste côté CLI `oto pennylane`.
+Les écritures engageantes sont **brouillon-d'abord** : créer une facture ou un
+avoir produit un draft, et **finaliser/envoyer sont des `op` distincts** que
+l'agent n'appelle qu'après validation humaine (modèle de supervision validé avec
+un client). Le lettrage (`pennylane_match`) reste exposé : lien de rapprochement
+réversible, pas une écriture.
+
+L'**achat** est couvert pour verser une facture fournisseur depuis un fichier
+« côté oto » : `pennylane_upload_file` (poste un PDF désigné par sa source oto —
+Drive/Gmail/URL) puis `pennylane_supplier_invoice(op="import")` (brouillon,
+champs fournis par l'agent qui a lu le PDF).
 """
 from __future__ import annotations
 
@@ -41,6 +47,349 @@ def register(mcp: FastMCP) -> None:
     def _bad(msg: str) -> McpError:
         return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
+    def _need(value, name: str, op: str):
+        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        if value is None:
+            raise _bad(f"op='{op}' requiert {name}")
+        return value
+
+    # --- référentiels (lecture seule) ---------------------------------------
+
+    @mcp.tool()
+    def pennylane_ref(kind: str, product_id: Optional[int] = None,
+                      max_pages: Optional[int] = None) -> dict | list:
+        """Référentiels Pennylane en LECTURE SEULE — ce qu'il faut résoudre AVANT
+        d'écrire (ids de produits, modèles de facture, comptes, catégories).
+
+        `kind` :
+        - "company" : informations de l'entreprise du compte courant.
+        - "fiscal_years" : exercices fiscaux.
+        - "ledger_accounts" : plan comptable (comptes du grand livre).
+        - "categories" : catégories de dépenses.
+        - "invoice_templates" : modèles de facturation. Le modèle pilote le RENDU
+          PDF — notamment le modèle « Avoir » (sans bloc paiement/IBAN), seul moyen
+          API d'obtenir le rendu avoir : passer son id en
+          `customer_invoice_template_id` à `pennylane_invoice`. Scope requis :
+          customer_invoice_templates:readonly.
+        - "products" : catalogue produits (id, label, prix, unité, vat_rate…).
+          Avec `product_id` → la fiche d'UN produit. Sert à résoudre le
+          `product_id` d'une ligne de facture ou d'avoir — ne jamais deviner un
+          product_id : le lire ici. Attention aux libellés quasi homonymes (ex.
+          deux produits « crédit … ») : choisir sur la fiche complète (prix,
+          unité), pas sur le début du nom.
+
+        Args:
+            kind: le référentiel voulu (voir ci-dessus).
+            product_id: kind="products" — la fiche d'un seul produit.
+            max_pages: limite de pagination (kinds paginés : products,
+                invoice_templates).
+        """
+        c = _client()
+        if kind == "company":
+            return c.get_company_info()
+        if kind == "fiscal_years":
+            return c.get_fiscal_years()
+        if kind == "ledger_accounts":
+            return c.get_ledger_accounts()
+        if kind == "categories":
+            return c.get_categories()
+        if kind == "invoice_templates":
+            return c.list_invoice_templates(max_pages=max_pages)
+        if kind == "products":
+            if product_id is not None:
+                return c.get_product(product_id)
+            return c.list_products(max_pages=max_pages)
+        raise _bad("kind doit être 'company', 'fiscal_years', 'ledger_accounts', "
+                   "'categories', 'invoice_templates' ou 'products'")
+
+    # --- clients -------------------------------------------------------------
+
+    @mcp.tool()
+    def pennylane_customer(
+        op: str = "list",
+        customer_id: Optional[int] = None,
+        external_reference: Optional[str] = None,
+        name: Optional[str] = None,
+        address: Optional[str] = None,
+        postal_code: Optional[str] = None,
+        city: Optional[str] = None,
+        country_alpha2: str = "FR",
+        emails: Optional[list] = None,
+        fields: Optional[dict] = None,
+        max_pages: Optional[int] = None,
+    ) -> dict | list:
+        """Clients (entreprises) Pennylane — lister, retrouver, créer, compléter.
+
+        `op` :
+        - "list" : id + nom + coordonnées. Sert à résoudre un `customer_id` depuis
+          un NOM (`pennylane_invoice(op="list")` ne renvoie que `customer.{id,url}`,
+          sans nom ni filtre). Paginé (`max_pages`).
+        - "find" (`external_reference`) : filtre serveur natif, un seul appel.
+          **Anti-doublon** : un client déjà créé (ex. companyId back-office en
+          external_reference) fait échouer `op="create"` en 422 « External reference
+          has already been taken ». À appeler AVANT de créer : s'il existe,
+          réutiliser son `id`. Renvoie le client ou `{"found": false}`.
+        - "create" : l'adresse de facturation complète est OBLIGATOIRE (API v2) —
+          `name`, `address`, `postal_code`, `city`, `country_alpha2`. Renvoie le
+          client créé avec son `id` (à passer en `customer_id` de
+          `pennylane_invoice(op="create")`).
+        - "update" (`customer_id`, `fields`) : compléter email, vat_number,
+          reg_no, billing_iban, external_reference… Cas type : Pennylane « connaît »
+          un client importé mais sans email ni identifiant — compléter avant de
+          créer l'avoir.
+
+        Args:
+            op: "list" (défaut) | "find" | "create" | "update".
+            customer_id: requis pour op="update".
+            external_reference: op="find" (recherche) ou op="create" (trace de la
+                source / anti-doublon).
+            name / address / postal_code / city / country_alpha2: op="create"
+                (country_alpha2 = ISO alpha-2, défaut FR).
+            emails: op="create" — destinataires des factures.
+            fields: op="update" — champs à mettre à jour, ex.
+                {"emails": ["x@y.fr"], "external_reference": "MM-12345"}.
+            max_pages: op="list" — limite de pagination.
+        """
+        c = _client()
+        if op == "list":
+            return c.list_customers(max_pages=max_pages)
+        if op == "find":
+            found = c.find_customer_by_external_reference(
+                _need(external_reference, "external_reference", op))
+            return found if found else {"found": False}
+        if op == "create":
+            return c.create_customer(
+                name=_need(name, "name", op), emails=emails,
+                address=_need(address, "address", op),
+                postal_code=_need(postal_code, "postal_code", op),
+                city=_need(city, "city", op), country_alpha2=country_alpha2,
+                external_reference=external_reference)
+        if op == "update":
+            return c.update_customer(_need(customer_id, "customer_id", op),
+                                     **(fields or {}))
+        raise _bad("op doit être 'list', 'find', 'create' ou 'update'")
+
+    # --- factures de VENTE + avoirs (brouillon-d'abord, supervision) ---------
+
+    @mcp.tool()
+    def pennylane_invoice(
+        op: str = "list",
+        invoice_id: Optional[int] = None,
+        customer_id: Optional[int] = None,
+        date: Optional[str] = None,
+        deadline: Optional[str] = None,
+        lines: Optional[list] = None,
+        external_reference: Optional[str] = None,
+        free_text: Optional[str] = None,
+        customer_invoice_template_id: Optional[int] = None,
+        credited_invoice_id: Optional[int] = None,
+        fields: Optional[dict] = None,
+        max_pages: Optional[int] = None,
+    ) -> dict | list:
+        """Factures de VENTE (factures clients) et AVOIRS — le côté « recettes ».
+
+        `op` :
+        - "list" : l'inventaire des factures émises, à confronter aux encaissements
+          pour un rapprochement bancaire (sens encaissement ↔ facture client) ou
+          pour repérer les impayés / le reste à devoir. ⚠️ Sans `max_pages`, TOUT
+          l'historique revient (peut dépasser la limite de tokens) — commencer petit
+          puis élargir. Ne cherche PAS une facture précise : voir op="find".
+        - "find" (`external_reference`) : anti-doublon avant de créer un avoir pour
+          un paiement échoué — si une facture porte déjà cette référence (ex. l'id
+          GoCardless `PM…`), l'avoir existe, ne pas le recréer. Renvoie la facture
+          ou `{"found": false}`.
+        - "create" : facture de vente en **brouillon**. Le client doit exister
+          (`pennylane_customer`).
+        - "credit_note" : avoir **standalone** en brouillon (convention v2 :
+          montants négatifs). Fournis les lignes en **POSITIF** (le geste métier :
+          195 crédits à 1,45) — la négativation qui en fait un AVOIR est appliquée
+          côté serveur, jamais par toi. **Pas de facture liée par défaut** (la
+          référence vit en texte libre) ; si `credited_invoice_id` est fourni, le
+          lien est posé APRÈS création via l'endpoint dédié (le champ create-time
+          est cassé côté Pennylane).
+        - "update" (`invoice_id`, `fields`) : sur un BROUILLON (date, deadline,
+          customer_invoice_template_id, pdf_invoice_free_text, external_reference…).
+          Sur un document FINALISÉ l'API ne permet plus que label /
+          transaction_reference / external_reference — ne pas s'en servir pour
+          « corriger » un document émis. Usage type : basculer un brouillon d'avoir
+          sur le modèle « Avoir » avant finalisation.
+        - "finalize" (`invoice_id`) : donne sa référence définitive au brouillon.
+          ⚠️ Écriture engageante — après validation humaine explicite SEULEMENT.
+        - "send" (`invoice_id`) : envoie le document finalisé au client par email
+          (email Pennylane du client). ⚠️ Envoi externe — après validation humaine
+          explicite SEULEMENT.
+
+        ⚠️ Schéma de LIGNE strict pour create/credit_note (tout écart → 400 opaque
+        `NotAnyOf`) — une ligne = UNE des 2 formes, aucun champ hors liste :
+        - produit : `{product_id: int, quantity: number}` (le produit remplit le
+          reste ; overrides possibles : label, raw_currency_unit_price, unit,
+          vat_rate) — résoudre le product_id via `pennylane_ref(kind="products")` ;
+        - libre : `{label: str, quantity: number, unit: str,
+          raw_currency_unit_price: str, vat_rate: str}` — TOUS requis.
+        `vat_rate` = code Pennylane, jamais un pourcentage : 20 %→"FR_200",
+        10 %→"FR_100", 5,5 %→"FR_55", 2,1 %→"FR_21", exonéré→"exempt".
+        `raw_currency_unit_price` = prix unitaire HT en STRING ("700.00") ;
+        `quantity` = number (jamais une string).
+
+        Args:
+            op: "list" (défaut) | "find" | "create" | "credit_note" | "update" |
+                "finalize" | "send".
+            invoice_id: requis pour update / finalize / send.
+            customer_id: requis pour create / credit_note.
+            date: date d'émission / de l'avoir (YYYY-MM-DD).
+            deadline: date d'échéance (YYYY-MM-DD).
+            lines: lignes au schéma strict ci-dessus (create / credit_note).
+            external_reference: op="find" (recherche) ; create/credit_note (trace de
+                la source, ex. id paiement GoCardless — anti-doublon).
+            free_text: texte libre imprimé sur le PDF (champ API
+                `pdf_invoice_free_text`) — c'est LÀ que vit le rapprochement lisible
+                avec la facture d'origine d'un avoir non lié structurellement (ex.
+                « Avoir sur facture AUT-XXXXX suite prélèvement échoué »).
+            customer_invoice_template_id: modèle de rendu PDF
+                (`pennylane_ref(kind="invoice_templates")`).
+            credited_invoice_id: op="credit_note" — facture à créditer ; le lien est
+                posé après création (2ᵉ appel), jamais au create.
+            fields: op="update" — champs à mettre à jour.
+            max_pages: op="list" — borne la pagination (⚠️ voir ci-dessus).
+        """
+        c = _client()
+        if op == "list":
+            return c.get_customer_invoices(max_pages=max_pages)
+        if op == "find":
+            inv = c.find_invoice_by_external_reference(
+                _need(external_reference, "external_reference", op))
+            return inv if inv else {"found": False}
+        if op in ("create", "credit_note"):
+            kwargs = dict(
+                customer_id=_need(customer_id, "customer_id", op),
+                date=_need(date, "date", op),
+                deadline=_need(deadline, "deadline", op),
+                lines=_need(lines, "lines", op),
+                external_reference=external_reference, pdf_free_text=free_text,
+                customer_invoice_template_id=customer_invoice_template_id,
+                draft=True)
+            if op == "create":
+                return c.create_customer_invoice(**kwargs)
+            note = c.create_credit_note(**kwargs)
+            if credited_invoice_id:
+                note_id = note.get("id") or (note.get("customer_invoice") or {}).get("id")
+                if not note_id:
+                    return {"credit_note": note,
+                            "link": "NON posé : id de l'avoir introuvable dans la réponse"}
+                return {"credit_note": note,
+                        "link": c.link_credit_note(credited_invoice_id, note_id)}
+            return note
+        if op == "update":
+            return c.update_invoice(_need(invoice_id, "invoice_id", op), **(fields or {}))
+        if op == "finalize":
+            return c.finalize_invoice(_need(invoice_id, "invoice_id", op))
+        if op == "send":
+            return c.send_invoice(_need(invoice_id, "invoice_id", op))
+        raise _bad("op doit être 'list', 'find', 'create', 'credit_note', 'update', "
+                   "'finalize' ou 'send'")
+
+    # --- achats : fournisseurs + factures d'achat ----------------------------
+
+    @mcp.tool()
+    def pennylane_supplier(op: str = "list", name: Optional[str] = None,
+                           fields: Optional[dict] = None,
+                           max_pages: Optional[int] = None) -> dict | list:
+        """Fournisseurs Pennylane.
+
+        `op` :
+        - "list" : id + nom. Sert à retrouver le `supplier_id` d'un fournisseur
+          EXISTANT à réutiliser dans `pennylane_supplier_invoice(op="import")` (qui
+          exige un supplier_id). Paginé.
+        - "create" : à faire avant de saisir la facture d'achat d'un NOUVEAU
+          fournisseur. Renvoie le fournisseur créé (avec son id).
+
+        Args:
+            op: "list" (défaut) | "create".
+            name: op="create" — raison sociale (obligatoire).
+            fields: op="create" — autres champs Pennylane optionnels (ex.
+                {"vat_number": "FR…", "reg_no": "123456789",
+                "emails": ["compta@exemple.fr"]}).
+            max_pages: op="list" — limite de pagination.
+        """
+        c = _client()
+        if op == "list":
+            return c.list_suppliers(max_pages=max_pages)
+        if op == "create":
+            return c.create_supplier(_need(name, "name", op), **(fields or {}))
+        raise _bad("op doit être 'list' ou 'create'")
+
+    @mcp.tool()
+    def pennylane_supplier_invoice(
+        op: str = "list",
+        max_pages: Optional[int] = None,
+        file_attachment_id: Optional[int] = None,
+        supplier_id: Optional[int] = None,
+        date: Optional[str] = None,
+        deadline: Optional[str] = None,
+        currency_amount_before_tax: Optional[str] = None,
+        currency_amount: Optional[str] = None,
+        currency_tax: Optional[str] = None,
+        invoice_lines: Optional[list[dict]] = None,
+        currency: str = "EUR",
+        external_reference: Optional[str] = None,
+        import_as_incomplete: bool = False,
+        invoice_number: Optional[str] = None,
+        label: Optional[str] = None,
+    ) -> dict | list:
+        """Factures d'ACHAT (factures fournisseurs reçues) — le côté « dépenses ».
+
+        `op` :
+        - "list" : l'inventaire des factures reçues, à confronter aux décaissements
+          pour un rapprochement bancaire (sens dépense ↔ facture fournisseur) ou
+          pour repérer ce qui reste à payer. ⚠️ Sans `max_pages`, TOUT l'historique
+          d'achats revient (peut dépasser la limite de tokens) — commencer petit
+          puis élargir. Ne liste pas les fournisseurs eux-mêmes
+          (`pennylane_supplier`).
+        - "import" : crée la facture d'achat depuis un PDF déjà posté. Flux en deux
+          temps : `pennylane_upload_file(...)` → `file_attachment_id`, puis ceci.
+          Pennylane ne fait PAS d'OCR — YOU (ayant lu le PDF) fournis les champs.
+          Les montants sont des STRINGS. Crée un brouillon ; le rapprocher ensuite
+          à une transaction bancaire avec
+          `pennylane_match(invoice_id, transaction_id, invoice_type="supplier")`.
+
+        Args:
+            op: "list" (défaut) | "import".
+            max_pages: op="list" — borne la pagination (⚠️ voir ci-dessus).
+            file_attachment_id: op="import" — id renvoyé par `pennylane_upload_file`.
+            supplier_id: op="import" — fournisseur (company_supplier) existant
+                (`pennylane_supplier`).
+            date / deadline: op="import" — dates ISO (facture / échéance de paiement).
+            currency_amount_before_tax / currency_amount / currency_tax:
+                op="import" — montants en STRING : HT / TTC / TVA, dans la devise.
+            invoice_lines: op="import" — ≥1 ligne (label, montants… au schéma de
+                ligne Pennylane).
+            currency: défaut EUR. external_reference: clé d'idempotence / de trace.
+            import_as_incomplete: marquer le brouillon incomplet si des données
+                manquent.
+            invoice_number / label: numéro fournisseur / libellé comptable.
+        """
+        c = _client()
+        if op == "list":
+            return c.get_supplier_invoices(max_pages=max_pages)
+        if op == "import":
+            res = c.import_supplier_invoice(
+                file_attachment_id=_need(file_attachment_id, "file_attachment_id", op),
+                supplier_id=_need(supplier_id, "supplier_id", op),
+                date=_need(date, "date", op), deadline=_need(deadline, "deadline", op),
+                currency_amount_before_tax=_need(
+                    currency_amount_before_tax, "currency_amount_before_tax", op),
+                currency_amount=_need(currency_amount, "currency_amount", op),
+                currency_tax=_need(currency_tax, "currency_tax", op),
+                invoice_lines=_need(invoice_lines, "invoice_lines", op),
+                currency=currency, external_reference=external_reference,
+                import_as_incomplete=import_as_incomplete,
+                invoice_number=invoice_number, label=label,
+            )
+            if isinstance(res, dict) and res.get("error"):
+                raise _bad(f"Pennylane supplier invoice import failed: {res.get('details', res)}")
+            return res
+        raise _bad("op doit être 'list' ou 'import'")
+
     @mcp.tool()
     def pennylane_upload_file(source: dict, account: Optional[str] = None) -> dict:
         """Upload a file (PDF) to Pennylane from a file that lives "côté oto".
@@ -55,7 +404,7 @@ def register(mcp: FastMCP) -> None:
         Optional `account` (email) targets a specific Google account for drive/gmail.
 
         Returns {file_attachment_id, filename, url}. Feed `file_attachment_id` to
-        `pennylane_import_supplier_invoice` to create the supplier invoice.
+        `pennylane_supplier_invoice(op="import")` to create the supplier invoice.
         """
         try:
             rf = file_source.resolve(source)
@@ -66,116 +415,7 @@ def register(mcp: FastMCP) -> None:
             raise _bad(f"Pennylane file upload failed: {res.get('details', res)}")
         return {"file_attachment_id": res["id"], "filename": rf.filename, "url": res.get("url")}
 
-    @mcp.tool()
-    def pennylane_import_supplier_invoice(
-        file_attachment_id: int, supplier_id: int, date: str, deadline: str,
-        currency_amount_before_tax: str, currency_amount: str, currency_tax: str,
-        invoice_lines: list[dict], currency: str = "EUR",
-        external_reference: Optional[str] = None, import_as_incomplete: bool = False,
-        invoice_number: Optional[str] = None, label: Optional[str] = None,
-    ) -> dict:
-        """Create a SUPPLIER (purchase) invoice in Pennylane from an uploaded PDF.
-
-        Two-step flow: first `pennylane_upload_file(...)` → `file_attachment_id`,
-        then this. Pennylane does NOT OCR — YOU (having read the PDF) provide the
-        fields. Amounts are STRINGS. Creates a draft; reconcile it to a bank
-        transaction afterwards with
-        `pennylane_match(invoice_id, transaction_id, invoice_type="supplier")`.
-
-        Args:
-            file_attachment_id: id returned by pennylane_upload_file.
-            supplier_id: Pennylane supplier (company_supplier) id.
-            date / deadline: ISO dates (invoice date / payment due date).
-            currency_amount_before_tax / currency_amount / currency_tax: amounts as
-                strings — HT / TTC / VAT, in the invoice currency.
-            invoice_lines: ≥1 line (label, amounts… per Pennylane line schema).
-            currency: default EUR. external_reference: your idempotency/trace key.
-            import_as_incomplete: mark the draft incomplete if some data is missing.
-            invoice_number / label: optional supplier number / accounting label.
-        """
-        res = _client().import_supplier_invoice(
-            file_attachment_id=file_attachment_id, supplier_id=supplier_id,
-            date=date, deadline=deadline,
-            currency_amount_before_tax=currency_amount_before_tax,
-            currency_amount=currency_amount, currency_tax=currency_tax,
-            invoice_lines=invoice_lines, currency=currency,
-            external_reference=external_reference, import_as_incomplete=import_as_incomplete,
-            invoice_number=invoice_number, label=label,
-        )
-        if isinstance(res, dict) and res.get("error"):
-            raise _bad(f"Pennylane supplier invoice import failed: {res.get('details', res)}")
-        return res
-
-    @mcp.tool()
-    def pennylane_company() -> dict:
-        """Informations de l'entreprise du compte Pennylane courant."""
-        return _client().get_company_info()
-
-    @mcp.tool()
-    def pennylane_fiscal_years() -> list:
-        """Liste des exercices fiscaux."""
-        return _client().get_fiscal_years()
-
-    @mcp.tool()
-    def pennylane_trial_balance(start_date: str, end_date: str) -> list:
-        """Balance comptable sur une période.
-
-        Args:
-            start_date: début de période (YYYY-MM-DD).
-            end_date: fin de période (YYYY-MM-DD).
-        """
-        return _client().get_trial_balance(start_date, end_date)
-
-    @mcp.tool()
-    def pennylane_ledger_accounts() -> list:
-        """Plan comptable (comptes du grand livre)."""
-        return _client().get_ledger_accounts()
-
-    @mcp.tool()
-    def pennylane_customer_invoices(max_pages: Optional[int] = None) -> list:
-        """Factures clients (paginé ; max_pages limite le volume)."""
-        return _client().get_customer_invoices(max_pages=max_pages)
-
-    @mcp.tool()
-    def pennylane_supplier_invoices(max_pages: Optional[int] = None) -> list:
-        """Factures fournisseurs (paginé ; max_pages limite le volume)."""
-        return _client().get_supplier_invoices(max_pages=max_pages)
-
-    @mcp.tool()
-    def pennylane_list_suppliers(max_pages: Optional[int] = None) -> list:
-        """Liste les fournisseurs (id + nom). Sert à retrouver le `supplier_id` d'un
-        fournisseur EXISTANT à réutiliser dans pennylane_import_supplier_invoice (qui
-        exige un supplier_id). Paginé ; max_pages limite le volume."""
-        return _client().list_suppliers(max_pages=max_pages)
-
-    @mcp.tool()
-    def pennylane_find_customer_by_reference(external_reference: str) -> dict:
-        """Retrouve un client par son `external_reference`, ou {"found": false}.
-
-        Anti-doublon client : un client déjà créé (ex. companyId back-office en
-        external_reference) fait échouer `pennylane_create_customer` en 422
-        « External reference has already been taken ». À appeler AVANT de créer :
-        s'il existe, réutiliser son `id` ; sinon créer. Filtre serveur natif
-        (un seul appel).
-
-        Args:
-            external_reference: la référence externe recherchée (ex. companyId).
-        """
-        c = _client().find_customer_by_external_reference(external_reference)
-        return c if c else {"found": False}
-
-    @mcp.tool()
-    def pennylane_create_supplier(name: str, fields: Optional[dict] = None) -> dict:
-        """Crée un fournisseur — à faire avant de saisir la facture d'achat d'un
-        NOUVEAU fournisseur (pennylane_import_supplier_invoice exige un supplier_id
-        existant). Renvoie le fournisseur créé (avec son id).
-
-        Args:
-            name: raison sociale du fournisseur (obligatoire).
-            fields: autres champs Pennylane optionnels (ex. {"vat_number": "FR…",
-                "reg_no": "123456789", "emails": ["compta@exemple.fr"]}).
-        """
-        return _client().create_supplier(name, **(fields or {}))
+    # --- banque & lettrage ---------------------------------------------------
 
     @mcp.tool()
     def pennylane_transactions(max_pages: Optional[int] = None,
@@ -200,9 +440,14 @@ def register(mcp: FastMCP) -> None:
             only_outstanding=only_outstanding, per_page=per_page)
 
     @mcp.tool()
-    def pennylane_categories() -> list:
-        """Catégories de dépenses."""
-        return _client().get_categories()
+    def pennylane_trial_balance(start_date: str, end_date: str) -> list:
+        """Balance comptable sur une période.
+
+        Args:
+            start_date: début de période (YYYY-MM-DD).
+            end_date: fin de période (YYYY-MM-DD).
+        """
+        return _client().get_trial_balance(start_date, end_date)
 
     @mcp.tool()
     def pennylane_match(
@@ -223,255 +468,3 @@ def register(mcp: FastMCP) -> None:
             invoice_type: "customer" (ventes) ou "supplier" (achats).
         """
         return _client().match_transaction(invoice_id, transaction_id, invoice_type)
-
-    # --- écriture du flux avoir (brouillon-d'abord, supervision) -------------
-
-    @mcp.tool()
-    def pennylane_find_invoice_by_reference(external_reference: str) -> dict:
-        """Cherche une facture client par son `external_reference` (anti-doublon).
-
-        À appeler AVANT de créer un avoir pour un paiement échoué : si une
-        facture porte déjà cet `external_reference` (ex. l'id GoCardless `PM…`),
-        l'avoir existe — ne pas le recréer. Renvoie la facture trouvée ou
-        `{"found": false}`.
-
-        Args:
-            external_reference: référence externe recherchée (ex. id paiement GoCardless).
-        """
-        inv = _client().find_invoice_by_external_reference(external_reference)
-        return inv if inv else {"found": False}
-
-    @mcp.tool()
-    def pennylane_create_invoice(
-        customer_id: int,
-        date: str,
-        deadline: str,
-        lines: list,
-        external_reference: Optional[str] = None,
-        free_text: Optional[str] = None,
-        customer_invoice_template_id: Optional[int] = None,
-    ) -> dict:
-        """Crée une facture de vente client en **brouillon** dans Pennylane.
-
-        Toujours créée en brouillon : finaliser ensuite avec
-        `pennylane_finalize_invoice` (puis `pennylane_send_invoice`) APRÈS validation
-        humaine explicite. Le client doit exister (`pennylane_create_customer` pour
-        le créer ; `pennylane_update_customer` pour l'e-mail/les coordonnées).
-
-        ⚠️ Schéma de ligne STRICT (tout écart → 400 opaque `NotAnyOf`) — une ligne =
-        UNE des 2 formes, aucun champ hors liste :
-        - produit : `{product_id: int, quantity: number}` (le produit remplit le
-          reste ; overrides possibles : label, raw_currency_unit_price, unit, vat_rate) ;
-        - libre : `{label: str, quantity: number, unit: str,
-          raw_currency_unit_price: str, vat_rate: str}` — TOUS requis.
-        `vat_rate` = code Pennylane, jamais un pourcentage : 20 %→"FR_200",
-        10 %→"FR_100", 5,5 %→"FR_55", 2,1 %→"FR_21", exonéré→"exempt".
-        `raw_currency_unit_price` = prix unitaire HT en STRING ("700.00") ;
-        `quantity` = number (jamais une string).
-
-        Args:
-            customer_id: ID du client Pennylane.
-            date: date d'émission (YYYY-MM-DD).
-            deadline: date d'échéance (YYYY-MM-DD).
-            lines: lignes au schéma strict ci-dessus.
-            external_reference: référence externe (anti-doublon / trace de la source).
-            free_text: texte libre imprimé sur le PDF (commentaire visible client,
-                champ API `pdf_invoice_free_text`).
-        """
-        return _client().create_customer_invoice(
-            customer_id=customer_id, date=date, deadline=deadline, lines=lines,
-            external_reference=external_reference, pdf_free_text=free_text,
-            customer_invoice_template_id=customer_invoice_template_id,
-            draft=True)
-
-    @mcp.tool()
-    def pennylane_create_credit_note(
-        customer_id: int,
-        date: str,
-        deadline: str,
-        lines: list,
-        external_reference: Optional[str] = None,
-        free_text: Optional[str] = None,
-        customer_invoice_template_id: Optional[int] = None,
-        credited_invoice_id: Optional[int] = None,
-    ) -> dict:
-        """Crée un avoir **standalone** en brouillon (convention v2 : montants négatifs).
-
-        Fournis les lignes en **POSITIF** (le geste métier : 195 crédits à 1,45) —
-        la négativation qui fait de la facture un AVOIR est appliquée côté client,
-        jamais par toi. **Pas de facture liée par défaut** (la pratique réelle :
-        la référence AUT-… vit en texte libre) ; si `credited_invoice_id` est
-        fourni, le lien est posé APRÈS création via l'endpoint dédié
-        `link_credit_note` (le champ create-time est cassé côté Pennylane).
-        Toujours créé en brouillon : finaliser avec `pennylane_finalize_invoice`
-        après validation humaine. Anti-doublon au préalable :
-        `pennylane_find_invoice_by_reference` sur la référence externe.
-
-        Args:
-            customer_id: ID du client Pennylane (créé au préalable si besoin).
-            date: date de l'avoir (YYYY-MM-DD).
-            deadline: date d'échéance (YYYY-MM-DD — pratique MM : aujourd'hui).
-            lines: lignes au schéma strict de `pennylane_create_invoice`, en
-                POSITIF (2 formes : produit `{product_id, quantity}` — résoudre le
-                product_id via `pennylane_products` — ou libre `{label, quantity,
-                unit, raw_currency_unit_price, vat_rate}` tous requis ; vat_rate =
-                code "FR_200"/"FR_100"/…, prix HT en string, quantity en number).
-            external_reference: trace de la source (ex. id paiement GoCardless `PM…`) — anti-doublon.
-            free_text: texte libre imprimé sur le PDF (commentaire visible client,
-                champ API `pdf_invoice_free_text`) — c'est LÀ que vit le
-                rapprochement lisible avec la facture d'origine (pratique MM :
-                « Avoir sur facture AUT-XXXXX suite prélèvement échoué sur
-                GoCardless »), l'avoir n'étant pas lié structurellement.
-            credited_invoice_id: optionnel — ID d'une facture à créditer ; le lien
-                est posé après création (2ᵉ appel), jamais au create.
-        """
-        note = _client().create_credit_note(
-            customer_id=customer_id, date=date, deadline=deadline, lines=lines,
-            external_reference=external_reference, pdf_free_text=free_text,
-            customer_invoice_template_id=customer_invoice_template_id,
-            draft=True)
-        if credited_invoice_id:
-            note_id = note.get("id") or (note.get("customer_invoice") or {}).get("id")
-            if not note_id:
-                return {"credit_note": note,
-                        "link": "NON posé : id de l'avoir introuvable dans la réponse"}
-            link = _client().link_credit_note(credited_invoice_id, note_id)
-            return {"credit_note": note, "link": link}
-        return note
-
-    @mcp.tool()
-    def pennylane_products(
-        op: str = "list",
-        product_id: Optional[int] = None,
-        max_pages: Optional[int] = None,
-    ) -> dict | list:
-        """Catalogue produits Pennylane. op="list" → tous les produits (id, label,
-        prix, unité, vat_rate…) ; op="get" (`product_id`) → la fiche d'un produit.
-
-        Sert à résoudre le `product_id` d'une ligne de facture ou d'avoir
-        (`pennylane_create_invoice` / `pennylane_create_credit_note`) — ne jamais
-        deviner un product_id : le lire ici. Attention aux libellés quasi
-        homonymes (ex. deux produits « crédit … ») : choisir sur la fiche
-        complète (prix, unité), pas sur le début du nom.
-
-        Args:
-            op: "list" (défaut) ou "get".
-            product_id: requis pour op="get".
-            max_pages: op="list" — limite de pagination.
-        """
-        if op == "list":
-            return _client().list_products(max_pages=max_pages)
-        if op == "get":
-            if not product_id:
-                raise ValueError("op='get' requiert product_id")
-            return _client().get_product(product_id)
-        raise ValueError("op doit être 'list' ou 'get'")
-
-    @mcp.tool()
-    def pennylane_invoice_templates(max_pages: Optional[int] = None) -> list:
-        """Liste les modèles de facturation (customer invoice templates).
-
-        Le modèle pilote le RENDU PDF du document — notamment le modèle
-        « Avoir » (sans bloc paiement/IBAN), seul moyen API d'obtenir le rendu
-        avoir : le passer en `customer_invoice_template_id` à
-        `pennylane_create_credit_note` (ou via `pennylane_update_invoice` sur
-        un brouillon). Scope requis : customer_invoice_templates:readonly.
-
-        Args:
-            max_pages: limite de pagination.
-        """
-        return _client().list_invoice_templates(max_pages=max_pages)
-
-    @mcp.tool()
-    def pennylane_update_invoice(invoice_id: int, fields: dict) -> dict:
-        """Met à jour une facture/avoir en BROUILLON (date, deadline,
-        customer_invoice_template_id, pdf_invoice_free_text, external_reference…).
-
-        Sur un document FINALISÉ, l'API ne permet plus que label /
-        transaction_reference / external_reference — ne pas s'en servir pour
-        « corriger » un document émis. Usage type : basculer un brouillon
-        d'avoir sur le modèle « Avoir » (`{"customer_invoice_template_id": <id>}`)
-        avant finalisation.
-
-        Args:
-            invoice_id: ID du brouillon.
-            fields: champs à mettre à jour.
-        """
-        return _client().update_invoice(invoice_id, **fields)
-
-    @mcp.tool()
-    def pennylane_finalize_invoice(invoice_id: int) -> dict:
-        """Finalise une facture/avoir en brouillon (lui donne sa référence définitive).
-
-        ⚠️ Écriture engageante — n'appeler qu'après validation humaine explicite.
-
-        Args:
-            invoice_id: ID du brouillon à finaliser.
-        """
-        return _client().finalize_invoice(invoice_id)
-
-    @mcp.tool()
-    def pennylane_send_invoice(invoice_id: int) -> dict:
-        """Envoie une facture/avoir finalisé(e) au client par email (email Pennylane du client).
-
-        ⚠️ Envoi externe — n'appeler qu'après validation humaine explicite. Le
-        gabarit/corps précis (modèle « échec des prélèvements » + motif) reste à
-        confirmer côté compte ; cette route déclenche l'envoi standard Pennylane.
-
-        Args:
-            invoice_id: ID de la facture finalisée à envoyer.
-        """
-        return _client().send_invoice(invoice_id)
-
-    @mcp.tool()
-    def pennylane_list_customers(max_pages: Optional[int] = None) -> list:
-        """Liste les clients (id + nom + coordonnées). Sert à résoudre un `customer_id`
-        depuis un NOM (pennylane_customer_invoices ne renvoie que `customer.{id,url}`,
-        sans nom ni filtre) — p. ex. retrouver la facture d'origine d'un client donné
-        avant de créer un avoir. Paginé ; max_pages limite le volume."""
-        return _client().list_customers(max_pages=max_pages)
-
-    @mcp.tool()
-    def pennylane_create_customer(
-        name: str,
-        address: str,
-        postal_code: str,
-        city: str,
-        country_alpha2: str = "FR",
-        emails: Optional[list] = None,
-        external_reference: Optional[str] = None,
-    ) -> dict:
-        """Crée un client (entreprise) dans Pennylane.
-
-        L'adresse de facturation complète est OBLIGATOIRE (API v2) — les 4 champs
-        address/postal_code/city/country_alpha2. Compléter ensuite les champs
-        additionnels (vat_number, reg_no, billing_iban…) via
-        `pennylane_update_customer`. Renvoie le client créé avec son `id` (à passer
-        en `customer_id` de `pennylane_create_invoice`).
-
-        Args:
-            name: raison sociale du client.
-            address: adresse de facturation (rue).
-            postal_code: code postal.
-            city: ville.
-            country_alpha2: pays ISO alpha-2 (défaut FR).
-            emails: e-mails du client (destinataires des factures).
-            external_reference: référence externe (anti-doublon / trace de la source).
-        """
-        return _client().create_customer(
-            name=name, emails=emails, address=address, postal_code=postal_code,
-            city=city, country_alpha2=country_alpha2,
-            external_reference=external_reference)
-
-    @mcp.tool()
-    def pennylane_update_customer(customer_id: int, fields: dict) -> dict:
-        """Met à jour un client (compléter email, vat_number, external_reference…).
-
-        Pour la réconciliation : Pennylane « connaît » un client exporté de MM
-        mais sans email ni identifiant — compléter avant de créer l'avoir.
-
-        Args:
-            customer_id: ID du client Pennylane.
-            fields: champs à mettre à jour (ex. {"emails": ["x@y.fr"], "external_reference": "MM-12345"}).
-        """
-        return _client().update_customer(customer_id, **fields)
