@@ -128,7 +128,15 @@ def exchange_code(token_url: str, *, code: str, client_id: str, client_secret: s
             f"Réponse illisible du serveur d'autorisation ({host}, HTTP {r.status_code}).")
     # Beaucoup de fournisseurs (Zoho…) répondent HTTP 200 avec l'erreur dans le corps.
     if r.status_code >= 400 or "error" in body:
-        detail = body.get("error") or body.get("message") or f"HTTP {r.status_code}"
+        # `error` seul ne suffit PAS à diagnostiquer : `invalid_grant` est le code
+        # fourre-tout d'OAuth 2 (code expiré, déjà consommé, verifier PKCE qui ne
+        # correspond pas, appel depuis une IP non autorisée, jeton révoqué…). Le
+        # fournisseur dit lequel dans `error_description` ; le jeter obligeait à
+        # deviner à la main, une hypothèse à la fois. Vécu le 31/07 sur Salesforce.
+        detail = " : ".join(str(v).strip() for v in (
+            body.get("error") or body.get("message") or f"HTTP {r.status_code}",
+            body.get("error_description"),
+        ) if v)
         raise OAuthFlowError(f"Échec de l'échange OAuth ({host}) : {detail}.")
     return body
 

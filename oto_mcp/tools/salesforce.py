@@ -100,14 +100,31 @@ def _sf_error_hint(exc: Exception) -> str:
     par la sonde `_verify` (credential déjà posé) ET par le flow OAuth live
     (`salesforce_oauth.exchange_code`, échec de l'échange authorization_code) —
     les deux surfaces d'erreur Salesforce partagent le même vocabulaire brut,
-    donc les mêmes branches de correspondance s'appliquent."""
-    low = str(exc).lower()
+    donc les mêmes branches de correspondance s'appliquent.
+
+    ⚠️ Une traduction AJOUTE, elle ne REMPLACE jamais. La version précédente
+    substituait sa supposition au dire du fournisseur : un `invalid_grant` était
+    systématiquement rendu « refresh token périmé, ou login_url incorrect », alors
+    que Salesforce disait autre chose (code d'autorisation expiré, appel depuis
+    une IP non autorisée…). Le message accusait la mauvaise pièce et envoyait
+    corriger ce qui marchait — une heure perdue le 31/07."""
+    raw = " ".join(str(exc).split())[:220]
+    low = raw.lower()
+    hint = _sf_hint_for(low)
+    return f"{hint} (Salesforce dit : {raw})" if hint else (
+        f"échec de connexion Salesforce : {raw}")
+
+
+def _sf_hint_for(low: str) -> str:
+    """La correspondance seule — sans le dire du fournisseur, que l'appelant joint."""
     if "invalid_client" in low or "invalid_client_id" in low:
         return ("client_id / client_secret incorrect — vérifie la Connected App "
                 "Salesforce (Consumer Key / Consumer Secret).")
     if "invalid_grant" in low:
-        return ("refresh token périmé/révoqué, ou login_url incorrect (prod "
-                "login.salesforce.com vs sandbox test.salesforce.com) — régénère-le.")
+        return ("le grant a été refusé — jeton révoqué ou expiré, code d'autorisation "
+                "déjà consommé, ou appel bloqué par les restrictions IP de l'app "
+                "(le rafraîchissement part de NOTRE serveur, pas de ton navigateur). "
+                "Le motif exact est entre parenthèses ci-dessous.")
     if "invalid_scope" in low:
         return ("les OAuth Scopes de la Connected App n'incluent pas `api` et "
                 "`refresh_token` (ou `offline_access`) — Setup → App Manager → "
@@ -121,7 +138,7 @@ def _sf_error_hint(exc: Exception) -> str:
         attendue = connector_flow.callback_url("salesforce") or "l'URL affichée sur la fiche"
         return ("Callback URL de la Connected App incorrecte — doit être exactement "
                 f"{attendue} (vérifie qu'il n'y a pas d'espace ni de slash final en trop).")
-    return f"échec de connexion Salesforce : {exc}"
+    return ""
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
