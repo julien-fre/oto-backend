@@ -63,10 +63,8 @@ def _allowed_origins() -> list[str]:
         "https://app.oto.ninja",
         "https://otomata.tech",             # formulaire de contact vitrine
         "https://www.otomata.tech",
-        "https://tulina.oto.zone",          # front Tulina prod (box tulina-0)
-        "https://tulina-canari.oto.zone",   # front Tulina preprod
-        "https://app.tulina.ai",            # idem, une fois les CNAME posés
-        "https://run.tulina.ai",
+        "https://app.tulina.ai",            # front Tulina PROD (box tulina-0)
+        "https://tulina.oto.zone",          # front Tulina PREPROD (même box, :3001)
         "http://localhost:5173",
         "http://localhost:4173",
         "http://localhost:5182",
