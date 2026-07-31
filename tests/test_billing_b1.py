@@ -31,10 +31,14 @@ def test_schema_declares_billing_tables():
 def test_init_drops_legacy_table_before_schema():
     # la migration #82→0043 (drop de l'org_subscriptions Stripe) doit courir
     # AVANT l'application de _SCHEMA, sinon boot KO (vécu 2026-07-06).
+    # ⚠️ On inspecte la fonction qui APPLIQUE le schéma, pas `init_db` : depuis le
+    # retry anti-deadlock, `init_db` n'est plus que la boucle et le corps vit dans
+    # `_init_db_once` — le test cherchait ses deux repères dans la mauvaise fonction
+    # et cassait le CI sur un invariant pourtant intact.
     import inspect
     from oto_mcp.db import _init
 
-    src = inspect.getsource(_init.init_db)
+    src = inspect.getsource(_init._init_db_once)
     assert src.index("_drop_legacy_org_subscriptions") < src.index("conn.execute(_SCHEMA)")
 
 
