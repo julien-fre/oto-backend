@@ -49,23 +49,29 @@ def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = Non
 
 
 def verify_api_token(token: str) -> Optional[str]:
-    """Renvoie le sub du token, et met à jour last_used_at. None si inconnu ou expiré."""
+    """Renvoie le sub du token, et met à jour last_used_at. None si inconnu ou expiré.
+
+    UN SEUL statement (`UPDATE … RETURNING`), et pas un SELECT puis un UPDATE dans la
+    même transaction : la forme en deux temps prenait AccessShareLock (SELECT) puis
+    demandait RowExclusiveLock (UPDATE) sur `user_api_tokens`. Un `ALTER TABLE` de
+    migration (init_db) qui se glissait ENTRE les deux se mettait en file d'attente
+    derrière l'AccessShareLock, et l'UPDATE — bloqué derrière l'ALTER en attente
+    (file FIFO des locks PG) — fermait le cycle : DeadlockDetected des deux côtés
+    (Sentry, 5 événements côté boot + 2 côté requête, dernier 2026-07-30). Un seul
+    statement prend son lock d'un coup : plus d'escalade intra-transaction, plus de
+    cycle possible avec le DDL.
+    """
     if not token or not token.startswith(_TOKEN_PREFIX):
         return None
     h = _hash_token(token)
     with _connect() as conn:
         row = conn.execute(
-            "SELECT sub FROM user_api_tokens "
-            "WHERE token_hash = %s AND (expires_at IS NULL OR expires_at > NOW())",
+            "UPDATE user_api_tokens SET last_used_at = NOW() "
+            "WHERE token_hash = %s AND (expires_at IS NULL OR expires_at > NOW()) "
+            "RETURNING sub",
             (h,),
         ).fetchone()
-        if not row:
-            return None
-        conn.execute(
-            "UPDATE user_api_tokens SET last_used_at = NOW() WHERE token_hash = %s",
-            (h,),
-        )
-        return row["sub"]
+        return row["sub"] if row else None
 
 
 def list_api_tokens(sub: str) -> list[dict]:

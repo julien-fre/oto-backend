@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 
 import psycopg
 
@@ -21,6 +22,37 @@ logger = logging.getLogger(__name__)
 _INIT_DB_LOCK_ID = 0x0704_0D0B  # « oto init_db », 117_449_483
 
 def init_db() -> None:
+    """Applique le schéma, en RÉESSAYANT sur contention de lock.
+
+    L'advisory lock ci-dessous sérialise deux MIGRATEURS entre eux, mais rien ne
+    protège du **trafic applicatif** : la migration tient des AccessExclusiveLock sur
+    des dizaines de tables dans une seule transaction, pendant qu'une requête en vol
+    en verrouille d'autres → cycle possible, donc `DeadlockDetected` (Sentry, 2026-07-30 :
+    un `ALTER TABLE user_api_tokens` au boot canari contre un `/api/fr/accords/search`
+    en prod, DB partagée). PG choisit sa victime au hasard : si c'est nous, le boot
+    échouait sec. Deux crans, dans cet ordre :
+      1. `lock_timeout` (posé APRÈS l'advisory lock, qui lui doit attendre sans borne)
+         → le DDL abandonne vite au lieu de camper en tête de file d'attente, où il
+         bloque tout le trafic sur la table derrière lui ;
+      2. retry de la transaction entière — la DDL est idempotente, un rejeu est sûr.
+    """
+    attempts = max(1, int(os.environ.get("OTO_MCP_INIT_DB_ATTEMPTS", "3")))
+    for attempt in range(1, attempts + 1):
+        try:
+            _init_db_once()
+            return
+        except (psycopg.errors.DeadlockDetected, psycopg.errors.LockNotAvailable) as e:
+            if attempt == attempts:
+                raise
+            delay = 2 * attempt
+            logger.warning(
+                "init_db: %s (tentative %d/%d) — nouvel essai dans %ds",
+                type(e).__name__, attempt, attempts, delay,
+            )
+            time.sleep(delay)
+
+
+def _init_db_once() -> None:
     with _connect() as conn:
         # Un SEUL migrateur à la fois. La DB est PARTAGÉE canari/prod : deux instances
         # qui bootent en même temps exécutaient CETTE MÊME transaction de DDL (DROP/
@@ -32,6 +64,15 @@ def init_db() -> None:
         # les _migrate_* ci-dessous). Le waiter est ACTIF (pas idle-in-tx) → non coupé
         # par idle_in_transaction_session_timeout ; il attend le commit du 1er.
         conn.execute("SELECT pg_advisory_xact_lock(%s)", (_INIT_DB_LOCK_ID,))
+        # APRÈS l'advisory lock (qui, lui, doit pouvoir attendre le migrateur d'en face
+        # sans borne) : borne l'ATTENTE d'acquisition de chaque lock de table du DDL.
+        # `true` = LOCAL à la transaction. Ne borne PAS la durée d'exécution (un gros
+        # CREATE INDEX reste libre de prendre son temps une fois le lock obtenu) — donc
+        # sans risque pour les migrations lourdes, contrairement à statement_timeout.
+        conn.execute(
+            "SELECT set_config('lock_timeout', %s, true)",
+            (os.environ.get("OTO_MCP_INIT_DB_LOCK_TIMEOUT_MS", "5000"),),
+        )
         # AVANT _SCHEMA : renomme l'ancienne tool_call_log vers le schéma canonique
         # (sinon CREATE IF NOT EXISTS poserait une tool_calls vide à côté).
         _migrate_tool_call_log(conn)
