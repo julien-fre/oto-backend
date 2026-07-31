@@ -58,13 +58,18 @@ class Flow:
     start: Callable[..., dict]       # (ctx, values) -> {"auth_url": …}
     params: tuple[FlowParam, ...] = field(default_factory=tuple)
     label: str = "Connecter"
+    # Chemin du retour de consentement. L'URL COMPLÈTE en est dérivée à la lecture
+    # (`callback_url`), jamais écrite en dur : elle dépend de l'environnement, et une
+    # URL de prose dans une doc ment dès qu'on la lit depuis la preprod.
+    callback_path: str = ""
 
 
 _FLOWS: dict[str, Flow] = {}
 
 
 def declare(connector: str, *, start: Callable[..., dict],
-            params: tuple[FlowParam, ...] = (), label: str = "Connecter") -> None:
+            params: tuple[FlowParam, ...] = (), label: str = "Connecter",
+            callback_path: str = "") -> None:
     """Déclare le flux de connexion de ce connecteur. Appelé au niveau MODULE (comme
     `status_hints.register_state`) : c'est une déclaration pure, elle doit être lisible
     dès l'import, sans attendre le montage FastMCP."""
@@ -75,7 +80,8 @@ def declare(connector: str, *, start: Callable[..., dict],
             raise ValueError(
                 f"{connector}.{p.name} : paramètre requis sans options ni défaut.")
     _FLOWS[connector] = Flow(connector=connector, start=start,
-                             params=tuple(params), label=label)
+                             params=tuple(params), label=label,
+                             callback_path=callback_path)
 
 
 def supports(connector: str) -> bool:
@@ -101,3 +107,22 @@ def start(connector: str, ctx, values: dict) -> dict:
     """Démarre le flux déclaré. Lève `KeyError` si le connecteur n'en a pas — l'appelant
     (la capacité générique) le traduit en refus actionnable."""
     return _FLOWS[connector].start(ctx, values or {})
+
+
+def callback_url(connector: str) -> Optional[str]:
+    """URL de retour à enregistrer chez le fournisseur, DÉRIVÉE de l'environnement.
+
+    Elle n'est PAS dans `describe()` : ce descripteur-là part dans `/api/connectors`,
+    servie sans authentification. Celle-ci n'est ajoutée que sur la projection
+    authentifiée — c'est une valeur que le client doit connaître pour configurer son
+    app, pas une donnée de catalogue public.
+
+    Dérivée, et c'est le point : jusqu'ici elle vivait en PROSE dans la doc du
+    connecteur, avec le domaine de prod écrit à la main. Un utilisateur de preprod y
+    lisait donc une URL que son backend n'utilise pas — et le consentement échouait sur
+    un `redirect_uri_mismatch` incompréhensible."""
+    f = _FLOWS.get(connector)
+    if not f or not f.callback_path:
+        return None
+    from . import oauth_flow
+    return oauth_flow.redirect_uri(f.callback_path)

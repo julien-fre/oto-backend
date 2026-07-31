@@ -30,6 +30,16 @@ class DocSection:
     body_md: str
 
 
+def _callback(path: str) -> str:
+    """URL de retour de CET environnement. Les deux lignes ci-dessous l'écrivaient en
+    dur — et sur le domaine de PREPROD, servi tel quel aux clients de production. Un
+    client qui enregistrait cette URL chez son fournisseur se prenait un
+    `redirect_uri_mismatch` dont le message l'accusait, lui. Calculé à l'import : l'env
+    est posé avant le démarrage du process."""
+    from . import oauth_flow
+    return oauth_flow.redirect_uri(path)
+
+
 # name de connecteur → sections. Vide pour un connecteur = rien d'affiché.
 DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
     # ── fédéré (mount) ──────────────────────────────────────────────────────
@@ -38,7 +48,7 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "avant de connecter, un **admin** de ton org Atlassian doit autoriser "
             "l'URL de callback d'oto dans les réglages Rovo MCP Server (sinon le "
             "consentement OAuth échoue).\n"
-            "- url à autoriser : `https://mcp.oto.ninja/api/atlassian/oauth/callback`\n"
+            f"- url à autoriser : `{_callback('/api/atlassian/oauth/callback')}`\n"
             "- où : [admin.atlassian.com → Security → Rovo MCP](https://admin.atlassian.com)\n"
             "- [doc Atlassian](https://support.atlassian.com/security-and-access-policies/docs/control-atlassian-rovo-mcp-server-settings/)"
         )),
@@ -57,7 +67,7 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "propres droits Folk.\n"
             "- distinct du connecteur `folk` natif (clé API partagée de l'org) : "
             "ici chaque personne connecte **son** compte\n"
-            "- url de callback : `https://mcp.oto.ninja/api/folkmcp/oauth/callback`"
+            f"- url de callback : `{_callback('/api/folkmcp/oauth/callback')}`"
         )),
         DocSection(kind="usage", title="piloter ton CRM Folk", body_md=(
             "le MCP officiel de Folk (outils fédérés `folkmcp_*`) : cherche, crée et "
@@ -123,8 +133,9 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "chaque org Salesforce doit créer sa propre **Connected App** :\n"
             "- Setup → App Manager → **New Connected App**\n"
             "- coche **Enable OAuth Settings**\n"
-            "- **Callback URL** : `https://mcp.oto.cx/api/salesforce/oauth/callback` (exactement — "
-            "espace ou slash final en trop = échec)\n"
+            "- **Callback URL** : celle affichée sur la fiche du connecteur, sous « Autoriser "
+            "oto chez Salesforce » — copie-la telle quelle (un espace ou un slash final en trop "
+            "suffit à faire échouer le consentement)\n"
             "- **OAuth Scopes** : ajoute `Manage user data via APIs (api)` et "
             "`Perform requests at any time (refresh_token, offline_access)`\n"
             "- une fois enregistrée, copie le **Consumer Key** et le **Consumer Secret** "

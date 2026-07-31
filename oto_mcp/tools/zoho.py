@@ -129,6 +129,7 @@ for _c in ("zoho", "zohodesk", "zohoanalytics"):
         _c,
         start=lambda ctx, values, _c=_c: _start_flow(ctx, _c, values),
         label="Autoriser oto chez Zoho",
+        callback_path="/api/zoho/oauth/callback",
         params=(connector_flow.FlowParam(
             name="data_center", label="Région de ton compte Zoho", default="eu",
             help="l'app OAuth et le jeton sont liés à leur data center",

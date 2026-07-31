@@ -130,6 +130,17 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
         for ns in c.get("namespaces") or []:
             refset |= doc_refs.get(ns, set())
         base = c if inp.verbose else {k: c.get(k) for k in _COMPACT_KEYS}
+        # URL de retour de consentement — sur la projection AUTHENTIFIÉE seulement.
+        # `providers.public_catalog()` alimente aussi `/api/connectors`, servie sans
+        # auth : le descripteur public reste sans URL (cf. `connector_flow.describe`).
+        # Elle est DÉRIVÉE de l'environnement, jamais écrite : c'est la valeur que le
+        # client doit enregistrer chez son fournisseur, et une prose codée en dur ment
+        # dès qu'on la lit depuis la preprod (vécu : un `redirect_uri_mismatch`
+        # incompréhensible côté client).
+        if inp.verbose and base.get("connect"):
+            from .. import connector_flow
+            base = {**base, "connect": {**base["connect"],
+                                        "callback_url": connector_flow.callback_url(c["name"])}}
         # Couche 3 (option payante) sur la surface USER — sans ça le front ne peut pas
         # dire LAQUELLE des 3 conditions manque (le bandeau « État pour toi », ADR 0044) :
         # `mode==forbidden` conflate option/activation/RBAC. `option_ok=True` si aucune

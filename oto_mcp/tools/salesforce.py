@@ -86,6 +86,7 @@ connector_flow.declare(
     "salesforce",
     start=_start_flow,
     label="Autoriser oto chez Salesforce",
+    callback_path="/api/salesforce/oauth/callback",
     params=(connector_flow.FlowParam(
         name="scope", label="Pour qui ?", default="member", required=False,
         help="au nom de qui ranger la connexion — org/équipe demandent d'en être admin",
@@ -112,9 +113,14 @@ def _sf_error_hint(exc: Exception) -> str:
                 "`refresh_token` (ou `offline_access`) — Setup → App Manager → "
                 "ton app → Edit Policies → OAuth Scopes, puis réessaie.")
     if "redirect_uri_mismatch" in low:
+        # DÉRIVÉE, jamais écrite : ce message est lu depuis la prod ET la preprod, et
+        # chacune envoie sa propre redirect_uri. Une URL en dur y désignait toujours la
+        # prod — donc un utilisateur de preprod lisait « doit être exactement <prod> »
+        # alors que son backend envoyait autre chose. Le message accusait la victime.
+        from .. import connector_flow
+        attendue = connector_flow.callback_url("salesforce") or "l'URL affichée sur la fiche"
         return ("Callback URL de la Connected App incorrecte — doit être exactement "
-                "https://mcp.oto.cx/api/salesforce/oauth/callback (vérifie qu'il n'y "
-                "a pas d'espace ni de slash final en trop).")
+                f"{attendue} (vérifie qu'il n'y a pas d'espace ni de slash final en trop).")
     return f"échec de connexion Salesforce : {exc}"
 
 

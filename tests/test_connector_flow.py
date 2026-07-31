@@ -99,3 +99,38 @@ def test_la_capacite_generique_est_montee_sur_un_chemin_fixe():
     # le nom du connecteur voyage en PARAMÈTRE, il n'est pas dans le chemin
     for n in providers.REGISTRY:
         assert n not in cap.rest.path
+
+
+# --- l'URL de retour : dérivée, et du bon côté ---------------------------------
+
+def test_lurl_de_retour_est_derivee_de_lenvironnement(monkeypatch):
+    """Elle vivait en PROSE dans la doc du connecteur, domaine de prod écrit à la main.
+    Un utilisateur de preprod y lisait donc une URL que SON backend n'utilise pas, et le
+    consentement échouait sur un `redirect_uri_mismatch` dont le message accusait sa
+    Connected App. Désormais elle suit `OTO_MCP_PUBLIC_URL`."""
+    monkeypatch.setenv("OTO_MCP_PUBLIC_URL", "https://mcp.example.test")
+    assert connector_flow.callback_url("salesforce") == (
+        "https://mcp.example.test/api/salesforce/oauth/callback")
+
+
+def test_lurl_de_retour_nest_PAS_dans_le_catalogue_anonyme():
+    """`/api/connectors` est servie sans authentification. Le descripteur public porte
+    la FORME du geste, pas les adresses — c'est la projection authentifiée qui ajoute
+    l'URL, parce que c'est là qu'elle sert à quelqu'un."""
+    for name in connector_flow.entries():
+        assert "callback_url" not in (connector_flow.describe(name) or {})
+    cat = {c["name"]: c for c in providers.public_catalog()}
+    assert "callback_url" not in (cat["salesforce"]["connect"] or {})
+
+
+def test_aucune_url_de_retour_ecrite_en_dur_dans_la_prose_client():
+    """TRIPWIRE — la doc et les messages d'erreur lus par un CLIENT ne doivent plus
+    contenir de domaine en dur : ils sont servis aux deux environnements."""
+    import pathlib as _p
+    for f in (_p.Path("oto_mcp/connector_docs.py"),
+              _p.Path("oto_mcp/tools/salesforce.py"),
+              _p.Path("oto_mcp/tools/zoho.py")):
+        src = f.read_text(encoding="utf-8")
+        for ligne in src.splitlines():
+            if "oauth/callback" in ligne and "mcp.oto." in ligne and not ligne.lstrip().startswith("#"):
+                raise AssertionError(f"{f} code une URL de retour en dur : {ligne.strip()[:110]}")
