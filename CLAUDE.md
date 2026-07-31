@@ -818,7 +818,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 - `docs/connector-model.md` — **carte d'ensemble** : les **3 couches** d'un connecteur (disponibilité / authentification / option de connecteur), la matrice des niveaux (user/groupe/org/plateforme), le vocabulaire canonique, le seam `access.has_option`. **À lire en premier** avant de toucher activation/clés/options (les autres docs ci-dessous = le détail par couche).
 - `docs/connector-vault.md` — **archi centrale** : registre source unique (`connectors.py`), coffre chiffré unique `connector_credentials` (clés API + platform_keys + sessions linkedin/crunchbase/google multi-compte), enveloppe AES-256-GCM **obligatoire** (pas de plaintext), résolution + palier org. À lire avant de toucher credentials/registre/résolution.
 - `docs/roles-and-resolution.md` — rôles (3 paliers) + cascade de résolution de clé / grants / platform keys.
-- `docs/doctrines.md` — doctrine & skills d'org (`oto_procedure`, versionnée).
+- `docs/doctrines.md` — doctrine & skills d'org (`oto_procedure`, versionnée) + **renommer un outil = migrer les procédures** (refs `<tool:slug>` en DB, angle mort du CI).
 - `docs/auth-logto.md` — auth Logto ES384, discovery RFC 9728, façade DCR.
 - `docs/rest-api.md` — inventaire des endpoints REST `/api/*`.
 - `docs/federation.md` — fédération MCP : mount (per-user) vs remote/bridge (org).

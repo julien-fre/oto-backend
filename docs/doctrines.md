@@ -58,3 +58,24 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
 - **Pas d'instruction par namespace d'outil** : un gotcha d'outil est vrai pour tout le monde et
   évolue avec le code du connecteur → sa place reste le repo (docstring, `_SERVER_INSTRUCTIONS`),
   versionné avec l'outil.
+
+## Renommer un outil = migrer les procédures
+
+Une procédure référence ses outils par `<tool:slug>` (ADR 0014), et ces refs vivent **en DB, par
+org** — hors du repo. Un renommage d'outil est donc un breaking qui traverse le **code ET les
+données**, dont le CI ne voit que la moitié : `test_tools_client_methods_exist` garde le skew
+tool↔oto-core, `connector_docs.py` se relit en PR, mais **rien ne lit `org_instructions`**. Une
+suite verte ne dit donc rien de l'état des procédures.
+
+Vécu le 2026-07-31 (consolidation pennylane 25→9 outils, v1.38.0, ADR 0047 étendu aux
+connecteurs) : `rapprochement-pennylane` (org 2, qui arme une routine planifiée quotidienne) et
+`agent-avoirs-compta` (org 35, agent client sous supervision) sont parties **en prod** avec
+respectivement 2 et 10 refs mortes, réparées seulement après coup.
+
+Le détecteur, lui, existe déjà : `tool_registry.manifest_for(body_md)` rend
+`referenced_tools[].status` et `unresolved_tools` — c'est ce que `oto_procedure(op='get')` et le
+retour d'`op='set'` affichent. La migration est donc mécanique : balayer les orgs, réécrire le
+corps, vérifier `unresolved_tools == []`. ⚠️ Vérifier contre le serveur qui porte DÉJÀ la nouvelle
+surface — tant que le tag n'est pas en prod, les anciens noms y résolvent encore et le contrôle
+est faussement vert. **Aucun garde-fou automatique à ce jour** : la migration reste à la charge
+de qui renomme.
