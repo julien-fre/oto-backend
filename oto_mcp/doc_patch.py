@@ -37,12 +37,37 @@ def headings(body: str) -> list[str]:
     return out
 
 
+def _strip_own_heading(new_body: str, target: str) -> str:
+    """Retire de `new_body` un titre de tête identique à la section visée.
+
+    Le titre est CONSERVÉ par le serveur (il vit dans `head`) : un `body_md` qui le
+    reprend produisait deux sections homonymes — et le doc devenait irréparable par
+    patch, puisque le patch suivant ciblait la PREMIÈRE (vide) des deux (signal #328).
+    On absorbe plutôt que de refuser : « le corps d'une section ne redéclare pas son
+    propre titre » est une convention qu'un agent ne peut pas deviner."""
+    lines = (new_body or "").split("\n")
+    i = 0
+    while i < len(lines) and not lines[i].strip():
+        i += 1
+    if i >= len(lines):
+        return new_body
+    m = _HEADING.match(lines[i])
+    if not m or _norm(m.group(2)) != target:
+        return new_body
+    rest = lines[i + 1:]
+    while rest and not rest[0].strip():
+        rest.pop(0)
+    return "\n".join(rest)
+
+
 def patch_section(body: str, heading: str, new_body: str, mode: str = "replace") -> str:
     """Retourne le corps COMPLET avec la section `heading` modifiée.
 
     `mode` : 'replace' (remplace le contenu SOUS le titre, garde le titre) /
     'append' (ajoute à la fin de la section) / 'prepend' (insère juste après le titre).
     La section court du titre jusqu'au PROCHAIN titre de niveau ≤ (ou la fin).
+    `new_body` = le CORPS de la section : s'il rouvre lui-même le titre visé, ce titre
+    de tête est absorbé (jamais dupliqué).
     Lève `SectionNotFound` si le titre n'existe pas."""
     if mode not in ("replace", "append", "prepend"):
         raise ValueError(f"mode invalide: {mode}")
@@ -61,7 +86,7 @@ def patch_section(body: str, heading: str, new_body: str, mode: str = "replace")
                 break
             j += 1
         head, inner, tail = lines[:i + 1], lines[i + 1:j], lines[j:]
-        new_lines = (new_body or "").split("\n")
+        new_lines = _strip_own_heading(new_body, target).split("\n")
         if mode == "replace":
             # Une ligne vide encadre proprement le nouveau contenu sous le titre.
             section = [""] + new_lines + ([""] if tail else [])

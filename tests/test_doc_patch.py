@@ -69,3 +69,38 @@ def test_headings_lists_all():
 def test_invalid_mode():
     with pytest.raises(ValueError):
         P.patch_section(BODY, "Contacts", "x", mode="delete")
+
+
+# --- Le corps ne redéclare pas son propre titre (signal #328) ---------------
+
+def test_replace_absorbs_heading_repeated_in_body():
+    """Un agent qui renvoie « ## Contacts\\n- bob » ne doit pas créer 2 sections."""
+    out = P.patch_section(BODY, "## Contacts", "## Contacts\n\n- bob", mode="replace")
+    assert P.headings(out).count("Contacts") == 1
+    assert "- bob" in out
+
+
+def test_absorption_is_case_and_hash_insensitive_like_the_match():
+    out = P.patch_section(BODY, "Contacts", "#### contacts\n- bob", mode="replace")
+    assert P.headings(out).count("Contacts") == 1
+    assert "- bob" in out
+
+
+def test_append_and_prepend_absorb_too():
+    for mode in ("append", "prepend"):
+        out = P.patch_section(BODY, "Contacts", "## Contacts\n- bob", mode=mode)
+        assert P.headings(out).count("Contacts") == 1, mode
+        assert "- alice" in out and "- bob" in out, mode
+
+
+def test_a_different_heading_in_body_is_preserved():
+    """On n'absorbe QUE le titre visé — une sous-section légitime reste."""
+    out = P.patch_section(BODY, "Contacts", "### Internes\n- bob", mode="replace")
+    assert "### Internes" in out
+    assert P.headings(out).count("Contacts") == 1
+
+
+def test_body_that_is_only_the_heading_empties_the_section():
+    out = P.patch_section(BODY, "Contacts", "## Contacts", mode="replace")
+    assert P.headings(out).count("Contacts") == 1
+    assert "- alice" not in out
