@@ -164,17 +164,62 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
         raise ValueError(_sf_error_hint(e)) from e
 
 
+def _rotation_writer(rc, jeton_lu: str):
+    """Persiste le refresh token RENOUVELÉ, là où l'ancien a été lu.
+
+    Salesforce impose la rotation (RTR) sur les External Client Apps : chaque
+    rafraîchissement invalide le jeton utilisé et en renvoie un neuf. Ne pas
+    l'écrire revient à révoquer la connexion au premier appel — et à la faire
+    révoquer *complètement* au second, Salesforce traitant la réutilisation d'un
+    jeton consommé comme une compromission (révocation du jeton courant ET des
+    access tokens associés).
+
+    ⚠️ **Écriture conditionnelle**, pas un écrasement : on ne réécrit que si le
+    jeton stocké est toujours celui qu'on a lu. Deux appels concurrents (ou la
+    preprod, qui partage cette base avec la prod) peuvent avoir tourné entre-temps ;
+    écraser aveuglément remettrait en place un jeton déjà consommé, c'est-à-dire
+    exactement le geste que Salesforce interprète comme une attaque.
+    """
+    from .. import credentials_store
+
+    def _write(token_data: dict) -> None:
+        nouveau = token_data.get("refresh_token")
+        # Pas de rotation, ou grant plateforme (pas de ligne de coffre à réécrire).
+        if not nouveau or nouveau == jeton_lu or rc.entity_type is None:
+            return
+        row = credentials_store.get_credential_with_meta(
+            rc.entity_type, rc.entity_id, "salesforce", account=rc.account)
+        if not row or not row.get("secret"):
+            return
+        champs = credentials_store.unpack_secret("salesforce", row["secret"])
+        if champs.get("refresh_token") != jeton_lu:
+            return  # quelqu'un d'autre a déjà tourné : sa valeur est plus récente
+        credentials_store.set_credential(
+            rc.entity_type, rc.entity_id, "salesforce",
+            credentials_store.pack_secret("salesforce",
+                                          {**champs, "refresh_token": nouveau}),
+            account=rc.account)
+
+    return _write
+
+
 def register(mcp: FastMCP) -> None:
     connector_verify.register("salesforce", _verify)
     from oto.tools.salesforce.client import SalesforceClient
 
     def _client() -> SalesforceClient:
-        creds = access.resolve_credential_fields("salesforce")
+        # On passe par `resolve_credential` (et non `resolve_credential_fields`) parce
+        # qu'on a besoin de l'ENTITÉ gagnante de la cascade : sous rotation, il faut
+        # réécrire le jeton renouvelé exactement là où il a été lu — clé membre, clé
+        # d'équipe ou clé d'org — sinon on le range au mauvais niveau.
+        rc = access.resolve_credential("salesforce")
+        creds = rc.fields
         return SalesforceClient(
             client_id=creds.get("client_id"),
             client_secret=creds.get("client_secret"),
             refresh_token=creds.get("refresh_token"),
             login_url=_login_url(creds.get("login_url")),
+            on_refresh=_rotation_writer(rc, creds.get("refresh_token") or ""),
         )
 
     @mcp.tool()
