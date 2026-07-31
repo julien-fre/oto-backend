@@ -77,25 +77,6 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
             "- « fais avancer ce deal dans le pipeline »"
         )),
     ),
-    "lemlistmcp": (
-        DocSection(kind="prerequisite", title="clé api lemlist", body_md=(
-            "crée une clé API dans [lemlist](https://app.lemlist.com) (Settings → Integrations → API), "
-            "puis colle-la dans oto (page compte / connecteurs). une clé partagée par l'org "
-            "(secret d'org) fonctionne aussi bien qu'une clé personnelle.\n"
-            "- distinct du connecteur `lemlist` natif (lecture seule, curé) : ici c'est le "
-            "**MCP officiel** de lemlist (outils `lemlistmcp_*`), catalogue complet en lecture "
-            "ET écriture"
-        )),
-        DocSection(kind="usage", title="piloter tes campagnes de cold outreach", body_md=(
-            "le catalogue officiel complet de lemlist — campagnes, leads, séquences, stats et "
-            "activités, lecture et écriture (ajouter/retirer un lead, créer/mettre en pause "
-            "une campagne…).\n"
-            "- « liste mes campagnes lemlist et leur statut »\n"
-            "- « stats de la campagne X (envoyés, ouverts, répondus, bounces) »\n"
-            "- « ajoute ce contact à la campagne Y »\n"
-            "- « montre les dernières activités (ouvertures, clics, réponses) »"
-        )),
-    ),
     "planity": (
         DocSection(kind="prerequisite", title="email + mot de passe planity", body_md=(
             "connecteur fédéré : renseigne l'**email et le mot de passe** de ton compte "
