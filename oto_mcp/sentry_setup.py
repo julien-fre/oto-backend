@@ -39,6 +39,7 @@ from .auth_hooks import current_client_id_from_token, current_user_sub_from_toke
 from .error_taxonomy import (  # noqa: F401
     _USER_INPUT_CODES,
     _is_arg_validation_error,
+    _is_client_disconnect,
     _is_expected_error,
     _is_managed_connector_error,
     _is_user_input_error,
@@ -49,9 +50,16 @@ logger = logging.getLogger("oto_mcp")
 
 
 def _before_send(event, hint):
-    """Droppe les erreurs gérées — couvre aussi la copie LoggingIntegration."""
+    """Droppe les erreurs gérées — couvre aussi la copie LoggingIntegration.
+
+    Deux familles, deux raisons : l'erreur GÉRÉE (`_is_expected_error` : 4xx amont,
+    refus d'entrée…) n'est pas un bug ; la DÉCONNEXION CLIENT n'est même pas une
+    erreur — le client a raccroché pendant qu'on lui répondait. Cette seconde
+    famille est traitée ici et pas dans `_is_expected_error` parce qu'elle ne
+    concerne que Sentry : elle n'atteint aucun agent (cf. `_is_client_disconnect`).
+    """
     exc_info = (hint or {}).get("exc_info")
-    if exc_info and _is_expected_error(exc_info[1]):
+    if exc_info and (_is_expected_error(exc_info[1]) or _is_client_disconnect(exc_info[1])):
         return None
     return event
 

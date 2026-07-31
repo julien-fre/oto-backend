@@ -123,6 +123,41 @@ def _is_upstream_managed_error(exc) -> bool:
     return False
 
 
+# Déconnexion du CLIENT pendant qu'on lui répondait. Le client MCP ferme le POST
+# (onglet fermé, conversation abandonnée, timeout côté claude.ai) et le serveur écrit
+# dans un stream déjà mort. Rien n'a mal tourné CHEZ NOUS : il n'y a plus personne au
+# bout du fil. Deux formes du MÊME incident, chaînées dans le même event :
+#   - `ClosedResourceError` (anyio) quand le SDK MCP pousse dans le stream fermé ;
+#   - `RuntimeError: Unexpected ASGI message … after response already completed`
+#     quand uvicorn refuse les headers d'une réponse déjà terminée.
+# 38 événements Sentry en 3 semaines, aucun actionnable.
+_CLIENT_DISCONNECT_TYPES = {
+    "ClosedResourceError", "BrokenResourceError", "EndOfStream", "ClientDisconnect",
+}
+_ASGI_AFTER_COMPLETE = "after response already completed"
+
+
+def _is_client_disconnect(exc) -> bool:
+    """True si la chaîne porte une déconnexion client en cours de réponse.
+
+    Reconnu par NOM de classe (comme `_is_upstream_managed_error`) : la taxonomie ne
+    doit pas importer anyio ni le SDK MCP pour rester importable seule.
+
+    ⚠️ VOLONTAIREMENT hors de `_is_expected_error` : ce prédicat ne répond pas à la
+    même question. `_is_expected_error` = « faut-il en tenir l'agent responsable ? »,
+    et sert aussi à `ErrorEnvelopeMiddleware` pour composer la réponse RENDUE à
+    l'agent. Ici, il n'y a plus d'agent à qui répondre — la seule décision qui reste
+    est « faut-il réveiller quelqu'un ? », qui est une question Sentry. D'où l'appel
+    séparé dans `_before_send`.
+    """
+    for e in _chain(exc):
+        if type(e).__name__ in _CLIENT_DISCONNECT_TYPES:
+            return True
+        if isinstance(e, RuntimeError) and _ASGI_AFTER_COMPLETE in str(e):
+            return True
+    return False
+
+
 _UNKNOWN_TOOL = re.compile(r"Unknown tool: '([^']+)'")
 
 
