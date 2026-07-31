@@ -29,18 +29,68 @@ def register(mcp: FastMCP) -> None:
         name: Optional[str] = None,
         domain: Optional[str] = None,
         country: Optional[str] = None,
+        employee_ranges: Optional[list[str]] = None,
+        revenue_min: Optional[int] = None,
+        revenue_max: Optional[int] = None,
+        locations: Optional[list[str]] = None,
+        keywords: Optional[list[str]] = None,
+        technologies: Optional[list[str]] = None,
+        org_ids: Optional[list[str]] = None,
         per_page: int = 10,
+        page: int = 1,
     ) -> dict:
-        """Search Apollo organizations by name, domain and/or country."""
+        """Find companies by firmographics — the CHEAP way to qualify a list.
+
+        Costs 1 Apollo credit per PAGE (up to 100 results), where enrichment costs
+        1 credit per COMPANY: filter here, enrich only what you keep.
+
+        ⚠️ Results carry revenue and headcount GROWTH, but NOT the headcount itself
+        — that's why you filter by `employee_ranges` instead of reading a number.
+        For the exact headcount and its per-department split, enrich (see
+        apollo_enrich_organization / apollo_bulk_enrich_organizations).
+
+        Args:
+            name: company name.
+            domain: company domain.
+            country: HQ country (shorthand for `locations`).
+            employee_ranges: headcount brackets "min,max", e.g. ["11,50", "51,200"].
+            revenue_min / revenue_max: annual revenue bounds.
+            locations: HQ cities/regions/countries.
+            keywords: activity keywords.
+            technologies: technology uids in use, e.g. ["salesforce"].
+            org_ids: Apollo organization ids.
+            per_page: results per page (≤100). page: page number.
+        """
         client, _ = _client()
         return client.search_organizations(
-            name=name, domain=domain, country=country, per_page=per_page)
+            name=name, domain=domain, country=country, per_page=per_page, page=page,
+            employee_ranges=employee_ranges, revenue_min=revenue_min,
+            revenue_max=revenue_max, locations=locations, keywords=keywords,
+            technologies=technologies, org_ids=org_ids)
 
     @mcp.tool()
     def apollo_enrich_organization(domain: str) -> dict:
-        """Enrich a company from its domain (firmographics, size, industry…)."""
+        """Enrich a company from its domain (firmographics, size, industry…).
+
+        Returns the exact `estimated_num_employees`, its per-department split
+        (`departmental_head_count`), 6/12/24-month headcount growth, revenue,
+        founding year and tech stack. Costs 1 Apollo credit. For several companies
+        at once, prefer apollo_bulk_enrich_organizations (same cost, 10× fewer calls).
+        """
         client, _ = _client()
         return client.enrich_organization(domain)
+
+    @mcp.tool()
+    def apollo_bulk_enrich_organizations(domains: list[str]) -> dict:
+        """Enrich UP TO 10 companies in a single call — same fields as
+        apollo_enrich_organization (headcount, per-department split, growth, revenue).
+
+        Costs 1 Apollo credit per company (a batch saves CALLS, not credits: the
+        enrich rate limit is 600/h, so batching divides your call budget by 10).
+        Over 10 domains, split into batches yourself — the API refuses more.
+        """
+        client, _ = _client()
+        return client.bulk_enrich_organizations(domains)
 
     @mcp.tool()
     def apollo_search_people(
