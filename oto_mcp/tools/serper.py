@@ -22,7 +22,10 @@ from .. import access
 # taxonomie droppe les McpError d'entrée) :
 #  - **400** (générique, dans `_run`) : requête/URL invalide — param de lieu manquant
 #    (`Missing fid/cid/placeId`), URL non scrapable (`Content-Type application/json`)… ;
-#  - **5xx** du scrape (dans `serper_scrape`) : la page a bloqué le robot.
+#  - **404 et 5xx** du scrape (dans `serper_scrape`) : l'URL ne mène à rien (page
+#    morte) ou la page a bloqué le robot. Le 404 était le 1ᵉʳ contributeur de bruit
+#    Sentry du backend — 37 événements en 5 semaines pour « l'URL que l'agent a
+#    trouvée est morte », ce qui est une entrée invalide, pas une panne.
 # Les 401/402/403/429 (clé/crédits/rate) restent propagés : vrais problèmes de config.
 _SERPER_STATUS = re.compile(r"Serper \w+ (\d{3}):")
 
@@ -430,11 +433,13 @@ def register(mcp: FastMCP) -> None:
             return _run("scrape_page", url=url, include_markdown=include_markdown)
         except RuntimeError as e:
             m = _SERPER_STATUS.search(str(e))
-            if m and 500 <= int(m.group(1)) < 600:
+            code = int(m.group(1)) if m else None
+            if code == 404 or (code is not None and 500 <= code < 600):
+                detail = ("cette page n'existe pas (ou plus)" if code == 404 else
+                          "la page a bloqué le robot ou n'a pas pu être récupérée")
                 raise McpError(ErrorData(
                     code=INVALID_REQUEST,
-                    message=(f"Scrape impossible pour cette URL ({url}) : la page a "
-                             "bloqué le robot ou n'a pas pu être récupérée. Essaie une "
-                             "autre source ou serper_web_search."),
+                    message=(f"Scrape impossible pour cette URL ({url}) : {detail}. "
+                             "Essaie une autre source ou serper_web_search."),
                 )) from None
             raise

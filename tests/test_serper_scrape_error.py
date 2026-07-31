@@ -67,6 +67,18 @@ def test_scrape_5xx_becomes_managed_mcp_error(scrape):
     assert _is_expected_error(ei.value) is True
 
 
+def test_scrape_404_becomes_managed_mcp_error(scrape):
+    # 404 = l'URL ne mène à rien (page morte) → entrée invalide, pas un incident.
+    # 1ᵉʳ contributeur de bruit Sentry avant ce mapping (37 événements).
+    fn, calls = scrape
+    calls["exc"] = RuntimeError("Serper scrape 404: Page not found.")
+    with pytest.raises(McpError) as ei:
+        fn("https://example.com/page-morte")
+    assert "n'existe pas" in ei.value.error.message
+    assert "page-morte" in ei.value.error.message
+    assert _is_expected_error(ei.value) is True
+
+
 def test_scrape_4xx_propagates_unchanged(scrape):
     # 402/403 (crédits épuisés, clé invalide) = vrai problème de config, pas un
     # échec d'URL → on ne le masque PAS derrière « URL non scrapable ».
