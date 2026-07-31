@@ -551,6 +551,12 @@ _REGISTRY_LIST = [
     _c("unipile", ["unipile", "whatsapp", "telegram", "instagram", "messenger", "twitter"],
        auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        secret_kind="api_key", hosted_auth=True, personal_cross_org=True,
+       # free-tier : clé plateforme OUVERTE à tous, gardée par l'OPTION couche-3 (has_option),
+       # PAS par un allowlist de clé. Sans ce flag, un grant plateforme (onboarding d'un user
+       # à unipile via le dashboard) fait passer la clé `open`→`closed`+share_down=[ce user]
+       # et coupe TOUS les autres (panne all-users vécue 2× — org 194, puis un user). Avec le
+       # flag, `platform_grant` ne pose QUE le quota, ne ferme jamais la clé (cf. oto-backend#245).
+       platform_key_open=True,
        label="Messagerie hébergée (Unipile)",
        help="LinkedIn + WhatsApp + Telegram + Instagram + Messenger + X/Twitter hébergés (recherche/scrape/messagerie)",
        href="https://www.unipile.com",
