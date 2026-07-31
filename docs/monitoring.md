@@ -3,11 +3,11 @@ title: Monitoring des appels MCP
 type: reference
 description: >-
   Référence du système de journalisation des appels MCP dans oto-backend :
-  CallMonitoringMiddleware via hook on_call_tool (point d'interception unique),
-  table tool_call_log(id, sub, tool_name, called_at, duration_ms, ok, error),
+  ToolCallLogger (oto_mcp/calllog.py) via hook on_call_tool (point d'interception
+  unique), table tool_calls (kind mcp|rest, sub, tool, args, ok, error, run_id),
   prune au boot via OTO_MCP_CALL_LOG_RETENTION_DAYS (défaut 30j). Décrit les
   surfaces admin GET /api/admin/monitoring/summary et /calls (agrégats par tool/user/
-  jour, journal brut filtrable) consommées par AdminMcpMonitoring.vue. À consulter
+  jour, journal brut filtrable) consommées par MonitoringView.vue. À consulter
   pour comprendre ce qui est tracé (outils MCP uniquement, pas les appels REST ni
   le handshake), diagnostiquer un user actif sans appels, ou étendre la rétention.
 ---

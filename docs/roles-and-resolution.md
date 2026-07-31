@@ -6,7 +6,8 @@ description: >-
   définis dans access.py/roles.py, bootstrap via OTO_MCP_ADMIN_SUB) et de la cascade
   de résolution de clé API par appel : clé membre BYO scopée (sub, org) [ADR 0033] > grant explicite user_grants
   (quota daily) > McpError actionnable. Détaille les platform_keys en DB uniquement
-  (plus de SOPS, rotation via oto_admin_set_platform_key), le gate auth_modes pour
+  (plus de SOPS ; la POSE du secret brut est dashboard-only, le MCP ne porte que les
+  droits via oto_admin_key_grant), le gate auth_modes pour
   les providers platform-éligibles (serper/hunter/sirene/kaspr), les providers byo-only
   (attio/lemlist/pennylane), le cas Slack (token xoxp per-user), et le débranchement
   SOPS (OTO_CONFIG_DISABLE_SOPS=1 en prod). À consulter pour diagnostiquer un accès

@@ -8,7 +8,7 @@ description: >-
   pile session FastMCP, runs imbriqués OK), et capacité feedback (signal
   tool_feedback|gap → table durable usage_signals hors prune 30j). Détaille les
   projections admin /api/admin/usage/* (runs, gaps, tool-quality, signals filtrables
-  open/resolved) et la résolution de signaux via oto_admin_resolve_signal. À charger
+  open/resolved) et la résolution de signaux via oto_admin_signal (op=resolve). À charger
   pour comprendre comment tracer un déroulé d'agent, remonter un gap d'outil, ou
   déboguer un run_id manquant sur les appels.
 adr:

@@ -7,7 +7,8 @@ description: >-
   secret_fields dérivé), coffre chiffré unique connector_credentials (table 4-col PK
   entity_type/entity_id/connector/account, AES-256-GCM obligatoire via crypto.py,
   master key en Scaleway Secret Manager), et résolution access.py (resolve_api_key,
-  resolve_credential_fields, resolve_mount_token, status_for, granted_namespaces_for).
+  resolve_credential_fields, resolve_mount_token, status_for,
+  list_datastore_namespaces_granted_to).
   Inclut le packing multi-champs, Google multi-compte, LinkedIn/Crunchbase en coffre,
   et le modèle de connecteur remote (ADR 0003, pilote = un connecteur remote client). À consulter pour
   tout ajout de connecteur, débogage de credential, ou compréhension du chiffrement.

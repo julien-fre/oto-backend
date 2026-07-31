@@ -9,7 +9,8 @@ description: >-
   1-clic (candidate, bank_details). Détaille la capture passive du schéma observé
   via connector_schema_store (squelette clés+types, jamais de valeurs/PII, table
   connector_schemas, cap 1000 clés) car les API tierces (Unipile, Apollo…) ne
-  publient pas de schéma de réponse. Couvre le dry-run preview (oto_preview_org_field_filter)
+  publient pas de schéma de réponse. Couvre le dry-run preview (capacité
+  org.field_filters.preview, REST POST /api/orgs/{id}/field-filters/{service}/preview)
   et le moteur FieldFilter d'oto-core (mask/pseudonym/generalize/hash/drop). À lire
   pour configurer ou étendre la rédaction de PII dans une org.
 ---
