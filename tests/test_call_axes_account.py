@@ -30,7 +30,7 @@ def test_account_axis_applies_to_identity_bearing_tools():
 
 
 def test_account_axis_excludes_single_and_spine():
-    for name in ("folk_search", "serper_web_search", "pennylane_company",
+    for name in ("folk_search", "serper_web_search", "pennylane_ref",
                  "oto_create_org", "oto_whoami", "data_write"):
         assert "_account" not in _params(name), name
 

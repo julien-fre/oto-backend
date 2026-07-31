@@ -19,7 +19,7 @@ def test_testable_covers_fod_readonly():
 def test_not_testable_side_effect_and_apps():
     # Effet de bord / mutation / coût — jamais testables via un simple bouton.
     for name in ("email_send", "data_write", "data_delete_row", "folk_create_person",
-                 "whatsapp_send_message", "pennylane_create_credit_note",
+                 "whatsapp_send_message", "pennylane_invoice",
                  "serper_web_search", "oto_use_org"):
         assert not is_testable(name), name
     # Les MCP Apps renvoient un composant d'UI, pas du JSON → exclues.

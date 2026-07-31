@@ -718,10 +718,10 @@ DOC_SECTIONS: dict[str, tuple[DocSection, ...]] = {
         )),
         DocSection(kind="usage", title="lire et lettrer ta compta", body_md=(
             "interroge factures, transactions et balance, et solde les paiements non rapprochés.\n"
-            "- `pennylane_trial_balance` la balance comptable sur une période, `pennylane_ledger_accounts` le plan comptable\n"
-            "- `pennylane_customer_invoices` / `pennylane_supplier_invoices` les factures, `pennylane_transactions` les mouvements bancaires\n"
+            "- `pennylane_trial_balance` la balance comptable sur une période, `pennylane_ref(kind=\"ledger_accounts\")` le plan comptable\n"
+            "- `pennylane_invoice(op=\"list\")` / `pennylane_supplier_invoice(op=\"list\")` les factures, `pennylane_transactions` les mouvements bancaires\n"
             "- `pennylane_match` lettre une transaction avec sa facture (réversible) pour ne pas laisser une facture payée en `late`\n"
-            "- flux avoir supervisé : `pennylane_products` (résoudre le `product_id`, jamais le deviner) → `pennylane_find_invoice_by_reference` (anti-doublon) → `pennylane_create_credit_note` (brouillon **standalone**, lignes en positif — la négativation « avoir » est appliquée côté serveur) → `pennylane_finalize_invoice` puis `pennylane_send_invoice` **après validation humaine**"
+            "- flux avoir supervisé : `pennylane_ref(kind=\"products\")` (résoudre le `product_id`, jamais le deviner) → `pennylane_invoice(op=\"find\")` (anti-doublon) → `pennylane_invoice(op=\"credit_note\")` (brouillon **standalone**, lignes en positif — la négativation « avoir » est appliquée côté serveur) → `pennylane_invoice(op=\"finalize\")` puis `op=\"send\"` **après validation humaine**"
         )),
     ),
     "gocardless": (
