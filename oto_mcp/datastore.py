@@ -28,7 +28,7 @@ from typing import Any, Optional
 from psycopg.errors import UniqueViolation
 
 from . import datastore_schema as dsv2
-from . import db, ownership
+from . import db, ownership, session_org
 
 
 _META_COLS = ("_id", "_created_at", "_updated_at", "_claimed_by", "_claimed_until")
@@ -227,6 +227,11 @@ class DatastorePg:
                                             str(ns_id), "write"))
             if not ok:
                 raise NamespaceReadOnly(namespace)
+        # Le journal cite l'ENTITÉ, pas la chaîne tapée : `data_write("mucho-leads")`,
+        # `data_write("160")` et `data_write("slot:vivier")` visent le même tableau.
+        # Consigné APRÈS les gardes (un namespace refusé ne laisse pas de trace) ;
+        # no-op hors appel MCP — la face REST tient déjà son propre relevé.
+        session_org.note_call_trace(ns_id=ns_id, ns_name=ns.get("namespace"))
         return ns_id
 
     @staticmethod
@@ -248,8 +253,38 @@ class DatastorePg:
 
     # --- schéma v2 : validation d'écriture + cycle de vie (ADR 0046) ---------
 
+    def _ns_of(self, ns_id: int) -> dict:
+        """La ligne `user_datastores` (nom canonique + schéma + propriétaire)."""
+        return db.get_datastore_namespace_by_id(ns_id) or {}
+
     def _schema_of(self, ns_id: int) -> Optional[dict]:
-        return (db.get_datastore_namespace_by_id(ns_id) or {}).get("schema")
+        return self._ns_of(ns_id).get("schema")
+
+    def _trace(self, trace: Optional[dict], ns_id: int, ns: dict,
+               *, prev_status: Any = None) -> None:
+        """RELEVÉ du geste pour le journal (seam ADR 0046 b4) : ce que la surface REST
+        doit savoir, pris DANS la mutation qui l'a déjà calculé.
+
+        ⚠️ `prev_status` **doit** venir d'ici et pas d'une relecture séparée : c'est
+        l'état sur lequel la transition a été VALIDÉE. Une relecture faite avant
+        l'appel court avec un write concurrent (un agent qui bouge la ligne entre
+        les deux) et ferait proposer au cockpit une annulation vers un état que la
+        ligne n'a jamais eu. Bénéfice second : zéro requête ajoutée (D2)."""
+        if trace is None:
+            return
+        schema = ns.get("schema")
+        trace.update({
+            "ns_id": int(ns_id),
+            "namespace": ns.get("namespace"),
+            "status_key": (dsv2.status_field(schema) or {}).get("key"),
+            "title_key": (dsv2.title_field(schema) or {}).get("key"),
+            "prev_status": prev_status,
+        })
+
+    @staticmethod
+    def _declared_key_of(schema: Optional[dict]) -> Optional[str]:
+        k = (schema or {}).get("key")
+        return k if isinstance(k, str) and k else None
 
     @staticmethod
     def _check_row(schema: Optional[dict], merged: dict, *,
@@ -440,15 +475,22 @@ class DatastorePg:
 
     # --- row ops -------------------------------------------------------------
 
-    def append_row(self, namespace: str, data: dict) -> dict:
+    def append_row(self, namespace: str, data: dict, *,
+                   trace: Optional[dict] = None) -> dict:
         """Écrit UNE row. Si le namespace déclare une clé métier (`schema.key`),
         applique la MÊME dédup upsert que le batch `write_rows` : une row de même
         valeur de clé est MERGÉE (pas de doublon, l'index `ds_bkey_<ns>` la refuse) ;
-        sinon append. Renvoie la row (nouvelle ou mise à jour)."""
+        sinon append. Renvoie la row (nouvelle ou mise à jour).
+
+        `trace` (dict mutable, optionnel) = relevé pour le journal, cf. `_trace`."""
         ns_id = self._resolve(namespace, write=True)
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}
-        schema = self._schema_of(ns_id)
-        key = self.declared_key(namespace)
+        ns = self._ns_of(ns_id)
+        schema = ns.get("schema")
+        self._trace(trace, ns_id, ns)
+        # La clé métier sort du MÊME schéma que ci-dessus (`declared_key` re-résolvait
+        # le namespace et relisait la ligne pour le même résultat).
+        key = self._declared_key_of(schema)
         kv = user_data.get(key) if key else None
         if key and kv is not None and str(kv) != "":
             existing_id = db.datastore_find_row_id_by_key(ns_id, key, kv)
@@ -527,8 +569,7 @@ class DatastorePg:
     def declared_key(self, namespace: str) -> Optional[str]:
         """Clé métier déclarée au schéma (`schema.key`) — sert la dédup au batch
         write. None si aucune (table libre / schéma sans clé)."""
-        k = (self.get_schema(namespace) or {}).get("key")
-        return k if isinstance(k, str) and k else None
+        return self._declared_key_of(self.get_schema(namespace))
 
     def write_rows(self, namespace: str, rows: list, *, key: Optional[str] = None) -> dict:
         """Écrit un LOT de rows en un appel. Si une clé métier est en vigueur (param
@@ -680,15 +721,21 @@ class DatastorePg:
             "offset": offset, "limit": limit,
         }
 
-    def update_row(self, namespace: str, row_id: str, patch: dict) -> dict:
+    def update_row(self, namespace: str, row_id: str, patch: dict, *,
+                   trace: Optional[dict] = None) -> dict:
+        """Patch partiel d'une row. `trace` (dict mutable, optionnel) = relevé pour
+        le journal — dont l'état AVANT, celui-là même sur lequel la transition de
+        cycle de vie est validée juste en dessous (cf. `_trace`)."""
         ns_id = self._resolve(namespace, write=True)
         existing = db.datastore_get_row(ns_id, row_id)
         if not existing:
             raise RowNotFound(row_id)
         data = dict(existing.get("data") or {})
-        schema = self._schema_of(ns_id)
+        ns = self._ns_of(ns_id)
+        schema = ns.get("schema")
         status_key = (dsv2.status_field(schema) or {}).get("key")
         prev_status = data.get(status_key) if status_key else None
+        self._trace(trace, ns_id, ns, prev_status=prev_status)
         for k, v in patch.items():
             if k in _META_COLS:
                 continue
@@ -745,14 +792,26 @@ class DatastorePg:
         ns_id = self._resolve(namespace)
         return [self._row_to_dict(r) for r in db.datastore_claimed_rows(ns_id)]
 
-    def force_release(self, namespace: str, row_id: str) -> bool:
+    def force_release(self, namespace: str, row_id: str, *,
+                      trace: Optional[dict] = None) -> bool:
         """Libère le bail SANS garde de worker — supervision humaine (dashboard),
         ≠ `release_claim` (agent, gardé). Exige le droit d'écriture. False = pas
         de bail à libérer."""
         ns_id = self._resolve(namespace, write=True)
+        if trace is not None:
+            self._trace(trace, ns_id, self._ns_of(ns_id))
         return db.datastore_release_claim(ns_id, row_id, None)
 
-    def delete_row(self, namespace: str, row_id: str) -> None:
+    def delete_row(self, namespace: str, row_id: str, *,
+                   trace: Optional[dict] = None) -> None:
         ns_id = self._resolve(namespace, write=True)
+        if trace is not None:
+            # Relevé demandé : on lit l'état de la row DANS le chemin de suppression
+            # (au plus près du delete), jamais par un `get_row` séparé côté route —
+            # qui re-résoudrait le namespace et courrait avec un write concurrent.
+            ns = self._ns_of(ns_id)
+            sk = (dsv2.status_field(ns.get("schema")) or {}).get("key")
+            prev = ((db.datastore_get_row(ns_id, row_id) or {}).get("data") or {}) if sk else {}
+            self._trace(trace, ns_id, ns, prev_status=prev.get(sk) if sk else None)
         if not db.datastore_delete_row(ns_id, row_id):
             raise RowNotFound(row_id)

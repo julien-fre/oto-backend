@@ -164,6 +164,11 @@ def _build_auth(verifier: JWTVerifier) -> RemoteAuthProvider:
 
 _SERVER_INSTRUCTIONS = instructions.render()
 
+# Clés du relevé d'appel (`session_org.note_call_trace`) versées dans les args du
+# journal. Liste FERMÉE : le relevé est un seam de service interne, il ne doit pas
+# devenir une porte par laquelle n'importe quel état de résolution finit journalisé.
+_TRACED_ARGS = ("ns_id",)
+
 
 def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # init_db idempotent — utile pour que les tables existent avant que
@@ -281,6 +286,15 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
             # → le token est lisible ici comme dans le handler.
             from .auth_hooks import current_client_id_from_token
             row["client_id"] = current_client_id_from_token()
+            # Entités résolues pendant l'appel (relevé rempli par les seams, ex.
+            # `DatastorePg._resolve` → ns_id). Versées DANS les args, à côté de ce que
+            # l'agent a tapé : `namespace` reste l'intention, `ns_id` devient la clé de
+            # corrélation exacte des lectures du journal. Le contexte est copié par
+            # create_task → le holder est le même objet que celui muté par le handler.
+            trace = session_org.current_call_trace()
+            if trace:
+                row["args"] = {**(row.get("args") or {}),
+                               **{k: v for k, v in trace.items() if k in _TRACED_ARGS}}
         except Exception:
             pass
         # to_thread : l'INSERT PG (pool psycopg sync) ne doit pas bloquer

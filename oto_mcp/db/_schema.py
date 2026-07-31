@@ -85,6 +85,13 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_sub ON tool_calls(sub);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_server_tool ON tool_calls(server, tool, created_at);
+-- Lentilles d'activité du datastore (ADR 0046 b4) : corrélation par `ns_id` résolu.
+-- Index d'EXPRESSION partiel — seules les lignes `data_*` portent un ns_id, donc
+-- l'index reste petit et la lecture d'un tableau ne scanne plus tout le journal.
+-- `args` existe depuis la création de la table (contrat calllog) : sûr ici, contrairement
+-- aux colonnes ajoutées par ALTER (cf. bloc ci-dessous).
+CREATE INDEX IF NOT EXISTS idx_tool_calls_ns ON tool_calls ((args->>'ns_id'), created_at DESC)
+    WHERE args->>'ns_id' IS NOT NULL;
 -- idx_tool_calls_run (run_id) ET idx_tool_calls_org (org_id) créés dans le bloc
 -- ALTER de init_db, APRÈS leur ADD COLUMN : sur une table existante, CREATE TABLE
 -- IF NOT EXISTS est un no-op donc ces colonnes n'existent pas encore ici (un index

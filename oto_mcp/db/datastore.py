@@ -500,6 +500,27 @@ def datastore_namespaces_with_key() -> list[dict]:
         return [dict(r) for r in rows]
 
 
+_DS_MAX_ROWS_BY_IDS = 200
+
+
+def datastore_rows_by_ids(ns_id: int, row_ids: list) -> dict:
+    """Contenu d'un LOT de lignes, en UNE requête : `{row_id: data}`.
+
+    Sert à libeller des références (le journal d'activité cite des `row_id`, l'UI
+    veut le champ `role="title"`). Les ids inconnus — ligne supprimée depuis —
+    sont simplement absents du résultat, jamais une erreur. Lot borné.
+    """
+    ids = [str(r) for r in (row_ids or []) if r][:_DS_MAX_ROWS_BY_IDS]
+    if not ids:
+        return {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT row_id, data FROM datastore_rows WHERE ns_id = %s AND row_id = ANY(%s)",
+            (ns_id, ids),
+        ).fetchall()
+        return {r["row_id"]: (r["data"] or {}) for r in rows}
+
+
 def datastore_get_row(ns_id: int, row_id: str) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(

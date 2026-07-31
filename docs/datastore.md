@@ -53,6 +53,64 @@ Surfaces :
   `tools/foncier.py` (`foncier_*_app`).
 - REST `/api/datastore/*` — pour le CLI `oto data` + UI dashboard.
 
+**Journal de travail : les deux surfaces, une seule table (2026-07-28).** Un geste fait
+au cockpit (dashboard, REST) était journalisé au seul grain ROUTE (`RestCallLogger`,
+`tool='PATCH /api/datastore/…'`) : on voyait qu'une écriture avait eu lieu, jamais
+LAQUELLE ni depuis quel état — cliquer une transition de cycle de vie ne laissait donc
+rien d'exploitable (ni retrouver la ligne, ni annuler). Les mutations REST posent
+désormais AUSSI une ligne **sémantique** dans la même table `tool_calls`
+(`kind='rest'`), nommée dans le **vocabulaire des tools MCP** (`data_write`,
+`data_delete_row`, `data_release`) et portant `namespace`/`ns_id`/`id`/`fields`/
+`from_status`/`to_status`. Helper unique `calllog.log_rest_call` (best-effort, hors
+chemin chaud) ; colle datastore dans `datastore_journal.py`. Lectures : capacités
+`me.datastore.row_activity` (`GET …/rows/{row_id}/activity`) et `me.datastore.activity`
+(`GET …/activity`, `?limit=` borné 200) — elles ne filtrent plus `kind='mcp'`, et
+résolvent `sub → email` **à la lecture** (un lot par page : `tool_calls.email` n'est
+peuplé par aucun sink).
+
+⚠️ **`from_status` vient de la MUTATION, pas d'une relecture.** Les mutations du store
+(`update_row`/`delete_row`/`append_row`/`force_release`) acceptent un **relevé** `trace`
+(dict mutable) qu'elles remplissent avec `ns_id`/`namespace`/`status_key`/`title_key`/
+`prev_status` — pris là où ils sont déjà calculés. Le relire avant l'appel courrait avec
+un write concurrent (un agent qui bouge la ligne entre les deux) et ferait proposer au
+cockpit une annulation vers un état que la ligne n'a jamais eu ; ça ajoutait en prime
+4 requêtes PG synchrones par mutation, sur un serveur mono-loop.
+
+⚠️ **Le journal cite l'ENTITÉ, pas la chaîne tapée.** Le calllog journalise les args
+BRUTS de l'appel — or `data_write` prend `namespace: str`, que l'agent remplit tantôt du
+nom, tantôt de l'id, tantôt d'un `slot:<name>`. Corréler là-dessus obligeait à matcher
+par NOM, avec trois dettes : un nom n'est unique que **par propriétaire**
+(`uq_user_datastores_owner_ns`) donc il fallait le borner au tenant sous peine de fuite
+cross-org, il change au **renommage** (historique orphelin), et un `slot:` n'est pas
+rétro-résolvable. Depuis le 2026-07-28 les deux surfaces corrèlent sur le **`ns_id`
+résolu serveur** : la face REST le tient de sa route, la face MCP du **relevé d'appel**
+(`session_org.note_call_trace`, rempli par `DatastorePg._resolve` APRÈS les gardes —
+un tableau refusé ne laisse pas de trace ; versé dans les args par `_calllog_sink`,
+clés **fermées** `server._TRACED_ARGS`). Index d'expression partiel `idx_tool_calls_ns`.
+
+> Le relevé est un **HOLDER MUTABLE** (dict posé vide par `CallContextMiddleware`), pas
+> une valeur rebindée : les handlers de tools sont majoritairement des `def` sync
+> dispatchés en threadpool, où `copy_context()` copie les BINDINGS — un `.set()` fait
+> dans le thread ne remonte JAMAIS au contexte appelant, la mutation du dict posé en
+> amont si (même objet). Garde-fou : `test_the_trace_survives_the_threadpool`.
+
+L'axe NOM subsiste en **repli, borné au propriétaire** (`db._owner_clause` → `l.org_id`
+ou `l.sub`), pour l'historique écrit avant cette bascule — il s'éteint de lui-même avec
+la rétention 30 j. Même borne sur l'autre axe flou : la valeur de clé métier du parcours
+d'une ligne (cherchée en sous-chaîne dans les args). Owner inconnu ou tableau d'équipe ⇒
+l'axe flou est abandonné (sous-couvrir, jamais sur-matcher) ; `ns_id` et `row_id` (uuid4,
+accès déjà prouvé) se matchent nus.
+
+⚠️ **La lentille REST admin ne compte que les ROUTES.** `kind='rest'` porte maintenant
+deux natures (route `MÉTHODE /chemin` de `RestCallLogger`, geste métier `data_write` du
+journal) → `db.rest_call_stats` filtre sur la forme `position(' /' in tool) > 0`, sinon
+chaque mutation du cockpit double-compte et `by_route` liste des pseudo-routes à latence
+nulle. Les autres lentilles de monitoring filtrent `kind='mcp'` : elles sont intactes.
+
+Refus de schéma : `ds_append`/`ds_update_row` traduisent `RowValidationError` en
+**400 `row_invalid`** (détail = les champs/transitions fautifs), pas en 500 — c'est le
+chemin d'échec d'une annulation (transition de retour devenue illégale).
+
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
 du LLM. Un namespace peut déclarer une **clé métier** au schéma (`schema.key`, ex.

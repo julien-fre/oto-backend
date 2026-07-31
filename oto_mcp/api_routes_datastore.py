@@ -39,13 +39,14 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import db, google_oauth, ownership, roles
+from . import access, datastore_journal, db, google_oauth, ownership, roles
 from .datastore import (
     NamespaceExists,
     NamespaceForbidden,
     NamespaceNotFound,
     NamespaceReadOnly,
     RowNotFound,
+    RowValidationError,
     make_store,
 )
 
@@ -259,12 +260,22 @@ def make_routes(
         if not isinstance(body, dict):
             return json_error(request, 400, "invalid_body")
         namespace = request.path_params["namespace"]
+        trace: dict = {}
         try:
-            return json_response(request, make_store(sub).append_row(namespace, body), status=201)
+            created = make_store(sub).append_row(namespace, body, trace=trace)
         except NamespaceNotFound:
             return json_error(request, 404, "namespace_not_found")
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
+        except RowValidationError as e:
+            # Schéma strict / cycle de vie : refus ACTIONNABLE (le message liste les
+            # champs fautifs), jamais un 500 opaque — le front l'affiche tel quel.
+            return json_error(request, 400, "row_invalid", str(e))
+        ctx = datastore_journal.from_trace(trace, namespace)
+        datastore_journal.record(
+            datastore_journal.TOOL_WRITE, sub=sub, ctx=ctx, row_id=created.get("_id"),
+            fields=list(body.keys()), to_status=datastore_journal.status_of(created, ctx))
+        return json_response(request, created, status=201)
 
     async def ds_list_rows(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
@@ -303,28 +314,10 @@ def make_routes(
             return json_error(request, 400, "invalid_filters")
         return json_response(request, page)
 
-    async def ds_row_activity(request: Request) -> JSONResponse:
-        """Parcours de l'agent d'une row (ADR 0046 b4) : appels `data_*` du calllog
-        corrélés à cette row (par `_id` OU valeur de clé métier) + leur run. Gate =
-        accès LECTURE au namespace (la row est relue via le store, jamais l'id nu)."""
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        namespace = request.path_params["namespace"]
-        row_id = request.path_params["row_id"]
-        store = make_store(sub)
-        try:
-            row = store.get_row(namespace, row_id)
-        except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
-        except RowNotFound:
-            return json_error(request, 404, "row_not_found")
-        key = store.declared_key(namespace)
-        key_value = row.get(key) if key else None
-        activity = db.datastore_row_activity(
-            row_id, str(key_value) if key_value is not None else None)
-        return json_response(request, {"activity": activity, "key": key,
-                                       "retention_days": 30})
+    # Les DEUX lectures d'activité (parcours d'une ligne · activité du tableau) sont
+    # des CAPACITÉS (`capabilities/datastore_activity.py`, ADR 0042 §Convergence) :
+    # un descripteur, une autz, la face REST dérivée — le garde-fou CI interdit
+    # d'écrire un verbe de dashboard à la main ici.
 
     async def ds_aggregate(request: Request) -> JSONResponse:
         """Agrégat serveur (ADR 0046 b1 — compteurs du cockpit) : COUNT/SUM/AVG/…
@@ -395,12 +388,17 @@ def make_routes(
             return err
         namespace = request.path_params["namespace"]
         row_id = request.path_params["row_id"]
+        trace: dict = {}
         try:
-            released = make_store(sub).force_release(namespace, row_id)
+            released = make_store(sub).force_release(namespace, row_id, trace=trace)
         except NamespaceNotFound:
             return json_error(request, 404, "namespace_not_found")
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
+        if released:  # rien libéré = rien changé, donc rien à journaliser
+            datastore_journal.record(datastore_journal.TOOL_RELEASE, sub=sub,
+                                     ctx=datastore_journal.from_trace(trace, namespace),
+                                     row_id=row_id)
         return json_response(request, {"ok": True, "released": released, "id": row_id})
 
     async def ds_get_row(request: Request) -> JSONResponse:
@@ -428,14 +426,30 @@ def make_routes(
             return json_error(request, 400, "invalid_body")
         namespace = request.path_params["namespace"]
         row_id = request.path_params["row_id"]
+        # L'état AVANT vient du RELEVÉ de la mutation (`_trace`) : c'est celui sur
+        # lequel la transition a été validée. Le relire ici, avant l'appel, courrait
+        # avec un write concurrent → le cockpit proposerait d'annuler vers un état
+        # que la ligne n'a jamais eu. Bonus : 0 requête ajoutée au geste.
+        trace: dict = {}
         try:
-            return json_response(request, make_store(sub).update_row(namespace, row_id, body))
+            updated = make_store(sub).update_row(namespace, row_id, body, trace=trace)
         except NamespaceNotFound:
             return json_error(request, 404, "namespace_not_found")
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
         except RowNotFound:
             return json_error(request, 404, "row_not_found")
+        except RowValidationError as e:
+            # Transition de cycle de vie non déclarée / champ requis manquant : c'est
+            # le chemin d'échec de l'annulation côté cockpit → 400 avec le détail,
+            # pas un 500 (le front ne saurait pas dire « ce retour n'est plus possible »).
+            return json_error(request, 400, "row_invalid", str(e))
+        ctx = datastore_journal.from_trace(trace, namespace)
+        datastore_journal.record(
+            datastore_journal.TOOL_WRITE, sub=sub, ctx=ctx, row_id=row_id,
+            fields=list(body.keys()), from_status=trace.get("prev_status"),
+            to_status=datastore_journal.status_of(updated, ctx))
+        return json_response(request, updated)
 
     async def ds_delete_row(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
@@ -443,14 +457,19 @@ def make_routes(
             return err
         namespace = request.path_params["namespace"]
         row_id = request.path_params["row_id"]
+        trace: dict = {}
         try:
-            make_store(sub).delete_row(namespace, row_id)
+            make_store(sub).delete_row(namespace, row_id, trace=trace)
         except NamespaceNotFound:
             return json_error(request, 404, "namespace_not_found")
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
         except RowNotFound:
             return json_error(request, 404, "row_not_found")
+        ctx = datastore_journal.from_trace(trace, namespace)
+        before = trace.get("prev_status")
+        datastore_journal.record(datastore_journal.TOOL_DELETE, sub=sub, ctx=ctx,
+                                 row_id=row_id, from_status=before)
         return json_response(request, {"ok": True, "id": row_id})
 
     async def ds_url(request: Request) -> JSONResponse:
@@ -624,8 +643,6 @@ def make_routes(
         Route("/api/datastore/namespaces/{namespace}/rows", ds_list_rows, methods=["GET"]),
         Route("/api/datastore/namespaces/{namespace}/rows", ds_append, methods=["POST"]),
         Route("/api/datastore/namespaces/{namespace}/rows", options_handler, methods=["OPTIONS"]),
-        Route("/api/datastore/namespaces/{namespace}/rows/{row_id}/activity", ds_row_activity, methods=["GET"]),
-        Route("/api/datastore/namespaces/{namespace}/rows/{row_id}/activity", options_handler, methods=["OPTIONS"]),
         Route("/api/datastore/namespaces/{namespace}/rows/{row_id}/release", ds_release_claim, methods=["POST"]),
         Route("/api/datastore/namespaces/{namespace}/rows/{row_id}/release", options_handler, methods=["OPTIONS"]),
         Route("/api/datastore/namespaces/{namespace}/rows/{row_id}", ds_get_row, methods=["GET"]),

@@ -514,30 +514,44 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
     }
 
 
+# `kind='rest'` porte DEUX natures de ligne (ADR 0046 b4) : la **route** posée par
+# `api_routes.RestCallLogger` (`tool='PATCH /api/datastore/…'`, avec durée) et le
+# **geste métier** posé par `calllog.log_rest_call` (`tool='data_write'`, sans durée).
+# Cette lentille-ci est une télémétrie de SURFACE → elle ne compte que les routes,
+# sinon chaque mutation du cockpit double-compterait et `by_route` listerait des
+# pseudo-routes `data_write`/`data_delete_row` à latence nulle. Une ligne de route
+# est toujours `MÉTHODE /chemin` — le ' /' est le discriminant.
+_REST_ROUTE_SHAPE = "position(' /' in tool) > 0"
+
+
 def rest_call_stats(since_days: int = 7) -> dict:
     """Lentille REST (ADR 0017, kind='rest') : volume + erreurs + latence des appels
-    `/api/*`, par route normalisée. `ok` = 2xx/3xx ; les ≥400 sont comptés erreurs."""
+    `/api/*`, **par route** normalisée. `ok` = 2xx/3xx ; les ≥400 sont comptés erreurs.
+    Les lignes SÉMANTIQUES du journal datastore (même `kind`, `tool` = nom de geste)
+    sont exclues — cf. `_REST_ROUTE_SHAPE`."""
     since_days = max(1, min(int(since_days), 365))
     with _connect() as conn:
         totals = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) AS total,
                    COUNT(*) FILTER (WHERE NOT ok) AS errors,
                    COUNT(DISTINCT sub) AS users
             FROM tool_calls
-            WHERE kind = 'rest' AND created_at >= NOW() - make_interval(days => %s)
+            WHERE kind = 'rest' AND {_REST_ROUTE_SHAPE}
+                  AND created_at >= NOW() - make_interval(days => %s)
             """,
             (since_days,),
         ).fetchone() or {}
         by_route = conn.execute(
-            """
+            f"""
             SELECT tool AS route,
                    COUNT(*) AS calls,
                    COUNT(*) FILTER (WHERE NOT ok) AS errors,
                    ROUND(AVG(duration_ms))::int AS avg_ms,
                    ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms))::int AS p95_ms
             FROM tool_calls
-            WHERE kind = 'rest' AND created_at >= NOW() - make_interval(days => %s)
+            WHERE kind = 'rest' AND {_REST_ROUTE_SHAPE}
+                  AND created_at >= NOW() - make_interval(days => %s)
             GROUP BY tool
             ORDER BY calls DESC
             LIMIT 100
@@ -646,35 +660,156 @@ def get_usage_today(sub: str, tool: str) -> int:
         return int(row["count"]) if row else 0
 
 
+# Colonnes lues pour une entrée d'activité datastore (les deux lectures ci-dessous
+# servent le MÊME contrat d'entrée → une seule projection).
+_DS_ACTIVITY_SELECT = """
+            SELECT l.created_at, l.kind, l.tool, l.args, l.ok, l.error, l.sub, l.email,
+                   l.run_id, r.label AS run_label, r.doctrine, r.outcome
+            FROM tool_calls l LEFT JOIN runs r ON r.run_id = l.run_id
+"""
+
+# Les DEUX surfaces sont journalisées : 'mcp' = appel d'agent, 'rest' = geste fait
+# depuis le dashboard (`calllog.log_rest_call`, même vocabulaire de `tool`). Filtrer
+# `kind='mcp'` laissait le parcours VIDE pour qui travaille au cockpit.
+_DS_ACTIVITY_KINDS = "l.kind IN ('mcp', 'rest')"
+
+
+def _owner_clause(owner_type: Optional[str], owner_id: Optional[str]):
+    """Borne de TENANT d'un tableau → `(sql, param)`, ou None si inconnue.
+
+    Les axes de corrélation « flous » du journal (nom de tableau, valeur de clé
+    métier) ne discriminent PAS le propriétaire : un nom de tableau n'est unique que
+    par propriétaire (`uq_user_datastores_owner_ns`) et une clé métier est cherchée
+    en sous-chaîne. Non bornés, ils feraient lire à une org les gestes d'une autre.
+    On borne donc au tenant qui a **pu** résoudre ce tableau : son org (l'org active
+    scope `DatastorePg._resolve`) ou l'acteur lui-même pour un tableau perso.
+    Propriétaire inconnu ou tableau d'ÉQUIPE ⇒ None = l'axe flou est abandonné
+    (sous-couvrir plutôt que sur-matcher)."""
+    if not owner_id:
+        return None
+    if str(owner_type) == "org":
+        return "l.org_id = %s", int(owner_id)
+    if str(owner_type) == "user":
+        return "l.sub = %s", str(owner_id)
+    return None
+
+
+def _ds_activity_entry(r: dict) -> dict:
+    """Ligne de `tool_calls` → entrée d'activité (contrat REST).
+
+    Les champs enrichis (`row_id`/`fields`/`from_status`/`to_status`) sont LUS des
+    args journalisés : les lignes MCP et les lignes antérieures à cette version ne
+    les portent pas → null / [] sans erreur, aucune migration de données. `row_title`
+    est laissé à None ici : le libellé se résout côté surface (elle a le store et le
+    champ `role="title"` du schéma), pas dans le SQL du journal.
+    """
+    args = r.get("args") if isinstance(r.get("args"), dict) else {}
+    fields = args.get("fields")
+    return {
+        "created_at": r.get("created_at"),
+        "kind": r.get("kind") or "mcp",
+        "tool": r.get("tool"),
+        "ok": r.get("ok"),
+        "error": r.get("error"),
+        "sub": r.get("sub"),
+        "email": r.get("email"),
+        "run_id": r.get("run_id"),
+        "run_label": r.get("run_label"),
+        "doctrine": r.get("doctrine"),
+        "outcome": r.get("outcome"),
+        "row_id": args.get("id"),
+        "row_title": None,
+        "fields": [str(f) for f in fields] if isinstance(fields, list) else [],
+        "from_status": args.get("from_status"),
+        "to_status": args.get("to_status"),
+    }
+
+
 def datastore_row_activity(row_id: str, key_value: Optional[str] = None,
+                           *, owner_type: Optional[str] = None,
+                           owner_id: Optional[str] = None,
                            limit: int = 50) -> list[dict]:
-    """Parcours de l'agent d'UNE row du datastore (ADR 0046 b4) : les appels
-    `data_*` du calllog qui portent son `_id` (update/lecture ciblée/claim) OU la
-    valeur de sa CLÉ MÉTIER (append/batch — l'id n'existe pas encore au write),
-    joints au run (label/doctrine/outcome, ADR 0017). Fenêtre = la rétention du
-    calllog (prune 30 j) : c'est un journal de travail, pas un audit permanent.
+    """Parcours d'UNE row du datastore (ADR 0046 b4) : les gestes `data_*` du calllog
+    qui portent son `_id` (update/lecture ciblée/claim) OU la valeur de sa CLÉ MÉTIER
+    (append/batch — l'id n'existe pas encore au write), joints au run (label/doctrine/
+    outcome, ADR 0017). Appels d'AGENT (kind='mcp') **et** gestes de dashboard
+    (kind='rest'). Fenêtre = la rétention du calllog (prune 30 j) : c'est un journal
+    de travail, pas un audit permanent.
     Le match clé passe par `args::text ILIKE` (les args sont petits et le scan est
     borné par `tool LIKE 'data_%'` + rétention) — une valeur de clé courte/ambiguë
-    peut sur-matcher, assumé pour un journal indicatif."""
+    peut sur-matcher, assumé pour un journal indicatif. ⚠️ Assumé DANS LE TENANT
+    seulement : cet axe est une recherche de SOUS-CHAÎNE, il est donc borné au
+    propriétaire du tableau (même raison qu'en dessous — sans borne, une clé métier
+    banale ferait remonter les gestes d'une autre org). L'axe `id`, lui, reste nu :
+    c'est un uuid4 non devinable et l'appelant a déjà prouvé son accès à CETTE row."""
     limit = max(1, min(int(limit), 200))
-    clauses = ["l.kind = 'mcp'", "l.tool LIKE 'data\\_%%'"]
+    clauses = [_DS_ACTIVITY_KINDS, "l.tool LIKE 'data\\_%%'"]
     params: list[Any] = []
     match = ["l.args->>'id' = %s"]
     params.append(str(row_id))
-    if key_value is not None and str(key_value).strip():
-        match.append("l.args::text ILIKE %s")
-        params.append(f"%{str(key_value).strip()}%")
+    key_bound = _owner_clause(owner_type, owner_id)
+    if key_value is not None and str(key_value).strip() and key_bound:
+        sql, bound = key_bound
+        match.append(f"(l.args::text ILIKE %s AND {sql})")
+        params += [f"%{str(key_value).strip()}%", bound]
     clauses.append("(" + " OR ".join(match) + ")")
     params.append(limit)
     with _connect() as conn:
         rows = conn.execute(
-            f"""
-            SELECT l.created_at, l.tool, l.ok, l.error, l.sub, l.email,
-                   l.run_id, r.label AS run_label, r.doctrine, r.outcome
-            FROM tool_calls l LEFT JOIN runs r ON r.run_id = l.run_id
+            f"""{_DS_ACTIVITY_SELECT}
             WHERE {' AND '.join(clauses)}
             ORDER BY l.created_at DESC LIMIT %s
             """,
             tuple(params),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [_ds_activity_entry(dict(r)) for r in rows]
+
+
+def datastore_namespace_activity(ns_id: int, namespace: Optional[str] = None,
+                                 *, owner_type: Optional[str] = None,
+                                 owner_id: Optional[str] = None,
+                                 limit: int = 50) -> list[dict]:
+    """Activité de TOUT un tableau : les gestes `data_*` qui l'ont visé, agent (MCP)
+    comme dashboard (REST).
+
+    L'axe de corrélation est le `ns_id` **résolu serveur**, sur les DEUX surfaces : la
+    face REST le tient de sa route, la face MCP du relevé d'appel que
+    `DatastorePg._resolve` remplit (`session_org.note_call_trace`). Le journal cite donc
+    l'entité, quelle que soit la chaîne tapée — `data_write("mucho-leads")`,
+    `data_write("160")` et `data_write("slot:vivier")` retombent sur la même ligne, et
+    un renommage de tableau n'orpheline plus son historique.
+
+    ⚠️ L'axe NOM subsiste en **repli, uniquement pour l'historique** écrit avant que le
+    ns_id ne soit journalisé (il s'éteint de lui-même avec la rétention 30 j du calllog).
+    Il est **BORNÉ AU PROPRIÉTAIRE, jamais matché nu** (`_owner_clause`) : un nom n'est
+    unique que par propriétaire (`uq_user_datastores_owner_ns`), deux orgs ont chacune le
+    droit d'avoir un `leads`, et un `args->>'namespace' = 'leads'` sans borne ferait lire
+    à l'org B les gestes de l'org A. Résiduel de ce repli, borné dans le temps : un
+    homonyme DANS le même tenant reste indistinguable (même tenant, pas une fuite).
+    """
+    limit = max(1, min(int(limit), 200))
+    ns_id = int(ns_id)
+    match = ["l.args->>'ns_id' = %s"]
+    params: list[Any] = [str(ns_id)]
+    # Repli historique : les formes sous lesquelles un agent a pu nommer CE tableau
+    # avant que le ns_id résolu ne soit journalisé — son id en texte et son nom canonique.
+    names = [str(ns_id)]
+    name = (namespace or "").strip()
+    if name and name != str(ns_id):
+        names.append(name)
+    name_bound = _owner_clause(owner_type, owner_id)
+    if name_bound:
+        sql, bound = name_bound
+        match.append(f"(l.args->>'namespace' = ANY(%s) AND {sql})")
+        params += [names, bound]
+    params.append(limit)
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""{_DS_ACTIVITY_SELECT}
+            WHERE {_DS_ACTIVITY_KINDS} AND l.tool LIKE 'data\\_%%'
+                  AND ({' OR '.join(match)})
+            ORDER BY l.created_at DESC LIMIT %s
+            """,
+            tuple(params),
+        ).fetchall()
+        return [_ds_activity_entry(dict(r)) for r in rows]

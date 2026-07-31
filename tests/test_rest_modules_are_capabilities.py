@@ -76,7 +76,8 @@ _KNOWN: dict[str, str] = {
     "/api/datastore/namespaces/{namespace}/queue": DEBT,
     "/api/datastore/namespaces/{namespace}/rows": DEBT,
     "/api/datastore/namespaces/{namespace}/rows/{row_id}": DEBT,
-    "/api/datastore/namespaces/{namespace}/rows/{row_id}/activity": DEBT,
+    # `…/rows/{row_id}/activity` a quitté cette liste : les DEUX lectures d'activité
+    # sont des capacités (`capabilities/datastore_activity.py`) — dette remboursée.
     "/api/datastore/namespaces/{namespace}/rows/{row_id}/release": DEBT,
     "/api/datastore/namespaces/{namespace}/schema": DEBT,
     "/api/datastore/namespaces/{namespace}/share": DEBT,

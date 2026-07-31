@@ -156,8 +156,52 @@ def reset_call_account(token: contextvars.Token) -> None:
 
 
 def current_call_account() -> Optional[str]:
-    """Compte (identité connecteur) épinglé par `account=` de l'appel courant, ou None."""
+    """Compte (identité connecteur) épinglé par `_account=` de l'appel courant, ou None."""
     return _CALL_ACCOUNT.get()
+
+
+# ── Relevé de résolution de l'appel (« ce que le SERVEUR a résolu ») ─────────
+# Sens inverse des axes ci-dessus : ceux-là portent ce que l'APPELANT a fourni,
+# celui-ci ce que le serveur a résolu PENDANT l'appel — aujourd'hui le `ns_id` d'un
+# tableau du datastore, pour que le journal cite l'ENTITÉ et non la chaîne tapée.
+# `data_write("mucho-leads", …)` et `data_write("160", …)` désignent le même tableau ;
+# sans l'id résolu, la lecture du journal doit corréler par NOM — or un nom n'est
+# unique que par propriétaire (donc à borner par tenant), il change au renommage, et
+# un `slot:<name>` n'est pas rétro-résolvable. L'id supprime les trois d'un coup.
+#
+# HOLDER MUTABLE (dict posé vide au point d'entrée), et non une valeur rebindée :
+# la plupart des handlers de tools sont des `def` sync dispatchés en threadpool, où
+# `copy_context()` copie les BINDINGS — un `.set()` fait dans le thread ne remonte
+# jamais au contexte appelant, alors que la mutation du dict posé en amont, si (c'est
+# le même objet). Vérifié empiriquement avant d'être écrit ici.
+_CALL_TRACE: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "oto_call_trace", default=None)
+
+
+def set_call_trace(holder: dict) -> contextvars.Token:
+    """Pose le relevé de l'appel courant (dict vide, rempli par les seams de résolution)."""
+    return _CALL_TRACE.set(holder)
+
+
+def reset_call_trace(token: contextvars.Token) -> None:
+    _CALL_TRACE.reset(token)
+
+
+def current_call_trace() -> Optional[dict]:
+    """Relevé de l'appel courant, ou None hors appel MCP (REST, stdio, tests)."""
+    return _CALL_TRACE.get()
+
+
+def note_call_trace(**values) -> None:
+    """Consigne au relevé de l'appel courant — écrit DEDANS, ne le remplace jamais
+    (le holder est l'objet que le contexte parent relira).
+
+    No-op hors appel MCP : un seam de résolution ne doit jamais dépendre de la
+    présence du journal. Les valeurs `None` sont ignorées."""
+    holder = _CALL_TRACE.get()
+    if holder is None:
+        return
+    holder.update({k: v for k, v in values.items() if v is not None})
 
 
 # ── View-as USER (« voir en tant que », face REST, LECTURE SEULE) ────────────

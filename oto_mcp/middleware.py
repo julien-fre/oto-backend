@@ -232,6 +232,10 @@ class CallContextMiddleware(Middleware):
         # ultérieure lève (les tokens déjà posés sont toujours nettoyés).
         undo: list = []
         try:
+            # Relevé de résolution : posé EN PREMIER (donc reset EN DERNIER, LIFO) pour
+            # que les seams l'aient pendant tout le handler ET que le calllog le relise
+            # après. Inerte si rien ne le remplit — un dict vide n'ajoute aucune ligne.
+            undo.append((session_org.reset_call_trace, session_org.set_call_trace({})))
             # `_org=` (tools de capacité) : posé ici, retiré des kwargs par `_make_tool`.
             if name in self._org and args.get("_org") is not None:
                 undo.append((session_org.reset_call_org, await self._pin_org(args["_org"])))

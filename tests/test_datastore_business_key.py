@@ -169,7 +169,9 @@ def test_update_row_key_collision_raises_valueerror_not_500(monkeypatch):
     monkeypatch.setattr(st, "_resolve", lambda ns, write=False: 7)
     monkeypatch.setattr(dsm.db, "datastore_get_row",
                         lambda ns_id, rid: {"data": {"siren": "111", "x": 1}})
-    monkeypatch.setattr(st, "_schema_of", lambda ns_id: {"key": "siren", "fields": []})
+    monkeypatch.setattr(st, "_ns_of",
+                        lambda ns_id: {"namespace": "t",
+                                       "schema": {"key": "siren", "fields": []}})
     monkeypatch.setattr(st, "_check_row", lambda *a, **k: None)
     monkeypatch.setattr(dsm.db, "datastore_update_row",
                         lambda ns_id, rid, data, ts: (_ for _ in ()).throw(
@@ -185,7 +187,8 @@ def test_update_row_unexplained_violation_reraises(monkeypatch):
     monkeypatch.setattr(st, "_resolve", lambda ns, write=False: 7)
     monkeypatch.setattr(dsm.db, "datastore_get_row",
                         lambda ns_id, rid: {"data": {"x": 1}})
-    monkeypatch.setattr(st, "_schema_of", lambda ns_id: {"fields": []})  # pas de key
+    monkeypatch.setattr(st, "_ns_of",  # pas de key
+                        lambda ns_id: {"namespace": "t", "schema": {"fields": []}})
     monkeypatch.setattr(st, "_check_row", lambda *a, **k: None)
     monkeypatch.setattr(dsm.db, "datastore_update_row",
                         lambda ns_id, rid, data, ts: (_ for _ in ()).throw(

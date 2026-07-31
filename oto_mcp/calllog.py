@@ -1,8 +1,13 @@
-"""Journal des appels de tools MCP — middleware inliné (ex-lib `otomata-calllog`).
+"""Journal des appels — middleware MCP inliné (ex-lib `otomata-calllog`) + gestes REST.
 
 Une ligne par `call_tool` reçu : qui (sub du JWT), quel tool, arguments tronqués,
 durée, succès/erreur. L'écriture part en tâche de fond : zéro latence ajoutée, un
 échec de journalisation n'échoue jamais le tool.
+
+Le journal a **un seul domicile** : la table `tool_calls` (`db.insert_tool_call`),
+et **un seul module** — ici. `log_rest_call` y ajoute les gestes faits depuis le
+dashboard (`kind='rest'`), sous le MÊME vocabulaire de `tool` que la surface MCP
+(`data_write`…), pour qu'une lecture de journal voie l'agent ET l'humain.
 
 Historique : lib `otomata-calllog` (extraite d'ogic 2026-06-12), inlinée ici le
 2026-07-23 (otomata-calllog#1) — le backend était son dernier consommateur, et le
@@ -44,6 +49,85 @@ def truncated_args(arguments: dict | None, max_chars: int = MAX_ARG_CHARS) -> di
                 v = v[:max_chars] + "…"
         out[k] = v
     return out
+
+
+MAX_FIELDS = 50
+MAX_FIELD_CHARS = 64
+
+# Références fortes sur les écritures REST en tâche de fond (anti-GC asyncio).
+_REST_PENDING: set = set()
+
+
+def _fields_list(fields: Any) -> list[str]:
+    """Champs touchés par l'écriture, bornés — gardés comme un VRAI tableau JSON
+    (`truncated_args` stringifierait la liste, et le journal ne serait plus
+    exploitable colonne par colonne)."""
+    if not fields:
+        return []
+    return [str(f)[:MAX_FIELD_CHARS] for f in list(fields)[:MAX_FIELDS]]
+
+
+def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
+                  fields: Any = None, ok: bool = True, error: str | None = None,
+                  org_id: int | None = None, duration_ms: int | None = None) -> None:
+    """Journalise un GESTE fait depuis le dashboard (REST) dans le flux unifié.
+
+    Même table, même fonction d'insertion et même discipline que le middleware MCP :
+    **best-effort** (l'écriture part en tâche de fond, un échec se log en warning et
+    n'échoue JAMAIS la requête métier) et arguments passés à `truncated_args` (le
+    journal montre l'intention, jamais le payload).
+
+    `tool` doit nommer le geste dans le vocabulaire de la surface MCP (`data_write`,
+    `data_delete_row`, `data_release`) : les lectures du journal (parcours d'une
+    ligne, activité d'un tableau) filtrent là-dessus, pas sur la route HTTP.
+    ⚠️ Distinct de la ligne de route posée par `api_routes.RestCallLogger`
+    (`tool='PATCH /api/…'`, sans args) : celle-là est de la télémétrie de surface,
+    celle-ci porte le SENS du geste (quelle ligne, quels champs, quel état avant/après).
+    """
+    row: dict[str, Any] = {
+        "server": "oto",
+        "kind": "rest",
+        "sub": sub,
+        "tool": tool,
+        "args": {**(truncated_args(args) or {}), "fields": _fields_list(fields)},
+        "ok": bool(ok),
+        "error": (str(error)[:MAX_ERROR_CHARS] if error else None),
+        "org_id": org_id,
+        "duration_ms": duration_ms,
+    }
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # Appelé hors event loop (contexte synchrone) : on insère en direct, même
+        # chemin d'insertion — le journal reste best-effort, pas de file d'attente.
+        _insert_rest(row)
+        return
+    task = loop.create_task(_emit_rest(row))
+    _REST_PENDING.add(task)
+    task.add_done_callback(_REST_PENDING.discard)
+
+
+async def _emit_rest(row: dict) -> None:
+    """Écrit hors event loop (`to_thread` : l'INSERT psycopg est sync)."""
+    try:
+        await asyncio.to_thread(_insert_rest, row)
+    except Exception:  # noqa: BLE001 — le journal ne casse jamais le service
+        logger.warning("journalisation rest en échec (%s)", row.get("tool"), exc_info=True)
+
+
+def _insert_rest(row: dict) -> None:
+    """Stampe l'org de l'acteur (scope d'audit, comme le sink MCP) puis insère."""
+    try:
+        if row.get("org_id") is None and row.get("sub"):
+            from . import access
+            row["org_id"] = access.current_org(row["sub"])
+    except Exception:  # noqa: BLE001 — org indisponible ⇒ ligne non scopée, pas d'échec
+        logger.debug("org de journalisation rest indisponible", exc_info=True)
+    try:
+        from . import db
+        db.insert_tool_call(row)
+    except Exception:  # noqa: BLE001
+        logger.warning("insert tool_call rest en échec (%s)", row.get("tool"), exc_info=True)
 
 
 class ToolCallLogger(Middleware):

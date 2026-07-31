@@ -40,12 +40,23 @@ def _fields(schema: Optional[dict]) -> list[dict]:
     return [f for f in (schema or {}).get("fields") or [] if isinstance(f, dict)]
 
 
-def status_field(schema: Optional[dict]) -> Optional[dict]:
-    """Le field déclaré `role="status"` (premier trouvé), ou None."""
+def field_by_role(schema: Optional[dict], role: str) -> Optional[dict]:
+    """Le premier field déclarant ce `role` (`status`, `title`…), ou None."""
     for f in _fields(schema):
-        if f.get("role") == "status":
+        if f.get("role") == role:
             return f
     return None
+
+
+def status_field(schema: Optional[dict]) -> Optional[dict]:
+    """Le field déclaré `role="status"` (premier trouvé), ou None."""
+    return field_by_role(schema, "status")
+
+
+def title_field(schema: Optional[dict]) -> Optional[dict]:
+    """Le field déclaré `role="title"` (premier trouvé), ou None — le LIBELLÉ d'une
+    ligne (ce qu'un humain reconnaît dans un journal, à la place d'un uuid)."""
+    return field_by_role(schema, "title")
 
 
 def validation_active(schema: Optional[dict]) -> bool:
