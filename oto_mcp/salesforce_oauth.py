@@ -263,22 +263,24 @@ async def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
         credentials_store.set_credential(entity_type, entity_id, "salesforce", secret,
                                          set_by=sub, meta=meta)
 
-    # Best-effort post-write confirmation. This deliberately differs from
-    # api_key_save's verify-BEFORE-persist (#106): here, the write itself IS
-    # the OAuth mechanic (there's no complete credential to test before it
-    # exists), so there's nothing to gate the write on. A probe failure here
-    # is surfaced in meta, never used to discard a token Salesforce itself
-    # just issued via a real, successful browser authorization.
-    from . import connector_verify
-    verified = False
-    verify_error = None
-    try:
-        await connector_verify.run("salesforce", merged)
-        verified = True
-    except Exception as e:  # noqa: BLE001 — the auth failure IS the result
-        verify_error = str(e)
-    credentials_store.update_meta(entity_type, entity_id, "salesforce", "", {
-        "verified_at": datetime.now(timezone.utc).isoformat() if verified else None,
-        "verify_error": verify_error,
-    })
-    return {"verified": verified, "verify_error": verify_error}
+    # PAS de sonde post-écriture. Il y en avait une — « best-effort », censée
+    # confirmer que le jeton fraîchement obtenu fonctionnait. Sous rotation (RTR,
+    # imposée par Salesforce), elle **détruisait** ce qu'elle vérifiait : la sonde
+    # consomme le refresh token, Salesforce en renvoie un neuf, et ce chemin-ci
+    # n'avait aucun moyen de l'écrire. Mesuré le 31/07, trois fois de suite —
+    # jeton posé à 14:36:58.158, sondé avec succès à 14:36:58.679, mort ensuite.
+    #
+    # Câbler la persistance dans la sonde ne suffit pas ici : on est dans le
+    # CALLBACK OAuth, une requête navigateur sans contexte authentifié (le `sub`
+    # vient du state signé, pas d'un jeton), donc la sonde ne peut pas résoudre la
+    # cascade pour savoir où réécrire.
+    #
+    # Et le coût n'achetait rien : `verified_at`/`verify_error` n'avaient AUCUN
+    # lecteur — ni backend, ni dashboard. Le commentaire d'origine reconnaissait
+    # déjà qu'un échec n'était jamais utilisé pour rejeter le jeton. On payait donc
+    # la connexion pour un marqueur que personne ne lisait.
+    #
+    # L'état réel de la connexion se constate au premier usage, ou via la sonde
+    # explicite (`oto_instance op=verify`), qui tourne dans un contexte authentifié
+    # et persiste, elle, le jeton renouvelé.
+    return {"verified": None, "verify_error": None}

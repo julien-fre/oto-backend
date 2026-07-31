@@ -261,7 +261,13 @@ async def test_persist_token_merges_refresh_token_without_disturbing_other_field
         "login_url": "https://acme.my.salesforce.com", "refresh_token": "rt-abc",
     }
     assert store.set_credential_calls[0]["meta"]["instance_url"] == "https://acme.my.salesforce.com"
-    assert result["verified"] is True
+    # Plus de sonde post-écriture : sous rotation elle CONSOMMAIT le jeton qu'elle
+    # venait d'attester, et ce chemin — le callback OAuth, sans contexte authentifié —
+    # ne peut pas résoudre où réécrire le remplaçant. Le marqueur n'avait par ailleurs
+    # aucun lecteur.
+    assert result["verified"] is None
+    assert not store.update_meta_calls, (
+        "une sonde post-écriture est revenue : elle détruira le jeton sous rotation")
 
 
 @pytest.mark.asyncio
