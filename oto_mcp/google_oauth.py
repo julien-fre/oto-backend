@@ -37,7 +37,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import db
+from . import connector_link, db
 
 
 SCOPES = [
@@ -308,6 +308,19 @@ def list_accounts(sub: str) -> list[dict]:
     """Comptes Google connectés du user DANS l'org de contexte (email, défaut, scopes)."""
     from . import access  # lazy
     return db.list_google_accounts(sub, access.current_org(sub))
+
+
+def _link_state(sub: str) -> connector_link.LinkState:
+    """État de lien pour `/api/me`. Google est MULTI-COMPTE : une ligne de coffre par
+    adresse (`account = email`), avec ses satellites dans `meta`. Une boucle générique
+    qui chercherait « la » ligne du membre n'en trouverait aucune."""
+    accounts = list_accounts(sub)
+    return connector_link.LinkState(
+        linked=bool(accounts), accounts=len(accounts),
+        set_at=max((a.get("set_at") or "" for a in accounts), default="") or None)
+
+
+connector_link.register("google", _link_state)
 
 
 def revoke(sub: str, account: Optional[str] = None) -> None:

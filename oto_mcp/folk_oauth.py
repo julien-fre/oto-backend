@@ -33,7 +33,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from . import oauth_flow, credentials_store, oauth2_pkce
+from . import connector_link, credentials_store, oauth2_pkce, oauth_flow
 
 _AUTH_URL = "https://app.folk.app/oauth/authorize"
 _TOKEN_URL = "https://api.stytch.folk.app/v1/oauth2/token"
@@ -225,6 +225,19 @@ def status_for(sub: str) -> dict:
     cred = credentials_store.get_credential_with_meta("user", sub, _CONNECTOR)
     return {"connected": bool(cred and cred.get("secret")),
             "set_at": cred.get("set_at") if cred else None}
+
+
+def _link_state(sub: str) -> connector_link.LinkState:
+    """État de lien pour `/api/me` — le credential vit au scope LEGACY ("user", sub),
+    pas au scope MEMBRE des connecteurs keyés. C'est précisément pour ça que la
+    lecture est déclarée ici et pas devinée par une boucle générique."""
+    st = status_for(sub)
+    return connector_link.LinkState(linked=bool(st.get("connected")),
+                                    set_at=st.get("set_at"),
+                                    accounts=1 if st.get("connected") else 0)
+
+
+connector_link.register(_CONNECTOR, _link_state)
 
 
 def disconnect(sub: str) -> bool:

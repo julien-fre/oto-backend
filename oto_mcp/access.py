@@ -44,7 +44,7 @@ from typing import Callable, Optional
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from . import connectors, credentials_store, db, group_store, org_store, session_org, status_hints
+from . import connector_link, connectors, credentials_store, db, group_store, org_store, session_org, status_hints
 from .auth_hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
@@ -1544,6 +1544,37 @@ def status_for(sub: str, *, org: "int | None | object" = _UNSET,
             "group_session_set_at": grp_st["set_at"] if grp_st else None,
             "org_secret_configured": org_st is not None,
             "org_session_set_at": org_st["set_at"] if org_st else None,
+            "platform_key_label": None,
+            "quota_used_today": 0,
+            "quota_daily": None,
+        }
+
+    # 4e boucle — connecteurs à credential OAuth FÉDÉRÉ (atlassian, folkmcp, google).
+    # Ils ne sont dans AUCUNE des trois boucles ci-dessus : `keyed=False`,
+    # `secret_fields=0`, `secret_kind='oauth'`. Ils n'avaient donc pas d'entrée du tout —
+    # et sans entrée, la décoration `pending_action` juste en dessous ne peut pas les
+    # atteindre, `health_ko` non plus, et le verdict de la fiche n'a rien à lire. C'est
+    # ce trou qui obligeait le dashboard à interroger `/api/<nom>/oauth/status`, donc à
+    # connaître les connecteurs par leur nom.
+    #
+    # La LECTURE est déclarée par chaque module (`connector_link`) : les trois ne rangent
+    # pas leur credential au même endroit (scope legacy ("user", sub) pour atlassian et
+    # folkmcp, une ligne PAR COMPTE pour google). La TRADUCTION vers `ProviderStatus` —
+    # la forme que le dashboard lit — se fait ici, une fois.
+    for c in connectors.REGISTRY.values():
+        if c.name in out["providers"] or c.secret_kind != "oauth":
+            continue
+        link = connector_link.state(c.name, sub) if sub else None
+        if link is None:
+            continue          # pas de lecture déclarée, ou lecture en échec : on se tait
+        out["providers"][c.name] = {
+            # `forbidden` = « aucune clé ne résout », l'état par défaut d'un BYO pas
+            # encore connecté (ce n'est PAS un refus RBAC — cf. la carte connecteur).
+            "mode": "user" if link.linked else "forbidden",
+            "user_key_configured": link.linked,
+            "session_set_at": link.set_at,
+            "group_secret_configured": False,
+            "org_secret_configured": False,
             "platform_key_label": None,
             "quota_used_today": 0,
             "quota_daily": None,
