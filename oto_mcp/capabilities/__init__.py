@@ -38,7 +38,7 @@ from . import doctrine_library  # noqa: F401 — library.{list,get,publish,fork,
 from . import connectors_selection  # noqa: F401 — connectors.{me,select,pause,unselect}
 from . import connectors_identities  # noqa: F401 — connectors.{identities,set_default_identity} (ADR 0024)
 from . import connectors_connect  # noqa: F401 — me.connector_connect (POST /api/me/connectors/{name}/connect, chemin FIXE)
-from . import salesforce_connect  # noqa: F401 — me.salesforce_connect (oto_salesforce_connect + GET /api/salesforce/oauth/start)
+from . import salesforce_connect  # noqa: F401 — me.salesforce_connect (oto_salesforce_connect ; REST = le chemin fixe /connect)
 from . import zoho_connect  # noqa: F401 — me.zoho_connect (oto_zoho_connect + GET /api/zoho/oauth/{start,modes})
 from . import connectors_verify  # noqa: F401 — connectors.verify (sonde de credential — MCP via oto_instance op=verify)
 # Plafond DUR d'org (ADR 0022) — override d'activation per-org, éditable org_admin.
@@ -89,5 +89,7 @@ from . import search  # noqa: F401 — me.search (oto_search, lot 3 Ship 1)
 from . import inbox  # noqa: F401 — me.inbox (lot 3 Ship 3)
 from . import docs  # noqa: F401 — me.doc (oto_doc, POST /api/me/docs) — pages d'un projet
 from . import uploads  # noqa: F401 — me.upload_url (oto_upload_url) — push out-of-bande de gros contenu (#105)
+# Journal de travail du datastore (ADR 0046 b4) — parcours d'une ligne + activité du tableau.
+from . import datastore_activity  # noqa: F401 — me.datastore.{row_activity,activity} (REST-only)
 
 __all__ = ["registry", "_mcp_adapter", "_rest_adapter"]

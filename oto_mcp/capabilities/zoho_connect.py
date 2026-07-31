@@ -105,22 +105,13 @@ CAPABILITIES += [
             "est rangé au coffre. Prérequis : client_id + client_secret de l'app Zoho "
             "posés sur la carte du connecteur (ou partagés par l'org)."),
     ),
-    Capability(
-        key="me.zoho_connect.start",
-        handler=lambda ctx, inp: _start(ctx, ZohoConnectInput(
-            op="start", connector=inp.connector, data_center=inp.data_center)),
-        Input=ZohoVerbInput,
-        authz=ORG_MEMBER,
-        mcp=None,
-        rest=RestBinding(verb="GET", path="/api/zoho/oauth/start"),
-    ),
-    Capability(
-        key="me.zoho_connect.modes",
-        handler=lambda ctx, inp: _modes(ctx, ZohoConnectInput(
-            op="modes", connector=inp.connector, data_center=inp.data_center)),
-        Input=ZohoVerbInput,
-        authz=ORG_MEMBER,
-        mcp=None,
-        rest=RestBinding(verb="GET", path="/api/zoho/oauth/modes"),
-    ),
+    # `me.zoho_connect.start` a été RETIRÉE : elle n'existait que pour porter la face
+    # REST `/api/zoho/oauth/start`, désormais servie par le chemin fixe
+    # `/api/me/connectors/{name}/connect` (capacité `me.connector_connect`), via le
+    # même `start_for`. Le démarrage garde sa face MCP sur `me.zoho_connect` op=start.
+    # `me.zoho_connect.modes` a été RETIRÉE de même : son unique consommateur était le
+    # widget nommé du dashboard, supprimé avec la généralisation. L'op reste servie par
+    # `me.zoho_connect` (op='modes') côté MCP — un agent qui prépare une connexion a de
+    # bonnes raisons de demander « une app est-elle déjà disponible ? ». Une surface REST
+    # sans appelant, elle, est une dette qui se paie à chaque lecture du code.
 ]

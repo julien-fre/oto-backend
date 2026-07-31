@@ -23,7 +23,7 @@ from pydantic import BaseModel
 
 from .. import salesforce_oauth
 from ._authz import ORG_MEMBER
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
 
 
@@ -70,7 +70,10 @@ CAPABILITIES += [
         Input=SalesforceConnectInput,
         authz=ORG_MEMBER,
         mcp="oto_salesforce_connect",
-        rest=RestBinding(verb="GET", path="/api/salesforce/oauth/start"),
+        # Plus de face REST NOMMÉE : le chemin fixe `/api/me/connectors/{name}/connect`
+        # (capacité `me.connector_connect`) la sert désormais, via le MÊME `start_for`.
+        # La face MCP reste — un agent connaît le connecteur qu'il connecte.
+        rest=None,
         description=(
             "Connect Salesforce. op='start' returns the consent URL to OPEN in a "
             "browser — on return, the refresh token is stored in the vault. "

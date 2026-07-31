@@ -77,11 +77,23 @@ def test_tout_connecteur_a_deux_temps_declare_son_flux():
         "aucun flux : le front ne pourra pas proposer le geste.")
 
 
+def test_aucune_face_rest_de_connexion_nommee_dapres_un_connecteur():
+    """Les chemins `/api/<nom>/oauth/start` ont été RETIRÉS une fois le dashboard de prod
+    passé au chemin fixe (v1.19.0). Il ne reste qu'une face REST pour démarrer un flux,
+    et son chemin ne nomme personne."""
+    from oto_mcp.capabilities import registry
+    for cap in registry.CAPABILITIES:
+        if cap.rest is None or "connect" not in cap.key:
+            continue
+        for n in providers.REGISTRY:
+            assert f"/{n}/" not in cap.rest.path, (
+                f"{cap.key} expose une face REST nommée : {cap.rest.path}")
+
+
 def test_le_demarrage_generique_partage_le_handler_des_capacites_nommees():
-    """Il n'existe qu'UNE façon de démarrer un consentement. Les chemins par connecteur
-    (`/api/zoho/oauth/start`) survivent le temps que le dashboard bascule sur le chemin
-    fixe — ils appellent le MÊME `start_for`, donc les deux surfaces ne peuvent pas
-    diverger. À retirer quand le front en prod n'appelle plus que `/connect`."""
+    """Il n'existe qu'UNE façon de démarrer un consentement : la face MCP par connecteur
+    et le flux générique appellent le MÊME `start_for`, donc les deux surfaces ne peuvent
+    pas diverger."""
     from oto_mcp.capabilities import salesforce_connect, zoho_connect
     import inspect
     assert "start_for" in inspect.getsource(zoho_connect._start)
