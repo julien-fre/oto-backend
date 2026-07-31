@@ -29,14 +29,28 @@ def _require_known_connector(name: str) -> None:
     """Slug hors catalogue → erreur explicite, jamais le même payload qu'un
     connecteur connu sans identités (feedback #162 : `linkedin` rendait
     `{supported:false, identities:[]}` comme un nom bidon — faux négatif
-    silencieux pour l'agent qui s'est trompé de slug)."""
+    silencieux pour l'agent qui s'est trompé de slug).
+
+    ⚠️ `linkedin` reste un alias piégeux même depuis que ce slug DÉSIGNE un vrai
+    connecteur (#231 : recherche B2B via AI Ark, clé app credits SEULE, aucune
+    notion de compte connecté — distinct d'`aiark`, qui garde son BYO) : un agent
+    qui tape `linkedin` pense quasi toujours à SON compte LinkedIn personnel, qui
+    vit sous `unipile`. On garde donc le hint AVANT le check registre — sinon la
+    même confusion renaît sous une forme différente (`{supported:false}` au lieu
+    de 404)."""
     from .. import providers
+    if name == "linkedin":
+        raise AuthzDenied(
+            404, "unknown_connector",
+            "Connecteur inconnu pour les identités : `linkedin` (recherche B2B, "
+            "clé app credits partagée, aucun compte perso) n'a pas d'identités. "
+            "Ton compte LinkedIn personnel passe par le connecteur `unipile`. "
+            "Slugs valides : `oto_connector(op='list')`.")
     if name in providers.REGISTRY:
         return
-    hint = " (LinkedIn passe par le connecteur `unipile`)" if name == "linkedin" else ""
     raise AuthzDenied(
         404, "unknown_connector",
-        f"Connecteur inconnu : `{name}`{hint}. Slugs valides : `oto_connector(op='list')`.")
+        f"Connecteur inconnu : `{name}`. Slugs valides : `oto_connector(op='list')`.")
 
 
 async def _list(ctx: ResolvedCtx, inp: IdentitiesInput) -> dict:

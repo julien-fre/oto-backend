@@ -294,7 +294,7 @@ _CATEGORY_BY_CONNECTOR = {
     "brevo": "Prospection", "salesforce": "Prospection", "pipedrive": "Prospection",
     "figma": "Design", "supabase": "Dev",
     # recherche web / scraping
-    "aiark": "Prospection", "cognism": "Prospection",
+    "aiark": "Prospection", "linkedin": "Prospection", "cognism": "Prospection",
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
     # ATS / talent sourcing (RH)
     "greenhouse": "Recrutement", "lever": "Recrutement", "ashby": "Recrutement",
@@ -321,7 +321,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
-    "aiark": "AI Ark", "cognism": "Cognism", "lighton": "LightOn",
+    "aiark": "AI Ark", "linkedin": "LinkedIn", "cognism": "Cognism", "lighton": "LightOn",
     "recruitee": "Recruitee", "teamtailor": "Teamtailor", "spott": "Spott",
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
@@ -410,7 +410,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "greenhouse": "greenhouse.io", "lever": "lever.co", "ashby": "ashbyhq.com",
     "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
-    "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
+    "aiark": "ai-ark.com", "linkedin": "linkedin.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
     "reddit": "reddit.com",
     # CRM & vente
@@ -735,6 +735,23 @@ _REGISTRY_LIST = [
        secret_kind="api_key",
        label="AI Ark",
        help="people & company search via LinkedIn",
+       href="https://ai-ark.com"),
+    # linkedin (#231) : connecteur DISTINCT d'`aiark`, PAS un mode/alias — même
+    # vendeur (AI Ark, docs.ai-ark.com) et même client oto-core
+    # (`oto.tools.aiark.client.AiArkClient`, réutilisé tel quel), tools curés dans
+    # `tools/linkedin.py` (surface simplifiée, pas de tool `credits`). **App
+    # credits only** : `auth_modes={"platform"}` SEUL — pas de BYO user/org
+    # (`is_byo_user`/`is_org_shareable` renvoient False ⟹ aucune surface de pose
+    # de credential, ADR 0011/0012). Nécessite SA PROPRE clé plateforme
+    # (`oto_admin_set_platform_key` sur `linkedin`, résolution standard via
+    # `resolve_api_key("linkedin")`) — poser la même clé AI Ark que sous `aiark`
+    # pour partager le même pool de crédits vendeur ; aucun partage de credential
+    # cross-connecteur côté Oto (chaque connecteur résout SON nom, ADR 0024).
+    _c("linkedin", ["linkedin"],
+       auth_modes={"platform"}, keyed=True,
+       secret_kind="api_key",
+       label="LinkedIn",
+       help="people & company search via LinkedIn (app credits only)",
        href="https://ai-ark.com"),
     # cognism : connecteur classique (kind="tools") sur l'API Search de Cognism
     # (developers.cognism.com). Client REST synchrone dans oto-core
