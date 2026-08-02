@@ -56,6 +56,23 @@ def test_run_requires_run_id():
     assert e.value.code == "missing_run_id"
 
 
+def test_rest_paths_are_unchanged_for_the_dashboard():
+    """Les lentilles ont quitté `api_routes` pour la couche capacité : les CHEMINS
+    doivent rester identiques (le dashboard tape ces URLs, cf. api/console.ts) —
+    une migration interne ne doit jamais casser une surface consommée."""
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    paths = {b.path for c in CAPABILITIES if c.key.startswith("monitoring.")
+             for b in c.rest_bindings()}
+    assert paths == {
+        "/api/admin/monitoring/summary",
+        "/api/admin/monitoring/rest",
+        "/api/admin/monitoring/connectors",
+        "/api/admin/monitoring/funnel",
+        "/api/admin/monitoring/calls",
+        "/api/admin/monitoring/calls/{call_id}",
+    }
+
+
 def test_usage_ops_reuse_adr0017_handlers(monkeypatch):
     seen = {}
     monkeypatch.setattr(usage.db, "aggregate_gaps", lambda days: seen.update(gaps=days) or [])
