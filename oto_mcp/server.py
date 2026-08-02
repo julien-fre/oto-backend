@@ -303,6 +303,11 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
             # → le token est lisible ici comme dans le handler.
             from .auth_hooks import current_client_id_from_token
             row["client_id"] = current_client_id_from_token()
+            # Lien journal → traceback : l'event Sentry capturé pour CET appel par
+            # `SentryToolErrorMiddleware` (innermost → il a déjà tourné quand on écrit).
+            # None sur le chemin nominal, sur une erreur GÉRÉE (4xx amont) et sans DSN.
+            from .sentry_setup import current_tool_event_id
+            row["sentry_event_id"] = current_tool_event_id()
             # Entités résolues pendant l'appel (relevé rempli par les seams, ex.
             # `DatastorePg._resolve` → ns_id). Versées DANS les args, à côté de ce que
             # l'agent a tapé : `namespace` reste l'intention, `ns_id` devient la clé de

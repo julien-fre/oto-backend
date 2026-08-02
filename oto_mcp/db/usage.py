@@ -46,8 +46,9 @@ def insert_tool_call(row: dict) -> None:
         conn.execute(
             """
             INSERT INTO tool_calls
-                (server, kind, sub, email, tool, args, ok, error, duration_ms, session_id, run_id, org_id, client_id)
-            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s)
+                (server, kind, sub, email, tool, args, ok, error, duration_ms, session_id,
+                 run_id, org_id, client_id, sentry_event_id)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 row.get("server") or "oto", row.get("kind") or "mcp",
@@ -55,7 +56,7 @@ def insert_tool_call(row: dict) -> None:
                 row["tool"], json.dumps(row.get("args")) if row.get("args") is not None else None,
                 bool(row.get("ok")), row.get("error"), row.get("duration_ms"),
                 row.get("session_id"), row.get("run_id"), row.get("org_id"),
-                row.get("client_id"),
+                row.get("client_id"), row.get("sentry_event_id"),
             ),
         )
 
@@ -366,7 +367,8 @@ def list_tool_calls(
         rows = conn.execute(
             f"""
             SELECT l.id, l.sub, u.email, u.name, l.tool AS tool_name, l.created_at AS called_at,
-                   l.duration_ms, l.ok, l.error, l.session_id, l.run_id, l.org_id
+                   l.duration_ms, l.ok, l.error, l.session_id, l.run_id, l.org_id,
+                   l.sentry_event_id
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             {where}
@@ -387,7 +389,8 @@ def get_tool_call(call_id: int) -> Optional[dict]:
             """
             SELECT l.id, l.kind, l.server, l.sub, COALESCE(u.email, l.email) AS email,
                    u.name, l.tool, l.args, l.ok, l.error, l.duration_ms, l.created_at,
-                   l.session_id, l.run_id, l.org_id, o.name AS org_name, l.client_id
+                   l.session_id, l.run_id, l.org_id, o.name AS org_name, l.client_id,
+                   l.sentry_event_id
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             LEFT JOIN orgs o ON o.id = l.org_id

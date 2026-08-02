@@ -80,7 +80,12 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     -- Application OAuth cliente porteuse du grant (`azp`/`client_id` du JWT :
     -- claude.ai, Claude Code, ChatGPT… — extension OTO-LOCALE). Télémétrie par
     -- surface, jamais une frontière d'autz. NULL en REST/dev local.
-    client_id TEXT
+    client_id TEXT,
+    -- Event Sentry du traceback de CET appel (extension OTO-LOCALE) : posé quand
+    -- `SentryToolErrorMiddleware` a capturé (donc uniquement sur une erreur de CODE
+    -- — les 4xx amont/refus d'entrée sont droppés). Lien direct journal → traceback,
+    -- fin du détour « chercher par user.id dans Sentry ». NULL partout ailleurs.
+    sentry_event_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_sub ON tool_calls(sub);

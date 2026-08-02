@@ -95,6 +95,9 @@ def _init_db_once() -> None:
         # Soft-disconnect unipile : la ligne de binding survit (preuve de propriété
         # durable du compte hébergé → rebind déterministe à la reconnexion).
         conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS disconnected_at TIMESTAMPTZ")
+        # Lien journal → traceback Sentry (investigation) : l'event id capturé pour
+        # l'appel. Additif, NULL sur tout l'historique (non reconstructible).
+        conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS sentry_event_id TEXT")
         # ADR 0032 §2 : le lien projet→entité porte un `role` (pourquoi cette entité est ici).
         conn.execute("ALTER TABLE project_links ADD COLUMN IF NOT EXISTS role TEXT")
         # ADR 0032 §4 (B2) : surcharge contextuelle préfaite du lien (connecteur → identité/instructions).

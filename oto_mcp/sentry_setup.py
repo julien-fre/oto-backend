@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import logging
 import os
+from contextvars import ContextVar
+from typing import Optional
 
 import sentry_sdk
 from fastmcp.server.middleware import Middleware
@@ -47,6 +49,21 @@ from .error_taxonomy import (  # noqa: F401
 )
 
 logger = logging.getLogger("oto_mcp")
+
+# Event Sentry capturé pour l'appel EN COURS (extension OTO-LOCALE) : posé par
+# `SentryToolErrorMiddleware` (innermost), relu par le sink calllog (plus externe,
+# même tâche → la ContextVar mutée ici lui est visible) qui le stampe sur la ligne
+# `tool_calls`. Ferme le détour « erreur au journal → chercher à la main dans Sentry
+# par user.id » : la ligne d'audit porte le lien vers le traceback.
+_LAST_EVENT_ID: ContextVar[Optional[str]] = ContextVar("oto_sentry_event_id", default=None)
+
+
+def current_tool_event_id() -> Optional[str]:
+    """Event id Sentry de l'appel courant, ou None (nominal / Sentry off)."""
+    try:
+        return _LAST_EVENT_ID.get()
+    except Exception:
+        return None
 
 
 def _before_send(event, hint):
@@ -95,6 +112,9 @@ class SentryToolErrorMiddleware(Middleware):
     """
 
     async def on_call_tool(self, context, call_next):
+        # Remise à zéro par appel : sans elle, un event capturé plus tôt dans la même
+        # tâche serait stampé sur la ligne d'un appel suivant, sain.
+        _LAST_EVENT_ID.set(None)
         try:
             return await call_next(context)
         except Exception as e:
@@ -113,7 +133,9 @@ class SentryToolErrorMiddleware(Middleware):
                         client = current_client_id_from_token()
                         if client:
                             scope.set_tag("mcp.client", client)
-                        sentry_sdk.capture_exception(e)
+                        # L'id retourné (None si Sentry est off ou l'event droppé par
+                        # `before_send`) devient le lien journal → traceback.
+                        _LAST_EVENT_ID.set(sentry_sdk.capture_exception(e))
                 except Exception:
                     # La capture ne doit jamais masquer l'erreur d'origine.
                     pass
