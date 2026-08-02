@@ -195,10 +195,12 @@ class CallContextMiddleware(Middleware):
     résolution du handler ET les hooks post-tool (rédaction de champs, calllog) voient
     la MÊME org que l'appel — pas l'org maison (modèle sans état de session, #108/#112).
 
-    Doit être enregistré **en dernier** (`add_middleware`) → outermost : il enveloppe
+    Doit être enregistré **en premier** (`add_middleware` : premier ajouté = plus
+    EXTERNE, vérifié empiriquement sur fastmcp `_run_middleware`) → il enveloppe
     `FieldRedactionMiddleware` + `ToolCallLogger`, et la ContextVar `_CALL_ORG` reste
     posée pendant qu'ils relisent `current_org` (sinon reset trop tôt = rédaction/audit
-    sous la maison). ContextVar per-tâche (isolée par appel) ; reset en `finally`.
+    sous la maison — bug vécu jusqu'au 2026-08-02, le middleware était ajouté en
+    dernier donc INNERMOST). ContextVar per-tâche (isolée par appel) ; reset en `finally`.
 
     Garde d'appartenance au point d'entrée : `_org=` dont le sub n'est pas membre lève un
     McpError **actionnable**, jamais un repli silencieux vers une autre org. Ne s'active

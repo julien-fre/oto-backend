@@ -233,20 +233,37 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .capabilities import registry as _cap_registry
     _mcp_adapter.register(instance, _cap_registry.CAPABILITIES)
 
-    # Contrat d'erreur uniforme rendu à l'agent (D2, #124) : réécrit toute exception
-    # de tool en McpError scrubbée + data {code, retryable, hint}. Ajouté AVANT Sentry
-    # → OUTERMOST : Sentry (plus interne) capture le vrai traceback en premier, cette
-    # enveloppe normalise en dernier (cf. ErrorEnvelopeMiddleware).
+    # ⚠️ ORDRE : fastmcp exécute les middlewares dans l'ordre d'ajout — le PREMIER
+    # ajouté est le plus EXTERNE (vérifié empiriquement, `_run_middleware` wrap en
+    # reversed()). Les commentaires historiques « ajouté en dernier = outermost »
+    # étaient FAUX : rédaction et contexte d'appel tournaient au plus INTERNE, donc
+    # `_CALL_ORG` était reset AVANT que la rédaction et le calllog (plus externes) ne
+    # relisent `current_org` → un appel épinglé `_org=` était rédigé/audité sous l'org
+    # MAISON. Corrigé 2026-08-02 : l'ordre d'ajout ci-dessous EST l'ordre extern→interne.
+
+    # 1. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) — OUTERMOST :
+    # pose la ContextVar `_CALL_ORG` AVANT toute la chaîne et la reset APRÈS, pour que
+    # le handler ET les hooks post-tool (rédaction, calllog) lisent la MÊME org que
+    # l'appel. Garde d'appartenance au point d'entrée.
+    from .middleware import CallContextMiddleware
+    instance.add_middleware(
+        CallContextMiddleware(_mcp_adapter.reserved_org_tool_names(_cap_registry.CAPABILITIES))
+    )
+
+    # 2. Rédaction des champs sensibles du RÉSULTAT des tools (ADR 0009/0015) selon la
+    # politique de l'org active — sous le contexte d'appel (lit la bonne org), au-dessus
+    # de tout le reste (retouche le résultat final en sortie).
+    from .middleware import FieldRedactionMiddleware
+    instance.add_middleware(FieldRedactionMiddleware())
+
+    # 3. Contrat d'erreur uniforme rendu à l'agent (D2, #124) : réécrit toute exception
+    # de tool en McpError scrubbée + data {code, retryable, hint}. Plus externe que
+    # Sentry et le calllog → eux voient l'erreur BRUTE, l'enveloppe normalise en dernier.
     from .middleware import ErrorEnvelopeMiddleware
     instance.add_middleware(ErrorEnvelopeMiddleware())
 
-    # Capture des exceptions de tools vers Sentry (vrai traceback ; no-op si
-    # OTO_SENTRY_DSN absent). Les erreurs de tool sont des erreurs JSON-RPC en
-    # HTTP 200 → invisibles à l'intégration Starlette ; ce middleware les voit.
-    from .sentry_setup import SentryToolErrorMiddleware
-    instance.add_middleware(SentryToolErrorMiddleware())
-
-    # Filtrage per-user des tools (toggle individuel sur /account).
+    # 4. Filtrage per-user des tools (toggle individuel sur /account) — au-dessus du
+    # calllog : un refus de gate (tool_not_mounted) n'est pas journalisé (inchangé).
     from .middleware import DynamicInstructionsMiddleware, UserDisabledToolsMiddleware
     instance.add_middleware(UserDisabledToolsMiddleware())
     # Injection de la doctrine de base de l'org dans les instructions du `initialize`
@@ -308,21 +325,12 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
         ToolCallLogger(_calllog_sink, server="oto", identity=_calllog_identity)
     )
 
-    # Rédaction des champs sensibles du RÉSULTAT des tools (ADR 0009/0015) selon la
-    # politique de l'org active. EN DERNIER : l'exécution est en ordre inverse, donc
-    # ce middleware enveloppe les autres et retouche le résultat final en sortie.
-    from .middleware import FieldRedactionMiddleware
-    instance.add_middleware(FieldRedactionMiddleware())
-
-    # Contexte d'appel (`_org=`, modèle sans état de session, #108/#112). ENCORE APRÈS
-    # la rédaction → outermost : pose la ContextVar `_CALL_ORG` AVANT toute la chaîne et
-    # la reset APRÈS, pour que le handler ET les hooks post-tool (rédaction, calllog) lisent
-    # la MÊME org que l'appel. Garde d'appartenance au point d'entrée. Ensemble des tools
-    # à `_org=` réservé dérivé du registre de capacités (inerte pour les autres).
-    from .middleware import CallContextMiddleware
-    instance.add_middleware(
-        CallContextMiddleware(_mcp_adapter.reserved_org_tool_names(_cap_registry.CAPABILITIES))
-    )
+    # 7. Capture des exceptions de tools vers Sentry (no-op si OTO_SENTRY_DSN absent) —
+    # INNERMOST : au plus près du handler, capture le vrai traceback AVANT le calllog
+    # (qui pourra stamper l'event_id) et l'enveloppe (qui scrubbe). Les erreurs de tool
+    # sont des erreurs JSON-RPC en HTTP 200 → invisibles à l'intégration Starlette.
+    from .sentry_setup import SentryToolErrorMiddleware
+    instance.add_middleware(SentryToolErrorMiddleware())
 
     return instance
 
