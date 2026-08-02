@@ -323,8 +323,23 @@ revalidés à chaque appel, jamais de repli silencieux).
 
 `ToolCallLogger` (middleware inliné `oto_mcp/calllog.py`, ex-lib otomata-calllog décommissionnée — contrat canonique dans le socle otomata-mcp) journalise chaque appel dans `tool_calls`
 (`db.insert_tool_call`, best-effort, identité = `sub` du JWT via
-`current_user_sub_from_token`) ; surface admin `/api/admin/monitoring/{summary,calls}`.
-**Détail : `docs/monitoring.md`**. ⚠️ **Ne trace QUE les invocations d'outils MCP** —
+`current_user_sub_from_token`).
+**Détail : `docs/monitoring.md`**.
+
+> **Investigation = une capacité, deux faces (02/08).** Les lentilles ont quitté les
+> routes écrites main d'`api_routes.py` pour `capabilities/monitoring.py` (chemins REST
+> `/api/admin/monitoring/*` **inchangés**, dashboard intact) et gagnent leur face MCP :
+> console **`oto_admin_monitoring(op=…)`** (ADR 0047) — `summary` / `calls` / `call` /
+> `run` / `runs` / `rest` / `connectors` / `funnel` / `gaps` / `tool_quality`. L'agent
+> plateforme enquête EN SESSION, plus seulement via le dashboard.
+> Le grain appel porte les axes de corrélation (`session_id`, `run_id`, `org_id`,
+> `client_id`) et se filtre dessus, + `min_duration_ms` (appels lents, chasse aux gels
+> mono-loop) et `error_contains`. `sub` accepte email OU sub.
+> **`tool_calls.sentry_event_id`** relie la ligne d'audit à son traceback (posé par
+> `SentryToolErrorMiddleware`) — fin du « chercher à la main par user.id ».
+> ⚠️ Ces colonnes dépendent de **l'ordre des middlewares** (cf. §Conventions).
+
+⚠️ **Ne trace QUE les invocations d'outils MCP** —
 pas la connexion du connecteur, pas le `tools/list`, pas les appels REST/dashboard.
 Donc **compte actif ≠ usage** : un user qui a un compte (table `users`) mais 0 ligne
 `tool_calls` n'a jamais déclenché d'outil (connecté-mais-idle, OU handshake OAuth du
@@ -664,6 +679,19 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   vérifie STATIQUEMENT que chaque `_client().<m>()` d'un tool existe sur la classe
   oto-core épinglée (un tool en avance de phase sur son oto-core casse la PR au lieu
   d'atteindre la prod — leçon `folk_get_user`).
+- **Ordre des middlewares MCP = contrat, pas un détail (02/08).** fastmcp exécute
+  `instance.middleware` dans l'**ordre d'ajout** : le PREMIER ajouté est le plus
+  **EXTERNE** (`_run_middleware` wrap en `reversed()`, vérifié empiriquement). Deux
+  commentaires historiques croyaient l'inverse (« ajouté en dernier pour envelopper ») →
+  `CallContextMiddleware` et `FieldRedactionMiddleware` tournaient au plus INTERNE, donc
+  la ContextVar `_CALL_ORG` d'un appel épinglé `_org=` était **reset avant** que la
+  rédaction de champs et le calllog (plus externes) ne relisent `current_org` : politique
+  de rédaction et `org_id` d'audit de l'org **maison**, pas de celle de l'appel. Invisible
+  quand les deux coïncident (le cas courant), faux sinon. Ordre correct (extern→interne) :
+  `CallContext` → `FieldRedaction` → `ErrorEnvelope` → `UserDisabledTools` →
+  `DynamicInstructions` → `ToolCallLogger` → `Sentry` (innermost : traceback brut au plus
+  près du handler, et son `event_id` est posé AVANT que le calllog n'écrive la ligne).
+  Figé par `tests/test_middleware_order.py` — le changer demande de relire ses invariants.
 - **PERF — le serveur est MONO-LOOP : aucun I/O bloquant dans la boucle.** Un handler
   de tool qui n'`await` rien doit être `def` sync (threadpool) ; du DB sync dans un
   middleware = même règle (`run_in_threadpool`). Deux modes de gel vécus + garde-fous
