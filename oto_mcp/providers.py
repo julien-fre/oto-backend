@@ -400,7 +400,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "unipile": "unipile.com", "pennylane": "pennylane.com", "pennylaneged": "pennylane.com", "gocardless": "gocardless.com",
     "silae": "silae.fr", "attio": "attio.com", "crunchbase": "crunchbase.com",
     "brevo": "brevo.com", "brevoauto": "brevo.com", "pipedrive": "pipedrive.com",
-    "slack": "slack.com", "whatsapp": "whatsapp.com", "google": "google.com",
+    "slack": "slack.com", "google": "google.com",
     "planity": "planity.com", "topograph": "topograph.co",
     "atlassian": "atlassian.com",
     "sirene": "insee.fr", "droit": "legifrance.gouv.fr",
@@ -413,7 +413,24 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
     "reddit": "reddit.com",
+    # CRM & vente
+    "salesforce": "salesforce.com", "hubspot": "hubspot.com",
+    "zoho": "zoho.com", "zohodesk": "zoho.com", "zohoanalytics": "zoho.com",
+    "apollo": "apollo.io", "phantombuster": "phantombuster.com",
+    "hithorizons": "hithorizons.com", "zerobounce": "zerobounce.net",
+    # Productivité & infra
+    "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
+    "scaleway": "scaleway.com", "resend": "resend.com",
+    "osm": "openstreetmap.org",
 }
+
+# Connecteurs SANS logo de marque, et c'est voulu : soit génériques (le connecteur
+# n'est pas une marque — `http`, `browser`), soit maison (`gr`), soit composés de
+# sources publiques hétérogènes (`infosec`). L'UI y rend un monogramme.
+# Cette liste est l'inverse d'une dette : elle rend l'absence DÉLIBÉRÉE et
+# vérifiable, au lieu de laisser un oubli se confondre avec un choix — les 20
+# connecteurs sans logo du 31/07 étaient tous des oublis, sauf ces cinq.
+_SANS_LOGO_DE_MARQUE = {"browser", "gr", "http", "infosec", "checkcrm"}
 
 
 def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=False,

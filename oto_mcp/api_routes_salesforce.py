@@ -52,6 +52,12 @@ def make_routes(
     def _app_url() -> str:
         return os.environ.get("OTO_APP_URL", "https://dashboard.oto.ninja").rstrip("/")
 
+    def _retour(etat: str) -> str:
+        """Où renvoyer le navigateur après le consentement : sur la fiche du
+        connecteur, dépliée. `connector=` est le deep-link lu par le dashboard —
+        sans lui on retombe sur la liste, et il faut retrouver la ligne à la main."""
+        return f"{_app_url()}/connectors?connector=salesforce&salesforce={etat}"
+
     async def callback(request: Request) -> Response:
         # Salesforce redirige ici (pas d'auth Logto) — l'identité + le scope
         # viennent du state signé (voir salesforce_oauth.make_state).
@@ -59,7 +65,7 @@ def make_routes(
         state = request.query_params.get("state")
         parsed = salesforce_oauth.verify_state(state) if state else None
         if not code or not parsed:
-            return RedirectResponse(f"{_app_url()}/?salesforce=error", status_code=302)
+            return RedirectResponse(_retour("error"), status_code=302)
         sub, org_id, scope, verifier_pkce, group_id = parsed
         # RE-GARDE du droit d'écrire au scope demandé. `build_auth_url` l'a vérifié
         # au /start, mais le state vit 10 min : entre le clic et le retour, l'auteur
@@ -74,7 +80,7 @@ def make_routes(
         if not allowed:
             logger.warning("salesforce callback refusé : %s n'est plus admin du scope "
                            "%s (org=%s group=%s)", sub, scope, org_id, group_id)
-            return RedirectResponse(f"{_app_url()}/?salesforce=forbidden", status_code=302)
+            return RedirectResponse(_retour("forbidden"), status_code=302)
         try:
             fields = salesforce_oauth.read_saved_fields(sub, org_id, scope, group_id)
             if not fields:
@@ -93,8 +99,14 @@ def make_routes(
             # avalée). On journalise le traceback, jamais le `code` ni les tokens.
             logger.exception("salesforce oauth callback en échec (sub=%s scope=%s org=%s)",
                              sub, scope, org_id)
-            return RedirectResponse(f"{_app_url()}/?salesforce=error", status_code=302)
-        status = "connected" if result.get("verified") else "connected_unverified"
-        return RedirectResponse(f"{_app_url()}/?salesforce={status}", status_code=302)
+            return RedirectResponse(_retour("error"), status_code=302)
+        # On revient sur LA FICHE du connecteur, pas sur l'accueil. Le retour
+        # atterrissait sur `/`, donc sur la vue d'ensemble — un écran où Salesforce
+        # n'apparaît nulle part : l'utilisateur venait d'autoriser et se retrouvait
+        # devant rien, sans moyen de constater le résultat de son geste.
+        # `connected_unverified` a disparu avec la sonde post-écriture : cet état
+        # n'existe plus, et le mot « unverified » inquiétait pour une connexion saine.
+        del result  # la pose EST le résultat ; plus de verdict à transporter
+        return RedirectResponse(_retour("connected"), status_code=302)
 
     return [Route("/api/salesforce/oauth/callback", callback, methods=["GET"])]
