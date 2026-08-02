@@ -49,5 +49,7 @@ def test_org_id_adds_scope_clause(monkeypatch):
 def test_without_org_id_no_scope_clause(monkeypatch):
     sink = _wire(monkeypatch)
     usage.list_tool_calls(sub="u1", limit=50)
-    assert "l.org_id" not in sink["sql"]        # rétro-compat : admin monitoring non scopé
+    # rétro-compat : admin monitoring non scopé — pas de FILTRE org (la colonne
+    # projetée `l.org_id` dans le SELECT est un axe de corrélation, pas un scope).
+    assert "l.org_id = %s" not in sink["sql"]
     assert tuple(sink["params"]) == ("u1", 50)

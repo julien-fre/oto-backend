@@ -1371,48 +1371,8 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
             return _json_error(request, 404, "unknown_token")
         return _json(request, {"ok": True, "id": token_id})
 
-    async def admin_monitoring_summary(request: Request) -> JSONResponse:
-        """Agrégats des appels MCP (total / échecs / par tool / par user / par
-        jour) sur une fenêtre `?days=` (défaut 7). Admin only."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_platform_operator(sub):
-            return _json_error(request, 403, "forbidden")
-        try:
-            days = int(request.query_params.get("days", "7"))
-        except ValueError:
-            days = 7
-        return _json(request, db.tool_call_stats(since_days=days))
-
-    async def admin_monitoring_calls(request: Request) -> JSONResponse:
-        """Derniers appels MCP (journal brut), récent d'abord. Filtres :
-        `?limit=` (défaut 200, max 1000), `?sub=`, `?tool=`, `?errors=1`,
-        `?days=`. Admin only."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_platform_operator(sub):
-            return _json_error(request, 403, "forbidden")
-        qp = request.query_params
-        try:
-            limit = int(qp.get("limit", "200"))
-        except ValueError:
-            limit = 200
-        since_days: int | None = None
-        if qp.get("days"):
-            try:
-                since_days = int(qp["days"])
-            except ValueError:
-                since_days = None
-        calls = db.list_tool_calls(
-            limit=limit,
-            sub=qp.get("sub") or None,
-            tool_name=qp.get("tool") or None,
-            errors_only=qp.get("errors") in ("1", "true"),
-            since_days=since_days,
-        )
-        return _json(request, {"calls": calls})
+    # Les lentilles admin `/api/admin/monitoring/*` sont devenues des CAPACITÉS
+    # (`capabilities/monitoring.py`, mêmes chemins + console MCP oto_admin_monitoring).
 
     def _monitoring_days(request: Request, default: int = 7) -> int:
         try:
@@ -1453,36 +1413,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         active_org = access.current_org(sub)
         return _json(request, db.tool_call_stats(
             since_days=_monitoring_days(request), org_id=active_org, sub=sub))
-
-    async def admin_monitoring_rest(request: Request) -> JSONResponse:
-        """Lentille REST (ADR 0017, kind='rest') : volume/erreurs/latence des appels
-        `/api/*` par route, sur `?days=` (défaut 7). Admin only."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_platform_operator(sub):
-            return _json_error(request, 403, "forbidden")
-        return _json(request, db.rest_call_stats(since_days=_monitoring_days(request)))
-
-    async def admin_monitoring_connectors(request: Request) -> JSONResponse:
-        """Santé connecteurs (ADR 0017, kind='connector') : échecs de résolution de
-        credential par provider, sur `?days=` (défaut 7). Admin only."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_platform_operator(sub):
-            return _json_error(request, 403, "forbidden")
-        return _json(request, db.connector_failure_stats(since_days=_monitoring_days(request)))
-
-    async def admin_monitoring_funnel(request: Request) -> JSONResponse:
-        """Funnel d'activation : comptes vs usage réel (idle / jamais actif / bloqué
-        connecteur), fenêtre `?days=` (défaut 30). Admin only."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_platform_operator(sub):
-            return _json_error(request, 403, "forbidden")
-        return _json(request, db.activation_funnel(active_window_days=_monitoring_days(request, 30)))
 
     async def my_calls(request: Request) -> JSONResponse:
         """Journal des appels MCP de l'utilisateur courant (sa propre activité).
@@ -1845,20 +1775,10 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/admin/users/{sub}/tokens", options_handler, methods=["OPTIONS"]),
         Route("/api/admin/users/{sub}/tokens/{token_id}", admin_tokens_delete, methods=["DELETE"]),
         Route("/api/admin/users/{sub}/tokens/{token_id}", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/monitoring/summary", admin_monitoring_summary, methods=["GET"]),
-        Route("/api/admin/monitoring/summary", options_handler, methods=["OPTIONS"]),
         Route("/api/me/activity-summary", me_activity_summary, methods=["GET"]),
         Route("/api/me/activity-summary", options_handler, methods=["OPTIONS"]),
         Route("/api/me/projects/{id}/export", me_project_export, methods=["GET"]),
         Route("/api/me/projects/{id}/export", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/monitoring/calls", admin_monitoring_calls, methods=["GET"]),
-        Route("/api/admin/monitoring/calls", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/monitoring/rest", admin_monitoring_rest, methods=["GET"]),
-        Route("/api/admin/monitoring/rest", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/monitoring/connectors", admin_monitoring_connectors, methods=["GET"]),
-        Route("/api/admin/monitoring/connectors", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/monitoring/funnel", admin_monitoring_funnel, methods=["GET"]),
-        Route("/api/admin/monitoring/funnel", options_handler, methods=["OPTIONS"]),
         *datastore_routes,
         *sirene_routes,
         *accords_routes,

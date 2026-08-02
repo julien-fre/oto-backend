@@ -316,12 +316,20 @@ def list_tool_calls(
     errors_only: bool = False,
     since_days: Optional[int] = None,
     org_id: Optional[int] = None,
+    run_id: Optional[str] = None,
+    session_id: Optional[str] = None,
+    min_duration_ms: Optional[int] = None,
+    error_contains: Optional[str] = None,
 ) -> list[dict]:
     """Derniers appels MCP (récent d'abord), joints à l'email user pour l'UI.
 
     `org_id` (si fourni) scope les appels émis SOUS cette org (colonne `tool_calls.org_id`
     stampée par le seam `current_org` au moment de l'appel, ADR 0023) — l'activité « la
-    mienne » du dashboard doit refléter l'org chargée, pas l'union de toutes mes orgs."""
+    mienne » du dashboard doit refléter l'org chargée, pas l'union de toutes mes orgs.
+
+    Axes d'investigation : `run_id`/`session_id` = tous les appels d'un déroulé /
+    d'une conversation ; `min_duration_ms` = appels lents (chasse aux gels mono-loop) ;
+    `error_contains` = recherche substring insensible à la casse dans le message."""
     limit = max(1, min(int(limit), 1000))
     clauses: list[str] = ["l.kind = 'mcp'"]
     params: list[Any] = []
@@ -339,6 +347,18 @@ def list_tool_calls(
     if since_days is not None:
         clauses.append("l.created_at >= NOW() - make_interval(days => %s)")
         params.append(int(since_days))
+    if run_id:
+        clauses.append("l.run_id = %s")
+        params.append(run_id)
+    if session_id:
+        clauses.append("l.session_id = %s")
+        params.append(session_id)
+    if min_duration_ms is not None:
+        clauses.append("l.duration_ms >= %s")
+        params.append(int(min_duration_ms))
+    if error_contains:
+        clauses.append("l.error ILIKE %s")
+        params.append(f"%{error_contains}%")
     where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     params.append(limit)
     with _connect() as conn:
@@ -346,7 +366,7 @@ def list_tool_calls(
         rows = conn.execute(
             f"""
             SELECT l.id, l.sub, u.email, u.name, l.tool AS tool_name, l.created_at AS called_at,
-                   l.duration_ms, l.ok, l.error
+                   l.duration_ms, l.ok, l.error, l.session_id, l.run_id, l.org_id
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             {where}
@@ -356,6 +376,26 @@ def list_tool_calls(
             tuple(params),
         ).fetchall()
         return list(rows)
+
+
+def get_tool_call(call_id: int) -> Optional[dict]:
+    """Fiche d'UN appel (investigation plateforme) : la ligne complète, args inclus
+    (TRONQUÉS à l'écriture par `truncated_args` — jamais le payload intégral) +
+    axes de corrélation (session_id, run_id, org_id + nom, client_id)."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT l.id, l.kind, l.server, l.sub, COALESCE(u.email, l.email) AS email,
+                   u.name, l.tool, l.args, l.ok, l.error, l.duration_ms, l.created_at,
+                   l.session_id, l.run_id, l.org_id, o.name AS org_name, l.client_id
+            FROM tool_calls l
+            LEFT JOIN users u ON u.sub = l.sub
+            LEFT JOIN orgs o ON o.id = l.org_id
+            WHERE l.id = %s
+            """,
+            (int(call_id),),
+        ).fetchone()
+        return dict(row) if row else None
 
 
 def list_tool_calls_for_org(
