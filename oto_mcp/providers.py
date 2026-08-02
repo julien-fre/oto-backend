@@ -1001,14 +1001,20 @@ _REGISTRY_LIST = [
        secret_kind="fields", label="Salesforce",
        help="CRM Salesforce (Contacts, Accounts/companies, Leads, Opportunities, notes)",
        href="https://login.salesforce.com", credential_fields=(
-           CredentialField("client_id", "Consumer Key", secret=True,
+           CredentialField("client_id", "Clé du consommateur", secret=True,
                            help="Consumer Key de la Connected App"),
-           CredentialField("client_secret", "Consumer Secret", secret=True,
-                           help="Consumer Secret de la Connected App"),
-           CredentialField("login_url", "Login URL (prod ou sandbox)",
+           CredentialField("client_secret", "Secret du consommateur", secret=True,
+                           help="révélé par « Détails du consommateur » sur ton "
+                                "application Salesforce, après vérification par email"),
+           # ⚠️ Le libellé disait « login.salesforce.com (prod) ou test.salesforce.com
+           # (sandbox) ». C'est daté : My Domain est obligatoire depuis, et une org qui
+           # bloque l'authentification via login.salesforce.com — de plus en plus le
+           # défaut — fait échouer le consentement. Vécu le 31/07.
+           CredentialField("login_url", "Login URL (ton My Domain)",
                            secret=False, reveal=True,
-                           help="login.salesforce.com (prod, défaut) ou "
-                                "test.salesforce.com (sandbox)"),
+                           help="https://<ton-domaine>.my.salesforce.com — SANS le "
+                                "« -setup » du domaine de la console. Sandbox : "
+                                "https://<domaine>.sandbox.my.salesforce.com"),
        )),
     # pipedrive : token API personnel (1 secret) + `company_domain` FACULTATIF non
     # secret (route la requête vers le data center du compte — recommandé par
