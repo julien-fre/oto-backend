@@ -79,6 +79,15 @@ Mistral). **Détail : `docs/auth-logto.md`** (gotchas, env, onboarding).
 > MCP en plus de `mcp.oto.ninja` — env **`MCP_AUDIENCE_ALT`** (audiences canoniques secondaires,
 > vide = no-op), resource Logto dédiée, PRM Host-aware (`config.mcp_audience_alt_hosts`).
 > DNS mcp.oto.cx = grey+ACME direct box.
+>
+> ⚠️ **`MCP_AUDIENCE_ALT` est une LISTE (virgules) : ÉTENDRE, jamais remplacer.** Un
+> `sed 's|^MCP_AUDIENCE_ALT=.*|…|'` écrase les audiences déjà déclarées — sans erreur au
+> boot, le service démarre : la casse ne se voit qu'au premier `invalid_token` d'un client.
+> Vécu 03/08 (Tulina) : la preprod portait `mcp-canari.oto.ninja/mcp`, l'écraser aurait coupé
+> le canari. Chaque environnement a SA liste (`/opt/oto-mcp/.env` ≠ `/opt/oto-mcp-canari/.env`) :
+> poser une audience sur l'un ne la pose PAS sur l'autre — le symptôme est alors « ça marche en
+> prod, pas en preprod ». Même règle pour tout env-liste partagé (`OTO_MCP_CORS_ORIGINS`,
+> `MAILER_FROM_DOMAINS`, SPF, redirect URIs OAuth) : lire la valeur, y ajouter, réécrire.
 
 ## Rôles + résolution de clé API
 
