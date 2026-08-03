@@ -34,20 +34,33 @@ class _RC:
 
 # --- le nommage de l'instance --------------------------------------------------
 
-@pytest.mark.parametrize("mode,etype,eid,attendu", [
-    ("user", "member", "2:sub-x", "member:2:sub-x:salesforce"),
-    ("group", "group", "7", "group:7:salesforce"),
-    ("org", "org", "2", "org:2:salesforce"),
+@pytest.mark.parametrize("mode,etype,eid,niveau,attendu", [
+    # ⚠️ `mode` vaut « user » là où l'entité dit « member » : c'est le level de l'ENTITÉ
+    # qu'on expose, celui que parlent `ref` et `oto_instance op=list`.
+    ("user", "member", "2:sub-x", "member", "member:2:sub-x:salesforce"),
+    ("group", "group", "7", "group", "group:7:salesforce"),
+    ("org", "org", "2", "org", "org:2:salesforce"),
     # Un grant plateforme n'a PAS de ligne de coffre — il faut quand même le nommer,
     # sinon le cas le plus ambigu de la cascade est justement celui qu'on ne voit pas.
-    ("platform", None, None, "platform:salesforce"),
+    ("platform", None, None, "platform", "platform:salesforce"),
 ])
-def test_la_sonde_nomme_linstance_jointe(monkeypatch, mode, etype, eid, attendu):
+def test_la_sonde_nomme_linstance_jointe(monkeypatch, mode, etype, eid, niveau, attendu):
     from oto_mcp import access
     monkeypatch.setattr(access, "resolve_credential",
                         lambda *a, **k: _RC(mode, etype, eid))
     _, _, _, instance, _ = cv._fields_config_scope(_Ctx(), _Inp())
-    assert instance == {"level": mode, "ref": attendu}
+    assert instance == {"level": niveau, "ref": attendu}
+
+
+def test_level_et_ref_ne_peuvent_pas_se_contredire(monkeypatch):
+    """Ils sont dérivés de la MÊME source. Exposer `rc.mode` (« user ») à côté d'un ref
+    en « member: » donnait deux mots pour le même objet dans une seule réponse, et
+    cassait tout code comparant ce level à celui d'`oto_instance op=list`."""
+    from oto_mcp import access
+    monkeypatch.setattr(access, "resolve_credential",
+                        lambda *a, **k: _RC("user", "member", "2:sub-x"))
+    _, _, _, instance, _ = cv._fields_config_scope(_Ctx(), _Inp())
+    assert instance["ref"].startswith(instance["level"] + ":")
 
 
 def test_le_niveau_org_se_nomme_sans_passer_par_la_cascade(monkeypatch):

@@ -67,8 +67,12 @@ def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict
     scope = (("member", credentials_store.member_id(ctx.org_id, ctx.sub))
              if getattr(rc, "mode", None) == "user" and ctx.org_id is not None else None)
     etype, eid = getattr(rc, "entity_type", None), getattr(rc, "entity_id", None)
-    instance = {"level": getattr(rc, "mode", None) or "unknown",
-                "ref": _ref(etype, eid, inp.provider)}
+    # `level` et `ref` sont DÉRIVÉS de la même source — l'entité — pour qu'ils ne
+    # puissent pas se contredire. La version précédente exposait `rc.mode`, dont le
+    # vocabulaire diffère (`user` là où l'entité, le `ref` et `oto_instance op=list`
+    # disent `member`) : deux mots pour le même objet dans la même réponse, et tout
+    # code comparant ce `level` à celui de la liste cassait. Signalé le 03/08.
+    instance = {"level": etype or "platform", "ref": _ref(etype, eid, inp.provider)}
     # Cible d'ÉCRITURE pour une sonde à effet de bord (rotation) — None pour un grant
     # plateforme, qui n'a pas de ligne de coffre à réécrire.
     cible = (etype, eid, getattr(rc, "account", "") or "") if etype else None
