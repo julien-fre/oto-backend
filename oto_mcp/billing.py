@@ -42,30 +42,31 @@ def is_enabled() -> bool:
     return os.environ.get("OTO_BILLING_ENABLED", "0") == "1"
 
 # plan → prix (centimes), intervalle, options de connecteur débloquées (couche 3,
-# lues par access.has_option). Prix HT mensuels (Alexis 2026-07-06). Chaque
-# plan CONFIGURE l'org à l'activation (options débloquées + plafond de comptes
-# messagerie) → une seule action admin, plus de grants/quotas par connecteur.
-# `amount=None` = palier sur devis (pas de checkout self-serve ; posé par un
-# admin en abonnement `comp`). `unipile_accounts` alimente orgs.unipile_account_
-# limit ; `unmetered=True` = clés plateforme sans quota (fin des credits d'appel).
-# Plafonds de comptes messagerie actés (Alexis 2026-07-09) : 1 / 10 / 50.
+# lues par access.has_option). Prix HT mensuels (Alexis 2026-08-03 : 19/49/249/499).
+# Chaque plan CONFIGURE l'org à l'activation → une seule action admin.
+# **Modèle simplifié (2026-08-03)** : gratuit = pas d'Unipile (option bloquée, sauf
+# `comp` admin = « offert ») ; payant = Unipile + clés plateforme SANS quota
+# (`unmetered`). On NE facture PLUS au nombre de comptes messagerie → tous les
+# paliers ont `unipile_accounts=None` (illimité). ⚠️ Les 4 paliers débloquent donc
+# AUJOURD'HUI exactement la même chose et ne diffèrent QUE par le prix — la
+# différenciation (« payant = Unipile, mais pas que ») viendra plus tard (options
+# premium par palier). `unmetered=True` = fin des credits d'appel.
 PLANS: dict[str, dict] = {
-    "solo": {
-        "label": "Solo", "amount": 4900, "currency": "eur", "interval": "month",
-        "options": ("unipile",), "unipile_accounts": 1, "unmetered": True,
+    "standard": {
+        "label": "Standard", "amount": 1900, "currency": "eur", "interval": "month",
+        "options": ("unipile",), "unipile_accounts": None, "unmetered": True,
     },
-    "team": {
-        "label": "Team", "amount": 25000, "currency": "eur", "interval": "month",
-        "options": ("unipile",), "unipile_accounts": 10, "unmetered": True,
+    "premium": {
+        "label": "Premium", "amount": 4900, "currency": "eur", "interval": "month",
+        "options": ("unipile",), "unipile_accounts": None, "unmetered": True,
     },
     "business": {
-        "label": "Business", "amount": 50000, "currency": "eur", "interval": "month",
-        "options": ("unipile",), "unipile_accounts": 50, "unmetered": True,
+        "label": "Business", "amount": 24900, "currency": "eur", "interval": "month",
+        "options": ("unipile",), "unipile_accounts": None, "unmetered": True,
     },
     "enterprise": {
-        "label": "Entreprise (sur devis)", "amount": None, "currency": "eur",
-        "interval": "month", "options": ("unipile",), "unipile_accounts": None,
-        "unmetered": True, "custom": True,
+        "label": "Entreprise", "amount": 49900, "currency": "eur", "interval": "month",
+        "options": ("unipile",), "unipile_accounts": None, "unmetered": True,
     },
 }
 

@@ -53,13 +53,13 @@ def _wire_subscribe(monkeypatch, existing=None):
 
 def test_subscribe_happy_path(monkeypatch):
     calls = _wire_subscribe(monkeypatch)
-    out = billing.subscribe(42, "solo", "https://otomata.tech/billing")
+    out = billing.subscribe(42, "premium", "https://otomata.tech/billing")
     assert out["checkout_url"].startswith("https://www.mollie.com/checkout/")
     assert calls["customer"]["metadata"] == {"org_id": "42"}
     amount, kw = calls["payment"]
-    assert amount == billing.PLANS["solo"]["amount"]
+    assert amount == billing.PLANS["premium"]["amount"]
     assert kw["method"] == "creditcard"                  # 'card' → page carte
-    assert kw["metadata"] == {"org_id": "42", "plan": "solo"}   # le plan voyage
+    assert kw["metadata"] == {"org_id": "42", "plan": "premium"}   # le plan voyage
     assert calls["insert"][0][:2] == (42, "initial")
 
 
@@ -67,7 +67,7 @@ def test_subscribe_sepa_maps_to_directdebit(monkeypatch):
     # UN seul flux : method='sepa' restreint juste la page Mollie (mandat SEPA
     # collecté sur le checkout, plus de flux IBAN/OTP/ICS séparé).
     calls = _wire_subscribe(monkeypatch)
-    out = billing.subscribe(42, "solo", "https://otomata.tech/billing", method="sepa")
+    out = billing.subscribe(42, "premium", "https://otomata.tech/billing", method="sepa")
     assert out["method"] == "sepa"
     assert calls["payment"][1]["method"] == "directdebit"
 
@@ -77,18 +77,18 @@ def test_subscribe_rejects_unknown_plan_method_and_double(monkeypatch):
     with pytest.raises(ValueError, match="unknown_plan"):
         billing.subscribe(42, "gold", "https://otomata.tech/billing")
     with pytest.raises(ValueError, match="unknown_method"):
-        billing.subscribe(42, "solo", "https://otomata.tech/billing", method="wire")
+        billing.subscribe(42, "premium", "https://otomata.tech/billing", method="wire")
     _wire_subscribe(monkeypatch, existing={"status": "active", "canceled_at": None,
-                                           "customer_id": "cst_1", "plan": "solo"})
+                                           "customer_id": "cst_1", "plan": "premium"})
     with pytest.raises(ValueError, match="already_subscribed"):
-        billing.subscribe(42, "solo", "https://otomata.tech/billing")
+        billing.subscribe(42, "premium", "https://otomata.tech/billing")
 
 
 def test_subscribe_reuses_customer(monkeypatch):
     calls = _wire_subscribe(monkeypatch, existing={
         "status": "canceled", "canceled_at": "2026-07-01", "customer_id": "cst_old",
-        "plan": "solo"})
-    billing.subscribe(42, "solo", "https://otomata.tech/billing")
+        "plan": "premium"})
+    billing.subscribe(42, "premium", "https://otomata.tech/billing")
     assert "customer" not in calls                       # pas de re-création
     assert calls["payment"][1]["customer_id"] == "cst_old"
 
@@ -127,12 +127,12 @@ def test_confirm_success_opens_subscription(monkeypatch):
     state = _wire_confirm(
         monkeypatch,
         payment={"status": "paid", "customerId": "cst_1", "method": "creditcard",
-                 "id": "tr_1", "metadata": {"org_id": "42", "plan": "solo"}},
+                 "id": "tr_1", "metadata": {"org_id": "42", "plan": "premium"}},
         mandate={"id": "mdt_1", "mandateReference": "RUM123"})
     out = billing.confirm(42)
-    assert out["status"] == "active" and out["plan"] == "solo" and out["method"] == "card"
+    assert out["status"] == "active" and out["plan"] == "premium" and out["method"] == "card"
     org, kw = state["upsert"]
-    assert (org, kw["plan"], kw["mandate_id"], kw["status"]) == (42, "solo", "mdt_1", "active")
+    assert (org, kw["plan"], kw["mandate_id"], kw["status"]) == (42, "premium", "mdt_1", "active")
     assert kw["provider"] == "mollie"
     assert kw["next_billing_at"] == kw["current_period_end"]
 
@@ -141,7 +141,7 @@ def test_confirm_paid_without_mandate_refuses(monkeypatch):
     # encaissé mais aucun mandat valide → PAS d'abonnement irrenouvelable posé.
     _wire_confirm(monkeypatch,
                   payment={"status": "paid", "customerId": "cst_1",
-                           "metadata": {"org_id": "42", "plan": "solo"}},
+                           "metadata": {"org_id": "42", "plan": "premium"}},
                   mandate=None)
     with pytest.raises(RuntimeError, match="no_mandate"):
         billing.confirm(42)
@@ -149,9 +149,9 @@ def test_confirm_paid_without_mandate_refuses(monkeypatch):
 
 def test_confirm_idempotent_when_active(monkeypatch):
     monkeypatch.setattr(db_billing, "get_org_subscription",
-                        lambda org: {"status": "active", "plan": "solo"})
+                        lambda org: {"status": "active", "plan": "premium"})
     monkeypatch.setattr(db_billing, "list_billing_payments", lambda org, limit=20: [])
-    assert billing.confirm(42) == {"status": "active", "plan": "solo"}
+    assert billing.confirm(42) == {"status": "active", "plan": "premium"}
 
 
 # ── cancel & entitlement helper ──────────────────────────────────────────────
@@ -163,7 +163,7 @@ def test_cancel_requires_subscription(monkeypatch):
 
 
 def test_plan_options_mapping():
-    assert "unipile" in billing.plan_options("solo")
+    assert "unipile" in billing.plan_options("premium")
     assert billing.plan_options("inconnu") == frozenset()
 
 

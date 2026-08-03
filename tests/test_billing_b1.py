@@ -123,7 +123,7 @@ def test_create_first_payment_body(monkeypatch):
     monkeypatch.setattr(mollie_client, "_c", lambda: _mock_client(handler))
     out = mollie_client.create_first_payment(
         4900, customer_id="cst_1", redirect_url="https://otomata.tech/r",
-        method="creditcard", metadata={"org_id": "42", "plan": "solo"})
+        method="creditcard", metadata={"org_id": "42", "plan": "premium"})
     assert out["id"] == "tr_1"
     assert mollie_client.checkout_url(out) == "https://www.mollie.com/checkout/x"
     assert seen["path"] == "/v2/payments"
@@ -131,7 +131,7 @@ def test_create_first_payment_body(monkeypatch):
         "amount": {"currency": "EUR", "value": "49.00"},
         "customerId": "cst_1", "sequenceType": "first",
         "redirectUrl": "https://otomata.tech/r", "method": "creditcard",
-        "metadata": {"org_id": "42", "plan": "solo"},
+        "metadata": {"org_id": "42", "plan": "premium"},
     }
 
 

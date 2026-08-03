@@ -12,7 +12,7 @@ NOW = datetime(2026, 7, 6, 12, 0, tzinfo=timezone.utc)
 
 
 def _sub(**over) -> dict:
-    base = {"org_id": 42, "plan": "solo", "method": "card",
+    base = {"org_id": 42, "plan": "premium", "method": "card",
             "mandate_id": "mdt_1", "customer_id": "cst_1",
             "current_period_end": NOW - timedelta(hours=2), "status": "active"}
     base.update(over)
@@ -52,7 +52,7 @@ def test_renewal_success_anchors_on_period_end(monkeypatch):
     state = _wire(monkeypatch)
     assert billing_runner._charge_one(_sub(), NOW) == "renewed"
     amount, kw = state["charge"]
-    assert amount == billing.PLANS["solo"]["amount"]
+    assert amount == billing.PLANS["premium"]["amount"]
     assert kw["customer_id"] == "cst_1" and kw["mandate_id"] == "mdt_1"
     # idempotency_key déterministe période+tentative (anti double-débit)
     assert kw["idempotency_key"] == "org42-2026-07-06-a1"

@@ -12,22 +12,30 @@ from oto_mcp.db import billing as db_billing
 
 def test_four_plans_with_prices():
     p = {x["plan"]: x for x in billing.plans()}
-    assert set(p) == {"solo", "team", "business", "enterprise"}
-    assert (p["solo"]["amount"], p["team"]["amount"], p["business"]["amount"]) \
-        == (4900, 25000, 50000)
-    assert p["enterprise"]["amount"] is None and p["enterprise"]["custom"] is True
+    assert set(p) == {"standard", "premium", "business", "enterprise"}
+    # 19 / 49 / 249 / 499 € (Alexis 2026-08-03)
+    assert (p["standard"]["amount"], p["premium"]["amount"],
+            p["business"]["amount"], p["enterprise"]["amount"]) \
+        == (1900, 4900, 24900, 49900)
 
 
 def test_self_serve_refuses_custom_plan(monkeypatch):
+    # aucun plan n'est `custom` aujourd'hui (4 paliers self-serve à prix fixe) ;
+    # le garde-fou reste, testé sur un plan custom injecté.
+    monkeypatch.setitem(billing.PLANS, "devis", {
+        "label": "Devis", "amount": None, "currency": "eur", "interval": "month",
+        "options": ("unipile",), "unipile_accounts": None, "unmetered": True,
+        "custom": True})
     monkeypatch.setattr(db_billing, "get_org_subscription", lambda org: None)
     with pytest.raises(ValueError, match="custom_plan"):
-        billing.subscribe(42, "enterprise", "https://oto.cx/billing")
+        billing.subscribe(42, "devis", "https://oto.cx/billing")
 
 
-def test_plan_carries_messaging_cap_and_unmetered():
+def test_plan_carries_no_cap_and_unmetered():
+    # modèle simplifié : plus de plafond de comptes (None = illimité), tous unmetered.
     assert billing.plan_is_unmetered("business") is True
-    assert billing.PLANS["team"]["unipile_accounts"] == 10
-    assert billing.PLANS["enterprise"]["unipile_accounts"] is None   # devis = illimité
+    assert billing.PLANS["premium"]["unipile_accounts"] is None
+    assert billing.PLANS["enterprise"]["unipile_accounts"] is None
 
 
 # ── admin force plan (comp) ──────────────────────────────────────────────────
@@ -46,8 +54,9 @@ def test_admin_set_plan_forces_comp_and_configures_org(monkeypatch):
     state = _wire_admin(monkeypatch)
     billing.admin_set_plan(7, "business", granted_by="admin-sub")
     assert state["comp"] == (7, "business", "admin-sub")
-    # le plan CONFIGURE l'org : plafond messagerie posé d'un coup (50 pour business)
-    assert state["limit"] == (7, 50)
+    # le plan CONFIGURE l'org : plafond messagerie posé d'un coup (None = illimité,
+    # modèle simplifié — plus de facturation au nombre de comptes)
+    assert state["limit"] == (7, None)
 
 
 def test_admin_set_plan_rejects_unknown(monkeypatch):
@@ -90,7 +99,7 @@ def test_runner_never_charges_comp(monkeypatch):
 # ── levée de quota (fin des credits d'appel) ─────────────────────────────────
 
 def test_unmetered_org_bypasses_quota(monkeypatch):
-    monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: "solo")
+    monkeypatch.setattr(access.db, "subscription_plan_for_org", lambda oid: "premium")
     assert access._org_unmetered(5) is True
 
 
