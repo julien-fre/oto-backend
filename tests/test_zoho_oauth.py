@@ -324,9 +324,12 @@ def test_verify_capability_returns_pending_not_failure(monkeypatch):
     from oto_mcp.tools import zoho  # noqa: F401 — déclare l'état
     import asyncio
 
+    # 4e élément = l'INSTANCE sondée (level + ref), ajoutée le 03/08 : un `ok` de sonde
+    # doit dire quelle clé a répondu, la cascade pouvant retomber d'un cran.
     monkeypatch.setattr(cv, "_fields_config_scope",
                         lambda ctx, inp: ({"client_id": "1000.X", "client_secret": "s",
-                                           "data_center": "eu"}, {}, None))
+                                           "data_center": "eu"}, {}, None,
+                                          {"level": "user", "ref": "member:1:sub:zoho"}))
     monkeypatch.setattr(cv.connector_verify, "supports", lambda p: True)
     def _never(*a, **k):
         raise AssertionError("la sonde ne doit PAS être EXÉCUTÉE sur un credential incomplet")

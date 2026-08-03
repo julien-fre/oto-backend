@@ -25,8 +25,21 @@ class VerifyInput(BaseModel):
     level: Literal["auto", "org"] = "auto"     # auto = credential effectif ; org = clé de l'org
 
 
-def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict, "tuple | None"]:
-    """(champs déchiffrés, config non-secrète, SCOPE-santé) à sonder selon le niveau.
+def _ref(entity_type: "str | None", entity_id: "str | None", provider: str) -> str:
+    """Identifiant lisible de l'instance sondée. `None` = grant plateforme : il n'a pas
+    de ligne de coffre, mais il faut quand même pouvoir le NOMMER dans le résultat."""
+    if entity_type is None:
+        return f"platform:{provider}"
+    return f"{entity_type}:{entity_id}:{provider}"
+
+
+def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict, "tuple | None", dict]:
+    """(champs déchiffrés, config non-secrète, SCOPE-santé, INSTANCE sondée) selon le niveau.
+
+    `instance` = quelle clé a RÉELLEMENT été testée (`level` + `ref`). Sans elle, un
+    `ok:true` en niveau `auto` est ambigu : la cascade a pu retomber d'un cran, et on ne
+    peut pas distinguer « ma clé perso marche » de « ma clé perso a échoué, c'est celle
+    de l'org qui répond ». C'est précisément le cas où la confirmation compte.
 
     `config` = satellites NON-secrets appariés à la clé (meta public : dsn
     unipile…) — une sonde vers un endpoint dont l'hôte dépend de la clé DOIT en tenir compte.
@@ -45,13 +58,17 @@ def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict
                               "aucune clé d'org posée pour ce connecteur.")
         return (credentials_store.unpack_secret(inp.provider, row["secret"]),
                 credentials_store.public_meta(row.get("meta")),
-                ("org", str(ctx.org_id)))
+                ("org", str(ctx.org_id)),
+                {"level": "org", "ref": _ref("org", str(ctx.org_id), inp.provider)})
     rc = access.resolve_credential(
         inp.provider, want="auto", sub=ctx.sub, emit_on_failure=False,
     )
     scope = (("member", credentials_store.member_id(ctx.org_id, ctx.sub))
              if getattr(rc, "mode", None) == "user" and ctx.org_id is not None else None)
-    return rc.fields, rc.config, scope
+    instance = {"level": getattr(rc, "mode", None) or "unknown",
+                "ref": _ref(getattr(rc, "entity_type", None),
+                            getattr(rc, "entity_id", None), inp.provider)}
+    return rc.fields, rc.config, scope, instance
 
 
 def _record_health(provider: str, scope: "tuple | None", ok: bool, error: "str | None") -> None:
@@ -73,7 +90,7 @@ async def _verify(ctx: ResolvedCtx, inp: VerifyInput) -> dict:
     if probe is None:
         raise AuthzDenied(400, "verify_unavailable",
                           f"pas de test de connexion pour « {inp.provider} ».")
-    fields, config, scope = _fields_config_scope(ctx, inp)
+    fields, config, scope, instance = _fields_config_scope(ctx, inp)
     # Connexion en DEUX temps : un credential VOLONTAIREMENT incomplet (app posée,
     # consentement à venir) n'est pas une erreur de saisie — sonder le renverrait un
     # échec, et le formulaire du dashboard resterait ouvert sur une correction
@@ -83,7 +100,7 @@ async def _verify(ctx: ResolvedCtx, inp: VerifyInput) -> dict:
     st = status_hints.credential_state(inp.provider, fields)
     if st is not None and not st.complete:
         return {"ok": False, "pending": True, "provider": inp.provider,
-                "error": st.next_action, "elapsed_ms": 0}
+                "error": st.next_action, "elapsed_ms": 0, **instance}
     started = time.monotonic()
     ok, error = True, None
     try:
@@ -96,7 +113,9 @@ async def _verify(ctx: ResolvedCtx, inp: VerifyInput) -> dict:
     # La sonde EST le « health check » (read facile) → son verdict alimente le flag santé.
     _record_health(inp.provider, scope, ok, error)
     out = {"ok": ok, "provider": inp.provider,
-           "elapsed_ms": int((time.monotonic() - started) * 1000)}
+           "elapsed_ms": int((time.monotonic() - started) * 1000),
+           # QUELLE instance a répondu — cf. `_fields_config_scope`.
+           **instance}
     if not ok:
         out["error"] = error
     return out
@@ -106,7 +125,9 @@ CAP_DOC = (
     "Test whether a connector's configured credential actually authenticates "
     "(side-effect-free probe), returning {ok, error}. Use it to diagnose a connector "
     "that is set but not working (wrong region, expired token…) before reporting a gap. "
-    "'auto' tests the credential that resolves for you; 'org' tests the org shared key."
+    "'auto' tests the credential that resolves for you; 'org' tests the org shared key. "
+    "The reply names the instance actually probed (`level` + `ref`) — under 'auto' the "
+    "cascade may have fallen through to a shared key, and `ok` alone would not say so."
 )
 
 class EffectForMemberInput(BaseModel):
