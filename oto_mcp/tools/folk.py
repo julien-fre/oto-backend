@@ -296,19 +296,27 @@ def register(mcp: FastMCP) -> None:
             entity: "person", "company" or "deal".
             filters: Field → value, matched with `like` (e.g. {"fullName": "Dupont",
                 "emails": "@otomata.tech"} for people, {"name": "Otomata"} for companies).
+                For another operator, pass {field: {op: value}} — op ∈ eq, not_eq,
+                like, not_like, empty, not_empty, gt (dates), in / not_in (relations).
             max_results: Truncate the response (default 100).
-            group_id: REQUIRED for `deal` only (the group whose deals to search).
+            group_id: for `person`/`company`, LIST THE MEMBERS of that group (get its
+                id from folk_list_groups) — e.g. audit the "Leads" pipeline. REQUIRED
+                for `deal` (the group whose deals to search).
             object_type: collection name (default "deals"), `deal` only.
         """
         c = _client()
+        filters = dict(filters or {})
+        if group_id and entity in ("person", "company"):
+            # Appartenance à un groupe : le client traduit en filter[groups][in][id].
+            filters["groups"] = group_id
         if entity == "person":
-            items = c.list_people(**(filters or {}))
+            items = c.list_people(**filters)
         elif entity == "company":
-            items = c.list_companies(**(filters or {}))
+            items = c.list_companies(**filters)
         elif entity == "deal":
             if not group_id:
                 raise _bad("group_id requis pour entity='deal'.")
-            items = c.list_deals(group_id, object_type=object_type, **(filters or {}))
+            items = c.list_deals(group_id, object_type=object_type, **filters)
         else:
             raise _bad("entity doit être 'person', 'company' ou 'deal'.")
         return {"entity": entity, "count": len(items), "results": items[:max_results]}
