@@ -529,6 +529,15 @@ def set_credential(
     ATOMIQUE — le write legacy et le write canonique commitent ou rollback
     ensemble). Sinon ouvre sa propre transaction.
 
+    ⚠️ **`meta` omis n'est PAS « ne pas y toucher » — c'est ÉCRASER par `{}`.**
+    L'upsert fait `meta = EXCLUDED.meta` avec `json.dumps(meta or {})` : tout appel
+    sans `meta` efface les satellites de la ligne (`instance_url`, `identity_url`,
+    `connected_at`, `health_ko`…). Un appelant qui ne veut réécrire QUE le secret doit
+    relire le meta et le repasser (`get_credential_with_meta(...)["meta"]`), ou passer
+    par `update_meta` pour un merge. Vécu 03/08 : un writer appelé à chaque appel
+    d'outil vidait le meta d'un credential dès son premier usage — on ne savait plus
+    sur quelle org Salesforce la clé pointait.
+
     Remote (ADR 0003/0011) défini par la donnée (`meta.base_url`) → pas d'entrée
     registre ; sinon, garde d'éligibilité registre.
     """

@@ -720,7 +720,8 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   `category` (curée) + `publisher` (curé, `_PUBLISHER_BY_CONNECTOR`) + `logo_url`
   (dérivé du **CDN logo.dev** par `Connector.logo_url_for` : domaine de marque curé
   `_LOGO_DOMAIN_BY_CONNECTOR` + token publishable `LOGODEV_TOKEN` en env ; pas de S3,
-  pas de seed. open-data/maison sans domaine → pas de logo, monogramme côté UI).
+  pas de seed. L'absence est DÉCLARÉE dans `_SANS_LOGO_DE_MARQUE` (générique/maison :
+  monogramme côté UI) + tripwire — sinon un oubli se confond avec un choix).
   Surface admin `/api/admin/connectors/activation`
   (`api_routes_connectors.py`) + écran dashboard « connector activation ».
 - **Connecteur client-sensible = JAMAIS de code ici** : pont via le connecteur
@@ -759,7 +760,11 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   calqué sur `browser_session.register`) : un connecteur enregistre une `_verify(fields)`
   qui **lève sur échec** (le message d'exception = le retour d'erreur). Capacité unique
   `connectors.verify` (MCP `oto_instance(op="verify")` — console ADR 0047 + REST `POST /api/me/connectors/{provider}/verify`,
-  `authz=ORG_MEMBER`, `level` auto|org) → `{ok, error, elapsed_ms}`, jamais un 500 ;
+  `authz=ORG_MEMBER`, `level` auto|org) → `{ok, error, elapsed_ms, level, ref}`, jamais un 500 ;
+  `level`/`ref` (ex. `org:2:salesforce`) DÉRIVÉS de la même entité, sinon un `ok` sous
+  `auto` ne dit pas quel cran de la cascade a répondu. `run()` transporte aussi
+  `instance=(entity_type, entity_id, account)` aux sondes qui le DÉCLARENT — vital dès
+  qu'une sonde a un effet de bord (rotation : cf. `docs/connector-vault.md`) ;
   `providers.public_catalog` expose `verifiable: connector_verify.supports(name)` (front
   gate le bouton). **Une bonne sonde teste l'auth ET les scopes**, pas juste l'auth :
   seed Zoho (`tools/zoho.py::_verify`) fait un refresh OAuth brut (valide client/secret/
@@ -772,6 +777,12 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   param `fields`** (une lecture nue → 400, pas un scope-mismatch) → sonder via `list_records`
   (qui fournit les `DEFAULT_FIELDS`), pas un `GET /crm/v7/{module}` brut.
 - Docstrings = contrat LLM (le modèle choisit les tools là-dessus). Précis, pas verbeux.
+- **Doc how-to d'un connecteur = un markdown**, `oto_mcp/connector_docs/<nom>.md`
+  (nommé comme son module), sections `## <kind> — <titre>`, servie au catalogue et à
+  toutes les fiches. Une URL de rappel ne s'y écrit JAMAIS en dur — marqueur
+  `{{callback:/chemin}}` résolu à la lecture, car elle diffère prod/preprod (tripwire).
+  C'était un dict de 850 lignes de chaînes Python : la prose y devenait intouchable, et
+  la fiche Salesforce a fini par décrire un modèle d'app que Salesforce avait désactivé.
 - **Aucune résolution de secret côté serveur hors DB/env de process** : pas de
   `get_secret`/`require_secret` oto.config dans le code serveur (l'unit pose
   `OTO_CONFIG_DISABLE_SOPS=1`, tout résidu échoue fort).
@@ -856,7 +867,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 ## Docs
 
 - `docs/connector-model.md` — **carte d'ensemble** : les **3 couches** d'un connecteur (disponibilité / authentification / option de connecteur), la matrice des niveaux (user/groupe/org/plateforme), le vocabulaire canonique, le seam `access.has_option`. **À lire en premier** avant de toucher activation/clés/options (les autres docs ci-dessous = le détail par couche).
-- `docs/connector-vault.md` — **archi centrale** : registre source unique (`connectors.py`), coffre chiffré unique `connector_credentials` (clés API + platform_keys + sessions linkedin/crunchbase/google multi-compte), enveloppe AES-256-GCM **obligatoire** (pas de plaintext), résolution + palier org. À lire avant de toucher credentials/registre/résolution.
+- `docs/connector-vault.md` — **archi centrale** : registre source unique (`connectors.py`), coffre chiffré unique `connector_credentials` (clés API + platform_keys + sessions linkedin/crunchbase/google multi-compte), enveloppe AES-256-GCM **obligatoire** (pas de plaintext), résolution + palier org, **credentials qui se consomment à l'usage (rotation)** et le modèle application-d'org ≠ jeton-d'identité. À lire avant de toucher credentials/registre/résolution.
 - `docs/roles-and-resolution.md` — rôles (3 paliers) + cascade de résolution de clé / grants / platform keys.
 - `docs/doctrines.md` — doctrine & skills d'org (`oto_procedure`, versionnée) + **renommer un outil = migrer les procédures** (refs `<tool:slug>` en DB, angle mort du CI).
 - `docs/auth-logto.md` — auth Logto ES384, discovery RFC 9728, façade DCR.

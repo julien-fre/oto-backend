@@ -96,6 +96,58 @@ sortent pas — seule la part `meta` est projetée en `config`. Le « gagnant »
 cascade reste dit par `status_for` (une seule vérité) ; la projection ne porte
 que l'ordre de proximité (tri membre < groupe < org < plateforme).
 
+## Credentials qui se CONSOMMENT à l'usage (rotation)
+
+Certains fournisseurs invalident le jeton à chaque utilisation et en renvoient un neuf
+— **Salesforce l'impose** sur les External Client Apps (contrôle verrouillé, « paramètre
+obligatoire », application 2026, donc chez *tous* les clients).
+
+**La règle : sous rotation, toute LECTURE est une ÉCRITURE.** Tout chemin qui touche au
+jeton en devient consommateur et doit persister le remplaçant — sinon il détruit le
+credential en s'en servant.
+
+Les consommateurs, à traiter **ensemble** (les traiter un par un ne marche pas, chacun
+suffit à tuer la connexion) :
+
+| Consommateur | Ce qu'il lui faut |
+|---|---|
+| appel d'outil | rappel `on_refresh` → réécriture à l'entité résolue |
+| sonde de vérification | l'**entité sondée** (`connector_verify.run(instance=…)`) — la cascade désigne la clé la plus PROCHE, pas celle qu'on teste |
+| sonde post-écriture d'un callback OAuth | *retirée* — une requête navigateur n'a pas de contexte authentifié, donc aucun moyen de savoir où réécrire |
+| script de diagnostic | il consomme comme les autres : préférer la sonde du serveur |
+
+**L'écriture est CONDITIONNELLE**, jamais un écrasement : on ne réécrit que si le jeton
+stocké est encore celui qu'on a lu. Deux appels concurrents — ou preprod et prod, qui
+partagent la base — peuvent avoir tourné entre-temps ; remettre en place un jeton déjà
+consommé est précisément ce que le fournisseur traite comme une compromission (Salesforce
+révoque alors le jeton courant *et* tous les access tokens associés).
+
+Deux corollaires qui coûtent cher quand on les découvre en production :
+
+- **un cache d'access token porté par l'instance de client ne sert à rien** côté serveur
+  (une instance par appel MCP) : sans cache process-wide, on rafraîchit — donc on fait
+  tourner le jeton — à chaque appel d'outil. C'est ce qui transforme la rotation en
+  problème explosif plutôt que contraignant ;
+- **une sonde n'est plus « sans effet de bord »**, et ne peut pas l'être.
+
+### Application ≠ jeton
+
+Corollaire de modèle, visible sur Salesforce (`salesforce_oauth.py`) : l'**application**
+OAuth (`client_id`/`client_secret`/`login_url`) est une **infrastructure d'org** — un
+admin la pose une fois ; le **refresh token** est une **identité** — il appartient à qui
+consent.
+
+D'où une asymétrie délibérée : l'application se **lit en cascade** du scope demandé vers
+le haut (membre → équipe → org), le jeton s'**écrit au scope demandé** exactement. Un
+membre consent donc avec l'application de son org sans jamais en connaître les
+identifiants. La cascade **remonte et ne descend jamais** : consentir pour l'org
+n'utilisera pas l'application d'un particulier, sinon la connexion de toute l'org serait
+adossée aux identifiants d'une personne.
+
+⚠️ L'aller (`build_auth_url`) et le retour (`read_saved_fields`) doivent appliquer la
+**même** règle : un code d'autorisation est émis pour un `client_id` précis, l'échanger
+avec un autre échoue — après le consentement de l'utilisateur, au pire moment.
+
 ## Validation
 
 Pas de framework de tests dans le repo → validation manuelle sur **PG16 jetable (docker)** + revue adversariale par phase. Migrations idempotentes au boot (`init_db` : ALTER additifs, PK 4-col, backfills, encrypt-existing, drop-plaintext gaté).
