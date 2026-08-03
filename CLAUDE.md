@@ -270,70 +270,7 @@ DSN par credential, sélecteur d'identité, **comptes partagés autorisés** (#5
 revalidés à chaque appel, jamais de repli silencieux).
 **Détail : `docs/unipile.md`**.
 
-> **Instance PERSONNELLE cross-org (#172, amende ADR 0033).** Un compte de messagerie
-> hébergé est **par-personne** → flag registre `Connector.personal_cross_org=True`
-> (unipile). La clé membre d'un `sub` posée dans UNE org **le suit dans toutes ses orgs**
-> (résolution de proximité, pas seulement le pin `instance=` d'ADR 0038) : seam unique
-> déterministe `access.personal_instance_org` (org perso > plus récente) partagé par la
-> clé (`_resolve_credential_impl`, retombe cross-org AVANT groupe/org/plateforme quand la
-> clé LOCALE manque — même sub = zéro usurpation), le miroir de statut (`credential_mode_for`/
-> `unipile_api_key_for`) ET le compte (`connector_identities._own_unipile_account_id`, MÊME
-> org que la clé → appariés). Surfacé pinnable par `oto_instance(op='list')`
-> (`via='personal_cross_org'`). **Garde-fou** : `unipile_connect_start`/`POST /api/unipile/connect`
-> refusent (409 `unipile_already_connected_elsewhere`, override `force=true`) une 2e
-> connexion du même canal déjà lié dans une AUTRE org (anti-doublon `account_id`).
-
-> **Siège plateforme cross-org (#221, 2026-07-16, LIVE PROD).** Le cross-org #172 ci-dessus
-> était accroché à la **clé MEMBRE** (`personal_instance_org` → `list_member_orgs_for`) →
-> un user sur la **clé PLATEFORME partagée** (donc SANS clé membre) tombait à travers : son
-> siège hébergé, pourtant par-personne, ne le suivait QUE dans les orgs où une ligne
-> `unipile_accounts` existait → « je connecte mais ça reste sur Connect » ailleurs. Fix :
-> le **siège plateforme suit le sub cross-org** — `db.any_unipile_account_id(sub, provider)`
-> (siège `platform_seat=True` le plus récent, toutes orgs) est un fallback dans
-> `_own_unipile_account_id` (résolution outils) ET `status_for` (affichage), **gardé sur
-> `credential_mode_for == 'platform'` ET `subscribed`** (l'org de contexte résout la clé
-> plateforme ET a l'option) → jamais un siège sous une clé BYO (mismatch) ni un faux
-> « connecté » sans option. ⚠️ **`db.list_unipile_accounts` doit renvoyer `platform_seat`**
-> (le SELECT l'omettait → filtre cross-org muet ; bug masqué par les stubs unitaires,
-> attrapé en test empirique — cf. la leçon « stubs cachent la forme de row » ci-dessus).
-
-> **API v2 = seul chemin (V1 COUPÉ, 2026-07-16, LIVE PROD).** La migration des comptes
-> en v2 étant bouclée, **v1 est retiré du code** : oto-core **≥v1.26.0** n'a plus qu'**une
-> classe `UnipileClient` (v2)** (`client_v2.py` fusionné dans `client.py` ; `UnipileClientV2`
-> + `make_unipile_client(api_version=)` supprimés) ; `DEFAULT_DSN = api.unipile.com` (gateway
-> v2 unifié). **Plus AUCUN plumbing `api_version`** côté backend (construction client, pose de
-> clé member/org/plateforme, carte `status_for`) ni de sélecteur dashboard. Le `dsn` par-clé
-> (`meta.dsn`) reste lu (défaut = gateway v2). Deltas API v2 (account_id-in-path, enveloppe
-> `{data,next_cursor}` normalisée `items`/`cursor`, inbox model, posts keyés URN, `inmail-credits`)
-> = **docstrings de `client.py`** oto-core.
->
-> **Hosted-auth v2 : webhook non livré → réconciliation poll-and-bind.** Le hosted-auth v2 ne
-> rappelle **pas** notre `notify_url` (webhook au niveau APP Unipile, pas par-lien) et le compte
-> connecté **ne porte pas notre nonce** → le compte se crée chez Unipile mais n'est jamais
-> enregistré côté oto (pending qui traîne). Fix **webhook-indépendant** : `unipile_connect.reconcile_pending(sub)`
-> liste les comptes Unipile et lie au sub le plus **récent, non déjà lié, du bon provider, créé
-> APRÈS son pending** (floor = anti-rebind d'un siège tiers). **Self-heal** dans `GET /api/me/unipile`
-> (no-op sans pending, donc sans appel Unipile) + endpoint explicite `POST /api/me/unipile/reconcile`.
-> Le webhook `POST /api/unipile/webhook` (handler v1 `CREATION_SUCCESS`) reste mais **dormant** (le v2
-> ne l'alimente pas) — utile seulement si on branche `account.disconnected` (détection de déco, non fait).
->
-> **Consolidation « tout en clé plateforme » (2026-07-16).** Clé plateforme rotée en v2 (scope
-> PLATFORM, label `env`) ; tous les BYO unipile supprimés ; **option comp** posée pour les orgs
-> concernées (`db.set_option_comp("org",id,"unipile")`). ⚠️ **GOTCHA share (ADR 0044 §F)** :
-> `share_mode='open'` n'ouvre à tous que si **`share_down` est VIDE** (`_platform_instance_usable` :
-> `(not down) or granted`) — sinon seule l'allowlist passe (sinon `404 unipile_not_configured`, la
-> clé plateforme ne résout pas). Free-tier réel = `open` + `share_down=[]`, l'option couche 3 gardant
-> qui peut connecter.
-
-> **Couche 3 « option » = source unique `access.option_open(sub, connector, org, group)` (2026-07-07).**
-> « L'option payante est-elle levée ? » était recopiée à 3 endroits (`connectors_selection.option_ok`
-> + `unipile.status_for.subscribed` self & admin) → divergence (le **BYO ouvre l'option** — l'user
-> gère sa propre instance — était oublié dans un seul) → carte incohérente « clé d'org (vert) +
-> Bloqué (rouge) ». Règle : pas d'option ⟹ ouvert ; sinon **BYO** OU `has_option` (comp/abonnement).
-> Le **front est backend-driven** (rend `option_ok`/`subscribed`, 0 RBAC recodée client) → il devient
-> durable car il lit un flag cohérent. **Ne jamais recoder une règle d'accès côté front** : ajouter
-> un flag backend. Le gate DUR (qui peut utiliser) reste `require_connector_access` (ADR 0025, couvre
-> le BYO — « pas de clé perso qui contourne ») ; il gate aussi la **pose** (`api_key_save` → 403).
+> Le détail (cas limites, incidents, gotchas empiriques) a été migré dans **`docs/unipile.md`** — il n'a pas sa place dans une carte, et il y était devenu illisible.
 
 ## Monitoring des appels MCP
 
@@ -480,50 +417,7 @@ en place — elle sert encore de source au backfill de boot ; son DROP est une m
 `docs/doctrines.md`) gardent le mot doctrine. Prose opératoire versionnée par org,
 **détail : `docs/doctrines.md`**.
 
-> **Livraison au LLM = injection, plus un appel d'outil (otomata-private#49 puis #50, amende ADR 0014).**
-> Le canal FIABLE de bootstrap = les `instructions` du `initialize` (FastMCP les relit par
-> session ; Claude rehandshake par conversation). `DynamicInstructionsMiddleware.on_initialize`
-> (`middleware.py`) **remplace** `result.instructions` par `instructions.compose_session(sub, org_id)`
-> — un **artefact composé de 2 blocs** (`instructions.py`, #50 ; l'ex-bloc B onboarding a été
-> retiré le 2026-07-01 — l'onboarding est un projet, ADR 0032 §7) :
-> - **bloc A « secret sauce »** (posture + boucle d'usage + **catalogue de namespaces** dérivé) —
->   prose en DB `platform_instructions['secret_sauce']`, éditable admin plateforme, **inviolable par
->   l'org**, toujours injecté (seedé depuis la constante = fallback) ; le catalogue est appendé à la composition ;
-> - **bloc C « contexte dynamique »** par-(sub, org) — section de contexte résolu (org / équipe /
->   connecteurs actifs / N derniers projets / derniers déroulés via `db.recent_runs` / fiche profil
->   « situation avec oto » de l'user) + **agent readme cumulés** org → équipe active → user
->   (`_format_org_readme`/`_format_group_readme`/`_format_user_readme`), chacun avec substitution
->   `{{org}}`/`{{user}}`/`{{équipe}}`/`{{connecteurs_actifs}}`.
->
-> Donc **ne plus prescrire « appelle la lecture de doctrine au démarrage »** — la doctrine est injectée.
-> Les **doctrines nommées (skills)** ne sont pas des outils → absentes de `tools/list` → `on_list_tools`
-> **enrichit la description de `oto_procedure`** avec leur index per-org (`instructions.skills_index_md`,
-> Tool non-frozen → `model_copy`). `render()` reste la surface STATIQUE (boot / fallback, sans DB).
-> Tout **fail-open** (pas de sub/org/doctrine/DB → surface statique). Édition des blocs A/B : capacité
-> `oto_admin_platform_instructions` (+ REST `/api/admin/platform-instructions`, `PLATFORM_ADMIN`) →
-> éditeur dashboard `/platform/instructions`. Transparence : `/api/me/agent-context` rend le même
-> artefact composé. **Reste (#54)** : anticipation **pilotée** (message proactif amorcé par l'admin).
-
-> **Slots de procédure (ADR 0035, B1–B3 déployés).** Une procédure déclare ses **entités
-> à instance** (quel tableau, quel compte de connecteur, quelle page Documents) en **JSON propre** :
-> colonne `org_instructions.slots` JSONB (`{name, type ∈ tableau|connecteur|doc,
-> description?, connector?}`), la prose les référence **par nom** via `<slot:name>` (même
-> famille que `<tool:slug>` 0014 ; le binding nom→instance vit dans le PROJET,
-> `project_links.slot` — vocabulaire DU projet, unicité `(project_id, slot)` → 409
-> `slot_taken` au link). Module `slots.py` = source unique (validation dure
-> `validate_slots`/`normalize_name` + check croisé non bloquant `slots_check` : refs
-> mortes, slots jamais cités, cohérence connecteurs déclarés ↔ refs `<tool:>`, suggestion
-> quand un connecteur à identités est référencé sans slot). Écriture : `oto_procedure(op='set')`/
-> `PUT /api/me/instructions/{slug}` (param `slots`, warnings en réponse) ; transport
-> revisions + revert + `copy_instruction_to_org` + publish/fork bibliothèque +
-> `duplicate_project`. **Runtime (B3)** : les tools `data_*` acceptent
-> `namespace='slot:<name>'` → `access.resolve_slot_tableau` résout contre les bindings du
-> **projet actif** ; pas de projet / slot non bindé / binding pendouillant = **McpError
-> actionnable, jamais de fallback** (bracelet serveur 0023) ; `data_create_namespace`
-> refuse le préfixe (un slot binde un tableau existant). Bloc A : §« Slots » (⚠️ prose
-> seedée en DB — une évolution du texte passe par `oto_admin_platform_instructions`, pas
-> seulement la constante). Grandfathering : procédure sans slots / nom nu = inchangés.
-> Restent B4 (inventaire dérivé) + B5 (vérifications) — épic otomata-private#59.
+> Le détail (cas limites, incidents, gotchas empiriques) a été migré dans **`docs/doctrines.md`** — il n'a pas sa place dans une carte, et il y était devenu illisible.
 
 ## Groupes (départements) & hiérarchie de droits (ADR 0012)
 
@@ -550,19 +444,10 @@ grain, le scope est une COLONNE ; migrations vivantes sur la DB partagée = play
   `owner_id=group_id`, `org_id`=org parente ; ex-jumelle `org_group_instructions`
   DROPpée) ; `oto_procedure(op='get')` sert org **puis** groupe actif (complément,
   chaque skill taggée `scope`). Les procédures d'équipe ont un `id` (ownership 0030).
-- **gouvernance de connecteur (ADR 0012 B1/B2, restrict-only — 08/07/2026)** — le chef
-  d'équipe peut, pour SON équipe : **couper** un connecteur (lignes scope 'group' de
-  `connector_availability`, coupures seules) et **réserver** un connecteur à des membres
-  (lignes scope 'group' de `connector_acl`).
-  **INVARIANT MONOTONE** : l'équipe ne peut que RÉTRÉCIR ce que l'org expose, jamais élargir
-  (platform ⊇ org ⊇ group). Dispo = **visibilité** (`session_visibility`, fail-open,
-  `connector_activation.effective_for_group`/`group_cut_connectors`). Accès = **gate DUR** :
-  seam `access.group_rbac_denied_connectors` (mirror de `rbac_denied_connectors`, bypass
-  super/org_admin/group_admin) ; `require_connector_access` = `org_block OR grp_block` à
-  **fail-open INDÉPENDANT par palier** (un hoquet DB d'équipe ne désactive pas l'org).
-  Capacités `connectors.activation.{group_list,set_group,clear_group}` +
-  `connectors.acl.{group_list,group_grant,group_revoke}` (GROUP_*). REST
-  `/api/groups/{id}/connectors[/{name}]/activation` + `.../access`.
+- **gouvernance de connecteur** — le chef d'équipe peut COUPER un connecteur et le
+  RÉSERVER à des membres, pour son équipe seulement. **Invariant monotone** :
+  l'équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse (platform ⊇ org ⊇ group).
+  Détail (paliers, fail-open indépendant, capacités) : `docs/groups-and-roles.md`.
 
 **Groupe actif** : ≤1 par sub (`org_group_members.is_active`, index partiel),
 **invariant** = appartient à l'org active. `set_active_group` pose aussi l'org

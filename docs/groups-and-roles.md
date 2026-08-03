@@ -139,3 +139,22 @@ Ajoute `active_group`, `active_group_name`, `group_role` (effectif) ;
 - Pas de sous-groupes (groupes plats sous l'org) — décision produit v1.
 - Les entitlements de namespace gouverné restent **org-level** (non délégués au
   groupe) — décision produit v1.
+
+## Gouvernance de connecteur par l'équipe (ADR 0012 B1/B2, restrict-only)
+
+Migré de la carte : le détail des paliers, du fail-open par palier et des
+capacités n'a pas sa place dans un index.
+
+**gouvernance de connecteur (ADR 0012 B1/B2, restrict-only — 08/07/2026)** — le chef
+  d'équipe peut, pour SON équipe : **couper** un connecteur (lignes scope 'group' de
+  `connector_availability`, coupures seules) et **réserver** un connecteur à des membres
+  (lignes scope 'group' de `connector_acl`).
+  **INVARIANT MONOTONE** : l'équipe ne peut que RÉTRÉCIR ce que l'org expose, jamais élargir
+  (platform ⊇ org ⊇ group). Dispo = **visibilité** (`session_visibility`, fail-open,
+  `connector_activation.effective_for_group`/`group_cut_connectors`). Accès = **gate DUR** :
+  seam `access.group_rbac_denied_connectors` (mirror de `rbac_denied_connectors`, bypass
+  super/org_admin/group_admin) ; `require_connector_access` = `org_block OR grp_block` à
+  **fail-open INDÉPENDANT par palier** (un hoquet DB d'équipe ne désactive pas l'org).
+  Capacités `connectors.activation.{group_list,set_group,clear_group}` +
+  `connectors.acl.{group_list,group_grant,group_revoke}` (GROUP_*). REST
+  `/api/groups/{id}/connectors[/{name}]/activation` + `.../access`.

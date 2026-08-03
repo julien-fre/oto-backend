@@ -79,3 +79,50 @@ corps, vérifier `unresolved_tools == []`. ⚠️ Vérifier contre le serveur qu
 surface — tant que le tag n'est pas en prod, les anciens noms y résolvent encore et le contrôle
 est faussement vert. **Aucun garde-fou automatique à ce jour** : la migration reste à la charge
 de qui renomme.
+
+## Détail accumulé (migré de la carte)
+
+**Livraison au LLM = injection, plus un appel d'outil (otomata-private#49 puis #50, amende ADR 0014).**
+Le canal FIABLE de bootstrap = les `instructions` du `initialize` (FastMCP les relit par
+session ; Claude rehandshake par conversation). `DynamicInstructionsMiddleware.on_initialize`
+(`middleware.py`) **remplace** `result.instructions` par `instructions.compose_session(sub, org_id)`
+— un **artefact composé de 2 blocs** (`instructions.py`, #50 ; l'ex-bloc B onboarding a été
+retiré le 2026-07-01 — l'onboarding est un projet, ADR 0032 §7) :
+- **bloc A « secret sauce »** (posture + boucle d'usage + **catalogue de namespaces** dérivé) —
+  prose en DB `platform_instructions['secret_sauce']`, éditable admin plateforme, **inviolable par
+  l'org**, toujours injecté (seedé depuis la constante = fallback) ; le catalogue est appendé à la composition ;
+- **bloc C « contexte dynamique »** par-(sub, org) — section de contexte résolu (org / équipe /
+  connecteurs actifs / N derniers projets / derniers déroulés via `db.recent_runs` / fiche profil
+  « situation avec oto » de l'user) + **agent readme cumulés** org → équipe active → user
+  (`_format_org_readme`/`_format_group_readme`/`_format_user_readme`), chacun avec substitution
+  `{{org}}`/`{{user}}`/`{{équipe}}`/`{{connecteurs_actifs}}`.
+
+Donc **ne plus prescrire « appelle la lecture de doctrine au démarrage »** — la doctrine est injectée.
+Les **doctrines nommées (skills)** ne sont pas des outils → absentes de `tools/list` → `on_list_tools`
+**enrichit la description de `oto_procedure`** avec leur index per-org (`instructions.skills_index_md`,
+Tool non-frozen → `model_copy`). `render()` reste la surface STATIQUE (boot / fallback, sans DB).
+Tout **fail-open** (pas de sub/org/doctrine/DB → surface statique). Édition des blocs A/B : capacité
+`oto_admin_platform_instructions` (+ REST `/api/admin/platform-instructions`, `PLATFORM_ADMIN`) →
+éditeur dashboard `/platform/instructions`. Transparence : `/api/me/agent-context` rend le même
+artefact composé. **Reste (#54)** : anticipation **pilotée** (message proactif amorcé par l'admin).
+
+**Slots de procédure (ADR 0035, B1–B3 déployés).** Une procédure déclare ses **entités
+à instance** (quel tableau, quel compte de connecteur, quelle page Documents) en **JSON propre** :
+colonne `org_instructions.slots` JSONB (`{name, type ∈ tableau|connecteur|doc,
+description?, connector?}`), la prose les référence **par nom** via `<slot:name>` (même
+famille que `<tool:slug>` 0014 ; le binding nom→instance vit dans le PROJET,
+`project_links.slot` — vocabulaire DU projet, unicité `(project_id, slot)` → 409
+`slot_taken` au link). Module `slots.py` = source unique (validation dure
+`validate_slots`/`normalize_name` + check croisé non bloquant `slots_check` : refs
+mortes, slots jamais cités, cohérence connecteurs déclarés ↔ refs `<tool:>`, suggestion
+quand un connecteur à identités est référencé sans slot). Écriture : `oto_procedure(op='set')`/
+`PUT /api/me/instructions/{slug}` (param `slots`, warnings en réponse) ; transport
+revisions + revert + `copy_instruction_to_org` + publish/fork bibliothèque +
+`duplicate_project`. **Runtime (B3)** : les tools `data_*` acceptent
+`namespace='slot:<name>'` → `access.resolve_slot_tableau` résout contre les bindings du
+**projet actif** ; pas de projet / slot non bindé / binding pendouillant = **McpError
+actionnable, jamais de fallback** (bracelet serveur 0023) ; `data_create_namespace`
+refuse le préfixe (un slot binde un tableau existant). Bloc A : §« Slots » (⚠️ prose
+seedée en DB — une évolution du texte passe par `oto_admin_platform_instructions`, pas
+seulement la constante). Grandfathering : procédure sans slots / nom nu = inchangés.
+Restent B4 (inventaire dérivé) + B5 (vérifications) — épic otomata-private#59.
