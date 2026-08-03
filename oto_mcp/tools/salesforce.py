@@ -25,6 +25,41 @@ def _login_url(login_url: Optional[str]) -> str:
     return (login_url or "").strip().rstrip("/") or "https://login.salesforce.com"
 
 
+# Ce qu'il faut d'un champ pour le LIRE ou l'ÉCRIRE — le reste des 57 clés que
+# Salesforce renvoie par champ (aggregatable, byteLength, compoundFieldName, mask…)
+# ne sert à personne côté agent.
+_DESCRIBE_FIELD_KEYS = ("name", "label", "type", "length", "nillable",
+                        "createable", "updateable", "referenceTo", "defaultValue")
+_DESCRIBE_OBJECT_KEYS = ("name", "label", "labelPlural", "custom", "createable",
+                         "updateable", "deletable", "queryable", "searchable", "keyPrefix")
+
+
+def _project_describe(raw: dict) -> dict:
+    """Projection resserrée d'un describe sObject (signal #339).
+
+    Le payload brut d'un Account standard fait ~220 Ko / 45 clés (127
+    childRelationships, actionOverrides, recordTypeInfos…) : trop gros pour le
+    contexte d'un agent, donc tronqué et déporté en fichier par le client — donc
+    inchaînable, alors que seuls 51 champs comptent. On garde l'objet + ses champs,
+    `verbose=True` rend le brut à qui en a besoin."""
+    fields = []
+    for f in (raw.get("fields") or []):
+        out = {k: f.get(k) for k in _DESCRIBE_FIELD_KEYS if f.get(k) not in (None, [], "")}
+        out["name"] = f.get("name")          # toujours présent, même vide
+        # Un picklist n'est utile qu'en VALEURS d'API actives (l'objet complet porte
+        # label/validFor/defaultValue par entrée = 4× le poids pour rien).
+        picks = [p.get("value") for p in (f.get("picklistValues") or []) if p.get("active")]
+        if picks:
+            out["picklistValues"] = picks
+        fields.append(out)
+    obj = {k: raw.get(k) for k in _DESCRIBE_OBJECT_KEYS if raw.get(k) is not None}
+    obj["fields"] = fields
+    obj["field_count"] = len(fields)
+    obj["_note"] = ("Projection (name/label/type/length/nillable/createable/updateable/"
+                    "referenceTo/picklistValues). verbose=true pour le payload Salesforce brut.")
+    return obj
+
+
 def _salesforce_credential_state(fields: dict) -> status_hints.CredentialState:
     """SOURCE UNIQUE de « ce credential Salesforce est-il utilisable ? ».
 
@@ -257,9 +292,23 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
-    def salesforce_describe(sobject: str) -> dict:
-        """Field metadata for an sObject type (e.g. "Account", "Contact", or custom)."""
-        return _client().describe(sobject)
+    def salesforce_describe(sobject: str, verbose: bool = False) -> dict:
+        """Field metadata for an sObject type (e.g. "Account", "Contact", or custom).
+
+        Returns a TIGHT projection: the object's own flags + one entry per field with
+        what you need to read or write it (name, label, type, length, nillable,
+        createable, updateable, referenceTo, picklist values). Salesforce's raw
+        describe is ~220 KB for a standard Account (127 childRelationships,
+        actionOverrides, recordTypeInfos, 57 keys per field) — too big to chain on.
+
+        Args:
+            sobject: e.g. "Account", "Contact", or a custom "Foo__c".
+            verbose: True → the RAW Salesforce payload, unprojected. Only when you
+                need something the projection drops (child relationships, layouts);
+                expect it to be truncated by the client.
+        """
+        raw = _client().describe(sobject)
+        return raw if verbose else _project_describe(raw)
 
     @mcp.tool()
     def salesforce_list(
