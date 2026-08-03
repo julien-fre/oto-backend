@@ -196,8 +196,10 @@ def register(mcp: FastMCP) -> None:
           puis élargir. Ne cherche PAS une facture précise : voir op="find".
         - "find" (`external_reference`) : anti-doublon avant de créer un avoir pour
           un paiement échoué — si une facture porte déjà cette référence (ex. l'id
-          GoCardless `PM…`), l'avoir existe, ne pas le recréer. Renvoie la facture
-          ou `{"found": false}`.
+          GoCardless `PM…`), l'avoir existe, ne pas le recréer. Recherche par filtre
+          serveur : EXHAUSTIVE (l'ancienneté ou l'archivage d'une facture ne la
+          cachent pas) et fiable — une panne amont lève au lieu de se lire
+          « aucune ». Renvoie la facture ou `{"found": false}`.
         - "create" : facture de vente en **brouillon**. Le client doit exister
           (`pennylane_customer`).
         - "credit_note" : avoir **standalone** en brouillon (convention v2 :
