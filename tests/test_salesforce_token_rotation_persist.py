@@ -32,11 +32,12 @@ class _RC:
 def coffre(monkeypatch):
     """Coffre en mémoire : {(type, id, account): champs}."""
     store: dict[tuple, dict] = {}
+    metas: dict[tuple, dict] = {}
     ecritures: list[tuple] = []
 
     def _get(entity_type, entity_id, connector, account=""):
         champs = store.get((entity_type, entity_id, account))
-        return {"secret": champs} if champs else None
+        return {"secret": champs, "meta": metas.get((entity_type, entity_id, account), {})} if champs else None
 
     def _unpack(_connector, secret):
         return dict(secret)
@@ -46,13 +47,16 @@ def coffre(monkeypatch):
 
     def _set(entity_type, entity_id, connector, secret, account="", **kw):
         store[(entity_type, entity_id, account)] = dict(secret)
+        # Reproduit l'upsert réel : `meta = EXCLUDED.meta`, donc omettre l'argument
+        # ÉCRASE par {} au lieu de préserver.
+        metas[(entity_type, entity_id, account)] = dict(kw.get("meta") or {})
         ecritures.append((entity_type, entity_id, account))
 
     monkeypatch.setattr(credentials_store, "get_credential_with_meta", _get)
     monkeypatch.setattr(credentials_store, "unpack_secret", _unpack)
     monkeypatch.setattr(credentials_store, "pack_secret", _pack)
     monkeypatch.setattr(credentials_store, "set_credential", _set)
-    return store, ecritures
+    return store, ecritures, metas
 
 
 def _pose(store, entity_type, entity_id, jeton, account=""):
@@ -68,7 +72,7 @@ def _pose(store, entity_type, entity_id, jeton, account=""):
 def test_le_jeton_est_reecrit_a_lentite_gagnante(coffre, entity_type, entity_id):
     """Membre, équipe ou org : on réécrit LÀ OÙ on a lu. Se tromper de niveau
     rangerait le jeton d'une org dans la clé perso, ou l'inverse."""
-    store, _ = coffre
+    store, _, metas = coffre
     _pose(store, entity_type, entity_id, "RT-1")
     _rotation_writer(_RC(entity_type, entity_id), "RT-1")({"refresh_token": "RT-2"})
     assert store[(entity_type, entity_id, "")]["refresh_token"] == "RT-2"
@@ -77,7 +81,7 @@ def test_le_jeton_est_reecrit_a_lentite_gagnante(coffre, entity_type, entity_id)
 def test_les_autres_champs_survivent(coffre):
     """Read-merge-write : le secret est un blob unique, une écriture partielle
     effacerait client_id/client_secret/login_url."""
-    store, _ = coffre
+    store, _, metas = coffre
     _pose(store, "member", "2:sub-x", "RT-1")
     _rotation_writer(_RC("member", "2:sub-x"), "RT-1")({"refresh_token": "RT-2"})
     champs = store[("member", "2:sub-x", "")]
@@ -87,7 +91,7 @@ def test_les_autres_champs_survivent(coffre):
 
 def test_le_compte_nomme_est_respecte(coffre):
     """Multi-compte : écrire sur le compte '' écraserait la mauvaise ligne."""
-    store, _ = coffre
+    store, _, metas = coffre
     _pose(store, "member", "2:sub-x", "RT-1", account="prod")
     _rotation_writer(_RC("member", "2:sub-x", "prod"), "RT-1")({"refresh_token": "RT-2"})
     assert store[("member", "2:sub-x", "prod")]["refresh_token"] == "RT-2"
@@ -98,14 +102,14 @@ def test_le_compte_nomme_est_respecte(coffre):
 def test_sans_rotation_aucune_ecriture(coffre):
     """Tous les fournisseurs ne tournent pas. Une écriture par appel d'outil serait
     du bruit pur — et de la contention sur une ligne chaude."""
-    store, ecritures = coffre
+    store, ecritures, metas = coffre
     _pose(store, "member", "2:sub-x", "RT-1")
     _rotation_writer(_RC("member", "2:sub-x"), "RT-1")({"access_token": "AT"})
     assert not ecritures
 
 
 def test_un_jeton_identique_nest_pas_reecrit(coffre):
-    store, ecritures = coffre
+    store, ecritures, metas = coffre
     _pose(store, "member", "2:sub-x", "RT-1")
     _rotation_writer(_RC("member", "2:sub-x"), "RT-1")({"refresh_token": "RT-1"})
     assert not ecritures
@@ -114,7 +118,7 @@ def test_un_jeton_identique_nest_pas_reecrit(coffre):
 def test_un_grant_plateforme_na_pas_de_ligne_a_reecrire(coffre):
     """`entity_type is None` = clé plateforme : sa config est l'environnement, pas une
     ligne du coffre. Écrire créerait une ligne fantôme."""
-    _, ecritures = coffre
+    _, ecritures, metas = coffre
     _rotation_writer(_RC(None, None), "RT-1")({"refresh_token": "RT-2"})
     assert not ecritures
 
@@ -123,7 +127,7 @@ def test_on_necrase_pas_un_jeton_plus_recent(coffre):
     """LE test qui compte. Un autre appel — ou l'autre environnement, la base étant
     partagée — a déjà tourné. Réécrire remettrait en place un jeton CONSOMMÉ, et sa
     réutilisation fait révoquer par Salesforce toute la connexion."""
-    store, ecritures = coffre
+    store, ecritures, metas = coffre
     _pose(store, "member", "2:sub-x", "RT-3")            # déjà tourné par un autre
     _rotation_writer(_RC("member", "2:sub-x"), "RT-1")({"refresh_token": "RT-2"})
     assert store[("member", "2:sub-x", "")]["refresh_token"] == "RT-3"
@@ -133,7 +137,7 @@ def test_on_necrase_pas_un_jeton_plus_recent(coffre):
 def test_une_ligne_disparue_ne_fait_pas_echouer_lappel(coffre):
     """Le credential a pu être supprimé pendant l'appel. L'utilisateur a un jeton
     d'accès valide en main : sa requête doit aboutir."""
-    _, ecritures = coffre
+    _, ecritures, metas = coffre
     _rotation_writer(_RC("member", "2:absent"), "RT-1")({"refresh_token": "RT-2"})
     assert not ecritures
 
@@ -191,3 +195,23 @@ def test_la_sonde_hors_contexte_ne_casse_pas(monkeypatch):
 
     monkeypatch.setattr(access, "resolve_credential", _boom)
     assert sf._rotation_writer_for("RT-1") is None
+
+
+def test_la_rotation_ne_detruit_pas_le_meta(coffre):
+    """RÉGRESSION du 03/08. L'upsert fait `meta = EXCLUDED.meta` : omettre l'argument
+    n'est pas « ne pas y toucher », c'est écraser par {}. Comme la rotation réécrit à
+    chaque appel d'outil, `instance_url` / `identity_url` / `connected_at` étaient
+    effacés dès le premier usage — on ne savait plus sur quelle org Salesforce la clé
+    pointait. Repéré parce qu'une clé ayant tourné depuis la veille avait un config
+    vide, là où une clé fraîche avait le sien intact."""
+    store, _, metas = coffre
+    _pose(store, "member", "2:sub-x", "RT-1")
+    metas[("member", "2:sub-x", "")] = {
+        "instance_url": "https://x.my.salesforce.com",
+        "identity_url": "https://login.salesforce.com/id/00D.../005...",
+        "connected_at": "2026-08-02T14:47:00Z"}
+    _rotation_writer(_RC("member", "2:sub-x"), "RT-1")({"refresh_token": "RT-2"})
+    apres = metas[("member", "2:sub-x", "")]
+    assert apres.get("instance_url") == "https://x.my.salesforce.com", (
+        "la rotation a effacé instance_url : on ne sait plus quelle org est jointe")
+    assert apres.get("identity_url") and apres.get("connected_at")

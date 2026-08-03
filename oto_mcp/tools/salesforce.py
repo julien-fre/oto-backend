@@ -263,11 +263,18 @@ def _rotation_writer(rc, jeton_lu: str):
         champs = credentials_store.unpack_secret("salesforce", row["secret"])
         if champs.get("refresh_token") != jeton_lu:
             return  # quelqu'un d'autre a déjà tourné : sa valeur est plus récente
+        # ⚠️ `meta` DOIT être repassé. L'upsert fait `meta = EXCLUDED.meta` avec
+        # `json.dumps(meta or {})` : omettre l'argument n'est pas « ne pas toucher au
+        # meta », c'est l'ÉCRASER par {}. Comme la rotation réécrit à chaque appel
+        # d'outil, la version précédente effaçait `instance_url`/`identity_url`/
+        # `connected_at` dès le premier usage — on ne savait alors plus sur quelle org
+        # Salesforce la clé pointait. Repéré le 03/08, sur une clé qui avait tourné
+        # depuis la veille pendant qu'une clé fraîche avait encore son meta intact.
         credentials_store.set_credential(
             rc.entity_type, rc.entity_id, "salesforce",
             credentials_store.pack_secret("salesforce",
                                           {**champs, "refresh_token": nouveau}),
-            account=rc.account)
+            account=rc.account, meta=row.get("meta") or {})
 
     return _write
 
