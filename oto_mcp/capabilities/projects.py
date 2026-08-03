@@ -792,7 +792,46 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
     return {"ok": True, "id": inp.project_id, "archived": True}
 
 
+class ProjectReadInput(BaseModel):
+    """Lire UN projet, désigné par l'URL."""
+    project_id: int
+    include: Optional[list[str]] = None
+
+
+def _project_read(ctx: ResolvedCtx, inp: ProjectReadInput) -> dict:
+    """`op=get`, servi par une URL qui NOMME son projet.
+
+    Même handler, mêmes gates : la lecture par id ne doit pas être une seconde
+    implémentation qui dérive de la première (c'est tout l'objet de l'ADR 0009).
+
+    Pourquoi une route de plus, alors que `POST /api/me/projects {"op":"get"}` fait
+    déjà le travail : parce qu'un jeton PORTÉ ne peut pas être borné sur ce POST —
+    sa cible vit dans le corps, et `token_scopes` ne lit que la méthode et le
+    chemin. Une intégration à qui l'on confie un projet (et lui seul) a besoin que
+    le projet s'adresse. C'est le même geste que pour les tableaux, qui se nomment
+    déjà dans l'URL.
+    """
+    return _project(ctx, ProjectInput(op="get", project_id=inp.project_id,
+                                      include=inp.include))
+
+
 CAPABILITIES += [
+    Capability(
+        key="me.project_read", handler=_project_read, Input=ProjectReadInput,
+        authz=SUB_ONLY,
+        description=(
+            "Read ONE project by id (its brief, links and audit) — the same payload as "
+            "oto_project op=get, on a URL that names its target. REST-only: agents "
+            "already have oto_project. Exists so a SCOPED api token can be granted one "
+            "project and nothing else ({\"projects\": {\"12\": \"read\"}}), which the "
+            "POST form cannot express — its target sits in the body."
+        ),
+        mcp=None,
+        # `:int` et non `{project_id}` nu : le motif de portée (`token_scopes`)
+        # ne reconnaît qu'un id numérique. Une route plus permissive que sa
+        # portée se laisserait atteindre pour être refusée juste après.
+        rest=RestBinding("GET", "/api/me/projects/{project_id:int}"),
+    ),
     Capability(
         key="me.project", handler=_project, Input=ProjectInput, authz=SUB_ONLY,
         description=(

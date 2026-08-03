@@ -110,7 +110,11 @@ Endpoints `/api/*` (compte, settings, orgs, admin, datastore…), même
 > (`allow_api_token=False` sur `/api/me/tokens*` + miroirs admin — un jeton ne fabrique
 > plus de jeton, une fuite n'est plus auto-entretenue), et un jeton peut naître **porté**
 > (`token_scopes.py`, `user_api_tokens.scopes`) : deny-by-default borné à des tableaux
-> nommés en read/write. `scopes` NULL = jeton historique, inchangé.
+> nommés en read/write. `scopes` NULL = jeton historique, inchangé. Depuis le 03/08 la
+> portée nomme aussi des **projets** (`{"projects": {"12": "read"}}`), servis par
+> `GET /api/me/projects/{id}` — la forme POST porte sa cible dans le CORPS, donc aucune
+> portée ne peut la borner : **ce qu'un jeton porté atteint doit se lire dans le chemin.**
+> C'est la règle à garder en tête avant d'ouvrir une nouvelle surface aux intégrations.
 
 ⚠️ **CORS : la liste du code est MORTE en prod comme en preprod.** `_allowed_origins()`
 (`api_routes.py`) n'est qu'un **fallback** — les DEUX box posent `OTO_MCP_CORS_ORIGINS`

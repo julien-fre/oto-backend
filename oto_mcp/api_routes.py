@@ -147,11 +147,16 @@ async def _authenticate(
         scopes = row.get("scopes")
         token_scopes.set_current(scopes)
         if not token_scopes.authorize(scopes, request.method, request.url.path):
+            granted = []
+            if token_scopes.namespaces(scopes):
+                granted.append(f"les tableaux {sorted(token_scopes.namespaces(scopes))}")
+            if token_scopes.projects(scopes):
+                granted.append(f"les projets {sorted(token_scopes.projects(scopes))}")
             return None, _json_error(
                 request, 403, "token_scope_forbidden",
-                "Ce jeton est porté : il n'ouvre que les tableaux "
-                f"{sorted(token_scopes.namespaces(scopes))}, en lecture ou écriture "
-                "selon sa portée. Rien d'autre de l'organisation ne lui est accessible.")
+                f"Ce jeton est porté : il n'ouvre que {' et '.join(granted)}, en "
+                "lecture ou écriture selon sa portée. Rien d'autre de l'organisation "
+                "ne lui est accessible.")
         return _maybe_view_as(row["sub"], apply_view_as), None
 
     # Sinon, JWT Logto (session interactive) — jamais de portée de jeton.

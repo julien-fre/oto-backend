@@ -142,3 +142,67 @@ def test_filter_namespaces_is_noop_without_scope():
     rows = [{"namespace": "a"}, {"namespace": "b"}]
     ts.set_current(None)
     assert ts.filter_namespaces(rows) == rows
+
+
+# ── Portée « projet » : brancher une intégration sur un projet, et lui seul ───
+
+PROJECT_ONLY = {"projects": {"12": "read"}}
+BOTH = {"namespaces": {"leads-accords-dormants": "read"}, "projects": {"12": "read"}}
+
+
+def test_project_scoped_token_reads_its_project():
+    assert ts.authorize(PROJECT_ONLY, "GET", "/api/me/projects/12")
+
+
+def test_project_scoped_token_is_forbidden_on_another_project():
+    """Le pendant du critère « pas les voisins » : un projet nommé, pas les autres."""
+    assert not ts.authorize(PROJECT_ONLY, "GET", "/api/me/projects/13")
+
+
+def test_project_scope_does_not_open_the_post_form():
+    """`POST /api/me/projects` porte sa cible dans le CORPS : impossible à borner,
+    donc jamais ouvert à un jeton porté — quelle que soit sa portée."""
+    for scopes in (PROJECT_ONLY, BOTH):
+        assert not ts.authorize(scopes, "POST", "/api/me/projects")
+
+
+def test_project_scope_does_not_open_the_datastore():
+    assert not ts.authorize(
+        PROJECT_ONLY, "GET", "/api/datastore/namespaces/leads-accords-dormants/rows")
+
+
+def test_table_scope_does_not_open_the_project():
+    assert not ts.authorize(READ_ONLY, "GET", "/api/me/projects/12")
+
+
+def test_both_scopes_coexist():
+    assert ts.authorize(BOTH, "GET", "/api/me/projects/12")
+    assert ts.authorize(BOTH, "GET",
+                        "/api/datastore/namespaces/leads-accords-dormants/rows")
+
+
+def test_project_scope_leaves_the_rest_of_the_platform_shut():
+    for path in ("/api/me", "/api/me/tokens", "/api/me/projects/12/files",
+                 "/api/me/projects/12/export", "/api/connectors"):
+        assert not ts.authorize(PROJECT_ONLY, "GET", path), path
+
+
+@pytest.mark.parametrize("raw", [
+    {"projects": {"12": "write"}},            # aucune écriture de projet n'est ouverte
+    {"projects": {"douze": "read"}},          # un projet se nomme par son id
+    {"projects": {}},                         # portée vide = jeton inerte
+])
+def test_parse_rejects_malformed_project_scope(raw):
+    with pytest.raises(ts.ScopeError):
+        ts.parse(raw)
+
+
+def test_parse_normalises_project_ids():
+    """L'id peut arriver en nombre (JSON relu côté Python) : la clé reste une string."""
+    assert ts.parse({"projects": {12: "read"}}) == {"projects": {"12": "read"}}
+
+
+def test_projects_lists_the_scoped_ids():
+    assert ts.projects(BOTH) == frozenset({"12"})
+    assert ts.projects(READ_ONLY) == frozenset()
+    assert ts.projects(None) == frozenset()
