@@ -687,19 +687,24 @@ def register(mcp: FastMCP) -> None:
         return fod_fr.acco_themes()
 
     @mcp.tool()
-    def fr_accords_text(acco_id: str) -> dict:
+    def fr_accords_text(acco_id: str, offset: int = 0) -> dict:
         """Full text of a company agreement (accord d'entreprise) by its DILA
         id — fetched on demand from Légifrance (the local ACCO index only has
         metadata). Chain after fr_accords_search / fr_accords_get.
 
         Args:
             acco_id: DILA id (ACCOTEXT000…) from fr_accords_search results.
+            offset: start position in the text. Long agreements come back in
+                chunks: when `tronque` is true, call again with
+                offset=`next_offset` to get the rest (health/pension clauses and
+                final provisions usually sit at the END of a merger agreement).
 
         Returns metadata + `texte` (extracted from the filed docx; may be empty
-        when no integral version was published) + verifiable `source_url`.
+        when no integral version was published) + `texte_chars`/`offset`/
+        `next_offset` + verifiable `source_url`.
         """
         from .. import fod_ccn
-        return fod_ccn.accords_text(acco_id)
+        return fod_ccn.accords_text(acco_id, offset=offset)
 
     # Jurisprudence / codes / conventions collectives (juris_*/loi_*/ccn_*) ont
     # été extraits vers le connecteur `droit` (tools/droit.py) — carte « Info

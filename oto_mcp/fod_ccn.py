@@ -62,9 +62,13 @@ def article(kali_id: str) -> dict[str, Any]:
     return r.json()
 
 
-def accords_text(acco_id: str) -> dict[str, Any]:
-    """Texte intégral d'un accord d'entreprise (ACCOTEXT…) — proxy Légifrance du FOD."""
-    r = _c().get(f"/api/accords/text/{acco_id}")
+def accords_text(acco_id: str, *, offset: int = 0) -> dict[str, Any]:
+    """Texte intégral d'un accord d'entreprise (ACCOTEXT…) — proxy Légifrance du FOD.
+
+    Rendu par tranches : `offset` reprend là où la précédente s'est arrêtée
+    (`next_offset` dans la réponse, absent = fin du texte)."""
+    params = {"offset": int(offset)} if offset else None
+    r = _c().get(f"/api/accords/text/{acco_id}", params=params)
     r.raise_for_status()
     return r.json()
 
