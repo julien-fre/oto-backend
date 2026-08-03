@@ -312,7 +312,17 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                 seen[prj] = _can(sub, prj, "read")
             return seen[prj]
         cites = [b for b in db.doc_backlinks(int(inp.doc_id)) if _readable(b["project_id"])]
-        return {"doc_id": inp.doc_id, "backlinks": cites, "count": len(cites)}
+        out = {"doc_id": inp.doc_id, "backlinks": cites, "count": len(cites)}
+        if not cites:
+            # Un zéro muet se lit comme « la fonction ne marche pas » : personne ne
+            # peut deviner que SEUL `[[Titre]]` compte (signal #244 — trois formats
+            # de lien essayés, tous inertes, aucun indice nulle part).
+            out["hint"] = (
+                f"Personne ne cite encore cette page. Un backlink naît d'un lien wiki "
+                f"`[[{row.get('title') or 'Titre exact'}]]` écrit dans le corps d'une "
+                "autre page (résolu à l'écriture, insensible à la casse) — la prose, "
+                "`[texte](doc:ID)` et `[texte](/docs/ID)` n'en créent aucun.")
+        return out
 
     if inp.op == "set_public":
         # Partager publiquement (ou retirer) — action d'écriture (gap #4a).
@@ -475,7 +485,13 @@ CAPABILITIES += [
             "NESTED sub-sections are part of it — replacing a `###` also replaces its "
             "`####` children (the response then lists `removed_subsections`). To keep "
             "them, target the sub-heading itself or use mode=append) / "
-            "revisions (doc_id → version history, newest first) / request_change (read-only "
+            "revisions (doc_id → version history, newest first) / backlinks (doc_id → the "
+            "pages that CITE this one). LINK PAGES with `[[Exact page title]]` in body_md — "
+            "that wiki-link is the ONLY thing that creates a backlink (prose mentions, "
+            "[text](doc:88) and [text](/docs/88) create none). Resolved AT WRITE TIME against "
+            "the current project then the org KB, case- and edge-space-insensitive; a title "
+            "that doesn't exist yet is kept as a stub and links itself once the page is "
+            "created or renamed / request_change (read-only "
             "users propose a new body_md/title + message) / list_changes (owner: pending "
             "requests) / resolve_change (request_id + accept: true applies it, false rejects) "
             "/ set_public (public: true → shareable public read-only link, false → private ; "

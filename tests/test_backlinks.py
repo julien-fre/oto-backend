@@ -131,3 +131,30 @@ def test_op_backlinks_filters_unreadable_projects(monkeypatch):
                         lambda sub, t, rid, want="read": str(rid) == "1")
     out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
     assert out["count"] == 1 and out["backlinks"][0]["id"] == 10
+
+
+def test_op_backlinks_empty_says_how_a_backlink_is_made(monkeypatch):
+    """Un zéro muet se lit comme « la fonction est cassée » : trois formats de lien
+    ont été essayés en vrai, tous inertes, sans le moindre indice (signal #244)."""
+    from oto_mcp.capabilities import docs as D
+    from oto_mcp.capabilities._types import ResolvedCtx
+    monkeypatch.setattr(D.db, "get_doc_by_id",
+                        lambda did: {"id": did, "project_id": 1, "title": "Charte"})
+    monkeypatch.setattr(D.db, "doc_backlinks", lambda did: [])
+    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
+    out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
+    assert out["count"] == 0
+    assert "[[Charte]]" in out["hint"]          # le titre exact, prêt à copier
+    assert "doc:ID" in out["hint"]              # …et ce qui NE marche pas
+
+
+def test_op_backlinks_non_empty_has_no_hint(monkeypatch):
+    from oto_mcp.capabilities import docs as D
+    from oto_mcp.capabilities._types import ResolvedCtx
+    monkeypatch.setattr(D.db, "get_doc_by_id",
+                        lambda did: {"id": did, "project_id": 1, "title": "Charte"})
+    monkeypatch.setattr(D.db, "doc_backlinks",
+                        lambda did: [{"id": 10, "project_id": 1, "title": "P"}])
+    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
+    out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
+    assert "hint" not in out
