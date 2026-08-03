@@ -364,9 +364,18 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         _require(inp.section and inp.section.strip(), "missing_section",
                  "`section` (titre de la section à modifier) requis.")
         _require(inp.body_md is not None, "missing_body", "`body_md` (nouveau contenu) requis.")
+        mode = inp.mode or "replace"
+        # Une section court jusqu'au prochain titre de niveau ≤ : un `replace` sur un
+        # `###` emporte donc ses `####`. C'est la sémantique voulue (on remplace une
+        # section ENTIÈRE), mais silencieuse elle transforme le patch — vendu comme le
+        # mode sûr — en écrasement du travail d'un autre auteur (signal #334). On ne
+        # refuse pas : on ANNONCE ce qui part, la révision précédente permettant de
+        # revenir en arrière (op=revisions).
+        removed = (doc_patch.subsections(row.get("body_md") or "", inp.section)
+                   if mode == "replace" else [])
         try:
             new_body = doc_patch.patch_section(
-                row.get("body_md") or "", inp.section, inp.body_md, mode=(inp.mode or "replace"))
+                row.get("body_md") or "", inp.section, inp.body_md, mode=mode)
         except doc_patch.SectionNotFound as e:
             _require(False, "unknown_section",
                      f"Section « {inp.section} » introuvable. Sections disponibles : "
@@ -379,7 +388,15 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                      f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
                      f"Relis-le (op=get) et refais ton patch sur la version à jour.", 409)
         db.log_project_activity(pid, sub, "doc.patch", f"{row.get('title')} § {inp.section}")
-        return _view(db.get_doc_by_id(int(inp.doc_id)))
+        out = _view(db.get_doc_by_id(int(inp.doc_id)))
+        if removed:
+            out["removed_subsections"] = removed
+            out["warning"] = (
+                f"`mode=replace` sur « {inp.section} » a remplacé la section ENTIÈRE, "
+                f"donc aussi {len(removed)} sous-section(s) : {', '.join(removed)}. "
+                "Si tu ne voulais pas les perdre : op=revisions puis republie leur "
+                "contenu (ou vise directement la sous-section, ou mode=append).")
+        return out
 
     if inp.op == "delete":
         _require(_can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
@@ -453,7 +470,11 @@ CAPABILITIES += [
             "conflict detection → 409 if the page changed since) / patch (edit ONE section in "
             "place: `section`=its markdown heading + `body_md` = the section's BODY, WITHOUT "
             "repeating that heading (the server keeps it) + `mode` replace|append|prepend "
-            "→ two authors on different sections don't clobber; also honours `expected_rev`) / "
+            "→ two authors on different sections don't clobber; also honours `expected_rev`. "
+            "SCOPE: a section runs to the next heading of EQUAL-OR-HIGHER level, so its "
+            "NESTED sub-sections are part of it — replacing a `###` also replaces its "
+            "`####` children (the response then lists `removed_subsections`). To keep "
+            "them, target the sub-heading itself or use mode=append) / "
             "revisions (doc_id → version history, newest first) / request_change (read-only "
             "users propose a new body_md/title + message) / list_changes (owner: pending "
             "requests) / resolve_change (request_id + accept: true applies it, false rejects) "

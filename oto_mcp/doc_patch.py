@@ -60,12 +60,51 @@ def _strip_own_heading(new_body: str, target: str) -> str:
     return "\n".join(rest)
 
 
+def _locate(lines: list[str], target: str) -> tuple[int, int, int] | None:
+    """`(index du titre, niveau, fin exclusive)` de la section `target` (déjà normalisé).
+
+    Fin de section = prochain titre de niveau ≤ (une sous-section reste DEDANS).
+    `None` si le titre n'existe pas."""
+    for i, line in enumerate(lines):
+        m = _HEADING.match(line)
+        if not m or _norm(m.group(2)) != target:
+            continue
+        level = len(m.group(1))
+        j = i + 1
+        while j < len(lines):
+            m2 = _HEADING.match(lines[j])
+            if m2 and len(m2.group(1)) <= level:
+                break
+            j += 1
+        return i, level, j
+    return None
+
+
+def subsections(body: str, heading: str) -> list[str]:
+    """Titres des SOUS-sections imbriquées dans `heading` (niveau strictement >).
+
+    Une section court jusqu'au prochain titre de niveau ≤ : ses sous-sections en font
+    partie, donc `mode='replace'` les remplace AVEC le reste. Tant que c'était
+    silencieux, patcher un parent écrasait le travail d'un autre auteur sur l'enfant —
+    le contraire de ce que le patch promet (signal #334). Le caller annonce ce qu'il
+    retire. Liste vide si la section est introuvable ou n'a pas d'enfant."""
+    lines = (body or "").split("\n")
+    found = _locate(lines, _norm(heading))
+    if not found:
+        return []
+    i, _level, j = found
+    return [m.group(2).strip()
+            for m in (_HEADING.match(ln) for ln in lines[i + 1:j]) if m]
+
+
 def patch_section(body: str, heading: str, new_body: str, mode: str = "replace") -> str:
     """Retourne le corps COMPLET avec la section `heading` modifiée.
 
     `mode` : 'replace' (remplace le contenu SOUS le titre, garde le titre) /
     'append' (ajoute à la fin de la section) / 'prepend' (insère juste après le titre).
-    La section court du titre jusqu'au PROCHAIN titre de niveau ≤ (ou la fin).
+    La section court du titre jusqu'au PROCHAIN titre de niveau ≤ (ou la fin) : ses
+    SOUS-sections en font partie et sont donc remplacées elles aussi — `subsections()`
+    dit lesquelles, pour que le caller l'annonce.
     `new_body` = le CORPS de la section : s'il rouvre lui-même le titre visé, ce titre
     de tête est absorbé (jamais dupliqué).
     Lève `SectionNotFound` si le titre n'existe pas."""
@@ -73,29 +112,20 @@ def patch_section(body: str, heading: str, new_body: str, mode: str = "replace")
         raise ValueError(f"mode invalide: {mode}")
     lines = (body or "").split("\n")
     target = _norm(heading)
-    for i, line in enumerate(lines):
-        m = _HEADING.match(line)
-        if not m or _norm(m.group(2)) != target:
-            continue
-        level = len(m.group(1))
-        # Fin de section = prochain titre de niveau ≤ (une sous-section reste dedans).
-        j = i + 1
-        while j < len(lines):
-            m2 = _HEADING.match(lines[j])
-            if m2 and len(m2.group(1)) <= level:
-                break
-            j += 1
-        head, inner, tail = lines[:i + 1], lines[i + 1:j], lines[j:]
-        new_lines = _strip_own_heading(new_body, target).split("\n")
-        if mode == "replace":
-            # Une ligne vide encadre proprement le nouveau contenu sous le titre.
-            section = [""] + new_lines + ([""] if tail else [])
-        elif mode == "append":
-            # Retire les vides de fin de section avant d'ajouter.
-            while inner and not inner[-1].strip():
-                inner.pop()
-            section = inner + [""] + new_lines + ([""] if tail else [])
-        else:  # prepend
-            section = [""] + new_lines + [""] + inner
-        return "\n".join(head + section + tail)
-    raise SectionNotFound(heading, headings(body))
+    found = _locate(lines, target)
+    if found is None:
+        raise SectionNotFound(heading, headings(body))
+    i, _level, j = found
+    head, inner, tail = lines[:i + 1], lines[i + 1:j], lines[j:]
+    new_lines = _strip_own_heading(new_body, target).split("\n")
+    if mode == "replace":
+        # Une ligne vide encadre proprement le nouveau contenu sous le titre.
+        section = [""] + new_lines + ([""] if tail else [])
+    elif mode == "append":
+        # Retire les vides de fin de section avant d'ajouter.
+        while inner and not inner[-1].strip():
+            inner.pop()
+        section = inner + [""] + new_lines + ([""] if tail else [])
+    else:  # prepend
+        section = [""] + new_lines + [""] + inner
+    return "\n".join(head + section + tail)

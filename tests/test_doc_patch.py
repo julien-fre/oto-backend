@@ -104,3 +104,36 @@ def test_body_that_is_only_the_heading_empties_the_section():
     out = P.patch_section(BODY, "Contacts", "## Contacts", mode="replace")
     assert P.headings(out).count("Contacts") == 1
     assert "- alice" not in out
+
+
+# --- Portée réelle d'une section : ses sous-sections en font partie (signal #334) ---
+
+def test_subsections_lists_nested_headings_only():
+    """« Panorama » contient « ### Sous-marché A » ; « Contacts » n'a pas d'enfant."""
+    assert P.subsections(BODY, "Panorama des marchés") == ["Sous-marché A"]
+    assert P.subsections(BODY, "Contacts") == []
+
+
+def test_subsections_is_empty_for_an_unknown_heading():
+    assert P.subsections(BODY, "Section fantôme") == []
+
+
+def test_subsections_matches_what_replace_actually_removes():
+    """Le contrat : ce que `subsections` annonce est EXACTEMENT ce que replace retire."""
+    announced = P.subsections(BODY, "Panorama des marchés")
+    out = P.patch_section(BODY, "Panorama des marchés", "nouveau panorama.", mode="replace")
+    for h in announced:
+        assert h not in P.headings(out)
+    assert "détail A." not in out
+
+
+def test_subsections_goes_deeper_than_one_level():
+    body = "## Parent\n\ntexte.\n\n### Enfant\n\nx.\n\n#### Petit-enfant\n\ny.\n\n## Autre\n"
+    assert P.subsections(body, "Parent") == ["Enfant", "Petit-enfant"]
+    assert P.subsections(body, "Autre") == []
+
+
+def test_append_does_not_touch_subsections():
+    """mode=append n'écrase rien : le caller n'a donc rien à annoncer."""
+    out = P.patch_section(BODY, "Panorama des marchés", "ajout.", mode="append")
+    assert "### Sous-marché A" in out and "détail A." in out
