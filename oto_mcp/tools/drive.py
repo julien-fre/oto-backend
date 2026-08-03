@@ -5,9 +5,13 @@ renommer, dossiers), supprimer, partager. Scope `/auth/drive` **complet**
 (restricted) — pour voir/gérer TOUS les fichiers, pas seulement ceux créés par
 oto. Compte par défaut ou ciblé par `account`. Per-user via OAuth.
 
-L'**upload** local→Drive et l'export Google natif restent côté CLI (pas de FS
-serveur). En revanche le **download bytes** EST exposé (`drive_download`) : il rend
-le contenu à l'agent (inline texte, ou URL signée pour un binaire) sans disque.
+L'**upload** local→Drive reste côté CLI (pas de FS serveur). La LECTURE, elle, est
+exposée en entier et sans disque : `drive_download` pour les fichiers binaires/
+uploadés, `drive_export` pour les Google natifs (Docs/Sheets/Slides — leur contenu
+ne se télécharge pas, il se convertit). Les deux rendent le contenu à l'agent
+(inline texte, ou URL signée pour un binaire). L'argument « pas de FS » ne valait
+pas pour l'export : convertir en mémoire n'écrit rien (signal #329 — sans lui,
+impossible d'ingérer les notes de réunion Gemini autrement qu'au copier-coller).
 """
 from __future__ import annotations
 
@@ -23,6 +27,26 @@ from .. import access, file_content, google_oauth
 
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+
+# Formats d'export offerts à l'agent (un mot, pas un mime à recopier).
+_EXPORT_MIME = {
+    "markdown": "text/markdown",
+    "md": "text/markdown",
+    "text": "text/plain",
+    "txt": "text/plain",
+    "html": "text/html",
+    "pdf": "application/pdf",
+    "csv": "text/csv",
+}
+
+# Défaut par type SOURCE : un tableur n'a pas de markdown, une présentation non plus.
+# Sert aussi de test « est-ce un natif Google ? » — sinon c'est drive_download.
+_DEFAULT_EXPORT_BY_SOURCE = {
+    "application/vnd.google-apps.document": "text/markdown",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+    "application/vnd.google-apps.presentation": "text/plain",
+}
 
 
 def _client_for_user(account: Optional[str] = None):
@@ -70,9 +94,9 @@ def register(mcp: FastMCP) -> None:
           storage and returned as a short-lived signed URL: `{encoding: "url",
           url, expires_in}` (seconds). Fetch the URL to get the bytes.
 
-        For a Google-native doc (Docs/Sheets/Slides), this fails — those must be
-        exported (CLI), not downloaded. Returns {filename, mimeType, size,
-        encoding, content|url, expires_in?}.
+        For a Google-native doc (Docs/Sheets/Slides), this fails — read those with
+        `drive_export` instead (they are converted, not downloaded). Returns
+        {filename, mimeType, size, encoding, content|url, expires_in?}.
         """
         client = _client_for_user(account)
         try:
@@ -85,6 +109,54 @@ def register(mcp: FastMCP) -> None:
             return await asyncio.to_thread(
                 file_content.render_for_agent, data, filename, mime,
                 sub=sub, prefix="drive-files")
+        except file_content.MediaUnavailable as e:
+            raise _bad(str(e))
+
+    @mcp.tool()
+    async def drive_export(
+        file_id: str, format: Optional[str] = None, account: Optional[str] = None,
+    ) -> dict:
+        """Read the CONTENT of a GOOGLE-NATIVE doc (Docs/Sheets/Slides), by file_id.
+
+        The counterpart of `drive_download`, which only works on uploaded/binary
+        files: a Google-native doc has no binary content to download (403 "Only
+        files with binary content can be downloaded"), its content comes out of an
+        EXPORT — that's this tool. Use it to actually READ meeting notes ("… - Notes
+        par Gemini"), specs, or any Doc you found with `drive_list`.
+
+        Args:
+            file_id: from `drive_list` / `drive_metadata` (mimeType
+                application/vnd.google-apps.{document,spreadsheet,presentation}).
+            format: markdown | text | html | pdf | csv. Omit for a sensible default
+                per type (Doc→markdown, Sheet→csv (first sheet), Slides→text).
+            account: which Google account (default: the primary one).
+
+        Returns {filename, mimeType, encoding, content|url, …}: text formats come
+        back INLINE, `pdf` as a short-lived signed URL.
+        """
+        client = _client_for_user(account)
+        mime = _EXPORT_MIME.get((format or "").strip().lower()) if format else None
+        if format and not mime:
+            raise _bad(f"format « {format} » inconnu — attendu : "
+                       f"{', '.join(sorted(_EXPORT_MIME))}.")
+        if mime is None:
+            meta = await asyncio.to_thread(client.get_file_metadata, file_id)
+            src = (meta.get("mimeType") or "")
+            mime = _DEFAULT_EXPORT_BY_SOURCE.get(src)
+            if mime is None:
+                # Pas un natif Google : l'export ne s'applique pas, mais le download si.
+                raise _bad(f"« {meta.get('name') or file_id} » n'est pas un document "
+                           f"Google natif (mimeType {src or 'inconnu'}) : son contenu se "
+                           f"lit avec drive_download, pas drive_export.")
+        try:
+            f = await asyncio.to_thread(client.export_file_bytes, file_id, mime)
+        except Exception as e:
+            raise _bad(str(e))
+        sub = access.current_user_sub_or_raise()
+        try:
+            return await asyncio.to_thread(
+                file_content.render_for_agent, f["data"], f["filename"], mime,
+                sub=sub, prefix="drive-exports")
         except file_content.MediaUnavailable as e:
             raise _bad(str(e))
 
