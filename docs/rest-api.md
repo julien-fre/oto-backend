@@ -57,3 +57,45 @@ description: >-
   un secret d'org : une doctrine sensible ne se publie pas (reste un skill d'org privé).
 - CORS : `oto.ninja`, `app.oto.ninja`, `dashboard.oto.ninja` (+ localhosts dev) — défaut dans `_allowed_origins`, override `OTO_MCP_CORS_ORIGINS`. `account.oto.zone` retiré (surface compte décommissionnée → dashboard.oto.ninja)
 - Même `JWTVerifier` que `/mcp` — partage l'audience `https://mcp.oto.ninja/mcp`
+
+## Descriptif OpenAPI — `GET /openapi.json` (aussi `/api/openapi.json`)
+
+**Sans auth**, comme `/api/mcp/catalog` : un descriptif décrit des FORMES, aucune valeur.
+**Dérivé à chaque requête** (`openapi.py`) de deux sources — le registre de capacités
+(chemin + verbe + description + JSON Schema de l'`Input` pydantic) et la **table de routes
+vivante** de l'app pour les routes encore écrites à la main (chemin + méthodes, sans schéma,
+taggées `_legacy`). Rien n'est saisi à la main, donc rien ne peut mentir. `/api/admin/*` en
+est retiré (console de la plateforme, pas d'intégrateur tiers).
+
+⚠️ **À lire avant de conclure qu'une surface manque.** La consolidation ADR 0047 a déplacé le
+verbe dans le CORPS : `POST /api/me/projects {"op":"list"}` n'est pas « créer un projet »,
+c'est **toute** la surface projet (list/get/runs/inventory/link/publish_mcp…). Un intégrateur
+qui sonde `/api/projects` obtient 404 et conclut « les projets ne sont pas sur REST » — c'est
+arrivé (brief scout, 08/2026). Le descriptif rend l'énuméré `op` lisible, ce que le sondage de
+chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/resources`.
+
+## Jetons API `oto_` — gestion et portée
+
+- **La gestion des jetons demande une session interactive.** `GET|POST /api/me/tokens`,
+  `DELETE /api/me/tokens/{id}` et leurs miroirs admin `/api/admin/users/{sub}/tokens*`
+  refusent un porteur de jeton (`403 api_token_forbidden`) : seul un JWT Logto y passe.
+  Sinon une fuite est **auto-entretenue** — l'attaquant s'émet un second jeton (non-expirant)
+  avant qu'on révoque le premier, et peut révoquer les jetons légitimes. Émettre un jeton
+  redevient un acte humain, ce qui borne la gravité réelle d'une fuite à la portée du jeton.
+- **Portée opt-in** (`token_scopes.py`, colonne `user_api_tokens.scopes` JSONB) : à la
+  création, `POST /api/me/tokens {"label":"scout", "scopes":{"namespaces":{"leads":"read"}}}`
+  rend un jeton **porté** — deny-by-default, il n'ouvre QUE les tableaux nommés, en `read`
+  ou `write` (write ⊃ read), et **rien d'autre** : ni `/api/me`, ni les connecteurs, ni les
+  projets, ni la gouvernance du tableau (créer/supprimer/renommer/partager). Hors portée →
+  `403 token_scope_forbidden`. C'est la forme à confier à une intégration tierce ; sans elle,
+  un jeton **est** le sub et ouvre toute l'organisation.
+  - `scopes` absent ⇒ jeton NON porté = comportement historique. Aucun jeton existant n'est
+    touché, aucune migration.
+  - Seule réponse **filtrée** plutôt que refusée : `GET /api/datastore/namespaces` rend les
+    tableaux de la portée, droits **rabattus** sur ceux du jeton (`permission`/`can_write`/
+    `can_govern`) — sans lui une intégration n'aurait pas le schéma de son tableau
+    (`page_rows` ne le rend pas) et ne pourrait pas peindre ses colonnes.
+  - La table des routes autorisées (`token_scopes._ALLOWED`) est la **seule** porte : une
+    route ajoutée demain est refusée sans qu'on ait à y penser.
+  - ⚠️ La portée nomme le tableau par son **nom** (ce que l'URL adresse), pas par son id :
+    après un renommage, ré-émettre le jeton.

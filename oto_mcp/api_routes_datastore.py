@@ -39,7 +39,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import access, datastore_journal, db, google_oauth, ownership, roles
+from . import access, datastore_journal, db, google_oauth, org_store, ownership, roles, token_scopes
 from .datastore import (
     NamespaceExists,
     NamespaceForbidden,
@@ -157,26 +157,52 @@ def make_routes(
 
     # --- API tokens (CLI auth) -------------------------------------------
 
+    # --- Jetons API : gestion réservée à une SESSION INTERACTIVE ---------------
+    # `allow_api_token=False` sur les trois : un jeton `oto_` ne peut ni lister, ni
+    # créer, ni révoquer de jeton. Sinon une fuite est auto-entretenue (l'attaquant
+    # s'émet un second jeton non-expirant avant qu'on révoque le premier) et peut
+    # révoquer les jetons légitimes. Émettre un jeton reste donc un acte humain,
+    # ce qui est exactement ce qu'on veut d'un jeton confié à un tiers.
+
     async def me_tokens_list(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
+        sub, err = await authenticate(request, verifier, allow_api_token=False)
         if err:
             return err
         return json_response(request, {"tokens": db.list_api_tokens(sub)})
 
     async def me_tokens_create(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
+        sub, err = await authenticate(request, verifier, allow_api_token=False)
         if err:
             return err
         try:
             body = await request.json()
         except Exception:
             body = {}
-        label = (body.get("label") if isinstance(body, dict) else None) or "cli"
-        token = db.create_api_token(sub, label=label.strip()[:32])
-        return json_response(request, {"token": token, "label": label}, status=201)
+        if not isinstance(body, dict):
+            body = {}
+        label = body.get("label") or "cli"
+        # Portée optionnelle (`token_scopes`) : absente ⇒ jeton non porté (il EST le
+        # sub). Présente ⇒ jeton borné à des tableaux nommés — la forme à confier à
+        # une intégration tierce. Validée ici, jamais côté porteur.
+        try:
+            scopes = token_scopes.parse(body.get("scopes"))
+        except token_scopes.ScopeError as e:
+            return json_error(request, 400, "invalid_scopes", str(e))
+        if scopes is not None:
+            # Refuser un tableau que l'émetteur ne voit pas : le jeton ne peut de
+            # toute façon pas dépasser les droits du sub, mais une faute de frappe
+            # produirait un jeton muet qu'on croirait branché.
+            visible = {n["namespace"] for n in make_store(sub).list_namespaces()}
+            missing = sorted(set(scopes["namespaces"]) - visible)
+            if missing:
+                return json_error(request, 400, "unknown_namespace",
+                                  f"Tableaux inconnus dans l'org active : {missing}")
+        token = db.create_api_token(sub, label=label.strip()[:32], scopes=scopes)
+        return json_response(request, {"token": token, "label": label, "scopes": scopes},
+                             status=201)
 
     async def me_tokens_delete(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
+        sub, err = await authenticate(request, verifier, allow_api_token=False)
         if err:
             return err
         try:
@@ -194,7 +220,12 @@ def make_routes(
         sub, err = await authenticate(request, verifier)
         if err:
             return err
-        return json_response(request, {"namespaces": make_store(sub).list_namespaces()})
+        # Seule réponse FILTRÉE plutôt que refusée pour un jeton porté : sans le
+        # catalogue, une intégration n'a pas le schéma de son tableau (`page_rows`
+        # ne le rend pas) — elle ne pourrait pas peindre ses colonnes. No-op pour
+        # un JWT ou un jeton non porté.
+        rows = token_scopes.filter_namespaces(make_store(sub).list_namespaces())
+        return json_response(request, {"namespaces": rows})
 
     async def ds_create_ns(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)

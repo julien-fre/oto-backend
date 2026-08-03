@@ -176,7 +176,8 @@ def _sf_hint_for(low: str) -> str:
     return ""
 
 
-def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
+def _verify(fields: dict, config: dict | None = None,
+            instance: tuple | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
     """Sonde en deux temps (auth PUIS accès réel) :
 
     1. **refresh du token OAuth** : valide client_id + client_secret + refresh_token +
@@ -200,7 +201,12 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
         client_secret=fields.get("client_secret"),
         refresh_token=fields.get("refresh_token"),
         login_url=_login_url(fields.get("login_url")),
-        on_refresh=_rotation_writer_for(fields.get("refresh_token") or ""),
+        # `instance` = la clé RÉELLEMENT sondée, fournie par l'appelant. Sans elle on
+        # ne peut que deviner via la cascade — qui désigne la plus proche, pas celle
+        # qu'on teste : un `verify level=org` chez quelqu'un qui a AUSSI une clé perso
+        # comparait le jeton d'org au jeton perso, ne reconnaissait pas, ne persistait
+        # rien, et tuait donc le jeton d'org en le rafraîchissant. Vécu 03/08.
+        on_refresh=_rotation_writer_for(fields.get("refresh_token") or "", instance),
     )
     try:
         client.query("SELECT Id FROM Contact LIMIT 1")
@@ -208,12 +214,23 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
         raise ValueError(_sf_error_hint(e)) from e
 
 
-def _rotation_writer_for(jeton_lu: str):
-    """Le writer de rotation pour la SONDE, qui ne reçoit que des champs — pas l'entité.
+class _Cible:
+    """L'entité sondée, sous la forme attendue par `_rotation_writer`."""
 
-    On retrouve l'entité en résolvant la cascade, et on ne branche l'écriture que si le
-    credential résolu porte bien le jeton qu'on s'apprête à consommer. Deux cas où l'on
-    ne persiste rien, volontairement :
+    def __init__(self, entity_type, entity_id, account=""):
+        self.entity_type, self.entity_id, self.account = entity_type, entity_id, account
+
+
+def _rotation_writer_for(jeton_lu: str, instance: tuple | None = None):
+    """Le writer de rotation pour la SONDE.
+
+    Quand l'appelant DIT quelle entité il teste (`instance`), on écrit là — sans
+    deviner. C'est le cas nominal, et le seul correct dès qu'il existe plusieurs clés
+    pour un même connecteur : la cascade désigne la plus PROCHE, pas celle qu'on sonde.
+
+    Sinon (appelants qui ne le fournissent pas encore) on retombe sur la cascade, et
+    on ne branche l'écriture que si le credential résolu porte bien le jeton qu'on
+    s'apprête à consommer. Deux cas où l'on ne persiste rien, volontairement :
 
     - **sonde avant persistance** (`api_key_save`) : les champs testés sont des
       candidats, aucune ligne ne les porte encore — il n'y a rien à mettre à jour ;
@@ -224,6 +241,9 @@ def _rotation_writer_for(jeton_lu: str):
     """
     from .. import access
 
+    if instance is not None:
+        etype, eid, *reste = instance
+        return _rotation_writer(_Cible(etype, eid, reste[0] if reste else ""), jeton_lu)
     try:
         rc = access.resolve_credential("salesforce", emit_on_failure=False)
     except Exception:  # noqa: BLE001 — pas de credential résolu = rien à persister

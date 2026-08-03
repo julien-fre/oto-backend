@@ -552,7 +552,12 @@ CREATE TABLE IF NOT EXISTS user_api_tokens (
     token_hash TEXT NOT NULL UNIQUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_used_at TIMESTAMPTZ,
-    expires_at TIMESTAMPTZ  -- NULL = non-expirant (token CLI long-lived). Sinon rejeté passé l'échéance.
+    expires_at TIMESTAMPTZ,  -- NULL = non-expirant (token CLI long-lived). Sinon rejeté passé l'échéance.
+    -- Portée du jeton (`token_scopes.py`). NULL = jeton NON PORTÉ : il est le sub,
+    -- pleins pouvoirs (comportement historique de tous les jetons émis à ce jour).
+    -- Non NULL = deny-by-default : seules les routes que la portée nomme passent,
+    -- p.ex. {"namespaces": {"leads-dormants": "read"}} pour une intégration tierce.
+    scopes JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_user_api_tokens_sub ON user_api_tokens(sub);
 

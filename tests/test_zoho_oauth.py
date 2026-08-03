@@ -329,7 +329,8 @@ def test_verify_capability_returns_pending_not_failure(monkeypatch):
     monkeypatch.setattr(cv, "_fields_config_scope",
                         lambda ctx, inp: ({"client_id": "1000.X", "client_secret": "s",
                                            "data_center": "eu"}, {}, None,
-                                          {"level": "user", "ref": "member:1:sub:zoho"}))
+                                          {"level": "user", "ref": "member:1:sub:zoho"},
+                                          ("member", "1:sub", "")))
     monkeypatch.setattr(cv.connector_verify, "supports", lambda p: True)
     def _never(*a, **k):
         raise AssertionError("la sonde ne doit PAS être EXÉCUTÉE sur un credential incomplet")

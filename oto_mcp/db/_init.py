@@ -623,6 +623,9 @@ def _init_db_once() -> None:
         conn.execute("ALTER TABLE connector_credentials ADD PRIMARY KEY (entity_type, entity_id, connector, account)")
         # TTL opt-in des tokens API (audit 2026-06-13) : NULL = non-expirant.
         conn.execute("ALTER TABLE user_api_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
+        # Portée opt-in d'un jeton API (`token_scopes.py`) : NULL = jeton non porté
+        # (pleins pouvoirs du sub) → additif pur, aucun jeton existant n'est touché.
+        conn.execute("ALTER TABLE user_api_tokens ADD COLUMN IF NOT EXISTS scopes JSONB")
         _drop_legacy_plaintext_stores(conn)
         # Décommission du substrat « fact graph » (ex-ADR 0008/0027) : le schéma
         # factgraph et toutes ses tables sont supprimés (idempotent). Plus aucune

@@ -40,7 +40,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                   Response, StreamingResponse)
 
-from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, org_store, ownership, tool_registry
+from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, openapi, org_store, ownership, token_scopes, tool_registry
 from .capabilities import _rest_adapter as _cap_rest_adapter
 from .capabilities import registry as _cap_registry
 from . import auth_hooks
@@ -107,7 +107,15 @@ async def _authenticate(
     *,
     allow_query_token: bool = False,
     apply_view_as: bool = True,
+    allow_api_token: bool = True,
 ) -> tuple[str | None, JSONResponse | None]:
+    """Résout l'appelant (JWT Logto **ou** jeton API `oto_`) et **garde la portée**.
+
+    `allow_api_token=False` = route réservée à une **session interactive** : un
+    porteur de jeton y est refusé. Réservé à la gestion des jetons eux-mêmes — un
+    jeton qui peut en créer d'autres rend sa fuite auto-entretenue (révoquer le
+    jeton fuité ne suffit plus, l'attaquant s'en est fait un second, non-expirant).
+    """
     auth = request.headers.get("authorization", "")
     token: str | None = None
     if auth.lower().startswith("bearer "):
@@ -122,14 +130,32 @@ async def _authenticate(
     # Pas de upsert_user ici : la FK CASCADE garantit que si la row user a
     # été supprimée, le token a été supprimé avec.
     if token.startswith("oto_"):
+        if not allow_api_token:
+            token_scopes.set_current(None)
+            return None, _json_error(
+                request, 403, "api_token_forbidden",
+                "La gestion des jetons demande une session interactive (JWT) — "
+                "un jeton API ne peut ni lister, ni créer, ni révoquer de jeton.")
         # DB HORS de la loop (threadpool) : un blip DB ne doit jamais geler le
         # serveur mono-loop entier (vécu 2026-07-02, py-spy : getconn wait ici).
-        sub = await run_in_threadpool(db.verify_api_token, token)
-        if not sub:
+        row = await run_in_threadpool(db.verify_api_token, token)
+        if not row:
+            token_scopes.set_current(None)
             return None, _json_error(request, 401, "invalid_api_token")
-        return _maybe_view_as(sub, apply_view_as), None
+        # Portée du jeton (`token_scopes`) : posée à CHAQUE requête (None comprise),
+        # puis gate deny-by-default. Un jeton non porté (`scopes` NULL) est inchangé.
+        scopes = row.get("scopes")
+        token_scopes.set_current(scopes)
+        if not token_scopes.authorize(scopes, request.method, request.url.path):
+            return None, _json_error(
+                request, 403, "token_scope_forbidden",
+                "Ce jeton est porté : il n'ouvre que les tableaux "
+                f"{sorted(token_scopes.namespaces(scopes))}, en lecture ou écriture "
+                "selon sa portée. Rien d'autre de l'organisation ne lui est accessible.")
+        return _maybe_view_as(row["sub"], apply_view_as), None
 
-    # Sinon, JWT Logto.
+    # Sinon, JWT Logto (session interactive) — jamais de portée de jeton.
+    token_scopes.set_current(None)
     access_token = await verifier.verify_token(token)
     if not access_token or not getattr(access_token, "claims", None):
         return None, _json_error(request, 401, "invalid_token")
@@ -517,6 +543,21 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
                 "output_schema": getattr(t, "output_schema", None),
             })
         return _json(request, {"tools": payload, "count": len(payload)})
+
+    async def openapi_doc(request: Request) -> JSONResponse:
+        """Descriptif OpenAPI de l'API REST — **dérivé** du registre de capacités et
+        de la table de routes VIVANTE (`request.app.routes`), donc jamais désynchronisé.
+
+        Pas d'auth, comme `/api/mcp/catalog` : un descriptif d'API décrit des FORMES,
+        aucune valeur. Sans lui, chaque intégrateur redécouvre la surface par sondage
+        de chemins — et conclut faux (cf. `openapi.py`). `/api/admin/*` est exclu.
+        """
+        try:
+            routes = getattr(request.app, "routes", None)
+        except Exception:                                   # pas d'app Starlette exposée
+            routes = None
+        base = str(request.base_url).rstrip("/") or None
+        return _json(request, openapi.build(routes, server_url=base))
 
     async def connectors_catalog(request: Request) -> JSONResponse:
         """Catalogue des connecteurs (registre source unique), auth optionnelle.
@@ -1325,8 +1366,11 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
             return _json_error(request, 404, "unknown_key")
         return _json(request, {"ok": True, "provider": provider, "label": label})
 
+    # Gestion des jetons (palier admin) : `allow_api_token=False` — même règle que
+    # `/api/me/tokens`, un jeton ne fabrique pas de jeton. Ici l'enjeu est pire :
+    # ces routes émettent pour un sub TIERS.
     async def admin_tokens_list(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
+        sub, err = await _authenticate(request, verifier, allow_api_token=False)
         if err:
             return err
         if not access.is_super_admin(sub):
@@ -1337,7 +1381,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         return _json(request, {"tokens": db.list_api_tokens(target_sub)})
 
     async def admin_tokens_create(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
+        sub, err = await _authenticate(request, verifier, allow_api_token=False)
         if err:
             return err
         if not access.is_super_admin(sub):
@@ -1352,11 +1396,17 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         label = (body or {}).get("label") or "cli"
         ttl_raw = (body or {}).get("ttl_days")
         ttl_days = int(ttl_raw) if isinstance(ttl_raw, (int, str)) and str(ttl_raw).isdigit() else None
-        token = db.create_api_token(target_sub, label=label.strip()[:32], ttl_days=ttl_days)
-        return _json(request, {"token": token, "label": label, "ttl_days": ttl_days})
+        try:
+            scopes = token_scopes.parse((body or {}).get("scopes"))
+        except token_scopes.ScopeError as e:
+            return _json_error(request, 400, "invalid_scopes", str(e))
+        token = db.create_api_token(target_sub, label=label.strip()[:32],
+                                    ttl_days=ttl_days, scopes=scopes)
+        return _json(request, {"token": token, "label": label, "ttl_days": ttl_days,
+                               "scopes": scopes})
 
     async def admin_tokens_delete(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
+        sub, err = await _authenticate(request, verifier, allow_api_token=False)
         if err:
             return err
         if not access.is_super_admin(sub):
@@ -1704,6 +1754,12 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/favicon.ico", favicon, methods=["GET"]),
         Route("/api/mcp/catalog", mcp_catalog, methods=["GET"]),
         Route("/api/mcp/catalog", options_handler, methods=["OPTIONS"]),
+        # Descriptif de l'API REST, dérivé (cf. openapi.py). Servi aux deux chemins
+        # usuels : un intégrateur sonde l'un ou l'autre, aucun n'est plus canonique.
+        Route("/openapi.json", openapi_doc, methods=["GET"]),
+        Route("/openapi.json", options_handler, methods=["OPTIONS"]),
+        Route("/api/openapi.json", openapi_doc, methods=["GET"]),
+        Route("/api/openapi.json", options_handler, methods=["OPTIONS"]),
         Route("/api/connectors", connectors_catalog, methods=["GET"]),
         Route("/api/connectors", options_handler, methods=["OPTIONS"]),
         Route("/api/doctrines/library", doctrines_library_public, methods=["GET"]),

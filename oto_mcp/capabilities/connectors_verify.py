@@ -33,8 +33,8 @@ def _ref(entity_type: "str | None", entity_id: "str | None", provider: str) -> s
     return f"{entity_type}:{entity_id}:{provider}"
 
 
-def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict, "tuple | None", dict]:
-    """(champs déchiffrés, config non-secrète, SCOPE-santé, INSTANCE sondée) selon le niveau.
+def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict, "tuple | None", dict, "tuple | None"]:
+    """(champs, config, SCOPE-santé, INSTANCE sondée, CIBLE d'écriture) selon le niveau.
 
     `instance` = quelle clé a RÉELLEMENT été testée (`level` + `ref`). Sans elle, un
     `ok:true` en niveau `auto` est ambigu : la cascade a pu retomber d'un cran, et on ne
@@ -59,16 +59,20 @@ def _fields_config_scope(ctx: ResolvedCtx, inp: VerifyInput) -> tuple[dict, dict
         return (credentials_store.unpack_secret(inp.provider, row["secret"]),
                 credentials_store.public_meta(row.get("meta")),
                 ("org", str(ctx.org_id)),
-                {"level": "org", "ref": _ref("org", str(ctx.org_id), inp.provider)})
+                {"level": "org", "ref": _ref("org", str(ctx.org_id), inp.provider)},
+                ("org", str(ctx.org_id), ""))
     rc = access.resolve_credential(
         inp.provider, want="auto", sub=ctx.sub, emit_on_failure=False,
     )
     scope = (("member", credentials_store.member_id(ctx.org_id, ctx.sub))
              if getattr(rc, "mode", None) == "user" and ctx.org_id is not None else None)
+    etype, eid = getattr(rc, "entity_type", None), getattr(rc, "entity_id", None)
     instance = {"level": getattr(rc, "mode", None) or "unknown",
-                "ref": _ref(getattr(rc, "entity_type", None),
-                            getattr(rc, "entity_id", None), inp.provider)}
-    return rc.fields, rc.config, scope, instance
+                "ref": _ref(etype, eid, inp.provider)}
+    # Cible d'ÉCRITURE pour une sonde à effet de bord (rotation) — None pour un grant
+    # plateforme, qui n'a pas de ligne de coffre à réécrire.
+    cible = (etype, eid, getattr(rc, "account", "") or "") if etype else None
+    return rc.fields, rc.config, scope, instance, cible
 
 
 def _record_health(provider: str, scope: "tuple | None", ok: bool, error: "str | None") -> None:
@@ -90,7 +94,7 @@ async def _verify(ctx: ResolvedCtx, inp: VerifyInput) -> dict:
     if probe is None:
         raise AuthzDenied(400, "verify_unavailable",
                           f"pas de test de connexion pour « {inp.provider} ».")
-    fields, config, scope, instance = _fields_config_scope(ctx, inp)
+    fields, config, scope, instance, cible = _fields_config_scope(ctx, inp)
     # Connexion en DEUX temps : un credential VOLONTAIREMENT incomplet (app posée,
     # consentement à venir) n'est pas une erreur de saisie — sonder le renverrait un
     # échec, et le formulaire du dashboard resterait ouvert sur une correction
@@ -104,7 +108,14 @@ async def _verify(ctx: ResolvedCtx, inp: VerifyInput) -> dict:
     started = time.monotonic()
     ok, error = True, None
     try:
-        res = probe(fields, config)
+        # La cible est passée à la sonde : sous rotation, sonder CONSOMME le jeton, et
+        # le remplaçant doit être réécrit sur la ligne testée — pas sur celle que la
+        # cascade aurait choisie. Sans ça, un `verify level=org` chez quelqu'un qui a
+        # aussi une clé perso tuait le jeton d'org (`ok:true`, puis mort). Vécu 03/08.
+        kw = {}
+        if cible is not None and "instance" in inspect.signature(probe).parameters:
+            kw["instance"] = cible
+        res = probe(fields, config, **kw)
         if inspect.isawaitable(res):
             await res
     except Exception as e:  # noqa: BLE001 — l'erreur d'auth EST le résultat

@@ -29,27 +29,35 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = None) -> str:
+def create_api_token(sub: str, label: str = "cli", ttl_days: Optional[int] = None,
+                     scopes: Optional[dict] = None) -> str:
     """Génère un token, persiste son hash, renvoie le plaintext une seule fois.
 
     `ttl_days` : si fourni (>0), le token expire après ce délai et est rejeté
     par `verify_api_token`. None = non-expirant (défaut — token CLI long-lived
     stocké en SOPS). La révocation explicite reste `delete_api_token`.
+
+    `scopes` (cf. `token_scopes.py`) : None = jeton NON PORTÉ, il est le sub.
+    Non None = deny-by-default, seul ce que la portée nomme passe — la forme d'un
+    jeton confié à une intégration tierce. Validé par `token_scopes.parse` AVANT
+    d'arriver ici (le document est stocké tel quel).
     """
     upsert_user(sub)
     token = _TOKEN_PREFIX + secrets.token_urlsafe(32)
     expires = f"NOW() + INTERVAL '{int(ttl_days)} days'" if ttl_days and ttl_days > 0 else "NULL"
     with _connect() as conn:
         conn.execute(
-            f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at) "
-            f"VALUES (%s, %s, %s, {expires})",
-            (sub, label, _hash_token(token)),
+            f"INSERT INTO user_api_tokens (sub, label, token_hash, expires_at, scopes) "
+            f"VALUES (%s, %s, %s, {expires}, %s)",
+            (sub, label, _hash_token(token),
+             json.dumps(scopes) if scopes is not None else None),
         )
     return token
 
 
-def verify_api_token(token: str) -> Optional[str]:
-    """Renvoie le sub du token, et met à jour last_used_at. None si inconnu ou expiré.
+def verify_api_token(token: str) -> Optional[dict]:
+    """Renvoie `{sub, scopes}` du token, et met à jour last_used_at — `scopes` None
+    pour un jeton non porté. None (tout court) si inconnu ou expiré.
 
     UN SEUL statement (`UPDATE … RETURNING`), et pas un SELECT puis un UPDATE dans la
     même transaction : la forme en deux temps prenait AccessShareLock (SELECT) puis
@@ -68,16 +76,36 @@ def verify_api_token(token: str) -> Optional[str]:
         row = conn.execute(
             "UPDATE user_api_tokens SET last_used_at = NOW() "
             "WHERE token_hash = %s AND (expires_at IS NULL OR expires_at > NOW()) "
-            "RETURNING sub",
+            "RETURNING sub, scopes",
             (h,),
         ).fetchone()
-        return row["sub"] if row else None
+        if not row:
+            return None
+        return {"sub": row["sub"], "scopes": _as_scopes(row.get("scopes"))}
+
+
+def _as_scopes(raw: object) -> Optional[dict]:
+    """`scopes` JSONB → dict. La row factory rend les JSONB en dict ; un pilote qui
+    rendrait du texte ne doit pas faire d'un jeton PORTÉ un jeton libre — d'où le
+    parse explicite, et le **fail-closed** (illisible ⇒ portée vide ⇒ rien ne passe)."""
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, (str, bytes)):
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
 
 
 def list_api_tokens(sub: str) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, label, created_at, last_used_at, expires_at FROM user_api_tokens WHERE sub = %s ORDER BY created_at DESC",
+            "SELECT id, label, created_at, last_used_at, expires_at, scopes "
+            "FROM user_api_tokens WHERE sub = %s ORDER BY created_at DESC",
             (sub,),
         ).fetchall()
         return [dict(r) for r in rows]

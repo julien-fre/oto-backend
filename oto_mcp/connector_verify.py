@@ -41,7 +41,8 @@ def probe_for(connector: str) -> Optional[Probe]:
     return _REGISTRY.get(connector)
 
 
-async def run(connector: str, fields: dict, config: Optional[dict] = None) -> None:
+async def run(connector: str, fields: dict, config: Optional[dict] = None,
+              instance: Optional[tuple] = None) -> None:
     """Exécute la sonde du connecteur si elle existe (await si async) ; LÈVE
     l'exception de la sonde sur échec d'authentification, no-op si aucune sonde n'est
     enregistrée. Helper partagé entre la capacité `connectors.verify` (qui traduit
@@ -50,6 +51,17 @@ async def run(connector: str, fields: dict, config: Optional[dict] = None) -> No
     probe = _REGISTRY.get(connector)
     if probe is None:
         return
-    res = probe(fields, config or {})
+    # `instance` = (entity_type, entity_id, account) de la clé RÉELLEMENT sondée.
+    # Indispensable dès qu'une sonde a un effet de bord sur le credential : sous rotation
+    # (Salesforce RTR), sonder CONSOMME le jeton, et le remplaçant doit être réécrit sur
+    # la bonne ligne. Sans cette information, la sonde ne peut que deviner via la cascade
+    # — qui désigne la clé la plus proche, pas celle qu'on teste. Un `verify level=org`
+    # tuait ainsi le jeton d'org en le rafraîchissant : `ok:true`, puis mort. Vécu 03/08.
+    # Passé UNIQUEMENT aux sondes qui le déclarent : les ~15 autres gardent leur
+    # signature à deux arguments.
+    kwargs = {}
+    if instance is not None and "instance" in inspect.signature(probe).parameters:
+        kwargs["instance"] = instance
+    res = probe(fields, config or {}, **kwargs)
     if inspect.isawaitable(res):
         await res

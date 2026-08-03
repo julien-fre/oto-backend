@@ -100,6 +100,18 @@ grants/quota, platform keys, providers byo-only).
 Endpoints `/api/*` (compte, settings, orgs, admin, datastore…), même
 `JWTVerifier` que `/mcp`. **Inventaire : `docs/rest-api.md`**.
 
+> **Descriptif dérivé + jetons portés (03/08).** `GET /openapi.json` (et
+> `/api/openapi.json`) sert un OpenAPI **dérivé** du registre de capacités + de la table
+> de routes vivante (`openapi.py`) — sans auth, `/api/admin/*` exclu. Il existe parce que
+> la surface était *indescriptible* : après l'ADR 0047, le verbe vit dans le corps (`op`),
+> donc un intégrateur qui sonde `/api/projects` tombe sur 404 et conclut « pas de REST »,
+> alors que `POST /api/me/projects {"op":"list"}` sert tout le métier projet. Côté sécurité,
+> deux crans sur les jetons `oto_` : leur **gestion** exige une session interactive
+> (`allow_api_token=False` sur `/api/me/tokens*` + miroirs admin — un jeton ne fabrique
+> plus de jeton, une fuite n'est plus auto-entretenue), et un jeton peut naître **porté**
+> (`token_scopes.py`, `user_api_tokens.scopes`) : deny-by-default borné à des tableaux
+> nommés en read/write. `scopes` NULL = jeton historique, inchangé.
+
 ⚠️ **CORS : la liste du code est MORTE en prod comme en preprod.** `_allowed_origins()`
 (`api_routes.py`) n'est qu'un **fallback** — les DEUX box posent `OTO_MCP_CORS_ORIGINS`
 dans leur `.env`, qui **écrase** la liste. Ajouter une origine au code, la déployer et

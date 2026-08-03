@@ -46,7 +46,7 @@ def test_la_sonde_nomme_linstance_jointe(monkeypatch, mode, etype, eid, attendu)
     from oto_mcp import access
     monkeypatch.setattr(access, "resolve_credential",
                         lambda *a, **k: _RC(mode, etype, eid))
-    _, _, _, instance = cv._fields_config_scope(_Ctx(), _Inp())
+    _, _, _, instance, _ = cv._fields_config_scope(_Ctx(), _Inp())
     assert instance == {"level": mode, "ref": attendu}
 
 
@@ -62,7 +62,7 @@ def test_le_niveau_org_se_nomme_sans_passer_par_la_cascade(monkeypatch):
     class _InpOrg:
         provider, level = "salesforce", "org"
 
-    _, _, _, instance = cv._fields_config_scope(_Ctx(), _InpOrg())
+    _, _, _, instance, _ = cv._fields_config_scope(_Ctx(), _InpOrg())
     assert instance == {"level": "org", "ref": "org:2:salesforce"}
 
 
@@ -85,3 +85,31 @@ def test_un_credential_incomplet_nomme_aussi_son_instance():
     src = inspect.getsource(cv._verify)
     bloc = src[src.index('"pending": True'):src.index("started = time.monotonic()")]
     assert "**instance" in bloc
+
+
+# --- la cible d'écriture, sous rotation ----------------------------------------
+
+@pytest.mark.parametrize("mode,etype,eid,cible_attendue", [
+    ("user", "member", "2:sub-x", ("member", "2:sub-x", "")),
+    ("org", "org", "2", ("org", "2", "")),
+    # Grant plateforme : aucune ligne de coffre à réécrire.
+    ("platform", None, None, None),
+])
+def test_la_sonde_sait_ou_reecrire(monkeypatch, mode, etype, eid, cible_attendue):
+    """LE bug du 03/08. Sous rotation, sonder CONSOMME le jeton — le remplaçant doit
+    être réécrit sur la ligne TESTÉE. Sans cette cible, la sonde ne peut que deviner via
+    la cascade, qui désigne la clé la plus PROCHE : un `verify level=org` chez quelqu'un
+    ayant aussi une clé perso comparait le jeton d'org au jeton perso, ne reconnaissait
+    rien, ne persistait rien — et tuait donc le jeton d'org en le validant."""
+    from oto_mcp import access
+    monkeypatch.setattr(access, "resolve_credential", lambda *a, **k: _RC(mode, etype, eid))
+    *_, cible = cv._fields_config_scope(_Ctx(), _Inp())
+    assert cible == cible_attendue
+
+
+def test_la_cible_est_transmise_a_la_sonde():
+    """TRIPWIRE. La calculer sans la passer ne servirait à rien — c'est exactement
+    l'état d'avant, où l'information existait et se perdait."""
+    import inspect
+    src = inspect.getsource(cv._verify)
+    assert 'kw["instance"] = cible' in src and "probe(fields, config, **kw)" in src
