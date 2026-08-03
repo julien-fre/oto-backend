@@ -139,11 +139,53 @@ def _read_fields(entity_type: str, entity_id: str) -> Optional[dict]:
 
 def read_saved_fields(sub: str, org_id: int, scope: str,
                       group_id: Optional[int] = None) -> Optional[dict]:
-    """Public entry point for the callback route to read the customer's
-    already-saved partial credential without reaching into this module's
-    private entity-resolution helpers directly."""
+    """L'application à utiliser pour l'ÉCHANGE du code, au retour de Salesforce.
+
+    Même règle qu'à l'aller (`build_auth_url`) : la ligne de ce scope si elle existe,
+    sinon l'application la plus proche en remontant. Les deux DOIVENT s'accorder — le
+    code a été émis pour un `client_id` précis, l'échanger avec un autre échoue.
+    C'est pour ça que ce point d'entrée n'interroge plus l'entité exacte."""
     entity_type, entity_id = _fields_entity(org_id, sub, scope, group_id)
-    return _read_fields(entity_type, entity_id)
+    champs = _read_fields(entity_type, entity_id)
+    if champs and all(champs.get(k) for k in _APP):
+        return champs
+    return _read_app(org_id, sub, scope, group_id)
+
+
+_APP = ("client_id", "client_secret", "login_url")
+
+
+def _entites_montantes(org_id: int, sub: str, scope: str,
+                       group_id: Optional[int]) -> list[tuple[str, str]]:
+    """Les entités où CHERCHER l'application, du scope demandé vers le haut.
+
+    L'application (client_id/secret/login_url) est une infrastructure d'ORG : un
+    admin la pose une fois. Le refresh token, lui, est une IDENTITÉ : il appartient à
+    qui consent. Les lire au même endroit obligeait chaque membre à recoller les
+    identifiants de l'application de son org pour pouvoir simplement s'authentifier —
+    en pratique, à connaître un secret qui ne le regarde pas.
+    """
+    # Construite PAR SCOPE, sans arithmétique d'index : une version calculée sur des
+    # positions supposait l'équipe toujours présente et sortait des bornes sans elle
+    # (donc aucune entité, donc « aucune application » sur un cas parfaitement valide).
+    org = ("org", str(org_id))
+    equipe = ("group", str(group_id)) if group_id else None
+    if scope == "org":
+        return [org]
+    if scope == "group":
+        return [e for e in (equipe, org) if e]
+    membre = (credentials_store.MEMBER, credentials_store.member_id(org_id, sub))
+    return [e for e in (membre, equipe, org) if e]
+
+
+def _read_app(org_id: int, sub: str, scope: str,
+              group_id: Optional[int]) -> Optional[dict]:
+    """L'application COMPLÈTE la plus proche, en remontant depuis le scope demandé."""
+    for etype, eid in _entites_montantes(org_id, sub, scope, group_id):
+        champs = _read_fields(etype, eid)
+        if champs and all(champs.get(k) for k in _APP):
+            return champs
+    return None
 
 
 def _clean_login_url(login_url: Optional[str]) -> str:
@@ -177,13 +219,16 @@ def build_auth_url(sub: str, scope: str = "member") -> str:
             raise PermissionError(
                 "Seul un chef d'équipe peut connecter Salesforce au nom de toute l'équipe."
             )
-    entity_type, entity_id = _fields_entity(org_id, sub, scope, group_id)
-    fields = _read_fields(entity_type, entity_id)
-    if not fields or not all(fields.get(k) for k in ("client_id", "client_secret", "login_url")):
+    # L'application se cherche EN CASCADE (voir `_entites_montantes`) : un membre
+    # consent avec l'application de son org sans jamais en connaître les identifiants.
+    # Le jeton, lui, sera écrit au scope demandé — c'est toute l'asymétrie.
+    fields = _read_app(org_id, sub, scope, group_id)
+    if not fields:
         raise LookupError(
-            "Enregistre d'abord le Consumer Key, le Consumer Secret et la Login URL "
-            "de ta Connected App Salesforce (formulaire de connecteur), puis clique "
-            "sur Connecter."
+            "Aucune application Salesforce n'est enregistrée à ce niveau ni au-dessus. "
+            "Un administrateur doit poser le Consumer Key, le Consumer Secret et la "
+            "Login URL sur la fiche du connecteur (au niveau org pour que toute "
+            "l'équipe en profite), puis relance l'autorisation."
         )
     from urllib.parse import urlencode
     verifier, challenge = oauth2_pkce.pkce_pair()
@@ -241,11 +286,18 @@ async def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
             "Edit Policies)."
         )
     entity_type, entity_id = _fields_entity(org_id, sub, scope, group_id)
-    existing = _read_fields(entity_type, entity_id)
+    # `existing` = la ligne de CE scope si elle existe (on préserve ce qu'elle porte).
+    # Sinon l'application vient de la cascade : c'est le cas d'un membre qui consent
+    # avec l'application de son org — il n'a aucune ligne à lui avant ce moment.
+    # Les identifiants d'application sont alors COPIÉS dans sa ligne, ce qui est
+    # acceptable ici : régénérer le secret de l'application côté Salesforce invalide
+    # de toute façon tous les jetons émis, donc impose une reconnexion à chacun.
+    existing = _read_fields(entity_type, entity_id) or _read_app(
+        org_id, sub, scope, group_id)
     if not existing:
         raise RuntimeError(
-            "Le Consumer Key/Secret/Login URL ont disparu entre le clic sur "
-            "Connecter et le retour de Salesforce — recommence."
+            "L'application Salesforce a disparu entre le clic sur Connecter et le "
+            "retour de Salesforce — recommence."
         )
     merged = {**existing, "refresh_token": refresh_token}
     secret = credentials_store.pack_secret("salesforce", merged)

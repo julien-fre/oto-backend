@@ -117,16 +117,17 @@ def _start_flow(ctx, values: dict) -> dict:
 
 # Le flux de consentement, déclaré comme celui de Zoho — c'est ce qui fait apparaître le
 # bouton sur la fiche, SANS que le dashboard ait à connaître le nom « salesforce ».
+# ⚠️ PAS de paramètre « Pour qui ? ». Il a existé, et c'était un pansement : la surface
+# ORG n'avait pas de bouton de connexion, donc consentir pour l'org ne pouvait se faire
+# que depuis la fiche PERSONNELLE, en le déclarant dans un menu. Le levier manquant a été
+# posé (02/08) — le sélecteur est alors devenu une question absurde : on est sur sa fiche,
+# on autorise pour soi ; on est sur la fiche de l'org, on autorise pour l'org. Le scope se
+# DÉDUIT de la surface, l'appelant le passe (`values["scope"]`), on ne le demande plus.
 connector_flow.declare(
     "salesforce",
     start=_start_flow,
     label="Autoriser oto chez Salesforce",
     callback_path="/api/salesforce/oauth/callback",
-    params=(connector_flow.FlowParam(
-        name="scope", label="Pour qui ?", default="member", required=False,
-        help="au nom de qui ranger la connexion — org/équipe demandent d'en être admin",
-        options=(("member", "moi"), ("org", "toute l'org"), ("group", "mon équipe"))),
-    ),
 )
 
 
