@@ -13,6 +13,8 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
 
@@ -106,6 +108,11 @@ def register(mcp: FastMCP) -> None:
         Returns identities WITHOUT email/phone — reveal a contact with
         apollo_match_person (which costs an Apollo credit).
 
+        ⚠️ LAST NAMES COME BACK OBFUSCATED here ("Vi***l"). To reveal someone you
+        found, pass the `id` of the result as `person_id` to apollo_match_person —
+        NEVER first name + company, which matches nobody: Apollo then mints an empty
+        record and charges the credit anyway.
+
         Args:
             domains: company domains, e.g. ["acme.com"].
             org_ids: Apollo organization ids (from apollo_enrich_organization).
@@ -119,6 +126,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def apollo_match_person(
+        person_id: Optional[str] = None,
         linkedin_url: Optional[str] = None,
         email: Optional[str] = None,
         first_name: Optional[str] = None,
@@ -129,13 +137,25 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Match a single person (enrichment). Returns {} if no match.
 
-        Pass the strongest identifier you have (linkedin_url or email best).
-        Coût : 1 crédit Apollo par appel (compté sur le quota plateforme).
+        Pass the strongest identifier you have. Coming from apollo_search_people, that
+        is `person_id` = the `id` of the search result — search obfuscates last names,
+        so the id is the ONLY reliable handle on someone you just found. Otherwise:
+        email or linkedin_url, or a FULL name (first + last) with the company.
+
+        ⚠️ Costs 1 Apollo credit per call, charged even when nothing matches: a weak
+        identifier (first name + company) makes Apollo mint an EMPTY record rather than
+        return nothing. Such an answer carries `person._stub: true` — treat it as a
+        failure, not as data. Calls with no usable identifier are refused before the
+        credit is spent.
         """
         client, is_platform = _client()
-        result = client.match_person(
-            linkedin_url=linkedin_url, email=email, first_name=first_name,
-            last_name=last_name, name=name, domain=domain, org_name=org_name) or {}
+        try:
+            result = client.match_person(
+                person_id=person_id, linkedin_url=linkedin_url, email=email,
+                first_name=first_name, last_name=last_name, name=name,
+                domain=domain, org_name=org_name) or {}
+        except ValueError as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         if is_platform:
             access.record_platform_usage("apollo")
         return result
