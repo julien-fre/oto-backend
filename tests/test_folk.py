@@ -441,3 +441,90 @@ def test_add_to_group_bulk_dry_run_already_member_shows_noop(client_cls):
         "folk_add_to_group", entity="person", ids=["per_1"], group_id="g1", dry_run=True)
     changes = r["would_add"][0]["changes"]["groups"]
     assert changes["from"] == changes["to"] == [{"id": "g1"}]
+
+
+# --- folk_list_webhooks / folk_create_webhook / folk_update_webhook --------
+
+def test_list_webhooks(client_cls):
+    inst = _instance(client_cls)
+    inst.list_webhooks.return_value = [{"id": "wbk_1"}]
+    r = _register_and_call("folk_list_webhooks")
+    assert r == {"webhooks": [{"id": "wbk_1"}]}
+
+
+def test_create_webhook_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.create_webhook.return_value = {"id": "wbk_1", "signingSecret": "whsec_x"}
+    events = [{"eventType": "person.created", "filter": {"groupId": "grp_1"}}]
+    r = _register_and_call(
+        "folk_create_webhook", name="My app", target_url="https://example.com/hook",
+        subscribed_events=events)
+    assert r == {"id": "wbk_1", "signingSecret": "whsec_x"}
+    inst.create_webhook.assert_called_once_with("My app", "https://example.com/hook", events)
+
+
+def test_create_webhook_rejects_invalid_event_type(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="person.made_up"):
+        _register_and_call(
+            "folk_create_webhook", name="My app", target_url="https://example.com/hook",
+            subscribed_events=[{"eventType": "person.made_up"}])
+    inst.create_webhook.assert_not_called()
+
+
+def test_create_webhook_rejects_empty_events(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError):
+        _register_and_call(
+            "folk_create_webhook", name="My app", target_url="https://example.com/hook",
+            subscribed_events=[])
+    inst.create_webhook.assert_not_called()
+
+
+def test_create_webhook_dry_run_makes_no_network_call(client_cls):
+    inst = _instance(client_cls)
+    events = [{"eventType": "company.updated"}]
+    r = _register_and_call(
+        "folk_create_webhook", name="My app", target_url="https://example.com/hook",
+        subscribed_events=events, dry_run=True)
+    inst.create_webhook.assert_not_called()
+    assert r == {"dry_run": True, "would_create": {
+        "name": "My app", "targetUrl": "https://example.com/hook",
+        "subscribedEvents": events,
+    }}
+
+
+def test_update_webhook_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.update_webhook.return_value = {"id": "wbk_1", "status": "inactive"}
+    r = _register_and_call("folk_update_webhook", webhook_id="wbk_1",
+                           fields={"status": "inactive"})
+    assert r == {"id": "wbk_1", "status": "inactive"}
+    inst.update_webhook.assert_called_once_with("wbk_1", status="inactive")
+
+
+def test_update_webhook_rejects_empty_fields(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError):
+        _register_and_call("folk_update_webhook", webhook_id="wbk_1", fields={})
+    inst.update_webhook.assert_not_called()
+
+
+def test_update_webhook_rejects_invalid_event_type(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="bogus"):
+        _register_and_call(
+            "folk_update_webhook", webhook_id="wbk_1",
+            fields={"subscribedEvents": [{"eventType": "bogus"}]})
+    inst.update_webhook.assert_not_called()
+
+
+def test_update_webhook_dry_run_shows_diff(client_cls):
+    inst = _instance(client_cls)
+    inst.get_webhook.return_value = {"status": "active"}
+    r = _register_and_call(
+        "folk_update_webhook", webhook_id="wbk_1",
+        fields={"status": "inactive"}, dry_run=True)
+    inst.update_webhook.assert_not_called()
+    assert r == {"dry_run": True, "id": "wbk_1",
+                 "changes": {"status": {"from": "active", "to": "inactive"}}}

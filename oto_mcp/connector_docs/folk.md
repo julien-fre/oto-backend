@@ -13,3 +13,6 @@ gère ton crm folk (personnes, entreprises, deals) + notes, interactions et rapp
 - « log un appel sur ce contact » → `folk_create` (entity `interaction`, type/titre/contenu)
 - « crée un deal dans le groupe X » → `folk_create` (entity `deal`), et `folk_list_deals` pour les lister
 - « ajoute ces 20 contacts » → `folk_create` (entity `person`, `items=[...]`) en un seul appel
+- « préviens mon endpoint à chaque nouveau deal du groupe X » → `folk_create_webhook` (avant ça : `folk_list_groups` pour l'id du groupe, `folk_group_custom_fields` si le filtre porte sur un champ custom)
+- « liste mes webhooks » / « désactive ce webhook » → `folk_list_webhooks` / `folk_update_webhook` (`fields={"status": "inactive"}`)
+- ⚠️ un filtre de webhook posé via l'api n'existe QUE là : le modifier depuis les réglages de l'app folk le fait disparaître silencieusement
