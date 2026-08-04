@@ -586,9 +586,19 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   au **tag** (`deploy.yml` « Deploy prod »), et installe oto-core **au tag épinglé**
   (runner neuf → pin du pyproject) : un test rouge bloque le merge ET le deploy (les
   deux jobs `deploy` ont `needs: test`). Garde-fou anti-version-skew : `test_tools_client_methods_exist.py`
-  vérifie STATIQUEMENT que chaque `_client().<m>()` d'un tool existe sur la classe
+  vérifie STATIQUEMENT que les méthodes appelées sur le client existent sur la classe
   oto-core épinglée (un tool en avance de phase sur son oto-core casse la PR au lieu
-  d'atteindre la prod — leçon `folk_get_user`).
+  d'atteindre la prod — leçon `folk_get_user`). Portée élargie le **31/07** : `_client()`
+  annoté `-> tuple[Classe, …]` compte comme `-> Classe`, et les variables qui REÇOIVENT
+  le client (`client, _ = _client()`) sont suivies — `tools/apollo.py` cumulait les deux
+  et sortait ENTIÈREMENT de la couverture, en silence. Seuls les attributs **appelés**
+  comptent (un client à sous-objets — `client.companies.list()`, Attio — porte ses
+  namespaces en attributs d'instance : les compter produirait un faux positif, et un
+  garde-fou qui crie à tort finit ignoré). Un module avec un `_client()` hors portée fait
+  désormais échouer `test_no_module_silently_uncovered`, sauf s'il est déclaré dans l'une
+  des deux catégories nommées (sous-objets ; **dispatch dynamique** `getattr(client, m)()`
+  — serper, serpapi, brightdata, cloro, spott, statiquement invérifiables et donc à
+  découvert, ce qui est assumé et visible plutôt qu'implicite).
 - **Ordre des middlewares MCP = contrat, pas un détail (02/08).** fastmcp exécute
   `instance.middleware` dans l'**ordre d'ajout** : le PREMIER ajouté est le plus
   **EXTERNE** (`_run_middleware` wrap en `reversed()`, vérifié empiriquement). Deux
