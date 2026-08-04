@@ -77,6 +77,10 @@ def _role_updated(calls):
     return any(s.startswith("UPDATE org_members SET org_role") for s, _ in calls)
 
 
+def _personal_of_cleared(calls):
+    return any(s.startswith("UPDATE orgs SET personal_of = NULL") for s, _ in calls)
+
+
 def test_brand_new_user_activates_real_org(monkeypatch):
     calls = _run_add(monkeypatch, existing=None, active=None, joining_personal=False)
     assert _inserted_active(calls) is True
@@ -119,6 +123,29 @@ def test_personal_does_not_steal_real_home(monkeypatch):
         active={"org_id": 5, "personal": False}, joining_personal=True,
     )
     assert _inserted_active(calls) is False
+
+
+def test_second_member_joining_a_personal_org_clears_personal_of(monkeypatch):
+    # Une org perso est mono-membre par définition (slot unique `personal_of`) :
+    # dès qu'un 2e membre distinct la rejoint, ce n'en est plus une (Tulina/Partoo,
+    # 2026-08-04 — une org réelle multi-membre restait "personal" à vie faute de ce clear).
+    calls = _run_add(
+        monkeypatch, existing=None,
+        active=None, joining_personal=True,
+    )
+    assert _personal_of_cleared(calls)
+
+
+def test_first_member_bootstrap_does_not_clear_personal_of(monkeypatch):
+    # ensure_personal_org : à la création, jp lit encore False (personal_of pas
+    # encore posé sur l'org perso à ce stade — cf. docstring add_org_member).
+    calls = _run_add(monkeypatch, existing=None, active=None, joining_personal=False)
+    assert not _personal_of_cleared(calls)
+
+
+def test_readd_does_not_clear_personal_of(monkeypatch):
+    calls = _run_add(monkeypatch, existing=(1,))
+    assert not _personal_of_cleared(calls)
 
 
 # ── accept_invitation* : idempotence ─────────────────────────────────────────
