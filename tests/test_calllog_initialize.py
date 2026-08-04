@@ -9,15 +9,29 @@ Logique pure : sink stubbé, aucun accès DB (convention `CLAUDE.md` §Tests).
 import asyncio
 import types
 
+import mcp.types as mt
 import pytest
 
 from oto_mcp import calllog
 
 
 def _context(client_name="claude.ai", client_version="1.2.3", protocol="2025-11-25"):
-    info = types.SimpleNamespace(name=client_name, version=client_version)
+    """Vrai `InitializeRequest` — PAS un stub maison.
+
+    fastmcp passe à `on_initialize` la requête ENTIÈRE (params sous `.params`), là
+    où `on_call_tool` reçoit directement les params. Un stub à plat reproduisait la
+    mauvaise forme : le test passait et la prod écrivait des NULL. On construit donc
+    le type réel, pour que la structure ne puisse plus diverger en silence.
+    """
     return types.SimpleNamespace(
-        message=types.SimpleNamespace(clientInfo=info, protocolVersion=protocol)
+        message=mt.InitializeRequest(
+            method="initialize",
+            params=mt.InitializeRequestParams(
+                protocolVersion=protocol,
+                capabilities=mt.ClientCapabilities(),
+                clientInfo=mt.Implementation(name=client_name, version=client_version),
+            ),
+        )
     )
 
 
@@ -72,7 +86,8 @@ async def test_initialize_sans_client_info_ne_casse_pas():
     async def call_next(_ctx):
         return object()
 
-    ctx = types.SimpleNamespace(message=types.SimpleNamespace())  # ni clientInfo ni version
+    # Client exotique : requête sans params exploitables (repli du hook sur `msg`).
+    ctx = types.SimpleNamespace(message=types.SimpleNamespace(params=None))
     await _logger(rows).on_initialize(ctx, call_next)
     await _drain()
 

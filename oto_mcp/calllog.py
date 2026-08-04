@@ -161,8 +161,11 @@ class ToolCallLogger(Middleware):
 
         Isolé du monitoring d'outils : toutes ses lectures filtrent `kind='mcp'`.
         """
-        msg = context.message
-        info = getattr(msg, "clientInfo", None)
+        # ⚠️ ASYMÉTRIE fastmcp : `on_initialize` reçoit un `InitializeRequest` ENTIER
+        # (params sous `.params`), là où `on_call_tool` reçoit directement les params.
+        # Le repli sur `msg` couvre une éventuelle normalisation amont.
+        params = getattr(context.message, "params", None) or context.message
+        info = getattr(params, "clientInfo", None)
         row: dict[str, Any] = {
             "server": self.server,
             "kind": "protocol",
@@ -172,7 +175,7 @@ class ToolCallLogger(Middleware):
             "args": {
                 "client_name": getattr(info, "name", None),
                 "client_version": getattr(info, "version", None),
-                "protocol_version": getattr(msg, "protocolVersion", None),
+                "protocol_version": getattr(params, "protocolVersion", None),
             },
         }
         try:
