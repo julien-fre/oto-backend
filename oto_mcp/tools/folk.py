@@ -1,4 +1,4 @@
-"""Folk CRM — groups, people, companies, deals, notes, interactions, reminders.
+"""Folk CRM — groups, people, companies, deals, notes, interactions, reminders, webhooks.
 
 Wrappe `oto.tools.folk.FolkClient` (API publique https://developer.folk.app).
 Clé résolue par appel via `access.resolve_api_key("folk")` — provider byo-only
@@ -252,13 +252,24 @@ def _bulk_run(items: list, fn) -> list[tuple[int, bool, object]]:
 
 
 def register(mcp: FastMCP) -> None:
-    from oto.tools.folk.client import FolkClient
+    from oto.tools.folk.client import FolkClient, WEBHOOK_EVENT_TYPES
 
     def _client() -> FolkClient:
         key, _ = access.resolve_api_key("folk")
         # Rédaction des champs sensibles : plus au niveau client — appliquée à la
         # frontière des tools par `FieldRedactionMiddleware` (policy de l'org active).
         return FolkClient(api_key=key)
+
+    def _validate_subscribed_events(events: list) -> None:
+        if not events:
+            raise _bad("subscribed_events : au moins un événement requis.")
+        for e in events:
+            event_type = (e or {}).get("eventType")
+            if event_type not in WEBHOOK_EVENT_TYPES:
+                raise _bad(
+                    f"eventType invalide : {event_type!r}. Valeurs valides : "
+                    + ", ".join(sorted(WEBHOOK_EVENT_TYPES))
+                )
 
     # --- groups -------------------------------------------------------------
 
@@ -647,6 +658,113 @@ def register(mcp: FastMCP) -> None:
         """Fetch a workspace user by ID. `user_id="me"` (default) returns the
         authenticated user — call it to attribute an action to the current user."""
         return _client().get_user(user_id)
+
+    # --- webhooks -------------------------------------------------------------
+    #
+    # Ressource globale (pas de group_id/object_type, pas de mode bulk — un
+    # workspace en a peu). `dry_run` suit la même convention que folk_create/
+    # update/delete (preview `would_create` en création, diff `changes` en
+    # update, aucun appel réseau mutant).
+
+    @mcp.tool()
+    def folk_list_webhooks() -> dict:
+        """List all webhooks configured on this Folk workspace: target URL,
+        status, and which events/filters each one subscribes to."""
+        return {"webhooks": _client().list_webhooks()}
+
+    @mcp.tool()
+    def folk_create_webhook(
+        name: str, target_url: str, subscribed_events: list[dict],
+        dry_run: bool = False,
+    ) -> dict:
+        """Create a Folk webhook. Folk POSTs an event payload to `target_url`
+        each time one of the subscribed events fires.
+
+        Before calling this with a filter, call `folk_list_groups` (for
+        `groupId`) and/or `folk_group_custom_fields` (for the custom field
+        name used in `path`) to get real workspace values — don't guess them.
+
+        Args:
+            name: Friendly name (max 255 chars).
+            target_url: Public HTTPS URL that will receive the event (max 2048 chars).
+            subscribed_events: 1-20 items, each `{"eventType": ..., "filter": {...}}`.
+                eventType — one per entity, by lifecycle:
+                  person: created, updated, deleted, groups_updated,
+                    workspace_interaction_metadata_updated
+                  company: created, updated, deleted, groups_updated
+                  object (deals AND any custom object_type): created, updated, deleted
+                  note: created, updated, deleted
+                  reminder: created, updated, deleted, triggered
+                (full values are "person.created", "object.updated", etc.)
+                filter (optional, all keys optional):
+                  groupId — only for entities in this group (folk_list_groups).
+                    For object.* this is a sibling of `path`, never repeated
+                    inside it.
+                  objectType — for object.* events, scope to one collection
+                    (e.g. "Deals" vs a custom object_type — Folk's own example
+                    uses the display name, NOT necessarily the lowercase slug
+                    accepted by folk_list_deals(object_type=...); unconfirmed
+                    against a live workspace, verify before relying on it).
+                  path + value — for *.updated events, fire only when the
+                    attribute at `path` changes to `value`. `path` covers both
+                    plain attributes and custom fields, and its shape differs
+                    by entity:
+                      plain attribute (any entity): `["firstName"]`, `["name"]`
+                      person/company custom field:
+                        `["customFieldValues", groupId, fieldName]` (3 segments
+                        — the group id is repeated here, inside the path)
+                      object/deal custom field:
+                        `["customFieldValues", fieldName]` (2 segments — no
+                        group id in path; use the sibling `filter.groupId`
+                        instead)
+                    fieldName is the field's `name` from
+                    folk_group_custom_fields (custom fields have no separate
+                    id — `name` IS the identifier Folk matches on).
+            dry_run: if true, creates nothing — returns a preview instead
+                (`would_create`); zero network calls.
+
+        Note: the response's `signingSecret` is returned in FULL only here —
+        Folk only ever shows a redacted version afterwards, so save it now if
+        you need to verify payload signatures.
+
+        Note: filters only exist through this API — editing this webhook's
+        events from Folk's own settings UI afterwards silently drops them.
+        """
+        _validate_subscribed_events(subscribed_events)
+        if dry_run:
+            return {"dry_run": True, "would_create": {
+                "name": name, "targetUrl": target_url,
+                "subscribedEvents": subscribed_events,
+            }}
+        return _client().create_webhook(name, target_url, subscribed_events)
+
+    @mcp.tool()
+    def folk_update_webhook(webhook_id: str, fields: dict, dry_run: bool = False) -> dict:
+        """Update a Folk webhook (PATCH — only the given fields change).
+
+        Args:
+            webhook_id: the webhook ID (wbk_…, from folk_list_webhooks).
+            fields: Folk's raw API field names, camelCase — same vocabulary
+                caveat as folk_update: name, targetUrl, subscribedEvents
+                (REPLACES the full list, not a merge/add — call
+                folk_list_webhooks first and resend the existing entries you
+                want to keep), status ("active"|"inactive" — pause without
+                deleting). Same eventType/filter shape as folk_create_webhook.
+            dry_run: if true, doesn't PATCH — returns a diff `{"changes":
+                {field: {"from", "to"}}}` against the current webhook.
+        """
+        if not fields:
+            raise _bad("fields : au moins un champ à mettre à jour (name, "
+                       "targetUrl, subscribedEvents, status).")
+        if "subscribedEvents" in fields:
+            _validate_subscribed_events(fields["subscribedEvents"])
+        c = _client()
+        if dry_run:
+            current = c.get_webhook(webhook_id)
+            return {"dry_run": True, "id": webhook_id,
+                    "changes": {k: {"from": current.get(k), "to": v}
+                               for k, v in fields.items()}}
+        return c.update_webhook(webhook_id, **fields)
 
     # --- lists (énumération par collection) ---------------------------------
 
