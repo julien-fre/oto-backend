@@ -110,9 +110,14 @@ status_hints.register("salesforce", _salesforce_pending_action)
 
 def _start_flow(ctx, values: dict) -> dict:
     """Point d'entrée du flux générique — délègue au MÊME handler que la capacité
-    `me.salesforce_connect`, pour qu'il n'existe qu'une façon de démarrer."""
+    `me.salesforce_connect`, pour qu'il n'existe qu'une façon de démarrer.
+
+    `app` (comme `scope`) est une clé cachée, pas un `FlowParam` déclaré : le
+    dashboard/front la passe hors formulaire (le client sait qui il est), elle ne
+    doit jamais devenir un champ visible à l'utilisateur."""
     from ..capabilities import salesforce_connect
-    return salesforce_connect.start_for(ctx, (values.get("scope") or "member"))
+    return salesforce_connect.start_for(
+        ctx, (values.get("scope") or "member"), values.get("app"))
 
 
 # Le flux de consentement, déclaré comme celui de Zoho — c'est ce qui fait apparaître le

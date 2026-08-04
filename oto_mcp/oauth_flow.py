@@ -103,6 +103,57 @@ def redirect_uri(path: str) -> str:
     return f"{base}/{path.lstrip('/')}"
 
 
+# --- retour vers le front qui a demandé la connexion ----------------------------
+
+# Le callback (`/api/<connecteur>/oauth/callback`) est appelé PAR LE FOURNISSEUR
+# (Salesforce/Zoho/…) — à ce stade il n'y a plus d'Origin utile à lire. Le SEUL
+# moment où on sait QUEL front a demandé la connexion, c'est `/start` : la capacité
+# REST peut recevoir une clé d'app explicite du client (`app=`), portée ensuite dans
+# le state signé jusqu'au retour (même mécanique que `org`/`group` côté Salesforce).
+# Pas de sniff d'Origin ici : les capacités sont transport-agnostiques par construction
+# (ADR 0009, aucune Request ne descend jusqu'au handler) — un champ déclaré par le
+# client est la seule donnée disponible à ce niveau, et elle ne vaut de toute façon
+# que ce que `resolve_return_app` en valide.
+#
+# Gabarit de CHEMIN par app — le connecteur fournit lui-même son SUFFIXE (la query
+# string `?connector=x&x=connected` ne change pas d'un front à l'autre, seul le
+# chemin avant le `?` diffère). `{org}` substitué depuis le state, déjà porté pour
+# scoper le credential (cf. `salesforce_oauth.make_state`).
+RETURN_APPS: dict[str, tuple[str, str]] = {
+    "tulina": ("https://app.tulina.ai", "/network/{org}/connectors"),
+    "tulina-preprod": ("https://tulina.oto.zone", "/network/{org}/connectors"),
+}
+
+# Défaut historique (oto-dashboard) — byte-à-byte ce que chaque `_app_url()` de
+# route callback faisait seul avant ce module.
+_DEFAULT_RETURN_BASE_ENV = "OTO_APP_URL"
+_DEFAULT_RETURN_BASE_FALLBACK = "https://dashboard.oto.ninja"
+_DEFAULT_RETURN_PATH = "/connectors"
+
+
+def resolve_return_app(app: Optional[str]) -> str:
+    """Clé à ranger dans le state signé (`make_state`-side). Une valeur absente ou
+    hors de `RETURN_APPS` devient chaîne vide, qui fait retomber `return_url` sur
+    le défaut oto-dashboard : on ne fait JAMAIS confiance à une valeur de client
+    au-delà d'un lookup dans une liste fermée — jamais une origine prise telle
+    quelle (ce serait un open redirect)."""
+    return app if app in RETURN_APPS else ""
+
+
+def return_url(app: Optional[str], suffix: str, *, org: Optional[int] = None) -> str:
+    """URL de retour après consentement : base + chemin de l'app portée par le state
+    (vide/inconnue → `OTO_APP_URL`/oto-dashboard, comportement historique), suivi de
+    `suffix` — la query string propre au connecteur (ex.
+    `?connector=salesforce&salesforce=connected`), inchangée d'un front à l'autre."""
+    if app in RETURN_APPS:
+        base, path_tmpl = RETURN_APPS[app]
+    else:
+        base = os.environ.get(_DEFAULT_RETURN_BASE_ENV, _DEFAULT_RETURN_BASE_FALLBACK).rstrip("/")
+        path_tmpl = _DEFAULT_RETURN_PATH
+    path = path_tmpl.format(org=org if org is not None else "")
+    return f"{base}{path}{suffix}"
+
+
 # --- échange du code -----------------------------------------------------------
 
 def exchange_code(token_url: str, *, code: str, client_id: str, client_secret: str,

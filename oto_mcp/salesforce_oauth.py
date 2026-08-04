@@ -87,36 +87,50 @@ def _ctx_group(sub: str) -> int:
 
 
 def make_state(sub: str, org_id: int, scope: str, verifier: str,
-               group_id: Optional[int] = None) -> str:
+               group_id: Optional[int] = None, return_app: str = "") -> str:
     """State signé, LIÉ à l'audience `salesforce` (`oauth_flow.sign_state`).
 
     Ce que le payload porte de spécifique : `org` (le credential est scopé (org, sub)),
     `scope` ("member" | "org" | "group") et, pour une équipe, `group`. Le callback
     arrive SANS en-tête d'auth : ces valeurs doivent voyager avec lui, pas être
     re-dérivées d'une session vivante. `group` est gelé ici — l'équipe active au clic
-    est celle où l'on écrit, même si un autre onglet en change entre-temps."""
-    payload = {"sub": sub, "org": org_id, "scope": scope, "v": verifier}
+    est celle où l'on écrit, même si un autre onglet en change entre-temps.
+
+    `return_app` (payload `app`) porte quel FRONT a demandé la connexion (ex.
+    "tulina") — pas l'application Salesforce (`_APP`/`_read_app`, un tout autre
+    sens du mot dans ce module). Toujours écrit, même vide : `oauth_flow.return_url`
+    dégrade correctement une chaîne vide vers le défaut historique
+    oto-dashboard. Déjà résolu/validé par l'appelant (`build_auth_url`) via
+    `oauth_flow.resolve_return_app` — ce module ne revalide pas."""
+    payload = {"sub": sub, "org": org_id, "scope": scope, "v": verifier, "app": return_app}
     if group_id is not None:
         payload["group"] = group_id
     return oauth_flow.sign_state(_AUD, payload)
 
 
-def verify_state(state: str) -> Optional[tuple[str, int, str, str, Optional[int]]]:
-    """(sub, org_id, scope, verifier, group_id) si le state est valide, non expiré et
-    émis POUR ce flux ; None sinon. `group_id` n'est renseigné qu'en scope `group` —
-    et un payload `scope="group"` sans `group` est refusé (on ne devine pas l'équipe
-    où écrire un secret)."""
+def verify_state(state: str) -> Optional[tuple[str, int, str, str, Optional[int], str]]:
+    """(sub, org_id, scope, verifier, group_id, return_app) si le state est valide,
+    non expiré et émis POUR ce flux ; None sinon. `group_id` n'est renseigné qu'en
+    scope `group` — et un payload `scope="group"` sans `group` est refusé (on ne
+    devine pas l'équipe où écrire un secret).
+
+    `return_app` absent (state signé AVANT ce champ, encore vivant dans la fenêtre
+    de 10 min d'un déploiement) ou de mauvais type ⇒ `""`, pas un refus du state
+    entier — perdre le retour ciblé n'est pas une raison de perdre la connexion."""
     data = oauth_flow.read_state(_AUD, state)
     if not data:
         return None
-    sub, org, scope, verifier, group = (data.get("sub"), data.get("org"), data.get("scope"),
-                                        data.get("v"), data.get("group"))
+    sub, org, scope, verifier, group, return_app = (
+        data.get("sub"), data.get("org"), data.get("scope"),
+        data.get("v"), data.get("group"), data.get("app"))
     if (not isinstance(sub, str) or not isinstance(org, int)
             or scope not in ("member", "org", "group") or not isinstance(verifier, str)):
         return None
     if scope == "group" and not isinstance(group, int):
         return None
-    return sub, org, scope, verifier, group
+    if not isinstance(return_app, str):
+        return_app = ""
+    return sub, org, scope, verifier, group, return_app
 
 
 def _fields_entity(org_id: int, sub: str, scope: str, group_id: Optional[int] = None) -> tuple[str, str]:
@@ -192,7 +206,7 @@ def _clean_login_url(login_url: Optional[str]) -> str:
     return (login_url or "").strip().rstrip("/") or "https://login.salesforce.com"
 
 
-def build_auth_url(sub: str, scope: str = "member") -> str:
+def build_auth_url(sub: str, scope: str = "member", return_app: Optional[str] = None) -> str:
     """Authorize URL for THIS customer's Connected App — the client_id/login_url
     come from their own already-saved credential, never a module constant
     (unlike every other oauth module here, whose client is Otomata-owned).
@@ -201,6 +215,12 @@ def build_auth_url(sub: str, scope: str = "member") -> str:
     (the `/start` route translates this into an actionable 400 the dashboard's
     Connect button can gate on) and `PermissionError` if `scope="org"`/`"group"`
     is requested by a non-admin.
+
+    `return_app` : clé de front déclarée par l'APPELANT (ex. "tulina"), jamais un
+    Origin sniffé (les capacités sont transport-agnostiques, ADR 0009). Validée
+    ICI, une seule fois, AVANT `make_state` — `oauth_flow.resolve_return_app`
+    réduit toute valeur hors de sa liste fermée à `""` : le state ne porte jamais
+    une valeur de client non vérifiée (pas d'open redirect).
     """
     if scope not in ("member", "org", "group"):
         raise ValueError(f"scope invalide : {scope!r} (attendu 'member', 'org' ou 'group')")
@@ -230,6 +250,7 @@ def build_auth_url(sub: str, scope: str = "member") -> str:
             "Login URL sur la fiche du connecteur (au niveau org pour que toute "
             "l'équipe en profite), puis relance l'autorisation."
         )
+    resolved_app = oauth_flow.resolve_return_app(return_app)
     from urllib.parse import urlencode
     verifier, challenge = oauth2_pkce.pkce_pair()
     login_url = _clean_login_url(fields["login_url"])
@@ -238,7 +259,7 @@ def build_auth_url(sub: str, scope: str = "member") -> str:
         "client_id": fields["client_id"],
         "redirect_uri": oauth_flow.redirect_uri(_CALLBACK_PATH),
         "scope": SCOPES,
-        "state": make_state(sub, org_id, scope, verifier, group_id),
+        "state": make_state(sub, org_id, scope, verifier, group_id, resolved_app),
         "code_challenge": challenge,
         "code_challenge_method": "S256",
     }
