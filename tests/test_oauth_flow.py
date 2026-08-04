@@ -128,6 +128,43 @@ def test_unreadable_response_is_explicit(monkeypatch):
                          client_secret="s", redirect="https://r")
 
 
+# --- retour vers le front qui a demandé la connexion ---------------------------
+
+def test_resolve_return_app_keeps_known_key():
+    assert of.resolve_return_app("tulina") == "tulina"
+
+
+@pytest.mark.parametrize("bad", [None, "", "oto", "app.tulina.ai", "https://app.tulina.ai"])
+def test_resolve_return_app_rejects_unknown_or_missing(bad):
+    """Jamais une valeur de client prise telle quelle : hors de `RETURN_APPS`, chaîne
+    vide — pas d'origine arbitraire, pas d'open redirect."""
+    assert of.resolve_return_app(bad) == ""
+
+
+def test_return_url_known_app_substitutes_org():
+    url = of.return_url("tulina", "?connector=salesforce&salesforce=connected", org=178)
+    assert url == "https://app.tulina.ai/network/178/connectors?connector=salesforce&salesforce=connected"
+
+
+def test_return_url_preprod_app():
+    url = of.return_url("tulina-preprod", "?connector=zoho&zoho=connected", org=3)
+    assert url == "https://tulina.oto.zone/network/3/connectors?connector=zoho&zoho=connected"
+
+
+def test_return_url_unknown_app_falls_back_to_oto_dashboard():
+    """Comportement historique byte-à-byte : `app` vide/inconnu ⇒ `OTO_APP_URL`
+    (défaut dashboard.oto.ninja) + `/connectors`, exactement ce que chaque
+    `_app_url()`/`_retour()` de route callback faisait seul avant ce module."""
+    url = of.return_url("", "?connector=salesforce&salesforce=connected", org=178)
+    assert url == "https://dashboard.oto.ninja/connectors?connector=salesforce&salesforce=connected"
+
+
+def test_return_url_respects_oto_app_url_override(monkeypatch):
+    monkeypatch.setenv("OTO_APP_URL", "https://dashboard.oto.cx")
+    url = of.return_url(None, "?connector=zoho&zoho=connected")
+    assert url == "https://dashboard.oto.cx/connectors?connector=zoho&zoho=connected"
+
+
 # --- la duplication doit DÉCROÎTRE --------------------------------------------
 
 def _modules_with(pattern: str) -> list[str]:

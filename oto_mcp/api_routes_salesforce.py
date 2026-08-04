@@ -26,7 +26,6 @@ static-fields form already supports via `/api/settings/api-keys/salesforce`,
 from __future__ import annotations
 
 import logging
-import os
 from typing import Awaitable, Callable
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -49,14 +48,19 @@ def make_routes(
     options_handler: Callable[[Request], Awaitable[Response]],
 ) -> list[Route]:
 
-    def _app_url() -> str:
-        return os.environ.get("OTO_APP_URL", "https://dashboard.oto.ninja").rstrip("/")
-
-    def _retour(etat: str) -> str:
+    def _retour(etat: str, return_app: str = "", org_id: int | None = None) -> str:
         """Où renvoyer le navigateur après le consentement : sur la fiche du
         connecteur, dépliée. `connector=` est le deep-link lu par le dashboard —
-        sans lui on retombe sur la liste, et il faut retrouver la ligne à la main."""
-        return f"{_app_url()}/connectors?connector=salesforce&salesforce={etat}"
+        sans lui on retombe sur la liste, et il faut retrouver la ligne à la main.
+
+        `return_app`/`org_id` : le FRONT qui a demandé la connexion (`""` =
+        historique, dégrade vers `OTO_APP_URL`/oto-dashboard) — `oauth_flow.return_url`
+        porte la résolution base+chemin, cf. son docstring. Absents dans l'UNE
+        branche où le state n'a même pas pu être lu (voir `callback` ci-dessous) :
+        cas dégradé accepté, on n'a alors aucun moyen de savoir qui rappeler."""
+        from . import oauth_flow
+        return oauth_flow.return_url(
+            return_app, f"?connector=salesforce&salesforce={etat}", org=org_id)
 
     async def callback(request: Request) -> Response:
         # Salesforce redirige ici (pas d'auth Logto) — l'identité + le scope
@@ -65,8 +69,11 @@ def make_routes(
         state = request.query_params.get("state")
         parsed = salesforce_oauth.verify_state(state) if state else None
         if not code or not parsed:
+            # State absent/expiré/altéré : on n'a NI org_id NI return_app (ils vivent
+            # DANS ce state qu'on vient d'échouer à lire) — dégradation acceptée vers
+            # le défaut oto-dashboard, seul cas où ce module ne peut pas faire mieux.
             return RedirectResponse(_retour("error"), status_code=302)
-        sub, org_id, scope, verifier_pkce, group_id = parsed
+        sub, org_id, scope, verifier_pkce, group_id, return_app = parsed
         # RE-GARDE du droit d'écrire au scope demandé. `build_auth_url` l'a vérifié
         # au /start, mais le state vit 10 min : entre le clic et le retour, l'auteur
         # a pu perdre son rôle. Doctrine maison (ADR 0038, ce qui a fermé #108) :
@@ -80,7 +87,7 @@ def make_routes(
         if not allowed:
             logger.warning("salesforce callback refusé : %s n'est plus admin du scope "
                            "%s (org=%s group=%s)", sub, scope, org_id, group_id)
-            return RedirectResponse(_retour("forbidden"), status_code=302)
+            return RedirectResponse(_retour("forbidden", return_app, org_id), status_code=302)
         try:
             fields = salesforce_oauth.read_saved_fields(sub, org_id, scope, group_id)
             if not fields:
@@ -99,7 +106,7 @@ def make_routes(
             # avalée). On journalise le traceback, jamais le `code` ni les tokens.
             logger.exception("salesforce oauth callback en échec (sub=%s scope=%s org=%s)",
                              sub, scope, org_id)
-            return RedirectResponse(_retour("error"), status_code=302)
+            return RedirectResponse(_retour("error", return_app, org_id), status_code=302)
         # On revient sur LA FICHE du connecteur, pas sur l'accueil. Le retour
         # atterrissait sur `/`, donc sur la vue d'ensemble — un écran où Salesforce
         # n'apparaît nulle part : l'utilisateur venait d'autoriser et se retrouvait
@@ -107,6 +114,6 @@ def make_routes(
         # `connected_unverified` a disparu avec la sonde post-écriture : cet état
         # n'existe plus, et le mot « unverified » inquiétait pour une connexion saine.
         del result  # la pose EST le résultat ; plus de verdict à transporter
-        return RedirectResponse(_retour("connected"), status_code=302)
+        return RedirectResponse(_retour("connected", return_app, org_id), status_code=302)
 
     return [Route("/api/salesforce/oauth/callback", callback, methods=["GET"])]

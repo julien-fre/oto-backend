@@ -28,19 +28,36 @@ from oto_mcp import salesforce_oauth  # noqa: E402
 def test_state_roundtrip_recovers_sub_org_scope_and_verifier():
     state = salesforce_oauth.make_state("sub-xyz", 42, "member", "verifier-abc")
     got = salesforce_oauth.verify_state(state)
-    assert got == ("sub-xyz", 42, "member", "verifier-abc", None)
+    assert got == ("sub-xyz", 42, "member", "verifier-abc", None, "")
 
 
 def test_state_roundtrip_carries_org_scope():
     state = salesforce_oauth.make_state("sub-1", 7, "org", "v")
     got = salesforce_oauth.verify_state(state)
-    assert got == ("sub-1", 7, "org", "v", None)
+    assert got == ("sub-1", 7, "org", "v", None, "")
 
 
 def test_state_roundtrip_carries_group_scope_and_group_id():
     state = salesforce_oauth.make_state("sub-1", 7, "group", "v", group_id=99)
     got = salesforce_oauth.verify_state(state)
-    assert got == ("sub-1", 7, "group", "v", 99)
+    assert got == ("sub-1", 7, "group", "v", 99, "")
+
+
+def test_state_roundtrip_carries_return_app():
+    state = salesforce_oauth.make_state("sub-1", 7, "member", "v", return_app="tulina")
+    got = salesforce_oauth.verify_state(state)
+    assert got == ("sub-1", 7, "member", "v", None, "tulina")
+
+
+def test_state_missing_app_key_defaults_to_empty_string():
+    """État signé AVANT ce champ (déploiement à cheval sur la fenêtre de 10 min du
+    state) : `app` absent ne doit pas invalider tout le state, juste dégrader vers
+    la chaîne vide (⇒ retour oto-dashboard historique, pas une connexion perdue)."""
+    from oto_mcp import oauth_flow
+    forged = oauth_flow.sign_state("salesforce",
+                                   {"sub": "s", "org": 1, "scope": "member", "v": "x"})
+    got = salesforce_oauth.verify_state(forged)
+    assert got == ("s", 1, "member", "x", None, "")
 
 
 def test_group_scope_state_without_group_id_is_rejected():
@@ -116,6 +133,35 @@ def test_build_auth_url_uses_this_customers_own_client_id(monkeypatch):
     assert q["redirect_uri"][0] == "https://mcp.oto.ninja/api/salesforce/oauth/callback"
     assert q["code_challenge_method"][0] == "S256"
     assert q["scope"][0] == "api refresh_token"
+
+
+def test_build_auth_url_embeds_known_return_app(monkeypatch):
+    from oto_mcp import access
+    monkeypatch.setattr(access, "current_org", lambda sub: 99)
+    _stub_saved_fields(monkeypatch, {
+        "client_id": "cid", "client_secret": "secret",
+        "login_url": "https://acme.my.salesforce.com",
+    })
+    url = salesforce_oauth.build_auth_url("sub-1", "member", return_app="tulina")
+    state = parse_qs(urlparse(url).query)["state"][0]
+    _, _, _, _, _, return_app = salesforce_oauth.verify_state(state)
+    assert return_app == "tulina"
+
+
+def test_build_auth_url_unknown_return_app_is_reduced_to_empty(monkeypatch):
+    """Régression open-redirect : une valeur hors de `oauth_flow.RETURN_APPS` ne
+    doit JAMAIS atteindre le state signé telle quelle — `resolve_return_app`
+    doit tourner à l'ÉCRITURE (`build_auth_url`), pas seulement à la lecture."""
+    from oto_mcp import access
+    monkeypatch.setattr(access, "current_org", lambda sub: 99)
+    _stub_saved_fields(monkeypatch, {
+        "client_id": "cid", "client_secret": "secret",
+        "login_url": "https://acme.my.salesforce.com",
+    })
+    url = salesforce_oauth.build_auth_url("sub-1", "member", return_app="https://evil.example.com")
+    state = parse_qs(urlparse(url).query)["state"][0]
+    _, _, _, _, _, return_app = salesforce_oauth.verify_state(state)
+    assert return_app == ""
 
 
 def test_build_auth_url_different_customers_get_different_urls(monkeypatch):

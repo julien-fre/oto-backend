@@ -35,10 +35,14 @@ class SalesforceConnectInput(BaseModel):
     scope: Optional[Literal["member", "org", "group"]] = "member"
 
 
-def start_for(ctx: ResolvedCtx, scope: str) -> dict:
+def start_for(ctx: ResolvedCtx, scope: str, return_app: Optional[str] = None) -> dict:
     """URL de consentement à ouvrir, pour le niveau demandé. Partagé avec le flux
     générique (`connector_flow`, déclaré dans tools/salesforce.py) : une seule façon
-    de démarrer, deux surfaces."""
+    de démarrer, deux surfaces.
+
+    `return_app` : uniquement porté par le chemin REST générique (le navigateur
+    d'un front sait qui il est) ; le chemin MCP ci-dessous (`_start`) ne le passe
+    jamais — un agent Claude n'a pas de navigateur à rerediriger."""
     from mcp.shared.exceptions import McpError
 
     from .. import access
@@ -47,7 +51,7 @@ def start_for(ctx: ResolvedCtx, scope: str) -> dict:
     except McpError as e:
         raise AuthzDenied(403, "connector_restricted", e.error.message)
     try:
-        auth_url = salesforce_oauth.build_auth_url(ctx.sub, scope or "member")
+        auth_url = salesforce_oauth.build_auth_url(ctx.sub, scope or "member", return_app)
     except ValueError as e:
         raise AuthzDenied(400, "invalid_scope_param", str(e))
     except PermissionError as e:
