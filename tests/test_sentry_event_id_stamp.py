@@ -30,6 +30,10 @@ def _server(monkeypatch, *, event_id, rows):
         return "ok"
 
     async def sink(row: dict) -> None:
+        # Le handshake `initialize` émet aussi une ligne (kind='protocol') : hors sujet
+        # ici, ce test porte sur les lignes d'APPEL D'OUTIL et leur ordre.
+        if row.get("kind") == "protocol":
+            return
         # Ce que fait `server._calllog_sink` : relire la ContextVar depuis la tâche
         # d'insertion, où le contexte a été COPIÉ au create_task.
         row["sentry_event_id"] = sentry_setup.current_tool_event_id()
