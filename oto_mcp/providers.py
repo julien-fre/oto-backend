@@ -286,6 +286,7 @@ _CATEGORY_BY_CONNECTOR = {
     "hubspot": "Prospection", "apollo": "Prospection", "zerobounce": "Prospection",
     "hithorizons": "Prospection", "phantombuster": "Prospection", "zoho": "Prospection",
     "brevo": "Prospection", "salesforce": "Prospection", "pipedrive": "Prospection",
+    "sellsy": "Prospection",
     "figma": "Design", "supabase": "Dev",
     # recherche web / scraping
     "aiark": "Prospection", "linkedin": "Prospection", "cognism": "Prospection",
@@ -314,7 +315,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
-    "salesforce": "Salesforce", "pipedrive": "Pipedrive",
+    "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
     "aiark": "AI Ark", "linkedin": "LinkedIn", "cognism": "Cognism", "lighton": "LightOn",
     "recruitee": "Recruitee", "teamtailor": "Teamtailor", "spott": "Spott",
@@ -396,6 +397,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "unipile": "unipile.com", "pennylane": "pennylane.com", "pennylaneged": "pennylane.com", "gocardless": "gocardless.com",
     "silae": "silae.fr", "attio": "attio.com", "crunchbase": "crunchbase.com",
     "brevo": "brevo.com", "brevoauto": "brevo.com", "pipedrive": "pipedrive.com",
+    "sellsy": "sellsy.com",
     "slack": "slack.com", "google": "google.com",
     "planity": "planity.com", "topograph": "topograph.co",
     "atlassian": "atlassian.com",
@@ -1016,6 +1018,19 @@ _REGISTRY_LIST = [
            CredentialField("company_domain", "Sous-domaine du compte",
                            secret=False, reveal=True, required=False,
                            help="acme pour acme.pipedrive.com — facultatif"),
+       )),
+    # sellsy : CRM + gestion commerciale FR (le CRM et la facturation dans le même
+    # compte). Credential = OAuth2 **client_credentials** (client_id + client_secret
+    # d'un accès « personnel » du portail développeur) → multi-champs, pas keyed :
+    # la clé d'appel est un jeton dérivé, pas le secret posé. byo-only — un compte
+    # Sellsy est celui d'une entreprise, il n'y a pas de clé plateforme à partager.
+    _c("sellsy", ["sellsy"], auth_modes={"byo_user", "byo_org"},
+       secret_kind="fields", label="Sellsy",
+       help="CRM + gestion commerciale FR (tiers, opportunités, devis, factures, paiements)",
+       href="https://www.sellsy.fr", credential_fields=(
+           CredentialField("client_id", "Client ID", secret=True,
+                           help="Sellsy → Réglages → Portail développeur → API V2"),
+           CredentialField("client_secret", "Client Secret", secret=True),
        )),
 
     # --- ATS / talent sourcing (RH) — câblés 2026-06-20 ----------------------
