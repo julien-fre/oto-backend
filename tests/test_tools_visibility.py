@@ -89,3 +89,36 @@ def test_group_unhide_removes(monkeypatch):
     out = cap._group_unhide(_ctx(), cap.GroupHiddenToolSetInput(group_id=7, name="attio_delete_deal"))
     assert out == {"group_id": 7, "tool": "attio_delete_deal", "hidden": False}
     assert calls == [(7, "attio_delete_deal")]
+
+
+# --- outils protégés : refus à l'ÉCRITURE, pas seulement à la lecture ---------
+#
+# `is_tool_visible` ignore déjà le denylist sur un tool protégé — donc sans refus
+# ici, l'admin recevrait `hidden: true` sur un masquage qui ne masque rien. Les
+# deux autres faces du geste refusent (`oto_disable_tool`, `POST /api/me/tools/
+# {name}` → 400 protected_tool) ; ces deux tests figent l'alignement.
+
+def test_org_hide_refuses_protected_tool(monkeypatch):
+    monkeypatch.setattr(cap.tool_registry, "boot_tool_names", lambda: ["oto_whoami"])
+    stored = []
+    monkeypatch.setattr(cap.db, "add_org_disabled_tool",
+                        lambda *a, **k: stored.append(a))
+
+    with pytest.raises(AuthzDenied) as e:
+        cap._org_hide(_ctx(), cap.OrgHiddenToolSetInput(org_id=2, name="oto_whoami"))
+
+    assert e.value.code == "protected_tool"
+    assert not stored, "aucune ligne ne doit être écrite pour un tool protégé"
+
+
+def test_group_hide_refuses_protected_tool(monkeypatch):
+    monkeypatch.setattr(cap.tool_registry, "boot_tool_names", lambda: ["oto_call"])
+    stored = []
+    monkeypatch.setattr(cap.db, "add_group_disabled_tool",
+                        lambda *a, **k: stored.append(a))
+
+    with pytest.raises(AuthzDenied) as e:
+        cap._group_hide(_ctx(), cap.GroupHiddenToolSetInput(group_id=7, name="oto_call"))
+
+    assert e.value.code == "protected_tool"
+    assert not stored

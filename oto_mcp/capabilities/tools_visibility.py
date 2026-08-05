@@ -25,6 +25,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from .. import db, group_store, org_store, tool_registry
+from ..tool_visibility import is_protected
 from ._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, ORG_ADMIN_OF, ORG_MEMBER_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -35,6 +36,25 @@ _GID = {"id": "group_id"}
 
 def _known_tool_names() -> set[str]:
     return set(tool_registry.boot_tool_names())
+
+
+def _reject_unhidable(name: str) -> None:
+    """Refuse un tool inconnu, et un tool PROTÉGÉ (anti-lockout, source unique
+    `tool_visibility.PROTECTED_TOOLS`).
+
+    Sans ce second refus, masquer `oto_whoami` écrirait la ligne et répondrait
+    `hidden: true` — mais `is_tool_visible` court-circuite sur les protégés, donc
+    le tool resterait visible : un admin croirait avoir masqué quelque chose. Les
+    deux autres faces du même geste refusent déjà (`oto_disable_tool` lève,
+    `POST /api/me/tools/{name}` → 400 `protected_tool`) ; celle-ci s'aligne."""
+    if name not in _known_tool_names():
+        raise AuthzDenied(404, "unknown_tool", f"Tool `{name}` inconnu.")
+    if is_protected(name):
+        raise AuthzDenied(
+            400, "protected_tool",
+            f"`{name}` ne peut pas être masqué : c'est un outil protégé "
+            "(méta-toolset, identité, échappatoire de contexte ou boucle d'usage). "
+            "Le masquer n'aurait aucun effet.")
 
 
 class OrgHiddenToolsListInput(BaseModel):
@@ -53,8 +73,7 @@ def _org_list(ctx: ResolvedCtx, inp: OrgHiddenToolsListInput) -> dict:
 
 
 def _org_hide(ctx: ResolvedCtx, inp: OrgHiddenToolSetInput) -> dict:
-    if inp.name not in _known_tool_names():
-        raise AuthzDenied(404, "unknown_tool", f"Tool `{inp.name}` inconnu.")
+    _reject_unhidable(inp.name)
     db.add_org_disabled_tool(inp.org_id, inp.name, disabled_by=ctx.sub)
     return {"org_id": inp.org_id, "tool": inp.name, "hidden": True}
 
@@ -80,8 +99,7 @@ def _group_list(ctx: ResolvedCtx, inp: GroupHiddenToolsListInput) -> dict:
 
 
 def _group_hide(ctx: ResolvedCtx, inp: GroupHiddenToolSetInput) -> dict:
-    if inp.name not in _known_tool_names():
-        raise AuthzDenied(404, "unknown_tool", f"Tool `{inp.name}` inconnu.")
+    _reject_unhidable(inp.name)
     db.add_group_disabled_tool(inp.group_id, inp.name, disabled_by=ctx.sub)
     return {"group_id": inp.group_id, "tool": inp.name, "hidden": True}
 
