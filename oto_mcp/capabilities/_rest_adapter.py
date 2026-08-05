@@ -11,6 +11,7 @@ Dépend du core (sens unique ADR 0004).
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Awaitable, Callable
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -18,6 +19,8 @@ from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
+
+logger = logging.getLogger(__name__)
 
 from ._types import AuthzDenied, Capability, RawCtx
 
@@ -46,6 +49,31 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         for ph, value in request.path_params.items():
             field = (binding.path_map or {}).get(ph, ph)
             data[field] = value
+        # REFUSER un champ inconnu, jamais l'IGNORER.
+        #
+        # Pydantic ignore par défaut les clés qu'il ne connaît pas (`extra="ignore"`).
+        # Un client qui se trompe de forme reçoit donc un 200 et un comportement de
+        # repli, sans le moindre signal. Vécu le 05/08 : un front envoyait
+        # `{app, scope}` au premier niveau alors que l'`Input` déclare `params: dict` —
+        # les deux ont été jetés en silence, le scope est retombé sur sa valeur par
+        # défaut et le retour OAuth est parti chez le mauvais front. Aucune erreur,
+        # aucun log, une demi-journée pour le trouver.
+        #
+        # C'est la MÊME famille que le bug des jetons de contexte du 28/07 (`account`
+        # métier mangé par l'axe `account`) : un argument légitime avalé sans bruit.
+        # Le remède est le même — refuser plutôt qu'ignorer — et il vaut pour les ~200
+        # routes générées, pas connecteur par connecteur.
+        #
+        # Les noms sont RENDUS au client : un refus qui ne dit pas quel champ pose
+        # problème oblige à deviner, et c'est exactement ce qu'on cherche à supprimer.
+        inconnus = sorted(set(data) - set(cap.Input.model_fields))
+        if inconnus:
+            logger.warning("capacité %s : champ(s) inconnu(s) refusé(s) : %s",
+                           cap.key, ", ".join(inconnus))
+            return json_error(
+                request, 400, "unknown_fields",
+                f"Champ(s) non reconnu(s) : {', '.join(inconnus)}. "
+                f"Attendus : {', '.join(sorted(cap.Input.model_fields))}.")
         try:
             inp = cap.Input(**data)
         except ValidationError:
