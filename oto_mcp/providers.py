@@ -290,6 +290,7 @@ _CATEGORY_BY_CONNECTOR = {
     # recherche web / scraping
     "aiark": "Prospection", "linkedin": "Prospection", "cognism": "Prospection",
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
+    "firecrawl": "Prospection", "apify": "Prospection",
     # ATS / talent sourcing (RH)
     "greenhouse": "Recrutement", "lever": "Recrutement", "ashby": "Recrutement",
     "recruitee": "Recrutement", "teamtailor": "Recrutement", "spott": "Recrutement",
@@ -319,6 +320,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "recruitee": "Recruitee", "teamtailor": "Teamtailor", "spott": "Spott",
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
+    "firecrawl": "Firecrawl", "apify": "Apify",
     "n8n": "n8n", "make": "Make", "zapier": "Zapier",
     # open-data FR → éditeur = la source publique
     "sirene": "INSEE", "culture": "Ministère de la Culture",
@@ -404,6 +406,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "greenhouse": "greenhouse.io", "lever": "lever.co", "ashby": "ashbyhq.com",
     "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
+    "firecrawl": "firecrawl.dev", "apify": "apify.com",
     "aiark": "ai-ark.com", "linkedin": "linkedin.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
     "reddit": "reddit.com",
@@ -1086,6 +1089,24 @@ _REGISTRY_LIST = [
        label="Cloro",
        help="veille AI-search (ChatGPT, Gemini, Perplexity…) + SERP Google JSON",
        href="https://cloro.dev"),
+    # firecrawl : une URL → markdown propre (rendu JS, nav retirée) ; map/crawl pour
+    # un site entier, search pour du web + contenu. keyed api_key, **BYOK** (byo
+    # user/org) — facturation au crédit chez l'éditeur, donc pas de clé oto partagée
+    # (même raisonnement que cloro).
+    _c("firecrawl", ["firecrawl"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
+       label="Firecrawl",
+       help="pages web en markdown propre — scrape, crawl d'un site, map, search",
+       href="https://firecrawl.dev"),
+    # apify : catalogue d'« actors » (scrapers hébergés prêts à l'emploi — Google
+    # Maps, LinkedIn, Amazon…) qu'on lance avec un JSON d'entrée et dont on lit le
+    # dataset. keyed api_key, **BYOK** : un run se facture à l'usage sur le compte
+    # de l'org.
+    _c("apify", ["apify"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
+       label="Apify",
+       help="scrapers hébergés prêts à l'emploi (Google Maps, LinkedIn, Amazon…) via le Store",
+       href="https://apify.com"),
 
     # --- automatisation de workflows (no-code) — câblés 2026-06-21 -----------
     # Connecteurs vers les plateformes d'automatisation tierces. byo, hors socle
