@@ -81,3 +81,55 @@ def remove_user_enabled_tool(sub: str, tool_name: str, org_id: int = 0) -> None:
             "DELETE FROM user_enabled_tools WHERE sub = %s AND org_id = %s AND tool_name = %s",
             (sub, org_id, tool_name),
         )
+
+
+def list_org_disabled_tools(org_id: int) -> list[str]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT tool_name FROM org_disabled_tools WHERE org_id = %s ORDER BY tool_name",
+            (org_id,),
+        ).fetchall()
+        return [r["tool_name"] for r in rows]
+
+
+def add_org_disabled_tool(org_id: int, tool_name: str, disabled_by: Optional[str] = None) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO org_disabled_tools (org_id, tool_name, disabled_by) VALUES (%s, %s, %s) "
+            "ON CONFLICT (org_id, tool_name) DO NOTHING",
+            (org_id, tool_name, disabled_by),
+        )
+
+
+def remove_org_disabled_tool(org_id: int, tool_name: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM org_disabled_tools WHERE org_id = %s AND tool_name = %s",
+            (org_id, tool_name),
+        )
+
+
+def list_group_disabled_tools(group_id: int) -> list[str]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT tool_name FROM group_disabled_tools WHERE group_id = %s ORDER BY tool_name",
+            (group_id,),
+        ).fetchall()
+        return [r["tool_name"] for r in rows]
+
+
+def add_group_disabled_tool(group_id: int, tool_name: str, disabled_by: Optional[str] = None) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO group_disabled_tools (group_id, tool_name, disabled_by) VALUES (%s, %s, %s) "
+            "ON CONFLICT (group_id, tool_name) DO NOTHING",
+            (group_id, tool_name, disabled_by),
+        )
+
+
+def remove_group_disabled_tool(group_id: int, tool_name: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "DELETE FROM group_disabled_tools WHERE group_id = %s AND tool_name = %s",
+            (group_id, tool_name),
+        )

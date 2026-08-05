@@ -8,7 +8,7 @@ même fonction sur le chemin DB (vérifié au déploiement).
 """
 from __future__ import annotations
 
-from oto_mcp.tool_visibility import is_protected, is_tool_visible
+from oto_mcp.tool_visibility import effective_disabled, is_protected, is_tool_visible
 
 
 def test_spine_tools_are_protected():
@@ -49,3 +49,34 @@ def test_non_protected_tool_respects_disable():
     # un outil de connecteur désactivé reste masqué
     assert not is_tool_visible("apollo_search_people",
                                disabled={"apollo_search_people"}, enabled_override=set())
+
+
+# ── denylist admin org/équipe (remplace l'ex-baseline allowlist, 3951a57) ──────
+
+def test_admin_hidden_masque_par_defaut():
+    assert not is_tool_visible("apollo_search_people", disabled=set(), enabled_override=set(),
+                               admin_hidden={"apollo_search_people"})
+
+
+def test_admin_hidden_pas_dans_le_denylist_reste_visible():
+    assert is_tool_visible("serper_web_search", disabled=set(), enabled_override=set(),
+                           admin_hidden={"apollo_search_people"})
+
+
+def test_personal_override_bat_toujours_admin_hidden():
+    # l'échappatoire self-serve (ADR 0031, gouvernance pas sécurité) prime.
+    assert is_tool_visible("apollo_search_people", disabled=set(),
+                           enabled_override={"apollo_search_people"},
+                           admin_hidden={"apollo_search_people"})
+
+
+def test_protected_tool_ignore_admin_hidden():
+    assert is_tool_visible("oto_doc", disabled=set(), enabled_override=set(),
+                           admin_hidden={"oto_doc"})
+
+
+def test_effective_disabled_agrege_admin_hidden():
+    all_names = {"apollo_search_people", "serper_web_search"}
+    to_hide = effective_disabled(all_names, disabled=set(), enabled_override=set(),
+                                 admin_hidden={"apollo_search_people"})
+    assert to_hide == {"apollo_search_people"}

@@ -115,12 +115,24 @@ def register(mcp: FastMCP) -> None:
         org = _active_org(sub)
         disabled = set(db.list_user_disabled_tools(sub, org))
         enabled_override = set(db.list_user_enabled_tools(sub, org))
+        # Denylist admin (org + équipe active) — même fail-open indépendant par
+        # palier que session_visibility.compute_hidden_tools, pour que ce que
+        # l'user VOIT ici matche ce qui est réellement monté à la session.
+        admin_hidden: set[str] = set()
+        try:
+            admin_hidden |= access.org_admin_hidden_tools(access.current_org(sub))
+        except Exception:
+            pass
+        try:
+            admin_hidden |= access.group_admin_hidden_tools(access.current_group(sub))
+        except Exception:
+            pass
         # run_middleware=False : on veut la liste complète (y compris les
         # tools masqués pour ce user), sinon on n'affiche pas leur état.
         all_tools = await ctx.fastmcp.list_tools(run_middleware=False)
         names = sorted(t.name for t in all_tools)
         states = {
-            n: is_tool_visible(n, disabled, enabled_override)
+            n: is_tool_visible(n, disabled, enabled_override, frozenset(admin_hidden))
             for n in names
         }
         return {

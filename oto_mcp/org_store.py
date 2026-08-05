@@ -221,9 +221,14 @@ def archive_org(org_id: int) -> bool:
 # --- baseline de connecteurs proposés par l'org (ADR 0019) ------------------
 
 def get_org_default_connectors(org_id: int) -> Optional[list[str]]:
-    """Baseline de connecteurs *proposés* par l'org (« org propose », ADR 0019) :
-    liste de noms de connecteurs recommandés à ses membres, ou None si l'org n'en
-    impose pas. Consultatif — le membre reste libre de (dé)sélectionner."""
+    """Baseline de connecteurs par défaut de l'org (« org propose », ADR 0019),
+    ou None si l'org n'en pose pas. Depuis peu : c'est la source RÉELLE du socle
+    de départ d'un NOUVEAU membre (union avec le socle plateforme au seed,
+    `session_visibility.compute_hidden_tools`) — plus seulement un badge
+    consultatif. N'affecte jamais un membre déjà seedé (existant) : ceux-là
+    restent sur leurs propres choix, sauf poussée explicite via `connectors.
+    bulk_select`. Le membre reste toujours libre de (dé)sélectionner APRÈS
+    son seed initial — cette baseline ne fixe qu'un point de départ."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT default_connectors FROM orgs WHERE id = %s", (org_id,)
