@@ -91,12 +91,6 @@ class Connector:
     # monté `folkmcp_*` (strip="folk_") au lieu de `folkmcp_folk_*`. Le forward
     # vers le distant garde le nom d'origine (ProxyTool). None = pas de strip.
     mount_strip_prefix: str | None = None
-    # Nom du header HTTP pour injecter la clé d'un mount `keyed=True` (kind="mount"
-    # uniquement). None (défaut) = comportement historique inchangé
-    # (`Authorization: Bearer <clé>`, cf. tous les mounts OAuth existants). Renseigné
-    # pour un MCP distant qui attend un header custom — ex. lemlistmcp : "X-API-Key"
-    # (le MCP officiel Lemlist n'accepte pas Bearer). Voir tools/mount.py#_build_transport.
-    mount_auth_header: str | None = None
     # Schéma de saisie EXPLICITE du credential (modèle générique multi-champs).
     # Vide → dérivé du secret_kind (cf. `secret_fields`). Renseigné pour les
     # credentials à >1 champ qui ne sont ni api_key ni basic_auth (ex. Silae :
@@ -275,7 +269,7 @@ MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho", "browser"})
 # Catégorie d'usage (domaine) par connecteur — CURÉE (pas dérivable), tunable.
 _CATEGORY_BY_CONNECTOR = {
     "serper": "Prospection", "hunter": "Prospection", "kaspr": "Prospection",
-    "fullenrich": "Prospection", "lemlist": "Prospection", "lemlistmcp": "Prospection",
+    "fullenrich": "Prospection", "lemlist": "Prospection",
     "attio": "Prospection",
     "folk": "Prospection", "crunchbase": "Prospection", "dropcontact": "Prospection",
     "unipile": "Prospection", "topograph": "Prospection",
@@ -294,7 +288,7 @@ _CATEGORY_BY_CONNECTOR = {
     "brevo": "Prospection", "salesforce": "Prospection", "pipedrive": "Prospection",
     "figma": "Design", "supabase": "Dev",
     # recherche web / scraping
-    "aiark": "Prospection", "cognism": "Prospection",
+    "aiark": "Prospection", "linkedin": "Prospection", "cognism": "Prospection",
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
     # ATS / talent sourcing (RH)
     "greenhouse": "Recrutement", "lever": "Recrutement", "ashby": "Recrutement",
@@ -309,7 +303,7 @@ _CATEGORY_BY_CONNECTOR = {
 # sur `Connector.name`, comme `_CATEGORY_BY_CONNECTOR`.
 _PUBLISHER_BY_CONNECTOR = {
     "serper": "Serper", "hunter": "Hunter.io", "kaspr": "Kaspr",
-    "fullenrich": "FullEnrich", "lemlist": "lemlist", "lemlistmcp": "lemlist", "folk": "Folk",
+    "fullenrich": "FullEnrich", "lemlist": "lemlist", "folk": "Folk",
     "dropcontact": "Dropcontact",
     "unipile": "Unipile", "pennylane": "Pennylane", "gocardless": "GoCardless",
     "silae": "Silae", "attio": "Attio", "crunchbase": "Crunchbase",
@@ -321,7 +315,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
-    "aiark": "AI Ark", "cognism": "Cognism", "lighton": "LightOn",
+    "aiark": "AI Ark", "linkedin": "LinkedIn", "cognism": "Cognism", "lighton": "LightOn",
     "recruitee": "Recruitee", "teamtailor": "Teamtailor", "spott": "Spott",
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
@@ -395,7 +389,7 @@ _DESCRIPTION_BY_CONNECTOR = {
 # la Marianne via leur domaine .gouv.fr — identité visuelle commune « Data FR ».
 _LOGO_DOMAIN_BY_CONNECTOR = {
     "serper": "serper.dev", "hunter": "hunter.io", "kaspr": "kaspr.io",
-    "fullenrich": "fullenrich.com", "lemlist": "lemlist.com", "lemlistmcp": "lemlist.com",
+    "fullenrich": "fullenrich.com", "lemlist": "lemlist.com",
     "folk": "folk.app", "dropcontact": "dropcontact.com",
     "unipile": "unipile.com", "pennylane": "pennylane.com", "pennylaneged": "pennylane.com", "gocardless": "gocardless.com",
     "silae": "silae.fr", "attio": "attio.com", "crunchbase": "crunchbase.com",
@@ -410,7 +404,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "greenhouse": "greenhouse.io", "lever": "lever.co", "ashby": "ashbyhq.com",
     "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
-    "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
+    "aiark": "ai-ark.com", "linkedin": "linkedin.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
     "reddit": "reddit.com",
     # CRM & vente
@@ -438,7 +432,7 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
        default_quota=0, default_active=False,
        platform_key_open=False, label="", help="", href=None,
        publisher="", logo_url=None, kind="tools", mount_url=None,
-       mount_strip_prefix=None, mount_auth_header=None,
+       mount_strip_prefix=None,
        credential_fields=(), modules=(), hosted_auth=False,
        personal_cross_org=False) -> Connector:
     return Connector(
@@ -449,7 +443,6 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
         label=label or name.capitalize(), help=help, href=href,
         publisher=publisher, logo_url=logo_url, kind=kind,
         mount_url=mount_url, mount_strip_prefix=mount_strip_prefix,
-        mount_auth_header=mount_auth_header,
         credential_fields=tuple(credential_fields),
         modules=tuple(modules), hosted_auth=hosted_auth,
         personal_cross_org=personal_cross_org,
@@ -671,32 +664,6 @@ _REGISTRY_LIST = [
        label="Folk (MCP)",
        help="CRM Folk via son MCP officiel (fédéré, OAuth per-user)",
        href="https://folk.app"),
-    # lemlistmcp : MCP OFFICIEL de Lemlist (kind=mount), COEXISTANT avec le
-    # connecteur natif `lemlist` (clé API REST, tools/lemlist.py, volontairement
-    # lecture seule — « un mauvais call LLM peut envoyer une campagne
-    # involontairement »). Namespace distinct `lemlistmcp` (un seul token — voir
-    # `namespace_of`, qui prend le 1er segment avant `_` : `lemlist_mcp` casserait
-    # la résolution du namespace en "lemlist"). Expose le catalogue OFFICIEL
-    # complet tel quel, writes inclus (create/pause campaign, add/delete lead…) —
-    # décision produit assumée pour ce connecteur distinct, sans toucher au
-    # comportement lecture-seule du natif `lemlist`. **Premier mount keyed=True
-    # (api_key) réellement vivant** : le MCP officiel Lemlist authentifie par
-    # header statique `X-API-Key`, pas OAuth ni Bearer — d'où
-    # `mount_auth_header="X-API-Key"` (branche déjà prévue dans
-    # _build_transport/factory_keyed mais jusqu'ici sans consommateur réel,
-    # cf. son historique AI Ark #152→#160). byo_org fonctionne à l'identique
-    # d'un connecteur `kind="tools"` (`org_shareable` ne dépend que d'`auth_modes`,
-    # pas de `kind`). Inerte tant que `lemlistmcp` n'est pas dans
-    # OTO_MCP_MOUNTS_ENABLED (défaut = aucun mount) — c'est un nouveau
-    # connecteur, l'activation explicite est l'onboarding normal, pas une
-    # régression pour d'éventuels users déjà sur `lemlist` (inchangé).
-    _c("lemlistmcp", ["lemlistmcp"], kind="mount",
-       mount_url="https://app.lemlist.com/mcp",
-       auth_modes={"byo_user", "byo_org"}, keyed=True, secret_kind="api_key",
-       mount_auth_header="X-API-Key",
-       label="Lemlist MCP",
-       help="cold outreach — MCP officiel Lemlist (fédéré)",
-       href="https://app.lemlist.com"),
     # planity : MCP fédéré (kind=mount). Serveur autonome stateless distant
     # (planity-mcp.oto.zone) monté via proxy FastMCP ; credential per-user =
     # base64("email:password") du compte Planity de l'user, injecté par requête
@@ -735,6 +702,23 @@ _REGISTRY_LIST = [
        secret_kind="api_key",
        label="AI Ark",
        help="people & company search via LinkedIn",
+       href="https://ai-ark.com"),
+    # linkedin (#231) : connecteur DISTINCT d'`aiark`, PAS un mode/alias — même
+    # vendeur (AI Ark, docs.ai-ark.com) et même client oto-core
+    # (`oto.tools.aiark.client.AiArkClient`, réutilisé tel quel), tools curés dans
+    # `tools/linkedin.py` (surface simplifiée, pas de tool `credits`). **App
+    # credits only** : `auth_modes={"platform"}` SEUL — pas de BYO user/org
+    # (`is_byo_user`/`is_org_shareable` renvoient False ⟹ aucune surface de pose
+    # de credential, ADR 0011/0012). Nécessite SA PROPRE clé plateforme
+    # (`oto_admin_set_platform_key` sur `linkedin`, résolution standard via
+    # `resolve_api_key("linkedin")`) — poser la même clé AI Ark que sous `aiark`
+    # pour partager le même pool de crédits vendeur ; aucun partage de credential
+    # cross-connecteur côté Oto (chaque connecteur résout SON nom, ADR 0024).
+    _c("linkedin", ["linkedin"],
+       auth_modes={"platform"}, keyed=True,
+       secret_kind="api_key",
+       label="LinkedIn",
+       help="people & company search via LinkedIn (app credits only)",
        href="https://ai-ark.com"),
     # cognism : connecteur classique (kind="tools") sur l'API Search de Cognism
     # (developers.cognism.com). Client REST synchrone dans oto-core

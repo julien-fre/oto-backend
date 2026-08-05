@@ -58,8 +58,12 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     server TEXT NOT NULL DEFAULT 'oto',
     -- Discriminateur d'événement (ADR 0017, « un seul flux ») : 'mcp' = invocation
     -- d'outil MCP (le cas historique, défaut) ; 'rest' = appel /api/* ; 'connector'
-    -- = échec/événement de résolution de credential ou de connexion connecteur.
-    -- `tool` porte alors l'identifiant d'événement (route REST, nom de provider…).
+    -- = échec/événement de résolution de credential ou de connexion connecteur ;
+    -- 'protocol' = événement PROTOCOLAIRE MCP (handshake `initialize`) — mesure la
+    -- cadence de re-handshake par client (`client_id`) et le churn de `session_id`,
+    -- dont dépendent la visibilité des tools et l'injection des blocs A/C.
+    -- `tool` porte alors l'identifiant d'événement (route REST, nom de provider,
+    -- méthode protocolaire…).
     -- Les lectures du monitoring d'outils filtrent kind='mcp' pour rester iso.
     kind TEXT NOT NULL DEFAULT 'mcp',
     sub TEXT,

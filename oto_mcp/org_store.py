@@ -492,6 +492,18 @@ def add_org_member(org_id: int, sub: str, org_role: str = "org_member") -> None:
                     (org_id,),
                 ).fetchone()
                 joining_personal = bool(jp and jp["p"])
+                if joining_personal:
+                    # Une org perso est par définition mono-membre (`orgs.personal_of`,
+                    # slot unique par sub) : dès qu'un 2e membre distinct la rejoint, ce
+                    # n'en est plus une (même geste que `archive_org` qui libère ce
+                    # slot). Sans ce clear, une org perso invitée en devient une VRAIE
+                    # org multi-membre qui garde pourtant `personal_of` à vie — front
+                    # et `is_personal_org` continuent de la traiter comme "personal"
+                    # (masque Teams/Invite) alors qu'elle a de vrais coéquipiers. Vécu
+                    # 2026-08-04 (Tulina/Partoo, org réelle restée bloquée "personal").
+                    conn.execute(
+                        "UPDATE orgs SET personal_of = NULL WHERE id = %s", (org_id,)
+                    )
                 if active is None:
                     make_active = True
                 elif not joining_personal and active["personal"]:

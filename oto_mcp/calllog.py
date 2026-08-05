@@ -147,6 +147,50 @@ class ToolCallLogger(Middleware):
         self.server = server
         self.identity = identity or (lambda: {})
 
+    async def on_initialize(self, context, call_next):
+        """Journalise le HANDSHAKE lui-même (`kind='protocol'`, ADR 0017 « un seul flux »).
+
+        Pourquoi : deux mécanismes centraux sont calculés à l'`initialize` — la règle
+        de visibilité des tools (`SessionVisibilityMiddleware`) et l'injection des
+        blocs A/C (`DynamicInstructionsMiddleware`) — donc « une fois par session ».
+        Or la cadence RÉELLE de re-handshake des clients n'a jamais été mesurée :
+        « Claude rehandshake par conversation » est une croyance de docstring, pas
+        une observation. Le sink stampe déjà `session_id` et `client_id` (`azp` :
+        claude.ai, Claude Code, ChatGPT…) → une ligne par handshake suffit à trancher,
+        par client, sur du trafic réel.
+
+        Isolé du monitoring d'outils : toutes ses lectures filtrent `kind='mcp'`.
+        """
+        # ⚠️ ASYMÉTRIE fastmcp : `on_initialize` reçoit un `InitializeRequest` ENTIER
+        # (params sous `.params`), là où `on_call_tool` reçoit directement les params.
+        # Le repli sur `msg` couvre une éventuelle normalisation amont.
+        params = getattr(context.message, "params", None) or context.message
+        info = getattr(params, "clientInfo", None)
+        row: dict[str, Any] = {
+            "server": self.server,
+            "kind": "protocol",
+            "sub": None,
+            "email": None,
+            "tool": "initialize",
+            "args": {
+                "client_name": getattr(info, "name", None),
+                "client_version": getattr(info, "version", None),
+                "protocol_version": getattr(params, "protocolVersion", None),
+            },
+        }
+        try:
+            row.update({k: v for k, v in self.identity().items() if k in ("sub", "email")})
+        except Exception:
+            pass
+        t0 = time.monotonic()
+        try:
+            result = await call_next(context)
+        except Exception as e:
+            self._record({**row, "ok": False, "error": str(e)[:MAX_ERROR_CHARS]}, t0)
+            raise
+        self._record({**row, "ok": True, "error": None}, t0)
+        return result
+
     async def on_call_tool(self, context, call_next):
         row: dict[str, Any] = {
             "server": self.server,
