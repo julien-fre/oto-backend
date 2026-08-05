@@ -47,6 +47,8 @@ from . import connectors_verify  # noqa: F401 — connectors.verify (sonde de cr
 from . import connectors_activation  # noqa: F401 — connectors.activation.{org_list,set_org,clear_org}
 # RBAC connecteur interne à l'org (ADR 0025) — restreindre un connecteur à des départements/membres.
 from . import connectors_acl  # noqa: F401 — connectors.acl.{list,grant,revoke}
+# Denylist de TOOLS par org/équipe — remplace l'ancienne baseline allowlist (retirée 3951a57).
+from . import tools_visibility  # noqa: F401 — tools.{org,group}_{list,hide,unhide}
 # Partage d'instance (ADR 0044) — le propriétaire PRÊTE sa clé à un pair (share_side — MCP via oto_instance op=lend).
 from . import connectors_sharing  # noqa: F401 — connectors.lend_instance
 # Autorisation de compte connecteur partagé (#55) — le propriétaire accorde l'opération de SON compte.

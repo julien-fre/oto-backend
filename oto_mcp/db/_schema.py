@@ -177,6 +177,36 @@ CREATE TABLE IF NOT EXISTS user_enabled_tools (
     PRIMARY KEY (sub, org_id, tool_name)
 );
 
+-- Denylist de tools par ORG (gouvernance de visibilité, PAS une barrière de
+-- sécurité — ADR 0031, même esprit que DEFAULT_HIDDEN_TOOLS) : l'org_admin masque
+-- des tools SPÉCIFIQUES par défaut pour son org. `user_enabled_tools` (au-dessus)
+-- lève TOUJOURS ce masquage — même échappatoire perso que le masqué-par-défaut
+-- plateforme, un cran plus spécifique. Remplace l'ancienne baseline ALLOWLIST
+-- org/équipe (retirée 2026-07-03, commit 3951a57) : ici on choisit ce qu'on
+-- masque, tout le reste (y compris les tools futurs) reste visible par défaut.
+-- Pas de FK (même convention que user_disabled_tools/connector_availability
+-- ci-dessus — ces tables de préférence self-managing ne référencent pas leur
+-- entité) ; évite aussi tout souci d'ordre de création vs org_groups (défini
+-- plus bas dans ce fichier).
+CREATE TABLE IF NOT EXISTS org_disabled_tools (
+    org_id BIGINT NOT NULL,
+    tool_name TEXT NOT NULL,
+    disabled_by TEXT,
+    disabled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (org_id, tool_name)
+);
+
+-- Mirror au grain ÉQUIPE — un chef d'équipe masque un tool pour SON équipe.
+-- Additif avec le denylist d'org (union à la lecture, jamais un retrait croisé) :
+-- une équipe ne peut jamais RÉVÉLER un tool que l'org a masqué.
+CREATE TABLE IF NOT EXISTS group_disabled_tools (
+    group_id BIGINT NOT NULL,
+    tool_name TEXT NOT NULL,
+    disabled_by TEXT,
+    disabled_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (group_id, tool_name)
+);
+
 -- Fiche « situation avec oto » par utilisateur. `profile` = data model libre (qui est
 -- l'user, son métier, ses objectifs, connecteurs voulus, ton…) entretenu au fil de l'eau
 -- via `oto_profile` et relu à chaque session (injecté au handshake). Une ligne par sub,

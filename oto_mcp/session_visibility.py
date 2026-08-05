@@ -19,7 +19,7 @@ import logging
 from fastmcp.server.transforms.visibility import disable_components, reset_visibility
 
 from . import (access, connector_activation, connector_selection, connectors,
-               credentials_store, db, providers)
+               credentials_store, db, org_store, providers)
 from .tool_visibility import (
     DEFAULT_HIDDEN_TOOLS,
     effective_disabled,
@@ -68,7 +68,22 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
         # repli FAIL-CLOSED : disabled explicites + masqués-par-défaut
         # (sinon ils resteraient visibles, denylist incomplète).
         all_names = disabled | DEFAULT_HIDDEN_TOOLS
-    to_hide = effective_disabled(all_names, disabled, enabled_override)
+    # Denylist ADMIN (org + équipe active) : gouvernance de visibilité au grain
+    # TOOL, PAS une barrière de sécurité (ADR 0031) — l'override perso positif lu
+    # ci-dessus (`enabled_override`) la lève toujours, `effective_disabled` en
+    # décide via `is_tool_visible`. Fail-OPEN INDÉPENDANT par palier (miroir de
+    # `require_connector_access`) : un hoquet sur l'équipe ne doit pas priver
+    # l'org de son denylist, et inversement.
+    admin_hidden: set[str] = set()
+    try:
+        admin_hidden |= access.org_admin_hidden_tools(active_org)
+    except Exception as e:
+        logger.warning("org tool denylist skipped for %s (fail-open): %s", sub, e)
+    try:
+        admin_hidden |= access.group_admin_hidden_tools(access.current_group(sub))
+    except Exception as e:
+        logger.warning("group tool denylist skipped for %s (fail-open): %s", sub, e)
+    to_hide = effective_disabled(all_names, disabled, enabled_override, frozenset(admin_hidden))
     # Activation (ADR 0011) : masque les tools d'un connecteur non activé pour
     # l'org de la session — à chaud, per-org. Fail-OPEN (gouvernance d'exposition,
     # pas une barrière de sécurité ; le grant-only reste fail-closed ci-dessus).
@@ -128,14 +143,19 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
     # — VIDE depuis le 16/07 : un nouveau compte démarre SANS connecteurs installés,
     # l'agent guide depuis les tools spine + le catalogue injecté (bloc A). Les
     # pairs pré-0050 ont été backfillés avec leur visible d'alors (db._init).
+    # Depuis peu : la baseline PLATEFORME est complétée par la baseline PROPRE à
+    # l'org active (`org_store.get_org_default_connectors`, ex-« recommended »,
+    # posée par `connectors.recommend`) — un org_admin peut donc faire démarrer
+    # SES nouveaux membres avec un socle non-vide, sans toucher au socle plateforme.
     # Fail-OPEN sur glitch (ergonomie, jamais une barrière : les gates call-time
     # restent) ; `oto_call` = échappatoire d'appel ponctuel d'un tool non listé
     # (ADR 0036).
     try:
         if not connector_selection.is_seeded(sub, prof_org):
+            org_defaults = set(org_store.get_org_default_connectors(active_org) or []) if active_org else set()
             connector_selection.seed_active(
                 sub,
-                providers.DEFAULT_ACTIVE_CONNECTORS
+                (providers.DEFAULT_ACTIVE_CONNECTORS | org_defaults)
                 & connector_activation.exposed_connectors(active_org),
                 prof_org)
         _sel = connector_selection.list_selection(sub, prof_org)

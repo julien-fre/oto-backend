@@ -366,6 +366,31 @@ def group_rbac_denied_connectors(sub: str, group: Optional[int]) -> set:
     return set(restricted) - set(db.group_member_allowed_connectors(sub, group))
 
 
+def org_admin_hidden_tools(org: Optional[int]) -> set:
+    """Tools masqués PAR DÉFAUT pour `org` (denylist posé par l'org_admin) —
+    gouvernance de visibilité, PAS une barrière de sécurité (ADR 0031, même esprit
+    que `tool_visibility.DEFAULT_HIDDEN_TOOLS`) : un override perso positif
+    (`user_enabled_tools`) le lève toujours. Pas d'escalade à exempter — même un
+    org_admin qui a masqué le tool le voit masqué, et se le réactive lui-même
+    comme n'importe qui (cohérent avec DEFAULT_HIDDEN_TOOLS aujourd'hui). LÈVE sur
+    hoquet DB : chaque surface (session_visibility, oto_list_my_tools) garde sa
+    propre doctrine fail-open, indépendante du palier équipe."""
+    if org is None:
+        return set()
+    return set(db.list_org_disabled_tools(org))
+
+
+def group_admin_hidden_tools(group: Optional[int]) -> set:
+    """Mirror au grain ÉQUIPE — un chef d'équipe masque un tool pour SON équipe.
+    Additif pur (l'appelant UNIT ce résultat avec `org_admin_hidden_tools`) : ce
+    seam n'exprime jamais une levée, une équipe ne peut donc jamais révéler un tool
+    que l'org a masqué. LÈVE sur hoquet DB (fail-open par palier, à la charge de
+    l'appelant)."""
+    if group is None:
+        return set()
+    return set(db.list_group_disabled_tools(group))
+
+
 def require_connector_access(provider: str, sub: Optional[str] = None) -> None:
     """Backstop call-time du RBAC connecteur (ADR 0025 org + 0012 B2 équipe) : si
     `provider` est RESTREINT dans l'org active OU dans l'ÉQUIPE active du `sub` et qu'il

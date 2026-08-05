@@ -122,16 +122,24 @@ def is_tool_visible(
     name: str,
     disabled: set[str],
     enabled_override: set[str],
+    admin_hidden: frozenset[str] = frozenset(),
 ) -> bool:
     """Règle de visibilité effective pour un tool donné.
 
-    Override positif perso prime > désactivé perso > masqué-par-défaut > visible.
-    Les méta-tools protégés ne sont jamais masqués (anti-lockout)."""
+    Override positif perso prime > désactivé perso > masqué par un admin
+    (denylist org/équipe, `access.org_admin_hidden_tools`/`group_admin_hidden_tools`)
+    > masqué-par-défaut plateforme > visible. Les méta-tools protégés ne sont
+    jamais masqués (anti-lockout). Le masquage admin reste de la GOUVERNANCE
+    (ADR 0031, pas une barrière de sécurité) : un override perso positif le lève
+    toujours, même échappatoire qu'un masqué-par-défaut plateforme — un cran
+    plus spécifique, rien de plus."""
     if is_protected(name):
-        return True  # anti-lockout : jamais masqué (ni toggle perso, ni default-hidden)
+        return True  # anti-lockout : jamais masqué (ni toggle perso, ni default-hidden/admin)
     if name in enabled_override:
         return True
     if name in disabled:
+        return False
+    if name in admin_hidden:
         return False
     if is_default_hidden(name):
         return False
@@ -142,10 +150,11 @@ def effective_disabled(
     all_names: set[str],
     disabled: set[str],
     enabled_override: set[str],
+    admin_hidden: frozenset[str] = frozenset(),
 ) -> set[str]:
     """Ensemble des tools à masquer pour cet user, parmi `all_names`."""
     return {
         n
         for n in all_names
-        if not is_tool_visible(n, disabled, enabled_override)
+        if not is_tool_visible(n, disabled, enabled_override, admin_hidden)
     }
