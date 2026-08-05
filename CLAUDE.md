@@ -288,6 +288,19 @@ revalidés à chaque appel, jamais de repli silencieux).
 `current_user_sub_from_token`).
 **Détail : `docs/monitoring.md`**.
 
+> **L'observabilité a trois étages (05/08).** Le journal servait deux sièges — « moi »
+> (`/api/me/{activity-summary,calls}`) et « toute la plateforme » — et rien entre les
+> deux : un responsable d'org n'avait que l'export brut d'audit (#67). `capabilities/
+> org_monitoring.py` rejoue les lentilles à SON échelle : **`oto_org_monitoring(op=…)`**
+> + `GET /api/orgs/{id}/monitoring/*`, autz `ORG_ADMIN_OF`. Scope = `tool_calls.org_id` /
+> `usage_signals.org_id` (ce qui a été émis SOUS l'org), **jamais l'appartenance** — donc
+> mêmes chiffres que l'export d'audit. `rest`/`funnel` ne descendent pas (santé d'infra,
+> base entière) ; en échange une lentille propre à l'étage : **`adoption`**, membre par
+> membre (actif / jamais actif / bloqué par un connecteur), qui part d'`org_members` —
+> partir des appels rendrait invisible le membre à 0 appel, celui qu'on cherche.
+> ⚠️ `call_id` est un BIGSERIAL : `op=call` compare l'org et rend le **même 404** qu'un id
+> inexistant (idem `op=run`). Détail : `docs/monitoring.md` §Trois étages.
+
 > **Investigation = une capacité, deux faces (02/08).** Les lentilles ont quitté les
 > routes écrites main d'`api_routes.py` pour `capabilities/monitoring.py` (chemins REST
 > `/api/admin/monitoring/*` **inchangés**, dashboard intact) et gagnent leur face MCP :

@@ -5,10 +5,11 @@ description: >-
   Référence du journal d'appels d'oto-backend : ToolCallLogger (oto_mcp/calllog.py)
   via hook on_call_tool, table tool_calls (kind mcp|rest|connector, corrélation
   session_id/run_id/org_id/client_id/sentry_event_id), prune au boot via
-  OTO_MCP_CALL_LOG_RETENTION_DAYS (défaut 30j). Décrit les DEUX surfaces
-  d'investigation — console MCP oto_admin_monitoring (agent) et /platform/monitoring
-  (dashboard) — servies par les mêmes capacités. À consulter pour comprendre ce qui
-  est tracé, enquêter sur une erreur, ou étendre la rétention.
+  OTO_MCP_CALL_LOG_RETENTION_DAYS (défaut 30j). Décrit les surfaces d'investigation —
+  console MCP oto_admin_monitoring + /platform/monitoring (plateforme),
+  oto_org_monitoring + /org/monitoring (org_admin, mêmes lentilles bornées à SON org),
+  /api/me/* (membre) — servies par les mêmes capacités. À consulter pour comprendre ce
+  qui est tracé, enquêter sur une erreur, ou étendre la rétention.
 ---
 
 # Monitoring & investigation des appels
@@ -98,3 +99,35 @@ Côté dashboard, ces mêmes gestes sont l'onglet « journal » : filtres serveu
 dépliable en fiche, axes de corrélation cliquables (ils refiltrent le journal), lien
 Sentry quand l'event id est présent (gaté sur `VITE_SENTRY_ORG_URL` — sans lui, l'id est
 rendu copiable plutôt qu'un lien cassé).
+
+## Trois étages, un seul journal
+
+La même table sert trois sièges, qui ne diffèrent que par le SCOPE — jamais par le
+mécanisme, jamais par une projection dupliquée :
+
+| étage | qui | ce qu'il voit | surface |
+|---|---|---|---|
+| membre | tout user | SON activité dans l'org active | `GET /api/me/{activity-summary,calls}` |
+| **org** | **org_admin** | **tout ce qui a été émis SOUS son org** | **`oto_org_monitoring(op=…)` + `GET /api/orgs/{id}/monitoring/*`** |
+| plateforme | platform_admin | tout | `oto_admin_monitoring(op=…)` + `/api/admin/monitoring/*` |
+
+**Scope org = `tool_calls.org_id` / `usage_signals.org_id`, jamais l'appartenance du
+membre.** Un membre de N orgs n'apporte à chaque étage que ce qu'il a fait sous celle-là,
+donc les chiffres d'un écran org et ceux de l'export d'audit (#67) coïncident par
+construction. ⚠ Les appels antérieurs à la colonne `org_id` (NULL) sont invisibles à
+l'étage org — non reconstructibles.
+
+L'étage org (`capabilities/org_monitoring.py`, autz `ORG_ADMIN_OF`) rejoue les lentilles
+plateforme avec `org_id` posé, **plus une** qui n'existe qu'à cet étage, et **moins deux** :
+
+| op | note |
+|---|---|
+| `summary` · `calls` · `call` · `runs` · `run` · `connectors` · `gaps` · `tool_quality` | mêmes projections, `org_id` passé |
+| `adoption` | **propre à l'org** — membre par membre : qui s'en sert, qui n'a jamais essayé, qui est bloqué par un connecteur. Part d'`org_members` (sinon un membre à 0 appel serait invisible — c'est justement lui qu'on cherche) |
+| `export` | rebranche `org.audit_log.export` (#67), même autz, même scope |
+| ~~`rest`~~ · ~~`funnel`~~ | ne descendent pas : télémétrie de surface `/api/*` et comptes de toute la base = santé d'infra, pas usage d'org. `adoption` répond à la question du funnel à l'échelle d'une équipe |
+
+**Gardes cross-org à ne pas perdre** : `call_id` est un BIGSERIAL donc devinable →
+`op=call` compare `row.org_id` et rend le **même 404** qu'un id inexistant ; `op=run`
+filtre en SQL puis 404 sur timeline vide. Testé par `tests/test_org_monitoring.py` — un
+handler ajouté sans sa garde y casse.

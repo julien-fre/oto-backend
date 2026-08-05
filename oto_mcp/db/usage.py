@@ -228,14 +228,20 @@ def resolve_usage_signal(
         return dict(row) if row else None
 
 
-def list_runs(limit: int = 100) -> list[dict]:
+def list_runs(limit: int = 100, *, org_id: Optional[int] = None) -> list[dict]:
     """Runs récents (un par run_id ouvert via run_start) avec label/doctrine,
     acteur, bornes, outcome (si fermé) et nb d'appels du déroulé. `slug` (alias =
-    doctrine sinon label) conservé pour compat dashboard."""
+    doctrine sinon label) conservé pour compat dashboard.
+
+    `org_id` (si fourni) borne aux déroulés OUVERTS sous cette org (`tool_calls.org_id`
+    de la ligne `run_start`, seam `current_org`) — scope de la lentille org (org_admin),
+    même règle exacte que le journal d'audit. Sans lui : plateforme-wide (défaut admin)."""
     limit = max(1, min(int(limit), 500))
+    org_clause = " AND s.org_id = %s" if org_id is not None else ""
+    params: list[Any] = ([int(org_id)] if org_id is not None else []) + [limit]
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
-            """
+            f"""
             SELECT s.run_id,
                    COALESCE(s.args->>'doctrine', s.args->>'label') AS slug,
                    s.args->>'label'    AS label,
@@ -256,58 +262,69 @@ def list_runs(limit: int = 100) -> list[dict]:
                 SELECT run_id, count(*) AS n_calls FROM tool_calls
                 WHERE run_id IS NOT NULL GROUP BY run_id
             ) c ON c.run_id = s.run_id
-            WHERE s.tool = 'run_start' AND s.run_id IS NOT NULL
+            WHERE s.tool = 'run_start' AND s.run_id IS NOT NULL{org_clause}
             ORDER BY s.created_at DESC LIMIT %s
             """,
-            (limit,),
+            tuple(params),
         ).fetchall()]
 
 
-def get_run(run_id: str) -> list[dict]:
-    """Timeline d'un déroulé : tous les appels du run, dans l'ordre."""
+def get_run(run_id: str, *, org_id: Optional[int] = None) -> list[dict]:
+    """Timeline d'un déroulé : tous les appels du run, dans l'ordre.
+
+    `org_id` (si fourni) ne rend que les appels émis SOUS cette org — un run_id
+    deviné depuis une autre org rend une timeline VIDE, que l'appelant traduit en
+    404 (pas de lecture cross-org par id devinable)."""
+    clauses = ["run_id = %s"]
+    params: list[Any] = [run_id]
+    if org_id is not None:
+        clauses.append("org_id = %s")
+        params.append(int(org_id))
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
-            """
+            f"""
             SELECT created_at, tool, args, ok, error, duration_ms
-            FROM tool_calls WHERE run_id = %s ORDER BY created_at
+            FROM tool_calls WHERE {" AND ".join(clauses)} ORDER BY created_at
             """,
-            (run_id,),
+            tuple(params),
         ).fetchall()]
 
 
-def aggregate_gaps(days: int = 30) -> list[dict]:
+def _signal_agg(signal: str, group_by: str, label: str, days: int,
+                org_id: Optional[int]) -> list[dict]:
+    """Corps commun des deux agrégats de `usage_signals` (manques / qualité d'outil) :
+    même fenêtre, même `users` (emails distincts des rapporteurs, repli sub si compte
+    inconnu), même scope `org_id` optionnel — seuls le signal et l'axe de groupement
+    changent. `group_by`/`label` sont des littéraux du module, jamais une entrée."""
+    org_clause = " AND s.org_id = %s" if org_id is not None else ""
+    params: list[Any] = [signal, int(days)] + ([int(org_id)] if org_id is not None else [])
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            f"""
+            SELECT {group_by}, s.kind, count(*) AS n, max(s.created_at) AS last_at,
+                   array_remove(array_agg(DISTINCT coalesce(u.email, s.sub)), NULL) AS users
+            FROM usage_signals s
+            LEFT JOIN users u ON u.sub = s.sub
+            WHERE s.signal = %s AND s.created_at > NOW() - make_interval(days => %s){org_clause}
+            GROUP BY {label}, s.kind ORDER BY n DESC, last_at DESC
+            """,
+            tuple(params),
+        ).fetchall()]
+
+
+def aggregate_gaps(days: int = 30, *, org_id: Optional[int] = None) -> list[dict]:
     """Manques agrégés (cas d'usage non couverts) — backlog produit dérivé.
 
     `users` = emails distincts des rapporteurs (repli sub si compte inconnu) —
-    l'UI admin montre QUI a signalé, pas seulement combien."""
-    with _connect() as conn:
-        return [dict(r) for r in conn.execute(
-            """
-            SELECT s.kind, s.target AS intent, count(*) AS n, max(s.created_at) AS last_at,
-                   array_remove(array_agg(DISTINCT coalesce(u.email, s.sub)), NULL) AS users
-            FROM usage_signals s
-            LEFT JOIN users u ON u.sub = s.sub
-            WHERE s.signal = 'gap' AND s.created_at > NOW() - make_interval(days => %s)
-            GROUP BY s.kind, s.target ORDER BY n DESC, last_at DESC
-            """,
-            (int(days),),
-        ).fetchall()]
+    l'UI admin montre QUI a signalé, pas seulement combien. `org_id` = les manques
+    remontés PAR les membres de cette org (lentille org_admin) ; sans lui, plateforme."""
+    return _signal_agg("gap", "s.target AS intent", "s.target", days, org_id)
 
 
-def aggregate_tool_feedback(days: int = 30) -> list[dict]:
-    """Qualité d'outil agrégée : feedback par (outil, kind). `users` : cf. aggregate_gaps."""
-    with _connect() as conn:
-        return [dict(r) for r in conn.execute(
-            """
-            SELECT s.target AS tool, s.kind, count(*) AS n, max(s.created_at) AS last_at,
-                   array_remove(array_agg(DISTINCT coalesce(u.email, s.sub)), NULL) AS users
-            FROM usage_signals s
-            LEFT JOIN users u ON u.sub = s.sub
-            WHERE s.signal = 'tool_feedback' AND s.created_at > NOW() - make_interval(days => %s)
-            GROUP BY s.target, s.kind ORDER BY n DESC, last_at DESC
-            """,
-            (int(days),),
-        ).fetchall()]
+def aggregate_tool_feedback(days: int = 30, *, org_id: Optional[int] = None) -> list[dict]:
+    """Qualité d'outil agrégée : feedback par (outil, kind). `users`/`org_id` :
+    cf. aggregate_gaps."""
+    return _signal_agg("tool_feedback", "s.target AS tool", "s.target", days, org_id)
 
 
 def list_tool_calls(
@@ -610,26 +627,31 @@ def rest_call_stats(since_days: int = 7) -> dict:
     }
 
 
-def connector_failure_stats(since_days: int = 7) -> dict:
+def connector_failure_stats(since_days: int = 7, *, org_id: Optional[int] = None) -> dict:
     """Lentille santé connecteurs (ADR 0017, kind='connector') : échecs de résolution
     de credential par provider — combien, combien d'users distincts touchés, dernier
-    échec. C'est le signal « ce connecteur ne résout pas » (compte actif sans clé valide)."""
+    échec. C'est le signal « ce connecteur ne résout pas » (compte actif sans clé valide).
+
+    `org_id` = les échecs subis SOUS cette org (lentille org_admin : « quel connecteur
+    bloque MES membres »). Sans lui : plateforme-wide."""
     since_days = max(1, min(int(since_days), 365))
+    org_clause = " AND l.org_id = %s" if org_id is not None else ""
+    params: list[Any] = [since_days] + ([int(org_id)] if org_id is not None else [])
     with _connect() as conn:
         by_provider = conn.execute(
-            """
+            f"""
             SELECT l.tool AS provider,
                    COUNT(*) AS failures,
                    COUNT(DISTINCT l.sub) AS users_affected,
                    MAX(l.created_at) AS last_at
             FROM tool_calls l
             WHERE l.kind = 'connector'
-              AND l.created_at >= NOW() - make_interval(days => %s)
+              AND l.created_at >= NOW() - make_interval(days => %s){org_clause}
             GROUP BY l.tool
             ORDER BY failures DESC
             LIMIT 100
             """,
-            (since_days,),
+            tuple(params),
         ).fetchall()
     return {
         "since_days": since_days,
@@ -678,6 +700,74 @@ def activation_funnel(active_window_days: int = 30) -> dict:
         "rest_only": rest_only,
         "never_active": max(0, total - active),
         "blocked_by_connector": blocked,
+    }
+
+
+# Plafond de la LISTE nominative d'adoption (les compteurs, eux, portent sur toute
+# la population — cf. org_adoption).
+_ADOPTION_LIST_CAP = 500
+
+
+def org_adoption(org_id: int, active_window_days: int = 30) -> dict:
+    """Adoption d'une org, membre par membre (pendant org du funnel plateforme).
+
+    Le funnel plateforme distingue COMPTE et USAGE sur toute la base ; ici la même
+    question se pose à l'échelle d'une équipe : **qui s'en sert vraiment**. On part de
+    la population connue (`org_members` — jamais des appels, sinon un membre à 0 appel
+    resterait invisible, ce qui est justement l'information cherchée) et on lui
+    raccroche son activité ÉMISE SOUS CETTE ORG (`tool_calls.org_id`, seam
+    `current_org`) : un membre actif dans une autre org compte comme inactif ICI.
+
+    Trois lectures dans un seul passage : appels + erreurs dans la fenêtre,
+    dernier appel (hors fenêtre, pour dater un décrochage), et échecs de connecteur
+    (le membre a essayé mais rien ne résolvait — ≠ jamais essayé, deux actions
+    opposées pour l'org_admin). La LISTE nominative est bornée à `_ADOPTION_LIST_CAP`
+    (`truncated` le dit) ; les compteurs, eux, couvrent toute la population.
+    """
+    days = max(1, min(int(active_window_days), 365))
+    with _connect() as conn:
+        rows = [dict(r) for r in conn.execute(
+            """
+            SELECT m.sub, u.email, u.name, m.org_role,
+                   COALESCE(a.n_calls, 0)    AS calls,
+                   COALESCE(a.n_errors, 0)   AS errors,
+                   a.last_call_at,
+                   COALESCE(f.n_failures, 0) AS connector_failures
+            FROM org_members m
+            LEFT JOIN users u ON u.sub = m.sub
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) FILTER (
+                           WHERE c.created_at >= NOW() - make_interval(days => %s)) AS n_calls,
+                       COUNT(*) FILTER (
+                           WHERE c.created_at >= NOW() - make_interval(days => %s)
+                             AND NOT c.ok) AS n_errors,
+                       MAX(c.created_at) AS last_call_at
+                FROM tool_calls c
+                WHERE c.kind = 'mcp' AND c.sub = m.sub AND c.org_id = m.org_id
+            ) a ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS n_failures
+                FROM tool_calls c
+                WHERE c.kind = 'connector' AND c.sub = m.sub AND c.org_id = m.org_id
+                  AND c.created_at >= NOW() - make_interval(days => %s)
+            ) f ON TRUE
+            WHERE m.org_id = %s
+            ORDER BY calls DESC, u.email
+            """,
+            (days, days, days, int(org_id)),
+        ).fetchall()]
+    active = sum(1 for r in rows if int(r["calls"] or 0) > 0)
+    return {
+        "org_id": int(org_id),
+        "window_days": days,
+        # Compteurs calculés sur TOUTE la population — seule la liste nominative est
+        # tronquée. Des agrégats faux sont pires qu'une liste courte.
+        "total_members": len(rows),
+        "active": active,
+        "never_active": len(rows) - active,
+        "blocked_by_connector": sum(1 for r in rows if int(r["connector_failures"] or 0) > 0),
+        "truncated": len(rows) > _ADOPTION_LIST_CAP,
+        "members": rows[:_ADOPTION_LIST_CAP],
     }
 
 

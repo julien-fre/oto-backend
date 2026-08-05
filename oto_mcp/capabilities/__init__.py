@@ -68,6 +68,9 @@ from . import procedure_console  # noqa: F401 — org.procedure.console
 from . import org_console  # noqa: F401 — org.console + org.settings.console + group.console + org.scheduled_emails.console
 # Export du journal d'audit org-scopé (oto-backend#67) — REST-only, org_admin.
 from . import audit_log  # noqa: F401 — org.audit_log.export (GET /api/orgs/{id}/audit-log/export)
+# Observabilité au niveau ORG (après monitoring + audit_log : elle rebranche leurs
+# handlers) — les lentilles plateforme bornées à SON org, pour l'org_admin.
+from . import org_monitoring  # noqa: F401 — org.monitoring.* (oto_org_monitoring, /api/orgs/{id}/monitoring/*)
 # Gouvernance générique des ressources possédées (ADR 0030) — transfert/partage
 # d'un objet possédé (datastore pilote), owner ∪ escalade roles.py.
 from . import resources  # noqa: F401 — resources.govern (oto_resource)
