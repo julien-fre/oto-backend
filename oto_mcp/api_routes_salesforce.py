@@ -57,10 +57,18 @@ def make_routes(
         historique, dégrade vers `OTO_APP_URL`/oto-dashboard) — `oauth_flow.return_url`
         porte la résolution base+chemin, cf. son docstring. Absents dans l'UNE
         branche où le state n'a même pas pu être lu (voir `callback` ci-dessous) :
-        cas dégradé accepté, on n'a alors aucun moyen de savoir qui rappeler."""
+        cas dégradé accepté, on n'a alors aucun moyen de savoir qui rappeler.
+
+        `connect=` dit CE QUI S'EST PASSÉ. Le paramètre s'appelait `salesforce=` et
+        **personne ne le lisait** : l'utilisateur revenait devant un écran muet. Vécu le
+        04/08 chez un client — le consentement avait RÉUSSI (jeton posé à la
+        milliseconde du callback, zéro erreur), et faute du moindre signe ils ont
+        désinstallé puis réinstallé le connecteur en boucle pendant cinq heures.
+        Nom générique : une clé nommée d'après un connecteur obligerait chaque surface
+        à en connaître le nom, exactement ce qu'on retire partout ailleurs."""
         from . import oauth_flow
         return oauth_flow.return_url(
-            return_app, f"?connector=salesforce&salesforce={etat}", org=org_id)
+            return_app, f"?connector=salesforce&connect={etat}", org=org_id)
 
     async def callback(request: Request) -> Response:
         # Salesforce redirige ici (pas d'auth Logto) — l'identité + le scope
