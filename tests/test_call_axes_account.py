@@ -30,9 +30,17 @@ def test_account_axis_applies_to_identity_bearing_tools():
 
 
 def test_account_axis_excludes_single_and_spine():
-    for name in ("folk_search", "serper_web_search", "pennylane_ref",
+    # folk n'est plus mono-compte (N clés API perso nommées) — cf.
+    # test_account_axis_applies_to_folk ci-dessous.
+    for name in ("serper_web_search", "pennylane_ref",
                  "oto_create_org", "oto_whoami", "data_write"):
         assert "_account" not in _params(name), name
+
+
+def test_account_axis_applies_to_folk():
+    # folk : N clés API personnelles nommées (ex. plusieurs workspaces Folk),
+    # même mécanisme générique que zoho (« 2 Zoho »).
+    assert "_account" in _params("folk_search")
 
 
 def test_inject_schema_adds_optional_account_property():
@@ -73,7 +81,7 @@ async def test_on_list_tools_advertises_only_where_applicable():
     mw = CallContextMiddleware(reserved_org_tools=set())
     tools = [
         _Tool("zoho_get", {"type": "object", "properties": {}}),
-        _Tool("folk_search", {"type": "object", "properties": {}}),
+        _Tool("serper_web_search", {"type": "object", "properties": {}}),
     ]
 
     async def _next(_ctx):
@@ -82,7 +90,7 @@ async def test_on_list_tools_advertises_only_where_applicable():
     out = await mw.on_list_tools(_Ctx(_Msg("tools/list", {})), _next)
     by = {t.name: t for t in out}
     assert "_account" in by["zoho_get"].parameters["properties"]
-    assert "_account" not in by["folk_search"].parameters["properties"]
+    assert "_account" not in by["serper_web_search"].parameters["properties"]
 
 
 @pytest.mark.asyncio
@@ -108,13 +116,13 @@ async def test_on_call_tool_strips_axis_and_poses_contextvar():
 @pytest.mark.asyncio
 async def test_on_call_tool_ignores_axis_on_non_applicable_tool():
     mw = CallContextMiddleware(reserved_org_tools=set())
-    args = {"query": "x", "_account": "boulot"}  # folk n'expose pas _account=
+    args = {"query": "x", "_account": "boulot"}  # serper n'expose pas _account=
 
     async def _next(ctx):
         # non applicable → l'axe n'est PAS strippé (resterait un arg métier si déclaré)
         return dict(ctx.message.arguments)
 
-    out = await mw.on_call_tool(_Ctx(_Msg("folk_search", args)), _next)
+    out = await mw.on_call_tool(_Ctx(_Msg("serper_web_search", args)), _next)
     assert out == {"query": "x", "_account": "boulot"}
     assert session_org.current_call_account() is None
 
