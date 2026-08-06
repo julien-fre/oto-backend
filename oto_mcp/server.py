@@ -22,8 +22,10 @@ import os
 
 from fastmcp import FastMCP
 from fastmcp.server.auth import RemoteAuthProvider
+from fastmcp.server.auth.auth import AccessToken
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from pydantic import AnyHttpUrl
+from starlette.concurrency import run_in_threadpool
 
 from . import api_routes, db, instructions
 from .config import require_env, mcp_audience_alts
@@ -72,7 +74,34 @@ class _IatGatedVerifier(JWTVerifier):
         from . import subdomain_project
         return any(subdomain_project.valid_org_audience(a) for a in auds)
 
+    async def _verify_api_token(self, token):
+        """Jeton d'API oto (`oto_…`, opaque) — la face MCP l'accepte comme la face REST.
+
+        Un runtime NON INTERACTIF (Claude Tag dans Slack, une CI, un script) ne peut
+        pas faire l'OAuth dance : sans ce chemin, il lui faut une app Logto dédiée,
+        donc un compte machine orphelin, sans email ni dashboard — invisible et
+        inconfigurable par son propriétaire. Ce jeton, lui, EST un vrai compte : créé
+        et révoqué depuis le dashboard, il porte le `sub` de qui l'a émis.
+
+        Un jeton PORTÉ (`scopes`) est refusé ici : son gate (`token_scopes.authorize`)
+        raisonne sur méthode+chemin HTTP, notions absentes d'un appel MCP. L'accepter
+        reviendrait à ignorer sa portée en silence — donc à l'élargir. Fail-closed.
+        """
+        if not token or not token.startswith("oto_"):
+            return None
+        # DB hors de la loop : un blip DB ne doit jamais geler le serveur mono-loop
+        # (même raison que sur la face REST, vécu 2026-07-02).
+        row = await run_in_threadpool(db.verify_api_token, token)
+        if not row or row.get("scopes") is not None:
+            return None
+        sub = row["sub"]
+        return AccessToken(token=token, client_id="oto_api_token", scopes=[],
+                           subject=sub, claims={"sub": sub})
+
     async def verify_token(self, token):
+        api = await self._verify_api_token(token)
+        if api is not None:
+            return api
         result = await super().verify_token(token)
         if not result and self._fallback is not None:
             try:
