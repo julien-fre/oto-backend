@@ -17,8 +17,14 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, connector_flow, connector_verify, status_hints
+
+
+def _bad(msg: str) -> McpError:
+    return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
 
 def _login_url(login_url: Optional[str]) -> str:
@@ -305,6 +311,38 @@ def _rotation_writer(rc, jeton_lu: str):
     return _write
 
 
+# sObject Collections plafonne à 200 enregistrements par appel — limite DURE
+# Salesforce (vérifiée sur la doc officielle), pas une politique oto : on la
+# fait échouer tôt côté tool plutôt que de laisser Salesforce renvoyer un 400.
+_MAX_COLLECTION_RECORDS = 200
+
+
+def _validate_bulk_items(items: list) -> None:
+    if not items:
+        raise _bad("items : au moins un enregistrement requis.")
+    if len(items) > _MAX_COLLECTION_RECORDS:
+        raise _bad(
+            f"{len(items)} éléments — sObject Collections plafonne à "
+            f"{_MAX_COLLECTION_RECORDS} par appel, découper en plusieurs appels."
+        )
+
+
+def _validate_update_items_have_id(items: list) -> None:
+    for i, item in enumerate(items):
+        if not item.get("Id"):
+            raise _bad(f"items[{i}] : \"Id\" requis pour mettre à jour un enregistrement.")
+
+
+def _bulk_receipt(raw: list[dict]) -> dict:
+    """Normalise la réponse sObject Collections (liste de {id, success, errors},
+    même ordre que les items envoyés) en un reçu indexé — même esprit que le
+    reçu bulk de folk_create, jamais N corps de réponse complets."""
+    results = [{"index": i, **r} for i, r in enumerate(raw)]
+    return {"total": len(raw),
+            "succeeded": sum(1 for r in raw if r.get("success")),
+            "results": results}
+
+
 def register(mcp: FastMCP) -> None:
     connector_verify.register("salesforce", _verify)
     from oto.tools.salesforce.client import SalesforceClient
@@ -403,6 +441,61 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Create-or-update a record keyed on an external id field (idempotent)."""
         return _client().upsert_record(sobject, external_id_field, external_id, data)
+
+    @mcp.tool()
+    def salesforce_bulk_create(
+        sobject: str, items: list[dict], all_or_none: bool = False,
+    ) -> dict:
+        """Create up to 200 records of the SAME sObject type in ONE Salesforce
+        call (sObject Collections) — instead of N separate salesforce_create
+        calls.
+
+        Args:
+            sobject: e.g. "Contact", "Account", "Lead", "Opportunity", or a
+                custom "Foo__c". Every record in `items` must be this type.
+            items: field→value dicts, same shape as salesforce_create's
+                `data`, one per record (max 200 — split into several calls
+                above that).
+            all_or_none: if true, the WHOLE batch rolls back when any record
+                fails. Default false (Salesforce's own default): successes
+                are kept, failures are reported per-record below.
+
+        Returns:
+            {"total", "succeeded", "results": [{"index", "id", "success",
+            "errors"}, ...]} — ALWAYS inspect `results`: unlike
+            salesforce_create, a record can fail here with no exception
+            raised (the call itself succeeded, that one record didn't).
+        """
+        _validate_bulk_items(items)
+        raw = _client().create_records(sobject, items, all_or_none=all_or_none)
+        return _bulk_receipt(raw)
+
+    @mcp.tool()
+    def salesforce_bulk_update(
+        sobject: str, items: list[dict], all_or_none: bool = False,
+    ) -> dict:
+        """Update up to 200 records of the SAME sObject type in ONE Salesforce
+        call (sObject Collections) — instead of N separate salesforce_update
+        calls.
+
+        Args:
+            sobject: e.g. "Contact", "Account" — every record in `items` must
+                be this type.
+            items: field→value dicts, EACH MUST include "Id" (the record to
+                update) plus the fields to change (max 200 records).
+            all_or_none: if true, the whole batch rolls back when any record
+                fails. Default false: successes are kept, failures reported
+                per-record below.
+
+        Returns:
+            {"total", "succeeded", "results": [{"index", "id", "success",
+            "errors"}, ...]} — always inspect `results`, same caveat as
+            salesforce_bulk_create.
+        """
+        _validate_bulk_items(items)
+        _validate_update_items_have_id(items)
+        raw = _client().update_records(sobject, items, all_or_none=all_or_none)
+        return _bulk_receipt(raw)
 
     @mcp.tool()
     def salesforce_notes(record_id: str) -> dict:
