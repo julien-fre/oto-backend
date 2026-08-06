@@ -12,7 +12,9 @@ sont **solo OU bulk selon le param passé** : un singulier (`item`/`id`) pour
 UN record → résultat direct ; un pluriel (`items`/`ids`, ≤50) pour plusieurs →
 reçu allégé (compte + erreurs par item, jamais N corps de réponse complets).
 Folk n'a d'endpoint batch nulle part — le mode bulk boucle sur les méthodes
-single-record avec un petit délai de courtoisie (`_bulk_run`).
+single-record, en PARALLÈLE et à cadence plafonnée (`_bulk_run`), pas en
+séquence avec une pause fixe (la latence réseau par appel dominait le temps
+total, pas la cadence Folk).
 
 ⚠️ **Deux vocabulaires de champs différents cohabitent** : `folk_create` prend
 des clés Python snake_case (`first_name`, `company_id`...) ; `folk_update`
@@ -23,6 +25,8 @@ docstring de chaque tool.
 from __future__ import annotations
 
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from typing import Optional
 
 from fastmcp import FastMCP
@@ -209,12 +213,43 @@ def _delete_one(c, entity: str, id: str, group_id: Optional[str] = None,
     raise _bad(f"entity doit être l'un de {_DELETE_ENTITIES}.")
 
 
-# Cap dérivé du timeout dur de l'invocation REST d'un outil (`api_routes.py`,
-# `asyncio.wait_for(_invoke(), timeout=45)`) : à ~0.15s de délai de courtoisie
-# entre appels + latence Folk par item, on vise une marge confortable sous
-# les 45s plutôt que de s'en approcher.
+# 50 reste une limite d'ergonomie d'appel (pas de constat précis dérrière),
+# indépendante de la cadence ci-dessous.
 _BULK_MAX_ITEMS = 50
-_BULK_DELAY_S = 0.15
+
+# Folk documente 600 req/min (10 req/s) par clé. Le goulot d'un lot n'est PAS
+# cette cadence — c'est la latence réseau par appel, non recouverte tant que
+# les appels étaient séquentiels (un délai de courtoisie fixe entre appels
+# n'accélère rien, il ajoute juste une pause après une attente déjà payée).
+# `_BULK_CONCURRENCY` appels en vol en parallèle recouvrent cette latence ;
+# `_RateLimiter` plafonne la cadence D'ENVOI combinée (tous workers confondus)
+# à ~8 req/s, sous les 10 req/s documentés avec marge pour le trafic
+# concurrent d'autres appels sur la même clé. `_request` gère déjà les 429
+# (retry sur Retry-After) : le régulateur vise à rester sous la limite en
+# usage normal, pas à s'y substituer.
+_BULK_CONCURRENCY = 6
+_BULK_MIN_INTERVAL_S = 0.125  # ~8 req/s
+
+
+class _RateLimiter:
+    """Espace les DISPATCHES d'appel à un intervalle minimum PARTAGÉ entre tous
+    les workers — un délai par-worker ne suffirait pas : N workers respectant
+    chacun leur propre délai peuvent quand même émettre N fois plus vite que
+    prévu au global."""
+
+    def __init__(self, min_interval_s: float):
+        self._min_interval = min_interval_s
+        self._lock = Lock()
+        self._next_at = 0.0
+
+    def wait(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            start_at = max(now, self._next_at)
+            self._next_at = start_at + self._min_interval
+        delay = start_at - now
+        if delay > 0:
+            time.sleep(delay)
 
 
 def _bulk_fatal(exc: Exception) -> bool:
@@ -229,26 +264,44 @@ def _bulk_fatal(exc: Exception) -> bool:
 
 
 def _bulk_run(items: list, fn) -> list[tuple[int, bool, object]]:
-    """Exécute `fn(item)` pour chaque item, avec un petit délai de courtoisie
-    entre appels (limite de débit Folk — `_request` gère déjà les 429, ce
-    délai évite de les déclencher trop souvent). Renvoie une liste de
-    `(index, ok, valeur_ou_message_erreur)` — au tool d'en tirer le reçu
-    (les formes diffèrent : create doit remonter les IDs créés, les autres
-    juste un compte)."""
+    """Exécute `fn(item)` pour chaque item EN PARALLÈLE (jusqu'à
+    `_BULK_CONCURRENCY` appels HTTP en vol, cadence combinée plafonnée par
+    `_RateLimiter`) plutôt qu'en séquence avec une pause fixe après chaque
+    appel — c'est la latence réseau par appel qui dominait le temps total, pas
+    la cadence Folk, et une boucle séquentielle ne pouvait jamais la recouvrir.
+
+    Renvoie une liste de `(index, ok, valeur_ou_message_erreur)` — comme avant
+    mais PAS nécessairement dans l'ordre de soumission : chaque appelant ne se
+    fie qu'à l'`index` porté par le tuple, jamais à la position dans la liste
+    (vérifié aux 4 call-sites). Une erreur FATALE (auth/connexion) annule les
+    appels pas encore démarrés et relève l'exception — même contrat qu'avant
+    (le lot entier est perdu, pas de reçu partiel), simplement détecté plus
+    tôt grâce au parallélisme."""
     if len(items) > _BULK_MAX_ITEMS:
         raise _bad(f"trop d'éléments ({len(items)}) — max {_BULK_MAX_ITEMS} par appel, "
                    f"découper en plusieurs appels.")
-    results: list[tuple[int, bool, object]] = []
-    for i, item in enumerate(items):
-        try:
-            results.append((i, True, fn(item)))
-        except Exception as e:
-            if _bulk_fatal(e):
-                raise
-            results.append((i, False, str(e)))
-        if i < len(items) - 1:
-            time.sleep(_BULK_DELAY_S)
-    return results
+    limiter = _RateLimiter(_BULK_MIN_INTERVAL_S)
+    results: list[Optional[tuple[int, bool, object]]] = [None] * len(items)
+
+    def _run_one(item):
+        limiter.wait()
+        return fn(item)
+
+    pool = ThreadPoolExecutor(max_workers=min(_BULK_CONCURRENCY, len(items)))
+    futures = {pool.submit(_run_one, item): i for i, item in enumerate(items)}
+    try:
+        for future in as_completed(futures):
+            i = futures[future]
+            try:
+                results[i] = (i, True, future.result())
+            except Exception as e:
+                if _bulk_fatal(e):
+                    pool.shutdown(wait=False, cancel_futures=True)
+                    raise
+                results[i] = (i, False, str(e))
+    finally:
+        pool.shutdown(wait=True)
+    return [r for r in results if r is not None]
 
 
 def register(mcp: FastMCP) -> None:
@@ -367,8 +420,8 @@ def register(mcp: FastMCP) -> None:
     # singulier (un seul record, résultat/preview renvoyé directement) OU le
     # pluriel (jusqu'à 50, reçu bulk). Folk n'a d'endpoint batch nulle part
     # (vérifié sur ce connecteur, le MCP officiel Folk, et un MCP tiers) — le
-    # pluriel boucle sur les méthodes single-record avec un délai de
-    # courtoisie (`_bulk_run`) et renvoie un reçu allégé, jamais N corps de
+    # pluriel boucle sur les méthodes single-record, en parallèle à cadence
+    # plafonnée (`_bulk_run`) et renvoie un reçu allégé, jamais N corps de
     # réponse complets.
 
     @mcp.tool()
