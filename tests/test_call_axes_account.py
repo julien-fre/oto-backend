@@ -4,6 +4,7 @@ Trois contrats : exposition SÉLECTIVE du schéma (dérivée du registre), strip
 la ContextVar par le middleware, lecture par le seam de résolution (`resolve_credential`
 sélectionne le compte de l'axe en multi-compte — « 2 Zoho »)."""
 import pytest
+from mcp.shared.exceptions import McpError
 
 from oto_mcp import access, call_axes, credentials_store, db, session_org
 from oto_mcp.middleware import CallContextMiddleware
@@ -163,3 +164,51 @@ def test_explicit_account_param_beats_axis(monkeypatch):
     finally:
         session_org.reset_call_account(tok)
     assert rc.key == "K_BOULOT"      # param explicite prime sur l'axe
+
+
+# ── 4. Sans pin, 2+ comptes : le défaut (`meta.is_default`) tranche ──────────
+
+def _wire_multi_account_with_meta(monkeypatch, provider, org, sub, accounts_meta, keys):
+    """Comme `_wire_multi_account`, mais chaque compte porte son `meta` (pour
+    exercer la résolution par défaut `oto_identity(op='set')` → `meta.is_default`,
+    lue par `_member_fetch` avant de lever l'ambiguïté)."""
+    monkeypatch.setattr(access, "current_org", lambda s: org)
+    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
+    monkeypatch.setattr(access, "_is_multi_account", lambda p: True)
+    monkeypatch.setattr(access, "project_pinned_identity", lambda p, project_id=None: None)
+    monkeypatch.setattr(credentials_store, "list_accounts",
+                        lambda et, eid, con: [{"account": a, "meta": m} for a, m in accounts_meta])
+    monkeypatch.setattr(credentials_store, "member_id", lambda o, s: f"{o}:{s}")
+    monkeypatch.setattr(db, "get_member_api_key",
+                        lambda s, o, p, account="": keys.get(account))
+
+
+def test_no_pin_resolves_to_the_marked_default(monkeypatch):
+    _wire_multi_account_with_meta(
+        monkeypatch, "folk", 42, "u",
+        [("Julien's access - Tangible", {"is_default": True}), ("Second key", {})],
+        {"Julien's access - Tangible": "K_DEFAULT", "Second key": "K_OTHER"})
+    rc = access.resolve_credential("folk", want="auto", sub="u")
+    assert rc.key == "K_DEFAULT"
+    assert rc.account == "Julien's access - Tangible"
+
+
+def test_no_pin_and_no_default_raises_ambiguity_error(monkeypatch):
+    _wire_multi_account_with_meta(
+        monkeypatch, "folk", 42, "u",
+        [("boulot", {}), ("perso", {})],
+        {"boulot": "K_BOULOT", "perso": "K_PERSO"})
+    with pytest.raises(McpError, match="Plusieurs comptes"):
+        access.resolve_credential("folk", want="auto", sub="u")
+
+
+def test_no_pin_and_two_defaults_still_raises(monkeypatch):
+    # Ne devrait jamais arriver en pratique (`_keyed_select` pose un défaut
+    # UNIQUE), mais la résolution ne doit jamais deviner entre deux défauts
+    # concurrents plutôt que de lever.
+    _wire_multi_account_with_meta(
+        monkeypatch, "folk", 42, "u",
+        [("boulot", {"is_default": True}), ("perso", {"is_default": True})],
+        {"boulot": "K_BOULOT", "perso": "K_PERSO"})
+    with pytest.raises(McpError, match="Plusieurs comptes"):
+        access.resolve_credential("folk", want="auto", sub="u")
