@@ -61,25 +61,31 @@ def test_create_requires_exactly_one_of_item_or_items(client_cls):
 
 
 def test_create_bulk_success_returns_ids(client_cls):
+    # Keyed par le contenu de l'appel (pas une liste positionnelle) : le lot
+    # tourne maintenant en PARALLÈLE (`_bulk_run`), l'ordre d'appel réel n'est
+    # plus garanti suivre l'ordre des items — seul l'`index` porté par chaque
+    # tuple de résultat l'est (vérifié ci-dessous).
     inst = _instance(client_cls)
-    inst.create_person.side_effect = [{"id": "per_1"}, {"id": "per_2"}]
+    inst.create_person.side_effect = lambda **fields: {"id": f"per_{fields['first_name']}"}
     r = _register_and_call(
         "folk_create", entity="person",
         items=[{"first_name": "A"}, {"first_name": "B"}])
     assert r["total"] == 2
     assert r["succeeded"] == 2
-    assert r["created"] == [{"index": 0, "id": "per_1"}, {"index": 1, "id": "per_2"}]
+    assert r["created"] == [{"index": 0, "id": "per_A"}, {"index": 1, "id": "per_B"}]
     assert r["failed"] == []
 
 
 def test_create_bulk_partial_failure_continues_batch(client_cls):
     from oto.tools.common.errors import UpstreamHTTPError
     inst = _instance(client_cls)
-    inst.create_person.side_effect = [
-        {"id": "per_1"},
-        UpstreamHTTPError(422, {"message": "invalid email"}, service="folk"),
-        {"id": "per_3"},
-    ]
+
+    def _side_effect(**fields):
+        if fields["first_name"] == "B":
+            raise UpstreamHTTPError(422, {"message": "invalid email"}, service="folk")
+        return {"id": f"per_{fields['first_name']}"}
+
+    inst.create_person.side_effect = _side_effect
     r = _register_and_call(
         "folk_create", entity="person",
         items=[{"first_name": "A"}, {"first_name": "B"}, {"first_name": "C"}])
@@ -92,13 +98,20 @@ def test_create_bulk_partial_failure_continues_batch(client_cls):
 
 def test_create_bulk_auth_error_aborts_whole_batch(client_cls):
     from oto.tools.common.errors import UpstreamHTTPError
+    from oto_mcp.tools.folk import _BULK_CONCURRENCY
     inst = _instance(client_cls)
     inst.create_person.side_effect = UpstreamHTTPError(401, {"message": "bad key"}, service="folk")
     with pytest.raises(UpstreamHTTPError):
         _register_and_call(
             "folk_create", entity="person",
-            items=[{"first_name": "A"}, {"first_name": "B"}, {"first_name": "C"}])
-    assert inst.create_person.call_count == 1  # pas répété N fois
+            items=[{"first_name": str(i)} for i in range(20)])
+    # Abandon anticipé : dès la 1re erreur fatale vue, les futures pas encore
+    # démarrées sont annulées. Le lot tourne en parallèle (`_BULK_CONCURRENCY`
+    # appels en vol) donc "exactement 1 appel" n'est plus un invariant garanti
+    # (plusieurs workers peuvent avoir démarré avant que le 1er échec soit
+    # détecté) — l'invariant qui tient est que le lot entier (20) n'est
+    # JAMAIS entièrement exécuté.
+    assert inst.create_person.call_count < 20
 
 
 def test_create_bulk_rejects_over_cap(client_cls):
@@ -226,10 +239,13 @@ def test_update_bulk_success(client_cls):
 def test_update_bulk_partial_failure_reports_id(client_cls):
     from oto.tools.common.errors import UpstreamHTTPError
     inst = _instance(client_cls)
-    inst.update_person.side_effect = [
-        {"id": "per_1"},
-        UpstreamHTTPError(404, {"message": "not found"}, service="folk"),
-    ]
+
+    def _side_effect(id, **fields):
+        if id == "per_404":
+            raise UpstreamHTTPError(404, {"message": "not found"}, service="folk")
+        return {"id": id}
+
+    inst.update_person.side_effect = _side_effect
     r = _register_and_call(
         "folk_update", entity="person",
         items=[{"id": "per_1", "fields": {"jobTitle": "CTO"}},
@@ -295,10 +311,13 @@ def test_update_bulk_dry_run_note_entity_degrades_gracefully(client_cls):
 def test_update_bulk_dry_run_partial_failure_still_continues(client_cls):
     from oto.tools.common.errors import UpstreamHTTPError
     inst = _instance(client_cls)
-    inst.get_person.side_effect = [
-        UpstreamHTTPError(404, {"message": "not found"}, service="folk"),
-        {"id": "per_2", "jobTitle": "CTO"},
-    ]
+
+    def _side_effect(id):
+        if id == "per_404":
+            raise UpstreamHTTPError(404, {"message": "not found"}, service="folk")
+        return {"id": id, "jobTitle": "CTO"}
+
+    inst.get_person.side_effect = _side_effect
     r = _register_and_call(
         "folk_update", entity="person",
         items=[{"id": "per_404", "fields": {"jobTitle": "X"}},
