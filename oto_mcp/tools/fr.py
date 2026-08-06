@@ -621,6 +621,7 @@ def register(mcp: FastMCP) -> None:
         tranche_effectifs: Optional[list[str]] = None,
         categories_entreprise: Optional[list[str]] = None,
         exclude_categories: Optional[list[str]] = None,
+        scan_cap: Optional[int] = None,
     ) -> dict:
         """Search French company collective agreements (accords d'entreprise, ACCO).
 
@@ -677,6 +678,11 @@ def register(mcp: FastMCP) -> None:
                 category on record — an inclusion drops them (you cannot assert a
                 company is an SME without knowing), an exclusion keeps them. To
                 target autonomous SMEs, prefer exclude_categories=["GE"].
+            scan_cap: how many agreements the SIRENE cross-check examines before
+                paginating (default 5000, max 25000). `effectifs_filter.truncated`
+                =true in the response means the pool is LARGER than this cap — the
+                answer is then NOT exhaustive. Raise it to cover a whole pool
+                (health/pension nationally is ~9700 agreements).
         """
         return fod_fr.search_acco(
             query=query, themes=themes, nature=nature, siren=siren, siret=siret,
@@ -684,7 +690,7 @@ def register(mcp: FastMCP) -> None:
             latest_per_siret=latest_per_siret, sort_by=sort_by, sort_dir=sort_dir,
             limit=limit, offset=offset, tranche_effectifs=tranche_effectifs,
             categories_entreprise=categories_entreprise,
-            exclude_categories=exclude_categories,
+            exclude_categories=exclude_categories, scan_cap=scan_cap,
         )
 
     @mcp.tool()

@@ -123,7 +123,8 @@ def search_acco(query=None, themes=None, nature=None, siren=None, siret=None,
                 idcc=None, departement=None, date_from=None, date_to=None,
                 latest_per_siret=False, sort_by="date", sort_dir="desc",
                 limit=50, offset=0, tranche_effectifs=None,
-                categories_entreprise=None, exclude_categories=None) -> dict[str, Any]:
+                categories_entreprise=None, exclude_categories=None,
+                scan_cap=None) -> dict[str, Any]:
     return _post("/api/fr/accords/search", {
         "query": query, "themes": themes, "nature": nature, "siren": siren,
         "siret": siret, "idcc": idcc, "departement": departement,
@@ -132,6 +133,7 @@ def search_acco(query=None, themes=None, nature=None, siren=None, siret=None,
         "tranche_effectifs": tranche_effectifs,
         "categories_entreprise": categories_entreprise,
         "exclude_categories": exclude_categories,
+        **({"scan_cap": scan_cap} if scan_cap else {}),
     })
 
 
