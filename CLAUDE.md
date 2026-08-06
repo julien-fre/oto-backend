@@ -67,6 +67,18 @@ JWT Logto **ES384** (défaut RS256 = tout rejeté), discovery RFC 9728 sur 401,
 façade DCR self-service (`oauth_facade.py`) pour les clients sans DCR (Claude/ChatGPT/
 Mistral). **Détail : `docs/auth-logto.md`** (gotchas, env, onboarding).
 
+> **La face MCP accepte aussi un jeton d'API `oto_` (v1.57.0).** `_IatGatedVerifier._verify_api_token`
+> essaie `db.verify_api_token` avant le JWT (DB **hors de la loop**), et un jeton reconnu rend un
+> `AccessToken` porteur du `sub` de son émetteur — donc un vrai compte, avec son dashboard et ses
+> connecteurs. Sans ce chemin, un runtime **non interactif** (Claude Tag dans Slack, une CI) n'avait
+> que `client_credentials`, donc une app Logto par intégration, donc un compte machine orphelin
+> (ni email, ni dashboard, org à poser par `PUT /api/me/active-org` faute d'UI). ⚠️ **Un jeton PORTÉ
+> (`scopes`) est refusé ici** : son gate `token_scopes.authorize` raisonne sur méthode + chemin HTTP,
+> notions absentes d'un appel MCP — l'accepter élargirait sa portée en silence. Fail-closed figé par
+> `tests/test_mcp_api_token.py`. Procédure côté utilisateur = guide plateforme `claude-tag`
+> (+ template public `otomata-tech/oto-claude-tag-template`, Claude Tag n'acceptant qu'un dépôt privé
+> comme source de plugins).
+
 > **⚠️ CUTOVER ADR 0040 (2026-07-06) — `.ninja`↔`.cx` inversés.** Désormais **PROD =
 > `mcp.oto.cx`** (:9103, audience canonique `mcp.oto.cx/mcp`, dashboard `manage.oto.cx`) et
 > **PREPROD = `mcp.oto.ninja`** (:9105, audience `mcp.oto.ninja/mcp`, dashboard `manage.oto.ninja`).
