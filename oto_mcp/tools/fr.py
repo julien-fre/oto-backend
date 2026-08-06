@@ -619,6 +619,8 @@ def register(mcp: FastMCP) -> None:
         limit: int = 20,
         offset: int = 0,
         tranche_effectifs: Optional[list[str]] = None,
+        categories_entreprise: Optional[list[str]] = None,
+        exclude_categories: Optional[list[str]] = None,
     ) -> dict:
         """Search French company collective agreements (accords d'entreprise, ACCO).
 
@@ -631,6 +633,10 @@ def register(mcp: FastMCP) -> None:
           date_to=<today-12months>.
         - Does THIS company have any health/pension agreement (and when):
           siren="123456789", themes=["111","112"].
+        - PROSPECTING AUTONOMOUS SMEs (skip group subsidiaries, whose insurance is
+          decided at HQ): exclude_categories=["GE"]. 26% of the companies filing a
+          health/pension agreement are GE — filtering here is one query instead of
+          a per-company qualification pass.
 
         Args:
             query: Substring in the agreement title (ILIKE).
@@ -660,12 +666,25 @@ def register(mcp: FastMCP) -> None:
                 establishment, e.g. ["11","12","21"] — ACCO carries no company
                 size, so this is resolved against the local SIRENE stock. Use it to
                 keep SMEs only instead of post-filtering by hand.
+            exclude_categories: drop these INSEE size categories ("PME"|"ETI"|"GE").
+                THE way to skip group subsidiaries: the category is computed by
+                INSEE over the GROUP perimeter, so a subsidiary that is small by
+                its own headcount still reads "GE" (GTIE Rennes, €8M and a 20-49
+                band, is a GE because it belongs to VINCI). No other field carries
+                that. Resolved against the SIRENE legal-unit stock.
+            categories_entreprise: keep ONLY these categories. ⚠️ NOT the mirror of
+                exclude_categories: 4% of the companies filing an agreement have no
+                category on record — an inclusion drops them (you cannot assert a
+                company is an SME without knowing), an exclusion keeps them. To
+                target autonomous SMEs, prefer exclude_categories=["GE"].
         """
         return fod_fr.search_acco(
             query=query, themes=themes, nature=nature, siren=siren, siret=siret,
             idcc=idcc, departement=departement, date_from=date_from, date_to=date_to,
             latest_per_siret=latest_per_siret, sort_by=sort_by, sort_dir=sort_dir,
             limit=limit, offset=offset, tranche_effectifs=tranche_effectifs,
+            categories_entreprise=categories_entreprise,
+            exclude_categories=exclude_categories,
         )
 
     @mcp.tool()
