@@ -55,9 +55,10 @@ def test_hosted_is_unipile_only():
 
 def test_multi_account_providers():
     # google (OAuth N comptes) + zoho (self-clients keyed multi-compte, « 2 Zoho »)
-    # + browser (N sites derrière login : un compte = un host, oto-private#79).
+    # + browser (N sites derrière login : un compte = un host, oto-private#79)
+    # + folk (N clés API personnelles nommées, ex. plusieurs workspaces Folk).
     multi = {c.name for c in _REGISTRY_LIST if c.auth_multi_account}
-    assert multi == {"google", "zoho", "browser"}, multi
+    assert multi == {"google", "zoho", "browser", "folk"}, multi
 
 
 def test_catalog_exposes_auth():

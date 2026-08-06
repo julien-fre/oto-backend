@@ -16,6 +16,14 @@ def test_zoho_registered_generic():
     assert ci._LISTERS["google"] is ci._google_list
 
 
+def test_folk_registered_generic():
+    # folk : N clés API personnelles nommées (ex. plusieurs workspaces Folk),
+    # même backend générique que zoho — aucun code par-connecteur requis.
+    assert "folk" in providers.MULTI_ACCOUNT_PROVIDERS
+    assert ci.supports("folk")
+    assert ci._LISTERS["folk"] is not ci._google_list
+
+
 def test_keyed_list_maps_accounts(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: 1)
     monkeypatch.setattr(credentials_store, "member_id", lambda org, sub: f"{org}:{sub}")

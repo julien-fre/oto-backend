@@ -260,11 +260,13 @@ class Connector:
 BROWSER_PROVIDERS = frozenset()
 
 # Connecteurs dont le credential est MULTI-COMPTE — N grants liés à une même
-# entité (ADR 0024). Google (N comptes OAuth), zoho (self-clients FR/US), et
+# entité (ADR 0024). Google (N comptes OAuth), zoho (self-clients FR/US),
 # `browser` (N sites derrière login : un compte = un host, un Context Browserbase
-# par site — cf. tools/browser.py). Les autres sessions/oauth (crunchbase,
-# atlassian…) restent mono-compte par entité.
-MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho", "browser"})
+# par site — cf. tools/browser.py), et `folk` (N clés API nommées d'un même
+# membre — ex. plusieurs workspaces/équipes Folk — sélectionnées par nom via
+# l'axe d'appel `_account=`, cf. call_axes.py). Les autres sessions/oauth
+# (crunchbase, atlassian…) restent mono-compte par entité.
+MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho", "browser", "folk"})
 
 # Catégorie d'usage (domaine) par connecteur — CURÉE (pas dérivable), tunable.
 _CATEGORY_BY_CONNECTOR = {
