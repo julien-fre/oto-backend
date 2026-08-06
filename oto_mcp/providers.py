@@ -274,7 +274,7 @@ _CATEGORY_BY_CONNECTOR = {
     "fullenrich": "Prospection", "lemlist": "Prospection",
     "attio": "Prospection",
     "folk": "Prospection", "crunchbase": "Prospection", "dropcontact": "Prospection",
-    "unipile": "Prospection", "topograph": "Prospection",
+    "unipile": "Prospection", "topograph": "Prospection", "lusha": "Prospection",
     "sirene": "Data FR", "culture": "Data FR", "droit": "Data FR",
     "foncier": "Data FR", "sante": "Data FR", "frenchtech": "Data FR", "gr": "Data GR",
     "reddit": "Web",
@@ -419,6 +419,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "zoho": "zoho.com", "zohodesk": "zoho.com", "zohoanalytics": "zoho.com",
     "apollo": "apollo.io", "phantombuster": "phantombuster.com",
     "hithorizons": "hithorizons.com", "zerobounce": "zerobounce.net",
+    "lusha": "lusha.com",
     # Productivité & infra
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
     "scaleway": "scaleway.com", "resend": "resend.com",
@@ -616,6 +617,13 @@ _REGISTRY_LIST = [
            CredentialField("project_id", "Project ID Scaleway", secret=False, reveal=True),
            CredentialField("region", "Région TEM (déf. fr-par)", secret=False, reveal=True),
        )),
+    # lusha : recherche + reveal (emails/téléphones) de contacts, byo-only (pas
+    # de clé plateforme). Auth = header `api_key` plat (pas OAuth), 1 seul
+    # endpoint câblé pour l'instant (search-and-enrich).
+    _c("lusha", ["lusha"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
+       label="Lusha", help="recherche + reveal de contacts (emails/téléphones)",
+       publisher="Lusha", href="https://www.lusha.com"),
 
     # --- byo_user à credential multi-champs (hors resolve_api_key) -----------
     # silae : paie FR. Auth OAuth2 client-credentials (Azure AD B2C) = 3 secrets
