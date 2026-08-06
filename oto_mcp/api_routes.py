@@ -43,7 +43,7 @@ from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
 from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, openapi, org_store, ownership, token_scopes, tool_registry
 from .capabilities import _rest_adapter as _cap_rest_adapter
 from .capabilities import registry as _cap_registry
-from . import auth_hooks
+from . import auth_hooks, guide_store
 from .tool_visibility import (
     PROTECTED_TOOLS, is_default_hidden, is_testable, namespace_of)
 
@@ -623,6 +623,26 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         if not entry:
             return _json_error(request, 404, "unknown_entry")
         return _json(request, entry)
+
+    async def guides_library_public(request: Request) -> JSONResponse:
+        """Catalogue PUBLIC des guides PLATEFORME — pas d'auth.
+
+        Même rôle que `doctrines_library_public` : alimenter la vitrine (snapshot
+        build-time du site) et rendre lisible par un humain ce que l'agent charge
+        via `oto_guide`. Deny-by-default par CONSTRUCTION plutôt que par filtre :
+        `list_guides_for()` sans `sub` ni `org_id` ne rend que le scope plateforme
+        — un guide d'org ou d'user ne peut pas fuir ici, même par erreur d'appel.
+        """
+        return _json(request, {"guides": guide_store.list_guides_for()})
+
+    async def guides_library_public_get(request: Request) -> JSONResponse:
+        """Un guide PLATEFORME complet (markdown) par slug — vitrine, pas d'auth.
+        `scope='platform'` est EXPLICITE : sans lui, `read_guide_scoped` cherche
+        aussi org puis user, ce qu'une route anonyme ne doit jamais faire."""
+        g = guide_store.read_guide_scoped(request.path_params["slug"], scope="platform")
+        if not g:
+            return _json_error(request, 404, "unknown_guide")
+        return _json(request, g)
 
     async def invite_preview(request: Request) -> JSONResponse:
         """Aperçu PUBLIC d'une invitation (pas d'auth — le token est le secret).
@@ -1771,6 +1791,10 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/doctrines/library", options_handler, methods=["OPTIONS"]),
         Route("/api/doctrines/library/{slug}", doctrines_library_public_get, methods=["GET"]),
         Route("/api/doctrines/library/{slug}", options_handler, methods=["OPTIONS"]),
+        Route("/api/guides/library", guides_library_public, methods=["GET"]),
+        Route("/api/guides/library", options_handler, methods=["OPTIONS"]),
+        Route("/api/guides/library/{slug}", guides_library_public_get, methods=["GET"]),
+        Route("/api/guides/library/{slug}", options_handler, methods=["OPTIONS"]),
         Route("/api/invitations/code/{code}", invite_preview_by_code, methods=["GET"]),
         Route("/api/invitations/code/{code}", options_handler, methods=["OPTIONS"]),
         Route("/api/invitations/{token}", invite_preview, methods=["GET"]),
