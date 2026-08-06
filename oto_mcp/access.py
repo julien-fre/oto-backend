@@ -797,9 +797,10 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     def _member_fetch(msub: str, morg: int, mprov: str) -> Optional[tuple]:
         """Sonde MEMBRE du fetch : sélection du compte en multi-compte (« 2 Zoho ») =
         account explicite (param) > axe d'appel `_account=` (#108) > épinglage projet
-        > compte unique auto > McpError — jamais de repli muet vers un autre compte/
-        l'org/la plateforme (anti-usurpation). '' = mono-compte legacy. Un compte
-        explicite/épinglé introuvable LÈVE (on n'agit pas sous une autre identité)."""
+        > compte unique auto > défaut posé (`oto_identity(op='set')`) > McpError —
+        jamais de repli muet vers un autre compte/l'org/la plateforme (anti-usurpation).
+        '' = mono-compte legacy. Un compte explicite/épinglé introuvable LÈVE (on
+        n'agit pas sous une autre identité)."""
         if not _is_multi_account(mprov):
             key = db.get_member_api_key(msub, morg, mprov)
             return (key, "") if key else None
@@ -813,12 +814,23 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
             elif len(accts) == 0:
                 eff = ""
             else:
-                raise McpError(ErrorData(
-                    code=INVALID_PARAMS,
-                    message=(
-                        f"Plusieurs comptes `{mprov}` configurés dans cette org — "
-                        f"précise lequel (oto_identity(op='list') pour les lister)."
-                    )))
+                # Plusieurs comptes : le défaut posé via `oto_identity(op='set')`
+                # (meta.is_default, `connector_identities._keyed_select`) tranche —
+                # jusqu'ici il était écrit au coffre mais jamais relu ici, donc un
+                # défaut posé côté dashboard/agent n'avait aucun effet sur la
+                # résolution : chaque appel non épinglé restait en erreur.
+                defaults = [a for a in accts if (a.get("meta") or {}).get("is_default")]
+                if len(defaults) == 1:
+                    eff = defaults[0]["account"]
+                else:
+                    raise McpError(ErrorData(
+                        code=INVALID_PARAMS,
+                        message=(
+                            f"Plusieurs comptes `{mprov}` configurés dans cette org, "
+                            f"aucun (ou plusieurs) marqué par défaut — précise lequel "
+                            f"(oto_identity(op='list') pour les lister, "
+                            f"oto_identity(op='set') pour en fixer un par défaut)."
+                        )))
         key = db.get_member_api_key(msub, morg, mprov, eff)
         if eff and not key:
             raise McpError(ErrorData(
