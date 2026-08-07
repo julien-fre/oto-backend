@@ -53,6 +53,20 @@ Surfaces :
   `tools/foncier.py` (`foncier_*_app`).
 - REST `/api/datastore/*` — pour le CLI `oto data` + UI dashboard.
 
+> **Trier ET filtrer sur les dates système (05/08).** `order_by` acceptait déjà
+> `_created_at`/`_updated_at`/`_id` ; le WHERE, lui, ne connaissait que
+> `data ->> <champ>` — donc un filtre « modifiée depuis le 1er » cherchait la clé
+> `_updated_at` DANS le JSON, ne la trouvait jamais et rendait **zéro ligne sans
+> erreur**. `_ds_filter_clauses` route désormais ces trois noms vers leur vraie
+> colonne (`_DS_META_TS_COLS`/`_DS_META_TEXT_COLS`), sur les deux faces (dashboard
+> `filters=[…]`, agent `data_rows(filter={"_updated_at": {"gte": "2026-08-01"}})`).
+> Deux règles à connaître : une valeur **date seule** désigne la **journée entière**
+> (`lte "2026-08-05"` inclut le 5 — un `<=` nu comparerait à minuit et effacerait la
+> journée saisie), et les ops sans objet sur une colonne NOT NULL (`empty`,
+> `not_empty`, `contains`) sont **refusées** (400 nommant les ops valides) plutôt que
+> servies vides. Une valeur de date malformée lève aussi côté Python : le cast SQL
+> aurait rendu un 500 opaque au lieu d'un `invalid_filters`.
+
 **Journal de travail : les deux surfaces, une seule table (2026-07-28).** Un geste fait
 au cockpit (dashboard, REST) était journalisé au seul grain ROUTE (`RestCallLogger`,
 `tool='PATCH /api/datastore/…'`) : on voyait qu'une écriture avait eu lieu, jamais
