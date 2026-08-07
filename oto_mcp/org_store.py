@@ -87,6 +87,20 @@ def create_org(name: str, created_by: Optional[str] = None) -> int:
         return int(row["id"])
 
 
+def org_front(org_id: Optional[int]) -> tuple[Optional[str], Optional[str]]:
+    """Front qui héberge l'org : `(base_url, brand)`, `(None, None)` pour oto (le
+    défaut) et pour une org inconnue/absente. Lecture ciblée plutôt qu'un élargissement
+    de `get_org` : c'est de la config de déploiement, elle n'a rien à faire dans la
+    fiche d'org rendue aux appelants. Cf. les colonnes `orgs.front_*` (db/_init)."""
+    if not org_id:
+        return (None, None)
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT front_base_url, front_brand FROM orgs WHERE id = %s", (org_id,)
+        ).fetchone()
+    return (row["front_base_url"], row["front_brand"]) if row else (None, None)
+
+
 def get_org(org_id: int) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(

@@ -88,13 +88,74 @@ def test_emit_invitation_sends_email(monkeypatch):
 
     monkeypatch.setattr(org_store, "create_invitation",
                         lambda *a, **k: (1, "tok", "CODE1234"))
+    monkeypatch.setattr(org_store, "org_front", lambda org_id: (None, None))
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
     sent = {}
     monkeypatch.setattr(email, "send_invite_email",
-                        lambda to, name, url, inviter: sent.update(to=to, name=name) or True)
+                        lambda to, name, url, inviter, **kw: sent.update(to=to, name=name) or True)
     out = oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=35, email="Invitee@Org.Test",
                              send_email=True, source="org_admin", role="org_member",
                              target_name="movinmotion")
     assert out["emailed"] is True
     assert sent["to"] == "invitee@org.test" and sent["name"] == "movinmotion"
     assert out["code"] == "CODE1234" and "/invitation/CODE1234" in out["invite_url"]
+
+
+# --- Front qui héberge l'org (colonnes `orgs.front_*`) ----------------------
+
+def test_invite_base_defaults_to_oto(monkeypatch):
+    monkeypatch.delenv("OTO_INVITE_BASE_URL", raising=False)
+    assert oi._invite_base() == "https://oto.cx"
+    assert oi._invite_base(None) == "https://oto.cx"
+
+
+def test_invite_base_uses_org_front():
+    assert oi._invite_base("https://app.tulina.ai/") == "https://app.tulina.ai"
+
+
+def test_nominal_url_skips_magic_link_for_third_party_front(monkeypatch):
+    """Régression : l'OTT est minté sur NOTRE Logto (`LOGTO_ENDPOINT`, un seul global)
+    et n'authentifie pas contre l'émetteur dédié d'un front tiers (Tulina :
+    `auth.tulina.ai`). Une org sous front tiers ne doit JAMAIS produire de magic-link,
+    seulement le lien nu — sinon échec de connexion silencieux pour l'invité."""
+    def _boom(*a, **k):
+        raise AssertionError("magic_url ne doit pas être appelé sous un front tiers")
+    monkeypatch.setattr(oi.oauth_facade, "magic_url", _boom)
+    url = oi._nominal_url("CODE1234", "invitee@org.test", front_base="https://app.tulina.ai")
+    assert url == "https://app.tulina.ai/invitation/CODE1234"
+
+
+def test_nominal_url_keeps_magic_link_for_oto(monkeypatch):
+    monkeypatch.setattr(oi.oauth_facade, "magic_url", lambda url, email: f"{url}?otl=stub")
+    assert oi._nominal_url("CODE1234", "invitee@org.test").endswith("?otl=stub")
+
+
+def test_emit_invitation_derives_front_from_org(monkeypatch):
+    """Le lien ET la marque du mail viennent de l'org cible — pas l'un sans l'autre,
+    et sans que l'appelant ne déclare quoi que ce soit (les 3 niveaux de la cascade
+    en héritent)."""
+    from oto_mcp import db, email
+    from oto_mcp.capabilities._types import ResolvedCtx
+
+    monkeypatch.setattr(org_store, "create_invitation",
+                        lambda *a, **k: (1, "tok", "CODE1234"))
+    monkeypatch.setattr(org_store, "org_front",
+                        lambda org_id: ("https://app.tulina.ai", "tulina"))
+    monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
+    sent = {}
+    monkeypatch.setattr(email, "send_invite_email",
+                        lambda to, name, url, inviter, **kw: sent.update(url=url, **kw) or True)
+    out = oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=178, email="invitee@org.test",
+                             send_email=True, source="org_admin", role="org_member",
+                             target_name="partoo")
+    assert out["invite_url"] == "https://app.tulina.ai/invitation/CODE1234"
+    assert sent["url"] == "https://app.tulina.ai/invitation/CODE1234"  # pas d'OTT
+    assert sent["brand"] == "tulina"
+
+
+def test_invite_create_input_carries_no_front_field():
+    """Le front est DÉRIVÉ de l'org, jamais déclaré par le client : aucun champ de
+    ce genre ne doit apparaître au contrat (une invitation ne peut pas prétendre
+    venir d'un front auquel l'org n'appartient pas)."""
+    fields = set(oi.InviteCreateInput.model_fields)
+    assert fields == {"org_id", "email", "role", "send_email"}

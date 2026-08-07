@@ -23,18 +23,30 @@ _ID = {"id": "org_id"}
 _INVITE_TTL_DAYS = int(os.environ.get("OTO_MCP_INVITE_TTL_DAYS", "7"))
 
 
-def _invite_base() -> str:
+def _invite_base(front_base: str | None = None) -> str:
     """Base PUBLIQUE des liens d'invitation partagés (court, marketing).
-    `oto.cx/invitation/...` redirige vers le dashboard (règle Caddy)."""
-    return os.environ.get("OTO_INVITE_BASE_URL", "https://oto.cx").rstrip("/")
+    `front_base` = le front qui héberge l'org (`orgs.front_base_url`, ex. Tulina) ;
+    absent = oto, où `oto.cx/invitation/...` redirige vers le dashboard (règle Caddy)."""
+    return (front_base or os.environ.get("OTO_INVITE_BASE_URL", "https://oto.cx")).rstrip("/")
 
 
-def _nominal_url(code: str, email_addr: str | None = None) -> str:
+def _nominal_url(code: str, email_addr: str | None = None, *,
+                 front_base: str | None = None) -> str:
     """Lien d'une invitation nominative : `/invitation/<code>`. Augmenté d'un
     magic-link Logto (OTT) quand on connaît l'email invité → connexion sans saisie
-    de code. Sans email = lien nu, partageable à la main."""
-    url = f"{_invite_base()}/invitation/{code}"
-    return oauth_facade.magic_url(url, email_addr.strip()) if email_addr else url
+    de code. Sans email = lien nu, partageable à la main.
+
+    ⚠️ L'OTT est minté sur NOTRE Logto (`LOGTO_ENDPOINT`, un seul global) et
+    n'authentifie que contre lui. Une org sous front tiers a son propre émetteur
+    (Tulina : `auth.tulina.ai` depuis le 2026-08-03) — un OTT oto y serait inerte,
+    soit un échec de connexion silencieux pour l'invité. Donc pas de magic-link dès
+    que l'org porte un `front_base_url` : le code nu suffit (modèle bearer).
+    Le jour de l'étage tenant (ADR 0052), la condition devient « l'émetteur du tenant
+    est le nôtre » — dont la présence d'un front tiers n'est ici qu'un proxy."""
+    url = f"{_invite_base(front_base)}/invitation/{code}"
+    if email_addr and not front_base:
+        return oauth_facade.magic_url(url, email_addr.strip())
+    return url
 
 
 def _norm_email(raw: str | None, *, required: bool) -> str | None:
@@ -79,17 +91,24 @@ def emit_invitation(ctx: ResolvedCtx, *, org_id: int | None, email: str | None,
     """Cœur partagé d'émission d'une invitation, commun aux 3 niveaux de la cascade
     (plateforme/org/équipe). Crée la ligne (scope dérivé des cibles), forge le lien
     `/invitation/<code>` et, si demandé, envoie le mail (`target_name` = ce qu'on
-    rejoint, None = plateforme → « rejoindre oto »)."""
+    rejoint, None = plateforme → « rejoindre oto »).
+
+    Le front destinataire (base du lien, marque du mail) est **dérivé de l'org cible**
+    (`orgs.front_*`), jamais déclaré par l'appelant : une invitation ne peut pas
+    prétendre venir d'un front auquel l'org n'appartient pas, et les 3 niveaux en
+    héritent sans rien porter. Sans org (invitation plateforme pure) = oto."""
     email_addr = _norm_email(email, required=send_email)
+    front_base, brand = org_store.org_front(org_id)
     _, _token, code = org_store.create_invitation(
         org_id, email_addr, role, invited_by=ctx.sub, ttl_days=_INVITE_TTL_DAYS,
         source=source, group_id=group_id, group_role=group_role)
-    share_url = _nominal_url(code)
+    share_url = _nominal_url(code, front_base=front_base)
     emailed = False
     if send_email and email_addr:
         inviter = (db.get_user(ctx.sub) or {}).get("email")
         emailed = email_mod.send_invite_email(
-            email_addr, target_name, _nominal_url(code, email_addr), inviter)
+            email_addr, target_name, _nominal_url(code, email_addr, front_base=front_base),
+            inviter, brand=brand or "oto")
     return {"ok": True, "email": email_addr, "role": group_role or role, "code": code,
             "invite_url": share_url, "emailed": emailed}
 

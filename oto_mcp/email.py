@@ -139,16 +139,22 @@ _FAINT = 'color:#7a6c50;font-size:13px'
 
 
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
-                      inviter: str | None = None) -> bool:
-    """Email d'invitation à rejoindre oto. True si envoyé, False sinon.
+                      inviter: str | None = None, *, brand: str = "oto") -> bool:
+    """Email d'invitation à rejoindre `brand`. True si envoyé, False sinon.
 
     `target_name` = ce qu'on rejoint (nom d'org OU d'équipe) ; None = invitation
-    plateforme (onboarding pur → « rejoindre oto »). Voix funnel : FR, vouvoiement +
-    minuscules (alignée sur le dashboard)."""
+    plateforme (onboarding pur → « rejoindre {brand} »). `brand` = le produit sous
+    lequel l'org vit (`orgs.front_brand`, défaut oto) — la marque du TEXTE seulement :
+    l'expéditeur reste le nôtre, un domaine d'envoi tiers supposerait sa vérification
+    chez Scaleway TEM. Voix funnel : FR, vouvoiement + minuscules (alignée sur le
+    dashboard)."""
     lead = f"{_esc(inviter)} vous invite" if inviter else "vous êtes invité·e"
-    where = f"<strong>{_esc(target_name)}</strong> sur oto" if target_name else "oto"
-    subject = (f"invitation à rejoindre {target_name} sur oto" if target_name
-               else "invitation à rejoindre oto")
+    # `brand` échappé pour le corps HTML, brut pour le sujet (qui n'est pas du HTML —
+    # même traitement que `target_name` juste en dessous ; `_send` neutralise les CRLF).
+    where = (f"<strong>{_esc(target_name)}</strong> sur {_esc(brand)}" if target_name
+             else _esc(brand))
+    subject = (f"invitation à rejoindre {target_name} sur {brand}" if target_name
+               else f"invitation à rejoindre {brand}")
     html = (
         f'<div style="{_WRAP}">'
         f'<p>{lead} à rejoindre {where}.</p>'

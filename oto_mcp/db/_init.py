@@ -581,6 +581,20 @@ def _init_db_once() -> None:
         # miroir d'enforcement MFA au login (aucune autorité). Voir docs/auth-logto.md.
         conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS require_mfa BOOLEAN NOT NULL DEFAULT FALSE")
         conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logto_org_id TEXT")
+        # Front qui héberge l'org — oto-backend sert PLUSIEURS produits depuis une
+        # instance (oto, Tulina). NULL = oto (le défaut, l'écrasante majorité) ; posé
+        # = l'org vit sous un front tiers, dont les liens sortants et la marque des
+        # mails doivent porter SES couleurs, pas les nôtres :
+        #   front_base_url = base des liens publics (https://app.tulina.ai)
+        #   front_brand    = marque écrite dans les mails ("tulina")
+        # Dérivé de l'org, JAMAIS déclaré par l'appelant : une invitation ne peut pas
+        # prétendre venir d'un front auquel l'org n'appartient pas.
+        # ⚠️ Provisoire assumé : cette information appartient au TENANT (ADR 0052),
+        # pas à chaque org. Tenable tant que les orgs sous front tiers se comptent sur
+        # les doigts ; à la migration, ces deux colonnes remontent d'un cran et les
+        # lignes se vident — le code qui les lit ne bouge pas.
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS front_base_url TEXT")
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS front_brand TEXT")
         # Identité par org (ADR 0015) : visibilité scopée par (sub, org_id) ; org_id=0
         # = profil perso/global. Migration ONE-SHOT (gardée sur l'absence d'org_id) :
         # ajoute la colonne (existants → 0 = perso), re-keye les PK, puis BACKFILL =
