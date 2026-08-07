@@ -325,6 +325,13 @@ revalidés à chaque appel, jamais de repli silencieux).
 > **`tool_calls.sentry_event_id`** relie la ligne d'audit à son traceback (posé par
 > `SentryToolErrorMiddleware`) — fin du « chercher à la main par user.id ».
 > ⚠️ Ces colonnes dépendent de **l'ordre des middlewares** (cf. §Conventions).
+> ⚠️ **`client_id` n'identifie PAS le front d'où vient l'utilisateur** : c'est le client
+> OAuth du jeton, et un même id couvre des orgs de produits différents (07/08 : le même
+> `client_id` sur des orgs Tulina ET sur `movinmotion`/`Mūcho`/`Audiens`, pendant que
+> d'autres appels des mêmes orgs sortent avec `client_id` NULL). Le backend ne stocke
+> **nulle part** par quel front un compte est arrivé — d'où les colonnes `orgs.front_*`
+> (§Email). Le piège est qu'un échantillon de 2 lignes semble confirmer le contraire :
+> énumérer (`GROUP BY client_id`) avant d'en tirer une population.
 
 ⚠️ **Ne trace QUE les invocations d'outils MCP** —
 pas la connexion du connecteur, pas le `tools/list`, pas les appels REST/dashboard.
@@ -405,6 +412,20 @@ par Scaleway) + `resend` (BYOK). `email_send` = spine qui route
 `sender→connecteur→transport` (`EMAIL_CONNECTOR_TRANSPORT`) ; config
 `orgs.email_settings` par connecteur (senders + quiet hours) ; envoi différé
 (`scheduler.py`, quiet hours 20h–8h défaut). **Détail : `docs/email.md`**.
+
+> **Front qui héberge l'org (invitations, 07/08).** oto-backend sert plusieurs produits
+> depuis une instance (oto, Tulina) : deux colonnes `orgs.front_base_url` / `front_brand`
+> (NULL = oto) portent le front d'une org, lues par `emit_invitation` — base du lien
+> `/invitation/<code>`, marque du texte du mail, **et pas de magic-link** dès qu'un front
+> tiers est posé (l'OTT est minté sur NOTRE Logto : il serait inerte sur l'émetteur dédié
+> du tiers, soit un échec de connexion silencieux). **Dérivé de l'org CIBLE, jamais déclaré
+> par l'appelant** — sinon c'est un champ d'API publique (REST + surface MCP) qu'il faudra
+> retirer à l'arrivée de l'étage tenant (ADR 0052, où ces colonnes remontent d'un cran), et
+> une invitation pourrait prétendre venir d'un front auquel l'org n'appartient pas. Les 3
+> niveaux de la cascade en héritent sans rien porter. La marque s'arrête au TEXTE :
+> l'expéditeur reste `_MAIL_FROM`, un domaine d'envoi tiers supposerait sa vérification TEM.
+> ⚠️ Aucune surface n'édite ces colonnes (UPDATE à la main) : une nouvelle org sous front
+> tiers naît donc sous marque oto tant que personne ne la renseigne.
 
 ## Visibility per-user
 
@@ -805,6 +826,15 @@ with psycopg.connect(os.environ[\"DATABASE_URL\"]) as c:
 Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-backend isolé + Caddy + chiffrement du coffre actif, sert `mcp.oto.ninja`. **DB** = PostgreSQL managé partagé (`otomata-main`, DB `oto_mcp`). Le coffre `connector_credentials` est chiffré au repos (AES-256-GCM, master key en Secret Manager fetchée au boot, 0 plaintext). Object Storage S3 pour avatars/logos (`media_store.py`).
 
 > **Détails machine = repo privé `otomata-tech/infra`** (IPs, IDs de secrets/zone/instance, systemd, runbook deploy, env de process) — pas ici (ce repo est public). Voir `infra/docs/oto-platform-state.md` + docs ciblés (`scaleway-managed-db.md`, `caddy.md`, `cloudflare.md`, `deploy-keys.md`). Toute intervention prod = skill `prod-init`.
+
+> ⚠️ **PROD et PREPROD partagent la MÊME base** (constaté 07/08 : DSN **identiques** — même
+> hôte, même DB — entre `/opt/oto-mcp/.env` et `/opt/oto-mcp-canari/.env`). Le « DB découplée »
+> du bloc CUTOVER plus haut ne décrit **pas** l'état réel. Deux conséquences pratiques : une
+> donnée écrite depuis la preprod est **la donnée de prod** (pas un bac à sable) ; et toute
+> config portée par une COLONNE ne peut avoir qu'**une** valeur pour les deux environnements
+> — ce qui exclut de distinguer prod/preprod par la base (vécu sur `orgs.front_base_url`, où
+> la preprod émet donc des liens vers le front de prod). Vérifier avant de raisonner dessus :
+> comparer les DSN par hash, jamais en les lisant en clair.
 
 ## Docs
 
