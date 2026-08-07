@@ -62,6 +62,12 @@ class Flow:
     # (`callback_url`), jamais écrite en dur : elle dépend de l'environnement, et une
     # URL de prose dans une doc ment dès qu'on la lit depuis la preprod.
     callback_path: str = ""
+    # « Une app OAuth est-elle déjà à disposition de cet utilisateur ? » — la sienne,
+    # celle de son org, ou celle de l'ÉDITEUR (oto). Sans cette réponse, le front ne
+    # peut que promettre le pire cas : il demandait « pose d'abord les identifiants de
+    # l'application », y compris à qui n'a plus rien à poser. `None` = le connecteur
+    # ne déclare pas la question, le front ne promet alors rien.
+    app_ready: Optional[Callable[[str], bool]] = None
 
 
 _FLOWS: dict[str, Flow] = {}
@@ -69,7 +75,8 @@ _FLOWS: dict[str, Flow] = {}
 
 def declare(connector: str, *, start: Callable[..., dict],
             params: tuple[FlowParam, ...] = (), label: str = "Connecter",
-            callback_path: str = "") -> None:
+            callback_path: str = "",
+            app_ready: Optional[Callable[[str], bool]] = None) -> None:
     """Déclare le flux de connexion de ce connecteur. Appelé au niveau MODULE (comme
     `status_hints.register_state`) : c'est une déclaration pure, elle doit être lisible
     dès l'import, sans attendre le montage FastMCP."""
@@ -81,7 +88,7 @@ def declare(connector: str, *, start: Callable[..., dict],
                 f"{connector}.{p.name} : paramètre requis sans options ni défaut.")
     _FLOWS[connector] = Flow(connector=connector, start=start,
                              params=tuple(params), label=label,
-                             callback_path=callback_path)
+                             callback_path=callback_path, app_ready=app_ready)
 
 
 def supports(connector: str) -> bool:
@@ -126,3 +133,22 @@ def callback_url(connector: str) -> Optional[str]:
         return None
     from . import oauth_flow
     return oauth_flow.redirect_uri(f.callback_path)
+
+
+def app_ready(connector: str, sub: str) -> Optional[bool]:
+    """Cet utilisateur a-t-il déjà une app OAuth à disposition pour ce connecteur ?
+
+    `None` = question non déclarée (ou hors service) : le front doit alors rester
+    muet plutôt que d'affirmer. Comme `callback_url`, ça n'entre QUE dans la
+    projection authentifiée — la réponse dépend de qui demande.
+
+    Fail-open volontaire : une panne de lecture ne doit pas transformer un écran de
+    connexion en écran d'erreur ; au pire l'utilisateur voit la consigne longue."""
+    f = _FLOWS.get(connector)
+    if not f or f.app_ready is None or not sub:
+        return None
+    try:
+        return bool(f.app_ready(sub))
+    except Exception:  # noqa: BLE001
+        logger.debug("app_ready failed for %s", connector, exc_info=True)
+        return None

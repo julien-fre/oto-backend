@@ -68,6 +68,13 @@ SCOPES = {
 
 CONNECTORS = tuple(SCOPES)
 
+# Les champs que le consentement PRODUIT (cf. `persist`) — le reste des champs requis
+# d'un connecteur doit être saisi à la main. C'est ce qui sépare « pas encore autorisé »
+# de « l'autorisation ne suffira pas » : Analytics exige un `org_id` qu'aucun flux OAuth
+# ne peut deviner. Gardé ici, à côté de `persist`, pour que les deux ne divergent pas
+# (tripwire `test_editor_app.py`).
+PERSISTED_FIELDS = ("client_id", "client_secret", "refresh_token", "data_center")
+
 
 class ZohoOAuthError(ValueError):
     """Échec d'acquisition — message SANS secret (cf. `zoho.auth`, incident #284)."""

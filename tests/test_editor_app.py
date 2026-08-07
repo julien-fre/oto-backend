@@ -118,3 +118,34 @@ def test_set_editor_app_requires_region():
     with pytest.raises(ValueError):
         credentials_store.set_editor_app(
             "zoho", "", {"client_id": "x", "client_secret": "y"})
+
+
+# --- ce que le consentement produit, et ce qu'il ne produira jamais ---------------
+
+def test_persisted_fields_match_what_persist_writes(monkeypatch):
+    """Tripwire : `PERSISTED_FIELDS` sert à décider quels champs requis restent à la
+    charge de l'utilisateur. S'il dérive de ce que `persist` écrit vraiment, un champ
+    réapparaît comme « manquant » alors qu'il est rempli — ou l'inverse, plus grave."""
+    ecrit = {}
+    monkeypatch.setattr(credentials_store, "secret_from_input",
+                        lambda c, k, fields: ecrit.update(fields) or "packed")
+    monkeypatch.setattr(credentials_store, "member_id", lambda o, s: f"{o}:{s}")
+    monkeypatch.setattr(credentials_store, "set_credential", lambda *a, **k: None)
+    zoho_oauth.persist("sub-x", 1, "zoho", "eu", {"refresh_token": "rt"},
+                       app={"client_id": "cid", "client_secret": "sec"})
+    assert set(ecrit) == set(zoho_oauth.PERSISTED_FIELDS)
+
+
+def test_analytics_org_id_is_reported_as_missing():
+    """Le cas qui motive tout : Analytics exige un `org_id` que l'OAuth ne produit pas.
+    Après consentement, le credential est donc VALIDE mais inutilisable — et le dire
+    est la seule façon d'éviter un échec opaque au premier appel."""
+    from oto_mcp import status_hints
+    consenti = {"client_id": "c", "client_secret": "s", "refresh_token": "rt",
+                "data_center": "eu"}
+    st = status_hints.credential_state("zohoanalytics", consenti)
+    assert st is not None and not st.complete
+    assert st.missing == ("org_id",)
+    assert "org id" in (st.next_action or "").lower()
+    # Le même credential sur le CRM, lui, est complet : rien d'autre n'est requis.
+    assert status_hints.credential_state("zoho", consenti).complete

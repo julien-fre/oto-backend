@@ -147,10 +147,17 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
         # client doit enregistrer chez son fournisseur, et une prose codée en dur ment
         # dès qu'on la lit depuis la preprod (vécu : un `redirect_uri_mismatch`
         # incompréhensible côté client).
+        # `app_ready` suit la même règle (réponse propre au DEMANDEUR, donc jamais au
+        # catalogue public) : il dit au front s'il reste une app à poser avant de
+        # pouvoir consentir. Sans lui, l'écran de connexion promettait le pire cas à
+        # tout le monde — « pose d'abord les identifiants de l'application », y compris
+        # à qui n'a plus rien à poser depuis qu'oto publie la sienne.
         if inp.verbose and base.get("connect"):
             from .. import connector_flow
-            base = {**base, "connect": {**base["connect"],
-                                        "callback_url": connector_flow.callback_url(c["name"])}}
+            base = {**base, "connect": {
+                **base["connect"],
+                "callback_url": connector_flow.callback_url(c["name"]),
+                "app_ready": connector_flow.app_ready(c["name"], ctx.sub)}}
         # Couche 3 (option payante) sur la surface USER — sans ça le front ne peut pas
         # dire LAQUELLE des 3 conditions manque (le bandeau « État pour toi », ADR 0044) :
         # `mode==forbidden` conflate option/activation/RBAC. `option_ok=True` si aucune

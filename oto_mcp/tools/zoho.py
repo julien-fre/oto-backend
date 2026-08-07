@@ -15,7 +15,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_flow, connector_verify, status_hints
+from .. import (access, connector_flow, connector_verify, connectors, status_hints,
+                zoho_oauth)
 
 # Modules CRM standard sondés pour prouver un scope de LECTURE réel (au moins un
 # `ZohoCRM.modules.<m>.READ`). On passe au 1er lisible ; tous en scope-mismatch =
@@ -56,22 +57,45 @@ def _resolve_dc_domains(data_center: Optional[str]) -> tuple[str, str]:
     return _DC_DOMAINS[dc]
 
 
-def _zoho_credential_state(fields: dict) -> status_hints.CredentialState:
-    """SOURCE UNIQUE de « ce credential Zoho est-il utilisable ? ».
+def _credential_state_for(connector: str):
+    """SOURCE UNIQUE de « ce credential Zoho est-il utilisable ? », par connecteur.
 
     Connexion en DEUX temps : on pose l'app (client_id + client_secret), puis on
     consent — et c'est le consentement qui produit le refresh_token. L'état
     intermédiaire est donc NORMAL, pas une panne. Un seul libellé, rendu tel quel
-    par toutes les surfaces (verdict de la fiche, sonde « tester la connexion »)."""
-    if fields.get("client_id") and fields.get("client_secret") \
-            and not fields.get("refresh_token"):
-        return status_hints.CredentialState(
-            complete=False, missing=("refresh_token",),
-            next_action=("app Zoho enregistrée, mais l'autorisation n'a pas encore "
-                         "été donnée — clique « Autoriser oto chez Zoho » sur la "
-                         "fiche du connecteur. (Ou colle un refresh token si tu "
-                         "utilises un self client.)"))
-    return status_hints.CredentialState(complete=True)
+    par toutes les surfaces (verdict de la fiche, sonde « tester la connexion »).
+
+    ⚠️ Le consentement ne remplit QUE ce qu'OAuth produit (`zoho_oauth.PERSISTED_FIELDS`) :
+    les AUTRES champs requis du connecteur restent à saisir. Analytics exige ainsi un
+    `org_id` qu'aucun flux ne peut deviner — c'est l'identifiant de l'org Analytics de
+    l'utilisateur. On dérive donc les manques du REGISTRE plutôt que de nommer un champ
+    en dur : coder `refresh_token` seul laissait passer pour « complet » un credential
+    Analytics inutilisable, et chaque nouveau champ requis rouvrirait le même trou.
+
+    Les champs produits par le flux sont EXCLUS de ce contrôle : ils ont déjà leur
+    diagnostic, plus précis (`_resolve_dc_domains` sur la région). Deux messages pour un
+    seul problème valent moins qu'un bon."""
+    def _state(fields: dict) -> status_hints.CredentialState:
+        if fields.get("client_id") and fields.get("client_secret") \
+                and not fields.get("refresh_token"):
+            return status_hints.CredentialState(
+                complete=False, missing=("refresh_token",),
+                next_action=("app Zoho enregistrée, mais l'autorisation n'a pas encore "
+                             "été donnée — clique « Autoriser oto chez Zoho » sur la "
+                             "fiche du connecteur. (Ou colle un refresh token si tu "
+                             "utilises un self client.)"))
+        con = connectors.REGISTRY.get(connector)
+        manquants = tuple(f for f in (con.secret_fields if con else ())
+                          if f.required and not fields.get(f.name)
+                          and f.name not in zoho_oauth.PERSISTED_FIELDS)
+        if manquants:
+            libelles = ", ".join(f"« {f.label} »" for f in manquants)
+            return status_hints.CredentialState(
+                complete=False, missing=tuple(f.name for f in manquants),
+                next_action=(f"il manque {libelles} sur la fiche du connecteur — "
+                             "l'autorisation Zoho ne peut pas le deviner."))
+        return status_hints.CredentialState(complete=True)
+    return _state
 
 
 def _zoho_error_hint(exc: Exception) -> str:
@@ -104,8 +128,14 @@ def _pending_action_for(connector: str):
                 connector, want="byo", sub=sub, emit_on_failure=False).fields
         except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
             return None
-        st = _zoho_credential_state(f)
-        return None if st.complete else "Autorise oto chez Zoho"
+        st = _credential_state_for(connector)(f)
+        # Le libellé du CTA suit l'étape qui manque : proposer « Autorise oto chez
+        # Zoho » à qui a déjà consenti mais à qui il manque un champ enverrait
+        # refaire le geste qui vient de réussir.
+        if st.complete:
+            return None
+        return ("Autorise oto chez Zoho" if "refresh_token" in (st.missing or ())
+                else st.next_action)
     return _hook
 
 
@@ -120,7 +150,7 @@ def _start_flow(ctx, connector: str, values: dict) -> dict:
 
 for _c in ("zoho", "zohodesk", "zohoanalytics"):
     status_hints.register(_c, _pending_action_for(_c))
-    status_hints.register_state(_c, _zoho_credential_state)
+    status_hints.register_state(_c, _credential_state_for(_c))
     # Le flux de consentement, déclaré comme le reste : le front en dérive un select de
     # région + un bouton, sans savoir que « zoho » existe. Les régions vivent ICI et
     # nulle part ailleurs — elles étaient recopiées jusque dans un libellé de registre
@@ -130,6 +160,10 @@ for _c in ("zoho", "zohodesk", "zohoanalytics"):
         start=lambda ctx, values, _c=_c: _start_flow(ctx, _c, values),
         label="Autoriser oto chez Zoho",
         callback_path="/api/zoho/oauth/callback",
+        # Sans région : « une app existe quelque part » (la sienne, celle de son org,
+        # ou celle d'oto pour au moins une région). La région n'est choisie qu'au clic,
+        # donc la promesse affichée avant le clic ne peut pas en dépendre.
+        app_ready=lambda sub, _c=_c: zoho_oauth.has_app(_c, sub),
         params=(connector_flow.FlowParam(
             name="data_center", label="Région de ton compte Zoho", default="eu",
             help="l'app OAuth et le jeton sont liés à leur data center",
@@ -220,7 +254,7 @@ def register(mcp: FastMCP) -> None:
         # été donné (pas de refresh_token). Partir quand même produisait un échec OAuth
         # opaque au premier appel ; on rend l'ÉTAPE MANQUANTE, avec le libellé unique de
         # `_zoho_credential_state` — le même que celui de la fiche et de la sonde.
-        state = _zoho_credential_state(creds)
+        state = _credential_state_for("zoho")(creds)
         if not state.complete:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=state.next_action))
         api_domain, accounts_url = _resolve_dc_domains(creds.get("data_center"))
