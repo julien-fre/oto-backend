@@ -94,6 +94,30 @@ def is_terminal_status(schema: Optional[dict], value: Any) -> bool:
     return value is not None and str(value) in terminal_states(schema)
 
 
+def queue_release_warning(schema: Optional[dict]) -> Optional[str]:
+    """Le namespace se donne un STATUT mais aucun état TERMINAL : dit-le, sinon le
+    silence se paie en file de travail (signal #360).
+
+    L'auto-release du bail (`_release_if_terminal`) ne se déclenche que sur un état
+    terminal ; sans `lifecycle`, `terminal_states` est vide, donc l'écriture du
+    verdict ne libère RIEN et chaque ligne traitée reste réservée jusqu'à expiration
+    du bail. Un `role="status"` avec ses `options` ressemble pourtant à un cycle de
+    vie — c'est exactement la configuration où l'agent croit tenir la garantie qu'il
+    n'a pas. None = rien à signaler (pas de statut, ou terminaux dérivables)."""
+    sf = status_field(schema)
+    if not sf or terminal_states(schema):
+        return None
+    key = sf.get("key") or "status"
+    cause = ("aucun `lifecycle`" if not lifecycle_of(schema)
+             else "un `lifecycle` sans état terminal dérivable "
+                  "(tout état a une transition sortante)")
+    return (f"champ `{key}` (role=status) : {cause} → la file de travail ne libérera "
+            "AUCUN bail à l'écriture du verdict (les lignes traitées restent "
+            "réservées jusqu'à expiration). Déclare "
+            f"`lifecycle: {{states: [...], terminal: [...]}}` sur `{key}`, ou appelle "
+            "`data_release` après chaque verdict. Cf. guide `work-queue`.")
+
+
 # ── validation de la DÉFINITION du schéma ────────────────────────────────────
 
 def validate_schema_def(schema: Optional[dict]) -> list[str]:

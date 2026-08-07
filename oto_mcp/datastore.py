@@ -462,7 +462,13 @@ class DatastorePg:
             db.datastore_ensure_key_index(ns_id, new_key)
         else:
             db.datastore_drop_key_index(ns_id)
-        return {"namespace": namespace, "schema": schema}
+        out = {"namespace": namespace, "schema": schema}
+        # Un statut sans état terminal = file de travail qui ne libère rien : le dire
+        # ICI, à l'auteur du schéma, au moment où il le pose (les deux faces l'ont).
+        warning = dsv2.queue_release_warning(schema)
+        if warning:
+            out["warning"] = warning
+        return out
 
     def set_semantic(self, namespace: str, enabled: bool) -> dict:
         """Active/désactive la recherche SÉMANTIQUE des lignes du namespace (#67 V2.2,
@@ -764,11 +770,16 @@ class DatastorePg:
     # --- file de travail (ADR 0046 D) -----------------------------------------
 
     def claim_next(self, namespace: str, *, worker: str,
-                   filter: Optional[dict] = None, lease_s: int = 900) -> Optional[dict]:
+                   filter: Optional[dict] = None, lease_s: int = 900,
+                   warnings: Optional[list] = None) -> Optional[dict]:
         """Pick + claim atomique de la prochaine row claimable (bail NULL ou
         expiré), `FOR UPDATE SKIP LOCKED` — N workers drainent sans collision.
         `filter` = filtre exact `{col: val}` (ex. {"status": "nouveau"}). Renvoie
-        la row (avec `_claimed_by`/`_claimed_until`) ou None (file vide)."""
+        la row (avec `_claimed_by`/`_claimed_until`) ou None (file vide).
+
+        `warnings` = liste OUT (patron `trace`) où est déposé, le cas échéant, le
+        défaut de configuration qui rend l'auto-release inopérante — le worker qui
+        claim est celui que ça concerne, et il peut alors libérer explicitement."""
         worker = (worker or "").strip()
         if not worker:
             raise ValueError("worker requis (libellé stable rejoué sur release)")
@@ -776,6 +787,11 @@ class DatastorePg:
         filters = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
         row = db.datastore_claim_next(ns_id, worker=worker,
                                       lease_seconds=int(lease_s), filters=filters)
+        if row is not None and warnings is not None:
+            # ns_id déjà résolu : le schéma coûte une lecture de plus, pas un resolve.
+            w = dsv2.queue_release_warning(self._schema_of(ns_id))
+            if w:
+                warnings.append(w)
         return self._row_to_dict(row) if row else None
 
     def release_claim(self, namespace: str, row_id: str, *, worker: str) -> bool:

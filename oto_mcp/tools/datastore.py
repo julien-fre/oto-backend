@@ -294,7 +294,10 @@ def register(mcp: FastMCP) -> None:
         - lifecycle: on the `role:"status"` field, `lifecycle: {states:[…],
           transitions:{from:[to…]}, terminal?:[…]}` — unknown state or undeclared
           transition is refused; entering a terminal state auto-releases the row's
-          work-queue claim (cf. data_claim_next).
+          work-queue claim (cf. data_claim_next). ⚠️ A `role:"status"` field WITHOUT
+          a lifecycle has NO terminal state, so nothing is ever auto-released: a
+          table drained by workers needs the lifecycle (the answer carries a
+          `warning` when it is missing).
 
         SEMANTIC SEARCH (#67 V2.2 — opt-in per namespace): pass `semantic_search=true`
         to make this namespace's ROWS findable by MEANING via oto_search (not just exact
@@ -413,9 +416,10 @@ def register(mcp: FastMCP) -> None:
         """
         store = _acting_store()
         namespace = _ns(namespace)
+        warnings: list = []
         try:
             row = store.claim_next(namespace, worker=worker, filter=filter,
-                                   lease_s=lease_s)
+                                   lease_s=lease_s, warnings=warnings)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except NamespaceNotFound:
@@ -424,6 +428,7 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=f"namespace `{namespace}` partagé en lecture seule"))
         return {"namespace": namespace, "row": row,
+                **({"warning": warnings[0]} if warnings else {}),
                 **({} if row else {"hint": "plus rien à claim (file vide pour ce filtre, "
                                            "ou tout est sous bail actif)"})}
 
