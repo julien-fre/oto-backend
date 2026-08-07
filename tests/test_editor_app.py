@@ -140,7 +140,11 @@ def test_analytics_org_id_is_reported_as_missing():
     """Le cas qui motive tout : Analytics exige un `org_id` que l'OAuth ne produit pas.
     Après consentement, le credential est donc VALIDE mais inutilisable — et le dire
     est la seule façon d'éviter un échec opaque au premier appel."""
+    # Import EXPLICITE : les hooks d'état sont posés à l'import du module connecteur.
+    # Sans lui, le test ne passait que si un autre fichier de la suite l'avait importé
+    # avant — donc vert en suite complète, rouge en isolation.
     from oto_mcp import status_hints
+    import oto_mcp.tools.zoho  # noqa: F401 — enregistre les hooks des 3 connecteurs
     consenti = {"client_id": "c", "client_secret": "s", "refresh_token": "rt",
                 "data_center": "eu"}
     st = status_hints.credential_state("zohoanalytics", consenti)

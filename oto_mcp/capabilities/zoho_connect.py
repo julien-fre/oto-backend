@@ -87,6 +87,37 @@ class ZohoVerbInput(BaseModel):
     data_center: Optional[str] = None
 
 
+class AnalyticsOrgsInput(BaseModel):
+    pass
+
+
+def _analytics_orgs(ctx: ResolvedCtx, inp: AnalyticsOrgsInput) -> dict:  # noqa: ARG001
+    """Les organisations Analytics du compte connecté, pour les faire CHOISIR.
+
+    Zoho Analytics exige une organisation sur chaque appel, et un compte en voit
+    souvent plusieurs (workspaces partagés). Sans cette liste, il ne restait qu'à
+    demander un identifiant à onze chiffres — que personne ne connaît par cœur et
+    qu'il faut aller chercher dans l'interface Zoho. Ici on rend des NOMS.
+
+    Quand une seule organisation existe, elle a déjà été posée au consentement
+    (`zoho_oauth._derived_fields`) : cette surface ne sert donc que le cas ambigu,
+    et le confirme (`current` = celle qui est enregistrée)."""
+    try:
+        fields = access.resolve_credential(
+            "zohoanalytics", want="byo", sub=ctx.sub, emit_on_failure=False).fields or {}
+    except Exception:  # noqa: BLE001
+        fields = {}
+    if not fields.get("refresh_token"):
+        raise AuthzDenied(400, "zoho_analytics_not_connected",
+                          "connecte d'abord Zoho Analytics — la liste des "
+                          "organisations vient de ton compte.")
+    try:
+        orgs = zoho_oauth.analytics_orgs(fields)
+    except Exception as e:  # noqa: BLE001
+        raise AuthzDenied(502, "zoho_analytics_orgs_failed", str(e))
+    return {"orgs": orgs, "current": fields.get("org_id") or None}
+
+
 # Motif `platform.instructions` (ADR 0042) : UNE capacité op-aware pour le MCP +
 # des capacités par-verbe pour REST, mêmes handlers. Les faces REST sont
 # idiomatiques (un chemin = un verbe) et le MCP garde une surface consolidée
@@ -106,6 +137,20 @@ CAPABILITIES += [
             "de consentement à OUVRIR dans un navigateur — au retour, le refresh token "
             "est rangé au coffre. Prérequis : client_id + client_secret de l'app Zoho "
             "posés sur la carte du connecteur (ou partagés par l'org)."),
+    ),
+    Capability(
+        key="me.zoho_analytics_orgs",
+        handler=_analytics_orgs,
+        Input=AnalyticsOrgsInput,
+        authz=ORG_MEMBER,
+        mcp="zohoanalytics_orgs",
+        rest=RestBinding("GET", "/api/me/connectors/zohoanalytics/orgs"),
+        description=(
+            "Organisations Zoho Analytics visibles par ton compte (id, nom, rôle) + "
+            "celle actuellement enregistrée. Analytics exige une organisation sur "
+            "chaque appel et un compte en voit souvent plusieurs (workspaces "
+            "partagés) : c'est ici qu'on la choisit, sur des noms plutôt que sur un "
+            "identifiant."),
     ),
     # `me.zoho_connect.start` a été RETIRÉE : elle n'existait que pour porter la face
     # REST `/api/zoho/oauth/start`, désormais servie par le chemin fixe

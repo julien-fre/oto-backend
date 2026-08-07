@@ -37,11 +37,14 @@ Le transport OAuth (state signé, échange du code, URI de redirection) est dél
 """
 from __future__ import annotations
 
+import logging
 import urllib.parse
 from typing import Optional
 
 
 from . import access, credentials_store, oauth_flow, providers
+
+logger = logging.getLogger(__name__)
 
 _STATE_TTL = 600  # 10 min — le temps de lire un écran de consentement
 
@@ -54,6 +57,16 @@ _ACCOUNTS = {
     "au": "https://accounts.zoho.com.au",
     "jp": "https://accounts.zoho.jp",
     "ca": "https://accounts.zohocloud.ca",
+}
+
+# Domaine d'API Analytics par région — même découpage que `_ACCOUNTS`, autre hôte.
+_ANALYTICS_DOMAINS = {
+    "com": "https://analyticsapi.zoho.com",
+    "eu": "https://analyticsapi.zoho.eu",
+    "in": "https://analyticsapi.zoho.in",
+    "au": "https://analyticsapi.zoho.com.au",
+    "jp": "https://analyticsapi.zoho.jp",
+    "ca": "https://analyticsapi.zohocloud.ca",
 }
 
 # Scopes demandés PAR CONNECTEUR — c'est tout l'intérêt du mode server-based :
@@ -247,6 +260,45 @@ def exchange_code(code: str, data_center: str,
     return payload
 
 
+def analytics_orgs(fields: dict) -> list[dict]:
+    """Organisations Analytics visibles par ce credential (`org_id`, `name`, `role`).
+
+    Analytics est le seul des trois à exiger une organisation sur CHAQUE appel (le CRM
+    la déduit du jeton, Desk sait s'en passer en mono-org). Elle est donc à renseigner
+    — mais l'API sait la dire, ce qui évite d'envoyer l'utilisateur chercher un
+    identifiant à onze chiffres dans l'interface Zoho."""
+    from oto.tools.zohoanalytics.client import ZohoAnalyticsClient
+    dc = (fields.get("data_center") or "").strip().lower()
+    if dc not in _ACCOUNTS:
+        raise ZohoOAuthError(f"Data center Zoho non reconnu : {fields.get('data_center')!r}.")
+    return ZohoAnalyticsClient(
+        client_id=fields.get("client_id"), client_secret=fields.get("client_secret"),
+        refresh_token=fields.get("refresh_token"), org_id=None,
+        api_domain=_ANALYTICS_DOMAINS[dc], accounts_url=_ACCOUNTS[dc],
+    ).list_orgs()
+
+
+def _derived_fields(connector: str, fields: dict) -> dict:
+    """Ce que le consentement permet de DÉDUIRE, quand il n'y a qu'une réponse possible.
+
+    Analytics : une seule organisation ⟹ on la pose, l'utilisateur ne voit jamais la
+    question. PLUSIEURS ⟹ on ne devine pas. La réponse de Zoho ne désigne aucune
+    organisation par défaut, et sur le premier compte réel testé il y en avait deux —
+    « la première » aurait été la mauvaise. Le champ reste alors vide : l'état du
+    credential le signale, et l'utilisateur choisit sur des noms.
+
+    Best-effort : un échec ici ne doit JAMAIS faire perdre un consentement réussi —
+    l'utilisateur retomberait sur la saisie manuelle, pas sur une erreur."""
+    if connector != "zohoanalytics":
+        return {}
+    try:
+        orgs = analytics_orgs(fields)
+    except Exception:  # noqa: BLE001
+        logger.debug("analytics org discovery failed", exc_info=True)
+        return {}
+    return {"org_id": orgs[0]["org_id"]} if len(orgs) == 1 else {}
+
+
 def persist(sub: str, org_id: int, connector: str, data_center: str,
             tokens: dict, app: Optional[dict] = None, *,
             entity_type: str = "member") -> None:
@@ -260,6 +312,10 @@ def persist(sub: str, org_id: int, connector: str, data_center: str,
         "refresh_token": tokens["refresh_token"],
         "data_center": data_center,
     }
+    # ⚠️ Après les champs du flux, jamais avant : la découverte a besoin du jeton
+    # tout juste obtenu. Et hors de `PERSISTED_FIELDS` à dessein — un `org_id` qu'on
+    # n'a PAS pu déduire doit rester signalé comme manquant.
+    fields.update(_derived_fields(connector, fields))
     secret = credentials_store.secret_from_input(connector, None, fields)
     # ⚠️ TOUJOURS via `member_id(org, sub)` — l'ordre est (org, sub), et l'**AAD de
     # chiffrement en dérive** : un id reconstruit à la main dans le mauvais ordre ne
