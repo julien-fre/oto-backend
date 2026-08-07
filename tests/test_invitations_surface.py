@@ -91,10 +91,63 @@ def test_emit_invitation_sends_email(monkeypatch):
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
     sent = {}
     monkeypatch.setattr(email, "send_invite_email",
-                        lambda to, name, url, inviter: sent.update(to=to, name=name) or True)
+                        lambda to, name, url, inviter, **kw: sent.update(to=to, name=name) or True)
     out = oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=35, email="Invitee@Org.Test",
                              send_email=True, source="org_admin", role="org_member",
                              target_name="movinmotion")
     assert out["emailed"] is True
     assert sent["to"] == "invitee@org.test" and sent["name"] == "movinmotion"
-    assert out["code"] == "CODE1234" and "/invitation/CODE1234" in out["invite_url"]
+
+
+def test_invite_base_defaults_to_oto(monkeypatch):
+    monkeypatch.delenv("OTO_INVITE_BASE_URL", raising=False)
+    assert oi._invite_base() == "https://oto.cx"
+    assert oi._invite_base("unknown-app") == "https://oto.cx"
+
+
+def test_invite_base_resolves_known_app():
+    assert oi._invite_base("tulina") == "https://app.tulina.ai"
+    assert oi._invite_base("tulina-preprod") == "https://tulina.oto.zone"
+
+
+def test_invite_create_input_carries_app():
+    f = oi.InviteCreateInput.model_fields
+    assert "app" in f and f["app"].default is None
+
+
+def test_emit_invitation_threads_app_to_link_and_brand(monkeypatch):
+    """Un front connu (`app=`) doit produire un lien SUR SA base ET une marque
+    de mail cohérente — pas juste l'un ou l'autre (cf. INVITE_APPS/_BRAND_BY_APP)."""
+    from oto_mcp import db, email
+    from oto_mcp.capabilities._types import ResolvedCtx
+
+    monkeypatch.setattr(org_store, "create_invitation",
+                        lambda *a, **k: (1, "tok", "CODE1234"))
+    monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
+    sent = {}
+    monkeypatch.setattr(email, "send_invite_email",
+                        lambda to, name, url, inviter, **kw: sent.update(url=url, **kw) or True)
+    out = oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=35, email="invitee@org.test",
+                             send_email=True, source="org_admin", role="org_member",
+                             target_name="movinmotion", app="tulina")
+    assert out["invite_url"].startswith("https://app.tulina.ai/invitation/")
+    assert sent["url"].startswith("https://app.tulina.ai/invitation/")
+    assert sent["brand"] == "tulina"
+
+
+def test_nominal_url_skips_magic_link_for_known_app(monkeypatch):
+    """Régression : l'OTT est minté sur le tenant Logto d'oto-backend
+    (`LOGTO_ENDPOINT`, un seul global) — il n'authentifie pas contre le tenant
+    dédié de Tulina (`auth.tulina.ai`). Un `app` connu d'INVITE_APPS ne doit
+    donc JAMAIS produire de magic-link, seulement le lien nu."""
+    def _boom(*a, **k):
+        raise AssertionError("magic_url ne doit pas être appelé pour un app connu")
+    monkeypatch.setattr(oi.oauth_facade, "magic_url", _boom)
+    url = oi._nominal_url("CODE1234", "invitee@org.test", app="tulina")
+    assert url == "https://app.tulina.ai/invitation/CODE1234"
+
+
+def test_nominal_url_keeps_magic_link_for_default_oto(monkeypatch):
+    monkeypatch.setattr(oi.oauth_facade, "magic_url", lambda url, email: f"{url}?otl=stub")
+    url = oi._nominal_url("CODE1234", "invitee@org.test")
+    assert url.endswith("?otl=stub")

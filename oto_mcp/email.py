@@ -139,16 +139,18 @@ _FAINT = 'color:#7a6c50;font-size:13px'
 
 
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
-                      inviter: str | None = None) -> bool:
-    """Email d'invitation à rejoindre oto. True si envoyé, False sinon.
+                      inviter: str | None = None, *, brand: str = "oto") -> bool:
+    """Email d'invitation à rejoindre `brand` (oto par défaut, "tulina" pour les
+    invitations émises depuis ce front — cf. `orgs_invites._BRAND_BY_APP`). True
+    si envoyé, False sinon.
 
     `target_name` = ce qu'on rejoint (nom d'org OU d'équipe) ; None = invitation
-    plateforme (onboarding pur → « rejoindre oto »). Voix funnel : FR, vouvoiement +
-    minuscules (alignée sur le dashboard)."""
+    plateforme (onboarding pur → « rejoindre {brand} »). Voix funnel : FR,
+    vouvoiement + minuscules (alignée sur le dashboard)."""
     lead = f"{_esc(inviter)} vous invite" if inviter else "vous êtes invité·e"
-    where = f"<strong>{_esc(target_name)}</strong> sur oto" if target_name else "oto"
-    subject = (f"invitation à rejoindre {target_name} sur oto" if target_name
-               else "invitation à rejoindre oto")
+    where = f"<strong>{_esc(target_name)}</strong> sur {brand}" if target_name else brand
+    subject = (f"invitation à rejoindre {target_name} sur {brand}" if target_name
+               else f"invitation à rejoindre {brand}")
     html = (
         f'<div style="{_WRAP}">'
         f'<p>{lead} à rejoindre {where}.</p>'

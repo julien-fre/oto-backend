@@ -22,19 +22,48 @@ from .registry import CAPABILITIES
 _ID = {"id": "org_id"}
 _INVITE_TTL_DAYS = int(os.environ.get("OTO_MCP_INVITE_TTL_DAYS", "7"))
 
+# Base par front, au même titre que `RETURN_APPS` (oauth_flow.py) pour les
+# callbacks connecteur : oto-backend sert PLUSIEURS fronts (oto, Tulina) depuis
+# UNE instance, donc un lien ne peut pas dériver d'un unique env global sans
+# perdre la marque de qui a émis l'invitation. Clé fournie par le CLIENT
+# (`InviteCreateInput.app`), jamais une origine prise telle quelle (open
+# redirect) — lookup dans cette liste fermée, comme `resolve_return_app`.
+INVITE_APPS: dict[str, str] = {
+    "tulina": "https://app.tulina.ai",
+    "tulina-preprod": "https://tulina.oto.zone",
+}
 
-def _invite_base() -> str:
+# Marque affichée dans le mail d'invitation (sujet + corps) — même clé `app`.
+_BRAND_BY_APP: dict[str, str] = {
+    "tulina": "tulina",
+    "tulina-preprod": "tulina",
+}
+
+
+def _invite_base(app: str | None = None) -> str:
     """Base PUBLIQUE des liens d'invitation partagés (court, marketing).
-    `oto.cx/invitation/...` redirige vers le dashboard (règle Caddy)."""
+    `app` connu (Tulina) → sa base dédiée ; sinon défaut historique : env
+    `OTO_INVITE_BASE_URL` (`oto.cx/invitation/...` redirige vers le dashboard,
+    règle Caddy)."""
+    if app in INVITE_APPS:
+        return INVITE_APPS[app].rstrip("/")
     return os.environ.get("OTO_INVITE_BASE_URL", "https://oto.cx").rstrip("/")
 
 
-def _nominal_url(code: str, email_addr: str | None = None) -> str:
+def _nominal_url(code: str, email_addr: str | None = None, *, app: str | None = None) -> str:
     """Lien d'une invitation nominative : `/invitation/<code>`. Augmenté d'un
     magic-link Logto (OTT) quand on connaît l'email invité → connexion sans saisie
-    de code. Sans email = lien nu, partageable à la main."""
-    url = f"{_invite_base()}/invitation/{code}"
-    return oauth_facade.magic_url(url, email_addr.strip()) if email_addr else url
+    de code. Sans email = lien nu, partageable à la main.
+
+    ⚠️ L'OTT est minté sur LE tenant Logto d'oto-backend (`LOGTO_ENDPOINT`, un seul
+    global) — il n'authentifie QUE contre ce tenant. Tulina a son propre tenant
+    (`auth.tulina.ai` depuis le 2026-08-03) : un OTT oto y serait inerte, voire un
+    échec de connexion silencieux. Donc pas de magic-link pour un `app` connu
+    d'`INVITE_APPS` — juste le lien nu, le code suffit (modèle bearer)."""
+    url = f"{_invite_base(app)}/invitation/{code}"
+    if email_addr and app not in INVITE_APPS:
+        return oauth_facade.magic_url(url, email_addr.strip())
+    return url
 
 
 def _norm_email(raw: str | None, *, required: bool) -> str | None:
@@ -53,6 +82,9 @@ class InviteCreateInput(BaseModel):
     email: str | None = None
     role: str = "org_member"
     send_email: bool = True
+    # Front émetteur ("tulina"/"tulina-preprod"), pour que le lien pointe sur SA
+    # base au lieu du défaut oto — cf. `INVITE_APPS`. Omis/inconnu = défaut oto.
+    app: str | None = None
 
 
 class InviteListInput(BaseModel):
@@ -75,7 +107,8 @@ def emit_invitation(ctx: ResolvedCtx, *, org_id: int | None, email: str | None,
                     send_email: bool, source: str, role: str,
                     target_name: str | None,
                     group_id: int | None = None,
-                    group_role: str | None = None) -> dict:
+                    group_role: str | None = None,
+                    app: str | None = None) -> dict:
     """Cœur partagé d'émission d'une invitation, commun aux 3 niveaux de la cascade
     (plateforme/org/équipe). Crée la ligne (scope dérivé des cibles), forge le lien
     `/invitation/<code>` et, si demandé, envoie le mail (`target_name` = ce qu'on
@@ -84,12 +117,13 @@ def emit_invitation(ctx: ResolvedCtx, *, org_id: int | None, email: str | None,
     _, _token, code = org_store.create_invitation(
         org_id, email_addr, role, invited_by=ctx.sub, ttl_days=_INVITE_TTL_DAYS,
         source=source, group_id=group_id, group_role=group_role)
-    share_url = _nominal_url(code)
+    share_url = _nominal_url(code, app=app)
     emailed = False
     if send_email and email_addr:
         inviter = (db.get_user(ctx.sub) or {}).get("email")
         emailed = email_mod.send_invite_email(
-            email_addr, target_name, _nominal_url(code, email_addr), inviter)
+            email_addr, target_name, _nominal_url(code, email_addr, app=app), inviter,
+            brand=_BRAND_BY_APP.get(app, "oto"))
     return {"ok": True, "email": email_addr, "role": group_role or role, "code": code,
             "invite_url": share_url, "emailed": emailed}
 
@@ -104,7 +138,7 @@ def _invite_create(ctx: ResolvedCtx, inp: InviteCreateInput) -> dict:
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
     return emit_invitation(ctx, org_id=inp.org_id, email=inp.email,
                            send_email=inp.send_email, source="org_admin",
-                           role=inp.role, target_name=org["name"])
+                           role=inp.role, target_name=org["name"], app=inp.app)
 
 
 def _invite_list(ctx: ResolvedCtx, inp: InviteListInput) -> dict:
