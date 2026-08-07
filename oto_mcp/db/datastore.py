@@ -543,12 +543,65 @@ _DS_CMP_SQL = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 _DS_NUM_RE = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")  # numérique strict (pas de nan/1e5)
 
 
+# Colonnes MÉTA filtrables. Elles ne vivent PAS dans `data` : sans ce routage, un
+# filtre « modifié depuis le 1er » partait en `data ->> '_updated_at'` = NULL et
+# rendait ZÉRO ligne, sans la moindre erreur — un filtre muet est pire qu'un filtre
+# absent. `order_by` les connaissait déjà (cf. `datastore_list_rows`), pas le WHERE.
+_DS_META_TS_COLS = {"_updated_at": "updated_at", "_created_at": "created_at"}
+_DS_META_TEXT_COLS = {"_id": "row_id"}
+# Ops qui ont un sens sur une colonne NOT NULL : ni `empty`/`not_empty` (réponse
+# connue d'avance), ni `contains` sur un instant. On REFUSE plutôt que de servir un
+# résultat vide inexplicable.
+_DS_META_TS_OPS = {"eq", "ne", "gt", "gte", "lt", "lte"}
+_DS_META_TEXT_OPS = {"eq", "ne", "contains", "in"}
+# Date seule (`2026-08-05`) vs instant (`2026-08-05T14:30`, suffixe tz optionnel).
+_DS_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DS_TS_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$")
+
+
 _DS_MAX_FILTERS = 30
+
+
+def _ds_meta_ts_clause(col: str, op: str, val: str) -> tuple[str, list]:
+    """Fragment WHERE d'un filtre sur une colonne timestamptz méta.
+
+    Une valeur DATE SEULE désigne la journée entière : « jusqu'au 5 » inclut le 5
+    (sinon `<= '2026-08-05'` = minuit, et la journée saisie disparaît du résultat —
+    le piège classique d'un filtre de date sur un timestamp). Une valeur avec heure
+    se compare telle quelle. `col` vient de nos propres dicts (jamais de la saisie),
+    la valeur reste paramétrée.
+
+    ⚠️ « La journée » est celle du fuseau de la session PG (UTC en prod) : une ligne
+    touchée à 23h30 à Paris compte pour le lendemain. Assumé tant qu'aucun fuseau
+    utilisateur n'est déclaré nulle part — le jour où il l'est, c'est ICI que ça se
+    règle (une borne, pas un décalage éparpillé dans les appelants)."""
+    day = bool(_DS_DATE_ONLY_RE.match(val))
+    if not day and not _DS_TS_RE.match(val):
+        raise ValueError(
+            f"valeur de date invalide `{val}` — attendu `AAAA-MM-JJ` "
+            f"ou `AAAA-MM-JJTHH:MM`")
+    if not day:
+        sym = {"eq": "=", "ne": "<>"}.get(op) or _DS_CMP_SQL[op]
+        return f"{col} {sym} %s::timestamptz", [val]
+    lo, hi = "%s::timestamptz", "(%s::date + 1)::timestamptz"
+    if op == "gte":
+        return f"{col} >= {lo}", [val]
+    if op == "lt":
+        return f"{col} < {lo}", [val]
+    if op == "gt":                       # après CE jour = à partir du lendemain
+        return f"{col} >= {hi}", [val]
+    if op == "lte":                      # jusqu'à CE jour inclus
+        return f"{col} < {hi}", [val]
+    window = f"({col} >= {lo} AND {col} < {hi})"
+    return (window if op == "eq" else f"NOT {window}"), [val, val]
 
 
 def _ds_filter_clauses(filters: Optional[list]) -> tuple[list[str], list]:
     """Construit les fragments WHERE (combinés en AND) pour des filtres par colonne
-    JSONB. Champ paramétré + op whitelisté → pas d'injection. Les comparaisons
+    JSONB — **ou par colonne méta** (`_updated_at`/`_created_at`, dates système ;
+    `_id`), routées vers la vraie colonne au lieu de `data ->>` (cf.
+    `_DS_META_TS_COLS`). Champ paramétré + op whitelisté → pas d'injection. Les comparaisons
     ordonnées (`gt/gte/lt/lte`) sont numériques si la valeur EST numérique (cast
     gardé `::numeric`, les rows non numériques sont écartées), sinon textuelles
     (l'ISO `YYYY-MM-DD` se compare correctement en lexicographique). Lève
@@ -571,7 +624,35 @@ def _ds_filter_clauses(filters: Optional[list]) -> tuple[list[str], list]:
             raise ValueError(
                 f"opérateur de filtre inconnu `{op}` sur la colonne `{field}` — "
                 f"disponibles : {', '.join(sorted(_DS_FILTER_OPS))}")
-        if op == "empty":
+        if field in _DS_META_TS_COLS:
+            if op not in _DS_META_TS_OPS:
+                raise ValueError(
+                    f"opérateur `{op}` non applicable à `{field}` (date système, "
+                    f"toujours renseignée) — disponibles : "
+                    f"{', '.join(sorted(_DS_META_TS_OPS))}")
+            clause, cparams = _ds_meta_ts_clause(_DS_META_TS_COLS[field], op, str(val))
+            clauses.append(clause)
+            params.extend(cparams)
+        elif field in _DS_META_TEXT_COLS:
+            col = _DS_META_TEXT_COLS[field]
+            if op not in _DS_META_TEXT_OPS:
+                raise ValueError(
+                    f"opérateur `{op}` non applicable à `{field}` — disponibles : "
+                    f"{', '.join(sorted(_DS_META_TEXT_OPS))}")
+            if op == "in":
+                vals = [str(v) for v in (val if isinstance(val, list) else [val])
+                        if v is not None and str(v) != ""]
+                if not vals:
+                    continue
+                clauses.append(f"{col} = ANY(%s)")
+                params.append(vals)
+            elif op == "contains":
+                clauses.append(f"{col} ILIKE %s")
+                params.append(f"%{val}%")
+            else:
+                clauses.append(f"{col} {'=' if op == 'eq' else '<>'} %s")
+                params.append(str(val))
+        elif op == "empty":
             clauses.append("(data ->> %s IS NULL OR data ->> %s = '')")
             params.extend([field, field])
         elif op == "not_empty":

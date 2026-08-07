@@ -487,8 +487,11 @@ def register(mcp: FastMCP) -> None:
                 `{"author": {"contains": "sylvie"}}`, `{"status": {"ne": "traité"}}`,
                 `{"idcc": {"in": ["573", "86"]}}`, `{"email": {"not_empty": true}}`.
                 Ops: eq, ne, contains, in, gt, gte, lt, lte, empty, not_empty.
-                Filtering happens in SQL — never pull the whole table to filter it
-                yourself. (list mode only)
+                The system columns are filterable too — `_updated_at`/`_created_at`
+                (ops eq/ne/gt/gte/lt/lte; a plain `YYYY-MM-DD` means that WHOLE day,
+                so `{"_updated_at": {"gte": "2026-08-01"}}` = touched since the 1st)
+                and `_id`. Filtering happens in SQL — never pull the whole table to
+                filter it yourself. (list mode only)
             q: free-text search across the whole row (accent-insensitive substring)
                 — the way to find a row when you don't know WHICH column holds the
                 word. Combines with `filter` (AND). (list mode only)

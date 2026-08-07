@@ -78,6 +78,80 @@ def test_bad_op_and_shape_raise():
         db._ds_filter_clauses([{"field": "a", "op": "eq", "value": "1"}] * (db._DS_MAX_FILTERS + 1))
 
 
+class TestMetaColumns:
+    """Filtres sur les colonnes MÉTA (`_updated_at`/`_created_at`/`_id`).
+
+    Elles ne vivent pas dans `data` : sans routage, `data ->> '_updated_at'` est NULL
+    et le filtre rend 0 ligne SANS erreur. Le tri les connaissait déjà, pas le WHERE.
+    """
+
+    def test_updated_at_is_not_read_from_the_json_blob(self):
+        clauses, params = db._ds_filter_clauses(
+            [{"field": "_updated_at", "op": "gte", "value": "2026-08-01"}])
+        assert "data ->>" not in clauses[0]
+        assert clauses[0] == "updated_at >= %s::timestamptz"
+        assert params == ["2026-08-01"]
+
+    def test_date_only_lte_covers_the_whole_day(self):
+        # « jusqu'au 5 » DOIT inclure le 5 : borne haute = lendemain exclu (un `<=`
+        # nu comparerait à minuit et effacerait la journée saisie).
+        clauses, params = db._ds_filter_clauses(
+            [{"field": "_updated_at", "op": "lte", "value": "2026-08-05"}])
+        assert clauses[0] == "updated_at < (%s::date + 1)::timestamptz"
+        assert params == ["2026-08-05"]
+
+    def test_date_only_gt_starts_the_next_day(self):
+        clauses, _ = db._ds_filter_clauses(
+            [{"field": "_created_at", "op": "gt", "value": "2026-08-05"}])
+        assert clauses[0] == "created_at >= (%s::date + 1)::timestamptz"
+
+    def test_date_only_eq_is_a_day_window(self):
+        clauses, params = db._ds_filter_clauses(
+            [{"field": "_created_at", "op": "eq", "value": "2026-08-05"}])
+        assert clauses[0] == ("(created_at >= %s::timestamptz "
+                              "AND created_at < (%s::date + 1)::timestamptz)")
+        assert params == ["2026-08-05", "2026-08-05"]
+        clauses, _ = db._ds_filter_clauses(
+            [{"field": "_created_at", "op": "ne", "value": "2026-08-05"}])
+        assert clauses[0].startswith("NOT (")
+
+    def test_timestamp_value_compares_as_an_instant(self):
+        clauses, params = db._ds_filter_clauses(
+            [{"field": "_updated_at", "op": "lt", "value": "2026-08-05T14:30"}])
+        assert clauses[0] == "updated_at < %s::timestamptz"
+        assert params == ["2026-08-05T14:30"]
+
+    def test_malformed_date_raises_instead_of_reaching_postgres(self):
+        # Sinon le cast SQL lève → 500 opaque au lieu du 400 « invalid_filters ».
+        with pytest.raises(ValueError, match="date invalide"):
+            db._ds_filter_clauses(
+                [{"field": "_updated_at", "op": "gte", "value": "hier"}])
+
+    def test_ops_without_meaning_on_a_not_null_column_are_refused(self):
+        for op in ("empty", "not_empty", "contains", "in"):
+            with pytest.raises(ValueError, match="non applicable"):
+                db._ds_filter_clauses(
+                    [{"field": "_updated_at", "op": op, "value": "x"}])
+
+    def test_row_id_maps_to_the_real_column(self):
+        clauses, params = db._ds_filter_clauses(
+            [{"field": "_id", "op": "eq", "value": "0199-abc"}])
+        assert clauses[0] == "row_id = %s"
+        assert params == ["0199-abc"]
+        clauses, params = db._ds_filter_clauses(
+            [{"field": "_id", "op": "in", "value": ["a", "b"]}])
+        assert clauses[0] == "row_id = ANY(%s)"
+        assert params == [["a", "b"]]
+
+    def test_user_field_named_like_a_meta_one_is_unaffected(self):
+        # Le routage est une correspondance EXACTE : un champ user `updated_at`
+        # (sans underscore) reste dans le JSON.
+        clauses, params = db._ds_filter_clauses(
+            [{"field": "updated_at", "op": "eq", "value": "2026-08-05"}])
+        assert clauses[0] == "data ->> %s = %s"
+        assert params == ["updated_at", "2026-08-05"]
+
+
 def test_where_merges_q_and_filters_in_order():
     from oto_mcp.db.projects import _fold
     where, params = db._ds_where(7, "marseille", [{"field": "statut", "op": "eq", "value": "retenu"}])
