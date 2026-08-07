@@ -148,6 +148,35 @@ adossée aux identifiants d'une personne.
 **même** règle : un code d'autorisation est émis pour un `client_id` précis, l'échanger
 avec un autre échoue — après le consentement de l'utilisateur, au pire moment.
 
+### App d'ÉDITEUR — le cran au-dessus de l'org
+
+Prolongement direct d'« Application ≠ jeton » : si l'application est une infrastructure,
+elle peut être fournie par **oto** plutôt que par chaque org. Sans ce cran, un connecteur
+à consentement impose le mode **Self Client** — l'utilisateur crée lui-même une app dans
+la console du fournisseur et coche ses scopes à la main (3 incidents : #190, #202, Desk
+articles-only). Avec, il ne reste que le geste utile : consentir.
+
+- **Rangement** : scope `PLATFORM` du coffre, `entity_id = editor:<data_center>` — une
+  app OAuth est enregistrée dans **sa** région (`accounts.zoho.eu` rejette un client
+  `.com`), donc la région fait partie de la clé. Accesseurs
+  `credentials_store.{set,get,list,clear}_editor_app`.
+- **Ordre de lecture** (`zoho_oauth.app_fields`) : le BYO **prime** (membre > équipe >
+  org) — une org qui veut voir SON app dans ses logs la pose et rien ne change pour
+  elle ; l'app d'éditeur n'est le repli que si personne n'a rien apporté.
+- ⚠️ **Invariant qui rend le rangement sûr** : `walk_cascade` ne propose le palier
+  plateforme que si le connecteur déclare `auth_modes ∋ 'platform'`. Les connecteurs à
+  consentement ne le déclarent pas ⟹ l'app d'éditeur n'est **jamais** servie comme
+  credential d'appel. Sans ça, un membre qui n'a pas consenti hériterait d'une app
+  **nue** (sans `refresh_token`) et se prendrait un échec OAuth opaque au lieu de
+  s'entendre dire de se connecter. Figé par `tests/test_editor_app.py` (avec
+  contre-épreuve sur un connecteur qui, lui, déclare le mode plateforme).
+- **Pose** : `POST /api/admin/editor-apps` (super admin, capacité
+  `platform.editor_app.set`). **REST seulement** — un secret brut en argument d'outil
+  MCP transiterait par le contexte du modèle.
+- **Conséquence de rotation** : `persist()` range une COPIE de l'app dans le credential
+  né du consentement. Roter l'app d'éditeur ne casse donc pas les connexions déjà
+  établies… jusqu'à leur prochain refresh, qui échouera avec l'ancien `client_secret`.
+
 ## Validation
 
 Pas de framework de tests dans le repo → validation manuelle sur **PG16 jetable (docker)** + revue adversariale par phase. Migrations idempotentes au boot (`init_db` : ALTER additifs, PK 4-col, backfills, encrypt-existing, drop-plaintext gaté).

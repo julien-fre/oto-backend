@@ -48,23 +48,25 @@ def _modes(ctx: ResolvedCtx, inp: ZohoConnectInput) -> dict:
         "connector": inp.connector,
         "self_client": True,            # toujours disponible
         "server_based": True,
-        "has_app": zoho_oauth.has_app(inp.connector, ctx.sub),
+        "has_app": zoho_oauth.has_app(inp.connector, ctx.sub, inp.data_center or ""),
         "scopes": list(zoho_oauth.SCOPES[inp.connector]),
     }
 
 
 def start_for(ctx: ResolvedCtx, connector: str, data_center: str) -> dict:
-    """URL de consentement à ouvrir. L'app (client_id/secret) vient du COFFRE, via la
-    cascade — jamais d'une variable d'env : chaque org peut apporter la sienne, et une
-    clé plateforme donne le « un clic » à tous sans changer de code.
+    """URL de consentement à ouvrir. L'app (client_id/secret) vient du COFFRE — jamais
+    d'une variable d'env : l'org qui apporte la sienne l'emporte, sinon on prend l'app
+    d'ÉDITEUR de la région (`credentials_store` §app d'éditeur), qui donne le « un
+    clic » à tous.
 
     Partagé avec le flux générique (`connector_flow`, déclaré dans tools/zoho.py) : il
     ne doit exister qu'UNE façon de démarrer un consentement Zoho, sinon les deux
     surfaces divergent — c'est exactement ce que la convergence cherche à éviter."""
     try:
+        dc = (data_center or "").lower()
         url = zoho_oauth.build_auth_url(
-            ctx.sub, ctx.org_id or 0, connector, (data_center or "").lower(),
-            app=zoho_oauth.app_fields(connector, ctx.sub))
+            ctx.sub, ctx.org_id or 0, connector, dc,
+            app=zoho_oauth.app_fields(connector, ctx.sub, dc))
     except zoho_oauth.ZohoOAuthError as e:
         raise AuthzDenied(400, "zoho_oauth_unavailable", str(e))
     return {"auth_url": url, "connector": connector}

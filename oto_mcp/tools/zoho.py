@@ -216,6 +216,13 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> ZohoClient:
         creds = access.resolve_credential_fields("zoho")
+        # Connexion en DEUX temps : l'app peut être posée sans que le consentement ait
+        # été donné (pas de refresh_token). Partir quand même produisait un échec OAuth
+        # opaque au premier appel ; on rend l'ÉTAPE MANQUANTE, avec le libellé unique de
+        # `_zoho_credential_state` — le même que celui de la fiche et de la sonde.
+        state = _zoho_credential_state(creds)
+        if not state.complete:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=state.next_action))
         api_domain, accounts_url = _resolve_dc_domains(creds.get("data_center"))
         return ZohoClient(
             client_id=creds.get("client_id"),

@@ -75,19 +75,41 @@ class ZohoOAuthError(ValueError):
 
 # --- app (client_id / client_secret) ----------------------------------------
 
-def app_fields(connector: str, sub: str) -> dict:
-    """Champs du credential résolu pour ce (sub, connecteur) — cascade habituelle
-    (membre > équipe > org > plateforme). `{}` si rien n'est encore posé : c'est
-    l'état NOMINAL d'une première connexion, jamais une erreur."""
+def editor_app(connector: str, data_center: str) -> dict:
+    """L'app de l'ÉDITEUR (oto) pour cette région, ou `{}`.
+
+    C'est le cran qui rend la connexion « un clic » sans que personne n'ait à créer
+    d'app : oto publie la sienne, l'utilisateur ne fait que consentir. Elle ne donne
+    accès à rien par elle-même — cf. l'invariant dans `credentials_store` §app
+    d'éditeur. `{}` si oto n'en publie pas pour cette région : le Self Client reste
+    alors la voie, et c'est `resolve_app` qui le dit."""
+    if not (data_center or "").strip():
+        return {}
+    return credentials_store.get_editor_app(connector, data_center) or {}
+
+
+def app_fields(connector: str, sub: str, data_center: str = "") -> dict:
+    """Champs de l'app à utiliser pour ce (sub, connecteur, région).
+
+    Deux origines, dans cet ordre — **l'app apportée prime toujours sur la nôtre** :
+    1. le credential BYO résolu (membre > équipe > org) : une org qui veut voir SON
+       app dans ses logs Zoho la pose, et rien ne change pour elle ;
+    2. à défaut, l'app d'ÉDITEUR de la région (`data_center`), si oto en publie une.
+
+    `{}` si ni l'une ni l'autre : c'est l'état NOMINAL d'une première connexion sur un
+    connecteur sans app d'éditeur, jamais une erreur."""
     # ⚠️ `resolve_credential(..., sub=…)` et NON `resolve_credential_fields`, qui
     # n'a pas de paramètre `sub` : on est dans une route REST, hors contexte MCP, où
     # le sub ambiant n'existe pas. `emit_on_failure=False` — c'est une SONDE qui avale
     # l'échec, elle ne doit pas polluer le signal d'usage (ADR 0017).
     try:
-        return access.resolve_credential(
+        byo = access.resolve_credential(
             connector, want="byo", sub=sub, emit_on_failure=False).fields or {}
     except Exception:  # noqa: BLE001 — pas encore de credential
-        return {}
+        byo = {}
+    if byo.get("client_id") and byo.get("client_secret"):
+        return byo
+    return editor_app(connector, data_center)
 
 
 def resolve_app(fields: Optional[dict]) -> tuple[str, str]:
@@ -98,16 +120,35 @@ def resolve_app(fields: Optional[dict]) -> tuple[str, str]:
     if cid and sec:
         return cid, sec
     raise ZohoOAuthError(
-        "Aucune app OAuth Zoho disponible. Renseigne d'abord « client id » et "
-        "« client secret » de ton app Zoho sur la carte du connecteur (ou "
-        "demande à ton org / à la plateforme de partager la sienne), puis relance "
-        "la connexion.")
+        "Aucune app OAuth Zoho disponible pour cette région. Renseigne « client id » "
+        "et « client secret » d'un self client Zoho sur la carte du connecteur (ou "
+        "demande à ton org de partager le sien), puis relance la connexion.")
 
 
-def has_app(connector: str, sub: str) -> bool:
-    """Une app est-elle déjà à disposition (à n'importe quel palier) ?"""
-    f = app_fields(connector, sub)
-    return bool(f.get("client_id") and f.get("client_secret"))
+def has_app(connector: str, sub: str, data_center: str = "") -> bool:
+    """Une app est-elle à disposition ? Avec `data_center`, la réponse vaut POUR cette
+    région ; sans, elle vaut « une app existe quelque part » — l'app apportée par le
+    membre/l'équipe/l'org, ou une app d'éditeur pour au moins une région (le front
+    affiche le bouton, la région n'étant choisie qu'au clic)."""
+    if data_center:
+        f = app_fields(connector, sub, data_center)
+        return bool(f.get("client_id") and f.get("client_secret"))
+    # Sans région, `app_fields` ne consulte QUE le BYO (le repli éditeur est keyé par
+    # région) — d'où la seconde question, posée à part.
+    byo = app_fields(connector, sub)
+    if byo.get("client_id") and byo.get("client_secret"):
+        return True
+    return _has_editor_app(connector)
+
+
+def _has_editor_app(connector: str) -> bool:
+    """oto publie-t-il une app pour ce connecteur, dans n'importe quelle région ?
+    Fail-open : une panne de lecture ne doit pas cacher le bouton (au pire, `start`
+    rendra un message actionnable)."""
+    try:
+        return bool(credentials_store.list_editor_apps(connector))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # --- state signé (délégué à la fabrique) --------------------------------------
@@ -161,7 +202,7 @@ def build_auth_url(sub: str, org_id: int, connector: str, data_center: str,
         raise ZohoOAuthError(
             f"Data center Zoho non reconnu : {data_center!r} — l'un de "
             f"{', '.join(_ACCOUNTS)}.")
-    client_id, _ = resolve_app(app if app is not None else app_fields(connector, sub))
+    client_id, _ = resolve_app(app if app is not None else app_fields(connector, sub, dc))
     q = urllib.parse.urlencode({
         "response_type": "code",
         "client_id": client_id,

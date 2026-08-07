@@ -201,6 +201,106 @@ def platform_revoke(provider: str, scope: str, label: "str | None" = None) -> No
             "version=version+1 WHERE entity_type=%s AND entity_id=%s AND connector=%s AND account=''",
             (json.dumps(down), json.dumps(meta), PLATFORM, label, provider))
 
+
+# --- app OAuth de l'ÉDITEUR ---------------------------------------------------
+#
+# Une app OAuth n'est **pas** un credential d'accès : c'est l'identité de l'ÉDITEUR
+# du logiciel (`client_id` + `client_secret`) qui DEMANDE l'accès. Le credential, lui,
+# naît du consentement de l'utilisateur, ouvre SES données et lui appartient. Les
+# confondre est la confusion de départ du mode « Self Client », où le même humain est
+# éditeur et utilisateur — d'où une app à créer par personne, et des scopes cochés à la
+# main (3 incidents : #190, #202, Desk articles-only).
+#
+# Les deux vivent dans le même coffre (même chiffrement, même rotation) mais à des
+# adresses distinctes : l'app d'éditeur est rangée au scope PLATFORM sous un
+# `entity_id` préfixé `editor:<data_center>` — une app OAuth est liée à SA région
+# (`accounts.zoho.eu` rejette un client `.com`), donc la région fait partie de la clé.
+#
+# ⚠️ **L'invariant qui rend ce rangement sûr** : `walk_cascade` ne propose le palier
+# plateforme que si le connecteur déclare `auth_modes ∋ 'platform'` (access.py). Les
+# connecteurs à consentement ne le déclarent pas ⟹ une app d'éditeur n'est JAMAIS
+# résolue comme credential d'appel. Conséquences voulues : elle n'ouvre aucune donnée
+# par elle-même, et un membre qui n'a pas encore consenti ne peut pas hériter d'une app
+# NUE (sans refresh_token) qui échouerait de façon opaque au premier appel. Figé par
+# `tests/test_editor_app.py`.
+#
+# Un seul appelant la lit : le flux de consentement du module connecteur
+# (`zoho_oauth.app_fields`). Jamais la résolution.
+
+EDITOR_PREFIX = "editor:"
+
+
+def editor_label(data_center: str) -> str:
+    """`entity_id` de l'app d'éditeur pour une région (`editor:eu`)."""
+    return f"{EDITOR_PREFIX}{(data_center or '').strip().lower()}"
+
+
+def set_editor_app(connector: str, data_center: str, fields: dict,
+                   set_by: Optional[str] = None) -> None:
+    """Pose/rote l'app d'éditeur d'un connecteur pour une région.
+
+    `_upsert` en direct : `set_credential` gate sur `require_credential`, qui refuse le
+    scope plateforme à un connecteur sans `auth_modes ∋ 'platform'`. Ce refus est JUSTE
+    pour une clé d'accès — et hors sujet pour une app d'éditeur, qui n'en est pas une
+    (cf. l'invariant ci-dessus). Même échappatoire assumée que le chemin remote."""
+    if not (fields.get("client_id") and fields.get("client_secret")):
+        raise ValueError("client_id et client_secret requis")
+    if not (data_center or "").strip():
+        raise ValueError("data_center requis")
+    with _connect() as conn:
+        _upsert(conn, PLATFORM, editor_label(data_center), connector, "",
+                pack_secret(connector, {"client_id": fields["client_id"],
+                                        "client_secret": fields["client_secret"]}),
+                set_by, None)
+
+
+def get_editor_app(connector: str, data_center: str) -> Optional[dict]:
+    """`{client_id, client_secret}` de l'app d'éditeur pour cette région, ou None.
+
+    Ne rend QUE ces deux champs : ce qui est stocké là est l'identité de l'éditeur, pas
+    un jeton d'accès — si un refresh_token s'y trouvait, il ne doit pas ressortir."""
+    label = editor_label(data_center)
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT secret_enc FROM connector_credentials "
+            "WHERE entity_type=%s AND entity_id=%s AND connector=%s AND account=''",
+            (PLATFORM, label, connector)).fetchone()
+    if not row:
+        return None
+    fields = unpack_secret(connector, _reveal(row, PLATFORM, label, connector, "") or "")
+    cid, sec = fields.get("client_id"), fields.get("client_secret")
+    return {"client_id": cid, "client_secret": sec} if cid and sec else None
+
+
+def list_editor_apps(connector: "str | None" = None) -> list[dict]:
+    """Apps d'éditeur posées (connecteur + région + date), **sans secret** — surface
+    admin. Le `client_id` lui-même n'est pas rendu : inutile pour décider, et il finit
+    dans des captures d'écran."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT connector, entity_id, set_at FROM connector_credentials "
+            "WHERE entity_type=%s AND entity_id LIKE %s"
+            + (" AND connector=%s" if connector else "")
+            + " ORDER BY connector, entity_id",
+            (PLATFORM, EDITOR_PREFIX + "%", connector) if connector
+            else (PLATFORM, EDITOR_PREFIX + "%")).fetchall()
+    return [{"connector": r["connector"],
+             "data_center": r["entity_id"][len(EDITOR_PREFIX):],
+             "set_at": r["set_at"]} for r in rows]
+
+
+def clear_editor_app(connector: str, data_center: str) -> bool:
+    """Retire l'app d'éditeur d'une région. Les credentials DÉJÀ obtenus par
+    consentement en gardent une copie (`persist` les range avec) : ils continuent de
+    fonctionner, mais plus aucune nouvelle connexion ne pourra démarrer."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM connector_credentials WHERE entity_type=%s AND entity_id=%s "
+            "AND connector=%s AND account=''",
+            (PLATFORM, editor_label(data_center), connector))
+    return (cur.rowcount or 0) > 0
+
+
 # `meta` JSONB porte aussi des satellites SECRETS (audit 2026-06-13, otomata#29) :
 # l'`access_token` bearer dérivé d'OAuth (google/atlassian) y vit en clair (le
 # refresh_token, lui, est chiffré dans `secret_enc`). Les surfaces « statut /

@@ -52,7 +52,12 @@ def make_routes(
                                     status_code=302)
 
         def _finish() -> None:
-            app = zoho_oauth.app_fields(parsed["connector"], parsed["sub"])
+            # ⚠️ La RÉGION doit être repassée : l'app d'éditeur est keyée par data
+            # center. Sans elle, `app_fields` ne verrait que le BYO et l'échange du
+            # code échouerait pour tout utilisateur venu par l'app d'oto — alors même
+            # que le consentement, lui, a réussi.
+            app = zoho_oauth.app_fields(parsed["connector"], parsed["sub"],
+                                        parsed["data_center"])
             tokens = zoho_oauth.exchange_code(code, parsed["data_center"], app=app)
             zoho_oauth.persist(parsed["sub"], parsed["org"], parsed["connector"],
                                parsed["data_center"], tokens, app=app)
