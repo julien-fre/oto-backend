@@ -107,6 +107,22 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
                              f"champ `{field}` de la requête" if field != ph else ""))
         required.discard(field)
 
+    # La 200 porte un schéma dès que la capacité DÉCLARE sa sortie (`Output`). Sans
+    # lui, on ne peut qu'annoncer « OK » — ce qui suffit à appeler, jamais à écrire
+    # le client qui consomme. Cf. `Capability.Output` et le garde-fou de dette.
+    ok: dict = {"description": "OK"}
+    if cap.Output is not None:
+        try:
+            out = cap.Output.model_json_schema(
+                ref_template="#/components/schemas/{model}")
+        except Exception:                              # modèle exotique → sans schéma
+            out = {}
+        if isinstance(out, dict):
+            defs.update(out.pop("$defs", {}) or {})
+        if out:
+            ok = {"description": "OK",
+                  "content": {"application/json": {"schema": out}}}
+
     op: dict = {
         "operationId": f"{cap.key}.{binding.verb.lower()}".replace(".", "_"),
         "summary": (cap.description or cap.key).strip().split(". ")[0][:180],
@@ -114,7 +130,7 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
         "tags": [cap.key.split(".")[0]],
         "security": [{"bearerAuth": []}],
         "responses": {
-            "200": {"description": "OK"},
+            "200": ok,
             "401": {"description": "jeton absent ou invalide"},
             "403": {"description": "refus d'autorisation (ou hors portée du jeton)"},
         },

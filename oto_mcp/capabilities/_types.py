@@ -68,6 +68,18 @@ class Capability:
     handler: Callable                           # (ResolvedCtx, Input) -> dict (logique core)
     Input: type[BaseModel]                       # seule source de validation
     authz: AuthzRule                            # OBLIGATOIRE (pas de défaut → oubli = TypeError)
+    # Forme de la RÉPONSE. L'entrée est dérivable depuis `Input` (schéma OpenAPI,
+    # schéma de tool MCP) ; la sortie ne l'était par rien — elle n'existait que dans
+    # les `return` du handler. Un consommateur tiers savait donc APPELER sans savoir
+    # ce qu'il recevrait, et devait sonder. C'est la contrainte d'ADR 0059 prise au
+    # mot : **on ne fige que ce qui est généré** — donc rien n'était figeable côté
+    # réponse. `Output` déclaré ⟹ `/openapi.json` porte le schéma de la 200.
+    # `None` = non déclarée : toléré pour l'existant, INTERDIT pour une capacité
+    # neuve (garde-fou `tests/test_capability_outputs.py`, dette qui ne peut que
+    # décroître). Le handler continue de renvoyer un `dict` — `Output` DÉCRIT, il
+    # ne valide pas : valider la sortie ferait échouer un appel à l'exécution pour
+    # une divergence de contrat, ce qui punit l'utilisateur d'un bug de serveur.
+    Output: Optional[type[BaseModel]] = None
     description: str = ""                       # contrat LLM du tool MCP
     mcp: Optional[str] = None                   # nom du tool MCP, ou None (opt-out explicite)
     # un OU plusieurs bindings REST (ex. routes self-service + admin sur le même

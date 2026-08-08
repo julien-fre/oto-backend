@@ -72,6 +72,23 @@ class ProfileOpInput(BaseModel):
     fields: Optional[dict] = None
 
 
+class ProfileField(BaseModel):
+    """Une entrée de `PROFILE_FIELDS` — le schéma SUGGÉRÉ, pas une contrainte : la
+    fiche accepte des clés libres hors de cette liste."""
+    key: str
+    question: str
+    why: str
+
+
+class ProfileView(BaseModel):
+    """Forme de réponse des TROIS faces (`_view`). Déclarée pour que le descriptif
+    OpenAPI dise ce qu'un appel renvoie, pas seulement comment l'émettre."""
+    profile: dict                                # la fiche elle-même (data model LIBRE)
+    updated_at: Optional[str] = None             # None tant que rien n'a été écrit
+    fields: list[ProfileField]                   # schéma suggéré, pour guider l'agent
+    missing: list[str]                           # clés de `fields` encore vides
+
+
 def _missing(profile: dict) -> list[str]:
     return [f["key"] for f in PROFILE_FIELDS if not str(profile.get(f["key"]) or "").strip()]
 
@@ -110,6 +127,7 @@ CAPABILITIES += [
     # Face MCP op-aware (surface consolidée ADR 0047).
     Capability(
         key="me.profile", handler=_profile_op, Input=ProfileOpInput, authz=SUB_ONLY,
+        Output=ProfileView,
         description=(
             "The user's « situation with oto » profile — who they are, their job, goals, "
             "CRM, wanted connectors, tone preferences. This card is re-read into EVERY "
@@ -123,11 +141,13 @@ CAPABILITIES += [
     # Faces REST par-verbe (édition manuelle dans la section Context du dashboard).
     Capability(
         key="me.profile.get", handler=_get_profile, Input=_NoInput, authz=SUB_ONLY,
+        Output=ProfileView,
         description="The user's « situation with oto » profile plus the suggested field schema.",
         rest=RestBinding("GET", "/api/me/profile"),
     ),
     Capability(
         key="me.profile.set", handler=_set_profile, Input=SetProfileInput, authz=SUB_ONLY,
+        Output=ProfileView,
         description="Shallow-merge `fields` into the user's profile (empty string clears a value).",
         rest=RestBinding("PUT", "/api/me/profile"),
     ),
