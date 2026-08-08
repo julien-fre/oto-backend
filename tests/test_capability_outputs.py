@@ -60,7 +60,7 @@ def test_debt_list_does_not_lie():
 
 
 def test_output_debt_only_shrinks():
-    assert len(_debt()) <= 191, (
+    assert len(_debt()) <= 189, (
         f"la dette de sortie a grossi ({len(_debt())} capacités). Elle doit "
         "DÉCROÎTRE : déclare l'`Output` plutôt que d'élargir le plafond.")
 

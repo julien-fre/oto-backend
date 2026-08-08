@@ -815,6 +815,19 @@ def _project_read(ctx: ResolvedCtx, inp: ProjectReadInput) -> dict:
                                       include=inp.include))
 
 
+class ImportedProject(BaseModel):
+    """Résultat d'un « Ajouter à mon Oto ». **`imported: false` n'est pas un échec** —
+    l'opération est idempotente : re-forker un projet déjà importé, ou forker le sien,
+    renvoie 200 en désignant l'existant. `reason` dit lequel des deux cas."""
+    project_id: int
+    imported: bool
+    name: Optional[str] = None
+    reason: Optional[str] = None                 # own_project | already_imported
+    copied_from: Optional[int] = None            # présent seulement sur une vraie copie
+    # Ce que la duplication n'a pas pu reprendre (structure copiée, jamais de secret).
+    warnings: Optional[list] = None
+
+
 CAPABILITIES += [
     Capability(
         key="me.project_read", handler=_project_read, Input=ProjectReadInput,
@@ -994,6 +1007,7 @@ def _import_project(ctx: ResolvedCtx, inp: ImportProjectInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="me.import_project", handler=_import_project, Input=ImportProjectInput,
+        Output=ImportedProject,
         authz=ORG_MEMBER,
         description=(
             "« Add to my Oto »: FORK a PUBLISHED project (resolved by its share slug) into "

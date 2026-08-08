@@ -20,6 +20,8 @@ from __future__ import annotations
 import logging
 import types
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 from .. import instructions as _instructions
@@ -38,6 +40,46 @@ class AgentContextInput(BaseModel):
 
 def _namespace_of(tool_name: str) -> str:
     return tool_name.split("_", 1)[0]
+
+
+class ContextLayer(BaseModel):
+    """Une couche de l'artefact injecté, dans son ORDRE d'injection. `chars` est son
+    poids : c'est le thermomètre de 0055-D5 — on mesure et on alerte, on n'ampute
+    jamais. Les couches au corps vide sont omises."""
+    key: str                                     # platform | catalog | … (bloc C)
+    label: str
+    body: str
+    chars: int
+
+
+class ToolsNamespace(BaseModel):
+    namespace: str
+    visible: int
+    total: int
+
+
+class ToolsView(BaseModel):
+    """⚠️ `available: false` signifie que la vue n'a **pas pu être dérivée** (hors
+    serveur, ou échec du calcul de visibilité) — ce n'est **pas** « aucun outil ».
+    Un front qui l'affiche comme un zéro ment ; les compteurs sont alors absents."""
+    available: bool
+    total_visible: Optional[int] = None
+    total_hidden: Optional[int] = None
+    namespaces: Optional[list[ToolsNamespace]] = None
+
+
+class AgentContextView(BaseModel):
+    """Ce que le Claude de cet utilisateur reçoit vraiment — la vue de transparence."""
+    org_id: Optional[int] = None
+    # L'artefact EXACT injecté au handshake (blocs A + C concaténés).
+    instructions: str
+    # Le MÊME artefact, décomposé. Invariant tenu par `instructions.session_layers` :
+    # `"\n\n".join(couches non vides) == instructions`.
+    layers: list[ContextLayer]
+    # La doctrine d'org résolue, telle que la sert `oto_get_doctrine` — forme non
+    # redéclarée ici pour ne pas en tenir deux copies.
+    doctrine: dict
+    tools: ToolsView
 
 
 async def _tools_view(ctx: ResolvedCtx) -> dict:
@@ -95,7 +137,7 @@ async def _agent_context(ctx: ResolvedCtx, inp: AgentContextInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="me.agent_context", handler=_agent_context, Input=AgentContextInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=AgentContextView,
         description="The exact oto context this user's Claude receives: static server "
                     "instructions (posture + derived namespace catalog), effective org "
                     "doctrine, and the tools currently visible for the active org.",
