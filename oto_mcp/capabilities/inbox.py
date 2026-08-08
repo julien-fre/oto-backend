@@ -13,6 +13,8 @@ REST-only (surface dashboard) ; zéro table neuve.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 from .. import db, org_store, ownership
@@ -23,6 +25,57 @@ from .registry import CAPABILITIES
 
 class InboxInput(BaseModel):
     pass
+
+
+class InboxProposal(BaseModel):
+    """Une proposition en attente sur un projet où j'ai l'écriture."""
+    request_id: int
+    kind: str                                    # create | modif
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
+    doc_id: Optional[int] = None                 # absent = création
+    doc_title: Optional[str] = None
+    proposed_title: Optional[str] = None
+    proposed_body_md: Optional[str] = None       # le « après » du diff de revue
+    requested_by: Optional[str] = None
+    message: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class InboxInvitation(BaseModel):
+    """Invitation en attente pour mon email — cross-org, hors org active."""
+    code: Optional[str] = None
+    org_id: Optional[int] = None
+    org_name: Optional[str] = None
+    group_id: Optional[int] = None
+    invited_by: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class InboxRecent(BaseModel):
+    """Voie « info qui vieillit ». **Liste hétérogène, discriminée par `type`** :
+    `proposal_resolved` (retour au proposeur) ou `project_shared` — d'où des champs
+    optionnels qui ne coexistent jamais tous."""
+    type: str
+    request_id: Optional[int] = None
+    status: Optional[str] = None
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
+    doc_id: Optional[int] = None
+    doc_title: Optional[str] = None
+    proposed_title: Optional[str] = None
+    resolved_by: Optional[str] = None
+    resolved_at: Optional[str] = None
+    permission: Optional[str] = None             # project_shared seulement
+    granted_at: Optional[str] = None
+
+
+class InboxView(BaseModel):
+    to_review: list[InboxProposal]
+    invitations: list[InboxInvitation]
+    recent: list[InboxRecent]                    # borné à 30, trié du plus récent
+    # Badge = ce qui attend une DÉCISION (états pending). Jamais un « non lu ».
+    count: int
 
 
 def _inbox(ctx: ResolvedCtx, inp: InboxInput) -> dict:
@@ -87,7 +140,8 @@ def _inbox(ctx: ResolvedCtx, inp: InboxInput) -> dict:
 
 CAPABILITIES += [
     Capability(
-        key="me.inbox", handler=_inbox, Input=InboxInput, authz=SUB_ONLY,
+        key="me.inbox", handler=_inbox, Input=InboxInput,
+        Output=InboxView, authz=SUB_ONLY,
         mcp="oto_inbox",
         description=(
             "YOUR inbox — two lists. `to_review`: change-request proposals awaiting "

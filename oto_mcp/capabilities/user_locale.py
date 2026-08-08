@@ -23,6 +23,11 @@ class SetLocaleInput(BaseModel):
     locale: Literal["en", "fr"]
 
 
+class LocaleView(BaseModel):
+    """Écho de la préférence enregistrée — le front n'a pas à relire `/api/me`."""
+    locale: Literal["en", "fr"]
+
+
 def _set_locale(ctx: ResolvedCtx, inp: SetLocaleInput) -> dict:
     db.set_user_locale(ctx.sub, inp.locale)
     return {"locale": inp.locale}
@@ -31,7 +36,7 @@ def _set_locale(ctx: ResolvedCtx, inp: SetLocaleInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="me.locale.set", handler=_set_locale, Input=SetLocaleInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=LocaleView,
         description="Set the user's dashboard UI language preference (`locale`, 'en' or 'fr').",
         rest=RestBinding("PUT", "/api/me/locale"),
     ),

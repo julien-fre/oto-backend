@@ -157,6 +157,43 @@ def _init_ref(ctx: ResolvedCtx, scope: str, slug: str, *, write: bool,
     return owner, guide_store.INIT_SLUG
 
 
+class GuideRef(BaseModel):
+    """Entrée de catalogue : de quoi CHOISIR un guide, sans en charger le corps."""
+    slug: str
+    scope: str                                   # platform | org | user
+    title: str = ""
+    description: str = ""
+
+
+class GuideList(BaseModel):
+    guides: list[GuideRef]
+
+
+class GuideView(BaseModel):
+    """Enveloppe COMMUNE de get et set, pour les deux livraisons — d'où les champs
+    optionnels, qui ne coexistent pas tous :
+    - un readme `init` porte `delivery` et `updated_at`, jamais de titre ;
+    - un guide `on-demand` porte titre/description ;
+    - `set` d'un on-demand ne renvoie PAS le corps (l'appelant vient de l'écrire).
+    """
+    scope: str
+    slug: str
+    delivery: Optional[str] = None
+    body_md: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class GuideDeleted(BaseModel):
+    """Un readme `init` ne se supprime pas, il se VIDE — d'où `delivery` ici et un
+    `deleted` qui vaut « la couche ne s'affiche plus », pas « la ligne est partie »."""
+    scope: str
+    slug: str
+    deleted: bool
+    delivery: Optional[str] = None
+
+
 def _list(ctx: ResolvedCtx, inp: _NoInput) -> dict:
     """Catalogue des guides on-demand visibles : plateforme ∪ org active ∪ perso (DB)."""
     return {"guides": guide_store.list_guides_for(ctx.sub, ctx.org_id)}
@@ -275,6 +312,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="me.guides.list", handler=_list, Input=_NoInput, authz=SUB_ONLY, mcp=None,
+        Output=GuideList,
         description="List the on-demand guides you can see (platform ∪ your org ∪ your own).",
         rest=RestBinding("GET", "/api/me/guides"),
     ),
@@ -283,6 +321,7 @@ CAPABILITIES += [
     # doit pas dépendre de l'équipe « active » de la session (même métier, même autz dessous).
     Capability(
         key="me.guides.get", handler=_get, Input=GuideRefInput, authz=SUB_ONLY, mcp=None,
+        Output=GuideView,
         description="Read one guide body by scope+slug (`?delivery=init` for a readme).",
         rest=(RestBinding("GET", "/api/me/guides/{scope}/{slug}"),
               RestBinding("GET", "/api/orgs/{id}/guides/{scope}/{slug}", {"id": "owner_id"}),
@@ -290,6 +329,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="me.guides.set", handler=_set, Input=GuideSetInput, authz=SUB_ONLY, mcp=None,
+        Output=GuideView,
         description=("Create/update a guide (scope=platform|org|group|user). "
                      "`delivery='init'` writes that scope's injected readme (empty body clears it)."),
         rest=(RestBinding("PUT", "/api/me/guides/{scope}/{slug}"),
@@ -298,6 +338,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="me.guides.delete", handler=_delete, Input=GuideRefInput, authz=SUB_ONLY, mcp=None,
+        Output=GuideDeleted,
         description="Delete a guide (scope=platform|org|group|user).",
         rest=RestBinding("DELETE", "/api/me/guides/{scope}/{slug}"),
     ),

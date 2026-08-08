@@ -10,6 +10,8 @@ canal agent → pas de binding MCP.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 from .. import db, legal_docs
@@ -24,6 +26,29 @@ class _NoInput(BaseModel):
 
 class AcceptInput(BaseModel):
     context: str
+
+
+class LegalDocument(BaseModel):
+    slug: str                                    # terms | cgv | dpa | privacy | legal
+    version: str                                 # version COURANTE du doc
+    url: str
+    label: str
+    accepted: bool                               # accepté À LA VERSION COURANTE
+    accepted_version: Optional[str] = None       # ce qu'il a accepté, s'il l'a fait
+    accepted_at: Optional[str] = None
+
+
+class LegalContext(BaseModel):
+    """Ce qu'un contexte exige, et ce qui manque encore — `outstanding` vide = le
+    gate passe."""
+    required: list[str]
+    outstanding: list[str]
+
+
+class LegalStatus(BaseModel):
+    """Forme des DEUX faces : `accept` renvoie le statut rafraîchi, pas un accusé."""
+    documents: list[LegalDocument]
+    contexts: dict[str, LegalContext]            # clé = 'access' | 'purchase'
 
 
 def _is_current(acc: dict, slug: str) -> bool:
@@ -69,7 +94,7 @@ def _accept(ctx: ResolvedCtx, inp: AcceptInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="me.legal.get", handler=_get, Input=_NoInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=LegalStatus,
         description="The user's legal acceptance status: current documents "
                     "(slug/version/url/label + whether accepted) and, per context "
                     "('access'|'purchase'), the required docs and those still outstanding.",
@@ -77,7 +102,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="me.legal.accept", handler=_accept, Input=AcceptInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=LegalStatus,
         description="Record the user's acceptance of the documents required by a "
                     "context ('access' at signup, 'purchase' at checkout) at their "
                     "current version. Returns the refreshed legal status.",

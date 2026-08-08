@@ -90,17 +90,9 @@ me.datastore.activity
 me.datastore.row_activity
 me.doc
 me.guide
-me.guides.delete
-me.guides.get
-me.guides.list
-me.guides.set
 me.import_project
-me.inbox
 me.kb
 me.leave_org
-me.legal.accept
-me.legal.get
-me.locale.set
 me.project
 me.project_files
 me.project_read
