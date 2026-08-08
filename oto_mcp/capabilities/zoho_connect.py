@@ -122,6 +122,14 @@ def _analytics_orgs(ctx: ResolvedCtx, inp: AnalyticsOrgsInput) -> dict:  # noqa:
 # des capacités par-verbe pour REST, mêmes handlers. Les faces REST sont
 # idiomatiques (un chemin = un verbe) et le MCP garde une surface consolidée
 # (ADR 0047, un tool par objet métier).
+class AnalyticsOrgs(BaseModel):
+    """Les organisations Zoho Analytics visibles par le credential courant, et celle
+    qui est épinglée. `current` est None tant que personne n'a choisi — c'est ce qui
+    déclenche la question à l'utilisateur plutôt qu'un choix arbitraire."""
+    orgs: list[dict]
+    current: Optional[object] = None
+
+
 CAPABILITIES += [
     Capability(
         key="me.zoho_connect",
@@ -142,6 +150,7 @@ CAPABILITIES += [
         key="me.zoho_analytics_orgs",
         handler=_analytics_orgs,
         Input=AnalyticsOrgsInput,
+        Output=AnalyticsOrgs,
         authz=ORG_MEMBER,
         mcp="zohoanalytics_orgs",
         rest=RestBinding("GET", "/api/me/connectors/zohoanalytics/orgs"),

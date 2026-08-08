@@ -113,11 +113,43 @@ def _activity(ctx: ResolvedCtx, inp: NamespaceActivityInput) -> dict:
     return {"activity": activity, "retention_days": RETENTION_DAYS}
 
 
+class ActivityEntry(BaseModel):
+    """Un geste d'agent lu depuis la boucle d'usage (0017) — le journal EST la source,
+    il n'y a pas de table d'activité. D'où la fenêtre bornée par `retention_days` :
+    au-delà, l'appel n'existe plus, ce n'est pas un trou de données."""
+    call_id: Optional[int] = None
+    tool: Optional[str] = None
+    at: Optional[str] = None
+    sub: Optional[str] = None
+    email: Optional[str] = None                  # joint pour l'affichage
+    ok: Optional[bool] = None
+    error: Optional[str] = None
+    run_id: Optional[int] = None
+    run_label: Optional[str] = None
+    run_doctrine: Optional[str] = None
+    run_outcome: Optional[str] = None
+    row_title: Optional[str] = None              # posé sur le parcours d'UNE ligne
+
+
+class NamespaceActivity(BaseModel):
+    activity: list[ActivityEntry]
+    retention_days: int
+
+
+class RowActivity(BaseModel):
+    activity: list[ActivityEntry]
+    # La clé métier de la ligne, quand le tableau en déclare une : c'est le second axe
+    # de corrélation (des appels citent la valeur, pas l'`_id`).
+    key: Optional[object] = None
+    retention_days: int
+
+
 CAPABILITIES += [
     Capability(
         key="me.datastore.row_activity",
         handler=_row_activity,
         Input=RowActivityInput,
+        Output=RowActivity,
         authz=SUB_ONLY,
         mcp=None,  # opt-out explicite : lecture de cockpit, l'agent a son propre fil
         rest=RestBinding(
@@ -130,6 +162,7 @@ CAPABILITIES += [
         key="me.datastore.activity",
         handler=_activity,
         Input=NamespaceActivityInput,
+        Output=NamespaceActivity,
         authz=SUB_ONLY,
         mcp=None,
         rest=RestBinding(

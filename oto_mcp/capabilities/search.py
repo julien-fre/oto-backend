@@ -18,6 +18,37 @@ from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 
+class SearchHit(BaseModel):
+    """Un résultat, quelle que soit sa source.
+
+    ⚠️ **`ref` est polymorphe** — c'est la forme réelle, pas une approximation : un
+    identifiant simple pour la plupart des sources (slug d'une procédure, id d'une
+    page), mais un objet `{scope, slug}` pour un guide, dont le slug ne suffit pas à
+    désigner (le même slug peut exister en plateforme, en org et en perso).
+    `matched_by` dit par quel chemin le hit est remonté — un même document trouvé
+    par les deux voies est dédupliqué, ses rangs sommés (RRF)."""
+    kind: str                                    # page | brief | procedure | guide | tableau | ligne | fichier | connecteur
+    ref: object
+    title: str
+    description: Optional[str] = None
+    passage: Optional[str] = None                # extrait surligné, absent si non pertinent
+    updated_at: Optional[str] = None
+    matched_by: Optional[str] = None             # lexical | semantic
+    project_id: Optional[int] = None
+    project_name: Optional[str] = None
+
+
+class SearchResults(BaseModel):
+    hits: list[SearchHit]
+    count: int
+    # DÉRIVÉ des hits, jamais codé en dur : semantic si tous le sont, mixed si les
+    # deux familles cohabitent, lexical sinon.
+    matched_by: str
+    # Présent UNIQUEMENT quand il n'y a aucun résultat — un conseil de reformulation,
+    # pas un champ d'erreur.
+    hint: Optional[str] = None
+
+
 class SearchInput(BaseModel):
     q: str
     scope: Literal["org", "project"] = "org"
@@ -92,6 +123,7 @@ CAPABILITIES += [
         key="me.search",
         handler=_search,
         Input=SearchInput,
+        Output=SearchResults,
         authz=SUB_ONLY,
         description=(
             "SEARCH across everything readable in the active org — one query, ranked "

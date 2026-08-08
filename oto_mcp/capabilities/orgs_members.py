@@ -124,6 +124,14 @@ def _leave_org(ctx: ResolvedCtx, inp: LeaveOrgInput) -> dict:
     return {"ok": True, "org_id": inp.org_id, "left": True}
 
 
+class LeftOrg(BaseModel):
+    """Auto-retrait réussi. `ok`/`left` sont redondants par HISTOIRE (le dashboard lit
+    `ok`), pas par design — ne pas en déduire un motif d'enveloppe."""
+    ok: bool
+    org_id: int
+    left: bool
+
+
 CAPABILITIES += [
     Capability(
         key="org.member.add", handler=_add_member, Input=AddMemberInput,
@@ -150,7 +158,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="me.leave_org", handler=_leave_org, Input=LeaveOrgInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=LeftOrg,
         description="Leave an org you belong to (self-removal). Refused for your personal org or if you are its last admin.",
         # Self-service dashboard (REST-only) : quitter depuis « paramètres » de l'org.
         rest=RestBinding("DELETE", "/api/me/orgs/{id}/membership", {"id": "org_id"}),
