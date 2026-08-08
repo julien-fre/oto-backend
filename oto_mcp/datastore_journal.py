@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 TOOL_WRITE = "data_write"
 TOOL_DELETE = "data_delete_row"
 TOOL_RELEASE = "data_release"
+TOOL_CLAIM_NEXT = "data_claim_next"
+# `data_claim` (réserver une ligne NOMMÉE) n'a pas d'équivalent MCP à ce jour : un
+# agent qui draine prend la suivante, un humain qui appelle choisit sa ligne. Le nom
+# reste dans le vocabulaire `data_*` — c'est ce que les lectures d'activité filtrent
+# (`tool LIKE 'data\_%'`), et le parcours d'une ligne doit montrer sa réservation.
+TOOL_CLAIM = "data_claim"
 
 
 @dataclass(frozen=True)

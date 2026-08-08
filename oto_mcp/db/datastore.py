@@ -944,6 +944,30 @@ def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
         return dict(row) if row else None
 
 
+def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
+                        lease_seconds: int = 900) -> Optional[dict]:
+    """Claim d'une row **nommée** (≠ pick de la suivante) — la file pilotée par un
+    humain, qui choisit la ligne qu'il traite et à qui le serveur la réserve.
+
+    Même condition d'éligibilité que `datastore_claim_next` (bail NULL ou expiré),
+    plus le RENOUVELLEMENT par le même worker : rafraîchir son écran ne doit pas
+    coûter sa propre ligne. L'UPDATE conditionnel EST l'atomicité — deux appels
+    concurrents sur la même row, un seul repart avec le bail.
+
+    None = row absente OU sous bail actif d'un AUTRE worker ; les distinguer coûte
+    une relecture, laissée à l'appelant (chemin d'échec seulement)."""
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE datastore_rows SET claimed_by = %s, "
+            "claimed_until = NOW() + (%s || ' seconds')::interval "
+            "WHERE ns_id = %s AND row_id = %s AND (claimed_until IS NULL "
+            "OR claimed_until < NOW() OR claimed_by = %s) "
+            "RETURNING row_id, created_at, updated_at, data, claimed_by, claimed_until",
+            (str(worker), int(lease_seconds), ns_id, row_id, str(worker)),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def datastore_claimed_rows(ns_id: int) -> list[dict]:
     """Rows sous bail de file de travail (ADR 0046 D) — la vue « en cours » du
     dashboard. Bail actif OU expiré confondus (le consommateur tranche sur

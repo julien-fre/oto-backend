@@ -121,6 +121,32 @@ journal) → `db.rest_call_stats` filtre sur la forme `position(' /' in tool) > 
 chaque mutation du cockpit double-compte et `by_route` liste des pseudo-routes à latence
 nulle. Les autres lentilles de monitoring filtrent `kind='mcp'` : elles sont intactes.
 
+**File de travail : les deux surfaces RÉSERVENT (2026-08-08, signal #362).** Le bail
+(ADR 0046 D, colonnes `claimed_by`/`claimed_until`) n'était posable que depuis le MCP
+(`data_claim_next`) : une application web pouvait lire la file (`GET …/queue`) et
+libérer, jamais réserver. Les fronts compensaient en écrivant un verrou **dans les
+données** de la ligne — coopératif, donc non atomique (deux personnes qui cliquent à la
+même seconde obtiennent la même ligne), et deux colonnes à prévoir par tableau pour une
+mécanique déjà en base. Deux **capacités** REST-only comblent le trou
+(`capabilities/datastore_claim.py`, `mcp=None` assumé — `data_claim_next` tient la face
+agent) :
+
+- `POST …/claim_next` `{worker, filter?, lease_s?}` → la prochaine ligne libre, réservée
+  (`FOR UPDATE SKIP LOCKED`), ou `{row: null, hint}` quand il n'y a plus rien ;
+- `POST …/rows/{row_id}/claim` `{worker, lease_s?}` → **cette** ligne. **409
+  `row_claimed`** si un autre la tient (avec qui et jusqu'à quand) — un conflit se dit,
+  il ne se devine pas. Renouvelable sans erreur par le **même** `worker` : rafraîchir son
+  écran ne doit pas coûter sa ligne (`db.datastore_claim_row`, UPDATE conditionnel).
+
+`worker` (libellé stable de celui qui réserve) est **exigé aux deux claims** : c'est la
+garde rejouée au release. D'où le second cran, sur `POST …/rows/{row_id}/release` :
+corps `{worker}` ⇒ libération **gardée** (`release_claim`) ; corps vide ⇒ libération
+**forcée** (supervision dashboard), mais **refusée à un jeton porté** (`token_scopes.
+current()` non None → 400 `worker_required`). Un jeton porté est le vecteur des
+intégrations multi-utilisateurs : y laisser le forcé, c'est laisser chacun retirer la
+ligne de son collègue. Côté portée, réserver **est une écriture** (`_ALLOWED` : les deux
+claims en `WRITE`) — un jeton `read` lit la file sans pouvoir en retirer une ligne.
+
 Refus de schéma : `ds_append`/`ds_update_row` traduisent `RowValidationError` en
 **400 `row_invalid`** (détail = les champs/transitions fautifs), pas en 500 — c'est le
 chemin d'échec d'une annulation (transition de retour devenue illégale).

@@ -69,16 +69,18 @@ def test_claim_next_warns_the_worker(monkeypatch):
                         lambda ns_id, **kw: row if kw.get("filters") is not None else None)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 7)
-    monkeypatch.setattr(s, "_schema_of", lambda ns_id: schema)
+    # Une seule lecture de la ligne namespace sert le warning ET le relevé de journal
+    # (`_after_claim`) — d'où le stub à ce grain, pas sur le schéma seul.
+    monkeypatch.setattr(s, "_ns_of", lambda ns_id: {"namespace": "vivier", "schema": schema})
 
     warnings: list = []
     assert s.claim_next("vivier", worker="w-1", warnings=warnings)["_id"] == "r1"
     assert len(warnings) == 1 and "data_release" in warnings[0]
 
     # schéma sain ⇒ silence ; et `warnings` reste optionnel (appelants historiques)
-    monkeypatch.setattr(s, "_schema_of", lambda ns_id:
-                        _with_lifecycle(states=["a_enrichir", "enrichi"],
-                                        terminal=["enrichi"]))
+    monkeypatch.setattr(s, "_ns_of", lambda ns_id: {
+        "namespace": "vivier",
+        "schema": _with_lifecycle(states=["a_enrichir", "enrichi"], terminal=["enrichi"])})
     warnings = []
     s.claim_next("vivier", worker="w-1", warnings=warnings)
     assert warnings == []
@@ -89,7 +91,8 @@ def test_claim_next_silent_when_queue_is_empty(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_claim_next", lambda ns_id, **kw: None)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 7)
-    monkeypatch.setattr(s, "_schema_of", lambda ns_id: {"fields": [_STATUS]})
+    monkeypatch.setattr(s, "_ns_of", lambda ns_id: {"namespace": "vivier",
+                                                    "schema": {"fields": [_STATUS]}})
 
     warnings: list = []
     assert s.claim_next("vivier", worker="w-1", warnings=warnings) is None

@@ -66,6 +66,30 @@ def test_everything_else_is_denied(method, path):
     assert not ts.authorize(WRITABLE, method, path)
 
 
+# ── File de travail : réserver est une écriture (signal #362) ────────────────
+
+def test_write_token_can_claim():
+    ns = "/api/datastore/namespaces/leads-accords-dormants"
+    assert ts.authorize(WRITABLE, "POST", f"{ns}/claim_next")
+    assert ts.authorize(WRITABLE, "POST", f"{ns}/rows/42/claim")
+    assert ts.authorize(WRITABLE, "POST", f"{ns}/rows/42/release")
+
+
+def test_read_only_token_cannot_claim():
+    """Lire la file ne donne pas le droit d'en retirer une ligne aux autres."""
+    ns = "/api/datastore/namespaces/leads-accords-dormants"
+    assert ts.authorize(READ_ONLY, "GET", f"{ns}/queue")      # la file se lit…
+    assert not ts.authorize(READ_ONLY, "POST", f"{ns}/claim_next")
+    assert not ts.authorize(READ_ONLY, "POST", f"{ns}/rows/42/claim")
+    assert not ts.authorize(READ_ONLY, "POST", f"{ns}/rows/42/release")
+
+
+def test_claim_stays_within_the_scoped_table():
+    for path in ("/api/datastore/namespaces/autre-tableau/claim_next",
+                 "/api/datastore/namespaces/autre-tableau/rows/42/claim"):
+        assert not ts.authorize(WRITABLE, "POST", path), path
+
+
 def test_unknown_future_route_is_denied_by_default():
     """Une route ajoutée demain est refusée sans qu'on ait rien à y penser."""
     assert not ts.authorize(WRITABLE, "GET", "/api/quelque-chose-de-neuf")

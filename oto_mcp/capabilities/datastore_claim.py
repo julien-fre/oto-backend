@@ -1,0 +1,167 @@
+"""Capacités « réserver une ligne » — la file de travail, côté application (signal #362).
+
+`claim_next` et le bail (ADR 0046 D) n'existaient que côté MCP : une application web
+pouvait LIRE la file (`…/queue`) et libérer, jamais RÉSERVER. Les fronts compensaient
+en écrivant un verrou dans les données de la ligne — ça tient tant que l'équipe est
+coopérative, mais ce n'est pas atomique (deux personnes qui cliquent à la même seconde
+obtiennent la même ligne) et ça oblige chaque tableau à prévoir deux colonnes pour une
+mécanique déjà en base.
+
+Deux gestes, REST-only :
+
+- `me.datastore.claim_next` — POST …/claim_next          : la prochaine ligne libre ;
+- `me.datastore.claim_row`  — POST …/rows/{row_id}/claim : CETTE ligne-là.
+
+`mcp=None` sur les deux, opt-out explicite : la face agent de `claim_next` existe déjà
+(tool `data_claim_next`), en ajouter une seconde serait le doublon que la convergence
+combat ; et réserver une ligne NOMMÉE est le geste d'un humain qui choisit qui il
+appelle, là où un agent qui draine prend la suivante. Le jour où l'agent en a besoin,
+c'est une ligne `mcp=` à poser ici — pas un tool à réécrire.
+
+`worker` est le libellé rejoué au release : c'est LA garde du bail (on ne libère pas
+la réservation d'un autre), d'où son exigence des deux côtés. Autz `SUB_ONLY` au
+seuil, le vrai gate est le droit d'ÉCRITURE sur le tableau — résolu par le store
+(org active + ownership), jamais par le nom passé en path ; un tableau hors périmètre
+répond 404, comme partout ailleurs dans le datastore.
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from pydantic import BaseModel
+
+from .. import datastore_journal
+from ..datastore import (
+    NamespaceNotFound,
+    NamespaceReadOnly,
+    RowClaimed,
+    RowNotFound,
+    make_store,
+)
+from ._authz import SUB_ONLY
+from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .registry import CAPABILITIES
+
+
+class ClaimNextInput(BaseModel):
+    namespace: str
+    # Défaut vide plutôt que champ requis : un `worker` manquant mérite un refus qui
+    # DIT ce qu'est un worker (le `invalid_input` de pydantic ne le dirait pas).
+    worker: str = ""
+    filter: Optional[dict] = None
+    lease_s: Optional[int] = None
+
+
+class ClaimRowInput(BaseModel):
+    namespace: str
+    row_id: str
+    worker: str = ""
+    lease_s: Optional[int] = None
+
+
+class ClaimResult(BaseModel):
+    namespace: str
+    # La ligne réservée, colonnes libres du tableau + son bail (`_claimed_by`,
+    # `_claimed_until`). `null` sur `claim_next` quand il n'y a plus rien à réserver.
+    row: Optional[dict] = None
+    # Défaut de configuration qui rend l'auto-release inopérant (statut sans état
+    # terminal) : le worker qui réserve est celui que ça concerne.
+    warning: Optional[str] = None
+    hint: Optional[str] = None
+
+
+def _worker(raw: str) -> str:
+    w = (raw or "").strip()
+    if not w:
+        raise AuthzDenied(
+            400, "worker_required",
+            "worker = libellé stable de celui qui réserve (une personne, un poste, "
+            "un agent), rejoué tel quel au release : c'est la garde du bail.")
+    return w
+
+
+def _lease(inp) -> dict:
+    """Le défaut du bail appartient au store, pas à l'appelant : `lease_s` absent
+    ne se relaie pas."""
+    return {} if inp.lease_s is None else {"lease_s": int(inp.lease_s)}
+
+
+def _claim_next(ctx: ResolvedCtx, inp: ClaimNextInput) -> dict:
+    worker = _worker(inp.worker)
+    trace: dict = {}
+    warnings: list = []
+    try:
+        row = make_store(ctx.sub).claim_next(
+            inp.namespace, worker=worker, filter=inp.filter,
+            warnings=warnings, trace=trace, **_lease(inp))
+    except NamespaceNotFound:
+        raise AuthzDenied(404, "namespace_not_found")
+    except NamespaceReadOnly:
+        raise AuthzDenied(403, "namespace_read_only")
+    except ValueError as e:
+        raise AuthzDenied(400, "invalid_claim", str(e))
+    if row:
+        datastore_journal.record(
+            datastore_journal.TOOL_CLAIM_NEXT, sub=ctx.sub,
+            ctx=datastore_journal.from_trace(trace, inp.namespace), row_id=row.get("_id"))
+    return {
+        "namespace": inp.namespace, "row": row,
+        **({"warning": warnings[0]} if warnings else {}),
+        # File vide ≠ erreur — mais ça se dit, sinon un `row: null` se lit comme un bug.
+        **({} if row else {"hint": "plus rien à réserver (file vide pour ce filtre, "
+                                   "ou tout est sous bail actif)"}),
+    }
+
+
+def _claim_row(ctx: ResolvedCtx, inp: ClaimRowInput) -> dict:
+    worker = _worker(inp.worker)
+    trace: dict = {}
+    warnings: list = []
+    try:
+        row = make_store(ctx.sub).claim_row(
+            inp.namespace, inp.row_id, worker=worker,
+            warnings=warnings, trace=trace, **_lease(inp))
+    except NamespaceNotFound:
+        raise AuthzDenied(404, "namespace_not_found")
+    except NamespaceReadOnly:
+        raise AuthzDenied(403, "namespace_read_only")
+    except RowNotFound:
+        raise AuthzDenied(404, "row_not_found")
+    except RowClaimed as e:
+        # 409 et non 403 : le refus n'est pas un droit qui manque, c'est un collègue
+        # plus rapide — et l'utilisateur a besoin de savoir QUI et jusqu'à QUAND.
+        raise AuthzDenied(
+            409, "row_claimed",
+            f"ligne déjà réservée par « {e.claimed_by} » jusqu'à {e.claimed_until}")
+    except ValueError as e:
+        raise AuthzDenied(400, "invalid_claim", str(e))
+    datastore_journal.record(
+        datastore_journal.TOOL_CLAIM, sub=ctx.sub,
+        ctx=datastore_journal.from_trace(trace, inp.namespace), row_id=inp.row_id)
+    return {"namespace": inp.namespace, "row": row,
+            **({"warning": warnings[0]} if warnings else {})}
+
+
+CAPABILITIES += [
+    Capability(
+        key="me.datastore.claim_next",
+        handler=_claim_next,
+        Input=ClaimNextInput,
+        Output=ClaimResult,
+        authz=SUB_ONLY,
+        mcp=None,  # `data_claim_next` tient déjà la face agent
+        rest=RestBinding(verb="POST", path="/api/datastore/namespaces/{namespace}/claim_next"),
+        description="Réserve atomiquement la prochaine ligne libre d'un tableau (file de travail).",
+    ),
+    Capability(
+        key="me.datastore.claim_row",
+        handler=_claim_row,
+        Input=ClaimRowInput,
+        Output=ClaimResult,
+        authz=SUB_ONLY,
+        mcp=None,  # geste d'un humain qui choisit sa ligne ; l'agent draine
+        rest=RestBinding(verb="POST",
+                         path="/api/datastore/namespaces/{namespace}/rows/{row_id}/claim"),
+        description="Réserve une ligne nommée d'un tableau (409 si déjà sous bail d'un autre).",
+    ),
+]

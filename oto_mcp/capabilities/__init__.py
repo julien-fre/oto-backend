@@ -99,5 +99,7 @@ from . import docs  # noqa: F401 — me.doc (oto_doc, POST /api/me/docs) — pag
 from . import uploads  # noqa: F401 — me.upload_url (oto_upload_url) — push out-of-bande de gros contenu (#105)
 # Journal de travail du datastore (ADR 0046 b4) — parcours d'une ligne + activité du tableau.
 from . import datastore_activity  # noqa: F401 — me.datastore.{row_activity,activity} (REST-only)
+# File de travail côté application (signal #362) — réserver depuis un front web.
+from . import datastore_claim  # noqa: F401 — me.datastore.{claim_next,claim_row} (REST-only)
 
 __all__ = ["registry", "_mcp_adapter", "_rest_adapter"]

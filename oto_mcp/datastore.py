@@ -128,6 +128,20 @@ class NamespaceForbidden(Exception):
     pass
 
 
+class RowClaimed(Exception):
+    """Row nommée déjà sous bail ACTIF d'un autre worker (ADR 0046 D).
+
+    Le conflit qu'il faut rendre visible : deux personnes qui prennent la même
+    ligne à la même seconde, l'une des deux doit l'apprendre. Porte le bail en
+    place pour que la surface dise QUI la tient et jusqu'à QUAND."""
+
+    def __init__(self, row_id: str, claimed_by: Any = None, claimed_until: Any = None):
+        self.row_id = row_id
+        self.claimed_by = claimed_by
+        self.claimed_until = claimed_until
+        super().__init__(f"row {row_id} sous bail de {claimed_by!r} jusqu'à {claimed_until!r}")
+
+
 def make_store(sub: str) -> "DatastorePg":
     """Construit un store PG pour `sub`. Plus aucune dépendance externe (ADR 0016)
     — datastore est une surface plateforme self-contained."""
@@ -771,7 +785,8 @@ class DatastorePg:
 
     def claim_next(self, namespace: str, *, worker: str,
                    filter: Optional[dict] = None, lease_s: int = 900,
-                   warnings: Optional[list] = None) -> Optional[dict]:
+                   warnings: Optional[list] = None,
+                   trace: Optional[dict] = None) -> Optional[dict]:
         """Pick + claim atomique de la prochaine row claimable (bail NULL ou
         expiré), `FOR UPDATE SKIP LOCKED` — N workers drainent sans collision.
         `filter` = filtre exact `{col: val}` (ex. {"status": "nouveau"}). Renvoie
@@ -787,18 +802,55 @@ class DatastorePg:
         filters = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
         row = db.datastore_claim_next(ns_id, worker=worker,
                                       lease_seconds=int(lease_s), filters=filters)
-        if row is not None and warnings is not None:
-            # ns_id déjà résolu : le schéma coûte une lecture de plus, pas un resolve.
-            w = dsv2.queue_release_warning(self._schema_of(ns_id))
-            if w:
-                warnings.append(w)
+        if row is not None:
+            self._after_claim(ns_id, warnings=warnings, trace=trace)
         return self._row_to_dict(row) if row else None
 
-    def release_claim(self, namespace: str, row_id: str, *, worker: str) -> bool:
+    def claim_row(self, namespace: str, row_id: str, *, worker: str,
+                  lease_s: int = 900, warnings: Optional[list] = None,
+                  trace: Optional[dict] = None) -> dict:
+        """Réserve une row NOMMÉE — la file pilotée par un humain (il choisit qui
+        appeler), là où `claim_next` sert un worker qui draine.
+
+        Même bail, même garde au release. Renouvelable par le même `worker` (un
+        rafraîchissement d'écran ne perd pas la ligne). Lève `RowNotFound` (row
+        absente) ou `RowClaimed` (bail actif d'un autre) — la distinction est ce
+        que la surface doit dire à l'utilisateur, un `None` commun ne le peut pas."""
+        worker = (worker or "").strip()
+        if not worker:
+            raise ValueError("worker requis (libellé stable rejoué sur release)")
+        ns_id = self._resolve(namespace, write=True)
+        row = db.datastore_claim_row(ns_id, row_id, worker=worker, lease_seconds=int(lease_s))
+        if row is None:
+            existing = db.datastore_get_row(ns_id, row_id)
+            if not existing:
+                raise RowNotFound(row_id)
+            raise RowClaimed(row_id, existing.get("claimed_by"), existing.get("claimed_until"))
+        self._after_claim(ns_id, warnings=warnings, trace=trace)
+        return self._row_to_dict(row)
+
+    def _after_claim(self, ns_id: int, *, warnings: Optional[list],
+                     trace: Optional[dict]) -> None:
+        """Relevés communs aux deux claims, sur un ns_id DÉJÀ résolu : le défaut de
+        configuration qui rend l'auto-release inopérante, et le contexte de journal.
+        Une seule lecture de la ligne namespace pour les deux."""
+        if warnings is None and trace is None:
+            return
+        ns = self._ns_of(ns_id)
+        if warnings is not None:
+            w = dsv2.queue_release_warning(ns.get("schema"))
+            if w:
+                warnings.append(w)
+        self._trace(trace, ns_id, ns)
+
+    def release_claim(self, namespace: str, row_id: str, *, worker: str,
+                      trace: Optional[dict] = None) -> bool:
         """Libère le bail (abandon sans verdict). Gardé par `worker` — on ne
         libère pas le claim d'un autre. L'entrée dans un état terminal libère
         déjà automatiquement (pas besoin d'appeler release après)."""
         ns_id = self._resolve(namespace, write=True)
+        if trace is not None:
+            self._trace(trace, ns_id, self._ns_of(ns_id))
         return db.datastore_release_claim(ns_id, row_id, str(worker))
 
     def queue(self, namespace: str) -> list[dict]:

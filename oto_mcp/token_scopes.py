@@ -70,6 +70,12 @@ _ALLOWED: tuple[tuple[re.Pattern, frozenset, str, str], ...] = (
      frozenset({"GET"}), READ, NAMESPACES),
     (re.compile(rf"^/api/datastore/namespaces/{_RES}/rows/[^/]+$"),
      frozenset({"PATCH", "DELETE"}), WRITE, NAMESPACES),
+    # File de travail : réserver EST une écriture (le bail change la ligne), et un
+    # jeton en lecture ne doit pas pouvoir retirer une ligne à ses collègues.
+    (re.compile(rf"^/api/datastore/namespaces/{_RES}/claim_next$"),
+     frozenset({"POST"}), WRITE, NAMESPACES),
+    (re.compile(rf"^/api/datastore/namespaces/{_RES}/rows/[^/]+/claim$"),
+     frozenset({"POST"}), WRITE, NAMESPACES),
     (re.compile(rf"^/api/datastore/namespaces/{_RES}/rows/[^/]+/release$"),
      frozenset({"POST"}), WRITE, NAMESPACES),
     (re.compile(rf"^/api/datastore/namespaces/{_RES}/rows/[^/]+/activity$"),

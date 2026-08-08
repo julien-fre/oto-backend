@@ -20,7 +20,7 @@ Endpoints exposés :
 - `GET    /api/datastore/namespaces/{ns}/rows`  → liste les rows (filter=k:v, limit=N)
 - `GET    /api/datastore/namespaces/{ns}/queue` → rows sous bail (file de travail)
 - `POST   /api/datastore/namespaces/{ns}/rows`  → append row
-- `POST   /api/datastore/namespaces/{ns}/rows/{row_id}/release` → libère le bail (forcé)
+- `POST   /api/datastore/namespaces/{ns}/rows/{row_id}/release` → libère le bail
 - `GET    /api/datastore/namespaces/{ns}/rows/{row_id}`    → fetch row
 - `PATCH  /api/datastore/namespaces/{ns}/rows/{row_id}`    → update row
 - `DELETE /api/datastore/namespaces/{ns}/rows/{row_id}`    → delete row
@@ -34,6 +34,11 @@ le tableau d'une autre de ses organisations est invisible, et répond 404. L'en-
 est validé pour appartenance (`ViewAsMiddleware`) et déjà déclaré en CORS, donc
 utilisable depuis un navigateur. Un 404 sur un namespace qui existe ailleurs le
 rappelle désormais dans son `detail` (signal #316).
+
+**Réserver une ligne vit à côté** (signal #362) : `POST …/claim_next` et
+`POST …/rows/{row_id}/claim` sont des CAPACITÉS (`capabilities/datastore_claim.py`),
+pas des routes écrites ici — une surface neuve naît capacité. Seule la LIBÉRATION
+reste dans ce module, avec les autres routes datastore historiques.
 """
 from __future__ import annotations
 
@@ -449,16 +454,36 @@ def make_routes(
         return json_response(request, {"rows": rows})
 
     async def ds_release_claim(request: Request) -> JSONResponse:
-        """Libération FORCÉE du bail d'une row (supervision humaine — pas de garde
-        de worker, contrairement au tool MCP `data_release`). Exige l'écriture."""
+        """Libère le bail d'une row. Deux régimes, selon ce que l'appelant SAIT :
+
+        - corps `{worker}` → libération GARDÉE (on ne libère pas le bail d'un autre) ;
+        - corps vide → libération FORCÉE, supervision humaine (dashboard).
+
+        Le forcé est refusé à un jeton PORTÉ : c'est le vecteur des intégrations
+        multi-utilisateurs (un front d'équipe), où « n'importe qui libère la
+        réservation de n'importe qui » est le défaut, pas la supervision. Une
+        session interactive garde le geste de supervision, elle en a la légitimité.
+        Exige l'écriture dans les deux cas."""
         sub, err = await authenticate(request, verifier)
         if err:
             return err
         namespace = request.path_params["namespace"]
         row_id = request.path_params["row_id"]
-        trace: dict = {}
         try:
-            released = make_store(sub).force_release(namespace, row_id, trace=trace)
+            body = await request.json()
+        except Exception:
+            body = {}                      # release nu = supervision, corps optionnel
+        worker = str((body or {}).get("worker") or "").strip() if isinstance(body, dict) else ""
+        if not worker and token_scopes.current() is not None:
+            return json_error(request, 400, "worker_required",
+                              "un jeton porté libère SON bail : passer le worker "
+                              "utilisé au claim (la libération forcée est réservée "
+                              "à la supervision, session interactive)")
+        trace: dict = {}
+        store = make_store(sub)
+        try:
+            released = (store.release_claim(namespace, row_id, worker=worker, trace=trace)
+                        if worker else store.force_release(namespace, row_id, trace=trace))
         except NamespaceNotFound:
             return _ns_not_found(request, sub, namespace)
         except NamespaceReadOnly:
@@ -467,7 +492,12 @@ def make_routes(
             datastore_journal.record(datastore_journal.TOOL_RELEASE, sub=sub,
                                      ctx=datastore_journal.from_trace(trace, namespace),
                                      row_id=row_id)
-        return json_response(request, {"ok": True, "released": released, "id": row_id})
+        return json_response(request, {
+            "ok": True, "released": released, "id": row_id,
+            **({} if released else
+               {"hint": "rien à libérer : pas de bail sur cette ligne"
+                        + (", ou bail posé par un autre worker" if worker else "")}),
+        })
 
     async def ds_get_row(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
