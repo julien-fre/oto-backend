@@ -27,6 +27,13 @@ Endpoints exposés :
 
 Auth : Bearer JWT Logto **ou** API token long-lived (préfixe `oto_`),
 résolu via `_authenticate` (partagé avec `api_routes.py`).
+
+⚠️ **Org ciblée = en-tête `X-Oto-Org: <org_id>`** (pas un query param `?org=`, qui
+est ignoré). Sans lui, tout est résolu sur l'org ACTIVE du porteur du token — donc
+le tableau d'une autre de ses organisations est invisible, et répond 404. L'en-tête
+est validé pour appartenance (`ViewAsMiddleware`) et déjà déclaré en CORS, donc
+utilisable depuis un navigateur. Un 404 sur un namespace qui existe ailleurs le
+rappelle désormais dans son `detail` (signal #316).
 """
 from __future__ import annotations
 
@@ -73,6 +80,36 @@ def make_routes(
     `options_handler` sont passés depuis `api_routes.py` pour partager les
     primitives (auth Logto + token, CORS).
     """
+
+    def _ns_not_found(request: Request, sub: str, namespace: str) -> JSONResponse:
+        """404 qui dit OÙ vit le tableau quand il appartient à une autre org du user.
+
+        L'API résout le store sur l'org ACTIVE ; viser le tableau d'une autre org
+        demande l'en-tête `X-Oto-Org`, qui n'apparaissait ni dans la description des
+        routes ni dans le moindre message. Un namespace bien réel répondait donc
+        « namespace_not_found », ce qui se lit comme « il n'existe pas » — temps
+        perdu, et un faux diagnostic produit au passage (signal #316).
+
+        On ne nomme que des orgs dont le porteur du token est MEMBRE : l'indice ne
+        révèle rien qu'il ne puisse déjà lister. Fail-open : au moindre pépin, le
+        404 nu d'avant."""
+        try:
+            orgs = {int(o["org_id"]): o.get("name") for o in org_store.list_orgs_for_user(sub)}
+            owners = [("org", str(i)) for i in orgs]
+            elsewhere = [n for n in db.list_datastore_namespaces_for_owners(owners)
+                         if n["namespace"] == namespace]
+            if elsewhere:
+                where = ", ".join(
+                    f"{orgs.get(int(n['owner_id'])) or 'org'} (org {n['owner_id']})"
+                    for n in elsewhere)
+                first = elsewhere[0]["owner_id"]
+                return json_error(
+                    request, 404, "namespace_not_found",
+                    f"« {namespace} » existe, mais dans une autre de tes organisations : "
+                    f"{where}. Rejoue la requête avec l'en-tête « X-Oto-Org: {first} ».")
+        except Exception:  # noqa: BLE001 — un indice ne doit jamais casser la réponse
+            pass
+        return json_error(request, 404, "namespace_not_found")
 
     # --- Google OAuth ----------------------------------------------------
 
@@ -275,7 +312,7 @@ def make_routes(
         try:
             make_store(sub).delete_namespace(namespace)
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except NamespaceForbidden:
             return json_error(request, 403, "forbidden")
         return json_response(request, {"ok": True, "namespace": namespace})
@@ -295,7 +332,7 @@ def make_routes(
         try:
             created = make_store(sub).append_row(namespace, body, trace=trace)
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
         except RowValidationError as e:
@@ -340,7 +377,7 @@ def make_routes(
                 namespace, offset=offset, limit=limit,
                 order_by=order_by, order_dir=order_dir, q=q, filters=filters)
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except ValueError:
             return json_error(request, 400, "invalid_filters")
         return json_response(request, page)
@@ -393,7 +430,7 @@ def make_routes(
                 namespace, group_by=group_by, metrics=metrics, filter=filter_eq,
                 q=q, filters=filters)
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except ValueError:
             return json_error(request, 400, "invalid_aggregate")
         return json_response(request, {"groups": groups})
@@ -408,7 +445,7 @@ def make_routes(
         try:
             rows = make_store(sub).queue(namespace)
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         return json_response(request, {"rows": rows})
 
     async def ds_release_claim(request: Request) -> JSONResponse:
@@ -423,7 +460,7 @@ def make_routes(
         try:
             released = make_store(sub).force_release(namespace, row_id, trace=trace)
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
         if released:  # rien libéré = rien changé, donc rien à journaliser
@@ -441,7 +478,7 @@ def make_routes(
         try:
             return json_response(request, make_store(sub).get_row(namespace, row_id))
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except RowNotFound:
             return json_error(request, 404, "row_not_found")
 
@@ -465,7 +502,7 @@ def make_routes(
         try:
             updated = make_store(sub).update_row(namespace, row_id, body, trace=trace)
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
         except RowNotFound:
@@ -492,7 +529,7 @@ def make_routes(
         try:
             make_store(sub).delete_row(namespace, row_id, trace=trace)
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
         except RowNotFound:
@@ -511,7 +548,7 @@ def make_routes(
         try:
             return json_response(request, {"url": make_store(sub).get_url(namespace)})
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
 
     async def ds_set_schema(request: Request) -> JSONResponse:
         """Pose/retire le schéma typé d'un namespace (ADR 0032 §6 / 0029, B6).
@@ -529,7 +566,7 @@ def make_routes(
         try:
             return json_response(request, make_store(sub).set_schema(namespace, body.get("schema")))
         except NamespaceNotFound:
-            return json_error(request, 404, "namespace_not_found")
+            return _ns_not_found(request, sub, namespace)
         except NamespaceReadOnly:
             return json_error(request, 403, "namespace_read_only")
         except ValueError:
