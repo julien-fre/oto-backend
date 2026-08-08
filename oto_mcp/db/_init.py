@@ -92,6 +92,21 @@ def _init_db_once() -> None:
         conn.execute("DROP TABLE IF EXISTS platform_keys")
         # Idempotent column adds — `CREATE TABLE IF NOT EXISTS` ne propage pas les
         # nouvelles colonnes sur les tables existantes.
+        # ADR 0052 (lot L1) — rattacher les orgs à un tenant. L'ORDRE compte : le
+        # tenant 1 doit exister AVANT la colonne, sinon la FK échoue sur la première
+        # org. Purement additif ⟹ sûr sur la base partagée preprod/prod (même
+        # argument que `embed_dirty` plus bas) ; PG ≥ 11 range le DEFAULT au catalogue,
+        # donc pas de réécriture de table. **Rien ne lit encore cette colonne** :
+        # l'existant est NOMMÉ, pas déplacé — le lot se défait par un `drop`.
+        conn.execute("INSERT INTO tenants (id, slug, name) VALUES (1, 'oto', 'Oto') "
+                     "ON CONFLICT (id) DO NOTHING")
+        # La séquence ne bouge pas sur un INSERT à id explicite : sans ce recalage, le
+        # prochain tenant naîtrait sur l'id 1 et casserait (cf. « ids fusionnés = la
+        # MÊME séquence », docs/live-migrations.md).
+        conn.execute("SELECT setval(pg_get_serial_sequence('tenants','id'), "
+                     "GREATEST((SELECT MAX(id) FROM tenants), 1))")
+        conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS tenant_id BIGINT "
+                     "NOT NULL DEFAULT 1 REFERENCES tenants(id)")
         # Soft-disconnect unipile : la ligne de binding survit (preuve de propriété
         # durable du compte hébergé → rebind déterministe à la reconnexion).
         conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS disconnected_at TIMESTAMPTZ")

@@ -21,6 +21,25 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Palier TENANT (ADR 0052) — l'étage d'identité entre la plateforme et l'org :
+-- un émetteur dédié, des domaines, des orgs. Créé AVANT `orgs`, qui le référence
+-- (`orgs.tenant_id`, posé en ALTER dans `_init`) : même contrainte d'ordre que
+-- pour `orgs` ci-dessous, une FK vers une table non encore créée échoue sur une
+-- base vierge.
+--
+-- ⚠️ COLLISION DE VOCABULAIRE, à ne pas confondre : `sub_aliases` (plus bas) parle
+-- de « bascule de tenant » au sens **instance Logto** (auth.oto.zone → auth.oto.ninja).
+-- Ici, un tenant est l'étage d'identité du PRODUIT — il PORTE un émetteur, il n'en
+-- est pas un. Le tenant `oto` (id 1) est celui de tout l'existant : son sub reste
+-- **nu**, donc aucune ligne n'est retouchée et rien n'est rechiffré (l'AAD du coffre
+-- dérive du sub, cf. 0052).
+CREATE TABLE IF NOT EXISTS tenants (
+    id BIGSERIAL PRIMARY KEY,
+    slug TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Palier organization (= périmètre / store serveur) — table RACINE, définie en
 -- tête car des tables plus bas la référencent (`unipile_accounts` etc.) : sur une
 -- base VIERGE, PostgreSQL crée les tables dans l'ordre du DDL et une FK vers une
