@@ -626,24 +626,45 @@ def register(mcp: FastMCP) -> None:
         """Search French company collective agreements (accords d'entreprise, ACCO).
 
         Neutral primitive returning raw rows — compose your own need via filters,
-        sort and per-company reduction. Common recipes:
-        - Who just renegotiated their health/pension scheme:
-          themes=["111","112"], nature="AVENANT", sort_dir="desc".
-        - Companies whose health scheme is STALE (dormant contract, no recent act):
-          themes=["111","112"], latest_per_siret=True, sort_dir="asc",
-          date_to=<today-12months>.
-        - Does THIS company have any health/pension agreement (and when):
-          siren="123456789", themes=["111","112"].
+        sort and per-company reduction.
+
+        ⚠️ `themes` PROVES PRESENCE, NEVER ABSENCE. Theme codes come from DILA's
+        own indexing of the filing: declarative, uneven, and demonstrably
+        incomplete. Measured case — CAFES BIBAL VENDING (SIREN 345255087) filed
+        the SAME kind of agreement twice: the 2019 one is coded 111/112, the
+        2025 one is coded 081-084 only, yet its article 5 ("Régime de
+        remboursement complémentaire de frais de santé et de prévoyance")
+        re-institutes health AND pension for 4 years. Filtering on 111/112 there
+        returns the 2019 act alone — reading "no recent act" off that is a FALSE
+        NEGATIVE produced by the source, not by this tool. Health clauses
+        routinely travel inside an agreement titled "égalité professionnelle" or
+        "NAO", and get coded accordingly.
+
+        Consequence for prospecting: to assert a company's scheme is DORMANT,
+        theme codes are not enough — search by `siren` WITHOUT `themes`, then
+        read the recent acts with `fr_accords_text` (health sections carry very
+        stable headings: "frais de santé", "régime de prévoyance",
+        "complémentaire santé"). Use `themes` to FIND candidates cheaply, the
+        text to CONFIRM the ones you are about to act on.
+
+        Common recipes:
+        - Who just renegotiated their health/pension scheme (candidates, not an
+          exhaustive set): themes=["111","112"], nature="AVENANT", sort_dir="desc".
+        - Does THIS company have a health/pension agreement, and when: search by
+          siren WITHOUT themes, sort_dir="desc", then read the recent acts.
         - PROSPECTING AUTONOMOUS SMEs (skip group subsidiaries, whose insurance is
           decided at HQ): exclude_categories=["GE"]. 26% of the companies filing a
           health/pension agreement are GE — filtering here is one query instead of
           a per-company qualification pass.
 
         Args:
-            query: Substring in the agreement title (ILIKE).
+            query: Substring in the agreement TITLE (ILIKE) — not in its text. The
+                local index holds metadata only; body text is fetched per act by
+                fr_accords_text, so a clause cannot be searched across the corpus.
             themes: Theme codes (OR). Health/pension: "111" (complémentaire santé),
                 "112" (prévoyance), "113" (retraite supplémentaire). Use
-                fr_accords_themes to discover codes.
+                fr_accords_themes to discover codes. Presence-only — see the
+                warning above before concluding anything from their ABSENCE.
             nature: ACCORD (initial) | AVENANT (amendment = renegotiation) | …
             siren: Company SIREN (9 digits) — matches ALL its establishments.
                 PREFER this over siret to check a company: ACCO files an agreement
@@ -694,21 +715,46 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
-    def fr_accords_get(id_or_numero: str) -> dict:
+    def fr_accords_get(id_or_numero: str, include_text: bool = False) -> dict:
         """Fetch a single company agreement by its DILA id (ACCOTEXT…) or numero (T…).
+
+        Returns METADATA (who, when, themes, branch…). The body text is NOT in the
+        local index — it is fetched per act from Légifrance, so ask for it with
+        `include_text=True` (or call `fr_accords_text`, which also paginates long
+        agreements). Without that, this tool cannot tell you what an agreement
+        SAYS — and what it says is often the point: theme codes are declarative
+        and incomplete (cf. fr_accords_search), so a health clause is regularly
+        found only by reading.
 
         Args:
             id_or_numero: DILA identifier (ACCOTEXT000…) or deposit number (T…).
+            include_text: also fetch the full text (one Légifrance call). Long
+                agreements come back truncated here — `texte_tronque`=true means
+                use `fr_accords_text(acco_id, offset=…)` to walk the rest.
         """
         result = fod_fr.get_acco(id_or_numero)
         if result is None:
             return {"error": "not_found", "id_or_numero": id_or_numero}
-        return result
+        if not include_text:
+            return result
+        from .. import fod_ccn
+        # Le texte se demande par ID DILA : l'appelant a pu nommer l'acte par son
+        # numéro de dépôt (T…), que Légifrance ne connaît pas.
+        text = fod_ccn.accords_text(result.get("id") or id_or_numero)
+        return {**result, "texte": text.get("texte"),
+                "texte_chars": text.get("texte_chars"),
+                "texte_tronque": text.get("tronque"),
+                "next_offset": text.get("next_offset"),
+                "source_url": text.get("source_url")}
 
     @mcp.tool()
     def fr_accords_themes() -> list[dict]:
         """List the agreement theme codes present in the database (code → label →
-        count). Discovery helper so you can pick `themes` for fr_accords_search."""
+        count). Discovery helper so you can pick `themes` for fr_accords_search.
+
+        The counts say how often DILA APPLIED a code, not how many agreements
+        cover the topic — the indexing is declarative and misses clauses (see
+        the warning on fr_accords_search)."""
         return fod_fr.acco_themes()
 
     @mcp.tool()

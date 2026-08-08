@@ -100,10 +100,12 @@ def register(mcp: FastMCP) -> None:
         org_ids: Optional[list[str]] = None,
         titles: Optional[list[str]] = None,
         seniorities: Optional[list[str]] = None,
+        person_locations: Optional[list[str]] = None,
+        organization_locations: Optional[list[str]] = None,
         per_page: int = 25,
         page: int = 1,
     ) -> dict:
-        """Search people by company domains/ids, titles, seniorities (net-new).
+        """Search people by company domains/ids, titles, seniorities, location (net-new).
 
         Returns identities WITHOUT email/phone — reveal a contact with
         apollo_match_person (which costs an Apollo credit).
@@ -113,16 +115,32 @@ def register(mcp: FastMCP) -> None:
         NEVER first name + company, which matches nobody: Apollo then mints an empty
         record and charges the credit anyway.
 
+        ⚠️ A DOMAIN IS WORLDWIDE. On a subsidiary of an international group, the
+        domain is shared across every country: franke.com returns 1887 profiles,
+        verifone.com 3282, sonova.com 3147 — targeting the French entity by domain
+        alone means revealing at random, one credit each, mostly on the wrong
+        country. Add `person_locations=["France"]`. Same for the reverse case: a
+        French head office with expatriates is `organization_locations`.
+
         Args:
             domains: company domains, e.g. ["acme.com"].
             org_ids: Apollo organization ids (from apollo_enrich_organization).
             titles: job-title keywords, e.g. ["directeur financier", "CFO"].
             seniorities: e.g. ["c_suite", "founder", "owner", "director", "manager"].
+            person_locations: where the PERSON is — country, region or city as
+                Apollo spells it, e.g. ["France"], ["Paris, France"]. THE filter
+                for a national subsidiary of a global domain.
+            organization_locations: where their EMPLOYER's site is (≠ the person's
+                own location: a French-based employee of a German site matches
+                person_locations=["France"], not organization_locations).
         """
         client, _ = _client()
         return client.search_people(
             domains=domains, org_ids=org_ids,
-            titles=titles, seniorities=seniorities, per_page=per_page, page=page)
+            titles=titles, seniorities=seniorities,
+            person_locations=person_locations,
+            organization_locations=organization_locations,
+            per_page=per_page, page=page)
 
     @mcp.tool()
     def apollo_match_person(

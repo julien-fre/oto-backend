@@ -32,10 +32,13 @@ _FEED_SYNC_CAP_PAGES = 5            # garde-fou anti-martelage LinkedIn par sync
 _FEED_PAGE_COUNT = 40              # items par page Voyager pendant le sync
 _FEED_SORT_ORDER = "MEMBER_SETTING"  # honore le tri choisi sur la home LinkedIn
 
-# --- Discipline du rate-limit amont LinkedIn (Unipile). EMPIRIQUE 2026-07-21 : le 429
-# Unipile est un rate-limit EN COUCHES (« We only allow 1 / 10 / 100 requests ») avec un
-# `Retry in N` le plus souvent en SECONDES (rafale : 3-38s), rarement en heures. Ce n'est
-# PAS un cap dur 100/12h (455 appels/h observés dont 187 OK, 429 récupéré en ~40s). On
+# --- Discipline du rate-limit amont LinkedIn (Unipile). EMPIRIQUE : le 429 Unipile est un
+# rate-limit EN COUCHES (« We only allow 1 / 10 / 100 requests ») dont le `Retry in N`
+# SUIT LA CADENCE RÉCENTE du compte — ce n'est pas une constante. Deux mesures, à ne pas
+# confondre : 2026-07-21, rafales modérées → 3-38s (455 appels/h dont 187 OK, 429 récupéré
+# en ~40s) ; 2026-08-07, APRÈS un pilote qui a enchaîné → ~55 min puis ~53 min sur un seul
+# appel isolé (#361). Donc pas de cap dur 100/12h, mais pas non plus de « quelques secondes »
+# promises : le délai à annoncer est CELUI qu'Unipile renvoie, jamais une moyenne. On
 # SUIT le signal d'Unipile : sur un 429 on arme un cooldown = SON PROPRE `retry_after`
 # (parsé oto-core, secondes incluses), plafonné, et on refuse les scrapes du sub d'ici là
 # — micro-backoff qui auto-pace la rafale sans marteler (le martèlement dégrade en timeouts
@@ -63,14 +66,18 @@ def _rate_limit_guard(sub: str) -> None:
     if until > now:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
             f"⏳ Unipile rate-limite ce compte LinkedIn — réessaie dans {_fmt_wait(until - now)} "
-            "(délai demandé par Unipile ; c'est en général quelques secondes). RALENTIS la "
-            "cadence des appels unipile_* plutôt que de les enchaîner en rafale.")))
+            "(délai demandé par Unipile : de quelques secondes après une rafale légère à "
+            "~1h quand la cadence récente a été soutenue — c'est le délai affiché qui fait "
+            "foi, pas une moyenne). RALENTIS la cadence des appels unipile_* plutôt que de "
+            "les enchaîner en rafale ; si l'attente est longue, passe à autre chose et "
+            "reviens, plutôt que de sonder en boucle.")))
 
 
 def _note_rate_limited(sub: str, err) -> None:
-    """Arme le cooldown = le `retry_after` renvoyé par Unipile (souvent quelques secondes),
-    plafonné à `_RL_MAX_SECS` (un « 12 hours » rare/trompeur ne bloque pas la journée) ;
-    défaut court si le corps n'a pas de délai lisible."""
+    """Arme le cooldown = le `retry_after` renvoyé par Unipile — quelques secondes après
+    une rafale légère, jusqu'à ~1h quand la cadence récente a été soutenue (#361) — plafonné
+    à `_RL_MAX_SECS` (un « 12 hours » rare/trompeur ne bloque pas la journée) ; défaut court
+    si le corps n'a pas de délai lisible."""
     secs = min(getattr(err, "retry_after", None) or _RL_DEFAULT_SECS, _RL_MAX_SECS)
     _RATE_LIMIT_UNTIL[sub] = time.time() + secs
 
@@ -527,9 +534,11 @@ def register(mcp: FastMCP) -> None:
         (2) le mode `url=` est **plafonné à 25 sans pagination** — préfère le structuré.
 
         ⚠️ **Cadence** : LinkedIn rate-limite par compte. Enchaîner des dizaines
-        d'appels en rafale déclenche un `429` (backoff de quelques secondes), puis
-        DÉGRADE et finit par DÉCONNECTER le compte. Espace tes appels ; sur un `429`,
-        respecte le délai renvoyé (souvent quelques s) et RALENTIS — n'insiste pas.
+        d'appels en rafale déclenche un `429`, puis DÉGRADE et finit par DÉCONNECTER
+        le compte. Le backoff demandé SUIT ta cadence récente : quelques secondes
+        après une rafale légère, jusqu'à ~1h derrière un enchaînement soutenu — lis
+        le délai renvoyé, ne suppose pas qu'il est court. Espace tes appels ; sur un
+        `429`, respecte CE délai et RALENTIS — n'insiste pas.
         Pour du volume, délègue la pagination à un sous-agent (guide `bulk-load`).
 
         `company`/`location`/`industry` acceptent des NOMS (résolus automatiquement

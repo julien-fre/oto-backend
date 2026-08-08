@@ -56,19 +56,26 @@ en cas d'ambiguïté, résous d'abord via `unipile_search_facets` et passe l'id 
 ## Cadence & rate-limit (ne pas cramer le compte)
 
 LinkedIn rate-limite **par compte**, en couches (Unipile renvoie `429 We only allow
-1 / 10 / 100 requests. Retry in N`). Le `Retry in N` est **le plus souvent quelques
-secondes** (throttle de rafale), rarement des heures. Ce n'est **pas** un cap dur : le
-danger n'est pas « 100 et bloqué », c'est **le martèlement** — enchaîner des dizaines
-d'appels en rafale fait passer le compte de `429` → **timeouts** → **checkpoint /
-déconnexion** (vécu : un compte cassé ainsi en une soirée).
+1 / 10 / 100 requests. Retry in N`). **Le `Retry in N` suit ta cadence récente — ce
+n'est pas une constante** : quelques secondes après une rafale légère (mesuré 3-38s le
+21/07), mais **~55 min** derrière un pilote qui a enchaîné les appels (mesuré le 07/08,
+sur un seul appel isolé, puis ~53 min au suivant). Lis le délai renvoyé, ne suppose pas
+qu'il est court : c'est lui qui fait foi.
+
+Ce n'est **pas** un cap dur : le danger n'est pas « 100 et bloqué », c'est **le
+martèlement** — enchaîner des dizaines d'appels en rafale fait passer le compte de
+`429` → **timeouts** → **checkpoint / déconnexion** (vécu : un compte cassé ainsi en une
+soirée). Un backoff qui grimpe à l'heure est le signal que la cadence précédente était
+déjà trop haute.
 
 Règles :
 
 - **Espace tes appels** — pas des dizaines de `unipile_company` / `unipile_search` en
   rafale. Traite les leads en série tranquille, pas en tir groupé.
-- **Sur un `429`** : le serveur arme un court backoff (= le délai qu'Unipile a demandé)
-  et refuse les scrapes d'ici là avec « réessaie dans ~Xs ». **Respecte-le, RALENTIS** ;
-  n'insiste pas en boucle (ça aggrave le throttle).
+- **Sur un `429`** : le serveur arme un backoff (= le délai qu'Unipile a demandé, plafonné
+  à 1h) et refuse les scrapes d'ici là en annonçant l'attente restante. **Respecte-la,
+  RALENTIS** ; n'insiste pas en boucle (ça aggrave le throttle). Si l'attente se compte en
+  dizaines de minutes, passe à autre chose et reviens — ne sonde pas.
 - **`unipile_company` est mis en cache 6h** par compte : relire une société déjà vue ne
   coûte rien — mais ne relis pas inutilement.
 - **Search-first** : une page de résultats porte déjà nom/poste/entreprise/headline. Ne
