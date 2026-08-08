@@ -118,8 +118,22 @@ def _get_one(c, entity: str, id: str, group_id: Optional[str] = None,
     return None
 
 
-def _create_one(c, entity: str, group_id: Optional[str] = None,
-                 object_type: str = "deals", dry_run: bool = False, **fields):
+def _create_one(c, entity: str, fields: Optional[dict] = None,
+                 group_id: Optional[str] = None,
+                 object_type: str = "deals", dry_run: bool = False):
+    """Crée UN record. `fields` = l'item de l'appelant, passé comme DICT.
+
+    Surtout pas `**fields` : les clés de l'item viennent de l'agent, et l'une
+    d'elles peut porter le nom d'un paramètre de cette fonction — `folk_create
+    (entity='person', item={... 'group_id': 'grp_…'})` levait alors un
+    `TypeError: got multiple values for keyword argument 'group_id'`, rendu à
+    l'appelant en « erreur interne du serveur » là où il attendait le refus
+    actionnable « champ inconnu pour entity='person' » que la validation juste
+    en dessous sait produire (signal #353). Même famille que la collision des
+    jetons de contexte : un argument métier mangé par un paramètre homonyme.
+    Passer le dict ferme la collision par construction, pour toute clé future.
+    """
+    fields = dict(fields or {})
     if entity == "deal" and not group_id:
         raise _bad("group_id requis pour entity='deal'.")
     unknown = set(fields) - _CREATE_FIELDS.get(entity, set())
@@ -483,13 +497,13 @@ def register(mcp: FastMCP) -> None:
             raise _bad("group_id requis pour entity='deal'.")
         c = _client()
         if item is not None:
-            result = _create_one(c, entity, group_id=group_id, object_type=object_type,
-                                 dry_run=dry_run, **item)
+            result = _create_one(c, entity, item, group_id=group_id,
+                                 object_type=object_type, dry_run=dry_run)
             return {"dry_run": True, **result} if dry_run else result
         results = _bulk_run(
-            items, lambda it: _create_one(c, entity, group_id=group_id,
+            items, lambda it: _create_one(c, entity, it, group_id=group_id,
                                           object_type=object_type,
-                                          dry_run=dry_run, **it))
+                                          dry_run=dry_run))
         failed = [{"index": i, "error": val} for i, ok, val in results if not ok]
         if dry_run:
             would_create = [{"index": i, **val} for i, ok, val in results if ok]

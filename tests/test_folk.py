@@ -147,6 +147,35 @@ def test_create_rejects_unknown_field_for_person(client_cls):
     inst.create_person.assert_not_called()
 
 
+@pytest.mark.parametrize("colliding", ["group_id", "object_type", "dry_run", "entity"])
+def test_create_item_key_colliding_with_a_param_is_a_clean_refusal(client_cls, colliding):
+    """Une clé d'item homonyme d'un paramètre interne = refus actionnable, pas un 500.
+
+    `item={'group_id': 'grp_…'}` sur une person levait un TypeError (« multiple
+    values for keyword argument ») rendu en « erreur interne du serveur », là où
+    l'utilisateur attendait le « champ inconnu » que l'allow-list sait produire
+    (signal #353). L'item est désormais passé comme DICT : aucune clé, présente
+    ou future, ne peut plus percuter la signature."""
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match=colliding):
+        _register_and_call("folk_create", entity="person",
+                           item={"first_name": "Ada", colliding: "x"})
+    inst.create_person.assert_not_called()
+
+
+def test_create_bulk_item_key_collision_is_a_per_item_failure(client_cls):
+    """Même garantie en lot : l'item fautif échoue seul, le reste passe."""
+    inst = _instance(client_cls)
+    inst.create_person.return_value = {"id": "p1"}
+    out = _register_and_call("folk_create", entity="person", items=[
+        {"first_name": "Ada"},
+        {"first_name": "Bob", "group_id": "grp_1"},
+    ])
+    assert out["succeeded"] == 1
+    assert [f["index"] for f in out["failed"]] == [1]
+    assert "group_id" in str(out["failed"][0]["error"])
+
+
 def test_create_rejects_unknown_field_for_deal(client_cls):
     # Avant l'allow-list, ceci levait un TypeError brut de create_deal (pas
     # de **kwargs côté client) — désormais un McpError propre, même message

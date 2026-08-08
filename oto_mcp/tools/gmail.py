@@ -235,7 +235,7 @@ def register(mcp: FastMCP) -> None:
                 return await asyncio.to_thread(
                     lambda: client.create_draft(
                         to=to, subject=subject or "", body=body, html=html, cc=cc, bcc=bcc,
-                        attachments=att_paths,
+                        markdown=markdown, attachments=att_paths,
                     )
                 )
             return await asyncio.to_thread(

@@ -11,6 +11,9 @@ dependencies = [
     # (SHA backend + ce pin). PyPI ne reçoit pas chaque merge (publish manuel, lag) →
     # on tague oto-core et on bump CE pin par PR. Bump = éditer le tag ici ; rollback
     # = revert ce commit (ramène aussi le bon oto-core). Cf. ADR 0020 (deploy/canari).
+    # v1.77.0 = gmail (en-têtes canoniques To/Cc/Subject + relecture insensible à la
+    # casse + markdown rendu en BROUILLON, signaux #340/#341/#342/#343) et sirene stock
+    # (`[ND]` non diffusible ne tue plus le scan, #358) ;
     # v1.75.0 = LushaClient.search_and_enrich (search + reveal emails/phones,
     # 100 contacts max par appel) ; v1.74.0 = salesforce create_records/update_records (bulk via sObject
     # Collections, 200 max par appel) ; v1.73.0 = SellsyClient (CRM + gestion
@@ -27,7 +30,7 @@ dependencies = [
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.76.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.77.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome
