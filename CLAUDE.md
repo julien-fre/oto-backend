@@ -79,6 +79,21 @@ Mistral). **Détail : `docs/auth-logto.md`** (gotchas, env, onboarding).
 > (+ template public `otomata-tech/oto-claude-tag-template`, Claude Tag n'acceptant qu'un dépôt privé
 > comme source de plugins).
 
+> **Le verifier est un REGISTRE d'émetteurs, et le sub est qualifié par tenant (ADR 0052 L2).**
+> `server._build_verifier` construit `issuer → (tenant, verifier)` (`tenancy.py`) : sélection par
+> le claim `iss` **non vérifié** (il ne sert qu'à CHOISIR ; le verifier retenu revalide signature
+> + `iss`). **`LOGTO_ENDPOINT_ALT` n'est plus un `fallback`** : c'est une entrée du registre sur
+> le même tenant `oto` (deux émetteurs, un tenant). L'émetteur primaire vient de l'ENV, jamais de
+> la base → l'auth canonique est DB-indépendante ; les tenants tiers viennent de la table
+> `tenants` (registre construit **au boot** ⟹ un tenant neuf demande un restart).
+> ⚠️ **Le tenant `oto` garde un sub NU** — l'AAD du coffre dérive du sub
+> (`credentials_store._aad`) : le qualifier rendrait TOUS les credentials de prod
+> indéchiffrables. Un tenant tiers a `"<slug>:<sub>"`, et **en aval le sub est une chaîne
+> OPAQUE, jamais découpée** (`entity_id` ne se découpe qu'à son PREMIER `:`, et jamais au scope
+> `user` où `entity_id` EST le sub — tripwire `tests/test_tenant_l2_sub_opaque.py`). Pour savoir
+> de quel tenant relève un sub : `tenancy.current().tenant_of(sub)` (classement par préfixe).
+> **Détail : `docs/auth-logto.md` §Registre d'émetteurs.**
+
 > **⚠️ CUTOVER ADR 0040 (2026-07-06) — `.ninja`↔`.cx` inversés.** Désormais **PROD =
 > `mcp.oto.cx`** (:9103, audience canonique `mcp.oto.cx/mcp`, dashboard `manage.oto.cx`) et
 > **PREPROD = `mcp.oto.ninja`** (:9105, audience `mcp.oto.ninja/mcp`, dashboard `manage.oto.ninja`).
