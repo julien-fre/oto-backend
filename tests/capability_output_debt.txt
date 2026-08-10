@@ -78,16 +78,8 @@ org.admin.list
 org.console
 org.doctrine.admin_get
 org.doctrine.admin_list
-org.doctrine.get
 org.instruction.admin_delete
 org.instruction.admin_set
-org.instruction.delete
-org.instruction.get
-org.instruction.list
-org.instruction.revert
-org.instruction.set
-org.instruction.usage
-org.instruction.versions
 org.monitoring.console
 org.procedure.console
 org.scheduled_emails.console

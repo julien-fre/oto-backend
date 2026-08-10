@@ -40,6 +40,220 @@ _BASE = org_store.BASE_SLUG
 _DOCTRINE_GET_TOOL = "oto_procedure"
 
 
+# ── Sorties ─────────────────────────────────────────────────────────────────
+# Vocabulaire, parce qu'il piège : une **procédure** (skill nommée, versionnée) est
+# un objet de CE module ; le **readme d'org** est un GUIDE `delivery='init'` (ADR
+# 0042) qui vit ailleurs. Le slug réservé `claude_md` désigne le second — d'où une
+# asymétrie visible plus bas : la liste l'annonce, `get` ne le sert pas.
+
+class ReferencedTool(BaseModel):
+    """Un `<tool:slug>` du corps, résolu **à la lecture** contre le registre vivant
+    (ADR 0014). `status='missing'` = la référence ne désigne plus rien (outil renommé
+    ou non monté) : le corps n'a pas changé, sa résolution si. Une entrée `missing`
+    ne porte que `name` + `status` ; une entrée `ok` porte la fiche de l'outil."""
+    name: str
+    status: str
+
+
+class DoctrineView(BaseModel):
+    """⚠️ **Trois formes derrière une capacité**, choisies par l'ENTRÉE :
+
+    1. `doctrine_id` fourni → une procédure par son id STABLE (le seul chemin qui
+       traverse les orgs : l'accès passe par le seam ownership, donc une procédure
+       PARTAGÉE à toi par une autre org est lisible ici). **C'est la seule forme que
+       la face REST peut produire** — `doctrine_id` y est un segment de chemin.
+    2. `slug` omis (MCP) → le *bundle de session* : readme d'org + readme d'équipe +
+       index des procédures.
+    3. `slug` fourni (MCP) → une procédure nommée.
+
+    ⚠️ La clé de scope CHANGE de nom selon la forme : `org_id` en scope org,
+    `group_id` en scope équipe — pas un champ nul, un champ absent.
+
+    ⚠️ Sans org active, la forme 2 répond **200 avec un bundle vide** (`org_id: null`,
+    `doctrine: ""`, `doctrines: []`), pas une erreur : `doctrine: ""` confond « pas
+    d'org » et « org sans readme »."""
+    org_id: Optional[int] = None
+    group_id: Optional[int] = None
+    doctrine_id: Optional[int] = None
+    scope: Optional[str] = None
+    slug: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    version: Optional[int] = None
+    body_md: Optional[str] = None
+    # Entités requises déclarées (ADR 0035), citées `<slot:name>` dans la prose.
+    slots: Optional[list] = None
+    referenced_tools: Optional[list[ReferencedTool]] = None
+    # Forme 2 seulement : le readme d'org (prose plate), son org, son équipe active.
+    org: Optional[str] = None
+    doctrine: Optional[str] = None
+    group: Optional[str] = None
+    group_doctrine: Optional[str] = None
+    # Index (slug/title/description/scope) — SANS les corps.
+    doctrines: Optional[list[dict]] = None
+    # Présent seulement s'il y a un projet actif : les entités du projet contre
+    # lesquelles résoudre les `<slot:>`. Dérivé best-effort — son ABSENCE peut donc
+    # aussi vouloir dire « la dérivation a échoué », pas seulement « hors projet ».
+    project_instance: Optional[dict] = None
+    # Forme 3 avec `with_history=true`, en scope org uniquement.
+    versions: Optional[list[dict]] = None
+
+
+class DoctrineMeta(BaseModel):
+    """État du readme d'org. ⚠️ **`version` est un faux compteur** : il vaut 1 s'il
+    existe un readme, 0 sinon, et n'atteint JAMAIS 2 — le readme est de la prose plate
+    sans historique (ADR 0042). L'afficher comme un numéro de révision promet un
+    versionnage qui n'existe pas."""
+    exists: bool
+    version: int
+    updated_at: Optional[str] = None
+
+
+class InstructionIndexEntry(BaseModel):
+    """Métadonnées d'une procédure — **sans le corps** (`body_md` s'obtient par
+    `GET /api/me/instructions/{slug}`)."""
+    id: int
+    slug: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    version: int
+    updated_at: Optional[str] = None
+
+
+class InstructionsBundle(BaseModel):
+    """Readme + index des procédures de l'ORG ACTIVE.
+
+    ⚠️ **Sans org active, c'est un 200 avec tout à vide** (`org_id: null`,
+    `can_edit: false`, `doctrine.exists: false`, `instructions: []`) — pas un 400.
+    Indiscernable, à la lecture, d'une org réelle qui n'aurait rien écrit.
+
+    ⚠️ **`instructions` exclut le readme** (slug réservé `claude_md`), qui n'est décrit
+    que par `doctrine`. Et l'asymétrie va plus loin : `doctrine.exists: true` annonce
+    un readme que `GET /api/me/instructions/claude_md` **ne sait pas servir** (404) —
+    le readme se lit sur la surface guide, pas ici."""
+    org_id: Optional[int] = None
+    org_name: Optional[str] = None
+    can_edit: bool
+    doctrine: DoctrineMeta
+    instructions: list[InstructionIndexEntry]
+
+
+class InstructionView(BaseModel):
+    """Une procédure, corps compris. `slug` est le slug NORMALISÉ (l'entrée est
+    tolérante).
+
+    ⚠️ **`updated_at: null` ne veut pas dire « jamais modifiée »** : c'est le signe
+    qu'on lit une VERSION ARCHIVÉE (`?version=N`), servie depuis la table des
+    révisions, qui ne porte pas cette colonne. Sur la version courante, elle est
+    toujours renseignée."""
+    slug: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    version: int
+    body_md: str
+    slots: list
+    set_by: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class InstructionVersion(BaseModel):
+    version: int
+    title: Optional[str] = None
+    set_by: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class InstructionVersions(BaseModel):
+    """Historique d'une procédure, plus récente d'abord.
+
+    ⚠️ **Une liste vide recouvre trois situations distinctes** et rend 200 dans les
+    trois : le slug n'existe pas (aucun 404 n'est levé ici), c'est le readme (qui n'a
+    par nature pas d'historique), ou la procédure n'a encore aucune révision archivée.
+    Il faut `GET /api/me/instructions/{slug}` pour trancher."""
+    slug: str
+    versions: list[InstructionVersion]
+
+
+class InstructionUsage(BaseModel):
+    """Usage d'une procédure, dérivé du journal d'appels (ADR 0014).
+
+    ⚠️ **`count` et `series` ne mesurent pas la même fenêtre** : `series` couvre les 30
+    derniers jours, `count` et `callers` n'ont **aucun filtre de date** — ils comptent
+    tout ce qui reste en base. `count` ≠ `sum(series)`, et l'écart n'est pas un bug.
+
+    ⚠️ **`callers` peut être plus court que ce que `count` totalise** : les appelants
+    sans compte `users` connu sont exclus de la liste mais comptés dans le total.
+
+    ⚠️ **Sur le slug du readme (`claude_md`), le filtre par procédure disparaît** : le
+    compte devient celui de TOUS les chargements de procédure de l'org, quelle qu'elle
+    soit. Ce n'est pas l'usage d'un document, c'est le volume d'une surface.
+
+    Autres bornes : seuls les appels RÉUSSIS comptent, et le périmètre est celui des
+    membres ACTUELS de l'org — le départ d'un membre efface rétroactivement ses
+    chargements."""
+    slug: str
+    count: int
+    # Emails des appelants, du plus actif au moins actif.
+    callers: list[str]
+    # Exactement 30 entiers, du plus ancien au plus récent (jour UTC). Les jours sans
+    # appel valent 0 — ici, contrairement au monitoring, la série est densifiée.
+    series: list[int]
+
+
+class InstructionWritten(BaseModel):
+    """Écriture d'une procédure. Chaque écriture **incrémente la version** et archive
+    un instantané ; il n'y a pas de mise à jour en place.
+
+    Les checks croisés sont **non bloquants par conception** (ADR 0014/0035) : ils
+    signalent le drift, ils ne refusent pas l'écriture. Donc `ok: true` avec des
+    `unresolved_tools` ou des `unresolved_slots` non vides = **la procédure est
+    enregistrée ET cassée**. C'est le seul endroit où ça se voit.
+
+    `slots` renvoyé est l'état EFFECTIF après écriture (envoyer `slots: null` conserve
+    l'existant, donc l'écho peut différer de ce qui a été posté)."""
+    ok: bool
+    org_id: Optional[int] = None
+    slug: str
+    # Le NOUVEAU numéro de version (jamais celui qu'on a envoyé).
+    version: int
+    # Constante d'écho : vaut toujours `true` quand la réponse existe.
+    set: bool
+    # Présent seulement si l'écriture était une restauration (`from_version`).
+    reverted_from: Optional[int] = None
+    referenced_tools: Optional[list[ReferencedTool]] = None
+    # Refs `<tool:>` qui ne désignent plus rien — l'écriture a quand même eu lieu.
+    unresolved_tools: Optional[list[str]] = None
+    slots: Optional[list] = None
+    # `<slot:name>` cité dans la prose sans déclaration correspondante.
+    unresolved_slots: Optional[list[str]] = None
+    # Déclaré mais jamais cité — l'inverse, tout aussi silencieux.
+    unreferenced_slots: Optional[list[str]] = None
+    slot_warnings: Optional[list[str]] = None
+    suggested_slots: Optional[list] = None
+
+
+class InstructionDeleted(BaseModel):
+    """Suppression d'une procédure **et de tout son historique** — irréversible, aucune
+    corbeille. `deleted` ne vaut jamais `false` (un slug absent lève un 404) : c'est
+    une constante d'écho. `slug` est le slug normalisé."""
+    ok: bool
+    org_id: Optional[int] = None
+    slug: str
+    deleted: bool
+
+
+class InstructionReverted(BaseModel):
+    """Restauration d'une version passée. ⚠️ **`version` est un numéro NEUF, pas celui
+    qu'on restaure** : revenir à la v2 d'une procédure en v6 produit une v7 dont le
+    contenu est celui de la v2. L'historique n'est jamais rembobiné — `reverted_from`
+    est la seule trace de l'intention."""
+    ok: bool
+    slug: str
+    version: int
+    reverted_from: int
+
+
 # ── Inputs — palier membre (org active, pas d'org_id) ───────────────────────
 class EmptyInput(BaseModel):
     pass
@@ -396,7 +610,7 @@ CAPABILITIES += [
     # ── Lectures membre (org active) ────────────────────────────────────────
     Capability(
         key="org.doctrine.get", handler=_get_doctrine, Input=DoctrineGetInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=DoctrineView,
         description=("Operational doctrine of your active org. The base doctrine is now "
                      "INJECTED into your session instructions at connect — call this with "
                      "`slug` to load ONE named skill's full markdown (list skills with "
@@ -411,28 +625,28 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.instruction.list", handler=_instructions_list, Input=EmptyInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=InstructionsBundle,
         rest=RestBinding("GET", "/api/me/instructions"),
     ),
     Capability(
         key="org.instruction.get", handler=_instruction_get, Input=InstrGetInput,
-        authz=ORG_MEMBER,
+        authz=ORG_MEMBER, Output=InstructionView,
         rest=RestBinding("GET", "/api/me/instructions/{slug}"),
     ),
     Capability(
         key="org.instruction.versions", handler=_instruction_versions, Input=SlugInput,
-        authz=ORG_MEMBER,
+        authz=ORG_MEMBER, Output=InstructionVersions,
         rest=RestBinding("GET", "/api/me/instructions/{slug}/versions"),
     ),
     Capability(
         key="org.instruction.usage", handler=_instruction_usage, Input=SlugInput,
-        authz=ORG_MEMBER,
+        authz=ORG_MEMBER, Output=InstructionUsage,
         rest=RestBinding("GET", "/api/me/instructions/{slug}/usage"),
     ),
     # ── Écritures membre (org active, org_admin) ────────────────────────────
     Capability(
         key="org.instruction.set", handler=_set_instruction, Input=InstrSetInput,
-        authz=ORG_ADMIN_OPT("org"),
+        authz=ORG_ADMIN_OPT("org"), Output=InstructionWritten,
         description=("Write your org's doctrine (org_admin). Each write bumps the version "
                      "and archives a snapshot. slug omitted = base doctrine; given = a named "
                      "skill. `from_version` restores a past version as a new one (revert). "
@@ -447,7 +661,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.instruction.delete", handler=_delete_instruction, Input=DoctrineDeleteInput,
-        authz=ORG_ADMIN_OPT("org"),
+        authz=ORG_ADMIN_OPT("org"), Output=InstructionDeleted,
         description=("Delete a doctrine and its history (org_admin). Pass the EXACT slug. "
                      "`org` pins to an explicit org id (default = active org; must be "
                      "org_admin of it)."),
@@ -455,7 +669,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.instruction.revert", handler=_instruction_revert, Input=RevertInput,
-        authz=ORG_ADMIN,
+        authz=ORG_ADMIN, Output=InstructionReverted,
         rest=RestBinding("POST", "/api/me/instructions/{slug}/revert"),
     ),
     # ── Palier admin (org ciblée par org_id ; cross-org = platform admin) ────
