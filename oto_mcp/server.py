@@ -27,7 +27,7 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from pydantic import AnyHttpUrl
 from starlette.concurrency import run_in_threadpool
 
-from . import api_routes, db, instructions
+from . import api_routes, db, instructions, tenancy
 from .config import require_env, mcp_audience_alts
 from .tools import register_all
 
@@ -42,17 +42,23 @@ class _IatGatedVerifier(JWTVerifier):
     reçoivent un 401 + WWW-Authenticate et re-lancent l'OAuth dance.
     """
 
-    def __init__(self, *args, min_iat: int = 0, fallback: "JWTVerifier | None" = None,
+    # Registre d'émetteurs (ADR 0052 §3) : `iss → (tenant, verifier)`, le verifier
+    # étant `None` pour le primaire — c'est nous. Défaut de CLASSE : une instance
+    # construite hors `_build_verifier` (tests du chemin jeton d'API) route sur le
+    # primaire, comme avant le registre. Jamais muté.
+    _by_issuer: dict = {}
+
+    def __init__(self, *args, min_iat: int = 0,
+                 by_issuer: "dict | None" = None,
                  expected_audience: "str | None" = None,
                  alt_audiences: "frozenset[str]" = frozenset(), **kwargs) -> None:
         # Le parent est construit SANS check d'audience (`audience=None`) : on valide
         # l'audience nous-mêmes (canonique OU sous-domaine org publié, ADR 0032 §barreau 4).
         super().__init__(*args, **kwargs)
         self._min_iat = min_iat
-        # Fenêtre de bascule tenant (A2/B1) : accepte aussi les tokens d'un 2e
-        # issuer (auth.oto.ninja) le temps que tout le monde migre. Non posé =
-        # mono-issuer, comportement inchangé.
-        self._fallback = fallback
+        # Le drain `LOGTO_ENDPOINT_ALT` n'est plus un mécanisme à part : il est une
+        # ENTRÉE de ce registre, sur le tenant `oto` (deux émetteurs, un tenant).
+        self._by_issuer = dict(by_issuer or {})
         self._expected_audience = expected_audience
         # Audiences canoniques SECONDAIRES (coexistence multi-domaine, ex. mcp.oto.cx).
         # Vide = no-op → mcp.oto.ninja inchangé.
@@ -98,14 +104,48 @@ class _IatGatedVerifier(JWTVerifier):
         return AccessToken(token=token, client_id="oto_api_token", scopes=[],
                            subject=sub, claims={"sub": sub})
 
+    def _route(self, token) -> tuple:
+        """`(slug du tenant, verifier)` pour ce jeton — sélection par le claim `iss`,
+        **non vérifié** (ADR 0052 §3).
+
+        Le claim ne sert qu'à CHOISIR : le verifier retenu revalide ensuite l'émetteur
+        pour de vrai (signature contre SON JWKS + `iss` byte-à-byte). Un jeton forgé
+        qui revendique l'émetteur d'un tenant tiers est donc rejeté par le verifier de
+        ce tenant, pas accepté par le nôtre. `iss` absent, malformé ou inconnu retombe
+        sur le primaire — qui le rejettera aussi.
+        """
+        entry = self._by_issuer.get(tenancy.unverified_issuer(token) or "")
+        return entry if entry is not None else (tenancy.PRIMARY_SLUG, None)
+
+    def _qualified(self, result, slug: str):
+        """Le point où un jeton devient un sub — l'UNIQUE endroit de la chaîne de
+        vérification (les faces MCP et REST partagent cette instance).
+
+        Tenant `oto` : le résultat ressort **tel quel**, byte pour byte. Ce n'est pas
+        une optimisation — l'AAD du coffre dérive du sub, donc qualifier le sub du
+        tenant `oto` rendrait tous les credentials existants indéchiffrables.
+        """
+        if slug == tenancy.PRIMARY_SLUG:
+            return result
+        claims = dict(getattr(result, "claims", None) or {})
+        sub = claims.get("sub")
+        if not isinstance(sub, str) or not sub:
+            return result       # pas de sub ⟹ pas d'identité, donc rien à qualifier
+        claims["sub"] = tenancy.qualify(slug, sub)
+        return result.model_copy(update={"claims": claims, "subject": claims["sub"]})
+
     async def verify_token(self, token):
+        # Jeton d'API `oto_` : son sub sort de la DB, où il a été écrit DÉJÀ qualifié
+        # (c'est un vrai compte). Le re-qualifier le préfixerait deux fois.
         api = await self._verify_api_token(token)
         if api is not None:
             return api
-        result = await super().verify_token(token)
-        if not result and self._fallback is not None:
+        slug, verifier = self._route(token)
+        if verifier is None:
+            result = await super().verify_token(token)
+        else:
             try:
-                result = await self._fallback.verify_token(token)
+                result = await verifier.verify_token(token)
             except Exception:
                 result = None
         if not result:
@@ -119,35 +159,55 @@ class _IatGatedVerifier(JWTVerifier):
             if iat < self._min_iat:
                 logger.info(f"iat-gate reject sub={claims.get('sub')} iat={iat} < min_iat={self._min_iat}")
                 return None
-        return result
+        # Qualification EN DERNIER : un jeton recalé par l'audience ou l'iat ne doit
+        # jamais avoir produit de sub.
+        return self._qualified(result, slug)
 
 
 def _build_verifier() -> JWTVerifier:
-    """JWT verifier partagé entre l'auth MCP et l'API REST."""
+    """JWT verifier partagé entre l'auth MCP et l'API REST — **registre d'émetteurs**
+    (ADR 0052 §3).
+
+    L'émetteur primaire vient de l'env (`LOGTO_ENDPOINT`) et porte le tenant `oto` :
+    ce chemin est DB-indépendant, l'authentification canonique ne casse jamais sur un
+    hoquet de base. `LOGTO_ENDPOINT_ALT` — la fenêtre de drain d'une bascule
+    d'instance Logto — n'est plus un mécanisme à côté : c'est une **entrée du
+    registre**, sur le même tenant `oto` (deux émetteurs, un tenant, sub nu des deux
+    côtés). Les tenants TIERS viennent de la base, avec leur slug et leur JWKS.
+    """
     logto_endpoint = require_env("LOGTO_ENDPOINT").rstrip("/")
     audience = require_env("MCP_AUDIENCE")
     issuer = f"{logto_endpoint}/oidc"
     min_iat = int(os.environ.get("MIN_TOKEN_IAT", "0") or "0")
-    # Bascule tenant (A2) : `LOGTO_ENDPOINT_ALT` posé → 2e issuer accepté pendant la
-    # fenêtre de migration (même audience/indicator sur les 2 tenants). Drain puis on
-    # retire l'env. Logto self-hosted signe en ES384 (vérifié sur /oidc/jwks).
-    fallback = None
     alt = os.environ.get("LOGTO_ENDPOINT_ALT", "").strip().rstrip("/")
-    if alt:
-        alt_issuer = f"{alt}/oidc"
-        # audience=None : la validation d'audience est faite par _IatGatedVerifier
-        # (canonique OU sous-domaine org), unifiée sur le résultat primaire/fallback.
-        fallback = JWTVerifier(
-            jwks_uri=f"{alt_issuer}/jwks", issuer=alt_issuer,
-            audience=None, algorithm="ES384",
-        )
+    drains = [f"{alt}/oidc"] if alt else []
+    registry = tenancy.IssuerRegistry(
+        tenancy.build(issuer, drain_issuers=drains, tenants=tenancy.load_tenants()))
+    # Posé pour les consommateurs HORS chemin de vérification : l'attribution du
+    # journal REST (`_claimed_sub`, qui décode sans vérifier) et la garde d'alias
+    # (`db.users.migrate_sub`). Jamais pour décider d'une autorisation.
+    tenancy.install(registry)
+
+    by_issuer: dict = {}
+    for entry in registry.entries():
+        if entry.issuer == issuer:
+            by_issuer[entry.issuer] = (entry.slug, None)   # le primaire, c'est nous
+            continue
+        # audience=None : la validation d'audience reste faite par `_audience_ok`,
+        # uniformément sur tous les tenants (le cran par tenant est le lot L3).
+        # Logto self-hosted signe en ES384 (vérifié sur /oidc/jwks).
+        by_issuer[entry.issuer] = (entry.slug, JWTVerifier(
+            jwks_uri=entry.jwks_uri, issuer=entry.issuer,
+            audience=None, algorithm="ES384"))
+    logger.info("registre d'émetteurs : %s",
+                {iss: slug for iss, (slug, _) in by_issuer.items()})
     return _IatGatedVerifier(
         jwks_uri=f"{issuer}/jwks",
         issuer=issuer,
         audience=None,
         algorithm="ES384",
         min_iat=min_iat,
-        fallback=fallback,
+        by_issuer=by_issuer,
         expected_audience=audience,
         alt_audiences=mcp_audience_alts(),
     )

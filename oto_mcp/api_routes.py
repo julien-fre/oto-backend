@@ -43,7 +43,7 @@ from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
 from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, openapi, org_store, ownership, token_scopes, tool_registry
 from .capabilities import _rest_adapter as _cap_rest_adapter
 from .capabilities import registry as _cap_registry
-from . import auth_hooks, guide_store
+from . import auth_hooks, guide_store, tenancy
 from .tool_visibility import (
     PROTECTED_TOOLS, is_default_hidden, is_testable, namespace_of)
 
@@ -422,7 +422,11 @@ _REST_LOG_TASKS: set = set()  # garde les refs des tâches fire-and-forget (anti
 def _claimed_sub(request: Request) -> str | None:
     """Sub revendiqué par le bearer JWT, **NON vérifié** — attribution de log
     uniquement (jamais d'autz ; la route, elle, vérifie pour de vrai). Best-effort :
-    token API opaque (`oto_…`) ou JWT malformé → None (ligne anonyme)."""
+    token API opaque (`oto_…`) ou JWT malformé → None (ligne anonyme).
+
+    Qualifié par tenant (ADR 0052) avec le MÊME qualificateur que le verifier : deux
+    utilisateurs de deux émetteurs peuvent porter le même sub Logto, et sans ça leurs
+    requêtes s'écriraient sur la même ligne d'audit — celle de l'utilisateur `oto`."""
     auth = request.headers.get("authorization", "")
     if not auth.lower().startswith("bearer "):
         return None
@@ -432,8 +436,7 @@ def _claimed_sub(request: Request) -> str | None:
     try:
         pad = parts[1] + "=" * (-len(parts[1]) % 4)
         claims = json.loads(base64.urlsafe_b64decode(pad))
-        sub = claims.get("sub")
-        return sub if isinstance(sub, str) else None
+        return tenancy.current().qualify_claims(claims)
     except Exception:
         return None
 

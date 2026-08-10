@@ -17,6 +17,7 @@ from . import (
     _schema,
     _init,
     users,
+    tenants,
     unipile,
     connector_grants,
     keys,
@@ -41,7 +42,7 @@ from . import (
 # package. L'ordre place les bases (_conn, users) d'abord — sans incidence, les
 # noms sont disjoints entre modules.
 _MODULES = (
-    _conn, _schema, _init, users, unipile, connector_grants, keys, usage,
+    _conn, _schema, _init, users, tenants, unipile, connector_grants, keys, usage,
     platform_instructions, visibility, emails, google, datastore, projects,
     tokens, upload_tokens, billing, guides, legal, search, aux_embed,
     datastore_embed,

@@ -70,7 +70,8 @@ def test_le_jwt_reste_le_chemin_par_defaut(monkeypatch):
         return None
 
     monkeypatch.setattr(server.JWTVerifier, "verify_token", _super)
+    # Registre d'émetteurs vide (défaut de classe) : un jeton sans `iss` connu route
+    # sur le verifier PRIMAIRE — donc `super().verify_token`, ci-dessus.
     v = _Verifier()
-    v._fallback = None
     asyncio.run(v.verify_token("oto_inconnu"))
     assert calls == ["oto_inconnu"], "un jeton oto_ rejeté doit retomber sur le JWT"
