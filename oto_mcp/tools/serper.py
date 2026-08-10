@@ -14,7 +14,16 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_REQUEST
 
-from .. import access
+from .. import access, output_projection
+
+# Ce qu'un `compact=True` retire d'une page de résultats Google. Aucune de ces clés n'est
+# du bruit dans l'absolu — knowledge graph et sitelinks servent parfois — mais aucune ne
+# sert la boucle courante d'un agent (titre + lien + extrait), et ensemble elles pèsent
+# ~34 % d'une réponse (mesuré : 3 105 c. pour 5 résultats, dont 542 de knowledgeGraph,
+# 328 de relatedSearches, 635 de sitelinks). D'où l'opt-in, jamais le défaut : c'est
+# `fr_get` projeté par allowlist qui a perdu `liste_idcc` en silence (oto-core#37).
+_SEARCH_DROP = ("knowledgeGraph", "peopleAlsoAsk", "relatedSearches", "searchParameters")
+_RESULT_DROP = ("sitelinks", "attributes", "imageUrl", "thumbnailUrl")
 
 # Serper renvoie `Serper <method> <status>: <msg>` (RuntimeError nu). Deux classes
 # d'échec sont des ENTRÉES invalides, pas des bugs backend — on les convertit en
@@ -53,6 +62,18 @@ def register(mcp: FastMCP) -> None:
             access.record_platform_usage("serper")
         return result
 
+    def _project(result: dict, items: str, compact: bool, fields) -> dict:
+        """Applique la projection demandée à une page de résultats. Sans `compact` ni
+        `fields`, rend le payload INCHANGÉ — le brut reste le défaut, l'agent décide."""
+        if not compact and not fields:
+            return result
+        return output_projection.project(
+            result,
+            drop=_SEARCH_DROP if compact else (),
+            items_path=items,
+            item_drop=_RESULT_DROP if compact else (),
+            fields=fields)
+
     @mcp.tool()
     def serper_web_search(
         query: str,
@@ -64,6 +85,8 @@ def register(mcp: FastMCP) -> None:
         tbs: Optional[str] = None,
         location: Optional[str] = None,
         autocorrect: Optional[bool] = None,
+        compact: bool = False,
+        fields: Optional[list[str]] = None,
     ) -> dict:
         """Google web search via Serper.
 
@@ -77,12 +100,18 @@ def register(mcp: FastMCP) -> None:
             tbs: Google time filter (e.g. "qdr:d" past day, "qdr:w" past week).
             location: Geographic location bias (e.g. "Paris, France").
             autocorrect: Toggle Google spelling autocorrection (default Serper-side).
+            compact: drop what a scan of results does not read — knowledge graph,
+                people-also-ask, related searches, per-result sitelinks (~a third of the
+                payload). Use it when you are sweeping many queries; leave it off when
+                you may need the knowledge graph.
+            fields: keep ONLY these keys on each result (e.g. ["title","link","snippet"]).
+                The envelope (credits, pagination) is kept either way.
         """
-        return _run(
+        return _project(_run(
             "search", query=query, num=num, page=page, country=country,
             language=language, site_filter=site_filter, tbs=tbs,
             location=location, autocorrect=autocorrect,
-        )
+        ), "organic", compact, fields)
 
     @mcp.tool()
     def serper_news_search(
@@ -92,6 +121,8 @@ def register(mcp: FastMCP) -> None:
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
         tbs: Optional[str] = None,
+        compact: bool = False,
+        fields: Optional[list[str]] = None,
     ) -> dict:
         """Google News search via Serper.
 
@@ -104,11 +135,14 @@ def register(mcp: FastMCP) -> None:
             country: Country code (default "fr").
             language: Language code (default "fr").
             tbs: Google time filter (e.g. "qdr:w" past week).
+            compact: drop the search echo and per-item thumbnails — useful when
+                sweeping many companies for signals.
+            fields: keep ONLY these keys on each item (e.g. ["title","link","date"]).
         """
-        return _run(
+        return _project(_run(
             "search_news", query=query, num=num, page=page, country=country,
             language=language, tbs=tbs,
-        )
+        ), "news", compact, fields)
 
     @mcp.tool()
     def serper_image_search(
@@ -418,19 +452,31 @@ def register(mcp: FastMCP) -> None:
         )
 
     @mcp.tool()
-    def serper_scrape(url: str, include_markdown: bool = True) -> dict:
+    def serper_scrape(url: str, format: str = "markdown") -> dict:
         """Fetch a web page via Serper's scraper.
 
-        Returns text + JSON-LD + metadata, optionally a markdown rendition.
-        Préférable à un fetch brut : Serper gère le JS rendering et les
+        Returns the page content in ONE rendition (markdown by default) + JSON-LD +
+        metadata. Préférable à un fetch brut : Serper gère le JS rendering et les
         anti-bot rudimentaires.
 
         Args:
             url: Page URL to scrape.
-            include_markdown: Include a markdown version (default True, plus pratique pour LLM).
+            format: "markdown" (default, the LLM-friendly rendition) | "text" (plain) |
+                "both" (only if you genuinely need to compare the two).
         """
+        if format not in ("markdown", "text", "both"):
+            raise McpError(ErrorData(
+                code=INVALID_REQUEST,
+                message=f"`format` invalide : {format!r} (markdown | text | both)."))
         try:
-            return _run("scrape_page", url=url, include_markdown=include_markdown)
+            res = _run("scrape_page", url=url, include_markdown=format != "text")
+            # Serper renvoyait `text` ET `markdown` : deux représentations du MÊME
+            # contenu (mesuré, 97 % de mots communs), pour 37 % du payload en pure
+            # duplication. On n'en sert qu'une — retirer un doublon ne perd rien, c'est
+            # ce qui distingue ce défaut de `compact=`, qui reste un opt-in.
+            if format == "markdown" and res.get("markdown"):
+                res.pop("text", None)
+            return res
         except RuntimeError as e:
             m = _SERPER_STATUS.search(str(e))
             code = int(m.group(1)) if m else None

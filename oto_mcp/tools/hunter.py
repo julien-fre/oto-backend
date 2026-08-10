@@ -9,7 +9,7 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
-from .. import access
+from .. import access, output_projection
 
 
 def register(mcp: FastMCP) -> None:
@@ -20,16 +20,29 @@ def register(mcp: FastMCP) -> None:
         return HunterClient(api_key=key), is_platform
 
     @mcp.tool()
-    def hunter_domain_search(domain: str, limit: int = 10) -> dict:
+    def hunter_domain_search(domain: str, limit: int = 10,
+                             compact: bool = False) -> dict:
         """List public emails found on a company domain (Hunter domain-search).
 
         Useful to discover existing email patterns and contacts.
         Coût : 1 crédit Hunter par tranche de 10 emails.
+
+        Args:
+            domain: Company domain (e.g. "gallimard.fr").
+            limit: Max emails to return (1 credit per 10).
+            compact: drop the per-address provenance — `sources` (every page where the
+                address was seen) and the `verification` detail. They dominate the
+                payload and a contact sweep never reads them. Keep it off when you must
+                justify WHERE an address comes from (a real need under GDPR).
         """
         client, is_platform = _client()
         result = client.domain_search(domain=domain, limit=limit)
         if is_platform:
             access.record_platform_usage("hunter")
+        if compact:
+            result = output_projection.project(
+                result, items_path="data.emails",
+                item_drop=("sources", "verification"))
         return result
 
     @mcp.tool()
