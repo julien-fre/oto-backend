@@ -24,7 +24,6 @@ connectors.console.activation
 connectors.console.connector
 connectors.console.identity
 connectors.console.instance
-connectors.force.member
 group.clear
 group.console
 group.create

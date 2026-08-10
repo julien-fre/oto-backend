@@ -30,6 +30,24 @@ class ForceConnectorInput(BaseModel):
     member: str  # sub Logto OU email du membre cible
 
 
+class ForceConnectorResult(BaseModel):
+    """Écho du push d'un connecteur dans la toolbox d'un membre. C'est de la
+    VISIBILITÉ (préférence imposée), pas un grant : le membre voit le connecteur
+    sans l'activer, peut toujours le re-masquer, et l'accès réel reste gardé au
+    call-time (credential + ADR 0025)."""
+    ok: bool
+    org_id: int
+    connector: str
+    # Le sub RÉSOLU du membre — l'entrée acceptait un email, la réponse ne le
+    # renvoie jamais.
+    member: str
+    # Nombre de tools sur lesquels l'override positif a été posé. ⚠️ `0` renvoie
+    # `ok:true` : le connecteur est déclaré au registre mais aucun de ses tools
+    # n'est monté (module non chargé, registre non réchauffé). Rien n'a été poussé
+    # — c'est ici, et nulle part ailleurs, que ça se voit.
+    tools_forced: int
+
+
 def _resolve_member(org_id: int, target: str) -> str:
     """Résout le sub du membre cible (email accepté) + vérifie son appartenance à l'org."""
     sub = target
@@ -60,7 +78,7 @@ async def _force_connector(ctx: ResolvedCtx, inp: ForceConnectorInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="connectors.force.member", handler=_force_connector, Input=ForceConnectorInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=ForceConnectorResult,
         description="[org admin] Force a connector into a member's toolbox IN THIS ORG: sets a "
                     "positive visibility override on all the connector's tools for the target member "
                     "(`member` = sub or email). They see it without enabling it, and can still hide it "
