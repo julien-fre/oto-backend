@@ -18,9 +18,6 @@ billing.payments
 billing.plans
 billing.status
 billing.subscribe
-connectors.account_grants.grant
-connectors.account_grants.list
-connectors.account_grants.revoke
 connectors.console.access
 connectors.console.account_access
 connectors.console.activation

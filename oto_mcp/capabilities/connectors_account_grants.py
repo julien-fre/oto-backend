@@ -13,7 +13,7 @@ org_admin : seul le propriétaire du compte accorde (exigence #55).
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -56,6 +56,81 @@ class AccountGrantsListInput(BaseModel):
 class AccountGrantInput(BaseModel):
     channel: Channel
     grantee: str                         # sub OU email du membre autorisé
+
+
+class GrantedByMe(BaseModel):
+    """Une autorisation que J'AI accordée : « untel peut opérer mon compte sur ce
+    canal »."""
+    # ⚠️ `provider` n'est PAS le `channel` de l'entrée : c'est le provider DB, en
+    # MAJUSCULES (`LINKEDIN`, `WHATSAPP`…). On accorde par `channel=linkedin` et on
+    # relit `provider="LINKEDIN"` — un client qui compare les deux tel quel ne
+    # matche jamais.
+    provider: str
+    # État LIVE du compte (LEFT JOIN), pas le snapshot d'audit du grant : `null`
+    # si le canal a été déconnecté depuis — le grant existe encore mais est INERTE.
+    account_id: Optional[str] = None
+    account_name: Optional[str] = None
+    grantee_sub: str
+    grantee_email: Optional[str] = None     # null si l'user n'a pas de ligne `users`
+    grantee_name: Optional[str] = None
+    granted_by: Optional[str] = None
+    granted_at: Optional[str] = None
+    # DÉRIVÉ de `account_id IS NOT NULL` : `false` = j'ai déconnecté le canal, le
+    # grant dort. Ce n'est ni une révocation ni une erreur — reconnecter le
+    # ressuscite tel quel.
+    active: bool
+
+
+class GrantedToMe(BaseModel):
+    """Une autorisation que J'AI REÇUE : un compte d'autrui que je peux opérer."""
+    provider: str                           # provider DB en MAJUSCULES (cf. GrantedByMe)
+    owner_sub: str
+    owner_email: Optional[str] = None
+    owner_name: Optional[str] = None
+    account_id: Optional[str] = None        # null = le propriétaire a déconnecté le canal
+    account_name: Optional[str] = None
+    # L'org sous laquelle le PROPRIÉTAIRE a connecté ce compte — dit d'OÙ vient le
+    # partage. Le grant lui-même n'est scopé à aucune org (cross-org assumé) : ce
+    # n'est donc pas un filtre d'accès.
+    owner_org_id: Optional[int] = None
+    owner_org_name: Optional[str] = None
+    granted_at: Optional[str] = None
+    active: bool
+
+
+class AccountGrants(BaseModel):
+    """Les deux faces du partage de compte connecteur (#55), du point de vue du
+    caller. Deny-by-default : deux listes vides = personne n'opère rien."""
+    granted_by_me: list[GrantedByMe]
+    granted_to_me: list[GrantedToMe]
+
+
+class AccountGrantCreated(BaseModel):
+    """Écho d'une autorisation accordée."""
+    ok: bool
+    channel: str                            # le canal FRONT tel que passé (minuscules)
+    account_id: str                         # le compte visé, snapshot au moment du grant
+    grantee_sub: str                        # sub RÉSOLU (l'entrée pouvait être un email)
+    grantee_email: Optional[str] = None
+    # Limitation documentée, renvoyée telle quelle : le grant autorise, il ne
+    # fournit pas la clé. Le bénéficiaire doit encore joindre ce compte avec SA
+    # clé (partagée org/plateforme = OK ; une clé BYO perso ne le voit pas → 404
+    # à l'appel).
+    note: str
+
+
+class AccountGrantRevoked(BaseModel):
+    """Écho d'une révocation. Idempotent : `revoked=false` = il n'y avait pas de
+    grant à retirer, pas un refus."""
+    ok: bool
+    channel: str
+    # ⚠️ Écho de l'entrée quand elle n'a pas pu être résolue : un email INCONNU
+    # est renvoyé tel quel ici (aucune erreur — le retrait ne fait que ne rien
+    # trouver, là où `grant` aurait levé un 404). Un `grantee_sub` contenant un
+    # « @ » + `revoked:false` est donc le signe d'une cible mal nommée, pas d'un
+    # grant déjà retiré.
+    grantee_sub: str
+    revoked: bool
 
 
 def _list(ctx: ResolvedCtx, inp: AccountGrantsListInput) -> dict:
@@ -104,7 +179,7 @@ def _revoke(ctx: ResolvedCtx, inp: AccountGrantInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="connectors.account_grants.list", handler=_list, Input=AccountGrantsListInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=AccountGrants,
         description="List the connector account authorizations you granted (who may operate "
                     "your Unipile accounts, per channel) and those granted to you (accounts "
                     "you may operate). Deny-by-default: no grant = nobody but the owner.",
@@ -112,7 +187,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.account_grants.grant", handler=_grant, Input=AccountGrantInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=AccountGrantCreated,
         description="[account owner] Authorize any oto user (grantee = email or sub — including "
                     "someone OUTSIDE your orgs, e.g. an external freelancer or agency) to OPERATE "
                     "your connected account on a channel (linkedin, whatsapp, …), acting as you. "
@@ -121,7 +196,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.account_grants.revoke", handler=_revoke, Input=AccountGrantInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=AccountGrantRevoked,
         description="[account owner] Revoke a member's authorization to operate your account "
                     "on a channel. Immediate: their next call under your identity fails "
                     "explicitly. Idempotent.",
