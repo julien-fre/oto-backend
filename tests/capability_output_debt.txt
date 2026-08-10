@@ -27,12 +27,6 @@ connectors.acl.group_list
 connectors.acl.group_revoke
 connectors.acl.list
 connectors.acl.revoke
-connectors.activation.clear_group
-connectors.activation.clear_org
-connectors.activation.group_list
-connectors.activation.org_list
-connectors.activation.set_group
-connectors.activation.set_org
 connectors.console.access
 connectors.console.account_access
 connectors.console.activation

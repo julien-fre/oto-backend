@@ -15,6 +15,8 @@ Effet pour les autres membres : à leur session suivante (gate à la visibilité
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 from .. import access, connector_activation, db, group_store, org_store, providers
@@ -53,6 +55,82 @@ class OrgActivationSetInput(BaseModel):
 class OrgActivationClearInput(BaseModel):
     org_id: int
     name: str
+
+
+class ActivationOverrideSet(BaseModel):
+    """Écho d'une POSE d'override d'activation. Exactement UN des deux ids de
+    scope est présent, selon la route empruntée (org ou équipe) — c'est le même
+    geste à deux grains, pas deux objets.
+
+    ⚠️ Au grain ÉQUIPE, `enabled` vaut TOUJOURS `false` : l'invariant est monotone
+    (une équipe ne peut que couper), `enabled=true` est refusé en 409. Pour
+    ré-ouvrir, on RETIRE la coupure (`clear`), on ne la pose pas à `true`."""
+    org_id: Optional[int] = None            # présent au grain ORG
+    group_id: Optional[int] = None          # présent au grain ÉQUIPE
+    connector: str
+    enabled: bool
+
+
+class ActivationOverrideCleared(BaseModel):
+    """Écho d'un RETRAIT d'override — le connecteur retombe sur le cran du dessus
+    (master plateforme pour une org, exposition de l'org pour une équipe).
+
+    ⚠️ `cleared` vaut TOUJOURS `true` : l'opération est idempotente et ne compte
+    pas les lignes supprimées. Il ne prouve donc PAS qu'un override existait."""
+    org_id: Optional[int] = None            # présent au grain ORG
+    group_id: Optional[int] = None          # présent au grain ÉQUIPE
+    connector: str
+    cleared: bool
+
+
+class OrgActivationRow(BaseModel):
+    """Un connecteur dans le cockpit de gouvernance de l'org : les DEUX crans
+    (plafond plateforme, override d'org) et leur résultante."""
+    connector: str
+    label: str
+    help: Optional[str] = None
+    namespaces: list[str]
+    # `None` = aucune ligne d'activation plateforme n'a JAMAIS été posée, ce qui
+    # vaut OFF. Distinct de `false` (coupé explicitement) — les deux se lisent
+    # « pas exposé », seul le second est une décision.
+    master_enabled: Optional[bool] = None
+    org_enabled: Optional[bool] = None      # None = pas d'override, l'org suit le master
+    effective: bool                         # override > master > OFF
+    recommended: bool                       # baseline d'org (ADR 0019), pas l'activation
+    paid_option: Optional[str] = None       # add-on payant requis (couche 3), None = aucun
+    # `false` par défaut ET quand aucune option n'est requise — ne se lit donc
+    # PAS comme « l'org n'a pas payé » hors du cas `paid_option != null`.
+    subscribed: bool
+
+
+class OrgActivation(BaseModel):
+    """Cockpit d'activation de l'org. La liste est FILTRÉE au plafond plateforme :
+    un connecteur que la plateforme n'a jamais exposé et que l'org n'a pas
+    override n'y figure pas (pas de levier inerte) — l'absence d'une ligne n'est
+    donc pas la preuve que le connecteur n'existe pas."""
+    org_id: int
+    connectors: list[OrgActivationRow]
+
+
+class GroupActivationRow(BaseModel):
+    """Un connecteur dans le cockpit d'équipe. L'équipe n'a qu'un levier —
+    couper — d'où deux booléens seulement : ce que l'org rend disponible, et ce
+    que l'équipe a coupé."""
+    connector: str
+    label: str
+    help: Optional[str] = None
+    namespaces: list[str]
+    org_available: bool
+    group_cut: bool
+    effective: bool                         # org_available AND NOT group_cut
+
+
+class GroupActivation(BaseModel):
+    """Cockpit d'activation de l'équipe. Liste = ce que l'org expose, PLUS les
+    coupures résiduelles d'une équipe sur un connecteur que l'org n'expose plus
+    (sinon la coupure deviendrait invisible et irrémédiable)."""
+    group_id: int
+    connectors: list[GroupActivationRow]
 
 
 def _org_list(ctx: ResolvedCtx, inp: OrgActivationListInput) -> dict:
@@ -202,6 +280,7 @@ def _group_clear(ctx: ResolvedCtx, inp: GroupActivationClearInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="connectors.activation.group_list", handler=_group_list, Input=GroupActivationListInput,
+        Output=GroupActivation,
         authz=GROUP_MEMBER_OF("group_id"),
         description="List, for a team, each connector available to its org: whether the org "
                     "exposes it, whether the team has cut it, and the effective state for the "
@@ -210,6 +289,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.activation.set_group", handler=_group_set, Input=GroupActivationSetInput,
+        Output=ActivationOverrideSet,
         authz=GROUP_ADMIN_OF("group_id"), refresh_visibility=True,
         description="[team lead] Cut a connector for your whole team (restrict-only — a team can "
                     "only narrow what the org allows, never expose beyond it). Requires the org to "
@@ -218,6 +298,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.activation.clear_group", handler=_group_clear, Input=GroupActivationClearInput,
+        Output=ActivationOverrideCleared,
         authz=GROUP_ADMIN_OF("group_id"), refresh_visibility=True,
         description="[team lead] Remove your team's cut for a connector — it falls back to the "
                     "org's availability.",
@@ -225,6 +306,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.activation.org_list", handler=_org_list, Input=OrgActivationListInput,
+        Output=OrgActivation,
         authz=ORG_MEMBER_OF("org_id"),
         description="List, for your org, each connector's activation: the platform master switch, "
                     "your org's override (if any), the effective state, and whether the org "
@@ -233,6 +315,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.activation.set_org", handler=_org_set, Input=OrgActivationSetInput,
+        Output=ActivationOverrideSet,
         authz=ORG_ADMIN_OF("org_id"), refresh_visibility=True,
         description="[org admin] Force a connector ON or OFF for your whole org (hard ceiling). "
                     "Enabling requires the platform to expose it (the platform ceiling is never "
@@ -241,6 +324,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.activation.clear_org", handler=_org_clear, Input=OrgActivationClearInput,
+        Output=ActivationOverrideCleared,
         authz=ORG_ADMIN_OF("org_id"), refresh_visibility=True,
         description="[org admin] Clear your org's activation override for a connector — it falls "
                     "back to the platform master switch.",
