@@ -86,7 +86,6 @@ org.email_settings.set
 org.field_filters.get
 org.field_filters.preview
 org.field_filters.set
-org.get
 org.instruction.admin_delete
 org.instruction.admin_set
 org.instruction.delete
@@ -100,7 +99,6 @@ org.invite.accept
 org.invite.create
 org.invite.list
 org.invite.revoke
-org.list
 org.member.add
 org.member.remove
 org.member.set_role
