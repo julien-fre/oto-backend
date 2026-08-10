@@ -114,8 +114,6 @@ org.procedure.console
 org.scheduled_email.cancel
 org.scheduled_email.list
 org.scheduled_emails.console
-org.secret.delete
-org.secret.set
 org.settings.console
 org.use_org
 platform.editor_app.delete

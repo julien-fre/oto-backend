@@ -21,6 +21,37 @@ from .registry import CAPABILITIES
 _ID = {"id": "org_id"}
 
 
+class OrgSecretSet(BaseModel):
+    """Credential partagé d'org posé / roté. La réponse n'écho **rien** de ce qui a
+    été écrit : le coffre ne restitue aucun secret, même à l'auteur du POST.
+
+    ⚠️ C'est un **REMPLACEMENT**, jamais un merge : pour un connecteur multi-champs
+    (zoho, silae…), `fields` doit porter TOUS les champs requis — en envoyer un
+    sous-ensemble est refusé (`missing_credentials`), pas complété par l'existant.
+
+    ⚠️ `ok: true` dit « écrit et chiffré », **pas** « ce credential fonctionne » : rien
+    n'est appelé chez le fournisseur ici. Tester = `POST /api/me/connectors/{provider}/verify`."""
+    ok: bool
+    org_id: int
+    provider: str
+
+
+class OrgSecretDeleted(BaseModel):
+    """Retrait du credential partagé d'org. ⚠️ **`deleted: false` n'est pas une
+    erreur** : avec `ok: true` en HTTP 200, il dit qu'il n'y avait rien à retirer.
+    L'opération est idempotente et ne rend jamais 404 — contrairement à la pose, qui
+    valide le provider et peut refuser en 400.
+
+    Retirer le secret d'org ne coupe pas forcément le connecteur pour les membres :
+    la cascade (clé membre > secret d'équipe > secret d'org > grant plateforme)
+    retombe sur le grant plateforme s'il existe, et un membre qui avait sa propre
+    clé n'était de toute façon jamais servi par celui-ci."""
+    ok: bool
+    org_id: int
+    provider: str
+    deleted: bool
+
+
 class SetSecretInput(BaseModel):
     org_id: int
     provider: str
@@ -59,7 +90,7 @@ CAPABILITIES += [
     Capability(
         # MCP retiré (2026-06-25) : pose de secret brut = dashboard-only. REST conservé.
         key="org.secret.set", handler=_set_secret, Input=SetSecretInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=OrgSecretSet,
         description=("Set/rotate an org's shared account credential for a provider "
                      "(org-shareable only). Single-key connectors: pass `api_key`. "
                      "Multi-field connectors (zoho/silae…): pass `fields` "
@@ -69,7 +100,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.secret.delete", handler=_delete_secret, Input=DeleteSecretInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=OrgSecretDeleted,
         description="Remove an org's shared secret for a provider.",
         rest=(RestBinding("DELETE", "/api/orgs/{id}/secrets/{provider}", _ID),
               RestBinding("DELETE", "/api/admin/orgs/{id}/secrets/{provider}", _ID)),
