@@ -28,6 +28,52 @@ _ID = {"id": "org_id"}
 _ID_CONNECTOR = {"id": "org_id", "connector": "connector"}
 
 
+class EmailSettingsView(BaseModel):
+    """Config d'envoi d'email de l'org, keyée PAR CONNECTEUR.
+
+    ⚠️ **Un connecteur sans `quiet_hours` n'est pas « sans fenêtre calme »** : le
+    défaut plateforme (`quiet_hours_default`, 20h→8h Europe/Paris) s'applique quand
+    même. Une org qui n'a jamais rien réglé voit donc ses mails composés la nuit
+    DIFFÉRÉS au matin — silence de config ≠ envoi immédiat.
+
+    ⚠️ `settings: {}` = aucun expéditeur déclaré ⟹ `email_send` sans `from_email` n'a
+    rien à utiliser et échoue. Ce n'est pas « on prendra un défaut ».
+
+    `connectors` et `transports` portent la même information (les clés de l'un sont
+    la liste de l'autre) — redondance de compat front, pas deux catalogues.
+    `resend_key_set` dit qu'une clé Resend est POSÉE au coffre, jamais qu'elle est
+    valide (aucun appel n'est fait ici)."""
+    org_id: int
+    # {"<connector>": {"senders": [{email, name?, reply_to?}], "quiet_hours"?: {...}}}
+    settings: dict
+    connectors: list[str]
+    transports: dict
+    # Fenêtre appliquée à défaut, PAR le serveur — pas une suggestion d'UI.
+    quiet_hours_default: dict
+    resend_key_set: bool
+
+
+class EmailSettingsSet(BaseModel):
+    """Écho **partiel** de l'écriture : c'est un MERGE par connecteur, et seules les
+    clés effectivement touchées par cet appel reviennent.
+
+    ⚠️ `senders`/`count` **absents** = tu n'as pas envoyé `senders` ; ça ne dit RIEN
+    du nombre d'expéditeurs de l'org. Idem pour `quiet_hours`.
+
+    ⚠️ `quiet_hours: null` (via `clear_quiet_hours=true`) ne veut pas dire « plus de
+    fenêtre calme » mais « retour au défaut PLATEFORME » (20h→8h) — le seul moyen
+    d'envoyer la nuit reste `send_at`/`force_now` côté `email_send`.
+
+    `senders` renvoyé est la liste NETTOYÉE (adresses strippées, `name`/`reply_to`
+    vides retirés) et elle **remplace** celle du connecteur, elle ne s'y ajoute pas."""
+    ok: bool
+    org_id: int
+    connector: str
+    senders: Optional[list[dict]] = None
+    count: Optional[int] = None
+    quiet_hours: Optional[dict] = None
+
+
 class GetEmailSettingsInput(BaseModel):
     org_id: int
 
@@ -123,7 +169,7 @@ def _set_email_settings(ctx: ResolvedCtx, inp: SetEmailSettingsInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="org.email_settings.get", handler=_get_email_settings, Input=GetEmailSettingsInput,
-        authz=ORG_MEMBER_OF("org_id"),
+        authz=ORG_MEMBER_OF("org_id"), Output=EmailSettingsView,
         description=("Read the org's email config keyed by connector (scaleway = Otomata-"
                      "hosted, resend = BYOK): per-connector senders + quiet hours, the known "
                      "email connectors, connector→transport map, and whether the org's Resend "
@@ -132,7 +178,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.email_settings.set", handler=_set_email_settings, Input=SetEmailSettingsInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=EmailSettingsSet,
         description=("Set ONE email connector's config for `email_send`. `connector` ∈ "
                      "{scaleway (Otomata-hosted via Scaleway TEM — domain verified + in the "
                      "service allowlist), resend (BYOK — set the org's Resend key via "

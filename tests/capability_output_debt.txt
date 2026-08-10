@@ -80,8 +80,6 @@ org.console
 org.doctrine.admin_get
 org.doctrine.admin_list
 org.doctrine.get
-org.email_settings.get
-org.email_settings.set
 org.instruction.admin_delete
 org.instruction.admin_set
 org.instruction.delete
@@ -108,8 +106,6 @@ org.monitoring.runs
 org.monitoring.summary
 org.monitoring.tool_quality
 org.procedure.console
-org.scheduled_email.cancel
-org.scheduled_email.list
 org.scheduled_emails.console
 org.settings.console
 org.use_org
