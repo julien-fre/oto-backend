@@ -88,16 +88,7 @@ org.instruction.revert
 org.instruction.set
 org.instruction.usage
 org.instruction.versions
-org.monitoring.adoption
-org.monitoring.call
-org.monitoring.calls
-org.monitoring.connectors
 org.monitoring.console
-org.monitoring.gaps
-org.monitoring.run
-org.monitoring.runs
-org.monitoring.summary
-org.monitoring.tool_quality
 org.procedure.console
 org.scheduled_emails.console
 org.settings.console

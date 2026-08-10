@@ -37,6 +37,250 @@ from .registry import CAPABILITIES
 _ID = {"id": "org_id"}
 
 
+# ── sorties ─────────────────────────────────────────────────────────────────
+# Deux invariants valent pour TOUTES les lentilles de ce module, et ils décident
+# de ce qu'un chiffre veut dire :
+#
+# ① **Rétention ~30 jours** (`prune_tool_calls` au boot,
+#    `OTO_MCP_CALL_LOG_RETENTION_DAYS`). `days` accepte jusqu'à 365, mais au-delà de
+#    la rétention il n'y a plus de lignes : une fenêtre large ne rend pas plus
+#    d'histoire, elle rend le même mois avec un dénominateur trompeur.
+# ② **Scope = ce qui a été ÉMIS SOUS cette org** (`tool_calls.org_id` / `usage_signals
+#    .org_id`), jamais l'appartenance. Un membre de N orgs n'apporte ici que son
+#    activité sous celle-ci — donc « inactif » veut dire « inactif ICI ».
+#
+# Les horodatages sortent en `"YYYY-MM-DD HH:MM:SS"` (sans `T`, sans offset).
+
+class ToolStat(BaseModel):
+    """Un outil sur la fenêtre. `avg_ms`/`p95_ms` sont `null` quand aucune durée n'a
+    été enregistrée sur ces appels — pas `0`."""
+    tool_name: str
+    calls: int
+    errors: int
+    avg_ms: Optional[int] = None
+    p95_ms: Optional[int] = None
+
+
+class UserStat(BaseModel):
+    sub: Optional[str] = None
+    email: Optional[str] = None      # None si le sub n'a pas de ligne `users`
+    name: Optional[str] = None
+    calls: int
+    errors: int
+
+
+class DayStat(BaseModel):
+    day: str                          # "YYYY-MM-DD"
+    calls: int
+    errors: int
+
+
+class OrgMonitoringSummary(BaseModel):
+    """Agrégats d'activité de l'org sur `since_days`.
+
+    ⚠️ **Les totaux et les ventilations n'ont pas le même dénominateur** :
+    `total_calls`/`error_count`/`active_users` couvrent TOUT, alors que `by_tool` et
+    `by_user` sont tronqués aux **100 premiers**. Sommer `by_tool[].calls` pour
+    retrouver `total_calls` échoue dès qu'une org dépasse 100 outils distincts, et
+    l'écart n'est signalé nulle part.
+
+    ⚠️ **`by_day` n'a pas de ligne pour les jours à zéro** — ce sont des trous, pas des
+    zéros : un graphe qui relie les points sans re-densifier la série ment sur la forme.
+
+    `active_users` = subs distincts ayant appelé SOUS cette org dans la fenêtre — ce
+    n'est ni le nombre de membres, ni le nombre de comptes."""
+    since_days: int
+    total_calls: int
+    error_count: int
+    active_users: int
+    by_tool: list[ToolStat]
+    by_user: list[UserStat]
+    by_day: list[DayStat]
+
+
+class CallRow(BaseModel):
+    """Une ligne du journal. Les noms `tool_name`/`called_at` sont des ALIAS de compat
+    (`tool`/`created_at` en base) — la fiche `op=call`, elle, rend les noms bruts :
+    les deux surfaces du même objet ne nomment pas ses champs pareil."""
+    id: int
+    sub: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    tool_name: Optional[str] = None
+    called_at: Optional[str] = None
+    duration_ms: Optional[int] = None
+    ok: Optional[bool] = None
+    error: Optional[str] = None
+    session_id: Optional[str] = None
+    run_id: Optional[str] = None
+    org_id: Optional[int] = None
+    # Id de l'event Sentry correspondant, quand l'erreur en a produit un — le pont
+    # vers le traceback. None sur un appel réussi (et sur une erreur gérée).
+    sentry_event_id: Optional[str] = None
+
+
+class OrgCalls(BaseModel):
+    """Journal d'appels de l'org, plus récent d'abord.
+
+    ⚠️ `limit` est **silencieusement plafonné à 1000** côté store : demander 5000 rend
+    1000 lignes sans le dire. Comme il n'y a ni total ni curseur, une liste de la
+    taille du `limit` doit toujours être lue comme « probablement tronquée »."""
+    calls: list[CallRow]
+
+
+class OrgCall(BaseModel):
+    """Fiche d'UN appel. ⚠️ `call.args` est **tronqué à l'écriture** (`truncated_args`) :
+    ce n'est pas le payload intégral, et ça ne doit pas servir à rejouer un appel.
+
+    L'id est un entier séquentiel donc devinable : un appel d'une AUTRE org rend le
+    **même 404** qu'un id inexistant — l'absence de résultat ne prouve pas l'absence
+    d'appel."""
+    call: dict
+
+
+class ConnectorFailure(BaseModel):
+    provider: str
+    failures: int
+    users_affected: int
+    last_at: Optional[str] = None
+
+
+class OrgConnectorHealth(BaseModel):
+    """Échecs de **résolution de credential** par connecteur — « quel connecteur bloque
+    mes membres ». Ce ne sont PAS des erreurs d'API tierce : le connecteur n'a même
+    pas trouvé de clé à utiliser.
+
+    ⚠️ `total_failures` est la somme de `by_provider`, lui-même **tronqué aux 100
+    premiers providers** : sur une org qui dépasserait ce seuil, le total est
+    sous-estimé, pas exact."""
+    since_days: int
+    total_failures: int
+    by_provider: list[ConnectorFailure]
+
+
+class AdoptionMember(BaseModel):
+    """Un membre et son activité SOUS cette org.
+
+    ⚠️ **`calls: 0` avec un `last_call_at` non nul ≠ « n'a jamais utilisé »** :
+    `last_call_at` n'est pas borné par la fenêtre, il date le DERNIER appel connu. La
+    combinaison décrit un **décrochage** — l'action de l'org_admin n'est pas la même
+    que pour quelqu'un qui n'a jamais commencé (`last_call_at: null`).
+
+    `connector_failures > 0` = le membre a essayé et rien ne résolvait ; c'est
+    l'opposé de « n'a pas essayé », et ça se répare autrement."""
+    sub: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+    org_role: Optional[str] = None
+    calls: int
+    errors: int
+    last_call_at: Optional[str] = None
+    connector_failures: int
+
+
+class OrgAdoption(BaseModel):
+    """Adoption membre par membre — la lentille qui part de `org_members`, pas des
+    appels (sinon le membre à 0 appel, justement celui qu'on cherche, serait invisible).
+
+    ⚠️ **`truncated: true` ne dégrade que la LISTE** : `members` est plafonné à 500,
+    les compteurs (`total_members`, `active`, `never_active`, `blocked_by_connector`)
+    portent sur toute la population. Ne jamais recompter depuis `members`.
+
+    ⚠️ `never_active` veut dire « aucun appel **sous cette org** » : un membre très
+    actif ailleurs y figure — c'est voulu (l'org ne voit que ce qui la concerne), mais
+    ça ne se dit pas « il n'utilise pas oto »."""
+    org_id: int
+    window_days: int
+    total_members: int
+    active: int
+    never_active: int
+    blocked_by_connector: int
+    truncated: bool
+    members: list[AdoptionMember]
+
+
+class RunRow(BaseModel):
+    """Un déroulé. `slug` est un alias de compat = `doctrine` s'il y en a une, sinon
+    `label` — pas un troisième identifiant.
+
+    ⚠️ `finished_at`/`outcome` à `null` = le déroulé n'a **pas été fermé** (`run_finish`
+    jamais appelé, ou sa ligne purgée par la rétention). Ce n'est pas « en cours » au
+    sens d'un processus vivant : personne ne le clôturera.
+
+    ⚠️ `n_calls` compte les appels du `run_id` **toutes orgs confondues** — la seule
+    valeur de cette lentille qui n'est pas scopée à l'org."""
+    run_id: str
+    slug: Optional[str] = None
+    label: Optional[str] = None
+    doctrine: Optional[str] = None
+    sub: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    outcome: Optional[str] = None
+    n_calls: int
+
+
+class OrgRuns(BaseModel):
+    """Déroulés récents. ⚠️ Le scope d'org est appliqué à la ligne `run_start` : un
+    déroulé OUVERT sous une autre org mais poursuivi ici n'apparaît pas, même si ses
+    appels, eux, sont dans le journal de l'org. `limit` est plafonné à 500."""
+    runs: list[RunRow]
+
+
+class RunCall(BaseModel):
+    created_at: Optional[str] = None
+    tool: Optional[str] = None
+    args: Optional[dict] = None       # tronqué à l'écriture
+    ok: Optional[bool] = None
+    error: Optional[str] = None
+    duration_ms: Optional[int] = None
+
+
+class OrgRun(BaseModel):
+    """Timeline d'un déroulé, bornée aux appels émis SOUS cette org — un run à cheval
+    sur deux orgs n'en montre donc que la tranche locale, sans le signaler. Un `run_id`
+    deviné depuis une autre org rend une timeline vide, traduite en 404."""
+    run_id: str
+    calls: list[RunCall]
+
+
+class GapRow(BaseModel):
+    """Un manque signalé par un membre (`feedback(signal='gap')`). `intent` est le texte
+    LIBRE saisi par l'agent — l'axe de regroupement, donc deux formulations du même
+    besoin font deux lignes."""
+    intent: Optional[str] = None
+    kind: Optional[str] = None
+    n: int
+    last_at: Optional[str] = None
+    # Emails distincts des rapporteurs, repli sur le sub si le compte est inconnu :
+    # la liste MÉLANGE donc deux formats d'identifiant.
+    users: list[str] = []
+
+
+class OrgGaps(BaseModel):
+    """Ce qui manque à TES membres. ⚠️ Une liste vide ne veut pas dire « rien ne
+    manque » : elle veut dire que personne n'a émis de signal — c'est une mesure de
+    la remontée, pas du besoin."""
+    gaps: list[GapRow]
+
+
+class ToolFeedbackRow(BaseModel):
+    tool: Optional[str] = None
+    kind: Optional[str] = None
+    n: int
+    last_at: Optional[str] = None
+    users: list[str] = []
+
+
+class OrgToolQuality(BaseModel):
+    """Retours d'outil de TES membres, groupés par (outil, `kind`). ⚠️ `kind` porte
+    aussi bien un compliment qu'un défaut : `n` est un volume de SIGNAL, pas un compte
+    de problèmes — trier par `n` sans lire `kind` classe en tête un outil très aimé."""
+    tools: list[ToolFeedbackRow]
+
+
 # ── entrées (une par lentille : `org_id` porté par le path REST) ─────────────
 
 class OrgSummaryInput(BaseModel):
@@ -201,31 +445,31 @@ _ADMIN_OF = ORG_ADMIN_OF("org_id")
 
 CAPABILITIES += [
     Capability(key="org.monitoring.summary", handler=_summary, Input=OrgSummaryInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgMonitoringSummary,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/summary", _ID)),
     Capability(key="org.monitoring.calls", handler=_calls, Input=OrgCallsInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgCalls,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/calls", _ID)),
     Capability(key="org.monitoring.call", handler=_call, Input=OrgCallInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgCall,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/calls/{call_id}", _ID)),
     Capability(key="org.monitoring.connectors", handler=_connectors, Input=OrgWindowInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgConnectorHealth,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/connectors", _ID)),
     Capability(key="org.monitoring.adoption", handler=_adoption, Input=OrgDaysInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgAdoption,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/adoption", _ID)),
     Capability(key="org.monitoring.runs", handler=_runs, Input=OrgRunsInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgRuns,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/runs", _ID)),
     Capability(key="org.monitoring.run", handler=_run, Input=OrgRunInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgRun,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/runs/{run_id}", _ID)),
     Capability(key="org.monitoring.gaps", handler=_gaps, Input=OrgDaysInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgGaps,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/gaps", _ID)),
     Capability(key="org.monitoring.tool_quality", handler=_tool_quality, Input=OrgDaysInput,
-               authz=_ADMIN_OF, mcp=None,
+               authz=_ADMIN_OF, mcp=None, Output=OrgToolQuality,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/tool-quality", _ID)),
     Capability(
         key="org.monitoring.console", handler=_console, Input=OrgMonitoringInput,
