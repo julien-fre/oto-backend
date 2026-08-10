@@ -5,8 +5,9 @@ d'une clé BYO). Le dashboard pose dessus le picker (liste + défaut)."""
 from __future__ import annotations
 
 import inspect
+from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import connector_identities
 from ._authz import SUB_ONLY
@@ -20,6 +21,70 @@ class IdentitiesInput(BaseModel):
 class SetIdentityInput(BaseModel):
     connector: str                       # path {connector}
     identity_id: str                     # body — id renvoyé par connectors.identities
+
+
+class IdentityOwner(BaseModel):
+    """Propriétaire d'un compte ACCORDÉ (#55) — présent seulement sur une identité
+    qu'on opère sans la posséder."""
+    sub: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+    org: Optional[int] = None               # org sous laquelle le owner a connecté le compte
+    org_name: Optional[str] = None
+
+
+class Identity(BaseModel):
+    """Contrat commun `Identity` des trois backends (Google = comptes du coffre,
+    Unipile = identités distantes d'une clé, keyed générique = lignes du coffre).
+    L'unification est au niveau SURFACE, pas stockage."""
+    # Opaque, et de nature différente selon le backend : email Google, handle
+    # distant Unipile, nom de compte du coffre. Ne jamais le parser.
+    id: str
+    label: Optional[str] = None
+    # `ok` par défaut. Sur un compte Unipile hébergé, le statut est confirmé par
+    # une sonde de liveness (users/me) et rétrogradé en `disconnected` — le statut
+    # de compte remonté par le fournisseur peut rester « OK » alors que la session
+    # est morte (#236). Fail-soft : un incident de sonde laisse `ok`.
+    status: Optional[str] = None
+    # Identité effectivement opérée sur SON canal. Plusieurs entrées peuvent donc
+    # être `is_default` en même temps sur un connecteur multi-canal (une par canal).
+    is_default: bool
+    # `null` hors multi-canal (Google) — fuite assumée du modèle Unipile, qui est
+    # par-canal là où Google est par-service.
+    channel: Optional[str] = None
+    granted: Optional[bool] = None          # présent (true) si le compte est ACCORDÉ (#55)
+    owner: Optional[IdentityOwner] = None   # le prêteur, présent avec `granted`
+
+
+class ConnectorIdentities(BaseModel):
+    """Identités joignables par le credential résolu du caller pour un connecteur."""
+    connector: str
+    # `false` = ce connecteur n'a AUCUN sélecteur d'identité. Mais l'inverse ne
+    # tient pas : `supported:true` avec `identities: []` est normal (clé plateforme
+    # Unipile → passer par la connexion hébergée, ou aucun compte connecté). Un slug
+    # INCONNU, lui, ne rend jamais ce payload — il lève un 404 (feedback #162 :
+    # `{supported:false, identities:[]}` rendait un nom bidon indiscernable d'un vrai
+    # connecteur sans identités).
+    supported: bool
+    identities: list[Identity]
+
+
+class SelectedIdentity(BaseModel):
+    """L'identité choisie, telle que la rend le backend du connecteur. Les clés
+    varient selon la branche empruntée : un compte ACCORDÉ porte `granted`, le
+    backend keyed générique renvoie un `label`, les autres ni l'un ni l'autre —
+    d'où l'ouverture aux champs additionnels."""
+    model_config = ConfigDict(extra="allow")
+
+    connector: str
+    id: str
+    is_default: bool                        # toujours true — c'est l'effet du verbe
+    # `null` pour un connecteur hors multi-canal. Sur Unipile, sélectionner
+    # SON PROPRE compte efface le pointeur « identité opérée » du canal (retour à
+    # soi) ; le retour est le même dans les deux cas.
+    channel: Optional[str] = None
+    label: Optional[str] = None
+    granted: Optional[bool] = None
 
 
 # Handlers async : un backend d'identités enregistré (`connector_identities.register`)
@@ -93,12 +158,13 @@ from .registry import CAPABILITIES  # noqa: E402
 CAPABILITIES += [
     Capability(
         key="connectors.identities", handler=_list, Input=IdentitiesInput, authz=SUB_ONLY,
+        Output=ConnectorIdentities,
         description=CAPABILITIES_DOC_LIST,
         rest=RestBinding("GET", "/api/connectors/{connector}/identities"),
     ),
     Capability(
         key="connectors.set_default_identity", handler=_set_default, Input=SetIdentityInput,
-        authz=SUB_ONLY, description=CAPABILITIES_DOC_SET,
+        authz=SUB_ONLY, Output=SelectedIdentity, description=CAPABILITIES_DOC_SET,
         rest=RestBinding("PUT", "/api/connectors/{connector}/identities/default"),
     ),
 ]
