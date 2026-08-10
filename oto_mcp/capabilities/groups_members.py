@@ -53,6 +53,55 @@ class RemoveGroupMemberInput(BaseModel):
     target: str
 
 
+# --- Sorties ----------------------------------------------------------------
+
+class GroupMemberWritten(BaseModel):
+    """Écho d'un ajout de membre d'équipe ou d'un changement de rôle.
+
+    ⚠️ `sub` est le sub **RÉSOLU** : l'entrée accepte un email, la réponse ne le
+    renvoie jamais — garder sa propre trace pour rapprocher requête et réponse.
+
+    ⚠️ **L'ajout est un UPSERT** (`ON CONFLICT DO UPDATE`) : ajouter quelqu'un déjà
+    membre de l'équipe ne rend pas de conflit, ça écrase son rôle. `POST /members` sur
+    un membre existant est donc un changement de rôle déguisé — et il **ne passe PAS**
+    par l'anti-lockout de `POST /members/{sub}` (409 `last_group_admin`) : rétrograder
+    le dernier chef d'équipe est refusé sur une route, accepté sur l'autre. Même défaut
+    qu'#273 côté org, un palier plus bas ; à fermer de la même façon.
+
+    ⚠️ **Le décompte des chefs ignore l'escalade** : `last_group_admin` compte les
+    lignes `group_admin` EXPLICITES. Deux conséquences opposées, également surprenantes
+    — on refuse de rétrograder le « dernier » chef d'une équipe qu'un org_admin peut de
+    toute façon administrer ; et une équipe peut vivre avec **zéro** chef explicite (cf.
+    `GroupCreated` : créée par quelqu'un d'extérieur à l'org), auquel cas la garde ne
+    protège rien.
+
+    ⚠️ Aucun effet sur l'équipe ACTIVE : ajouter quelqu'un ne le fait pas travailler
+    sous cette équipe (il faut qu'il la choisisse). Tant qu'il ne l'a pas fait, le
+    secret partagé de l'équipe ne le sert pas."""
+    ok: bool
+    group_id: int
+    sub: str
+    # Rôle EFFECTIF après écriture, validé contre `group_store.GROUP_ROLES`.
+    role: str
+
+
+class GroupMemberRemoved(BaseModel):
+    """Retrait d'un membre d'équipe. ⚠️ `removed` ne vaut **jamais** `false` : l'absence
+    d'appartenance lève un 404 et le dernier chef d'équipe un 409. C'est une constante
+    d'écho, pas un verdict à tester.
+
+    ⚠️ Effet de bord invisible dans la réponse : si l'équipe retirée était l'équipe
+    ACTIVE de la personne, elle se retrouve **sans équipe active** — donc au niveau org
+    à son appel suivant, et **plus servie par le secret partagé de l'équipe** (bascule
+    silencieuse vers le secret d'org ou le grant plateforme, sans erreur).
+
+    `sub` est le sub RÉSOLU (l'entrée acceptait un email)."""
+    ok: bool
+    group_id: int
+    sub: str
+    removed: bool
+
+
 def _add_member(ctx: ResolvedCtx, inp: AddGroupMemberInput) -> dict:
     role = _check_role(inp.role)
     target_sub = _resolve_target(inp.target)
@@ -91,20 +140,20 @@ def _remove_member(ctx: ResolvedCtx, inp: RemoveGroupMemberInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="group.member.add", handler=_add_member, Input=AddGroupMemberInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupMemberWritten,
         description=("Add a member (by email or sub) to a group you lead. The target "
                      "must already belong to the parent org. role: group_member|group_admin."),
         rest=RestBinding("POST", "/api/groups/{id}/members", _GID),
     ),
     Capability(
         key="group.member.set_role", handler=_set_member_role, Input=SetGroupMemberRoleInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupMemberWritten,
         description="Change a member's role in a group you lead (group_member|group_admin).",
         rest=RestBinding("POST", "/api/groups/{id}/members/{sub}", _GID),
     ),
     Capability(
         key="group.member.remove", handler=_remove_member, Input=RemoveGroupMemberInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupMemberRemoved,
         description="Remove a member (by email or sub) from a group you lead.",
         rest=RestBinding("DELETE", "/api/groups/{id}/members/{sub}",
                          {"id": "group_id", "sub": "target"}),

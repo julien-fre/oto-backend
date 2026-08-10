@@ -51,6 +51,170 @@ class InstrRevertInput(BaseModel):
     version: int
 
 
+# --- Sorties ----------------------------------------------------------------
+#
+# ⚠️ Ce palier est le MIROIR de la doctrine d'org (`orgs_instructions`), mais le
+# miroir est INFIDÈLE sur trois points qu'un front factorisé prendra de plein fouet :
+#   · `list` rend `doctrine` en **chaîne brute** ici, en **objet** `{exists, version,
+#     updated_at}` côté org — même nom de clé, deux types ;
+#   · les écritures d'org portent un `ok`, celles d'équipe **n'en portent pas** ;
+#   · `delete` d'un slug inconnu rend `deleted: false` en 200 ici, un **404** côté org.
+# Les modèles ci-dessous décrivent le palier ÉQUIPE ; ne pas déduire l'autre de l'un.
+
+class GroupInstructionIndexEntry(BaseModel):
+    """Métadonnées d'une procédure d'équipe — **sans le corps** (`body_md` s'obtient par
+    `GET /api/groups/{id}/instructions/{slug}`)."""
+    id: int
+    slug: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    version: int
+    updated_at: Optional[str] = None
+
+
+class GroupInstructionsBundle(BaseModel):
+    """Readme d'équipe + index de ses procédures.
+
+    ⚠️ **`doctrine` est le corps MARKDOWN BRUT, pas un objet de métadonnées** — c'est
+    l'écart de forme avec le bundle d'org, qui rend là un `{exists, version,
+    updated_at}`. Chaîne vide = pas de readme.
+
+    ⚠️ **`doctrine_version` est un faux compteur** : il vaut `1` s'il existe un readme,
+    `null` sinon, et n'atteint JAMAIS 2. Le readme d'équipe est de la prose plate sans
+    historique (ADR 0042) ; l'afficher comme un numéro de révision promet un versionnage
+    qui n'existe pas — et `POST …/revert` sur ce slug ne le rembobinera pas.
+
+    ⚠️ **Un readme vide peut être un incident, pas une absence** : sa lecture est
+    **fail-open** — une erreur de base rend `null`, donc exactement `doctrine: ""` +
+    `doctrine_version: null`, indiscernable d'une équipe qui n'a rien écrit. Ne pas
+    proposer « créer le readme » sur cette seule foi si l'action écrase.
+
+    ⚠️ `instructions` **exclut le readme** (slug réservé `claude_md`). L'asymétrie va
+    plus loin : le readme annoncé par `doctrine` est **introuvable** par
+    `GET …/instructions/claude_md` (404) — il vit sur la surface guide, pas ici.
+
+    ⚠️ **`can_edit` est le seul champ de tout le domaine `group.*` qui dit la vérité sur
+    les droits** : il intègre l'escalade (chef d'équipe, org_admin parent,
+    platform_admin), là où `GroupBrief.my_role` ne rend que l'appartenance explicite.
+    `can_edit: true` avec `my_role: null` n'est pas une incohérence — c'est un org_admin."""
+    group_id: int
+    doctrine: str
+    doctrine_version: Optional[int] = None
+    instructions: list[GroupInstructionIndexEntry]
+    can_edit: bool
+
+
+class GroupInstructionView(BaseModel):
+    """Une procédure d'équipe, corps compris. `slug` est le slug NORMALISÉ (l'entrée est
+    tolérante).
+
+    ⚠️ **Demander `?version=N` rend un objet plus PETIT** : la version archivée est
+    servie depuis la table des révisions, qui ne porte ni `id` ni `updated_at`. Ces deux
+    champs absents ne signalent donc ni une procédure sans identité ni une procédure
+    jamais modifiée — seulement qu'on lit un instantané.
+
+    ⚠️ Le slug réservé `claude_md` rend **404** ici, même quand
+    `GET /api/groups/{id}/instructions` vient d'annoncer un readme : les deux surfaces ne
+    lisent pas le même stockage.
+
+    ⚠️ **Aucun contrôle de références au niveau équipe** : contrairement à la procédure
+    d'org, le corps n'est pas confronté au registre d'outils vivants. Un `<tool:slug>`
+    mort y reste, silencieusement — rien dans cette réponse ne le signale."""
+    group_id: int
+    # Absent quand on lit une version archivée (cf. ci-dessus).
+    id: Optional[int] = None
+    slug: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    version: int
+    body_md: str
+    set_by: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
+class GroupInstructionWritten(BaseModel):
+    """Écriture d'une procédure d'équipe. Chaque écriture **incrémente la version** et
+    archive un instantané ; il n'y a pas de mise à jour en place — `version` est donc le
+    NOUVEAU numéro, jamais celui qu'on croit poser.
+
+    ⚠️ **Pas de champ `ok` ici** (l'équivalent d'org en a un) : le témoin de succès est
+    `set`, une constante qui vaut toujours `true` quand la réponse existe. Un client qui
+    teste `response.ok` lira `undefined` et conclura à un échec.
+
+    ⚠️ **Écrire le slug réservé `claude_md` n'est pas refusé proprement** : le store lève,
+    et la capacité ne traduit pas — l'appelant reçoit une erreur serveur au lieu d'un 400
+    actionnable. Le readme d'équipe s'écrit sur la surface guide
+    (`scope='group', delivery='init'`), pas ici.
+
+    `title`/`description` omis **conservent** l'existant (ce n'est pas un effacement) ;
+    ils ne sont pas réécho, donc relire l'index pour confirmer."""
+    group_id: int
+    # Slug NORMALISÉ (minuscules, [a-z0-9_-]) — peut différer de l'entrée.
+    slug: str
+    # Le NOUVEAU numéro de version.
+    version: int
+    # Constante d'écho : vaut toujours `true`.
+    set: bool
+
+
+class GroupInstructionDeleted(BaseModel):
+    """Suppression d'une procédure d'équipe **et de tout son historique** — irréversible,
+    aucune corbeille.
+
+    ⚠️ **`deleted: false` est un 200, pas un 404** : supprimer un slug inexistant réussit
+    et le dit par ce booléen. C'est l'inverse exact du palier org, où l'absence lève un
+    404 et où `deleted` ne vaut jamais `false`. Le même nom de champ n'a donc pas le même
+    statut aux deux étages : ici il faut le lire, là-bas il ne dit rien.
+
+    ⚠️ Pas de champ `ok` (asymétrie avec l'org, cf. `GroupInstructionWritten`)."""
+    group_id: int
+    slug: str
+    deleted: bool
+
+
+class GroupInstructionVersion(BaseModel):
+    """Une révision archivée — métadonnées seules, sans le corps (`?version=N` sur la
+    lecture pour l'obtenir)."""
+    version: int
+    title: Optional[str] = None
+    set_by: Optional[str] = None
+    created_at: Optional[str] = None
+
+
+class GroupInstructionVersions(BaseModel):
+    """Historique d'une procédure d'équipe, plus récente d'abord.
+
+    ⚠️ **Une liste vide recouvre trois situations distinctes**, toutes en 200 : le slug
+    n'existe pas (aucun 404 n'est levé ici), c'est le readme (`claude_md`, retourné vide
+    par construction — il n'a pas d'historique), ou la procédure n'a encore aucune
+    révision archivée. Il faut `GET …/instructions/{slug}` pour trancher.
+
+    `slug` est renvoyé normalisé, y compris quand la liste est vide — ce n'est pas une
+    confirmation d'existence."""
+    group_id: int
+    slug: str
+    versions: list[GroupInstructionVersion]
+
+
+class GroupInstructionReverted(BaseModel):
+    """Restauration d'une version passée.
+
+    ⚠️ **`version` est un numéro NEUF, pas celui qu'on restaure** : revenir à la v2 d'une
+    procédure en v6 produit une v7 dont le contenu est celui de la v2. L'historique n'est
+    jamais rembobiné — `reverted_from` est la seule trace de l'intention.
+
+    ⚠️ Pas de champ `ok` (asymétrie avec l'org).
+
+    ⚠️ Un revert sur le readme (`claude_md`) rend **404 `unknown_version`** quelle que
+    soit la version demandée — un code trompeur : ce n'est pas la version qui manque,
+    c'est que ce slug n'a jamais d'historique ici."""
+    group_id: int
+    slug: str
+    version: int
+    reverted_from: int
+
+
 def _list(ctx: ResolvedCtx, inp: GroupIdInput) -> dict:
     # Readme d'équipe = guide `delivery='init'` (ADR 0042), lu sur sa surface.
     base_body = guide_store.init_guide_body("group", inp.group_id) or ""
@@ -109,38 +273,38 @@ def _revert(ctx: ResolvedCtx, inp: InstrRevertInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="group.instruction.list", handler=_list, Input=GroupIdInput,
-        authz=GROUP_MEMBER_OF("group_id"),
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionsBundle,
         description="Group base doctrine + skills index (+ can_edit flag).",
         rest=RestBinding("GET", "/api/groups/{id}/instructions", _GID),
     ),
     Capability(
         key="group.instruction.get", handler=_get, Input=InstrGetInput,
-        authz=GROUP_MEMBER_OF("group_id"),
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionView,
         description="Full markdown of one group instruction (slug `claude_md` = base doctrine).",
         rest=RestBinding("GET", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     Capability(
         key="group.instruction.set", handler=_set, Input=InstrSetInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionWritten,
         description=("Create/update a group instruction (team lead). slug `claude_md` "
                      "= the group base doctrine; any other slug = a named skill."),
         rest=RestBinding("PUT", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     Capability(
         key="group.instruction.delete", handler=_delete, Input=InstrSlugInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionDeleted,
         description="Delete a group instruction and its history.",
         rest=RestBinding("DELETE", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     Capability(
         key="group.instruction.versions", handler=_versions, Input=InstrSlugInput,
-        authz=GROUP_MEMBER_OF("group_id"),
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionVersions,
         description="Version history of one group instruction (metadata, latest first).",
         rest=RestBinding("GET", "/api/groups/{id}/instructions/{slug}/versions", _GID_SLUG),
     ),
     Capability(
         key="group.instruction.revert", handler=_revert, Input=InstrRevertInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionReverted,
         description="Restore an older version of a group instruction as a new version.",
         rest=RestBinding("POST", "/api/groups/{id}/instructions/{slug}/revert", _GID_SLUG),
     ),

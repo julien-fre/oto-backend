@@ -38,6 +38,46 @@ class GroupInviteRevokeInput(BaseModel):
     invite_id: int
 
 
+# --- Sorties ----------------------------------------------------------------
+#
+# La forme est celle de la cascade (`orgs_invites`), au grain équipe : on hérite des
+# champs plutôt que de les recopier, et on redocumente ce qui change de SENS ici.
+
+class GroupInvitationEmitted(orgs_invites.InvitationEmitted):
+    """Invitation d'ÉQUIPE créée. Même forme que l'invitation d'org — mêmes réserves
+    sur `emailed` (qui confond « pas demandé » et « échoué »), sur `invite_url` (lien
+    nu, jamais le magic-link) et sur `code` (**secret porteur** : le détenir suffit).
+
+    ⚠️ **`role` porte le rôle d'ÉQUIPE, et masque le rôle d'org accordé au passage.**
+    Accepter cette invitation fait rejoindre l'org parente en `org_member` PUIS
+    l'équipe avec le rôle affiché. Ce premier octroi n'apparaît nulle part dans la
+    réponse : un intégrateur qui lit `role: "group_member"` croit n'avoir donné qu'un
+    accès d'équipe, alors qu'il a créé un membre de l'org.
+
+    ⚠️ **C'est l'exception à « une équipe ne peut que rétrécir »** : un chef d'équipe,
+    qui n'a par ailleurs aucun droit d'admin sur l'org, fait ici GROSSIR la population
+    de l'org. La délégation d'ADR 0012 est monotone sur ce qu'on RESTREINT (outils,
+    appartenance à l'équipe), pas sur qui entre.
+
+    ⚠️ L'invité peut être un email **encore inconnu de la plateforme** : contrairement à
+    `group.member.add` (qui exige une appartenance préalable à l'org, 409
+    `not_org_member`), l'invitation contourne l'ordre org-puis-équipe. Les deux surfaces
+    ne posent donc pas les mêmes préconditions pour un résultat voisin."""
+
+
+class GroupInvitations(BaseModel):
+    """Invitations d'ÉQUIPE en attente pour cette équipe.
+
+    ⚠️ **Une liste vide ne veut pas dire « personne n'a été invité à rejoindre »** :
+    en sont absentes les invitations d'ORG (qui amèneront la personne dans l'org sans
+    l'équipe), les **acceptées** et les **expirées**. C'est une file d'attente d'un
+    seul palier, pas un historique de recrutement.
+
+    ⚠️ Chaque entrée porte `code`, donc le secret porteur : cette liste est du matériel
+    sensible, pas un journal. `scope` y vaut toujours `"team"`."""
+    invitations: list[orgs_invites.InvitationEntry]
+
+
 def _invite_create(ctx: ResolvedCtx, inp: GroupInviteCreateInput) -> dict:
     if inp.role not in group_store.GROUP_ROLES:
         raise AuthzDenied(400, "invalid_role", f"Rôle d'équipe invalide : {inp.role!r}.")
@@ -65,7 +105,7 @@ def _invite_revoke(ctx: ResolvedCtx, inp: GroupInviteRevokeInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="group.invite.create", handler=_invite_create, Input=GroupInviteCreateInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInvitationEmitted,
         description=("Invite someone to a team you lead (role: group_member|group_admin). "
                      "They join the parent org then the team on accept. send_email=true "
                      "mails a link; false returns a short code to share yourself."),
@@ -73,13 +113,15 @@ CAPABILITIES += [
     ),
     Capability(
         key="group.invite.list", handler=_invite_list, Input=GroupInviteListInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInvitations,
         description="List pending invitations for a team you lead.",
         rest=RestBinding("GET", "/api/groups/{id}/invitations", _GID),
     ),
     Capability(
         key="group.invite.revoke", handler=_invite_revoke, Input=GroupInviteRevokeInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        # Forme ET sémantique identiques au palier org (404 si inconnue OU déjà
+        # acceptée) — le modèle est partagé, pas recopié.
+        authz=GROUP_ADMIN_OF("group_id"), Output=orgs_invites.InvitationRevoked,
         description="Revoke a pending team invitation.",
         rest=RestBinding("DELETE", "/api/groups/{id}/invitations/{inv}",
                          {"id": "group_id", "inv": "invite_id"}),

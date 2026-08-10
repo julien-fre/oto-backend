@@ -46,6 +46,235 @@ class UpdateGroupInput(BaseModel):
     description: Optional[str] = None
 
 
+# --- Sorties ----------------------------------------------------------------
+#
+# ⚠️ Lire d'abord l'invariant du palier, et surtout SES EXCEPTIONS. La règle qu'on
+# retient d'ADR 0012 est « une équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse »
+# — vraie pour l'appartenance (`group.member.add` refuse un non-membre de l'org) et
+# pour la visibilité d'outils (denylist additif). **Elle est FAUSSE pour deux des
+# capacités décrites ici**, et un intégrateur qui l'applique en bloc se trompera :
+#   · `group.secret.set` — le secret d'équipe passe AVANT celui de l'org dans la
+#     cascade : l'équipe REDIRIGE ce que l'org avait posé, elle ne le restreint pas.
+#   · `group.invite.create` — un chef d'équipe invite dans SON équipe, et l'invité
+#     rejoint l'ORG au passage : l'équipe fait grossir la population de l'org.
+
+class GroupCreated(BaseModel):
+    """Équipe créée. ⚠️ **Créer une équipe ne bascule rien** — contrairement à
+    `org.create`, qui fait de l'org neuve ton org maison. L'équipe fraîche n'est ni
+    ton équipe active ni ta maison ; il faut `PUT /api/me/home-group` pour l'habiter.
+
+    ⚠️ **« Tu deviens chef d'équipe » n'est pas garanti** : le créateur n'est fait
+    `group_admin` que s'il est RÉELLEMENT membre de l'org parente. Un platform_admin
+    (ou un opérateur qui passe l'autz par escalade sans appartenir à l'org) crée donc
+    une équipe **sans aucun chef** — et rien dans cette réponse ne le dit. L'équipe
+    n'est alors administrable que par un org_admin, jamais depuis son propre palier.
+
+    ⚠️ `description` n'est **pas** rendue : impossible de confirmer ce qui a été
+    enregistré sans relire `GET /api/groups/{id}`.
+
+    Un nom déjà pris dans l'org (comparaison INSENSIBLE à la casse) est refusé en 409
+    `group_exists` — mais voir `GroupUpdated` : le renommage, lui, ne fait pas ce
+    contrôle."""
+    # `id` et `group_id` portent LA MÊME valeur (doublon de compat front, hérité des
+    # deux conventions de nommage du dashboard) — pas deux identifiants distincts.
+    id: int
+    group_id: int
+    org_id: int
+    # Le nom APRÈS strip : peut différer de l'entrée.
+    name: str
+
+
+class GroupBrief(BaseModel):
+    """Fiche courte d'une équipe.
+
+    ⚠️ **`my_role: null` ne veut PAS dire « tu n'as aucun droit sur cette équipe »** :
+    c'est le rôle EXPLICITE (une ligne d'appartenance), sans l'escalade de `roles.py`.
+    Un org_admin gouverne toutes les équipes de son org sans être membre d'aucune —
+    il lit donc `my_role: null` sur des équipes qu'il peut renommer, supprimer, dont
+    il peut poser les secrets. Un front qui conditionne ses boutons de gestion à
+    `my_role == "group_admin"` cache l'administration à ceux qui l'ont. La source du
+    droit, c'est `can_edit` (servi par `GET /api/groups/{id}/instructions`), jamais
+    ce champ.
+
+    ⚠️ `member_count` compte les mêmes lignes explicites : une équipe « à 0 membre »
+    peut être pleinement gouvernée (et son secret partagé pleinement actif)."""
+    id: int
+    group_id: int
+    org_id: int
+    name: str
+    # Toujours présente (chaîne vide si jamais renseignée) — pas de null à gérer.
+    description: str
+    member_count: int
+    my_role: Optional[str] = None
+
+
+class GroupList(BaseModel):
+    """Équipes d'une org. ⚠️ **Ce n'est pas « mes équipes »** : l'autz est
+    `ORG_MEMBER_OF`, donc un simple membre voit TOUTES les équipes de l'org, y compris
+    celles où il n'entre pas (`my_role: null`). Pour la vue « les miennes + laquelle
+    est active », c'est la console `oto_group`, pas cette route.
+
+    Une liste vide veut bien dire « aucune équipe dans cette org » — c'est le seul
+    endroit de ce module où le vide n'est pas ambigu."""
+    org_id: int
+    groups: list[GroupBrief]
+
+
+class UseGroupResult(BaseModel):
+    """⚠️ **Deux réponses distinctes selon la SURFACE, pas selon un paramètre** (même
+    dissymétrie que `org.use_org`) :
+
+    - Face MCP (`oto_use_group`) : **pur hint, rien n'est muté** (ADR 0038). On valide
+      l'appartenance et on renvoie `{group, name, org, session_state: null, how_to}`.
+      `session_state: null` ne dit pas « effacé » mais « ce concept n'existe plus » :
+      le scope se porte par appel (`_group=`).
+    - Face REST (`PUT /api/me/active-group`) : **écriture, et DOUBLE**. Elle pose
+      l'équipe maison ET bascule l'org maison sur l'org parente (invariant équipe ⊂
+      org, atomique). `active_org` n'est donc pas un écho informatif : c'est la trace
+      d'une seconde mutation que l'appelant n'a pas demandée. Un dashboard qui ne
+      rafraîchit que l'indicateur d'équipe affiche une org périmée.
+
+    Les deux jeux de clés sont mutuellement exclusifs.
+
+    ⚠️ Le 403 `not_a_member` recouvre **deux** causes côté REST : tu n'es pas membre
+    de l'équipe, **ou** tu l'es sans être membre de l'org parente (incohérence de
+    données). Le message est le même dans les deux cas."""
+    # Face MCP
+    group: Optional[int] = None
+    org: Optional[int] = None
+    session_state: Optional[str] = None
+    how_to: Optional[str] = None
+    # Face REST
+    active_group: Optional[int] = None
+    active_org: Optional[int] = None
+    # Commun aux deux faces.
+    name: Optional[str] = None
+
+
+class ClearGroupResult(BaseModel):
+    """⚠️ Deux réponses selon la surface, comme `UseGroupResult` :
+
+    - Face MCP (`oto_clear_group`) : **no-op** — `{session_state: null, how_to}`, rien
+      n'est écrit.
+    - Face REST (`DELETE /api/me/active-group`) : efface l'équipe maison → `active_group:
+      null`.
+
+    ⚠️ **Asymétrie avec `org.clear`** : on peut parfaitement rester SANS équipe (c'est
+    le niveau org, le régime nominal), là où on n'est jamais sans org (le DELETE d'org
+    bascule sur l'espace personnel). Ne pas transposer le raisonnement d'un palier à
+    l'autre : ici `null` est un état de repos valide, pas une anomalie à corriger.
+
+    L'opération est idempotente et ne rend jamais 404 : effacer quand rien n'est actif
+    répond 200."""
+    active_group: Optional[int] = None
+    session_state: Optional[str] = None
+    how_to: Optional[str] = None
+
+
+class HomeGroupSet(BaseModel):
+    """Équipe MAISON posée (`PUT /api/me/home-group`, dashboard — pas de binding MCP :
+    l'agent ne mute pas les défauts).
+
+    ⚠️ **C'est une double écriture** : poser l'équipe maison pose AUSSI l'org parente
+    en org maison (invariant équipe ⊂ org). `home_org` n'est donc pas la relecture
+    d'une valeur inchangée — c'est le second champ que l'appel vient de modifier,
+    potentiellement pour toutes les conversations déjà ouvertes de l'utilisateur.
+
+    ⚠️ 403 `not_a_member` couvre là aussi deux causes (pas membre de l'équipe / pas
+    membre de l'org parente)."""
+    home_group: int
+    home_org: int
+    name: Optional[str] = None
+
+
+class GroupMemberEntry(BaseModel):
+    """Un membre d'équipe.
+
+    ⚠️ **`active` ne dit rien de l'état du compte** : ce n'est ni « actif » au sens
+    activé, ni « a utilisé oto récemment ». C'est le pointeur d'équipe COURANTE de
+    CETTE personne — vrai si c'est l'équipe qu'elle a choisie pour travailler, faux
+    sinon. Un membre parfaitement légitime lit `active: false` dès qu'il travaille
+    sous une autre équipe. Le rendre en « compte actif / inactif » est un contresens,
+    et il a une conséquence concrète : **le secret partagé de l'équipe ne sert QUE les
+    membres dont `active` est vrai ici** (la cascade lit l'équipe active).
+
+    ⚠️ `email`/`name` valent `null` quand le sub n'a pas de ligne `users` (invité
+    rattaché sans première connexion, compte machine) — jamais une erreur, et jamais
+    une raison de masquer la ligne : `sub` reste l'identifiant qui fait foi.
+
+    `role` est le rôle EXPLICITE (`group_admin`|`group_member`) — mêmes réserves que
+    `GroupBrief.my_role` sur l'escalade."""
+    sub: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+    role: str
+    active: bool
+
+
+class GroupSecretEntry(BaseModel):
+    """Un credential partagé de l'équipe — **métadonnées seules** : le coffre ne
+    restitue aucun secret, à personne.
+
+    ⚠️ `base_url` est une clé **ABSENTE**, pas `null`, quand le connecteur n'en porte
+    pas : elle n'est ajoutée que si elle existe. Un client typé strictement doit
+    tolérer son absence plutôt que tester `!== null`.
+
+    ⚠️ Sa présence ici ne dit pas qu'un membre l'utilise : la cascade est
+    `clé membre > secret de l'équipe ACTIVE > secret d'org > grant plateforme`. Un
+    membre qui a sa propre clé, ou dont l'équipe active est une autre, ne verra jamais
+    ce credential."""
+    provider: str
+    set_by: Optional[str] = None
+    set_at: Optional[str] = None
+    base_url: Optional[str] = None
+
+
+class GroupDetail(BaseModel):
+    """Fiche complète d'une équipe (autz `GROUP_MEMBER_OF`, donc lisible par un
+    org_admin non membre via l'escalade).
+
+    ⚠️ `secrets` liste ce que l'ÉQUIPE partage, pas ce dont ses membres disposent :
+    ni les clés personnelles, ni le secret d'org, ni les grants plateforme n'y
+    figurent. Une liste vide ne veut donc pas dire « cette équipe n'a accès à rien »."""
+    group: GroupBrief
+    members: list[GroupMemberEntry]
+    secrets: list[GroupSecretEntry]
+
+
+class GroupUpdated(BaseModel):
+    """Renommage / re-description. ⚠️ **`ok: true` ne dit pas qu'une écriture a eu
+    lieu** : c'est une constante d'écho. Envoyer `name: null, description: null` (rien
+    à changer) répond exactement pareil, et le booléen que le store renvoie
+    (« la ligne existait ») est jeté avant la réponse.
+
+    ⚠️ **Le contrôle de collision de nom de `group.create` n'existe PAS ici** : renommer
+    une équipe vers un nom déjà pris dans l'org ne rend pas un 409 actionnable mais
+    heurte la contrainte `UNIQUE (org_id, name)` — soit une erreur serveur, pas un
+    refus métier. Vérifier la disponibilité du nom côté appelant avant de renommer.
+
+    Rien n'est réécho (ni le nouveau nom, ni la description) : relire `GET /api/groups/{id}`
+    pour confirmer l'état."""
+    ok: bool
+    group_id: int
+
+
+class GroupDeleted(BaseModel):
+    """Suppression d'une équipe. **Irréversible et large** : partent avec elle les
+    appartenances, la doctrine d'équipe et son historique de versions (cascade FK) et
+    **les credentials partagés de l'équipe** (purgés explicitement du coffre, hors FK).
+    La réponse ne dit rien de ce qui a été détruit.
+
+    ⚠️ Conséquence invisible ici : les membres qui étaient servis par le secret
+    d'équipe basculent **silencieusement** sur le secret d'org ou le grant plateforme
+    à leur appel suivant — sans erreur, sous une autre identité côté fournisseur.
+
+    `deleted: false` est quasi inatteignable (l'autz refuse déjà une équipe inconnue
+    en 403) : ne pas en faire un cas d'usage, c'est un témoin de course."""
+    ok: bool
+    group_id: int
+    deleted: bool
+
+
 def _group_brief(g: dict, sub: str) -> dict:
     members = group_store.list_group_members(g["id"])
     return {
@@ -184,19 +413,20 @@ def _delete_group(ctx: ResolvedCtx, inp: GroupIdInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="group.create", handler=_create_group, Input=CreateGroupInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=GroupCreated,
         description=("Create a group (department/team) inside an org you administer. "
                      "You become its team lead (group_admin)."),
         rest=RestBinding("POST", "/api/orgs/{id}/groups", _OID),
     ),
     Capability(
         key="group.list", handler=_list_groups, Input=OrgIdInput,
-        authz=ORG_MEMBER_OF("org_id"),
+        authz=ORG_MEMBER_OF("org_id"), Output=GroupList,
         description="List the groups (departments) of an org you belong to.",
         rest=RestBinding("GET", "/api/orgs/{id}/groups", _OID),
     ),
     Capability(
         key="group.use", handler=_use_group, Input=UseGroupInput, authz=SUB_ONLY,
+        Output=UseGroupResult,
         description=("Resolve a group (department) you belong to and get the RELIABLE "
                      "way to act under it. NO session state (ADR 0038): pass "
                      "`group=<id>` directly on each group-scoped call (its parent org "
@@ -208,6 +438,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="group.clear", handler=_clear_group, Input=NoInput, authz=SUB_ONLY,
+        Output=ClearGroupResult,
         description=("No-op hint (ADR 0038: no session state). Without a `_group=` "
                      "token a call is at org level; the durable default is changed "
                      "in the dashboard only."),
@@ -216,6 +447,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="group.set_home", handler=_set_home_group, Input=UseGroupInput, authz=SUB_ONLY,
+        Output=HomeGroupSet,
         description=("Set the HOME group (department) — persistent default. UI-ONLY "
                      "(décision 2026-07-06, comme org.set_home) : pas de binding MCP, "
                      "l'agent ne mute pas le défaut (il pose aussi l'org parente en "
@@ -224,19 +456,19 @@ CAPABILITIES += [
     ),
     Capability(
         key="group.get", handler=_group_detail, Input=GroupIdInput,
-        authz=GROUP_MEMBER_OF("group_id"),
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupDetail,
         description="Group detail (members, shared secrets).",
         rest=RestBinding("GET", "/api/groups/{id}", _GID),
     ),
     Capability(
         key="group.update", handler=_update_group, Input=UpdateGroupInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupUpdated,
         description="Rename / re-describe a group you lead.",
         rest=RestBinding("PATCH", "/api/groups/{id}", _GID),
     ),
     Capability(
         key="group.delete", handler=_delete_group, Input=GroupIdInput,
-        authz=GROUP_ADMIN_OF("group_id"),
+        authz=GROUP_ADMIN_OF("group_id"), Output=GroupDeleted,
         description="Delete a group you lead (members/doctrine/secrets purged).",
         rest=RestBinding("DELETE", "/api/groups/{id}", _GID),
     ),
