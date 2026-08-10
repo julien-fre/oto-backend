@@ -59,6 +59,26 @@ def _decode_cursor(cursor: str) -> str:
         raise InvalidCursor(cursor) from e
 
 
+_OFFSET_CURSOR_PREFIX = "off:"
+
+
+def _encode_offset_cursor(offset: int) -> str:
+    """Curseur du chemin TRIÉ (`order_by`) : l'ordre n'étant plus celui du keyset
+    `row_id`, la page suivante se repère par offset. Même forme opaque que le curseur
+    keyset, préfixée pour ne jamais confondre les deux régimes."""
+    return _encode_cursor(f"{_OFFSET_CURSOR_PREFIX}{offset}")
+
+
+def _decode_offset_cursor(cursor: str) -> int:
+    raw = _decode_cursor(cursor)
+    if not raw.startswith(_OFFSET_CURSOR_PREFIX):
+        raise InvalidCursor(cursor)  # curseur keyset repassé sur un appel trié
+    try:
+        return max(0, int(raw[len(_OFFSET_CURSOR_PREFIX):]))
+    except ValueError as e:
+        raise InvalidCursor(cursor) from e
+
+
 def _filter_specs(filter: Optional[dict]) -> list[dict]:
     """`{col: valeur}` ou `{col: {op: valeur}}` → la liste `{field, op, value}` du
     moteur SQL (ops whitelistés par `db._ds_filter_clauses`, qui lève sur inconnu).
@@ -680,16 +700,38 @@ class DatastorePg:
         limit: int = 100,
         cursor: Optional[str] = None,
         q: Optional[str] = None,
+        order_by: Optional[str] = None,
+        order_dir: str = "desc",
     ) -> dict:
-        """Page **keyset** pour l'agent (chemin MCP `data_rows`) : tri stable par
-        `row_id`, filtre poussé en SQL, recherche plein texte `q`. Renvoie
-        `{rows, next_cursor}` — `next_cursor` non nul ⇒ il reste des lignes (repasse-le
-        pour la suite). Robuste aux écritures concurrentes (pas d'OFFSET qui dérive)."""
+        """Page pour l'agent (chemin MCP `data_rows`), filtre/recherche/tri poussés en
+        SQL. Renvoie `{rows, next_cursor}` — `next_cursor` non nul ⇒ il reste des lignes
+        (repasse-le pour la suite).
+
+        Deux régimes de pagination, et le curseur porte lequel :
+          - **sans `order_by`** (défaut) → keyset sur `row_id` = ordre de création,
+            robuste aux écritures concurrentes (pas d'OFFSET qui dérive) ;
+          - **avec `order_by`** → tri SQL demandé + pagination par offset, faute de clé
+            keyset stable pour un tri arbitraire.
+
+        Repasser le curseur d'un régime dans l'autre lève `InvalidCursor` plutôt que de
+        rendre une page fausse — un curseur d'offset relu comme un `row_id` cadrerait
+        silencieusement sur les mauvaises lignes."""
         ns_id = self._resolve(namespace)
+        filters = _filter_specs(filter)
+        if order_by:
+            offset = _decode_offset_cursor(cursor) if cursor else 0
+            rows = db.datastore_list_rows(
+                ns_id, offset=offset, limit=limit, order_by=order_by,
+                order_dir=order_dir, q=q, filters=filters)
+            next_cursor = (_encode_offset_cursor(offset + len(rows))
+                           if len(rows) == limit else None)
+            return {"rows": [self._row_to_dict(r) for r in rows],
+                    "next_cursor": next_cursor}
         after = _decode_cursor(cursor) if cursor else None
+        if after and after.startswith(_OFFSET_CURSOR_PREFIX):
+            raise InvalidCursor(cursor)  # curseur trié repassé sans `order_by`
         rows = db.datastore_list_rows_after(
-            ns_id, after_row_id=after, limit=limit, q=q,
-            filters=_filter_specs(filter))
+            ns_id, after_row_id=after, limit=limit, q=q, filters=filters)
         out = [self._row_to_dict(r) for r in rows]
         next_cursor = _encode_cursor(rows[-1]["row_id"]) if len(rows) == limit else None
         return {"rows": out, "next_cursor": next_cursor}

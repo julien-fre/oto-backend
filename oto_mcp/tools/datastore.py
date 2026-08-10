@@ -459,14 +459,20 @@ def register(mcp: FastMCP) -> None:
         filter: Optional[dict] = None, limit: int = 100,
         cursor: str | None = None, fields: Optional[list[str]] = None,
         count_only: bool = False, q: str | None = None,
+        order_by: str | None = None, order_dir: str = "desc",
     ) -> dict:
         """Read rows. WITH `id` = the single row (by `_id`). WITHOUT `id` = one PAGE
-        of rows (optional `filter` / free-text `q`, `limit`) with a stable cursor.
+        of rows (`filter`/`q` narrow it, `order_by` sorts it) with a stable cursor.
 
         List mode returns `{rows, count, next_cursor}`. When `next_cursor` is not null
         there are MORE rows: call again with `cursor=<next_cursor>` (same namespace/
-        filter) to get the next page — repeat until `next_cursor` is null. The cursor
-        is keyset-stable (rows created meanwhile don't shift the paging).
+        filter/order) to get the next page — repeat until `next_cursor` is null.
+
+        Without `order_by` the cursor is keyset-stable (rows created meanwhile don't
+        shift the paging). With `order_by` it pages by offset instead, since an
+        arbitrary sort has no stable keyset — so a row inserted mid-walk can shift the
+        remaining pages. Keep the SAME `order_by` across a walk: passing a cursor from
+        one regime into the other is rejected rather than silently mispaged.
 
         Use `count_only=True` to get just the TOTAL number of (optionally filtered)
         rows — computed server-side, no rows returned — when you only need the count
@@ -500,6 +506,11 @@ def register(mcp: FastMCP) -> None:
             fields: list of column names to keep (projection) — the returned rows
                 carry only these plus `_id`. Omit = full rows.
             count_only: return only `{total}` (filtered row count), no rows.
+            order_by: sort column — a user field, or a system one (`_created_at`,
+                `_updated_at`, `_id`). Omit = creation order. Sorting in SQL is how
+                you get "the 10 most recent" or "the top scores" without pulling the
+                table and sorting it yourself. (list mode only)
+            order_dir: `desc` (default) or `asc`. Only meaningful with `order_by`.
         """
         store = _acting_store()
         namespace = _ns(namespace)
@@ -510,7 +521,8 @@ def register(mcp: FastMCP) -> None:
                 row = store.get_row(namespace, id)
                 return _project_row(row, fields) if fields else row
             page = store.cursor_rows(namespace, filter=filter, limit=limit,
-                                     cursor=cursor, q=q)
+                                     cursor=cursor, q=q,
+                                     order_by=order_by, order_dir=order_dir)
             rows = [_project_row(r, fields) for r in page["rows"]] if fields else page["rows"]
             out = {"rows": rows, "count": len(rows),
                    "next_cursor": page["next_cursor"]}
