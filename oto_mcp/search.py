@@ -43,7 +43,11 @@ _PLAIN = "aaaaaeeeeiiiooooouuuucnyyAAAAAEEEEIIIOOOOOUUUUCNYY"
 _FOLD = str.maketrans(_ACCENTS, _PLAIN)
 
 
-def _fold_py(s: str) -> str:
+def fold(s: str) -> str:
+    """Repli accents+casse — LA règle du produit pour tout matching en mémoire.
+    Publique parce que le catalogue d'outils (`tool_registry.match`) s'en sert aussi :
+    deux replis divergents feraient répondre différemment à « déclaration » selon
+    qu'on cherche un tableau ou un outil."""
     return (s or "").translate(_FOLD).lower()
 
 
@@ -221,12 +225,12 @@ def _match_tableaux(q: str, sub: str, org_id: int) -> list[dict]:
     """Tableaux du CONTEXTE matchés en mémoire sur nom + labels de colonnes du schéma.
     Rang : nom exact > nom partiel > label."""
     rows = _accessible_namespaces(sub, org_id)
-    fq = _fold_py(q)
+    fq = fold(q)
     scored: list[tuple[int, dict]] = []
     for r in rows:
-        name = _fold_py(r["namespace"])
+        name = fold(r["namespace"])
         labels = " ".join(
-            _fold_py(str(f.get("label") or f.get("key") or ""))
+            fold(str(f.get("label") or f.get("key") or ""))
             for f in ((r.get("schema") or {}).get("fields") or []))
         if name == fq:
             rank = 0
@@ -286,13 +290,13 @@ def _match_rows_semantic(q: str, sub: str, org_id: int,
 def _match_connectors(q: str, catalog: list[dict]) -> list[dict]:
     """Connecteurs du catalogue VISIBLE (injecté par la capacité — activation × RBAC
     déjà appliqués), matchés en mémoire sur name/label/description."""
-    fq = _fold_py(q)
+    fq = fold(q)
     if not fq:
         return []
     scored: list[tuple[int, dict]] = []
     for c in catalog:
-        name, label = _fold_py(c.get("name", "")), _fold_py(c.get("label", ""))
-        blurb = _fold_py(f"{c.get('help', '')} {c.get('description', '')}")
+        name, label = fold(c.get("name", "")), fold(c.get("label", ""))
+        blurb = fold(f"{c.get('help', '')} {c.get('description', '')}")
         if fq == name or fq == label:
             rank = 0
         elif fq in name or fq in label:

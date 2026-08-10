@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 
 from . import providers
+from .search import fold
 from .tool_visibility import namespace_of
 
 _MARKER = re.compile(r"<tool:([a-z0-9_]+)>")
@@ -56,14 +57,119 @@ def namespaces_in(text: str) -> set[str]:
     return {n.split("_", 1)[0] for n in ref_names(text)}
 
 
+# Une docstring d'outil est enveloppée à ~80 colonnes : sa 1ʳᵉ LIGNE coupe presque
+# toujours au milieu d'une phrase (« Full company profile by SIREN: identity (siège, »).
+# On prend donc le 1er PARAGRAPHE, replié en une ligne, borné à la 1ʳᵉ phrase complète
+# qui tient dans le budget — sinon coupe au dernier mot entier.
+_BLURB_CHARS = 140
+
+
+def blurb(description: str | None, limit: int = _BLURB_CHARS) -> str:
+    """Résumé d'une ligne d'un outil, borné. Pur — testable sans registre.
+
+    Règle unique du produit pour « décrire un outil en une ligne » : le catalogue
+    (`oto_list_my_tools`) et le manifeste de doctrine s'en servent tous les deux, avec
+    des budgets différents. Le budget compte : le catalogue rend ~350 entrées d'un coup."""
+    para = (description or "").strip().split("\n\n", 1)[0]
+    text = " ".join(para.split())
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text
+    # Une phrase complète vaut mieux qu'une coupe : on la garde si elle occupe au moins
+    # la moitié du budget (sinon on rendrait un fragment inutilement court).
+    cut = text.rfind(". ", 0, limit + 1)
+    if cut >= limit // 2:
+        return text[: cut + 1]
+    cut = text.rfind(" ", 0, limit)
+    return text[: cut if cut > 0 else limit].rstrip(" ,;:") + "…"
+
+
+def _matcher(token: str):
+    """Prédicat « ce mot est-il dans la botte de foin ? », compilé une fois par mot.
+
+    Deux régimes, parce qu'un seul se trompe dans un sens ou dans l'autre :
+    - **mot court (≤3)** → MOT ENTIER. En sous-chaîne, `fr` touche « **fr**om your
+      organisation » et rend `email_send` sur une requête `fr`.
+    - **mot long** → sous-chaîne, plus un `s`/`x` final retiré : le catalogue dit
+      « donnée entreprise FR », l'agent tape « entreprises ». Sans cette tolérance la
+      recherche rate exactement les requêtes en langue naturelle qu'elle sert."""
+    if len(token) <= 3:
+        rx = re.compile(rf"\b{re.escape(token)}\b")
+        return lambda hay: rx.search(hay) is not None
+    stem = token[:-1] if token[-1] in "sx" else None
+    return lambda hay: token in hay or (stem is not None and stem in hay)
+
+
+def match(query: str, entries: list[dict]) -> list[dict]:
+    """Classe des entrées `{name, description, namespace_help?}` contre une requête en
+    mots. Pur — testable sans registre.
+
+    Parcourir 356 noms d'outils n'est pas une stratégie d'accès : un agent en mode
+    différé (`oto_list_my_tools` → `oto_tool_schema` → `oto_call`) doit pouvoir demander
+    « entreprises françaises » et recevoir les `fr_*` (issue #275).
+
+    **C'est du lexical, pas du sémantique** — assumé : le classement est par nombre de
+    mots retrouvés, puis nom avant description (qui tape `unipile` veut le connecteur, pas
+    les outils qui le citent en passant). Un mot introuvable ne disqualifie pas l'entrée,
+    il la fait juste descendre : une requête en langue naturelle porte des mots de liaison
+    qu'aucune docstring ne contient, et un ET strict rendait zéro résultat là où l'agent
+    avait raison de chercher. L'appelant doit traiter « zéro résultat » comme « reformule
+    ou prends le catalogue entier », jamais comme « oto ne sait pas faire ».
+
+    Les docstrings d'outils sont en ANGLAIS (contrat LLM) : le pont vers une requête
+    française passe par `namespace_help`, la ligne de catalogue du connecteur, curée en
+    français — d'où son inclusion dans la botte de foin."""
+    # Découpe sur tout non-alphanumérique : une requête est aussi bien « facturation
+    # client » qu'un nom d'outil collé (`fr_get`), et le `_` doit alors séparer comme
+    # une espace. Mots de 1-2 lettres écartés (« un », « de », « my ») — sauf si la
+    # requête n'est QUE ça : `fr` ou `rh` sont de vraies requêtes.
+    words_q = [t for t in re.split(r"[^a-z0-9]+", fold(query or "")) if t]
+    tokens = [t for t in words_q if len(t) >= 3] or words_q
+    if not tokens:
+        return list(entries)
+    exact = fold((query or "").strip())
+    hits = [_matcher(t) for t in tokens]
+    out: list[tuple[tuple, dict]] = []
+    for e in entries:
+        name = fold(e.get("name", ""))
+        words = name.replace("_", " ")
+        # `own` = ce que dit l'OUTIL (nom + docstring) ; `hay` y ajoute la ligne de
+        # catalogue de son connecteur, PARTAGÉE par tous ses outils. Sans départager les
+        # deux, « recherche web » remonterait n'importe quel `serper_*` (tous héritent de
+        # « Serper : recherche web ») avant `serper_web_search`.
+        own = f"{words} {fold(e.get('description', ''))}"
+        hay = f"{own} {fold(e.get('namespace_help', ''))}"
+        score = sum(1 for h in hits if h(hay))
+        if not score:
+            continue
+        # Trois paliers de preuve, du plus fort au plus faible : le NOM porte le mot,
+        # puis la docstring de l'outil, puis la ligne de catalogue du connecteur. Sans le
+        # palier « nom », « envoyer un email » sortait `data_share` avant `email_send` —
+        # les deux citent « email », seul l'un des deux s'appelle ainsi.
+        name_score = sum(1 for h in hits if h(words))
+        own_score = sum(1 for h in hits if h(own))
+        if name == exact:
+            rank = 0
+        elif name_score == len(tokens):
+            rank = 1
+        elif tokens[0] == name.split("_", 1)[0]:   # le namespace, cité en tête
+            rank = 2
+        else:
+            rank = 3
+        out.append(((-score, -name_score, rank, -own_score, len(name), name), e))
+    out.sort(key=lambda t: t[0])
+    return [e for _, e in out]
+
+
 def _entry(tool) -> dict:
-    """Entrée registre d'un tool MCP : nom + description (1ʳᵉ ligne de la docstring
-    = champ `description`, ce que le modèle voit déjà) + source native/federated."""
+    """Entrée registre d'un tool MCP : nom + résumé d'une ligne (`blurb`) + source
+    native/federated."""
     conn = providers.connector_for_namespace(namespace_of(tool.name))
     federated = bool(conn and conn.kind == "mount")
     e = {
         "name": tool.name,
-        "description": (tool.description or "").strip().split("\n", 1)[0].strip(),
+        "description": blurb(tool.description),
         "source": "federated" if federated else "native",
     }
     if federated and conn:

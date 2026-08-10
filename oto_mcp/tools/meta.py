@@ -23,7 +23,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
-from .. import access, call_axes, db, doctrine_run, redaction
+from .. import access, call_axes, db, doctrine_run, providers, redaction, tool_registry
 from ..auth_hooks import current_user_sub_from_token
 from ..tool_visibility import (
     PROTECTED_TOOLS,
@@ -37,7 +37,25 @@ from ..tool_visibility import (
 # Miroir de `middleware._SPINE_SERVICES`.
 _NON_DISPATCHABLE: frozenset[str] = frozenset({"oto", "run", "feedback", "data"})
 
+# Budget d'une ligne de catalogue. ~350 entrées rendues d'un coup : chaque caractère
+# est multiplié par le nombre d'outils. 100 c. suffisent à dire ce que fait un outil ;
+# le détail est dans `oto_tool_schema`, qu'on lit AVANT d'appeler de toute façon.
+_CATALOG_BLURB = 100
+# Recherche : borne par défaut. Au-delà, l'agent relit le catalogue entier — c'est le
+# signe que la requête était trop large, pas qu'il manque des résultats.
+_SEARCH_LIMIT = 40
+
 logger = logging.getLogger(__name__)
+
+
+def _namespace_help(ns: str) -> str:
+    """Ligne de catalogue du connecteur d'un namespace (curée, en français) — le pont
+    entre une requête en langue naturelle et des docstrings anglaises. Fail-soft."""
+    try:
+        con = providers.connector_for_namespace(ns)
+        return f"{con.label} {con.help}" if con else ""
+    except Exception:
+        return ""
 
 
 def _require_sub() -> str:
@@ -106,10 +124,29 @@ async def _trace_target_call(sub: Optional[str], name: str, args: dict, ok: bool
 
 def register(mcp: FastMCP) -> None:
     @mcp.tool()
-    async def oto_list_my_tools(ctx: Context) -> dict:
-        """List all oto-mcp tools with their enabled/disabled state for the current user.
+    async def oto_list_my_tools(ctx: Context, query: Optional[str] = None,
+                                limit: Optional[int] = None) -> dict:
+        """The oto tool CATALOG — every tool, what it does in one line, and whether it is
+        currently visible to you.
 
-        Returns a dict with `tools` (list of {name, enabled}) and `disabled_count`.
+        This is the entry point of the deferred mode (`oto_list_my_tools` →
+        `oto_tool_schema` → `oto_call`): the way an agent reaches oto without loading
+        ~350 full schemas. Each entry carries a one-line `description` — pick from it
+        rather than guessing from the name, then read the exact arguments with
+        `oto_tool_schema(name)` before calling.
+
+        Args:
+            query: keywords to search the catalog (name + description + the connector's
+                catalog line), e.g. "entreprises françaises", "linkedin message",
+                "invoice". Ranked by how many words match, name before description.
+                LEXICAL, not semantic — zero results means "rephrase, or drop the query
+                and read the whole catalog", never "oto cannot do this": the response
+                then carries `namespaces`, the map of every capability of the platform.
+            limit: cap the number of entries returned (default: all; 40 when searching).
+
+        Returns `{tools: [{name, description, enabled}], total, shown, disabled_count}`.
+        `enabled: false` = not mounted in your session — call it anyway with `oto_call`,
+        or install its connector durably with `oto_connector(op='select')`.
         """
         sub = _require_sub()
         org = _active_org(sub)
@@ -130,15 +167,39 @@ def register(mcp: FastMCP) -> None:
         # run_middleware=False : on veut la liste complète (y compris les
         # tools masqués pour ce user), sinon on n'affiche pas leur état.
         all_tools = await ctx.fastmcp.list_tools(run_middleware=False)
-        names = sorted(t.name for t in all_tools)
-        states = {
-            n: is_tool_visible(n, disabled, enabled_override, frozenset(admin_hidden))
-            for n in names
+        entries = sorted(
+            ({"name": t.name,
+              "description": tool_registry.blurb(t.description, _CATALOG_BLURB),
+              # Ligne de catalogue du connecteur : le seul texte FRANÇAIS de l'entrée
+              # (les docstrings sont en anglais). Sert la recherche, pas la sortie.
+              "namespace_help": _namespace_help(namespace_of(t.name))}
+             for t in all_tools),
+            key=lambda e: e["name"])
+        for e in entries:
+            e["enabled"] = is_tool_visible(e["name"], disabled, enabled_override,
+                                           frozenset(admin_hidden))
+        out: dict = {
+            "total": len(entries),
+            "disabled_count": sum(1 for e in entries if not e["enabled"]),
         }
-        return {
-            "tools": [{"name": n, "enabled": states[n]} for n in names],
-            "disabled_count": sum(1 for v in states.values() if not v),
-        }
+        if query:
+            entries = tool_registry.match(query, entries)
+            out["query"] = query
+            if not entries:
+                # Zéro résultat lexical ≠ « oto ne sait pas faire » (le piège que la
+                # recherche pourrait CRÉER). On rend la carte des capacités : l'agent
+                # repart du domaine au lieu de conclure à une lacune.
+                out["namespaces"] = providers.render_namespace_catalog()
+                out["hint"] = ("Aucun outil ne porte ces mots (recherche lexicale, "
+                               "docstrings en anglais). Repère le domaine dans "
+                               "`namespaces`, ou relance sans `query` pour le catalogue "
+                               "complet.")
+        cap = limit if limit is not None else (_SEARCH_LIMIT if query else None)
+        shown = entries[:cap] if cap else entries
+        out["shown"] = len(shown)
+        out["tools"] = [{k: e[k] for k in ("name", "description", "enabled")}
+                        for e in shown]
+        return out
 
     @mcp.tool()
     async def oto_disable_tool(name: str, ctx: Context) -> dict:
