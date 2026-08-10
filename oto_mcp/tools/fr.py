@@ -194,6 +194,16 @@ def register(mcp: FastMCP) -> None:
         "date_creation", "date_fermeture", "site_internet",
         "nombre_etablissements", "nombre_etablissements_ouverts", "finances",
     )
+    # Convention(s) collective(s) — l'amont la porte sous `complements.liste_idcc`.
+    # Elle était perdue au mapping alors que `fr_search` ACCEPTE l'IDCC en FILTRE :
+    # on pouvait chercher par convention sans jamais lire celle d'une entreprise
+    # qu'on tenait déjà. L'asymétrie est le piège — pouvoir filtrer laisse croire que
+    # la donnée est accessible (signal : champ « IDCC vérifié » resté à 0 % sur 500
+    # lignes, alors que le client l'avait demandé explicitement).
+    # Remontée À PLAT plutôt que sous `complements` : c'est la seule clé de ce bloc
+    # qui porte une donnée métier ; exposer le bloc entier ramènerait ~30 booléens
+    # d'annuaire (est_bio, est_qualiopi…) que personne n'a demandés.
+    _COMPLEMENT_KEEP = ("liste_idcc",)
     _EVENT_KEEP = (
         "id", "dateparution", "familleavis", "familleavis_lib", "typeavis",
         "typeavis_lib", "tribunal", "commercant", "jugement", "registre",
@@ -204,6 +214,7 @@ def register(mcp: FastMCP) -> None:
 
     def _compact_identity(identity: dict) -> dict:
         out = _pick(identity, _IDENTITY_KEEP)
+        out.update(_pick(identity.get("complements") or {}, _COMPLEMENT_KEEP))
         siege = identity.get("siege")
         if isinstance(siege, dict):
             out["siege"] = _pick(siege, _ETAB_KEEP)
