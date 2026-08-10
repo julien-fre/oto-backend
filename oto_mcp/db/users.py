@@ -175,8 +175,23 @@ def migrate_sub(old_sub: str, new_sub: str) -> bool:
     Hérite les champs d'accès de l'ancien, repointe TOUTES les tables keyed-by-sub
     (les 3 FK `ON DELETE CASCADE` incluses, AVANT de supprimer l'ancien → pas de
     cascade destructrice), supprime l'ancienne ligne users, pose l'alias. Idempotent
-    (no-op si l'ancien sub n'existe plus). True si une migration a eu lieu."""
+    (no-op si l'ancien sub n'existe plus). True si une migration a eu lieu.
+
+    ⚠️ Le merge se fait **par email**, et il est borné à UN MÊME tenant (ADR 0052,
+    R3 tranché le 08/08). Entre deux émetteurs, un merge par email serait une
+    fédération d'identités — ce que le §6 interdit nommément : un utilisateur d'un
+    tenant tiers absorberait le compte oto qui partage son adresse (rôle, orgs,
+    coffre). Le garde-fou est ici plutôt qu'à l'appelant parce que c'est le SEUL
+    endroit qui écrit `sub_aliases` : un alias cross-tenant ne peut donc pas exister,
+    et `resolve_sub` ne peut pas en drainer un."""
     if not old_sub or not new_sub or old_sub == new_sub:
+        return False
+    from ..tenancy import current as _tenants
+    if not _tenants().same_tenant(old_sub, new_sub):
+        logger.warning(
+            "tenant migration REFUSÉE : %s et %s ne relèvent pas du même tenant "
+            "(ADR 0052 §6 — pas de fédération d'identités entre tenants)",
+            old_sub, new_sub)
         return False
     with _connect() as conn:
         old = conn.execute("SELECT * FROM users WHERE sub=%s", (old_sub,)).fetchone()
