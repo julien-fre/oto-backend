@@ -77,9 +77,7 @@ org.admin.get
 org.admin.list
 org.archive
 org.audit_log.export
-org.clear
 org.console
-org.create
 org.doctrine.admin_get
 org.doctrine.admin_list
 org.doctrine.get
@@ -124,7 +122,6 @@ org.scheduled_email.list
 org.scheduled_emails.console
 org.secret.delete
 org.secret.set
-org.set_home
 org.settings.console
 org.update
 org.use_org

@@ -7,6 +7,7 @@ en dérivent.
 from __future__ import annotations
 
 import os
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,52 @@ class NoInput(BaseModel):
 
 class CreateOrgInput(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+
+class OrgCreated(BaseModel):
+    """Espace créé. ⚠️ **Créer bascule** : l'org neuve devient ton org MAISON dans la
+    foulée (`active_org` == `org_id`), donc le défaut de tous tes appels sans jeton
+    `_org=`, y compris depuis d'autres conversations déjà ouvertes. Un client qui
+    enchaîne des créations change de contexte à chaque fois sans l'avoir demandé."""
+    org_id: int
+    # Le nom APRÈS strip — peut différer de l'entrée (espaces de bord retirés).
+    name: str
+    # Écho de l'org maison désormais posée. Même valeur que `org_id` : redondance de
+    # compat front, pas un second concept.
+    active_org: int
+    # Toujours "org_admin" : le créateur est admin de son espace, par construction.
+    org_role: str
+
+
+class HomeOrgSet(BaseModel):
+    """Org MAISON posée (`PUT /api/me/active-org`, action « définir par défaut » du
+    dashboard). `home_org` et `active_org` portent **la même valeur** — le second est
+    un écho de compat pour le front, hérité de l'ex-face REST d'`use_org` ; ne pas y
+    lire deux pointeurs distincts."""
+    home_org: int
+    active_org: int
+    # None si l'org a disparu entre la résolution et la relecture (course) — jamais
+    # un signe que l'écriture a échoué : `home_org` fait foi.
+    name: Optional[str] = None
+
+
+class ClearOrgResult(BaseModel):
+    """⚠️ **Deux réponses distinctes selon la SURFACE, pas selon un paramètre.**
+
+    - Face MCP (`oto_clear_org`) : **pur no-op**. Depuis ADR 0038 il n'y a plus d'état
+      de session à effacer ; on renvoie `{session_state: null, how_to}` et **rien n'est
+      muté**. `session_state: null` ne veut donc pas dire « effacé », mais « ce concept
+      n'existe plus ».
+    - Face REST (`DELETE /api/me/active-org`) : **écriture**. Le verbe DELETE ne remet
+      pas l'org maison à « aucune » — il la bascule sur l'**espace personnel** de
+      l'utilisateur (créé au besoin), dont l'id revient dans `active_org`. On n'est
+      jamais org-less.
+
+    Les deux clés sont donc mutuellement exclusives : `active_org` en REST,
+    `session_state`+`how_to` en MCP."""
+    active_org: Optional[int] = None
+    session_state: Optional[str] = None
+    how_to: Optional[str] = None
 
 
 def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
@@ -105,7 +152,7 @@ CAPABILITIES += [
         key="org.create",
         handler=_create_org,
         Input=CreateOrgInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=OrgCreated,
         description=(
             "Create your own organization (workspace). You become its org_admin "
             "and it becomes your active org. Self-serve — any authenticated user."
@@ -132,7 +179,7 @@ CAPABILITIES += [
         key="org.set_home",
         handler=_set_home_org,
         Input=UseOrgInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=HomeOrgSet,
         description=(
             "Set the HOME organization — the persistent default of every call "
             "without an org token. UI-ONLY (dashboard « définir par défaut ») : "
@@ -145,7 +192,7 @@ CAPABILITIES += [
         key="org.clear",
         handler=_clear_org,
         Input=NoInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=ClearOrgResult,
         description=(
             "No-op hint (ADR 0038: no session state — without an `_org=` token "
             "every call already resolves your home org, which is changed in the "
