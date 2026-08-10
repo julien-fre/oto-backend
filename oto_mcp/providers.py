@@ -291,7 +291,7 @@ _CATEGORY_BY_CONNECTOR = {
     "sellsy": "Prospection",
     "figma": "Design", "supabase": "Dev",
     # recherche web / scraping
-    "aiark": "Prospection", "linkedin": "Prospection", "cognism": "Prospection",
+    "aiark": "Prospection", "cognism": "Prospection",
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
     "firecrawl": "Prospection", "apify": "Prospection",
     # ATS / talent sourcing (RH)
@@ -319,7 +319,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
-    "aiark": "AI Ark", "linkedin": "LinkedIn", "cognism": "Cognism", "lighton": "LightOn",
+    "aiark": "AI Ark", "cognism": "Cognism", "lighton": "LightOn",
     "recruitee": "Recruitee", "teamtailor": "Teamtailor", "spott": "Spott",
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
@@ -411,7 +411,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
     "firecrawl": "firecrawl.dev", "apify": "apify.com",
-    "aiark": "ai-ark.com", "linkedin": "linkedin.com", "cognism": "cognism.com", "lighton": "lighton.ai",
+    "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
     "reddit": "reddit.com",
     # CRM & vente
@@ -719,28 +719,27 @@ _REGISTRY_LIST = [
     # v1 = endpoints synchrones (company/people search, single-person export+email,
     # reverse-lookup, mobile phone) ; les exports en lot d'AI Ark sont async
     # (webhook) → hors périmètre.
-    _c("aiark", ["aiark"],
+    # ⚠️ Namespace des tools = `linkedin_aiark` (ADR 0010 §Amendement 2026-08-10) :
+    # le nom porte la CAPACITÉ (LinkedIn) suffixée du FOURNISSEUR, parce que deux
+    # fournisseurs NON SUBSTITUABLES la rendent — AI Ark = donnée ACHETÉE au crédit
+    # (aucun compte connecté), Unipile = la session OPÉRÉE (`linkedin_unipile_*`).
+    # `namespace_of` résout au plus long préfixe déclaré : les deux gardent un gate
+    # distinct. Le connecteur, lui, garde le nom du fournisseur — c'est l'unité
+    # d'activation et de credential.
+    # **Absorbe l'ex-connecteur `linkedin`** (#231, déposé le 2026-08-10,
+    # oto-backend#279) : même vendeur, même client `AiArkClient`, mêmes 5 fonctions —
+    # il n'en différait que par le mode d'auth (`platform` seul vs BYO), ce qui est
+    # une distinction d'INSTANCE (ADR 0038/0044 §F), pas de connecteur. Le doublon
+    # coûtait de poser DEUX FOIS la même clé pour un seul pool de crédits vendeur
+    # (ADR 0024 : chaque connecteur résout SON nom). Le packaging « offert par oto »
+    # survit tel quel : c'est le grant plateforme sur `aiark`. Rien à migrer côté
+    # coffre — aucun grant n'était posé sous `linkedin`, dont les 5 tools étaient
+    # montés et inopérants depuis leur mise en service.
+    _c("aiark", ["linkedin_aiark"],
        auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        secret_kind="api_key",
        label="AI Ark",
-       help="people & company search via LinkedIn",
-       href="https://ai-ark.com"),
-    # linkedin (#231) : connecteur DISTINCT d'`aiark`, PAS un mode/alias — même
-    # vendeur (AI Ark, docs.ai-ark.com) et même client oto-core
-    # (`oto.tools.aiark.client.AiArkClient`, réutilisé tel quel), tools curés dans
-    # `tools/linkedin.py` (surface simplifiée, pas de tool `credits`). **App
-    # credits only** : `auth_modes={"platform"}` SEUL — pas de BYO user/org
-    # (`is_byo_user`/`is_org_shareable` renvoient False ⟹ aucune surface de pose
-    # de credential, ADR 0011/0012). Nécessite SA PROPRE clé plateforme
-    # (`oto_admin_set_platform_key` sur `linkedin`, résolution standard via
-    # `resolve_api_key("linkedin")`) — poser la même clé AI Ark que sous `aiark`
-    # pour partager le même pool de crédits vendeur ; aucun partage de credential
-    # cross-connecteur côté Oto (chaque connecteur résout SON nom, ADR 0024).
-    _c("linkedin", ["linkedin"],
-       auth_modes={"platform"}, keyed=True,
-       secret_kind="api_key",
-       label="LinkedIn",
-       help="people & company search via LinkedIn (app credits only)",
+       help="people & company search via LinkedIn (données achetées au crédit)",
        href="https://ai-ark.com"),
     # cognism : connecteur classique (kind="tools") sur l'API Search de Cognism
     # (developers.cognism.com). Client REST synchrone dans oto-core

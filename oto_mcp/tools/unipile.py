@@ -500,35 +500,58 @@ def _verify(fields: dict, config: dict | None = None) -> None:
 
 
 def register_messaging_tools(mcp: FastMCP, channel: str) -> None:
-    """Enregistre les 3 outils de messagerie Unipile d'un canal :
-    `{c}_list_chats` / `{c}_read_chat` / `{c}_send_message` (résolus sur le compte
-    <channel> de l'user, no-fallback). La messagerie Unipile (`/chats`) est
-    channel-agnostic → un seul code pour WhatsApp/Telegram/Instagram. Appelé par
-    tools/whatsapp.py, tools/telegram.py, tools/instagram.py."""
+    """Enregistre L'outil de messagerie Unipile d'un canal : `{c}_chat(op=…)`,
+    résolu sur le compte <channel> de l'user (no-fallback). La messagerie Unipile
+    (`/chats`) est channel-agnostic → un seul code pour tous les canaux. Appelé par
+    tools/{whatsapp,telegram,instagram,messenger,twitter}.py.
+
+    Le canal reste dans le NOM (c'est ce qui le rend trouvable par l'agent) ; le
+    verbe passe en `op` — même forme que `linkedin_unipile_chat`, qui est la même
+    capacité sur le même connecteur (ADR 0047 §Amendement). 3 tools × 5 canaux
+    (15) → 5."""
     cl = channel.lower()
     prov = channel.upper()
 
-    @mcp.tool(name=f"{cl}_list_chats",
-              description=f"Liste les conversations {channel} (messagerie) via Unipile. "
-                          "Paginé (limit + cursor) ; chaque fil 1-à-1 est enrichi du nom "
-                          "de l'interlocuteur (attendee_name), with_names=False le coupe.")
-    def _list_chats(limit: int = 20, cursor: Optional[str] = None,
-                    with_names: bool = True) -> dict:
-        return unipile_client(prov).list_chats(limit=limit, cursor=cursor,
-                                               with_attendee_names=with_names)
+    @mcp.tool(
+        name=f"{cl}_chat",
+        description=(
+            f"Messagerie {channel} (DM) via Unipile.\n\n"
+            "`op` :\n"
+            "- **\"list\"** (défaut) : les conversations, paginé (`limit` + `cursor`). "
+            "Chaque fil 1-à-1 est enrichi du nom de l'interlocuteur (`attendee_name`) ; "
+            "`with_names=False` coupe cet enrichissement (payload brut, un appel API en moins).\n"
+            "- **\"read\"** : les messages d'un fil (`chat_id` d'op=\"list\").\n"
+            "- **\"send\"** : envoie un message. `chat_id` → répond dans un fil existant ; "
+            "sinon `recipient_id` → ouvre un nouveau fil."),
+    )
+    def _chat(op: str = "list",
+              chat_id: Optional[str] = None,
+              text: Optional[str] = None,
+              recipient_id: Optional[str] = None,
+              limit: Optional[int] = None,
+              cursor: Optional[str] = None,
+              with_names: bool = True) -> dict:
+        client = unipile_client(prov)
 
-    @mcp.tool(name=f"{cl}_read_chat",
-              description=f"Lit les messages d'une conversation {channel} via Unipile "
-                          f"(chat_id renvoyé par {cl}_list_chats).")
-    def _read_chat(chat_id: str, limit: int = 30) -> dict:
-        return unipile_client(prov).list_messages(chat_id, limit=limit)
+        def _bad(msg: str) -> McpError:
+            return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
 
-    @mcp.tool(name=f"{cl}_send_message",
-              description=f"Envoie un message {channel} via Unipile. chat_id = répondre "
-                          f"dans un fil existant ; sinon recipient_id = nouveau fil.")
-    def _send_message(text: str, chat_id: Optional[str] = None,
-                            recipient_id: Optional[str] = None) -> dict:
-        return unipile_client(prov).send_message(text, chat_id=chat_id, attendee_id=recipient_id)
+        if op == "list":
+            return client.list_chats(limit=limit if limit is not None else 20,
+                                     cursor=cursor, with_attendee_names=with_names)
+        if op == "read":
+            if chat_id is None:
+                raise _bad("op='read' requiert chat_id")
+            return client.list_messages(chat_id,
+                                        limit=limit if limit is not None else 30)
+        if op == "send":
+            if text is None:
+                raise _bad("op='send' requiert text")
+            if chat_id is None and recipient_id is None:
+                raise _bad("op='send' requiert chat_id (répondre) ou recipient_id "
+                           "(nouveau fil)")
+            return client.send_message(text, chat_id=chat_id, attendee_id=recipient_id)
+        raise _bad("op doit être 'list', 'read' ou 'send'")
 
 
 def register(mcp: FastMCP) -> None:

@@ -1,7 +1,7 @@
 """Telegram — messagerie hébergée via Unipile (compte Telegram connecté par l'user).
 
 Le compte Telegram vit chez Unipile, connecté par l'user via le hosted-auth
-(dashboard, `?channel=telegram`). Outils `telegram_*` dérivés de la factory
+(dashboard, `?channel=telegram`). Outil `telegram_chat(op=…)` dérivé de la factory
 messagerie commune (cf. `tools/unipile.register_messaging_tools`).
 """
 from __future__ import annotations

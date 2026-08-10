@@ -123,7 +123,10 @@ def test_business_params_named_like_legacy_tokens_survive():
         assert args == {name: "valeur-métier" for name in params}, f"{module}.{tool}"
 
 
-@pytest.mark.parametrize("tool_name", ["aiark_company_search", "aiark_people_search"])
+# Renommés `linkedin_aiark_*` + consolidés le 2026-08-10 (oto-backend#279) — viser
+# les noms VIVANTS : sur un tool disparu, `axes_for` répondrait « pas d'axe » pour
+# la mauvaise raison, et la régression nommée ne serait plus gardée.
+@pytest.mark.parametrize("tool_name", ["linkedin_aiark_search", "linkedin_aiark_person"])
 def test_aiark_account_is_a_business_filter(tool_name):
     """Régression nommée : l'axe compte ne s'applique pas à aiark (ni multi-credential ni
     porteur d'identités) et son `account` métier n'est plus dans l'espace des jetons."""

@@ -12,13 +12,14 @@ import pytest
 from oto_mcp import providers
 from oto_mcp.tool_visibility import namespace_of
 
+# Surface consolidée 6 → 3 et renommée `linkedin_aiark_*` le 2026-08-10 (ADR 0010
+# §Amendement + ADR 0047 §Amendement, oto-backend#279) : le namespace porte la
+# CAPACITÉ (LinkedIn) suffixée du FOURNISSEUR, AI Ark et Unipile n'étant pas
+# substituables (donnée achetée vs session opérée).
 EXPECTED_TOOLS = {
-    "aiark_credits",
-    "aiark_company_search",
-    "aiark_people_search",
-    "aiark_export_person",
-    "aiark_reverse_lookup",
-    "aiark_mobile_phone",
+    "linkedin_aiark_credits",
+    "linkedin_aiark_search",
+    "linkedin_aiark_person",
 }
 
 
@@ -58,15 +59,15 @@ def test_aiark_no_longer_a_mount():
 
 def test_aiark_tools_register_under_namespace(all_tools):
     assert EXPECTED_TOOLS <= all_tools
-    assert all(namespace_of(t) == "aiark"
-               for t in all_tools if t.startswith("aiark_"))
+    assert all(namespace_of(t) == "linkedin_aiark"
+               for t in all_tools if t.startswith("linkedin_aiark_"))
 
 
 def test_aiark_verify_is_probe_not_tool(all_tools):
     # « tester la connexion » = sonde générique (oto_instance op=verify), plus un
     # tool MCP dédié par connecteur.
     from oto_mcp import connector_verify
-    assert "aiark_verify_key" not in all_tools
+    assert "linkedin_aiark_verify_key" not in all_tools
     assert connector_verify.supports("aiark")
 
 
@@ -74,7 +75,7 @@ def test_aiark_async_bulk_endpoints_not_exposed(all_tools):
     # v1 = synchrone seulement ; les exports/find-emails EN LOT (webhook) sont hors
     # périmètre → aucun tool "bulk"/"track" exposé.
     assert not any("bulk" in t or "track" in t for t in all_tools
-                   if t.startswith("aiark_"))
+                   if t.startswith("linkedin_aiark_"))
 
 
 # --- jointure tool ↔ client oto-core (garde version-skew) ---------------------

@@ -205,3 +205,43 @@ def test_missing_required_arg_names_the_op_and_the_arg(client, tool, op, missing
         kwargs = {"job_id": "j1"}
     with pytest.raises(McpError, match=missing):
         _tool(tool)(op=op, **kwargs)
+
+
+# --- canaux non-LinkedIn (même connecteur, même factory) -----------------------
+
+@pytest.mark.parametrize("channel", ["whatsapp", "telegram", "instagram",
+                                     "messenger", "twitter"])
+@pytest.mark.parametrize("op,kwargs,method", [
+    ("list", {}, "list_chats"),
+    ("read", {"chat_id": "c1"}, "list_messages"),
+    ("send", {"chat_id": "c1", "text": "hello"}, "send_message"),
+])
+def test_channel_chat_ops_route_to_the_right_client_method(
+        client, channel, op, kwargs, method):
+    """Les 5 canaux passent par la MÊME factory : un seul jeu de cas les couvre
+    tous, et une régression sur la factory les casserait tous ensemble."""
+    from fastmcp import FastMCP
+    from oto_mcp.tools import unipile as U
+
+    m = FastMCP("t")
+    U.register_messaging_tools(m, channel.upper())
+    asyncio.run(m.get_tool(f"{channel}_chat")).fn(op=op, **kwargs)
+    getattr(client, method).assert_called_once()
+
+
+def test_channel_chat_refuses_unknown_op_and_missing_args(client):
+    from fastmcp import FastMCP
+    from oto_mcp.tools import unipile as U
+
+    m = FastMCP("t")
+    U.register_messaging_tools(m, "WHATSAPP")
+    fn = asyncio.run(m.get_tool("whatsapp_chat")).fn
+    with pytest.raises(McpError, match="op doit être"):
+        fn(op="nope")
+    with pytest.raises(McpError, match="chat_id"):
+        fn(op="read")
+    with pytest.raises(McpError, match="text"):
+        fn(op="send", chat_id="c1")
+    with pytest.raises(McpError, match="chat_id"):
+        fn(op="send", text="hello")
+    client.send_message.assert_not_called()

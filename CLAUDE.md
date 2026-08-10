@@ -299,7 +299,7 @@ dans l'org active (structure only, jamais de credentials ; idempotent via `proje
 
 ## Messagerie & LinkedIn (Unipile)
 
-Tools `whatsapp_*`/`telegram_*`/`instagram_*` + **`linkedin_unipile_*`** = **Unipile
+Tools `{whatsapp,telegram,instagram,messenger,twitter}_chat` + **`linkedin_unipile_*`** = **Unipile
 hébergé** (factory channel-agnostic, `account_id` per-membre `(sub, org_id, provider)`
 ADR 0033, no-fallback anti-usurpation). Mode plateforme (clé partagée + grant + option comp),
 DSN par credential, sélecteur d'identité, **comptes partagés autorisés** (#55, grants
@@ -314,8 +314,23 @@ revalidés à chaque appel, jamais de repli silencieux).
 > des deux ne prend le nom nu. ⚠️ **`namespace_of` résout au plus long préfixe DÉCLARÉ au
 > registre**, plus au 1er token — sans quoi `linkedin_unipile_*` tomberait sous le connecteur
 > `linkedin` (mauvais credential/activation/sélection). Additif (aucun autre namespace n'est
-> multi-token), tripwire `test_linkedin_unipile_namespace_resolves_to_unipile`. `unipile_connect_start`
-> garde son nom (multi-canal ⟹ hors capacité ; cible = `oto_connector op=connect`).
+> multi-token), tripwire `tests/test_linkedin.py`. `unipile_connect_start` garde son nom
+> (multi-canal ⟹ hors capacité ; cible = `oto_connector op=connect`).
+>
+> **Lots 2-3 (10/08, même issue)** : les 5 autres canaux passent à `{whatsapp,telegram,
+> instagram,messenger,twitter}_chat(op=list|read|send)` — 15 → 5, factory commune, le canal
+> reste dans le NOM (trouvabilité) ; et **le connecteur `linkedin` est DÉPOSÉ** au profit
+> d'`aiark`, dont les tools deviennent `linkedin_aiark_*` (6 → 3 : `search` op=people|companies,
+> `person` op=export|reverse|mobile, `credits`). Les deux connecteurs étaient le même vendeur
+> et le même client `AiArkClient`, ne différant que par le mode d'auth = une distinction
+> d'INSTANCE (ADR 0038/0044 §F), qui coûtait de poser deux fois la même clé pour un seul pool
+> de crédits (ADR 0024). Rien à migrer au coffre : aucun grant n'y était posé, ses 5 tools
+> étaient **montés et inopérants** depuis leur mise en service. `linkedin_aiark_credits` REFUSE
+> en mode plateforme (le solde du pool oto n'est pas celui de l'appelant). Domaine complet :
+> **62 → 17 tools** ; catalogue **665 → 619**.
+> ⚠️ **Reste à faire au tag prod** : migrer `user_selected_connectors` (119 lignes `linkedin`
+> → `aiark`, dédoublonnées) — la DB est partagée preprod/prod, la migrer avant le tag
+> retirerait le connecteur de 119 toolbox encore servies par l'ancien code.
 
 > Le détail (cas limites, incidents, gotchas empiriques) a été migré dans **`docs/unipile.md`** — il n'a pas sa place dans une carte, et il y était devenu illisible.
 

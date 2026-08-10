@@ -1,6 +1,6 @@
 """X / Twitter — messagerie (DM) hébergée via Unipile (compte connecté par l'user).
 
-Outils `twitter_*` dérivés de la factory messagerie commune
+Outil `twitter_chat(op=…)` dérivé de la factory messagerie commune
 (cf. `tools/unipile.register_messaging_tools`). Connexion via hosted-auth
 (dashboard, `?channel=twitter`). Le code provider Unipile est `TWITTER`.
 """

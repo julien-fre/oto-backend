@@ -1,6 +1,6 @@
 """Messenger — messagerie hébergée via Unipile (compte connecté par l'user).
 
-Outils `messenger_*` dérivés de la factory messagerie commune
+Outil `messenger_chat(op=…)` dérivé de la factory messagerie commune
 (cf. `tools/unipile.register_messaging_tools`). Connexion via hosted-auth
 (dashboard, `?channel=messenger`).
 """

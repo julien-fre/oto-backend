@@ -64,129 +64,122 @@ def register(mcp: FastMCP) -> None:
         return result
 
     @mcp.tool()
-    def aiark_credits() -> dict:
-        """Remaining AI Ark credits for the resolved account (`{"total": <int>}`)."""
+    def linkedin_aiark_credits() -> dict:
+        """Remaining AI Ark credits for the resolved account (`{"total": <int>}`).
+
+        ⚠️ On the PLATFORM key (credits paid by oto), the balance is not yours to
+        read — the call is refused rather than showing someone else's pool. Bring
+        your own AI Ark key to see a balance.
+        """
+        _, is_platform = _client()
+        if is_platform:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                "Ces crédits AI Ark sont fournis par oto : leur solde ne t'est pas "
+                "exposé. Pose ta propre clé AI Ark pour suivre un solde.")))
         return _run(lambda c: c.credits())
 
     @mcp.tool()
-    def aiark_company_search(
+    def linkedin_aiark_search(
+        op: str = "people",
         account: Optional[dict] = None,
+        contact: Optional[dict] = None,
         lookalike_domains: Optional[list[str]] = None,
         lists: Optional[dict] = None,
         page: int = 0,
         size: int = 10,
     ) -> dict:
-        """Search B2B companies by firmographics (AI Ark).
+        """Search LinkedIn-sourced B2B data through AI Ark (bought data, per-credit).
+
+        Not interchangeable with `linkedin_unipile_search`: that one drives YOUR
+        connected LinkedIn session (and is rate-limited by LinkedIn); this one
+        queries AI Ark's index and BILLS CREDITS per returned record.
+
+        `op`:
+        - **"people"** (default): people by company + contact filters. Results do
+          NOT include emails — use `linkedin_aiark_person(op="export")` for one.
+        - **"companies"**: companies by firmographics.
 
         Args:
-            account: filter object. AI Ark nested DSL — each field takes an
+            op: "people" (default) | "companies".
+            account: filters on the company. AI Ark nested DSL — each field takes an
                 include/exclude matcher. Examples:
                 - name: {"name": {"any": {"include": {"mode": "SMART", "content": ["Amazon"]}}}}
                 - location: {"location": {"any": {"include": ["United States"]}}}
                 - employee size: {"employeeSize": {"type": "RANGE", "range": [{"start": 1000, "end": 5000}]}}
                 Combine keys in one object. Supports domain, website, industries,
                 revenue, foundedYear, technologies, keywords, funding, naics…
-            lookalike_domains: up to 5 company URLs to find similar companies.
-            lists: exclude companies already in saved lists.
-            page: zero-based page number. size: 0-100 (default 10).
-
-        Returns the raw AI Ark page: `content[]` (company records with summary,
-        link, contact, financial, location, technologies…), `totalElements`,
-        `totalPages`, `pageable`. Cost: credits per returned record.
-        """
-        return _run(lambda c: c.search_companies(
-            account=account, lists=lists,
-            lookalike_domains=lookalike_domains, page=page, size=size,
-        ))
-
-    @mcp.tool()
-    def aiark_people_search(
-        account: Optional[dict] = None,
-        contact: Optional[dict] = None,
-        lists: Optional[dict] = None,
-        page: int = 0,
-        size: int = 10,
-    ) -> dict:
-        """Search B2B people by company + contact filters (AI Ark).
-
-        Args:
-            account: filters on the person's company (same DSL as
-                aiark_company_search), e.g. {"domain": {"any": {"include": ["amazon.com"]}}}.
-            contact: filters on the person, e.g.
+            contact: op="people" — filters on the person, e.g.
                 {"seniority": {"any": {"include": ["founder"]}}}. Supports title,
                 department, seniority, location…
-            lists: exclude people already in saved lists.
+            lookalike_domains: op="companies" — up to 5 company URLs to find similar ones.
+            lists: exclude records already in saved lists.
             page: zero-based page number. size: 0-100 (default 10).
 
-        Returns the raw AI Ark page: `content[]` (people with profile, link,
-        location, company, department, skills…), `totalElements`, `totalPages`,
-        `trackId`. Note: search results do NOT include emails — use
-        aiark_export_person to get an email for a specific match.
+        Returns the raw AI Ark page: `content[]`, `totalElements`, `totalPages`.
         """
-        return _run(lambda c: c.search_people(
-            account=account, contact=contact, lists=lists, page=page, size=size,
-        ))
+        if op == "people":
+            return _run(lambda c: c.search_people(
+                account=account, contact=contact, lists=lists, page=page, size=size))
+        if op == "companies":
+            return _run(lambda c: c.search_companies(
+                account=account, lists=lists,
+                lookalike_domains=lookalike_domains, page=page, size=size))
+        raise McpError(ErrorData(code=INVALID_PARAMS,
+                                 message="op doit être 'people' ou 'companies'"))
 
     @mcp.tool()
-    def aiark_export_person(
+    def linkedin_aiark_person(
+        op: str = "export",
         id: Optional[str] = None,
         url: Optional[str] = None,
-    ) -> dict:
-        """Export one person WITH email (synchronous email finder, AI Ark).
-
-        Args:
-            id: an AI Ark person id from a prior aiark_people_search result, OR…
-            url: a LinkedIn profile URL. At least one of `id`/`url` is required.
-
-        Returns the person profile with `email.output[]` (each: address, status,
-        domainType), or `{"found": false}` if no profile/email was found.
-        """
-        if not id and not url:
-            raise McpError(ErrorData(
-                code=INVALID_PARAMS,
-                message="aiark_export_person exige `id` ou `url`.",
-            ))
-        result = _run(lambda c: c.export_person(id=id, url=url))
-        if result is None:
-            return {"found": False}
-        return {"found": True, **result}
-
-    @mcp.tool()
-    def aiark_reverse_lookup(search: str) -> dict:
-        """Reverse-lookup a person from a contact detail (AI Ark).
-
-        Args:
-            search: an email, phone number, or other contact info to resolve.
-
-        Returns the full person profile, or `{"found": false}` if not found.
-        """
-        result = _run(lambda c: c.reverse_lookup(search))
-        if result is None:
-            return {"found": False}
-        return {"found": True, **result}
-
-    @mcp.tool()
-    def aiark_mobile_phone(
+        search: Optional[str] = None,
         linkedin: Optional[str] = None,
         domain: Optional[str] = None,
         name: Optional[str] = None,
     ) -> dict:
-        """Find a person's mobile phone number(s) (AI Ark).
+        """Resolve ONE person through AI Ark (bought data, per-credit).
+
+        `op`:
+        - **"export"** (default): the person WITH their email (synchronous email
+          finder). Give `id` (from `linkedin_aiark_search(op="people")`) OR `url`
+          (a LinkedIn profile URL).
+        - **"reverse"**: find the person FROM a contact detail (`search` = an email,
+          a phone number…).
+        - **"mobile"**: their mobile phone number(s). Give `linkedin` (profile URL)
+          alone, OR `domain` AND `name` together.
+
+        Every op returns `{"found": false}` rather than an error when nothing
+        matches — an absence is a result, not a failure.
 
         Args:
-            linkedin: the person's LinkedIn profile URL (alone), OR…
-            domain + name: the company domain AND the person's name (together).
-
-        Returns `{"found": true, ...}` with `data` (list of phone numbers) and the
-        matched id/linkedin, or `{"found": false}` if none.
+            op: export (default) | reverse | mobile.
+            id: op="export" — an AI Ark person id from a prior search.
+            url: op="export" — a LinkedIn profile URL.
+            search: op="reverse" — the contact detail to resolve.
+            linkedin: op="mobile" — the person's LinkedIn profile URL.
+            domain: op="mobile" — the company domain (with `name`).
+            name: op="mobile" — the person's name (with `domain`).
         """
-        if not linkedin and not (domain and name):
+        def _need(cond: bool, msg: str) -> None:
+            if not cond:
+                raise McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+        if op == "export":
+            _need(bool(id or url), "op='export' exige `id` ou `url`.")
+            result = _run(lambda c: c.export_person(id=id, url=url))
+        elif op == "reverse":
+            _need(bool(search), "op='reverse' exige `search`.")
+            result = _run(lambda c: c.reverse_lookup(search))
+        elif op == "mobile":
+            _need(bool(linkedin) or bool(domain and name),
+                  "op='mobile' exige `linkedin` OU (`domain` ET `name`).")
+            result = _run(lambda c: c.mobile_phone(
+                linkedin=linkedin, domain=domain, name=name))
+        else:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message="aiark_mobile_phone exige `linkedin` OU (`domain` ET `name`).",
-            ))
-        result = _run(lambda c: c.mobile_phone(
-            linkedin=linkedin, domain=domain, name=name))
+                message="op doit être 'export', 'reverse' ou 'mobile'"))
+
         if result is None:
             return {"found": False}
         return {"found": True, **result}

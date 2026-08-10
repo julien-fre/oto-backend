@@ -27,7 +27,7 @@ def test_account_axis_applies_to_identity_bearing_tools():
     # ADR 0051 : unipile (1 clé partagée → N identités opérées) porte l'axe
     # _account= pour épingler le compte LinkedIn/messagerie à opérer.
     assert "_account" in _params("linkedin_unipile_search")
-    assert "_account" in _params("whatsapp_send_message")
+    assert "_account" in _params("whatsapp_chat")
 
 
 def test_account_axis_excludes_single_and_spine():

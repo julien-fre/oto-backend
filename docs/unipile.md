@@ -3,8 +3,8 @@
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.
 
 
-Tools `whatsapp_*` / `telegram_*` / `instagram_*` (`list_chats`/`read_chat`/
-`send_message`) = messagerie **hébergée Unipile**, sous le connecteur `unipile`
+Tools `whatsapp_chat` / `telegram_chat` / `instagram_chat` / `messenger_chat` /
+`twitter_chat` (`op=list|read|send`) = messagerie **hébergée Unipile**, sous le connecteur `unipile`
 (`modules`/namespaces = `unipile, whatsapp, telegram, instagram`). Générés par la
 factory `tools/unipile.register_messaging_tools(mcp, channel)` — l'API `/chats`
 d'Unipile est channel-agnostic ; chaque tool résout l'`account_id` du canal pour le
@@ -30,6 +30,12 @@ user (no-fallback, `tools/unipile.unipile_client(provider)`).
 > **`unipile_connect_start` garde son nom** : il est multi-canal
 > (`channel=linkedin|whatsapp|…`), donc il n'appartient à aucune capacité. Sa place
 > cible est `oto_connector op=connect` (lot séparé, #279).
+>
+> **Les 5 autres canaux ont suivi le même jour** : `{c}_list_chats`/`{c}_read_chat`/
+> `{c}_send_message` → **`{c}_chat(op=list|read|send)`**, soit 15 → 5 tools. Même
+> factory `register_messaging_tools`, donc un seul jeu de cas de test les couvre tous.
+> Le canal reste dans le NOM — c'est ce qui le rend trouvable par l'agent — et ces
+> namespaces restent NUS (mono-fournisseur : pas de suffixe, cf. la règle).
 
 Connexion = hosted-auth Unipile (dashboard, `?channel=whatsapp|telegram|instagram`),
 `account_id` per-membre dans `unipile_accounts` (PK `(sub, org_id, provider)` — scope
