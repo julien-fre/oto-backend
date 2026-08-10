@@ -107,6 +107,19 @@ def _init_db_once() -> None:
                      "GREATEST((SELECT MAX(id) FROM tenants), 1))")
         conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS tenant_id BIGINT "
                      "NOT NULL DEFAULT 1 REFERENCES tenants(id)")
+        # ADR 0052 (lot L2) — le tenant PORTE son émetteur, et les domaines qui le
+        # désigneront en L3. Contrairement à L1, aucun ordre à tenir vis-à-vis des
+        # données : colonnes nullables ou defaultées, aucune FK à satisfaire, donc
+        # rien qu'une ligne existante puisse violer. `ADD COLUMN IF NOT EXISTS …
+        # UNIQUE` est rejouable — colonne déjà là ⟹ la clause entière est sautée,
+        # contrainte comprise (et sur `tenants`, l'index unique se construit sur une
+        # poignée de lignes).
+        # Le tenant `oto` garde `issuer` NULL : son émetteur est l'env, pas la base
+        # (cf. le commentaire de `_schema`). NULL n'entre pas dans l'unicité.
+        conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS issuer TEXT UNIQUE")
+        conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS jwks_uri TEXT")
+        conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hosts JSONB "
+                     "NOT NULL DEFAULT '[]'::jsonb")
         # Soft-disconnect unipile : la ligne de binding survit (preuve de propriété
         # durable du compte hébergé → rebind déterministe à la reconnexion).
         conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS disconnected_at TIMESTAMPTZ")

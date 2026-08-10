@@ -37,6 +37,22 @@ CREATE TABLE IF NOT EXISTS tenants (
     id BIGSERIAL PRIMARY KEY,
     slug TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
+    -- (lot L2) L'ÉMETTEUR du tenant : le claim `iss` EXACT de ses jetons, donc la
+    -- clé du registre `issuer → (tenant, verifier)`. UNIQUE — deux tenants sur un
+    -- même émetteur rendraient la sélection ambiguë, et l'ambiguïté ici décide de
+    -- QUI est l'appelant.
+    -- ⚠️ **NULL pour le tenant `oto`**, par construction : son émetteur est l'env
+    -- (`LOGTO_ENDPOINT`), donc DB-INDÉPENDANT — l'authentification canonique ne
+    -- doit jamais dépendre d'une lecture de table. Une ligne qui redéclarerait cet
+    -- émetteur est ignorée par le registre (le primaire gagne toujours).
+    issuer TEXT UNIQUE,
+    -- JWKS du tenant. NULL = dérivé `<issuer>/jwks` (convention Logto, la voie
+    -- nominale d'ADR 0052 §5) ; renseigné pour un BYO-issuer qui le publie ailleurs.
+    jwks_uri TEXT,
+    -- Domaines servis pour ce tenant (liste de hosts). Posé ici pour le binding
+    -- `host → tenant → (AS, audience)` du lot L3 (audience stricte + PRM Host-aware) :
+    -- **rien ne le lit en L2**.
+    hosts JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
