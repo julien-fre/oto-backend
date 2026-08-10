@@ -101,5 +101,6 @@ from . import uploads  # noqa: F401 — me.upload_url (oto_upload_url) — push 
 from . import datastore_activity  # noqa: F401 — me.datastore.{row_activity,activity} (REST-only)
 # File de travail côté application (signal #362) — réserver depuis un front web.
 from . import datastore_claim  # noqa: F401 — me.datastore.{claim_next,claim_row} (REST-only)
+from . import datastore_schema  # noqa: F401 — me.datastore.get_schema (MCP data_get_schema + REST)
 
 __all__ = ["registry", "_mcp_adapter", "_rest_adapter"]
