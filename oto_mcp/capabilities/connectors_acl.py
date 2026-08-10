@@ -10,7 +10,7 @@ autz `ORG_ADMIN_OF` : l'org_admin gouverne SON org (super_admin escalade via rol
 """
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -54,6 +54,43 @@ def _validate(inp: AclSetInput) -> None:
                               f"`{inp.principal_id}` n'est pas membre de l'org #{inp.org_id}.")
 
 
+class AclEntry(BaseModel):
+    """Une ligne d'ACL d'org : « ce connecteur est réservé à ce principal ».
+    La PRÉSENCE de lignes est ce qui restreint (ADR 0025) — il n'y a pas de ligne
+    de refus, donc pas de moyen d'exclure quelqu'un d'un connecteur ouvert."""
+    connector: str
+    principal_type: Literal["group", "user"]
+    # `group` → id de groupe en TEXTE (la colonne est commune aux deux types) ;
+    # `user` → sub Logto. Jamais un email.
+    principal_id: str
+    granted_by: Optional[str] = None        # sub de l'admin qui a posé la règle
+    granted_at: Optional[str] = None
+
+
+class OrgAcl(BaseModel):
+    """ACL connecteur de l'org. `restricted` est DÉRIVÉ d'`access` (les connecteurs
+    qui y ont ≥1 ligne) : il ne dit pas qui a le droit, il dit lesquels sont passés
+    en deny-by-default. Un connecteur absent des deux est ouvert à toute l'org."""
+    org_id: int
+    access: list[AclEntry]
+    restricted: list[str]
+
+
+class AclWriteResult(BaseModel):
+    """Écho d'une pose/retrait de règle d'org — et surtout l'état RÉSULTANT du
+    connecteur."""
+    ok: bool
+    org_id: int
+    connector: str
+    principal_type: Literal["group", "user"]
+    principal_id: str
+    # État APRÈS l'opération, pas l'effet de la ligne : `true` sur `grant` (la
+    # première ligne bascule le connecteur en deny-by-default), et sur `revoke`
+    # `false` = le DERNIER principal vient d'être retiré ⟹ connecteur RÉOUVERT à
+    # toute l'org. C'est l'inverse de ce que « revoke » laisse attendre.
+    restricted: bool
+
+
 def _list_acl(ctx: ResolvedCtx, inp: AclListInput) -> dict:
     return {
         "org_id": inp.org_id,
@@ -95,6 +132,35 @@ class GroupAclSetInput(BaseModel):
     member: str          # sub d'un membre de l'équipe (le seul type de principal ici)
 
 
+class GroupAclEntry(BaseModel):
+    """Une ligne d'ACL d'équipe. Le seul type de principal est le membre — d'où
+    `principal_sub` et non le couple (type, id) du grain org (projection
+    historique, conservée)."""
+    connector: str
+    principal_sub: str
+    granted_by: Optional[str] = None
+    granted_at: Optional[str] = None
+
+
+class GroupAcl(BaseModel):
+    """ACL connecteur de l'équipe. NARROWING pur : ces règles s'intersectent avec
+    celles de l'org, elles ne peuvent jamais débloquer ce que l'org refuse."""
+    group_id: int
+    access: list[GroupAclEntry]
+    restricted: list[str]
+
+
+class GroupAclWriteResult(BaseModel):
+    """Écho d'une pose/retrait de règle d'équipe. Même piège que le grain org :
+    `restricted=false` après un `revoke` = le connecteur est RÉOUVERT à toute
+    l'équipe (dernier membre retiré), pas « retrait refusé »."""
+    ok: bool
+    group_id: int
+    connector: str
+    member: str                             # sub du membre visé
+    restricted: bool
+
+
 def _validate_group(inp: GroupAclSetInput) -> None:
     """Connecteur réel + membre appartenant à l'ÉQUIPE (anti-typo / anti-IDOR)."""
     if providers.connector_for_provider(inp.connector) is None:
@@ -129,6 +195,7 @@ def _group_revoke(ctx: ResolvedCtx, inp: GroupAclSetInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="connectors.acl.group_list", handler=_group_list_acl, Input=GroupAclListInput,
+        Output=GroupAcl,
         authz=GROUP_MEMBER_OF("group_id"),
         description="[team] List the connector access rules of a team (which connectors are reserved, "
                     "and to which members). Team-level RBAC narrows the org's — it can only further restrict.",
@@ -136,6 +203,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.acl.group_grant", handler=_group_grant, Input=GroupAclSetInput,
+        Output=GroupAclWriteResult,
         authz=GROUP_ADMIN_OF("group_id"), refresh_visibility=True,
         description="[team lead] Reserve a connector to a member of your team (member=<sub>). Adding the "
                     "first member makes it restricted within the team (deny-by-default) — a further "
@@ -144,6 +212,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.acl.group_revoke", handler=_group_revoke, Input=GroupAclSetInput,
+        Output=GroupAclWriteResult,
         authz=GROUP_ADMIN_OF("group_id"), refresh_visibility=True,
         description="[team lead] Remove a member from a connector's team access list. Removing the last "
                     "member reopens the connector to the whole team.",
@@ -151,6 +220,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.acl.list", handler=_list_acl, Input=AclListInput,
+        Output=OrgAcl,
         authz=ORG_ADMIN_OF("org_id"),
         description="[org admin] List the connector access rules of an org (which connectors are "
                     "restricted, and to which departments/members).",
@@ -158,6 +228,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.acl.grant", handler=_grant, Input=AclSetInput,
+        Output=AclWriteResult,
         authz=ORG_ADMIN_OF("org_id"),
         description="[org admin] Restrict a connector to a department (principal_type='group', "
                     "principal_id=<group_id>) or a member (principal_type='user', principal_id=<sub>). "
@@ -166,6 +237,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.acl.revoke", handler=_revoke, Input=AclSetInput,
+        Output=AclWriteResult,
         authz=ORG_ADMIN_OF("org_id"),
         description="[org admin] Remove a department/member from a connector's access list. Removing "
                     "the last principal reopens the connector to the whole org.",

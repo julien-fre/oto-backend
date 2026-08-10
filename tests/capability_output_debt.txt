@@ -21,12 +21,6 @@ billing.subscribe
 connectors.account_grants.grant
 connectors.account_grants.list
 connectors.account_grants.revoke
-connectors.acl.grant
-connectors.acl.group_grant
-connectors.acl.group_list
-connectors.acl.group_revoke
-connectors.acl.list
-connectors.acl.revoke
 connectors.console.access
 connectors.console.account_access
 connectors.console.activation
