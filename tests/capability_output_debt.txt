@@ -89,10 +89,6 @@ org.instruction.revert
 org.instruction.set
 org.instruction.usage
 org.instruction.versions
-org.invite.accept
-org.invite.create
-org.invite.list
-org.invite.revoke
 org.monitoring.adoption
 org.monitoring.call
 org.monitoring.calls

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import os
 
+from typing import Optional
+
 from pydantic import BaseModel
 
 from .. import db, oauth_facade, org_store
@@ -56,6 +58,95 @@ def _norm_email(raw: str | None, *, required: bool) -> str | None:
     if e is not None and "@" not in e:
         raise AuthzDenied(400, "invalid_email", "Email invalide.")
     return e
+
+
+# --- Sorties ----------------------------------------------------------------
+
+class InvitationEmitted(BaseModel):
+    """Invitation créée. Forme commune aux TROIS niveaux de la cascade
+    (plateforme / org / équipe) — d'où le champ `role` unique, qui porte le rôle
+    d'équipe quand il y en a un, sinon le rôle d'org.
+
+    ⚠️ **`emailed: false` confond deux causes** : « tu n'as pas demandé d'envoi »
+    (`send_email=false`, cas nominal du partage manuel) et « l'envoi a échoué ». Rien
+    dans la réponse ne les distingue — un front qui affiche « mail envoyé » sur
+    `ok: true` peut mentir. Traiter `emailed: false` comme « à partager soi-même ».
+
+    ⚠️ `invite_url` est le lien **NU** (`/invitation/<code>`). Le magic-link Logto,
+    quand il est minté, ne part que dans le MAIL — le partager depuis cette réponse
+    ne transporte donc jamais la connexion sans saisie. Et une org rattachée à un
+    front tiers n'en obtient aucun (l'OTT serait inerte sur son émetteur).
+
+    ⚠️ `code` est un **secret porteur** : le détenir suffit à rejoindre l'org (il n'y
+    a pas de vérification que l'accepteur est bien `email`). À traiter comme un jeton,
+    pas comme un identifiant."""
+    ok: bool
+    # Email NORMALISÉ (strip + minuscules), ou None quand l'invitation est un simple
+    # code à partager.
+    email: Optional[str] = None
+    role: str
+    code: str
+    invite_url: str
+    emailed: bool
+
+
+class InvitationEntry(BaseModel):
+    """Une invitation en attente. Elle porte `code`, donc le secret porteur : cette
+    liste est du matériel sensible, pas un simple journal."""
+    id: int
+    email: Optional[str] = None
+    code: str
+    org_role: Optional[str] = None
+    group_role: Optional[str] = None
+    org_id: Optional[int] = None
+    group_id: Optional[int] = None
+    invited_by: Optional[str] = None
+    source: Optional[str] = None
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    org_name: Optional[str] = None
+    group_name: Optional[str] = None
+    # Dérivé (team si group_id, sinon org si org_id, sinon platform). Sur CETTE
+    # capacité il vaut toujours "org" — les invitations d'équipe en sont exclues.
+    scope: str
+
+
+class Invitations(BaseModel):
+    """Invitations d'ORG en attente. ⚠️ **Une liste vide ne veut pas dire « personne
+    n'a été invité »** : trois populations en sont absentes — les invitations
+    d'ÉQUIPE (`group_id` non nul, servies par l'écran équipe), les **acceptées** et
+    les **expirées**. Cette vue est une file d'attente, pas un historique."""
+    invitations: list[InvitationEntry]
+
+
+class InvitationRevoked(BaseModel):
+    """Révocation. Non idempotente : une invitation inconnue **ou déjà acceptée** rend
+    un 404 (`unknown_invitation`) — accepter puis révoquer est impossible, il faut
+    retirer le membre. `revoked` réécho l'id demandé."""
+    ok: bool
+    revoked: int
+
+
+class InvitationAccepted(BaseModel):
+    """Invitation consommée (modèle bearer : le code ou le token SUFFIT, l'identité de
+    l'accepteur n'est pas confrontée à l'email invité).
+
+    ⚠️ **`org_id: null` avec `ok: true` est un succès qui ne rejoint rien** : c'est une
+    invitation de PLATEFORME (attribution d'onboarding), consommée sans adhésion. Un
+    front qui redirige vers `/orgs/{org_id}` construira une URL invalide.
+
+    Quand `org_id` est présent, l'org rejointe devient bien l'org MAISON — `active_org`
+    en est l'écho fidèle (`set_active_org` est appelé explicitement), pas une supposition.
+
+    Ré-accepter par le MÊME sub est idempotent (même réponse) ; par un autre, c'est un
+    410 `invalid_or_expired`."""
+    ok: bool
+    org_id: Optional[int] = None
+    org_role: Optional[str] = None
+    group_id: Optional[int] = None
+    group_role: Optional[str] = None
+    active_org: Optional[int] = None
+    name: Optional[str] = None
 
 
 # --- Inputs -----------------------------------------------------------------
@@ -156,7 +247,7 @@ def _invite_accept(ctx: ResolvedCtx, inp: InviteAcceptInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="org.invite.create", handler=_invite_create, Input=InviteCreateInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=InvitationEmitted,
         description="Invite someone to an org you administer (role: org_member|org_admin). "
                     "send_email=true mails a link; false returns a short code to share yourself.",
         rest=(RestBinding("POST", "/api/orgs/{id}/invitations", _ID),
@@ -164,20 +255,20 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.invite.list", handler=_invite_list, Input=InviteListInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=Invitations,
         description="List pending invitations for an org you administer.",
         rest=RestBinding("GET", "/api/orgs/{id}/invitations", _ID),
     ),
     Capability(
         key="org.invite.revoke", handler=_invite_revoke, Input=InviteRevokeInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=InvitationRevoked,
         description="Revoke a pending invitation.",
         rest=RestBinding("DELETE", "/api/orgs/{id}/invitations/{inv}",
                          {"id": "org_id", "inv": "invite_id"}),
     ),
     Capability(
         key="org.invite.accept", handler=_invite_accept, Input=InviteAcceptInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=InvitationAccepted,
         description="Accept an org invitation by mail token or short code. Joins the org.",
         rest=RestBinding("POST", "/api/me/invitations/accept"),
     ),
