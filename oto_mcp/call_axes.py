@@ -21,6 +21,16 @@ Mécanisme (zéro modification des fonctions de tools) :
 Exposition SÉLECTIVE (pas sur toute la surface — coût tokens de `tools/list`) : chaque
 axe porte un prédicat `applies` dérivé du registre.
 
+**Les descriptions de `schema` sont VOLONTAIREMENT courtes** (issue #277). Elles sont
+recopiées à l'identique dans le schéma de CHAQUE tool concerné : ce qu'on écrit ici est
+multiplié par ~350. Mesuré avant la coupe : 1 845 caractères de prose d'axe par tool,
+soit **61 % du poids total des schémas** de `mcp.oto.cx` (561 k caractères sur 914 k) —
+six paragraphes répétés, que la plupart des clients paient sans jamais s'en servir.
+Le *pourquoi* de ces jetons (modèle sans état, préfixe `_`, quoi faire quand plusieurs
+comptes existent…) vit donc **une seule fois**, dans le bloc A des instructions serveur
+(`instructions.py`, « Porte ton contexte DANS l'appel ») — injecté au handshake, donc lu
+par tout client. Ici : ce que l'axe fait, et où trouver sa valeur. Rien de plus.
+
 **Les jetons sont NAMESPACÉS `_` (issue #250)** : `_org`, `_project`, `_group`,
 `_account`, `_instance`, `_run_id`. Ils occupaient auparavant les noms NUS, dans le même
 espace plat que les arguments métier des tools — or `account`, `org`, `group`, `project`
@@ -155,12 +165,8 @@ ACCOUNT = CallAxis(
         "type": "string",
         "title": "Account",
         "description": (
-            "Compte/identité à utiliser POUR CET APPEL quand plusieurs sont possibles : "
-            "soit un credential parmi plusieurs (ex. « 2 Zoho »), soit — pour LinkedIn/"
-            "messagerie — le compte à OPÉRER sous la clé partagée (le tien par défaut, ou "
-            "un compte qui t'est accordé). Passe l'`account_id`/label listé par "
-            "oto_identity(op='list'). Épinglage ÉPHÉMÈRE (cet appel seulement), il ne "
-            "change pas ton compte par défaut. Omets pour ton compte par défaut."
+            "Compte/identité à OPÉRER pour CET APPEL, quand plusieurs sont possibles "
+            "(liste : oto_identity(op='list')). Épinglage éphémère. Omets pour ton défaut."
         ),
     },
     applies=_has_account_axis,
@@ -263,12 +269,8 @@ PROJECT = CallAxis(
         "type": "integer",
         "title": "Project",
         "description": (
-            "Projet dans le cadre duquel exécuter CET appel (id, cf. `oto_project "
-            "op=list`) — le jeton PRIMAIRE : scope l'action sur l'org du projet (et sur "
-            "son ÉQUIPE si le projet appartient à une équipe → ses secrets d'équipe "
-            "résolvent), résout les `slot:<nom>` contre ses bindings et épingle ses "
-            "identités connecteur préfaites. À passer sur CHAQUE appel fait pour un "
-            "projet (aucun état de session ne le retient)."
+            "Projet (id) sous lequel exécuter CET APPEL — jeton PRIMAIRE : son org/équipe, "
+            "ses `slot:<nom>`, ses identités connecteur. Liste : oto_project(op='list')."
         ),
     },
     applies=_is_project_scopable_tool,
@@ -320,11 +322,8 @@ RUN = CallAxis(
         "type": "string",
         "title": "Run Id",
         "description": (
-            "run_id d'un déroulé ouvert par `run_start`. Le serveur rattache DÉJÀ tout "
-            "appel au run ACTIF (sommet de ta pile run_start/run_finish) quand tu l'omets "
-            "— pas besoin de le répéter systématiquement. Passe-le explicitement pour "
-            "OVERRIDE (cibler un run précis parmi plusieurs imbriqués) ou par robustesse si "
-            "la corrélation semble se perdre. Omets hors de tout run."
+            "run_id d'un déroulé `run_start`. Omets : le run ACTIF s'applique déjà. "
+            "Passe-le pour cibler un run précis parmi plusieurs imbriqués."
         ),
     },
     applies=_is_run_correlatable_tool,
@@ -358,9 +357,8 @@ ORG = CallAxis(
         "type": "integer",
         "title": "Org",
         "description": (
-            "Organisation (id) sous laquelle exécuter CET appel — résout les credentials, "
-            "la visibilité et les données de cette org. Alternative fiable et sans état au "
-            "bracelet `oto_use_org` (qui ne persiste pas). Omets pour ton org courante."
+            "Organisation (id) sous laquelle exécuter CET APPEL — résout ses credentials, "
+            "sa visibilité, ses données. Omets pour ton org courante."
         ),
     },
     applies=_is_org_scopable_tool,
@@ -410,9 +408,8 @@ GROUP = CallAxis(
         "type": "integer",
         "title": "Group",
         "description": (
-            "Équipe (groupe, id) sous laquelle exécuter CET appel — résout les secrets "
-            "et la doctrine du groupe, et scope l'action sur son org parente. Omets "
-            "hors contexte d'équipe."
+            "Équipe (id) sous laquelle exécuter CET APPEL — résout ses secrets et sa "
+            "doctrine, sous son org parente. Omets hors contexte d'équipe."
         ),
     },
     applies=_is_org_scopable_tool,
@@ -466,10 +463,8 @@ INSTANCE = CallAxis(
         "type": "string",
         "title": "Instance",
         "description": (
-            "Ref d'instance de connecteur (obtenu via oto_instance(op='list')) sous "
-            "laquelle exécuter CET appel — résout EXACTEMENT ce credential-là (ta clé, "
-            "celle d'un de tes groupes ou celle de l'org), jamais un autre. Omets pour "
-            "la résolution de proximité normale."
+            "Ref d'instance de connecteur (via oto_instance(op='list')) : résout EXACTEMENT "
+            "ce credential-là, jamais un autre. Omets pour la résolution normale."
         ),
     },
     applies=_is_instance_scopable_tool,
