@@ -25,6 +25,34 @@ from .registry import CAPABILITIES
 _ID = {"id": "org_id"}
 
 
+class OrgMfaState(BaseModel):
+    """Exigence de 2ᵉ facteur de l'org.
+
+    ⚠️ **`provisioned` ne suit pas `require_mfa`.** Il dit que l'organization Logto
+    miroir EXISTE, pas qu'elle impose quoi que ce soit : après une désactivation on
+    **conserve** le miroir (réactivation sans re-sync) → l'état durable
+    `require_mfa: false` + `provisioned: true` est parfaitement normal. Seul
+    `require_mfa` fait foi ; `provisioned: false` avec `require_mfa: true` serait, lui,
+    une incohérence (le provisioning précède toujours la pose du drapeau)."""
+    org_id: int
+    require_mfa: bool
+    provisioned: bool
+
+
+class OrgMfaSet(BaseModel):
+    """Bascule de l'exigence MFA. `require_mfa` est l'écho de la valeur DEMANDÉE — il
+    est fiable parce qu'il n'y a pas de succès partiel : si Logto refuse, l'appel sort
+    en 502 (`logto_provisioning_failed` / `logto_deprovisioning_failed`) **sans avoir
+    changé l'état** (pas de fail-open sur un contrôle de sécurité).
+
+    ⚠️ `ok: true` ne veut pas dire « les membres sont protégés maintenant » : les
+    sessions ouvertes ne sont pas coupées, l'enrôlement est exigé à la **prochaine
+    connexion** de chaque membre."""
+    ok: bool
+    org_id: int
+    require_mfa: bool
+
+
 class GetOrgMfaInput(BaseModel):
     org_id: int
 
@@ -70,7 +98,7 @@ def _set_org_mfa(ctx: ResolvedCtx, inp: SetOrgMfaInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="org.mfa.get", handler=_get_org_mfa, Input=GetOrgMfaInput,
-        authz=ORG_MEMBER_OF("org_id"),
+        authz=ORG_MEMBER_OF("org_id"), Output=OrgMfaState,
         description=("Read whether this org requires its members to use MFA (a second "
                      "factor). Returns require_mfa and whether the Logto enforcement "
                      "mirror is provisioned."),
@@ -78,7 +106,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.mfa.set", handler=_set_org_mfa, Input=SetOrgMfaInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=OrgMfaSet,
         description=("Turn the org's mandatory-MFA requirement on/off (require=true|false). "
                      "When on, every member must enroll and use a second factor at their "
                      "next sign-in (enforced by Logto). Provisions/updates the Logto "
