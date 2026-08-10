@@ -10,6 +10,27 @@ factory `tools/unipile.register_messaging_tools(mcp, channel)` — l'API `/chats
 d'Unipile est channel-agnostic ; chaque tool résout l'`account_id` du canal pour le
 user (no-fallback, `tools/unipile.unipile_client(provider)`).
 
+> **⚠️ La surface LinkedIn s'appelle `linkedin_unipile_*` depuis le 2026-08-10**
+> (ADR 0010 §Amendement + ADR 0047 §Amendement, oto-backend#279) : **38 tools
+> `unipile_*` → 8 tools à `op=`** — `search`, `facets`, `profile`, `chat`, `post`,
+> `network`, `account`, `job`. Deux raisons cumulées : le namespace portait le
+> **fournisseur** (Unipile) pour des tools qui sont du **LinkedIn**, alors que les 4
+> autres canaux du MÊME connecteur portaient déjà leur capacité (`whatsapp_*`…) ; et
+> le catalogue pesait 51 tools à lui seul. Le suffixe `_unipile` distingue la **session
+> opérée** de la donnée achetée (`linkedin_*` = AI Ark) — les deux surfaces ne sont pas
+> substituables, aucune ne prend le nom nu.
+>
+> Conséquence technique : `namespace_of` résout désormais au **plus long préfixe déclaré
+> au registre** (`tool_visibility.py`) et non plus au 1er token — sans quoi
+> `linkedin_unipile_*` tomberait sous le connecteur `linkedin` (AI Ark) : mauvais
+> credential, mauvaise activation, mauvaise sélection. Le changement est additif (aucun
+> autre namespace n'est multi-token) et verrouillé par
+> `tests/test_linkedin.py::test_linkedin_unipile_namespace_resolves_to_unipile`.
+>
+> **`unipile_connect_start` garde son nom** : il est multi-canal
+> (`channel=linkedin|whatsapp|…`), donc il n'appartient à aucune capacité. Sa place
+> cible est `oto_connector op=connect` (lot séparé, #279).
+
 Connexion = hosted-auth Unipile (dashboard, `?channel=whatsapp|telegram|instagram`),
 `account_id` per-membre dans `unipile_accounts` (PK `(sub, org_id, provider)` — scope
 membre ADR 0033 B4 : le binding vaut dans l'org de contexte, un canal se connecte par

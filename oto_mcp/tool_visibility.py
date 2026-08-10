@@ -91,8 +91,30 @@ TESTABLE_NAMESPACES: frozenset[str] = frozenset(
 
 
 def namespace_of(name: str) -> str:
-    """Namespace d'un tool = préfixe avant le premier `_` (ex. `mm_company` → `mm`)."""
-    return name.split("_", 1)[0]
+    """Namespace d'un tool = le plus long préfixe **déclaré au registre**, aligné sur
+    les `_` ; à défaut, le premier token (ex. `mm_company` → `mm`).
+
+    Pourquoi pas « le 1er token » tout court (règle d'avant le 2026-08-10) : le
+    namespace résout LE CONNECTEUR qui gouverne le tool (`connector_for_namespace` →
+    gates d'appel, visibilité de session, sélection, projets, slots). Avec un schéma de
+    nommage `capacité_fournisseur` (ADR 0010 §Amendement — `linkedin_unipile_*` vs
+    `linkedin_aiark_*`), le 1er token est la CAPACITÉ : deux connecteurs distincts
+    tomberaient sur le même namespace, et le gate en désignerait un au hasard.
+
+    **Strictement additif** : tant qu'aucun namespace multi-token n'est déclaré, la
+    boucle retombe sur le 1er token — comportement identique à l'implémentation
+    précédente. Un tool dont aucun préfixe n'est déclaré garde son 1er token (le gate
+    reste fail-open sur un namespace inconnu, inchangé).
+    """
+    if "_" not in name:
+        return name
+    from . import providers
+    parts = name.split("_")
+    for i in range(len(parts) - 1, 1, -1):   # du plus long au plus court, 1er token exclu
+        candidate = "_".join(parts[:i])
+        if providers.connector_for_namespace(candidate) is not None:
+            return candidate
+    return parts[0]
 
 
 def is_testable(name: str) -> bool:

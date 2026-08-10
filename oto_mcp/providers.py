@@ -564,9 +564,16 @@ _REGISTRY_LIST = [
     # gateway `api.unipile.com`) est résolu côté client (env `UNIPILE_DSN`, défaut
     # api.unipile.com = celui d'Otomata) — PAS un champ de credential tant qu'un BYO
     # sur un autre endpoint n'existe pas (déféré ; single-field = compatible avec le
-    # stockage org-secret existant, mono-valeur). 2e provider
-    # du domaine LinkedIn — convergence en capabilities provider-agnostiques (0010/0011) plus tard.
-    _c("unipile", ["unipile", "whatsapp", "telegram", "instagram", "messenger", "twitter"],
+    # stockage org-secret existant, mono-valeur).
+    # ⚠️ Namespace des tools LinkedIn = `linkedin_unipile` (multi-token), pas `unipile` :
+    # ADR 0010 §Amendement 2026-08-10 — le namespace porte la CAPACITÉ, suffixée du
+    # FOURNISSEUR quand plusieurs fournisseurs non substituables la rendent (ici Unipile,
+    # session opérée · AI Ark, donnée achetée). `namespace_of` résout au plus long préfixe
+    # DÉCLARÉ ici : les deux gardent donc un gate distinct. `unipile` reste déclaré pour
+    # `unipile_connect_start` (multi-canal : linkedin|whatsapp|… — il n'appartient à aucune
+    # capacité, sa place cible est `oto_connector op=connect`, cf. oto-backend#279).
+    _c("unipile", ["linkedin_unipile", "unipile", "whatsapp", "telegram",
+                   "instagram", "messenger", "twitter"],
        auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        secret_kind="api_key", hosted_auth=True, personal_cross_org=True,
        # free-tier : clé plateforme OUVERTE à tous, gardée par l'OPTION couche-3 (has_option),

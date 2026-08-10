@@ -299,12 +299,23 @@ dans l'org active (structure only, jamais de credentials ; idempotent via `proje
 
 ## Messagerie & LinkedIn (Unipile)
 
-Tools `whatsapp_*`/`telegram_*`/`instagram_*` + `unipile_*` = **Unipile hébergé**
-(factory channel-agnostic, `account_id` per-membre `(sub, org_id, provider)` ADR 0033,
-no-fallback anti-usurpation). Mode plateforme (clé partagée + grant + option comp),
+Tools `whatsapp_*`/`telegram_*`/`instagram_*` + **`linkedin_unipile_*`** = **Unipile
+hébergé** (factory channel-agnostic, `account_id` per-membre `(sub, org_id, provider)`
+ADR 0033, no-fallback anti-usurpation). Mode plateforme (clé partagée + grant + option comp),
 DSN par credential, sélecteur d'identité, **comptes partagés autorisés** (#55, grants
 revalidés à chaque appel, jamais de repli silencieux).
 **Détail : `docs/unipile.md`**.
+
+> **Renommage + consolidation LinkedIn (10/08, #279)** : `unipile_*` → **`linkedin_unipile_*`**,
+> 38 tools → **8 à `op=`** (search · facets · profile · chat · post · network · account · job).
+> Le namespace porte la CAPACITÉ suffixée du FOURNISSEUR (ADR 0010 §Amendement) — les 4 autres
+> canaux du même connecteur le faisaient déjà (`whatsapp_*`…), LinkedIn était l'exception ; et
+> `linkedin_*` (AI Ark, donnée achetée) n'est pas substituable à la session opérée, donc aucune
+> des deux ne prend le nom nu. ⚠️ **`namespace_of` résout au plus long préfixe DÉCLARÉ au
+> registre**, plus au 1er token — sans quoi `linkedin_unipile_*` tomberait sous le connecteur
+> `linkedin` (mauvais credential/activation/sélection). Additif (aucun autre namespace n'est
+> multi-token), tripwire `test_linkedin_unipile_namespace_resolves_to_unipile`. `unipile_connect_start`
+> garde son nom (multi-canal ⟹ hors capacité ; cible = `oto_connector op=connect`).
 
 > Le détail (cas limites, incidents, gotchas empiriques) a été migré dans **`docs/unipile.md`** — il n'a pas sa place dans une carte, et il y était devenu illisible.
 

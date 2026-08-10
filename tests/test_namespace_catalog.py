@@ -42,8 +42,10 @@ def test_availability_annotations():
     # tout = bruit) — le régime est dit UNE fois dans l'en-tête (_CATALOG_HEADER).
     assert "hors socle" not in cat
     assert "à activer" not in cat
-    # seule annotation restante : le compte à connecter (hosted auth)
-    unipile = next(l for l in cat.splitlines() if l.startswith("• unipile_*"))
+    # seule annotation restante : le compte à connecter (hosted auth). La ligne du
+    # connecteur unipile s'ouvre sur `linkedin_unipile_*` depuis l'ADR 0010
+    # §Amendement (le namespace porte la capacité + le fournisseur).
+    unipile = next(l for l in cat.splitlines() if l.startswith("• linkedin_unipile_*"))
     assert "compte à connecter" in unipile
 
 

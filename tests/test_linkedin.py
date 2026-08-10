@@ -64,8 +64,27 @@ def test_aiark_is_left_completely_untouched():
 
 def test_linkedin_tools_register_under_namespace(all_tools):
     assert EXPECTED_TOOLS <= all_tools
+    # ⚠️ `linkedin_` n'est plus un préfixe qui identifie CE connecteur : depuis
+    # l'ADR 0010 §Amendement (2026-08-10), le namespace porte la capacité suffixée du
+    # fournisseur dès que plusieurs fournisseurs non substituables la rendent — d'où
+    # `linkedin_unipile_*` (session opérée) à côté de `linkedin_*` (AI Ark, donnée
+    # achetée). Le tri se fait sur le plus long préfixe DÉCLARÉ, pas sur le 1er token.
     assert all(namespace_of(t) == "linkedin"
-               for t in all_tools if t.startswith("linkedin_"))
+               for t in all_tools
+               if t.startswith("linkedin_") and not t.startswith("linkedin_unipile_"))
+
+
+def test_linkedin_unipile_namespace_resolves_to_unipile(all_tools):
+    """Le gate d'un tool suit son NAMESPACE : `linkedin_unipile_*` doit rester
+    gouverné par le connecteur `unipile`, jamais par le connecteur `linkedin`
+    (AI Ark). Sans la résolution au plus long préfixe déclaré, le 1er token
+    (`linkedin`) les ferait tomber sous le mauvais connecteur — donc le mauvais
+    credential, la mauvaise activation et la mauvaise sélection."""
+    tools = {t for t in all_tools if t.startswith("linkedin_unipile_")}
+    assert tools, "aucun tool linkedin_unipile_* monté"
+    for t in tools:
+        assert namespace_of(t) == "linkedin_unipile"
+        assert providers.connector_for_namespace(namespace_of(t)).name == "unipile"
 
 
 def test_linkedin_has_no_credits_tool(all_tools):

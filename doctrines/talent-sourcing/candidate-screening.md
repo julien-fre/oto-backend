@@ -30,8 +30,9 @@ pas. Économise les crédits d'enrichissement et le temps d'approche.
 
 ## Sources de preuve (outils)
 
-- Profil & parcours : `unipile_profile`, `unipile_member_posts` (ce qu'il publie).
-- Employeur actuel : `unipile_company`, `fr_get` (si entreprise FR — taille, santé).
+- Profil & parcours : `linkedin_unipile_profile` (op="person", puis op="posts" pour
+  ce qu'il publie).
+- Employeur actuel : `linkedin_unipile_profile(op="company")`, `fr_get` (si entreprise FR — taille, santé).
 - Travaux : `serper_web_search` / `serper_scholar_search`, GitHub via X-ray.
 
 ## Traçabilité

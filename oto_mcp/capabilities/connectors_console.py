@@ -296,7 +296,7 @@ CAPABILITIES += [
             "the LinkedIn accounts under your shared Unipile key, or your Google accounts). "
             "op=list → each operable account with `is_default`, plus `granted:true`+`owner` "
             "when a peer shared THEIRS with you (#55). **To act as one for a SINGLE call, pass "
-            "`account=<id>` on that tool** (e.g. unipile_search(account=<id>, …)) — an "
+            "`account=<id>` on that tool** (e.g. linkedin_unipile_search(account=<id>, …)) — an "
             "EPHEMERAL pin: it's how you use a granted account without changing your default, "
             "and needs NO reconnection or key setup. op=set (`identity_id` from op=list) sets "
             "your PERSISTENT default identity instead (rejects an id your credential can't reach)."),

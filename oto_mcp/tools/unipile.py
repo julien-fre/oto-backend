@@ -68,7 +68,7 @@ def _rate_limit_guard(sub: str) -> None:
             f"⏳ Unipile rate-limite ce compte LinkedIn — réessaie dans {_fmt_wait(until - now)} "
             "(délai demandé par Unipile : de quelques secondes après une rafale légère à "
             "~1h quand la cadence récente a été soutenue — c'est le délai affiché qui fait "
-            "foi, pas une moyenne). RALENTIS la cadence des appels unipile_* plutôt que de "
+            "foi, pas une moyenne). RALENTIS la cadence des appels linkedin_unipile_* plutôt que de "
             "les enchaîner en rafale ; si l'attente est longue, passe à autre chose et "
             "reviens, plutôt que de sonder en boucle.")))
 
@@ -94,7 +94,7 @@ def _scrape(sub: str, fn):
         wait = _fmt_wait(_RATE_LIMIT_UNTIL[sub] - time.time())
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
             f"⏳ Unipile rate-limite ce compte LinkedIn ({e}). Réessaie dans {wait} et "
-            "RALENTIS : n'enchaîne pas des dizaines d'appels unipile_* en rafale (c'est ce qui "
+            "RALENTIS : n'enchaîne pas des dizaines d'appels linkedin_unipile_* en rafale (c'est ce qui "
             "déclenche le throttle, puis dégrade et déconnecte le compte). Les fiches société "
             "déjà vues sont servies du cache — inutile de les relire.")))
 
@@ -104,7 +104,7 @@ def _slim_search(res):
     - dé-duplique `data`/`items` et `next_cursor`/`cursor` — oto-core `_norm` renvoie les
       DEUX (même liste) pour la stabilité de l'aval ; l'agent n'a besoin QUE de `items`/`cursor` ;
     - retire de chaque résultat les URLs d'image (`*picture_url*` : photo + large + fond) =
-      poids mort en recherche (l'agent ne rend pas d'images ; un profil précis → unipile_profile).
+      poids mort en recherche (l'agent ne rend pas d'images ; un profil précis → linkedin_unipile_profile).
     Ne touche à RIEN d'autre (tous les champs métier restent)."""
     if not isinstance(res, dict):
         return res
@@ -470,7 +470,8 @@ def register(mcp: FastMCP) -> None:
 
         ⚠️ **LinkedIn premium** : par défaut seul le produit `classic` est connecté.
         Si la personne a un siège **Recruiter** ou **Sales Navigator** et veut s'en
-        servir (`unipile_search(api="recruiter"/"sales_navigator")`, `unipile_contracts`…),
+        servir (`linkedin_unipile_search(api="recruiter"/"sales_navigator")`,
+        `linkedin_unipile_account(op="contracts")`…),
         il FAUT le demander ICI via `premium` — sinon ces APIs répondent 403 « out of
         your scope ». Les deux sont **exclusifs**. Pour AJOUTER un produit à un compte
         DÉJÀ connecté (classic seul aujourd'hui), relance avec `premium=` — et
@@ -510,8 +511,21 @@ def register(mcp: FastMCP) -> None:
             "(webhook). Vérifie ensuite avec oto_instance(op='verify', connector='unipile').")
         return out
 
+    # ---- helpers de dispatch (patron `op=`, ADR 0047) --------------------
+
+    def _bad(msg: str) -> McpError:
+        return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+    def _need(value, name: str, op: str):
+        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        if value is None:
+            raise _bad(f"op='{op}' requiert {name}")
+        return value
+
+    # ---- recherche -------------------------------------------------------
+
     @mcp.tool()
-    def unipile_search(
+    def linkedin_unipile_search(
         keywords: Optional[str] = None,
         category: str = "people",
         company: Optional[list[str]] = None,
@@ -530,7 +544,7 @@ def register(mcp: FastMCP) -> None:
         secteur, localisation, employeur) : lis d'abord le guide
         `oto_guide(op=read, slug="linkedin-search")`. Deux pièges qui FAUSSENT en
         silence : (1) une facette exige un **ID résolu** — passe le terme par
-        `unipile_search_facets` et donne l'`id` choisi ; un terme brut NE filtre PAS ;
+        `linkedin_unipile_facets` et donne l'`id` choisi ; un terme brut NE filtre PAS ;
         (2) le mode `url=` est **plafonné à 25 sans pagination** — préfère le structuré.
 
         ⚠️ **Cadence** : LinkedIn rate-limite par compte. Enchaîner des dizaines
@@ -560,7 +574,7 @@ def register(mcp: FastMCP) -> None:
             advanced_keywords: ciblage people — dict `{first_name?, last_name?, title?,
                 company?, school?}`.
             skills: filtre compétences (Recruiter / Sales Nav) — liste de noms OU
-                d'ids de facette (résous d'abord via `unipile_search_facets(
+                d'ids de facette (résous d'abord via `linkedin_unipile_facets(
                 facet_type="SKILL", …)` et passe l'`id` choisi). Accepte aussi un dict
                 `{include?, exclude?}` (exclusion = `priority DOESNT_HAVE`).
             url: URL de recherche LinkedIn collée du navigateur (classic / Sales
@@ -584,16 +598,17 @@ def register(mcp: FastMCP) -> None:
         )))
 
     @mcp.tool()
-    def unipile_search_facets(facet_type: str, keywords: str, limit: int = 25) -> dict:
+    def linkedin_unipile_facets(facet_type: str, keywords: str, limit: int = 25) -> dict:
         """Résout un NOM de filtre LinkedIn en candidats `{id, name}` à passer à
-        `unipile_search`. À utiliser AVANT une recherche structurée dès qu'un critère
-        n'est pas un simple mot-clé (compétence, secteur, localisation, employeur…).
+        `linkedin_unipile_search`. À utiliser AVANT une recherche structurée dès qu'un
+        critère n'est pas un simple mot-clé (compétence, secteur, localisation,
+        employeur…).
 
         Le choix du bon candidat est TON travail : une même saisie renvoie souvent
         plusieurs facettes (« Microsoft Excel » → Excel, Microsoft Office, …) —
-        lis les `name` et retiens l'`id` pertinent. Puis passe-le à `unipile_search`
-        (`location`/`company`/`industry` acceptent déjà les ids ; les autres facettes
-        arrivent — cf. guide `linkedin-search`).
+        lis les `name` et retiens l'`id` pertinent. Puis passe-le à
+        `linkedin_unipile_search` (`location`/`company`/`industry` acceptent déjà les
+        ids ; les autres facettes arrivent — cf. guide `linkedin-search`).
 
         Args:
             facet_type: type de facette, MAJUSCULES. Confirmés : `SKILL`, `LOCATION`,
@@ -609,414 +624,471 @@ def register(mcp: FastMCP) -> None:
         cands = unipile_client().resolve_facet(str(facet_type).upper(), keywords, limit=limit)
         return {"facet_type": str(facet_type).upper(), "candidates": cands}
 
-    @mcp.tool()
-    def unipile_profile(identifier: str, sections: str = "*") -> dict:
-        """Profil LinkedIn complet (carrière datée, écoles, réseau) via Unipile.
-
-        ⚠️ LinkedIn peut throttler une section (souvent `experience`) : la réponse
-        porte alors `throttled_sections=[…]` avec la section vide malgré un
-        `*_total_count` > 0. C'est un rate-limit AMONT, pas une absence de donnée :
-        réessaie plus tard (minutes), réduis la concurrence (≤8 en parallèle), et
-        sur un batch traite ces cibles dans une passe de rattrapage différée.
-        VÉRIFIE aussi que le `public_identifier`/id renvoyé == demandé avant
-        d'écrire (rejette + retry sinon).
-
-        Args:
-            identifier: public identifier (slug) ou provider id LinkedIn.
-            sections: Sections à inclure ("*" = tout).
-        """
-        sub = access.current_user_sub_or_raise()
-        return _scrape(sub, lambda: unipile_client().get_profile(
-            _canonical_li_identifier(identifier), sections=sections))
+    # ---- membres & sociétés : lire un profil, son activité, agir dessus ---
 
     @mcp.tool()
-    def unipile_company(identifier: str) -> dict:
-        """Fiche société LinkedIn via Unipile.
-
-        Résultat mis en cache 6h par compte (les fiches société sont ~statiques) :
-        une même société relookée est servie du cache, sans consommer le quota amont
-        (~100 fiches/12h par compte). Args: identifier = slug ou id de page société.
-        """
-        sub = access.current_user_sub_or_raise()
-        ident = _canonical_li_identifier(identifier)
-        key = (sub, ident.lower())
-        hit = _COMPANY_CACHE.get(key)
-        if hit and time.time() - hit[0] < _COMPANY_TTL:
-            return hit[1]
-        res = _scrape(sub, lambda: unipile_client().get_company(ident))
-        if len(_COMPANY_CACHE) >= _COMPANY_CACHE_MAX:
-            _COMPANY_CACHE.clear()
-        _COMPANY_CACHE[key] = (time.time(), res)
-        return res
-
-    @mcp.tool()
-    def unipile_chats(limit: int = 20, cursor: Optional[str] = None,
-                      with_names: bool = True) -> dict:
-        """Liste les conversations LinkedIn (messagerie) via Unipile. Paginé
-        (`limit` + `cursor`).
-
-        Chaque fil 1-à-1 est enrichi de `attendee_name`/`attendee_headline`/
-        `attendee_profile_url` (résolus en batch — le `name` brut des fils 1-à-1
-        est null et `attendee_provider_id` est opaque). `with_names=False` coupe
-        cet enrichissement (payload brut, un appel API en moins)."""
-        return unipile_client().list_chats(limit=limit, cursor=cursor,
-                                           with_attendee_names=with_names)
-
-    @mcp.tool()
-    def unipile_read_chat(chat_id: str, limit: int = 30) -> dict:
-        """Lit les messages d'une conversation LinkedIn via Unipile.
-
-        Args:
-            chat_id: Id du fil (renvoyé par unipile_chats).
-            limit: Nombre de messages à récupérer.
-        """
-        return unipile_client().list_messages(chat_id, limit=limit)
-
-    @mcp.tool()
-    def unipile_send_message(
-        text: str,
-        chat_id: Optional[str] = None,
-        recipient_id: Optional[str] = None,
+    def linkedin_unipile_profile(
+        op: str = "person",
+        identifier: Optional[str] = None,
+        sections: str = "*",
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        fields: Optional[list[str]] = None,
+        text_max_chars: Optional[int] = None,
+        skill_endorsement_id: Optional[int] = None,
+        api: Optional[str] = None,
+        action: Optional[str] = None,
+        hiring_project_id: Optional[str] = None,
+        stage: Optional[str] = None,
+        list_id: Optional[str] = None,
     ) -> dict:
-        """Envoie un message LinkedIn via Unipile.
-
-        `chat_id` → répond dans un fil existant ; sinon `recipient_id` (provider
-        id du destinataire) → ouvre un nouveau fil.
-
-        Args:
-            text: Contenu du message.
-            chat_id: Id du fil pour répondre.
-            recipient_id: provider id du destinataire (nouveau fil).
-        """
-        return unipile_client().send_message(text, chat_id=chat_id, attendee_id=recipient_id)
-
-    @mcp.tool()
-    def unipile_relations(cursor: Optional[str] = None,
-                                limit: Optional[int] = None,
-                                fields: Optional[list] = None) -> dict:
-        """Liste tes relations LinkedIn de 1er degré (N1) via Unipile — pour
-        cibler/exporter ton réseau direct. Paginé (`cursor`).
-
-        `fields` = PROJECTION : ne garde que ces champs sur chaque item (ex.
-        `["name","headline","public_identifier","member_id","created_at"]`) —
-        réduit fortement le payload d'un export (le plein item porte des champs
-        lourds inutiles : profile_picture_url, urns…). Omis = items complets.
-
-        ⚠️ Pagination NON fiable pour un export EXHAUSTIF : le `cursor` encode un
-        offset volatil (doublons dans l'espace d'offset, total surestimé) et une
-        page `limit=100` rend 90-100 items, pas 100. Pour charger tout un réseau :
-        dédupliquer par `member_id` (JAMAIS l'offset), garder ≤8 pages en parallèle
-        (au-delà : 502 en cascade), prouver le tarissement par 2 passes décalées.
-        Doctrine dédiée : `bulk-load-reseau`."""
-        out = unipile_client().list_relations(cursor=cursor, limit=limit)
-        if fields and isinstance(out, dict) and isinstance(out.get("items"), list):
-            keep = set(fields)
-            out["items"] = [{k: v for k, v in it.items() if k in keep}
-                            for it in out["items"] if isinstance(it, dict)]
-        return out
-
-    @mcp.tool()
-    def unipile_invitations(direction: str = "received", limit: int = 50,
-                            cursor: Optional[str] = None) -> dict:
-        """Liste les invitations de connexion LinkedIn. `direction`='received'
-        (reçues, à accepter) ou 'sent' (envoyées, en attente). Paginé : `limit`
-        (défaut 50 — sans borne le backlog entier dépasse la limite de tokens)
-        + `cursor` pour la page suivante."""
-        return unipile_client().list_invitations(direction, limit=limit, cursor=cursor)
-
-    @mcp.tool()
-    def unipile_send_invitation(provider_id: str,
-                                      message: Optional[str] = None) -> dict:
-        """Envoie une demande de connexion LinkedIn (outreach 2e/3e degré).
-
-        Args:
-            provider_id: provider id LinkedIn du destinataire (champ `provider_id`
-                d'un résultat unipile_search / unipile_profile).
-            message: note d'accompagnement optionnelle (≤300 caractères).
-        """
-        return unipile_client().send_invitation(provider_id, message=message)
-
-    @mcp.tool()
-    def unipile_member_posts(identifier: str, cursor: Optional[str] = None,
-                                   limit: Optional[int] = None,
-                                   fields: Optional[list[str]] = None,
-                                   text_max_chars: Optional[int] = None) -> dict:
-        """Posts publiés par un membre LinkedIn. Pour repérer un post à commenter/liker.
+        """Un membre ou une société LinkedIn : lire son profil, son activité, agir dessus.
 
         `identifier` = **slug public** (`marie-dupont`) ou **URN** (`ACoAA…`). PAS le
-        `member_id` numérique d'unipile_search : l'API v2 le rejette (`400 Invalid User
-        ID`) — passe par le slug, que ce tool résout pour toi.
+        `member_id` numérique de `linkedin_unipile_search` : l'API v2 le rejette
+        (`400 Invalid User ID`) — passe par le slug, que ces ops résolvent pour toi.
 
-        POUR TRIER SANS TOUT CHARGER (le brut fait 55-75 Ko pour 10 posts) :
-        `fields=["text","posted_at","social_id"]` + `text_max_chars=400` suffisent à
-        décider quel post ouvrir ; `id`/`social_id` sont toujours conservés pour pouvoir
-        enchaîner (unipile_get_post, unipile_comment). Sans ces deux paramètres, le
-        payload complet est renvoyé — comportement inchangé.
-        """
-        return _slim(
-            unipile_client().list_member_posts(identifier, cursor=cursor, limit=limit),
-            fields, text_max_chars)
-
-    @mcp.tool()
-    def unipile_get_post(post_id: str) -> dict:
-        """Récupère un post LinkedIn — `post_id` = social_id (`urn:li:…`) d'un résultat
-        unipile_member_posts."""
-        return unipile_client().get_post(post_id)
-
-    @mcp.tool()
-    def unipile_post_engagement(post_id: str, kind: str = "comments",
-                                      cursor: Optional[str] = None) -> dict:
-        """Liste l'engagement d'un post LinkedIn — `kind`='comments' ou 'reactions'."""
-        c = unipile_client()
-        return c.list_reactions(post_id, cursor=cursor) if kind == "reactions" \
-            else c.list_comments(post_id, cursor=cursor)
-
-    @mcp.tool()
-    def unipile_comment(post_id: str, text: str) -> dict:
-        """Commente un post LinkedIn (social-selling). `post_id` = social_id du post."""
-        return unipile_client().comment_post(post_id, text)
-
-    @mcp.tool()
-    def unipile_react(post_id: str, value: str = "LIKE") -> dict:
-        """Réagit à un post LinkedIn. `value`: LIKE | PRAISE | EMPATHY | INTEREST |
-        APPRECIATION | ENTERTAINMENT."""
-        return unipile_client().react_post(post_id, value=value)
-
-    @mcp.tool()
-    def unipile_create_post(text: str) -> dict:
-        """Publie un post LinkedIn depuis le compte connecté."""
-        return unipile_client().create_post(text)
-
-    @mcp.tool()
-    def unipile_feed(limit: int = 20, page: int = 0, refresh: bool = False) -> dict:
-        """Miroir autogéré de ta home LinkedIn. Tu n'as RIEN à gérer (ni curseur, ni
-        sync) : l'outil persiste les posts de ta page d'accueil dans ta base
-        (datastore `linkedin-feed`, dédupliqués par leur identifiant), rafraîchit
-        tout seul quand le cache est périmé, et te sert le miroir le plus récent en
-        tête. Les encarts sponsorisés/promo sont exclus.
-
-        Sous le capot : à `page=0`, refresh si le cache a dépassé son TTL — on
-        pagine le feed live et on n'ajoute que les posts neufs (arrêt dès qu'une page
-        est déjà connue). Les pages suivantes (`page>0`) lisent le miroir stocké sans
-        retaper LinkedIn. Le tri suit ton réglage de home LinkedIn (« Plus récents »
-        pour un miroir chronologique) ; quoi qu'il arrive le miroir est re-trié par
-        date de publication.
-
-        Le miroir complet reste requêtable via `data_rows('linkedin-feed')` (filtrage
-        par date côté nous, impossible sur le feed Voyager brut).
+        `op` :
+        - **"person"** (défaut) : profil complet (carrière datée, écoles, réseau).
+          ⚠️ LinkedIn peut throttler une section (souvent `experience`) : la réponse
+          porte alors `throttled_sections=[…]` avec la section vide malgré un
+          `*_total_count` > 0. C'est un rate-limit AMONT, pas une absence de donnée :
+          réessaie plus tard (minutes), réduis la concurrence (≤8 en parallèle), et
+          sur un batch traite ces cibles dans une passe de rattrapage différée.
+          VÉRIFIE aussi que le `public_identifier`/id renvoyé == demandé avant
+          d'écrire (rejette + retry sinon).
+        - **"company"** : fiche société. Mise en cache 6h par compte (fiches
+          ~statiques) — une même société relookée ne consomme pas le quota amont
+          (~100 fiches/12h par compte).
+        - **"me"** : profil du compte connecté lui-même (le « moi » sous lequel les
+          autres ops agissent). Aucun `identifier`.
+        - **"posts"** / **"comments"** : ce qu'un membre publie / commente — pour
+          repérer un post à commenter/liker, ou ce qu'un prospect engage.
+          POUR TRIER SANS TOUT CHARGER (le brut fait 55-75 Ko pour 10 posts) :
+          `fields=["text","posted_at","social_id"]` + `text_max_chars=400` suffisent à
+          décider quoi ouvrir ; `id`/`social_id` sont toujours conservés pour enchaîner
+          (`linkedin_unipile_post`). Sans ces deux paramètres, payload complet.
+        - **"reactions"** : posts qu'un membre a likés/aimés.
+        - **"followers"** / **"following"** : followers du compte connecté, ou d'un
+          membre via `identifier`. Paginé.
+        - **"endorse"** : recommande une compétence (`skill_endorsement_id` =
+          `endorsement_id` d'une compétence renvoyée par op="person").
+        - **"action"** : action premium sur un membre (sauvegarde lead Sales Navigator
+          / pipeline Recruiter). Exige `api` + `action`.
 
         Args:
-            limit: nombre de posts à renvoyer pour cette page (défaut 20).
-            page: page du miroir (0 = la plus récente). >0 ne déclenche pas de refresh.
-            refresh: force un rafraîchissement live même si le cache est encore frais.
-
-        Retourne `{items, total, page, limit, synced}` — `items` = posts (récent en
-        tête, mêmes champs qu'avant : urn, author_name, author_headline, text,
-        posted_at, reactions_count, comments_count, post_url), `total` = taille du
-        miroir, `synced` = True si un refresh live a eu lieu.
+            op: person (défaut) | company | me | posts | comments | reactions |
+                followers | following | endorse | action.
+            identifier: slug public ou URN du membre / de la société. Obligatoire
+                sauf op="me" ; optionnel pour followers/following (défaut = toi).
+            sections: op="person" — sections à inclure ("*" = tout).
+            cursor: pagination (posts, comments, reactions, followers, following).
+            limit: taille de page.
+            fields: op="posts"/"comments" — projection de champs (allège fortement).
+            text_max_chars: op="posts"/"comments" — tronque le texte de chaque item.
+            skill_endorsement_id: op="endorse" — id de la compétence à recommander.
+            api: op="action" — 'sales_navigator' ou 'recruiter'.
+            action: op="action" — sales_navigator → 'saveLead' ; recruiter →
+                'addCandidateToPipeline' | 'addApplicantToPipeline' |
+                'changeCandidatePipeline' | 'rejectApplicant'.
+            hiring_project_id: op="action" — requis pour les actions pipeline recruiter.
+            stage: op="action" — pipeline recruiter : 'UNCONTACTED' | 'CONTACTED' | 'REPLIED'.
+            list_id: op="action" — liste Sales Navigator cible (optionnel pour saveLead).
         """
-        from ..datastore import make_store, NamespaceNotFound
-
         sub = access.current_user_sub_or_raise()
+
+        if op == "me":
+            return unipile_client().get_own_profile()
+
+        if op == "person":
+            ident = _canonical_li_identifier(_need(identifier, "identifier", op))
+            return _scrape(sub, lambda: unipile_client().get_profile(ident, sections=sections))
+
+        if op == "company":
+            ident = _canonical_li_identifier(_need(identifier, "identifier", op))
+            key = (sub, ident.lower())
+            hit = _COMPANY_CACHE.get(key)
+            if hit and time.time() - hit[0] < _COMPANY_TTL:
+                return hit[1]
+            res = _scrape(sub, lambda: unipile_client().get_company(ident))
+            if len(_COMPANY_CACHE) >= _COMPANY_CACHE_MAX:
+                _COMPANY_CACHE.clear()
+            _COMPANY_CACHE[key] = (time.time(), res)
+            return res
+
+        if op == "posts":
+            return _slim(unipile_client().list_member_posts(
+                _need(identifier, "identifier", op), cursor=cursor, limit=limit),
+                fields, text_max_chars)
+
+        if op == "comments":
+            return _slim(unipile_client().list_member_comments(
+                _need(identifier, "identifier", op), cursor=cursor, limit=limit),
+                fields, text_max_chars)
+
+        if op == "reactions":
+            return unipile_client().list_member_reactions(
+                _need(identifier, "identifier", op), cursor=cursor, limit=limit)
+
+        if op == "followers":
+            return unipile_client().list_followers(user_id=identifier, cursor=cursor,
+                                                   limit=limit)
+
+        if op == "following":
+            return unipile_client().list_following(user_id=identifier, cursor=cursor,
+                                                    limit=limit)
+
+        if op == "endorse":
+            return unipile_client().endorse_profile(
+                _need(identifier, "identifier", op),
+                _need(skill_endorsement_id, "skill_endorsement_id", op))
+
+        if op == "action":
+            return unipile_client().member_action(
+                _need(identifier, "identifier", op),
+                _need(api, "api", op), _need(action, "action", op),
+                hiring_project_id=hiring_project_id, stage=stage, list_id=list_id)
+
+        raise _bad("op doit être 'person', 'company', 'me', 'posts', 'comments', "
+                   "'reactions', 'followers', 'following', 'endorse' ou 'action'")
+
+    # ---- messagerie ------------------------------------------------------
+
+    @mcp.tool()
+    def linkedin_unipile_chat(
+        op: str = "list",
+        chat_id: Optional[str] = None,
+        message_id: Optional[str] = None,
+        text: Optional[str] = None,
+        recipient_id: Optional[str] = None,
+        action: Optional[str] = None,
+        value: Optional[bool | str] = None,
+        reaction: Optional[str] = None,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        with_names: bool = True,
+    ) -> dict:
+        """Messagerie LinkedIn (DM) via Unipile.
+
+        `op` :
+        - **"list"** (défaut) : les conversations, paginé (`limit` + `cursor`).
+          Chaque fil 1-à-1 est enrichi de `attendee_name`/`attendee_headline`/
+          `attendee_profile_url` (résolus en batch — le `name` brut des fils 1-à-1
+          est null et `attendee_provider_id` est opaque). `with_names=False` coupe
+          cet enrichissement (payload brut, un appel API en moins).
+        - **"read"** : les messages d'un fil (`chat_id`).
+        - **"send"** : envoie un message. `chat_id` → répond dans un fil existant ;
+          sinon `recipient_id` (provider id du destinataire) → ouvre un nouveau fil.
+        - **"attendees"** : participants d'un fil (`chat_id`).
+        - **"contacts"** : ton carnet de contacts de messagerie (interlocuteurs). Paginé.
+        - **"update"** : modifie l'état d'un fil — `action` ∈ setReadStatus |
+          setMuteStatus | setArchiveStatus | setPinnedStatus | setLabel | getInviteLink ;
+          `value` = booléen pour les statuts, string pour setLabel, omis pour getInviteLink.
+        - **"react"** : réagit à un message avec un emoji natif (ex. '👍').
+          `message_id` = id d'un message d'op="read" ; `chat_id` est **requis sur
+          l'API v2**, ignoré en v1.
+
+        Args:
+            op: list (défaut) | read | send | attendees | contacts | update | react.
+            chat_id: id du fil (read, attendees, update, send-dans-un-fil, react v2).
+            message_id: op="react" — id du message ciblé.
+            text: op="send" — contenu du message.
+            recipient_id: op="send" — provider id du destinataire (nouveau fil).
+            action: op="update" — l'action de fil (cf. liste ci-dessus).
+            value: op="update" — valeur associée à l'action.
+            reaction: op="react" — l'emoji.
+            limit: taille de page (list, read, contacts).
+            cursor: pagination (list, contacts).
+            with_names: op="list" — enrichissement des noms d'interlocuteurs.
+        """
         client = unipile_client()
-        store = make_store(sub)
 
-        synced = False
-        if page <= 0 and (refresh or _feed_is_stale(sub)):
-            _sync_feed(client, store, sub)
-            synced = True
+        if op == "list":
+            return client.list_chats(limit=limit if limit is not None else 20,
+                                     cursor=cursor, with_attendee_names=with_names)
 
-        try:
-            rows = store.list_rows(_FEED_NS, limit=10_000)
-        except NamespaceNotFound:
-            rows = []
-        rows.sort(key=lambda r: r.get("posted_at") or "", reverse=True)
+        if op == "read":
+            return client.list_messages(_need(chat_id, "chat_id", op),
+                                        limit=limit if limit is not None else 30)
 
-        offset = max(0, page) * limit
-        window = rows[offset:offset + limit]
-        return {"items": window, "total": len(rows), "page": page,
-                "limit": limit, "synced": synced}
+        if op == "send":
+            if chat_id is None and recipient_id is None:
+                raise _bad("op='send' requiert chat_id (répondre) ou recipient_id "
+                           "(nouveau fil)")
+            return client.send_message(_need(text, "text", op), chat_id=chat_id,
+                                       attendee_id=recipient_id)
 
-    # ---- réseau : invitations (accepter / annuler) ----------------------
+        if op == "attendees":
+            return client.list_chat_attendees(_need(chat_id, "chat_id", op))
+
+        if op == "contacts":
+            return client.list_attendees(cursor=cursor, limit=limit)
+
+        if op == "update":
+            return client.patch_chat(_need(chat_id, "chat_id", op),
+                                     _need(action, "action", op), value=value)
+
+        if op == "react":
+            mid = _need(message_id, "message_id", op)
+            rea = _need(reaction, "reaction", op)
+            # Ne passe `chat_id` que s'il est fourni : garde la compat si oto-core est
+            # encore à une version dont `react_message` n'a pas ce kwarg (v2-only).
+            if chat_id is not None:
+                return client.react_message(mid, rea, chat_id=chat_id)
+            return client.react_message(mid, rea)
+
+        raise _bad("op doit être 'list', 'read', 'send', 'attendees', 'contacts', "
+                   "'update' ou 'react'")
+
+    # ---- publications ----------------------------------------------------
 
     @mcp.tool()
-    def unipile_handle_invitation(invitation_id: str, shared_secret: str,
-                                        action: str = "accept") -> dict:
-        """Accepte ou refuse une invitation LinkedIn REÇUE.
+    def linkedin_unipile_post(
+        op: str = "feed",
+        post_id: Optional[str] = None,
+        text: Optional[str] = None,
+        kind: str = "comments",
+        value: str = "LIKE",
+        limit: int = 20,
+        page: int = 0,
+        refresh: bool = False,
+        cursor: Optional[str] = None,
+    ) -> dict:
+        """Publications LinkedIn : ton fil d'accueil, un post, l'engagement, publier.
 
-        `invitation_id` ET `shared_secret` proviennent d'un item de
-        `unipile_invitations(direction='received')`.
+        `op` :
+        - **"feed"** (défaut) : miroir autogéré de ta home LinkedIn. Tu n'as RIEN à
+          gérer (ni curseur, ni sync) : l'outil persiste les posts de ta page
+          d'accueil dans ta base (datastore `linkedin-feed`, dédupliqués par leur
+          identifiant), rafraîchit tout seul quand le cache est périmé, et te sert le
+          miroir le plus récent en tête. Les encarts sponsorisés/promo sont exclus.
+          Sous le capot : à `page=0`, refresh si le cache a dépassé son TTL — on pagine
+          le feed live et on n'ajoute que les posts neufs (arrêt dès qu'une page est
+          déjà connue). Les pages suivantes (`page>0`) lisent le miroir stocké sans
+          retaper LinkedIn. Le tri suit ton réglage de home LinkedIn ; quoi qu'il
+          arrive le miroir est re-trié par date de publication. Le miroir complet
+          reste requêtable via `data_rows('linkedin-feed')` (filtrage par date côté
+          nous, impossible sur le feed Voyager brut). Renvoie
+          `{items, total, page, limit, synced}`.
+        - **"get"** : un post — `post_id` = social_id (`urn:li:…`) d'un résultat
+          `linkedin_unipile_profile(op="posts")`.
+        - **"engagement"** : qui a réagi/commenté — `kind`='comments' ou 'reactions'.
+        - **"create"** : publie un post depuis le compte connecté.
+        - **"comment"** : commente un post (social-selling).
+        - **"react"** : réagit à un post — `value`: LIKE | PRAISE | EMPATHY |
+          INTEREST | APPRECIATION | ENTERTAINMENT.
 
         Args:
-            invitation_id: id de l'invitation reçue.
-            shared_secret: token LinkedIn du même item (obligatoire).
-            action: 'accept' ou 'decline'.
+            op: feed (défaut) | get | engagement | create | comment | react.
+            post_id: social_id du post (get, engagement, comment, react).
+            text: op="create"/"comment" — le contenu.
+            kind: op="engagement" — 'comments' (défaut) ou 'reactions'.
+            value: op="react" — le type de réaction.
+            limit: op="feed" — posts renvoyés pour cette page (défaut 20).
+            page: op="feed" — page du miroir (0 = la plus récente ; >0 ne rafraîchit pas).
+            refresh: op="feed" — force un rafraîchissement live.
+            cursor: op="engagement" — pagination.
         """
-        return unipile_client().handle_invitation(invitation_id, shared_secret, action)
+        if op == "feed":
+            from ..datastore import make_store, NamespaceNotFound
 
-    @mcp.tool()
-    def unipile_cancel_invitation(invitation_id: str) -> dict:
-        """Annule une invitation LinkedIn ENVOYÉE (en attente). `invitation_id` =
-        id d'un item `unipile_invitations(direction='sent')`."""
-        return unipile_client().cancel_invitation(invitation_id)
+            sub = access.current_user_sub_or_raise()
+            client = unipile_client()
+            store = make_store(sub)
 
-    # ---- réseau : moi / followers / activité d'un membre ----------------
+            synced = False
+            if page <= 0 and (refresh or _feed_is_stale(sub)):
+                _sync_feed(client, store, sub)
+                synced = True
 
-    @mcp.tool()
-    def unipile_me() -> dict:
-        """Profil du compte LinkedIn connecté lui-même (le « moi » sous lequel les
-        autres tools unipile_* agissent)."""
-        return unipile_client().get_own_profile()
+            try:
+                rows = store.list_rows(_FEED_NS, limit=10_000)
+            except NamespaceNotFound:
+                rows = []
+            rows.sort(key=lambda r: r.get("posted_at") or "", reverse=True)
 
-    @mcp.tool()
-    def unipile_followers(user_id: Optional[str] = None,
-                                cursor: Optional[str] = None,
-                                limit: Optional[int] = None) -> dict:
-        """Followers du compte connecté (ou d'un membre via `user_id`). Paginé."""
-        return unipile_client().list_followers(user_id=user_id, cursor=cursor, limit=limit)
+            offset = max(0, page) * limit
+            window = rows[offset:offset + limit]
+            return {"items": window, "total": len(rows), "page": page,
+                    "limit": limit, "synced": synced}
 
-    @mcp.tool()
-    def unipile_following(user_id: Optional[str] = None,
-                                cursor: Optional[str] = None,
-                                limit: Optional[int] = None) -> dict:
-        """Comptes suivis par le compte connecté (ou par un membre via `user_id`). Paginé."""
-        return unipile_client().list_following(user_id=user_id, cursor=cursor, limit=limit)
-
-    @mcp.tool()
-    def unipile_member_comments(identifier: str, cursor: Optional[str] = None,
-                                      limit: Optional[int] = None,
-                                      fields: Optional[list[str]] = None,
-                                      text_max_chars: Optional[int] = None) -> dict:
-        """Commentaires laissés par un membre LinkedIn — ce qu'un prospect engage.
-
-        `identifier` = **slug public** ou **URN** (`ACoAA…`), même contrat que
-        `unipile_member_posts` (le `member_id` numérique n'est pas accepté par l'API).
-        `fields` / `text_max_chars` allègent le retour de la même façon."""
-        return _slim(
-            unipile_client().list_member_comments(identifier, cursor=cursor, limit=limit),
-            fields, text_max_chars)
-
-    @mcp.tool()
-    def unipile_member_reactions(identifier: str, cursor: Optional[str] = None,
-                                       limit: Optional[int] = None) -> dict:
-        """Réactions d'un membre LinkedIn (`identifier` = provider id) — posts qu'il
-        a likés/aimés."""
-        return unipile_client().list_member_reactions(identifier, cursor=cursor, limit=limit)
-
-    # ---- messagerie : participants / contacts / état du fil -------------
-
-    @mcp.tool()
-    def unipile_chat_attendees(chat_id: str) -> dict:
-        """Participants d'un fil de messagerie LinkedIn (`chat_id` d'un unipile_chats)."""
-        return unipile_client().list_chat_attendees(chat_id)
-
-    @mcp.tool()
-    def unipile_attendees(cursor: Optional[str] = None,
-                                limit: Optional[int] = None) -> dict:
-        """Carnet de contacts de messagerie LinkedIn (interlocuteurs). Paginé."""
-        return unipile_client().list_attendees(cursor=cursor, limit=limit)
-
-    @mcp.tool()
-    def unipile_chat_update(chat_id: str, action: str,
-                                  value: Optional[bool | str] = None) -> dict:
-        """Modifie l'état d'un fil LinkedIn. `action` ∈ setReadStatus | setMuteStatus
-        | setArchiveStatus | setPinnedStatus | setLabel | getInviteLink. `value` =
-        booléen pour les statuts (ex. setReadStatus + true), string pour setLabel,
-        omis pour getInviteLink."""
-        return unipile_client().patch_chat(chat_id, action, value=value)
-
-    @mcp.tool()
-    def unipile_message_react(message_id: str, reaction: str,
-                              chat_id: Optional[str] = None) -> dict:
-        """Réagit à un message LinkedIn (DM) avec un emoji natif (ex. '👍').
-        `message_id` = id d'un message de unipile_read_chat. `chat_id` (celui du
-        fil) est **requis sur l'API v2**, ignoré en v1."""
         client = unipile_client()
-        # Ne passe `chat_id` que s'il est fourni : garde la compat si oto-core est
-        # encore à une version dont `react_message` n'a pas ce kwarg (v2-only).
-        if chat_id is not None:
-            return client.react_message(message_id, reaction, chat_id=chat_id)
-        return client.react_message(message_id, reaction)
 
-    # ---- LinkedIn recruiter / sales navigator ---------------------------
-    # Nécessitent un abonnement Recruiter / Sales Navigator sur le compte connecté.
+        if op == "get":
+            return client.get_post(_need(post_id, "post_id", op))
 
-    @mcp.tool()
-    def unipile_contracts() -> dict:
-        """Contrats LinkedIn premium (Recruiter / Sales Navigator) disponibles sur le
-        compte — id à passer à unipile_select_contract pour activer la bonne ardoise."""
-        return unipile_client().list_contracts()
+        if op == "engagement":
+            pid = _need(post_id, "post_id", op)
+            return client.list_reactions(pid, cursor=cursor) if kind == "reactions" \
+                else client.list_comments(pid, cursor=cursor)
 
-    @mcp.tool()
-    def unipile_select_contract(contract_id: str) -> dict:
-        """Active un contrat Recruiter / Sales Navigator (`contract_id` de
-        unipile_contracts) pour les appels premium qui suivent."""
-        return unipile_client().select_contract(contract_id)
+        if op == "create":
+            return client.create_post(_need(text, "text", op))
 
-    @mcp.tool()
-    def unipile_inmail_balance() -> dict:
-        """Solde de crédits InMail (messages premium) du compte LinkedIn connecté."""
-        return unipile_client().inmail_balance()
+        if op == "comment":
+            return client.comment_post(_need(post_id, "post_id", op),
+                                       _need(text, "text", op))
+
+        if op == "react":
+            return client.react_post(_need(post_id, "post_id", op), value=value)
+
+        raise _bad("op doit être 'feed', 'get', 'engagement', 'create', 'comment' "
+                   "ou 'react'")
+
+    # ---- réseau : relations & invitations ---------------------------------
 
     @mcp.tool()
-    def unipile_endorse(profile_id: str, skill_endorsement_id: int) -> dict:
-        """Recommande une compétence d'un membre LinkedIn.
+    def linkedin_unipile_network(
+        op: str = "relations",
+        direction: str = "received",
+        provider_id: Optional[str] = None,
+        invitation_id: Optional[str] = None,
+        shared_secret: Optional[str] = None,
+        message: Optional[str] = None,
+        action: str = "accept",
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+        fields: Optional[list] = None,
+    ) -> dict:
+        """Ton réseau LinkedIn : relations de 1er degré et invitations.
+
+        `op` :
+        - **"relations"** (défaut) : tes relations N1 — pour cibler/exporter ton
+          réseau direct. Paginé (`cursor`). `fields` = PROJECTION : ne garde que ces
+          champs sur chaque item (ex. `["name","headline","public_identifier",
+          "member_id","created_at"]`) — réduit fortement le payload d'un export.
+          ⚠️ Pagination NON fiable pour un export EXHAUSTIF : le `cursor` encode un
+          offset volatil (doublons dans l'espace d'offset, total surestimé) et une
+          page `limit=100` rend 90-100 items, pas 100. Pour charger tout un réseau :
+          dédupliquer par `member_id` (JAMAIS l'offset), garder ≤8 pages en parallèle
+          (au-delà : 502 en cascade), prouver le tarissement par 2 passes décalées.
+          Doctrine dédiée : `bulk-load-reseau`.
+        - **"invitations"** : les invitations de connexion. `direction`='received'
+          (reçues, à accepter) ou 'sent' (envoyées, en attente). Paginé — `limit`
+          (défaut 50 : sans borne le backlog entier dépasse la limite de tokens).
+        - **"invite"** : envoie une demande de connexion (outreach 2e/3e degré).
+          `provider_id` = champ `provider_id` d'un résultat `linkedin_unipile_search`
+          / `linkedin_unipile_profile` ; `message` = note ≤300 caractères.
+        - **"handle"** : accepte ou refuse une invitation REÇUE. `invitation_id` ET
+          `shared_secret` proviennent du MÊME item d'op="invitations"
+          (direction='received') ; `action` = 'accept' ou 'decline'.
+        - **"cancel"** : annule une invitation ENVOYÉE (en attente) — `invitation_id`
+          d'un item direction='sent'.
 
         Args:
-            profile_id: provider id du membre (commence par ACo/ADo).
-            skill_endorsement_id: `endorsement_id` d'une compétence, renvoyé dans
-                unipile_profile.
+            op: relations (défaut) | invitations | invite | handle | cancel.
+            direction: op="invitations" — 'received' (défaut) ou 'sent'.
+            provider_id: op="invite" — provider id LinkedIn du destinataire.
+            invitation_id: op="handle"/"cancel" — id de l'invitation.
+            shared_secret: op="handle" — token LinkedIn du même item (obligatoire).
+            message: op="invite" — note d'accompagnement (≤300 caractères).
+            action: op="handle" — 'accept' (défaut) ou 'decline'.
+            cursor: pagination (relations, invitations).
+            limit: taille de page.
+            fields: op="relations" — projection de champs.
         """
-        return unipile_client().endorse_profile(profile_id, skill_endorsement_id)
+        client = unipile_client()
+
+        if op == "relations":
+            out = client.list_relations(cursor=cursor, limit=limit)
+            if fields and isinstance(out, dict) and isinstance(out.get("items"), list):
+                keep = set(fields)
+                out["items"] = [{k: v for k, v in it.items() if k in keep}
+                                for it in out["items"] if isinstance(it, dict)]
+            return out
+
+        if op == "invitations":
+            return client.list_invitations(direction,
+                                           limit=limit if limit is not None else 50,
+                                           cursor=cursor)
+
+        if op == "invite":
+            return client.send_invitation(_need(provider_id, "provider_id", op),
+                                          message=message)
+
+        if op == "handle":
+            return client.handle_invitation(_need(invitation_id, "invitation_id", op),
+                                            _need(shared_secret, "shared_secret", op),
+                                            action)
+
+        if op == "cancel":
+            return client.cancel_invitation(_need(invitation_id, "invitation_id", op))
+
+        raise _bad("op doit être 'relations', 'invitations', 'invite', 'handle' "
+                   "ou 'cancel'")
+
+    # ---- compte : ardoise premium (Recruiter / Sales Navigator) -----------
 
     @mcp.tool()
-    def unipile_member_action(user_id: str, api: str, action: str,
-                                    hiring_project_id: Optional[str] = None,
-                                    stage: Optional[str] = None,
-                                    list_id: Optional[str] = None) -> dict:
-        """Action premium sur un membre LinkedIn (sauvegarde lead / pipeline recruteur).
+    def linkedin_unipile_account(op: str = "contracts",
+                                 contract_id: Optional[str] = None) -> dict:
+        """Ardoise premium du compte LinkedIn connecté (Recruiter / Sales Navigator).
+
+        Nécessite l'abonnement correspondant SUR le compte connecté, et le siège
+        premium activé au connect (`unipile_connect_start(premium=…)`) — sinon les
+        APIs premium répondent 403 « out of your scope ».
+
+        `op` :
+        - **"contracts"** (défaut) : les contrats premium disponibles — l'`id` à
+          passer à op="select".
+        - **"select"** : active un contrat pour les appels premium qui suivent.
+        - **"inmail_balance"** : solde de crédits InMail (messages premium).
 
         Args:
-            user_id: provider id du membre.
-            api: 'sales_navigator' ou 'recruiter'.
-            action: sales_navigator → 'saveLead' ; recruiter → 'addCandidateToPipeline'
-                | 'addApplicantToPipeline' | 'changeCandidatePipeline' | 'rejectApplicant'.
-            hiring_project_id: requis pour les actions pipeline recruiter.
-            stage: pipeline recruiter — 'UNCONTACTED' | 'CONTACTED' | 'REPLIED'.
-            list_id: liste Sales Navigator cible (optionnel pour saveLead).
+            op: contracts (défaut) | select | inmail_balance.
+            contract_id: op="select" — id renvoyé par op="contracts".
         """
-        return unipile_client().member_action(
-            user_id, api, action, hiring_project_id=hiring_project_id,
-            stage=stage, list_id=list_id,
-        )
+        client = unipile_client()
 
-    # ---- LinkedIn recruiter : offres d'emploi & candidats (lectures) ----
+        if op == "contracts":
+            return client.list_contracts()
+        if op == "select":
+            return client.select_contract(_need(contract_id, "contract_id", op))
+        if op == "inmail_balance":
+            return client.inmail_balance()
 
-    @mcp.tool()
-    def unipile_job_postings(cursor: Optional[str] = None,
-                                   limit: Optional[int] = None) -> dict:
-        """Offres d'emploi (job postings) du compte recruteur LinkedIn. Paginé."""
-        return unipile_client().list_job_postings(cursor=cursor, limit=limit)
+        raise _bad("op doit être 'contracts', 'select' ou 'inmail_balance'")
 
-    @mcp.tool()
-    def unipile_job_posting(job_id: str) -> dict:
-        """Détail d'une offre d'emploi LinkedIn (`job_id` de unipile_job_postings)."""
-        return unipile_client().get_job_posting(job_id)
+    # ---- Recruiter : offres d'emploi & candidats (lectures) ---------------
 
     @mcp.tool()
-    def unipile_job_applicants(job_id: str, cursor: Optional[str] = None,
-                                     limit: Optional[int] = None) -> dict:
-        """Candidats d'une offre d'emploi LinkedIn. Paginé."""
-        return unipile_client().list_job_applicants(job_id, cursor=cursor, limit=limit)
+    def linkedin_unipile_job(op: str = "postings",
+                             job_id: Optional[str] = None,
+                             applicant_id: Optional[str] = None,
+                             cursor: Optional[str] = None,
+                             limit: Optional[int] = None) -> dict:
+        """Offres d'emploi et candidats du compte Recruiter LinkedIn (lectures).
 
-    @mcp.tool()
-    def unipile_job_applicant(job_id: str, applicant_id: str) -> dict:
-        """Détail d'un candidat (`applicant_id` de unipile_job_applicants)."""
-        return unipile_client().get_job_applicant(job_id, applicant_id)
+        `op` :
+        - **"postings"** (défaut) : les offres d'emploi du compte recruteur. Paginé.
+        - **"posting"** : détail d'une offre (`job_id` d'op="postings").
+        - **"applicants"** : candidats d'une offre. Paginé.
+        - **"applicant"** : détail d'un candidat (`applicant_id` d'op="applicants").
+        - **"projects"** : projets de recrutement (hiring projects). Le
+          `hiring_project_id` alimente `linkedin_unipile_profile(op="action")`
+          (pipeline). Paginé.
 
-    @mcp.tool()
-    def unipile_hiring_projects(cursor: Optional[str] = None,
-                                      limit: Optional[int] = None) -> dict:
-        """Projets de recrutement (hiring projects) du compte Recruiter LinkedIn.
-        Le `hiring_project_id` alimente unipile_member_action (pipeline). Paginé."""
-        return unipile_client().list_hiring_projects(cursor=cursor, limit=limit)
+        Args:
+            op: postings (défaut) | posting | applicants | applicant | projects.
+            job_id: id de l'offre (posting, applicants, applicant).
+            applicant_id: op="applicant" — id du candidat.
+            cursor: pagination.
+            limit: taille de page.
+        """
+        client = unipile_client()
+
+        if op == "postings":
+            return client.list_job_postings(cursor=cursor, limit=limit)
+        if op == "posting":
+            return client.get_job_posting(_need(job_id, "job_id", op))
+        if op == "applicants":
+            return client.list_job_applicants(_need(job_id, "job_id", op),
+                                              cursor=cursor, limit=limit)
+        if op == "applicant":
+            return client.get_job_applicant(_need(job_id, "job_id", op),
+                                            _need(applicant_id, "applicant_id", op))
+        if op == "projects":
+            return client.list_hiring_projects(cursor=cursor, limit=limit)
+
+        raise _bad("op doit être 'postings', 'posting', 'applicants', 'applicant' "
+                   "ou 'projects'")
