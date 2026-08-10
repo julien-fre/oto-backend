@@ -138,7 +138,10 @@ _SUB_COLUMNS = [
     # `col=old_sub` ne peut toucher que les lignes user.
     ("user_datastores", "owner_id"), ("projects", "owner_id"),
     ("resource_grants", "principal_id"), ("resource_grants", "granted_by"),
-    ("guides", "owner_id"),
+    # `guides` est gelée depuis le lot M1 (ses lignes vivent dans `nodes`) mais elle
+    # existe encore et la prod y écrit pendant la fenêtre : les DEUX se repointent,
+    # sinon une bascule de tenant orphelinerait ce que la conversion recopiera après.
+    ("guides", "owner_id"), ("nodes", "owner_id"),
     # attribution (soft)
     ("projects", "created_by"),
     ("orgs", "created_by"),

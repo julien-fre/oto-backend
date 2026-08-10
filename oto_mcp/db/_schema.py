@@ -794,6 +794,16 @@ CREATE TABLE IF NOT EXISTS platform_instructions (
 --   * delivery='init' : readme injecté au handshake (bloc A/C) — le MÊME primitif,
 --     migré des ex-tables (secret_sauce, *_instructions[claude_md], user_agent_readme).
 -- Distincte des PROCÉDURES (`org_instructions`, slots/versioning). CLAIR (pas un credential).
+--
+-- ⚠️ TABLE EN LECTURE SEULE depuis le lot M1 (blueprint ADR 0063-D4) : ses lignes
+-- vivent désormais dans `nodes` (voir juste dessous), plus rien ici ne s'écrit par
+-- la façade `db/guides.py`. Elle reste en place — la PROD tourne encore l'ancien
+-- code sur CETTE MÊME base, et la conversion la recopie à chaque boot pour
+-- rattraper ce qu'elle y écrit. Deux lecteurs directs subsistent, hors façade :
+-- la recherche (`db/search.py`, index GIN d'expression) et l'outbox d'embeddings
+-- (`db/aux_embed.py`) — leur bascule appartient au lot M5 (unification des index
+-- de recherche), et jusque-là un guide écrit APRÈS M1 n'entre pas dans ces deux
+-- index. C'est le seul écart de comportement du lot, et il est nommé.
 CREATE TABLE IF NOT EXISTS guides (
     id BIGSERIAL PRIMARY KEY,
     scope TEXT NOT NULL,                         -- 'platform' | 'org' | 'group' | 'user'
@@ -807,6 +817,79 @@ CREATE TABLE IF NOT EXISTS guides (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (scope, owner_id, slug)
 );
+
+-- NŒUDS (blueprint ADR 0054 + 0063, lot M1) — la table de contenu UNIQUE vers
+-- laquelle convergent pages, projets, tableaux, lignes et couches de contexte.
+-- Neuve, et pas une extension de `docs` (0063-D1) : la table des pages porte une
+-- contrainte contraire au modèle (`project_id NOT NULL`) et un ownership qui vit
+-- sur le projet — les traîner dans chaque requête pendant des mois coûterait plus
+-- que la conversion.
+--
+-- ⚠️ CE QUE CE LOT FAIT DISPARAÎTRE, et qu'un lecteur futur ne devinera pas en
+-- lisant le code : **le concept de « guide »**. L'ADR 0055-D4 pose qu'une couche
+-- de contexte EST une page. Un readme d'org, un how-to plateforme, la note perso
+-- d'un utilisateur : ce sont des pages (`kind='page'`), possédées par un scope.
+-- Il n'existe donc AUCUN genre « guide » — et l'axe de livraison « injecté /
+-- à la demande », qui était la NATURE d'une ligne de `guides` (sa colonne
+-- `delivery`, ses deux jeux de fonctions, ses deux surfaces), n'est plus qu'une
+-- PROPRIÉTÉ parmi d'autres : `props->>'delivery'`. La table `guides` n'a pas
+-- déménagé, elle s'est dissoute. C'est le premier endroit où le modèle unique
+-- devient réel — les surfaces (`oto_guide`, `/api/me/guides/*`), elles, ne
+-- changent pas d'un octet : elles lisent ici à travers la même façade
+-- (`db/guides.py`).
+--
+-- FORME MESURÉE, pas supposée : c'est la « forme B » du banc d'écriture en masse
+-- (`oto-blueprint:docs/banc-ecriture-noeuds.md`), éprouvée jusqu'à un million de
+-- lignes. Ne pas l'élargir sans mesure — chaque colonne se paie cent mille fois
+-- sur un vivier (0063-D3, garde-fou 1) ; les champs métier vont dans `props`.
+CREATE TABLE IF NOT EXISTS nodes (
+    id BIGSERIAL PRIMARY KEY,
+    -- 0059-D3 : la désignation OPAQUE et immuable, clé des machines (le BIGSERIAL
+    -- reste interne). Une table neuve naît avec — d'où la dette du backfill à
+    -- double résolution évitée avant d'être contractée.
+    -- ⚠️ C'est un IDENTIFIANT, jamais une capacité : le connaître n'ouvre aucun
+    -- droit (0055-D9 — les droits viennent des grants, jamais du contenu).
+    -- L'unicité est une contrainte d'IDENTITÉ (un identifiant qui collisionne ne
+    -- résout plus), pas un index de requête : les index de requête sont les DEUX
+    -- ci-dessous, et seulement eux.
+    public_id TEXT NOT NULL,
+    -- L'arbre. PAS de clé étrangère : « contrainte, ou intégrité portée par le
+    -- code ? » est l'arbitrage M-e du chantier, ouvert (le CASCADE hérité de
+    -- `docs` rend la suppression d'un tableau ×118 plus chère sans index sur
+    -- parent_id). Il se tranche avant M4, pas ici.
+    parent_id BIGINT,
+    position BIGINT,           -- ordre de la fratrie (entiers espacés, 0063-D2)
+    kind TEXT NOT NULL,        -- 'page' aujourd'hui ; tableau | ligne aux lots M3/M4
+    owner_type TEXT NOT NULL,  -- platform | tenant | org | group | user (0049/0053)
+    -- ⚠️ ÉCART ASSUMÉ avec la forme du banc, qui portait `owner_id BIGINT` : un
+    -- propriétaire de scope `user` est un `sub` Logto (`users.sub` est la clé
+    -- primaire, il n'existe aucun id numérique d'utilisateur), et le scope
+    -- `platform` n'a pas d'id du tout. Un BIGINT obligerait donc à inventer un
+    -- surrogate par utilisateur — une migration d'identité, sans rapport avec le
+    -- modèle de contenu. TEXT est aussi ce que portent déjà `projects.owner_id`,
+    -- `user_datastores.owner_id`, `org_instructions.owner_id` et `guides.owner_id` :
+    -- le couple (owner_type, owner_id) se lit de la même façon partout.
+    owner_id TEXT NOT NULL,
+    props JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Le bail de la file de travail migre TEL QUEL (0063-D3) — colonnes posées
+    -- ici, sans lecteur avant la conversion des lignes (M4).
+    claimed_by TEXT,
+    claimed_until TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Contrainte NOMMÉE (docs/live-migrations.md) : un futur
+    -- `DROP CONSTRAINT IF EXISTS nodes_public_id_key` ne peut pas viser autre chose.
+    CONSTRAINT nodes_public_id_key UNIQUE (public_id)
+);
+-- DEUX index de requête, pas plus (0063-D3 garde-fou 2, confirmé par le banc : le
+-- coût du volume se joue là, bien plus que dans la largeur de la ligne) — l'arbre
+-- et le propriétaire. Les deux index partiels de M-f (ownership d'une ligne,
+-- prédicat du bail) attendent M4, et il n'y a AUCUN index de recherche ici : sur
+-- un vivier ils pèsent 99 % du temps d'écriture, leur sort se décide en M5.
+-- Table et index naissent ensemble ⟹ leur place est ici et pas dans `_init`
+-- (cf. le piège « CREATE INDEX d'une NOUVELLE colonne », docs/live-migrations.md).
+CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
+CREATE INDEX IF NOT EXISTS idx_nodes_owner ON nodes(owner_type, owner_id);
 
 -- Procédures (doctrines/skills) — table UNIQUE, possédée par un SCOPE (chantier
 -- procédures, cadrage 10/07) : `owner_type/owner_id` ('org' = procédure d'org,

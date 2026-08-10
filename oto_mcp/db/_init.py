@@ -296,6 +296,28 @@ def _init_db_once() -> None:
         # elle-même — cf. le DROP plus bas. Il a tourné à chaque boot du 06/07 au 28/07 ;
         # le laisser ferait échouer le premier boot post-drop, exactement le piège noté
         # au barreau 2 ci-dessous.)
+        #
+        # === Lot M1 (blueprint ADR 0054/0063) : les guides deviennent des NŒUDS ====
+        # L'ORDRE compte, et c'est le seul risque du lot : la conversion doit suivre
+        # TOUTE écriture de `guides` faite par ce boot — sinon le readme plateforme
+        # que la ligne juste au-dessus vient de semer n'arriverait dans `nodes` qu'au
+        # boot d'après (même famille de piège que le seed-avant-colonne de L1).
+        #
+        # Copie legacy→cible à CHAQUE boot, gardée `to_regclass`
+        # (docs/live-migrations.md) : tant que `guides` existe on recopie — la PROD
+        # tourne encore l'ancien code sur CETTE MÊME base et y écrit pendant la
+        # fenêtre de promotion ; après son DROP (lot suivant), la garde rend ceci
+        # no-op et aucun boot ne casse, quel que soit l'ordre des déploiements.
+        # Purement ADDITIF : rien n'est modifié ni supprimé dans `guides`, qui reste
+        # lisible telle quelle par la prod. Le lot se défait en repointant la façade.
+        #
+        # Ce que la conversion FAIT DISPARAÎTRE, au-delà du déménagement de lignes :
+        # le concept de guide. Une couche de contexte EST une page (0055-D4) → toutes
+        # ces lignes deviennent `kind='page'`, et `delivery` (injecté / à la demande)
+        # descend au rang de PROPRIÉTÉ. Détail et forme : `db/guides.py`, `_schema`.
+        if conn.execute("SELECT to_regclass('guides') AS t").fetchone()["t"]:
+            from .guides import CONVERT_GUIDES_TO_NODES_SQL
+            conn.execute(CONVERT_GUIDES_TO_NODES_SQL)
         # Barreau 2 : readmes d'org + d'équipe (slug réservé claude_md) sortis de
         # `*_instructions` vers `guides` — backfills one-shot RETIRÉS (cadrage 10/07,
         # chantier procédures B1) : ils ont tourné en prod à chaque boot depuis le
