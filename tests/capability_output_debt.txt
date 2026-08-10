@@ -33,7 +33,6 @@ connectors.activation.group_list
 connectors.activation.org_list
 connectors.activation.set_group
 connectors.activation.set_org
-connectors.bulk_select
 connectors.console.access
 connectors.console.account_access
 connectors.console.activation
@@ -46,13 +45,7 @@ connectors.identities
 connectors.instances.list
 connectors.instances.suspend
 connectors.lend_instance
-connectors.me
-connectors.pause
-connectors.recommend
-connectors.select
 connectors.set_default_identity
-connectors.unselect
-connectors.unset_default
 connectors.verify
 group.clear
 group.console

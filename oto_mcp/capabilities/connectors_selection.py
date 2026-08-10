@@ -18,9 +18,9 @@ session suivante (`session_visibility`).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import access, connector_activation, connector_selection, org_store, providers, tool_registry
 from ._authz import ORG_ADMIN_OF, SUB_ONLY
@@ -63,6 +63,113 @@ class BulkSelectInput(BaseModel):
 class UnsetDefaultInput(BaseModel):
     org_id: int
     name: str                            # connecteur (placeholder {name}, auto-mappé)
+
+
+class ReachableInstance(BaseModel):
+    """Une clé du connecteur qui existe à portée du membre SANS être la sienne
+    (équipe dont il est membre, autre org) — de la découvrabilité, pas un droit :
+    l'usage passe par un pin (`_group=`/`_org=`/`_instance=`) et reste re-gardé à
+    l'appel."""
+    kind: Literal["group", "org"]
+    id: int
+    name: str
+
+
+class MyConnectorRow(BaseModel):
+    """Un connecteur du catalogue vu par le membre : la carte + SON état à lui.
+
+    Les champs ci-dessous sont ceux du mode COMPACT (défaut, cf. `_COMPACT_KEYS`).
+    En `verbose=true` la même ligne porte EN PLUS toute la carte publique du
+    catalogue (`description`, `doc_sections`, `auth`, `credential_fields`,
+    `namespaces`, `free_tier`, `identities`, `verifiable`, `connect` enrichi de
+    `callback_url`/`app_ready`) — d'où l'ouverture aux champs additionnels : la
+    forme large est celle du dashboard, elle n'est pas figée ici."""
+    model_config = ConfigDict(extra="allow")
+
+    name: str
+    label: Optional[str] = None
+    help: Optional[str] = None
+    family: Optional[str] = None            # axe builder (dérivé)
+    category: Optional[str] = None          # axe utilisateur (curé)
+    availability: Optional[str] = None
+    # None = absence DÉCLARÉE de logo de marque (générique/maison) → monogramme
+    # côté UI, pas un chargement raté.
+    logo_url: Optional[str] = None
+    state: Literal["not_selected", "active", "paused"]
+    # Baseline proposée par l'ORG (ADR 0019), jamais l'état du membre : un
+    # connecteur `recommended` peut très bien être `not_selected`.
+    recommended: bool
+    # Nombre de procédures d'org qui citent un namespace du connecteur — dérivé
+    # des bodies de doctrine, best-effort (0 sur incident de lecture, pas d'erreur).
+    doctrine_ref_count: int
+    paid_option: Optional[str] = None       # option payante requise (couche 3), None = aucune
+    # `true` = l'option est levée OU aucune n'est requise. Ne dit RIEN du credential :
+    # un connecteur `option_ok` reste inutilisable sans clé posée.
+    option_ok: bool
+    # Présent SEULEMENT si une clé est à portée sans être installée (la ligne se
+    # distingue au lieu d'ajouter un champ vide sur 40 lignes). Son ABSENCE ne
+    # prouve pas qu'il n'y en a aucune : le batch ne couvre pas « ma clé membre
+    # dans une autre org » (limite assumée d'`access.reachable_instances_map`).
+    reachable_instances: Optional[list[ReachableInstance]] = None
+
+
+class MyConnectors(BaseModel):
+    """Le catalogue exposé à l'org active, fusionné avec l'état per-membre.
+    Source UNIQUE de la library ET de « mes connecteurs » du dashboard."""
+    connectors: list[MyConnectorRow]
+    # Écho de la projection demandée — dit au client si les lignes portent la carte
+    # complète ou la vue compacte (les deux formes sortent du MÊME champ).
+    verbose: bool
+
+
+class ConnectorSelectionState(BaseModel):
+    """État de sélection d'UN connecteur pour le membre, après mutation. Forme
+    commune à `select` / `pause` / `unselect` — même objet (l'appartenance du
+    connecteur à la toolbox), les extras diffèrent selon le verbe."""
+    connector: str
+    state: Literal["active", "paused", "not_selected"]
+    # `select` seulement : les outils du connecteur, lus du registre BOOT. Vide si
+    # le registre n'est pas réchauffé (script hors serveur) — pas un connecteur
+    # sans outils.
+    tools: Optional[list[str]] = None
+    # `select` seulement : le mode d'emploi de l'instant — les outils ne sont PAS
+    # montés dans la conversation courante (registre figé à l'ouverture), il faut
+    # passer par `oto_call` ou rouvrir une conversation.
+    hint: Optional[str] = None
+    # `unselect` seulement. `false` = il n'y avait rien à retirer : l'opération est
+    # idempotente, ce n'est PAS un échec.
+    removed: Optional[bool] = None
+
+
+class OrgRecommendedConnectors(BaseModel):
+    """Écho de la baseline d'org posée. C'est le socle de départ réel de tout
+    NOUVEAU membre (ADR 0050), jamais une rétroaction sur les membres existants."""
+    org_id: int
+    recommended: list[str]                  # [] = retour au seul socle plateforme
+
+
+class BulkSelectResult(BaseModel):
+    """Résultat du geste « rendre ce connecteur actif pour toute l'org » — deux
+    effets comptés séparément parce qu'ils portent sur deux populations."""
+    org_id: int
+    connector: str
+    # Membres ACTUELS sans choix posé, à qui le connecteur vient d'être activé.
+    activated: int
+    # Membres SAUTÉS parce qu'ils avaient déjà un choix (actif OU pause) : leur
+    # décision n'est jamais réécrite. `skipped>0` n'est donc pas une anomalie.
+    skipped: int
+    # `false` = le connecteur était DÉJÀ dans la baseline d'org (rien à ajouter),
+    # pas un refus.
+    added_to_org_defaults: bool
+
+
+class UnsetDefaultResult(BaseModel):
+    """Écho du retrait de la baseline d'org. `removed=false` = il n'y était pas.
+    Dans les DEUX cas aucun membre existant n'est touché, et le connecteur reste
+    visible dans la library (ce n'est pas un levier d'exposition)."""
+    org_id: int
+    connector: str
+    removed: bool
 
 
 def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
@@ -302,6 +409,7 @@ def _unset_default(ctx: ResolvedCtx, inp: UnsetDefaultInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="connectors.me", handler=_me, Input=MyConnectorsInput, authz=SUB_ONLY,
+        Output=MyConnectors,
         description="List every connector available to you (the marketplace catalog) with your "
                     "per-workspace state: not_selected (in the library) / active / paused, plus "
                     "`recommended` when your org proposes it. Source for both the connector "
@@ -315,6 +423,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.select", handler=_select, Input=ConnectorActionInput, authz=SUB_ONLY,
+        Output=ConnectorSelectionState,
         description="Install a connector into your active workspace (state=active). name = "
                     "connector name from the catalog. Its tools do NOT mount in the current "
                     "conversation (the tool registry is frozen at open) — the response `hint` "
@@ -323,18 +432,21 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.pause", handler=_pause, Input=ConnectorActionInput, authz=SUB_ONLY,
+        Output=ConnectorSelectionState,
         description="Pause an installed connector (state=paused): kept installed but its tools "
                     "are hidden. Resume by selecting it again.",
         rest=RestBinding("POST", "/api/me/connectors/{name}/pause"),
     ),
     Capability(
         key="connectors.unselect", handler=_unselect, Input=ConnectorActionInput, authz=SUB_ONLY,
+        Output=ConnectorSelectionState,
         description="Remove a connector from your workspace (back to the library). Does not touch "
                     "credentials, only your selection.",
         rest=RestBinding("DELETE", "/api/me/connectors/{name}"),
     ),
     Capability(
         key="connectors.recommend", handler=_recommend, Input=RecommendInput,
+        Output=OrgRecommendedConnectors,
         authz=ORG_ADMIN_OF("org_id"),
         description="[org admin] Set your org's default connector set. This is the REAL starting "
                     "toolbox for every NEW member (merged with the platform baseline at their "
@@ -345,6 +457,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.bulk_select", handler=_bulk_select, Input=BulkSelectInput,
+        Output=BulkSelectResult,
         authz=ORG_ADMIN_OF("org_id"),
         description="[org admin] Make a connector active for the whole org, now and going "
                     "forward, in one call: activates it for every CURRENT member who hasn't made "
@@ -355,6 +468,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="connectors.unset_default", handler=_unset_default, Input=UnsetDefaultInput,
+        Output=UnsetDefaultResult,
         authz=ORG_ADMIN_OF("org_id"),
         description="[org admin] Remove a connector from the org's default set — members who "
                     "join later stop getting it pre-activated. Never touches an existing "
