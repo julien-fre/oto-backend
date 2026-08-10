@@ -28,6 +28,20 @@ class LendInstanceInput(BaseModel):
     revoke: bool = False
 
 
+class LendInstanceResult(BaseModel):
+    """État du prêt APRÈS l'opération — pas un accusé de réception du geste seul."""
+    ok: bool
+    connector: str
+    revoked: bool                           # écho de l'intention (`revoke` de l'entrée)
+    # ⚠️ La liste COMPLÈTE des emprunteurs après coup, pas le seul pair visé : un
+    # `revoke` renvoie donc une liste non vide s'il restait d'autres prêts. Et elle
+    # ne porte QUE les entrées nominatives `user:` — un `share_side` visant une
+    # ÉQUIPE existe dans le coffre mais n'apparaît pas ici (cette surface ne prête
+    # qu'à des personnes). Un `lent_to` vide ne prouve pas que l'instance n'est
+    # partagée avec personne.
+    lent_to: list[str]                      # subs des emprunteurs
+
+
 def _lend_instance(ctx: ResolvedCtx, inp: LendInstanceInput) -> dict:
     if providers.connector_for_provider(inp.connector) is None:
         raise AuthzDenied(400, "unknown_connector", f"Connecteur `{inp.connector}` inconnu.")
@@ -61,7 +75,7 @@ def _lend_instance(ctx: ResolvedCtx, inp: LendInstanceInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="connectors.lend_instance", handler=_lend_instance, Input=LendInstanceInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=LendInstanceResult,
         description=("Lend YOUR connector instance (your key in your current org) to a "
                      "peer so they can use it by pinning it (instance=). `to`=peer's sub; "
                      "`revoke=true` takes it back. You only ever share your OWN key; the "

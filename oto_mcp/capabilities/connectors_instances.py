@@ -33,9 +33,9 @@ LIMITES (documentées) :
 from __future__ import annotations
 
 import logging
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 # Lecteurs NON-déchiffrants uniquement — jamais get_credential*, jamais
 # list_platform_keys (qui déchiffre), jamais les formes appauvries
@@ -54,6 +54,84 @@ _LEVEL_RANK = {"member": 0, "group": 1, "org": 2, "platform": 3}
 class ListInstancesInput(BaseModel):
     connector: Optional[str] = None      # filtre par type de connecteur
     level: Optional[Literal["member", "group", "org", "platform"]] = None
+
+
+class InstanceOwner(BaseModel):
+    """Propriétaire d'une instance. `type='user'` porte un sub, `group`/`org` un
+    entier, `platform` **aucun id** (une clé plateforme est identifiée par son
+    label, ADR 0044 §F) — d'où trois champs optionnels plutôt qu'un couple figé."""
+    type: Literal["user", "group", "org", "platform"]
+    # sub (user) ou id de groupe/org — ENTIER quand il vient du contexte, CHAÎNE
+    # quand il est reconstruit depuis une ligne partagée (`entity_id`). Absent en
+    # platform.
+    id: Optional[Union[int, str]] = None
+    label: Optional[str] = None             # nom du groupe, ou label de la clé plateforme
+
+
+class ConnectorInstance(BaseModel):
+    """Une instance = un connecteur × un paramétrage d'auth, projeté depuis le
+    coffre (lecture seule). Métadonnées uniquement : le secret n'est NI déchiffré
+    NI renvoyé.
+
+    Deux familles derrière la même forme, et leurs clés diffèrent : une instance
+    de COFFRE (member/group/org) porte `account`/`secret_kind`/`config`/`set_by` ;
+    une instance PLATEFORME n'a aucune ligne de coffre, donc rien de tout ça —
+    seulement `daily_quota` (grant) ou `set_at` (free-tier)."""
+    model_config = ConfigDict(extra="allow")
+
+    # Handle opaque et STABLE, cible d'un pin `_instance=`. Ne pas le parser.
+    ref: str
+    connector: str
+    # Rang de PROXIMITÉ dans la cascade, qui porte le tri (membre < groupe < org <
+    # plateforme). Ce n'est PAS le gagnant : la liste ne dit jamais qui résout —
+    # une seule vérité pour ça, `status_for`.
+    level: Literal["member", "group", "org", "platform"]
+    owner: InstanceOwner
+    # DÉRIVÉ, jamais stocké : `meta.label` > « Connecteur · compte » > « Connecteur ·
+    # label de clé » > label du connecteur. Deux instances peuvent donc porter le
+    # même nom ; `ref` est l'identité.
+    name: str
+    # Discrimine plusieurs instances du même connecteur au même niveau (multi-compte).
+    # `""` = l'instance par défaut. Absent des instances plateforme.
+    account: Optional[str] = None
+    secret_kind: Optional[str] = None
+    # Part PUBLIQUE du meta seulement. ⚠️ Les `config_fields` packés DANS le secret
+    # (ex. `data_center` zoho) n'y sont PAS — les lire supposerait de déchiffrer.
+    # Un `config` vide ne signifie donc pas « aucune configuration ».
+    config: Optional[dict] = None
+    set_by: Optional[str] = None
+    set_at: Optional[str] = None
+    # D'OÙ vient l'instance : `credential` (le coffre, à ma portée), `user_grant` /
+    # `org_grant` / `free_tier` (paliers plateforme), `shared_with_me` (prêt
+    # nominatif d'un pair, ADR 0044 share_side — cross-org possible),
+    # `personal_cross_org` (ma propre clé posée dans une AUTRE org, #172).
+    via: str
+    is_default: Optional[bool] = None       # présent (true) seulement si marqué défaut
+    # Présent (true) seulement si l'instance est mise de côté : la cascade la SAUTE,
+    # mais elle reste listée et réactivable — un `suspended` n'est pas une absence.
+    suspended: Optional[bool] = None
+    daily_quota: Optional[int] = None       # paliers plateforme grantés seulement
+
+
+class ConnectorInstances(BaseModel):
+    """Les instances visibles depuis l'org active, par proximité.
+
+    Deux angles morts assumés, qui font qu'une absence ne prouve rien : la liste
+    n'applique AUCUN filtre d'activation/exposition (une instance existe même si
+    le connecteur n'est pas exposé — divergence voulue avec `connectors.me`), et
+    ses sections « partagé avec moi » / « perso cross-org » sont fail-open loggé
+    (un incident les rend vides sans erreur)."""
+    instances: list[ConnectorInstance]
+    count: int                              # = len(instances), APRÈS filtres
+
+
+class SuspendInstanceResult(BaseModel):
+    """Écho de la mise de côté (ou réactivation) de MA clé membre."""
+    connector: str
+    # `null` quand l'instance visée est celle sans compte nommé (le `""` de
+    # l'entrée ressort en `null`) — pas « compte inconnu ».
+    account: Optional[str] = None
+    suspended: bool
 
 
 def _connector_label(connector: str) -> str:
@@ -332,6 +410,7 @@ CAPABILITIES += [
         key="connectors.instances.list",
         handler=_list_instances,
         Input=ListInstancesInput,
+        Output=ConnectorInstances,
         authz=SUB_ONLY,   # org_id injecté du seam acteur, jamais d'un param client
         description=(
             "List the connector INSTANCES (connector x auth/config) visible to you in the active "
@@ -375,6 +454,7 @@ CAPABILITIES += [
         key="connectors.instances.suspend",
         handler=_suspend_instance,
         Input=SuspendInstanceInput,
+        Output=SuspendInstanceResult,
         authz=SUB_ONLY,   # ta propre clé, org du seam acteur — jamais un tiers
         description=(
             "Suspend or reactivate YOUR OWN member key for a connector in the active "

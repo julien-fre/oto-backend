@@ -25,9 +25,6 @@ connectors.console.connector
 connectors.console.identity
 connectors.console.instance
 connectors.force.member
-connectors.instances.list
-connectors.instances.suspend
-connectors.lend_instance
 group.clear
 group.console
 group.create
