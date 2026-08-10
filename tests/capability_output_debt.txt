@@ -24,14 +24,12 @@ connectors.console.activation
 connectors.console.connector
 connectors.console.identity
 connectors.console.instance
-connectors.effect_for_member
 connectors.force.member
 connectors.identities
 connectors.instances.list
 connectors.instances.suspend
 connectors.lend_instance
 connectors.set_default_identity
-connectors.verify
 group.clear
 group.console
 group.create

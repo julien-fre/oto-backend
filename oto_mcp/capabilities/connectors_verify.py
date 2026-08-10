@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import inspect
 import time
-from typing import Literal
+from typing import Literal, Optional
 
 from mcp.shared.exceptions import McpError
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import access, connector_verify, credentials_store, status_hints
 from ._authz import ORG_ADMIN, ORG_MEMBER
@@ -23,6 +23,74 @@ from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 class VerifyInput(BaseModel):
     provider: str                              # path {provider}
     level: Literal["auto", "org"] = "auto"     # auto = credential effectif ; org = clé de l'org
+
+
+class VerifyResult(BaseModel):
+    """Verdict d'une sonde de connexion. L'échec d'authentification EST le
+    résultat (200 + `ok:false`), jamais un 500 — un client qui ne regarde que le
+    code HTTP conclura toujours au succès."""
+    ok: bool
+    provider: str
+    # Durée de la sonde. Vaut **0** sans avoir rien sondé quand `pending` est vrai.
+    elapsed_ms: int
+    # QUELLE instance a répondu, DÉRIVÉE de la même entité que `ref` pour qu'ils ne
+    # puissent pas se contredire. Sous `level="auto"` la cascade a pu retomber d'un
+    # cran : `ok:true` seul ne distingue pas « ma clé perso marche » de « ma clé
+    # perso a échoué, c'est celle de l'org qui répond ». `platform` = grant
+    # plateforme, qui n'a aucune ligne de coffre.
+    level: Literal["member", "group", "org", "platform"]
+    # `<level>:<entity_id>:<provider>` — ex. `org:2:salesforce`. Au palier
+    # plateforme l'`entity_id` est le LABEL de la clé (ADR 0044 §F : plus de
+    # surrogate id), pas un entier : `platform:serper-shared:serper`.
+    ref: str
+    # ⚠️ Porte DEUX sens selon `pending`. Sous `pending:true` ce n'est PAS une
+    # erreur mais l'ÉTAPE SUIVANTE à faire (`status_hints.next_action`) ; sinon
+    # c'est le message d'échec de la sonde. ABSENT quand `ok:true`.
+    error: Optional[str] = None
+    # Présent (et vrai) UNIQUEMENT sur une connexion en DEUX temps volontairement
+    # incomplète (application posée, consentement à venir) : rien n'a été sondé.
+    # `ok:false` + `pending:true` = « enregistré, la suite est ailleurs », pas un
+    # credential invalide — le confondre rouvre le formulaire sur une correction
+    # impossible.
+    pending: Optional[bool] = None
+
+
+class MemberProviderStatus(BaseModel):
+    """Entrée `ProviderStatus` d'un membre pour un connecteur — la MÊME forme que
+    lit sa propre carte, rejouée par un org_admin.
+
+    Le jeu de clés dépend de la FAMILLE du connecteur (keyed à quota, BYO à champs
+    déclarés, session navigateur, OAuth fédéré) : `quota_*` n'existe qu'avec un
+    palier plateforme, `session_set_at`/`identity_*` seulement pour une session
+    navigateur, etc. D'où l'ouverture aux champs additionnels — seuls `mode` et
+    les quatre booléens de présence sont servis par toutes les familles."""
+    model_config = ConfigDict(extra="allow")
+
+    # `forbidden` = rien ne résout POUR CE MEMBRE ; il ne dit pas pourquoi (option
+    # manquante, activation coupée, RBAC) — c'est `connectors.me` qui désambiguïse.
+    mode: str
+    user_key_configured: bool
+    group_secret_configured: bool
+    org_secret_configured: bool
+    platform_key_label: Optional[str] = None
+    quota_used_today: Optional[int] = None
+    # `null` = pas de palier plateforme OU quota illimité (convention : 0 illimité
+    # est traduit en `null` pour que l'UI affiche « ∞ », pas « /0 »).
+    quota_daily: Optional[int] = None
+    # Clé d'équipe « à portée » sans être active — renseignée SEULEMENT quand
+    # `mode == "forbidden"` : sa présence dit « une clé existe, il faut l'épingler ».
+    team_key_group: Optional[dict] = None
+
+
+class ConnectorEffectForMember(BaseModel):
+    """Verdict d'un connecteur REJOUÉ pour un membre nommé (M4) : ce que LUI voit,
+    calculé contre SON org (jamais le contexte du requérant, ADR 0023)."""
+    provider: str
+    member: str                               # sub du membre visé
+    # ⚠️ `null` = ce connecteur n'a AUCUNE entrée de statut (nom hors catalogue, ou
+    # famille sans credential) — pas « accès refusé ». Un front qui rend le null
+    # comme un blocage invente un verdict.
+    status: Optional[MemberProviderStatus] = None
 
 
 def _ref(entity_type: "str | None", entity_id: "str | None", provider: str) -> str:
@@ -172,12 +240,13 @@ from .registry import CAPABILITIES  # noqa: E402
 CAPABILITIES += [
     Capability(
         key="connectors.verify", handler=_verify, Input=VerifyInput, authz=ORG_MEMBER,
+        Output=VerifyResult,
         description=CAP_DOC,
         rest=RestBinding("POST", "/api/me/connectors/{provider}/verify"),
     ),
     Capability(
         key="connectors.effect_for_member", handler=_effect_for_member,
-        Input=EffectForMemberInput, authz=ORG_ADMIN,
+        Input=EffectForMemberInput, authz=ORG_ADMIN, Output=ConnectorEffectForMember,
         description="Org admin: replay a connector's verdict AS a given org member (M4). "
                     "Returns that member's ProviderStatus entry for {provider}, org scoped.",
         rest=RestBinding("GET", "/api/me/connectors/{provider}/effect"),
