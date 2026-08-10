@@ -24,6 +24,43 @@ class OrgIdInput(BaseModel):
     org_id: int
 
 
+class OrgUpdated(BaseModel):
+    """Profil d'org après écriture — **relu du store**, donc normalisé : ce que tu
+    reçois n'est pas forcément ce que tu as envoyé.
+
+    - `domain` passe par `normalize_domain` : `https://WWW.Acme.com/x` ressort
+      `acme.com`. Un domaine non normalisable est un 400, jamais un silence.
+    - `description`/`industry`/`location` sont *strippés* ; une chaîne VIDE **efface**
+      le champ (et `domain: ""` le met à NULL) — c'est une écriture, pas un « ne
+      touche pas » (pour ça, omettre le champ).
+    - ⚠️ Un PATCH **sans aucun champ** est un no-op qui répond `ok: true` avec l'org
+      inchangée : le succès ne prouve pas qu'une modification a eu lieu."""
+    ok: bool
+    org_id: int
+    name: Optional[str] = None
+    description: Optional[str] = None
+    domain: Optional[str] = None
+    industry: Optional[str] = None
+    location: Optional[str] = None
+    # Logo EFFECTIF (upload > logo.dev dérivé du `domain`) : éditer `domain` change
+    # donc `logo_url` sans qu'aucun logo n'ait été téléversé.
+    logo_url: Optional[str] = None
+
+
+class OrgArchived(BaseModel):
+    """Archivage (soft-delete) d'une org. ⚠️ **`archived: false` n'est pas un échec** :
+    avec `ok: true` en HTTP 200, il dit que l'org était **déjà archivée** — l'opération
+    est idempotente et le résultat voulu est atteint. Un client qui traite `false`
+    comme une erreur re-tentera indéfiniment.
+
+    L'org sort de tous les listings mais rien n'est détruit (réversible en DB, membres
+    et credentials conservés). Les membres qui l'avaient pour maison basculent sur leur
+    plus ancienne org restante ; l'espace personnel est le repli."""
+    ok: bool
+    org_id: int
+    archived: bool
+
+
 class UpdateOrgInput(BaseModel):
     org_id: int
     name: Optional[str] = Field(None, max_length=80)
@@ -78,7 +115,7 @@ def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="org.update", handler=_update_org, Input=UpdateOrgInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=OrgUpdated,
         description=("Update an organization's profile (name, description, brand "
                      "domain like acme.com, industry, location). The domain also "
                      "drives the org logo when none is uploaded. "
@@ -88,7 +125,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.archive", handler=_archive_org, Input=OrgIdInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=OrgArchived,
         description=("Archive (delete) an organization you administer: it disappears "
                      "from every listing and its members fall back to their other "
                      "orgs. Reversible in DB, data is kept. You must be org_admin; "
