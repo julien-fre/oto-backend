@@ -40,10 +40,17 @@ latérale) → créer un jeton. Il ne s'affiche qu'une fois.
 | Jeton | celui de l'étape 1 |
 | Hôtes autorisés | `mcp.oto.cx` |
 
-**3. Ajouter le plugin.** Section **Plugins** de l'espace de travail → **+**. Deux voies :
-téléverser l'archive `oto-mcp.zip` (le plus simple), ou déclarer un dépôt privé comme source
-d'organisation (la synchronisation devient automatique). Les deux donnent le même plugin
-`oto-mcp` ; le zip est figé, le dépôt se met à jour seul.
+**3. Ajouter le plugin.** Section **Plugins** de l'espace de travail → **+**. Deux voies, au
+choix — les deux donnent le même plugin `oto-mcp` :
+
+- **téléverser l'archive** `oto-mcp.zip`, à prendre sur
+  <https://github.com/otomata-tech/oto-claude-tag-template/releases> — le plus rapide, mais figé ;
+- **déclarer un dépôt privé** : ouvrir <https://github.com/otomata-tech/oto-claude-tag-template>,
+  bouton **Use this template** → **Private**, puis ajouter votre copie comme source de plugins
+  d'organisation — plus long à poser, mais les mises à jour arrivent toutes seules.
+
+Claude Tag n'accepte comme source que des dépôts **privés ou internes** : c'est pourquoi on part
+d'un template plutôt que d'un fork, qui resterait public et serait refusé.
 
 **4. Essayer.** Dans un canal, `/invite @Claude`, puis dans un **fil neuf** :
 `@Claude qui suis-je sur oto ?`
