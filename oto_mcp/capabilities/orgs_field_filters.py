@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import connector_field_schema, connector_schema_store, db, field_filter_defaults, org_store
 from ._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
@@ -49,6 +49,72 @@ _ACTION_SCHEMA = [
     {"action": "anonymize", "label": "Anonymiser (person_…)", "params": []},
     {"action": "drop", "label": "Supprimer le champ", "params": []},
 ]
+
+
+class FieldFiltersView(BaseModel):
+    """Politique de redaction de l'org, par connecteur, + de quoi peindre le
+    formulaire. Trois pièges de lecture :
+
+    ⚠️ **`filters: {}` veut dire « rien n'est masqué »**, pas « pas encore
+    configuré » : la redaction est OPT-IN et `defaults` (`SERVER_DEFAULTS`) est
+    **vide par décision** — aucun champ n'est redacté tant qu'une règle d'org ne le
+    demande. Ne jamais afficher un état vide comme « protégé par défaut ».
+
+    ⚠️ **`schema` (singulier) et `schemas` (pluriel) n'ont aucun rapport.** `schema`
+    = la spec du FORMULAIRE (actions disponibles et leurs sous-options), toujours
+    présent ; `schemas` = le catalogue des champs par connecteur, ~160 KB, **absent
+    de l'objet** sauf `include_schemas=true` (il dépasse le plafond de tokens MCP).
+    Clé absente ≠ catalogue vide.
+
+    `templates` = jeux de règles applicables en un clic ; les appliquer écrit une
+    politique d'org ordinaire, ce n'est pas un mode."""
+    org_id: int
+    # {"<service>": {"rules": [...], "salt"?: str}} — keyé par nom de connecteur.
+    filters: dict
+    # Défauts serveur. Vide par décision produit (cf. docstring).
+    defaults: dict
+    templates: dict
+    # Spec du formulaire : [{action, label, params:[{key, type, label, options?}]}].
+    # Aliasé : le champ s'appelle `schema` sur le fil, mais `BaseModel.schema` est un
+    # attribut pydantic — l'attribut python porte donc un underscore final.
+    schema_: list[dict] = Field(alias="schema")
+    # Catalogue des champs par connecteur (curé ∪ OBSERVÉ sur les vraies réponses).
+    # Absent sauf `include_schemas=true`.
+    schemas: Optional[dict] = None
+
+
+class FieldFilterSet(BaseModel):
+    """Politique de redaction d'UN connecteur écrite (ou effacée).
+
+    ⚠️ **`rules` change de type entre la requête et la réponse** : en entrée c'est la
+    LISTE des règles, en sortie c'est leur NOMBRE. Même nom, deux types.
+
+    ⚠️ `service` n'est **pas validé contre le catalogue de connecteurs** : une faute
+    de frappe (`salesfroce`) répond `ok: true` et stocke une politique qui ne
+    s'appliquera jamais. Rien dans la réponse ne le signale — relire `filters` de
+    `GET /field-filters` et comparer aux connecteurs réels reste à la charge du client.
+
+    `cleared: true` = la politique de ce connecteur a été RETIRÉE ; le repli est le
+    défaut serveur, qui est vide ⟹ plus rien n'est masqué pour ce connecteur."""
+    ok: bool
+    org_id: int
+    service: str
+    cleared: bool
+    # Nombre de règles posées (0 quand `cleared`).
+    rules: int
+
+
+class FieldFilterPreview(BaseModel):
+    """Dry-run : l'échantillon passé à travers le filtre. `redacted` a la forme de ce
+    qui a été envoyé (objet ou liste), pas une enveloppe.
+
+    ⚠️ Un `redacted` **identique à l'entrée** ne veut pas dire « rien de sensible » :
+    c'est le cas normal quand aucune règle ne s'applique (aucune politique posée pour
+    ce service, et le défaut serveur est vide). Le dry-run ne détecte rien — il
+    APPLIQUE des règles."""
+    org_id: int
+    service: str
+    redacted: Any
 
 
 class GetFieldFiltersInput(BaseModel):
@@ -162,7 +228,7 @@ def _preview_field_filter(ctx: ResolvedCtx, inp: PreviewFieldFilterInput) -> dic
 CAPABILITIES += [
     Capability(
         key="org.field_filters.get", handler=_get_field_filters, Input=GetFieldFiltersInput,
-        authz=ORG_MEMBER_OF("org_id"),
+        authz=ORG_MEMBER_OF("org_id"), Output=FieldFiltersView,
         description=("Read the org's field-redaction policy per connector, plus the "
                      "server defaults and the available redaction modes/params. Pass "
                      "include_schemas=true to also get the full per-connector field "
@@ -171,7 +237,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.field_filters.set", handler=_set_field_filter, Input=SetFieldFilterInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=FieldFilterSet,
         description=("Set the org's field-redaction rules for one connector (service). "
                      "Each rule = {fields:[...], action, ...params}. Actions: mask "
                      "(+preserve email/phone/iban or keep_first/keep_last), pseudonym "
@@ -182,7 +248,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.field_filters.preview", handler=_preview_field_filter, Input=PreviewFieldFilterInput,
-        authz=ORG_MEMBER_OF("org_id"),
+        authz=ORG_MEMBER_OF("org_id"), Output=FieldFilterPreview,
         description=("Dry-run a connector's field-redaction on a real sample response: "
                      "returns the redacted payload so you can SEE exactly which fields "
                      "(incl. nested keys) get masked. Pass `rules` to test a draft, or omit "

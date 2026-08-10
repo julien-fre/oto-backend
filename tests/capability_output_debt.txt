@@ -82,9 +82,6 @@ org.doctrine.admin_list
 org.doctrine.get
 org.email_settings.get
 org.email_settings.set
-org.field_filters.get
-org.field_filters.preview
-org.field_filters.set
 org.instruction.admin_delete
 org.instruction.admin_set
 org.instruction.delete
