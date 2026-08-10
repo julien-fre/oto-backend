@@ -75,7 +75,6 @@ org.admin.archive
 org.admin.create
 org.admin.get
 org.admin.list
-org.audit_log.export
 org.console
 org.doctrine.admin_get
 org.doctrine.admin_list
