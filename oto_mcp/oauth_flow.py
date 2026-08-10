@@ -45,6 +45,20 @@ class OAuthFlowError(ValueError):
     retrouvaient dans les messages d'erreur)."""
 
 
+class OAuthExchangeRefused(OAuthFlowError):
+    """Le serveur d'autorisation a REFUSÉ l'échange — condition d'entrée/config de
+    l'utilisateur, jamais un bug backend : code expiré ou déjà consommé, verifier PKCE
+    qui ne correspond pas, client_id/secret faux, scopes absents, callback URL
+    divergente, appel bloqué par une restriction IP.
+
+    Sous-classe distincte parce que `OAuthFlowError` couvre aussi de VRAIS bugs de
+    notre côté (`OTO_MCP_OAUTH_STATE_SECRET` absent) : les deux ne doivent pas partir
+    au même endroit. Celle-ci est droppée de Sentry (`error_taxonomy`), l'autre non —
+    sinon une misconfiguration serveur disparaîtrait derrière le bruit des refus
+    normaux (2026-07-31 : 3 events de refus de grant Salesforce en tête du tableau,
+    alors qu'ils décrivaient une Connected App mal réglée côté client)."""
+
+
 # --- state signé --------------------------------------------------------------
 
 def _secret() -> bytes:
@@ -175,7 +189,7 @@ def exchange_code(token_url: str, *, code: str, client_id: str, client_secret: s
     try:
         body = r.json()
     except ValueError:
-        raise OAuthFlowError(
+        raise OAuthExchangeRefused(
             f"Réponse illisible du serveur d'autorisation ({host}, HTTP {r.status_code}).")
     # Beaucoup de fournisseurs (Zoho…) répondent HTTP 200 avec l'erreur dans le corps.
     if r.status_code >= 400 or "error" in body:
@@ -188,7 +202,7 @@ def exchange_code(token_url: str, *, code: str, client_id: str, client_secret: s
             body.get("error") or body.get("message") or f"HTTP {r.status_code}",
             body.get("error_description"),
         ) if v)
-        raise OAuthFlowError(f"Échec de l'échange OAuth ({host}) : {detail}.")
+        raise OAuthExchangeRefused(f"Échec de l'échange OAuth ({host}) : {detail}.")
     return body
 
 

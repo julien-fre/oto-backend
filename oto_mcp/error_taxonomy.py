@@ -106,6 +106,23 @@ def _is_arg_validation_error(exc) -> bool:
     return False
 
 
+def _is_oauth_exchange_refused(exc) -> bool:
+    """True si la chaîne porte un REFUS du serveur d'autorisation (`OAuthExchangeRefused`).
+
+    Le refus décrit la Connected App ou le grant de l'UTILISATEUR — code expiré, scopes
+    absents, callback divergente, restriction IP — jamais notre code. La chaîne suffit :
+    chaque connecteur re-lève son message traduit `from e`, donc la cause d'origine reste
+    visible ici sans que la taxonomie ait à connaître un seul connecteur par son nom.
+
+    Import local : `oauth_flow` importe la config au chargement, et ce module est importé
+    très tôt par le middleware Sentry."""
+    try:
+        from .oauth_flow import OAuthExchangeRefused
+    except Exception:
+        return False
+    return any(isinstance(e, OAuthExchangeRefused) for e in _chain(exc))
+
+
 def _is_upstream_managed_error(exc) -> bool:
     """True si la chaîne porte une erreur de connecteur amont d'INPUT/config SANS
     statut HTTP (oto-backend#90) : facette LinkedIn introuvable, compte non connecté,
@@ -191,12 +208,14 @@ def _connector_of_tool(name: str) -> Optional[str]:
 
 def _is_expected_error(exc) -> bool:
     """Erreur gérée, à NE PAS reporter à Sentry : 4xx amont OU refus d'entrée/config
-    user OU args rejetés OU outil non monté (condition de toolbox, pas un bug).
+    user OU args rejetés OU refus d'échange OAuth OU outil non monté (condition de
+    toolbox, pas un bug).
     Les vraies exceptions code (5xx, KeyError, InvalidTag…) restent reportées."""
     return (_is_managed_connector_error(exc)
             or _is_user_input_error(exc)
             or _is_arg_validation_error(exc)
             or _is_upstream_managed_error(exc)
+            or _is_oauth_exchange_refused(exc)
             or _unknown_tool_name(exc) is not None)
 
 
