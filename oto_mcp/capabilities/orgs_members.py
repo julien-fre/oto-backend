@@ -60,10 +60,11 @@ class MemberWritten(BaseModel):
     pour rapprocher requête et réponse.
 
     ⚠️ **L'ajout est un UPSERT, pas une création** : ajouter quelqu'un qui est déjà
-    membre ne rend pas de conflit, ça écrase son rôle. Deux conséquences :
-    `POST /members` sur un membre existant est un changement de rôle déguisé, et il
-    ne passe PAS par l'anti-lockout de `POST /members/{sub}` (qui, lui, refuse en 409
-    de rétrograder le dernier org_admin).
+    membre ne rend pas de conflit, ça écrase son rôle. `POST /members` sur un membre
+    existant est donc un changement de rôle déguisé — et il porte le MÊME anti-lockout
+    que `POST /members/{sub}` (409 `last_org_admin` sur le dernier org_admin) depuis
+    #273 ; avant ce correctif il était la route par laquelle on rétrogradait ce que
+    l'autre refusait.
 
     ⚠️ Effet de bord invisible dans la réponse : une **première** adhésion peut
     devenir l'org MAISON de la personne (si elle n'avait que son espace personnel) —
@@ -109,25 +110,40 @@ class LeaveOrgInput(BaseModel):
     org_id: int
 
 
+def _write_member_role(org_id: int, sub: str, role: str, *, require_member: bool) -> dict:
+    """Écrit le rôle d'un membre — le geste métier commun aux DEUX capacités d'écriture.
+
+    `org_store.add_org_member` est un **upsert** : « ajouter » et « changer le rôle »
+    touchent la même ligne, donc c'est la même opération et elle doit porter les mêmes
+    gardes. Tant que l'anti-lockout vivait dans le seul `_set_member_role`, `POST /members`
+    rétrogradait le dernier org_admin que `POST /members/{sub}` refusait de toucher (#273) —
+    une règle tenue à deux endroits n'est tenue qu'au premier qu'on relit. D'où ce point
+    de passage unique : toute nouvelle surface d'écriture de rôle passe par ici.
+
+    `require_member` = la SEULE divergence légitime entre les deux : `set_role` exige une
+    appartenance préexistante (404 sinon), `add` l'accepte absente — c'est son objet.
+    """
+    current = org_store.get_org_role(org_id, sub)
+    if current is None and require_member:
+        raise AuthzDenied(404, "not_a_member", "Cible non-membre de l'org.")
+    # Anti-lockout : ne pas rétrograder le dernier org_admin, par quelque route que ce soit.
+    if current == "org_admin" and role != "org_admin" and _count_org_admins(org_id) <= 1:
+        raise AuthzDenied(409, "last_org_admin", "Impossible de rétrograder le dernier org_admin.")
+    org_store.add_org_member(org_id, sub, role)
+    return {"ok": True, "org_id": org_id, "sub": sub, "role": role}
+
+
 def _add_member(ctx: ResolvedCtx, inp: AddMemberInput) -> dict:
     _require_org_exists(inp.org_id)
     role = _check_role(inp.role)
     target_sub = _resolve_target(inp.target)
-    org_store.add_org_member(inp.org_id, target_sub, role)
-    return {"ok": True, "org_id": inp.org_id, "sub": target_sub, "role": role}
+    return _write_member_role(inp.org_id, target_sub, role, require_member=False)
 
 
 def _set_member_role(ctx: ResolvedCtx, inp: SetMemberRoleInput) -> dict:
     _require_org_exists(inp.org_id)
     role = _check_role(inp.role)
-    current = org_store.get_org_role(inp.org_id, inp.sub)
-    if current is None:
-        raise AuthzDenied(404, "not_a_member", "Cible non-membre de l'org.")
-    # Anti-lockout : ne pas rétrograder le dernier org_admin.
-    if current == "org_admin" and role != "org_admin" and _count_org_admins(inp.org_id) <= 1:
-        raise AuthzDenied(409, "last_org_admin", "Impossible de rétrograder le dernier org_admin.")
-    org_store.add_org_member(inp.org_id, inp.sub, role)
-    return {"ok": True, "org_id": inp.org_id, "sub": inp.sub, "role": role}
+    return _write_member_role(inp.org_id, inp.sub, role, require_member=True)
 
 
 def _remove_member(ctx: ResolvedCtx, inp: RemoveMemberInput) -> dict:
