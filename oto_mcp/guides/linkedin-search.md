@@ -1,26 +1,48 @@
 ---
 title: Recherche LinkedIn (Recruiter / Sales Navigator / Classic) — facettes & pagination
-description: préférer le structuré (paginé au cursor), résoudre chaque filtre en id via unipile_search_facets ; l'URL est une boîte noire plafonnée à 25
+description: ce qui commande la pagination, c'est le PRODUIT (classic ne pagine pas, premium oui), pas le mode d'entrée ; résoudre chaque filtre en id via unipile_search_facets ; l'URL reste une boîte noire plafonnée
 ---
 
 # Rechercher sur LinkedIn via Unipile
 
 À lire avant toute recherche de personnes/entreprises un peu sérieuse — surtout
-dès que tu veux **plus de 25 résultats** ou **filtrer par autre chose qu'un mot-clé**
-(compétence, secteur, localisation, employeur, intitulé…).
+dès que tu veux **plus d'une page de résultats** ou **filtrer par autre chose qu'un
+mot-clé** (compétence, secteur, localisation, employeur, intitulé…).
 
-## La règle : structuré, pas URL
+## Ce qui commande le volume : le PRODUIT, pas le mode d'entrée
 
-`unipile_search` a deux entrées, `url=` et les paramètres structurés. **Privilégie
-TOUJOURS le structuré.**
+C'est le point à comprendre avant tout le reste, parce que se tromper ici coûte des
+jours : **la pagination dépend du produit LinkedIn (`api=`), pas de la façon dont tu
+formules la requête.**
 
-- **Mode URL** (`url="…"`) = **boîte noire**. Il rend **la première page (25 résultats) et
-  rien de plus** : pas de cursor, le `start` de l'URL est **ignoré**, même la vraie URL
-  « page 2 » redonne les 25 premiers. Il n'existe **aucun** moyen de paginer une recherche
-  URL, et Unipile n'a **aucun endpoint pour décoder une URL en paramètres** (le
-  `searchContextId` est opaque). ⇒ N'utilise l'URL que pour un aperçu jetable des 25 premiers.
-- **Mode structuré** (`keywords=` + facettes) = **paginé par cursor** → tu récupères tout.
-  C'est la seule voie complète.
+- **`classic`** (défaut, compte sans abonnement) : **ne pagine pas**. Ni en URL, ni en
+  structuré. Tu obtiens une première page et rien de plus, sans cursor exploitable —
+  mesuré : 10 résultats rendus sur 92 annoncés. Passer de l'URL au structuré ne débloque
+  RIEN sur ce palier ; ça n'améliore que la façon de filtrer.
+- **`sales_navigator` / `recruiter`** : **paginent au cursor**, et c'est là seulement que
+  le structuré donne accès au gisement complet.
+
+⚠️ Une version antérieure de ce guide opposait « mode URL » et « mode structuré » en
+présentant le second comme « la seule voie complète, paginée au cursor ». C'était faux et
+trompeur : sur un compte classic, changer de mode ne change pas le plafond. La conclusion
+naturelle — « je pagine mal, donc je m'y prends mal » — envoyait chercher un problème de
+formulation là où il fallait un siège premium.
+
+**Donc, dans l'ordre :** si tu as besoin de volume, vérifie d'abord le produit. S'il est
+`classic`, aucune formulation ne te donnera la suite.
+
+## Structuré plutôt qu'URL — pour les filtres, pas pour le volume
+
+`unipile_search` a deux entrées, `url=` et les paramètres structurés. **Privilégie le
+structuré**, mais pour la bonne raison : il te rend les filtres maîtrisables, pas le
+gisement complet (voir ci-dessus).
+
+- **Mode URL** (`url="…"`) = **boîte noire**. Première page et rien de plus : pas de
+  cursor, le `start` de l'URL est **ignoré**, même la vraie URL « page 2 » redonne les
+  premiers résultats. Unipile n'a **aucun endpoint pour décoder une URL en paramètres**
+  (le `searchContextId` est opaque). ⇒ Aperçu jetable, rien d'autre.
+- **Mode structuré** (`keywords=` + facettes) = filtres explicites, reproductibles, et
+  **paginables si et seulement si le produit le permet**.
 
 **Si on te donne une URL** : regarde si elle porte un `searchKeyword=` lisible. Si oui,
 reprends ce mot-clé en structuré (`keywords=…`) et rajoute les filtres voulus. Si l'URL
@@ -50,8 +72,12 @@ en cas d'ambiguïté, résous d'abord via `unipile_search_facets` et passe l'id 
 - **Produit** (`api=`) : `classic` (défaut, sans abonnement), `sales_navigator`, `recruiter`.
   Les deux premium exigent le **siège activé À LA CONNEXION** (`unipile_connect_start(premium=…)`),
   sinon `403 "out of your scope"`. Recruiter et Sales Navigator sont exclusifs.
-- **Pagination** : repasse le `cursor` renvoyé (`unipile_search(cursor=…)`) — il ré-encode
-  toute la requête, ne reconstruis rien. Boucle jusqu'à cursor vide.
+- **Pagination, sur premium uniquement** : repasse le `cursor` renvoyé
+  (`unipile_search(cursor=…)`) — il ré-encode toute la requête, ne reconstruis rien.
+  Boucle jusqu'à cursor vide.
+- **Sur `classic`** : il n'y a pas de suite à aller chercher. Si le besoin porte sur un
+  gisement entier, dis-le plutôt que de boucler — c'est un problème de siège, pas de
+  méthode.
 
 ## Cadence & rate-limit (ne pas cramer le compte)
 
