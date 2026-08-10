@@ -160,6 +160,25 @@ def clear_unipile_account(sub: str, org_id: Optional[int], provider: str = "LINK
             (sub, org_id, provider))
 
 
+def org_unipile_account_ids(org_id: Optional[int], provider: str = "LINKEDIN") -> set:
+    """`account_id` VIVANTS rattachés à CETTE org sur ce canal, tous membres confondus.
+
+    Sert la garde du chemin SANS `sub` (endpoint MCP publié d'un projet, ADR 0032) : le
+    projet déclare une identité de connecteur, et il faut prouver qu'elle appartient bien
+    à l'org propriétaire avant d'opérer sous elle. Sans ce recoupement, un lien de projet
+    nommant un `acc_…` quelconque ferait agir l'endpoint sous le compte LinkedIn d'un
+    autre tenant — la clé Unipile partagée adresse tout l'abonnement."""
+    if org_id is None:
+        return set()
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT account_id FROM unipile_accounts "
+            "WHERE org_id = %s AND provider = %s AND disconnected_at IS NULL",
+            (org_id, provider),
+        ).fetchall()
+    return {r["account_id"] for r in rows}
+
+
 def count_unipile_accounts_for_org(org_id: int) -> int:
     """Nombre de SIÈGES de la clé plateforme consommés par cet org (base du plafond
     anti-dérapage sur les comptes hébergés). Les comptes BYO (platform_seat=false)

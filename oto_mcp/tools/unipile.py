@@ -22,7 +22,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify, db, status_hints
+from .. import access, connector_verify, db, session_org, status_hints
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,21 @@ def _note_rate_limited(sub: str, err) -> None:
     si le corps n'a pas de délai lisible."""
     secs = min(getattr(err, "retry_after", None) or _RL_DEFAULT_SECS, _RL_MAX_SECS)
     _RATE_LIMIT_UNTIL[sub] = time.time() + secs
+
+
+def _actor_key() -> str:
+    """Clé d'ACTEUR pour la comptabilité LOCALE — cooldown de rate-limit, cache société.
+    Jamais une autorisation : ce qu'elle indexe, c'est une cadence, pas un droit.
+
+    Le `sub` quand il y en a un. Sur un endpoint MCP de projet publié (ADR 0032) il n'y
+    en a pas, et exiger un `sub` ici refusait des lectures que le projet autorise
+    pourtant — c'est le fond de #276. Le projet est le porteur légitime : il n'opère
+    qu'un compte LinkedIn, donc une seule cadence à tenir."""
+    from .. import subdomain_project
+    anon = subdomain_project.current_anon_context()
+    if anon is not None:
+        return f"project:{anon.project_id}"
+    return access.current_user_sub_or_raise()
 
 
 def _scrape(sub: str, fn):
@@ -335,6 +350,71 @@ def admin_status_by_org(sub: str, orgs: list) -> list:
     return out
 
 
+def _project_operated_account(anon, provider: str) -> str:
+    """Compte à opérer sur un endpoint MCP PUBLIÉ (ADR 0032) — aucun `sub`.
+
+    Le secret d'un endpoint publié authentifie le PROJET, pas une personne : la
+    résolution per-membre (`resolve_operated_account_id`) n'a rien à quoi s'accrocher et
+    levait « Unauthenticated ». Résultat, un projet partagé avec un tiers perdait
+    LinkedIn — la moitié des contacts d'une mission d'enrichissement — et la seule
+    alternative était de confier un jeton `oto_` NOMINAL, qui porte l'organisation
+    entière (356 outils, `email_send`, `data_delete_namespace`) : indéfendable devant la
+    conformité d'un client sous contrat de traitement.
+
+    L'information manquante existait déjà : le projet DÉCLARE ses identités de connecteur
+    (`project_links.identity_ref`). On l'utilise — c'est ce qui fait du secret de projet un
+    vrai jeton restreint : le périmètre d'un projet, sous les identités qu'il déclare.
+
+    Deux gardes, toutes deux nécessaires :
+    - **appartenance** — l'identité doit être un compte VIVANT de l'org propriétaire du
+      projet. La clé Unipile partagée adresse tout l'abonnement de la plateforme : sans ce
+      recoupement, un lien de projet nommant un `acc_…` quelconque ferait agir un endpoint
+      public sous le LinkedIn d'un autre tenant.
+    - **canal** — le filtre par `provider` remplace ici la règle « plusieurs bindings ⇒
+      ambigu, on abandonne » : un projet qui déclare LinkedIn ET WhatsApp sous le même
+      connecteur `unipile` ne dit rien d'ambigu, il déclare deux canaux.
+
+    Jamais de repli : ni sur un autre compte de l'org, ni sur le premier de l'abonnement.
+    Un message parti sous la mauvaise identité est irréversible, et le destinataire du
+    partage n'a aucun moyen de s'en apercevoir."""
+    declared = access.project_declared_identities("unipile", anon.project_id)
+    if not declared:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(f"Ce projet partagé ne déclare aucun compte {provider.title()}. Son "
+                     "propriétaire doit lier le connecteur AVEC une identité "
+                     "(`oto_project op=link target_type=connecteur target_ref=unipile "
+                     "identity_ref=<account_id>`) pour que l'endpoint puisse agir.")))
+    usable = [a for a in declared
+              if a in db.org_unipile_account_ids(anon.org_id, provider)]
+    if not usable:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(f"Le compte {provider.title()} déclaré par ce projet n'est pas (ou "
+                     "plus) un compte connecté de l'organisation propriétaire — "
+                     "déconnecté, ou lié à une autre organisation. Pas de repli sur un "
+                     "autre compte : le propriétaire doit rétablir le lien.")))
+    if len(usable) > 1:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(f"Ce projet déclare {len(usable)} comptes {provider.title()} "
+                     f"({', '.join(sorted(usable))}). Un endpoint publié n'a personne à "
+                     "qui demander lequel : le propriétaire doit n'en garder qu'un pour "
+                     "ce canal.")))
+    # `_account=` reste lisible sur cette surface (l'axe ne demande pas de `sub`). On ne
+    # l'ignore PAS en silence — avaler un jeton de contexte fait agir sous une autre
+    # identité que celle demandée, le mode de panne que le préfixe `_` corrigeait
+    # (#250) : on l'accepte s'il redit l'identité du projet, on refuse sinon. Le
+    # destinataire d'un partage ne choisit pas sous quel compte il opère.
+    pin = session_org.current_call_account()
+    if pin and pin != usable[0]:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=("`_account=` n'est pas recevable sur un endpoint de projet publié : "
+                     "l'identité vient du projet, pas de l'appelant. Retire le jeton.")))
+    return usable[0]
+
+
 def unipile_client(provider: str = "LINKEDIN"):
     """Client Unipile du user pour un canal (LINKEDIN, WHATSAPP, …).
 
@@ -352,8 +432,13 @@ def unipile_client(provider: str = "LINKEDIN"):
     quelle (la clé résolue est indépendante du compte).
     """
     from oto.tools.unipile import make_unipile_client
-    from .. import connector_identities
+    from .. import connector_identities, subdomain_project
     rc = access.resolve_credential("unipile", want="auto")
+    anon = subdomain_project.current_anon_context()
+    if anon is not None:
+        return make_unipile_client(
+            api_key=rc.key, dsn=(None if rc.is_platform else rc.config.get("dsn")),
+            account_id=_project_operated_account(anon, provider))
     sub = access.current_user_sub_or_raise()
     try:
         account_id = connector_identities.resolve_operated_account_id(sub, provider)
@@ -589,7 +674,7 @@ def register(mcp: FastMCP) -> None:
                 le siège premium activé au connect (sinon 403 « out of scope »).
             cursor: Curseur de pagination renvoyé par un appel précédent.
         """
-        sub = access.current_user_sub_or_raise()
+        sub = _actor_key()
         return _slim_search(_scrape(sub, lambda: unipile_client().search(
             keywords=keywords, category=category, company=company, location=location,
             industry=industry, network_distance=network_distance,
@@ -695,7 +780,7 @@ def register(mcp: FastMCP) -> None:
             stage: op="action" — pipeline recruiter : 'UNCONTACTED' | 'CONTACTED' | 'REPLIED'.
             list_id: op="action" — liste Sales Navigator cible (optionnel pour saveLead).
         """
-        sub = access.current_user_sub_or_raise()
+        sub = _actor_key()
 
         if op == "me":
             return unipile_client().get_own_profile()

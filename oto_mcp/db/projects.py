@@ -30,9 +30,19 @@ from .users import upsert_user
 
 
 # --- Projets (couche d'organisation, owned resource ADR 0030) ----------------
+# ⚠️ Cette liste est le SEUL chemin de lecture d'un projet (`get_project_by_id`,
+# `get_project_by_mcp_slug`, listes…). Une colonne écrite mais absente d'ici est une
+# colonne MORTE : la valeur part en base et ne revient jamais. Vécu — `mcp_expose_docs`
+# et `mcp_instructions_md`, ajoutés en #310 sans être ajoutés ici, donnaient trois
+# symptômes sans cause apparente (le flag « exposer les pages » relu à false et donc
+# inerte au serving ; les instructions du projet jamais servies au handshake, le
+# destinataire recevant le préambule générique ; l'avertissement « aucune instruction
+# publiée » émis même après en avoir publié). Tenu par
+# `tests/test_project_columns_are_read.py`, qui croise le DDL.
 _PROJECT_COLS = ("id, owner_type, owner_id, context_org_id, name, icon, brief_md, created_by, "
                  "is_template, mcp_slug, mcp_access, mcp_tools, mcp_expose_datastore, "
-                 "mcp_expose_datastore_write, archived_at, created_at, updated_at")
+                 "mcp_expose_datastore_write, mcp_expose_docs, mcp_instructions_md, "
+                 "archived_at, created_at, updated_at")
 
 # Publication MCP (ADR 0032, amende #44) : label de sous-domaine `<slug>.mcp.oto.cx`.
 _MCP_SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{1,}[a-z0-9])$")  # >=3 chars, pas de - en bord

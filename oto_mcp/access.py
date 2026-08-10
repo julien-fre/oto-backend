@@ -276,6 +276,32 @@ def project_pinned_identity(connector: str, project_id: Optional[int] = None) ->
     return None
 
 
+def project_declared_identities(connector: str, project_id: int) -> list[str]:
+    """TOUTES les identités déclarées par un projet pour `connector` (ADR 0032 §4).
+
+    Pendant de `project_pinned_identity`, pour le chemin **sans `sub`** (endpoint MCP
+    publié, ADR 0032) : là, il n'y a personne dont on puisse prendre le compte par
+    défaut, et « ambigu ⇒ None » n'est pas jouable — un projet qui déclare LinkedIn ET
+    WhatsApp sous le même connecteur `unipile` n'est pas ambigu, il déclare deux canaux.
+    On rend donc la liste, et c'est au module du connecteur de choisir sur un critère
+    qu'il est seul à connaître (le canal, ici) — la spécificité reste dans son module.
+
+    ⚠️ Le résultat n'est PAS une autorisation : ces refs viennent d'un lien de projet,
+    donc de ce qu'un membre a écrit. Sur une clé PARTAGÉE (l'abonnement Unipile de la
+    plateforme adresse tous les comptes de tous les tenants), les servir tels quels
+    laisserait un lien nommer le compte d'autrui. L'appelant DOIT recouper contre les
+    comptes réellement rattachés à l'org propriétaire. Fail-soft : erreur ⇒ []."""
+    try:
+        return [str(link["identity_ref"])
+                for link in db.list_project_links(int(project_id))
+                if link.get("target_type") == "connecteur"
+                and link.get("target_ref") == connector and link.get("identity_ref")]
+    except Exception as e:  # noqa: BLE001
+        logger.warning("project_declared_identities fail-soft %s/%s: %s",
+                       project_id, connector, e)
+        return []
+
+
 # Préfixe d'adressage par slot (ADR 0035 B3) : `slot:<name>` dans un argument
 # `namespace` des tools data_* = « le tableau bindé sous ce nom par le projet actif ».
 SLOT_PREFIX = "slot:"
