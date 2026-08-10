@@ -99,7 +99,9 @@ def test_procedure_allowed(monkeypatch):
     monkeypatch.setattr(org_store, "get_instruction_by_id",
                         lambda rid: {"title": "Enrichissement", "body_md": "# Étapes\n\n1. Chercher"})
     html, status = share_ui.build_page(_PROJECT, "/procedures/11", connect_url="u")
-    assert status == 200 and "Enrichissement" in html and "Étapes" in html
+    # Le titre affiché est le `label` DU LIEN (« Enrichir »), pas celui de la doctrine :
+    # c'est le nom que le projet lui donne (oto-dashboard#119).
+    assert status == 200 and "Enrichir" in html and "Étapes" in html
 
 
 def test_procedure_not_linked_is_404(monkeypatch):
@@ -251,3 +253,91 @@ def test_cell_td_wraps_and_marks_rich():
     # Scalaire court : td nu, wrapper `.cell` simple, pas de title.
     td2 = share_ui._cell_td("court")
     assert td2.startswith("<td>") and 'class="cell"' in td2 and "title=" not in td2
+
+
+# ── Le rôle d'une entité liée (oto-dashboard#119) ─────────────────────────────
+# Un lien de projet porte un `role` — « pourquoi cette entité est là » (ADR 0032 §2) —
+# saisi par le propriétaire et jamais rendu ici. Sous la rubrique « Procédures », le
+# lecteur d'un partage ne voyait donc qu'un titre : ni ce que la procédure fait, ni
+# pourquoi elle est là. C'est la pièce la plus importante d'un projet pour comprendre le
+# chantier, et il n'a aucun autre moyen de le savoir — il n'a pas accès au projet.
+
+_LINKS_WITH_ROLE = [
+    {"target_type": "procedure", "target_ref": "11", "label": "Enrichir",
+     "title": "Enrichissement", "role": "Ce que chaque agent worker exécute, une ligne à la fois."},
+    {"target_type": "tableau", "target_ref": "22", "label": "Prospects",
+     "namespace": "prospects", "role": "Périmètre sourcé par convention collective."},
+]
+
+
+def test_index_shows_the_role_of_each_linked_entity(monkeypatch):
+    _wire(monkeypatch, links=_LINKS_WITH_ROLE)
+    html, _ = share_ui.build_page(_PROJECT, "/", connect_url="https://x/mcp")
+    assert "Ce que chaque agent worker exécute" in html
+    assert "Périmètre sourcé par convention collective." in html
+
+
+def test_the_label_still_wins_over_the_procedure_title(monkeypatch):
+    """Le `label` du lien est le nom choisi POUR CE PROJET ; le titre de la doctrine
+    n'est qu'un repli quand le lien n'en porte pas."""
+    _wire(monkeypatch, links=_LINKS_WITH_ROLE)
+    html, _ = share_ui.build_page(_PROJECT, "/", connect_url="https://x/mcp")
+    assert "Enrichir" in html
+
+
+def test_a_link_without_role_renders_no_empty_line(monkeypatch):
+    _wire(monkeypatch, links=[{"target_type": "procedure", "target_ref": "11",
+                               "label": "Enrichir", "role": None}])
+    html, _ = share_ui.build_page(_PROJECT, "/", connect_url="https://x/mcp")
+    assert "class=r" not in html
+
+
+def test_the_role_is_escaped(monkeypatch):
+    """Le `role` est saisi par un humain et rendu sur une page PUBLIQUE."""
+    _wire(monkeypatch, links=[{"target_type": "procedure", "target_ref": "11",
+                               "label": "P", "role": "<script>alert(1)</script>"}])
+    html, _ = share_ui.build_page(_PROJECT, "/", connect_url="https://x/mcp")
+    assert "<script>" not in html and "&lt;script&gt;" in html
+
+
+def test_a_page_uses_its_chapo_as_role(monkeypatch):
+    """Une page n'est pas LIÉE (elle appartient au projet) donc n'a pas de `role` — son
+    chapô dit la même chose : ce qu'on va lire."""
+    monkeypatch.setattr(db, "list_project_links", lambda pid: [])
+    monkeypatch.setattr(db, "list_docs_for_project",
+                        lambda pid: [{"id": 44, "title": "Veille", "description": "Signaux de rachat"}])
+    html, _ = share_ui.build_page(_PROJECT, "/", connect_url="https://x/mcp")
+    assert "Signaux de rachat" in html
+
+
+def test_procedure_page_shows_the_project_label_and_role(monkeypatch):
+    """La page d'une procédure affichait le `title` de la DOCTRINE et rien d'autre : un
+    déroulé opératoire livré sans dire ce qu'on vient y chercher. Le nom qui compte est
+    celui donné DANS ce projet (`label`), et le `role` dit pourquoi elle est là."""
+    _wire(monkeypatch, links=_LINKS_WITH_ROLE)
+    monkeypatch.setattr(org_store, "get_instruction_by_id",
+                        lambda i: {"title": "Titre canonique de la doctrine",
+                                   "body_md": "# Déroulé"})
+    html, status = share_ui.build_page(_PROJECT, "/procedures/11", connect_url="https://x/mcp")
+    assert status == 200
+    assert "Enrichir" in html                                   # le label du lien
+    assert "Ce que chaque agent worker exécute" in html         # le role
+    assert "Titre canonique de la doctrine" not in html         # le title n'est qu'un repli
+
+
+def test_procedure_page_falls_back_to_the_doctrine_title(monkeypatch):
+    """Un lien posé sans label (l'agent lie souvent ainsi) doit rester lisible."""
+    _wire(monkeypatch, links=[{"target_type": "procedure", "target_ref": "11"}])
+    monkeypatch.setattr(org_store, "get_instruction_by_id",
+                        lambda i: {"title": "Titre canonique", "body_md": "x"})
+    html, _ = share_ui.build_page(_PROJECT, "/procedures/11", connect_url="https://x/mcp")
+    assert "Titre canonique" in html
+
+
+def test_an_unlinked_procedure_is_still_404(monkeypatch):
+    """Le gate d'appartenance ne doit pas s'être perdu dans la reprise du lien."""
+    _wire(monkeypatch, links=_LINKS_WITH_ROLE)
+    monkeypatch.setattr(org_store, "get_instruction_by_id",
+                        lambda i: {"title": "Secrète", "body_md": "x"})
+    _, status = share_ui.build_page(_PROJECT, "/procedures/999", connect_url="https://x/mcp")
+    assert status == 404

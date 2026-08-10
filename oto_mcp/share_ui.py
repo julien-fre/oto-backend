@@ -92,8 +92,10 @@ def _shell(*, title: str, inner: str, home_url: Optional[str] = None,
     transition:border-color .12s,transform .12s}}
   .nav a:hover{{border-color:var(--primary);transform:translateX(2px)}}
   .nav .k{{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--primary-ink);
-    background:var(--primary-soft);border-radius:5px;padding:2px 7px;white-space:nowrap;text-transform:uppercase;letter-spacing:.03em}}
-  .nav .arrow{{margin-left:auto;color:var(--faint)}}
+    background:var(--primary-soft);border-radius:5px;padding:2px 7px;white-space:nowrap;text-transform:uppercase;letter-spacing:.03em;align-self:flex-start;margin-top:2px}}
+  .nav .t{{display:flex;flex-direction:column;gap:3px;min-width:0}}
+  .nav .r{{color:var(--mute);font-size:12.5px;line-height:1.45}}
+  .nav .arrow{{margin-left:auto;color:var(--faint);align-self:center}}
   .empty{{color:var(--mute);font-size:14px}}
   article{{color:var(--ink-soft);font-size:15.5px}}
   article h1,article h2,article h3{{font-family:'Bricolage Grotesque',sans-serif;color:var(--ink)}}
@@ -208,14 +210,22 @@ def _shell(*, title: str, inner: str, home_url: Optional[str] = None,
 
 
 def _nav_section(title: str, items: list[dict]) -> str:
-    """Une carte « section » avec une liste de liens navigables (ou rien si vide)."""
+    """Une carte « section » avec une liste de liens navigables (ou rien si vide).
+
+    Chaque entrée porte son `role` sous son label quand le projet en a posé un — le
+    « pourquoi cette entité est là », déjà saisi dans le lien (`project_links.role`,
+    ADR 0032 §2) mais jamais rendu. Sans lui, une procédure n'était qu'un titre : la
+    pièce la plus importante d'un projet pour comprendre le chantier, et la seule à ne
+    rien dire (oto-dashboard#119). Le lecteur d'un partage n'a par ailleurs aucun autre
+    moyen de le savoir — il n'a pas accès au projet."""
     if not items:
         return ""
     lis = "".join(
         f'<a href="{html.escape(it["href"])}">'
         f'<span class=k>{html.escape(it["kind"])}</span>'
-        f'<span class=n>{html.escape(it["label"])}</span>'
-        f'<span class=arrow>→</span></a>'
+        f'<span class=t><span class=n>{html.escape(it["label"])}</span>'
+        + (f'<span class=r>{html.escape(it["role"])}</span>' if it.get("role") else "")
+        + f'</span><span class=arrow>→</span></a>'
         for it in items
     )
     return f'<div class=card><h2>{html.escape(title)}</h2><div class=nav>{lis}</div></div>'
@@ -277,13 +287,18 @@ def render_index(*, name: str, brief_md: str, procedures: list[dict], tables: li
                   else '<p class="empty">Projet partagé, en lecture seule.</p>')
     sections = (
         _nav_section("Procédures", [
-            {"href": f"/procedures/{p['id']}", "kind": "procédure", "label": p["label"]}
+            {"href": f"/procedures/{p['id']}", "kind": "procédure", "label": p["label"],
+             "role": p.get("role")}
             for p in procedures])
         + _nav_section("Tableaux", [
-            {"href": f"/data/{t['id']}", "kind": "tableau", "label": t["label"]}
+            {"href": f"/data/{t['id']}", "kind": "tableau", "label": t["label"],
+             "role": t.get("role")}
             for t in tables])
         + _nav_section("Documents", [
-            {"href": f"/docs/{d['id']}", "kind": "doc", "label": d["label"]}
+            {"href": f"/docs/{d['id']}", "kind": "doc", "label": d["label"],
+             # Une page n'a pas de `role` (elle n'est pas liée, elle appartient au
+             # projet) : son chapô joue le même rôle — dire ce qu'on va lire.
+             "role": d.get("description")}
             for d in docs])
     )
     if not sections:
@@ -304,10 +319,16 @@ def render_index(*, name: str, brief_md: str, procedures: list[dict], tables: li
     return _shell(title=name, inner=inner)
 
 
-def render_prose(*, name: str, title: str, body_md: str, kind_label: str) -> str:
+def render_prose(*, name: str, title: str, body_md: str, kind_label: str,
+                 role: Optional[str] = None) -> str:
+    """Page d'une prose liée (procédure, doc). `role` = pourquoi elle est dans CE projet
+    (`project_links.role`) — rendu sous le titre : le lecteur d'un partage arrive sur un
+    déroulé opératoire sans savoir ce qu'il vient y chercher (oto-dashboard#119)."""
     body_html = _MD.render(body_md or "")
+    role_html = (f'  <p class=lede>{html.escape(role)}</p>\n' if (role or "").strip() else "")
     inner = (f'  <div class=eyebrow>{html.escape(kind_label)} · {html.escape(name or "Projet")}</div>\n'
              f'  <h1>{html.escape(title or kind_label)}</h1>\n'
+             f'{role_html}'
              f'  <div class=card><article>{body_html}</article></div>')
     return _shell(title=title, inner=inner, home_url="/")
 
@@ -566,12 +587,12 @@ def _tableau_entries(project: dict, links: list) -> list[dict]:
         if not ref:
             continue
         if ref.isdigit():
-            out.append({"id": int(ref),
+            out.append({"id": int(ref), "role": l.get("role"),
                         "label": l.get("label") or l.get("namespace") or f"#{ref}"})
         elif owner_id:
             ns = db.get_datastore_namespace(owner_type, owner_id, ref)
             if ns:
-                out.append({"id": int(ns["id"]),
+                out.append({"id": int(ns["id"]), "role": l.get("role"),
                             "label": l.get("label") or l.get("namespace") or ref})
     return out
 
@@ -596,13 +617,16 @@ def build_page(project: dict, path: str, *, offset: int = 0,
     if p == "/":
         links = db.list_project_links(pid)
         procedures = [
-            {"id": int(l["target_ref"]), "label": l.get("label") or l.get("title") or f"#{l['target_ref']}"}
+            {"id": int(l["target_ref"]),
+             "label": l.get("label") or l.get("title") or f"#{l['target_ref']}",
+             "role": l.get("role")}
             for l in links
             if l.get("target_type") == "procedure" and str(l.get("target_ref", "")).isdigit()]
         tables = (_tableau_entries(project, links) if show_data else [])
         # Docs : les pages de l'arbre du projet. (Le lien `doc` — pointeur manuel vers
         # une page d'un autre projet — a été retiré, lot 3 chantier 0.4.)
-        docs = [{"id": int(d["id"]), "label": d.get("title") or f"#{d['id']}"}
+        docs = [{"id": int(d["id"]), "label": d.get("title") or f"#{d['id']}",
+                 "description": d.get("description")}
                 for d in db.list_docs_for_project(pid)]
         connectors, loose = _connectors_from_tools(list(project.get("mcp_tools") or []))
         # « Ajouter à mon Oto » : deep-link dashboard (login + fork/récupération gérés là-bas).
@@ -619,13 +643,22 @@ def build_page(project: dict, path: str, *, offset: int = 0,
         links = db.list_project_links(pid)
 
         if section == "procedures":
-            allowed = {int(l["target_ref"]) for l in links
-                       if l.get("target_type") == "procedure" and str(l.get("target_ref", "")).isdigit()}
-            instr = org_store.get_instruction_by_id(rid) if rid in allowed else None
+            # Le LIEN, pas seulement l'id : il porte le nom donné à la procédure DANS ce
+            # projet (`label`) et la raison de sa présence (`role`). La page affichait le
+            # `title` de la doctrine et rien d'autre — un déroulé opératoire livré sans
+            # dire ce qu'on vient y chercher (oto-dashboard#119). Le titre de la doctrine
+            # reste le repli, pour un lien posé sans label.
+            link = next((l for l in links
+                         if l.get("target_type") == "procedure"
+                         and str(l.get("target_ref", "")).isdigit()
+                         and int(l["target_ref"]) == rid), None)
+            instr = org_store.get_instruction_by_id(rid) if link else None
             if not instr:
                 return render_not_found(), 404
-            return render_prose(name=project.get("name") or "", title=instr.get("title") or "",
-                                body_md=instr.get("body_md") or "", kind_label="Procédure"), 200
+            return render_prose(name=project.get("name") or "",
+                                title=link.get("label") or instr.get("title") or "",
+                                body_md=instr.get("body_md") or "", kind_label="Procédure",
+                                role=link.get("role")), 200
 
         if section == "data":
             allowed = {t["id"] for t in _tableau_entries(project, links)}
