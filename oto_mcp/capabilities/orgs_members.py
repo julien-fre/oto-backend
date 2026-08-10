@@ -52,6 +52,42 @@ def _require_org_exists(org_id: int) -> None:
         raise AuthzDenied(404, "unknown_org", f"Org #{org_id} inconnue.")
 
 
+class MemberWritten(BaseModel):
+    """Écho d'un ajout de membre ou d'un changement de rôle.
+
+    ⚠️ `sub` est le sub **RÉSOLU** : l'entrée accepte un email, la réponse ne le
+    renvoie jamais — un client qui a envoyé un email doit garder sa propre trace
+    pour rapprocher requête et réponse.
+
+    ⚠️ **L'ajout est un UPSERT, pas une création** : ajouter quelqu'un qui est déjà
+    membre ne rend pas de conflit, ça écrase son rôle. Deux conséquences :
+    `POST /members` sur un membre existant est un changement de rôle déguisé, et il
+    ne passe PAS par l'anti-lockout de `POST /members/{sub}` (qui, lui, refuse en 409
+    de rétrograder le dernier org_admin).
+
+    ⚠️ Effet de bord invisible dans la réponse : une **première** adhésion peut
+    devenir l'org MAISON de la personne (si elle n'avait que son espace personnel) —
+    on change donc son contexte de travail par défaut, pas seulement son
+    appartenance."""
+    ok: bool
+    org_id: int
+    sub: str
+    # Le rôle EFFECTIF après écriture (validé contre `org_store.ORG_ROLES`).
+    role: str
+
+
+class MemberRemoved(BaseModel):
+    """Retrait d'un membre par un org_admin. ⚠️ `removed` ne vaut **jamais** `false` :
+    l'absence d'appartenance lève un 404 et le dernier org_admin un 409. C'est une
+    constante d'écho, pas un verdict à tester.
+
+    `sub` est le sub RÉSOLU (l'entrée acceptait un email)."""
+    ok: bool
+    org_id: int
+    sub: str
+    removed: bool
+
+
 class AddMemberInput(BaseModel):
     org_id: int
     target: str                       # email ou sub
@@ -135,7 +171,7 @@ class LeftOrg(BaseModel):
 CAPABILITIES += [
     Capability(
         key="org.member.add", handler=_add_member, Input=AddMemberInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=MemberWritten,
         description="Add a member (by email or sub) to an org you administer. role: org_member|org_admin.",
         # MCP fusionné dans oto_admin_org_member(op=add). REST conservé (dashboard).
         rest=(RestBinding("POST", "/api/orgs/{id}/members", _ID),
@@ -143,14 +179,14 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.member.set_role", handler=_set_member_role, Input=SetMemberRoleInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=MemberWritten,
         description="Change a member's role in an org you administer (org_member|org_admin).",
         rest=(RestBinding("POST", "/api/orgs/{id}/members/{sub}", _ID),
               RestBinding("POST", "/api/admin/orgs/{id}/members/{sub}", _ID)),
     ),
     Capability(
         key="org.member.remove", handler=_remove_member, Input=RemoveMemberInput,
-        authz=ORG_ADMIN_OF("org_id"),
+        authz=ORG_ADMIN_OF("org_id"), Output=MemberRemoved,
         description="Remove a member (by email or sub) from an org you administer.",
         # MCP fusionné dans oto_admin_org_member(op=remove). REST conservé (dashboard).
         rest=(RestBinding("DELETE", "/api/orgs/{id}/members/{sub}", {"id": "org_id", "sub": "target"}),

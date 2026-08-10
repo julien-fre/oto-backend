@@ -98,9 +98,6 @@ org.invite.accept
 org.invite.create
 org.invite.list
 org.invite.revoke
-org.member.add
-org.member.remove
-org.member.set_role
 org.mfa.get
 org.mfa.set
 org.monitoring.adoption
