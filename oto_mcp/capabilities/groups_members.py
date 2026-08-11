@@ -2,10 +2,20 @@
 
 Autz = `GROUP_ADMIN_OF` (chef d'équipe, org_admin parent, ou platform_admin par
 escalade `roles`). INVARIANT : on n'ajoute au groupe qu'un membre DÉJÀ dans l'org
-parente (l'appartenance groupe est subordonnée à l'org). Garde « dernier chef »
-au niveau handler.
+parente (l'appartenance groupe est subordonnée à l'org).
+
+**Garantie anti-lockout (#280) : une équipe a toujours quelqu'un qui peut
+l'administrer, le responsable d'organisation compris.** Ce n'est PAS « l'équipe garde
+un chef explicite » : la hiérarchie de `roles.py` fait qu'un `org_admin` administre
+toutes les équipes de son org, donc retirer ou rétrograder le dernier chef d'une
+équipe est **normal et autorisé** — l'ancienne garde `last_group_admin` protégeait
+contre un verrouillage qui n'existait pas. Ce qui est refusé, c'est le seul état
+vraiment mort : zéro chef explicite ET zéro responsable dans l'org parente (état
+atteignable — `oto_admin_org op=create` crée une org sans aucun membre).
 """
 from __future__ import annotations
+
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -63,17 +73,17 @@ class GroupMemberWritten(BaseModel):
 
     ⚠️ **L'ajout est un UPSERT** (`ON CONFLICT DO UPDATE`) : ajouter quelqu'un déjà
     membre de l'équipe ne rend pas de conflit, ça écrase son rôle. `POST /members` sur
-    un membre existant est donc un changement de rôle déguisé — et il **ne passe PAS**
-    par l'anti-lockout de `POST /members/{sub}` (409 `last_group_admin`) : rétrograder
-    le dernier chef d'équipe est refusé sur une route, accepté sur l'autre. Même défaut
-    qu'#273 côté org, un palier plus bas ; à fermer de la même façon.
+    un membre existant est donc un changement de rôle déguisé — et il porte depuis #280
+    la MÊME garde que `POST /members/{sub}` (les deux passent par `_write_member_role`) ;
+    avant ce correctif il était la route par laquelle on rétrogradait ce que l'autre
+    refusait, comme #273 un palier plus haut.
 
-    ⚠️ **Le décompte des chefs ignore l'escalade** : `last_group_admin` compte les
-    lignes `group_admin` EXPLICITES. Deux conséquences opposées, également surprenantes
-    — on refuse de rétrograder le « dernier » chef d'une équipe qu'un org_admin peut de
-    toute façon administrer ; et une équipe peut vivre avec **zéro** chef explicite (cf.
-    `GroupCreated` : créée par quelqu'un d'extérieur à l'org), auquel cas la garde ne
-    protège rien.
+    ⚠️ **Rétrograder le dernier chef explicite d'une équipe PASSE** (et c'est voulu) :
+    un `org_admin` administre toutes les équipes de son org, donc l'équipe reste
+    administrable. Le seul refus est `group_unadministrable` (409) — plus personne, org
+    comprise, ne pourrait l'administrer. Ne pas lire un succès ici comme « l'équipe a
+    encore un chef » : elle peut légitimement n'en avoir **aucun** d'explicite (cf.
+    `GroupCreated` : créée par quelqu'un d'extérieur à l'org).
 
     ⚠️ Aucun effet sur l'équipe ACTIVE : ajouter quelqu'un ne le fait pas travailler
     sous cette équipe (il faut qu'il la choisisse). Tant qu'il ne l'a pas fait, le
@@ -87,8 +97,13 @@ class GroupMemberWritten(BaseModel):
 
 class GroupMemberRemoved(BaseModel):
     """Retrait d'un membre d'équipe. ⚠️ `removed` ne vaut **jamais** `false` : l'absence
-    d'appartenance lève un 404 et le dernier chef d'équipe un 409. C'est une constante
+    d'appartenance lève un 404, et un retrait qui laisserait l'équipe sans personne pour
+    l'administrer (org comprise) un 409 `group_unadministrable`. C'est une constante
     d'écho, pas un verdict à tester.
+
+    ⚠️ Retirer le dernier chef explicite PASSE dès lors que l'org a un responsable — il
+    administre l'équipe (#280). Le retrait n'est donc pas plus strict que la
+    rétrogradation : même garde, même critère.
 
     ⚠️ Effet de bord invisible dans la réponse : si l'équipe retirée était l'équipe
     ACTIVE de la personne, elle se retrouve **sans équipe active** — donc au niveau org
@@ -102,6 +117,59 @@ class GroupMemberRemoved(BaseModel):
     removed: bool
 
 
+def _guard_group_stays_administrable(group_id: int, org_id: int,
+                                     current_role: Optional[str],
+                                     new_role: Optional[str]) -> None:
+    """Garantie : une équipe a toujours quelqu'un qui peut l'administrer, le responsable
+    d'organisation compris. `new_role=None` = retrait du membre.
+
+    Trois sorties sans refus, dans l'ordre du moins cher au plus cher : personne ne perd
+    son galon ; il reste un chef explicite ; l'org a un responsable — qui administre
+    TOUTES ses équipes (`roles.can_admin_group`), donc rien à protéger. Reste le seul
+    état mort, refusé.
+
+    ⚠️ Le `platform_admin` est délibérément HORS du décompte : il administre toute équipe
+    par escalade, donc l'inclure rendrait cette garde inatteignable (il en existe toujours
+    un). La garantie porte sur l'administration de l'ORG, pas sur l'échappatoire
+    plateforme.
+    """
+    if current_role != "group_admin" or new_role == "group_admin":
+        return
+    if group_store.count_group_admins(group_id) > 1:
+        return
+    if any(m["org_role"] == "org_admin" for m in org_store.list_org_members(org_id)):
+        return
+    raise AuthzDenied(409, "group_unadministrable",
+                      "Personne ne pourrait plus administrer cette équipe : elle perdrait "
+                      "son dernier chef et son org n'a aucun responsable. Nommer un "
+                      "responsable d'org, ou un autre chef d'équipe, d'abord.")
+
+
+def _write_member_role(group_id: int, org_id: int, sub: str, role: str, *,
+                       require_member: bool) -> dict:
+    """Écrit le rôle d'un membre d'équipe — le geste métier commun aux DEUX capacités.
+
+    `group_store.add_group_member` est un **upsert** : « ajouter » et « changer le rôle »
+    touchent la même ligne, donc c'est la même opération et elle doit porter les mêmes
+    gardes. Tant que l'anti-lockout vivait dans le seul `_set_member_role`,
+    `POST /members` rétrogradait le dernier chef que `POST /members/{sub}` refusait de
+    toucher (#280, même défaut qu'#273 un palier plus haut) — une règle tenue à deux
+    endroits n'est tenue qu'au premier qu'on relit. D'où ce point de passage unique :
+    toute nouvelle surface d'écriture de rôle d'équipe passe par ici.
+
+    `require_member` = la SEULE divergence légitime entre les deux : `set_role` exige une
+    appartenance préexistante (404 sinon), `add` l'accepte absente — c'est son objet.
+    (L'invariant « déjà membre de l'org parente » reste chez `_add_member` : la 404 de
+    `set_role` le subsume, un membre d'équipe étant nécessairement membre de l'org.)
+    """
+    current = group_store.get_group_role(group_id, sub)
+    if current is None and require_member:
+        raise AuthzDenied(404, "not_a_member", "Cible non-membre du groupe.")
+    _guard_group_stays_administrable(group_id, org_id, current, role)
+    group_store.add_group_member(group_id, sub, role)
+    return {"ok": True, "group_id": group_id, "sub": sub, "role": role}
+
+
 def _add_member(ctx: ResolvedCtx, inp: AddGroupMemberInput) -> dict:
     role = _check_role(inp.role)
     target_sub = _resolve_target(inp.target)
@@ -109,29 +177,24 @@ def _add_member(ctx: ResolvedCtx, inp: AddGroupMemberInput) -> dict:
     if org_store.get_org_role(ctx.org_id, target_sub) is None:
         raise AuthzDenied(409, "not_org_member",
                           "La cible doit d'abord être membre de l'org parente.")
-    group_store.add_group_member(inp.group_id, target_sub, role)
-    return {"ok": True, "group_id": inp.group_id, "sub": target_sub, "role": role}
+    return _write_member_role(inp.group_id, ctx.org_id, target_sub, role,
+                              require_member=False)
 
 
 def _set_member_role(ctx: ResolvedCtx, inp: SetGroupMemberRoleInput) -> dict:
     role = _check_role(inp.role)
-    current = group_store.get_group_role(inp.group_id, inp.sub)
-    if current is None:
-        raise AuthzDenied(404, "not_a_member", "Cible non-membre du groupe.")
-    if current == "group_admin" and role != "group_admin" \
-            and group_store.count_group_admins(inp.group_id) <= 1:
-        raise AuthzDenied(409, "last_group_admin",
-                          "Impossible de rétrograder le dernier chef d'équipe.")
-    group_store.add_group_member(inp.group_id, inp.sub, role)
-    return {"ok": True, "group_id": inp.group_id, "sub": inp.sub, "role": role}
+    return _write_member_role(inp.group_id, ctx.org_id, inp.sub, role,
+                              require_member=True)
 
 
 def _remove_member(ctx: ResolvedCtx, inp: RemoveGroupMemberInput) -> dict:
     target_sub = _resolve_target(inp.target)
-    if group_store.get_group_role(inp.group_id, target_sub) == "group_admin" \
-            and group_store.count_group_admins(inp.group_id) <= 1:
-        raise AuthzDenied(409, "last_group_admin",
-                          "Impossible de retirer le dernier chef d'équipe.")
+    # Même garantie que l'écriture de rôle : sans quoi le retrait resterait le chemin
+    # strict d'une garde que la rétrogradation autorise — donc contournable en deux
+    # appels (rétrograder puis retirer), c.-à-d. décoratif.
+    _guard_group_stays_administrable(inp.group_id, ctx.org_id,
+                                     group_store.get_group_role(inp.group_id, target_sub),
+                                     None)
     if not group_store.remove_group_member(inp.group_id, target_sub):
         raise AuthzDenied(404, "not_a_member", "Cible non-membre du groupe.")
     return {"ok": True, "group_id": inp.group_id, "sub": target_sub, "removed": True}

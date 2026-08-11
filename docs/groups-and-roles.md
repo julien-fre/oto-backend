@@ -120,7 +120,13 @@ groupe (hors FK) sont purgés explicitement par `delete_group`.
   (`oto_use_group` + `PUT /api/me/active-group`), `group.clear`, `group.get`,
   `group.update`, `group.delete`.
 - **membres** (`groups_members.py`) : `group.member.{add,set_role,remove}`
-  (`GROUP_ADMIN_OF`, garde « dernier chef », cible doit être membre de l'org).
+  (`GROUP_ADMIN_OF`, cible doit être membre de l'org). Les trois passent par la MÊME
+  garde anti-lockout — **« une équipe a toujours quelqu'un qui peut l'administrer, le
+  responsable d'organisation compris »** (#280) : retirer/rétrograder le dernier chef
+  explicite est **autorisé** (l'org_admin administre toutes les équipes de son org) ;
+  seul l'état sans personne — zéro chef ET zéro `org_admin` dans l'org — est refusé
+  (409 `group_unadministrable`). `add` étant un upsert, il porte la garde comme
+  `set_role` (avant #280 il rétrogradait ce que l'autre refusait).
 - **secrets** (`groups_secrets.py`) : `group.secret.{set,delete}`.
 - **doctrine** (`groups_doctrine.py`) : `group.instruction.{list,get,set,delete,
   versions,revert}` — lecture = membre, écriture = chef. Édité par le dashboard
