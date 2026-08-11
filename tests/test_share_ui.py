@@ -35,17 +35,17 @@ def test_index_shows_connectors_with_tooltip_and_link(monkeypatch):
     # tooltip (description) + lien vers la fiche marketplace du dashboard.
     _wire(monkeypatch, links=[])
     monkeypatch.setattr(db, "list_docs_for_project", lambda pid: [])
-    proj = {"id": 5, "name": "P", "brief_md": "", "mcp_tools": ["fr_search", "serper_web_search"]}
+    proj = {"id": 5, "name": "P", "brief_md": "", "mcp_tools": ["fr_search", "serper_search"]}
     html, _ = share_ui.build_page(proj, "/", connect_url="u")
     assert "Connecteurs" in html
-    # serper_web_search → connecteur `serper` ; fr_search → connecteur `sirene`.
+    # serper_search → connecteur `serper` ; fr_search → connecteur `sirene`.
     assert "connector=serper" in html
     assert "dashboard.oto.ninja/connectors?tab=marketplace" in html
     assert 'class=conn' in html and 'data-tip=' in html  # pastille + tooltip
 
 
 def test_connectors_from_tools_groups_and_derives():
-    conns, loose = share_ui._connectors_from_tools(["serper_web_search", "serper_news_search",
+    conns, loose = share_ui._connectors_from_tools(["serper_search", "serper_scrape",
                                                     "fr_search"])
     names = {c["name"] for c in conns}
     assert "serper" in names

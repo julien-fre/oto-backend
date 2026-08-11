@@ -137,7 +137,7 @@ def match(query: str, entries: list[dict]) -> list[dict]:
         # `own` = ce que dit l'OUTIL (nom + docstring) ; `hay` y ajoute la ligne de
         # catalogue de son connecteur, PARTAGÉE par tous ses outils. Sans départager les
         # deux, « recherche web » remonterait n'importe quel `serper_*` (tous héritent de
-        # « Serper : recherche web ») avant `serper_web_search`.
+        # « Serper : recherche web ») avant `serper_search`.
         own = f"{words} {fold(e.get('description', ''))}"
         hay = f"{own} {fold(e.get('namespace_help', ''))}"
         score = sum(1 for h in hits if h(hay))

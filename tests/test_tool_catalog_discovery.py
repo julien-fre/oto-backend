@@ -7,7 +7,7 @@ la fenêtre d'un mistral-large. Le catalogue ne rendait que des noms :
     {"name": "apollo_bulk_enrich_organizations", "enabled": true}
 
 Run réel mesuré le 10/08/2026 (agent Mistral en connector MCP, enrichissement B2B) :
-`fr_siret` choisi sans avoir le SIRET → échec ; `serper_web_search(q=…)` au lieu de
+`fr_siret` choisi sans avoir le SIRET → échec ; `serper_search(q=…)` au lieu de
 `query=` → échec ; sept appels, ~30 s perdues sur 94. Le modèle s'en sort, en tâtonnant
 sur ce qu'une ligne de description réglait.
 
@@ -65,7 +65,7 @@ CATALOG = [
      "namespace_help": "INSEE SIRENE : données entreprise FR"},
     {"name": "fr_search", "description": "Search French companies by name and NAF.",
      "namespace_help": "INSEE SIRENE : données entreprise FR"},
-    {"name": "serper_web_search", "description": "Google web search.",
+    {"name": "serper_search", "description": "Google web search.",
      "namespace_help": "Serper : recherche web"},
     {"name": "serper_lens", "description": "Reverse image lookup.",
      "namespace_help": "Serper : recherche web"},
@@ -94,7 +94,7 @@ def test_the_name_outranks_a_shared_catalog_line():
     """Tous les `serper_*` héritent de « Serper : recherche web ». Sans départager le
     texte propre de l'outil et celui de son connecteur, la recherche rendait le premier
     dans l'ordre alphabétique."""
-    assert tool_registry.match("recherche web", CATALOG)[0]["name"] == "serper_web_search"
+    assert tool_registry.match("recherche web", CATALOG)[0]["name"] == "serper_search"
 
 
 def test_the_name_outranks_a_passing_mention():

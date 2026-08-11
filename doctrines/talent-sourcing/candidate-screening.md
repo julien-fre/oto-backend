@@ -33,7 +33,7 @@ pas. Économise les crédits d'enrichissement et le temps d'approche.
 - Profil & parcours : `linkedin_unipile_profile` (op="person", puis op="posts" pour
   ce qu'il publie).
 - Employeur actuel : `linkedin_unipile_profile(op="company")`, `fr_get` (si entreprise FR — taille, santé).
-- Travaux : `serper_web_search` / `serper_scholar_search`, GitHub via X-ray.
+- Travaux : `serper_search` (kind="web" puis kind="scholar"), GitHub via X-ray.
 
 ## Traçabilité
 

@@ -111,7 +111,7 @@ def test_anon_resolve_dispatch(monkeypatch):
     """resolve_credential(sub=None) sous contexte anonyme → _resolve_credential_anon."""
     monkeypatch.setattr(org_store, "get_org_secret",
                         lambda org, prov: "ORGKEY" if (org, prov) == (99, "serper") else None)
-    ctx = sp.AnonContext(42, 99, frozenset({"serper_web_search"}))
+    ctx = sp.AnonContext(42, 99, frozenset({"serper_search"}))
     tok = sp._CTX.set(ctx)
     try:
         rc = access.resolve_credential("serper", sub=None)
@@ -181,12 +181,12 @@ async def test_anon_visibility_allowlist(monkeypatch):
     try:
         mw = av.AnonymousVisibilityMiddleware()
         all_names = ["frenchtech_search_annuaire", "frenchtech_evenements",
-                     "serper_web_search", "oto_project", "data_write"]
+                     "serper_search", "oto_project", "data_write"]
         await mw.on_initialize(_FakeMwCtx(all_names), lambda c: _async_none())
     finally:
         sp._CTX.reset(tok)
     # seuls les hors-preset sont masqués ; le preset reste visible
-    assert hidden["names"] == {"serper_web_search", "oto_project", "data_write"}
+    assert hidden["names"] == {"serper_search", "oto_project", "data_write"}
 
 
 @pytest.mark.asyncio
@@ -204,11 +204,11 @@ async def test_anon_visibility_exposes_datastore_read(monkeypatch):
     try:
         mw = av.AnonymousVisibilityMiddleware()
         all_names = ["fr_search", "data_list_namespaces", "data_rows",
-                     "data_write", "serper_web_search"]
+                     "data_write", "serper_search"]
         await mw.on_initialize(_FakeMwCtx(all_names), lambda c: _async_none())
     finally:
         sp._CTX.reset(tok)
-    assert hidden["names"] == {"data_write", "serper_web_search"}
+    assert hidden["names"] == {"data_write", "serper_search"}
 
 
 async def _async_none():

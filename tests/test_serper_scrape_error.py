@@ -42,6 +42,12 @@ def tools(monkeypatch):
             calls["kwargs"] = kwargs
             raise calls["exc"]
 
+        # `serper_reviews` répond TOUT par défaut depuis la consolidation (op="all") :
+        # le chemin nominal passe par `reviews_all`, pas par `search_reviews`.
+        def reviews_all(self, **kwargs):
+            calls["kwargs"] = kwargs
+            raise calls["exc"]
+
     monkeypatch.setattr("oto.tools.serper.SerperClient", _Client)
     monkeypatch.setattr("oto_mcp.access.resolve_api_key", lambda p: ("k", False))
     from oto_mcp.tools import serper
@@ -101,11 +107,15 @@ def test_scrape_400_becomes_managed_mcp_error(scrape):
     assert _is_expected_error(ei.value) is True
 
 
-def test_reviews_400_becomes_managed_mcp_error(tools):
+@pytest.mark.parametrize("op", ["all", "page"])
+def test_reviews_400_becomes_managed_mcp_error(tools, op):
     # 400 générique via `_run` (tout tool serper) : param de lieu manquant.
+    # Les DEUX chemins (reviews_all par défaut, search_reviews sur op="page")
+    # doivent rendre la même erreur gérée — sinon le défaut consolidé ferait
+    # remonter un RuntimeError nu à Sentry.
     fns, calls = tools
     calls["exc"] = RuntimeError("Serper reviews 400: Missing \"fid\", \"cid\" or \"placeId\" parameter")
     with pytest.raises(McpError) as ei:
-        fns["serper_reviews"](query="test")
+        fns["serper_reviews"](op=op, query="test")
     assert "placeId" in ei.value.error.message
     assert _is_expected_error(ei.value) is True

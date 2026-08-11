@@ -30,14 +30,14 @@ indexe LinkedIn et autres).
 Exemple : *Senior Python à Paris, pas d'agence* →
 `(python OR django OR fastapi) AND (senior OR lead OR "tech lead") AND (paris OR "île-de-france" OR remote) NOT (freelance OR agency OR recrutement)`
 
-## X-ray Google (via `serper_web_search`)
+## X-ray Google (via `serper_search`)
 
 Cible un site qui indexe les profils :
 - LinkedIn : `site:linkedin.com/in (python OR golang) (senior OR lead) paris`
 - GitHub : `site:github.com python "machine learning" location:france`
 - Portfolios/CV : `(intitle:cv OR intitle:resume) "data engineer" filetype:pdf`
 
-`serper_web_search` rend les SERP structurées — itère sur les requêtes, déduplique
+`serper_search` rend les SERP structurées — itère sur les requêtes, déduplique
 les profils, garde l'URL canonique comme clé.
 
 ## Sur LinkedIn (via `linkedin_unipile_search`)

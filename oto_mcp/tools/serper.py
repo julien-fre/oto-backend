@@ -74,142 +74,105 @@ def register(mcp: FastMCP) -> None:
             item_drop=_RESULT_DROP if compact else (),
             fields=fields)
 
+    def _bad(msg: str) -> McpError:
+        return McpError(ErrorData(code=INVALID_REQUEST, message=msg))
+
+    # Verticale → (méthode du client, chemin des items, params acceptés en plus du socle).
+    # Le socle commun est `query` + `num` + `page` + `country` + `language` : c'est ce
+    # recouvrement qui justifie la fusion (ADR 0047 §Amendement — le critère est
+    # l'homogénéité des params, pas le comptage).
+    _KINDS = {
+        "web":      ("search",          "organic"),
+        "news":     ("search_news",     "news"),
+        "images":   ("search_images",   "images"),
+        "videos":   ("search_videos",   "videos"),
+        "places":   ("search_places",   "places"),
+        "shopping": ("search_shopping", "shopping"),
+        "scholar":  ("search_scholar",  "organic"),
+        "patents":  ("search_patents",  "organic"),
+    }
+    _KIND_LIST = ", ".join(sorted(_KINDS) + ["autocomplete"])
+
     @mcp.tool()
-    def serper_web_search(
+    def serper_search(
         query: str,
+        kind: str = "web",
         num: int = 10,
         page: int = 1,
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
-        site_filter: Optional[str] = None,
         tbs: Optional[str] = None,
         location: Optional[str] = None,
+        site_filter: Optional[str] = None,
         autocorrect: Optional[bool] = None,
         compact: bool = False,
         fields: Optional[list[str]] = None,
     ) -> dict:
-        """Google web search via Serper.
+        """Google search via Serper — une verticale par `kind`.
+
+        `kind` :
+        - **"web"** (défaut) : résultats organiques. Accepte `site_filter`
+          (ex. "linkedin.com/in"), `autocorrect`, `location`, `tbs`.
+        - **"news"** : Google News — utile pour surveiller les signaux d'une cible
+          (communiqués, recrutements, levées). Accepte `tbs`.
+        - **"images"** / **"videos"** : renvoient un tableau `images` / `videos`
+          (titre, lien, source, dimensions ou durée). Acceptent `tbs`.
+        - **"places"** : Google Local — les établissements d'une requête. Excellent
+          pour de la prospection B2B locale : titre, adresse, téléphone, site, note,
+          nombre d'avis et **`cid`** (à passer à `serper_reviews`). Accepte `location`.
+        - **"shopping"** : titre, prix, marchand, note, livraison. Accepte `location`.
+        - **"scholar"** : publications académiques (titre, revue, année, citations, pdf).
+        - **"patents"** : brevets (titre, inventeur, déposant, numéro, dates).
+        - **"autocomplete"** : les suggestions Google pour `query` — pour élargir un
+          champ lexical ou trouver des idées de mots-clés. Ignore la pagination.
 
         Args:
-            query: Search query.
-            num: Number of results (max 100).
-            page: Result page (1-based).
-            country: Country code (default "fr").
-            language: Language code (default "fr").
-            site_filter: Restrict to a domain (e.g. "linkedin.com/in").
-            tbs: Google time filter (e.g. "qdr:d" past day, "qdr:w" past week).
-            location: Geographic location bias (e.g. "Paris, France").
-            autocorrect: Toggle Google spelling autocorrection (default Serper-side).
-            compact: drop what a scan of results does not read — knowledge graph,
-                people-also-ask, related searches, per-result sitelinks (~a third of the
-                payload). Use it when you are sweeping many queries; leave it off when
-                you may need the knowledge graph.
-            fields: keep ONLY these keys on each result (e.g. ["title","link","snippet"]).
-                The envelope (credits, pagination) is kept either way.
+            query: la requête.
+            kind: la verticale (défaut "web") : web | news | images | videos |
+                places | shopping | scholar | patents | autocomplete.
+            num: nombre de résultats (max 100). Ignoré par "autocomplete".
+            page: page de résultats (1-based). Ignoré par "autocomplete".
+            country: code pays (défaut "fr").
+            language: code langue (défaut "fr").
+            tbs: filtre temporel Google — "qdr:d" (24 h), "qdr:w" (7 j), "qdr:m"…
+                Accepté par web / news / images / videos.
+            location: biais géographique (ex. "Paris, France"). Accepté par
+                web / places / shopping.
+            site_filter: kind="web" — restreint à un domaine (ex. "linkedin.com/in").
+            autocorrect: kind="web" — bascule la correction orthographique Google.
+            compact: retire ce qu'un balayage de résultats ne lit pas — knowledge
+                graph, people-also-ask, recherches associées, sitelinks par résultat
+                (~un tiers du payload). À utiliser quand tu enchaînes beaucoup de
+                requêtes ; à laisser off si tu peux avoir besoin du knowledge graph.
+                Accepté par web / news.
+            fields: ne garde QUE ces clés sur chaque résultat (ex. ["title","link",
+                "snippet"]). L'enveloppe (crédits, pagination) est conservée dans tous
+                les cas. Accepté par web / news.
         """
-        return _project(_run(
-            "search", query=query, num=num, page=page, country=country,
-            language=language, site_filter=site_filter, tbs=tbs,
-            location=location, autocorrect=autocorrect,
-        ), "organic", compact, fields)
+        if kind == "autocomplete":
+            return _run("autocomplete", query=query, country=country, language=language)
 
-    @mcp.tool()
-    def serper_news_search(
-        query: str,
-        num: int = 10,
-        page: int = 1,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-        tbs: Optional[str] = None,
-        compact: bool = False,
-        fields: Optional[list[str]] = None,
-    ) -> dict:
-        """Google News search via Serper.
+        entry = _KINDS.get(kind)
+        if entry is None:
+            raise _bad(f"`kind` invalide : {kind!r} (attendu : {_KIND_LIST}).")
+        method, items = entry
 
-        Useful for monitoring signals on a target company (PR, hiring, fundraising).
+        args = {"query": query, "num": num, "page": page,
+                "country": country, "language": language}
+        if kind in ("web", "news", "images", "videos"):
+            args["tbs"] = tbs
+        if kind in ("web", "places", "shopping"):
+            args["location"] = location
+        if kind == "web":
+            args["site_filter"] = site_filter
+            args["autocorrect"] = autocorrect
 
-        Args:
-            query: Search query.
-            num: Number of results (max 100).
-            page: Result page (1-based).
-            country: Country code (default "fr").
-            language: Language code (default "fr").
-            tbs: Google time filter (e.g. "qdr:w" past week).
-            compact: drop the search echo and per-item thumbnails — useful when
-                sweeping many companies for signals.
-            fields: keep ONLY these keys on each item (e.g. ["title","link","date"]).
-        """
-        return _project(_run(
-            "search_news", query=query, num=num, page=page, country=country,
-            language=language, tbs=tbs,
-        ), "news", compact, fields)
+        result = _run(method, **args)
+        return _project(result, items, compact, fields) if kind in ("web", "news") else result
 
-    @mcp.tool()
-    def serper_image_search(
-        query: str,
-        num: int = 10,
-        page: int = 1,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-        tbs: Optional[str] = None,
-    ) -> dict:
-        """Google Images search via Serper.
-
-        Returns an 'images' array (title, imageUrl, source link, dimensions).
-        """
-        return _run(
-            "search_images", query=query, num=num, page=page, country=country,
-            language=language, tbs=tbs,
-        )
-
-    @mcp.tool()
-    def serper_video_search(
-        query: str,
-        num: int = 10,
-        page: int = 1,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-        tbs: Optional[str] = None,
-    ) -> dict:
-        """Google Videos search via Serper.
-
-        Returns a 'videos' array (title, link, source, channel, duration, date).
-        """
-        return _run(
-            "search_videos", query=query, num=num, page=page, country=country,
-            language=language, tbs=tbs,
-        )
-
-    @mcp.tool()
-    def serper_places_search(
-        query: str,
-        num: int = 10,
-        page: int = 1,
-        location: Optional[str] = None,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-    ) -> dict:
-        """Google Local / Places search via Serper — businesses for a query.
-
-        Great for local B2B prospecting: returns a 'places' array with title,
-        address, phone, website, rating, reviews count and `cid` (usable with
-        serper_reviews / serper_maps).
-
-        Args:
-            query: What to look for (e.g. "agence immobilière Lyon").
-            num: Number of results (max 100).
-            page: Result page (1-based).
-            location: Geographic location (e.g. "Lyon, France").
-            country: Country code (default "fr").
-            language: Language code (default "fr").
-        """
-        return _run(
-            "search_places", query=query, num=num, page=page,
-            location=location, country=country, language=language,
-        )
 
     @mcp.tool(meta={"census_via": "serper_maps_census"})
-    def serper_maps_search(
+    def serper_maps_sample(
         query: Optional[str] = None,
         ll: Optional[str] = None,
         place_id: Optional[str] = None,
@@ -219,23 +182,25 @@ def register(mcp: FastMCP) -> None:
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
     ) -> dict:
-        """Google Maps search via Serper — richer than places, geo-anchored.
+        """Google Maps — un ÉCHANTILLON de lieux, ancré géographiquement.
 
-        ⚠️ Plafonne à ~20 résultats/appel et biaise vers `ll` → il **sous-compte
-        silencieusement** (20 trouvés là où 60 existent, sans lever d'erreur).
-        Pour un comptage/recensement EXHAUSTIF d'un type de commerce sur une zone
-        (« combien de X à Y »), utilise **`serper_maps_census`** (pave + pagine +
-        déduplique). Règle : total exact → census ; quelques hits en tête → ce tool.
+        ⚠️ Le nom dit ce que fait ce tool : un échantillon, pas un inventaire. Il
+        plafonne à ~20 résultats par appel et biaise vers `ll` → il **sous-compte
+        silencieusement** (20 trouvés là où 60 existent, sans lever d'erreur ni
+        annoncer de total). Pour un comptage ou une liste EXHAUSTIVE d'un type de
+        commerce sur une zone (« combien de X à Y »), utilise **`serper_maps_census`**,
+        qui pave la zone, pagine chaque ancre et déduplique côté serveur.
+        Règle : total exact → census ; quelques hits en tête → ce tool.
 
         Args:
-            query: Search query (e.g. "coffee shops").
-            ll: Lat/long + zoom anchor "@lat,lng,zoom" (e.g. "@45.76,4.83,12z").
-            place_id: Google place id to look up directly.
-            cid: Google customer id of a place.
-            num: Number of results (max 100).
-            page: Result page (1-based).
-            country: Country code (default "fr").
-            language: Language code (default "fr").
+            query: la requête (ex. "coffee shops").
+            ll: ancre lat/long + zoom "@lat,lng,zoom" (ex. "@45.76,4.83,12z").
+            place_id: id Google d'un lieu, à consulter directement.
+            cid: customer id Google d'un lieu.
+            num: nombre de résultats (max 100).
+            page: page de résultats (1-based).
+            country: code pays (défaut "fr").
+            language: code langue (défaut "fr").
         """
         return _run(
             "search_maps", query=query, ll=ll, place_id=place_id, cid=cid,
@@ -256,12 +221,12 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Recensement EXHAUSTIF d'un type de commerce sur une zone (Google Maps).
 
-        À utiliser — PAS `serper_maps_search` — dès qu'il faut un **comptage ou
-        une liste exhaustive** d'un type de commerce sur une zone. Un
-        `serper_maps_search` seul plafonne à ~20 résultats et biaise vers son
-        point d'ancrage : il **sous-compte silencieusement**. Ce tool corrige les
-        deux côté serveur — il **pave** la zone en une grille d'ancres géo,
-        **pagine** chacune et **déduplique** par id de lieu → résultat complet.
+        À utiliser — PAS `serper_maps_sample` — dès qu'il faut un **comptage ou une
+        liste exhaustive** d'un type de commerce sur une zone. Un échantillon Maps
+        plafonne à ~20 résultats et biaise vers son point d'ancrage : il **sous-compte
+        silencieusement**. Ce tool corrige les deux côté serveur — il **pave** la zone
+        en une grille d'ancres géo, **pagine** chacune et **déduplique** par id de lieu
+        → résultat complet.
 
         Fournir soit `center` "lat,lng" (+ radius_km, grid), soit `ll_anchors`.
         Coût : ~grid² × max_pages appels Serper (throttlés) — c'est le prix de
@@ -279,7 +244,7 @@ def register(mcp: FastMCP) -> None:
             language: Language code (default "fr").
 
         Returns {query, count, places[], anchors_used, pages_fetched}. `count` =
-        total dédupliqué — à préférer à tout comptage d'un `serper_maps_search` seul.
+        total dédupliqué — à préférer à tout comptage d'un échantillon seul.
         """
         return _run(
             "census_maps", query=query, center=center, radius_km=radius_km,
@@ -287,48 +252,9 @@ def register(mcp: FastMCP) -> None:
             country=country, language=language,
         )
 
-    @mcp.tool(meta={"all_via": "serper_reviews_all"})
-    def serper_reviews(
-        cid: Optional[str] = None,
-        fid: Optional[str] = None,
-        place_id: Optional[str] = None,
-        query: Optional[str] = None,
-        sort_by: Optional[str] = None,
-        topic_id: Optional[str] = None,
-        next_page_token: Optional[str] = None,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-    ) -> dict:
-        """Google reviews of a place via Serper — ONE page (~10 reviews).
-
-        ⚠️ Renders a single page : un seul appel **sous-représente
-        silencieusement** les avis d'un lieu (le total réel = `ratingCount` du
-        lieu). Pour analyser TOUS les avis (sentiment, thèmes récurrents), utilise
-        **`serper_reviews_all`** (pagine le curseur jusqu'à épuisement). Ce tool
-        reste bon pour un échantillon rapide ou pour paginer à la main.
-
-        Identify the place by one of `cid` / `fid` / `place_id` (from a
-        serper_places_search / serper_maps_search result) or by free-text `query`.
-
-        Args:
-            cid: Google customer id of the place.
-            fid: Google feature id of the place.
-            place_id: Google place id.
-            query: Free-text place lookup (alternative to ids).
-            sort_by: 'mostRelevant' | 'newest' | 'highestRating' | 'lowestRating'.
-            topic_id: Filter reviews by topic id.
-            next_page_token: Pagination cursor from a previous response.
-            country: Country code (default "fr").
-            language: Language code (default "fr").
-        """
-        return _run(
-            "search_reviews", cid=cid, fid=fid, place_id=place_id, query=query,
-            sort_by=sort_by, topic_id=topic_id, next_page_token=next_page_token,
-            country=country, language=language,
-        )
-
     @mcp.tool(meta={"technique": "reviews-census"})
-    def serper_reviews_all(
+    def serper_reviews(
+        op: str = "all",
         cid: Optional[str] = None,
         fid: Optional[str] = None,
         place_id: Optional[str] = None,
@@ -336,91 +262,56 @@ def register(mcp: FastMCP) -> None:
         sort_by: Optional[str] = None,
         topic_id: Optional[str] = None,
         max_reviews: int = 200,
+        next_page_token: Optional[str] = None,
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
     ) -> dict:
-        """ALL reviews of a place — paginates until exhausted (up to max_reviews).
+        """Avis Google d'un lieu.
 
-        À utiliser — PAS `serper_reviews` — dès qu'il faut analyser l'ENSEMBLE
-        des avis d'un lieu (sentiment global, thèmes récurrents, réputation). Un
-        `serper_reviews` seul ne rend qu'une page (~10) et sous-représente
-        silencieusement. Ce tool suit le curseur `nextPageToken` côté serveur
-        jusqu'à épuisement, ou jusqu'au plafond `max_reviews` (borne le coût — un
-        lieu peut avoir des milliers d'avis ; `truncated=True` signale la coupe).
+        ⚠️ **Le défaut rend TOUS les avis, et c'est voulu.** Une page seule
+        (~10 avis, triés `mostRelevant`) **sous-représente silencieusement** un lieu
+        qui peut en avoir des milliers : une analyse de sentiment faite dessus est
+        biaisée sans que rien ne le signale. Le chemin par défaut est donc le chemin
+        complet ; l'échantillon se demande explicitement.
 
-        Identifier le lieu par `cid`/`fid`/`place_id` (d'un serper_places_search /
-        serper_maps_search) ou par `query` libre.
+        `op` :
+        - **"all"** (défaut) : suit le curseur `nextPageToken` côté serveur jusqu'à
+          épuisement, ou jusqu'au plafond `max_reviews` (borne le coût ;
+          `truncated=True` signale la coupe). Renvoie {count, reviews[],
+          pages_fetched, truncated}. C'est ce qu'il faut pour un sentiment global,
+          des thèmes récurrents, une réputation.
+        - **"page"** : UNE page (~10 avis) — échantillon rapide, ou pagination à la
+          main via `next_page_token`. Ne conclus rien de global dessus.
+
+        Identifier le lieu par `cid` / `fid` / `place_id` (issus d'un
+        `serper_search(kind="places")` ou d'un `serper_maps_sample`) ou par `query` libre.
 
         Args:
-            cid: Google customer id of the place.
-            fid: Google feature id of the place.
-            place_id: Google place id.
-            query: Free-text place lookup (alternative to ids).
+            op: "all" (défaut) | "page".
+            cid: customer id Google du lieu.
+            fid: feature id Google du lieu.
+            place_id: place id Google.
+            query: recherche libre du lieu (alternative aux ids).
             sort_by: 'mostRelevant' | 'newest' | 'highestRating' | 'lowestRating'.
-            topic_id: Filter reviews by topic id.
-            max_reviews: Plafond d'avis récupérés (défaut 200).
-            country: Country code (default "fr").
-            language: Language code (default "fr").
-
-        Returns {count, reviews[], pages_fetched, truncated}.
+            topic_id: filtre les avis par thème.
+            max_reviews: op="all" — plafond d'avis récupérés (défaut 200).
+            next_page_token: op="page" — curseur d'une réponse précédente.
+            country: code pays (défaut "fr").
+            language: code langue (défaut "fr").
         """
-        return _run(
-            "reviews_all", cid=cid, fid=fid, place_id=place_id, query=query,
-            sort_by=sort_by, topic_id=topic_id, max_reviews=max_reviews,
-            country=country, language=language,
-        )
-
-    @mcp.tool()
-    def serper_shopping_search(
-        query: str,
-        num: int = 10,
-        page: int = 1,
-        location: Optional[str] = None,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-    ) -> dict:
-        """Google Shopping search via Serper.
-
-        Returns a 'shopping' array (title, price, source, rating, delivery).
-        """
-        return _run(
-            "search_shopping", query=query, num=num, page=page,
-            location=location, country=country, language=language,
-        )
-
-    @mcp.tool()
-    def serper_scholar_search(
-        query: str,
-        num: int = 10,
-        page: int = 1,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-    ) -> dict:
-        """Google Scholar search via Serper — academic papers.
-
-        Returns an 'organic' array (title, publication info, year, citedBy, pdf).
-        """
-        return _run(
-            "search_scholar", query=query, num=num, page=page,
-            country=country, language=language,
-        )
-
-    @mcp.tool()
-    def serper_patents_search(
-        query: str,
-        num: int = 10,
-        page: int = 1,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-    ) -> dict:
-        """Google Patents search via Serper.
-
-        Returns patents with title, inventor, assignee, publication number, dates.
-        """
-        return _run(
-            "search_patents", query=query, num=num, page=page,
-            country=country, language=language,
-        )
+        if op == "all":
+            return _run(
+                "reviews_all", cid=cid, fid=fid, place_id=place_id, query=query,
+                sort_by=sort_by, topic_id=topic_id, max_reviews=max_reviews,
+                country=country, language=language,
+            )
+        if op == "page":
+            return _run(
+                "search_reviews", cid=cid, fid=fid, place_id=place_id, query=query,
+                sort_by=sort_by, topic_id=topic_id, next_page_token=next_page_token,
+                country=country, language=language,
+            )
+        raise _bad(f"`op` invalide : {op!r} (attendu : all | page).")
 
     @mcp.tool()
     def serper_lens(
@@ -428,46 +319,30 @@ def register(mcp: FastMCP) -> None:
         country: Optional[str] = "fr",
         language: Optional[str] = "fr",
     ) -> dict:
-        """Google Lens via Serper — reverse image search from an image URL.
+        """Google Lens via Serper — recherche inversée à partir d'une image.
 
         Args:
-            url: Public URL of the image to analyse.
-            country: Country code (default "fr").
-            language: Language code (default "fr").
+            url: URL publique de l'image à analyser.
+            country: code pays (défaut "fr").
+            language: code langue (défaut "fr").
         """
         return _run("search_lens", url=url, country=country, language=language)
 
     @mcp.tool()
-    def serper_autocomplete(
-        query: str,
-        country: Optional[str] = "fr",
-        language: Optional[str] = "fr",
-    ) -> dict:
-        """Google autocomplete suggestions via Serper.
-
-        Returns a 'suggestions' array — useful for query expansion / keyword ideas.
-        """
-        return _run(
-            "autocomplete", query=query, country=country, language=language,
-        )
-
-    @mcp.tool()
     def serper_scrape(url: str, format: str = "markdown") -> dict:
-        """Fetch a web page via Serper's scraper.
+        """Récupère une page web via le scraper de Serper.
 
-        Returns the page content in ONE rendition (markdown by default) + JSON-LD +
-        metadata. Préférable à un fetch brut : Serper gère le JS rendering et les
+        Renvoie le contenu en UNE représentation (markdown par défaut) + JSON-LD +
+        métadonnées. Préférable à un fetch brut : Serper gère le rendu JS et les
         anti-bot rudimentaires.
 
         Args:
-            url: Page URL to scrape.
-            format: "markdown" (default, the LLM-friendly rendition) | "text" (plain) |
-                "both" (only if you genuinely need to compare the two).
+            url: URL de la page à récupérer.
+            format: "markdown" (défaut, la représentation lisible par un LLM) |
+                "text" (brut) | "both" (seulement si tu as vraiment besoin de comparer).
         """
         if format not in ("markdown", "text", "both"):
-            raise McpError(ErrorData(
-                code=INVALID_REQUEST,
-                message=f"`format` invalide : {format!r} (markdown | text | both)."))
+            raise _bad(f"`format` invalide : {format!r} (markdown | text | both).")
         try:
             res = _run("scrape_page", url=url, include_markdown=format != "text")
             # Serper renvoyait `text` ET `markdown` : deux représentations du MÊME
@@ -486,6 +361,6 @@ def register(mcp: FastMCP) -> None:
                 raise McpError(ErrorData(
                     code=INVALID_REQUEST,
                     message=(f"Scrape impossible pour cette URL ({url}) : {detail}. "
-                             "Essaie une autre source ou serper_web_search."),
+                             "Essaie une autre source ou serper_search."),
                 )) from None
             raise
