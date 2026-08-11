@@ -433,6 +433,25 @@ résumé des connecteurs configurés et l'ancre de la KB d'org. C'est le pendant
 « identité MCP » du dashboard ; à appeler pour confirmer le contexte avant une action
 sensible. Pour basculer : `oto_use_org`.
 
+## Automatisations — déclencher une routine Claude Code (v1.73.0)
+
+Connecteur `routine` (`routine_fire.py` + capacité `me.automation.fire`, MCP
+`routine_fire` / REST `POST /api/me/automations/fire`) : **une instance = une routine**
+hébergée chez Anthropic (`routine_id` + jeton de déclenchement en `credential_fields`),
+parce que le jeton `/fire` est scopé par Anthropic à une seule routine. L'appel ne bloque
+pas — il crée la session et rend son URL ; le résultat se lit **dans la session**.
+Le `text` arrive à l'agent enveloppé `<routine-fire-payload>` étiqueté DONNÉE NON FIABLE
+(le prompt de la routine doit opter pour le lire) ⟹ passer une **référence**, jamais
+l'enregistrement. Montage complet côté utilisateur = guide plateforme
+**`procedure-en-routine`**.
+
+⚠️ **Ce connecteur relaie, il n'apporte rien d'autre** : un tiers qui sait faire un POST
+appelle `/fire` en direct. Son seul cas réel est *un agent en conversation qui déclenche
+une automatisation*. Il ne vaudra plus que ça tant qu'oto ne fait rien entre les deux
+(tracer les tirs, router selon l'événement, dédupliquer). **Aucune API publique de
+création de routine ni de génération de jeton** — le provisionnement reste manuel, par
+construction ; l'état vide de la page Automatisations du dashboard l'explique.
+
 ## Boucle d'usage (ADR 0017)
 
 Flux d'événements de session unifié : calllog (involontaire) + feedback volontaire
