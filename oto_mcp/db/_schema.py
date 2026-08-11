@@ -1035,6 +1035,62 @@ CREATE TABLE IF NOT EXISTS nodes (
 CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_owner ON nodes(owner_type, owner_id);
 
+-- BLOCS (blueprint ADR 0054-D2 + 0063-D2, lot M2) — le corps d'un nœud est une
+-- SÉQUENCE DE BLOCS STOCKÉS, pas un markdown qu'on reparserait à chaque lecture.
+-- Ce qu'on y gagne : l'adressage natif (un bloc a un identifiant, donc on peut le
+-- citer), l'édition chirurgicale (remplacer un paragraphe sans réécrire la page) et
+-- le verrouillage fin.
+--
+-- ⚠️ CE QUI N'ENTRE PAS ICI, et c'est une décision, pas un oubli : **les révisions**
+-- (`doc_revisions`). Une révision est un INSTANTANÉ SÉRIALISÉ du document entier, et
+-- le reste (0063-D2). Versionner bloc à bloc obligerait à reconstituer un état passé
+-- par assemblage, alors qu'une révision doit être atomique et lisible telle quelle.
+-- Les deux formes coexistent : le courant en table pour l'adressage, l'historique en
+-- document pour l'intégrité.
+--
+-- L'ORDRE suit le pattern déjà en place sur `docs.position` : entiers espacés (×16),
+-- réindexés au déplacement — rien à inventer. (⚠️ M-g du chantier : « réindexer
+-- atomiquement » coûte 20 s sur 45 000 lignes ; la règle à écrire est l'intervalle,
+-- la réindexation devenant un rattrapage. Se tranche à M3, pas ici.)
+--
+-- ⚠️ AUJOURD'HUI CES BLOCS SONT UNE PROJECTION, pas la source de vérité : le corps
+-- courant reste `props->>'body_md'` (nœuds) et `docs.body_md` (table legacy encore
+-- lue par la prod). Le parse est rejoué au boot quand le corps change
+-- (`props->>'blocks_md5'`, cf. `db/blocks.py`). Le jour où les blocs deviennent la
+-- source, c'est l'ÉCRITURE qui les posera — et ce commentaire tombera.
+--
+-- Forme SOBRE, même discipline que `nodes` (0063-D3 garde-fou 1) : le nœud, la
+-- position, le type, la charge utile. Les champs de bloc vont dans `props`.
+CREATE TABLE IF NOT EXISTS blocks (
+    id BIGSERIAL PRIMARY KEY,
+    -- 0059-D3 : la désignation opaque, celle qu'un agent cite pour éditer CE bloc.
+    -- DÉRIVÉE de (nœud, rang) — cf. `db/blocks.py` : c'est ce qui rend le re-parse
+    -- rejouable sans dupliquer, et ce qui garde l'adresse d'un bloc stable quand
+    -- son contenu change.
+    public_id TEXT NOT NULL,
+    -- PAS de clé étrangère vers `nodes`, comme `nodes.parent_id` n'en a pas : le
+    -- même arbitrage (contrainte, ou intégrité portée par le code ?) est ouvert
+    -- pour tout le chantier — il se tranche une fois, avant M4, pas deux fois ici.
+    node_id BIGINT NOT NULL,
+    position BIGINT NOT NULL,   -- ordre dans le corps (entiers espacés ×16)
+    -- 0054-D2 : texte · code · image · référence. Le lot M2 n'en produit que deux
+    -- (`text`, `code`) — c'est tout ce qu'un markdown converti contient ; les deux
+    -- autres naîtront des surfaces d'édition, pas d'une conversion.
+    type TEXT NOT NULL,
+    -- Charge utile. Invariant du parse : `props->>'md'` porte la source EXACTE du
+    -- bloc, et la concaténation des blocs d'un nœud rend le corps au caractère près
+    -- (tenu par `db/blocks.py` + `tests/test_nodes_m2_blocks.py`).
+    props JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Contrainte NOMMÉE (docs/live-migrations.md), même raison que `nodes`.
+    CONSTRAINT blocks_public_id_key UNIQUE (public_id)
+);
+-- UN index de requête : le corps d'un nœud, dans l'ordre. C'est la seule question
+-- qu'on pose à cette table. Table et index naissent ensemble ⟹ leur place est ici
+-- (cf. le piège « CREATE INDEX d'une NOUVELLE colonne », docs/live-migrations.md).
+CREATE INDEX IF NOT EXISTS idx_blocks_node ON blocks(node_id, position);
+
 -- Procédures (doctrines/skills) — table UNIQUE, possédée par un SCOPE (chantier
 -- procédures, cadrage 10/07) : `owner_type/owner_id` ('org' = procédure d'org,
 -- 'group' = procédure d'équipe à la fusion B2 d'org_group_instructions ; `org_id`
