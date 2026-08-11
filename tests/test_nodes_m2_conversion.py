@@ -349,6 +349,105 @@ def test_a_native_node_is_never_purged(live):
     assert _rows("SELECT 1 FROM nodes WHERE public_id = 'nod_natif_m2'")
 
 
+# ── le corps devient des blocs ───────────────────────────────────────────────
+
+def _blocks_of(node_id: int) -> list[dict]:
+    return _rows("SELECT public_id, position, type, props FROM blocks "
+                 "WHERE node_id = %s ORDER BY position", (node_id,))
+
+
+def test_the_body_of_a_converted_page_becomes_blocks(live):
+    """0054-D2/0063-D2 : le corps est une séquence de blocs stockés. Le code y est
+    isolé du texte — c'est le premier bloc qu'un agent voudra remplacer sans toucher
+    au reste."""
+    from oto_mcp.db import create_doc, create_project
+
+    body = "# Titre\n\nDu texte.\n\n```py\nprint(1)\n```\n"
+    pid = create_project("org", "42", "Avec du corps")
+    did = create_doc(pid, "Page à blocs", body_md=body)
+    live()
+
+    blocks = _blocks_of(_node_of_doc(did)["id"])
+    assert [b["type"] for b in blocks] == ["text", "text", "code"]
+    assert [b["position"] for b in blocks] == [16, 32, 48]
+    assert blocks[2]["props"]["lang"] == "py"
+
+
+def test_the_blocks_rebuild_the_body_character_for_character(live):
+    """L'invariant du parse, vérifié APRÈS un aller-retour en base : c'est ce qui
+    rend le découpage vérifiable au lieu d'être cru. Le brief d'un projet compte
+    autant qu'une page — c'est le même corps."""
+    from oto_mcp.db import create_project
+
+    brief = "Contexte\n\n- un\n- deux\n\n```sh\nls -la\n```\n\nFin.\n"
+    pid = create_project("org", "42", "Brief riche", brief_md=brief)
+    live()
+    blocks = _blocks_of(_node_of_project(pid)["id"])
+    assert len(blocks) > 1
+    assert "".join(b["props"]["md"] for b in blocks) == brief
+
+
+def test_reparsing_is_a_no_op(live):
+    """Le marqueur (`props->>'blocks_md5'`) évite de reparser à chaque boot — et
+    surtout de fabriquer des adresses neuves à chaque fois. Une adresse de bloc qui
+    change à chaque redémarrage ne serait pas une adresse."""
+    from oto_mcp.db import create_project
+
+    pid = create_project("org", "42", "Stable", brief_md="un\n\ndeux\n")
+    live()
+    nid = _node_of_project(pid)["id"]
+    before = _blocks_of(nid)
+    assert len(before) == 2
+    live()
+    assert _blocks_of(nid) == before
+
+
+def test_editing_the_body_reparses_it(live):
+    """Les blocs sont une PROJECTION du corps tant que l'écriture n'est pas
+    basculée : un corps édité (par la prod, sur cette même base) doit voir ses blocs
+    refaits au boot suivant, sinon la page et ses blocs divergent en silence."""
+    from oto_mcp.db import create_project, update_project
+
+    pid = create_project("org", "42", "Évolutif", brief_md="une seule ligne\n")
+    live()
+    nid = _node_of_project(pid)["id"]
+    assert len(_blocks_of(nid)) == 1
+
+    update_project(pid, brief_md="un\n\ndeux\n\ntrois\n")
+    live()
+    blocks = _blocks_of(nid)
+    assert [b["props"]["md"] for b in blocks] == ["un\n\n", "deux\n\n", "trois\n"]
+
+
+def test_an_emptied_body_leaves_no_orphan_blocks(live):
+    """Le corps fait foi : le vider retire ses blocs. Les laisser derrière rendrait
+    la projection fausse — et un futur lecteur servirait du texte effacé."""
+    from oto_mcp.db import create_project, update_project
+
+    pid = create_project("org", "42", "À vider", brief_md="du contenu\n")
+    live()
+    nid = _node_of_project(pid)["id"]
+    assert _blocks_of(nid)
+
+    update_project(pid, brief_md="")
+    live()
+    assert _blocks_of(nid) == []
+
+
+def test_revisions_are_not_touched(live):
+    """0063-D2 : l'historique reste un instantané sérialisé. Il ne gagne ni blocs ni
+    node_id — le reconstituer par assemblage le rendrait dépendant de l'état courant
+    des blocs, ce qu'une révision ne doit jamais être."""
+    from oto_mcp.db import create_doc, create_project, list_doc_revisions, update_doc
+
+    pid = create_project("org", "42", "Avec un historique")
+    did = create_doc(pid, "Page", body_md="v1")
+    update_doc(did, body_md="v2")
+    live()
+    revs = list_doc_revisions(did)
+    assert [r["body_md"] for r in revs] == ["v1"]
+
+
 # ── la recherche : ne pas la casser, et ne pas l'élargir ────────────────────
 
 def test_a_converted_project_is_not_found_as_a_guide(live):

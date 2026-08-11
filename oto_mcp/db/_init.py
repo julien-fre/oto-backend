@@ -789,6 +789,19 @@ def _init_db_once() -> None:
             convert_projects(conn)
             if conn.execute("SELECT to_regclass('docs') AS t").fetchone()["t"]:
                 convert_docs(conn)
+    # Lot M2 : le corps des nœuds se parse en BLOCS (0054-D2/0063-D2). HORS de la
+    # transaction de schéma, et pour deux raisons : le parse lit les nœuds que la
+    # conversion vient de COMMITER, et c'est du Python sur du texte — pas du DDL.
+    # Fail-open : ces blocs ne sont lus par aucune surface, faire tomber un boot de
+    # production pour un markdown biscornu serait hors de proportion. No-op dès que
+    # rien n'a changé (marqueur `props->>'blocks_md5'`, filtré en SQL).
+    try:
+        from .blocks import backfill_node_blocks
+        parsed = backfill_node_blocks()
+        if parsed:
+            logger.info("blocs : %d nœud(s) parsé(s)", parsed)
+    except Exception as e:
+        logger.warning("backfill_node_blocks failed: %s", e)
     # Borne la volumétrie du journal de monitoring (hors transaction schéma).
     try:
         from .usage import prune_tool_calls

@@ -168,7 +168,7 @@ def test_nothing_else_touches_nodes_yet():
     surface ne lit encore ces nœuds-là** (la bascule de lecture est un autre lot)."""
     allowed = {"oto_mcp/db/guides.py", "oto_mcp/db/_schema.py", "oto_mcp/db/_init.py",
                "oto_mcp/db/users.py", "oto_mcp/db/search.py", "oto_mcp/db/aux_embed.py",
-               "oto_mcp/db/nodes.py"}
+               "oto_mcp/db/nodes.py", "oto_mcp/db/blocks.py"}
     offenders = []
     for path in (_ROOT / "oto_mcp").rglob("*.py"):
         rel = str(path.relative_to(_ROOT))
