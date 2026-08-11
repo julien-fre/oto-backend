@@ -39,6 +39,14 @@ détruisant que ce que le code prod COURANT ne référence plus.
 - **Ids fusionnés = la MÊME séquence** : des lignes migrées vers une table à id
   surrogate prennent `nextval` de la séquence EXISTANTE — jamais une séquence neuve ni
   un offset (collision garantie avec les refs déjà distribuées : project_links, grants).
+  ⚠️ **La recette ne marche qu'à UNE source.** Dès que DEUX tables à séquence
+  indépendante convergent vers la même cible (cas `projects` + `docs` → `nodes`,
+  lot M2 du modèle de contenu), aucune des deux ne peut garder son id : la ligne 12
+  de l'une et la ligne 12 de l'autre réclament la même. L'id legacy descend alors
+  dans une propriété, et **le vrai coût n'est pas là** — il est dans tout ce à quoi
+  cet id avait déjà été distribué (routes de front, refs de liens, grants, portées de
+  jeton, colonnes d'ancrage). Le mesurer AVANT de promettre une bascule de lecture :
+  c'est ce qui décide si le lot est une conversion ou un changement de régime.
 - **Fusion de tables jumelles → prédicats de scope PARTOUT** : quand des lignes d'un
   autre grain entrent dans une table, chaque requête existante doit gagner son
   `owner_type='…'` — chercher en priorité les requêtes SANS filtre (list_all, by_id).

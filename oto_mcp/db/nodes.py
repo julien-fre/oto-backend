@@ -22,10 +22,36 @@ chaque page** — et c'est ce couple qui interdisait d'étendre la table des pag
 
 **Il PROJETTE, à chaque boot** : `projects` et `docs` restent la source de vérité et
 la cible des écritures ; `nodes` en reçoit une image fidèle, rafraîchie par `_init`.
-La **bascule de lecture** (0063-D4) n'est pas dans ce lot — elle demande de trancher
-le sort des satellites keyés sur `docs(id)` / `projects(id)` (révisions, propositions,
-backlinks, embeddings, liens, journal, fichiers, grants, runs), qui est une décision,
-pas une mécanique. Tant qu'elle n'est pas prise, **personne ne lit ces nœuds-là**.
+Tant que la bascule n'est pas faite, **personne ne lit ces nœuds-là**.
+
+**La BASCULE DE LECTURE (0063-D4) n'est PAS dans ce lot**, et ce n'est pas un renvoi
+de travail : c'est une **décision** qui n'a pas été prise, mesurée ici pour que le
+lot suivant parte de faits.
+
+1. **Un nœud ne peut pas garder l'id de sa ligne legacy.** `docs.id` et
+   `projects.id` sont deux séquences INDÉPENDANTES qui convergent vers UNE table :
+   la page 12 et le projet 12 ne peuvent pas être tous deux `nodes.id = 12`, et les
+   24 nœuds du lot M1 occupent déjà le bas de la séquence. L'id legacy vit donc dans
+   `props->>'legacy_id'`. Or **les surfaces distribuent cet id** — routes du
+   dashboard (`/data/:id`), `oto_doc`, `project_links.target_ref`,
+   `resource_grants(resource_type='project')`, `runs.project_id`,
+   `orgs.kb_project_id`, la portée d'un jeton porté (`{"projects": {"12": "read"}}`).
+   Lire depuis `nodes` en gardant les surfaces à l'identique impose donc de projeter
+   `props->>'legacy_id'` comme `id` — ce qui n'est plus une conversion, c'est un
+   régime.
+2. **La lecture ne peut pas basculer sans l'écriture.** La conversion tourne au
+   BOOT : une page créée après lui n'est pas dans `nodes`. Lire `nodes` en écrivant
+   `docs` servirait une page qui n'existe pas encore.
+3. **L'écriture ne peut pas basculer sans les satellites.** 13 colonnes de 8 tables
+   pointent `docs(id)` / `projects(id)` en clé étrangère (révisions, propositions,
+   backlinks, embeddings de page et de chunk, liens de projet, journal, fichiers).
+   Une page qui ne vivrait QUE dans `nodes` n'a pas de ligne `docs` : son premier
+   `update_doc` violerait la FK de `doc_revisions`. Déplacer ce keying est un lot en
+   soi — et il touche `doc_revisions`, dont 0063-D2 dit qu'elle ne bouge pas.
+
+Le pan qui manque est donc : *que deviennent les satellites, et l'identifiant que
+les surfaces ont déjà distribué ?* Tant que ce n'est pas tranché, projeter est ce
+qu'on peut livrer qui tienne.
 
 **⚠️ L'invariant que ce lot doit tenir, et que rien ne gardait avant lui** : la
 recherche des couches de contexte (`db/search.py`, `db/aux_embed.py`) discrimine un
