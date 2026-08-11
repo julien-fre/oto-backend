@@ -1,6 +1,12 @@
 # Capacités dont la RÉPONSE n'est pas déclarée (`Capability.Output`).
 # Une capacité NEUVE ne doit jamais s'ajouter ici : déclare son Output.
 # Cette liste ne peut que DÉCROÎTRE — cf. tests/test_capability_outputs.py.
+#
+# Ce qui reste ici n'est PLUS de la couverture publique perdue : ces capacités
+# n'apparaissent pas dans /api/openapi.json (préfixe admin exclu du document, ou
+# aucune face REST). Deux exceptions qui, elles, comptent : les surfaces
+# consolidées (me.project, me.doc, me.kb, resources.govern) — un Output unique ne
+# peut pas décrire des dizaines de verbes derrière un seul chemin, cf. #269.
 admin.capabilities
 admin.doctrine
 admin.invite
@@ -12,12 +18,6 @@ admin.signal
 admin.user
 admin.vault_health
 billing.admin_set_plan
-billing.cancel
-billing.confirm
-billing.payments
-billing.plans
-billing.status
-billing.subscribe
 connectors.console.access
 connectors.console.account_access
 connectors.console.activation
@@ -25,20 +25,13 @@ connectors.console.connector
 connectors.console.identity
 connectors.console.instance
 group.console
-library.fork
-library.get
-library.list
-library.publish
-library.unpublish
 me.clear_project
-me.connector_connect
 me.context
 me.doc
 me.guide
 me.kb
 me.project
 me.project_files
-me.project_read
 me.salesforce_connect
 me.upload_url
 me.use_project
@@ -82,13 +75,6 @@ platform.user.get
 platform.user.list
 platform.user.set_role
 resources.govern
-tools.group_hide
-tools.group_list
-tools.group_unhide
-tools.org_hide
-tools.org_list
-tools.org_unhide
-usage.feedback
 usage.gaps
 usage.resolve_signal
 usage.run
