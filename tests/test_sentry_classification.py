@@ -93,7 +93,7 @@ def test_mcp_input_errors_are_user_config_noise():
     assert _is_user_input_error(McpError(ErrorData(code=INVALID_REQUEST, message="x")))
     # remonte la chaîne : ToolError fastmcp emballant la McpError de config
     assert _is_user_input_error(
-        _chained(Exception("Error calling tool 'gmail_get'"),
+        _chained(Exception("Error calling tool 'gmail_message'"),
                  McpError(ErrorData(code=INVALID_PARAMS, message="Aucun compte Google connecté")))
     )
 

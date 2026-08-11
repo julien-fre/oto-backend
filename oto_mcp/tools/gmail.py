@@ -8,9 +8,22 @@ le compte ciblé par le paramètre `account` (l'adresse email).
 Pas de clé plateforme : l'accès est strictement per-user via OAuth (comme le
 datastore et WhatsApp), donc pas de `resolve_api_key` ici.
 
-Surface regroupée (6 tools) : énumérer les comptes, chercher, lire, lister les
-brouillons, **composer** (envoi/brouillon, nouveau ou réponse) et **modifier**
-(archiver/corbeille).
+**Surface consolidée (ADR 0047 §Amendement, appliqué au produit gmail)** : un tool
+par OBJET métier, le verbe en paramètre `op` — `gmail_message` (search/get/
+attachment/drafts/archive/trash : tout ce qui désigne un message de la boîte, par
+requête ou par id). Deux tools restent SEULS :
+- `gmail_list_accounts` : aucun paramètre (il énumère les `account` que les autres
+  consomment) — même cas que `zoho_modules`, fusionner de la découverte pure
+  n'homogénéise rien ;
+- `gmail_compose` : ses ~12 paramètres de rédaction (body/to/subject/reply_to/cc/
+  bcc/html/from_name/markdown/attachments/mode) ne recouvrent AUCUN paramètre des
+  ops ci-dessus — c'est une variante disjointe, qui pèserait dans le schéma
+  exactement ce qu'elle pèse aujourd'hui séparée (critère = homogénéité des
+  paramètres, pas le comptage).
+
+⚠️ Ce module ÉCRIT sur la boîte de l'utilisateur : `op="archive"`/`op="trash"`
+(gmail_message) et `gmail_compose` (envoi réel). Le défaut de `gmail_message` est
+`op="search"` — une LECTURE : un appel sans `op` ne peut ni écrire ni supprimer.
 """
 from __future__ import annotations
 
@@ -26,9 +39,30 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, file_content, file_source, google_oauth
 
+# Ops de `gmail_message`, dans l'ordre lectures → écritures. Source unique : la
+# validation d'entrée ET le message de refus en dérivent, donc une op ajoutée ne
+# peut pas être acceptée sans être annoncée (ni l'inverse).
+_MESSAGE_READ_OPS = ("search", "get", "attachment", "drafts")
+_MESSAGE_WRITE_OPS = ("archive", "trash")
+_MESSAGE_OPS = _MESSAGE_READ_OPS + _MESSAGE_WRITE_OPS
+_MESSAGE_OPS_ERROR = (
+    "op doit être 'search', 'get', 'attachment', 'drafts', 'archive' ou 'trash'")
+
 
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+
+def _need(value, name: str, op: str):
+    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+
+    Une valeur VIDE compte comme absente : `message_ids=[]` sur `op='trash'`
+    rendrait un `{"trashed": []}` qui passerait pour un succès alors que rien n'a
+    été demandé, et `query=""` sur `op='search'` ratisserait la boîte entière.
+    """
+    if value is None or (isinstance(value, (str, list)) and not value):
+        raise _bad(f"op='{op}' requiert {name}")
+    return value
 
 
 def _client_for_user(account: Optional[str] = None):
@@ -96,77 +130,109 @@ def register(mcp: FastMCP) -> None:
         }
 
     @mcp.tool()
-    async def gmail_search(query: str, max_results: int = 20, account: Optional[str] = None) -> dict:
-        """Search the user's Gmail with Gmail query syntax.
-
-        Args:
-            query: Gmail search query (e.g. `from:foo@bar.com is:unread newer_than:7d`).
-            max_results: max messages to return (default 20).
-            account: email of the Google account to use (default account if omitted).
-
-        Returns {messages: [{id, threadId, from, subject, date, snippet, labelIds}]}.
-        """
-        client = _client_for_user(account)
-        messages = await asyncio.to_thread(client.search, query, max_results)
-        return {"messages": messages, "count": len(messages)}
-
-    @mcp.tool()
-    async def gmail_get(message_id: str, account: Optional[str] = None) -> dict:
-        """Fetch a full message (headers, body, attachment metadata).
-
-        Args:
-            message_id: Gmail message id.
-            account: email of the Google account to use (default if omitted).
-        """
-        client = _client_for_user(account)
-        return await asyncio.to_thread(client.get_message, message_id)
-
-    @mcp.tool()
-    async def gmail_get_attachment(
-        message_id: str, filename: str, index: int = 0, account: Optional[str] = None
+    async def gmail_message(
+        op: str = "search",
+        query: Optional[str] = None,
+        message_id: Optional[str] = None,
+        message_ids: Optional[list[str]] = None,
+        filename: Optional[str] = None,
+        index: int = 0,
+        max_results: int = 20,
+        account: Optional[str] = None,
     ) -> dict:
-        """Fetch the CONTENT of a Gmail attachment, by filename.
+        """A message in the user's mailbox — search, read, fetch an attachment,
+        list drafts, archive, trash.
 
-        Identify the attachment by its `filename` (from the `attachments` list of
-        `gmail_get`). The response depends on the file:
-        - **small text** (JSON/CSV/Markdown/plain, ≤256 KB) → returned INLINE:
-          `{encoding: "text", content: "<decoded text>"}` — read it directly.
-        - **binary or large** (PDF, image, big file) → uploaded to temporary
-          storage and returned as a short-lived signed URL: `{encoding: "url",
-          url, expires_in}` (seconds). Fetch the URL to get the bytes.
+        `op`:
+        - **"search"** (default): search the user's Gmail with Gmail query syntax.
+          `query` e.g. `from:foo@bar.com is:unread newer_than:7d`. Returns
+          {messages: [{id, threadId, from, subject, date, snippet, labelIds}], count}.
+        - **"get"**: fetch a full message (headers, body, attachment metadata) by
+          `message_id`.
+        - **"attachment"**: fetch the CONTENT of a Gmail attachment, by filename.
+          Identify the attachment by its `filename` (from the `attachments` list of
+          `op="get"`). The response depends on the file:
+          - **small text** (JSON/CSV/Markdown/plain, ≤256 KB) → returned INLINE:
+            `{encoding: "text", content: "<decoded text>"}` — read it directly.
+          - **binary or large** (PDF, image, big file) → uploaded to temporary
+            storage and returned as a short-lived signed URL: `{encoding: "url",
+            url, expires_in}` (seconds). Fetch the URL to get the bytes.
+          Returns {filename, mimeType, size, encoding, content|url, expires_in?}.
+        - **"drafts"**: list the user's Gmail drafts. Returns
+          {drafts: [{id, message_id, to, subject, date, snippet}], count}.
+        - **"archive"** — ⚠️ WRITES: removes the INBOX label from `message_ids`.
+        - **"trash"** — ⚠️ WRITES: moves `message_ids` to the trash.
+
+        Writing an email (send or save a draft, new message or reply) is a
+        different tool: `gmail_compose`.
 
         Args:
-            message_id: Gmail message id (the one passed to gmail_get).
-            filename: name of the attachment to fetch (e.g. "Contrat.pdf").
-            index: 0-based tiebreaker if several attachments share that name
-                (e.g. inline images); default 0 = the first one.
+            op: search (default) | get | attachment | drafts | archive | trash.
+            query: op="search" — Gmail search query (e.g.
+                `from:foo@bar.com is:unread newer_than:7d`).
+            message_id: op="get"/"attachment" — Gmail message id (the one returned
+                by op="search").
+            message_ids: op="archive"/"trash" — Gmail message ids to act on.
+            filename: op="attachment" — name of the attachment to fetch
+                (e.g. "Contrat.pdf").
+            index: op="attachment" — 0-based tiebreaker if several attachments
+                share that name (e.g. inline images); default 0 = the first one.
+            max_results: op="search"/"drafts" — max items to return (default 20).
             account: email of the Google account to use (default if omitted).
-
-        Returns {filename, mimeType, size, encoding, content|url, expires_in?}.
         """
+        # Refus AVANT toute résolution de credential : une op inconnue n'atteint
+        # jamais le client — donc jamais, par un chemin dérivé, une écriture.
+        if op not in _MESSAGE_OPS:
+            raise _bad(_MESSAGE_OPS_ERROR)
         client = _client_for_user(account)
-        try:
-            att = await asyncio.to_thread(client.get_attachment, message_id, filename, index)
-        except Exception as e:
-            raise _bad(str(e))
-        data, filename, mime = att["data"], att["filename"], att["mimeType"]
-        sub = access.current_user_sub_or_raise()
-        try:
+
+        # ---- lectures --------------------------------------------------------
+        if op == "search":
+            messages = await asyncio.to_thread(
+                client.search, _need(query, "query", op), max_results)
+            return {"messages": messages, "count": len(messages)}
+
+        if op == "get":
             return await asyncio.to_thread(
-                file_content.render_for_agent, data, filename, mime,
-                sub=sub, prefix="gmail-attachments")
-        except file_content.MediaUnavailable as e:
-            raise _bad(str(e))
+                client.get_message, _need(message_id, "message_id", op))
 
-    @mcp.tool()
-    async def gmail_list_drafts(max_results: int = 20, account: Optional[str] = None) -> dict:
-        """List the user's Gmail drafts.
+        if op == "attachment":
+            mid = _need(message_id, "message_id", op)
+            name = _need(filename, "filename", op)
+            try:
+                att = await asyncio.to_thread(client.get_attachment, mid, name, index)
+            except Exception as e:
+                raise _bad(str(e))
+            data, att_filename, mime = att["data"], att["filename"], att["mimeType"]
+            sub = access.current_user_sub_or_raise()
+            try:
+                return await asyncio.to_thread(
+                    file_content.render_for_agent, data, att_filename, mime,
+                    sub=sub, prefix="gmail-attachments")
+            except file_content.MediaUnavailable as e:
+                raise _bad(str(e))
 
-        Returns {drafts: [{id, message_id, to, subject, date, snippet}]}.
-        """
-        client = _client_for_user(account)
-        drafts = await asyncio.to_thread(client.list_drafts, max_results)
-        return {"drafts": drafts, "count": len(drafts)}
+        if op == "drafts":
+            drafts = await asyncio.to_thread(client.list_drafts, max_results)
+            return {"drafts": drafts, "count": len(drafts)}
+
+        # ---- écritures -------------------------------------------------------
+        if op == "archive":
+            results = await asyncio.to_thread(
+                client.archive_messages, _need(message_ids, "message_ids", op))
+            return {"archived": results}
+
+        if op == "trash":
+            trashed = []
+            for mid in _need(message_ids, "message_ids", op):
+                res = await asyncio.to_thread(client.trash_message, mid)
+                trashed.append(res.get("id", mid))
+            return {"trashed": trashed}
+
+        # Structurellement inatteignable (garde d'entrée ci-dessus) — filet contre
+        # un `return None` implicite si une op était ajoutée à `_MESSAGE_OPS` sans
+        # sa branche : mieux vaut refuser que rendre « rien » pour un succès.
+        raise _bad(_MESSAGE_OPS_ERROR)
 
     @mcp.tool()
     async def gmail_compose(
@@ -246,28 +312,3 @@ def register(mcp: FastMCP) -> None:
             )
         finally:
             _cleanup()
-
-    @mcp.tool()
-    async def gmail_modify(
-        message_ids: list[str], action: str, account: Optional[str] = None,
-    ) -> dict:
-        """Archive or trash messages.
-
-        Args:
-            message_ids: Gmail message ids to act on.
-            action: "archive" (remove the INBOX label) or "trash" (move to trash).
-            account: email of the Google account to use (default if omitted).
-        """
-        if not message_ids:
-            raise _bad("message_ids requis")
-        if action not in ("archive", "trash"):
-            raise _bad("action doit être 'archive' ou 'trash'.")
-        client = _client_for_user(account)
-        if action == "archive":
-            results = await asyncio.to_thread(client.archive_messages, message_ids)
-            return {"archived": results}
-        trashed = []
-        for mid in message_ids:
-            res = await asyncio.to_thread(client.trash_message, mid)
-            trashed.append(res.get("id", mid))
-        return {"trashed": trashed}

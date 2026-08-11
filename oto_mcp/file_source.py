@@ -93,7 +93,7 @@ def _from_url(src: dict, max_bytes: int) -> ResolvedFile:
     _assert_public_host(host or "")
     # Redirections DÉSACTIVÉES : un 3xx pourrait pointer une IP interne (le garde-fou
     # ci-dessus ne valide que l'hôte initial). Nos sources légitimes (URLs signées S3,
-    # gmail_get_attachment) sont directes → pas de redirect attendu.
+    # gmail_message(op="attachment")) sont directes → pas de redirect attendu.
     with httpx.Client(follow_redirects=False, timeout=60.0) as c:
         with c.stream("GET", url) as r:
             if 300 <= r.status_code < 400:

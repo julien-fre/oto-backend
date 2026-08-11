@@ -399,10 +399,10 @@ def register(mcp: FastMCP) -> None:
         The agent has no local disk: designate the file by a `source` reference
         that oto resolves to bytes server-side, then uploads to Pennylane.
         `source` (object, `kind` selects the origin):
-        - Drive: `{"kind":"drive","file_id":"<id>"}` (id from drive_list/metadata)
+        - Drive: `{"kind":"drive","file_id":"<id>"}` (id from drive_file op=list/metadata)
         - Gmail attachment: `{"kind":"gmail","message_id":"<id>","filename":"<name>"}`
         - URL: `{"kind":"url","url":"https://…"}` (e.g. a signed URL from
-          drive_download / gmail_get_attachment)
+          drive_file op="download" / gmail_message op="attachment")
         Optional `account` (email) targets a specific Google account for drive/gmail.
 
         Returns {file_attachment_id, filename, url}. Feed `file_attachment_id` to

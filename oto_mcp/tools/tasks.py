@@ -5,8 +5,19 @@ sur `https://app.oto.ninja/` (flow OAuth unifié, scope `tasks` inclus). Les
 tools `tasks_*` agissent sur le compte par défaut, ou sur le compte ciblé par
 `account` (l'adresse email). Pas de clé plateforme : accès strictement per-user.
 
-Surface regroupée (6 tools) : gérer les listes, lister/lire les tâches,
-**upsert** (créer ou modifier), changer le **statut** (fait/rouvert), supprimer.
+**Surface consolidée (ADR 0047 §Amendement, appliqué au produit tasks)** : un tool
+par OBJET métier, le verbe en paramètre `op` — 6 tools → 2.
+- `tasks_task` = **la tâche** : `list` / `get` / `upsert` (créer ou modifier) /
+  `set_status` (fait / rouvert) / `rm` (supprimer). Tous ses ops partagent le même
+  couple `(task_id, tasklist)` + `account` : recouvrement de paramètres maximal,
+  c'est le critère de fusion.
+- `tasks_lists` = **la liste de tâches**, et il reste SEUL : autre objet, et aucun
+  paramètre commun avec la tâche (ni `task_id`, ni `tasklist` — c'est lui qui
+  PRODUIT les ids de `tasklist` que l'autre consomme). Même cas que `zoho_modules`.
+
+⚠️ Ce module ÉCRIT sur les données personnelles de l'utilisateur : `op="upsert"`
+crée/modifie, `op="set_status"` modifie, **`op="rm"` supprime** (irréversible). Le
+défaut `op="list"` est une LECTURE — un appel sans `op` n'écrit ni ne supprime jamais.
 """
 from __future__ import annotations
 
@@ -19,9 +30,25 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, google_oauth
 
+# Ops de `tasks_task`, et le libellé de refus qui les NOMME (source unique : un op
+# ajouté ici doit apparaître dans le message, sinon l'agent ne peut pas se corriger).
+_TASK_OPS = ("list", "get", "upsert", "set_status", "rm")
+_UNKNOWN_OP = "op doit être 'list', 'get', 'upsert', 'set_status' ou 'rm'"
+
 
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+
+def _need(value, name: str, op: str):
+    """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+
+    La chaîne VIDE compte comme absente : `op='rm'` avec `task_id=""` partirait
+    sinon taper l'API avec un id vide, et le refus doit venir d'ici, pas d'un 404
+    amont opaque."""
+    if value is None or value == "":
+        raise _bad(f"op='{op}' requiert {name}")
+    return value
 
 
 def _client_for_user(account: Optional[str] = None):
@@ -55,8 +82,7 @@ def register(mcp: FastMCP) -> None:
             account: email of the Google account to use (default if omitted).
 
         Returns {tasklists: [{id, title, updated}], count} when listing. Use a
-        list `id` as the `tasklist` argument of the other tasks_* tools; omit it
-        for '@default'.
+        list `id` as the `tasklist` argument of `tasks_task`; omit it for '@default'.
         """
         client = _client_for_user(account)
         if create:
@@ -65,82 +91,78 @@ def register(mcp: FastMCP) -> None:
         return {"tasklists": tasklists, "count": len(tasklists)}
 
     @mcp.tool()
-    async def tasks_list(
+    async def tasks_task(
+        op: str = "list",
+        task_id: Optional[str] = None,
         tasklist: str = "@default",
+        title: Optional[str] = None,
+        notes: Optional[str] = None,
+        due: Optional[str] = None,
+        parent: Optional[str] = None,
+        done: bool = True,
         completed: bool = False,
         max_results: int = 100,
         account: Optional[str] = None,
     ) -> dict:
-        """List tasks in a task list.
+        """A task inside a Google Tasks list — list, read, create/update, complete, delete.
+
+        `op`:
+        - **"list"** (default): list tasks in a task list.
+        - **"get"**: get a single task by id.
+        - **"upsert"**: create a task, or update an existing one.
+        - **"set_status"**: complete (`done=True`) or reopen (`done=False`) a task.
+        - **"rm"**: delete a task. Irreversible.
 
         Args:
-            tasklist: task list id (default '@default').
-            completed: include completed tasks (default false).
-            max_results: max tasks to return (default 100).
+            op: list (default) | get | upsert | set_status | rm.
+            task_id: the task id — REQUIRED for op="get"/"set_status"/"rm". For
+                op="upsert": when set, UPDATE that task instead of creating; pass
+                any of title/notes/due to change.
+            tasklist: task list id (default '@default'). Ids: `tasks_lists`.
+            title: op="upsert" — task title. REQUIRED to create (omit `task_id`);
+                optional to update.
+            notes: op="upsert" — free-text notes.
+            due: op="upsert" — due date, 'YYYY-MM-DD' or RFC 3339 (Tasks ignores
+                the time).
+            parent: op="upsert" — parent task id to nest under, same list (create only).
+            done: op="set_status" — True = mark completed ; False = reopen (back to
+                needsAction).
+            completed: op="list" — include completed tasks (default false).
+            max_results: op="list" — max tasks to return (default 100).
             account: email of the Google account to use (default if omitted).
         """
-        client = _client_for_user(account)
-        tasks = await asyncio.to_thread(client.list_tasks, tasklist, completed, max_results)
-        return {"tasks": tasks, "count": len(tasks)}
+        # Refus AVANT toute résolution de credential : un op inconnu doit s'entendre
+        # dire lesquels sont valides, pas « aucun compte Google connecté ».
+        if op not in _TASK_OPS:
+            raise _bad(_UNKNOWN_OP)
 
-    @mcp.tool()
-    async def tasks_get(task_id: str, tasklist: str = "@default", account: Optional[str] = None) -> dict:
-        """Get a single task by id."""
         client = _client_for_user(account)
-        return await asyncio.to_thread(client.get_task, task_id, tasklist)
 
-    @mcp.tool()
-    async def tasks_upsert(
-        title: Optional[str] = None,
-        task_id: Optional[str] = None,
-        notes: Optional[str] = None,
-        due: Optional[str] = None,
-        tasklist: str = "@default",
-        parent: Optional[str] = None,
-        account: Optional[str] = None,
-    ) -> dict:
-        """Create a task, or update an existing one.
-
-        Args:
-            title: task title. REQUIRED to create (omit `task_id`); optional to update.
-            task_id: when set, UPDATE that task instead of creating; pass any of
-                title/notes/due to change.
-            notes: free-text notes.
-            due: due date, 'YYYY-MM-DD' or RFC 3339 (Tasks ignores the time).
-            tasklist: task list id (default '@default').
-            parent: parent task id to nest under, same list (create only).
-            account: email of the Google account to use (default if omitted).
-        """
-        client = _client_for_user(account)
-        if task_id:
-            if title is None and notes is None and due is None:
-                raise _bad("Pour une mise à jour, fournis title, notes ou due.")
+        if op == "list":
+            tasks = await asyncio.to_thread(client.list_tasks, tasklist, completed, max_results)
+            return {"tasks": tasks, "count": len(tasks)}
+        if op == "get":
             return await asyncio.to_thread(
-                client.update_task, task_id, tasklist, title, notes, _normalize_due(due)
+                client.get_task, _need(task_id, "task_id", op), tasklist
             )
-        if not title:
-            raise _bad("`title` requis pour créer une tâche (ou fournis `task_id` pour modifier).")
-        return await asyncio.to_thread(
-            client.create_task, title, notes, _normalize_due(due), tasklist, parent
-        )
-
-    @mcp.tool()
-    async def tasks_set_status(
-        task_id: str, done: bool = True, tasklist: str = "@default", account: Optional[str] = None,
-    ) -> dict:
-        """Complete (done=True) or reopen (done=False) a task.
-
-        Args:
-            task_id: the task id.
-            done: True = mark completed ; False = reopen (back to needsAction).
-            tasklist: task list id (default '@default').
-            account: email of the Google account to use (default if omitted).
-        """
-        client = _client_for_user(account)
-        return await asyncio.to_thread(client.complete_task, task_id, tasklist, done)
-
-    @mcp.tool()
-    async def tasks_rm(task_id: str, tasklist: str = "@default", account: Optional[str] = None) -> dict:
-        """Delete a task."""
-        client = _client_for_user(account)
-        return await asyncio.to_thread(client.delete_task, task_id, tasklist)
+        if op == "upsert":
+            if task_id:
+                if title is None and notes is None and due is None:
+                    raise _bad("Pour une mise à jour, fournis title, notes ou due.")
+                return await asyncio.to_thread(
+                    client.update_task, task_id, tasklist, title, notes, _normalize_due(due)
+                )
+            if not title:
+                raise _bad("`title` requis pour créer une tâche (ou fournis `task_id` pour modifier).")
+            return await asyncio.to_thread(
+                client.create_task, title, notes, _normalize_due(due), tasklist, parent
+            )
+        if op == "set_status":
+            return await asyncio.to_thread(
+                client.complete_task, _need(task_id, "task_id", op), tasklist, done
+            )
+        if op == "rm":
+            return await asyncio.to_thread(
+                client.delete_task, _need(task_id, "task_id", op), tasklist
+            )
+        raise _bad(_UNKNOWN_OP)   # inatteignable (garde en tête) — filet si `_TASK_OPS` grandit

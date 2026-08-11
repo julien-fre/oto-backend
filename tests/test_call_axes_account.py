@@ -14,9 +14,9 @@ from oto_mcp.middleware import CallContextMiddleware
 
 def test_account_axis_applies_to_multi_account_tools():
     assert call_axes.axes_for("zoho_record")          # zoho = multi-compte
-    assert call_axes.axes_for("gmail_search")      # google = multi-compte
-    assert call_axes.axes_for("tasks_list")
-    assert call_axes.axes_for("calendar_events")
+    assert call_axes.axes_for("gmail_message")      # google = multi-compte
+    assert call_axes.axes_for("tasks_task")
+    assert call_axes.axes_for("calendar_event")
 
 
 def _params(name):
