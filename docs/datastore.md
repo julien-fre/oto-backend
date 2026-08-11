@@ -151,6 +151,26 @@ Refus de schéma : `ds_append`/`ds_update_row` traduisent `RowValidationError` e
 **400 `row_invalid`** (détail = les champs/transitions fautifs), pas en 500 — c'est le
 chemin d'échec d'une annulation (transition de retour devenue illégale).
 
+**Purger une colonne morte (#296 / signal #385).** Un schéma s'ajoute et se remplace,
+il ne réduisait pas : retirer un champ le sortait de la vue, mais la clé restait dans
+chaque ligne — rendue à la lecture, et acceptée en écriture. Après un renommage
+(`actualite_sociale` → `analyse1`), l'ancien nom **décrit le contenu mieux que le
+nouveau**, donc un agent qui relit une ligne écrit dedans en croyant viser juste (trois
+fois de suite sur une mission, deux analyses sourcées perdues). Le geste manquant :
+capacité **`me.datastore.drop_column`** (MCP `data_drop_column`, `rest=None` tant que le
+cockpit ne l'affiche pas) → `db.datastore_drop_column` = `data = data - key`, l'opérateur
+qui EFFACE là où écrire `null` conserve (une clé nulle reste une clé). Gardes dans le
+STORE, donc valables pour toute face future : `confirm=True` obligatoire, refus d'une clé
+**encore déclarée** au schéma (un `confirm` ne protège pas d'une faute de nom ;
+l'échappatoire est le geste naturel du renommage — retirer le champ du schéma d'abord),
+refus des colonnes de plateforme. En amont, `set_schema` **avertit** des colonnes
+orphelines (`_orphan_columns_warning`, échantillon de 1000 lignes, strict seulement) : le
+piège s'arme à la pose du schéma, c'est là qu'il faut le dire. ⚠️ **La 3ᵉ option du signal
+— que `data_rows` cesse d'exposer les clés non déclarées en strict — est écartée** : elle
+cacherait des données réelles, alors que le contrat 0016 promet qu'un champ libre
+*s'affiche* et que #294 vient de trancher « signaler, jamais refuser ni masquer ». On
+supprime la colonne ou on la déclare ; on ne la rend pas invisible.
+
 **Écrire hors du format se DIT, sans être refusé (#294).** Sur un namespace `strict`,
 un nom de champ que le schéma ne déclare pas est accepté (contrat 0016 : un champ libre
 s'affiche, il ne débloque rien) et la valeur persiste — mais dans une colonne hors

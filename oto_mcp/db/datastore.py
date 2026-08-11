@@ -441,6 +441,42 @@ def datastore_overlong_fields(ns_id: int, bounds: dict) -> list[dict]:
     return sorted(out, key=lambda d: d["longest"] - d["max_length"], reverse=True)
 
 
+def datastore_drop_column(ns_id: int, key: str) -> int:
+    """Retire la clé `key` du blob `data` de TOUTES les rows du namespace. Renvoie le
+    nombre de rows modifiées (0 = la colonne n'existait dans aucune).
+
+    L'opérateur JSONB `-` retire la clé, là où l'écrire à `null` la CONSERVE (une
+    clé de valeur nulle reste une clé : elle continue de se rendre, et de tromper).
+    Le `WHERE data ? key` borne l'UPDATE aux rows concernées — sur un namespace où
+    la colonne est rare, on ne réécrit pas les autres pour rien."""
+    from psycopg import sql as _sql
+    q = _sql.SQL(
+        "UPDATE datastore_rows SET data = data - {k} "
+        " WHERE ns_id = %s AND data ? {k}"
+    ).format(k=_sql.Literal(str(key)))
+    with _connect() as conn:
+        return conn.execute(q, (ns_id,)).rowcount or 0
+
+
+def datastore_row_keys(ns_id: int, sample: int = 1000) -> list[str]:
+    """Clés présentes dans les DONNÉES d'un namespace, triées.
+
+    Bornée à un ÉCHANTILLON (`sample` rows les plus récentes) : l'usage est de
+    signaler des colonnes que le schéma ne déclare plus, et celles-là sont sur
+    toutes les lignes ou presque. Scanner un namespace de 500 000 rows pour un
+    geste de confort (poser un schéma) coûterait plus que ça ne rapporte — au prix
+    assumé qu'une clé présente sur une poignée de lignes anciennes puisse échapper
+    au relevé."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT jsonb_object_keys(data) AS k FROM ("
+            "  SELECT data FROM datastore_rows WHERE ns_id = %s "
+            "   ORDER BY created_at DESC, row_id DESC LIMIT %s) t",
+            (ns_id, int(sample)),
+        ).fetchall()
+    return sorted(r["k"] for r in rows)
+
+
 def datastore_merge_key_duplicates(ns_id: int, key: str) -> int:
     """Résorbe les doublons de clé métier en reconstituant la sémantique upsert :
     pour chaque valeur en doublon, MERGE les `data` dans l'ordre chronologique dans

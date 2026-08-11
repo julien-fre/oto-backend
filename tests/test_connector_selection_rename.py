@@ -10,61 +10,17 @@ la PK est `(sub, org_id, connector)`, donc un `UPDATE … SET connector` brut y 
 l'unicité. Un test naïf (une seule ligne à renommer) passe et ne prouve rien — d'où
 un exercice contre un **vrai PostgreSQL**, la seule instance qui applique la PK.
 
-Le test se saute proprement si aucun PostgreSQL n'est joignable (`OTO_TEST_PG_DSN`,
-ou un conteneur jetable quand `docker` répond) : le garde-fou d'ORDRE en fin de
-fichier, lui, reste actif partout — c'est l'ordre des trois gestes qui porte le
-correctif.
+Le test se saute proprement si aucun PostgreSQL n'est joignable (fixture `pg_dsn`,
+`tests/conftest.py`) : le garde-fou d'ORDRE en fin de fichier, lui, reste actif
+partout — c'est l'ordre des trois gestes qui porte le correctif.
 """
 from __future__ import annotations
 
-import os
 import pathlib
-import subprocess
-import time
-import uuid
 
 import pytest
 
 from oto_mcp import connector_selection as sel
-
-_IMAGE = "postgres:17-alpine"
-
-
-def _dsn_from_env() -> str | None:
-    return os.environ.get("OTO_TEST_PG_DSN") or None
-
-
-@pytest.fixture(scope="module")
-def pg_dsn():
-    """DSN d'un PostgreSQL exerçable : celui de l'env, sinon un conteneur jetable."""
-    dsn = _dsn_from_env()
-    if dsn:
-        yield dsn
-        return
-    if subprocess.run(["docker", "info"], capture_output=True).returncode != 0:
-        pytest.skip("aucun PostgreSQL joignable (ni OTO_TEST_PG_DSN, ni docker)")
-    name = f"oto-test-pg-{uuid.uuid4().hex[:8]}"
-    subprocess.run(
-        ["docker", "run", "-d", "--rm", "--name", name,
-         "-e", "POSTGRES_PASSWORD=test", "-P", _IMAGE],
-        capture_output=True, check=True)
-    try:
-        port = subprocess.run(
-            ["docker", "port", name, "5432/tcp"],
-            capture_output=True, text=True, check=True).stdout.strip().rsplit(":", 1)[1]
-        dsn = f"postgresql://postgres:test@127.0.0.1:{port}/postgres"
-        deadline = time.time() + 60
-        while time.time() < deadline:
-            ready = subprocess.run(["docker", "exec", name, "pg_isready", "-U", "postgres"],
-                                   capture_output=True)
-            if ready.returncode == 0:
-                break
-            time.sleep(1)
-        else:
-            pytest.skip("le PostgreSQL jetable n'est pas devenu prêt")
-        yield dsn
-    finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
 
 @pytest.fixture()

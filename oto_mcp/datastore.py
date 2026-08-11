@@ -527,10 +527,38 @@ class DatastorePg:
         # Un statut sans état terminal = file de travail qui ne libère rien : le dire
         # ICI, à l'auteur du schéma, au moment où il le pose (les deux faces l'ont).
         warnings = [w for w in (dsv2.queue_release_warning(schema),
-                                self._overlong_warning(ns_id, schema)) if w]
+                                self._overlong_warning(ns_id, schema),
+                                self._orphan_columns_warning(ns_id, schema)) if w]
         if warnings:
             out["warning"] = "\n".join(warnings)
         return out
+
+    @staticmethod
+    def _orphan_columns_warning(ns_id: int, schema: Optional[dict]) -> Optional[str]:
+        """Des colonnes vivent dans les DONNÉES sans être déclarées au schéma qu'on
+        vient de poser : le dire ici, à l'auteur du renommage (#296).
+
+        C'est le moment utile — renommer `actualite_sociale` en `analyse1` sort
+        l'ancien nom de la vue, mais la clé reste dans chaque ligne. Elle continue
+        de se rendre à la lecture, et son nom décrit souvent le contenu mieux que le
+        nouveau : trois agents successifs ont écrit dedans en la prenant pour la
+        bonne cible. Le silence à la pose du schéma est ce qui laisse le piège armé.
+
+        Strict seulement : sur un schéma souple, un champ libre est un droit du
+        contrat (0016) — la table qu'on explore avant de la typer en est pleine, et
+        signaler y serait du bruit sur un usage normal."""
+        if not isinstance(schema, dict) or not schema.get("strict"):
+            return None
+        declared = {f.get("key") for f in dsv2._fields(schema)}
+        orphans = [k for k in db.datastore_row_keys(ns_id) if k not in declared]
+        if not orphans:
+            return None
+        noms = ", ".join(f"`{k}`" for k in orphans)
+        return (f"colonnes présentes dans les données mais PAS dans ce schéma : {noms}. "
+                "Elles se rendent encore à la lecture — après un renommage, leur nom "
+                "décrit souvent le contenu mieux que le nouveau, et un agent qui relit "
+                "une ligne écrit dedans en croyant viser juste. Purge-les "
+                "(`data_drop_column(namespace, key, confirm=True)`) ou déclare-les.")
 
     @staticmethod
     def _overlong_warning(ns_id: int, schema: Optional[dict]) -> Optional[str]:
@@ -551,6 +579,42 @@ class DatastorePg:
                 "écritures futures sont refusées, ces lignes-là restent en place "
                 "jusqu'à ce qu'on réécrive le champ (un patch d'un AUTRE champ "
                 "passe).")
+
+    def drop_column(self, namespace: str, key: str, *, confirm: bool) -> dict:
+        """Retire une colonne des DONNÉES de toutes les rows (#296). Destructif et
+        irréversible : `confirm=True` exigé — la garde vit ICI, pas dans la surface,
+        pour qu'aucune face ne puisse l'oublier. Exige le droit d'écriture (même
+        palier que `set_schema` : c'est le même geste, la forme de la table).
+
+        Retirer un champ du schéma le sort de la vue mais laisse la clé dans chaque
+        ligne, où elle continue de se rendre — et d'attirer les écritures. Mettre la
+        valeur à `null` ne l'efface pas non plus (une clé nulle reste une clé). D'où
+        ce geste, le seul qui fasse disparaître la colonne.
+
+        REFUSE une clé encore DÉCLARÉE au schéma : un `confirm` ne protège pas d'une
+        faute de nom, et l'échappatoire est le geste naturel du renommage — retirer
+        d'abord le champ du schéma. Ainsi la purge ne peut viser qu'une colonne dont
+        le format a déjà acté la sortie."""
+        key = (key or "").strip()
+        if not key:
+            raise ValueError("key requise (le nom de la colonne à purger)")
+        if key in _META_COLS:
+            raise ValueError(
+                f"`{key}` est une colonne gérée par la plateforme, pas une donnée")
+        if not confirm:
+            raise ValueError(
+                f"purge de la colonne `{key}` non confirmée — c'est irréversible sur "
+                "toutes les lignes : rappelle l'appel avec confirm=True")
+        ns_id = self._resolve(namespace, write=True)
+        schema = self._schema_of(ns_id)
+        if key in {f.get("key") for f in dsv2._fields(schema)}:
+            raise ValueError(
+                f"`{key}` est encore DÉCLARÉE au schéma de `{namespace}` : purger une "
+                "colonne vivante est presque toujours une faute de nom. Si la sortie "
+                "est voulue, retire d'abord le champ du schéma (data_set_schema), puis "
+                "purge.")
+        rows = db.datastore_drop_column(ns_id, key)
+        return {"namespace": namespace, "key": key, "rows": rows}
 
     def set_semantic(self, namespace: str, enabled: bool) -> dict:
         """Active/désactive la recherche SÉMANTIQUE des lignes du namespace (#67 V2.2,

@@ -336,6 +336,10 @@ def register(mcp: FastMCP) -> None:
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
+    # `data_drop_column` (purge d'une colonne morte, #296) n'est PAS ici : c'est une
+    # capacité (`capabilities/datastore_columns.py`) — un verbe de plateforme naît
+    # capacité, ADR 0042 §Convergence des surfaces.
+
     @mcp.tool()
     def data_write(namespace: str, row: dict | None = None, id: str | None = None,
                    rows: list | None = None, key: str | None = None) -> dict:

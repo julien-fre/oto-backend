@@ -102,6 +102,8 @@ from . import datastore_activity  # noqa: F401 — me.datastore.{row_activity,ac
 # File de travail côté application (signal #362) — réserver depuis un front web.
 from . import datastore_claim  # noqa: F401 — me.datastore.{claim_next,claim_row} (REST-only)
 from . import datastore_schema  # noqa: F401 — me.datastore.get_schema (MCP data_get_schema + REST)
+# Purge d'une colonne morte (#296) — après un renommage, l'ancienne clé piège les agents.
+from . import datastore_columns  # noqa: F401 — me.datastore.drop_column (MCP data_drop_column)
 from . import automation  # noqa: F401 — me.automation.fire (MCP routine_fire + REST)
 
 __all__ = ["registry", "_mcp_adapter", "_rest_adapter"]
