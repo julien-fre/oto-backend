@@ -448,7 +448,12 @@ def datastore_drop_column(ns_id: int, key: str) -> int:
     L'opérateur JSONB `-` retire la clé, là où l'écrire à `null` la CONSERVE (une
     clé de valeur nulle reste une clé : elle continue de se rendre, et de tromper).
     Le `WHERE data ? key` borne l'UPDATE aux rows concernées — sur un namespace où
-    la colonne est rare, on ne réécrit pas les autres pour rien."""
+    la colonne est rare, on ne réécrit pas les autres pour rien.
+
+    ⚠️ NON sérialisé avec les écritures applicatives : celles-ci font un
+    read-merge-write du blob entier (`_merge_into_row`), donc un write dont le
+    SELECT précède cette purge et l'UPDATE la suit REMET la clé sur sa ligne.
+    Fenêtre étroite, effet re-purgeable — purger hors drainage, ou repasser."""
     from psycopg import sql as _sql
     q = _sql.SQL(
         "UPDATE datastore_rows SET data = data - {k} "

@@ -165,7 +165,14 @@ STORE, donc valables pour toute face future : `confirm=True` obligatoire, refus 
 l'échappatoire est le geste naturel du renommage — retirer le champ du schéma d'abord),
 refus des colonnes de plateforme. En amont, `set_schema` **avertit** des colonnes
 orphelines (`_orphan_columns_warning`, échantillon de 1000 lignes, strict seulement) : le
-piège s'arme à la pose du schéma, c'est là qu'il faut le dire. ⚠️ **La 3ᵉ option du signal
+piège s'arme à la pose du schéma, c'est là qu'il faut le dire. ⚠️ **La purge n'est pas
+sérialisée avec les écritures applicatives** : elle borne son UPDATE aux lignes portant la
+clé (`WHERE data ? key` — les autres ne sont pas réécrites), mais un write concurrent fait
+un read-merge-write du blob ENTIER (`_merge_into_row`, `SELECT FOR UPDATE` + UPDATE) — si
+son SELECT précède la purge et son UPDATE la suit, la clé purgée **revient** sur cette
+ligne. Fenêtre étroite et effet bénin (re-purgeable), mais réel : purger quand rien ne
+draine le tableau, ou repasser après. Prendre le verrou de ligne dans la purge serait la
+vraie réponse, et coûterait un parcours verrouillé de tout le namespace. ⚠️ **La 3ᵉ option du signal
 — que `data_rows` cesse d'exposer les clés non déclarées en strict — est écartée** : elle
 cacherait des données réelles, alors que le contrat 0016 promet qu'un champ libre
 *s'affiche* et que #294 vient de trancher « signaler, jamais refuser ni masquer ». On
