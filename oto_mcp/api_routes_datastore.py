@@ -345,6 +345,14 @@ def make_routes(
             # Schéma strict / cycle de vie : refus ACTIONNABLE (le message liste les
             # champs fautifs), jamais un 500 opaque — le front l'affiche tel quel.
             return json_error(request, 400, "row_invalid", str(e))
+        except ValueError as e:
+            # Refus d'ENTRÉE du store (`_id` posé dans le corps, #390) : même
+            # traitement que ci-dessus. Sans ce `except`, la face MCP rendait un
+            # message actionnable pendant que REST rendait « Internal Server Error »
+            # — et Sentry comptait une faute d'appel comme un bug backend. Vu au
+            # smoke prod, invisible aux tests du store : c'est la TRADUCTION de
+            # l'erreur qui manquait, pas la garde.
+            return json_error(request, 400, "invalid_row_input", str(e))
         ctx = datastore_journal.from_trace(trace, namespace)
         datastore_journal.record(
             datastore_journal.TOOL_WRITE, sub=sub, ctx=ctx, row_id=created.get("_id"),
@@ -546,6 +554,10 @@ def make_routes(
             # le chemin d'échec de l'annulation côté cockpit → 400 avec le détail,
             # pas un 500 (le front ne saurait pas dire « ce retour n'est plus possible »).
             return json_error(request, 400, "row_invalid", str(e))
+        except ValueError as e:
+            # Refus d'ENTRÉE (`_id` divergent du `id` visé #390, clé métier déjà
+            # portée par une autre ligne) : 400 actionnable, cf. `ds_append`.
+            return json_error(request, 400, "invalid_row_input", str(e))
         ctx = datastore_journal.from_trace(trace, namespace)
         datastore_journal.record(
             datastore_journal.TOOL_WRITE, sub=sub, ctx=ctx, row_id=row_id,
