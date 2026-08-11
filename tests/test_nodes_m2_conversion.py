@@ -70,11 +70,19 @@ def _rows(sql, params=()):
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
-def _node_of_project(project_id: int) -> dict:
-    rows = _rows("SELECT * FROM nodes WHERE props->>'legacy' = 'prj' "
-                 "AND (props->>'legacy_id')::bigint = %s", (project_id,))
+def _node_of(family: str, legacy_id: int) -> dict:
+    rows = _rows("SELECT * FROM nodes WHERE props->>'legacy' = %s "
+                 "AND (props->>'legacy_id')::bigint = %s", (family, legacy_id))
     assert len(rows) == 1, rows
     return rows[0]
+
+
+def _node_of_project(project_id: int) -> dict:
+    return _node_of("prj", project_id)
+
+
+def _node_of_doc(doc_id: int) -> dict:
+    return _node_of("doc", doc_id)
 
 
 # ── le geste du lot ──────────────────────────────────────────────────────────
@@ -111,10 +119,11 @@ def test_no_converted_node_carries_a_delivery(live):
     ⚠️ Le détecteur est VALIDÉ avant d'être cru : un test qui cherche une anomalie
     et n'en trouve pas ne prouve rien tant qu'on n'a pas vu qu'il sait en trouver
     une. On en plante donc une, on vérifie qu'elle est vue, puis on la retire."""
-    from oto_mcp.db import create_project
+    from oto_mcp.db import create_doc, create_project
     from oto_mcp.db._conn import _connect
 
-    create_project("user", "sub-delivery", "Un projet", brief_md="corps")
+    pid = create_project("user", "sub-delivery", "Un projet", brief_md="corps")
+    create_doc(pid, "Une page", body_md="corps de page")
     live()
 
     detect = ("SELECT public_id, props->>'delivery' AS d FROM nodes "
@@ -147,6 +156,111 @@ def test_absent_optional_fields_are_absent_not_null(live):
     assert props["is_template"] is False          # un false n'est PAS un null
 
 
+# ── le point dur : poser un propriétaire sur des pages qui n'en ont jamais eu ─
+
+def test_a_page_carries_the_owner_of_its_project(live):
+    """0063-D1 : l'ownership vit sur `projects`, PAS sur `docs`. Une page n'a jamais
+    eu de propriétaire — elle héritait de celui de son projet par la contrainte
+    `project_id NOT NULL`. Poser ce propriétaire sur chaque page EST la conversion ;
+    c'est la seule chose de tout le lot qui crée ce qui n'existait pas."""
+    from oto_mcp.db import create_doc, create_project
+
+    pid = create_project("org", "42", "Porteur", brief_md="brief")
+    did = create_doc(pid, "Une page", body_md="du texte", created_by="u-1")
+    live()
+
+    n = _node_of_doc(did)
+    assert (n["owner_type"], n["owner_id"]) == ("org", "42")
+    assert n["kind"] == "page"
+    assert n["props"]["title"] == "Une page"
+    assert n["props"]["body_md"] == "du texte"
+    assert n["props"]["doc_kind"] == "doc"        # la provenance est une PROPRIÉTÉ
+    assert "delivery" not in n["props"]
+
+
+def test_the_tree_reflects_the_old_attachment(live):
+    """Une page de premier niveau se rattache au nœud du PROJET (c'est ce qui fait de
+    l'épingle la racine de son sous-arbre, 0054-D5) ; une sous-page se rattache à sa
+    page parente. Le rattachement cesse d'être une colonne, il devient l'arbre."""
+    from oto_mcp.db import create_doc, create_project
+
+    pid = create_project("org", "42", "Avec un arbre")
+    racine = create_doc(pid, "Racine")
+    enfant = create_doc(pid, "Enfant", parent_id=racine)
+    live()
+
+    projet = _node_of_project(pid)
+    assert _node_of_doc(racine)["parent_id"] == projet["id"]
+    assert _node_of_doc(enfant)["parent_id"] == _node_of_doc(racine)["id"]
+
+
+def test_a_page_moved_in_the_tree_follows(live):
+    """`move_doc` reparente ET réindexe la fratrie sans que le contenu change. La
+    structure est donc réconciliée hors newer-wins — sinon l'arbre se fige au premier
+    boot et diverge de la source, sans erreur."""
+    from oto_mcp.db import create_doc, create_project, move_doc
+
+    pid = create_project("org", "42", "Réorganisable")
+    a = create_doc(pid, "A")
+    b = create_doc(pid, "B")
+    live()
+    assert _node_of_doc(b)["parent_id"] == _node_of_project(pid)["id"]
+
+    move_doc(b, a)                                 # B devient enfant de A
+    live()
+    assert _node_of_doc(b)["parent_id"] == _node_of_doc(a)["id"]
+
+
+def test_transferring_a_project_moves_its_pages_owner(live):
+    """LE piège silencieux du lot. `reparent_project` ne touche AUCUNE ligne de
+    `docs` : sous newer-wins seul, `EXCLUDED.updated_at > nodes.updated_at` serait
+    faux pour toutes ses pages, qui resteraient chez l'ancien propriétaire —
+    indéfiniment, et sans un mot. C'est le test qui justifie que la structure ait
+    son propre UPDATE."""
+    from oto_mcp.db import create_doc, create_project, reparent_project
+    from oto_mcp.db._conn import _connect
+
+    pid = create_project("org", "42", "À transférer avec ses pages")
+    did = create_doc(pid, "Une page qui suit")
+    live()
+    assert _node_of_doc(did)["owner_type"] == "org"
+
+    reparent_project(pid, "user", "sub-repreneur", context_org_id=42)
+    # L'horodatage de la page est intact : c'est TOUT le propos.
+    doc_updated = _rows("SELECT updated_at FROM docs WHERE id = %s", (did,))[0]
+    live()
+    assert _rows("SELECT updated_at FROM docs WHERE id = %s", (did,))[0] == doc_updated
+
+    n = _node_of_doc(did)
+    assert (n["owner_type"], n["owner_id"]) == ("user", "sub-repreneur")
+
+
+def test_a_deleted_page_does_not_survive_as_a_node(live):
+    from oto_mcp.db import create_doc, create_project, delete_doc
+
+    pid = create_project("org", "42", "Avec une page éphémère")
+    did = create_doc(pid, "Éphémère")
+    live()
+    assert _node_of_doc(did)
+    delete_doc(did)
+    live()
+    assert _rows("SELECT 1 FROM nodes WHERE props->>'legacy' = 'doc' "
+                 "AND (props->>'legacy_id')::bigint = %s", (did,)) == []
+
+
+def test_the_public_token_travels_as_a_property(live):
+    """Le partage public d'une page (une seule ligne en production) voyage tel quel.
+    Le transporter est le geste évident ; savoir s'il DEVIENT un accès du modèle de
+    grants se tranchera quand la chaîne sera vivante — pas sur une population de un."""
+    from oto_mcp.db import create_doc, create_project, set_doc_public
+
+    pid = create_project("org", "42", "Avec une page publique")
+    did = create_doc(pid, "Publique")
+    token = set_doc_public(did, True)
+    live()
+    assert _node_of_doc(did)["props"]["public_token"] == token
+
+
 # ── idempotence : prouvée par le rejeu ───────────────────────────────────────
 
 def test_replaying_the_migration_is_a_no_op(live):
@@ -157,15 +271,18 @@ def test_replaying_the_migration_is_a_no_op(live):
     faite par la production pendant la fenêtre."""
     from oto_mcp.db import create_project
 
-    create_project("org", "7", "Idempotent", brief_md="stable")
+    from oto_mcp.db import create_doc
+
+    pid = create_project("org", "7", "Idempotent", brief_md="stable")
+    create_doc(pid, "Page stable", body_md="stable aussi")
     live()
-    before = _rows("SELECT public_id, props, updated_at FROM nodes "
-                   "WHERE props->>'legacy' = 'prj' ORDER BY public_id")
+    snapshot = ("SELECT public_id, parent_id, position, owner_type, owner_id, props, "
+                "updated_at FROM nodes WHERE props ? 'legacy' ORDER BY public_id")
+    before = _rows(snapshot)
+    assert len(before) >= 2
     live()
     live()
-    after = _rows("SELECT public_id, props, updated_at FROM nodes "
-                  "WHERE props->>'legacy' = 'prj' ORDER BY public_id")
-    assert after == before
+    assert _rows(snapshot) == before
 
 
 def test_an_edit_between_two_boots_is_caught_up(live):

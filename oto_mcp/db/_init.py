@@ -779,9 +779,16 @@ def _init_db_once() -> None:
         # **le projet en tant qu'objet** (0054-D5). Il devient une ÉPINGLE — un
         # drapeau `props->>'pinned'` sur un nœud ordinaire, dont le brief est le
         # corps et dont les pages seront l'arbre. Détail : `db/nodes.py`.
+        #
+        # ⚠️ L'ORDRE des deux conversions n'est pas cosmétique : une page de premier
+        # niveau se rattache au NŒUD de son projet — s'il n'existe pas encore, la
+        # jointure ne rend rien et la page reste orpheline jusqu'au boot suivant.
+        # Un arbre à moitié posé, qu'aucune erreur ne signale.
         if conn.execute("SELECT to_regclass('projects') AS t").fetchone()["t"]:
-            from .nodes import convert_projects
+            from .nodes import convert_docs, convert_projects
             convert_projects(conn)
+            if conn.execute("SELECT to_regclass('docs') AS t").fetchone()["t"]:
+                convert_docs(conn)
     # Borne la volumétrie du journal de monitoring (hors transaction schéma).
     try:
         from .usage import prune_tool_calls

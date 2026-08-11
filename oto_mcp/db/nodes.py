@@ -8,9 +8,15 @@ cesse d'être une idée.
 **Le projet devient une ÉPINGLE** (0054-D5). Il ne disparaît pas en tant que
 contenu, il disparaît en tant qu'*objet* : c'est un nœud comme un autre, marqué
 `props->>'pinned'`, dont le nom devient le titre, le brief devient le **corps**, et
-dont les pages deviendront l'**arbre**. L'épingle donne deux choses, et rien d'autre :
+dont les pages deviennent l'**arbre**. L'épingle donne deux choses, et rien d'autre :
 la borne de localisation (« vous êtes dans *Refonte de la marque* ») et le grain du
 contexte dynamique.
+
+**Le point dur du lot est l'ownership** (0063-D1, §2 du chantier). Il vit sur
+`projects` (`owner_type`/`owner_id`), **pas sur `docs`** : une page n'a jamais eu de
+propriétaire, elle héritait de celui de son projet par la contrainte
+`project_id NOT NULL`. La conversion, c'est exactement **poser ce propriétaire sur
+chaque page** — et c'est ce couple qui interdisait d'étendre la table des pages.
 
 ## Ce que ce module fait, et ce qu'il ne fait pas
 
@@ -55,6 +61,7 @@ from __future__ import annotations
 # table : sans préfixe distinct, la page 12 et le projet 12 réclameraient le même
 # identifiant public et l'une écraserait l'autre au premier boot, en silence.
 _FAMILY_PROJECT = "prj"
+_FAMILY_DOC = "doc"
 
 
 def _public_id_sql(family: str, id_expr: str) -> str:
@@ -151,8 +158,101 @@ PURGE_PROJECT_NODES_SQL = f"""
 """
 
 
+# --- Pages → nœuds ------------------------------------------------------------
+
+# **LE POINT DUR DU LOT, et il tient en une ligne** : `p.owner_type, p.owner_id` —
+# le propriétaire du PROJET, posé sur chaque page.
+#
+# L'ownership vit sur `projects`, **pas sur `docs`** (0063-D1, §2 du chantier) : une
+# page n'a jamais eu de propriétaire, elle héritait de celui de son projet par la
+# contrainte `project_id NOT NULL`. C'est ce couple qui interdisait d'étendre la
+# table des pages — retirer la contrainte laisserait des pages sans propriétaire, et
+# le poser sur chaque page EST la conversion. Tout le reste de ce fichier déménage
+# des colonnes ; cette ligne-là crée quelque chose qui n'existait pas.
+#
+# `docs.kind` ('doc' humain | 'note' agent | 'source' import) devient
+# `props->>'doc_kind'` : la colonne `kind` du nœud dit ce que l'objet EST (une page),
+# pas d'où il vient. Les confondre rendrait la provenance structurante — et
+# rappellerait le `kind='guide'` que M1 a précisément dissous.
+#
+# `public_token` voyage tel quel (**une seule page en porte un** en production,
+# relevé du 11/08). Savoir s'il DEVIENT un accès du modèle de 0053 se tranchera
+# quand la chaîne de grants sera vivante : décider maintenant, ce serait calibrer un
+# modèle d'accès sur une population de un — l'erreur exacte qui a produit #282.
+CONVERT_DOCS_TO_NODES_SQL = f"""
+    INSERT INTO nodes (public_id, kind, owner_type, owner_id, position, props,
+                       created_at, updated_at)
+    SELECT {_public_id_sql(_FAMILY_DOC, 'd.id')},
+           '{_KIND}', p.owner_type, p.owner_id, d.position,
+           jsonb_strip_nulls(jsonb_build_object(
+               'legacy', '{_FAMILY_DOC}', 'legacy_id', d.id,
+               'title', COALESCE(d.title, ''),
+               'description', d.description,
+               'body_md', COALESCE(d.body_md, ''),
+               'doc_kind', d.kind,
+               'public_token', d.public_token,
+               'project_id', d.project_id,
+               'created_by', d.created_by)),
+           d.created_at, d.updated_at
+      FROM docs d JOIN projects p ON p.id = d.project_id
+    ON CONFLICT ON CONSTRAINT nodes_public_id_key DO UPDATE SET
+        props = EXCLUDED.props, position = EXCLUDED.position,
+        updated_at = EXCLUDED.updated_at
+     WHERE EXCLUDED.updated_at > nodes.updated_at
+"""
+
+# L'ARBRE, et le propriétaire hérité. Deux raisons de sortir ceci du newer-wins, et
+# la seconde est un piège silencieux :
+#
+# 1. **le parent ne peut pas être résolu à l'insertion** — le nœud du parent peut
+#    naître dans le MÊME `INSERT … SELECT`, donc n'être visible qu'après ;
+# 2. **le propriétaire d'une page ne dépend pas de son horodatage** : transférer un
+#    projet (`reparent_project`) ne touche AUCUNE ligne de `docs`. Sous newer-wins
+#    seul, `EXCLUDED.updated_at > nodes.updated_at` serait faux pour toutes ses
+#    pages — qui resteraient donc chez l'ANCIEN propriétaire, indéfiniment et sans
+#    un mot. C'est précisément la classe de panne que ce lot a pour objet d'éviter.
+#
+# Le rattachement : le nœud de `docs.parent_id` s'il existe, sinon celui du PROJET.
+# C'est ce qui fait de l'épingle la racine de son sous-arbre (0054-D5) — une page de
+# premier niveau n'était rattachée à son projet que par une colonne, elle l'est
+# maintenant par l'arbre.
+RECONCILE_DOC_NODES_SQL = f"""
+    UPDATE nodes n
+       SET owner_type = p.owner_type, owner_id = p.owner_id,
+           parent_id = COALESCE(par.id, prj.id)
+      FROM docs d
+      JOIN projects p ON p.id = d.project_id
+      JOIN nodes prj ON prj.public_id = {_public_id_sql(_FAMILY_PROJECT, 'd.project_id')}
+      LEFT JOIN nodes par
+             ON d.parent_id IS NOT NULL
+            AND par.public_id = {_public_id_sql(_FAMILY_DOC, 'd.parent_id')}
+     WHERE n.public_id = {_public_id_sql(_FAMILY_DOC, 'd.id')}
+       AND (n.owner_type, n.owner_id, n.parent_id)
+           IS DISTINCT FROM (p.owner_type, p.owner_id, COALESCE(par.id, prj.id))
+"""
+
+PURGE_DOC_NODES_SQL = f"""
+    DELETE FROM nodes n
+     WHERE n.props->>'legacy' = '{_FAMILY_DOC}'
+       AND NOT EXISTS (SELECT 1 FROM docs d
+                        WHERE d.id = (n.props->>'legacy_id')::bigint)
+"""
+
+
 def convert_projects(conn) -> None:
     """Projets → nœuds épinglés : contenu, structure, purge. Rejouable."""
     conn.execute(CONVERT_PROJECTS_TO_NODES_SQL)
     conn.execute(RECONCILE_PROJECT_NODES_SQL)
     conn.execute(PURGE_PROJECT_NODES_SQL)
+
+
+def convert_docs(conn) -> None:
+    """Pages → nœuds : contenu, puis propriétaire hérité + arbre, puis purge.
+
+    ⚠️ L'ORDRE avec `convert_projects` compte : le rattachement d'une page de
+    premier niveau vise le nœud de son PROJET. S'il n'existe pas encore, la
+    jointure ne rend rien et la page reste orpheline jusqu'au boot suivant — un
+    arbre à moitié posé, qu'aucune erreur ne signale."""
+    conn.execute(CONVERT_DOCS_TO_NODES_SQL)
+    conn.execute(RECONCILE_DOC_NODES_SQL)
+    conn.execute(PURGE_DOC_NODES_SQL)
