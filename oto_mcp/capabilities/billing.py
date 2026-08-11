@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .. import billing
 from ..mollie_client import MollieError
@@ -32,6 +32,14 @@ class SubscribeInput(BaseModel):
 
 class PaymentsInput(BaseModel):
     limit: int = 20
+
+    @field_validator("limit")
+    @classmethod
+    def _cap(cls, v):
+        # Patron `SearchInput._cap` : la valeur part telle quelle en `LIMIT %s`. Sans
+        # borne, un `limit` énorme sérialise tout l'historique de l'org et un NÉGATIF
+        # fait échouer Postgres (« LIMIT must not be negative ») en 500 opaque.
+        return max(1, min(int(v), 100))
 
 
 class AdminPlanInput(BaseModel):

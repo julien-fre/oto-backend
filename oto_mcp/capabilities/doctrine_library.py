@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .. import access, org_store, roles
 from ._authz import ORG_MEMBER, SUB_ONLY
@@ -37,6 +37,15 @@ class LibraryListInput(BaseModel):
     category: Optional[str] = None
     author_kind: Optional[str] = None    # 'otomata' | 'org'
     limit: int = 100
+
+    @field_validator("limit")
+    @classmethod
+    def _cap(cls, v):
+        # Patron `SearchInput._cap` : la valeur part telle quelle en `LIMIT %s`. Sans
+        # borne, un `limit` énorme rend toute la bibliothèque d'un coup (avec un ILIKE
+        # sur `body_md` quand il y a une requête) et un NÉGATIF fait échouer Postgres
+        # (« LIMIT must not be negative ») en 500 opaque.
+        return max(1, min(int(v), 200))
 
 
 class LibraryGetInput(BaseModel):
