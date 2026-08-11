@@ -287,10 +287,17 @@ def register(mcp: FastMCP) -> None:
         - nested types: `type:"object"` + `fields:[…]` (sub-record, e.g. occupant);
           `type:"list"` + `of:<field-def>` (list of scalars or sub-records, e.g.
           contacts = list of {nom, titre, email}).
-        - write validation: `field.required: true`, type conformity, and
+        - write validation: `field.required: true`, type conformity,
           `field.required_when: {"<field>": "<value>"}` (e.g. deliverables required
-          when status="qualified") — active when `strict: true` or any field has
-          required/required_when. A non-conforming write FAILS naming the culprit.
+          when status="qualified"), and `field.max_length: <int>` on a SCALAR field
+          — active when `strict: true` or any field has required/required_when/
+          max_length. A non-conforming write FAILS naming the culprit (max_length
+          reports the actual length AND the bound).
+          Bound the fields meant to hold ONE short value (a job title, a city): a
+          column that collects reasoning stops being groupable/filterable. The
+          bound applies to the keys a write actually SETS, so rows already over it
+          keep working until that field is rewritten — and setting a bound on a
+          table that already overflows answers with a `warning` saying how many.
         - lifecycle: on the `role:"status"` field, `lifecycle: {states:[…],
           transitions:{from:[to…]}, terminal?:[…]}` — unknown state or undeclared
           transition is refused; entering a terminal state auto-releases the row's

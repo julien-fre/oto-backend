@@ -66,6 +66,19 @@ def test_def_rejects_lifecycle_inconsistencies():
     assert any("terminal: état inconnu 'c'" in e for e in errs)
 
 
+def test_def_rejects_malformed_max_length():
+    errs = dsv2.validate_schema_def({"fields": [
+        {"key": "a", "type": "text", "max_length": "60"},   # pas un entier
+        {"key": "b", "type": "text", "max_length": 0},      # borne vide
+        {"key": "c", "type": "list", "of": {"type": "text"},
+         "max_length": 30},                                  # composite : borne de quoi ?
+    ]})
+    assert sum("max_length" in e for e in errs) == 3
+    assert any("scalaire" in e for e in errs)
+    assert dsv2.validate_schema_def(
+        {"fields": [{"key": "a", "type": "text", "max_length": 60}]}) == []
+
+
 def test_def_rejects_lifecycle_on_non_status_field():
     errs = dsv2.validate_schema_def({"fields": [
         {"key": "etat", "lifecycle": {"states": ["a"]}}]})
@@ -85,6 +98,20 @@ def test_validation_active_via_strict_or_required():
         {"fields": [{"key": "a", "required": True}]})
     assert dsv2.validation_active(
         {"fields": [{"key": "a", "required_when": {"s": "x"}}]})
+
+
+def test_max_length_alone_activates_validation():
+    """Sinon la borne est INERTE, silencieusement (#383) — y compris posée sur un
+    sous-champ, où la profondeur est le cas nominal (contacts[].fonction)."""
+    assert dsv2.validation_active(
+        {"fields": [{"key": "fonction", "type": "text", "max_length": 60}]})
+    assert dsv2.validation_active({"fields": [
+        {"key": "contacts", "type": "list",
+         "of": {"fields": [{"key": "fonction", "type": "text",
+                            "max_length": 60}]}}]})
+    # une borne mal formée n'active rien (elle est refusée à la pose)
+    assert not dsv2.validation_active(
+        {"fields": [{"key": "a", "type": "text", "max_length": "60"}]})
 
 
 # ── validation de row ─────────────────────────────────────────────────────────
@@ -135,6 +162,52 @@ def test_nested_object_and_list_validated():
     assert any(e.startswith("occupant.nom") for e in errs)
     assert any(e.startswith("contacts[0].nom") for e in errs)
     assert any("contacts[1]" in e and "object" in e for e in errs)
+
+
+# ── borne de longueur (#383) ─────────────────────────────────────────────────
+
+BOUNDED = {"fields": [
+    {"key": "societe", "type": "text", "required": True},
+    {"key": "fonction", "type": "text", "max_length": 60},
+    {"key": "notes", "type": "text"},
+    {"key": "contacts", "type": "list",
+     "of": {"fields": [{"key": "fonction", "type": "text", "max_length": 60}]}},
+]}
+# Le cas réel : le raisonnement écrit dans la colonne « fonction » (247 car.)
+_OVERLONG = ("C.O.O & CFO / Directeur General Operations et Finance. Dans "
+             "l'entreprise depuis 1996 et a ce poste depuis septembre 2019, base "
+             "a Gennevilliers : c'est le decideur sur le cout charge, et de loin "
+             "le contact le mieux etabli de la fiche")
+
+
+def test_max_length_refuses_and_names_both_numbers():
+    errs = dsv2.validate_row(BOUNDED, {"societe": "ACME", "fonction": _OVERLONG})
+    assert len(errs) == 1
+    assert errs[0] == f"fonction: {len(_OVERLONG)} caractères, maximum 60"
+    assert dsv2.validate_row(BOUNDED, {"societe": "ACME", "fonction": "DAF"}) == []
+
+
+def test_max_length_applies_inside_sub_records():
+    errs = dsv2.validate_row(BOUNDED, {"societe": "ACME",
+                                       "contacts": [{"fonction": _OVERLONG}]})
+    assert any(e.startswith("contacts[0].fonction") and "maximum 60" in e
+               for e in errs)
+
+
+def test_max_length_only_judges_the_keys_actually_written():
+    """Une valeur trop longue DÉJÀ en base ne doit pas bloquer un patch qui porte
+    sur un autre champ (#383) — mais la réécrire trop longue, si."""
+    merged = {"societe": "ACME", "fonction": _OVERLONG, "notes": "rappelé"}
+    assert dsv2.validate_row(BOUNDED, merged, written={"notes"}) == []
+    errs = dsv2.validate_row(BOUNDED, merged, written={"fonction"})
+    assert any("fonction" in e and "maximum 60" in e for e in errs)
+    # written=None (insert / remplacement intégral) = tout est jugé
+    assert dsv2.validate_row(BOUNDED, merged) != []
+
+
+def test_max_length_unbounded_field_untouched():
+    assert dsv2.validate_row(BOUNDED, {"societe": "ACME",
+                                       "notes": _OVERLONG}) == []
 
 
 def test_lifecycle_unknown_state_and_forbidden_transition():

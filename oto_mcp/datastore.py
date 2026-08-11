@@ -322,10 +322,15 @@ class DatastorePg:
 
     @staticmethod
     def _check_row(schema: Optional[dict], merged: dict, *,
-                   prev_status=None) -> None:
+                   prev_status=None, written: Optional[set] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
-        déclare ni strict/required ni lifecycle (défaut 0016 soft)."""
-        errors = dsv2.validate_row(schema, merged, prev_status=prev_status)
+        déclare ni strict/required/max_length ni lifecycle (défaut 0016 soft).
+
+        `written` = les clés que le geste réécrit (None sur un insert/remplacement,
+        où tout est écrit) : borne `max_length` restreinte à celles-là, cf.
+        `dsv2.validate_row`."""
+        errors = dsv2.validate_row(schema, merged, prev_status=prev_status,
+                                   written=written)
         if errors:
             raise RowValidationError(errors)
 
@@ -499,10 +504,31 @@ class DatastorePg:
         out = {"namespace": namespace, "schema": schema}
         # Un statut sans état terminal = file de travail qui ne libère rien : le dire
         # ICI, à l'auteur du schéma, au moment où il le pose (les deux faces l'ont).
-        warning = dsv2.queue_release_warning(schema)
-        if warning:
-            out["warning"] = warning
+        warnings = [w for w in (dsv2.queue_release_warning(schema),
+                                self._overlong_warning(ns_id, schema)) if w]
+        if warnings:
+            out["warning"] = "\n".join(warnings)
         return out
+
+    @staticmethod
+    def _overlong_warning(ns_id: int, schema: Optional[dict]) -> Optional[str]:
+        """Des rows existantes dépassent déjà une borne `max_length` fraîchement
+        posée : le dire à celui qui la pose (#383). Pas un refus — la borne vaut
+        pour ce qu'on ÉCRIT, l'historique n'est refusé qu'au geste qui le réécrit —
+        mais un silence ferait croire la table conforme."""
+        bounds = dsv2.top_level_bounds(schema)
+        if not bounds:
+            return None
+        over = db.datastore_overlong_fields(ns_id, bounds)
+        if not over:
+            return None
+        detail = ", ".join(
+            f"`{o['field']}` : {o['rows']} ligne(s) jusqu'à {o['longest']} car. "
+            f"(max {o['max_length']})" for o in over)
+        return (f"borne posée sur des données déjà hors borne — {detail}. Les "
+                "écritures futures sont refusées, ces lignes-là restent en place "
+                "jusqu'à ce qu'on réécrive le champ (un patch d'un AUTRE champ "
+                "passe).")
 
     def set_semantic(self, namespace: str, enabled: bool) -> dict:
         """Active/désactive la recherche SÉMANTIQUE des lignes du namespace (#67 V2.2,
@@ -572,7 +598,8 @@ class DatastorePg:
             merged = dict(current or {})
             prev_status = merged.get(sk) if sk else None
             merged.update(user_data)
-            self._check_row(schema, merged, prev_status=prev_status)
+            self._check_row(schema, merged, prev_status=prev_status,
+                            written=set(user_data))
             return merged
 
         result = db.datastore_merge_row_locked(ns_id, row_id, _apply, _now_iso())
@@ -798,13 +825,16 @@ class DatastorePg:
         status_key = (dsv2.status_field(schema) or {}).get("key")
         prev_status = data.get(status_key) if status_key else None
         self._trace(trace, ns_id, ns, prev_status=prev_status)
+        written = set()
         for k, v in patch.items():
             if k in _META_COLS:
                 continue
             data[k] = v
+            written.add(k)
         # Validation sur le RÉSULTAT mergé (un patch partiel ne doit pas échouer
         # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).
-        self._check_row(schema, data, prev_status=prev_status)
+        # Seule la borne de longueur se limite aux clés du patch (#383).
+        self._check_row(schema, data, prev_status=prev_status, written=written)
         try:
             row = db.datastore_update_row(ns_id, row_id, data, _now_iso())
         except UniqueViolation:

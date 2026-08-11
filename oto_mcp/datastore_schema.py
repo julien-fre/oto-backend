@@ -6,10 +6,11 @@ s'étend au-delà du rendu (0016) avec quatre couches OPT-IN :
 - **types imbriqués** : `type: "object"` (+ `fields: [...]`) et `type: "list"`
   (+ `of: <field-def>` — scalaire ou sous-record) décrivent une *fiche* (occupant,
   `contacts[]`, `signaux[]`) que le blob JSONB porte déjà ;
-- **validation à l'écriture** : `field.required`, conformité de type, et
+- **validation à l'écriture** : `field.required`, conformité de type,
   `field.required_when: {<champ>: <valeur>}` (le guard-rail : livrables requis
-  quand `status = "qualified"`) — active si `schema.strict` OU si un field déclare
-  required/required_when ;
+  quand `status = "qualified"`) et `field.max_length` (borne de longueur — un
+  intitulé de poste n'est pas un paragraphe de raisonnement) — active si
+  `schema.strict` OU si un field déclare required/required_when/max_length ;
 - **cycle de vie** : `lifecycle: {states, transitions, terminal?}` sur le field
   `role="status"` — état inconnu ou transition non déclarée = refus ;
 - **états terminaux** : `terminal` explicite, sinon dérivés (état sans transition
@@ -22,6 +23,7 @@ une ValueError, jamais un refus muet.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from datetime import datetime
 from typing import Any, Optional
 
@@ -38,6 +40,46 @@ _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
 def _fields(schema: Optional[dict]) -> list[dict]:
     return [f for f in (schema or {}).get("fields") or [] if isinstance(f, dict)]
+
+
+def _walk_fields(fields: list) -> Iterator[dict]:
+    """Tous les fields, sous-records COMPRIS (`object.fields`, `list.of[.fields]`)."""
+    for f in fields:
+        if not isinstance(f, dict):
+            continue
+        yield f
+        if isinstance(f.get("fields"), list):
+            yield from _walk_fields(f["fields"])
+        of = f.get("of")
+        if isinstance(of, dict):
+            yield from _walk_fields([of])
+
+
+def max_length_of(field: dict) -> Optional[int]:
+    """La borne de longueur déclarée sur un field, si elle est exploitable.
+
+    Volontairement muette sur une déclaration mal formée (`max_length: "60"`, 0,
+    négative) : c'est `_validate_fields_def` qui la REFUSE à la pose du schéma.
+    Ici on ne fait qu'appliquer ce qui est valide — un schéma déjà en base, posé
+    quand la clé était encore ignorée, ne doit pas faire exploser une écriture."""
+    ml = field.get("max_length")
+    if isinstance(ml, bool) or not isinstance(ml, int) or ml <= 0:
+        return None
+    # Une borne sur un composite n'a pas de sens (longueur de quoi ?) et la
+    # définition la refuse ; si elle traîne dans un vieux schéma, on l'ignore.
+    return None if field.get("type") in COMPOSITE_TYPES else ml
+
+
+def top_level_bounds(schema: Optional[dict]) -> dict[str, int]:
+    """`{clé: max_length}` des champs BORNÉS de premier niveau — ceux qu'une requête
+    SQL sait mesurer (`data->>clé`). Sert l'avertissement « des lignes existantes
+    dépassent déjà » à la pose du schéma."""
+    out: dict[str, int] = {}
+    for f in _fields(schema):
+        key, ml = f.get("key"), max_length_of(f)
+        if isinstance(key, str) and key and ml:
+            out[key] = ml
+    return out
 
 
 def field_by_role(schema: Optional[dict], role: str) -> Optional[dict]:
@@ -61,12 +103,22 @@ def title_field(schema: Optional[dict]) -> Optional[dict]:
 
 def validation_active(schema: Optional[dict]) -> bool:
     """La validation d'écriture est OPT-IN : `schema.strict` truthy, OU au moins un
-    field déclarant `required`/`required_when`. Sans ça, écriture soft (0016)."""
+    field déclarant `required`/`required_when`/`max_length`. Sans ça, écriture
+    soft (0016).
+
+    `max_length` compte au même titre que `required` — sans quoi une borne posée
+    sur un schéma qui n'a aucun requis serait INERTE, silencieusement (signal
+    #383). Elle est cherchée en PROFONDEUR (sous-records inclus), là où
+    required/required_when restent au premier niveau : élargir ces deux-là
+    activerait rétroactivement la validation de schémas déjà posés, alors que
+    déclarer une borne EST la demande de la faire respecter."""
     if not isinstance(schema, dict):
         return False
     if schema.get("strict"):
         return True
-    return any(f.get("required") or f.get("required_when") for f in _fields(schema))
+    if any(f.get("required") or f.get("required_when") for f in _fields(schema)):
+        return True
+    return any(max_length_of(f) for f in _walk_fields(_fields(schema)))
 
 
 def lifecycle_of(schema: Optional[dict]) -> Optional[dict]:
@@ -187,6 +239,14 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
         rw = f.get("required_when")
         if rw is not None and (not isinstance(rw, dict) or not rw):
             errors.append(f"{fpath}: required_when doit être un objet {{champ: valeur}}")
+        ml = f.get("max_length")
+        if ml is not None:
+            if isinstance(ml, bool) or not isinstance(ml, int) or ml <= 0:
+                errors.append(f"{fpath}: max_length doit être un entier > 0, reçu {ml!r}")
+            elif ftype in COMPOSITE_TYPES:
+                errors.append(
+                    f"{fpath}: max_length ne borne qu'un champ scalaire "
+                    f"(type={ftype} — borne le sous-champ concerné)")
 
 
 # ── validation d'une ROW à l'écriture ────────────────────────────────────────
@@ -261,7 +321,12 @@ def _type_error(value: Any, ftype: str, path: str,
     return []  # json / type absent : tout passe
 
 
-def _row_errors(fields: list, data: dict, path: str) -> list[str]:
+def _row_errors(fields: list, data: dict, path: str,
+                written: Optional[set] = None) -> list[str]:
+    """Erreurs d'un (sous-)record. `written` = clés effectivement RÉÉCRITES par ce
+    geste (None = toutes) : seule la borne de longueur s'y restreint, cf.
+    `validate_row`. La récursion dans un sous-record repart à None — remplacer une
+    clé de premier niveau réécrit tout ce qu'elle contient."""
     errors: list[str] = []
     for f in fields:
         key = f.get("key")
@@ -282,19 +347,35 @@ def _row_errors(fields: list, data: dict, path: str) -> list[str]:
             errors.extend(_type_error(value, f["type"], fpath,
                                       f.get("fields"), f.get("of"),
                                       f.get("options")))
+        ml = max_length_of(f)
+        if ml and (written is None or key in written):
+            n = len(value) if isinstance(value, str) else len(str(value))
+            if n > ml:
+                # La longueur CONSTATÉE autant que la borne : un refus qui ne dit
+                # pas de combien on dépasse fait deviner (signal #383).
+                errors.append(f"{fpath}: {n} caractères, maximum {ml}")
     return errors
 
 
 def validate_row(schema: Optional[dict], merged: dict, *,
-                 prev_status: Any = None) -> list[str]:
+                 prev_status: Any = None,
+                 written: Optional[set] = None) -> list[str]:
     """Erreurs d'une row TELLE QU'ELLE SERA ÉCRITE (le résultat mergé, pas le
     patch) : required / required_when / types / structure imbriquée — si la
     validation est active — plus le cycle de vie (états + transitions) dès qu'un
-    `lifecycle` est déclaré, même hors mode strict. Liste vide = OK."""
+    `lifecycle` est déclaré, même hors mode strict. Liste vide = OK.
+
+    `written` = les clés que ce geste réécrit (None = la row entière, cas d'un
+    insert ou d'un remplacement). La borne `max_length` — et elle seule — s'y
+    restreint : c'est une propriété de la valeur qu'on POSE, pas de l'état final.
+    Sans ça, une valeur trop longue déjà en base ferait échouer tout patch
+    ultérieur de la ligne, même portant sur un champ sans rapport (signal #383).
+    Le reste continue de se juger sur le mergé : un requis manquant est un défaut
+    de la row, quel que soit le geste qui l'y laisse."""
     errors: list[str] = []
     if validation_active(schema):
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
-        errors.extend(_row_errors(_fields(schema), merged, ""))
+        errors.extend(_row_errors(_fields(schema), merged, "", written))
     lc = lifecycle_of(schema)
     if lc:
         sf = status_field(schema)

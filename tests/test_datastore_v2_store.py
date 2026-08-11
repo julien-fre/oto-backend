@@ -174,3 +174,65 @@ def test_set_schema_rejects_invalid_definition(store, monkeypatch):
     monkeypatch.setattr(dsm.db, "datastore_key_dup_groups", lambda *a: [])
     with pytest.raises(ValueError, match="type inconnu"):
         st.set_schema("leads", {"fields": [{"key": "x", "type": "wat"}]})
+
+
+# ── borne de longueur (#383) ─────────────────────────────────────────────────
+
+BOUNDED = {"fields": [{"key": "fonction", "type": "text", "max_length": 60},
+                      {"key": "notes", "type": "text"}]}
+
+
+@pytest.fixture()
+def bounded(store, monkeypatch):
+    st, calls = store
+    monkeypatch.setattr(dsm.db, "get_datastore_namespace_by_id",
+                        lambda ns_id: {"id": ns_id, "schema": BOUNDED})
+    monkeypatch.setattr(dsm.db, "datastore_get_row",
+                        lambda ns_id, rid: {
+                            "row_id": rid, "created_at": "t", "updated_at": "t",
+                            "data": {"fonction": "x" * 247, "notes": ""}})
+    return st, calls
+
+
+def test_bound_refuses_the_overlong_write(bounded):
+    st, calls = bounded
+    with pytest.raises(RowValidationError, match="247 caractères, maximum 60"):
+        st.append_row("viviers", {"fonction": "x" * 247})
+    assert calls["insert"] == []
+
+
+def test_patch_of_another_field_survives_an_overlong_row_in_place(bounded):
+    """La ligne en base dépasse déjà : patcher `notes` doit passer, patcher
+    `fonction` non. Sinon poser une borne gèlerait tout l'historique (#383)."""
+    st, calls = bounded
+    out = st.update_row("viviers", "r1", {"notes": "rappelé le 12"})
+    assert out["notes"] == "rappelé le 12" and calls["update"]
+    with pytest.raises(RowValidationError, match="maximum 60"):
+        st.update_row("viviers", "r1", {"fonction": "y" * 90})
+
+
+def test_set_schema_warns_about_rows_already_over_the_bound(store, monkeypatch):
+    st, _ = store
+    monkeypatch.setattr(dsm.db, "set_datastore_schema", lambda *a: None)
+    monkeypatch.setattr(dsm.db, "datastore_key_dup_groups", lambda *a: [])
+    monkeypatch.setattr(dsm.db, "datastore_drop_key_index", lambda *a: None)
+    seen = {}
+    monkeypatch.setattr(dsm.db, "datastore_overlong_fields",
+                        lambda ns_id, bounds: (
+                            seen.update(ns_id=ns_id, bounds=bounds) or
+                            [{"field": "fonction", "max_length": 60,
+                              "rows": 12, "longest": 247}]))
+    out = st.set_schema("viviers", BOUNDED)
+    assert seen == {"ns_id": 7, "bounds": {"fonction": 60}}
+    assert "12 ligne(s) jusqu'à 247 car." in out["warning"]
+
+
+def test_set_schema_silent_without_bounds(store, monkeypatch):
+    st, _ = store
+    monkeypatch.setattr(dsm.db, "set_datastore_schema", lambda *a: None)
+    monkeypatch.setattr(dsm.db, "datastore_key_dup_groups", lambda *a: [])
+    monkeypatch.setattr(dsm.db, "datastore_drop_key_index", lambda *a: None)
+    monkeypatch.setattr(dsm.db, "datastore_overlong_fields",
+                        lambda *a, **k: pytest.fail("aucune borne : pas de scan"))
+    assert "warning" not in st.set_schema(
+        "viviers", {"fields": [{"key": "notes", "type": "text"}]})

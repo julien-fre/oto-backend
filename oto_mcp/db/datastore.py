@@ -419,6 +419,28 @@ def datastore_key_dup_groups(ns_id: int, key: str, limit: int = 10) -> list[dict
         return [dict(r) for r in conn.execute(q, (ns_id, limit)).fetchall()]
 
 
+def datastore_overlong_fields(ns_id: int, bounds: dict) -> list[dict]:
+    """Champs dont des rows DÉJÀ EN BASE dépassent la borne `max_length` posée —
+    `[{field, max_length, rows, longest}]`, pire dépassement d'abord.
+
+    Sert l'avertissement (pas le refus) de `set_schema` : borner un champ après
+    coup est légitime, mais celui qui pose la borne doit savoir ce que l'historique
+    contient — ces lignes-là ne seront refusées qu'au geste qui les réécrit."""
+    from psycopg import sql as _sql
+    out: list[dict] = []
+    with _connect() as conn:
+        for field, ml in (bounds or {}).items():
+            q = _sql.SQL(
+                "SELECT COUNT(*) AS rows, MAX(length(data->>{k})) AS longest "
+                "FROM datastore_rows WHERE ns_id = %s AND length(data->>{k}) > %s"
+            ).format(k=_sql.Literal(str(field)))
+            r = conn.execute(q, (ns_id, int(ml))).fetchone()
+            if r and (r["rows"] or 0) > 0:
+                out.append({"field": field, "max_length": int(ml),
+                            "rows": int(r["rows"]), "longest": int(r["longest"])})
+    return sorted(out, key=lambda d: d["longest"] - d["max_length"], reverse=True)
+
+
 def datastore_merge_key_duplicates(ns_id: int, key: str) -> int:
     """Résorbe les doublons de clé métier en reconstituant la sémantique upsert :
     pour chaque valeur en doublon, MERGE les `data` dans l'ordre chronologique dans
