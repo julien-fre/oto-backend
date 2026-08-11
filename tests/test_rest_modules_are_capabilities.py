@@ -10,6 +10,13 @@ alors qu'elle crée la même dette en miroir — le jour où l'agent en a besoin
 écrit un tool MCP à côté. Angle mort constaté le 2026-07-28 (`api_routes_zoho.py`
 ajouté à la main le jour même de la convergence, sans que rien ne le signale).
 
+⚠️ **Ce garde-fou avait lui-même un angle mort, fermé le 2026-08-11 (#286).** Son
+glob disait `api_routes_*.py` — qui ne matche PAS `api_routes.py`, le fichier qui
+porte le plus de routes. Trente-six chemins y vivaient invisibles pendant que le
+docstring promettait « la CI casse ». Un garde-fou qui couvre 45 chemins sur 81 en
+annonçant qu'il les couvre tous est pire qu'absent : on cesse de regarder. Le glob
+dit désormais `api_routes*.py`, et les 36 chemins découverts sont classés ci-dessous.
+
 **Grain = la ROUTE, pas le module.** Première version classée par module : un seul
 webhook « par nature » y blanchissait les 17 autres routes du même fichier. La
 plupart des modules sont mixtes (un callback OAuth + dix verbes de dashboard), donc
@@ -97,13 +104,102 @@ _KNOWN: dict[str, str] = {
     "/api/folkmcp/oauth/start": DEBT,
     "/api/folkmcp/oauth/status": DEBT,
     "/api/folkmcp/oauth": DEBT,
+
+    # ======================================================================
+    # `api_routes.py` — LE FICHIER PRINCIPAL, hors radar jusqu'au 2026-08-11
+    # ======================================================================
+    # Le glob ne matchait que `api_routes_<x>.py` : ces 36 chemins n'ont jamais été
+    # vus (#286). Ils sont classés ici pour la PREMIÈRE fois — c'est de l'ancien
+    # qu'on cesse d'ignorer, pas du neuf qu'on accueille (cf. le plafond plus bas).
+    #
+    # --- NATURE — servies SANS AUTH, donc hors contrat capacité par CONSTRUCTION :
+    # `_rest_adapter` authentifie TOUJOURS, un anonyme ne peut pas y passer.
+    # L'argument est déjà écrit dans le code (`doctrines_library_public` : « route
+    # écrite à la main car l'adaptateur REST des capacités authentifie toujours »).
+    # Quatre d'entre elles sont même consommées par un PROGRAMME, sans en-tête
+    # d'auth : le build du site vitrine (`oto-websites/web/scripts/refresh-catalog.mjs`
+    # → catalog/connectors/doctrines/guides) et celui de docs.oto.cx
+    # (`sites/docs.oto.cx/scripts/refresh-openapi.mjs` → openapi.json).
+    "/api/mcp/catalog": NATURE,
+    "/api/doctrines/library": NATURE,
+    "/api/doctrines/library/{slug}": NATURE,
+    "/api/guides/library": NATURE,
+    "/api/guides/library/{slug}": NATURE,
+    # Descriptif de la surface REST : décrit des FORMES, aucune valeur. Servi aux
+    # deux chemins usuels parce qu'un intégrateur sonde l'un ou l'autre.
+    "/openapi.json": NATURE,
+    "/api/openapi.json": NATURE,
+    # ⚠️ Seule route MIXTE du lot : anonyme (vitrine) ET authentifiée (le dashboard
+    # y scope son catalogue sur l'org active). Classée NATURE parce que sa moitié
+    # anonyme est un contrat du build vitrine — la migrer supposerait de SCINDER la
+    # route. Si elle bouge un jour, ce sera par une capacité AJOUTÉE à côté, jamais
+    # par déplacement de ce chemin.
+    "/api/connectors": NATURE,
+    # Aperçu d'invitation AVANT création de compte : par construction, il n'y a pas
+    # encore de `sub` à autoriser. Le jeton (ou le code) EST le secret.
+    "/api/invitations/{token}": NATURE,
+    "/api/invitations/code/{code}": NATURE,
+    # Partage public d'un doc par token — lecture seule, le token EST le secret.
+    # `/p/d/…` rend du HTML server-rendered (lisible par un agent sans JS), pas du
+    # JSON : ce n'est même pas la forme d'une capacité.
+    "/api/public/docs/{token}": NATURE,
+    "/p/d/{token}": NATURE,
+    # Réception d'un upload signé (#105) : PAS de JWT, le jeton scellé de l'URL fait
+    # foi (sub/org/cible, TTL, usage unique). Appelée par un `curl` d'agent (PUT) ou
+    # le formulaire humain (POST/GET) — un tiers, hors session dashboard.
+    "/api/upload/{token}": NATURE,
+    # Icône de marque servie au NAVIGATEUR (l'endpoint MCP n'a pas de page racine) :
+    # du SVG, pas du JSON, pas d'autz à tenir. Ce n'est pas une opération d'API.
+    "/favicon.svg": NATURE,
+    "/favicon.ico": NATURE,
+    #
+    # --- DETTE — verbes de dashboard authentifiés, à migrer en capacités.
+    # Compte, profil, activité : le cœur de ce que lit le dashboard.
+    "/api/me": DEBT,
+    "/api/me/avatar": DEBT,
+    "/api/me/activity-summary": DEBT,
+    "/api/me/calls": DEBT,
+    # Fichiers bruts d'un projet + export — le reste du domaine projet est déjà en
+    # capacités (`/api/me/projects` sert tout le métier en `op=`), ces quatre-là non.
+    "/api/me/projects/{project_id:int}/files": DEBT,
+    "/api/me/projects/{project_id:int}/files/{file_id:int}": DEBT,
+    "/api/me/projects/{project_id:int}/files/{file_id:int}/public": DEBT,
+    "/api/me/projects/{id}/export": DEBT,
+    "/api/orgs/{id}/logo": DEBT,
+    # Toolbox du membre : miroir REST de `oto_list_my_tools`/`oto_enable_tool`/
+    # `oto_disable_tool`/`oto_tool_schema`/`oto_call` — deux implémentations du même
+    # métier, exactement la dette que ce garde-fou nomme.
+    "/api/me/tools": DEBT,
+    "/api/me/tools/registry": DEBT,
+    "/api/me/tools/{name}": DEBT,
+    "/api/me/tools/{name}/detail": DEBT,
+    "/api/me/tools/{name}/call": DEBT,
+    # Pose/lecture de credential et connexion par session navigateur. La pose d'un
+    # secret est dashboard-only par DESIGN (jamais un argument MCP, il transiterait
+    # dans le contexte LLM) — mais une capacité peut être REST-only (binding `mcp`
+    # retiré, cf. `set_platform_key`) : c'est bien de la dette, pas une nature.
+    "/api/settings/api-keys/{provider}": DEBT,
+    "/api/me/connectors/{name}/session/start": DEBT,
+    "/api/me/connectors/{name}/session/finalize": DEBT,
+    # Palier admin. ⚠️ Les deux routes `tokens` portent `allow_api_token=False` (un
+    # jeton ne fabrique pas de jeton) — un cran que `_rest_adapter` ne sait pas
+    # encore exprimer : c'est un travail de migration, pas une nature. Leurs miroirs
+    # membres (`/api/me/tokens*`) sont déjà classés en dette pour la même raison.
+    "/api/admin/platform-keys": DEBT,
+    "/api/admin/platform-keys/{provider}/{label}": DEBT,
+    "/api/admin/users/{sub}/tokens": DEBT,
+    "/api/admin/users/{sub}/tokens/{token_id}": DEBT,
 }
 
 
 def _handwritten_routes() -> dict[str, str]:
-    """`{chemin: module}` de toute `Route("…")` déclarée dans un `api_routes_*.py`."""
+    """`{chemin: module}` de toute `Route("…")` déclarée dans un `api_routes*.py`.
+
+    ⚠️ Le glob n'a PAS d'underscore avant l'étoile, et c'est le tout du correctif
+    #286 : `api_routes_*.py` excluait `api_routes.py`, le fichier principal.
+    """
     out: dict[str, str] = {}
-    for path in sorted(ROOT.glob("api_routes_*.py")):
+    for path in sorted(ROOT.glob("api_routes*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -132,9 +228,16 @@ def test_no_new_handwritten_rest_route():
 
 def test_rest_debt_only_shrinks():
     """La dette est NOMMÉE et COMPTÉE (« no silent caps » : un plafond tu est un
-    plafond oublié). Ce plafond ne doit que baisser, au fil des migrations."""
+    plafond oublié). Ce plafond ne doit que baisser, au fil des migrations.
+
+    ⚠️ **Il est passé de 37 à 49 le 2026-08-11 (#286), et c'est le SEUL cas où
+    l'élargir est légitime** : on ne l'a pas relevé pour accueillir du NEUF, mais
+    pour cesser d'ignorer de l'ANCIEN. Les 21 routes ajoutées vivaient déjà dans
+    `api_routes.py`, hors de portée du glob depuis toujours ; les compter ne crée
+    pas une dette, elle la RÉVÈLE. Toute autre hausse est un relâchement.
+    """
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 37, (
+    assert len(debt) <= 49, (
         f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
         "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
 
