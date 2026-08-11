@@ -1503,6 +1503,15 @@ _LIBRARY_META_COLS = (
 )
 
 
+class LibrarySlugTaken(Exception):
+    """Le slug public est déjà porté par une entrée qui appartient à QUELQU'UN
+    D'AUTRE (autre org, ou la plateforme). Volontairement pauvre : le message
+    rendu à l'appelant ne doit jamais nommer le propriétaire — une entrée
+    `unlisted` se lit par slug exact, son slug tient donc lieu de lien secret et
+    un refus précis en confirmerait l'existence (même règle que le 404
+    non-disclosant du gate d'org, ADR 0023)."""
+
+
 def publish_doctrine(*, slug: str, title: str = "", description: str = "",
                      body_md: str, author_kind: str, author_org_id: Optional[int] = None,
                      author_display: str = "", category: str = "",
@@ -1511,9 +1520,18 @@ def publish_doctrine(*, slug: str, title: str = "", description: str = "",
                      forked_from: Optional[int] = None,
                      published_by: Optional[str] = None,
                      slots: Optional[list] = None) -> dict:
-    """Publie (ou re-publie) une doctrine dans la bibliothèque. Upsert par `slug` :
+    """Publie (ou RE-publie **la sienne**) dans la bibliothèque. Upsert par `slug` :
     re-publier le même slug incrémente `version` et remplace le corps. Sérialisé
-    par slug via verrou advisory. Renvoie la row publiée (avec body)."""
+    par slug via verrou advisory. Renvoie la row publiée (avec body).
+
+    ⚠️ Écriture BORNÉE À L'AUTEUR : si le slug existe et que son couple
+    `(author_kind, author_org_id)` diffère de celui de l'appelant, on lève
+    `LibrarySlugTaken` — publier ne prend jamais possession de l'entrée d'autrui
+    (le nom EST l'adresse : `UNIQUE (slug)`, toute l'API adresse par slug).
+    L'appartenance est lue SOUS le verrou advisory, donc sans course. Une entrée
+    orpheline (`author_kind='org'`, `author_org_id` NULL après suppression de
+    l'org — ON DELETE SET NULL) n'est réclamable par personne : seul un admin
+    plateforme peut la dépublier."""
     slug = normalize_slug(slug)
     if not slug:
         raise ValueError("slug requis")
@@ -1521,6 +1539,10 @@ def publish_doctrine(*, slug: str, title: str = "", description: str = "",
         raise ValueError("body_md requis")
     if author_kind not in ("otomata", "org"):
         raise ValueError("author_kind invalide (otomata|org)")
+    if author_kind == "org" and author_org_id is None:
+        # Sinon l'entrée naît sans propriétaire : indépublicable par son auteur et
+        # hors de portée du contrôle d'appartenance ci-dessous.
+        raise ValueError("author_org_id requis pour author_kind='org'")
     if visibility not in ("public", "unlisted"):
         raise ValueError("visibility invalide (public|unlisted)")
     tags = list(tags or [])
@@ -1528,8 +1550,11 @@ def publish_doctrine(*, slug: str, title: str = "", description: str = "",
         with conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"dl:{slug}",))
             cur = conn.execute(
-                "SELECT version FROM doctrine_library WHERE slug = %s", (slug,)
+                "SELECT version, author_kind, author_org_id FROM doctrine_library "
+                "WHERE slug = %s", (slug,)
             ).fetchone()
+            if cur and (cur["author_kind"], cur["author_org_id"]) != (author_kind, author_org_id):
+                raise LibrarySlugTaken(slug)
             new_version = (cur["version"] + 1) if cur else 1
             row = conn.execute(
                 f"""
@@ -1541,8 +1566,10 @@ def publish_doctrine(*, slug: str, title: str = "", description: str = "",
                 ON CONFLICT (slug) DO UPDATE SET
                     title = EXCLUDED.title, description = EXCLUDED.description,
                     body_md = EXCLUDED.body_md, slots = EXCLUDED.slots,
-                    author_kind = EXCLUDED.author_kind,
-                    author_org_id = EXCLUDED.author_org_id,
+                    -- `author_kind`/`author_org_id` volontairement ABSENTS du SET :
+                    -- l'appartenance d'une entrée ne change jamais par un upsert
+                    -- (elle est vérifiée sous le verrou juste au-dessus). Les
+                    -- remettre ici rouvrirait la prise de possession silencieuse.
                     author_display = EXCLUDED.author_display,
                     category = EXCLUDED.category, tags = EXCLUDED.tags,
                     visibility = EXCLUDED.visibility,

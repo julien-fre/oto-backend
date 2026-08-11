@@ -69,6 +69,19 @@ def main() -> None:
     assert got["body_md"].startswith("# Outreach"), got
     print("  ✓")
 
+    print("→ bob publie SON skill sous le nom déjà pris par Org A → 409 slug_taken (#292)")
+    org_store.set_instruction(ob, "outreach", "# Outreach (Org B)\nAutre chose.",
+                              title="Le mien", set_by="bob")
+    denied(lambda: run("library.publish", "bob", slug="outreach"), 409)
+    held = org_store.get_library_entry(slug="outreach", include_unlisted=True)
+    assert held["author_org_id"] == oa and held["version"] == 1, held
+    assert held["body_md"].startswith("# Outreach\n"), held["body_md"][:40]
+    print("  ✓ l'entrée d'Org A est intacte : corps, auteur, version")
+
+    print("→ alice republie LA SIENNE → v2 (le cas normal, inchangé)")
+    assert run("library.publish", "alice", slug="outreach")["version"] == 2
+    print("  ✓")
+
     print("→ bob forke dans Org B → skill versionné v1")
     fk = run("library.fork", "bob", slug="outreach")
     assert fk["forked"] and fk["org_id"] == ob and fk["version"] == 1

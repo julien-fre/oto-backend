@@ -8,8 +8,13 @@ org). Co-déclarées MCP + REST (ADR 0009) :
   la surface ANONYME pour la vitrine est servie à part par des routes écrites à
   la main dans `api_routes` (l'adaptateur REst des capacités authentifie toujours).
 - publication / fork = org_admin de l'**org active** (injectée par `ORG_MEMBER`,
-  jamais d'un param client → verrou IDOR) ; un publieur **platform-operator**
+  jamais d'un param client → verrou IDOR ; l'org est REQUISE même pour un
+  platform-operator, cf. `_require_org_admin`) ; un publieur **platform-operator**
   publie au nom d'**Otomata**.
+- publier est **borné à l'auteur** : le slug public est unique (c'est l'adresse de
+  l'entrée, toute l'API adresse par slug) et POSSÉDÉ — republier le sien
+  incrémente sa version, viser celui d'une autre org est refusé (409 `slug_taken`,
+  message non-disclosant : un slug `unlisted` est un lien secret).
 - dépublication = l'auteur (org_admin de l'org auteur) ou un admin plateforme.
 
 Handlers SYNC (les adaptateurs n'awaitent pas). Le fork réutilise
@@ -157,12 +162,14 @@ class LibraryEntry(BaseModel):
 
 
 class PublishResult(BaseModel):
-    """Accusé de publication. Une entrée déjà publiée sous le même slug public est
-    REMPLACÉE (corps, titre, auteur) et sa version incrémentée — publier n'est donc
-    pas toujours une création."""
+    """Accusé de publication. Une entrée déjà publiée sous le même slug public par
+    TON org est REMPLACÉE (corps, titre) et sa version incrémentée — publier n'est
+    donc pas toujours une création. Le slug d'une entrée appartenant à une AUTRE
+    org (ou à la plateforme) est refusé, jamais repris : 409 `slug_taken`."""
     published: bool = Field(description="Toujours `true` : un échec ne rend pas "
                                         "`published:false`, il lève (404 doctrine "
-                                        "absente, 403 sans org_admin). Ne pas le tester "
+                                        "absente, 403 sans org_admin, 409 nom déjà "
+                                        "pris par une autre org). Ne pas le tester "
                                         "comme un booléen d'issue.")
     id: int = Field(description="Identifiant de l'entrée publiée — à conserver, c'est "
                                 "ce qu'attend library.unpublish.")
@@ -205,20 +212,43 @@ class UnpublishResult(BaseModel):
                     "voulu est déjà atteint.")
 
 
-def _require_org_admin(ctx: ResolvedCtx, what: str) -> None:
-    """Gate org_admin de l'org active (escalade platform_admin incluse)."""
+def _require_org_admin(ctx: ResolvedCtx, what: str) -> int:
+    """Gate org_admin de l'org active (escalade platform_admin incluse) — et rend
+    l'org active, dont ces deux opérations ont besoin.
+
+    L'org est exigée AVANT l'escalade plateforme : publier lit un skill DANS une
+    org (`get_instruction(org_id, slug)`) et forker écrit DANS une org
+    (`org_instructions.org_id` NOT NULL). `author_kind='otomata'` ne nomme qu'un
+    AUTEUR — il ne fournit ni la source à publier ni la destination du fork. Sans
+    ce garde, un opérateur plateforme sans org active passait le gate avec
+    `org_id=None` : 500 (violation NOT NULL) au fork, 404 au message faux
+    (« absente de ton org active ») à la publication."""
+    if ctx.org_id is None:
+        raise AuthzDenied(400, "no_active_org",
+                          f"{what} demande une org active — choisis-en une avec oto_use_org.")
     if access.is_platform_operator(ctx.sub):
-        return
-    if ctx.org_id is None or not roles.is_org_admin(ctx.sub, ctx.org_id):
+        return ctx.org_id
+    if not roles.is_org_admin(ctx.sub, ctx.org_id):
         raise AuthzDenied(403, "forbidden", f"{what} requiert org_admin de ton org active.")
+    return ctx.org_id
 
 
 def _author_for(ctx: ResolvedCtx) -> tuple[str, Optional[int], str]:
-    """Auteur affiché : platform-operator → Otomata ; sinon l'org active."""
+    """Auteur affiché : platform-operator → Otomata ; sinon l'org active.
+
+    Lève plutôt que de publier un auteur vide : `author_display` est le seul axe
+    de confiance affiché au catalogue, une entrée anonyme n'y a rien à faire."""
     if access.is_platform_operator(ctx.sub):
         return "otomata", None, "Otomata"
-    o = org_store.get_org(ctx.org_id) if ctx.org_id else None
-    return "org", ctx.org_id, ((o or {}).get("name") or "")
+    o = org_store.get_org(ctx.org_id)
+    if not o:
+        raise AuthzDenied(404, "unknown_org", f"Org #{ctx.org_id} introuvable.")
+    name = (o.get("name") or "").strip()
+    if not name:
+        raise AuthzDenied(400, "unnamed_org",
+                          "Ton org n'a pas de nom : nomme-la avant de publier "
+                          "(elle signe l'entrée au catalogue).")
+    return "org", ctx.org_id, name
 
 
 def _list(ctx: ResolvedCtx, inp: LibraryListInput) -> dict:
@@ -241,31 +271,39 @@ def _get(ctx: ResolvedCtx, inp: LibraryGetInput) -> dict:
 
 
 def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
-    _require_org_admin(ctx, "Publier")
-    src = org_store.get_instruction(ctx.org_id, inp.slug)
+    org_id = _require_org_admin(ctx, "Publier")
+    src = org_store.get_instruction(org_id, inp.slug)
     if not src:
         raise AuthzDenied(404, "unknown_doctrine",
                           f"Doctrine `{inp.slug}` absente de ton org active.")
     kind, author_org_id, display = _author_for(ctx)
-    row = org_store.publish_doctrine(
-        slug=inp.public_slug or inp.slug,
-        title=inp.title if inp.title is not None else (src.get("title") or ""),
-        description=inp.description if inp.description is not None else (src.get("description") or ""),
-        body_md=src["body_md"], author_kind=kind, author_org_id=author_org_id,
-        author_display=display, category=inp.category or "", tags=inp.tags or [],
-        visibility=inp.visibility, source_org_id=ctx.org_id, source_slug=inp.slug,
-        published_by=ctx.sub, slots=src.get("slots") or [],
-    )
+    try:
+        row = org_store.publish_doctrine(
+            slug=inp.public_slug or inp.slug,
+            title=inp.title if inp.title is not None else (src.get("title") or ""),
+            description=inp.description if inp.description is not None else (src.get("description") or ""),
+            body_md=src["body_md"], author_kind=kind, author_org_id=author_org_id,
+            author_display=display, category=inp.category or "", tags=inp.tags or [],
+            visibility=inp.visibility, source_org_id=org_id, source_slug=inp.slug,
+            published_by=ctx.sub, slots=src.get("slots") or [],
+        )
+    except org_store.LibrarySlugTaken:
+        # NON-DISCLOSANT, à dessein : ne jamais dire À QUI est l'entrée, ni même
+        # qu'elle existe sous cette forme — le slug d'une entrée `unlisted` est un
+        # lien secret (cf. `_get`), un refus précis le confirmerait à qui devine.
+        raise AuthzDenied(409, "slug_taken",
+                          f"Le nom `{org_store.normalize_slug(inp.public_slug or inp.slug)}` "
+                          "n'est pas disponible — publie sous un autre `public_slug`.")
     return {"published": True, "id": row["id"], "slug": row["slug"],
             "version": row["version"], "visibility": row["visibility"]}
 
 
 def _fork(ctx: ResolvedCtx, inp: ForkInput) -> dict:
-    _require_org_admin(ctx, "Forker")
+    org_id = _require_org_admin(ctx, "Forker")
     entry = org_store.get_library_entry(slug=inp.slug, include_unlisted=True)
     if not entry:
         raise AuthzDenied(404, "unknown_entry", f"Doctrine publique `{inp.slug}` inconnue.")
-    res = org_store.fork_into_org(entry_id=entry["id"], org_id=ctx.org_id,
+    res = org_store.fork_into_org(entry_id=entry["id"], org_id=org_id,
                                   new_slug=inp.new_slug, set_by=ctx.sub)
     return {"forked": True, **res}
 
@@ -304,7 +342,10 @@ CAPABILITIES += [
         key="library.publish", handler=_publish, Input=PublishInput, authz=ORG_MEMBER,
         description="Publish one of your org's named doctrines (skills) to the PUBLIC library "
                     "so others can find and fork it. Requires org_admin of your active org. "
-                    "slug = the org skill to publish ; visibility = public | unlisted.",
+                    "slug = the org skill to publish ; visibility = public | unlisted. "
+                    "Public names are unique and OWNED: re-publishing your own entry bumps its "
+                    "version, a name held by someone else is refused (409) — pick another "
+                    "public_slug.",
         Output=PublishResult,
         rest=RestBinding("POST", "/api/me/doctrines/publish"),
     ),
