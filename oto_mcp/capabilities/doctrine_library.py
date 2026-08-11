@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import access, org_store, roles
 from ._authz import ORG_MEMBER, SUB_ONLY
@@ -55,6 +55,154 @@ class ForkInput(BaseModel):
 
 class UnpublishInput(BaseModel):
     id: int
+
+
+# ── formes de réponse (ADR 0009 : `Output` DÉCRIT la 200, ne la valide pas) ───
+# Ce qui n'était écrit nulle part et qu'un intégrateur découvrait autrement en
+# production : le catalogue ne porte PAS le corps, `snippet` dépend de la requête,
+# un slug rendu peut différer de celui demandé, et un `version` ne dit pas la même
+# chose selon qu'on publie ou qu'on forke.
+
+class LibraryEntrySummary(BaseModel):
+    """Une entrée du CATALOGUE : métadonnées seules. Le corps markdown n'y est
+    jamais — c'est library.get qui le sert, par slug."""
+    id: int = Field(description="Identifiant de l'entrée publiée — la clé qu'attend "
+                                "library.unpublish (≠ le slug).")
+    slug: str = Field(description="Slug PUBLIC de l'entrée (normalisé à la "
+                                  "publication) : la clé de library.get et library.fork. "
+                                  "Il peut différer du slug du skill d'org d'origine.")
+    title: str = Field(description="Titre affiché ; chaîne vide si l'auteur n'en a "
+                                   "jamais posé (jamais null).")
+    description: str = Field(description="Résumé d'une ligne ; chaîne vide par défaut.")
+    author_kind: str = Field(description="'otomata' (publiée par la plateforme) | 'org' "
+                                         "(créateur privé). C'est le seul axe de "
+                                         "confiance affichable.")
+    author_org_id: Optional[int] = Field(
+        default=None,
+        description="Org autrice quand author_kind='org' ; `null` pour une entrée "
+                    "Otomata. Une entrée 'org' sans author_org_id n'est plus "
+                    "dépubliable par son auteur (seul un admin plateforme le peut).")
+    author_display: str = Field(description="Nom d'auteur affichable ('Otomata' ou le "
+                                            "nom de l'org). Figé à la publication : il "
+                                            "ne suit pas un renommage d'org ultérieur.")
+    category: str = Field(description="Catégorie de rangement, libre ; chaîne vide si "
+                                      "non classée (et non filtrable par category alors).")
+    tags: list = Field(default_factory=list, description="Étiquettes libres, [] par défaut.")
+    visibility: str = Field(
+        description="'public' (listée) | 'unlisted' (partage par LIEN : servie par slug "
+                    "exact à tout compte authentifié, mais jamais listée ici). Sur cette "
+                    "liste la valeur vaut donc toujours 'public'.")
+    version: int = Field(description="Numéro de publication : incrémenté à chaque "
+                                     "re-publication du même slug. 1 = jamais republiée.")
+    created_at: str = Field(description="Première publication ('YYYY-MM-DD HH:MM:SS' UTC).")
+    updated_at: str = Field(description="Dernière re-publication — c'est la clé de tri "
+                                        "du catalogue (plus récentes d'abord).")
+    snippet: Optional[str] = Field(
+        default=None,
+        description="Extrait du corps autour de la 1ʳᵉ occurrence de `query`. Présent "
+                    "UNIQUEMENT quand une `query` a été passée : son absence signifie "
+                    "« pas de recherche », jamais « corps vide ».")
+
+
+class LibraryList(BaseModel):
+    """Catalogue filtré, plus récemment publiées d'abord, borné par `limit`.
+
+    ⚠️ Ne contient QUE les entrées `public` : une entrée `unlisted` existe et reste
+    lisible par son slug exact (library.get), mais n'apparaît jamais ici. Une liste
+    vide ne prouve donc pas qu'une doctrine n'existe pas."""
+    doctrines: list[LibraryEntrySummary]
+
+
+class LibraryEntry(BaseModel):
+    """Une entrée COMPLÈTE, corps inclus. ⚠️ Rendue à plat, sans enveloppe : les
+    champs sont à la racine de la réponse (pas de clé `doctrine`)."""
+    id: int = Field(description="Identifiant de l'entrée publiée.")
+    slug: str = Field(description="Slug public.")
+    title: str = Field(description="Titre affiché ('' si absent).")
+    description: str = Field(description="Résumé ('' si absent).")
+    body_md: str = Field(description="Le corps markdown intégral de la doctrine — la "
+                                     "matière à lire avant de forker. Jamais vide : une "
+                                     "publication au corps vide est refusée.")
+    slots: list = Field(default_factory=list,
+                        description="Entités requises déclarées par la procédure (ADR "
+                                    "0035) : ce qu'il faudra brancher APRÈS le fork pour "
+                                    "qu'elle tourne. [] = rien à brancher.")
+    author_kind: str = Field(description="'otomata' | 'org'.")
+    author_org_id: Optional[int] = Field(default=None, description="Org autrice, `null` "
+                                                                   "pour Otomata.")
+    author_display: str = Field(description="Nom d'auteur figé à la publication.")
+    category: str = Field(description="Catégorie ('' si non classée).")
+    tags: list = Field(default_factory=list, description="Étiquettes libres.")
+    visibility: str = Field(
+        description="'public' | 'unlisted'. Ici la valeur PEUT être 'unlisted' : cette "
+                    "lecture sert le partage par lien. « Non listé » ≠ secret d'org — "
+                    "tout compte authentifié qui connaît le slug lit l'entrée.")
+    source_org_id: Optional[int] = Field(
+        default=None,
+        description="Org d'où le skill a été publié (traçabilité interne). `null` pour "
+                    "une publication au nom d'Otomata.")
+    source_slug: Optional[str] = Field(default=None, description="Slug du skill d'org "
+                                                                 "d'origine, quand il "
+                                                                 "diffère du slug public.")
+    forked_from: Optional[int] = Field(
+        default=None,
+        description="Entrée de bibliothèque dont celle-ci descend, si elle a elle-même "
+                    "été forkée avant d'être republiée. `null` = publication d'origine.")
+    version: int = Field(description="Numéro de publication (incrémenté à chaque "
+                                     "re-publication du même slug).")
+    published_by: Optional[str] = Field(default=None, description="Compte (sub) auteur de "
+                                                                  "la dernière publication.")
+    created_at: str = Field(description="Première publication ('YYYY-MM-DD HH:MM:SS' UTC).")
+    updated_at: str = Field(description="Dernière re-publication.")
+
+
+class PublishResult(BaseModel):
+    """Accusé de publication. Une entrée déjà publiée sous le même slug public est
+    REMPLACÉE (corps, titre, auteur) et sa version incrémentée — publier n'est donc
+    pas toujours une création."""
+    published: bool = Field(description="Toujours `true` : un échec ne rend pas "
+                                        "`published:false`, il lève (404 doctrine "
+                                        "absente, 403 sans org_admin). Ne pas le tester "
+                                        "comme un booléen d'issue.")
+    id: int = Field(description="Identifiant de l'entrée publiée — à conserver, c'est "
+                                "ce qu'attend library.unpublish.")
+    slug: str = Field(description="Slug public RÉELLEMENT retenu, après normalisation : "
+                                  "il peut différer du `public_slug` demandé.")
+    version: int = Field(description="Version de publication après l'opération. `1` = "
+                                     "création ; ≥2 = le slug existait et vient d'être "
+                                     "écrasé.")
+    visibility: str = Field(description="'public' | 'unlisted' tel qu'enregistré.")
+
+
+class ForkResult(BaseModel):
+    """Accusé de fork : la doctrine publique a été COPIÉE dans l'org active comme
+    nouveau skill versionné. Copie ponctuelle, sans lien vivant — republier la
+    source ne mettra jamais à jour le fork."""
+    forked: bool = Field(description="Toujours `true` (un échec lève : 404 entrée "
+                                     "inconnue, 403 sans org_admin).")
+    org_id: int = Field(description="Org d'accueil = l'org ACTIVE de l'appelant, jamais "
+                                    "un paramètre — c'est le verrou anti-IDOR.")
+    slug: str = Field(description="Slug du skill créé dans l'org. Peut différer du "
+                                  "`new_slug` demandé : en cas de collision avec un "
+                                  "skill existant, il est suffixé -2, -3… plutôt que "
+                                  "d'écraser.")
+    version: int = Field(description="Version du skill d'org créé — vaut toujours 1, le "
+                                     "slug étant dédoublonné avant écriture (un fork "
+                                     "n'écrase jamais une procédure existante).")
+    forked_from: int = Field(description="Identifiant de l'entrée de bibliothèque "
+                                         "source, conservé pour la traçabilité.")
+    source_title: str = Field(description="Titre de l'entrée source au moment du fork "
+                                          "('' si elle n'en portait pas).")
+
+
+class UnpublishResult(BaseModel):
+    """Retrait du catalogue. Le retrait supprime l'entrée PUBLIÉE, jamais le skill
+    d'org d'origine ni les forks déjà faits par d'autres."""
+    unpublished: bool = Field(
+        description="`false` n'est ni un refus (403) ni un identifiant inconnu (404) — "
+                    "les deux lèvent avant. C'est le cas de course : l'entrée a disparu "
+                    "entre la vérification d'auteur et la suppression, donc le résultat "
+                    "voulu est déjà atteint.")
 
 
 def _require_org_admin(ctx: ResolvedCtx, what: str) -> None:
@@ -140,6 +288,7 @@ CAPABILITIES += [
                     "templates). Each entry has an author (Otomata or a private creator). "
                     "Filter by query / category / author_kind (otomata|org). Returns metadata "
                     "+ snippet, not the full body — use oto_procedure op=library_get for that.",
+        Output=LibraryList,
         rest=RestBinding("GET", "/api/me/doctrines/library"),
     ),
     Capability(
@@ -148,6 +297,7 @@ CAPABILITIES += [
                     "slug — preview before forking it into your org with oto_procedure op=fork. "
                     "Also serves `unlisted` entries by exact slug (unlisted = shared by link, "
                     "never in the catalog), not a private-org secret.",
+        Output=LibraryEntry,
         rest=RestBinding("GET", "/api/me/doctrines/library/{slug}"),
     ),
     Capability(
@@ -155,6 +305,7 @@ CAPABILITIES += [
         description="Publish one of your org's named doctrines (skills) to the PUBLIC library "
                     "so others can find and fork it. Requires org_admin of your active org. "
                     "slug = the org skill to publish ; visibility = public | unlisted.",
+        Output=PublishResult,
         rest=RestBinding("POST", "/api/me/doctrines/publish"),
     ),
     Capability(
@@ -162,12 +313,14 @@ CAPABILITIES += [
         description="Fork (copy) a public-library doctrine into your active org as a new "
                     "versioned skill. Requires org_admin of your active org. slug = the public "
                     "entry ; new_slug optional (defaults to source slug, de-duplicated).",
+        Output=ForkResult,
         rest=RestBinding("POST", "/api/me/doctrines/fork"),
     ),
     Capability(
         key="library.unpublish", handler=_unpublish, Input=UnpublishInput, authz=SUB_ONLY,
         description="Remove a doctrine you published from the public library (author org_admin "
                     "or platform admin). id = the library entry id.",
+        Output=UnpublishResult,
         rest=RestBinding("DELETE", "/api/me/doctrines/library/{id}"),
     ),
 ]
