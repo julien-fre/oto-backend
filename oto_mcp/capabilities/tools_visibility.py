@@ -123,6 +123,26 @@ def _org_hide(ctx: ResolvedCtx, inp: OrgHiddenToolSetInput) -> dict:
     return {"org_id": inp.org_id, "tool": inp.name, "hidden": True}
 
 
+# ⚠️ **L'ASYMÉTRIE EST VOULUE : démasquer ne valide PAS le nom** (là où masquer refuse
+# un tool inconnu ou protégé). C'était un effet de bord, c'est une décision (#293), et
+# elle est écrite dans les `description=` des deux capacités `*_unhide` — donc dans le
+# contrat publié, pas seulement ici.
+#
+# Ce qu'elle sert : rien ne nettoie une ligne dont le tool a été renommé ou retiré du
+# catalogue. Sans cette porte, ce résidu serait DÉFINITIF — refusé au démasquage parce
+# qu'inconnu, invisible autrement qu'en lisant la table.
+#
+# Pourquoi pas plutôt « valider des deux côtés + une purge » : la purge n'a aucun
+# référentiel fiable de ce qui existe. `tool_registry.boot_tool_names()` ne liste que ce
+# qui a été MONTÉ au boot — `tools.register_all` désactive silencieusement (warning) tout
+# module dont une dép optionnelle manque, et le registre rend `[]` tant qu'il n'est pas
+# réchauffé. Une purge branchée dessus effacerait la gouvernance d'une org au premier
+# import raté. Un référentiel faux qui SUPPRIME est pire qu'un résidu inerte.
+#
+# Conséquence assumée : ces deux verbes répondent 200 `hidden: false` pour n'importe
+# quelle chaîne. C'est un DELETE idempotent sur une table de gouvernance (ADR 0031), pas
+# une barrière d'accès — il ne révèle rien et n'ouvre rien.
+
 def _org_unhide(ctx: ResolvedCtx, inp: OrgHiddenToolSetInput) -> dict:
     db.remove_org_disabled_tool(inp.org_id, inp.name)
     return {"org_id": inp.org_id, "tool": inp.name, "hidden": False}
@@ -173,6 +193,8 @@ def _group_hide(ctx: ResolvedCtx, inp: GroupHiddenToolSetInput) -> dict:
 
 
 def _group_unhide(ctx: ResolvedCtx, inp: GroupHiddenToolSetInput) -> dict:
+    # Pas de validation du nom — même échappatoire assumée qu'`_org_unhide`, cf. le
+    # bloc qui la motive au-dessus.
     db.remove_group_disabled_tool(inp.group_id, inp.name)
     return {"group_id": inp.group_id, "tool": inp.name, "hidden": False}
 

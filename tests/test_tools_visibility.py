@@ -91,6 +91,45 @@ def test_group_unhide_removes(monkeypatch):
     assert calls == [(7, "attio_record")]
 
 
+# --- démasquer accepte n'importe quel nom : échappatoire ASSUMÉE (#293) -------
+#
+# Masquer valide (404 inconnu, 400 protégé), démasquer non. C'est ce qui permet de
+# nettoyer une ligne dont le tool a été renommé ou retiré — rien d'autre ne le fait.
+# Une purge automatique n'a pas de référentiel fiable : `boot_tool_names()` ne liste
+# que ce qui a été MONTÉ (un module dont une dép manque est désactivé en silence, et
+# le registre non réchauffé rend `[]`), donc elle effacerait de la gouvernance vivante
+# au premier import raté. Ces deux tests figent la porte ouverte ET sa mention dans le
+# contrat publié : la refermer sans écrire la purge doit les casser.
+
+def test_demasquer_accepte_un_nom_que_masquer_refuserait(monkeypatch):
+    monkeypatch.setattr(cap.tool_registry, "boot_tool_names", lambda: ["attio_record"])
+    retires = []
+    monkeypatch.setattr(cap.db, "remove_org_disabled_tool",
+                        lambda oid, name: retires.append((oid, name)))
+    monkeypatch.setattr(cap.db, "remove_group_disabled_tool",
+                        lambda gid, name: retires.append((gid, name)))
+
+    # `tool_disparu` : inconnu du registre — le cas du tool renommé/retiré.
+    # `oto_whoami` : protégé — masquer le refuse, démasquer doit rester possible.
+    assert cap._org_unhide(
+        _ctx(), cap.OrgHiddenToolSetInput(org_id=42, name="tool_disparu"))["hidden"] is False
+    assert cap._group_unhide(
+        _ctx(), cap.GroupHiddenToolSetInput(group_id=7, name="oto_whoami"))["hidden"] is False
+    assert retires == [(42, "tool_disparu"), (7, "oto_whoami")]
+
+
+def test_le_contrat_publie_annonce_lechappatoire():
+    """Un effet de bord non écrit est une dette ; écrit dans la `description=`, c'est
+    une décision que l'intégrateur lit dans `/api/openapi.json` et le schéma MCP."""
+    from oto_mcp.capabilities import registry
+
+    for key in ("tools.org_unhide", "tools.group_unhide"):
+        d = next(c for c in registry.CAPABILITIES if c.key == key).description or ""
+        assert "the hide side would refuse" in d and "stale row" in d, (
+            f"{key} ne documente plus qu'il accepte un nom inconnu : soit tu le "
+            "redis, soit tu valides des deux côtés ET tu écris la purge.")
+
+
 # --- outils protégés : refus à l'ÉCRITURE, pas seulement à la lecture ---------
 #
 # `is_tool_visible` ignore déjà le denylist sur un tool protégé — donc sans refus
