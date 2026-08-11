@@ -31,6 +31,24 @@ class FeedbackInput(BaseModel):
     text: Optional[str] = None
 
 
+class SignalRecorded(BaseModel):
+    """Accusé d'enregistrement d'un signal d'usage — **pas un accusé de traitement**.
+    `ok: true` dit que la remontée est écrite et sera vue ; il ne promet ni réponse,
+    ni correction, ni notification en retour. Le suivi vit ailleurs (les projections
+    admin `usage.signals`, où le signal se résout).
+
+    Rien n'est dédupliqué : deux appels identiques donnent deux lignes et deux `id`
+    distincts. C'est volontaire — la répétition d'un même manque EST le signal (ADR
+    0017) —, mais un client qui rejoue sa requête sur timeout double son propre poids.
+
+    L'échec, lui, n'a pas de forme : l'écriture est synchrone, une panne remonte en
+    erreur HTTP et non en `ok: false`. Il n'existe donc pas de 200 négative ici."""
+    ok: bool                     # toujours `true` — un échec ne prend pas ce chemin
+    # Identifiant durable de la ligne `usage_signals`, à citer pour la résoudre côté
+    # plateforme. Croît strictement, tous signaux et tous émetteurs confondus.
+    id: int
+
+
 def _correlation() -> tuple[str, Optional[str]]:
     """(source, session_id). Contexte MCP présent → 'agent' + session ; sinon
     (REST humain) → 'human' + None. Best-effort, jamais bloquant."""
@@ -118,6 +136,7 @@ def _resolve_signal(ctx: ResolvedCtx, inp: ResolveSignalInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="usage.feedback", handler=_feedback, Input=FeedbackInput, authz=SUB_ONLY,
+        Output=SignalRecorded,
         description="Report a usage signal about oto. signal='tool_feedback' = feedback on a "
                     "tool you just used (target = the tool name ; kind = bug | misleading_doc | "
                     "wrong_result | praise | other). signal='gap' = a use case oto could NOT do, "

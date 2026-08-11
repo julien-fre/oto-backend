@@ -798,6 +798,94 @@ class ProjectReadInput(BaseModel):
     include: Optional[list[str]] = None
 
 
+class ProjectAudit(BaseModel):
+    """Santé des LIENS du projet — un contrôle, pas un blocage : un projet dont
+    l'audit est plein reste parfaitement lisible et utilisable.
+
+    **Les quatre listes sont toujours présentes, vides quand il n'y a rien.** Mais
+    « vide » ne prouve pas « sain » : l'audit est best-effort, chaque vérification
+    est enveloppée et un lien qui fait lever la sienne est simplement SAUTÉ (log
+    serveur, pas d'erreur ici). Un audit tout vert peut donc être un audit partiel —
+    ne pas en faire un feu vert automatique.
+
+    ⚠️ Ce modèle décrit l'audit COMPLET, celui de la lecture par id. La LISTE de
+    projets sert le même nom sous une forme allégée (checks en mémoire seuls, pour
+    éviter un N+1) : `inert_procedures` y est toujours vide et les procédures
+    cassées n'y remontent pas. Deux payloads, deux profondeurs."""
+    # Lien dont la cible n'existe plus : namespace de tableau disparu, procédure qui
+    # ne résout plus, connecteur absent du registre. `{target_type, target_ref, why}`.
+    dead_links: list[dict]
+    # Procédure liée dont des slots ne sont bindés par aucun lien de CE projet —
+    # elle est exécutable mais incomplète. `{procedure, ref, slots}`.
+    unbound_slots: list[dict]
+    # Connecteur lié qu'AUCUN credential de l'org ne résoudrait aujourd'hui.
+    # Calculé seulement pour un projet possédé par une ORG (le seul cas où « l'org »
+    # désigne quelqu'un) : toujours vide sur un projet perso ou d'équipe — ce n'est
+    # donc pas un signal d'absence de problème. `{target_ref, why}`.
+    unresolvable_connectors: list[dict]
+    # Slugs de procédures liées que les runs du projet n'ont jamais empruntées.
+    # ⚠️ Reste vide tant que le projet n'a AUCUN run : sans historique, « inerte »
+    # ne veut rien dire (un projet jeune n'est pas un projet mort).
+    inert_procedures: list[str]
+
+
+class ProjectRead(BaseModel):
+    """UN projet lu par son id — exactement le payload d'`oto_project op=get`, même
+    handler (ADR 0009 : la lecture par URL ne doit pas être une seconde
+    implémentation qui dérive de la première).
+
+    Deux choses que la forme ne dit pas d'elle-même :
+
+    - **`can_write` est l'accès de l'APPELANT, recalculé à chaque lecture**, pas une
+      propriété du projet. Un projet partagé en lecture seule le rend `false` alors
+      que tout le reste du payload est identique à ce que voit son propriétaire —
+      c'est le seul champ qui répond « et moi, j'ai le droit ? ».
+    - **Un projet n'est lisible que DEPUIS l'org qui le possède** (gate de contexte,
+      ADR 0023). Y accéder depuis une autre de ses orgs donne 404, pas 403 : le
+      message dit alors de basculer d'org quand l'appelant y a bien accès, et reste
+      non-disclosant sinon. Un 404 n'est donc PAS une preuve d'inexistence.
+
+    Champs `mcp_*` : ils décrivent la PUBLICATION du projet (endpoint MCP dédié,
+    partage navigable). `mcp_access == "off"` ⟹ rien n'est publié et `mcp_url` /
+    `share_url` sont `null`."""
+    id: int
+    name: str
+    icon: Optional[str] = None
+    brief_md: str = ""
+    owner_type: str                              # user | org | group | platform
+    owner_id: str
+    # Org de CONTEXTE d'un projet PERSO (« moi, dans cette org ») — `null` pour tout
+    # projet non-perso, dont le contexte se dérive de l'owner. Servi en CHAÎNE.
+    context_org_id: Optional[str] = None
+    is_template: bool = False
+    mcp_slug: Optional[str] = None
+    mcp_access: str = "off"                      # off | anonymous | secret | org
+    mcp_tools: list[str] = []
+    mcp_expose_datastore: bool = False
+    mcp_expose_datastore_write: bool = False
+    mcp_expose_docs: bool = False
+    # Prose servie au DESTINATAIRE de l'endpoint — ≠ `brief_md`, qui reste interne.
+    mcp_instructions_md: str = ""
+    mcp_url: Optional[str] = None                # dérivé du slug + du mode, jamais stocké
+    share_url: Optional[str] = None              # mode `secret` uniquement
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    archived_at: Optional[str] = None            # non-null ⟹ projet archivé
+    # Droit d'écriture de l'APPELANT sur ce projet (cf. docstring).
+    can_write: bool
+    # Liens typés (tableau | procedure | connecteur) enrichis à la lecture :
+    # `namespace` (tableau) / `title` (procédure) résolus, et `cross_project: true`
+    # quand la même cible est liée par un AUTRE projet — la toucher retombe ailleurs.
+    links: list[dict]
+    audit: ProjectAudit
+    # Présent SEULEMENT si `include=['spine']` a été demandé — l'arbre des pages dans
+    # l'ordre curé : `{pages, root_doc, tree[]}` (+ `more_roots` si des racines ont
+    # été coupées). Borné (profondeur, 200 nœuds) : un nœud porte `more` = nombre de
+    # descendants NON rendus. Une branche sans `children` n'est donc pas forcément
+    # une feuille — vérifier `more`.
+    spine: Optional[dict] = None
+
+
 def _project_read(ctx: ResolvedCtx, inp: ProjectReadInput) -> dict:
     """`op=get`, servi par une URL qui NOMME son projet.
 
@@ -831,7 +919,7 @@ class ImportedProject(BaseModel):
 CAPABILITIES += [
     Capability(
         key="me.project_read", handler=_project_read, Input=ProjectReadInput,
-        authz=SUB_ONLY,
+        authz=SUB_ONLY, Output=ProjectRead,
         description=(
             "Read ONE project by id (its brief, links and audit) — the same payload as "
             "oto_project op=get, on a URL that names its target. REST-only: agents "
