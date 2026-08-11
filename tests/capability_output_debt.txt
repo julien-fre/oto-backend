@@ -5,8 +5,9 @@
 # Ce qui reste ici n'est PLUS de la couverture publique perdue : ces capacités
 # n'apparaissent pas dans /api/openapi.json (préfixe admin exclu du document, ou
 # aucune face REST). Deux exceptions qui, elles, comptent : les surfaces
-# consolidées (me.project, me.doc, me.kb, resources.govern) — un Output unique ne
-# peut pas décrire des dizaines de verbes derrière un seul chemin, cf. #269.
+# consolidées (me.project, me.doc, resources.govern) — un Output unique ne peut
+# pas décrire des dizaines de verbes derrière un seul chemin, cf. #269.
+# `me.kb` en est SORTIE : une seule `op`, réponse déclarée en entier (`KbView`).
 admin.capabilities
 admin.doctrine
 admin.invite
@@ -29,7 +30,6 @@ me.clear_project
 me.context
 me.doc
 me.guide
-me.kb
 me.project
 me.project_files
 me.salesforce_connect

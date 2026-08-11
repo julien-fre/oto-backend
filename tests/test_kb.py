@@ -112,3 +112,39 @@ def test_capability_registered():
     from oto_mcp.capabilities.registry import CAPABILITIES
     cap = next((c for c in CAPABILITIES if c.key == "me.kb"), None)
     assert cap is not None and cap.mcp == "oto_kb"
+
+
+def test_kb_output_holds_for_every_op(seams):
+    """`KbView` doit décrire la réponse de TOUTES les `op` de la surface, pas de
+    celle qu'on avait sous les yeux en l'écrivant.
+
+    C'est le seul garde-fou qui compte sur une surface consolidée (le verbe vit
+    dans le corps) : une `op` ajoutée demain qui rendrait une autre forme ferait
+    générer des types FAUX chez l'intégrateur qui dérive son client d'`/openapi.json`.
+    Ici l'énumération tient dans une ligne — `op` n'a qu'une valeur — et c'est
+    précisément pourquoi cette surface-là est déclarable, quand ses trois voisines
+    (me.project, me.doc, resources.govern) ne le sont pas (#269)."""
+    from typing import get_args
+
+    ops = get_args(K.KbInput.model_fields["op"].annotation)
+    assert ops, "aucune `op` énumérée : le test ne prouverait rien."
+    declared = set(K.KbView.model_fields)
+    for op in ops:
+        seams["anchor"] = 9
+        seams["projects"][9] = _proj(9)
+        out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op=op))
+        assert set(out) == declared, (
+            f"op={op!r} rend {sorted(set(out) ^ declared)} en écart de `KbView`. "
+            "Soit la nouvelle op rend les mêmes champs, soit `KbView` retombe sur "
+            "l'INTERSECTION commune à toutes les op (et le reste passe en prose).")
+        K.KbView(**out)          # les TYPES tiennent aussi, pas seulement les noms
+
+
+def test_kb_output_reaches_the_openapi_document():
+    """Une déclaration qui n'atteint pas le document est décorative."""
+    from oto_mcp import openapi
+
+    schema = (openapi.build()["paths"]["/api/me/kb"]["post"]["responses"]["200"]
+              .get("content", {}).get("application/json", {}).get("schema", {}))
+    assert set(schema.get("properties", {})) == set(K.KbView.model_fields)
+    assert sorted(schema.get("required", [])) == sorted(K.KbView.model_fields)

@@ -33,6 +33,24 @@ class KbInput(BaseModel):
     op: Literal["get"] = "get"
 
 
+class KbView(BaseModel):
+    """Ancre de la base de connaissance de l'org active.
+
+    Cette surface est consolidée comme ses voisines (le verbe vit dans le corps,
+    `op=`), mais elle n'a **qu'une seule `op`** — `get` — donc l'intersection des
+    réponses de toutes ses `op` EST la réponse entière : ce modèle décrit la 200
+    en totalité, ce n'est pas une enveloppe partielle. Un `op` ajouté ici devra
+    donc, soit rendre ces trois champs, soit faire retomber la déclaration sur
+    l'intersection commune (garde-fou `test_kb_output_holds_for_every_op`).
+
+    Ce que la réponse ne contient PAS : les pages elles-mêmes. `project_id` est
+    l'entrée — l'arbre, les versions, le partage public et les propositions de
+    modification se lisent et s'écrivent avec `oto_doc` (`POST /api/me/docs`)."""
+    project_id: int          # projet dédié « Base de connaissance » (créé au 1er appel)
+    name: str                # son nom courant — renommable, l'ancre est l'id
+    brief_md: str            # brief du projet KB ('' si vidé)
+
+
 def _anchored_kb(org: int) -> "tuple[Optional[int], Optional[dict]]":
     """(ancre, projet) — projet None si l'ancre est absente OU pendouillante
     (projet disparu / archivé / plus org-owned de CETTE org, ex. transféré)."""
@@ -71,7 +89,7 @@ def _kb(ctx: ResolvedCtx, inp: KbInput) -> dict:
 
 CAPABILITIES += [
     Capability(
-        key="me.kb", handler=_kb, Input=KbInput, authz=SUB_ONLY,
+        key="me.kb", handler=_kb, Input=KbInput, authz=SUB_ONLY, Output=KbView,
         description=(
             "Resolve the active org's KNOWLEDGE BASE — a single dedicated project "
             "« Base de connaissance » (created on first use). Returns project_id : its "
