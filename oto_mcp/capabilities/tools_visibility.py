@@ -66,6 +66,51 @@ class OrgHiddenToolSetInput(BaseModel):
     name: str                  # tool (placeholder {name}, auto-mappé)
 
 
+class OrgHiddenTools(BaseModel):
+    """Le denylist **de l'org**, et lui seul.
+
+    ⚠️ Trois lectures fausses à éviter, toutes coûteuses côté front :
+
+    1. **Ce n'est PAS la liste des outils invisibles pour un membre.** C'est un des
+       paliers d'un calcul additif (`session_visibility.compute_hidden_tools` :
+       plateforme ∪ org ∪ équipe active, moins les overrides perso positifs). Un
+       outil absent d'ici peut être masqué par la plateforme ou par l'équipe ; un
+       outil présent ici peut rester visible pour qui s'est posé un override
+       (`oto_enable_tool`) — c'est de la gouvernance, PAS une barrière d'accès
+       (ADR 0031). Pour « que voit CE membre ? », c'est `oto_list_my_tools`.
+    2. **`disabled_tools: []` veut dire « l'org ne masque rien », sans ambiguïté.**
+       Cette lecture frappe la table directement et LÈVE sur hoquet DB (pas de
+       200-vide de consolation). C'est la différence avec le calcul de session, qui
+       lui est fail-open par palier : là-bas une liste vide peut vouloir dire « la
+       vue n'a pas pu être dérivée ». Ici non — pas de troisième état à gérer.
+    3. **Un nom listé n'est pas forcément un outil qui existe encore.** La pose
+       refuse un outil inconnu, mais rien ne nettoie une ligne dont l'outil a
+       ensuite été renommé ou retiré du catalogue : le résidu reste servi tel quel
+       (inerte). Ne pas en déduire un catalogue.
+
+    Trié par nom, jamais par date de pose."""
+    org_id: int
+    disabled_tools: list[str]        # noms EXACTS d'outils, ordre alphabétique
+
+
+class OrgHiddenToolState(BaseModel):
+    """État VOULU du denylist d'org après le geste — pas un compte-rendu d'écriture.
+
+    Les deux gestes sont **idempotents** : masquer deux fois répond `hidden: true`
+    sans rien réécrire (`ON CONFLICT DO NOTHING`), démasquer un outil qui n'était
+    pas masqué répond `hidden: false` sans erreur. Donc `hidden` = « voilà où en est
+    l'org sur cet outil », jamais « une ligne a bougé » : un client qui compte les
+    changements ne peut pas le faire ici.
+
+    ⚠️ `hidden: true` ne rend pas l'outil inaccessible — un membre lève toujours ce
+    masquage pour lui-même avec `oto_enable_tool` (ADR 0031). Et le masquage prend
+    effet à la session MCP **suivante** des autres membres ; seule celle de
+    l'appelant est rafraîchie à chaud (`refresh_visibility`)."""
+    org_id: int
+    tool: str                        # l'outil visé, écho du paramètre de chemin
+    hidden: bool
+
+
 def _org_list(ctx: ResolvedCtx, inp: OrgHiddenToolsListInput) -> dict:
     if not org_store.get_org(inp.org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
@@ -92,6 +137,29 @@ class GroupHiddenToolSetInput(BaseModel):
     name: str                  # tool (placeholder {name}, auto-mappé)
 
 
+class GroupHiddenTools(BaseModel):
+    """Le denylist **de l'équipe**, et lui seul — miroir d'`OrgHiddenTools` au grain
+    équipe, mêmes trois pièges (palier parmi d'autres, `[]` non ambigu car la lecture
+    lève sur hoquet DB, noms possiblement périmés).
+
+    ⚠️ Piège propre à ce grain : la liste **n'inclut pas** ce que l'org masque de son
+    côté. Les deux paliers s'unissent à la lecture de session, jamais ici — afficher
+    ceci comme « ce que mon équipe cache » sous-déclare donc l'effet réel. Et
+    l'inverse est impossible par construction : une équipe ne peut que RÉTRÉCIR
+    (aucune ligne d'équipe ne révèle un outil masqué par l'org)."""
+    group_id: int
+    disabled_tools: list[str]        # noms EXACTS d'outils, ordre alphabétique
+
+
+class GroupHiddenToolState(BaseModel):
+    """État VOULU du denylist d'équipe après le geste — miroir d'`OrgHiddenToolState`
+    (idempotent des deux côtés, `hidden` = état et non écriture, masquage levable par
+    un override perso, effet à la session suivante des autres membres)."""
+    group_id: int
+    tool: str                        # l'outil visé, écho du paramètre de chemin
+    hidden: bool
+
+
 def _group_list(ctx: ResolvedCtx, inp: GroupHiddenToolsListInput) -> dict:
     if not group_store.get_group(inp.group_id):
         raise AuthzDenied(404, "unknown_group", f"Équipe #{inp.group_id} inconnue.")
@@ -112,7 +180,7 @@ def _group_unhide(ctx: ResolvedCtx, inp: GroupHiddenToolSetInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="tools.org_list", handler=_org_list, Input=OrgHiddenToolsListInput,
-        authz=ORG_MEMBER_OF("org_id"),
+        authz=ORG_MEMBER_OF("org_id"), Output=OrgHiddenTools,
         description="List the tools your org_admin has hidden by default for your org. "
                     "Governance only (ADR 0031) — you can always self-override with "
                     "oto_enable_tool.",
@@ -121,6 +189,7 @@ CAPABILITIES += [
     Capability(
         key="tools.org_hide", handler=_org_hide, Input=OrgHiddenToolSetInput,
         authz=ORG_ADMIN_OF("org_id"), refresh_visibility=True,
+        Output=OrgHiddenToolState,
         description="[org admin] Hide a specific tool by default for your whole org. "
                     "Members can still self-override with oto_enable_tool — this is "
                     "governance, not an access barrier. name = exact tool name.",
@@ -129,18 +198,25 @@ CAPABILITIES += [
     Capability(
         key="tools.org_unhide", handler=_org_unhide, Input=OrgHiddenToolSetInput,
         authz=ORG_ADMIN_OF("org_id"), refresh_visibility=True,
-        description="[org admin] Remove your org's default-hide on a tool.",
+        Output=OrgHiddenToolState,
+        description="[org admin] Remove your org's default-hide on a tool. Idempotent: "
+                    "a tool that was not hidden answers 200 hidden:false. Accepts a name "
+                    "the hide side would refuse (unknown or protected), so a stale row "
+                    "left by a renamed tool can be cleaned up.",
         rest=RestBinding("DELETE", "/api/orgs/{id}/tools/{name}/hidden", _ID),
     ),
     Capability(
         key="tools.group_list", handler=_group_list, Input=GroupHiddenToolsListInput,
-        authz=GROUP_MEMBER_OF("group_id"),
-        description="List the tools your team lead has hidden by default for your team.",
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupHiddenTools,
+        description="List the tools your team lead has hidden by default for your team. "
+                    "This is the TEAM's own denylist — it does not include what the org "
+                    "hides (the two add up only when a session is computed).",
         rest=RestBinding("GET", "/api/groups/{id}/tools/hidden", _GID),
     ),
     Capability(
         key="tools.group_hide", handler=_group_hide, Input=GroupHiddenToolSetInput,
         authz=GROUP_ADMIN_OF("group_id"), refresh_visibility=True,
+        Output=GroupHiddenToolState,
         description="[team lead] Hide a specific tool by default for your team. Additive "
                     "with the org's own denylist (never reveals an org-hidden tool). "
                     "Members can still self-override with oto_enable_tool.",
@@ -149,7 +225,10 @@ CAPABILITIES += [
     Capability(
         key="tools.group_unhide", handler=_group_unhide, Input=GroupHiddenToolSetInput,
         authz=GROUP_ADMIN_OF("group_id"), refresh_visibility=True,
-        description="[team lead] Remove your team's default-hide on a tool.",
+        Output=GroupHiddenToolState,
+        description="[team lead] Remove your team's default-hide on a tool. Idempotent, "
+                    "and accepts a name the hide side would refuse — so a stale row left "
+                    "by a renamed tool can be cleaned up.",
         rest=RestBinding("DELETE", "/api/groups/{id}/tools/{name}/hidden", _GID),
     ),
 ]
