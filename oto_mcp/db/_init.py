@@ -759,6 +759,29 @@ def _init_db_once() -> None:
         # manuel : la base est partagée preprod/prod, un boot doit pouvoir rejouer.
         # Sûr depuis v1.69.0 — plus aucun code servi ne lit `'linkedin'`.
         _conn_sel.rename_selection(conn, "linkedin", "aiark")
+        # === Lot M2 (blueprint ADR 0054/0063, #287) : projets et pages → NŒUDS ===
+        # PLACÉ EN FIN DE TRANSACTION, et c'est la même règle qu'au lot M1 : la
+        # conversion doit suivre TOUTE écriture de sa table source dans CE boot.
+        # Ici la liste est longue — `projects` et `docs` gagnent leurs colonnes par
+        # `ALTER` plus haut (`icon`, `context_org_id`, `is_template`, `description`,
+        # `position`, `public_token`) et `docs.position` reçoit même un backfill.
+        # Convertir avant, c'est lire des colonnes qui n'existent pas encore sur une
+        # base ancienne (boot KO) ou projeter un état que le boot vient de corriger.
+        #
+        # Copie legacy→cible à CHAQUE boot, gardée `to_regclass`
+        # (docs/live-migrations.md) : `projects`/`docs` restent la source de vérité
+        # et la cible des écritures de ce lot — la conversion est une PROJECTION,
+        # pas une bascule. Purement ADDITIF : rien n'est modifié ni supprimé côté
+        # legacy, la prod (qui tourne l'ancien code sur CETTE MÊME base) ne voit
+        # strictement rien. Le lot se défait en retirant ces deux appels.
+        #
+        # Ce que la conversion fait disparaître, au-delà du déménagement de lignes :
+        # **le projet en tant qu'objet** (0054-D5). Il devient une ÉPINGLE — un
+        # drapeau `props->>'pinned'` sur un nœud ordinaire, dont le brief est le
+        # corps et dont les pages seront l'arbre. Détail : `db/nodes.py`.
+        if conn.execute("SELECT to_regclass('projects') AS t").fetchone()["t"]:
+            from .nodes import convert_projects
+            convert_projects(conn)
     # Borne la volumétrie du journal de monitoring (hors transaction schéma).
     try:
         from .usage import prune_tool_calls

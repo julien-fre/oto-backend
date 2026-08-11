@@ -18,7 +18,12 @@ import uuid
 
 import pytest
 
-_IMAGE = "postgres:17-alpine"
+# ⚠️ **pgvector, et pas `postgres:17-alpine`** : `init_db()` fait
+# `CREATE EXTENSION vector` avant `_SCHEMA` (des tables de `_SCHEMA` déclarent des
+# `halfvec`), donc une image sans l'extension rend le VRAI boot intestable — et un
+# test de migration qui ne peut pas jouer `init_db` ne prouve rien de la migration.
+# Image officielle pgvector = PostgreSQL 17 standard + l'extension, `pg_trgm` inclus.
+_IMAGE = "pgvector/pgvector:pg17"
 
 
 @pytest.fixture(scope="session")

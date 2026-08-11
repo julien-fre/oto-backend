@@ -160,9 +160,15 @@ def test_nothing_else_touches_nodes_yet():
 
     Deux lecteurs s'y sont ajoutés délibérément en fermant #282 : la recherche et
     l'outbox d'embeddings, les deux seuls consommateurs de guides qui vivaient hors
-    façade et étaient restés sur la table gelée."""
+    façade et étaient restés sur la table gelée.
+
+    Un ÉCRIVAIN s'y ajoute au lot **M2** (#287) : `db/nodes.py`, la conversion des
+    projets et des pages. C'est exactement l'acte délibéré que ce garde-fou
+    réclamait — il n'écrit rien qui ne vienne de `projects`/`docs`, et **aucune
+    surface ne lit encore ces nœuds-là** (la bascule de lecture est un autre lot)."""
     allowed = {"oto_mcp/db/guides.py", "oto_mcp/db/_schema.py", "oto_mcp/db/_init.py",
-               "oto_mcp/db/users.py", "oto_mcp/db/search.py", "oto_mcp/db/aux_embed.py"}
+               "oto_mcp/db/users.py", "oto_mcp/db/search.py", "oto_mcp/db/aux_embed.py",
+               "oto_mcp/db/nodes.py"}
     offenders = []
     for path in (_ROOT / "oto_mcp").rglob("*.py"):
         rel = str(path.relative_to(_ROOT))
