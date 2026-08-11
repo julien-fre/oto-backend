@@ -33,7 +33,7 @@ def test_pin_instance_member_ok_copins_org(monkeypatch):
     ref = instance_refs.make_member_ref(8, "u", "zoho", "alexandra")
 
     async def _scenario():
-        undo = await call_axes._pin_instance(ref, "zoho_records")
+        undo = await call_axes._pin_instance(ref, "zoho_record")
         try:
             pinned = session_org.current_call_instance()
             assert pinned.level == "member" and pinned.account == "alexandra"
@@ -48,7 +48,7 @@ def test_pin_instance_member_ok_copins_org(monkeypatch):
 
 def test_pin_instance_rejects_malformed():
     with pytest.raises(McpError, match="invalide"):
-        asyncio.run(call_axes._pin_instance("n'importe:quoi", "zoho_records"))
+        asyncio.run(call_axes._pin_instance("n'importe:quoi", "zoho_record"))
 
 
 def test_pin_instance_rejects_platform_ref():
@@ -67,7 +67,7 @@ def test_pin_instance_rejects_other_members_instance(monkeypatch):
     monkeypatch.setattr(roles, "is_org_member", lambda sub, org: True)
     ref = instance_refs.make_member_ref(8, "quelqu_un_d_autre", "zoho")
     with pytest.raises(McpError, match="autre membre"):
-        asyncio.run(call_axes._pin_instance(ref, "zoho_records"))
+        asyncio.run(call_axes._pin_instance(ref, "zoho_record"))
     assert session_org.current_call_instance() is None
 
 
@@ -75,7 +75,7 @@ def test_pin_instance_rejects_group_non_reader(monkeypatch):
     monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: False)
     ref = instance_refs.make_group_ref(3, "zoho")
     with pytest.raises(McpError, match="groupe"):
-        asyncio.run(call_axes._pin_instance(ref, "zoho_records"))
+        asyncio.run(call_axes._pin_instance(ref, "zoho_record"))
 
 
 def test_pin_instance_group_ok_copins_parent_org(monkeypatch):
@@ -84,7 +84,7 @@ def test_pin_instance_group_ok_copins_parent_org(monkeypatch):
     ref = instance_refs.make_group_ref(3, "zoho")
 
     async def _scenario():
-        undo = await call_axes._pin_instance(ref, "zoho_records")
+        undo = await call_axes._pin_instance(ref, "zoho_record")
         try:
             assert session_org.current_call_instance().group_id == 3
             assert session_org.current_call_org() == 42
@@ -95,7 +95,7 @@ def test_pin_instance_group_ok_copins_parent_org(monkeypatch):
 
 
 def test_pin_instance_none_is_inert():
-    assert asyncio.run(call_axes._pin_instance(None, "zoho_records")) == []
+    assert asyncio.run(call_axes._pin_instance(None, "zoho_record")) == []
 
 
 # ─── 2. Résolution (_resolve_credential_impl, instance épinglée) ─────────────

@@ -5,10 +5,20 @@ opportunités) ET la chaîne de vente (devis → commande → facture → avoir,
 encaissements, catalogue). Le connecteur expose les deux.
 
 **Surface consolidée (ADR 0047)** : un tool par OBJET métier, le verbe en `op`.
-Les quatre documents de vente partagent un seul tool `sellsy_document(kind=…)` :
-côté API, devis/commande/facture/avoir ont les MÊMES paramètres (mêmes filtres de
-recherche, même corps `related`/`rows`) — les séparer aurait quadruplé un bloc
-identique sans rien apprendre à l'agent.
+Deux objets sont portés par plusieurs ressources de l'API et tiennent donc dans un
+seul tool à `kind=`, parce que leurs PARAMÈTRES se recouvrent exactement (critère
+de fusion de l'ADR — pas le comptage) :
+- `sellsy_document(kind=…)` — devis/commande/facture/avoir ont les MÊMES paramètres
+  (mêmes filtres de recherche, même corps `related`/`rows`) ; les séparer aurait
+  quadruplé un bloc identique sans rien apprendre à l'agent.
+- `sellsy_third_party(kind=…)` — société et particulier sont les deux faces du même
+  rôle : le tiers qu'un document facture (`related` porte d'ailleurs le
+  discriminant, `{"id": 42, "type": "company"}`). Mêmes verbes, mêmes filtres, même
+  corps ; seul `link_contact`/`unlink_contact` est propre à la société.
+
+Restent des tools nommés là où les verbes ne se factorisent pas : `sellsy_contact`
+(la personne, pas le tiers : pas de `convert`, pas d'encaissement), `sellsy_ref`
+(lecture seule, ni `op` ni pagination) et `sellsy_search` (plein texte, `q` seul).
 
 Credential = OAuth2 client_credentials multi-champs (client_id + client_secret,
 créés dans Réglages → Portail développeur → API V2), résolu par appel via
@@ -34,6 +44,12 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, connector_verify
+
+# Les deux faces du tiers : nom d'agent → ressource de l'API.
+_THIRD_PARTIES = {
+    "company": "companies",
+    "individual": "individuals",
+}
 
 # Les quatre documents de vente : nom d'agent → ressource de l'API.
 _DOCUMENTS = {
@@ -174,8 +190,8 @@ def register(mcp: FastMCP) -> None:
     # --- CRM : tiers et contacts --------------------------------------------
 
     @mcp.tool()
-    def sellsy_company(
-        op: str = "list", record_id: Optional[int] = None,
+    def sellsy_third_party(
+        kind: str, op: str = "list", record_id: Optional[int] = None,
         data: Optional[dict] = None, filters: Optional[dict] = None,
         contact_id: Optional[int] = None,
         limit: Optional[int] = None, offset: Optional[str] = None,
@@ -184,18 +200,28 @@ def register(mcp: FastMCP) -> None:
         all_pages: bool = False, max_pages: int = 10,
         dry_run: Optional[bool] = None,
     ) -> Any:
-        """Sociétés du CRM (clients, prospects, fournisseurs).
+        """Tiers du CRM : sociétés et particuliers (clients, prospects, fournisseurs).
+
+        `kind` ∈ "company" (société) | "individual" (particulier) — les deux faces
+        du tiers, mêmes verbes et mêmes paramètres. Le particulier est le pendant
+        « personne physique » de la société : un devis ou une facture se rattache
+        SOIT à une société, SOIT à un particulier — c'est ici que vivent les clients
+        qui ne sont pas des entreprises (le `related` d'un document porte le même
+        discriminant : `[{"id": 42, "type": "company"}]`).
 
         `op` :
         - "list" / "search" : liste et liste filtrée. Filtres utiles :
           `{"name": "acme"}`, `{"type": ["client"]}`, `{"created": {"start":
-          "2026-01-01T00:00:00+01:00"}}`, `{"postal_code": ["13001"]}`.
+          "2026-01-01T00:00:00+01:00"}}`, `{"postal_code": ["13001"]}` ; côté
+          particulier aussi `{"email": …}`.
         - "get" / "create" / "update" / "delete" (`record_id`, `data`).
-          Créer exige `name` et `type` ∈ prospect | client | supplier.
-        - "contacts" : les contacts rattachés à la société.
+          Créer exige `type` ∈ prospect | client | supplier, plus `name` pour une
+          société et `last_name` pour un particulier.
+        - "contacts" : les contacts rattachés au tiers.
         - "convert" : bascule un prospect en client (irréversible côté Sellsy).
         - "link_contact" / "unlink_contact" (`contact_id`) : rattache ou détache
-          un contact existant.
+          un contact existant. **kind="company" seulement** — un contact se
+          rattache à une société, pas à un particulier.
         - "custom_fields" : lit les champs personnalisés ; avec
           `data={"custom_fields": [{"id": 12, "value": "x"}]}`, les écrit.
         - "record_payment" (`data`) : encaissement sur le compte du tiers
@@ -203,20 +229,24 @@ def register(mcp: FastMCP) -> None:
           "payment_method_id": …, "type": "credit"}`).
 
         Args:
-            op: le verbe (ci-dessus). record_id: id de la société.
+            kind: le type de tiers (ci-dessus). op: le verbe.
+            record_id: id du tiers (société ou particulier).
             data: corps de l'écriture. filters: filtres d'op="search".
-            contact_id: op link_contact / unlink_contact.
+            contact_id: op link_contact / unlink_contact (kind="company").
             limit: taille de page (max 100). offset: curseur `pagination.offset`
                 rendu par la page précédente. order / direction: tri (asc | desc).
             fields: projection (`["id", "name"]`). embed: objets liés à inclure.
             all_pages / max_pages: déroule la pagination (1 requête par page).
             dry_run: op="create" — valide le payload SANS rien persister.
         """
+        resource = _THIRD_PARTIES.get(kind)
+        if resource is None:
+            raise _bad(f"kind doit être l'un de {', '.join(_THIRD_PARTIES)}")
         extra = ("contacts", "convert", "link_contact", "unlink_contact",
                  "record_payment")
         c = _client()
         with _upstream():
-            out = _crud(c, "companies", op, record_id=record_id, data=data,
+            out = _crud(c, resource, op, record_id=record_id, data=data,
                         filters=filters, limit=limit, offset=offset, order=order,
                         direction=direction, fields=fields, embed=embed,
                         all_pages=all_pages, max_pages=max_pages, dry_run=dry_run,
@@ -224,69 +254,23 @@ def register(mcp: FastMCP) -> None:
             if out is not None:
                 return out
             if op == "contacts":
-                return c.list_sub("companies", _need(record_id, "record_id", op),
+                return c.list_sub(resource, _need(record_id, "record_id", op),
                                   "contacts", limit=limit, offset=offset)
             if op == "convert":
-                return c.act("companies", _need(record_id, "record_id", op),
+                return c.act(resource, _need(record_id, "record_id", op),
                              "convert", payload=data or {"target": "client"})
-            if op == "link_contact":
-                return c.link_contact_to_company(
-                    _need(record_id, "record_id", op),
-                    _need(contact_id, "contact_id", op), payload=data)
-            if op == "unlink_contact":
-                return c.unlink_contact_from_company(
-                    _need(record_id, "record_id", op),
-                    _need(contact_id, "contact_id", op))
-            return c.act("companies", _need(record_id, "record_id", op),
-                         "payments", payload=_need(data, "data", op))
-
-    @mcp.tool()
-    def sellsy_individual(
-        op: str = "list", record_id: Optional[int] = None,
-        data: Optional[dict] = None, filters: Optional[dict] = None,
-        limit: Optional[int] = None, offset: Optional[str] = None,
-        order: Optional[str] = None, direction: Optional[str] = None,
-        fields: Optional[list] = None, embed: Optional[list] = None,
-        all_pages: bool = False, max_pages: int = 10,
-        dry_run: Optional[bool] = None,
-    ) -> Any:
-        """Particuliers du CRM — le pendant « personne physique » de la société.
-
-        Un devis ou une facture se rattache SOIT à une société, SOIT à un
-        particulier : c'est ici que vivent les clients qui ne sont pas des
-        entreprises.
-
-        `op` : "list" / "search" (filtres `name`, `email`, `type`, `created`,
-        `postal_code`…), "get" / "create" / "update" / "delete" (créer exige
-        `last_name` et `type`), "contacts", "convert" (prospect → client),
-        "custom_fields", "record_payment" (`data`, encaissement sur le tiers).
-
-        Args:
-            op: le verbe (ci-dessus). record_id: id du particulier.
-            data: corps de l'écriture. filters: filtres d'op="search".
-            limit: taille de page (max 100). offset: curseur `pagination.offset`
-                rendu par la page précédente. order / direction: tri (asc | desc).
-            fields: projection. embed: objets liés à inclure.
-            all_pages / max_pages: déroule la pagination (1 requête par page).
-            dry_run: op="create" — valide le payload SANS rien persister.
-        """
-        extra = ("contacts", "convert", "record_payment")
-        c = _client()
-        with _upstream():
-            out = _crud(c, "individuals", op, record_id=record_id, data=data,
-                        filters=filters, limit=limit, offset=offset, order=order,
-                        direction=direction, fields=fields, embed=embed,
-                        all_pages=all_pages, max_pages=max_pages, dry_run=dry_run,
-                        extra_ops=extra)
-            if out is not None:
-                return out
-            if op == "contacts":
-                return c.list_sub("individuals", _need(record_id, "record_id", op),
-                                  "contacts", limit=limit, offset=offset)
-            if op == "convert":
-                return c.act("individuals", _need(record_id, "record_id", op),
-                             "convert", payload=data or {"target": "client"})
-            return c.act("individuals", _need(record_id, "record_id", op),
+            if op in ("link_contact", "unlink_contact"):
+                if kind != "company":
+                    raise _bad(f"op='{op}' ne s'applique qu'à kind='company' — un "
+                               "contact se rattache à une société, pas à un "
+                               "particulier")
+                company_id = _need(record_id, "record_id", op)
+                contact_id = _need(contact_id, "contact_id", op)
+                if op == "link_contact":
+                    return c.link_contact_to_company(company_id, contact_id,
+                                                     payload=data)
+                return c.unlink_contact_from_company(company_id, contact_id)
+            return c.act(resource, _need(record_id, "record_id", op),
                          "payments", payload=_need(data, "data", op))
 
     @mcp.tool()
@@ -302,7 +286,7 @@ def register(mcp: FastMCP) -> None:
         """Contacts — les personnes rattachées aux sociétés et particuliers.
 
         Un contact existe indépendamment du tiers : le rattachement se fait par
-        `sellsy_company(op="link_contact")`.
+        `sellsy_third_party(kind="company", op="link_contact")`.
 
         `op` : "list" / "search" (filtres `last_name`, `email`, `phone_number`,
         `companies`, `is_linked`…), "get" / "create" / "update" / "delete",
@@ -479,7 +463,7 @@ def register(mcp: FastMCP) -> None:
         `{"related_objects": [{"id": 9, "type": "invoice"}]}`), "get", "delete".
 
         Enregistrer un paiement se fait sur le tiers :
-        `sellsy_company(op="record_payment")` ou son équivalent particulier.
+        `sellsy_third_party(op="record_payment")`, kind="company" ou "individual".
 
         Args:
             op: le verbe (ci-dessus). record_id: id du paiement.

@@ -13,7 +13,7 @@ byo uniquement : un compte Sellsy est celui d'une entreprise, il n'y a pas de cl
 ## usage — le CRM et la facturation dans la même conversation
 
 Sellsy tient les deux bouts : qui sont les clients, et ce qui leur est facturé.
-- « quelles sociétés ont été créées ce mois-ci ? » → `sellsy_company` (op `search`)
+- « quelles sociétés ont été créées ce mois-ci ? » → `sellsy_third_party` (op `search`)
 - « qui est Acme chez nous ? » → `sellsy_search` (plein texte, tous objets)
 - « où en est le pipeline ? » → `sellsy_opportunity`, puis op `move` pour changer d'étape
 - « liste les factures impayées » → `sellsy_document` (kind `invoice`, op `search`, filtre `status`)

@@ -74,7 +74,7 @@ def test_select_returns_activation_hint(monkeypatch):
     # #186 : la réponse DONNE les noms d'outils (registre boot, immunisé visibilité).
     import oto_mcp.tool_registry as tr
     monkeypatch.setattr(tr, "boot_tool_names",
-                        lambda: ["unipile_me", "unipile_search", "zoho_get"])
+                        lambda: ["unipile_me", "unipile_search", "zoho_record"])
     out = CS._select(ResolvedCtx(sub="u1", org_id=42), CS.ConnectorActionInput(name="unipile"))
     assert out["connector"] == "unipile" and out["state"] == "active"
     assert out["tools"] == ["unipile_me", "unipile_search"]   # les siens, pas zoho

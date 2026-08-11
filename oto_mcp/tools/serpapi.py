@@ -4,9 +4,19 @@ Wrappe `oto.tools.serpapi.SerpAPIClient`. Un tool générique `serpapi_search`
 atteint **n'importe quel moteur** SerpApi (tous les verticaux Google + Bing,
 DuckDuckGo, Yahoo, Baidu, Yandex, YouTube, Walmart, Amazon, eBay, Home Depot,
 Apple App Store, Yelp, Naver, TripAdvisor, Brave, google_trends/finance/flights/
-hotels/events/play…). Des tools typés couvrent les verticaux phares que Serper
-n'expose pas (trends, finance, flights, hotels, events, youtube, walmart, amazon,
-ebay, bing) + le sourcing d'offres (Google Jobs).
+hotels/events/play…).
+
+**Surface consolidée (ADR 0047 §Amendement appliqué à un connecteur)** : le
+moteur est un **axe `engine=`**, pas un tool par moteur — bing / youtube /
+walmart / amazon / ebay / google_events partagent exactement les mêmes
+paramètres (`query`, `country`, `language`, `location`, `page`, `count`,
+`domain`), seuls leurs NOMS natifs diffèrent, et `serpapi_search` les traduit.
+`serpapi_jobs` porte l'objet métier « offre d'emploi » (op=search|details).
+Restent des tools à part les verticaux dont le contrat n'est PAS une recherche
+par mot-clé — leurs paramètres ne recouvrent pas ceux des autres :
+`serpapi_google_trends` (data_type/date), `serpapi_google_finance` (window),
+`serpapi_google_flights` (departure_id/arrival_id/dates, aucun `query`),
+`serpapi_google_hotels` (check_in/check_out/adults).
 
 Clé résolue par appel via `access.resolve_api_key("serpapi")` : user key
 (`/account`) ou credential partagé de l'org si posé, sinon clé plateforme + quota
@@ -18,8 +28,33 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
+
+# --- traduction des params partagés vers le nom natif de chaque moteur --------
+# Seuls les moteurs qui DIVERGENT de la convention Google/SerpApi sont listés ;
+# tout moteur absent utilise `_DEFAULT_PARAMS` (q / gl / hl / location), ce qui
+# couvre google_events et l'ensemble des verticaux google.
+_ENGINE_PARAMS: dict[str, dict[str, str]] = {
+    "bing": {"query": "q", "country": "cc", "language": "setlang", "count": "count"},
+    "youtube": {"query": "search_query", "country": "gl", "language": "hl"},
+    "walmart": {"query": "query", "page": "page"},
+    "amazon": {"query": "k", "domain": "amazon_domain", "page": "page"},
+    "ebay": {"query": "_nkw", "domain": "ebay_domain", "page": "_pgn"},
+}
+_DEFAULT_PARAMS: dict[str, str] = {
+    "query": "q", "country": "gl", "language": "hl", "location": "location",
+}
+# Défauts historiques des ex-tools typés — conservés à l'identique par moteur.
+_ENGINE_DEFAULTS: dict[str, dict] = {
+    "bing": {"count": 10},
+    "walmart": {"page": 1},
+    "amazon": {"domain": "amazon.com", "page": 1},
+    "ebay": {"domain": "ebay.com", "page": 1},
+}
+_SHARED_ORDER = ("query", "country", "language", "location", "page", "count", "domain")
 
 
 def register(mcp: FastMCP) -> None:
@@ -37,17 +72,95 @@ def register(mcp: FastMCP) -> None:
             access.record_platform_usage("serpapi")
         return result
 
-    # --- générique : tout le scope ------------------------------------------
+    def _bad(msg: str) -> McpError:
+        return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+    def _need(value, name: str, op: str):
+        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        if value is None:
+            raise _bad(f"op='{op}' requiert {name}")
+        return value
+
+    def _shared_params(engine: str, **supplied) -> dict:
+        """Traduit les arguments partagés dans les noms natifs de `engine`.
+
+        Un argument sans équivalent connu pour ce moteur est REFUSÉ (jamais
+        envoyé sous un nom deviné : un filtre mal nommé serait ignoré en
+        silence par SerpApi et rendrait un résultat faux sans erreur).
+        """
+        spec = _ENGINE_PARAMS.get(engine, _DEFAULT_PARAMS)
+        defaults = _ENGINE_DEFAULTS.get(engine, {})
+        out: dict = {}
+        for name in _SHARED_ORDER:
+            value = supplied.get(name)
+            if value is None:
+                value = defaults.get(name)
+            if value is None:
+                continue
+            native = spec.get(name)
+            if native is None:
+                raise _bad(
+                    f"`{name}` n'a pas d'équivalent connu pour engine='{engine}' — "
+                    f"passe-le dans `params` sous le nom attendu par ce moteur "
+                    f"(voir serpapi.com).")
+            out[native] = value
+        return out
+
+    # --- recherche : tout le scope, un moteur par appel ----------------------
     @mcp.tool()
     def serpapi_search(
         engine: str,
+        query: Optional[str] = None,
+        country: Optional[str] = None,
+        language: Optional[str] = None,
+        location: Optional[str] = None,
+        page: Optional[int] = None,
+        count: Optional[int] = None,
+        domain: Optional[str] = None,
         params: Optional[dict] = None,
         max_results: Optional[int] = None,
         results_key: Optional[str] = None,
     ) -> dict:
-        """Generic SerpApi call — reach ANY SerpApi engine.
+        """SerpApi search — reach ANY SerpApi engine through the `engine=` axis.
 
-        Use this for engines without a dedicated tool below.
+        The shared arguments (`query`, `country`, `language`, `location`, `page`,
+        `count`, `domain`) are translated into each engine's own parameter names;
+        `params` stays the raw escape hatch for anything else (and for engines
+        with no shortcut). Returns the raw SerpApi JSON payload.
+
+        Engines with a mapped shortcut (native `query` name in parentheses):
+
+        - **bing** (`q`) — Bing web search. Returns 'organic_results'.
+          `country` = market/country code (Bing `cc`, e.g. "us", "fr"),
+          `language` = UI language (Bing `setlang`), `count` = number of results
+          (default 10).
+        - **youtube** (`search_query`) — YouTube search: videos, channels,
+          playlists for a query. `language` = interface language (`hl`),
+          `country` = country code (`gl`).
+        - **walmart** (`query`) — Walmart product search. Returns
+          'organic_results' (products with price, rating, seller). `page` =
+          result page (default 1).
+        - **amazon** (`k`) — Amazon product search. Returns 'organic_results'
+          (products, price, rating, ASIN). `domain` = Amazon domain, e.g.
+          "amazon.com", "amazon.fr" (default "amazon.com"); `page` = result page.
+        - **ebay** (`_nkw`) — eBay product search. Returns 'organic_results'
+          (listings, price, condition, shipping). `domain` = eBay domain, e.g.
+          "ebay.com", "ebay.fr" (default "ebay.com"); `page` = result page
+          (eBay `_pgn`).
+        - **google_events** (`q`) — Google Events: local/online events for a
+          query, e.g. "tech conferences in Paris". `location` = geographic
+          location (e.g. "Paris, France"), `language` = interface language
+          (`hl`), `country` = country code (`gl`).
+        - **any other engine** — Google/SerpApi convention: `query`→`q`,
+          `country`→`gl`, `language`→`hl`, `location`→`location`.
+          `page`/`count`/`domain` have no portable equivalent: on an engine
+          without a shortcut they are REFUSED rather than silently sent under a
+          guessed name — pass them in `params` under the name that engine expects.
+
+        Dedicated tools cover the verticals whose contract is NOT a keyword
+        search: `serpapi_jobs` (Google Jobs), `serpapi_google_trends`,
+        `serpapi_google_finance`, `serpapi_google_flights`,
+        `serpapi_google_hotels`. They stay reachable here via `engine=` + `params=`.
 
         Args:
             engine: SerpApi engine id. Common values —
@@ -59,95 +172,77 @@ def register(mcp: FastMCP) -> None:
                 Other engines: bing, duckduckgo, yahoo, baidu, yandex, brave,
                 youtube, ebay, walmart, amazon, home_depot, apple_app_store, yelp,
                 naver, tripadvisor.
+            query: search query, mapped to the engine's own query parameter.
+            country: country/market restriction, mapped per engine.
+            language: interface/UI language, mapped per engine.
+            location: geographic location (e.g. "Paris, France").
+            page: result page — walmart, amazon, ebay.
+            count: number of results — bing.
+            domain: marketplace domain — amazon, ebay.
             params: engine-specific params, e.g. {"q": "pizza", "gl": "us", "hl": "en"}.
-                See serpapi.com docs for each engine's parameters.
-            max_results: with `results_key`, auto-paginate up to this many.
+                See serpapi.com docs for each engine's parameters. Merged LAST:
+                a key given here overrides the value derived from the arguments above.
+            max_results: with `results_key`, auto-paginate up to this many. No-op
+                if the engine returns no `serpapi_pagination.next_page_token`.
             results_key: result array to paginate/cap (e.g. "organic_results").
-
-        Returns the raw SerpApi JSON payload.
         """
-        return _run("search", engine=engine, params=params or {},
+        payload = _shared_params(
+            engine, query=query, country=country, language=language,
+            location=location, page=page, count=count, domain=domain)
+        payload.update(params or {})
+        return _run("search", engine=engine, params=payload,
                     max_results=max_results, results_key=results_key)
 
-    # --- tools typés phares (complètent Serper) -----------------------------
+    # --- offres d'emploi (Google Jobs) --------------------------------------
     @mcp.tool()
-    def serpapi_bing_search(
-        query: str,
+    def serpapi_jobs(
+        op: str = "search",
+        query: Optional[str] = None,
+        company: Optional[str] = None,
+        location: Optional[str] = None,
         country: Optional[str] = None,
-        language: Optional[str] = None,
-        count: int = 10,
+        language: str = "en",
+        max_results: int = 50,
+        no_cache: bool = False,
+        job_id: Optional[str] = None,
     ) -> dict:
-        """Bing web search via SerpApi. Returns 'organic_results'.
+        """Google Jobs — live job postings (job-board sourcing).
+
+        `op` :
+        - **"search"** (default) : search Google Jobs for live job postings.
+          Returns the SerpApi payload incl. `jobs_results` (each with a `job_id`
+          usable in op="details").
+        - **"details"** : fetch the full detail of one job posting by its Google
+          Jobs `job_id` (apply options, full description) — `job_id` comes from
+          op="search".
 
         Args:
-            query: search query (Bing `q`).
-            country: market/country code (Bing `cc`, e.g. "us", "fr").
-            language: UI language (Bing `setlang`).
-            count: number of results.
+            op: search (default) | details.
+            query: op="search" — free-text job query, e.g. "data engineer Paris",
+                "senior python remote". Preferred for general sourcing.
+            company: op="search" — shortcut: if `query` is omitted, searches
+                "<company> jobs".
+            location: op="search" — e.g. "Paris, France".
+            country: op="search" — 2-letter code, e.g. "fr", "us" (Google `gl`).
+            language: op="search" — language code (Google `hl`).
+            max_results: op="search" — max postings (pagination handled).
+            no_cache: op="search" — force fresh results.
+            job_id: op="details" — Google Jobs job id, from op="search".
         """
-        params: dict = {"q": query, "count": count}
-        if country:
-            params["cc"] = country
-        if language:
-            params["setlang"] = language
-        return _run("search", engine="bing", params=params)
+        if op == "search":
+            if query is None and company is None:
+                raise _bad("op='search' requiert query ou company")
+            return _run(
+                "search_jobs", query=query, company=company, location=location,
+                country=country, language=language, max_results=max_results,
+                no_cache=no_cache)
 
-    @mcp.tool()
-    def serpapi_youtube_search(query: str, language: Optional[str] = None,
-                                     country: Optional[str] = None) -> dict:
-        """YouTube search via SerpApi — videos, channels, playlists for a query.
+        if op == "details":
+            return _run("get_job_details", job_id=_need(job_id, "job_id", op))
 
-        Args:
-            query: search query (YouTube `search_query`).
-            language: interface language (`hl`).
-            country: country code (`gl`).
-        """
-        params: dict = {"search_query": query}
-        if language:
-            params["hl"] = language
-        if country:
-            params["gl"] = country
-        return _run("search", engine="youtube", params=params)
+        raise _bad("op doit être 'search' ou 'details'")
 
-    @mcp.tool()
-    def serpapi_walmart_search(query: str, page: int = 1) -> dict:
-        """Walmart product search via SerpApi. Returns 'organic_results' (products
-        with price, rating, seller).
-
-        Args:
-            query: product query (Walmart `query`).
-            page: result page.
-        """
-        return _run("search", engine="walmart", params={"query": query, "page": page})
-
-    @mcp.tool()
-    def serpapi_amazon_search(query: str, domain: str = "amazon.com",
-                                    page: int = 1) -> dict:
-        """Amazon product search via SerpApi. Returns 'organic_results' (products,
-        price, rating, ASIN).
-
-        Args:
-            query: product query (Amazon `k`).
-            domain: Amazon domain, e.g. "amazon.com", "amazon.fr".
-            page: result page.
-        """
-        return _run("search", engine="amazon",
-                    params={"k": query, "amazon_domain": domain, "page": page})
-
-    @mcp.tool()
-    def serpapi_ebay_search(query: str, domain: str = "ebay.com",
-                                  page: int = 1) -> dict:
-        """eBay product search via SerpApi. Returns 'organic_results' (listings,
-        price, condition, shipping).
-
-        Args:
-            query: search query (eBay `_nkw`).
-            domain: eBay domain, e.g. "ebay.com", "ebay.fr".
-            page: result page (`_pgn`).
-        """
-        return _run("search", engine="ebay",
-                    params={"_nkw": query, "ebay_domain": domain, "_pgn": page})
-
+    # --- verticaux à contrat propre (params disjoints, non fusionnables) -----
     @mcp.tool()
     def serpapi_google_trends(
         query: str,
@@ -241,61 +336,3 @@ def register(mcp: FastMCP) -> None:
         if country:
             params["gl"] = country
         return _run("search", engine="google_hotels", params=params)
-
-    @mcp.tool()
-    def serpapi_google_events(query: str, location: Optional[str] = None,
-                                    language: Optional[str] = None,
-                                    country: Optional[str] = None) -> dict:
-        """Google Events via SerpApi — local/online events for a query.
-
-        Args:
-            query: events query, e.g. "tech conferences in Paris" (Events `q`).
-            location: geographic location (e.g. "Paris, France").
-            language: interface language (`hl`).
-            country: country code (`gl`).
-        """
-        params: dict = {"q": query}
-        if location:
-            params["location"] = location
-        if language:
-            params["hl"] = language
-        if country:
-            params["gl"] = country
-        return _run("search", engine="google_events", params=params)
-
-    # --- jobs (existant, recâblé sur _run) ----------------------------------
-    @mcp.tool()
-    def serpapi_search_jobs(
-        query: Optional[str] = None,
-        company: Optional[str] = None,
-        location: Optional[str] = None,
-        country: Optional[str] = None,
-        language: str = "en",
-        max_results: int = 50,
-        no_cache: bool = False,
-    ) -> dict:
-        """Search Google Jobs for live job postings (job-board sourcing).
-
-        Args:
-            query: free-text job query, e.g. "data engineer Paris", "senior
-                python remote". Preferred for general sourcing.
-            company: shortcut — if `query` is omitted, searches "<company> jobs".
-            location: e.g. "Paris, France".
-            country: 2-letter code, e.g. "fr", "us" (Google `gl`).
-            language: language code (Google `hl`).
-            max_results: max postings (pagination handled).
-            no_cache: force fresh results.
-
-        Returns the SerpApi payload incl. `jobs_results` (each with a `job_id`
-        usable in serpapi_job_details).
-        """
-        return _run(
-            "search_jobs", query=query, company=company, location=location,
-            country=country, language=language, max_results=max_results,
-            no_cache=no_cache)
-
-    @mcp.tool()
-    def serpapi_job_details(job_id: str) -> dict:
-        """Fetch the full detail of one job posting by its Google Jobs `job_id`
-        (apply options, full description) — `job_id` comes from serpapi_search_jobs."""
-        return _run("get_job_details", job_id=job_id)

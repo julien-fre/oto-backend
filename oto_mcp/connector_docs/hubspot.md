@@ -8,7 +8,7 @@ hubspot s'authentifie via un **token de private app**. dans les [réglages de to
 ## usage — ce que tu peux faire
 
 interroge et édite ton crm hubspot (contacts, companies, deals, tickets) depuis claude.
-- « cherche les contacts de chez acme » → `hubspot_search` (object_type `contacts`)
-- « crée un deal à 10k€ » → `hubspot_create` (object_type `deals`)
-- « les deals associés à ce contact » → `hubspot_associations`
-- « ajoute une note sur ce contact » → `hubspot_create_note`
+- « cherche les contacts de chez acme » → `hubspot_object` (op `search`, object_type `contacts`)
+- « crée un deal à 10k€ » → `hubspot_object` (op `create`, object_type `deals`)
+- « les deals associés à ce contact » → `hubspot_object` (op `associations`)
+- « ajoute une note sur ce contact » → `hubspot_object` (op `create_note`)

@@ -218,9 +218,9 @@ def test_dispatch_pins_org_during_run_then_resets(oto_call_fn, monkeypatch):
         return 167
     monkeypatch.setattr(call_axes, "resolve_org_guarded", _fake_guard)
 
-    target = _OrgCapturingTool("zoho_records")
+    target = _OrgCapturingTool("zoho_record")
     assert session_org.current_call_org() is None            # propre avant
-    _call(oto_call_fn, [target], name="zoho_records",
+    _call(oto_call_fn, [target], name="zoho_record",
           arguments={"module": "Contacts"}, _org=167)
 
     assert target.org_during_run == 167                      # le tool a vu l'org 167
@@ -230,8 +230,8 @@ def test_dispatch_pins_org_during_run_then_resets(oto_call_fn, monkeypatch):
 def test_dispatch_without_org_leaves_context_clean(oto_call_fn, monkeypatch):
     from oto_mcp import session_org
     monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
-    target = _OrgCapturingTool("zoho_records")
-    _call(oto_call_fn, [target], name="zoho_records", arguments={})
+    target = _OrgCapturingTool("zoho_record")
+    _call(oto_call_fn, [target], name="zoho_record", arguments={})
     assert target.org_during_run is None                     # aucune org sans org=
     assert session_org.current_call_org() is None
 
@@ -246,9 +246,9 @@ def test_dispatch_org_refused_raises_before_run(oto_call_fn, monkeypatch):
         raise McpError(ErrorData(code=INVALID_PARAMS, message="pas membre"))
     monkeypatch.setattr(call_axes, "resolve_org_guarded", _reject)
 
-    target = _OrgCapturingTool("zoho_records")
+    target = _OrgCapturingTool("zoho_record")
     with pytest.raises(McpError):
-        _call(oto_call_fn, [target], name="zoho_records", arguments={}, _org=999)
+        _call(oto_call_fn, [target], name="zoho_record", arguments={}, _org=999)
     assert target.org_during_run is None                     # dispatch jamais atteint
     assert session_org.current_call_org() is None
 
@@ -276,8 +276,8 @@ def test_dispatch_org_axis_in_arguments(oto_call_fn, monkeypatch):
         return 167
     monkeypatch.setattr(call_axes, "resolve_org_guarded", _guard)
 
-    target = _ArgsCapturingTool("zoho_records")
-    _call(oto_call_fn, [target], name="zoho_records",
+    target = _ArgsCapturingTool("zoho_record")
+    _call(oto_call_fn, [target], name="zoho_record",
           arguments={"module": "Contacts", "_org": 167})
 
     assert target.org_during_run == 167              # org routée (jeton dans arguments)

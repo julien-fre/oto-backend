@@ -194,7 +194,7 @@ def test_middleware_upstream_carries_hint_and_retryable():
 
 def test_unknown_tool_of_known_connector_is_actionable():
     from fastmcp.exceptions import NotFoundError
-    info = classify(NotFoundError("Unknown tool: 'zoho_records'"))
+    info = classify(NotFoundError("Unknown tool: 'zoho_record'"))
     assert info.code == "tool_not_mounted"
     assert info.retryable is False
     assert "zoho" in info.message           # nomme le connecteur à installer
@@ -220,6 +220,6 @@ def test_unknown_tool_walks_exception_chain():
 def test_unknown_tool_is_expected_not_sentry_reported():
     from fastmcp.exceptions import NotFoundError
     from oto_mcp.error_taxonomy import _is_expected_error
-    assert _is_expected_error(NotFoundError("Unknown tool: 'zoho_records'")) is True
+    assert _is_expected_error(NotFoundError("Unknown tool: 'zoho_record'")) is True
     # une NotFoundError SANS le motif « Unknown tool » reste un bug reporté
     assert _is_expected_error(NotFoundError("prompt introuvable")) is False

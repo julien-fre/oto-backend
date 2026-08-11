@@ -30,7 +30,7 @@ def test_admin_and_connector_tools_are_NOT_protected():
     for n in ("oto_admin_org", "oto_admin_signal", "oto_admin_user"):
         assert not is_protected(n), n
     # outils de connecteur = jamais spine
-    for n in ("apollo_search_people", "serper_web_search", "zoho_records",
+    for n in ("apollo_search_people", "serper_search", "zoho_record",
               "unipile_search", "folk_list_notes"):
         assert not is_protected(n), n
     # autres oto_* NON spine (gérés par nom, pas protégés)
@@ -59,7 +59,7 @@ def test_admin_hidden_masque_par_defaut():
 
 
 def test_admin_hidden_pas_dans_le_denylist_reste_visible():
-    assert is_tool_visible("serper_web_search", disabled=set(), enabled_override=set(),
+    assert is_tool_visible("serper_search", disabled=set(), enabled_override=set(),
                            admin_hidden={"apollo_search_people"})
 
 
@@ -76,7 +76,7 @@ def test_protected_tool_ignore_admin_hidden():
 
 
 def test_effective_disabled_agrege_admin_hidden():
-    all_names = {"apollo_search_people", "serper_web_search"}
+    all_names = {"apollo_search_people", "serper_search"}
     to_hide = effective_disabled(all_names, disabled=set(), enabled_override=set(),
                                  admin_hidden={"apollo_search_people"})
     assert to_hide == {"apollo_search_people"}

@@ -30,11 +30,11 @@ sourcer large mais qualifié, enrichir les coordonnées, qualifier, puis approch
 2. **Sourcer (multi-canal).** Voir le skill `boolean-search`.
    - LinkedIn via Unipile (`linkedin_unipile_search`, `linkedin_unipile_profile`
      op="person"/"company").
-   - Recherche web / X-ray (`serper_web_search`, `serper_scholar_search` pour les
+   - Recherche web / X-ray (`serper_search`, kind="scholar" pour les
      profils techniques/académiques). ⚠️ `serper_*` ne couvre PAS les offres
      d'emploi (pas de vertical Jobs).
-   - **Offres d'emploi / veille marché** : `serpapi_search_jobs` (Google Jobs) —
-     qui recrute sur ce métier, où, à quelles conditions ; `serpapi_job_details`
+   - **Offres d'emploi / veille marché** : `serpapi_jobs` (Google Jobs) —
+     qui recrute sur ce métier, où, à quelles conditions ; `serpapi_jobs(op="details")`
      pour dérouler une offre. Sert le « mapping » du marché et les approches
      concurrentielles.
    - Viviers ATS existants (candidats déjà en base, talent pools).

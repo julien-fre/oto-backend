@@ -7,7 +7,7 @@ crée une clé api (`private api key`) dans ton dashboard [serpapi](https://serp
 ## usage — recherche multi-moteurs
 
 atteint des moteurs que serper n'a pas : verticaux google (trends, finance, vols, hôtels, events, jobs), bing, youtube et marketplaces.
-- `serpapi_search` — appel générique vers n'importe quel moteur serpapi (google_play, duckduckgo, yelp…)
-- `serpapi_search_jobs` + `serpapi_job_details` — sourcing d'offres via google jobs
+- `serpapi_search(engine=…)` — n'importe quel moteur serpapi : `bing`, `youtube`, `amazon`, `walmart`, `ebay`, `google_events`, et le générique (google_play, duckduckgo, yelp…)
+- `serpapi_jobs(op="search"|"details")` — sourcing d'offres via google jobs (le `job_id` du détail sort de la recherche)
 - `serpapi_google_trends` — intérêt dans le temps / par région pour un terme
-- `serpapi_youtube_search` / `serpapi_amazon_search` — vidéos, produits
+- `serpapi_google_finance` / `serpapi_google_flights` / `serpapi_google_hotels` — cotations, vols, hôtels

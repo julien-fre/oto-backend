@@ -9,7 +9,7 @@ renseigne ces 3 champs dans oto sur ton compte (`/account`), connecteur **zoho**
 ## usage — ce que tu peux faire
 
 crud générique sur tes modules zoho crm (contacts, leads, deals, accounts…) depuis claude.
-- « liste mes modules » → `zoho_modules`, « liste les deals » → `zoho_records`
-- « trouve le contact dont l'email = a@b.com » → `zoho_search` (criteria zoho)
-- « crée un lead » → `zoho_create`, « mets à jour ce deal » → `zoho_update`
-- « ajoute une note sur ce record » → `zoho_create_note`
+- « liste mes modules » → `zoho_modules`, « liste les deals » → `zoho_record` (op `list`)
+- « trouve le contact dont l'email = a@b.com » → `zoho_record` (op `search`, criteria zoho)
+- « crée un lead » → `zoho_record` (op `create`), « mets à jour ce deal » → op `update`
+- « ajoute une note sur ce record » → `zoho_note` (op `create`)

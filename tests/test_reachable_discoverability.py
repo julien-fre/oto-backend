@@ -97,9 +97,9 @@ def test_map_without_org_still_scans_other_orgs(wired):
 def test_tool_not_mounted_carries_the_connector(monkeypatch):
     """`ErrorInfo.connector` est ce qui permet à l'enveloppe d'ajouter le hint
     « instances à portée » sur le PREMIER mur (le classifieur reste pur)."""
-    monkeypatch.setattr(error_taxonomy, "_unknown_tool_name", lambda e: "zoho_records")
+    monkeypatch.setattr(error_taxonomy, "_unknown_tool_name", lambda e: "zoho_record")
     monkeypatch.setattr(error_taxonomy, "_connector_of_tool", lambda n: "zoho")
-    info = error_taxonomy.classify(RuntimeError("Unknown tool: 'zoho_records'"))
+    info = error_taxonomy.classify(RuntimeError("Unknown tool: 'zoho_record'"))
     assert info.code == "tool_not_mounted"
     assert info.connector == "zoho"
 

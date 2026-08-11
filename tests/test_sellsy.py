@@ -4,8 +4,11 @@ Verrouille : l'entrée de registre (credential multi-champs byo-only), la surfac
 MCP sous le namespace `sellsy`, la jointure tool↔client oto-core (garde
 version-skew), la sonde « tester la connexion », et les endroits où le module ne
 se contente PAS de passer le plat — un tool par objet métier avec le verbe en
-`op` (ADR 0047), un seul tool pour les quatre documents de vente, et les verbes
-qui n'existent que pour certains d'entre eux (`validate` ≠ `status`).
+`op` (ADR 0047), un seul tool pour les quatre documents de vente comme pour les
+deux faces du tiers (société / particulier), et les verbes qui n'existent que
+pour certains d'entre eux (`validate` ≠ `status`).
+
+Le dispatch op par op vit dans `test_sellsy_op_dispatch.py`.
 """
 import asyncio
 from unittest.mock import patch
@@ -16,7 +19,7 @@ from oto_mcp import connector_verify, providers
 from oto_mcp.tool_visibility import namespace_of
 
 EXPECTED_TOOLS = {
-    "sellsy_company", "sellsy_individual", "sellsy_contact", "sellsy_opportunity",
+    "sellsy_third_party", "sellsy_contact", "sellsy_opportunity",
     "sellsy_document", "sellsy_payment", "sellsy_item", "sellsy_task",
     "sellsy_ref", "sellsy_search",
 }
@@ -102,7 +105,8 @@ def test_search_goes_through_the_filtered_endpoint():
     creds, cls = _with_fake_client()
     with creds, cls as client_cls:
         inst = client_cls.return_value
-        _tool("sellsy_company").fn(op="search", filters={"name": "acme"}, limit=50)
+        _tool("sellsy_third_party").fn(kind="company", op="search",
+                                       filters={"name": "acme"}, limit=50)
 
         assert inst.search_records.call_args.args[0] == "companies"
         assert inst.search_records.call_args.args[1] == {"name": "acme"}
@@ -179,12 +183,12 @@ def test_custom_fields_reads_or_writes_depending_on_data():
     creds, cls = _with_fake_client()
     with creds, cls as client_cls:
         inst = client_cls.return_value
-        tool = _tool("sellsy_company")
+        tool = _tool("sellsy_third_party")
 
-        tool.fn(op="custom_fields", record_id=42)
+        tool.fn(kind="individual", op="custom_fields", record_id=42)
         assert inst.get_custom_fields.called and not inst.set_custom_fields.called
 
-        tool.fn(op="custom_fields", record_id=42,
+        tool.fn(kind="individual", op="custom_fields", record_id=42,
                 data={"custom_fields": [{"id": 12, "value": "x"}]})
         assert inst.set_custom_fields.call_args.args[2] == [{"id": 12, "value": "x"}]
 
@@ -229,9 +233,9 @@ def test_dry_run_maps_to_the_api_validation_flag():
     creds, cls = _with_fake_client()
     with creds, cls as client_cls:
         inst = client_cls.return_value
-        _tool("sellsy_company").fn(op="create", data={"name": "Acme",
-                                                      "type": "prospect"},
-                                   dry_run=True)
+        _tool("sellsy_third_party").fn(kind="company", op="create",
+                                       data={"name": "Acme", "type": "prospect"},
+                                       dry_run=True)
 
         assert inst.create_record.call_args.kwargs["verify"] is True
 
@@ -249,7 +253,7 @@ def test_upstream_403_becomes_an_actionable_tool_error():
         client_cls.return_value.list_records.side_effect = UpstreamHTTPError(
             403, {"error": {"message": "Insufficient privileges"}}, service="sellsy")
         with pytest.raises(McpError, match="droits"):
-            _tool("sellsy_company").fn(op="list")
+            _tool("sellsy_third_party").fn(kind="company", op="list")
 
 
 def test_upstream_429_mentions_the_quota_windows():

@@ -5,6 +5,12 @@ refresh_token → modèle générique multi-champs (ADR 0011), résolu par appel
 `access.resolve_credential_fields("zoho")`. byo_user (pas de quota plateforme :
 le credential EST le grant). Le token d'accès est dérivé/caché en mémoire côté
 client.
+
+**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur zoho)** : un tool
+par OBJET métier, le verbe en paramètre `op` — `zoho_record` (list/get/search/create/
+update/delete, tous scopés par `module`) et `zoho_note` (list/create sur un record).
+`zoho_modules` reste seul : il ne prend AUCUN paramètre (il énumère les `module` que
+les deux autres consomment) et dépend d'un scope OAuth distinct (settings vs data).
 """
 from __future__ import annotations
 
@@ -214,7 +220,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
         raise ValueError(_zoho_error_hint(tok.get("error") or tok))
     granted = tok.get("scope", "")
 
-    # 2) scope — LECTURE réelle par le MÊME chemin que le tool `zoho_records`
+    # 2) scope — LECTURE réelle par le MÊME chemin que le tool `zoho_record`
     # (`list_records` ajoute les `fields` par défaut, requis en API v7) : au moins un
     # module CRM lisible = credential utilisable. `per_page=1`, sans effet de bord.
     client = ZohoClient(
@@ -266,6 +272,15 @@ def register(mcp: FastMCP) -> None:
             accounts_url=accounts_url,
         )
 
+    def _bad(msg: str) -> McpError:
+        return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+    def _need(value, name: str, op: str):
+        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback."""
+        if value is None:
+            raise _bad(f"op='{op}' requiert {name}")
+        return value
+
     @mcp.tool()
     def zoho_modules() -> dict:
         """List the available CRM modules (Contacts, Leads, Deals, Accounts…).
@@ -273,7 +288,7 @@ def register(mcp: FastMCP) -> None:
         Reads Zoho's module metadata, which needs the **settings** scope on the
         self-client — `ZohoCRM.settings.modules.READ` (or `ZohoCRM.settings.ALL`).
         A token minted with only data scopes (`ZohoCRM.modules.ALL`) reads records
-        fine (`zoho_records`) but is rejected here; regenerate the self-client with
+        fine (`zoho_record`) but is rejected here; regenerate the self-client with
         the settings scope added.
         """
         from oto.tools.common.errors import UpstreamHTTPError
@@ -284,66 +299,92 @@ def register(mcp: FastMCP) -> None:
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
                     "le token Zoho n'a pas le scope métadonnées `ZohoCRM.settings.modules.READ` "
                     "(ou `ZohoCRM.settings.ALL`) requis pour lister les modules — les données "
-                    "(`zoho_records`) restent lisibles. Régénère le self-client Zoho CRM en "
+                    "(`zoho_record`) restent lisibles. Régénère le self-client Zoho CRM en "
                     "ajoutant ce scope settings à côté des scopes data.")))
             raise
 
     @mcp.tool()
-    def zoho_records(
+    def zoho_record(
         module: str,
+        op: str = "list",
+        record_id: Optional[str] = None,
+        data: Optional[dict] = None,
+        criteria: Optional[str] = None,
         page: int = 1,
         per_page: int = 200,
         fields: Optional[str] = None,
     ) -> dict:
-        """List records from a module.
+        """A CRM record inside a module — list, read, search, create, update, delete.
+
+        `op`:
+        - **"list"** (default): list records from a module. Paginated
+          (`page` / `per_page`).
+        - **"get"**: get one record by id (`record_id`). {} if not found.
+        - **"search"**: search records. `criteria` = Zoho criteria, e.g.
+          "(Email:equals:a@b.com)" or "(Last_Name:starts_with:Dup)". Paginated.
+        - **"create"**: create a record in a module (`data` = field → value).
+        - **"update"**: update a record's fields (`record_id` + `data`).
+        - **"delete"**: delete a record. Irreversible.
 
         Args:
             module: e.g. "Contacts", "Leads", "Deals", "Accounts".
-            fields: comma-separated field names. Optional — a sensible default
-                set is used per known module if omitted.
+            op: list (default) | get | search | create | update | delete.
+            record_id: op="get"/"update"/"delete" — the record id.
+            data: op="create"/"update" — field → value.
+            criteria: op="search" — Zoho criteria, e.g. "(Email:equals:a@b.com)"
+                or "(Last_Name:starts_with:Dup)".
+            page: pagination (list, search).
+            per_page: page size (list, search).
+            fields: op="list" — comma-separated field names. Optional — a sensible
+                default set is used per known module if omitted.
         """
-        return _client().list_records(module, page=page, per_page=per_page, fields=fields)
+        client = _client()
+
+        if op == "list":
+            return client.list_records(module, page=page, per_page=per_page,
+                                       fields=fields)
+        if op == "get":
+            return client.get_record(module, _need(record_id, "record_id", op))
+        if op == "search":
+            return client.search_records(module, _need(criteria, "criteria", op),
+                                         page=page, per_page=per_page)
+        if op == "create":
+            return client.create_record(module, _need(data, "data", op))
+        if op == "update":
+            return client.update_record(module, _need(record_id, "record_id", op),
+                                        _need(data, "data", op))
+        if op == "delete":
+            return client.delete_record(module, _need(record_id, "record_id", op))
+        raise _bad("op doit être 'list', 'get', 'search', 'create', 'update' "
+                   "ou 'delete'")
 
     @mcp.tool()
-    def zoho_get(module: str, record_id: str) -> dict:
-        """Get one record by id. {} if not found."""
-        return _client().get_record(module, record_id)
-
-    @mcp.tool()
-    def zoho_search(
-        module: str, criteria: str, page: int = 1, per_page: int = 200,
+    def zoho_note(
+        module: str,
+        record_id: str,
+        op: str = "list",
+        title: Optional[str] = None,
+        content: Optional[str] = None,
     ) -> dict:
-        """Search records.
+        """The notes attached to a CRM record.
+
+        `op`:
+        - **"list"** (default): list the notes attached to a record.
+        - **"create"**: add a note to a record (`title` + `content`).
 
         Args:
-            criteria: Zoho criteria, e.g. "(Email:equals:a@b.com)" or
-                "(Last_Name:starts_with:Dup)".
+            module: e.g. "Contacts", "Leads", "Deals", "Accounts".
+            record_id: the record the notes are attached to.
+            op: list (default) | create.
+            title: op="create" — the note title.
+            content: op="create" — the note body.
         """
-        return _client().search_records(module, criteria, page=page, per_page=per_page)
+        client = _client()
 
-    @mcp.tool()
-    def zoho_create(module: str, data: dict) -> dict:
-        """Create a record in a module (data = field → value)."""
-        return _client().create_record(module, data)
-
-    @mcp.tool()
-    def zoho_update(module: str, record_id: str, data: dict) -> dict:
-        """Update a record's fields."""
-        return _client().update_record(module, record_id, data)
-
-    @mcp.tool()
-    def zoho_delete(module: str, record_id: str) -> dict:
-        """Delete a record. Irreversible."""
-        return _client().delete_record(module, record_id)
-
-    @mcp.tool()
-    def zoho_notes(module: str, record_id: str) -> dict:
-        """List the notes attached to a record."""
-        return {"notes": _client().list_notes(module, record_id)}
-
-    @mcp.tool()
-    def zoho_create_note(
-        module: str, record_id: str, title: str, content: str,
-    ) -> dict:
-        """Add a note to a record."""
-        return _client().create_note(module, record_id, title, content)
+        if op == "list":
+            return {"notes": client.list_notes(module, record_id)}
+        if op == "create":
+            return client.create_note(module, record_id,
+                                      _need(title, "title", op),
+                                      _need(content, "content", op))
+        raise _bad("op doit être 'list' ou 'create'")

@@ -18,7 +18,7 @@ def test_project_axis_applies_to_work_tools():
     # (data_* + connecteurs — le bracelet oto_use_project n'existe plus).
     assert "_project" in _params("data_write")
     assert "_project" in _params("data_rows")
-    assert "_project" in _params("zoho_get")
+    assert "_project" in _params("zoho_record")
     assert "_project" in _params("folk_search")
     # spine : hors surface de travail.
     assert "_project" not in _params("oto_whoami")
