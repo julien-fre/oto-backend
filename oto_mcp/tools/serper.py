@@ -16,12 +16,24 @@ from mcp.types import ErrorData, INVALID_REQUEST
 
 from .. import access, output_projection
 
-# Ce qu'un `compact=True` retire d'une page de résultats Google. Aucune de ces clés n'est
-# du bruit dans l'absolu — knowledge graph et sitelinks servent parfois — mais aucune ne
-# sert la boucle courante d'un agent (titre + lien + extrait), et ensemble elles pèsent
-# ~34 % d'une réponse (mesuré : 3 105 c. pour 5 résultats, dont 542 de knowledgeGraph,
-# 328 de relatedSearches, 635 de sitelinks). D'où l'opt-in, jamais le défaut : c'est
-# `fr_get` projeté par allowlist qui a perdu `liste_idcc` en silence (oto-core#37).
+# Ce que le défaut retire d'une page de résultats Google (rendu par `full=True`). Aucune
+# de ces clés n'est du bruit dans l'absolu — knowledge graph et sitelinks servent parfois
+# — mais aucune ne sert la boucle courante d'un agent (titre + lien + extrait), et
+# ensemble elles pèsent ~34 % d'une réponse (mesuré : 3 105 c. pour 5 résultats, dont 542
+# de knowledgeGraph, 328 de relatedSearches, 635 de sitelinks).
+#
+# C'ÉTAIT un opt-in `compact=True`, par prudence héritée de `fr_get` projeté par allowlist
+# qui avait perdu `liste_idcc` en silence (oto-core#37). Mesuré depuis : un agent branché
+# en direct sur le MCP ne le passe JAMAIS — six `serper_search` avec `query` seul sur une
+# fiche, six réponses entières —, et il n'a aucune raison de le faire : il ne sait pas que
+# le paramètre existe avant d'avoir lu le schéma, et rien ne lui dit que c'est important.
+# Une doctrine ne peut pas le lui apprendre non plus, celle qui pilote ces agents ne nomme
+# aucun outil (par choix : c'est ce qui la protège des renommages). **Un paramètre
+# d'économie qu'il faut connaître pour en bénéficier ne bénéficie à personne** — sur une
+# conversation d'enrichissement réelle, 6 800 tokens de sorties d'outils pour 784 de
+# prompt. Le défaut servait le cas rare et faisait payer le cas général : inversé.
+# La prudence de #37 ne s'applique pas ici — ces listes sont une DENYLIST de clés nommées,
+# pas une allowlist : elles ne peuvent pas faire disparaître un champ imprévu.
 _SEARCH_DROP = ("knowledgeGraph", "peopleAlsoAsk", "relatedSearches", "searchParameters")
 _RESULT_DROP = ("sitelinks", "attributes", "imageUrl", "thumbnailUrl")
 
@@ -62,16 +74,17 @@ def register(mcp: FastMCP) -> None:
             access.record_platform_usage("serper")
         return result
 
-    def _project(result: dict, items: str, compact: bool, fields) -> dict:
-        """Applique la projection demandée à une page de résultats. Sans `compact` ni
-        `fields`, rend le payload INCHANGÉ — le brut reste le défaut, l'agent décide."""
-        if not compact and not fields:
+    def _project(result: dict, items: str, full: bool, fields) -> dict:
+        """Applique la projection à une page de résultats. `full=True` rend le payload
+        INCHANGÉ (l'échappatoire pour qui veut le knowledge graph) ; sinon on retire ce
+        qu'un balayage ne lit pas, `fields` restant un resserrement supplémentaire."""
+        if full and not fields:
             return result
         return output_projection.project(
             result,
-            drop=_SEARCH_DROP if compact else (),
+            drop=() if full else _SEARCH_DROP,
             items_path=items,
-            item_drop=_RESULT_DROP if compact else (),
+            item_drop=() if full else _RESULT_DROP,
             fields=fields)
 
     def _bad(msg: str) -> McpError:
@@ -105,7 +118,7 @@ def register(mcp: FastMCP) -> None:
         location: Optional[str] = None,
         site_filter: Optional[str] = None,
         autocorrect: Optional[bool] = None,
-        compact: bool = False,
+        full: bool = False,
         fields: Optional[list[str]] = None,
     ) -> dict:
         """Google search via Serper — une verticale par `kind`.
@@ -140,10 +153,11 @@ def register(mcp: FastMCP) -> None:
                 web / places / shopping.
             site_filter: kind="web" — restreint à un domaine (ex. "linkedin.com/in").
             autocorrect: kind="web" — bascule la correction orthographique Google.
-            compact: retire ce qu'un balayage de résultats ne lit pas — knowledge
-                graph, people-also-ask, recherches associées, sitelinks par résultat
-                (~un tiers du payload). À utiliser quand tu enchaînes beaucoup de
-                requêtes ; à laisser off si tu peux avoir besoin du knowledge graph.
+            full: rend la réponse Google ENTIÈRE. Par défaut (recommandé) le retour
+                est resserré sur ce qu'un balayage lit — titre, lien, extrait — et
+                laisse tomber knowledge graph, people-also-ask, recherches associées
+                et sitelinks par résultat (~un tiers du payload, jamais lu). Ne passe
+                `full=True` que si tu veux précisément l'une de ces sections.
                 Accepté par web / news.
             fields: ne garde QUE ces clés sur chaque résultat (ex. ["title","link",
                 "snippet"]). L'enveloppe (crédits, pagination) est conservée dans tous
@@ -168,7 +182,7 @@ def register(mcp: FastMCP) -> None:
             args["autocorrect"] = autocorrect
 
         result = _run(method, **args)
-        return _project(result, items, compact, fields) if kind in ("web", "news") else result
+        return _project(result, items, full, fields) if kind in ("web", "news") else result
 
 
     @mcp.tool(meta={"census_via": "serper_maps_census"})
@@ -347,8 +361,10 @@ def register(mcp: FastMCP) -> None:
             res = _run("scrape_page", url=url, include_markdown=format != "text")
             # Serper renvoyait `text` ET `markdown` : deux représentations du MÊME
             # contenu (mesuré, 97 % de mots communs), pour 37 % du payload en pure
-            # duplication. On n'en sert qu'une — retirer un doublon ne perd rien, c'est
-            # ce qui distingue ce défaut de `compact=`, qui reste un opt-in.
+            # duplication. On n'en sert qu'une — retirer un doublon ne perd rien. Le
+            # JSON-LD et les métadonnées RESTENT : ce ne sont pas des représentations
+            # du contenu mais des données structurées (date, auteur) qu'on ne saurait
+            # pas reconstituer, donc les retirer perdrait quelque chose.
             if format == "markdown" and res.get("markdown"):
                 res.pop("text", None)
             return res

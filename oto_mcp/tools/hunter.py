@@ -21,7 +21,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def hunter_domain_search(domain: str, limit: int = 10,
-                             compact: bool = False) -> dict:
+                             full: bool = False) -> dict:
         """List public emails found on a company domain (Hunter domain-search).
 
         Useful to discover existing email patterns and contacts.
@@ -30,16 +30,19 @@ def register(mcp: FastMCP) -> None:
         Args:
             domain: Company domain (e.g. "gallimard.fr").
             limit: Max emails to return (1 credit per 10).
-            compact: drop the per-address provenance — `sources` (every page where the
-                address was seen) and the `verification` detail. They dominate the
-                payload and a contact sweep never reads them. Keep it off when you must
-                justify WHERE an address comes from (a real need under GDPR).
+            full: return the per-address PROVENANCE too — `sources` (every page where
+                the address was seen) and the `verification` detail. They dominate the
+                payload and a contact sweep never reads them, hence dropped by
+                default; ask for them when you must justify WHERE an address comes
+                from (a real need under GDPR).
         """
         client, is_platform = _client()
         result = client.domain_search(domain=domain, limit=limit)
         if is_platform:
             access.record_platform_usage("hunter")
-        if compact:
+        # Défaut resserré (#36) : l'économie qui demande à être connue ne sert personne
+        # — mesuré, aucun agent ne passait l'ancien `compact=True`.
+        if not full:
             result = output_projection.project(
                 result, items_path="data.emails",
                 item_drop=("sources", "verification"))

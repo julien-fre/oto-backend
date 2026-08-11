@@ -7,15 +7,24 @@ conversation d'enrichissement réelle (agent Mistral, 7 appels) : `prompt_tokens
 fonction de réduction maison par outil, invisible et refaite à sa façon par chaque
 consommateur (oto-core#36).
 
-**Ce qui est retiré par DÉFAUT vs sur demande — la ligne est nette :**
+**Ce qui est retiré par DÉFAUT vs sur demande — la ligne a bougé le 11/08/2026 :**
 
 - **Duplication pure** (le même contenu servi deux fois) → retiré par défaut. Personne
   n'a besoin du texte brut ET du markdown de la même page ; il n'y a rien à perdre.
-- **Détail moins utilisé** (knowledge graph, sitelinks, sources de vérification) → gardé
-  par défaut, retiré sur `compact=True`. C'est la leçon d'oto-core#37 : `fr_get`
-  projetait sur une allowlist et a laissé tomber `liste_idcc` en silence — un champ
-  « IDCC vérifié » resté vide sur 500 lignes, découvert par un audit champ par champ.
-  Une projection par défaut fait disparaître des données sans rien signaler.
+- **Détail moins utilisé** (knowledge graph, sitelinks, sources de vérification) → aussi
+  retiré par défaut désormais, et rendu sur **`full=True`**. C'était l'inverse (opt-in
+  `compact=True`), par prudence héritée d'oto-core#37 : `fr_get` projetait sur une
+  ALLOWLIST et a laissé tomber `liste_idcc` en silence — un champ « IDCC vérifié » resté
+  vide sur 500 lignes. Cette leçon vaut pour une allowlist, pas pour une **denylist de
+  clés nommées** : celle-ci ne peut pas faire disparaître un champ imprévu, seulement
+  ceux qu'on a écrits. Et l'opt-in ne servait personne — mesuré, aucun agent branché en
+  direct ne passait `compact` : il ne peut pas savoir qu'il existe avant d'avoir lu le
+  schéma, et la doctrine qui le pilote ne nomme aucun outil par choix. **Une économie
+  qu'il faut connaître pour en bénéficier ne bénéficie à personne** : le défaut servait
+  le cas rare et faisait payer le cas général.
+
+Le nom porte l'intention (ADR 0047 §Amendement) : `full=True` dit ce qu'on obtient, là où
+`compact=False` se lisait comme une double négation.
 
 Le module ne connaît AUCUN outil : chaque connecteur déclare ce qu'il coupe, là où il
 sait ce que ses champs valent.
