@@ -345,6 +345,46 @@ class DatastorePg:
                                                 if k in merged}
         self.off_schema.update(dsv2.off_schema_keys(schema, posed))
 
+    @staticmethod
+    def _reject_misplaced_id(data: dict, row_id: Optional[str], *,
+                             batch: bool = False) -> None:
+        """REFUSE un `_id` posé DANS le payload au lieu du paramètre `id` (#390).
+
+        `_id` est géré par le datastore : il vit dans la colonne `row_id`, jamais
+        dans le blob. Il était donc filtré des données écrites — en SILENCE, et c'est
+        ce silence qui coûte : une écriture `row={"_id": "019f…", "statut": …}` sans
+        `id=` a INSÉRÉ une ligne neuve portant tout le travail d'un enrichissement,
+        la ligne visée restant vide, sans une erreur. 28 champs repris à la main.
+
+        Refuser ne casse aucun appelant légitime : personne n'écrit `_id` comme
+        DONNÉE, puisque le faire n'avait déjà aucun effet. Un `_id` cohérent avec le
+        `id=` fourni passe en revanche — c'est le round-trip normal (relire une ligne
+        entière, la modifier, la repousser), et le refuser n'apprendrait rien à
+        personne. Les autres colonnes de plateforme (`_created_at`, `_claimed_by`…)
+        restent ignorées sans bruit pour la même raison : leur présence dans un
+        round-trip est bénigne, elles ne DÉSIGNENT pas la cible de l'écriture."""
+        if not isinstance(data, dict) or "_id" not in data:
+            return
+        posed = data.get("_id")
+        if row_id is not None and str(posed) == str(row_id):
+            return   # round-trip cohérent : l'intention est claire
+        if batch:
+            raise ValueError(
+                f"`_id` ({posed!r}) dans une row du LOT : un batch dédouble par clé "
+                "métier (`key`), il ne cible pas une ligne par son `_id`. Pour "
+                "modifier UNE ligne précise, appelle data_write(id=…, row={…}) ; "
+                "pour un lot, déclare la clé métier et laisse-la dédoublonner.")
+        if row_id is None:
+            raise ValueError(
+                f"`_id` ({posed!r}) posé DANS `row` : il y serait ignoré et ton "
+                "écriture INSÉRERAIT une nouvelle ligne au lieu de modifier "
+                "celle-là. L'identifiant est un paramètre : data_write(id=" +
+                f"{posed!r}, row={{…}}).")
+        raise ValueError(
+            f"`_id` ({posed!r}) dans `row` ne correspond pas au `id` visé "
+            f"({row_id!r}) — deux cibles pour une écriture. Retire `_id` du corps : "
+            "seul le paramètre `id` désigne la ligne.")
+
     def off_schema_report(self) -> dict:
         """Le relevé « hors schéma » du geste, prêt à fusionner dans une réponse
         d'écriture : `{}` quand tout est dans le format (le cas normal — pas de clé
@@ -635,6 +675,7 @@ class DatastorePg:
         sinon append. Renvoie la row (nouvelle ou mise à jour).
 
         `trace` (dict mutable, optionnel) = relevé pour le journal, cf. `_trace`."""
+        self._reject_misplaced_id(data, None)
         ns_id = self._resolve(namespace, write=True)
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}
         ns = self._ns_of(ns_id)
@@ -700,6 +741,7 @@ class DatastorePg:
         id), en remplaçant si elle existe. Crée le namespace au besoin. Sert le
         stockage dédupliqué par clé stable (ex. urn LinkedIn). Renvoie
         `(row, inserted)` — `inserted` False = la row existait déjà."""
+        self._reject_misplaced_id(data, row_id)
         try:
             ns_id = self._resolve(namespace, write=True)
         except NamespaceNotFound:
@@ -744,6 +786,7 @@ class DatastorePg:
         for data in rows:
             if not isinstance(data, dict):
                 raise ValueError("chaque row doit être un objet")
+            self._reject_misplaced_id(data, None, batch=True)
             user_data = {k: v for k, v in data.items() if k not in _META_COLS}
             kv = user_data.get(key) if key else None
             if key and kv is not None and str(kv) != "":
@@ -901,6 +944,7 @@ class DatastorePg:
         """Patch partiel d'une row. `trace` (dict mutable, optionnel) = relevé pour
         le journal — dont l'état AVANT, celui-là même sur lequel la transition de
         cycle de vie est validée juste en dessous (cf. `_trace`)."""
+        self._reject_misplaced_id(patch, row_id)
         ns_id = self._resolve(namespace, write=True)
         existing = db.datastore_get_row(ns_id, row_id)
         if not existing:

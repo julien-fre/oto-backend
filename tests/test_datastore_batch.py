@@ -107,7 +107,14 @@ def test_explicit_key_overrides_schema(store, monkeypatch):
 
 
 def test_meta_cols_stripped(store):
-    store._write_rows_to_ns(1, [{"_id": "nope", "_created_at": "x", "a": 1}], key=None)
+    """Les colonnes de plateforme ne descendent pas dans le blob.
+
+    ⚠️ `_id` ne fait plus partie de ce lot : il DÉSIGNE une cible d'écriture, donc le
+    retirer en silence a coûté une ligne insérée au lieu d'une ligne modifiée (#390).
+    Il est désormais REFUSÉ — cf. `test_datastore_misplaced_id.py`. Les autres restent
+    ignorées : elles ne désignent rien."""
+    store._write_rows_to_ns(1, [{"_created_at": "x", "_claimed_by": "a", "a": 1}],
+                            key=None)
     assert store._fake.rows == {"r1": {"a": 1}}
 
 
