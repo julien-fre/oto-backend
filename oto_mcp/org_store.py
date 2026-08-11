@@ -1106,21 +1106,40 @@ def _accept_invitation_row(inv: dict, sub: str) -> dict:
       rend active (l'org parente est jointe d'abord — invariant équipe ⊂ org) ;
     - **plateforme** (ni l'un ni l'autre) → l'invité a déjà son compte + org perso au
       signup ; l'acceptation ne fait que marquer l'invitation consommée (attribution).
+
+    **Accepter est un AJOUT, jamais une rétrogradation (#297).** `add_org_member` et
+    `add_group_member` sont des upserts : écrire le rôle de l'invitation tel quel
+    écrasait VERS LE BAS le rôle déjà détenu — un org_admin invité en `org_member`
+    perdait ses droits en cliquant « accepter », et au palier équipe le défaut
+    `group_member` rétrogradait un chef même quand l'invitation ne parlait pas
+    d'équipe. On garde donc le **maximum des deux rôles** ; l'administrateur qui veut
+    rétrograder a la route dédiée (`org.member.set_role`, gardée #273/#280). Les rangs
+    viennent de `roles` (source unique de la hiérarchie), jamais recopiés ici.
     """
+    # Import paresseux : `roles` importe org_store (et group_store) au niveau module
+    # → cycle si on l'importait en tête. À l'appel, tout est chargé.
+    from . import roles
     org_id = inv.get("org_id")
+    org_role = inv.get("org_role")
     if org_id is not None:
-        add_org_member(org_id, sub, inv["org_role"])
+        org_role = roles.max_org_role(get_org_role(org_id, sub), org_role)
+        add_org_member(org_id, sub, org_role)
         set_active_org(sub, org_id)
     group_id = inv.get("group_id")
+    group_role = inv.get("group_role")
     if group_id is not None:
         # Import paresseux : org_store n'importe PAS group_store au niveau module
         # (group_store dépend d'org_store → cycle). À l'appel, les deux sont chargés.
         from . import group_store
-        group_store.add_group_member(group_id, sub, inv.get("group_role") or "group_member")
+        group_role = roles.max_group_role(group_store.get_group_role(group_id, sub),
+                                          group_role or "group_member")
+        group_store.add_group_member(group_id, sub, group_role)
         group_store.set_active_group(sub, group_id)
     _mark_invitation_accepted(inv["id"], sub)
-    return {"org_id": org_id, "org_role": inv.get("org_role"),
-            "group_id": group_id, "group_role": inv.get("group_role")}
+    # Les rôles rendus sont ceux ÉCRITS, pas ceux de l'invitation : sinon l'écho
+    # annonce « tu es org_member » à quelqu'un qui vient de rester org_admin.
+    return {"org_id": org_id, "org_role": org_role,
+            "group_id": group_id, "group_role": group_role}
 
 
 def list_pending_invitations_for_email(email: str) -> list[dict]:

@@ -33,6 +33,52 @@ GROUP_ADMIN = "group_admin"
 GROUP_MEMBER = "group_member"
 
 
+# Ordre d'AUTORITÉ **par palier**, du plus faible au plus fort. La hiérarchie n'était
+# jusqu'ici lisible que dans la prose (docstring du module) et dans des comparaisons
+# `== ORG_ADMIN` disséminées : un appelant qui doit **comparer** deux rôles (« garder le
+# plus fort des deux », cf. `max_org_role`) n'avait rien à dériver et recopiait l'ordre
+# chez lui — un rang recopié diverge au premier rôle ajouté ici.
+# Deux tuples et non un seul : comparer un rôle d'org à un rôle d'équipe n'a pas de sens
+# (l'escalade ENTRE paliers passe par `effective_group_role`, jamais par un rang).
+ORG_ROLE_ORDER: tuple[str, ...] = (ORG_MEMBER, ORG_ADMIN)
+GROUP_ROLE_ORDER: tuple[str, ...] = (GROUP_MEMBER, GROUP_ADMIN)
+
+
+def _stronger(current: Optional[str], requested: Optional[str],
+              order: tuple[str, ...]) -> Optional[str]:
+    if current is None:
+        return requested
+    if requested is None:
+        return current
+    try:
+        return current if order.index(current) > order.index(requested) else requested
+    except ValueError:
+        # Rôle hors hiérarchie : aucun rang à comparer, on ne devine pas. Le rôle
+        # DEMANDÉ passe et c'est le store (enum `ORG_ROLES`/`GROUP_ROLES`) qui le
+        # refuse s'il est invalide — le « garder » ici masquerait l'écriture illégale.
+        return requested
+
+
+def max_org_role(current: Optional[str], requested: Optional[str]) -> Optional[str]:
+    """Le plus fort des deux rôles d'ORG **stockés** (None = aucune appartenance).
+
+    Pour les écritures qui sont des **ajouts** et non des administrations de rôle :
+    l'acceptation d'une invitation (`org_store.accept_invitation`) écrit par upsert et
+    rétrogradait donc un org_admin invité en org_member (#297).
+    ⚠️ Compare des rôles **de table**, jamais des rôles effectifs : l'escalade
+    platform_admin/org_admin n'est pas une appartenance et n'a rien à faire dans une
+    ligne `org_members` (`effective_org_role` la rendrait pourtant)."""
+    return _stronger(current, requested, ORG_ROLE_ORDER)
+
+
+def max_group_role(current: Optional[str], requested: Optional[str]) -> Optional[str]:
+    """Le plus fort des deux rôles d'ÉQUIPE **stockés** — pendant de `max_org_role`
+    au palier équipe (`org_group_members`). Mêmes réserves : rôles de table, pas
+    d'escalade (`effective_group_role` rendrait `group_admin` pour l'org_admin
+    parent, qui n'est membre d'aucune équipe)."""
+    return _stronger(current, requested, GROUP_ROLE_ORDER)
+
+
 def is_platform_admin(sub: str) -> bool:
     """platform_admin = **super_admin** : seul le tout-puissant escalade en masse
     (org_admin de toute org / group_admin de tout groupe). L'`admin` opérationnel
