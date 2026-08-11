@@ -277,7 +277,9 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
              "`anonymous` est public, un endpoint `org` résout déjà data_* via le "
              "membre authentifié).", 400)
     expose_ds_write = bool(expose_datastore_write) and expose_ds
-    # Pages : opt-in EXPLICITE (jamais un défaut), `secret` seulement — cf. #310.
+    # Pages : opt-in EXPLICITE (jamais un défaut), `secret` seulement. Régime INVERSE du
+    # datastore ci-dessus, et c'est voulu : le datastore d'un projet est le plus souvent
+    # le livrable qu'on partage, les pages sont de la doc interne.
     expose_docs_eff = bool(expose_docs) and access_mode == "secret"
     _require(not (expose_docs and access_mode != "secret"), "docs_secret_only",
              "mcp_expose_docs est réservé à l'accès `secret` (un endpoint "
