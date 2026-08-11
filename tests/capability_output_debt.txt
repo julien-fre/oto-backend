@@ -8,6 +8,32 @@
 # consolidées (me.project, me.doc, resources.govern) — un Output unique ne peut
 # pas décrire des dizaines de verbes derrière un seul chemin, cf. #269.
 # `me.kb` en est SORTIE : une seule `op`, réponse déclarée en entier (`KbView`).
+#
+# Les trois autres ont été MESURÉES le 2026-08-11 — chaque `return` de leur handler
+# énuméré (15 pour me.project, 20 pour me.doc, 7 pour resources.govern), puis les
+# formes intersectées. **L'enveloppe commune à toutes leurs `op` est VIDE** : aucune
+# clé n'est présente dans toutes les réponses d'une même surface. Une intersection
+# vide est un résultat, pas un échec — c'est la preuve que la surface est
+# indescriptible en l'état ; déclarer une enveloppe qui ne tient pas ferait générer
+# des types FAUX chez l'intégrateur, ce qui est pire que l'absence. On ne déclare
+# donc rien tant que ces objets ne sont pas convertis (ADR 0054-D5). Ce qui bloque :
+#   me.project       — `list`/`list_templates` ne rendent que {projects}. Et même en
+#                      les écartant, `lint` nomme sa cible `project_id` là où les 12
+#                      autres ops par-id rendent `id`.
+#   me.doc           — `bulk_create` ne rend que {created, count} ; `revisions`/
+#                      `backlinks`/`list_changes` nomment `doc_id` quand la vue de
+#                      page nomme `id` ; `create` par un LECTEUR (proposition, ADR
+#                      0032 « les lecteurs proposent ») rend {status, request}.
+#   resources.govern — `list` ne rend ni `ok` ni `resource_id` ; et `op=share` en
+#                      audience public/secret/private rend la vue PROJET (`id`,
+#                      `name`, `mcp_*`…), donc ni `ok`, ni `resource_id`, ni
+#                      `resource_type` : même les seules ops de mutation ne
+#                      partagent rien.
+# Le dénominateur commun de ces trois blocages est le même défaut, à signaler sans
+# le corriger ici (une réponse servie en prod ne se re-façonne pas pour arranger un
+# schéma) : la CIBLE d'un appel est nommée `id` dans une op et `project_id`/`doc_id`
+# dans sa voisine. Le jour où ces surfaces seront converties, une seule convention
+# de nommage de la cible suffirait à rendre l'enveloppe non vide.
 admin.capabilities
 admin.doctrine
 admin.invite
