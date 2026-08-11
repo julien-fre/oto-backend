@@ -14,6 +14,14 @@ def _ctx():
     return SimpleNamespace(sub="admin")
 
 
+@pytest.fixture(autouse=True)
+def _org_existe(monkeypatch):
+    """Défaut de tous les tests de ce fichier : l'org visée existe. Les trois verbes
+    d'org la lisent (404 `unknown_org`, cf. plus bas) et aucun de ces tests-là ne
+    porte sur ce cas — celui qui le teste repose son propre stub."""
+    monkeypatch.setattr(cap.org_store, "get_org", lambda oid: {"id": oid})
+
+
 # ── org ──────────────────────────────────────────────────────────────────────
 
 def test_org_list_unknown_org_raises(monkeypatch):
@@ -21,6 +29,67 @@ def test_org_list_unknown_org_raises(monkeypatch):
     with pytest.raises(AuthzDenied) as e:
         cap._org_list(_ctx(), cap.OrgHiddenToolsListInput(org_id=42))
     assert e.value.code == "unknown_org"
+
+
+# --- même fait, même réponse sur les trois verbes du triplet (#293) -----------
+#
+# `org_list` disait 404 `unknown_org`, `org_hide`/`org_unhide` 403 : elles s'en
+# remettaient à la règle d'autz, qui refuse faute de constater l'appartenance. Un
+# client recevait donc deux réponses pour le même fait selon le verbe employé. Et
+# comme `roles` rend org_admin de TOUTE org à un platform_admin (et que la table n'a
+# pas de FK), masquer « pour l'org 999999 » écrivait une ligne orpheline en 200.
+
+def _run(key: str, inp, *, sub: str = "admin"):
+    """Rejoue la chaîne de l'adaptateur pour UNE capacité : autz déclarée, puis
+    handler. C'est là que vit l'alignement — le code dépend des deux."""
+    from oto_mcp.capabilities import registry
+    from oto_mcp.capabilities._types import RawCtx
+
+    c = next(x for x in registry.CAPABILITIES if x.key == key)
+    return c.handler(c.authz(RawCtx(sub=sub), inp), inp)
+
+
+_TRIPLET_ORG = (
+    ("tools.org_list", lambda: cap.OrgHiddenToolsListInput(org_id=42)),
+    ("tools.org_hide", lambda: cap.OrgHiddenToolSetInput(org_id=42, name="attio_record")),
+    ("tools.org_unhide", lambda: cap.OrgHiddenToolSetInput(org_id=42, name="attio_record")),
+)
+
+_TRIPLET_GROUP = (
+    ("tools.group_list", lambda: cap.GroupHiddenToolsListInput(group_id=7)),
+    ("tools.group_hide", lambda: cap.GroupHiddenToolSetInput(group_id=7, name="attio_record")),
+    ("tools.group_unhide", lambda: cap.GroupHiddenToolSetInput(group_id=7, name="attio_record")),
+)
+
+
+@pytest.mark.parametrize("key,build", _TRIPLET_ORG, ids=[k for k, _ in _TRIPLET_ORG])
+def test_org_inconnue_est_un_404_sur_les_trois_verbes(monkeypatch, key, build):
+    from oto_mcp.capabilities import _authz
+    monkeypatch.setattr(_authz.roles, "is_org_member", lambda sub, oid: True)
+    monkeypatch.setattr(_authz.roles, "is_org_admin", lambda sub, oid: True)
+    monkeypatch.setattr(_authz.access, "get_user_role", lambda sub: "super_admin")
+    monkeypatch.setattr(cap.org_store, "get_org", lambda oid: None)
+    monkeypatch.setattr(cap.tool_registry, "boot_tool_names", lambda: ["attio_record"])
+    ecrit = []
+    monkeypatch.setattr(cap.db, "add_org_disabled_tool", lambda *a, **k: ecrit.append(a))
+    monkeypatch.setattr(cap.db, "remove_org_disabled_tool", lambda *a, **k: ecrit.append(a))
+
+    with pytest.raises(AuthzDenied) as e:
+        _run(key, build())
+    assert (e.value.status, e.value.code) == (404, "unknown_org")
+    assert not ecrit, "aucune ligne ne doit être écrite pour une org qui n'existe pas"
+
+
+@pytest.mark.parametrize("key,build", _TRIPLET_GROUP, ids=[k for k, _ in _TRIPLET_GROUP])
+def test_equipe_inconnue_est_un_404_sur_les_trois_verbes(monkeypatch, key, build):
+    """Au palier équipe l'alignement est porté un cran plus haut, par les règles
+    d'autz elles-mêmes — d'où le handler sans garde d'existence."""
+    from oto_mcp.capabilities import _authz
+    monkeypatch.setattr(_authz.group_store, "get_group", lambda gid: None)
+
+    with pytest.raises(AuthzDenied) as e:
+        _run(key, build())
+    assert (e.value.status, e.value.code) == (404, "unknown_group")
 
 
 def test_org_list_returns_stored_names(monkeypatch):
@@ -58,11 +127,9 @@ def test_org_unhide_removes(monkeypatch):
 
 # ── équipe ───────────────────────────────────────────────────────────────────
 
-def test_group_list_unknown_group_raises(monkeypatch):
-    monkeypatch.setattr(cap.group_store, "get_group", lambda gid: None)
-    with pytest.raises(AuthzDenied) as e:
-        cap._group_list(_ctx(), cap.GroupHiddenToolsListInput(group_id=7))
-    assert e.value.code == "unknown_group"
+# (« équipe inconnue » n'est plus testée sur le handler : la garde vit dans les règles
+# `GROUP_*_OF`, qui la portent pour les trois verbes — cf.
+# `test_equipe_inconnue_est_un_404_sur_les_trois_verbes`.)
 
 
 def test_group_hide_rejects_unknown_tool(monkeypatch):

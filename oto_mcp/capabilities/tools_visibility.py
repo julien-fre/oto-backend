@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from .. import db, group_store, org_store, tool_registry
+from .. import db, org_store, tool_registry
 from ..tool_visibility import is_protected
 from ._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, ORG_ADMIN_OF, ORG_MEMBER_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -111,13 +111,31 @@ class OrgHiddenToolState(BaseModel):
     hidden: bool
 
 
+def _require_org(org_id: int) -> None:
+    """« Cette org n'existe pas » se dit 404 `unknown_org` sur les TROIS verbes.
+
+    Seule la lecture le disait. Les deux écritures s'en remettaient à la règle
+    d'autz, qui refuse en 403 faute de pouvoir constater l'appartenance — même fait,
+    deux réponses selon le verbe employé. Pire pour qui escalade : `roles` rend
+    `org_admin` de TOUTE org à un platform_admin, y compris d'un id qui n'existe pas,
+    et la table ne porte pas de FK — masquer un outil « pour l'org 999999 » écrivait
+    donc une ligne orpheline, invisible ensuite (la lecture, elle, répond 404).
+
+    Placé APRÈS l'autz, comme les ~20 autres capacités d'org : un non-membre reçoit
+    403 quelle que soit l'existence de l'org, on ne lui apprend rien (convention
+    non-disclosante du gate d'org, ADR 0023). Le palier équipe a déjà cet alignement,
+    porté un cran plus haut par `GROUP_MEMBER_OF`/`GROUP_ADMIN_OF`."""
+    if not org_store.get_org(org_id):
+        raise AuthzDenied(404, "unknown_org", f"Org #{org_id} inconnue.")
+
+
 def _org_list(ctx: ResolvedCtx, inp: OrgHiddenToolsListInput) -> dict:
-    if not org_store.get_org(inp.org_id):
-        raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
+    _require_org(inp.org_id)
     return {"org_id": inp.org_id, "disabled_tools": db.list_org_disabled_tools(inp.org_id)}
 
 
 def _org_hide(ctx: ResolvedCtx, inp: OrgHiddenToolSetInput) -> dict:
+    _require_org(inp.org_id)
     _reject_unhidable(inp.name)
     db.add_org_disabled_tool(inp.org_id, inp.name, disabled_by=ctx.sub)
     return {"org_id": inp.org_id, "tool": inp.name, "hidden": True}
@@ -144,6 +162,7 @@ def _org_hide(ctx: ResolvedCtx, inp: OrgHiddenToolSetInput) -> dict:
 # une barrière d'accès — il ne révèle rien et n'ouvre rien.
 
 def _org_unhide(ctx: ResolvedCtx, inp: OrgHiddenToolSetInput) -> dict:
+    _require_org(inp.org_id)
     db.remove_org_disabled_tool(inp.org_id, inp.name)
     return {"org_id": inp.org_id, "tool": inp.name, "hidden": False}
 
@@ -181,8 +200,9 @@ class GroupHiddenToolState(BaseModel):
 
 
 def _group_list(ctx: ResolvedCtx, inp: GroupHiddenToolsListInput) -> dict:
-    if not group_store.get_group(inp.group_id):
-        raise AuthzDenied(404, "unknown_group", f"Équipe #{inp.group_id} inconnue.")
+    # Pas de garde d'existence ici : `GROUP_MEMBER_OF`/`GROUP_ADMIN_OF` la portent déjà
+    # pour les TROIS verbes (404 `unknown_group` avant l'appartenance) — la recopier ne
+    # ferait qu'une seconde lecture et laisserait croire que la règle ne le fait pas.
     return {"group_id": inp.group_id, "disabled_tools": db.list_group_disabled_tools(inp.group_id)}
 
 
