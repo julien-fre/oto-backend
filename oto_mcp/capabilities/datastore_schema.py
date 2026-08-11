@@ -25,6 +25,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .. import access
 from ..datastore import NamespaceNotFound, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -52,11 +53,16 @@ class SchemaOut(BaseModel):
 
 
 def _get_schema(ctx: ResolvedCtx, inp: GetSchemaInput) -> dict:
+    # `slot:<nom>` accepté comme partout dans le datastore (ADR 0035 B3) : sans cette
+    # résolution la référence passait pour un nom littéral et rendait 404 — une lecture
+    # refusée là où tous les tools `data_*` l'acceptent. Le nom RÉSOLU est renvoyé :
+    # l'appelant doit voir sur quel tableau il vient de lire.
+    namespace = access.resolve_namespace_ref(inp.namespace)
     try:
-        schema = make_store(ctx.sub).get_schema(inp.namespace)
+        schema = make_store(ctx.sub).get_schema(namespace)
     except NamespaceNotFound:
         raise AuthzDenied(404, "namespace_not_found")
-    return {"namespace": inp.namespace, "schema": schema}
+    return {"namespace": namespace, "schema": schema}
 
 
 CAPABILITIES += [

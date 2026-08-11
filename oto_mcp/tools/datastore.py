@@ -163,10 +163,12 @@ def _ns(namespace: str) -> str:
     """Adressage par SLOT (ADR 0035 B3) : `slot:<name>` = le tableau bindé sous ce
     nom par le PROJET ACTIF (`access.resolve_slot_tableau` — erreur actionnable si
     pas de projet actif / slot non bindé / binding pendouillant, JAMAIS de fallback).
-    Un nom nu passe inchangé (zéro magie sur les noms littéraux)."""
-    if isinstance(namespace, str) and namespace.strip().lower().startswith(access.SLOT_PREFIX):
-        return access.resolve_slot_tableau(namespace.strip()[len(access.SLOT_PREFIX):])
-    return namespace
+    Un nom nu passe inchangé (zéro magie sur les noms littéraux).
+
+    Corps déplacé dans `access.resolve_namespace_ref` (source unique) : les capacités
+    du datastore en ont besoin aussi, et l'avoir gardé ici a laissé `slot:` non résolu
+    sur leur face MCP."""
+    return access.resolve_namespace_ref(namespace)
 
 
 def register(mcp: FastMCP) -> None:

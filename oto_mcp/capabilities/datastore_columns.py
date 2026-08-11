@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+from .. import access
 from ..datastore import NamespaceNotFound, NamespaceReadOnly, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx
@@ -48,9 +49,15 @@ class DropColumnResult(BaseModel):
 
 
 def _drop_column(ctx: ResolvedCtx, inp: DropColumnInput) -> dict:
+    # `slot:<nom>` = le tableau bindé par le projet actif. À résoudre ICI : la
+    # référence de slot est le nom qu'un agent manipule couramment, et sans ça la
+    # capacité la traitait comme un nom littéral → `namespace_not_found` (seize fois
+    # de suite sur une purge réelle). Le tool `@mcp.tool()` que cette capacité
+    # remplace le faisait ; la conversion l'avait perdu.
+    namespace = access.resolve_namespace_ref(inp.namespace)
     try:
         return make_store(ctx.sub).drop_column(
-            inp.namespace, inp.key, confirm=bool(inp.confirm))
+            namespace, inp.key, confirm=bool(inp.confirm))
     except NamespaceNotFound:
         raise AuthzDenied(404, "namespace_not_found")
     except NamespaceReadOnly:

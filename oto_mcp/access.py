@@ -307,6 +307,24 @@ def project_declared_identities(connector: str, project_id: int) -> list[str]:
 SLOT_PREFIX = "slot:"
 
 
+def resolve_namespace_ref(namespace: str) -> str:
+    """Résout une référence de tableau : `slot:<name>` → le nom RÉEL du namespace
+    bindé par le projet actif ; un nom nu passe inchangé (zéro magie sur les noms
+    littéraux).
+
+    Source UNIQUE de cette résolution, appelée par les tools `data_*` comme par les
+    capacités du datastore. Elle a d'abord vécu dans `tools/datastore.py` seulement,
+    et c'est ce qui a fait le trou : une capacité datastore recevait `slot:vivier`
+    comme un nom littéral et répondait `namespace_not_found`. Sur un verbe destructif
+    (`data_drop_column`), l'échec est heureux — mais un agent qui travaille en slots
+    voit seize refus sans comprendre pourquoi, et croirait à un tableau déjà propre
+    si le refus n'était pas là."""
+    if (isinstance(namespace, str)
+            and namespace.strip().lower().startswith(SLOT_PREFIX)):
+        return resolve_slot_tableau(namespace.strip()[len(SLOT_PREFIX):])
+    return namespace
+
+
 def resolve_slot_tableau(name: str) -> str:
     """Résout un slot `tableau` contre les bindings du projet ACTIF (ADR 0035 B3) →
     le NOM réel du namespace. **Enforcement serveur, jamais de fallback** : pas de
