@@ -23,7 +23,7 @@ import logging
 
 import requests
 
-from . import org_store
+from . import org_store, tenancy
 from .oauth_facade import _UA, _logto_base, _mgmt_token
 
 _log = logging.getLogger("oto_mcp.mfa_mirror")
@@ -73,12 +73,21 @@ def _list_logto_members(logto_org_id: str) -> set[str]:
 def _add_logto_members(logto_org_id: str, subs: list[str]) -> None:
     if not subs:
         return
+    # Invariant de fil : on ne poste JAMAIS à notre Logto un sub d'un autre tenant.
+    # Le roster est déjà filtré (`_split_members_by_tenant`), donc cette garde ne
+    # peut pas se déclencher par le chemin nominal — elle est là pour qu'un futur
+    # call-site qui construirait la liste sans filtre échoue EN DISANT pourquoi,
+    # plutôt que de faire refuser l'appel entier par Logto (« utilisateur inconnu »).
+    for sub in subs:
+        tenancy.require_primary_tenant(sub, "ajout au miroir MFA")
     r = requests.post(f"{_logto_base()}/api/organizations/{logto_org_id}/users",
                       json={"userIds": subs}, headers=_headers(), timeout=_TIMEOUT)
     r.raise_for_status()
 
 
 def _remove_logto_member(logto_org_id: str, sub: str) -> None:
+    # Le sub entre dans l'URL : même invariant qu'à l'ajout (cf. ci-dessus).
+    tenancy.require_primary_tenant(sub, "retrait du miroir MFA")
     r = requests.delete(f"{_logto_base()}/api/organizations/{logto_org_id}/users/{sub}",
                         headers=_headers(), timeout=_TIMEOUT)
     if r.status_code not in (204, 404):   # 404 = déjà absent → tolérer
@@ -86,12 +95,43 @@ def _remove_logto_member(logto_org_id: str, sub: str) -> None:
 
 
 # ── Sync PG oto → org Logto miroir ────────────────────────────────────────────
-def _member_subs(org_id: int) -> set[str]:
-    """TOUS les subs membres de l'org (une ligne `org_members` = une appartenance).
+def _split_members_by_tenant(org_id: int) -> tuple[set[str], set[str]]:
+    """`(miroitables, hors-tenant)` — les membres de l'org, partagés selon que notre
+    annuaire Logto peut les porter ou non.
+
     ⚠️ NE PAS filtrer sur `is_active` : ce flag marque l'org active PAR DÉFAUT du sub
     (une seule par sub), pas l'appartenance — filtrer dessus exclurait les membres
-    dont l'org active est ailleurs → ils échapperaient au MFA (fuite d'enforcement)."""
-    return {m["sub"] for m in org_store.list_org_members(org_id)}
+    dont l'org active est ailleurs → ils échapperaient au MFA (fuite d'enforcement).
+    Le seul filtre est le **tenant**, et il ne retire personne à l'enforcement : un
+    membre d'un tenant tiers n'est pas dans notre annuaire, donc pas inscriptible au
+    miroir — et il n'en a pas besoin, son propre émetteur a sa politique MFA
+    (arbitrage oto-backend#274 : « le MFA sur un tenant, ce n'est pas notre sujet »).
+    Sans ce partage, UN seul sub qualifié dans le lot faisait échouer l'appel
+    `POST …/users` **entier**, donc la synchro de TOUTE l'org — en silence, le chemin
+    d'appartenance étant best-effort."""
+    registry = tenancy.current()
+    mirrorable: set[str] = set()
+    foreign: set[str] = set()
+    for m in org_store.list_org_members(org_id):
+        sub = m["sub"]
+        target = (mirrorable if registry.tenant_of(sub) == tenancy.PRIMARY_SLUG
+                  else foreign)
+        target.add(sub)
+    return mirrorable, foreign
+
+
+def _member_subs(org_id: int) -> set[str]:
+    """Les subs membres que le miroir doit porter (cf. `_split_members_by_tenant`)."""
+    return _split_members_by_tenant(org_id)[0]
+
+
+def foreign_tenant_members(org_id: int) -> set[str]:
+    """Membres de l'org qu'aucun miroir ne peut porter (tenant tiers).
+
+    Exposé par la capacité `org.mfa.get` (compte) : un filtrage MUET produirait un
+    « MFA actif » qui ment. Un responsable d'org doit pouvoir constater que N de ses
+    membres relèvent d'une autre politique MFA que la sienne."""
+    return _split_members_by_tenant(org_id)[1]
 
 
 def _org_label(org_id: int) -> tuple[str, str]:
@@ -103,14 +143,21 @@ def _org_label(org_id: int) -> tuple[str, str]:
 
 
 def sync_members(org_id: int) -> None:
-    """Réconcilie l'appartenance de l'org Logto miroir avec les membres actifs de
-    l'org oto (ajoute les manquants, retire les partis). No-op si l'org n'a pas de
-    miroir (pas de `logto_org_id`). Auto-réparateur : un ajout/retrait manqué est
-    rattrapé au prochain appel. Lève si Logto échoue."""
+    """Réconcilie l'appartenance de l'org Logto miroir avec les membres de l'org oto
+    **relevant du tenant `oto`** (ajoute les manquants, retire les partis ; les
+    membres d'un tenant tiers sont hors miroir par construction, cf.
+    `_split_members_by_tenant`). No-op si l'org n'a pas de miroir (pas de
+    `logto_org_id`). Auto-réparateur : un ajout/retrait manqué est rattrapé au
+    prochain appel. Lève si Logto échoue."""
     logto_org_id = org_store.get_org_mfa(org_id)["logto_org_id"]
     if not logto_org_id:
         return
-    want = _member_subs(org_id)
+    want, foreign = _split_members_by_tenant(org_id)
+    if foreign:
+        _log.info("MFA mirror org %s : %d membre(s) hors tenant %s non miroité(s) — "
+                  "leur émetteur applique sa propre politique MFA (exposé par "
+                  "org.mfa.get : members_other_tenant)",
+                  org_id, len(foreign), tenancy.PRIMARY_SLUG)
     have = _list_logto_members(logto_org_id)
     _add_logto_members(logto_org_id, sorted(want - have))
     for sub in sorted(have - want):

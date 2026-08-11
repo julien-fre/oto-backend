@@ -175,8 +175,19 @@ def logto_user_primary_email(sub: str) -> str | None:
     « email vérifié », et c'est la SOURCE DE VÉRITÉ (un claim de token, lui, peut
     mentir). Utilisé par la bascule de tenant pour décider d'un merge de comptes sans
     faire confiance au token. Renvoie None si user inconnu / Logto indispo (l'appelant
-    ne migre alors PAS — fail-safe)."""
+    ne migre alors PAS — fail-safe).
+
+    ⚠️ **Lève `ForeignTenantDirectory` sur un sub qualifié** (`slug:sub`, tenant tiers)
+    plutôt que d'interroger notre Logto avec un identifiant qui n'y existe pas : le
+    None qui en sortirait est indistinguable d'un « email non vérifié », et l'échec se
+    lirait à l'autre bout de la chaîne. Router la lecture vers l'émetteur du tenant
+    demanderait ses credentials de management, qu'on n'a pas (oto-backend#274)."""
     import requests
+
+    from .tenancy import require_primary_tenant
+    # AVANT le try : le message doit remonter à l'appelant, pas être absorbé par le
+    # fail-safe ci-dessous (qui, lui, couvre les pannes réseau/Logto).
+    require_primary_tenant(sub, "lecture de l'email primaire Logto")
     try:
         base, tok = _logto_base(), _mgmt_token()
         r = requests.get(

@@ -128,6 +128,19 @@ Implémentation :
   (import paresseux, best-effort). ⚠️ Le roster miroir = **tous** les membres, jamais
   filtré sur `org_members.is_active` (ce flag = l'org active par défaut du sub, pas
   l'appartenance).
+- **Le MFA d'org est une capacité du tenant `oto`** (arbitrage #274, 11/08) : le miroir
+  vit dans NOTRE Logto, donc un membre venu d'un **tenant tiers** (sub qualifié
+  `slug:sub`, ADR 0052 L2) n'y est pas inscriptible — et il n'en a pas besoin, son
+  émetteur applique sa propre politique. `_split_members_by_tenant` l'écarte du roster
+  (le SEUL filtre en plus du tenant : aucun rapport avec `is_active`). Ce n'était pas
+  cosmétique : `POST …/users` poste tout le roster d'un coup, donc UN sub qualifié
+  faisait échouer la synchro de **toute l'org**, en silence (chemin best-effort). Le
+  filtrage est **constatable** — `org.mfa.get` rend `members_other_tenant` (un
+  filtrage muet ferait dire « MFA actif » à une org mixte). Les deux helpers de fil
+  (`_add_logto_members`, `_remove_logto_member`) refusent en plus un sub qualifié
+  (`tenancy.require_primary_tenant` → `ForeignTenantDirectory`), même garde que
+  `oauth_facade.logto_user_primary_email` : administrer un annuaire tiers demanderait
+  ses credentials de management, que la table `tenants` ne porte pas.
 - Capacité `org.mfa.{get,set}` (`capabilities/orgs_mfa.py`) → `oto_get/set_org_mfa`
   + REST `/api/orgs/{id}/mfa` (`ORG_MEMBER`/`ORG_ADMIN`). **Pas de fail-open** :
   activation = provisionner AVANT le drapeau (Logto plante → drapeau non posé) ;

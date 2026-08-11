@@ -287,7 +287,16 @@ def reconcile_tenant_migration(new_sub: str, email_hint: Optional[str] = None) -
                 return False
         # Email AUTORITATIF (source de vérité) — la décision de merge se prend ici.
         from ..oauth_facade import logto_user_primary_email
-        email = logto_user_primary_email(new_sub)
+        from ..tenancy import ForeignTenantDirectory
+        try:
+            email = logto_user_primary_email(new_sub)
+        except ForeignTenantDirectory as e:
+            # Compte d'un tenant tiers : son email autoritatif vit dans SON annuaire,
+            # que nous n'administrons pas. Rien à réconcilier ici — et on le dit en
+            # une ligne (sans traceback) plutôt qu'à chaque requête de l'user, ce
+            # chemin étant sur le trajet chaud d'`upsert_user`.
+            logger.warning("reconcile_tenant_migration ignorée pour %s : %s", new_sub, e)
+            return False
         if not email:
             return False
         with _connect() as conn:

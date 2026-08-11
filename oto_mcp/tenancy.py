@@ -231,6 +231,41 @@ def current() -> IssuerRegistry:
     return _INSTALLED
 
 
+# ── Frontière d'annuaire : authentifier ≠ administrer ─────────────────────────
+class ForeignTenantDirectory(RuntimeError):
+    """Un acte d'**administration d'annuaire** a été demandé sur un sub qui ne relève
+    pas du tenant `oto` — donc sur un annuaire qui n'est pas le nôtre.
+
+    Connaître le tenant d'un sub suffit à l'**authentifier** (c'est ce que fait le
+    registre ci-dessus, et ça marche), mais pas à **agir dans son annuaire** : la
+    table `tenants` porte `slug`/`issuer`/`jwks_uri`/`hosts` et **aucun credential de
+    management**. Ce qui manque n'est pas l'information du tenant, ce sont les clés de
+    la maison du partenaire — question ouverte, à trancher au lot de provisioning
+    quand un partenaire en aura besoin (oto-backend#274).
+
+    Cette exception existe pour que l'échec DISE ça, au lieu de laisser notre Logto
+    répondre « utilisateur inconnu » très loin de la cause.
+    """
+
+
+def require_primary_tenant(sub: Optional[str], action: str) -> Optional[str]:
+    """Garde d'un appel qui écrit dans **notre** annuaire Logto : lève
+    `ForeignTenantDirectory` si `sub` relève d'un autre tenant.
+
+    À poser au plus près du fil (le helper qui met le sub dans un corps ou une URL
+    Management API), pas chez l'appelant : c'est là que l'hypothèse « ce sub désigne
+    un utilisateur de notre Logto » est faite.
+    """
+    slug = current().tenant_of(sub)
+    if slug != PRIMARY_SLUG:
+        raise ForeignTenantDirectory(
+            f"{action} : le compte {sub!r} relève du tenant {slug!r}, pas de "
+            f"{PRIMARY_SLUG!r}. Il n'existe pas dans notre annuaire Logto, et nous "
+            f"n'avons aucun credential de management sur l'émetteur de {slug!r} — "
+            f"cet acte doit être porté par le tenant propriétaire du compte.")
+    return sub
+
+
 def load_tenants() -> list:
     """Tenants porteurs d'un émetteur, depuis la base.
 
