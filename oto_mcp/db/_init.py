@@ -750,6 +750,15 @@ def _init_db_once() -> None:
         # toolbox pour l'existant ; les pairs créés ensuite reçoivent le SOCLE
         # curé au seed lazy (session_visibility).
         _conn_sel.backfill_preexisting(conn)
+        # #295 — les sélections d'un connecteur DÉPOSÉ suivent son renommage. #279
+        # (lot 3) a déposé `linkedin` au profit d'`aiark` (même fournisseur, même
+        # client, même pool de crédits : la distinction n'était qu'un mode d'auth),
+        # mais 119 lignes de sélection sont restées sur l'ancien nom — qui ne résout
+        # plus rien, donc ne monte aucun outil : depuis le tag v1.69.0, ces membres
+        # avaient perdu la toolbox LinkedIn sans un mot. Ici et pas en one-shot
+        # manuel : la base est partagée preprod/prod, un boot doit pouvoir rejouer.
+        # Sûr depuis v1.69.0 — plus aucun code servi ne lit `'linkedin'`.
+        _conn_sel.rename_selection(conn, "linkedin", "aiark")
     # Borne la volumétrie du journal de monitoring (hors transaction schéma).
     try:
         from .usage import prune_tool_calls

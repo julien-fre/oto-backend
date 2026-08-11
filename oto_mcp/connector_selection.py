@@ -155,6 +155,57 @@ def seed_active(sub: str, connectors: set[str], org_id: int = 0) -> None:
         )
 
 
+# --- renommage d'un connecteur déposé (report des sélections) ------------------
+
+def rename_selection(conn, old: str, new: str) -> int:
+    """Reporte sur `new` les sélections restées sur un connecteur DÉPOSÉ `old`
+    (reçoit le `conn` de la transaction `db.init_db`). Renvoie le nombre de lignes
+    renommées (hors doublons résorbés). Idempotent : au rejeu, plus aucune ligne ne
+    porte `old` — tout devient no-op.
+
+    **Pourquoi une migration de boot et pas un one-shot manuel** : déposer un
+    connecteur (#279 : `linkedin` → `aiark`) renomme le registre, mais la toolbox
+    d'un membre est la liste de ses connecteurs INSTALLÉS (ADR 0019/0050) — un nom
+    qui ne résout plus rien ne monte aucun outil, et sous le régime strict
+    « non-sélectionné = masqué » le membre perd la surface entière, sans que rien ne
+    le lui dise. Le geste était noté en prose (« reste à faire au tag prod ») : une
+    note ne bloque rien et ne rappelle rien, sept tags sont passés au-dessus (#295).
+    Une migration de données qui doit suivre un tag est une migration de BOOT.
+
+    L'ORDRE des trois gestes est le correctif, pas un détail : la PK est
+    `(sub, org_id, connector)`, donc un `UPDATE … SET connector = new` brut échoue
+    sur toute paire qui portait DÉJÀ les deux (elles coexistaient — l'un en mode
+    plateforme, l'autre en BYO). D'où : promouvoir, dédoublonner, renommer."""
+    if old == new:
+        raise ValueError("rename_selection: old et new identiques")
+    # 1. Paires portant déjà `new` : le plus PERMISSIF gagne — si `old` était active,
+    #    la ligne survivante doit l'être (le membre avait bien l'outil).
+    conn.execute(
+        "UPDATE user_selected_connectors a SET state = %s "
+        " WHERE a.connector = %s AND a.state <> %s "
+        "   AND EXISTS (SELECT 1 FROM user_selected_connectors b "
+        "                WHERE b.sub = a.sub AND b.org_id = a.org_id "
+        "                  AND b.connector = %s AND b.state = %s)",
+        (ACTIVE, new, ACTIVE, old, ACTIVE),
+    )
+    # 2. … et l'ancienne ligne y est alors en trop (sinon le renommage viole la PK).
+    conn.execute(
+        "DELETE FROM user_selected_connectors a "
+        " WHERE a.connector = %s "
+        "   AND EXISTS (SELECT 1 FROM user_selected_connectors b "
+        "                WHERE b.sub = a.sub AND b.org_id = a.org_id "
+        "                  AND b.connector = %s)",
+        (old, new),
+    )
+    # 3. Le reste se renomme sans conflit — et garde son `state` (une sélection en
+    #    pause reste en pause : le renommage n'est pas une occasion d'installer).
+    cur = conn.execute(
+        "UPDATE user_selected_connectors SET connector = %s WHERE connector = %s",
+        (new, old),
+    )
+    return cur.rowcount or 0
+
+
 # --- migration ADR 0050 : backfill one-shot des pairs pré-existants -----------
 
 # Connecteurs `default_hidden` AU MOMENT du retrait du flag (ADR 0050 B3) — fait

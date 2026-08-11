@@ -1,0 +1,182 @@
+"""Renommage des sélections d'un connecteur déposé (oto-backend#295).
+
+Déposer un connecteur renomme le registre ; la toolbox d'un membre, elle, est la
+liste de ses connecteurs INSTALLÉS. `linkedin` → `aiark` (#279) a laissé 119 lignes
+sur un nom qui ne résout plus rien : aucun outil monté, et sous le régime strict
+« non-sélectionné = masqué » la surface entière disparaît sans un mot.
+
+Le seul cas qui CASSE est la paire `(sub, org)` portant DÉJÀ les deux connecteurs :
+la PK est `(sub, org_id, connector)`, donc un `UPDATE … SET connector` brut y viole
+l'unicité. Un test naïf (une seule ligne à renommer) passe et ne prouve rien — d'où
+un exercice contre un **vrai PostgreSQL**, la seule instance qui applique la PK.
+
+Le test se saute proprement si aucun PostgreSQL n'est joignable (`OTO_TEST_PG_DSN`,
+ou un conteneur jetable quand `docker` répond) : le garde-fou d'ORDRE en fin de
+fichier, lui, reste actif partout — c'est l'ordre des trois gestes qui porte le
+correctif.
+"""
+from __future__ import annotations
+
+import os
+import pathlib
+import subprocess
+import time
+import uuid
+
+import pytest
+
+from oto_mcp import connector_selection as sel
+
+_IMAGE = "postgres:17-alpine"
+
+
+def _dsn_from_env() -> str | None:
+    return os.environ.get("OTO_TEST_PG_DSN") or None
+
+
+@pytest.fixture(scope="module")
+def pg_dsn():
+    """DSN d'un PostgreSQL exerçable : celui de l'env, sinon un conteneur jetable."""
+    dsn = _dsn_from_env()
+    if dsn:
+        yield dsn
+        return
+    if subprocess.run(["docker", "info"], capture_output=True).returncode != 0:
+        pytest.skip("aucun PostgreSQL joignable (ni OTO_TEST_PG_DSN, ni docker)")
+    name = f"oto-test-pg-{uuid.uuid4().hex[:8]}"
+    subprocess.run(
+        ["docker", "run", "-d", "--rm", "--name", name,
+         "-e", "POSTGRES_PASSWORD=test", "-P", _IMAGE],
+        capture_output=True, check=True)
+    try:
+        port = subprocess.run(
+            ["docker", "port", name, "5432/tcp"],
+            capture_output=True, text=True, check=True).stdout.strip().rsplit(":", 1)[1]
+        dsn = f"postgresql://postgres:test@127.0.0.1:{port}/postgres"
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            ready = subprocess.run(["docker", "exec", name, "pg_isready", "-U", "postgres"],
+                                   capture_output=True)
+            if ready.returncode == 0:
+                break
+            time.sleep(1)
+        else:
+            pytest.skip("le PostgreSQL jetable n'est pas devenu prêt")
+        yield dsn
+    finally:
+        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+
+
+@pytest.fixture()
+def conn(pg_dsn):
+    """Connexion sur une table `user_selected_connectors` fraîche (schéma réel)."""
+    psycopg = pytest.importorskip("psycopg")
+    from psycopg.rows import dict_row
+    with psycopg.connect(pg_dsn, row_factory=dict_row, autocommit=True) as c:
+        c.execute("DROP TABLE IF EXISTS user_selected_connectors")
+        c.execute("DROP TABLE IF EXISTS connector_selection_seeded")
+        sel.init_schema(c)          # le VRAI schéma, PK comprise
+        yield c
+
+
+def _seed(conn, rows):
+    for sub, org_id, connector, state in rows:
+        conn.execute(
+            "INSERT INTO user_selected_connectors (sub, org_id, connector, state) "
+            "VALUES (%s, %s, %s, %s)", (sub, org_id, connector, state))
+
+
+def _selection(conn) -> set:
+    return {(r["sub"], r["org_id"], r["connector"], r["state"]) for r in
+            conn.execute("SELECT sub, org_id, connector, state "
+                         "FROM user_selected_connectors").fetchall()}
+
+
+def test_simple_rename_keeps_its_state(conn):
+    _seed(conn, [("s1", 2, "linkedin", "active"),
+                 ("s2", 2, "linkedin", "paused")])
+    assert sel.rename_selection(conn, "linkedin", "aiark") == 2
+    # une pause reste une pause : renommer n'est pas installer
+    assert _selection(conn) == {("s1", 2, "aiark", "active"),
+                               ("s2", 2, "aiark", "paused")}
+
+
+def test_pair_holding_both_connectors_does_not_violate_the_primary_key(conn):
+    """LE cas du bug : sans le dédoublonnage, cet UPDATE lève UniqueViolation."""
+    _seed(conn, [("s1", 2, "linkedin", "active"),
+                 ("s1", 2, "aiark", "paused")])
+    sel.rename_selection(conn, "linkedin", "aiark")
+    # une seule ligne survit, et elle est ACTIVE — le plus permissif gagne, car le
+    # membre avait bien l'outil par sa sélection `linkedin`.
+    assert _selection(conn) == {("s1", 2, "aiark", "active")}
+
+
+def test_both_paused_stays_paused(conn):
+    """Le « plus permissif gagne » ne fabrique pas un actif à partir de deux pauses."""
+    _seed(conn, [("s1", 2, "linkedin", "paused"),
+                 ("s1", 2, "aiark", "paused")])
+    sel.rename_selection(conn, "linkedin", "aiark")
+    assert _selection(conn) == {("s1", 2, "aiark", "paused")}
+
+
+def test_already_active_target_is_untouched(conn):
+    _seed(conn, [("s1", 2, "linkedin", "paused"),
+                 ("s1", 2, "aiark", "active")])
+    sel.rename_selection(conn, "linkedin", "aiark")
+    assert _selection(conn) == {("s1", 2, "aiark", "active")}
+
+
+def test_scope_is_the_pair_not_the_sub(conn):
+    """Le dédoublonnage se juge par (sub, org_id) : la même personne dans deux orgs
+    n'est pas la même sélection."""
+    _seed(conn, [("s1", 2, "linkedin", "active"),
+                 ("s1", 3, "aiark", "paused"),
+                 ("s1", 3, "linkedin", "active")])
+    sel.rename_selection(conn, "linkedin", "aiark")
+    assert _selection(conn) == {("s1", 2, "aiark", "active"),
+                               ("s1", 3, "aiark", "active")}
+
+
+def test_replay_is_a_noop(conn):
+    """La migration tourne à CHAQUE boot (base partagée preprod/prod) : le second
+    passage ne doit rien trouver, ni rien abîmer."""
+    _seed(conn, [("s1", 2, "linkedin", "active"), ("s1", 2, "aiark", "paused"),
+                 ("s2", 2, "linkedin", "paused"), ("s3", 0, "aiark", "active")])
+    sel.rename_selection(conn, "linkedin", "aiark")
+    after = _selection(conn)
+    assert sel.rename_selection(conn, "linkedin", "aiark") == 0
+    assert _selection(conn) == after
+
+
+def test_other_connectors_are_never_touched(conn):
+    _seed(conn, [("s1", 2, "linkedin", "active"), ("s1", 2, "unipile", "paused"),
+                 ("s2", 2, "folk", "active")])
+    sel.rename_selection(conn, "linkedin", "aiark")
+    assert ("s1", 2, "unipile", "paused") in _selection(conn)
+    assert ("s2", 2, "folk", "active") in _selection(conn)
+
+
+# ── garde-fou d'ORDRE (actif sans PostgreSQL) ────────────────────────────────
+
+_SRC = (pathlib.Path(__file__).resolve().parent.parent
+        / "oto_mcp" / "connector_selection.py").read_text(encoding="utf-8")
+
+
+def test_the_three_statements_stay_in_this_order():
+    """Promouvoir → dédoublonner → renommer. Inverser 2 et 3 fait échouer le
+    renommage sur la PK ; passer 1 après 2 perd l'information « était active » (la
+    ligne source est déjà supprimée) — et un membre garderait une sélection en pause
+    alors qu'il avait l'outil."""
+    body = _SRC[_SRC.index("def rename_selection"):_SRC.index("# --- migration ADR 0050")]
+    promote = body.index("UPDATE user_selected_connectors a SET state")
+    dedupe = body.index("DELETE FROM user_selected_connectors a")
+    rename = body.index("UPDATE user_selected_connectors SET connector")
+    assert promote < dedupe < rename
+
+
+def test_the_boot_runs_the_linkedin_rename():
+    """La consigne « à faire au tag » est devenue un geste de BOOT — c'est la leçon
+    de #295, et elle ne tient que si l'appel est là."""
+    init_src = (pathlib.Path(__file__).resolve().parent.parent
+                / "oto_mcp" / "db" / "_init.py").read_text(encoding="utf-8")
+    assert 'rename_selection(conn, "linkedin", "aiark")' in init_src
