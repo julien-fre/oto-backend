@@ -216,3 +216,28 @@ Le **front est backend-driven** (rend `option_ok`/`subscribed`, 0 RBAC recodée 
 durable car il lit un flag cohérent. **Ne jamais recoder une règle d'accès côté front** : ajouter
 un flag backend. Le gate DUR (qui peut utiliser) reste `require_connector_access` (ADR 0025, couvre
 le BYO — « pas de clé perso qui contourne ») ; il gate aussi la **pose** (`api_key_save` → 403).
+
+**Le feed est servi en VUE DE TRI (#384, 2026-08-11).** `linkedin_unipile_post(op="feed",
+limit=40)` rendait **65-67 Ko**, au-delà du plafond d'un résultat MCP : sur la procédure
+`veille-linkedin`, le harnais a déversé la sortie dans un fichier et l'agent a repassé au
+`jq` pour la ramener à 42 Ko — deux tours et un détour par le shell avant le vrai travail ;
+un client MCP **sans shell** (agent n8n) n'a lui aucun recours et cale sur l'appel. Mesure
+sur 40 lignes réelles du miroir : **1 647 caractères par post**, dont 60 % de `text`, ~10 %
+d'identifiant répété trois fois (`_id` == `urn` == la queue de `post_url`) et le reste en
+comptabilité de miroir. Le défaut coupe donc le texte à **600 caractères** (coupe MARQUÉE
+`text_truncated`) et ne rend que les colonnes qui servent à trier → **1 019 car./post**
+(65 899 → 40 765 sur la même page ; le plafond passe de ~30 à ~49 posts).
+- **Rien ne sort du catalogue** : le miroir garde toutes ses colonnes (`data_rows`),
+  `fields=["*"]` les rend à l'octet près, `text_max_chars=None` rend le texte entier, et
+  la réponse porte un bloc `projection` qui NOMME les colonnes écartées + le chemin vers
+  le brut. Un défaut qui résume doit dire ce qu'il a rogné, sinon il cache.
+- `fields` a **exactement la sémantique de `data_rows`** (projection + `_id`/`urn`
+  toujours gardés pour adresser la ligne, colonne inconnue signalée sans bloquer) — une
+  seule chose à apprendre. `fields=[]` est refusé (l'avaler rendrait plus que le défaut).
+- Même extrait par défaut sur `linkedin_unipile_profile(op="posts"/"comments")`, **même
+  seam** (`_slim`) : #281 y avait ajouté `fields`/`text_max_chars` sans corriger le
+  DÉFAUT, et le même incident s'est rejoué sur le feed. ADR 0047 §Amendement du 11/08 :
+  *le défaut est un acte de conception, le chemin paresseux doit être le chemin juste* —
+  un paramètre optionnel de plus ne traite pas le signal.
+- ⚠️ **Tronquer le texte SEUL ne suffisait pas** (0,76 de la page brute, encore ~46 Ko) :
+  c'est la conjonction extrait + projection qui fait tomber le coût par post.
