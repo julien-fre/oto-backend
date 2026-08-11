@@ -1,4 +1,7 @@
-"""Capacité « purger une colonne » d'un tableau (oto-backend#296).
+"""Capacités de FORME d'un tableau : purger une colonne (#296), patcher le schéma
+par clé (#388).
+
+Purger une colonne (oto-backend#296).
 
 Retirer un champ du schéma le sort de la VUE ; la clé, elle, reste dans le blob de
 chaque ligne — donc elle se rend encore à la lecture, et elle attire les écritures.
@@ -24,7 +27,9 @@ ownership) — un tableau hors périmètre répond 404, comme partout dans le da
 """
 from __future__ import annotations
 
-from pydantic import BaseModel
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from .. import access
 from ..datastore import NamespaceNotFound, NamespaceReadOnly, make_store
@@ -66,6 +71,50 @@ def _drop_column(ctx: ResolvedCtx, inp: DropColumnInput) -> dict:
         raise AuthzDenied(400, "invalid_drop_column", str(e))
 
 
+class PatchSchemaInput(BaseModel):
+    namespace: str
+    # Fusion PAR CLÉ : chaque entrée complète le field de même `key` (les propriétés
+    # fournies écrasent, les autres sont préservées) ou l'ajoute s'il est inconnu.
+    fields: Optional[list] = None
+    # Le pendant obligé de la fusion : sans retrait explicite, plus de nettoyage.
+    remove: Optional[list] = None
+    strict: Optional[bool] = None
+    key: Optional[str] = None
+
+
+class PatchSchemaResult(BaseModel):
+    # Même contorsion que `SchemaOut` (capabilities/datastore_schema.py) : le champ
+    # s'appelle `schema` sur le fil, mais ce nom masque une méthode héritée de
+    # `BaseModel` — d'où le nom python décalé + alias, le schéma OpenAPI étant généré
+    # `by_alias`.
+    model_config = ConfigDict(populate_by_name=True)
+
+    namespace: str
+    # Le schéma RÉSULTANT, tel qu'il est désormais en base.
+    declared_schema: Optional[dict] = Field(default=None, alias="schema",
+                                            serialization_alias="schema")
+    added: list = []
+    updated: list = []
+    removed: list = []
+    # Avertissements héréités de la pose du schéma (file de travail sans état
+    # terminal, bornes posées sur des données hors borne, colonnes orphelines).
+    warning: Optional[str] = None
+
+
+def _patch_schema(ctx: ResolvedCtx, inp: PatchSchemaInput) -> dict:
+    namespace = access.resolve_namespace_ref(inp.namespace)
+    try:
+        return make_store(ctx.sub).patch_schema(
+            namespace, fields=inp.fields, remove=inp.remove,
+            strict=inp.strict, key=inp.key)
+    except NamespaceNotFound:
+        raise AuthzDenied(404, "namespace_not_found")
+    except NamespaceReadOnly:
+        raise AuthzDenied(403, "namespace_read_only")
+    except ValueError as e:
+        raise AuthzDenied(400, "invalid_patch_schema", str(e))
+
+
 CAPABILITIES += [
     Capability(
         key="me.datastore.drop_column",
@@ -85,5 +134,27 @@ CAPABILITIES += [
             "them once instead of warning every agent forever. A key still DECLARED in "
             "the schema is refused: take it out of the schema first (`data_set_schema`). "
             "Returns `{rows}` = how many rows carried it."),
+    ),
+    Capability(
+        key="me.datastore.patch_schema",
+        handler=_patch_schema,
+        Input=PatchSchemaInput,
+        Output=PatchSchemaResult,
+        authz=SUB_ONLY,
+        mcp="data_patch_schema",
+        rest=None,  # même raison que drop_column : une ligne à poser au besoin
+        description=(
+            "Change a namespace's schema BY KEY, without rewriting the whole field "
+            "list. Prefer this over `data_set_schema` for any EDIT: `set` REPLACES, so "
+            "rebuilding the list from what you know silently drops the per-field "
+            "settings you did not restate (labels, help, max_length, pattern, width, "
+            "options) — same call, same success, no way to tell. `fields` merges by "
+            "`key`: listed properties overwrite, unlisted ones are PRESERVED, unknown "
+            "keys are appended. `remove: [\"key\", …]` is the explicit deletion (a "
+            "wrong key is refused, never silently ignored) — it takes the field out of "
+            "the SCHEMA; to erase the column from the rows' DATA, that is "
+            "`data_drop_column`. `strict`/`key` change the head keys, untouched when "
+            "omitted. Field ORDER is never reshuffled. Returns the resulting schema "
+            "plus `{added, updated, removed}` and any `warning` the schema raises."),
     ),
 ]

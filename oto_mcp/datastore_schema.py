@@ -146,6 +146,76 @@ def is_terminal_status(schema: Optional[dict], value: Any) -> bool:
     return value is not None and str(value) in terminal_states(schema)
 
 
+def merge_fields(current: list, patch: list) -> tuple[list, list[str], list[str]]:
+    """Fusionne `patch` dans `current` PAR CLÉ → `(fields, ajoutés, modifiés)`.
+
+    Un field déjà présent est COMPLÉTÉ (les propriétés fournies écrasent, les autres
+    sont préservées) ; un field inconnu est ajouté À LA FIN. L'ordre existant ne
+    bouge pas : il pilote le rendu (ADR 0032 §6), le déplacer serait un effet de
+    bord invisible dans un geste qui prétend ne toucher qu'aux propriétés nommées.
+
+    La fusion descend dans les composites DÉCLARÉS (`object.fields`, `list.of` et
+    ses `fields`) : sans ça, patcher un sous-record détruirait ses sous-champs —
+    le trou qu'on ferme, un cran plus bas."""
+    out = [dict(f) for f in current if isinstance(f, dict)]
+    by_key = {f.get("key"): f for f in out if f.get("key")}
+    added: list[str] = []
+    updated: list[str] = []
+    for p in patch:
+        if not isinstance(p, dict):
+            continue
+        key = p.get("key")
+        if not isinstance(key, str) or not key:
+            continue
+        target = by_key.get(key)
+        if target is None:
+            new = dict(p)
+            out.append(new)
+            by_key[key] = new
+            added.append(key)
+            continue
+        updated.append(key)
+        sub_patch = p.get("fields")
+        of_patch = p.get("of")
+        for k, v in p.items():
+            if k in ("fields", "of"):
+                continue
+            target[k] = v
+        if isinstance(sub_patch, list) and isinstance(target.get("fields"), list):
+            target["fields"] = merge_fields(target["fields"], sub_patch)[0]
+        elif isinstance(sub_patch, list):
+            target["fields"] = [dict(f) for f in sub_patch if isinstance(f, dict)]
+        if isinstance(of_patch, dict):
+            of_cur = dict(target.get("of") or {})
+            of_sub = of_patch.get("fields")
+            for k, v in of_patch.items():
+                if k != "fields":
+                    of_cur[k] = v
+            if isinstance(of_sub, list):
+                of_cur["fields"] = (merge_fields(of_cur["fields"], of_sub)[0]
+                                    if isinstance(of_cur.get("fields"), list)
+                                    else [dict(f) for f in of_sub if isinstance(f, dict)])
+            target["of"] = of_cur
+    return out, added, updated
+
+
+def remove_fields(current: list, keys: list) -> tuple[list, list[str]]:
+    """Retire les fields nommés → `(fields, clés inconnues)`.
+
+    Le retrait est le pendant OBLIGÉ de la fusion : un patch qui ne sait qu'ajouter
+    et compléter rend le nettoyage délibéré impossible, et on aurait troqué la
+    destruction accidentelle contre l'impossibilité de supprimer. Les deux gestes
+    servent à une heure d'intervalle sur un format qui bouge.
+
+    Les clés inconnues sont RENDUES, pas ignorées : un `remove` silencieux sur une
+    faute de frappe ferait croire au nettoyage."""
+    wanted = {str(k) for k in keys or []}
+    kept = [f for f in current
+            if not (isinstance(f, dict) and f.get("key") in wanted)]
+    present = {f.get("key") for f in current if isinstance(f, dict)}
+    return kept, sorted(wanted - present)
+
+
 def off_schema_keys(schema: Optional[dict], data: dict) -> list[str]:
     """Clés de la row ÉCRITE qu'aucun field du schéma ne déclare (chemins pointés
     pour les sous-records : `contacts[].email_pro`) — le signal de l'issue #294.

@@ -178,6 +178,25 @@ cacherait des données réelles, alors que le contrat 0016 promet qu'un champ li
 *s'affiche* et que #294 vient de trancher « signaler, jamais refuser ni masquer ». On
 supprime la colonne ou on la déclare ; on ne la rend pas invisible.
 
+**Retoucher un schéma sans le détruire (#388).** `data_set_schema` REMPLACE — bon geste
+pour POSER un format, piège pour l'ÉDITER : deux appels indiscernables (même méthode,
+même succès, même réponse) n'ont pas le même effet selon que l'appelant a patché en
+mémoire ou reconstruit la liste des champs. Mesuré en une journée sur un même tableau :
+un patch a préservé 78 notes de champ, une reconstruction a détruit un `pattern` et un
+`max_length`, 52 notes ont disparu entre deux sessions. Un avertissement n'aurait rien
+changé — personne ne lit un avertissement sur un appel qui réussit —, d'où un geste qui
+ne PEUT pas détruire : capacité **`me.datastore.patch_schema`** (MCP `data_patch_schema`).
+`fields` = **fusion par clé** (`dsv2.merge_fields`, récursive dans les composites
+déclarés — patcher un sous-record ne détruit pas ses sous-champs ; l'ordre existant n'est
+jamais rebrassé, il pilote le rendu) ; `remove` = le **retrait explicite**
+(`dsv2.remove_fields`), pendant OBLIGÉ de la fusion — sans lui on troquerait la
+destruction accidentelle contre l'impossibilité de nettoyer, et une clé inconnue y est
+REFUSÉE (un `remove` avalé sur une faute de frappe ferait croire au nettoyage) ;
+`strict`/`key` = les clés de tête, inchangées si omises. Le résultat repasse par
+`store.set_schema`, donc par ses gardes (doublons de clé métier, index UNIQUE) et ses
+trois avertissements — la logique n'est pas doublée. ⚠️ `remove` sort le champ du
+**SCHÉMA** ; effacer la **COLONNE** des données reste `data_drop_column`.
+
 **Écrire hors du format se DIT, sans être refusé (#294).** Sur un namespace `strict`,
 un nom de champ que le schéma ne déclare pas est accepté (contrat 0016 : un champ libre
 s'affiche, il ne débloque rien) et la valeur persiste — mais dans une colonne hors

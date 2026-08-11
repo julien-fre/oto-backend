@@ -573,6 +573,54 @@ class DatastorePg:
             out["warning"] = "\n".join(warnings)
         return out
 
+    def patch_schema(self, namespace: str, *, fields: Optional[list] = None,
+                     remove: Optional[list] = None,
+                     strict: Optional[bool] = None,
+                     key: Optional[str] = None) -> dict:
+        """Modifie le schéma PAR CLÉ, sans réécrire la liste entière (#388).
+
+        `data_set_schema` REMPLACE : c'est le bon geste pour poser un format, et un
+        piège pour le retoucher. Deux appels indiscernables — même méthode, même
+        succès, même réponse — n'ont pas le même effet selon que l'appelant a patché
+        en mémoire ou reconstruit la liste : le premier a préservé 78 notes de champ,
+        le second a détruit un `pattern` et un `max_length`, et 52 notes ont disparu
+        entre deux sessions par le même mécanisme. Rien dans la réponse ne le disait.
+        Un avertissement n'aurait pas suffi : personne ne lit un avertissement sur un
+        appel qui réussit. Il faut un geste qui ne PEUT pas détruire.
+
+        `fields` = fusion par clé (complète l'existant, ajoute l'inconnu) ; `remove`
+        = le retrait EXPLICITE, sans quoi on rendrait le nettoyage impossible ;
+        `strict`/`key` = les clés de tête, inchangées si omises. Le schéma résultant
+        repasse par `set_schema`, donc par ses gardes (doublons de clé métier, index
+        UNIQUE) et ses avertissements (file de travail, bornes, colonnes orphelines)
+        — on ne double pas cette logique."""
+        ns_id = self._resolve(namespace, write=True)
+        current = self._schema_of(ns_id) or {}
+        if not isinstance(current, dict):
+            raise ValueError("le schéma courant n'est pas un objet — repose-le avec "
+                             "data_set_schema avant de le patcher")
+        if fields is None and remove is None and strict is None and key is None:
+            raise ValueError(
+                "rien à patcher : passe `fields` (fusion par clé), `remove` (retrait "
+                "explicite), `strict` ou `key`")
+        merged = [f for f in (current.get("fields") or []) if isinstance(f, dict)]
+        merged, added, updated = dsv2.merge_fields(merged, fields or [])
+        merged, unknown = dsv2.remove_fields(merged, remove or [])
+        if unknown:
+            raise ValueError(
+                "`remove` nomme des champs que le schéma ne déclare pas : "
+                + ", ".join(f"`{k}`" for k in unknown)
+                + ". Rien n'a été touché — vérifie l'orthographe (data_get_schema). "
+                "Pour effacer la COLONNE des données, c'est data_drop_column.")
+        out_schema = {**current, "fields": merged}
+        if strict is not None:
+            out_schema["strict"] = bool(strict)
+        if key is not None:
+            out_schema["key"] = key
+        result = self.set_schema(namespace, out_schema)
+        return {**result, "added": added, "updated": updated,
+                "removed": [str(k) for k in (remove or [])]}
+
     @staticmethod
     def _orphan_columns_warning(ns_id: int, schema: Optional[dict]) -> Optional[str]:
         """Des colonnes vivent dans les DONNÉES sans être déclarées au schéma qu'on
