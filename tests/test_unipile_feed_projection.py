@@ -253,3 +253,43 @@ def test_les_posts_dun_membre_ont_le_meme_defaut(monkeypatch):
     whole = profile(op="posts", identifier="marie-dupont",
                     text_max_chars=None)["items"][0]
     assert len(whole["text"]) == 5000, "le texte entier reste à un paramètre"
+
+
+# --- le texte de l'ORIGINAL d'un repost est borné lui aussi -------------------
+
+def _shape(lignes, fields=None, text_max_chars=600):
+    from oto_mcp.tools import unipile as U
+    return U._shape_feed(
+        {"items": [dict(r) for r in lignes], "total": len(lignes), "page": 0,
+         "limit": len(lignes)}, fields, text_max_chars)
+
+
+def test_le_texte_de_loriginal_est_borne_comme_le_texte():
+    """Depuis oto-core v1.80.0 un repost porte `original_text` — le propos RÉEL, quand
+    `text` ne contient que le mot du re-partageur (souvent « 👏 »). Ne borner que
+    `text` laisserait celui-là passer entier, et annulerait le plafond sur précisément
+    les posts où il y a le plus à lire."""
+    ligne = dict(ROWS[0], urn="urn:li:activity:repost", is_repost=True,
+                 text="👏", original_text="z" * 3000)
+    it = _shape([ligne])["items"][0]
+    assert len(it["original_text"]) == 601 and it["original_text"].endswith("…")
+    assert it["original_text_truncated"] is True, "la coupe doit être marquée"
+
+
+def test_un_original_court_nest_pas_marque_tronque():
+    ligne = dict(ROWS[0], urn="urn:li:activity:repost2", is_repost=True,
+                 text="👏", original_text="court")
+    it = _shape([ligne])["items"][0]
+    assert it["original_text"] == "court"
+    assert "original_text_truncated" not in it
+
+
+def test_le_defaut_dit_de_quoi_le_post_est_fait():
+    """Sans `content_type`, un post dont tout le propos est dans l'image (texte
+    « 🧐 », 2 775 réactions) est INCLASSABLE — c'est le manque qui a motivé
+    oto-core v1.80.0."""
+    ligne = dict(ROWS[0], urn="urn:li:activity:image", text="🧐",
+                 content_type="image", content_title="Schéma d'architecture")
+    it = _shape([ligne])["items"][0]
+    assert it["content_type"] == "image"
+    assert it["content_title"] == "Schéma d'architecture"

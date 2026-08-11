@@ -45,8 +45,10 @@ _FEED_DEFAULT_FIELDS = (
     "author_name", "author_headline",               # qui parle (la doctrine trie dessus)
     "posted_at",                                    # fraîcheur
     "text",                                         # de quoi ça parle (tronqué)
+    "content_type", "content_title",                # …et de quoi le post est FAIT
     "reactions_count", "comments_count",            # traction
     "is_repost", "original_author_name",            # repost ⟹ réagir sur l'original
+    "original_text", "original_content_type",       # …et le propos EST dans l'original
     "feed_reason",                                  # pourquoi c'est dans ton feed
 )
 # Écartées du défaut : `_created_at`/`_updated_at` (dates du MIROIR, pas du post),
@@ -65,6 +67,12 @@ _FEED_ADDRESSING = ("urn",)         # jamais projeté hors du résultat : sans l
 # le trier (c'est ce que l'agent de #384 avait retenu à la main au jq) ; la coupe est
 # MARQUÉE (`text_truncated`) et `text_max_chars=None` rend le texte entier.
 _TEXT_EXCERPT_CHARS = 600
+# TOUS les champs de texte libre d'un item, pas seulement `text` : depuis oto-core
+# v1.80.0 un repost porte aussi `original_text` (le propos réel, quand `text` ne
+# contient que le mot du re-partageur). Ne borner que `text` laisserait le second
+# passer entier et annulerait le plafond sur précisément les posts où il y a le plus
+# à lire. Chaque coupe est marquée à son propre nom (`original_text_truncated`).
+_TEXTUAL_FIELDS = ("text", "original_text")
 
 # --- Discipline du rate-limit amont LinkedIn (Unipile). EMPIRIQUE : le 429 Unipile est un
 # rate-limit EN COUCHES (« We only allow 1 / 10 / 100 requests ») dont le `Retry in N`
@@ -209,9 +217,11 @@ def _slim(payload, fields: Optional[list[str]] = None,
         if not isinstance(it, dict):
             return it
         out = {k: v for k, v in it.items() if k in keep} if keep else dict(it)
-        if text_max_chars and isinstance(out.get("text"), str) and len(out["text"]) > text_max_chars:
-            out["text"] = out["text"][:text_max_chars] + "…"
-            out["text_truncated"] = True
+        for champ in _TEXTUAL_FIELDS:
+            v = out.get(champ)
+            if text_max_chars and isinstance(v, str) and len(v) > text_max_chars:
+                out[champ] = v[:text_max_chars] + "…"
+                out[f"{champ}_truncated"] = True
         return out
 
     payload = dict(payload)
