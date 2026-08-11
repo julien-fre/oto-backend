@@ -158,6 +158,7 @@ def test_ce_qui_est_ecarte_est_nomme_dans_la_reponse(feed):
     out = feed(op="feed", limit=40)
     proj = out["projection"]
     assert set(proj["omitted_fields"]) == {
+        "_id",  # même chaîne que `urn` par construction — cf. _FEED_ADDRESSING
         "_created_at", "_updated_at", "posted_relative", "surfaced_by",
         "comment_authors"}
     assert proj["text_max_chars"] == 600
@@ -185,8 +186,11 @@ def test_toutes_les_colonnes_avec_le_texte_en_extrait(feed):
 def test_fields_projette_comme_data_rows(feed):
     out = feed(op="feed", limit=40, fields=["author_name"], text_max_chars=None)
     it = out["items"][0]
-    assert set(it) == {"author_name", "_id", "urn"}, (
-        "comme `data_rows`, la projection garde toujours de quoi ADRESSER la ligne")
+    assert set(it) == {"author_name", "urn"}, (
+        "comme `data_rows`, la projection garde toujours de quoi ADRESSER la ligne — "
+        "l'`urn` SEUL, puisqu'il EST l'id de la ligne (le sync écrit "
+        "`upsert_row(_FEED_NS, urn, item)`) : rendre `_id` en plus serait la même "
+        "chaîne deux fois")
 
 
 def test_une_colonne_inconnue_est_signalee_sans_bloquer(feed):

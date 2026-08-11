@@ -41,7 +41,7 @@ _FEED_SORT_ORDER = "MEMBER_SETTING"  # honore le tri choisi sur la home LinkedIn
 # `fields=["*"]` / `text_max_chars=None` rendent le brut. Ce qui change est la LECTURE
 # par défaut — ADR 0047 §Amendement du 11/08 : le chemin paresseux doit être le juste.
 _FEED_DEFAULT_FIELDS = (
-    "_id", "urn", "post_url",                       # adresser le post + le citer
+    "urn", "post_url",                              # adresser le post + le citer
     "author_name", "author_headline",               # qui parle (la doctrine trie dessus)
     "posted_at",                                    # fraîcheur
     "text",                                         # de quoi ça parle (tronqué)
@@ -52,7 +52,11 @@ _FEED_DEFAULT_FIELDS = (
 # Écartées du défaut : `_created_at`/`_updated_at` (dates du MIROIR, pas du post),
 # `posted_relative` (dérivable de `posted_at`, et figée à l'heure du sync donc trompeuse
 # relue plus tard), `surfaced_by`/`comment_authors` (vides sur 40/40 des lignes mesurées).
-_FEED_ADDRESSING = ("_id", "urn")   # jamais projetés hors du résultat : sans eux on ne
+# `_id` AUSSI : le sync écrit `upsert_row(_FEED_NS, urn, item)`, donc l'`urn` EST l'id de
+# la ligne — les deux colonnes portent la même chaîne, par construction et pas par hasard
+# (vérifié 40/40). Rendre les deux coûtait 2,7 % de la page pour zéro information. Qui
+# veut relire la ligne passe l'`urn` en `id` à `data_rows`, c'est le même identifiant.
+_FEED_ADDRESSING = ("urn",)         # jamais projeté hors du résultat : sans lui on ne
                                     # peut plus ouvrir le post ni le dédupliquer
 
 # Longueur d'extrait par DÉFAUT de tout texte long rendu en LISTE par ce connecteur —
