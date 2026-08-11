@@ -3,8 +3,13 @@
 Verrouille : l'entrée de registre (keyed byo-only, catégorie Recrutement), la
 surface MCP curée sous le namespace `spott`, la jointure tool↔client oto-core
 (garde version-skew), la sonde « tester la connexion », et les deux points où le
-module fait autre chose que passer le plat : le routage de `spott_applications`
-(par job / par candidat / liste) et la bascule liste↔recherche de `spott_clients`.
+module fait autre chose que passer le plat : le routage de `spott_application`
+(par job / par candidat / liste) et la bascule liste↔recherche de `spott_client`.
+
+⚠️ La surface a été consolidée par `op=` (ADR 0047 §Amendement, 20 tools → 9) : les
+noms attendus ci-dessous ont changé en conséquence. Le dispatch op par op (méthode
+client appelée, refus d'une op inconnue, arguments obligatoires, garde-fous des 5
+écritures) est verrouillé à part, dans `test_spott_op_dispatch.py`.
 """
 import asyncio
 from unittest.mock import patch
@@ -15,14 +20,11 @@ from oto_mcp import connector_verify, providers
 from oto_mcp.tool_visibility import namespace_of
 
 EXPECTED_TOOLS = {
-    "spott_candidates", "spott_candidate", "spott_search_candidates",
-    "spott_create_candidate", "spott_update_candidate",
-    "spott_jobs", "spott_job", "spott_search_jobs",
-    "spott_applications", "spott_create_application", "spott_move_application",
-    "spott_stages",
-    "spott_notes", "spott_create_note",
-    "spott_clients", "spott_client", "spott_client_contacts", "spott_placements",
-    "spott_people", "spott_users",
+    # un tool par objet métier, le verbe en `op=`
+    "spott_candidate", "spott_job", "spott_application", "spott_note",
+    "spott_client",
+    # laissés seuls : paramètres disjoints de ceux des objets ci-dessus
+    "spott_stages", "spott_placements", "spott_people", "spott_users",
 }
 
 
@@ -93,7 +95,7 @@ def test_client_exposes_methods_called_by_tools():
         assert callable(getattr(SpottClient, meth, None)), f"SpottClient.{meth} manquant"
 
 
-# --- routage spott_applications ----------------------------------------------
+# --- routage spott_application op="list" --------------------------------------
 
 def _with_fake_client():
     """Patche la résolution de clé + la classe client ; rend le mock d'instance."""
@@ -106,15 +108,15 @@ def test_applications_routes_by_job_candidate_or_listing():
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value
-        tool = _tool("spott_applications")
+        tool = _tool("spott_application")
 
-        tool.fn(job_id="v1")
+        tool.fn(op="list", job_id="v1")
         inst.applications_by_job.assert_called_once_with("v1")
 
-        tool.fn(candidate_id="c1")
+        tool.fn(op="list", candidate_id="c1")
         inst.applications_by_candidate.assert_called_once_with("c1")
 
-        tool.fn(limit=10)
+        tool.fn(op="list", limit=10)
         assert inst.list_applications.call_args.kwargs["limit"] == 10
 
 
@@ -123,18 +125,20 @@ def test_applications_rejects_job_and_candidate_together():
 
     key, cls = _with_fake_client()
     with key, cls:
-        tool = _tool("spott_applications")
+        tool = _tool("spott_application")
         with pytest.raises(McpError):
-            tool.fn(job_id="v1", candidate_id="c1")
+            tool.fn(op="list", job_id="v1", candidate_id="c1")
 
 
 # --- bascule liste ↔ recherche des clients ------------------------------------
 
 def test_clients_switches_to_search_when_filters_given():
+    """La bascule est passée d'implicite (présence de `filters`) à explicite
+    (`op='search'`) — même capacité, verbe nommé."""
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value
-        tool = _tool("spott_clients")
+        tool = _tool("spott_client")
 
         tool.fn()
         inst.list_clients.assert_called_once()
@@ -142,7 +146,7 @@ def test_clients_switches_to_search_when_filters_given():
 
         flt = [{"type": "text", "operator": "contains",
                 "path": "client.company.name", "value": "acme"}]
-        tool.fn(filters=flt, page=1)
+        tool.fn(op="search", filters=flt, page=1)
         inst.search_clients.assert_called_once_with(filters=flt, page=1, page_size=None)
 
 

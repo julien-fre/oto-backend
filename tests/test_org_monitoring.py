@@ -72,7 +72,7 @@ def test_call_of_another_org_is_a_404_not_a_leak(monkeypatch):
     """`call_id` est un BIGSERIAL : sans cette garde, un org_admin itère les ids et lit
     le journal de toute la plateforme. Même 404 qu'un id inexistant (ne pas confirmer)."""
     monkeypatch.setattr(om.db, "get_tool_call",
-                        lambda cid: {"id": cid, "org_id": 99, "tool": "folk_search"})
+                        lambda cid: {"id": cid, "org_id": 99, "tool": "folk_record"})
     with pytest.raises(AuthzDenied) as e:
         om._console(CTX, _inp(op="call", call_id=1234))
     assert (e.value.status, e.value.code) == (404, "unknown_call")

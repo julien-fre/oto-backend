@@ -6,14 +6,57 @@ risques/ICPE, productible solaire, signaux de conso électrique, valorisation
 immobilière par comparables. Tous les clients viennent de `france-opendata`
 (open data, pas de clé).
 
-ADR 0010 (namespaces cohérents) : `foncier_icpe` (Géorisques) et les `foncier_*`
-DVF étaient auparavant dispersés sous `fr` / `dvf` — regroupés ici. `foncier_permis_search`
+ADR 0010 (namespaces cohérents) : `foncier_icpe` (Géorisques) et les tools DVF
+étaient auparavant dispersés sous `fr` / `dvf` — regroupés ici. `foncier_permis_search`
 (Sit@del) interroge l'API DiDo `/rows` **en live** (filtre serveur commune/dept/année) —
 le pendant requêtable du productible solaire ; l'ingestion de masse via CSV national
 (276 Mo) reste réservée aux consommateurs qui croisent les sources (cf. GR), hors oto.
 
 Connecteur open-data : pas de credential. Exposé seulement si activé en DB
 (cran d'activation, ADR 0010) — register_all gate sur `connector_activation`.
+
+**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur foncier)** : un
+tool par OBJET métier, le verbe en paramètre `op` — 14 tools JSON → 8.
+
+⚠️ Le connecteur est en **LECTURE SEULE** : open data, aucune écriture, aucun
+crédit consommé. Aucune op n'a d'effet de bord, donc les défauts d'`op` sont des
+lectures comme le reste. Ce qui coûte ici c'est le VOLUME balayé en amont : les
+deux gardes anti-scan national sont conservées telles quelles (`foncier_permis_search`
+exige un scope commune/dept/demandeur, `foncier_conso_elec` exige `dept`).
+
+| avant                          | après                                    |
+| ------------------------------ | ---------------------------------------- |
+| `foncier_reverse`              | `foncier_site(op="adresse")`             |
+| `foncier_parcelle`             | `foncier_site(op="parcelle")` — défaut   |
+| `foncier_bati`                 | `foncier_site(op="bati")`                |
+| `foncier_productible_solaire`  | `foncier_site(op="solaire")`             |
+| `foncier_prix_m2`              | `foncier_dvf(op="prix_m2")` — défaut     |
+| `foncier_comparables`          | `foncier_dvf(op="comparables")`          |
+| `foncier_comparables_adresse`  | `foncier_dvf(op="comparables_adresse")`  |
+| `foncier_dpe_adresse`          | `foncier_dpe(op="adresse")` — défaut     |
+| `foncier_dpe_stats`            | `foncier_dpe(op="stats")`                |
+
+`foncier_site` est keyé par le POINT : ses quatre ops prennent exactement
+`lat`/`lon` (+ `kwc` pour la seule op solaire). CINQ tools restent SEULS — leurs
+paramètres ne recouvrent pas ceux de leurs voisins, et un `oneOf` de variantes
+disjointes pèse ce que pesaient les tools séparés (le critère est l'homogénéité
+des paramètres, pas le comptage) :
+- `foncier_geocode` : clé = une adresse en texte libre (+ ses filtres CP/commune),
+  aucun `lat`/`lon` — c'est l'ENTRÉE du namespace (adresse → point), pas une
+  lecture au point ; son repli sur le code postal lui est propre ;
+- `foncier_isochrone` : partage `lat`/`lon` avec `foncier_site`, mais ajoute quatre
+  paramètres disjoints (budget temps OU distance, mode, sens) et rend une ZONE
+  (polygone) au lieu d'une caractéristique du point — il doublerait le schéma de
+  `foncier_site` pour une seule op ;
+- `foncier_permis_search` : neuf paramètres, dont l'axe DEMANDEUR (`siren`/`siret`)
+  qui n'existe nulle part ailleurs dans le namespace ;
+- `foncier_conso_elec` : scope année × département × bande de MWh, disjoint du reste ;
+- `foncier_icpe` : clé `siret` ou `code_insee` (registre Géorisques, pagination
+  propre), aucun paramètre partagé.
+
+Les trois variantes rendues `*_app` (MCP Apps SEP-1865) sont HORS périmètre de la
+consolidation — elles renvoient un composant d'UI, pas du JSON. Leur prose nomme
+encore les tools d'avant : la table ci-dessus donne la correspondance.
 """
 from __future__ import annotations
 
@@ -21,6 +64,8 @@ import re
 from typing import Optional
 
 from fastmcp import FastMCP
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData, INVALID_PARAMS
 
 # Import OPTIONNEL de prefab_ui (extra `fastmcp[apps]`) au niveau MODULE — et NON
 # local à register() : les tools *_app ci-dessous annotent leur retour `-> Card`,
@@ -48,6 +93,42 @@ _DIDO_PAGE_SIZES = (10, 20, 50, 100)
 # rend l'absence de candidat `housenumber` suspecte plutôt que normale.
 _NUMBERED_ADDRESS_RE = re.compile(r"^\s*\d{1,4}\s*(?:bis|ter|quater)?\s+\S", re.I)
 _POSTCODE_RE = re.compile(r"\b\d{5}\b")
+
+
+# Ops de chaque tool consolidé. SOURCE UNIQUE : la validation d'entrée ET le
+# message de refus en dérivent (`_ops_error`), donc une op ajoutée ne peut pas
+# être acceptée sans être annoncée à l'agent, ni l'inverse.
+_SITE_OPS = ("parcelle", "bati", "solaire", "adresse")
+_DVF_OPS = ("prix_m2", "comparables", "comparables_adresse")
+_DPE_OPS = ("adresse", "stats")
+
+# `years` n'a PAS le même défaut selon l'op DVF (2 ans pour les mutations brutes
+# d'une commune, 3 pour les stats et le voisinage d'une adresse) : le paramètre
+# fusionné vaut donc `None` par défaut et se résout ici, pour ne changer le
+# comportement d'AUCUNE des trois lectures.
+_DVF_YEARS_DEFAULT = {"prix_m2": 3, "comparables": 2, "comparables_adresse": 3}
+
+
+def _ops_error(ops: tuple[str, ...]) -> str:
+    quoted = [f"'{o}'" for o in ops]
+    return "op doit être " + ", ".join(quoted[:-1]) + f" ou {quoted[-1]}"
+
+
+def _bad(msg: str) -> McpError:
+    return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+
+def _need(value, name: str, op: str):
+    """Argument obligatoire pour CET op — erreur actionnable qui NOMME l'op et
+    l'argument, jamais un fallback.
+
+    Une valeur VIDE compte comme absente : `adresse=""` sur `op='comparables_adresse'`
+    partirait géocoder le vide et rendrait un voisinage arbitraire, qui passerait
+    pour une réponse.
+    """
+    if value is None or (isinstance(value, (str, list)) and not value):
+        raise _bad(f"op='{op}' requiert {name}")
+    return value
 
 
 def _has_housenumber(candidates: list[dict]) -> bool:
@@ -98,6 +179,8 @@ def register(mcp: FastMCP) -> None:
         `relaxed="postcode"`. If that still finds no housenumber, every candidate is
         tagged `warning="no_housenumber_match"`: treat them as approximate.
 
+        The reverse direction (point → nearest address) is `foncier_site(op="adresse")`.
+
         Args:
             adresse: free-form address (e.g. "44 la canebière marseille").
             limit: max candidates (default 5).
@@ -119,50 +202,66 @@ def register(mcp: FastMCP) -> None:
                 return [{**c, "relaxed": "postcode"} for c in retry]
         return [{**c, "warning": "no_housenumber_match"} for c in res]
 
-    @mcp.tool()
-    def foncier_reverse(lat: float, lon: float) -> Optional[dict]:
-        """Reverse-geocode a point (lat, lon) → nearest known address, or null."""
-        return ban.reverse(lat, lon)
-
-    # --- cadastre (API Carto IGN) --------------------------------------------
+    # --- le site au point : adresse / cadastre / bâti / solaire ---------------
 
     @mcp.tool()
-    def foncier_parcelle(lat: float, lon: float) -> Optional[dict]:
-        """Cadastral parcel at a point (lat, lon), or null.
+    def foncier_site(
+        lat: float,
+        lon: float,
+        op: str = "parcelle",
+        kwc: Optional[float] = None,
+    ) -> Optional[dict]:
+        """What a point (lat, lon) carries — cadastral parcel, built footprint,
+        nearest address, solar yield. Geocode the address first (foncier_geocode).
 
-        Returns idu (unique id), commune, INSEE code, section, numéro, area
-        (contenance_m2) and GeoJSON geometry. Use to identify the land unit
-        under an address (geocode first to get lat/lon).
+        `op`:
+        - **"parcelle"** (default): cadastral parcel at the point (API Carto IGN),
+          or null. Returns idu (unique id), commune, INSEE code, section, numéro,
+          area (contenance_m2) and GeoJSON geometry. Use to identify the land unit
+          under an address.
+        - **"bati"**: built footprint on that parcel (IGN BDTOPO V3) — ground area,
+          real CES, uses, heights. Resolves the cadastral parcel at the point, then
+          sums BDTOPO buildings whose centroid falls inside it. `ces_reel` = built
+          area / parcel area (low CES in a dense area = under-developed land signal).
+          Returns an `error` key if no parcel is found at the point.
+        - **"solaire"**: annual solar yield (kWh) for a PV system of `kwc` kWp at the
+          point, via PVGIS (JRC). Picks optimal tilt/azimuth for a rooftop install.
+          Returns physical data only (productible_kwh_an, irradiance, losses, optimal
+          angles) — no tariff or business assumptions. Null if inputs invalid or
+          PVGIS unavailable.
+        - **"adresse"**: reverse-geocode the point (BAN) → nearest known address,
+          or null.
+
+        Args:
+            lat: latitude of the point (WGS84).
+            lon: longitude of the point (WGS84).
+            op: parcelle (default) | bati | solaire | adresse.
+            kwc: op="solaire" — peak power of the PV system, in kWp. REQUIRED for
+                that op, ignored by the others.
         """
-        return cadastre.parcelle_at(lat, lon)
+        if op not in _SITE_OPS:
+            raise _bad(_ops_error(_SITE_OPS))
 
-    # --- bâti existant (IGN BDTOPO V3) ---------------------------------------
+        if op == "parcelle":
+            return cadastre.parcelle_at(lat, lon)
 
-    @mcp.tool()
-    def foncier_bati(lat: float, lon: float) -> dict:
-        """Built footprint on the parcel at (lat, lon): ground area, real CES, uses, heights.
+        if op == "adresse":
+            return ban.reverse(lat, lon)
 
-        Resolves the cadastral parcel at the point, then sums BDTOPO buildings
-        whose centroid falls inside it. `ces_reel` = built area / parcel area
-        (low CES in a dense area = under-developed land signal). Returns an
-        `error` key if no parcel is found at the point.
-        """
-        parcelle = cadastre.parcelle_at(lat, lon)
-        if not parcelle or not parcelle.get("geometry"):
-            return {"error": "no_parcel_at_point", "lat": lat, "lon": lon}
-        return bdtopo.bati_parcelle(parcelle["geometry"], contenance_m2=parcelle.get("contenance_m2"))
+        if op == "solaire":
+            return pvgis.productible(lat, lon, _need(kwc, "kwc", op))
 
-    # --- productible solaire (PVGIS, JRC) ------------------------------------
+        if op == "bati":
+            parcelle = cadastre.parcelle_at(lat, lon)
+            if not parcelle or not parcelle.get("geometry"):
+                return {"error": "no_parcel_at_point", "lat": lat, "lon": lon}
+            return bdtopo.bati_parcelle(
+                parcelle["geometry"], contenance_m2=parcelle.get("contenance_m2"))
 
-    @mcp.tool()
-    def foncier_productible_solaire(lat: float, lon: float, kwc: float) -> Optional[dict]:
-        """Annual solar yield (kWh) for a PV system of `kwc` kWp at (lat, lon), via PVGIS.
-
-        Picks optimal tilt/azimuth for a rooftop install. Returns physical data
-        only (productible_kwh_an, irradiance, losses, optimal angles) — no tariff
-        or business assumptions. Null if inputs invalid or PVGIS unavailable.
-        """
-        return pvgis.productible(lat, lon, kwc)
+        # Structurellement inatteignable (garde d'entrée ci-dessus) — filet contre
+        # un `return None` implicite si une op était ajoutée à `_SITE_OPS` sans sa
+        # branche : mieux vaut refuser que rendre « rien » pour un succès.
+        raise _bad(_ops_error(_SITE_OPS))
 
     # --- isochrone / zone de chalandise (IGN Géoplateforme) ------------------
 
@@ -344,104 +443,104 @@ def register(mcp: FastMCP) -> None:
     # --- valorisation immobilière (DVF+ Cerema, depuis 2014) — repris de `dvf` -
 
     @mcp.tool()
-    def foncier_prix_m2(
-        code_commune: str,
-        type_local: Optional[str] = None,
-        years: int = 3,
-    ) -> dict:
-        """Real-estate price stats (€/m²) for a French commune, from DVF+ open data
-        (Cerema, transactions since 2014).
-
-        Median/mean/min/max €/m² + per-year breakdown, on clean mono-bien sales
-        (one Appartement or Maison per mutation; outliers <100 or >50000 €/m²
-        filtered). Use to value a property by comparables.
-
-        Args:
-            code_commune: INSEE code, 5 digits (e.g. "13201" = Marseille 1er).
-            type_local: "Appartement" | "Maison" (default: both).
-            years: lookback in years WITH data (DVF lags ~6 months; default 3,
-                up to ~2014).
-        """
-        return dvf.stats(code_commune=code_commune, type_local=type_local, years=years)
-
-    @mcp.tool()
-    def foncier_comparables(
-        code_commune: str,
+    def foncier_dvf(
+        op: str = "prix_m2",
+        code_commune: Optional[str] = None,
+        adresse: Optional[str] = None,
         type_local: Optional[str] = None,
         surface_min: Optional[float] = None,
         surface_max: Optional[float] = None,
-        years: int = 2,
+        years: Optional[int] = None,
         limit: int = 50,
-    ) -> dict:
-        """Raw DVF+ real-estate transactions for a commune (Cerema open data, since
-        2014). NOT filtered: ALL property types (flats, houses, land, dependencies,
-        mixed-use, commercial) and ALL natures (sale, VEFA off-plan, auction,
-        exchange) — the agent decides the use (valuation, land analysis, market
-        volume…). For a clean median €/m², use foncier_prix_m2 instead.
-
-        Each row: date_mutation, nature_mutation, valeur_fonciere, type_bien (raw
-        DVF+ label) + type_local (set only for residential mono-bien, else null),
-        surface_reelle_bati, surface_terrain, prix_m2 (null if not computable),
-        nombre_locaux, vefa, id_parcelle(s), adresse (reverse-geocoded BAN), lat/lon.
-        Most recent first.
-
-        Args:
-            code_commune: INSEE code, 5 digits.
-            type_local: OPTIONAL filter "Appartement" | "Maison" (default: everything).
-            surface_min / surface_max: OPTIONAL surface bâtie band m².
-            years: lookback in years with data (default 2, up to ~2014).
-            limit: max rows, most recent first (default 50).
-        """
-        return dvf.comparables(
-            code_commune=code_commune, type_local=type_local,
-            surface_min=surface_min, surface_max=surface_max, years=years, limit=limit,
-        )
-
-    @mcp.tool()
-    def foncier_comparables_adresse(
-        adresse: str,
         radius_m: int = 500,
-        type_local: Optional[str] = None,
-        surface_min: Optional[float] = None,
-        surface_max: Optional[float] = None,
-        years: int = 3,
-        limit: int = 50,
         with_dpe: bool = False,
     ) -> dict:
-        """Raw DVF+ transactions around a precise address (Cerema open data, since
-        2014). Geocodes the address (BAN), returns ALL mutations whose parcel lies
-        within `radius_m` metres (distance to nearest parcel vertex — robust to
-        multi-parcel goods), nearest first, each with `distance_m`. NOT filtered by
-        property type/nature; `median_prix_m2` is computed on residential mono-bien
-        rows only (indicative). Same fields as foncier_comparables.
+        """Real-estate transactions from DVF+ open data (Cerema, since 2014) — price
+        stats for a commune, or the raw mutations of a commune / around an address.
 
-        With `with_dpe=True`, each sale is enriched with ADEME energy data: a HOUSE
-        gets its matched `dpe` (etiquette + `dpe_match` confidence by proximity &
-        surface); a FLAT gets `dpe_immeuble` (the building's DPE list — NO 1:1 match,
-        as DVF and DPE share no dwelling key).
+        `op`:
+        - **"prix_m2"** (default): price stats (€/m²) for a French commune.
+          Median/mean/min/max €/m² + per-year breakdown, on clean mono-bien sales
+          (one Appartement or Maison per mutation; outliers <100 or >50000 €/m²
+          filtered). Use to value a property by comparables. Needs `code_commune`.
+        - **"comparables"**: RAW transactions for a commune. NOT filtered: ALL
+          property types (flats, houses, land, dependencies, mixed-use, commercial)
+          and ALL natures (sale, VEFA off-plan, auction, exchange) — the agent
+          decides the use (valuation, land analysis, market volume…). For a clean
+          median €/m², use op="prix_m2" instead. Needs `code_commune`.
+        - **"comparables_adresse"**: RAW transactions around a PRECISE address.
+          Geocodes the address (BAN), returns ALL mutations whose parcel lies within
+          `radius_m` metres (distance to nearest parcel vertex — robust to
+          multi-parcel goods), nearest first, each with `distance_m`. NOT filtered by
+          property type/nature; `median_prix_m2` is computed on residential mono-bien
+          rows only (indicative). Needs `adresse`.
+
+        Each raw row (both "comparables" ops): date_mutation, nature_mutation,
+        valeur_fonciere, type_bien (raw DVF+ label) + type_local (set only for
+        residential mono-bien, else null), surface_reelle_bati, surface_terrain,
+        prix_m2 (null if not computable), nombre_locaux, vefa, id_parcelle(s),
+        adresse (reverse-geocoded BAN), lat/lon. Most recent first (nearest first
+        for "comparables_adresse").
+
+        With `with_dpe=True` (op="comparables_adresse" only), each sale is enriched
+        with ADEME energy data: a HOUSE gets its matched `dpe` (etiquette +
+        `dpe_match` confidence by proximity & surface); a FLAT gets `dpe_immeuble`
+        (the building's DPE list — NO 1:1 match, as DVF and DPE share no dwelling key).
 
         Args:
-            adresse: free-form address (e.g. "44 la canebière marseille").
-            radius_m: search radius in metres (default 500).
-            type_local: OPTIONAL filter "Appartement" | "Maison" (default: everything).
-            surface_min / surface_max: OPTIONAL surface bâtie band m².
-            years: lookback in years with data (default 3, up to ~2014).
-            limit: max rows, nearest first (default 50).
-            with_dpe: attach ADEME DPE energy labels per sale (default False).
+            op: prix_m2 (default) | comparables | comparables_adresse.
+            code_commune: op="prix_m2"/"comparables" — INSEE code, 5 digits
+                (e.g. "13201" = Marseille 1er).
+            adresse: op="comparables_adresse" — free-form address (e.g. "44 la
+                canebière marseille").
+            type_local: "Appartement" | "Maison". Default: both for "prix_m2",
+                everything (all property types) for the two "comparables" ops.
+            surface_min / surface_max: OPTIONAL surface bâtie band m² (comparables ops).
+            years: lookback in years WITH data (DVF lags ~6 months; up to ~2014).
+                Defaults differ per op: 3 for "prix_m2" and "comparables_adresse",
+                2 for "comparables".
+            limit: comparables ops — max rows (default 50).
+            radius_m: op="comparables_adresse" — search radius in metres (default 500).
+            with_dpe: op="comparables_adresse" — attach ADEME DPE energy labels per
+                sale (default False).
         """
-        res = dvf.comparables_by_address(
-            adresse=adresse, radius_m=radius_m, type_local=type_local,
-            surface_min=surface_min, surface_max=surface_max, years=years, limit=limit,
-        )
-        if with_dpe and res.get("mutations"):
-            from ..dpe_match import attach_dpe_to_sales
-            zone = dpe.by_address(adresse, radius_m=radius_m, limit=1000)
-            attach_dpe_to_sales(res["mutations"], zone.get("dpe", []))
-        return res
+        if op not in _DVF_OPS:
+            raise _bad(_ops_error(_DVF_OPS))
+        annees = _DVF_YEARS_DEFAULT[op] if years is None else years
+
+        if op == "prix_m2":
+            return dvf.stats(code_commune=_need(code_commune, "code_commune", op),
+                             type_local=type_local, years=annees)
+
+        if op == "comparables":
+            return dvf.comparables(
+                code_commune=_need(code_commune, "code_commune", op),
+                type_local=type_local, surface_min=surface_min,
+                surface_max=surface_max, years=annees, limit=limit,
+            )
+
+        if op == "comparables_adresse":
+            adr = _need(adresse, "adresse", op)
+            res = dvf.comparables_by_address(
+                adresse=adr, radius_m=radius_m, type_local=type_local,
+                surface_min=surface_min, surface_max=surface_max,
+                years=annees, limit=limit,
+            )
+            if with_dpe and res.get("mutations"):
+                from ..dpe_match import attach_dpe_to_sales
+                zone = dpe.by_address(adr, radius_m=radius_m, limit=1000)
+                attach_dpe_to_sales(res["mutations"], zone.get("dpe", []))
+            return res
+
+        raise _bad(_ops_error(_DVF_OPS))
+
+    # --- performance énergétique (DPE, ADEME) --------------------------------
 
     @mcp.tool()
-    def foncier_dpe_adresse(
-        adresse: str,
+    def foncier_dpe(
+        op: str = "adresse",
+        adresse: Optional[str] = None,
+        code_commune: Optional[str] = None,
         radius_m: int = 200,
         type_batiment: Optional[str] = None,
         etiquette: Optional[str] = None,
@@ -449,37 +548,43 @@ def register(mcp: FastMCP) -> None:
         surface_max: Optional[float] = None,
         limit: int = 50,
     ) -> dict:
-        """Energy performance diagnostics (DPE, ADEME open data) around an address.
+        """Energy performance diagnostics (DPE, ADEME open data) — raw records around
+        an address, or the label distribution of a commune. ~15M dwellings, since
+        July 2021.
 
-        Geocodes the address (BAN), returns raw DPE records within `radius_m` metres,
-        nearest first. Each: etiquette_dpe (A–G), etiquette_ges, conso_ep_kwh_m2_an,
-        surface_habitable, annee_construction, type_batiment, adresse, date_dpe,
-        distance_m, lat/lon. ~15M dwellings, since July 2021.
-
-        Args:
-            adresse: free-form address.
-            radius_m: search radius in metres (default 200).
-            type_batiment: OPTIONAL "maison" | "appartement" | "immeuble".
-            etiquette: OPTIONAL DPE label filter (A..G).
-            surface_min / surface_max: OPTIONAL surface habitable band m².
-            limit: max records, nearest first (default 50).
-        """
-        return dpe.by_address(
-            adresse=adresse, radius_m=radius_m, type_batiment=type_batiment,
-            etiquette=etiquette, surface_min=surface_min, surface_max=surface_max, limit=limit,
-        )
-
-    @mcp.tool()
-    def foncier_dpe_stats(code_commune: str, type_batiment: Optional[str] = None) -> dict:
-        """DPE label distribution (A–G) for a commune, from ADEME open data.
-
-        Aggregated view of energy performance across all dwellings of the commune.
+        `op`:
+        - **"adresse"** (default): geocodes the address (BAN), returns raw DPE records
+          within `radius_m` metres, nearest first. Each: etiquette_dpe (A–G),
+          etiquette_ges, conso_ep_kwh_m2_an, surface_habitable, annee_construction,
+          type_batiment, adresse, date_dpe, distance_m, lat/lon. Needs `adresse`.
+        - **"stats"**: DPE label distribution (A–G) for a commune — aggregated view of
+          energy performance across all its dwellings. Needs `code_commune`.
 
         Args:
-            code_commune: INSEE code, 5 digits.
-            type_batiment: OPTIONAL "maison" | "appartement" | "immeuble".
+            op: adresse (default) | stats.
+            adresse: op="adresse" — free-form address.
+            code_commune: op="stats" — INSEE code, 5 digits.
+            radius_m: op="adresse" — search radius in metres (default 200).
+            type_batiment: OPTIONAL "maison" | "appartement" | "immeuble" (both ops).
+            etiquette: op="adresse" — OPTIONAL DPE label filter (A..G).
+            surface_min / surface_max: op="adresse" — OPTIONAL surface habitable band m².
+            limit: op="adresse" — max records, nearest first (default 50).
         """
-        return dpe.stats(code_commune=code_commune, type_batiment=type_batiment)
+        if op not in _DPE_OPS:
+            raise _bad(_ops_error(_DPE_OPS))
+
+        if op == "adresse":
+            return dpe.by_address(
+                adresse=_need(adresse, "adresse", op), radius_m=radius_m,
+                type_batiment=type_batiment, etiquette=etiquette,
+                surface_min=surface_min, surface_max=surface_max, limit=limit,
+            )
+
+        if op == "stats":
+            return dpe.stats(code_commune=_need(code_commune, "code_commune", op),
+                             type_batiment=type_batiment)
+
+        raise _bad(_ops_error(_DPE_OPS))
 
     # --- MCP Apps : variantes à interface rendue (SEP-1865) ------------------
     # Quelques tools "flagship" *_app qui renvoient une UI (carte + table) rendue

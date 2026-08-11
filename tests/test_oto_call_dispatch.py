@@ -153,10 +153,10 @@ def test_invalid_arguments_return_schema(oto_call_fn):
 
 def test_target_error_returned_as_data(oto_call_fn, monkeypatch):
     monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
-    target = _FakeTool("foncier_dpe_adresse", exc=RuntimeError("upstream 500"))
+    target = _FakeTool("foncier_dpe", exc=RuntimeError("upstream 500"))
 
-    out = _call(oto_call_fn, [target], name="foncier_dpe_adresse", arguments={})
-    assert out == {"tool": "foncier_dpe_adresse", "ok": False, "error": "upstream 500"}
+    out = _call(oto_call_fn, [target], name="foncier_dpe", arguments={})
+    assert out == {"tool": "foncier_dpe", "ok": False, "error": "upstream 500"}
 
 
 def test_unknown_tool_raises(oto_call_fn, monkeypatch):
@@ -292,7 +292,7 @@ def test_dispatch_strips_nonapplicable_axis(oto_call_fn, monkeypatch):
     monkeypatch.setattr(redaction, "_resolve_field_filter", lambda _s: FieldFilter())
     # folk n'est ni multi-credential ni porteur d'identités → `_account` ne s'y applique
     # pas : rien ne le consomme, le balayage doit l'écarter avant le dispatch.
-    target = _ArgsCapturingTool("folk_search")
-    _call(oto_call_fn, [target], name="folk_search",
+    target = _ArgsCapturingTool("folk_record")
+    _call(oto_call_fn, [target], name="folk_record",
           arguments={"query": "acme", "_account": "nope"})
     assert target.args_seen == {"query": "acme"}     # `_account` écarté, cible propre

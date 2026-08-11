@@ -23,7 +23,7 @@ un pipeline lisible. Vaut pour les connecteurs **Greenhouse**, **Lever**, **Ashb
 
 ## Règles d'or
 
-1. **Dédup avant création.** Cherche par email d'abord (`greenhouse_candidates` avec
+1. **Dédup avant création.** Cherche par email d'abord (`greenhouse_candidate(op="list")` avec
    `email=`, `lever_opportunities` `email=`, `ashby_search_candidates`,
    `teamtailor_candidates` `email=`, `recruitee_candidates` `query=`). Un humain =
    une fiche. Si doublon → enrichis l'existant, ne crée pas.

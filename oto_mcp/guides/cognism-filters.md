@@ -5,8 +5,8 @@ description: référence complète des ~150 champs de filtre Cognism — à lire
 
 # DSL de filtres Cognism
 
-À lire avant de construire un `filters` un peu élaboré pour `cognism_search_contacts`
-ou `cognism_search_accounts` — la DSL est large (~150 champs, plusieurs niveaux
+À lire avant de construire un `filters` un peu élaboré pour `cognism_search(op="contact")`
+ou `cognism_search(op="account")` — la DSL est large (~150 champs, plusieurs niveaux
 d'imbrication) et les docstrings des tools restent volontairement courtes. `filters`
 est un dict qui reproduit **exactement** le JSON attendu par l'API Cognism — pas de
 transformation côté oto, à part la validation des champs à valeurs fermées listés
@@ -14,10 +14,10 @@ plus bas.
 
 ## Piège n°1 : recherche vs reveal
 
-`cognism_search_contacts`/`cognism_search_accounts` renvoient des **flags booléens**
+`cognism_search(op="contact")`/`cognism_search(op="account")` renvoient des **flags booléens**
 (`hasEmail`, `hasDirectPhoneNumbers`, …), **jamais** l'email ou le téléphone réel.
-Pour obtenir la valeur réelle, il faut ensuite appeler `cognism_redeem_contacts`/
-`cognism_redeem_accounts` avec l'`id` (ou le `redeemId` fourni dans le résultat de
+Pour obtenir la valeur réelle, il faut ensuite appeler `cognism_redeem(op="contact")`/
+`cognism_redeem(op="account")` avec l'`id` (ou le `redeemId` fourni dans le résultat de
 recherche) — **cet appel consomme des crédits**, contrairement à la recherche.
 `cognism_enrich_contact`/`cognism_enrich_account` sont le chemin inverse : retrouver
 UN contact/société depuis des critères d'identité (email, LinkedIn, nom+société…)
@@ -34,9 +34,9 @@ page, dans l'ordre.
 
 Les mêmes champs société (`types`, `fundingEvent.*`, `hiringEvent.*`,
 `accountSearchOptions.*`, `technologies`, `industries`, `headcount`…) vivent :
-- sous **`account.*`** dans `cognism_search_contacts` (le contact est la racine, la
+- sous **`account.*`** dans `cognism_search(op="contact")` (le contact est la racine, la
   société qui l'emploie est imbriquée) ;
-- **à la racine** dans `cognism_search_accounts` (la société EST la racine, là).
+- **à la racine** dans `cognism_search(op="account")` (la société EST la racine, là).
 
 Exemple : `{"account": {"types": ["Public Company"]}}` pour chercher des contacts
 dans des sociétés cotées, mais `{"types": ["Public Company"]}` (sans le préfixe
@@ -51,7 +51,7 @@ matche vraiment rien.
 
 ---
 
-## Champs contact (racine de `cognism_search_contacts`)
+## Champs contact (racine de `cognism_search(op="contact")`)
 
 | Champ | Type | Notes |
 |---|---|---|
@@ -140,7 +140,7 @@ champs…}`.
 | `ai_job_title` | Boolean | expansion IA du titre — combinable avec `match_exact_job_title:true` pour un match large mais ciblé |
 | `sort_fields` ⚠️validé | Array[String] | **LastConfirmedContactDESC/ASC, EmailQualityDESC/ASC, ProfileScoreDESC/ASC** |
 
-## Recherche société (`cognism_search_accounts`, champs à la racine)
+## Recherche société (`cognism_search(op="account")`, champs à la racine)
 
 Mêmes champs que la section "Champs société" ci-dessus, **sans le préfixe
 `account.`** (cf. Piège n°3) — `names`, `domains`, `types`, `industries`,
@@ -157,7 +157,7 @@ API mais déjà figés ci-dessus, l'appel live n'est utile que pour vérifier un
 
 ## Champ hors DSL de filtre : redeem / enrich
 
-`cognism_redeem_contacts`/`cognism_redeem_accounts` prennent `ids` OU `redeem_ids`
+`cognism_redeem(op="contact")`/`cognism_redeem(op="account")` prennent `ids` OU `redeem_ids`
 (exclusif) + `merge_phones_and_locations`. `cognism_enrich_contact`/
 `cognism_enrich_account` prennent des critères d'identité directement (pas de dict
 `filters`) :

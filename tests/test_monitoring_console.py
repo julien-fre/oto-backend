@@ -30,13 +30,13 @@ def test_calls_passes_investigation_filters(monkeypatch):
                         lambda **kw: seen.update(kw) or [])
     monitoring._monitoring(CTX, monitoring.MonitoringInput(
         op="calls", run_id="r1", session_id="s1", min_duration_ms=5000,
-        error_contains="timeout", errors=True, tool="folk_search"))
+        error_contains="timeout", errors=True, tool="folk_record"))
     assert seen["run_id"] == "r1"
     assert seen["session_id"] == "s1"
     assert seen["min_duration_ms"] == 5000
     assert seen["error_contains"] == "timeout"
     assert seen["errors_only"] is True
-    assert seen["tool_name"] == "folk_search"
+    assert seen["tool_name"] == "folk_record"
     assert seen["limit"] == 200          # défaut console
 
 

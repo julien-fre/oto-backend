@@ -69,7 +69,7 @@ def test_query_string_filters_are_coerced(monkeypatch):
 
     asyncio.run(handler(FakeReq(query={
         "days": "7", "limit": "50", "errors": "1",
-        "min_duration_ms": "5000", "error_contains": "timeout", "tool": "folk_search",
+        "min_duration_ms": "5000", "error_contains": "timeout", "tool": "folk_record",
     })))
 
     # Les valeurs arrivent typées, pas en str — c'est ce que le SQL attend.

@@ -8,16 +8,55 @@ credentials; its payroll is visible only to it.
 
 Read-only surface (dossiers, employees, payslips, variables awaiting entry).
 The write operations (adding a bonus/hours, confirming staged entries) stay out
-of the agent for now — entering payroll is a sensitive act. Bank details
-(IBAN/BIC/RIB) are masked before the response reaches the agent : the redaction
-is applied at the tool boundary by `FieldRedactionMiddleware` (server default in
-`field_filter_defaults.SERVER_DEFAULTS`, overridable by the org_admin), not here.
+of the agent for now — entering payroll is a sensitive act. ⚠️ `SilaeClient` DOES
+carry them (`ajouter_element_variable`, `ajouter_prime`, `ajouter_heures`,
+`confirmer_saisies`) : aucun tool d'ici ne les atteint, et
+`tests/test_silae_op_dispatch.py` le VÉRIFIE (toutes les ops jouées, les quatre
+méthodes d'écriture `assert_not_called`, plus un contrôle statique du module).
+Exposer une écriture = un acte explicite, pas un effet de bord de refactor.
+
+**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur silae le
+2026-08-11)** : un tool par OBJET métier, le verbe en paramètre `op` —
+`silae_dossier` (list/numbers/info/current_period), `silae_employee`
+(list/get/jobs, tous scopés par `numero_dossier`) et `silae_payslip`
+(list/header/lines/totals, tous scopés par `numero_dossier` + `periode`).
+`silae_variables_to_enter` reste SEUL et **inchangé** : une seule capacité (un
+`op` à valeur unique n'est pas un verbe), et c'est la ressource Silae
+(`v1/Variables/*`) où vivent TOUTES les écritures non exposées — la garder à
+part maintient la frontière lecture/écriture visible.
+
+⚠️ **La rédaction des coordonnées bancaires n'est PAS active par défaut.** Le
+masquage IBAN/BIC/RIB est disponible à la frontière des tools
+(`FieldRedactionMiddleware`, politique résolue par NAMESPACE `silae` — donc
+insensible au nom des tools : ce renommage ne la casse pas), mais
+`field_filter_defaults.SERVER_DEFAULTS` est **vide depuis le 2026-06-22** : rien
+n'est redacté tant que l'org n'a pas posé de politique (template `bank_details`,
+applicable en 1 clic ; `connector_field_schema` déclare le plancher PII silae —
+iban/bic/rib/salaire/numeroSecu/dateNaissance/nom/prenom). Les bulletins
+arrivent donc **en clair** à l'agent par défaut. *(Ce docstring affirmait
+l'inverse jusqu'au 2026-08-11 — « the redaction is applied … server default in
+`field_filter_defaults.SERVER_DEFAULTS` » — c'était faux : SERVER_DEFAULTS = {}.)*
+
+⚠️ **L'API Silae ne lève pas : elle renvoie l'erreur dans le corps.**
+`SilaeClient.call` rend `{"error": "<status>", "details": …, "status_code": …}`
+sur échec HTTP, `{"error": "<exception>"}` sur erreur réseau, et
+`{"error": "Max retries exceeded"}` à bout de tentatives — un tool d'ici peut
+donc renvoyer un dict d'erreur en HTTP 200. Vérifier la clé `error` avant de
+conclure « dossier vide ». (401 = invalidation du token puis retry ; 429 =
+backoff exponentiel — gérés dans le client, pas ici.)
+
+⚠️ **La subscription key BORNE le périmètre** : envoyée en
+`Ocp-Apim-Subscription-Key`, elle scope les dossiers ET les fonctions
+atteignables. Un dossier absent de `silae_dossier(op="list")` n'est pas
+forcément inexistant — il peut être hors périmètre de la clé.
 """
 from __future__ import annotations
 
 from typing import Optional
 
 from fastmcp import FastMCP
+from mcp.shared.exceptions import McpError
+from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
 
@@ -27,135 +66,166 @@ def register(mcp: FastMCP) -> None:
 
     def _client() -> SilaeClient:
         creds = access.resolve_credential_fields("silae")
-        # Rédaction (masque IBAN/BIC/RIB par défaut) appliquée à la frontière des
-        # tools par `FieldRedactionMiddleware`, plus au niveau client.
+        # Rédaction (masque IBAN/BIC/RIB) appliquée à la frontière des tools par
+        # `FieldRedactionMiddleware` — et SEULEMENT si l'org a posé une politique
+        # (cf. l'avertissement du docstring de module) ; plus au niveau client.
         return SilaeClient(
             client_id=creds.get("client_id"),
             client_secret=creds.get("client_secret"),
             subscription_key=creds.get("subscription_key"),
         )
 
+    def _bad(msg: str) -> McpError:
+        return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+    def _need(value, name: str, op: str):
+        """Argument obligatoire pour CET op — erreur actionnable, jamais de fallback.
+        Une chaîne vide compte comme absente : Silae traite `""` comme « tous les
+        salariés », donc la laisser passer sur un op mono-salarié rendrait un
+        résultat plausible et faux."""
+        if value is None or value == "":
+            raise _bad(f"op='{op}' requiert {name}")
+        return value
+
+    def _refuse_ignored(op: str, hint: str, **provided) -> None:
+        """Un argument fourni que CET op n'utilise pas est une erreur d'intention,
+        pas un détail. Le silence est le vrai risque de la consolidation par `op` :
+        `silae_dossier(numero_dossier="001")` sans op rendrait la liste COMPLÈTE des
+        dossiers — un résultat crédible, à côté de la demande. On nomme donc l'op qui
+        honore l'argument."""
+        for name, value in provided.items():
+            if value is not None and value != "":
+                raise _bad(f"op='{op}' n'utilise pas {name} — {hint}")
+
     # --- Dossiers (payroll files) ---
 
     @mcp.tool()
-    def silae_dossiers() -> object:
-        """List the payroll dossiers (folders) reachable with the API key."""
-        return _client().list_dossiers()
+    def silae_dossier(
+        op: str = "list",
+        numero_dossier: Optional[str] = None,
+    ) -> object:
+        """A payroll dossier (folder) — what the key reaches, or one dossier's payroll.
 
-    @mcp.tool()
-    def silae_dossier_numbers() -> object:
-        """List just the dossier numbers reachable with the API key."""
-        return _client().list_numeros_dossiers()
-
-    @mcp.tool()
-    def silae_dossier_info(numero_dossier: str) -> object:
-        """Detailed payroll information for a dossier.
-
-        Args:
-            numero_dossier: Dossier (folder) number.
-        """
-        return _client().dossier_infos(numero_dossier)
-
-    @mcp.tool()
-    def silae_dossier_current_period(numero_dossier: str) -> object:
-        """Current open payroll period for a dossier.
+        `op`:
+        - **"list"** (default): the payroll dossiers reachable with the API key.
+        - **"numbers"**: just the dossier numbers reachable with the API key —
+          lighter than "list" when all you need is a `numero_dossier` to feed the
+          other tools.
+        - **"info"**: detailed payroll information for a dossier (`numero_dossier`).
+        - **"current_period"**: the current OPEN payroll period of a dossier
+          (`numero_dossier`) — that's the value to pass as `periode` to
+          `silae_payslip`.
 
         Args:
-            numero_dossier: Dossier (folder) number.
+            op: list (default) | numbers | info | current_period.
+            numero_dossier: op="info"/"current_period" — dossier (folder) number.
+                Refused on "list"/"numbers", which enumerate everything the
+                subscription key reaches and would silently ignore the filter.
         """
-        return _client().dossier_periode_en_cours(numero_dossier)
+        client = _client()
+
+        if op == "list":
+            _refuse_ignored(op, "utilise op='info' pour un dossier précis",
+                            numero_dossier=numero_dossier)
+            return client.list_dossiers()
+        if op == "numbers":
+            _refuse_ignored(op, "utilise op='info' pour un dossier précis",
+                            numero_dossier=numero_dossier)
+            return client.list_numeros_dossiers()
+        if op == "info":
+            return client.dossier_infos(_need(numero_dossier, "numero_dossier", op))
+        if op == "current_period":
+            return client.dossier_periode_en_cours(
+                _need(numero_dossier, "numero_dossier", op))
+        raise _bad("op doit être 'list', 'numbers', 'info' ou 'current_period'")
 
     # --- Salariés (employees) ---
 
     @mcp.tool()
-    def silae_employees(numero_dossier: str) -> object:
-        """List the employees of a dossier.
-
-        Args:
-            numero_dossier: Dossier (folder) number.
-        """
-        return _client().list_salaries(numero_dossier)
-
-    @mcp.tool()
-    def silae_employee(numero_dossier: str, matricule_salarie: str) -> object:
-        """Fetch one employee by registration number (matricule).
-
-        Args:
-            numero_dossier: Dossier (folder) number.
-            matricule_salarie: Employee registration number.
-        """
-        return _client().salarie_matricule(numero_dossier, matricule_salarie)
-
-    @mcp.tool()
-    def silae_employee_jobs(
+    def silae_employee(
         numero_dossier: str,
-        matricule_salarie: str = "",
-        type_emplois: int = 0,
+        op: str = "list",
+        matricule_salarie: Optional[str] = None,
+        type_emplois: Optional[int] = None,
     ) -> object:
-        """List an employee's jobs/positions (emplois).
+        """An employee of a dossier — the roster, one employee, or their jobs.
+
+        `op`:
+        - **"list"** (default): list the employees of a dossier.
+        - **"get"**: fetch one employee by registration number (matricule).
+        - **"jobs"**: list an employee's jobs/positions (emplois). Omit
+          `matricule_salarie` to get them for every employee of the dossier.
 
         Args:
-            numero_dossier: Dossier (folder) number.
-            matricule_salarie: Employee matricule (empty = all employees).
-            type_emplois: 0 = current jobs only, 1 = current + archived.
+            numero_dossier: Dossier (folder) number — required by every op.
+            op: list (default) | get | jobs.
+            matricule_salarie: Employee registration number. Required by "get";
+                optional on "jobs" (omitted = all employees); refused on "list",
+                which returns the whole roster and would ignore it.
+            type_emplois: op="jobs" — 0 = current jobs only (default),
+                1 = current + archived.
         """
-        return _client().list_salarie_emplois(
-            numero_dossier, matricule_salarie, type_emplois
-        )
+        client = _client()
+
+        if op == "list":
+            _refuse_ignored(op, "utilise op='get' pour un salarié précis",
+                            matricule_salarie=matricule_salarie,
+                            type_emplois=type_emplois)
+            return client.list_salaries(numero_dossier)
+        if op == "get":
+            _refuse_ignored(op, "type_emplois ne vaut que pour op='jobs'",
+                            type_emplois=type_emplois)
+            return client.salarie_matricule(
+                numero_dossier, _need(matricule_salarie, "matricule_salarie", op))
+        if op == "jobs":
+            return client.list_salarie_emplois(
+                numero_dossier, matricule_salarie or "", type_emplois or 0)
+        raise _bad("op doit être 'list', 'get' ou 'jobs'")
 
     # --- Bulletins (payslips) ---
 
     @mcp.tool()
-    def silae_payslips(
-        numero_dossier: str, periode: str, matricule_salarie: str = ""
+    def silae_payslip(
+        numero_dossier: str,
+        periode: str,
+        op: str = "list",
+        matricule_salarie: Optional[str] = None,
     ) -> object:
-        """Retrieve payslips for a period (one employee or the whole dossier).
+        """A payslip (bulletin) of a period — the payslips, or one payslip's detail.
+
+        `op`:
+        - **"list"** (default): retrieve payslips for a period — the whole dossier,
+          or one employee when `matricule_salarie` is given.
+        - **"header"**: payslip header (entête) for one employee/period.
+        - **"lines"**: payslip lines (lignes) for one employee/period.
+        - **"totals"**: payslip cumulative totals (cumuls) for one employee/period.
 
         Args:
-            numero_dossier: Dossier (folder) number.
-            periode: Payroll period (e.g. "2026-05").
-            matricule_salarie: Employee matricule, or empty for all employees.
+            numero_dossier: Dossier (folder) number — required by every op.
+            periode: Payroll period (e.g. "2026-05") — required by every op.
+                `silae_dossier(op="current_period")` gives the open one.
+            op: list (default) | header | lines | totals.
+            matricule_salarie: Employee matricule. Optional on "list" (omitted =
+                all employees of the dossier); REQUIRED by "header", "lines" and
+                "totals", which each describe ONE payslip.
         """
-        return _client().bulletins(numero_dossier, periode, matricule_salarie)
+        client = _client()
 
-    @mcp.tool()
-    def silae_payslip_header(
-        numero_dossier: str, matricule_salarie: str, periode: str
-    ) -> object:
-        """Payslip header (entête) for one employee/period.
-
-        Args:
-            numero_dossier: Dossier (folder) number.
-            matricule_salarie: Employee matricule.
-            periode: Payroll period (e.g. "2026-05").
-        """
-        return _client().bulletin_entete(numero_dossier, matricule_salarie, periode)
-
-    @mcp.tool()
-    def silae_payslip_lines(
-        numero_dossier: str, matricule_salarie: str, periode: str
-    ) -> object:
-        """Payslip lines (lignes) for one employee/period.
-
-        Args:
-            numero_dossier: Dossier (folder) number.
-            matricule_salarie: Employee matricule.
-            periode: Payroll period (e.g. "2026-05").
-        """
-        return _client().bulletin_lignes(numero_dossier, matricule_salarie, periode)
-
-    @mcp.tool()
-    def silae_payslip_totals(
-        numero_dossier: str, matricule_salarie: str, periode: str
-    ) -> object:
-        """Payslip cumulative totals (cumuls) for one employee/period.
-
-        Args:
-            numero_dossier: Dossier (folder) number.
-            matricule_salarie: Employee matricule.
-            periode: Payroll period (e.g. "2026-05").
-        """
-        return _client().bulletin_cumuls(numero_dossier, matricule_salarie, periode)
+        if op == "list":
+            return client.bulletins(numero_dossier, periode, matricule_salarie or "")
+        if op == "header":
+            return client.bulletin_entete(
+                numero_dossier, _need(matricule_salarie, "matricule_salarie", op),
+                periode)
+        if op == "lines":
+            return client.bulletin_lignes(
+                numero_dossier, _need(matricule_salarie, "matricule_salarie", op),
+                periode)
+        if op == "totals":
+            return client.bulletin_cumuls(
+                numero_dossier, _need(matricule_salarie, "matricule_salarie", op),
+                periode)
+        raise _bad("op doit être 'list', 'header', 'lines' ou 'totals'")
 
     # --- Variables de paie (EVP) ---
 

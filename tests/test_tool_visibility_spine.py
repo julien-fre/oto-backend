@@ -31,7 +31,7 @@ def test_admin_and_connector_tools_are_NOT_protected():
         assert not is_protected(n), n
     # outils de connecteur = jamais spine
     for n in ("apollo_search_people", "serper_search", "zoho_record",
-              "unipile_search", "folk_list_notes"):
+              "unipile_search", "folk_record"):
         assert not is_protected(n), n
     # autres oto_* NON spine (gérés par nom, pas protégés)
     for n in ("oto_org", "oto_resource", "oto_connector"):

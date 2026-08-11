@@ -1,5 +1,8 @@
-"""folk_create/update/delete/add_to_group — one tool per verb, solo OR bulk
-depending on which param is passed (`item`/`id` vs `items`/`ids`). Verrouille :
+"""folk_record op=create/update/delete/add_to_group — un tool par OBJET, le verbe
+en `op=` (ADR 0047 §Amendement), solo OU bulk selon le param passé (`item`/`id` vs
+`items`/`ids`). Seuls les NOMS de surface ont changé (ex-`folk_record` →
+`folk_record(op="create")`, ex-`folk_*_webhook` → `folk_webhook(op=…)`) : le
+comportement verrouillé ici est le même qu'avant. Verrouille :
 la validation "exactement un des deux" (ni les deux, ni aucun), le for-loop
 server-side en mode bulk (pas de batch natif Folk), le reçu allégé (compte +
 erreurs par item, IDs pour create), l'abandon immédiat du lot sur erreur
@@ -42,21 +45,21 @@ def _instance(client_cls):
     return client_cls.return_value
 
 
-# --- folk_create -------------------------------------------------------------
+# --- folk_record op="create" -------------------------------------------------------------
 
 def test_create_solo_returns_record_directly(client_cls):
     inst = _instance(client_cls)
     inst.create_person.return_value = {"id": "per_1"}
-    r = _register_and_call("folk_create", entity="person", item={"first_name": "Ada"})
+    r = _register_and_call("folk_record", op="create", entity="person", item={"first_name": "Ada"})
     assert r == {"id": "per_1"}
     inst.create_person.assert_called_once_with(first_name="Ada")
 
 
 def test_create_requires_exactly_one_of_item_or_items(client_cls):
     with pytest.raises(McpError):
-        _register_and_call("folk_create", entity="person")  # neither
+        _register_and_call("folk_record", op="create", entity="person")  # neither
     with pytest.raises(McpError):
-        _register_and_call("folk_create", entity="person",
+        _register_and_call("folk_record", op="create", entity="person",
                            item={"first_name": "A"}, items=[{"first_name": "B"}])  # both
 
 
@@ -68,7 +71,7 @@ def test_create_bulk_success_returns_ids(client_cls):
     inst = _instance(client_cls)
     inst.create_person.side_effect = lambda **fields: {"id": f"per_{fields['first_name']}"}
     r = _register_and_call(
-        "folk_create", entity="person",
+        "folk_record", op="create", entity="person",
         items=[{"first_name": "A"}, {"first_name": "B"}])
     assert r["total"] == 2
     assert r["succeeded"] == 2
@@ -87,7 +90,7 @@ def test_create_bulk_partial_failure_continues_batch(client_cls):
 
     inst.create_person.side_effect = _side_effect
     r = _register_and_call(
-        "folk_create", entity="person",
+        "folk_record", op="create", entity="person",
         items=[{"first_name": "A"}, {"first_name": "B"}, {"first_name": "C"}])
     assert inst.create_person.call_count == 3  # le lot n'est pas interrompu
     assert r["total"] == 3
@@ -103,7 +106,7 @@ def test_create_bulk_auth_error_aborts_whole_batch(client_cls):
     inst.create_person.side_effect = UpstreamHTTPError(401, {"message": "bad key"}, service="folk")
     with pytest.raises(UpstreamHTTPError):
         _register_and_call(
-            "folk_create", entity="person",
+            "folk_record", op="create", entity="person",
             items=[{"first_name": str(i)} for i in range(20)])
     # Abandon anticipé : dès la 1re erreur fatale vue, les futures pas encore
     # démarrées sont annulées. Le lot tourne en parallèle (`_BULK_CONCURRENCY`
@@ -118,7 +121,7 @@ def test_create_bulk_rejects_over_cap(client_cls):
     inst = _instance(client_cls)
     with pytest.raises(McpError):
         _register_and_call(
-            "folk_create", entity="person",
+            "folk_record", op="create", entity="person",
             items=[{"first_name": str(i)} for i in range(51)])
     inst.create_person.assert_not_called()
 
@@ -126,14 +129,14 @@ def test_create_bulk_rejects_over_cap(client_cls):
 def test_create_unknown_entity_rejected_before_any_call(client_cls):
     inst = _instance(client_cls)
     with pytest.raises(McpError):
-        _register_and_call("folk_create", entity="bogus", items=[{}])
+        _register_and_call("folk_record", op="create", entity="bogus", items=[{}])
     inst.create_person.assert_not_called()
 
 
 def test_create_deal_requires_group_id(client_cls):
     inst = _instance(client_cls)
     with pytest.raises(McpError):
-        _register_and_call("folk_create", entity="deal", items=[{"name": "Deal A"}])
+        _register_and_call("folk_record", op="create", entity="deal", items=[{"name": "Deal A"}])
     inst.create_deal.assert_not_called()
 
 
@@ -143,7 +146,7 @@ def test_create_rejects_unknown_field_for_person(client_cls):
     # serait avalée SILENCIEUSEMENT dans le payload plutôt que rejetée ici.
     inst = _instance(client_cls)
     with pytest.raises(McpError, match="firstName"):
-        _register_and_call("folk_create", entity="person", item={"firstName": "Ada"})
+        _register_and_call("folk_record", op="create", entity="person", item={"firstName": "Ada"})
     inst.create_person.assert_not_called()
 
 
@@ -158,7 +161,7 @@ def test_create_item_key_colliding_with_a_param_is_a_clean_refusal(client_cls, c
     ou future, ne peut plus percuter la signature."""
     inst = _instance(client_cls)
     with pytest.raises(McpError, match=colliding):
-        _register_and_call("folk_create", entity="person",
+        _register_and_call("folk_record", op="create", entity="person",
                            item={"first_name": "Ada", colliding: "x"})
     inst.create_person.assert_not_called()
 
@@ -167,7 +170,7 @@ def test_create_bulk_item_key_collision_is_a_per_item_failure(client_cls):
     """Même garantie en lot : l'item fautif échoue seul, le reste passe."""
     inst = _instance(client_cls)
     inst.create_person.return_value = {"id": "p1"}
-    out = _register_and_call("folk_create", entity="person", items=[
+    out = _register_and_call("folk_record", op="create", entity="person", items=[
         {"first_name": "Ada"},
         {"first_name": "Bob", "group_id": "grp_1"},
     ])
@@ -182,7 +185,7 @@ def test_create_rejects_unknown_field_for_deal(client_cls):
     # que pour person/company.
     inst = _instance(client_cls)
     with pytest.raises(McpError, match="bogusField"):
-        _register_and_call("folk_create", entity="deal", group_id="g1",
+        _register_and_call("folk_record", op="create", entity="deal", group_id="g1",
                            item={"name": "Deal A", "bogusField": 1})
     inst.create_deal.assert_not_called()
 
@@ -190,7 +193,7 @@ def test_create_rejects_unknown_field_for_deal(client_cls):
 def test_create_rejects_unknown_field_in_dry_run_too(client_cls):
     inst = _instance(client_cls)
     with pytest.raises(McpError, match="firstName"):
-        _register_and_call("folk_create", entity="person",
+        _register_and_call("folk_record", op="create", entity="person",
                            item={"firstName": "Ada"}, dry_run=True)
     inst.create_person.assert_not_called()
 
@@ -200,7 +203,7 @@ def test_create_rejects_unknown_field_in_bulk_item(client_cls):
     # capturée par `_bulk_run` (comme toute erreur non-fatale) et remonte dans
     # `failed`, sans abandonner le lot.
     inst = _instance(client_cls)
-    r = _register_and_call("folk_create", entity="person", items=[{"firstName": "Ada"}])
+    r = _register_and_call("folk_record", op="create", entity="person", items=[{"firstName": "Ada"}])
     inst.create_person.assert_not_called()
     assert r["succeeded"] == 0
     assert len(r["failed"]) == 1 and "firstName" in r["failed"][0]["error"]
@@ -208,7 +211,7 @@ def test_create_rejects_unknown_field_in_bulk_item(client_cls):
 
 def test_create_solo_dry_run_makes_no_network_call(client_cls):
     inst = _instance(client_cls)
-    r = _register_and_call("folk_create", entity="person", item={"first_name": "Ada"}, dry_run=True)
+    r = _register_and_call("folk_record", op="create", entity="person", item={"first_name": "Ada"}, dry_run=True)
     inst.create_person.assert_not_called()
     assert r["dry_run"] is True
     assert r["would_create"]["first_name"] == "Ada"
@@ -217,7 +220,7 @@ def test_create_solo_dry_run_makes_no_network_call(client_cls):
 def test_create_bulk_dry_run_makes_no_network_call(client_cls):
     inst = _instance(client_cls)
     r = _register_and_call(
-        "folk_create", entity="person",
+        "folk_record", op="create", entity="person",
         items=[{"first_name": "A"}, {"first_name": "B"}], dry_run=True)
     inst.create_person.assert_not_called()
     assert r["dry_run"] is True
@@ -228,29 +231,29 @@ def test_create_bulk_dry_run_makes_no_network_call(client_cls):
     assert r["failed"] == []
 
 
-# --- folk_update ---------------------------------------------------------
+# --- folk_record op="update" ---------------------------------------------------------
 
 def test_update_solo_returns_record_directly(client_cls):
     inst = _instance(client_cls)
     inst.update_person.return_value = {"id": "per_1"}
     r = _register_and_call(
-        "folk_update", entity="person", id="per_1", fields={"jobTitle": "CEO"})
+        "folk_record", op="update", entity="person", id="per_1", fields={"jobTitle": "CEO"})
     assert r == {"id": "per_1"}
 
 
 def test_update_requires_exactly_one_of_id_or_items(client_cls):
     with pytest.raises(McpError):
-        _register_and_call("folk_update", entity="person")  # neither
+        _register_and_call("folk_record", op="update", entity="person")  # neither
     with pytest.raises(McpError):
         _register_and_call(
-            "folk_update", entity="person", id="per_1",
+            "folk_record", op="update", entity="person", id="per_1",
             items=[{"id": "per_2", "fields": {}}])  # both
 
 
 def test_update_solo_now_accepts_note_and_reminder(client_cls):
     inst = _instance(client_cls)
     inst.update_note.return_value = {"id": "nte_1"}
-    r = _register_and_call("folk_update", entity="note", id="nte_1", fields={"content": "x"})
+    r = _register_and_call("folk_record", op="update", entity="note", id="nte_1", fields={"content": "x"})
     assert r == {"id": "nte_1"}
     inst.update_note.assert_called_once_with("nte_1", content="x")
 
@@ -259,7 +262,7 @@ def test_update_bulk_success(client_cls):
     inst = _instance(client_cls)
     inst.update_person.side_effect = [{"id": "per_1"}, {"id": "per_2"}]
     r = _register_and_call(
-        "folk_update", entity="person",
+        "folk_record", op="update", entity="person",
         items=[{"id": "per_1", "fields": {"jobTitle": "CTO"}},
                {"id": "per_2", "fields": {"jobTitle": "CEO"}}])
     assert r == {"total": 2, "succeeded": 2, "failed": []}
@@ -276,7 +279,7 @@ def test_update_bulk_partial_failure_reports_id(client_cls):
 
     inst.update_person.side_effect = _side_effect
     r = _register_and_call(
-        "folk_update", entity="person",
+        "folk_record", op="update", entity="person",
         items=[{"id": "per_1", "fields": {"jobTitle": "CTO"}},
                {"id": "per_404", "fields": {"jobTitle": "CEO"}}])
     assert r["succeeded"] == 1
@@ -288,7 +291,7 @@ def test_update_bulk_missing_id_is_per_item_failure_not_abort(client_cls):
     inst = _instance(client_cls)
     inst.update_person.side_effect = [{"id": "per_2"}]
     r = _register_and_call(
-        "folk_update", entity="person",
+        "folk_record", op="update", entity="person",
         items=[{"fields": {"jobTitle": "CTO"}},  # pas d'id
                {"id": "per_2", "fields": {"jobTitle": "CEO"}}])
     assert r["succeeded"] == 1
@@ -298,14 +301,14 @@ def test_update_bulk_missing_id_is_per_item_failure_not_abort(client_cls):
 
 def test_update_interaction_rejected():
     with pytest.raises(McpError):
-        _register_and_call("folk_update", entity="interaction", id="x", fields={})
+        _register_and_call("folk_record", op="update", entity="interaction", id="x", fields={})
 
 
 def test_update_solo_dry_run_shows_diff(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"jobTitle": "CTO"}
     r = _register_and_call(
-        "folk_update", entity="person", id="per_1",
+        "folk_record", op="update", entity="person", id="per_1",
         fields={"jobTitle": "CEO"}, dry_run=True)
     inst.update_person.assert_not_called()
     assert r == {"dry_run": True, "id": "per_1",
@@ -316,7 +319,7 @@ def test_update_bulk_dry_run_shows_diff_and_writes_nothing(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"id": "per_1", "jobTitle": "CTO"}
     r = _register_and_call(
-        "folk_update", entity="person",
+        "folk_record", op="update", entity="person",
         items=[{"id": "per_1", "fields": {"jobTitle": "CEO"}}], dry_run=True)
     inst.update_person.assert_not_called()
     inst.get_person.assert_called_once_with("per_1")
@@ -329,7 +332,7 @@ def test_update_bulk_dry_run_shows_diff_and_writes_nothing(client_cls):
 def test_update_bulk_dry_run_note_entity_degrades_gracefully(client_cls):
     inst = _instance(client_cls)
     r = _register_and_call(
-        "folk_update", entity="note",
+        "folk_record", op="update", entity="note",
         items=[{"id": "nte_1", "fields": {"content": "new text"}}], dry_run=True)
     inst.update_note.assert_not_called()
     assert r["would_update"] == [
@@ -348,7 +351,7 @@ def test_update_bulk_dry_run_partial_failure_still_continues(client_cls):
 
     inst.get_person.side_effect = _side_effect
     r = _register_and_call(
-        "folk_update", entity="person",
+        "folk_record", op="update", entity="person",
         items=[{"id": "per_404", "fields": {"jobTitle": "X"}},
                {"id": "per_2", "fields": {"jobTitle": "CEO"}}], dry_run=True)
     assert inst.get_person.call_count == 2  # le lot continue après l'échec
@@ -357,19 +360,19 @@ def test_update_bulk_dry_run_partial_failure_still_continues(client_cls):
     inst.update_person.assert_not_called()
 
 
-# --- folk_delete -----------------------------------------------------------
+# --- folk_record op="delete" -----------------------------------------------------------
 
 def test_delete_requires_exactly_one_of_id_or_ids(client_cls):
     with pytest.raises(McpError):
-        _register_and_call("folk_delete", entity="person")  # neither
+        _register_and_call("folk_record", op="delete", entity="person")  # neither
     with pytest.raises(McpError):
-        _register_and_call("folk_delete", entity="person", id="per_1", ids=["per_2"])  # both
+        _register_and_call("folk_record", op="delete", entity="person", id="per_1", ids=["per_2"])  # both
 
 
 def test_delete_solo_now_accepts_note_and_reminder(client_cls):
     inst = _instance(client_cls)
     inst.delete_note.return_value = {}
-    r = _register_and_call("folk_delete", entity="note", id="nte_1")
+    r = _register_and_call("folk_record", op="delete", entity="note", id="nte_1")
     assert r == {}
     inst.delete_note.assert_called_once_with("nte_1")
 
@@ -377,20 +380,20 @@ def test_delete_solo_now_accepts_note_and_reminder(client_cls):
 def test_delete_bulk_success(client_cls):
     inst = _instance(client_cls)
     inst.delete_person.side_effect = [{}, {}]
-    r = _register_and_call("folk_delete", entity="person", ids=["per_1", "per_2"])
+    r = _register_and_call("folk_record", op="delete", entity="person", ids=["per_1", "per_2"])
     assert r == {"total": 2, "succeeded": 2, "failed": []}
     assert inst.delete_person.call_args_list == [(("per_1",),), (("per_2",),)]
 
 
 def test_delete_interaction_rejected():
     with pytest.raises(McpError):
-        _register_and_call("folk_delete", entity="interaction", id="x")
+        _register_and_call("folk_record", op="delete", entity="interaction", id="x")
 
 
 def test_delete_solo_dry_run(client_cls):
     inst = _instance(client_cls)
     inst.get_company.return_value = {"id": "com_1", "name": "Acme"}
-    r = _register_and_call("folk_delete", entity="company", id="com_1", dry_run=True)
+    r = _register_and_call("folk_record", op="delete", entity="company", id="com_1", dry_run=True)
     inst.delete_company.assert_not_called()
     assert r == {"dry_run": True, "id": "com_1", "would_delete": {"id": "com_1", "name": "Acme"}}
 
@@ -399,7 +402,7 @@ def test_delete_bulk_dry_run_shows_would_delete_and_writes_nothing(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"id": "per_1", "firstName": "Ada"}
     r = _register_and_call(
-        "folk_delete", entity="person", ids=["per_1"], dry_run=True)
+        "folk_record", op="delete", entity="person", ids=["per_1"], dry_run=True)
     inst.delete_person.assert_not_called()
     inst.get_person.assert_called_once_with("per_1")
     assert r["dry_run"] is True
@@ -410,19 +413,19 @@ def test_delete_bulk_dry_run_shows_would_delete_and_writes_nothing(client_cls):
 def test_delete_bulk_dry_run_note_entity_degrades_gracefully(client_cls):
     inst = _instance(client_cls)
     r = _register_and_call(
-        "folk_delete", entity="note", ids=["nte_1"], dry_run=True)
+        "folk_record", op="delete", entity="note", ids=["nte_1"], dry_run=True)
     inst.delete_note.assert_not_called()
     assert r["would_delete"] == [
         {"index": 0, "id": "nte_1", "would_delete": None, "current_available": False}]
 
 
-# --- folk_add_to_group -------------------------------------------------------
+# --- folk_record op="add_to_group" -------------------------------------------------------
 
 def test_add_to_group_requires_exactly_one_of_id_or_ids(client_cls):
     with pytest.raises(McpError):
-        _register_and_call("folk_add_to_group", entity="person", group_id="g1")  # neither
+        _register_and_call("folk_record", op="add_to_group", entity="person", group_id="g1")  # neither
     with pytest.raises(McpError):
-        _register_and_call("folk_add_to_group", entity="person", group_id="g1",
+        _register_and_call("folk_record", op="add_to_group", entity="person", group_id="g1",
                            id="per_1", ids=["per_2"])  # both
 
 
@@ -430,7 +433,7 @@ def test_add_to_group_solo_preserves_existing_groups(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
     inst.update_person.return_value = {"id": "per_1"}
-    r = _register_and_call("folk_add_to_group", entity="person", id="per_1", group_id="g2")
+    r = _register_and_call("folk_record", op="add_to_group", entity="person", id="per_1", group_id="g2")
     assert r == {"id": "per_1"}
     inst.update_person.assert_called_once_with("per_1", groups=[{"id": "g1"}, {"id": "g2"}])
 
@@ -440,7 +443,7 @@ def test_add_to_group_bulk_preserves_existing_groups(client_cls):
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
     inst.update_person.return_value = {"id": "per_1"}
     r = _register_and_call(
-        "folk_add_to_group", entity="person", ids=["per_1"], group_id="g2")
+        "folk_record", op="add_to_group", entity="person", ids=["per_1"], group_id="g2")
     assert r == {"total": 1, "succeeded": 1, "failed": []}
     inst.update_person.assert_called_once_with("per_1", groups=[{"id": "g1"}, {"id": "g2"}])
 
@@ -450,21 +453,21 @@ def test_add_to_group_already_member_is_noop_success(client_cls):
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
     inst.update_person.return_value = {"id": "per_1"}
     r = _register_and_call(
-        "folk_add_to_group", entity="person", ids=["per_1"], group_id="g1")
+        "folk_record", op="add_to_group", entity="person", ids=["per_1"], group_id="g1")
     assert r["succeeded"] == 1
     inst.update_person.assert_called_once_with("per_1", groups=[{"id": "g1"}])
 
 
 def test_add_to_group_deal_entity_rejected():
     with pytest.raises(McpError):
-        _register_and_call("folk_add_to_group", entity="deal", ids=["x"], group_id="g1")
+        _register_and_call("folk_record", op="add_to_group", entity="deal", ids=["x"], group_id="g1")
 
 
 def test_add_to_group_solo_dry_run_shows_diff(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
     r = _register_and_call(
-        "folk_add_to_group", entity="person", id="per_1", group_id="g2", dry_run=True)
+        "folk_record", op="add_to_group", entity="person", id="per_1", group_id="g2", dry_run=True)
     inst.update_person.assert_not_called()
     assert r == {"dry_run": True, "id": "per_1",
                  "changes": {"groups": {"from": [{"id": "g1"}], "to": [{"id": "g1"}, {"id": "g2"}]}}}
@@ -474,7 +477,7 @@ def test_add_to_group_bulk_dry_run_shows_diff_and_writes_nothing(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
     r = _register_and_call(
-        "folk_add_to_group", entity="person", ids=["per_1"], group_id="g2", dry_run=True)
+        "folk_record", op="add_to_group", entity="person", ids=["per_1"], group_id="g2", dry_run=True)
     inst.update_person.assert_not_called()
     assert r["dry_run"] is True
     assert r["would_add"] == [
@@ -486,17 +489,17 @@ def test_add_to_group_bulk_dry_run_already_member_shows_noop(client_cls):
     inst = _instance(client_cls)
     inst.get_person.return_value = {"groups": [{"id": "g1"}]}
     r = _register_and_call(
-        "folk_add_to_group", entity="person", ids=["per_1"], group_id="g1", dry_run=True)
+        "folk_record", op="add_to_group", entity="person", ids=["per_1"], group_id="g1", dry_run=True)
     changes = r["would_add"][0]["changes"]["groups"]
     assert changes["from"] == changes["to"] == [{"id": "g1"}]
 
 
-# --- folk_list_webhooks / folk_create_webhook / folk_update_webhook --------
+# --- folk_webhook op="list" / "create" / "update" --------
 
 def test_list_webhooks(client_cls):
     inst = _instance(client_cls)
     inst.list_webhooks.return_value = [{"id": "wbk_1"}]
-    r = _register_and_call("folk_list_webhooks")
+    r = _register_and_call("folk_webhook")
     assert r == {"webhooks": [{"id": "wbk_1"}]}
 
 
@@ -505,7 +508,7 @@ def test_create_webhook_happy_path(client_cls):
     inst.create_webhook.return_value = {"id": "wbk_1", "signingSecret": "whsec_x"}
     events = [{"eventType": "person.created", "filter": {"groupId": "grp_1"}}]
     r = _register_and_call(
-        "folk_create_webhook", name="My app", target_url="https://example.com/hook",
+        "folk_webhook", op="create", name="My app", target_url="https://example.com/hook",
         subscribed_events=events)
     assert r == {"id": "wbk_1", "signingSecret": "whsec_x"}
     inst.create_webhook.assert_called_once_with("My app", "https://example.com/hook", events)
@@ -515,7 +518,7 @@ def test_create_webhook_rejects_invalid_event_type(client_cls):
     inst = _instance(client_cls)
     with pytest.raises(McpError, match="person.made_up"):
         _register_and_call(
-            "folk_create_webhook", name="My app", target_url="https://example.com/hook",
+            "folk_webhook", op="create", name="My app", target_url="https://example.com/hook",
             subscribed_events=[{"eventType": "person.made_up"}])
     inst.create_webhook.assert_not_called()
 
@@ -524,7 +527,7 @@ def test_create_webhook_rejects_empty_events(client_cls):
     inst = _instance(client_cls)
     with pytest.raises(McpError):
         _register_and_call(
-            "folk_create_webhook", name="My app", target_url="https://example.com/hook",
+            "folk_webhook", op="create", name="My app", target_url="https://example.com/hook",
             subscribed_events=[])
     inst.create_webhook.assert_not_called()
 
@@ -533,7 +536,7 @@ def test_create_webhook_dry_run_makes_no_network_call(client_cls):
     inst = _instance(client_cls)
     events = [{"eventType": "company.updated"}]
     r = _register_and_call(
-        "folk_create_webhook", name="My app", target_url="https://example.com/hook",
+        "folk_webhook", op="create", name="My app", target_url="https://example.com/hook",
         subscribed_events=events, dry_run=True)
     inst.create_webhook.assert_not_called()
     assert r == {"dry_run": True, "would_create": {
@@ -545,7 +548,7 @@ def test_create_webhook_dry_run_makes_no_network_call(client_cls):
 def test_update_webhook_happy_path(client_cls):
     inst = _instance(client_cls)
     inst.update_webhook.return_value = {"id": "wbk_1", "status": "inactive"}
-    r = _register_and_call("folk_update_webhook", webhook_id="wbk_1",
+    r = _register_and_call("folk_webhook", op="update", webhook_id="wbk_1",
                            fields={"status": "inactive"})
     assert r == {"id": "wbk_1", "status": "inactive"}
     inst.update_webhook.assert_called_once_with("wbk_1", status="inactive")
@@ -554,7 +557,7 @@ def test_update_webhook_happy_path(client_cls):
 def test_update_webhook_rejects_empty_fields(client_cls):
     inst = _instance(client_cls)
     with pytest.raises(McpError):
-        _register_and_call("folk_update_webhook", webhook_id="wbk_1", fields={})
+        _register_and_call("folk_webhook", op="update", webhook_id="wbk_1", fields={})
     inst.update_webhook.assert_not_called()
 
 
@@ -562,7 +565,7 @@ def test_update_webhook_rejects_invalid_event_type(client_cls):
     inst = _instance(client_cls)
     with pytest.raises(McpError, match="bogus"):
         _register_and_call(
-            "folk_update_webhook", webhook_id="wbk_1",
+            "folk_webhook", op="update", webhook_id="wbk_1",
             fields={"subscribedEvents": [{"eventType": "bogus"}]})
     inst.update_webhook.assert_not_called()
 
@@ -571,7 +574,7 @@ def test_update_webhook_dry_run_shows_diff(client_cls):
     inst = _instance(client_cls)
     inst.get_webhook.return_value = {"status": "active"}
     r = _register_and_call(
-        "folk_update_webhook", webhook_id="wbk_1",
+        "folk_webhook", op="update", webhook_id="wbk_1",
         fields={"status": "inactive"}, dry_run=True)
     inst.update_webhook.assert_not_called()
     assert r == {"dry_run": True, "id": "wbk_1",

@@ -41,7 +41,7 @@ def test_account_axis_excludes_single_and_spine():
 def test_account_axis_applies_to_folk():
     # folk : N clés API personnelles nommées (ex. plusieurs workspaces Folk),
     # même mécanisme générique que zoho (« 2 Zoho »).
-    assert "_account" in _params("folk_search")
+    assert "_account" in _params("folk_record")
 
 
 def test_inject_schema_adds_optional_account_property():

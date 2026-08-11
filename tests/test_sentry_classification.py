@@ -65,7 +65,7 @@ def test_4xx_are_managed_connector_errors():
     assert _is_managed_connector_error(_NinjaError(400))
     # fastmcp emballe dans un ToolError : on remonte la chaîne jusqu'à l'amont
     assert _is_managed_connector_error(
-        _chained(Exception("Error calling tool 'folk_update'"), _Upstream(422))
+        _chained(Exception("Error calling tool 'folk_record'"), _Upstream(422))
     )
 
 

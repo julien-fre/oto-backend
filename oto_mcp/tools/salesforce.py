@@ -11,6 +11,32 @@ côté client avec l'access token.
 "Companies" = l'sObject standard **Account** ; contacts = **Contact**. Surface
 générique par `sobject` (comme hubspot/zoho) plutôt que des tools contact/account
 dédiés — couvre aussi Lead/Opportunity/objets custom sans code supplémentaire.
+
+**Surface consolidée (ADR 0047 §Amendement, appliqué au connecteur salesforce)** :
+un tool par OBJET métier, le verbe en paramètre `op` — `salesforce_record`
+(list/get/create/update/delete/upsert/bulk_create/bulk_update, tous scopés par
+`sobject`), `salesforce_query` (soql/sosl) et `salesforce_note` (list/create sur
+un enregistrement). Les deux décisions de périmètre :
+
+- **les bulk sont des `op` de `salesforce_record`**, pas un tool à part : `items`
+  est le pluriel de `data`, tout est scopé par le même `sobject`, et l'avertissement
+  « prends-moi plutôt que N create » se lit alors À CÔTÉ de `op="create"`, là où
+  l'agent le cherche. Coût réel de la fusion : deux paramètres (`items`,
+  `all_or_none`), pas une variante disjointe.
+- **`salesforce_query` porte SOQL *et* SOSL** : deux langages, mais un seul
+  paramètre, de même forme (une chaîne) et de même retour — le critère est
+  l'homogénéité des paramètres, et ici elle est totale. `op` nomme le langage.
+
+`salesforce_describe` reste **SEUL** : il décrit un TYPE, pas un enregistrement ;
+sa sortie est un schéma projeté (pas des lignes), son `verbose` n'a de contrepartie
+nulle part, et c'est lui qui énumère les `fields` que les autres consomment — même
+rôle de découverte que `zoho_modules` / `gmail_list_accounts`.
+
+⚠️ **Ce module ÉCRIT dans le CRM du client** : `salesforce_record` op=create /
+update / delete / upsert / bulk_create / bulk_update, et `salesforce_note`
+op=create. Tous les défauts d'`op` sont des LECTURES (`salesforce_record`
+op="list", `salesforce_note` op="list", `salesforce_query` op="soql") : un appel
+sans `op` ne peut ni écrire, ni supprimer.
 """
 from __future__ import annotations
 
@@ -25,6 +51,18 @@ from .. import access, connector_flow, connector_verify, status_hints
 
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+
+def _need(value, name: str, op: str):
+    """Argument obligatoire pour CET op — erreur actionnable qui NOMME l'op et
+    l'argument, jamais un fallback.
+
+    Une chaîne VIDE compte comme absente : `record_id=""` ne désigne aucun
+    enregistrement, et l'URL construite viserait la COLLECTION — donc un autre
+    enregistrement que celui voulu, ou une suppression qui rate sa cible."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise _bad(f"op='{op}' requiert {name}")
+    return value
 
 
 def _login_url(login_url: Optional[str]) -> str:
@@ -343,6 +381,26 @@ def _bulk_receipt(raw: list[dict]) -> dict:
             "results": results}
 
 
+# Ops de chaque tool, lectures d'abord. SOURCE UNIQUE : la garde d'entrée ET le
+# message de refus en dérivent — une op ajoutée ne peut donc pas être acceptée sans
+# être annoncée (ni annoncée sans être acceptée). Le découpage read/write n'est pas
+# décoratif : il documente ce qu'un défaut d'`op` peut atteindre (jamais une écriture).
+_RECORD_READ_OPS = ("list", "get")
+_RECORD_WRITE_OPS = ("create", "update", "delete", "upsert",
+                     "bulk_create", "bulk_update")
+_RECORD_OPS = _RECORD_READ_OPS + _RECORD_WRITE_OPS
+_RECORD_OPS_ERROR = ("op doit être 'list', 'get', 'create', 'update', 'delete', "
+                     "'upsert', 'bulk_create' ou 'bulk_update'")
+
+_QUERY_OPS = ("soql", "sosl")            # les deux sont des LECTURES
+_QUERY_OPS_ERROR = "op doit être 'soql' ou 'sosl'"
+
+_NOTE_READ_OPS = ("list",)
+_NOTE_WRITE_OPS = ("create",)
+_NOTE_OPS = _NOTE_READ_OPS + _NOTE_WRITE_OPS
+_NOTE_OPS_ERROR = "op doit être 'list' ou 'create'"
+
+
 def register(mcp: FastMCP) -> None:
     connector_verify.register("salesforce", _verify)
     from oto.tools.salesforce.client import SalesforceClient
@@ -382,128 +440,181 @@ def register(mcp: FastMCP) -> None:
         return raw if verbose else _project_describe(raw)
 
     @mcp.tool()
-    def salesforce_list(
+    def salesforce_record(
         sobject: str,
+        op: str = "list",
+        record_id: Optional[str] = None,
+        data: Optional[dict] = None,
         fields: Optional[str] = None,
         where: Optional[str] = None,
         limit: int = 200,
+        external_id_field: Optional[str] = None,
+        external_id: Optional[str] = None,
+        items: Optional[list[dict]] = None,
+        all_or_none: bool = False,
     ) -> dict:
-        """List records of an sObject type (built as a SOQL SELECT).
+        """A record of an sObject type — list, read, create, update, delete,
+        upsert, or write up to 200 in one call.
+
+        "Companies" are the standard **Account** sObject; contacts are
+        **Contact**. The same surface covers Lead / Opportunity / any custom
+        "Foo__c".
+
+        `op`:
+        - **"list"** (default): list records of `sobject`, built as a SOQL SELECT.
+          Filter with `where`, pick columns with `fields`, cap with `limit`.
+        - **"get"**: get one record by id (`record_id`).
+        - **"create"** — ⚠️ WRITES: create a record (`data` = field → value), e.g.
+          sobject="Contact", data={"FirstName": "Ada", "LastName": "Lovelace",
+          "Email": "ada@example.com"}; sobject="Account", data={"Name": "Acme Corp"}.
+        - **"update"** — ⚠️ WRITES: update a record's fields (`record_id` + `data`).
+        - **"delete"** — ⚠️ WRITES: delete a record. Irreversible.
+        - **"upsert"** — ⚠️ WRITES: create-or-update a record keyed on an external
+          id field (idempotent).
+        - **"bulk_create"** — ⚠️ WRITES: create up to 200 records of the SAME
+          sObject type in ONE Salesforce call (sObject Collections) — instead of N
+          separate op="create" calls.
+        - **"bulk_update"** — ⚠️ WRITES: update up to 200 records of the SAME
+          sObject type in ONE Salesforce call (sObject Collections) — instead of N
+          separate op="update" calls.
 
         Args:
-            sobject: e.g. "Contact", "Account" (companies), "Lead", "Opportunity".
-            fields: comma-separated field names. Optional — a sensible default set
-                is used per known sObject if omitted.
-            where: SOQL WHERE clause without the "WHERE" keyword,
+            sobject: e.g. "Contact", "Account" (companies), "Lead", "Opportunity",
+                or a custom "Foo__c". For the bulk ops, EVERY record in `items`
+                must be this type.
+            op: list (default) | get | create | update | delete | upsert |
+                bulk_create | bulk_update.
+            record_id: op="get"/"update"/"delete" — the record id.
+            data: op="create"/"update"/"upsert" — field → value.
+            fields: op="list"/"get" — comma-separated field names. Optional — a
+                sensible default set is used per known sObject if omitted.
+            where: op="list" — SOQL WHERE clause without the "WHERE" keyword,
                 e.g. "Industry = 'Technology'".
-        """
-        return _client().list_records(sobject, fields=fields, where=where, limit=limit)
-
-    @mcp.tool()
-    def salesforce_get(sobject: str, record_id: str, fields: Optional[str] = None) -> dict:
-        """Get one record by id."""
-        return _client().get_record(sobject, record_id, fields=fields)
-
-    @mcp.tool()
-    def salesforce_query(soql: str) -> dict:
-        """Run a raw SOQL query,
-        e.g. "SELECT Id, Name FROM Account WHERE Industry = 'Technology'"."""
-        return _client().query(soql)
-
-    @mcp.tool()
-    def salesforce_search(sosl: str) -> dict:
-        """Run a raw SOSL search,
-        e.g. "FIND {Acme} IN ALL FIELDS RETURNING Account(Id, Name)"."""
-        return _client().search(sosl)
-
-    @mcp.tool()
-    def salesforce_create(sobject: str, data: dict) -> dict:
-        """Create a record (data = field → value).
-
-        e.g. sobject="Contact", data={"FirstName": "Ada", "LastName": "Lovelace",
-        "Email": "ada@example.com"}; sobject="Account", data={"Name": "Acme Corp"}.
-        """
-        return _client().create_record(sobject, data)
-
-    @mcp.tool()
-    def salesforce_update(sobject: str, record_id: str, data: dict) -> dict:
-        """Update a record's fields."""
-        return _client().update_record(sobject, record_id, data)
-
-    @mcp.tool()
-    def salesforce_delete(sobject: str, record_id: str) -> dict:
-        """Delete a record. Irreversible."""
-        return _client().delete_record(sobject, record_id)
-
-    @mcp.tool()
-    def salesforce_upsert(
-        sobject: str, external_id_field: str, external_id: str, data: dict,
-    ) -> dict:
-        """Create-or-update a record keyed on an external id field (idempotent)."""
-        return _client().upsert_record(sobject, external_id_field, external_id, data)
-
-    @mcp.tool()
-    def salesforce_bulk_create(
-        sobject: str, items: list[dict], all_or_none: bool = False,
-    ) -> dict:
-        """Create up to 200 records of the SAME sObject type in ONE Salesforce
-        call (sObject Collections) — instead of N separate salesforce_create
-        calls.
-
-        Args:
-            sobject: e.g. "Contact", "Account", "Lead", "Opportunity", or a
-                custom "Foo__c". Every record in `items` must be this type.
-            items: field→value dicts, same shape as salesforce_create's
-                `data`, one per record (max 200 — split into several calls
-                above that).
-            all_or_none: if true, the WHOLE batch rolls back when any record
-                fails. Default false (Salesforce's own default): successes
-                are kept, failures are reported per-record below.
+            limit: op="list" — maximum number of records (default 200).
+            external_id_field: op="upsert" — name of the external id FIELD to key
+                the create-or-update on.
+            external_id: op="upsert" — the external id VALUE.
+            items: op="bulk_create"/"bulk_update" — field→value dicts, same shape
+                as `data`, one per record (max 200 — split into several calls
+                above that). For op="bulk_update" each item MUST include "Id"
+                (the record to update) plus the fields to change.
+            all_or_none: op="bulk_create"/"bulk_update" — if true, the WHOLE batch
+                rolls back when any record fails. Default false (Salesforce's own
+                default): successes are kept, failures are reported per-record
+                below.
 
         Returns:
-            {"total", "succeeded", "results": [{"index", "id", "success",
-            "errors"}, ...]} — ALWAYS inspect `results`: unlike
-            salesforce_create, a record can fail here with no exception
-            raised (the call itself succeeded, that one record didn't).
+            The Salesforce payload for the single-record ops. For
+            op="bulk_create"/"bulk_update": {"total", "succeeded", "results":
+            [{"index", "id", "success", "errors"}, ...]} — ALWAYS inspect
+            `results`: unlike op="create", a record can fail here with NO
+            exception raised (the call itself succeeded, that one record didn't).
+
+        Field metadata — what fields exist on an sObject, their type, whether they
+        are createable/updateable, their picklist values — is a different tool:
+        salesforce_describe.
         """
-        _validate_bulk_items(items)
-        raw = _client().create_records(sobject, items, all_or_none=all_or_none)
-        return _bulk_receipt(raw)
+        # Refus AVANT toute résolution de credential : une op inconnue n'atteint
+        # jamais le client — donc jamais, par un chemin dérivé, une écriture.
+        if op not in _RECORD_OPS:
+            raise _bad(_RECORD_OPS_ERROR)
+        client = _client()
+
+        # ---- lectures --------------------------------------------------------
+        if op == "list":
+            return client.list_records(sobject, fields=fields, where=where,
+                                       limit=limit)
+        if op == "get":
+            return client.get_record(sobject, _need(record_id, "record_id", op),
+                                     fields=fields)
+
+        # ---- écritures -------------------------------------------------------
+        if op == "create":
+            return client.create_record(sobject, _need(data, "data", op))
+        if op == "update":
+            return client.update_record(sobject,
+                                        _need(record_id, "record_id", op),
+                                        _need(data, "data", op))
+        if op == "delete":
+            return client.delete_record(sobject, _need(record_id, "record_id", op))
+        if op == "upsert":
+            return client.upsert_record(
+                sobject,
+                _need(external_id_field, "external_id_field", op),
+                _need(external_id, "external_id", op),
+                _need(data, "data", op))
+        if op == "bulk_create":
+            _validate_bulk_items(_need(items, "items", op))
+            raw = client.create_records(sobject, items, all_or_none=all_or_none)
+            return _bulk_receipt(raw)
+        if op == "bulk_update":
+            _validate_bulk_items(_need(items, "items", op))
+            _validate_update_items_have_id(items)
+            raw = client.update_records(sobject, items, all_or_none=all_or_none)
+            return _bulk_receipt(raw)
+
+        # Structurellement inatteignable (garde d'entrée ci-dessus) — filet contre
+        # un `return None` implicite si une op était ajoutée à `_RECORD_OPS` sans sa
+        # branche : mieux vaut refuser que rendre « rien » pour un succès.
+        raise _bad(_RECORD_OPS_ERROR)
 
     @mcp.tool()
-    def salesforce_bulk_update(
-        sobject: str, items: list[dict], all_or_none: bool = False,
-    ) -> dict:
-        """Update up to 200 records of the SAME sObject type in ONE Salesforce
-        call (sObject Collections) — instead of N separate salesforce_update
-        calls.
+    def salesforce_query(query: str, op: str = "soql") -> dict:
+        """Run a raw statement against the org — SOQL query or SOSL search.
+
+        `op`:
+        - **"soql"** (default): a SOQL query, e.g.
+          "SELECT Id, Name FROM Account WHERE Industry = 'Technology'".
+        - **"sosl"**: a SOSL search, e.g.
+          "FIND {Acme} IN ALL FIELDS RETURNING Account(Id, Name)".
 
         Args:
-            sobject: e.g. "Contact", "Account" — every record in `items` must
-                be this type.
-            items: field→value dicts, EACH MUST include "Id" (the record to
-                update) plus the fields to change (max 200 records).
-            all_or_none: if true, the whole batch rolls back when any record
-                fails. Default false: successes are kept, failures reported
-                per-record below.
+            query: the statement itself — SOQL under op="soql", SOSL (a FIND …
+                statement) under op="sosl". The two languages are NOT
+                interchangeable: a FIND statement sent with the default op is
+                rejected by Salesforce as a malformed query.
+            op: soql (default) | sosl.
 
-        Returns:
-            {"total", "succeeded", "results": [{"index", "id", "success",
-            "errors"}, ...]} — always inspect `results`, same caveat as
-            salesforce_bulk_create.
+        Both are reads. For a plain listing of one sObject you do not need to write
+        SOQL at all: salesforce_record(op="list", sobject=…, where=…) builds it.
         """
-        _validate_bulk_items(items)
-        _validate_update_items_have_id(items)
-        raw = _client().update_records(sobject, items, all_or_none=all_or_none)
-        return _bulk_receipt(raw)
+        if op not in _QUERY_OPS:
+            raise _bad(_QUERY_OPS_ERROR)
+        client = _client()
+        if op == "soql":
+            return client.query(_need(query, "query", op))
+        if op == "sosl":
+            return client.search(_need(query, "query", op))
+        raise _bad(_QUERY_OPS_ERROR)   # inatteignable, cf. salesforce_record
 
     @mcp.tool()
-    def salesforce_notes(record_id: str) -> dict:
-        """List the Enhanced Notes attached to a record (ContentNote, the
-        Lightning default — not supported on orgs still on classic Notes)."""
-        return {"notes": _client().list_notes(record_id)}
+    def salesforce_note(
+        record_id: str,
+        op: str = "list",
+        title: Optional[str] = None,
+        body: Optional[str] = None,
+    ) -> dict:
+        """The Enhanced Notes attached to a record.
 
-    @mcp.tool()
-    def salesforce_create_note(record_id: str, title: str, body: str) -> dict:
-        """Add an Enhanced Note (ContentNote) to a record."""
-        return _client().create_note(record_id, title, body)
+        Enhanced Notes = the **ContentNote** object, the Lightning default — NOT
+        supported on orgs still on classic Notes.
+
+        `op`:
+        - **"list"** (default): list the notes attached to `record_id`.
+        - **"create"** — ⚠️ WRITES: add an Enhanced Note to the record.
+
+        Args:
+            record_id: the record the notes are attached to (any sObject).
+            op: list (default) | create.
+            title: op="create" — the note title.
+            body: op="create" — the note body.
+        """
+        if op not in _NOTE_OPS:
+            raise _bad(_NOTE_OPS_ERROR)
+        client = _client()
+        if op == "list":
+            return {"notes": client.list_notes(record_id)}
+        if op == "create":
+            return client.create_note(record_id, _need(title, "title", op),
+                                      _need(body, "body", op))
+        raise _bad(_NOTE_OPS_ERROR)    # inatteignable, cf. salesforce_record

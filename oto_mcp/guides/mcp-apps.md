@@ -17,9 +17,9 @@ données structurées, que tu peux lire normalement.
 | --- | --- | --- |
 | `data_app` | le datastore : sans `namespace` = table de tes tableaux ; avec = table triable des lignes (`filter` exact-match, `show_meta`) ; `row=<id\|clé\|titre>` ou un filtre qui isole 1 ligne = **fiche détail** (sous-records dépliés, statut + cycle de vie) | `data_rows`, `data_list_namespaces` |
 | `oto_doc_app` | les pages/docs, **lecture seule** : sans argument = arbre de la Base de connaissance de l'org active ; `project_id` = arbre des pages d'un projet (enfants indentés) ; `doc_id` = une page en Markdown rendu ; `query` = recherche plein-texte avec extraits | `oto_doc` |
-| `foncier_site_app` | fiche d'un site (géocodage + parcelle + bâti) | `foncier_geocode`, `foncier_parcelle`, `foncier_bati` |
-| `foncier_comparables_app` | ventes DVF comparables autour d'une adresse | `foncier_comparables_adresse` |
-| `foncier_prix_m2_app` | stats €/m² d'une commune | `foncier_prix_m2` |
+| `foncier_site_app` | fiche d'un site (géocodage + parcelle + bâti) | `foncier_geocode`, `foncier_site(op="parcelle")`, `foncier_site(op="bati")` |
+| `foncier_comparables_app` | ventes DVF comparables autour d'une adresse | `foncier_dvf(op="comparables_adresse")` |
+| `foncier_prix_m2_app` | stats €/m² d'une commune | `foncier_dvf(op="prix_m2")` |
 
 ## Quand appeler l'app, quand appeler le JSON
 

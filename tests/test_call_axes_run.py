@@ -15,7 +15,7 @@ def _params(name):
 
 
 def test_run_axis_applies_to_work_tools():
-    for name in ("folk_search", "gmail_message", "data_write", "serper_search",
+    for name in ("folk_record", "gmail_message", "data_write", "serper_search",
                  "pennylane_ref"):
         assert "_run_id" in _params(name), name
 

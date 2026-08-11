@@ -8,11 +8,11 @@ folk fournit une clé api personnelle. récupère-la dans les [réglages api/dé
 ## usage — ce que tu peux faire
 
 gère ton crm folk (personnes, entreprises, deals) + notes, interactions et rappels depuis claude.
-- « trouve le contact dupont » → `folk_search` (entity `person`), puis `folk_get` pour la fiche
-- « ajoute jean dupont, cto chez acme » → `folk_create` (entity `person`)
-- « log un appel sur ce contact » → `folk_create` (entity `interaction`, type/titre/contenu)
-- « crée un deal dans le groupe X » → `folk_create` (entity `deal`), et `folk_list_deals` pour les lister
-- « ajoute ces 20 contacts » → `folk_create` (entity `person`, `items=[...]`) en un seul appel
-- « préviens mon endpoint à chaque nouveau deal du groupe X » → `folk_create_webhook` (avant ça : `folk_list_groups` pour l'id du groupe, `folk_group_custom_fields` si le filtre porte sur un champ custom)
-- « liste mes webhooks » / « désactive ce webhook » → `folk_list_webhooks` / `folk_update_webhook` (`fields={"status": "inactive"}`)
+- « trouve le contact dupont » → `folk_record(op="search")` (entity `person`), puis `folk_record(op="get")` pour la fiche
+- « ajoute jean dupont, cto chez acme » → `folk_record(op="create")` (entity `person`)
+- « log un appel sur ce contact » → `folk_record(op="create")` (entity `interaction`, type/titre/contenu)
+- « crée un deal dans le groupe X » → `folk_record(op="create")` (entity `deal`), et `folk_record(op="search", entity="deal")` pour les lister
+- « ajoute ces 20 contacts » → `folk_record(op="create")` (entity `person`, `items=[...]`) en un seul appel
+- « préviens mon endpoint à chaque nouveau deal du groupe X » → `folk_webhook(op="create")` (avant ça : `folk_group(op="list")` pour l'id du groupe, `folk_group(op="custom_fields")` si le filtre porte sur un champ custom)
+- « liste mes webhooks » / « désactive ce webhook » → `folk_webhook(op="list")` / `folk_webhook(op="update")` (`fields={"status": "inactive"}`)
 - ⚠️ un filtre de webhook posé via l'api n'existe QUE là : le modifier depuis les réglages de l'app folk le fait disparaître silencieusement

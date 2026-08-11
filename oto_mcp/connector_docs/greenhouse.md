@@ -10,7 +10,7 @@ il te faut une clé **harvest api** greenhouse.
 ## usage — ce que tu peux faire
 
 pilote ton ats greenhouse depuis la conversation : candidats, jobs, candidatures, notes.
-- « liste les candidats sur le job 123 » → `greenhouse_candidates` (filtres `job_id`, `email`, `created_after`)
+- « liste les candidats sur le job 123 » → `greenhouse_candidate(op="list")` (filtres `job_id`, `email`, `created_after`)
 - « montre-moi le candidat 456 et ses candidatures » → `greenhouse_candidate`
-- « ajoute une note sur le candidat 456 » → `greenhouse_add_note` (il faut un `user_id` auteur, cf. `greenhouse_users`)
-- « quels jobs sont ouverts ? » → `greenhouse_jobs` (`status` open/closed/draft)
+- « ajoute une note sur le candidat 456 » → `greenhouse_candidate(op="add_note")` (il faut un `user_id` auteur, cf. `greenhouse_users`)
+- « quels jobs sont ouverts ? » → `greenhouse_job(op="list")` (`status` open/closed/draft)

@@ -82,7 +82,7 @@ def test_check_connector_coherence(monkeypatch):
     monkeypatch.setattr(connector_identities, "_LISTERS", {"folk": lambda sub: []})
 
     # Connecteur déclaré + tool référencé → aucune alarme.
-    body = "Créer via <tool:folk_create_person> vers <slot:crm>."
+    body = "Créer via <tool:folk_record> vers <slot:crm>."
     r = slots_mod.slots_check(body, [{"name": "crm", "type": "connecteur", "connector": "folk"}])
     assert r["slot_warnings"] == [] and r["suggested_slots"] == []
 
@@ -96,7 +96,7 @@ def test_check_connector_coherence(monkeypatch):
     assert any("aucun tool" in w for w in r["slot_warnings"])
 
     # L'inverse : tools d'un connecteur À IDENTITÉS sans slot déclaré → suggestion.
-    r = slots_mod.slots_check("Créer via <tool:folk_create_person>.", [])
+    r = slots_mod.slots_check("Créer via <tool:folk_record>.", [])
     assert [s["connector"] for s in r["suggested_slots"]] == ["folk"]
 
 
@@ -375,13 +375,13 @@ def test_inventory_derives_union(monkeypatch):
         {"target_type": "tableau", "target_ref": "9", "slot": "sortie", "namespace": "leads_q3"},
     ])
     monkeypatch.setattr(P.db, "project_run_tools",
-                        lambda pid: ["fr_search", "oto_use_project", "folk_create_person"])
+                        lambda pid: ["fr_search", "oto_use_project", "folk_record"])
     monkeypatch.setattr(P.db, "project_run_stats", lambda pid: {"runs": 0, "doctrines": []})
 
     import oto_mcp.org_store as org_store_mod
     monkeypatch.setattr(org_store_mod, "get_instruction_by_id",
                         lambda iid: {"slug": "prospection", "body_md":
-                                     "Chercher via <tool:fr_search> puis <tool:folk_create_person> "
+                                     "Chercher via <tool:fr_search> puis <tool:folk_record> "
                                      "vers <slot:sortie>.",
                                      "slots": [{"name": "crm", "type": "connecteur", "connector": "folk"},
                                                {"name": "sortie", "type": "tableau"}]})
@@ -395,7 +395,7 @@ def test_inventory_derives_union(monkeypatch):
 
     out = P._project(ResolvedCtx(sub="u1", org_id=3), P.ProjectInput(op="inventory", project_id=7))
     # Union : refs des procédures d'abord, puis runs ; oto_use_project (spine) écarté.
-    assert out["tools"] == ["fr_search", "folk_create_person"]
+    assert out["tools"] == ["fr_search", "folk_record"]
     # Connecteurs : slots connecteur ∪ liens ∪ dérivés des tools.
     assert out["connectors"] == ["folk", "sirene", "unipile"]
     procs = out["sources"]["procedures"]

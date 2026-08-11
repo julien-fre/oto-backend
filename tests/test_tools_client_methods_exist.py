@@ -1,11 +1,11 @@
-"""Garde-fou version-skew (otomata-private, leçon folk_get_user) — un tool ne doit
+"""Garde-fou version-skew (otomata-private, leçon folk_user) — un tool ne doit
 PAS référencer une méthode absente de l'oto-core ÉPINGLÉ.
 
 Contexte : backend et oto-core sont deux repos ; le backend épingle une version
 d'oto-core (pin git dans pyproject, ADR 0020). Un tool mergé en avance de phase —
 qui appelle `client.methode()` avant que le tag épinglé la contienne — passe la
 CI (l'import du module réussit, la méthode n'est touchée qu'à l'appel) puis lève
-`AttributeError` en prod à la 1ʳᵉ invocation (vécu 2026-07-01→03 : `folk_get_user`
+`AttributeError` en prod à la 1ʳᵉ invocation (vécu 2026-07-01→03 : `folk_user`
 → `FolkClient` sans `get_user` sur v1.11.0, corrigé par le bump v1.12.0).
 
 Cette sonde ferme la fenêtre : en CI de PR, oto-core est installé AU TAG ÉPINGLÉ
@@ -211,4 +211,4 @@ def test_client_methods_exist_on_pinned_core(tool_mod, clsname, import_mod, meth
     assert not missing, (
         f"{tool_mod}.py appelle des méthodes absentes de {clsname} "
         f"(oto-core épinglé) : {missing} — bump le pin oto-core dans CETTE PR "
-        f"(version-skew, cf. leçon folk_get_user).")
+        f"(version-skew, cf. leçon folk_user).")

@@ -1,6 +1,8 @@
 """Connecteur Cognism — verrouille : l'entrée registre (keyed API, BYO user/org
 SEULEMENT — pas de mode plateforme tant qu'il n'y a pas d'accord commercial
-Otomata↔Cognism, contrairement à AI Ark/Kaspr), la surface MCP curée (8 tools),
+Otomata↔Cognism, contrairement à AI Ark/Kaspr), la surface MCP curée (6 tools
+depuis la consolidation ADR 0047 §Amendement : la cible contact/account est
+passée en `op=`, cf. `test_cognism_op_dispatch.py` pour le dispatch lui-même),
 la jointure tool↔client oto-core (garde version-skew), le contrat HTTP côté
 tool layer (traduction erreurs -> McpError, y compris ValueError de filtre
 invalide -> message actionnable AVANT tout appel réseau côté client), et les
@@ -16,15 +18,12 @@ from oto_mcp import providers
 from oto_mcp.tool_visibility import namespace_of
 
 EXPECTED_TOOLS = {
-    "cognism_search_contacts",
-    "cognism_search_accounts",
-    "cognism_redeem_contacts",
-    "cognism_redeem_accounts",
-    "cognism_enrich_contact",
+    "cognism_search",            # op=contact|account — preview GRATUIT
+    "cognism_redeem",            # op=contact|account — reveal, CONSOMME DES CRÉDITS
+    "cognism_enrich_contact",    # variantes disjointes : laissées seules
     "cognism_enrich_account",
-    "cognism_contact_entitlement",
-    "cognism_account_entitlement",
-    "cognism_filter_values",
+    "cognism_entitlement",       # op=contact|account
+    "cognism_filter_values",     # vocabulaire `kind` propre : laissé seul
 }
 
 
@@ -138,7 +137,7 @@ def _call(tool_name, **kwargs):
 def test_search_contacts_sends_bearer_and_query_params():
     with patch("oto.tools.cognism.client.requests.request") as req:
         req.return_value = _resp(200, {"results": [], "totalResults": 0})
-        _call("cognism_search_contacts", filters={"firstName": "Stjepan"},
+        _call("cognism_search", op="contact", filters={"firstName": "Stjepan"},
               index_size=25, last_returned_key=None)
     args, kwargs = req.call_args
     assert args[0] == "POST"
@@ -151,20 +150,20 @@ def test_search_contacts_sends_bearer_and_query_params():
 def test_search_contacts_invalid_enum_never_hits_network():
     with patch("oto.tools.cognism.client.requests.request") as req:
         with pytest.raises(McpError) as exc:
-            _call("cognism_search_contacts", filters={"seniority": ["Founder"]})
+            _call("cognism_search", op="contact", filters={"seniority": ["Founder"]})
     req.assert_not_called()
     assert "seniority" in str(exc.value)
 
 
 def test_redeem_contacts_requires_ids_or_redeem_ids():
     with pytest.raises(McpError):
-        _call("cognism_redeem_contacts")
+        _call("cognism_redeem", op="contact")
 
 
 def test_redeem_contacts_body_shape():
     with patch("oto.tools.cognism.client.requests.request") as req:
         req.return_value = _resp(200, {"total": 0, "result": []})
-        _call("cognism_redeem_contacts", ids=["abc"])
+        _call("cognism_redeem", op="contact", ids=["abc"])
     args, kwargs = req.call_args
     assert args[1] == "https://app.cognism.com/api/search/contact/redeem"
     assert kwargs["json"] == {"ids": ["abc"]}
@@ -191,7 +190,7 @@ def test_401_maps_to_actionable_message():
     with patch("oto.tools.cognism.client.requests.request") as req:
         req.return_value = _resp(401)
         with pytest.raises(McpError) as exc:
-            _call("cognism_contact_entitlement")
+            _call("cognism_entitlement", op="contact")
     assert "401" in str(exc.value) or "invalide" in str(exc.value)
 
 
@@ -199,7 +198,7 @@ def test_5xx_maps_to_retry_message():
     with patch("oto.tools.cognism.client.requests.request") as req:
         req.return_value = _resp(503)
         with pytest.raises(McpError) as exc:
-            _call("cognism_account_entitlement")
+            _call("cognism_entitlement", op="account")
     assert "503" in str(exc.value)
 
 

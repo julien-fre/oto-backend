@@ -9,8 +9,8 @@ brevo s'authentifie via une **clé api v3**. dans [ton compte brevo](https://app
 ## usage — emailing & crm depuis claude
 
 gère ta base contacts, tes envois et ton crm brevo.
-- « ajoute jean à la liste newsletter » → `brevo_upsert_contact` / `brevo_list_membership`
+- « ajoute jean à la liste newsletter » → `brevo_contact(op="upsert")` / `brevo_list(op="contacts")`
 - « envoie cet email à marie » → `brevo_send_email` (transactionnel unitaire)
-- « prépare une campagne pour la liste clients » → `brevo_create_campaign` (brouillon ; l'envoi de masse se déclenche dans l'ui)
-- « combien d'ouvertures sur ma dernière campagne » → `brevo_campaigns` (statistics)
+- « prépare une campagne pour la liste clients » → `brevo_campaign(op="create")` (brouillon ; l'envoi de masse se déclenche dans l'ui)
+- « combien d'ouvertures sur ma dernière campagne » → `brevo_campaign(op="list")` (statistics)
 - « crée un deal à 10k€ » → `brevo_crm_create` (entity `deals`)

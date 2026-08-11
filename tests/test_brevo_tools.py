@@ -52,12 +52,17 @@ def test_both_modules_register_under_brevo_namespace(brevo_tools):
     # le CRM (module séparé) et l'email (module principal) sont bien là
     assert "brevo_crm_list" in brevo
     assert "brevo_send_email" in brevo
-    assert len(brevo) >= 25
+    # Plancher revu à la baisse par la consolidation ADR 0047 §Amendement
+    # (2026-08-11) : `tools/brevo.py` est passé de 30 tools à 9 (verbe en `op=`),
+    # `tools/brevo_crm.py` en garde 6. Le plancher ne dit plus « la surface est
+    # riche » mais « les DEUX modules sont montés » — le contenu par op est
+    # verrouillé par `test_brevo_op_dispatch.py`.
+    assert len(brevo) >= 14
 
 
 def test_brevoauto_namespace_does_not_collide(brevo_tools):
     # `brevoauto_*` → namespace `brevoauto`, jamais absorbé par `brevo`
-    assert namespace_of("brevoauto_add_step") == "brevoauto"
+    assert namespace_of("brevoauto_step") == "brevoauto"
     assert all(namespace_of(t) == "brevo"
                for t in brevo_tools if t.startswith("brevo_"))
 
@@ -67,6 +72,9 @@ def test_brevoauto_namespace_does_not_collide(brevo_tools):
     "brevo_delete_campaign", "brevo_delete_template", "brevo_delete_hardbounces",
 ])
 def test_destructive_writes_are_not_exposed(brevo_tools, forbidden):
+    # ⚠️ Contrôle par NOM : depuis la consolidation `op=`, une suppression
+    # s'ajouterait sans créer de tool. Le pendant au grain op (`op="delete"`,
+    # `op="send"` refusés) vit dans `test_brevo_op_dispatch.py`.
     assert forbidden not in brevo_tools
 
 
@@ -74,4 +82,6 @@ def test_transactional_send_stays_exposed(brevo_tools):
     # l'envoi unitaire (destinataires explicites) reste ; c'est l'envoi de MASSE
     # (campagne) et les suppressions qui sont retirés
     assert "brevo_send_email" in brevo_tools
-    assert "brevo_campaign_test" in brevo_tools
+    # l'envoi d'un test de campagne existe toujours — ex-`brevo_campaign_test`,
+    # devenu `brevo_campaign(op="test")` (ADR 0047 §Amendement)
+    assert "brevo_campaign" in brevo_tools

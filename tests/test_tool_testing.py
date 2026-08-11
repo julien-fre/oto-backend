@@ -10,7 +10,7 @@ from oto_mcp.tool_visibility import TESTABLE_NAMESPACES, is_testable, namespace_
 
 def test_testable_covers_fod_readonly():
     for name in ("fr_get", "fr_search", "fr_siret", "fr_stock_search",
-                 "foncier_geocode", "foncier_parcelle", "urba_zonage",
+                 "foncier_geocode", "foncier_site", "urba_zonage",
                  "sante_finess", "frenchtech_membres", "culture_spectacle_search",
                  "infosec_domain"):
         assert is_testable(name), name
@@ -18,7 +18,7 @@ def test_testable_covers_fod_readonly():
 
 def test_not_testable_side_effect_and_apps():
     # Effet de bord / mutation / coût — jamais testables via un simple bouton.
-    for name in ("email_send", "data_write", "data_delete_row", "folk_create_person",
+    for name in ("email_send", "data_write", "data_delete_row", "folk_record",
                  "whatsapp_chat", "pennylane_invoice",
                  "serper_search", "oto_use_org"):
         assert not is_testable(name), name
