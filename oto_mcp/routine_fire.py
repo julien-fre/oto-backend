@@ -41,6 +41,11 @@ _BETA = "experimental-cc-routine-2026-04-01"
 # donc une lecture courte suffit et un amont muet ne doit pas immobiliser un worker.
 _TIMEOUT = (10, 30)
 
+# Plafond du contexte de run, imposé par l'API. On le vérifie AVANT d'envoyer : au-delà
+# le serveur rend un 400 dont le motif se perd parmi les autres causes de 400, alors
+# qu'ici on peut dire exactement de combien ça dépasse.
+_MAX_TEXT = 65_536
+
 
 class RoutineFireError(RuntimeError):
     """Échec du déclenchement. Le message est SÛR à afficher : jamais le jeton,
@@ -68,7 +73,13 @@ def fire(routine_id: str, token: str, text: Optional[str] = None) -> dict:
 
     body: dict = {}
     if text is not None and str(text).strip():
-        body["text"] = str(text)
+        payload = str(text)
+        if len(payload) > _MAX_TEXT:
+            raise RoutineFireError(
+                f"contexte de run trop long : {len(payload)} caractères pour un "
+                f"plafond de {_MAX_TEXT}. Passe une RÉFÉRENCE que l'agent rechargera "
+                "par oto (un id de ligne, un projet) plutôt que l'enregistrement.")
+        body["text"] = payload
 
     try:
         r = requests.post(
@@ -103,6 +114,15 @@ def fire(routine_id: str, token: str, text: Optional[str] = None) -> dict:
             "plafond de déclenchements atteint sur ce compte claude.ai — les "
             "routines ont un quota quotidien de runs, distinct de l'usage",
             status=429, retryable=True)
+    if r.status_code == 400:
+        # Un 400 recouvre plusieurs causes ; la seule qui soit un ÉTAT et non une
+        # erreur d'appel est la routine en pause — et c'est un geste, pas un bug.
+        # On ne devine pas : on relaie le dire du serveur et on ajoute l'indice
+        # quand il le nomme.
+        detail = _detail(r)
+        hint = (" — la routine est en pause : réactive-la sur claude.ai/code/routines"
+                if "pause" in detail.lower() else "")
+        raise RoutineFireError(f"déclenchement refusé : {detail}{hint}", status=400)
     if r.status_code >= 400:
         raise RoutineFireError(
             f"déclenchement refusé (HTTP {r.status_code}) : {_detail(r)}",

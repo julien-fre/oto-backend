@@ -117,6 +117,45 @@ def test_a_network_failure_is_retryable_and_leaks_nothing(monkeypatch):
     assert "TOPSECRET" not in str(e.value)
 
 
+def test_a_paused_routine_says_so(posted, monkeypatch):
+    """La seule cause de 400 qui soit un ÉTAT et non une erreur d'appel. Sans
+    l'indice, l'utilisateur cherche un bug là où il y a un interrupteur."""
+    monkeypatch.setattr(
+        routine_fire.requests, "post",
+        lambda url, **kw: _Resp(400, {"error": {"message": "This routine is paused."}}))
+    with pytest.raises(routine_fire.RoutineFireError) as e:
+        routine_fire.fire("trig_01ABC", "t")
+    assert "claude.ai/code/routines" in str(e.value)
+    assert e.value.retryable is False
+
+
+def test_another_400_relays_the_server_without_inventing_a_cause(posted, monkeypatch):
+    monkeypatch.setattr(
+        routine_fire.requests, "post",
+        lambda url, **kw: _Resp(400, {"error": {"message": "beta header missing"}}))
+    with pytest.raises(routine_fire.RoutineFireError) as e:
+        routine_fire.fire("trig_01ABC", "t")
+    assert "beta header missing" in str(e.value)
+    assert "pause" not in str(e.value).lower()
+
+
+def test_an_oversized_text_is_refused_before_the_call(monkeypatch):
+    """Le plafond est côté API (65 536) : l'atteindre rend un 400 noyé parmi les
+    autres causes. Le dire ici permet de nommer le dépassement — et de rappeler
+    qu'un contexte de run est une référence, pas un enregistrement."""
+    def _never(*a, **k):
+        raise AssertionError("aucun appel ne doit partir avec un texte hors plafond")
+    monkeypatch.setattr(routine_fire.requests, "post", _never)
+    with pytest.raises(routine_fire.RoutineFireError) as e:
+        routine_fire.fire("trig_01ABC", "t", text="x" * 65_537)
+    assert "65536" in str(e.value).replace(" ", "").replace(" ", "")
+
+
+def test_a_text_at_the_limit_still_goes_through(posted):
+    routine_fire.fire("trig_01ABC", "t", text="x" * 65_536)
+    assert len(posted["json"]["text"]) == 65_536
+
+
 def test_a_missing_credential_field_fails_before_any_call(monkeypatch):
     def _never(*a, **k):
         raise AssertionError("aucun appel ne doit partir sans credential complet")
