@@ -318,6 +318,16 @@ def _init_db_once() -> None:
         if conn.execute("SELECT to_regclass('guides') AS t").fetchone()["t"]:
             from .guides import CONVERT_GUIDES_TO_NODES_SQL
             conn.execute(CONVERT_GUIDES_TO_NODES_SQL)
+        # Outbox sémantique des couches de contexte (#282) : `nodes` ne porte pas de
+        # colonne `embed_dirty` (la forme de la table est mesurée, 0063-D3 garde-fou 1)
+        # → le marqueur est une clé de `props`, et son index est PARTIEL sur elle seule
+        # (l'équivalent d'`idx_guides_embed_dirty`, quelques lignes indexées).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_nodes_embed_dirty ON nodes(id) "
+                     "WHERE (props->>'embed_dirty') = 'true'")
+        # Backfill : ce qui a été converti au lot M1 n'a pas d'embedding sous le
+        # nouveau keying (kind='node', ref=nodes.id) — on le remet dans l'outbox.
+        from .aux_embed import MARK_NODES_TO_EMBED_SQL
+        conn.execute(MARK_NODES_TO_EMBED_SQL)
         # Barreau 2 : readmes d'org + d'équipe (slug réservé claude_md) sortis de
         # `*_instructions` vers `guides` — backfills one-shot RETIRÉS (cadrage 10/07,
         # chantier procédures B1) : ils ont tourné en prod à chaque boot depuis le

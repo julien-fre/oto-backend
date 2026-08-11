@@ -931,11 +931,15 @@ CREATE TABLE IF NOT EXISTS platform_instructions (
 -- vivent désormais dans `nodes` (voir juste dessous), plus rien ici ne s'écrit par
 -- la façade `db/guides.py`. Elle reste en place — la PROD tourne encore l'ancien
 -- code sur CETTE MÊME base, et la conversion la recopie à chaque boot pour
--- rattraper ce qu'elle y écrit. Deux lecteurs directs subsistent, hors façade :
--- la recherche (`db/search.py`, index GIN d'expression) et l'outbox d'embeddings
--- (`db/aux_embed.py`) — leur bascule appartient au lot M5 (unification des index
--- de recherche), et jusque-là un guide écrit APRÈS M1 n'entre pas dans ces deux
--- index. C'est le seul écart de comportement du lot, et il est nommé.
+-- rattraper ce qu'elle y écrit. Les deux lecteurs qui vivaient hors façade — la
+-- recherche (`db/search.py`) et l'outbox d'embeddings (`db/aux_embed.py`) — sont
+-- passés sur `nodes` (#282) : un guide écrit depuis M1 était sorti de `oto_search`
+-- sans que rien ne le dise.
+-- ⚠️ **Rien ici ne se DROPPE tant que la prod n'a pas été taguée** : ni la table,
+-- ni ses colonnes, ni ses index de recherche `idx_guides_fts`/`idx_guides_trgm`
+-- (posés par `search.index_ddl`), ni les lignes `aux_embeddings(kind='guide')`.
+-- L'ancien code s'en sert en production : les retirer aujourd'hui y casserait la
+-- recherche instantanément. C'est le lot d'après (docs/live-migrations.md).
 CREATE TABLE IF NOT EXISTS guides (
     id BIGSERIAL PRIMARY KEY,
     scope TEXT NOT NULL,                         -- 'platform' | 'org' | 'group' | 'user'
@@ -1016,10 +1020,18 @@ CREATE TABLE IF NOT EXISTS nodes (
 -- DEUX index de requête, pas plus (0063-D3 garde-fou 2, confirmé par le banc : le
 -- coût du volume se joue là, bien plus que dans la largeur de la ligne) — l'arbre
 -- et le propriétaire. Les deux index partiels de M-f (ownership d'une ligne,
--- prédicat du bail) attendent M4, et il n'y a AUCUN index de recherche ici : sur
--- un vivier ils pèsent 99 % du temps d'écriture, leur sort se décide en M5.
+-- prédicat du bail) attendent M4.
 -- Table et index naissent ensemble ⟹ leur place est ici et pas dans `_init`
 -- (cf. le piège « CREATE INDEX d'une NOUVELLE colonne », docs/live-migrations.md).
+--
+-- ⚠️ Les index de RECHERCHE (GIN d'expression, FTS + trigramme) ne sont pas ici :
+-- leur expression DOIT être la même objet que celle de la clause WHERE, donc ils
+-- sont construits par `db/search.index_ddl()` (source unique index ↔ requête) et
+-- posés par `_init`. Ils portent aujourd'hui sur `nodes` ENTIÈRE, sans prédicat
+-- partiel : la table porte des dizaines de lignes. C'est quand les LIGNES de
+-- tableau y entreront (M4) que le prédicat partiel achètera quelque chose — sur un
+-- vivier, ces GIN pèsent 99 % du temps d'écriture (banc M0). Le décider avant
+-- serait le calibrer sur une population qui n'existe pas.
 CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_owner ON nodes(owner_type, owner_id);
 

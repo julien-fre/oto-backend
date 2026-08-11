@@ -84,6 +84,11 @@ _COLS = ("id, owner_type AS scope, owner_id, props->>'slug' AS slug, "
 # une écriture prod de la fenêtre est rattrapée au boot suivant. Rejouable par
 # construction : sans écriture entre deux passes, la garde `>` rend la seconde
 # passe intégralement no-op.
+#
+# `embed_dirty` est posé à TRUE sans regarder `g.embed_dirty` (#282) : le drapeau
+# legacy dit « embeddé sous `aux_embeddings(kind='guide', ref=guides.id)` », ce qui
+# ne renseigne en rien le nouveau keying (`kind='node'`, `ref=nodes.id`). Une ligne
+# rattrapée de la prod a par ailleurs changé — donc à ré-indexer.
 CONVERT_GUIDES_TO_NODES_SQL = f"""
     INSERT INTO nodes (public_id, kind, owner_type, owner_id, props,
                        created_at, updated_at)
@@ -92,7 +97,8 @@ CONVERT_GUIDES_TO_NODES_SQL = f"""
            jsonb_build_object('slug', g.slug, 'delivery', g.delivery,
                               'title', COALESCE(g.title, ''),
                               'description', COALESCE(g.description, ''),
-                              'body_md', COALESCE(g.body_md, '')),
+                              'body_md', COALESCE(g.body_md, ''),
+                              'embed_dirty', TRUE),
            g.created_at, g.updated_at
       FROM guides g
     ON CONFLICT ON CONSTRAINT nodes_public_id_key DO UPDATE SET
@@ -137,19 +143,20 @@ def set_guide_db(scope: str, owner_id: str, slug: str, body_md: str,
     """Crée ou met à jour (upsert par `(scope, owner_id, slug)`) un guide ON-DEMAND.
 
     La mise à jour ne touche QUE la prose — `delivery` n'est posé qu'à l'insertion,
-    exactement comme la table `guides` ne le mettait pas à jour. (Le drapeau
-    `embed_dirty` n'a pas suivi : l'outbox d'embeddings lit encore `guides`, gelée,
-    et sa bascule appartient au lot M5 — cf. le commentaire de `_schema`.)"""
+    exactement comme la table `guides` ne le mettait pas à jour. `embed_dirty` suit
+    la prose (#282) : écrire une couche la remet dans l'outbox sémantique, comme
+    `guides` le faisait par sa colonne."""
     with _connect() as conn:
         row = conn.execute(
             f"INSERT INTO nodes (public_id, kind, owner_type, owner_id, props) "
             f"VALUES ({_PID}, '{_KIND}', %s, %s, "
             "        jsonb_build_object('slug', %s::text, 'delivery', 'on-demand', "
             "                           'title', %s::text, 'description', %s::text, "
-            "                           'body_md', %s::text)) "
+            "                           'body_md', %s::text, 'embed_dirty', TRUE)) "
             "ON CONFLICT ON CONSTRAINT nodes_public_id_key DO UPDATE SET "
             "  props = nodes.props || jsonb_build_object("
-            "      'title', %s::text, 'description', %s::text, 'body_md', %s::text), "
+            "      'title', %s::text, 'description', %s::text, 'body_md', %s::text, "
+            "      'embed_dirty', TRUE), "
             "  updated_at = NOW() "
             f"RETURNING {_COLS}",
             (scope, str(owner_id), slug,                       # public_id dérivé
@@ -171,7 +178,7 @@ def seed_guide_db(scope: str, owner_id: str, slug: str, body_md: str,
             f"VALUES ({_PID}, '{_KIND}', %s, %s, "
             "        jsonb_build_object('slug', %s::text, 'delivery', 'on-demand', "
             "                           'title', %s::text, 'description', %s::text, "
-            "                           'body_md', %s::text)) "
+            "                           'body_md', %s::text, 'embed_dirty', TRUE)) "
             "ON CONFLICT ON CONSTRAINT nodes_public_id_key DO NOTHING",
             (scope, str(owner_id), slug, scope, str(owner_id),
              slug, title, description, body_md),

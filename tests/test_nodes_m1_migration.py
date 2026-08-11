@@ -55,21 +55,21 @@ def test_owner_id_is_text_because_a_user_owner_is_a_sub():
     assert re.search(r"^\s{4}owner_id TEXT NOT NULL", _nodes_block(), re.M)
 
 
-def test_exactly_two_query_indexes_and_no_search_index():
+def test_exactly_two_query_indexes_in_the_schema():
     """L'arbre et le propriétaire (0063-D3 garde-fou 2). Les deux index partiels de
-    M-f (ownership d'une ligne, prédicat du bail) appartiennent à M4 ; un index de
-    recherche appartient à M5 — l'ajouter ici le ferait porter, sans mesure, par le
-    lot qui convertira le million de lignes."""
+    M-f (ownership d'une ligne, prédicat du bail) appartiennent à M4.
+
+    Les index de RECHERCHE, eux, ont quitté l'interdit en fermant #282 — mais ils ne
+    sont pas ici : leur expression est construite par `db/search.py` (source unique
+    index ↔ requête), cf. le test suivant."""
     idx = re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+) ON nodes\(([^)]*)\)",
                      _SCHEMA_SRC)
     assert idx == [("idx_nodes_parent", "parent_id"),
                    ("idx_nodes_owner", "owner_type, owner_id")], idx
-    for src, name in ((_SCHEMA_SRC, "_schema.py"), (_INIT_SRC, "_init.py"),
-                      ((_DB / "search.py").read_text(encoding="utf-8"), "search.py")):
-        assert not re.search(r"ON nodes\s+USING", src, re.I), (
-            f"un index d'accès parallèle est posé sur `nodes` dans {name} — sur un "
-            "vivier, les GIN de recherche pèsent 99 % du temps d'écriture (banc M0). "
-            "Leur sort se décide en M5, pas ici.")
+    assert not re.search(r"ON nodes\s+USING", _SCHEMA_SRC, re.I), (
+        "un index GIN d'expression posé à la main dans _schema.py : son expression "
+        "diverge alors de celle de la requête (elles ne peuvent plus venir du même "
+        "helper), et le planner cesse de l'utiliser sans que rien ne le dise.")
 
 
 def test_public_id_uniqueness_is_named():
@@ -156,9 +156,13 @@ def test_nothing_else_touches_nodes_yet():
     """M1 livre la table et les guides convertis, rien d'autre. Ce garde-fou
     n'interdit rien pour toujours — il force à ce que le premier autre lecteur de
     `nodes` (les pages en M2, les tableaux en M3) soit un acte délibéré, avec sa
-    revue, plutôt qu'un effet de bord."""
+    revue, plutôt qu'un effet de bord.
+
+    Deux lecteurs s'y sont ajoutés délibérément en fermant #282 : la recherche et
+    l'outbox d'embeddings, les deux seuls consommateurs de guides qui vivaient hors
+    façade et étaient restés sur la table gelée."""
     allowed = {"oto_mcp/db/guides.py", "oto_mcp/db/_schema.py", "oto_mcp/db/_init.py",
-               "oto_mcp/db/users.py"}
+               "oto_mcp/db/users.py", "oto_mcp/db/search.py", "oto_mcp/db/aux_embed.py"}
     offenders = []
     for path in (_ROOT / "oto_mcp").rglob("*.py"):
         rel = str(path.relative_to(_ROOT))

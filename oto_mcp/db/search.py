@@ -26,6 +26,14 @@ DOCS_TEXT = "coalesce(title,'') || ' ' || coalesce(body_md,'')"
 PROJECTS_TEXT = "coalesce(name,'') || ' ' || coalesce(brief_md,'')"
 INSTR_TEXT = "coalesce(title,'') || ' ' || coalesce(description,'') || ' ' || coalesce(body_md,'')"
 GUIDES_TEXT = "coalesce(title,'') || ' ' || coalesce(description,'') || ' ' || coalesce(body_md,'')"
+# Couches de contexte (surface `oto_guide`) — des NŒUDS depuis le lot M1 (blueprint
+# ADR 0054/0063) : `nodes`, la prose dans `props`. MÊME texte indexé qu'au temps de
+# la table `guides` (titre + chapô + corps), à la lecture JSONB près — le
+# comportement de recherche est identique, seule la table lue change (#282).
+# `->>` sur jsonb (`jsonb_object_field_text`) est IMMUTABLE → indexable en
+# expression, comme `data::text` juste dessous.
+NODES_TEXT = ("coalesce(props->>'title','') || ' ' || coalesce(props->>'description','') "
+              "|| ' ' || coalesce(props->>'body_md','')")
 # Lignes de datastore (#67 V2.1) : le JSONB entier rendu en texte. `data::text` est
 # IMMUTABLE (jsonb_out) → indexable en expression, comme les autres sources ; même
 # config `french` + repli d'accents. Grain grossier assumé (matche clés + valeurs),
@@ -56,8 +64,20 @@ def index_ddl() -> list[str]:
         f"CREATE INDEX IF NOT EXISTS idx_docs_fts ON docs USING GIN ({_vec(DOCS_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_projects_fts ON projects USING GIN ({_vec(PROJECTS_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_org_instructions_fts ON org_instructions USING GIN ({_vec(INSTR_TEXT)})",
+        # ⚠️ Les deux index `idx_guides_*` ne servent plus AUCUNE requête d'ici (la
+        # recherche lit `nodes` depuis #282) — ils restent posés parce que la PROD
+        # tourne encore l'ancien code sur CETTE MÊME base et s'en sert. Leur DROP
+        # (et celui de la table) appartient au lot qui suivra le tag prod, pas ici :
+        # les retirer maintenant casserait la recherche de guides en production
+        # instantanément (docs/live-migrations.md, « la danse en N lots »).
         f"CREATE INDEX IF NOT EXISTS idx_guides_fts ON guides USING GIN ({_vec(GUIDES_TEXT)}) "
         "WHERE delivery = 'on-demand'",
+        # Couches de contexte converties en NŒUDS (#282). Index sur `nodes` ENTIÈRE,
+        # sans prédicat partiel : la table porte des dizaines de lignes (seule la
+        # façade des guides y écrit), et le prédicat se décidera quand les lignes de
+        # tableau y entreront — le calibrer sur une population qui n'existe pas est
+        # exactement l'erreur qui a produit cette régression.
+        f"CREATE INDEX IF NOT EXISTS idx_nodes_fts ON nodes USING GIN ({_vec(NODES_TEXT)})",
         # Lignes de datastore (#67 V2.1) — rend les rows trouvables via oto_search.
         f"CREATE INDEX IF NOT EXISTS idx_datastore_rows_fts ON datastore_rows USING GIN ({_vec(DATASTORE_ROWS_TEXT)})",
         # Index TRIGRAMME (#67) : substring indexé (« syl »→« Sylvie », fragments/préfixes)
@@ -65,8 +85,10 @@ def index_ddl() -> list[str]:
         f"CREATE INDEX IF NOT EXISTS idx_docs_trgm ON docs USING GIN ({_trgm(DOCS_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_projects_trgm ON projects USING GIN ({_trgm(PROJECTS_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_org_instructions_trgm ON org_instructions USING GIN ({_trgm(INSTR_TEXT)})",
+        # Idem : gardé pour la PROD (cf. le commentaire du FTS ci-dessus), plus lu ici.
         f"CREATE INDEX IF NOT EXISTS idx_guides_trgm ON guides USING GIN ({_trgm(GUIDES_TEXT)}) "
         "WHERE delivery = 'on-demand'",
+        f"CREATE INDEX IF NOT EXISTS idx_nodes_trgm ON nodes USING GIN ({_trgm(NODES_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_datastore_rows_trgm ON datastore_rows USING GIN ({_trgm(DATASTORE_ROWS_TEXT)})",
     ]
 
@@ -155,13 +177,20 @@ def search_procedures_fts(q: str, org_id: int, *, limit: int = 20) -> list[dict]
 
 def search_guides_fts(q: str, org_id: Optional[int], sub: str, *, limit: int = 20) -> list[dict]:
     """Guides ON-DEMAND lisibles par l'acteur : plateforme (tous) + org active + user.
-    Scope 'group' exclu V1 (même écart nommé que les procédures d'équipe)."""
+    Scope 'group' exclu V1 (même écart nommé que les procédures d'équipe).
+
+    Lit `nodes` depuis #282 (les couches de contexte y ont été converties au lot M1).
+    Le `scope` de la surface EST l'`owner_type` du nœud et la livraison une clé de
+    `props` — même vocabulaire, même prédicat, mêmes clés de retour qu'au temps de la
+    table `guides` : rien ne change pour l'appelant."""
     return _prose_query(
-        "guides", GUIDES_TEXT,
-        "scope, owner_id, slug, title, description, updated_at",
-        "coalesce(body_md,'')",
-        "delivery = 'on-demand' AND (scope = 'platform' "
-        "OR (scope = 'org' AND owner_id = %s) OR (scope = 'user' AND owner_id = %s))",
+        "nodes", NODES_TEXT,
+        "owner_type AS scope, owner_id, props->>'slug' AS slug, "
+        "coalesce(props->>'title','') AS title, "
+        "coalesce(props->>'description','') AS description, updated_at",
+        "coalesce(props->>'body_md','')",
+        "props->>'delivery' = 'on-demand' AND (owner_type = 'platform' "
+        "OR (owner_type = 'org' AND owner_id = %s) OR (owner_type = 'user' AND owner_id = %s))",
         (str(org_id or ""), sub), q, limit)
 
 
