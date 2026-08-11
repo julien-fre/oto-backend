@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, Field
 
 from .. import connector_flow
 from ._authz import ORG_MEMBER
@@ -39,22 +39,21 @@ class ConnectorConnectStarted(BaseModel):
     humaine, pas un appel d'API. Elle est à usage unique et porte un `state` à durée
     de vie courte — la stocker pour plus tard donne un lien mort.
 
-    ⚠️ **Le reste de la réponse dépend du connecteur.** Chaque flux est déclaré par
-    son propre module et échoue à l'accord sur ce qu'il ÉCHOTE : Zoho renvoie
-    `connector`, Salesforce renvoie `scope`. Seul `auth_url` est commun à tous —
-    ne dépendre de rien d'autre, et lire les champs additionnels sans les exiger.
+    **La forme ne dépend PAS du connecteur** — c'est la raison d'être de ce chemin
+    unique. `auth_url` est commun à tous les flux ; ce qu'un connecteur veut échoter
+    en plus vit sous `details`, à lui, et n'est jamais nécessaire pour agir (Zoho y
+    met `connector`, Salesforce le `scope` retenu). Un client qui lit `details`
+    accepte de savoir quel connecteur il branche : le seam ne le lui demande pas.
     (Le refus de connecteur, lui, n'arrive jamais ici : un connecteur sans flux
     déclaré répond 400 `no_connection_flow`, un connecteur réservé par l'org 403
     `connector_restricted`.)"""
-    model_config = ConfigDict(extra="allow")
 
     auth_url: str
-    # Zoho seulement : écho du connecteur demandé (`zoho`|`zohodesk`|`zohoanalytics`).
-    connector: Optional[str] = None
-    # Salesforce seulement : le palier pour lequel le consentement est demandé
-    # (`member` par défaut, `org`, `group`) — il détermine où le refresh token
-    # atterrira au retour, pas qui a le droit de cliquer.
-    scope: Optional[str] = None
+    details: dict = Field(
+        default_factory=dict,
+        description="Écho propre au connecteur — jamais requis pour ouvrir "
+                    "`auth_url`. Son contenu appartient au module du connecteur et "
+                    "peut changer sans que ce contrat bouge.")
 
 
 def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
@@ -74,7 +73,7 @@ def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
         access.require_connector_access(inp.name, ctx.sub)
     except McpError as e:
         raise AuthzDenied(403, "connector_restricted", e.error.message)
-    return connector_flow.start(inp.name, ctx, inp.params or {})
+    return connector_flow.start(inp.name, ctx, inp.params or {}).as_dict()
 
 
 CAPABILITIES += [

@@ -18,7 +18,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import access, zoho_oauth
+from .. import access, connector_flow, zoho_oauth
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -53,7 +53,7 @@ def _modes(ctx: ResolvedCtx, inp: ZohoConnectInput) -> dict:
     }
 
 
-def start_for(ctx: ResolvedCtx, connector: str, data_center: str) -> dict:
+def start_for(ctx: ResolvedCtx, connector: str, data_center: str) -> connector_flow.FlowStart:
     """URL de consentement à ouvrir. L'app (client_id/secret) vient du COFFRE — jamais
     d'une variable d'env : l'org qui apporte la sienne l'emporte, sinon on prend l'app
     d'ÉDITEUR de la région (`credentials_store` §app d'éditeur), qui donne le « un
@@ -69,12 +69,14 @@ def start_for(ctx: ResolvedCtx, connector: str, data_center: str) -> dict:
             app=zoho_oauth.app_fields(connector, ctx.sub, dc))
     except zoho_oauth.ZohoOAuthError as e:
         raise AuthzDenied(400, "zoho_oauth_unavailable", str(e))
-    return {"auth_url": url, "connector": connector}
+    # L'écho du connecteur est SPÉCIFIQUE à Zoho (trois connecteurs partagent ce flux) :
+    # il descend dans `details`, le premier niveau restant commun à tous les flux.
+    return connector_flow.FlowStart(auth_url=url, details={"connector": connector})
 
 
 def _start(ctx: ResolvedCtx, inp: ZohoConnectInput) -> dict:
     _guard(inp)
-    return start_for(ctx, inp.connector, inp.data_center or "")
+    return start_for(ctx, inp.connector, inp.data_center or "").as_dict()
 
 
 def _dispatch(ctx: ResolvedCtx, inp: ZohoConnectInput) -> dict:

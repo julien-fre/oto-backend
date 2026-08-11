@@ -21,7 +21,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import salesforce_oauth
+from .. import connector_flow, salesforce_oauth
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
@@ -35,7 +35,8 @@ class SalesforceConnectInput(BaseModel):
     scope: Optional[Literal["member", "org", "group"]] = "member"
 
 
-def start_for(ctx: ResolvedCtx, scope: str, return_app: Optional[str] = None) -> dict:
+def start_for(ctx: ResolvedCtx, scope: str,
+              return_app: Optional[str] = None) -> connector_flow.FlowStart:
     """URL de consentement à ouvrir, pour le niveau demandé. Partagé avec le flux
     générique (`connector_flow`, déclaré dans tools/salesforce.py) : une seule façon
     de démarrer, deux surfaces.
@@ -60,11 +61,14 @@ def start_for(ctx: ResolvedCtx, scope: str, return_app: Optional[str] = None) ->
         raise AuthzDenied(400, "missing_credentials", str(e))
     except RuntimeError as e:
         raise AuthzDenied(400, "oauth_misconfigured", str(e))
-    return {"auth_url": auth_url, "scope": scope or "member"}
+    # Le palier RETENU est spécifique à Salesforce (les autres flux n'en ont pas) : il
+    # descend dans `details`. Il porte une information — c'est le scope effectif, défaut
+    # résolu — mais aucun client générique n'a à le connaître pour ouvrir l'URL.
+    return connector_flow.FlowStart(auth_url=auth_url, details={"scope": scope or "member"})
 
 
 def _start(ctx: ResolvedCtx, inp: SalesforceConnectInput) -> dict:
-    return start_for(ctx, inp.scope or "member")
+    return start_for(ctx, inp.scope or "member").as_dict()
 
 
 CAPABILITIES += [

@@ -113,6 +113,60 @@ def test_la_capacite_generique_est_montee_sur_un_chemin_fixe():
         assert n not in cap.rest.path
 
 
+# --- la SORTIE du seam est commune, comme son entrée ---------------------------
+
+def _both_flows(monkeypatch) -> dict[str, dict]:
+    """Démarre RÉELLEMENT les deux flux déclarés (seuls les appels sortants sont
+    neutralisés) et rend ce que chacun sert à l'appelant."""
+    from types import SimpleNamespace
+
+    from oto_mcp import access, salesforce_oauth, zoho_oauth
+    monkeypatch.setattr(zoho_oauth, "app_fields", lambda *a, **k: {})
+    monkeypatch.setattr(zoho_oauth, "build_auth_url",
+                        lambda *a, **k: "https://accounts.zoho.eu/oauth/v2/auth?x=1")
+    monkeypatch.setattr(salesforce_oauth, "build_auth_url",
+                        lambda *a, **k: "https://login.salesforce.com/services/oauth2/authorize?x=1")
+    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
+    ctx = SimpleNamespace(sub="u-1", org_id=1)
+    return {n: connector_flow.start(n, ctx, {"data_center": "eu"}).as_dict()
+            for n in ("zoho", "salesforce")}
+
+
+def test_les_deux_flux_rendent_la_meme_forme(monkeypatch):
+    """L'écart que ce contrat ferme : `me.connector_connect` existe pour qu'un front
+    branche un connecteur SANS savoir lequel, et sa sortie ne le permettait pas —
+    Zoho échotait `{auth_url, connector}`, Salesforce `{auth_url, scope}`. Le
+    premier niveau est désormais commun ; le propre du connecteur est sous `details`."""
+    shapes = _both_flows(monkeypatch)
+    assert set(shapes["zoho"]) == set(shapes["salesforce"]) == {"auth_url", "details"}
+    assert shapes["zoho"]["details"] == {"connector": "zoho"}
+    assert shapes["salesforce"]["details"] == {"scope": "member"}
+
+
+def test_le_contrat_publie_decrit_les_deux_flux_sans_champ_libre(monkeypatch):
+    """Le modèle de réponse était ouvert (`extra="allow"`) avec deux champs
+    optionnels : il DOCUMENTAIT l'incohérence au lieu de la fermer. Il doit
+    maintenant décrire exactement ce que les deux flux servent."""
+    from oto_mcp.capabilities.connectors_connect import ConnectorConnectStarted
+
+    assert ConnectorConnectStarted.model_config.get("extra") != "allow"
+    attendus = set(ConnectorConnectStarted.model_fields)
+    for name, payload in _both_flows(monkeypatch).items():
+        assert set(payload) == attendus, f"{name} sert autre chose que le contrat publié"
+        ConnectorConnectStarted.model_validate(payload)
+
+
+def test_un_flux_qui_invente_sa_forme_est_refuse():
+    """La garantie n'était qu'un commentaire de type — un troisième flux aurait donc
+    inventé sa clé sans que rien ne proteste. Elle est vérifiée au point de passage."""
+    connector_flow.declare("_probe_forme", start=lambda ctx, values: {"auth_url": "https://x"})
+    try:
+        with pytest.raises(TypeError, match="details"):
+            connector_flow.start("_probe_forme", None, {})
+    finally:
+        connector_flow._FLOWS.pop("_probe_forme", None)
+
+
 # --- l'URL de retour : dérivée, et du bon côté ---------------------------------
 
 def test_lurl_de_retour_est_derivee_de_lenvironnement(monkeypatch):

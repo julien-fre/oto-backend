@@ -53,9 +53,36 @@ class FlowParam:
 
 
 @dataclass(frozen=True)
+class FlowStart:
+    """Ce que rend un flux — la MÊME forme pour tous, quel que soit le connecteur.
+
+    `me.connector_connect` est le seam qui permet au front de brancher un connecteur
+    sans savoir lequel. Sa sortie ne l'a pas suivi : Zoho échotait `{auth_url,
+    connector}`, Salesforce `{auth_url, scope}`, et la garantie commune n'était qu'un
+    commentaire de type (`-> {"auth_url": …}`) que rien ne faisait respecter — un
+    troisième flux aurait inventé sa troisième clé. Le contrat publié a dû être
+    déclaré ouvert avec deux champs optionnels : il documentait l'incohérence.
+
+    **Le premier niveau est FERMÉ, et c'est le seul que l'appelant peut écrire** :
+    `auth_url` à ouvrir dans un navigateur, rien d'autre. Ce qu'un connecteur veut
+    échoter en plus descend dans `details`, un champ NOMMÉ dont le contenu est sa
+    propriété — même règle qu'en entrée (la spécificité d'un connecteur vit dans son
+    module) et même choix que `ResolvedCredential.config`. Figer l'union des clés
+    aurait fait grossir le contrat commun à chaque flux ajouté ; ici il ne bouge plus.
+
+    `details` n'est JAMAIS requis pour agir : un client qui le lit accepte de
+    connaître le connecteur qu'il branche, ce que le seam ne lui demande pas."""
+    auth_url: str
+    details: dict = field(default_factory=dict)
+
+    def as_dict(self) -> dict:
+        return {"auth_url": self.auth_url, "details": dict(self.details)}
+
+
+@dataclass(frozen=True)
 class Flow:
     connector: str
-    start: Callable[..., dict]       # (ctx, values) -> {"auth_url": …}
+    start: Callable[..., FlowStart]  # (ctx, values) -> FlowStart
     params: tuple[FlowParam, ...] = field(default_factory=tuple)
     label: str = "Connecter"
     # Chemin du retour de consentement. L'URL COMPLÈTE en est dérivée à la lecture
@@ -73,7 +100,7 @@ class Flow:
 _FLOWS: dict[str, Flow] = {}
 
 
-def declare(connector: str, *, start: Callable[..., dict],
+def declare(connector: str, *, start: Callable[..., FlowStart],
             params: tuple[FlowParam, ...] = (), label: str = "Connecter",
             callback_path: str = "",
             app_ready: Optional[Callable[[str], bool]] = None) -> None:
@@ -110,10 +137,21 @@ def describe(connector: str) -> Optional[dict]:
     return {"label": f.label, "params": [p.describe() for p in f.params]}
 
 
-def start(connector: str, ctx, values: dict) -> dict:
-    """Démarre le flux déclaré. Lève `KeyError` si le connecteur n'en a pas — l'appelant
-    (la capacité générique) le traduit en refus actionnable."""
-    return _FLOWS[connector].start(ctx, values or {})
+def start(connector: str, ctx, values: dict) -> FlowStart:
+    """Démarre le flux déclaré et rend la forme commune.
+
+    Le type de retour est vérifié ICI, à l'unique point de passage : une annotation
+    Python ne s'applique pas toute seule, et c'est précisément parce que la garantie
+    ne vivait qu'en commentaire que deux flux ont pu diverger sans que rien ne
+    proteste. Un flux qui rend autre chose casse au premier appel, pas au premier
+    front qui s'y fie."""
+    out = _FLOWS[connector].start(ctx, values or {})
+    if not isinstance(out, FlowStart):
+        raise TypeError(
+            f"le flux « {connector} » doit rendre un FlowStart (reçu {type(out).__name__}) : "
+            "la forme rendue à l'appelant est commune à tous les connecteurs, ce qui "
+            "t'est propre va dans `details`.")
+    return out
 
 
 def callback_url(connector: str) -> Optional[str]:
