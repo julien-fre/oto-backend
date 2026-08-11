@@ -35,13 +35,15 @@ def _need(val, code: str, msg: str):
 class OrgAdminInput(BaseModel):
     op: Literal["create", "archive", "list", "get"]
     name: Optional[str] = None        # create
+    admin: Optional[str] = None       # create : responsable (email|sub|"me"), défaut = toi
     org_id: Optional[int] = None      # archive / get
 
 
 def _org(ctx: ResolvedCtx, inp: OrgAdminInput) -> dict:
     if inp.op == "create":
         return orgs_admin._create_org(ctx, orgs_admin.CreateOrgInput(
-            name=_need(inp.name, "missing_name", "`name` requis pour create.")))
+            name=_need(inp.name, "missing_name", "`name` requis pour create."),
+            admin=inp.admin))
     if inp.op == "list":
         return orgs_reads._list_all_orgs(ctx, orgs_reads.NoInput())
     oid = _need(inp.org_id, "missing_org", f"`org_id` requis pour {inp.op}.")
@@ -216,8 +218,9 @@ CAPABILITIES += [
         key="admin.org", handler=_org, Input=OrgAdminInput,
         authz=ADMIN_BY_OP({"create": SUPER_ADMIN, "archive": SUPER_ADMIN,
                            "list": PLATFORM_ADMIN, "get": PLATFORM_ADMIN}),
-        description=("Manage organizations. op=create (`name`, super admin) / archive "
-                     "(`org_id`, super admin) / list (all orgs, platform admin) / get "
+        description=("Manage organizations. op=create (`name` + `admin` = email|sub of "
+                     "the person who will run it, or \"me\"/omitted for yourself; super "
+                     "admin) / archive (`org_id`, super admin) / list (all orgs, platform admin) / get "
                      "(`org_id` → full fiche: members, secrets, entitlements, grants; platform admin)."),
         mcp="oto_admin_org",
     ),
