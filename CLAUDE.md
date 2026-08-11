@@ -809,10 +809,22 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 .venv/bin/python -m pytest -q
 
-# Tester un CLONE scratchpad (livraison par PR, tree /data/oto stale) SANS réinstaller les
-# deps : réutiliser le venv local (deps+pytest présents) en forçant PYTHONPATH sur le clone
-# → `oto_mcp` résolu depuis le clone (PYTHONPATH prime sur l'editable install) = ton code :
-#   PYTHONPATH=<clone> OTO_CONFIG_DISABLE_SOPS=1 /data/oto/backend/.venv/bin/python -m pytest -q <clone>/tests/...
+# Tester un CLONE (clone scratchpad, ou `git archive <commit>` pour isoler un commit du WIP
+# voisin du tree partagé) SANS réinstaller les deps : réutiliser le venv local (deps+pytest
+# présents) en résolvant `oto_mcp` depuis le clone.
+#   cd <clone> && PYTHONPATH=<clone> OTO_CONFIG_DISABLE_SOPS=1 \
+#     /data/oto/backend/.venv/bin/python -m pytest -q tests/...
+#
+# ⚠️ **Le `cd <clone>` n'est PAS cosmétique : c'est LUI qui fait marcher la recette.**
+# `PYTHONPATH` seul NE PRIME PAS sur l'editable install — son finder vit dans `sys.meta_path`,
+# consulté AVANT `sys.path`. Lancé depuis `/data/oto/backend`, le même PYTHONPATH importe
+# donc `/data/oto/backend/oto_mcp` : on croit tester le clone, on teste le tree partagé.
+# Le mode d'échec est un **faux négatif silencieux** — vécu 11/08, un agent a conclu « le
+# code d'avant passe déjà mes 16 tests » en testant en réalité son propre correctif, ce qui
+# invalide la seule chose que le clone servait à prouver.
+# **Valider l'instrument avant d'en tirer une conclusion**, une ligne suffit :
+#   cd <clone> && PYTHONPATH=<clone> /data/oto/backend/.venv/bin/python -c \
+#     "import oto_mcp.db.search as m; print(m.__file__)"   # doit pointer DANS le clone
 # Convention : tester la LOGIQUE PURE (helpers hors DB, ex. `effective_for_group`,
 # `_connector_blocked`/seams) + les gardes de capacité par stub ; le chemin SQL est vérifié
 # au déploiement (le job `test` du CI tourne le vrai suite avec toutes les deps).
