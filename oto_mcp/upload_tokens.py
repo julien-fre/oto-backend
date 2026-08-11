@@ -239,13 +239,17 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
     if kind == "datastore":
         from . import datastore as ds  # lazy : évite tout cycle d'import au boot
         rows = _parse_rows(data, target.get("format") or "ndjson")
+        store = ds.make_store(sub)
         try:
-            out = ds.make_store(sub)._write_rows_to_ns(
+            out = store._write_rows_to_ns(
                 int(target["ns_id"]), rows, key=target.get("key"))
         except ValueError as e:
             raise UploadError(400, "bad_row", str(e))
+        # Le chemin de bulk load est celui où le silence coûte le plus cher (#294) :
+        # un format renommé + un lot de 500 lignes, et tout atterrit hors schéma.
         return {"ok": True, "kind": "datastore", "namespace": target.get("namespace"),
                 "inserted": out["inserted"], "updated": out["updated"],
-                "count": out["count"], "bytes": len(data)}
+                "count": out["count"], "bytes": len(data),
+                **store.off_schema_report()}
 
     raise UploadError(400, "unknown_target", f"Cible inconnue : {kind!r}.")

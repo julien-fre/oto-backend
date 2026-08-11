@@ -334,8 +334,9 @@ def make_routes(
             return json_error(request, 400, "invalid_body")
         namespace = request.path_params["namespace"]
         trace: dict = {}
+        store = make_store(sub)
         try:
-            created = make_store(sub).append_row(namespace, body, trace=trace)
+            created = store.append_row(namespace, body, trace=trace)
         except NamespaceNotFound:
             return _ns_not_found(request, sub, namespace)
         except NamespaceReadOnly:
@@ -348,7 +349,9 @@ def make_routes(
         datastore_journal.record(
             datastore_journal.TOOL_WRITE, sub=sub, ctx=ctx, row_id=created.get("_id"),
             fields=list(body.keys()), to_status=datastore_journal.status_of(created, ctx))
-        return json_response(request, created, status=201)
+        # Même relevé « hors schéma » que la face MCP (#294) — une écriture par le
+        # dashboard suit le format, mais les deux faces ne doivent pas diverger.
+        return json_response(request, {**created, **store.off_schema_report()}, status=201)
 
     async def ds_list_rows(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
@@ -529,8 +532,9 @@ def make_routes(
         # avec un write concurrent → le cockpit proposerait d'annuler vers un état
         # que la ligne n'a jamais eu. Bonus : 0 requête ajoutée au geste.
         trace: dict = {}
+        store = make_store(sub)
         try:
-            updated = make_store(sub).update_row(namespace, row_id, body, trace=trace)
+            updated = store.update_row(namespace, row_id, body, trace=trace)
         except NamespaceNotFound:
             return _ns_not_found(request, sub, namespace)
         except NamespaceReadOnly:
@@ -547,7 +551,7 @@ def make_routes(
             datastore_journal.TOOL_WRITE, sub=sub, ctx=ctx, row_id=row_id,
             fields=list(body.keys()), from_status=trace.get("prev_status"),
             to_status=datastore_journal.status_of(updated, ctx))
-        return json_response(request, updated)
+        return json_response(request, {**updated, **store.off_schema_report()})
 
     async def ds_delete_row(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)

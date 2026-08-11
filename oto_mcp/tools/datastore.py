@@ -354,6 +354,13 @@ def register(mcp: FastMCP) -> None:
         declare a persistent `key`. For LARGE batches, prefer `oto_upload_url` to push
         the data out-of-band (never through your context).
 
+        On a namespace with a STRICT schema, any key you write that the schema does
+        NOT declare comes back in `hors_schema` (with `hors_schema_hint`): the write
+        IS accepted and the value persists, but it lands in a free column that the
+        interface and everything schema-driven ignore. CHECK that field after a
+        write — it is how you catch a renamed field you kept writing under its old
+        name. Absent = everything you wrote is in the declared format.
+
         ⚠️ The namespace must EXIST first (create it with `data_create_namespace`);
         writing to an unknown namespace raises "namespace inconnu" — it is NOT
         auto-created. New JSON KEYS within an existing namespace, however, do
@@ -389,6 +396,9 @@ def register(mcp: FastMCP) -> None:
                     raise McpError(ErrorData(code=INVALID_PARAMS, message="row doit être un dict"))
                 out = store.append_row(namespace, row) if id is None \
                     else store.update_row(namespace, id, row)
+            # Champs posés hors du format déclaré (#294) : l'écriture est acceptée (un
+            # champ libre reste un droit du contrat), mais elle n'est plus silencieuse.
+            out = {**out, **store.off_schema_report()}
             hint = _project_hint(namespace)
             return {**out, "project_hint": hint} if hint else out
         except ValueError as e:

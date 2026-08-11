@@ -202,6 +202,10 @@ class DatastorePg:
                                               else {int(x) for x in allowed_ns_ids})
         self.read_only = bool(read_only)
         self._active_scope_cache: Optional[tuple[list[int], list[int]]] = None
+        # Relevé des champs écrits HORS SCHÉMA par ce store (#294), union sur un lot :
+        # rempli par `_check_row`, lu par les surfaces via `off_schema_report()`. Le
+        # store est instancié par requête, donc la portée est celle du geste.
+        self.off_schema: set = set()
 
     # --- résolution namespace -> ns_id ---------------------------------------
 
@@ -320,19 +324,37 @@ class DatastorePg:
         k = (schema or {}).get("key")
         return k if isinstance(k, str) and k else None
 
-    @staticmethod
-    def _check_row(schema: Optional[dict], merged: dict, *,
+    def _check_row(self, schema: Optional[dict], merged: dict, *,
                    prev_status=None, written: Optional[set] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
         déclare ni strict/required/max_length ni lifecycle (défaut 0016 soft).
 
         `written` = les clés que le geste réécrit (None sur un insert/remplacement,
         où tout est écrit) : borne `max_length` restreinte à celles-là, cf.
-        `dsv2.validate_row`."""
+        `dsv2.validate_row`.
+
+        C'est aussi LE seam d'écriture — tous les chemins (append, batch, merge de
+        clé métier, upsert, patch) y passent — donc l'endroit unique où relever les
+        champs HORS SCHÉMA du geste (#294), sur les seules clés posées. Un schéma
+        `strict` active la validation, donc l'appel a bien lieu."""
         errors = dsv2.validate_row(schema, merged, prev_status=prev_status,
                                    written=written)
         if errors:
-            raise RowValidationError(errors)
+            raise RowValidationError(errors)   # refusée ⇒ rien à relever
+        posed = merged if written is None else {k: merged[k] for k in written
+                                                if k in merged}
+        self.off_schema.update(dsv2.off_schema_keys(schema, posed))
+
+    def off_schema_report(self) -> dict:
+        """Le relevé « hors schéma » du geste, prêt à fusionner dans une réponse
+        d'écriture : `{}` quand tout est dans le format (le cas normal — pas de clé
+        parasite dans la réponse), sinon la liste des champs + la phrase qui dit
+        quoi en faire. Union sur un lot : un renommage fautif se voit une fois,
+        pas une par row."""
+        keys = sorted(self.off_schema)
+        if not keys:
+            return {}
+        return {"hors_schema": keys, "hors_schema_hint": dsv2.off_schema_warning(keys)}
 
     @staticmethod
     def _release_if_terminal(schema: Optional[dict], ns_id: int, row_id: str,

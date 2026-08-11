@@ -146,6 +146,74 @@ def is_terminal_status(schema: Optional[dict], value: Any) -> bool:
     return value is not None and str(value) in terminal_states(schema)
 
 
+def off_schema_keys(schema: Optional[dict], data: dict) -> list[str]:
+    """Clés de la row ÉCRITE qu'aucun field du schéma ne déclare (chemins pointés
+    pour les sous-records : `contacts[].email_pro`) — le signal de l'issue #294.
+
+    Un nom hors schéma n'est PAS refusé et n'est pas perdu : il crée une colonne
+    libre et la valeur persiste (contrat 0016, « tout autre champ s'affiche, il ne
+    débloque rien »). Mais cette colonne est **hors du format** — l'interface et
+    les consommateurs du schéma ne la lisent pas. Sur un renommage de champs (cas
+    ordinaire : le format évolue, les agents ne sont pas tous relancés ensemble),
+    le travail atterrit dans une colonne que personne ne regarde, et rien ne le
+    signale : un agent écrit, reçoit un accusé de réception, passe à la ligne.
+    D'où ce relevé, rendu à l'appelant qui peut le vérifier.
+
+    Vide hors mode `strict` : un champ libre y est un droit explicite du contrat
+    (c'est ce qui permet d'explorer un tableau avant de le typer), pas une anomalie.
+    Vide aussi si le schéma strict ne déclare AUCUN field — sans référentiel, tout
+    serait « hors schéma », ce qui n'informe personne."""
+    if not isinstance(schema, dict) or not schema.get("strict"):
+        return []
+    fields = _fields(schema)
+    if not fields or not isinstance(data, dict):
+        return []
+    return sorted(_off_schema(fields, data, ""))
+
+
+def _off_schema(fields: list, data: dict, prefix: str) -> set:
+    """Clés de `data` absentes de `fields`, en descendant dans les composites
+    DÉCLARÉS (un champ déjà hors schéma n'est pas exploré : on ne sait pas ce
+    qu'il devrait contenir). Les items d'une liste sont agrégés sur un chemin
+    unique `clé[].sous_clé` — un lot de 300 contacts ne rend pas 300 lignes."""
+    declared = {f["key"]: f for f in fields
+                if isinstance(f.get("key"), str) and f["key"]}
+    out: set = set()
+    for key, value in data.items():
+        f = declared.get(key)
+        if f is None:
+            out.add(f"{prefix}{key}")
+            continue
+        ftype, sub = f.get("type"), None
+        if ftype == "object" and isinstance(value, dict):
+            sub = f.get("fields")
+            if isinstance(sub, list):
+                out |= _off_schema([x for x in sub if isinstance(x, dict)],
+                                   value, f"{prefix}{key}.")
+        elif ftype == "list" and isinstance(value, list):
+            of = f.get("of")
+            sub = of.get("fields") if isinstance(of, dict) else None
+            if isinstance(sub, list):
+                declared_sub = [x for x in sub if isinstance(x, dict)]
+                for item in value:
+                    if isinstance(item, dict):
+                        out |= _off_schema(declared_sub, item, f"{prefix}{key}[].")
+    return out
+
+
+def off_schema_warning(keys: list) -> Optional[str]:
+    """La phrase actionnable qui accompagne `off_schema_keys` — une liste nue ne
+    dit pas ce qu'elle implique. None si rien n'est hors schéma."""
+    if not keys:
+        return None
+    noms = ", ".join(f"`{k}`" for k in keys)
+    return (f"écrit HORS SCHÉMA : {noms} — le tableau déclare un format strict, ces "
+            "colonnes en sortent : elles sont stockées et lisibles, mais l'interface "
+            "et tout ce qui s'appuie sur le schéma les ignorent. Si c'est une faute de "
+            "nom (champ renommé depuis), relis le format avec `data_get_schema` et "
+            "réécris sous le bon nom ; si le champ est voulu, déclare-le au schéma.")
+
+
 def queue_release_warning(schema: Optional[dict]) -> Optional[str]:
     """Le namespace se donne un STATUT mais aucun état TERMINAL : dit-le, sinon le
     silence se paie en file de travail (signal #360).

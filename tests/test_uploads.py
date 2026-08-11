@@ -155,14 +155,20 @@ def test_materialize_datastore_batch(monkeypatch):
         def _write_rows_to_ns(self, ns_id, rows, *, key):
             seen["ns_id"], seen["rows"], seen["key"] = ns_id, rows, key
             return {"inserted": 2, "updated": 0, "count": 2, "key": key, "ids": ["r1", "r2"]}
+
+        def off_schema_report(self):
+            return {"hors_schema": ["actualite_sociale"], "hors_schema_hint": "…"}
     import oto_mcp.datastore as ds
     monkeypatch.setattr(ds, "make_store", lambda sub: FakeStore())
     target = {"kind": "datastore", "ns_id": 7, "namespace": "boites",
               "format": "ndjson", "key": "siren"}
     res = ut.materialize("u1", target, b'{"siren":"1"}\n{"siren":"2"}', None)
     assert seen["ns_id"] == 7 and seen["key"] == "siren" and len(seen["rows"]) == 2
+    # Le récap remonte AUSSI le relevé « hors schéma » (#294) : le bulk load est le
+    # geste où un format renommé passe le plus facilement inaperçu.
     assert res == {"ok": True, "kind": "datastore", "namespace": "boites",
-                   "inserted": 2, "updated": 0, "count": 2, "bytes": 27}
+                   "inserted": 2, "updated": 0, "count": 2, "bytes": 27,
+                   "hors_schema": ["actualite_sociale"], "hors_schema_hint": "…"}
 
 
 def test_mint_datastore_seals_resolved_ns_id(monkeypatch):

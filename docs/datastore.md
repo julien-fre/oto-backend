@@ -151,6 +151,22 @@ Refus de schéma : `ds_append`/`ds_update_row` traduisent `RowValidationError` e
 **400 `row_invalid`** (détail = les champs/transitions fautifs), pas en 500 — c'est le
 chemin d'échec d'une annulation (transition de retour devenue illégale).
 
+**Écrire hors du format se DIT, sans être refusé (#294).** Sur un namespace `strict`,
+un nom de champ que le schéma ne déclare pas est accepté (contrat 0016 : un champ libre
+s'affiche, il ne débloque rien) et la valeur persiste — mais dans une colonne hors
+format, que l'interface et tout ce qui s'appuie sur le schéma ignorent. Un humain relit
+sa colonne et voit le vide ; un agent reçoit un accusé de réception et passe à la ligne.
+Toute réponse d'écriture porte donc `hors_schema` + `hors_schema_hint`
+(`dsv2.off_schema_keys`/`off_schema_warning`, relevé par le SEAM `DatastorePg._check_row`
+— par lequel passent append/batch/merge/upsert/patch — et servi par
+`store.off_schema_report()` aux **trois** surfaces : `data_write`, REST append/patch,
+et la matérialisation d'upload signé). Le relevé porte sur les clés que le geste POSE
+(pas sur le mergé, même raison que la borne `max_length` : une colonne hors format déjà
+en base ne doit pas ré-alerter à chaque patch), il agrège un lot en une entrée par
+chemin (`contacts[].tel`), et il est **vide hors strict** — là, le champ libre est un
+droit explicite du contrat, pas une anomalie. Refuser franchement aurait été plus net,
+mais aurait cassé cette liberté : ce qui manquait était un signal, pas une barrière.
+
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
 du LLM. Un namespace peut déclarer une **clé métier** au schéma (`schema.key`, ex.

@@ -112,6 +112,9 @@ class _FakeStore:
     def declared_key(self, namespace):
         return "societe"
 
+    def off_schema_report(self):
+        return {}   # relevé « hors schéma » (#294) : rien de hors format ici
+
 
 def _wire_journal(monkeypatch) -> list[dict]:
     """Capture les lignes `tool_calls` posées, sans DB ni event loop."""
