@@ -135,3 +135,81 @@ def test_the_filter_warning_states_what_was_measured():
     txt = fr_finances.FILTRE_CA_AVERTISSEMENT
     assert "ca_max=400000" in txt and "12" in txt
     assert "tranche_effectif_salarie" in txt, "il faut dire par quoi remplacer"
+
+
+# --- câblage : l'annotation doit ATTEINDRE l'appelant ---------------------------
+# Les tests ci-dessus prouvent que le module est juste ; ceux-ci prouvent qu'il est
+# BRANCHÉ. La projection `_compact_identity` ne garde que des clés connues — une
+# annotation posée au mauvais endroit serait silencieusement perdue (le piège est
+# déjà commenté dans `fr_search` pour `matched_by`).
+
+class _Reg:
+    def __init__(self):
+        self.tools = {}
+
+    def tool(self, *a, **k):
+        def deco(fn):
+            self.tools[fn.__name__] = fn
+            return fn
+        return deco(a[0]) if a and callable(a[0]) else deco
+
+
+# Une banque : montant réel en milliers, effectif 2 000-4 999 → invraisemblable.
+_BANQUE = {
+    "siren": "549800373", "nom_complet": "BANQUE POPULAIRE VAL DE FRANCE",
+    "tranche_effectif_salarie": "51", "categorie_entreprise": "GE",
+    "finances": {"2024": {"ca": 392287, "resultat_net": 82684}},
+    "siege": {}, "dirigeants": [], "matching_etablissements": [],
+}
+
+
+@pytest.fixture()
+def fr_tools(monkeypatch):
+    from oto_mcp import fod_fr
+    from oto_mcp.tools import fr
+
+    class _Entreprises:
+        def search(self, **kw):
+            return {"results": [dict(_BANQUE)], "total_results": 1}
+
+        def get_by_siren(self, siren):
+            return dict(_BANQUE)
+
+    class _Inpi:
+        def list_exercises(self, siren):
+            return []
+
+    class _Bodacc:
+        def search_by_siren(self, siren, *a):
+            return {"results": [], "total_count": 0}
+
+    monkeypatch.setattr(fod_fr, "entreprises", _Entreprises())
+    monkeypatch.setattr(fod_fr, "inpi", _Inpi())
+    monkeypatch.setattr(fod_fr, "bodacc", _Bodacc())
+    reg = _Reg()
+    fr.register(reg)
+    return reg.tools
+
+
+def test_fr_search_surfaces_the_alert_and_the_warning(fr_tools):
+    out = fr_tools["fr_search"](query="banque")
+    hit = out["results"][0]
+    assert hit["finances"]["2024"]["alerte"] == ["ca_invraisemblable"]
+    assert hit["finances"]["2024"]["ca_par_salarie"] == 196
+    assert "finances_avertissement" in hit, (
+        "l'avertissement doit survivre à la projection _compact_identity")
+
+
+def test_fr_get_surfaces_the_alert(fr_tools):
+    out = fr_tools["fr_get"](siren="549800373")
+    ident = out["identity"]
+    assert ident["finances"]["2024"]["alerte"] == ["ca_invraisemblable"]
+    assert "finances_avertissement" in ident
+
+
+def test_the_filter_warning_appears_only_when_the_filter_is_used(fr_tools):
+    assert "filtre_ca_avertissement" not in fr_tools["fr_search"](query="banque")
+    for kw in ({"ca_max": 400000}, {"ca_min": 1}, {"ca_min": 0}, {"ca_max": 0}):
+        out = fr_tools["fr_search"](query="banque", **kw)
+        assert "filtre_ca_avertissement" in out, (
+            f"{kw} filtre sur le CA → l'appelant doit être averti")
