@@ -257,7 +257,16 @@ def _domain(fn, *args):
     except MollieError as e:
         raise AuthzDenied(502, "psp_error", e.detail)
     except RuntimeError as e:
-        raise AuthzDenied(503, "billing_unavailable", str(e))
+        msg = str(e)
+        code = msg.split(":", 1)[0].strip() if ":" in msg else ""
+        # Tout n'est pas transitoire. `no_mandate` (encaissé sans mandat réutilisable)
+        # et `bad_metadata` sont DÉFINITIFS : les annoncer « facturation indisponible »
+        # invite à retenter — sur un état où le client a DÉJÀ été débité et où il faut
+        # une investigation manuelle. Un 409 dit la vérité : l'état empêche d'aboutir,
+        # réessayer n'y changera rien.
+        if code in ("no_mandate", "bad_metadata"):
+            raise AuthzDenied(409, code, msg)
+        raise AuthzDenied(503, "billing_unavailable", msg)
 
 
 def _plans(ctx: ResolvedCtx, inp: NoInput) -> dict:

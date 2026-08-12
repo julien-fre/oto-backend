@@ -30,6 +30,10 @@ from typing import Optional
 from . import mollie_client
 from . import db
 from .db import billing as db_billing
+# Le format de date servi par l'API est défini UNE fois, dans la couche DB (le row
+# factory normalise tout datetime relu). Une réponse qui construit sa date sans
+# passer par là fabrique un second format pour le même champ — cf. #291.
+from .db._conn import _normalize_value
 
 logger = logging.getLogger(__name__)
 
@@ -170,14 +174,23 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
             "payment_intent_id": payment["id"], "plan": plan, "method": method}
 
 
-def confirm(org_id: int) -> dict:
-    """Fait avancer la souscription en cours (POLLING) : lit le premier paiement ;
+def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
+    """Fait avancer la souscription en cours : lit un paiement initial ouvert ;
     encaissé (`paid`) → récupère le mandat réutilisable né du checkout, pose le
     miroir `active` (carte comme SEPA — même chemin). Idempotent : re-confirmer un
-    abonnement déjà actif est un no-op informatif."""
+    abonnement déjà actif est un no-op informatif.
+
+    `payment_ref` = l'identifiant du paiement à traiter, quand l'appelant le
+    connaît. Le **webhook** le connaît (c'est celui qu'il vient de recevoir) et
+    DOIT le passer ; le **polling** ne le connaît pas et prend le plus récent, ce
+    qui reste correct pour lui. Sans ce paramètre, l'identité du paiement encaissé
+    se perdait entre le webhook et ce chemin (#291)."""
     sub_row = db_billing.get_org_subscription(org_id)
     open_initial = [
-        p for p in db_billing.list_billing_payments(org_id)
+        # ⚠️ `limit` explicite : au défaut (20), un `initial` ouvert plus ancien
+        # devenait carrément INVISIBLE dès qu'une org avait vingt lignes de paiement
+        # — donc jamais confirmé, sans le moindre message.
+        p for p in db_billing.list_billing_payments(org_id, limit=200)
         if p["kind"] == "initial"
         and p["status"] not in db_billing.TERMINAL_PAYMENT_STATUSES
         and p.get("payment_intent_id")
@@ -187,7 +200,24 @@ def confirm(org_id: int) -> dict:
             return {"status": "active", "plan": sub_row["plan"]}
         raise ValueError("no_pending_subscription: aucun paiement initial en cours")
 
-    row = open_initial[0]  # le plus récent (list_billing_payments trie DESC)
+    # Rien n'interdit deux souscriptions ouvertes à la fois (retour arrière, page
+    # rechargée, hésitation carte/SEPA) : il peut donc exister PLUSIEURS paiements
+    # ouverts, chacun avec une page payable. Quand l'appelant sait lequel a été
+    # encaissé — le webhook le sait, il vient de le recevoir — on traite CELUI-LÀ.
+    # Sans ça, le payeur qui termine l'ANCIENNE page était débité pendant que
+    # `confirm` regardait la plus récente, la trouvait non payée, et rendait
+    # `pending` : encaissé, aucun droit ouvert, aucune erreur nulle part.
+    if payment_ref:
+        row = next((p for p in open_initial if p["payment_intent_id"] == payment_ref), None)
+        if row is None:
+            # Le paiement visé n'est pas (ou plus) un initial ouvert de cette org :
+            # on ne se rabat PAS sur un autre, ce serait confirmer sur la foi d'un
+            # encaissement qui concerne autre chose.
+            raise ValueError(
+                f"unknown_payment: le paiement {payment_ref} n'est pas un paiement "
+                "initial en cours pour cette org")
+    else:
+        row = open_initial[0]  # le plus récent (list_billing_payments trie DESC)
     payment = mollie_client.get_payment(row["payment_intent_id"])
     pstatus = str(payment.get("status") or "")
 
@@ -228,7 +258,13 @@ def confirm(org_id: int) -> dict:
     logger.info("billing: org %s abonnée (plan %s, méthode %s, échéance %s)",
                 org_id, plan, method, period_end.date())
     return {"status": "active", "plan": plan, "method": method,
-            "current_period_end": period_end.isoformat()}
+            # MÊME format que `status`/`cancel`, qui rendent la valeur relue en base
+            # (normalisée « YYYY-MM-DD HH:MM:SS » par le row factory). Cette réponse
+            # sortait en ISO 8601 avec offset : le même champ, deux formes selon le
+            # verbe, donc un client qui parse `confirm` cassait sur `status` (#291).
+            # On importe le normaliseur plutôt que de recopier son expression — une
+            # seule définition du format, celle de la couche DB.
+            "current_period_end": _normalize_value(period_end)}
 
 
 # ── état & résiliation ───────────────────────────────────────────────────────
@@ -311,7 +347,25 @@ def process_webhook(payment_id: str) -> str:
     payment = mollie_client.get_payment(payment_id)
     status = str(payment.get("status") or "")
     if row["kind"] == "initial" and status == "paid":
-        confirm(row["org_id"])   # pose le miroir si pas déjà fait (idempotent)
+        # On passe l'identifiant du paiement ENCAISSÉ : sans lui, `confirm` repartait
+        # du plus récent et pouvait confirmer un autre paiement — ou rien (#291).
+        try:
+            out = confirm(row["org_id"], payment_ref=payment_id)
+        except (ValueError, RuntimeError) as e:
+            # Un encaissement qu'on ne sait pas transformer en droits est un incident
+            # à INVESTIGUER, pas une exception à propager : la laisser remonter ferait
+            # répondre 500 au webhook, donc relancer Mollie en boucle sur un état que
+            # le retry ne réparera pas. On trace fort et on absorbe.
+            logger.error("webhook: paiement %s encaissé (org %s) mais NON confirmé — %s",
+                         payment_id, row["org_id"], e)
+            return "not_confirmed"
+        # Et on rend l'issue RÉELLE : annoncer « confirmed » quoi qu'il arrive faisait
+        # affirmer au journal le contraire de ce qui s'était passé, ce qui est pire
+        # qu'un silence — on cherche l'incident ailleurs.
+        if out.get("status") != "active":
+            logger.error("webhook: paiement %s encaissé (org %s), abonnement toujours "
+                         "%s — investiguer", payment_id, row["org_id"], out.get("status"))
+            return "not_confirmed"
         return "confirmed"
     if status and status != row["status"]:
         db_billing.update_billing_payment(row["id"], status=status)

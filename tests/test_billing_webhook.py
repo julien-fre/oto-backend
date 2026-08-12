@@ -15,7 +15,16 @@ def _wire(monkeypatch, *, row, payment=None, confirm_spy=None):
     monkeypatch.setattr(db_billing, "update_billing_payment",
                         lambda rid, **k: updates.append((rid, k)) or True)
     spy = confirm_spy if confirm_spy is not None else {}
-    monkeypatch.setattr(billing, "confirm", lambda org: spy.__setitem__("org", org))
+
+    def _confirm(org, payment_ref=None):
+        # Depuis #291, `confirm` reçoit l'identifiant du paiement ENCAISSÉ et rend
+        # l'issue réelle — le webhook n'annonce plus « confirmed » sans l'avoir
+        # constaté. Le stub doit donc porter les deux, sinon il teste un contrat mort.
+        spy["org"] = org
+        spy["payment_ref"] = payment_ref
+        return {"status": "active", "plan": "standard"}
+
+    monkeypatch.setattr(billing, "confirm", _confirm)
     return updates
 
 
@@ -36,6 +45,10 @@ def test_webhook_paid_initial_replays_confirm(monkeypatch):
           payment={"status": "paid"}, confirm_spy=spy)
     assert billing.process_webhook("tr_1") == "confirmed"
     assert spy["org"] == 42                       # miroir posé (idempotent)
+    # #291 : l'identifiant du paiement ENCAISSÉ doit voyager jusqu'à `confirm`.
+    # Sans lui, `confirm` repartait « du plus récent » — et si le payeur avait terminé
+    # une page plus ancienne, il confirmait le mauvais paiement, ou aucun.
+    assert spy["payment_ref"] == "tr_1"
 
 
 def test_webhook_updates_changed_status(monkeypatch):
