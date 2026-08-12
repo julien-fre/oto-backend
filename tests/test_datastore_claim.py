@@ -6,23 +6,23 @@ ligne, non atomiques. Ces tests figent les trois gestes et leurs gardes : réser
 la suivante, réserver une ligne nommée, et ne pas libérer le bail d'un autre.
 
 Les deux claims sont des CAPACITÉS (une surface neuve naît capacité) → handlers
-appelés en direct ; la libération est une route historique → montée par
-`make_routes`. Seams PG monkeypatchés (le chemin SQL est vérifié au deploy).
+appelés en direct. La LIBÉRATION l'est devenue à son tour le 2026-08-12 (#302) :
+elle s'exerce ici par sa route, sur la vraie chaîne de l'adaptateur REST — c'est là
+que vivent son corps optionnel et son refus de jeton porté. Seams PG monkeypatchés
+(le chemin SQL est vérifié au deploy).
 """
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
-from oto_mcp import api_routes_datastore as ard
+from _datastore_rest import call, stub_authz
+
 from oto_mcp import datastore as D
+from oto_mcp import token_scopes
 from oto_mcp.capabilities import datastore_claim as dsc
+from oto_mcp.capabilities import datastore_rows as dsr
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.datastore import NamespaceNotFound, RowClaimed, RowNotFound
-
-RELEASE = "/api/datastore/namespaces/{namespace}/rows/{row_id}/release"
-
 
 # ── Le store : réserver une ligne NOMMÉE ─────────────────────────────────────
 
@@ -236,66 +236,40 @@ def test_the_claims_are_rest_only_capabilities():
 
 
 # ── Release : deux régimes, selon ce que l'appelant sait ──────────────────────
-# Route historique du module datastore (≠ les claims, capacités) → montée telle
-# quelle, avec les primitives que `api_routes` lui passe.
+# Capacité depuis #302 (`me.datastore.release_claim`), même chemin qu'avant.
 
-class _FakeReq:
-    def __init__(self, path_params, body=None, bad_json=False):
-        self.path_params = path_params
-        self.query_params = {}
-        self.headers = {}
-        self._body = body
-        self._bad = bad_json
-
-    async def json(self):
-        if self._bad:
-            raise ValueError("no body")
-        return self._body
-
-
-def _call(monkeypatch, store, path, params, body, *, bad_json=False):
-    async def authenticate(request, verifier):
-        return "u-1", None
-
-    async def options_handler(request):
-        return "opt"
-
-    monkeypatch.setattr(ard, "make_store", lambda sub: store)
-    monkeypatch.setattr(ard.datastore_journal, "record", lambda *a, **k: None)
-    routes = ard.make_routes(
-        None, authenticate,
-        lambda request, payload, status=200: ("ok", status, payload),
-        lambda request, status, code, detail=None: ("err", status, code, detail),
-        lambda origin: {}, options_handler)
-    h = {(r.path, m): r.endpoint for r in routes for m in r.methods}[(path, "POST")]
-    return asyncio.run(h(_FakeReq(params, body, bad_json)))
+def _call(monkeypatch, store, body, *, no_body=False):
+    stub_authz(monkeypatch)
+    monkeypatch.setattr(dsr, "make_store", lambda sub: store)
+    monkeypatch.setattr(dsr.datastore_journal, "record", lambda *a, **k: None)
+    return call("me.datastore.release_claim",
+                path_params={"namespace": "vivier", "row_id": "r1"},
+                body=body, no_body=no_body)
 
 
 def test_release_with_a_worker_is_guarded(monkeypatch):
     store = _Store(release_claim=True)
-    out = _call(monkeypatch, store, RELEASE, {"namespace": "vivier", "row_id": "r1"},
-                {"worker": "sarah"})
-    assert out[:2] == ("ok", 200)
+    status, _ = _call(monkeypatch, store, {"worker": "sarah"})
+    assert status == 200
     name, kw = store.calls[0]
     assert (name, kw["worker"]) == ("release_claim", "sarah")   # pas force_release
 
 
 def test_guarded_release_of_someone_elses_lease_changes_nothing(monkeypatch):
     store = _Store(release_claim=False)
-    kind, status, payload = _call(monkeypatch, store, RELEASE,
-                                  {"namespace": "vivier", "row_id": "r1"},
-                                  {"worker": "sarah"})
+    status, payload = _call(monkeypatch, store, {"worker": "sarah"})
+    assert status == 200
     assert payload["released"] is False
     assert "autre worker" in payload["hint"]
 
 
 def test_release_without_body_is_the_supervision_gesture(monkeypatch):
-    """Le dashboard (session interactive) garde la libération forcée d'un bail bloqué."""
+    """Le dashboard (session interactive) garde la libération forcée d'un bail bloqué.
+    Il poste SANS corps : la capacité doit s'en accommoder, pas exiger `{}`."""
     store = _Store(force_release=True)
-    ard.token_scopes.set_current(None)
-    out = _call(monkeypatch, store, RELEASE, {"namespace": "vivier", "row_id": "r1"},
-                None, bad_json=True)
-    assert out[:2] == ("ok", 200)
+    token_scopes.set_current(None)
+    status, _ = _call(monkeypatch, store, None, no_body=True)
+    assert status == 200
     assert store.calls[0][0] == "force_release"
 
 
@@ -303,22 +277,21 @@ def test_a_scoped_token_cannot_force_release(monkeypatch):
     """Un jeton porté = une intégration multi-utilisateurs : y laisser la
     libération forcée, c'est laisser chacun retirer la ligne de son collègue."""
     store = _Store(force_release=True)
-    ard.token_scopes.set_current({"namespaces": {"vivier": "write"}})
+    token_scopes.set_current({"namespaces": {"vivier": "write"}})
     try:
-        out = _call(monkeypatch, store, RELEASE, {"namespace": "vivier", "row_id": "r1"}, {})
+        status, corps = _call(monkeypatch, store, {})
     finally:
-        ard.token_scopes.set_current(None)
-    assert out[:3] == ("err", 400, "worker_required")
+        token_scopes.set_current(None)
+    assert (status, corps["error"]) == (400, "worker_required")
     assert store.calls == []
 
 
 def test_a_scoped_token_releases_its_own_lease(monkeypatch):
     store = _Store(release_claim=True)
-    ard.token_scopes.set_current({"namespaces": {"vivier": "write"}})
+    token_scopes.set_current({"namespaces": {"vivier": "write"}})
     try:
-        out = _call(monkeypatch, store, RELEASE, {"namespace": "vivier", "row_id": "r1"},
-                    {"worker": "sarah"})
+        status, _ = _call(monkeypatch, store, {"worker": "sarah"})
     finally:
-        ard.token_scopes.set_current(None)
-    assert out[:2] == ("ok", 200)
+        token_scopes.set_current(None)
+    assert status == 200
     assert store.calls[0][0] == "release_claim"

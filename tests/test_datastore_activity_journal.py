@@ -18,9 +18,11 @@ import asyncio
 
 import pytest
 
+from _datastore_rest import call, stub_authz
+
 from oto_mcp import calllog, datastore_journal
-from oto_mcp import api_routes_datastore as ard
 from oto_mcp.capabilities import datastore_activity as dsa
+from oto_mcp.capabilities import datastore_rows as dsr
 from oto_mcp.db import usage
 
 
@@ -130,29 +132,11 @@ def _wire_journal(monkeypatch) -> list[dict]:
     return written
 
 
-def _handlers(monkeypatch, store):
-    async def authenticate(request, verifier):
-        return "u-1", None
-
-    def json_response(request, payload, status=200):
-        return ("ok", status, payload)
-
-    def json_error(request, status, code, *a, **k):
-        return ("err", status, code)
-
-    def cors_headers(origin):
-        return {}
-
-    async def options_handler(request):
-        return "opt"
-
-    monkeypatch.setattr(ard, "make_store", lambda sub: store)
-    routes = ard.make_routes(None, authenticate, json_response, json_error,
-                             cors_headers, options_handler)
-    return {(r.path, m): r.endpoint for r in routes for m in r.methods}
-
-
-ROW_PATH = "/api/datastore/namespaces/{namespace}/rows/{row_id}"
+def _mount(monkeypatch, store):
+    """Écrire une ligne est une CAPACITÉ depuis le 2026-08-12 (#302) : le journal se
+    vérifie donc sur `capabilities/datastore_rows.py`, par la vraie chaîne REST."""
+    stub_authz(monkeypatch)
+    monkeypatch.setattr(dsr, "make_store", lambda sub: store)
 
 
 # --- 1. le geste REST écrit from_status / to_status -------------------------
@@ -160,13 +144,13 @@ ROW_PATH = "/api/datastore/namespaces/{namespace}/rows/{row_id}"
 def test_rest_transition_journals_from_and_to_status(monkeypatch):
     store = _FakeStore()
     written = _wire_journal(monkeypatch)
-    h = _handlers(monkeypatch, store)[(ROW_PATH, "PATCH")]
+    _mount(monkeypatch, store)
 
-    kind, status, payload = asyncio.run(h(_FakeReq(
-        path_params={"namespace": "160", "row_id": "row-1"},
-        body={"statut": "ecarte"})))
+    status, payload = call("me.datastore.update_row",
+                           path_params={"namespace": "160", "row_id": "row-1"},
+                           body={"statut": "ecarte"})
 
-    assert (kind, status) == ("ok", 200)
+    assert status == 200
     assert payload["statut"] == "ecarte"
     assert len(written) == 1
     line = written[0]
@@ -185,9 +169,10 @@ def test_rest_transition_journals_from_and_to_status(monkeypatch):
 def test_rest_delete_journals_previous_status(monkeypatch):
     store = _FakeStore()
     written = _wire_journal(monkeypatch)
-    h = _handlers(monkeypatch, store)[(ROW_PATH, "DELETE")]
+    _mount(monkeypatch, store)
 
-    asyncio.run(h(_FakeReq(path_params={"namespace": "mucho-leads", "row_id": "row-1"})))
+    call("me.datastore.delete_row",
+         path_params={"namespace": "mucho-leads", "row_id": "row-1"})
 
     assert written[0]["tool"] == "data_delete_row"
     assert written[0]["args"]["from_status"] == "enrichi"
@@ -202,10 +187,10 @@ def test_from_status_comes_from_the_mutation_not_a_reread(monkeypatch):
     store = _FakeStore()
     store.get_row = lambda ns, rid: {"_id": "row-1", "statut": "en_cours"}  # périmé
     written = _wire_journal(monkeypatch)
-    h = _handlers(monkeypatch, store)[(ROW_PATH, "PATCH")]
+    _mount(monkeypatch, store)
 
-    asyncio.run(h(_FakeReq(path_params={"namespace": "160", "row_id": "row-1"},
-                           body={"statut": "ecarte"})))
+    call("me.datastore.update_row",
+         path_params={"namespace": "160", "row_id": "row-1"}, body={"statut": "ecarte"})
 
     assert written[0]["args"]["from_status"] == "enrichi"  # pas "en_cours"
 
@@ -216,12 +201,12 @@ def test_journal_failure_never_breaks_the_write(monkeypatch):
     _wire_journal(monkeypatch)
     monkeypatch.setattr(calllog, "_insert_rest",
                         lambda row: (_ for _ in ()).throw(RuntimeError("pg down")))
-    h = _handlers(monkeypatch, store)[(ROW_PATH, "PATCH")]
+    _mount(monkeypatch, store)
 
-    kind, status, payload = asyncio.run(h(_FakeReq(
-        path_params={"namespace": "160", "row_id": "row-1"},
-        body={"statut": "ecarte"})))
-    assert (kind, status) == ("ok", 200)
+    status, _ = call("me.datastore.update_row",
+                     path_params={"namespace": "160", "row_id": "row-1"},
+                     body={"statut": "ecarte"})
+    assert status == 200
 
 
 def test_namespace_lookup_failure_never_breaks_the_read(monkeypatch):
@@ -249,12 +234,12 @@ def test_illegal_transition_is_a_400_not_a_500(monkeypatch):
         raise RowValidationError(["statut: transition 'ecarte' → 'enrichi' interdite"])
 
     store.update_row = _refuse
-    h = _handlers(monkeypatch, store)[(ROW_PATH, "PATCH")]
+    _mount(monkeypatch, store)
 
-    kind, status, code = asyncio.run(h(_FakeReq(
-        path_params={"namespace": "160", "row_id": "row-1"},
-        body={"statut": "enrichi"})))
-    assert (kind, status, code) == ("err", 400, "row_invalid")
+    status, corps = call("me.datastore.update_row",
+                         path_params={"namespace": "160", "row_id": "row-1"},
+                         body={"statut": "enrichi"})
+    assert (status, corps["error"]) == (400, "row_invalid")
 
 
 def test_fields_stay_a_bounded_json_array():

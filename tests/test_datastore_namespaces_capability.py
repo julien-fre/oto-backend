@@ -11,59 +11,18 @@ un champ inconnu (400 `unknown_fields`) là où ces routes l'ignoraient — dern
 """
 from __future__ import annotations
 
-import asyncio
-import json
-
 import pytest
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 
-from oto_mcp.capabilities import _rest_adapter, datastore_namespaces as dsn
+from _datastore_rest import Boom, call as _call, cap as _cap, stub_authz
+
+from oto_mcp.capabilities import datastore_namespaces as dsn
 from oto_mcp.capabilities.registry import CAPABILITIES
 from oto_mcp.datastore import NamespaceExists, NamespaceForbidden, NamespaceNotFound
 
 
 @pytest.fixture(autouse=True)
 def _sans_db(monkeypatch):
-    """`SUB_ONLY` lit l'org active et le rôle : deux requêtes, hors sujet ici.
-
-    On teste la LOGIQUE de ces capacités (les refus, les formes rendues) ; le chemin
-    SQL est exercé au déploiement par la suite complète du CI."""
-    from oto_mcp.capabilities import _authz
-    monkeypatch.setattr(_authz.access, "current_org", lambda sub: 35)
-    monkeypatch.setattr(_authz.access, "get_user_role", lambda sub: "member")
-
-
-def _cap(key: str):
-    return next(c for c in CAPABILITIES if c.key == key)
-
-
-def _call(key, *, path_params=None, body=None, query=b"", sub="u-1"):
-    """Exerce la capacité PAR SA ROUTE — la même chaîne que sert le serveur."""
-    cap = _cap(key)
-    binding = cap.rest_bindings()[0]
-
-    def _json_error(_req, status, code, detail=None):
-        return JSONResponse({"error": code, "detail": detail}, status_code=status)
-
-    def _json_response(_req, payload, status=200):
-        return JSONResponse(payload, status_code=status)
-
-    async def _auth(_req, _verifier):
-        return sub, None
-
-    handler = _rest_adapter._make_handler(cap, binding, None, _auth,
-                                          _json_response, _json_error)
-    brut = b"" if body is None else json.dumps(body).encode()
-
-    async def _receive():
-        return {"type": "http.request", "body": brut, "more_body": False}
-
-    req = Request({"type": "http", "method": binding.verb, "path": binding.path,
-                   "headers": [], "query_string": query,
-                   "path_params": path_params or {}}, _receive)
-    rep = asyncio.run(handler(req))
-    return rep.status_code, json.loads(bytes(rep.body))
+    stub_authz(monkeypatch)
 
 
 class _Store:
@@ -102,9 +61,6 @@ class _Store:
 def store(monkeypatch):
     s = _Store()
     monkeypatch.setattr(dsn, "make_store", lambda sub: s)
-    # `ns_not_found` interroge la base pour son indice cross-org : sans stub il
-    # tomberait dans son fail-open. On le rend explicite plutôt que fortuit.
-    monkeypatch.setattr(dsn, "ns_not_found", dsn.ns_not_found)
     return s
 
 
@@ -172,21 +128,9 @@ def test_les_proprietaires_mal_formes_sont_refuses(store, owner, attendu):
 
 
 def test_un_nom_deja_pris_est_un_409(store, monkeypatch):
-    monkeypatch.setattr(dsn, "make_store", lambda sub: _Boom(NamespaceExists("v")))
+    monkeypatch.setattr(dsn, "make_store", lambda sub: Boom(NamespaceExists("v")))
     code, corps = _call("me.datastore.create_namespace", body={"namespace": "v"})
     assert (code, corps["error"]) == (409, "namespace_exists")
-
-
-class _Boom:
-    """Store dont tout geste lève — le chemin d'erreur, sans mise en scène."""
-
-    def __init__(self, exc):
-        self.exc = exc
-
-    def __getattr__(self, _name):
-        def _raise(*a, **k):
-            raise self.exc
-        return _raise
 
 
 # --- supprimer ------------------------------------------------------------------
@@ -198,7 +142,7 @@ def test_la_suppression_rend_ok_et_le_nom(store):
 
 
 def test_la_suppression_sans_gouvernance_est_un_403(monkeypatch):
-    monkeypatch.setattr(dsn, "make_store", lambda sub: _Boom(NamespaceForbidden("v")))
+    monkeypatch.setattr(dsn, "make_store", lambda sub: Boom(NamespaceForbidden("v")))
     code, corps = _call("me.datastore.delete_namespace", path_params={"namespace": "v"})
     assert (code, corps["error"]) == (403, "forbidden")
 
@@ -206,7 +150,7 @@ def test_la_suppression_sans_gouvernance_est_un_403(monkeypatch):
 def test_un_tableau_absent_garde_son_404_qui_dit_ou_il_vit(monkeypatch):
     """L'indice cross-org du signal #316 traverse la migration : c'est lui qui évite
     de lire « namespace_not_found » comme « il n'existe pas »."""
-    monkeypatch.setattr(dsn, "make_store", lambda sub: _Boom(NamespaceNotFound("v")))
+    monkeypatch.setattr(dsn, "make_store", lambda sub: Boom(NamespaceNotFound("v")))
     from oto_mcp.capabilities import datastore_common as dc
     monkeypatch.setattr(dc.org_store, "list_orgs_for_user",
                         lambda sub: [{"org_id": 81, "name": "Mūcho"}])

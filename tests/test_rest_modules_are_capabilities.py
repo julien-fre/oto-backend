@@ -77,17 +77,13 @@ _KNOWN: dict[str, str] = {
     "/api/admin/connectors/{provider}/platform-access": DEBT,
     # Datastore : miroir REST des tools `data_*` (eux-mêmes listés en dette dans
     # le garde-fou jumeau) — deux implémentations du même métier.
-    # ⚠️ `namespaces` (GET/POST), `namespaces/{ns}` (DELETE/PATCH) et `…/url` ont
-    # quitté cette liste le 2026-08-12 (#302) : ce sont des capacités
-    # (`capabilities/datastore_namespaces.py`), mêmes chemins, entrée et sortie
-    # déclarées. Une dette qu'on rembourse, pas une nature qu'on découvre.
-    "/api/datastore/namespaces/{namespace}/aggregate": DEBT,
-    "/api/datastore/namespaces/{namespace}/queue": DEBT,
-    "/api/datastore/namespaces/{namespace}/rows": DEBT,
-    "/api/datastore/namespaces/{namespace}/rows/{row_id}": DEBT,
-    # `…/rows/{row_id}/activity` a quitté cette liste : les DEUX lectures d'activité
-    # sont des capacités (`capabilities/datastore_activity.py`) — dette remboursée.
-    "/api/datastore/namespaces/{namespace}/rows/{row_id}/release": DEBT,
+    # ⚠️ Le 2026-08-12 (#302), NEUF chemins datastore ont quitté cette liste : le
+    # tableau (`namespaces`, `namespaces/{ns}`, `…/url` →
+    # `capabilities/datastore_namespaces.py`) et les lignes (`…/rows`,
+    # `…/rows/{row_id}`, `…/rows/{row_id}/release`, `…/queue`, `…/aggregate` →
+    # `capabilities/datastore_rows.py`). Mêmes chemins, entrée et sortie déclarées.
+    # Une dette qu'on rembourse, pas une nature qu'on découvre.
+    # `…/rows/{row_id}/activity` était déjà partie (`datastore_activity.py`).
     "/api/datastore/namespaces/{namespace}/schema": DEBT,
     "/api/datastore/namespaces/{namespace}/share": DEBT,
     # OAuth Google : les VERBES (le callback ci-dessus est, lui, par nature).
@@ -238,7 +234,7 @@ def test_rest_debt_only_shrinks():
     pas une dette, elle la RÉVÈLE. Toute autre hausse est un relâchement.
     """
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 46, (
+    assert len(debt) <= 41, (
         f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
         "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
 

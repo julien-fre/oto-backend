@@ -105,6 +105,9 @@ from . import datastore_schema  # noqa: F401 — me.datastore.get_schema (MCP da
 # Le tableau lui-même (#302) — lister/créer/renommer/supprimer/ouvrir, ex-routes écrites
 # à la main : mêmes chemins, entrée ET sortie déclarées.
 from . import datastore_namespaces  # noqa: F401 — me.datastore.{list,create,delete,rename}_namespace + url
+# Les lignes (#302) — page/fiche/écriture/suppression/file/agrégat, ex-routes écrites
+# à la main. Deux corps LIBRES (les colonnes du tableau), déclarés comme tels.
+from . import datastore_rows  # noqa: F401 — me.datastore.{list_rows,append_row,get_row,update_row,delete_row,release_claim,queue,aggregate}
 # Purge d'une colonne morte (#296) — après un renommage, l'ancienne clé piège les agents.
 from . import datastore_columns  # noqa: F401 — me.datastore.drop_column (MCP data_drop_column)
 from . import automation  # noqa: F401 — me.automation.fire (MCP routine_fire + REST)

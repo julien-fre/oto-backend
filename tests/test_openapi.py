@@ -67,10 +67,13 @@ def test_admin_surface_is_not_published():
 
 
 def test_handwritten_routes_are_listed_without_schema():
+    # ⚠️ Le chemin d'exemple était `…/datastore/…/rows` : il est passé en capacité
+    # (#302), donc décrit AVEC son schéma — l'exemple s'est mis à prouver le
+    # contraire de ce qu'il énonce. On prend un chemin encore écrit à la main.
     doc = openapi.build([
-        _FakeRoute("/api/datastore/namespaces/{namespace}/rows", ["GET", "POST", "OPTIONS"]),
+        _FakeRoute("/api/me/tokens", ["GET", "POST", "OPTIONS"]),
     ])
-    item = doc["paths"]["/api/datastore/namespaces/{namespace}/rows"]
+    item = doc["paths"]["/api/me/tokens"]
     assert set(item) == {"get", "post"}          # OPTIONS n'est pas une opération
     assert "requestBody" not in item["post"]     # forme non dérivable, dit comme tel
     assert item["get"]["tags"] == ["_legacy"]
