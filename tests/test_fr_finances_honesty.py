@@ -118,8 +118,16 @@ def test_the_source_block_is_not_mutated():
 
 
 def test_every_year_is_examined_not_only_the_latest():
-    """Une entreprise peut être saine une année et illisible la suivante — c'est
-    exactement le cas Michelin (euros jusqu'en 2018, milliers ensuite)."""
+    """Robustesse : chaque année est jugée pour elle-même, pas la dernière pour toutes.
+
+    ⚠️ Aujourd'hui l'amont ne sert QU'UN exercice par fiche — mesuré le 12/08/2026
+    sur 483 entreprises, dont 382 portant un bloc `finances` : 100 % à un seul
+    exercice (l'année varie de 2016 à 2025, c'est le dernier dépôt disponible).
+    Ce test couvre donc une forme que l'amont ne produit pas encore, et c'est
+    délibéré : le jour où il en sert deux, une entreprise saine une année et
+    illisible la suivante ne doit pas contaminer l'autre. Le cas existe déjà dans
+    les DÉPÔTS (Michelin : euros jusqu'en 2018, milliers ensuite) — c'est
+    `fr_bilans` qui les expose, pas ce bloc-ci."""
     ann, avert = fr_finances.annotate(
         {"2018": {"ca": 5500000000}, "2024": {"ca": 5513153}}, "53")
     assert "alerte" not in ann["2018"]
