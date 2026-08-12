@@ -674,6 +674,17 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 
 ## Conventions
 
+- **Un garde-fou d'inventaire s'exerce sur le MONTAGE RÉEL, jamais sur une fixture
+  partielle.** Trois cas en deux jours (11-12/08) où le banc du garde-fou divergeait du
+  réel et le garde-fou **mentait par omission** : le glob anti-routes-manuelles voyait
+  45 chemins sur 81 (`api_routes_*.py` rate `api_routes.py`) ; `openapi.build()` local
+  rend 138 opérations quand le document SERVI en porte 233 (les routes main n'existent
+  que servies — **auditer le document servi, jamais le build**) ; l'inventaire des flux
+  de connexion montait les tools sans les routes REST, or au boot réel ce sont les
+  routes qui importent les modules d'auth. Racine commune : la fixture reproduit une
+  PARTIE du démarrage et le test promet le TOUT. Règle : le banc d'un garde-fou
+  d'inventaire = le vrai boot (`register_all` + routes) ou le document servi — et à sa
+  création, **prouver qu'il mord** en lui présentant l'anomalie qu'il prétend attraper.
 - **Jetons de contexte d'appel = noms RÉSERVÉS, préfixés `_`** (ADR 0038 amendée 29/07,
   oto-backend#250) : `_org`, `_project`, `_group`, `_account`, `_instance`, `_run_id`
   (`call_axes.py`). Ils sont advertisés sélectivement au schéma des tools concernés, lus
