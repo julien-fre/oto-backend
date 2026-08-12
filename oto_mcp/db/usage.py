@@ -771,17 +771,57 @@ def org_adoption(org_id: int, active_window_days: int = 30) -> dict:
     }
 
 
+# Rétention de l'ÉTIQUETTE d'un run, alignée sur celle de ses faits (#289).
+# Deux gardes, une par mode de panne — retirer l'une ou l'autre casse un cas réel :
+#   ① l'ÂGE (`finished_at` sinon `started_at`) protège le run fraîchement ouvert dont
+#      la journalisation a échoué (`_persist_open` est best-effort) : sans faits dès la
+#      première seconde, il ne doit pas s'effacer pour autant ;
+#   ② `NOT EXISTS` protège le run ANCIEN toujours vivant (ouvert il y a 40 jours, appels
+#      d'hier) : tant qu'il lui reste un fait, sa page n'est pas vide — on ne touche pas
+#      à son étiquette.
+# À jouer APRÈS la purge du journal (le prédicat lit l'état d'après), dans la MÊME
+# transaction (sinon une fenêtre où l'étiquette survit à ce qu'elle étiquette).
+_PRUNE_ORPHAN_RUNS = """
+    DELETE FROM runs r
+     WHERE COALESCE(r.finished_at, r.started_at) < NOW() - make_interval(days => %s)
+       AND NOT EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.run_id = r.run_id)
+"""
+
+
 def prune_tool_calls(keep_days: int = 30) -> int:
-    """Retire les lignes de journal plus vieilles que `keep_days`. Borne la
-    volumétrie (appelé au boot dans init_db). Retourne le nombre de lignes
-    supprimées."""
+    """Rétention du journal — **et des runs qui n'ont plus de faits** (#289, ADR 0058-D2).
+
+    Un run EST ses faits : sa ligne `runs` n'est qu'une étiquette (label, doctrine,
+    outcome) posée sur les lignes `tool_calls` qui portent son déroulé, et sa page est
+    ASSEMBLÉE à la lecture depuis ces faits — on ne la stocke pas. Effacer les faits en
+    gardant l'étiquette rendait donc, au 31ᵉ jour, une page de run VIDE sous une ligne
+    qui annonçait toujours « prospection Q3 → done ». Les deux partent désormais
+    ensemble, dans la même transaction.
+
+    Ce que ça décide côté produit : **un déroulé se garde `keep_days` jours, entier**
+    (faits + étiquette), et un run encore actif ne perd jamais son étiquette (garde ②
+    ci-dessus). Cela borne aussi ce que rendent les lectures dérivées de `runs`
+    (`project_runs`, `project_run_stats`, la pastille de procédure) : l'historique d'un
+    projet est celui de la fenêtre de rétention, pas l'éternité.
+
+    Ne tranche PAS la duplication de source (table `runs` vs reconstruction depuis le
+    journal, `list_runs`) : les deux s'éteignent maintenant en même temps, laquelle
+    survit est une décision d'archi encore ouverte (chantier du run, J-a).
+
+    Appelé au boot (`init_db`, `OTO_MCP_CALL_LOG_RETENTION_DAYS`). Retourne le nombre de
+    lignes de JOURNAL supprimées (contrat inchangé) ; le compte de runs part au log.
+    """
     keep_days = max(1, int(keep_days))
     with _connect() as conn:
-        cur = conn.execute(
+        n_calls = conn.execute(
             "DELETE FROM tool_calls WHERE created_at < NOW() - make_interval(days => %s)",
             (keep_days,),
-        )
-        return cur.rowcount or 0
+        ).rowcount or 0
+        n_runs = conn.execute(_PRUNE_ORPHAN_RUNS, (keep_days,)).rowcount or 0
+    if n_calls or n_runs:
+        logger.info("prune (>%d j) : %d ligne(s) de journal, %d run(s) sans faits",
+                    keep_days, n_calls, n_runs)
+    return n_calls
 
 
 def get_usage_today(sub: str, tool: str) -> int:

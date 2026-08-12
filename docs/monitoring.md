@@ -62,6 +62,15 @@ un bug.
 Volumétrie bornée par un prune au boot (`prune_tool_calls` dans `init_db`, rétention
 `OTO_MCP_CALL_LOG_RETENTION_DAYS`, défaut 30 j).
 
+**Un déroulé s'efface entier** (#289) : le même prune retire, dans la même transaction,
+les lignes `runs` qui viennent de perdre tous leurs faits. Un run *est* ses faits (ADR
+0058-D2) et sa page est assemblée à la lecture — garder l'étiquette au-delà rendait, au
+31ᵉ jour, une page VIDE sous une ligne qui annonçait « done ». Deux gardes : l'étiquette
+d'un run **encore vivant** (ouvert il y a 40 jours, appelé hier) n'est jamais touchée, et
+celle d'un run **récent** non plus, même si sa journalisation a échoué (best-effort).
+Conséquence sur les lectures dérivées de `runs` (`project_runs`, `project_run_stats`,
+pastille de procédure) : elles ne remontent pas au-delà de la fenêtre de rétention.
+
 ## Les deux surfaces (mêmes capacités, ADR 0009/0042)
 
 Les lentilles vivent dans `capabilities/monitoring.py` — **un handler, deux faces**, autz
