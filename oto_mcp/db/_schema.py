@@ -124,7 +124,21 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     -- `SentryToolErrorMiddleware` a capturé (donc uniquement sur une erreur de CODE
     -- — les 4xx amont/refus d'entrée sont droppés). Lien direct journal → traceback,
     -- fin du détour « chercher par user.id dans Sentry ». NULL partout ailleurs.
-    sentry_event_id TEXT
+    sentry_event_id TEXT,
+    -- Discriminant PAR APPEL (#117, extension OTO-LOCALE). `session_id` désigne une
+    -- conversation entière et `run_id` est souvent NULL : rien n'identifiait UN appel,
+    -- donc rien ne permettait de dire quelle réponse est partie à quelle requête — ni
+    -- de prouver un cross-talk, ni de prouver qu'un correctif l'a fermé.
+    --   request_id    = l'identifiant de la requête entrante, tel que le client l'a émis.
+    --   call_uid      = le nôtre, frappé à l'entrée du middleware : deux requêtes qui
+    --                   porteraient le même identifiant client restent distinguables.
+    --   effective_sub = le compte relu APRÈS exécution du handler, là où `sub` est celui
+    --                   capturé à l'ENTRÉE. Les deux doivent être égaux ; une divergence
+    --                   EST le défaut, et la ligne le porte. C'est le seul champ qui
+    --                   puisse trahir une réponse servie sous une autre identité.
+    request_id TEXT,
+    call_uid TEXT,
+    effective_sub TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_sub ON tool_calls(sub);

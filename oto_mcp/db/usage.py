@@ -47,8 +47,10 @@ def insert_tool_call(row: dict) -> None:
             """
             INSERT INTO tool_calls
                 (server, kind, sub, email, tool, args, ok, error, duration_ms, session_id,
-                 run_id, org_id, client_id, sentry_event_id)
-            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s)
+                 run_id, org_id, client_id, sentry_event_id,
+                 request_id, call_uid, effective_sub)
+            VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s)
             """,
             (
                 row.get("server") or "oto", row.get("kind") or "mcp",
@@ -57,6 +59,9 @@ def insert_tool_call(row: dict) -> None:
                 bool(row.get("ok")), row.get("error"), row.get("duration_ms"),
                 row.get("session_id"), row.get("run_id"), row.get("org_id"),
                 row.get("client_id"), row.get("sentry_event_id"),
+                # #117 — discriminant par appel. Absents des gestes REST et des
+                # écritures hors MCP : la ligne les porte à NULL, sans branche ici.
+                row.get("request_id"), row.get("call_uid"), row.get("effective_sub"),
             ),
         )
 

@@ -378,6 +378,10 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
 
             ctx = get_context()
             row["session_id"] = ctx.session_id
+            # #117 — l'identifiant de la requête entrante. `session_id` désigne une
+            # conversation entière : il ne distingue pas deux appels concurrents de la
+            # même session, qui est précisément le cas suspecté.
+            row["request_id"] = str(ctx.request_id) if ctx.request_id is not None else None
             # run_id de l'appel : axe explicite `_run_id=` EN PRIORITÉ (modèle sans état
             # de session, #108 — la pile session-scopée ne survit pas au renouvellement
             # du Mcp-Session-Id), repli sur la pile session de `doctrine_run`.
@@ -392,6 +396,25 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
             # → le token est lisible ici comme dans le handler.
             from .auth_hooks import current_client_id_from_token
             row["client_id"] = current_client_id_from_token()
+            # #117 — le compte relu APRÈS exécution du handler, là où `row["sub"]` est
+            # celui capturé à l'ENTRÉE (middleware, avant `call_next`). Les deux DOIVENT
+            # être égaux : une divergence signifie que l'appel a été servi sous une autre
+            # identité que celle qui l'a demandé. C'est le seul champ qui puisse trahir
+            # une réponse partie à la mauvaise requête — et la seule façon de trancher
+            # une hypothèse ouverte depuis le 06/07 autrement qu'en la supposant.
+            # Écrit TOUJOURS (pas seulement en cas d'écart) : une colonne qui ne se
+            # remplit qu'en cas de bug ne se distingue pas d'une colonne qui ne marche
+            # pas — et on ne saurait pas lire son silence.
+            effective = current_user_sub_from_token()
+            row["effective_sub"] = effective
+            if effective != row.get("sub"):
+                # Cri immédiat : la ligne de journal suffit à l'analyse a posteriori,
+                # pas à réagir. Rare par construction ⟹ aucun risque de bruit.
+                logger.error(
+                    "IDENTITÉ DIVERGENTE sur %s — demandée=%r effective=%r "
+                    "(call_uid=%s request_id=%s session=%s)",
+                    row.get("tool"), row.get("sub"), effective,
+                    row.get("call_uid"), row.get("request_id"), row.get("session_id"))
             # Lien journal → traceback : l'event Sentry capturé pour CET appel par
             # `SentryToolErrorMiddleware` (innermost → il a déjà tourné quand on écrit).
             # None sur le chemin nominal, sur une erreur GÉRÉE (4xx amont) et sans DSN.

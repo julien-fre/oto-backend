@@ -120,6 +120,16 @@ def _init_db_once() -> None:
         conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS jwks_uri TEXT")
         conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hosts JSONB "
                      "NOT NULL DEFAULT '[]'::jsonb")
+        # #117 — discriminant PAR APPEL. Trois colonnes nullables : rien à réécrire sur
+        # une table volumineuse (une colonne sans défaut ne touche pas les lignes
+        # existantes), et les lignes d'avant restent lisibles avec des NULL — elles
+        # n'ont simplement pas de discriminant, ce qui est la vérité.
+        # ⚠️ PAS d'index ici : la lecture qui compte (`effective_sub IS DISTINCT FROM
+        # sub`) est une requête d'enquête, pas un chemin chaud — et un index de plus sur
+        # `tool_calls` se paie à CHAQUE appel journalisé. À poser le jour où on enquête
+        # souvent, pas d'avance.
+        for _col in ("request_id", "call_uid", "effective_sub"):
+            conn.execute(f"ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS {_col} TEXT")
         # Soft-disconnect unipile : la ligne de binding survit (preuve de propriété
         # durable du compte hébergé → rebind déterministe à la reconnexion).
         conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS disconnected_at TIMESTAMPTZ")

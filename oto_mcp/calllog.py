@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import uuid
 from typing import Any, Awaitable, Callable
 
 from fastmcp.server.middleware import Middleware
@@ -198,6 +199,11 @@ class ToolCallLogger(Middleware):
             "email": None,
             "tool": context.message.name,
             "args": truncated_args(context.message.arguments),
+            # #117 — frappé ICI, au point le plus EXTERNE du chemin d'appel (ce
+            # middleware est le premier ajouté après ceux du contexte), et avant
+            # `call_next`. C'est ce qui en fait un discriminant : il naît dans la pile
+            # de CETTE requête, sans dépendre d'un identifiant fourni par le client.
+            "call_uid": uuid.uuid4().hex,
         }
         try:
             row.update({k: v for k, v in self.identity().items() if k in ("sub", "email")})
