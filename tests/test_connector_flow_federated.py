@@ -36,23 +36,25 @@ def test_le_flux_est_declare(name, module):
 
 
 @pytest.mark.parametrize("name,module", FEDERES, ids=[n for n, _ in FEDERES])
-def test_le_flux_rend_la_forme_commune(monkeypatch, name, module):
+@pytest.mark.asyncio
+async def test_le_flux_rend_la_forme_commune(monkeypatch, name, module):
     """Le point de passage VÉRIFIE le type de retour : un flux qui rendrait un dict
     maison lèverait ici. C'est tout l'objet de l'exercice."""
     monkeypatch.setattr(module, "build_auth_url", lambda sub: f"https://exemple/{sub}")
-    out = connector_flow.start(name, _Ctx(), {})
+    out = await connector_flow.start(name, _Ctx(), {})
     assert isinstance(out, connector_flow.FlowStart)
     assert out.as_dict() == {"auth_url": "https://exemple/user-1", "details": {}}
 
 
 @pytest.mark.parametrize("name,module", FEDERES, ids=[n for n, _ in FEDERES])
-def test_le_flux_part_du_compte_appelant(monkeypatch, name, module):
+@pytest.mark.asyncio
+async def test_le_flux_part_du_compte_appelant(monkeypatch, name, module):
     """L'URL est liée au compte : c'est le `sub` du contexte qui doit la construire,
     jamais une valeur passée par l'appelant — sinon on signerait un état pour un tiers."""
     vus = []
     monkeypatch.setattr(module, "build_auth_url",
                         lambda sub: vus.append(sub) or "https://exemple/x")
-    connector_flow.start(name, _Ctx(), {"sub": "quelquun-dautre"})
+    await connector_flow.start(name, _Ctx(), {"sub": "quelquun-dautre"})
     assert vus == ["user-1"]
 
 
@@ -66,7 +68,8 @@ def test_le_descripteur_reste_muet_sur_les_chemins():
             assert interdit not in blob, f"{name} : « {interdit} » dans le descripteur"
 
 
-def test_google_traduit_une_config_absente_en_refus_nomme(monkeypatch):
+@pytest.mark.asyncio
+async def test_google_traduit_une_config_absente_en_refus_nomme(monkeypatch):
     """La route rendait 500 sur une app OAuth non configurée. Ce n'est pas une panne :
     c'est un état qui empêche d'aboutir, et réessayer n'y changera rien."""
     def _boom(sub):
@@ -74,5 +77,5 @@ def test_google_traduit_une_config_absente_en_refus_nomme(monkeypatch):
 
     monkeypatch.setattr(google_oauth, "build_auth_url", _boom)
     with pytest.raises(AuthzDenied) as e:
-        connector_flow.start("google", _Ctx(), {})
+        await connector_flow.start("google", _Ctx(), {})
     assert e.value.code == "oauth_misconfigured"

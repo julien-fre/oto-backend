@@ -23,6 +23,7 @@ de bord de la documentation. Le chemin est FIXE et connu du client
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass, field
 from typing import Callable, Optional
@@ -137,7 +138,7 @@ def describe(connector: str) -> Optional[dict]:
     return {"label": f.label, "params": [p.describe() for p in f.params]}
 
 
-def start(connector: str, ctx, values: dict) -> FlowStart:
+async def start(connector: str, ctx, values: dict) -> FlowStart:
     """Démarre le flux déclaré et rend la forme commune.
 
     Le type de retour est vérifié ICI, à l'unique point de passage : une annotation
@@ -146,6 +147,12 @@ def start(connector: str, ctx, values: dict) -> FlowStart:
     proteste. Un flux qui rend autre chose casse au premier appel, pas au premier
     front qui s'y fie."""
     out = _FLOWS[connector].start(ctx, values or {})
+    if inspect.isawaitable(out):
+        # Un flux peut être ASYNCHRONE — celui d'une messagerie hébergée interroge le
+        # fournisseur avant de rendre son lien. Le serveur est mono-loop : ce chemin
+        # réseau doit être attendu, jamais exécuté en bloquant. Les flux synchrones
+        # (les cinq autres) ne passent pas ici et restent inchangés.
+        out = await out
     if not isinstance(out, FlowStart):
         raise TypeError(
             f"le flux « {connector} » doit rendre un FlowStart (reçu {type(out).__name__}) : "

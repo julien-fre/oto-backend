@@ -16,7 +16,7 @@ import secrets
 
 from mcp.shared.exceptions import McpError
 
-from . import access, db
+from . import access, connector_flow, db
 
 logger = logging.getLogger(__name__)
 
@@ -319,3 +319,57 @@ def reconcile_pending(sub: str) -> dict:
         logger.info("reconcile unipile: bound sub=%s account_id=%s org=%s",
                     sub, chosen["id"], pend["org_id"])
     return {"bound": bool(bound), "accounts": bound}
+
+
+# --- Le geste « connecter », sous le point de passage commun (#300) ----------
+
+async def _start_flow(ctx, values: dict):
+    """Démarre la connexion d'un canal hébergé — déclaré comme tout autre flux.
+
+    ⚠️ **Ce flux a deux issues, et une seule est un consentement.** Le cas nominal
+    rend un lien hébergé à ouvrir. Mais quand la MÊME personne a déjà connecté ce
+    canal ailleurs, le compte est **adopté** — rattaché ici sans wizard — et il n'y a
+    aucune page à ouvrir.
+
+    Le contrat commun promet « démarrer une connexion ⟹ une URL à ouvrir ». Rendre
+    une URL vide dans le cas adopté serait un mensonge qu'un client ouvrirait ; et
+    rendre l'URL facultative rouvrirait pour TOUS un contrat fermé précisément parce
+    que chaque flux y inventait sa forme. Donc : **l'adoption n'est pas un démarrage
+    de flux**, c'est une résolution — deux gestes qu'une même route avait fusionnés
+    parce qu'ils partagent un bouton.
+
+    D'où un refus TYPÉ et actionnable (patron `tool_not_mounted` : un refus qui dit
+    quoi faire) plutôt qu'un `FlowStart` mutilé. L'adoption ayant déjà eu lieu, il ne
+    demande pas d'agir : il constate.
+
+    L'ancienne route REST continue de servir ses deux issues telle quelle jusqu'à la
+    bascule du front — ce lot ne la touche pas.
+    """
+    from . import connector_flow
+    from .capabilities._types import AuthzDenied
+    try:
+        out = await hosted_auth_url(
+            ctx.sub, str(values.get("channel") or "linkedin"),
+            force=bool(values.get("force")),
+            premium=(str(values["premium"]).strip().lower()
+                     if values.get("premium") else None))
+    except ConnectRefused as e:
+        raise AuthzDenied(e.status, e.code, e.message)
+    if out.get("adopted"):
+        raise AuthzDenied(
+            409, "already_linked",
+            f"Ce compte {out.get('channel') or 'hébergé'} était déjà connecté sous ton "
+            f"identité : il vient d'être rattaché ici ({out.get('account_name') or 'compte'}). "
+            "Aucun consentement à donner — relis tes identités pour le voir.")
+    return connector_flow.FlowStart(auth_url=out["url"],
+                                    details={"channel": out.get("channel")})
+
+
+connector_flow.declare(
+    "unipile",
+    start=_start_flow,
+    label="Connecter un compte de messagerie",
+    params=(connector_flow.FlowParam(
+        name="channel", label="Canal à connecter", default="linkedin",
+        options=tuple((c.lower(), c.capitalize()) for c in CHANNELS)),),
+)

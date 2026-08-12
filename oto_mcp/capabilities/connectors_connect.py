@@ -56,7 +56,7 @@ class ConnectorConnectStarted(BaseModel):
                     "peut changer sans que ce contrat bouge.")
 
 
-def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
+async def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
     from mcp.shared.exceptions import McpError
 
     from .. import access
@@ -73,7 +73,7 @@ def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
         access.require_connector_access(inp.name, ctx.sub)
     except McpError as e:
         raise AuthzDenied(403, "connector_restricted", e.error.message)
-    return connector_flow.start(inp.name, ctx, inp.params or {}).as_dict()
+    return (await connector_flow.start(inp.name, ctx, inp.params or {})).as_dict()
 
 
 CAPABILITIES += [

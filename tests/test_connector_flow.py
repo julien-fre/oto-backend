@@ -8,6 +8,8 @@ personne n'ait à en connaître.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from fastmcp import FastMCP
 
@@ -24,7 +26,7 @@ def _declarations():
     # importe en montant leurs routes. Sans ces deux lignes, le garde-fou ci-dessous
     # ne verrait pas des flux pourtant déclarés en production, et son inventaire
     # mentirait par omission — exactement le mode de panne qu'il existe pour éviter.
-    from oto_mcp import atlassian_oauth, folk_oauth  # noqa: F401
+    from oto_mcp import atlassian_oauth, folk_oauth, unipile_connect  # noqa: F401
 
 
 # --- le contrat du descripteur -------------------------------------------------
@@ -37,7 +39,7 @@ def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
     """
     assert set(connector_flow.entries()) == {
         "zoho", "zohodesk", "zohoanalytics", "salesforce",
-        "atlassian", "folkmcp", "google"}
+        "atlassian", "folkmcp", "google", "unipile"}
 
 
 def test_le_descripteur_ne_porte_ni_url_ni_nom_de_capacite():
@@ -72,7 +74,9 @@ def test_le_catalogue_expose_la_forme_et_rien_pour_les_autres():
     cat = {c["name"]: c for c in providers.public_catalog()}
     assert cat["salesforce"]["connect"]["label"]
     assert cat["serper"]["connect"] is None       # 56 connecteurs sur 70
-    assert cat["unipile"]["connect"] is None      # flux hébergé, pas encore déclaré ici
+    # Le flux hébergé était l'exception (« pas encore déclaré ici ») : il ne l'est
+    # plus — son geste est déclaré comme les autres, avec son choix de canal.
+    assert cat["unipile"]["connect"]["params"][0]["name"] == "channel"
 
 
 # --- ce que le front n'a plus le droit de faire --------------------------------
@@ -128,7 +132,7 @@ def test_la_capacite_generique_est_montee_sur_un_chemin_fixe():
 
 # --- la SORTIE du seam est commune, comme son entrée ---------------------------
 
-def _both_flows(monkeypatch) -> dict[str, dict]:
+async def _both_flows(monkeypatch) -> dict[str, dict]:
     """Démarre RÉELLEMENT les deux flux déclarés (seuls les appels sortants sont
     neutralisés) et rend ce que chacun sert à l'appelant."""
     from types import SimpleNamespace
@@ -141,22 +145,24 @@ def _both_flows(monkeypatch) -> dict[str, dict]:
                         lambda *a, **k: "https://login.salesforce.com/services/oauth2/authorize?x=1")
     monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     ctx = SimpleNamespace(sub="u-1", org_id=1)
-    return {n: connector_flow.start(n, ctx, {"data_center": "eu"}).as_dict()
+    return {n: (await connector_flow.start(n, ctx, {"data_center": "eu"})).as_dict()
             for n in ("zoho", "salesforce")}
 
 
-def test_les_deux_flux_rendent_la_meme_forme(monkeypatch):
+@pytest.mark.asyncio
+async def test_les_deux_flux_rendent_la_meme_forme(monkeypatch):
     """L'écart que ce contrat ferme : `me.connector_connect` existe pour qu'un front
     branche un connecteur SANS savoir lequel, et sa sortie ne le permettait pas —
     Zoho échotait `{auth_url, connector}`, Salesforce `{auth_url, scope}`. Le
     premier niveau est désormais commun ; le propre du connecteur est sous `details`."""
-    shapes = _both_flows(monkeypatch)
+    shapes = await _both_flows(monkeypatch)
     assert set(shapes["zoho"]) == set(shapes["salesforce"]) == {"auth_url", "details"}
     assert shapes["zoho"]["details"] == {"connector": "zoho"}
     assert shapes["salesforce"]["details"] == {"scope": "member"}
 
 
-def test_le_contrat_publie_decrit_les_deux_flux_sans_champ_libre(monkeypatch):
+@pytest.mark.asyncio
+async def test_le_contrat_publie_decrit_les_deux_flux_sans_champ_libre(monkeypatch):
     """Le modèle de réponse était ouvert (`extra="allow"`) avec deux champs
     optionnels : il DOCUMENTAIT l'incohérence au lieu de la fermer. Il doit
     maintenant décrire exactement ce que les deux flux servent."""
@@ -164,7 +170,7 @@ def test_le_contrat_publie_decrit_les_deux_flux_sans_champ_libre(monkeypatch):
 
     assert ConnectorConnectStarted.model_config.get("extra") != "allow"
     attendus = set(ConnectorConnectStarted.model_fields)
-    for name, payload in _both_flows(monkeypatch).items():
+    for name, payload in (await _both_flows(monkeypatch)).items():
         assert set(payload) == attendus, f"{name} sert autre chose que le contrat publié"
         ConnectorConnectStarted.model_validate(payload)
 
@@ -175,7 +181,7 @@ def test_un_flux_qui_invente_sa_forme_est_refuse():
     connector_flow.declare("_probe_forme", start=lambda ctx, values: {"auth_url": "https://x"})
     try:
         with pytest.raises(TypeError, match="details"):
-            connector_flow.start("_probe_forme", None, {})
+            asyncio.run(connector_flow.start("_probe_forme", None, {}))
     finally:
         connector_flow._FLOWS.pop("_probe_forme", None)
 
