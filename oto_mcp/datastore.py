@@ -972,18 +972,30 @@ class DatastorePg:
         order_by: Optional[str] = None,
         order_dir: str = "desc",
         q: Optional[str] = None,
+        filter: Optional[dict] = None,
         filters: Optional[list] = None,
     ) -> dict:
         """Page server-side (tri/recherche/filtres SQL) + total — pour le dashboard.
-        `filters` = filtres par colonne (liste `{field, op, value}`, combinés AND).
-        Renvoie `{rows, total, offset, limit}`."""
+        Deux formes de filtre CUMULABLES, comme `aggregate` : `filter` exact
+        `{col: val}` (chemin MCP, et la CLI `--filter`) et `filters` riches
+        (liste `{field, op, value}`, combinées en ET). Renvoie
+        `{rows, total, offset, limit}`.
+
+        `filter` manquait ici alors que `cursor_rows`, `aggregate` et `claim_next`
+        le portent : la face REST du même verbe ignorait donc **en silence** un
+        paramètre que la face MCP honore (#303)."""
         ns_id = self._resolve(namespace)
+        clauses = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
+        clauses.extend(filters or [])
+        clauses = clauses or None
         rows = db.datastore_list_rows(
             ns_id, offset=offset, limit=limit, order_by=order_by,
-            order_dir=order_dir, q=q, filters=filters)
+            order_dir=order_dir, q=q, filters=clauses)
         return {
             "rows": [self._row_to_dict(r) for r in rows],
-            "total": db.datastore_count_rows(ns_id, q=q, filters=filters),
+            # Le total doit décrire le MÊME jeu que la page : filtré aussi, sinon la
+            # pagination du dashboard annonce des lignes qu'elle ne servira jamais.
+            "total": db.datastore_count_rows(ns_id, q=q, filters=clauses),
             "offset": offset, "limit": limit,
         }
 

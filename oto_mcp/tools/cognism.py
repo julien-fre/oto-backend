@@ -49,7 +49,7 @@ Trois tools restent SEULS :
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -120,7 +120,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def cognism_search(
-        op: str,
+        op: Literal["contact", "account"],
         filters: Optional[dict] = None,
         index_size: Optional[int] = None,
         last_returned_key: Optional[str] = None,
@@ -176,7 +176,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def cognism_redeem(
-        op: str,
+        op: Literal["contact", "account"],
         ids: Optional[list[str]] = None,
         redeem_ids: Optional[list[str]] = None,
         merge_phones_and_locations: bool = False,
@@ -291,7 +291,7 @@ def register(mcp: FastMCP) -> None:
         ))
 
     @mcp.tool()
-    def cognism_entitlement(op: str) -> dict:
+    def cognism_entitlement(op: Literal["contact", "account"]) -> dict:
         """Which fields the configured Cognism key can see — check before assuming
         a field will come back populated (Cognism).
 
@@ -309,7 +309,10 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def cognism_filter_values(
-        kind: str,
+        kind: Literal["technologies", "managementLevels", "companySizes",
+                      "industries", "jobFunctions", "regions", "countries",
+                      "states", "sic", "isic", "naics", "skills",
+                      "companyTypes", "seniority"],
         search: Optional[str] = None,
         index_size: int = 20,
         last_returned_key: Optional[str] = None,

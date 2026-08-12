@@ -22,7 +22,7 @@ défaut `op="list"` est une LECTURE — un appel sans `op` n'écrit ni ne suppri
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Literal, Optional, get_args
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -32,7 +32,10 @@ from .. import access, google_oauth
 
 # Ops de `tasks_task`, et le libellé de refus qui les NOMME (source unique : un op
 # ajouté ici doit apparaître dans le message, sinon l'agent ne peut pas se corriger).
-_TASK_OPS = ("list", "get", "upsert", "set_status", "rm")
+# Le `Literal` est cette source : il sert à la fois d'annotation (⟹ `enum` au schéma
+# JSON servi au modèle, qui contraint la génération) et de garde runtime via `get_args`.
+_TaskOp = Literal["list", "get", "upsert", "set_status", "rm"]
+_TASK_OPS = get_args(_TaskOp)
 _UNKNOWN_OP = "op doit être 'list', 'get', 'upsert', 'set_status' ou 'rm'"
 
 
@@ -92,7 +95,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def tasks_task(
-        op: str = "list",
+        op: _TaskOp = "list",
         task_id: Optional[str] = None,
         tasklist: str = "@default",
         title: Optional[str] = None,

@@ -37,7 +37,7 @@ Deux gardes valent d'être connues avant d'écrire :
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -191,7 +191,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def sellsy_third_party(
-        kind: str, op: str = "list", record_id: Optional[int] = None,
+        kind: Literal["company", "individual"],
+        op: Literal["list", "search", "get", "create", "update", "delete",
+                    "contacts", "convert", "link_contact", "unlink_contact",
+                    "custom_fields", "record_payment"] = "list",
+        record_id: Optional[int] = None,
         data: Optional[dict] = None, filters: Optional[dict] = None,
         contact_id: Optional[int] = None,
         limit: Optional[int] = None, offset: Optional[str] = None,
@@ -275,7 +279,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def sellsy_contact(
-        op: str = "list", record_id: Optional[int] = None,
+        op: Literal["list", "search", "get", "create", "update", "delete",
+                    "companies", "custom_fields"] = "list",
+        record_id: Optional[int] = None,
         data: Optional[dict] = None, filters: Optional[dict] = None,
         limit: Optional[int] = None, offset: Optional[str] = None,
         order: Optional[str] = None, direction: Optional[str] = None,
@@ -315,7 +321,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def sellsy_opportunity(
-        op: str = "list", record_id: Optional[int] = None,
+        op: Literal["list", "search", "get", "create", "update", "delete",
+                    "move", "custom_fields"] = "list",
+        record_id: Optional[int] = None,
         data: Optional[dict] = None, filters: Optional[dict] = None,
         step: Optional[int] = None, before_sibling: Optional[int] = None,
         limit: Optional[int] = None, offset: Optional[str] = None,
@@ -369,7 +377,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def sellsy_document(
-        kind: str, op: str = "list", record_id: Optional[int] = None,
+        kind: Literal["estimate", "order", "invoice", "credit_note"],
+        op: Literal["list", "search", "get", "create", "update", "delete",
+                    "validate", "status", "payments", "linked",
+                    "custom_fields"] = "list",
+        record_id: Optional[int] = None,
         data: Optional[dict] = None, filters: Optional[dict] = None,
         status: Optional[str] = None,
         limit: Optional[int] = None, offset: Optional[str] = None,
@@ -388,8 +400,8 @@ def register(mcp: FastMCP) -> None:
           `{"date": {"start": "2026-01-01", "end": "2026-01-31"}}`,
           `{"related_objects": [{"id": 42, "type": "company"}]}`,
           `{"owners": [id]}`, `{"currency": ["EUR"]}`.
-        - "get" / "create" / "update" (`record_id`, `data`). Un document créé est
-          un BROUILLON. Corps minimal : `related` (le tiers,
+        - "get" / "create" / "update" / "delete" (`record_id`, `data`). Un
+          document créé est un BROUILLON. Corps minimal : `related` (le tiers,
           `[{"id": 42, "type": "company"}]`, exactement une société OU un
           particulier), `date`, `subject`, `currency`, et `rows` — chaque ligne
           porte son `type` : `single` (libre : `quantity`, `unit_amount`,
@@ -450,7 +462,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def sellsy_payment(
-        op: str = "list", record_id: Optional[int] = None,
+        op: Literal["list", "search", "get", "delete",
+                    "custom_fields"] = "list",
+        record_id: Optional[int] = None,
         filters: Optional[dict] = None,
         limit: Optional[int] = None, offset: Optional[str] = None,
         order: Optional[str] = None, direction: Optional[str] = None,
@@ -460,7 +474,8 @@ def register(mcp: FastMCP) -> None:
         """Encaissements — ce qui a été payé, et sur quel document.
 
         `op` : "list" / "search" (filtres `{"status": [...]}`,
-        `{"related_objects": [{"id": 9, "type": "invoice"}]}`), "get", "delete".
+        `{"related_objects": [{"id": 9, "type": "invoice"}]}`), "get", "delete",
+        "custom_fields" (lecture seule ici : ce tool n'a pas de `data`).
 
         Enregistrer un paiement se fait sur le tiers :
         `sellsy_third_party(op="record_payment")`, kind="company" ou "individual".
@@ -482,7 +497,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def sellsy_item(
-        op: str = "list", record_id: Optional[int] = None,
+        op: Literal["list", "search", "get", "create", "update", "delete",
+                    "prices", "custom_fields"] = "list",
+        record_id: Optional[int] = None,
         data: Optional[dict] = None, filters: Optional[dict] = None,
         limit: Optional[int] = None, offset: Optional[str] = None,
         order: Optional[str] = None, direction: Optional[str] = None,
@@ -498,7 +515,8 @@ def register(mcp: FastMCP) -> None:
         `op` : "list" / "search" (filtres `{"name": …}`, `{"reference": …}`,
         `{"type": ["product", "service"]}`, `{"is_archived": false}`),
         "get" / "create" / "update" / "delete" (créer exige `type` et
-        `reference`), "prices" (grille tarifaire de l'article).
+        `reference`), "prices" (grille tarifaire de l'article),
+        "custom_fields".
 
         Args:
             op: le verbe (ci-dessus). record_id: id de l'article.
@@ -525,7 +543,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def sellsy_task(
-        op: str = "list", record_id: Optional[int] = None,
+        op: Literal["list", "search", "get", "create", "update", "delete",
+                    "custom_fields"] = "list",
+        record_id: Optional[int] = None,
         data: Optional[dict] = None, filters: Optional[dict] = None,
         limit: Optional[int] = None, offset: Optional[str] = None,
         order: Optional[str] = None, direction: Optional[str] = None,
@@ -537,7 +557,8 @@ def register(mcp: FastMCP) -> None:
 
         `op` : "list" / "search" (filtres `{"assigned_staffs": [id]}`,
         `{"due_date": {"start": …, "end": …}}`, `{"statuses": ["todo"]}`,
-        `{"companies": [id]}`), "get" / "create" / "update" / "delete".
+        `{"companies": [id]}`), "get" / "create" / "update" / "delete",
+        "custom_fields".
 
         Créer exige `related` (`[{"id": 42, "type": "company"}]`) ; les champs
         usuels sont `title`, `due_date`, `assigned_staff_ids`, `priority`.
@@ -561,7 +582,13 @@ def register(mcp: FastMCP) -> None:
     # --- référentiels & recherche transverse ---------------------------------
 
     @mcp.tool()
-    def sellsy_ref(kind: str, pipeline_id: Optional[int] = None,
+    def sellsy_ref(kind: Literal["staffs", "pipelines", "steps", "sources",
+                                 "categories", "custom_fields", "taxes", "units",
+                                 "currencies", "countries", "payment_methods",
+                                 "rate_categories", "accounting_codes",
+                                 "task_labels", "document_layouts",
+                                 "smart_tags"],
+                   pipeline_id: Optional[int] = None,
                    linked_type: Optional[str] = None,
                    limit: Optional[int] = None) -> Any:
         """Référentiels du compte en LECTURE SEULE — les ids à résoudre AVANT

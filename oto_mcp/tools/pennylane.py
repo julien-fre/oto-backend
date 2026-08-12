@@ -26,7 +26,7 @@ champs fournis par l'agent qui a lu le PDF).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -56,7 +56,9 @@ def register(mcp: FastMCP) -> None:
     # --- référentiels (lecture seule) ---------------------------------------
 
     @mcp.tool()
-    def pennylane_ref(kind: str, product_id: Optional[int] = None,
+    def pennylane_ref(kind: Literal["company", "fiscal_years", "ledger_accounts",
+                                    "categories", "invoice_templates", "products"],
+                      product_id: Optional[int] = None,
                       max_pages: Optional[int] = None) -> dict | list:
         """Référentiels Pennylane en LECTURE SEULE — ce qu'il faut résoudre AVANT
         d'écrire (ids de produits, modèles de facture, comptes, catégories).
@@ -106,7 +108,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def pennylane_customer(
-        op: str = "list",
+        op: Literal["list", "find", "create", "update"] = "list",
         customer_id: Optional[int] = None,
         external_reference: Optional[str] = None,
         name: Optional[str] = None,
@@ -173,7 +175,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def pennylane_invoice(
-        op: str = "list",
+        op: Literal["list", "find", "create", "credit_note", "update",
+                    "finalize", "send"] = "list",
         invoice_id: Optional[int] = None,
         customer_id: Optional[int] = None,
         date: Optional[str] = None,
@@ -293,7 +296,8 @@ def register(mcp: FastMCP) -> None:
     # --- achats : fournisseurs + factures d'achat ----------------------------
 
     @mcp.tool()
-    def pennylane_supplier(op: str = "list", name: Optional[str] = None,
+    def pennylane_supplier(op: Literal["list", "create"] = "list",
+                           name: Optional[str] = None,
                            fields: Optional[dict] = None,
                            max_pages: Optional[int] = None) -> dict | list:
         """Fournisseurs Pennylane.
@@ -322,7 +326,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def pennylane_supplier_invoice(
-        op: str = "list",
+        op: Literal["list", "import"] = "list",
         max_pages: Optional[int] = None,
         file_attachment_id: Optional[int] = None,
         supplier_id: Optional[int] = None,

@@ -25,7 +25,7 @@ dédiés que Serper n'a pas (jobs, trends, finance, flights, hotels, marketplace
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -196,7 +196,7 @@ def register(mcp: FastMCP) -> None:
     # --- offres d'emploi (Google Jobs) --------------------------------------
     @mcp.tool()
     def serpapi_jobs(
-        op: str = "search",
+        op: Literal["search", "details"] = "search",
         query: Optional[str] = None,
         company: Optional[str] = None,
         location: Optional[str] = None,

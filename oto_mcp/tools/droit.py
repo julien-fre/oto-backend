@@ -34,7 +34,7 @@ consomme de crédit ; le défaut de chaque tool est donc une lecture sans risque
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -63,7 +63,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def ccn_article(
-        op: str = "search",
+        op: Literal["search", "get"] = "search",
         query: Optional[str] = None,
         idcc: Optional[str] = None,
         en_vigueur: bool = True,
@@ -137,7 +137,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def loi_article(
-        op: str = "get",
+        op: Literal["get", "versions", "search"] = "get",
         code: Optional[str] = None,
         num: Optional[str] = None,
         date: Optional[str] = None,
@@ -204,7 +204,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def juris_decision(
-        op: str = "search",
+        op: Literal["search", "get"] = "search",
         query: Optional[str] = None,
         fond: Optional[str] = None,
         juridiction: Optional[str] = None,

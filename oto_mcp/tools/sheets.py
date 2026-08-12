@@ -25,7 +25,7 @@ refusé, jamais élargi au tableau entier.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -85,7 +85,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def sheets_spreadsheet(
         spreadsheet_id: str,
-        op: str = "metadata",
+        op: Literal["metadata", "read", "write", "clear"] = "metadata",
         range: Optional[str] = None,
         values: Optional[list[list[Any]]] = None,
         formatted: bool = True,

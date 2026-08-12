@@ -65,6 +65,12 @@ class ListRowsInput(BaseModel):
     order_by: Optional[str] = None
     order_dir: str = "desc"
     q: Optional[str] = None
+    # JSON encodé : filtre d'égalité exacte `{colonne: valeur}` — le MÊME paramètre
+    # que la face MCP `data_rows`, et ce que la CLI envoie sur `--filter`. Il était
+    # absent : la route l'ignorait en silence et rendait TOUTES les lignes en les
+    # présentant comme filtrées (#303). Les deux faces d'un verbe doivent offrir
+    # les mêmes paramètres — c'est « une capacité, deux faces » appliquée à elle-même.
+    filter: Optional[str] = None
     # JSON encodé : liste de clauses `{field, op, value}`, combinées en ET.
     filters: Optional[str] = None
 
@@ -196,12 +202,13 @@ def _json_param(raw: Optional[str], code: str, *, expect=None):
 def _list_rows(ctx: ResolvedCtx, inp: ListRowsInput) -> dict:
     offset = max(0, inp.offset if inp.offset is not None else 0)
     limit = min(500, max(1, inp.limit if inp.limit is not None else 50))
+    filter_eq = _json_param(inp.filter, "invalid_filter", expect=dict)
     filters = _json_param(inp.filters, "invalid_filters", expect=list)
     try:
         return make_store(ctx.sub).page_rows(
             inp.namespace, offset=offset, limit=limit,
             order_by=inp.order_by or None, order_dir=inp.order_dir,
-            q=inp.q or None, filters=filters)
+            q=inp.q or None, filter=filter_eq, filters=filters)
     except NamespaceNotFound:
         raise ns_not_found(ctx.sub, inp.namespace)
     except ValueError:

@@ -61,7 +61,7 @@ encore les tools d'avant : la table ci-dessus donne la correspondance.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -208,7 +208,7 @@ def register(mcp: FastMCP) -> None:
     def foncier_site(
         lat: float,
         lon: float,
-        op: str = "parcelle",
+        op: Literal["parcelle", "bati", "solaire", "adresse"] = "parcelle",
         kwc: Optional[float] = None,
     ) -> Optional[dict]:
         """What a point (lat, lon) carries — cadastral parcel, built footprint,
@@ -444,7 +444,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def foncier_dvf(
-        op: str = "prix_m2",
+        op: Literal["prix_m2", "comparables", "comparables_adresse"] = "prix_m2",
         code_commune: Optional[str] = None,
         adresse: Optional[str] = None,
         type_local: Optional[str] = None,
@@ -538,7 +538,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def foncier_dpe(
-        op: str = "adresse",
+        op: Literal["adresse", "stats"] = "adresse",
         adresse: Optional[str] = None,
         code_commune: Optional[str] = None,
         radius_m: int = 200,

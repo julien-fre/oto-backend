@@ -19,7 +19,7 @@ ambiguë (`space` ET `user`, ou ni l'un ni l'autre) est refusée au lieu d'être
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -106,7 +106,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def chat_message(
-        op: str = "list",
+        op: Literal["list", "send"] = "list",
         space: Optional[str] = None,
         text: Optional[str] = None,
         user: Optional[str] = None,

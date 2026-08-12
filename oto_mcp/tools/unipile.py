@@ -16,7 +16,7 @@ import os
 import time
 import unicodedata
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -628,7 +628,7 @@ def register_messaging_tools(mcp: FastMCP, channel: str) -> None:
             "- **\"send\"** : envoie un message. `chat_id` → répond dans un fil existant ; "
             "sinon `recipient_id` → ouvre un nouveau fil."),
     )
-    def _chat(op: str = "list",
+    def _chat(op: Literal["list", "read", "send"] = "list",
               chat_id: Optional[str] = None,
               text: Optional[str] = None,
               recipient_id: Optional[str] = None,
@@ -840,7 +840,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linkedin_unipile_profile(
-        op: str = "person",
+        op: Literal["person", "company", "me", "posts", "comments", "reactions",
+                    "followers", "following", "endorse", "action"] = "person",
         identifier: Optional[str] = None,
         sections: str = "*",
         cursor: Optional[str] = None,
@@ -971,7 +972,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linkedin_unipile_chat(
-        op: str = "list",
+        op: Literal["list", "read", "send", "attendees", "contacts", "update",
+                    "react"] = "list",
         chat_id: Optional[str] = None,
         message_id: Optional[str] = None,
         text: Optional[str] = None,
@@ -1059,10 +1061,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linkedin_unipile_post(
-        op: str = "feed",
+        op: Literal["feed", "get", "engagement", "create", "comment",
+                    "react"] = "feed",
         post_id: Optional[str] = None,
         text: Optional[str] = None,
-        kind: str = "comments",
+        kind: Literal["comments", "reactions"] = "comments",
         value: str = "LIKE",
         limit: int = 20,
         page: int = 0,
@@ -1169,8 +1172,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linkedin_unipile_network(
-        op: str = "relations",
-        direction: str = "received",
+        op: Literal["relations", "invitations", "invite", "handle",
+                    "cancel"] = "relations",
+        direction: Literal["received", "sent"] = "received",
         provider_id: Optional[str] = None,
         invitation_id: Optional[str] = None,
         shared_secret: Optional[str] = None,
@@ -1250,8 +1254,10 @@ def register(mcp: FastMCP) -> None:
     # ---- compte : ardoise premium (Recruiter / Sales Navigator) -----------
 
     @mcp.tool()
-    def linkedin_unipile_account(op: str = "contracts",
-                                 contract_id: Optional[str] = None) -> dict:
+    def linkedin_unipile_account(
+        op: Literal["contracts", "select", "inmail_balance"] = "contracts",
+        contract_id: Optional[str] = None,
+    ) -> dict:
         """Ardoise premium du compte LinkedIn connecté (Recruiter / Sales Navigator).
 
         Nécessite l'abonnement correspondant SUR le compte connecté, et le siège
@@ -1282,11 +1288,14 @@ def register(mcp: FastMCP) -> None:
     # ---- Recruiter : offres d'emploi & candidats (lectures) ---------------
 
     @mcp.tool()
-    def linkedin_unipile_job(op: str = "postings",
-                             job_id: Optional[str] = None,
-                             applicant_id: Optional[str] = None,
-                             cursor: Optional[str] = None,
-                             limit: Optional[int] = None) -> dict:
+    def linkedin_unipile_job(
+        op: Literal["postings", "posting", "applicants", "applicant",
+                    "projects"] = "postings",
+        job_id: Optional[str] = None,
+        applicant_id: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> dict:
         """Offres d'emploi et candidats du compte Recruiter LinkedIn (lectures).
 
         `op` :

@@ -14,7 +14,7 @@ les deux autres consomment) et dépend d'un scope OAuth distinct (settings vs da
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 import requests
 from fastmcp import FastMCP
@@ -306,7 +306,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def zoho_record(
         module: str,
-        op: str = "list",
+        op: Literal["list", "get", "search", "create", "update", "delete"] = "list",
         record_id: Optional[str] = None,
         data: Optional[dict] = None,
         criteria: Optional[str] = None,
@@ -362,7 +362,7 @@ def register(mcp: FastMCP) -> None:
     def zoho_note(
         module: str,
         record_id: str,
-        op: str = "list",
+        op: Literal["list", "create"] = "list",
         title: Optional[str] = None,
         content: Optional[str] = None,
     ) -> dict:

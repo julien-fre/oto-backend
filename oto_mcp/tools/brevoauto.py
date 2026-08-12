@@ -52,7 +52,7 @@ inconnue est refusée AVANT la résolution du credential — elle n'atteint jama
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import Context, FastMCP
 from mcp.shared.exceptions import McpError
@@ -70,10 +70,13 @@ logger = logging.getLogger(__name__)
 _API = "https://workflow-apis.brevo.com/v1"
 _APP = "https://app.brevo.com/"
 
-# Ops de chaque tool, lectures d'abord. Source unique : la validation d'entrée ET le
-# message de refus en dérivent — une op ajoutée ne peut pas être acceptée sans être
+# Ops de chaque tool, lectures d'abord. Source unique : la validation d'entrée, le
+# message de refus ET l'annotation `Literal[…]` de `op` (donc l'`enum` du schéma JSON
+# servi au modèle) en dérivent — une op ajoutée ne peut pas être acceptée sans être
 # annoncée (ni l'inverse). `brevoauto_trigger`/`brevoauto_step` n'ont aucune lecture :
 # leur `op` n'a donc PAS de défaut (cf. docstring de module).
+# ⚠️ Ces constantes sont subscriptées dans un `Literal[…]` : garder des TUPLES (une
+# liste est non hashable → `Literal[[…]]` lève à la résolution des annotations).
 _AUTOMATION_READ_OPS = ("list", "get", "catalog")
 _AUTOMATION_WRITE_OPS = ("create", "status")
 _AUTOMATION_OPS = _AUTOMATION_READ_OPS + _AUTOMATION_WRITE_OPS
@@ -210,7 +213,8 @@ def register(mcp: FastMCP) -> None:
 
     # --- Le scénario lui-même ----------------------------------------------
     @mcp.tool()
-    async def brevoauto_automation(ctx: Context, op: str = "list",
+    async def brevoauto_automation(ctx: Context,
+                                   op: Literal[_AUTOMATION_OPS] = "list",
                                    workflow_id: Optional[int] = None,
                                    name: Optional[str] = None,
                                    description: str = "",
@@ -285,7 +289,8 @@ def register(mcp: FastMCP) -> None:
 
     # --- Portes d'entrée (triggers) ----------------------------------------
     @mcp.tool()
-    async def brevoauto_trigger(ctx: Context, op: str, workflow_id: int,
+    async def brevoauto_trigger(ctx: Context, op: Literal[_TRIGGER_OPS],
+                                workflow_id: int,
                                 trigger_point_id: Optional[int] = None,
                                 trigger_name: Optional[str] = None,
                                 internal_action_id: Optional[int] = None,
@@ -358,7 +363,8 @@ def register(mcp: FastMCP) -> None:
 
     # --- Étapes (steps) -----------------------------------------------------
     @mcp.tool()
-    async def brevoauto_step(ctx: Context, op: str, workflow_id: int,
+    async def brevoauto_step(ctx: Context, op: Literal[_STEP_OPS],
+                             workflow_id: int,
                              step_id: Optional[int] = None,
                              step_type: Optional[str] = None,
                              step_name: Optional[str] = None,

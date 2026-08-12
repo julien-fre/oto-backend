@@ -52,7 +52,7 @@ forcément inexistant — il peut être hors périmètre de la clé.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -101,7 +101,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def silae_dossier(
-        op: str = "list",
+        op: Literal["list", "numbers", "info", "current_period"] = "list",
         numero_dossier: Optional[str] = None,
     ) -> object:
         """A payroll dossier (folder) — what the key reaches, or one dossier's payroll.
@@ -144,7 +144,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def silae_employee(
         numero_dossier: str,
-        op: str = "list",
+        op: Literal["list", "get", "jobs"] = "list",
         matricule_salarie: Optional[str] = None,
         type_emplois: Optional[int] = None,
     ) -> object:
@@ -188,7 +188,7 @@ def register(mcp: FastMCP) -> None:
     def silae_payslip(
         numero_dossier: str,
         periode: str,
-        op: str = "list",
+        op: Literal["list", "header", "lines", "totals"] = "list",
         matricule_salarie: Optional[str] = None,
     ) -> object:
         """A payslip (bulletin) of a period — the payslips, or one payslip's detail.

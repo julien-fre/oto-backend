@@ -11,7 +11,7 @@ répondent par webhook (async) → hors périmètre (itération suivante).
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -80,7 +80,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linkedin_aiark_search(
-        op: str = "people",
+        op: Literal["people", "companies"] = "people",
         account: Optional[dict] = None,
         contact: Optional[dict] = None,
         lookalike_domains: Optional[list[str]] = None,
@@ -129,7 +129,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linkedin_aiark_person(
-        op: str = "export",
+        op: Literal["export", "reverse", "mobile"] = "export",
         id: Optional[str] = None,
         url: Optional[str] = None,
         search: Optional[str] = None,

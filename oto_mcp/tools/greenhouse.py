@@ -35,7 +35,7 @@ croire à l'agent que sa demande a été honorée.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -80,7 +80,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def greenhouse_candidate(
-        op: str = "list",
+        op: Literal["list", "get", "create", "add_note"] = "list",
         candidate_id: Optional[int] = None,
         per_page: int = 50,
         page: int = 1,
@@ -154,7 +154,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def greenhouse_job(
-        op: str = "list",
+        op: Literal["list", "get"] = "list",
         job_id: Optional[int] = None,
         per_page: int = 50,
         page: int = 1,
@@ -187,7 +187,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def greenhouse_application(
-        op: str = "list",
+        op: Literal["list", "get"] = "list",
         application_id: Optional[int] = None,
         per_page: int = 50,
         page: int = 1,

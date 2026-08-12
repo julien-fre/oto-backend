@@ -24,7 +24,7 @@ prendre ~30-45 s.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -66,7 +66,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def cloro_ask(
-        engine: str,
+        engine: Literal["chatgpt", "perplexity", "gemini", "copilot", "grok",
+                        "aimode"],
         prompt: str,
         country: Optional[str] = None,
         markdown: bool = True,
@@ -111,7 +112,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def cloro_google(
         query: str,
-        op: str = "serp",
+        op: Literal["serp", "news"] = "serp",
         country: Optional[str] = None,
         ai_overview: bool = True,
         organic: bool = True,

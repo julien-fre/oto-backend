@@ -31,7 +31,7 @@ Trois tools restent SEULS, leurs paramètres ne recouvrant pas ceux de leurs voi
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -88,7 +88,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def brevo_contact(
-        op: str = "list",
+        op: Literal["list", "get", "stats", "attributes", "upsert",
+                    "update"] = "list",
         identifier: Optional[str] = None,
         identifier_type: Optional[str] = None,
         email: Optional[str] = None,
@@ -217,7 +218,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def brevo_list(
-        op: str = "list",
+        op: Literal["list", "get", "contacts", "create", "update", "add",
+                    "remove", "folders", "segments"] = "list",
         list_id: Optional[int] = None,
         name: Optional[str] = None,
         folder_id: Optional[int] = None,
@@ -333,7 +335,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def brevo_transactional(
-        op: str = "logs",
+        op: Literal["logs", "content", "events", "report", "blocked",
+                    "blocked_domains"] = "logs",
         email: Optional[str] = None,
         template_id: Optional[int] = None,
         message_id: Optional[str] = None,
@@ -409,7 +412,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def brevo_template(
-        op: str = "list",
+        op: Literal["list", "create", "update"] = "list",
         template_id: Optional[int] = None,
         template_name: Optional[str] = None,
         subject: Optional[str] = None,
@@ -471,7 +474,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def brevo_campaign(
-        op: str = "list",
+        op: Literal["list", "create", "update", "test", "report",
+                    "ab_test"] = "list",
         campaign_id: Optional[int] = None,
         status: Optional[str] = None,
         statistics: Optional[str] = None,

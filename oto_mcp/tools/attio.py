@@ -55,7 +55,7 @@ supprimer. Une op inconnue est refusée AVANT même la résolution de la clé.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional, get_args
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -63,20 +63,34 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
 
-# Ops de chaque objet, dans l'ordre lectures → écritures. Source unique : la
-# validation d'entrée ET le message de refus en dérivent, donc une op ajoutée ne
-# peut pas être acceptée sans être annoncée (ni l'inverse).
-_RECORD_OBJECTS = ("companies", "people", "deals")
-_RECORD_OPS = ("list", "get", "search", "create", "update", "delete")
-_NOTE_OPS = ("list", "get", "create", "delete")
-_TASK_OPS = ("list", "get", "create", "update", "delete")
-_LIST_OPS = ("list", "get", "views", "create", "update")
-_ENTRY_OPS = ("query", "get", "create", "update", "delete")
-_MEMBER_OPS = ("list", "get")
-_COMMENT_OPS = ("threads", "thread", "get", "create", "delete")
-_MEETING_OPS = ("list", "get", "recordings", "recording", "transcript")
-_OBJECT_OPS = ("list", "get", "views")
-_ATTRIBUTE_OPS = ("list", "get", "options", "statuses")
+# Ops de chaque objet, dans l'ordre lectures → écritures. Source unique : le
+# SCHÉMA MCP (`Literal` → `enum` JSON : depuis la consolidation le verbe n'est
+# plus dans le nom du tool, donc c'est l'enum qui l'annonce au client), la
+# validation d'entrée ET le message de refus en dérivent — une op ajoutée ne peut
+# pas être acceptée sans être annoncée (ni l'inverse).
+_RecordObject = Literal["companies", "people", "deals"]
+_RecordOp = Literal["list", "get", "search", "create", "update", "delete"]
+_NoteOp = Literal["list", "get", "create", "delete"]
+_TaskOp = Literal["list", "get", "create", "update", "delete"]
+_ListOp = Literal["list", "get", "views", "create", "update"]
+_EntryOp = Literal["query", "get", "create", "update", "delete"]
+_MemberOp = Literal["list", "get"]
+_CommentOp = Literal["threads", "thread", "get", "create", "delete"]
+_MeetingOp = Literal["list", "get", "recordings", "recording", "transcript"]
+_ObjectOp = Literal["list", "get", "views"]
+_AttributeOp = Literal["list", "get", "options", "statuses"]
+
+_RECORD_OBJECTS = get_args(_RecordObject)
+_RECORD_OPS = get_args(_RecordOp)
+_NOTE_OPS = get_args(_NoteOp)
+_TASK_OPS = get_args(_TaskOp)
+_LIST_OPS = get_args(_ListOp)
+_ENTRY_OPS = get_args(_EntryOp)
+_MEMBER_OPS = get_args(_MemberOp)
+_COMMENT_OPS = get_args(_CommentOp)
+_MEETING_OPS = get_args(_MeetingOp)
+_OBJECT_OPS = get_args(_ObjectOp)
+_ATTRIBUTE_OPS = get_args(_AttributeOp)
 
 
 def _one_of(name: str, values: tuple[str, ...]) -> str:
@@ -118,8 +132,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def attio_record(
-        object: str,
-        op: str = "list",
+        object: _RecordObject,
+        op: _RecordOp = "list",
         record_id: Optional[str] = None,
         attributes: Optional[dict] = None,
         query: Optional[str] = None,
@@ -215,7 +229,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def attio_note(
-        op: str = "list",
+        op: _NoteOp = "list",
         note_id: Optional[str] = None,
         parent_object: Optional[str] = None,
         parent_record_id: Optional[str] = None,
@@ -272,7 +286,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def attio_task(
-        op: str = "list",
+        op: _TaskOp = "list",
         task_id: Optional[str] = None,
         content: Optional[str] = None,
         deadline: Optional[str] = None,
@@ -345,7 +359,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def attio_list(
-        op: str = "list",
+        op: _ListOp = "list",
         list_id_or_slug: Optional[str] = None,
         name: Optional[str] = None,
         parent_object: Optional[str] = None,
@@ -414,7 +428,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def attio_entry(
         list_id_or_slug: str,
-        op: str = "query",
+        op: _EntryOp = "query",
         entry_id: Optional[str] = None,
         parent_object: Optional[str] = None,
         parent_record_id: Optional[str] = None,
@@ -493,7 +507,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def attio_workspace_member(
-        op: str = "list",
+        op: _MemberOp = "list",
         workspace_member_id: Optional[str] = None,
     ) -> dict:
         """A workspace member (a human with access to the Attio workspace) —
@@ -529,7 +543,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def attio_comment(
-        op: str = "threads",
+        op: _CommentOp = "threads",
         thread_id: Optional[str] = None,
         comment_id: Optional[str] = None,
         content: Optional[str] = None,
@@ -620,7 +634,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def attio_meeting(
-        op: str = "list",
+        op: _MeetingOp = "list",
         meeting_id: Optional[str] = None,
         call_recording_id: Optional[str] = None,
         limit: int = 50,
@@ -672,7 +686,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def attio_object(
-        op: str = "list",
+        op: _ObjectOp = "list",
         object_id_or_slug: Optional[str] = None,
     ) -> dict:
         """An object definition in the workspace (system or custom) — list, read,
@@ -718,7 +732,7 @@ def register(mcp: FastMCP) -> None:
     def attio_attribute(
         target: str,
         identifier: str,
-        op: str = "list",
+        op: _AttributeOp = "list",
         attribute: Optional[str] = None,
     ) -> dict:
         """An attribute (the schema) of an object or of a list — list, read, and

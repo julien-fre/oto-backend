@@ -39,7 +39,7 @@ qui NOMME l'op et l'argument, jamais un fallback qui inventerait une donnée.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -131,7 +131,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def spott_candidate(
-        op: str = "list",
+        op: Literal["list", "get", "search", "create", "update"] = "list",
         candidate_id: Optional[str] = None,
         limit: int = 25,
         cursor: Optional[str] = None,
@@ -221,7 +221,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def spott_job(
-        op: str = "list",
+        op: Literal["list", "get", "search"] = "list",
         job_id: Optional[str] = None,
         limit: int = 25,
         cursor: Optional[str] = None,
@@ -281,7 +281,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def spott_application(
-        op: str = "list",
+        op: Literal["list", "create", "move"] = "list",
         job_id: Optional[str] = None,
         candidate_id: Optional[str] = None,
         application_id: Optional[str] = None,
@@ -368,7 +368,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def spott_stages(
-        entity: str = "applications", template_id: Optional[str] = None,
+        entity: Literal["applications", "vacancies", "clients",
+                        "opportunities"] = "applications",
+        template_id: Optional[str] = None,
     ) -> dict:
         """List the ordered pipeline stages (with their ids and labels).
 
@@ -385,7 +387,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def spott_note(
-        op: str = "list",
+        op: Literal["list", "create"] = "list",
         limit: int = 25,
         cursor: Optional[str] = None,
         candidate_id: Optional[str] = None,
@@ -445,7 +447,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def spott_client(
-        op: str = "list",
+        op: Literal["list", "get", "search", "contacts"] = "list",
         client_id: Optional[str] = None,
         limit: int = 25,
         cursor: Optional[str] = None,

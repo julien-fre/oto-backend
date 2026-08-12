@@ -28,7 +28,7 @@ qui répondrait un 400 opaque) :
 """
 from __future__ import annotations
 
-from typing import Optional, Union
+from typing import Literal, Optional, Union
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -88,7 +88,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def hubspot_object(
-        op: str = "search",
+        op: Literal["search", "list", "get", "create", "update", "delete",
+                    "associations", "add_note"] = "search",
         object_type: Optional[str] = None,
         object_id: Optional[str] = None,
         properties: Optional[Union[list[str], dict]] = None,

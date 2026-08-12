@@ -31,7 +31,7 @@ import asyncio
 import os
 import shutil
 import tempfile
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -131,7 +131,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def gmail_message(
-        op: str = "search",
+        op: Literal["search", "get", "attachment", "drafts", "archive",
+                    "trash"] = "search",
         query: Optional[str] = None,
         message_id: Optional[str] = None,
         message_ids: Optional[list[str]] = None,
@@ -237,7 +238,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def gmail_compose(
         body: str,
-        mode: str = "send",
+        mode: Literal["send", "draft"] = "send",
         to: Optional[str] = None,
         subject: Optional[str] = None,
         reply_to: Optional[str] = None,

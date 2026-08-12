@@ -40,7 +40,7 @@ sans `op` ne peut ni écrire, ni supprimer.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -381,10 +381,11 @@ def _bulk_receipt(raw: list[dict]) -> dict:
             "results": results}
 
 
-# Ops de chaque tool, lectures d'abord. SOURCE UNIQUE : la garde d'entrée ET le
-# message de refus en dérivent — une op ajoutée ne peut donc pas être acceptée sans
-# être annoncée (ni annoncée sans être acceptée). Le découpage read/write n'est pas
-# décoratif : il documente ce qu'un défaut d'`op` peut atteindre (jamais une écriture).
+# Ops de chaque tool, lectures d'abord. SOURCE UNIQUE : la garde d'entrée, le
+# message de refus ET l'enum du schéma (`Literal[…]` en signature) en dérivent — une
+# op ajoutée ne peut donc pas être acceptée sans être annoncée (ni annoncée sans être
+# acceptée). Le découpage read/write n'est pas décoratif : il documente ce qu'un
+# défaut d'`op` peut atteindre (jamais une écriture).
 _RECORD_READ_OPS = ("list", "get")
 _RECORD_WRITE_OPS = ("create", "update", "delete", "upsert",
                      "bulk_create", "bulk_update")
@@ -442,7 +443,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def salesforce_record(
         sobject: str,
-        op: str = "list",
+        op: Literal[_RECORD_OPS] = "list",
         record_id: Optional[str] = None,
         data: Optional[dict] = None,
         fields: Optional[str] = None,
@@ -559,7 +560,7 @@ def register(mcp: FastMCP) -> None:
         raise _bad(_RECORD_OPS_ERROR)
 
     @mcp.tool()
-    def salesforce_query(query: str, op: str = "soql") -> dict:
+    def salesforce_query(query: str, op: Literal[_QUERY_OPS] = "soql") -> dict:
         """Run a raw statement against the org — SOQL query or SOSL search.
 
         `op`:
@@ -590,7 +591,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def salesforce_note(
         record_id: str,
-        op: str = "list",
+        op: Literal[_NOTE_OPS] = "list",
         title: Optional[str] = None,
         body: Optional[str] = None,
     ) -> dict:

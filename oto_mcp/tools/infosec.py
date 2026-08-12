@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 import socket
 import ssl
-from typing import Optional
+from typing import Literal, Optional
 
 from urllib.parse import urlsplit
 
@@ -287,8 +287,12 @@ def register(mcp: FastMCP) -> None:
     # `op` est SANS défaut : aucune facette n'est « la » lecture naturelle d'un
     # domaine, et un défaut ferait répondre autre chose que ce qui est demandé.
     @mcp.tool()
-    async def infosec_domain(op: str, domain: str,
-                             limit: int = 100, port: int = 443) -> dict:
+    async def infosec_domain(
+        op: Literal["whois", "dns", "email_security", "subdomains", "tls", "headers"],
+        domain: str,
+        limit: int = 100,
+        port: int = 443,
+    ) -> dict:
         """Empreinte numérique d'un domaine (recon **passif** / OSINT) — `op` = la facette.
 
         **Passif uniquement** : RDAP, DNS-over-HTTPS, logs CT publics (crt.sh),

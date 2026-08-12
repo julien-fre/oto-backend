@@ -8,7 +8,7 @@ Guests doivent obligatoirement poser leur propre clé.
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -109,7 +109,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def serper_search(
         query: str,
-        kind: str = "web",
+        kind: Literal["web", "news", "images", "videos", "places", "shopping",
+                      "scholar", "patents", "autocomplete"] = "web",
         num: int = 10,
         page: int = 1,
         country: Optional[str] = "fr",
@@ -268,7 +269,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool(meta={"technique": "reviews-census"})
     def serper_reviews(
-        op: str = "all",
+        op: Literal["all", "page"] = "all",
         cid: Optional[str] = None,
         fid: Optional[str] = None,
         place_id: Optional[str] = None,
@@ -343,7 +344,10 @@ def register(mcp: FastMCP) -> None:
         return _run("search_lens", url=url, country=country, language=language)
 
     @mcp.tool()
-    def serper_scrape(url: str, format: str = "markdown") -> dict:
+    def serper_scrape(
+        url: str,
+        format: Literal["markdown", "text", "both"] = "markdown",
+    ) -> dict:
         """Récupère une page web via le scraper de Serper.
 
         Renvoie le contenu en UNE représentation (markdown par défaut) + JSON-LD +

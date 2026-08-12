@@ -27,7 +27,7 @@ titre ou une date.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -83,7 +83,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def calendar_event(
-        op: str = "list",
+        op: Literal["list", "get", "create"] = "list",
         calendar_id: str = "primary",
         event_id: Optional[str] = None,
         time_min: Optional[str] = None,

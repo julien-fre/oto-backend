@@ -31,7 +31,7 @@ l'argument — jamais de repli silencieux.
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -88,7 +88,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     async def drive_file(
-        op: str = "list",
+        op: Literal["list", "metadata", "download", "export", "create_folder",
+                    "update", "delete"] = "list",
         file_id: Optional[str] = None,
         folder_id: Optional[str] = None,
         query: Optional[str] = None,

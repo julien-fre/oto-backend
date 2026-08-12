@@ -20,7 +20,7 @@ frontière est dans l'API (v1, pagination offset), autant l'assumer.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -88,8 +88,9 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def pipedrive_record(
-        entity: str,
-        op: str = "list",
+        entity: Literal["deals", "persons", "organizations", "activities",
+                        "products", "pipelines", "stages"],
+        op: Literal["list", "get", "create", "update", "delete", "fields"] = "list",
         record_id: Optional[int] = None,
         data: Optional[dict] = None,
         limit: int = 100,
@@ -187,8 +188,9 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def pipedrive_search(
         term: str,
-        op: str = "entity",
-        entity: Optional[str] = None,
+        op: Literal["entity", "all"] = "entity",
+        entity: Optional[Literal["deals", "persons", "organizations", "products",
+                                 "leads"]] = None,
         item_types: Optional[str] = None,
         fields: Optional[str] = None,
         exact_match: bool = False,
@@ -248,7 +250,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def pipedrive_note(
-        op: str = "list",
+        op: Literal["list", "create"] = "list",
         content: Optional[str] = None,
         deal_id: Optional[int] = None,
         person_id: Optional[int] = None,
@@ -295,7 +297,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def pipedrive_lead(
-        op: str = "list",
+        op: Literal["list", "create"] = "list",
         title: Optional[str] = None,
         owner_id: Optional[int] = None,
         person_id: Optional[int] = None,

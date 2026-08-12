@@ -52,7 +52,7 @@ from __future__ import annotations
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
-from typing import Optional
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
@@ -104,6 +104,14 @@ def _merge_group_ids(current_groups, add, remove) -> list[dict]:
 # (convention oto — cf. `email_send`, LinkedIn `send_message`/`connect`) : la
 # validation tourne normalement, seul l'appel mutant final est sauté, remplacé
 # par un aperçu.
+
+# Axes de dispatch de `folk_record`, DÉCLARÉS au schéma (`Literal` → `enum` JSON).
+# Depuis la consolidation, le verbe n'est plus dans le NOM du tool : sans enum, les
+# valeurs admises n'existent que dans la prose de la docstring, et rien ne contraint
+# le client. `_Entity` borne l'UNION des entités (= tout ce qu'au moins une op
+# accepte) ; le sous-ensemble admis PAR op reste gardé par les tuples ci-dessous.
+_Entity = Literal["person", "company", "deal", "note", "interaction", "reminder"]
+_RecordOp = Literal["search", "get", "create", "update", "delete", "add_to_group"]
 
 _SEARCH_ENTITIES = ("person", "company", "deal", "note", "reminder")
 _GET_ENTITIES = ("person", "company", "deal", "reminder")
@@ -395,8 +403,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def folk_record(
-        entity: str,
-        op: str = "search",
+        entity: _Entity,
+        op: _RecordOp = "search",
         id: Optional[str] = None,
         ids: Optional[list[str]] = None,
         item: Optional[dict] = None,
@@ -713,7 +721,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def folk_group(
-        op: str = "list",
+        op: Literal["list", "custom_fields"] = "list",
         group_id: Optional[str] = None,
         entity_type: str = "person",
     ) -> dict:
@@ -745,7 +753,7 @@ def register(mcp: FastMCP) -> None:
     # --- users (membres du workspace, lecture seule) ------------------------
 
     @mcp.tool()
-    def folk_user(op: str = "list", user_id: str = "me") -> dict:
+    def folk_user(op: Literal["list", "get"] = "list", user_id: str = "me") -> dict:
         """A Folk workspace user (member) — list them, or fetch one.
 
         `op`:
@@ -774,7 +782,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def folk_webhook(
-        op: str = "list",
+        op: Literal["list", "create", "update"] = "list",
         webhook_id: Optional[str] = None,
         name: Optional[str] = None,
         target_url: Optional[str] = None,
