@@ -1,9 +1,9 @@
-"""Conversion des projets et des pages en NŒUDS — lot M2 du modèle de contenu.
+"""Conversion des projets, des pages et des tableaux en NŒUDS — lots M2 et M3.
 
 Le lot M1 a fait des couches de contexte (`guides`) des nœuds. Celui-ci fait le
 reste du contenu : les **projets** et les **pages** (blueprint ADR 0054/0063,
-oto-backend#287). C'est la conversion structurante — celle où le modèle unique
-cesse d'être une idée.
+oto-backend#287), puis les **tableaux** (`user_datastores`, #301). C'est la
+conversion structurante — celle où le modèle unique cesse d'être une idée.
 
 **Le projet devient une ÉPINGLE** (0054-D5). Il ne disparaît pas en tant que
 contenu, il disparaît en tant qu'*objet* : c'est un nœud comme un autre, marqué
@@ -282,3 +282,134 @@ def convert_docs(conn) -> None:
     conn.execute(CONVERT_DOCS_TO_NODES_SQL)
     conn.execute(RECONCILE_DOC_NODES_SQL)
     conn.execute(PURGE_DOC_NODES_SQL)
+
+
+# ══ Lot M3 — le rang d'une fratrie, et les tableaux (#301) ═══════════════════
+
+# --- M-g : les positions par INTERVALLE ---------------------------------------
+
+# **L'écart entre deux voisins**, et le seul chiffre de tout ce module qui vienne
+# d'une mesure plutôt que d'un goût. 2^16 : seize insertions successives *au même
+# endroit* avant que l'intervalle ne soit épuisé, et un million de frères ne
+# portent que 6,5e10 — un dix-millionième de ce qu'un BIGINT sait compter.
+POSITION_GAP = 1 << 16
+
+
+def midpoint(after: int | None, before: int | None) -> int | None:
+    """Le rang libre entre deux voisins — `None` quand l'intervalle est ÉPUISÉ.
+
+    **C'est la règle M-g du chantier** (blueprint `chantier-modele-contenu.md` §5),
+    et elle règle une question de tarif, pas d'élégance. Le banc M0 a chiffré les
+    deux gestes possibles pour ordonner une fratrie :
+
+    - **renuméroter la fratrie entière** — le pattern hérité de `docs.position`
+      (« entiers espacés, réindexés atomiquement au déplacement », 0063-D2) :
+      **20 secondes** sur 45 000 frères ;
+    - **insérer dans l'intervalle** entre deux voisins : **1,4 milliseconde**.
+
+    Quatorze mille fois moins cher, et l'écart n'est pas théorique : une table du
+    datastore de production porte aujourd'hui 43 584 lignes, qui deviendront autant
+    de nœuds frères au lot M4. « Réindexer atomiquement » y coûterait vingt secondes
+    de transaction — sur le chemin nominal d'un `data_write`.
+
+    D'où l'inversion que ce module pose : **l'insertion dans l'intervalle est
+    l'opération nominale, la réindexation devient un RATTRAPAGE** (`reindex_siblings`),
+    joué le jour où l'écart ne peut plus absorber. `None` est ce jour-là.
+
+    Fonction PURE, et ce n'est pas un hasard : le cas qui compte (l'épuisement) ne
+    s'observe qu'après seize insertions au même point, ou sur deux voisins collés
+    hérités d'ailleurs. Il doit se tester sans base."""
+    if after is None and before is None:
+        return POSITION_GAP                      # fratrie vide : le premier rang
+    if before is None:
+        return int(after) + POSITION_GAP         # en fin : l'écart nominal
+    if after is None:
+        mid = int(before) // 2                   # en tête : la moitié du premier
+        return mid if mid >= 1 else None
+    mid = (int(after) + int(before)) // 2
+    return mid if after < mid < before else None
+
+
+def _sibling_scope(parent_id: int | None, owner_type: str, owner_id: str) -> tuple[str, list]:
+    """Le prédicat SQL d'une FRATRIE, et la définition qui va avec.
+
+    Frères = même parent. **À la racine (`parent_id IS NULL`), même propriétaire** —
+    parce que « tous les nœuds sans parent » n'est pas une fratrie mais la table
+    entière : deux orgs qui ne se connaissent pas y partageraient un ordre, et le
+    premier rattrapage renumérotererait le contenu de tout le monde."""
+    if parent_id is not None:
+        return "parent_id = %s", [parent_id]
+    return "parent_id IS NULL AND owner_type = %s AND owner_id = %s", [owner_type, owner_id]
+
+
+def reindex_siblings(conn, *, parent_id: int | None, owner_type: str,
+                     owner_id: str) -> int:
+    """LE RATTRAPAGE : renumérote une fratrie à l'écart nominal. Rend son cardinal.
+
+    ⚠️ **Ceci n'est pas un chemin nominal, et le jour où il le redevient, la règle
+    est perdue** (cf. `midpoint` : 20 s contre 1,4 ms). On ne l'appelle que lorsque
+    l'intervalle est épuisé — jamais « pour faire propre », jamais à chaque
+    déplacement. `ORDER BY position NULLS LAST, id` : un frère jamais placé (rang
+    nul) passe en fin, dans l'ordre de sa création."""
+    where, params = _sibling_scope(parent_id, owner_type, owner_id)
+    rows = conn.execute(
+        f"SELECT id FROM nodes WHERE {where} ORDER BY position NULLS LAST, id",
+        tuple(params)).fetchall()
+    for rank, r in enumerate(rows, start=1):
+        conn.execute("UPDATE nodes SET position = %s WHERE id = %s",
+                     (rank * POSITION_GAP, r["id"]))
+    return len(rows)
+
+
+def place_after(conn, node_id: int, *, after_id: int | None, parent_id: int | None,
+                owner_type: str, owner_id: str) -> int:
+    """Place `node_id` juste après son frère `after_id` (`None` = en tête).
+
+    ⚠️ **L'ancre est un NŒUD, pas un rang**, et c'est ce qui rend le rattrapage sûr :
+    une réindexation change tous les rangs de la fratrie, donc un rang capturé avant
+    elle désignerait ensuite un autre endroit. En repartant de l'identité du frère,
+    la seconde passe vise toujours la même place.
+
+    Deux passes au plus : après un rattrapage, l'écart vaut `POSITION_GAP` partout,
+    donc `midpoint` ne peut plus refuser."""
+    where, params = _sibling_scope(parent_id, owner_type, owner_id)
+    for _ in range(2):
+        after = None
+        if after_id is not None:
+            row = conn.execute("SELECT position FROM nodes WHERE id = %s",
+                               (after_id,)).fetchone()
+            after = None if row is None else row["position"]
+        # Le voisin de droite : le plus petit rang STRICTEMENT au-dessus de l'ancre
+        # (ou le plus petit de la fratrie quand on insère en tête). `node_id` s'exclut
+        # lui-même — un nœud qu'on déplace est déjà de la fratrie, et se prendre pour
+        # son propre voisin le figerait sur place.
+        sql = (f"SELECT min(position) AS p FROM nodes WHERE {where} AND id <> %s "
+               "AND position IS NOT NULL")
+        args = list(params) + [node_id]
+        if after is not None:
+            sql += " AND position > %s"
+            args.append(after)
+        before = conn.execute(sql, tuple(args)).fetchone()["p"]
+        pos = midpoint(after, before)
+        if pos is not None:
+            conn.execute("UPDATE nodes SET position = %s WHERE id = %s", (pos, node_id))
+            return pos
+        reindex_siblings(conn, parent_id=parent_id, owner_type=owner_type,
+                         owner_id=owner_id)
+    raise RuntimeError("rang introuvable après rattrapage")        # pragma: no cover
+
+
+def place_at_end(conn, node_id: int, *, parent_id: int | None, owner_type: str,
+                 owner_id: str) -> int:
+    """Place `node_id` en FIN de fratrie — le cas nominal d'une conversion.
+
+    Dégénérescence de `place_after` : après le dernier frère il n'y a pas de voisin
+    de droite, donc `midpoint` rend `dernier + POSITION_GAP` et aucun rang existant
+    ne bouge. Un lot de conversion coûte ainsi un `UPDATE` par nœud converti, et
+    zéro écriture sur ce qui était déjà là."""
+    where, params = _sibling_scope(parent_id, owner_type, owner_id)
+    row = conn.execute(
+        f"SELECT id FROM nodes WHERE {where} AND id <> %s AND position IS NOT NULL "
+        "ORDER BY position DESC LIMIT 1", tuple(list(params) + [node_id])).fetchone()
+    return place_after(conn, node_id, after_id=(row["id"] if row else None),
+                       parent_id=parent_id, owner_type=owner_type, owner_id=owner_id)

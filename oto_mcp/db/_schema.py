@@ -994,7 +994,13 @@ CREATE TABLE IF NOT EXISTS nodes (
     -- `docs` rend la suppression d'un tableau ×118 plus chère sans index sur
     -- parent_id). Il se tranche avant M4, pas ici.
     parent_id BIGINT,
-    position BIGINT,           -- ordre de la fratrie (entiers espacés, 0063-D2)
+    -- Ordre de la fratrie : entiers espacés (0063-D2), mais **l'insertion se fait
+    -- dans l'INTERVALLE entre deux voisins**, et la réindexation n'est plus qu'un
+    -- rattrapage — c'est l'arbitrage M-g du chantier, tranché au lot M3 sur les
+    -- chiffres du banc M0 (renuméroter 45 000 frères : 20 s ; insérer dans
+    -- l'intervalle : 1,4 ms). D'où un BIGINT et un écart de 2^16 : cf.
+    -- `db/nodes.midpoint`, qui porte la règle et son motif.
+    position BIGINT,
     kind TEXT NOT NULL,        -- 'page' aujourd'hui ; tableau | ligne aux lots M3/M4
     owner_type TEXT NOT NULL,  -- platform | tenant | org | group | user (0049/0053)
     -- ⚠️ ÉCART ASSUMÉ avec la forme du banc, qui portait `owner_id BIGINT` : un
@@ -1049,9 +1055,11 @@ CREATE INDEX IF NOT EXISTS idx_nodes_owner ON nodes(owner_type, owner_id);
 -- document pour l'intégrité.
 --
 -- L'ORDRE suit le pattern déjà en place sur `docs.position` : entiers espacés (×16),
--- réindexés au déplacement — rien à inventer. (⚠️ M-g du chantier : « réindexer
--- atomiquement » coûte 20 s sur 45 000 lignes ; la règle à écrire est l'intervalle,
--- la réindexation devenant un rattrapage. Se tranche à M3, pas ici.)
+-- réindexés au déplacement — rien à inventer. (⚠️ M-g du chantier a été tranché
+-- depuis, au lot M3 : pour une FRATRIE DE NŒUDS, l'insertion se fait dans
+-- l'intervalle et la réindexation devient un rattrapage — `db/nodes.midpoint`. Les
+-- blocs d'un corps se comptent par dizaines, jamais par dizaines de milliers : ils
+-- gardent le geste simple, et c'est le rapport de volume qui le justifie.)
 --
 -- ⚠️ AUJOURD'HUI CES BLOCS SONT UNE PROJECTION, pas la source de vérité : le corps
 -- courant reste `props->>'body_md'` (nœuds) et `docs.body_md` (table legacy encore
