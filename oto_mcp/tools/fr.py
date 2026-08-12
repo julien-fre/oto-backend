@@ -12,6 +12,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import INVALID_PARAMS, ErrorData
 
 from .. import access
+from .. import fr_finances
 
 # Formes juridiques couramment ÉNONCÉES devant le nom (« la SCI Untel »), et les
 # catégories juridiques INSEE correspondantes. Le répertoire, lui, n'inscrit
@@ -92,6 +93,17 @@ def register(mcp: FastMCP) -> None:
         SIÈGE is in a département, use `fr_stock_search(departement=…,
         sieges_only=True)`.
 
+        ⚠️ **`ca_min`/`ca_max` ne qualifient PAS une taille d'entreprise.** Le
+        filtre porte sur un montant dont l'unité varie selon le dépôt (euros ou
+        milliers, parfois d'une année à l'autre chez la même entreprise) et dont le
+        0 signifie « non déclaré » — donc toute borne haute ramène en masse des
+        entreprises dont le CA est inconnu, ce qui biaise vers les PLUS GROSSES.
+        Mesuré : `tranche_effectif_salarie=51,52,53 & ca_max=400000` rend 12
+        résultats, tous grandes entreprises, aucun vrai positif. Pour cibler par
+        taille, utiliser `tranche_effectif_salarie` ou `categorie_entreprise`.
+        Le bloc `finances` des résultats porte les mêmes réserves, marquées
+        ligne à ligne (`alerte`) — cf. `finances_avertissement`.
+
         Args:
             query: Full-text search (company name, SIREN, brand…).
             naf: NAF activity codes, comma-separated (e.g. "62.01Z,62.02A").
@@ -103,8 +115,8 @@ def register(mcp: FastMCP) -> None:
                 resolves enseigne/commune by code too).
             employees: Employee-range codes (INSEE TEFEN) of the unité légale, comma-separated.
             categorie_entreprise: INSEE size category — "PME", "ETI" or "GE".
-            ca_min: Minimum turnover in euros.
-            ca_max: Maximum turnover in euros.
+            ca_min: Minimum turnover — ⚠️ NOT reliably in euros, see below.
+            ca_max: Maximum turnover — ⚠️ NOT reliably in euros, see below.
             idcc: IDCC codes (conventions collectives), comma-separated.
             nature_juridique: INSEE legal-form codes, comma-separated (e.g. "6540" for
                 SCI, "5710" for SAS). Exact 4-digit codes only — an invalid value makes
@@ -160,6 +172,11 @@ def register(mcp: FastMCP) -> None:
                 "form": label, "query": name, "nature_juridique": codes,
                 "total_results": extra.get("total_results"), "added": len(added),
             }
+        # Qui filtre sur le CA a besoin de savoir sur QUOI il vient de filtrer :
+        # l'amont compare une borne en euros à un nombre sans unité dont le 0 vaut
+        # « non déclaré ». Dit ici, au moment où la question se pose (#399).
+        if ca_min is not None or ca_max is not None:
+            res["filtre_ca_avertissement"] = fr_finances.FILTRE_CA_AVERTISSEMENT
         return res
 
     # 7 ratios top B2B + métadonnées d'exercice. Le reste (marge_brute, ebit,
@@ -215,6 +232,14 @@ def register(mcp: FastMCP) -> None:
     def _compact_identity(identity: dict) -> dict:
         out = _pick(identity, _IDENTITY_KEEP)
         out.update(_pick(identity.get("complements") or {}, _COMPLEMENT_KEEP))
+        # `finances` est un passthrough de l'amont, qui ne transmet ni l'unité du
+        # dépôt ni la différence entre zéro et non-déclaré (#399). On ne convertit
+        # rien — on retire ce qui n'est pas une donnée et on marque l'invraisemblable.
+        if "finances" in out:
+            out["finances"], avertissement = fr_finances.annotate(
+                out["finances"], out.get("tranche_effectif_salarie"))
+            if avertissement:
+                out["finances_avertissement"] = avertissement
         siege = identity.get("siege")
         if isinstance(siege, dict):
             out["siege"] = _pick(siege, _ETAB_KEEP)
