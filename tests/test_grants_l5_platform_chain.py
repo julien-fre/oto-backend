@@ -320,3 +320,30 @@ def test_instance_is_in_the_journal_allowlist():
     from oto_mcp import server
 
     assert "instance" in server._TRACED_ARGS
+
+
+# ── 7. Le chemin chaud : un bulk ne se compte pas en N requêtes ────────────────
+
+def test_a_bulk_debits_the_edge_once(monkeypatch):
+    """`fullenrich` facture au contact et métrait donc en boucle : jusqu'à 100
+    incréments par job. L'historique garde sa cadence (sa signature n'accepte pas de
+    pas), mais la chaîne débite en UNE fois — sinon la fenêtre multiplierait par cinq
+    le trafic DB d'un bulk, sur le chemin chaud d'un serveur mono-loop."""
+    legacy, edge = [], []
+    monkeypatch.setattr(access, "current_user_sub_from_token", lambda: "s")
+    monkeypatch.setattr(access, "current_org", lambda sub: None)
+    monkeypatch.setattr(access.db, "increment_usage",
+                        lambda sub, p: legacy.append(p))
+    monkeypatch.setattr(grants_chain, "record_usage",
+                        lambda sub, p, org, calls: edge.append(calls))
+    access.record_platform_usage("fullenrich", 100)
+    assert len(legacy) == 100, "le compteur historique garde EXACTEMENT sa cadence"
+    assert edge == [100], "l'arête est débitée une fois, du bon montant"
+
+
+def test_a_non_migrated_connector_never_reaches_the_chain_counter(monkeypatch):
+    monkeypatch.setattr(access, "current_user_sub_from_token", lambda: "s")
+    monkeypatch.setattr(access.db, "increment_usage", lambda sub, p: None)
+    monkeypatch.setattr(grants_chain, "record_usage",
+                        lambda *a, **k: pytest.fail("connecteur non basculé compté"))
+    access.record_platform_usage("serper", 3)

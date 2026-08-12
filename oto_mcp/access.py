@@ -1524,20 +1524,26 @@ def resolve_mount_token(provider: str) -> str:
     ))
 
 
-def record_platform_usage(provider: str) -> None:
+def record_platform_usage(provider: str, calls: int = 1) -> None:
     """À appeler APRÈS un appel réussi avec la platform key. No-op si pas authentifié.
 
     Deux compteurs pendant la fenêtre de double lecture (blueprint ADR 0053, L5) :
     l'historique `usage(sub, tool, day)` — qui garde l'AUTORITÉ du refus, cf.
     `grants_chain` §Le comptage — et le compteur d'ARÊTE de 0053-D7, tenu en parallèle
     pour que la bascule d'autorité soit vérifiée avant d'être faite. No-op (et aucune
-    requête) hors connecteurs basculés."""
+    requête) hors connecteurs basculés.
+
+    `calls` = consommation d'UN appel qui compte pour plusieurs (un bulk facturé au
+    contact). L'historique reste incrémenté un par un — sa signature n'accepte pas de
+    pas —, mais la chaîne débite en UNE fois : sur un bulk de 100, c'est la différence
+    entre 5 requêtes et 500 sur le chemin chaud."""
     sub = current_user_sub_from_token()
     if not sub:
         return
-    db.increment_usage(sub, provider)
+    for _ in range(max(1, calls)):
+        db.increment_usage(sub, provider)
     if grants_chain.is_chained(provider):
-        grants_chain.record_usage(sub, provider, current_org(sub))
+        grants_chain.record_usage(sub, provider, current_org(sub), max(1, calls))
 
 
 def status_for(sub: str, *, org: "int | None | object" = _UNSET,

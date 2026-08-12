@@ -56,8 +56,10 @@ def register(mcp: FastMCP) -> None:
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         if is_platform:
-            for _ in contacts:
-                access.record_platform_usage("fullenrich")
+            # Un job = un contact facturé par contact : la consommation est le
+            # NOMBRE de contacts, comptée en un seul geste (l'ancienne boucle faisait
+            # une requête par contact — jusqu'à 100 par job).
+            access.record_platform_usage("fullenrich", len(contacts))
         return {
             "enrichment_id": enrichment_id,
             "submitted": len(contacts),
