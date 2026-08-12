@@ -1,6 +1,12 @@
-"""Routes REST datastore + Google OAuth + API tokens.
+"""Routes REST Google OAuth + jetons API.
 
 Extrait de `api_routes.py` pour respecter la limite 500 LOC.
+
+⚠️ **Le datastore a quitté ce module le 2026-08-12 (#302)** : ses 17 routes écrites à
+la main sont des CAPACITÉS (`capabilities/datastore_{namespaces,rows,schema,sharing,
+claim,activity,columns}.py`) — mêmes chemins, mêmes réponses, mais entrée ET sortie
+déclarées, donc décrites dans `/api/openapi.json`. Le nom du fichier est resté (il est
+le point d'accroche de `api_routes.py`) ; ce qu'il porte, non.
 
 Endpoints exposés :
 
@@ -13,27 +19,14 @@ Endpoints exposés :
 - `POST   /api/me/tokens`                       → crée un token, renvoie le plaintext (one-shot)
 - `DELETE /api/me/tokens/{token_id}`            → révoque
 
-- `PUT    /api/datastore/namespaces/{ns}/schema` → pose/retire le schéma typé
-- `GET|POST|DELETE /api/datastore/namespaces/{ns}/share` → partages nominatifs
-
 Auth : Bearer JWT Logto **ou** API token long-lived (préfixe `oto_`),
 résolu via `_authenticate` (partagé avec `api_routes.py`).
 
-⚠️ **Org ciblée = en-tête `X-Oto-Org: <org_id>`** (pas un query param `?org=`, qui
-est ignoré). Sans lui, tout est résolu sur l'org ACTIVE du porteur du token — donc
-le tableau d'une autre de ses organisations est invisible, et répond 404. L'en-tête
-est validé pour appartenance (`ViewAsMiddleware`) et déjà déclaré en CORS, donc
-utilisable depuis un navigateur. Un 404 sur un namespace qui existe ailleurs le
-rappelle désormais dans son `detail` (signal #316).
-
-**Réserver une ligne vit à côté** (signal #362) : `POST …/claim_next` et
-`POST …/rows/{row_id}/claim` sont des CAPACITÉS (`capabilities/datastore_claim.py`),
-pas des routes écrites ici — une surface neuve naît capacité. Seule la LIBÉRATION
-reste dans ce module, avec les autres routes datastore historiques.
+⚠️ La création d'un jeton PORTÉ lit le catalogue des tableaux (pour refuser un nom
+que l'émetteur ne voit pas) : c'est la seule attache qui reste avec le datastore.
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Awaitable, Callable
 
@@ -42,16 +35,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import access, datastore_journal, db, google_oauth, org_store, ownership, roles, token_scopes
-from .datastore import (
-    NamespaceExists,
-    NamespaceForbidden,
-    NamespaceNotFound,
-    NamespaceReadOnly,
-    RowNotFound,
-    RowValidationError,
-    make_store,
-)
+from . import access, db, google_oauth, token_scopes
+from .datastore import make_store
 
 
 # Type alias for the auth helper passed in from api_routes.
@@ -70,42 +55,12 @@ def make_routes(
     cors_headers: Callable[[str | None], dict[str, str]],
     options_handler: Callable[[Request], Awaitable[Response]],
 ) -> list[Route]:
-    """Construit les routes datastore.
+    """Construit ces routes.
 
     Les helpers `authenticate`/`json_response`/`json_error`/`cors_headers`/
     `options_handler` sont passés depuis `api_routes.py` pour partager les
     primitives (auth Logto + token, CORS).
     """
-
-    def _ns_not_found(request: Request, sub: str, namespace: str) -> JSONResponse:
-        """404 qui dit OÙ vit le tableau quand il appartient à une autre org du user.
-
-        L'API résout le store sur l'org ACTIVE ; viser le tableau d'une autre org
-        demande l'en-tête `X-Oto-Org`, qui n'apparaissait ni dans la description des
-        routes ni dans le moindre message. Un namespace bien réel répondait donc
-        « namespace_not_found », ce qui se lit comme « il n'existe pas » — temps
-        perdu, et un faux diagnostic produit au passage (signal #316).
-
-        On ne nomme que des orgs dont le porteur du token est MEMBRE : l'indice ne
-        révèle rien qu'il ne puisse déjà lister. Fail-open : au moindre pépin, le
-        404 nu d'avant."""
-        try:
-            orgs = {int(o["org_id"]): o.get("name") for o in org_store.list_orgs_for_user(sub)}
-            owners = [("org", str(i)) for i in orgs]
-            elsewhere = [n for n in db.list_datastore_namespaces_for_owners(owners)
-                         if n["namespace"] == namespace]
-            if elsewhere:
-                where = ", ".join(
-                    f"{orgs.get(int(n['owner_id'])) or 'org'} (org {n['owner_id']})"
-                    for n in elsewhere)
-                first = elsewhere[0]["owner_id"]
-                return json_error(
-                    request, 404, "namespace_not_found",
-                    f"« {namespace} » existe, mais dans une autre de tes organisations : "
-                    f"{where}. Rejoue la requête avec l'en-tête « X-Oto-Org: {first} ».")
-        except Exception:  # noqa: BLE001 — un indice ne doit jamais casser la réponse
-            pass
-        return json_error(request, 404, "namespace_not_found")
 
     # --- Google OAuth ----------------------------------------------------
 
@@ -260,105 +215,10 @@ def make_routes(
     # (ajouter/modifier : les colonnes du tableau) le sont explicitement, par
     # `RestBinding.body_field`.
 
-    async def ds_set_schema(request: Request) -> JSONResponse:
-        """Pose/retire le schéma typé d'un namespace (ADR 0032 §6 / 0029, B6).
-        Corps : {schema: {fields:[...]}} ou {schema: null} pour repasser en table libre."""
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        try:
-            body = await request.json()
-        except Exception:
-            return json_error(request, 400, "invalid_json")
-        if not isinstance(body, dict):
-            return json_error(request, 400, "invalid_body")
-        namespace = request.path_params["namespace"]
-        try:
-            return json_response(request, make_store(sub).set_schema(namespace, body.get("schema")))
-        except NamespaceNotFound:
-            return _ns_not_found(request, sub, namespace)
-        except NamespaceReadOnly:
-            return json_error(request, 403, "namespace_read_only")
-        except ValueError:
-            return json_error(request, 400, "invalid_schema")
-
-    def _govern_ns(sub: str, namespace: str) -> tuple[int | None, tuple[int, str] | None]:
-        """Résout le namespace par nom + vérifie le droit de GOUVERNANCE de l'acteur
-        (owner ∪ escalade roles.py). Retourne (ns_id, None) ou (None, (status, code))."""
-        try:
-            ns_id = make_store(sub).resolve_ns_id(namespace)
-        except NamespaceNotFound:
-            return None, (404, "namespace_not_found")
-        if not ownership.can_govern(sub, "datastore_namespace", str(ns_id)):
-            return None, (403, "forbidden")
-        return ns_id, None
-
-    async def ds_share(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        namespace = request.path_params["namespace"]
-        try:
-            body = await request.json()
-        except Exception:
-            return json_error(request, 400, "invalid_json")
-        email = (body.get("email") or "").strip()
-        permission = (body.get("permission") or "write").strip()
-        if not email:
-            return json_error(request, 400, "email_required")
-        if permission not in ("read", "write"):
-            return json_error(request, 400, "permission must be 'read' or 'write'")
-        recipient = db.get_user_by_email(email)
-        if not recipient:
-            return json_error(request, 404, f"no oto user with email {email}")
-        ns_id, gerr = _govern_ns(sub, namespace)
-        if gerr:
-            return json_error(request, gerr[0], gerr[1])
-        ownership.grant("datastore_namespace", str(ns_id), "user", recipient["sub"],
-                        permission, granted_by=sub)
-        return json_response(
-            request,
-            {"ok": True, "namespace": namespace, "shared_with": email, "permission": permission},
-        )
-
-    async def ds_unshare(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        namespace = request.path_params["namespace"]
-        try:
-            body = await request.json()
-        except Exception:
-            return json_error(request, 400, "invalid_json")
-        email = (body.get("email") or "").strip()
-        if not email:
-            return json_error(request, 400, "email_required")
-        recipient = db.get_user_by_email(email)
-        if not recipient:
-            return json_error(request, 404, f"no oto user with email {email}")
-        ns_id, gerr = _govern_ns(sub, namespace)
-        if gerr:
-            return json_error(request, gerr[0], gerr[1])
-        removed = ownership.revoke("datastore_namespace", str(ns_id), "user", recipient["sub"])
-        if not removed:
-            return json_error(request, 404, f"no active share for {email} on {namespace}")
-        return json_response(request, {"ok": True, "namespace": namespace, "removed": email})
-
-    async def ds_list_shares(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        namespace = request.path_params["namespace"]
-        ns_id, gerr = _govern_ns(sub, namespace)
-        if gerr:
-            return json_error(request, gerr[0], gerr[1])
-        shares = [
-            {"email": s.get("email"), "permission": s.get("permission"),
-             "principal_type": s.get("principal_type"), "principal_id": s.get("principal_id"),
-             "created_at": s.get("granted_at")}
-            for s in ownership.list_grants("datastore_namespace", str(ns_id))
-        ]
-        return json_response(request, {"shares": shares})
+    # Le SCHÉMA (pose) et le PARTAGE sont des CAPACITÉS (#302) :
+    # `capabilities/datastore_schema.py` (la lecture y vivait déjà) et
+    # `capabilities/datastore_sharing.py`. Le corps du DELETE de partage — forme
+    # historique du client `oto-core` — est déclaré par `RestBinding.reads_body`.
 
     # Le TRANSFERT de propriété d'un datastore passe par la capacité UNIQUE `oto_resource`
     # (op=transfer, resource_type='datastore_namespace' — même seam `ownership` + garde-fou
@@ -383,11 +243,4 @@ def make_routes(
         Route("/api/me/tokens", options_handler, methods=["OPTIONS"]),
         Route("/api/me/tokens/{token_id}", me_tokens_delete, methods=["DELETE"]),
         Route("/api/me/tokens/{token_id}", options_handler, methods=["OPTIONS"]),
-        # Datastore
-        Route("/api/datastore/namespaces/{namespace}/schema", ds_set_schema, methods=["PUT"]),
-        Route("/api/datastore/namespaces/{namespace}/schema", options_handler, methods=["OPTIONS"]),
-        Route("/api/datastore/namespaces/{namespace}/share", ds_list_shares, methods=["GET"]),
-        Route("/api/datastore/namespaces/{namespace}/share", ds_share, methods=["POST"]),
-        Route("/api/datastore/namespaces/{namespace}/share", ds_unshare, methods=["DELETE"]),
-        Route("/api/datastore/namespaces/{namespace}/share", options_handler, methods=["OPTIONS"]),
     ]

@@ -101,7 +101,9 @@ from . import uploads  # noqa: F401 — me.upload_url (oto_upload_url) — push 
 from . import datastore_activity  # noqa: F401 — me.datastore.{row_activity,activity} (REST-only)
 # File de travail côté application (signal #362) — réserver depuis un front web.
 from . import datastore_claim  # noqa: F401 — me.datastore.{claim_next,claim_row} (REST-only)
-from . import datastore_schema  # noqa: F401 — me.datastore.get_schema (MCP data_get_schema + REST)
+from . import datastore_schema  # noqa: F401 — me.datastore.{get,set}_schema (MCP data_get_schema + REST)
+# Partage nominatif d'un tableau (#302) — contrat du client HTTP d'oto-core.
+from . import datastore_sharing  # noqa: F401 — me.datastore.{list_shares,share,unshare}
 # Le tableau lui-même (#302) — lister/créer/renommer/supprimer/ouvrir, ex-routes écrites
 # à la main : mêmes chemins, entrée ET sortie déclarées.
 from . import datastore_namespaces  # noqa: F401 — me.datastore.{list,create,delete,rename}_namespace + url

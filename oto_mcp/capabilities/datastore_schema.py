@@ -1,4 +1,4 @@
-"""Capacité « relire le schéma d'un tableau » — le pendant lecture de `data_set_schema`.
+"""Capacités du schéma d'un tableau : le relire, et le POSER (#302).
 
 Un schéma se posait sans pouvoir se relire. Pour connaître l'existant il fallait
 `data_list_namespaces` puis filtrer soi-même sur l'id — une jointure imposée à
@@ -18,17 +18,26 @@ sortent d'un descripteur unique, avec une seule autz.
 Autz `SUB_ONLY` au seuil : le vrai gate est le droit de LECTURE sur le tableau, résolu
 par le store (org active + ownership), jamais par le nom passé en path — un tableau
 hors périmètre répond 404, comme partout ailleurs dans le datastore.
+
+**La POSE rejoint la lecture ici** (#302, ex-route écrite à la main) : même chemin
+`PUT …/{namespace}/schema`, mêmes réponses. ⚠️ Une asymétrie la traverse et n'est PAS
+corrigée dans ce lot : la lecture résout les références `slot:<nom>` (ADR 0035 B3), la
+pose non — elle prend le nom littéral, comme avant. La corriger ferait passer un appel
+qui rendait 404, ce qui est un changement de comportement déguisé en migration ; à
+trancher pour ses propres raisons.
 """
 from __future__ import annotations
 
+import warnings
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import access
-from ..datastore import NamespaceNotFound, make_store
+from ..datastore import NamespaceNotFound, NamespaceReadOnly, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .datastore_common import ns_not_found
 from .registry import CAPABILITIES
 
 
@@ -65,7 +74,62 @@ def _get_schema(ctx: ResolvedCtx, inp: GetSchemaInput) -> dict:
     return {"namespace": namespace, "schema": schema}
 
 
+# ⚠️ Le champ d'ENTRÉE doit s'appeler `schema` — c'est le nom sur le fil, et la garde
+# de champ inconnu compare des noms PYTHON, pas des alias (un alias ferait refuser le
+# corps que le dashboard envoie depuis toujours). Or `schema` masque une méthode
+# héritée de `BaseModel`, que pydantic signale à la définition de la classe : le
+# warning est éteint ICI, sur ces trois lignes, plutôt que subi au boot du serveur.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", UserWarning)
+
+    class SetSchemaInput(BaseModel):
+        namespace: str
+        # `null` (ou absent) = RETIRER le schéma, retour en table libre. Les deux se
+        # confondent, et c'est le comportement de la route d'avant : `body.get("schema")`.
+        schema: Optional[dict] = None
+
+
+class SchemaPosed(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    namespace: str
+    declared_schema: Optional[dict] = Field(default=None, alias="schema",
+                                            serialization_alias="schema")
+    # Défaut de configuration relevé à la pose (statut sans état terminal, bornes
+    # posées sur des données déjà hors borne, colonnes orphelines) : présent seulement
+    # quand il y a quelque chose à dire, et adressé à l'auteur du schéma.
+    warning: Optional[str] = None
+
+
+def _set_schema(ctx: ResolvedCtx, inp: SetSchemaInput) -> dict:
+    try:
+        return make_store(ctx.sub).set_schema(inp.namespace, inp.schema)
+    except NamespaceNotFound:
+        raise ns_not_found(ctx.sub, inp.namespace)
+    except NamespaceReadOnly:
+        raise AuthzDenied(403, "namespace_read_only")
+    except ValueError:
+        # Le détail du refus n'était pas rendu par la route (`invalid_schema` nu) —
+        # inchangé ici : le message du store cite des valeurs de données (échantillon
+        # de doublons), et l'ouvrir serait un choix, pas une migration.
+        raise AuthzDenied(400, "invalid_schema")
+
+
 CAPABILITIES += [
+    Capability(
+        key="me.datastore.set_schema",
+        handler=_set_schema,
+        Input=SetSchemaInput,
+        Output=SchemaPosed,
+        authz=SUB_ONLY,
+        mcp=None,  # `data_set_schema` tient déjà la face agent
+        rest=RestBinding(verb="PUT",
+                         path="/api/datastore/namespaces/{namespace}/schema"),
+        description=(
+            "Pose (ou retire, avec `schema: null`) le schéma typé d'un tableau. "
+            "Le schéma est posé ENTIER — relire avant d'amender."
+        ),
+    ),
     Capability(
         key="me.datastore.get_schema",
         handler=_get_schema,
