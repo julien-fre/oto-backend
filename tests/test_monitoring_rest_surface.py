@@ -38,7 +38,7 @@ def _mount(monkeypatch, *, admin=True):
     async def authenticate(request, verifier):
         return ("admin-sub", None)
 
-    def json_response(request, payload):
+    def json_response(request, payload, status=200):
         return payload
 
     def json_error(request, status, code, detail=None):

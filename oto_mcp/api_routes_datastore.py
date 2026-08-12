@@ -13,10 +13,6 @@ Endpoints exposés :
 - `POST   /api/me/tokens`                       → crée un token, renvoie le plaintext (one-shot)
 - `DELETE /api/me/tokens/{token_id}`            → révoque
 
-- `GET    /api/datastore/namespaces`            → liste les namespaces user
-- `POST   /api/datastore/namespaces`            → crée une namespace
-- `DELETE /api/datastore/namespaces/{ns}`       → supprime
-- `GET    /api/datastore/namespaces/{ns}/url`   → deep-link dashboard du namespace
 - `GET    /api/datastore/namespaces/{ns}/rows`  → liste les rows (filter=k:v, limit=N)
 - `GET    /api/datastore/namespaces/{ns}/queue` → rows sous bail (file de travail)
 - `POST   /api/datastore/namespaces/{ns}/rows`  → append row
@@ -258,69 +254,10 @@ def make_routes(
 
     # --- Datastore (PG natif, ADR 0016) ----------------------------------
 
-    async def ds_list_ns(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        # Seule réponse FILTRÉE plutôt que refusée pour un jeton porté : sans le
-        # catalogue, une intégration n'a pas le schéma de son tableau (`page_rows`
-        # ne le rend pas) — elle ne pourrait pas peindre ses colonnes. No-op pour
-        # un JWT ou un jeton non porté.
-        rows = token_scopes.filter_namespaces(make_store(sub).list_namespaces())
-        return json_response(request, {"namespaces": rows})
-
-    async def ds_create_ns(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        try:
-            body = await request.json()
-        except Exception:
-            return json_error(request, 400, "invalid_json")
-        namespace = (body or {}).get("namespace", "").strip()
-        if not namespace:
-            return json_error(request, 400, "missing_namespace")
-        # owner optionnel (ADR 0030) : classeur d'org/groupe. Défaut = perso.
-        owner = (body or {}).get("owner") or {}
-        owner_type = (owner.get("type") or "user").strip()
-        owner_id = sub
-        if owner_type == "org":
-            try:
-                org_id = int(owner.get("id"))
-            except (TypeError, ValueError):
-                return json_error(request, 400, "invalid_owner_id")
-            if not roles.is_org_member(sub, org_id):
-                return json_error(request, 403, "not_org_member")
-            owner_id = str(org_id)
-        elif owner_type == "group":
-            try:
-                group_id = int(owner.get("id"))
-            except (TypeError, ValueError):
-                return json_error(request, 400, "invalid_owner_id")
-            if not roles.can_read_group(sub, group_id):
-                return json_error(request, 403, "not_group_member")
-            owner_id = str(group_id)
-        elif owner_type != "user":
-            return json_error(request, 400, "invalid_owner_type")
-        try:
-            created = make_store(sub).create_namespace(
-                namespace, owner_type=owner_type, owner_id=owner_id)
-            return json_response(request, created, status=201)
-        except NamespaceExists:
-            return json_error(request, 409, "namespace_exists")
-
-    async def ds_delete_ns(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        namespace = request.path_params["namespace"]
-        try:
-            make_store(sub).delete_namespace(namespace)
-        except NamespaceNotFound:
-            return _ns_not_found(request, sub, namespace)
-        except NamespaceForbidden:
-            return json_error(request, 403, "forbidden")
-        return json_response(request, {"ok": True, "namespace": namespace})
+    # Lister / créer / supprimer / renommer un tableau, et son deep-link, sont des
+    # CAPACITÉS (`capabilities/datastore_namespaces.py`, #302) : mêmes chemins, mêmes
+    # réponses, mais entrée ET sortie déclarées — donc décrites dans
+    # `/api/openapi.json`, donc générables chez un intégrateur.
 
     async def ds_append(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
@@ -586,16 +523,6 @@ def make_routes(
                                  row_id=row_id, from_status=before)
         return json_response(request, {"ok": True, "id": row_id})
 
-    async def ds_url(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        namespace = request.path_params["namespace"]
-        try:
-            return json_response(request, {"url": make_store(sub).get_url(namespace)})
-        except NamespaceNotFound:
-            return _ns_not_found(request, sub, namespace)
-
     async def ds_set_schema(request: Request) -> JSONResponse:
         """Pose/retire le schéma typé d'un namespace (ADR 0032 §6 / 0029, B6).
         Corps : {schema: {fields:[...]}} ou {schema: null} pour repasser en table libre."""
@@ -696,27 +623,6 @@ def make_routes(
         ]
         return json_response(request, {"shares": shares})
 
-    async def ds_rename(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        namespace = request.path_params["namespace"]
-        try:
-            body = await request.json()
-        except Exception:
-            return json_error(request, 400, "invalid_json")
-        new = ((body or {}).get("name") or "").strip()
-        if not new:
-            return json_error(request, 400, "name_required")
-        ns_id, gerr = _govern_ns(sub, namespace)
-        if gerr:
-            return json_error(request, gerr[0], gerr[1])
-        try:
-            db.rename_datastore_namespace_by_id(ns_id, new)
-        except ValueError as e:
-            return json_error(request, 409, str(e))
-        return json_response(request, {"ok": True, "namespace": new})
-
     # Le TRANSFERT de propriété d'un datastore passe par la capacité UNIQUE `oto_resource`
     # (op=transfer, resource_type='datastore_namespace' — même seam `ownership` + garde-fou
     # anti-lockout + cibles user/org/GROUPE). L'ancien endpoint bespoke `ds_transfer` a été
@@ -741,13 +647,6 @@ def make_routes(
         Route("/api/me/tokens/{token_id}", me_tokens_delete, methods=["DELETE"]),
         Route("/api/me/tokens/{token_id}", options_handler, methods=["OPTIONS"]),
         # Datastore
-        Route("/api/datastore/namespaces", ds_list_ns, methods=["GET"]),
-        Route("/api/datastore/namespaces", ds_create_ns, methods=["POST"]),
-        Route("/api/datastore/namespaces", options_handler, methods=["OPTIONS"]),
-        Route("/api/datastore/namespaces/{namespace}", ds_delete_ns, methods=["DELETE"]),
-        Route("/api/datastore/namespaces/{namespace}", options_handler, methods=["OPTIONS"]),
-        Route("/api/datastore/namespaces/{namespace}/url", ds_url, methods=["GET"]),
-        Route("/api/datastore/namespaces/{namespace}/url", options_handler, methods=["OPTIONS"]),
         Route("/api/datastore/namespaces/{namespace}/schema", ds_set_schema, methods=["PUT"]),
         Route("/api/datastore/namespaces/{namespace}/schema", options_handler, methods=["OPTIONS"]),
         Route("/api/datastore/namespaces/{namespace}/aggregate", ds_aggregate, methods=["GET"]),
@@ -763,7 +662,6 @@ def make_routes(
         Route("/api/datastore/namespaces/{namespace}/rows/{row_id}", ds_update_row, methods=["PATCH"]),
         Route("/api/datastore/namespaces/{namespace}/rows/{row_id}", ds_delete_row, methods=["DELETE"]),
         Route("/api/datastore/namespaces/{namespace}/rows/{row_id}", options_handler, methods=["OPTIONS"]),
-        Route("/api/datastore/namespaces/{namespace}", ds_rename, methods=["PATCH"]),
         Route("/api/datastore/namespaces/{namespace}/share", ds_list_shares, methods=["GET"]),
         Route("/api/datastore/namespaces/{namespace}/share", ds_share, methods=["POST"]),
         Route("/api/datastore/namespaces/{namespace}/share", ds_unshare, methods=["DELETE"]),
