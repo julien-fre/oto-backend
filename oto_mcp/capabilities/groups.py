@@ -401,6 +401,17 @@ def _group_detail(ctx: ResolvedCtx, inp: GroupIdInput) -> dict:
 
 
 def _update_group(ctx: ResolvedCtx, inp: UpdateGroupInput) -> dict:
+    # Même conflit métier que `group.create`, donc même réponse : sans ce contrôle,
+    # l'index UNIQUE (org_id, name) remontait une IntegrityError en 500 — un renommage
+    # refusé répondait autrement qu'une création refusée (#281). Le groupe s'exclut
+    # lui-même : se renommer en son propre nom n'est pas un conflit.
+    if inp.name is not None:
+        name = inp.name.strip()
+        grp = group_store.get_group(inp.group_id)
+        if grp and any(g["name"].lower() == name.lower() and g["id"] != inp.group_id
+                       for g in group_store.list_groups(grp["org_id"])):
+            raise AuthzDenied(409, "group_exists",
+                              f"Un groupe `{name}` existe déjà dans cette org.")
     group_store.update_group(inp.group_id, name=inp.name, description=inp.description)
     return {"ok": True, "group_id": inp.group_id}
 

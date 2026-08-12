@@ -241,6 +241,15 @@ def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
     slug = org_store.normalize_slug(inp.slug)
     if not slug:
         raise AuthzDenied(400, "invalid_slug", "slug vide ou invalide ([a-z0-9_-]).")
+    # Le readme d'équipe est réservé (ADR 0042) : le store le refuse déjà, mais par un
+    # `ValueError` que rien ne traduit — l'appelant recevait un 500 pour une entrée
+    # refusée. On déclare le refus ici plutôt que d'élargir l'adaptateur à `ValueError` :
+    # un refus métier se déclare, il ne se déduit pas d'un type d'exception (#281).
+    if slug == org_store.BASE_SLUG:
+        raise AuthzDenied(
+            400, "reserved_slug",
+            f"`{org_store.BASE_SLUG}` est le readme d'équipe, pas une procédure — "
+            "écris-le via la surface guide (`oto_guide` scope='group', delivery='init').")
     version = group_store.set_group_instruction(
         inp.group_id, slug, inp.body_md, title=inp.title,
         description=inp.description, set_by=ctx.sub)
