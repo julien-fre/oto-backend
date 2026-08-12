@@ -340,6 +340,14 @@ def register(mcp: FastMCP) -> None:
         EBE, marge EBE, autonomie financière, taux d'endettement, liquidité).
         For the full ratio set, call `fr_bilan(siren, date_cloture)`.
 
+        ⚠️ **`latest_bilan` = LITTÉRALEMENT le dernier exercice déposé, qui ne porte
+        pas nécessairement de chiffre d'affaires** — un bilan simplifié n'a pas de
+        case « CA total ». Pour un CA, remonter les exercices : `fr_bilans(siren)`
+        les rend du plus récent au plus ancien avec leur `chiffre_d_affaires`, il
+        faut prendre le premier qui en porte un. Vu sur Norauto : dernier exercice
+        (simplifié) muet, 974 718 176 € à l'exercice précédent. Ne pas conclure
+        « pas de chiffre d'affaires » sur le seul `latest_bilan`.
+
         Resilient to per-source failures: a timeout or error on INPI (bilan) or
         BODACC (events) degrades gracefully — the available blocks are returned
         and the failing sources are listed under `partial_errors`. Only an
