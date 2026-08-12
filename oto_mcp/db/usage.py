@@ -66,14 +66,95 @@ def insert_tool_call(row: dict) -> None:
         )
 
 
+# ── Le run : UNE source, et c'est le JOURNAL ─────────────────────────────────
+#
+# Verdict du 12/08 (chantier du run, arbitrage J-a ; #289) : **la table `runs` n'est
+# pas le run**. Un run est un ASSEMBLAGE À LA LECTURE (ADR 0058-D2) — le journal des
+# appels porte le déroulé, les sorties sont des nœuds de l'arbre de contenu, et la
+# page de run ne se stocke jamais. La ligne `runs` n'est au mieux qu'un **index**.
+#
+# Ce que ça ferme : deux reconstructions concurrentes du MÊME objet cohabitaient — la
+# table (bloc C du handshake, pastille de procédure, activité datastore) et le journal
+# (lentilles admin et org). Elles peuvent rendre deux issues différentes du même run :
+# `finish_run` est un UPDATE qui NO-OPE quand la ligne n'existe pas (`_persist_open`
+# est best-effort) ou quand le `sub` ne matche pas, pendant que le fait `run_finish`,
+# lui, est toujours journalisé. La table peut donc annoncer « en cours » ce que le
+# journal a clos — et l'inverse ne peut plus arriver.
+#
+# CE QUI RESTE CRÉDIBLE DANS LA TABLE, champ par champ :
+#   • `run_id`     — la clé de jointure. C'est la seule raison de lire cette table.
+#   • `project_id` — le SEUL fait qu'aucune ligne de journal ne porte (`tool_calls`
+#                    n'a pas de colonne projet) : c'est ce qui garde la table en vie.
+#   • `sub`, `org_id` — redondants avec la ligne `run_start` (mêmes seams à l'écriture,
+#                    `current_user_sub_from_token` / `current_org`) ; ils servent
+#                    `idx_runs_sub_org`, ils ne sont jamais RENDUS.
+#   • `label`, `doctrine`, `outcome`, `note`, `started_at`, `finished_at` — DOUBLONS
+#                    **non autoritatifs**. Ils continuent d'être écrits (retirer les
+#                    colonnes est une migration, pas ce lot), et plus aucun lecteur ne
+#                    les lit : dès qu'ils divergent du journal, c'est le journal qui
+#                    dit vrai.
+#
+# D'où les deux fragments ci-dessous : ils sont la SEULE façon de lire un run. Rejoindre
+# `runs` ailleurs pour un label, une doctrine ou une issue, c'est rouvrir la 2ᵉ vérité.
+
+
+def _run_closure(start: str = "s") -> str:
+    """LATERAL de la CLÔTURE d'un run, lue du journal (la ligne `run_finish`).
+
+    Trois prédicats, un mode d'erreur chacun :
+    - `args->>'run_id'` est le lien qui existe pour TOUTES les lignes. `_run_id=` n'est
+      pas advertisé sur `run_finish` (`call_axes._is_run_correlatable_tool` exclut les
+      verbes de run), donc la colonne `tool_calls.run_id` d'une clôture ne se remplit
+      que depuis le stamp que `run_finish` pose lui-même : l'historique de la fenêtre
+      de rétention ne l'a pas, et se fier à la colonne perdrait ces clôtures-là ;
+    - `created_at >= {start}.created_at` : une clôture ne précède pas son ouverture
+      (et le prédicat borne le parcours) ;
+    - `sub IS NOT DISTINCT FROM {start}.sub` : la MÊME règle que `finish_run`, qui scope
+      sa clôture au propriétaire. Sans elle, un `run_finish` tapé par un tiers sur un
+      run_id deviné donnerait au journal une issue que la table refuse — c'est-à-dire
+      très exactement la deuxième vérité qu'on est en train de fermer.
+    La DERNIÈRE clôture gagne : un agent peut rejouer `run_finish`."""
+    return f"""
+            LEFT JOIN LATERAL (
+                SELECT created_at, args
+                  FROM tool_calls
+                 WHERE tool = 'run_finish'
+                   AND args->>'run_id' = {start}.run_id
+                   AND created_at >= {start}.created_at
+                   AND sub IS NOT DISTINCT FROM {start}.sub
+                 ORDER BY created_at DESC
+                 LIMIT 1
+            ) f ON TRUE"""
+
+
+def _runs_from_journal(extra: str = "") -> str:
+    """Le run RECONSTRUIT depuis ses faits : l'ouverture (`run_start`) porte label,
+    doctrine, acteur, org et date de début ; la clôture porte l'issue et la date de fin.
+    `outcome` NULL = pas de fait de clôture = run ouvert.
+
+    `extra` = prédicats supplémentaires sur l'alias `s` (la ligne d'ouverture),
+    TOUJOURS des littéraux de ce module — jamais une entrée d'appelant."""
+    return f"""
+            SELECT s.run_id, s.sub, s.org_id,
+                   s.args->>'label'    AS label,
+                   s.args->>'doctrine' AS doctrine,
+                   s.created_at        AS started_at,
+                   f.created_at        AS finished_at,
+                   f.args->>'outcome'  AS outcome
+              FROM tool_calls s{_run_closure("s")}
+             WHERE s.tool = 'run_start' AND s.run_id IS NOT NULL{extra}"""
+
+
 def insert_run(
     run_id: str, *, sub: Optional[str], org_id: Optional[int], label: str,
     doctrine: Optional[str] = None, project_id: Optional[int] = None,
 ) -> None:
-    """Persiste l'ouverture d'un run (best-effort, idempotent sur `run_id`). La pile
-    session-scopée de `doctrine_run.py` reste la source du run ACTIF ; cette ligne
-    est la trace durable (label/doctrine). `project_id` = projet actif gelé au start
-    (ADR 0032 §5/§6, B3) ; NULL hors projet."""
+    """Pose l'INDEX d'un run (best-effort, idempotent sur `run_id`).
+
+    ⚠️ Ce n'est pas « persister le run » : le run est ses faits (cf. le bloc ci-dessus).
+    Cette ligne existe pour porter `project_id` — le projet actif gelé à l'ouverture
+    (ADR 0032 §5/§6, B3), qu'aucune colonne de `tool_calls` ne porte ; NULL hors projet.
+    `label`/`doctrine` y sont écrits par héritage et ne sont plus lus."""
     with _connect() as conn:
         conn.execute(
             "INSERT INTO runs (run_id, sub, org_id, project_id, label, doctrine) "
@@ -84,10 +165,14 @@ def insert_run(
 
 def finish_run(run_id: str, outcome: str, note: Optional[str] = None,
                sub: Optional[str] = None) -> None:
-    """Clôt un run persisté (outcome + note + finished_at). No-op si run_id inconnu
-    (run ouvert dans une session sans persistance, ou déjà prune). `sub` (≠ None)
-    SCOPE la clôture au propriétaire du run — un run_id d'autrui (session réutilisée,
-    #108) n'est pas clôturable ; `sub=None` (stdio local) matche les runs sans sub."""
+    """Marque la clôture sur l'INDEX (outcome + note + finished_at).
+
+    ⚠️ Écriture de confort, **jamais lue** : l'issue d'un run se lit du fait `run_finish`
+    (`_runs_from_journal`). No-op si run_id inconnu (index jamais posé, ou déjà prune) —
+    c'était précisément la source de la divergence : l'UPDATE rate en silence, le fait,
+    lui, est écrit. `sub` (≠ None) SCOPE la clôture au propriétaire (un run_id d'autrui,
+    #108, n'est pas clôturable) ; `sub=None` (stdio local) matche les runs sans sub. La
+    reconstruction applique la MÊME règle de propriété."""
     with _connect() as conn:
         conn.execute(
             "UPDATE runs SET outcome = %s, note = %s, finished_at = NOW() "
@@ -97,13 +182,22 @@ def finish_run(run_id: str, outcome: str, note: Optional[str] = None,
 
 
 def recent_runs(sub: str, org_id: Optional[int], limit: int = 5) -> list[dict]:
-    """Les `limit` derniers runs d'un (sub, org), plus récent d'abord. Sert
-    l'anticipation du contexte injecté (#50 bloc C) + la boucle d'usage."""
+    """Les `limit` derniers runs d'un (sub, org), plus récent d'abord — l'anticipation
+    du contexte injecté (#50 bloc C) + la boucle d'usage.
+
+    Lus du JOURNAL (le run est ses faits) ; la table n'est jointe que pour `project_id`,
+    le seul champ qu'elle sait. Conséquence assumée : un run dont l'ouverture n'a pas
+    été journalisée n'apparaît plus au handshake — mieux qu'une étiquette sans déroulé."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT run_id, label, doctrine, outcome, project_id, started_at, finished_at "
-            "FROM runs WHERE sub = %s AND org_id IS NOT DISTINCT FROM %s "
-            "ORDER BY started_at DESC LIMIT %s",
+            f"""
+            WITH j AS ({_runs_from_journal(
+                " AND s.sub = %s AND s.org_id IS NOT DISTINCT FROM %s")})
+            SELECT j.run_id, j.label, j.doctrine, j.outcome, x.project_id,
+                   j.started_at, j.finished_at
+              FROM j LEFT JOIN runs x ON x.run_id = j.run_id
+             ORDER BY j.started_at DESC LIMIT %s
+            """,
             (sub, org_id, limit),
         ).fetchall()
     return list(rows)
@@ -113,7 +207,10 @@ def project_run_tools(project_id: int, limit: int = 200) -> list[str]:
     """Outils réellement APPELÉS par les runs d'un projet — la part « usage observé »
     de l'inventaire dérivé (ADR 0035 B4 : surface d'un projet = refs des procédures
     liées ∪ slots×bindings ∪ runs). Distincts, plus fréquents d'abord ; brut (spine/
-    méta inclus — le consommateur cure)."""
+    méta inclus — le consommateur cure).
+
+    Seul usage LÉGITIME de la table `runs` en jointure : on ne lui demande que
+    `project_id` (son unique champ crédible), la matière vient du journal."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT tc.tool, count(*) AS n FROM tool_calls tc "
@@ -129,27 +226,43 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
                  limit: int = 20) -> list[dict]:
     """Derniers runs d'un projet (plus récent d'abord), optionnellement filtrés sur une
     `doctrine` (slug) — alimente la pastille ok/échec du viewer de procédure (refonte UX,
-    ADR 0032/0017). `outcome` NULL = run en cours / non clôturé."""
-    sql = ("SELECT run_id, label, doctrine, outcome, started_at, finished_at "
-           "FROM runs WHERE project_id = %s ")
-    params: list = [project_id]
-    if doctrine is not None:
-        sql += "AND doctrine = %s "
-        params.append(doctrine)
-    sql += "ORDER BY started_at DESC LIMIT %s"
-    params.append(limit)
+    ADR 0032/0017). `outcome` NULL = run ouvert / non clôturé.
+
+    L'axe PROJET vient de l'index (`runs.project_id`), tout le reste du journal — le
+    filtre `doctrine` inclus : filtrer sur la colonne de la table ferait apparaître dans
+    la pastille d'une procédure un run que le journal rattache à une autre."""
+    doctrine_clause = " AND j.doctrine = %s" if doctrine is not None else ""
+    params: list = [project_id] + ([doctrine] if doctrine is not None else []) + [limit]
     with _connect() as conn:
-        return [dict(r) for r in conn.execute(sql, tuple(params)).fetchall()]
+        return [dict(r) for r in conn.execute(
+            f"""
+            WITH j AS ({_runs_from_journal()})
+            SELECT j.run_id, j.label, j.doctrine, j.outcome, j.started_at, j.finished_at
+              FROM runs x JOIN j ON j.run_id = x.run_id
+             WHERE x.project_id = %s{doctrine_clause}
+             ORDER BY j.started_at DESC LIMIT %s
+            """,
+            tuple(params),
+        ).fetchall()]
 
 
 def project_run_stats(project_id: int) -> dict:
     """Nombre de runs d'un projet + slugs de doctrines déroulées (distincts) — sert
-    l'inertie de l'audit de liens (ADR 0035 B5 : procédure liée jamais déroulée)."""
+    l'inertie de l'audit de liens (ADR 0035 B5 : procédure liée jamais déroulée).
+
+    JOIN (pas LEFT JOIN) sur les faits : un index sans déroulé journalisé ne compte pas
+    — la question posée est « cette procédure a-t-elle SERVI », et un run sans le
+    moindre fait ne le prouve pas."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT count(*) AS n, "
-            "array_agg(DISTINCT doctrine) FILTER (WHERE doctrine IS NOT NULL) AS doctrines "
-            "FROM runs WHERE project_id = %s",
+            f"""
+            WITH j AS ({_runs_from_journal()})
+            SELECT count(*) AS n,
+                   array_agg(DISTINCT j.doctrine)
+                       FILTER (WHERE j.doctrine IS NOT NULL) AS doctrines
+              FROM runs x JOIN j ON j.run_id = x.run_id
+             WHERE x.project_id = %s
+            """,
             (project_id,),
         ).fetchone()
     return {"runs": int(row["n"] or 0), "doctrines": list(row["doctrines"] or [])}
@@ -247,28 +360,19 @@ def list_runs(limit: int = 100, *, org_id: Optional[int] = None) -> list[dict]:
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             f"""
-            SELECT s.run_id,
-                   COALESCE(s.args->>'doctrine', s.args->>'label') AS slug,
-                   s.args->>'label'    AS label,
-                   s.args->>'doctrine' AS doctrine,
-                   s.sub, u.email, u.name,
-                   s.created_at      AS started_at,
-                   f.created_at      AS finished_at,
-                   f.args->>'outcome' AS outcome,
+            WITH j AS ({_runs_from_journal(org_clause)})
+            SELECT j.run_id,
+                   COALESCE(j.doctrine, j.label) AS slug,
+                   j.label, j.doctrine, j.sub, u.email, u.name,
+                   j.started_at, j.finished_at, j.outcome,
                    COALESCE(c.n_calls, 0) AS n_calls
-            FROM tool_calls s
-            LEFT JOIN users u ON u.sub = s.sub
-            LEFT JOIN LATERAL (
-                SELECT created_at, args FROM tool_calls
-                WHERE tool = 'run_finish' AND args->>'run_id' = s.run_id
-                ORDER BY created_at DESC LIMIT 1
-            ) f ON TRUE
-            LEFT JOIN (
-                SELECT run_id, count(*) AS n_calls FROM tool_calls
-                WHERE run_id IS NOT NULL GROUP BY run_id
-            ) c ON c.run_id = s.run_id
-            WHERE s.tool = 'run_start' AND s.run_id IS NOT NULL{org_clause}
-            ORDER BY s.created_at DESC LIMIT %s
+              FROM j
+              LEFT JOIN users u ON u.sub = j.sub
+              LEFT JOIN (
+                  SELECT run_id, count(*) AS n_calls FROM tool_calls
+                   WHERE run_id IS NOT NULL GROUP BY run_id
+              ) c ON c.run_id = j.run_id
+             ORDER BY j.started_at DESC LIMIT %s
             """,
             tuple(params),
         ).fetchall()]
@@ -809,9 +913,10 @@ def prune_tool_calls(keep_days: int = 30) -> int:
     (`project_runs`, `project_run_stats`, la pastille de procédure) : l'historique d'un
     projet est celui de la fenêtre de rétention, pas l'éternité.
 
-    Ne tranche PAS la duplication de source (table `runs` vs reconstruction depuis le
-    journal, `list_runs`) : les deux s'éteignent maintenant en même temps, laquelle
-    survit est une décision d'archi encore ouverte (chantier du run, J-a).
+    La duplication de source, elle, est tranchée depuis (arbitrage J-a du 12/08, cf. le
+    bloc « UNE source » plus haut) : le journal EST le run, `runs` n'est qu'un index.
+    Cette purge en devient le corollaire naturel — l'index ne survit pas à ce qu'il
+    indexe.
 
     Appelé au boot (`init_db`, `OTO_MCP_CALL_LOG_RETENTION_DAYS`). Retourne le nombre de
     lignes de JOURNAL supprimées (contrat inchangé) ; le compte de runs part au log.
@@ -840,10 +945,24 @@ def get_usage_today(sub: str, tool: str) -> int:
 
 # Colonnes lues pour une entrée d'activité datastore (les deux lectures ci-dessous
 # servent le MÊME contrat d'entrée → une seule projection).
-_DS_ACTIVITY_SELECT = """
+#
+# Le run cité à côté d'un geste vient du JOURNAL, plus de la table (source unique) :
+# une ligne de tableau ne doit pas afficher « → done » quand le déroulé qui l'a touchée
+# est ouvert (ou l'inverse). Le LATERAL retrouve l'ouverture par la colonne indexée
+# `tool_calls.run_id` (`idx_tool_calls_run`, partiel) — `run_start` la stampe lui-même —
+# puis sa clôture par `_run_closure`.
+_DS_ACTIVITY_SELECT = f"""
             SELECT l.created_at, l.kind, l.tool, l.args, l.ok, l.error, l.sub, l.email,
-                   l.run_id, r.label AS run_label, r.doctrine, r.outcome
-            FROM tool_calls l LEFT JOIN runs r ON r.run_id = l.run_id
+                   l.run_id, r.run_label, r.doctrine, r.outcome
+            FROM tool_calls l
+            LEFT JOIN LATERAL (
+                SELECT s.args->>'label'    AS run_label,
+                       s.args->>'doctrine' AS doctrine,
+                       f.args->>'outcome'  AS outcome
+                  FROM tool_calls s{_run_closure("s")}
+                 WHERE s.tool = 'run_start' AND s.run_id = l.run_id
+                 ORDER BY s.created_at LIMIT 1
+            ) r ON l.run_id IS NOT NULL
 """
 
 # Les DEUX surfaces sont journalisées : 'mcp' = appel d'agent, 'rest' = geste fait

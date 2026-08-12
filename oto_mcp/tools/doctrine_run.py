@@ -96,6 +96,13 @@ def register(mcp: FastMCP) -> None:
                 code=INVALID_PARAMS,
                 message=f"outcome must be one of {', '.join(_OUTCOMES)}",
             ))
+        # La clôture appartient au déroulé qu'elle clôt : sans ce stamp, `tool_calls.
+        # run_id` reste NULL sur cette ligne (l'axe `_run_id=` n'est pas advertisé sur
+        # les verbes de run) et la timeline d'un run — `get_run`, qui filtre sur la
+        # colonne — n'affiche jamais sa propre fin, pendant que l'issue est lue de
+        # cette ligne-là. Même geste que `run_start`, symétrique et sans reset.
+        from .. import session_org
+        session_org.set_call_run(run_id)
         removed = await dr.pop_run(ctx, run_id)
         await _persist_close(run_id, outcome, note)
         return {"ok": True, "run_id": run_id, "outcome": outcome, "was_open": removed is not None}
