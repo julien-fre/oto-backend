@@ -15,12 +15,12 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .. import db
 from . import usage
 from ._authz import PLATFORM_ADMIN
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import cap_limit, AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 
@@ -60,6 +60,11 @@ class CallsInput(BaseModel):
     session_id: Optional[str] = None
     min_duration_ms: Optional[int] = None
     error_contains: Optional[str] = None
+
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 200)
 
 
 class CallInput(BaseModel):
@@ -114,6 +119,14 @@ class MonitoringInput(BaseModel):
     min_duration_ms: Optional[int] = None  # calls : appels lents
     error_contains: Optional[str] = None  # calls : recherche dans le message d'erreur
     call_id: Optional[int] = None         # call (requis)
+
+    # Console op-aware : plafond du plus large de ses ops (`calls`, 200). Écrête au
+    # lieu de refuser — une valeur énorme partait telle quelle au SQL, une négative
+    # faisait échouer la requête en 500 (#300).
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 200, default=None) if v is not None else None
 
 
 def _need(val, code: str, msg: str):
@@ -185,3 +198,4 @@ CAPABILITIES += [
         mcp="oto_admin_monitoring",
     ),
 ]
+

@@ -136,6 +136,27 @@ class Capability:
         return list(self.rest)
 
 
+def cap_limit(value, maximum: int, *, default: Optional[int] = None) -> int:
+    """Borne une taille de page — **écrête, ne refuse pas**.
+
+    Le patron vient de la recherche (`SearchInput._cap`) et vaut pour toute lentille
+    paginée : sans lui, une valeur énorme part telle quelle au SQL et une valeur
+    négative fait échouer la requête en 500 (oto-backend#300). Écrêter plutôt que
+    refuser est un choix : le client qui demande trop reçoit le maximum servable, et
+    non une erreur qu'il devra apprendre à éviter.
+
+    `default` sert aux consoles op-aware, dont le `limit` est `Optional` parce qu'il
+    dépend du verbe (un export ne se pagine pas comme une timeline).
+    """
+    if value is None:
+        value = default if default is not None else maximum
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        value = default if default is not None else maximum
+    return max(1, min(value, maximum))
+
+
 def apply_flat_signature(fn: Callable, model: type[BaseModel]) -> Callable:
     """Expose les champs de `model` en paramètres KEYWORD_ONLY plats sur `fn`.
 

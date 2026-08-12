@@ -261,11 +261,19 @@ def GROUP_MEMBER_OF(field: str):
     def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
         sub = _require_sub(raw)
         group_id = _field_int(inp, field, "missing_group", field)
-        g = group_store.get_group(group_id)
-        if g is None:
-            raise AuthzDenied(404, "unknown_group", f"Groupe #{group_id} inconnu.")
+        # Autorisation AVANT existence — la convention du palier org (`ORG_MEMBER_OF`
+        # ne teste que l'appartenance). L'ordre inverse faisait apprendre à un
+        # non-membre SI l'équipe #N existe : mince (un entier, sans nom ni contenu),
+        # mais c'était une divergence non décidée entre deux paliers qui appliquent
+        # par ailleurs la même doctrine de refus non-disclosant (#300).
+        # `can_read_group` rend False sur un groupe inexistant ⟹ même 403 dans les
+        # deux cas, ce qui est exactement le but.
         if not roles.can_read_group(sub, group_id):
             raise AuthzDenied(403, "forbidden", f"Réservé aux membres du groupe #{group_id}.")
+        g = group_store.get_group(group_id)
+        if g is None:
+            # Autorisé sur un groupe absent : incohérence de données, pas un refus.
+            raise AuthzDenied(404, "unknown_group", f"Groupe #{group_id} inconnu.")
         return ResolvedCtx(sub=sub, org_id=g["org_id"], group_id=group_id,
                            role=access.get_user_role(sub))
     return rule
@@ -278,12 +286,13 @@ def GROUP_ADMIN_OF(field: str):
     def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
         sub = _require_sub(raw)
         group_id = _field_int(inp, field, "missing_group", field)
-        g = group_store.get_group(group_id)
-        if g is None:
-            raise AuthzDenied(404, "unknown_group", f"Groupe #{group_id} inconnu.")
+        # Même ordre que `GROUP_MEMBER_OF` ci-dessus : autorisation d'abord (#300).
         if not roles.can_admin_group(sub, group_id):
             raise AuthzDenied(403, "forbidden",
                               f"Réservé au chef d'équipe (ou org_admin) du groupe #{group_id}.")
+        g = group_store.get_group(group_id)
+        if g is None:
+            raise AuthzDenied(404, "unknown_group", f"Groupe #{group_id} inconnu.")
         return ResolvedCtx(sub=sub, org_id=g["org_id"], group_id=group_id,
                            role=access.get_user_role(sub))
     return rule

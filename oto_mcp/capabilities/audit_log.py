@@ -21,12 +21,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .. import db
 from ..tool_visibility import namespace_of
 from ._authz import ORG_ADMIN_OF
-from ._types import Capability, ResolvedCtx, RestBinding
+from ._types import cap_limit, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
@@ -89,6 +89,13 @@ class AuditExportInput(BaseModel):
     until: Optional[str] = None       # borne haute ISO, incluse
     limit: int = 1000
 
+    # C'est la lentille la plus exposée : sur un EXPORT, un grand nombre paraît
+    # légitime, donc rien ne le rendait suspect. Écrête au défaut servi (#300).
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 1000)
+
 
 def _export(ctx: ResolvedCtx, inp: AuditExportInput) -> dict:
     calls = db.list_tool_calls_for_org(inp.org_id, since=inp.since, until=inp.until, limit=inp.limit)
@@ -108,3 +115,4 @@ CAPABILITIES += [
         rest=RestBinding("GET", "/api/orgs/{id}/audit-log/export", _ID),
     ),
 ]
+

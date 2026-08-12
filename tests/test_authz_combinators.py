@@ -272,9 +272,19 @@ def test_group_member_of_injects_parent_org(monkeypatch):
 
 
 def test_group_member_of_unknown_group(monkeypatch):
+    """Une équipe inconnue est refusée **sans dire si elle existe** (#300).
+
+    C'était un 404 `unknown_group` : le test d'existence passait AVANT celui
+    d'appartenance, donc un non-membre apprenait si l'équipe #N existe. Le palier org
+    ne fait pas ça (`ORG_MEMBER_OF` ne teste que l'appartenance), et les deux paliers
+    appliquent par ailleurs la même doctrine de refus non-disclosant.
+
+    Le prix, assumé : un administrateur légitime qui se trompe d'identifiant reçoit
+    lui aussi 403 au lieu de 404 — exactement ce que le palier org lui rend déjà.
+    """
     monkeypatch.setattr(group_store, "get_group", lambda gid: None)
     err = _denied(_authz.GROUP_MEMBER_OF("group_id"), RAW, SimpleNamespace(group_id=3))
-    assert err.status == 404 and err.code == "unknown_group"
+    assert err.status == 403 and err.code == "forbidden"
 
 
 def test_group_member_of_denies_outsider(monkeypatch):

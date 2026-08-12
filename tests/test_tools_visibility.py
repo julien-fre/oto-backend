@@ -81,15 +81,26 @@ def test_org_inconnue_est_un_404_sur_les_trois_verbes(monkeypatch, key, build):
 
 
 @pytest.mark.parametrize("key,build", _TRIPLET_GROUP, ids=[k for k, _ in _TRIPLET_GROUP])
-def test_equipe_inconnue_est_un_404_sur_les_trois_verbes(monkeypatch, key, build):
+def test_equipe_inconnue_est_refusee_sur_les_trois_verbes(monkeypatch, key, build):
     """Au palier équipe l'alignement est porté un cran plus haut, par les règles
-    d'autz elles-mêmes — d'où le handler sans garde d'existence."""
+    d'autz elles-mêmes — d'où le handler sans garde d'existence.
+
+    ⚠️ Le CODE a changé le 12/08 (#300) : c'était 404 `unknown_group`, c'est
+    désormais 403 — l'autorisation est testée avant l'existence, donc un non-membre
+    n'apprend plus si l'équipe #N existe. Ce que ce test garde est inchangé : une
+    équipe inconnue ne passe pas, et le handler n'a pas besoin de sa propre garde.
+    """
     from oto_mcp.capabilities import _authz
+    # Stubber `roles` et pas seulement `_authz.group_store` : depuis l'inversion, ce
+    # sont les fonctions de rôle qui interrogent la base EN PREMIER — un stub posé
+    # sur le seul module d'autz laissait le test ouvrir une vraie connexion.
+    monkeypatch.setattr(_authz.roles, "can_read_group", lambda sub, gid: False)
+    monkeypatch.setattr(_authz.roles, "can_admin_group", lambda sub, gid: False)
     monkeypatch.setattr(_authz.group_store, "get_group", lambda gid: None)
 
     with pytest.raises(AuthzDenied) as e:
         _run(key, build())
-    assert (e.value.status, e.value.code) == (404, "unknown_group")
+    assert (e.value.status, e.value.code) == (403, "forbidden")
 
 
 def test_org_list_returns_stored_names(monkeypatch):

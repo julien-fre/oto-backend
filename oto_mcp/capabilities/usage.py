@@ -14,11 +14,11 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .. import db, org_store
 from ._authz import PLATFORM_ADMIN, SUB_ONLY
-from ._types import Capability, ResolvedCtx, RestBinding
+from ._types import cap_limit, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 
@@ -82,6 +82,11 @@ def _feedback(ctx: ResolvedCtx, inp: FeedbackInput) -> dict:
 class RunsInput(BaseModel):
     limit: int = 100
 
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 100)
+
 
 class RunInput(BaseModel):
     run_id: str
@@ -96,6 +101,11 @@ class SignalsInput(BaseModel):
     target: Optional[str] = None
     status: Optional[str] = None   # 'open' | 'resolved' | None (tous)
     limit: int = 200
+
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 200)
 
 
 class ResolveSignalInput(BaseModel):

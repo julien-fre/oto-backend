@@ -26,12 +26,12 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .. import db
 from . import audit_log, monitoring
 from ._authz import ORG_ADMIN_OF
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import cap_limit, AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
@@ -311,6 +311,11 @@ class OrgCallsInput(BaseModel):
     min_duration_ms: Optional[int] = None
     error_contains: Optional[str] = None
 
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 200)
+
 
 class OrgCallInput(BaseModel):
     org_id: int
@@ -320,6 +325,11 @@ class OrgCallInput(BaseModel):
 class OrgRunsInput(BaseModel):
     org_id: int
     limit: int = 100
+
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 100)
 
 
 class OrgRunInput(BaseModel):
@@ -401,6 +411,13 @@ class OrgMonitoringInput(BaseModel):
     call_id: Optional[int] = None         # call (requis)
     since: Optional[str] = None           # export : borne basse ISO
     until: Optional[str] = None           # export : borne haute ISO
+
+    # Console op-aware : plafond du plus large de ses ops (`export`, 1000) — borner
+    # plus bas écrêterait un export légitime. Écrête au lieu de refuser (#300).
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        return cap_limit(v, 1000) if v is not None else None
 
 
 def _need(val, code: str, msg: str):
@@ -490,3 +507,4 @@ CAPABILITIES += [
         mcp="oto_org_monitoring",
     ),
 ]
+
