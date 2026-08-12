@@ -26,7 +26,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from . import connector_link, credentials_store, oauth2_pkce, oauth_flow
+from . import connector_flow, connector_link, credentials_store, oauth2_pkce, oauth_flow
 
 _AUTH_URL = "https://mcp.atlassian.com/v1/authorize"
 _TOKEN_URL = "https://cf.mcp.atlassian.com/v1/token"
@@ -227,6 +227,26 @@ def _link_state(sub: str) -> connector_link.LinkState:
 
 
 connector_link.register(_CONNECTOR, _link_state)
+
+
+def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
+    """Le geste « connecter », déclaré comme celui de tout autre connecteur (#300).
+
+    Il existait — mais **hors du point de passage** : une route REST écrite à la main
+    rendait `{auth_url}` par coïncidence, sans que rien ne l'y oblige, et le garde-fou
+    qui impose la forme commune ne voit que les capacités. Le front devait donc garder
+    une fonction par connecteur là où le seam existe précisément pour qu'il n'ait pas à
+    savoir lequel il branche.
+    """
+    return connector_flow.FlowStart(auth_url=build_auth_url(ctx.sub))
+
+
+connector_flow.declare(
+    _CONNECTOR,
+    start=_start_flow,
+    label="Autoriser oto chez Atlassian",
+    callback_path="/api/atlassian/oauth/callback",
+)
 
 
 def disconnect(sub: str) -> bool:

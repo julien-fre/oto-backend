@@ -18,13 +18,26 @@ from oto_mcp.tools import register_all
 @pytest.fixture(scope="module", autouse=True)
 def _declarations():
     register_all(FastMCP("connector-flow-probe"))
+    # Un flux se déclare à l'IMPORT de son module. Les connecteurs à outils sont
+    # couverts par `register_all` ; ceux dont le geste vit dans un module d'auth
+    # (fédérations OAuth) ne le sont pas — au boot réel, c'est `api_routes` qui les
+    # importe en montant leurs routes. Sans ces deux lignes, le garde-fou ci-dessous
+    # ne verrait pas des flux pourtant déclarés en production, et son inventaire
+    # mentirait par omission — exactement le mode de panne qu'il existe pour éviter.
+    from oto_mcp import atlassian_oauth, folk_oauth  # noqa: F401
 
 
 # --- le contrat du descripteur -------------------------------------------------
 
 def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
+    """⚠️ Cette liste est un INVENTAIRE, pas une préférence : elle doit grossir dès
+    qu'un geste « connecter » existe quelque part. Trois flux vivaient hors du point
+    de passage — des routes REST écrites à la main qui rendaient la bonne forme par
+    coïncidence, sans que rien ne l'impose et sans que ce garde-fou les voie (#300).
+    """
     assert set(connector_flow.entries()) == {
-        "zoho", "zohodesk", "zohoanalytics", "salesforce"}
+        "zoho", "zohodesk", "zohoanalytics", "salesforce",
+        "atlassian", "folkmcp", "google"}
 
 
 def test_le_descripteur_ne_porte_ni_url_ni_nom_de_capacite():

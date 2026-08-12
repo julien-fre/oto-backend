@@ -33,7 +33,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from . import connector_link, credentials_store, oauth2_pkce, oauth_flow
+from . import connector_flow, connector_link, credentials_store, oauth2_pkce, oauth_flow
 
 _AUTH_URL = "https://app.folk.app/oauth/authorize"
 _TOKEN_URL = "https://api.stytch.folk.app/v1/oauth2/token"
@@ -238,6 +238,24 @@ def _link_state(sub: str) -> connector_link.LinkState:
 
 
 connector_link.register(_CONNECTOR, _link_state)
+
+
+def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
+    """Le geste « connecter », déclaré comme celui de tout autre connecteur (#300).
+
+    Il existait — mais **hors du point de passage** : une route REST écrite à la main
+    rendait `{auth_url}` par coïncidence, sans que rien ne l'y oblige, et le garde-fou
+    qui impose la forme commune ne voit que les capacités.
+    """
+    return connector_flow.FlowStart(auth_url=build_auth_url(ctx.sub))
+
+
+connector_flow.declare(
+    _CONNECTOR,
+    start=_start_flow,
+    label="Autoriser oto chez Folk",
+    callback_path="/api/folkmcp/oauth/callback",
+)
 
 
 def disconnect(sub: str) -> bool:

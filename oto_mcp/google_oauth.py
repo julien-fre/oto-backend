@@ -37,7 +37,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import connector_link, db
+from . import connector_flow, connector_link, db
 
 
 SCOPES = [
@@ -321,6 +321,33 @@ def _link_state(sub: str) -> connector_link.LinkState:
 
 
 connector_link.register("google", _link_state)
+
+
+def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
+    """Le geste « connecter », déclaré comme celui de tout autre connecteur (#300).
+
+    Il existait — mais **hors du point de passage** : une route REST écrite à la main
+    rendait `{auth_url}` par coïncidence, sans que rien ne l'y oblige, et le garde-fou
+    qui impose la forme commune ne voit que les capacités.
+
+    ⚠️ Une configuration OAuth absente lève ici un `RuntimeError` que la route
+    traduisait en 500. Sous le seam, c'est un refus d'ENTRÉE (la plateforme n'a pas
+    d'app Google configurée), pas une panne : traduit en erreur nommée, l'appelant
+    saura que réessayer n'y changera rien.
+    """
+    from .capabilities._types import AuthzDenied
+    try:
+        return connector_flow.FlowStart(auth_url=build_auth_url(ctx.sub))
+    except RuntimeError as e:
+        raise AuthzDenied(503, "oauth_misconfigured", str(e))
+
+
+connector_flow.declare(
+    "google",
+    start=_start_flow,
+    label="Autoriser oto chez Google",
+    callback_path="/api/google/oauth/callback",
+)
 
 
 def revoke(sub: str, account: Optional[str] = None) -> None:
