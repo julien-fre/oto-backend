@@ -18,11 +18,19 @@ propriétaire, elle héritait de celui de son projet par la contrainte
 `project_id NOT NULL`. La conversion, c'est exactement **poser ce propriétaire sur
 chaque page** — et c'est ce couple qui interdisait d'étendre la table des pages.
 
+**Le namespace d'un tableau devient une POSITION** (0054-D4, lot M3). Le système de
+nommage parallèle des datastores disparaît : un tableau est un nœud, nommé par sa
+place dans l'arbre — sous le nœud du projet qui le lie, à défaut à la racine de son
+propriétaire. Et son schéma de colonnes descend dans les propriétés : c'est la
+**dimension**, le schéma que ses enfants porteront. ⚠️ **Les LIGNES ne bougent pas**
+(lot M4, le volume en dernier), ni le bail de la file de travail qui vit sur elles.
+
 ## Ce que ce module fait, et ce qu'il ne fait pas
 
-**Il PROJETTE, à chaque boot** : `projects` et `docs` restent la source de vérité et
-la cible des écritures ; `nodes` en reçoit une image fidèle, rafraîchie par `_init`.
-Tant que la bascule n'est pas faite, **personne ne lit ces nœuds-là**.
+**Il PROJETTE, à chaque boot** : `projects`, `docs` et `user_datastores` restent la
+source de vérité et la cible des écritures ; `nodes` en reçoit une image fidèle,
+rafraîchie par `_init`. Tant que la bascule n'est pas faite, **personne ne lit ces
+nœuds-là**.
 
 **La BASCULE DE LECTURE (0063-D4) n'est PAS dans ce lot**, et ce n'est pas un renvoi
 de travail : c'est une **décision** qui n'a pas été prise, mesurée ici pour que le
@@ -55,10 +63,11 @@ qu'on peut livrer qui tienne.
 
 **⚠️ L'invariant que ce lot doit tenir, et que rien ne gardait avant lui** : la
 recherche des couches de contexte (`db/search.py`, `db/aux_embed.py`) discrimine un
-guide par `props->>'delivery' = 'on-demand'`, **pas par le `kind`** — or les contenus
-convertis arrivent ici en `kind='page'` eux aussi. **Aucun nœud converti ne porte de
-`delivery`**, sans quoi il se met à remonter comme un guide, dans le scope des
-guides. Tenu par `tests/test_nodes_m2_conversion.py`, contre un vrai PostgreSQL.
+guide par `props->>'delivery' = 'on-demand'`, **pas par le `kind`** — or les pages et
+les projets convertis arrivent ici en `kind='page'` eux aussi. **Aucun nœud converti
+ne porte de `delivery`**, sans quoi il se met à remonter comme un guide, dans le scope
+des guides. Tenu par `tests/test_nodes_m2_conversion.py` et son pendant M3, contre un
+vrai PostgreSQL.
 
 ## La forme des conversions (mêmes techniques qu'au lot M1)
 
@@ -67,12 +76,18 @@ Chaque famille se convertit en **trois temps**, tous rejouables :
 1. **le contenu** — un `INSERT … ON CONFLICT (public_id) DO UPDATE` **newer-wins**
    (`WHERE EXCLUDED.updated_at > nodes.updated_at`) : rejouer sans écriture entre
    deux passes est intégralement no-op, et une écriture faite par la PROD pendant la
-   fenêtre de promotion est rattrapée au boot suivant ;
+   fenêtre de promotion est rattrapée au boot suivant. ⚠️ **Les tableaux font
+   exception** : `user_datastores` ne porte pas d'`updated_at`, donc l'arbitre y est
+   le CONTENU (mêmes deux propriétés, cf. `CONVERT_TABLES_TO_NODES_SQL`) ;
 2. **la structure** — un `UPDATE` qui réconcilie propriétaire, parent et rang
    **quoi qu'en dise `updated_at`**. Gardé par un `IS DISTINCT FROM` → no-op au
    rejeu ;
 3. **la purge** — les nœuds dont la ligne legacy n'existe plus. Sans elle, un
    contenu supprimé survivrait dans `nodes` jusqu'à la fin des temps.
+
+Une **famille** distincte par source (`prj`, `doc`, `tbl`) : elle sépare les
+identifiants publics de trois séquences indépendantes, et elle borne chaque purge à
+ce qu'elle a elle-même écrit.
 
 Tout est gardé `to_regclass` par l'appelant (docs/live-migrations.md) : après le DROP
 des tables legacy, un boot reste un no-op au lieu de casser, quel que soit l'ordre
@@ -413,3 +428,199 @@ def place_at_end(conn, node_id: int, *, parent_id: int | None, owner_type: str,
         "ORDER BY position DESC LIMIT 1", tuple(list(params) + [node_id])).fetchone()
     return place_after(conn, node_id, after_id=(row["id"] if row else None),
                        parent_id=parent_id, owner_type=owner_type, owner_id=owner_id)
+
+
+# --- Tableaux → nœuds-tableaux (#301) -----------------------------------------
+
+_FAMILY_TABLE = "tbl"
+
+# **Le genre d'un tableau EST `tableau`**, et c'est le seul endroit du chantier où
+# un genre s'ajoute plutôt que de se dissoudre. Le raisonnement de M2 (« l'épingle
+# est un flag, pas un genre ») ne s'applique pas ici, et la raison est mesurée :
+# 0054-D4 fait d'un nœud un tableau **parce qu'il déclare un schéma d'enfants**, or
+# **29 des 83 tableaux de production n'en déclarent aucun** (`schema` NULL = table
+# libre, colonnes découvertes des lignes). La dimension ne peut donc pas servir de
+# discriminant — elle dirait de ces 29-là qu'ils sont des pages. Le `kind` dit ce
+# que l'objet EST, la dimension dit ce que ses enfants PORTENT.
+_KIND_TABLE = "tableau"
+
+# Les clés de `props` que la conversion POSSÈDE. Tout ce qui n'est pas là (une clé
+# posée par une surface, un jour) survit à un rafraîchissement — la projection écrase
+# ce qu'elle a écrit, pas ce qu'elle trouve. ⚠️ Liste exhaustive : une clé projetée
+# qui manquerait ici ne serait jamais RETIRÉE (un schéma effacé resterait).
+_TABLE_PROPS_KEYS = "'{legacy,legacy_id,title,child_schema,semantic_search}'::text[]"
+
+# ── Où vit un tableau dans l'arbre ────────────────────────────────────────────
+#
+# **Le namespace devient une position** (0054-D4 : « le système de nommage namespace
+# disparaît — un tableau est un nœud, nommé par sa place dans l'arbre »). Cette place
+# est celle du PROJET qui le lie, à défaut la racine de son propriétaire.
+#
+# ⚠️ Trois pièges, tous relevés sur la production du 12/08 — aucun ne se devine :
+#
+# 1. **`project_links.target_ref` n'est pas toujours un id.** 14 liens `tableau` sur
+#    65 portent un NOM de namespace (#117 : l'agent lie par nom, le dashboard par id).
+#    Un `target_ref::bigint` ferait donc tomber le boot sur `invalid input syntax`.
+#    D'où la comparaison en TEXTE (`pl.target_ref = d.id::text`), qui n'a besoin
+#    d'aucun garde-fou de forme.
+# 2. **Un nom ne désigne un tableau que CHEZ UN PROPRIÉTAIRE** (l'unicité est
+#    `(owner_type, owner_id, namespace)`, et 4 noms sont portés par plusieurs
+#    propriétaires en production). Un lien par nom ne résout donc que dans le
+#    périmètre du projet qui le porte — sinon on rattache le tableau d'autrui. La
+#    voie par id, elle, désigne sans ambiguïté : elle n'est pas scopée (3 liens
+#    pointent en production un tableau dont le propriétaire diffère de celui du
+#    projet — un partage, pas une erreur).
+# 3. **Un tableau peut être lié par PLUSIEURS projets** (2 cas en production), alors
+#    qu'un nœud n'a qu'un parent. `MIN(project_id)` tranche : le plus ancien lien,
+#    donc un arbre STABLE d'un boot à l'autre — le critère importe moins que le fait
+#    qu'il ne dépende pas de l'ordre de lecture.
+#
+# ⚠️ **La place ne transfère pas la propriété.** Un tableau posé sous le nœud d'un
+# projet garde SON propriétaire, contrairement aux pages du lot M2 qui n'en avaient
+# jamais eu. Une page héritait faute de mieux ; un tableau, lui, en a un depuis la
+# Phase H — le lui reprendre serait une régression d'accès déguisée en rangement.
+_TABLE_PLACE_CTE = f"""
+    lien AS (
+        SELECT d.id AS ds_id, MIN(pl.project_id) AS project_id
+          FROM user_datastores d
+          JOIN project_links pl ON pl.target_type = 'tableau'
+          JOIN projects p ON p.id = pl.project_id
+         WHERE pl.target_ref = d.id::text
+            OR (pl.target_ref = d.namespace
+                AND p.owner_type = d.owner_type AND p.owner_id = d.owner_id)
+         GROUP BY d.id
+    ),
+    place AS (
+        SELECT d.id AS ds_id, d.owner_type, d.owner_id, prj.id AS parent_id
+          FROM user_datastores d
+          LEFT JOIN lien ON lien.ds_id = d.id
+          LEFT JOIN nodes prj
+                 ON prj.public_id = {_public_id_sql(_FAMILY_PROJECT, 'lien.project_id')}
+         WHERE d.owner_id IS NOT NULL
+    )
+"""
+
+# ⚠️ **`user_datastores` n'a PAS d'`updated_at`**, et ce fait commande tout ce bloc.
+# Le newer-wins des lots M1/M2 est donc impossible : `EXCLUDED.updated_at >
+# nodes.updated_at` serait faux à jamais, et un schéma de colonnes édité par la PROD
+# pendant la fenêtre de promotion ne serait JAMAIS rattrapé — la projection mentirait
+# en silence, ce qui est exactement le mode d'échec que ces lots cherchent à éviter.
+#
+# L'arbitre est donc le CONTENU : on récrit quand le résultat diffère de ce qui est
+# en base, et pas autrement. Deux propriétés, les mêmes que le newer-wins :
+# le rejeu sans écriture est intégralement no-op (`updated_at` compris), et une
+# écriture prod de la fenêtre est rattrapée au boot suivant.
+#
+# La fusion `(props - clés) || EXCLUDED.props` est ADDITIVE là où M1/M2 remplacent :
+# elle retire ce que la conversion possède, repose sa version, et laisse intact ce
+# qu'un autre aurait écrit. Le prédicat compare le RÉSULTAT de cette fusion à
+# l'existant — une seule expression, donc aucune chance qu'un jour la garde et
+# l'écriture divergent.
+#
+# ⚠️ **Le schéma de colonnes ne passe PAS par `jsonb_strip_nulls`** : c'est une
+# donnée du CLIENT, pas un champ de la conversion, et `strip_nulls` est RÉCURSIF —
+# un `{{"label": null}}` déclaré dans un champ y perdrait sa clé, silencieusement.
+# Les champs de la conversion, eux, y passent (une clé absente doit être absente, pas
+# présente à null : `props ? 'child_schema'` répondrait vrai).
+#
+# **Pas de `body_md`** : un tableau n'a pas de corps (0054 §2 — le corps est
+# optionnel). Conséquence utile : ces nœuds sortent d'eux-mêmes du parse en blocs,
+# qui ne sélectionne que `props ? 'body_md'`. Et **pas de `delivery`** : l'invariant
+# de M2 vaut ici sans changement (la recherche des guides discrimine là-dessus).
+#
+# `position` n'est pas posé ici : le rang se prend dans l'intervalle, nœud par nœud,
+# après la purge (cf. `_place_table_nodes`). C'est le point où M-g s'applique.
+CONVERT_TABLES_TO_NODES_SQL = f"""
+    WITH {_TABLE_PLACE_CTE}
+    INSERT INTO nodes (public_id, kind, owner_type, owner_id, parent_id, props,
+                       created_at, updated_at)
+    SELECT {_public_id_sql(_FAMILY_TABLE, 'd.id')},
+           '{_KIND_TABLE}', d.owner_type, d.owner_id, place.parent_id,
+           jsonb_strip_nulls(jsonb_build_object(
+               'legacy', '{_FAMILY_TABLE}', 'legacy_id', d.id,
+               'title', d.namespace,
+               'semantic_search', d.semantic_search))
+           || CASE WHEN d.schema IS NULL THEN '{{}}'::jsonb
+                   ELSE jsonb_build_object('child_schema', d.schema) END,
+           d.created_at, d.created_at
+      FROM user_datastores d JOIN place ON place.ds_id = d.id
+    ON CONFLICT ON CONSTRAINT nodes_public_id_key DO UPDATE SET
+        props = (nodes.props - {_TABLE_PROPS_KEYS}) || EXCLUDED.props,
+        updated_at = NOW()
+     WHERE ((nodes.props - {_TABLE_PROPS_KEYS}) || EXCLUDED.props)
+           IS DISTINCT FROM nodes.props
+"""
+
+# Réconciliation STRUCTURELLE, hors comparaison de contenu — même raison qu'au lot
+# M2, et ici elle est plus aiguë encore : **lier un tableau à un projet ne touche pas
+# `user_datastores`** (l'attache vit dans `project_links`), pas plus qu'un transfert
+# de propriétaire ne réécrit un contenu. Sans cet UPDATE, un tableau rangé dans un
+# projet après le premier boot resterait à la racine pour toujours.
+#
+# ⚠️ **Le rang est ANNULÉ quand le parent change**, et c'est le seul endroit où un
+# rang se perd : une position ne veut rien dire hors de sa fratrie — la garder ferait
+# arriver le tableau au milieu d'une fratrie qu'il n'a jamais connue, voire sur le
+# rang d'un autre. Le `NULL` est ce que `_place_table_nodes` reprend juste après.
+RECONCILE_TABLE_NODES_SQL = f"""
+    WITH {_TABLE_PLACE_CTE}
+    UPDATE nodes n
+       SET owner_type = place.owner_type, owner_id = place.owner_id,
+           parent_id = place.parent_id,
+           position = CASE WHEN n.parent_id IS DISTINCT FROM place.parent_id
+                           THEN NULL ELSE n.position END
+      FROM place
+     WHERE n.public_id = {_public_id_sql(_FAMILY_TABLE, 'place.ds_id')}
+       AND (n.owner_type, n.owner_id, n.parent_id)
+           IS DISTINCT FROM (place.owner_type, place.owner_id, place.parent_id)
+"""
+
+# Même prédicat qu'aux lots M1/M2, et même raison de ne PAS le relâcher : il porte
+# sur `props->>'legacy'`, donc un nœud NATIF (créé par une surface, sans ligne
+# legacy) n'est jamais candidat. La famille est distincte (`tbl`) : purger les
+# tableaux n'effleure ni les pages, ni les projets, ni les couches de contexte.
+PURGE_TABLE_NODES_SQL = f"""
+    DELETE FROM nodes n
+     WHERE n.props->>'legacy' = '{_FAMILY_TABLE}'
+       AND NOT EXISTS (SELECT 1 FROM user_datastores d
+                        WHERE d.id = (n.props->>'legacy_id')::bigint)
+"""
+
+
+def _place_table_nodes(conn) -> int:
+    """Donne son rang à tout nœud-tableau qui n'en a pas — **c'est ici que M-g vit**.
+
+    Deux populations, une seule règle : le tableau qui vient d'être converti, et
+    celui que la réconciliation vient de reparenter (son rang a été annulé, une
+    position n'ayant pas de sens hors de sa fratrie). Chacun se place EN FIN de sa
+    fratrie, donc dans l'intervalle qui suit le dernier frère — aucun rang existant
+    ne bouge, et le coût est d'un `UPDATE` par nœud placé au lieu d'une
+    renumérotation de fratrie (`midpoint` : 1,4 ms contre 20 s).
+
+    Rejouable : un nœud placé a un rang, donc n'est plus sélectionné. En régime
+    établi, ce pas coûte une requête qui ne rend rien."""
+    rows = conn.execute(
+        "SELECT id, parent_id, owner_type, owner_id FROM nodes "
+        f"WHERE props->>'legacy' = '{_FAMILY_TABLE}' AND position IS NULL "
+        "ORDER BY id").fetchall()
+    for r in rows:
+        place_at_end(conn, int(r["id"]), parent_id=r["parent_id"],
+                     owner_type=r["owner_type"], owner_id=r["owner_id"])
+    return len(rows)
+
+
+def convert_tables(conn) -> None:
+    """Tableaux → nœuds-tableaux : contenu, structure, purge, puis les rangs.
+
+    ⚠️ L'ORDRE avec `convert_projects` compte, comme pour les pages : un tableau lié
+    à un projet se rattache au NŒUD de ce projet. S'il n'existe pas encore, la
+    jointure ne rend rien et le tableau atterrit à la racine de son propriétaire —
+    un rangement faux, qu'aucune erreur ne signale.
+
+    ⚠️ **Les LIGNES ne bougent pas** (`datastore_rows`) : c'est le lot M4, celui du
+    volume, et il attend d'avoir appris sur trois types plus simples (0063-D4). Le
+    **bail de la file de travail** (`claimed_by`/`claimed_until`) ne bouge pas non
+    plus — il vit sur les lignes, et migrera avec elles (0063-D3)."""
+    conn.execute(CONVERT_TABLES_TO_NODES_SQL)
+    conn.execute(RECONCILE_TABLE_NODES_SQL)
+    conn.execute(PURGE_TABLE_NODES_SQL)
+    _place_table_nodes(conn)

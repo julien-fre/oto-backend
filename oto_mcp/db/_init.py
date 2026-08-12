@@ -785,10 +785,29 @@ def _init_db_once() -> None:
         # jointure ne rend rien et la page reste orpheline jusqu'au boot suivant.
         # Un arbre à moitié posé, qu'aucune erreur ne signale.
         if conn.execute("SELECT to_regclass('projects') AS t").fetchone()["t"]:
-            from .nodes import convert_docs, convert_projects
+            from .nodes import convert_docs, convert_projects, convert_tables
             convert_projects(conn)
             if conn.execute("SELECT to_regclass('docs') AS t").fetchone()["t"]:
                 convert_docs(conn)
+            # === Lot M3 (#301) : les TABLEAUX → nœuds-tableaux ===
+            # Le namespace devient une POSITION dans l'arbre (0054-D4) : sous le
+            # nœud du projet qui lie le tableau, sinon à la racine de son
+            # propriétaire — d'où la place SOUS `convert_projects`, dont il lit les
+            # nœuds. Et le schéma de colonnes descend dans `props` : c'est la
+            # dimension de 0054-D4, ce qui fait d'un nœud un tableau.
+            #
+            # ⚠️ Sous le MÊME garde `projects` que les pages, et ce n'est pas un
+            # raccourci : le rattachement se résout par `project_links`, qui meurt
+            # avec `projects` (clé étrangère CASCADE). Le jour où ces tables
+            # disparaissent, il n'y a plus de rattachement legacy à projeter — la
+            # place d'un tableau vivra dans `nodes`, et cette conversion n'aura
+            # plus d'objet.
+            #
+            # ⚠️ Les LIGNES (`datastore_rows`) ne bougent pas : lot M4, le volume,
+            # en dernier (0063-D4). Le bail de la file de travail non plus.
+            if conn.execute(
+                    "SELECT to_regclass('user_datastores') AS t").fetchone()["t"]:
+                convert_tables(conn)
     # Lot M2 : le corps des nœuds se parse en BLOCS (0054-D2/0063-D2). HORS de la
     # transaction de schéma, et pour deux raisons : le parse lit les nœuds que la
     # conversion vient de COMMITER, et c'est du Python sur du texte — pas du DDL.
