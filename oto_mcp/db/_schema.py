@@ -1001,7 +1001,13 @@ CREATE TABLE IF NOT EXISTS nodes (
     -- l'intervalle : 1,4 ms). D'où un BIGINT et un écart de 2^16 : cf.
     -- `db/nodes.midpoint`, qui porte la règle et son motif.
     position BIGINT,
-    kind TEXT NOT NULL,        -- 'page' aujourd'hui ; tableau | ligne aux lots M3/M4
+    -- Ce que l'objet EST : `page` (couches de contexte, projets, pages — lots M1/M2)
+    -- ou `tableau` (lot M3) ; `ligne` au lot M4. ⚠️ Le tableau a bien son genre, alors
+    -- que l'ÉPINGLE n'en a pas : 0054-D4 fait d'un nœud un tableau parce qu'il déclare
+    -- un schéma d'enfants, mais 29 des 83 tableaux de production n'en déclarent aucun
+    -- (table libre) — la dimension ne peut donc pas discriminer. Le genre dit ce que
+    -- l'objet est, la dimension ce que ses enfants portent.
+    kind TEXT NOT NULL,
     owner_type TEXT NOT NULL,  -- platform | tenant | org | group | user (0049/0053)
     -- ⚠️ ÉCART ASSUMÉ avec la forme du banc, qui portait `owner_id BIGINT` : un
     -- propriétaire de scope `user` est un `sub` Logto (`users.sub` est la clé
