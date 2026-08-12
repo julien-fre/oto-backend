@@ -528,9 +528,13 @@ def test_the_trace_survives_the_threadpool():
 
 def test_trace_only_yields_a_closed_set_of_keys():
     """Le relevé est un seam de service : il ne doit pas devenir une porte par
-    laquelle n'importe quel état de résolution finit journalisé."""
+    laquelle n'importe quel état de résolution finit journalisé.
+
+    Trois clés, trois raisons nommées : l'entité datastore résolue (`ns_id`), et
+    l'EMPREINTE d'un run — la version de procédure exécutée + l'instance de connecteur
+    résolue (chantier du run, lot J2)."""
     from oto_mcp import server
-    assert server._TRACED_ARGS == ("ns_id",)
+    assert server._TRACED_ARGS == ("ns_id", "doctrine_version", "instance")
 
 
 def test_namespace_lens_correlates_on_the_id_without_a_tenant_bound(monkeypatch):

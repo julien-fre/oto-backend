@@ -24,6 +24,58 @@ logger = logging.getLogger(__name__)
 _OUTCOMES = ("done", "abandoned", "failed", "blocked")
 
 
+def _procedure_version(sub: str | None, slug: str) -> int | None:
+    """Version COURANTE de la procédure `slug`, lue dans l'ordre où
+    `oto_procedure(op='get')` la sert : l'org active d'abord, l'équipe active en
+    complément. None si le slug ne désigne aucune procédure — un run ad-hoc, une
+    doctrine d'un autre foyer, ou un slug inventé.
+
+    Lecture DB ⇒ appelée HORS boucle (`asyncio.to_thread`)."""
+    from .. import access, group_store, org_store
+    org_id = access.current_org(sub) if sub else None
+    if org_id is not None:
+        row = org_store.get_instruction(int(org_id), slug)
+        if row and row.get("version") is not None:
+            return int(row["version"])
+    gid = access.current_group(sub) if sub else None
+    if gid is not None:
+        row = group_store.get_group_instruction(int(gid), slug)
+        if row and row.get("version") is not None:
+            return int(row["version"])
+    return None
+
+
+async def _note_procedure_version(doctrine: str | None) -> int | None:
+    """L'EMPREINTE du run : QUELLE version de la procédure il exécute.
+
+    `runs.doctrine` ne porte qu'un **slug**, alors que les procédures sont versionnées
+    (`org_instructions.version`, snapshot par version dans `org_instruction_revisions`).
+    Un run n'enregistrait donc pas ce qu'il a réellement déroulé : rejouer « la même
+    procédure » trois semaines plus tard, c'est en jouer une autre sans le savoir.
+    ADR 0055-D10 / 0058-D1 : le gel de version EST l'empreinte du run.
+
+    Elle atterrit dans le JOURNAL, à côté du slug tapé par l'agent — le relevé d'appel
+    (`session_org.note_call_trace`, allowlist `server._TRACED_ARGS`) verse la valeur
+    dans les args de CETTE ligne `run_start`. C'est le domicile cohérent avec le verdict
+    du 12/08 : le run est ses faits, pas sa ligne d'index.
+
+    Best-effort, comme tout ce qui entoure un run : une version indisponible n'empêche
+    jamais un déroulé de s'ouvrir."""
+    if not doctrine:
+        return None
+    try:
+        from .. import session_org
+        from ..auth_hooks import current_user_sub_from_token
+        sub = current_user_sub_from_token()
+        version = await asyncio.to_thread(_procedure_version, sub, doctrine)
+    except Exception:
+        logger.warning("version de procédure indisponible pour %r (best-effort)",
+                       doctrine, exc_info=True)
+        return None
+    session_org.note_call_trace(doctrine_version=version)
+    return version
+
+
 async def _persist_open(run_id: str, label: str, doctrine: str | None) -> None:
     """Trace durable de l'ouverture (best-effort, off-loop). La pile session reste
     la source du run actif ; ceci ne fait qu'ajouter label/doctrine en base."""
@@ -69,6 +121,9 @@ def register(mcp: FastMCP) -> None:
             label: short human description of what this run does (always logged).
             doctrine: optional — the doctrine/skill slug being executed (as passed to
                 oto_procedure op=get). Omit for a one-shot/ad-hoc run.
+
+        Returns `doctrine_version` — the version of that procedure frozen for this run
+        (null for an ad-hoc run, or if the slug matches no procedure you can read).
         """
         run_id = dr.new_run_id()
         await dr.push_run(ctx, run_id, label, doctrine)
@@ -77,8 +132,10 @@ def register(mcp: FastMCP) -> None:
         # amorce l'axe pour l'agent (qui le repasse ensuite via `_run_id=`).
         from .. import session_org
         session_org.set_call_run(run_id)
+        version = await _note_procedure_version(doctrine)
         await _persist_open(run_id, label, doctrine)
-        return {"run_id": run_id, "label": label, "doctrine": doctrine}
+        return {"run_id": run_id, "label": label, "doctrine": doctrine,
+                "doctrine_version": version}
 
     @mcp.tool()
     async def run_finish(

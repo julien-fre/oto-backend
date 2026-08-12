@@ -136,11 +136,12 @@ def _runs_from_journal(extra: str = "") -> str:
     TOUJOURS des littéraux de ce module — jamais une entrée d'appelant."""
     return f"""
             SELECT s.run_id, s.sub, s.org_id,
-                   s.args->>'label'    AS label,
-                   s.args->>'doctrine' AS doctrine,
-                   s.created_at        AS started_at,
-                   f.created_at        AS finished_at,
-                   f.args->>'outcome'  AS outcome
+                   s.args->>'label'             AS label,
+                   s.args->>'doctrine'          AS doctrine,
+                   s.args->>'doctrine_version'  AS doctrine_version,
+                   s.created_at                 AS started_at,
+                   f.created_at                 AS finished_at,
+                   f.args->>'outcome'           AS outcome
               FROM tool_calls s{_run_closure("s")}
              WHERE s.tool = 'run_start' AND s.run_id IS NOT NULL{extra}"""
 
@@ -347,9 +348,9 @@ def resolve_usage_signal(
 
 
 def list_runs(limit: int = 100, *, org_id: Optional[int] = None) -> list[dict]:
-    """Runs récents (un par run_id ouvert via run_start) avec label/doctrine,
-    acteur, bornes, outcome (si fermé) et nb d'appels du déroulé. `slug` (alias =
-    doctrine sinon label) conservé pour compat dashboard.
+    """Runs récents (un par run_id ouvert via run_start) avec label/doctrine, version de
+    procédure exécutée, acteur, bornes, outcome (si fermé) et nb d'appels du déroulé.
+    `slug` (alias = doctrine sinon label) conservé pour compat dashboard.
 
     `org_id` (si fourni) borne aux déroulés OUVERTS sous cette org (`tool_calls.org_id`
     de la ligne `run_start`, seam `current_org`) — scope de la lentille org (org_admin),
@@ -363,7 +364,8 @@ def list_runs(limit: int = 100, *, org_id: Optional[int] = None) -> list[dict]:
             WITH j AS ({_runs_from_journal(org_clause)})
             SELECT j.run_id,
                    COALESCE(j.doctrine, j.label) AS slug,
-                   j.label, j.doctrine, j.sub, u.email, u.name,
+                   j.label, j.doctrine, j.doctrine_version,
+                   j.sub, u.email, u.name,
                    j.started_at, j.finished_at, j.outcome,
                    COALESCE(c.n_calls, 0) AS n_calls
               FROM j

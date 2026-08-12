@@ -256,7 +256,23 @@ _SERVER_INSTRUCTIONS = instructions.render()
 # Clés du relevé d'appel (`session_org.note_call_trace`) versées dans les args du
 # journal. Liste FERMÉE : le relevé est un seam de service interne, il ne doit pas
 # devenir une porte par laquelle n'importe quel état de résolution finit journalisé.
-_TRACED_ARGS = ("ns_id",)
+#
+# Les deux clés ajoutées le 12/08 sont l'EMPREINTE d'un run (chantier du run, lot J2 ;
+# ADR 0055-D10 / 0058-D1 : « le gel des versions EST l'empreinte du run ») — ce qui
+# manquait pour qu'un déroulé soit reproductible :
+#   • `doctrine_version` — la VERSION de la procédure exécutée, résolue par `run_start`
+#     (`runs.doctrine` ne porte qu'un slug, or les procédures sont versionnées) ;
+#   • `instance` — le ref de l'instance de connecteur RÉSOLUE pour l'appel
+#     (`instance_refs`), c'est-à-dire quel credential a réellement servi. Le journal
+#     enregistre l'appel, pas ce qu'il a résolu : `_instance=`/`_account=` sont retirés
+#     des args par `CallContextMiddleware` (le plus externe) AVANT que `ToolCallLogger`
+#     ne journalise, et une résolution sans jeton ne laisse aucune trace du tout.
+#     ⚠️ **Aucun seam ne l'alimente encore** : le point d'écriture est la sortie de
+#     `access.resolve_credential` (le résolveur unique, ADR 0024) — une ligne
+#     `session_org.note_call_trace(instance=<ref de la ligne gagnante>)`. Tant qu'elle
+#     n'y est pas, cette clé n'apparaît dans AUCUNE ligne de journal : ne rien bâtir
+#     dessus sans avoir vérifié qu'elle se remplit.
+_TRACED_ARGS = ("ns_id", "doctrine_version", "instance")
 
 
 def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
