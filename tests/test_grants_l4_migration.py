@@ -15,9 +15,15 @@ par de la vigilance :
    c'est de l'« harmoniser » avec l'index de résolution en lui ajoutant
    `WHERE revoked_at IS NULL` : la lecture de D7 compte les arêtes ARCHIVÉES, donc
    un index partiel ne peut plus la servir, et les 74 ms reviennent EN SILENCE.
-3. **L'INTENTION.** Personne ne lit ni n'écrit ces tables. Le test ne l'interdit pas
-   pour toujours — il force à ce que le premier usage soit un acte délibéré (retirer
-   le test dans le même commit), pas un effet de bord.
+3. ~~**L'INTENTION.** Personne ne lit ni n'écrit ces tables.~~ **Levée le 12/08/2026
+   par le lot L5** : `oto_mcp/db/grants.py` + `oto_mcp/grants_chain.py` sont le premier
+   lecteur/écrivain, et la clé plateforme `fullenrich` passe au modèle d'accès par
+   chaîne. Le test `test_nothing_reads_or_writes_the_access_tables_yet` a fait son
+   travail — forcer que le premier usage soit un acte délibéré, visible en revue — et
+   part avec le commit qui le déclenche, comme il le prescrivait lui-même. Les trois
+   autres tests de ce fichier RESTENT : ils gardent la forme du socle, pas son
+   inertie, et l'index non partiel devient d'autant plus critique qu'il est désormais
+   sur le chemin chaud pour de vrai.
 
 Ces tests sont STATIQUES : ils portent sur des ordres et des formes, là où un test
 SQL exigerait un PostgreSQL et ne dirait rien de plus. Le SQL lui-même a été exercé
@@ -90,23 +96,3 @@ def test_constraint_vocabulary_stays_closed():
         f"vocabulaire de contraintes modifié : {sorted(keys)}. Il est FERMÉ à cinq "
         "entrées (`périmètre` en a été retiré le 08/08) — une entrée de plus est un "
         "amendement d'ADR, pas une ligne de SQL.")
-
-
-def test_nothing_reads_or_writes_the_access_tables_yet():
-    """L4 pose le socle, il ne le branche pas. Le jour où un call-site touche ces
-    tables, ce n'est plus L4 — c'est L5, avec sa propre revue."""
-    root = _DB.parent
-    sql_ref = re.compile(r"\b(?:from|into|update|join|table)\s+grants\b", re.IGNORECASE)
-    users = []
-    for path in sorted(root.rglob("*.py")):
-        if path.name in ("_init.py", "_schema.py"):
-            continue
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.lstrip().startswith(("#", "--")):
-                continue
-            if sql_ref.search(line) or "grant_counters" in line:
-                users.append(f"{path.relative_to(root.parent)}: {line.strip()}")
-    assert not users, (
-        "Quelqu'un touche `grants`/`grant_counters`, ce qui déborde du lot L4 "
-        f"(« écrites par rien, lues par rien ») : {users}. Si c'est voulu, retirer "
-        "ce test dans le même commit — pour que la bascule soit visible en revue.")

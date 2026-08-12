@@ -818,6 +818,14 @@ def _init_db_once() -> None:
             if conn.execute(
                     "SELECT to_regclass('user_datastores') AS t").fetchone()["t"]:
                 convert_tables(conn)
+        # === Lot L5 (blueprint ADR 0053) : les grants de clé plateforme deviennent
+        # === des ARÊTES, un connecteur à la fois.
+        # EN FIN DE TRANSACTION, comme les conversions M2/M3 et pour la même raison :
+        # la migration LIT `connector_credentials`, que ce boot vient de faire évoluer
+        # (colonnes du coffre, PK recomposée plus haut). Additive et idempotente — elle
+        # ne fait qu'INSÉRER dans `grants` ; aucune ligne du coffre n'est touchée, donc
+        # la prod qui tourne l'ancien code sur CETTE MÊME base ne voit rien.
+        _seed_platform_grants_as_edges(conn)
     # Lot M2 : le corps des nœuds se parse en BLOCS (0054-D2/0063-D2). HORS de la
     # transaction de schéma, et pour deux raisons : le parse lit les nœuds que la
     # conversion vient de COMMITER, et c'est du Python sur du texte — pas du DDL.
@@ -927,3 +935,71 @@ def _drop_legacy_plaintext_stores(conn: psycopg.Connection) -> None:
     # Tables legacy entièrement foldées dans le coffre.
     conn.execute("DROP TABLE IF EXISTS org_secrets")
     conn.execute("DROP TABLE IF EXISTS user_google_oauth")
+
+
+def _seed_platform_grants_as_edges(conn: psycopg.Connection) -> None:
+    """Lot L5 (blueprint ADR 0053) — chaque grant de clé plateforme existant devient
+    une ARÊTE, pour les seuls connecteurs basculés (`grants_chain.CHAIN_CONNECTORS`).
+
+    **Le mapping, champ par champ** (source = la ligne du coffre scope PLATFORM) :
+
+    | ancien | nouveau |
+    |---|---|
+    | `entity_type/entity_id/connector` | `resource_id = 'platform:<label>:<connector>'` |
+    | (le propriétaire, implicite) | `grantor = platform/platform` (0053-D3) |
+    | une entrée de `share_down` **ou** une clé de `meta.rate_limit_by` | `grantee_kind/grantee_id` |
+    | `rate_limit_by[scope]`, à défaut `meta.rate_limit` | `constraints = {'quota': N}` |
+    | (rien) | `parent_id = NULL` — racine du propriétaire, chaîne de profondeur 1 |
+    | (rien) | `source = 'manual'` — un humain les a posés ; le réconciliateur billing
+      (L9) ne touche QUE ses propres grants (0053-D6), celui-ci ne les reprendra donc pas |
+
+    **Les deux sources de scopes, et pourquoi les deux.** `share_down` porte les
+    grants d'une clé FERMÉE ; `rate_limit_by` porte les quotas — y compris ceux d'une
+    clé free-tier, où accorder ne posait QUE le quota (le pansement de l'incident du
+    31/07, oto-backend#245). Ne lire que `share_down` raterait donc tous les grants
+    des connecteurs `platform_key_open`, c'est-à-dire précisément ceux qu'on bascule.
+
+    **Idempotence** : une arête n'est posée que si le couple (instance, bénéficiaire)
+    n'en porte AUCUNE — révoquée comprise. Rejouer ne duplique pas, et surtout ne
+    RESSUSCITE pas un accès retiré à la main entre deux boots.
+
+    **Ce qui n'est pas migré, et se voit dans les logs** : un scope hors `user:`/`org:`
+    (`group:<id>`, ou le `org` nu « tout le monde »). L'ancien chemin ne les résout de
+    toute façon jamais sur une clé plateforme (`access._platform_grantee_scope` ne
+    connaît que user et org), et le vocabulaire de 0053 n'a pas de scope « tout le
+    monde ». Les inventer ici serait décider à la place de l'ADR.
+    """
+    from .. import grants_chain
+    from . import grants as db_grants
+
+    for provider in sorted(grants_chain.CHAIN_CONNECTORS):
+        rows = conn.execute(
+            "SELECT entity_id AS label, share_down, meta FROM connector_credentials "
+            "WHERE entity_type = 'platform' AND connector = %s AND account = ''",
+            (provider,)).fetchall()
+        for row in rows:
+            meta = row["meta"] or {}
+            rate_limit_by = meta.get("rate_limit_by") or {}
+            ref = grants_chain.instance_ref(row["label"], provider)
+            # Ordre déterministe : deux boots concurrents sur la base partagée
+            # posent les mêmes arêtes dans le même ordre (l'advisory lock les
+            # sérialise déjà, ceci rend le diff des logs lisible).
+            scopes = sorted(set(row["share_down"] or []) | set(rate_limit_by))
+            for scope in scopes:
+                kind, _, ident = str(scope).partition(":")
+                if kind not in ("user", "org") or not ident:
+                    logger.warning(
+                        "L5 grants: scope %r sur %s ignoré (hors vocabulaire "
+                        "user:/org: — l'ancien chemin ne le résout pas non plus)",
+                        scope, ref)
+                    continue
+                if db_grants.edge_exists(ref, kind, ident, conn=conn):
+                    continue
+                quota = rate_limit_by.get(scope, meta.get("rate_limit"))
+                db_grants.insert_grant(
+                    resource_id=ref, grantor_kind="platform", grantor_id="platform",
+                    grantee_kind=kind, grantee_id=ident,
+                    constraints={"quota": int(quota)} if quota else {},
+                    source="manual", created_by="migration:l5", conn=conn)
+                logger.info("L5 grants: arête posée %s → %s:%s (quota=%s)",
+                            ref, kind, ident, quota)
