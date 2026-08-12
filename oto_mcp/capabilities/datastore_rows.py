@@ -211,8 +211,14 @@ def _list_rows(ctx: ResolvedCtx, inp: ListRowsInput) -> dict:
             q=inp.q or None, filter=filter_eq, filters=filters)
     except NamespaceNotFound:
         raise ns_not_found(ctx.sub, inp.namespace)
-    except ValueError:
-        raise AuthzDenied(400, "invalid_filters")
+    except ValueError as e:
+        # Le message du store arrive JUSQU'À l'appelant. Sans lui, un refus
+        # SÉMANTIQUE (opérateur inconnu, `null` sur `eq`, date invalide) rend le
+        # même `invalid_filters` nu qu'un JSON malformé — l'appelant relit sa
+        # syntaxe alors que c'est le SENS de son filtre qui est refusé. Trouvé au
+        # smoke prod de v1.87.0 : la garde `null` nommait `empty` et personne ne
+        # le voyait.
+        raise AuthzDenied(400, "invalid_filters", str(e))
 
 
 def _aggregate(ctx: ResolvedCtx, inp: AggregateInput) -> dict:
@@ -227,8 +233,8 @@ def _aggregate(ctx: ResolvedCtx, inp: AggregateInput) -> dict:
             filter=filter_eq, q=inp.q or None, filters=filters)
     except NamespaceNotFound:
         raise ns_not_found(ctx.sub, inp.namespace)
-    except ValueError:
-        raise AuthzDenied(400, "invalid_aggregate")
+    except ValueError as e:
+        raise AuthzDenied(400, "invalid_aggregate", str(e))
     return {"groups": groups}
 
 
