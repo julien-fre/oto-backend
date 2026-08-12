@@ -20,13 +20,18 @@ from oto_mcp.tools import register_all
 @pytest.fixture(scope="module", autouse=True)
 def _declarations():
     register_all(FastMCP("connector-flow-probe"))
-    # Un flux se déclare à l'IMPORT de son module. Les connecteurs à outils sont
-    # couverts par `register_all` ; ceux dont le geste vit dans un module d'auth
-    # (fédérations OAuth) ne le sont pas — au boot réel, c'est `api_routes` qui les
-    # importe en montant leurs routes. Sans ces deux lignes, le garde-fou ci-dessous
-    # ne verrait pas des flux pourtant déclarés en production, et son inventaire
-    # mentirait par omission — exactement le mode de panne qu'il existe pour éviter.
-    from oto_mcp import atlassian_oauth, folk_oauth, unipile_connect  # noqa: F401
+    # ⚠️ Un flux se déclare à l'IMPORT de son module — donc ce banc doit charger
+    # EXACTEMENT ce que charge le boot, ni plus ni moins.
+    #
+    # `register_all` couvre les connecteurs à outils. Les fédérations OAuth, elles,
+    # sont importées au boot par `api_routes` en montant leurs routes : on importe
+    # donc CE module, pas les leurs. La nuance n'est pas cosmétique — importer un
+    # module de complaisance a masqué un vrai défaut le 12/08 : le flux hébergé était
+    # déclaré dans un module que RIEN n'importe au boot (import paresseux dans les
+    # handlers). Le test le voyait, la production non, et le catalogue de prod ne
+    # l'a jamais servi. Un banc qui charge plus que le boot ne garde rien : il
+    # certifie une couverture qui n'existe pas.
+    from oto_mcp import api_routes  # noqa: F401
 
 
 # --- le contrat du descripteur -------------------------------------------------

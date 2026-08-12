@@ -22,7 +22,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify, db, session_org, status_hints
+from .. import access, connector_flow, connector_verify, db, session_org, status_hints
 
 logger = logging.getLogger(__name__)
 
@@ -1331,3 +1331,32 @@ def register(mcp: FastMCP) -> None:
 
         raise _bad("op doit être 'postings', 'posting', 'applicants', 'applicant' "
                    "ou 'projects'")
+
+
+# --- Le geste « connecter », déclaré ICI et pas dans le module d'auth ---------
+#
+# ⚠️ Un flux se déclare à l'IMPORT de son module. `unipile_connect` n'est importé
+# que DANS les handlers (import paresseux) : le déclarer là-bas revenait à ne jamais
+# le déclarer au boot — le catalogue de production ne le voyait pas, alors que les
+# tests le voyaient parce que leur fixture importait le module de complaisance.
+# Troisième fois cette semaine qu'un banc de test diverge du montage réel ; ici la
+# règle qui en sort est simple : **une déclaration vit dans un module que le boot
+# charge**, et `tools/unipile.py` en est un (le connecteur est au registre).
+connector_flow.declare(
+    "unipile",
+    start=lambda ctx, values: _start_hosted_flow(ctx, values),
+    label="Connecter un compte de messagerie",
+    params=(connector_flow.FlowParam(
+        name="channel", label="Canal à connecter", default="linkedin",
+        options=(("linkedin", "LinkedIn"), ("whatsapp", "WhatsApp"),
+                 ("telegram", "Telegram"), ("instagram", "Instagram"),
+                 ("messenger", "Messenger"), ("twitter", "X (Twitter)"))),),
+)
+
+
+async def _start_hosted_flow(ctx, values: dict):
+    """Délègue au corps partagé REST+MCP, importé paresseusement (il tire le client
+    du fournisseur). Les deux issues du flux — lien à ouvrir, ou compte adopté — sont
+    traitées là-bas : l'adoption devient un refus typé, pas un contrat mutilé."""
+    from .. import unipile_connect
+    return await unipile_connect._start_flow(ctx, values)

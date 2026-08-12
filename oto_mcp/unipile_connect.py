@@ -364,12 +364,3 @@ async def _start_flow(ctx, values: dict):
     return connector_flow.FlowStart(auth_url=out["url"],
                                     details={"channel": out.get("channel")})
 
-
-connector_flow.declare(
-    "unipile",
-    start=_start_flow,
-    label="Connecter un compte de messagerie",
-    params=(connector_flow.FlowParam(
-        name="channel", label="Canal à connecter", default="linkedin",
-        options=tuple((c.lower(), c.capitalize()) for c in CHANNELS)),),
-)
