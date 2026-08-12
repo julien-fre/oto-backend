@@ -267,3 +267,56 @@ def test_quota_zero_means_unlimited_like_before():
     assert grants_chain.quota_of(_edge(quota=None)) is None
     assert grants_chain.quota_of({"constraints": {"quota": 0}}) == 0
     assert grants_chain.quota_of({"constraints": {}}) is None
+
+
+# ── 6. L'empreinte de résolution : SOUS QUELLE CLÉ l'appel est passé ───────────
+
+def _resolved_ref(monkeypatch, rung):
+    """Fait résoudre un credential et rend ce que le relevé de l'appel a retenu."""
+    from oto_mcp import session_org
+
+    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
+    monkeypatch.setattr(access, "_resolve_credential_impl", lambda *a, **k: rung)
+    holder: dict = {}
+    token = session_org.set_call_trace(holder)
+    try:
+        access.resolve_credential("fullenrich", sub="s")
+    finally:
+        session_org.reset_call_trace(token)
+    return holder.get("instance")
+
+
+def test_the_trace_says_which_key_actually_served(monkeypatch):
+    """Le journal disait quel outil et quelle org ; jamais SOUS QUELLE CLÉ. C'est
+    pourtant la question d'une bascule d'accès — « l'appel est-il passé par l'arête
+    ou par l'ancien chemin ? » — et celle de tout incident de credential."""
+    from oto_mcp import instance_refs
+
+    platform = access.ResolvedCredential(
+        "fullenrich", "SECRET", True, "platform", "platform", "env")
+    assert _resolved_ref(monkeypatch, platform) == "platform:fullenrich:env"
+
+    member = access.ResolvedCredential(
+        "fullenrich", "SECRET", False, "user", "member", "42:sub-x", account="a@b.c")
+    assert _resolved_ref(monkeypatch, member) == instance_refs.make_member_ref(
+        42, "sub-x", "fullenrich", "a@b.c")
+
+
+def test_the_trace_never_breaks_a_resolution(monkeypatch):
+    """Best-effort, et il faut que ce soit vrai : un relevé qui lève ferait échouer
+    un appel qui a pourtant résolu sa clé."""
+    monkeypatch.setattr(access.session_org, "note_call_trace",
+                        lambda **k: (_ for _ in ()).throw(RuntimeError("journal HS")))
+    weird = access.ResolvedCredential("fullenrich", "SECRET", False, "user",
+                                      "member", "pas-un-id")
+    monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
+    monkeypatch.setattr(access, "_resolve_credential_impl", lambda *a, **k: weird)
+    assert access.resolve_credential("fullenrich", sub="s") is weird
+
+
+def test_instance_is_in_the_journal_allowlist():
+    """Le relevé n'atteint la ligne de journal que si l'allowlist le laisse passer —
+    une valeur consignée hors allowlist serait un travail invisible."""
+    from oto_mcp import server
+
+    assert "instance" in server._TRACED_ARGS

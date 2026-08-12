@@ -80,6 +80,31 @@ def make_platform_ref(connector: str, label: str) -> str:
     return f"platform:{quote(connector, safe='')}:{quote(label, safe='')}"
 
 
+def ref_for_credential(entity_type: str, entity_id: str, connector: str,
+                       account: str = "") -> Optional[str]:
+    """Ref d'une LIGNE du coffre, projetée depuis sa clé primaire
+    `(entity_type, entity_id, connector, account)`. None si non-projetable — résidu
+    OAuth `entity_type='user'` (scope abandonné par l'ADR 0033) ou id malformé.
+
+    Domicile de la projection, parce qu'elle en avait trois : le relevé d'appel
+    (`access.resolve_credential` — quelle clé a réellement servi), la liste des
+    instances prêtées (`capabilities/connectors_instances._shared_ref`) et les
+    messages d'erreur. Le format vit ici (cf. en-tête), la projection aussi."""
+    if entity_type == "member":
+        org_id, _, sub = (entity_id or "").partition(":")
+        if not (org_id.isascii() and org_id.isdigit() and sub):
+            return None
+        return make_member_ref(int(org_id), sub, connector, account)
+    if entity_type == "group" and (entity_id or "").isdigit():
+        return make_group_ref(int(entity_id), connector, account)
+    if entity_type == "org" and (entity_id or "").isdigit():
+        return make_org_ref(int(entity_id), connector, account)
+    if entity_type == "platform" and entity_id is not None:
+        # `entity_id` EST le label de la clé plateforme (ADR 0044 §F).
+        return make_platform_ref(connector, entity_id)
+    return None
+
+
 def format_ref(r: InstanceRef) -> str:
     """Inverse de `parse_ref` — re-sérialise un ref décomposé (messages d'erreur,
     ré-affichage). Roundtrip exact avec les make_*."""

@@ -45,7 +45,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from . import (connector_link, connectors, credentials_store, db, grants_chain,
-               group_store, org_store, session_org, status_hints)
+               group_store, instance_refs, org_store, session_org, status_hints)
 from .auth_hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
@@ -561,14 +561,34 @@ def resolve_credential(provider: str, want: str = "auto",
         from . import subdomain_project
         anon = subdomain_project.current_anon_context()
         if anon is not None:
-            return _resolve_credential_anon(provider, want, anon.org_id)
+            return _note_resolved_instance(
+                _resolve_credential_anon(provider, want, anon.org_id))
     sub = sub or current_user_sub_or_raise()
     try:
-        return _resolve_credential_impl(provider, want, sub, account=account)
+        resolved = _resolve_credential_impl(provider, want, sub, account=account)
     except McpError:
         if emit_on_failure:
             _emit_connector_failure(provider, sub)
         raise
+    return _note_resolved_instance(resolved)
+
+
+def _note_resolved_instance(rc: ResolvedCredential) -> ResolvedCredential:
+    """Verse au relevé de l'appel le ref de la ligne du coffre qui a RÉELLEMENT servi
+    (allowlist `server._TRACED_ARGS`) — l'empreinte que le journal ne portait pas.
+
+    Le journal disait quel outil et quelle org ; jamais SOUS QUELLE CLÉ. Or c'est
+    précisément la question d'une bascule d'accès (« l'appel est-il passé par
+    l'arête ou par l'ancien chemin ? ») et celle d'un incident de credential
+    (« quelle instance a été appelée ? »). Best-effort et no-op hors appel MCP : un
+    relevé ne fait jamais échouer une résolution."""
+    try:
+        ref = instance_refs.ref_for_credential(
+            rc.entity_type or "", rc.entity_id or "", rc.provider, rc.account)
+        session_org.note_call_trace(instance=ref)
+    except Exception:  # noqa: BLE001
+        logger.debug("relevé d'instance échoué", exc_info=True)
+    return rc
 
 
 def _emit_connector_failure(provider: str, sub: str) -> None:
