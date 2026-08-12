@@ -22,7 +22,10 @@ def test_project_axis_applies_to_work_tools():
     assert "_project" in _params("folk_record")
     # spine : hors surface de travail.
     assert "_project" not in _params("oto_whoami")
-    assert "_project" not in _params("run_start")
+    # …sauf les verbes de RUN (#290) : le run n'est pas un tool de travail, mais il gèle
+    # le projet sous lequel il se déroule (`runs.project_id`) — il doit donc pouvoir le
+    # recevoir comme les appels qu'il encadre. Détail : tests/test_run_project_scope.py.
+    assert "_project" in _params("run_start")
 
 
 def _project_axis():

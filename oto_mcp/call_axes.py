@@ -176,14 +176,33 @@ ACCOUNT = CallAxis(
 
 # ── Axe _project= (slots de tableau — enforcement serveur ADR 0035) ────────────
 
+# Verbes de RUN (`run_start`/`run_finish`). Ce ne sont pas des tools de travail — mais
+# le run est l'objet dont le métier est de CORRÉLER des appels de travail, donc il doit
+# porter les mêmes jetons de contexte qu'eux (#290). Sans ça, le modèle sans état de
+# l'ADR 0038 était appliqué à moitié : tout était devenu jeton d'appel SAUF l'objet qui
+# relie les appels. Conséquences mesurées en prod — `runs.project_id` TOUJOURS NULL (son
+# seul alimentateur est `access.current_project()`, que seul `_pin_project` remplit), donc
+# quatre lecteurs qui interrogent une colonne morte ; et `runs.org_id` = l'org MAISON même
+# quand tout le déroulé se fait sous `_org=`, donc un run rangé sous la mauvaise lentille.
+# ⚠️ SEULEMENT les axes de CONTEXTE (`_project`/`_org`/`_group`) : `_run_id=` reste hors
+# de portée (`_is_run_correlatable_tool`) — corréler `run_start` à un autre run n'a pas
+# de sens, c'est lui qui en ouvre un.
+_RUN_VERBS = frozenset({"run_start", "run_finish"})
+
+
 def _is_project_scopable_tool(name: str) -> bool:
     """Tool de TRAVAIL (connecteurs + `data_*`) : `_project=` est le jeton PRIMAIRE
     du modèle sans état (ADR 0038 §A — l'org en dérive, les slots `slot:<name>` s'y
     résolvent, l'identité connecteur préfaite du projet s'y épingle). Élargi de
     `data_*` seul à toute la surface de travail au retrait du bracelet
-    `oto_use_project` (B3b) — l'axe est le SEUL porteur du contexte projet."""
+    `oto_use_project` (B3b) — l'axe est le SEUL porteur du contexte projet.
+
+    Les **verbes de run** s'y ajoutent (#290) : `run_start` GÈLE le projet dans
+    `runs.project_id` en lisant ce même seam, et un run se déroule dans un projet
+    aussi souvent que les appels qu'il encadre."""
     ns = namespace_of(name)
-    return ns == "data" or providers.connector_for_namespace(ns) is not None
+    return (ns == "data" or providers.connector_for_namespace(ns) is not None
+            or name in _RUN_VERBS)
 
 
 def _resolve_project_context_guarded(
@@ -336,9 +355,15 @@ RUN = CallAxis(
 def _is_org_scopable_tool(name: str) -> bool:
     """Tool PLAT dont l'action dépend de l'org (résolution de credential/visibilité/
     données) : tools de TRAVAIL (connecteurs + `data_*`) + `oto_whoami` (lecture de
-    l'identité effective). Les CAPACITÉS reçoivent déjà `_org=` par `_mcp_adapter` (elles
-    ne sont pas des tools de travail → exclues ici, pas de double-traitement)."""
-    return _is_work_tool(name) or name == "oto_whoami"
+    l'identité effective) + les **verbes de run** (#290 — l'org d'un run est celle sous
+    laquelle il se déroule, pas l'org d'habitude de celui qui l'ouvre ; c'est elle que
+    `runs.org_id` gèle et que scope la lentille d'org). Les CAPACITÉS reçoivent déjà
+    `_org=` par `_mcp_adapter` (elles ne sont pas des tools de travail → exclues ici, pas
+    de double-traitement).
+
+    L'axe `_group=` partage ce prédicat : un run ouvert sous une équipe co-pose l'org
+    parente, invariant `groupe ⊂ org` par construction (cf. `_pin_group`)."""
+    return _is_work_tool(name) or name == "oto_whoami" or name in _RUN_VERBS
 
 
 async def _pin_org_flat(value: object) -> list[UndoEntry]:
