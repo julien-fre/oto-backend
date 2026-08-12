@@ -60,6 +60,26 @@ class RestBinding:
     path: str                                   # ex "/api/me/active-org"
     # placeholder de route -> champ Input, quand ils diffèrent (routes réelles en {id}).
     path_map: dict = field(default_factory=dict)
+    # Code de la réponse heureuse. 200 partout, SAUF là où un chemin historique rend
+    # déjà 201 (création d'un tableau, ajout d'une ligne) : ce code est servi au
+    # dashboard et à `oto-core` depuis toujours, le ramener à 200 en migrant la route
+    # serait une régression silencieuse — la migration ne doit rien changer au fil.
+    status: int = 200
+    # Le corps JSON **entier** EST la valeur de CE champ d'`Input`, au lieu d'être
+    # fusionné clé par clé dans les données validées.
+    #
+    # Pour les chemins dont le corps est une DONNÉE libre : la ligne d'un tableau,
+    # dont les colonnes appartiennent à l'utilisateur — aucune ne peut être déclarée
+    # dans un modèle. Sans ce cran, la garde de champ inconnu refuserait chacune
+    # d'elles : elle vise un client qui se trompe de FORME, pas un client qui envoie
+    # ses propres données. Déclaré par binding (donc greppable), jamais deviné.
+    body_field: Optional[str] = None
+    # Lire le corps JSON même sur un verbe qui n'en porte pas d'ordinaire (DELETE).
+    # Un seul cas, historique : `DELETE …/namespaces/{ns}/share {"email": …}`, dont
+    # le client vit hors de ce dépôt (`oto-core`). Opt-in explicite : le défaut reste
+    # « pas de corps sur un DELETE », sinon migrer une route pourrait faire apparaître
+    # un 400 `unknown_fields` sur un corps jusque-là ignoré.
+    reads_body: bool = False
 
 
 @dataclass(frozen=True)

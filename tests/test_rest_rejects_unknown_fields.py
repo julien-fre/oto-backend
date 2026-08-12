@@ -48,8 +48,8 @@ async def _appeler(corps: dict) -> tuple[int, dict]:
     def _json_error(_req, status, code, message=None):
         return JSONResponse({"error": code, "detail": message}, status_code=status)
 
-    def _json_response(_req, payload):
-        return JSONResponse(payload)
+    def _json_response(_req, payload, status=200):
+        return JSONResponse(payload, status_code=status)
 
     async def _auth(_req, _verifier):
         return "sub-test", None

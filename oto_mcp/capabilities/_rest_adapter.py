@@ -38,11 +38,18 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         # plus basse (body puis path params écrasent).
         if request.query_params:
             data.update(dict(request.query_params))
-        if request.method in ("POST", "PUT", "PATCH"):
+        if request.method in ("POST", "PUT", "PATCH") or binding.reads_body:
             try:
                 body = await request.json()
                 if isinstance(body, dict):
-                    data.update(body)
+                    if binding.body_field:
+                        # Corps LIBRE (les colonnes d'une ligne de tableau) : il ne se
+                        # fusionne pas clé par clé, il EST la valeur d'un champ déclaré.
+                        # Cf. `RestBinding.body_field` — la garde ci-dessous continue
+                        # donc de couvrir la query string et les params de chemin.
+                        data[binding.body_field] = body
+                    else:
+                        data.update(body)
             except Exception:
                 pass
         # path params : mapping explicite placeholder->champ Input, sinon nom identique.
@@ -91,7 +98,7 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
             # `d.message` — les deux surfaces disaient donc des choses différentes du
             # MÊME refus.
             return json_error(request, d.status, d.code, d.message or None)
-        return json_response(request, result)
+        return json_response(request, result, status=binding.status)
     return _handler
 
 

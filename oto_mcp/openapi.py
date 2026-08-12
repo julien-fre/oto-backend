@@ -130,12 +130,28 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
         "tags": [cap.key.split(".")[0]],
         "security": [{"bearerAuth": []}],
         "responses": {
-            "200": ok,
+            # Le code de la réponse heureuse vient du binding (201 sur les créations
+            # historiques) : le document décrit ce que le serveur REND, pas 200 par
+            # convention — un client généré qui n'attend que 200 traiterait un 201
+            # comme une erreur.
+            str(binding.status): ok,
             "401": {"description": "jeton absent ou invalide"},
             "403": {"description": "refus d'autorisation (ou hors portée du jeton)"},
         },
     }
-    if binding.verb in _BODY_VERBS:
+    if binding.verb in _BODY_VERBS or binding.reads_body:
+        if binding.body_field:
+            # Corps LIBRE : le corps entier est la valeur d'UN champ (`body_field`),
+            # donc c'est le schéma de ce champ qu'on publie — pas un objet qui
+            # l'envelopperait, ce que le fil ne porte jamais.
+            body = props.pop(binding.body_field, None) or {"type": "object"}
+            required.discard(binding.body_field)
+            for name, sub in props.items():
+                params.append(_param(name, "query", sub, name in required))
+            op["parameters"] = params
+            op["requestBody"] = {"required": True,
+                                 "content": {"application/json": {"schema": body}}}
+            return op, defs
         body = {"type": "object", "properties": props}
         if required:
             body["required"] = sorted(required)
