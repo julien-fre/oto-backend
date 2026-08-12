@@ -212,6 +212,21 @@ def test_a_counted_edge_cannot_be_deleted(live):
         _exec("DELETE FROM grants WHERE id = %s", (gid,))
 
 
+def test_removing_the_edges_restores_the_old_path(live):
+    """La réversibilité, exercée : compteurs puis arêtes supprimés ⟹ la chaîne
+    redevient MUETTE et l'ancien chemin (la ligne du coffre, intacte) répond seul."""
+    from oto_mcp import access, grants_chain
+
+    _seed_prod_shaped_platform_key()
+    live()
+    assert grants_chain.platform_rung("granted-sub", "fullenrich", None) is not None
+    _exec("DELETE FROM grant_counters")
+    _exec("DELETE FROM grants")
+    assert grants_chain.platform_rung("granted-sub", "fullenrich", None) is None
+    assert access._platform_grant_meta("granted-sub", "fullenrich", None) == {
+        "label": "env", "daily_quota": 200}
+
+
 # ── Les conditions du socle, vérifiées DANS la base ────────────────────────────
 
 def test_counting_index_is_not_partial_in_the_database(live):

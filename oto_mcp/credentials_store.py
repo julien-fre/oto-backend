@@ -149,6 +149,16 @@ def platform_grant(provider: str, scope: str, daily_quota: "int | None" = None,
     grant_platform_key/grant_org_platform_key. Non free-tier ⟹ ajoute au `share_down`
     (mode 'closed'). Free-tier (`platform_key_open`) ⟹ accès déjà ouvert à tous : on ne pose
     QUE le quota (`meta.rate_limit_by[scope]`). Le quota s'applique dans les deux cas."""
+    from . import grants_chain  # import tardif (grants_chain lit ce module)
+
+    if grants_chain.is_chained(provider):
+        # Blueprint ADR 0053 (lot L5) : accorder = poser une ARÊTE. On ne touche PLUS
+        # la ligne du coffre — ni `share_mode`, ni `share_down`, ni `rate_limit_by`.
+        # C'est exactement le geste qui a brûlé le 31/07 : ici il n'existe plus, donc
+        # accorder à l'un ne peut plus retirer à l'autre. L'existant reste EN PLACE
+        # (rien n'est effacé) — c'est ce qui rend le retour à l'ancien chemin possible.
+        grants_chain.grant(provider, scope, daily_quota=daily_quota, label=label)
+        return
     con = connectors.REGISTRY.get(provider)
     free_tier = bool(con and getattr(con, "platform_key_open", False))
     with _connect() as conn:
@@ -178,6 +188,14 @@ def platform_grant(provider: str, scope: str, daily_quota: "int | None" = None,
 
 def platform_revoke(provider: str, scope: str, label: "str | None" = None) -> None:
     """ADR 0044 §F R4 : retire l'accès de `scope` (retire du share_down + du rate_limit_by)."""
+    from . import grants_chain  # import tardif (grants_chain lit ce module)
+
+    if grants_chain.is_chained(provider):
+        # L5 : l'arête s'ARCHIVE (0053-D7, jamais de suppression — sinon la
+        # consommation passée disparaît). L'accès est coupé à la lecture suivante :
+        # la chaîne, ayant un avis (« révoqué »), ne retombe pas sur l'ancien chemin.
+        grants_chain.revoke(provider, scope, label=label)
+        return
     with _connect() as conn:
         label = label or _latest_platform_label(conn, provider)
         if label is None:

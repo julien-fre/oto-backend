@@ -44,7 +44,8 @@ from typing import Callable, Optional
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from . import connector_link, connectors, credentials_store, db, group_store, org_store, session_org, status_hints
+from . import (connector_link, connectors, credentials_store, db, grants_chain,
+               group_store, org_store, session_org, status_hints)
 from .auth_hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
@@ -654,15 +655,45 @@ def _platform_quota(sub, active_org, meta: dict) -> "int | None":
     return (meta or {}).get("rate_limit")
 
 
-def _platform_grant_meta(sub, provider, active_org) -> "dict | None":
+def _legacy_platform_grant_meta(sub, provider, active_org) -> "dict | None":
     """Palier plateforme (ADR 0044 §F R3) SANS secret : {label, daily_quota} de l'instance
     PLATEFORM utilisable par `sub` la plus récente, ou None. Base des miroirs `status_for`/
-    `credential_mode_for` (présence + quota, jamais de déchiffrement)."""
+    `credential_mode_for` (présence + quota, jamais de déchiffrement).
+
+    ⚠️ **L'ancien chemin, et il ne bouge pas d'un octet** (blueprint ADR 0053, lot L5) :
+    il reste le seul pour les neuf connecteurs non basculés, et le repli EXACT pour un
+    bénéficiaire que la chaîne ne connaît pas. Le préfixe `_legacy_` ne le déprécie pas —
+    il nomme l'une des deux voies de la fenêtre de double lecture."""
     for inst in credentials_store.list_platform_instances(provider):
         if _platform_instance_usable(sub, active_org, inst):
             return {"label": inst["label"],
                     "daily_quota": _platform_quota(sub, active_org, inst.get("meta"))}
     return None
+
+
+def _platform_grant_meta(sub, provider, active_org) -> "dict | None":
+    """Le palier plateforme, **chaîne de grants d'abord** (blueprint ADR 0053, lot L5).
+
+    Trois issues, et la troisième est ce qui rend la fenêtre sûre :
+
+    - la chaîne ACCORDE → son verdict (clé + quota portés par l'arête) ;
+    - la chaîne REFUSE (des arêtes existent, toutes révoquées) → refus **sans repli** :
+      sinon révoquer une arête ne couperait rien, l'ancien chemin free-tier
+      re-accordant aussitôt ;
+    - la chaîne est MUETTE (connecteur non basculé, ou aucune arête n'a jamais visé cet
+      appelant) → l'ancien chemin, à l'identique.
+
+    Les deux voies sont lues pour un connecteur basculé — c'est le prix assumé de la
+    fenêtre (une lecture indexée de plus) et c'est ce qui produit le journal d'écart,
+    matière du verdict de fin de fenêtre."""
+    verdict = grants_chain.platform_rung(sub, provider, active_org)
+    if verdict is None:
+        return _legacy_platform_grant_meta(sub, provider, active_org)
+    legacy = _legacy_platform_grant_meta(sub, provider, active_org)
+    grants_chain.journal_resolution(provider, sub, active_org, verdict, legacy)
+    if not verdict.granted:
+        return None
+    return {"label": verdict.label, "daily_quota": verdict.quota}
 
 
 def _resolve_platform_grant(sub, provider, active_org) -> "dict | None":
@@ -1474,11 +1505,19 @@ def resolve_mount_token(provider: str) -> str:
 
 
 def record_platform_usage(provider: str) -> None:
-    """À appeler APRÈS un appel réussi avec la platform key. No-op si pas authentifié."""
+    """À appeler APRÈS un appel réussi avec la platform key. No-op si pas authentifié.
+
+    Deux compteurs pendant la fenêtre de double lecture (blueprint ADR 0053, L5) :
+    l'historique `usage(sub, tool, day)` — qui garde l'AUTORITÉ du refus, cf.
+    `grants_chain` §Le comptage — et le compteur d'ARÊTE de 0053-D7, tenu en parallèle
+    pour que la bascule d'autorité soit vérifiée avant d'être faite. No-op (et aucune
+    requête) hors connecteurs basculés."""
     sub = current_user_sub_from_token()
     if not sub:
         return
     db.increment_usage(sub, provider)
+    if grants_chain.is_chained(provider):
+        grants_chain.record_usage(sub, provider, current_org(sub))
 
 
 def status_for(sub: str, *, org: "int | None | object" = _UNSET,

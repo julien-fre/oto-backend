@@ -104,7 +104,13 @@ def has_member_api_key(sub: str, org_id: Optional[int], provider: str,
 def _grants_for_scope(scope: str) -> list[dict]:
     """ADR 0044 §F : grants dérivés des instances plateforme dont le `share_down` contient
     `scope` (`user:<sub>` | `org:<id>`). Renvoie {provider, label, daily_quota} — plus de
-    surrogate platform_key_id. `share_down @> [scope]` = contenance JSONB (indexable)."""
+    surrogate platform_key_id. `share_down @> [scope]` = contenance JSONB (indexable).
+
+    **∪ les arêtes de la chaîne** (blueprint ADR 0053, lot L5) : pour un connecteur
+    basculé, un grant n'est plus une entrée de `share_down` mais une arête. Sans cette
+    union, la clé accordée disparaîtrait des surfaces d'affichage (KeyStack du
+    dashboard, fiche admin) alors qu'elle résout toujours — un miroir qui ment, ce que
+    le plan de chantier compte parmi les vraies fins de lot."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT connector AS provider, entity_id AS label, meta FROM connector_credentials "
@@ -115,6 +121,13 @@ def _grants_for_scope(scope: str) -> list[dict]:
         rlb = (r["meta"] or {}).get("rate_limit_by") or {}
         out.append({"provider": r["provider"], "label": r["label"],
                     "daily_quota": rlb.get(scope)})
+    from .. import grants_chain  # import tardif (grants_chain lit credentials_store)
+
+    kind, _, ident = scope.partition(":")
+    seen = {(g["provider"], g["label"]) for g in out}
+    for g in grants_chain.granted_instances(kind, ident):
+        if (g["provider"], g["label"]) not in seen:
+            out.append(g)
     return out
 
 
