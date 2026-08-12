@@ -606,6 +606,40 @@ _DS_CMP_SQL = {"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 _DS_NUM_RE = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")  # numérique strict (pas de nan/1e5)
 
 
+def _ds_text(val: Any) -> str:
+    """Valeur de filtre → sa forme TEXTE telle que `data ->> champ` la rendrait (#306).
+
+    `->>` extrait le JSON **en texte**, avec les conventions du JSON : un booléen y
+    ressort `"true"`/`"false"` en minuscules. `str(True)` rend `"True"` — majuscule,
+    convention Python — donc la comparaison était `"true" = "True"`, fausse pour
+    chaque ligne. Zéro résultat, **sans erreur** : SQL compare deux chaînes valides
+    qui ne coïncident jamais, et « aucune correspondance » est une réponse honnête à
+    une question qui n'était pas celle qu'on posait. Mesuré : 0 ligne contre 29.
+
+    Même famille pour un flottant entier — `str(1.0)` rend `"1.0"` là où un entier
+    stocké ressort `"1"`.
+
+    ⚠️ Une CHAÎNE passe telle quelle, et c'est délibéré : des appelants contournent
+    aujourd'hui en envoyant `"true"` (le seul moyen d'obtenir le bon résultat). Le
+    correctif ne doit pas transformer un piège silencieux en régression chez ceux
+    qui avaient trouvé la parade — les deux formes matchent le même booléen stocké.
+    """
+    if isinstance(val, bool):        # AVANT le test int : en Python, bool ⊂ int
+        return "true" if val else "false"
+    if isinstance(val, float) and val.is_integer():
+        return str(int(val))
+    if val is None:
+        # `data ->> champ` rend SQL NULL aussi bien pour un JSON `null` que pour une
+        # clé absente : aucune comparaison textuelle ne peut les distinguer. On le
+        # dit plutôt que de rendre un zéro que l'appelant lirait comme « aucune
+        # ligne ne correspond ».
+        raise ValueError(
+            "valeur de filtre `null` : `data ->> champ` ne distingue pas un JSON "
+            "`null` d'une clé absente, donc `eq`/`ne` ne peuvent pas y répondre — "
+            "utiliser l'opérateur `empty` (ou `not_empty`).")
+    return str(val)
+
+
 # Colonnes MÉTA filtrables. Elles ne vivent PAS dans `data` : sans ce routage, un
 # filtre « modifié depuis le 1er » partait en `data ->> '_updated_at'` = NULL et
 # rendait ZÉRO ligne, sans la moindre erreur — un filtre muet est pire qu'un filtre
@@ -722,7 +756,7 @@ def _ds_filter_clauses(filters: Optional[list]) -> tuple[list[str], list]:
             clauses.append("(data ->> %s IS NOT NULL AND data ->> %s <> '')")
             params.extend([field, field])
         elif op == "in":
-            vals = [str(v) for v in (val if isinstance(val, list) else [val])
+            vals = [_ds_text(v) for v in (val if isinstance(val, list) else [val])
                     if v is not None and str(v) != ""]
             if not vals:
                 continue
@@ -730,16 +764,16 @@ def _ds_filter_clauses(filters: Optional[list]) -> tuple[list[str], list]:
             params.extend([field, vals])
         elif op == "contains":
             clauses.append("data ->> %s ILIKE %s")
-            params.extend([field, f"%{val}%"])
+            params.extend([field, f"%{_ds_text(val)}%"])
         elif op == "eq":
             clauses.append("data ->> %s = %s")
-            params.extend([field, str(val)])
+            params.extend([field, _ds_text(val)])
         elif op == "ne":
             clauses.append("(data ->> %s IS DISTINCT FROM %s)")
-            params.extend([field, str(val)])
+            params.extend([field, _ds_text(val)])
         else:  # gt/gte/lt/lte
             sym = _DS_CMP_SQL[op]
-            sval = str(val)
+            sval = _ds_text(val)
             if _DS_NUM_RE.match(sval):
                 clauses.append(
                     "(data ->> %s ~ '^-?[0-9]+(\\.[0-9]+)?$' "
