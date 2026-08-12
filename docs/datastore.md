@@ -31,7 +31,8 @@ connecter Google (plus de `412 google_not_connected`). Le partage est **DB-only*
 (`datastore_shares` ; le destinataire lit via son propre `sub`, plus de
 permission Drive). `data_url` renvoie un **deep-link dashboard** (`/console/data`),
 pas une URL de Sheet. Code : `datastore.py` (`DatastorePg`) + `tools/datastore.py`
-+ `api_routes_datastore.py` + fonctions `db.datastore_*`.
+(face MCP) + `capabilities/datastore_*.py` (face REST, depuis #302 — plus
+`api_routes_datastore.py`, qui n'en porte plus rien) + fonctions `db.datastore_*`.
 
 > **Export/sync vers un provider tiers** (Sheets/Docs/Notion — édition humaine,
 > garantie de sortie) = projection optionnelle, **déférée à otomata#29**. C'est
@@ -51,7 +52,15 @@ Surfaces :
   Rend le contenu INLINE dans le chat au lieu du seul deep-link `data_url`. Dégradation
   gracieuse si l'extra `fastmcp[apps]` est absent (non enregistré). Pattern : cf.
   `tools/foncier.py` (`foncier_*_app`).
-- REST `/api/datastore/*` — pour le CLI `oto data` + UI dashboard.
+- REST `/api/datastore/*` — pour le CLI `oto data` + UI dashboard. **Face DÉRIVÉE
+  depuis le 2026-08-12** (#302) : plus une seule route écrite à la main, tout vient
+  des capacités `capabilities/datastore_{namespaces,rows,schema,sharing,claim,
+  activity,columns}.py`. Conséquences pratiques : les 22 opérations portent leur
+  schéma d'entrée ET de réponse dans `/api/openapi.json` (un intégrateur les génère),
+  et un **champ inconnu est refusé** (400 `unknown_fields`) au lieu d'être ignoré —
+  sauf le corps d'un ajout/patch de ligne, qui EST la donnée (`body_field`).
+  ⚠️ Éditer un de ces chemins = éditer sa capacité ; en rajouter un à la main casse
+  le garde-fou `tests/test_rest_modules_are_capabilities.py`.
 
 > **Trier ET filtrer sur les dates système (05/08).** `order_by` acceptait déjà
 > `_created_at`/`_updated_at`/`_id` ; le WHERE, lui, ne connaissait que
