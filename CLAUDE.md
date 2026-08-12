@@ -858,6 +858,16 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 # **Valider l'instrument avant d'en tirer une conclusion**, une ligne suffit :
 #   cd <clone> && PYTHONPATH=<clone> /data/oto/backend/.venv/bin/python -c \
 #     "import oto_mcp.db.search as m; print(m.__file__)"   # doit pointer DANS le clone
+#
+# ⚠️ **2e piège (12/08) : la validation ci-dessus ne couvre PAS un fichier NEUF.** Si ton
+# lot CRÉE un module (ex. `grants_chain.py`), le finder editable le sert depuis
+# /data/oto/backend même avec le `cd` — le clone de HEAD ne l'a pas, l'import retombe sur
+# le tree partagé, et la ligne de validation ne l'attrape pas (elle teste un module qui
+# existe des deux côtés). Le test « rouge sur le code d'avant » devient alors un mensonge.
+# Parade : un `sitecustomize.py` dans le clone qui retire les finders editable :
+#   import sys; sys.meta_path = [f for f in sys.meta_path
+#                                if "__editable__" not in type(f).__module__]
+# Puis re-valider en important LE MODULE NEUF : il doit lever ImportError dans le clone.
 # Convention : tester la LOGIQUE PURE (helpers hors DB, ex. `effective_for_group`,
 # `_connector_blocked`/seams) + les gardes de capacité par stub ; le chemin SQL est vérifié
 # au déploiement (le job `test` du CI tourne le vrai suite avec toutes les deps).
