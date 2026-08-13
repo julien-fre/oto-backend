@@ -117,12 +117,25 @@ def _unknown_filter_keys(store, namespace: str, filter: dict) -> set[str]:
     """Clés de `filter` absentes de TOUTES les lignes d'un échantillon du namespace
     (feedback #163 : filtre sur colonne inexistante = 0 résultat silencieux,
     indiscernable d'un « aucune ligne ne matche »). Chemin résultat-vide seulement.
-    Namespace vide ou erreur ⇒ set() (rien d'affirmable, pas de faux warning)."""
+    Namespace vide ou erreur ⇒ set() (rien d'affirmable, pas de faux warning).
+
+    ⚠️ Le schéma prime sur l'échantillon, pour la même raison que la projection :
+    une colonne déclarée mais peu renseignée peut manquer aux 50 lignes tirées, et
+    l'annoncer inconnue enverrait chercher une faute d'orthographe qui n'existe
+    pas. Un filtre légitime sur une colonne rare rend 0 ligne — c'est une réponse,
+    pas un symptôme."""
+    # Le schéma est lu à part : s'il est indisponible, on RETOMBE sur l'échantillon
+    # au lieu d'éteindre l'avertissement. Le mettre dans le try commun ferait
+    # disparaître un signal utile à la première anicroche de lecture de schéma —
+    # exactement le genre de silence que ce warning existe pour combattre.
+    try:
+        known = set(dsv2.top_level_keys(store.get_schema(namespace)))
+    except Exception:  # noqa: BLE001
+        known = set()
     try:
         sample = store.cursor_rows(namespace, limit=50)["rows"]
-        if not sample:
+        if not sample and not known:
             return set()
-        known: set[str] = set()
         for r in sample:
             known |= set(r.keys())
         return {k for k in filter if k not in known}
@@ -551,9 +564,17 @@ def register(mcp: FastMCP) -> None:
                    "next_cursor": page["next_cursor"]}
             # Projection sur des colonnes absentes de TOUTES les lignes = même piège
             # silencieux que le filter (#163) : on le signale sans bloquer.
+            # ⚠️ Le SCHÉMA d'abord, l'échantillon seulement à défaut : une colonne
+            # déclarée mais renseignée sur 12 lignes de 500 est absente d'une page
+            # où aucune des 12 ne figure (dans une row JSONB, une colonne vide
+            # n'existe pas). L'annoncer « inconnue — vérifie l'orthographe » ne
+            # rate pas seulement sa cible, ça DÉSIGNE UNE CAUSE FAUSSE : l'appelant
+            # relit son appel, qui est juste, et conclut que le champ n'existe pas.
             if fields and page["rows"]:
                 present = {k for r in page["rows"] for k in r}
-                unknown = [f for f in fields if f not in present]
+                declared = dsv2.top_level_keys(store.get_schema(namespace))
+                unknown = [f for f in fields
+                           if f not in present and f not in declared]
                 if unknown:
                     out["warning"] = (
                         f"colonne(s) de `fields` inconnue(s) dans ce namespace : "

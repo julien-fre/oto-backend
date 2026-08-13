@@ -568,6 +568,7 @@ class DatastorePg:
         # ICI, à l'auteur du schéma, au moment où il le pose (les deux faces l'ont).
         warnings = [w for w in (dsv2.queue_release_warning(schema),
                                 self._overlong_warning(ns_id, schema),
+                                self._offending_enum_warning(ns_id, schema),
                                 self._orphan_columns_warning(ns_id, schema)) if w]
         if warnings:
             out["warning"] = "\n".join(warnings)
@@ -667,6 +668,47 @@ class DatastorePg:
                 "écritures futures sont refusées, ces lignes-là restent en place "
                 "jusqu'à ce qu'on réécrive le champ (un patch d'un AUTRE champ "
                 "passe).")
+
+    @staticmethod
+    def _offending_enum_warning(ns_id: int, schema: Optional[dict]) -> Optional[str]:
+        """Des rows existantes portent une valeur qu'un enum fraîchement déclaré
+        condamne : le dire à celui qui le déclare.
+
+        Un schéma ne vaut que pour l'AVENIR — le poser ne revalide pas l'existant.
+        Or l'ordre normal des choses est d'écrire d'abord et de formaliser ensuite :
+        au moment où le format arrive, la table est déjà pleine. Sans cet
+        avertissement elle *paraît* conforme (elle a un schéma) tout en contenant
+        des valeurs invisibles au filtrage et aux facettes. Vécu : 504 lignes en
+        « Oui »/« Non » sur un enum `oui`/`non`/`inconnu`.
+
+        AVERTIT, ne refuse pas : refuser rendrait impossible de déclarer un format
+        sur un tableau existant, c'est-à-dire le cas normal. Et rend les valeurs
+        fautives avec leur compte — c'est ce qui permet de choisir entre corriger la
+        donnée et élargir les options, là où un total nu laisse chercher."""
+        # Gate = la validation sera-t-elle ACTIVE ? On avertit exactement quand les
+        # écritures futures seront refusées. Sur un schéma souple, l'enum ne
+        # condamne rien (validation opt-in, 0016) : signaler l'existant y annoncerait
+        # un refus qui n'aura pas lieu — un faux avertissement coûte la confiance
+        # qu'on met dans les vrais.
+        if not dsv2.validation_active(schema):
+            return None
+        options = dsv2.top_level_enum_options(schema)
+        if not options:
+            return None
+        bad = db.datastore_offending_enum_values(ns_id, options)
+        if not bad:
+            return None
+        detail = "\n".join(
+            f"  `{b['field']}` : {b['rows']} ligne(s) hors options — "
+            + ", ".join(f"« {v['value']} » ({v['rows']})" for v in b["values"])
+            + (f", et {b['distinct'] - len(b['values'])} autre(s) valeur(s)"
+               if b["distinct"] > len(b["values"]) else "")
+            + f"  [options : {', '.join(options[b['field']])}]"
+            for b in bad)
+        return ("enum déclaré sur des données qui en sortent déjà :\n" + detail +
+                "\nCes lignes restent en place et resteront INVISIBLES au filtrage "
+                "et aux facettes. Corrige-les (réécris le champ) ou élargis les "
+                "options ; les écritures futures, elles, sont refusées.")
 
     def drop_column(self, namespace: str, key: str, *, confirm: bool) -> dict:
         """Retire une colonne des DONNÉES de toutes les rows (#296). Destructif et

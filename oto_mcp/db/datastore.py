@@ -441,6 +441,48 @@ def datastore_overlong_fields(ns_id: int, bounds: dict) -> list[dict]:
     return sorted(out, key=lambda d: d["longest"] - d["max_length"], reverse=True)
 
 
+def datastore_offending_enum_values(ns_id: int, options: dict,
+                                    per_field: int = 5) -> list[dict]:
+    """Valeurs DÉJÀ EN BASE qu'un enum fraîchement déclaré condamne —
+    `[{field, values: [{value, rows}], rows}]`, le plus atteint d'abord.
+
+    Un schéma ne vaut que pour l'AVENIR : le poser ne revalide pas l'existant. Une
+    colonne peut donc être pleine de valeurs que le format refuse désormais, sans
+    que rien ne le dise — et le tableau *a l'air* conforme puisqu'il a un schéma.
+    Vécu : 504 lignes en « Oui »/« Non » sur un enum `oui`/`non`/`inconnu`, valeurs
+    présentes à l'écran et invisibles au filtrage comme aux facettes.
+
+    On rend les valeurs FAUTIVES avec leur compte, pas un simple total : c'est ce
+    qui permet de trancher tout de suite entre corriger la donnée et élargir les
+    options. Les vides (`NULL`, chaîne vide) sont écartés — une case non remplie
+    n'est pas une valeur hors options, c'est l'affaire de `required`."""
+    from psycopg import sql as _sql
+    out: list[dict] = []
+    with _connect() as conn:
+        for field, allowed in (options or {}).items():
+            vals = [str(o) for o in (allowed or [])]
+            if not vals:
+                continue  # enum libre : aucune option déclarée, rien à condamner
+            q = _sql.SQL(
+                "SELECT data->>{k} AS value, COUNT(*) AS rows "
+                "FROM datastore_rows WHERE ns_id = %s "
+                "AND data->>{k} IS NOT NULL AND data->>{k} <> '' "
+                "AND NOT (data->>{k} = ANY(%s)) "
+                "GROUP BY 1 ORDER BY 2 DESC"
+            ).format(k=_sql.Literal(str(field)))
+            rows = conn.execute(q, (ns_id, vals)).fetchall()
+            if not rows:
+                continue
+            out.append({
+                "field": field,
+                "rows": sum(int(r["rows"]) for r in rows),
+                "distinct": len(rows),
+                "values": [{"value": r["value"], "rows": int(r["rows"])}
+                           for r in rows[:per_field]],
+            })
+    return sorted(out, key=lambda d: d["rows"], reverse=True)
+
+
 def datastore_drop_column(ns_id: int, key: str) -> int:
     """Retire la clé `key` du blob `data` de TOUTES les rows du namespace. Renvoie le
     nombre de rows modifiées (0 = la colonne n'existait dans aucune).

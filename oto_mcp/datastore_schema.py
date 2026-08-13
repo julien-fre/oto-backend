@@ -82,6 +82,36 @@ def top_level_bounds(schema: Optional[dict]) -> dict[str, int]:
     return out
 
 
+def top_level_keys(schema: Optional[dict]) -> set:
+    """Colonnes DÉCLARÉES au premier niveau — la réponse à « cette colonne
+    existe-t-elle ? ».
+
+    Le schéma est la seule source de vérité là-dessus, et c'est pour ça que ce
+    helper existe : dans une row JSONB, **une colonne vide n'existe pas** (il n'y a
+    pas de case vide, il n'y a pas de case). Une colonne déclarée mais renseignée
+    sur 12 lignes de 500 est donc ABSENTE d'une page où aucune des 12 ne figure —
+    et un contrôle qui échantillonne les lignes rendues la déclare inconnue.
+    """
+    return {str(f["key"]) for f in _fields(schema) if f.get("key")}
+
+
+def top_level_enum_options(schema: Optional[dict]) -> dict:
+    """`{champ: [options]}` des enums DÉCLARÉS au premier niveau, options non vides.
+
+    Restreint au premier niveau comme `top_level_bounds` : c'est ce qu'une requête
+    `data->>champ` sait interroger sur l'existant. Un enum sans `options` est un
+    enum LIBRE (le client rend un select vide) — il ne condamne rien."""
+    out: dict = {}
+    for f in _fields(schema):
+        key = f.get("key")
+        if not key or f.get("type") != "enum":
+            continue
+        opts = [str(o) for o in (f.get("options") or [])]
+        if opts:
+            out[str(key)] = opts
+    return out
+
+
 def field_by_role(schema: Optional[dict], role: str) -> Optional[dict]:
     """Le premier field déclarant ce `role` (`status`, `title`…), ou None."""
     for f in _fields(schema):
