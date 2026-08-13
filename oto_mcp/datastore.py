@@ -38,31 +38,81 @@ from . import config
 _META_COLS = ("_id", "_created_at", "_updated_at", "_claimed_by", "_claimed_until")
 
 
+def _writes_layers(new: Any) -> bool:
+    """L'écriture NOMME-t-elle des couches ? (`{"origine": …}`, `{"valeur": …}`…)
+
+    Strict, comme tout écrivain : un dict fait UNIQUEMENT de couches connues. Un
+    `{"a": 1, "origine": "x"}` reste une donnée `json` métier qui se trouve avoir un
+    champ nommé « origine » — on ne le réinterprète pas."""
+    return (isinstance(new, dict) and bool(new)
+            and all(k in dsv2.ALL_LAYER_KEYS for k in new))
+
+
+def _existing_layers(existing: Any) -> dict:
+    """Le contenu ACTUEL d'une colonne, vu comme ses couches.
+
+    Tolérant, comme tout lecteur : un dict qui porte `valeur` est une colonne à
+    couches même s'il en porte une qu'on ne connaît pas — écrite par une version plus
+    récente, elle traverse intacte au lieu d'être perdue à la première réécriture par
+    un nœud plus ancien. Un scalaire est une valeur sans couches ; `None` est le vide."""
+    if isinstance(existing, dict) and existing and (
+            dsv2.VALUE_LAYER in existing
+            or all(k in dsv2.ALL_LAYER_KEYS for k in existing)):
+        return dict(existing)
+    return {} if existing is None else {dsv2.VALUE_LAYER: existing}
+
+
 def _merge_column(existing: Any, new: Any) -> Any:
-    """Fusion d'UNE colonne : ce qu'on écrit gagne, sauf `origine` qui survit.
+    """Fusion d'UNE colonne. **Aucune couche ne s'écrit implicitement, dans aucun sens.**
 
-    L'origine est la valeur reçue à l'import. Une écriture ORDINAIRE ne doit pas y
-    toucher — et surtout pas avoir à y penser : un agent qui met à jour un dirigeant
-    écrit la valeur courante, l'origine reste, sans consigne et sans exception à
-    lever. C'est la protection contre l'ACCIDENT, pas contre l'intention.
+    Une écriture ne touche QUE ce qu'elle nomme. C'est la protection contre
+    l'ACCIDENT, pas contre l'intention — et surtout, c'est ce qui dispense l'agent d'y
+    penser : il écrit ce qu'il veut poser, le reste demeure. Un geste explicite
+    remplace ce qu'il vise ; il n'y a pas de verrou, donc rien à contourner.
 
-    Un geste qui vise explicitement l'origine la remplace : il suffit de l'écrire.
-    Pas de verrou, donc rien à contourner — et un ré-import repose simplement une
-    nouvelle valeur de départ.
+    Les deux directions ont coûté un défaut chacune, et la seconde a failli coûter
+    8 910 lignes :
 
-    ⚠️ Les autres couches ne survivent PAS. `source`, `source_link` et `commentaire`
-    décrivent LA VALEUR : les garder au-dessus d'une valeur remplacée ferait affirmer
-    une provenance fausse — précisément le défaut qu'on élimine, une couche plus
-    haut. Elles suivent la valeur ou disparaissent avec elle."""
-    # Toute colonne A une origine ; ici elle est VIDE, il n'y a donc rien à préserver
-    # — ce n'est pas « la colonne n'a pas de couches », c'est « ses couches sont
-    # vides ». Le plat est un état, pas une nature.
-    if not isinstance(existing, dict) or dsv2.ORIGIN_LAYER not in existing:
-        return new
-    origine = existing[dsv2.ORIGIN_LAYER]
-    if isinstance(new, dict) and dsv2.VALUE_LAYER in new:
-        return new if dsv2.ORIGIN_LAYER in new else {**new, dsv2.ORIGIN_LAYER: origine}
-    return {dsv2.VALUE_LAYER: new, dsv2.ORIGIN_LAYER: origine}
+      - écrire une VALEUR effaçait l'origine (#322) — le patch par `id`, le geste le
+        plus courant d'un agent ;
+      - écrire une ORIGINE seule effaçait la valeur (#326) — le geste nominal du
+        RATTRAPAGE de socle, quand un tableau adopte les couches après coup. Aucune
+        erreur, la valeur simplement disparue.
+
+    D'où la règle unique dont les deux découlent, plutôt que deux correctifs
+    symétriques : on part de l'existant, l'écriture y dépose ce qu'elle nomme.
+
+    ⚠️ Deux conséquences qui ne se devinent pas :
+
+    `comment` et `link` décrivent LA VALEUR : quand elle change sans qu'ils soient
+    renommés, ils tombent avec elle — les garder ferait affirmer une provenance
+    fausse, précisément le défaut qu'on élimine une couche plus haut. `origine`, elle,
+    décrit le point de départ : elle survit.
+
+    Une écriture ORDINAIRE (scalaire, `null`, ou donnée `json`) est une écriture de
+    la valeur : elle laisse l'origine intacte. Effacer l'origine se demande —
+    `{"origine": null}`. Et une colonne dont il ne reste que la valeur redevient un
+    scalaire nu : les lignes sans couches ne doivent pas se mettre à porter une
+    enveloppe."""
+    if not _writes_layers(new):
+        # Toute colonne A une origine ; quand elle est VIDE il n'y a rien à préserver,
+        # et la colonne reste plate — le plat est un état, pas une nature.
+        origine = _existing_layers(existing).get(dsv2.ORIGIN_LAYER)
+        if origine is None:
+            return new
+        return ({dsv2.ORIGIN_LAYER: origine} if new is None
+                else {dsv2.VALUE_LAYER: new, dsv2.ORIGIN_LAYER: origine})
+    out = _existing_layers(existing)
+    if dsv2.VALUE_LAYER in new:
+        for couche in dsv2.VALUE_BOUND_LAYERS:
+            out.pop(couche, None)
+    out.update(new)
+    out = {k: v for k, v in out.items() if v is not None}
+    if not out:
+        return None
+    if set(out) == {dsv2.VALUE_LAYER}:
+        return out[dsv2.VALUE_LAYER]
+    return out
 
 
 class RowValidationError(ValueError):

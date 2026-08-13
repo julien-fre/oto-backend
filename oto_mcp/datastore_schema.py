@@ -49,6 +49,15 @@ ORIGIN_LAYER = "origine"
 # possible, ce n'est plus induit par la forme.
 LAYER_KEYS = (ORIGIN_LAYER, "comment", "link")
 
+# Tout ce qu'une colonne à couches peut porter, valeur comprise.
+ALL_LAYER_KEYS = (VALUE_LAYER, *LAYER_KEYS)
+
+# Les couches qui décrivent LA VALEUR : elles la suivent, et disparaissent avec elle
+# — les garder au-dessus d'une valeur remplacée ferait affirmer une provenance fausse.
+# `origine` n'en est pas : elle décrit le point de DÉPART, pas la valeur courante, et
+# c'est pourquoi elle est la seule à survivre à une réécriture.
+VALUE_BOUND_LAYERS = tuple(k for k in LAYER_KEYS if k != ORIGIN_LAYER)
+
 
 def unknown_layers(value: Any) -> list:
     """Couches d'une colonne que CETTE version du serveur ne connaît pas.
