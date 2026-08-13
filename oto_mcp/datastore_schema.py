@@ -35,6 +35,35 @@ from typing import Any, Optional
 SCALAR_TYPES = ("text", "number", "date", "datetime", "bool", "json",
                 "url", "email", "enum")
 COMPOSITE_TYPES = ("object", "list")
+
+# --- couches d'une colonne (#318) ---------------------------------------------
+# NATIF et universel : aucune déclaration ne dit qu'une colonne porte des couches.
+# Une colonne dont la valeur est un objet portant `valeur` EN a ; toute autre en est
+# dépourvue. C'est le contrat, et il vaut pour toute colonne de tout tableau.
+VALUE_LAYER = "valeur"
+ORIGIN_LAYER = "origine"
+LAYER_KEYS = (ORIGIN_LAYER, "source", "source_link", "commentaire")
+
+
+def unwrap(value: Any) -> Any:
+    """La VALEUR d'une colonne, qu'elle porte des couches ou non.
+
+    Le pendant Python de l'expression SQL polymorphe — MÊME règle, deux endroits
+    parce que deux langages, jamais deux règles. Tout ce qui JUGE une valeur (types,
+    requis, bornes, options) doit déballer d'abord : sinon un schéma strict qui
+    déclare `email` en `text` refuse un objet, et l'écriture en couches devient
+    impossible précisément sur les tableaux qu'on recommande de rendre stricts.
+
+    ⚠️ Conséquence assumée du caractère universel : un champ `json` légitime dont le
+    contenu porte une clé `valeur` (`{"valeur": 42, "unite": "kg"}`) est déballé lui
+    aussi. C'est le prix de « pas de déclaration » — la convention s'applique partout,
+    y compris là où l'auteur ne pensait pas à elle. Le repli est bénin (on rend la
+    valeur au lieu de l'objet, souvent ce qu'on voulait), et l'alternative — un
+    marqueur réservé, ou une déclaration par colonne — rachèterait un cas rare au prix
+    de la simplicité qui fait tout l'intérêt de la primitive."""
+    if isinstance(value, dict) and VALUE_LAYER in value:
+        return value[VALUE_LAYER]
+    return value
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
 
@@ -501,7 +530,11 @@ def _row_errors(fields: list, data: dict, path: str,
         if not key:
             continue
         fpath = f"{path}.{key}" if path else key
-        value = data.get(key)
+        # Déballer avant de juger : c'est la VALEUR qui doit respecter le type, la
+        # borne et les options — pas son enveloppe. Sans ça un schéma strict refuse
+        # toute écriture en couches, donc la primitive est inutilisable là où elle
+        # sert le plus.
+        value = unwrap(data.get(key))
         required = bool(f.get("required"))
         rw = f.get("required_when")
         if not required and isinstance(rw, dict) and rw:

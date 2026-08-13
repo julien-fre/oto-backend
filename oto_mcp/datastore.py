@@ -35,6 +35,30 @@ from . import config
 _META_COLS = ("_id", "_created_at", "_updated_at", "_claimed_by", "_claimed_until")
 
 
+def _merge_column(existing: Any, new: Any) -> Any:
+    """Fusion d'UNE colonne : ce qu'on écrit gagne, sauf `origine` qui survit.
+
+    L'origine est la valeur reçue à l'import. Une écriture ORDINAIRE ne doit pas y
+    toucher — et surtout pas avoir à y penser : un agent qui met à jour un dirigeant
+    écrit la valeur courante, l'origine reste, sans consigne et sans exception à
+    lever. C'est la protection contre l'ACCIDENT, pas contre l'intention.
+
+    Un geste qui vise explicitement l'origine la remplace : il suffit de l'écrire.
+    Pas de verrou, donc rien à contourner — et un ré-import repose simplement une
+    nouvelle valeur de départ.
+
+    ⚠️ Les autres couches ne survivent PAS. `source`, `source_link` et `commentaire`
+    décrivent LA VALEUR : les garder au-dessus d'une valeur remplacée ferait affirmer
+    une provenance fausse — précisément le défaut qu'on élimine, une couche plus
+    haut. Elles suivent la valeur ou disparaissent avec elle."""
+    if not isinstance(existing, dict) or dsv2.ORIGIN_LAYER not in existing:
+        return new
+    origine = existing[dsv2.ORIGIN_LAYER]
+    if isinstance(new, dict) and dsv2.VALUE_LAYER in new:
+        return new if dsv2.ORIGIN_LAYER in new else {**new, dsv2.ORIGIN_LAYER: origine}
+    return {dsv2.VALUE_LAYER: new, dsv2.ORIGIN_LAYER: origine}
+
+
 class RowValidationError(ValueError):
     """Écriture refusée par le schéma strict / le cycle de vie (ADR 0046 B/C).
     Le message liste les champs fautifs — actionnable, jamais un refus muet."""
@@ -847,7 +871,11 @@ class DatastorePg:
         def _apply(current: dict) -> dict:
             merged = dict(current or {})
             prev_status = merged.get(sk) if sk else None
-            merged.update(user_data)
+            # Colonne par colonne, pour que l'origine survive à une écriture
+            # ordinaire. Un `update` en bloc l'emporterait avec le reste — et
+            # silencieusement, puisque remplacer une valeur est le geste normal.
+            for _k, _v in user_data.items():
+                merged[_k] = _merge_column(merged.get(_k), _v)
             self._check_row(schema, merged, prev_status=prev_status,
                             written=set(user_data))
             return merged

@@ -18,6 +18,7 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
+from ..datastore_schema import LAYER_KEYS, VALUE_LAYER
 from ._conn import _connect
 from .users import upsert_user
 
@@ -487,16 +488,17 @@ def field_value_sql(key: str) -> str:
 # l'invariant anti-injection du module (« le champ est TOUJOURS paramétré ») reste
 # intact. Seul le chemin CLÉ MÉTIER prend `field_value_sql`, parce que lui doit
 # matcher son index à la chaîne près.
-# Le nom de la couche qui porte LA VALEUR. Écrit une fois : les deux formes de
-# l'expression (paramétrée et littérale) le dérivent, aucune ne le recopie.
-VALUE_LAYER = "valeur"
-
 FIELD_VALUE_PARAM_SQL = f"COALESCE(data->%s->>'{VALUE_LAYER}', data->>%s)"
 
 # Les COUCHES adressables d'une colonne (#318). `valeur` n'en fait pas partie : elle
 # EST la colonne, on l'atteint par son nom nu — c'est ce qui garde le contrat de
 # lecture inchangé pour tout l'existant.
-LAYER_KEYS = ("source", "origine", "commentaire")
+# Le vocabulaire vit dans le module PUR du domaine — une seule source, pas deux.
+# `source` et `source_link` y sont DEUX couches, et la séparation a une raison
+# opérationnelle : une source unique qui mélangerait « registre » et une URL rendrait
+# `group_by champ.source` inutile — chaque URL comptant pour une provenance distincte,
+# on obtiendrait autant de groupes que de lignes. Or « combien de valeurs déduites ? »
+# est précisément la question de pilotage. La NATURE se groupe, la PREUVE se vérifie.
 
 # Chemin GÉNÉRIQUE vers une sous-clé : `data->%s->>%s` (colonne, sous-clé) — les deux
 # en paramètres, rien de figé. Il sert les couches aujourd'hui ; il servira tel quel le
