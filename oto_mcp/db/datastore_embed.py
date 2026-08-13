@@ -8,6 +8,17 @@ EXACTEMENT comme le lexical (mêmes `ns_ids` accessibles → invariant « cherch
 """
 from __future__ import annotations
 
+from .datastore import ROW_VALUES_TEXT_SQL
+
+# Le texte embarqué doit être celui des VALEURS, pas des enveloppes (#318) : sans ça
+# la provenance entre dans le vecteur sémantique au même titre que le contenu, et
+# deux lignes se ressemblent parce qu'elles viennent de la même source. Aucun index
+# d'expression ici (le HNSW porte sur le vecteur), donc rien ne bloque — contrairement
+# à `oto_search`, dont les GIN lexicaux sont bâtis sur l'expression elle-même.
+#
+# L'alias de table oblige à qualifier la colonne.
+_VALUES_TEXT = ROW_VALUES_TEXT_SQL.replace("data", "r.data")
+
 from ._conn import _connect
 
 
@@ -17,9 +28,9 @@ def list_dirty_rows(limit: int = 16) -> list[dict]:
     trivial (une row vide n'a rien à indexer)."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT r.ns_id, r.row_id, r.data::text AS text "
+            f"SELECT r.ns_id, r.row_id, {_VALUES_TEXT} AS text "
             "FROM datastore_rows r JOIN user_datastores d ON d.id = r.ns_id "
-            "WHERE r.embed_dirty AND d.semantic_search AND length(r.data::text) > 2 "
+            f"WHERE r.embed_dirty AND d.semantic_search AND length({_VALUES_TEXT}) > 2 "
             "ORDER BY r.ns_id, r.row_id LIMIT %s",
             (limit,)).fetchall()
         return [dict(r) for r in rows]
