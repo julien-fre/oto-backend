@@ -17,7 +17,11 @@ diff dit alors ce qu'on a fait.
 """
 from __future__ import annotations
 
-# Inventaire figé le 13/08, juste avant le découpage.
+# Inventaire relevé le 13/08, APRÈS la première couture — il contient donc déjà les
+# noms qu'elle a produits. Le commentaire d'origine disait « juste avant le découpage »,
+# ce qui était faux et rendait ce fichier trompeur : on aurait cru qu'il attestait de
+# l'état du monolithe, alors qu'il atteste de l'état d'une étape. Il vaut pour ce qu'il
+# est — un cliquet qui n'autorise plus de retrait à partir de ce point.
 _SURFACE = """
     Any CONVERT_GUIDES_TO_NODES_SQL CREDENTIAL_PROVIDERS ConnectionPool
     DATASTORE_ROWS_TEXT DOCS_TEXT DocConflict FIELD_VALUE_PARAM_SQL FILE_TEXT

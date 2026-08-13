@@ -15,6 +15,8 @@ import json
 import re
 from typing import Optional
 
+import psycopg
+
 from ._conn import _connect
 from .users import upsert_user
 
