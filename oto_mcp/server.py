@@ -723,6 +723,13 @@ def main():
         if os.environ.get("OTO_RANK_BACKFILL_ENABLED", "1") != "0":
             from . import rank_backfill_worker
             _bg_loops.append(rank_backfill_worker.run_rank_backfill_loop)
+        # Le tick des déclencheurs du runner (chantier R3) : une horloge qui ENFILE
+        # des jobs à l'échéance — jamais d'exécution (le worker externe claime).
+        # Concurrent-sûr par CAS sur next_due : prod et preprod partagent la base,
+        # deux ticks tournent, un seul gagne chaque échéance.
+        from . import runner_tick
+        if runner_tick.enabled():
+            _bg_loops.append(runner_tick.run_runner_tick_loop)
         from . import billing as _billing
         if _billing.is_enabled() and os.environ.get("OTO_BILLING_RUNNER_ENABLED", "1") != "0":
             # échéances d'abonnement + réconciliation (ADR 0043) — gaté sur le

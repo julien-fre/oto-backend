@@ -255,6 +255,34 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_claim
     ON runner_jobs(org_id, due_at) WHERE status = 'pending';
 
+-- Les DÉCLENCHEURS du runner (chantier R3) : la CONFIG utilisateur qui FABRIQUE des
+-- jobs — le tick les enfile à l'échéance (jamais d'exécution ici), le worker les
+-- claime. `sub` = qui a posé le déclencheur (audit) ; le run tournera sous le
+-- worker. `cron` s'évalue DANS `tz` (défaut Europe/Paris, ÉCRIT — « tous les
+-- matins à 8h » doit dire quel 8h, sinon l'heure d'été décale toutes les veilles
+-- d'une heure sans un mot). ⚠️ next_due se consomme par COMPARE-AND-SWAP : prod
+-- et preprod partagent la même base, DEUX ticks tournent — un seul doit gagner
+-- chaque échéance, l'autre voit le CAS échouer et passe.
+CREATE TABLE IF NOT EXISTS runner_triggers (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL,
+    sub TEXT NOT NULL,
+    label TEXT,
+    procedure TEXT NOT NULL,
+    project_id BIGINT,
+    tools JSONB NOT NULL,
+    input TEXT,
+    max_steps INT,
+    cron TEXT NOT NULL,
+    tz TEXT NOT NULL DEFAULT 'Europe/Paris',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    next_due TIMESTAMPTZ NOT NULL,
+    last_enqueued_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_runner_triggers_due
+    ON runner_triggers(next_due) WHERE enabled;
+
 -- Visibilité scopée par org (ADR 0015) : org_id=0 = profil perso/global (aucune
 -- org active), >0 = profil de cette org. Une identité par (sub, org_id).
 CREATE TABLE IF NOT EXISTS user_disabled_tools (

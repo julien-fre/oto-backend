@@ -68,6 +68,7 @@ dependencies = [
     "markdown-it-py>=3.0",
     "psycopg[binary]>=3.2",
     "psycopg-pool>=3.2",
+    "croniter>=2.0",           # déclencheurs du runner (R3) : next_due depuis le cron, dans le fuseau du déclencheur
     # france-opendata : plus de dép DIRECTE (ADR 0028 extraction totale — foncier/fr/
     # urba/sante/frenchtech + SIRENE/DILA/BOAMP/ACCO passent tous par le service FOD).
     # Reste tirée TRANSITIVEMENT par oto-core (>=0.7.0, base sans extras) pour le seul
