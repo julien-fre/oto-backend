@@ -62,6 +62,30 @@ def _existing_layers(existing: Any) -> dict:
     return {} if existing is None else {dsv2.VALUE_LAYER: existing}
 
 
+def _refuse_flat_writes(schema: Optional[dict], user_data: dict) -> None:
+    """Écrire sur un nom PROJETÉ est refusé, en nommant la cible neuve (oto#22 §6).
+
+    Pendant la migration, `contact1_nom` est servi en LECTURE — calculé depuis la
+    colonne-tableau, jamais stocké. L'accepter en écriture créerait une colonne libre
+    du même nom : la lecture continuerait de rendre la valeur PROJETÉE, et ce qui vient
+    d'être écrit serait invisible tout en ayant été accepté. C'est la forme exacte du
+    défaut qu'on passe la journée à fermer — un accusé de réception pour un travail qui
+    n'atteint rien.
+
+    Le refus dit où écrire : un message qui dit seulement « non » fait deviner."""
+    if not user_data:
+        return
+    for cle in user_data:
+        cible = dsv2.resolve_flat_name(schema, cle)
+        if cible is None:
+            continue
+        colonne, rang, attr = cible
+        raise RowValidationError([
+            f"{cle}: nom servi en lecture pendant la migration, il ne s'écrit pas "
+            f"(il est CALCULÉ depuis `{colonne}`, jamais stocké) — écrire "
+            f"`{colonne}[{rang}].{attr}`"])
+
+
 def _merge_column(existing: Any, new: Any) -> Any:
     """Fusion d'UNE colonne. **Aucune couche ne s'écrit implicitement, dans aucun sens.**
 
@@ -1127,6 +1151,7 @@ class DatastorePg:
         mutuellement (last-writer-wins) et perdaient des champs silencieusement."""
         if schema is None:
             schema = self._schema_of(ns_id)
+        _refuse_flat_writes(schema, user_data)
         sk = (dsv2.status_field(schema) or {}).get("key")
 
         def _apply(current: dict) -> dict:
@@ -1383,6 +1408,7 @@ class DatastorePg:
         data = dict(existing.get("data") or {})
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
+        _refuse_flat_writes(schema, patch)
         status_key = (dsv2.status_field(schema) or {}).get("key")
         prev_status = data.get(status_key) if status_key else None
         self._trace(trace, ns_id, ns, prev_status=prev_status)

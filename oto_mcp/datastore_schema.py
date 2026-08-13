@@ -111,6 +111,62 @@ def unwrap(value: Any) -> Any:
     return value
 
 
+FLAT_ALIAS = "flat_alias"
+_ALIAS_SLOTS = ("{n}", "{attr}")
+
+
+def _alias_re(gabarit: str):
+    """Le gabarit compilé. `{n}` et `{attr}` sont les seuls trous ; tout le reste est
+    littéral et ÉCHAPPÉ — un gabarit est déclaré par un humain, pas une expression."""
+    out = []
+    for part in re.split(r"(\{n\}|\{attr\})", str(gabarit)):
+        if part == "{n}":
+            out.append(r"(?P<n>\d+)")
+        elif part == "{attr}":
+            out.append(r"(?P<attr>.+)")
+        else:
+            out.append(re.escape(part))
+    return re.compile("^" + "".join(out) + "$")
+
+
+def flat_alias_of(schema: Optional[dict]) -> dict:
+    """`{clé de colonne-tableau: gabarit}` — les colonnes en double-service (oto#22 §6).
+
+    Pendant la fenêtre de migration, la colonne-tableau est la VÉRITÉ et les anciens
+    noms plats restent servis en lecture, pour que les écrans et réglages qui parlent
+    `contact1_nom` ne tombent pas tous le même jour.
+
+    Le gabarit est **DÉCLARÉ**, jamais deviné : résoudre `contact1_nom` vers
+    `contacts[0].nom` en le devinant rouvrirait exactement l'interprétation de motif de
+    nom que le barreau 1 a fermée. Exécuter une déclaration n'est pas deviner une
+    convention. Il n'y a pas de gabarit par défaut non plus — le défaut évident
+    (`{key}{n}_{attr}`) rend `contacts1_nom`, pas `contact1_nom` : un défaut qui doit
+    singulariser la clé serait une devinette de plus."""
+    return {str(f["key"]): str(f[FLAT_ALIAS]) for f in _fields(schema)
+            if f.get("key") and f.get(FLAT_ALIAS)}
+
+
+def flat_name(gabarit: str, rang: int, attr: str) -> str:
+    """Le nom projeté d'un attribut. ⚠️ Le `{n}` du gabarit est **1-indexé** — c'est
+    l'humain qui le déclare et qui le lit (« contact1 »), alors que l'adressage et
+    l'écriture comptent à partir de 0. L'asymétrie est assumée et documentée aux trois
+    endroits où elle se rencontre ; c'est ICI qu'une confusion coûterait le plus."""
+    return str(gabarit).replace("{n}", str(rang + 1)).replace("{attr}", attr)
+
+
+def resolve_flat_name(schema: Optional[dict], name: str):
+    """`contact1_email.comment` → `("contacts", 0, "email.comment")`, ou None.
+
+    Le suffixe de couche COMPOSE : l'alias mappe le préfixe de chemin, la couche suit.
+    Sans ça les marques de provenance disparaîtraient des écrans pendant toute la
+    fenêtre de migration, sans message."""
+    for key, gabarit in flat_alias_of(schema).items():
+        m = _alias_re(gabarit).match(str(name))
+        if m:
+            return key, int(m.group("n")) - 1, m.group("attr")
+    return None
+
+
 def flat_layers(key: str, value: Any) -> dict:
     """Les couches RENSEIGNÉES d'une colonne, aplaties en `clé.couche`.
 
@@ -517,6 +573,20 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
                 f"key=\"{cle}\" désigne un champ de type \"{porteur.get('type')}\" — "
                 "une clé métier identifie la ligne, elle doit être une valeur simple "
                 "(une liste ne se réduit pas à une valeur, l'unicité serait fausse)")
+    for f in _fields(schema):
+        gabarit = f.get(FLAT_ALIAS)
+        if not gabarit:
+            continue
+        nom = f.get("key")
+        if f.get("type") != "list":
+            errors.append(
+                f"{nom}: `{FLAT_ALIAS}` ne vaut que sur une colonne de type \"list\" "
+                "— c'est le service des anciens noms plats pendant une migration")
+        for trou in _ALIAS_SLOTS:
+            if str(gabarit).count(trou) != 1:
+                errors.append(
+                    f"{nom}: le gabarit {gabarit!r} doit contenir `{trou}` "
+                    f"exactement une fois (ex. \"contact{{n}}_{{attr}}\")")
     lc = lifecycle_of(schema)
     if lc is not None:
         states = lc.get("states")
