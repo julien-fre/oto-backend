@@ -251,6 +251,44 @@ def copy_object(src_key: str, prefix: str, owner_id: str) -> str:
         raise MediaError(500, "copy_failed", str(e))
 
 
+def fetch_object(key: str, *, max_bytes: int | None = None) -> bytes:
+    """Les OCTETS d'un objet privé — lecture serveur, pour l'extraction de texte (#298).
+
+    ⚠️ **La taille est vérifiée AVANT de matérialiser**, par un `head_object` qui ne
+    transfère rien. Lire puis mesurer serait un contrôle victime de ce qu'il contrôle :
+    un objet de 200 Mo serait déjà en mémoire au moment d'être refusé, sur un serveur
+    mono-loop où un dépassement tue le process entier.
+
+    L'upload borne déjà ce qui entre — mais un objet écrit par un autre chemin, ou une
+    borne abaissée après coup, ne doivent pas pouvoir contourner celle-ci. Un contrôle
+    à l'entrée ne dispense pas d'un contrôle à la lecture : ils ne protègent pas des
+    mêmes erreurs.
+
+    ≠ `presign_get`, qui rend une URL pour que le CLIENT lise. Ici c'est le serveur qui
+    lit, et repasser par une URL signée serait un aller-retour HTTP vers notre propre
+    stockage.
+    """
+    limite = max_bytes or _max_bytes()
+    try:
+        client = _get_client()
+        meta = client.head_object(Bucket=_bucket(), Key=key)
+        taille = int(meta.get("ContentLength") or 0)
+        if taille > limite:
+            raise MediaError(413, "object_too_large",
+                             f"{taille} octets (borne {limite})")
+        body = client.get_object(Bucket=_bucket(), Key=key)["Body"]
+        # `amt` borné même après le head : la taille annoncée pourrait mentir, et on
+        # lit un octet de plus pour distinguer « pile la borne » de « tronqué ».
+        data = body.read(limite + 1)
+    except MediaError:
+        raise
+    except Exception as e:  # boto / réseau / clé absente
+        raise MediaError(500, "fetch_failed", str(e))
+    if len(data) > limite:
+        raise MediaError(413, "object_too_large", f"dépasse {limite} octets à la lecture")
+    return data
+
+
 def presign_get(key: str, *, expiry: int | None = None) -> str:
     """URL GET signée et expirante pour une clé privée (lecture à la demande)."""
     try:

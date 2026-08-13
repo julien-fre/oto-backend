@@ -310,14 +310,27 @@ def supported_extensions() -> set:
     return set(_BY_EXT)
 
 
+_MIME_EXT = {"application/pdf": "pdf", "text/plain": "txt", "text/markdown": "md",
+             "text/csv": "csv", "application/json": "json"}
+
+
 def _extension_of(filename: str, mime: str = "") -> str:
-    ext = (filename or "").rsplit(".", 1)[-1].lower() if "." in (filename or "") else ""
-    if ext in _BY_EXT:
-        return ext
-    # Repli sur le mime, pour un fichier SANS extension (un upload d'API, un `blob`).
-    return {"application/pdf": "pdf", "text/plain": "txt", "text/markdown": "md",
-            "text/csv": "csv", "application/json": "json"}.get(
-                (mime or "").split(";")[0].strip().lower(), ext)
+    """L'extension qui décide du lecteur — le mime n'est qu'un REPLI, et seulement
+    quand l'extension MANQUE.
+
+    ⚠️ La nuance a été trouvée en écrivant les tests du worker, et elle compte : le
+    repli ne doit pas s'appliquer à une extension présente mais non supportée. Sinon
+    un fichier nommé `.png`, déclaré `application/pdf` par un client qui se trompe (ou
+    qui ment), part chez le lecteur PDF — alors que le principe posé est que
+    l'extension fait autorité. Le mime vient du client ; il ne peut pas servir à
+    contredire ce que le fichier dit de lui-même, seulement à combler un silence.
+    """
+    nom = filename or ""
+    ext = nom.rsplit(".", 1)[-1].lower() if "." in nom else ""
+    if ext:
+        return ext                      # présente : elle décide, supportée ou non
+    # Sans extension (un upload d'API, un `blob`), le mime est tout ce qu'on a.
+    return _MIME_EXT.get((mime or "").split(";")[0].strip().lower(), "")
 
 
 def extract(data: bytes, filename: str, mime: str = "") -> Extraction:

@@ -707,6 +707,16 @@ def main():
         if os.environ.get("OTO_EMBED_WORKER_ENABLED", "1") != "0":
             from . import embed_worker
             _bg_loops.append(embed_worker.run_embed_loop)
+        # Extraction du texte des fichiers déposés (#298) : les rend cherchables par
+        # ce qu'ils CONTIENNENT. Boucle SÉPARÉE de l'indexation sémantique, et pas par
+        # goût du découpage — `run_embed_loop` sort d'emblée sans MISTRAL_API_KEY, or
+        # l'extraction ne dépend d'aucun service tiers. L'y greffer la rendrait muette
+        # sur un déploiement sans clé, sous le symptôme « la recherche de fichiers ne
+        # trouve rien », sans erreur nulle part. Les domaines de panne restent donc
+        # disjoints : un échec Mistral n'arrête pas l'extraction, ni l'inverse.
+        if os.environ.get("OTO_FILE_EXTRACT_WORKER_ENABLED", "1") != "0":
+            from . import file_extract_worker
+            _bg_loops.append(file_extract_worker.run_extract_loop)
         from . import billing as _billing
         if _billing.is_enabled() and os.environ.get("OTO_BILLING_RUNNER_ENABLED", "1") != "0":
             # échéances d'abonnement + réconciliation (ADR 0043) — gaté sur le

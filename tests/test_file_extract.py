@@ -306,6 +306,17 @@ def test_the_mime_is_a_fallback_never_the_authority():
     assert fe.extract(b"du texte bien assez long ici", "blob").status == fe.UNSUPPORTED
 
 
+def test_a_declared_mime_cannot_override_a_real_extension():
+    """⚠️ Le cas trouvé en écrivant les tests du worker. Une extension PRÉSENTE mais
+    non supportée ne doit pas laisser le mime décider à sa place : sinon un `.png`
+    déclaré `application/pdf` par un client qui se trompe — ou qui ment — part chez le
+    lecteur PDF. Le mime comble un silence, il ne contredit jamais le fichier."""
+    out = fe.extract(b"\x89PNG\r\n\x1a\n" + b"0" * 100, "capture.png", "application/pdf")
+
+    assert out.status == fe.UNSUPPORTED
+    assert "png" in out.detail
+
+
 def test_supported_extensions_are_derived_not_recopied():
     """Une liste en double finit par mentir : celle de la doc, celle du code, et la
     vraie. `supported_extensions()` dérive du registre."""
