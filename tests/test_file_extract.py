@@ -169,6 +169,83 @@ def test_a_zip_bomb_is_refused_before_being_opened():
     assert len(buf.getvalue()) < 1_000_000
 
 
+_BOMBE_ENTITES = b"""<?xml version="1.0"?>
+<!DOCTYPE t [
+ <!ENTITY a "AAAAAAAAAA"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">
+ <!ENTITY c "&b;&b;&b;&b;&b;&b;&b;&b;&b;&b;"><!ENTITY d "&c;&c;&c;&c;&c;&c;&c;&c;&c;&c;">
+ <!ENTITY e "&d;&d;&d;&d;&d;&d;&d;&d;&d;&d;"><!ENTITY f "&e;&e;&e;&e;&e;&e;&e;&e;&e;&e;">
+ <!ENTITY g "&f;&f;&f;&f;&f;&f;&f;&f;&f;&f;">]>
+<document><t>&g;</t></document>"""
+
+_ENTITE_EXTERNE = b"""<?xml version="1.0"?>
+<!DOCTYPE t [<!ENTITY x SYSTEM "file:///etc/passwd">]>
+<document><t>&x;</t></document>"""
+
+
+def _zip_avec(nom_partie: str, charge: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(nom_partie, charge)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("charge,quoi", [(_BOMBE_ENTITES, "expansion d'entités"),
+                                         (_ENTITE_EXTERNE, "entité externe")])
+@pytest.mark.parametrize("partie,nom", [("word/document.xml", "piege.docx"),
+                                        ("xl/sharedStrings.xml", "piege.xlsx")])
+def test_xml_entity_payloads_are_refused_before_parsing(charge, quoi, partie, nom):
+    """⚠️ Une déclaration d'entités dans un document bureautique est un document
+    FORGÉ : aucun producteur légitime (Word, Excel, LibreOffice, les libs de
+    génération) n'en écrit. On refuse donc avant de parser, avec un statut nommé.
+
+    Mesuré le 13/08 : les deux moteurs XML sous-jacents résistaient déjà (ni fuite de
+    fichier local, ni expansion — mémoire stable). Mais cette protection est
+    EMPRUNTÉE aux bibliothèques : elle tient tant qu'elles ne changent pas de moteur,
+    ce dont personne ne nous préviendra, sur un chemin qui traite des fichiers
+    hostiles. Ce pré-scan ne dépend d'aucune d'elles.
+
+    C'est aussi pourquoi il remplace `defusedxml` : la dépendance ne corrigeait rien
+    de mesurable et ne couvrirait que le lecteur qui la consulte, là où cette garde
+    couvre tout format ZIP+XML — celui qu'on ajoutera demain compris."""
+    out = fe.extract(_zip_avec(partie, charge), nom)
+
+    assert out.status == fe.REJECTED_DTD, f"{quoi} non refusée sur {nom} : {out}"
+    assert not fe.is_retryable(out.status), "un document forgé le restera"
+    assert not out.text
+
+
+def test_a_legitimate_document_carries_no_dtd():
+    """La garde ne doit pas mordre sur les vrais fichiers — sinon elle sera retirée.
+    On le vérifie sur des documents produits par les bibliothèques elles-mêmes."""
+    docx = pytest.importorskip("docx")
+    openpyxl = pytest.importorskip("openpyxl")
+
+    d = docx.Document()
+    d.add_paragraph("un document parfaitement ordinaire")
+    b1 = io.BytesIO()
+    d.save(b1)
+    assert fe.extract(b1.getvalue(), "vrai.docx").ok
+
+    wb = openpyxl.Workbook()
+    wb.active.append(["Société", "Statut"])
+    b2 = io.BytesIO()
+    wb.save(b2)
+    assert fe.extract(b2.getvalue(), "vrai.xlsx").ok
+
+
+def test_the_size_guard_runs_before_the_entity_scan():
+    """L'ORDRE des gardes est une propriété de sécurité, pas un détail de style : le
+    scan d'entités LIT les parties, donc les décompresse. Le faire passer avant la
+    borne de taille rendrait le contrôle victime de ce qu'il contrôle."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        # Énorme ET porteur d'entités : c'est la borne de taille qui doit répondre.
+        z.writestr("word/document.xml",
+                   b"<!DOCTYPE t []>" + b"a" * (fe.MAX_UNCOMPRESSED_BYTES + 1024))
+
+    assert fe.extract(buf.getvalue(), "double.docx").status == fe.TOO_LARGE
+
+
 def test_the_same_guard_covers_spreadsheets():
     """La garde est sur le format ZIP, pas sur le lecteur : `.xlsx` est exposé
     exactement pareil."""

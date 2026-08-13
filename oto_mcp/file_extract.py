@@ -73,6 +73,7 @@ UNSUPPORTED = "unsupported"      # format qu'on ne sait pas lire (image, archive
 ENCRYPTED = "encrypted"          # protégé par mot de passe — ne réussira jamais seul
 EMPTY = "empty"                  # lu, mais sans texte utile (scan sans OCR, doc vide)
 TOO_LARGE = "too_large"          # décompresserait au-delà de la borne — refusé AVANT lecture
+REJECTED_DTD = "rejected_dtd"    # XML à déclaration d'entités — refusé AVANT parsing
 FAILED = "failed"                # imprévu (fichier tronqué, lib qui lève) — reprenable
 
 
@@ -166,6 +167,54 @@ def _extract_pdf(data: bytes) -> Extraction:
                       detail=f"tronqué à {MAX_TEXT_CHARS} caractères" if tronque else "")
 
 
+# Marqueurs d'une déclaration d'entités XML. Un document bureautique LÉGITIME n'en
+# porte jamais : les producteurs (Word, Excel, LibreOffice, les libs de génération)
+# écrivent du XML sans DTD. Leur présence n'est donc pas un cas limite à gérer, c'est
+# un document forgé.
+_DTD_MARQUEURS = (b"<!DOCTYPE", b"<!ENTITY", b"<!doctype", b"<!entity")
+
+
+def _zip_declares_entities(data: bytes) -> Optional[Extraction]:
+    """Refuser un document dont une partie XML déclare des entités — AVANT de parser.
+
+    ## Pourquoi cette garde existe alors que la mesure dit qu'on est déjà protégé
+
+    Vérifié le 13/08 en fabriquant les attaques : ni `python-docx`/lxml ni `openpyxl`
+    ne résolvent l'entité externe (aucune fuite de fichier local, aucune requête
+    sortante) et l'expansion d'entités est refusée (mémoire stable). Le risque signalé
+    n'était pas exploitable.
+
+    Mais cette protection est **empruntée** : elle appartient au parseur des
+    bibliothèques, pas à nous. Elle tient tant qu'elles ne changent pas de moteur XML,
+    ce dont personne ne nous préviendra — et le jour où ça arrive, la faille revient
+    par une mise à jour de routine, sur un chemin qui traite des fichiers hostiles.
+    Le pré-scan, lui, ne dépend d'aucune bibliothèque : il ferme la classe entière,
+    quel que soit ce qui parse derrière.
+
+    C'est aussi pourquoi il est préféré à `defusedxml` : la dépendance ne corrige rien
+    de mesurable ici (les deux moteurs résistent déjà) et ne couvrirait que le lecteur
+    qui la consulte, alors que cette garde couvre tout format ZIP+XML — celui qu'on
+    ajoutera demain compris.
+
+    ⚠️ Le contrôle vient APRÈS `_zip_too_large` : lire les parties suppose de les
+    décompresser, donc la borne de taille doit avoir déjà parlé.
+    """
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            for it in z.infolist():
+                if not it.filename.lower().endswith((".xml", ".rels")):
+                    continue
+                contenu = z.read(it.filename)
+                if any(m in contenu for m in _DTD_MARQUEURS):
+                    return Extraction(
+                        REJECTED_DTD,
+                        detail=f"déclaration d'entités XML dans « {it.filename} »")
+    except Exception:
+        return None                       # pas un zip lisible : la lib dira `failed`
+    return None
+
+
 def _zip_too_large(data: bytes) -> Optional[Extraction]:
     """Refuser AVANT d'ouvrir une archive qui décompresserait au-delà de la borne.
 
@@ -194,13 +243,23 @@ def _zip_too_large(data: bytes) -> Optional[Extraction]:
     return None
 
 
+def _zip_guards(data: bytes) -> Optional[Extraction]:
+    """Les gardes d'une archive ZIP+XML, dans l'ORDRE qui les rend sûres.
+
+    Une seule porte pour tous les formats de cette famille : un lecteur ajouté demain
+    (`.pptx`, `.odt`) l'appelle et hérite des deux protections, au lieu d'en oublier
+    une. L'ordre n'est pas indifférent — le scan des entités lit les parties, donc il
+    suppose que la borne de taille a déjà refusé les archives démesurées."""
+    return _zip_too_large(data) or _zip_declares_entities(data)
+
+
 @_register("docx")
 def _extract_docx(data: bytes) -> Extraction:
     from docx import Document
 
-    trop_gros = _zip_too_large(data)
-    if trop_gros is not None:
-        return trop_gros
+    refus = _zip_guards(data)
+    if refus is not None:
+        return refus
     try:
         doc = Document(io.BytesIO(data))
         # Les paragraphes ET les tableaux : dans un document bureautique, une part
@@ -221,9 +280,9 @@ def _extract_docx(data: bytes) -> Extraction:
 def _extract_xlsx(data: bytes) -> Extraction:
     from openpyxl import load_workbook
 
-    trop_gros = _zip_too_large(data)
-    if trop_gros is not None:
-        return trop_gros
+    refus = _zip_guards(data)
+    if refus is not None:
+        return refus
     try:
         # `read_only` + `data_only` : on veut les VALEURS, pas les formules, et sans
         # charger le classeur entier en mémoire (un export de 50 000 lignes existe).
