@@ -20,11 +20,12 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, org_store, session_org
 from ..auth_hooks import current_user_sub_from_token
+from .. import config
 
 logger = logging.getLogger(__name__)
 
 # Env-driven (cutover ADR 0040 : prod dashboard ≠ preprod ; ne pas figer sur .oto.ninja).
-_DASHBOARD = os.environ.get("OTO_DASHBOARD_URL", "https://dashboard.oto.ninja").rstrip("/")
+_DASHBOARD = config.dashboard_url()
 
 
 def _require_sub() -> str:

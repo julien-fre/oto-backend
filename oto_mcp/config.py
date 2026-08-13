@@ -51,3 +51,23 @@ def mcp_audience_alt_hosts() -> frozenset[str]:
     from urllib.parse import urlparse
     hosts = (urlparse(a).hostname for a in mcp_audience_alts())
     return frozenset(h for h in hosts if h)
+
+
+def dashboard_url() -> str:
+    """L'adresse du tableau de bord servie AUX UTILISATEURS (liens de tableaux, de
+    connexion, pages publiques).
+
+    Source unique. TROIS variables ont longtemps coexisté pour la même chose —
+    `OTO_APP_URL`, `OTO_DASHBOARD_URL`, `OTO_DASHBOARD_BASE_URL` — et la production ne
+    posait que la première :
+    tout ce qui lisait la seconde retombait sur un défaut EN DUR pointant la
+    **preprod**. Un client d'un partenaire s'est ainsi vu servir un lien vers un
+    environnement qui n'est pas le sien (13/08). Le défaut, lui, vise désormais la
+    PROD : un environnement mal configuré doit dégrader vers le vrai produit, jamais
+    vers un bac à sable.
+    """
+    for var in ("OTO_APP_URL", "OTO_DASHBOARD_URL", "OTO_DASHBOARD_BASE_URL"):
+        valeur = os.environ.get(var, "").strip().rstrip("/")
+        if valeur:
+            return valeur
+    return "https://manage.oto.cx"

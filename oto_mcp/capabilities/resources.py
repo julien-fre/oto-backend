@@ -23,6 +23,7 @@ from .. import access, db, email, group_store, org_store, ownership, roles
 from ._authz import RESOURCE_GOVERN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+from .. import config
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ def _notify_grant(sharer_sub: str, resource_type: str, rid: str, to_email: str,
     tracé — ne casse JAMAIS l'action métier. Ne notifie que les principals `user` :
     pour une org/un groupe destinataire, « qui reçoit » reste à trancher (#77)."""
     try:
-        app_url = os.environ.get("OTO_APP_URL", "https://dashboard.oto.ninja").rstrip("/")
+        app_url = config.dashboard_url()
         sharer = _owner_label("user", sharer_sub)
         name = _resource_name(resource_type, rid)
         type_label = _TYPE_LABELS.get(resource_type, "ressource")

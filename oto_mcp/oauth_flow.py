@@ -35,6 +35,7 @@ import time
 from typing import Optional
 
 import requests
+from . import config
 
 DEFAULT_STATE_TTL = 600   # 10 min — le temps de lire un écran de consentement
 
@@ -141,7 +142,7 @@ RETURN_APPS: dict[str, tuple[str, str]] = {
 # Défaut historique (oto-dashboard) — byte-à-byte ce que chaque `_app_url()` de
 # route callback faisait seul avant ce module.
 _DEFAULT_RETURN_BASE_ENV = "OTO_APP_URL"
-_DEFAULT_RETURN_BASE_FALLBACK = "https://dashboard.oto.ninja"
+_DEFAULT_RETURN_BASE_FALLBACK = config.dashboard_url()
 _DEFAULT_RETURN_PATH = "/connectors"
 
 

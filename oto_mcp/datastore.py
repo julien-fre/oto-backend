@@ -29,6 +29,7 @@ from psycopg.errors import UniqueViolation
 
 from . import datastore_schema as dsv2
 from . import db, ownership, session_org
+from . import config
 
 
 _META_COLS = ("_id", "_created_at", "_updated_at", "_claimed_by", "_claimed_until")
@@ -116,7 +117,7 @@ def _new_id() -> str:
 
 
 def _dashboard_url() -> str:
-    return os.environ.get("OTO_DASHBOARD_URL", "https://dashboard.oto.ninja").rstrip("/")
+    return config.dashboard_url()
 
 
 def _ns_url(ns_id: int) -> str:

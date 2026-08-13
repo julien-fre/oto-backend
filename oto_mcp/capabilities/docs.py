@@ -17,6 +17,7 @@ from .. import db, doc_patch, email, org_store, ownership
 from ._authz import PROJECT_SHARED_READ, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+from .. import config
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ PROJECT_RTYPE = "project"
 
 
 def _dash_url() -> str:
-    return os.environ.get("OTO_DASHBOARD_BASE_URL", "https://dashboard.oto.ninja").rstrip("/")
+    return config.dashboard_url()
 
 
 def _email_of(sub: Optional[str]) -> Optional[str]:
@@ -82,7 +83,7 @@ def _public_doc_url(token: str) -> str:
     """Lien public d'un doc partagé (gap #4a) — pointe sur la route publique du
     dashboard qui rend le markdown. Base configurable (défaut prod)."""
     import os
-    base = os.environ.get("OTO_DASHBOARD_BASE_URL", "https://dashboard.oto.ninja").rstrip("/")
+    base = config.dashboard_url()
     return f"{base}/p/d/{token}"
 
 

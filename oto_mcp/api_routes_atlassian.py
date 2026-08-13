@@ -20,6 +20,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 from . import atlassian_oauth
+from . import config
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
@@ -33,7 +34,7 @@ def make_routes(
 ) -> list[Route]:
 
     def _app_url() -> str:
-        return os.environ.get("OTO_APP_URL", "https://dashboard.oto.ninja").rstrip("/")
+        return config.dashboard_url()
 
     async def start(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)

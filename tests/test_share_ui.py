@@ -40,7 +40,8 @@ def test_index_shows_connectors_with_tooltip_and_link(monkeypatch):
     assert "Connecteurs" in html
     # serper_search → connecteur `serper` ; fr_search → connecteur `sirene`.
     assert "connector=serper" in html
-    assert "dashboard.oto.ninja/connectors?tab=marketplace" in html
+    from oto_mcp import share_ui as _su
+    assert f"{_su._DASHBOARD}/connectors?tab=marketplace" in html
     assert 'class=conn' in html and 'data-tip=' in html  # pastille + tooltip
 
 
@@ -61,7 +62,11 @@ def test_add_to_oto_cta_when_slug_present(monkeypatch):
     proj = {"id": 5, "name": "P", "brief_md": "", "mcp_access": "secret", "mcp_slug": "demo-x"}
     html, _ = share_ui.build_page(proj, "/", connect_url="https://demo-x.share.oto.cx/mcp")
     assert "Ajouter à mon Oto" in html
-    assert "dashboard.oto.ninja/import?slug=demo-x" in html
+    # ⚠️ L'adresse est DÉRIVÉE (`config.dashboard_url`) : la figer ici graverait le
+    # défaut du 13/08 — la prod servait un lien vers la preprod parce que trois
+    # variables coexistaient et que le défaut en dur visait `.ninja`.
+    from oto_mcp import share_ui as _su
+    assert f"{_su._DASHBOARD}/import?slug=demo-x" in html
 
 
 def test_index_hides_tables_when_anonymous(monkeypatch):

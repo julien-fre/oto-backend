@@ -32,6 +32,7 @@ from typing import Optional
 from markdown_it import MarkdownIt
 
 from . import brand
+from . import config
 
 # Rendu CommonMark SÛR (html=False = HTML brut échappé, pas exécuté), réutilisé (stateless).
 _MD = MarkdownIt("commonmark", {"html": False})
@@ -41,7 +42,7 @@ _DATA_PAGE = 100
 
 # Deep-link « Ajouter à mon Oto » (le dashboard gère le login puis le fork/récupération).
 # Env-driven (cutover ADR 0040 : prod dashboard ≠ preprod ; ne pas figer sur .oto.ninja).
-_DASHBOARD = os.environ.get("OTO_DASHBOARD_URL", "https://dashboard.oto.ninja").rstrip("/")
+_DASHBOARD = config.dashboard_url()
 
 # Favicon Otomata (mark canonique) — source unique dans `brand.py`.
 _FAVICON_LINK = brand.FAVICON_LINK

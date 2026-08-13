@@ -156,7 +156,9 @@ def test_return_url_unknown_app_falls_back_to_oto_dashboard():
     (défaut dashboard.oto.ninja) + `/connectors`, exactement ce que chaque
     `_app_url()`/`_retour()` de route callback faisait seul avant ce module."""
     url = of.return_url("", "?connector=salesforce&salesforce=connected", org=178)
-    assert url == "https://dashboard.oto.ninja/connectors?connector=salesforce&salesforce=connected"
+    from oto_mcp import config as _cfg
+    assert url == (f"{_cfg.dashboard_url()}/connectors"
+                   "?connector=salesforce&salesforce=connected")
 
 
 def test_return_url_respects_oto_app_url_override(monkeypatch):

@@ -17,6 +17,7 @@ import secrets
 from mcp.shared.exceptions import McpError
 
 from . import access, connector_flow, db
+from . import config
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +191,7 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
         if existing and existing.get("account_id"):
             reconnect_account = existing["account_id"]
     public = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    dash = os.environ.get("OTO_DASHBOARD_URL", "https://dashboard.oto.ninja").rstrip("/")
+    dash = config.dashboard_url()
     nonce = secrets.token_urlsafe(24)
     db.create_unipile_pending(nonce, sub, org_id, provider, platform_seat=platform_seat)
     ch = provider.lower()
