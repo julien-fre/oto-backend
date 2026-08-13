@@ -94,6 +94,31 @@ Mistral). **Détail : `docs/auth-logto.md`** (gotchas, env, onboarding).
 > de quel tenant relève un sub : `tenancy.current().tenant_of(sub)` (classement par préfixe).
 > **Détail : `docs/auth-logto.md` §Registre d'émetteurs.**
 
+> **Un tenant tiers est SERVI, depuis le 13/08 (oto-private#83).** Le premier partenaire a
+> son émetteur, son host, son client OAuth et ses 10 comptes qualifiés. Trois règles en
+> sont sorties, toutes contre-intuitives, toutes payées en prod :
+> - ⚠️ **La découverte annonce la FAÇADE sur le host du tenant, JAMAIS son émetteur en
+>   direct.** Annoncer l'émetteur paraît plus honnête et retire `oauth_facade` du chemin —
+>   or elle existe parce que Logto self-hosted **ne fait pas de DCR** : le client échoue sur
+>   « l'enregistrement automatique n'est pas pris en charge ». La façade s'annonce comme
+>   serveur (issuer = le host) et route autorisation/jeton/clés vers l'annuaire du tenant.
+>   Elle rend `tenants.oauth_client_id` — le client de l'annuaire VISÉ, sinon le client se
+>   présente chez l'un avec l'identité de l'autre.
+> - ⚠️ **Pas de patron, pas de lien** (`links.py`, `tenants.link_paths`). Les chemins d'un
+>   partenaire ne ressemblent pas aux nôtres et certaines de nos vues n'ont **aucun**
+>   équivalent chez lui : coller nos chemins sous son domaine fabrique des liens morts, pire
+>   qu'un lien à notre marque. Un lien AFFICHÉ peut valoir `None` ; une REDIRECTION (retour
+>   OAuth) aboutit toujours (`redirect_for`) — on ne peut pas « ne pas rediriger ».
+> - **Le socle d'instructions suit le tenant** (`guides` scope `tenant`, owner = le slug) :
+>   sinon l'assistant d'un partenaire se présente sous NOTRE marque à chaque session.
+>
+> ⚠️ **OPS — une bascule de tenant ABANDONNE les clés personnelles.** L'AAD dérive de
+> l'entité : `migrate_sub` ne repointe plus `connector_credentials.entity_id` (une ligne
+> repointée sans rechiffrement est indéchiffrable — pire qu'absente, la fiche la dit posée).
+> Toute fenêtre doit donc s'accompagner de la LISTE « qui repose quelles clés », prévenue
+> avant. ⚠️ Le scope `member` a `entity_id = "<org_id>:<sub>"` : une requête qui cherche le
+> sub nu ne les voit PAS (elles sont pourtant la majorité).
+
 > **⚠️ CUTOVER ADR 0040 (2026-07-06) — `.ninja`↔`.cx` inversés.** Désormais **PROD =
 > `mcp.oto.cx`** (:9103, audience canonique `mcp.oto.cx/mcp`, dashboard `manage.oto.cx`) et
 > **PREPROD = `mcp.oto.ninja`** (:9105, audience `mcp.oto.ninja/mcp`, dashboard `manage.oto.ninja`).
@@ -468,6 +493,16 @@ construction ; l'état vide de la page Automatisations du dashboard l'explique.
 
 ## Boucle d'usage (ADR 0017)
 
+> **Un run silencieux ne s'annonce plus « en cours » (13/08, #311).** 15 des 16 runs
+> « ouverts » de prod n'avaient plus donné signe de vie depuis 1 jour à 1 mois : des
+> conversations terminées sans clôture déclarée. Le silence est **dérivé à la lecture**
+> (`run_status`, 48 h sans appel rattaché) — jamais stocké : une colonne d'état écrite par
+> un démon pourrait mentir à son tour, ce qui est le défaut qu'on ferme. `last_seen_at`
+> remonte de `_runs_from_journal`, donc les 4 lectures en héritent d'un coup.
+> ⚠️ **Le vocabulaire d'issue vient de l'ADR, pas de la mesure** : `abandoned` est retiré
+> (absent d'ADR 0058-D5) ; `failed` RESTE bien qu'il n'ait jamais servi non plus, parce que
+> D5 le porte. **La mesure tranche ce que l'ADR laisse ouvert, jamais ce qu'elle a fermé.**
+
 Flux d'événements de session unifié : calllog (involontaire) + feedback volontaire
 d'agent (`feedback`, signal=tool_feedback|gap) + runs / déroulés (`run_start/finish`,
 `doctrine` optionnel → doctrine nommée ou run one-shot). **Détail : `docs/usage-loop.md`**.
@@ -673,6 +708,19 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 `*_connect_status` sont déjà des handles), une standardisation possible.
 
 ## Conventions
+
+- **Un test qui affirme une INTENTION grave le bug.** Trois fois le 13/08 : des tests
+  vérifiaient que la découverte annonçait l'émetteur du tenant, que le lien collait notre
+  chemin sous leur domaine, que l'adresse valait `dashboard.oto.ninja` — tous verts, tous
+  protégeant un défaut qui a cassé la prod ou servi la preprod à un client. Un test doit
+  décrire le SYSTÈME (le document servi, la route montée, la dérivation), pas la valeur
+  qu'on croit juste. Corollaire : **une chaîne de découverte d'auth se prouve avec un vrai
+  client MCP avant la prod**, jamais avec des assertions sur un document.
+- **Une adresse rendue à l'utilisateur ne s'écrit jamais en dur** (`config.dashboard_url`,
+  tripwire `test_dashboard_url_par_tenant.py`). Trois variables ont coexisté pour la même
+  adresse et la prod n'en posait qu'une : tout ce qui lisait les autres servait la
+  **preprod**, y compris à un client. Le défaut vise désormais la prod — un environnement
+  mal configuré doit dégrader vers le vrai produit, pas vers un bac à sable.
 
 - **Un garde-fou d'inventaire s'exerce sur le MONTAGE RÉEL, jamais sur une fixture
   partielle.** Trois cas en deux jours (11-12/08) où le banc du garde-fou divergeait du
