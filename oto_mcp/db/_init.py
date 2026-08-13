@@ -290,6 +290,10 @@ def _init_db_once() -> None:
         # (data_claim_next / data_release ; NULL = libre, bail expiré = recyclable).
         conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_by TEXT")
         conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_until TIMESTAMPTZ")
+        # #317 : le run sous lequel la ligne est réservée. `ADD COLUMN` nullable sans
+        # défaut = instantané (PG 11+), aucune réécriture, aucun verrou long — la
+        # base est partagée avec la production.
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_run TEXT")
         # « Ajouter à mon Oto » (otomata-private, canal d'acquisition) : un projet forké
         # depuis un partage public garde le pointeur vers sa source → import IDEMPOTENT
         # (on RÉCUPÈRE la copie déjà présente dans l'org au lieu d'en refaire une).

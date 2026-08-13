@@ -35,7 +35,7 @@ class FakeDB:
         self.rows[row_id] = dict(data)
         return {"row_id": row_id, "data": dict(data), "created_at": "t", "updated_at": updated_at}
 
-    def datastore_merge_row_locked(self, ns_id, row_id, apply_fn, updated_at):
+    def datastore_merge_row_locked(self, ns_id, row_id, apply_fn, updated_at, **k):
         # Sémantique du seam réel (verrou de ligne, #197) : get -> apply_fn -> update
         # atomiques ; ici séquentiel sur le store mémoire.
         if row_id not in self.rows:

@@ -103,6 +103,9 @@ def store(monkeypatch):
                             calls["insert"].append(data) or
                             {"row_id": rid, "created_at": "t", "updated_at": "t",
                              "data": data}))
+    # #317 : l'écriture ciblée contrôle le bail avant d'écrire. Ces tests portent
+    # sur l'identité de la ligne visée, pas sur le verrou — elle y est libre.
+    monkeypatch.setattr(dsm.db, "datastore_active_lease", lambda ns_id, rid: None)
     monkeypatch.setattr(dsm.db, "datastore_update_row",
                         lambda ns_id, rid, data, ts: (
                             calls["update"].append((rid, data)) or

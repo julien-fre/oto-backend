@@ -1182,7 +1182,8 @@ def datastore_update_row(ns_id: int, row_id: str, data: dict, updated_at: str) -
         return dict(row) if row else None
 
 
-def datastore_merge_row_locked(ns_id: int, row_id: str, apply_fn, updated_at: str):
+def datastore_merge_row_locked(ns_id: int, row_id: str, apply_fn, updated_at: str,
+                               lease_guard=None):
     """MERGE ATOMIQUE d'une row par son `row_id`, sous verrou de ligne (#197).
 
     Dans UNE transaction : verrouille la row (`SELECT … FOR UPDATE`), applique
@@ -1194,15 +1195,28 @@ def datastore_merge_row_locked(ns_id: int, row_id: str, apply_fn, updated_at: st
     écrasés sous forte concurrence). Renvoie `(row, merged)` ou `None` si la row
     n'existe plus (course de suppression). `apply_fn` peut lever (validation) →
     la transaction rollback, l'exception est propagée.
+
+    `lease_guard` (#317) = contrôle du BAIL, appelé sous le verrou avec la ligne
+    verrouillée (`claimed_by`/`claimed_until`/`claimed_run` inclus). Il lève pour
+    refuser l'écriture — la transaction rollback, rien n'est écrit. Passé en
+    paramètre plutôt que codé ici parce que « qui a le droit d'écrire » est une règle
+    du STORE, pas du SQL : ce module ne connaît ni le run courant ni le worker.
     """
     with _connect() as conn:
         with conn.transaction():
+            # Le bail est lu DANS le même verrou que la donnée (#317) : le lire
+            # avant, sur une autre connexion, laisserait la fenêtre où un claim
+            # s'intercale entre le contrôle et l'écriture — le défaut exact que
+            # `FOR UPDATE` a été posé pour fermer sur `data` (#197).
             locked = conn.execute(
-                "SELECT data FROM datastore_rows WHERE ns_id = %s AND row_id = %s FOR UPDATE",
+                "SELECT data, claimed_by, claimed_until, claimed_run "
+                "FROM datastore_rows WHERE ns_id = %s AND row_id = %s FOR UPDATE",
                 (ns_id, row_id),
             ).fetchone()
             if locked is None:
                 return None
+            if lease_guard is not None:
+                lease_guard(locked)
             current = locked["data"]
             if not isinstance(current, dict):
                 current = json.loads(current) if current else {}
@@ -1264,7 +1278,8 @@ def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
 
 
 def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
-                        lease_seconds: int = 900) -> Optional[dict]:
+                        lease_seconds: int = 900,
+                        run_id: Optional[str] = None) -> Optional[dict]:
     """Claim d'une row **nommée** (≠ pick de la suivante) — la file pilotée par un
     humain, qui choisit la ligne qu'il traite et à qui le serveur la réserve.
 
@@ -1282,8 +1297,47 @@ def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
             "WHERE ns_id = %s AND row_id = %s AND (claimed_until IS NULL "
             "OR claimed_until < NOW() OR claimed_by = %s) "
             "RETURNING row_id, created_at, updated_at, data, claimed_by, claimed_until",
-            (str(worker), int(lease_seconds), ns_id, row_id, str(worker)),
+            (str(worker), int(lease_seconds), run_id, ns_id, row_id, str(worker)),
         ).fetchone()
+        return dict(row) if row else None
+
+
+def datastore_release_by_run(run_id: str) -> int:
+    """Libère toutes les lignes réservées sous ce run — la TROISIÈME voie du verrou.
+
+    Appelée à la fermeture d'un run, quel que soit son issue (`done`, `failed`,
+    `blocked`, et au passage `stale`) : un run qui se termine ne travaille plus, donc
+    ne tient plus rien. C'est la réponse au cas mesuré — un worker disparu laissait sa
+    ligne bloquée jusqu'à expiration du bail, soit **18 jours** sur la seule ligne
+    réservée qu'ait porté la production.
+
+    ⚠️ Aucune garde de worker ici, et c'est voulu : la garde du release protège d'un
+    agent qui libérerait la ligne d'un AUTRE. Ici c'est le run lui-même qui se ferme —
+    il ne peut libérer que ce qu'il tenait, la clause `claimed_run = %s` s'en charge.
+
+    Rend le nombre de lignes libérées (0 = le cas normal, un run qui n'a rien
+    réservé)."""
+    if not run_id:
+        return 0
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL, "
+            "claimed_run = NULL WHERE claimed_run = %s", (str(run_id),))
+        return cur.rowcount or 0
+
+
+def datastore_active_lease(ns_id: int, row_id: str) -> Optional[dict]:
+    """Le bail ACTIF d'une ligne, ou None — expiré compte pour libre.
+
+    ⚠️ « Actif » est la nuance qui empêche la protection en écriture de devenir un
+    mur : un bail expiré ne protège rien (son titulaire est mort), sinon le zombie de
+    18 jours mesuré en production aurait bloqué cette ligne pendant 18 jours."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT claimed_by, claimed_until, claimed_run FROM datastore_rows "
+            "WHERE ns_id = %s AND row_id = %s AND claimed_by IS NOT NULL "
+            "  AND claimed_until IS NOT NULL AND claimed_until > NOW()",
+            (ns_id, row_id)).fetchone()
         return dict(row) if row else None
 
 

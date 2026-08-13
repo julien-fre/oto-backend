@@ -43,6 +43,10 @@ def store(monkeypatch):
     monkeypatch.setattr(dsm.db, "datastore_release_claim",
                         lambda ns_id, rid, worker: (
                             calls["release"].append((rid, worker)) or True))
+    # #317 : la protection en écriture lit le bail ACTIF avant les gestes qui
+    # n'ouvrent pas de verrou de ligne. Ces tests portent sur la validation de
+    # schéma, pas sur le verrou — la ligne y est libre.
+    monkeypatch.setattr(dsm.db, "datastore_active_lease", lambda ns_id, rid: None)
     return st, calls
 
 
@@ -130,7 +134,7 @@ def test_claim_next_plumbs_filters_and_exposes_lease(store, monkeypatch):
     st, _ = store
     seen = {}
     monkeypatch.setattr(dsm.db, "datastore_claim_next",
-                        lambda ns_id, *, worker, lease_seconds, filters: (
+                        lambda ns_id, *, worker, lease_seconds, filters, **k: (
                             seen.update(ns_id=ns_id, worker=worker,
                                         lease=lease_seconds, filters=filters) or
                             {"row_id": "r9", "created_at": "t", "updated_at": "t",

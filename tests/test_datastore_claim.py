@@ -36,7 +36,7 @@ def _store(monkeypatch, ns_id=7):
 def test_claim_row_returns_the_row_with_its_lease(monkeypatch):
     seen = {}
 
-    def _claim(ns_id, row_id, *, worker, lease_seconds):
+    def _claim(ns_id, row_id, *, worker, lease_seconds, **k):
         seen.update(ns_id=ns_id, row_id=row_id, worker=worker, lease=lease_seconds)
         return {"row_id": "r1", "created_at": "c", "updated_at": "u",
                 "data": {"nom": "ACME"}, "claimed_by": "sarah", "claimed_until": "t+15"}

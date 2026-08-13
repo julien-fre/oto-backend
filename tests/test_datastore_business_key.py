@@ -17,7 +17,7 @@ def _fake_merge_locked(rows):
     """Stub de `db.datastore_merge_row_locked` (seam verrou de ligne #197) sur un
     dict `rows` en mémoire : reproduit get -> apply_fn -> update de façon
     séquentielle. Renvoie (row, merged) ou None si la row n'existe pas."""
-    def merge_locked(ns_id, row_id, apply_fn, updated_at):
+    def merge_locked(ns_id, row_id, apply_fn, updated_at, **k):
         if row_id not in rows:
             return None
         merged = apply_fn(dict(rows[row_id]))
@@ -173,6 +173,7 @@ def test_update_row_key_collision_raises_valueerror_not_500(monkeypatch):
                         lambda ns_id: {"namespace": "t",
                                        "schema": {"key": "siren", "fields": []}})
     monkeypatch.setattr(st, "_check_row", lambda *a, **k: None)
+    monkeypatch.setattr(dsm.db, "datastore_active_lease", lambda ns_id, rid: None)
     monkeypatch.setattr(dsm.db, "datastore_update_row",
                         lambda ns_id, rid, data, ts: (_ for _ in ()).throw(
                             UniqueViolation("duplicate key ds_bkey_7")))
@@ -190,6 +191,7 @@ def test_update_row_unexplained_violation_reraises(monkeypatch):
     monkeypatch.setattr(st, "_ns_of",  # pas de key
                         lambda ns_id: {"namespace": "t", "schema": {"fields": []}})
     monkeypatch.setattr(st, "_check_row", lambda *a, **k: None)
+    monkeypatch.setattr(dsm.db, "datastore_active_lease", lambda ns_id, rid: None)
     monkeypatch.setattr(dsm.db, "datastore_update_row",
                         lambda ns_id, rid, data, ts: (_ for _ in ()).throw(
                             UniqueViolation("duplicate key ds_bkey_7")))

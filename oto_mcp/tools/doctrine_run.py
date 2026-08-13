@@ -166,4 +166,25 @@ def register(mcp: FastMCP) -> None:
         session_org.set_call_run(run_id)
         removed = await dr.pop_run(ctx, run_id)
         await _persist_close(run_id, outcome, note)
-        return {"ok": True, "run_id": run_id, "outcome": outcome, "was_open": removed is not None}
+        # TROISIÈME voie de libération du verrou de file (#317) : un run qui se
+        # termine ne travaille plus, donc ne tient plus rien — quel que soit son
+        # issue. C'est la réponse au cas mesuré : un worker disparu laissait sa ligne
+        # bloquée jusqu'à expiration du bail, soit 18 jours sur la seule ligne
+        # réservée qu'ait portée la production, sans que personne ne le voie.
+        # Best-effort et HORS de la boucle : libérer est un service rendu, jamais une
+        # condition de la fermeture du run — un run doit pouvoir se clore même si la
+        # base tousse.
+        liberees = 0
+        try:
+            from starlette.concurrency import run_in_threadpool
+            from .. import db
+            liberees = await run_in_threadpool(db.datastore_release_by_run, run_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("libération des lignes du run %s échouée (best-effort)", run_id)
+        out = {"ok": True, "run_id": run_id, "outcome": outcome,
+               "was_open": removed is not None}
+        if liberees:
+            # Dit, parce qu'une ligne rendue sans qu'on l'ait demandé doit se voir :
+            # l'agent saura que son travail en cours a été relâché.
+            out["rows_released"] = liberees
+        return out

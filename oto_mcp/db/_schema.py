@@ -346,6 +346,23 @@ CREATE TABLE IF NOT EXISTS datastore_rows (
     -- par data_release ou par l'entrée dans un état terminal du cycle de vie.
     claimed_by TEXT,
     claimed_until TIMESTAMPTZ,
+    -- Le RUN sous lequel la ligne a été réservée (#317). Trois choses en dépendent :
+    --
+    -- ① **la libération quand l'agent meurt** — la troisième voie du verrou, avec le
+    --    release explicite et l'expiration. La pile de run est session-scopée (état
+    --    FastMCP, aucune table) : elle ne survit ni au redémarrage ni à l'agent
+    --    disparu, or c'est PRÉCISÉMENT lui qu'il s'agit de ramasser. Le lien doit
+    --    donc être durable, et il l'est ICI plutôt que dans une table à part — le
+    --    bail est une propriété de la LIGNE (0046 amendé par #317), et deux endroits
+    --    où il vit seraient deux vérités à réconcilier ;
+    -- ② **l'identification du titulaire à l'écriture** — écrire sous le run qui tient
+    --    la ligne, c'est être le titulaire, sans rien avoir à déclarer ;
+    -- ③ le point d'ancrage naturel du futur journal d'écriture (oto#19) : « qui a
+    --    écrit quoi sous quel run » commence par « qui tient la ligne ».
+    --
+    -- Mesure qui a rendu ① nécessaire : UNE ligne en production portait un bail, tenu
+    -- depuis 18 jours par un worker disparu — invisible de tous.
+    claimed_run TEXT,
     PRIMARY KEY (ns_id, row_id)
 );
 
