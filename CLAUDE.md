@@ -761,7 +761,10 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   le stash de l'autre session (AttributeError sur les chemins d'écriture, CI rouge).
   Règle : le superviseur séquence les fichiers contendus (un seul occupant à la fois) ;
   à défaut, staging au grain hunk ; et un commit dont le diff dépasse son périmètre
-  annoncé ne se pousse pas.
+  annoncé ne se pousse pas. Corollaire (13/08 soir) : **un WIP qui ne compile pas n'est
+  pas un WIP, c'est une panne pour tout le monde** (l'import du package échoue ⟹ plus
+  aucun test ne tourne sur le tree, hotfix prod bloqué inclus) — découper en édits qui
+  laissent chacun le module IMPORTABLE.
 - **Jetons de contexte d'appel = noms RÉSERVÉS, préfixés `_`** (ADR 0038 amendée 29/07,
   oto-backend#250) : `_org`, `_project`, `_group`, `_account`, `_instance`, `_run_id`
   (`call_axes.py`). Ils sont advertisés sélectivement au schéma des tools concernés, lus
