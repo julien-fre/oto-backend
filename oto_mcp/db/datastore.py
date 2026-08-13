@@ -438,7 +438,7 @@ def datastore_overlong_fields(ns_id: int, bounds: dict) -> list[dict]:
             q = _sql.SQL(
                 "SELECT COUNT(*) AS rows, MAX(length({v})) AS longest "
                 "FROM datastore_rows WHERE ns_id = %s AND length({v}) > %s"
-            ).format(v=_sql.SQL(field_value_sql(field)))
+            ).format(v=field_value_sql(field))
             r = conn.execute(q, (ns_id, int(ml))).fetchone()
             if r and (r["rows"] or 0) > 0:
                 out.append({"field": field, "max_length": int(ml),
@@ -470,7 +470,13 @@ def field_value_sql(key: str) -> str:
     """
     from psycopg import sql as _sql
     k = _sql.Literal(str(key))
-    return _sql.SQL("COALESCE(data->{k}->>'valeur', data->>{k})").format(k=k).as_string(None)
+    # Rend un COMPOSABLE, jamais une chaîne : la composition ne quitte pas psycopg.
+    # Une chaîne calculée puis re-enveloppée dans `_sql.SQL()` serait CORRECTE ici
+    # (le `Literal` double les apostrophes — vérifié sur `x'; DROP TABLE …`), mais
+    # la correction reposerait alors sur ce seul échappement, sans filet : une
+    # édition future qui retirerait le `Literal` passerait sans que rien ne crie.
+    # Signalé par la revue de sécurité automatique, et le durcissement est gratuit.
+    return _sql.SQL("COALESCE(data->{k}->>'valeur', data->>{k})").format(k=k)
 
 
 # Même expression, forme PARAMÉTRÉE — le champ passe en `%s` (deux fois) au lieu
@@ -519,7 +525,7 @@ def datastore_offending_enum_values(ns_id: int, options: dict,
                 "AND {v} IS NOT NULL AND {v} <> '' "
                 "AND NOT ({v} = ANY(%s)) "
                 "GROUP BY 1 ORDER BY 2 DESC"
-            ).format(v=_sql.SQL(field_value_sql(field)))
+            ).format(v=field_value_sql(field))
             rows = conn.execute(q, (ns_id, vals)).fetchall()
             if not rows:
                 continue

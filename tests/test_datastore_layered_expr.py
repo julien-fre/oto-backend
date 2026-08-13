@@ -29,7 +29,7 @@ def conn(pg_dsn):
 
 def _read(conn, data: str) -> object:
     """Valeur rendue par l'expression polymorphe pour ce blob."""
-    expr = dsdb.field_value_sql("f")
+    expr = dsdb.field_value_sql("f").as_string(None)
     conn.execute("DELETE FROM t_layers")
     conn.execute("INSERT INTO t_layers VALUES (1, %s::jsonb)", (data,))
     # Connexion NUE : pas le row factory dict de `db._conn`, donc un tuple.
@@ -85,4 +85,17 @@ def test_the_index_and_the_lookup_share_one_expression():
     la panne silencieuse type : on ne la voit qu'au moment où le namespace est assez
     gros pour que ça coûte. D'où ce test, qui compare les deux chaînes plutôt que
     leurs effets."""
-    assert dsdb.field_value_sql("siren") == dsdb.bkey_index_expr("siren")
+    assert (dsdb.field_value_sql("siren").as_string(None)
+            == dsdb.bkey_index_expr("siren").as_string(None))
+
+
+def test_a_hostile_field_name_stays_inside_a_literal():
+    """Le nom de champ vient d'un schéma utilisateur : il est ÉCHAPPÉ, pas nettoyé.
+
+    On ne restreint pas le jeu de caractères d'une clé — ce serait un changement de
+    comportement sur des schémas déjà posés, donc un risque réel échangé contre un
+    risque hypothétique. Ce qui protège est l'échappement, et il est vérifié ici sur
+    la charge qu'un attaquant écrirait."""
+    out = dsdb.field_value_sql("x'; DROP TABLE datastore_rows; --").as_string(None)
+    assert "''; DROP TABLE" in out, "l'apostrophe doit être DOUBLÉE"
+    assert out.count("COALESCE") == 1 and out.endswith(")")
