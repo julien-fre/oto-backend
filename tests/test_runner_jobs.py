@@ -78,6 +78,31 @@ def test_un_start_sans_payload_est_refuse(espion):
     assert e.value.code == "missing_fields"
 
 
+def test_enfiler_un_continue_sur_le_run_dautrui_rend_run_inconnu(espion, monkeypatch):
+    """Le gate propriétaire tient CÔTÉ SERVEUR, pas dans le séquencement de l'UI :
+    un enqueue direct (sans append préalable) sur le run d'un autre ferait
+    continuer son fil par le worker, avec les droits du run. Même 404 sans
+    oracle que l'append du fil (R1)."""
+    monkeypatch.setattr(RJ.db, "get_run_head",
+                        lambda run_id: {"sub": "proprietaire", "org_id": 226}
+                        if run_id == "run-X" else None)
+    monkeypatch.setattr(RJ.db, "enqueue_job",
+                        lambda *a, **k: pytest.fail("rien ne s'enfile sans propriété"))
+    with pytest.raises(AuthzDenied) as a:
+        _appel(_ctx(sub="intrus"), op="enqueue", kind="continue", run_id="run-X")
+    with pytest.raises(AuthzDenied) as b:
+        _appel(_ctx(sub="intrus"), op="enqueue", kind="continue", run_id="run-INEXISTANT")
+    assert (a.value.status, a.value.code) == (b.value.status, b.value.code) == \
+        (404, "run_not_found")
+
+
+def test_le_proprietaire_enfile_son_continue(espion, monkeypatch):
+    monkeypatch.setattr(RJ.db, "get_run_head",
+                        lambda run_id: {"sub": "worker-audiens", "org_id": 226})
+    out = _appel(_ctx(), op="enqueue", kind="continue", run_id="run-X")
+    assert out["id"] == 7
+
+
 def test_enqueue_scope_lorg_de_lappel(espion):
     out = _appel(_ctx(org_id=42), op="enqueue", kind="start",
                  payload={"procedure": "veille-linkedin"})

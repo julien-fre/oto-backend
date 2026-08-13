@@ -64,6 +64,14 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         if inp.kind == "start" and not inp.payload:
             raise AuthzDenied(400, "missing_fields",
                               "un job `start` exige `payload` (au moins la procédure à charger)")
+        if inp.run_id:
+            # Le gate propriétaire tient CÔTÉ SERVEUR, pas dans le séquencement de
+            # l'UI : enfiler un `continue` sur le run d'autrui ferait continuer son
+            # fil par le worker, avec les droits du run — un trou d'autz, pas un
+            # détail. Même règle et même 404 sans oracle que l'append du fil (R1).
+            head = db.get_run_head(inp.run_id)
+            if not head or head.get("sub") != ctx.sub:
+                raise AuthzDenied(404, "run_not_found", "run inconnu")
         res = db.enqueue_job(ctx.org_id, inp.kind, payload=inp.payload,
                              run_id=inp.run_id, max_attempts=inp.max_attempts)
         return {"id": res["id"], "status": res["status"], "due_at": str(res["due_at"])}
