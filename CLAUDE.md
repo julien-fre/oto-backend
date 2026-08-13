@@ -753,6 +753,15 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   = tout le serveur). La garde se pose sur le CATALOGUE du zip (les tailles annoncées,
   sans décompresser — le contrôle ne peut pas être victime de ce qu'il contrôle), et on
   s'arrête PENDANT la lecture — jamais accumuler-puis-tronquer.
+- **Tree partagé entre sessions : deux sessions ne partagent JAMAIS un fichier — le
+  séquencement prime, le staging n'est qu'un filet.** Vécu 13/08 (main rouge) : un
+  `git add <chemin>` EXPLICITE a absorbé ~148 lignes du WIP d'une session voisine dans
+  un commit poussé — le chemin explicite ne protège que du FICHIER voisin, pas du
+  **HUNK** voisin dans le même fichier ; le commit appelait une fonction restée dans
+  le stash de l'autre session (AttributeError sur les chemins d'écriture, CI rouge).
+  Règle : le superviseur séquence les fichiers contendus (un seul occupant à la fois) ;
+  à défaut, staging au grain hunk ; et un commit dont le diff dépasse son périmètre
+  annoncé ne se pousse pas.
 - **Jetons de contexte d'appel = noms RÉSERVÉS, préfixés `_`** (ADR 0038 amendée 29/07,
   oto-backend#250) : `_org`, `_project`, `_group`, `_account`, `_instance`, `_run_id`
   (`call_axes.py`). Ils sont advertisés sélectivement au schéma des tools concernés, lus
