@@ -71,6 +71,10 @@ class TenantIssuer:
     jwks_uri: str
     name: str = ""
     hosts: tuple = ()
+    # Client OAuth servi par la façade d'enregistrement sur les hosts de ce tenant
+    # (cf. `oauth_facade`). Sans lui, un host déclaré enverrait le client demander un
+    # enregistrement automatique à un annuaire qui n'en fait pas.
+    oauth_client_id: str = ""
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -134,14 +138,16 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
     """
     entries: dict[str, TenantIssuer] = {}
 
-    def _put(slug: str, issuer, jwks_uri=None, name="", hosts=()) -> None:
+    def _put(slug: str, issuer, jwks_uri=None, name="", hosts=(),
+             oauth_client_id="") -> None:
         iss = normalize_issuer(issuer)
         if not iss:
             return
         jwks = (jwks_uri or "").strip() if isinstance(jwks_uri, str) else ""
         entries[iss] = TenantIssuer(slug=slug, issuer=iss,
                                     jwks_uri=jwks or f"{iss}/jwks",
-                                    name=name or "", hosts=tuple(hosts or ()))
+                                    name=name or "", hosts=tuple(hosts or ()),
+                                    oauth_client_id=str(oauth_client_id or ""))
 
     _put(PRIMARY_SLUG, primary_issuer)
     for drain in drain_issuers or ():
@@ -168,7 +174,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
             continue
         _put(slug, iss, (row or {}).get("jwks_uri"),
              name=str((row or {}).get("name") or ""),
-             hosts=normalize_hosts((row or {}).get("hosts")))
+             hosts=normalize_hosts((row or {}).get("hosts")),
+             oauth_client_id=str((row or {}).get("oauth_client_id") or ""))
     return entries
 
 

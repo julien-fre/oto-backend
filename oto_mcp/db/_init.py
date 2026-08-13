@@ -120,6 +120,12 @@ def _init_db_once() -> None:
         conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS jwks_uri TEXT")
         conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS hosts JSONB "
                      "NOT NULL DEFAULT '[]'::jsonb")
+        # (lot L3) Le client OAuth que la FAÇADE d'enregistrement sert sur les hosts de
+        # ce tenant. Logto self-hosted ne sait pas enregistrer un client à la volée :
+        # notre façade rend un client_id PRÉPARÉ, et il doit être celui de l'annuaire
+        # vers lequel on envoie l'utilisateur — sinon le client s'authentifie chez l'un
+        # avec l'identité de l'autre. NULL = aucun host servi pour ce tenant.
+        conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS oauth_client_id TEXT")
         # #117 — discriminant PAR APPEL. Trois colonnes nullables : rien à réécrire sur
         # une table volumineuse (une colonne sans défaut ne touche pas les lignes
         # existantes), et les lignes d'avant restent lisibles avec des NULL — elles

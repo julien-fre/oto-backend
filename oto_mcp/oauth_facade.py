@@ -34,7 +34,7 @@ def _logto_issuer() -> str:
     return os.environ["LOGTO_ENDPOINT"].rstrip("/") + "/oidc"
 
 
-def as_metadata(public_url: str) -> dict:
+def as_metadata(public_url: str, logto: str = "") -> dict:
     """Métadonnée RFC 8414 servie sur NOTRE domaine : issuer = nous, le
     `registration_endpoint` est à nous, tous les endpoints OAuth sont ceux de Logto.
 
@@ -45,7 +45,7 @@ def as_metadata(public_url: str) -> dict:
     (`https://x` → `https://x/`). On normalise l'issuer par le MÊME `AnyHttpUrl` →
     égalité byte-à-byte garantie. Sans ça, un client strict (Mistral) rejette le
     discovery pour issuer mismatch (claude.ai, lui, tolère le slash). Vécu 2026-06-25."""
-    logto = _logto_issuer()
+    logto = logto or _logto_issuer()
     return {
         "issuer": str(AnyHttpUrl(public_url)),
         "authorization_endpoint": f"{logto}/auth",
@@ -60,7 +60,7 @@ def as_metadata(public_url: str) -> dict:
     }
 
 
-def as_oidc_metadata(public_url: str) -> dict:
+def as_oidc_metadata(public_url: str, logto: str = "") -> dict:
     """OIDC Discovery 1.0 servie sur NOTRE domaine (`/.well-known/openid-configuration`).
 
     Certains clients OAuth 2.1 (dont Mistral) sondent l'OIDC discovery EN PLUS de
@@ -69,9 +69,9 @@ def as_oidc_metadata(public_url: str) -> dict:
     (`subject_types_supported`, `id_token_signing_alg_values_supported` = ES384, ce
     que Logto self-hosted signe) + `userinfo_endpoint`. Même issuer (normalisé) →
     pas de mismatch."""
-    logto = _logto_issuer()
+    logto = logto or _logto_issuer()
     return {
-        **as_metadata(public_url),
+        **as_metadata(public_url, logto),
         "userinfo_endpoint": f"{logto}/me",
         "subject_types_supported": ["public"],
         "id_token_signing_alg_values_supported": ["ES384"],
@@ -324,26 +324,56 @@ def _prm_handler(public_url: str, resource_url: str, *, as_url: str = "",
 
 def tenant_discovery_for_host(host: str):
     """`(as_url, resource_name)` à annoncer pour ce host, ou **None** s'il n'est
-    réclamé par aucun tenant — c'est-à-dire dans tous les cas d'aujourd'hui.
+    réclamé par aucun tenant.
+
+    ⚠️ **L'`as_url` est le host LUI-MÊME, pas l'émetteur du tenant** — c'est-à-dire
+    NOTRE façade, servie sur son domaine. Annoncer l'émetteur en direct paraît plus
+    honnête et casse tout : la façade existe parce que Logto self-hosted ne sait pas
+    enregistrer un client à la volée, et la retirer du chemin fait échouer le client
+    sur « l'enregistrement automatique n'est pas pris en charge » (vécu en fenêtre, le
+    13/08). La façade servie ici route ensuite vers l'annuaire du tenant et sert SON
+    client préparé (`as_metadata`, `dcr`).
 
     Partagé par le PRM et le 401 pour qu'ils ne puissent pas diverger : annoncer un
-    émetteur dans l'un et un autre dans l'autre enverrait le client faire un aller-
+    serveur dans l'un et un autre dans l'autre enverrait le client faire un aller-
     retour entre deux annuaires, panne bien plus obscure que celle qu'on corrige.
     """
     from . import tenancy
     entry = tenancy.current().for_host(host)
     if entry is None:
         return None
-    return entry.issuer, (entry.name or entry.slug)
+    return f"https://{host}/", (entry.name or entry.slug)
+
+
+def _host_of(request) -> str:
+    return (request.headers.get("host") or "").split(":")[0].strip().lower()
+
+
+def tenant_for_host(host: str):
+    """L'entrée de registre servie par ce host, ou None. Sert les routes de la façade
+    (métadonnée + enregistrement), qui doivent toutes viser le MÊME annuaire."""
+    from . import tenancy
+    return tenancy.current().for_host(host)
 
 
 def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
     public_url = public_url.rstrip("/")
 
     async def as_meta(request: Request) -> JSONResponse:
+        # Servie sur le host d'un tenant : l'issuer est CE host (la façade), et les
+        # endpoints d'autorisation sont ceux de SON annuaire. Un host libre est servi
+        # exactement comme avant.
+        host = _host_of(request)
+        entry = tenant_for_host(host)
+        if entry is not None:
+            return JSONResponse(as_metadata(f"https://{host}", entry.issuer))
         return JSONResponse(as_metadata(public_url))
 
     async def oidc_meta(request: Request) -> JSONResponse:
+        host = _host_of(request)
+        entry = tenant_for_host(host)
+        if entry is not None:
+            return JSONResponse(as_oidc_metadata(f"https://{host}", entry.issuer))
         return JSONResponse(as_oidc_metadata(public_url))
 
     async def prm(request: Request):
@@ -400,14 +430,30 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         # client_id — Claude reste fonctionnel (son redirect est déjà enregistré) ;
         # seul un NOUVEAU redirect (ChatGPT) serait alors refusé plus tard au
         # /authorize, cas dégradé loggé, jamais une régression de l'existant.
+        # Sur le host d'un tenant, le client rendu doit être celui de SON annuaire :
+        # c'est là que l'utilisateur va s'authentifier. Rendre le nôtre enverrait le
+        # client se présenter chez l'un avec l'identité de l'autre — refus au
+        # `/authorize`, et un message qui n'accuse pas la bonne cause.
+        entry = tenant_for_host(_host_of(request))
+        app_id = (entry.oauth_client_id if entry is not None else "") or claude_app_id
+        if entry is not None and not entry.oauth_client_id:
+            _log.warning(
+                "DCR sur le host d'un tenant %r sans client OAuth déclaré : on rend "
+                "celui de la plateforme, l'authentification échouera au /authorize. "
+                "Renseigner `tenants.oauth_client_id`.", entry.slug)
         try:
-            _register_redirects(claude_app_id, requested)
+            # ⚠️ N'enregistre les redirects que sur NOTRE annuaire : le faire chez un
+            # tenant demanderait ses accès d'administration, que la plateforme ne
+            # détient pas (oto-backend#274). Ses redirects sont donc posés à la main
+            # avec son application — d'où le fail-open ci-dessous, déjà le régime.
+            if entry is None:
+                _register_redirects(app_id, requested)
         except Exception:
             _log.exception("DCR: enregistrement Logto échoué (redirects=%r)", requested)
         # Logto valide le redirect contre l'app : on renvoie le client_id partagé.
         return JSONResponse(
             {
-                "client_id": claude_app_id,
+                "client_id": app_id,
                 "client_id_issued_at": int(time.time()),
                 "redirect_uris": body.get("redirect_uris", []),
                 "token_endpoint_auth_method": "none",
