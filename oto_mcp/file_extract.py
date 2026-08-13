@@ -40,6 +40,7 @@ process d'extraction séparé.
 """
 from __future__ import annotations
 
+import io
 import logging
 from dataclasses import dataclass
 from typing import Optional
@@ -53,11 +54,25 @@ log = logging.getLogger(__name__)
 MAX_TEXT_CHARS = 2_000_000
 MIN_TEXT_CHARS = 16
 
+# ⚠️ **Borne de DÉCOMPRESSION — c'est une protection, pas un réglage.** Un `.docx`
+# comme un `.xlsx` est une archive ZIP : la taille du fichier reçu ne dit RIEN de ce
+# qu'il pèse une fois ouvert. Mesuré le 13/08 sur ce module : une archive de **400 ko**
+# faisait monter le process à **638 Mo** (facteur 1 600) — le document entier est
+# parsé en mémoire AVANT que `MAX_TEXT_CHARS` ne tronque quoi que ce soit, donc la
+# borne de sortie n'protège de rien.
+#
+# Le serveur est MONO-LOOP : un dépassement mémoire ne dégrade pas une requête, il tue
+# le process et toutes les sessions avec. Et le fichier vient d'un upload utilisateur,
+# donc l'entrée est hostile par construction. On refuse donc AVANT d'ouvrir, en lisant
+# la taille annoncée par le catalogue du ZIP.
+MAX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
+
 # Statuts. `ok` mis à part, tous sont TERMINAUX sauf `failed` (cf. `is_retryable`).
 OK = "ok"
 UNSUPPORTED = "unsupported"      # format qu'on ne sait pas lire (image, archive, binaire)
 ENCRYPTED = "encrypted"          # protégé par mot de passe — ne réussira jamais seul
 EMPTY = "empty"                  # lu, mais sans texte utile (scan sans OCR, doc vide)
+TOO_LARGE = "too_large"          # décompresserait au-delà de la borne — refusé AVANT lecture
 FAILED = "failed"                # imprévu (fichier tronqué, lib qui lève) — reprenable
 
 
@@ -106,10 +121,25 @@ def _extract_text(data: bytes) -> Extraction:
     return Extraction(OK, data.decode("utf-8", errors="replace"))
 
 
+def _join_bounded(parts) -> tuple:
+    """Concaténer en s'ARRÊTANT à la borne, au lieu d'accumuler puis tronquer.
+
+    La nuance n'est pas cosmétique : un document à dix mille pages tient tout entier
+    en mémoire avant d'être coupé si l'on accumule d'abord. On coupe donc pendant.
+    Rend `(texte, tronqué)`."""
+    total, morceaux = 0, []
+    for p in parts:
+        if not p:
+            continue
+        morceaux.append(p)
+        total += len(p)
+        if total > MAX_TEXT_CHARS:
+            return "\n".join(morceaux)[:MAX_TEXT_CHARS], True
+    return "\n".join(morceaux), False
+
+
 @_register("pdf")
 def _extract_pdf(data: bytes) -> Extraction:
-    import io
-
     from pypdf import PdfReader
     from pypdf.errors import FileNotDecryptedError, PdfReadError
 
@@ -123,20 +153,54 @@ def _extract_pdf(data: bytes) -> Extraction:
                 reader.decrypt("")
             except Exception:
                 return Extraction(ENCRYPTED, detail="pdf protégé par mot de passe")
-        pages = [(p.extract_text() or "") for p in reader.pages]
+        n_pages = len(reader.pages)
+        # Générateur : les pages sont extraites AU FIL de la concaténation, qui
+        # s'arrête à la borne — un PDF à dix mille pages ne tient jamais en entier.
+        texte, tronque = _join_bounded(
+            (p.extract_text() or "") for p in reader.pages)
     except FileNotDecryptedError:
         return Extraction(ENCRYPTED, detail="pdf protégé par mot de passe")
     except (PdfReadError, Exception) as e:            # tronqué, corrompu, inattendu
         return Extraction(FAILED, detail=type(e).__name__)
-    return Extraction(OK, "\n".join(pages), pages=len(pages))
+    return Extraction(OK, texte, pages=n_pages,
+                      detail=f"tronqué à {MAX_TEXT_CHARS} caractères" if tronque else "")
+
+
+def _zip_too_large(data: bytes) -> Optional[Extraction]:
+    """Refuser AVANT d'ouvrir une archive qui décompresserait au-delà de la borne.
+
+    On lit le CATALOGUE du ZIP (`infolist`), qui annonce la taille décompressée de
+    chaque membre : ça ne décompresse rien, donc le contrôle ne peut pas être la
+    victime de ce qu'il contrôle.
+
+    ⚠️ Une taille annoncée peut MENTIR (un en-tête forgé). C'est acceptable ici : le
+    mensonge ne peut que sous-déclarer, et la lib s'arrête alors sur une archive
+    incohérente (`failed`). Ce qu'on ferme, c'est le cas simple et efficace — une
+    archive honnête et énorme —, celui qui coûte 400 ko à l'attaquant et 638 Mo au
+    serveur. Une borne dure sur la mémoire du process est un autre sujet
+    (`docs/event-loop-perf.md`), pas celui de ce module.
+    """
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            total = sum(i.file_size for i in z.infolist())
+    except Exception:
+        return None                       # pas un zip lisible : la lib dira `failed`
+    if total > MAX_UNCOMPRESSED_BYTES:
+        return Extraction(
+            TOO_LARGE,
+            detail=f"décompresserait {total // 1048576} Mo "
+                   f"(borne {MAX_UNCOMPRESSED_BYTES // 1048576} Mo)")
+    return None
 
 
 @_register("docx")
 def _extract_docx(data: bytes) -> Extraction:
-    import io
-
     from docx import Document
 
+    trop_gros = _zip_too_large(data)
+    if trop_gros is not None:
+        return trop_gros
     try:
         doc = Document(io.BytesIO(data))
         # Les paragraphes ET les tableaux : dans un document bureautique, une part
@@ -146,30 +210,39 @@ def _extract_docx(data: bytes) -> Extraction:
         for t in doc.tables:
             for row in t.rows:
                 parts.extend(c.text for c in row.cells)
+        texte, tronque = _join_bounded(parts)
     except Exception as e:
         return Extraction(FAILED, detail=type(e).__name__)
-    return Extraction(OK, "\n".join(x for x in parts if x))
+    return Extraction(OK, texte,
+                      detail=f"tronqué à {MAX_TEXT_CHARS} caractères" if tronque else "")
 
 
 @_register("xlsx")
 def _extract_xlsx(data: bytes) -> Extraction:
-    import io
-
     from openpyxl import load_workbook
 
+    trop_gros = _zip_too_large(data)
+    if trop_gros is not None:
+        return trop_gros
     try:
         # `read_only` + `data_only` : on veut les VALEURS, pas les formules, et sans
         # charger le classeur entier en mémoire (un export de 50 000 lignes existe).
         wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
-        parts = []
-        for ws in wb.worksheets:
-            parts.append(str(ws.title))
-            for row in ws.iter_rows(values_only=True):
-                parts.extend(str(v) for v in row if v is not None)
+
+        def _cellules():
+            for ws in wb.worksheets:
+                yield str(ws.title)
+                for row in ws.iter_rows(values_only=True):
+                    for v in row:
+                        if v is not None:
+                            yield str(v)
+
+        texte, tronque = _join_bounded(_cellules())
         wb.close()
     except Exception as e:
         return Extraction(FAILED, detail=type(e).__name__)
-    return Extraction(OK, "\n".join(parts))
+    return Extraction(OK, texte,
+                      detail=f"tronqué à {MAX_TEXT_CHARS} caractères" if tronque else "")
 
 
 def supported_extensions() -> set:

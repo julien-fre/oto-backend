@@ -144,6 +144,69 @@ def test_a_pathological_file_is_truncated_not_refused():
     assert "tronqué" in out.detail
 
 
+def test_a_zip_bomb_is_refused_before_being_opened():
+    """⚠️ **La garde de sécurité du module.** Un `.docx`/`.xlsx` est une archive ZIP :
+    la taille du fichier REÇU ne dit rien de ce qu'il pèse une fois ouvert.
+
+    Mesuré sur ce module avant correction : une archive de **400 ko** faisait monter
+    le process à **638 Mo** — parce que le document est parsé EN ENTIER avant que la
+    borne de sortie ne tronque quoi que ce soit. Sur un serveur mono-loop, un
+    dépassement mémoire ne dégrade pas une requête : il tue le process et toutes les
+    sessions avec. Et le fichier vient d'un upload utilisateur.
+
+    On refuse donc sur le CATALOGUE du zip, sans rien décompresser."""
+    gros = "a" * (fe.MAX_UNCOMPRESSED_BYTES + 1024)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("word/document.xml", gros)
+
+    out = fe.extract(buf.getvalue(), "bombe.docx")
+
+    assert out.status == fe.TOO_LARGE
+    assert not fe.is_retryable(out.status), "une archive énorme le restera"
+    assert "Mo" in out.detail
+    # Et l'archive elle-même est petite : c'est tout l'intérêt de l'attaque.
+    assert len(buf.getvalue()) < 1_000_000
+
+
+def test_the_same_guard_covers_spreadsheets():
+    """La garde est sur le format ZIP, pas sur le lecteur : `.xlsx` est exposé
+    exactement pareil."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("xl/worksheets/sheet1.xml", "a" * (fe.MAX_UNCOMPRESSED_BYTES + 1024))
+    assert fe.extract(buf.getvalue(), "bombe.xlsx").status == fe.TOO_LARGE
+
+
+def test_an_honest_document_still_passes_the_guard():
+    """La garde ne doit pas refuser les vrais documents — sinon elle sera retirée."""
+    docx = pytest.importorskip("docx")
+    d = docx.Document()
+    d.add_paragraph("un document ordinaire, de taille ordinaire")
+    buf = io.BytesIO()
+    d.save(buf)
+    assert fe.extract(buf.getvalue(), "normal.docx").ok
+
+
+def test_text_is_cut_during_accumulation_not_after():
+    """Couper APRÈS avoir tout accumulé laisse le document entier en mémoire — la
+    borne de sortie ne protège alors de rien. `_join_bounded` s'arrête pendant.
+
+    On le prouve sur le générateur : il ne doit pas être consommé jusqu'au bout."""
+    consommes = []
+
+    def _morceaux():
+        for i in range(100_000):
+            consommes.append(i)
+            yield "x" * 1000
+
+    texte, tronque = fe._join_bounded(_morceaux())
+
+    assert tronque and len(texte) == fe.MAX_TEXT_CHARS
+    assert len(consommes) < 5000, (
+        f"le générateur a été consommé {len(consommes)} fois : la coupe arrive trop tard")
+
+
 def test_a_few_characters_are_not_a_document():
     """Trois caractères de garde ne font pas un document extrait : les marquer `ok`
     peuplerait l'index de bruit et masquerait les vrais cas OCR."""
