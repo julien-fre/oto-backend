@@ -10,6 +10,11 @@ import pytest
 
 from oto_mcp import db
 
+# L'expression polymorphe (#318) — référencée, jamais recopiée : ces tests
+# portent sur la COMPOSITION (quel opérateur, combien de paramètres), pas sur la
+# forme de la lecture, qui évoluera encore.
+V = db.FIELD_VALUE_PARAM_SQL
+
 
 def test_no_filters_is_noop():
     clauses, params = db._ds_filter_clauses(None)
@@ -24,12 +29,13 @@ def test_contains_eq_in():
         {"field": "statut", "op": "eq", "value": "retenu"},
         {"field": "offre", "op": "in", "value": ["sante_prevoyance", "titres_restaurant"]},
     ])
-    assert clauses[0] == "data ->> %s ILIKE %s"
-    assert params[0:2] == ["secteur", "%santé%"]
-    assert clauses[1] == "data ->> %s = %s"
-    assert params[2:4] == ["statut", "retenu"]
-    assert clauses[2] == "data ->> %s = ANY(%s)"
-    assert params[4] == "offre" and params[5] == ["sante_prevoyance", "titres_restaurant"]
+    assert clauses[0] == f"{V} ILIKE %s"
+    assert params[0:3] == ["secteur", "secteur", "%santé%"]
+    assert clauses[1] == f"{V} = %s"
+    assert params[3:6] == ["statut", "statut", "retenu"]
+    assert clauses[2] == f"{V} = ANY(%s)"
+    assert params[6:8] == ["offre", "offre"]
+    assert params[8] == ["sante_prevoyance", "titres_restaurant"]
 
 
 def test_numeric_comparison_casts_and_guards():
@@ -37,14 +43,14 @@ def test_numeric_comparison_casts_and_guards():
     clauses, params = db._ds_filter_clauses([{"field": "effectif", "op": "gte", "value": "50"}])
     assert "::numeric >= %s::numeric" in clauses[0]
     assert "~ '^-?[0-9]+" in clauses[0]
-    assert params == ["effectif", "effectif", "50"]
+    assert params == ["effectif"] * 4 + ["50"]
 
 
 def test_date_comparison_stays_textual():
     # Valeur non numérique (ISO date) → comparaison texte (lexicographique = chrono).
     clauses, params = db._ds_filter_clauses([{"field": "date_depot", "op": "lt", "value": "2024-01-01"}])
-    assert clauses[0] == "data ->> %s < %s"
-    assert params == ["date_depot", "2024-01-01"]
+    assert clauses[0] == f"{V} < %s"
+    assert params == ["date_depot", "date_depot", "2024-01-01"]
 
 
 def test_empty_not_empty():
@@ -52,10 +58,10 @@ def test_empty_not_empty():
         {"field": "email", "op": "empty", "value": None},
         {"field": "phone", "op": "not_empty", "value": None},
     ])
-    assert clauses[0] == "(data ->> %s IS NULL OR data ->> %s = '')"
-    assert params[0:2] == ["email", "email"]
-    assert clauses[1] == "(data ->> %s IS NOT NULL AND data ->> %s <> '')"
-    assert params[2:4] == ["phone", "phone"]
+    assert clauses[0] == f"({V} IS NULL OR {V} = '')"
+    assert params[0:4] == ["email"] * 4
+    assert clauses[1] == f"({V} IS NOT NULL AND {V} <> '')"
+    assert params[4:8] == ["phone"] * 4
 
 
 def test_field_is_always_parameterized_no_injection():
@@ -63,7 +69,7 @@ def test_field_is_always_parameterized_no_injection():
     evil = "x'); DROP TABLE datastore_rows; --"
     clauses, params = db._ds_filter_clauses([{"field": evil, "op": "eq", "value": "1"}])
     assert evil not in clauses[0]
-    assert clauses[0] == "data ->> %s = %s"
+    assert clauses[0] == f"{V} = %s"
     assert params[0] == evil
 
 
@@ -88,7 +94,7 @@ class TestMetaColumns:
     def test_updated_at_is_not_read_from_the_json_blob(self):
         clauses, params = db._ds_filter_clauses(
             [{"field": "_updated_at", "op": "gte", "value": "2026-08-01"}])
-        assert "data ->>" not in clauses[0]
+        assert "data->" not in clauses[0] and "data ->>" not in clauses[0]
         assert clauses[0] == "updated_at >= %s::timestamptz"
         assert params == ["2026-08-01"]
 
@@ -148,8 +154,8 @@ class TestMetaColumns:
         # (sans underscore) reste dans le JSON.
         clauses, params = db._ds_filter_clauses(
             [{"field": "updated_at", "op": "eq", "value": "2026-08-05"}])
-        assert clauses[0] == "data ->> %s = %s"
-        assert params == ["updated_at", "2026-08-05"]
+        assert clauses[0] == f"{V} = %s"
+        assert params == ["updated_at", "updated_at", "2026-08-05"]
 
 
 def test_where_merges_q_and_filters_in_order():
@@ -159,5 +165,5 @@ def test_where_merges_q_and_filters_in_order():
     # `_fold` (source unique index↔requête) — la recopier en dur ici la ferait mentir au
     # prochain ajustement du jeu de caractères.
     assert where == (f"WHERE ns_id = %s AND {_fold('data::text')} ILIKE "
-                     f"'%%' || {_fold('%s')} || '%%' AND data ->> %s = %s")
-    assert params == [7, "marseille", "statut", "retenu"]   # les % vivent dans le SQL
+                     f"'%%' || {_fold('%s')} || '%%' AND {V} = %s")
+    assert params == [7, "marseille", "statut", "statut", "retenu"]  # les % vivent dans le SQL

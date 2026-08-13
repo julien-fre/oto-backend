@@ -473,6 +473,15 @@ def field_value_sql(key: str) -> str:
     return _sql.SQL("COALESCE(data->{k}->>'valeur', data->>{k})").format(k=k).as_string(None)
 
 
+# Même expression, forme PARAMÉTRÉE — le champ passe en `%s` (deux fois) au lieu
+# d'être inscrit dans le SQL. C'est la forme des filtres, du tri et des agrégats :
+# eux n'ont aucun index d'expression à servir, donc rien n'exige le littéral, et
+# l'invariant anti-injection du module (« le champ est TOUJOURS paramétré ») reste
+# intact. Seul le chemin CLÉ MÉTIER prend `field_value_sql`, parce que lui doit
+# matcher son index à la chaîne près.
+FIELD_VALUE_PARAM_SQL = "COALESCE(data->%s->>'valeur', data->>%s)"
+
+
 def bkey_index_expr(key: str) -> str:
     """Expression indexée pour la clé métier — LA MÊME que celle du lookup.
 
@@ -832,39 +841,46 @@ def _ds_filter_clauses(filters: Optional[list]) -> tuple[list[str], list]:
             else:
                 clauses.append(f"{col} {'=' if op == 'eq' else '<>'} %s")
                 params.append(str(val))
-        elif op == "empty":
-            clauses.append("(data ->> %s IS NULL OR data ->> %s = '')")
-            params.extend([field, field])
-        elif op == "not_empty":
-            clauses.append("(data ->> %s IS NOT NULL AND data ->> %s <> '')")
-            params.extend([field, field])
-        elif op == "in":
-            vals = [_ds_text(v) for v in (val if isinstance(val, list) else [val])
-                    if v is not None and str(v) != ""]
-            if not vals:
-                continue
-            clauses.append("data ->> %s = ANY(%s)")
-            params.extend([field, vals])
-        elif op == "contains":
-            clauses.append("data ->> %s ILIKE %s")
-            params.extend([field, f"%{_ds_text(val)}%"])
-        elif op == "eq":
-            clauses.append("data ->> %s = %s")
-            params.extend([field, _ds_text(val)])
-        elif op == "ne":
-            clauses.append("(data ->> %s IS DISTINCT FROM %s)")
-            params.extend([field, _ds_text(val)])
-        else:  # gt/gte/lt/lte
-            sym = _DS_CMP_SQL[op]
-            sval = _ds_text(val)
-            if _DS_NUM_RE.match(sval):
-                clauses.append(
-                    "(data ->> %s ~ '^-?[0-9]+(\\.[0-9]+)?$' "
-                    f"AND (data ->> %s)::numeric {sym} %s::numeric)")
-                params.extend([field, field, sval])
-            else:
-                clauses.append(f"data ->> %s {sym} %s")
-                params.extend([field, sval])
+        # À partir d'ici, la colonne est lue par l'expression POLYMORPHE (#318) : elle
+        # rend la valeur qu'elle soit plate ou à couches. Le champ y passe DEUX fois
+        # (un `%s` par branche du COALESCE) — d'où `fp` plutôt que `field` répété à
+        # la main, qui est l'endroit exact où un décalage de paramètres se glisse.
+        else:
+            V = FIELD_VALUE_PARAM_SQL
+            fp = [field, field]
+            if op == "empty":
+                clauses.append(f"({V} IS NULL OR {V} = '')")
+                params.extend(fp + fp)
+            elif op == "not_empty":
+                clauses.append(f"({V} IS NOT NULL AND {V} <> '')")
+                params.extend(fp + fp)
+            elif op == "in":
+                vals = [_ds_text(v) for v in (val if isinstance(val, list) else [val])
+                        if v is not None and str(v) != ""]
+                if not vals:
+                    continue
+                clauses.append(f"{V} = ANY(%s)")
+                params.extend(fp + [vals])
+            elif op == "contains":
+                clauses.append(f"{V} ILIKE %s")
+                params.extend(fp + [f"%{_ds_text(val)}%"])
+            elif op == "eq":
+                clauses.append(f"{V} = %s")
+                params.extend(fp + [_ds_text(val)])
+            elif op == "ne":
+                clauses.append(f"({V} IS DISTINCT FROM %s)")
+                params.extend(fp + [_ds_text(val)])
+            else:  # gt/gte/lt/lte
+                sym = _DS_CMP_SQL[op]
+                sval = _ds_text(val)
+                if _DS_NUM_RE.match(sval):
+                    clauses.append(
+                        f"({V} ~ '^-?[0-9]+(\\.[0-9]+)?$' "
+                        f"AND ({V})::numeric {sym} %s::numeric)")
+                    params.extend(fp + fp + [sval])
+                else:
+                    clauses.append(f"{V} {sym} %s")
+                    params.extend(fp + [sval])
     return clauses, params
 
 

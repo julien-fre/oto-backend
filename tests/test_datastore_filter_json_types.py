@@ -20,7 +20,10 @@ def _eq(field, value):
     """(clause, valeur comparée) d'un filtre `eq`."""
     clauses, params = db._ds_filter_clauses([
         {"field": field, "op": "eq", "value": value}])
-    return clauses[0], params[1]
+    # La VALEUR comparée est le dernier paramètre — le champ la précède, une
+    # fois par branche du COALESCE (#318). Lire par la fin plutôt que par un
+    # index fixe : c'est la valeur qui est le sujet, pas sa position.
+    return clauses[0], params[-1]
 
 
 # --- le défaut lui-même --------------------------------------------------------
@@ -71,7 +74,7 @@ def test_numeric_comparisons_still_cast():
     clauses, params = db._ds_filter_clauses([
         {"field": "ca", "op": "gte", "value": 1000000}])
     assert "::numeric >= %s::numeric" in clauses[0]
-    assert params == ["ca", "ca", "1000000"]
+    assert params == ["ca"] * 4 + ["1000000"]
 
 
 # --- les autres opérateurs qui passaient par la même conversion ----------------
@@ -79,20 +82,20 @@ def test_numeric_comparisons_still_cast():
 def test_in_normalises_each_member():
     clauses, params = db._ds_filter_clauses([
         {"field": "actif", "op": "in", "value": [True, False, "peut-etre"]}])
-    assert clauses[0] == "data ->> %s = ANY(%s)"
-    assert params[1] == ["true", "false", "peut-etre"]
+    assert clauses[0] == f"{db.FIELD_VALUE_PARAM_SQL} = ANY(%s)"
+    assert params[-1] == ["true", "false", "peut-etre"]
 
 
 def test_ne_normalises_too():
     clauses, params = db._ds_filter_clauses([
         {"field": "a_reprendre", "op": "ne", "value": True}])
-    assert params[1] == "true"
+    assert params[-1] == "true"
 
 
 def test_contains_normalises_too():
     clauses, params = db._ds_filter_clauses([
         {"field": "a_reprendre", "op": "contains", "value": True}])
-    assert params[1] == "%true%"
+    assert params[-1] == "%true%"
 
 
 def test_bool_is_checked_before_int():
