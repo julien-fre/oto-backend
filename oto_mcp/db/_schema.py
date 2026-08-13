@@ -225,6 +225,36 @@ CREATE TABLE IF NOT EXISTS run_messages (
     UNIQUE (run_id, seq)
 );
 
+-- La file d'EXÉCUTIONS du runner (chantier runner R2) — de la PLOMBERIE plateforme,
+-- PAS une donnée du client : la file de LIGNES d'une campagne vit dans le datastore
+-- de l'org (namespace client, `data_claim_next`) ; mélanger les deux ferait de la
+-- plomberie une donnée visible du client. Même mécanique de bail (SKIP LOCKED),
+-- table distincte — les deux baux coexistent sans se connaître.
+-- `claimed_by` = le SUB du worker : l'audit d'un job (qui l'a pris, qui l'a fini)
+-- en dépend. Le claim est SCOPÉ à l'org (V1 : un worker = un jeton d'org — le pool
+-- multi-org attend l'arbitrage compte-de-service, ADR 0064 §5-1).
+-- Un job à bout de tentatives est MARQUÉ `failed` (visible), jamais rejoué en
+-- boucle : refuser-et-marquer, pas tourner.
+CREATE TABLE IF NOT EXISTS runner_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('start', 'continue')),
+    run_id TEXT REFERENCES runs(run_id) ON DELETE CASCADE,  -- NULL : start pas encore lié à son run
+    payload JSONB,                       -- références SEULEMENT (procédure, projet, message) — jamais un secret
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending', 'claimed', 'done', 'failed')),
+    attempts INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 3,
+    claimed_by TEXT,
+    lease_until TIMESTAMPTZ,
+    last_error TEXT,
+    due_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_claim
+    ON runner_jobs(org_id, due_at) WHERE status = 'pending';
+
 -- Visibilité scopée par org (ADR 0015) : org_id=0 = profil perso/global (aucune
 -- org active), >0 = profil de cette org. Une identité par (sub, org_id).
 CREATE TABLE IF NOT EXISTS user_disabled_tools (
