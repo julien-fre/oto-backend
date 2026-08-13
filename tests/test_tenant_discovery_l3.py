@@ -74,13 +74,28 @@ def test_un_host_reclame_deux_fois_reste_au_premier(caplog):
 # --- l'audience, dérivée des hosts et non de l'environnement -------------------
 
 def test_laudience_dun_host_declare_est_acceptee(registre_avec_partenaire):
+    """Acceptée pour un jeton DU tenant qui déclare le host."""
     from oto_mcp.server import _audience_of_declared_tenant
-    assert _audience_of_declared_tenant("https://mcp.acme.test/mcp")
+    assert _audience_of_declared_tenant("https://mcp.acme.test/mcp", "acme")
+
+
+def test_laudience_dun_partenaire_est_refusee_a_un_jeton_dun_AUTRE_tenant(
+        registre_avec_partenaire):
+    """LE cran strict du binding : « servi sur son domaine » doit vouloir dire plus
+    que « servi ». Un jeton du tenant primaire, ou d'un autre partenaire, ne peut pas
+    revendiquer l'audience de celui-ci.
+
+    ⚠️ Ce cran s'active SEUL au retrait de `MCP_AUDIENCE_ALT` : tant que cette
+    variable porte l'audience, elle est servie à tout le monde plus haut dans
+    `_audience_ok`. Pas d'interrupteur à ne pas oublier."""
+    from oto_mcp.server import _audience_of_declared_tenant
+    for slug in ("oto", "beta", ""):
+        assert not _audience_of_declared_tenant("https://mcp.acme.test/mcp", slug), slug
 
 
 def test_laudience_dun_host_inconnu_est_refusee(registre_avec_partenaire):
     from oto_mcp.server import _audience_of_declared_tenant
-    assert not _audience_of_declared_tenant("https://mcp.inconnu.test/mcp")
+    assert not _audience_of_declared_tenant("https://mcp.inconnu.test/mcp", "acme")
 
 
 def test_un_host_declare_nouvre_pas_ses_autres_chemins(registre_avec_partenaire):
@@ -92,12 +107,12 @@ def test_un_host_declare_nouvre_pas_ses_autres_chemins(registre_avec_partenaire)
                 "https://mcp.acme.test",
                 "http://mcp.acme.test/mcp",          # pas https
                 "", None, 42, ["https://mcp.acme.test/mcp"]):
-        assert not _audience_of_declared_tenant(aud), aud
+        assert not _audience_of_declared_tenant(aud, "acme"), aud
 
 
 def test_le_slash_final_ne_change_rien(registre_avec_partenaire):
     from oto_mcp.server import _audience_of_declared_tenant
-    assert _audience_of_declared_tenant("https://mcp.acme.test/mcp/")
+    assert _audience_of_declared_tenant("https://mcp.acme.test/mcp/", "acme")
 
 
 def test_sans_tenant_declare_laudience_ne_passe_pas():
@@ -108,7 +123,7 @@ def test_sans_tenant_declare_laudience_ne_passe_pas():
         tenancy.build("https://auth.oto.ninja/oidc")))
     try:
         from oto_mcp.server import _audience_of_declared_tenant
-        assert not _audience_of_declared_tenant("https://mcp.acme.test/mcp")
+        assert not _audience_of_declared_tenant("https://mcp.acme.test/mcp", "acme")
     finally:
         tenancy.install(avant)
 

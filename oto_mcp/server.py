@@ -64,7 +64,7 @@ class _IatGatedVerifier(JWTVerifier):
         # Vide = no-op → mcp.oto.ninja inchangé.
         self._alt_audiences = alt_audiences
 
-    def _audience_ok(self, claims) -> bool:
+    def _audience_ok(self, claims, slug: str = "") -> bool:
         """Canonique (`MCP_AUDIENCE`, DB-INDÉPENDANT → l'auth canonique ne casse jamais)
         OU resource indicator d'un endpoint org publié (`<slug>.mcp.oto.cx/mcp`, motif +
         existence en DB, fail-closed). Pas d'audience attendue configurée → pas de check."""
@@ -77,7 +77,14 @@ class _IatGatedVerifier(JWTVerifier):
         alt = getattr(self, "_alt_audiences", frozenset())
         if alt and any(a in alt for a in auds):
             return True
-        if any(_audience_of_declared_tenant(a) for a in auds):
+        # Audience d'un host déclaré par le tenant DE CE JETON (binding strict).
+        # ⚠️ `slug` est un PARAMÈTRE, pas un attribut d'instance : ce verifier est
+        # unique et partagé par toutes les requêtes. Le porter sur `self` marcherait
+        # aujourd'hui (rien n'attend entre la pose et la lecture) et casserait le jour
+        # où ce chemin gagne un `await` — deux appels concurrents s'entrelaceraient et
+        # une audience serait validée contre le tenant du VOISIN. Un tel bug
+        # n'apparaît que sous charge et se lit comme un incident d'authentification.
+        if any(_audience_of_declared_tenant(a, slug) for a in auds):
             return True
         from . import subdomain_project
         return any(subdomain_project.valid_org_audience(a) for a in auds)
@@ -153,7 +160,10 @@ class _IatGatedVerifier(JWTVerifier):
         if not result:
             return None
         claims = getattr(result, "claims", None) or {}
-        if not self._audience_ok(claims):
+        # Le tenant retenu voyage jusqu'au check d'audience — il n'est PAS relu du
+        # jeton (ce serait déclaratif) : c'est celui dont le verifier vient de valider
+        # la signature. Porté par l'appel, jamais par l'instance, qui est partagée.
+        if not self._audience_ok(claims, slug):
             logger.info("audience reject aud=%r", claims.get("aud"))
             return None
         if self._min_iat > 0:
@@ -166,23 +176,27 @@ class _IatGatedVerifier(JWTVerifier):
         return self._qualified(result, slug)
 
 
-def _audience_of_declared_tenant(aud) -> bool:
-    """L'audience canonique d'un host DÉCLARÉ par un tenant (`https://<host>/mcp`).
+def _audience_of_declared_tenant(aud, slug: str = "") -> bool:
+    """L'audience canonique d'un host déclaré par le tenant **DU JETON**.
 
-    C'est la moitié « audience » du binding `host → tenant → (AS, audience)` : sans
-    elle, l'audience d'un partenaire ne vit que dans `MCP_AUDIENCE_ALT`, et le retrait
-    de cette variable — qui fait partie du basculement — invaliderait TOUS ses jetons
-    d'un coup. La dériver de ses hosts rend le retrait possible.
+    Le binding complet est `host → tenant → (AS, audience)`, et il est **STRICT** :
+    l'audience d'un partenaire n'est acceptée que si le jeton relève de CE partenaire.
+    Un jeton du tenant primaire portant l'audience d'un partenaire est refusé — sinon
+    « servi sur son domaine » ne voudrait rien dire de plus que « servi ».
 
-    Strict par construction : le host doit être réclamé par un tenant du registre (une
-    ligne écrite à la main, pas une entrée devinée), et le chemin est exactement `/mcp`.
-    Un host déclaré n'ouvre donc pas ses autres chemins.
+    Trois conditions, toutes nécessaires : le host est réclamé par une ligne `tenants`
+    (écrite à la main, jamais devinée) ; le chemin est exactement `/mcp` — déclarer un
+    domaine ne consent qu'à son endpoint, pas au domaine entier ; et le tenant de ce
+    host est celui du jeton.
 
-    ⚠️ Ce cran dit « cette audience appartient à UN tenant », pas « au tenant de CE
-    jeton » — un jeton du tenant primaire portant l'audience d'un partenaire passe
-    encore. Le resserrer est le cran STRICT du binding, à faire quand plus rien ne
-    dépend de `MCP_AUDIENCE_ALT` : aujourd'hui c'est cette variable qui sert cette
-    audience à tout le monde, donc l'interdire ici casserait ce qui marche.
+    ⚠️ **Ce cran s'active tout seul, sans interrupteur — et c'est voulu.** Il ne peut
+    rien accepter tant qu'aucune ligne ne porte de host (l'état d'aujourd'hui), donc il
+    est inerte. Et tant que `MCP_AUDIENCE_ALT` porte l'audience d'un partenaire, elle
+    est servie à tout le monde **avant** d'arriver ici (`_audience_ok` teste les alts
+    en premier) : la transition reste douce. **Le retrait de cette variable EST
+    l'activation du cran strict** — pas un drapeau à basculer, pas un second
+    déploiement, juste une ligne d'environnement qui disparaît. Un drapeau se serait
+    ajouté à la liste des choses à ne pas oublier ; celui-ci s'oublie tout seul.
     """
     if not isinstance(aud, str) or not aud:
         return False
@@ -192,7 +206,12 @@ def _audience_of_declared_tenant(aud) -> bool:
     if parsed.scheme != "https" or parsed.path != "/mcp":
         return False
     host = (parsed.hostname or "").lower()
-    return bool(host) and tenancy.current().for_host(host) is not None
+    if not host:
+        return False
+    entry = tenancy.current().for_host(host)
+    # Le tenant du host DOIT être celui du jeton. `slug` vient de la sélection par
+    # `iss` (déjà revalidée par le verifier retenu), donc il n'est pas déclaratif.
+    return entry is not None and entry.slug == slug
 
 
 def _build_verifier() -> JWTVerifier:
