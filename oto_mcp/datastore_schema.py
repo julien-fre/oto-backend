@@ -190,9 +190,26 @@ def status_field(schema: Optional[dict]) -> Optional[dict]:
     return field_by_role(schema, "status")
 
 
+# La PRÉSENTATION d'une colonne — ce que sa valeur sert à l'écran, par opposition à
+# `type` qui dit ce qu'elle EST (#317, « voie Notion »). Les deux dimensions sont
+# ORTHOGONALES, et c'est une mesure qui l'a établi : sur les 57 titres de production,
+# **six ne sont pas du texte** (cinq `url`, une `date`). En faire une valeur de `type`
+# aurait forcé à choisir — un titre qui est une URL aurait cessé d'être rendu en lien.
+#
+# Un champ, une présentation ; un tableau, un titre.
+DISPLAY_TITLE = "title"
+
+
 def title_field(schema: Optional[dict]) -> Optional[dict]:
-    """Le field déclaré `role="title"` (premier trouvé), ou None — le LIBELLÉ d'une
-    ligne (ce qu'un humain reconnaît dans un journal, à la place d'un uuid)."""
+    """La colonne qui NOMME une ligne — ce qu'un humain reconnaît dans un journal, à
+    la place d'un uuid.
+
+    ⚠️ Repli TRANSITOIRE sur `role="title"` : il vit le temps de la conversion des
+    schémas en base et **meurt avec les rôles** (#317 étape C). Un repli qui survit à
+    sa raison devient le canal par lequel ce qu'on retire revient."""
+    for f in _fields(schema):
+        if f.get("display") == DISPLAY_TITLE and f.get("key"):
+            return f
     return field_by_role(schema, "title")
 
 
@@ -414,6 +431,16 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
         return ["schema doit être un objet {fields:[...]} ou null"]
     errors: list[str] = []
     _validate_fields_def(_fields(schema), "fields", errors)
+    # Une colonne titre par tableau (#317) : deux candidats, et le nom d'une ligne
+    # dépendrait de l'ordre de déclaration — une inférence silencieuse, exactement ce
+    # que le retrait des rôles supprime. Zéro conflit en production au moment de la
+    # bascule : le refus ne casse personne.
+    titres = [str(f.get("key")) for f in _fields(schema)
+              if f.get("display") == DISPLAY_TITLE and f.get("key")]
+    if len(titres) > 1:
+        errors.append(
+            f"display=\"title\" déclaré sur {len(titres)} colonnes ({', '.join(titres)}) "
+            "— une seule nomme la ligne")
     lc = lifecycle_of(schema)
     if lc is not None:
         states = lc.get("states")

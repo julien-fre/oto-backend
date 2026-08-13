@@ -792,6 +792,13 @@ def register(mcp: FastMCP) -> None:
         return [f for f in (schema or {}).get("fields") or [] if isinstance(f, dict)]
 
     def _role_key(schema: Optional[dict], role: str) -> Optional[str]:
+        """La clé du champ qui joue ce rôle à l'écran.
+
+        ⚠️ `title` passe par `dsv2.title_field` (#317) : la désignation vit désormais
+        dans `display`, et cette fonction ne doit pas garder une seconde lecture de
+        `role` — deux chemins pour la même question finissent par diverger."""
+        if role == "title":
+            return (dsv2.title_field(schema) or {}).get("key")
         for f in _fdefs(schema):
             if f.get("role") == role and f.get("key"):
                 return f["key"]

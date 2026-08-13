@@ -115,7 +115,14 @@ def test_the_column_schema_becomes_the_dimension_untouched(live):
     set_datastore_schema(ns, schema)
     live()
 
-    assert _node_of_table(ns)["props"]["child_schema"] == schema
+    # ⚠️ Le schéma attendu n'est plus celui POSÉ, et ce test l'a signalé le premier :
+    # le boot convertit désormais `role: "title"` en `display: "title"` (#317, la
+    # désignation devient une présentation). C'est une modification ASSUMÉE du schéma
+    # client — c'est l'objet même de la conversion — mais elle est additive : rien
+    # n'est retiré, le `label: None` interne survit, et c'est ce que ce test garde.
+    attendu = {"fields": [{**schema["fields"][0], "display": "title"},
+                          schema["fields"][1]]}
+    assert _node_of_table(ns)["props"]["child_schema"] == attendu
 
 
 def test_a_table_without_owner_never_breaks_the_boot(live):

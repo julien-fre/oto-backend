@@ -294,6 +294,25 @@ def _init_db_once() -> None:
         # défaut = instantané (PG 11+), aucune réécriture, aucun verrou long — la
         # base est partagée avec la production.
         conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_run TEXT")
+        # #317 : le rôle `title` devient une PRÉSENTATION (`display`). Conversion
+        # ADDITIVE — le `role` reste en place, seuls les lecteurs changent de source ;
+        # son retrait est l'étape suivante du dossier, une fois la bascule vérifiée.
+        # Idempotent : ne touche que les champs qui n'ont pas encore leur `display`.
+        # Population mesurée avant conversion : 57 tableaux, un titre chacun, aucun
+        # conflit — la conversion est mécanique, un pour un.
+        conn.execute("""
+            UPDATE user_datastores d SET schema = jsonb_set(
+                d.schema, '{fields}',
+                (SELECT jsonb_agg(
+                    CASE WHEN f->>'role' = 'title' AND f->>'display' IS NULL
+                         THEN f || '{"display": "title"}'::jsonb ELSE f END
+                    ORDER BY ord)
+                   FROM jsonb_array_elements(d.schema->'fields')
+                        WITH ORDINALITY AS t(f, ord)))
+             WHERE jsonb_typeof(d.schema->'fields') = 'array'
+               AND EXISTS (SELECT 1 FROM jsonb_array_elements(d.schema->'fields') x
+                            WHERE x->>'role' = 'title' AND x->>'display' IS NULL)
+        """)
         # « Ajouter à mon Oto » (otomata-private, canal d'acquisition) : un projet forké
         # depuis un partage public garde le pointeur vers sa source → import IDEMPOTENT
         # (on RÉCUPÈRE la copie déjà présente dans l'org au lieu d'en refaire une).
