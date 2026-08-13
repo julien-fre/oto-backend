@@ -112,6 +112,32 @@ def test_a_truly_unknown_column_is_still_flagged(monkeypatch):
     assert "notes_verification" not in out.get("warning", "")
 
 
+def test_an_orphan_column_is_not_a_typo(monkeypatch):
+    """Troisième juge : une colonne ORPHELINE — présente en base, sortie du schéma
+    par un renommage — n'est ni déclarée ni forcément sur la page tirée. Elle
+    EXISTE ; l'annoncer « vérifie l'orthographe » désignerait encore une cause
+    fausse. Vécu à la vérification en préprod : `note`, écrite sur 1 ligne de 7,
+    accusée sur la page qui ne la portait pas."""
+    from oto_mcp.tools import datastore as D
+    monkeypatch.setattr(D, "_namespace_keys", lambda store, ns: {"note"})
+    out = _rows(monkeypatch, _Store(), fields=["nom", "note", "raison_social"])
+    assert "note" not in out.get("warning", ""), "orpheline ≠ faute de frappe"
+    assert "raison_social" in out["warning"], "la vraie faute reste signalée"
+
+
+def test_the_namespace_scan_only_runs_when_about_to_accuse(monkeypatch):
+    """Le relevé des clés coûte une requête : il ne doit se déclencher que sur le
+    chemin où l'on s'apprête à écrire un avertissement, pas à chaque lecture."""
+    from oto_mcp.tools import datastore as D
+
+    def _boom(store, ns):
+        raise AssertionError("relevé inutile : rien n'était douteux")
+
+    monkeypatch.setattr(D, "_namespace_keys", _boom)
+    out = _rows(monkeypatch, _Store(), fields=["raison_sociale"])
+    assert "warning" not in out
+
+
 def test_without_a_schema_the_sample_still_judges(monkeypatch):
     """Tableau libre : pas de schéma, donc l'échantillon reprend son rôle — le
     correctif ne doit pas éteindre le contrôle, seulement le subordonner."""

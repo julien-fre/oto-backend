@@ -113,6 +113,22 @@ def _project_hint(namespace: str) -> Optional[str]:
         return None
 
 
+def _namespace_keys(store, namespace: str) -> set[str]:
+    """Clés réellement présentes dans les DONNÉES du namespace (relevé borné).
+
+    Troisième juge, après le schéma et la page : une colonne ORPHELINE — présente
+    en base, sortie du schéma par un renommage — n'est ni déclarée ni forcément sur
+    la page tirée. L'annoncer « inconnue, vérifie l'orthographe » désignerait encore
+    une cause fausse ; elle existe, elle n'est simplement plus au format.
+    Indisponible ⇒ set() (on ne se tait pas sur un doute, on garde l'accusation la
+    moins coûteuse : signaler)."""
+    try:
+        ns_id = store._resolve(namespace)
+        return set(db.datastore_row_keys(ns_id))
+    except Exception:  # noqa: BLE001
+        return set()
+
+
 def _unknown_filter_keys(store, namespace: str, filter: dict) -> set[str]:
     """Clés de `filter` absentes de TOUTES les lignes d'un échantillon du namespace
     (feedback #163 : filtre sur colonne inexistante = 0 résultat silencieux,
@@ -138,7 +154,11 @@ def _unknown_filter_keys(store, namespace: str, filter: dict) -> set[str]:
             return set()
         for r in sample:
             known |= set(r.keys())
-        return {k for k in filter if k not in known}
+        unknown = {k for k in filter if k not in known}
+        # Même dernier recours que la projection : une orpheline existe en base
+        # sans être ni déclarée ni forcément dans l'échantillon.
+        return {k for k in unknown
+                if k not in _namespace_keys(store, namespace)} if unknown else set()
     except Exception:  # noqa: BLE001
         return set()
 
@@ -575,6 +595,15 @@ def register(mcp: FastMCP) -> None:
                 declared = dsv2.top_level_keys(store.get_schema(namespace))
                 unknown = [f for f in fields
                            if f not in present and f not in declared]
+                # Dernier recours AVANT d'accuser : une colonne peut n'être ni
+                # déclarée ni sur cette page, et exister quand même ailleurs dans le
+                # tableau (colonne orpheline d'un renommage). L'appeler « faute
+                # d'orthographe » serait encore désigner une cause fausse. Le relevé
+                # des clés du namespace tranche — et il ne coûte que sur ce chemin-là,
+                # celui où on s'apprête à écrire un avertissement.
+                if unknown:
+                    unknown = [f for f in unknown
+                               if f not in _namespace_keys(store, namespace)]
                 if unknown:
                     out["warning"] = (
                         f"colonne(s) de `fields` inconnue(s) dans ce namespace : "
