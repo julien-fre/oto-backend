@@ -8,7 +8,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from starlette.concurrency import run_in_threadpool
 
-from . import call_axes, error_taxonomy, redaction, session_org
+from . import call_axes, doctrine_run, error_taxonomy, redaction, session_org
 from .auth_hooks import current_user_sub_from_token
 from .session_visibility import apply_session_visibility
 from .tool_visibility import namespace_of
@@ -238,6 +238,22 @@ class CallContextMiddleware(Middleware):
             # que les seams l'aient pendant tout le handler ET que le calllog le relise
             # après. Inerte si rien ne le remplit — un dict vide n'ajoute aucune ligne.
             undo.append((session_org.reset_call_trace, session_org.set_call_trace({})))
+            # Le RUN ACTIF de la session, posé en ContextVar pour les seams SYNC
+            # (#317). Sans lui, un agent qui encadre son travail par `run_start` n'est
+            # reconnu nulle part : la pile vit dans l'état de session (async), que le
+            # store ne peut pas lire. Vécu en production le 15/08 — les lignes
+            # n'étaient jamais rattachées à leur run, donc jamais libérées à sa
+            # fermeture, et leur propre titulaire se voyait refuser l'écriture.
+            #
+            # ⚠️ MÊME source que le calllog (`server.py`) : le jeton explicite `_run_id=`
+            # d'abord, la pile ensuite. J'avais pris le premier pour le run courant —
+            # or il n'est posé que si l'appelant l'a passé, ce qu'un agent ne fait pas.
+            # Une seule lecture des deux sources, ici, plutôt qu'une par seam.
+            if not session_org.current_call_run():
+                actif = await doctrine_run.active_run_id(context)
+                if actif:
+                    undo.append((session_org.reset_call_run,
+                                 session_org.set_call_run(actif)))
             # `_org=` (tools de capacité) : posé ici, retiré des kwargs par `_make_tool`.
             if name in self._org and args.get("_org") is not None:
                 undo.append((session_org.reset_call_org, await self._pin_org(args["_org"])))

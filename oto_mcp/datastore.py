@@ -1020,10 +1020,25 @@ class DatastorePg:
             by = locked.get("claimed_by")
             if not by or until is None:
                 return                       # libre
+            # ⚠️ La date arrive en CHAÎNE, et c'est le cas NORMAL : le row factory du
+            # dépôt (`db/_conn._str_dict_row`) normalise tout `datetime` en texte pour
+            # les réponses JSON. Une première version retournait ici « comparaison
+            # impossible ⇒ ne bloque pas » — un fail-open sur le cas courant, donc une
+            # protection qui n'a JAMAIS protégé ce chemin. Constaté en production le
+            # 15/08 : les écritures par lot passaient sur des lignes réservées sans un
+            # mot, pendant que le chemin unitaire refusait tout le monde.
+            # `run_status._as_aware` accepte les deux formes — la même fonction que le
+            # reste du dépôt, plutôt qu'un second parseur qui divergerait.
             from datetime import datetime, timezone
-            if isinstance(until, str):       # row factory qui rend des chaînes
-                return                       # comparaison impossible ⇒ ne bloque pas
-            if until <= datetime.now(timezone.utc):
+
+            from .run_status import _as_aware
+            echeance = _as_aware(until)
+            if echeance is None:
+                # Illisible pour de bon : on REFUSE plutôt que d'ouvrir. Un bail dont
+                # on ne sait pas s'il court protège encore quelqu'un ; l'ignorance ne
+                # doit pas se résoudre en faveur de l'écrivain.
+                raise RowLocked(row_id, by, until)
+            if echeance <= datetime.now(timezone.utc):
                 return                       # bail EXPIRÉ : ne protège rien
             run = _current_run()
             if run and locked.get("claimed_run") == run:

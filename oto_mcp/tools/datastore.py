@@ -25,6 +25,7 @@ from ..datastore import (
     NamespaceForbidden,
     NamespaceNotFound,
     NamespaceReadOnly,
+    RowLocked,
     RowNotFound,
     make_org_store,
     make_store,
@@ -447,6 +448,12 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` partagé en lecture seule"))
         except RowNotFound:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"row `{id}` introuvable"))
+        except RowLocked as e:
+            # #317 : un refus, pas un 500. Sans cette traduction l'agent voit « Erreur
+            # interne du serveur » là où il lui faut QUI tient la ligne, JUSQU'À QUAND,
+            # et COMMENT lever — vécu en production le 15/08, sur une campagne bloquée.
+            # Le message de l'exception porte déjà les trois : on le rend tel quel.
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
 
     @mcp.tool()
     def data_claim_next(namespace: str, worker: str, filter: Optional[dict] = None,
@@ -690,6 +697,12 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` partagé en lecture seule"))
         except RowNotFound:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"row `{id}` introuvable"))
+        except RowLocked as e:
+            # #317 : un refus, pas un 500. Sans cette traduction l'agent voit « Erreur
+            # interne du serveur » là où il lui faut QUI tient la ligne, JUSQU'À QUAND,
+            # et COMMENT lever — vécu en production le 15/08, sur une campagne bloquée.
+            # Le message de l'exception porte déjà les trois : on le rend tel quel.
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         return {"ok": True, "id": id}
 
     @mcp.tool()
