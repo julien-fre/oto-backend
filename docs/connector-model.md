@@ -6,12 +6,13 @@ description: >-
   connecteur oto (unipile, google, pennylane, sirene…) : disponibilité (connector_activation
   master ± override org + availability self_serve/platform_granted), authentification
   (cascade resolve_api_key BYO-user > groupe > org > clé plateforme), et option de
-  connecteur (has_option = comp admin via option_comps ; plus de billing/Stripe).
-  Explique aussi le RBAC interne org-connector-access (ADR 0025). À lire
-  AVANT de toucher activation, clés ou options ; les autres docs (connector-vault,
-  roles-and-resolution) sont le détail de chaque couche.
+  connecteur (has_option = comp admin via option_comps OU abonnement d'org, ADR 0043 ;
+  option_open = has_option ∪ BYO). Explique aussi le RBAC interne org-connector-access
+  (ADR 0025). À lire AVANT de toucher activation, clés ou options ; les autres docs
+  (connector-vault, roles-and-resolution) sont le détail de chaque couche.
 adr:
   - "0025"
+  - "0043"
 ---
 
 # Modèle de connecteur — les 3 couches
@@ -28,7 +29,7 @@ Pour qu'un connecteur **marche** pour un utilisateur, les **trois** doivent êtr
 |---|--------|----------|----------|
 | 1 | **Disponibilité** | le connecteur est-il exposé ? | `connector_activation` (master ± override org) + `availability` |
 | 2 | **Authentification** | avec quelle clé appelle-t-il l'API ? | cascade `resolve_api_key` (user→groupe→org→clé plateforme) |
-| 3 | **Option** *(options gatées only)* | l'option est-elle débloquée ? | `has_option(sub, option)` = comp admin (user\|org) |
+| 3 | **Option** *(options gatées only)* | l'option est-elle débloquée ? | `option_open(sub, connector)` = **BYO** ∪ `has_option` (comp admin user\|org **OU abonnement d'org**) |
 
 La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à option gatée**
 (unipile, linkedin hébergé) ont la couche **3**.
@@ -100,22 +101,41 @@ partagé. (Noté 2026-06-24 — pertinent pour l'automatisation d'écriture Zoho
 ## Couche 3 — Option de connecteur (unipile, linkedin hébergé)
 
 Certains connecteurs (messagerie hébergée) sont **gatés par une option** : ils consomment des
-sièges sur la clé plateforme Otomata, donc l'accès est **accordé par un admin** (plus de paiement —
-le modèle billing/Stripe a été retiré, la gouvernance de l'option est purement admin).
-Seam unique : **`access.has_option(sub, option)`** — l'option est débloquée si **l'une** des deux :
+sièges sur la clé plateforme Otomata — l'accès s'ouvre donc par l'**offre** ou par un **geste
+d'admin**.
+
+**Deux seams, deux questions distinctes — ne pas les confondre :**
+
+**`access.has_option(sub, option)`** — « l'option est-elle ACCORDÉE ? ». Vraie si **l'une**
+des trois :
 
 1. **Comp admin sur l'user** — `option_comps (entity_type='user', entity_id=sub)`.
 2. **Comp admin sur l'org active** — `option_comps (entity_type='org', entity_id=org)`.
+3. **Abonnement actif de l'org** dont le plan inclut l'option (**ADR 0043**) — mapping
+   `billing.plan_options`, miroir `org_subscriptions`. `past_due` reste **ouvert** tant que
+   la grâce court ; la fermeture est un acte du `billing_runner`, jamais un effet de bord de
+   lecture.
 
-- **Comp admin** : `option_comps`, **entity-keyé (user|org)**, posé par un super_admin
-  (« accorder l'option »).
-- Le gate `has_option` est le **seul** point lu par le runtime (`api_routes_connectors`) — ne
-  jamais lire les sources en direct dans un nouveau chemin.
-- BYO (clé Unipile propre user/groupe/org) court-circuite le gate : l'entité gère sa propre
-  instance, pas de siège plateforme à protéger.
+**`access.option_open(sub, connector)`** — « l'option est-elle LEVÉE pour cet appel ? », donc
+`has_option` **∪ BYO** (clé propre user/groupe/org). C'est le seam que lisent le statut de la
+carte connecteur (`connectors_selection.option_ok`) ET le gate « connecter » (`status_for.
+subscribed`) : les faire diverger a déjà produit une carte « clé d'org » + « Bloqué »
+incohérente (corrigé 2026-07-07). **Un nouveau chemin appelle `option_open`**, pas les sources.
 
-Surfaces : bouton **« accorder l'option »** (super_admin) sur la fiche **user** (`option_comps` user)
-ET la fiche **org** (`option_comps` org).
+> ⚠️ **Le BYO lève la couche 3 par CONSTRUCTION, pas par faveur** : l'entité gère sa propre
+> instance chez le fournisseur, il n'y a donc aucun siège plateforme à protéger. C'est la
+> raison, et elle explique pourquoi le gate ne se contourne pas autrement.
+
+> ⚠️ **Ce doc a affirmé le contraire jusqu'au 13/08/2026** (« plus de paiement — le modèle
+> billing/Stripe a été retiré, la gouvernance de l'option est purement admin »). C'était vrai
+> à l'écriture, faux depuis l'**ADR 0043** (abonnement par org, PSP Mollie, LIVE prod le
+> 03/08/2026) : l'abonnement est redevenu une source de `has_option`, et la carte canonique
+> disait encore qu'il n'en existait qu'une. Un lecteur qui s'y fiait concluait qu'un client
+> abonné devait quand même recevoir un comp.
+
+Surfaces : bouton **« accorder l'option »** (super_admin) sur la fiche **user** (`option_comps`
+user) ET la fiche **org** (`option_comps` org) ; l'abonnement, lui, pose les options à
+l'activation du plan (`billing.apply_plan_entitlements`).
 
 ---
 
@@ -123,7 +143,8 @@ ET la fiche **org** (`option_comps` org).
 
 1. **Disponible** ? unipile master ON (✓ par défaut).
 2. **Clé** ? il pose sa clé Unipile (BYO) **ou** un admin lui **grant la clé plateforme** (fiche user → « grant key »).
-3. **Option débloquée** ? un admin **accorde l'option** (comp, fiche user ou org) — ou l'entité est en BYO.
+3. **Option débloquée** ? l'org est **abonnée** à un plan qui l'inclut, **ou** un admin
+   **accorde l'option** (comp, fiche user ou org), **ou** l'entité est en BYO.
 4. Puis **lui** connecte son LinkedIn/WhatsApp (hosted-auth, `/console/connectors`).
 
 ## Trous connus (à combler)
