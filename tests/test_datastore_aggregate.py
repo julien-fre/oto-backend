@@ -86,8 +86,11 @@ def test_build_group_by_sum_then_count_param_order():
         7, "departement",
         [{"op": "sum", "field": "kwc"}, {"op": "count"}],
         None, None, 500)
-    # Ordre des %s : group field, (sum: field, regex, field), WHERE ns_id, LIMIT
-    assert params == ["departement", "kwc", DB._NUMERIC_RE, "kwc", 7, 500]
+    # Ordre des %s — chaque champ compte DOUBLE depuis #318 (un `%s` par branche
+    # du COALESCE qui lit une colonne plate ou à couches) : group ×2,
+    # (sum : champ ×2, regex, champ ×2), WHERE ns_id, LIMIT.
+    assert params == ["departement"] * 2 + ["kwc"] * 2 + [DB._NUMERIC_RE] \
+        + ["kwc"] * 2 + [7, 500]
     assert "GROUP BY grp ORDER BY m0 DESC NULLS LAST, grp ASC" in sql
     assert names == [("m0", "sum_kwc"), ("m1", "count")]
     # champ jamais interpolé en dur → pas de nom de colonne dans le SQL
@@ -98,9 +101,9 @@ def test_build_filter_params_after_select():
     filters = [{"field": "statut", "op": "eq", "value": "qualified"}]
     sql, params, names = DB._build_aggregate(
         7, None, [{"op": "avg", "field": "score"}], None, filters, 1000)
-    # select params (score×2 + regex) puis ns_id puis filter value puis limit
-    assert params[:3] == ["score", DB._NUMERIC_RE, "score"]
-    assert params[3] == 7
+    # select params (score ×4 + regex, cf. #318) puis ns_id puis filter puis limit
+    assert params[:5] == ["score"] * 2 + [DB._NUMERIC_RE] + ["score"] * 2
+    assert params[5] == 7
     assert "qualified" in params and params[-1] == 1000
 
 

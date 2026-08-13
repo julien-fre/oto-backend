@@ -436,9 +436,9 @@ def datastore_overlong_fields(ns_id: int, bounds: dict) -> list[dict]:
     with _connect() as conn:
         for field, ml in (bounds or {}).items():
             q = _sql.SQL(
-                "SELECT COUNT(*) AS rows, MAX(length(data->>{k})) AS longest "
-                "FROM datastore_rows WHERE ns_id = %s AND length(data->>{k}) > %s"
-            ).format(k=_sql.Literal(str(field)))
+                "SELECT COUNT(*) AS rows, MAX(length({v})) AS longest "
+                "FROM datastore_rows WHERE ns_id = %s AND length({v}) > %s"
+            ).format(v=_sql.SQL(field_value_sql(field)))
             r = conn.execute(q, (ns_id, int(ml))).fetchone()
             if r and (r["rows"] or 0) > 0:
                 out.append({"field": field, "max_length": int(ml),
@@ -514,12 +514,12 @@ def datastore_offending_enum_values(ns_id: int, options: dict,
             if not vals:
                 continue  # enum libre : aucune option déclarée, rien à condamner
             q = _sql.SQL(
-                "SELECT data->>{k} AS value, COUNT(*) AS rows "
+                "SELECT {v} AS value, COUNT(*) AS rows "
                 "FROM datastore_rows WHERE ns_id = %s "
-                "AND data->>{k} IS NOT NULL AND data->>{k} <> '' "
-                "AND NOT (data->>{k} = ANY(%s)) "
+                "AND {v} IS NOT NULL AND {v} <> '' "
+                "AND NOT ({v} = ANY(%s)) "
                 "GROUP BY 1 ORDER BY 2 DESC"
-            ).format(k=_sql.Literal(str(field)))
+            ).format(v=_sql.SQL(field_value_sql(field)))
             rows = conn.execute(q, (ns_id, vals)).fetchall()
             if not rows:
                 continue
@@ -923,7 +923,7 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
     elif order_by == "_id":
         order_sql = f"row_id {direction}"
     else:
-        order_sql = f"data ->> %s {direction}, row_id {direction}"
+        order_sql = f"{FIELD_VALUE_PARAM_SQL} {direction}, row_id {direction}"
         params.append(order_by)  # valeur paramétrée → pas d'injection
     tail = ""
     if limit is not None:
@@ -984,12 +984,14 @@ def _build_aggregate(ns_id: int, group_by: Optional[str], metrics: Optional[list
     """Construit `(sql, params, names)` de l'agrégat — PUR (aucun I/O), testable sans PG.
     `names` = `[(alias_sql, nom_lisible)]`. Ordre des `%s` : colonnes SELECT (group +
     métriques) puis WHERE puis LIMIT — l'ordre de `params` doit suivre EXACTEMENT.
-    Les noms de champs passent en PARAMÈTRES (`data->>%s`), jamais interpolés (anti-injection)."""
+    Les noms de champs passent en PARAMÈTRES, jamais interpolés (anti-injection) —
+    DEUX fois chacun depuis #318, un par branche du COALESCE qui lit une colonne
+    plate ou à couches. L'ordre de `sparams` en dépend."""
     metrics = metrics or [{"op": "count"}]
     select, sparams, names = [], [], []  # noms lisibles alignés sur les alias mN
     if group_by:
-        select.append("data->>%s AS grp")
-        sparams.append(group_by)
+        select.append(f"{FIELD_VALUE_PARAM_SQL} AS grp")
+        sparams.extend([group_by, group_by])
     for i, m in enumerate(metrics):
         op = str(m.get("op", "")).lower()
         field = m.get("field")
@@ -998,15 +1000,16 @@ def _build_aggregate(ns_id: int, group_by: Optional[str], metrics: Optional[list
             select.append(f"COUNT(*) AS {alias}")
             names.append((alias, "count"))
         elif op == "count":
-            select.append(f"COUNT(data->>%s) AS {alias}")
-            sparams.append(field)
+            select.append(f"COUNT({FIELD_VALUE_PARAM_SQL}) AS {alias}")
+            sparams.extend([field, field])
             names.append((alias, f"count_{field}"))
         elif op in ("sum", "avg", "min", "max"):
             if not field:
                 raise ValueError(f"agrégat: op '{op}' exige un `field`")
             select.append(
-                f"{op.upper()}(CASE WHEN data->>%s ~ %s THEN (data->>%s)::numeric END) AS {alias}")
-            sparams.extend([field, _NUMERIC_RE, field])
+                f"{op.upper()}(CASE WHEN {FIELD_VALUE_PARAM_SQL} ~ %s "
+                f"THEN ({FIELD_VALUE_PARAM_SQL})::numeric END) AS {alias}")
+            sparams.extend([field, field, _NUMERIC_RE, field, field])
             names.append((alias, f"{op}_{field}"))
         else:
             raise ValueError(f"agrégat: op inconnu {op!r} (count|sum|avg|min|max)")
