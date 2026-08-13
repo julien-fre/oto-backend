@@ -126,6 +126,11 @@ def _init_db_once() -> None:
         # vers lequel on envoie l'utilisateur — sinon le client s'authentifie chez l'un
         # avec l'identité de l'autre. NULL = aucun host servi pour ce tenant.
         conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS oauth_client_id TEXT")
+        # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
+        # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
+        # portaient notre domaine : un client d'un partenaire recevait des liens vers
+        # un produit qui n'est pas le sien. NULL = les nôtres.
+        conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS dashboard_url TEXT")
         # #117 — discriminant PAR APPEL. Trois colonnes nullables : rien à réécrire sur
         # une table volumineuse (une colonne sans défaut ne touche pas les lignes
         # existantes), et les lignes d'avant restent lisibles avec des NULL — elles

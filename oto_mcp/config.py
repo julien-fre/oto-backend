@@ -1,5 +1,6 @@
 """Env-var helper. Keep secrets out of the repo."""
 import os
+from typing import Optional
 
 
 def require_env(name: str) -> str:
@@ -71,3 +72,30 @@ def dashboard_url() -> str:
         if valeur:
             return valeur
     return "https://manage.oto.cx"
+
+
+def dashboard_url_for(sub: Optional[str]) -> str:
+    """L'adresse du tableau de bord servie À CE COMPTE.
+
+    Un compte de tenant tiers reçoit celle de SON produit : lui envoyer la nôtre
+    revient à lui proposer un service qu'il n'a pas — constaté chez un client le
+    13/08, qui s'est vu offrir un lien vers notre tableau de bord au milieu d'une
+    conversation avec l'assistant de son fournisseur.
+
+    Repli sur la nôtre à chaque détente (pas de compte, tenant primaire, pas
+    d'adresse déclarée, registre illisible) : ce chemin sert des liens dans des
+    réponses d'outils, il ne doit jamais lever.
+    """
+    if not sub:
+        return dashboard_url()
+    try:
+        from . import tenancy
+        registre = tenancy.current()
+        slug = registre.tenant_of(sub)
+        if not slug or slug == tenancy.PRIMARY_SLUG:
+            return dashboard_url()
+        propre = next((e.dashboard_url for e in registre.entries()
+                       if e.slug == slug and e.dashboard_url), "")
+        return propre or dashboard_url()
+    except Exception:  # noqa: BLE001
+        return dashboard_url()

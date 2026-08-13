@@ -116,15 +116,14 @@ def _new_id() -> str:
     return str(uuid.UUID(int=raw))
 
 
-def _dashboard_url() -> str:
-    return config.dashboard_url()
-
-
-def _ns_url(ns_id: int) -> str:
+def _ns_url(ns_id: int, sub: Optional[str] = None) -> str:
     """Deep-link vers la vue datastore du dashboard (surface d'édition canonique
     tant que l'export tiers — otomata#29 — n'existe pas). Par ID (`/data/<id>`,
-    BIGSERIAL stable au renommage) — l'adressage `?ns=<nom>` est déprécié."""
-    return f"{_dashboard_url()}/data/{int(ns_id)}"
+    BIGSERIAL stable au renommage) — l'adressage `?ns=<nom>` est déprécié.
+
+    ⚠️ L'adresse suit le TENANT du compte : servir la nôtre à l'utilisateur d'un
+    partenaire lui propose un produit qui n'est pas le sien (vécu le 13/08)."""
+    return f"{config.dashboard_url_for(sub)}/data/{int(ns_id)}"
 
 
 class NamespaceNotFound(Exception):
@@ -422,7 +421,7 @@ class DatastorePg:
             "id": ns_id,
             "namespace": n["namespace"],
             "created_at": n.get("created_at"),
-            "url": _ns_url(ns_id),
+            "url": _ns_url(ns_id, self.sub),
             "shared": shared,
             "owner_type": n.get("owner_type"),
             "owner_id": n.get("owner_id"),
@@ -489,7 +488,7 @@ class DatastorePg:
             ns_id = db.create_datastore_namespace(owner_type, oid, namespace)
         except ValueError as e:
             raise NamespaceExists(str(e))
-        return {"namespace": namespace, "id": ns_id, "url": _ns_url(ns_id)}
+        return {"namespace": namespace, "id": ns_id, "url": _ns_url(ns_id, self.sub)}
 
     def delete_namespace(self, namespace: str) -> None:
         ns_id = self._resolve(namespace)
@@ -511,7 +510,7 @@ class DatastorePg:
             db.rename_datastore_namespace_by_id(ns_id, new_name)
         except ValueError as e:
             raise NamespaceExists(str(e))
-        return {"id": ns_id, "namespace": new_name, "url": _ns_url(ns_id)}
+        return {"id": ns_id, "namespace": new_name, "url": _ns_url(ns_id, self.sub)}
 
     def resolve_ns_id(self, namespace: str) -> int:
         """ns_id d'un namespace visible par l'acteur (lève `NamespaceNotFound`).
@@ -526,7 +525,7 @@ class DatastorePg:
         return self._resolve(namespace, write=True)
 
     def get_url(self, namespace: str) -> str:
-        return _ns_url(self._resolve(namespace))  # 404 si inconnu
+        return _ns_url(self._resolve(namespace), self.sub)  # 404 si inconnu
 
     # --- mode typé (ADR 0032 §6 / 0029, B6) ----------------------------------
 

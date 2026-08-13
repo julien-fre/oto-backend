@@ -22,7 +22,8 @@ def list_tenant_issuers() -> list:
             # `name` et `hosts` servent la DÉCOUVERTE (lot L3 : PRM et 401 sensibles
             # au host), jamais la vérification d'un jeton — celle-ci ne connaît que
             # l'émetteur. Les lire ici ne change donc rien au chemin d'auth.
-            "SELECT slug, name, issuer, jwks_uri, hosts, oauth_client_id FROM tenants "
+            "SELECT slug, name, issuer, jwks_uri, hosts, oauth_client_id, "
+            "dashboard_url FROM tenants "
             "WHERE issuer IS NOT NULL AND btrim(issuer) <> '' ORDER BY id"
         ).fetchall()
     return [dict(r) for r in rows]

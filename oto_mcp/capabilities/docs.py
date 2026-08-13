@@ -24,8 +24,10 @@ logger = logging.getLogger(__name__)
 PROJECT_RTYPE = "project"
 
 
-def _dash_url() -> str:
-    return config.dashboard_url()
+def _dash_url(sub: Optional[str] = None) -> str:
+    """L'adresse du tableau de bord servie à ce compte (celle de son tenant s'il en
+    a une). Sans `sub` : la nôtre — les surfaces anonymes n'ont pas de tenant."""
+    return config.dashboard_url_for(sub)
 
 
 def _email_of(sub: Optional[str]) -> Optional[str]:
@@ -79,12 +81,11 @@ def _notify_cr_resolved(cr: dict, accepted: bool) -> None:
         logger.warning("notify CR resolved (#%s) failed: %s", cr.get("id"), e)
 
 
-def _public_doc_url(token: str) -> str:
+def _public_doc_url(token: str, sub: Optional[str] = None) -> str:
     """Lien public d'un doc partagé (gap #4a) — pointe sur la route publique du
-    dashboard qui rend le markdown. Base configurable (défaut prod)."""
-    import os
-    base = config.dashboard_url()
-    return f"{base}/p/d/{token}"
+    dashboard qui rend le markdown. Suit le tenant de celui qui partage : le lien
+    part chez des tiers, c'est la vitrine la plus visible de la marque."""
+    return f"{_dash_url(sub)}/p/d/{token}"
 
 
 class DocInput(BaseModel):
@@ -140,7 +141,7 @@ def _can(sub: Optional[str], project_id: int, want: str) -> bool:
 _SHARED_READ_OPS = frozenset({"list", "get", "revisions", "backlinks"})
 
 
-def _view(row: dict) -> dict:
+def _view(row: dict, sub: Optional[str] = None) -> dict:
     out = {k: row.get(k) for k in
            ("id", "project_id", "parent_id", "title", "description", "position",
             "body_md", "kind", "created_at", "updated_at")}
@@ -149,7 +150,7 @@ def _view(row: dict) -> dict:
     out["rev"] = db.doc_rev(row.get("title"), row.get("body_md"))
     tok = row.get("public_token")
     out["public"] = bool(tok)
-    out["public_url"] = _public_doc_url(tok) if tok else None
+    out["public_url"] = _public_doc_url(tok, sub) if tok else None
     return out
 
 
@@ -183,7 +184,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                             body_md=inp.body_md or "", kind=(inp.kind or "doc"), created_by=sub,
                             description=inp.description)
         db.log_project_activity(int(inp.project_id), sub, "doc.create", inp.title.strip())
-        return _view(db.get_doc_by_id(did))
+        return _view(db.get_doc_by_id(did), sub)
 
     if inp.op == "bulk_create":
         # A4 (#6) : créer N pages en UN appel (33 pages ≠ 33 allers-retours). Arbre en un
@@ -269,7 +270,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         _require(inp.project_id is not None, "missing_project", "`project_id` requis.")
         _require(_can(sub, inp.project_id, "read"), "forbidden", "Accès refusé.", 403)
         return {"project_id": inp.project_id,
-                "docs": [_view(d) for d in db.list_docs_for_project(int(inp.project_id))]}
+                "docs": [_view(d, sub) for d in db.list_docs_for_project(int(inp.project_id))]}
 
     if inp.op == "search":
         # DÉPRÉCIÉ (lot 3 Ship 1) : rerouté sur le chemin UNIQUE de recherche
@@ -296,7 +297,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
 
     if inp.op == "get":
         _require(_can(sub, pid, "read"), "forbidden", "Accès refusé.", 403)
-        return _view(row)
+        return _view(row, sub)
 
     if inp.op == "revisions":
         _require(_can(sub, pid, "read"), "forbidden", "Accès refusé.", 403)
@@ -332,7 +333,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         db.log_project_activity(pid, sub, "doc.set_public",
                                 f"{row.get('title')}:{bool(inp.public)}")
         return {"ok": True, "id": inp.doc_id, "public": bool(token),
-                "public_url": _public_doc_url(token) if token else None}
+                "public_url": _public_doc_url(token, sub) if token else None}
 
     if inp.op == "request_change":
         # MODIF (doc_id) — lecture seule → propose ; ≥ accès LECTURE au projet.
@@ -364,7 +365,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                      f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
                      f"Relis-le (op=get) et refais ton édition sur la version à jour.", 409)
         db.log_project_activity(pid, sub, "doc.update", row.get("title"))
-        return _view(db.get_doc_by_id(int(inp.doc_id)))
+        return _view(db.get_doc_by_id(int(inp.doc_id)), sub)
 
     if inp.op == "patch":
         # Édition PARTIELLE par section (top5 #3) : ne touche QUE la section `section`
@@ -399,7 +400,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                      f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
                      f"Relis-le (op=get) et refais ton patch sur la version à jour.", 409)
         db.log_project_activity(pid, sub, "doc.patch", f"{row.get('title')} § {inp.section}")
-        out = _view(db.get_doc_by_id(int(inp.doc_id)))
+        out = _view(db.get_doc_by_id(int(inp.doc_id)), sub)
         if removed:
             out["removed_subsections"] = removed
             out["warning"] = (
@@ -439,7 +440,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                                    position=inp.position)
         db.log_project_activity(pid, sub, "doc.move_out", f"{row.get('title')} → projet {tgt}")
         db.log_project_activity(tgt, sub, "doc.move_in", row.get("title"))
-        out = _view(db.get_doc_by_id(int(inp.doc_id)))
+        out = _view(db.get_doc_by_id(int(inp.doc_id)), sub)
         out["moved_count"] = n
         return out
 
@@ -459,7 +460,7 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     else:
         target_parent = None
     db.move_doc(int(inp.doc_id), target_parent, position=inp.position)
-    return _view(db.get_doc_by_id(int(inp.doc_id)))
+    return _view(db.get_doc_by_id(int(inp.doc_id)), sub)
 
 
 CAPABILITIES += [

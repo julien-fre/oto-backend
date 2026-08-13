@@ -75,6 +75,8 @@ class TenantIssuer:
     # (cf. `oauth_facade`). Sans lui, un host déclaré enverrait le client demander un
     # enregistrement automatique à un annuaire qui n'en fait pas.
     oauth_client_id: str = ""
+    # Adresse du tableau de bord de ce tenant. Vide = la nôtre (cf. `config`).
+    dashboard_url: str = ""
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -139,7 +141,7 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
     entries: dict[str, TenantIssuer] = {}
 
     def _put(slug: str, issuer, jwks_uri=None, name="", hosts=(),
-             oauth_client_id="") -> None:
+             oauth_client_id="", dashboard_url="") -> None:
         iss = normalize_issuer(issuer)
         if not iss:
             return
@@ -147,7 +149,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
         entries[iss] = TenantIssuer(slug=slug, issuer=iss,
                                     jwks_uri=jwks or f"{iss}/jwks",
                                     name=name or "", hosts=tuple(hosts or ()),
-                                    oauth_client_id=str(oauth_client_id or ""))
+                                    oauth_client_id=str(oauth_client_id or ""),
+                                    dashboard_url=str(dashboard_url or "").rstrip("/"))
 
     _put(PRIMARY_SLUG, primary_issuer)
     for drain in drain_issuers or ():
@@ -175,7 +178,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
         _put(slug, iss, (row or {}).get("jwks_uri"),
              name=str((row or {}).get("name") or ""),
              hosts=normalize_hosts((row or {}).get("hosts")),
-             oauth_client_id=str((row or {}).get("oauth_client_id") or ""))
+             oauth_client_id=str((row or {}).get("oauth_client_id") or ""),
+             dashboard_url=str((row or {}).get("dashboard_url") or ""))
     return entries
 
 

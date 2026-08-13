@@ -24,8 +24,9 @@ from .. import config
 
 logger = logging.getLogger(__name__)
 
-# Env-driven (cutover ADR 0040 : prod dashboard ≠ preprod ; ne pas figer sur .oto.ninja).
-_DASHBOARD = config.dashboard_url()
+# ⚠️ PAS une constante de module : l'adresse dépend du TENANT du compte, donc de
+# l'appel. La figer au chargement servirait la nôtre à tout le monde — y compris aux
+# utilisateurs d'un partenaire, à qui elle propose un produit qui n'est pas le leur.
 
 
 def _require_sub() -> str:
@@ -175,5 +176,5 @@ def register(mcp: FastMCP) -> None:
                 "platform_available": platform_ready,
             },
             "summary": summary,
-            "dashboard_url": _DASHBOARD,
+            "dashboard_url": config.dashboard_url_for(sub),
         }
