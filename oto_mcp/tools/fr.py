@@ -12,7 +12,27 @@ from mcp.shared.exceptions import McpError
 from mcp.types import INVALID_PARAMS, ErrorData
 
 from .. import access
-from .. import fr_finances
+
+# Les annotations du bloc `finances` (0 = non déclaré, valeur illisible, montant
+# invraisemblable) sont posées par **FOD**, pas ici : elles sont vraies quel que soit
+# le consommateur, donc elles vivent au seul point que tous traversent (ADR 0028
+# amendée le 12/08 — « FOD dit ce qu'il SAIT, jamais ce qu'il CROIT »). Le backend
+# les fait passer, sans les recalculer : deux détections divergeraient.
+#
+# CE qui reste ici est propre à la SURFACE AGENT — l'avertissement sur les paramètres
+# de filtre, qui n'existent que dans ce tool.
+_FILTRE_CA_AVERTISSEMENT = (
+    "⚠️ `ca_min`/`ca_max` filtrent en amont sur un montant dont l'unité est INCONNUE "
+    "(euros pour les uns, milliers pour les autres, parfois d'une année à l'autre chez "
+    "la même entreprise) et dont le 0 signifie « non déclaré ». Conséquences mesurées : "
+    "la plage laisse passer les entreprises SANS CA connu (elles valent 0, donc ≤ toute "
+    "borne haute) et rate celles qui ont déposé en milliers. Sur "
+    "`tranche_effectif_salarie=51,52,53 & ca_max=400000`, les 12 résultats sont des "
+    "grandes entreprises — 11 n'y sont que par leur 0, et la 12ᵉ est une banque à "
+    "392 M€ lue comme 392 k€. Pour qualifier par taille, préférer "
+    "`tranche_effectif_salarie` ou `categorie_entreprise`, et ne conclure sur un CA "
+    "qu'après lecture du dépôt (`fr_bilans`)."
+)
 
 # Formes juridiques couramment ÉNONCÉES devant le nom (« la SCI Untel »), et les
 # catégories juridiques INSEE correspondantes. Le répertoire, lui, n'inscrit
@@ -176,7 +196,7 @@ def register(mcp: FastMCP) -> None:
         # l'amont compare une borne en euros à un nombre sans unité dont le 0 vaut
         # « non déclaré ». Dit ici, au moment où la question se pose (#399).
         if ca_min is not None or ca_max is not None:
-            res["filtre_ca_avertissement"] = fr_finances.FILTRE_CA_AVERTISSEMENT
+            res["filtre_ca_avertissement"] = _FILTRE_CA_AVERTISSEMENT
         return res
 
     # 7 ratios top B2B + métadonnées d'exercice. Le reste (marge_brute, ebit,
@@ -187,6 +207,12 @@ def register(mcp: FastMCP) -> None:
         "chiffre_d_affaires", "resultat_net", "ebe",
         "marge_ebe", "autonomie_financiere", "taux_d_endettement",
         "ratio_de_liquidite",
+        # Les AVERTISSEMENTS de l'amont, jamais projetés hors de la réponse : un
+        # `chiffre_d_affaires: None` accompagné de `valeur_indisponible` dit « le
+        # dépôt porte un montant qu'on ne sait pas lire » ; le même None seul dit
+        # « pas de dépôt ». Les jeter rendrait au consommateur exactement
+        # l'ambiguïté que FOD vient de lever (ADR 0028 amendée).
+        "alerte", "postes_indisponibles",
     )
 
     # fr_get compact : le payload brut recherche-entreprises pèse jusqu'à 40k chars
@@ -210,6 +236,9 @@ def register(mcp: FastMCP) -> None:
         "annee_tranche_effectif_salarie", "categorie_entreprise",
         "date_creation", "date_fermeture", "site_internet",
         "nombre_etablissements", "nombre_etablissements_ouverts", "finances",
+        # Frère de `finances`, posé par FOD : sans lui dans cette liste, la
+        # projection le mangerait en silence (elle ne garde que des clés connues).
+        "finances_avertissement",
     )
     # Convention(s) collective(s) — l'amont la porte sous `complements.liste_idcc`.
     # Elle était perdue au mapping alors que `fr_search` ACCEPTE l'IDCC en FILTRE :
@@ -232,14 +261,6 @@ def register(mcp: FastMCP) -> None:
     def _compact_identity(identity: dict) -> dict:
         out = _pick(identity, _IDENTITY_KEEP)
         out.update(_pick(identity.get("complements") or {}, _COMPLEMENT_KEEP))
-        # `finances` est un passthrough de l'amont, qui ne transmet ni l'unité du
-        # dépôt ni la différence entre zéro et non-déclaré (#399). On ne convertit
-        # rien — on retire ce qui n'est pas une donnée et on marque l'invraisemblable.
-        if "finances" in out:
-            out["finances"], avertissement = fr_finances.annotate(
-                out["finances"], out.get("tranche_effectif_salarie"))
-            if avertissement:
-                out["finances_avertissement"] = avertissement
         siege = identity.get("siege")
         if isinstance(siege, dict):
             out["siege"] = _pick(siege, _ETAB_KEEP)
