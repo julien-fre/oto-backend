@@ -446,6 +446,42 @@ def datastore_overlong_fields(ns_id: int, bounds: dict) -> list[dict]:
     return sorted(out, key=lambda d: d["longest"] - d["max_length"], reverse=True)
 
 
+def field_value_sql(key: str) -> str:
+    """SQL qui rend la VALEUR d'une colonne, qu'elle soit plate ou à couches (#318).
+
+    Une colonne peut porter `{"valeur": …, "source": …, "origine": …}` au lieu d'un
+    scalaire. Personne ne réécrira les 43 782 lignes existantes : **la table reste
+    mixte pour toujours**, ce n'est pas un état de transition. Tout lecteur adressé
+    par champ passe donc par ici — filtres, tri, agrégats, clé métier, contrôles de
+    schéma — et **aucun ne recopie l'expression** : c'est le contrat que la bascule
+    du modèle de contenu transportera, et il n'existe qu'à un endroit.
+
+    Le `COALESCE` ne se déclenche que sur NULL, donc une `valeur` vide ("") reste
+    une valeur et ne retombe pas sur l'objet entier. Un champ `json` légitime qui
+    se trouve être un objet sans `valeur` rend son texte, comme avant : l'expression
+    ne DEVINE pas — c'est le type déclaré au schéma qui dit ce qui porte des couches,
+    jamais la forme observée.
+
+    ⚠️ Le champ est un **littéral** échappé (`psycopg.sql.Literal`), pas un
+    paramètre : l'index d'unicité de clé métier est un index d'EXPRESSION, et le
+    planner ne le sert au lookup que si le `WHERE` porte la MÊME chaîne. Un écart
+    ne casserait rien de visible — la déduplication marcherait, chaque lookup
+    partirait en seq scan.
+    """
+    from psycopg import sql as _sql
+    k = _sql.Literal(str(key))
+    return _sql.SQL("COALESCE(data->{k}->>'valeur', data->>{k})").format(k=k).as_string(None)
+
+
+def bkey_index_expr(key: str) -> str:
+    """Expression indexée pour la clé métier — LA MÊME que celle du lookup.
+
+    Délègue plutôt que de recopier : la dérive entre les deux est impossible par
+    construction, et le test qui compare les deux chaînes garde l'invariant si
+    quelqu'un rompt un jour cette délégation."""
+    return field_value_sql(key)
+
+
 def datastore_offending_enum_values(ns_id: int, options: dict,
                                     per_field: int = 5) -> list[dict]:
     """Valeurs DÉJÀ EN BASE qu'un enum fraîchement déclaré condamne —
