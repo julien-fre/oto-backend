@@ -80,7 +80,12 @@ INIT_SLUG = "readme"
 # Scopes dont la prose INIT vit dans `guides` (ADR 0042). TOUS depuis le barreau 2 :
 # le readme d'org/group est sorti de `*_instructions[claude_md]` (split readme↔procédure,
 # les procédures gardent leur table + versioning). Owner = org.id/group.id::text.
-_INIT_IN_GUIDES = ("platform", "user", "org", "group")
+# `tenant` : le socle servi aux comptes d'un tenant tiers, à la place du socle
+# plateforme. Owner = le SLUG du tenant (pas un id numérique : le slug est déjà la
+# clé stable du registre, et il est lisible dans la table). Un tenant sans ligne
+# retombe sur le socle plateforme — donc ajouter ce scope ne change rien tant que
+# personne n'écrit.
+_INIT_IN_GUIDES = ("platform", "tenant", "user", "org", "group")
 
 
 def _init_ref(scope: str, ident: Optional[str]) -> tuple[str, str]:

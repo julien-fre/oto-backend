@@ -348,14 +348,47 @@ def render() -> str:
     return f"{_SECRET_SAUCE.strip()}\n\n{_catalog()}"
 
 
+def _socle_for(sub: str | None) -> tuple[str, str]:
+    """Le socle injecté à ce compte, et son étiquette — `(corps, label)`.
+
+    Un compte d'un tenant tiers reçoit LE SOCLE DE SON TENANT s'il en existe un. Sans
+    ce cran, l'assistant d'un partenaire se présente sous notre marque et renvoie vers
+    nos adresses : constaté chez un client le 13/08 (« Sur Tulina (Oto), tu es… » +
+    un lien vers notre tableau de bord). Ce n'est pas un défaut de formulation — le
+    texte est au niveau plateforme alors qu'il décrit un produit.
+
+    Fail-open à trois détentes, parce que ce chemin est celui du handshake : pas de
+    tenant, pas de ligne, ou lecture en erreur ⟹ le socle plateforme, à l'octet près.
+    """
+    plateforme = (_platform_block(KEY_SECRET_SAUCE, _SECRET_SAUCE), "socle oto")
+    if not sub:
+        return plateforme
+    try:
+        from . import guide_store, tenancy
+        registre = tenancy.current()
+        slug = registre.tenant_of(sub)
+        if not slug or slug == tenancy.PRIMARY_SLUG:
+            return plateforme
+        corps = guide_store.init_guide_body("tenant", slug)
+        if not corps:
+            return plateforme
+        nom = next((e.name for e in registre.entries()
+                    if e.slug == slug and e.name), slug)
+        return corps, f"socle {nom}"
+    except Exception:  # noqa: BLE001 — le handshake ne casse jamais là-dessus
+        logger.warning("socle de tenant illisible pour %s (fail-open)", sub,
+                       exc_info=True)
+        return plateforme
+
+
 def session_layers(sub: str | None, org_id: int | None) -> list[dict]:
     """L'artefact injecté DÉCOMPOSÉ en couches ordonnées `[{key, label, body}]` :
     bloc A (socle plateforme + catalogue dérivé) puis couches du bloc C. Invariant :
     `"\\n\\n".join(bodies) == compose_session(sub, org_id)` — sert la vue de
     transparence (`/api/me/agent-context`) sans dupliquer la composition."""
+    socle, label = _socle_for(sub)
     return [
-        {"key": "platform", "label": "socle oto",
-         "body": _platform_block(KEY_SECRET_SAUCE, _SECRET_SAUCE)},
+        {"key": "platform", "label": label, "body": socle},
         {"key": "catalog", "label": "catalogue des capacités", "body": _catalog()},
     ] + _c_layers(sub, org_id)
 

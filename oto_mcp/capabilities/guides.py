@@ -116,7 +116,35 @@ def _owner_for_write(ctx: ResolvedCtx, scope: str, owner_id: Optional[str] = Non
         if not roles.is_platform_admin(ctx.sub):
             raise AuthzDenied(403, "forbidden", "Réservé à l'admin plateforme (guide plateforme).")
         return guide_store.PLATFORM_OWNER
-    raise AuthzDenied(400, "bad_scope", "scope éditable = platform | org | group | user.")
+    if scope == "tenant":
+        # Le socle d'un tenant remplace le nôtre pour TOUS ses comptes : c'est la
+        # marque et le mode d'emploi d'un produit tiers. L'écrire est un acte
+        # d'exploitation, jamais une préférence — même palier que le socle plateforme.
+        if not roles.is_platform_admin(ctx.sub):
+            raise AuthzDenied(403, "forbidden",
+                              "Réservé à l'admin plateforme (socle de tenant).")
+        return _target_tenant(ctx, owner_id)
+    raise AuthzDenied(400, "bad_scope",
+                      "scope éditable = platform | tenant | org | group | user.")
+
+
+def _target_tenant(ctx: ResolvedCtx, owner_id: Optional[str]) -> str:
+    """Le slug du tenant visé — explicite, ou celui de l'appelant.
+
+    Refuse un tenant inconnu du registre plutôt que d'écrire une ligne que personne ne
+    lira : le registre est construit au boot, donc une faute de frappe resterait muette
+    jusqu'à ce qu'on cherche pourquoi la marque ne change pas."""
+    from .. import tenancy
+    slug = (owner_id or "").strip() or tenancy.current().tenant_of(ctx.sub)
+    if not slug or slug == tenancy.PRIMARY_SLUG:
+        raise AuthzDenied(400, "bad_owner",
+                          "Préciser le tenant visé (son slug) — `platform` a son "
+                          "propre scope.")
+    if not any(e.slug == slug for e in tenancy.current().entries()):
+        raise AuthzDenied(404, "unknown_tenant",
+                          f"Aucun tenant `{slug}` au registre. Un tenant se déclare "
+                          "en base et le registre se construit au démarrage.")
+    return slug
 
 
 def _owner_for_read(ctx: ResolvedCtx, scope: str, owner_id: Optional[str] = None) -> str:
@@ -138,6 +166,14 @@ def _owner_for_read(ctx: ResolvedCtx, scope: str, owner_id: Optional[str] = None
         return str(gid)
     if scope == "platform":
         return guide_store.PLATFORM_OWNER
+    if scope == "tenant":
+        # Lecture : son propre tenant sans rien demander (c'est ce que le handshake
+        # injecte déjà) ; un autre tenant demande le palier plateforme.
+        from .. import roles, tenancy
+        sien = tenancy.current().tenant_of(ctx.sub)
+        if owner_id and owner_id != sien and not roles.is_platform_admin(ctx.sub):
+            raise AuthzDenied(403, "forbidden", "Réservé à l'admin plateforme.")
+        return _target_tenant(ctx, owner_id)
     raise AuthzDenied(400, "bad_scope", "scope = platform | org | group | user.")
 
 
