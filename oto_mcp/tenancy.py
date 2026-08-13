@@ -44,7 +44,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, Any
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,9 @@ class TenantIssuer:
     oauth_client_id: str = ""
     # Adresse du tableau de bord de ce tenant. Vide = la nôtre (cf. `config`).
     dashboard_url: str = ""
+    # Chemins par TYPE de lien (`links.DEFAULT_PATHS` pour les types connus).
+    # Type absent = ce tenant n'a pas cette vue ⟹ on ne rend AUCUN lien.
+    link_paths: Any = None
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -141,7 +144,7 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
     entries: dict[str, TenantIssuer] = {}
 
     def _put(slug: str, issuer, jwks_uri=None, name="", hosts=(),
-             oauth_client_id="", dashboard_url="") -> None:
+             oauth_client_id="", dashboard_url="", link_paths=None) -> None:
         iss = normalize_issuer(issuer)
         if not iss:
             return
@@ -150,7 +153,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
                                     jwks_uri=jwks or f"{iss}/jwks",
                                     name=name or "", hosts=tuple(hosts or ()),
                                     oauth_client_id=str(oauth_client_id or ""),
-                                    dashboard_url=str(dashboard_url or "").rstrip("/"))
+                                    dashboard_url=str(dashboard_url or "").rstrip("/"),
+                                    link_paths=_normalize_paths(link_paths))
 
     _put(PRIMARY_SLUG, primary_issuer)
     for drain in drain_issuers or ():
@@ -179,8 +183,23 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
              name=str((row or {}).get("name") or ""),
              hosts=normalize_hosts((row or {}).get("hosts")),
              oauth_client_id=str((row or {}).get("oauth_client_id") or ""),
-             dashboard_url=str((row or {}).get("dashboard_url") or ""))
+             dashboard_url=str((row or {}).get("dashboard_url") or ""),
+             link_paths=(row or {}).get("link_paths"))
     return entries
+
+
+def _normalize_paths(valeur) -> dict:
+    """`{type: chemin}` en forme utilisable. Une valeur illisible devient un dict VIDE,
+    donc « aucun lien » — jamais un lien construit sur une donnée qu'on n'a pas su lire."""
+    if isinstance(valeur, str):
+        try:
+            valeur = json.loads(valeur)
+        except ValueError:
+            return {}
+    if not isinstance(valeur, dict):
+        return {}
+    return {str(k): str(v) for k, v in valeur.items()
+            if isinstance(k, str) and isinstance(v, str) and v.strip()}
 
 
 def normalize_hosts(hosts) -> tuple:

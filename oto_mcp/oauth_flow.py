@@ -142,6 +142,9 @@ RETURN_APPS: dict[str, tuple[str, str]] = {
 # Défaut historique (oto-dashboard) — byte-à-byte ce que chaque `_app_url()` de
 # route callback faisait seul avant ce module.
 _DEFAULT_RETURN_BASE_ENV = "OTO_APP_URL"
+# Une redirection doit TOUJOURS aboutir : sans patron chez le tenant, on sert la
+# nôtre (cf. `links.redirect_for`). Voir notre marque une fois vaut mieux qu'une page
+# blanche au milieu d'une connexion.
 _DEFAULT_RETURN_BASE_FALLBACK = config.dashboard_url()
 _DEFAULT_RETURN_PATH = "/connectors"
 

@@ -116,14 +116,16 @@ def _new_id() -> str:
     return str(uuid.UUID(int=raw))
 
 
-def _ns_url(ns_id: int, sub: Optional[str] = None) -> str:
+def _ns_url(ns_id: int, sub: Optional[str] = None) -> Optional[str]:
     """Deep-link vers la vue datastore du dashboard (surface d'édition canonique
     tant que l'export tiers — otomata#29 — n'existe pas). Par ID (`/data/<id>`,
     BIGSERIAL stable au renommage) — l'adressage `?ns=<nom>` est déprécié.
 
-    ⚠️ L'adresse suit le TENANT du compte : servir la nôtre à l'utilisateur d'un
-    partenaire lui propose un produit qui n'est pas le sien (vécu le 13/08)."""
-    return f"{config.dashboard_url_for(sub)}/data/{int(ns_id)}"
+    ⚠️ **Peut valoir `None`** : le produit d'un partenaire n'a pas forcément de vue
+    tableau (celui du 13/08 n'en a aucune). On ne rend alors AUCUN lien — un lien mort
+    ne se diagnostique pas, il se subit."""
+    from . import links
+    return links.link_for("table", sub=sub, id=int(ns_id))
 
 
 class NamespaceNotFound(Exception):

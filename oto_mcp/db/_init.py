@@ -131,6 +131,12 @@ def _init_db_once() -> None:
         # portaient notre domaine : un client d'un partenaire recevait des liens vers
         # un produit qui n'est pas le sien. NULL = les nôtres.
         conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS dashboard_url TEXT")
+        # (lot L3) Les CHEMINS de ce tenant, par type de lien — `{"doc": "/network/
+        # {org}/knowledge/{id}", …}`. Une adresse ne suffit pas : les chemins d'un
+        # partenaire ne ressemblent pas aux nôtres, et certaines de nos vues n'ont
+        # aucun équivalent chez lui. Type absent = AUCUN lien de ce type (cf. `links`).
+        conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS link_paths JSONB "
+                     "NOT NULL DEFAULT '{}'::jsonb")
         # #117 — discriminant PAR APPEL. Trois colonnes nullables : rien à réécrire sur
         # une table volumineuse (une colonne sans défaut ne touche pas les lignes
         # existantes), et les lignes d'avant restent lisibles avec des NULL — elles

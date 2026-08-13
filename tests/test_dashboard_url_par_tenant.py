@@ -97,17 +97,20 @@ def test_un_registre_illisible_ne_casse_aucun_lien(env_propre, monkeypatch):
 
 # --- les surfaces qui rendent ces liens ----------------------------------------
 
-def test_le_lien_dun_tableau_suit_le_tenant(registre, env_propre):
-    """LE lien de la capture du 13/08."""
+def test_une_adresse_seule_ne_suffit_pas_a_faire_un_lien(registre, env_propre):
+    """⚠️ Ce test affirmait l'inverse jusqu'au 13/08 — il collait NOS chemins sous
+    LEUR domaine. Le code du partenaire a montré que ça fabrique des liens morts :
+    ses chemins ne ressemblent pas aux nôtres, et il n'a aucune vue tableau.
+
+    Une adresse ne suffit donc plus : il faut un patron par type (`links`). Sans
+    patron, aucun lien — c'est le sujet de `test_links_par_tenant.py`."""
     from oto_mcp.datastore import _ns_url
-    assert _ns_url(203, "acme:u-1") == "https://app.acme.test/data/203"
-    assert _ns_url(203, "bn01jfy76a5n") == f"{config.dashboard_url()}/data/203"
-
-
-def test_le_lien_public_dune_page_suit_le_tenant(registre, env_propre):
-    """Celui-ci part chez des TIERS : c'est la vitrine la plus visible de la marque."""
     from oto_mcp.capabilities.docs import _public_doc_url
-    assert _public_doc_url("tok", "acme:u-1") == "https://app.acme.test/p/d/tok"
+    assert _ns_url(203, "acme:u-1") is None
+    assert _public_doc_url("tok", "acme:u-1") is None
+    # Nous, inchangés.
+    assert _ns_url(203, "bn01jfy76a5n") == f"{config.dashboard_url()}/data/203"
+    assert _public_doc_url("tok", "bn01jfy76a5n") == f"{config.dashboard_url()}/p/d/tok"
 
 
 def test_aucune_adresse_de_tableau_de_bord_nest_ecrite_en_dur():

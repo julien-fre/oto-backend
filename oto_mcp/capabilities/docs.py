@@ -81,11 +81,14 @@ def _notify_cr_resolved(cr: dict, accepted: bool) -> None:
         logger.warning("notify CR resolved (#%s) failed: %s", cr.get("id"), e)
 
 
-def _public_doc_url(token: str, sub: Optional[str] = None) -> str:
-    """Lien public d'un doc partagé (gap #4a) — pointe sur la route publique du
-    dashboard qui rend le markdown. Suit le tenant de celui qui partage : le lien
-    part chez des tiers, c'est la vitrine la plus visible de la marque."""
-    return f"{_dash_url(sub)}/p/d/{token}"
+def _public_doc_url(token: str, sub: Optional[str] = None) -> Optional[str]:
+    """Lien public d'un doc partagé (gap #4a). Suit le tenant de celui qui partage :
+    ce lien part chez des TIERS, c'est la vitrine la plus visible de la marque.
+
+    `None` si le produit du partenaire n'a pas de page publique — la page reste
+    partagée, elle n'a simplement pas d'adresse à sa marque."""
+    from .. import links
+    return links.link_for("public_doc", sub=sub, token=token)
 
 
 class DocInput(BaseModel):
