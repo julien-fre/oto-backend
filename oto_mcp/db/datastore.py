@@ -487,6 +487,42 @@ def field_value_sql(key: str) -> str:
 # matcher son index à la chaîne près.
 FIELD_VALUE_PARAM_SQL = "COALESCE(data->%s->>'valeur', data->>%s)"
 
+# Les COUCHES adressables d'une colonne (#318). `valeur` n'en fait pas partie : elle
+# EST la colonne, on l'atteint par son nom nu — c'est ce qui garde le contrat de
+# lecture inchangé pour tout l'existant.
+LAYER_KEYS = ("source", "origine", "commentaire")
+
+# Lire une couche : `data->%s->>%s` (base, couche). Pas de COALESCE — une couche n'a
+# pas de forme plate à laquelle retomber : sur une colonne scalaire elle est NULL, et
+# c'est la bonne réponse (« cette valeur n'a pas de source » est justement la question
+# qu'on veut pouvoir poser).
+LAYER_VALUE_PARAM_SQL = "data->%s->>%s"
+
+
+def split_layer(field: str) -> tuple:
+    """`email.source` → `("email", "source")` ; `email` → `("email", None)`.
+
+    Ne coupe qu'au DERNIER point, et seulement si le suffixe est une couche connue :
+    un champ légitimement nommé `taux.2024` reste un nom de colonne entier. Le
+    vocabulaire est FERMÉ, donc l'ambiguïté est décidable — pas de devinette."""
+    base, sep, last = str(field).rpartition(".")
+    if sep and base and last in LAYER_KEYS:
+        return base, last
+    return str(field), None
+
+
+def field_read_sql(field: str) -> tuple:
+    """`(fragment SQL, paramètres)` pour lire ce que l'appelant a désigné.
+
+    Un nom nu lit la VALEUR (plate ou à couches) ; `champ.source` lit la couche.
+    Les deux se filtrent, se trient et s'agrègent pareil — c'est ce qui rend
+    « toutes les lignes dont l'email n'a pas de source » exprimable, et donc la
+    provenance vérifiable au lieu de décorative."""
+    base, layer = split_layer(field)
+    if layer:
+        return LAYER_VALUE_PARAM_SQL, [base, layer]
+    return FIELD_VALUE_PARAM_SQL, [base, base]
+
 
 def bkey_index_expr(key: str) -> str:
     """Expression indexée pour la clé métier — LA MÊME que celle du lookup.
@@ -852,8 +888,9 @@ def _ds_filter_clauses(filters: Optional[list]) -> tuple[list[str], list]:
         # (un `%s` par branche du COALESCE) — d'où `fp` plutôt que `field` répété à
         # la main, qui est l'endroit exact où un décalage de paramètres se glisse.
         else:
-            V = FIELD_VALUE_PARAM_SQL
-            fp = [field, field]
+            # Nom nu → la valeur ; `champ.source` → la couche. Une seule décision,
+            # ici, dont toutes les branches héritent.
+            V, fp = field_read_sql(field)
             if op == "empty":
                 clauses.append(f"({V} IS NULL OR {V} = '')")
                 params.extend(fp + fp)
@@ -929,7 +966,8 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
     elif order_by == "_id":
         order_sql = f"row_id {direction}"
     else:
-        order_sql = f"{FIELD_VALUE_PARAM_SQL} {direction}, row_id {direction}"
+        _v, _vp = field_read_sql(order_by)
+        order_sql = f"{_v} {direction}, row_id {direction}"
         params.append(order_by)  # valeur paramétrée → pas d'injection
     tail = ""
     if limit is not None:
@@ -996,8 +1034,9 @@ def _build_aggregate(ns_id: int, group_by: Optional[str], metrics: Optional[list
     metrics = metrics or [{"op": "count"}]
     select, sparams, names = [], [], []  # noms lisibles alignés sur les alias mN
     if group_by:
-        select.append(f"{FIELD_VALUE_PARAM_SQL} AS grp")
-        sparams.extend([group_by, group_by])
+        _v, _vp = field_read_sql(group_by)
+        select.append(f"{_v} AS grp")
+        sparams.extend(_vp)
     for i, m in enumerate(metrics):
         op = str(m.get("op", "")).lower()
         field = m.get("field")
@@ -1006,16 +1045,18 @@ def _build_aggregate(ns_id: int, group_by: Optional[str], metrics: Optional[list
             select.append(f"COUNT(*) AS {alias}")
             names.append((alias, "count"))
         elif op == "count":
-            select.append(f"COUNT({FIELD_VALUE_PARAM_SQL}) AS {alias}")
-            sparams.extend([field, field])
+            _v, _vp = field_read_sql(field)
+            select.append(f"COUNT({_v}) AS {alias}")
+            sparams.extend(_vp)
             names.append((alias, f"count_{field}"))
         elif op in ("sum", "avg", "min", "max"):
             if not field:
                 raise ValueError(f"agrégat: op '{op}' exige un `field`")
+            _v, _vp = field_read_sql(field)
             select.append(
-                f"{op.upper()}(CASE WHEN {FIELD_VALUE_PARAM_SQL} ~ %s "
-                f"THEN ({FIELD_VALUE_PARAM_SQL})::numeric END) AS {alias}")
-            sparams.extend([field, field, _NUMERIC_RE, field, field])
+                f"{op.upper()}(CASE WHEN {_v} ~ %s "
+                f"THEN ({_v})::numeric END) AS {alias}")
+            sparams.extend(_vp + [_NUMERIC_RE] + _vp)
             names.append((alias, f"{op}_{field}"))
         else:
             raise ValueError(f"agrégat: op inconnu {op!r} (count|sum|avg|min|max)")
