@@ -795,7 +795,8 @@ def _init_db_once() -> None:
         # jointure ne rend rien et la page reste orpheline jusqu'au boot suivant.
         # Un arbre à moitié posé, qu'aucune erreur ne signale.
         if conn.execute("SELECT to_regclass('projects') AS t").fetchone()["t"]:
-            from .nodes import convert_docs, convert_projects, convert_tables
+            from .nodes import (convert_docs, convert_projects, convert_rows,
+                                convert_tables)
             convert_projects(conn)
             if conn.execute("SELECT to_regclass('docs') AS t").fetchone()["t"]:
                 convert_docs(conn)
@@ -813,11 +814,33 @@ def _init_db_once() -> None:
             # place d'un tableau vivra dans `nodes`, et cette conversion n'aura
             # plus d'objet.
             #
-            # ⚠️ Les LIGNES (`datastore_rows`) ne bougent pas : lot M4, le volume,
-            # en dernier (0063-D4). Le bail de la file de travail non plus.
+            # === Lot M4 (#308) : les LIGNES → nœuds-lignes ===
+            # Le volume, en dernier (0063-D4) : 43 584 lignes, soixante fois tout le
+            # reste du contenu réuni. Sous le MÊME garde que les tableaux, et
+            # immédiatement APRÈS eux — une ligne se rattache au nœud de son tableau
+            # par une jointure interne, donc un tableau non encore converti fait
+            # simplement disparaître ses lignes de la projection de ce boot-ci.
+            #
+            # ⚠️ Le **bail** de la file de travail ne bouge toujours pas : il vit sur
+            # `datastore_rows`, qui reste la table de vérité jusqu'à la bascule de
+            # lecture (0063-D3). La projection ne le copie pas — un bail change sans
+            # passer par un boot, une colonne projetée mentirait entre deux.
             if conn.execute(
                     "SELECT to_regclass('user_datastores') AS t").fetchone()["t"]:
                 convert_tables(conn)
+                convert_rows(conn)
+                # L'index d'ownership NU cède la place au partiel posé par `_SCHEMA`
+                # juste avant (`idx_nodes_owner_scoped`) — sans ce DROP, la base
+                # porterait les DEUX et paierait quand même le volume, ce qui vide
+                # le lot M-f de son objet. Après la conversion et pas avant : c'est
+                # l'ordre qui rend le remplacement invisible en production.
+                #
+                # Sûr malgré la base partagée avec la prod (docs/live-migrations.md) :
+                # la seule requête qui l'utilisait porte `kind = 'page'`, donc le
+                # partiel la couvre — vérifié au plan, pas supposé. L'autre lecture
+                # d'ownership de `nodes` (`db/aux_embed`) joint par clé primaire et
+                # ne s'en sert pas.
+                conn.execute("DROP INDEX IF EXISTS idx_nodes_owner")
         # === Lot L5 (blueprint ADR 0053) : les grants de clé plateforme deviennent
         # === des ARÊTES, un connecteur à la fois.
         # EN FIN DE TRANSACTION, comme les conversions M2/M3 et pour la même raison :

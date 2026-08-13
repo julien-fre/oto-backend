@@ -1059,7 +1059,24 @@ CREATE TABLE IF NOT EXISTS nodes (
 -- vivier, ces GIN pèsent 99 % du temps d'écriture (banc M0). Le décider avant
 -- serait le calibrer sur une population qui n'existe pas.
 CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
-CREATE INDEX IF NOT EXISTS idx_nodes_owner ON nodes(owner_type, owner_id);
+-- ⚠️ L'ownership est PARTIEL depuis le lot M4 (#308), et l'exclusion des lignes est
+-- tout l'intérêt : 0054-D4 dit qu'une ligne n'a pas de propriétaire propre, elle a
+-- celui de son tableau. « Que possède cet acteur ? » ne se demande donc jamais d'une
+-- ligne — l'index nu répondait 43 584 fois à une question posée quelques milliers de
+-- fois, et se serait alourdi de chaque ligne créée depuis.
+--
+-- Mesuré sur la base peuplée à l'échelle de la production (12/08) : **16 kB contre
+-- 312 kB**, et le planner l'utilise bel et bien pour la seule requête d'ownership de
+-- `nodes` (`db/guides.py`), qui porte `kind = 'page'` — PostgreSQL sait prouver que
+-- `kind = 'page'` implique `kind <> 'ligne'`.
+--
+-- ⚠️ **Le corollaire est une contrainte pour la suite** : une requête d'ownership
+-- sans prédicat de genre NE PEUT PAS l'utiliser (vérifié : elle retombe en parcours
+-- séquentiel). Toute nouvelle lecture par propriétaire sur `nodes` doit donc porter
+-- son genre — ce qu'elle veut de toute façon dire, puisqu'on cherche des pages, des
+-- guides ou des tableaux, jamais « tout ce que possède cet acteur, lignes comprises ».
+CREATE INDEX IF NOT EXISTS idx_nodes_owner_scoped ON nodes(owner_type, owner_id)
+    WHERE kind <> 'ligne';
 
 -- BLOCS (blueprint ADR 0054-D2 + 0063-D2, lot M2) — le corps d'un nœud est une
 -- SÉQUENCE DE BLOCS STOCKÉS, pas un markdown qu'on reparserait à chaque lecture.

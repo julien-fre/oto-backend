@@ -289,10 +289,20 @@ def test_every_converted_table_gets_a_rank(live):
 
 # ── ce que le lot NE touche pas ──────────────────────────────────────────────
 
-def test_the_rows_do_not_move(live):
-    """⚠️ `datastore_rows` est le lot M4 — le volume, en dernier, quand on a appris
-    sur trois types plus simples (0063-D4). Ce lot ne convertit que les CONTENEURS :
-    aucune ligne ne devient un nœud, et les lignes restent où elles sont."""
+def test_this_lot_converts_containers_not_rows(live):
+    """⚠️ **La frontière entre M3 et M4**, et elle a bougé le 12/08 : les lignes sont
+    désormais converties, mais par un lot DISTINCT (#308) et dans une famille
+    distincte (`row`). Ce que M3 garantit reste ce qu'il a toujours garanti — un
+    tableau produit UN nœud-conteneur, pas un par ligne.
+
+    Le test le vérifie donc par la FAMILLE plutôt que par l'absence d'enfants : la
+    conversion des tableaux ne doit jamais fabriquer un nœud `tbl` de plus que de
+    tableaux, quel que soit le nombre de lignes qu'ils portent. Écrit autrement, il
+    redeviendrait faux au premier lot suivant.
+
+    Et les lignes SOURCES ne bougent toujours pas : la projection est en lecture
+    seule sur `datastore_rows`, ce qui est ce qui permet à la prod de tourner
+    l'ancien code sur cette même base."""
     from oto_mcp.db import create_datastore_namespace, datastore_upsert_row
 
     ns = create_datastore_namespace("org", "42", "avec-des-lignes")
@@ -301,11 +311,13 @@ def test_the_rows_do_not_move(live):
     live()
 
     assert len(_rows("SELECT 1 FROM datastore_rows WHERE ns_id = %s", (ns,))) == 2
-    # UN seul nœud pour ce tableau : le conteneur. Pas trois.
+    # UN seul nœud de la famille `tbl` pour ce tableau : le conteneur. Pas trois.
     assert len(_rows("SELECT 1 FROM nodes WHERE props->>'legacy' = 'tbl' "
                      "AND (props->>'legacy_id')::bigint = %s", (ns,))) == 1
-    assert _rows("SELECT 1 FROM nodes WHERE parent_id = %s",
-                 (_node_of_table(ns)["id"],)) == []
+    # Ses enfants sont des nœuds-LIGNES (lot M4), jamais des tableaux.
+    enfants = _rows("SELECT props->>'legacy' AS famille FROM nodes WHERE parent_id = %s",
+                    (_node_of_table(ns)["id"],))
+    assert {e["famille"] for e in enfants} == {"row"}, enfants
 
 
 def test_the_work_queue_lease_does_not_move(live):

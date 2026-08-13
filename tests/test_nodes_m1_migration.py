@@ -56,8 +56,27 @@ def test_owner_id_is_text_because_a_user_owner_is_a_sub():
 
 
 def test_exactly_two_query_indexes_in_the_schema():
-    """L'arbre et le propriétaire (0063-D3 garde-fou 2). Les deux index partiels de
-    M-f (ownership d'une ligne, prédicat du bail) appartiennent à M4.
+    """L'arbre et le propriétaire (0063-D3 garde-fou 2) — **toujours deux, et c'est
+    le nombre qui est gardé ici**, pas leur forme.
+
+    ⚠️ L'ownership est PARTIEL depuis le lot M4 (#308) : `WHERE kind <> 'ligne'`. Ce
+    n'est pas un assouplissement du garde-fou mais son application — 0054-D4 dit
+    qu'une ligne n'a pas de propriétaire propre, donc « que possède cet acteur ? » ne
+    se demande jamais d'une ligne, et l'index nu répondait 43 584 fois à une question
+    posée quelques milliers de fois (mesuré : 16 kB contre 312).
+
+    L'autre index de M-f, celui du **prédicat du bail**, n'est toujours pas là — et
+    pas par oubli : `NOW()` n'étant pas IMMUTABLE, la forme partielle que prescrit le
+    banc M0 est illégale, et les deux formes légales mesurées n'accélèrent rien
+    (l'une est même un peu pire, l'autre inutilisable par la requête actuelle).
+
+    Sa place est **la bascule de lecture, pas M4** : le chemin de claim vit encore
+    sur `datastore_rows`, donc l'index et la réécriture qui le rendrait utile se
+    tranchent ensemble, le jour où la file change de table. Ce qui reste à arbitrer
+    d'ici là est un contrat de surface, pas un index — toute forme utile change
+    l'ordre observable de `data_claim_next`, sauf à relâcher les baux expirés au fil
+    du claim pour que `claimed_until IS NULL` (immuable, donc indexable en partiel)
+    redevienne le prédicat complet.
 
     Les index de RECHERCHE, eux, ont quitté l'interdit en fermant #282 — mais ils ne
     sont pas ici : leur expression est construite par `db/search.py` (source unique
@@ -65,7 +84,11 @@ def test_exactly_two_query_indexes_in_the_schema():
     idx = re.findall(r"CREATE (?:UNIQUE )?INDEX IF NOT EXISTS (\w+) ON nodes\(([^)]*)\)",
                      _SCHEMA_SRC)
     assert idx == [("idx_nodes_parent", "parent_id"),
-                   ("idx_nodes_owner", "owner_type, owner_id")], idx
+                   ("idx_nodes_owner_scoped", "owner_type, owner_id")], idx
+    assert re.search(r"idx_nodes_owner_scoped[^;]*WHERE kind <> 'ligne'",
+                     _SCHEMA_SRC, re.S), (
+        "l'index d'ownership doit rester PARTIEL : sans son prédicat, il se remet à "
+        "indexer chaque ligne de tableau — le coût que le lot M4 a précisément retiré.")
     assert not re.search(r"ON nodes\s+USING", _SCHEMA_SRC, re.I), (
         "un index GIN d'expression posé à la main dans _schema.py : son expression "
         "diverge alors de celle de la requête (elles ne peuvent plus venir du même "

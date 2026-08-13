@@ -624,3 +624,196 @@ def convert_tables(conn) -> None:
     conn.execute(RECONCILE_TABLE_NODES_SQL)
     conn.execute(PURGE_TABLE_NODES_SQL)
     _place_table_nodes(conn)
+
+
+# ══ Lot M4 — les LIGNES de tableau (#308) ════════════════════════════════════
+#
+# Le dernier lot de conversion, et le seul qui porte du VOLUME : 43 584 lignes en
+# production contre quelques centaines de nœuds pour tout le reste réuni. Les trois
+# lots précédents ont établi le patron sur des populations où une maladresse ne se
+# voyait pas ; ici, chaque geste est multiplié par soixante.
+#
+# Ce que ce lot NE fait pas, et qui n'est pas un oubli :
+#
+# - **Le bail ne bouge pas.** `claimed_by`/`claimed_until` restent lus et écrits sur
+#   `datastore_rows`, qui demeure la table de vérité jusqu'à la bascule (0063-D3).
+#   La projection ne les COPIE même pas : un bail est volatile (il change à chaque
+#   réservation, sans passer par un boot), donc un bail projeté serait périmé dans la
+#   seconde. Une colonne vide est un manque visible ; une colonne qui ment ne l'est
+#   pas. Le backfill appartient à la bascule, qui saura le faire dans la même
+#   transaction que le basculement du lecteur.
+# - **La recherche des lignes ne bouge pas** : le FTS des lignes reste l'index de
+#   `datastore_rows` (`db/search.DATASTORE_ROWS_TEXT`). C'est ce qui commande de loger
+#   la donnée sous `props->'data'` **et pas** dans `title`/`body_md` : `NODES_TEXT`
+#   n'indexe que ces clés-là, donc les deux GIN de `nodes` restent INERTES pour les
+#   lignes. Ce n'est pas une économie de bout de chandelle — le banc M0 les chiffre à
+#   **99 % du temps d'écriture d'un vivier** et à deux fois le poids de la table
+#   qu'ils indexent. Les faire mordre ici doublerait le coût de toute écriture de
+#   ligne, pour une recherche que personne ne lirait avant M5.
+_FAMILY_ROW = "row"
+
+# Le genre d'une ligne. **Le mot est déjà celui de la recherche** (`oto_search` rend
+# `kind='ligne'` pour le contenu d'un tableau depuis #67 V2.1) : le prendre ici évite
+# qu'un même objet porte deux noms selon la surface qui le regarde.
+_KIND_ROW = "ligne"
+
+# ⚠️ **La clé legacy d'une ligne est COMPOSITE** — c'est le fait qui commande tout ce
+# bloc, et il n'a pas d'équivalent dans les lots M1/M2/M3. `datastore_rows` a pour clé
+# primaire `(ns_id, row_id)` et **aucune colonne `id`** : il n'existe donc pas de
+# bigint à dériver, et `(n.props->>'legacy_id')::bigint` — la jointure de purge des
+# trois lots précédents — n'a ici aucun sens (le cast tomberait sur un `row_id`
+# textuel, uuid7 en production). La famille garde donc DEUX clés, `legacy_ns` et
+# `legacy_row`, et la purge joint sur les deux.
+#
+# `ns_id` est un entier : il ne contient pas de `:`, donc le premier séparateur de la
+# chaîne dérivée découpe sans ambiguïté quelle que soit la forme de `row_id`. Deux
+# lignes distinctes ne peuvent pas produire le même identifiant public.
+_ROW_LEGACY_KEY = "r.ns_id::text || ':' || r.row_id"
+
+_ROW_PROPS_KEYS = "'{legacy,legacy_ns,legacy_row,data}'::text[]"
+
+# Le parent ET le propriétaire viennent du **nœud-tableau**, pas de `user_datastores`.
+# Une seule jointure pour les deux, et c'est délibéré : 0054-D4 dit qu'une ligne
+# hérite de son tableau, donc lire l'ownership ailleurs que sur le nœud parent, c'est
+# se ménager la possibilité que les deux divergent. Ils ne peuvent pas diverger s'ils
+# ont une seule source.
+#
+# ⚠️ Une ligne dont le tableau n'a pas de nœud n'est pas convertie (jointure interne).
+# Le cas est transitoire par construction — `convert_tables` tourne juste avant, dans
+# la même transaction — et se rattrape au boot suivant. C'est l'ordre déjà exigé par
+# les pages et les tableaux, pour la même raison.
+_ROW_PLACE_JOIN = f"""
+      JOIN nodes tbl ON tbl.public_id = {_public_id_sql(_FAMILY_TABLE, 'r.ns_id')}
+"""
+
+# Même arbitre que M3 — le CONTENU, faute d'un `updated_at` fiable à comparer. Ici
+# `datastore_rows` en a bien un, mais le newer-wins reste le mauvais outil : la
+# fusion additive `(props - clés) || EXCLUDED.props` doit aussi rattraper un
+# `props->'data'` que la projection aurait écrit de travers, ce qu'un test de date ne
+# voit pas. Le rejeu reste intégralement no-op, `updated_at` compris.
+CONVERT_ROWS_TO_NODES_SQL = f"""
+    INSERT INTO nodes (public_id, kind, owner_type, owner_id, parent_id, props,
+                       created_at, updated_at)
+    SELECT {_public_id_sql(_FAMILY_ROW, _ROW_LEGACY_KEY)},
+           '{_KIND_ROW}', tbl.owner_type, tbl.owner_id, tbl.id,
+           jsonb_build_object(
+               'legacy', '{_FAMILY_ROW}', 'legacy_ns', r.ns_id,
+               'legacy_row', r.row_id, 'data', r.data),
+           r.created_at, r.updated_at
+      FROM datastore_rows r {_ROW_PLACE_JOIN}
+    ON CONFLICT ON CONSTRAINT nodes_public_id_key DO UPDATE SET
+        props = (nodes.props - {_ROW_PROPS_KEYS}) || EXCLUDED.props,
+        updated_at = NOW()
+     WHERE ((nodes.props - {_ROW_PROPS_KEYS}) || EXCLUDED.props)
+           IS DISTINCT FROM nodes.props
+"""
+
+# Réconciliation STRUCTURELLE : un tableau qu'on range dans un projet, ou qu'on
+# transfère, change le propriétaire de ses lignes sans qu'aucune ligne ne soit
+# réécrite — `datastore_rows` ne bouge pas d'un octet. Sans cet UPDATE, les lignes
+# garderaient l'ownership du premier boot pour toujours.
+#
+# Le rang est annulé quand le parent change, même règle qu'en M3 : une position ne
+# veut rien dire hors de sa fratrie. `_place_row_nodes` le reprend juste après.
+RECONCILE_ROW_NODES_SQL = f"""
+    UPDATE nodes n
+       SET owner_type = tbl.owner_type, owner_id = tbl.owner_id, parent_id = tbl.id,
+           position = CASE WHEN n.parent_id IS DISTINCT FROM tbl.id
+                           THEN NULL ELSE n.position END
+      FROM datastore_rows r {_ROW_PLACE_JOIN}
+     WHERE n.public_id = {_public_id_sql(_FAMILY_ROW, _ROW_LEGACY_KEY)}
+       AND (n.owner_type, n.owner_id, n.parent_id)
+           IS DISTINCT FROM (tbl.owner_type, tbl.owner_id, tbl.id)
+"""
+
+# La purge, bornée à SA famille comme aux trois lots précédents — et c'est ELLE qui
+# porte l'intégrité de l'arbre, puisque `parent_id` n'a pas de clé étrangère
+# (arbitrage M-e, tranché : « je n'aime pas que de la logique soit dans la base »).
+#
+# Elle couvre les DEUX façons dont une ligne peut cesser d'exister :
+#   1. la ligne est supprimée → plus de `datastore_rows` correspondante ;
+#   2. le TABLEAU entier est supprimé → `datastore_rows` part en cascade (clé
+#      étrangère `ns_id`), donc le cas 1 s'applique à chacune de ses lignes.
+# Sans clé étrangère sur `parent_id`, rien ne supprime les nœuds-lignes quand le
+# nœud-tableau disparaît : ce DELETE est le seul garant, et c'est pourquoi il est
+# testé sur le cas orphelin explicitement (`test_nodes_m4_rows.py`).
+#
+# Ce que la clé étrangère aurait coûté, mesuré au banc M0 : **+36 %** sur chaque
+# écriture de masse (contrôle par ligne, à vie), et **×118** à la suppression d'un
+# tableau — 75 secondes de verrou sur un vivier, parce que la cascade cherche les
+# enfants de chacun des 45 000 enfants. Le prix d'un DELETE au boot est sans commune
+# mesure.
+PURGE_ROW_NODES_SQL = f"""
+    DELETE FROM nodes n
+     WHERE n.props->>'legacy' = '{_FAMILY_ROW}'
+       AND NOT EXISTS (
+           SELECT 1 FROM datastore_rows r
+            WHERE r.ns_id = (n.props->>'legacy_ns')::bigint
+              AND r.row_id = n.props->>'legacy_row')
+"""
+
+# ⚠️ **Le placement est ENSEMBLISTE ici, alors qu'il est ligne à ligne en M3** — et
+# c'est le seul endroit où ce lot s'écarte du patron qu'il suit par ailleurs.
+#
+# `_place_table_nodes` boucle en Python et appelle `place_at_end` par nœud : un
+# `SELECT` du dernier frère puis un `UPDATE`, deux allers-retours par nœud. Sur 83
+# tableaux, c'est instantané et parfaitement lisible. Sur 43 584 lignes, le même
+# geste a été mesuré (conteneur jetable peuplé à l'échelle, 12/08) à **297 s
+# extrapolées**, contre **0,66 s** pour l'UPDATE unique ci-dessous — un facteur
+# **449**. Et le chiffre est un PLANCHER : le banc tourne sur un PostgreSQL local,
+# quand la production parle à une base managée à travers le réseau, où 87 000
+# allers-retours se paient une deuxième fois.
+#
+# La sémantique, elle, est identique à `place_at_end` : chaque nœud se range APRÈS le
+# dernier frère déjà placé (`base`), aucun rang existant ne bouge, et l'écart nominal
+# est le même `POSITION_GAP`. L'ordre d'arrivée est l'ordre de création, `public_id`
+# départageant les ex æquo — un tri TOTAL, donc un arbre stable d'un boot à l'autre
+# (`created_at` seul ne l'est pas : une insertion en masse partage l'horodatage).
+#
+# Rejouable pour la même raison qu'en M3 : un nœud placé a un rang, donc sort du
+# `WHERE`. En régime établi, ce pas est une requête qui ne rend rien.
+PLACE_ROW_NODES_SQL = f"""
+    WITH base AS (
+        SELECT parent_id, MAX(position) AS max_pos
+          FROM nodes
+         WHERE parent_id IS NOT NULL AND position IS NOT NULL
+         GROUP BY parent_id
+    ),
+    ranked AS (
+        SELECT n.id,
+               COALESCE(b.max_pos, 0)
+               + row_number() OVER (PARTITION BY n.parent_id
+                                    ORDER BY n.created_at, n.public_id)
+                 * {POSITION_GAP} AS pos
+          FROM nodes n
+          LEFT JOIN base b ON b.parent_id = n.parent_id
+         WHERE n.props->>'legacy' = '{_FAMILY_ROW}' AND n.position IS NULL
+    )
+    UPDATE nodes n SET position = ranked.pos
+      FROM ranked WHERE n.id = ranked.id
+"""
+
+
+def convert_rows(conn) -> None:
+    """Lignes de tableau → nœuds-lignes : contenu, structure, purge, puis les rangs.
+
+    ⚠️ L'ORDRE avec `convert_tables` compte, et plus durement qu'ailleurs : une ligne
+    se rattache au NŒUD de son tableau, et la jointure est INTERNE — si le nœud-tableau
+    n'existe pas encore, la ligne n'est pas convertie du tout (au lieu d'atterrir au
+    mauvais endroit, comme une page l'aurait fait). L'écart se rattrape au boot
+    suivant, mais un `convert_rows` appelé avant `convert_tables` ne convertirait
+    jamais rien sur une base neuve.
+
+    **Coût mesuré du premier boot** (conteneur jetable à l'échelle de la production,
+    43 584 lignes / 83 tableaux) : de l'ordre de la **seconde**, là où l'extrapolation
+    naïve depuis M2 annonçait 45 s — le brief #308 en faisait, à raison, le risque
+    principal du lot. Deux raisons à l'écart : le travail est ENSEMBLISTE (quatre
+    requêtes, pas 43 584), et les deux GIN de recherche de `nodes` restent inertes
+    faute de `title`/`body_md` sur ces nœuds. La projection reste donc bloquante au
+    boot, comme les trois lots précédents ; la rendre reprenable par tranches aurait
+    ajouté un curseur, un état à réconcilier et un mode dégradé pour rien.
+    """
+    conn.execute(CONVERT_ROWS_TO_NODES_SQL)
+    conn.execute(RECONCILE_ROW_NODES_SQL)
+    conn.execute(PURGE_ROW_NODES_SQL)
+    conn.execute(PLACE_ROW_NODES_SQL)
