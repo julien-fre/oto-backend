@@ -509,6 +509,42 @@ LAYER_KEYS = ("source", "origine", "commentaire")
 LAYER_VALUE_PARAM_SQL = "data->%s->>%s"
 
 
+# Le blob RECONSTRUIT avec les valeurs à la place des enveloppes — pour tout ce qui
+# lit la ligne entière en texte : recherche plein-texte, extrait, embedding sémantique.
+#
+# Sans ça, une colonne à couches ferait entrer sa provenance dans le texte cherché :
+# `q=hunter` matcherait toute ligne dont un email VIENT de Hunter, et l'embedding
+# porterait la source au même titre que le contenu. Ce n'est pas une casse — c'est
+# une pollution, et elle est indétectable depuis le résultat.
+#
+# ⚠️ On reconstruit un JSONB puis on le sérialise, plutôt que de concaténer les
+# valeurs : le texte produit est alors IDENTIQUE À L'OCTET à `data::text` sur une
+# ligne plate — c'est-à-dire sur les 43 782 lignes existantes et sur tout ce qui
+# n'aura jamais de couches. Une concaténation aurait changé la forme (ponctuation
+# JSON perdue), donc le résultat de recherches en sous-chaîne, pour tout le monde.
+_ROW_VALUES_REBUILD_SQL = (
+    "COALESCE((SELECT jsonb_object_agg(k, CASE"
+    " WHEN jsonb_typeof(v) = 'object' AND v ? '" + VALUE_LAYER + "'"
+    " THEN v->'" + VALUE_LAYER + "' ELSE v END)"
+    " FROM jsonb_each(data) AS _e(k, v)), data)::text"
+)
+
+# ⚠️ GARDÉ, et la garde vient d'une mesure, pas d'une intuition. Reconstruire le blob
+# pour chaque ligne scannée coûte ×6,4 ; le faire seulement quand la ligne PORTE une
+# couche ramène à ×1,5 sur une table sans couches — c'est-à-dire sur la totalité de
+# l'existant. Le coût suit donc l'usage : il n'arrive qu'avec la fonctionnalité.
+#
+# Mesuré sur 50 000 lignes, 7 colonnes (PG 17) :
+#     data::text nu ............  78 ms    projection systématique ...  498 ms  ×6,4
+#     garde jsonpath ..........  113 ms    garde par sous-chaîne .....  150 ms  ×1,9
+# Le pire cas (toutes les lignes à couches) revient à ×7 quelle que soit la variante —
+# c'est le prix du service rendu, pas un défaut de la garde.
+ROW_VALUES_TEXT_SQL = (
+    "CASE WHEN jsonb_path_exists(data, '$.*." + VALUE_LAYER + "')"
+    " THEN " + _ROW_VALUES_REBUILD_SQL + " ELSE data::text END"
+)
+
+
 def split_layer(field: str) -> tuple:
     """`email.source` → `("email", "source")` ; `email` → `("email", None)`.
 
@@ -948,7 +984,8 @@ def _ds_where(ns_id: int, q: Optional[str], filters: Optional[list]) -> tuple[st
         # (matching partiel conservé, choix de la file feed) — l'alignement en tsquery
         # tokenisée est un arbitrage distinct.
         from .projects import _fold  # lazy : projects importe datastore (évite le cycle)
-        where += f" AND {_fold('data::text')} ILIKE '%%' || {_fold('%s')} || '%%'"
+        where += (f" AND {_fold(ROW_VALUES_TEXT_SQL)} ILIKE"
+                  f" '%%' || {_fold('%s')} || '%%'")
         params.append(q)
     fclauses, fparams = _ds_filter_clauses(filters)
     for c in fclauses:

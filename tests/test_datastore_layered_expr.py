@@ -99,3 +99,55 @@ def test_a_hostile_field_name_stays_inside_a_literal():
     out = dsdb.field_value_sql("x'; DROP TABLE datastore_rows; --").as_string(None)
     assert "''; DROP TABLE" in out, "l'apostrophe doit être DOUBLÉE"
     assert out.count("COALESCE") == 1 and out.endswith(")")
+
+
+# --- le blob lu en TEXTE (recherche, extrait, embedding) -----------------------
+
+def _text(conn, data: str) -> str:
+    conn.execute("DELETE FROM t_layers")
+    conn.execute("INSERT INTO t_layers VALUES (1, %s::jsonb)", (data,))
+    return conn.execute(
+        f"SELECT {dsdb.ROW_VALUES_TEXT_SQL} AS t FROM t_layers").fetchone()[0]
+
+
+def _raw(conn, data: str) -> str:
+    conn.execute("DELETE FROM t_layers")
+    conn.execute("INSERT INTO t_layers VALUES (1, %s::jsonb)", (data,))
+    return conn.execute("SELECT data::text AS t FROM t_layers").fetchone()[0]
+
+
+@pytest.mark.parametrize("blob", [
+    '{"email": "a@b.c", "nom": "ACME"}',
+    '{}',
+    '{"n": 42, "ok": true, "rien": null}',
+    '{"json_legitime": {"a": 1, "b": [2, 3]}}',
+])
+def test_a_flat_row_is_byte_identical_to_before(conn, blob):
+    """L'exigence qui rend le changement sûr : sur une ligne SANS couches — les
+    43 782 existantes, et tout ce qui n'en aura jamais — le texte produit est
+    exactement celui d'avant. Une concaténation des valeurs aurait changé la forme,
+    donc le résultat des recherches en sous-chaîne, pour tout le monde."""
+    assert _text(conn, blob) == _raw(conn, blob)
+
+
+def test_a_layered_column_contributes_its_value_only(conn):
+    """Le fond : `q=hunter` ne doit pas matcher une ligne dont l'email VIENT de
+    Hunter. La provenance sort du texte cherché."""
+    out = _text(conn, '{"email": {"valeur": "a@b.c", "source": "hunter"}}')
+    assert "a@b.c" in out
+    assert "hunter" not in out and "source" not in out
+
+
+def test_a_layered_row_reads_like_the_flat_row_it_describes(conn):
+    """Plus fort que « la source disparaît » : le texte est celui qu'aurait la même
+    ligne sans couches. Une ligne enrichie et une ligne plate se cherchent pareil."""
+    assert (_text(conn, '{"email": {"valeur": "a@b.c", "source": "h"}, "nom": "ACME"}')
+            == _raw(conn, '{"email": "a@b.c", "nom": "ACME"}'))
+
+
+def test_a_genuine_json_column_is_untouched(conn):
+    """Un champ `json` légitime n'a pas de clé `valeur` : il reste entier, avec ses
+    propres clés cherchables — c'est le comportement d'aujourd'hui, et le retirer
+    casserait des recherches qui marchent."""
+    out = _text(conn, '{"payload": {"a": 1, "source": "x"}}')
+    assert '"a"' in out and "source" in out

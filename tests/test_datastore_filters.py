@@ -164,6 +164,9 @@ def test_where_merges_q_and_filters_in_order():
     # `q` est ACCENT-INSENSIBLE depuis #67 V2.3 : l'expression de repli est DÉRIVÉE de
     # `_fold` (source unique index↔requête) — la recopier en dur ici la ferait mentir au
     # prochain ajustement du jeu de caractères.
-    assert where == (f"WHERE ns_id = %s AND {_fold('data::text')} ILIKE "
+    # La recherche lit les VALEURS, pas les enveloppes (#318) — d'où la constante
+    # plutôt que `data::text` : une colonne à couches ne doit pas faire matcher sa
+    # provenance (`q=hunter` sur une ligne dont l'email VIENT de Hunter).
+    assert where == (f"WHERE ns_id = %s AND {_fold(db.ROW_VALUES_TEXT_SQL)} ILIKE "
                      f"'%%' || {_fold('%s')} || '%%' AND {V} = %s")
     assert params == [7, "marseille", "statut", "statut", "retenu"]  # les % vivent dans le SQL
