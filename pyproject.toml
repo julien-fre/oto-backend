@@ -74,6 +74,17 @@ dependencies = [
     "boto3>=1.34",  # upload avatars/logos → Scaleway Object Storage (S3-compatible)
     "python-multipart>=0.0.9",  # parsing multipart des uploads (Starlette request.form())
     "sentry-sdk[starlette]>=2.0",  # error tracking SaaS (gaté OTO_SENTRY_DSN) : 500 REST via intégration Starlette + exceptions tools MCP via middleware (sentry_setup.py)
+    # Extraction du TEXTE des fichiers déposés (#298) — rendre cherchable ce qu'un
+    # fichier CONTIENT, pas seulement son nom. Trois critères tenus, et ce sont eux
+    # qui bornent la famille : **pur Python** (aucun binaire système à installer sur
+    # la box — pas de LibreOffice, pas de tesseract), **licence permissive**
+    # compatible MIT (BSD-3 / MIT / MIT), **maintenue**. Un format qui exigerait un
+    # binaire n'est pas ajouté : il est déclaré NON SUPPORTÉ, ce qui est honnête et
+    # ne fait pas grossir l'image.
+    # ⚠️ Pas d'OCR : lire une image est un autre métier et un autre coût.
+    "pypdf>=6.0",          # PDF
+    "python-docx>=1.1",    # .docx
+    "openpyxl>=3.1",       # .xlsx
 ]
 
 [project.optional-dependencies]
