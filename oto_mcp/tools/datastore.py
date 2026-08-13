@@ -130,8 +130,30 @@ def _namespace_keys(store, namespace: str) -> set[str]:
         return set()
 
 
-def _unknown_filter_keys(store, namespace: str, filter: dict) -> set[str]:
-    """Clés de `filter` absentes de TOUTES les lignes d'un échantillon du namespace
+def _targeted_columns(filter: Optional[dict], filters: Optional[list]) -> set[str]:
+    """Les colonnes qu'un appel VISE, quelle que soit la forme employée.
+
+    Les deux formes doivent nourrir l'avertissement anti-faute de frappe : une colonne
+    mal orthographiée dans `fields` rendrait moins de lignes sans rien dire, ce qui est
+    exactement le piège que cet avertissement existe pour fermer — et le rouvrir sur la
+    forme NEUVE serait le rouvrir là où l'agent a le plus besoin d'aide.
+
+    Le suffixe de couche est retiré (`email.comment` vise la colonne `email`), et les
+    colonnes système sont écartées : elles ne figurent jamais dans `data`, les annoncer
+    inconnues désignerait une cause fausse."""
+    vise = set(filter or {})
+    for f in (filters or []):
+        if not isinstance(f, dict):
+            continue
+        cibles = f.get("fields") if f.get("fields") is not None else [f.get("field")]
+        for c in (cibles if isinstance(cibles, (list, tuple)) else []):
+            if isinstance(c, str) and c:
+                vise.add(db.split_layer(c)[0])
+    return {c for c in vise if not c.startswith("_")}
+
+
+def _unknown_filter_keys(store, namespace: str, filter, filters=None) -> set[str]:
+    """Clés de `filter`/`filters` absentes de TOUTES les lignes d'un échantillon du namespace
     (feedback #163 : filtre sur colonne inexistante = 0 résultat silencieux,
     indiscernable d'un « aucune ligne ne matche »). Chemin résultat-vide seulement.
     Namespace vide ou erreur ⇒ set() (rien d'affirmable, pas de faux warning).
@@ -155,7 +177,7 @@ def _unknown_filter_keys(store, namespace: str, filter: dict) -> set[str]:
             return set()
         for r in sample:
             known |= set(r.keys())
-        unknown = {k for k in filter if k not in known}
+        unknown = {k for k in _targeted_columns(filter, filters) if k not in known}
         # Même dernier recours que la projection : une orpheline existe en base
         # sans être ni déclarée ni forcément dans l'échantillon.
         return {k for k in unknown
@@ -294,7 +316,7 @@ def register(mcp: FastMCP) -> None:
         A typed namespace renders as readable cards/records instead of a flat table.
         `schema` = {"fields": [{"key": str, "label"?: str, "type"?: "text|number|date|
         datetime|bool|json|object|list|url|email|enum",
-        "role"?: "title|badge|metric|status|qualif|note"}],
+        "display"?: "title", "role"?: "status|metric|note|qualif"}],
         "key"?: str, "strict"?: bool}.
         The optional top-level `"key"` names the field that is the row's BUSINESS KEY
         (e.g. "email", "siren"): batch writes (`data_write` rows=…, `oto_upload_url`)
@@ -315,9 +337,15 @@ def register(mcp: FastMCP) -> None:
           the width is derived from the widget — declare it to keep a stable layout.
         - `hidden: true` = keep the field OUT of the table columns by default (still
           editable in the record). Use it for opaque ids and technical fields.
-        - `role` also ranks table columns: role-bearing fields (title, status,
-          badge, metric, qualif) are the ones shown by default when a schema has
-          many fields — the rest stays one click away in the column picker.
+        - `display: "title"` NAMES the row: that field titles the record everywhere
+          the server names a line (work queue, undo, cards) instead of a raw `_id`.
+          One per table.
+        - `role: "status"` is what `lifecycle` attaches to — declaring a lifecycle on
+          any other field is refused. `metric`/`note`/`qualif` only steer the
+          dashboard's rendering (metric tiles, notes placed last).
+          ⚠️ The dashboard still titles rows from `role: "title"`, which the server
+          no longer reads. On a table meant to look right in BOTH, declare both until
+          they converge.
 
         STRUCTURED RECORDS (ADR 0046 — every layer opt-in):
         - nested types: `type:"object"` + `fields:[…]` (sub-record, e.g. occupant);
@@ -527,6 +555,7 @@ def register(mcp: FastMCP) -> None:
         cursor: str | None = None, fields: Optional[list[str]] = None,
         count_only: bool = False, q: str | None = None,
         order_by: str | None = None, order_dir: str = "desc",
+        filters: Optional[list[dict]] = None,
     ) -> dict:
         """Read rows. WITH `id` = the single row (by `_id`). WITHOUT `id` = one PAGE
         of rows (`filter`/`q` narrow it, `order_by` sorts it) with a stable cursor.
@@ -565,6 +594,19 @@ def register(mcp: FastMCP) -> None:
                 so `{"_updated_at": {"gte": "2026-08-01"}}` = touched since the 1st)
                 and `_id`. Filtering happens in SQL — never pull the whole table to
                 filter it yourself. (list mode only)
+            filters: list of clauses, for what `filter` cannot express — ONE clause
+                may target SEVERAL columns at once. A single notion often lives on
+                numbered columns (`contact1_fonction`, `contact2_fonction`…): ask
+                about all of them in one go by NAMING them.
+                `[{"fields": ["contact1_fonction", "contact2_fonction",
+                "contact3_fonction"], "op": "in", "value": ["DRH", "DAF"]}]`
+                = rows where ANY of those three holds an HR/finance role, whichever
+                rank carries it. `match` picks the sense: `any` (default, one column
+                is enough) or `all` (every listed column) — `all` + `empty` is how you
+                get "rows with NO contact at all", which is NOT the negation of the
+                first. A clause may also name a single column (`{"field": …}`), and
+                a `champ.origine`/`.comment`/`.link` suffix targets that layer.
+                Clauses combine with AND, and with `filter`. (list mode only)
             q: free-text search across the whole row (accent-insensitive substring)
                 — the way to find a row when you don't know WHICH column holds the
                 word. Combines with `filter` (AND). (list mode only)
@@ -583,12 +625,13 @@ def register(mcp: FastMCP) -> None:
         namespace = _ns(namespace)
         try:
             if count_only:
-                return {"total": store.count_rows(namespace, filter=filter, q=q)}
+                return {"total": store.count_rows(namespace, filter=filter, q=q,
+                                                  filters=filters)}
             if id is not None:
                 row = store.get_row(namespace, id)
                 return _project_row(row, fields) if fields else row
             page = store.cursor_rows(namespace, filter=filter, limit=limit,
-                                     cursor=cursor, q=q,
+                                     cursor=cursor, q=q, filters=filters,
                                      order_by=order_by, order_dir=order_dir)
             rows = [_project_row(r, fields) for r in page["rows"]] if fields else page["rows"]
             out = {"rows": rows, "count": len(rows),
@@ -622,8 +665,8 @@ def register(mcp: FastMCP) -> None:
             # 0 résultat filtré ≠ « la donnée n'existe pas » : si une clé du filter
             # n'apparaît dans AUCUNE ligne échantillonnée, c'est probablement une
             # colonne mal orthographiée — on le SIGNALE (non bloquant, feedback #163).
-            if filter and not out["rows"]:
-                unknown = _unknown_filter_keys(store, namespace, filter)
+            if (filter or filters) and not out["rows"]:
+                unknown = _unknown_filter_keys(store, namespace, filter, filters)
                 if unknown:
                     out["warning"] = (
                         f"colonne(s) de filter inconnue(s) dans ce namespace : "
@@ -644,39 +687,69 @@ def register(mcp: FastMCP) -> None:
     def data_aggregate(
         namespace: str,
         metrics: Optional[list[dict]] = None,
-        group_by: str | None = None,
+        group_by: str | list[str] | None = None,
         filter: Optional[dict] = None,
+        filters: Optional[list[dict]] = None,
+        q: str | None = None,
     ) -> dict:
         """Aggregate rows SERVER-SIDE — stats over a whole (optionally filtered) table
         WITHOUT pulling the rows into context (feedback #191). Use this for totals and
         distributions over a large vivier (e.g. total kWc, average score, count per
         department) instead of reading 300+ rows and summing them yourself.
 
-        `metrics` = list of `{op, field?}`; `op` ∈ count|sum|avg|min|max (default
-        `[{"op":"count"}]`). `count` without `field` = total rows; sum/avg/min/max
-        require a numeric `field` and ignore non-numeric values. `group_by` = a column
-        to group on (omit = one global row). Results are sorted by the first metric
-        descending when grouped (so `group_by` gives you the TOP groups first).
+        `metrics` = list of `{op, field?}`; `op` ∈ count|count_rows|sum|avg|min|max
+        (default `[{"op":"count"}]`). `count` without `field` = total rows;
+        sum/avg/min/max require a numeric `field` and ignore non-numeric values.
+        `group_by` = a column to group on (omit = one global row). Results are sorted
+        by the first metric descending when grouped (so `group_by` gives you the TOP
+        groups first).
+
+        A metric may carry its OWN condition — `where`, same clauses as `filters` —
+        so the total and a subset are counted in the SAME query. That is how you get a
+        RATE without crossing two calls whose scopes can silently differ. Give such a
+        metric a `label`, and it comes back under that name.
+
+        `group_by` also accepts a LIST of columns: their values are pooled, one row
+        contributing one occurrence per filled column ("all ranks together"). Under a
+        pooled group, `count` counts OCCURRENCES and `count_rows` counts ROWS — two
+        different questions, so ask for the one you mean.
 
         Returns `{results: [...]}` — each entry carries the `group_by` value (when set)
-        plus one key per metric (`count`, `sum_<field>`, `avg_<field>`…).
+        plus one key per metric (`count`, `sum_<field>`, `avg_<field>`, or `label`).
 
         Examples:
             - total rows matching a filter: metrics omitted, filter={"statut":"qualified"}
             - MWc by department: group_by="departement",
               metrics=[{"op":"sum","field":"kwc_estime"}, {"op":"count"}]
+            - share of companies with an HR contact on ANY rank, by headcount band —
+              one call, no rows pulled:
+              group_by="tranche_effectif",
+              metrics=[{"op":"count","label":"fiches"},
+                       {"op":"count","label":"avec_rh","where":[
+                          {"fields":["contact1_fonction","contact2_fonction",
+                                     "contact3_fonction"],
+                           "op":"in","value":["DRH","DAF"]}]}]
+            - which roles appear across all contact ranks:
+              group_by=["contact1_fonction","contact2_fonction","contact3_fonction"]
 
         Args:
             namespace: target namespace, or `slot:<name>` (active project).
-            metrics: list of `{op, field?}` aggregations (default = count of rows).
-            group_by: column to group by (omit = global aggregate, single row).
+            metrics: list of `{op, field?, where?, label?}` aggregations
+                (default = count of rows).
+            group_by: column to group by, or a LIST of columns whose values are
+                pooled (omit = global aggregate, single row).
             filter: dict `{column: value}` exact match to scope the aggregate.
+            filters: list of clauses, incl. multi-column ones — same grammar as
+                `data_rows.filters`. Combines with `filter` (AND).
+            q: free-text search across the whole row, to aggregate the same set a
+                search shows.
         """
         store = _acting_store()
         namespace = _ns(namespace)
         try:
             results = store.aggregate(
-                namespace, group_by=group_by, metrics=metrics, filter=filter)
+                namespace, group_by=group_by, metrics=metrics, filter=filter,
+                filters=filters, q=q)
             return {"results": results}
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
@@ -904,8 +977,8 @@ def register(mcp: FastMCP) -> None:
 
     def _fiche_card(record: dict, schema: Optional[dict], url: str,
                     *, show_meta: bool) -> "Card":
-        """Vue DÉTAIL d'UNE fiche : titre (role=title), statut+lifecycle, scalaires
-        en clé/valeur, puis chaque sous-record déplié. La valeur de v2."""
+        """Vue DÉTAIL d'UNE fiche : titre (`display="title"`), statut+lifecycle,
+        scalaires en clé/valeur, puis chaque sous-record déplié. La valeur de v2."""
         by_key = {f["key"]: f for f in _fdefs(schema) if f.get("key")}
         title_key = _role_key(schema, "title")
         status_key = _role_key(schema, "status")
