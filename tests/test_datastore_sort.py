@@ -43,6 +43,7 @@ def spy(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_list_rows", _list)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 1)
+    monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)  # pas de schéma sur ce banc
     return s, calls
 
 

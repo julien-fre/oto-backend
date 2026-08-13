@@ -455,7 +455,7 @@ class DatastorePg:
         return ns_id
 
     @staticmethod
-    def _row_to_dict(row: dict) -> dict:
+    def _row_to_dict(row: dict, schema: Optional[dict] = None) -> dict:
         """Ligne `datastore_rows` → row API (`_id`/`_created_at`/`_updated_at` à
         plat + champs user). Le bail de claim (ADR 0046 D) n'apparaît que s'il est
         posé (les lectures ordinaires ne le SELECTent pas → absent, pas None)."""
@@ -482,6 +482,22 @@ class DatastorePg:
             # Les couches s'exposent dès qu'il y en a — même sans `valeur` posée
             # (import de socle sur un champ pas encore renseigné).
             out.update(dsv2.flat_layers(k, v))
+        # Double-service d'une migration (oto#22 §6) : les anciens noms plats sont
+        # SERVIS, calculés depuis la colonne-tableau et jamais stockés — deux vérités
+        # à réconcilier sinon. L'ordre des rangs est celui de la liste, qui est un
+        # CONTRAT : un écran affiche « le premier contact » comme cible d'appel, et un
+        # ordre instable ferait appeler quelqu'un d'autre entre deux ouvertures.
+        #
+        # Les couches suivent sans rien de plus : l'item est déjà servi, donc son
+        # `email.origine` devient `contact1_email.origine`.
+        for cle, gabarit in dsv2.flat_alias_of(schema).items():
+            items = out.get(cle)
+            if not isinstance(items, list):
+                continue
+            for rang, item in enumerate(items):
+                if isinstance(item, dict):
+                    for attr, val in item.items():
+                        out[dsv2.flat_name(gabarit, rang, attr)] = val
         if row.get("claimed_by") is not None:
             out["_claimed_by"] = row["claimed_by"]
             out["_claimed_until"] = row.get("claimed_until")
@@ -1040,7 +1056,8 @@ class DatastorePg:
             existing_id = db.datastore_find_row_id_by_key(ns_id, key, kv)
             if existing_id is not None:
                 return self._row_to_dict(
-                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema))
+                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema),
+                    schema)
         self._check_row(schema, user_data)
         try:
             row = db.datastore_insert_row(ns_id, _new_id(), user_data)
@@ -1053,8 +1070,9 @@ class DatastorePg:
             if existing_id is None:
                 raise  # violation inexpliquée → erreur franche, pas de repli muet
             return self._row_to_dict(
-                self._merge_into_row(ns_id, existing_id, user_data, schema=schema))
-        return self._row_to_dict(row)
+                self._merge_into_row(ns_id, existing_id, user_data, schema=schema),
+                schema)
+        return self._row_to_dict(row, schema)
 
     def _assert_writable(self, ns_id: int, row_id: str) -> None:
         """La même protection, pour les chemins qui n'ont PAS de verrou de ligne.
@@ -1198,7 +1216,7 @@ class DatastorePg:
         row, inserted = db.datastore_upsert_row(ns_id, row_id, user_data)
         if not inserted:
             self._terminal_write_notice(schema, ns_id, row_id, user_data)
-        return self._row_to_dict(row), inserted
+        return self._row_to_dict(row, schema), inserted
 
     def declared_key(self, namespace: str) -> Optional[str]:
         """Clé métier déclarée au schéma (`schema.key`) — sert la dédup au batch
@@ -1266,7 +1284,7 @@ class DatastorePg:
         row = db.datastore_get_row(ns_id, row_id)
         if not row:
             raise RowNotFound(row_id)
-        return self._row_to_dict(row)
+        return self._row_to_dict(row, self._schema_of(ns_id))
 
     def list_rows(
         self,
@@ -1277,9 +1295,10 @@ class DatastorePg:
         """Filtre exact k:v en Python (chemin MCP `data_rows`). Ordre stable plus
         ancien d'abord (compat historique)."""
         ns_id = self._resolve(namespace)
+        sch = self._schema_of(ns_id)
         out: list[dict] = []
         for row in db.datastore_list_rows(ns_id, order_by="_created_at", order_dir="asc"):
-            record = self._row_to_dict(row)
+            record = self._row_to_dict(row, sch)
             if filter and not all(str(record.get(k)) == str(v) for k, v in filter.items()):
                 continue
             out.append(record)
@@ -1317,6 +1336,9 @@ class DatastorePg:
         silencieusement sur les mauvaises lignes."""
         ns_id = self._resolve(namespace)
         filters = _filter_clauses(filter, filters)
+        # ⚠️ Le schéma se lit une fois par PAGE, et seulement quand il y a des lignes à
+        # servir : le lire dès l'entrée ferait payer une requête à un appel qui va
+        # refuser son curseur — un coût là où il n'y a même pas de résultat.
         if order_by:
             offset = _decode_offset_cursor(cursor) if cursor else 0
             rows = db.datastore_list_rows(
@@ -1324,14 +1346,16 @@ class DatastorePg:
                 order_dir=order_dir, q=q, filters=filters)
             next_cursor = (_encode_offset_cursor(offset + len(rows))
                            if len(rows) == limit else None)
-            return {"rows": [self._row_to_dict(r) for r in rows],
+            sch = self._schema_of(ns_id) if rows else None
+            return {"rows": [self._row_to_dict(r, sch) for r in rows],
                     "next_cursor": next_cursor}
         after = _decode_cursor(cursor) if cursor else None
         if after and after.startswith(_OFFSET_CURSOR_PREFIX):
             raise InvalidCursor(cursor)  # curseur trié repassé sans `order_by`
         rows = db.datastore_list_rows_after(
             ns_id, after_row_id=after, limit=limit, q=q, filters=filters)
-        out = [self._row_to_dict(r) for r in rows]
+        sch = self._schema_of(ns_id) if rows else None
+        out = [self._row_to_dict(r, sch) for r in rows]
         next_cursor = _encode_cursor(rows[-1]["row_id"]) if len(rows) == limit else None
         return {"rows": out, "next_cursor": next_cursor}
 
@@ -1387,8 +1411,11 @@ class DatastorePg:
         rows = db.datastore_list_rows(
             ns_id, offset=offset, limit=limit, order_by=order_by,
             order_dir=order_dir, q=q, filters=clauses)
+        # Le schéma se lit UNE fois par page : dans la compréhension, il partait en une
+        # requête PAR LIGNE — invisible en test, 50 allers-retours sur une vraie page.
+        sch = self._schema_of(ns_id)
         return {
-            "rows": [self._row_to_dict(r) for r in rows],
+            "rows": [self._row_to_dict(r, sch) for r in rows],
             # Le total doit décrire le MÊME jeu que la page : filtré aussi, sinon la
             # pagination du dashboard annonce des lignes qu'elle ne servira jamais.
             "total": db.datastore_count_rows(ns_id, q=q, filters=clauses),
@@ -1442,7 +1469,7 @@ class DatastorePg:
                     "(clé métier unique) — impossible de dupliquer") from None
             raise  # violation inexpliquée → erreur franche, pas de repli muet
         self._terminal_write_notice(schema, ns_id, row_id, data)
-        return self._row_to_dict(row)
+        return self._row_to_dict(row, schema)
 
     # --- file de travail (ADR 0046 D) -----------------------------------------
 
@@ -1469,7 +1496,7 @@ class DatastorePg:
                                       run_id=_current_run())
         if row is not None:
             self._after_claim(ns_id, warnings=warnings, trace=trace)
-        return self._row_to_dict(row) if row else None
+        return self._row_to_dict(row, self._schema_of(ns_id)) if row else None
 
     def claim_row(self, namespace: str, row_id: str, *, worker: str,
                   lease_s: int = 900, warnings: Optional[list] = None,
@@ -1493,7 +1520,7 @@ class DatastorePg:
                 raise RowNotFound(row_id)
             raise RowClaimed(row_id, existing.get("claimed_by"), existing.get("claimed_until"))
         self._after_claim(ns_id, warnings=warnings, trace=trace)
-        return self._row_to_dict(row)
+        return self._row_to_dict(row, self._schema_of(ns_id))
 
     def _after_claim(self, ns_id: int, *, warnings: Optional[list],
                      trace: Optional[dict]) -> None:
@@ -1524,7 +1551,9 @@ class DatastorePg:
         actif ou expiré, le consommateur tranche sur `_claimed_until`. Lecture
         seule (aucun droit d'écriture requis)."""
         ns_id = self._resolve(namespace)
-        return [self._row_to_dict(r) for r in db.datastore_claimed_rows(ns_id)]
+        sch = self._schema_of(ns_id)
+        return [self._row_to_dict(r, sch)
+                for r in db.datastore_claimed_rows(ns_id)]
 
     def force_release(self, namespace: str, row_id: str, *,
                       trace: Optional[dict] = None) -> bool:

@@ -117,6 +117,7 @@ def test_le_store_convertit_le_filtre_en_clauses():
 
     store = ds.DatastorePg.__new__(ds.DatastorePg)
     store._resolve = lambda ns, write=False: 1
+    store._schema_of = lambda ns_id: None  # pas de schéma sur ce banc
     store._row_to_dict = lambda r: r
     orig_db = ds.db
     ds.db = _FakeDb

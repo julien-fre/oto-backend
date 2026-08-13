@@ -18,6 +18,7 @@ def test_queue_lists_claimed_rows_read_only(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_claimed_rows", lambda ns_id: rows)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", _resolve)
+    monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)  # pas de schéma sur ce banc
 
     out = s.queue("vivier")
     assert out == [{"_id": "r1", "_created_at": "c", "_updated_at": "u",
@@ -39,6 +40,7 @@ def test_force_release_requires_write_and_skips_worker_guard(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_release_claim", _release)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", _resolve)
+    monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)  # pas de schéma sur ce banc
 
     assert s.force_release("vivier", "r1") is True
     assert seen["write"] is True   # écriture exigée (on touche le bail)

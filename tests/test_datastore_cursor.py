@@ -25,6 +25,7 @@ def store(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_list_rows_after", _fake_after)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 1)
+    monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)  # pas de schéma sur ce banc
     return s
 
 
@@ -78,5 +79,6 @@ def test_count_rows_pushes_filter_to_sql(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_count_rows", _fake_count)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 1)
+    monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)  # pas de schéma sur ce banc
     assert s.count_rows("ns", filter={"statut": "qualified"}) == 301
     assert seen["filters"] == [{"field": "statut", "op": "eq", "value": "qualified"}]
