@@ -51,6 +51,9 @@ def _merge_column(existing: Any, new: Any) -> Any:
     décrivent LA VALEUR : les garder au-dessus d'une valeur remplacée ferait affirmer
     une provenance fausse — précisément le défaut qu'on élimine, une couche plus
     haut. Elles suivent la valeur ou disparaissent avec elle."""
+    # Toute colonne A une origine ; ici elle est VIDE, il n'y a donc rien à préserver
+    # — ce n'est pas « la colonne n'a pas de couches », c'est « ses couches sont
+    # vides ». Le plat est un état, pas une nature.
     if not isinstance(existing, dict) or dsv2.ORIGIN_LAYER not in existing:
         return new
     origine = existing[dsv2.ORIGIN_LAYER]
@@ -309,8 +312,23 @@ class DatastorePg:
             "_id": row["row_id"],
             "_created_at": row["created_at"],
             "_updated_at": row["updated_at"],
-            **{k: v for k, v in data.items() if k not in _META_COLS},
         }
+        # Toute colonne a des sous-champs (#318) — c'est le contrat du datastore, pas
+        # une forme que certaines valeurs adoptent. Une colonne « plate » est une
+        # colonne dont les sous-champs sont VIDES, et on ne rend pas du vide.
+        #
+        # Le NOM NU rend donc toujours la valeur : un lecteur qui fait `row["email"]`
+        # reçoit un e-mail, qu'il y ait une provenance ou non. Les sous-champs
+        # renseignés s'ajoutent à plat sous `champ.couche` — visibles sans être
+        # imposés, et projetables par `fields` comme n'importe quelle colonne.
+        for k, v in data.items():
+            if k in _META_COLS:
+                continue
+            out[k] = dsv2.unwrap(v)
+            if isinstance(v, dict) and dsv2.VALUE_LAYER in v:
+                for _layer in dsv2.LAYER_KEYS:
+                    if v.get(_layer) not in (None, ""):
+                        out[f"{k}.{_layer}"] = v[_layer]
         if row.get("claimed_by") is not None:
             out["_claimed_by"] = row["claimed_by"]
             out["_claimed_until"] = row.get("claimed_until")

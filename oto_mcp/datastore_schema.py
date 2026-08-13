@@ -50,6 +50,28 @@ ORIGIN_LAYER = "origine"
 LAYER_KEYS = (ORIGIN_LAYER, "comment", "link")
 
 
+def unknown_layers(value: Any) -> list:
+    """Couches d'une colonne que CETTE version du serveur ne connaît pas.
+
+    L'asymétrie est le cœur du contrat d'évolution : le LECTEUR tolère (une couche
+    écrite par une version plus récente est ignorée, la valeur reste lisible — sinon
+    un déploiement progressif casserait les anciens nœuds), l'ÉCRIVAIN refuse. C'est
+    ce qui permet d'ajouter une couche sans jamais dégrader l'ancien.
+
+    Refuser à l'écriture plutôt que stocker en silence, parce qu'on a déjà payé
+    l'inverse : une clé `enum:` posée là où le validateur lit `options:` a été
+    acceptée, stockée, jamais lue — et 504 lignes ont été écrites en croyant le champ
+    contraint. Une couche mal orthographiée doit s'apprendre à l'écriture, pas se
+    découvrir six semaines plus tard.
+
+    Un dict SANS `valeur` n'est pas une colonne à couches : c'est une valeur `json`
+    ordinaire, on n'y touche pas."""
+    if not isinstance(value, dict) or VALUE_LAYER not in value:
+        return []
+    connues = {VALUE_LAYER, *LAYER_KEYS}
+    return sorted(k for k in value if k not in connues)
+
+
 def unwrap(value: Any) -> Any:
     """La VALEUR d'une colonne, qu'elle porte des couches ou non.
 
@@ -535,6 +557,12 @@ def _row_errors(fields: list, data: dict, path: str,
         if not key:
             continue
         fpath = f"{path}.{key}" if path else key
+        inconnues = unknown_layers(data.get(key))
+        if inconnues:
+            errors.append(
+                f"{fpath}: sous-champ(s) inconnu(s) {', '.join(repr(k) for k in inconnues)}"
+                f" — disponibles : {', '.join(LAYER_KEYS)}. Une couche stockée sans "
+                "être lue donnerait l'illusion d'une provenance renseignée.")
         # Déballer avant de juger : c'est la VALEUR qui doit respecter le type, la
         # borne et les options — pas son enveloppe. Sans ça un schéma strict refuse
         # toute écriture en couches, donc la primitive est inutilisable là où elle

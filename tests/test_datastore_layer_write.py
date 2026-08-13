@@ -106,3 +106,78 @@ def test_a_column_without_an_origin_is_replaced_plainly():
     assert _merge_column(None, "nouveau") == "nouveau"
     assert _merge_column({"a": 1}, "nouveau") == "nouveau"
     assert _merge_column({"valeur": "x", "comment": "s"}, "nouveau") == "nouveau"
+
+
+# --- ce que l'agent LIT ---------------------------------------------------------
+
+def _read(data: dict) -> dict:
+    from oto_mcp.datastore import DatastorePg
+    return DatastorePg._row_to_dict(
+        {"row_id": "r1", "created_at": "t", "updated_at": "t", "data": data})
+
+
+def test_the_bare_name_always_returns_the_value():
+    """LE contrat de lecture : `row["email"]` rend un e-mail, provenance ou pas.
+    Sans ça, tout consommateur qui lit une colonne casse le jour où quelqu'un y met
+    une source — silencieusement, puisqu'il recevrait un objet au lieu d'un texte."""
+    assert _read({"email": "a@b.c"})["email"] == "a@b.c"
+    assert _read({"email": {"valeur": "a@b.c", "comment": "hunter"}})["email"] == "a@b.c"
+
+
+def test_filled_layers_are_exposed_flat():
+    out = _read({"email": {"valeur": "a@b.c", "comment": "hunter",
+                           "link": "https://x", "origine": "import"}})
+    assert out["email.comment"] == "hunter"
+    assert out["email.link"] == "https://x"
+    assert out["email.origine"] == "import"
+
+
+def test_empty_layers_are_not_rendered():
+    """Une colonne « plate » est une colonne dont les sous-champs sont VIDES — et on
+    ne rend pas du vide. C'est ce qui garde une ligne sans provenance identique à ce
+    qu'elle était."""
+    assert _read({"email": "a@b.c"}) == _read({"email": {"valeur": "a@b.c"}})
+    out = _read({"email": {"valeur": "a@b.c", "comment": "", "link": None}})
+    assert [k for k in out if k.startswith("email.")] == []
+
+
+def test_layers_are_projectable_like_any_column():
+    """Elles s'atteignent par `fields` sans que la projection ait rien à apprendre :
+    ce sont des clés de la ligne, comme les autres."""
+    from oto_mcp.tools.datastore import _project_row
+    row = _read({"nom": "ACME", "email": {"valeur": "a@b.c", "comment": "hunter"}})
+    assert _project_row(row, ["nom", "email.comment"]) == {
+        "_id": "r1", "nom": "ACME", "email.comment": "hunter"}
+
+
+# --- lecteur tolérant, écrivain strict -------------------------------------------
+
+def test_an_unknown_layer_is_refused_at_write():
+    """Déjà payé dans l'autre sens : une clé `enum:` posée là où le validateur lit
+    `options:` a été acceptée, stockée, jamais lue — et 504 lignes écrites en croyant
+    le champ contraint. Une couche mal orthographiée s'apprend à l'écriture."""
+    errs = _err({"nom": "ACME", "email": {"valeur": "a@b.c", "sourse": "hunter"}})
+    assert errs and "sourse" in errs[0] and "comment" in errs[0]
+
+
+def test_a_plain_json_value_is_not_judged_as_layers():
+    """Un dict SANS `valeur` est une donnée `json` ordinaire — pas une colonne à
+    couches. On n'y touche pas."""
+    assert dsv2.unknown_layers({"a": 1, "sourse": 2}) == []
+
+
+def test_the_reader_tolerates_what_the_writer_refuses():
+    """L'asymétrie EST le contrat d'évolution : une couche écrite par une version
+    plus récente doit rester lisible, sinon un déploiement progressif casse les
+    anciens nœuds. Le lecteur ignore, il ne lève jamais."""
+    out = _read({"email": {"valeur": "a@b.c", "couche_du_futur": "x"}})
+    assert out["email"] == "a@b.c"
+    assert "email.couche_du_futur" not in out
+
+
+def test_a_layer_may_become_structured():
+    """Rien ne fige « une couche est un scalaire » : le jour où `comment` devient
+    structuré, il traverse tel quel — c'est le patron polymorphe à réappliquer un
+    niveau plus bas, pas une réécriture."""
+    out = _read({"email": {"valeur": "a@b.c", "comment": {"texte": "x", "tag": "y"}}})
+    assert out["email.comment"] == {"texte": "x", "tag": "y"}
