@@ -293,3 +293,19 @@ Deux raisons, la première étant la plus profonde :
 - les questions réelles sont « a un contact RH » et « n'a aucun contact ». La seconde
   s'écrit déjà (`empty` + `match: all` sur des colonnes). « Tous les contacts sont
   DRH » n'a aucun demandeur : on ne construit pas sa syntaxe par symétrie.
+
+
+## 12. Le patron d'aplatissement de référence (étape 6 — décrit par le consommateur qui l'a construit, 13/08)
+
+L'export scout-side est livré et éprouvé sur tableau réel ; son patron devient LA référence de l'export natif. L'idée structurelle : **deux fonctions, et la première ne voit AUCUNE ligne** —
+
+```
+colonnes(schéma, options) → [ {entête, source} ]   ← ne reçoit pas les lignes
+ligne(row, colonnes)      → [ valeurs ]            ← ne décide de rien
+```
+
+Le déterminisme est STRUCTUREL, pas promis : ce qui ne reçoit pas le contenu ne peut pas varier avec lui. `source` = `{champ}` ou `{item, rang, attribut}` — le dépliage est décidé une fois, à la construction, jamais dans la boucle des lignes.
+
+Les règles : largeur = `max_items` (à défaut mesurée = la SEULE entorse, annoncée dans le fichier, et SEULEMENT pour les listes réellement exportées) · rangs 1-indexés au nom de colonne / 0 à l'adressage, documenté aux deux bouts · couches exclues par défaut, sautées À LA CONSTRUCTION (pas filtrées après) · **une cellule ne porte jamais de structure** — une valeur composite au rendu vaut VIDE (une cellule vide se voit, un blob JSON se subit) · **un trou d'item ne décale pas** (dépliage par `(rang, attribut)`, jamais par itération sur le contenu) · l'ordre des colonnes suit l'ÉCRAN quand l'appelant fournit sa liste retenue.
+
+Le format : un vrai classeur (jamais CSV — la locale Windows coupe sur le séparateur, les données portent des points-virgules) ; première ligne = les colonnes, JAMAIS un titre (le filtre auto et toute relecture script en dépendent) ; le contexte (source, filtre, largeurs mesurées) va dans une SECONDE feuille. Test d'acceptation : écrire, RELIRE avec la même bibliothèque, vérifier items aux bonnes colonnes, nombre resté nombre, fiche sans contacts sans décalage.
