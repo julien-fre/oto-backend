@@ -698,6 +698,13 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   `register_all` + routes, ou le document servi) — et à sa création, **prouver qu'il
   mord** en lui présentant l'anomalie qu'il prétend attraper (retirer la déclaration ⟹
   l'inventaire doit tomber).
+  Corollaire sécurité (13/08) : **un signalement de vuln se vérifie en CONSTRUISANT
+  l'attaque**, jamais en jugeant les bibliothèques — le XXE signalé sur l'extraction ne
+  s'appliquait pas (entités non résolues, prouvé par l'exploit), mais le construire a
+  révélé le voisin réel : la bombe de décompression (400 ko → 638 Mo de RSS, mono-loop
+  = tout le serveur). La garde se pose sur le CATALOGUE du zip (les tailles annoncées,
+  sans décompresser — le contrôle ne peut pas être victime de ce qu'il contrôle), et on
+  s'arrête PENDANT la lecture — jamais accumuler-puis-tronquer.
 - **Jetons de contexte d'appel = noms RÉSERVÉS, préfixés `_`** (ADR 0038 amendée 29/07,
   oto-backend#250) : `_org`, `_project`, `_group`, `_account`, `_instance`, `_run_id`
   (`call_axes.py`). Ils sont advertisés sélectivement au schéma des tools concernés, lus
