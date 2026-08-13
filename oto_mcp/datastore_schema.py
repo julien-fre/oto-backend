@@ -42,7 +42,12 @@ COMPOSITE_TYPES = ("object", "list")
 # dépourvue. C'est le contrat, et il vaut pour toute colonne de tout tableau.
 VALUE_LAYER = "valeur"
 ORIGIN_LAYER = "origine"
-LAYER_KEYS = (ORIGIN_LAYER, "source", "source_link", "commentaire")
+# Trois couches, pas cinq. `source` et `commentaire` disaient la même chose — d'où
+# `comment` seul ; `link` porte l'URL qui atteste, quand il y en a une.
+# ⚠️ Conséquence assumée : `group_by champ.comment` ne comptera les provenances que
+# si elles sont écrites de façon régulière (« registre », « déduction »). C'est
+# possible, ce n'est plus induit par la forme.
+LAYER_KEYS = (ORIGIN_LAYER, "comment", "link")
 
 
 def unwrap(value: Any) -> Any:

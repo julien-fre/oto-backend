@@ -2,12 +2,12 @@
 
 C'est ce qui sépare une provenance VÉRIFIABLE d'une provenance décorative. La
 question qui compte pour un assureur — *« toutes les lignes dont l'email n'a pas de
-source »* — n'est posable que si la couche est adressable au même titre que la valeur.
+provenance »* — n'est posable que si la couche est adressable au même titre que la valeur.
 La mission qui a motivé le chantier en avait la démonstration en creux : un champ JSON
 portant la provenance de tous les champs, ni filtrable ni comptable, à côté de trois
 colonnes plates qui marchaient.
 
-Le vocabulaire est FERMÉ (`source`, `origine`, `commentaire`) : c'est ce qui rend
+Le vocabulaire est FERMÉ (`origine`, `comment`, `link`) : c'est ce qui rend
 l'ambiguïté décidable sans deviner, et ce qui interdit au datastore d'interpréter
 quoi que ce soit d'un nom de champ.
 """
@@ -23,15 +23,15 @@ from oto_mcp.db import datastore as dsdb
 
 @pytest.mark.parametrize("field,attendu", [
     ("email", ("email", None)),
-    ("email.source", ("email", "source")),
+    ("email.comment", ("email", "comment")),
     ("email.origine", ("email", "origine")),
-    ("email.commentaire", ("email", "commentaire")),
+    ("email.link", ("email", "link")),
 ])
 def test_a_layer_suffix_is_recognised(field, attendu):
     assert dsdb.split_layer(field) == attendu
 
 
-@pytest.mark.parametrize("field", ["taux.2024", "a.b", "email.valeur", "email.SOURCE"])
+@pytest.mark.parametrize("field", ["taux.2024", "a.b", "email.valeur", "email.COMMENT"])
 def test_anything_else_stays_a_column_name(field):
     """⚠️ `valeur` n'est PAS une couche adressable : elle EST la colonne, on l'atteint
     par son nom nu. L'admettre ici ouvrirait deux façons de dire la même chose.
@@ -42,7 +42,7 @@ def test_anything_else_stays_a_column_name(field):
 
 
 def test_a_bare_leading_dot_is_not_a_layer():
-    assert dsdb.split_layer(".source") == (".source", None)
+    assert dsdb.split_layer(".comment") == (".comment", None)
 
 
 # --- ce que ça donne dans une clause -------------------------------------------
@@ -54,9 +54,9 @@ def _clause(field, op="eq", value="x"):
 
 
 def test_filtering_a_layer_reads_the_layer():
-    clause, params = _clause("email.source")
+    clause, params = _clause("email.comment")
     assert clause == f"{dsdb.LAYER_VALUE_PARAM_SQL} = %s"
-    assert params == ["email", "source", "x"]
+    assert params == ["email", "comment", "x"]
 
 
 def test_filtering_a_bare_name_still_reads_the_value():
@@ -70,9 +70,9 @@ def test_filtering_a_bare_name_still_reads_the_value():
 def test_the_question_that_matters_is_expressible():
     """« Toutes les lignes dont l'email n'a pas de source » — la seule question qui
     transforme la provenance en garantie plutôt qu'en décoration."""
-    clause, params = _clause("email.source", op="empty", value=None)
+    clause, params = _clause("email.comment", op="empty", value=None)
     assert "IS NULL" in clause
-    assert params[:2] == ["email", "source"]
+    assert params[:2] == ["email", "comment"]
 
 
 def test_a_layer_has_no_flat_fallback():
@@ -80,7 +80,7 @@ def test_a_layer_has_no_flat_fallback():
     c'est la BONNE réponse. Y retomber sur la valeur ferait répondre « la source est
     l'email lui-même » — un mensonge, précisément là où on cherche la vérité."""
     assert "COALESCE" not in dsdb.LAYER_VALUE_PARAM_SQL
-    clause, _ = _clause("email.source")
+    clause, _ = _clause("email.comment")
     assert "COALESCE" not in clause
 
 
@@ -89,5 +89,5 @@ def test_layers_sort_and_aggregate_like_values():
     les provenances, ce qui est la question de pilotage (« combien de valeurs
     déduites ? »)."""
     sql, params, _ = dsdb._build_aggregate(
-        7, "email.source", [{"op": "count"}], None, None, 500)
-    assert params[:2] == ["email", "source"]
+        7, "email.comment", [{"op": "count"}], None, None, 500)
+    assert params[:2] == ["email", "comment"]

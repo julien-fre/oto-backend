@@ -33,12 +33,12 @@ def _err(row):
 
 def test_a_layered_value_passes_the_type_check():
     """Le cas qui débloque tout : un objet là où le schéma attend un e-mail."""
-    assert _err({"nom": "ACME", "email": {"valeur": "a@b.c", "source": "hunter"}}) == []
+    assert _err({"nom": "ACME", "email": {"valeur": "a@b.c", "comment": "hunter"}}) == []
 
 
 def test_a_layered_value_is_still_JUDGED():
     """Déballer n'est pas dispenser : une valeur fausse reste fausse."""
-    errs = _err({"nom": "ACME", "email": {"valeur": "pas-un-email", "source": "x"}})
+    errs = _err({"nom": "ACME", "email": {"valeur": "pas-un-email", "comment": "x"}})
     assert errs and "email" in errs[0]
 
 
@@ -51,13 +51,13 @@ def test_options_are_checked_on_the_value():
 def test_a_bound_measures_the_value_not_the_envelope():
     """`max_length: 5` doit mesurer « ACME », pas le JSON qui l'enveloppe — sinon
     toute écriture en couches dépasserait, quelle que soit la valeur."""
-    assert _err({"nom": {"valeur": "ACME", "source": "registre"}}) == []
-    errs = _err({"nom": {"valeur": "BEAUCOUP TROP LONG", "source": "x"}})
+    assert _err({"nom": {"valeur": "ACME", "comment": "registre"}}) == []
+    errs = _err({"nom": {"valeur": "BEAUCOUP TROP LONG", "comment": "x"}})
     assert errs and "nom" in errs[0]
 
 
 def test_a_required_field_empty_in_its_layers_is_missing():
-    errs = _err({"nom": {"valeur": "", "source": "x"}})
+    errs = _err({"nom": {"valeur": "", "comment": "x"}})
     assert errs and "requis" in errs[0]
 
 
@@ -75,12 +75,12 @@ def test_an_ordinary_write_keeps_the_origin():
 
 
 def test_the_other_layers_follow_the_value():
-    """`source`/`commentaire` décrivent LA VALEUR : les garder au-dessus d'une valeur
+    """`comment`/`link` décrivent LA VALEUR : les garder au-dessus d'une valeur
     remplacée ferait affirmer une provenance fausse — le défaut qu'on élimine, une
     couche plus haut."""
     out = _merge_column(
-        {"valeur": "a@b.c", "origine": "import", "source": "hunter",
-         "commentaire": "vérifié"},
+        {"valeur": "a@b.c", "origine": "import", "comment": "hunter",
+         "link": "https://x"},
         "autre@x.fr")
     assert out == {"valeur": "autre@x.fr", "origine": "import"}
 
@@ -95,8 +95,8 @@ def test_an_explicit_gesture_replaces_the_origin():
 
 def test_writing_layers_without_an_origin_keeps_the_existing_one():
     out = _merge_column({"valeur": "x", "origine": "import"},
-                        {"valeur": "y", "source": "registre"})
-    assert out == {"valeur": "y", "source": "registre", "origine": "import"}
+                        {"valeur": "y", "comment": "registre"})
+    assert out == {"valeur": "y", "comment": "registre", "origine": "import"}
 
 
 def test_a_column_without_an_origin_is_replaced_plainly():
@@ -105,4 +105,4 @@ def test_a_column_without_an_origin_is_replaced_plainly():
     assert _merge_column("ancien", "nouveau") == "nouveau"
     assert _merge_column(None, "nouveau") == "nouveau"
     assert _merge_column({"a": 1}, "nouveau") == "nouveau"
-    assert _merge_column({"valeur": "x", "source": "s"}, "nouveau") == "nouveau"
+    assert _merge_column({"valeur": "x", "comment": "s"}, "nouveau") == "nouveau"
