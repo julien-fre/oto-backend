@@ -602,6 +602,60 @@ CREATE TABLE IF NOT EXISTS project_files (
 );
 CREATE INDEX IF NOT EXISTS idx_project_files_project ON project_files(project_id);
 
+-- Texte EXTRAIT d'un fichier déposé (#298) — pour qu'on le retrouve par ce qu'il
+-- CONTIENT, et plus seulement par son nom. Jusqu'ici un PDF de trente pages était,
+-- du point de vue de la recherche, un nom de fichier : mal nommé, introuvable.
+--
+-- ⚠️ **Table DÉDIÉE, et pas trois colonnes de plus sur `project_files`.** Celle-ci
+-- est une table de MÉTADONNÉES, lue à chaque listing de projet ; le texte d'un
+-- document pèse des dizaines de kilo-octets et n'est lu que par la recherche. Les
+-- coller ensemble ferait payer le poids du contenu à toutes les lectures de
+-- catalogue (0063-D3, garde-fou 1 : chaque colonne se paie autant de fois qu'on lit
+-- la ligne). ⚠️ Et surtout **PAS dans `project_files.summary`**, colonne morte : un
+-- texte extrait n'est pas un résumé, et le nom mentirait — le défaut qu'on passe la
+-- semaine à corriger ailleurs.
+--
+-- **La clé est le fichier lui-même**, simple et empruntée telle quelle. C'est
+-- délibéré et c'est la leçon du lot M4 : une clé COMPOSITE (là-bas `(ns_id, row_id)`)
+-- casse le patron de conversion des lots précédents et se découvre trop tard. Le
+-- texte extrait rejoindra un jour le modèle de nœuds ; avec un id de séquence, la
+-- transposition est le `legacy_id::bigint` qui marche déjà trois fois.
+--
+-- **L'absence de ligne EST la file de travail** : un fichier sans ligne ici est un
+-- fichier à extraire. Pas de drapeau `dirty` sur `project_files`, donc pas d'état à
+-- réconcilier — le manque se lit par une jointure, et un fichier supprimé emporte sa
+-- ligne (CASCADE) sans laisser de tâche fantôme.
+CREATE TABLE IF NOT EXISTS project_file_texts (
+    file_id BIGINT PRIMARY KEY REFERENCES project_files(id) ON DELETE CASCADE,
+    -- ok | unsupported | encrypted | empty | too_large | rejected_dtd | failed.
+    -- ⚠️ Le statut est TERMINAL sauf `failed` : un fichier chiffré ou d'un format
+    -- non supporté ne changera pas d'avis au prochain passage du worker. Le stocker
+    -- (plutôt qu'un booléen) est ce qui permet à l'interface de dire « format non
+    -- supporté » au lieu de « en cours », et à un futur lot d'OCR de retrouver
+    -- exactement la population `empty` d'une requête.
+    status TEXT NOT NULL,
+    -- Vide sauf sur `ok`. Le texte ENTIER (borné à l'extraction), pas seulement ses
+    -- vecteurs : les extraits de résultat en ont besoin, et le garder évite de
+    -- retélécharger le fichier à chaque affichage.
+    extracted_text TEXT NOT NULL DEFAULT '',
+    pages INTEGER,
+    -- De quoi comprendre sans rouvrir le fichier (« tronqué à … », le type d'erreur).
+    -- Jamais un extrait du contenu : un message de lib peut recracher des octets du
+    -- document, qui n'ont rien à faire dans un champ de diagnostic.
+    detail TEXT NOT NULL DEFAULT '',
+    -- Nombre de tentatives : seul `failed` se retente, et pas indéfiniment.
+    attempts INTEGER NOT NULL DEFAULT 1,
+    extracted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Un seul index, et il sert la FILE : « les fichiers encore à traiter ». Partiel,
+-- donc il ne porte QUE la population reprenable — les lignes terminales (l'immense
+-- majorité en régime établi) n'y entrent jamais. `status` est une colonne, le
+-- prédicat est immuable.
+-- ⚠️ Pas d'index de recherche ici : la FTS des fichiers se décide avec la requête
+-- qu'elle sert (barreau suivant), jamais « par symétrie » avec les autres sources.
+CREATE INDEX IF NOT EXISTS idx_project_file_texts_retry
+    ON project_file_texts(file_id) WHERE status = 'failed';
+
 -- Primitive de ressource possédée (ADR 0030). Partage cross-type deny-by-default :
 -- une ressource est identifiée par (resource_type, resource_id) ; chaque ligne
 -- accorde une permission à un principal (user/group/org). L'OWNER de la ressource

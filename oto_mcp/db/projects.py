@@ -1064,8 +1064,78 @@ def get_project_file(file_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
+# ── Texte extrait des fichiers (#298) ────────────────────────────────────────
+
+# Combien de fois on retente un échec IMPRÉVU avant d'abandonner. Les autres statuts
+# ne se retentent pas du tout (un fichier chiffré ne changera pas d'avis) ; celui-ci
+# peut venir d'un fichier tronqué à l'upload, donc mérite une seconde chance — mais
+# pas une file qui se repasse le même fichier pour toujours.
+MAX_EXTRACT_ATTEMPTS = 3
+
+
+def files_pending_extraction(limit: int = 20) -> list[dict]:
+    """Les fichiers à extraire, les plus récents d'abord.
+
+    **L'absence de ligne EST la file** : un fichier sans texte extrait est un fichier
+    à traiter. Pas de drapeau à poser à l'upload, donc pas d'état à réconcilier — et
+    un backfill est gratuit, puisque les fichiers déjà déposés sont, par construction,
+    déjà dans la file.
+
+    S'y ajoutent les échecs IMPRÉVUS pas encore épuisés. Les autres statuts sont
+    terminaux et n'y reviennent jamais.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT f.id, f.project_id, f.s3_key, f.filename, f.mime, f.size_bytes "
+            "FROM project_files f "
+            "LEFT JOIN project_file_texts t ON t.file_id = f.id "
+            "WHERE t.file_id IS NULL "
+            "   OR (t.status = 'failed' AND t.attempts < %s) "
+            "ORDER BY f.created_at DESC LIMIT %s",
+            (MAX_EXTRACT_ATTEMPTS, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def save_extracted_text(file_id: int, *, status: str, text: str = "",
+                        pages: Optional[int] = None, detail: str = "") -> None:
+    """Enregistre le résultat d'une extraction — succès comme refus.
+
+    ⚠️ **Un refus s'écrit aussi**, et c'est tout l'intérêt : sans ligne, le fichier
+    reviendrait dans la file à chaque passage. C'est ce qui distingue « on a regardé,
+    ce format n'est pas supporté » de « on n'a pas encore regardé » — pour la file
+    comme pour l'interface.
+
+    `attempts` s'incrémente au ré-essai plutôt que de repartir de zéro : c'est le
+    compteur qui borne la reprise d'un échec imprévu."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO project_file_texts "
+            "  (file_id, status, extracted_text, pages, detail) "
+            "VALUES (%s, %s, %s, %s, %s) "
+            "ON CONFLICT (file_id) DO UPDATE SET "
+            "  status = EXCLUDED.status, extracted_text = EXCLUDED.extracted_text, "
+            "  pages = EXCLUDED.pages, detail = EXCLUDED.detail, "
+            "  attempts = project_file_texts.attempts + 1, extracted_at = NOW()",
+            (file_id, status, text, pages, detail),
+        )
+
+
+def get_extracted_text(file_id: int) -> Optional[dict]:
+    """L'état d'extraction d'un fichier, ou None s'il n'a pas encore été regardé."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT file_id, status, extracted_text, pages, detail, attempts, "
+            "extracted_at FROM project_file_texts WHERE file_id = %s", (file_id,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def delete_project_file(file_id: int) -> Optional[dict]:
-    """Supprime la ligne et renvoie la `s3_key` à purger (ou None si inconnu)."""
+    """Supprime la ligne et renvoie la `s3_key` à purger (ou None si inconnu).
+
+    Le texte extrait part avec (CASCADE) : aucune ligne d'extraction ne survit à son
+    fichier, donc aucune tâche fantôme ne revient dans la file."""
     with _connect() as conn:
         row = conn.execute(
             "DELETE FROM project_files WHERE id = %s RETURNING project_id, s3_key",
