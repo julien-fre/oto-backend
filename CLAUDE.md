@@ -682,9 +682,14 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   que servies — **auditer le document servi, jamais le build**) ; l'inventaire des flux
   de connexion montait les tools sans les routes REST, or au boot réel ce sont les
   routes qui importent les modules d'auth. Racine commune : la fixture reproduit une
-  PARTIE du démarrage et le test promet le TOUT. Règle : le banc d'un garde-fou
-  d'inventaire = le vrai boot (`register_all` + routes) ou le document servi — et à sa
-  création, **prouver qu'il mord** en lui présentant l'anomalie qu'il prétend attraper.
+  PARTIE du démarrage et le test promet le TOUT. Un 4e cas le soir même, dans l'AUTRE
+  sens : un test qui importait lui-même le module qu'il inventoriait certifiait une
+  couverture inexistante — le flux n'était déclaré nulle part au boot réel, seul le test
+  le chargeait (v1.88.0, corrigé v1.88.1). Règle complète : **le banc d'un garde-fou
+  d'inventaire charge ce que charge le boot, ni plus NI MOINS** (le vrai boot
+  `register_all` + routes, ou le document servi) — et à sa création, **prouver qu'il
+  mord** en lui présentant l'anomalie qu'il prétend attraper (retirer la déclaration ⟹
+  l'inventaire doit tomber).
 - **Jetons de contexte d'appel = noms RÉSERVÉS, préfixés `_`** (ADR 0038 amendée 29/07,
   oto-backend#250) : `_org`, `_project`, `_group`, `_account`, `_instance`, `_run_id`
   (`call_axes.py`). Ils sont advertisés sélectivement au schéma des tools concernés, lus
