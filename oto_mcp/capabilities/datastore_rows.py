@@ -152,6 +152,12 @@ class WrittenRow(Row):
     """
     hors_schema: Optional[list[str]] = None
     hors_schema_hint: Optional[str] = None
+    # #319 — valeurs écrites hors des `options` déclarées, sur un tableau qui n'est
+    # PAS en format strict : elles passent (le régime est souple par déclaration),
+    # mais la réponse le dit désormais. `{champ: valeur}`. Absent quand tout est dans
+    # les listes — le cas normal, pas de clé parasite dans la réponse.
+    hors_options: Optional[dict] = None
+    hors_options_hint: Optional[str] = None
 
 
 class RowPage(BaseModel):

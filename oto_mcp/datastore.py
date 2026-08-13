@@ -206,6 +206,7 @@ class DatastorePg:
         # rempli par `_check_row`, lu par les surfaces via `off_schema_report()`. Le
         # store est instancié par requête, donc la portée est celle du geste.
         self.off_schema: set = set()
+        self.off_options: dict = {}
 
     # --- résolution namespace -> ns_id ---------------------------------------
 
@@ -344,6 +345,11 @@ class DatastorePg:
         posed = merged if written is None else {k: merged[k] for k in written
                                                 if k in merged}
         self.off_schema.update(dsv2.off_schema_keys(schema, posed))
+        # Valeurs hors des options DÉCLARÉES quand rien ne les fait respecter (#319) :
+        # écrites quand même — le tableau est en régime souple — mais plus en silence.
+        # Vide dès que la validation est armée : là, `validate_row` ci-dessus a déjà
+        # refusé, et le redire serait un doublon sur un chemin qui ne passe pas.
+        self.off_options.update(dsv2.unenforced_options(schema, posed))
 
     @staticmethod
     def _reject_misplaced_id(data: dict, row_id: Optional[str], *,
@@ -391,10 +397,18 @@ class DatastorePg:
         parasite dans la réponse), sinon la liste des champs + la phrase qui dit
         quoi en faire. Union sur un lot : un renommage fautif se voit une fois,
         pas une par row."""
+        out: dict = {}
         keys = sorted(self.off_schema)
-        if not keys:
-            return {}
-        return {"hors_schema": keys, "hors_schema_hint": dsv2.off_schema_warning(keys)}
+        if keys:
+            out["hors_schema"] = keys
+            out["hors_schema_hint"] = dsv2.off_schema_warning(keys)
+        # #319 : les options déclarées mais inertes. Clé DISTINCTE de `hors_schema` —
+        # ce n'est pas la même faute : là une colonne inconnue, ici une valeur hors
+        # d'une liste que le schéma laissait croire fermée.
+        if self.off_options:
+            out["hors_options"] = dict(sorted(self.off_options.items()))
+            out["hors_options_hint"] = dsv2.unenforced_options_warning(self.off_options)
+        return out
 
     @staticmethod
     def _release_if_terminal(schema: Optional[dict], ns_id: int, row_id: str,
@@ -576,6 +590,14 @@ class DatastorePg:
                                 # déclarations, que le datastore transporte), on DIT.
                                 dsv2.unknown_keys_warning(
                                     dsv2.unknown_declaration_keys(schema)),
+                                # #319 : des options déclarées mais qu'aucun régime ne
+                                # fait respecter — dit AU MOMENT où on pose le schéma,
+                                # pas six semaines plus tard devant des valeurs libres.
+                                dsv2.options_not_enforced_warning(
+                                    dsv2.options_not_enforced(schema)),
+                                # Et le fait, sur les champs `json` : stockés, rendus,
+                                # mais pas interrogeables en profondeur.
+                                dsv2.json_depth_warning(dsv2.json_fields_depth(schema)),
                                 self._overlong_warning(ns_id, schema),
                                 self._offending_enum_warning(ns_id, schema),
                                 self._orphan_columns_warning(ns_id, schema)) if w]
