@@ -682,7 +682,15 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   que servies — **auditer le document servi, jamais le build**) ; l'inventaire des flux
   de connexion montait les tools sans les routes REST, or au boot réel ce sont les
   routes qui importent les modules d'auth. Racine commune : la fixture reproduit une
-  PARTIE du démarrage et le test promet le TOUT. Un 4e cas le soir même, dans l'AUTRE
+  PARTIE du démarrage et le test promet le TOUT.
+  **Même racine côté DONNÉES (3 cas sur le seul lot M4, 13/08)** : un banc qui
+  RECONSTITUE le schéma mesure la représentation qu'on s'en fait, pas le système —
+  la table sans son vrai DDL (un `id BIGSERIAL` supposé, inexistant : clé composite),
+  `nodes` sans ses deux GIN (99 % du coût d'écriture au banc M0), un peuplement
+  uniforme là où la prod est un vivier (la fausse absence de dégradation de la file :
+  la table s'épuisait avant que la dégradation n'apparaisse). Et toujours dans le sens
+  RASSURANT. Règle : un banc s'exerce sur le VRAI DDL (extrait de `_schema.py`) et une
+  population de forme réelle — sinon il rend des verdicts, pas des mesures. Un 4e cas le soir même, dans l'AUTRE
   sens : un test qui importait lui-même le module qu'il inventoriait certifiait une
   couverture inexistante — le flux n'était déclaré nulle part au boot réel, seul le test
   le chargeait (v1.88.0, corrigé v1.88.1). Règle complète : **le banc d'un garde-fou
