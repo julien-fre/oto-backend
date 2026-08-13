@@ -113,5 +113,6 @@ from . import datastore_rows  # noqa: F401 — me.datastore.{list_rows,append_ro
 # Purge d'une colonne morte (#296) — après un renommage, l'ancienne clé piège les agents.
 from . import datastore_columns  # noqa: F401 — me.datastore.drop_column (MCP data_drop_column)
 from . import automation  # noqa: F401 — me.automation.fire (MCP routine_fire + REST)
+from . import run_thread  # noqa: F401 — runs.thread append/read (MCP oto_run_thread + REST) — chantier runner R1
 
 __all__ = ["registry", "_mcp_adapter", "_rest_adapter"]

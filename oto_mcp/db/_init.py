@@ -922,6 +922,16 @@ def _init_db_once() -> None:
         prune_tool_calls(int(os.environ.get("OTO_MCP_CALL_LOG_RETENTION_DAYS", "30")))
     except Exception as e:
         logger.warning("prune_tool_calls failed: %s", e)
+    # Le FIL des runs hébergés naît AVEC sa purge (chantier runner R1, ADR 0064-D3 :
+    # l'effacer n'ampute pas le run — le journal porte l'audit). Rétention distincte
+    # du journal : le fil est un état d'exécution, pas une vérité.
+    try:
+        from .run_thread import prune_run_messages
+        n_fil = prune_run_messages(int(os.environ.get("OTO_MCP_RUN_THREAD_RETENTION_DAYS", "30")))
+        if n_fil:
+            logger.info("fil des runs : %d tour(s) purgé(s)", n_fil)
+    except Exception as e:
+        logger.warning("prune_run_messages failed: %s", e)
     # #109 ch.3 : matérialise les clés métier déclarées en contrainte (hors
     # transaction schéma — DDL par namespace, fail-open).
     _ensure_datastore_key_indexes()

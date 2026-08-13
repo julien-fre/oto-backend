@@ -204,6 +204,27 @@ CREATE INDEX IF NOT EXISTS idx_runs_sub_org ON runs(sub, org_id, started_at DESC
 -- pas encore ici, un index la référençant dans _SCHEMA crashe au boot (vécu 2026-06-30,
 -- même gotcha que idx_tool_calls_run/org ci-dessus).
 
+-- Le FIL d'un run HÉBERGÉ (chantier runner R1 — ADR 0064 du blueprint) : l'état
+-- d'exécution, PAS le journal. La reprise canonique inter-agents reste le journal ;
+-- le fil sert à CONTINUER le même run (le worker le recharge, le dashboard le lit).
+-- Il est EFFAÇABLE sans amputer le run — purge courte au boot (_init), et AUCUNE
+-- fonction du produit ne doit l'exiger. Deux étages par tour : `content` = la
+-- projection NEUTRE (ce que l'UI et l'API lisent, indépendante du fournisseur de
+-- modèle) ; `provider_raw` = le tour provider exact (blocs de thinking inclus, à
+-- réémettre verbatim pour une continuation fidèle) — NULL pour un message humain.
+-- Hors recherche PAR CONSTRUCTION : jamais déclaré comme source (même règle que les
+-- sous-arbres de run, 0058-D2). UNIQUE(run_id, seq) porte l'index de lecture.
+CREATE TABLE IF NOT EXISTS run_messages (
+    id BIGSERIAL PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+    seq INT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
+    content JSONB NOT NULL,
+    provider_raw JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (run_id, seq)
+);
+
 -- Visibilité scopée par org (ADR 0015) : org_id=0 = profil perso/global (aucune
 -- org active), >0 = profil de cette org. Une identité par (sub, org_id).
 CREATE TABLE IF NOT EXISTS user_disabled_tools (
