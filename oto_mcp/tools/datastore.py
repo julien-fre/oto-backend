@@ -335,11 +335,10 @@ def register(mcp: FastMCP) -> None:
           table that already overflows answers with a `warning` saying how many.
         - lifecycle: on the `role:"status"` field, `lifecycle: {states:[…],
           transitions:{from:[to…]}, terminal?:[…]}` — unknown state or undeclared
-          transition is refused; entering a terminal state auto-releases the row's
-          work-queue claim (cf. data_claim_next). ⚠️ A `role:"status"` field WITHOUT
-          a lifecycle has NO terminal state, so nothing is ever auto-released: a
-          table drained by workers needs the lifecycle (the answer carries a
-          `warning` when it is missing).
+          transition is refused. ⚠️ It no longer releases the work-queue claim:
+          writing a "final" state does NOT free the row (#317). Release is a gesture
+          of the LOCK — data_release, or closing your run — never an inference from
+          a business value.
 
         SEMANTIC SEARCH (#67 V2.2 — opt-in per namespace): pass `semantic_search=true`
         to make this namespace's ROWS findable by MEANING via oto_search (not just exact
@@ -464,9 +463,11 @@ def register(mcp: FastMCP) -> None:
         on data_release — the guard so one agent cannot release another's claim.
         `filter` (exact {col: val}, e.g. {"status": "nouveau"}) selects what counts
         as claimable. The claim does NOT change the row: write your progress via
-        data_write (id=…) ; writing a TERMINAL lifecycle status auto-releases the
-        claim, data_release only serves abandoning without a verdict. The lease
-        (`lease_s`, default 900s) recycles rows from dead workers.
+        data_write (id=…), then RELEASE the row — writing a "final" status does not
+        free it (#317). Release with data_release, or let `run_finish` free every row
+        your run held. The lease (`lease_s`, default 900s) is the last resort for a
+        worker that died without closing anything. While you hold a row, nobody else
+        can write it.
 
         `namespace` also accepts `slot:<name>` (table bound by the active project).
         """
@@ -490,11 +491,14 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def data_release(namespace: str, id: str, worker: str) -> dict:
-        """Release a claimed row WITHOUT a verdict (abandon) — work-queue counterpart
-        of data_claim_next. Guarded by `worker` (same label as at claim time).
-        Writing a terminal lifecycle status already auto-releases: only call this
-        when giving up on a row so another worker can pick it before the lease
-        expires. `namespace` also accepts `slot:<name>`."""
+        """Release a claimed row — the NORMAL end of processing one row, and the
+        counterpart of data_claim_next. Guarded by `worker` (same label as at claim
+        time).
+
+        ⚠️ Call it after EVERY row you finish, not only when abandoning: writing a
+        "final" status no longer frees the row (#317). If you wrap your work in
+        run_start / run_finish, closing the run frees everything it held — that is
+        the safety net when you forget. `namespace` also accepts `slot:<name>`."""
         store = _acting_store()
         namespace = _ns(namespace)
         try:

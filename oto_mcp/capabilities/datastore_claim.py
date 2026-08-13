@@ -64,7 +64,7 @@ class ClaimResult(BaseModel):
     # La ligne réservée, colonnes libres du tableau + son bail (`_claimed_by`,
     # `_claimed_until`). `null` sur `claim_next` quand il n'y a plus rien à réserver.
     row: Optional[dict] = None
-    # Défaut de configuration qui rend l'auto-release inopérant (statut sans état
+    # Défaut de configuration relevé au claim (statut sans état
     # terminal) : le worker qui réserve est celui que ça concerne.
     warning: Optional[str] = None
     hint: Optional[str] = None

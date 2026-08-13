@@ -36,12 +36,17 @@ def test_every_real_world_title_type_survives(type_):
     assert dsv2.title_field(schema)["type"] == type_
 
 
-def test_the_legacy_role_still_names_a_row_during_the_conversion():
-    """Repli transitoire : un schéma pas encore converti continue de nommer ses
-    lignes. Sans lui, la bascule des lecteurs ferait afficher des uuid le temps que
-    la conversion passe."""
+def test_the_legacy_role_alone_no_longer_names_a_row():
+    """⚠️ **Le repli est MORT** (#317 étape C). Il a vécu le temps de la conversion ;
+    le garder ferait qu'un schéma neuf déclarant un rôle continuerait de marcher — et
+    le rôle ne serait jamais parti. Un repli qui survit à sa raison devient le canal
+    par lequel ce qu'on retire revient.
+
+    La conversion au boot est passée sur les 57 tableaux : plus aucun schéma vivant
+    n'est dans ce cas. Celui qui le serait retombe sur la clé métier puis
+    l'identifiant, comme un tableau sans titre."""
     schema = {"fields": [{"key": "raison_sociale", "type": "text", "role": "title"}]}
-    assert dsv2.title_field(schema)["key"] == "raison_sociale"
+    assert dsv2.title_field(schema) is None
 
 
 def test_display_wins_over_the_legacy_role():

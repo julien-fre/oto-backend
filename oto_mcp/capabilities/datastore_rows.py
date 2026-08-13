@@ -158,6 +158,13 @@ class WrittenRow(Row):
     # les listes — le cas normal, pas de clé parasite dans la réponse.
     hors_options: Optional[dict] = None
     hors_options_hint: Optional[str] = None
+    # #317 : ce qui a CHANGÉ dans le comportement de la plateforme, dit à l'instant
+    # où ça joue — aujourd'hui le retrait de la libération automatique sur état final.
+    # Déclaré (et pas seulement toléré par `extra="allow"`) parce qu'un message de
+    # migration dont tout l'objet est d'être LU doit exister au contrat publié : une
+    # intégration qui lit l'OpenAPI ne saurait pas qu'il peut arriver. Absent quand
+    # il n'y a rien à dire — le cas normal.
+    notices: Optional[list[str]] = None
 
 
 class RowPage(BaseModel):

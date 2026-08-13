@@ -67,7 +67,8 @@ class _FakeReq:
         return self._body
 
 
-SCHEMA = {"fields": [{"key": "societe", "role": "title"},
+# #317 : la colonne qui nomme une ligne se déclare par sa PRÉSENTATION.
+SCHEMA = {"fields": [{"key": "societe", "display": "title"},
                      {"key": "statut", "role": "status"}]}
 
 

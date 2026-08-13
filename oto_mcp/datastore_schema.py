@@ -204,13 +204,18 @@ def title_field(schema: Optional[dict]) -> Optional[dict]:
     """La colonne qui NOMME une ligne — ce qu'un humain reconnaît dans un journal, à
     la place d'un uuid.
 
-    ⚠️ Repli TRANSITOIRE sur `role="title"` : il vit le temps de la conversion des
-    schémas en base et **meurt avec les rôles** (#317 étape C). Un repli qui survit à
-    sa raison devient le canal par lequel ce qu'on retire revient."""
+    ⚠️ **Plus de repli sur `role="title"`** (#317 étape C) : il a vécu le temps de la
+    conversion des schémas en base, et il meurt ici. Un repli qui survit à sa raison
+    devient le canal par lequel ce qu'on retire revient — un schéma neuf déclarant un
+    rôle continuerait de marcher, et le rôle ne serait jamais parti.
+
+    La conversion au boot est passée sur les 57 tableaux (additive, idempotente) :
+    un schéma qui n'aurait QUE le rôle ne nomme plus sa ligne, et retombe sur la clé
+    métier puis l'identifiant, comme un tableau sans titre."""
     for f in _fields(schema):
         if f.get("display") == DISPLAY_TITLE and f.get("key"):
             return f
-    return field_by_role(schema, "title")
+    return None
 
 
 def validation_active(schema: Optional[dict]) -> bool:

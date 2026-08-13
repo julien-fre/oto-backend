@@ -1,6 +1,6 @@
 ---
 title: "File de travail : drainer un vivier avec N agents"
-description: claim atomique, bail, statut terminal — le cycle qui garantit qu'une flotte de sous-agents traite un tableau sans doublon ni ligne perdue
+description: claim atomique, bail, libération — le cycle qui garantit qu'une flotte de sous-agents traite un tableau sans doublon ni ligne perdue
 ---
 
 # Drainer un tableau avec plusieurs agents
@@ -37,16 +37,29 @@ Réponse : `{namespace, row}` avec `row = null` quand il n'y a plus rien à pren
 2. si row == null  → terminé, le worker s'arrête
 3. traiter row (enrichissement, appels connecteurs, raisonnement…)
 4. data_write(namespace="<table>", id=row["_id"],
-              row={"status": "traité", ...livrables})   ← libère le bail
-5. reboucler en 1
+              row={"status": "traité", ...livrables})
+5. data_release(namespace="<table>", id=row["_id"], worker="<mon-libellé>")
+6. reboucler en 1
 ```
 
-**L'écriture d'un statut terminal libère le bail automatiquement.** C'est la fin
-nominale d'un traitement — pas besoin d'appeler `data_release` derrière.
+**Rendre la ligne est un geste, pas une conséquence.** Écrire un verdict ne la libère
+pas : le verrou ne connaît pas tes états métier, et il n'a pas à les connaître — « à
+qualifier » ou « traité » sont TES mots, pas les siens. Ce qui rend une ligne :
 
-`data_release(namespace, id, worker)` ne sert qu'à **abandonner sans verdict** : tu
-renonces à la ligne, elle redevient claimable immédiatement au lieu d'attendre la fin
-du bail. Le `worker` y est rejoué comme garde — on ne libère pas le claim d'un autre.
+- **`data_release`** — le geste normal, à la fin de chaque ligne traitée ;
+- **la fin de ton traitement** — si tu as encadré ton travail par `run_start` /
+  `run_finish`, toutes les lignes que tu tenais sont rendues à la fermeture, quelle
+  qu'en soit l'issue. C'est le filet quand tu oublies le release ;
+- **l'expiration du bail** — le dernier recours, celui qui joue si ton agent s'arrête
+  sans rien fermer. Il peut être long : ne compte pas dessus (cf. la durée du bail
+  plus bas).
+
+Le `worker` est rejoué au release comme garde — on ne libère pas le claim d'un autre.
+
+**Tant que tu tiens une ligne, personne d'autre ne peut l'écrire.** Le bail protège
+désormais la donnée, pas seulement l'attribution : une écriture venue d'ailleurs est
+refusée avec un message qui dit qui tient la ligne et jusqu'à quand. Toi, tu écris
+librement — tu es reconnu par ton run, ou par ton `worker` si tu écris hors run.
 
 ## Les trois paramètres qui comptent
 
@@ -68,27 +81,23 @@ traiter deux fois ; trop long, une ligne abandonnée dort.
 
 ## ⚠️ Le piège : sans états terminaux déclarés, rien n'est libéré
 
-L'auto-release ne se déclenche que si le schéma du namespace déclare un champ
-`role: "status"` **avec un `lifecycle` dont on peut dériver des états terminaux** :
+Le verrou est **le même pour tous les tableaux** : il n'y a rien à déclarer au schéma
+pour qu'il fonctionne, et rien à régler par tableau. Un agent prend une ligne, la rend.
 
-```json
-{"key": "status", "role": "status",
- "lifecycle": {"states": ["nouveau", "en_cours", "traité", "écarté"],
-               "transitions": {"nouveau": ["en_cours", "écarté"],
-                               "en_cours": ["traité", "écarté"]},
-               "terminal": ["traité", "écarté"]}}
-```
+Ton champ de statut, lui, reste **entièrement le tien** : `"à qualifier"`, `"traité"`,
+`"écarté"` sont des valeurs de ton métier, dans une colonne ordinaire. Le verrou ne les
+lit pas — c'est ce qui garantit qu'il fonctionne pareil chez tout le monde.
 
-Les états terminaux sont ceux de `terminal` s'il est déclaré, sinon **dérivés** = les
-états sans transition sortante. Conséquences :
+> **Ce qui a changé (août 2026).** Écrire un état déclaré « final » libérait
+> automatiquement la ligne. Ce comportement est retiré : la plateforme devait pour cela
+> connaître tes états et deviner lesquels sont des fins, ce qui échouait en silence dès
+> que la déclaration ne correspondait pas exactement à l'usage. Si tu dépendais de cette
+> libération, ajoute un `data_release` après ton écriture — ou encadre ton travail par
+> `run_start` / `run_finish`.
 
-- **pas de `lifecycle`** (juste `role: "status"`) → aucun état terminal → **aucune
-  libération automatique**, chaque ligne reste sous bail jusqu'à expiration ;
-- `lifecycle` où **tout état a une transition sortante** → ensemble terminal vide,
-  même symptôme. Déclare `terminal` explicitement, c'est plus sûr que de le dériver.
-
-Symptôme à reconnaître : la file « se vide » alors que les lignes ne sont pas traitées,
-puis se remplit à nouveau ~15 min plus tard. C'est le bail qui expire, pas un bug.
+**Symptôme à reconnaître** : la file « se vide » alors que les lignes ne sont pas
+traitées, puis se remplit à nouveau plus tard. C'est le bail qui expire, pas un bug — et
+c'est le signe qu'il manque un `data_release` quelque part.
 
 ## Fan-out : ce que ça remplace
 
@@ -103,7 +112,7 @@ n'as donc plus à :
   — deux relectures simultanées donnent le même verdict).
 
 Le patron : lance N sous-agents identiques, chacun avec son `worker`, chacun bouclant
-`claim → traiter → écrire un statut terminal` jusqu'à `row == null`. Le parallélisme se
+`claim → traiter → écrire → rendre la ligne` jusqu'à `row == null`. Le parallélisme se
 règle par le nombre d'agents, pas par un découpage. Pour les gros volumes, combine avec
 le guide `bulk-load` (garder les payloads hors du contexte principal).
 
