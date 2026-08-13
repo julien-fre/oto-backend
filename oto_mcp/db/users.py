@@ -116,6 +116,24 @@ def emails_by_subs(subs: list) -> dict:
 # genre s'ajoute ICI (garde-fou : `tests/test_migrate_sub_inventory.py`).
 _MEMBERSHIP_TABLES = (("org_members", "org_id"), ("org_group_members", "group_id"))
 
+# Tables dont la **clé primaire CONTIENT** une colonne de sub : l'`UPDATE` nu de
+# `_SUB_COLUMNS` y lève `UniqueViolation` dès que les deux comptes portent la même
+# ligne (même canal opéré, même prêt) — et cette exception fait échouer TOUT le merge,
+# pas seulement cette table. Même patron que les appartenances : on jette la ligne de
+# l'ancien (le canonique est le nouveau), puis on repointe.
+#
+# ⚠️ Ces quatre colonnes portent des données que personne ne peut recréer de mémoire :
+# le canal de messagerie opéré et les prêts de compte (ADR 0044 §H / #55). Elles
+# étaient **hors inventaire** — donc emportées par le `DELETE FROM users` de l'étape 4,
+# en silence. Trouvées le 13/08 en dérivant les FK `ON DELETE CASCADE` du DDL plutôt
+# qu'en relisant la liste (garde-fou `tests/test_migrate_sub_cascade.py`).
+# `(table, colonne de sub, reste de la PK)`.
+_PK_SUB_TABLES = (
+    ("unipile_operated_accounts", "sub", ("provider",)),
+    ("connector_account_grants", "owner_sub", ("provider", "grantee_sub")),
+    ("connector_account_grants", "grantee_sub", ("owner_sub", "provider")),
+)
+
 # Inventaire des colonnes keyed-by-sub à repointer (issue oto-backend#56). Plain
 # UPDATE : le nouveau sub est frais → aucun conflit de PK, SAUF user_account_profile
 # (PK sub), les appartenances ci-dessus et connector_credentials (coffre user),
@@ -131,6 +149,9 @@ _SUB_COLUMNS = [
     ("user_disabled_tools", "sub"), ("user_enabled_tools", "sub"),
     ("org_members", "sub"), ("org_group_members", "sub"),
     ("user_api_tokens", "sub"), ("unipile_accounts", "sub"), ("unipile_pending", "sub"),
+    # Le PROPRIÉTAIRE d'un canal opéré : hors PK `(sub, provider)`, donc UPDATE nu
+    # (le TITULAIRE, lui, est en PK → `_PK_SUB_TABLES`).
+    ("unipile_operated_accounts", "owner_sub"),
     # ressources possédées + grants (ère ownership 0030/0042/0048 — ajoutées Phase H B1 :
     # l'inventaire n'avait jamais suivi, une bascule de tenant orphelinait les ressources
     # user-owned et les grants nominatifs). `owner_id`/`principal_id` mélangent sub et
@@ -252,6 +273,20 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
                 f"UPDATE {table} SET is_active=FALSE WHERE sub=%s "
                 f"AND EXISTS (SELECT 1 FROM {table} WHERE sub=%s AND is_active)",
                 (old_sub, new_sub))
+        # 2 ter. Colonnes de sub ENTRANT DANS UNE PK (canal opéré, prêts de compte) :
+        #    même raison qu'en 2 bis — l'UPDATE nu violerait la PK quand les deux
+        #    comptes portent la même ligne. On jette celle de l'ancien, puis on
+        #    repointe. Sans ce pré-traitement, ces lignes partaient en CASCADE avec
+        #    l'ancien compte à l'étape 4 : un canal de messagerie à reconnecter et
+        #    des prêts à re-consentir, sans trace de ce qui a disparu.
+        for table, col, reste in _PK_SUB_TABLES:
+            meme_ligne = " AND ".join(f"a.{c} = b.{c}" for c in reste)
+            conn.execute(
+                f"DELETE FROM {table} a WHERE a.{col}=%s AND EXISTS ("
+                f"SELECT 1 FROM {table} b WHERE b.{col}=%s AND {meme_ligne})",
+                (old_sub, new_sub))
+            conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s",
+                         (new_sub, old_sub))
         # 3. repointer toutes les colonnes sub.
         for table, col in _SUB_COLUMNS:
             conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s", (new_sub, old_sub))
