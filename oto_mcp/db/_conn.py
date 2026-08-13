@@ -104,3 +104,20 @@ def _connect() -> Iterator[psycopg.Connection]:
     pool = _get_pool()
     with pool.connection() as conn:
         yield conn
+
+
+@contextmanager
+def _connect_autocommit() -> Iterator[psycopg.Connection]:
+    """Connexion HORS pool, en autocommit — pour le seul DDL qui l'exige.
+
+    `CREATE INDEX CONCURRENTLY` est REFUSÉ dans un bloc transactionnel (« cannot run
+    inside a transaction block », vérifié), et le pool en ouvre un. Or c'est
+    précisément la forme qui ne bloque pas les écritures pendant la construction :
+    sans elle, poser un index d'unicité sur une grosse table gèlerait les écritures
+    de tout le monde le temps du scan.
+
+    Hors pool et à usage strictement local : on n'expose pas une connexion sans
+    transaction à du code métier, qui perdrait l'atomicité sans le voir."""
+    with psycopg.connect(_database_url(), options=_connect_options(),
+                         row_factory=_str_dict_row, autocommit=True) as conn:
+        yield conn

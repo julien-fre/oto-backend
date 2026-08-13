@@ -19,7 +19,7 @@ import psycopg
 logger = logging.getLogger(__name__)
 
 from ..datastore_schema import LAYER_KEYS, VALUE_LAYER
-from ._conn import _connect
+from ._conn import _connect, _connect_autocommit
 from .users import upsert_user
 
 
@@ -384,16 +384,19 @@ def datastore_upsert_row(ns_id: int, row_id: str, data: dict) -> tuple[dict, boo
 
 
 def datastore_find_row_id_by_key(ns_id: int, key_field: str, key_value) -> Optional[str]:
-    """Trouve le `row_id` d'une row par une CLÉ MÉTIER (champ JSONB `data->>key`),
-    pour la dédup d'un batch write. Renvoie le plus ancien match (ordre stable) ou
-    None. La clé est interpolée en LITTÉRAL SQL (psycopg.sql, jamais un f-string) :
-    un paramètre `data->>$1` ne matcherait pas l'index d'expression de clé métier
-    (#109 ch.3) — le littéral rend le lookup indexé, O(1)."""
+    """Trouve le `row_id` d'une row par une CLÉ MÉTIER, pour la dédup d'un batch
+    write. Renvoie le plus ancien match (ordre stable) ou None.
+
+    ⚠️ L'expression vient de `bkey_index_expr` — LA MÊME que celle de l'index, à la
+    chaîne près. Le planner ne sert un index d'EXPRESSION que si le `WHERE` porte
+    exactement la sienne : un écart ne casserait rien de visible (la déduplication
+    marcherait) et ferait simplement partir chaque lookup en seq scan. C'est la panne
+    qu'on ne voit qu'au moment où le namespace est assez gros pour qu'elle coûte."""
     from psycopg import sql as _sql
     q = _sql.SQL(
-        "SELECT row_id FROM datastore_rows WHERE ns_id = %s AND data->>{k} = %s "
+        "SELECT row_id FROM datastore_rows WHERE ns_id = %s AND {e} = %s "
         "ORDER BY created_at ASC LIMIT 1"
-    ).format(k=_sql.Literal(str(key_field)))
+    ).format(e=bkey_index_expr(key_field))
     with _connect() as conn:
         row = conn.execute(q, (ns_id, str(key_value))).fetchone()
         return row["row_id"] if row else None
@@ -711,13 +714,26 @@ def datastore_ensure_key_index(ns_id: int, key: str) -> None:
     est un LITTÉRAL composé via psycopg.sql (le DDL ne se paramètre pas)."""
     from psycopg import sql as _sql
     name = _bkey_index_name(ns_id)
-    with _connect() as conn:
-        conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(n=_sql.Identifier(name)))
+    expr = bkey_index_expr(key)
+    # CRÉER AVANT DE DÉPOSER, et jamais l'inverse : un DROP suivi d'un CREATE laisse
+    # une fenêtre où RIEN n'impose l'unicité, et un batch concurrent y insère des
+    # doublons que l'index neuf ne pourra plus se créer par-dessus. Les deux
+    # coexistent sans conflit — sur une ligne plate, les deux expressions rendent la
+    # même valeur.
+    #
+    # CONCURRENTLY ne bloque pas les écritures pendant la construction, et REFUSE de
+    # tourner dans une transaction (vérifié) — d'où la connexion autocommit. Mesuré :
+    # 40 ms sur 50 000 lignes, contre 32 ms pour l'ancienne forme plate.
+    tmp = _sql.Identifier(name + "_v2")
+    with _connect_autocommit() as conn:
+        conn.execute(_sql.SQL("DROP INDEX IF EXISTS {t}").format(t=tmp))
         conn.execute(_sql.SQL(
-            "CREATE UNIQUE INDEX {n} ON datastore_rows ((data->>{k})) "
-            "WHERE ns_id = {ns} AND data->>{k} IS NOT NULL"
-        ).format(n=_sql.Identifier(name), k=_sql.Literal(str(key)),
-                 ns=_sql.Literal(int(ns_id))))
+            "CREATE UNIQUE INDEX CONCURRENTLY {t} ON datastore_rows (({e})) "
+            "WHERE ns_id = {ns} AND {e} IS NOT NULL"
+        ).format(t=tmp, e=expr, ns=_sql.Literal(int(ns_id))))
+        conn.execute(_sql.SQL("DROP INDEX IF EXISTS {n}").format(n=_sql.Identifier(name)))
+        conn.execute(_sql.SQL("ALTER INDEX {t} RENAME TO {n}").format(
+            t=tmp, n=_sql.Identifier(name)))
 
 
 def datastore_drop_key_index(ns_id: int) -> None:

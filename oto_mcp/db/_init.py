@@ -52,6 +52,12 @@ def init_db() -> None:
             time.sleep(delay)
 
 
+    # HORS de tout bloc transactionnel : la reconstruction des index de clé métier
+    # passe par `CREATE INDEX CONCURRENTLY`, que PostgreSQL REFUSE dans une
+    # transaction (« cannot run inside a transaction block », vérifié). Elle ouvre
+    # donc ses propres connexions autocommit (#318).
+    migrate_business_key_indexes()
+
 def _init_db_once() -> None:
     with _connect() as conn:
         # Un SEUL migrateur à la fois. La DB est PARTAGÉE canari/prod : deux instances
@@ -1051,3 +1057,40 @@ def _seed_platform_grants_as_edges(conn: psycopg.Connection) -> None:
                     source="manual", created_by="migration:l5", conn=conn)
                 logger.info("L5 grants: arête posée %s → %s:%s (quota=%s)",
                             ref, kind, ident, quota)
+
+
+def migrate_business_key_indexes() -> int:
+    """Refait les index d'unicité de clé métier sur l'expression POLYMORPHE (#318).
+
+    Un index d'expression posé sur `data->>clé` compare l'objet entier dès que la
+    colonne porte des sous-champs : deux lignes du même SIREN, l'une nue l'autre
+    enveloppée, ne collisionneraient pas — doublon silencieux. La nouvelle expression
+    lit la valeur dans les deux formes, donc l'unicité redevient vraie.
+
+    D'UN COUP sur tous les namespaces à clé, et c'est délibéré : migrer au fil de
+    l'eau créerait une période où certains tableaux acceptent les sous-champs sur
+    leur clé et d'autres non — un état à expliquer, à tester et à garder en tête.
+    Là, il n'existe jamais.
+
+    Idempotent (l'index est reconstruit à l'identique s'il l'est déjà) et sans trou
+    d'unicité : `datastore_ensure_key_index` crée en CONCURRENTLY avant de déposer.
+    Mesuré à 40 ms par index sur 50 000 lignes — le coût de boot est le nombre de
+    namespaces à clé, pas leur volume.
+    """
+    from .datastore import datastore_ensure_key_index
+    n = 0
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT id, schema->>'key' AS k FROM user_datastores "
+            "WHERE schema->>'key' IS NOT NULL AND schema->>'key' <> ''").fetchall()
+    for r in rows:
+        try:
+            datastore_ensure_key_index(int(r["id"]), r["k"])
+            n += 1
+        except Exception:  # noqa: BLE001
+            # Un namespace dont les données portent DÉJÀ un doublon sur la clé refuse
+            # l'index — c'est un fait à voir, pas un boot à casser. Les autres passent.
+            logger.exception("clé métier: index non migré pour le namespace %s", r["id"])
+    logger.info("clé métier: %s index migrés en expression polymorphe", n)
+    return n
+

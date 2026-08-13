@@ -369,35 +369,6 @@ class DatastorePg:
         k = (schema or {}).get("key")
         return k if isinstance(k, str) and k else None
 
-    @staticmethod
-    def _reject_layered_business_key(schema: Optional[dict], data: dict) -> None:
-        """Refuse des couches sur LE champ qui sert de clé métier, tant que l'index
-        d'unicité n'est pas migré (#318).
-
-        Le lookup d'upsert et l'index UNIQUE lisent tous deux `data->>clé` — l'objet,
-        pas la valeur. Écrire `{"siren": {"valeur": "552081317", …}}` donnerait donc :
-        la validation ACCEPTE (elle déballe), le lookup ne matche pas (il compare
-        l'objet), l'index ne collisionne pas (même raison) ⟹ **doublon silencieux du
-        SIREN existant**. Un doublon qu'aucune des trois protections ne voit.
-
-        La fenêtre est aujourd'hui théorique — personne n'écrit encore de couches.
-        On refuse quand même : le coût d'un refus nommé est nul, celui d'un doublon
-        de clé métier découvert plus tard ne l'est pas, et c'est précisément le genre
-        d'écart qu'on ne détecte qu'en cherchant autre chose.
-
-        Le refus tombe avec la migration de l'index, qui rendra les deux lectures
-        polymorphes : le gate et sa levée sont le même invariant vu des deux bouts."""
-        key = (schema or {}).get("key")
-        if not key or not isinstance(data, dict):
-            return
-        if dsv2.unwrap(data.get(key)) is not data.get(key):
-            raise RowValidationError([
-                f"`{key}` est la clé métier de ce tableau : elle ne peut pas encore "
-                "porter de sous-champs. L'unicité et la déduplication lisent la "
-                "colonne telle quelle, donc une valeur enveloppée créerait un doublon "
-                f"sans que rien ne le signale. Écris `{key}` en valeur nue ; les "
-                "sous-champs y arriveront avec la migration de l'index."])
-
     def _check_row(self, schema: Optional[dict], merged: dict, *,
                    prev_status=None, written: Optional[set] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
@@ -411,7 +382,6 @@ class DatastorePg:
         clé métier, upsert, patch) y passent — donc l'endroit unique où relever les
         champs HORS SCHÉMA du geste (#294), sur les seules clés posées. Un schéma
         `strict` active la validation, donc l'appel a bien lieu."""
-        self._reject_layered_business_key(schema, merged)
         errors = dsv2.validate_row(schema, merged, prev_status=prev_status,
                                    written=written)
         if errors:
