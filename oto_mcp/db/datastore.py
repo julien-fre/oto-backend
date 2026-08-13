@@ -476,7 +476,9 @@ def field_value_sql(key: str) -> str:
     # la correction reposerait alors sur ce seul échappement, sans filet : une
     # édition future qui retirerait le `Literal` passerait sans que rien ne crie.
     # Signalé par la revue de sécurité automatique, et le durcissement est gratuit.
-    return _sql.SQL("COALESCE(data->{k}->>'valeur', data->>{k})").format(k=k)
+    return _sql.SQL(
+        "COALESCE(data->{k}->>{v}, data->>{k})"
+    ).format(k=k, v=_sql.Literal(VALUE_LAYER))
 
 
 # Même expression, forme PARAMÉTRÉE — le champ passe en `%s` (deux fois) au lieu
@@ -485,17 +487,25 @@ def field_value_sql(key: str) -> str:
 # l'invariant anti-injection du module (« le champ est TOUJOURS paramétré ») reste
 # intact. Seul le chemin CLÉ MÉTIER prend `field_value_sql`, parce que lui doit
 # matcher son index à la chaîne près.
-FIELD_VALUE_PARAM_SQL = "COALESCE(data->%s->>'valeur', data->>%s)"
+# Le nom de la couche qui porte LA VALEUR. Écrit une fois : les deux formes de
+# l'expression (paramétrée et littérale) le dérivent, aucune ne le recopie.
+VALUE_LAYER = "valeur"
+
+FIELD_VALUE_PARAM_SQL = f"COALESCE(data->%s->>'{VALUE_LAYER}', data->>%s)"
 
 # Les COUCHES adressables d'une colonne (#318). `valeur` n'en fait pas partie : elle
 # EST la colonne, on l'atteint par son nom nu — c'est ce qui garde le contrat de
 # lecture inchangé pour tout l'existant.
 LAYER_KEYS = ("source", "origine", "commentaire")
 
-# Lire une couche : `data->%s->>%s` (base, couche). Pas de COALESCE — une couche n'a
-# pas de forme plate à laquelle retomber : sur une colonne scalaire elle est NULL, et
-# c'est la bonne réponse (« cette valeur n'a pas de source » est justement la question
-# qu'on veut pouvoir poser).
+# Chemin GÉNÉRIQUE vers une sous-clé : `data->%s->>%s` (colonne, sous-clé) — les deux
+# en paramètres, rien de figé. Il sert les couches aujourd'hui ; il servira tel quel le
+# jour où l'on voudra filtrer la sous-clé d'un champ `json` ordinaire (oto#20), qui est
+# la même question posée sur un autre vocabulaire.
+#
+# Pas de COALESCE ici : une sous-clé n'a pas de forme plate à laquelle retomber. Sur
+# une colonne scalaire elle est NULL, et c'est la BONNE réponse — « cette valeur n'a
+# pas de source » est justement la question qu'on veut pouvoir poser.
 LAYER_VALUE_PARAM_SQL = "data->%s->>%s"
 
 
