@@ -156,6 +156,26 @@ intégrations multi-utilisateurs : y laisser le forcé, c'est laisser chacun ret
 ligne de son collègue. Côté portée, réserver **est une écriture** (`_ALLOWED` : les deux
 claims en `WRITE`) — un jeton `read` lit la file sans pouvoir en retirer une ligne.
 
+**Le bail sait qui le tient, et il ne se lève plus tout seul (13/08, #317).** Trois
+défauts constatés en PRODUCTION au premier essai réel, sur une campagne de 8 910
+lignes. ① Le lien entre une ligne et le traitement en cours n'était jamais enregistré
+(la source lue ne rend un run que s'il est passé explicitement, or un agent qui encadre
+son travail empile dans l'état de session) : rien ne se libérait à la fin, et le
+TITULAIRE lui-même se voyait refuser l'écriture. Les deux sources sont désormais lues
+une seule fois, au middleware de contexte. ② Ce refus, non traduit, ressortait en
+« erreur interne » : il est maintenant un refus NOMMÉ, portant qui tient la ligne,
+jusqu'à quand, et comment la libérer. ③ La protection du chemin par LOT n'avait jamais
+rien protégé — un fail-open sur les horodatages « rendus en texte », alors que le row
+factory du dépôt normalise tout horodatage en texte : le cas cru marginal était le cas
+normal. Les deux chemins avaient donc des comportements opposés, l'un refusant tout le
+monde y compris le titulaire, l'autre ne refusant jamais personne. Une date illisible
+REFUSE désormais au lieu d'ouvrir : un bail dont on ne sait pas s'il court protège
+peut-être encore quelqu'un.
+
+⚠️ **Écrire un état terminal ne libère plus la ligne** — le store émet une notice à la
+place. Un tableau dont le statut n'a aucun état terminal est une file qui ne libère
+rien : `set_schema` le signale à la pose.
+
 Refus de schéma : `ds_append`/`ds_update_row` traduisent `RowValidationError` en
 **400 `row_invalid`** (détail = les champs/transitions fautifs), pas en 500 — c'est le
 chemin d'échec d'une annulation (transition de retour devenue illégale).
@@ -270,6 +290,75 @@ contrainte. S'il passe en *published/external*, Google impose un audit
 sécurité annuel (CASA). Le flow étant unifié, **tout** user qui connecte
 Google pour le datastore se voit aussi demander l'accès Gmail. Choix assumé
 (substrat unique vs deux flows séparés).
+
+## Sous-champs d'une colonne (#318, #322, #326)
+
+**Toute colonne a des sous-champs** — ce n'est pas une forme que certaines valeurs
+adoptent, c'est le contrat. Une colonne « plate » est simplement une colonne dont les
+sous-champs sont vides. Vocabulaire FERMÉ, source unique dans `datastore_schema.py` :
+`valeur` (la colonne elle-même) + trois couches, `origine` · `comment` · `link`.
+
+**Le nom nu rend toujours la VALEUR.** `row["email"]` rend un e-mail, provenance ou
+pas — sans quoi tout consommateur casserait, silencieusement, le jour où quelqu'un
+pose une source. Les couches renseignées s'ajoutent à plat sous `champ.couche`, et
+s'atteignent comme des colonnes : `{"field": "email.origine", "op": "empty"}` répond à
+« quelles valeurs n'ont pas de provenance ? », qui est ce qui sépare une provenance
+vérifiable d'une provenance décorative. Pas de `COALESCE` sur une couche : sur une
+colonne scalaire elle est NULL, et c'est la bonne réponse.
+
+**La table reste MIXTE pour toujours** (personne ne réécrira les lignes existantes) :
+tout lecteur adressé par champ passe donc par `db.field_value_sql` /
+`field_read_sql` — filtres, tri, agrégats, clé métier, contrôles de schéma — et aucun
+ne recopie l'expression. L'index d'unicité de clé métier est un index d'EXPRESSION :
+il doit matcher la chaîne du lookup au caractère près, d'où le littéral échappé plutôt
+qu'un paramètre sur ce seul chemin.
+
+**Écrire : l'écriture ne touche QUE ce qu'elle nomme** (`_merge_column`). Une règle,
+dont découlent les deux défauts payés :
+
+| écriture | effet |
+|---|---|
+| `{"champ": Y}` (ou `null`) | valeur posée/effacée, **origine intacte** |
+| `{"champ": {"valeur": Y}}` | idem |
+| `{"champ": {"origine": X}}` | **valeur intacte**, origine posée |
+| `{"champ": {"origine": null}}` | origine effacée ; ne reste que la valeur ⇒ colonne à nouveau plate |
+
+`comment` et `link` décrivent la valeur : quand elle change sans qu'ils soient
+renommés, ils tombent avec elle — les garder ferait affirmer une provenance fausse.
+`origine` décrit le point de départ, elle survit. C'est une protection contre
+l'ACCIDENT, pas contre l'intention : un geste explicite remplace ce qu'il vise.
+
+**Asymétrie lecteur/écrivain** : une couche inconnue est IGNORÉE à la lecture (un
+déploiement progressif ne doit pas perdre ce qu'un nœud plus récent a écrit) et
+REFUSÉE par son nom à l'écriture (une couche mal orthographiée s'apprend tout de
+suite, pas six semaines plus tard). ⚠️ Un dict qui mêle une couche connue et une clé
+inconnue reste une donnée `json` métier — arbitré en #329.
+
+**Le blob lu en TEXTE** (recherche plein-texte, extrait, embedding) est reconstruit
+avec les valeurs à la place des enveloppes (`ROW_VALUES_TEXT_SQL`), sinon `q=hunter`
+matcherait toute ligne dont l'e-mail VIENT de Hunter. Gardé par un `jsonb_path_exists`
+mesuré : ×6,4 si systématique, ×1,5 sur une table sans couches.
+
+## Interroger PLUSIEURS colonnes à la fois (oto#22 barreau 1)
+
+Une notion vit souvent sur des colonnes numérotées (`contact1_fonction`…). Un filtre
+peut viser plusieurs colonnes **déclarées par l'appelant** — le serveur n'interprète
+jamais un motif de nom :
+
+```jsonc
+filters: [{"fields": ["contact1_fonction","contact2_fonction","contact3_fonction"],
+           "op": "in", "value": ["DRH","DAF"], "match": "any"}]
+```
+
+`match` : `any` (défaut, une colonne suffit) ou `all` — et `all` n'est pas la négation
+d'`any` : « aucun rang n'a de contact » (`empty` + `all`) ne s'obtient pas en niant
+« au moins un rang en a ». Une métrique d'agrégat porte sa propre condition (`where`,
+même grammaire) : le total et la sous-population dans la MÊME requête, donc un taux
+sans recouper deux appels. `group_by` accepte une liste — les valeurs sont mises en
+commun, `count` compte les occurrences et `count_rows` les fiches.
+
+Surfaces : `data_rows(filters=…)`, `data_aggregate(filters=…, metrics=[{…, "where":…}],
+group_by=[…])`, et le même `filters` côté REST.
 
 ## Setup GCP (one-shot, par projet)
 
