@@ -201,15 +201,18 @@ def test_the_business_key_may_now_carry_layers():
 
 # --- l'origine survit sur TOUS les chemins d'écriture ----------------------------
 
-def test_a_patch_by_id_keeps_the_origin():
-    """`update_row` avait sa PROPRE fusion : la préservation n'était câblée que dans
-    le chemin batch, donc un patch par `id` — le geste le plus courant d'un agent —
-    effaçait l'origine quand même. Un seul chemin corrigé sur deux ne corrige rien."""
-    import oto_mcp.datastore as ds
-    import inspect
-    src = inspect.getsource(ds.DatastorePg.update_row)
-    assert "_merge_column(data.get(k), v)" in src, (
-        "update_row doit passer par le même point de fusion que le batch")
+# `update_row` avait sa PROPRE fusion : la préservation n'était câblée que dans le
+# chemin batch, donc un patch par `id` — le geste le plus courant d'un agent — effaçait
+# l'origine quand même. Un seul chemin corrigé sur deux ne corrige rien.
+#
+# Ce fait était gardé ici par un test qui LISAIT le texte d'`update_row` à la recherche
+# de l'appel. Retiré : il affirmait une intention (« le code appelle telle fonction »)
+# là où la propriété est un COMPORTEMENT, et il virait au rouge dès qu'une autre
+# session éditait le module — le décalage de `linecache` suffit, sans qu'aucun
+# comportement n'ait bougé. Un faux rouge sur un tree partagé coûte à tout le monde, et
+# celui-là ne disait rien de plus que ce que prouve déjà, en l'exerçant vraiment,
+# `test_datastore_origin_survives_sequence.py` (écriture, RÉÉCRITURE, puis lecture de
+# l'origine — par `DatastorePg.update_row`, le chemin qu'un agent emprunte).
 
 
 def test_an_origin_alone_still_reads_flat():
