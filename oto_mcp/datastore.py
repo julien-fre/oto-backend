@@ -134,6 +134,22 @@ def _filter_specs(filter: Optional[dict]) -> list[dict]:
     return out
 
 
+def _filter_clauses(filter: Optional[dict], filters: Optional[list]) -> list[dict]:
+    """Les DEUX formes de filtre d'un même appel, réunies en une liste de clauses.
+
+    `filter` = le raccourci `{colonne: valeur}` (une colonne à la fois) ; `filters` =
+    la forme complète `[{field|fields, op, value, match?}]`, seule capable de viser
+    plusieurs colonnes déclarées (oto#22). Elles se cumulent en ET.
+
+    Point unique, et il a coûté un défaut : `aggregate` et `page_rows` recopiaient la
+    conversion en la simplifiant en égalité, si bien qu'un opérateur imbriqué —
+    `{"posted_at": {"gte": "2026-06-01"}}`, la forme que la fiche de `data_rows`
+    documente — y comparait la colonne au TEXTE d'un dictionnaire Python. Zéro ligne,
+    aucune erreur : la même syntaxe répondait juste sur un verbe et faux sur l'autre.
+    """
+    return _filter_specs(filter) + list(filters or [])
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -1207,10 +1223,14 @@ class DatastorePg:
         q: Optional[str] = None,
         order_by: Optional[str] = None,
         order_dir: str = "desc",
+        filters: Optional[list] = None,
     ) -> dict:
         """Page pour l'agent (chemin MCP `data_rows`), filtre/recherche/tri poussés en
         SQL. Renvoie `{rows, next_cursor}` — `next_cursor` non nul ⇒ il reste des lignes
         (repasse-le pour la suite).
+
+        `filter` et `filters` se cumulent (cf. `_filter_clauses`) : le premier vise une
+        colonne, le second en vise plusieurs à la fois.
 
         Deux régimes de pagination, et le curseur porte lequel :
           - **sans `order_by`** (défaut) → keyset sur `row_id` = ordre de création,
@@ -1222,7 +1242,7 @@ class DatastorePg:
         rendre une page fausse — un curseur d'offset relu comme un `row_id` cadrerait
         silencieusement sur les mauvaises lignes."""
         ns_id = self._resolve(namespace)
-        filters = _filter_specs(filter)
+        filters = _filter_clauses(filter, filters)
         if order_by:
             offset = _decode_offset_cursor(cursor) if cursor else 0
             rows = db.datastore_list_rows(
@@ -1242,27 +1262,30 @@ class DatastorePg:
         return {"rows": out, "next_cursor": next_cursor}
 
     def count_rows(self, namespace: str, *, filter: Optional[dict] = None,
-                   q: Optional[str] = None) -> int:
-        """Nombre de lignes (mêmes `filter`/`q` que `cursor_rows`), poussé en SQL
-        (`COUNT(*)`) — sans rapatrier les lignes (feedback #191 : stats d'un gros
+                   q: Optional[str] = None, filters: Optional[list] = None) -> int:
+        """Nombre de lignes (mêmes `filter`/`filters`/`q` que `cursor_rows`), poussé en
+        SQL (`COUNT(*)`) — sans rapatrier les lignes (feedback #191 : stats d'un gros
         vivier sans charger 300+ lignes en contexte)."""
         ns_id = self._resolve(namespace)
-        return db.datastore_count_rows(ns_id, q=q, filters=_filter_specs(filter))
+        return db.datastore_count_rows(
+            ns_id, q=q, filters=_filter_clauses(filter, filters))
 
-    def aggregate(self, namespace: str, *, group_by: Optional[str] = None,
+    def aggregate(self, namespace: str, *, group_by=None,
                   metrics: Optional[list] = None, filter: Optional[dict] = None,
                   q: Optional[str] = None, filters: Optional[list] = None) -> list[dict]:
         """Agrégat serveur (feedback #191) : COUNT/SUM/AVG/MIN/MAX sur des champs JSONB,
         `group_by` optionnel — stats d'un vivier sans rapatrier les lignes. Délègue à
         `db.datastore_aggregate`. Deux formes de filtre cumulables : `filter` exact
-        `{col: val}` (chemin MCP) et `q`/`filters` riches ({field, op, value}, mêmes
-        clauses que `page_rows`) — le dashboard agrège ainsi le MÊME jeu que sa vue
-        filtrée (tuiles metric)."""
+        `{col: val}` (chemin MCP) et `q`/`filters` riches ({field|fields, op, value},
+        mêmes clauses que `page_rows`) — le dashboard agrège ainsi le MÊME jeu que sa
+        vue filtrée (tuiles metric).
+
+        `group_by` accepte une LISTE de colonnes (oto#22) : leurs valeurs sont mises en
+        commun, une ligne comptant une occurrence par colonne renseignée."""
         ns_id = self._resolve(namespace)
-        clauses = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
-        clauses.extend(filters or [])
         return db.datastore_aggregate(
-            ns_id, group_by=group_by, metrics=metrics, q=q, filters=clauses)
+            ns_id, group_by=group_by, metrics=metrics, q=q,
+            filters=_filter_clauses(filter, filters))
 
     def page_rows(
         self,
@@ -1286,9 +1309,7 @@ class DatastorePg:
         le portent : la face REST du même verbe ignorait donc **en silence** un
         paramètre que la face MCP honore (#303)."""
         ns_id = self._resolve(namespace)
-        clauses = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
-        clauses.extend(filters or [])
-        clauses = clauses or None
+        clauses = _filter_clauses(filter, filters) or None
         rows = db.datastore_list_rows(
             ns_id, offset=offset, limit=limit, order_by=order_by,
             order_dir=order_dir, q=q, filters=clauses)
@@ -1356,8 +1377,9 @@ class DatastorePg:
                    trace: Optional[dict] = None) -> Optional[dict]:
         """Pick + claim atomique de la prochaine row claimable (bail NULL ou
         expiré), `FOR UPDATE SKIP LOCKED` — N workers drainent sans collision.
-        `filter` = filtre exact `{col: val}` (ex. {"status": "nouveau"}). Renvoie
-        la row (avec `_claimed_by`/`_claimed_until`) ou None (file vide).
+        `filter` = `{col: val}`, ou `{col: {op: val}}` pour un opérateur (même
+        grammaire que `data_rows`). Renvoie la row (avec `_claimed_by`/
+        `_claimed_until`) ou None (file vide).
 
         `warnings` = liste OUT (patron `trace`) où est déposé, le cas échéant, le
         défaut de configuration qui rend l'auto-release inopérante — le worker qui
@@ -1366,7 +1388,7 @@ class DatastorePg:
         if not worker:
             raise ValueError("worker requis (libellé stable rejoué sur release)")
         ns_id = self._resolve(namespace, write=True)
-        filters = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
+        filters = _filter_clauses(filter, None)
         row = db.datastore_claim_next(ns_id, worker=worker,
                                       lease_seconds=int(lease_s), filters=filters,
                                       run_id=_current_run())
