@@ -16,6 +16,7 @@ def test_aggregate_delegates_and_converts_filter(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_aggregate", _fake_agg)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 7)
+    monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)  # pas de schéma sur ce banc
 
     out = s.aggregate(
         "vivier",
@@ -40,6 +41,7 @@ def test_aggregate_default_metrics_none_passthrough(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_aggregate", _fake_agg)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 1)
+    monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)  # pas de schéma sur ce banc
 
     assert s.aggregate("vivier") == [{"count": 301}]
     # metrics non fourni → le défaut ([{op:count}]) est appliqué côté db, pas ici.
@@ -58,6 +60,7 @@ def test_aggregate_combines_exact_filter_and_rich_filters(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_aggregate", _fake_agg)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 7)
+    monkeypatch.setattr(s, "_schema_of", lambda ns_id: None)  # pas de schéma sur ce banc
 
     s.aggregate("vivier", filter={"statut": "qualified"},
                 q="lyon", filters=[{"field": "bp", "op": "gte", "value": "100"}])

@@ -562,13 +562,57 @@ def split_layer(field: str) -> tuple:
     return str(field), None
 
 
+_LIST_PATH_RE = re.compile(r"^(?P<col>[^\[\]]+)\[(?P<rang>\d*)\]\.(?P<reste>.+)$")
+
+
+def split_list_path(field: str):
+    """`contacts[].email` → `("contacts", None, "email")` ; `contacts[0].email.origine`
+    → `("contacts", 0, "email.origine")` ; autre chose → None.
+
+    Deux formes, deux usages : le rang VIDE interroge la liste entière (« il existe un
+    contact dont… »), un rang NOMMÉ vise une fiche précise — c'est ce dont la
+    projection d'une migration a besoin pour résoudre un ancien nom plat."""
+    m = _LIST_PATH_RE.match(str(field))
+    if not m:
+        return None
+    rang = m.group("rang")
+    return m.group("col"), (int(rang) if rang else None), m.group("reste")
+
+
+def leaf_read_sql(base_sql: str, base_params: list, field: str) -> tuple:
+    """La lecture d'une FEUILLE sous une base quelconque — `data` au premier niveau,
+    l'item courant sous une liste. Une seule expression, deux contextes : c'est le
+    principe de la feuille rendu littéral, plutôt que deux SQL à garder d'accord."""
+    base, layer = split_layer(field)
+    if layer:
+        return f"{base_sql}->%s->>%s", base_params + [base, layer]
+    return (f"COALESCE({base_sql}->%s->>'{VALUE_LAYER}', {base_sql}->>%s)",
+            base_params + [base] + base_params + [base])
+
+
 def field_read_sql(field: str) -> tuple:
     """`(fragment SQL, paramètres)` pour lire ce que l'appelant a désigné.
 
-    Un nom nu lit la VALEUR (plate ou à couches) ; `champ.source` lit la couche.
-    Les deux se filtrent, se trient et s'agrègent pareil — c'est ce qui rend
-    « toutes les lignes dont l'email n'a pas de source » exprimable, et donc la
-    provenance vérifiable au lieu de décorative."""
+    Un nom nu lit la VALEUR (plate ou à couches) ; `champ.source` lit la couche ;
+    `contacts[0].email` lit l'attribut d'une fiche de rang précis. **Les trois se
+    filtrent, se trient et s'agrègent pareil** — c'est ici que l'uniformité des verbes
+    se joue, et on a déjà payé de la perdre : le même filtre répondait juste sur un
+    verbe et faux sur trois, parce que la résolution était recopiée ailleurs.
+
+    `contacts[].email` (TOUS les items) n'a pas sa place ici : il ne désigne pas UNE
+    valeur mais N, donc rien à trier ni à regrouper. Refusé en le nommant plutôt que
+    rendu comme s'il valait le premier item — un ordre reproductible et faux."""
+    chemin = split_list_path(field)
+    if chemin is not None:
+        colonne, rang, reste = chemin
+        if rang is None:
+            raise ValueError(
+                f"`{field}` désigne TOUS les items de `{colonne}` : il n'a pas une "
+                f"valeur mais N, donc il ne se trie ni ne se regroupe (il se FILTRE, "
+                f"par existence). Viser un rang précis — `{colonne}[0].{reste}`.")
+        # Le rang vient d'un `\d+` converti en entier : l'inscrire dans le SQL n'est
+        # pas une interpolation de saisie.
+        return leaf_read_sql(f"data->%s->{int(rang)}", [colonne], reste)
     base, layer = split_layer(field)
     if layer:
         return LAYER_VALUE_PARAM_SQL, [base, layer]
@@ -1035,7 +1079,35 @@ def _ds_one_field_clause(field: str, op: str, val) -> tuple[Optional[str], list]
     #
     # Nom nu → la valeur ; `champ.source` → la couche. Une seule décision, ici, dont
     # toutes les branches héritent.
+    chemin = split_list_path(field)
+    if chemin is not None and chemin[1] is None:
+        # `contacts[].email` — l'EXISTENCE est intrinsèque à la notation (oto#22 §12) :
+        # « il existe un contact dont l'e-mail… ». `match` ne descend jamais ici, il
+        # joint les cibles déclarées. C'est le SEUL chemin qui ne rend pas une valeur
+        # scalaire, donc le seul qui ne peut pas passer par `field_read_sql`.
+        colonne, _, reste = chemin
+        V, fp = leaf_read_sql("_i.v", [], reste)
+        clause, cparams = _ds_leaf_predicate(V, fp, op, val)
+        if clause is None:
+            return None, []
+        # La garde de type est OBLIGATOIRE : `jsonb_array_elements` LÈVE sur une
+        # valeur qui n'est pas un tableau, et pendant une conversion une partie
+        # des lignes ne l'est pas encore — l'état NORMAL, pas un cas limite.
+        return (f"EXISTS (SELECT 1 FROM jsonb_array_elements("
+                f"CASE WHEN jsonb_typeof(data->%s) = 'array' THEN data->%s "
+                f"ELSE '[]'::jsonb END) AS _i(v) WHERE {clause})",
+                [colonne, colonne] + cparams)
     V, fp = field_read_sql(field)
+    return _ds_leaf_predicate(V, fp, op, val)
+
+
+def _ds_leaf_predicate(V: str, fp: list, op: str, val) -> tuple:
+    """Le prédicat sur une FEUILLE déjà résolue — `(fragment, params)`.
+
+    Séparé de la résolution du chemin pour que les deux vivent au même endroit quel
+    que soit le niveau : une colonne, une couche, l'attribut d'un item de liste. Sans
+    cette séparation, interroger une liste aurait demandé une seconde copie de toute
+    la logique d'opérateurs, et les deux auraient divergé au premier ajout."""
     if op in ("empty", "not_empty"):
         # ⚠️ La VALEUR compte. `{"empty": false}` se lit « pas vide » — c'est
         # la seule lecture possible d'un booléen, et un agent l'écrira. Elle
@@ -1109,7 +1181,13 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
     else:
         _v, _vp = field_read_sql(order_by)
         order_sql = f"{_v} {direction}, row_id {direction}"
-        params.append(order_by)  # valeur paramétrée → pas d'injection
+        # ⚠️ TOUS les paramètres de l'expression, pas le nom une fois : depuis #318 la
+        # lecture d'une colonne est un COALESCE à DEUX emplacements (plate ou à
+        # couches), et un chemin de liste en compte quatre. N'en fournir qu'un faisait
+        # échouer la requête — tout tri par colonne user, en production. Le banc de tri
+        # stubbait le SQL : il vérifiait quel CHEMIN de code est pris, jamais que la
+        # requête s'exécute. La sonde qui l'attrape est donc contre un vrai PostgreSQL.
+        params.extend(_vp)
     tail = ""
     if limit is not None:
         tail = " LIMIT %s OFFSET %s"

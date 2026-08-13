@@ -62,6 +62,55 @@ def _existing_layers(existing: Any) -> dict:
     return {} if existing is None else {dsv2.VALUE_LAYER: existing}
 
 
+def _to_path(schema: Optional[dict], nom):
+    """Un ancien nom plat → son chemin réel ; tout le reste, inchangé."""
+    if not isinstance(nom, str):
+        return nom
+    cible = dsv2.resolve_flat_name(schema, nom)
+    if cible is None:
+        return nom
+    colonne, rang, attr = cible
+    return f"{colonne}[{rang}].{attr}"
+
+
+def _resolve_filters(schema: Optional[dict], filters):
+    out = []
+    for f in filters or []:
+        if not isinstance(f, dict):
+            out.append(f)
+            continue
+        g = dict(f)
+        if g.get("field"):
+            g["field"] = _to_path(schema, g["field"])
+        if isinstance(g.get("fields"), list):
+            g["fields"] = [_to_path(schema, k) for k in g["fields"]]
+        if isinstance(g.get("where"), list):
+            g["where"] = _resolve_filters(schema, g["where"])
+        out.append(g)
+    return out
+
+
+def _resolve_metrics(schema: Optional[dict], metrics):
+    out = []
+    for m in metrics or []:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        g = dict(m)
+        if g.get("field"):
+            g["field"] = _to_path(schema, g["field"])
+        if isinstance(g.get("where"), list):
+            g["where"] = _resolve_filters(schema, g["where"])
+        out.append(g)
+    return out
+
+
+def _resolve_group_by(schema: Optional[dict], group_by):
+    if isinstance(group_by, (list, tuple)):
+        return [_to_path(schema, k) for k in group_by]
+    return _to_path(schema, group_by)
+
+
 def _refuse_flat_writes(schema: Optional[dict], user_data: dict) -> None:
     """Écrire sur un nom PROJETÉ est refusé, en nommant la cible neuve (oto#22 §6).
 
@@ -1336,9 +1385,12 @@ class DatastorePg:
         silencieusement sur les mauvaises lignes."""
         ns_id = self._resolve(namespace)
         filters = _filter_clauses(filter, filters)
-        # ⚠️ Le schéma se lit une fois par PAGE, et seulement quand il y a des lignes à
-        # servir : le lire dès l'entrée ferait payer une requête à un appel qui va
-        # refuser son curseur — un coût là où il n'y a même pas de résultat.
+        # ⚠️ Le schéma se lit une fois par PAGE, et seulement quand il y a quelque chose
+        # à résoudre ou à servir : le lire dès l'entrée ferait payer une requête à un
+        # appel qui va refuser son curseur — un coût là où il n'y a même pas de résultat.
+        sch = self._schema_of(ns_id) if (filters or order_by) else None
+        filters = _resolve_filters(sch, filters)
+        order_by = _to_path(sch, order_by)
         if order_by:
             offset = _decode_offset_cursor(cursor) if cursor else 0
             rows = db.datastore_list_rows(
@@ -1346,7 +1398,8 @@ class DatastorePg:
                 order_dir=order_dir, q=q, filters=filters)
             next_cursor = (_encode_offset_cursor(offset + len(rows))
                            if len(rows) == limit else None)
-            sch = self._schema_of(ns_id) if rows else None
+            if sch is None and rows:
+                sch = self._schema_of(ns_id)
             return {"rows": [self._row_to_dict(r, sch) for r in rows],
                     "next_cursor": next_cursor}
         after = _decode_cursor(cursor) if cursor else None
@@ -1354,7 +1407,8 @@ class DatastorePg:
             raise InvalidCursor(cursor)  # curseur trié repassé sans `order_by`
         rows = db.datastore_list_rows_after(
             ns_id, after_row_id=after, limit=limit, q=q, filters=filters)
-        sch = self._schema_of(ns_id) if rows else None
+        if sch is None and rows:
+            sch = self._schema_of(ns_id)
         out = [self._row_to_dict(r, sch) for r in rows]
         next_cursor = _encode_cursor(rows[-1]["row_id"]) if len(rows) == limit else None
         return {"rows": out, "next_cursor": next_cursor}
@@ -1365,8 +1419,10 @@ class DatastorePg:
         SQL (`COUNT(*)`) — sans rapatrier les lignes (feedback #191 : stats d'un gros
         vivier sans charger 300+ lignes en contexte)."""
         ns_id = self._resolve(namespace)
-        return db.datastore_count_rows(
-            ns_id, q=q, filters=_filter_clauses(filter, filters))
+        clauses = _filter_clauses(filter, filters)
+        # Le compte doit décrire le MÊME jeu que la page : mêmes noms résolus.
+        clauses = _resolve_filters(self._schema_of(ns_id), clauses) if clauses else clauses
+        return db.datastore_count_rows(ns_id, q=q, filters=clauses)
 
     def aggregate(self, namespace: str, *, group_by=None,
                   metrics: Optional[list] = None, filter: Optional[dict] = None,
@@ -1381,9 +1437,23 @@ class DatastorePg:
         `group_by` accepte une LISTE de colonnes (oto#22) : leurs valeurs sont mises en
         commun, une ligne comptant une occurrence par colonne renseignée."""
         ns_id = self._resolve(namespace)
-        return db.datastore_aggregate(
-            ns_id, group_by=group_by, metrics=metrics, q=q,
-            filters=_filter_clauses(filter, filters))
+        clauses = _filter_clauses(filter, filters)
+        demande = group_by
+        if clauses or group_by or metrics:
+            sch = self._schema_of(ns_id)
+            clauses = _resolve_filters(sch, clauses)
+            group_by = _resolve_group_by(sch, group_by)
+            metrics = _resolve_metrics(sch, metrics)
+        out = db.datastore_aggregate(
+            ns_id, group_by=group_by, metrics=metrics, q=q, filters=clauses)
+        # L'appelant retrouve la clé sous le nom QU'IL A DEMANDÉ. Rendre le nom résolu
+        # obligerait chaque consommateur à connaître la traduction — donc à savoir
+        # qu'une migration est en cours, ce que le double-service existe pour lui
+        # épargner : sa facette doit revivre à l'identique, sans une ligne changée.
+        avant, apres = db.group_key(demande), db.group_key(group_by)
+        if avant != apres:
+            out = [{(avant if k == apres else k): v for k, v in r.items()} for r in out]
+        return out
 
     def page_rows(
         self,
@@ -1408,12 +1478,12 @@ class DatastorePg:
         paramètre que la face MCP honore (#303)."""
         ns_id = self._resolve(namespace)
         clauses = _filter_clauses(filter, filters) or None
+        sch = self._schema_of(ns_id)
+        clauses = _resolve_filters(sch, clauses) or None
+        order_by = _to_path(sch, order_by)
         rows = db.datastore_list_rows(
             ns_id, offset=offset, limit=limit, order_by=order_by,
             order_dir=order_dir, q=q, filters=clauses)
-        # Le schéma se lit UNE fois par page : dans la compréhension, il partait en une
-        # requête PAR LIGNE — invisible en test, 50 allers-retours sur une vraie page.
-        sch = self._schema_of(ns_id)
         return {
             "rows": [self._row_to_dict(r, sch) for r in rows],
             # Le total doit décrire le MÊME jeu que la page : filtré aussi, sinon la

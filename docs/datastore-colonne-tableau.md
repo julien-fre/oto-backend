@@ -262,3 +262,34 @@ Revue superviseur (déjà intégrée au corps par `f3f60aa`) : le sort des colon
 9. **(§7) Témoignage consommateur consigné** : côté scout, un écran EST déjà des feuilles répétées (la composition d'une fiche = liste de groupes, chaque groupe une liste d'éléments) — la question des pages a donc un précédent de consommateur, et la nommer autrement fabriquerait le second vocabulaire qu'on refuse. La question reste ouverte côté pages, son coût de mauvaise réponse est maintenant documenté.
 
 **Correction de fait (hors amendement)** : « `description` sera enfin servie » (§3) ne change RIEN au premier niveau — les descriptions traversaient déjà (schéma stocké et rendu tel quel), l'étape 2 n'a fait que FIGER l'existant par un test. L'exposition de descriptions écrites pour des agents sur des écrans clients est PRÉEXISTANTE — c'est une relecture ÉDITORIALE côté mission, pas un gate de plateforme.
+
+## 12. Arbitrage — `match` joint les cibles, jamais les items (13/08)
+
+`match` voulait dire deux choses selon le niveau, et le croisement n'était pas défini.
+Au barreau 1 il joint plusieurs COLONNES (`any` : une suffit ; `all` : toutes) ; §5.1
+lui faisait joindre les ITEMS d'une liste. Chacun est clair seul. Ensemble, non :
+
+```jsonc
+{"fields": ["contacts[].fonction", "dirigeant_fonction"],
+ "op": "in", "value": ["DRH"], "match": "all"}
+```
+
+« les deux cibles satisfont, un contact suffit » ou « les deux satisfont, et TOUS les
+contacts sont DRH » ? Deux lectures plausibles, aucune devinable par l'appelant — donc
+le pire cas : sur un contrôle de complétude, un résultat crédible et faux, dans les
+deux sens.
+
+**Tranché** : `match` joint les **CIBLES DÉCLARÉES**, jamais les items. La notation
+`[]` porte l'existence **intrinsèquement** — `contacts[].fonction` signifie toujours
+« il existe un contact dont la fonction… ». « Tous les items » n'existe pas tant
+qu'aucun usage réel ne le demande ; et tout croisement non défini est **REFUSÉ en le
+nommant**, jamais servi sur une sémantique devinée.
+
+Deux raisons, la première étant la plus profonde :
+
+- **un mot qui change de sens selon la FORME de sa cible est de l'interprétation** —
+  sur un paramètre au lieu d'un nom, mais la même maladie que la famille `contact*`
+  qu'on a refusé de deviner ;
+- les questions réelles sont « a un contact RH » et « n'a aucun contact ». La seconde
+  s'écrit déjà (`empty` + `match: all` sur des colonnes). « Tous les contacts sont
+  DRH » n'a aucun demandeur : on ne construit pas sa syntaxe par symétrie.
