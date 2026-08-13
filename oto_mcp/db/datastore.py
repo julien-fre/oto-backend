@@ -955,11 +955,16 @@ def _ds_filter_clauses(filters: Optional[list]) -> tuple[list[str], list]:
             # Nom nu → la valeur ; `champ.source` → la couche. Une seule décision,
             # ici, dont toutes les branches héritent.
             V, fp = field_read_sql(field)
-            if op == "empty":
-                clauses.append(f"({V} IS NULL OR {V} = '')")
-                params.extend(fp + fp)
-            elif op == "not_empty":
-                clauses.append(f"({V} IS NOT NULL AND {V} <> '')")
+            if op in ("empty", "not_empty"):
+                # ⚠️ La VALEUR compte. `{"empty": false}` se lit « pas vide » — c'est
+                # la seule lecture possible d'un booléen, et un agent l'écrira. Elle
+                # était JETÉE : les deux sens rendaient le même jeu de lignes, donc
+                # « quelles valeurs n'ont pas de provenance ? » et son contraire
+                # répondaient pareil, sans erreur. Défaut antérieur aux couches — il
+                # valait déjà sur une colonne plate.
+                veut_vide = (op == "empty") == (val is not False)
+                clauses.append(f"({V} IS NULL OR {V} = '')" if veut_vide
+                               else f"({V} IS NOT NULL AND {V} <> '')")
                 params.extend(fp + fp)
             elif op == "in":
                 vals = [_ds_text(v) for v in (val if isinstance(val, list) else [val])
@@ -1229,7 +1234,8 @@ def datastore_delete_row(ns_id: int, row_id: str) -> bool:
 # terminal du cycle de vie (côté store).
 
 def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
-                         filters: Optional[list] = None) -> Optional[dict]:
+                         filters: Optional[list] = None,
+                         run_id: Optional[str] = None) -> Optional[dict]:
     """Claim atomique de la prochaine row claimable du namespace (ordre de
     création — row_id uuid7 monotone). `filters` = mêmes filtres whitelistés que
     la lecture (`_ds_filter_clauses`), typiquement `[{field:'status',op:'eq',…}]`.
@@ -1249,10 +1255,10 @@ def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
             return None
         row = conn.execute(
             "UPDATE datastore_rows SET claimed_by = %s, "
-            "claimed_until = NOW() + (%s || ' seconds')::interval "
+            "claimed_until = NOW() + (%s || ' seconds')::interval, claimed_run = %s "
             "WHERE ns_id = %s AND row_id = %s "
             "RETURNING row_id, created_at, updated_at, data, claimed_by, claimed_until",
-            (str(worker), int(lease_seconds), ns_id, picked["row_id"]),
+            (str(worker), int(lease_seconds), run_id, ns_id, picked["row_id"]),
         ).fetchone()
         return dict(row) if row else None
 
@@ -1272,7 +1278,7 @@ def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
     with _connect() as conn:
         row = conn.execute(
             "UPDATE datastore_rows SET claimed_by = %s, "
-            "claimed_until = NOW() + (%s || ' seconds')::interval "
+            "claimed_until = NOW() + (%s || ' seconds')::interval, claimed_run = %s "
             "WHERE ns_id = %s AND row_id = %s AND (claimed_until IS NULL "
             "OR claimed_until < NOW() OR claimed_by = %s) "
             "RETURNING row_id, created_at, updated_at, data, claimed_by, claimed_until",

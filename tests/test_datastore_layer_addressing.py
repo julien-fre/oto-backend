@@ -91,3 +91,30 @@ def test_layers_sort_and_aggregate_like_values():
     sql, params, _ = dsdb._build_aggregate(
         7, "email.comment", [{"op": "count"}], None, None, 500)
     assert params[:2] == ["email", "comment"]
+
+
+# --- `empty` honore sa valeur ---------------------------------------------------
+
+@pytest.mark.parametrize("op,value,attendu_vide", [
+    ("empty", True, True),
+    ("empty", None, True),          # sans valeur = l'opérateur nu
+    ("empty", False, False),        # ⚠️ « pas vide »
+    ("not_empty", True, False),
+    ("not_empty", False, True),
+])
+def test_empty_reads_its_boolean(op, value, attendu_vide):
+    """La valeur était JETÉE : `{"empty": false}` rendait le même jeu que
+    `{"empty": true}`. Donc « quelles valeurs n'ont pas de provenance ? » et son
+    contraire répondaient pareil, sans erreur — sur un contrôle de complétude, c'est
+    une réponse plausible et fausse dans les deux sens.
+
+    Défaut ANTÉRIEUR aux couches : il valait déjà sur une colonne plate."""
+    clause, _ = _clause("email.comment", op=op, value=value)
+    assert ("IS NULL" in clause) is attendu_vide
+
+
+def test_the_completeness_question_answers_both_ways():
+    """Les deux sens doivent rendre des jeux COMPLÉMENTAIRES, pas identiques."""
+    vide, _ = _clause("email.comment", op="empty", value=True)
+    plein, _ = _clause("email.comment", op="empty", value=False)
+    assert vide != plein
