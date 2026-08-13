@@ -567,6 +567,15 @@ class DatastorePg:
         # Un statut sans état terminal = file de travail qui ne libère rien : le dire
         # ICI, à l'auteur du schéma, au moment où il le pose (les deux faces l'ont).
         warnings = [w for w in (dsv2.queue_release_warning(schema),
+                                # Clés de déclaration qu'oto n'interprète PAS (#316) :
+                                # posées, stockées, rendues fidèlement… et jamais lues.
+                                # Le cas réel : `enum:` au lieu d'`options:` sur trois
+                                # champs — 504 valeurs libres sur un tableau qui se
+                                # croyait contraint, sans le moindre signal. On ne
+                                # refuse pas (les consommateurs posent leurs propres
+                                # déclarations, que le datastore transporte), on DIT.
+                                dsv2.unknown_keys_warning(
+                                    dsv2.unknown_declaration_keys(schema)),
                                 self._overlong_warning(ns_id, schema),
                                 self._offending_enum_warning(ns_id, schema),
                                 self._orphan_columns_warning(ns_id, schema)) if w]

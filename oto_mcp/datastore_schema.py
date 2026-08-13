@@ -564,3 +564,134 @@ def validate_row(schema: Optional[dict], merged: dict, *,
                             + (f" (autorisées: {sorted(allowed)})" if allowed
                                else " (état terminal)"))
     return errors
+
+
+# ── Clés de déclaration non interprétées (#316) ──────────────────────────────
+#
+# Le cas réel : trois champs posés avec `enum: [...]` au lieu d'`options: [...]`.
+# La clé a été stockée, rendue fidèlement, affichée — et jamais lue. Les trois
+# énumérations étaient LIBRES sans que rien ne le dise, et 504 valeurs sont entrées
+# sur un tableau qui se croyait contraint. Comportement conforme au contrat, et
+# indistinguable d'un enum contraint À L'USAGE.
+#
+# ⚠️ **On ne ferme PAS le vocabulaire**, et c'est doctrinal : les consommateurs posent
+# leurs propres déclarations (`role: qualif`, `dated_by`, `compare_by`, `initial_of`)
+# que le datastore transporte sans les interpréter. Refuser l'inconnu casserait ce
+# contrat. On SIGNALE — même patron que `hors_schema` à l'écriture d'une ligne : on
+# n'empêche rien, on rend la chose visible et actionnable.
+
+
+def _read_keys() -> frozenset:
+    """Les clés que le code LIT réellement, dérivées de son source.
+
+    ⚠️ **Dérivées, pas listées** — et ce n'est pas du zèle : une liste parallèle du
+    vocabulaire diverge le jour où quelqu'un lit une clé de plus (ou cesse d'en lire
+    une), et le signal se met alors à mentir dans les deux sens — taire une vraie
+    faute de frappe, ou accuser une clé parfaitement lue. C'est exactement ce que
+    `lifecycle` et `role` s'apprêtent à faire : ils sont en cours de recadrage
+    (#315/#317), et les figer ici en dur les laisserait dans le vocabulaire après
+    que le code aura cessé de les lire.
+
+    La dérivation surestime (elle ramasse aussi des clés de ligne ou de namespace,
+    `data`, `owner_id`…) et c'est le BON côté de l'erreur : on signale moins, jamais
+    à tort. Un faux positif — accuser une clé qui marche — est ce qui ferait ignorer
+    l'avertissement, donc le rendrait inutile.
+    """
+    import ast
+    import pathlib
+
+    keys: set = set()
+    ici = pathlib.Path(__file__).parent
+    for nom in ("datastore_schema.py", "datastore.py"):
+        try:
+            arbre = ast.parse((ici / nom).read_text(encoding="utf-8"))
+        except Exception:      # source illisible (zip, .pyc seul) : on n'invente pas
+            return frozenset()
+        for n in ast.walk(arbre):
+            if (isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                    and n.func.attr == "get" and n.args
+                    and isinstance(n.args[0], ast.Constant)
+                    and isinstance(n.args[0].value, str)):
+                keys.add(n.args[0].value)
+    return frozenset(keys)
+
+
+_READ_KEYS: Optional[frozenset] = None
+
+
+def interpreted_keys() -> frozenset:
+    """Le vocabulaire effectivement interprété — calculé une fois, dérivé du code."""
+    global _READ_KEYS
+    if _READ_KEYS is None:
+        _READ_KEYS = _read_keys()
+    return _READ_KEYS
+
+
+# Fautes de frappe qui MÉRITENT d'être nommées : une clé inconnue proche d'une clé
+# lue n'est presque jamais une déclaration tierce délibérée. Dérivé lui aussi — les
+# variantes pointent vers la clé réelle, qui doit exister dans le vocabulaire lu.
+_NEAR_MISS = {
+    "enum": "options", "enums": "options", "option": "options",
+    "choices": "options", "choix": "options", "values": "options",
+    "valeurs": "options", "allowed": "options",
+    "maxlength": "max_length", "max_len": "max_length", "maxLength": "max_length",
+    "requiredWhen": "required_when", "required_if": "required_when",
+    "mandatory": "required", "obligatoire": "required",
+    "champs": "fields", "columns": "fields",
+    "cle": "key", "name": "key", "nom": "key",
+}
+
+
+def unknown_declaration_keys(schema: Optional[dict]) -> list[dict]:
+    """Par champ, les clés de déclaration qu'oto n'interprète pas.
+
+    Rend `[{field, keys: [...], near_miss: {clé: clé_réelle}}]` — vide quand tout est
+    lu. Le near-miss est ce qui rend l'avertissement ACTIONNABLE : « `enum` n'est pas
+    lue par oto ; si tu voulais contraindre les valeurs, la clé est `options` » vaut
+    infiniment mieux que « clé inconnue ».
+    """
+    if not isinstance(schema, dict):
+        return []
+    lues = interpreted_keys()
+    if not lues:                       # dérivation indisponible : ne rien affirmer
+        return []
+    out: list[dict] = []
+
+    def _visiter(fields: list, prefixe: str = "") -> None:
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            nom = f"{prefixe}{f.get('key') or '?'}"
+            inconnues = sorted(k for k in f if k not in lues)
+            if inconnues:
+                near = {k: _NEAR_MISS[k] for k in inconnues
+                        if k in _NEAR_MISS and _NEAR_MISS[k] in lues}
+                out.append({"field": nom, "keys": inconnues, "near_miss": near})
+            if isinstance(f.get("fields"), list):
+                _visiter(f["fields"], f"{nom}.")
+            of = f.get("of")
+            if isinstance(of, dict) and isinstance(of.get("fields"), list):
+                _visiter(of["fields"], f"{nom}[].")
+
+    _visiter(_fields(schema))
+    return out
+
+
+def unknown_keys_warning(inconnues: list[dict]) -> str:
+    """Le message rendu à l'appelant — une phrase, pas un dump.
+
+    Il dit la CONSÉQUENCE (« stockée et rendue, mais jamais lue ») avant la
+    correction : sans elle, un lecteur pressé prend l'avertissement pour un détail de
+    style, alors qu'il signale une contrainte qui n'existe pas."""
+    if not inconnues:
+        return ""
+    corrections = [f"{k} → {v}" for e in inconnues
+                   for k, v in (e.get("near_miss") or {}).items()]
+    champs = ", ".join(f"{e['field']} ({', '.join(e['keys'])})" for e in inconnues[:5])
+    msg = (f"Clés non interprétées par oto : {champs}"
+           + (" …" if len(inconnues) > 5 else "")
+           + ". Elles sont stockées et rendues telles quelles, mais AUCUNE ne "
+             "contraint quoi que ce soit.")
+    if corrections:
+        msg += " Vouliez-vous écrire : " + ", ".join(sorted(set(corrections))) + " ?"
+    return msg
