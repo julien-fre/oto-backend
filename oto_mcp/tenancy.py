@@ -60,10 +60,17 @@ _SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 
 @dataclass(frozen=True)
 class TenantIssuer:
-    """Une entrée du registre : un émetteur, le tenant qu'il désigne, son JWKS."""
+    """Une entrée du registre : un émetteur, le tenant qu'il désigne, son JWKS.
+
+    `name` et `hosts` servent la DÉCOUVERTE (lot L3) et rien d'autre : le nom part
+    en `resource_name` du PRM, les hosts font le binding `host → tenant`. Ils sont
+    sans effet sur la vérification d'un jeton, qui ne connaît que l'émetteur.
+    """
     slug: str
     issuer: str
     jwks_uri: str
+    name: str = ""
+    hosts: tuple = ()
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -127,13 +134,14 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
     """
     entries: dict[str, TenantIssuer] = {}
 
-    def _put(slug: str, issuer, jwks_uri=None) -> None:
+    def _put(slug: str, issuer, jwks_uri=None, name="", hosts=()) -> None:
         iss = normalize_issuer(issuer)
         if not iss:
             return
         jwks = (jwks_uri or "").strip() if isinstance(jwks_uri, str) else ""
         entries[iss] = TenantIssuer(slug=slug, issuer=iss,
-                                    jwks_uri=jwks or f"{iss}/jwks")
+                                    jwks_uri=jwks or f"{iss}/jwks",
+                                    name=name or "", hosts=tuple(hosts or ()))
 
     _put(PRIMARY_SLUG, primary_issuer)
     for drain in drain_issuers or ():
@@ -158,8 +166,35 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
                 "registre d'émetteurs : %s réclamé par le tenant %r alors qu'il est "
                 "déjà tenu par %r — ligne ignorée", iss, slug, entries[iss].slug)
             continue
-        _put(slug, iss, (row or {}).get("jwks_uri"))
+        _put(slug, iss, (row or {}).get("jwks_uri"),
+             name=str((row or {}).get("name") or ""),
+             hosts=normalize_hosts((row or {}).get("hosts")))
     return entries
+
+
+def normalize_hosts(hosts) -> tuple:
+    """Hosts d'un tenant, en forme de comparaison (minuscule, sans port).
+
+    Un `Host:` d'entrée arrive tel que le client l'a écrit — casse libre, port
+    éventuel. On compare donc les deux côtés sous la même forme, sinon un tenant
+    déclaré `MCP.Tulina.ai` ne serait jamais reconnu et le défaut (notre émetteur)
+    s'appliquerait en silence : exactement le symptôme qu'on corrige.
+    """
+    if isinstance(hosts, str):
+        try:
+            hosts = json.loads(hosts)
+        except ValueError:
+            hosts = [hosts]
+    if not isinstance(hosts, (list, tuple, set)):
+        return ()
+    out = []
+    for h in hosts:
+        if not isinstance(h, str):
+            continue
+        h = h.strip().lower().split("/")[0].split(":")[0]
+        if h and h not in out:
+            out.append(h)
+    return tuple(out)
 
 
 class IssuerRegistry:
@@ -175,6 +210,21 @@ class IssuerRegistry:
         # découper (cf. `tenant_of`). Triés pour un log/diagnostic stable.
         self._prefixes = tuple(sorted(
             f"{e.slug}:" for e in self._by_issuer.values() if e.slug != PRIMARY_SLUG))
+        # Binding `host → tenant` (lot L3). Un host déclaré par DEUX tenants est
+        # refusé comme l'est un émetteur en double : il déciderait vers quel
+        # annuaire on envoie l'utilisateur, et se tromper l'envoie chez le mauvais
+        # partenaire. Le PREMIER déclarant garde le host, l'autre est loggé.
+        self._by_host: dict = {}
+        for entry in self._by_issuer.values():
+            for host in entry.hosts:
+                held = self._by_host.get(host)
+                if held is not None and held.slug != entry.slug:
+                    logger.warning(
+                        "registre d'émetteurs : le host %r est réclamé par le tenant "
+                        "%r alors qu'il est déjà tenu par %r — réclamation ignorée",
+                        host, entry.slug, held.slug)
+                    continue
+                self._by_host[host] = entry
 
     def entries(self) -> tuple:
         return tuple(self._by_issuer.values())
@@ -211,6 +261,21 @@ class IssuerRegistry:
             if sub.startswith(prefix):
                 return prefix[:-1]
         return PRIMARY_SLUG
+
+    def for_host(self, host) -> Optional[TenantIssuer]:
+        """Tenant servi par ce host, ou **None** si le host n'est réclamé par aucun.
+
+        `None` est le cas nominal aujourd'hui — aucune ligne ne porte de host — et
+        c'est ce qui rend ce lot inerte : tout appelant doit lire `None` comme
+        « garde le comportement d'avant », jamais comme une erreur.
+        """
+        if not host or not isinstance(host, str):
+            return None
+        return self._by_host.get(host.strip().lower().split(":")[0])
+
+    def hosts(self) -> tuple:
+        """Les hosts liés à un tenant, pour diagnostic (ordre stable)."""
+        return tuple(sorted(self._by_host))
 
     def same_tenant(self, a: Optional[str], b: Optional[str]) -> bool:
         """Deux subs relèvent-ils du même tenant ? (garde d'alias, ADR 0052 §6 :

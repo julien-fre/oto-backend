@@ -19,7 +19,10 @@ def list_tenant_issuers() -> list:
     """
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT slug, issuer, jwks_uri FROM tenants "
+            # `name` et `hosts` servent la DÉCOUVERTE (lot L3 : PRM et 401 sensibles
+            # au host), jamais la vérification d'un jeton — celle-ci ne connaît que
+            # l'émetteur. Les lire ici ne change donc rien au chemin d'auth.
+            "SELECT slug, name, issuer, jwks_uri, hosts FROM tenants "
             "WHERE issuer IS NOT NULL AND btrim(issuer) <> '' ORDER BY id"
         ).fetchall()
     return [dict(r) for r in rows]

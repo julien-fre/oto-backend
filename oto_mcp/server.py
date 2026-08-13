@@ -77,6 +77,8 @@ class _IatGatedVerifier(JWTVerifier):
         alt = getattr(self, "_alt_audiences", frozenset())
         if alt and any(a in alt for a in auds):
             return True
+        if any(_audience_of_declared_tenant(a) for a in auds):
+            return True
         from . import subdomain_project
         return any(subdomain_project.valid_org_audience(a) for a in auds)
 
@@ -164,6 +166,35 @@ class _IatGatedVerifier(JWTVerifier):
         return self._qualified(result, slug)
 
 
+def _audience_of_declared_tenant(aud) -> bool:
+    """L'audience canonique d'un host DÉCLARÉ par un tenant (`https://<host>/mcp`).
+
+    C'est la moitié « audience » du binding `host → tenant → (AS, audience)` : sans
+    elle, l'audience d'un partenaire ne vit que dans `MCP_AUDIENCE_ALT`, et le retrait
+    de cette variable — qui fait partie du basculement — invaliderait TOUS ses jetons
+    d'un coup. La dériver de ses hosts rend le retrait possible.
+
+    Strict par construction : le host doit être réclamé par un tenant du registre (une
+    ligne écrite à la main, pas une entrée devinée), et le chemin est exactement `/mcp`.
+    Un host déclaré n'ouvre donc pas ses autres chemins.
+
+    ⚠️ Ce cran dit « cette audience appartient à UN tenant », pas « au tenant de CE
+    jeton » — un jeton du tenant primaire portant l'audience d'un partenaire passe
+    encore. Le resserrer est le cran STRICT du binding, à faire quand plus rien ne
+    dépend de `MCP_AUDIENCE_ALT` : aujourd'hui c'est cette variable qui sert cette
+    audience à tout le monde, donc l'interdire ici casserait ce qui marche.
+    """
+    if not isinstance(aud, str) or not aud:
+        return False
+    from urllib.parse import urlparse
+    from . import tenancy
+    parsed = urlparse(aud.rstrip("/"))
+    if parsed.scheme != "https" or parsed.path != "/mcp":
+        return False
+    host = (parsed.hostname or "").lower()
+    return bool(host) and tenancy.current().for_host(host) is not None
+
+
 def _build_verifier() -> JWTVerifier:
     """JWT verifier partagé entre l'auth MCP et l'API REST — **registre d'émetteurs**
     (ADR 0052 §3).
@@ -211,6 +242,80 @@ def _build_verifier() -> JWTVerifier:
         expected_audience=audience,
         alt_audiences=mcp_audience_alts(),
     )
+
+
+class TenantChallengeMiddleware:
+    """Le `WWW-Authenticate` d'un 401 pointe le PRM à consulter. Sur un host servi
+    POUR un autre tenant, il doit pointer le PRM de CE host (ADR 0052 L3).
+
+    Pourquoi un middleware ASGI et pas un paramètre : le pointeur est figé à la
+    construction de `RequireAuthMiddleware` (`resource_metadata_url`), qui ne voit
+    pas la requête. Réécrire l'en-tête au vol est le seul endroit où le host est
+    connu — et ça garde intact le reste de la chaîne d'auth.
+
+    Deux gardes qui font que ce lot atterrit **inerte** :
+
+    - on ne touche QUE les réponses **401** portant un `resource_metadata=` ;
+    - et seulement si le host est **réclamé par un tenant**. Aucune ligne ne porte
+      de host aujourd'hui, donc le registre rend `None` et rien n'est réécrit :
+      l'octet servi est celui d'avant.
+
+    Ne réécrit jamais l'émetteur annoncé dans le challenge : c'est le PRM pointé qui
+    le porte, et lui suit déjà le host (`oauth_facade`). Une seule source.
+    """
+
+    _MARK = "resource_metadata="
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+        host = ""
+        for k, v in scope.get("headers") or ():
+            if k == b"host":
+                host = v.decode("latin-1").split(":")[0].strip().lower()
+                break
+        from . import tenancy
+        entry = tenancy.current().for_host(host) if host else None
+        if entry is None:                      # cas nominal — rien à faire
+            await self.app(scope, receive, send)
+            return
+
+        async def _send(message):
+            if message.get("type") == "http.response.start" and \
+                    int(message.get("status") or 0) == 401:
+                headers, changed = [], False
+                for k, v in message.get("headers") or ():
+                    if k.lower() == b"www-authenticate":
+                        txt = v.decode("latin-1")
+                        if self._MARK in txt:
+                            txt = _point_challenge_at_host(txt, host)
+                            v = txt.encode("latin-1")
+                            changed = True
+                    headers.append((k, v))
+                if changed:
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, _send)
+
+
+def _point_challenge_at_host(challenge: str, host: str) -> str:
+    """Réécrit l'URL de `resource_metadata=` du challenge sur `host`, en gardant le
+    chemin annoncé (il porte le suffixe de la ressource, ex. `.../mcp`) — c'est le
+    HOST qui est faux, jamais le chemin."""
+    import re as _re
+
+    def _swap(m):
+        url = m.group(1)
+        path = url.split("://", 1)[-1]
+        path = path[path.find("/"):] if "/" in path else ""
+        return f'resource_metadata="https://{host}{path}"'
+
+    return _re.sub(r'resource_metadata="([^"]+)"', _swap, challenge)
 
 
 def _build_auth(verifier: JWTVerifier) -> RemoteAuthProvider:
@@ -548,6 +653,11 @@ def main():
         from . import subdomain_project as _subproj
         for route in reversed(_subproj.make_routes()):
             app.router.routes.insert(0, route)
+
+        # Découverte sensible au host (ADR 0052 L3) : sur un host réclamé par un
+        # tenant tiers, le 401 doit pointer SON PRM, pas le nôtre. Pass-through total
+        # tant qu'aucun tenant ne déclare de host — l'état d'aujourd'hui.
+        app.add_middleware(TenantChallengeMiddleware)
 
         # View-as (ADR 0023) : middleware ASGI brut, n'intervient que sur /api/* avec
         # le header X-Oto-Org (pass-through total sinon → n'altère pas le streaming /mcp).

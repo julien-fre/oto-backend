@@ -1,0 +1,183 @@
+"""La découverte suit le HOST : émetteur, nom, et audience du tenant qui le réclame.
+
+Ce que ce lot ferme (oto-private#83) : le domaine d'un partenaire annonçait NOTRE
+serveur d'autorisation, donc son utilisateur natif atterrissait sur NOTRE écran de
+connexion — où il n'a pas de compte. Le mur n'était pas dans la vérification du jeton
+(elle acceptait déjà le sien), il était dans la découverte.
+
+Et l'audience va avec : elle ne vivait que dans `MCP_AUDIENCE_ALT`, la variable que le
+basculement doit retirer. La dériver des hosts déclarés est ce qui rend ce retrait
+possible — sans elle, le flip invaliderait tous les jetons du partenaire d'un coup.
+
+Invariant tenu de bout en bout : **un host qu'aucun tenant ne réclame ne change pas
+d'un octet.** C'est ce qui permet à ce lot d'atterrir inerte.
+"""
+from __future__ import annotations
+
+import pytest
+
+from oto_mcp import tenancy
+
+
+@pytest.fixture
+def registre_avec_partenaire():
+    """Un tenant tiers déclarant son host — l'état d'APRÈS la déclaration."""
+    avant = tenancy.current()
+    entries = tenancy.build(
+        "https://auth.oto.ninja/oidc",
+        tenants=[{"slug": "acme", "name": "Acme",
+                  "issuer": "https://auth.acme.test/oidc",
+                  "jwks_uri": "https://auth.acme.test/oidc/jwks",
+                  "hosts": ["mcp.acme.test"]}])
+    tenancy.install(tenancy.IssuerRegistry(entries))
+    yield tenancy.current()
+    tenancy.install(avant)
+
+
+# --- le binding host → tenant --------------------------------------------------
+
+def test_un_host_declare_designe_son_tenant(registre_avec_partenaire):
+    entry = registre_avec_partenaire.for_host("mcp.acme.test")
+    assert entry is not None and entry.slug == "acme"
+    assert entry.issuer == "https://auth.acme.test/oidc"
+
+
+def test_un_host_inconnu_ne_designe_rien(registre_avec_partenaire):
+    """`None` est le cas NOMINAL, pas une erreur : c'est lui qui garde intact le
+    comportement de tous les domaines qui n'appartiennent à personne."""
+    assert registre_avec_partenaire.for_host("mcp.oto.cx") is None
+    assert registre_avec_partenaire.for_host("") is None
+    assert registre_avec_partenaire.for_host(None) is None
+
+
+def test_le_host_se_compare_sans_casse_ni_port(registre_avec_partenaire):
+    """Un `Host:` arrive tel que le client l'a écrit. Comparer les deux formes
+    brutes ferait retomber le tenant sur le défaut EN SILENCE — le symptôme même
+    qu'on corrige."""
+    assert registre_avec_partenaire.for_host("MCP.Acme.Test") is not None
+    assert registre_avec_partenaire.for_host("mcp.acme.test:443") is not None
+
+
+def test_un_host_reclame_deux_fois_reste_au_premier(caplog):
+    """Le host décide vers quel annuaire on envoie l'utilisateur : une réclamation
+    ambiguë l'enverrait chez le mauvais partenaire. Le second est refusé ET loggé."""
+    entries = tenancy.build(
+        "https://auth.oto.ninja/oidc",
+        tenants=[{"slug": "acme", "issuer": "https://auth.acme.test/oidc",
+                  "hosts": ["mcp.partage.test"]},
+                 {"slug": "beta", "issuer": "https://auth.beta.test/oidc",
+                  "hosts": ["mcp.partage.test"]}])
+    reg = tenancy.IssuerRegistry(entries)
+    assert reg.for_host("mcp.partage.test").slug == "acme"
+
+
+# --- l'audience, dérivée des hosts et non de l'environnement -------------------
+
+def test_laudience_dun_host_declare_est_acceptee(registre_avec_partenaire):
+    from oto_mcp.server import _audience_of_declared_tenant
+    assert _audience_of_declared_tenant("https://mcp.acme.test/mcp")
+
+
+def test_laudience_dun_host_inconnu_est_refusee(registre_avec_partenaire):
+    from oto_mcp.server import _audience_of_declared_tenant
+    assert not _audience_of_declared_tenant("https://mcp.inconnu.test/mcp")
+
+
+def test_un_host_declare_nouvre_pas_ses_autres_chemins(registre_avec_partenaire):
+    """Déclarer un domaine ne consent qu'à SON endpoint. Accepter n'importe quel
+    chemin ferait d'une ligne de configuration un blanc-seing sur le domaine."""
+    from oto_mcp.server import _audience_of_declared_tenant
+    for aud in ("https://mcp.acme.test/api",
+                "https://mcp.acme.test/mcp/autre",
+                "https://mcp.acme.test",
+                "http://mcp.acme.test/mcp",          # pas https
+                "", None, 42, ["https://mcp.acme.test/mcp"]):
+        assert not _audience_of_declared_tenant(aud), aud
+
+
+def test_le_slash_final_ne_change_rien(registre_avec_partenaire):
+    from oto_mcp.server import _audience_of_declared_tenant
+    assert _audience_of_declared_tenant("https://mcp.acme.test/mcp/")
+
+
+def test_sans_tenant_declare_laudience_ne_passe_pas():
+    """L'état d'AVANT : registre sans host → la dérivation ne peut rien accepter,
+    donc elle n'élargit rien tant que personne n'a écrit de ligne."""
+    avant = tenancy.current()
+    tenancy.install(tenancy.IssuerRegistry(
+        tenancy.build("https://auth.oto.ninja/oidc")))
+    try:
+        from oto_mcp.server import _audience_of_declared_tenant
+        assert not _audience_of_declared_tenant("https://mcp.acme.test/mcp")
+    finally:
+        tenancy.install(avant)
+
+
+# --- ce que la découverte annonce ---------------------------------------------
+
+def test_la_decouverte_dun_host_declare_pointe_son_annuaire(registre_avec_partenaire):
+    from oto_mcp.oauth_facade import tenant_discovery_for_host
+    as_url, nom = tenant_discovery_for_host("mcp.acme.test")
+    assert as_url == "https://auth.acme.test/oidc"
+    assert nom == "Acme", "le nom du tenant doit être servi, pas son identifiant"
+
+
+def test_la_decouverte_dun_host_libre_ne_change_rien(registre_avec_partenaire):
+    """LE garde-fou d'inertie : tant qu'aucun tenant ne réclame un host, la
+    découverte doit rendre exactement ce qu'elle rendait avant ce lot."""
+    from oto_mcp.oauth_facade import tenant_discovery_for_host
+    assert tenant_discovery_for_host("mcp.oto.cx") is None
+
+
+def test_le_nom_retombe_sur_lidentifiant_si_absent():
+    """Une ligne sans nom ne doit pas servir une chaîne vide au client — le champ
+    est lu par un humain dans son écran de consentement."""
+    entries = tenancy.build(
+        "https://auth.oto.ninja/oidc",
+        tenants=[{"slug": "acme", "issuer": "https://auth.acme.test/oidc",
+                  "hosts": ["mcp.acme.test"]}])
+    avant = tenancy.current()
+    tenancy.install(tenancy.IssuerRegistry(entries))
+    try:
+        from oto_mcp.oauth_facade import tenant_discovery_for_host
+        assert tenant_discovery_for_host("mcp.acme.test")[1] == "acme"
+    finally:
+        tenancy.install(avant)
+
+
+# --- la route servie, pas seulement le helper ---------------------------------
+#
+# ⚠️ Les tests ci-dessus interrogent les fonctions. Ce que le client LIT est la route,
+# et c'est là qu'a vécu le défaut : le helper existait déjà, la route ne l'appelait pas.
+# On sert donc réellement le document, pour les deux cas.
+
+def _prm(host: str) -> dict:
+    """Le document de découverte SERVI pour ce Host, tel qu'un client le reçoit."""
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from oto_mcp import oauth_facade
+    app = Starlette(routes=oauth_facade.make_routes("https://mcp.oto.cx", "app-x"))
+    with TestClient(app) as client:
+        r = client.get("/.well-known/oauth-protected-resource", headers={"host": host})
+        assert r.status_code == 200, r.text
+        return r.json()
+
+
+def test_le_document_servi_a_un_host_declare_pointe_le_partenaire(registre_avec_partenaire):
+    doc = _prm("mcp.acme.test")
+    assert doc["authorization_servers"] == ["https://auth.acme.test/oidc"], (
+        "le client serait envoyé sur NOTRE écran de connexion — le défaut d'origine")
+    assert doc["resource_name"] == "Acme"
+    # L'audience DOIT suivre le host, sans quoi le client demande un jeton pour une
+    # ressource qui n'est pas la sienne. C'est ce cran qui rend possible le retrait
+    # de `MCP_AUDIENCE_ALT` pendant le basculement.
+    assert doc["resource"].rstrip("/") == "https://mcp.acme.test/mcp"
+
+
+def test_le_document_servi_a_un_host_libre_est_inchange(registre_avec_partenaire):
+    """L'INERTIE, vérifiée sur le document réel : un host que personne ne réclame
+    reçoit exactement ce qu'il recevait avant ce lot."""
+    doc = _prm("mcp.oto.cx")
+    assert doc["authorization_servers"] == ["https://mcp.oto.cx/"]
+    assert doc["resource_name"] == "oto MCP"

@@ -296,22 +296,45 @@ def ensure_api_resource(indicator: str, *, name: str | None = None) -> None:
 # ── PRM (RFC 9728) host-aware — la SEULE pièce de discovery à rendre host-aware ─
 # Le PRM annonce le `resource` (= l'audience que le client demandera à Logto). Sur le
 # sous-domaine d'un projet org publié, il DOIT annoncer le sous-domaine lui-même (sinon
-# claude.ai reçoit un token opaque, blocage #44). L'AS reste canonique (RFC 8707 :
-# resource indicator ≠ authorization server) → as_meta/oidc_meta INCHANGÉS.
+# claude.ai reçoit un token opaque, blocage #44).
 # Sécurité canonique : on construit le PRM via le MÊME modèle mcp lib que fastmcp, avec
 # les MÊMES paramètres pour le host canonique → sortie identique byte-à-byte ; on ne
 # diverge le `resource` que pour un sous-domaine org VÉRIFIÉ publié.
-def _prm_handler(public_url: str, resource_url: str):
+#
+# ⚠️ **L'AS n'est plus canonique par principe** (lot L3). Le commentaire disait « l'AS
+# reste canonique (RFC 8707 : resource indicator ≠ authorization server) » : c'était
+# vrai tant qu'il n'y avait qu'un émetteur. Depuis le registre de tenants, un host peut
+# être servi POUR un autre tenant, et lui annoncer NOTRE émetteur envoie son utilisateur
+# natif sur NOTRE écran de connexion — où il n'a pas de compte (oto-private#83).
+# Le host décide donc de l'AS et du nom ; un host qu'aucun tenant ne réclame garde le
+# comportement d'avant, à l'octet près.
+def _prm_handler(public_url: str, resource_url: str, *, as_url: str = "",
+                 resource_name: str = "oto MCP"):
     from mcp.server.auth.handlers.metadata import ProtectedResourceMetadataHandler
     from mcp.shared.auth import ProtectedResourceMetadata
     md = ProtectedResourceMetadata(
         resource=AnyHttpUrl(resource_url),
-        authorization_servers=[AnyHttpUrl(public_url)],
+        authorization_servers=[AnyHttpUrl(as_url or public_url)],
         # Mêmes valeurs que _build_auth (RemoteAuthProvider) → PRM canonique identique.
         scopes_supported=["openid", "profile", "email", "offline_access"],
-        resource_name="oto MCP",
+        resource_name=resource_name,
     )
     return ProtectedResourceMetadataHandler(md)
+
+
+def tenant_discovery_for_host(host: str):
+    """`(as_url, resource_name)` à annoncer pour ce host, ou **None** s'il n'est
+    réclamé par aucun tenant — c'est-à-dire dans tous les cas d'aujourd'hui.
+
+    Partagé par le PRM et le 401 pour qu'ils ne puissent pas diverger : annoncer un
+    émetteur dans l'un et un autre dans l'autre enverrait le client faire un aller-
+    retour entre deux annuaires, panne bien plus obscure que celle qu'on corrige.
+    """
+    from . import tenancy
+    entry = tenancy.current().for_host(host)
+    if entry is None:
+        return None
+    return entry.issuer, (entry.name or entry.slug)
 
 
 def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
@@ -330,12 +353,25 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         candidate = f"https://{host}/mcp"
         from . import subdomain_project
         from .config import mcp_audience_alt_hosts
+        # Host réclamé par un tenant → SON émetteur et SON nom ; sinon rien ne change.
+        tenant = tenant_discovery_for_host(host)
+        as_url, resource_name = tenant if tenant else ("", "oto MCP")
         # Host = domaine canonique SECONDAIRE (ex. mcp.oto.cx) → resource = ce host ;
-        # sinon sous-domaine d'un projet org publié ; sinon canonique (mcp.oto.ninja).
+        # sinon host d'un TENANT déclaré ; sinon sous-domaine d'un projet org publié ;
+        # sinon canonique (mcp.oto.ninja).
+        #
+        # ⚠️ Le cran `tenant` n'est pas une redite de `mcp_audience_alt_hosts()` : c'est
+        # ce qui rend le retrait de `MCP_AUDIENCE_ALT` POSSIBLE. Le host d'un partenaire
+        # y vit aujourd'hui ; sans dérivation depuis ses hosts déclarés, le flip (retrait
+        # du drain + de l'audience alt) ferait retomber sa `resource` sur NOTRE domaine —
+        # le client demanderait alors un jeton pour une audience qui n'est pas la sienne,
+        # et l'échec se lirait comme un problème d'émetteur.
         resource_url = candidate if (host in mcp_audience_alt_hosts()
+                                     or tenant is not None
                                      or subdomain_project.valid_org_audience(candidate)) \
             else f"{public_url}/mcp"
-        return await _prm_handler(public_url, resource_url).handle(request)
+        return await _prm_handler(public_url, resource_url, as_url=as_url,
+                                  resource_name=resource_name).handle(request)
 
     async def dcr(request: Request) -> JSONResponse:
         if request.method == "OPTIONS":
