@@ -503,6 +503,20 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
         errors.append(
             f"display=\"title\" déclaré sur {len(titres)} colonnes ({', '.join(titres)}) "
             "— une seule nomme la ligne")
+    # Une clé métier n'est JAMAIS un sous-tableau ni un sous-record (oto#22 §4). Elle
+    # identifie la ligne : les écritures par lot dédupliquent dessus, et un index
+    # d'unicité d'expression la compare. Une liste ne se réduit pas à une valeur —
+    # l'unicité porterait sur le TEXTE d'un objet JSON, donc deux listes équivalentes
+    # d'ordre différent ne collisionneraient pas. Refusé à la DÉCLARATION plutôt qu'à
+    # la première écriture : le tableau serait déjà peuplé de doublons.
+    cle = schema.get("key")
+    if cle:
+        porteur = next((f for f in _fields(schema) if f.get("key") == cle), None)
+        if porteur and porteur.get("type") in COMPOSITE_TYPES:
+            errors.append(
+                f"key=\"{cle}\" désigne un champ de type \"{porteur.get('type')}\" — "
+                "une clé métier identifie la ligne, elle doit être une valeur simple "
+                "(une liste ne se réduit pas à une valeur, l'unicité serait fausse)")
     lc = lifecycle_of(schema)
     if lc is not None:
         states = lc.get("states")
@@ -679,6 +693,12 @@ def _row_errors(fields: list, data: dict, path: str,
             errors.extend(_type_error(value, f["type"], fpath,
                                       f.get("fields"), f.get("of"),
                                       f.get("options")))
+        mi = f.get("max_items")
+        if (isinstance(mi, int) and not isinstance(mi, bool) and mi > 0
+                and isinstance(value, list) and len(value) > mi):
+            # Même forme que la borne de longueur : le CONSTATÉ autant que la borne,
+            # sinon le refus fait deviner de combien on dépasse.
+            errors.append(f"{fpath}: {len(value)} éléments, maximum {mi}")
         ml = max_length_of(f)
         if ml and (written is None or key in written):
             n = len(value) if isinstance(value, str) else len(str(value))
