@@ -181,3 +181,46 @@ def test_a_layer_may_become_structured():
     niveau plus bas, pas une réécriture."""
     out = _read({"email": {"valeur": "a@b.c", "comment": {"texte": "x", "tag": "y"}}})
     assert out["email.comment"] == {"texte": "x", "tag": "y"}
+
+
+# --- le champ-clé n'accepte pas encore de couches --------------------------------
+
+_KEYED = {"strict": True, "key": "siren", "fields": [
+    {"key": "siren", "type": "text"},
+    {"key": "nom", "type": "text"},
+]}
+
+
+def _keyed_check(row):
+    from oto_mcp.datastore import DatastorePg
+    return DatastorePg._reject_layered_business_key(_KEYED, row)
+
+
+def test_layers_on_the_business_key_are_refused():
+    """Sans ce refus : la validation ACCEPTE (elle déballe), le lookup d'upsert ne
+    matche pas (il compare l'objet) et l'index UNIQUE ne collisionne pas (même
+    raison) ⟹ doublon silencieux du SIREN existant. Un doublon qu'aucune des trois
+    protections ne voit."""
+    from oto_mcp.datastore import RowValidationError
+    with pytest.raises(RowValidationError) as e:
+        _keyed_check({"siren": {"valeur": "552081317", "comment": "registre"}})
+    msg = str(e.value)
+    assert "clé métier" in msg and "doublon" in msg
+    assert "valeur nue" in msg, "le message doit dire QUOI FAIRE, pas seulement non"
+
+
+def test_a_bare_business_key_passes():
+    assert _keyed_check({"siren": "552081317", "nom": "ACME"}) is None
+
+
+def test_layers_on_any_OTHER_field_pass():
+    """Le refus vise la seule colonne dont l'unicité dépend — pas la primitive."""
+    assert _keyed_check({"siren": "552081317",
+                         "nom": {"valeur": "ACME", "comment": "registre"}}) is None
+
+
+def test_a_namespace_without_a_business_key_is_unaffected():
+    from oto_mcp.datastore import DatastorePg
+    assert DatastorePg._reject_layered_business_key(
+        {"fields": [{"key": "siren"}]},
+        {"siren": {"valeur": "x", "comment": "y"}}) is None
