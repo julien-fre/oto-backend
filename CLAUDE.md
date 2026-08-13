@@ -753,6 +753,14 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   = tout le serveur). La garde se pose sur le CATALOGUE du zip (les tailles annoncées,
   sans décompresser — le contrôle ne peut pas être victime de ce qu'il contrôle), et on
   s'arrête PENDANT la lecture — jamais accumuler-puis-tronquer.
+  Variante « chemin jamais emprunté » (13/08 soir) : **la suite ne couvre pas une clause
+  de rattrapage que rien n'exerce** — une clause `except` ne s'évalue qu'à la propagation
+  (un nom non importé y dort sans erreur : boot vert, suite verte, NameError en prod au
+  premier doublon — trouvé par revue adversariale post-découpage, pas par les tests).
+  Deux parades posées : le test du CHEMIN DE RATTRAPAGE lui-même (provoquer l'exception,
+  vérifier le contrat de l'appelant qui en dépend), et après toute scission de module un
+  balayage des noms lus sans être importés ni définis (test grossier niveau module,
+  suffisant pour le nom hérité d'un fichier scindé).
 - **Tree partagé entre sessions : deux sessions ne partagent JAMAIS un fichier — le
   séquencement prime, le staging n'est qu'un filet.** Vécu 13/08 (main rouge) : un
   `git add <chemin>` EXPLICITE a absorbé ~148 lignes du WIP d'une session voisine dans
