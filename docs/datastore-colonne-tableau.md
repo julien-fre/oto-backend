@@ -237,3 +237,18 @@ Ce qui débloque la migration d'abord, l'exhaustivité ensuite :
 4. existence/agrégat `contacts[].attr` (§5.1) ;
 5. écriture par rang (§5.2) ;
 6. export à plat déterministe (§5.3) — le plus gros, il n'existe rien à étendre.
+
+
+---
+
+## 10. Amendements de revue (13/08 soir — superviseur + scout, consignés par le superviseur)
+
+La revue scout rend **GO**, tous les tranchages du §8 acceptés, avec cinq points qui amendent ce document :
+
+1. **(§6) La conversion nomme une étape « PRÉVENIR LES CONSOMMATEURS », et le retrait du `flat_alias` est un geste DISTINCT et annoncé** — jamais la suite mécanique de la purge. Fait mesuré qui l'impose : scout garde par tableau CINQ listes qui nomment des colonnes (`default_columns`, `hidden_fields`, `hidden_facets`, `composition`, `field_roles`) — au retrait de l'alias elles pointeraient dans le vide EN SILENCE (le piège payé à la migration Mūcho, ×5). Scout bascule ses listes lui-même ; l'étape doit être dans le chemin instruit, pas dans une mémoire.
+2. **(§5.1) Les DEUX comptes sont SERVIS sur les chemins de liste** : `count` (occurrences) ET `count_rows` (fiches) — comme au barreau 1 multi-colonnes. Exigence BLOQUANTE de scout : ses facettes affichent `count` comme un nombre de fiches — une fiche à deux DRH compterait double, le chiffre serait plausible et faux. À figer par un test à l'étape 4.
+3. **(§5.3) PAS de gabarit par défaut : `flat_alias` est OBLIGATOIRE dès qu'on migre.** Le défaut proposé (`{key}{n}_{attr}`) ne produit pas son propre exemple (`contacts` → `contacts1_nom` ≠ `contact1_nom`) — un défaut qui singularise la clé serait une devinette, ce que ce document interdit. Celui qui migre déclare, toujours.
+4. **(§6) L'alias PROJETTE les couches** : `contact1_email.comment` se résout vers `contacts[0].email.comment` — l'alias mappe le préfixe de chemin, le suffixe de couche compose. Sans ça, les marques de provenance disparaîtraient des écrans pendant toute la fenêtre, sans message.
+5. **(§8.2) L'asymétrie 0/1 a TROIS bouts, pas deux** : l'écriture (0-indexée), l'export (1-indexé), et le `{n}` du `flat_alias` (1-indexé — c'est l'humain qui le déclare et c'est là que la confusion coûterait le plus). Documentée aux trois.
+
+Revue superviseur (déjà intégrée au corps par `f3f60aa`) : le sort des colonnes plates (copier → vérifier ligne à ligne → PURGER), le rang vide servi `{}` jamais `null`, l'asymétrie documentée dans les fiches au moment où les surfaces existent.
