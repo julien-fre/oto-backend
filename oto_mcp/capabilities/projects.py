@@ -57,7 +57,10 @@ class ProjectInput(BaseModel):
     owner_id: Optional[str] = None   # org.id si owner_type='org' ; group.id si 'group' ; ignoré sinon
     # link / unlink : un pointeur typé vers une entité regroupée par le projet.
     target_type: Optional[Literal["tableau", "procedure", "connecteur"]] = None
-    # Ship 2 (lot 3) — épine opt-in d'op=get : include=['spine'] + drill/bornage.
+    # Opt-ins d'op=get, cumulables : 'spine' (l'arbre des pages, Ship 2 lot 3, +
+    # drill/bornage ci-dessous) · 'procedures' (le CORPS des procédures liées, #313).
+    # Une valeur inconnue est ignorée en silence — l'absence d'un champ optionnel se
+    # lit dans la réponse, et refuser ferait d'un ajout futur une rupture de contrat.
     include: Optional[list[str]] = None
     from_doc: Optional[int] = None     # enraciner l'épine sur un nœud (drill)
     depth: Optional[int] = None        # profondeur (défaut 2)
@@ -490,6 +493,10 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             out["spine"] = db.project_spine(
                 int(inp.project_id), from_doc=inp.from_doc,
                 depth=(inp.depth if inp.depth is not None else 2))
+        # PROCÉDURES (#313) — opt-in : le CORPS des procédures liées, pour qu'on
+        # puisse lire la règle qui a produit une fiche sans quitter l'écran.
+        if inp.include and "procedures" in inp.include:
+            out["procedures"] = _linked_procedures(sub, links)
         return out
 
     if inp.op == "lint":
@@ -794,6 +801,50 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
     return {"ok": True, "id": inp.project_id, "archived": True}
 
 
+# ── Procédures liées, servies sur demande (#313) ─────────────────────────────
+
+# ⚠️ **L'ALLOWLIST EST LE MÉCANISME DE SÉCURITÉ, pas une commodité de sérialisation.**
+# La contrainte est produit et non négociable : une procédure servie ne dit RIEN de
+# son exécution — ni le modèle qui l'exécute, ni ceux qu'on essaie. Le rendu est donc
+# CONSTRUIT champ par champ à partir de cette liste, jamais dérivé de la ligne
+# (`{**instr}`) : une colonne ajoutée demain à `org_instructions` n'a aucun chemin
+# pour atteindre le client. C'est ce que fige `test_procedure_payload_is_an_allowlist`.
+#
+# `slots` en est absent à dessein, bien qu'inoffensif : c'est de la mécanique
+# d'exécution (quelle instance branchée où), pas la règle que le lecteur veut lire.
+_PROCEDURE_FIELDS = ("ref", "slug", "title", "version", "body_md")
+
+
+def _linked_procedures(sub: str, links: list[dict]) -> list[dict]:
+    """Le corps des procédures liées au projet, dans l'ordre des liens.
+
+    **Chaque procédure est regardée par le seam `ownership`, une par une**, et ce
+    n'est pas une précaution redondante avec le gate du projet : un projet peut lier
+    une procédure d'une AUTRE org (partage cross-org par grant, #52). Lire le projet
+    n'emporte donc pas le droit de lire tout ce qu'il désigne — une procédure
+    inaccessible est simplement ABSENTE du rendu, sans erreur : elle reste visible
+    comme lien (titre, ref), c'est son corps qui ne suit pas.
+
+    Un lien mort (procédure supprimée) est sauté de la même façon — `audit.dead_links`
+    est l'endroit qui le SIGNALE ; ce rendu-ci n'a pas à le redire, et surtout pas à
+    faire échouer la lecture du projet pour autant."""
+    out = []
+    for l in links:
+        if l.get("target_type") != "procedure":
+            continue
+        ref = str(l.get("target_ref") or "")
+        if not ref.isdigit():          # l'ADR 0032 a fixé l'id ; un slug résiduel n'est pas résolu ici
+            continue
+        if not ownership.can_access(sub, "doctrine", ref, "read"):
+            continue
+        instr = org_store.get_instruction_by_id(int(ref))
+        if not instr:
+            continue
+        out.append({"ref": ref, "slug": instr["slug"], "title": instr["title"],
+                    "version": instr["version"], "body_md": instr["body_md"]})
+    return out
+
+
 class ProjectReadInput(BaseModel):
     """Lire UN projet, désigné par l'URL."""
     project_id: int
@@ -886,6 +937,13 @@ class ProjectRead(BaseModel):
     # descendants NON rendus. Une branche sans `children` n'est donc pas forcément
     # une feuille — vérifier `more`.
     spine: Optional[dict] = None
+    # Présent SEULEMENT si `include=['procedures']` a été demandé (#313) — le CORPS
+    # des procédures liées : `{ref, slug, title, version, body_md}`, et rien d'autre
+    # (cf. `_PROCEDURE_FIELDS` : aucune métadonnée d'exécution, jamais).
+    # ⚠️ La liste peut être plus COURTE que les liens de type `procedure` : une
+    # procédure liée mais inaccessible à l'appelant (partage cross-org) ou supprimée
+    # est absente ici tout en restant présente dans `links`. Apparier par `ref`.
+    procedures: Optional[list[dict]] = None
 
 
 def _project_read(ctx: ResolvedCtx, inp: ProjectReadInput) -> dict:
@@ -927,7 +985,10 @@ CAPABILITIES += [
             "oto_project op=get, on a URL that names its target. REST-only: agents "
             "already have oto_project. Exists so a SCOPED api token can be granted one "
             "project and nothing else ({\"projects\": {\"12\": \"read\"}}), which the "
-            "POST form cannot express — its target sits in the body."
+            "POST form cannot express — its target sits in the body. "
+            "Optional include=procedures adds the BODY of the linked procedures "
+            "(title, version, body_md) so a reader can see the rule that produced a "
+            "record; omitted, the response is byte-for-byte unchanged."
         ),
         mcp=None,
         # `:int` et non `{project_id}` nu : le motif de portée (`token_scopes`)
