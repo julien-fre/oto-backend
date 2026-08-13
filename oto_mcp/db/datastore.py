@@ -1306,10 +1306,18 @@ def datastore_release_by_run(run_id: str) -> int:
     """Libère toutes les lignes réservées sous ce run — la TROISIÈME voie du verrou.
 
     Appelée à la fermeture d'un run, quel que soit son issue (`done`, `failed`,
-    `blocked`, et au passage `stale`) : un run qui se termine ne travaille plus, donc
-    ne tient plus rien. C'est la réponse au cas mesuré — un worker disparu laissait sa
-    ligne bloquée jusqu'à expiration du bail, soit **18 jours** sur la seule ligne
-    réservée qu'ait porté la production.
+    `blocked`) : un run qui se termine ne travaille plus, donc ne tient plus rien.
+
+    ⚠️ **Ce qu'elle NE couvre PAS, contrairement à ce que ce commentaire affirmait :
+    l'agent qui MEURT.** Un agent mort n'appelle pas `run_finish` — c'est la
+    définition. `stale` est par ailleurs DÉRIVÉ (`run_status.is_stale`), jamais posé :
+    rien ne ferme un run abandonné, donc rien ne libère ses lignes. Le seul filet pour
+    ce cas reste l'expiration du bail, celui qui a mis **18 jours** à jouer sur la
+    seule ligne réservée qu'ait portée la production. Le ramassage des runs abandonnés
+    est une décision à part (#324).
+
+    Ce qu'elle couvre réellement : l'agent qui TERMINE son run en oubliant de relâcher
+    ses lignes. Plus petit que promis, et probablement le cas fréquent.
 
     ⚠️ Aucune garde de worker ici, et c'est voulu : la garde du release protège d'un
     agent qui libérerait la ligne d'un AUTRE. Ici c'est le run lui-même qui se ferme —

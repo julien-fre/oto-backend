@@ -297,6 +297,7 @@ class DatastorePg:
         # store est instancié par requête, donc la portée est celle du geste.
         self.off_schema: set = set()
         self.off_options: dict = {}
+        self.off_notices: set = set()
 
     # --- résolution namespace -> ns_id ---------------------------------------
 
@@ -515,18 +516,51 @@ class DatastorePg:
         if self.off_options:
             out["hors_options"] = dict(sorted(self.off_options.items()))
             out["hors_options_hint"] = dsv2.unenforced_options_warning(self.off_options)
+        # #317 étape B : le changement de comportement, dit à l'instant où il joue.
+        # Union sur un lot (comme `hors_schema`) — un batch de 500 lignes finies ne
+        # répète pas 500 fois la même phrase.
+        if self.off_notices:
+            out["notices"] = sorted(self.off_notices)
         return out
 
-    @staticmethod
-    def _release_if_terminal(schema: Optional[dict], ns_id: int, row_id: str,
-                             merged: dict) -> None:
-        """Entrée dans un état terminal du cycle de vie ⇒ le bail de claim tombe
-        (fin de traitement, façon log_exploration_attempt). Best-effort."""
+    # Le message que voient les tableaux dont l'écriture d'un état final libérait la
+    # ligne (#317 étape B). Rendu à l'INSTANT où l'ancien comportement aurait joué :
+    # c'est le seul moment où l'information est actionnable, et son lecteur est le
+    # seul qui puisse agir. Trois autres emplacements ont été écartés — à la pose du
+    # schéma (les tableaux concernés ne le reposent pas, le message n'arriverait
+    # jamais), au claim (trop tôt, et relu à chaque ligne), une annonce hors produit
+    # (hors du geste, donc oubliée).
+    #
+    # ⚠️ La promesse finale est volontairement PLUS PETITE que la première rédaction :
+    # elle disait « couvre le cas où votre agent s'arrête en route », ce qui est FAUX
+    # — un agent qui meurt n'appelle pas `run_finish`. Ce que la fin de run couvre,
+    # c'est l'OUBLI de relâcher. Une promesse doit suivre le code, pas l'inverse.
+    _TERMINAL_RELEASE_RETIRED = (
+        "La ligne reste réservée. Écrire un état final ne libère plus la ligne "
+        "automatiquement — ce comportement a été retiré. Ce qui la libère "
+        "maintenant : la fin du traitement en cours (`run_finish`, quelle que soit "
+        "son issue) rend toutes les lignes qu'il avait prises ; ou un `data_release` "
+        "explicite si vous travaillez hors traitement. Si vous dépendiez de la "
+        "libération automatique : appelez `data_release` après avoir écrit l'état "
+        "final, ou encadrez votre travail par `run_start` / `run_finish` — la "
+        "libération devient alors automatique si vous oubliez de relâcher vos lignes."
+    )
+
+    def _terminal_write_notice(self, schema: Optional[dict], ns_id: int, row_id: str,
+                               merged: dict) -> None:
+        """Dit, UNE fois par écriture concernée, que la libération automatique est
+        retirée — et ne libère plus rien.
+
+        Ne parle qu'aux tableaux réellement touchés : un cycle de vie déclaré, un état
+        final écrit, ET une ligne effectivement sous bail. Les autres ne voient rien.
+        """
         sf = dsv2.status_field(schema)
         if not sf:
             return
-        if dsv2.is_terminal_status(schema, merged.get(sf.get("key"))):
-            db.datastore_release_claim(ns_id, row_id, None)
+        if not dsv2.is_terminal_status(schema, merged.get(sf.get("key"))):
+            return
+        if db.datastore_active_lease(ns_id, row_id):
+            self.off_notices.add(self._TERMINAL_RELEASE_RETIRED)
 
     # --- namespace lifecycle -------------------------------------------------
 
@@ -1032,7 +1066,7 @@ class DatastorePg:
         if result is None:
             raise RowNotFound(row_id)  # supprimée entre le lookup et le verrou (course)
         row, merged = result
-        self._release_if_terminal(schema, ns_id, row_id, merged)
+        self._terminal_write_notice(schema, ns_id, row_id, merged)
         return row
 
     def upsert_row(self, namespace: str, row_id: str, data: dict) -> tuple[dict, bool]:
@@ -1058,7 +1092,7 @@ class DatastorePg:
         self._assert_writable(ns_id, row_id)
         row, inserted = db.datastore_upsert_row(ns_id, row_id, user_data)
         if not inserted:
-            self._release_if_terminal(schema, ns_id, row_id, user_data)
+            self._terminal_write_notice(schema, ns_id, row_id, user_data)
         return self._row_to_dict(row), inserted
 
     def declared_key(self, namespace: str) -> Optional[str]:
@@ -1296,7 +1330,7 @@ class DatastorePg:
                     f"un autre enregistrement porte déjà {dk}={dkv} "
                     "(clé métier unique) — impossible de dupliquer") from None
             raise  # violation inexpliquée → erreur franche, pas de repli muet
-        self._release_if_terminal(schema, ns_id, row_id, data)
+        self._terminal_write_notice(schema, ns_id, row_id, data)
         return self._row_to_dict(row)
 
     # --- file de travail (ADR 0046 D) -----------------------------------------

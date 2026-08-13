@@ -276,3 +276,75 @@ def test_a_brand_new_row_is_never_blocked(table):
     st = _store()
     st.upsert_row(ns, "toute-neuve", {"societe": "Créée"})
     assert db.datastore_get_row(ns_id, "toute-neuve")["data"]["societe"] == "Créée"
+
+
+# ── étape B : la libération sur état final est retirée ───────────────────────
+
+def _schema_lifecycle(ns_id: int) -> None:
+    """Un tableau comme les 19 vivants : un statut, un cycle de vie, un état final."""
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE user_datastores SET schema = %s::jsonb WHERE id = %s",
+            ('{"fields": [{"key": "statut", "type": "enum", "role": "status",'
+             ' "options": ["a_faire", "fait"],'
+             ' "lifecycle": {"states": ["a_faire", "fait"], "terminal": ["fait"]}}]}',
+             ns_id))
+
+
+def test_writing_a_final_state_no_longer_frees_the_row(table):
+    """⚠️ **Le retrait.** Le verrou cesse de dépendre de ce que le client appelle
+    « terminé » : pour savoir qu'un travail est fini, la plateforme devait connaître
+    les états du client et lesquels sont des fins. Une mission a payé ce couplage —
+    le verrou écoutait un champ que personne ne remplissait."""
+    ns, ns_id = table
+    _schema_lifecycle(ns_id)
+    row = _store().claim_next(ns, worker="w1")
+
+    from oto_mcp.datastore import writing_as
+    with writing_as("w1"):                       # le titulaire écrit son verdict
+        _store().upsert_row(ns, row["_id"], {"statut": "fait"})
+
+    assert _bail(ns_id, row["_id"])["claimed_by"] == "w1", \
+        "l'état final ne libère plus — c'est le geste de fin de travail qui libère"
+
+
+def test_the_change_is_announced_where_it_happens(table):
+    """Le message est rendu à l'INSTANT où l'ancien comportement aurait joué — le seul
+    moment actionnable, et son lecteur est le seul qui puisse agir."""
+    ns, ns_id = table
+    _schema_lifecycle(ns_id)
+    row = _store().claim_next(ns, worker="w1")
+
+    from oto_mcp.datastore import writing_as
+    st = _store()
+    with writing_as("w1"):
+        st.upsert_row(ns, row["_id"], {"statut": "fait"})
+    notices = st.off_schema_report().get("notices") or []
+
+    assert notices, "le changement doit être dit"
+    texte = notices[0]
+    assert texte.startswith("La ligne reste réservée"), "la conséquence d'abord"
+    assert "data_release" in texte and "run_finish" in texte, "les deux remplaçants"
+    # ⚠️ La promesse est réduite à ce qui est VRAI : la fin de run couvre l'oubli de
+    # relâcher, PAS l'agent qui meurt (il n'appelle pas `run_finish`).
+    assert "oubliez de relâcher" in texte
+    assert "s'arrête en route" not in texte, "promesse retirée : elle était fausse"
+
+
+def test_a_table_without_a_lifecycle_hears_nothing(table):
+    """Les 38 tableaux sans cycle de vie ne sont pas concernés : pas de message."""
+    ns, ns_id = table
+    st = _store()
+    st.upsert_row(ns, "r1", {"societe": "Rien à dire"})
+    assert not (st.off_schema_report().get("notices") or [])
+
+
+def test_a_free_row_hears_nothing_either(table):
+    """Écrire un état final sur une ligne qui n'est PAS réservée ne concerne
+    personne — le message ne parle qu'à qui perd quelque chose."""
+    ns, ns_id = table
+    _schema_lifecycle(ns_id)
+    st = _store()
+    st.upsert_row(ns, "r2", {"statut": "fait"})
+    assert not (st.off_schema_report().get("notices") or [])

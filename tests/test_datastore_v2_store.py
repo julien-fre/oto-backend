@@ -106,7 +106,16 @@ def test_forbidden_transition_refused(store, monkeypatch):
 
 # ── cycle de vie → release auto du claim ─────────────────────────────────────
 
-def test_terminal_status_releases_claim(store, monkeypatch):
+def test_terminal_status_no_longer_releases_claim(store, monkeypatch):
+    """⚠️ Ce test gardait le comportement que #317 RETIRE — il est retourné, pas
+    supprimé : c'est lui qui garantit désormais que le verrou ne dépend plus de ce
+    que le client appelle « terminé ».
+
+    La raison du retrait : pour savoir qu'un travail était fini, la plateforme devait
+    connaître les états du client et lesquels sont des fins. Une mission a payé ce
+    couplage — deux champs d'état, le verrou écoutait celui que personne ne
+    remplissait, et le mécanisme n'a jamais fonctionné. La fin de travail est
+    désormais un acte du verrou (fin de traitement, ou release explicite)."""
     st, calls = store
     monkeypatch.setattr(dsm.db, "datastore_get_row",
                         lambda ns_id, rid: {"row_id": rid, "created_at": "t",
@@ -114,7 +123,7 @@ def test_terminal_status_releases_claim(store, monkeypatch):
                                             "data": {"fact_id": "f1",
                                                      "status": "en_cours"}})
     st.update_row("leads", "r1", {"status": "qualified", "qualification": "ok!"})
-    assert calls["release"] == [("r1", None)]   # libération inconditionnelle
+    assert calls["release"] == []
 
 
 def test_non_terminal_status_keeps_claim(store, monkeypatch):
