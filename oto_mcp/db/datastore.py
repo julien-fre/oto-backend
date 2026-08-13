@@ -354,6 +354,8 @@ def datastore_insert_row(ns_id: int, row_id: str, data: dict,
             "RETURNING row_id, created_at, updated_at, data",
             (ns_id, row_id, json.dumps(data), created_at, updated_at, ns_id),
         ).fetchone()
+        from .search import stamp_rank_vector
+        stamp_rank_vector(conn, "datastore_rows", "ns_id = %s AND row_id = %s", (ns_id, row_id))
         return dict(row)
 
 
@@ -373,6 +375,9 @@ def datastore_upsert_row(ns_id: int, row_id: str, data: dict) -> tuple[dict, boo
             "RETURNING row_id, created_at, updated_at, data, (xmax = 0) AS inserted",
             (ns_id, row_id, json.dumps(data), ns_id),
         ).fetchone()
+        from .search import stamp_rank_vector
+        stamp_rank_vector(conn, "datastore_rows", "ns_id = %s AND row_id = %s", (ns_id, row_id))
+
         inserted = bool(row.pop("inserted"))
         return dict(row), inserted
 
@@ -1000,6 +1005,8 @@ def datastore_update_row(ns_id: int, row_id: str, data: dict, updated_at: str) -
             "RETURNING row_id, created_at, updated_at, data",
             (json.dumps(data), updated_at, ns_id, row_id),
         ).fetchone()
+        from .search import stamp_rank_vector
+        stamp_rank_vector(conn, "datastore_rows", "ns_id = %s AND row_id = %s", (ns_id, row_id))
         return dict(row) if row else None
 
 

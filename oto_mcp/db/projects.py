@@ -506,6 +506,8 @@ def create_doc(project_id: int, title: str, *, parent_id: Optional[int] = None,
              project_id, parent_id),
         ).fetchone()
         conn.execute("UPDATE projects SET updated_at = NOW() WHERE id = %s", (project_id,))
+        from .search import stamp_rank_vector
+        stamp_rank_vector(conn, "docs", "id = %s", (int(row["id"]),))
         _backlinks.refresh_links(conn, int(row["id"]), project_id, body_md)
         # #6 C : une page créée avec ce titre résout les `[[Titre]]`-souches écrits AVANT
         # elle dans d'autres pages → on re-résout leurs liens.
@@ -658,6 +660,8 @@ def update_doc(doc_id: int, *, title: Optional[str] = None,
                 (doc_id, prior["title"], prior["body_md"], edited_by),
             )
         conn.execute(f"UPDATE docs SET {', '.join(sets)} WHERE id = %s", tuple(params))
+        from .search import stamp_rank_vector
+        stamp_rank_vector(conn, "docs", "id = %s", (doc_id,))
         # Backlinks (Ship 4) : re-extraire les liens sortants quand le corps change.
         pr = None
         if body_md is not None:
@@ -1119,6 +1123,8 @@ def save_extracted_text(file_id: int, *, status: str, text: str = "",
             "  attempts = project_file_texts.attempts + 1, extracted_at = NOW()",
             (file_id, status, text, pages, detail),
         )
+        from .search import stamp_rank_vector
+        stamp_rank_vector(conn, "project_file_texts", "file_id = %s", (file_id,))
 
 
 def get_extracted_text(file_id: int) -> Optional[dict]:

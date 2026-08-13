@@ -172,6 +172,37 @@ def rank_backfill_sql(table: str, batch: int) -> str:
             f"WHERE {RANK_VECTOR_COLUMN} IS NULL LIMIT {int(batch)})")
 
 
+def stamp_rank_vector(conn, table: str, where: str, params: tuple = ()) -> None:
+    """Rafraîchit le vecteur de classement des lignes visées — DANS la transaction
+    de l'écriture qui vient de les modifier.
+
+    C'est le maintien à l'écriture (#318, barreau 2) : sans lui, une ligne modifiée
+    garderait son ancien vecteur jusqu'au passage du rattrapage, donc un classement
+    daté de quelques secondes. Jamais faux — le FILTRE lit l'expression indexée, à
+    jour — mais daté, et c'est évitable.
+
+    ⚠️ **Un UPDATE séparé, volontairement, plutôt qu'une colonne de plus dans
+    l'écriture** : en SQL, `SET data = <neuf>, vec = f(data)` calcule `f` sur
+    l'ANCIENNE valeur — le vecteur naîtrait périmé, silencieusement, et le test le
+    plus évident (« après écriture, le vecteur est frais ») passerait au vert sur du
+    faux si on comparait à la mauvaise chose. Le faire APRÈS, sur la ligne écrite,
+    n'a pas ce piège.
+
+    Best-effort : une source non matérialisée ou une erreur ici ne doit pas faire
+    échouer l'écriture métier — le rattrapage repassera, et le repli du `COALESCE`
+    fait qu'entre-temps rien ne ment.
+    """
+    expr = RANKED_SOURCES.get(table)
+    if not expr:
+        return
+    try:
+        conn.execute(
+            f"UPDATE {table} SET {RANK_VECTOR_COLUMN} = {_vec(expr)} WHERE {where}",
+            params)
+    except Exception:                      # noqa: BLE001 — jamais au prix de l'écriture
+        pass
+
+
 def rank_pending_counts() -> dict:
     """Combien de lignes attendent encore leur vecteur, par source — l'état du
     rattrapage, lisible sans deviner."""

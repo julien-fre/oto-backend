@@ -229,6 +229,86 @@ def test_a_row_without_its_vector_is_never_lost(corpus):
     assert _ordre(corpus, "budget") == attendu
 
 
+# ── le maintien à l'écriture (sans le rattrapage) ────────────────────────────
+
+def _vecteur(table: str, where: str, params: tuple):
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        r = conn.execute(
+            f"SELECT {S.RANK_VECTOR_COLUMN} AS v FROM {table} WHERE {where}", params
+        ).fetchone()
+    return (r or {}).get("v")
+
+
+def test_writing_a_page_stamps_its_vector_without_the_backfill(live):
+    """⚠️ **Le critère du barreau, et il se prouve en COUPANT le rattrapage** : une
+    écriture rend le vecteur frais toute seule, dans sa propre transaction. Sinon le
+    test passerait au vert grâce à la boucle de fond, et ne prouverait rien du
+    maintien."""
+    from oto_mcp import db
+
+    p = db.create_project("org", "1", "Fraîcheur " + uuid.uuid4().hex[:6])
+    pid = int(p["id"] if isinstance(p, dict) else p)
+    doc_id = db.create_doc(pid, "Note de cadrage", body_md="budget arbitrage")
+
+    # Aucun tour de rattrapage n'a été joué : le vecteur doit déjà être là.
+    assert _vecteur("docs", "id = %s", (doc_id,)) is not None
+
+    avant = _vecteur("docs", "id = %s", (doc_id,))
+    db.update_doc(doc_id, body_md="déploiement incident correctif")
+    apres = _vecteur("docs", "id = %s", (doc_id,))
+
+    assert apres is not None and apres != avant, (
+        "le corps a changé : le vecteur doit suivre, sans attendre le rattrapage")
+    assert "budget" not in str(apres), "l'ancien texte ne doit plus classer la page"
+
+
+def test_writing_a_row_stamps_its_vector_without_the_backfill(live):
+    """Le volume est ici — c'est la source où un vecteur daté se verrait le plus."""
+    from oto_mcp import db
+
+    ns = db.create_datastore_namespace("org", "1", "t-" + uuid.uuid4().hex[:6])
+    db.datastore_insert_row(ns, "r1", {"societe": "Boulangerie Sylvestre"})
+    assert _vecteur("datastore_rows", "ns_id = %s AND row_id = %s", (ns, "r1")) is not None
+
+    avant = _vecteur("datastore_rows", "ns_id = %s AND row_id = %s", (ns, "r1"))
+    db.datastore_upsert_row(ns, "r1", {"societe": "Charcuterie Martin"})
+    apres = _vecteur("datastore_rows", "ns_id = %s AND row_id = %s", (ns, "r1"))
+
+    assert apres != avant and "sylvestr" not in str(apres).lower()
+
+
+def test_an_extracted_file_stamps_its_vector(live):
+    """La source du lot précédent : le texte extrait arrive par le worker, pas par une
+    surface — le maintien doit y être aussi, sans quoi tout fichier indexé attendrait
+    le rattrapage."""
+    from oto_mcp import db
+
+    p = db.create_project("org", "1", "Fichiers " + uuid.uuid4().hex[:6])
+    pid = int(p["id"] if isinstance(p, dict) else p)
+    f = db.add_project_file(pid, "s3/x", "doc.pdf", mime="application/pdf")
+    db.save_extracted_text(int(f["id"]), status="ok", text="visite chez Sylvestre")
+
+    assert _vecteur("project_file_texts", "file_id = %s", (int(f["id"]),)) is not None
+
+
+def test_a_write_that_fails_to_stamp_never_breaks_the_write(live, monkeypatch):
+    """Best-effort : le vecteur est un accélérateur, jamais une condition de
+    l'écriture métier. S'il échoue, la ligne s'écrit quand même — le rattrapage
+    repassera, et le repli du COALESCE fait qu'entre-temps rien ne ment."""
+    from oto_mcp import db
+    from oto_mcp.db import search as mod
+
+    p = db.create_project("org", "1", "Robuste " + uuid.uuid4().hex[:6])
+    pid = int(p["id"] if isinstance(p, dict) else p)
+    monkeypatch.setattr(mod, "RANKED_SOURCES", {})     # plus aucune source connue
+
+    doc_id = db.create_doc(pid, "Toujours écrite", body_md="corps")
+
+    assert db.get_doc_by_id(doc_id) is not None
+    assert _vecteur("docs", "id = %s", (doc_id,)) is None
+
+
 def test_the_backfill_round_is_idempotent_and_converges(corpus):
     """Le tour ne fait rien quand tout est rempli — c'est ce qui lui permet de rester
     en place comme réconciliation, sans coûter."""
