@@ -173,24 +173,32 @@ def _stronger_role(a: Optional[str], b: Optional[str]) -> str:
     return (a if ra >= rb else b) or "member"
 
 
-def migrate_sub(old_sub: str, new_sub: str) -> bool:
+def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> bool:
     """MERGE transactionnel ancien→nouveau compte (bascule de tenant, issue #56).
     Hérite les champs d'accès de l'ancien, repointe TOUTES les tables keyed-by-sub
     (les 3 FK `ON DELETE CASCADE` incluses, AVANT de supprimer l'ancien → pas de
     cascade destructrice), supprime l'ancienne ligne users, pose l'alias. Idempotent
     (no-op si l'ancien sub n'existe plus). True si une migration a eu lieu.
 
-    ⚠️ Le merge se fait **par email**, et il est borné à UN MÊME tenant (ADR 0052,
-    R3 tranché le 08/08). Entre deux émetteurs, un merge par email serait une
-    fédération d'identités — ce que le §6 interdit nommément : un utilisateur d'un
-    tenant tiers absorberait le compte oto qui partage son adresse (rôle, orgs,
-    coffre). Le garde-fou est ici plutôt qu'à l'appelant parce que c'est le SEUL
-    endroit qui écrit `sub_aliases` : un alias cross-tenant ne peut donc pas exister,
-    et `resolve_sub` ne peut pas en drainer un."""
+    ⚠️ Le merge **par email** est borné à UN MÊME tenant (ADR 0052, R3 tranché le
+    08/08). Entre deux émetteurs, il serait une fédération d'identités — ce que le §6
+    interdit nommément : quiconque s'inscrit chez un tenant tiers sous l'adresse d'un
+    autre absorberait son compte oto (rôle, orgs, coffre). Le garde-fou est ici plutôt
+    qu'à l'appelant parce que c'est le SEUL endroit qui écrit `sub_aliases` : un alias
+    cross-tenant ne peut donc pas naître d'un login, et `resolve_sub` ne peut pas en
+    drainer un.
+
+    `operator_source` est la SEULE porte cross-tenant, et elle n'est pas atteignable
+    depuis un login : c'est un acte d'opérateur (déclarer un tenant qualifie ses subs
+    ⟹ il faut repointer ce qui existait sous la forme nue). Elle ouvre le passage
+    délibéré, jamais le merge automatique — l'appelant du chemin chaud
+    (`reconcile_tenant_migration`) ne la renseigne pas, donc reste fermé. Ce qui la
+    distingue d'un contournement : la décision « ces deux subs sont la même personne »
+    est prise HORS du code, et la trace de qui l'a prise part au journal."""
     if not old_sub or not new_sub or old_sub == new_sub:
         return False
     from ..tenancy import current as _tenants
-    if not _tenants().same_tenant(old_sub, new_sub):
+    if not _tenants().same_tenant(old_sub, new_sub) and not operator_source:
         logger.warning(
             "tenant migration REFUSÉE : %s et %s ne relèvent pas du même tenant "
             "(ADR 0052 §6 — pas de fédération d'identités entre tenants)",
@@ -247,8 +255,20 @@ def migrate_sub(old_sub: str, new_sub: str) -> bool:
         # 3. repointer toutes les colonnes sub.
         for table, col in _SUB_COLUMNS:
             conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s", (new_sub, old_sub))
-        # coffre user (connector_credentials) : entité + auteur.
-        conn.execute("UPDATE connector_credentials SET entity_id=%s WHERE entity_type='user' AND entity_id=%s", (new_sub, old_sub))
+        # coffre user : on repointe l'AUTEUR, jamais l'ENTITÉ.
+        #
+        # `_aad(entity_type, entity_id, connector, account)` — l'entité entre dans l'AAD,
+        # pas l'auteur. Repointer `entity_id` sans rechiffrer donnait donc une ligne
+        # que plus rien ne peut ouvrir : la fiche affiche « clé posée », chaque appel
+        # échoue en `InvalidTag`, et le diagnostic accuse le connecteur. Une clé
+        # ABSENTE se voit et se repose en dix secondes ; une clé présente-et-morte se
+        # débogue une demi-journée (mode d'échec déjà vécu, cf. coffre / clé périmée).
+        #
+        # On abandonne donc la ligne user derrière : l'utilisateur repose sa clé et
+        # l'interface dit la vérité. La ligne orpheline n'est pas supprimée — elle
+        # reste rechiffrable à la main si on décide un jour de la récupérer.
+        # ⚠️ Toute bascule de tenant doit donc s'accompagner de la LISTE des clés
+        # personnelles à reposer, prévenue avant la fenêtre (ADR 0052 §Migrer).
         conn.execute("UPDATE connector_credentials SET set_by=%s WHERE set_by=%s", (new_sub, old_sub))
         # 4. supprimer l'ancienne ligne users (enfants FK déjà repointés).
         conn.execute("DELETE FROM users WHERE sub=%s", (old_sub,))
@@ -258,7 +278,8 @@ def migrate_sub(old_sub: str, new_sub: str) -> bool:
             "ON CONFLICT (old_sub) DO UPDATE SET new_sub=EXCLUDED.new_sub, migrated_at=NOW()",
             (old_sub, new_sub),
         )
-    logger.info("tenant migration: merged %s → %s (par email)", old_sub, new_sub)
+    logger.info("tenant migration: merged %s → %s (%s)", old_sub, new_sub,
+                operator_source or "par email")
     return True
 
 
