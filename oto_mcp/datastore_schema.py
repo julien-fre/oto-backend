@@ -88,8 +88,17 @@ def unwrap(value: Any) -> Any:
     valeur au lieu de l'objet, souvent ce qu'on voulait), et l'alternative — un
     marqueur réservé, ou une déclaration par colonne — rachèterait un cas rare au prix
     de la simplicité qui fait tout l'intérêt de la primitive."""
-    if isinstance(value, dict) and VALUE_LAYER in value:
+    if not isinstance(value, dict):
+        return value
+    if VALUE_LAYER in value:
         return value[VALUE_LAYER]
+    # Pas de `valeur`, mais QUE des couches connues ⟹ c'est bien une colonne à
+    # couches, dont la valeur n'est pas encore posée. Le cas nominal d'un import de
+    # socle : on remplit `origine` sur un champ qu'aucun agent n'a renseigné. Sans
+    # ça la lecture rendait l'OBJET — donc tout ce qui attend une chaîne cassait,
+    # précisément sur le chemin qu'on recommande.
+    if value and all(k in LAYER_KEYS for k in value):
+        return None
     return value
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
 

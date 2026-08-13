@@ -17,6 +17,9 @@ projection optionnelle, déférée à otomata#29.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
+
 import base64
 import binascii
 import os
@@ -177,6 +180,64 @@ class NamespaceForbidden(Exception):
     pass
 
 
+# Le worker au nom duquel l'appel courant écrit (#317) — la SECONDE façon dont le
+# titulaire d'un bail s'identifie, quand il écrit hors du run qui tient la ligne.
+# Un contextvar plutôt qu'un paramètre porté de surface en surface : l'écriture
+# traverse quatre couches, et un argument qu'on oublie de relayer une fois produit un
+# refus incompréhensible. Posé par `writing_as`, jamais lu ailleurs qu'au garde-fou.
+_WRITING_AS: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "datastore_writing_as", default=None)
+
+
+@contextlib.contextmanager
+def writing_as(worker: Optional[str]):
+    """Déclare le worker au nom duquel on écrit, le temps d'un appel.
+
+    Sert le cas « le titulaire du bail écrit hors de son run » : sans lui, seul le
+    run identifie le titulaire, et un agent qui reprend son travail dans une autre
+    session se verrait refuser sa propre ligne."""
+    token = _WRITING_AS.set((worker or "").strip() or None)
+    try:
+        yield
+    finally:
+        _WRITING_AS.reset(token)
+
+
+def _current_run() -> Optional[str]:
+    """Le run de l'appel courant, ou None hors de tout run.
+
+    Lu ICI et pas passé par les surfaces : le run est un CONTEXTE d'appel (ADR 0038),
+    pas un argument métier — l'exiger des surfaces reviendrait à demander à chaque
+    appelant de déclarer ce que le serveur sait déjà, et à l'oublier une fois sur
+    deux."""
+    from . import session_org
+    try:
+        return session_org.current_call_run()
+    except Exception:      # noqa: BLE001 — hors contexte de requête (script, test)
+        return None
+
+
+class RowLocked(Exception):
+    """Écriture refusée sur une ligne sous bail ACTIF d'un autre (#317).
+
+    Le bail protégeait l'ATTRIBUTION, pas la donnée : deux agents ne prenaient pas la
+    même ligne, mais rien n'empêchait le second d'écrire dessus. « Verrou natif » veut
+    dire que la ligne réservée est aussi protégée en écriture.
+
+    ⚠️ Porte de quoi SORTIR, pas seulement de quoi comprendre : qui tient, jusqu'à
+    quand, et le geste — libérer explicitement, puis écrire. Sans la sortie, on
+    remplace un silence par un mur."""
+
+    def __init__(self, row_id: str, claimed_by: Any = None, claimed_until: Any = None):
+        self.row_id = row_id
+        self.claimed_by = claimed_by
+        self.claimed_until = claimed_until
+        super().__init__(
+            f"ligne « {row_id} » réservée par « {claimed_by} » jusqu'à "
+            f"{claimed_until} — écriture refusée. Si le travail est terminé ou "
+            f"l'agent abandonné, libère la ligne (data_release), puis écris.")
+
+
 class RowClaimed(Exception):
     """Row nommée déjà sous bail ACTIF d'un autre worker (ADR 0046 D).
 
@@ -325,7 +386,9 @@ class DatastorePg:
             if k in _META_COLS:
                 continue
             out[k] = dsv2.unwrap(v)
-            if isinstance(v, dict) and dsv2.VALUE_LAYER in v:
+            # Les couches s'exposent dès qu'il y en a — même sans `valeur` posée
+            # (import de socle sur un champ pas encore renseigné).
+            if isinstance(v, dict) and any(k in dsv2.LAYER_KEYS for k in v):
                 for _layer in dsv2.LAYER_KEYS:
                     if v.get(_layer) not in (None, ""):
                         out[f"{k}.{_layer}"] = v[_layer]
@@ -870,6 +933,72 @@ class DatastorePg:
                 self._merge_into_row(ns_id, existing_id, user_data, schema=schema))
         return self._row_to_dict(row)
 
+    def _assert_writable(self, ns_id: int, row_id: str) -> None:
+        """La même protection, pour les chemins qui n'ont PAS de verrou de ligne.
+
+        Le remplacement, la mise à jour et la suppression n'ouvrent pas de
+        transaction `FOR UPDATE` (contrairement à la fusion) : la garde y est donc
+        posée AVANT l'écriture, sur une lecture séparée.
+
+        ⚠️ **La fenêtre est assumée et bornée** : un claim qui s'intercalerait entre
+        ce contrôle et l'écriture passerait. Elle est de l'ordre de la milliseconde,
+        et infiniment plus étroite que ce qu'elle remplace — l'absence totale de
+        protection sur ces chemins. La refermer demanderait de router ces trois
+        gestes par le verrou de ligne, ce qui change leur sémantique (remplacer n'est
+        pas fusionner) : c'est un lot, pas une rustine.
+
+        Aucun contrôle sur une ligne NEUVE : elle ne peut pas être réservée."""
+        lease = db.datastore_active_lease(ns_id, row_id)
+        if not lease:
+            return
+        run = _current_run()
+        if run and lease.get("claimed_run") == run:
+            return
+        if _WRITING_AS.get() and _WRITING_AS.get() == lease.get("claimed_by"):
+            return
+        raise RowLocked(row_id, lease.get("claimed_by"), lease.get("claimed_until"))
+
+    @staticmethod
+    def _lease_guard(row_id: str):
+        """La protection en écriture (#317) — appelée SOUS le verrou de la ligne.
+
+        Le bail empêchait deux agents de PRENDRE la même ligne, pas d'ÉCRIRE dessus :
+        il protégeait l'attribution, pas la donnée. Ici il protège les deux.
+
+        **Le titulaire s'identifie de deux façons qui se recouvrent** — parce qu'une
+        écriture ordinaire ne dit pas qui écrit, et que `claimed_by` est un libellé
+        libre (`'mucho-w8'`), jamais un compte :
+
+        - **par le RUN** : écrire sous le run qui tient la ligne, c'est être le
+          titulaire — rien à déclarer, le cas nominal est transparent ;
+        - **par le WORKER** rejoué (`_writing_as`) : la sortie explicite hors run,
+          et c'est déjà LA garde du release, donc aucun concept nouveau.
+
+        ⚠️ **Seul un bail ACTIF protège.** Un bail expiré ne protège rien : son
+        titulaire est mort, la ligne est libre. Sans cette nuance, le bail zombie
+        mesuré en production (18 jours) serait devenu un mur de 18 jours.
+
+        Pas d'échappatoire « forcer » : un bouton force devient un réflexe en trois
+        clics et le verrou redevient une étiquette. La sortie est de LEVER le bail
+        (`data_release`) puis d'écrire — deux gestes délibérés, chacun tracé."""
+        def _guard(locked) -> None:
+            until = locked.get("claimed_until")
+            by = locked.get("claimed_by")
+            if not by or until is None:
+                return                       # libre
+            from datetime import datetime, timezone
+            if isinstance(until, str):       # row factory qui rend des chaînes
+                return                       # comparaison impossible ⇒ ne bloque pas
+            if until <= datetime.now(timezone.utc):
+                return                       # bail EXPIRÉ : ne protège rien
+            run = _current_run()
+            if run and locked.get("claimed_run") == run:
+                return                       # le titulaire, par son run
+            if _WRITING_AS.get() and _WRITING_AS.get() == by:
+                return                       # le titulaire, par son worker
+            raise RowLocked(row_id, by, until)
+        return _guard
+
     def _merge_into_row(self, ns_id: int, row_id: str, user_data: dict,
                         *, schema: Optional[dict] = None) -> dict:
         """MERGE `user_data` dans la row existante (dernier écrit gagne par champ),
@@ -898,7 +1027,8 @@ class DatastorePg:
                             written=set(user_data))
             return merged
 
-        result = db.datastore_merge_row_locked(ns_id, row_id, _apply, _now_iso())
+        result = db.datastore_merge_row_locked(ns_id, row_id, _apply, _now_iso(),
+                                               lease_guard=self._lease_guard(row_id))
         if result is None:
             raise RowNotFound(row_id)  # supprimée entre le lookup et le verrou (course)
         row, merged = result
@@ -925,6 +1055,7 @@ class DatastorePg:
             sk = (dsv2.status_field(schema) or {}).get("key")
             prev_status = ((prev or {}).get("data") or {}).get(sk) if sk else None
             self._check_row(schema, user_data, prev_status=prev_status)
+        self._assert_writable(ns_id, row_id)
         row, inserted = db.datastore_upsert_row(ns_id, row_id, user_data)
         if not inserted:
             self._release_if_terminal(schema, ns_id, row_id, user_data)
@@ -1140,13 +1271,17 @@ class DatastorePg:
         for k, v in patch.items():
             if k in _META_COLS:
                 continue
-            data[k] = v
+            # MÊME fusion que le batch : l'origine survit ici aussi. Elle avait été
+            # câblée dans `_merge_into_row` seulement — donc un patch par `id`, le
+            # geste le plus courant d'un agent, l'effaçait quand même.
+            data[k] = _merge_column(data.get(k), v)
             written.add(k)
         # Validation sur le RÉSULTAT mergé (un patch partiel ne doit pas échouer
         # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).
         # Seule la borne de longueur se limite aux clés du patch (#383).
         self._check_row(schema, data, prev_status=prev_status, written=written)
         try:
+            self._assert_writable(ns_id, row_id)
             row = db.datastore_update_row(ns_id, row_id, data, _now_iso())
         except UniqueViolation:
             # Un AUTRE enregistrement porte déjà cette valeur de clé métier (index
@@ -1184,7 +1319,8 @@ class DatastorePg:
         ns_id = self._resolve(namespace, write=True)
         filters = [{"field": k, "op": "eq", "value": v} for k, v in (filter or {}).items()]
         row = db.datastore_claim_next(ns_id, worker=worker,
-                                      lease_seconds=int(lease_s), filters=filters)
+                                      lease_seconds=int(lease_s), filters=filters,
+                                      run_id=_current_run())
         if row is not None:
             self._after_claim(ns_id, warnings=warnings, trace=trace)
         return self._row_to_dict(row) if row else None
@@ -1203,7 +1339,8 @@ class DatastorePg:
         if not worker:
             raise ValueError("worker requis (libellé stable rejoué sur release)")
         ns_id = self._resolve(namespace, write=True)
-        row = db.datastore_claim_row(ns_id, row_id, worker=worker, lease_seconds=int(lease_s))
+        row = db.datastore_claim_row(ns_id, row_id, worker=worker,
+                                     lease_seconds=int(lease_s), run_id=_current_run())
         if row is None:
             existing = db.datastore_get_row(ns_id, row_id)
             if not existing:
@@ -1264,5 +1401,6 @@ class DatastorePg:
             sk = (dsv2.status_field(ns.get("schema")) or {}).get("key")
             prev = ((db.datastore_get_row(ns_id, row_id) or {}).get("data") or {}) if sk else {}
             self._trace(trace, ns_id, ns, prev_status=prev.get(sk) if sk else None)
+        self._assert_writable(ns_id, row_id)
         if not db.datastore_delete_row(ns_id, row_id):
             raise RowNotFound(row_id)

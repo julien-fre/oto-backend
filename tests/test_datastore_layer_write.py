@@ -197,3 +197,37 @@ def test_the_business_key_may_now_carry_layers():
     keyed = {"strict": True, "key": "siren", "fields": [{"key": "siren", "type": "text"}]}
     assert dsv2.validate_row(
         keyed, {"siren": {"valeur": "552081317", "comment": "registre"}}) == []
+
+
+# --- l'origine survit sur TOUS les chemins d'écriture ----------------------------
+
+def test_a_patch_by_id_keeps_the_origin():
+    """`update_row` avait sa PROPRE fusion : la préservation n'était câblée que dans
+    le chemin batch, donc un patch par `id` — le geste le plus courant d'un agent —
+    effaçait l'origine quand même. Un seul chemin corrigé sur deux ne corrige rien."""
+    import oto_mcp.datastore as ds
+    import inspect
+    src = inspect.getsource(ds.DatastorePg.update_row)
+    assert "_merge_column(data.get(k), v)" in src, (
+        "update_row doit passer par le même point de fusion que le batch")
+
+
+def test_an_origin_alone_still_reads_flat():
+    """Un import de socle pose `origine` sur un champ qu'aucun agent n'a renseigné :
+    il n'y a pas encore de `valeur`. La lecture rendait alors l'OBJET — donc tout ce
+    qui attend une chaîne cassait, sur le chemin qu'on recommande."""
+    out = _read({"contact1_nom": {"origine": "DUPONT Jean (fichier client)"}})
+    assert out["contact1_nom"] is None
+    assert out["contact1_nom.origine"] == "DUPONT Jean (fichier client)"
+
+
+def test_an_ordinary_write_over_an_origin_only_column_keeps_it():
+    """Le cas d'audiens bout en bout : socle importé, puis l'agent renseigne."""
+    out = _merge_column({"origine": "DUPONT Jean"}, "MARTIN Claire")
+    assert out == {"valeur": "MARTIN Claire", "origine": "DUPONT Jean"}
+
+
+def test_a_genuine_json_object_is_still_opaque():
+    """La règle ne s'élargit qu'aux objets faits UNIQUEMENT de couches connues : un
+    `json` métier garde sa forme."""
+    assert dsv2.unwrap({"a": 1, "origine": "x"}) == {"a": 1, "origine": "x"}
