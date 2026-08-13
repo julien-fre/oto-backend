@@ -109,6 +109,54 @@ def unwrap(value: Any) -> Any:
     if value and all(k in LAYER_KEYS for k in value):
         return None
     return value
+
+
+def flat_layers(key: str, value: Any) -> dict:
+    """Les couches RENSEIGNÉES d'une colonne, aplaties en `clé.couche`.
+
+    Point unique : le premier niveau d'une ligne et les attributs d'un item de liste
+    l'appellent tous les deux. Deux implémentations exposeraient deux formes de la
+    même chose — et c'est le consommateur qui paierait la différence."""
+    if not isinstance(value, dict) or not any(k in LAYER_KEYS for k in value):
+        return {}
+    return {f"{key}.{layer}": value[layer] for layer in LAYER_KEYS
+            if value.get(layer) not in (None, "")}
+
+
+def served_value(value: Any) -> Any:
+    """Ce qu'un LECTEUR reçoit pour cette colonne (oto#22 §1-2).
+
+    `unwrap` rend la valeur d'UNE colonne ; celle-ci descend d'un cran quand cette
+    valeur est une LISTE DE FICHES. Sans elle, la garantie « le nom nu rend la valeur,
+    jamais la structure interne » se romprait au moment précis où les attributs d'un
+    item adoptent des couches : `row["contacts"][0]["email"]` rendrait l'enveloppe
+    au lieu de l'e-mail, donc tout consommateur casserait — silencieusement, le jour
+    où quelqu'un pose une source sur un contact.
+
+    Les couches d'un attribut sont aplaties DANS l'item (`item["email.origine"]`) :
+    la règle du premier niveau, appliquée un cran plus bas, plutôt qu'un second
+    vocabulaire à apprendre. Qui sait lire `row["email.origine"]` sait lire
+    `item["email.origine"]`.
+
+    Un item non-dict traverse tel quel — une liste de scalaires reste une liste de
+    scalaires."""
+    v = unwrap(value)
+    if isinstance(v, list):
+        return [_served_item(item) for item in v]
+    return v
+
+
+def _served_item(item: Any) -> Any:
+    """Un item de liste est une FICHE : chacun de ses attributs est une feuille."""
+    if not isinstance(item, dict):
+        return item
+    out: dict = {}
+    for k, v in item.items():
+        out[k] = served_value(v)
+        out.update(flat_layers(k, v))
+    return out
+
+
 _NUM_RE = re.compile(r"^-?\d+(\.\d+)?$")
 
 

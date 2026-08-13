@@ -126,8 +126,14 @@ data_write(id=…, row={"contacts[1].email": "d@x.fr",
 
 La fusion est celle de #322/#326, un cran plus bas : **l'écriture ne touche que ce
 qu'elle nomme**. Écrire `contacts` en entier remplace la liste ; écrire un rang ne
-touche que lui. Un rang au-delà de la longueur actuelle **étend** la liste (les trous
-sont des items vides), un rang au-delà de `max_items` est refusé.
+touche que lui. Un rang au-delà de la longueur actuelle **étend** la liste, un rang
+au-delà de `max_items` est refusé.
+
+**Un trou est servi comme `{}`, jamais `null`** — le rang est RÉSERVÉ, pas absent.
+Trois conséquences, toutes voulues : un consommateur itère et lit `item.get("nom")`
+sans garde de type (un `null` en imposerait une partout) ; `contacts[].attr` ne matche
+rien sur un trou, ce qui est la bonne réponse ; l'export rend des colonnes vides à ce
+rang. Même règle qu'au-dessus : une colonne-tableau vide rend `[]`, jamais `null`.
 
 ### 5.3 Aplatissement d'export DÉTERMINISTE
 
@@ -184,8 +190,16 @@ neuve**, plutôt que réécrite en douce. Fin de fenêtre = retrait du `flat_ali
 tableau à la fois.
 
 **Conversion** : elle lit les colonnes plates existantes et écrit la liste, en une
-passe idempotente, avec un compte avant/après par ligne. Instruite, annoncée, jamais
-un soir sur un rapport.
+passe idempotente, avec un compte avant/après par ligne. Puis — et c'est la moitié qui
+manquait — **elle SUPPRIME les colonnes plates sources**, une fois la copie vérifiée
+(même geste que la purge de colonne morte). Les laisser ferait de `contact1_nom` deux
+choses à la fois : la colonne résiduelle ET l'alias calculé, donc deux vérités à
+réconcilier — exactement ce que la projection calculée-jamais-stockée évite par
+ailleurs. Après la conversion, l'alias est l'**unique** résolveur du nom.
+
+Ordre non négociable : copier → **vérifier** (compte par ligne) → purger. Une purge
+avant vérification transforme une conversion ratée en perte. Instruite, annoncée,
+jamais un soir sur un rapport.
 
 ## 7. L'homologue côté PAGES — la question, posée
 
@@ -204,7 +218,10 @@ forme.
    règle qu'il connaît déjà, et que l'aplat global explose en largeur ;
 2. **rangs 0-indexés à l'adressage, 1-indexés à l'export** — la machine compte comme
    la machine, l'humain lit « contact1 ». C'est une incohérence assumée : l'inverse
-   ferait mentir l'une des deux faces ;
+   ferait mentir l'une des deux faces. **Elle ne survit que documentée AUX DEUX
+   BOUTS** : la fiche d'écriture dit « rangs 0-indexés ; l'export les nomme
+   1-indexés », et la réponse d'export le rappelle. Non écrite quelque part, elle
+   devient un piège au lieu d'un choix ;
 3. **`flat_alias` déclaré** comme réponse à la migration (§6) ;
 4. **couches exclues de l'export par défaut** ;
 5. **`max_items` porte double sens** (borne d'écriture + largeur d'export) plutôt que

@@ -452,13 +452,12 @@ class DatastorePg:
         for k, v in data.items():
             if k in _META_COLS:
                 continue
-            out[k] = dsv2.unwrap(v)
+            # `served_value` descend dans une colonne-tableau : chaque attribut d'item
+            # est une feuille, rendue comme telle (oto#22 §1).
+            out[k] = dsv2.served_value(v)
             # Les couches s'exposent dès qu'il y en a — même sans `valeur` posée
             # (import de socle sur un champ pas encore renseigné).
-            if isinstance(v, dict) and any(k in dsv2.LAYER_KEYS for k in v):
-                for _layer in dsv2.LAYER_KEYS:
-                    if v.get(_layer) not in (None, ""):
-                        out[f"{k}.{_layer}"] = v[_layer]
+            out.update(dsv2.flat_layers(k, v))
         if row.get("claimed_by") is not None:
             out["_claimed_by"] = row["claimed_by"]
             out["_claimed_until"] = row.get("claimed_until")
