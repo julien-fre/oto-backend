@@ -212,6 +212,14 @@ def _init_db_once() -> None:
         # en plus de la FTS tokenisée) → l'extension DOIT précéder.
         conn.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
         from . import search as _search
+        # Colonnes de vecteur de CLASSEMENT (#318) — AVANT les index, parce qu'elles
+        # doivent exister quand une requête les lit. `ADD COLUMN <tsvector>` nullable
+        # ne réécrit pas la table (PG 11+) : instantané, aucun verrou long. Elles
+        # naissent VIDES et se remplissent hors de ce chemin (boucle de fond) : le
+        # remplissage au boot aurait rendu le démarrage tributaire du volume, sous le
+        # healthcheck du deploy.
+        for ddl in _search.rank_column_ddl():
+            conn.execute(ddl)
         for ddl in _search.index_ddl():
             conn.execute(ddl)
         # Lot 3 chantier 0.4 : purge du type de lien `doc` (pointeur

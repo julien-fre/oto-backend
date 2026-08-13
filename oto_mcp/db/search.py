@@ -16,6 +16,7 @@ début du texte (jamais un texte foldé rendu à l'utilisateur).
 """
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from ._conn import _connect
@@ -45,6 +46,49 @@ DATASTORE_ROWS_TEXT = "data::text"
 # source distincte du nom, réunie par le RRF plutôt que par un `||`.
 FILE_TEXT = "coalesce(extracted_text,'')"
 
+
+# ── Vecteurs de classement matérialisés (#318) ───────────────────────────────
+#
+# Le classement par pertinence recalcule `to_tsvector` **par candidat** : mesuré à
+# 674 ms sur un mot présent dans 20 % des documents, contre 0,2 ms pour le même filtre
+# sans classement. Le coût n'est ni l'index (le plan montre bien le `BitmapOr`), ni le
+# surlignage (le borner ne change rien) — c'est le rang, et lui seul.
+#
+# ⚠️ **Deux remèdes ont été mesurés et ÉCARTÉS**, pour qu'on ne les reprenne pas :
+# borner les candidats avant classement ne gagne rien (1 278 ms contre 1 308 — ce que
+# l'issue #318 proposait au départ), et `GENERATED ALWAYS AS … STORED` réécrit la
+# table sous verrou exclusif — **7,55 s sur `datastore_rows`**, soit une interruption
+# de service en pleine production, la base étant partagée.
+#
+# D'où la forme retenue : une colonne NULLABLE ordinaire (ajout instantané, aucun
+# verrou), remplie **hors du chemin de démarrage**, et lue par un `COALESCE` qui rend
+# la bascule inutile — une ligne remplie se classe par sa colonne, une ligne pas
+# encore remplie recalcule comme avant. Aucun instant de bascule à ne pas rater, et
+# **aucun silence possible** : un document non encore rempli reste trouvable et
+# correctement classé.
+#
+# Mesuré sur 1 500 documents (mot fréquent) : **624 ms → 339 ms à mi-remplissage →
+# 10,4 ms une fois plein**, avec un top-20 IDENTIQUE aux trois états.
+#
+# ⚠️ **C'est LA source unique**, au sens de la convention index↔requête : l'écriture,
+# le rattrapage et le repli du `COALESCE` lisent tous cette table. Une expression
+# recopiée ailleurs divergerait en silence — le classement se ferait alors sur un
+# texte qui n'est plus celui qu'on indexe.
+RANKED_SOURCES = {
+    # table                  → (expression du texte, colonne du vecteur)
+    "docs": DOCS_TEXT,
+    "projects": PROJECTS_TEXT,
+    "org_instructions": INSTR_TEXT,
+    "guides": GUIDES_TEXT,
+    "nodes": NODES_TEXT,
+    "datastore_rows": DATASTORE_ROWS_TEXT,
+    "project_file_texts": FILE_TEXT,
+}
+
+# Le nom est le même partout : une colonne par table, jamais un nom par source.
+RANK_VECTOR_COLUMN = "search_vec"
+
+
 # MaxFragments=2 : deux extraits courts plutôt qu'un long qui coupe en plein
 # tableau markdown (oto-backend#6). Le texte est pré-nettoyé de ses pipes `|`.
 _HL_OPTS = "MaxWords=22,MinWords=8,ShortWord=2,HighlightAll=false,MaxFragments=2"
@@ -59,6 +103,87 @@ def _trgm(text_expr: str) -> str:
     indexé (substring rapide) en complément de la FTS tokenisée : « syl » retrouve
     « Sylvie », les fragments/préfixes matchent sans seq-scan. Même `_fold` que la FTS."""
     return f"({_fold(text_expr)}) gin_trgm_ops"
+
+
+def rank_expr(table: str, alias: str = "") -> str:
+    """L'expression de CLASSEMENT d'une source — la colonne, avec repli sur le calcul.
+
+    `alias` sert les requêtes qui joignent (`t.search_vec`). Le repli n'est pas une
+    précaution transitoire qu'on retirera : il reste après le rattrapage et couvre
+    l'écriture qui aurait raté son vecteur — la ligne est simplement classée comme
+    avant, jamais perdue, et le tour de rattrapage suivant la remet d'aplomb.
+    """
+    expr = RANKED_SOURCES.get(table)
+    if expr is None:                      # source non matérialisée : l'ancien chemin
+        return ""
+    p = f"{alias}." if alias else ""
+    return f"COALESCE({p}{RANK_VECTOR_COLUMN}, {_vec_of(expr, alias)})"
+
+
+def _vec_of(expr: str, alias: str = "") -> str:
+    """`_vec` appliqué à l'expression, préfixée de l'alias quand la requête joint."""
+    return _vec(_prefix(expr, alias))
+
+
+def _prefix(expr: str, alias: str) -> str:
+    """Préfixe les colonnes nues d'une expression par l'alias de table.
+
+    ⚠️ Grossier À DESSEIN : on ne préfixe que les identifiants connus de la source,
+    jamais un mot quelconque — une substitution large casserait `coalesce`, `text` ou
+    un littéral. Les expressions de ce module sont courtes et fermées ; si l'une
+    devenait complexe au point d'exiger un vrai parseur, ce serait le signal qu'elle
+    n'a plus sa place en chaîne."""
+    if not alias:
+        return expr
+    for col in ("title", "body_md", "description", "name", "brief_md", "props",
+                "data", "extracted_text"):
+        expr = re.sub(rf"(?<![\w.]){col}(?![\w])", f"{alias}.{col}", expr)
+    return expr
+
+
+def rank_column_ddl() -> list[str]:
+    """Les colonnes de vecteur de classement (#318) — DDL idempotent et INSTANTANÉ.
+
+    `ADD COLUMN <tsvector>` **sans défaut et sans contrainte** ne réécrit pas la
+    table (PostgreSQL 11+) : le catalogue est modifié, les lignes ne bougent pas. Le
+    verrou est de l'ordre de la milliseconde, ce qui est la raison même de cette
+    forme — la variante `GENERATED … STORED`, elle, réécrit tout et tenait
+    `datastore_rows` **7,55 s** sous verrou exclusif, en pleine production.
+
+    ⚠️ Aucun index sur ces colonnes : elles servent le CLASSEMENT, jamais le filtre.
+    Le `WHERE` continue de passer par les GIN d'expression — les indexer coûterait
+    l'écriture sans servir une seule requête."""
+    return [f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS {RANK_VECTOR_COLUMN} tsvector"
+            for t in RANKED_SOURCES]
+
+
+def rank_backfill_sql(table: str, batch: int) -> str:
+    """Une TRANCHE de rattrapage : au plus `batch` lignes dont le vecteur manque.
+
+    Borné par tranche, donc jamais un verrou de table — c'est ce qui permet de le
+    jouer pendant que la production écrit. Le prédicat `IS NULL` fait office de file :
+    aucune colonne d'avancement à tenir, et une ligne écrite après coup (sans son
+    vecteur) revient d'elle-même dans la file au tour suivant. C'est aussi ce qui rend
+    le rattrapage utile APRÈS la fin du remplissage : il devient la réconciliation.
+    """
+    expr = RANKED_SOURCES[table]
+    return (f"UPDATE {table} SET {RANK_VECTOR_COLUMN} = {_vec(expr)} "
+            f"WHERE ctid IN (SELECT ctid FROM {table} "
+            f"WHERE {RANK_VECTOR_COLUMN} IS NULL LIMIT {int(batch)})")
+
+
+def rank_pending_counts() -> dict:
+    """Combien de lignes attendent encore leur vecteur, par source — l'état du
+    rattrapage, lisible sans deviner."""
+    out = {}
+    with _connect() as conn:
+        for t in RANKED_SOURCES:
+            row = conn.execute(
+                f"SELECT count(*) AS n FROM {t} WHERE {RANK_VECTOR_COLUMN} IS NULL"
+            ).fetchone()
+            if row and row["n"]:
+                out[t] = int(row["n"])
+    return out
 
 
 def index_ddl() -> list[str]:
@@ -112,7 +237,8 @@ def index_ddl() -> list[str]:
 
 
 def _prose_query(table: str, text_expr: str, select_cols: str, headline_col: str,
-                 where_scope: str, scope_params: tuple, q: str, limit: int) -> list[dict]:
+                 where_scope: str, scope_params: tuple, q: str, limit: int,
+                 rank_vec: str = "") -> list[dict]:
     """Requête générique d'une source de prose : match FTS foldé (l'index), rang
     `ts_rank_cd` length-normalized (|32 — une page géante ne domine ni ne disparaît),
     headline sur la saisie brute contre le texte original.
@@ -124,8 +250,15 @@ def _prose_query(table: str, text_expr: str, select_cols: str, headline_col: str
       tsq vide ne matche rien, le substring oui). Rang : ts_rank classe les hits FTS
       devant, les hits substring-seul (rank 0) en fin ;
     - **fragments** de headline pré-nettoyés des pipes markdown (`_HL_OPTS`) ;
-    - **fallback OR** : si l'AND de tous les termes ne matche rien, on re-tente en OR."""
+    - **fallback OR** : si l'AND de tous les termes ne matche rien, on re-tente en OR.
+
+    `rank_vec` (#318) = l'expression de CLASSEMENT, quand la source a sa colonne de
+    vecteur matérialisée (`rank_expr(table)`). Elle ne remplace QUE le `ts_rank_cd` :
+    le `WHERE` continue de porter l'expression indexée, sans quoi le planner cesserait
+    d'utiliser les GIN — le filtre et le rang répondent à deux questions différentes,
+    et une seule des deux coûtait cher. Vide = l'ancien chemin, à l'identique."""
     vec = _vec(text_expr)
+    rank_on = rank_vec or vec
     fold_q = _fold("%s")            # translate(lower(%s), accents…)
     folded_doc = _fold(text_expr)   # le texte du document, foldé (repli ILIKE)
     hl_text = f"replace({headline_col}, '|', ' ')"  # pas de coupe en plein tableau
@@ -136,7 +269,7 @@ def _prose_query(table: str, text_expr: str, select_cols: str, headline_col: str
         tsq = f"replace({ws}::text, '&', '|')::tsquery" if or_mode else ws
         sql = (
             f"WITH qq AS (SELECT {tsq} AS tsq, {fold_q} AS raw) "
-            f"SELECT {select_cols}, ts_rank_cd({vec}, qq.tsq, 32) AS rank, "
+            f"SELECT {select_cols}, ts_rank_cd({rank_on}, qq.tsq, 32) AS rank, "
             f"ts_headline('french', {hl_text}, qq.tsq, '{_HL_OPTS}') AS headline "
             f"FROM {table}, qq "
             # FTS tokenisée (mots/stems, rangés par ts_rank) OR substring trigramme
@@ -166,7 +299,8 @@ def search_docs_fts(q: str, project_ids: list[int], *, limit: int = 20) -> list[
         "docs", DOCS_TEXT,
         "id, project_id, title, description, updated_at",
         "coalesce(body_md,'')",
-        "project_id = ANY(%s)", (project_ids,), q, limit)
+        "project_id = ANY(%s)", (project_ids,), q, limit,
+        rank_vec=rank_expr("docs"))
 
 
 def search_project_briefs(q: str, project_ids: list[int], *, limit: int = 20) -> list[dict]:
@@ -177,7 +311,8 @@ def search_project_briefs(q: str, project_ids: list[int], *, limit: int = 20) ->
         "projects", PROJECTS_TEXT,
         "id, name, updated_at",
         "coalesce(brief_md,'')",
-        "id = ANY(%s) AND archived_at IS NULL", (project_ids,), q, limit)
+        "id = ANY(%s) AND archived_at IS NULL", (project_ids,), q, limit,
+        rank_vec=rank_expr("projects"))
 
 
 def search_procedures_fts(q: str, org_id: int, *, limit: int = 20) -> list[dict]:
@@ -190,7 +325,7 @@ def search_procedures_fts(q: str, org_id: int, *, limit: int = 20) -> list[dict]
         "slug, title, description, updated_at",
         "coalesce(body_md,'')",
         "owner_type = 'org' AND owner_id = %s AND slug <> 'claude_md'",
-        (str(org_id),), q, limit)
+        (str(org_id),), q, limit, rank_vec=rank_expr("org_instructions"))
 
 
 def search_guides_fts(q: str, org_id: Optional[int], sub: str, *, limit: int = 20) -> list[dict]:
@@ -209,7 +344,7 @@ def search_guides_fts(q: str, org_id: Optional[int], sub: str, *, limit: int = 2
         "coalesce(props->>'body_md','')",
         "props->>'delivery' = 'on-demand' AND (owner_type = 'platform' "
         "OR (owner_type = 'org' AND owner_id = %s) OR (owner_type = 'user' AND owner_id = %s))",
-        (str(org_id or ""), sub), q, limit)
+        (str(org_id or ""), sub), q, limit, rank_vec=rank_expr("nodes"))
 
 
 def search_docs_semantic(query_literal: str, project_ids: list[int], *,
@@ -332,7 +467,10 @@ def search_file_contents(q: str, project_ids: list[int], *, limit: int = 20) -> 
         # Seuls les fichiers dont l'extraction a ABOUTI portent du texte : filtrer sur
         # le statut évite de balayer les lignes de refus, qui ont un texte vide.
         "f.project_id = ANY(%s) AND t.status = 'ok'",
-        (project_ids,), q, limit)
+        (project_ids,), q, limit,
+        # La source joint `project_files` pour le SCOPE : le classement doit donc
+        # viser la colonne de `project_file_texts`, alias compris.
+        rank_vec=rank_expr("project_file_texts", "t"))
 
 
 def search_datastore_rows_fts(q: str, ns_ids: list[int], *, limit: int = 20) -> list[dict]:
@@ -348,4 +486,5 @@ def search_datastore_rows_fts(q: str, ns_ids: list[int], *, limit: int = 20) -> 
         "datastore_rows", DATASTORE_ROWS_TEXT,
         "ns_id, row_id, updated_at, left(data::text, 200) AS excerpt",
         "data::text",
-        "ns_id = ANY(%s)", (ns_ids,), q, limit)
+        "ns_id = ANY(%s)", (ns_ids,), q, limit,
+        rank_vec=rank_expr("datastore_rows"))

@@ -717,6 +717,12 @@ def main():
         if os.environ.get("OTO_FILE_EXTRACT_WORKER_ENABLED", "1") != "0":
             from . import file_extract_worker
             _bg_loops.append(file_extract_worker.run_extract_loop)
+        # Vecteurs de classement (#318) : remplit par tranches, puis RÉCONCILIE (elle
+        # ne s'arrête pas). Hors du boot par nécessité — la variante auto-remplissante
+        # tenait `datastore_rows` 7,55 s sous verrou exclusif, en pleine production.
+        if os.environ.get("OTO_RANK_BACKFILL_ENABLED", "1") != "0":
+            from . import rank_backfill_worker
+            _bg_loops.append(rank_backfill_worker.run_rank_backfill_loop)
         from . import billing as _billing
         if _billing.is_enabled() and os.environ.get("OTO_BILLING_RUNNER_ENABLED", "1") != "0":
             # échéances d'abonnement + réconciliation (ADR 0043) — gaté sur le
