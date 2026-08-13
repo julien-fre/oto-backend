@@ -132,6 +132,13 @@ def _runs_from_journal(extra: str = "") -> str:
     doctrine, acteur, org et date de début ; la clôture porte l'issue et la date de fin.
     `outcome` NULL = pas de fait de clôture = run ouvert.
 
+    `last_seen_at` = le dernier signe de vie du run (son appel le plus récent, à
+    défaut son ouverture). C'est ce qui permet de distinguer un travail EN COURS d'une
+    conversation partie sans clore : sans lui, « pas d'issue » s'affichait « en cours »
+    jusqu'à la fin des temps. Dérivé ici plutôt que dans chaque surface — la
+    dérivation elle-même vit dans `run_status`, et toutes les lentilles en héritent.
+    L'index `idx_tool_calls_run` sert le LATERAL.
+
     `extra` = prédicats supplémentaires sur l'alias `s` (la ligne d'ouverture),
     TOUJOURS des littéraux de ce module — jamais une entrée d'appelant."""
     return f"""
@@ -141,8 +148,14 @@ def _runs_from_journal(extra: str = "") -> str:
                    s.args->>'doctrine_version'  AS doctrine_version,
                    s.created_at                 AS started_at,
                    f.created_at                 AS finished_at,
-                   f.args->>'outcome'           AS outcome
+                   f.args->>'outcome'           AS outcome,
+                   GREATEST(s.created_at,
+                            COALESCE(v.last_call_at, s.created_at)) AS last_seen_at
               FROM tool_calls s{_run_closure("s")}
+              LEFT JOIN LATERAL (
+                  SELECT max(c.created_at) AS last_call_at
+                    FROM tool_calls c WHERE c.run_id = s.run_id
+              ) v ON TRUE
              WHERE s.tool = 'run_start' AND s.run_id IS NOT NULL{extra}"""
 
 
@@ -195,7 +208,7 @@ def recent_runs(sub: str, org_id: Optional[int], limit: int = 5) -> list[dict]:
             WITH j AS ({_runs_from_journal(
                 " AND s.sub = %s AND s.org_id IS NOT DISTINCT FROM %s")})
             SELECT j.run_id, j.label, j.doctrine, j.outcome, x.project_id,
-                   j.started_at, j.finished_at
+                   j.started_at, j.finished_at, j.last_seen_at
               FROM j LEFT JOIN runs x ON x.run_id = j.run_id
              ORDER BY j.started_at DESC LIMIT %s
             """,
@@ -238,7 +251,8 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
         return [dict(r) for r in conn.execute(
             f"""
             WITH j AS ({_runs_from_journal()})
-            SELECT j.run_id, j.label, j.doctrine, j.outcome, j.started_at, j.finished_at
+            SELECT j.run_id, j.label, j.doctrine, j.outcome, j.started_at,
+                   j.finished_at, j.last_seen_at
               FROM runs x JOIN j ON j.run_id = x.run_id
              WHERE x.project_id = %s{doctrine_clause}
              ORDER BY j.started_at DESC LIMIT %s
@@ -366,7 +380,7 @@ def list_runs(limit: int = 100, *, org_id: Optional[int] = None) -> list[dict]:
                    COALESCE(j.doctrine, j.label) AS slug,
                    j.label, j.doctrine, j.doctrine_version,
                    j.sub, u.email, u.name,
-                   j.started_at, j.finished_at, j.outcome,
+                   j.started_at, j.finished_at, j.outcome, j.last_seen_at,
                    COALESCE(c.n_calls, 0) AS n_calls
               FROM j
               LEFT JOIN users u ON u.sub = j.sub

@@ -17,11 +17,15 @@ from fastmcp import Context, FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import doctrine_run as dr
+from .. import doctrine_run as dr, run_status
 
 logger = logging.getLogger(__name__)
 
-_OUTCOMES = ("done", "abandoned", "failed", "blocked")
+# Source UNIQUE du vocabulaire (ADR 0058-D5) : le tool, sa docstring — donc le schéma
+# que lit l'agent — et toute surface qui valide une issue lisent la même liste. Elle a
+# divergé de la prose du bloc A pendant des mois, ce qui est la façon la plus discrète
+# de mentir à un agent : le schéma dit une chose, l'instruction une autre.
+_OUTCOMES = run_status.OUTCOMES
 
 
 def _procedure_version(sub: str | None, slug: str) -> int | None:
@@ -145,7 +149,7 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             run_id: the id returned by run_start.
-            outcome: one of done | abandoned | failed | blocked.
+            outcome: one of done | failed | blocked.
             note: optional — what worked, where it broke, what was missing.
         """
         if outcome not in _OUTCOMES:
