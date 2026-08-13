@@ -31,7 +31,11 @@ def _patch(monkeypatch, cap, row=None):
     @contextlib.contextmanager
     def _fake():
         yield _Conn(cap, row)
-    monkeypatch.setattr(DB, "_connect", _fake)
+    # `resolve_datastore_ns` vit dans le module du TABLEAU depuis le découpage (#325) :
+    # c'est là que sa connexion se patche. Patcher l'ancien module rendait le test vert
+    # sur un chemin qu'il n'exerçait plus.
+    from oto_mcp.db import datastore_ns
+    monkeypatch.setattr(datastore_ns, "_connect", _fake)
 
 
 def test_digit_ref_sets_nsid_int(monkeypatch):
