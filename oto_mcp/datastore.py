@@ -31,6 +31,19 @@ from typing import Any, Optional
 from psycopg.errors import UniqueViolation
 
 from . import datastore_schema as dsv2
+# Les refus : extraits dans `datastore_errors` (#325), ré-importés ici pour que tout
+# appelant (`from .datastore import RowNotFound`) reste inchangé.
+from .datastore_errors import (  # noqa: F401
+    InvalidCursor,
+    NamespaceExists,
+    NamespaceForbidden,
+    NamespaceNotFound,
+    NamespaceReadOnly,
+    RowClaimed,
+    RowLocked,
+    RowNotFound,
+    RowValidationError,
+)
 from . import db, ownership, session_org
 from . import config
 
@@ -49,19 +62,6 @@ from .datastore_columns import (  # noqa: E402,F401
     _to_path,
     _writes_layers,
 )
-
-
-class RowValidationError(ValueError):
-    """Écriture refusée par le schéma strict / le cycle de vie (ADR 0046 B/C).
-    Le message liste les champs fautifs — actionnable, jamais un refus muet."""
-
-    def __init__(self, errors: list[str]):
-        self.errors = errors
-        super().__init__("écriture refusée par le schéma : " + " ; ".join(errors))
-
-
-class InvalidCursor(ValueError):
-    """Curseur de pagination illisible (mal formé / tronqué)."""
 
 
 def _encode_cursor(row_id: str) -> str:
@@ -160,28 +160,6 @@ def _ns_url(ns_id: int, sub: Optional[str] = None) -> Optional[str]:
     return links.link_for("table", sub=sub, id=int(ns_id))
 
 
-class NamespaceNotFound(Exception):
-    pass
-
-
-class RowNotFound(Exception):
-    pass
-
-
-class NamespaceExists(Exception):
-    pass
-
-
-class NamespaceReadOnly(Exception):
-    """Écriture tentée sur un namespace partagé en lecture seule."""
-    pass
-
-
-class NamespaceForbidden(Exception):
-    """Action de gouvernance (supprimer/transférer) tentée sans droit de gouvernance."""
-    pass
-
-
 # Le worker au nom duquel l'appel courant écrit (#317) — la SECONDE façon dont le
 # titulaire d'un bail s'identifie, quand il écrit hors du run qui tient la ligne.
 # Un contextvar plutôt qu'un paramètre porté de surface en surface : l'écriture
@@ -217,63 +195,6 @@ def _current_run() -> Optional[str]:
         return session_org.current_call_run()
     except Exception:      # noqa: BLE001 — hors contexte de requête (script, test)
         return None
-
-
-class RowLocked(Exception):
-    """Écriture refusée sur une ligne sous bail ACTIF d'un autre (#317).
-
-    Le bail protégeait l'ATTRIBUTION, pas la donnée : deux agents ne prenaient pas la
-    même ligne, mais rien n'empêchait le second d'écrire dessus. « Verrou natif » veut
-    dire que la ligne réservée est aussi protégée en écriture.
-
-    ⚠️ Porte de quoi SORTIR, pas seulement de quoi comprendre : qui tient, jusqu'à
-    quand, et le geste — libérer explicitement, puis écrire. Sans la sortie, on
-    remplace un silence par un mur."""
-
-    def __init__(self, row_id: str, claimed_by: Any = None, claimed_until: Any = None):
-        self.row_id = row_id
-        self.claimed_by = claimed_by
-        self.claimed_until = claimed_until
-        super().__init__(
-            f"ligne « {row_id} » réservée par « {claimed_by} » jusqu'à "
-            f"{claimed_until} — écriture refusée. Si le travail est terminé ou "
-            f"l'agent abandonné, libère la ligne (data_release), puis écris.")
-
-
-class RowClaimed(Exception):
-    """Row nommée déjà sous bail ACTIF d'un autre worker (ADR 0046 D).
-
-    Le conflit qu'il faut rendre visible : deux personnes qui prennent la même
-    ligne à la même seconde, l'une des deux doit l'apprendre. Porte le bail en
-    place pour que la surface dise QUI la tient et jusqu'à QUAND."""
-
-    def __init__(self, row_id: str, claimed_by: Any = None, claimed_until: Any = None):
-        self.row_id = row_id
-        self.claimed_by = claimed_by
-        self.claimed_until = claimed_until
-        super().__init__(f"row {row_id} sous bail de {claimed_by!r} jusqu'à {claimed_until!r}")
-
-
-def make_store(sub: str) -> "DatastorePg":
-    """Construit un store PG pour `sub`. Plus aucune dépendance externe (ADR 0016)
-    — datastore est une surface plateforme self-contained."""
-    return DatastorePg(sub)
-
-
-def make_org_store(org_id: int, *, allowed_ns_ids: Optional[set] = None,
-                   read_only: bool = False) -> "DatastorePg":
-    """Store agissant SOUS L'AUTORITÉ d'une ORG, sans user (`sub=None`). Sert un
-    endpoint MCP `secret` opt-in datastore (ADR 0032) : la résolution de namespace et
-    le droit d'écriture se décident sur le principal ORG (owner-match / grant d'org),
-    jamais sur un membre. N'expose PAS la gouvernance (create/delete/rename/share) —
-    ces actes restent réservés à un user identifié (tools sub-only).
-
-    `allowed_ns_ids` (non None) = **scope dur** : seuls ces namespaces sont listables/
-    résolvables — les tableaux LIÉS au projet partagé (anti-fuite #193 : sans ce scope
-    l'endpoint exposerait TOUT le datastore de l'org). Set vide ⇒ rien d'exposé.
-    `read_only=True` ⇒ l'écriture (`data_write`/`data_set_schema`) lève `NamespaceReadOnly`."""
-    return DatastorePg(None, acting_org=int(org_id),
-                       allowed_ns_ids=allowed_ns_ids, read_only=read_only)
 
 
 class DatastorePg:
@@ -1512,3 +1433,25 @@ class DatastorePg:
         self._assert_writable(ns_id, row_id)
         if not db.datastore_delete_row(ns_id, row_id):
             raise RowNotFound(row_id)
+
+
+def make_store(sub: str) -> "DatastorePg":
+    """Construit un store PG pour `sub`. Plus aucune dépendance externe (ADR 0016)
+    — datastore est une surface plateforme self-contained."""
+    return DatastorePg(sub)
+
+
+def make_org_store(org_id: int, *, allowed_ns_ids: Optional[set] = None,
+                   read_only: bool = False) -> "DatastorePg":
+    """Store agissant SOUS L'AUTORITÉ d'une ORG, sans user (`sub=None`). Sert un
+    endpoint MCP `secret` opt-in datastore (ADR 0032) : la résolution de namespace et
+    le droit d'écriture se décident sur le principal ORG (owner-match / grant d'org),
+    jamais sur un membre. N'expose PAS la gouvernance (create/delete/rename/share) —
+    ces actes restent réservés à un user identifié (tools sub-only).
+
+    `allowed_ns_ids` (non None) = **scope dur** : seuls ces namespaces sont listables/
+    résolvables — les tableaux LIÉS au projet partagé (anti-fuite #193 : sans ce scope
+    l'endpoint exposerait TOUT le datastore de l'org). Set vide ⇒ rien d'exposé.
+    `read_only=True` ⇒ l'écriture (`data_write`/`data_set_schema`) lève `NamespaceReadOnly`."""
+    return DatastorePg(None, acting_org=int(org_id),
+                       allowed_ns_ids=allowed_ns_ids, read_only=read_only)

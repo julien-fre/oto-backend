@@ -23,6 +23,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from . import datastore_schema as dsv2
+from .datastore_errors import RowValidationError
 
 
 def _writes_layers(new: Any) -> bool:
@@ -109,9 +110,6 @@ def _refuse_flat_writes(schema: Optional[dict], user_data: dict) -> None:
     n'atteint rien.
 
     Le refus dit où écrire : un message qui dit seulement « non » fait deviner."""
-    # Import LOCAL : l'erreur de validation appartient au store, qui compose ce module
-    # — la nommer en tête créerait un cycle. C'est la seule dépendance descendante.
-    from .datastore import RowValidationError
     if not user_data:
         return
     for cle in user_data:
