@@ -39,6 +39,11 @@ NODES_TEXT = ("coalesce(props->>'title','') || ' ' || coalesce(props->>'descript
 # config `french` + repli d'accents. Grain grossier assumé (matche clés + valeurs),
 # raffinable plus tard par colonne dérivée si besoin.
 DATASTORE_ROWS_TEXT = "data::text"
+# Texte EXTRAIT des fichiers déposés (#298). L'expression ne porte QUE la colonne de
+# `project_file_texts` : le nom du fichier vit dans `project_files`, et un index
+# d'expression ne peut pas couvrir une jointure — c'est ce qui fait du contenu une
+# source distincte du nom, réunie par le RRF plutôt que par un `||`.
+FILE_TEXT = "coalesce(extracted_text,'')"
 
 # MaxFragments=2 : deux extraits courts plutôt qu'un long qui coupe en plein
 # tableau markdown (oto-backend#6). Le texte est pré-nettoyé de ses pipes `|`.
@@ -90,6 +95,19 @@ def index_ddl() -> list[str]:
         "WHERE delivery = 'on-demand'",
         f"CREATE INDEX IF NOT EXISTS idx_nodes_trgm ON nodes USING GIN ({_trgm(NODES_TEXT)})",
         f"CREATE INDEX IF NOT EXISTS idx_datastore_rows_trgm ON datastore_rows USING GIN ({_trgm(DATASTORE_ROWS_TEXT)})",
+        # Texte extrait des fichiers (#298). Les DEUX index, et c'est mesuré, pas
+        # symétrique : sans eux l'`ILIKE` structurel de `_prose_query` coûte **2,5 s**
+        # sur 2 000 fichiers (contre 0,6 ms en FTS indexée) ; et la FTS SEULE ne rend
+        # rien sur un fragment interne — « ylvestr » : 0 résultat en FTS, 1 en
+        # trigramme. Poids relevé : 344 kB + 496 kB pour 2 000 fichiers de ~7 300
+        # caractères, soit ~0,4 Mo par millier.
+        # Partiels : seules les extractions ABOUTIES portent du texte, et les lignes
+        # de refus (`unsupported`, `encrypted`…) n'ont rien à indexer. Le prédicat est
+        # celui de la requête (`t.status = 'ok'`), sans quoi l'index serait inerte.
+        f"CREATE INDEX IF NOT EXISTS idx_file_texts_fts ON project_file_texts "
+        f"USING GIN ({_vec(FILE_TEXT)}) WHERE status = 'ok'",
+        f"CREATE INDEX IF NOT EXISTS idx_file_texts_trgm ON project_file_texts "
+        f"USING GIN ({_trgm(FILE_TEXT)}) WHERE status = 'ok'",
     ]
 
 
@@ -247,10 +265,17 @@ def project_names(ids: list[int]) -> dict[int, str]:
 
 
 def search_files_meta(q: str, project_ids: list[int], *, limit: int = 20) -> list[dict]:
-    """Fichiers des projets accessibles — kind=fichier, CONTENEUR : match sur
-    `filename + title + description` SEULEMENT (jamais `summary`, colonne morte ;
-    pas le binaire — extraction texte = V2). Table minuscule → ILIKE foldé à la
-    volée, pas d'index."""
+    """Fichiers des projets accessibles — kind=fichier, sur son NOM : match sur
+    `filename + title + description` SEULEMENT (jamais `summary`, colonne morte).
+    Table étroite → ILIKE foldé à la volée, pas d'index.
+
+    ⚠️ Le CONTENU est une source SÉPARÉE (`search_file_contents`, #298), et pas par
+    goût de la symétrie : le texte extrait vit dans une autre table
+    (`project_file_texts`), et **un index d'expression ne peut pas couvrir une
+    jointure**. Les fusionner ici obligerait donc à balayer — mesuré à 2,5 s sur
+    2 000 fichiers, contre 0,6 ms indexé. Les deux sources rendent le même
+    `kind`/`ref`, si bien que le RRF les réunit de lui-même : un fichier trouvé par
+    son nom ET par son contenu cumule ses rangs et remonte."""
     if not project_ids:
         return []
     text = "coalesce(filename,'') || ' ' || coalesce(title,'') || ' ' || coalesce(description,'')"
@@ -263,6 +288,51 @@ def search_files_meta(q: str, project_ids: list[int], *, limit: int = 20) -> lis
     with _connect() as conn:
         rows = conn.execute(sql, (project_ids, q, limit)).fetchall()
         return [dict(r) for r in rows]
+
+
+def search_file_contents(q: str, project_ids: list[int], *, limit: int = 20) -> list[dict]:
+    """Le CONTENU des fichiers déposés (#298) — kind=fichier, `matched_by='content'`.
+
+    Même régime que les autres sources de prose (`_prose_query` : FTS foldée `OR`
+    substring indexé trigramme, fallback OR, headline sur le texte). Chercher « syl »
+    trouve donc « Sylvestre » dans un PDF comme dans une page — la mesure a tranché :
+    la FTS seule ne rend RIEN sur un fragment interne (0 résultat), le trigramme le
+    trouve en 2 ms, et sans lui l'`ILIKE` structurel de ce patron coûterait 2,5 s.
+
+    ⚠️ **`project_files` est jointe pour le SCOPE**, jamais pour le texte : l'index
+    d'expression porte sur `project_file_texts` seule, comme tout index d'expression.
+    Le nom du fichier reste servi par `search_files_meta` — deux sources, un seul
+    `kind`, que le RRF réunit.
+
+    Invariant « cherchable ⇔ lisible » : `project_ids` est résolu par l'appelant
+    (`ownership.accessible_project_ids`), jamais ici — un fichier hérite de l'accès
+    de son projet, et son contenu ne peut pas être plus visible que lui.
+
+    ## Coût mesuré, et sa limite connue
+
+    Sur 1 500 fichiers de ~7 000 caractères : **8 ms** pour un mot rare, **10 ms**
+    pour un fragment interne, **~1,3 s pour un mot présent dans presque tous les
+    documents**. Le cas dégénéré vient du classement par pertinence, qui recalcule le
+    vecteur de CHAQUE candidat (l'index ne le rend pas) — il est donc inhérent au
+    patron de prose partagé, et non propre aux fichiers ; il ne se voyait pas sur des
+    pages, dix fois plus courtes.
+
+    ⚠️ Deux fausses pistes écartées par la mesure, pour qu'on ne les reprenne pas :
+    ce n'est ni le SURLIGNAGE (le borner à 20 000 caractères ne change rien : 1 383 ms
+    contre 1 255), ni un défaut d'index (le plan montre bien le `BitmapOr` des deux
+    GIN). Le traiter demanderait de borner les candidats avant le classement, ce qui
+    touche `_prose_query` et donc TOUTES les sources — un lot à part."""
+    if not project_ids:
+        return []
+    return _prose_query(
+        "project_file_texts t JOIN project_files f ON f.id = t.file_id",
+        FILE_TEXT,
+        "t.file_id AS id, f.project_id, f.filename, f.title, f.created_at",
+        "t.extracted_text",
+        # Seuls les fichiers dont l'extraction a ABOUTI portent du texte : filtrer sur
+        # le statut évite de balayer les lignes de refus, qui ont un texte vide.
+        "f.project_id = ANY(%s) AND t.status = 'ok'",
+        (project_ids,), q, limit)
 
 
 def search_datastore_rows_fts(q: str, ns_ids: list[int], *, limit: int = 20) -> list[dict]:

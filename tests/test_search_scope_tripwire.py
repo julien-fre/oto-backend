@@ -104,6 +104,11 @@ def test_each_source_gets_its_predicate(monkeypatch):
                         lambda q, org, sub, limit: rec.setdefault("guides", (org, sub)) and [])
     monkeypatch.setattr(S.db, "search_files_meta",
                         lambda q, pids, limit: rec.setdefault("files_pids", pids) and [])
+    # Le CONTENU d'un fichier (#298) suit EXACTEMENT le scope de son nom : un fichier
+    # n'est pas plus lisible par son texte que par son titre. Une source ajoutée sans
+    # entrer ici est le trou que ce tripwire existe pour attraper.
+    monkeypatch.setattr(S.db, "search_file_contents",
+                        lambda q, pids, limit: rec.setdefault("content_pids", pids) and [])
     monkeypatch.setattr(S.ownership, "active_org_principals",
                         lambda sub, org: [("org", "7"), ("user", "u1")])
     monkeypatch.setattr(S.db, "list_datastore_namespaces_for_owners",
@@ -117,7 +122,8 @@ def test_each_source_gets_its_predicate(monkeypatch):
     S.search("u1", 7, "prospection")
     assert rec["want"] == "read"
     # docs/briefs/fichiers : le MÊME ensemble accessible (jamais un scope à part)
-    assert rec["docs_pids"] == rec["briefs_pids"] == rec["files_pids"] == [11, 12]
+    assert (rec["docs_pids"] == rec["briefs_pids"] == rec["files_pids"]
+            == rec["content_pids"] == [11, 12])
     # procédures : l'org active, rien d'autre
     assert rec["proc_org"] == 7
     # guides : org active + sub

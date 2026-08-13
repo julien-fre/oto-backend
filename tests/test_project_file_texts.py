@@ -185,6 +185,58 @@ def test_the_cascade_is_carried_by_the_constraint_not_by_code(projet):
 
 # ── l'état non encore regardé se distingue du refus ──────────────────────────
 
+def test_a_word_inside_a_file_makes_it_findable(projet):
+    """⚠️ **Le fait utilisateur de tout le lot** : un fichier se trouve désormais par
+    ce qu'il CONTIENT, et plus seulement par son nom. Sans ce test, les trois barreaux
+    pourraient être verts pendant que la chose promise ne marche pas.
+
+    Le nom du fichier ne contient PAS le mot cherché — c'est le contenu qui répond."""
+    from oto_mcp import db
+    fid = _fichier(projet, "document-sans-rapport.pdf")
+    db.save_extracted_text(fid, status="ok", pages=2,
+                           text="compte rendu de la visite chez Boulangerie Sylvestre")
+
+    hits = db.search_file_contents("Sylvestre", [projet], limit=10)
+
+    assert [h["id"] for h in hits] == [fid]
+    assert "Sylvestre" in (hits[0].get("headline") or ""), "l'extrait montre POURQUOI"
+
+
+def test_a_fragment_finds_it_too(projet):
+    """Le trigramme sert un cas que la FTS ne couvre pas — mesuré : « ylvestr » rend
+    0 résultat en FTS seule. C'est ce qui a justifié le second index, et c'est ce que
+    ce test garde (sans lui, le retirer passerait inaperçu)."""
+    from oto_mcp import db
+    fid = _fichier(projet, "autre.pdf")
+    db.save_extracted_text(fid, status="ok", text="visite chez Boulangerie Sylvestre")
+
+    assert [h["id"] for h in db.search_file_contents("ylvestr", [projet])] == [fid]
+
+
+def test_a_refused_file_is_never_searchable(projet):
+    """Les lignes de refus n'ont pas de texte : elles ne doivent ni sortir, ni peser
+    dans les index (qui sont partiels sur `status = 'ok'` pour cette raison)."""
+    from oto_mcp import db
+    fid = _fichier(projet, "image.png")
+    db.save_extracted_text(fid, status="unsupported", detail="format non supporté")
+
+    assert db.search_file_contents("png", [projet]) == []
+    assert db.search_file_contents("", [projet]) == []
+
+
+def test_content_search_never_crosses_project_scope(projet):
+    """« Cherchable ⇔ lisible » au grain de la requête : un contenu ne remonte JAMAIS
+    hors des projets passés par l'appelant. Le tripwire garde le CÂBLAGE
+    (`accessible_project_ids`) ; celui-ci garde le SQL."""
+    from oto_mcp import db
+    fid = _fichier(projet, "confidentiel.pdf")
+    db.save_extracted_text(fid, status="ok", text="mention parfaitement unique zorglub")
+
+    assert [h["id"] for h in db.search_file_contents("zorglub", [projet])] == [fid]
+    assert db.search_file_contents("zorglub", [projet + 999]) == []
+    assert db.search_file_contents("zorglub", []) == []
+
+
 def test_never_looked_at_is_not_the_same_as_refused(projet):
     """`None` (jamais regardé) ≠ un statut de refus. L'interface doit pouvoir dire
     « en cours » dans un cas et « non supporté » dans l'autre — c'est toute la raison

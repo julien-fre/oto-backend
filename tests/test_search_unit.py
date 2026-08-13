@@ -12,7 +12,10 @@ from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 def _stub_empty(monkeypatch, **over):
     """Toutes les sources vides sauf `over` (nom db → rows)."""
     names = ("search_docs_fts", "search_project_briefs", "search_procedures_fts",
-             "search_guides_fts", "search_files_meta")
+             "search_guides_fts", "search_files_meta",
+             # Le CONTENU des fichiers (#298) : une source de plus, donc un stub de
+             # plus — sans lui ces tests tenteraient une vraie connexion.
+             "search_file_contents")
     sigs = {"search_procedures_fts": lambda q, org, limit: [],
             "search_guides_fts": lambda q, org, sub, limit: []}
     for n in names:

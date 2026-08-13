@@ -162,6 +162,19 @@ def search(sub: str, org_id: int, q: str, *,
             "description": r.get("description") or None,
             "project_id": r["project_id"],
             "updated_at": r.get("created_at"), "matched_by": "lexical"})
+        # Le CONTENU du fichier (#298) — jusqu'ici un PDF de trente pages était, pour
+        # la recherche, un nom de fichier : mal nommé, introuvable. Source SÉPARÉE
+        # parce que le texte vit dans une autre table et qu'un index d'expression ne
+        # couvre pas une jointure — mais même `kind` et même `ref`, donc le RRF réunit
+        # les deux : un fichier trouvé par son nom ET par son contenu cumule ses rangs
+        # et remonte. `matched_by='content'` dit lequel des deux a répondu, et le
+        # `passage` porte l'extrait — c'est lui qui montre POURQUOI le fichier sort.
+        _add(db.search_file_contents(q, pids, limit=per_source), lambda r: {
+            "kind": "fichier", "ref": r["id"],
+            "title": r.get("title") or r["filename"],
+            "passage": _snippet(r.get("headline") or "") or None,
+            "project_id": r["project_id"],
+            "updated_at": r.get("created_at"), "matched_by": "content"})
     if "connecteur" in wanted and connectors_catalog:
         _add(_match_connectors(q, connectors_catalog), lambda r: r)
 
