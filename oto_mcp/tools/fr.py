@@ -253,6 +253,14 @@ def register(mcp: FastMCP) -> None:
     _EVENT_KEEP = (
         "id", "dateparution", "familleavis", "familleavis_lib", "typeavis",
         "typeavis_lib", "tribunal", "commercant", "jugement", "registre",
+        # Le permalien officiel DILA (#341, dossier liens #335 : pleine confiance,
+        # à recopier jamais reconstruire) — il traversait fr_events mais était
+        # mangé ici : la classe « projection qui ment par omission » (ADR 0028).
+        "url_complete",
+        # Le CONTENU de l'avis pour deux familles (#341) : le descriptif d'une
+        # modification et celui d'un dépôt de comptes — même nature que
+        # `jugement` (gardé depuis toujours pour les procédures collectives).
+        "modificationsgenerales", "depot",
     )
 
     def _pick(d: dict, keys: tuple) -> dict:
