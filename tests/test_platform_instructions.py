@@ -111,3 +111,48 @@ def test_un_override_REEL_reste_annonce_comme_edite(monkeypatch):
                         lambda scope, key: {"body_md": "prose maison", "updated_at": "2026-08-14"})
     vue = P._view("secret_sauce")
     assert vue["is_seed"] is False and vue["body_md"] == "prose maison"
+
+
+# ── La sonde de dérive : ce que la base SERT vs ce que le code PORTE ────────────
+def test_les_quatre_etats_de_derive():
+    from oto_mcp.capabilities import platform_instructions as P
+
+    # Pas d'override → le code est servi, rien à faire.
+    assert P._etat("", "prose du code") == "seed"
+    assert P._etat("   ", "prose du code") == "seed"
+    # Override identique au code : inutile, mais inoffensif.
+    assert P._etat("prose du code", "prose du code") == "aligné"
+    # LE cas dangereux : la base gagne, le code n'atteint plus personne.
+    assert P._etat("ancienne prose", "prose du code") == "divergent"
+    # Né en base : un environnement NEUF naîtra sans cette prose.
+    assert P._etat("prose maison", "") == "hors_code"
+    assert P._etat("", "") == "vide"
+
+
+def test_la_sonde_ISOLE_ce_qui_demande_une_action(monkeypatch):
+    from oto_mcp.capabilities import platform_instructions as P
+
+    monkeypatch.setattr(P.guide_store, "get_init_guide",
+                        lambda scope, key: {"body_md": "", "updated_at": None})
+    monkeypatch.setattr(P.instructions, "default_block", lambda key: "bloc A du code")
+    monkeypatch.setattr(P.guide_store, "list_file_guides", lambda: [
+        {"slug": "aligne", "body_md": "même texte"},
+        {"slug": "derive", "body_md": "texte NEUF du code"},
+    ])
+    import oto_mcp.db as db
+    monkeypatch.setattr(db, "list_guides_db", lambda scope, owner: [
+        {"slug": "aligne", "body_md": "même texte", "updated_at": "2026-08-01"},
+        {"slug": "derive", "body_md": "vieux texte figé", "updated_at": "2026-07-01"},
+        {"slug": "ne-du-clic", "body_md": "écrit en ligne", "updated_at": "2026-08-10"},
+    ])
+
+    out = P._drift(None, P._NoInput())
+    par_slug = {ligne["slug"]: ligne["etat"] for ligne in out["proses"]}
+    assert par_slug["secret_sauce"] == "seed"
+    assert par_slug["aligne"] == "aligné"
+    assert par_slug["derive"] == "divergent"
+    assert par_slug["ne-du-clic"] == "hors_code"
+    # `a_traiter` ne retient QUE ce sur quoi il y a un geste à faire — une sonde qui
+    # rend tout au même niveau se lit comme un inventaire, pas comme une alerte.
+    assert {ligne["slug"] for ligne in out["a_traiter"]} == {"derive", "ne-du-clic"}
+    assert out["resume"]["divergent"] == 1 and out["resume"]["hors_code"] == 1
