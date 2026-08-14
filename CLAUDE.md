@@ -786,6 +786,33 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   du bloc A prescrit ces jetons : elle vit dans `instructions.py` **ET** en DB
   (`platform_instructions['secret_sauce']`) — mettre les deux à jour, la DB **après** le
   déploiement prod, sinon l'agent reçoit une consigne que le serveur ne sait pas honorer.
+- **Ce qu'un outil RENVOIE a un budget, et il se mesure — pas une consigne (14/08).** Sept
+  signaux d'usage en six jours, tous le même défaut : un payload qu'un agent ne peut pas
+  lire (`linkedin_aiark_search` 3 M caractères, `oto_doc op=list` 201 K, `linkedin_unipile_post
+  op=feed` 67 K, `oto_project op=list` 73 K). Chaque fois, le client déverse en fichier puis
+  reparse au `jq` — et **un agent sans shell (client MCP nu, n8n) cale tout court** : pour lui
+  un tool trop verbeux n'est pas cher, il est inutilisable. Quatre règles en sortent :
+  - **Une LISTE rend son index, jamais les corps.** Elle sert à choisir quoi ouvrir : de quoi
+    adresser, trier, et écarter sans se tromper. Seam partagé `output_projection.summarize()`
+    — les colonnes-corps deviennent `<champ>_length` et la réponse **NOMME** ce qu'elle a
+    écarté (bloc `projection`). Le brut reste atteignable (`fields=["*"]`), un `fields=[]` est
+    **refusé** plutôt qu'avalé. Fait sur `oto_doc`/`oto_project` ; `guides` et `org_instructions`
+    le faisaient déjà.
+  - **Projeter ≠ tronquer.** Retirer des colonnes est réversible et annoncé ; couper un texte à
+    N caractères est une mutilation silencieuse — l'agent croit avoir lu. D'où la TAILLE, jamais
+    un extrait (mesuré le 11/08 : un feed coupé à 600 c. tombait pile avant la chute qui
+    départage un post de fond d'une pub, 2 cas limites sur 5 tranchés à l'aveugle).
+  - **Denylist de clés nommées, jamais une allowlist** (leçon `fr_get`/`liste_idcc` : un champ
+    oublié disparaît en silence). Le seam ne connaît aucun outil — chaque connecteur déclare
+    ce qu'il coupe, là où il sait ce que ses champs valent (`full=True` rend le brut).
+  - **Le handshake aussi a un budget.** Les 6 jetons `_*` sont recopiés dans ~400 schémas : une
+    phrase écrite dans `call_axes.py` est payée 400 fois, à chaque tour, par chaque agent. Ils
+    pesaient **48,2 % des 880 K caractères servis** par `tools/list` ; ramenés à 36,2 % en
+    cessant de redire le bloc A (-41 400 tokens). Bornes gardées par `test_call_axes_budget.py`
+    et `test_list_view_budget.py` — **rallonger devient un choix visible**, pas une dérive.
+  ⚠️ **Aucune de ces tailles n'est instrumentée** : `tool_calls` n'a pas de colonne de taille de
+  réponse, donc « quel connecteur rend le plus gros payload ? » reste sans réponse et le 8ᵉ cas
+  sera découvert par l'utilisateur qui s'y cogne (oto-backend#340).
 - Nouveau connecteur = (1) un fichier `tools/<service>.py` exposant `register(mcp)`,
   (2) une **entrée au registre `providers.py`**. `register_all` (`tools/__init__.py`)
   **DÉRIVE le chargement du registre** (#24, fin de la liste hardcodée) : il boucle
