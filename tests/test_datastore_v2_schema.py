@@ -293,3 +293,25 @@ def test_la_condition_deballe_les_couches_liste_et_scalaire():
             f"condition {cond} désarmée par une valeur en couches"
         assert dsv2.validate_row(
             schema, {"s": {"valeur": "x"}, "m": "motif"}) == []
+
+
+def test_la_condition_mord_sur_le_resultat_fusionne():
+    """Le cas le plus fréquent en campagne (lignes reprises) : la ligne porte
+    déjà la qualification EN COUCHES, l'agent réécrit une valeur NUE — le merge
+    reconstruit les couches (l'origine survit), et c'est le RÉSULTAT FUSIONNÉ
+    que la condition doit juger. Si elle ne déballait que l'écriture entrante,
+    le trou se rouvrirait exactement là."""
+    from oto_mcp.datastore_columns import _merge_column
+
+    schema = {"fields": [
+        {"key": "qualification"},
+        {"key": "motif_ecartement",
+         "required_when": {"qualification": ["hors_perimetre", "dormante_ou_introuvable"]}},
+    ]}
+    existant = {"valeur": "en_activite", "origine": "fichier-client"}
+    merged = _merge_column(existant, "hors_perimetre")
+    assert isinstance(merged, dict) and merged.get("valeur") == "hors_perimetre", \
+        "le merge préserve l'origine : la colonne reste en couches"
+    errs = dsv2.validate_row(schema, {"qualification": merged})
+    assert errs and "motif_ecartement" in errs[0], \
+        "la condition juge le résultat fusionné, couches comprises"
