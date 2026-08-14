@@ -31,6 +31,18 @@ comptes existent…) vit donc **une seule fois**, dans le bloc A des instruction
 (`instructions.py`, « Porte ton contexte DANS l'appel ») — injecté au handshake, donc lu
 par tout client. Ici : ce que l'axe fait, et où trouver sa valeur. Rien de plus.
 
+**Deuxième coupe (14/08), sur la même règle.** Re-mesuré : les axes pesaient encore
+**424 744 c., soit 48,2 % des 880 520 c. de schémas servis** — la première coupe avait
+raccourci les paragraphes, pas fermé la multiplication par 410 outils. Les six
+descriptions redisaient ce que le bloc A dit déjà (le *pourquoi*, la marche à suivre
+quand plusieurs comptes existent, ce qui se passe si on omet le jeton), et ce redit-là
+se paie à CHAQUE tour de CHAQUE agent. Ne restent que les deux choses qu'un lecteur de
+schéma seul ne peut pas déduire : **ce que l'axe fait, et l'outil qui liste ses valeurs**
+— la clause « Omets pour ton défaut » part, parce qu'un paramètre optionnel omis prend
+son défaut, ce que le modèle sait sans qu'on le lui écrive 2 000 fois.
+⚠️ **La règle est un BUDGET, pas une consigne** : `tests/test_call_axes_budget.py` borne
+le coût agrégé des axes. Rallonger une description ici est un choix qui doit se voir.
+
 **Les jetons sont NAMESPACÉS `_` (issue #250)** : `_org`, `_project`, `_group`,
 `_account`, `_instance`, `_run_id`. Ils occupaient auparavant les noms NUS, dans le même
 espace plat que les arguments métier des tools — or `account`, `org`, `group`, `project`
@@ -165,8 +177,7 @@ ACCOUNT = CallAxis(
         "type": "string",
         "title": "Account",
         "description": (
-            "Compte/identité à OPÉRER pour CET APPEL, quand plusieurs sont possibles "
-            "(liste : oto_identity(op='list')). Épinglage éphémère. Omets pour ton défaut."
+            "Compte à OPÉRER quand plusieurs existent. `oto_identity(op='list')`."
         ),
     },
     applies=_has_account_axis,
@@ -288,8 +299,7 @@ PROJECT = CallAxis(
         "type": "integer",
         "title": "Project",
         "description": (
-            "Projet (id) sous lequel exécuter CET APPEL — jeton PRIMAIRE : son org/équipe, "
-            "ses `slot:<nom>`, ses identités connecteur. Liste : oto_project(op='list')."
+            "Projet (id) de CET APPEL — jeton PRIMAIRE. `oto_project(op='list')`."
         ),
     },
     applies=_is_project_scopable_tool,
@@ -341,8 +351,7 @@ RUN = CallAxis(
         "type": "string",
         "title": "Run Id",
         "description": (
-            "run_id d'un déroulé `run_start`. Omets : le run ACTIF s'applique déjà. "
-            "Passe-le pour cibler un run précis parmi plusieurs imbriqués."
+            "run_id d'un `run_start` — le run ACTIF s'applique déjà."
         ),
     },
     applies=_is_run_correlatable_tool,
@@ -382,8 +391,7 @@ ORG = CallAxis(
         "type": "integer",
         "title": "Org",
         "description": (
-            "Organisation (id) sous laquelle exécuter CET APPEL — résout ses credentials, "
-            "sa visibilité, ses données. Omets pour ton org courante."
+            "Org (id) de CET APPEL. `oto_list_orgs()`."
         ),
     },
     applies=_is_org_scopable_tool,
@@ -433,8 +441,7 @@ GROUP = CallAxis(
         "type": "integer",
         "title": "Group",
         "description": (
-            "Équipe (id) sous laquelle exécuter CET APPEL — résout ses secrets et sa "
-            "doctrine, sous son org parente. Omets hors contexte d'équipe."
+            "Équipe (id) de CET APPEL, sous son org parente."
         ),
     },
     applies=_is_org_scopable_tool,
@@ -488,8 +495,7 @@ INSTANCE = CallAxis(
         "type": "string",
         "title": "Instance",
         "description": (
-            "Ref d'instance de connecteur (via oto_instance(op='list')) : résout EXACTEMENT "
-            "ce credential-là, jamais un autre. Omets pour la résolution normale."
+            "Instance de connecteur PRÉCISE (un credential exact). `oto_instance(op='list')`."
         ),
     },
     applies=_is_instance_scopable_tool,
