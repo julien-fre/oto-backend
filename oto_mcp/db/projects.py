@@ -958,6 +958,13 @@ def project_spine(project_id: int, *, from_doc: Optional[int] = None,
         budget["n"] += 1
         out = {"id": r["id"], "title": r["title"],
                "description": r["description"] or derive_description(r["body_md"])}
+        if not r["description"]:
+            # Chapô DÉRIVÉ du corps (jamais stocké) : il SUIT donc le corps à chaque
+            # édition. Sans ce drapeau, réécrire le seul `body_md` se lit comme un
+            # écrasement silencieux de la description — signalé le 14/08 sur des pages
+            # dont les unes gardaient leur chapô (stocké) et les autres non (dérivé),
+            # ce qui a fait conclure à un comportement non déterministe.
+            out["description_derived"] = True
         kids = by_parent.get(r["id"], [])
         if not kids:
             return out

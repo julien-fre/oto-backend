@@ -76,6 +76,18 @@ def test_spine_ordered_tree_with_fallback_descriptions(monkeypatch):
     assert out["tree"][0]["children"][0]["title"] == "Enfant A1"
 
 
+def test_spine_flags_a_derived_description(monkeypatch):
+    """Un chapô dérivé SUIT le corps ; sans drapeau, une réécriture du corps se lit
+    comme un écrasement de la description (signalé le 14/08)."""
+    _wire(monkeypatch, [
+        _doc(1, None, "Chapô curé", desc="Posé à la main"),
+        _doc(2, None, "Chapô dérivé", body="Première ligne de prose."),
+    ])
+    out = P.project_spine(9)
+    assert "description_derived" not in out["tree"][0]
+    assert out["tree"][1]["description_derived"] is True
+
+
 def test_spine_depth_bound_with_more_counter(monkeypatch):
     # chaîne 1←2←3←4 : depth=2 = racine + 2 niveaux (N+2) → N3 rendu SANS enfants,
     # `more` compte le sous-arbre coupé (N4).
