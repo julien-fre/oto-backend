@@ -678,6 +678,20 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
         rw = f.get("required_when")
         if rw is not None and (not isinstance(rw, dict) or not rw):
             errors.append(f"{fpath}: required_when doit être un objet {{champ: valeur}}")
+        elif isinstance(rw, dict):
+            # La règle de la famille #329/#331 : une forme non interprétée se
+            # REFUSE à la pose en nommant l'attendu — jamais stockée-inerte
+            # (vécu #347 : une condition en liste était acceptée et désarmait
+            # la contrainte pour TOUTES les valeurs, scalaires comprises).
+            for ck, cv in rw.items():
+                ok_scalaire = isinstance(cv, (str, int, float, bool))
+                ok_liste = (isinstance(cv, (list, tuple)) and len(cv) > 0
+                            and all(isinstance(x, (str, int, float, bool)) for x in cv))
+                if not (ok_scalaire or ok_liste):
+                    errors.append(
+                        f"{fpath}: required_when — la condition de `{ck}` doit être "
+                        f"une valeur ou une liste non vide de valeurs (requis quand "
+                        f"la valeur du champ est / est parmi) ; reçu {cv!r}")
         ml = f.get("max_length")
         if ml is not None:
             if isinstance(ml, bool) or not isinstance(ml, int) or ml <= 0:
@@ -786,7 +800,14 @@ def _row_errors(fields: list, data: dict, path: str,
         required = bool(f.get("required"))
         rw = f.get("required_when")
         if not required and isinstance(rw, dict) and rw:
-            required = all(str(data.get(k)) == str(v) for k, v in rw.items())
+            # Une condition en LISTE = requis quand la valeur ∈ liste (#347).
+            # Avant, str(liste) ne matchait jamais : la déclaration qui semblait
+            # ÉLARGIR la garde la rendait inerte, sans un mot.
+            required = all(
+                str(data.get(k)) in {str(x) for x in v}
+                if isinstance(v, (list, tuple))
+                else str(data.get(k)) == str(v)
+                for k, v in rw.items())
         if _is_empty(value):
             if required:
                 cause = f" (requis quand {rw})" if not f.get("required") and rw else ""

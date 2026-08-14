@@ -233,3 +233,47 @@ def test_terminal_states_derived_and_explicit():
     explicit = {"fields": [{"key": "s", "role": "status",
                             "lifecycle": {"states": ["a", "b"], "terminal": ["b"]}}]}
     assert dsv2.terminal_states(explicit) == {"b"}
+
+
+# ── #347 : required_when à LISTE — la déclaration qui élargit ne désarme plus ──
+
+def test_une_liste_de_valeurs_mord_sur_chacune():
+    """`required_when: {status: [a, b]}` = requis quand la valeur ∈ liste. Avant
+    #347 la liste était acceptée, stockée, et la contrainte devenait INERTE pour
+    TOUTES les valeurs — y compris celle qui mordait en scalaire : la déclaration
+    qui semblait élargir la garde la supprimait sans un mot."""
+    schema = {"fields": [
+        {"key": "status"},
+        {"key": "motif", "required_when": {"status": ["hors_perimetre", "eteinte"]}},
+    ]}
+    for statut in ("hors_perimetre", "eteinte"):
+        errs = dsv2.validate_row(schema, {"status": statut})
+        assert errs and "motif" in errs[0], f"la contrainte doit mordre sur {statut}"
+    assert dsv2.validate_row(schema, {"status": "active"}) == [], \
+        "hors liste, rien n'est requis"
+    assert dsv2.validate_row(
+        schema, {"status": "eteinte", "motif": "radiation BODACC"}) == []
+
+
+def test_le_scalaire_continue_de_mordre():
+    schema = {"fields": [{"key": "s"}, {"key": "m", "required_when": {"s": "x"}}]}
+    assert dsv2.validate_row(schema, {"s": "x"})
+    assert dsv2.validate_row(schema, {"s": "y"}) == []
+
+
+def test_une_forme_non_interpretee_est_refusee_a_la_pose():
+    """La règle de la famille #329/#331 : ce qu'une surface ne sait pas
+    interpréter, elle le REFUSE en le nommant — jamais stocké-inerte."""
+    for mauvaise in ({"s": {"nested": 1}},        # dict en condition
+                     {"s": [["a"]]},              # liste imbriquée
+                     {"s": []},                   # liste vide : rien à matcher
+                     {"s": None}):                # None : condition indicible
+        errs = dsv2.validate_schema_def(
+            {"fields": [{"key": "m", "required_when": mauvaise}]})
+        assert errs and "required_when" in errs[0], f"{mauvaise!r} doit être refusé"
+
+
+def test_la_liste_valide_est_acceptee_a_la_pose():
+    assert dsv2.validate_schema_def(
+        {"fields": [{"key": "m",
+                     "required_when": {"s": ["a", "b"]}}]}) == []
