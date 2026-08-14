@@ -191,14 +191,22 @@ def stamp_rank_vector(conn, table: str, where: str, params: tuple = ()) -> None:
     Best-effort : une source non matérialisée ou une erreur ici ne doit pas faire
     échouer l'écriture métier — le rattrapage repassera, et le repli du `COALESCE`
     fait qu'entre-temps rien ne ment.
+
+    ⚠️ **Le SAVEPOINT est ce qui rend le best-effort VRAI** (#333) : sans lui,
+    l'erreur avalée laisse la transaction PARTAGÉE avortée — le COMMIT de
+    l'écriture métier devient un ROLLBACK silencieux pendant que l'appelant
+    reçoit l'écho du RETURNING. `conn.transaction()` sous une transaction déjà
+    ouverte (le cas ici, toujours) crée un savepoint : l'échec du stamp roule
+    au savepoint, l'écriture métier commit.
     """
     expr = RANKED_SOURCES.get(table)
     if not expr:
         return
     try:
-        conn.execute(
-            f"UPDATE {table} SET {RANK_VECTOR_COLUMN} = {_vec(expr)} WHERE {where}",
-            params)
+        with conn.transaction():
+            conn.execute(
+                f"UPDATE {table} SET {RANK_VECTOR_COLUMN} = {_vec(expr)} WHERE {where}",
+                params)
     except Exception:                      # noqa: BLE001 — jamais au prix de l'écriture
         pass
 
