@@ -146,3 +146,35 @@ def test_mobile_phone_requires_linkedin_or_domain_name():
     from oto.tools.aiark.client import AiArkClient
     with pytest.raises(ValueError):
         AiArkClient(api_key="k").mobile_phone(domain="acme.com")  # name manquant
+
+
+# --- filtres morts (acceptés par AI Ark, jamais appliqués) --------------------
+
+def test_dead_filter_website_is_refused():
+    """`account.website` rendait la base entière (72 M) en la faisant passer pour un
+    résultat filtré — vérifié par différentiel le 15/08/2026. Refus, pas avertissement."""
+    from mcp.shared.exceptions import McpError
+    from oto_mcp.tools import aiark
+
+    with pytest.raises(McpError) as e:
+        aiark._reject_dead_filters(
+            account={"website": {"any": {"include": ["finecobank.com"]}}}, contact=None)
+    assert "domain" in str(e.value)          # l'erreur NOMME le remplaçant
+
+
+def test_dead_filter_title_is_refused():
+    from mcp.shared.exceptions import McpError
+    from oto_mcp.tools import aiark
+
+    with pytest.raises(McpError):
+        aiark._reject_dead_filters(
+            account=None, contact={"title": {"any": {"include": ["cmo"]}}})
+
+
+def test_live_filters_pass_through():
+    """La garde ne mord QUE sur les clés mortes : `domain` et `seniority` passent."""
+    from oto_mcp.tools import aiark
+
+    aiark._reject_dead_filters(
+        account={"domain": {"any": {"include": ["finecobank.com"]}}},
+        contact={"seniority": {"any": {"include": ["c_suite"]}}})

@@ -38,6 +38,42 @@ _PERSON_DROP = ("educations", "volunteer_experiences", "awards", "skills", "lang
 # l'identique sur chacune des 100 personnes d'une même société.
 _COMPANY_DROP = ("technologies", "keywords", "naics", "industries", "languages",
                  "last_updated")
+
+# ── Filtres qu'AI Ark ACCEPTE et n'applique JAMAIS ───────────────────────────────
+# Une clé de filtre non indexée ne fait pas 400 : l'API l'avale et rend la base ENTIÈRE,
+# triée par effectif. L'agent lit alors 72 M de sociétés en croyant lire son résultat
+# filtré — un faux, pas un échec. Vécu le 14/08 (`account.website` = finecobank.com →
+# `totalElements` 72 343 404, Tata Group et Amazon en tête de « FinecoBank »).
+#
+# Vérifié par DIFFÉRENTIEL le 15/08/2026 (même requête `size=1` avec et sans la clé) :
+#   account.website → 72 343 404 dans les DEUX formes (liste nue ET wrapper SMART),
+#                     là où `account.domain` en liste nue rend 3.
+#   contact.title   → 8 191 335 avec et sans, au même premier id.
+# D'où le refus plutôt que l'avertissement : sur un filtre mort, tout ce qui revient est
+# faux, et rien dans la réponse ne le signale.
+_DEAD_FILTERS: dict[str, dict[str, str]] = {
+    "account": {
+        "website": 'domain, en liste nue : {"domain": {"any": {"include": '
+                   '["exemple.com"]}}} (le wrapper {"mode": "SMART", "content": […]} '
+                   "ne vaut que pour `name`)",
+    },
+    "contact": {
+        "title": "seniority (+ location), puis un tri des titres CÔTÉ CLIENT sur les "
+                 "pages rendues — AI Ark n'indexe pas l'intitulé de poste",
+    },
+}
+
+
+def _reject_dead_filters(**blocks) -> None:
+    """Refuse un filtre qu'AI Ark accepterait sans l'appliquer (cf. `_DEAD_FILTERS`)."""
+    for block, value in blocks.items():
+        for field, remedy in _DEAD_FILTERS.get(block, {}).items():
+            if isinstance(value, dict) and field in value:
+                raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                    f"Filtre `{block}.{field}` : AI Ark l'accepte et ne l'applique "
+                    f"PAS — la recherche rendrait la base entière en la faisant passer "
+                    f"pour un résultat filtré (vérifié par différentiel). "
+                    f"À la place : {remedy}.")))
 # URLs d'images : un agent ne les regarde pas.
 _PROFILE_DROP = ("picture", "background")
 
@@ -175,11 +211,19 @@ def register(mcp: FastMCP) -> None:
                 - name: {"name": {"any": {"include": {"mode": "SMART", "content": ["Amazon"]}}}}
                 - location: {"location": {"any": {"include": ["United States"]}}}
                 - employee size: {"employeeSize": {"type": "RANGE", "range": [{"start": 1000, "end": 5000}]}}
-                Combine keys in one object. Supports domain, website, industries,
-                revenue, foundedYear, technologies, keywords, funding, naics…
+                - a company's site: {"domain": {"any": {"include": ["example.com"]}}}
+                  — plain list, NOT the SMART wrapper (that one is for `name` only).
+                Combine keys in one object. Supports domain, industries, revenue,
+                foundedYear, technologies, keywords, funding, naics…
+                ⚠️ `website` is REFUSED here: AI Ark accepts it and silently ignores
+                it, returning the whole 72 M database as if it were your filtered
+                result. Filter on `domain` instead.
             contact: op="people" — filters on the person, e.g.
-                {"seniority": {"any": {"include": ["founder"]}}}. Supports title,
-                department, seniority, location…
+                {"seniority": {"any": {"include": ["founder"]}}}. Supports seniority,
+                location, department…
+                ⚠️ `title` is REFUSED for the same reason (job titles are not indexed):
+                filter on `seniority`, then sort titles client-side on the pages you
+                fetched.
             lookalike_domains: op="companies" — up to 5 company URLs to find similar ones.
             lists: exclude records already in saved lists.
             page: zero-based page number. size: 0-100 (default 10).
@@ -195,6 +239,7 @@ def register(mcp: FastMCP) -> None:
 
         Returns the AI Ark page: `content[]`, `totalElements`, `totalPages`.
         """
+        _reject_dead_filters(account=account, contact=contact)
         if op == "people":
             result = _run(lambda c: c.search_people(
                 account=account, contact=contact, lists=lists, page=page, size=size))
