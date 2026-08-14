@@ -91,6 +91,30 @@ email magic link, sans allowlist. Quiconque trouve l'URL peut s'inscrire,
 mais c'est sans risque pour les clés serveur car les platform keys ne sont
 accessibles qu'avec un grant explicite (cf. `access.py`).
 
+## Jetons d'API `oto_` — authentification non-interactive
+
+La face MCP accepte aussi un jeton d'API `oto_` (v1.57.0) en plus des JWT Logto.
+`_IatGatedVerifier._verify_api_token` essaie `db.verify_api_token` avant le JWT
+(DB **hors de la loop**), et un jeton reconnu rend un `AccessToken` porteur du `sub`
+de son émetteur — donc un vrai compte, avec son dashboard et ses connecteurs. Sans ce
+chemin, un runtime **non interactif** (Claude Tag dans Slack, une CI) n'avait que
+`client_credentials`, donc une app Logto par intégration, donc un compte machine
+orphelin (ni email, ni dashboard, org à poser par `PUT /api/me/active-org` faute d'UI).
+
+⚠️ **Un jeton PORTÉ (`scopes`) est refusé ici** : son gate `token_scopes.authorize`
+raisonne sur méthode + chemin HTTP, notions absentes d'un appel MCP — l'accepter
+élargirait sa portée en silence. Fail-closed figé par `tests/test_mcp_api_token.py`.
+Procédure côté utilisateur = guide plateforme `claude-tag` (+ template public
+`otomata-tech/oto-claude-tag-template`, Claude Tag n'acceptant qu'un dépôt privé
+comme source de plugins).
+
+## Coexistence multi-domaine (pré-cutover, 2026-07-02)
+
+Avant le cutover ADR 0040 (cf. ci-dessous), `mcp.oto.cx/mcp` servait le MCP en
+plus de `mcp.oto.ninja` — via **`MCP_AUDIENCE_ALT`** (audiences canoniques
+secondaires, vide = no-op), resource Logto dédiée, PRM Host-aware
+(`config.mcp_audience_alt_hosts`). DNS `mcp.oto.cx` = grey+ACME direct box.
+
 Env requis : `LOGTO_ENDPOINT`, `MCP_AUDIENCE`, `OTO_MCP_PUBLIC_URL`,
 `OTO_MCP_ADMIN_SUB` (sub Logto admin = **otomata `eufbvubidpyp`**, canonique, pas
 le gmail dual-sub), `OTO_MCP_CLAUDE_APP_ID` (client partagé) + `OTO_MCP_LOGTO_M2M_*`

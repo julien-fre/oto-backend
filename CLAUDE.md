@@ -65,34 +65,7 @@ Pour les opérations exposées sur **deux faces** (MCP + REST), arrêter de câb
 
 JWT Logto **ES384** (défaut RS256 = tout rejeté), discovery RFC 9728 sur 401,
 façade DCR self-service (`oauth_facade.py`) pour les clients sans DCR (Claude/ChatGPT/
-Mistral). **Détail : `docs/auth-logto.md`** (gotchas, env, onboarding).
-
-> **La face MCP accepte aussi un jeton d'API `oto_` (v1.57.0).** `_IatGatedVerifier._verify_api_token`
-> essaie `db.verify_api_token` avant le JWT (DB **hors de la loop**), et un jeton reconnu rend un
-> `AccessToken` porteur du `sub` de son émetteur — donc un vrai compte, avec son dashboard et ses
-> connecteurs. Sans ce chemin, un runtime **non interactif** (Claude Tag dans Slack, une CI) n'avait
-> que `client_credentials`, donc une app Logto par intégration, donc un compte machine orphelin
-> (ni email, ni dashboard, org à poser par `PUT /api/me/active-org` faute d'UI). ⚠️ **Un jeton PORTÉ
-> (`scopes`) est refusé ici** : son gate `token_scopes.authorize` raisonne sur méthode + chemin HTTP,
-> notions absentes d'un appel MCP — l'accepter élargirait sa portée en silence. Fail-closed figé par
-> `tests/test_mcp_api_token.py`. Procédure côté utilisateur = guide plateforme `claude-tag`
-> (+ template public `otomata-tech/oto-claude-tag-template`, Claude Tag n'acceptant qu'un dépôt privé
-> comme source de plugins).
-
-> **Le verifier est un REGISTRE d'émetteurs, et le sub est qualifié par tenant (ADR 0052 L2).**
-> `server._build_verifier` construit `issuer → (tenant, verifier)` (`tenancy.py`) : sélection par
-> le claim `iss` **non vérifié** (il ne sert qu'à CHOISIR ; le verifier retenu revalide signature
-> + `iss`). **`LOGTO_ENDPOINT_ALT` n'est plus un `fallback`** : c'est une entrée du registre sur
-> le même tenant `oto` (deux émetteurs, un tenant). L'émetteur primaire vient de l'ENV, jamais de
-> la base → l'auth canonique est DB-indépendante ; les tenants tiers viennent de la table
-> `tenants` (registre construit **au boot** ⟹ un tenant neuf demande un restart).
-> ⚠️ **Le tenant `oto` garde un sub NU** — l'AAD du coffre dérive du sub
-> (`credentials_store._aad`) : le qualifier rendrait TOUS les credentials de prod
-> indéchiffrables. Un tenant tiers a `"<slug>:<sub>"`, et **en aval le sub est une chaîne
-> OPAQUE, jamais découpée** (`entity_id` ne se découpe qu'à son PREMIER `:`, et jamais au scope
-> `user` où `entity_id` EST le sub — tripwire `tests/test_tenant_l2_sub_opaque.py`). Pour savoir
-> de quel tenant relève un sub : `tenancy.current().tenant_of(sub)` (classement par préfixe).
-> **Détail : `docs/auth-logto.md` §Registre d'émetteurs.**
+Mistral). **Détail : `docs/auth-logto.md`** (jetons API, registre d'émetteurs, env, onboarding).
 
 > **Un tenant tiers est SERVI, depuis le 13/08 (oto-private#83).** Le premier partenaire a
 > son émetteur, son host, son client OAuth et ses 10 comptes qualifiés. Trois règles en
@@ -149,11 +122,6 @@ Mistral). **Détail : `docs/auth-logto.md`** (gotchas, env, onboarding).
 > reste sur `otomata-main`). ⚠️ **Logto = 2 instances** : la vraie prod/preprod = **`auth.oto.ninja`**
 > (creds SOPS `LOGTO_NINJA_MGMT_*`), PAS `auth.oto.zone`. Les mentions `mcp.oto.ninja=prod`
 > ailleurs dans ce fichier sont **antérieures au cutover**.
->
-> **Coexistence multi-domaine (2026-07-02, contexte pré-cutover)** : `mcp.oto.cx/mcp` servait le
-> MCP en plus de `mcp.oto.ninja` — env **`MCP_AUDIENCE_ALT`** (audiences canoniques secondaires,
-> vide = no-op), resource Logto dédiée, PRM Host-aware (`config.mcp_audience_alt_hosts`).
-> DNS mcp.oto.cx = grey+ACME direct box.
 >
 > ⚠️ **`MCP_AUDIENCE_ALT` est une LISTE (virgules) : ÉTENDRE, jamais remplacer.** Un
 > `sed 's|^MCP_AUDIENCE_ALT=.*|…|'` écrase les audiences déjà déclarées — sans erreur au
@@ -1018,90 +986,7 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 
 ## Commands
 
-```bash
-# Transport stdio RETIRÉ (2026-06-13) : oto-mcp ne se sert qu'en streamable_http
-# (toujours authentifié Logto). Usage local = CLI `oto`. Pour un serveur local,
-# lancer en http avec les LOGTO_* et taper avec un bearer.
-
-# Tests — le venv .venv N'A PAS pytest (extra `dev` non installé) et `uv run pytest`
-# crée un env éphémère SANS les deps projet (piège, ModuleNotFoundError). Recette :
-uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
-.venv/bin/python -m pytest -q
-
-# Tester un CLONE (clone scratchpad, ou `git archive <commit>` pour isoler un commit du WIP
-# voisin du tree partagé) SANS réinstaller les deps : réutiliser le venv local (deps+pytest
-# présents) en résolvant `oto_mcp` depuis le clone.
-#   cd <clone> && PYTHONPATH=<clone> OTO_CONFIG_DISABLE_SOPS=1 \
-#     /data/oto/backend/.venv/bin/python -m pytest -q tests/...
-#
-# ⚠️ **Le `cd <clone>` n'est PAS cosmétique : c'est LUI qui fait marcher la recette.**
-# `PYTHONPATH` seul NE PRIME PAS sur l'editable install — son finder vit dans `sys.meta_path`,
-# consulté AVANT `sys.path`. Lancé depuis `/data/oto/backend`, le même PYTHONPATH importe
-# donc `/data/oto/backend/oto_mcp` : on croit tester le clone, on teste le tree partagé.
-# Le mode d'échec est un **faux négatif silencieux** — vécu 11/08, un agent a conclu « le
-# code d'avant passe déjà mes 16 tests » en testant en réalité son propre correctif, ce qui
-# invalide la seule chose que le clone servait à prouver.
-# **Valider l'instrument avant d'en tirer une conclusion**, une ligne suffit :
-#   cd <clone> && PYTHONPATH=<clone> /data/oto/backend/.venv/bin/python -c \
-#     "import oto_mcp.db.search as m; print(m.__file__)"   # doit pointer DANS le clone
-#
-# ⚠️ **2e piège (12/08) : la validation ci-dessus ne couvre PAS un fichier NEUF.** Si ton
-# lot CRÉE un module (ex. `grants_chain.py`), le finder editable le sert depuis
-# /data/oto/backend même avec le `cd` — le clone de HEAD ne l'a pas, l'import retombe sur
-# le tree partagé, et la ligne de validation ne l'attrape pas (elle teste un module qui
-# existe des deux côtés). Le test « rouge sur le code d'avant » devient alors un mensonge.
-# Parade : un `sitecustomize.py` dans le clone qui retire les finders editable :
-#   import sys; sys.meta_path = [f for f in sys.meta_path
-#                                if "__editable__" not in type(f).__module__]
-# Puis re-valider en important LE MODULE NEUF : il doit lever ImportError dans le clone.
-# Convention : tester la LOGIQUE PURE (helpers hors DB, ex. `effective_for_group`,
-# `_connector_blocked`/seams) + les gardes de capacité par stub ; le chemin SQL est vérifié
-# au déploiement (le job `test` du CI tourne le vrai suite avec toutes les deps).
-
-# Deploy — modèle tronc unique (refonte 2026-07-20, ADR 0020) :
-#   push `main`  → PREPROD (« Deploy preprod », deploy-canari.yml, script serveur
-#                  oto-backend-canari.sh : git reset --hard origin/main → preprod)
-#   tag  `v*`    → PROD    (« Deploy prod », deploy.yml, script serveur
-#                  oto-backend.sh <tag> : git reset --hard <tag> → prod)
-# Le deploy (les deux) = SSH box dédiée via runner self-hosted : reset au ref +
-# pip install -e . + **force-reinstall oto-core depuis le tag pinné** (lu du
-# pyproject ; pip saute sinon une dép VCS déjà présente) + restart + **smoke HTTP**
-# (GET 200 /.well-known/oauth-authorization-server) + **rollback auto** si
-# install/restart/smoke échoue. Le restart relance start-encrypted (refetch master
-# key). ⚠️ start-encrypted.sh untracked → survit au git reset.
-#
-# Preprod = travailler sur `main`, commit, push : deploy preprod auto (gate
-# `needs: test`). Claude Code (web) ouvre ses PR sur main → merge = deploy preprod.
-git push origin main            # → PREPROD
-
-# Prod = acte explicite : taguer un commit de main + pousser le tag.
-git tag v1.2.3 && git push origin v1.2.3   # → PROD (tags v* immuables, ruleset)
-# ⚠️ `canari` est DÉPRÉCIÉE (ne déploie plus) : un checkout encore dessus doit
-# passer sur main (`git checkout main`). guard-main + sync-main-to-canari retirés.
-
-# Logs
-ssh -i ~/.ssh/alexis root@<box> "journalctl -u oto-mcp -f"
-
-# DB inspect (PG managed) — depuis la box (env du process inclut DATABASE_URL via .env)
-# ⚠️ `psql` n'est PAS installé sur la box dédiée → passer par le venv + psycopg :
-ssh -i ~/.ssh/alexis root@<box> 'cd /opt/oto-mcp && set -a; . .env; set +a; ./.venv/bin/python -c "
-import os, psycopg
-with psycopg.connect(os.environ[\"DATABASE_URL\"]) as c:
-    for r in c.execute(\"SELECT sub, email, role FROM users\"): print(r)
-"'
-
-# ⚠️ Un script HORS SERVEUR ne voit AUCUN outil : `tool_registry.boot_tool_names()`
-# rend [] tant que le registre n'est pas réchauffé (le serveur le fait au lifespan).
-# Toute validation de nom d'outil renvoie alors un `unknown_tool` TROMPEUR — vécu
-# 05/08, j'ai failli annoncer un blocage inexistant. Diagnostic fidèle :
-#   register_all(mcp := FastMCP("x")); tool_registry.bind(mcp)
-#   asyncio.run(tool_registry.warm_registry(mcp))   # → 665 outils, la validation passe
-
-# ⚠️ Déchiffrer un credential ad-hoc : OTO_MCP_MASTER_KEY n'est PAS dans .env
-# (fetchée au boot depuis Secret Manager) → recette complète + pièges (RuntimeError
-# ≠ InvalidTag ; status_for = credential_status, jamais get_credential_with_meta) :
-# docs/connector-vault.md §Déchiffrer un credential ad-hoc.
-```
+Tests, déploiement, logs, inspection DB : **`docs/commands.md`** — avec les pièges qui coûtent une heure (le venv sans pytest, le clone qui teste en réalité le tree partagé, le registre d'outils vide hors serveur).
 
 ## Infra
 
@@ -1120,6 +1005,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 
 ## Docs
 
+- `docs/commands.md` — recettes tests / deploy / logs / inspection DB + leurs pièges.
 - `docs/connector-model.md` — **carte d'ensemble** : les **3 couches** d'un connecteur (disponibilité / authentification / option de connecteur), la matrice des niveaux (user/groupe/org/plateforme), le vocabulaire canonique, le seam `access.has_option`. **À lire en premier** avant de toucher activation/clés/options (les autres docs ci-dessous = le détail par couche).
 - `docs/connector-vault.md` — **archi centrale** : registre source unique (`connectors.py`), coffre chiffré unique `connector_credentials` (clés API + platform_keys + sessions linkedin/crunchbase/google multi-compte), enveloppe AES-256-GCM **obligatoire** (pas de plaintext), résolution + palier org, **credentials qui se consomment à l'usage (rotation)** et le modèle application-d'org ≠ jeton-d'identité. À lire avant de toucher credentials/registre/résolution.
 - `docs/roles-and-resolution.md` — rôles (3 paliers) + cascade de résolution de clé / grants / platform keys.
