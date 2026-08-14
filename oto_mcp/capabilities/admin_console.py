@@ -19,7 +19,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from .. import credentials_store, db
-from . import orgs_admin, orgs_members, orgs_reads, platform_invites, users_admin
+from . import (orgs_admin, orgs_members, orgs_reads, platform_invites, unipile_seats,
+               users_admin)
 from ._authz import ADMIN_BY_OP, ORG_ADMIN_OF, ORG_MEMBER_OF, PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
@@ -191,6 +192,36 @@ def _invite(ctx: ResolvedCtx, inp: InviteAdminInput) -> dict:
         invite_id=_need(inp.invite_id, "missing_invite_id", "`invite_id` requis pour revoke.")))
 
 
+# ── oto_admin_unipile_seat : list / release (ce que la plateforme PAIE) ──────
+class UnipileSeatAdminInput(BaseModel):
+    op: Literal["list", "release"]
+    account_id: Optional[str] = None      # release
+
+
+class UnipileSeatConsoleOut(BaseModel):
+    """Les deux formes d'un même concept : l'inventaire (op=list) et l'accusé de
+    libération (op=release). Champs optionnels plutôt que deux schémas, parce que la
+    console est UN tool — celui qui lit le schéma doit voir les deux sorties."""
+    # op=list
+    configured: Optional[bool] = None
+    instance_dsn: Optional[str] = None
+    seats: Optional[list[unipile_seats.Seat]] = None
+    orphan_count: Optional[int] = None
+    reclaimable_count: Optional[int] = None
+    # op=release
+    ok: Optional[bool] = None
+    account_id: Optional[str] = None
+    was: Optional[str] = None
+
+
+async def _unipile_seat(ctx: ResolvedCtx, inp: UnipileSeatAdminInput) -> dict:
+    if inp.op == "list":
+        return await unipile_seats._list_seats(ctx, unipile_seats.SeatsListInput())
+    return await unipile_seats._release_seat(ctx, unipile_seats.SeatReleaseInput(
+        account_id=_need(inp.account_id, "missing_account_id",
+                         "`account_id` requis pour release.")))
+
+
 # ── oto_admin_signal : list / resolve (boucle d'usage, ADR 0017) ─────────────
 class SignalAdminInput(BaseModel):
     op: Literal["list", "resolve"]
@@ -277,6 +308,17 @@ CAPABILITIES += [
                      "send_email=false returns the link only) / list (pending platform "
                      "invitations) / revoke (`invite_id`). Platform admin."),
         mcp="oto_admin_invite",
+    ),
+    Capability(
+        key="admin.unipile_seat", handler=_unipile_seat, Input=UnipileSeatAdminInput,
+        authz=SUPER_ADMIN, Output=UnipileSeatConsoleOut,
+        description=("Seats on the shared unipile platform key — what the platform PAYS "
+                     "for (super admin). op=list (each seat + `state`: bound in service | "
+                     "disconnected, owner unhooked it on oto but it still bills | orphan, "
+                     "nobody claims it; `reclaimable_count` = what you can stop paying) / "
+                     "release (`account_id` — deletes it on unipile. IRREVERSIBLE; refuses "
+                     "a seat still in service, that disconnection belongs to its owner)."),
+        mcp="oto_admin_unipile_seat",
     ),
     Capability(
         key="admin.signal", handler=_signal, Input=SignalAdminInput,

@@ -202,18 +202,24 @@ def list_unipile_accounts_by_org() -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def unipile_account_owners() -> list[dict]:
-    """Les comptes unipile mappés (bindings vivants) → propriétaire (sub/email) + org.
-    Pour la vue admin « sièges de la clé plateforme » : réconcilier les comptes présents
-    sur l'instance partagée avec leurs propriétaires oto (account_id NON mappé = orphelin)."""
+def unipile_account_owners(include_disconnected: bool = False) -> list[dict]:
+    """Les comptes unipile mappés → propriétaire (sub/email) + org. Pour la vue admin
+    « sièges de la clé plateforme » : réconcilier les comptes présents sur l'instance
+    partagée avec leurs propriétaires oto.
+
+    `include_disconnected=True` rend AUSSI les bindings soft-déconnectés (`disconnected_at`
+    posé). Sans eux, un siège que son propriétaire a simplement déconnecté paraît
+    **orphelin** alors qu'il est réclamé — le libérer casse le rebind déterministe et
+    on ne sait plus à qui écrire. Un vrai orphelin n'a AUCUNE ligne, morte comprise."""
+    where = "" if include_disconnected else " WHERE ua.disconnected_at IS NULL"
     with _connect() as conn:
         rows = conn.execute(
             "SELECT ua.account_id, ua.provider, ua.account_name, ua.sub, u.email, "
-            "ua.org_id, o.name AS org_name, ua.connected_at, ua.platform_seat "
+            "ua.org_id, o.name AS org_name, ua.connected_at, ua.disconnected_at, "
+            "ua.platform_seat "
             "FROM unipile_accounts ua "
             "LEFT JOIN users u ON u.sub = ua.sub "
-            "LEFT JOIN orgs o ON o.id = ua.org_id "
-            "WHERE ua.disconnected_at IS NULL"
+            "LEFT JOIN orgs o ON o.id = ua.org_id" + where
         ).fetchall()
     return [dict(r) for r in rows]
 

@@ -241,52 +241,6 @@ def make_routes(
         db.clear_unipile_account(sub, access.current_org(sub), provider)
         return json_response(request, {"ok": True})
 
-    async def unipile_platform_seats(request: Request) -> JSONResponse:
-        """[super_admin] Sièges de la **clé plateforme** unipile : tous les comptes
-        présents sur l'instance partagée (Otomata, api.unipile.com), réconciliés avec leur
-        propriétaire oto via `unipile_accounts`. Un compte sur l'instance NON mappé =
-        **orphelin** (créé puis user churné → coûte ~5 €/mois pour rien). Révèle
-        l'ownership cross-user → super_admin only. Ne renvoie aucun secret."""
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return json_error(request, 403, "forbidden")
-        from . import credentials_store
-        insts = credentials_store.list_platform_instances("unipile")  # ADR 0044 §F : coffre unifié
-        if not insts:
-            return json_response(request, {"configured": False, "seats": [],
-                                           "instance_dsn": None, "orphan_count": 0})
-        api_key = credentials_store.get_credential(credentials_store.PLATFORM, insts[0]["label"], "unipile")
-        from oto.tools.unipile import UnipileClient
-        client = UnipileClient(api_key=api_key)  # dsn=None → env/api.unipile.com (instance plateforme)
-        try:
-            instance = await asyncio.to_thread(client.list_accounts)
-        except Exception as e:
-            return json_error(request, 502, f"unipile_list_failed: {e}")
-        owners = {r["account_id"]: r for r in db.unipile_account_owners()}
-        seats = []
-        for a in instance:
-            o = owners.get(a.get("id"))
-            srcs = a.get("sources") or []
-            seats.append({
-                "account_id": a.get("id"),
-                "name": a.get("name"),
-                "type": a.get("type"),
-                "status": (srcs[0].get("status") if srcs else None) or "ok",
-                "owner_sub": o["sub"] if o else None,
-                "owner_email": o["email"] if o else None,
-                "org_id": o["org_id"] if o else None,
-                "org_name": o["org_name"] if o else None,
-                "orphan": o is None,
-            })
-        return json_response(request, {
-            "configured": True,
-            "instance_dsn": client.dsn,
-            "seats": seats,
-            "orphan_count": sum(1 for s in seats if s["orphan"]),
-        })
-
     async def platform_access(request: Request) -> JSONResponse:
         """[super_admin] Accès PLATEFORME d'un connecteur (ADR 0044 §H) : les orgs et
         membres à qui la plateforme ouvre ce connecteur — grantees de la clé plateforme
@@ -396,8 +350,9 @@ def make_routes(
         })
 
     return [
-        Route("/api/admin/unipile/seats", unipile_platform_seats, methods=["GET"]),
-        Route("/api/admin/unipile/seats", options_handler, methods=["OPTIONS"]),
+        # Les sièges de la clé plateforme unipile (inventaire + libération) sont des
+        # CAPACITÉS depuis le 15/08 (`capabilities/unipile_seats.py`) : mêmes chemins,
+        # dérivés — plus de route écrite ici.
         Route("/api/admin/connectors/{provider}/platform-access", platform_access, methods=["GET"]),
         Route("/api/admin/connectors/{provider}/platform-access", set_platform_access, methods=["POST"]),
         Route("/api/admin/connectors/{provider}/platform-access", options_handler, methods=["OPTIONS"]),

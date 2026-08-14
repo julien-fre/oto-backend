@@ -72,7 +72,8 @@ _KNOWN: dict[str, str] = {
     "/api/me/unipile": DEBT,
     "/api/me/unipile/connect": DEBT,
     "/api/me/unipile/reconcile": DEBT,
-    "/api/admin/unipile/seats": DEBT,
+    # (`/api/admin/unipile/seats` a quitté cette liste le 15/08 : inventaire ET
+    #  libération sont des capacités — `capabilities/unipile_seats.py`.)
     "/api/admin/connectors/activation": DEBT,
     "/api/admin/connectors/{provider}/platform-access": DEBT,
     # ⚠️ Le 2026-08-12 (#302), le datastore a quitté cette liste EN ENTIER — onze
@@ -230,7 +231,7 @@ def test_rest_debt_only_shrinks():
     pas une dette, elle la RÉVÈLE. Toute autre hausse est un relâchement.
     """
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 39, (
+    assert len(debt) <= 38, (
         f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
         "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
 
