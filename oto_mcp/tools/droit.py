@@ -78,10 +78,10 @@ def register(mcp: FastMCP) -> None:
         - **"search"** (default): search the full text of French collective
           agreements: articles, avenants, salary schedules, extension orders.
           Returns {count, articles: [{id, num, texte_titre, idcc, convention,
-          extrait, source_url, …}]}. Fetch full text with op="get".
+          extrait, permalien, lien_construit, …}]}. Fetch full text with op="get".
         - **"get"**: full consolidated text of a collective-agreement article
-          (KALIARTI…), with its parent text (avenant/accord), convention (IDCC)
-          and a verifiable Légifrance source_url.
+          (KALIARTI…), with its parent text (avenant/accord), convention (IDCC),
+          a verifiable `permalien` and a best-effort Légifrance `lien_construit`.
 
         Args:
             op: search (default) | get.

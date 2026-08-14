@@ -818,7 +818,11 @@ def register(mcp: FastMCP) -> None:
                 "texte_chars": text.get("texte_chars"),
                 "texte_tronque": text.get("tronque"),
                 "next_offset": text.get("next_offset"),
-                "source_url": text.get("source_url")}
+                # Breaking FOD #335 (relayé #343) : `permalien` (vérifiable, 404
+                # franc) + `lien_construit` (Légifrance, best-effort) remplacent
+                # `source_url`, disparu de ce fond.
+                "permalien": text.get("permalien"),
+                "lien_construit": text.get("lien_construit")}
 
     @mcp.tool()
     def fr_accords_themes() -> list[dict]:
@@ -845,7 +849,9 @@ def register(mcp: FastMCP) -> None:
 
         Returns metadata + `texte` (extracted from the filed docx; may be empty
         when no integral version was published) + `texte_chars`/`offset`/
-        `next_offset` + verifiable `source_url`.
+        `next_offset` + `permalien` (verifiable link, 404s honestly when the
+        text is absent) + `lien_construit` (best-effort Légifrance pattern,
+        not guaranteed to resolve).
         """
         from .. import fod_ccn
         return fod_ccn.accords_text(acco_id, offset=offset)
