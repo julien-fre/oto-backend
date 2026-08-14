@@ -493,6 +493,30 @@ résumé des connecteurs configurés et l'ancre de la KB d'org. C'est le pendant
 « identité MCP » du dashboard ; à appeler pour confirmer le contexte avant une action
 sensible. Pour basculer : `oto_use_org`.
 
+## Runner hébergé — l'état ici, la boucle dehors (chantier R1-R5, ADR 0064 au blueprint)
+
+Le backend porte l'ÉTAT du runner d'agents hébergé ; la BOUCLE vit dans le repo
+public **`otomata-tech/oto-runner`** (worker = client pur MCP+REST, ordonnanceur
+de flotte `fleet.py` piloté par un YAML par campagne — AUCUN kind serveur, la
+file reste uniforme ; déployé `/opt/oto-runner` sur otomata-0, gaté par le cran
+`OTO_RUNNER_ARMED`). Trois tables + leurs capacités :
+- **fil des runs** `run_messages` — capacité `runs.thread` (MCP `oto_run_thread`
+  + REST `/api/me/runs/thread`) : état d'exécution EFFAÇABLE (purge 30 j), append
+  = propriétaire seul, read = org_admin en projection neutre (`include_raw` au
+  propriétaire) ; la reprise inter-agents lit le JOURNAL, jamais le fil.
+- **file de jobs** `runner_jobs` — capacité `runner.jobs` (REST-only
+  `/api/me/runner/jobs`) : claim SKIP LOCKED + bail re-claimable, backoff,
+  `result` JSONB déclaré à la conclusion (usage_tokens, `tool_counts` — le
+  « tour perdu », un agent qui analyse sans écrire, se lit au grain job),
+  op=list org-scopé (surveillance dashboard `/automations`).
+- **déclencheurs** `runner_triggers` — capacité + MCP `oto_trigger`, tick
+  backend avec CAS sur `next_due` (prod/preprod partagent la base : un seul
+  gagnant par échéance).
+⚠️ Les jetons de contexte (`_project`…) sont advertisés PAR TOOL : un client
+les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclaré
+fait refuser l'appel entier à la validation). Conception + état des preuves :
+blueprint `chantier-runner.md` ; pilote = campagne Audiens (fusion R5, 14/08).
+
 ## Automatisations — déclencher une routine Claude Code (v1.73.0)
 
 Connecteur `routine` (`routine_fire.py` + capacité `me.automation.fire`, MCP
