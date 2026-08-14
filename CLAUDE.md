@@ -308,6 +308,36 @@ Sheets). Surfaces : tools `data_*` (MCP) + REST `/api/datastore/*` ; OAuth Googl
 per-user (Gmail/Tasks, multi-compte) câblé ici. **Détail : `docs/datastore.md`**
 (surfaces, OAuth multi-compte + scopes restricted/CASA, setup GCP, env vars).
 
+**Découpé par COUTURES depuis le 13/08 (#325)** — le fichier est l'unité d'occupation
+d'une session sur un tree partagé, et quatre chantiers ont dû entrer dans les trois
+mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser un lot :
+
+| module | ce qu'il porte |
+|---|---|
+| `db/paths.py` | désigner une valeur : `email` · `email.origine` · `contacts[0].email` · `contacts[].email` |
+| `db/query.py` | construire filtres/tris/agrégats — **PUR**, ne touche jamais une connexion |
+| `db/rowlock.py` | le bail d'une ligne (file de travail) |
+| `db/datastore_ns.py` | le TABLEAU : existence, nom, propriété, partages |
+| `db/datastore.py` | les LIGNES : CRUD + clé métier/index |
+| `datastore_errors.py` | les refus — **aucune dépendance**, importable de partout |
+| `datastore_columns.py` | la colonne côté Python : fusion des couches, résolution des anciens noms |
+| `datastore_schema_ops.py` | poser/retoucher/nettoyer le FORMAT (mixin du store) |
+| `datastore.py` | le store qui COMPOSE — gros par nature |
+
+Déplacements PURS : `db/datastore.py` et `datastore.py` ré-exportent, la surface plate
+`db.<fn>` est figée par `tests/test_db_surface_frozen.py` (cliquet : on peut ajouter,
+jamais retirer). ⚠️ Une scission fait dormir les noms hérités des globals dans les
+branches rares — balayage figé par `tests/test_datastore_ns_duplicate.py`.
+
+⚠️ **Ce qu'oto SAIT d'un champ, et ce qu'il ne saura jamais** (tranché par Alexis le
+14/08). Oto gère les **types standards** : un `number` se trie numériquement, une date
+chronologiquement — l'ignorer donnait `10, 100, 2, 9` (livré v1.112.0). Il ne gère PAS
+l'interprétation métier d'une VALEUR : que `20_49` soit une tranche INSEE qui suit
+`1_2` est le savoir du consommateur, jamais celui d'oto. Entre les deux, l'ordre des
+`options` déclarées au schéma **est honoré** — parce que c'est une DEMANDE adressée à
+oto, pas une compréhension qu'il aurait du métier. Même frontière que `flat_alias` :
+exécuter une déclaration n'est pas deviner une convention.
+
 > **La face REST est 100 % DÉRIVÉE depuis le 2026-08-12 (#302)** : les 17 routes
 > écrites à la main d'`api_routes_datastore.py` (10 chemins) sont des capacités
 > (`capabilities/datastore_{namespaces,rows,schema,sharing}.py`, aux côtés de
@@ -1100,6 +1130,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 - `docs/usage-loop.md` — boucle d'usage ADR 0017 (calllog + feedback + déroulés).
 - `docs/monitoring.md` — monitoring des appels MCP (tool_call_log + surface admin).
 - `docs/datastore.md` — datastore spine PG (`data_*`) + OAuth Google per-user (setup GCP, scopes).
+- `docs/datastore-colonne-tableau.md` — spec de la colonne-tableau (oto#22 barreau 2) : forme servie, couches d'un item, fonctions natives, non-définitions, et le chemin de migration en double-service.
 - `docs/groups-and-roles.md` — groupes/départements & hiérarchie de droits (ADR 0012).
 - `docs/browser-automation.md` — substrat Browserbase (Context/Live View/run_fetch), connecteurs brevo/crunchbase/pennylaneged, connecteur générique `browser` (N sites derrière login), LinkedIn isolation de session.
 - `docs/projects.md` — projet (liens typés, docs), livraison client cascade, endpoint MCP + partage navigable par projet (`<slug>.{mcp,share}.oto.cx`).

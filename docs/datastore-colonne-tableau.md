@@ -1,3 +1,17 @@
+---
+title: Spec — la colonne-tableau
+type: explanation
+description: >-
+  Comment une colonne de datastore porte une petite liste de fiches (les
+  interlocuteurs d'une entreprise) et reste interrogeable : forme servie et garantie
+  du nom nu, couches d'un attribut d'item, ce que déclare le schéma (`type: list`,
+  `of`, `max_items`, `flat_alias`), les quatre fonctions natives et les deux
+  non-définitions assumées, et le chemin de migration en double-service qui sert les
+  anciens noms `contactN_*` pendant la bascule. À charger avant de toucher aux
+  sous-tableaux, à la conversion (#332) ou aux étapes 5-6.
+adr: [0046]
+---
+
 # Spec — la colonne-tableau (oto#22, barreau 2)
 
 **But** : une colonne porte une petite liste de fiches (les interlocuteurs d'une
