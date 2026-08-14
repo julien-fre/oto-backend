@@ -42,10 +42,20 @@ def _parse(text: str) -> tuple[dict, str]:
     return meta, m.group(2).strip()
 
 
+def file_guide(slug: str) -> Optional[dict]:
+    """Le SEED fichier d'un guide plateforme, ou `None`. Le repli de lecture."""
+    return next((g for g in list_file_guides() if g["slug"] == slug), None)
+
+
 def list_file_guides() -> list[dict]:
     """SEEDS fichiers : `[{slug, title, description, body_md}]` trié par slug.
-    Ne sert plus qu'au seed de boot (`seed_platform_guides`) — la lecture live
-    passe par la DB."""
+
+    Semés au boot, ET **servis en repli quand la DB n'a pas de ligne** (scope platform) —
+    le même régime que le bloc A (`instructions._platform_block`), qui retombe sur sa
+    constante. Sans ce repli, l'absence de ligne = guide DISPARU jusqu'au prochain
+    redémarrage : supprimer un guide plateforme le retirait du catalogue au lieu de le
+    rendre à sa version de référence, et un environnement neuf n'avait de guides
+    qu'après un boot réussi."""
     if not _GUIDES_DIR.is_dir():
         return []
     out = []
@@ -161,9 +171,15 @@ def list_guides_for(sub: Optional[str] = None, org_id: Optional[int] = None) -> 
     """Guides on-demand VISIBLES par le caller : plateforme ∪ org active ∪ user —
     tout en DB. Chaque entrée porte son `scope`. Sans les corps."""
     from . import db
-    out = [{"slug": g["slug"], "scope": "platform", "title": g["title"],
-            "description": g["description"]}
-           for g in db.list_guides_db("platform", PLATFORM_OWNER)]
+    # Catalogue plateforme = lignes DB ∪ seeds fichiers, la DB primant sur son slug.
+    # L'union, sinon le catalogue mentirait au repli de lecture : un guide servable
+    # (fichier sans ligne) resterait invisible, donc introuvable.
+    en_db = {g["slug"]: g for g in db.list_guides_db("platform", PLATFORM_OWNER)}
+    fichiers = {g["slug"]: g for g in list_file_guides()}
+    out = [{"slug": slug, "scope": "platform",
+            "title": (en_db.get(slug) or fichiers[slug])["title"],
+            "description": (en_db.get(slug) or fichiers[slug])["description"]}
+           for slug in sorted(set(en_db) | set(fichiers))]
     if org_id is not None:
         out += [{"slug": g["slug"], "scope": "org", "title": g["title"],
                  "description": g["description"]} for g in db.list_guides_db("org", str(org_id))]
@@ -181,6 +197,11 @@ def read_guide_scoped(slug: str, *, scope: Optional[str] = None,
     for sc in ([scope] if scope else ["platform", "org", "user"]):
         if sc == "platform":
             g = db.get_guide_db("platform", PLATFORM_OWNER, slug)
+            if not g:
+                # Repli sur le SEED fichier — comme le bloc A retombe sur sa constante.
+                # Une ligne absente rend le guide à sa version de référence ; elle ne le
+                # fait pas disparaître.
+                g = file_guide(slug)
             if g:
                 return {"slug": slug, "scope": "platform", "title": g["title"],
                         "description": g["description"], "body_md": g["body_md"]}
