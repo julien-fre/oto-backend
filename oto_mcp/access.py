@@ -1429,7 +1429,13 @@ def _reachable_hint(sub: str, org: Optional[int], provider: str) -> str:
     if more > 0:
         lines.append(f"· … +{more} (oto_instance op=list pour tout voir)")
     return (
-        f"\nNB — des clés `{provider}` existent à portée :\n" + "\n".join(lines)
+        # Le hint nomme des clés qui appartiennent à l'entité citée, et un prestataire
+        # est membre des orgs de SES clients : sans cette réserve, il se lit comme un
+        # libre-service et l'agent bascule l'appel sur les crédits d'un client pour un
+        # travail qui n'est pas le sien (signalé le 12/08 sur une prospection maison
+        # renvoyée vers la clé d'une org cliente).
+        f"\nNB — des clés `{provider}` existent à portée, aux frais de l'entité citée "
+        f"— n'y bascule un appel QUE s'il est fait pour elle :\n" + "\n".join(lines)
         + "\nDurable : lie l'instance à ton projet (oto_project op=link)."
     )
 
