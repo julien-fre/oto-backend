@@ -803,10 +803,16 @@ def _row_errors(fields: list, data: dict, path: str,
             # Une condition en LISTE = requis quand la valeur ∈ liste (#347).
             # Avant, str(liste) ne matchait jamais : la déclaration qui semblait
             # ÉLARGIR la garde la rendait inerte, sans un mot.
+            # ⚠️ La valeur de condition se DÉBALLE (unwrap) comme toute valeur
+            # jugée — une qualification écrite en couches ({"valeur": …}) est un
+            # dict brut qui ne matche rien : la garde était désarmée par le
+            # geste NORMAL des agents (justifier en couches), et par tout merge
+            # sur une ligne portant déjà une couche (prouvé en re-validation :
+            # 5 fiches écartées sans motif, aucun refus).
             required = all(
-                str(data.get(k)) in {str(x) for x in v}
+                str(unwrap(data.get(k))) in {str(x) for x in v}
                 if isinstance(v, (list, tuple))
-                else str(data.get(k)) == str(v)
+                else str(unwrap(data.get(k))) == str(v)
                 for k, v in rw.items())
         if _is_empty(value):
             if required:

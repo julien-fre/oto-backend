@@ -277,3 +277,19 @@ def test_la_liste_valide_est_acceptee_a_la_pose():
     assert dsv2.validate_schema_def(
         {"fields": [{"key": "m",
                      "required_when": {"s": ["a", "b"]}}]}) == []
+
+
+def test_la_condition_deballe_les_couches_liste_et_scalaire():
+    """Le trou RÉEL derrière « la garde ne mord pas » (re-validation, 15/08) :
+    la condition lisait la valeur BRUTE — une qualification écrite en couches
+    ({"valeur": …}, le geste NORMAL des agents, et le résultat de tout merge
+    sur une ligne portant une couche) est un dict qui ne matche rien. Liste ET
+    scalaire étaient désarmés pareil ; « tout ce qui juge une valeur déballe
+    d'abord » vaut aussi pour les CONDITIONS."""
+    for cond in ({"s": ["x", "y"]}, {"s": "x"}):
+        schema = {"fields": [{"key": "s"}, {"key": "m", "required_when": cond}]}
+        errs = dsv2.validate_row(schema, {"s": {"valeur": "x", "comment": "j"}})
+        assert errs and "m" in errs[0], \
+            f"condition {cond} désarmée par une valeur en couches"
+        assert dsv2.validate_row(
+            schema, {"s": {"valeur": "x"}, "m": "motif"}) == []
