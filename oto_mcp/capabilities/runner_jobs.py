@@ -29,7 +29,7 @@ from .registry import CAPABILITIES
 
 
 class JobsInput(BaseModel):
-    op: Literal["enqueue", "claim", "bind_run", "complete", "extend", "get"]
+    op: Literal["enqueue", "claim", "bind_run", "complete", "extend", "get", "list"]
     # enqueue —
     kind: Optional[Literal["start", "continue"]] = None
     payload: Optional[dict[str, Any]] = None
@@ -44,14 +44,19 @@ class JobsInput(BaseModel):
     # complete — résultat déclaré par le worker (usage_tokens, stopped, steps…),
     # lu par un ordonnanceur de flotte (garde budget, R5). Jamais du contenu de fil.
     result: Optional[dict[str, Any]] = None
+    # list — surveillance dashboard : la file de l'org, du plus récent au plus ancien.
+    status: Optional[Literal["pending", "claimed", "done", "failed"]] = None
+    limit: int = 50
 
 
 class JobsOut(BaseModel):
-    # enqueue → id/status/due_at ; claim → job (ou null, file vide) ; les autres → ok/status.
+    # enqueue → id/status/due_at ; claim → job (ou null, file vide) ; list → jobs ;
+    # les autres → ok/status.
     id: Optional[int] = None
     status: Optional[str] = None
     due_at: Optional[str] = None
     job: Optional[dict[str, Any]] = None
+    jobs: Optional[list[dict[str, Any]]] = None
     ok: Optional[bool] = None
 
 
@@ -84,6 +89,12 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         job = db.claim_next_job(ctx.org_id, ctx.sub,
                                 lease_seconds=max(30, min(inp.lease_seconds, 3600)))
         return {"job": job}
+
+    if inp.op == "list":
+        # Surveillance (page Automatisations) : lecture org-scopée, jamais un
+        # geste — la liste rend de quoi écarter, le détail se demande par get.
+        return {"jobs": db.list_jobs(ctx.org_id, status=inp.status,
+                                     limit=inp.limit)}
 
     # Les quatre verbes de la prise exigent le job — et le db-layer les scope au
     # CLAIMANT : un pair qui tente de conclure le job d'un autre obtient le même

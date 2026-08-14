@@ -161,6 +161,26 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
     return dict(row) if row else None
 
 
+def list_jobs(org_id: int, status: Optional[str] = None,
+              limit: int = 50) -> list[dict]:
+    """La file vue d'en haut (surveillance dashboard) : les jobs de l'org, du
+    plus récent au plus ancien, filtrables par statut. Le payload est rendu
+    (références seulement, par contrat d'enqueue) mais jamais tronqué en
+    silence — c'est une LISTE : elle rend de quoi écarter, le détail par get."""
+    q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
+         "       claimed_by, last_error, result, due_at, created_at, finished_at "
+         "FROM runner_jobs WHERE org_id = %s")
+    params: list = [org_id]
+    if status:
+        q += " AND status = %s"
+        params.append(status)
+    q += " ORDER BY id DESC LIMIT %s"
+    params.append(max(1, min(int(limit), 200)))
+    with _connect() as conn:
+        rows = conn.execute(q, tuple(params)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_job(job_id: int, org_id: int) -> Optional[dict]:
     """Lecture d'un job, org-scopée — même 404 qu'un job inexistant côté capacité."""
     with _connect() as conn:

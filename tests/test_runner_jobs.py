@@ -180,6 +180,24 @@ def live(pg_dsn):
         root.close()
 
 
+def test_la_liste_est_scopee_a_lorg_et_filtrable(live):
+    """La surveillance (page Automatisations) : la file de MON org seulement,
+    du plus récent au plus ancien, filtrable par statut."""
+    from oto_mcp import db as d
+
+    a = d.enqueue_job(310, "start", payload={"procedure": "p1"})
+    d.enqueue_job(311, "start", payload={"procedure": "autrui"})
+    job = d.claim_next_job(310, "w-list", lease_seconds=60)
+    d.complete_job(job["id"], "w-list", False, error="boom")   # pending, attempt 1
+
+    jobs = d.list_jobs(310)
+    assert all("autrui" not in str(j.get("payload")) for j in jobs), \
+        "la file d'une autre org ne doit JAMAIS apparaître"
+    assert any(j["id"] == a["id"] for j in jobs)
+    en_attente = d.list_jobs(310, status="pending")
+    assert {j["status"] for j in en_attente} == {"pending"}
+
+
 def test_le_resultat_fait_l_aller_retour_en_base(live):
     """Le round-trip RÉEL : complete écrit `result`, get le rend — c'est ce que
     l'ordonnanceur de flotte lira pour sa garde budget. Un stub ne prouve ni la
