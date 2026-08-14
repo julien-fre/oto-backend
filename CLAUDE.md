@@ -118,6 +118,29 @@ Mistral). **Détail : `docs/auth-logto.md`** (gotchas, env, onboarding).
 > Toute fenêtre doit donc s'accompagner de la LISTE « qui repose quelles clés », prévenue
 > avant. ⚠️ Le scope `member` a `entity_id = "<org_id>:<sub>"` : une requête qui cherche le
 > sub nu ne les voit PAS (elles sont pourtant la majorité).
+>
+> ⚠️ **Une fusion de comptes emporte la MARQUE d'espace personnel — depuis le 14/08
+> seulement.** `orgs.personal_of` échappait aux deux garde-fous (pas une FK ⟹ invisible à
+> `test_migrate_sub_cascade` ; pas dans l'inventaire ⟹ hors `test_migrate_sub_inventory`,
+> qui vérifie que les entrées listées EXISTENT, jamais que les colonnes porteuses d'un
+> identifiant soient listées). La marque restait donc sur un identifiant que l'étape 4
+> supprime : plus d'espace personnel trouvable, et le boot suivant en fabriquait un neuf —
+> **deux organisations au même nom**, dont l'ancienne, celle qui porte l'historique,
+> n'était plus reconnue comme l'espace de son propriétaire. 14 comptes en prod, dont 9
+> issus de la seule bascule du 13/08 ; archivés à la main le 14/08 (les 14 doublons
+> n'avaient jamais servi : projets semés, aucune page, aucun tableau, aucune clé).
+> Traitement à part (étape 2 quater, `test_migrate_sub_personal_org.py`) : l'espace de
+> l'ANCIEN compte reste l'espace personnel sous le nouvel identifiant, celui du nouveau
+> est démarqué — jamais archivé automatiquement, « cet espace n'a jamais servi » ne se
+> décide pas au fond d'une transaction de merge.
+>
+> ⚠️ **Neuf autres colonnes portent un sub sans être repointées** (dérivation par mention
+> dans le DDL : `runs.sub`, `project_activity.sub`, `legal_acceptances.sub`,
+> `runner_triggers.sub`, `connector_acl.principal_id`, `option_comps.entity_id`,
+> `usage_signals.resolved_by`). Sans FK, ces lignes SURVIVENT au merge — mais rattachées à
+> un identifiant mort, donc invisibles au compte fusionné : déroulés et activité perdus de
+> vue, CGU à ré-accepter, et une **option offerte au compte d'origine cesse de s'appliquer**.
+> Chacune demande un arbitrage (repointer ou abandonner avec sa raison) — non traité.
 
 > **⚠️ CUTOVER ADR 0040 (2026-07-06) — `.ninja`↔`.cx` inversés.** Désormais **PROD =
 > `mcp.oto.cx`** (:9103, audience canonique `mcp.oto.cx/mcp`, dashboard `manage.oto.cx`) et

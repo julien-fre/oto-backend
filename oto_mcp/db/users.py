@@ -198,7 +198,9 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
     """MERGE transactionnel ancien→nouveau compte (bascule de tenant, issue #56).
     Hérite les champs d'accès de l'ancien, repointe TOUTES les tables keyed-by-sub
     (les 3 FK `ON DELETE CASCADE` incluses, AVANT de supprimer l'ancien → pas de
-    cascade destructrice), supprime l'ancienne ligne users, pose l'alias. Idempotent
+    cascade destructrice) **et la marque d'espace personnel** (`orgs.personal_of`,
+    hors inventaire car son index unique interdit l'UPDATE nu — étape 2 quater),
+    supprime l'ancienne ligne users, pose l'alias. Idempotent
     (no-op si l'ancien sub n'existe plus). True si une migration a eu lieu.
 
     ⚠️ Le merge **par email** est borné à UN MÊME tenant (ADR 0052, R3 tranché le
@@ -287,6 +289,39 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
                 (old_sub, new_sub))
             conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s",
                          (new_sub, old_sub))
+        # 2 quater. La MARQUE d'espace personnel (`orgs.personal_of`) : hors de
+        #    `_SUB_COLUMNS` parce qu'un UPDATE nu y violerait l'index unique
+        #    `uq_orgs_personal_of` — et pas dans un cas tordu, dans le cas NOMINAL :
+        #    le login crée le stub (donc son espace) AVANT que le merge ne le fusionne,
+        #    si bien que les deux comptes en ont un.
+        #    Sans ce traitement, la marque restait sur un identifiant qui n'existe plus.
+        #    `get_personal_org` ne trouvait donc plus rien pour le compte survivant, et
+        #    `ensure_personal_org` fabriquait un espace NEUF au boot suivant : deux
+        #    organisations au même nom dans la liste de l'utilisateur, dont l'ancienne —
+        #    celle qui porte son historique — n'est plus reconnue comme son espace.
+        #    Constaté le 2026-08-14 sur 14 comptes, dont les 9 de la bascule de tenant
+        #    du 13/08 (un espace en double par personne migrée).
+        #    Règle : l'espace de l'ANCIEN compte porte l'historique ⟹ c'est lui qui
+        #    reste l'espace personnel. Celui du nouveau est simplement DÉMARQUÉ — il
+        #    redevient une organisation ordinaire, que son propriétaire peut supprimer.
+        #    On ne l'archive pas ici : « cet espace n'a jamais servi » ne se décide pas
+        #    au fond d'une transaction de merge, et un archivage automatique effacerait
+        #    de la vue un espace qui, lui, aurait servi. L'avertissement ci-dessous le
+        #    nomme pour que le ménage reste un acte explicite.
+        perso_ancienne = conn.execute(
+            "SELECT id FROM orgs WHERE personal_of=%s AND archived_at IS NULL",
+            (old_sub,)).fetchone()
+        if perso_ancienne:
+            demarquees = conn.execute(
+                "UPDATE orgs SET personal_of=NULL WHERE personal_of=%s "
+                "AND archived_at IS NULL RETURNING id", (new_sub,)).fetchall()
+            conn.execute("UPDATE orgs SET personal_of=%s WHERE id=%s",
+                         (new_sub, perso_ancienne["id"]))
+            if demarquees:
+                logger.warning(
+                    "tenant migration: espace personnel conservé = org #%s (celui de %s) ; "
+                    "org(s) %s démarquée(s), à archiver si elles n'ont jamais servi",
+                    perso_ancienne["id"], old_sub, [r["id"] for r in demarquees])
         # 3. repointer toutes les colonnes sub.
         for table, col in _SUB_COLUMNS:
             conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s", (new_sub, old_sub))
