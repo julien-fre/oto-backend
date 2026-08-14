@@ -355,6 +355,66 @@ def _ds_where(ns_id: int, q: Optional[str], filters: Optional[list]) -> tuple[st
 _NUMERIC_RE = r'^\s*-?[0-9]+(\.[0-9]+)?\s*$'
 
 
+def _order_guards(value_sql: str, value_params: list, order_type: str,
+                  options) -> tuple:
+    """Les trois prédicats d'un tri typé (#336), fragments + params appariés :
+    `(vide, vide_p, conforme, conforme_p, typé, typé_p)`.
+
+    Partagés entre l'ORDER BY et le compteur d'écart — deux copies divergeraient
+    exactement comme le filtre et le tri avaient divergé (le même champ juste à
+    une question, faux à l'autre)."""
+    vide = f"({value_sql} IS NULL OR {value_sql} = '')"
+    vide_p = list(value_params) * 2
+    if order_type == "number":
+        # La même garde que le filtre : caster une valeur non numérique ferait
+        # échouer la requête ENTIÈRE — le CASE ne caste que ce qui est conforme.
+        conforme = f"{value_sql} ~ %s"
+        conforme_p = list(value_params) + [_NUMERIC_RE]
+        typed = f"({value_sql})::numeric"
+        typed_p = list(value_params)
+    elif order_type == "enum":
+        conforme = f"{value_sql} = ANY(%s::text[])"
+        conforme_p = list(value_params) + [list(options or [])]
+        typed = f"array_position(%s::text[], {value_sql})"
+        typed_p = [list(options or [])] + list(value_params)
+    else:  # date/datetime : ISO trie juste par l'alphabet — seul le bloc vide change
+        conforme = "TRUE"
+        conforme_p = []
+        typed = value_sql
+        typed_p = list(value_params)
+    return vide, vide_p, conforme, conforme_p, typed, typed_p
+
+
+def typed_order_sql(value_sql: str, value_params: list, order_type: str,
+                    options, direction: str) -> tuple[str, list]:
+    """L'ORDER BY d'un tri typé (#336) : trois blocs, dans cet ordre quel que
+    soit le sens — conformes (triés selon le type, ASC/DESC demandé), puis non
+    conformes (bloc alphabétique : une valeur qu'on ne sait pas ranger ne
+    s'intercale pas et ne prend jamais la tête), puis vides (une absence n'est
+    pas une donnée mal rangée)."""
+    vide, vide_p, conforme, conforme_p, typed, typed_p = _order_guards(
+        value_sql, value_params, order_type, options)
+    sql = (f"CASE WHEN {vide} THEN 2 WHEN {conforme} THEN 0 ELSE 1 END, "
+           f"CASE WHEN NOT {vide} AND {conforme} THEN {typed} END {direction}, "
+           f"{value_sql} ASC, row_id {direction}")
+    params = (vide_p + conforme_p                      # bloc sélecteur
+              + vide_p + conforme_p + typed_p          # valeur typée
+              + list(value_params))                    # bloc alphabétique
+    return sql, params
+
+
+def order_health_sql(value_sql: str, value_params: list, order_type: str,
+                     options) -> tuple[str, list]:
+    """Les deux compteurs d'écart du tri typé — `off_type` et `empty` — en une
+    projection `COUNT(*) FILTER`, sur le même WHERE que la page (le compteur
+    décrit le JEU filtré entier, jamais la page — sinon il ment dès la page 2)."""
+    vide, vide_p, conforme, conforme_p, _t, _tp = _order_guards(
+        value_sql, value_params, order_type, options)
+    sql = (f"COUNT(*) FILTER (WHERE NOT {vide} AND NOT {conforme}) AS off_type, "
+           f"COUNT(*) FILTER (WHERE {vide}) AS empty")
+    return sql, vide_p + conforme_p + vide_p
+
+
 def _metric_filter_sql(m: dict) -> tuple[str, list]:
     """Le `FILTER (WHERE …)` d'une métrique conditionnelle (oto#22 barreau 1).
 

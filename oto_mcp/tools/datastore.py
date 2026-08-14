@@ -619,6 +619,14 @@ def register(mcp: FastMCP) -> None:
                 `_updated_at`, `_id`). Omit = creation order. Sorting in SQL is how
                 you get "the 10 most recent" or "the top scores" without pulling the
                 table and sorting it yourself. (list mode only)
+                Sorting honors the DECLARED type of the column: a `number` sorts
+                numerically (never "10 < 2"), an `enum` sorts in its declared
+                option order, a `date` chronologically. Values that don't fit the
+                type (junk in a number column, a value outside the enum's options)
+                go to the TAIL in both directions, alphabetically; empty cells go
+                last of all. When that happens the response carries
+                `order_health: {off_type, empty}` — counts over the whole filtered
+                set, absent when everything conforms.
             order_dir: `desc` (default) or `asc`. Only meaningful with `order_by`.
         """
         store = _acting_store()
@@ -636,6 +644,10 @@ def register(mcp: FastMCP) -> None:
             rows = [_project_row(r, fields) for r in page["rows"]] if fields else page["rows"]
             out = {"rows": rows, "count": len(rows),
                    "next_cursor": page["next_cursor"]}
+            # Tri typé (#336) : l'écart (valeurs hors type/options, cases vides —
+            # rangées en queue) se DIT, sinon le tri a l'air délibéré et ment.
+            if page.get("order_health"):
+                out["order_health"] = page["order_health"]
             # Projection sur des colonnes absentes de TOUTES les lignes = même piège
             # silencieux que le filter (#163) : on le signale sans bloquer.
             # ⚠️ Le SCHÉMA d'abord, l'échantillon seulement à défaut : une colonne

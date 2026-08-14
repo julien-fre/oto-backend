@@ -346,6 +346,18 @@ class DatastorePg(SchemaOpsMixin):
     def _schema_of(self, ns_id: int) -> Optional[dict]:
         return self._ns_of(ns_id).get("schema")
 
+    @staticmethod
+    def _order_health(ns_id: int, order_by, otype, oopts, q, filters) -> Optional[dict]:
+        """Compteur d'écart d'un tri typé (#336) — présent SEULEMENT quand il y a
+        un écart : prévenir là où tout est conforme ferait cesser de lire
+        l'avertissement là où il compte (la leçon de l'avertissement scout)."""
+        if not otype:
+            return None
+        health = db.datastore_order_health(
+            ns_id, order_by=order_by, order_type=otype, order_options=oopts,
+            q=q, filters=filters)
+        return health if (health["off_type"] or health["empty"]) else None
+
     def _trace(self, trace: Optional[dict], ns_id: int, ns: dict,
                *, prev_status: Any = None) -> None:
         """RELEVÉ du geste pour le journal (seam ADR 0046 b4) : ce que la surface REST
@@ -933,15 +945,23 @@ class DatastorePg(SchemaOpsMixin):
         order_by = _to_path(sch, order_by)
         if order_by:
             offset = _decode_offset_cursor(cursor) if cursor else 0
+            # Même résolution de type que `page_rows` : le tri d'un champ ne peut
+            # pas répondre juste sur une face et faux sur l'autre (#336).
+            otype, oopts = dsv2.order_spec(sch, order_by)
             rows = db.datastore_list_rows(
                 ns_id, offset=offset, limit=limit, order_by=order_by,
-                order_dir=order_dir, q=q, filters=filters)
+                order_dir=order_dir, q=q, filters=filters,
+                order_type=otype, order_options=oopts)
             next_cursor = (_encode_offset_cursor(offset + len(rows))
                            if len(rows) == limit else None)
             if sch is None and rows:
                 sch = self._schema_of(ns_id)
-            return {"rows": [self._row_to_dict(r, sch) for r in rows],
-                    "next_cursor": next_cursor}
+            out = {"rows": [self._row_to_dict(r, sch) for r in rows],
+                   "next_cursor": next_cursor}
+            health = self._order_health(ns_id, order_by, otype, oopts, q, filters)
+            if health:
+                out["order_health"] = health
+            return out
         after = _decode_cursor(cursor) if cursor else None
         if after and after.startswith(_OFFSET_CURSOR_PREFIX):
             raise InvalidCursor(cursor)  # curseur trié repassé sans `order_by`
@@ -1015,22 +1035,37 @@ class DatastorePg(SchemaOpsMixin):
 
         `filter` manquait ici alors que `cursor_rows`, `aggregate` et `claim_next`
         le portent : la face REST du même verbe ignorait donc **en silence** un
-        paramètre que la face MCP honore (#303)."""
+        paramètre que la face MCP honore (#303).
+
+        Le tri honore le TYPE DÉCLARÉ de la colonne (#336) : `number` trié
+        numériquement, `enum` dans l'ordre déclaré des options, `date` en
+        chronologique. Les valeurs non conformes vont en QUEUE dans les deux
+        sens (bloc alphabétique), les cases vides tout au bout — et quand il y
+        en a, la réponse porte `order_health: {off_type, empty}` (compté sur le
+        jeu filtré entier, absent quand tout est conforme)."""
         ns_id = self._resolve(namespace)
         clauses = _filter_clauses(filter, filters) or None
         sch = self._schema_of(ns_id)
         clauses = _resolve_filters(sch, clauses) or None
         order_by = _to_path(sch, order_by)
+        # Le tri honore le TYPE déclaré (#336) — résolu ICI, où le schéma est connu :
+        # la couche db reçoit un type générique, jamais le schéma.
+        otype, oopts = dsv2.order_spec(sch, order_by)
         rows = db.datastore_list_rows(
             ns_id, offset=offset, limit=limit, order_by=order_by,
-            order_dir=order_dir, q=q, filters=clauses)
-        return {
+            order_dir=order_dir, q=q, filters=clauses,
+            order_type=otype, order_options=oopts)
+        out = {
             "rows": [self._row_to_dict(r, sch) for r in rows],
             # Le total doit décrire le MÊME jeu que la page : filtré aussi, sinon la
             # pagination du dashboard annonce des lignes qu'elle ne servira jamais.
             "total": db.datastore_count_rows(ns_id, q=q, filters=clauses),
             "offset": offset, "limit": limit,
         }
+        health = self._order_health(ns_id, order_by, otype, oopts, q, clauses)
+        if health:
+            out["order_health"] = health
+        return out
 
     def update_row(self, namespace: str, row_id: str, patch: dict, *,
                    trace: Optional[dict] = None) -> dict:

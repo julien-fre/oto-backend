@@ -79,6 +79,8 @@ from .query import (  # noqa: F401
     _DS_MAX_FIELDS_PER_FILTER,
     _DS_MAX_FILTERS,
     group_key,
+    order_health_sql,
+    typed_order_sql,
 )
 from .users import upsert_user
 
@@ -408,14 +410,21 @@ def datastore_get_row(ns_id: int, row_id: str) -> Optional[dict]:
 
 def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = None,
                         order_by: Optional[str] = None, order_dir: str = "desc",
-                        q: Optional[str] = None, filters: Optional[list] = None) -> list[dict]:
+                        q: Optional[str] = None, filters: Optional[list] = None,
+                        order_type: Optional[str] = None,
+                        order_options: Optional[list] = None) -> list[dict]:
     """Page de rows d'un namespace. `order_by` : `_created_at`/`_updated_at`/`_id`
     (colonnes méta) ou un nom de champ user → `data->>field`. `q` : recherche
     plein-texte sur tout le JSON (substring ACCENT-INSENSIBLE, aligné sur oto_search).
     `filters` : filtres par
     colonne (liste `{field, op, value}`, combinés AND — cf. `_ds_filter_clauses`).
     Tri/pagination/recherche/filtres côté SQL (server-side, ADR 0016). `limit=None`
-    = toutes les rows (compat `store.list_rows` / MCP `data_rows`)."""
+    = toutes les rows (compat `store.list_rows` / MCP `data_rows`).
+
+    `order_type`/`order_options` (#336) : le TYPE DÉCLARÉ du champ trié
+    (`number`/`enum`/`date`), résolu PAR LE STORE — cette couche ne connaît pas
+    le schéma et ne doit pas le connaître, elle reçoit un type générique et
+    construit l'expression (cf. `typed_order_sql`). None = tri textuel historique."""
     direction = "ASC" if str(order_dir).lower() == "asc" else "DESC"
     where, params = _ds_where(ns_id, q, filters)
     if order_by in (None, "", "_created_at"):
@@ -424,6 +433,10 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
         order_sql = f"updated_at {direction}, row_id {direction}"
     elif order_by == "_id":
         order_sql = f"row_id {direction}"
+    elif order_type:
+        _v, _vp = field_read_sql(order_by)
+        order_sql, _op = typed_order_sql(_v, _vp, order_type, order_options, direction)
+        params.extend(_op)
     else:
         _v, _vp = field_read_sql(order_by)
         order_sql = f"{_v} {direction}, row_id {direction}"
@@ -469,6 +482,25 @@ def datastore_list_rows_after(ns_id: int, *, after_row_id: Optional[str] = None,
             tuple(params),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def datastore_order_health(ns_id: int, *, order_by: str, order_type: str,
+                           order_options: Optional[list] = None,
+                           q: Optional[str] = None,
+                           filters: Optional[list] = None) -> dict:
+    """Les compteurs d'écart d'un tri typé (#336) : `{off_type, empty}` sur le
+    même WHERE que la page — décision ① rendue à l'issue : les valeurs qu'on ne
+    sait pas ranger vont en queue ET LA RÉPONSE LE DIT, au lieu d'enterrer
+    l'écart sous un tri qui a l'air délibéré."""
+    where, params = _ds_where(ns_id, q, filters)
+    _v, _vp = field_read_sql(order_by)
+    proj, pparams = order_health_sql(_v, _vp, order_type, order_options)
+    with _connect() as conn:
+        row = conn.execute(
+            f"SELECT {proj} FROM datastore_rows {where}",
+            tuple(pparams + params),
+        ).fetchone()
+    return {"off_type": int(row["off_type"] or 0), "empty": int(row["empty"] or 0)}
 
 
 def datastore_count_rows(ns_id: int, q: Optional[str] = None,

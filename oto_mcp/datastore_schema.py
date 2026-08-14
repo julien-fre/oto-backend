@@ -290,6 +290,33 @@ def top_level_enum_options(schema: Optional[dict]) -> dict:
     return out
 
 
+def order_spec(schema: Optional[dict], key) -> tuple:
+    """`(type, options)` qui rend le TRI typé pour ce champ — `(None, None)` sinon.
+
+    Le tri honore le type DÉCLARÉ (#336) : `number` → cast numérique, `enum` →
+    rang d'option, `date`/`datetime` → texte (ISO trie juste par l'alphabet) mais
+    vides-en-queue. Tout le reste — text, non déclaré, composite, chemin
+    `col[0].attr`, couche `champ.source` — garde le tri textuel historique : ce
+    helper ne matche que la CLÉ EXACTE d'un champ de premier niveau, comme
+    `top_level_enum_options`, parce que c'est ce que `data->>champ` sait trier.
+    Un enum sans `options` est un enum LIBRE : rien à ranger, tri textuel."""
+    if not isinstance(key, str):
+        return (None, None)
+    for f in _fields(schema):
+        if str(f.get("key") or "") != key:
+            continue
+        ftype = f.get("type")
+        if ftype == "number":
+            return ("number", None)
+        if ftype in ("date", "datetime"):
+            return ("date", None)
+        if ftype == "enum":
+            opts = [str(o) for o in (f.get("options") or [])]
+            return ("enum", opts) if opts else (None, None)
+        return (None, None)
+    return (None, None)
+
+
 def field_by_role(schema: Optional[dict], role: str) -> Optional[dict]:
     """Le premier field déclarant ce `role` (`status`, `title`…), ou None."""
     for f in _fields(schema):
