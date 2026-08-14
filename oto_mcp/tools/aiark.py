@@ -17,7 +17,74 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access, connector_verify, output_projection
+
+# ── Vue de tri d'une page de recherche ───────────────────────────────────────────
+# Une page `size=100` rendait 2,8 à 3,2 M de caractères : au-delà du plafond d'un tool
+# result, donc un déversement en fichier + un `jq` à CHAQUE page (11 pages sur un seul run
+# de sourcing). Et un agent sans shell — client MCP nu, n8n — n'a pas cette échappatoire.
+#
+# DENYLIST de clés nommées, jamais une allowlist : une allowlist a déjà fait disparaître
+# `liste_idcc` en silence sur `fr_get` (champ « IDCC vérifié » resté vide sur 500 lignes).
+# Une denylist ne peut escamoter qu'un champ qu'on a écrit ; un champ neuf d'AI Ark passe.
+#
+# Mesuré le 14/08 sur un enregistrement réel (~12 000 c.) : `position_groups` en pèse à lui
+# seul plus de la moitié — la description COMPLÈTE de chaque société où la personne est
+# passée, jusqu'au stage de 2010. Ce que le sourcing lit tient dans `profile` (nom, titre,
+# headline), `location`, `link`, `department.seniority` et l'identité de la société.
+_PERSON_DROP = ("educations", "volunteer_experiences", "awards", "skills", "languages",
+                "member_badges", "statistics", "position_groups")
+# `company` est GARDÉ (le sourcing en a besoin) mais délesté : ces blocs sont répétés à
+# l'identique sur chacune des 100 personnes d'une même société.
+_COMPANY_DROP = ("technologies", "keywords", "naics", "industries", "languages",
+                 "last_updated")
+# URLs d'images : un agent ne les regarde pas.
+_PROFILE_DROP = ("picture", "background")
+
+
+def _slim_company(company: object) -> object:
+    if not isinstance(company, dict):
+        return company
+    out = {k: v for k, v in company.items() if k not in _COMPANY_DROP}
+    loc = out.get("location")
+    if isinstance(loc, dict) and "headquarter" in loc:
+        # `locations[]` reprend le siège et ses annexes ; le siège suffit à situer.
+        out["location"] = {"headquarter": loc["headquarter"]}
+    return out
+
+
+def _slim_person(row: object) -> object:
+    if not isinstance(row, dict):
+        return row
+    out = {k: v for k, v in row.items() if k not in _PERSON_DROP}
+    if isinstance(prof := out.get("profile"), dict):
+        out["profile"] = {k: v for k, v in prof.items() if k not in _PROFILE_DROP}
+    if "company" in out:
+        out["company"] = _slim_company(out["company"])
+    return out
+
+
+def _shape(payload: object, op: str, full: bool, fields: Optional[list[str]]) -> object:
+    """Page AI Ark resserrée. `full=True` = la page brute, `fields=[…]` = ces clés seules.
+
+    Le nom porte l'intention (ADR 0047) : `full=True` dit ce qu'on obtient, là où
+    `compact=False` se lisait comme une double négation. Et le défaut RESSERRE : une
+    économie qu'il faut connaître pour en bénéficier ne bénéficie à personne — mesuré,
+    aucun agent branché en direct ne passait l'opt-in.
+
+    L'enveloppe (`totalElements`, `totalPages`, `trackId`, la pagination) est intacte :
+    sans elle l'agent croit avoir tout vu."""
+    if full or not isinstance(payload, dict):
+        return payload
+    rows = payload.get("content")
+    if not isinstance(rows, list):
+        return payload
+    slim = _slim_person if op == "people" else _slim_company
+    out = dict(payload)
+    out["content"] = [slim(r) for r in rows]
+    if fields:
+        out = output_projection.project(out, items_path="content", fields=fields)
+    return out
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde, non utilisé ici)
@@ -87,6 +154,8 @@ def register(mcp: FastMCP) -> None:
         lists: Optional[dict] = None,
         page: int = 0,
         size: int = 10,
+        full: bool = False,
+        fields: Optional[list[str]] = None,
     ) -> dict:
         """Search LinkedIn-sourced B2B data through AI Ark (bought data, per-credit).
 
@@ -114,18 +183,29 @@ def register(mcp: FastMCP) -> None:
             lookalike_domains: op="companies" — up to 5 company URLs to find similar ones.
             lists: exclude records already in saved lists.
             page: zero-based page number. size: 0-100 (default 10).
+            full: True = the RAW AI Ark record, every block. The DEFAULT is a sourcing
+                view that drops what sourcing never reads — past positions with the
+                full write-up of every company worked at, education, volunteering,
+                awards, skills, badges, statistics, languages, image URLs — plus the
+                company blocks repeated identically on all 100 people of one firm.
+                A `size=100` page returned ~3 M characters, past any tool-result cap.
+            fields: keep ONLY these keys on each record; the envelope (totals,
+                pagination, trackId) always stays — without it you would think you
+                saw everything. Combine with `full=True` to project the raw record.
 
-        Returns the raw AI Ark page: `content[]`, `totalElements`, `totalPages`.
+        Returns the AI Ark page: `content[]`, `totalElements`, `totalPages`.
         """
         if op == "people":
-            return _run(lambda c: c.search_people(
+            result = _run(lambda c: c.search_people(
                 account=account, contact=contact, lists=lists, page=page, size=size))
-        if op == "companies":
-            return _run(lambda c: c.search_companies(
+        elif op == "companies":
+            result = _run(lambda c: c.search_companies(
                 account=account, lists=lists,
                 lookalike_domains=lookalike_domains, page=page, size=size))
-        raise McpError(ErrorData(code=INVALID_PARAMS,
-                                 message="op doit être 'people' ou 'companies'"))
+        else:
+            raise McpError(ErrorData(code=INVALID_PARAMS,
+                                     message="op doit être 'people' ou 'companies'"))
+        return _shape(result, op, full, fields)
 
     @mcp.tool()
     def linkedin_aiark_person(
