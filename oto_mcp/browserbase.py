@@ -81,6 +81,16 @@ def start_session(context_id: str, *, keep_alive: bool = False,
     return _req("POST", "/sessions", body)
 
 
+def start_ephemeral_session(*, timeout: int = 120) -> dict:
+    """Session JETABLE, SANS Context (#348, cran ③ du lecteur) : un vrai Chrome
+    anonyme, aucun profil, aucun cookie du coffre — rien à persister, rien à
+    fuiter. C'est LA différence avec le connecteur `browser` (sites à login) :
+    ici on lit une page PUBLIQUE qui se défend, le navigateur n'a pas
+    d'identité. Timeout court : une lecture, pas une session de travail."""
+    return _req("POST", "/sessions",
+                {"projectId": _project(), "timeout": timeout})
+
+
 def connect_url(session_id: str) -> str:
     """URL CDP (wss) pour se (re)brancher à une session existante — la clé API y
     est injectée côté serveur, jamais exposée à l'agent."""
@@ -180,6 +190,36 @@ async def fetch_page(context_id: str, url: str, *, as_html: bool = False,
     from patchright.async_api import async_playwright
 
     sess = start_session(context_id)
+    sid = sess["id"]
+    try:
+        async with async_playwright() as p:
+            b = await p.chromium.connect_over_cdp(sess["connectUrl"])
+            try:
+                ctx = b.contexts[0] if b.contexts else await b.new_context()
+                pg = ctx.pages[0] if ctx.pages else await ctx.new_page()
+                resp = await pg.goto(url, wait_until=wait_until, timeout=timeout)
+                content = (await pg.content() if as_html
+                           else await pg.evaluate("() => document.body ? document.body.innerText : ''"))
+                return {"status": resp.status if resp is not None else None,
+                        "final_url": pg.url,
+                        "title": await pg.title(),
+                        "content": content or ""}
+            finally:
+                await b.close()
+    finally:
+        release_session(sid)
+
+
+async def fetch_page_ephemeral(url: str, *, as_html: bool = False,
+                               wait_until: str = "domcontentloaded",
+                               timeout: int = 40000) -> dict:
+    """`fetch_page`, mais sur une session JETABLE sans Context (#348, cran ③) :
+    un Chrome anonyme lit une page PUBLIQUE qui se défend (challenge anti-robot,
+    rendu JS, lenteur), sans profil ni cookie. Même contrat de sortie
+    ({status, final_url, title, content})."""
+    from patchright.async_api import async_playwright
+
+    sess = start_ephemeral_session()
     sid = sess["id"]
     try:
         async with async_playwright() as p:

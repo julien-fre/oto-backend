@@ -277,7 +277,7 @@ _CATEGORY_BY_CONNECTOR = {
     "unipile": "Prospection", "topograph": "Prospection", "lusha": "Prospection",
     "sirene": "Data FR", "culture": "Data FR", "droit": "Data FR",
     "foncier": "Data FR", "sante": "Data FR", "frenchtech": "Data FR", "gr": "Data GR",
-    "reddit": "Web",
+    "reddit": "Web", "web": "Web",
     "infosec": "Infosec",
     "pennylane": "Finance", "pennylaneged": "Finance", "gocardless": "Finance", "silae": "Finance",
     "slack": "Comms", "google": "Comms", "zohodesk": "Comms",
@@ -432,7 +432,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
 # Cette liste est l'inverse d'une dette : elle rend l'absence DÉLIBÉRÉE et
 # vérifiable, au lieu de laisser un oubli se confondre avec un choix — les 20
 # connecteurs sans logo du 31/07 étaient tous des oublis, sauf ces cinq.
-_SANS_LOGO_DE_MARQUE = {"browser", "gr", "http", "infosec", "checkcrm"}
+_SANS_LOGO_DE_MARQUE = {"browser", "gr", "http", "infosec", "checkcrm", "web"}
 
 
 def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=False,
@@ -897,6 +897,15 @@ _REGISTRY_LIST = [
     # namespace = préfixe réel : culture_spectacle_* → `culture` (namespace_of =
     # 1er token). Déclarer "culture", PAS "culture_spectacle" (jamais matché →
     # fail-open du gate, #24).
+    # Le lecteur qui ESCALADE (#348) : fetch nu → scraper serper → navigateur
+    # jetable opt-in. Capacité NUE (ADR 0010 : les fournisseurs des crans ne
+    # sont pas substituables par l'appelant, c'est une cascade) ; pas de
+    # credential propre — chaque cran résout le sien (serper par la cascade,
+    # Browserbase par la config plateforme).
+    _c("web", ["web"], secret_kind="none",
+       label="Lecteur web",
+       help="lire une page publique qui se défend — fetch, puis scraper, "
+            "puis navigateur jetable (opt-in coûté)"),
     _c("culture", ["culture"], secret_kind="none",
        label="Culture (open data)",
        help="entreprises du spectacle vivant — open data Ministère de la Culture"),
