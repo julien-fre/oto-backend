@@ -915,8 +915,16 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 - **PERF — le serveur est MONO-LOOP : aucun I/O bloquant dans la boucle.** Un handler
   de tool qui n'`await` rien doit être `def` sync (threadpool) ; du DB sync dans un
   middleware = même règle (`run_in_threadpool`). Deux modes de gel vécus + garde-fous
-  CI (`test_no_blocking_async_handlers`), pool borné (`timeout=5`), observabilité
+  CI, pool borné (`timeout=5`), observabilité
   (loop_watch/aiodebug, py-spy box, Kuma timeout 30s).
+  ⚠️ **DEUX garde-fous, de natures différentes, parce qu'un middleware échappe au
+  premier** : `test_no_blocking_async_handlers` lit le source des `@mcp.tool` (async
+  sans `await` = rejeté) — or un middleware n'est pas un tool ET doit `await
+  call_next`, donc il passe deux fois à côté ; `test_no_blocking_db_in_middleware`
+  **observe le thread** qui emprunte une connexion (mouchard sur `db._conn._get_pool`)
+  et refuse tout accès DB depuis la boucle. Gel de prod du 15/08 : le handshake
+  composait l'artefact de session — la cascade de statut de TOUS les connecteurs —
+  dans la boucle. Un chemin de la même classe reste à traiter, listé dans le doc.
   **Détail (incidents, recettes de diagnostic) : `docs/event-loop-perf.md`**.
 - **Cran d'activation (ADR 0010/0011)** : déclarer un connecteur ne l'expose PAS —
   gate DB `connector_activation.py` (master global ± override org, deny-by-default).
