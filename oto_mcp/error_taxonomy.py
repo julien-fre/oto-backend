@@ -106,6 +106,46 @@ def _is_arg_validation_error(exc) -> bool:
     return False
 
 
+def _arg_error_message(exc) -> str:
+    """« Arguments invalides » qui NOMME la clé fautive — parité avec la face REST.
+
+    La face REST refuse un champ inconnu en nommant l'excédent ET les attendus
+    (`_rest_adapter`, 400 `unknown_fields`) ; la face MCP disait « vérifie les paramètres
+    de l'outil », ce qui laisse deviner LEQUEL. Mesuré le 14/08 : deux formes fautives
+    (`{op:"draft"}`, `{action:"draft"}`) refusées sans nommer la clé, puis l'appel
+    recomposé à neuf — en oubliant le paramètre cherché depuis quatre essais.
+
+    La `ValidationError` pydantic porte tout : `loc` = la clé, `type` = la nature du
+    refus (`extra_forbidden` = clé inconnue, `missing` = clé requise absente)."""
+    err = next((e for e in _chain(exc) if isinstance(e, ValidationError)), None)
+    if err is None:
+        return "Arguments invalides — vérifie les paramètres de l'outil."
+    inconnus, manquants, autres = [], [], []
+    try:
+        for d in err.errors():
+            cle = ".".join(str(p) for p in (d.get("loc") or ())) or "?"
+            kind = d.get("type") or ""
+            if kind == "extra_forbidden":
+                inconnus.append(cle)
+            elif kind.startswith("missing"):
+                manquants.append(cle)
+            else:
+                autres.append(f"{cle} ({d.get('msg') or kind})")
+    except Exception:      # forme pydantic inattendue : on ne casse pas le message
+        return "Arguments invalides — vérifie les paramètres de l'outil."
+    bouts = []
+    if inconnus:
+        bouts.append(f"champ(s) non reconnu(s) : {', '.join(inconnus)}")
+    if manquants:
+        bouts.append(f"champ(s) requis absent(s) : {', '.join(manquants)}")
+    if autres:
+        bouts.append(f"valeur(s) refusée(s) : {'; '.join(autres)}")
+    if not bouts:
+        return "Arguments invalides — vérifie les paramètres de l'outil."
+    return ("Arguments invalides — " + " · ".join(bouts)
+            + ". Le schéma exact : oto_tool_schema(name=…).")
+
+
 def _is_oauth_exchange_refused(exc) -> bool:
     """True si la chaîne porte un REFUS du serveur d'autorisation (`OAuthExchangeRefused`).
 
@@ -206,6 +246,30 @@ def _connector_of_tool(name: str) -> Optional[str]:
         return None
 
 
+def _surviving_siblings(name: str) -> Optional[list[str]]:
+    """Les outils du MÊME namespace qui existent encore — quand `name`, lui, n'existe pas.
+
+    `None` = on ne peut rien affirmer : le nom EST au registre (il n'est donc pas retiré,
+    juste non monté), ou le registre n'est pas réchauffé (hors serveur il rend une liste
+    vide — en conclure « l'outil n'existe plus » ferait mentir CHAQUE message), ou son
+    namespace n'a plus rien à proposer.
+
+    DÉRIVÉ, jamais une table de renommages à tenir : une table serait à nourrir à chaque
+    consolidation, donc périmée au premier oubli — et c'est exactement ce genre d'oubli
+    qui produit le message trompeur qu'on ferme ici."""
+    try:
+        from . import tool_registry
+        from .tool_visibility import namespace_of
+        connus = set(tool_registry.boot_tool_names())
+        if not connus or name in connus:
+            return None
+        ns = namespace_of(name)
+        voisins = sorted(t for t in connus if namespace_of(t) == ns)
+        return voisins or None
+    except Exception:
+        return None
+
+
 def _is_expected_error(exc) -> bool:
     """Erreur gérée, à NE PAS reporter à Sentry : 4xx amont OU refus d'entrée/config
     user OU args rejetés OU refus d'échange OAuth OU outil non monté (condition de
@@ -293,10 +357,9 @@ def classify(exc) -> ErrorInfo:
             # traité comme interne non-retryable.
             return ErrorInfo("internal", False, msg or "Erreur interne du serveur.")
 
-    # (2) Arguments rejetés (le LLM a passé de mauvais paramètres).
+    # (2) Arguments rejetés (le LLM a passé de mauvais paramètres) — en NOMMANT la clé.
     if _is_arg_validation_error(exc):
-        return ErrorInfo("invalid_input", False,
-                         "Arguments invalides — vérifie les paramètres de l'outil.")
+        return ErrorInfo("invalid_input", False, _arg_error_message(exc))
 
     # (2b) Refus de dispatch fastmcp : l'outil est enregistré côté serveur mais pas
     # monté dans CETTE session (connecteur non installé / masqué). Rendu actionnable
@@ -304,6 +367,20 @@ def classify(exc) -> ErrorInfo:
     # l'installation du connecteur. Sans ça : « Erreur interne du serveur ».
     name = _unknown_tool_name(exc)
     if name:
+        # Un nom RETIRÉ n'est pas un connecteur absent — et le confondre envoie chercher
+        # un problème de montage qui n'existe pas. Vécu le 14/08 : `gmail_search`,
+        # supprimé par la consolidation google (33→13 tools), répondait « le connecteur
+        # google n'est pas installé dans ta toolbox » alors que google ÉTAIT installé et
+        # que les verbes du nom disparu vivaient dans `gmail_message`. La session a
+        # cherché un demi-montage inexistant.
+        voisins = _surviving_siblings(name)
+        if voisins is not None:
+            return ErrorInfo(
+                "unknown_tool", False,
+                f"L'outil `{name}` n'existe plus (nom retiré ou jamais existé). "
+                f"Les outils de ce domaine aujourd'hui : {', '.join(voisins)}.",
+                "ses verbes vivent probablement sous l'un d'eux, en paramètre `op` — "
+                f"lis son schéma avec oto_tool_schema(name='{voisins[0]}')")
         con = _connector_of_tool(name)
         if con:
             return ErrorInfo(

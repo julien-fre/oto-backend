@@ -251,6 +251,36 @@ def _refresh_access_token(refresh_token: str) -> dict:
     return r.json()
 
 
+def _no_account_message(sub: str, org_id: Optional[int], account: Optional[str]) -> str:
+    """« Aucun compte connecté » — en nommant les comptes qui LE SONT, et la forme attendue.
+
+    Le message ne disait ni l'un ni l'autre, alors qu'il sait déjà que l'appelant s'est
+    trompé de valeur et que `list_google_accounts` sait la bonne réponse. Coût mesuré le
+    14/08 : quatre essais à chercher un paramètre inexistant, l'appel recomposé à neuf
+    pour repartir sur de bonnes bases — et le paramètre `mode=draft` oublié au passage.
+    Trois mails partis chez une cliente.
+
+    La confusion précise à fermer : `otomata` est un ALIAS de la convention CLI
+    (`oto -a otomata`), pas un email. Ici on attend l'email du compte Google."""
+    try:
+        connectes = [a["google_email"] for a in db.list_google_accounts(sub, org_id)
+                     if a.get("google_email")]
+    except Exception:      # jamais transformer une erreur d'entrée en panne
+        connectes = []
+    dash = "https://manage.oto.cx/ (section Google)"
+    if not account:
+        return (f"Aucun compte Google connecté. Connecte-en un sur {dash}."
+                if not connectes else
+                "Aucun compte Google par défaut. Passe `account` — comptes connectés : "
+                f"{', '.join(connectes)}.")
+    if not connectes:
+        return (f"Aucun compte Google connecté (tu as demandé `{account}`). "
+                f"Connecte-en un sur {dash}.")
+    return (f"Aucun compte Google connecté pour `{account}`. Comptes connectés : "
+            f"{', '.join(connectes)} — `account` attend l'EMAIL du compte, pas un alias "
+            "ni un nom d'organisation. La liste complète : gmail_list_accounts().")
+
+
 def credentials_for(sub: str, account: Optional[str] = None):
     """Renvoie un `google.oauth2.credentials.Credentials` valide pour ce sub.
 
@@ -267,11 +297,7 @@ def credentials_for(sub: str, account: Optional[str] = None):
     org_id = _ctx_org(sub)
     row = db.get_google_oauth(sub, org_id, account=account)
     if not row:
-        suffix = f" pour {account}" if account else ""
-        raise RuntimeError(
-            f"Aucun compte Google connecté{suffix}. Connecte-le sur "
-            "https://manage.oto.cx/ (section Google)."
-        )
+        raise RuntimeError(_no_account_message(sub, org_id, account))
 
     from google.oauth2.credentials import Credentials
 

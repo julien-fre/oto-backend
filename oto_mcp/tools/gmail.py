@@ -271,7 +271,9 @@ def register(mcp: FastMCP) -> None:
                 - URL:   `{"kind":"url","url":"https://…"}` — e.g. a signed URL from
                   `oto_upload_url` (upload a local PDF first) or drive_download.
 
-        Returns the created/sent message ids.
+        Returns `kind` — **"sent" (the mail LEFT) or "draft" (saved, not sent)** — plus
+        the message ids. Always read `kind` before reporting what you did: it is the
+        only field that states the act.
         """
         if mode not in ("send", "draft"):
             raise _bad("mode doit être 'send' ou 'draft'.")
@@ -281,35 +283,46 @@ def register(mcp: FastMCP) -> None:
         except file_source.FileSourceError as e:
             raise _bad(str(e))
         att_paths, _cleanup = att
+
+        def _acte(res: object) -> dict:
+            """Le retour NOMME l'acte. Sans ce champ, « envoyé » et « brouillon » ne se
+            distinguent qu'au NOMBRE de clés rendues (3 vs 2) — une différence qu'il faut
+            déjà connaître pour la lire. Un agent qui rapporte « brouillon créé » après un
+            envoi réel n'a pas menti : il n'avait rien à lire qui le dise.
+            Payé le 14/08 : trois mails partis chez une cliente."""
+            out = dict(res) if isinstance(res, dict) else {"result": res}
+            out["kind"] = "draft" if mode == "draft" else "sent"
+            return out
+
         try:
             if reply_to:
                 if mode == "draft":
-                    return await asyncio.to_thread(
+                    return _acte(await asyncio.to_thread(
                         lambda: client.create_draft_reply(
                             message_id=reply_to, body=body, html=html, cc=cc, markdown=markdown,
                             attachments=att_paths,
                         )
-                    )
-                return await asyncio.to_thread(
+                    ))
+                return _acte(await asyncio.to_thread(
                     lambda: client.reply(
                         message_id=reply_to, body=body, html=html, cc=cc,
                         from_name=from_name, markdown=markdown, attachments=att_paths,
                     )
-                )
+                ))
             if not to:
                 raise _bad("`to` requis pour un nouveau message (ou fournis `reply_to` pour répondre).")
             if mode == "draft":
-                return await asyncio.to_thread(
+                return _acte(await asyncio.to_thread(
                     lambda: client.create_draft(
                         to=to, subject=subject or "", body=body, html=html, cc=cc, bcc=bcc,
                         markdown=markdown, attachments=att_paths,
                     )
-                )
-            return await asyncio.to_thread(
+                ))
+            return _acte(await asyncio.to_thread(
                 lambda: client.send(
                     to=to, subject=subject or "", body=body, html=html,
                     cc=cc, bcc=bcc, from_name=from_name, markdown=markdown, attachments=att_paths,
                 )
-            )
+            ))
         finally:
             _cleanup()
