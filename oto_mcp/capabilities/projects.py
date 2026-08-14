@@ -18,7 +18,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import config, db, group_store, org_store, ownership, roles, session_org
+from .. import (config, db, group_store, org_store, output_projection, ownership,
+                roles, session_org)
 from ._authz import ORG_MEMBER, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -70,6 +71,7 @@ class ProjectInput(BaseModel):
     config: Optional[dict] = None      # surcharge contextuelle PRÉFAITE du lien (ADR 0032 §4) — connecteur : {identity_id?, instructions_md?} (legacy : identité dans config ; multi-binding : voir identity_ref) ; tableau : {provision?: "shared"|"empty"|"seeded"} = comment la COPIE de projet traite ce tableau (ADR 0032 §6)
     identity_ref: Optional[str] = None  # connecteur : identité (compte) du BINDING — clé de multiplicité (#57) ; N liens par connecteur, une identité par binding. link sans identity_ref = binding par défaut ; unlink sans identity_ref = TOUS les bindings du connecteur
     instance_ref: Optional[str] = None  # connecteur : ref d'INSTANCE (ADR 0038 B5, grammaire B4 via oto_instance op=list) — le binding désigne exactement CE credential ; la résolution le sert en dur (re-gardé pour l'appelant). Exclusif d'identity_ref (le ref porte déjà le compte). Stocké config.instance_ref.
+    fields: Optional[list[str]] = None  # list / list_templates : projection — omis = vue de tri, ["*"] = la fiche entière
     slot: Optional[str] = None         # ADR 0035 (B2) : nom de SLOT que ce lien binde — vocabulaire DU PROJET (unicité (projet, slot) → 409 slot_taken). Fait correspondre le lien aux slots déclarés par les procédures (<slot:name>). Binder un slot TABLEAU dont la procédure déclare un `schema` cible provisionne le namespace vierge avec ce schéma (ADR 0046)
 
 
@@ -134,6 +136,24 @@ def _view(row: dict) -> dict:
         "created_at": row.get("created_at"), "updated_at": row.get("updated_at"),
         "archived_at": row.get("archived_at"),
     }
+
+
+def _projected(rows: list[dict], fields: Optional[list[str]]) -> dict:
+    """Vue de LISTE d'un index de projets : les proses deviennent leur taille.
+
+    L'index sert à choisir quel projet ouvrir — 26 projets avec tout leur `brief_md`
+    pesaient 73 K caractères, au-delà du plafond d'un tool result. Le brief entier se
+    lit par `op=get`, ou ici par `fields=["*"]`.
+
+    `mcp_instructions_md` (prose servie au destinataire d'un endpoint publié) suit la
+    même règle : c'est un corps, pas une métadonnée de tri."""
+    _require(fields is None or bool(fields), "empty_fields",
+             "`fields` est une liste vide : omets-le pour la vue de tri, passe "
+             '`["*"]` pour les fiches entières, ou nomme les colonnes voulues.')
+    rows, notice = output_projection.summarize(
+        rows, body_fields=("brief_md", "mcp_instructions_md"), fields=fields,
+        always=("id", "name", "owner_type", "owner_id"))
+    return {"projects": rows, **({"projection": notice} if notice else {})}
 
 
 def _require_active_org_visible(ctx: ResolvedCtx, row: dict) -> None:
@@ -454,14 +474,15 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         shared = [{**_enrich(r, True), "permission": r.get("permission")}
                   for r in db.list_projects_granted_to(principals)
                   if r["id"] not in seen]
-        return {"projects": own + shared}
+        return _projected(own + shared, inp.fields)
 
     if inp.op == "list_templates":
         # Modèles (is_template) lisibles par l'acteur — la bibliothèque copiable (B5a).
         # ADR 0049 : + les modèles PLATFORM-owned (bibliothèque plateforme), pour tous.
         owners = ownership.accessor_scope(sub).owner_pairs() + [("platform", "platform")]
-        return {"projects": [_view(r) for r in
-                             db.list_projects_for_owners(owners, templates_only=True)]}
+        return _projected([_view(r) for r in
+                           db.list_projects_for_owners(owners, templates_only=True)],
+                          inp.fields)
 
     # ops ciblées : project_id requis + existence
     _require(inp.project_id is not None, "missing_project", "`project_id` requis.")
@@ -1003,7 +1024,9 @@ CAPABILITIES += [
             "optional brief_md; owner_type user|org + owner_id for a team project) / list "
             "(ORG-SCOPED: the ACTIVE org's projects + projects shared with it or with you — "
             "pass `org=<id>` to see another org's; every response echoes the "
-            "effective org in `_org`) / list_templates (published MODEL projects you can copy) / "
+            "effective org in `_org`. An INDEX: names and `brief_md_length`, NOT the briefs — "
+            'read one with op=get, or pass `fields=["*"]` for whole records) / '
+            "list_templates (published MODEL projects you can copy) / "
             "get (project + its links + an `audit` of those links: dead_links / unbound_slots / "
             "inert_procedures — a linked entity that no longer resolves surfaces HERE, act on it) / "
             "update (name, icon = an emoji shown in the lists and headers (\"\" clears it), brief_md, is_template = publish/unpublish "

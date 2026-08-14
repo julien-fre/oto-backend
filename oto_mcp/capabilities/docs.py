@@ -13,7 +13,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import db, doc_patch, email, org_store, ownership
+from .. import db, doc_patch, email, org_store, output_projection, ownership
 from ._authz import PROJECT_SHARED_READ, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -113,6 +113,7 @@ class DocInput(BaseModel):
     mode: Optional[Literal["replace", "append", "prepend"]] = None  # patch : défaut replace
     to_project: Optional[int] = None    # move : projet cible (déplacer la page + son sous-arbre)
     pages: Optional[list[dict]] = None  # bulk_create : [{title, body_md?, kind?, description?, parent_index?}]
+    fields: Optional[list[str]] = None  # list : projection — omis = vue de tri, ["*"] = la page entière
 
 
 def _require(cond, code: str, msg: str, status: int = 400) -> None:
@@ -272,8 +273,18 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     if inp.op == "list":
         _require(inp.project_id is not None, "missing_project", "`project_id` requis.")
         _require(_can(sub, inp.project_id, "read"), "forbidden", "Accès refusé.", 403)
-        return {"project_id": inp.project_id,
-                "docs": [_view(d, sub) for d in db.list_docs_for_project(int(inp.project_id))]}
+        # Une liste sert à choisir quoi ouvrir : elle rend l'INDEX de l'arbre, pas les
+        # corps (37 pages = 201 K caractères, refusés par le client). `body_length`
+        # remplace `body_md` ; `fields=["*"]` rend le brut.
+        _require(inp.fields is None or bool(inp.fields), "empty_fields",
+                 "`fields` est une liste vide : omets-le pour la vue de tri, passe "
+                 '`["*"]` pour les pages entières, ou nomme les colonnes voulues.')
+        rows, notice = output_projection.summarize(
+            [_view(d, sub) for d in db.list_docs_for_project(int(inp.project_id))],
+            body_fields=("body_md",), fields=inp.fields,
+            always=("id", "project_id", "parent_id", "title"))
+        return {"project_id": inp.project_id, "docs": rows,
+                **({"projection": notice} if notice else {})}
 
     if inp.op == "search":
         # DÉPRÉCIÉ (lot 3 Ship 1) : rerouté sur le chemin UNIQUE de recherche
@@ -478,7 +489,9 @@ CAPABILITIES += [
             "op=create (project_id, title; optional parent_id/body_md/kind) / bulk_create "
             "(project_id + `pages`=[{title, body_md?, kind?, parent_index?}] → N pages in ONE "
             "call, build a tree via parent_index = an earlier page in the batch) / list "
-            "(project_id → all pages, build the tree via parent_id) / search (project_id + "
+            "(project_id → the page INDEX, build the tree via parent_id: titles and "
+            "`body_md_length`, NOT the bodies — pick a page here, then op=get it. "
+            '`fields=["*"]` returns whole pages, `fields=[…]` picks columns) / search (project_id + '
             "query → full-text hits {id,title,kind,snippet}: LOCATE a page, then get its "
             "content) / get (returns `rev`, an ETag) / update (title/body_md/kind, full body; "
             "snapshots the prior version; pass `expected_rev` from op=get for optimistic "

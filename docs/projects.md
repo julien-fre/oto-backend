@@ -13,6 +13,26 @@ update/archive/link/unlink/activity, `POST /api/me/projects`), **`oto_doc`** (`c
 docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/transfert via
 **`oto_resource`** (resource_type=`project` ajouté au dispatch `_OPS`).
 
+> **Une liste rend son INDEX, jamais les corps (14/08).** ⚠️ **Ce doc a laissé croire le
+> contraire jusqu'au 14/08** : `op=list` a longtemps rendu la fiche entière de chaque
+> élément, et rien ici ne le signalait. Mesuré en prod : `oto_doc(op=list)` = **201 170
+> caractères** pour 37 pages, `oto_project(op=list)` = **73 K** pour 26 projets — au-delà du
+> plafond d'un tool result, donc refusé par le client, qui devait déverser en fichier puis
+> reparser au `jq`. Un agent sans shell (client MCP nu, n8n) calait simplement.
+> Désormais, les deux `op=list` (+ `list_templates`) rendent une **vue de tri** :
+> `body_md`/`brief_md`/`mcp_instructions_md` sont remplacés par `<champ>_length`, et la
+> réponse porte un bloc **`projection`** qui NOMME ce qui a été écarté. Le brut reste
+> atteignable — `fields=["*"]` (le dashboard le passe : un navigateur rend les corps et n'a
+> pas de fenêtre de contexte), `fields=[…]` choisit des colonnes, `fields=[]` est **refusé**
+> plutôt qu'avalé. Une colonne-corps explicitement nommée est servie **entière**.
+> Le seam est partagé : `output_projection.summarize()`.
+> **Projeter ≠ tronquer** — on retire des colonnes (réversible, et le retour le dit) ; on ne
+> coupe jamais un texte à N caractères. Un extrait arbitraire tombe pile avant ce qui
+> départage deux éléments et l'agent croit avoir lu (mesuré le 11/08 sur un feed coupé à
+> 600 c. : deux cas limites sur cinq tranchés à l'aveugle). D'où la TAILLE, pas l'extrait.
+> Budget figé par `tests/test_list_view_budget.py` : le retour d'une liste croît avec le
+> NOMBRE d'éléments, jamais avec la taille de leur contenu.
+
 > **Push out-of-bande de gros contenu par un agent (issue #105).** Écrire un GROS contenu
 > via `oto_doc(body_md=…)`/multipart le fait transiter INLINE par le contexte du LLM (coût
 > tokens + troncature/paraphrase sur du verbatim). **`oto_upload_url(target)`** (capacité

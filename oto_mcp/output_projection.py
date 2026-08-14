@@ -75,3 +75,57 @@ def project(payload: Any, *, drop: Iterable[str] = (), items_path: Optional[str]
         for row in rows
     ]
     return out
+
+
+RAW = "*"  # `fields=["*"]` — le chemin vers le brut, même jeton que data_rows/le feed
+
+
+def summarize(rows: list[dict], *, body_fields: Iterable[str],
+              fields: Optional[Iterable[str]] = None,
+              always: Iterable[str] = ()) -> tuple[list[dict], Optional[dict]]:
+    """Vue de LISTE : un corps devient sa TAILLE, jamais un extrait.
+
+    Une liste est une étape de NAVIGATION — elle sert à décider quoi ouvrir ensuite,
+    donc à adresser, trier et écarter sans se tromper. Le contenu se demande dans un
+    second temps. Rendre le corps de chaque élément fait dépasser le plafond d'un tool
+    result (mesuré : 201 K caractères pour 37 pages), et le client doit alors déverser
+    en fichier puis reparser — un agent sans shell, lui, cale simplement.
+
+    ⚠️ **Projeter ≠ tronquer.** On retire des COLONNES (réversible, et le retour dit
+    lesquelles) ; on ne coupe pas un texte à N caractères. Un extrait arbitraire tombe
+    pile avant ce qui départage deux éléments et l'agent croit avoir lu — mesuré le
+    11/08 sur un feed coupé à 600 c., deux cas limites sur cinq tranchés à l'aveugle.
+    D'où `<champ>_length` : l'agent sait ce qu'il n'a PAS.
+
+    `body_fields` = les colonnes-corps. `fields` : omis → vue de tri ; `["*"]` → le
+    brut ; `[…]` → exactement ces clés, plus `always` (de quoi ADRESSER l'élément
+    ensuite — sans quoi la liste rendrait des lignes inutilisables).
+
+    Rend `(rows, notice)` — `notice` NOMME ce qui a été écarté et le chemin vers le
+    brut ; `None` quand rien ne l'a été."""
+    bodies = list(body_fields)
+    wanted = None if fields is None else list(fields)
+    if wanted is not None and RAW in wanted:
+        return rows, None
+    keep = None if wanted is None else (set(wanted) | set(always))
+    dropped: set[str] = set()
+    out: list[dict] = []
+    for row in rows:
+        item = {k: v for k, v in row.items() if keep is None or k in keep}
+        for b in bodies:
+            if keep is not None and b in keep:
+                continue
+            if b in row:
+                item.pop(b, None)
+                dropped.add(b)
+            # La taille est rendue même quand la colonne est absente de la ligne :
+            # « 0 » et « pas de corps » se lisent pareil pour qui trie.
+            item[f"{b}_length"] = len(row.get(b) or "")
+        out.append(item)
+    if keep is not None:
+        dropped |= {k for row in rows for k in row if k not in keep}
+    if not dropped:
+        return out, None
+    return out, {"omitted": sorted(dropped),
+                 "hint": f'Vue de tri. Corps et colonnes écartés : `fields=["{RAW}"]` '
+                         "rend la ligne entière, `fields=[…]` choisit."}
