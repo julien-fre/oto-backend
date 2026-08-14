@@ -73,3 +73,41 @@ def test_capability_registered():
     rest = by_key["platform.instructions.set"].rest
     assert rest is not None and rest.verb == "PUT"
     assert rest.path == "/api/admin/platform-instructions/{key}"
+
+
+# ── L'écran admin dit ce que le handshake SERT, pas autre chose ─────────────────
+def test_un_bloc_vide_se_lit_comme_le_SEED_pas_comme_une_edition(monkeypatch):
+    """Les deux notions d'« édité » divergeaient, et l'écran mentait.
+
+    `instructions._platform_block` sert le seed dès que l'override est vide ; cette vue,
+    elle, se réglait sur `updated_at`. Vider un bloc pose une ligne DATÉE à corps vide :
+    l'agent recevait donc le seed pendant que la surface admin annonçait « édité » avec
+    un corps vide. Vider l'override EST le geste « rétablir le défaut » — il doit se lire
+    comme tel.
+    """
+    from oto_mcp.capabilities import platform_instructions as P
+
+    monkeypatch.setattr(P.guide_store, "get_init_guide",
+                        lambda scope, key: {"body_md": "", "updated_at": "2026-08-14 10:00:00"})
+    vue = P._view("secret_sauce")
+    assert vue["is_seed"] is True
+    assert vue["body_md"] == vue["default_md"] and vue["body_md"]
+    # Et ce qui est ANNONCÉ est ce qui est SERVI au handshake.
+    assert P.instructions._platform_block("secret_sauce", vue["default_md"]) == vue["body_md"]
+
+
+def test_un_bloc_blanc_compte_comme_vide(monkeypatch):
+    from oto_mcp.capabilities import platform_instructions as P
+
+    monkeypatch.setattr(P.guide_store, "get_init_guide",
+                        lambda scope, key: {"body_md": "   \n  ", "updated_at": "2026-08-14"})
+    assert P._view("secret_sauce")["is_seed"] is True
+
+
+def test_un_override_REEL_reste_annonce_comme_edite(monkeypatch):
+    from oto_mcp.capabilities import platform_instructions as P
+
+    monkeypatch.setattr(P.guide_store, "get_init_guide",
+                        lambda scope, key: {"body_md": "prose maison", "updated_at": "2026-08-14"})
+    vue = P._view("secret_sauce")
+    assert vue["is_seed"] is False and vue["body_md"] == "prose maison"

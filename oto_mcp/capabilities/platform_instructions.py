@@ -48,10 +48,18 @@ def _require_key(key: Optional[str]) -> str:
 def _view(key: str) -> dict:
     """L'état effectif d'un bloc : la ligne `guides` (delivery='init'), ou le seed
     (is_seed=True, corps = constante) si jamais éditée. `default_md` accompagne toujours
-    (bouton « rétablir le défaut »). `updated_by` retiré (guides ne le porte pas)."""
+    (bouton « rétablir le défaut »). `updated_by` retiré (guides ne le porte pas).
+
+    ⚠️ **« Édité » se juge sur le CORPS, pas sur `updated_at`** — la même règle que ce que
+    le handshake SERT (`instructions._platform_block` : « override DB s'il existe *et non
+    vide*, sinon le seed »). Les deux divergeaient : vider un bloc pose une ligne datée à
+    corps vide, donc l'agent recevait le seed pendant que cette vue annonçait « édité »
+    avec un corps vide. Un écran qui décrit autre chose que ce qui est servi est pire
+    qu'un écran absent — on le lit avec confiance. Et c'est ce qui rend le geste
+    « rétablir le défaut » lisible : vider l'override EST le retour au seed."""
     st = guide_store.get_init_guide("platform", key)
     default_md = instructions.default_block(key)
-    if st["updated_at"] is not None:
+    if (st["body_md"] or "").strip():
         return {"key": key, "body_md": st["body_md"], "updated_at": st["updated_at"],
                 "updated_by": None, "is_seed": False, "default_md": default_md}
     return {"key": key, "body_md": default_md, "updated_at": None,
