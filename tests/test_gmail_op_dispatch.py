@@ -325,10 +325,27 @@ def test_compose_modes_route_to_the_right_client_method(client, mode, method):
     getattr(client, other).assert_not_called()
 
 
-def test_compose_reply_never_starts_a_new_thread(client):
-    _call("gmail_compose", body="hi", reply_to="m1")
-    client.reply.assert_called_once()
+@pytest.mark.parametrize("mode,method", [("send", "reply"), ("draft", "create_draft_reply")])
+def test_compose_reply_never_starts_a_new_thread(client, mode, method):
+    """Une réponse reste DANS son fil — dans les deux modes.
+
+    Le test passait `mode` implicitement et figeait donc le défaut d'alors (`send`).
+    Depuis que le défaut est `draft` (#345 ④, l'oubli d'un paramètre ne doit pas expédier
+    un mail dehors), un test qui repose sur le défaut ne prouve plus ce qu'il annonce :
+    il aurait suivi le changement au lieu de le contrôler. Les deux modes sont donc
+    exercés explicitement — la propriété gardée est le FIL, pas le défaut.
+    """
+    _call("gmail_compose", body="hi", reply_to="m1", mode=mode)
+    getattr(client, method).assert_called_once()
+    # Aucun chemin « nouveau message » : c'est ce qui casserait le fil.
     client.send.assert_not_called()
+    client.create_draft.assert_not_called()
+
+
+def test_le_defaut_d_une_reponse_est_lui_aussi_un_brouillon(client):
+    _call("gmail_compose", body="hi", reply_to="m1")
+    client.create_draft_reply.assert_called_once()
+    client.reply.assert_not_called()
 
 
 def test_compose_refuses_a_new_message_without_a_recipient(client):

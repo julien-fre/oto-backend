@@ -150,3 +150,45 @@ def test_le_retour_nomme_l_acte(mode, attendu):
     rendu = _acte({"id": "r123", "message_id": "m1", "threadId": "t1"})
     assert rendu["kind"] == attendu
     assert rendu["id"] == "r123"      # le retour amont n'est pas amputé
+
+
+# ── ④ le défaut ne sort plus vers l'extérieur ───────────────────────────────────
+def _schema_compose() -> tuple[dict, str]:
+    """Le schéma SERVI de `gmail_compose` + sa description — ce que le client voit.
+
+    On interroge `list_tools`, pas la fonction Python : un test qui lit la signature
+    décrirait notre intention, pas le document que le modèle reçoit.
+    """
+    import asyncio
+
+    from fastmcp import FastMCP
+
+    from oto_mcp.tools import gmail
+
+    m = FastMCP("t")
+    gmail.register(m)
+    t = next(x for x in asyncio.run(m.list_tools(run_middleware=False))
+             if x.name == "gmail_compose")
+    return t.parameters["properties"]["mode"], (t.description or "")
+
+
+def test_le_defaut_de_gmail_compose_est_BROUILLON():
+    """Le chemin paresseux ne doit pas être celui qui envoie à un tiers.
+
+    Avant : oublier `mode` suffisait à expédier un mail — c'est exactement ce qui est
+    arrivé le 14/08, trois fois, chez une cliente. La règle maison (« aucun défaut ne doit
+    écrire », a fortiori dehors) tranche : on rédige, et envoyer devient un acte déclaré.
+    Rupture de comportement assumée — une procédure qui envoie vraiment passe `mode="send"`.
+    """
+    mode, _ = _schema_compose()
+    assert mode["default"] == "draft"
+    assert set(mode["enum"]) == {"send", "draft"}      # envoyer reste possible
+    assert "(default)" in mode["description"] and "draft" in mode["description"]
+
+
+def test_le_contrat_ANNONCE_que_l_envoi_est_explicite():
+    # La description EST le contrat lu par le modèle : si elle ne dit pas que le défaut
+    # ne part pas, le changement de défaut ne protège que ceux qui l'ont deviné.
+    _, doc = _schema_compose()
+    assert "DRAFT by default" in doc
+    assert '`mode="send"` is required' in doc

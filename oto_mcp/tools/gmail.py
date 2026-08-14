@@ -238,7 +238,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     async def gmail_compose(
         body: str,
-        mode: Literal["send", "draft"] = "send",
+        mode: Literal["send", "draft"] = "draft",
         to: Optional[str] = None,
         subject: Optional[str] = None,
         reply_to: Optional[str] = None,
@@ -250,11 +250,15 @@ def register(mcp: FastMCP) -> None:
         account: Optional[str] = None,
         attachments: Optional[list[dict]] = None,
     ) -> dict:
-        """Compose an email — send or draft, new message or reply.
+        """Compose an email — **saved as a DRAFT by default**, or sent explicitly.
+
+        ⚠️ **`mode="send"` is required to actually send.** Omitting `mode` writes a draft
+        the user can review; it does NOT leave the mailbox. Say plainly which one you did
+        (read `kind` in the answer) — never report "sent" for a draft, or the reverse.
 
         Args:
             body: message body (rendered from markdown to HTML by default).
-            mode: "send" (default) to send now, or "draft" to save for human review.
+            mode: "draft" (default) saves for human review; "send" delivers it now.
             to: recipient(s), comma-separated. REQUIRED for a new message (omit when replying).
             subject: subject line (new message only; a reply keeps the thread's subject).
             reply_to: id of the message to reply to. When set, this is a threaded REPLY

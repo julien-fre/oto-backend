@@ -15,7 +15,8 @@ Autorisation **dynamique** selon le `from` résolu :
 - repli **marque** `oto@otomata.tech` (org sans adresse configurée, `from` omis) →
   réservé **super_admin** (c'est l'identité de marque de la plateforme).
 
-À distinguer de `gmail_compose`, qui envoie depuis la boîte Gmail de l'utilisateur.
+À distinguer de `gmail_compose`, qui écrit depuis la boîte Gmail de l'utilisateur
+(et qui, lui, rédige un BROUILLON par défaut — envoyer y est explicite).
 
 Spine : chargé explicitement dans `register_all`, hors gate d'activation, masqué
 par défaut (`PROTECTED_TOOLS`/`DEFAULT_HIDDEN_TOOLS` côté visibilité).
@@ -118,7 +119,8 @@ def register(mcp: FastMCP) -> None:
         via la clé Resend de l'org. Usage type — séquences d'onboarding pilotées
         par l'agent : lis l'état du compte cible, rédige un message ADAPTÉ, envoie,
         puis trace dans le datastore pour ne pas relancer en double. Pour envoyer
-        depuis la boîte Gmail de l'utilisateur, c'est `gmail_compose`.
+        depuis la boîte Gmail de l'utilisateur, c'est `gmail_compose` — attention, lui
+        rédige un BROUILLON par défaut, il faut `mode="send"` pour qu'il parte.
 
         Envoi différé : par défaut l'org a une fenêtre « quiet hours » (ex. 20h–8h) ;
         si tu composes dedans, l'envoi est AUTO-décalé au prochain créneau ouvert —
