@@ -34,8 +34,9 @@ def espion(monkeypatch):
                         lambda org_id, sub, lease_seconds=600:
                         vu.update(claim=(org_id, sub, lease_seconds)) or None)
     monkeypatch.setattr(RJ.db, "complete_job",
-                        lambda job_id, sub, ok, error=None, run_id=None:
-                        {"status": "done"} if sub == "worker-audiens" else None)
+                        lambda job_id, sub, ok, error=None, run_id=None, result=None:
+                        vu.update(result=result) or
+                        ({"status": "done"} if sub == "worker-audiens" else None))
     monkeypatch.setattr(RJ.db, "bind_job_run", lambda j, s, r: s == "worker-audiens")
     monkeypatch.setattr(RJ.db, "extend_job_lease", lambda j, s, lease_seconds=600: False)
     monkeypatch.setattr(RJ.db, "get_job", lambda j, org: None)
@@ -128,3 +129,69 @@ def test_prolonger_un_bail_perdu_rend_job_inconnu(espion):
         _appel(_ctx(), op="extend", job_id=7)
     assert e.value.status == 404, \
         "un worker dont le bail est mort ne garde aucune prise sur le job"
+
+
+# ── le résultat déclaré (R5, garde budget de flotte) ─────────────────────────
+
+def test_complete_transporte_le_resultat_declare(espion):
+    _appel(_ctx(), op="complete", job_id=7, ok=True,
+           result={"usage_tokens": 31500, "stopped": "end_turn", "steps": 18})
+    assert espion["result"] == {"usage_tokens": 31500, "stopped": "end_turn",
+                                "steps": 18}, \
+        "le coût d'un job doit être LISIBLE par l'ordonnanceur de flotte"
+
+
+def test_un_resultat_obese_est_refuse(espion):
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="complete", job_id=7, ok=True,
+               result={"note": "x" * 5000})
+    assert e.value.code == "result_too_large", \
+        "result est un résumé, jamais un contenu de fil"
+
+
+@pytest.fixture(scope="module")
+def live(pg_dsn):
+    import os
+    import uuid as _uuid
+
+    psycopg = pytest.importorskip("psycopg")
+    from oto_mcp.db import _conn as dbconn
+
+    name = "oto_rjobs_" + _uuid.uuid4().hex[:8]
+    root = psycopg.connect(pg_dsn, autocommit=True)
+    root.execute(f'CREATE DATABASE "{name}"')
+    dsn = pg_dsn.rsplit("/", 1)[0] + "/" + name
+    prev_url, prev_pool = os.environ.get("DATABASE_URL"), dbconn._pool
+    os.environ["DATABASE_URL"] = dsn
+    dbconn._pool = None
+    try:
+        from oto_mcp.db import init_db
+        init_db()
+        yield
+    finally:
+        if dbconn._pool is not None:
+            dbconn._pool.close()
+        dbconn._pool = prev_pool
+        if prev_url is None:
+            os.environ.pop("DATABASE_URL", None)
+        else:
+            os.environ["DATABASE_URL"] = prev_url
+        root.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        root.close()
+
+
+def test_le_resultat_fait_l_aller_retour_en_base(live):
+    """Le round-trip RÉEL : complete écrit `result`, get le rend — c'est ce que
+    l'ordonnanceur de flotte lira pour sa garde budget. Un stub ne prouve ni la
+    colonne, ni le COALESCE, ni le SELECT."""
+    from oto_mcp import db as d
+
+    j = d.enqueue_job(226, "start", payload={"procedure": "p"})
+    job = d.claim_next_job(226, "worker-live", lease_seconds=60)
+    assert job and job["id"] == j["id"]
+    out = d.complete_job(job["id"], "worker-live", True,
+                         result={"usage_tokens": 12345, "stopped": "end_turn"})
+    assert out == {"status": "done"}
+    relu = d.get_job(job["id"], 226)
+    assert relu["result"] == {"usage_tokens": 12345, "stopped": "end_turn"}
+    assert relu["status"] == "done"

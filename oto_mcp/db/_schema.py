@@ -250,7 +250,11 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     last_error TEXT,
     due_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    finished_at TIMESTAMPTZ
+    finished_at TIMESTAMPTZ,
+    -- Le RÉSULTAT déclaré par le worker à la conclusion (usage_tokens, stopped,
+    -- steps…) : c'est ce qui rend le coût d'un job LISIBLE par un ordonnanceur
+    -- de flotte (garde budget) sans parser la note libre d'un run.
+    result JSONB
 );
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_claim
     ON runner_jobs(org_id, due_at) WHERE status = 'pending';

@@ -132,6 +132,10 @@ def _init_db_once() -> None:
         # vers lequel on envoie l'utilisateur — sinon le client s'authentifie chez l'un
         # avec l'identité de l'autre. NULL = aucun host servi pour ce tenant.
         conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS oauth_client_id TEXT")
+        # Chantier runner R5 (fusion flotte) : le worker déclare le RÉSULTAT d'un job
+        # à sa conclusion (usage_tokens, stopped, steps…) — c'est ce qui rend le coût
+        # lisible par un ordonnanceur de flotte (garde budget) sans parser une note.
+        conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS result JSONB")
         # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
         # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
         # portaient notre domaine : un client d'un partenaire recevait des liens vers

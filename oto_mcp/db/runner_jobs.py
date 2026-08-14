@@ -115,8 +115,13 @@ def extend_job_lease(job_id: int, worker_sub: str,
 
 def complete_job(job_id: int, worker_sub: str, ok: bool,
                  error: Optional[str] = None,
-                 run_id: Optional[str] = None) -> Optional[dict]:
+                 run_id: Optional[str] = None,
+                 result: Optional[dict] = None) -> Optional[dict]:
     """Conclut la prise : `done`, ou re-file avec backoff, ou `failed` au plafond.
+
+    `result` (R5, flotte) = le résultat DÉCLARÉ par le worker (usage_tokens,
+    stopped, steps…) : c'est ce qu'un ordonnanceur de flotte lit pour sa garde
+    budget — jamais un secret, jamais du contenu de fil.
 
     Rend `{status}` conclu, ou None si le job n'est pas au claimant (déjà
     re-claimé après bail mort, ou jamais à lui) — l'appelant ne conclut pas
@@ -127,11 +132,13 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                 """
                 UPDATE runner_jobs
                    SET status = 'done', finished_at = NOW(),
-                       run_id = COALESCE(%s, run_id), last_error = NULL
+                       run_id = COALESCE(%s, run_id), last_error = NULL,
+                       result = COALESCE(%s::jsonb, result)
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
                 RETURNING status
                 """,
-                (run_id, job_id, worker_sub),
+                (run_id, json.dumps(result) if result is not None else None,
+                 job_id, worker_sub),
             ).fetchone()
         else:
             # Échec : au plafond → failed VISIBLE ; sinon retour en file, backoff
@@ -158,7 +165,7 @@ def get_job(job_id: int, org_id: int) -> Optional[dict]:
     """Lecture d'un job, org-scopée — même 404 qu'un job inexistant côté capacité."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
+            "SELECT id, kind, run_id, payload, status, attempts, max_attempts, result, "
             "       claimed_by, last_error, due_at, created_at, finished_at "
             "FROM runner_jobs WHERE id = %s AND org_id = %s",
             (job_id, org_id),

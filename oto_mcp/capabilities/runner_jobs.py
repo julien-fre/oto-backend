@@ -17,6 +17,7 @@ serait un coffre parallèle.
 """
 from __future__ import annotations
 
+import json
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
@@ -40,6 +41,9 @@ class JobsInput(BaseModel):
     job_id: Optional[int] = None
     ok: Optional[bool] = None
     error: Optional[str] = None
+    # complete — résultat déclaré par le worker (usage_tokens, stopped, steps…),
+    # lu par un ordonnanceur de flotte (garde budget, R5). Jamais du contenu de fil.
+    result: Optional[dict[str, Any]] = None
 
 
 class JobsOut(BaseModel):
@@ -103,8 +107,11 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
     if inp.op == "complete":
         if inp.ok is None:
             raise AuthzDenied(400, "missing_fields", "complete exige `ok` (true/false)")
+        if inp.result is not None and len(json.dumps(inp.result)) > 4096:
+            raise AuthzDenied(400, "result_too_large",
+                              "result > 4 Ko — un résumé, pas un contenu")
         res = db.complete_job(inp.job_id, ctx.sub, inp.ok,
-                              error=inp.error, run_id=inp.run_id)
+                              error=inp.error, run_id=inp.run_id, result=inp.result)
         if res is None:
             # Déjà re-claimé après bail mort, ou jamais à lui : on ne conclut pas
             # ce qui ne nous appartient plus.
