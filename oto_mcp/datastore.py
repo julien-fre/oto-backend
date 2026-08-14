@@ -56,7 +56,9 @@ from .datastore_columns import (  # noqa: E402,F401
     _META_COLS,
     _existing_layers,
     _merge_column,
+    _refuse_dotted_names,
     _refuse_flat_writes,
+    _refuse_mixed_layers,
     _resolve_filters,
     _resolve_group_by,
     _resolve_metrics,
@@ -648,6 +650,8 @@ class DatastorePg(SchemaOpsMixin):
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
+        _refuse_dotted_names(user_data)
+        _refuse_mixed_layers(schema, user_data)
         self._trace(trace, ns_id, ns)
         # La clé métier sort du MÊME schéma que ci-dessus (`declared_key` re-résolvait
         # le namespace et relisait la ligne pour le même résultat).
@@ -771,6 +775,8 @@ class DatastorePg(SchemaOpsMixin):
         if schema is None:
             schema = self._schema_of(ns_id)
         _refuse_flat_writes(schema, user_data)
+        _refuse_dotted_names(user_data)
+        _refuse_mixed_layers(schema, user_data)
         sk = (dsv2.status_field(schema) or {}).get("key")
 
         def _apply(current: dict) -> dict:
@@ -808,6 +814,8 @@ class DatastorePg(SchemaOpsMixin):
             ns_id = self._resolve(namespace, write=True)
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}
         schema = self._schema_of(ns_id)
+        _refuse_dotted_names(user_data)
+        _refuse_mixed_layers(schema, user_data)
         if dsv2.validation_active(schema) or dsv2.lifecycle_of(schema):
             prev = db.datastore_get_row(ns_id, row_id)  # remplacement intégral → prev pour la transition
             sk = (dsv2.status_field(schema) or {}).get("key")
@@ -1081,6 +1089,8 @@ class DatastorePg(SchemaOpsMixin):
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
         _refuse_flat_writes(schema, patch)
+        _refuse_dotted_names(patch)
+        _refuse_mixed_layers(schema, patch)
         status_key = (dsv2.status_field(schema) or {}).get("key")
         prev_status = data.get(status_key) if status_key else None
         self._trace(trace, ns_id, ns, prev_status=prev_status)

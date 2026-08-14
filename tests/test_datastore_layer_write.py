@@ -161,9 +161,16 @@ def test_an_unknown_layer_is_refused_at_write():
 
 
 def test_a_plain_json_value_is_not_judged_as_layers():
-    """Un dict SANS `valeur` est une donnée `json` ordinaire — pas une colonne à
-    couches. On n'y touche pas."""
+    """Un dict sans AUCUNE clé de couche connue est une donnée `json` ordinaire —
+    pas une colonne à couches. On n'y touche pas.
+
+    ⚠️ Ce test a affirmé le critère « sans `valeur` » jusqu'au 14/08 (#329) : il
+    protégeait alors le trou — `{"origine": x, "sourse": y}` passait sans refus
+    et écrasait la valeur. Le critère corrigé : ≥1 clé de couche connue présente
+    ⟹ la validation s'applique, `valeur` ou pas."""
     assert dsv2.unknown_layers({"a": 1, "sourse": 2}) == []
+    assert dsv2.unknown_layers({"origine": "x", "sourse": "y"}) == ["sourse"], \
+        "le geste du rattrapage (#326), une faute de frappe plus loin — refusé"
 
 
 def test_the_reader_tolerates_what_the_writer_refuses():

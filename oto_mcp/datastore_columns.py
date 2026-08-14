@@ -127,6 +127,80 @@ def _refuse_flat_writes(schema: Optional[dict], user_data: dict) -> None:
             f"`{colonne}[{rang}].{attr}`"])
 
 
+def _scan_mixed(value: Any, path: str, errors: list) -> None:
+    """Le balayage RÉCURSIF de la garde #329 — au grain feuille, parce que c'est
+    à l'intérieur des items de colonne-liste (les attributs contacts) que
+    passent les écritures réelles. Trois natures de dict, trois traitements :
+    mixte (≥1 couche connue + ≥1 inconnue) → refus nommé ; pur-couches → on ne
+    descend PAS dedans (la valeur d'une couche est opaque, contrat du lecteur
+    tolérant) ; sans aucune couche → donnée libre, on descend (ses feuilles
+    peuvent porter des couches)."""
+    if isinstance(value, dict):
+        cles = set(value)
+        couches = cles & set(dsv2.ALL_LAYER_KEYS)
+        if couches:
+            inconnues = sorted(cles - set(dsv2.ALL_LAYER_KEYS))
+            if inconnues:
+                errors.append(
+                    f"{path}: {', '.join(repr(k) for k in inconnues)} n'est pas une "
+                    f"couche — les couches sont {', '.join(dsv2.ALL_LAYER_KEYS)}. "
+                    "Rien n'a été écrit. Corrige la clé ; si c'est un objet métier "
+                    "qui porte ce nom par coïncidence, déclare la colonne en type "
+                    "`json` (data_set_schema) — elle devient exempte de cette garde.")
+            return
+        for k, v in value.items():
+            _scan_mixed(v, f"{path}.{k}", errors)
+    elif isinstance(value, list):
+        for i, item in enumerate(value):
+            _scan_mixed(item, f"{path}[{i}]", errors)
+
+
+def _refuse_mixed_layers(schema: Optional[dict], user_data: Optional[dict]) -> None:
+    """#329 : une couche mal orthographiée se REFUSE, elle n'écrase jamais.
+
+    Un dict qui mêle une clé de couche connue et une inconnue était traité en
+    donnée json ordinaire (`_writes_layers` strict + `unknown_layers`
+    court-circuité sans `valeur`) : il ÉCRASAIT la valeur existante sans une
+    erreur — une faute de frappe systématique dans une procédure effacerait un
+    champ sur ~9 000 lignes. La garde vit ICI, à la validation d'entrée, sur le
+    payload ÉCRIT : dans le merge elle raterait les items (grain colonne), sur
+    le résultat mergé elle bloquerait rétroactivement les lignes porteuses d'un
+    dict mixte historique.
+
+    Exemption au grain où un type EST déclaré : une colonne de premier niveau
+    déclarée `json` est un objet métier assumé — un contenu y porte `origine`
+    sans être des couches."""
+    if not user_data:
+        return
+    exemptes = {f.get("key") for f in dsv2._fields(schema)
+                if f.get("type") == "json" and f.get("key")}
+    errors: list = []
+    for col, val in user_data.items():
+        if col in exemptes or col in _META_COLS:
+            continue
+        _scan_mixed(val, col, errors)
+    if errors:
+        raise RowValidationError(errors)
+
+
+def _refuse_dotted_names(user_data: Optional[dict]) -> None:
+    """#329 volet 2 : un nom de COLONNE ne porte ni point ni adresse.
+
+    `data_write` avec `"champ.comment"` en clé fabriquait une colonne littérale
+    fantôme : acceptée, persistée, et invisible à l'adresse qui la nomme (le
+    filtre et le tri lisent la COUCHE `data->'champ'->>'comment'`, jamais la
+    colonne littérale) — avec collision silencieuse en lecture. Le refus nomme
+    la forme attendue au lieu de dire seulement non."""
+    for cle in user_data or {}:
+        if "." in cle:
+            base = cle.split("[")[0].split(".")[0]
+            raise RowValidationError([
+                f"`{cle}` n'est pas un nom de colonne — les points désignent des "
+                f"couches ou des attributs, qui s'écrivent en forme imbriquée : "
+                f'{{"{base}": {{…}}}}. Une colonne littérale nommée `{cle}` serait '
+                "invisible au filtre et au tri du même nom. Rien n'a été écrit."])
+
+
 def _merge_column(existing: Any, new: Any) -> Any:
     """Fusion d'UNE colonne. **Aucune couche ne s'écrit implicitement, dans aucun sens.**
 

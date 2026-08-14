@@ -73,11 +73,17 @@ def unknown_layers(value: Any) -> list:
     contraint. Une couche mal orthographiée doit s'apprendre à l'écriture, pas se
     découvrir six semaines plus tard.
 
-    Un dict SANS `valeur` n'est pas une colonne à couches : c'est une valeur `json`
-    ordinaire, on n'y touche pas."""
-    if not isinstance(value, dict) or VALUE_LAYER not in value:
+    Un dict sans AUCUNE clé de couche connue n'est pas une colonne à couches :
+    c'est une valeur `json` ordinaire, on n'y touche pas. ⚠️ Le critère a été
+    corrigé par #329 — jusque-là le court-circuit exigeait `valeur`, si bien
+    qu'un `{"origine": x, "sourse": y}` (le geste du rattrapage #326, une faute
+    de frappe plus loin) passait SANS refus et écrasait la valeur existante en
+    silence. La même validation s'applique désormais dans les deux cas."""
+    if not isinstance(value, dict):
         return []
     connues = {VALUE_LAYER, *LAYER_KEYS}
+    if not (set(value) & connues):
+        return []
     return sorted(k for k in value if k not in connues)
 
 

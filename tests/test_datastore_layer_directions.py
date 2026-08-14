@@ -162,13 +162,24 @@ def test_erasing_everything_empties_the_column(store):
 
 # --- ce qui n'est pas une couche ---------------------------------------------------
 
-def test_a_json_value_that_happens_to_have_an_origin_field_stays_data(store):
-    """`{"a": 1, "origine": "x"}` est une donnée métier qui se trouve porter un champ
-    nommé « origine ». La réinterpréter en couches ferait dépendre le sens d'une
-    colonne du vocabulaire de son contenu."""
+def test_a_json_value_that_happens_to_have_an_origin_field_is_refused(store):
+    """RETOURNÉ par #329 — ce test affirmait l'acceptation jusqu'au 14/08, et il
+    figeait le trou : `{"a": 1, "origine": "x"}` était stocké en donnée métier,
+    donc `{"origine": "x", "sourse": "y"}` (une couche mal orthographiée)
+    passait par la même porte et ÉCRASAIT la valeur sans erreur.
+
+    L'arbitrage : l'ambiguïté ne s'écrit pas — un dict qui mêle une clé de
+    couche connue et des clés étrangères se REFUSE en nommant la sortie. Le
+    prix assumé : une donnée métier qui porte `origine` par coïncidence exige
+    désormais de déclarer sa colonne en `json` (l'exemption), et le message du
+    refus le dit."""
+    from oto_mcp.datastore_errors import RowValidationError
+
     s, db = store
-    s.update_row("t", "r1", {"naf": {"a": 1, "origine": "x"}})
-    assert _lu(db) == {"a": 1, "origine": "x"}
+    with pytest.raises(RowValidationError) as e:
+        s.update_row("t", "r1", {"naf": {"a": 1, "origine": "x"}})
+    assert "json" in str(e.value), "le refus PORTE la sortie légitime"
+    assert _lu(db) is None, "rien n'est écrit"
 
 
 def test_a_layer_from_a_newer_version_survives_a_rewrite(store):
