@@ -806,9 +806,16 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   `aiark_company_search(account=)` (le filtre société, 28/07 : AI Ark renvoyait sa base
   entière, 72M lignes, sans la moindre erreur). Ne JAMAIS nommer un argument de tool
   `_<quelque chose>` (tripwire `test_call_axes_business_param_collision.py`). ⚠️ La prose
-  du bloc A prescrit ces jetons : elle vit dans `instructions.py` **ET** en DB
-  (`platform_instructions['secret_sauce']`) — mettre les deux à jour, la DB **après** le
-  déploiement prod, sinon l'agent reçoit une consigne que le serveur ne sait pas honorer.
+  du bloc A prescrit ces jetons : la source est `instructions.py` (le seed versionné).
+  **PAS d'override DB (`platform_instructions['secret_sauce']`) sauf divergence
+  DÉLIBÉRÉE** — un override qui recopie le seed est une MINE : il fige la prose au jour
+  de sa pose et toute évolution du code cesse de se propager sans que rien ne le
+  signale. Vécu 12-14/08 : la copie DB a survécu deux jours au retrait d'`abandoned`
+  (#311) — le texte le plus lu de la plateforme prescrivait une valeur que
+  `run_finish` REFUSAIT. Purgé le 14/08 (l'override est VIDE, le seed sert seul ;
+  vider l'override = « rétablir le défaut » depuis v1.117.0). Si un jour on diverge
+  pour de vrai : mettre les deux à jour, la DB **après** le déploiement prod — et
+  savoir que cette règle repose sur la mémoire, pas sur un garde-fou.
 - **Ce qu'un outil RENVOIE a un budget, et il se mesure — pas une consigne (14/08).** Sept
   signaux d'usage en six jours, tous le même défaut : un payload qu'un agent ne peut pas
   lire (`linkedin_aiark_search` 3 M caractères, `oto_doc op=list` 201 K, `linkedin_unipile_post
