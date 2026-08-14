@@ -1,5 +1,5 @@
 ---
-title: DSL de filtres Cognism (search_contacts / search_accounts)
+title: DSL de filtres Cognism (cognism_search / cognism_redeem)
 description: référence complète des ~150 champs de filtre Cognism — à lire avant une recherche contact/société non triviale
 ---
 
