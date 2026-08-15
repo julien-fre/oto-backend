@@ -35,6 +35,12 @@ passait sous les deux garde-fous. Sous la charge d'une campagne (~8 clients lour
 `mcp.oto.cx` + 807 « Unexpected ASGI message after response already completed » en
 20 min, **CPU calme** (load 0,31) — signature du gel de LOOP, pas de la saturation.
 
+> ⚠️ **Un des trois indices ci-dessus a été mal attribué, et il faut le savoir avant de
+> le réutiliser.** Les 807 « after response already completed » ne viennent PAS du gel :
+> c'est la signature de la race terminate-vs-POST documentée plus bas (#352), qui tournait
+> en parallèle et dont on ignorait alors l'existence. Le gel, lui, est bien établi par le
+> py-spy ci-dessous — ça, ça tient. Ne garder de cette ligne que les 502 et le CPU calme.
+
 py-spy sur la box, MainThread, **3 relevés sur 6** (dont ≥4 s consécutives) :
 
 ```
@@ -93,19 +99,25 @@ des 502**.
 | py-spy pendant | MainThread dans `psycopg execute` | MainThread **idle** |
 | remède | sortir le I/O de la boucle | compléter la réponse ASGI |
 
-**La mécanique.** Un POST `/mcp` est en vol quand la session streamable-http se termine
-(DELETE du client, ou stream fermé côté client). Le SDK MCP pousse alors dans un stream
-mort (`writer.send` → `anyio.BrokenResourceError`) et le POST se conclut sur une réponse
-ASGI **incomplète**, de deux façons :
+**La mécanique, en DEUX étages** — et le premier n'est pas celui qui casse. Un POST
+`/mcp` est en vol quand la session streamable-http se termine (le DELETE du client ferme
+le stream mémoire du transport) :
 
-- l'exception s'échappe — le `except Exception` du SDK renvoie un 500 **par-dessus le 202
-  déjà envoyé**, uvicorn refuse (`RuntimeError: … after response already completed`) et
-  la refuse jusqu'en haut ;
-- ou l'app RETOURNE sans terminer le corps (branche SSE : le task group annule la tâche
-  de réponse, le SDK avale) — uvicorn journalise « ASGI callable returned without
-  completing response ».
+1. `writer.send()` lève `anyio.BrokenResourceError`. **Le SDK l'attrape et la logue**
+   (`ERROR mcp.server.streamable_http: Error handling POST request`) — elle ne s'échappe
+   jamais. C'est du bruit, pas la panne ;
+2. son `except Exception` tente alors d'écrire un 500 **par-dessus le 202 déjà envoyé**
+   (`streamable_http.py:654`). h11 a clos la réponse → `RuntimeError: Unexpected ASGI
+   message 'http.response.start' sent, after response already completed`. **C'est CELLE-LÀ
+   qui remonte jusqu'à uvicorn**, et rien d'autre.
 
-Dans les deux cas uvicorn **ferme le transport**. Et c'est là qu'est le vrai dégât : Caddy
+Mesuré sur 8,4 h de journal (15/08) : 2744 `BrokenResourceError` loguées, 1433
+« Exception in ASGI application » — **toutes** le `RuntimeError` ci-dessus. Zéro
+`ExceptionGroup`, et zéro « ASGI callable returned without completing response ». Le
+piège de diagnostic est là : on cherche `BrokenResourceError` en haut de pile, elle n'y
+est jamais — elle n'apparaît que dans le message logué par le SDK.
+
+uvicorn **ferme alors le transport**. Et c'est là qu'est le vrai dégât : Caddy
 tenait cette connexion pour réutilisable dans son **pool keep-alive**. Elle meurt sous
 lui → 502 sur elle, **et sur les requêtes voisines qui en héritent** — d'où des 502 sur
 des `claim`/`extend`/`thread_append` de workers qui n'ont jamais parlé à `/mcp` (4-5 runs
@@ -126,3 +138,33 @@ ferait (#2983) est ouverte depuis juin, jamais mergée ; le backport du fix vois
 ligne 1.x a été refusé (`not_planned`, #3142), et `v1.x` est en « security fixes only ».
 **Bumper `mcp` ne rapporte pas ce fix** — et 2.0.0 est hors d'atteinte tant que
 `fastmcp-slim` pin `mcp<2.0`.
+
+### La source de la churn : c'est NOTRE workload, pas un tiers
+
+Les 3 IP Azure de l'incident (`4.223.142.177`, `20.240.139.18`, `4.225.216.254`) portent
+`User-Agent: MistralAI-MCPClient/1.0` (+ `X-Internal-Service: harmattan-api`) et sont
+**pleinement authentifiées** — zéro 401, zéro 403 sur 16 122 requêtes en 8,4 h. C'est le
+client MCP hébergé de Mistral, exécutant notre propre charge d'enrichissement (38 782
+appels sur 48 h : `data_write`, `data_rows`, `data_claim_next`, `serper_*`, `fr_*`).
+
+**⇒ Ni intrusion, ni abus : aucun rate-limit à poser.** En throttler serait throttler la
+campagne. Ce qui coûte, c'est le patron du client : il ouvre une session neuve **par
+tour** puis la DELETE aussitôt — **16 213 `initialize` en 48 h**, durée de vie médiane
+**339 ms** (p10 237 ms, min 211 ms), ~4,3 requêtes HTTP par session. Chaque `initialize`
+paie tout le handshake. Le levier est la réutilisation de session côté client, pas le
+reverse proxy.
+
+⚠️ **Angle mort d'observabilité relevé au passage** : `/etc/caddy/Caddyfile` n'a **aucune
+directive `log`** → pas d'access log Caddy. Les statuts ne se lisent que dans l'access log
+uvicorn (`journalctl -u oto-mcp`), qui ne remonte qu'à ~8 h (cap 183 Mo, cron d'hygiène
+disque) : **la rafale de nuit n'était déjà plus lisible au matin**, seule la base l'a
+gardée. Compter des 502 côté edge est aujourd'hui impossible.
+
+Deux corrélations qui NE marchent pas, à ne pas retenter : `Mcp-Session-Id` (32 hex, id
+de transport MCP) ≠ `tool_calls.session_id` (UUID 36, session applicative) — espaces
+disjoints, intersection nulle ; et le `X-Request-Id` de l'Envoy client ≠
+`tool_calls.request_id`. Le pont qui marche est le **profil horaire** (ratio ~4,3:1 entre
+requêtes HTTP et `initialize`) plus le `clientInfo` du handshake, stocké dans
+`tool_calls.args` — noter que le connecteur Mistral ne surcharge pas le clientInfo du SDK
+Python, donc la base ne montre qu'un générique `client_name='mcp'` : **le nom du produit
+ne se lit que dans le User-Agent HTTP**.

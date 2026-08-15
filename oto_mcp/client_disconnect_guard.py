@@ -2,20 +2,28 @@
 
 **Le problème mesuré** (oto-backend#352, prod nuit du 15-16/08 : ~70 × 502 en 40 min,
 durées 0,2 s — pas des timeouts). Un POST `/mcp` est en vol sur une session
-streamable-http quand la session SE TERMINE (DELETE du client, ou fermeture du stream
-côté client). Le SDK MCP pousse alors dans un stream mort (`writer.send` →
-`anyio.BrokenResourceError`, `mcp/server/streamable_http.py`), et le POST se conclut
-d'une des deux façons suivantes — les deux sont des **réponses ASGI incomplètes** :
+streamable-http quand la session SE TERMINE (le DELETE du client ferme le stream mémoire
+du transport). Deux étages, et **le premier n'est pas celui qui casse** :
 
-- l'exception s'échappe de l'app ASGI. uvicorn journalise « Exception in ASGI
-  application » puis, si la réponse était déjà partie, **ferme brutalement le
-  transport** (`transport.close()`) ;
-- l'app RETOURNE après avoir commencé la réponse sans la terminer (branche SSE : le
-  task group annule la tâche de réponse quand `writer.send` lève, le `except Exception`
-  du SDK avale, `_handle_post_request` retourne). uvicorn journalise « ASGI callable
-  returned without completing response » et **ferme brutalement le transport**.
+1. `writer.send()` lève `anyio.BrokenResourceError`
+   (`mcp/server/streamable_http.py`). Le SDK **l'attrape et la logue** — elle ne
+   s'échappe jamais. C'est du bruit, pas la panne ;
+2. son `except Exception` tente alors d'écrire un 500 **par-dessus le 202 déjà envoyé**.
+   h11 a clos la réponse → `RuntimeError: Unexpected ASGI message 'http.response.start'
+   sent, after response already completed`. **C'est celle-là qui remonte à uvicorn**, qui
+   journalise « Exception in ASGI application » et **ferme brutalement le transport**.
 
-Dans les deux cas la fermeture est le vrai dégât : Caddy tenait cette connexion pour
+Mesuré sur 8,4 h de journal (15/08) : 2744 `BrokenResourceError` loguées, 1433
+« Exception in ASGI application » — **toutes** le `RuntimeError` ci-dessus, zéro
+`ExceptionGroup`. Le piège de diagnostic est là : on cherche `BrokenResourceError` en
+haut de pile, elle n'y est jamais.
+
+(La garde couvre aussi la variante « l'app retourne après avoir commencé la réponse sans
+la terminer », qu'uvicorn journalise « ASGI callable returned without completing
+response » et sanctionne de la même fermeture. Zéro occurrence mesurée — c'est de la
+ceinture, pas la bretelle.)
+
+La fermeture est le vrai dégât : Caddy tenait cette connexion pour
 **réutilisable dans son pool keep-alive**. Elle meurt sous lui → `reverseproxy.statusError`
 → 502, **y compris sur les requêtes REST voisines** qui héritent de la connexion
 empoisonnée (vécu : 16 × 502 sur des claim/extend/thread_append de workers, 4-5 runs

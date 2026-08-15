@@ -932,7 +932,11 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   ferme le transport, et Caddy — qui tenait la connexion pour réutilisable — rend des 502
   sur elle **et sur les requêtes voisines de son pool keep-alive** (des `/api/*` de
   workers qui n'ont jamais parlé à `/mcp`). Le discriminant tient en un chiffre : ces
-  502-là durent **~0,2 s** (le gel, lui, fait attendre). Garde : `client_disconnect_guard.py`,
+  502-là durent **~0,2 s** (le gel, lui, fait attendre). ⚠️ **Ce qui remonte à uvicorn
+  n'est PAS `BrokenResourceError`** — le SDK l'attrape et la logue ; ce qui s'échappe est
+  le `RuntimeError … after response already completed` de son 500 écrit par-dessus le 202
+  (mesuré : 1433/1433). Chercher `BrokenResourceError` en haut de pile ne trouve rien.
+  Garde : `client_disconnect_guard.py`,
   posée par `server.build_root_app` en couche la plus EXTERNE — elle complète la réponse
   à la place du client parti et n'attrape QUE `error_taxonomy._is_client_disconnect`
   (même prédicat que le drop Sentry, une seule source) ; toute autre exception traverse,
