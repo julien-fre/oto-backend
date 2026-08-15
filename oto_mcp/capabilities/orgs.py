@@ -11,7 +11,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .. import org_store, session_org
+from .. import config, org_store, session_org
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -81,7 +81,18 @@ def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
     name = inp.name.strip()
     if not name:
         raise AuthzDenied(400, "invalid_name", "Nom d'espace requis.")
-    org_id = org_store.create_org(name, created_by=ctx.sub)
+    # Le front qui héberge l'org est DÉRIVÉ du tenant de son créateur (registre
+    # d'émetteurs), jamais déclaré. Sans ça une org créée depuis un front tiers
+    # repart à NULL, donc ses invitations pointent `oto.cx` ET s'augmentent d'un
+    # magic-link minté sur NOTRE Logto — inerte contre l'émetteur du tenant. L'invité
+    # se crée alors un compte CHEZ NOUS, accepte avec celui-là, et son compte du
+    # tenant n'est membre de rien : deux identités pour une personne, et l'org
+    # inatteignable depuis son propre front (vécu le 15/08 sur une org Tulina).
+    # b6e1d27 a donné aux invitations la marque de l'org ; il manquait qui la pose.
+    front_base_url, front_brand = config.front_for(ctx.sub)
+    org_id = org_store.create_org(name, created_by=ctx.sub,
+                                  front_base_url=front_base_url,
+                                  front_brand=front_brand)
     org_store.add_org_member(org_id, ctx.sub, "org_admin")
     # Nouvelle org = ton org maison (défaut) — effective immédiatement, y compris dans
     # cette conversation (le seam `current_org` retombe sur la maison sans jeton ; plus

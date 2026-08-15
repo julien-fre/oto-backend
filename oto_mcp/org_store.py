@@ -75,14 +75,22 @@ def has_org_secret(org_id: int, provider: str) -> bool:
 
 # --- écritures + lectures de gestion (barreau 3, meta-tools platform_admin) --
 
-def create_org(name: str, created_by: Optional[str] = None) -> int:
+def create_org(name: str, created_by: Optional[str] = None,
+               front_base_url: Optional[str] = None,
+               front_brand: Optional[str] = None) -> int:
+    """Crée une org. `front_base_url`/`front_brand` = le front qui l'héberge, DÉRIVÉ
+    du tenant de son créateur par l'appelant (`config.front_for`) et posé ici même :
+    NULL/NULL = oto, le défaut. Écrits à l'INSERT plutôt qu'en seconde écriture — une
+    org ne doit jamais exister, fût-ce un instant, sans la marque de ses liens
+    sortants. Cf. les colonnes `orgs.front_*` (db/_init) et `org_front` ci-dessous."""
     name = (name or "").strip()
     if not name:
         raise ValueError("nom d'org requis")
     with _connect() as conn:
         row = conn.execute(
-            "INSERT INTO orgs (name, created_by) VALUES (%s, %s) RETURNING id",
-            (name, created_by),
+            "INSERT INTO orgs (name, created_by, front_base_url, front_brand) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            (name, created_by, front_base_url or None, front_brand or None),
         ).fetchone()
         return int(row["id"])
 
