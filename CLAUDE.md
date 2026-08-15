@@ -85,6 +85,17 @@ Mistral). **Détail : `docs/auth-logto.md`** (jetons API, registre d'émetteurs,
 > - **Le socle d'instructions suit le tenant** (`guides` scope `tenant`, owner = le slug) :
 >   sinon l'assistant d'un partenaire se présente sous NOTRE marque à chaque session.
 >
+> **Le suivi est un ÉCRAN depuis le 15/08** (`capabilities/tenants_admin.py` + `db.list_tenants_overview`,
+> REST `/api/admin/tenants[/{slug}]`, MCP `oto_admin_tenant`, dashboard `/platform/tenants`) : qui est
+> servi, sous quel émetteur, avec quelles orgs/comptes/appels. Trois choses à savoir avant d'y toucher :
+> **(1) lecture seule** — le provisionnement reste un runbook et le registre est bâti AU BOOT, d'où le
+> verdict `pending_restart` (déclaré en base, absent du registre ⟹ ses jetons sont encore rejetés) plutôt
+> qu'un formulaire ; **(2) les deux rattachements sont comptés SÉPARÉMENT** (`orgs.tenant_id` vs la
+> qualification du sub) et l'écart est nommé `orgs_desalignees` — en dériver un chiffre unique le ferait
+> mentir ; **(3) c'est le premier LECTEUR de `orgs.tenant_id`** : le garde-fou L1 est passé d'une
+> interdiction totale à une **allowlist** de deux fichiers (`test_tenant_l1_migration.py`) — un chemin de
+> **résolution** qui dépendrait du rattachement d'org le casse toujours, et c'est voulu.
+>
 > ⚠️ **OPS — une bascule de tenant ABANDONNE les clés personnelles.** L'AAD dérive de
 > l'entité : `migrate_sub` ne repointe plus `connector_credentials.entity_id` (une ligne
 > repointée sans rechiffrement est indéchiffrable — pire qu'absente, la fiche la dit posée).
