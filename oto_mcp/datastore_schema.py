@@ -226,6 +226,14 @@ def _fields(schema: Optional[dict]) -> list[dict]:
     return [f for f in (schema or {}).get("fields") or [] if isinstance(f, dict)]
 
 
+def declares_field(schema: Optional[dict], key: str) -> bool:
+    """Le schéma déclare-t-il un field top-level de cette clé ? La reconnaissance
+    par DÉCLARATION (#354) : c'est elle qui distingue une colonne de données
+    légitime (un CSV importé porte souvent une colonne `id`) d'un identifiant de
+    ligne égaré dans le corps — jamais une devinette sur la forme de la valeur."""
+    return any(f.get("key") == key for f in _fields(schema))
+
+
 def _walk_fields(fields: list) -> Iterator[dict]:
     """Tous les fields, sous-records COMPRIS (`object.fields`, `list.of[.fields]`)."""
     for f in fields:

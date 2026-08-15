@@ -10,6 +10,15 @@ travail, aucune erreur. 28 champs repris à la main.
 `hors_schema` ne pouvait rien dire : tous les noms de champs étaient bons, c'est la
 DESTINATION qui était fausse. D'où une garde distincte, et au même endroit — le
 store, pour qu'aucune face ne puisse l'oublier.
+
+⚠️ AMENDÉ par #354 (16/08) — ce banc a affirmé le REFUS de `_id` dans `row`
+jusqu'à cette date. La nuit de flotte du 15/08 a montré que le refus était le
+deuxième meilleur remède : les agents refusés visaient tous la BONNE ligne, et
+un tour de correction se payait à chaque fois. `_id` dans `row` est désormais
+PROMU : c'est l'adresse de la ligne, le write-back symétrique du claim — avec le
+garde-fou indissociable qu'un `_id` inconnu ne crée JAMAIS (erreur nommée).
+S'y ajoute la garde du trou resté ouvert : `id` NU non déclaré au schéma, la
+variante qui a réellement produit 4 lignes fantômes cette nuit-là.
 """
 from __future__ import annotations
 
@@ -48,20 +57,59 @@ def store(monkeypatch):
     return st, calls
 
 
-def test_append_with_id_in_the_body_is_refused(store):
-    """LE cas vécu : sans `id=`, l'écriture insérait une ligne neuve."""
+def test_append_with_id_in_the_body_updates_that_row(store):
+    """La PROMOTION (#354) : `_id` dans `row` est l'adresse de la ligne — le
+    write-back tel que le claim l'a servie fusionne sur ELLE. Rien d'inséré,
+    rien de refusé : le chemin paresseux est devenu le chemin juste."""
     st, calls = store
-    with pytest.raises(ValueError, match="INSÉRERAIT"):
-        st.append_row("v", {"_id": ROW, "statut": "enrichi"})
-    assert calls["insert"] == []          # surtout : rien d'inséré
+    out = st.append_row("v", {"_id": ROW, "statut": "enrichi"})
+    assert calls["insert"] == []
+    assert calls["update"] and calls["update"][0][0] == ROW
+    assert out["statut"] == "enrichi"
+    assert "_id" not in calls["update"][0][1]   # jamais écrit dans le blob
 
 
-def test_the_message_hands_back_the_right_call(store):
-    st, _ = store
-    with pytest.raises(ValueError) as e:
-        st.append_row("v", {"_id": ROW, "statut": "enrichi"})
-    # l'identifiant ET la forme correcte, pour que la reprise soit mécanique
-    assert ROW in str(e.value) and "data_write(id=" in str(e.value)
+def test_a_promoted_unknown_id_never_creates(store, monkeypatch):
+    """LE garde-fou indissociable de la promotion : un `_id` qui ne matche
+    aucune ligne (tronqué, halluciné, purgé entre claim et write) rend une
+    erreur nommée — re-fabriquer le fantôme par cette porte est interdit."""
+    st, calls = store
+    monkeypatch.setattr(dsm.db, "datastore_get_row", lambda ns_id, rid: None)
+    with pytest.raises(ValueError, match="aucune ligne"):
+        st.append_row("v", {"_id": "019f-inconnu", "statut": "enrichi"})
+    assert calls["insert"] == [] and calls["update"] == []
+
+
+def test_a_naked_undeclared_id_is_refused(store):
+    """LE fantôme de la nuit du 15/08 : `id` (sans underscore) recopié du claim,
+    sans clé métier — la fusion ne matchait rien, 4 lignes fantômes portant tout
+    l'enrichissement, le tableau de la cliente pollué. Refus nommé, sur le seam
+    que TOUS les chemins d'écriture traversent."""
+    st, calls = store
+    with pytest.raises(ValueError, match="fantôme"):
+        st.append_row("v", {"id": ROW, "statut": "enrichi"})
+    assert calls["insert"] == []
+
+
+def test_a_declared_id_column_is_plain_data(store, monkeypatch):
+    """Reconnaissance par DÉCLARATION : un CSV importé porte souvent une vraie
+    colonne `id` — déclarée au schéma, elle s'écrit comme n'importe quelle
+    donnée."""
+    st, calls = store
+    monkeypatch.setattr(
+        dsm.db, "get_datastore_namespace_by_id",
+        lambda ns_id: {"id": ns_id,
+                       "schema": {"fields": [{"key": "id"}, {"key": "siren"}]}})
+    st.append_row("v", {"id": "ext-42", "siren": "2"})
+    assert calls["insert"] == [{"id": "ext-42", "siren": "2"}]
+
+
+def test_a_naked_undeclared_id_in_a_batch_is_refused_too(store):
+    """Le lot passe par le même seam : un `id` égaré dans une row de batch est
+    refusé pareil — pas de fantôme au volume."""
+    st, calls = store
+    with pytest.raises(ValueError, match="fantôme"):
+        st.write_rows("v", [{"siren": "1"}, {"id": ROW, "siren": "2"}])
 
 
 def test_patch_with_a_coherent_id_passes(store):

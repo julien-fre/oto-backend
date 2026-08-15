@@ -405,6 +405,23 @@ class DatastorePg(SchemaOpsMixin):
             raise RowValidationError(errors)   # refusée ⇒ rien à relever
         posed = merged if written is None else {k: merged[k] for k in written
                                                 if k in merged}
+        # #354 : un `id` NU posé par le geste, qu'aucun field ne déclare, est un
+        # identifiant de ligne égaré — pas une donnée. Écrit comme donnée, il a
+        # produit des lignes fantômes (4 en une nuit de flotte : l'agent recopie
+        # l'`id` que le claim lui a servi, la fusion ne matche rien, une ligne
+        # SANS clé métier naît avec tout l'enrichissement). Reconnaissance par
+        # DÉCLARATION : une vraie colonne `id` (CSV importé) se déclare au schéma
+        # et passe ; sans déclaration, refus nommé — jamais une devinette, jamais
+        # un silence. Posé ICI parce que ce seam voit TOUS les chemins d'écriture.
+        if "id" in posed and not dsv2.declares_field(schema, "id"):
+            raise ValueError(
+                f"`id` ({posed['id']!r}) posé dans `row` sans être une colonne "
+                "déclarée du tableau : un identifiant de ligne ne s'écrit pas "
+                "comme une donnée — l'écriture viserait à côté (ligne fantôme). "
+                "Pour cibler une ligne : garde son `_id` tel que servi dans la "
+                "ligne, ou passe le paramètre id=. Si `id` est une vraie colonne "
+                "de TES données, déclare-la au schéma (data_set_schema) puis "
+                "réécris.")
         self.off_schema.update(dsv2.off_schema_keys(schema, posed))
         # Valeurs hors des options DÉCLARÉES quand rien ne les fait respecter (#319) :
         # écrites quand même — le tableau est en régime souple — mais plus en silence.
@@ -442,6 +459,9 @@ class DatastorePg(SchemaOpsMixin):
                 "modifier UNE ligne précise, appelle data_write(id=…, row={…}) ; "
                 "pour un lot, déclare la clé métier et laisse-la dédoublonner.")
         if row_id is None:
+            # Chemin normalement inatteignable depuis append_row depuis #354 (la
+            # promotion capte `_id` en amont et route vers update) — conservé en
+            # défense en profondeur pour tout futur appelant.
             raise ValueError(
                 f"`_id` ({posed!r}) posé DANS `row` : il y serait ignoré et ton "
                 "écriture INSÉRERAIT une nouvelle ligne au lieu de modifier "
@@ -645,7 +665,23 @@ class DatastorePg(SchemaOpsMixin):
         sinon append. Renvoie la row (nouvelle ou mise à jour).
 
         `trace` (dict mutable, optionnel) = relevé pour le journal, cf. `_trace`."""
-        self._reject_misplaced_id(data, None)
+        if isinstance(data, dict) and "_id" in data:
+            # PROMOTION (#354, amende le refus #390) : `_id` dans `row` EST
+            # l'adresse de la ligne — réécrire la ligne telle que
+            # `data_claim_next`/`data_rows` l'a servie devient le geste juste,
+            # symétrique du claim. Garde-fou indissociable : un `_id` qui ne
+            # matche AUCUNE ligne rend une erreur nommée, jamais une création —
+            # sinon la promotion re-fabrique le fantôme par une porte de côté.
+            cible = str(data["_id"])
+            reste = {k: v for k, v in data.items() if k != "_id"}
+            try:
+                return self.update_row(namespace, cible, reste, trace=trace)
+            except RowNotFound:
+                raise ValueError(
+                    f"`_id` ({cible!r}) ne correspond à aucune ligne de "
+                    f"`{namespace}` — rien n'est créé. L'identifiant est peut-être "
+                    "tronqué ou la ligne purgée : relis-la (data_rows, "
+                    "data_claim_next) et réécris avec son `_id` exact.")
         ns_id = self._resolve(namespace, write=True)
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}
         ns = self._ns_of(ns_id)
