@@ -77,3 +77,52 @@ depuis `_rest_adapter._handler` (`current_org` sync, relevé py-spy), et le sink
 calllog `server._calllog_sink` → `auth_hooks.current_user_sub_from_token` →
 `db.upsert_user` (écriture + commit dans la boucle). Chacun est UNE requête ou trois,
 là où la composition en faisait des dizaines — d'où l'ordre de traitement.
+
+## Un 502 en rafale n'est pas forcément un gel — la 2ᵉ cause (#352, nuit du 15-16/08)
+
+⚠️ **À lire avant de conclure « c'est encore le gel ».** Ce document a servi, du 15/08 au
+16/08, à attribuer au gel mono-loop des 502 qui n'en venaient pas. Les deux causes
+partagent la moitié de leur signature — 502 en rafale, CPU calme, « after response
+already completed » au journal — et se distinguent nettement sur un point : **la durée
+des 502**.
+
+| | gel mono-loop (ci-dessus) | race terminate-vs-POST (#352) |
+|---|---|---|
+| durée des 502 | **longue** (la requête attend la boucle) | **~0,2 s** — la connexion meurt aussitôt |
+| loop_watch | callbacks ≥1 s nommés au journal | **muet** (la boucle tourne) |
+| py-spy pendant | MainThread dans `psycopg execute` | MainThread **idle** |
+| remède | sortir le I/O de la boucle | compléter la réponse ASGI |
+
+**La mécanique.** Un POST `/mcp` est en vol quand la session streamable-http se termine
+(DELETE du client, ou stream fermé côté client). Le SDK MCP pousse alors dans un stream
+mort (`writer.send` → `anyio.BrokenResourceError`) et le POST se conclut sur une réponse
+ASGI **incomplète**, de deux façons :
+
+- l'exception s'échappe — le `except Exception` du SDK renvoie un 500 **par-dessus le 202
+  déjà envoyé**, uvicorn refuse (`RuntimeError: … after response already completed`) et
+  la refuse jusqu'en haut ;
+- ou l'app RETOURNE sans terminer le corps (branche SSE : le task group annule la tâche
+  de réponse, le SDK avale) — uvicorn journalise « ASGI callable returned without
+  completing response ».
+
+Dans les deux cas uvicorn **ferme le transport**. Et c'est là qu'est le vrai dégât : Caddy
+tenait cette connexion pour réutilisable dans son **pool keep-alive**. Elle meurt sous
+lui → 502 sur elle, **et sur les requêtes voisines qui en héritent** — d'où des 502 sur
+des `claim`/`extend`/`thread_append` de workers qui n'ont jamais parlé à `/mcp` (4-5 runs
+tués vers 00:05 UTC le 16/08). Le 502 ne frappe pas que le client parti.
+
+**Le remède, dans NOTRE couche** : `oto_mcp/client_disconnect_guard.py`, posé par
+`server.build_root_app` en couche la plus externe (entre uvicorn et le dispatch par
+Host). Il complète la réponse à la place du client parti — 202 vide si les en-têtes ne
+sont pas partis, fin de corps sinon — et **n'attrape que la classe « déconnexion client »**
+(`error_taxonomy._is_client_disconnect`, le même prédicat que le drop Sentry) : toute
+autre exception traverse intacte, ce que `tests/test_client_disconnect_guard.py` fige.
+C'est la condition pour qu'une garde qui avale une exception soit acceptable.
+
+**Pas de fix upstream à attendre** (vérifié le 16/08) : le site fautif de
+`mcp/server/streamable_http.py` est identique de 1.27.2 à 1.29.0, à `v1.x` HEAD et à
+`main`/2.0.0 — aucune version publiée ne garde ce `writer.send`. La PR upstream qui le
+ferait (#2983) est ouverte depuis juin, jamais mergée ; le backport du fix voisin sur la
+ligne 1.x a été refusé (`not_planned`, #3142), et `v1.x` est en « security fixes only ».
+**Bumper `mcp` ne rapporte pas ce fix** — et 2.0.0 est hors d'atteinte tant que
+`fastmcp-slim` pin `mcp<2.0`.

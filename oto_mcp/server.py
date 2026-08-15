@@ -597,6 +597,31 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
 mcp = _build_mcp("noauth")
 
 
+def build_root_app(app, anon_app):
+    """L'app ASGI servie par uvicorn, de l'intérieur vers l'extérieur.
+
+    1. **dispatch par Host** (ADR 0032) : `<slug>.mcp.oto.cx` publié anonyme → instance
+       anonyme ; publié `org` → authentifiée + org épinglée ; sinon (host canonique ou
+       slug inconnu) → authentifiée. Compose les lifespans des deux instances FastMCP.
+    2. **garde de déconnexion client** (#352), la couche la plus EXTERNE — entre uvicorn
+       et tout le reste. Un POST `/mcp` dont le client est parti en cours de route
+       laissait une réponse ASGI incomplète ; uvicorn fermait alors le transport, et
+       Caddy rendait des 502 sur cette connexion **et sur les requêtes voisines** qui
+       héritaient de la connexion empoisonnée dans son pool keep-alive. La garde
+       complète la réponse à la place du client parti, et n'attrape QUE cette classe
+       (toute autre exception traverse). Elle ne touche NI la chaîne de middlewares
+       FastMCP (leur ordre est un contrat, cf. `tests/test_middleware_order.py`) NI la
+       lib `mcp`.
+
+    Fonction séparée de `main` pour que l'assemblage soit VÉRIFIABLE : `main` démarre
+    uvicorn, donc une garde posée là ne serait couverte par aucun test — et une garde
+    qu'on peut retirer sans faire rougir la suite n'est pas une garde
+    (`tests/test_client_disconnect_guard.py`)."""
+    from . import subdomain_project
+    from .client_disconnect_guard import ClientDisconnectGuard
+    return ClientDisconnectGuard(subdomain_project.HostDispatch(app, anon_app))
+
+
 def main():
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -762,11 +787,7 @@ def main():
 
         app.router.lifespan_context = _lifespan
 
-        # App racine : dispatch par Host (ADR 0032). `<slug>.mcp.oto.cx` publié anonyme →
-        # instance anonyme ; publié `org` → authentifiée + org épinglée ; sinon (canonique /
-        # slug inconnu) → authentifiée. Compose les lifespans des deux instances FastMCP.
-        from . import subdomain_project
-        root_app = subdomain_project.HostDispatch(app, anon_app)
+        root_app = build_root_app(app, anon_app)
 
         import uvicorn
         logger.info("HTTP MCP server on %s:%d (+ anonymous <slug>.mcp.oto.cx)", host, port)
