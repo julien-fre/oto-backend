@@ -294,6 +294,8 @@ _CATEGORY_BY_CONNECTOR = {
     "aiark": "Prospection", "cognism": "Prospection",
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
     "firecrawl": "Prospection", "apify": "Prospection",
+    # signaux de recrutement + campagnes sortantes
+    "theirstack": "Prospection", "origami": "Prospection",
     # ATS / talent sourcing (RH)
     "greenhouse": "Recrutement", "lever": "Recrutement", "ashby": "Recrutement",
     "recruitee": "Recrutement", "teamtailor": "Recrutement", "spott": "Recrutement",
@@ -324,6 +326,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
     "firecrawl": "Firecrawl", "apify": "Apify",
+    "theirstack": "TheirStack", "origami": "Origami",
     "n8n": "n8n", "make": "Make", "zapier": "Zapier",
     # open-data FR → éditeur = la source publique
     "sirene": "INSEE", "culture": "Ministère de la Culture",
@@ -411,6 +414,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
     "firecrawl": "firecrawl.dev", "apify": "apify.com",
+    "theirstack": "theirstack.com", "origami": "origami.chat",
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
     "reddit": "reddit.com",
@@ -1188,6 +1192,32 @@ _REGISTRY_LIST = [
        label="Apify",
        help="scrapers hébergés prêts à l'emploi (Google Maps, LinkedIn, Amazon…) via le Store",
        href="https://apify.com"),
+
+    # --- signaux de recrutement + campagnes sortantes — câblés 2026-08-17 ----
+    # theirstack : offres d'emploi par employeur + technologies détectées dans les
+    # offres (technographie : ERP, CRM…). Deux endpoints POST dont le corps est la
+    # DSL de filtres éditeur, passée telle quelle. keyed api_key (Bearer), **BYOK**
+    # (byo user/org) — facturation au crédit, au record ENTREPRISE rendu, donc pas de
+    # clé oto partagée. Couverture partielle sur les PME : `data: []` est normal.
+    # Lecture seule.
+    _c("theirstack", ["theirstack"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
+       label="TheirStack",
+       help="offres d'emploi par employeur + technologies utilisées (ERP…)",
+       href="https://theirstack.com"),
+    # origami : campagnes email + LinkedIn (origami.chat, API v2 Bearer `og_live_…`) —
+    # tables de leads (upload CSV, upsert), campagnes rédigées par l'agent Origami,
+    # lancement, pause/reprise, stats, séquences. keyed api_key, **BYOK** (byo
+    # user/org) : les crédits et les envois sont ceux du compte de l'org.
+    # ⚠️ Premier montage tiers dont l'ÉCRITURE ENVOIE hors plateforme (lancer =
+    # emails + messages LinkedIn à des personnes réelles) : chaque tool mutant est
+    # gaté `dry_run` (convention oto-wide), le lancement est dry_run=True par
+    # défaut. Décision d'acceptabilité laissée au mainteneur (cf. tools/origami.py).
+    _c("origami", ["origami"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
+       label="Origami",
+       help="campagnes email + LinkedIn : tables, campagnes, lancement, statistiques",
+       href="https://origami.chat"),
 
     # --- automatisation de workflows (no-code) — câblés 2026-06-21 -----------
     # Connecteurs vers les plateformes d'automatisation tierces. byo, hors socle
