@@ -23,4 +23,5 @@ origami tient des tables de leads et fait rédiger puis envoyer des campagnes mu
 - les clés de lignes sont les **slugs** des colonnes d'entrée (avec des tirets), pas les noms affichés — un slug inconnu est refusé (400 UNKNOWN_FIELDS)
 - `enrich=False` par défaut à l'upsert : l'enrichissement dépense des crédits, il se demande explicitement
 - la suppression est en deux temps ; le tool re-lit la campagne et ne dit « supprimée » que sur un 404
-- il n'y a pas de liste globale des campagnes : lister par table, ou passer par les séquences d'un workspace
+- il n'y a pas de liste globale des campagnes : lister par table, ou `origami_sequences(workspace_id=…)` qui suit `nextCursor` (pages de 50, `max_pages=10` par défaut) et rend `campaign_ids`, les campagnes DISTINCTES vues — une seule page en fait croire une là où il y en a quatre ; `truncated: true` = il en reste, repasser `cursor`
+- `origami_upload_csv` rend `table_id` / `table_slug` au premier niveau (l'id de la table créée conditionne l'upsert et la campagne qui suivent) et `error` si Origami a refusé le fichier

@@ -319,7 +319,9 @@ def test_upload_csv_dry_run_previews_first_rows():
 def test_upload_csv_sends_base64_json_table_mode():
     with patch("oto.tools.origami.client.OrigamiClient") as cls:
         inst = cls.return_value
-        inst.upload_documents.return_value = {"results": [{"kind": "table", "tableId": "t-9"}]}
+        # forme réelle mesurée le 17/08/2026 : la table créée est sous results[0].table
+        inst.upload_documents.return_value = {
+            "results": [{"kind": "table", "table": {"id": "t-9", "slug": "leads"}}]}
         out = _tool("origami_upload_csv").fn(
             workspace_id="ws-1", filename="leads.csv", csv_text=_CSV)
     ws, files = inst.upload_documents.call_args.args
@@ -327,7 +329,30 @@ def test_upload_csv_sends_base64_json_table_mode():
     assert files[0]["filename"] == "leads.csv" and files[0]["mode"] == "table"
     assert base64.b64decode(files[0]["content"]).decode() == _CSV
     assert "tableId" not in files[0]
-    assert out["rows_sent"] == 2 and out["result"]["results"][0]["tableId"] == "t-9"
+    assert out["rows_sent"] == 2 and out["result"]["results"][0]["table"]["id"] == "t-9"
+    # l'id de la table créée est remonté au premier niveau : c'est lui qui conditionne
+    # l'upsert et la campagne qui suivent (un harnais l'a raté à 3 niveaux de profondeur)
+    assert out["table_id"] == "t-9" and out["table_slug"] == "leads"
+    assert "error" not in out
+
+
+def test_upload_csv_surfaces_table_id_from_flat_shape_and_error_kind():
+    with patch("oto.tools.origami.client.OrigamiClient") as cls:
+        inst = cls.return_value
+        inst.upload_documents.return_value = {"results": [{"kind": "table", "tableId": "t-flat"}]}
+        out = _tool("origami_upload_csv").fn(
+            workspace_id="ws-1", filename="leads.csv", csv_text=_CSV)
+    assert out["table_id"] == "t-flat" and out["table_slug"] is None
+
+    with patch("oto.tools.origami.client.OrigamiClient") as cls:
+        inst = cls.return_value
+        inst.upload_documents.return_value = {
+            "results": [{"kind": "error", "filename": "leads.csv", "error": "Unsupported encoding"}]}
+        out = _tool("origami_upload_csv").fn(
+            workspace_id="ws-1", filename="leads.csv", csv_text=_CSV)
+    # un refus par fichier n'est pas un succès muet : il remonte en `error`, sans table_id
+    assert out["table_id"] is None
+    assert out["error"] == "Unsupported encoding"
 
 
 def test_upload_csv_append_requires_table_id_and_carries_it():
@@ -555,6 +580,39 @@ def test_sequences_xor_and_dispatch():
             _tool("origami_sequences").fn()
         with pytest.raises(McpError):
             _tool("origami_sequences").fn(workspace_id="ws-1", sequence_id="seq-1")
+
+
+def test_sequences_follows_next_cursor_and_lists_distinct_campaigns():
+    """Le mode liste PAGINE côté serveur (50/page) et rend `campaign_ids` DISTINCTS.
+
+    Verrouille la régression mesurée le 17/08/2026 sur le workspace réel : une seule
+    page rendait 50 séquences / 1 campagne là où il y en avait 369 / 4 — un agent qui
+    énumère les campagnes par cette vue concluait à tort qu'il n'en existait qu'une.
+    """
+    pages = [
+        {"items": [{"id": f"s{i}", "campaignId": "camp-A"} for i in range(50)], "nextCursor": "c2"},
+        {"items": [{"id": f"s{i}", "campaignId": "camp-B"} for i in range(50, 90)], "nextCursor": "c3"},
+        {"items": [{"id": "s90", "campaignId": "camp-A"}], "nextCursor": None},
+    ]
+    with patch("oto.tools.origami.client.OrigamiClient") as cls:
+        inst = cls.return_value
+        inst.list_sequences.side_effect = pages
+        out = _tool("origami_sequences").fn(workspace_id="ws-1")
+        assert inst.list_sequences.call_count == 3
+        assert [c.kwargs["cursor"] for c in inst.list_sequences.call_args_list] == [None, "c2", "c3"]
+        assert out["count"] == 91 and out["pages_fetched"] == 3
+        assert out["campaign_ids"] == ["camp-A", "camp-B"]
+        assert out["truncated"] is False and out["cursor"] is None
+
+    # max_pages borne la lecture et le signale : cursor rendu, truncated=True
+    with patch("oto.tools.origami.client.OrigamiClient") as cls:
+        inst = cls.return_value
+        inst.list_sequences.side_effect = pages
+        out = _tool("origami_sequences").fn(workspace_id="ws-1", max_pages=1)
+        assert inst.list_sequences.call_count == 1
+        assert out["count"] == 50 and out["truncated"] is True and out["cursor"] == "c2"
+        with pytest.raises(McpError):
+            _tool("origami_sequences").fn(workspace_id="ws-1", max_pages=0)
 
 
 # --- erreurs amont ------------------------------------------------------------

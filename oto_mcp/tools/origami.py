@@ -415,8 +415,23 @@ def register(mcp: FastMCP) -> None:
                     "would_upload": {"filename": filename, "mode": mode,
                                      "table_id": table_id, **parsed}}
         result = _run(lambda: _client().upload_documents(workspace_id, [spec]))
-        return {"workspace_id": workspace_id, "filename": filename, "mode": mode,
-                "rows_sent": parsed["rows"], "columns": parsed["columns"], "result": result}
+        # L'identifiant de la table créée est CE que l'appelant veut : il conditionne
+        # l'appel suivant (upsert, campagne). Remonté au premier niveau plutôt que laissé
+        # à `result.results[0].table.id` — mesuré : un harnais l'a raté à cette profondeur.
+        # Une entrée `kind: "error"` est remontée aussi, au lieu d'un succès muet.
+        first = ((result or {}).get("results") or [{}])[0] if isinstance(result, dict) else {}
+        first = first if isinstance(first, dict) else {}
+        created = first.get("table") if isinstance(first.get("table"), dict) else {}
+        # Forme mesurée le 17/08/2026 : `results[0].table.{id,slug}` ; `tableId` à plat
+        # accepté aussi, au cas où l'API le renverrait comme pour le mode append.
+        new_id = created.get("id") or first.get("tableId")
+        out = {"workspace_id": workspace_id, "filename": filename, "mode": mode,
+               "rows_sent": parsed["rows"], "columns": parsed["columns"],
+               "table_id": new_id or (table_id if mode == "append" else None),
+               "table_slug": created.get("slug"), "result": result}
+        if isinstance(first, dict) and first.get("kind") == "error":
+            out["error"] = first.get("error") or first.get("message") or "upload refusé (kind=error)"
+        return out
 
     # --- campaigns (lecture) ------------------------------------------------
 
@@ -697,11 +712,38 @@ def register(mcp: FastMCP) -> None:
 
     # --- sequences ----------------------------------------------------------
 
+    def _list_sequences(c: OrigamiClient, workspace_id: str, cursor: Optional[str],
+                        max_pages: int, status: Optional[str], channel: Optional[str],
+                        recipient: Optional[str]) -> dict:
+        """Suit `nextCursor` côté serveur jusqu'à `max_pages` (50 séquences/page), comme
+        `_list_rows`. Rend `cursor` quand il reste des pages, `truncated: true` — l'agent
+        sait qu'il n'a pas tout vu. Ajoute `campaign_ids`, la liste DISTINCTE des
+        campagnes rencontrées : c'est le seul moyen d'énumérer les campagnes d'un
+        workspace, et une première page seule en fait croire une là où il y en a quatre
+        (mesuré le 17/08/2026 : 50 séquences / 1 campagne sur une page, 369 / 4 en tout)."""
+        items: list = []
+        pages = 0
+        next_cursor = cursor
+        while pages < max_pages:
+            page = c.list_sequences(workspace_id, cursor=next_cursor, status=status,
+                                    channel=channel, recipient=recipient)
+            pages += 1
+            items.extend(_items(page))
+            next_cursor = page.get("nextCursor") if isinstance(page, dict) else None
+            if not next_cursor:
+                break
+        campaign_ids = sorted({s.get("campaignId") for s in items
+                               if isinstance(s, dict) and s.get("campaignId")})
+        return {"workspace_id": workspace_id, "count": len(items),
+                "campaign_ids": campaign_ids, "pages_fetched": pages,
+                "cursor": next_cursor, "truncated": bool(next_cursor), "items": items}
+
     @mcp.tool()
     def origami_sequences(
         workspace_id: Optional[str] = None,
         sequence_id: Optional[str] = None,
         cursor: Optional[str] = None,
+        max_pages: int = 10,
         status: Optional[str] = None,
         channel: Optional[str] = None,
         recipient: Optional[str] = None,
@@ -712,15 +754,19 @@ def register(mcp: FastMCP) -> None:
         - `workspace_id` → `GET /sequences?workspaceId=`: EVERY sequence of the
           workspace, each with its `campaignId`, `status`, `sendStatus`,
           `stopReason`, `tableId`, `rowId` — the only view that sees all campaigns
-          of a workspace at once (there is no global campaign list). Filters
-          `status` / `channel` (email|linkedin) / `recipient`; `nextCursor` → `cursor`.
+          of a workspace at once (there is no global campaign list). Pages are 50;
+          the tool follows `nextCursor` server-side up to `max_pages` (default 10 =
+          500 sequences) and returns `campaign_ids`, the DISTINCT campaigns seen,
+          plus `truncated`/`cursor` when more remain — pass `cursor` back to
+          continue. Filters `status` / `channel` (email|linkedin) / `recipient`.
         - `sequence_id` → the sequence with its steps inline (message copy per
           step; provider internals redacted).
 
         Args:
             workspace_id: list mode — the workspace.
             sequence_id: get mode — one sequence.
-            cursor: list mode — pagination.
+            cursor: list mode — resume from a previous `cursor`.
+            max_pages: list mode — pages of 50 to fetch server-side (default 10).
             status: list mode — filter on sequence status.
             channel: list mode — "email" | "linkedin".
             recipient: list mode — filter on recipient.
@@ -729,5 +775,7 @@ def register(mcp: FastMCP) -> None:
             raise _bad("Passe exactement un de `workspace_id` (liste) ou `sequence_id` (détail).")
         if sequence_id:
             return _run(lambda: _client().get_sequence(sequence_id))
-        return _run(lambda: _client().list_sequences(
-            workspace_id, cursor=cursor, status=status, channel=channel, recipient=recipient))
+        if max_pages < 1:
+            raise _bad("`max_pages` doit être ≥ 1.")
+        return _run(lambda: _list_sequences(_client(), workspace_id, cursor, max_pages,
+                                            status, channel, recipient))
