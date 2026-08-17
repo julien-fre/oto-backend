@@ -18,13 +18,23 @@ pas le comptage) :
   note | interaction | reminder. Les ex-`folk_list_deals` / `folk_list_notes` /
   `folk_list_reminders` / `folk_get_reminder` y entrent SANS ajouter un
   paramètre : ce sont `op="search"` / `op="get"` sur une autre `entity`.
-- **`folk_group`** (list/custom_fields) — reste à part : les groupes sont en
-  **lecture seule** côté API Folk (donc ni `dry_run`, ni `id`/`ids`, ni verbe
-  d'écriture), et `entity_type` n'est PAS `entity` (il qualifie un schéma de
-  champs custom, il ne désigne pas un objet à écrire).
+- **`folk_group`** (list/create/update/custom_fields/get_custom_field/
+  create_custom_field/update_custom_field/members/add_member/remove_member/
+  update_member) — reste à part : ni `id`/`ids` (jamais bulk — un workspace a
+  peu de groupes), ni `entity` (`entity_type` qualifie un schéma de champs
+  custom, il ne désigne pas un objet à écrire). Les ops `*_member` y sont
+  entrées par le même critère d'homogénéité (ancrées sur `group_id`, comme les
+  sept ops précédentes) plutôt qu'un tool `folk_group_member` séparé dont le
+  seul paramètre obligatoire aurait été... `group_id`. Folk n'a **pas
+  d'endpoint delete** pour un groupe ni pour un champ custom (vérifié contre la
+  doc — seuls list/create/update existent) : on ne peut retirer ni l'un ni
+  l'autre via l'API, seulement depuis l'app Folk — un **membre**, en revanche,
+  se retire bien via l'API (`op="remove_member"`).
 - **`folk_user`** (list/get) — reste à part : un membre du workspace n'est pas un
-  record CRM (pas d'`entity`, pas de `group_id`/`object_type`, pas d'écriture) ;
-  son unique paramètre `user_id` n'existe nulle part ailleurs.
+  record CRM (pas d'`entity`, pas de `group_id`/`object_type`, pas d'écriture).
+  Son paramètre `user_id` réapparaît sur `folk_group` (ops `*_member`) — même
+  espace d'ids (un membre de groupe EST un user du workspace), pas une
+  coïncidence de nommage.
 - **`folk_webhook`** (list/create/update) — reste à part : ressource GLOBALE du
   workspace (ni `entity`, ni `group_id`/`object_type`, ni mode bulk — un
   workspace en a peu), avec son propre vocabulaire d'événements validé à
@@ -49,6 +59,7 @@ de `folk_record`.
 """
 from __future__ import annotations
 
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
@@ -57,6 +68,8 @@ from typing import Literal, Optional
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
+
+from oto.tools.common.errors import UpstreamHTTPError
 
 from .. import access
 
@@ -73,6 +86,67 @@ def _need(value, name: str, op: str):
     if value is None:
         raise _bad(f"op='{op}' requiert {name}")
     return value
+
+
+_CUSTOM_FIELD_RESERVED_KEYS = {"group_id", "entity_type", "custom_field_name"}
+
+
+def _reject_reserved_keys(d: dict, param_name: str, op: str) -> None:
+    """`create_group_custom_field`/`update_group_custom_field` splattent le dict
+    de l'appelant (**field / **fields) sur des paramètres NOMMÉS (group_id,
+    entity_type, custom_field_name) — si le dict porte l'une de ces clés,
+    `TypeError: got multiple values for keyword argument` remonte en erreur
+    opaque au lieu d'un refus actionnable. Même famille de collision que
+    `_create_one` (folk_record) : un champ métier mangé par un paramètre
+    homonyme."""
+    collide = _CUSTOM_FIELD_RESERVED_KEYS & set(d or {})
+    if collide:
+        raise _bad(
+            f"op='{op}' : {param_name} ne doit pas porter {sorted(collide)} — "
+            "ce sont des paramètres du tool (group_id/entity_type/"
+            "custom_field_name), pas des champs de l'API custom field.")
+
+
+_AVAILABLE_ENTITY_TYPES_RE = re.compile(r"Available entity types are:\s*(.+)")
+_FIXED_ENTITY_TYPES = {"person", "company"}
+
+
+def _resolve_deal_object_type(c, group_id: str) -> str:
+    """`entity="deal"`'s `object_type` a longtemps défaulté à `"deals"` — mais
+    l'objet deal est un OBJET CUSTOM que chaque client Folk nomme lui-même
+    ("Deals" n'est que le nom choisi PAR CE workspace ; confirmé en live, un
+    autre workspace peut l'appeler autrement, ou décliner "deals" en
+    majuscule). Sonder plutôt que deviner : tenter "deals" (l'historique), et
+    si Folk 404, son propre message énumère les entity_type RÉELS du groupe
+    (`"Available entity types are: ..."`) — on y prend celui qui n'est ni
+    "person" ni "company". Ambigu (plusieurs objets custom, ex. Deals/Events/
+    Projects) ou aucun candidat : erreur actionnable plutôt qu'une supposition
+    qui écrirait au mauvais endroit.
+    """
+    try:
+        c.get_group_custom_fields(group_id, entity_type="deals")
+        return "deals"
+    except UpstreamHTTPError as e:
+        if e.status_code != 404:
+            raise
+        message = (e.body or {}).get("error", {}).get("message", "") \
+            if isinstance(e.body, dict) else ""
+        match = _AVAILABLE_ENTITY_TYPES_RE.search(message)
+        if not match:
+            raise  # 404 d'une autre nature (ex. group_id introuvable) — ne pas deviner dessus
+        available = re.findall(r'"([^"]+)"', match.group(1))
+        candidates = [t for t in available if t not in _FIXED_ENTITY_TYPES]
+        if len(candidates) == 1:
+            return candidates[0]
+        if not candidates:
+            raise _bad(
+                f"group_id {group_id!r} n'a pas d'objet deal — objets disponibles : "
+                f"{sorted(available)}. Passer `object_type` explicitement si l'un "
+                "d'eux convient (voir folk_group(op='custom_fields') pour le détail).")
+        raise _bad(
+            f"group_id {group_id!r} a plusieurs objets custom {sorted(candidates)} — "
+            "impossible de deviner lequel désigne les deals. Passer `object_type` "
+            "explicitement.")
 
 
 def _merge_group_ids(current_groups, add, remove) -> list[dict]:
@@ -415,10 +489,14 @@ def register(mcp: FastMCP) -> None:
         add_to_groups: Optional[list[str]] = None,
         remove_from_groups: Optional[list[str]] = None,
         group_id: Optional[str] = None,
-        object_type: str = "deals",
+        object_type: Optional[str] = None,
         dry_run: bool = False,
     ) -> dict:
-        """A Folk CRM record — search, read, create, update, delete, add to a group.
+        """Folk CRM records — people (contacts), companies, deals (or any other
+        custom object), notes, interactions, reminders: search, read, create,
+        update, delete, add to a group. This is the tool for "find/add/update a
+        contact", "look up a company", "list deals" etc. — Folk has no separate
+        `folk_company`/`folk_contact`/`folk_deal` tool; `entity` picks the noun.
 
         `entity` scopes every op (person | company | deal | note | interaction |
         reminder); `op` picks the verb:
@@ -467,10 +545,11 @@ def register(mcp: FastMCP) -> None:
             reminder: {entity_id*, name*, recurrence_rule*, visibility}
 
         Args:
-            entity: "person", "company", "deal", "note", "interaction" or
-                "reminder" — see each op for the ones it accepts (interactions
-                have no update/delete endpoint in Folk, notes have no get-by-id,
-                add_to_group is person/company only).
+            entity: "person" (a contact), "company", "deal" (or any other
+                custom object collection — see `object_type`), "note",
+                "interaction" or "reminder" — see each op for the ones it
+                accepts (interactions have no update/delete endpoint in Folk,
+                notes have no get-by-id, add_to_group is person/company only).
             op: search (default) | get | create | update | delete | add_to_group.
             id: the record ID (the deal_id for a deal, rmd_… for a reminder) —
                 op="get", and solo mode of update/delete/add_to_group.
@@ -516,9 +595,15 @@ def register(mcp: FastMCP) -> None:
                 the deal lives — on create, all record(s) land in this one group,
                 Folk deals aren't creatable across groups in a single call). Ne
                 PAS le passer pour person/company hors des deux cas ci-dessus.
-            object_type: custom-object collection name (default "deals") —
-                `deal` only, i.e. the deals OR any other custom object
-                collection of the group.
+            object_type: custom-object collection name — `deal` only. Omit it:
+                the tool auto-discovers this group's real deal object name
+                (tries "deals", and on a 404 reads the correct one out of
+                Folk's own error, which enumerates this group's valid entity
+                types — same discovery `folk_group(op="custom_fields")` uses).
+                Pass it explicitly only if the group has MULTIPLE non-person/
+                company custom objects (e.g. Deals AND Events AND Projects) —
+                auto-discovery can't guess which one is "deal" and will raise
+                asking you to disambiguate.
             dry_run: write ops only — n'écrit RIEN. create: preview
                 `would_create`, zéro appel réseau. update / add_to_group : relit
                 l'état courant et renvoie un diff `{"changes": {field: {"from",
@@ -547,6 +632,22 @@ def register(mcp: FastMCP) -> None:
                 or dry_run: {"dry_run": true, "total", "would_delete": [...],
                 "failed": [...]}.
         """
+        def _require_deal_group() -> None:
+            """Commun aux 5 ops qui acceptent entity="deal" (pas add_to_group,
+            qui le refuse d'entrée) : group_id d'abord (raise si absent, AVANT
+            tout appel réseau), puis résout `object_type` une seule fois si
+            l'appelant ne l'a pas donné. Ne PAS résoudre plus haut (avant le
+            dispatch par op) : `add_to_group` rejette entity="deal" sans jamais
+            avoir besoin de group_id ni de réseau — y résoudre quand même
+            ferait un appel réseau inutile avant un refus qui n'en a pas besoin
+            (vécu : cassait `test_add_to_group_deal_entity_rejected`, qui
+            n'attend aucun appel client)."""
+            nonlocal object_type
+            if not group_id:
+                raise _bad("group_id requis pour entity='deal'.")
+            if object_type is None:
+                object_type = _resolve_deal_object_type(_client(), group_id)
+
         if op == "search":
             if entity not in _SEARCH_ENTITIES:
                 raise _bad(f"op='search' : entity doit être l'un de {_SEARCH_ENTITIES}.")
@@ -563,8 +664,8 @@ def register(mcp: FastMCP) -> None:
                         f"op='search' entity='{entity}' : Folk ne filtre pas les "
                         "notes/rappels par groupe — passer "
                         "filters={'entity_id': '<person/company/deal id>'}.")
-            if entity == "deal" and not group_id:
-                raise _bad("group_id requis pour entity='deal'.")
+            if entity == "deal":
+                _require_deal_group()
             if entity in _GROUP_ENTITIES and group_id:
                 # Appartenance à un groupe : le client traduit en filter[groups][in][id].
                 f["groups"] = group_id
@@ -589,8 +690,8 @@ def register(mcp: FastMCP) -> None:
                     "n'a pas d'endpoint get-par-id pour les notes (les lister : "
                     "op='search', entity='note').")
             _need(id, "id", op)
-            if entity == "deal" and not group_id:
-                raise _bad("group_id requis pour entity='deal'.")
+            if entity == "deal":
+                _require_deal_group()
             return _get_one(_client(), entity, id, group_id=group_id,
                             object_type=object_type)
 
@@ -600,8 +701,8 @@ def register(mcp: FastMCP) -> None:
                            "`items` (plusieurs) — pas les deux, pas ni l'un ni l'autre.")
             if entity not in _CREATE_ENTITIES:
                 raise _bad(f"op='create' : entity doit être l'un de {_CREATE_ENTITIES}.")
-            if entity == "deal" and not group_id:
-                raise _bad("group_id requis pour entity='deal'.")
+            if entity == "deal":
+                _require_deal_group()
             c = _client()
             if item is not None:
                 result = _create_one(c, entity, item, group_id=group_id,
@@ -628,8 +729,8 @@ def register(mcp: FastMCP) -> None:
             if entity not in _UPDATE_ENTITIES:
                 raise _bad(f"op='update' : entity doit être l'un de {_UPDATE_ENTITIES} "
                            "(interactions have no update endpoint in Folk).")
-            if entity == "deal" and not group_id:
-                raise _bad("group_id requis pour entity='deal'.")
+            if entity == "deal":
+                _require_deal_group()
             c = _client()
             if id is not None:
                 result = _update_one(
@@ -665,8 +766,8 @@ def register(mcp: FastMCP) -> None:
             if entity not in _DELETE_ENTITIES:
                 raise _bad(f"op='delete' : entity doit être l'un de {_DELETE_ENTITIES} "
                            "(interactions have no delete endpoint in Folk).")
-            if entity == "deal" and not group_id:
-                raise _bad("group_id requis pour entity='deal'.")
+            if entity == "deal":
+                _require_deal_group()
             c = _client()
             if id is not None:
                 result = _delete_one(c, entity, id, group_id=group_id,
@@ -717,38 +818,242 @@ def register(mcp: FastMCP) -> None:
         raise _bad("op doit être 'search', 'get', 'create', 'update', 'delete' "
                    "ou 'add_to_group'")
 
-    # --- groups (lecture seule côté API Folk) --------------------------------
+    # --- groups + group custom fields + group members -------------------------
+    #
+    # Pas de "get a group" côté API Folk (seuls list/create/update existent) :
+    # le dry_run d'op="update"/"remove_member"/"update_member" relit list_groups()/
+    # list_group_members() et filtre sur l'id, même limitation déjà rencontrée
+    # sur notes/reminders (pas de filtre serveur, filtré côté client).
 
     @mcp.tool()
     def folk_group(
-        op: Literal["list", "custom_fields"] = "list",
+        op: Literal[
+            "list", "create", "update",
+            "custom_fields", "get_custom_field",
+            "create_custom_field", "update_custom_field",
+            "members", "add_member", "remove_member", "update_member",
+        ] = "list",
         group_id: Optional[str] = None,
         entity_type: str = "person",
+        custom_field_name: Optional[str] = None,
+        name: Optional[str] = None,
+        visibility: Optional[Literal["public", "private"]] = None,
+        custom_field: Optional[dict] = None,
+        fields: Optional[dict] = None,
+        user_id: Optional[str] = None,
+        role: Optional[Literal["admin", "contributor", "reader"]] = None,
+        dry_run: bool = False,
     ) -> dict:
-        """A Folk group (a folder of people/companies/deals) — list them, or read
-        the custom fields defined on one.
+        """A Folk group (a folder of people/companies/deals), the custom fields
+        defined on it, and its members — list/create/update any of the three.
 
         `op`:
         - **"list"** (default): list all groups in the Folk workspace.
+        - **"create"**: create a group (`name` + `visibility`). A default "All
+          people" table view is created automatically by Folk.
+        - **"update"**: PATCH a group (`group_id` + `name` and/or `visibility`).
         - **"custom_fields"**: list the custom fields defined on a group for an
           entity type (`group_id` + `entity_type`).
+        - **"get_custom_field"**: read one custom field by name (`group_id` +
+          `entity_type` + `custom_field_name`).
+        - **"create_custom_field"**: create a custom field on a group for an
+          entity type (`group_id` + `entity_type` + `custom_field`).
+        - **"update_custom_field"**: PATCH a custom field (`group_id` +
+          `entity_type` + `custom_field_name` + `fields`).
+        - **"members"**: list a group's members (`group_id`) — id, full name,
+          email, role. On a **public** group this lists EVERY workspace user
+          (Folk auto-membership, role always "admin"), not just people
+          explicitly added — see note below.
+        - **"add_member"**: add a workspace user to a group (`group_id` +
+          `user_id` + `role`). Get `user_id` from `folk_user(op="list")`. A
+          no-op on a public group (see note below) — the target is already an
+          implicit member.
+        - **"remove_member"**: remove a member from a group (`group_id` +
+          `user_id`).
+        - **"update_member"**: change a member's role (`group_id` + `user_id` +
+          `role`).
 
-        Note: the Folk API is read-only on groups — there is no endpoint to
-        create one. A new group must be created by the user in the Folk app,
-        then referenced here by its ID.
+        Note: Folk has no delete endpoint for a group or a custom field — remove
+        either from the Folk app, not from here. A group MEMBER, unlike the
+        group itself, can be removed via the API (`op="remove_member"`).
+
+        Note: **`visibility="public"` makes membership implicit and workspace-
+        wide** (confirmed live, 2026-08-17) — EVERY workspace user shows up in
+        `op="members"` with role "admin", whether or not anyone explicitly
+        added them. `op="add_member"`/`"remove_member"`/`"update_member"` only
+        do something meaningful on a **private** group (explicit membership).
+        To manage membership deliberately, create/update the group with
+        `visibility="private"` first.
 
         Args:
-            op: list (default) | custom_fields.
-            group_id: op="custom_fields" — Folk group ID.
-            entity_type: op="custom_fields" — "person" or "company".
+            op: list (default) | create | update | custom_fields |
+                get_custom_field | create_custom_field | update_custom_field |
+                members | add_member | remove_member | update_member.
+            group_id: required for every op except "list"/"create".
+            entity_type: "person", "company", or a custom object's DISPLAY
+                name — required for every custom-field op (default "person").
+                Not used by member ops. ⚠️ Only "person"/"company" are fixed.
+                Everything else is a **custom object each Folk customer names
+                themselves** — "Deals" is just what THIS workspace happens to
+                call theirs; another workspace's equivalent could be
+                "Opportunities", "Transactions", singular, translated,
+                anything. Never assume a name. Discover it: call
+                `op="custom_fields"` with any placeholder entity_type — Folk's
+                404 names the group's REAL entity types (`"Available entity
+                types are: ..."`), then reissue with the right one. This is
+                also the exact, case-sensitive display name — NOT the
+                lowercase URL slug `folk_record`/`folk_webhook` call
+                `object_type` (confirmed live: on one real workspace,
+                `object_type="deals"` 404s while `object_type="Deals"`,
+                matching this workspace's custom object name, returns
+                records) — the two params can differ even for the same
+                collection.
+            custom_field_name: op="get_custom_field"/"update_custom_field" — the
+                field's `name` (custom fields have no separate id; `name` IS the
+                identifier Folk matches on, from op="custom_fields").
+            name: op="create"/"update" — group name (1-255 chars).
+            visibility: op="create"/"update" — "public" (every workspace user
+                is an implicit member, role "admin" — see note above) or
+                "private" (only explicitly added members). Required on create.
+            custom_field: op="create_custom_field" — the field body, discriminated
+                by `type`:
+                  textField / dateField / userField / contactField / objectField:
+                    `{"type": ..., "name": ...}`
+                  singleSelect / multipleSelect:
+                    `{"type": ..., "name": ..., "options": [{"label", "color"}]}`
+                    (color is one of #5738ff #20cea9 #f54e50 #f2b934 #879aab
+                    #de4a96 #4a90e2 #f5a623)
+                  numericField:
+                    `{"type": "numericField", "name": ...,
+                      "config": {"format": "default"|"percent"|"currency"|"none"|"number",
+                                 "decimals"?: 0-5, "currency"?: "EUR"}}`
+                    (currency required only when format="currency")
+            fields: op="update_custom_field" — any of `name`, `config` (same
+                shape as `custom_field.config` above), `addOptions`
+                (`[{"label", "color"}]`, 1-100), `removeOptions` (option ids,
+                1-100), `updateOptions` (`[{"id", "label"?, "color"?}]`, 1-100) —
+                only the given ones change.
+            user_id: op="add_member"/"remove_member"/"update_member" — the
+                workspace user id (from `folk_user(op="list")`, NOT `folk_group
+                (op="members")` — a group member IS a workspace user).
+            role: op="add_member"/"update_member" — required, one of "admin",
+                "contributor", "reader". A LIST can also show "owner" (Folk's
+                workspace owner) but it can't be SET through this API.
+            dry_run: op="create"/"create_custom_field"/"add_member" — preview
+                (`would_create`/`would_add`), zero network calls. op="update"/
+                "update_custom_field"/"update_member" — diff `{"changes":
+                {field: {"from", "to"}}}` against the current record.
+                op="remove_member" — preview (`would_remove`) of the member
+                that would be removed, zero network calls.
         """
         if op == "list":
             return {"groups": _client().list_groups()}
+
+        if op == "create":
+            _need(name, "name", op)
+            _need(visibility, "visibility", op)
+            if dry_run:
+                return {"dry_run": True,
+                         "would_create": {"name": name, "visibility": visibility}}
+            return _client().create_group(name, visibility)
+
+        if op == "update":
+            _need(group_id, "group_id", op)
+            group_fields: dict = {}
+            if name is not None:
+                group_fields["name"] = name
+            if visibility is not None:
+                group_fields["visibility"] = visibility
+            if not group_fields:
+                raise _bad("op='update' requiert name et/ou visibility "
+                           "(pas `fields` — réservé à op='update_custom_field').")
+            c = _client()
+            if dry_run:
+                current = next((g for g in c.list_groups() if g.get("id") == group_id), None)
+                if current is None:
+                    raise _bad(f"group_id {group_id!r} introuvable (folk_group op='list').")
+                return {"dry_run": True, "group_id": group_id,
+                         "changes": {k: {"from": current.get(k), "to": v}
+                                     for k, v in group_fields.items()}}
+            return c.update_group(group_id, **group_fields)
+
         if op == "custom_fields":
             _need(group_id, "group_id", op)
             return {"custom_fields": _client().get_group_custom_fields(
                 group_id, entity_type)}
-        raise _bad("op doit être 'list' ou 'custom_fields'")
+
+        if op == "get_custom_field":
+            _need(group_id, "group_id", op)
+            _need(custom_field_name, "custom_field_name", op)
+            return _client().get_group_custom_field(group_id, entity_type, custom_field_name)
+
+        if op == "create_custom_field":
+            _need(group_id, "group_id", op)
+            _need(custom_field, "custom_field", op)
+            _reject_reserved_keys(custom_field, "custom_field", op)
+            if dry_run:
+                return {"dry_run": True, "would_create": custom_field}
+            return _client().create_group_custom_field(group_id, entity_type, **custom_field)
+
+        if op == "update_custom_field":
+            _need(group_id, "group_id", op)
+            _need(custom_field_name, "custom_field_name", op)
+            if not fields:
+                raise _bad("op='update_custom_field' requiert fields : au moins un "
+                           "champ (name, config, addOptions, removeOptions, "
+                           "updateOptions).")
+            _reject_reserved_keys(fields, "fields", op)
+            c = _client()
+            if dry_run:
+                current = c.get_group_custom_field(group_id, entity_type, custom_field_name)
+                return {"dry_run": True, "custom_field_name": custom_field_name,
+                         "changes": {k: {"from": current.get(k), "to": v}
+                                     for k, v in fields.items()}}
+            return c.update_group_custom_field(group_id, entity_type, custom_field_name, **fields)
+
+        if op == "members":
+            _need(group_id, "group_id", op)
+            return {"members": _client().list_group_members(group_id)}
+
+        if op == "add_member":
+            _need(group_id, "group_id", op)
+            _need(user_id, "user_id", op)
+            _need(role, "role", op)
+            if dry_run:
+                return {"dry_run": True, "would_add": {"id": user_id, "role": role}}
+            return _client().add_group_member(group_id, user_id, role)
+
+        if op == "remove_member":
+            _need(group_id, "group_id", op)
+            _need(user_id, "user_id", op)
+            c = _client()
+            if dry_run:
+                current = next(
+                    (m for m in c.list_group_members(group_id) if m.get("id") == user_id), None)
+                if current is None:
+                    raise _bad(f"user_id {user_id!r} introuvable dans ce groupe "
+                               "(folk_group op='members').")
+                return {"dry_run": True, "would_remove": current}
+            return c.remove_group_member(group_id, user_id)
+
+        if op == "update_member":
+            _need(group_id, "group_id", op)
+            _need(user_id, "user_id", op)
+            _need(role, "role", op)
+            c = _client()
+            if dry_run:
+                current = next(
+                    (m for m in c.list_group_members(group_id) if m.get("id") == user_id), None)
+                if current is None:
+                    raise _bad(f"user_id {user_id!r} introuvable dans ce groupe "
+                               "(folk_group op='members').")
+                return {"dry_run": True, "user_id": user_id,
+                         "changes": {"role": {"from": current.get("role"), "to": role}}}
+            return c.update_group_member(group_id, user_id, role)
+
+        raise _bad("op doit être l'un de 'list', 'create', 'update', 'custom_fields', "
+                   "'get_custom_field', 'create_custom_field', 'update_custom_field', "
+                   "'members', 'add_member', 'remove_member', 'update_member'")
 
     # --- users (membres du workspace, lecture seule) ------------------------
 
@@ -827,11 +1132,12 @@ def register(mcp: FastMCP) -> None:
                     For object.* this is a sibling of `path`, never repeated
                     inside it.
                   objectType — for object.* events, scope to one collection
-                    (e.g. "Deals" vs a custom object_type — Folk's own example
-                    uses the display name, NOT necessarily the lowercase slug
-                    accepted by `folk_record(entity="deal", object_type=...)`;
-                    unconfirmed against a live workspace, verify before relying
-                    on it).
+                    (e.g. "Deals" vs a custom object_type). Confirmed against a
+                    live workspace: this is the exact display name, same as
+                    `folk_group`'s `entity_type` — NOT the lowercase slug
+                    `folk_record(entity="deal", object_type=...)` historically
+                    defaulted to (that tool now auto-discovers it; here, pass
+                    the real name yourself).
                   path + value — for *.updated events, fire only when the
                     attribute at `path` changes to `value`. `path` covers both
                     plain attributes and custom fields, and its shape differs
