@@ -20,6 +20,7 @@ from fastmcp.server.transforms.visibility import disable_components, reset_visib
 
 from . import (access, connector_activation, connector_selection, connectors,
                credentials_store, db, org_store, providers)
+from .error_taxonomy import _is_client_disconnect
 from .tool_visibility import (
     DEFAULT_HIDDEN_TOOLS,
     effective_disabled,
@@ -181,6 +182,24 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
     return to_hide
 
 
+def _log_visibility_failure(quoi: str, sub: str, e: BaseException) -> None:
+    """Journalise un échec de pose de visibilité au bon NIVEAU.
+
+    Poser la visibilité, c'est pousser une notification `tools/list_changed` sur le
+    stream de la session. Quand le client a déjà fermé (nos workers runner ferment le
+    POST sitôt le corps lu), le push lève une déconnexion — **attendu, rien à corriger** :
+    337 de ces warnings en 2 h le 15/08 (#352), aucun actionnable, et ils noyaient le
+    reste du journal. Cette classe passe donc en `debug`.
+
+    Toute AUTRE cause reste un `warning` : un échec de visibilité pour une vraie raison
+    (registre, DB, bug) est un fait à voir — la session tourne alors avec une toolbox
+    plus large que prévu."""
+    if _is_client_disconnect(e):
+        logger.debug("Failed to %s tool visibility for %s (client parti): %s", quoi, sub, e)
+    else:
+        logger.warning("Failed to %s tool visibility for %s: %s", quoi, sub, e)
+
+
 async def apply_session_visibility(ctx, sub: str, *, reset: bool = False) -> None:
     """Calcule la denylist de `(sub, org active)` et la pose sur la session `ctx`.
 
@@ -193,10 +212,10 @@ async def apply_session_visibility(ctx, sub: str, *, reset: bool = False) -> Non
         try:
             await reset_visibility(ctx)
         except Exception as e:
-            logger.warning("Failed to reset tool visibility for %s: %s", sub, e)
+            _log_visibility_failure("reset", sub, e)
     if not to_hide:
         return
     try:
         await disable_components(ctx, names=to_hide, components={"tool"})
     except Exception as e:
-        logger.warning("Failed to apply tool visibility for %s: %s", sub, e)
+        _log_visibility_failure("apply", sub, e)

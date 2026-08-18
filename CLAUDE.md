@@ -937,6 +937,23 @@ remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
   composait l'artefact de session — la cascade de statut de TOUS les connecteurs —
   dans la boucle. Un chemin de la même classe reste à traiter, listé dans le doc.
   **Détail (incidents, recettes de diagnostic) : `docs/event-loop-perf.md`**.
+- **Un 502 en rafale n'est pas forcément un gel** — deuxième cause, distincte (#352,
+  nuit du 15-16/08) : un POST `/mcp` en vol quand la session streamable-http se termine
+  laisse une réponse ASGI **incomplète** (le SDK MCP pousse dans un stream mort), uvicorn
+  ferme le transport, et Caddy — qui tenait la connexion pour réutilisable — rend des 502
+  sur elle **et sur les requêtes voisines de son pool keep-alive** (des `/api/*` de
+  workers qui n'ont jamais parlé à `/mcp`). Le discriminant tient en un chiffre : ces
+  502-là durent **~0,2 s** (le gel, lui, fait attendre). ⚠️ **Ce qui remonte à uvicorn
+  n'est PAS `BrokenResourceError`** — le SDK l'attrape et la logue ; ce qui s'échappe est
+  le `RuntimeError … after response already completed` de son 500 écrit par-dessus le 202
+  (mesuré : 1433/1433). Chercher `BrokenResourceError` en haut de pile ne trouve rien.
+  Garde : `client_disconnect_guard.py`,
+  posée par `server.build_root_app` en couche la plus EXTERNE — elle complète la réponse
+  à la place du client parti et n'attrape QUE `error_taxonomy._is_client_disconnect`
+  (même prédicat que le drop Sentry, une seule source) ; toute autre exception traverse,
+  figé par `tests/test_client_disconnect_guard.py`. ⚠️ **Rien à attendre d'un bump `mcp`** :
+  le site fautif est identique de 1.27.2 à `main`/2.0.0, la PR upstream qui le garderait
+  n'est pas mergée et le backport 1.x est refusé (`not_planned`).
 - **Cran d'activation (ADR 0010/0011)** : déclarer un connecteur ne l'expose PAS —
   gate DB `connector_activation.py` (master global ± override org, deny-by-default).
   Gate à la **VISIBILITÉ par session** (`UserDisabledToolsMiddleware` + `connector_
