@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import psycopg
 import pytest
+from psycopg.rows import dict_row
 
 from oto_mcp import tenancy
 
@@ -43,7 +44,11 @@ def base(pg_dsn, monkeypatch):
     from oto_mcp import db
     db.init_db()
 
-    with psycopg.connect(pg_dsn, autocommit=True) as c:
+    # `row_factory=dict_row` n'est pas cosmétique : sans lui psycopg rend des
+    # tuples, et les lectures par nom ci-dessous (`fetchone()["id"]`) lèvent
+    # TypeError DANS LA FIXTURE — les 6 tests sortent alors en ERROR au setup,
+    # sans avoir rien exercé. Convention du repo pour tout accès PG direct.
+    with psycopg.connect(pg_dsn, row_factory=dict_row, autocommit=True) as c:
         for t in ("tool_calls", "org_members", "orgs", "users"):
             c.execute(f"DELETE FROM {t}")
         c.execute("DELETE FROM tenants WHERE slug <> 'oto'")
