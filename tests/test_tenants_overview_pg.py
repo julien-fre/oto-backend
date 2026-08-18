@@ -96,7 +96,10 @@ def test_les_compteurs_dun_tenant(base):
     assert set(par) == {"oto", "tulina", "acme"}
 
     oto = par["oto"]
-    assert (oto["orgs"], oto["orgs_archivees"]) == (3, 1)
+    # 2 ACTIVES (Oto Team, Reprise) + 1 archivée (Ancienne) : `orgs` filtre sur
+    # `archived_at IS NULL`, l'archivée a sa propre colonne et n'est pas comptée
+    # deux fois.
+    assert (oto["orgs"], oto["orgs_archivees"]) == (2, 1)
     assert oto["comptes"] == 2                    # alice, bob (subs nus)
     assert (oto["appels"], oto["comptes_actifs"]) == (2, 1)  # bob est hors fenêtre
     assert oto["orgs_desalignees"] == 1           # « Reprise », créée par tulina:dan
