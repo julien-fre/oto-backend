@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 from mcp.shared.exceptions import McpError
+from oto.tools.common.errors import UpstreamHTTPError
 
 # Méthodes mutantes du client Folk : aucune ne doit être touchée par une lecture,
 # ni par une op mutante autre que la sienne, ni par un dry_run.
@@ -153,6 +154,79 @@ def test_search_truncates_but_count_reports_the_real_total(client):
 def test_search_deal_requires_group_id(client):
     with pytest.raises(McpError, match="group_id"):
         _tool("folk_record")(entity="deal", op="search")
+    client.list_deals.assert_not_called()
+
+
+# --- entity="deal" : object_type auto-discovery -----------------------------
+#
+# "deals" (minuscule) est un défaut historique, pas une garantie Folk : l'objet
+# deal est un objet CUSTOM que chaque client nomme lui-même (confirmé en live,
+# 2026-08-17 — sur un vrai workspace `object_type="deals"` 404 quand l'objet
+# s'appelle "Deals"). `_resolve_deal_object_type` sonde le nom, jamais ne le suppose.
+
+def _entity_types_404(message: str) -> UpstreamHTTPError:
+    return UpstreamHTTPError(404, {"error": {"message": message}}, service="folk")
+
+
+def test_deal_object_type_omitted_resolves_via_probe(client):
+    client.get_group_custom_fields.return_value = []  # le hint "deals" est direct valide
+    client.create_deal.return_value = {"id": "dea_1"}
+    _tool("folk_record")(entity="deal", op="create", group_id="grp_1", item={"name": "D"})
+    client.get_group_custom_fields.assert_called_once_with("grp_1", entity_type="deals")
+    client.create_deal.assert_called_once_with("grp_1", object_type="deals", name="D")
+
+
+def test_deal_object_type_omitted_resolves_the_real_name_on_404(client):
+    client.get_group_custom_fields.side_effect = _entity_types_404(
+        'Object field "deals" not found in group "grp_1". Available entity types '
+        'are: "person", "company", "Opportunities".')
+    client.create_deal.return_value = {"id": "dea_1"}
+    _tool("folk_record")(entity="deal", op="create", group_id="grp_1", item={"name": "D"})
+    client.create_deal.assert_called_once_with("grp_1", object_type="Opportunities", name="D")
+
+
+def test_deal_object_type_explicit_skips_discovery_entirely(client):
+    client.list_deals.return_value = []
+    _tool("folk_record")(entity="deal", op="search", group_id="grp_1",
+                         object_type="Opportunities")
+    client.get_group_custom_fields.assert_not_called()
+    client.list_deals.assert_called_once_with("grp_1", object_type="Opportunities")
+
+
+def test_deal_object_type_ambiguous_candidates_raises_actionable_error(client):
+    client.get_group_custom_fields.side_effect = _entity_types_404(
+        'Object field "deals" not found in group "grp_1". Available entity types '
+        'are: "person", "company", "Deals", "Events".')
+    with pytest.raises(McpError) as exc:
+        _tool("folk_record")(entity="deal", op="create", group_id="grp_1",
+                             item={"name": "D"})
+    assert "Deals" in str(exc.value) and "Events" in str(exc.value)
+    client.create_deal.assert_not_called()
+
+
+def test_deal_object_type_no_custom_object_raises_actionable_error(client):
+    client.get_group_custom_fields.side_effect = _entity_types_404(
+        'Object field "deals" not found in group "grp_1". Available entity types '
+        'are: "person", "company".')
+    with pytest.raises(McpError, match="n'a pas d'objet deal"):
+        _tool("folk_record")(entity="deal", op="search", group_id="grp_1")
+    client.list_deals.assert_not_called()
+
+
+def test_deal_object_type_404_without_enumeration_reraises_raw(client):
+    """Un 404 qui ne porte PAS l'énumération Folk (ex. group_id lui-même
+    introuvable) n'est pas notre 404 « entity_type invalide » — ne pas deviner
+    dessus, remonter l'erreur d'origine telle quelle."""
+    client.get_group_custom_fields.side_effect = _entity_types_404("Group not found.")
+    with pytest.raises(UpstreamHTTPError):
+        _tool("folk_record")(entity="deal", op="search", group_id="grp_bogus")
+
+
+def test_deal_object_type_non_404_reraises_immediately(client):
+    client.get_group_custom_fields.side_effect = UpstreamHTTPError(
+        500, {"error": {"message": "boom"}}, service="folk")
+    with pytest.raises(UpstreamHTTPError):
+        _tool("folk_record")(entity="deal", op="search", group_id="grp_1")
     client.list_deals.assert_not_called()
 
 
@@ -356,7 +430,9 @@ def test_webhook_dry_run_never_writes(client):
 @pytest.mark.parametrize("tool,kwargs,expected", [
     ("folk_record", {"entity": "person"},
      "'search', 'get', 'create', 'update', 'delete' ou 'add_to_group'"),
-    ("folk_group", {}, "'list' ou 'custom_fields'"),
+    ("folk_group", {}, "'list', 'create', 'update', 'custom_fields', "
+     "'get_custom_field', 'create_custom_field', 'update_custom_field', "
+     "'members', 'add_member', 'remove_member', 'update_member'"),
     ("folk_user", {}, "'list' ou 'get'"),
     ("folk_webhook", {}, "'list', 'create' ou 'update'"),
 ])

@@ -579,3 +579,290 @@ def test_update_webhook_dry_run_shows_diff(client_cls):
     inst.update_webhook.assert_not_called()
     assert r == {"dry_run": True, "id": "wbk_1",
                  "changes": {"status": {"from": "active", "to": "inactive"}}}
+
+
+# --- folk_group op="list" / "create" / "update" -----------------------------
+
+def test_list_groups(client_cls):
+    inst = _instance(client_cls)
+    inst.list_groups.return_value = [{"id": "grp_1", "name": "Leads"}]
+    r = _register_and_call("folk_group")
+    assert r == {"groups": [{"id": "grp_1", "name": "Leads"}]}
+
+
+def test_create_group_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.create_group.return_value = {"id": "grp_1", "name": "Leads", "visibility": "private"}
+    r = _register_and_call("folk_group", op="create", name="Leads", visibility="private")
+    assert r == {"id": "grp_1", "name": "Leads", "visibility": "private"}
+    inst.create_group.assert_called_once_with("Leads", "private")
+
+
+def test_create_group_requires_name_and_visibility(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="visibility"):
+        _register_and_call("folk_group", op="create", name="Leads")
+    inst.create_group.assert_not_called()
+
+
+def test_create_group_dry_run_makes_no_network_call(client_cls):
+    inst = _instance(client_cls)
+    r = _register_and_call("folk_group", op="create", name="Leads", visibility="public",
+                           dry_run=True)
+    inst.create_group.assert_not_called()
+    assert r == {"dry_run": True, "would_create": {"name": "Leads", "visibility": "public"}}
+
+
+def test_update_group_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.update_group.return_value = {"id": "grp_1", "visibility": "public"}
+    r = _register_and_call("folk_group", op="update", group_id="grp_1", visibility="public")
+    assert r == {"id": "grp_1", "visibility": "public"}
+    inst.update_group.assert_called_once_with("grp_1", visibility="public")
+
+
+def test_update_group_requires_group_id(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="group_id"):
+        _register_and_call("folk_group", op="update", visibility="public")
+    inst.update_group.assert_not_called()
+
+
+def test_update_group_requires_at_least_one_field(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError):
+        _register_and_call("folk_group", op="update", group_id="grp_1")
+    inst.update_group.assert_not_called()
+
+
+def test_update_group_dry_run_shows_diff(client_cls):
+    inst = _instance(client_cls)
+    inst.list_groups.return_value = [{"id": "grp_1", "visibility": "private"}]
+    r = _register_and_call("folk_group", op="update", group_id="grp_1",
+                           visibility="public", dry_run=True)
+    inst.update_group.assert_not_called()
+    assert r == {"dry_run": True, "group_id": "grp_1",
+                 "changes": {"visibility": {"from": "private", "to": "public"}}}
+
+
+def test_update_group_dry_run_unknown_id_raises(client_cls):
+    inst = _instance(client_cls)
+    inst.list_groups.return_value = [{"id": "grp_1"}]
+    with pytest.raises(McpError, match="grp_bogus"):
+        _register_and_call("folk_group", op="update", group_id="grp_bogus",
+                           name="x", dry_run=True)
+
+
+# --- folk_group op="custom_fields" / "get_custom_field" ---------------------
+
+def test_list_group_custom_fields(client_cls):
+    inst = _instance(client_cls)
+    inst.get_group_custom_fields.return_value = [{"name": "Status"}]
+    r = _register_and_call("folk_group", op="custom_fields", group_id="grp_1")
+    assert r == {"custom_fields": [{"name": "Status"}]}
+    inst.get_group_custom_fields.assert_called_once_with("grp_1", "person")
+
+
+def test_custom_fields_requires_group_id(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="group_id"):
+        _register_and_call("folk_group", op="custom_fields")
+    inst.get_group_custom_fields.assert_not_called()
+
+
+def test_get_group_custom_field(client_cls):
+    inst = _instance(client_cls)
+    inst.get_group_custom_field.return_value = {"name": "Status", "type": "textField"}
+    r = _register_and_call("folk_group", op="get_custom_field", group_id="grp_1",
+                           entity_type="company", custom_field_name="Status")
+    assert r == {"name": "Status", "type": "textField"}
+    inst.get_group_custom_field.assert_called_once_with("grp_1", "company", "Status")
+
+
+def test_get_custom_field_requires_custom_field_name(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="custom_field_name"):
+        _register_and_call("folk_group", op="get_custom_field", group_id="grp_1")
+    inst.get_group_custom_field.assert_not_called()
+
+
+# --- folk_group op="create_custom_field" / "update_custom_field" -----------
+
+def test_create_custom_field_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.create_group_custom_field.return_value = {"name": "Status", "type": "textField"}
+    field = {"type": "textField", "name": "Status"}
+    r = _register_and_call("folk_group", op="create_custom_field", group_id="grp_1",
+                           custom_field=field)
+    assert r == {"name": "Status", "type": "textField"}
+    inst.create_group_custom_field.assert_called_once_with("grp_1", "person", **field)
+
+
+def test_create_custom_field_requires_custom_field(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="custom_field"):
+        _register_and_call("folk_group", op="create_custom_field", group_id="grp_1")
+    inst.create_group_custom_field.assert_not_called()
+
+
+def test_create_custom_field_rejects_reserved_key_collision(client_cls):
+    """`custom_field` splatte sur `create_group_custom_field(group_id, entity_type,
+    **field)` — une clé `group_id` dans le dict lèverait sinon un TypeError opaque
+    (« multiple values »), même famille que le signal #353 sur folk_record."""
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="group_id"):
+        _register_and_call(
+            "folk_group", op="create_custom_field", group_id="grp_1",
+            custom_field={"type": "textField", "name": "Status", "group_id": "grp_evil"})
+    inst.create_group_custom_field.assert_not_called()
+
+
+def test_create_custom_field_dry_run_makes_no_network_call(client_cls):
+    inst = _instance(client_cls)
+    field = {"type": "singleSelect", "name": "Stage",
+             "options": [{"label": "New", "color": "#5738ff"}]}
+    r = _register_and_call("folk_group", op="create_custom_field", group_id="grp_1",
+                           custom_field=field, dry_run=True)
+    inst.create_group_custom_field.assert_not_called()
+    assert r == {"dry_run": True, "would_create": field}
+
+
+def test_update_custom_field_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.update_group_custom_field.return_value = {"name": "Status"}
+    r = _register_and_call("folk_group", op="update_custom_field", group_id="grp_1",
+                           custom_field_name="Status", fields={"name": "Stage"})
+    assert r == {"name": "Status"}
+    inst.update_group_custom_field.assert_called_once_with(
+        "grp_1", "person", "Status", name="Stage")
+
+
+def test_update_custom_field_rejects_empty_fields(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError):
+        _register_and_call("folk_group", op="update_custom_field", group_id="grp_1",
+                           custom_field_name="Status", fields={})
+    inst.update_group_custom_field.assert_not_called()
+
+
+def test_update_custom_field_rejects_reserved_key_collision(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="entity_type"):
+        _register_and_call(
+            "folk_group", op="update_custom_field", group_id="grp_1",
+            custom_field_name="Status", fields={"name": "Stage", "entity_type": "company"})
+    inst.update_group_custom_field.assert_not_called()
+
+
+def test_update_custom_field_dry_run_shows_diff(client_cls):
+    inst = _instance(client_cls)
+    inst.get_group_custom_field.return_value = {"name": "Status"}
+    r = _register_and_call(
+        "folk_group", op="update_custom_field", group_id="grp_1",
+        custom_field_name="Status", fields={"name": "Stage"}, dry_run=True)
+    inst.update_group_custom_field.assert_not_called()
+    assert r == {"dry_run": True, "custom_field_name": "Status",
+                 "changes": {"name": {"from": "Status", "to": "Stage"}}}
+
+
+# --- folk_group op="members" / "add_member" / "remove_member" / "update_member" --
+
+def test_list_group_members(client_cls):
+    inst = _instance(client_cls)
+    inst.list_group_members.return_value = [
+        {"id": "usr_1", "fullName": "Ada", "email": "ada@x.com", "role": "admin"}]
+    r = _register_and_call("folk_group", op="members", group_id="grp_1")
+    assert r == {"members": [
+        {"id": "usr_1", "fullName": "Ada", "email": "ada@x.com", "role": "admin"}]}
+    inst.list_group_members.assert_called_once_with("grp_1")
+
+
+def test_members_requires_group_id(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="group_id"):
+        _register_and_call("folk_group", op="members")
+    inst.list_group_members.assert_not_called()
+
+
+def test_add_member_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.add_group_member.return_value = {"id": "usr_1", "role": "admin"}
+    r = _register_and_call("folk_group", op="add_member", group_id="grp_1",
+                           user_id="usr_1", role="admin")
+    assert r == {"id": "usr_1", "role": "admin"}
+    inst.add_group_member.assert_called_once_with("grp_1", "usr_1", "admin")
+
+
+def test_add_member_requires_user_id_and_role(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="role"):
+        _register_and_call("folk_group", op="add_member", group_id="grp_1", user_id="usr_1")
+    inst.add_group_member.assert_not_called()
+
+
+def test_add_member_dry_run_makes_no_network_call(client_cls):
+    inst = _instance(client_cls)
+    r = _register_and_call("folk_group", op="add_member", group_id="grp_1",
+                           user_id="usr_1", role="reader", dry_run=True)
+    inst.add_group_member.assert_not_called()
+    assert r == {"dry_run": True, "would_add": {"id": "usr_1", "role": "reader"}}
+
+
+def test_remove_member_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.remove_group_member.return_value = {"id": "usr_1"}
+    r = _register_and_call("folk_group", op="remove_member", group_id="grp_1", user_id="usr_1")
+    assert r == {"id": "usr_1"}
+    inst.remove_group_member.assert_called_once_with("grp_1", "usr_1")
+
+
+def test_remove_member_requires_user_id(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="user_id"):
+        _register_and_call("folk_group", op="remove_member", group_id="grp_1")
+    inst.remove_group_member.assert_not_called()
+
+
+def test_remove_member_dry_run_shows_would_remove(client_cls):
+    inst = _instance(client_cls)
+    inst.list_group_members.return_value = [
+        {"id": "usr_1", "fullName": "Ada", "role": "admin"}]
+    r = _register_and_call("folk_group", op="remove_member", group_id="grp_1",
+                           user_id="usr_1", dry_run=True)
+    inst.remove_group_member.assert_not_called()
+    assert r == {"dry_run": True,
+                 "would_remove": {"id": "usr_1", "fullName": "Ada", "role": "admin"}}
+
+
+def test_remove_member_dry_run_unknown_user_id_raises(client_cls):
+    inst = _instance(client_cls)
+    inst.list_group_members.return_value = [{"id": "usr_1"}]
+    with pytest.raises(McpError, match="usr_bogus"):
+        _register_and_call("folk_group", op="remove_member", group_id="grp_1",
+                           user_id="usr_bogus", dry_run=True)
+
+
+def test_update_member_happy_path(client_cls):
+    inst = _instance(client_cls)
+    inst.update_group_member.return_value = {"id": "usr_1", "role": "contributor"}
+    r = _register_and_call("folk_group", op="update_member", group_id="grp_1",
+                           user_id="usr_1", role="contributor")
+    assert r == {"id": "usr_1", "role": "contributor"}
+    inst.update_group_member.assert_called_once_with("grp_1", "usr_1", "contributor")
+
+
+def test_update_member_requires_role(client_cls):
+    inst = _instance(client_cls)
+    with pytest.raises(McpError, match="role"):
+        _register_and_call("folk_group", op="update_member", group_id="grp_1", user_id="usr_1")
+    inst.update_group_member.assert_not_called()
+
+
+def test_update_member_dry_run_shows_diff(client_cls):
+    inst = _instance(client_cls)
+    inst.list_group_members.return_value = [{"id": "usr_1", "role": "reader"}]
+    r = _register_and_call("folk_group", op="update_member", group_id="grp_1",
+                           user_id="usr_1", role="admin", dry_run=True)
+    inst.update_group_member.assert_not_called()
+    assert r == {"dry_run": True, "user_id": "usr_1",
+                 "changes": {"role": {"from": "reader", "to": "admin"}}}
