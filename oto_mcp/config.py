@@ -99,3 +99,42 @@ def dashboard_url_for(sub: Optional[str]) -> str:
         return propre or dashboard_url()
     except Exception:  # noqa: BLE001
         return dashboard_url()
+
+
+def front_for(sub: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """Le front qui héberge les orgs créées par CE COMPTE : `(base_url, brand)`.
+
+    Alimente `orgs.front_base_url` / `front_brand` à la création (cf.
+    `capabilities/orgs.py::_create_org`). `(None, None)` = oto, le défaut — et le
+    seul résultat possible pour un compte de la plateforme.
+
+    **Dérivé, jamais déclaré**, comme la lecture qu'il alimente (b6e1d27) : le
+    tenant vient de l'émetteur du jeton, donc un appelant ne peut pas revendiquer
+    un front auquel il n'appartient pas. Rien à retirer plus tard du contrat des
+    intégrateurs.
+
+    Pourquoi `dashboard_url` comme source : c'est déjà l'adresse du produit du
+    tenant, celle que `dashboard_url_for` sert à ses comptes. Une invitation ne
+    passe pas par `links` (son chemin `/invitation/<code>` est le même partout),
+    donc l'adresse suffit ici là où un lien de tableau exigerait un patron.
+
+    Inertie volontaire, même règle que `dashboard_url_for` : un tenant déclaré
+    SANS `dashboard_url` ne pose rien, et l'org retombe sur oto — le comportement
+    d'avant. Jamais une adresse devinée.
+
+    Ne lève pas : on est sur le chemin de création d'une org, un registre illisible
+    doit dégrader vers oto, pas refuser la création.
+    """
+    if not sub:
+        return (None, None)
+    try:
+        from . import tenancy
+        registre = tenancy.current()
+        slug = registre.tenant_of(sub)
+        if not slug or slug == tenancy.PRIMARY_SLUG:
+            return (None, None)
+        base = next((e.dashboard_url for e in registre.entries()
+                     if e.slug == slug and e.dashboard_url), "")
+        return (base, slug) if base else (None, None)
+    except Exception:  # noqa: BLE001
+        return (None, None)
