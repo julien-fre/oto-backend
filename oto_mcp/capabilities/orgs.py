@@ -75,9 +75,16 @@ class ClearOrgResult(BaseModel):
 
 def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
     """Self-serve : crée un espace, en fait l'admin, le bascule actif."""
-    if org_store.count_orgs_created_by(ctx.sub) >= _MAX_ORGS_PER_USER:
-        raise AuthzDenied(429, "org_quota",
-                          f"Limite de {_MAX_ORGS_PER_USER} espaces créés atteinte.")
+    # Le compte est relu pour le DIRE : un refus qui n'annonce que son plafond laisse
+    # l'appelant sans moyen de savoir ce qui l'occupe ni comment redescendre — et
+    # l'archivage, seul geste qui libère une place, n'est deviné par personne.
+    created = org_store.count_orgs_created_by(ctx.sub)
+    if created >= _MAX_ORGS_PER_USER:
+        raise AuthzDenied(
+            429, "org_quota",
+            f"Limite d'espaces créés atteinte : {created}/{_MAX_ORGS_PER_USER}. "
+            "Archive un espace que tu n'utilises plus pour libérer une place — "
+            "l'archivage est réversible et ton espace personnel n'est pas compté.")
     name = inp.name.strip()
     if not name:
         raise AuthzDenied(400, "invalid_name", "Nom d'espace requis.")
