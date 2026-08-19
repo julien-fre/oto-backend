@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import db
 from ._authz import ORG_MEMBER
@@ -49,14 +49,49 @@ class JobsInput(BaseModel):
     limit: int = 50
 
 
+class JobResult(BaseModel):
+    """Le résultat DÉCLARÉ par le worker à la conclusion (≤ 4 Ko) — un résumé
+    d'exécution, jamais du contenu de fil. `stopped` = le motif d'arrêt de la
+    boucle (end_turn, max_steps…) ; `tool_counts` = les appels RÉUSSIS par
+    outil — c'est là qu'un « tour perdu » (analyser sans écrire) se lit au
+    grain job, sans ouvrir le fil. `extra=allow` : le worker peut déclarer
+    plus, le schéma nomme le socle sans le fermer."""
+    model_config = ConfigDict(extra="allow")
+
+    usage_tokens: Optional[int] = None
+    stopped: Optional[str] = None
+    steps: Optional[int] = None
+    tool_counts: Optional[dict[str, int]] = None
+
+
+class Job(BaseModel):
+    """Un job tel que servi — Optional là où les PROJECTIONS divergent : le
+    claim rend (id, kind, run_id, payload, attempts, max_attempts, lease_until)
+    sans status ni result ; list/get rendent le reste sans lease_until."""
+    id: int
+    kind: Optional[str] = None
+    run_id: Optional[str] = None
+    payload: Optional[dict[str, Any]] = None
+    status: Optional[str] = None
+    attempts: Optional[int] = None
+    max_attempts: Optional[int] = None
+    claimed_by: Optional[str] = None
+    lease_until: Optional[str] = None
+    last_error: Optional[str] = None
+    result: Optional[JobResult] = None
+    due_at: Optional[str] = None
+    created_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
 class JobsOut(BaseModel):
     # enqueue → id/status/due_at ; claim → job (ou null, file vide) ; list → jobs ;
     # les autres → ok/status.
     id: Optional[int] = None
     status: Optional[str] = None
     due_at: Optional[str] = None
-    job: Optional[dict[str, Any]] = None
-    jobs: Optional[list[dict[str, Any]]] = None
+    job: Optional[Job] = None
+    jobs: Optional[list[Job]] = None
     ok: Optional[bool] = None
 
 

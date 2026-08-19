@@ -42,9 +42,30 @@ class TriggerInput(BaseModel):
     enabled: Optional[bool] = None
 
 
+class Trigger(BaseModel):
+    """Un déclencheur tel que servi (les colonnes de `_COLS`, db/runner_triggers) :
+    la procédure à jouer, quand (cron + tz), avec quels outils, et l'état de
+    marche (enabled, next_due, last_enqueued_at)."""
+    id: int
+    org_id: Optional[int] = None
+    sub: Optional[str] = None
+    label: Optional[str] = None
+    procedure: Optional[str] = None
+    project_id: Optional[int] = None
+    tools: Optional[list[str]] = None
+    input: Optional[str] = None
+    max_steps: Optional[int] = None
+    cron: Optional[str] = None
+    tz: Optional[str] = None
+    enabled: Optional[bool] = None
+    next_due: Optional[str] = None
+    last_enqueued_at: Optional[str] = None
+    created_at: Optional[str] = None
+
+
 class TriggerOut(BaseModel):
-    trigger: Optional[dict[str, Any]] = None
-    triggers: Optional[list[dict[str, Any]]] = None
+    trigger: Optional[Trigger] = None
+    triggers: Optional[list[Trigger]] = None
     ok: Optional[bool] = None
 
 
