@@ -51,6 +51,7 @@ import hashlib
 import json
 import logging
 import re
+import secrets
 from typing import Iterable, Optional
 
 from ._conn import _connect
@@ -195,19 +196,29 @@ _INSERT_BLOCK = (
 )
 
 
-def block_public_id(node_public_id: str, index: int) -> str:
-    """L'identifiant d'un bloc, DÉRIVÉ de (nœud, rang) — pas de son contenu.
+def _new_block_id() -> str:
+    """L'identifiant d'un bloc est un TIRAGE — jamais dérivé du rang ni du contenu
+    (#362, qui RETOURNE l'ancien schéma md5(nœud:rang) : l'identité positionnelle
+    faisait qu'un paragraphe inséré en tête ré-identifiait TOUS les blocs en
+    dessous — toute référence externe cassait au premier réordonnancement, la
+    classe de coût qu'on paie sur docs(id) en ce moment même. Trivial à changer
+    tant que rien ne lit les blocs, très cher après). Même schéma de tirage
+    qu'un nœud natif (0059-D3) ; l'identité posée est ensuite CONSERVÉE par le
+    rapprochement de `write_node_blocks`."""
+    return "blk_" + secrets.token_hex(12)
 
-    Deux propriétés voulues : rejouer le parse ne fabrique pas d'identifiants neufs
-    (donc pas de doublons, et un `ON CONFLICT` suffit), et **l'adresse d'un bloc
-    survit à la réécriture de son texte** — ce qui est le propre d'une adresse. Un
-    nœud NATIF, lui, tirera ses identifiants au sort (0059-D3)."""
-    return "blk_" + hashlib.md5(
-        f"{node_public_id}:{index}".encode("utf-8")).hexdigest()[:24]
 
-
-def write_node_blocks(conn, node_id: int, node_public_id: str, body: str) -> int:
+def write_node_blocks(conn, node_id: int, body: str) -> int:
     """(Ré)écrit les blocs d'UN nœud depuis son corps, et pose le marqueur.
+
+    **L'identité survit à la re-projection** (#362) : les blocs existants du nœud
+    sont lus d'abord, et chaque bloc parsé RÉCUPÈRE l'identifiant d'un existant
+    reconnaissable — même type, même source exacte — apparié dans l'ordre des
+    positions, chaque existant consommé au plus une fois. Insérer ou déplacer ne
+    ré-identifie donc jamais les blocs intacts ; un bloc ÉDITÉ prend une identité
+    neuve, et c'est assumé — mieux vaut une adresse neuve qu'une adresse qui
+    pointe un texte qui n'est plus celui qu'on visait. Les cas ambigus (deux
+    blocs de même source) s'apparient dans l'ordre : stable au no-op.
 
     ⚠️ Le marqueur est l'empreinte du corps QU'ON VIENT DE PARSER, pas une relecture
     SQL de `props->>'body_md'` : si le corps a changé entre la lecture et l'écriture,
@@ -215,12 +226,19 @@ def write_node_blocks(conn, node_id: int, node_public_id: str, body: str) -> int
     Relire en SQL stamperait au contraire le nouveau corps avec les blocs de
     l'ancien — un décalage définitif, et silencieux."""
     parsed = parse_blocks(body)
+    dispo: dict[tuple, list] = {}
+    for r in conn.execute(
+            "SELECT public_id, type, props->>'md' AS md FROM blocks "
+            "WHERE node_id = %s ORDER BY position", (node_id,)).fetchall():
+        dispo.setdefault((r["type"], r["md"] or ""), []).append(r["public_id"])
     conn.execute("DELETE FROM blocks WHERE node_id = %s", (node_id,))
     if parsed:
         params = []
         for idx, b in enumerate(parsed):
+            reconnus = dispo.get((b["type"], b["md"]))
+            pid = reconnus.pop(0) if reconnus else _new_block_id()
             props = {k: v for k, v in b.items() if k != "type"}
-            params.append((block_public_id(node_public_id, idx), node_id,
+            params.append((pid, node_id,
                            (idx + 1) * 16, b["type"], json.dumps(props)))
         with conn.cursor() as cur:
             cur.executemany(_INSERT_BLOCK, params)
@@ -255,8 +273,7 @@ def backfill_node_blocks(*, batch: int = 200) -> int:
             for r in rows:
                 try:
                     with conn.transaction():
-                        write_node_blocks(conn, int(r["id"]), r["public_id"],
-                                          r["body"] or "")
+                        write_node_blocks(conn, int(r["id"]), r["body"] or "")
                     done += 1
                 except Exception:
                     logger.warning("blocs : nœud %s non parsé (fail-open)",

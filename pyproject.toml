@@ -11,6 +11,9 @@ dependencies = [
     # (SHA backend + ce pin). PyPI ne reçoit pas chaque merge (publish manuel, lag) →
     # on tague oto-core et on bump CE pin par PR. Bump = éditer le tag ici ; rollback
     # = revert ce commit (ramène aussi le bon oto-core). Cf. ADR 0020 (deploy/canari).
+    # v1.83.0 = folk groupes (create/update, champs personnalisés de groupe, membres,
+    # oto-core#39) + clients TheirStack & Origami (prospection sortante, oto-core#40) :
+    # UN seul tag pour les deux, pour qu'aucun ordre de merge ne fasse régresser ce pin ;
     # v1.82.0 = `UnipileClient.delete_account` : le seul geste qui LIBÈRE un siège (un
     # compte facture tant qu'il existe sur l'instance — se déconnecter côté oto ne le rend
     # pas) ; v1.81.0 = la messagerie Unipile route par PROVIDER (inbox LinkedIn vs plate) : les
@@ -37,13 +40,7 @@ dependencies = [
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    # TODO(theirstack/origami) : bump to the tag that includes theirstack/origami clients
-    # once a maintainer cuts it (oto-core `feat/theirstack-origami-clients` : TheirStackClient
-    # + OrigamiClient, pas encore tagués). Tant que le pin reste à v1.82.0, `tools/theirstack.py`
-    # et `tools/origami.py` sont chargés par register_all mais leur `register()` échoue à
-    # l'import du client (warning « tools disabled », serveur intact) — les deux connecteurs
-    # restent inertes, sans casser le boot. Ne JAMAIS écrire un tag plus bas que celui-ci.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.82.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.83.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome

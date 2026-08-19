@@ -11,7 +11,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .. import org_store, session_org
+from .. import config, org_store, session_org
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -75,13 +75,31 @@ class ClearOrgResult(BaseModel):
 
 def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
     """Self-serve : crée un espace, en fait l'admin, le bascule actif."""
-    if org_store.count_orgs_created_by(ctx.sub) >= _MAX_ORGS_PER_USER:
-        raise AuthzDenied(429, "org_quota",
-                          f"Limite de {_MAX_ORGS_PER_USER} espaces créés atteinte.")
+    # Le compte est relu pour le DIRE : un refus qui n'annonce que son plafond laisse
+    # l'appelant sans moyen de savoir ce qui l'occupe ni comment redescendre — et
+    # l'archivage, seul geste qui libère une place, n'est deviné par personne.
+    created = org_store.count_orgs_created_by(ctx.sub)
+    if created >= _MAX_ORGS_PER_USER:
+        raise AuthzDenied(
+            429, "org_quota",
+            f"Limite d'espaces créés atteinte : {created}/{_MAX_ORGS_PER_USER}. "
+            "Archive un espace que tu n'utilises plus pour libérer une place — "
+            "l'archivage est réversible et ton espace personnel n'est pas compté.")
     name = inp.name.strip()
     if not name:
         raise AuthzDenied(400, "invalid_name", "Nom d'espace requis.")
-    org_id = org_store.create_org(name, created_by=ctx.sub)
+    # Le front qui héberge l'org est DÉRIVÉ du tenant de son créateur (registre
+    # d'émetteurs), jamais déclaré. Sans ça une org créée depuis un front tiers
+    # repart à NULL, donc ses invitations pointent `oto.cx` ET s'augmentent d'un
+    # magic-link minté sur NOTRE Logto — inerte contre l'émetteur du tenant. L'invité
+    # se crée alors un compte CHEZ NOUS, accepte avec celui-là, et son compte du
+    # tenant n'est membre de rien : deux identités pour une personne, et l'org
+    # inatteignable depuis son propre front (vécu le 15/08 sur une org Tulina).
+    # b6e1d27 a donné aux invitations la marque de l'org ; il manquait qui la pose.
+    front_base_url, front_brand = config.front_for(ctx.sub)
+    org_id = org_store.create_org(name, created_by=ctx.sub,
+                                  front_base_url=front_base_url,
+                                  front_brand=front_brand)
     org_store.add_org_member(org_id, ctx.sub, "org_admin")
     # Nouvelle org = ton org maison (défaut) — effective immédiatement, y compris dans
     # cette conversation (le seam `current_org` retombe sur la maison sans jeton ; plus

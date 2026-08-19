@@ -3,16 +3,22 @@
 folk fournit une clé api personnelle. récupère-la dans les [réglages api/développeur de ton compte folk](https://app.folk.app) (doc : [developer.folk.app](https://developer.folk.app)).
 - colle-la dans oto sur ton compte (`/account`), connecteur **folk**
 - byo uniquement : ta clé, ou le credential partagé de ton org — pas de clé plateforme
-- les **groupes** ne se créent pas via l'api : crée-les dans l'app folk, puis référence-les par leur id
+- les **groupes** (et leurs champs custom) se listent/créent/modifient via l'api (`folk_group`) — la suppression d'un groupe ou d'un champ custom reste réservée à l'app folk ; retirer un **membre** d'un groupe, en revanche, se fait via l'api (`folk_group(op="remove_member")`)
 
 ## usage — ce que tu peux faire
 
-gère ton crm folk (personnes, entreprises, deals) + notes, interactions et rappels depuis claude.
+gère ton crm folk (personnes/contacts, entreprises, deals ou tout autre objet custom) + notes, interactions et rappels depuis claude. Tout passe par `folk_record` (paramètre `entity`) — il n'y a pas de tool séparé `folk_company`/`folk_contact`/`folk_deal`.
 - « trouve le contact dupont » → `folk_record(op="search")` (entity `person`), puis `folk_record(op="get")` pour la fiche
 - « ajoute jean dupont, cto chez acme » → `folk_record(op="create")` (entity `person`)
 - « log un appel sur ce contact » → `folk_record(op="create")` (entity `interaction`, type/titre/contenu)
-- « crée un deal dans le groupe X » → `folk_record(op="create")` (entity `deal`), et `folk_record(op="search", entity="deal")` pour les lister
+- « crée un deal dans le groupe X » → `folk_record(op="create")` (entity `deal`), et `folk_record(op="search", entity="deal")` pour les lister — `object_type` est auto-découvert si omis (voir note ci-dessous) ; ne le passer explicitement que si le groupe a PLUSIEURS objets custom au-delà de person/company (l'auto-découverte lève alors une erreur qui les liste)
 - « ajoute ces 20 contacts » → `folk_record(op="create")` (entity `person`, `items=[...]`) en un seul appel
+- « crée un groupe Leads privé » → `folk_group(op="create", name="Leads", visibility="private")`
+- « ajoute un champ Statut (select) sur les personnes du groupe X » → `folk_group(op="create_custom_field")` (`entity_type="person"` par défaut, `custom_field={"type": "singleSelect", "name": "Statut", "options": [...]}`)
+- ⚠️ seuls `person`/`company` sont des entity_type FIXES. Tout objet au-delà (deal ou autre) est un **objet custom que chaque client folk nomme lui-même** ("Deals" n'est que le nom choisi par CE workspace — un autre pourrait l'appeler "Opportunités", au singulier, etc.). Pour `folk_group(op="custom_fields"/...)`, découvrir le nom : appeler avec n'importe quel entity_type — le 404 de Folk liste les VRAIS entity_type de ce groupe (`"Available entity types are: ..."`), puis rappeler avec le bon nom. `folk_record`'s `object_type` fait cette découverte tout seul (voir note ci-dessus) — seul `folk_group` demande encore de la faire à la main
+- « ajoute jean comme admin du groupe Leads » → `folk_group(op="add_member")` (`user_id` depuis `folk_user(op="list")`, `role="admin"`)
+- « qui a accès au groupe Leads ? » / « retire jean du groupe » → `folk_group(op="members")` / `folk_group(op="remove_member")`
+- ⚠️ un groupe **public** (`visibility="public"`) a une appartenance IMPLICITE : `folk_group(op="members")` y liste TOUT le workspace en rôle "admin", que quelqu'un ait été ajouté ou non (vérifié en live) — `add_member`/`remove_member`/`update_member` n'ont d'effet réel que sur un groupe **private** (appartenance explicite)
 - « préviens mon endpoint à chaque nouveau deal du groupe X » → `folk_webhook(op="create")` (avant ça : `folk_group(op="list")` pour l'id du groupe, `folk_group(op="custom_fields")` si le filtre porte sur un champ custom)
 - « liste mes webhooks » / « désactive ce webhook » → `folk_webhook(op="list")` / `folk_webhook(op="update")` (`fields={"status": "inactive"}`)
 - ⚠️ un filtre de webhook posé via l'api n'existe QUE là : le modifier depuis les réglages de l'app folk le fait disparaître silencieusement

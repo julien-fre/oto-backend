@@ -15,6 +15,16 @@ là où un test SQL exigerait un PostgreSQL et ne dirait rien de plus :
 Le troisième test garde l'intention du lot : L1 **nomme** l'existant, il ne le
 déplace pas. Le jour où un call-site lit `tenant_id`, ce n'est plus L1 — c'est un
 autre lot, avec sa propre revue.
+
+> **Première lecture admise, et bornée (suivi des tenants).** Le garde-fou refusait
+> TOUTE lecture de `orgs.tenant_id` et demandait, le jour venu, qu'on le retire —
+> le retirer rendrait alors muet ce qu'il protège vraiment : qu'aucun chemin de
+> **résolution** (identité, credential, visibilité, autz) ne se mette à dépendre du
+> rattachement d'org. L'écran de suivi plateforme lit la colonne pour la COMPTER, et
+> ne décide de rien avec. Le garde-fou passe donc d'une interdiction totale à une
+> **allowlist nommée** (patron `test_org_seam_tripwire.py`) : les deux fichiers du
+> suivi, et eux seuls. Un lecteur ailleurs casse toujours — c'est le cas qu'on veut
+> voir en revue.
 """
 from __future__ import annotations
 
@@ -47,10 +57,23 @@ def test_tenant_one_is_seeded_before_the_column_references_it():
         "fait pas avancer la BIGSERIAL, et le prochain tenant naîtrait sur l'id 1.")
 
 
-def test_nothing_reads_tenant_id_yet():
-    """L1 nomme l'existant, il ne le déplace pas. Ce garde-fou n'interdit rien pour
-    toujours — il force à ce que le premier LECTEUR de la colonne soit un acte
-    délibéré (retirer ce test), pas un effet de bord."""
+# Les SEULS lecteurs admis de `orgs.tenant_id` : le suivi (il COMPTE le
+# rattachement et n'en dérive aucune décision). Tout ajout à cette liste est un
+# changement de nature — la colonne cesserait d'être un nom pour devenir une entrée
+# de résolution — et doit être argumenté en revue, pas glissé dans un diff.
+_LECTEURS_ADMIS = {
+    "db/tenants.py",              # les compteurs de suivi (lecture seule)
+    "capabilities/tenants_admin.py",  # la capacité qui les sert (PLATFORM_ADMIN)
+}
+
+
+def test_only_the_tracking_read_touches_tenant_id():
+    """L1 nomme l'existant, il ne le déplace pas.
+
+    Ce que le garde-fou protège n'est pas « personne ne lit la colonne » mais
+    « aucune RÉSOLUTION n'en dépend » : identité, credential, visibilité, autz
+    continuent d'ignorer le rattachement d'org. Un lecteur hors allowlist tombe.
+    """
     root = _DB.parent
     readers = []
     for path in root.rglob("*.py"):
@@ -64,8 +87,12 @@ def test_nothing_reads_tenant_id_yet():
                 continue
             if line.lstrip().startswith(("#", "--")):
                 continue
+            rel = path.relative_to(root).as_posix()
+            if rel in _LECTEURS_ADMIS:
+                continue
             readers.append(f"{path.relative_to(root.parent)}: {line.strip()}")
     assert not readers, (
-        "Quelqu'un lit `orgs.tenant_id`, ce qui déborde du lot L1 (« l'existant est "
-        f"nommé, pas déplacé ») : {readers}. Si c'est voulu, retirer ce test dans le "
-        "même commit — pour que la bascule soit visible en revue.")
+        "Quelqu'un lit `orgs.tenant_id` hors du suivi, ce qui déborde du lot L1 "
+        f"(« l'existant est nommé, pas déplacé ») : {readers}. Un chemin de "
+        "résolution qui dépend du rattachement d'org est un LOT, avec sa revue : "
+        f"l'ajouter à _LECTEURS_ADMIS doit être un acte délibéré.")

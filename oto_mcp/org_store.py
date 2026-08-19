@@ -75,14 +75,22 @@ def has_org_secret(org_id: int, provider: str) -> bool:
 
 # --- écritures + lectures de gestion (barreau 3, meta-tools platform_admin) --
 
-def create_org(name: str, created_by: Optional[str] = None) -> int:
+def create_org(name: str, created_by: Optional[str] = None,
+               front_base_url: Optional[str] = None,
+               front_brand: Optional[str] = None) -> int:
+    """Crée une org. `front_base_url`/`front_brand` = le front qui l'héberge, DÉRIVÉ
+    du tenant de son créateur par l'appelant (`config.front_for`) et posé ici même :
+    NULL/NULL = oto, le défaut. Écrits à l'INSERT plutôt qu'en seconde écriture — une
+    org ne doit jamais exister, fût-ce un instant, sans la marque de ses liens
+    sortants. Cf. les colonnes `orgs.front_*` (db/_init) et `org_front` ci-dessous."""
     name = (name or "").strip()
     if not name:
         raise ValueError("nom d'org requis")
     with _connect() as conn:
         row = conn.execute(
-            "INSERT INTO orgs (name, created_by) VALUES (%s, %s) RETURNING id",
-            (name, created_by),
+            "INSERT INTO orgs (name, created_by, front_base_url, front_brand) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            (name, created_by, front_base_url or None, front_brand or None),
         ).fetchone()
         return int(row["id"])
 
@@ -845,10 +853,31 @@ def list_org_secrets(org_id: int) -> list[dict]:
 # --- création self-serve + invitations (onboarding SaaS) --------------------
 
 def count_orgs_created_by(sub: str) -> int:
-    """Nombre d'orgs créées par ce sub (anti-abus du self-serve `org.create`)."""
+    """Espaces créés par ce sub qui OCCUPENT une place du quota (`org.create`).
+
+    Le compte est celui d'un plafond qu'on peut redescendre, pas d'un total
+    historique : il ne retient donc que les orgs qui coûtent encore quelque chose.
+
+    - `archived_at IS NULL` — `archive_org` est le SEUL geste par lequel un
+      utilisateur peut relâcher une place (il n'y a pas de hard-delete, ADR : les FK
+      restent pour l'audit). Compter les archivées rendait le plafond
+      **irréversible** : l'org disparaissait de tous les listings (`list_orgs_for_user`
+      filtre déjà `archived_at IS NULL`) sans rendre sa place, donc le refus tombait
+      sur un compte que rien ne pouvait plus faire baisser.
+    - `personal_of IS NULL` — l'espace personnel n'est pas un espace *choisi* : il est
+      posé d'office par `ensure_personal_org` et son archivage est refusé
+      (`is_personal_org`, il serait recréé au boot suivant). Le compter facturait donc
+      une place que son propriétaire n'a ni demandée ni le droit de libérer — le
+      plafond RÉEL valait un de moins que celui annoncé par le message d'erreur.
+
+    L'axe `created_by` est inchangé : c'est bien « créés », pas « dont on est membre »
+    — rejoindre l'org d'autrui n'a jamais consommé de place et ne doit pas commencer.
+    """
     with _connect() as conn:
         return conn.execute(
-            "SELECT COUNT(*) AS n FROM orgs WHERE created_by = %s", (sub,)
+            "SELECT COUNT(*) AS n FROM orgs "
+            " WHERE created_by = %s AND archived_at IS NULL AND personal_of IS NULL",
+            (sub,),
         ).fetchone()["n"]
 
 

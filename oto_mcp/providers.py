@@ -560,7 +560,8 @@ _REGISTRY_LIST = [
     # plateforme) ; compte partagé équipe = credential de l'org Otomata.
     _c("folk", ["folk"], auth_modes={"byo_user", "byo_org"}, keyed=True,
        secret_kind="api_key",
-       label="Folk", help="CRM", href="https://app.folk.app"),
+       label="Folk", help="CRM — contacts, companies, deals & custom objects",
+       href="https://app.folk.app"),
     # checkcrm : wrappe l'API v1 de l'app "enrichment" de Julien (job-change check
     # LinkedIn + gestion des subsidiaries) — byo-only, chaque org configure sa
     # propre clé enrichment (voir enrichment/docs/sf-api.md). Nommé "checkcrm" (un
