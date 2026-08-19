@@ -11,10 +11,12 @@ vrai PostgreSQL dans `test_nodes_m2_conversion.py`.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
-from oto_mcp.db.blocks import (CODE, TEXT, block_public_id, code_of, parse_blocks,
-                               render_blocks)
+from oto_mcp.db.blocks import (CODE, TEXT, code_of, parse_blocks,
+                               render_blocks, write_node_blocks)
 
 CORPUS = [
     "",
@@ -124,14 +126,114 @@ def test_an_unclosed_fence_runs_to_the_end():
 
 # ── l'adresse d'un bloc ──────────────────────────────────────────────────────
 
-def test_a_block_address_is_stable_and_scoped_to_its_node():
-    """Dérivée de (nœud, rang) : rejouer le parse ne fabrique pas d'identifiants
-    neufs, donc pas de doublons — et l'adresse survit à la réécriture du texte, ce
-    qui est le propre d'une adresse."""
-    assert block_public_id("nod_a", 0) == block_public_id("nod_a", 0)
-    assert block_public_id("nod_a", 0) != block_public_id("nod_a", 1)
-    assert block_public_id("nod_a", 0) != block_public_id("nod_b", 0)
-    assert block_public_id("nod_a", 0).startswith("blk_")
+# ⚠️ RETOURNÉ le 19/08 (#362) : un test affirmait ici que l'adresse d'un bloc
+# était DÉRIVÉE de (nœud, rang) — l'identité positionnelle qui faisait qu'un
+# paragraphe inséré en tête ré-identifiait TOUS les blocs en dessous (toute
+# référence externe cassait au premier réordonnancement). L'identité est
+# désormais un TIRAGE à la première projection, CONSERVÉ par rapprochement —
+# les tests ci-dessous décrivent le monde d'après.
+
+class _FauxConn:
+    """Le strict nécessaire de write_node_blocks : SELECT des existants,
+    DELETE, INSERT en lot, UPDATE du marqueur."""
+
+    def __init__(self):
+        self.blocs: list[tuple] = []   # (public_id, node_id, position, type, props)
+
+    def execute(self, sql, params=None):
+        class _R:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def fetchall(self):
+                return self._rows
+
+        if sql.lstrip().startswith("SELECT"):
+            return _R([{"public_id": b[0], "type": b[3],
+                        "md": json.loads(b[4]).get("md", "")}
+                       for b in sorted(self.blocs, key=lambda x: x[2])])
+        if sql.lstrip().startswith("DELETE"):
+            self.blocs = []
+        return _R([])
+
+    def cursor(self):
+        conn = self
+
+        class _Cur:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def executemany(self, sql, params):
+                conn.blocs.extend(params)
+
+        return _Cur()
+
+
+def _ids(conn):
+    return [b[0] for b in sorted(conn.blocs, key=lambda x: x[2])]
+
+
+def _mds(conn):
+    return [json.loads(b[4])["md"] for b in sorted(conn.blocs, key=lambda x: x[2])]
+
+
+def test_l_identite_survit_a_une_insertion_en_tete():
+    """LE test de #362 : insérer un bloc en tête ⟹ les ids existants ne bougent
+    pas — seul le bloc neuf tire une identité neuve."""
+    conn = _FauxConn()
+    write_node_blocks(conn, 7, "un\n\ndeux\n")
+    avant = _ids(conn)
+    write_node_blocks(conn, 7, "zéro\n\nun\n\ndeux\n")
+    apres = _ids(conn)
+    assert apres[1:] == avant, "les voisins intacts gardent leur identité"
+    assert apres[0] not in avant and apres[0].startswith("blk_")
+
+
+def test_l_identite_survit_a_un_deplacement():
+    conn = _FauxConn()
+    write_node_blocks(conn, 7, "un\n\ndeux\n\ntrois\n")
+    par_md = dict(zip(_mds(conn), _ids(conn)))
+    write_node_blocks(conn, 7, "trois\n\nun\n\ndeux\n")
+    # ⚠️ le séparateur appartient au bloc du DESSUS : les sources exactes changent
+    # pour « trois » (gagne \n\n) et « deux » (le perd) — seuls les blocs à source
+    # INTACTE promettent leur identité. « un » est de ceux-là.
+    assert dict(zip(_mds(conn), _ids(conn)))["un\n\n"] == par_md["un\n\n"]
+
+
+def test_un_bloc_edite_prend_une_identite_neuve_sans_toucher_les_voisins():
+    conn = _FauxConn()
+    write_node_blocks(conn, 7, "un\n\ndeux\n\ntrois\n")
+    avant = _ids(conn)
+    write_node_blocks(conn, 7, "un\n\nDEUX ÉDITÉ\n\ntrois\n")
+    apres = _ids(conn)
+    assert apres[0] == avant[0] and apres[2] == avant[2], "voisins intacts"
+    assert apres[1] != avant[1], "le bloc édité change d'adresse — une adresse " \
+        "qui pointerait un texte qui n'est plus celui visé mentirait"
+
+
+def test_les_doublons_s_apparient_dans_l_ordre():
+    """Deux blocs de même source : chacun garde le sien (consommation unique,
+    ordre des positions) — pas de vol d'identité croisé."""
+    conn = _FauxConn()
+    write_node_blocks(conn, 7, "pareil\n\npareil\n\nfin\n")
+    avant = _ids(conn)
+    write_node_blocks(conn, 7, "pareil\n\npareil\n\nfin\n")
+    assert _ids(conn) == avant
+
+
+def test_la_reprojection_d_un_corps_inchange_est_idempotente():
+    """La propriété demandée au GO : même si le no-op blocks_md5 était contourné
+    (refactor futur), re-projeter un corps inchangé ne change AUCUN id — pas de
+    rotation d'identités silencieuse."""
+    conn = _FauxConn()
+    write_node_blocks(conn, 7, "# titre\nprose\n\n```py\ncode\n```\n")
+    avant = _ids(conn)
+    for _ in range(3):
+        write_node_blocks(conn, 7, "# titre\nprose\n\n```py\ncode\n```\n")
+    assert _ids(conn) == avant
 
 
 def test_code_of_only_answers_for_code():
