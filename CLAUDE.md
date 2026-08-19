@@ -1085,4 +1085,5 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 - `docs/email.md` — envoi per-org par connecteur (scaleway BYO TEM + resend), différé/quiet hours.
 - `docs/event-loop-perf.md` — les 2 modes de gel mono-loop + protections + recettes py-spy/aiodebug.
 - `docs/redaction.md` — **rédaction de champs** : middleware unique (FieldRedactionMiddleware), rien par défaut + templates 1-clic, **schéma OBSERVÉ** (capture passive `connector_schemas` — passthrough d'API tierces → on observe au lieu de déclarer), dry-run preview, moteur `FieldFilter` (oto-core).
+- `docs/connector-test-gate-theirstack-origami.md` — la porte de test LOCALE des deux connecteurs de prospection (unitaire, lecture live, écriture sur un espace jetable) : ce qu'un contributeur externe doit avoir fait passer avant de pousser, sans serveur qui tourne.
 - `docs/live-migrations.md` — **migrations vivantes sur la DB partagée canari/prod** : la danse en N lots promus, copies `to_regclass` newer-wins, bascule d'arbitre ON CONFLICT avant drop de PK, PK nommées, pièges (fail-open des gates, `gh pr merge` avant le guard, absorption de WIP).

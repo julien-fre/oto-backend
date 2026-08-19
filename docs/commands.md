@@ -81,6 +81,12 @@ with psycopg.connect(os.environ[\"DATABASE_URL\"]) as c:
     for r in c.execute(\"SELECT sub, email, role FROM users\"): print(r)
 "'
 
+# ⚠️ Même besoin pour tout script d'ENTRETIEN lancé à la main (`python -m scripts.X`) :
+# il n'hérite pas de l'environnement du service systemd, donc il sort en
+# « RuntimeError: DATABASE_URL not set » avant d'avoir rien fait. Sourcer d'abord :
+#   cd /opt/oto-mcp && set -a && . ./.env && set +a && ./.venv/bin/python -m scripts.X
+# Vécu 19/08 sur scripts.archive_empty_kb_projects (dry-run par défaut, --apply pour agir).
+
 # ⚠️ Un script HORS SERVEUR ne voit AUCUN outil : `tool_registry.boot_tool_names()`
 # rend [] tant que le registre n'est pas réchauffé (le serveur le fait au lifespan).
 # Toute validation de nom d'outil renvoie alors un `unknown_tool` TROMPEUR — vécu
