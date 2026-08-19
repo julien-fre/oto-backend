@@ -1,6 +1,7 @@
 """Base de connaissance d'org = la zone « Documents » (réunion
 30/06, fusion KB↔Document). Une SEULE base par org : un projet dédié « Base de
-connaissance », possédé par l'org active, résolu (et créé paresseusement) ici. La
+connaissance », possédé par l'org active, résolu ici — et créé à la demande par
+`op="ensure"` SEULEMENT (`op="get"` lit, cf. `KbInput`). La
 zone Documents du dashboard l'ouvre via le composant doc existant — on réutilise
 tout le substrat docs (pages arborescentes, versions, partage public, demande de
 modif) sans nouvelle table.
@@ -30,7 +31,16 @@ KB_BRIEF = ("La base de connaissance de l'organisation : pages de référence pa
 
 
 class KbInput(BaseModel):
-    op: Literal["get"] = "get"
+    """`get` LIT, `ensure` CRÉE — la distinction n'est pas cosmétique.
+
+    Jusqu'ici la seule op, `get`, créait la KB au passage (« résolue et créée
+    paresseusement »). Or ce endpoint est monté à la racine des fronts : le
+    simple fait d'ouvrir l'app posait un projet « Base de connaissance » VIDE
+    dans l'org de chaque client, que personne n'avait demandé et dont personne
+    ne pouvait expliquer l'origine (remonté par un client, 19/08). Une lecture
+    ne doit rien écrire ; l'écriture a désormais son verbe."""
+
+    op: Literal["get", "ensure"] = "get"
 
 
 class KbView(BaseModel):
@@ -46,9 +56,11 @@ class KbView(BaseModel):
     Ce que la réponse ne contient PAS : les pages elles-mêmes. `project_id` est
     l'entrée — l'arbre, les versions, le partage public et les propositions de
     modification se lisent et s'écrivent avec `oto_doc` (`POST /api/me/docs`)."""
-    project_id: int          # projet dédié « Base de connaissance » (créé au 1er appel)
-    name: str                # son nom courant — renommable, l'ancre est l'id
-    brief_md: str            # brief du projet KB ('' si vidé)
+    project_id: Optional[int]  # le projet dédié, ou None : op="get" sur une org qui
+                               # n'a PAS encore de KB (op="ensure" la crée)
+    name: str                # son nom courant — renommable, l'ancre est l'id ;
+                             # KB_NAME quand il n'y a pas encore de projet
+    brief_md: str            # brief du projet KB ('' si vidé, ou pas de KB)
 
 
 def _anchored_kb(org: int) -> "tuple[Optional[int], Optional[dict]]":
@@ -69,6 +81,12 @@ def _kb(ctx: ResolvedCtx, inp: KbInput) -> dict:
         raise AuthzDenied(400, "no_active_org", "Aucune org active.")
     pid, kb = _anchored_kb(org)
     if kb is None:
+        if inp.op == "get":
+            # Lecture pure : ni création, ni réparation d'ancre pendouillante
+            # (les deux écrivent). L'appelant qui a besoin d'un project_id pour
+            # ÉCRIRE demande `ensure` ; celui qui affiche une zone Documents
+            # vide n'a rien à créer pour ça.
+            return {"project_id": None, "name": KB_NAME, "brief_md": ""}
         if pid is not None:
             # Ancre pendouillante — compare-and-clear (jamais écraser une réparation
             # concurrente déjà re-posée).
@@ -92,9 +110,12 @@ CAPABILITIES += [
         key="me.kb", handler=_kb, Input=KbInput, authz=SUB_ONLY, Output=KbView,
         description=(
             "Resolve the active org's KNOWLEDGE BASE — a single dedicated project "
-            "« Base de connaissance » (created on first use). Returns project_id : its "
-            "pages are managed with oto_doc (tree, versions, public share, change "
-            "requests). This is the org-wide Documents space."
+            "« Base de connaissance ». This is the org-wide Documents space; its pages "
+            "are managed with oto_doc (tree, versions, public share, change requests). "
+            "op=\"get\" (default) READS the anchor and returns project_id=null when the "
+            "org has no knowledge base yet — it never creates one, so opening a "
+            "Documents view costs the org nothing. op=\"ensure\" resolves it and CREATES "
+            "it if missing: use it right before writing the first page, not to look."
         ),
         mcp="oto_kb",
         rest=RestBinding("POST", "/api/me/kb"),

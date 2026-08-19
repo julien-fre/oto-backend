@@ -62,8 +62,29 @@ def test_renamed_kb_still_resolves(seams):
     assert seams["created"] == []
 
 
-def test_no_anchor_creates_and_claims(seams):
+def test_get_on_an_org_without_kb_creates_nothing(seams):
+    """LE test de ce lot : une lecture ne pose pas de projet.
+
+    `op="get"` était créant, et ce endpoint est monté à la racine des fronts —
+    ouvrir l'app suffisait donc à planter une « Base de connaissance » vide dans
+    l'org de chaque client (remonté par un client, 19/08)."""
     out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
+    assert out["project_id"] is None
+    assert seams["created"] == [] and seams["anchor"] is None
+    K.KbView(**out)          # project_id nullable : la sortie déclarée tient
+
+
+def test_get_does_not_repair_a_dangling_anchor(seams):
+    # Réparer, c'est écrire (clear + create + claim) : réservé à `ensure`.
+    seams["anchor"] = 9
+    seams["projects"][9] = _proj(9, archived="2026-07-01")
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
+    assert out["project_id"] is None
+    assert seams["cleared"] == [] and seams["created"] == []
+
+
+def test_no_anchor_creates_and_claims(seams):
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
     assert seams["created"] == [("org", "7", K.KB_NAME)]
     assert out["project_id"] == 42 and seams["anchor"] == 42
 
@@ -72,7 +93,7 @@ def test_dangling_anchor_transferred_project_repairs(seams):
     # Le projet ancré a été transféré hors org → clear + recréation + re-claim.
     seams["anchor"] = 9
     seams["projects"][9] = _proj(9, org="99")   # owner ≠ org active
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
     assert seams["cleared"] == [9]
     assert out["project_id"] == 42 and seams["anchor"] == 42
 
@@ -80,7 +101,7 @@ def test_dangling_anchor_transferred_project_repairs(seams):
 def test_dangling_anchor_archived_project_repairs(seams):
     seams["anchor"] = 9
     seams["projects"][9] = _proj(9, archived="2026-07-01")
-    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
+    out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
     assert out["project_id"] == 42
 
 
@@ -95,7 +116,7 @@ def test_lost_claim_archives_duplicate_and_returns_winner(seams):
         return False
     K.org_store.claim_kb_project = _racing_claim
     try:
-        out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="get"))
+        out = K._kb(ResolvedCtx(sub="u1", org_id=7), K.KbInput(op="ensure"))
     finally:
         K.org_store.claim_kb_project = real_claim
     assert seams["archived"] == [42]          # mon doublon archivé
