@@ -54,6 +54,27 @@ class AuthzDenied(Exception):
 AuthzRule = Callable[[RawCtx, Optional[BaseModel]], ResolvedCtx]
 
 
+class NotModified:
+    """Sentinelle de retour : « rien n'a changé depuis la version que tu portes ».
+
+    Un handler la renvoie au lieu d'un corps ; chaque adaptateur la traduit dans SON
+    transport — REST une `304` sans corps (la seule forme qu'un cache HTTP comprend),
+    MCP un `{not_modified: True, rev}` (le protocole n'a pas de code d'état, et une
+    réponse vide s'y lirait comme un résultat vide).
+
+    Pourquoi une sentinelle et pas un `dict` convenu : le handler ne connaît pas son
+    transport (sens unique ADR 0004), et un `{"not_modified": true}` renvoyé en REST
+    serait une **200 avec un corps** — le client rangerait « rien n'a changé » dans son
+    cache à la place des données. La différence ne se voit pas en test d'unité ; elle se
+    voit au deuxième appel d'un vrai client.
+    """
+
+    __slots__ = ("rev",)
+
+    def __init__(self, rev: str):
+        self.rev = rev
+
+
 @dataclass(frozen=True)
 class RestBinding:
     verb: str                                   # GET | POST | PUT | PATCH | DELETE
@@ -80,6 +101,12 @@ class RestBinding:
     # « pas de corps sur un DELETE », sinon migrer une route pourrait faire apparaître
     # un 400 `unknown_fields` sur un corps jusque-là ignoré.
     reads_body: bool = False
+    # Surface DÉCLARÉE PROVISOIRE : forme attendue, pas contrat figé. Publié tel quel
+    # dans l'OpenAPI (`x-oto-provisoire: true`), la convention que le front a proposée
+    # et qu'on a prise. Dire « provisoire » DANS le document est ce qui autorise à
+    # servir tôt : un consommateur qui s'y branche sait qu'il s'y branche à ses frais,
+    # et personne n'a à déduire d'une absence de mention que la forme est gravée.
+    provisoire: bool = False
 
 
 @dataclass(frozen=True)

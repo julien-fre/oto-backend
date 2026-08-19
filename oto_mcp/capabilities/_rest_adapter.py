@@ -22,7 +22,7 @@ from starlette.routing import Route
 
 logger = logging.getLogger(__name__)
 
-from ._types import AuthzDenied, Capability, RawCtx
+from ._types import AuthzDenied, Capability, NotModified, RawCtx
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
@@ -98,8 +98,29 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
             # `d.message` — les deux surfaces disaient donc des choses différentes du
             # MÊME refus.
             return json_error(request, d.status, d.code, d.message or None)
+        if isinstance(result, NotModified):
+            # 304 : **sans corps**, c'est la spec et c'est tout l'intérêt — le client
+            # garde ce qu'il a en cache. Un 200 portant « rien n'a changé » ferait
+            # ranger CE message à la place des données.
+            return Response(status_code=304, headers=_cors_of(request, json_response))
         return json_response(request, result, status=binding.status)
     return _handler
+
+
+def _cors_of(request, json_response) -> dict:
+    """Les en-têtes CORS de la réponse ordinaire, recopiés sur la 304.
+
+    Une 304 est une réponse comme une autre pour le navigateur : sans `Access-Control-
+    Allow-Origin`, le dashboard voit une erreur CORS là où le serveur a répondu « ton
+    cache est bon ». On les DÉRIVE de la réponse normale plutôt que de les réécrire —
+    la politique CORS vit dans `json_response`, et un second endroit qui la décide
+    divergerait au premier changement d'origine autorisée."""
+    try:
+        modele = json_response(request, {}, status=200)
+        return {k: v for k, v in modele.headers.items()
+                if k.lower().startswith("access-control-")}
+    except Exception:
+        return {}
 
 
 def make_routes(

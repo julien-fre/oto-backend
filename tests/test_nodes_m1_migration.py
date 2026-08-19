@@ -188,10 +188,20 @@ def test_nothing_else_touches_nodes_yet():
     Un ÉCRIVAIN s'y ajoute au lot **M2** (#287) : `db/nodes.py`, la conversion des
     projets et des pages. C'est exactement l'acte délibéré que ce garde-fou
     réclamait — il n'écrit rien qui ne vienne de `projects`/`docs`, et **aucune
-    surface ne lit encore ces nœuds-là** (la bascule de lecture est un autre lot)."""
+    surface ne lit encore ces nœuds-là** (la bascule de lecture est un autre lot).
+
+    **Ce lot est arrivé le 17/08 : `db/shell.py`, la PREMIÈRE surface de lecture.**
+    C'est `/shell` v0 — le rail du front, contracté avec lui (`shell-contract.md`) et
+    accepté le 16/08. Le garde-fou a joué son rôle exactement comme annoncé : il a
+    refusé le nouveau lecteur jusqu'à ce que son inscription soit écrite ici, avec son
+    motif. Deux choses le bornent, et elles sont dans le module :
+    lecture SEULE (les écritures restent sur les surfaces actuelles jusqu'à M-h), et
+    `kind <> 'ligne'` dans chaque requête — sans quoi le rail avalerait les 43 584
+    lignes du datastore ET perdrait l'index partiel d'ownership (`tests/test_shell_v0`
+    le fige en lisant le SQL, pas un résultat)."""
     allowed = {"oto_mcp/db/guides.py", "oto_mcp/db/_schema.py", "oto_mcp/db/_init.py",
                "oto_mcp/db/users.py", "oto_mcp/db/search.py", "oto_mcp/db/aux_embed.py",
-               "oto_mcp/db/nodes.py", "oto_mcp/db/blocks.py"}
+               "oto_mcp/db/nodes.py", "oto_mcp/db/blocks.py", "oto_mcp/db/shell.py"}
     offenders = []
     for path in (_ROOT / "oto_mcp").rglob("*.py"):
         rel = str(path.relative_to(_ROOT))

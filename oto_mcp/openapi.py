@@ -139,6 +139,11 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
             "403": {"description": "refus d'autorisation (ou hors portée du jeton)"},
         },
     }
+    if binding.provisoire:
+        # Forme ATTENDUE, pas contrat figé (convention proposée par le front, prise
+        # telle quelle). Dire « provisoire » DANS le document est ce qui autorise à
+        # servir tôt : sans la marque, une absence de mention se lit comme « gravé ».
+        op["x-oto-provisoire"] = True
     if binding.verb in _BODY_VERBS or binding.reads_body:
         if binding.body_field:
             # Corps LIBRE : le corps entier est la valeur d'UN champ (`body_field`),

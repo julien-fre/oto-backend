@@ -21,7 +21,8 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import session_org
 from ..auth_hooks import current_user_sub_from_token
 from ..session_visibility import apply_session_visibility
-from ._types import AuthzDenied, Capability, RawCtx, apply_flat_signature
+from ._types import (AuthzDenied, Capability, NotModified, RawCtx,
+                     apply_flat_signature)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,11 @@ def _make_tool(cap: Capability):
                 result = await result
         except AuthzDenied as d:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=d.message or d.code))
+        if isinstance(result, NotModified):
+            # MCP n'a pas de code d'état : « rien n'a changé » doit être une DONNÉE,
+            # sinon une réponse vide se lit comme un résultat vide. On rend le `rev`
+            # avec, pour que l'appelant sache sur quelle version il est resté.
+            result = {"not_modified": True, "rev": result.rev}
         if isinstance(result, dict) and ctx.org_id is not None:
             # Org EFFECTIVE APRÈS le handler : un `oto_use_org` vient peut-être de
             # basculer l'override de session → `ctx.org_id`, résolu à l'autz AVANT le
