@@ -218,3 +218,68 @@ def test_les_compteurs_absents_valent_mieux_que_faux(monkeypatch):
     monkeypatch.setattr("oto_mcp.capabilities.inbox._inbox",
                         lambda ctx, inp: (_ for _ in ()).throw(RuntimeError("DB")))
     assert S._compteurs(CTX) == {}      # pas `{"home": 0}`, qui affirmerait « rien »
+
+
+# ── Le moule : chaque adaptateur traduit la sentinelle dans SON transport ───────
+@pytest.mark.asyncio
+async def test_REST_rend_une_304_NUE():
+    """304 sans corps — c'est la spec, et c'est tout l'intérêt.
+
+    Une 200 portant « rien n'a changé » ferait ranger CE message dans le cache du
+    client à la place des données. La différence ne se voit pas au niveau du handler ;
+    elle se voit au deuxième appel d'un vrai client, et c'est pour ça qu'elle se teste
+    à l'ADAPTATEUR.
+    """
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse
+
+    from oto_mcp.capabilities import _rest_adapter as R
+    from oto_mcp.capabilities._types import Capability, RestBinding
+
+    cap = Capability(key="t.nm", handler=lambda ctx, inp: NotModified("abc"),
+                     Input=S.ShellInput, authz=lambda raw, inp: ResolvedCtx(sub="u1"),
+                     rest=RestBinding("GET", "/t"))
+    binding = cap.rest_bindings()[0]
+
+    async def _auth(request, verifier):
+        return "u1", None
+
+    def _jr(request, payload, status=200):
+        return JSONResponse(payload, status_code=status,
+                            headers={"Access-Control-Allow-Origin": "https://x"})
+
+    h = R._make_handler(cap, binding, None, _auth, _jr, lambda *a, **k: None)
+    scope = {"type": "http", "method": "GET", "path": "/t", "headers": [],
+             "query_string": b"", "path_params": {}}
+    resp = await h(Request(scope))
+    assert resp.status_code == 304
+    assert resp.body == b""
+    # Une 304 reste une réponse pour le navigateur : sans CORS, le dashboard voit une
+    # erreur là où le serveur a répondu « ton cache est bon ».
+    assert resp.headers.get("access-control-allow-origin") == "https://x"
+
+
+@pytest.mark.asyncio
+async def test_MCP_rend_une_DONNEE_faute_de_code_d_etat(monkeypatch):
+    from oto_mcp.capabilities import _mcp_adapter as M
+    from oto_mcp.capabilities._types import Capability
+
+    cap = Capability(key="t.nm2", handler=lambda ctx, inp: NotModified("abc"),
+                     Input=S.ShellInput, authz=lambda raw, inp: ResolvedCtx(sub="u1"),
+                     mcp="t_nm2")
+    monkeypatch.setattr(M, "current_user_sub_from_token", lambda: "u1")
+    tool = M._make_tool(cap)
+    assert await tool(rev="abc") == {"not_modified": True, "rev": "abc"}
+
+
+def test_la_surface_est_DECLAREE_provisoire():
+    # Sans la marque, une absence de mention se lit comme « forme gravée » — et le
+    # front s'y brancherait en croyant le contrat figé.
+    from oto_mcp import openapi
+    from oto_mcp.capabilities import registry
+
+    cap = next(c for c in registry.CAPABILITIES if c.key == "me.shell")
+    binding = cap.rest_bindings()[0]
+    assert binding.provisoire is True
+    op, _ = openapi._operation(cap, binding)
+    assert op["x-oto-provisoire"] is True
