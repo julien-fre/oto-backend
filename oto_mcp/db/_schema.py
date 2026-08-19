@@ -1263,9 +1263,15 @@ CREATE INDEX IF NOT EXISTS idx_nodes_owner_scoped ON nodes(owner_type, owner_id)
 CREATE TABLE IF NOT EXISTS blocks (
     id BIGSERIAL PRIMARY KEY,
     -- 0059-D3 : la désignation opaque, celle qu'un agent cite pour éditer CE bloc.
-    -- DÉRIVÉE de (nœud, rang) — cf. `db/blocks.py` : c'est ce qui rend le re-parse
-    -- rejouable sans dupliquer, et ce qui garde l'adresse d'un bloc stable quand
-    -- son contenu change.
+    -- ⚠️ **TIRÉE AU SORT, plus dérivée du rang** (#362). Ce commentaire a décrit
+    -- l'inverse jusqu'au 17/08 — « dérivée de (nœud, rang) » —, et c'était vrai à
+    -- l'écriture : l'identité était positionnelle, donc insérer un paragraphe en tête
+    -- ré-identifiait TOUS les blocs en dessous et cassait toute référence externe.
+    -- C'est corrigé dans `db/blocks.py` ; la carte, elle, était restée. Elle comptait :
+    -- c'est ce commentaire qu'on lit pour savoir si un `blk_*` est ancrable.
+    -- La rejouabilité du re-parse est désormais tenue par le RAPPROCHEMENT
+    -- (`write_node_blocks` réattribue l'identité d'un bloc reconnaissable), pas par
+    -- une formule.
     public_id TEXT NOT NULL,
     -- PAS de clé étrangère vers `nodes`, comme `nodes.parent_id` n'en a pas : le
     -- même arbitrage (contrainte, ou intégrité portée par le code ?) est ouvert

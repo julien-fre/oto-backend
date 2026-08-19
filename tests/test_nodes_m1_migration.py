@@ -198,10 +198,17 @@ def test_nothing_else_touches_nodes_yet():
     lecture SEULE (les écritures restent sur les surfaces actuelles jusqu'à M-h), et
     `kind <> 'ligne'` dans chaque requête — sans quoi le rail avalerait les 43 584
     lignes du datastore ET perdrait l'index partiel d'ownership (`tests/test_shell_v0`
-    le fige en lisant le SQL, pas un résultat)."""
+    le fige en lisant le SQL, pas un résultat).
+
+    **Le second suit le 17/08 : `db/node_view.py`, l'ouverture d'UN nœud** (lot ④ de la
+    même file). Mêmes bornes : lecture seule, prédicat de genre partout, et une de plus
+    qui lui est propre — **ouvrir un tableau rend son SCHÉMA, jamais ses lignes**. La
+    surface des lignes est un autre lot, paginé par curseur : un « ouvrir » qui ramène
+    43 584 lignes n'est pas une fiche, c'est un export déguisé."""
     allowed = {"oto_mcp/db/guides.py", "oto_mcp/db/_schema.py", "oto_mcp/db/_init.py",
                "oto_mcp/db/users.py", "oto_mcp/db/search.py", "oto_mcp/db/aux_embed.py",
-               "oto_mcp/db/nodes.py", "oto_mcp/db/blocks.py", "oto_mcp/db/shell.py"}
+               "oto_mcp/db/nodes.py", "oto_mcp/db/blocks.py", "oto_mcp/db/shell.py",
+               "oto_mcp/db/node_view.py"}
     offenders = []
     for path in (_ROOT / "oto_mcp").rglob("*.py"):
         rel = str(path.relative_to(_ROOT))
