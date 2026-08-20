@@ -1,7 +1,8 @@
 """Connecteur Webflow — verrouille : l'entrée registre (keyed, un seul champ —
 un Site API token Webflow est bound à UN site, le client oto-core résout
 `site_id` lui-même via `GET /sites`, rien à saisir côté credential), la
-surface MCP (4 tools), et la jointure tool <-> client oto-core (garde
+surface MCP (3 tools — CMS consolidé en UN SEUL tool `webflow_cms`, publish
+et webhooks séparés), et la jointure tool <-> client oto-core (garde
 version-skew).
 """
 import asyncio
@@ -12,10 +13,9 @@ from oto_mcp import providers
 from oto_mcp.tool_visibility import namespace_of
 
 EXPECTED_TOOLS = {
-    "webflow_site",
-    "webflow_collections",
-    "webflow_items",
+    "webflow_cms",
     "webflow_publish",
+    "webflow_webhooks",
 }
 
 
@@ -67,7 +67,19 @@ def test_webflow_no_longer_a_mount():
     assert all(c.name != "webflow" for c in providers.MOUNT_CONNECTORS)
 
 
-# --- surface MCP ------------------------------------------------------------
+# --- surface MCP : CMS = UN SEUL tool visible ------------------------------
+
+def test_webflow_surface_is_exactly_three_tools(all_tools):
+    """Le CMS (site/collections/items) est consolidé dans UN tool
+    (`webflow_cms`, verbe en `op`) — ni `webflow_site`, ni
+    `webflow_collections`, ni `webflow_items` séparés ne doivent réapparaître :
+    côté agent comme côté carte connecteur du dashboard (qui liste les outils
+    d'un connecteur sous UNE carte), le CMS doit se présenter comme une seule
+    chose. `webflow_publish` (la seule action qui rend du contenu public) et
+    `webflow_webhooks` (domaine distinct) restent séparés."""
+    names = {t for t in all_tools if t.startswith("webflow_")}
+    assert names == EXPECTED_TOOLS
+
 
 def test_webflow_tools_register_under_namespace(all_tools):
     assert EXPECTED_TOOLS <= set(all_tools)
@@ -88,6 +100,7 @@ def test_client_exposes_methods_called_by_tools():
     from oto.tools.webflow.client import WebflowClient
     for meth in ("get_site", "list_collections", "get_collection", "list_items",
                  "get_item", "create_items", "update_items", "delete_items",
-                 "publish_items"):
+                 "publish_items", "list_webhooks", "get_webhook",
+                 "create_webhook", "delete_webhook"):
         assert callable(getattr(WebflowClient, meth, None)), \
             f"WebflowClient.{meth} manquant à l'oto-core épinglé"

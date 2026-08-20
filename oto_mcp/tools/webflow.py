@@ -1,4 +1,5 @@
-"""Webflow — CMS (collections & items), API v2 (developers.webflow.com/data).
+"""Webflow — CMS (site/collections/items) + webhooks, API v2
+(developers.webflow.com/data).
 
 Wrappe `oto.tools.webflow.client.WebflowClient`. Credential = clé unique
 (`keyed=True`, `secret_kind="api_key"`, `access.resolve_api_key("webflow")`) :
@@ -8,28 +9,25 @@ donc AUCUN `site_id` à saisir ni à faire voyager ici — le client (oto-core)
 le résout lui-même via `GET /sites` au premier appel qui en a besoin, mis en
 cache pour la durée de vie du client. byo-only (pas de clé plateforme).
 
-Scope v1 = CMS seulement : site (lecture), collections (lecture), items (CRUD
-sur les items STAGED = draft/non publiés) + publish explicite. Pas de pages,
-assets, forms, ecommerce.
-
 ⚠️ **Un item créé/modifié ici reste invisible sur le site public tant que
 `webflow_publish` n'a pas été appelé** — le seul tool de ce module qui touche
-le contenu LIVE. create/update valident `fieldData` contre le schéma réel de
-la collection (`webflow_collections(op="get")`) avant tout appel réseau
-d'écriture : un slug inconnu ou un champ requis manquant est nommé dans
-l'erreur plutôt que de laisser filer un 400 Webflow opaque à l'agent.
+le contenu LIVE, laissé SEUL (comme `cognism_redeem` face à `cognism_search` :
+la frontière entre « rien ne bouge » et « ça devient public » doit rester
+visible dans le nom du tool, pas noyée dans un `op` parmi d'autres). Tout le
+reste — site/collections/items — est UN SEUL tool consolidé, `webflow_cms`,
+verbe en `op` (convention Folk/Cognism ADR 0047 §Amendement) : côté agent
+comme côté catalogue dashboard (qui liste les outils PAR connecteur sous une
+même carte), le CMS se présente comme une chose, pas quatre. create/update
+valident `fieldData` contre le schéma réel de la collection
+(`webflow_cms(op="collection")`) avant tout appel réseau d'écriture : un slug
+inconnu ou un champ requis manquant est nommé dans l'erreur plutôt que de
+laisser filer un 400 Webflow opaque à l'agent.
 
-Surface : 4 tools, verbe en `op` là où plusieurs verbes partagent les mêmes
-paramètres (convention Folk/Cognism) :
-- `webflow_site` — la fiche du site pinné par le credential (un seul verbe,
-  pas d'`op`).
-- `webflow_collections` (op=list|get).
-- `webflow_items` (op=list|get|create|update|delete) — solo (`item`/`id`) ou
-  bulk (`items`/`ids`) selon ce qui est passé. Webflow a un VRAI endpoint
-  batch (`items[]` en un seul appel HTTP) — contrairement à Folk, le mode
-  bulk n'est PAS une boucle côté oto.
-- `webflow_publish` — dry_run résout les items et montre leur état COURANT
-  (isDraft/lastPublished), jamais un simple écho des ids passés.
+`webflow_webhooks` (list/get/create/delete) est la surface RÉELLE de l'API —
+**aucun endpoint update n'existe** (vérifié live 2026-08-20 : reconfigurer un
+webhook = delete + create). `secretKey` n'est renvoyé QU'À LA CRÉATION (jamais
+sur get/list, confirmé live) — le docstring de `op="create"` le signale, comme
+Folk pour `signingSecret`.
 """
 from __future__ import annotations
 
@@ -44,6 +42,15 @@ from oto.tools.common.errors import UpstreamHTTPError
 from .. import access
 
 _BULK_MAX_ITEMS = 50
+
+_WebhookTriggerType = Literal[
+    "form_submission", "site_publish",
+    "page_created", "page_metadata_updated", "page_deleted",
+    "ecomm_new_order", "ecomm_order_changed", "ecomm_inventory_changed",
+    "collection_item_created", "collection_item_changed",
+    "collection_item_deleted", "collection_item_published",
+    "collection_item_unpublished", "comment_created",
+]
 
 
 def _bad(msg: str) -> McpError:
@@ -106,14 +113,14 @@ def _validate_field_data(collection: dict, field_data: dict, *, op: str,
     unknown = set(field_data) - known
     if unknown:
         raise _bad(
-            f"webflow_items(op='{op}') : champ(s) inconnu(s) dans fieldData "
+            f"webflow_cms(op='{op}') : champ(s) inconnu(s) dans fieldData "
             f"pour cette collection : {sorted(unknown)}. Champs disponibles : "
             f"{sorted(known)}.")
     if check_required:
         missing = _required_field_slugs(collection) - set(field_data)
         if missing:
             raise _bad(
-                f"webflow_items(op='{op}') : champ(s) requis manquant(s) dans "
+                f"webflow_cms(op='{op}') : champ(s) requis manquant(s) dans "
                 f"fieldData : {sorted(missing)}.")
 
 
@@ -125,43 +132,10 @@ def register(mcp: FastMCP) -> None:
         return WebflowClient(api_key=key)
 
     @mcp.tool()
-    def webflow_site() -> dict:
-        """The Webflow site pinned to this connector's credential (Webflow).
-
-        A Webflow Site API token is bound to exactly one site — there's no
-        `site_id` param to pass, this always returns THAT site: id,
-        displayName, shortName, customDomains, lastPublished, timeZone, etc.
-        """
-        c = _client()
-        return _run(lambda: c.get_site())
-
-    @mcp.tool()
-    def webflow_collections(
-        op: Literal["list", "get"] = "list",
+    def webflow_cms(
+        op: Literal["site", "collections", "collection", "items", "item",
+                    "create", "update", "delete"],
         collection_id: Optional[str] = None,
-    ) -> dict:
-        """List or inspect the CMS collections of the pinned Webflow site (Webflow).
-
-        Args:
-            op: "list" (default) — all collections of the site (id, displayName,
-                slug — no field schema, use op="get" for that). "get" — one
-                collection's full schema, including `fields[]` (each field's
-                `slug`, `displayName`, `type`, `isRequired`) — the slugs
-                `webflow_items` needs for `fieldData`.
-            collection_id: required for op="get".
-        """
-        c = _client()
-        if op == "list":
-            return {"collections": _run(lambda: c.list_collections())}
-        if op == "get":
-            _need(collection_id, "collection_id", op)
-            return _run(lambda: c.get_collection(collection_id))
-        raise _bad("op doit être 'list' ou 'get'.")
-
-    @mcp.tool()
-    def webflow_items(
-        op: Literal["list", "get", "create", "update", "delete"],
-        collection_id: str,
         id: Optional[str] = None,
         ids: Optional[list[str]] = None,
         item: Optional[dict] = None,
@@ -174,21 +148,36 @@ def register(mcp: FastMCP) -> None:
         cms_locale_id: Optional[str] = None,
         dry_run: bool = False,
     ) -> dict:
-        """CMS items of ONE Webflow collection — list, read, create, update,
-        delete. Items created/updated here are STAGED (draft): nothing is
-        visible on the live site until `webflow_publish`.
+        """Webflow CMS — the site, its collections, and their items. This is
+        THE tool for "what's my Webflow site", "list my CMS collections", and
+        "find/add/update/delete an item" (a blog post, a product, any CMS
+        record) — Webflow has no separate `webflow_site`/`webflow_collections`
+        tool, `op` picks the target+verb. Items created/updated here are
+        STAGED (draft): nothing is visible on the live site until
+        `webflow_publish`.
 
         `op`:
-        - **"list"** (default): one paginated page (`offset`/`max_results`,
-          capped at 500), optionally sorted.
-        - **"get"**: one item by `id`.
-        - **"create"**: one (`item`) or several (`items`, ≤50) new items.
-          `fieldData` keys are validated against the collection's schema
-          (`webflow_collections(op="get")`) before any write — an unknown slug
-          or a missing required field is refused first.
+        - **"site"**: the site pinned to this connector's credential (a
+          Webflow Site API token is bound to exactly one site — no `site_id`
+          param, this always returns THAT site: id, displayName, shortName,
+          customDomains, lastPublished, timeZone...).
+        - **"collections"**: list all CMS collections of the site (id,
+          displayName, slug — no field schema, use op="collection" for that).
+        - **"collection"**: one collection's full schema (`collection_id`),
+          including `fields[]` (each field's `slug`, `displayName`, `type`,
+          `isRequired`) — the slugs op="create"/"update" need for `fieldData`.
+        - **"items"**: one paginated page of a collection's items
+          (`collection_id` + `offset`/`max_results`, capped at 500),
+          optionally sorted.
+        - **"item"**: one item by `id` (+ `collection_id`).
+        - **"create"**: one (`item`) or several (`items`, ≤50) new items in
+          `collection_id`. `fieldData` keys are validated against the
+          collection's schema (op="collection") before any write — an unknown
+          slug or a missing required field is refused first.
         - **"update"**: PATCH one (`id` + `item`) or several (`items`, ≤50 —
-          each needs an `"id"` key) items.
-        - **"delete"**: delete one (`id`) or several (`ids`, ≤50) items.
+          each needs an `"id"` key) items in `collection_id`.
+        - **"delete"**: delete one (`id`) or several (`ids`, ≤50) items from
+          `collection_id`.
 
         Solo vs bulk: exactly one of `item`/`items` (create), `id`/`items`
         (update), `id`/`ids` (delete) is required. Webflow has a REAL batch
@@ -196,9 +185,10 @@ def register(mcp: FastMCP) -> None:
         a client-side loop.
 
         Args:
-            op: list | get | create | update | delete.
-            collection_id: the collection (see `webflow_collections`).
-            id: item id — op="get", solo update/delete.
+            op: site | collections | collection | items | item | create |
+                update | delete.
+            collection_id: required for every op except "site".
+            id: item id — op="item", solo update/delete.
             ids: item ids — bulk delete.
             item: op="create" solo — `{"fieldData": {...}, "isArchived"?: bool,
                 "isDraft"?: bool}`. op="update" solo (with `id` set separately)
@@ -206,10 +196,10 @@ def register(mcp: FastMCP) -> None:
             items: op="create" bulk — list of the create shape above.
                 op="update" bulk — list of `{"id", "fieldData"?, "isArchived"?,
                 "isDraft"?}`.
-            offset, max_results: op="list" pagination — max_results capped at
+            offset, max_results: op="items" pagination — max_results capped at
                 500 server-side.
-            sort_by, sort_order: op="list" — sort the page.
-            cms_locale_id: op="list"/"get" — locale for multi-locale
+            sort_by, sort_order: op="items" — sort the page.
+            cms_locale_id: op="items"/"item" — locale for multi-locale
                 collections.
             dry_run: create — validates `fieldData` against the schema (one
                 read call), makes NO create call, returns `would_create`.
@@ -218,8 +208,11 @@ def register(mcp: FastMCP) -> None:
                 (the current record) — never an echo of the input.
 
         Returns:
-            list: `{"items": [...], "pagination": {"total", "offset", "limit"}}`.
-            get: the item.
+            site: the site.
+            collections: `{"collections": [...]}`.
+            collection: the collection schema.
+            items: `{"items": [...], "pagination": {"total", "offset", "limit"}}`.
+            item: the item.
             create solo: the created item, or `{"dry_run": true, "would_create"}`.
             create bulk: `{"total", "succeeded", "created": [{"index","id"}],
                 "failed": []}`, or dry_run preview.
@@ -230,13 +223,25 @@ def register(mcp: FastMCP) -> None:
         """
         c = _client()
 
-        if op == "list":
+        if op == "site":
+            return _run(lambda: c.get_site())
+
+        if op == "collections":
+            return {"collections": _run(lambda: c.list_collections())}
+
+        if op == "collection":
+            _need(collection_id, "collection_id", op)
+            return _run(lambda: c.get_collection(collection_id))
+
+        _need(collection_id, "collection_id", op)
+
+        if op == "items":
             return _run(lambda: c.list_items(
                 collection_id, offset=offset, limit=min(max_results, 500),
                 sort_by=sort_by, sort_order=sort_order,
                 cms_locale_id=cms_locale_id))
 
-        if op == "get":
+        if op == "item":
             _need(id, "id", op)
             return _run(lambda: c.get_item(collection_id, id))
 
@@ -347,7 +352,8 @@ def register(mcp: FastMCP) -> None:
             return {"total": len(target_ids), "succeeded": len(target_ids),
                     "failed": []}
 
-        raise _bad("op doit être 'list', 'get', 'create', 'update' ou 'delete'.")
+        raise _bad("op doit être 'site', 'collections', 'collection', "
+                   "'items', 'item', 'create', 'update' ou 'delete'.")
 
     @mcp.tool()
     def webflow_publish(
@@ -360,7 +366,7 @@ def register(mcp: FastMCP) -> None:
         this connector that makes content publicly visible (Webflow).
 
         Args:
-            collection_id: the collection (see `webflow_collections`).
+            collection_id: the collection (see `webflow_cms(op="collections")`).
             id: one item id, OR...
             ids: several item ids (≤50).
             dry_run: resolves the item(s) and returns their CURRENT
@@ -388,3 +394,89 @@ def register(mcp: FastMCP) -> None:
             return {"dry_run": True, "total": len(target_ids),
                     "would_publish": would_publish}
         return _run(lambda: c.publish_items(collection_id, target_ids))
+
+    @mcp.tool()
+    def webflow_webhooks(
+        op: Literal["list", "get", "create", "delete"] = "list",
+        webhook_id: Optional[str] = None,
+        trigger_type: Optional[_WebhookTriggerType] = None,
+        url: Optional[str] = None,
+        filter: Optional[dict] = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Webflow webhooks on the pinned site — list, inspect, create, delete.
+        Webflow POSTs an event payload to `url` each time `trigger_type` fires
+        (site publish, a CMS item created/changed/deleted/published, a form
+        submission, an ecommerce event...).
+
+        ⚠️ **No update endpoint exists** (confirmed against Webflow's actual
+        API, not just the docs) — to change a webhook's trigger/url/filter,
+        delete it and create a new one.
+
+        `op`:
+        - **"list"** (default): every webhook registered on this site.
+        - **"get"**: one webhook by `webhook_id`.
+        - **"create"**: register a new webhook (`trigger_type` + `url`,
+          optional `filter`). The response's `secretKey` (HMAC signing key for
+          `x-webflow-signature`) is returned IN FULL only here — Webflow never
+          shows it again on get/list, save it now if you need to verify
+          payload signatures.
+        - **"delete"**: unregister `webhook_id`. Irreversible — the webhook
+          stops firing immediately.
+
+        Args:
+            op: list (default) | get | create | delete.
+            webhook_id: op="get"/"delete".
+            trigger_type: op="create" — the event that fires this webhook.
+            url: op="create" — the HTTPS endpoint Webflow POSTs the event to.
+            filter: op="create" — ONLY valid for trigger_type="form_submission"
+                (`{"name": "<form name>"}`, scope to one form). Any other
+                trigger_type + a filter is refused before the network call
+                (Webflow itself 400s on this combination).
+            dry_run: create — makes NO create call, returns `would_create`
+                (no secretKey to preview — it doesn't exist until Webflow
+                mints it). delete — fetches the webhook first and returns
+                `would_delete` (its current record), never a bare echo of
+                `webhook_id`.
+
+        Returns:
+            list: `{"webhooks": [...]}`.
+            get: the webhook.
+            create: the webhook INCLUDING `secretKey`, or
+                `{"dry_run": true, "would_create"}`.
+            delete: `{}`, or `{"dry_run": true, "webhook_id", "would_delete"}`.
+        """
+        c = _client()
+
+        if op == "list":
+            return {"webhooks": _run(lambda: c.list_webhooks())}
+
+        if op == "get":
+            _need(webhook_id, "webhook_id", op)
+            return _run(lambda: c.get_webhook(webhook_id))
+
+        if op == "create":
+            _need(trigger_type, "trigger_type", op)
+            _need(url, "url", op)
+            if filter is not None and trigger_type != "form_submission":
+                raise _bad(
+                    "op='create' : `filter` n'est valide que pour "
+                    "trigger_type='form_submission' — Webflow refuse toute "
+                    f"autre combinaison (reçu trigger_type={trigger_type!r}).")
+            if dry_run:
+                preview = {"triggerType": trigger_type, "url": url}
+                if filter is not None:
+                    preview["filter"] = filter
+                return {"dry_run": True, "would_create": preview}
+            return _run(lambda: c.create_webhook(trigger_type, url, filter=filter))
+
+        if op == "delete":
+            _need(webhook_id, "webhook_id", op)
+            if dry_run:
+                current = _run(lambda: c.get_webhook(webhook_id))
+                return {"dry_run": True, "webhook_id": webhook_id,
+                        "would_delete": current}
+            _run(lambda: c.delete_webhook(webhook_id))
+            return {}
+
+        raise _bad("op doit être 'list', 'get', 'create' ou 'delete'.")
