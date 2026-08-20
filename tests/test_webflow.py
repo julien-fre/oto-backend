@@ -1,9 +1,9 @@
 """Connecteur Webflow — verrouille : l'entrée registre (keyed, un seul champ —
 un Site API token Webflow est bound à UN site, le client oto-core résout
 `site_id` lui-même via `GET /sites`, rien à saisir côté credential), la
-surface MCP (5 tools — CMS consolidé en UN SEUL tool `webflow_cms`, publish
-et webhooks séparés, forms/submissions séparés), et la jointure tool <->
-client oto-core (garde version-skew).
+surface MCP (7 tools — CMS consolidé en UN SEUL tool `webflow_cms`, publish/
+webhooks/forms/submissions/pages/site_publish séparés), et la jointure tool
+<-> client oto-core (garde version-skew).
 """
 import asyncio
 
@@ -18,6 +18,8 @@ EXPECTED_TOOLS = {
     "webflow_webhooks",
     "webflow_forms",
     "webflow_submissions",
+    "webflow_pages",
+    "webflow_site_publish",
 }
 
 
@@ -71,16 +73,20 @@ def test_webflow_no_longer_a_mount():
 
 # --- surface MCP : CMS = UN SEUL tool visible ------------------------------
 
-def test_webflow_surface_is_exactly_five_tools(all_tools):
+def test_webflow_surface_is_exactly_seven_tools(all_tools):
     """Le CMS (site/collections/items) est consolidé dans UN tool
     (`webflow_cms`, verbe en `op`) — ni `webflow_site`, ni
     `webflow_collections`, ni `webflow_items` séparés ne doivent réapparaître :
     côté agent comme côté carte connecteur du dashboard (qui liste les outils
     d'un connecteur sous UNE carte), le CMS doit se présenter comme une seule
-    chose. `webflow_publish` (la seule action qui rend du contenu public),
-    `webflow_webhooks` (domaine distinct) et `webflow_forms`/
-    `webflow_submissions` (catalogue de formulaires vs données de contact
-    réelles — formes de paramètres disjointes) restent séparés."""
+    chose. `webflow_publish` (items CMS) et `webflow_site_publish` (site
+    entier) sont deux actions DIFFÉRENTES qui rendent du contenu public —
+    restent chacune seules, jamais fondues l'une dans l'autre ni dans un
+    `op` parmi d'autres. `webflow_webhooks` (domaine distinct) et
+    `webflow_forms`/`webflow_submissions` (catalogue de formulaires vs
+    données de contact réelles — formes de paramètres disjointes) restent
+    aussi séparés. `webflow_pages` n'expose PAS d'écriture de contenu
+    (restriction Webflow aux locales secondaires — voir son docstring)."""
     names = {t for t in all_tools if t.startswith("webflow_")}
     assert names == EXPECTED_TOOLS
 
@@ -107,6 +113,8 @@ def test_client_exposes_methods_called_by_tools():
                  "publish_items", "list_webhooks", "get_webhook",
                  "create_webhook", "delete_webhook", "list_forms", "get_form",
                  "list_form_submissions", "get_form_submission",
-                 "update_form_submission", "delete_form_submission"):
+                 "update_form_submission", "delete_form_submission",
+                 "list_pages", "get_page", "update_page", "get_page_content",
+                 "publish_site"):
         assert callable(getattr(WebflowClient, meth, None)), \
             f"WebflowClient.{meth} manquant à l'oto-core épinglé"

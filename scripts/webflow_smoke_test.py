@@ -11,8 +11,9 @@ Par défaut, LECTURE SEULE : site -> collections -> schéma d'une collection ->
 items (page de 5) -> liste des webhooks existants -> liste des formulaires ->
 soumissions du premier formulaire (page de 5) -> dry_run update/delete sur une
 soumission RÉELLE (aucun appel d'écriture, juste la lecture qui nourrit le
-diff). Rien n'écrit sur le site tant que WEBFLOW_SMOKE_WRITE=1 n'est pas posé
-— dans ce cas :
+diff) -> liste des pages -> métadonnées + contenu (lecture) d'une page réelle
+-> dry_run update sur une page RÉELLE. Rien n'écrit sur le site tant que
+WEBFLOW_SMOKE_WRITE=1 n'est pas posé — dans ce cas :
 - un item CMS est créé en DRAFT (jamais publié par ce script) sur
   WEBFLOW_TEST_COLLECTION_ID, prévisualisé en dry_run d'abord, puis réellement
   créé, puis SUPPRIMÉ ;
@@ -25,11 +26,18 @@ WRITE=1 : il n'existe AUCUNE API pour fabriquer une soumission jetable (seul
 un vrai visiteur qui remplit le formulaire en crée une) — la mutation réelle
 sur une soumission réelle (donnée de contact d'un vrai lead) n'est délibérément
 jamais exercée par ce script, seulement par les tests unitaires mockés.
+⚠️ **`webflow_pages(op='update')` n'est JAMAIS exercée pour de vrai par ce
+script, même avec WRITE=1** — contrairement aux items CMS, une page n'a pas
+de gate draft/publish : un vrai update serait IMMÉDIATEMENT visible sur le
+site public et modifierait durablement une vraie page (titre/SEO). Seul le
+dry_run (lecture + diff, zéro écriture) est exercé ici ; la mutation réelle
+est couverte par les tests unitaires mockés uniquement. `webflow_site_publish`
+n'est jamais appelée pour de vrai non plus (publierait le site entier).
 Rien n'est jamais laissé traîner.
 
 Lancer :  set -a; . /chemin/vers/.env; set +a   # WEBFLOW_API_TOKEN
           [WEBFLOW_TEST_COLLECTION_ID=... [WEBFLOW_TEST_FORM_ID=...
-          [WEBFLOW_SMOKE_WRITE=1]]]
+          [WEBFLOW_TEST_PAGE_ID=... [WEBFLOW_SMOKE_WRITE=1]]]]
           OTO_CONFIG_DISABLE_SOPS=1 .venv/bin/python -m scripts.webflow_smoke_test
 
 Le token n'est JAMAIS imprimé.
@@ -63,6 +71,7 @@ def main() -> int:
     webhooks_tool = _tool(m, "webflow_webhooks")
     forms_tool = _tool(m, "webflow_forms")
     submissions_tool = _tool(m, "webflow_submissions")
+    pages_tool = _tool(m, "webflow_pages")
 
     with patch("oto_mcp.access.resolve_api_key", return_value=(token, False)):
         print("→ webflow_cms(op='site')")
@@ -185,6 +194,43 @@ def main() -> int:
                       "get/dry_run à tester)")
         else:
             print("  (aucun formulaire sur ce site)")
+
+        print("→ webflow_pages(op='list')")
+        pages = pages_tool(op="list")["pages"]
+        print(f"  ✓ {len(pages)} page(s)")
+        for p in pages[:10]:
+            print(f"   - {p.get('title')!r} id={p.get('id')} slug={p.get('slug')} "
+                  f"draft={p.get('draft')}")
+
+        if pages:
+            sample_page_id = os.environ.get("WEBFLOW_TEST_PAGE_ID") or pages[0]["id"]
+            if os.environ.get("WEBFLOW_TEST_PAGE_ID"):
+                print(f"  (WEBFLOW_TEST_PAGE_ID posé — utilise {sample_page_id})")
+
+            print(f"→ webflow_pages(op='get', page_id={sample_page_id!r})")
+            page_detail = pages_tool(op="get", page_id=sample_page_id)
+            assert page_detail["id"] == sample_page_id
+            print(f"  ✓ get cohérent avec list, title={page_detail.get('title')!r}")
+
+            print(f"→ webflow_pages(op='content', page_id={sample_page_id!r}, "
+                  "max_results=5)")
+            content = pages_tool(op="content", page_id=sample_page_id, max_results=5)
+            nodes = content.get("nodes", [])
+            print(f"  ✓ {len(nodes)} node(s) de contenu (lecture)")
+            for n in nodes[:5]:
+                text = (n.get("text") or {}).get("text", "")
+                print(f"   - type={n.get('type')} text={text[:60]!r}")
+
+            print(f"→ webflow_pages(op='update', dry_run=True) — lecture "
+                  "seule, AUCUNE mutation sur une vraie page (pas de gate "
+                  "draft/publish, un vrai update serait live immédiatement)")
+            update_preview = pages_tool(
+                op="update", page_id=sample_page_id, dry_run=True,
+                seo={"title": "oto-smoke-probe (dry-run only, never written)"})
+            assert update_preview["dry_run"] is True
+            print(f"  ✓ dry_run diff : {update_preview['changes']}")
+        else:
+            print("  (aucune page sur ce site)")
 
     print("✓ smoke test OK")
     return 0

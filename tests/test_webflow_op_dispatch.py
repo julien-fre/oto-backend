@@ -585,6 +585,131 @@ def test_submissions_bad_op_rejected(client):
         _tool("webflow_submissions")(op="create")
 
 
+# --- pages -----------------------------------------------------------------
+
+def test_pages_list_default_op(client):
+    client.list_pages.return_value = {"pages": [{"id": "page_1"}],
+                                       "pagination": {"total": 1}}
+    result = _tool("webflow_pages")()
+    assert result == {"pages": [{"id": "page_1"}], "pagination": {"total": 1}}
+    client.list_pages.assert_called_once_with(offset=0, limit=100, locale_id=None)
+
+
+def test_pages_list_caps_max_results_at_100(client):
+    client.list_pages.return_value = {"pages": [], "pagination": {"total": 0}}
+    _tool("webflow_pages")(op="list", max_results=10_000)
+    assert client.list_pages.call_args.kwargs["limit"] == 100
+
+
+def test_pages_get_requires_page_id(client):
+    with pytest.raises(McpError):
+        _tool("webflow_pages")(op="get")
+    client.get_page.assert_not_called()
+
+
+def test_pages_get(client):
+    client.get_page.return_value = {"id": "page_1", "title": "Home"}
+    result = _tool("webflow_pages")(op="get", page_id="page_1")
+    assert result == {"id": "page_1", "title": "Home"}
+    client.get_page.assert_called_once_with("page_1")
+
+
+def test_pages_update_requires_page_id(client):
+    with pytest.raises(McpError):
+        _tool("webflow_pages")(op="update", title="New")
+    client.update_page.assert_not_called()
+
+
+def test_pages_update_calls_client_with_metadata_only(client):
+    client.update_page.return_value = {"id": "page_1", "title": "New"}
+    result = _tool("webflow_pages")(
+        op="update", page_id="page_1", title="New",
+        seo={"title": "SEO"})
+    client.update_page.assert_called_once_with(
+        "page_1", title="New", slug=None, seo={"title": "SEO"},
+        open_graph=None, locale_id=None)
+    assert result == {"id": "page_1", "title": "New"}
+
+
+def test_pages_update_requires_at_least_one_field(client):
+    with pytest.raises(McpError):
+        _tool("webflow_pages")(op="update", page_id="page_1")
+    client.update_page.assert_not_called()
+
+
+def test_pages_update_dry_run_returns_real_diff_not_echo(client):
+    """op='update' est LIVE immédiatement (pas de gate draft/publish comme
+    les items CMS) — dry_run doit montrer un vrai diff basé sur l'état
+    courant, jamais un simple écho de l'input."""
+    client.get_page.return_value = {
+        "id": "page_1", "title": "Old title", "slug": "old-slug",
+        "seo": {"title": "Old SEO"}, "openGraph": {"title": "Old OG"}}
+    result = _tool("webflow_pages")(
+        op="update", page_id="page_1", dry_run=True,
+        title="New title", seo={"title": "New SEO"})
+    assert result["dry_run"] is True
+    assert result["changes"] == {
+        "title": {"from": "Old title", "to": "New title"},
+        "seo": {"from": {"title": "Old SEO"}, "to": {"title": "New SEO"}},
+    }
+    client.update_page.assert_not_called()
+
+
+def test_pages_content_requires_page_id(client):
+    with pytest.raises(McpError):
+        _tool("webflow_pages")(op="content")
+    client.get_page_content.assert_not_called()
+
+
+def test_pages_content_is_read_only(client):
+    """Aucun op d'écriture de contenu n'existe sur ce tool — restriction
+    Webflow (écriture réservée aux locales secondaires, voir le docstring
+    du tool). `op='content'` ne fait QUE lire."""
+    client.get_page_content.return_value = {
+        "pageId": "page_1", "nodes": [{"id": "n1", "type": "text",
+                                        "text": {"html": "<h1>Hi</h1>"}}]}
+    result = _tool("webflow_pages")(op="content", page_id="page_1", max_results=50)
+    client.get_page_content.assert_called_once_with(
+        "page_1", offset=0, limit=50, locale_id=None)
+    assert result["nodes"][0]["text"]["html"] == "<h1>Hi</h1>"
+
+
+def test_pages_bad_op_rejected(client):
+    with pytest.raises(McpError):
+        _tool("webflow_pages")(op="delete")
+
+
+# --- site_publish ----------------------------------------------------------
+
+def test_site_publish_requires_a_target(client):
+    with pytest.raises(McpError):
+        _tool("webflow_site_publish")()
+    client.publish_site.assert_not_called()
+
+
+def test_site_publish_webflow_subdomain(client):
+    client.publish_site.return_value = {"publishToWebflowSubdomain": True}
+    result = _tool("webflow_site_publish")(publish_to_webflow_subdomain=True)
+    client.publish_site.assert_called_once_with(
+        custom_domains=None, publish_to_webflow_subdomain=True)
+    assert result == {"publishToWebflowSubdomain": True}
+
+
+def test_site_publish_custom_domains(client):
+    client.publish_site.return_value = {}
+    _tool("webflow_site_publish")(custom_domains=["dom_1"])
+    client.publish_site.assert_called_once_with(
+        custom_domains=["dom_1"], publish_to_webflow_subdomain=False)
+
+
+def test_site_publish_dry_run_makes_no_call(client):
+    result = _tool("webflow_site_publish")(
+        publish_to_webflow_subdomain=True, dry_run=True)
+    assert result == {"dry_run": True, "would_publish": {
+        "customDomains": [], "publishToWebflowSubdomain": True}}
+    client.publish_site.assert_not_called()
+
+
 # --- traduction d'erreur HTTP ---------------------------------------------------
 
 @pytest.mark.parametrize("status,fragment", [

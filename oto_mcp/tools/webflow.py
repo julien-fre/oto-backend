@@ -40,6 +40,26 @@ soumission n'existe que si un visiteur remplit le formulaire côté site
 public ; `op="update"` sur `webflow_submissions` ne touche QUE les hidden
 fields déclarés au schéma du formulaire, jamais les données soumises
 (non éditables après coup côté Webflow).
+
+`webflow_pages` (op=list|get|update|content) couvre les MÉTADONNÉES de page
+(title/slug/seo/openGraph — read+write, sans restriction) et la LECTURE du
+contenu statique (les text nodes — titres/paragraphes). ⚠️ **L'ÉCRITURE du
+contenu n'est PAS exposée ici** : l'API Webflow ne permet d'écrire le
+contenu statique d'une page QUE sur une locale SECONDAIRE du site (jamais la
+primaire — confirmé verbatim contre la doc source), donc un site
+mono-locale (le cas courant, dont celui utilisé pour tester ce connecteur)
+n'a structurellement aucun moyen d'éditer le corps d'une page via cette API
+— ajouter un `op="update_content"` qui échoue systématiquement sur la
+majorité des sites serait un piège, pas une fonctionnalité. `webflow_
+site_publish` (distinct de `webflow_publish`, qui ne publie QUE des items
+CMS) publie le SITE ENTIER — rate-limité par Webflow à 1/minute, laissé
+SEUL comme les autres tools qui rendent du contenu public.
+
+Volontairement HORS PÉRIMÈTRE (v1) : assets, ecommerce, comments, custom
+code — ce dernier injecte du JS arbitraire exécuté par CHAQUE visiteur
+(site ou page entière), un risque catégoriquement différent d'un CRUD de
+données ; à construire seulement sur un besoin concret, avec des garde-fous
+dédiés (jamais un simple `op` de plus parmi d'autres).
 """
 from __future__ import annotations
 
@@ -616,3 +636,136 @@ def register(mcp: FastMCP) -> None:
             return {}
 
         raise _bad("op doit être 'list', 'get', 'update' ou 'delete'.")
+
+    @mcp.tool()
+    def webflow_pages(
+        op: Literal["list", "get", "update", "content"] = "list",
+        page_id: Optional[str] = None,
+        title: Optional[str] = None,
+        slug: Optional[str] = None,
+        seo: Optional[dict] = None,
+        open_graph: Optional[dict] = None,
+        offset: int = 0,
+        max_results: int = 100,
+        locale_id: Optional[str] = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Pages of the pinned Webflow site — metadata (title, slug, SEO, Open
+        Graph) and READ-ONLY static content (the actual text on the page).
+
+        ⚠️ **There is no op to WRITE a page's body content.** Webflow's API
+        only allows editing a static page's content on a SECONDARY locale of
+        the site — never the primary/default one — so on a single-language
+        site (the common case) there is structurally no API path to edit
+        page copy, only metadata. `op="content"` is read-only for that
+        reason; if you need to change what a page says, that's a Designer
+        edit, not something this tool can do.
+
+        ⚠️ **`op="update"` takes effect IMMEDIATELY on the live site** — unlike
+        CMS items (`webflow_cms`), a page has no draft/publish gate: a title
+        or SEO change is visible to real visitors and search engines right
+        away. Always `dry_run` first if you're not certain.
+
+        `op`:
+        - **"list"** (default): every page of the site, paginated.
+        - **"get"**: one page's metadata by `page_id`.
+        - **"update"**: change `title`/`slug`/`seo`/`open_graph` on one page,
+          LIVE IMMEDIATELY (only the given fields change — this does NOT
+          touch the page's body content, only its metadata).
+        - **"content"**: READ the page's static text nodes (the actual
+          headings/paragraphs) — `{"nodes": [{"id", "type", "text": {"html",
+          "text"}, "attributes"}], "pagination"}`.
+
+        Args:
+            op: list (default) | get | update | content.
+            page_id: required for get/update/content.
+            title, slug, seo, open_graph: op="update" only — `seo` =
+                `{"title", "description"}`, `open_graph` = `{"title",
+                "titleCopied", "description", "descriptionCopied"}`.
+            offset, max_results: op="list"/"content" pagination — capped at
+                100 server-side.
+            locale_id: op="list"/"get"/"update"/"content" — target a specific
+                locale's version of the page (metadata/content differ per
+                locale on a multi-locale site). Omit for the primary locale.
+            dry_run: op="update" only — fetches the page first and returns a
+                real diff (`changes: {field: {"from", "to"}}`), makes NO
+                write call. Never a bare echo of the input.
+
+        Returns:
+            list: `{"pages": [...], "pagination": {"total", "offset", "limit"}}`.
+            get: the page metadata.
+            update: the updated page metadata, or `{"dry_run": true,
+                "page_id", "changes"}`.
+            content: `{"pageId", "nodes": [...], "pagination", "lastUpdated"}`.
+        """
+        c = _client()
+
+        if op == "list":
+            return _run(lambda: c.list_pages(offset=offset,
+                                             limit=min(max_results, 100),
+                                             locale_id=locale_id))
+
+        _need(page_id, "page_id", op)
+
+        if op == "get":
+            return _run(lambda: c.get_page(page_id))
+
+        if op == "update":
+            # (clé webflow_pages, clé brute Webflow, valeur demandée)
+            requested = [
+                ("title", "title", title), ("slug", "slug", slug),
+                ("seo", "seo", seo), ("open_graph", "openGraph", open_graph),
+            ]
+            changed = [(k, raw_k, v) for k, raw_k, v in requested if v is not None]
+            if not changed:
+                raise _bad("op='update' requiert au moins un de title/slug/"
+                           "seo/open_graph.")
+            if dry_run:
+                current = _run(lambda: c.get_page(page_id))
+                return {"dry_run": True, "page_id": page_id,
+                        "changes": {k: {"from": current.get(raw_k), "to": v}
+                                    for k, raw_k, v in changed}}
+            return _run(lambda: c.update_page(
+                page_id, title=title, slug=slug, seo=seo,
+                open_graph=open_graph, locale_id=locale_id))
+
+        if op == "content":
+            return _run(lambda: c.get_page_content(
+                page_id, offset=offset, limit=min(max_results, 100),
+                locale_id=locale_id))
+
+        raise _bad("op doit être 'list', 'get', 'update' ou 'content'.")
+
+    @mcp.tool()
+    def webflow_site_publish(
+        publish_to_webflow_subdomain: bool = False,
+        custom_domains: Optional[list[str]] = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Publish the ENTIRE site (every page) — distinct from
+        `webflow_publish`, which only pushes CMS items live. Rate-limited by
+        Webflow to one publish per minute.
+
+        Args:
+            publish_to_webflow_subdomain: publish to the site's
+                *.webflow.io subdomain.
+            custom_domains: publish to these custom domain ids (see
+                `webflow_cms(op="site")` for the site's configured domains).
+                At least one of this or `publish_to_webflow_subdomain` is
+                required.
+            dry_run: makes NO publish call, returns what would be targeted.
+        """
+        if not custom_domains and not publish_to_webflow_subdomain:
+            raise _bad(
+                "fournir custom_domains et/ou "
+                "publish_to_webflow_subdomain=True — au moins une cible de "
+                "publication doit être désignée.")
+        if dry_run:
+            return {"dry_run": True, "would_publish": {
+                "customDomains": custom_domains or [],
+                "publishToWebflowSubdomain": publish_to_webflow_subdomain,
+            }}
+        c = _client()
+        return _run(lambda: c.publish_site(
+            custom_domains=custom_domains,
+            publish_to_webflow_subdomain=publish_to_webflow_subdomain))
