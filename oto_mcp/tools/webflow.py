@@ -1,12 +1,12 @@
 """Webflow — CMS (collections & items), API v2 (developers.webflow.com/data).
 
-Wrappe `oto.tools.webflow.client.WebflowClient`. Credential = multi-champs
-(`secret_kind="fields"`, PAS keyed) : un Site API token Webflow est bound à UN
-site (vérifié contre `reference/authentication/site-token` — « Site tokens are
-created per site ») → `access.resolve_credential_fields("webflow")` rend
-`{token, site_id}` d'un coup ; `site_id` voyage AVEC le credential plutôt qu'en
-paramètre d'appel (aucune découverte multi-site possible sur ce type de token,
-cf. `providers.py`). byo-only (pas de clé plateforme).
+Wrappe `oto.tools.webflow.client.WebflowClient`. Credential = clé unique
+(`keyed=True`, `secret_kind="api_key"`, `access.resolve_api_key("webflow")`) :
+un Site API token Webflow est bound à UN site (vérifié contre
+`reference/authentication/site-token` — « Site tokens are created per site »),
+donc AUCUN `site_id` à saisir ni à faire voyager ici — le client (oto-core)
+le résout lui-même via `GET /sites` au premier appel qui en a besoin, mis en
+cache pour la durée de vie du client. byo-only (pas de clé plateforme).
 
 Scope v1 = CMS seulement : site (lecture), collections (lecture), items (CRUD
 sur les items STAGED = draft/non publiés) + publish explicite. Pas de pages,
@@ -57,11 +57,18 @@ def _need(value, name: str, op: str):
 
 
 def _run(fn):
-    """Exécute un appel Webflow, traduit une erreur amont en McpError actionnable."""
+    """Exécute un appel Webflow, traduit une erreur amont en McpError actionnable.
+
+    `ValueError` = le client a résolu `site_id` via `GET /sites` et vu 0 ou
+    >1 site (token de workspace passé par erreur, scope `sites:read` absent,
+    token révoqué) — pas un refus HTTP, mais tout aussi actionnable pour
+    l'appelant."""
     try:
         return fn()
     except McpError:
         raise
+    except ValueError as e:
+        raise _bad(str(e))
     except UpstreamHTTPError as e:
         if e.status_code == 401:
             msg = "Token Webflow invalide ou révoqué (401). Vérifie le token posé."
@@ -114,8 +121,8 @@ def register(mcp: FastMCP) -> None:
     from oto.tools.webflow.client import WebflowClient
 
     def _client() -> WebflowClient:
-        creds = access.resolve_credential_fields("webflow")
-        return WebflowClient(api_key=creds.get("token"), site_id=creds.get("site_id"))
+        key, _ = access.resolve_api_key("webflow")
+        return WebflowClient(api_key=key)
 
     @mcp.tool()
     def webflow_site() -> dict:

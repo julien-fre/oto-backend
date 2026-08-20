@@ -1,7 +1,8 @@
-"""Connecteur Webflow — verrouille : l'entrée registre (fields, PAS keyed — un
-Site API token Webflow est bound à UN site, `site_id` voyage comme champ
-NON-secret du même credential plutôt qu'en param d'appel), la surface MCP (4
-tools), et la jointure tool <-> client oto-core (garde version-skew).
+"""Connecteur Webflow — verrouille : l'entrée registre (keyed, un seul champ —
+un Site API token Webflow est bound à UN site, le client oto-core résout
+`site_id` lui-même via `GET /sites`, rien à saisir côté credential), la
+surface MCP (4 tools), et la jointure tool <-> client oto-core (garde
+version-skew).
 """
 import asyncio
 
@@ -31,17 +32,17 @@ def all_tools():
 
 # --- registre -------------------------------------------------------------
 
-def test_webflow_is_fields_connector_not_keyed():
+def test_webflow_is_classic_keyed_connector():
     # Un Site API token Webflow est bound à UN site (Site tokens are created
-    # per site) : site_id voyage AVEC le token comme champ non-secret du même
-    # credential -> secret_kind="fields" + resolve_credential_fields, pas
-    # keyed/resolve_api_key.
+    # per site) : rien à saisir en plus du token, le client oto-core résout
+    # site_id lui-même via GET /sites -> keyed=True, un seul champ, comme
+    # folk/cognism (paste-the-token).
     c = providers.REGISTRY["webflow"]
     assert c.kind == "tools"
     assert c.mount_url is None
-    assert c.keyed is False
-    assert c.secret_kind == "fields"
-    assert "webflow" not in providers.KEY_PROVIDERS
+    assert c.keyed is True
+    assert c.secret_kind == "api_key"
+    assert "webflow" in providers.KEY_PROVIDERS
 
 
 def test_webflow_is_byo_only_no_platform_mode():
@@ -53,9 +54,8 @@ def test_webflow_is_byo_only_no_platform_mode():
 def test_webflow_credential_fields_shape():
     c = providers.REGISTRY["webflow"]
     fields = {f.name: f for f in c.credential_fields}
-    assert set(fields) == {"token", "site_id"}
+    assert set(fields) == {"token"}
     assert fields["token"].secret is True
-    assert fields["site_id"].secret is False
 
 
 def test_webflow_deny_by_default():

@@ -1293,25 +1293,27 @@ _REGISTRY_LIST = [
        )),
 
     # webflow : CMS (collections + items), API v2 (developers.webflow.com/data).
-    # secret_kind="fields" (PAS keyed) : un Site API token Webflow est bound à
+    # keyed=True, UN seul champ (token) : un Site API token Webflow est bound à
     # UN site (vérifié contre reference/authentication/site-token — « Site
-    # tokens are created per site »), donc `site_id` voyage AVEC le token comme
-    # champ non-secret du même credential, plutôt qu'en param d'appel — pas de
-    # discovery multi-site possible sur ce type de token. byo-only (pas de clé
-    # plateforme, pas d'accord commercial Otomata↔Webflow) — resolve_credential_
-    # fields comme silae/scaleway/http, pas resolve_api_key. Scope v1 = lecture/
+    # tokens are created per site »), donc pas de site_id à saisir — le client
+    # (oto-core) le résout lui-même via GET /sites (scope sites:read) au
+    # premier appel, mis en cache. Paste-the-token, comme folk/cognism — pas de
+    # second champ à aller chercher dans les settings. byo-only (pas de clé
+    # plateforme, pas d'accord commercial Otomata↔Webflow). Scope v1 = lecture/
     # écriture des collections/items STAGED (draft) + publish explicite — pas de
     # pages/assets/forms/ecommerce ici.
-    _c("webflow", ["webflow"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
+    _c("webflow", ["webflow"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
        label="Webflow",
        help="CMS — collections & items (site API token)",
        publisher="Webflow", href="https://webflow.com",
        credential_fields=(
            CredentialField("token", "Site API token", secret=True, reveal=True,
                            help="Site Settings → Apps & Integrations → API access — "
-                                "génère un token scopé cms:read/cms:write pour CE site"),
-           CredentialField("site_id", "Site ID", secret=False, reveal=True,
-                           help="Site Settings → General → Site ID"),
+                                "génère un token avec les scopes cms:read, "
+                                "cms:write et sites:read (ce dernier permet à oto "
+                                "de retrouver le site sans que tu aies à copier "
+                                "son ID)"),
        )),
 
     # --- bridge universel (ADR 0034, amende 0003/0011) ------------------------

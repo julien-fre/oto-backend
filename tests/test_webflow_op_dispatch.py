@@ -39,16 +39,17 @@ _COLLECTION_SCHEMA = {
 
 @pytest.fixture
 def client(monkeypatch):
-    """Faux `WebflowClient` + credential résolu. `register()` importe la
-    classe à l'appel : patcher l'attribut du module oto-core avant `_tool()`
-    suffit (même patron que test_cognism_op_dispatch.py)."""
+    """Faux `WebflowClient` + clé résolue. `register()` importe la classe à
+    l'appel : patcher l'attribut du module oto-core avant `_tool()` suffit
+    (même patron que test_cognism_op_dispatch.py). Le vrai client résout
+    `site_id` lui-même (`GET /sites`) — hors de portée d'un mock du tool
+    layer, couvert côté oto-core (`test_webflow_client.py`)."""
     inst = MagicMock()
     inst.get_collection.return_value = _COLLECTION_SCHEMA
     monkeypatch.setattr("oto.tools.webflow.client.WebflowClient",
-                        lambda api_key=None, site_id=None: inst)
-    monkeypatch.setattr(
-        "oto_mcp.access.resolve_credential_fields",
-        lambda provider, account=None: {"token": "tok", "site_id": "site_1"})
+                        lambda api_key=None: inst)
+    monkeypatch.setattr("oto_mcp.access.resolve_api_key",
+                        lambda provider, account=None: ("tok", False))
     return inst
 
 
