@@ -446,6 +446,145 @@ def test_webhooks_bad_op_rejected(client):
         _tool("webflow_webhooks")(op="update")
 
 
+# --- forms -------------------------------------------------------------------
+
+def test_forms_list_default_op(client):
+    client.list_forms.return_value = {"forms": [{"id": "form_1"}],
+                                       "pagination": {"total": 1}}
+    result = _tool("webflow_forms")()
+    assert result == {"forms": [{"id": "form_1"}], "pagination": {"total": 1}}
+    client.list_forms.assert_called_once_with(offset=0, limit=100)
+
+
+def test_forms_list_caps_max_results_at_100(client):
+    client.list_forms.return_value = {"forms": [], "pagination": {"total": 0}}
+    _tool("webflow_forms")(op="list", max_results=10_000)
+    assert client.list_forms.call_args.kwargs["limit"] == 100
+
+
+def test_forms_get_requires_form_id(client):
+    with pytest.raises(McpError):
+        _tool("webflow_forms")(op="get")
+    client.get_form.assert_not_called()
+
+
+def test_forms_get(client):
+    client.get_form.return_value = {"id": "form_1", "displayName": "Contact"}
+    result = _tool("webflow_forms")(op="get", form_id="form_1")
+    assert result == {"id": "form_1", "displayName": "Contact"}
+    client.get_form.assert_called_once_with("form_1")
+
+
+def test_forms_bad_op_rejected(client):
+    with pytest.raises(McpError):
+        _tool("webflow_forms")(op="create")
+
+
+# --- submissions ---------------------------------------------------------------
+
+def test_submissions_list_requires_form_id(client):
+    with pytest.raises(McpError):
+        _tool("webflow_submissions")(op="list")
+    client.list_form_submissions.assert_not_called()
+
+
+def test_submissions_list(client):
+    # Webflow's real key is "formSubmissions", PAS "submissions" — vérifié
+    # contre l'API en direct le 2026-08-20 (la doc source annonçait "submissions",
+    # incorrect). Passthrough : le tool ne renomme rien, il faut donc que le
+    # mock ET l'assertion utilisent le nom RÉEL, sinon un test vert masque le
+    # bug (vécu : les premières versions de ce test/du docstring/du smoke
+    # script utilisaient tous "submissions", jamais détecté avant un run live).
+    client.list_form_submissions.return_value = {
+        "formSubmissions": [{"id": "sub_1"}], "pagination": {"total": 1}}
+    result = _tool("webflow_submissions")(op="list", form_id="form_1")
+    assert result == {"formSubmissions": [{"id": "sub_1"}], "pagination": {"total": 1}}
+    client.list_form_submissions.assert_called_once_with(
+        "form_1", offset=0, limit=100)
+
+
+def test_submissions_list_caps_max_results_at_100(client):
+    client.list_form_submissions.return_value = {
+        "formSubmissions": [], "pagination": {"total": 0}}
+    _tool("webflow_submissions")(op="list", form_id="form_1", max_results=10_000)
+    assert client.list_form_submissions.call_args.kwargs["limit"] == 100
+
+
+def test_submissions_get_requires_submission_id(client):
+    with pytest.raises(McpError):
+        _tool("webflow_submissions")(op="get")
+    client.get_form_submission.assert_not_called()
+
+
+def test_submissions_get_does_not_require_form_id(client):
+    """get/update/delete sont scopés au submission_id seul (site_id
+    implicite) — form_id n'est requis QUE par op='list', vérifié contre la
+    doc source (forms/form-submissions/get-submission, pas de form_id dans
+    le chemin)."""
+    client.get_form_submission.return_value = {"id": "sub_1", "formId": "form_1"}
+    result = _tool("webflow_submissions")(op="get", submission_id="sub_1")
+    assert result == {"id": "sub_1", "formId": "form_1"}
+    client.get_form_submission.assert_called_once_with("sub_1")
+
+
+def test_submissions_update_requires_submission_id_and_data(client):
+    with pytest.raises(McpError):
+        _tool("webflow_submissions")(op="update", submission_id="sub_1")
+    with pytest.raises(McpError):
+        _tool("webflow_submissions")(op="update",
+                                     form_submission_data={"x": "y"})
+    client.update_form_submission.assert_not_called()
+
+
+def test_submissions_update_calls_client(client):
+    client.update_form_submission.return_value = {"id": "sub_1"}
+    result = _tool("webflow_submissions")(
+        op="update", submission_id="sub_1",
+        form_submission_data={"lead_score": "hot"})
+    client.update_form_submission.assert_called_once_with(
+        "sub_1", {"lead_score": "hot"})
+    assert result == {"id": "sub_1"}
+
+
+def test_submissions_update_dry_run_returns_real_diff_not_echo(client):
+    client.get_form_submission.return_value = {
+        "id": "sub_1", "formResponse": {"lead_score": "cold"}}
+    result = _tool("webflow_submissions")(
+        op="update", submission_id="sub_1", dry_run=True,
+        form_submission_data={"lead_score": "hot"})
+    assert result == {"dry_run": True, "submission_id": "sub_1",
+                      "changes": {"lead_score": {"from": "cold", "to": "hot"}}}
+    client.update_form_submission.assert_not_called()
+
+
+def test_submissions_delete_requires_submission_id(client):
+    with pytest.raises(McpError):
+        _tool("webflow_submissions")(op="delete")
+    client.delete_form_submission.assert_not_called()
+
+
+def test_submissions_delete(client):
+    result = _tool("webflow_submissions")(op="delete", submission_id="sub_1")
+    client.delete_form_submission.assert_called_once_with("sub_1")
+    assert result == {}
+
+
+def test_submissions_delete_dry_run_returns_would_delete_not_echo(client):
+    client.get_form_submission.return_value = {
+        "id": "sub_1", "formResponse": {"email": "lead@example.com"}}
+    result = _tool("webflow_submissions")(op="delete", submission_id="sub_1",
+                                          dry_run=True)
+    assert result == {"dry_run": True, "submission_id": "sub_1",
+                      "would_delete": {"id": "sub_1",
+                                       "formResponse": {"email": "lead@example.com"}}}
+    client.delete_form_submission.assert_not_called()
+
+
+def test_submissions_bad_op_rejected(client):
+    with pytest.raises(McpError):
+        _tool("webflow_submissions")(op="create")
+
+
 # --- traduction d'erreur HTTP ---------------------------------------------------
 
 @pytest.mark.parametrize("status,fragment", [

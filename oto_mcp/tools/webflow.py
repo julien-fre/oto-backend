@@ -28,6 +28,18 @@ laisser filer un 400 Webflow opaque à l'agent.
 webhook = delete + create). `secretKey` n'est renvoyé QU'À LA CRÉATION (jamais
 sur get/list, confirmé live) — le docstring de `op="create"` le signale, comme
 Folk pour `signingSecret`.
+
+`webflow_forms` (list/get — schéma des formulaires, jamais de write : un
+formulaire se construit dans l'éditeur visuel Webflow, pas par API) et
+`webflow_submissions` (list/get/update/delete — les LEADS remplis par de
+vrais visiteurs) restent DEUX tools distincts : la forme des paramètres ne se
+recouvre pas (`form_id` seul vs `submission_id` + `form_id` optionnel selon
+l'op), et fusionner masquerait la frontière « catalogue de formulaires » vs
+« données de contact réelles ». ⚠️ **Aucune création par API** — une
+soumission n'existe que si un visiteur remplit le formulaire côté site
+public ; `op="update"` sur `webflow_submissions` ne touche QUE les hidden
+fields déclarés au schéma du formulaire, jamais les données soumises
+(non éditables après coup côté Webflow).
 """
 from __future__ import annotations
 
@@ -480,3 +492,127 @@ def register(mcp: FastMCP) -> None:
             return {}
 
         raise _bad("op doit être 'list', 'get', 'create' ou 'delete'.")
+
+    @mcp.tool()
+    def webflow_forms(
+        op: Literal["list", "get"] = "list",
+        form_id: Optional[str] = None,
+        offset: int = 0,
+        max_results: int = 100,
+    ) -> dict:
+        """Forms configured on the pinned Webflow site — their schema (which
+        fields, which page they live on), not the leads people submitted (see
+        `webflow_submissions` for that). No write op: a form is built in
+        Webflow's visual editor, not created/edited via API.
+
+        Args:
+            op: "list" (default) — every form on the site, paginated.
+                "get" — one form's full schema by `form_id`.
+            form_id: required for op="get".
+            offset, max_results: op="list" pagination — max_results capped at
+                100 server-side.
+
+        Returns:
+            list: `{"forms": [...], "pagination": {"total", "offset", "limit"}}`
+                — each form has `id`, `displayName`, `pageId`/`pageName`,
+                `fields` (per-field type/placeholder/visibility),
+                `responseSettings` (redirect URL, email confirmation).
+            get: the same shape for one form.
+        """
+        c = _client()
+        if op == "list":
+            return _run(lambda: c.list_forms(offset=offset,
+                                             limit=min(max_results, 100)))
+        if op == "get":
+            _need(form_id, "form_id", op)
+            return _run(lambda: c.get_form(form_id))
+        raise _bad("op doit être 'list' ou 'get'.")
+
+    @mcp.tool()
+    def webflow_submissions(
+        op: Literal["list", "get", "update", "delete"] = "list",
+        form_id: Optional[str] = None,
+        submission_id: Optional[str] = None,
+        offset: int = 0,
+        max_results: int = 100,
+        form_submission_data: Optional[dict] = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Form submissions — the actual LEAD DATA a real visitor typed into
+        one of the site's forms (see `webflow_forms` for the form catalog
+        itself). This is the tool for "what leads came in through the
+        Webflow contact form" style questions.
+
+        ⚠️ **No create op exists** — a submission only comes into being when
+        a visitor submits the live form; there is no API to fabricate one.
+
+        `op`:
+        - **"list"** (default): every submission of ONE form (`form_id`
+          required), paginated.
+        - **"get"**: one submission by `submission_id` (site-scoped — no
+          `form_id` needed here, only op="list" requires it).
+        - **"update"**: set HIDDEN field values on a submission
+          (`form_submission_data`). Does NOT edit what the visitor actually
+          typed — Webflow does not allow that after the fact; only fields
+          declared as hidden on the form's schema (`webflow_forms(op="get")`)
+          are writable here, anything else is silently ignored by Webflow.
+        - **"delete"**: permanently remove a submission (e.g. a GDPR removal
+          request). Irreversible.
+
+        Args:
+            op: list (default) | get | update | delete.
+            form_id: required for op="list" only.
+            submission_id: required for op="get"/"update"/"delete".
+            offset, max_results: op="list" pagination — max_results capped at
+                100 server-side.
+            form_submission_data: op="update" — `{"<hidden field name>":
+                "<value>"}`.
+            dry_run: update/delete — fetches the submission first and returns
+                a real diff (`changes: {field: {"from", "to"}}`, update) or
+                `would_delete` (the full current record, delete) — never a
+                bare echo of the input.
+
+        Returns:
+            list: `{"formSubmissions": [...], "pagination": {"total", "offset",
+                "limit"}}` — each submission has `id`, `formId`,
+                `dateSubmitted`, `formResponse` (the visitor's answers,
+                field name → value), `localeId`.
+            get: the submission.
+            update: the updated submission, or `{"dry_run": true,
+                "submission_id", "changes"}`.
+            delete: `{}`, or `{"dry_run": true, "submission_id",
+                "would_delete"}`.
+        """
+        c = _client()
+
+        if op == "list":
+            _need(form_id, "form_id", op)
+            return _run(lambda: c.list_form_submissions(
+                form_id, offset=offset, limit=min(max_results, 100)))
+
+        if op == "get":
+            _need(submission_id, "submission_id", op)
+            return _run(lambda: c.get_form_submission(submission_id))
+
+        if op == "update":
+            _need(submission_id, "submission_id", op)
+            _need(form_submission_data, "form_submission_data", op)
+            if dry_run:
+                current = _run(lambda: c.get_form_submission(submission_id))
+                current_hidden = current.get("formResponse", {})
+                return {"dry_run": True, "submission_id": submission_id,
+                        "changes": {k: {"from": current_hidden.get(k), "to": v}
+                                    for k, v in form_submission_data.items()}}
+            return _run(lambda: c.update_form_submission(
+                submission_id, form_submission_data))
+
+        if op == "delete":
+            _need(submission_id, "submission_id", op)
+            if dry_run:
+                current = _run(lambda: c.get_form_submission(submission_id))
+                return {"dry_run": True, "submission_id": submission_id,
+                        "would_delete": current}
+            _run(lambda: c.delete_form_submission(submission_id))
+            return {}
+
+        raise _bad("op doit être 'list', 'get', 'update' ou 'delete'.")

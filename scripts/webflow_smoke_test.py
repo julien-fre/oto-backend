@@ -8,8 +8,11 @@ client oto-core le résout lui-même via `GET /sites` (nécessite le scope
 `sites:read` sur le token, en plus de `cms:read`/`cms:write`).
 
 Par défaut, LECTURE SEULE : site -> collections -> schéma d'une collection ->
-items (page de 5) -> liste des webhooks existants. Rien n'écrit sur le site
-tant que WEBFLOW_SMOKE_WRITE=1 n'est pas posé — dans ce cas :
+items (page de 5) -> liste des webhooks existants -> liste des formulaires ->
+soumissions du premier formulaire (page de 5) -> dry_run update/delete sur une
+soumission RÉELLE (aucun appel d'écriture, juste la lecture qui nourrit le
+diff). Rien n'écrit sur le site tant que WEBFLOW_SMOKE_WRITE=1 n'est pas posé
+— dans ce cas :
 - un item CMS est créé en DRAFT (jamais publié par ce script) sur
   WEBFLOW_TEST_COLLECTION_ID, prévisualisé en dry_run d'abord, puis réellement
   créé, puis SUPPRIMÉ ;
@@ -17,10 +20,16 @@ tant que WEBFLOW_SMOKE_WRITE=1 n'est pas posé — dans ce cas :
   vérifié via get, puis SUPPRIMÉ — les webhooks EXISTANTS du site (intégrations
   réelles n8n/Zapier/etc.) ne sont jamais touchés, seul l'id que create()
   vient de renvoyer est supprimé.
+⚠️ **update/delete de soumission NE sont testés qu'en dry_run**, même avec
+WRITE=1 : il n'existe AUCUNE API pour fabriquer une soumission jetable (seul
+un vrai visiteur qui remplit le formulaire en crée une) — la mutation réelle
+sur une soumission réelle (donnée de contact d'un vrai lead) n'est délibérément
+jamais exercée par ce script, seulement par les tests unitaires mockés.
 Rien n'est jamais laissé traîner.
 
 Lancer :  set -a; . /chemin/vers/.env; set +a   # WEBFLOW_API_TOKEN
-          [WEBFLOW_TEST_COLLECTION_ID=... [WEBFLOW_SMOKE_WRITE=1]]
+          [WEBFLOW_TEST_COLLECTION_ID=... [WEBFLOW_TEST_FORM_ID=...
+          [WEBFLOW_SMOKE_WRITE=1]]]
           OTO_CONFIG_DISABLE_SOPS=1 .venv/bin/python -m scripts.webflow_smoke_test
 
 Le token n'est JAMAIS imprimé.
@@ -52,6 +61,8 @@ def main() -> int:
     cms_tool = _tool(m, "webflow_cms")
     publish_tool = _tool(m, "webflow_publish")
     webhooks_tool = _tool(m, "webflow_webhooks")
+    forms_tool = _tool(m, "webflow_forms")
+    submissions_tool = _tool(m, "webflow_submissions")
 
     with patch("oto_mcp.access.resolve_api_key", return_value=(token, False)):
         print("→ webflow_cms(op='site')")
@@ -121,6 +132,59 @@ def main() -> int:
 
         if os.environ.get("WEBFLOW_SMOKE_WRITE") == "1":
             _webhooks_write_probe(webhooks_tool, before_ids)
+
+        print("→ webflow_forms(op='list')")
+        forms = forms_tool(op="list")["forms"]
+        print(f"  ✓ {len(forms)} formulaire(s)")
+        for f in forms[:10]:
+            print(f"   - {f.get('displayName')!r} id={f.get('id')} "
+                  f"page={f.get('pageName')}")
+
+        if forms:
+            sample_form_id = os.environ.get("WEBFLOW_TEST_FORM_ID") or forms[0]["id"]
+            if os.environ.get("WEBFLOW_TEST_FORM_ID"):
+                print(f"  (WEBFLOW_TEST_FORM_ID posé — utilise {sample_form_id})")
+            print(f"→ webflow_forms(op='get', form_id={sample_form_id!r})")
+            form_detail = forms_tool(op="get", form_id=sample_form_id)
+            assert form_detail["id"] == sample_form_id
+            print(f"  ✓ get cohérent avec list, {len(form_detail.get('fields', {}))} "
+                  f"champ(s)")
+
+            print(f"→ webflow_submissions(op='list', form_id={sample_form_id!r}, "
+                  "max_results=5)")
+            sub_page = submissions_tool(op="list", form_id=sample_form_id,
+                                        max_results=5)
+            submissions = sub_page.get("formSubmissions", [])
+            sub_total = sub_page.get("pagination", {}).get("total")
+            print(f"  ✓ {len(submissions)} soumission(s) rendue(s) sur {sub_total} total")
+
+            if submissions:
+                sample_sub_id = submissions[0]["id"]
+                print(f"→ webflow_submissions(op='get', submission_id={sample_sub_id!r})")
+                one_sub = submissions_tool(op="get", submission_id=sample_sub_id)
+                assert one_sub["id"] == sample_sub_id
+                print("  ✓ get-by-id cohérent avec list")
+
+                print(f"→ webflow_submissions(op='update', dry_run=True) — "
+                      "lecture seule, AUCUNE mutation sur une vraie soumission")
+                update_preview = submissions_tool(
+                    op="update", submission_id=sample_sub_id, dry_run=True,
+                    form_submission_data={"oto_smoke_probe": "dry-run-only"})
+                assert update_preview["dry_run"] is True
+                print(f"  ✓ dry_run diff : {update_preview['changes']}")
+
+                print(f"→ webflow_submissions(op='delete', dry_run=True) — "
+                      "lecture seule, AUCUNE mutation sur une vraie soumission")
+                delete_preview = submissions_tool(
+                    op="delete", submission_id=sample_sub_id, dry_run=True)
+                assert delete_preview["dry_run"] is True
+                print(f"  ✓ dry_run would_delete montre le record réel "
+                      f"(id={delete_preview['would_delete'].get('id')})")
+            else:
+                print("  (aucune soumission sur ce formulaire — pas de "
+                      "get/dry_run à tester)")
+        else:
+            print("  (aucun formulaire sur ce site)")
 
     print("✓ smoke test OK")
     return 0
