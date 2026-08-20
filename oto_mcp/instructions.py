@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 
-from . import providers, run_status
+from . import providers, run_status, tool_alias
 
 logger = logging.getLogger(__name__)
 
@@ -385,12 +385,24 @@ def session_layers(sub: str | None, org_id: int | None) -> list[dict]:
     """L'artefact injecté DÉCOMPOSÉ en couches ordonnées `[{key, label, body}]` :
     bloc A (socle plateforme + catalogue dérivé) puis couches du bloc C. Invariant :
     `"\\n\\n".join(bodies) == compose_session(sub, org_id)` — sert la vue de
-    transparence (`/api/me/agent-context`) sans dupliquer la composition."""
+    transparence (`/api/me/agent-context`) sans dupliquer la composition.
+
+    Les noms d'outils cités y sont écrits au nom du PRODUIT du compte (`tool_alias`).
+    Sinon le renommage se retourne contre lui-même : la consigne la plus lue de la
+    plateforme prescrirait `oto_doc`, l'agent l'appellerait (le serveur l'accepte), et
+    le client réafficherait `Oto doc` — le nom qu'on voulait faire disparaître, à
+    l'endroit exact où il se voit. Appliqué couche par couche, donc l'invariant de
+    composition tient sans le redire.
+    """
     socle, label = _socle_for(sub)
-    return [
+    couches = [
         {"key": "platform", "label": label, "body": socle},
         {"key": "catalog", "label": "catalogue des capacités", "body": _catalog()},
     ] + _c_layers(sub, org_id)
+    prefix = tool_alias.prefix_for(sub)
+    if not prefix:
+        return couches
+    return [{**c, "body": tool_alias.rewrite_prose(c["body"], prefix)} for c in couches]
 
 
 def compose_session(sub: str | None, org_id: int | None) -> str:

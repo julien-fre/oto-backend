@@ -80,6 +80,13 @@ surface — tant que le tag n'est pas en prod, les anciens noms y résolvent enc
 est faussement vert. **Aucun garde-fou automatique à ce jour** : la migration reste à la charge
 de qui renomme.
 
+⚠️ **À ne pas confondre avec le préfixe d'outils d'un tenant** (`tenants.tool_prefix`,
+`oto_mcp/tool_alias.py`) : celui-là n'est PAS un renommage. C'est une traduction posée au bord du
+protocole — `oto_doc` devient `tulina_doc` dans le `tools/list` servi, et redevient `oto_doc`
+avant que quoi que ce soit d'autre ne le lise. Les refs `<tool:slug>` restent donc écrites en
+canonique, continuent de résoudre, et **il n'y a rien à migrer**. Les deux formes sont d'ailleurs
+acceptées à l'appel, précisément pour que la prose déjà écrite aboutisse.
+
 ## Détail accumulé (migré de la carte)
 
 **Livraison au LLM = injection, plus un appel d'outil (otomata-private#49 puis #50, amende ADR 0014).**

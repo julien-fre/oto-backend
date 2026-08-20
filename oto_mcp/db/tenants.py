@@ -43,7 +43,7 @@ def list_tenant_issuers() -> list:
             # au host), jamais la vérification d'un jeton — celle-ci ne connaît que
             # l'émetteur. Les lire ici ne change donc rien au chemin d'auth.
             "SELECT slug, name, issuer, jwks_uri, hosts, oauth_client_id, "
-            "dashboard_url, link_paths FROM tenants "
+            "dashboard_url, link_paths, tool_prefix FROM tenants "
             "WHERE issuer IS NOT NULL AND btrim(issuer) <> '' ORDER BY id"
         ).fetchall()
     return [dict(r) for r in rows]
@@ -113,7 +113,7 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
               GROUP BY o.tenant_id
          )
     SELECT t.id, t.slug, t.name, t.issuer, t.jwks_uri, t.hosts, t.oauth_client_id,
-           t.dashboard_url, t.link_paths, t.created_at,
+           t.dashboard_url, t.link_paths, t.tool_prefix, t.created_at,
            COALESCE(oc.orgs, 0) AS orgs,
            COALESCE(oc.orgs_archivees, 0) AS orgs_archivees,
            COALESCE(ac.comptes, 0) AS comptes,
@@ -146,6 +146,11 @@ def _shape_tenant(row: dict) -> dict:
     out["primary"] = primaire
     out["hosts"] = list(out.get("hosts") or [])
     out["link_paths"] = dict(out.get("link_paths") or {})
+    # DÉCLARÉ seulement : ce que le process applique vraiment se lit sur le registre
+    # (`tenants_admin._decorate` → `tool_prefix_effectif`). Un préfixe posé en base
+    # après le dernier boot, ou refusé par `tool_alias.normalize_prefix`, s'affiche
+    # ici sans être servi — et c'est justement l'écart qu'un suivi doit montrer.
+    out["tool_prefix"] = (out.get("tool_prefix") or None)
     for k in ("orgs", "orgs_archivees", "comptes", "comptes_actifs", "appels",
               "orgs_desalignees"):
         out[k] = int(out.get(k) or 0)

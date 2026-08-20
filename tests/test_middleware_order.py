@@ -4,7 +4,13 @@ fastmcp exécute `instance.middleware` dans l'ordre de la liste : premier ajout�
 plus EXTERNE (`_run_middleware` wrap en reversed(), vérifié empiriquement). Les
 invariants gardés ici :
 
-- `CallContextMiddleware` OUTERMOST — sa ContextVar `_CALL_ORG` doit rester posée
+- `ToolAliasMiddleware` OUTERMOST absolu — il rétablit le nom CANONIQUE d'un outil
+  avant que quoi que ce soit d'autre ne le lise (gates `_org=`, rédaction par
+  namespace, visibilité, journal `tool_calls`), et renomme la liste servie en dernier
+  (au RETOUR), donc après le filtrage de visibilité. Plus interne, une partie de la
+  chaîne verrait le nom du tenant : le journal se scinderait en deux noms pour un
+  seul outil, et un gate par namespace tomberait fail-open sur un namespace inconnu.
+- `CallContextMiddleware` juste dessous — sa ContextVar `_CALL_ORG` doit rester posée
   pendant que la rédaction ET le calllog (plus internes… donc ajoutés après) relisent
   `current_org`. Ajouté ailleurs, un appel `_org=` est rédigé/audité sous l'org MAISON
   (bug vécu : il était innermost jusqu'au 2026-08-02).
@@ -20,6 +26,7 @@ from oto_mcp import server
 
 
 OURS = [
+    "ToolAliasMiddleware",
     "CallContextMiddleware",
     "FieldRedactionMiddleware",
     "ErrorEnvelopeMiddleware",

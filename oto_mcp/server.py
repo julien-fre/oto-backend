@@ -470,8 +470,16 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # relisent `current_org` → un appel épinglé `_org=` était rédigé/audité sous l'org
     # MAISON. Corrigé 2026-08-02 : l'ordre d'ajout ci-dessous EST l'ordre extern→interne.
 
-    # 1. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) — OUTERMOST :
-    # pose la ContextVar `_CALL_ORG` AVANT toute la chaîne et la reset APRÈS, pour que
+    # 0. Nom des outils au nom du PRODUIT du tenant (ADR 0052) — OUTERMOST absolu :
+    # il rétablit le nom CANONIQUE avant que le reste de la chaîne ne le lise (gates
+    # `_org=`, rédaction par namespace, visibilité, journal), et renomme la liste
+    # servie en dernier, après le filtrage de visibilité. Inerte pour le tenant `oto`
+    # et pour tout tenant qui ne déclare pas de préfixe (cf. `tool_alias`).
+    from .middleware import ToolAliasMiddleware
+    instance.add_middleware(ToolAliasMiddleware())
+
+    # 1. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) : pose la
+    # ContextVar `_CALL_ORG` AVANT le reste de la chaîne et la reset APRÈS, pour que
     # le handler ET les hooks post-tool (rédaction, calllog) lisent la MÊME org que
     # l'appel. Garde d'appartenance au point d'entrée.
     from .middleware import CallContextMiddleware
