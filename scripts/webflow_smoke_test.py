@@ -32,7 +32,8 @@ de gate draft/publish : un vrai update serait IMMÉDIATEMENT visible sur le
 site public et modifierait durablement une vraie page (titre/SEO). Seul le
 dry_run (lecture + diff, zéro écriture) est exercé ici ; la mutation réelle
 est couverte par les tests unitaires mockés uniquement. `webflow_site_publish`
-n'est jamais appelée pour de vrai non plus (publierait le site entier).
+n'est exercée qu'en `dry_run` (aucun appel réseau) + refus sans cible — jamais
+pour de vrai (publierait le site entier).
 Rien n'est jamais laissé traîner.
 
 Lancer :  set -a; . /chemin/vers/.env; set +a   # WEBFLOW_API_TOKEN
@@ -72,6 +73,7 @@ def main() -> int:
     forms_tool = _tool(m, "webflow_forms")
     submissions_tool = _tool(m, "webflow_submissions")
     pages_tool = _tool(m, "webflow_pages")
+    site_publish_tool = _tool(m, "webflow_site_publish")
 
     with patch("oto_mcp.access.resolve_api_key", return_value=(token, False)):
         print("→ webflow_cms(op='site')")
@@ -231,6 +233,23 @@ def main() -> int:
             print(f"  ✓ dry_run diff : {update_preview['changes']}")
         else:
             print("  (aucune page sur ce site)")
+
+        print("→ webflow_site_publish(dry_run=True) — lecture seule, AUCUN "
+              "appel réseau, jamais exercé pour de vrai par ce script "
+              "(publierait le site ENTIER)")
+        publish_preview = site_publish_tool(publish_to_webflow_subdomain=True,
+                                            dry_run=True)
+        assert publish_preview["dry_run"] is True
+        print(f"  ✓ would_publish : {publish_preview['would_publish']}")
+
+        print("→ webflow_site_publish() sans cible — vérifie le refus "
+              "actionnable AVANT tout appel réseau")
+        try:
+            site_publish_tool()
+            print("  ✗ aurait dû refuser (aucune cible fournie)")
+            return 1
+        except Exception as e:
+            print(f"  ✓ refusé comme attendu : {e}")
 
     print("✓ smoke test OK")
     return 0
