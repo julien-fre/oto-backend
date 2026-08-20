@@ -281,7 +281,7 @@ _CATEGORY_BY_CONNECTOR = {
     "infosec": "Infosec",
     "pennylane": "Finance", "pennylaneged": "Finance", "gocardless": "Finance", "silae": "Finance",
     "slack": "Comms", "google": "Comms", "zohodesk": "Comms",
-    "notion": "Knowledge", "zohoanalytics": "Knowledge",
+    "notion": "Knowledge", "zohoanalytics": "Knowledge", "grain": "Knowledge",
     "lighton": "Knowledge",
     "planity": "Métier",
     "atlassian": "Métier",
@@ -317,7 +317,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "planity": "Planity", "atlassian": "Atlassian",
     "hubspot": "HubSpot", "apollo": "Apollo", "zerobounce": "ZeroBounce",
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
-    "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
+    "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "grain": "Grain",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
@@ -426,6 +426,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "lusha": "lusha.com",
     # Productivité & infra
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
+    "grain": "grain.com",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
 }
@@ -1296,6 +1297,17 @@ _REGISTRY_LIST = [
     #  que le back-office re-expose, jointe via http_get/http_post. Le pilote MM a
     #  migré bridge→http. Le concept « remote data-driven » (base_url sur un provider
     #  hors registre) subsiste dans org_secret_meta, sans entrée de catalogue.)
+
+    # grain : enregistrements de réunion, transcripts, partage, webhooks,
+    # données d'organisation. keyed api_key (Bearer + header Public-Api-Version),
+    # byo-only (pas de clé plateforme) — Personal Access Token (par user) ou
+    # Workspace Access Token (admin, accès à toutes les données du workspace).
+    # Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed`
+    # est chargé (`status_for` en dépend), on n'insère jamais au milieu.
+    _c("grain", ["grain"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Grain",
+       help="enregistrements de réunion, transcripts, partage, webhooks, org",
+       href="https://grain.com"),
 ]
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}
