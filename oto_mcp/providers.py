@@ -290,6 +290,7 @@ _CATEGORY_BY_CONNECTOR = {
     "brevo": "Prospection", "salesforce": "Prospection", "pipedrive": "Prospection",
     "sellsy": "Prospection",
     "figma": "Design", "supabase": "Dev",
+    "webflow": "CMS",
     # recherche web / scraping
     "aiark": "Prospection", "cognism": "Prospection",
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
@@ -428,6 +429,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
+    "webflow": "webflow.com",
 }
 
 # Connecteurs SANS logo de marque, et c'est voulu : soit génériques (le connecteur
@@ -1288,6 +1290,28 @@ _REGISTRY_LIST = [
                            required=False, help="mode oauth2"),
            CredentialField("scope", "Scope", secret=False, reveal=True,
                            required=False, help="mode oauth2 (optionnel)"),
+       )),
+
+    # webflow : CMS (collections + items), API v2 (developers.webflow.com/data).
+    # secret_kind="fields" (PAS keyed) : un Site API token Webflow est bound à
+    # UN site (vérifié contre reference/authentication/site-token — « Site
+    # tokens are created per site »), donc `site_id` voyage AVEC le token comme
+    # champ non-secret du même credential, plutôt qu'en param d'appel — pas de
+    # discovery multi-site possible sur ce type de token. byo-only (pas de clé
+    # plateforme, pas d'accord commercial Otomata↔Webflow) — resolve_credential_
+    # fields comme silae/scaleway/http, pas resolve_api_key. Scope v1 = lecture/
+    # écriture des collections/items STAGED (draft) + publish explicite — pas de
+    # pages/assets/forms/ecommerce ici.
+    _c("webflow", ["webflow"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
+       label="Webflow",
+       help="CMS — collections & items (site API token)",
+       publisher="Webflow", href="https://webflow.com",
+       credential_fields=(
+           CredentialField("token", "Site API token", secret=True, reveal=True,
+                           help="Site Settings → Apps & Integrations → API access — "
+                                "génère un token scopé cms:read/cms:write pour CE site"),
+           CredentialField("site_id", "Site ID", secret=False, reveal=True,
+                           help="Site Settings → General → Site ID"),
        )),
 
     # --- bridge universel (ADR 0034, amende 0003/0011) ------------------------
