@@ -282,7 +282,7 @@ _CATEGORY_BY_CONNECTOR = {
     "pennylane": "Finance", "pennylaneged": "Finance", "gocardless": "Finance", "silae": "Finance",
     "slack": "Comms", "google": "Comms", "zohodesk": "Comms",
     "notion": "Knowledge", "zohoanalytics": "Knowledge",
-    "lighton": "Knowledge",
+    "lighton": "Knowledge", "granola": "Knowledge",
     "planity": "Métier",
     "atlassian": "Métier",
     "hubspot": "Prospection", "apollo": "Prospection", "zerobounce": "Prospection",
@@ -317,7 +317,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "planity": "Planity", "atlassian": "Atlassian",
     "hubspot": "HubSpot", "apollo": "Apollo", "zerobounce": "ZeroBounce",
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
-    "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
+    "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "granola": "Granola",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
@@ -426,6 +426,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "lusha": "lusha.com",
     # Productivité & infra
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
+    "granola": "granola.ai",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
 }
@@ -1296,6 +1297,17 @@ _REGISTRY_LIST = [
     #  que le back-office re-expose, jointe via http_get/http_post. Le pilote MM a
     #  migré bridge→http. Le concept « remote data-driven » (base_url sur un provider
     #  hors registre) subsiste dans org_secret_meta, sans entrée de catalogue.)
+
+    # granola : notes de réunion, transcripts, résumés IA, dossiers, journal
+    # d'audit, webhook endpoints. keyed api_key (Bearer), byo-only (pas de clé
+    # plateforme) — clé personnelle (tout membre Business) ou clé workspace
+    # (admin, Enterprise), toutes deux un Bearer simple ici. Ajouté en DERNIER
+    # dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed` est chargé
+    # (`status_for` en dépend), on n'insère jamais au milieu.
+    _c("granola", ["granola"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Granola",
+       help="notes de réunion, transcripts, résumés IA, dossiers, audit, webhooks",
+       href="https://granola.ai"),
 ]
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}
