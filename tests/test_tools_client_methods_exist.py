@@ -52,7 +52,16 @@ _SUBOBJECT_CLIENTS = {"attio"}
 # découvert sur le version-skew ; c'est un choix, pas un oubli, et l'ajouter à cette
 # liste doit rester un geste conscient (sinon un nouveau connecteur perdrait sa
 # couverture en silence, ce qui est précisément le trou qu'on vient de fermer).
-_DYNAMIC_DISPATCH_CLIENTS = {"serper", "serpapi", "brightdata", "cloro", "spott"}
+# `ahrefs` : PARTIELLEMENT dynamique — `_call_report` fait `getattr(client,
+# method_name)(**kwargs)` pour les 4 tools à axe `report=` (site_explorer/
+# keywords_explorer/site_audit/rank_tracker) + les rapports Brand Radar ; les
+# tools Management/Social/Public appellent le client en clair et RESTENT
+# couverts (des appels littéraux existent dans le module, `_covered_modules()`
+# ne consulte pas cet ensemble). Le trou dynamique est recouvert à la main par
+# `test_dispatch_tables_point_to_real_client_methods` (oto-backend/tests/
+# test_ahrefs.py) : chaque entrée de chaque table de dispatch est vérifiée
+# contre `AhrefsClient` au lieu d'être laissée hors de portée.
+_DYNAMIC_DISPATCH_CLIENTS = {"serper", "serpapi", "brightdata", "cloro", "spott", "ahrefs"}
 
 
 def _client_class_name(tree: ast.Module) -> str | None:
