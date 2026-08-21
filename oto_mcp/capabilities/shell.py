@@ -208,15 +208,45 @@ def _connecteurs(sub: str, org_id: Optional[int]) -> list[ShellConnector]:
 
     Un connecteur sans branchement résoluble n'entre pas dans la liste (contrat §7) —
     la palette ne propose que ce qui marcherait si on cliquait.
+
+    **Deux économies, mesurées avant d'être écrites (33 connecteurs, compte réel) :**
+
+    1. **Le contexte est résolu UNE FOIS et passé.** `credential_mode_for` le résout
+       sinon à chaque appel : `current_org` coûtait 73 % du temps total, appelé une
+       fois par connecteur pour rendre trente-trois fois la même valeur. 1 213 → 554 ms
+       à lui seul. On passe l'org et l'équipe de L'APPELANT — c'est le kwarg prévu
+       pour ça, et le seam reste scopé sur l'acteur (jamais `current_org(autre_sub)`).
+    2. **Une sonde PRÉCHARGÉE** remplace la marche par connecteur : l'inventaire des
+       credentials à portée est lu une fois, la cascade répond en mémoire. Le walker
+       n'est pas touché — c'est une sonde de plus, pas un second chemin.
     """
     if org_id is None:
         return []
+    installes = sorted(nom for nom, etat
+                       in connector_selection.list_selection(sub, org_id).items()
+                       if etat == "active")
+    if not installes:
+        return []
+    # Une fois, pas trente-trois. `_UNSET` ≠ `None` : passer explicitement suffit à
+    # court-circuiter la résolution par appel.
+    org_eff = access.current_org(sub)
+    grp_eff = access.current_group(sub)
+    try:
+        equipes = group_store.list_groups_for_user(sub, org_eff) if org_eff else []
+        sonde = access.preloaded_presence_probe(sub, org=org_eff, groups=equipes)
+    except Exception:      # l'inventaire n'est qu'une accélération, jamais un prérequis
+        logger.warning("shell: préchargement des credentials indisponible", exc_info=True)
+        sonde = access.PRESENCE_PROBE
+
     out: list[ShellConnector] = []
-    for nom, etat in sorted(connector_selection.list_selection(sub, org_id).items()):
-        if etat != "active":
-            continue
+    for nom in installes:
         try:
-            mode = access.credential_mode_for(sub, nom)
+            # PAR le seam, jamais à côté : `credential_mode_for` fait plus que rendre
+            # le barreau gagnant — c'est lui qui traduit un grant plateforme épuisé en
+            # `over_quota`. L'appeler avec la sonde préchargée garde ce contrôle ; le
+            # court-circuiter aurait listé comme utilisable un connecteur hors quota.
+            mode = access.credential_mode_for(sub, nom, org=org_eff, group=grp_eff,
+                                              probe=sonde)
         except Exception:      # un connecteur qui ne résout pas ne casse pas le rail
             logger.warning("shell: verdict connecteur %s indisponible", nom, exc_info=True)
             continue

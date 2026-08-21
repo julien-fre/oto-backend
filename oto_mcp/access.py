@@ -789,6 +789,67 @@ FETCH_PROBE = CascadeProbe(
 )
 
 
+def preloaded_presence_probe(sub: str, *, org: Optional[int],
+                             groups: Optional[list] = None) -> CascadeProbe:
+    """`PRESENCE_PROBE`, mais préchargée : les mêmes réponses, en quelques lectures.
+
+    **C'est une TROISIÈME SONDE, pas un second chemin.** Le walker n'est pas touché
+    d'une ligne : toute la cascade — gates byo_user, instance personnelle cross-org,
+    ORG_SHAREABLE, éligibilité plateforme — reste où elle est. On ne change que la
+    façon dont les cinq questions trouvent leur réponse : en mémoire, depuis un
+    inventaire lu une fois, au lieu d'un aller-retour par connecteur.
+
+    ⚠️ **Le prix d'une sonde préchargée est de rester ÉQUIVALENTE.** Elle ne peut pas
+    dériver silencieusement : `tests/test_presence_batch.py` la confronte à
+    `PRESENCE_PROBE` sur l'ensemble des connecteurs du registre, même contexte, et
+    exige le MÊME verdict. Un barreau ajouté demain à la cascade casse ce différentiel
+    au lieu de produire deux vérités.
+
+    Mesuré (33 connecteurs installés, compte réel) : les cinq sondes coûtaient 425 ms
+    en marchant une fois par connecteur. Ce qu'elle ne couvre PAS, et volontairement :
+    - le barreau **plateforme** garde la callable d'origine — il lit une chaîne de
+      grants avec journal d'écart (fenêtre de bascule 0053-L5), et le précharger
+      demanderait de rejouer cette logique ailleurs. Mesuré à 9 ms l'appel sur les
+      seuls connecteurs qui l'atteignent : le gain ne paie pas le risque ;
+    - `personal_instance_org` est appelé par le WALKER, pas par la sonde (un appel,
+      12 ms) — le précharger supposerait de toucher au walker, ce qu'on refuse.
+    """
+    from . import credentials_store as cs
+
+    membre: set = set()
+    suspendues: set = set()
+    if org is not None:
+        for r in cs.list_credentials(cs.MEMBER, cs.member_id(org, sub)):
+            membre.add(r["connector"])
+            if (r.get("meta") or {}).get("suspended") in (True, "true"):
+                # La suspension ne vaut que pour le compte MONO (account '') — c'est
+                # ce que la sonde d'origine interroge (`account=""`).
+                if not r.get("account"):
+                    suspendues.add(r["connector"])
+
+    par_groupe: dict = {}
+    for g in (groups or []):
+        gid = int(g["group_id"] if isinstance(g, dict) else g)
+        par_groupe[gid] = {r["connector"]
+                           for r in cs.list_credentials("group", str(gid))}
+
+    org_secrets: set = set()
+    if org is not None:
+        org_secrets = {r["connector"] for r in cs.list_credentials("org", str(org))}
+
+    return CascadeProbe(
+        member=lambda s, o, p: ((True, "") if p in membre and p not in suspendues
+                                else None),
+        # Cross-org : l'inventaire ne porte QUE l'org active, donc on retombe sur la
+        # lecture d'origine. C'est un appel, pas trente-trois : le walker n'y arrive
+        # que pour les connecteurs `personal_cross_org` mono-compte.
+        member_cross=PRESENCE_PROBE.member_cross,
+        group=lambda g, p: (True if p in par_groupe.get(int(g), ()) else None),
+        org=lambda o, p: (True if p in org_secrets else None),
+        platform=PRESENCE_PROBE.platform,
+    )
+
+
 def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
                  group: "Optional[int] | Callable[[], Optional[int]]",
                  probe: CascadeProbe, want: str = "auto"):
@@ -1442,20 +1503,33 @@ def _reachable_hint(sub: str, org: Optional[int], provider: str) -> str:
 
 def credential_mode_for(sub: str, provider: str, *,
                         org: "int | None | object" = _UNSET,
-                        group: "int | None | object" = _UNSET) -> str:
+                        group: "int | None | object" = _UNSET,
+                        probe: "Optional[CascadeProbe]" = None) -> str:
     """Origine de la clé `provider` pour `sub` (EXPLICITE, hors contexte MCP) :
     `user|group|org|platform|over_quota|forbidden`. PRÉSENCE seulement (pas de
     déchiffrement → sûr/léger pour un statut). **Miroir** de la cascade
     `resolve_credential` (incl. fallback grant org) — une divergence ferait mentir
     l'UI. « BYO » (clé propre, pas la plateforme) = mode ∈ {user, group, org}.
     `org`/`group` explicites (≠ _UNSET) = calcul pour un TIERS contre son propre
-    contexte (fiche admin), sans current_org/current_group (anti-fuite du requérant)."""
+    contexte (fiche admin), sans current_org/current_group (anti-fuite du requérant).
+
+    `probe` = sonde de présence ALTERNATIVE (défaut : `PRESENCE_PROBE`). Un appelant qui
+    interroge BEAUCOUP de connecteurs d'affilée passe une sonde **préchargée**
+    (`preloaded_presence_probe`) : mêmes réponses, en quelques lectures au lieu d'une
+    marche par connecteur. Le paramètre existe pour que ce cas passe PAR cette fonction
+    — le contrôle de quota du barreau plateforme, juste en dessous, ne se recopie pas
+    chez l'appelant, et un appelant pressé n'a pas de raison de contourner le seam.
+
+    ⚠️ Passer `org`/`group` explicitement N'EST PAS qu'un raccourci pour un tiers : c'est
+    aussi ce qui évite de re-résoudre le contexte à CHAQUE appel. Mesuré sur 33
+    connecteurs d'un compte réel — `current_org` y pesait 73 % du temps total, appelé
+    trente-trois fois pour rendre trente-trois fois la même valeur."""
     o = current_org(sub) if org is _UNSET else org
     g = current_group(sub) if group is _UNSET else group
     # Marche unique (walker) en sonde PRÉSENCE — plus de cascade recopiée ici :
     # le miroir est structurel, il ne peut plus diverger de la résolution.
     win = cascade_winner(sub, provider, org=o, group=g,
-                         probe=PRESENCE_PROBE, want="auto")
+                         probe=probe or PRESENCE_PROBE, want="auto")
     if win is None:
         return "forbidden"
     if win.mode != "platform":
