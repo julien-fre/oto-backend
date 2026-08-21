@@ -23,7 +23,8 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
-from .. import access, call_axes, db, doctrine_run, providers, redaction, tool_registry
+from .. import (access, call_axes, db, doctrine_run, providers, redaction,
+                tool_alias, tool_registry)
 from ..auth_hooks import current_user_sub_from_token
 from ..tool_visibility import (
     PROTECTED_TOOLS,
@@ -55,6 +56,21 @@ def _namespace_help(ns: str) -> str:
         con = providers.connector_for_namespace(ns)
         return f"{con.label} {con.help}" if con else ""
     except Exception:
+        return ""
+
+
+def _tool_prefix() -> str:
+    """Le préfixe d'outils du tenant courant (`""` = noms canoniques).
+
+    Ces cinq tools prennent un NOM en argument : ce sont les seuls endroits où un nom
+    traverse un HANDLER au lieu du bord du protocole, donc les seuls que le
+    `ToolAliasMiddleware` ne couvre pas. Sans ce rappel, un compte de tenant tiers
+    lisait `tulina_doc` dans sa liste et se voyait répondre « Unknown tool » en le
+    passant à `oto_tool_schema` — le catalogue et le dispatch auraient parlé deux
+    langues."""
+    try:
+        return tool_alias.prefix_for(current_user_sub_from_token())
+    except Exception:  # noqa: BLE001 — fail-open : les noms canoniques
         return ""
 
 
@@ -167,8 +183,13 @@ def register(mcp: FastMCP) -> None:
         # run_middleware=False : on veut la liste complète (y compris les
         # tools masqués pour ce user), sinon on n'affiche pas leur état.
         all_tools = await ctx.fastmcp.list_tools(run_middleware=False)
+        # Le catalogue annonce les noms tels que l'utilisateur les VOIT (cf.
+        # `tool_alias`) ; tout ce qui se calcule — namespace, visibilité — repart du
+        # nom canonique. Le retour `canonical(public(x)) == x` est total, donc aucun
+        # nom ne se perd en route.
+        prefix = _tool_prefix()
         entries = sorted(
-            ({"name": t.name,
+            ({"name": tool_alias.public(t.name, prefix),
               "description": tool_registry.blurb(t.description, _CATALOG_BLURB),
               # Ligne de catalogue du connecteur : le seul texte FRANÇAIS de l'entrée
               # (les docstrings sont en anglais). Sert la recherche, pas la sortie.
@@ -176,7 +197,8 @@ def register(mcp: FastMCP) -> None:
              for t in all_tools),
             key=lambda e: e["name"])
         for e in entries:
-            e["enabled"] = is_tool_visible(e["name"], disabled, enabled_override,
+            e["enabled"] = is_tool_visible(tool_alias.canonical(e["name"], prefix),
+                                           disabled, enabled_override,
                                            frozenset(admin_hidden))
         out: dict = {
             "total": len(entries),
@@ -213,6 +235,12 @@ def register(mcp: FastMCP) -> None:
             name: Exact tool name (e.g. `attio_create_deal`, `linkedin_unipile_search`).
         """
         sub = _require_sub()
+        # Le nom peut arriver sous la forme du tenant (`tulina_doc`) : la denylist,
+        # elle, s'écrit en canonique — sinon le même outil s'y retrouverait deux fois,
+        # et le toggle ne mordrait plus après un changement de préfixe. Le retour
+        # reprend la forme MONTRÉE, celle que l'agent vient de lire dans sa liste.
+        prefix = _tool_prefix()
+        name = tool_alias.canonical(name, prefix)
         all_tools = await ctx.fastmcp.list_tools(run_middleware=False)
         known = {t.name for t in all_tools}
         if name not in known:
@@ -230,7 +258,8 @@ def register(mcp: FastMCP) -> None:
         db.add_user_disabled_tool(sub, name, org)
         db.remove_user_enabled_tool(sub, name, org)  # lève un éventuel override
         await disable_components(ctx, names={name}, components={"tool"})
-        return {"name": name, "enabled": False, "persistent": True}
+        return {"name": tool_alias.public(name, prefix), "enabled": False,
+                "persistent": True}
 
     @mcp.tool()
     async def oto_enable_tool(name: str, ctx: Context) -> dict:
@@ -240,6 +269,8 @@ def register(mcp: FastMCP) -> None:
             name: Exact tool name to re-enable.
         """
         sub = _require_sub()
+        prefix = _tool_prefix()
+        name = tool_alias.canonical(name, prefix)
         # SÉCURITÉ — visibilité-only (ADR 0031) : (dés)activer un outil = préférence
         # d'AFFICHAGE, jamais une autorisation. Rendre un outil visible ne donne PAS
         # accès à son credential. L'accès réel d'un connecteur sensible est gardé au
@@ -253,7 +284,8 @@ def register(mcp: FastMCP) -> None:
         if is_default_hidden(name):
             db.add_user_enabled_tool(sub, name, org)
         await enable_components(ctx, names={name}, components={"tool"})
-        return {"name": name, "enabled": True, "persistent": True}
+        return {"name": tool_alias.public(name, prefix), "enabled": True,
+                "persistent": True}
 
     # --- dispatch universel (ADR 0036) --------------------------------------
 
@@ -269,14 +301,18 @@ def register(mcp: FastMCP) -> None:
             name: Exact tool name (e.g. `fr_ccn_search`, `foncier_dpe_adresse`).
         """
         _require_sub()
+        prefix = _tool_prefix()
+        demande, name = name, tool_alias.canonical(name, prefix)
         tool = await _resolve_tool(ctx, name)
         if tool is None:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"Unknown tool `{name}`. Use oto_list_my_tools to see available names."))
+                message=f"Unknown tool `{demande}`. Use oto_list_my_tools to see available names."))
         return {
-            "name": name,
-            "namespace": namespace_of(name),
+            # Rendu sous le nom que l'appelant VERRA dans sa liste, pas sous le nom
+            # interne : il va le recopier dans `oto_call`.
+            "name": tool_alias.public(name, prefix),
+            "namespace": tool_alias.public_namespace(namespace_of(name), prefix),
             "description": (tool.description or "").strip(),
             "input_schema": getattr(tool, "parameters", None),
             "output_schema": getattr(tool, "output_schema", None),
@@ -329,17 +365,21 @@ def register(mcp: FastMCP) -> None:
         except Exception:
             pass
 
+        # Le nom vient du catalogue, donc éventuellement sous la forme du tenant. Il
+        # redevient canonique AVANT le gate méta/spine : sans ça `tulina_doc` résout un
+        # namespace inconnu, échappe à `_NON_DISPATCHABLE`, et l'anti-boucle saute.
+        demande, name = name, tool_alias.canonical(name, _tool_prefix())
         if namespace_of(name) in _NON_DISPATCHABLE:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"`{name}` est un outil méta/spine — appelle-le directement, "
+                message=f"`{demande}` est un outil méta/spine — appelle-le directement, "
                         "pas via oto_call."))
 
         tool = await _resolve_tool(ctx, name)
         if tool is None:
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"Unknown tool `{name}`. Use oto_list_my_tools to see available names."))
+                message=f"Unknown tool `{demande}`. Use oto_list_my_tools to see available names."))
 
         args = arguments if isinstance(arguments, dict) else {}
         # Axes-contexte d'appel (ADR 0038). oto_call s'exécute HORS middleware → les
@@ -381,12 +421,15 @@ def register(mcp: FastMCP) -> None:
             ok, err = False, "invalid_arguments"
             raise McpError(ErrorData(
                 code=INVALID_PARAMS,
-                message=f"Arguments invalides pour `{name}` — voir `input_schema`.",
+                message=f"Arguments invalides pour `{demande}` — voir `input_schema`.",
                 data={"input_schema": getattr(tool, "parameters", None),
                       "errors": e.errors()}))
         except Exception as e:  # noqa: BLE001 — l'erreur de la cible EST un résultat
             ok, err = False, str(e)
-            return {"tool": name, "ok": False, "error": str(e)}
+            # `tool` reprend le nom DEMANDÉ : l'agent le relit pour réessayer, et un
+            # nom qu'il n'a jamais tapé le ferait douter de sa propre requête. Le
+            # journal, lui, écrit le canonique (`_trace_target_call` juste dessous).
+            return {"tool": demande, "ok": False, "error": str(e)}
         finally:
             for _reset, _tok in reversed(undo):
                 _reset(_tok)

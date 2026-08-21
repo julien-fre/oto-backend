@@ -80,6 +80,11 @@ class TenantIssuer:
     # Chemins par TYPE de lien (`links.DEFAULT_PATHS` pour les types connus).
     # Type absent = ce tenant n'a pas cette vue ⟹ on ne rend AUCUN lien.
     link_paths: Any = None
+    # Préfixe des outils de la plateforme MONTRÉS à ses comptes (`oto_doc` →
+    # `tulina_doc`, cf. `tool_alias`). Vide = les noms canoniques, l'état d'avant.
+    # DÉCLARÉ, jamais dérivé du slug : renommer les outils rompt les procédures et la
+    # prose déjà écrites du tenant, donc ça se décide.
+    tool_prefix: str = ""
 
 
 def qualify(slug: Optional[str], sub: Optional[str]) -> Optional[str]:
@@ -144,7 +149,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
     entries: dict[str, TenantIssuer] = {}
 
     def _put(slug: str, issuer, jwks_uri=None, name="", hosts=(),
-             oauth_client_id="", dashboard_url="", link_paths=None) -> None:
+             oauth_client_id="", dashboard_url="", link_paths=None,
+             tool_prefix="") -> None:
         iss = normalize_issuer(issuer)
         if not iss:
             return
@@ -154,7 +160,10 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
                                     name=name or "", hosts=tuple(hosts or ()),
                                     oauth_client_id=str(oauth_client_id or ""),
                                     dashboard_url=str(dashboard_url or "").rstrip("/"),
-                                    link_paths=_normalize_paths(link_paths))
+                                    link_paths=_normalize_paths(link_paths),
+                                    # Tel que DÉCLARÉ (cf. le slug juste au-dessus) :
+                                    # `tool_alias.normalize_prefix` juge, il ne répare pas.
+                                    tool_prefix=str(tool_prefix or ""))
 
     _put(PRIMARY_SLUG, primary_issuer)
     for drain in drain_issuers or ():
@@ -184,7 +193,8 @@ def build(primary_issuer: str, drain_issuers: Iterable[str] = (),
              hosts=normalize_hosts((row or {}).get("hosts")),
              oauth_client_id=str((row or {}).get("oauth_client_id") or ""),
              dashboard_url=str((row or {}).get("dashboard_url") or ""),
-             link_paths=(row or {}).get("link_paths"))
+             link_paths=(row or {}).get("link_paths"),
+             tool_prefix=(row or {}).get("tool_prefix"))
     return entries
 
 

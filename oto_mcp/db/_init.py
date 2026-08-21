@@ -147,6 +147,11 @@ def _init_db_once() -> None:
         # aucun équivalent chez lui. Type absent = AUCUN lien de ce type (cf. `links`).
         conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS link_paths JSONB "
                      "NOT NULL DEFAULT '{}'::jsonb")
+        # Le PRÉFIXE des outils montrés aux comptes de ce tenant. La liste d'outils
+        # d'un partenaire annonçait `oto_doc`, `oto_project`… dans SON produit — le
+        # même défaut que le socle et les liens, mais sur l'identifiant affiché à
+        # chaque appel. NULL = les noms canoniques (l'état d'avant, et le défaut).
+        conn.execute("ALTER TABLE tenants ADD COLUMN IF NOT EXISTS tool_prefix TEXT")
         # #117 — discriminant PAR APPEL. Trois colonnes nullables : rien à réécrire sur
         # une table volumineuse (une colonne sans défaut ne touche pas les lignes
         # existantes), et les lignes d'avant restent lisibles avec des NULL — elles

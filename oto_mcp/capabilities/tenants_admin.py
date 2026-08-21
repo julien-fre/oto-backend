@@ -23,7 +23,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from .. import db, tenancy
+from .. import db, tenancy, tool_alias
 from ._authz import PLATFORM_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding, cap_limit
 from .registry import CAPABILITIES
@@ -65,6 +65,10 @@ class TenantRow(BaseModel):
     oauth_client_id: Optional[str] = None
     dashboard_url: Optional[str] = None
     link_paths: dict = Field(default_factory=dict)
+    tool_prefix: Optional[str] = Field(
+        default=None, description="Préfixe DÉCLARÉ des outils de la plateforme montrés "
+                                  "à ses comptes (`oto_doc` → `<prefix>_doc`). null = "
+                                  "les noms canoniques.")
 
     primary: bool = Field(description="Le tenant de la plateforme (`oto`), dont "
                                       "l'émetteur vient de l'env, pas de la base.")
@@ -77,6 +81,11 @@ class TenantRow(BaseModel):
                                               ": ses jetons sont encore rejetés.")
     live_hosts: list[str] = Field(default_factory=list,
                                   description="Hosts effectivement servis par le process.")
+    tool_prefix_effectif: Optional[str] = Field(
+        default=None, description="Préfixe d'outils réellement APPLIQUÉ par ce process "
+                                  "— null alors que `tool_prefix` est posé signifie "
+                                  "soit un boot en retard, soit un préfixe refusé "
+                                  "(collision de namespace, forme invalide).")
 
     orgs: int
     orgs_archivees: int
@@ -139,7 +148,8 @@ def _live_registry() -> dict:
         # décrivent le même tenant.
         live.setdefault(entry.slug, {"issuer": entry.issuer, "hosts": list(entry.hosts),
                                      "jwks_uri": entry.jwks_uri,
-                                     "oauth_client_id": entry.oauth_client_id})
+                                     "oauth_client_id": entry.oauth_client_id,
+                                     "tool_prefix": entry.tool_prefix})
     return live
 
 
@@ -151,6 +161,10 @@ def _decorate(row: dict, live: dict) -> dict:
     # process : le boot est en retard sur la base. C'est le diagnostic qui manquait.
     row["pending_restart"] = bool(row.get("authenticates")) and entry is None
     row["live_hosts"] = list((entry or {}).get("hosts") or [])
+    # Le préfixe d'outils passe par la MÊME validation qu'au service (collision de
+    # namespace, forme) : l'écran doit montrer ce qui s'applique, pas ce qui est écrit.
+    row["tool_prefix_effectif"] = (
+        tool_alias.normalize_prefix((entry or {}).get("tool_prefix")) or None)
     return row
 
 
@@ -213,8 +227,10 @@ CAPABILITIES += [
         description=(
             "[platform admin] Tenant tracking (identity tier, ADR 0052). op=list → one "
             "row per declared tenant: issuer + jwks + hosts + oauth client + dashboard "
-            "url, whether it is LOADED in this process's issuer registry (declared but "
-            "not restarted ⇒ its tokens are still rejected), orgs (via orgs.tenant_id), "
+            "url, the tool-name prefix shown to its accounts (`tool_prefix` declared "
+            "vs `tool_prefix_effectif` actually applied), whether it is LOADED in this "
+            "process's issuer registry (declared but not restarted ⇒ its tokens are "
+            "still rejected), orgs (via orgs.tenant_id), "
             "accounts (via sub qualification), active accounts + MCP calls over `days` "
             "(default 30), and `orgs_desalignees` — orgs attached to this tenant whose "
             "creator is qualified under another one. op=get (`slug`) adds the lists "

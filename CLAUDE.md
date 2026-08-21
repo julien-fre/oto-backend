@@ -84,6 +84,30 @@ Mistral). **Détail : `docs/auth-logto.md`** (jetons API, registre d'émetteurs,
 >   OAuth) aboutit toujours (`redirect_for`) — on ne peut pas « ne pas rediriger ».
 > - **Le socle d'instructions suit le tenant** (`guides` scope `tenant`, owner = le slug) :
 >   sinon l'assistant d'un partenaire se présente sous NOTRE marque à chaque session.
+> - ⚠️ **Le socle ne suffisait pas : les OUTILS aussi portaient notre nom.** Dans la
+>   conversation d'un client du partenaire, chaque appel s'affichait `Oto doc`,
+>   `Oto project`… — le nom d'un outil n'est pas de la prose, il est réaffiché à chaque
+>   tour. `tenants.tool_prefix` (NULL = inerte) fait traduire `oto_*` → `<prefix>_*` **au
+>   bord du protocole seulement** (`tool_alias.py` + `ToolAliasMiddleware`, OUTERMOST) :
+>   le nom CANONIQUE est rétabli avant que quoi que ce soit d'autre ne le lise, donc le
+>   journal `tool_calls`, les toggles `user_disabled_tools`, les gates par namespace et
+>   les refs `<tool:slug>` des procédures ne connaissent toujours qu'UN nom par outil —
+>   rien à migrer. Les deux formes sont acceptées à l'appel (la prose déjà écrite cite
+>   les canoniques). Sont traduits : `tools/list` (noms + descriptions), l'artefact de
+>   session, le contrat d'erreur, et les cinq tools qui prennent un nom en argument
+>   (`oto_call`, `oto_tool_schema`, `oto_list_my_tools`, `oto_{disable,enable}_tool`) —
+>   sinon le catalogue et le dispatch parleraient deux langues. **Seul le namespace `oto`
+>   bouge** : `data_*`, `run_*`/`feedback` et les connecteurs nomment une capacité ou un
+>   fournisseur, pas notre marque. ⚠️ Un préfixe qui serait un namespace déclaré est
+>   REFUSÉ (l'alias éclipserait un vrai outil) ; rien n'est réparé au passage (`Acme` est
+>   refusé, pas abaissé — cf. le slug). Poser = `UPDATE tenants SET tool_prefix=…` **+
+>   restart** (le registre est bâti au boot) ; l'écran `/platform/tenants` nomme l'écart
+>   `tool_prefix` (déclaré) vs `tool_prefix_effectif` (appliqué). ⚠️ **Pas de canari
+>   possible** : prod et preprod partagent la base (§Infra), donc la colonne posée vaut
+>   pour les deux — la seule fenêtre de test est le décalage des redémarrages. La face
+>   REST reste en canonique : ses écritures sont keyées par nom, et le dashboard d'un
+>   tenant n'est pas le nôtre. Reste NON traité, même classe : `serverInfo.name` du
+>   `initialize` vaut toujours `oto`.
 >
 > **Le suivi est un ÉCRAN depuis le 15/08** (`capabilities/tenants_admin.py` + `db.list_tenants_overview`,
 > REST `/api/admin/tenants[/{slug}]`, MCP `oto_admin_tenant`, dashboard `/platform/tenants`) : qui est
