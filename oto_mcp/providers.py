@@ -283,6 +283,7 @@ _CATEGORY_BY_CONNECTOR = {
     "slack": "Comms", "google": "Comms", "zohodesk": "Comms",
     "notion": "Knowledge", "zohoanalytics": "Knowledge",
     "lighton": "Knowledge", "fireflies": "Knowledge",
+    "notion": "Knowledge", "zohoanalytics": "Knowledge", "grain": "Knowledge",
     "lighton": "Knowledge",
     "promptwatch": "Marketing",
     "lighton": "Knowledge", "granola": "Knowledge",
@@ -328,6 +329,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
     "fireflies": "Fireflies.ai",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "granola": "Granola",
+    "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "grain": "Grain",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
@@ -443,6 +445,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
     "fireflies": "fireflies.ai",
     "granola": "granola.ai",
+    "grain": "grain.com",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
     "ahrefs": "ahrefs.com",
@@ -1417,6 +1420,16 @@ _REGISTRY_LIST = [
        secret_kind="api_key", label="Granola",
        help="notes de réunion, transcripts, résumés IA, dossiers, audit, webhooks",
        href="https://granola.ai"),
+    # grain : enregistrements de réunion, transcripts, partage, webhooks,
+    # données d'organisation. keyed api_key (Bearer + header Public-Api-Version),
+    # byo-only (pas de clé plateforme) — Personal Access Token (par user) ou
+    # Workspace Access Token (admin, accès à toutes les données du workspace).
+    # Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed`
+    # est chargé (`status_for` en dépend), on n'insère jamais au milieu.
+    _c("grain", ["grain"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Grain",
+       help="enregistrements de réunion, transcripts, partage, webhooks, org",
+       href="https://grain.com"),
 ]
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}
