@@ -17,14 +17,16 @@ performance plutôt qu'à un problème de modèle.
 
 **Quatre écarts au contrat du front, tous assumés et nommés** (arbitrés le 17/08) :
 
-1. **Nos blocs sont trop GROS.** Le parse ne produit que `text` et `code` ; un bloc
-   `text` est un run de lignes hors code, donc un titre + trois paragraphes + une liste
-   peuvent partager UN id. Le front veut `heading`/`paragraph`/`list`/`embed`, et l'id
-   de bloc n'a d'intérêt que s'il désigne une unité qu'on peut commenter. Découper ICI
-   fabriquerait des ids par sous-unité, donc POSITIONNELS — le retour de #362 par la
-   fenêtre. Le grain fin appartient au parse (donc à l'écriture), c'est un lot à part.
-   ⚠️ **Corollaire à dire au front : ne rien ancrer sur un `blk_*` avant ce lot-là** —
-   le passage au grain fin fera tourner les identités une dernière fois.
+1. ✅ **Les blocs sont ÉTIQUETÉS depuis le 21/08** (lot ⑦). ⚠️ Ce paragraphe a dit le
+   contraire jusque-là — « nos blocs sont trop gros, un titre et trois paragraphes
+   partagent un id » — et **c'était faux** : mesuré sur 140 blocs de corps réels, le
+   découpage se fait aux lignes vides ET aux titres, zéro bloc mixte, médiane 175 c.
+   L'erreur venait d'une lecture partielle du parse (la fonction qui découpe le texte
+   n'avait pas été lue), corrigée par la mesure. Ce qui manquait n'était pas le grain
+   mais **l'étiquette** : `role` (`heading`/`paragraph`/`list`) et `items[]` sont
+   désormais servis, en PROPRIÉTÉ et jamais en `type` (0054-D2).
+   **L'interdit d'ancrage sur un `blk_*` est LEVÉ** : l'étiquetage n'a fait tourner
+   aucune identité, la clé de rapprochement étant passée sur la SOURCE SEULE.
 2. **`modified` est servi en ISO, pas en « jeudi ».** Le front demande la date
    humanisée ; elle n'a pas sa place dans une réponse CACHÉE et versionnée : « jeudi »
    devient faux la semaine suivante sans que `rev` bouge, donc le 304 confirme un cache
@@ -83,7 +85,20 @@ class TrailCrumb(BaseModel):
 
 class ContentBlock(BaseModel):
     id: str
+    # Le SUPPORT du bloc — `text` | `code` (0054-D2 : + `image`, `référence` un jour).
+    # Ce n'est PAS ce que l'écran rend : ça, c'est `role`.
     type: str
+    # Le RÔLE DE PRÉSENTATION, propriété et jamais valeur de `type` : `heading` |
+    # `paragraph` | `list`. **Absent quand on ne sait pas classer** (tableau, citation) —
+    # un `paragraph` posé par défaut mentirait, et le front rend alors la source comme
+    # il l'entend. Servir le rôle À CÔTÉ du type, plutôt qu'à sa place, garde `type`
+    # disponible pour ce qu'il désigne : le jour où `image` arrive, il n'entre pas en
+    # collision avec `heading`.
+    role: Optional[str] = None
+    # Les puces d'une liste, déjà extraites. Le front ne peut pas les dériver sans
+    # reparser du markdown — ce serait une seconde implémentation du parse, qui
+    # divergerait de la nôtre au premier cas limite.
+    items: Optional[list[str]] = None
     # La source EXACTE du bloc. Invariant du parse : concaténer les `md` d'un nœud rend
     # son corps au caractère près — c'est ce qui permet au front de rendre ce qu'il sait
     # rendre et de laisser passer le reste, plutôt que de recevoir une forme appauvrie.
@@ -207,6 +222,8 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
     else:
         corps["body"] = [
             ContentBlock(id=b["public_id"], type=b["type"],
+                         role=(b.get("props") or {}).get("role"),
+                         items=(b.get("props") or {}).get("items"),
                          md=(b.get("props") or {}).get("md"),
                          lang=(b.get("props") or {}).get("lang")).model_dump(
                              exclude_none=True)

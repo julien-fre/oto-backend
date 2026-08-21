@@ -109,6 +109,52 @@ def parse_blocks(md: str) -> list[dict]:
     return blocks
 
 
+# Marqueurs de puce, ordonnée ou non. `_PUCE` capture le texte de l'item — c'est ce
+# que le front attend dans `items[]`, et il ne peut pas le dériver lui-même sans
+# reparser du markdown, ce qu'il refuse de faire (et il a raison : ce serait une
+# seconde implémentation du parse, qui divergerait de celle-ci).
+_PUCE = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]+(.*)$")
+_PUCE_ORDONNEE = re.compile(r"^ {0,3}\d{1,9}[.)][ \t]+")
+# Ce qui trahit une structure markdown qu'on ne classe PAS : tableau, citation.
+_AUTRE_STRUCTURE = re.compile(r"^ {0,3}(?:\||>)")
+
+
+def _role_de(md: str) -> tuple[str | None, list[str] | None]:
+    """Le RÔLE DE PRÉSENTATION d'un bloc texte, et ses puces s'il en a.
+
+    ⚠️ **Un rôle, jamais un `type`.** 0054-D2 : le `type` dit le SUPPORT (texte, code,
+    image, référence) ; la présentation descend en PROPRIÉTÉ. C'est la règle qu'on a
+    proposée au front le 16/08 et qu'il a déjà appliquée de son côté — en faire une
+    valeur de `type` rouvrirait le second axe qu'on lui a demandé d'éviter, et
+    entrerait en collision le jour où `image` et `référence` arrivent.
+
+    Trois rôles seulement, et **rien quand on ne sait pas** : un tableau ou une citation
+    ne reçoit aucun rôle plutôt qu'un `paragraph` qui mentirait. L'absence dit « on ne
+    classe pas », et le front rend la source comme il l'entend — son `type` est une
+    chaîne libre et son objet est ouvert, précisément pour ce cas.
+
+    ⚠️ **`ordered` n'est PAS servi ici, et ce n'est pas un oubli.** Chez le front, il
+    signifie « ce bloc est UN PAS d'une suite numérotée », les blocs consécutifs qui le
+    portent étant rendus dans un même `<ol>` — une suite de N blocs, donc N identifiants
+    ancrables. Notre parse garde une liste markdown numérotée dans UN SEUL bloc : lui
+    coller `ordered` serait un faux ami, deux notions sous un même nom. La forme en pas
+    séparés viendra d'une surface d'écriture, pas d'une conversion.
+    """
+    lignes = [l for l in md.splitlines() if l.strip()]
+    if not lignes:
+        return None, None
+    if _HEADING.match(lignes[0]):
+        return "heading", None
+    puces = [_PUCE.match(l) for l in lignes]
+    if all(puces):
+        return "list", [m.group(1).strip() for m in puces if m]
+    if any(_AUTRE_STRUCTURE.match(l) for l in lignes):
+        return None, None          # tableau, citation : on ne prétend pas classer
+    if any(p for p in puces):
+        return None, None          # prose ET puces mêlées : idem
+    return "paragraph", None
+
+
 def _flush_text(buf: list[str], blocks: list[dict]) -> None:
     """Vide le tampon de texte en blocs, coupés aux lignes vides et aux titres.
 
@@ -129,7 +175,13 @@ def _flush_text(buf: list[str], blocks: list[dict]) -> None:
             # prolonge le bloc précédent plutôt que d'en former un vide.
             blocks[-1]["md"] += piece
         else:
-            blocks.append({"type": TEXT, "md": piece})
+            bloc = {"type": TEXT, "md": piece}
+            role, items = _role_de(piece)
+            if role:
+                bloc["role"] = role
+            if items is not None:
+                bloc["items"] = items
+            blocks.append(bloc)
         cur.clear()
 
     for line in buf:
@@ -178,7 +230,23 @@ def code_of(block: dict) -> Optional[str]:
 # calcule nativement (`md5(text)`), donc le filtre SQL ci-dessous peut se comparer
 # sans que Python n'ait à relire un seul corps quand rien n'a bougé — le boot
 # nominal coûte UNE requête qui ne rend rien.
-_MARKER = "blocks_md5"
+#
+# ⚠️ **Le nom du marqueur PORTE LA VERSION DU PARSE, et c'est le mécanisme de
+# migration.** Le marqueur est l'empreinte du CORPS : tant que le corps ne bouge pas,
+# rien ne se re-projette — ce qui est le but, sauf quand c'est le PARSE qui change.
+# Le 21/08, l'étiquetage (rôle de présentation + puces) a changé ce que le parse
+# PRODUIT sans toucher aux corps : sans ce renommage, aucun nœud existant n'aurait
+# jamais reçu son rôle, et la surface aurait servi deux populations de blocs — les
+# anciens muets, les neufs étiquetés — sans que rien ne le signale.
+#
+# Bumper le suffixe = une re-projection de tous les nœuds, une fois, en lots, au boot.
+# Elle est **gratuite pour les références externes** : la clé de rapprochement est la
+# SOURCE SEULE, donc chaque bloc retrouve son identifiant. C'est précisément ce qui
+# rend ce geste anodin aujourd'hui, et ce qui l'aurait rendu coûteux avant #362.
+_MARKER = "blocks_md5_v2"
+# L'ancien nom, retiré des props à la re-projection : un marqueur qui ne veut plus rien
+# dire est de la carte qui ment — le prochain lecteur croirait qu'il pilote quelque chose.
+_MARKER_PERIME = "blocks_md5"
 
 _SELECT_STALE = (
     "SELECT id, public_id, COALESCE(props->>'body_md', '') AS body "
@@ -213,12 +281,30 @@ def write_node_blocks(conn, node_id: int, body: str) -> int:
 
     **L'identité survit à la re-projection** (#362) : les blocs existants du nœud
     sont lus d'abord, et chaque bloc parsé RÉCUPÈRE l'identifiant d'un existant
-    reconnaissable — même type, même source exacte — apparié dans l'ordre des
-    positions, chaque existant consommé au plus une fois. Insérer ou déplacer ne
-    ré-identifie donc jamais les blocs intacts ; un bloc ÉDITÉ prend une identité
-    neuve, et c'est assumé — mieux vaut une adresse neuve qu'une adresse qui
-    pointe un texte qui n'est plus celui qu'on visait. Les cas ambigus (deux
-    blocs de même source) s'apparient dans l'ordre : stable au no-op.
+    reconnaissable — **même SOURCE exacte** — apparié dans l'ordre des positions,
+    chaque existant consommé au plus une fois. Insérer ou déplacer ne ré-identifie
+    donc jamais les blocs intacts ; un bloc ÉDITÉ prend une identité neuve, et c'est
+    assumé — mieux vaut une adresse neuve qu'une adresse qui pointe un texte qui
+    n'est plus celui qu'on visait. Les cas ambigus (deux blocs de même source)
+    s'apparient dans l'ordre : stable au no-op.
+
+    ⚠️ **La clé de rapprochement est la SOURCE SEULE, plus `(type, source)`** — changé
+    le 21/08, et ce n'est pas un détail d'implémentation. Le lot qui vient étiquette les
+    blocs (`text` → titre / paragraphe / liste) : avec le type dans la clé, ré-étiqueter
+    un corps **inchangé au caractère près** aurait fait tourner toutes les identités,
+    donc cassé toute référence externe — pour un texte que personne n'avait touché. Une
+    rotation gratuite, et la seconde en deux mois après celle de #362.
+
+    C'est sûr, et vérifié dans les deux sens plutôt que supposé :
+    - **structurellement**, un bloc `code` porte ses clôtures DANS sa source (c'est une
+      clôture qui l'ouvre) et un bloc `text` ne peut pas en contenir (une clôture est
+      précisément ce qui le termine) ⟹ les deux familles ont des sources DISJOINTES ;
+    - **empiriquement**, zéro collision sur les 140 blocs des corps réels du dépôt ;
+    - **après l'étiquetage**, les types seront DÉRIVÉS de la source (un titre commence
+      par `#`) ⟹ même source, même type : la disjonction tient encore.
+
+    Le seul cas résiduel — deux blocs strictement identiques dans un même nœud — est
+    celui que l'appariement par ordre départage déjà.
 
     ⚠️ Le marqueur est l'empreinte du corps QU'ON VIENT DE PARSER, pas une relecture
     SQL de `props->>'body_md'` : si le corps a changé entre la lecture et l'écriture,
@@ -226,16 +312,16 @@ def write_node_blocks(conn, node_id: int, body: str) -> int:
     Relire en SQL stamperait au contraire le nouveau corps avec les blocs de
     l'ancien — un décalage définitif, et silencieux."""
     parsed = parse_blocks(body)
-    dispo: dict[tuple, list] = {}
+    dispo: dict[str, list] = {}
     for r in conn.execute(
-            "SELECT public_id, type, props->>'md' AS md FROM blocks "
+            "SELECT public_id, props->>'md' AS md FROM blocks "
             "WHERE node_id = %s ORDER BY position", (node_id,)).fetchall():
-        dispo.setdefault((r["type"], r["md"] or ""), []).append(r["public_id"])
+        dispo.setdefault(r["md"] or "", []).append(r["public_id"])
     conn.execute("DELETE FROM blocks WHERE node_id = %s", (node_id,))
     if parsed:
         params = []
         for idx, b in enumerate(parsed):
-            reconnus = dispo.get((b["type"], b["md"]))
+            reconnus = dispo.get(b["md"])
             pid = reconnus.pop(0) if reconnus else _new_block_id()
             props = {k: v for k, v in b.items() if k != "type"}
             params.append((pid, node_id,
@@ -243,7 +329,8 @@ def write_node_blocks(conn, node_id: int, body: str) -> int:
         with conn.cursor() as cur:
             cur.executemany(_INSERT_BLOCK, params)
     conn.execute(
-        f"UPDATE nodes SET props = props || jsonb_build_object('{_MARKER}', %s::text) "
+        f"UPDATE nodes SET props = (props - '{_MARKER_PERIME}') "
+        f"|| jsonb_build_object('{_MARKER}', %s::text) "
         "WHERE id = %s",
         (hashlib.md5(body.encode("utf-8")).hexdigest(), node_id))
     return len(parsed)
