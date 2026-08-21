@@ -89,11 +89,13 @@ def test_ahrefs_is_keyed_byo_only_connector():
     assert providers._LOGO_DOMAIN_BY_CONNECTOR["ahrefs"] == "ahrefs.com"
 
 
-def test_ahrefs_appended_last_among_keyed_connectors():
-    """L'ordre des connecteurs `keyed` est chargé (`status_for` en dépend) —
-    on n'insère jamais au milieu, seulement en dernier."""
+def test_ahrefs_registered_among_keyed_connectors():
+    """L'ordre des `keyed` est chargé (`status_for` en dépend) : on n'insère
+    jamais au milieu. On vérifie l'APPARTENANCE, pas la position — deux
+    connecteurs fusionnés le même jour ne peuvent pas être « le dernier »
+    tous les deux (vécu le 21/08/2026 : main au rouge sur ce motif)."""
     keyed_names = [c.name for c in providers._REGISTRY_LIST if c.keyed]
-    assert keyed_names[-1] == "ahrefs"
+    assert "ahrefs" in keyed_names
 
 
 def test_ahrefs_has_onboarding_doc():

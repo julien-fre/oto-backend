@@ -283,6 +283,10 @@ _CATEGORY_BY_CONNECTOR = {
     "slack": "Comms", "google": "Comms", "zohodesk": "Comms",
     "notion": "Knowledge", "zohoanalytics": "Knowledge",
     "lighton": "Knowledge", "fireflies": "Knowledge",
+    "notion": "Knowledge", "zohoanalytics": "Knowledge", "grain": "Knowledge",
+    "lighton": "Knowledge",
+    "promptwatch": "Marketing",
+    "lighton": "Knowledge", "granola": "Knowledge",
     "planity": "Métier",
     "atlassian": "Métier",
     "hubspot": "Prospection", "apollo": "Prospection", "zerobounce": "Prospection",
@@ -290,6 +294,7 @@ _CATEGORY_BY_CONNECTOR = {
     "brevo": "Prospection", "salesforce": "Prospection", "pipedrive": "Prospection",
     "sellsy": "Prospection",
     "figma": "Design", "supabase": "Dev",
+    "webflow": "CMS",
     # recherche web / scraping
     "aiark": "Prospection", "cognism": "Prospection",
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
@@ -323,10 +328,13 @@ _PUBLISHER_BY_CONNECTOR = {
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
     "fireflies": "Fireflies.ai",
+    "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "granola": "Granola",
+    "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "grain": "Grain",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
     "aiark": "AI Ark", "cognism": "Cognism", "lighton": "LightOn",
+    "promptwatch": "PromptWatch",
     "recruitee": "Recruitee", "teamtailor": "Teamtailor", "spott": "Spott",
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
@@ -424,6 +432,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "theirstack": "theirstack.com", "origami": "origami.chat",
     "lightfield": "lightfield.app",
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
+    "promptwatch": "promptwatch.com",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
     "reddit": "reddit.com",
     # CRM & vente
@@ -435,9 +444,12 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     # Productivité & infra
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
     "fireflies": "fireflies.ai",
+    "granola": "granola.ai",
+    "grain": "grain.com",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
     "ahrefs": "ahrefs.com",
+    "webflow": "webflow.com",
 }
 
 # Connecteurs SANS logo de marque, et c'est voulu : soit génériques (le connecteur
@@ -840,6 +852,34 @@ _REGISTRY_LIST = [
                            required=False,
                            help="id du workspace LightOn qui scope par défaut "
                                 "search/ask/upload (optionnel)"),
+       )),
+
+    # promptwatch : monitoring de visibilité IA (comment une marque apparaît dans
+    # les réponses ChatGPT/Claude/Gemini…) — prompts organisés en monitors,
+    # analytics visibilité/sentiment/citations, contenu généré par IA pour
+    # combler les gaps de couverture. Client REST synchrone dans oto-core
+    # (`oto.tools.promptwatch`), tools curés dans `tools/promptwatch.py` (10
+    # tools `op=`, ADR 0047 — la portée v1 couvre projects/monitors/prompts
+    # (+ bulk natif)/responses/visibility/citations/content+content-gap/
+    # tags+topics/personas/brands ; Publishing, Content Agent, Ads Radar,
+    # Shopping, Site Health, Sitemap, Page Tracker, Models, Actions, Query
+    # Fanouts et Social Citations sont DÉFÉRÉS, pas construits). Credential à
+    # 2 champs (clé API + project_id optionnel — ne sert qu'à une clé
+    # ORG-level ciblant un projet précis, une clé project-level l'ignore) →
+    # secret_kind="fields", résolu via resolve_credential_fields, même patron
+    # que lighton. BYO only : pas d'accord commercial Otomata↔PromptWatch.
+    _c("promptwatch", ["promptwatch"], auth_modes={"byo_user", "byo_org"},
+       secret_kind="fields",
+       label="PromptWatch",
+       help="monitoring de visibilité IA — prompts, monitors, réponses, "
+            "citations, contenu généré pour combler les gaps",
+       href="https://promptwatch.com", credential_fields=(
+           CredentialField("api_key", "API key", secret=True,
+                           help="Settings > API Keys sur le dashboard PromptWatch"),
+           CredentialField("project_id", "Project ID par défaut", secret=False,
+                           required=False,
+                           help="clé ORG-level ciblant un projet précis "
+                                "uniquement (optionnel) — voir promptwatch_project"),
        )),
 
     # --- sessions per-user (hors resolve_api_key, stockage dédié) ------------
@@ -1279,8 +1319,16 @@ _REGISTRY_LIST = [
     # endpoint POST), keyed api_key (Bearer), byo-only (pas de clé plateforme).
     # Webhooks V1/V2 = dashboard-only chez Fireflies, aucune query/mutation
     # GraphQL pour ça — volontairement absent de la surface MCP de ce connecteur.
-    # Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed`
-    # est chargé (`status_for` en dépend), on n'insère jamais au milieu.
+    # Ajouté en fin de `_REGISTRY_LIST`, par convention de lecture.
+    # ⚠️ Ce commentaire a longtemps affirmé « l'ordre est chargé, `status_for` en
+    # dépend » — c'est FAUX, vérifié le 21/08/2026 : ni `KEY_PROVIDERS` ni
+    # `_REGISTRY_LIST` ne sont indexés par position nulle part, et `status_for`
+    # (access.py) les ITÈRE pour remplir `out["providers"][nom]`, un dict par NOM.
+    # L'ordre n'y survit que comme ordre de sérialisation, donc d'affichage.
+    # Cette phrase a coûté trois tests faux (ahrefs, fireflies, granola), chacun
+    # affirmant « je suis le dernier » — deux ne peuvent pas l'être ensemble, et
+    # main est passée au rouge le jour où deux connecteurs ont été fusionnés le
+    # même matin. Vérifier un invariant avant de demander qu'on le garde.
     _c("fireflies", ["fireflies"], auth_modes={"byo_user", "byo_org"}, keyed=True,
        secret_kind="api_key", label="Fireflies",
        help="transcripts de réunion, réunion en direct, AskFred, org",
@@ -1327,6 +1375,30 @@ _REGISTRY_LIST = [
                            required=False, help="mode oauth2 (optionnel)"),
        )),
 
+    # webflow : CMS (collections + items), API v2 (developers.webflow.com/data).
+    # keyed=True, UN seul champ (token) : un Site API token Webflow est bound à
+    # UN site (vérifié contre reference/authentication/site-token — « Site
+    # tokens are created per site »), donc pas de site_id à saisir — le client
+    # (oto-core) le résout lui-même via GET /sites (scope sites:read) au
+    # premier appel, mis en cache. Paste-the-token, comme folk/cognism — pas de
+    # second champ à aller chercher dans les settings. byo-only (pas de clé
+    # plateforme, pas d'accord commercial Otomata↔Webflow). Scope v1 = lecture/
+    # écriture des collections/items STAGED (draft) + publish explicite — pas de
+    # pages/assets/forms/ecommerce ici.
+    _c("webflow", ["webflow"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key",
+       label="Webflow",
+       help="CMS — collections & items (site API token)",
+       publisher="Webflow", href="https://webflow.com",
+       credential_fields=(
+           CredentialField("token", "Site API token", secret=True, reveal=True,
+                           help="Site Settings → Apps & Integrations → API access — "
+                                "génère un token avec les scopes cms:read, "
+                                "cms:write et sites:read (ce dernier permet à oto "
+                                "de retrouver le site sans que tu aies à copier "
+                                "son ID)"),
+       )),
+
     # --- bridge universel (ADR 0034, amende 0003/0011) ------------------------
     # (Connecteur `bridge` RETIRÉ le 2026-07-16, ADR 0037 / oto-backend#108 :
     #  subsumé par le connecteur `http` générique — un bridge n'est qu'une API HTTP
@@ -1338,14 +1410,49 @@ _REGISTRY_LIST = [
     # visibilité de marque sur les chatbots IA, analytics on-site, GSC, social
     # publishing. keyed api_key (Bearer), byo-only (pas de clé plateforme) :
     # un seat Ahrefs est cher et par abonnement, même raisonnement que
-    # TheirStack. Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des
-    # connecteurs `keyed` est chargé (`status_for` en dépend), on n'insère
-    # jamais au milieu.
+    # Ajouté en fin de `_REGISTRY_LIST`, par convention de lecture.
+    # ⚠️ Ce commentaire a longtemps affirmé « l'ordre est chargé, `status_for` en
+    # dépend » — c'est FAUX, vérifié le 21/08/2026 : ni `KEY_PROVIDERS` ni
+    # `_REGISTRY_LIST` ne sont indexés par position nulle part, et `status_for`
+    # (access.py) les ITÈRE pour remplir `out["providers"][nom]`, un dict par NOM.
+    # L'ordre n'y survit que comme ordre de sérialisation, donc d'affichage.
+    # Cette phrase a coûté trois tests faux (ahrefs, fireflies, granola), chacun
+    # affirmant « je suis le dernier » — deux ne peuvent pas l'être ensemble, et
+    # main est passée au rouge le jour où deux connecteurs ont été fusionnés le
+    # même matin. Vérifier un invariant avant de demander qu'on le garde.
     _c("ahrefs", ["ahrefs"], auth_modes={"byo_user", "byo_org"}, keyed=True,
        secret_kind="api_key", label="Ahrefs",
        help="SEO — backlinks, mots-clés, rank tracking, audits techniques, "
             "visibilité de marque sur les chatbots IA, analytics, GSC, social",
        href="https://ahrefs.com"),
+    # granola : notes de réunion, transcripts, résumés IA, dossiers, journal
+    # d'audit, webhook endpoints. keyed api_key (Bearer), byo-only (pas de clé
+    # plateforme) — clé personnelle (tout membre Business) ou clé workspace
+    # (admin, Enterprise), toutes deux un Bearer simple ici. Ajouté en DERNIER
+    # dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed` est chargé
+    # (`status_for` en dépend), on n'insère jamais au milieu.
+    _c("granola", ["granola"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Granola",
+       help="notes de réunion, transcripts, résumés IA, dossiers, audit, webhooks",
+       href="https://granola.ai"),
+    # grain : enregistrements de réunion, transcripts, partage, webhooks,
+    # données d'organisation. keyed api_key (Bearer + header Public-Api-Version),
+    # byo-only (pas de clé plateforme) — Personal Access Token (par user) ou
+    # Workspace Access Token (admin, accès à toutes les données du workspace).
+    # Ajouté en fin de `_REGISTRY_LIST`, par convention de lecture.
+    # ⚠️ Ce commentaire a longtemps affirmé « l'ordre est chargé, `status_for` en
+    # dépend » — c'est FAUX, vérifié le 21/08/2026 : ni `KEY_PROVIDERS` ni
+    # `_REGISTRY_LIST` ne sont indexés par position nulle part, et `status_for`
+    # (access.py) les ITÈRE pour remplir `out["providers"][nom]`, un dict par NOM.
+    # L'ordre n'y survit que comme ordre de sérialisation, donc d'affichage.
+    # Cette phrase a coûté trois tests faux (ahrefs, fireflies, granola), chacun
+    # affirmant « je suis le dernier » — deux ne peuvent pas l'être ensemble, et
+    # main est passée au rouge le jour où deux connecteurs ont été fusionnés le
+    # même matin. Vérifier un invariant avant de demander qu'on le garde.
+    _c("grain", ["grain"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Grain",
+       help="enregistrements de réunion, transcripts, partage, webhooks, org",
+       href="https://grain.com"),
 ]
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}
