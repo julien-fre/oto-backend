@@ -12,11 +12,11 @@ each org that wants Linear posts its own workspace key.
 - `linear_issue` — the core object. op=list/get/search/create/update/
   archive/delete.
 - `linear_comment` — comments on an issue. op=list/get/create/update/delete.
-- `linear_project` — op=list/get/create/update.
+- `linear_project` — op=list/get/create/update/delete.
 - `linear_team` — a team + its workflow states (needed to resolve a
   `state_id` for `linear_issue(op="update")`). op=list/get/states.
 - `linear_cycle` — sprints. op=list/get.
-- `linear_label` — op=list/get/create.
+- `linear_label` — op=list/get/create/delete.
 - `linear_user` — op=list/get/viewer (the API key's own owner).
 - `linear_webhook` — REAL GraphQL surface here, unlike Fireflies (dashboard-
   only there). op=list/create/update/delete.
@@ -26,11 +26,12 @@ REFUSES rather than dropping it (`_only`, allow-list per op — same contract
 as Fireflies' `_refuse_ignored`, expressed as an allow-list instead of a
 per-op deny-list since every op here has a small, disjoint param set).
 
-⚠️ **No live key was available while building this** — see
-`oto.tools.linear.client`'s module docstring for exactly what's unverified
-(human-readable issue identifiers on `get`, `issueSearch`'s argument shape,
-the full `resourceTypes` enum on webhooks). Treat this connector as
-unverified until exercised against a real Linear workspace key.
+**Live-tested 2026-08-21** against a real workspace, through this tool layer
+(not just the raw client) — full create/get/update/delete lifecycle on
+issues, projects, and webhooks, param-guard behavior confirmed, everything
+created was cleaned up. See `oto.tools.linear.client`'s module docstring
+for the 6 real bugs this surfaced (all fixed) — none catchable by reading
+Linear's docs or its GraphQL schema alone.
 """
 from __future__ import annotations
 
@@ -286,13 +287,13 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linear_project(
-        op: Literal["list", "get", "create", "update"] = "list",
+        op: Literal["list", "get", "create", "update", "delete"] = "list",
         project_id: Optional[str] = None,
         team_id: Optional[str] = None,
         team_ids: Optional[List[str]] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        state: Optional[str] = None,
+        status_id: Optional[str] = None,
         lead_id: Optional[str] = None,
         target_date: Optional[str] = None,
         first: Optional[int] = None,
@@ -302,41 +303,51 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             op: "list" (optionally scoped to one team) | "get" | "create" |
-                "update".
-            project_id: REQUIRED by "get"/"update".
+                "update" | "delete".
+            project_id: REQUIRED by "get"/"update"/"delete".
             team_id: op="list" only — filter to projects visible to one team.
             team_ids: REQUIRED by "create" — a project belongs to ≥1 team.
             name: REQUIRED by "create". Also settable on "update".
-            description/state/lead_id/target_date: op="create"/"update" fields.
+            description/lead_id/target_date: op="create"/"update" fields.
+            status_id: op="create"/"update" — id of one of the workspace's
+                configured project statuses (NOT a free-text state — Linear
+                has no such field). Read an existing project's `status.id`
+                via `linear_project(op="get"|"list")` to find a valid value.
             first/after: op="list" only — cursor pagination.
         """
         c = _client()
         if op == "list":
             _only(op, {"team_id", "first", "after"},
                   project_id=project_id, team_ids=team_ids, name=name,
-                  description=description, state=state, lead_id=lead_id,
+                  description=description, status_id=status_id, lead_id=lead_id,
                   target_date=target_date)
             return _run(lambda: c.list_projects(team_id=team_id, first=_page(first), after=after))
         if op == "get":
             _require(op, project_id=project_id)
             _only(op, {"project_id"}, team_id=team_id, team_ids=team_ids, name=name,
-                  description=description, state=state, lead_id=lead_id, target_date=target_date,
-                  first=first, after=after)
+                  description=description, status_id=status_id, lead_id=lead_id,
+                  target_date=target_date, first=first, after=after)
             return _run(lambda: c.get_project(project_id))
         if op == "create":
             _require(op, name=name, team_ids=team_ids)
-            _only(op, {"name", "team_ids", "description", "state", "lead_id", "target_date"},
+            _only(op, {"name", "team_ids", "description", "status_id", "lead_id", "target_date"},
                   project_id=project_id, team_id=team_id, first=first, after=after)
             return _run(lambda: c.create_project(
-                name, team_ids, description=description, state=state,
+                name, team_ids, description=description, status_id=status_id,
                 lead_id=lead_id, target_date=target_date))
         if op == "update":
             _require(op, project_id=project_id)
-            _only(op, {"project_id", "name", "description", "state", "lead_id", "target_date"},
+            _only(op, {"project_id", "name", "description", "status_id", "lead_id", "target_date"},
                   team_id=team_id, team_ids=team_ids, first=first, after=after)
             return _run(lambda: c.update_project(
-                project_id, name=name, description=description, state=state,
+                project_id, name=name, description=description, status_id=status_id,
                 lead_id=lead_id, target_date=target_date))
+        if op == "delete":
+            _require(op, project_id=project_id)
+            _only(op, {"project_id"}, team_id=team_id, team_ids=team_ids, name=name,
+                  description=description, status_id=status_id, lead_id=lead_id,
+                  target_date=target_date, first=first, after=after)
+            return _run(lambda: c.delete_project(project_id))
         raise _bad(f"op inconnu: {op!r}")
 
     # ================================================================
@@ -410,7 +421,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linear_label(
-        op: Literal["list", "get", "create"] = "list",
+        op: Literal["list", "get", "create", "delete"] = "list",
         label_id: Optional[str] = None,
         team_id: Optional[str] = None,
         name: Optional[str] = None,
@@ -423,8 +434,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             op: "list" (optionally scoped to one team; workspace labels
-                have no team) | "get" | "create".
-            label_id: REQUIRED by "get".
+                have no team) | "get" | "create" | "delete".
+            label_id: REQUIRED by "get"/"delete".
             team_id: op="list" filter. On "create", scopes the new label to
                 a team — omit for a workspace-level label.
             name: REQUIRED by "create".
@@ -447,6 +458,11 @@ def register(mcp: FastMCP) -> None:
                   first=first, after=after)
             return _run(lambda: c.create_label(
                 name, team_id=team_id, color=color, description=description))
+        if op == "delete":
+            _require(op, label_id=label_id)
+            _only(op, {"label_id"}, team_id=team_id, name=name, color=color, description=description,
+                  first=first, after=after)
+            return _run(lambda: c.delete_label(label_id))
         raise _bad(f"op inconnu: {op!r}")
 
     # ================================================================
@@ -510,11 +526,12 @@ def register(mcp: FastMCP) -> None:
             team_id: op="list" filter; op="create" scopes the subscription
                 to one team (use `all_public_teams` instead to cover every
                 public team).
-            resource_types: op="create"/"update" — event types, e.g.
-                `["Issue", "Comment"]`. Linear's documented values include
-                "Issue", "Comment", "IssueLabel", "Project", "Cycle",
-                "ProjectUpdate", "Reaction" — passed through raw, validated
-                server-side (full enum unconfirmed here).
+            resource_types: REQUIRED by "create" (live-confirmed via
+                introspection 2026-08-21: `WebhookCreateInput.resourceTypes`
+                is non-null — Linear rejects a webhook with none). Optional
+                on "update". Event types, e.g. `["Issue", "Comment"]` —
+                passed through raw, validated server-side (the full enum
+                wasn't confirmed here).
             secret: op="create" only — signs delivered payloads.
             enabled: op="create" (default True) / "update".
             all_public_teams: op="create" only — subscribe across every
@@ -528,7 +545,7 @@ def register(mcp: FastMCP) -> None:
                   secret=secret, enabled=enabled, all_public_teams=all_public_teams)
             return _run(lambda: c.list_webhooks(team_id=team_id, first=_page(first), after=after))
         if op == "create":
-            _require(op, url=url)
+            _require(op, url=url, resource_types=resource_types)
             _only(op, {"url", "team_id", "resource_types", "secret", "enabled", "all_public_teams"},
                   webhook_id=webhook_id, first=first, after=after)
             return _run(lambda: c.create_webhook(
