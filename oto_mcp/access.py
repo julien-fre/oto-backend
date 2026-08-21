@@ -1648,23 +1648,61 @@ def status_for(sub: str, *, org: "int | None | object" = _UNSET,
                  "active_group": active_group, "providers": {}}
     # Équipes du sub dans l'org (une requête, partagée par tous les hints
     # `team_key_group` ci-dessous). Best-effort.
+    #
+    # ⚠️ **Deux préchargements, mesurés avant d'être écrits (21/08, 67 connecteurs,
+    # 1 707 ms à chaud).** Ce qui pesait n'était PAS ce que le lot précédent avait
+    # corrigé sur `/shell` : `current_org` est déjà résolu une seule fois ici (9 ms), et
+    # appliquer le même correctif n'aurait rien gagné. Ce qui pesait :
+    #   • les sondes `member` (589 ms) et `org` (488 ms) — 64 %, une marche par
+    #     connecteur ⟹ **sonde préchargée** (l'inventaire lu une fois, la cascade répond
+    #     en mémoire ; le walker reste intouché, c'est une sonde de plus) ;
+    #   • **le quota, 410 ms et 24 %** — une requête par connecteur sur une table dont
+    #     une seule rend tout le jour d'une personne. Personne ne l'avait vu.
+    #
+    # ⚠️ Les deux sont construits sur `active_org` — donc sur le SUJET du snapshot,
+    # jamais sur le requérant. C'est ce qui fait que la fiche admin d'un tiers reste
+    # juste : `org`/`group` explicites (≠ `_UNSET`) court-circuitent `current_org`, et
+    # les préchargements SUIVENT cette valeur. Un préchargement bâti sur le contexte de
+    # l'appelant rouvrirait la fuite que le seam scopé sur l'acteur a fermée.
     try:
         member_groups = (group_store.list_groups_for_user(sub, active_org)
                          if active_org is not None else [])
     except Exception:
         member_groups = []
+    try:
+        sonde = preloaded_presence_probe(sub, org=active_org, groups=member_groups)
+    except Exception:      # une accélération, jamais un prérequis
+        logger.warning("status_for: préchargement des credentials indisponible",
+                       exc_info=True)
+        sonde = PRESENCE_PROBE
+    try:
+        quotas = db.usage_today_map(sub)
+    except Exception:
+        logger.warning("status_for: préchargement des quotas indisponible", exc_info=True)
+        quotas = None
+
+    def _used(provider: str) -> int:
+        """Le compteur du jour — depuis la map préchargée, ou la lecture unitaire.
+
+        Le repli n'est pas décoratif : si le préchargement a échoué, rendre 0 partout
+        ferait afficher « quota intact » à quelqu'un qui l'a épuisé. Mieux vaut payer
+        les 48 requêtes que mentir sur un quota."""
+        if quotas is not None:
+            return quotas.get(provider, 0)
+        return db.get_usage_today(sub, provider)
+
     for provider in db.KEY_PROVIDERS:
         # Marche COMPLÈTE du walker en sonde PRÉSENCE (pas de déchiffrement sur le
         # chemin /api/me) : le gagnant donne le mode, les barreaux suivants restent
         # affichables (flags par niveau). Miroir STRUCTUREL de resolve_api_key —
         # toute divergence ferait mentir /api/me sur le mode réel.
         hits = list(walk_cascade(sub, provider, org=active_org, group=active_group,
-                                 probe=PRESENCE_PROBE, want="auto"))
+                                 probe=sonde, want="auto"))
         user_has = any(r.mode == "user" and r.via == "local" for r in hits)
         group_has = any(r.mode == "group" for r in hits)
         org_has = any(r.mode == "org" for r in hits)
         grant = next((r.payload for r in hits if r.mode == "platform"), None)
-        used = db.get_usage_today(sub, provider)
+        used = _used(provider)
         limit = (grant.get("daily_quota") if grant else None) or quota_for(provider)
 
         winner = hits[0] if hits else None
@@ -1708,7 +1746,7 @@ def status_for(sub: str, *, org: "int | None | object" = _UNSET,
         # Même walker, `want='byo'` (le credential EST le grant — pas de palier
         # plateforme ni de quota, cf. resolve_credential_fields).
         hits = list(walk_cascade(sub, c.name, org=active_org, group=active_group,
-                                 probe=PRESENCE_PROBE, want="byo"))
+                                 probe=sonde, want="byo"))
         mode = hits[0].mode if hits else "forbidden"
         out["providers"][c.name] = {
             "mode": mode,

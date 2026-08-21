@@ -950,6 +950,25 @@ def prune_tool_calls(keep_days: int = 30) -> int:
     return n_calls
 
 
+def usage_today_map(sub: str) -> dict[str, int]:
+    """TOUS les compteurs du jour d'un sub, en UNE lecture : `{tool: count}`.
+
+    `get_usage_today` répond pour UN outil, ce qui est juste sur le chemin d'un appel —
+    mais `status_for` le rappelle une fois par connecteur du catalogue. Mesuré le
+    21/08 : **48 requêtes, 410 ms, 24 % du coût de `/api/me`**, pour une table dont une
+    seule requête rend la totalité des lignes du jour d'une personne.
+
+    Un outil absent de la map n'a pas de compteur aujourd'hui — c'est `0`, et c'est à
+    l'appelant de le lire ainsi (`.get(tool, 0)`), comme la lecture unitaire rend 0 sur
+    une ligne absente.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT tool, count FROM usage WHERE sub = %s AND day = CURRENT_DATE",
+            (sub,)).fetchall()
+    return {r["tool"]: int(r["count"]) for r in rows}
+
+
 def get_usage_today(sub: str, tool: str) -> int:
     with _connect() as conn:
         row = conn.execute(
