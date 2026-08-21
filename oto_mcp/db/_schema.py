@@ -368,6 +368,24 @@ CREATE TABLE IF NOT EXISTS legal_acceptances (
     PRIMARY KEY (sub, doc_slug)
 );
 
+-- Override PAR TENANT des métadonnées d'un doc légal (`legal_docs.CURRENT_DOCS`).
+-- Un tenant tiers (Tulina…) a ses PROPRES CGU, pas les nôtres — absence de ligne
+-- pour (tenant, slug) ⟹ le défaut plateforme s'applique tel quel (`legal_docs.
+-- docs_for`). Lue en LIVE à chaque `/api/me/legal` (pas de cache, pas de boot) :
+-- contrairement au registre d'émetteurs (`tenancy.py`, construit au boot), une
+-- écriture ici prend effet au tour suivant, sans redémarrage. `tenant_slug` n'est
+-- PAS une FK vers `tenants.slug` — un slug qualifie un sub sans jamais requérir
+-- que son émetteur soit déjà déclaré (même ordre lâche que `tenancy.qualify`).
+CREATE TABLE IF NOT EXISTS tenant_legal_docs (
+    tenant_slug TEXT NOT NULL,
+    doc_slug TEXT NOT NULL,
+    version TEXT NOT NULL,
+    label TEXT NOT NULL,
+    url TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tenant_slug, doc_slug)
+);
+
 
 -- RBAC connecteur — table UNIQUE `connector_acl` (chantier ACL, cadrage 10/07 :
 -- fusion d'org_connector_access + group_connector_access ; le grain est une COLONNE
