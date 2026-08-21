@@ -1319,8 +1319,16 @@ _REGISTRY_LIST = [
     # endpoint POST), keyed api_key (Bearer), byo-only (pas de clé plateforme).
     # Webhooks V1/V2 = dashboard-only chez Fireflies, aucune query/mutation
     # GraphQL pour ça — volontairement absent de la surface MCP de ce connecteur.
-    # Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed`
-    # est chargé (`status_for` en dépend), on n'insère jamais au milieu.
+    # Ajouté en fin de `_REGISTRY_LIST`, par convention de lecture.
+    # ⚠️ Ce commentaire a longtemps affirmé « l'ordre est chargé, `status_for` en
+    # dépend » — c'est FAUX, vérifié le 21/08/2026 : ni `KEY_PROVIDERS` ni
+    # `_REGISTRY_LIST` ne sont indexés par position nulle part, et `status_for`
+    # (access.py) les ITÈRE pour remplir `out["providers"][nom]`, un dict par NOM.
+    # L'ordre n'y survit que comme ordre de sérialisation, donc d'affichage.
+    # Cette phrase a coûté trois tests faux (ahrefs, fireflies, granola), chacun
+    # affirmant « je suis le dernier » — deux ne peuvent pas l'être ensemble, et
+    # main est passée au rouge le jour où deux connecteurs ont été fusionnés le
+    # même matin. Vérifier un invariant avant de demander qu'on le garde.
     _c("fireflies", ["fireflies"], auth_modes={"byo_user", "byo_org"}, keyed=True,
        secret_kind="api_key", label="Fireflies",
        help="transcripts de réunion, réunion en direct, AskFred, org",
@@ -1402,9 +1410,16 @@ _REGISTRY_LIST = [
     # visibilité de marque sur les chatbots IA, analytics on-site, GSC, social
     # publishing. keyed api_key (Bearer), byo-only (pas de clé plateforme) :
     # un seat Ahrefs est cher et par abonnement, même raisonnement que
-    # TheirStack. Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des
-    # connecteurs `keyed` est chargé (`status_for` en dépend), on n'insère
-    # jamais au milieu.
+    # Ajouté en fin de `_REGISTRY_LIST`, par convention de lecture.
+    # ⚠️ Ce commentaire a longtemps affirmé « l'ordre est chargé, `status_for` en
+    # dépend » — c'est FAUX, vérifié le 21/08/2026 : ni `KEY_PROVIDERS` ni
+    # `_REGISTRY_LIST` ne sont indexés par position nulle part, et `status_for`
+    # (access.py) les ITÈRE pour remplir `out["providers"][nom]`, un dict par NOM.
+    # L'ordre n'y survit que comme ordre de sérialisation, donc d'affichage.
+    # Cette phrase a coûté trois tests faux (ahrefs, fireflies, granola), chacun
+    # affirmant « je suis le dernier » — deux ne peuvent pas l'être ensemble, et
+    # main est passée au rouge le jour où deux connecteurs ont été fusionnés le
+    # même matin. Vérifier un invariant avant de demander qu'on le garde.
     _c("ahrefs", ["ahrefs"], auth_modes={"byo_user", "byo_org"}, keyed=True,
        secret_kind="api_key", label="Ahrefs",
        help="SEO — backlinks, mots-clés, rank tracking, audits techniques, "
@@ -1424,8 +1439,16 @@ _REGISTRY_LIST = [
     # données d'organisation. keyed api_key (Bearer + header Public-Api-Version),
     # byo-only (pas de clé plateforme) — Personal Access Token (par user) ou
     # Workspace Access Token (admin, accès à toutes les données du workspace).
-    # Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed`
-    # est chargé (`status_for` en dépend), on n'insère jamais au milieu.
+    # Ajouté en fin de `_REGISTRY_LIST`, par convention de lecture.
+    # ⚠️ Ce commentaire a longtemps affirmé « l'ordre est chargé, `status_for` en
+    # dépend » — c'est FAUX, vérifié le 21/08/2026 : ni `KEY_PROVIDERS` ni
+    # `_REGISTRY_LIST` ne sont indexés par position nulle part, et `status_for`
+    # (access.py) les ITÈRE pour remplir `out["providers"][nom]`, un dict par NOM.
+    # L'ordre n'y survit que comme ordre de sérialisation, donc d'affichage.
+    # Cette phrase a coûté trois tests faux (ahrefs, fireflies, granola), chacun
+    # affirmant « je suis le dernier » — deux ne peuvent pas l'être ensemble, et
+    # main est passée au rouge le jour où deux connecteurs ont été fusionnés le
+    # même matin. Vérifier un invariant avant de demander qu'on le garde.
     _c("grain", ["grain"], auth_modes={"byo_user", "byo_org"}, keyed=True,
        secret_kind="api_key", label="Grain",
        help="enregistrements de réunion, transcripts, partage, webhooks, org",
