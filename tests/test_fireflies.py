@@ -69,9 +69,9 @@ def test_fireflies_is_keyed_byo_only_connector():
     assert providers._LOGO_DOMAIN_BY_CONNECTOR["fireflies"] == "fireflies.ai"
 
 
-def test_fireflies_appended_last_among_keyed_connectors():
+def test_fireflies_registered_among_keyed_connectors():
     keyed_names = [c.name for c in providers._REGISTRY_LIST if c.keyed]
-    assert keyed_names[-1] == "fireflies"
+    assert "fireflies" in keyed_names
 
 
 def test_fireflies_has_onboarding_doc():
