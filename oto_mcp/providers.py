@@ -282,7 +282,7 @@ _CATEGORY_BY_CONNECTOR = {
     "pennylane": "Finance", "pennylaneged": "Finance", "gocardless": "Finance", "silae": "Finance",
     "slack": "Comms", "google": "Comms", "zohodesk": "Comms",
     "notion": "Knowledge", "zohoanalytics": "Knowledge",
-    "lighton": "Knowledge",
+    "lighton": "Knowledge", "fireflies": "Knowledge",
     "planity": "Métier",
     "atlassian": "Métier",
     "hubspot": "Prospection", "apollo": "Prospection", "zerobounce": "Prospection",
@@ -320,6 +320,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "hubspot": "HubSpot", "apollo": "Apollo", "zerobounce": "ZeroBounce",
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
+    "fireflies": "Fireflies.ai",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
@@ -429,6 +430,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "lusha": "lusha.com",
     # Productivité & infra
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
+    "fireflies": "fireflies.ai",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
     "ahrefs": "ahrefs.com",
@@ -1252,6 +1254,18 @@ _REGISTRY_LIST = [
        secret_kind="api_key", label="Zapier",
        help="automatisation — actions exposées (AI Actions) + exécution",
        href="https://actions.zapier.com"),
+
+    # fireflies : transcripts de réunion, contrôle de réunion en direct, AskFred
+    # (Q&A IA), org (users/groupes/canaux/bites/analytics/audit). GraphQL (un seul
+    # endpoint POST), keyed api_key (Bearer), byo-only (pas de clé plateforme).
+    # Webhooks V1/V2 = dashboard-only chez Fireflies, aucune query/mutation
+    # GraphQL pour ça — volontairement absent de la surface MCP de ce connecteur.
+    # Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed`
+    # est chargé (`status_for` en dépend), on n'insère jamais au milieu.
+    _c("fireflies", ["fireflies"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Fireflies",
+       help="transcripts de réunion, réunion en direct, AskFred, org",
+       href="https://fireflies.ai"),
 
     # --- connecteur http générique (secret DANS le coffre oto) ----------------
     # Client HTTP multi-auth : contrairement au bridge, oto DÉTIENT le secret de
