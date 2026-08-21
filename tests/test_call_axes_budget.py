@@ -22,11 +22,20 @@ from fastmcp import FastMCP
 
 from oto_mcp import call_axes
 
-# Plafonds calés ~10 % au-dessus du mesuré le 14/08 (259 019 c. d'axes sur 714 795 c.
-# servis). La marge absorbe l'arrivée de connecteurs ; elle n'absorbe pas le retour de
-# la prose dans les six descriptions, qui coûtait 165 725 c. de plus.
-_BUDGET_AXES = 290_000
-_BUDGET_PART = 0.40      # part des axes dans le total servi
+# ⚠️ **Le budget est PAR OUTIL, pas global — et c'est la correction du 21/08.**
+#
+# Le plafond absolu (290 000 c.) a sauté quand le catalogue est passé de 410 à 466
+# outils : six connecteurs contribués en une nuit, et le test rouge. Or rien n'avait
+# régressé — mesuré, le coût des axes vaut **632 caractères par outil** avant comme
+# après. Le test punissait la CROISSANCE au lieu de la dérive, ce qui en fait un test
+# qu'on finit par relever machinalement à chaque ajout : à la troisième fois, plus
+# personne ne se demande si le chiffre a une raison.
+#
+# La propriété qu'on garde n'a jamais été « le catalogue ne grossit pas » — c'est
+# « une phrase écrite dans call_axes n'est pas payée par tous ». Elle se mesure par
+# outil, et par la PART du handshake. Les deux sont invariants à l'échelle.
+_BUDGET_PAR_OUTIL = 700     # mesuré 632 c./outil le 21/08 (466 outils)
+_BUDGET_PART = 0.40         # part des axes dans le total servi
 _BUDGET_DESCRIPTION = 110   # caractères, par description d'axe
 
 
@@ -71,9 +80,12 @@ def test_les_jetons_de_contexte_tiennent_dans_leur_budget():
     rows = _served()
     axes = sum(c for _, _, c in rows)
     total = sum(t for _, t, _ in rows)
-    assert axes <= _BUDGET_AXES, (
-        f"les jetons `_*` pèsent {axes:,} c. (budget {_BUDGET_AXES:,}) sur "
-        f"{len(rows)} outils — {100 * axes / total:.1f} % des schémas servis."
+    par_outil = axes / max(len(rows), 1)
+    assert par_outil <= _BUDGET_PAR_OUTIL, (
+        f"les jetons `_*` coûtent {par_outil:.0f} c. PAR OUTIL (budget "
+        f"{_BUDGET_PAR_OUTIL}) — {axes:,} c. sur {len(rows)} outils. Ce chiffre ne "
+        "bouge pas quand le catalogue grandit : s'il monte, c'est que la prose des "
+        "descriptions d'axe est revenue."
     )
     assert axes / total <= _BUDGET_PART, (
         f"les jetons `_*` sont {100 * axes / total:.1f} % du handshake "
