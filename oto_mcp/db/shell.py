@@ -139,6 +139,17 @@ def resolve_grant_nodes(grants: list[dict]) -> tuple[dict, int]:
     return par_id, sans_noeud
 
 
+def recent_runs(sub: str, org_id: Optional[int], limit: int = 60) -> list[dict]:
+    """Les derniers runs d'un (sub, org) — lus du JOURNAL, pas de la table.
+
+    Simple réexport : le rail n'a qu'une porte vers la base, et cette lecture-là est
+    déjà écrite (`db/usage.recent_runs`). La réécrire ici produirait une seconde
+    définition de « les runs de quelqu'un », qui divergerait au premier correctif.
+    """
+    from . import usage
+    return usage.recent_runs(sub, org_id, limit=limit)
+
+
 def names_of(subs: Iterable[str]) -> dict[str, str]:
     """`{sub: nom affichable}` — le `sharedBy` du contrat est un NOM, pas un identifiant.
 

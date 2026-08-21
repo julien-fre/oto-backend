@@ -44,7 +44,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .. import access, connector_selection, group_store, org_store
+from .. import (access, connector_selection, group_store, org_store,
+                run_status)
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
 from ._types import Capability, NotModified, ResolvedCtx, RestBinding
@@ -209,6 +210,59 @@ def _arbre(lignes: list[dict], *, shared_par: Optional[dict] = None) -> list[Rai
     return rendues
 
 
+# Ce qu'on lit pour trouver les exécutions en cours. Large à la lecture, étroit au
+# rendu : le filtre « ouvert et non périmé » ne se pousse pas en SQL (la fraîcheur vient
+# du JOURNAL, pas de la table), donc on lit une tranche récente et on trie ici.
+_RUNS_LUS = 60
+_EXECUTIONS_MAX = 20
+
+
+def _executions(sub: str, org_id: Optional[int]) -> list[RailNode]:
+    """Les exécutions EN COURS de la personne — projetées, jamais stockées.
+
+    ⚠️ **Aucun nœud n'est créé pour un run**, et c'est une décision mesurée, pas une
+    facilité. Mesuré le 21/08 : 166 runs par jour, soit ~60 000 nœuds par an —
+    l'équivalent de toute la table de contenu d'aujourd'hui, ajouté chaque année, pour
+    des objets qui sont des JOURNAUX. Ils paieraient au passage les deux index GIN de
+    recherche (99 % du coût d'écriture d'un vivier au banc M0) sans qu'on cherche jamais
+    un run par son texte, et l'index d'ownership partiel ne les exclurait pas. 0058 a
+    déjà tranché que le journal est la vérité d'un run : un nœud-conteneur serait une
+    seconde vérité qui vieillit mal. Le contrat l'autorise — « les FORMES se contractent,
+    le STOCKAGE reste variable » : `type: execution` est un champ de RailNode, pas une
+    exigence de table.
+
+    ⚠️ **La borne n'est PAS une fenêtre de jours, et c'est là que la mesure a tranché.**
+    Sept jours donnaient **1 023 runs pour un seul compte** (dont 941 d'une même
+    campagne de flotte) : illisible, et contraire à ce que le rail EST — le chrome, pas
+    un journal. Le rail montre ce qui ATTEND la personne, jamais des volumes : c'est la
+    règle que le contrat pose déjà pour ses compteurs, et elle vaut ici.
+
+    Donc : **ouverts ET non périmés**, au sens que `run_status` porte déjà (48 h sans
+    signe de vie ⟹ un run cesse d'être annoncé « en cours », #311). Mesuré : 26 runs sur
+    toute la plateforme, médiane 1 par personne, maximum 24. Réutiliser ce seam plutôt
+    que d'inventer une fenêtre évite d'avoir deux définitions de « en cours » — et un
+    run périmé affiché ici serait le miroir exact du défaut que #311 a fermé.
+    """
+    if org_id is None:
+        return []
+    try:
+        runs = db_shell.recent_runs(sub, org_id, limit=_RUNS_LUS)
+    except Exception:      # le rail ne tombe pas parce que le journal hoquette
+        logger.warning("shell: exécutions en cours indisponibles", exc_info=True)
+        return []
+    vivants = [r for r in runs
+               if not r.get("outcome")
+               and not run_status.is_stale(r.get("outcome"), r.get("last_seen_at"))]
+    out = [RailNode(id=str(r["run_id"]), name=r.get("label") or "Exécution",
+                    type="execution")
+           for r in vivants[:_EXECUTIONS_MAX]]
+    if out and len(vivants) > _EXECUTIONS_MAX:
+        # Coupé, donc COMPTÉ — même règle que l'arbre : une liste tronquée sans
+        # compteur se lit comme une liste complète.
+        out[-1].more = len(vivants) - _EXECUTIONS_MAX
+    return out
+
+
 def _connecteurs(sub: str, org_id: Optional[int]) -> list[ShellConnector]:
     """Le VERDICT EFFECTIF, borné aux connecteurs INSTALLÉS de la personne.
 
@@ -311,10 +365,12 @@ def _compose(ctx: ResolvedCtx) -> dict:
             id=f"g-{gid}", name=nom, kind="team", origin=gid,
             context=RailContext(name=f"Contexte — {nom}"),
             nodes=_arbre(par_proprio.get(("group", gid), []))))
+    prive = _arbre(par_proprio.get(("user", sub), []))
+    prive += _executions(sub, org_id)
     sections.append(RailSection(
         id="sec-private", name="Privé", kind="private",
         context=RailContext(name="Contexte — Privé"),
-        nodes=_arbre(par_proprio.get(("user", sub), []))))
+        nodes=prive))
 
     # ── `shared` : les partages DIRECTS, moins ce qu'une autre section range déjà ──
     grants = db_shell.direct_grants(sub)

@@ -80,3 +80,72 @@ def test_une_procedure_convertie_porte_son_role_et_ses_slots():
     assert "'slots'" in sql
     # `kind='page'` comme tout le reste : une procédure est de la prose possédée.
     assert "'page', d.owner_type" in sql
+
+
+# ── Les exécutions : PROJETÉES, et bornées par ce qui ATTEND ───────────────────
+def _run(rid, *, outcome=None, vu="2026-08-21 08:00:00+00", label="Un déroulé"):
+    return {"run_id": rid, "label": label, "outcome": outcome,
+            "last_seen_at": vu, "project_id": None, "started_at": vu}
+
+
+@pytest.fixture
+def runs(monkeypatch):
+    etat = {"liste": []}
+    monkeypatch.setattr(S.db_shell, "recent_runs",
+                        lambda sub, org, limit=60: etat["liste"])
+    monkeypatch.setattr(S.run_status, "is_stale", lambda outcome, vu, now=None: vu == "vieux")
+    return etat
+
+
+def test_seuls_les_runs_OUVERTS_et_VIVANTS_entrent_au_rail(runs):
+    runs["liste"] = [
+        _run("r1"),                              # ouvert, vivant → OUI
+        _run("r2", outcome="done"),              # terminé → non
+        _run("r3", vu="vieux"),                  # ouvert mais périmé → non
+    ]
+    noeuds = S._executions("u1", 2)
+    assert [n.id for n in noeuds] == ["r1"]
+    assert noeuds[0].type == "execution"
+
+
+def test_un_run_PERIME_n_est_pas_annonce_en_cours(runs):
+    """Le miroir exact du défaut que #311 a fermé.
+
+    Un run silencieux depuis 48 h cesse d'être annoncé « en cours ». L'afficher au rail
+    le ré-annoncerait — et on retrouverait, dans une autre surface, la vérité qu'on
+    vient de corriger dans une première.
+    """
+    runs["liste"] = [_run("r1", vu="vieux")]
+    assert S._executions("u1", 2) == []
+
+
+def test_la_liste_est_BORNEE_et_ce_qui_dépasse_est_compté(runs):
+    runs["liste"] = [_run(f"r{i}") for i in range(50)]
+    noeuds = S._executions("u1", 2)
+    assert len(noeuds) == S._EXECUTIONS_MAX
+    assert noeuds[-1].more == 50 - S._EXECUTIONS_MAX
+
+
+def test_aucun_NOEUD_n_est_cree_pour_un_run(runs):
+    """La décision du lot, et elle se garde ici.
+
+    166 runs/jour ⟹ ~60 000 nœuds/an, l'équivalent de toute la table de contenu, pour
+    des journaux. La projection rend `type: execution` sans rien stocker — le contrat
+    l'autorise (« les formes se contractent, le stockage reste variable »).
+    """
+    import inspect
+    src = inspect.getsource(S._executions)
+    for ecriture in ("INSERT", "create_node", "nodes ("):
+        assert ecriture not in src
+
+
+def test_un_journal_en_panne_ne_fait_pas_tomber_le_RAIL(monkeypatch):
+    def _boom(sub, org, limit=60):
+        raise RuntimeError("journal indisponible")
+    monkeypatch.setattr(S.db_shell, "recent_runs", _boom)
+    assert S._executions("u1", 2) == []      # le chrome survit à une marche absente
+
+
+def test_sans_org_aucune_execution(runs):
+    runs["liste"] = [_run("r1")]
+    assert S._executions("u1", None) == []
