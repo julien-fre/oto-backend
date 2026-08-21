@@ -285,6 +285,7 @@ _CATEGORY_BY_CONNECTOR = {
     "lighton": "Knowledge", "fireflies": "Knowledge",
     "lighton": "Knowledge",
     "promptwatch": "Marketing",
+    "lighton": "Knowledge", "granola": "Knowledge",
     "planity": "Métier",
     "atlassian": "Métier",
     "hubspot": "Prospection", "apollo": "Prospection", "zerobounce": "Prospection",
@@ -326,6 +327,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
     "fireflies": "Fireflies.ai",
+    "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "granola": "Granola",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
@@ -440,6 +442,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     # Productivité & infra
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
     "fireflies": "fireflies.ai",
+    "granola": "granola.ai",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
     "ahrefs": "ahrefs.com",
@@ -1404,6 +1407,16 @@ _REGISTRY_LIST = [
        help="SEO — backlinks, mots-clés, rank tracking, audits techniques, "
             "visibilité de marque sur les chatbots IA, analytics, GSC, social",
        href="https://ahrefs.com"),
+    # granola : notes de réunion, transcripts, résumés IA, dossiers, journal
+    # d'audit, webhook endpoints. keyed api_key (Bearer), byo-only (pas de clé
+    # plateforme) — clé personnelle (tout membre Business) ou clé workspace
+    # (admin, Enterprise), toutes deux un Bearer simple ici. Ajouté en DERNIER
+    # dans `_REGISTRY_LIST` — l'ordre des connecteurs `keyed` est chargé
+    # (`status_for` en dépend), on n'insère jamais au milieu.
+    _c("granola", ["granola"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Granola",
+       help="notes de réunion, transcripts, résumés IA, dossiers, audit, webhooks",
+       href="https://granola.ai"),
 ]
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}
