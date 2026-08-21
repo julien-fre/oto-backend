@@ -302,6 +302,8 @@ _CATEGORY_BY_CONNECTOR = {
     # automatisation no-code (workflows)
     "n8n": "Automatisation", "make": "Automatisation", "zapier": "Automatisation",
     "brevoauto": "Automatisation",
+    # SEO / recherche concurrentielle
+    "ahrefs": "Prospection",
 }
 
 # Éditeur (publisher) par connecteur — CURÉ. Défaut "Otomata" (connecteurs maison /
@@ -337,6 +339,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "infosec": "Otomata (OSINT)",
     # open-data GR → éditeur = la source publique
     "gr": "GEMI / VIES",
+    "ahrefs": "Ahrefs",
 }
 
 # Description user-facing (2-3 phrases) par connecteur — CURÉE, affichée sur la
@@ -428,6 +431,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
+    "ahrefs": "ahrefs.com",
 }
 
 # Connecteurs SANS logo de marque, et c'est voulu : soit génériques (le connecteur
@@ -1296,6 +1300,19 @@ _REGISTRY_LIST = [
     #  que le back-office re-expose, jointe via http_get/http_post. Le pilote MM a
     #  migré bridge→http. Le concept « remote data-driven » (base_url sur un provider
     #  hors registre) subsiste dans org_secret_meta, sans entrée de catalogue.)
+
+    # ahrefs : SEO — backlinks, mots-clés, rank tracking, audits techniques,
+    # visibilité de marque sur les chatbots IA, analytics on-site, GSC, social
+    # publishing. keyed api_key (Bearer), byo-only (pas de clé plateforme) :
+    # un seat Ahrefs est cher et par abonnement, même raisonnement que
+    # TheirStack. Ajouté en DERNIER dans `_REGISTRY_LIST` — l'ordre des
+    # connecteurs `keyed` est chargé (`status_for` en dépend), on n'insère
+    # jamais au milieu.
+    _c("ahrefs", ["ahrefs"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Ahrefs",
+       help="SEO — backlinks, mots-clés, rank tracking, audits techniques, "
+            "visibilité de marque sur les chatbots IA, analytics, GSC, social",
+       href="https://ahrefs.com"),
 ]
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}
