@@ -57,11 +57,19 @@ logger = logging.getLogger(__name__)
 _PROFONDEUR = 2
 _BUDGET_PAR_SECTION = 200
 
-# `type` choisit le GLYPHE de la ligne, pas l'écran (contrat §2). `agent` et `execution`
-# sont au contrat mais n'ont pas de source : 0054-D6/D7 les prévoient, aucun code ne les
-# écrit, et le préalable est un arbitrage qui appartient au front (« Agents /
-# procédures »). On ne les invente pas — un nœud sans genre connu se rend en `page`.
+# `type` choisit le GLYPHE de la ligne, pas l'écran (contrat §2).
+#
+# ⚠️ **La nature est DÉRIVÉE, elle n'est pas un `kind` de plus.** Le genre dit ce que
+# l'objet EST (une page, un tableau) ; ce qu'il JOUE — procédure, agent — est un RÔLE
+# porté en propriété (0054-D5/D6), exactement comme le rôle de présentation d'un bloc au
+# lot ⑦. Créer `kind='agent'` rouvrirait le second axe qu'on a passé deux lots à fermer.
+#
+# `execution` (0054-D7) n'a toujours pas de source et n'est pas inventé ici : un
+# nœud-conteneur par run est une décision de VOLUMÉTRIE, pas un défaut à combler.
 _TYPE_PAR_KIND = {"page": "page", "tableau": "table"}
+# Rôle porté en props → nature servie au rail. Un rôle inconnu retombe sur le genre :
+# une nature inventée serait pire qu'une nature générique.
+_TYPE_PAR_ROLE = {"procedure": "agent"}
 
 
 class ShellInput(BaseModel):
@@ -130,7 +138,10 @@ class ShellOut(BaseModel):
     grants_sans_noeud: Optional[int] = None
 
 
-def _type_of(kind: str) -> str:
+def _type_of(kind: str, props: Optional[dict] = None) -> str:
+    role = (props or {}).get("role")
+    if role in _TYPE_PAR_ROLE:
+        return _TYPE_PAR_ROLE[role]
     return _TYPE_PAR_KIND.get(kind or "", "page")
 
 
@@ -160,7 +171,7 @@ def _arbre(lignes: list[dict], *, shared_par: Optional[dict] = None) -> list[Rai
     def _noeud(l: dict, prof: int) -> RailNode:
         budget["n"] += 1
         out = RailNode(id=l["public_id"], name=l.get("title") or "",
-                       type=_type_of(l.get("kind")))
+                       type=_type_of(l.get("kind"), l))
         if shared_par is not None:
             out.sharedBy = shared_par.get(l["public_id"])
         enfants = par_parent.get(l["id"], [])

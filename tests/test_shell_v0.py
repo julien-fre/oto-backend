@@ -60,15 +60,29 @@ def test_le_pont_vers_les_grants_est_le_MEME_calcul_que_la_conversion():
     assert "md5('prj:'" in sql and "1, 24" in sql
 
 
-def test_une_procedure_partagee_est_COMPTEE_faute_de_noeud():
-    # `doctrine` n'a pas de famille de conversion : le partage existe et n'est pas
-    # adressable. Le taire ferait lire « section vide » comme « rien de partagé ».
+def test_les_TROIS_natures_de_partage_designent_un_noeud():
+    """Depuis le lot ⑧, `doctrine` a sa famille de conversion.
+
+    ⚠️ Ce test affirmait le contraire jusqu'au 21/08 — « une procédure partagée est
+    comptée faute de nœud » — et c'était vrai : le compteur existait pour qu'une section
+    « Partagé » incomplète ne se lise pas comme « rien de partagé ». La conversion des
+    procédures ferme ce trou.
+    """
     par_id, sans_noeud = db_shell.resolve_grant_nodes([
         {"resource_type": "project", "resource_id": "7"},
-        {"resource_type": "doctrine", "resource_id": "prospection"},
+        {"resource_type": "doctrine", "resource_id": "41"},
         {"resource_type": "datastore_namespace", "resource_id": "12"},
     ])
-    assert len(par_id) == 2 and sans_noeud == 1
+    assert len(par_id) == 3 and sans_noeud == 0
+
+
+def test_le_compteur_RESTE_pour_la_prochaine_nature_sans_noeud():
+    # On ne retire pas un compteur parce qu'il vaut zéro : c'est lui qui signalera la
+    # nature suivante, et un compteur retiré ne se remet pas.
+    par_id, sans_noeud = db_shell.resolve_grant_nodes([
+        {"resource_type": "une_nature_future", "resource_id": "1"},
+    ])
+    assert not par_id and sans_noeud == 1
 
 
 # ── Les trois garanties du contrat ──────────────────────────────────────────────

@@ -31,8 +31,12 @@ from ._conn import _connect
 
 # Un nœud du rail : ce qu'il faut pour l'ADRESSER, le RANGER et l'AFFICHER — jamais
 # son corps. Le rail est le chrome ; le contenu se lit en ouvrant le nœud.
+# `role` voyage à côté du titre : c'est lui qui donne sa NATURE à la ligne du rail
+# (une procédure se rend en `agent`), et le lire ici évite une seconde requête par nœud.
+# On extrait la clé plutôt que de rendre `props` entier — le rail n'a que faire d'un
+# corps, et c'est tout le principe d'une vue de tri.
 _COLS = ("n.public_id, n.parent_id, n.id, n.kind, n.owner_type, n.owner_id, "
-         "n.position, n.props->>'title' AS title")
+         "n.position, n.props->>'title' AS title, n.props->>'role' AS role")
 
 # Le prédicat, écrit UNE fois et interpolé partout : deux endroits qui l'écrivent
 # finissent par diverger, et celui qui l'oublie ne le montre pas.
@@ -43,13 +47,18 @@ _HORS_LIGNES = "n.kind <> 'ligne'"
 # Le pont est donc gratuit et bidirectionnel — le re-keying des grants sur `public_id`
 # (chantier M-h) reste dû, mais il ne bloque pas cette lecture.
 #
-# ⚠️ `doctrine` n'a PAS de famille : les procédures ne sont pas encore des nœuds. Un
-# partage direct de procédure ne peut donc pas entrer dans le rail — il est COMPTÉ et
-# rendu à part (`grants_sans_noeud`), jamais tu. Son destin est le lot qui apporte la
-# nature de nœud « agent » (0054-D6), gaté sur l'arbitrage « Agents / procédures » qui
-# appartient au front : le jour où il tombe, les procédures deviennent des nœuds ET
-# leurs partages entrent ici — un seul lot, pas deux.
-_FAMILLE_PAR_GRANT = {"project": "prj", "datastore_namespace": "tbl"}
+# ✅ **`doctrine` a sa famille depuis le 21/08.** Ce commentaire a dit le contraire
+# jusque-là — « les procédures ne sont pas encore des nœuds, leur partage est compté et
+# rendu à part » — et c'était vrai à l'écriture : `grants_sans_noeud` existait pour
+# qu'une section « Partagé » incomplète ne se lise pas comme « rien de partagé ». La
+# conversion des procédures (lot ⑧) referme ce trou : les trois natures de partage
+# désignent maintenant un nœud, et ce compteur doit rester à zéro.
+#
+# ⚠️ Il n'est PAS retiré pour autant : c'est lui qui signalera la prochaine nature de
+# grant sans nœud, le jour où elle arrivera. Un compteur qu'on retire parce qu'il vaut
+# zéro est un compteur qu'on ne remettra pas.
+_FAMILLE_PAR_GRANT = {"project": "prj", "datastore_namespace": "tbl",
+                      "doctrine": "prc"}
 
 
 def _public_id_derive(famille: str, legacy_id: str) -> str:

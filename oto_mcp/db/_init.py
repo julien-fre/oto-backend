@@ -858,11 +858,29 @@ def _init_db_once() -> None:
         # jointure ne rend rien et la page reste orpheline jusqu'au boot suivant.
         # Un arbre à moitié posé, qu'aucune erreur ne signale.
         if conn.execute("SELECT to_regclass('projects') AS t").fetchone()["t"]:
-            from .nodes import (convert_docs, convert_projects, convert_rows,
-                                convert_tables)
+            from .nodes import (convert_docs, convert_doctrines, convert_projects,
+                                convert_rows, convert_tables)
             convert_projects(conn)
             if conn.execute("SELECT to_regclass('docs') AS t").fetchone()["t"]:
                 convert_docs(conn)
+            # === Lot ⑧ : les PROCÉDURES → nœuds ===
+            # Indépendante des trois autres — une procédure n'a ni parent ni enfant
+            # dans l'arbre, elle est possédée par un scope et c'est tout. D'où sa
+            # place ici, sans contrainte d'ordre : rien ne la lit, rien ne dépend
+            # d'elle.
+            #
+            # Elle ferme un trou VISIBLE depuis la naissance du rail : un partage
+            # direct de procédure ne désignait aucun nœud, donc n'entrait pas dans
+            # la section « Partagé ». On le comptait plutôt que de le taire — cette
+            # conversion fait tomber ce compteur à zéro.
+            #
+            # ⚠️ Son propre garde : `org_instructions` peut ne pas exister sur une
+            # base fraîche, et sa colonne `id` est posée par une migration de CE
+            # module — la conversion filtre donc `id IS NOT NULL` plutôt que de
+            # supposer que le backfill a déjà tourné.
+            if conn.execute(
+                    "SELECT to_regclass('org_instructions') AS t").fetchone()["t"]:
+                convert_doctrines(conn)
             # === Lot M3 (#301) : les TABLEAUX → nœuds-tableaux ===
             # Le namespace devient une POSITION dans l'arbre (0054-D4) : sous le
             # nœud du projet qui lie le tableau, sinon à la racine de son

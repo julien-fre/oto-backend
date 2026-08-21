@@ -96,7 +96,8 @@ def siblings_of(parent_ids: list[Optional[int]], *, owner: tuple[str, str],
     params += [owner[0], owner[1]]
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT n.parent_id, n.public_id, n.kind, n.props->>'title' AS title "
+            "SELECT n.parent_id, n.public_id, n.kind, n.props->>'title' AS title, "
+            "n.props->>'role' AS role "
             f"FROM nodes n WHERE {_HORS_LIGNES} AND ({' OR '.join(clauses)}) "
             "AND n.owner_type = %s AND n.owner_id = %s "
             "ORDER BY n.position NULLS LAST, n.props->>'title'", params).fetchall()

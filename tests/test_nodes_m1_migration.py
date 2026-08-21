@@ -204,7 +204,13 @@ def test_nothing_else_touches_nodes_yet():
     même file). Mêmes bornes : lecture seule, prédicat de genre partout, et une de plus
     qui lui est propre — **ouvrir un tableau rend son SCHÉMA, jamais ses lignes**. La
     surface des lignes est un autre lot, paginé par curseur : un « ouvrir » qui ramène
-    43 584 lignes n'est pas une fiche, c'est un export déguisé."""
+    43 584 lignes n'est pas une fiche, c'est un export déguisé.
+
+    **Le lot ⑧ ajoute une ÉCRITURE le 21/08** : `convert_doctrines` dans `db/nodes.py`
+    (déjà inscrit) — les procédures deviennent des nœuds. Elle ferme un trou visible
+    depuis la naissance du rail : un partage direct de procédure ne désignait aucun
+    nœud, donc n'entrait pas dans la section « Partagé ». Rien de neuf n'est lu ici —
+    c'est la même famille de conversion que les projets, les pages et les tableaux."""
     allowed = {"oto_mcp/db/guides.py", "oto_mcp/db/_schema.py", "oto_mcp/db/_init.py",
                "oto_mcp/db/users.py", "oto_mcp/db/search.py", "oto_mcp/db/aux_embed.py",
                "oto_mcp/db/nodes.py", "oto_mcp/db/blocks.py", "oto_mcp/db/shell.py",

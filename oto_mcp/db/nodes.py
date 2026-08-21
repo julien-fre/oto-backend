@@ -287,6 +287,77 @@ def convert_projects(conn) -> None:
     conn.execute(PURGE_PROJECT_NODES_SQL)
 
 
+# ══ Lot ⑧ — les PROCÉDURES deviennent des nœuds ═══════════════════════════════
+#
+# Dernière famille convertie, et celle qui ferme un trou VISIBLE depuis le lot ③ : un
+# partage direct de procédure (`resource_grants.resource_type = 'doctrine'`) ne désignait
+# aucun nœud, donc n'entrait pas dans la section « Partagé » du rail. On le comptait
+# (`grants_sans_noeud`) pour qu'une section vide ne se lise pas « rien de partagé » —
+# la conversion le fait tomber à zéro.
+#
+# ⚠️ **La clé dérivée est `org_instructions.id`, pas `(owner, slug)`.** Le slug est la
+# clé NATURELLE de la table, mais il se renomme ; l'`id` (colonne de séquence posée par
+# `_init`) ne bouge jamais, et c'est exactement lui que `resource_grants` désigne
+# (`get_instruction_by_id(int(resource_id))`). Dériver du slug aurait produit un
+# identifiant de nœud qui change au premier renommage — la classe de défaut que #362
+# vient de retirer sur les blocs.
+#
+# `kind = 'page'` comme tout le reste : une procédure est de la prose possédée par un
+# scope. 0054-D5 — le genre dit ce que l'objet EST, et ce qu'il JOUE (procédure, agent)
+# est un rôle porté en propriété, jamais un `kind` de plus. Même arbitrage qu'au lot ⑦.
+_FAMILY_DOCTRINE = "prc"
+
+CONVERT_DOCTRINES_TO_NODES_SQL = f"""
+    INSERT INTO nodes (public_id, kind, owner_type, owner_id, props,
+                       created_at, updated_at)
+    SELECT {_public_id_sql(_FAMILY_DOCTRINE, 'd.id')},
+           '{_KIND}', d.owner_type, d.owner_id,
+           jsonb_strip_nulls(jsonb_build_object(
+               'legacy', '{_FAMILY_DOCTRINE}', 'legacy_id', d.id,
+               'role', 'procedure',
+               'slug', d.slug,
+               'title', COALESCE(NULLIF(d.title, ''), d.slug),
+               'description', NULLIF(d.description, ''),
+               'body_md', COALESCE(d.body_md, ''),
+               'slots', NULLIF(d.slots, '[]'::jsonb),
+               'doctrine_version', d.version,
+               'created_by', d.set_by,
+               'org_id', d.org_id))
+           || CASE WHEN d.slots IS NULL OR d.slots = '[]'::jsonb THEN '{{}}'::jsonb
+                   ELSE jsonb_build_object('slots', d.slots) END,
+           d.created_at, d.updated_at
+      FROM org_instructions d
+     WHERE d.id IS NOT NULL
+    ON CONFLICT ON CONSTRAINT nodes_public_id_key DO UPDATE SET
+        props = EXCLUDED.props, updated_at = EXCLUDED.updated_at
+     WHERE EXCLUDED.updated_at > nodes.updated_at
+"""
+
+# Le propriétaire d'une procédure change sans que son contenu bouge (transfert de
+# ressource) : comme pour un projet, il ne peut pas dépendre d'un newer-wins.
+RECONCILE_DOCTRINE_NODES_SQL = f"""
+    UPDATE nodes n
+       SET owner_type = d.owner_type, owner_id = d.owner_id
+      FROM org_instructions d
+     WHERE n.public_id = {_public_id_sql(_FAMILY_DOCTRINE, 'd.id')}
+       AND (n.owner_type, n.owner_id) IS DISTINCT FROM (d.owner_type, d.owner_id)
+"""
+
+PURGE_DOCTRINE_NODES_SQL = f"""
+    DELETE FROM nodes n
+     WHERE n.props->>'legacy' = '{_FAMILY_DOCTRINE}'
+       AND NOT EXISTS (SELECT 1 FROM org_instructions d
+                        WHERE d.id = (n.props->>'legacy_id')::bigint)
+"""
+
+
+def convert_doctrines(conn) -> None:
+    """Procédures → nœuds : contenu, propriétaire, purge. Rejouable."""
+    conn.execute(CONVERT_DOCTRINES_TO_NODES_SQL)
+    conn.execute(RECONCILE_DOCTRINE_NODES_SQL)
+    conn.execute(PURGE_DOCTRINE_NODES_SQL)
+
+
 def convert_docs(conn) -> None:
     """Pages → nœuds : contenu, puis propriétaire hérité + arbre, puis purge.
 

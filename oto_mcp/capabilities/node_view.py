@@ -60,6 +60,9 @@ _PROFONDEUR_FIL = 12
 _FRERES_MAX = 50
 
 _TYPE_PAR_KIND = {"page": "page", "tableau": "table"}
+# Même règle qu'au rail : la nature est DÉRIVÉE d'un rôle porté en propriété, jamais
+# d'un `kind` de plus. Un rôle inconnu retombe sur le genre.
+_TYPE_PAR_ROLE = {"procedure": "agent"}
 
 
 class NodeInput(BaseModel):
@@ -115,7 +118,7 @@ class NodeModified(BaseModel):
 class NodeOut(BaseModel):
     id: str
     name: str
-    type: Literal["page", "table"]
+    type: Literal["page", "table", "agent", "execution"]
     trail: list[TrailCrumb] = []
     modified: NodeModified
     # Page : le corps en blocs. Absent sur un tableau.
@@ -129,7 +132,10 @@ class NodeOut(BaseModel):
     non_servi: list[str] = []
 
 
-def _type_of(kind: str) -> str:
+def _type_of(kind: str, props: Optional[dict] = None) -> str:
+    role = (props or {}).get("role")
+    if role in _TYPE_PAR_ROLE:
+        return _TYPE_PAR_ROLE[role]
     return _TYPE_PAR_KIND.get(kind or "", "page")
 
 
@@ -167,9 +173,9 @@ def _fil(fiche: dict) -> list[TrailCrumb]:
     for c in chaine:
         props = c.get("props") or {}
         out.append(TrailCrumb(
-            id=c["public_id"], name=props.get("title") or "", type=_type_of(c["kind"]),
+            id=c["public_id"], name=props.get("title") or "", type=_type_of(c["kind"], props),
             siblings=[TrailSibling(id=s["public_id"], name=s.get("title") or "",
-                                   type=_type_of(s["kind"]))
+                                   type=_type_of(s["kind"], s))
                       for s in freres.get(c["parent_id"], [])]))
     return out
 
@@ -203,7 +209,7 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
     corps: dict = {
         "id": fiche["public_id"],
         "name": props.get("title") or "",
-        "type": _type_of(fiche["kind"]),
+        "type": _type_of(fiche["kind"], props),
         "trail": [c.model_dump() for c in _fil(fiche)],
         "modified": NodeModified(
             at=str(fiche["updated_at"]) if fiche.get("updated_at") else None,
