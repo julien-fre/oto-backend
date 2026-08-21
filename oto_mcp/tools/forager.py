@@ -1,5 +1,14 @@
 """Forager.ai — job posts, organization firmographics, people/contact enrichment.
 
+**Live-tested 2026-08-21** against a real Trial-tier key, one call per op
+(36.00/50.00 credits spent) — every tool below confirmed working end to end.
+Two behaviors confirmed live and worth knowing before calling `forager_person`:
+`op="work_emails"`/`"personal_emails"`/`"phone_numbers"` return `[]` on no
+match (not billed), while `op="reverse_by_email"`/`"reverse_by_phone"` raise
+a tool error (404 from Forager) on no match instead — check for the right
+kind of "nothing found" per op. Also: `forager_autocomplete`'s `id` values
+are strings; cast to `int` before using them in a search `filters` dict.
+
 Credential = `X-API-KEY` header + an optional `account_id` (generic
 multi-field model, ADR 0011 — resolved via
 `access.resolve_credential_fields("forager")`, not `resolve_api_key`).
@@ -190,8 +199,10 @@ def register(mcp: FastMCP) -> None:
         Outlook, Yahoo, iCloud, Proton…), never corporate/edu domains.
         `do_contacts_enrichment` only applies to `"work_emails"`.
 
-        `op="reverse_by_email"`: requires `email`.
-        `op="reverse_by_phone"`: requires `phone_number`.
+        `op="reverse_by_email"`: requires `email`. Raises on no match
+        (confirmed live: Forager 404s) — unlike the `[]`-on-no-match ops above.
+        `op="reverse_by_phone"`: requires `phone_number`. Same no-match
+        behavior as `reverse_by_email`.
 
         `op="role_search"`/`"role_search_totals"`: `filters` (all optional) —
         page, role_title/description (str), role_is_current (bool),
@@ -330,7 +341,9 @@ def register(mcp: FastMCP) -> None:
         `web_technologies`/`organization_web_technologies`, `person_skills`
         on `forager_job_post`/`forager_organization`/`forager_person`).
         Passing raw text directly into those filters will not match — look
-        the ID up here first. Free, no credit cost.
+        the ID up here first. Free, no credit cost. ⚠️ Returns `results[].id`
+        as a STRING (confirmed live) — cast to `int` before putting it in a
+        `filters` dict, whose fields are typed as integer arrays.
         """
         client = _client()
         try:

@@ -32,6 +32,14 @@ Forager croise offres d'emploi, données d'entreprise et enrichissement contact,
 
 `GET/POST /api/api_keys/` et `GET/DELETE /api/api_keys/{prefix}/` existent côté Forager mais ne sont **volontairement** pas exposés en tool : créer une clé exposerait un secret dans le contexte agent, et en supprimer une pourrait casser une autre intégration silencieusement. Gestion exclusivement sur [app.forager.ai](https://app.forager.ai).
 
-## note — non testé en live
+## note — pas de résultat ≠ pas de résultat
 
-Construit à partir du spec OpenAPI officiel de Forager (contrairement à Grain/Fireflies, un vrai spec machine-readable existe) — donc dans la même catégorie de confiance qu'Ahrefs/Granola. **Pas de clé disponible pour un test live** au moment de la construction (API payante au crédit) : le comportement réel de l'API (codes d'erreur exacts sur un filtre mal typé, cardinalité de `accounts[]` pour une vraie clé, forme exacte de `test_scores` sur `person_detail_lookup`) reste à confirmer à la première utilisation réelle.
+`forager_person(op="work_emails"|"personal_emails"|"phone_numbers")` rend `[]` quand rien n'est trouvé (pas facturé). `op="reverse_by_email"|"reverse_by_phone"` **lève une erreur** dans le même cas (Forager répond 404) — les deux familles de lookup ne signalent pas « rien trouvé » de la même façon, confirmé en live.
+
+## note — testé en live le 2026-08-21
+
+Construit à partir du spec OpenAPI officiel de Forager (contrairement à Grain/Fireflies, un vrai spec machine-readable existe), puis testé en live sur une vraie clé Trial (50 crédits, 36 dépensés — un appel par op des 6 tools). Tout fonctionne de bout en bout. Deux découvertes réelles au passage :
+- `forager_autocomplete` rend des `id` en **chaîne** (`"9839"`), à caster en entier avant de les repasser dans un `filters` — cf. note ci-dessus sur les filtres par ID
+- `forager_job_post(op="totals")` et `op="search")` ont rendu des `total_search_results` différents sur le même filtre (500 vs 949) lors du test — pas d'explication trouvée côté client, à garder en tête si un chiffre surprend
+
+Restent non confirmés (pas testés pour économiser le solde) : le comportement exact sur un filtre mal typé, et la forme de `test_scores` sur `person_detail_lookup`.
