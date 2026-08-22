@@ -143,12 +143,12 @@ def test_resolve_return_app_rejects_unknown_or_missing(bad):
 
 def test_return_url_known_app_substitutes_org():
     url = of.return_url("tulina", "?connector=salesforce&salesforce=connected", org=178)
-    assert url == "https://app.tulina.ai/network/178/connectors?connector=salesforce&salesforce=connected"
+    assert url == "https://app.tulina.ai/org/178/connectors?connector=salesforce&salesforce=connected"
 
 
 def test_return_url_preprod_app():
     url = of.return_url("tulina-preprod", "?connector=zoho&zoho=connected", org=3)
-    assert url == "https://tulina.oto.zone/network/3/connectors?connector=zoho&zoho=connected"
+    assert url == "https://tulina.oto.zone/org/3/connectors?connector=zoho&zoho=connected"
 
 
 def test_return_url_unknown_app_falls_back_to_oto_dashboard():
