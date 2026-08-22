@@ -18,7 +18,10 @@ import pytest
 
 import oto_mcp.datastore as dsm
 from oto_mcp import datastore_schema as dsv2
+from oto_mcp.capabilities import datastore_columns as dcc
 from oto_mcp.datastore import DatastorePg
+
+from _datastore_rest import call, stub_authz
 
 
 CURRENT = {
@@ -162,3 +165,62 @@ def test_patch_inherits_the_schema_guards(store, monkeypatch):
     with pytest.raises(ValueError, match="DOUBLON"):
         st.patch_schema("v", key="siren")
     assert posed == {}
+
+
+# ── la face REST (cockpit — text → select, #388 suite) ──────────────────────
+
+class _RestStore:
+    """Un store REEL (patch_schema tel qu'écrit), pour que ce test exerce la
+    fusion elle-même — pas une reformulation qui serait d'accord avec elle-même."""
+
+    def __init__(self, current):
+        self.current = current
+        self.calls: list = []
+
+    def patch_schema(self, namespace, *, fields=None, remove=None, strict=None, key=None):
+        self.calls.append((namespace, fields, remove, strict, key))
+        merged, added, updated = dsv2.merge_fields(
+            [f for f in self.current.get("fields") or [] if isinstance(f, dict)],
+            fields or [])
+        return {"namespace": namespace, "schema": {**self.current, "fields": merged},
+               "added": added, "updated": updated, "removed": list(remove or [])}
+
+
+@pytest.fixture(autouse=True)
+def _sans_db(monkeypatch):
+    stub_authz(monkeypatch)
+
+
+def test_rest_patch_turns_a_text_column_into_a_select(monkeypatch):
+    """Le geste que le cockpit doit pouvoir faire : convertir `statut` (text) en
+    `enum` par PATCH, sans réécrire tout le schéma (ce que `PUT` exigerait)."""
+    store = _RestStore({"fields": [{"key": "statut", "type": "text", "label": "Statut"}]})
+    monkeypatch.setattr(dcc, "make_store", lambda sub: store)
+    status, corps = call(
+        "me.datastore.patch_schema",
+        path_params={"namespace": "vivier"},
+        body={"fields": [{"key": "statut", "type": "enum",
+                          "options": ["ouvert", "gagné", "perdu"]}]},
+    )
+    assert status == 200
+    assert corps["updated"] == ["statut"]
+    f = next(x for x in corps["schema"]["fields"] if x["key"] == "statut")
+    assert f["type"] == "enum" and f["options"] == ["ouvert", "gagné", "perdu"]
+    # le path param NOMME le tableau — jamais le corps (voir call() ci-dessus,
+    # qui ne poste pas `namespace`) : le champ ne s'y confond pas avec la clé
+    # métier `key` de `PatchSchemaInput`, prise ici pour ce qu'elle est.
+    assert store.calls[0][0] == "vivier"
+
+
+def test_rest_patch_refuses_an_unknown_field_rather_than_dropping_it(monkeypatch):
+    """La garde de champ inconnu (#302) couvre aussi cette route neuve — un
+    appelant qui se trompe de forme reçoit un 400 nommé, jamais un 200 muet."""
+    store = _RestStore({"fields": []})
+    monkeypatch.setattr(dcc, "make_store", lambda sub: store)
+    status, corps = call(
+        "me.datastore.patch_schema",
+        path_params={"namespace": "vivier"},
+        body={"type": "enum"},  # forme fautive : `type` n'est pas un champ d'Input
+    )
+    assert status == 400
+    assert corps["error"] == "unknown_fields"

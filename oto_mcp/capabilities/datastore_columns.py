@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .. import access
 from ..datastore import NamespaceNotFound, NamespaceReadOnly, make_store
 from ._authz import SUB_ONLY
-from ._types import AuthzDenied, Capability, ResolvedCtx
+from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 
@@ -142,7 +142,11 @@ CAPABILITIES += [
         Output=PatchSchemaResult,
         authz=SUB_ONLY,
         mcp="data_patch_schema",
-        rest=None,  # même raison que drop_column : une ligne à poser au besoin
+        # Le cockpit affiche « change le type de cette colonne » (text→select) —
+        # c'est exactement l'appel anticipé par le commentaire d'en-tête. Même
+        # chemin que get/set_schema (`{namespace}/schema`), distingué par le
+        # verbe : PATCH = fusion par clé, PUT = remplacement entier.
+        rest=RestBinding(verb="PATCH", path="/api/datastore/namespaces/{namespace}/schema"),
         description=(
             "Change a namespace's schema BY KEY, without rewriting the whole field "
             "list. Prefer this over `data_set_schema` for any EDIT: `set` REPLACES, so "
