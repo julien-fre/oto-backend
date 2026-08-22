@@ -11,6 +11,15 @@ dependencies = [
     # (SHA backend + ce pin). PyPI ne reçoit pas chaque merge (publish manuel, lag) →
     # on tague oto-core et on bump CE pin par PR. Bump = éditer le tag ici ; rollback
     # = revert ce commit (ramène aussi le bon oto-core). Cf. ADR 0020 (deploy/canari).
+    # v1.90.0 = apollo contacts : catalogue des champs personnalisés, recherche des
+    # contacts DE L'ÉQUIPE, lecture et PATCH d'un contact (0 crédit chacun). Ouvre
+    # l'écriture d'une variable d'outreach par lead avant enrôlement en séquence.
+    # ⚠️ v1.89.0 portait DÉJÀ les clients stripe + posthog : le pin posé par le
+    # commit stripe/posthog (v1.88.0) était UN TAG TROP BAS — `oto.tools.stripe` et
+    # `oto.tools.posthog` n'existent pas sous v1.88.0, donc les deux connecteurs se
+    # montaient en silence à vide (« stripe tools disabled: No module named ») et
+    # leurs 47 tests échouaient. v1.90.0 ⊇ v1.89.0 ⊇ v1.88.0 : bump en SUPERSET,
+    # jamais l'inverse (cf. l'incident de pin régressé du 2026-07-07).
     # v1.88.0 = clients stripe + posthog (paiements/facturation, analytics produit),
     # attendus par Tulina — UN seul tag pour les deux, pour qu'aucun ordre de merge
     # ne fasse régresser ce pin. ⚠️ Ces deux clients n'ont, DÉLIBÉRÉMENT, aucune
@@ -55,7 +64,7 @@ dependencies = [
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.88.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.90.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome

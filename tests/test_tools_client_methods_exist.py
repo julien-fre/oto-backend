@@ -63,6 +63,17 @@ _SUBOBJECT_CLIENTS = {"attio"}
 # contre `AhrefsClient` au lieu d'être laissée hors de portée.
 _DYNAMIC_DISPATCH_CLIENTS = {"serper", "serpapi", "brightdata", "cloro", "spott", "ahrefs"}
 
+# Fabriques de client reconnues. Un connecteur à DEUX régimes de clé en a deux
+# (apollo : `_client()` admet le palier plateforme, `_client_byo()` ne résout que
+# la clé du propriétaire) — et les deux rendent la MÊME classe, donc les deux
+# doivent être suivies. Sans `_client_byo`, les tools byo-only d'apollo n'étaient
+# couverts que par ACCIDENT : leur variable s'appelle `client`, un nom que
+# `_client()` lie ailleurs dans le même fichier. Un appel byo CHAÎNÉ
+# (`_client_byo().m()`) ou tenu sous un autre nom échappait donc entièrement à la
+# sonde — le trou exact que ce fichier a déjà refermé une fois pour apollo (cf.
+# docstring, 2026-07-31). Ajouter une 3ᵉ fabrique = une ligne ici, délibérée.
+_CLIENT_FACTORIES = ("_client", "_client_byo")
+
 
 def _client_class_name(tree: ast.Module) -> str | None:
     """Classe concrète rendue par `_client()` — annotation `Name` (`-> FolkClient`)
@@ -86,16 +97,17 @@ def _client_class_name(tree: ast.Module) -> str | None:
 
 
 def _names_bound_to_client(tree: ast.Module) -> set[str]:
-    """Variables qui REÇOIVENT le client : `client = _client()` et le dépaquetage
-    `client, is_platform = _client()`. Sans ça, tout connecteur qui passe par une
-    variable (au lieu de chaîner) est invisible à la sonde."""
+    """Variables qui REÇOIVENT le client : `client = _client()`, le dépaquetage
+    `client, is_platform = _client()`, et les mêmes formes sur toute fabrique de
+    `_CLIENT_FACTORIES` (`_client_byo()`). Sans ça, tout connecteur qui passe par
+    une variable (au lieu de chaîner) est invisible à la sonde."""
     names: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign):
             continue
         val = node.value
         if not (isinstance(val, ast.Call) and isinstance(val.func, ast.Name)
-                and val.func.id == "_client"):
+                and val.func.id in _CLIENT_FACTORIES):
             continue
         for target in node.targets:
             if isinstance(target, ast.Name):
@@ -122,7 +134,7 @@ def _import_of(tree: ast.Module, clsname: str) -> str | None:
 def _methods_called_on_client(tree: ast.Module) -> set[str]:
     """Méthodes appelées sur le client, quelle que soit la façon de le tenir :
 
-    - **chaîné** `_client().m()` ;
+    - **chaîné** `_client().m()` / `_client_byo().m()` ;
     - **lié** `client, _ = _client()` puis `client.m()` (cf. `_names_bound_to_client`) ;
     - **passé** `_create_one(c, …)` puis `c.m()` — nom conventionnel du client dans
       un dispatcher partagé (ex. Folk factorise singulier/bulk) ; sans ce motif, un
@@ -141,7 +153,7 @@ def _methods_called_on_client(tree: ast.Module) -> set[str]:
             continue
         recv = node.func.value
         if (isinstance(recv, ast.Call) and isinstance(recv.func, ast.Name)
-                and recv.func.id == "_client"):
+                and recv.func.id in _CLIENT_FACTORIES):
             methods.add(node.func.attr)
         elif isinstance(recv, ast.Name) and recv.id in bound:
             methods.add(node.func.attr)
