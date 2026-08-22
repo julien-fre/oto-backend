@@ -70,6 +70,10 @@ def _allowed_origins() -> list[str]:
         "http://localhost:5182",
         "http://localhost:5184",
         "http://localhost:5192",            # oto-dashboard dev (ADR 0007)
+        "http://localhost:5193",            # front Tulina dev, ports alternatifs (tulina-app-front#90)
+        "http://localhost:5194",
+        "http://localhost:5195",
+        "http://localhost:5196",
         "https://dashboard.otoninja.dev",   # oto-dashboard via Caddy local
         "https://dashboard.oto.ninja",      # oto-dashboard prod
     ]
