@@ -288,7 +288,7 @@ _CATEGORY_BY_CONNECTOR = {
     "promptwatch": "Marketing",
     "lighton": "Knowledge", "granola": "Knowledge",
     "planity": "Métier",
-    "atlassian": "Métier",
+    "atlassian": "Métier", "linear": "Métier",
     "hubspot": "Prospection", "apollo": "Prospection", "zerobounce": "Prospection",
     "hithorizons": "Prospection", "phantombuster": "Prospection", "zoho": "Prospection",
     "brevo": "Prospection", "salesforce": "Prospection", "pipedrive": "Prospection",
@@ -323,7 +323,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "unipile": "Unipile", "pennylane": "Pennylane", "gocardless": "GoCardless",
     "silae": "Silae", "attio": "Attio", "crunchbase": "Crunchbase",
     "slack": "Slack", "whatsapp": "WhatsApp", "google": "Google",
-    "planity": "Planity", "atlassian": "Atlassian",
+    "planity": "Planity", "atlassian": "Atlassian", "linear": "Linear",
     "hubspot": "HubSpot", "apollo": "Apollo", "zerobounce": "ZeroBounce",
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase",
@@ -445,6 +445,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
     "fireflies": "fireflies.ai",
     "granola": "granola.ai",
+    "linear": "linear.app",
     "grain": "grain.com",
     "scaleway": "scaleway.com", "resend": "resend.com",
     "osm": "openstreetmap.org", "routine": "anthropic.com",
@@ -1453,6 +1454,17 @@ _REGISTRY_LIST = [
        secret_kind="api_key", label="Grain",
        help="enregistrements de réunion, transcripts, partage, webhooks, org",
        href="https://grain.com"),
+    # linear : issues, projets, cycles (sprints), équipes, labels, commentaires,
+    # webhooks. keyed api_key (header `Authorization` SANS préfixe `Bearer` —
+    # spécificité Linear), **byo_org only** (pas de byo_user, pas de clé
+    # plateforme) : une clé API Linear est scopée au workspace par nature, et
+    # contrairement à un pool de crédits vendeur mutualisable (AI Ark, cf. le
+    # connecteur `linkedin` déposé, #279), il n'y a pas de raison de pool
+    # partagé ici — chaque org qui veut Linear pose sa propre clé workspace.
+    _c("linear", ["linear"], auth_modes={"byo_org"}, keyed=True,
+       secret_kind="api_key", label="Linear",
+       help="issues, projets, cycles, équipes, labels, commentaires, webhooks",
+       href="https://linear.app"),
 ]
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}

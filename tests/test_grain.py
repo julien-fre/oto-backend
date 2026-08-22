@@ -71,11 +71,6 @@ def test_grain_is_keyed_byo_only_connector():
     assert providers._LOGO_DOMAIN_BY_CONNECTOR["grain"] == "grain.com"
 
 
-def test_grain_appended_last_among_keyed_connectors():
-    keyed_names = [c.name for c in providers._REGISTRY_LIST if c.keyed]
-    assert keyed_names[-1] == "grain"
-
-
 def test_grain_has_onboarding_doc():
     kinds = {s.kind for s in providers.REGISTRY["grain"].doc_sections}
     assert {"prerequisite", "usage"} <= kinds
