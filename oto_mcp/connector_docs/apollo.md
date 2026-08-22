@@ -6,11 +6,13 @@ crée une clé api dans les réglages développeur/api de ton compte [apollo](ht
 - **seule la recherche/enrichissement d'entreprises et de personnes** (ci-dessous) admet
   une clé plateforme free-tier (quota quotidien) si tu n'en poses pas la tienne — elle
   interroge la base PARTAGÉE Apollo, la même pour tout le monde.
-- **séquences, emails et conversations sont BYO-only** — pas de repli plateforme sur ces
-  outils-là, il te faut ta propre clé. Pas seulement pour écrire : même les lister ou les
-  lire rend TES données (tes boîtes connectées, le contenu de tes emails envoyés, tes
-  transcripts d'appels) — une clé plateforme mutualisée exposerait ça à n'importe quel
-  autre utilisateur d'oto.
+- **contacts, séquences, emails et conversations sont BYO-only** — pas de repli plateforme
+  sur ces outils-là, il te faut ta propre clé. Pas seulement pour écrire : même les lister
+  ou les lire rend TES données (ton carnet de contacts, tes boîtes connectées, le contenu
+  de tes emails envoyés, tes transcripts d'appels) — une clé plateforme mutualisée
+  exposerait ça à n'importe quel autre utilisateur d'oto.
+- **les outils de contact demandent en plus une clé « Master »** (Apollo → Settings →
+  Integrations → API) : une clé standard authentifie mais rend 403 sur ces trois-là.
 
 ## usage — prospection b2b (entreprises + contacts)
 
@@ -19,6 +21,33 @@ recherche et enrichis entreprises et personnes, et repère les signaux de recrut
 - `apollo_search_people` — personnes par domaines, départements, intitulés, séniorités
 - `apollo_match_person` — enrichit une personne (url linkedin ou email = meilleurs identifiants)
 - `apollo_job_postings` — offres d'emploi actives d'une entreprise (signal d'embauche)
+
+## usage — contacts (les personnes DANS ton espace de travail)
+
+- `apollo_contact` (`op=fields|search|get|update`) — lis et modifie un contact
+  ENREGISTRÉ chez toi : titre, email, téléphones, stage, listes, champs personnalisés
+- `op=search` retrouve un contact et son `contact_id` (tes contacts, pas la base
+  partagée). ⚠️ L'autre source, souvent déjà payée : `apollo_match_person` porte le
+  contact id IMBRIQUÉ à `person.contact.id`, dès que la personne est un contact chez
+  toi. Un id d'`apollo_search_people` est un id de PERSONNE et sera refusé ici.
+  Le même `contact_id` sert ensuite à `apollo_sequence_contacts(op=add)`
+- ⚠️ un **contact ≠ une personne** : `apollo_search_people` interroge la base
+  partagée Apollo, `apollo_contact` ne voit que ce que ton équipe a déjà
+  enregistré. Une personne trouvée mais jamais enregistrée n'a pas d'id de contact
+- `op=get` **ne coûte aucun crédit** — c'est la façon de relire un contact ;
+  `apollo_match_person` en coûte un et rend la fiche partagée, pas tes valeurs
+- `op=fields` d'abord pour une écriture de champ personnalisé : la charge utile
+  est keyée par **id** de champ, jamais par nom. Pour une liste de choix, la
+  valeur à écrire est l'`id` de l'option, pas son libellé
+- `op=create_field` déclare un champ personnalisé sans passer par l'interface
+  Apollo (utile quand le compte appartient au client). ⚠️ Pour un texte long —
+  une accroche, un paragraphe — c'est `field_type="textarea"` : `string` est
+  plafonné à 120 caractères et Apollo tronque sans rien dire. Un champ portant
+  déjà ce nom fait REFUSER la création plutôt que d'en créer un homonyme
+- ⚠️ ces trois appels demandent une clé Apollo **Master** (Settings →
+  Integrations → API) ; une clé standard authentifie mais rend 403
+- ⚠️ `label_names` REMPLACE l'appartenance aux listes au lieu de s'y ajouter
+- `dry_run` disponible sur `op=update`
 
 ## usage — séquences (campagnes email automatisées)
 

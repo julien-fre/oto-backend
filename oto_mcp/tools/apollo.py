@@ -1,5 +1,5 @@
-"""Apollo.io — B2B prospection (organizations, people, job postings, sequences,
-one-off emails, conversations).
+"""Apollo.io — B2B prospection (organizations, people, job postings, contacts,
+sequences, one-off emails, conversations).
 
 Wrappe `oto.tools.apollo.ApolloClient`. Deux régimes de clé selon ce qu'un
 endpoint interroge, PAS selon lecture/écriture :
@@ -12,8 +12,8 @@ endpoint interroge, PAS selon lecture/écriture :
   plateforme métré = les **crédits Apollo** (`people/match`, qui révèle un
   contact) ; recherche org/people et job postings ne consomment pas de crédit →
   non métrés.
-- **Espace de travail DU PROPRIÉTAIRE de la clé** (séquences, emails, boîtes
-  connectées, conversations — TOUT ce qui a été ajouté dans ce module) :
+- **Espace de travail DU PROPRIÉTAIRE de la clé** (contacts, séquences, emails,
+  boîtes connectées, conversations — TOUT ce qui a été ajouté dans ce module) :
   `access.resolve_credential("apollo", want="byo")`, JAMAIS `resolve_api_key`.
   Ce n'est pas une distinction lecture/écriture — `apollo_email(op="search")` en
   lecture rend `body_html`/`body_text` des emails ENVOYÉS PAR le propriétaire de
@@ -29,11 +29,20 @@ endpoint interroge, PAS selon lecture/écriture :
   `send_email_from_email_account_id` côté client oto-core). Les conversations
   (transcripts d'appels/visios réels) sont byo-only pour la même raison
   d'espace privé, plus un coût crédit conditionnel (1 si insights IA, 0 sinon)
-  pas métrable a priori côté quota plateforme.
+  pas métrable a priori côté quota plateforme. Les **contacts** (`apollo_contact`)
+  sont le cas le plus net de cette règle : un contact est le carnet d'adresses de
+  l'équipe qui pose la clé — d'où byo-only sur les TROIS ops, LECTURES COMPRISES,
+  alors qu'aucune ne coûte de crédit. Ne pas les confondre avec les `people/*`,
+  qui interrogent la base partagée : une personne trouvée là n'est un contact ici
+  que si l'équipe l'a enregistrée.
 
 ⚠️ Doc Apollo (pas vérifié depuis cet environnement, pas de clé disponible ici) :
 `add_contact_ids` et `/emailer_messages/{id}/activities` (stats email) exigent
 une clé « Master » et 403 sinon — à confirmer côté Julien avec une clé réelle.
+La même exigence est documentée sur les TROIS endpoints contacts
+(`typed_custom_fields`, `contacts/{id}` en lecture et en PATCH) : là, plutôt que
+d'attendre, `apollo_contact` traduit le 403 en message qui NOMME le prérequis, et
+son écriture reste possible sans le catalogue (validation dégradée, annoncée).
 """
 from __future__ import annotations
 
@@ -43,7 +52,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, output_projection
 
 
 def _bad(msg: str) -> McpError:
@@ -51,7 +60,7 @@ def _bad(msg: str) -> McpError:
 
 
 def register(mcp: FastMCP) -> None:
-    from oto.tools.apollo.client import ApolloClient
+    from oto.tools.apollo.client import ApolloClient, ApolloError
 
     def _client() -> tuple[ApolloClient, bool]:
         key, is_platform = access.resolve_api_key("apollo")
@@ -240,6 +249,446 @@ def register(mcp: FastMCP) -> None:
         """List active job postings for an Apollo organization id (hiring signal)."""
         client, _ = _client()
         return client.get_job_postings(org_id)
+
+    # ------------------------------------------------------------------
+    # Contacts — la frontière de données bascule ICI. Tout ce qui précède
+    # interroge la base PARTAGÉE Apollo (`mixed_*`, `people/match`,
+    # `organizations/*`) ; un CONTACT est une personne enregistrée dans
+    # l'espace de travail DU PROPRIÉTAIRE de la clé, avec les valeurs que SON
+    # équipe y a écrites (stage, propriétaire, listes, champs personnalisés).
+    # Même règle que les séquences et les emails, donc : `_client_byo()` sur
+    # les TROIS ops, y compris les deux lectures. Une clé plateforme
+    # mutualisée rendrait ici le carnet d'adresses de quelqu'un d'autre.
+    #
+    # Les trois endpoints coûtent 0 crédit — c'est précisément ce qui rend
+    # `op="get"` utile : relire un contact qu'on possède déjà n'a aucune
+    # raison de repayer le crédit d'`apollo_match_person`.
+    # ------------------------------------------------------------------
+
+    # Écarté de la vue par défaut du catalogue de champs : plomberie de sync CRM
+    # et d'affichage. DENYLIST nommée, jamais une allowlist — une clé qu'Apollo
+    # ajouterait demain doit rester visible, pas disparaître en silence
+    # (leçon `fr_get`/`liste_idcc`, docs/conventions.md).
+    _FIELD_NOISE = (
+        "finder_view_ids", "finder_views", "icon_class", "project_workspace_id",
+        "mapped_crm_field", "additional_mapped_crm_field",
+        "is_readonly_mapped_crm_field", "picklist_options_last_synced_at",
+        "picklist_value_set_id", "context", "group", "meta", "parent",
+    )
+
+    # Vue de LISTE d'`op="search"` : deux blocs IMBRIQUÉS qu'Apollo recopie dans
+    # CHAQUE fiche et qui, à 25 lignes, pèsent plus que tout le reste réuni. Ce
+    # qui sert à choisir (`organization_name`, `account_id`, `title`, `email`,
+    # `typed_custom_fields`) reste — et `full=True` rend le brut. DENYLIST nommée :
+    # une clé qu'Apollo ajouterait demain reste visible (leçon `fr_get`).
+    _CONTACT_NOISE = ("organization", "account")
+
+    # Ce que veut dire un 422 DÉPEND de l'op, et se tromper de leçon est pire que
+    # ne rien dire : sur une lecture il ne peut désigner que l'id ; sur un PATCH il
+    # désigne aussi bien une VALEUR refusée (un stage inexistant, une date mal
+    # formée). Servir « ce n'est pas un id de contact » à qui vient d'écrire une
+    # mauvaise valeur l'envoie chercher au mauvais endroit.
+    _WRONG_ID_422 = (
+        "Apollo ne trouve pas ce contact dans ton espace de travail (inexistant, "
+        "supprimé, ou appartenant à une autre équipe). ⚠️ Un id rendu par "
+        "apollo_search_people/apollo_match_person est un id de PERSONNE de la base "
+        "partagée, PAS un id de contact : une personne que ton équipe n'a jamais "
+        "enregistrée n'a pas de contact ici.")
+    _REFUSED_WRITE_422 = (
+        "Apollo a refusé cette modification. Deux causes possibles, et le message "
+        "ci-dessus tranche : soit une VALEUR est invalide (contact_stage_id "
+        "inconnu, date mal formée, option de liste de choix inexistante), soit "
+        "`contact_id` ne désigne pas un contact de ton espace de travail — un id "
+        "d'apollo_search_people est un id de PERSONNE, pas de contact.")
+
+    def _contact_run(fn, *, on_422: str = _WRONG_ID_422):
+        """Traduit les deux refus PRÉVISIBLES de cette famille en erreur actionnable.
+
+        Le module n'a pas de table d'erreurs globale (ApolloError remonte tel quel,
+        message amont inclus) et c'est très bien pour la recherche. Ici deux statuts
+        ont une cause précise, que le message amont ne dit pas :
+
+        - **403** = clé Apollo non-Master. C'est le cas NORMAL d'une clé scopée, pas
+          une panne — et « Apollo 403 sur contacts/… » n'apprend rien à qui ne sait
+          pas que ces endpoints ont ce prérequis.
+        - **422** = cf. `on_422`, qui dépend de l'op (lecture vs écriture).
+
+        Tout le reste remonte INTACT : le message amont d'Apollo nomme le champ
+        refusé, et c'est ce qui rend un 400 corrigeable.
+        """
+        try:
+            return fn()
+        except ValueError as e:
+            raise _bad(str(e))
+        except ApolloError as e:
+            if e.status_code == 403:
+                raise _bad(
+                    f"{e} — ces endpoints (champs personnalisés, lecture et écriture "
+                    "d'un contact) exigent une clé Apollo **Master**, ou le scope "
+                    "nommé correspondant. Une clé Apollo standard authentifie mais "
+                    "rend 403 ici. Régénère-la en Master dans Apollo → Settings → "
+                    "Integrations → API.")
+            if e.status_code == 422:
+                raise _bad(f"{e} — {on_422}")
+            raise
+
+    def _custom_fields() -> dict:
+        """Catalogue des champs personnalisés de CETTE équipe Apollo (0 crédit).
+
+        ⚠️ Passe par `typed_custom_fields`, qu'Apollo marque déprécié au profit
+        de `GET /fields` — **sciemment**. Les deux ne rendent pas la même forme
+        d'id : celui-ci rend l'ObjectId NU, la clé exacte que `PATCH /contacts`
+        attend ; `/fields` rend un id PRÉFIXÉ de sa modalité
+        (`"account.6940…"`), qu'aucune doc n'autorise à découper. Le catalogue
+        « moderne » ferait donc écrire des clés qu'Apollo ignore en rendant 200.
+        """
+        return _client_byo().list_typed_custom_fields() or {}
+
+    def _field_index(catalog: Any) -> Optional[dict]:
+        """`{id: définition}` des champs du catalogue — **`None` si la forme
+        surprend**, `{}` si l'équipe n'en déclare aucun.
+
+        Les deux ne se valent pas et les confondre coûte cher dans les deux sens.
+        Forme illisible = on ne SAIT rien : refuser bloquerait une écriture
+        légitime au premier changement d'Apollo. Catalogue lu et vide = on sait
+        que l'id envoyé n'existe pas : laisser passer, c'est laisser Apollo
+        avaler l'écriture en rendant 200."""
+        rows = catalog.get("typed_custom_fields") if isinstance(catalog, dict) else None
+        if not isinstance(rows, list):
+            return None
+        return {r["id"]: r for r in rows
+                if isinstance(r, dict) and isinstance(r.get("id"), str)}
+
+    def _is_contact_field(definition: dict) -> bool:
+        """Un champ sans `modality` déclarée est traité comme un champ de contact
+        — même défaut permissif partout, sinon la liste des ids « valides » et le
+        contrôle qui refuse ne parlent pas du même ensemble."""
+        return (definition.get("modality") or "contact") == "contact"
+
+    def _check_custom_field_ids(values: dict) -> Optional[str]:
+        """Refuse un id de champ que cette équipe ne déclare pas — en nommant les
+        ids valides, sinon l'agent réessaie au hasard.
+
+        Rend une NOTE quand la validation n'a pas pu avoir lieu (catalogue
+        illisible), jamais None en silence : `GET typed_custom_fields` exige une
+        clé Master et rend 403 sinon, donc « pas validé » est le cas NORMAL
+        d'une clé scopée — et une écriture qui se dit vérifiée sans l'être est
+        pire que pas de vérification du tout.
+        """
+        try:
+            index = _field_index(_custom_fields())
+        except McpError:
+            raise
+        except Exception as e:  # noqa: BLE001 — le catalogue est un CONFORT, pas un verrou
+            return (f"ids non vérifiés : le catalogue des champs n'a pas pu être lu "
+                    f"({type(e).__name__}: {e}). `GET typed_custom_fields` demande "
+                    "une clé Apollo Master ; l'écriture, elle, est partie telle "
+                    "quelle — relis le contact avec op=\"get\" pour voir ce qui a "
+                    "réellement été enregistré.")
+        if index is None:
+            return ("ids non vérifiés : le catalogue des champs n'a pas la forme "
+                    "attendue (Apollo a pu la changer). L'écriture est partie telle "
+                    'quelle — relis le contact avec op="get" pour la vérifier.')
+
+        def _describe(i: str) -> str:
+            d = index[i]
+            return f'{i} ("{d.get("name") or d.get("label")}")'
+
+        unknown = sorted(set(values) - set(index))
+        if unknown:
+            valid = [{"id": i, "name": d.get("name") or d.get("label"),
+                      "type": d.get("type")}
+                     for i, d in index.items() if _is_contact_field(d)]
+            raise _bad(
+                f"champs personnalisés inconnus de cette équipe Apollo : {unknown}. "
+                f"Champs de CONTACT valides : {valid or 'aucun'}. "
+                "`typed_custom_fields` est keyé par ID (pas par nom) — lis-les avec "
+                'apollo_contact(op="fields").')
+
+        misfiled = sorted(i for i in values if not _is_contact_field(index[i]))
+        if misfiled:
+            detail = [f'{_describe(i)} → {index[i].get("modality")}' for i in misfiled]
+            raise _bad(
+                f"ces champs n'appartiennent pas à l'objet contact : {detail}. "
+                "Un champ personnalisé est attaché à UN objet Apollo ; posé sur un "
+                "contact il n'est pas « presque bon », il est ignoré sans erreur.")
+
+        # Une liste de choix n'accepte que l'ID d'une de ses options. Envoyer le
+        # LIBELLÉ est le piège que la description de l'outil nomme comme « la seule
+        # erreur qu'Apollo avale en silence » — le catalogue qu'on vient de lire
+        # porte déjà de quoi la refuser, ne pas s'en servir serait la documenter
+        # sans la fermer. On ne contrôle QUE ce que le catalogue déclare : une
+        # picklist dont les options sont absentes n'est pas contrôlée, pas refusée.
+        wrong: list[str] = []
+        for i, value in values.items():
+            d = index[i]
+            if d.get("type") not in ("picklist", "multi_select"):
+                continue
+            opts = d.get("picklist_values")
+            if not isinstance(opts, list) or not opts:
+                continue
+            ids = {o.get("id") for o in opts if isinstance(o, dict)}
+            if not ids:
+                continue
+            given = value if isinstance(value, list) else [value]
+            off = [v for v in given if v is not None and v not in ids]
+            if off:
+                names = [{"id": o.get("id"), "name": o.get("name")}
+                         for o in opts if isinstance(o, dict)]
+                wrong.append(f'{_describe(i)} : {off} — options valides {names}')
+        if wrong:
+            raise _bad(
+                "valeurs de liste de choix invalides : " + " ; ".join(wrong) + ". "
+                "Une picklist Apollo s'écrit avec l'`id` de l'option, jamais avec "
+                "son libellé — le libellé est accepté en apparence puis ignoré.")
+        return None
+
+    @mcp.tool()
+    def apollo_contact(
+        op: Literal["fields", "create_field", "search", "get", "update"],
+        contact_id: Optional[str] = None,
+        label: Optional[str] = None,
+        field_type: str = "string",
+        max_length: Optional[int] = None,
+        q_keywords: Optional[str] = None,
+        contact_stage_ids: Optional[list[str]] = None,
+        contact_label_ids: Optional[list[str]] = None,
+        sort_by_field: Optional[str] = None,
+        sort_ascending: Optional[bool] = None,
+        per_page: int = 25,
+        page: int = 1,
+        typed_custom_fields: Optional[dict] = None,
+        first_name: Optional[str] = None,
+        last_name: Optional[str] = None,
+        title: Optional[str] = None,
+        email: Optional[str] = None,
+        organization_name: Optional[str] = None,
+        account_id: Optional[str] = None,
+        website_url: Optional[str] = None,
+        label_names: Optional[list[str]] = None,
+        contact_stage_id: Optional[str] = None,
+        present_raw_address: Optional[str] = None,
+        direct_phone: Optional[str] = None,
+        corporate_phone: Optional[str] = None,
+        mobile_phone: Optional[str] = None,
+        home_phone: Optional[str] = None,
+        other_phone: Optional[str] = None,
+        modality: Literal["contact", "account", "opportunity", "all"] = "contact",
+        dry_run: bool = False,
+        full: bool = False,
+    ) -> dict:
+        """Read and edit a CONTACT — a person saved in YOUR Apollo workspace, with
+        the values your team wrote on them. BYO key only, all three ops, and all
+        three cost 0 Apollo credits.
+
+        ⚠️ A CONTACT IS NOT A PERSON, AND THE TWO IDS ARE DIFFERENT OBJECTS.
+        `apollo_search_people` returns PERSON ids, which every op here REJECTS. Two
+        things hand you a real contact id: `apollo_match_person`, nested at
+        `person.contact.id` — present once that person is a contact of your
+        workspace, and free because you already paid for the match — and op="search"
+        below. Never pass a person id: it fails, it does not fall back.
+
+        ⚠️ op="get" IS THE CHEAP WAY TO READ SOMEONE BACK. `apollo_match_person`
+        costs a credit and returns the SHARED record — not your team's stage, owner,
+        lists or custom values. To re-read a contact you already own, use this.
+
+        ⚠️ CUSTOM FIELDS ARE KEYED BY ID, NEVER BY NAME. `typed_custom_fields` looks
+        like `{"60c39ed82bd02f01154c470a": "2026-08-07"}` — call op="fields" FIRST to
+        get the ids. Ids are validated against your team's catalogue before the write,
+        and an unknown one is refused with the valid ids named.
+
+        ⚠️ FOR A PICKLIST FIELD, THE VALUE IS THE OPTION'S ID, NOT ITS LABEL. op="fields"
+        returns `picklist_values` for those — send `picklist_values[].id`. Sending the
+        human label is the one mistake Apollo swallows silently.
+
+        ⚠️ A NEW FIELD MEANT TO HOLD A SENTENCE MUST BE `field_type="textarea"`.
+        `string` is length-capped (120 characters by default) and Apollo truncates
+        past it without complaining — a personalised opener would arrive cut mid-word.
+
+        ⚠️ THE THREE ENDPOINTS NEED AN APOLLO **MASTER** API KEY (or the matching
+        scope) and answer 403 otherwise. When op="fields" cannot be read, op="update"
+        still writes — but it says so in `field_validation`, it never pretends the ids
+        were checked.
+
+        ⚠️ `label_names` REPLACES list membership instead of adding to it — sending
+        one list removes the contact from every other. Every other field is a true
+        PATCH: what you omit is left untouched.
+
+        Args by op:
+        - `fields`: the custom field definitions of your team — `id` (the bare id the
+          write expects), `name`, `type`, `modality` and, for picklists,
+          `picklist_values`. `modality` filters which object's fields you get
+          (default "contact"; "account", "opportunity", or "all" for every object).
+          `full=True` returns the raw catalogue instead of the projected one.
+        - `create_field`: declare a NEW custom field — the API equivalent of Apollo's
+          Settings → Custom Fields, for when you have no access to that UI. `label`
+          (required), `field_type` (`string`, `textarea`, `number`, `date`,
+          `datetime`, `boolean`), `max_length`, `modality`. Returns the field with its
+          id, ready to use as a `typed_custom_fields` key. `dry_run=True` echoes
+          without creating. A SETUP gesture — run it once per field, not per lead.
+        - `search`: find the contact ids you need. `q_keywords` (name, title,
+          employer or email), `contact_stage_ids`, `contact_label_ids`,
+          `sort_by_field` (`contact_last_activity_date`,
+          `contact_email_last_opened_at`, `contact_email_last_clicked_at`,
+          `contact_created_at`, `contact_updated_at`) + `sort_ascending`,
+          `per_page` (Apollo caps at 100), `page` (Apollo stops at 500 pages —
+          past 50 000 records, filter instead of paging). Searches YOUR saved
+          contacts only, never Apollo's database.
+        - `get`: `contact_id` (required). Returns the contact and its labels.
+        - `update`: `contact_id` (required) + at least one field among
+          `typed_custom_fields`, `first_name`, `last_name`, `title`, `email`,
+          `organization_name`, `account_id`, `website_url`, `label_names`,
+          `contact_stage_id`, `present_raw_address`, `direct_phone`,
+          `corporate_phone`, `mobile_phone`, `home_phone`, `other_phone`.
+          `dry_run=True` validates the custom field ids and echoes the exact payload
+          without writing.
+        """
+        if op not in ("fields", "create_field", "search", "get", "update"):
+            raise _bad(f'op inconnu "{op}" — attendu: fields, create_field, search, '
+                       'get, update')
+
+        if op == "fields":
+            catalog = _contact_run(_custom_fields)
+            if full:
+                return catalog
+            index = _field_index(catalog)
+            if index is None:
+                raise _bad(
+                    "le catalogue des champs personnalisés n'a pas la forme attendue "
+                    f"(Apollo a pu la changer) — brut : {str(catalog)[:400]}")
+            rows = [r for r in index.values()
+                    if modality == "all"
+                    or (r.get("modality") or "contact") == modality]
+            return {
+                "fields": output_projection.project(
+                    {"fields": rows}, items_path="fields",
+                    item_drop=_FIELD_NOISE)["fields"],
+                "count": len(rows),
+                "modality": modality,
+                "projection": {
+                    "dropped": list(_FIELD_NOISE),
+                    "filtered_on": f"modality={modality}",
+                    "how_to_get_all_columns": "full=True (rend le catalogue brut)",
+                    "how_to_get_all_objects": 'modality="all"',
+                },
+                "how_to_use": ('les `id` ci-dessus sont les clés de '
+                               '`typed_custom_fields` sur op="update"'),
+            }
+
+        if op == "create_field":
+            if not (label or "").strip():
+                raise _bad('op=create_field : `label` requis (le nom du champ).')
+            # Apollo ne déduplique PAS sur le libellé : un second appel crée un
+            # second champ homonyme, sans rien signaler. Les deux sortent au
+            # catalogue, la variable d'une séquence en désigne UN, et les écritures
+            # qui visent l'autre n'apparaissent nulle part. On regarde d'abord — et
+            # si le catalogue est illisible (clé non-Master), on ne bloque pas : on
+            # le DIT, comme partout ailleurs ici.
+            existing, dup_note = [], None
+            try:
+                index = _field_index(_custom_fields())
+                if index is None:
+                    dup_note = ("doublons non vérifiés : catalogue illisible.")
+                else:
+                    existing = [
+                        {"id": i, "name": d.get("name") or d.get("label"),
+                         "type": d.get("type")}
+                        for i, d in index.items()
+                        if (d.get("name") or d.get("label")) == label
+                        and (d.get("modality") or "contact") == modality]
+            except McpError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                dup_note = (f"doublons non vérifiés : le catalogue n'a pas pu être "
+                            f"lu ({type(e).__name__}: {e}).")
+            if existing:
+                raise _bad(
+                    f'un champ « {label} » existe déjà sur cet objet : {existing}. '
+                    "Apollo en créerait un SECOND, homonyme, que rien ne distingue — "
+                    "et une écriture qui viserait le mauvais n'apparaîtrait nulle "
+                    "part. Réutilise l'id ci-dessus, ou choisis un autre libellé.")
+            if dry_run:
+                out = {"dry_run": True, "action": "create_field", "label": label,
+                       "modality": modality, "field_type": field_type,
+                       "max_length": max_length}
+                if dup_note:
+                    out["field_validation"] = dup_note
+                return out
+            created = _contact_run(lambda: _client_byo().create_custom_field(
+                label=label, modality=modality, field_type=field_type,
+                max_length=max_length))
+            if dup_note and isinstance(created, dict):
+                created = {**created, "field_validation": dup_note}
+            return created
+
+        if op == "search":
+            found = _contact_run(lambda: _client_byo().search_contacts(
+                q_keywords=q_keywords, contact_stage_ids=contact_stage_ids,
+                contact_label_ids=contact_label_ids, sort_by_field=sort_by_field,
+                sort_ascending=sort_ascending, per_page=per_page, page=page))
+            if full or not isinstance(found, dict):
+                return found
+            out = output_projection.project(
+                found, items_path="contacts", item_drop=_CONTACT_NOISE)
+            out["projection"] = {
+                "dropped": list(_CONTACT_NOISE),
+                "why": ("deux blocs imbriqués qui pèsent plus que la fiche entière ; "
+                        "`organization_name` et `account_id` restent, de quoi "
+                        "rattacher sans les recharger"),
+                "how_to_get_everything": "full=True, ou op=\"get\" sur un id",
+            }
+            return out
+
+        if not contact_id:
+            raise _bad(f"contact_id requis pour op={op}")
+
+        if op == "get":
+            return _contact_run(lambda: _client_byo().get_contact(contact_id))
+
+        payload: dict[str, Any] = {
+            k: v for k, v in (
+                ("first_name", first_name), ("last_name", last_name),
+                ("title", title), ("email", email),
+                ("organization_name", organization_name),
+                ("account_id", account_id), ("website_url", website_url),
+                ("label_names", label_names),
+                ("contact_stage_id", contact_stage_id),
+                ("present_raw_address", present_raw_address),
+                ("direct_phone", direct_phone), ("corporate_phone", corporate_phone),
+                ("mobile_phone", mobile_phone), ("home_phone", home_phone),
+                ("other_phone", other_phone),
+                ("typed_custom_fields", typed_custom_fields),
+            # `{}` et `[]` sont écartés comme `None` : un `typed_custom_fields`
+            # VIDE n'exprime aucune modification, et le laisser passer produisait
+            # un PATCH sans effet rendu comme une écriture réussie.
+            ) if v is not None and v != {} and v != []
+        }
+        if not payload:
+            raise _bad(
+                "op=update : aucun champ à modifier — passe au moins un champ "
+                '(typed_custom_fields, title, email, contact_stage_id…). Les ids de '
+                'champs personnalisés se lisent avec apollo_contact(op="fields").')
+        if typed_custom_fields is not None and not isinstance(typed_custom_fields, dict):
+            raise _bad("typed_custom_fields doit être un objet {id_du_champ: valeur}, "
+                       'keyé par les ids rendus par apollo_contact(op="fields").')
+
+        note = _check_custom_field_ids(typed_custom_fields) if typed_custom_fields else None
+
+        if dry_run:
+            out = {"dry_run": True, "action": "update", "contact_id": contact_id,
+                   "payload": payload}
+            if note:
+                out["field_validation"] = note
+            return out
+        result = _contact_run(
+            lambda: _client_byo().update_contact(contact_id, **payload),
+            on_422=_REFUSED_WRITE_422)
+        if not note:
+            return result
+        # La note ne doit pas dépendre de la FORME du retour d'Apollo : « je n'ai
+        # pas pu vérifier » est une information sur l'appel, pas sur la réponse.
+        return ({**result, "field_validation": note} if isinstance(result, dict)
+                else {"result": result, "field_validation": note})
 
     # ------------------------------------------------------------------
     # Email accounts & schedules — prérequis en lecture, 0 crédit, mais BYO
