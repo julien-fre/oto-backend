@@ -309,6 +309,8 @@ _CATEGORY_BY_CONNECTOR = {
     "brevoauto": "Automatisation",
     # SEO / recherche concurrentielle
     "ahrefs": "Prospection",
+    # paiements & analytics produit
+    "stripe": "Finance", "posthog": "Dev",
 }
 
 # Éditeur (publisher) par connecteur — CURÉ. Défaut "Otomata" (connecteurs maison /
@@ -337,7 +339,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
     "firecrawl": "Firecrawl", "apify": "Apify",
-    "theirstack": "TheirStack", "origami": "Origami", "lightfield": "Lightfield", "forager": "Forager.ai",
+    "theirstack": "TheirStack", "origami": "Origami", "lightfield": "Lightfield", "forager": "Forager.ai", "stripe": "Stripe", "posthog": "PostHog",
     "n8n": "n8n", "make": "Make", "zapier": "Zapier",
     # open-data FR → éditeur = la source publique
     "sirene": "INSEE", "culture": "Ministère de la Culture",
@@ -426,7 +428,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
     "firecrawl": "firecrawl.dev", "apify": "apify.com",
-    "theirstack": "theirstack.com", "origami": "origami.chat", "lightfield": "lightfield.app", "forager": "forager.ai",
+    "theirstack": "theirstack.com", "origami": "origami.chat", "lightfield": "lightfield.app", "forager": "forager.ai", "stripe": "stripe.com", "posthog": "posthog.com",
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "promptwatch": "promptwatch.com",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
@@ -1483,6 +1485,59 @@ _REGISTRY_LIST = [
        secret_kind="api_key", label="Linear",
        help="issues, projets, cycles, équipes, labels, commentaires, webhooks",
        href="https://linear.app"),
+    # stripe : paiements & facturation — le compte Stripe du client.
+    # byo-only (pas de clé plateforme) : ce sont ses livres de comptes, une clé
+    # partagée entre orgs n'aurait aucun sens.
+    # TROIS champs plutôt qu'`api_key` nu, parce que deux satellites NON secrets
+    # décident CE QUE la clé lit : `api_version` (une version épinglée qui
+    # diverge du compte change des formes de réponse en silence) et surtout
+    # `stripe_account` — avec Connect, la MÊME question rend le chiffre
+    # d'affaires d'une AUTRE société selon cet en-tête. En faire un champ de
+    # credential est la forme la plus forte de « jamais déduit par appel » : ce
+    # n'est un paramètre d'aucun tool, donc impossible à basculer en cours de
+    # conversation.
+    _c("stripe", ["stripe"], auth_modes={"byo_user", "byo_org"},
+       secret_kind="fields", label="Stripe",
+       help="paiements & facturation — clients, abonnements, factures, encaissements, solde",
+       href="https://stripe.com", credential_fields=(
+           CredentialField("api_key", "Clé restreinte (rk_…) ou secrète (sk_…)",
+                           secret=True, reveal=True,
+                           help="Stripe Dashboard → Developers → API keys → « Create "
+                                "restricted key » ; des permissions en LECTURE suffisent. "
+                                "Une clé publiable `pk_…` est refusée : elle ne lit rien."),
+           CredentialField("api_version", "Version d'API (optionnel)", secret=False,
+                           required=False,
+                           help="vide = la version par défaut du compte, celle que montre "
+                                "son dashboard"),
+           CredentialField("stripe_account", "Compte connecté (optionnel, Connect)",
+                           secret=False, required=False,
+                           help="acct_… — TOUTES les lectures portent alors sur ce "
+                                "compte, pas sur le vôtre"),
+       )),
+    # posthog : analytics produit — HogQL, events, personnes, comptes (groupes),
+    # insights, feature flags, session recordings. byo-only.
+    # TROIS champs : la clé PERSONNELLE `phx_…` (la clé de PROJET `phc_…`, celle
+    # que PostHog met le plus en avant, est refusée par l'API de lecture — le
+    # client la rejette à la pose plutôt que de laisser un 401 illisible) ; le
+    # `host` régional, car us/eu sont deux déploiements distincts et une clé de
+    # l'un est inconnue de l'autre ; et un `project_id` facultatif qui épingle la
+    # clé sur UN projet (sinon découvert depuis la clé).
+    _c("posthog", ["posthog"], auth_modes={"byo_user", "byo_org"},
+       secret_kind="fields", label="PostHog",
+       help="analytics produit — requêtes HogQL, events, personnes, insights, "
+            "feature flags, session recordings",
+       href="https://posthog.com", credential_fields=(
+           CredentialField("api_key", "Personal API key (phx_…)", secret=True, reveal=True,
+                           help="PostHog → Settings → Personal API keys. PAS la clé de "
+                                "projet `phc_…` du snippet JS, qui est refusée ici."),
+           CredentialField("host", "Région / instance", secret=False, required=False,
+                           help="https://us.posthog.com (défaut) ou "
+                                "https://eu.posthog.com, ou l'URL de votre instance"),
+           CredentialField("project_id", "Projet par défaut (optionnel)", secret=False,
+                           required=False,
+                           help="épingle la clé sur UN projet ; sinon résolu "
+                                "automatiquement depuis la clé"),
+       )),
 ]
 
 REGISTRY: dict[str, Connector] = {c.name: c for c in _REGISTRY_LIST}
