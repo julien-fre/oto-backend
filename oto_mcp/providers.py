@@ -300,9 +300,7 @@ _CATEGORY_BY_CONNECTOR = {
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
     "firecrawl": "Prospection", "apify": "Prospection",
     # signaux de recrutement + campagnes sortantes
-    "theirstack": "Prospection", "origami": "Prospection",
-    # CRM agent-native
-    "lightfield": "CRM",
+    "theirstack": "Prospection", "origami": "Prospection", "lightfield": "CRM", "forager": "Prospection",
     # ATS / talent sourcing (RH)
     "greenhouse": "Recrutement", "lever": "Recrutement", "ashby": "Recrutement",
     "recruitee": "Recrutement", "teamtailor": "Recrutement", "spott": "Recrutement",
@@ -339,8 +337,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
     "firecrawl": "Firecrawl", "apify": "Apify",
-    "theirstack": "TheirStack", "origami": "Origami",
-    "lightfield": "Lightfield",
+    "theirstack": "TheirStack", "origami": "Origami", "lightfield": "Lightfield", "forager": "Forager.ai",
     "n8n": "n8n", "make": "Make", "zapier": "Zapier",
     # open-data FR → éditeur = la source publique
     "sirene": "INSEE", "culture": "Ministère de la Culture",
@@ -429,8 +426,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
     "firecrawl": "firecrawl.dev", "apify": "apify.com",
-    "theirstack": "theirstack.com", "origami": "origami.chat",
-    "lightfield": "lightfield.app",
+    "theirstack": "theirstack.com", "origami": "origami.chat", "lightfield": "lightfield.app", "forager": "forager.ai",
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "promptwatch": "promptwatch.com",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
@@ -712,6 +708,28 @@ _REGISTRY_LIST = [
            CredentialField("client_id", "Client ID", secret=True),
            CredentialField("client_secret", "Client Secret", secret=True),
            CredentialField("subscription_key", "Subscription Key", secret=True),
+       )),
+
+    # forager : job posts + firmographics + people/contact enrichment, payant
+    # au crédit par lookup. Auth = header `X-API-KEY` plat (un seul secret),
+    # mais PAS `secret_kind="api_key"` : chaque appel datastorage a besoin en
+    # plus d'un `account_id` entier en path, résolu au runtime via `GET
+    # /api/users/current/` → `accounts[]` — donc modèle multi-champs (ADR
+    # 0011, `secret_kind="fields"`) même si le secret lui-même est un simple
+    # bearer, pour porter ce second champ (non-secret). `account_id` est
+    # FACULTATIF : `ForagerClient` le résout tout seul si la clé n'a accès
+    # qu'à un compte, et REFUSE (au lieu de deviner) si elle en a plusieurs —
+    # deviner facturerait potentiellement le mauvais compte. byo-only (compte
+    # payant du client, pas de pool de crédits partagé). Pas de tool de
+    # gestion de clé API (create/delete) — dashboard-only, cf. tools/forager.py.
+    _c("forager", ["forager"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
+       label="Forager", help="job posts, firmographics et enrichissement contacts (payant au crédit)",
+       publisher="Forager.ai", href="https://forager.ai", credential_fields=(
+           CredentialField("api_key", "Clé API (X-API-KEY)", secret=True, reveal=True),
+           CredentialField(
+               "account_id", "Account ID", secret=False, reveal=True, required=False,
+               help="laisse vide sauf si ta clé a accès à plusieurs comptes Forager — "
+                    "sinon résolu automatiquement"),
        )),
 
     # --- gocardless : keyed BYO self-serve -----------------------------------

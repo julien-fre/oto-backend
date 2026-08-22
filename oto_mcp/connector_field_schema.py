@@ -55,6 +55,19 @@ CONNECTOR_FIELD_SCHEMA: dict[str, list[dict]] = {
         {"name": "phones", "label": "téléphones", "type": "list", "sensitive": True},
         {"name": "jobTitle", "label": "intitulé de poste", "type": "string", "sensitive": False},
     ],
+    # Forager (prospection — job posts/firmographics/contacts). Champs de contact
+    # résolus par les lookups person_* (détail, reverse by email/phone, emails
+    # perso/pro, téléphones) — noms alignés sur le schéma Forager réel (`full_name`,
+    # `phone_number`…), pas ceux de `_CANDIDATE_FIELDS` (unipile/ATS).
+    "forager": [
+        {"name": "full_name", "label": "nom complet", "type": "string", "sensitive": True},
+        {"name": "first_name", "label": "prénom", "type": "string", "sensitive": True},
+        {"name": "last_name", "label": "nom", "type": "string", "sensitive": True},
+        {"name": "email", "label": "email", "type": "string", "sensitive": True},
+        {"name": "phone_number", "label": "téléphone", "type": "string", "sensitive": True},
+        {"name": "photo", "label": "photo", "type": "string", "sensitive": True},
+        {"name": "headline", "label": "titre/accroche", "type": "string", "sensitive": False},
+    ],
     # Pennylane (compta FR). Tiers & adresses.
     "pennylane": [
         {"name": "name", "label": "nom du tiers", "type": "string", "sensitive": True},
