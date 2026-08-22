@@ -14,12 +14,22 @@ on:
       tag:
         description: "Tag à déployer en prod (ex: v1.2.3)"
         required: true
+  # Appelé par `release.yml`, qui pose la version puis déclenche le déploiement.
+  # Nécessaire parce qu'un tag créé avec le GITHUB_TOKEN ne déclenche AUCUN
+  # workflow (garde anti-récursion) : sans cet appel, la version serait posée et
+  # rien ne partirait.
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag à déployer en prod"
+        required: true
+        type: string
 
 jobs:
   test:
     runs-on: ubuntu-latest
     env:
-      DEPLOY_REF: ${{ github.event.inputs.tag || github.ref_name }}
+      DEPLOY_REF: ${{ inputs.tag || github.ref_name }}
     steps:
       # Valide le format du tag AVANT tout usage (anti-injection : le ref/input
       # atterrit ensuite dans un `ref:` de checkout et une commande shell).
@@ -31,7 +41,7 @@ jobs:
           esac
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
@@ -49,7 +59,7 @@ jobs:
       group: deploy-prod
       cancel-in-progress: false
     env:
-      DEPLOY_REF: ${{ github.event.inputs.tag || github.ref_name }}
+      DEPLOY_REF: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: Deploy prod (build serveur via script root-restreint)
         # Runner self-hosted sur la box dédiée (sudo NOPASSWD limité à

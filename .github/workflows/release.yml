@@ -1,0 +1,110 @@
+name: Release (poser une version et déployer)
+
+# POURQUOI CE WORKFLOW.
+# La prod se déclenche sur un tag `v*` poussé — ce qui suppose un `git push`
+# depuis une machine autorisée. Une session Claude Code cloud/web n'en a pas :
+# elle travaille sur une copie et ouvre des PR. Résultat : impossible de mettre
+# en prod depuis le web, alors que tout le reste s'y fait.
+#
+# Ici, la version est posée PAR le workflow, donc depuis n'importe où : l'onglet
+# Actions, `gh workflow run`, ou une session cloud qui exécute la même commande.
+#
+# ⚠️ PIÈGE GITHUB, la raison pour laquelle on appelle le déploiement au lieu de
+# se reposer sur le tag : un tag créé avec le `GITHUB_TOKEN` NE DÉCLENCHE PAS
+# d'autre workflow (garde anti-récursion). Sans l'appel explicite ci-dessous,
+# la version serait posée et RIEN ne partirait — panne silencieuse, la pire.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version à poser (ex: v1.140.0). Vide = incrément mineur du dernier tag."
+        required: false
+      dry_run:
+        description: "Simuler : calcule et vérifie, ne pose rien, ne déploie pas."
+        type: boolean
+        default: false
+
+permissions:
+  contents: write          # créer le tag
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      dry_run: ${{ inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0     # il faut TOUS les tags pour calculer le suivant
+
+      - name: Calculer la version
+        id: calc
+        env:
+          DEMANDEE: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$DEMANDEE" ]; then
+            case "$DEMANDEE" in
+              v[0-9]*.[0-9]*.[0-9]*) : ;;
+              *) echo "::error::version invalide '$DEMANDEE' (attendu vX.Y.Z)"; exit 1 ;;
+            esac
+            VERSION="$DEMANDEE"
+          else
+            # Incrément MINEUR du dernier tag. Calculé ici et pas à la main :
+            # deux personnes (ou deux sessions) qui préparent une release en
+            # parallèle choisissaient le même numéro, et la seconde échouait sur
+            # « tag existe déjà » — vécu le 21/08/2026.
+            DERNIER=$(git tag -l 'v*.*.*' | sort -V | tail -1)
+            [ -n "$DERNIER" ] || { echo "::error::aucun tag v* existant"; exit 1; }
+            MAJ=${DERNIER#v}; MAJEUR=${MAJ%%.*}; RESTE=${MAJ#*.}; MINEUR=${RESTE%%.*}
+            VERSION="v${MAJEUR}.$((MINEUR + 1)).0"
+          fi
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "::error::$VERSION existe déjà (les tags v* sont immuables)"; exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "### Version : \`$VERSION\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Refuser de publier un tronc rouge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Le déploiement relance les tests, mais il le fait APRÈS avoir posé la
+          # version — or une version est immuable. On regarde donc l'état du
+          # tronc AVANT de graver quoi que ce soit.
+          SHA=$(git rev-parse HEAD)
+          ETAT=$(gh api "repos/${{ github.repository }}/actions/runs?branch=main&event=push&per_page=20" \
+                 --jq "[.workflow_runs[] | select(.head_sha==\"$SHA\" and .name==\"Deploy preprod\")][0].conclusion // \"absent\"")
+          echo "préproduction sur $SHA : $ETAT"
+          case "$ETAT" in
+            success) ;;
+            absent)  echo "::warning::aucun run de préproduction trouvé pour ce commit — on continue, le déploiement retestera" ;;
+            *) echo "::error::la préproduction est '$ETAT' sur ce commit : on ne pose pas de version sur un tronc rouge"; exit 1 ;;
+          esac
+
+      - name: Poser la version
+        if: ${{ !inputs.dry_run }}
+        env:
+          VERSION: ${{ steps.calc.outputs.version }}
+        run: |
+          set -euo pipefail
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              tag -a "$VERSION" -m "$VERSION — posée depuis Actions"
+          git push origin "$VERSION"
+
+      - name: Simulation
+        if: ${{ inputs.dry_run }}
+        run: echo "::notice::simulation — rien n'a été posé ni déployé"
+
+  deploy:
+    needs: tag
+    if: ${{ !inputs.dry_run }}
+    # Appel EXPLICITE : le tag posé ci-dessus ne déclenchera pas `Deploy prod`
+    # tout seul (garde anti-récursion du GITHUB_TOKEN).
+    uses: ./.github/workflows/deploy.yml
+    with:
+      tag: ${{ needs.tag.outputs.version }}
+    secrets: inherit
