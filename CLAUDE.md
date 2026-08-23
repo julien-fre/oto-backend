@@ -674,6 +674,30 @@ en place — elle sert encore de source au backfill de boot ; son DROP est une m
 `docs/doctrines.md`) gardent le mot doctrine. Prose opératoire versionnée par org,
 **détail : `docs/doctrines.md`**.
 
+> **Une procédure s'OUVRE sur son digest et embarque son SCHÉMA — deux sections requises.**
+> Premier bloc = `> **Self-improvement digest** — …` (ce que le dernier déroulé a appris et ce
+> qui a été corrigé, daté ; une phrase si elle n'a jamais tourné — ⚠️ **jamais fabriqué**,
+> sourcé sur le journal des runs ou le relevé daté du corps). Sa PLACE vient du rendu : la page
+> retire un H1 de tête qui répète le titre, donc le digest se pose SOUS ce H1, et en tout
+> premier quand il n'y en a pas. `procedure_digest` → `digest_warning`.
+> **Le SCHÉMA, lui, est la vue par défaut de la page (tulina-app-front#108).** Le
+> front en fait la **vue par défaut** de la page de la procédure : sans dessin, la page
+> s'affiche vide. Le bloc va juste après le tableau « At a glance » (ou l'intro), avant le
+> premier titre de phase, **rien entre le tableau et lui** (la page retire ce tableau
+> quand le corps dessine, cf. `stripDiagramSummary` : ce qui traîne dans l'intervalle
+> reste orphelin au-dessus du dessin). ⚠️ **Sa grammaire est un CONTRAT** : le bloc est *reparsé en
+> graphe* puis redessiné en cartes, et tout ce qu'elle ne couvre pas est refusé (le
+> parseur préfère refuser plutôt que dessiner faux) et retombe en caractères bruts —
+> **UN** seul bloc fencé **non tagué** compte, un ```text ne sera jamais rendu. Grammaire
+> + exemple qui rend = guide plateforme **`procedure-flowchart`**, cité par le socle et
+> par la description d'`oto_procedure op=set`. Côté serveur, `procedure_diagram` ajoute un
+> **`diagram_warning`** au retour d'écriture (org **et** équipe), non bloquant comme
+> `unresolved_tools`/`slot_warnings` — un refus aurait cassé la réécriture des ~14
+> procédures vivantes sans dessin. ⚠️ Le check ne porte QUE les deux seuils du `isDrawing`
+> du front (≥ 3 lignes à glyphe, ≥ 20 glyphes) : rejouer la grammaire ici ferait **deux
+> vérités** qui divergeraient au premier changement de rendu — il répond « l'auteur
+> a-t-il dessiné ? », jamais « le dessin est-il valide ? ».
+
 > Le détail (cas limites, incidents, gotchas empiriques) a été migré dans **`docs/doctrines.md`** — il n'a pas sa place dans une carte, et il y était devenu illisible.
 
 ## Groupes (départements) & hiérarchie de droits (ADR 0012)
