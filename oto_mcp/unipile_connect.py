@@ -47,9 +47,29 @@ def _default_limit() -> int:
         return 5
 
 
+def _return_to(app: "str | None", org_id: "int | None", suffix: str) -> str:
+    """Où Unipile dépose la personne à la fin du wizard hébergé.
+
+    Le hosted-auth sort du site : c'est la SEULE chose qui décide sur quel front
+    on se réveille. Tant que c'était codé sur oto-dashboard, un utilisateur de
+    Tulina finissait sa connexion chez un autre produit — et pas seulement de
+    façon disgracieuse : la liaison du compte se fait par réconciliation, sous le
+    JWT du front d'arrivée. Atterrir sur le mauvais front, c'est réconcilier sous
+    un AUTRE sub, donc ne rien lier du tout (vécu le 2026-08-22).
+
+    `app` inconnu ou absent ⟹ destination historique, à l'octet près. On ne fait
+    JAMAIS confiance à une valeur de client au-delà d'un lookup dans la liste
+    fermée `RETURN_APPS` (`resolve_return_app` s'en charge)."""
+    from . import oauth_flow
+    if oauth_flow.resolve_return_app(app):
+        return oauth_flow.return_url(app, suffix, org=org_id)
+    return f"{config.dashboard_url()}/console/connections{suffix}"
+
+
 async def hosted_auth_url(sub: str, channel: str = "linkedin",
                           force: bool = False,
-                          premium: "str | None" = None) -> dict:
+                          premium: "str | None" = None,
+                          app: "str | None" = None) -> dict:
     """Génère l'URL hosted-auth où l'user connecte SON compte (canal donné) —
     mêmes gates que la face dashboard. Renvoie `{url, channel}`.
 
@@ -62,7 +82,15 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
     endpoints premium répondent 403 « out of your scope » et le wizard n'offre
     aucune case. Les deux sont exclusifs (un seul par compte). Demander un premium
     ajoute aussi la connexion par **cookies** au wizard (recommandé par Unipile
-    pour ces produits — sans ça, seul identifiant/mot de passe est proposé)."""
+    pour ces produits — sans ça, seul identifiant/mot de passe est proposé).
+
+    `app` = le front qui DEMANDE la connexion, clé d'une liste FERMÉE
+    (`oauth_flow.RETURN_APPS`) — jamais une origine prise telle quelle, ce serait
+    un open redirect. Il gouverne l'atterrissage de fin de wizard. Sans lui (face
+    MCP, oto-dashboard), on garde à l'octet près l'ancienne destination
+    `/console/connections` : c'est un chemin PROPRE au dashboard, que le patron
+    générique `return_url` ne connaît pas — y retomber renverrait le dashboard sur
+    `/connectors`, une régression pour l'appelant historique."""
     provider = str(channel or "linkedin").upper()
     if provider not in CHANNELS:
         raise ConnectRefused(400, "invalid_channel",
@@ -191,7 +219,6 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
         if existing and existing.get("account_id"):
             reconnect_account = existing["account_id"]
     public = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    dash = config.dashboard_url()
     nonce = secrets.token_urlsafe(24)
     db.create_unipile_pending(nonce, sub, org_id, provider, platform_seat=platform_seat)
     ch = provider.lower()
@@ -202,8 +229,8 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
                 name=nonce,
                 providers=[provider],
                 notify_url=f"{public}/api/unipile/webhook",
-                success_redirect_url=f"{dash}/console/connections?unipile=connected&channel={ch}",
-                failure_redirect_url=f"{dash}/console/connections?unipile=failed&channel={ch}",
+                success_redirect_url=_return_to(app, org_id, f"?unipile=connected&channel={ch}"),
+                failure_redirect_url=_return_to(app, org_id, f"?unipile=failed&channel={ch}"),
                 # produit premium demandé → `config.linkedin` (+ cookies au wizard,
                 # recommandé par Unipile pour ces produits)
                 premium=premium,
@@ -353,7 +380,11 @@ async def _start_flow(ctx, values: dict):
             ctx.sub, str(values.get("channel") or "linkedin"),
             force=bool(values.get("force")),
             premium=(str(values["premium"]).strip().lower()
-                     if values.get("premium") else None))
+                     if values.get("premium") else None),
+            # `app` voyage avec le geste (le front le pose déjà dans `params`) :
+            # sans lui, la fin du wizard repart chez oto-dashboard, quel que soit
+            # le front qui a demandé la connexion.
+            app=(str(values["app"]) if values.get("app") else None))
     except ConnectRefused as e:
         raise AuthzDenied(e.status, e.code, e.message)
     if out.get("adopted"):

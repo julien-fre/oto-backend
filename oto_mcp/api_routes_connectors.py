@@ -151,7 +151,10 @@ def make_routes(
                 # `premium` = 'recruiter' | 'sales_navigator' : produit LinkedIn à
                 # ACTIVER à la connexion (sinon classic seul → 403 sur ces APIs).
                 premium=(str(body["premium"]).strip().lower()
-                         if body.get("premium") else None))
+                         if body.get("premium") else None),
+                # Face REST historique : oto-dashboard n'envoie pas `app` et
+                # retombe donc sur sa propre destination, inchangée.
+                app=(str(body["app"]) if body.get("app") else None))
         except unipile_connect.ConnectRefused as e:
             # 502 (échec amont) et 409 (doublon cross-org, #172) portent un message
             # actionnable → on le renvoie ; les autres exposent leur code machine.

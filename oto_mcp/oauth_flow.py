@@ -135,8 +135,13 @@ def redirect_uri(path: str) -> str:
 # chemin avant le `?` diffère). `{org}` substitué depuis le state, déjà porté pour
 # scoper le credential (cf. `salesforce_oauth.make_state`).
 RETURN_APPS: dict[str, tuple[str, str]] = {
-    "tulina": ("https://app.tulina.ai", "/network/{org}/connectors"),
-    "tulina-preprod": ("https://tulina.oto.zone", "/network/{org}/connectors"),
+    # ⚠️ Le CHEMIN suit les routes du front, pas nos souvenirs : `/network/[orgId]`
+    # a été renommé `/org/[orgId]` (tulina-app-front, commit 6921521) et le
+    # segment `/network` n'existe plus du tout. Tant que ce patron est resté
+    # périmé, un retour d'OAuth « réussi » déposait la personne sur un 404 —
+    # panne silencieuse, puisque le consentement, lui, avait bien eu lieu.
+    "tulina": ("https://app.tulina.ai", "/org/{org}/connectors"),
+    "tulina-preprod": ("https://tulina.oto.zone", "/org/{org}/connectors"),
 }
 
 # Défaut historique (oto-dashboard) — byte-à-byte ce que chaque `_app_url()` de

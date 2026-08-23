@@ -53,7 +53,8 @@ def _modes(ctx: ResolvedCtx, inp: ZohoConnectInput) -> dict:
     }
 
 
-def start_for(ctx: ResolvedCtx, connector: str, data_center: str) -> connector_flow.FlowStart:
+def start_for(ctx: ResolvedCtx, connector: str, data_center: str,
+              return_app: str = "") -> connector_flow.FlowStart:
     """URL de consentement à ouvrir. L'app (client_id/secret) vient du COFFRE — jamais
     d'une variable d'env : l'org qui apporte la sienne l'emporte, sinon on prend l'app
     d'ÉDITEUR de la région (`credentials_store` §app d'éditeur), qui donne le « un
@@ -66,7 +67,8 @@ def start_for(ctx: ResolvedCtx, connector: str, data_center: str) -> connector_f
         dc = (data_center or "").lower()
         url = zoho_oauth.build_auth_url(
             ctx.sub, ctx.org_id or 0, connector, dc,
-            app=zoho_oauth.app_fields(connector, ctx.sub, dc))
+            app=zoho_oauth.app_fields(connector, ctx.sub, dc),
+            return_app=return_app)
     except zoho_oauth.ZohoOAuthError as e:
         raise AuthzDenied(400, "zoho_oauth_unavailable", str(e))
     # L'écho du connecteur est SPÉCIFIQUE à Zoho (trois connecteurs partagent ce flux) :
