@@ -214,30 +214,18 @@ def _audience_of_declared_tenant(aud, slug: str = "") -> bool:
     return entry is not None and entry.slug == slug
 
 
-def _build_verifier() -> JWTVerifier:
-    """JWT verifier partagé entre l'auth MCP et l'API REST — **registre d'émetteurs**
-    (ADR 0052 §3).
-
-    L'émetteur primaire vient de l'env (`LOGTO_ENDPOINT`) et porte le tenant `oto` :
-    ce chemin est DB-indépendant, l'authentification canonique ne casse jamais sur un
-    hoquet de base. `LOGTO_ENDPOINT_ALT` — la fenêtre de drain d'une bascule
-    d'instance Logto — n'est plus un mécanisme à côté : c'est une **entrée du
-    registre**, sur le même tenant `oto` (deux émetteurs, un tenant, sub nu des deux
-    côtés). Les tenants TIERS viennent de la base, avec leur slug et leur JWKS.
+def _registry_and_issuers() -> "tuple[tenancy.IssuerRegistry, dict]":
+    """`(registre, by_issuer)` depuis l'env + la base — la construction PARTAGÉE
+    entre le boot (`_build_verifier`) et le rechargement à chaud
+    (`reload_tenant_registry`). Une seule écriture de cette logique : un reload qui
+    la recopierait divergerait au premier tenant ajouté au boot seulement.
     """
     logto_endpoint = require_env("LOGTO_ENDPOINT").rstrip("/")
-    audience = require_env("MCP_AUDIENCE")
     issuer = f"{logto_endpoint}/oidc"
-    min_iat = int(os.environ.get("MIN_TOKEN_IAT", "0") or "0")
     alt = os.environ.get("LOGTO_ENDPOINT_ALT", "").strip().rstrip("/")
     drains = [f"{alt}/oidc"] if alt else []
     registry = tenancy.IssuerRegistry(
         tenancy.build(issuer, drain_issuers=drains, tenants=tenancy.load_tenants()))
-    # Posé pour les consommateurs HORS chemin de vérification : l'attribution du
-    # journal REST (`_claimed_sub`, qui décode sans vérifier) et la garde d'alias
-    # (`db.users.migrate_sub`). Jamais pour décider d'une autorisation.
-    tenancy.install(registry)
-
     by_issuer: dict = {}
     for entry in registry.entries():
         if entry.issuer == issuer:
@@ -249,9 +237,66 @@ def _build_verifier() -> JWTVerifier:
         by_issuer[entry.issuer] = (entry.slug, JWTVerifier(
             jwks_uri=entry.jwks_uri, issuer=entry.issuer,
             audience=None, algorithm="ES384"))
+    return registry, by_issuer
+
+
+# Le verifier VIVANT du process — posé par `_build_verifier`, lu par le reload à
+# chaud. None tant que le serveur n'est pas construit (tests, scripts hors serveur).
+_VERIFIER: "_IatGatedVerifier | None" = None
+
+
+def reload_tenant_registry() -> dict:
+    """Recharge le registre d'émetteurs depuis la base, SANS redémarrer (ADR 0052 B4,
+    la moitié « prise d'effet » du provisionnement — déclarer reste un runbook).
+
+    Deux écritures, dans cet ordre, toutes deux des swaps de référence (atomiques
+    sous CPython — aucun lecteur ne voit un état intermédiaire) :
+
+    1. `tenancy.install(registre_neuf)` — classification des subs, hosts, préfixes
+       d'outils, façade OAuth : tout ce qui lit `tenancy.current()` par requête.
+    2. `verifier._by_issuer = dict_neuf` — les émetteurs ACCEPTÉS : c'est le swap
+       qui éteint le verdict `pending_restart` (les jetons du tenant passent).
+
+    Échec de lecture (base, env) ⟹ l'exception REMONTE et rien n'est écrit : le
+    process garde le registre d'avant, entier — jamais un registre à moitié posé.
+    """
+    registry, by_issuer = _registry_and_issuers()
+    tenancy.install(registry)
+    verifier_updated = False
+    if _VERIFIER is not None:
+        _VERIFIER._by_issuer = dict(by_issuer)
+        verifier_updated = True
+    logger.info("registre d'émetteurs RECHARGÉ : %s (verifier %s)",
+                {iss: slug for iss, (slug, _) in by_issuer.items()},
+                "mis à jour" if verifier_updated else "absent — process sans serveur")
+    return {"tenants": sorted({e.slug for e in registry.entries()}),
+            "issuers": len(by_issuer), "verifier_updated": verifier_updated}
+
+
+def _build_verifier() -> JWTVerifier:
+    """JWT verifier partagé entre l'auth MCP et l'API REST — **registre d'émetteurs**
+    (ADR 0052 §3).
+
+    L'émetteur primaire vient de l'env (`LOGTO_ENDPOINT`) et porte le tenant `oto` :
+    ce chemin est DB-indépendant, l'authentification canonique ne casse jamais sur un
+    hoquet de base. `LOGTO_ENDPOINT_ALT` — la fenêtre de drain d'une bascule
+    d'instance Logto — n'est plus un mécanisme à côté : c'est une **entrée du
+    registre**, sur le même tenant `oto` (deux émetteurs, un tenant, sub nu des deux
+    côtés). Les tenants TIERS viennent de la base, avec leur slug et leur JWKS.
+    """
+    audience = require_env("MCP_AUDIENCE")
+    logto_endpoint = require_env("LOGTO_ENDPOINT").rstrip("/")
+    issuer = f"{logto_endpoint}/oidc"
+    min_iat = int(os.environ.get("MIN_TOKEN_IAT", "0") or "0")
+    registry, by_issuer = _registry_and_issuers()
+    # Posé pour les consommateurs HORS chemin de vérification : l'attribution du
+    # journal REST (`_claimed_sub`, qui décode sans vérifier) et la garde d'alias
+    # (`db.users.migrate_sub`). Jamais pour décider d'une autorisation.
+    tenancy.install(registry)
     logger.info("registre d'émetteurs : %s",
                 {iss: slug for iss, (slug, _) in by_issuer.items()})
-    return _IatGatedVerifier(
+    global _VERIFIER
+    _VERIFIER = _IatGatedVerifier(
         jwks_uri=f"{issuer}/jwks",
         issuer=issuer,
         audience=None,
@@ -261,6 +306,7 @@ def _build_verifier() -> JWTVerifier:
         expected_audience=audience,
         alt_audiences=mcp_audience_alts(),
     )
+    return _VERIFIER
 
 
 class TenantChallengeMiddleware:

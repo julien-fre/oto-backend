@@ -66,31 +66,51 @@ def _caps():
 
 # ── 1. autz ─────────────────────────────────────────────────────────────────
 
-def test_every_tenant_surface_is_platform_admin():
-    caps = _caps()
-    assert {c.key for c in caps} == {"admin.tenants", "admin.tenant",
-                                     "admin.tenant_console"}
-    for c in caps:
-        assert c.authz is PLATFORM_ADMIN, (
-            f"{c.key} doit rester PLATFORM_ADMIN : le suivi rend la configuration "
-            "d'annuaire des partenaires et la volumétrie de toute la plateforme.")
+def test_tenant_surfaces_read_platform_admin_reload_super_admin(monkeypatch):
+    """Les LECTURES restent PLATFORM_ADMIN ; le `reload` (il change ce que le
+    process AUTHENTIFIE — les émetteurs acceptés) est SUPER_ADMIN, y compris via
+    l'op de la console (combinateur op-aware, jamais dans le handler)."""
+    from oto_mcp import access
+    from oto_mcp.capabilities._types import RawCtx
+    from types import SimpleNamespace
+
+    caps = {c.key: c for c in _caps()}
+    assert set(caps) == {"admin.tenants", "admin.tenant", "admin.tenant_console",
+                         "admin.tenants_reload"}
+    assert caps["admin.tenants"].authz is PLATFORM_ADMIN
+    assert caps["admin.tenant"].authz is PLATFORM_ADMIN
+    from oto_mcp.capabilities._authz import SUPER_ADMIN
+    assert caps["admin.tenants_reload"].authz is SUPER_ADMIN
+    # La console : un opérateur plateforme (non super) lit, mais ne recharge pas.
+    monkeypatch.setattr(access, "is_platform_operator", lambda sub: True)
+    monkeypatch.setattr(access, "current_org", lambda sub: None)
+    monkeypatch.setattr(access, "get_user_role", lambda sub: "admin")
+    rule = caps["admin.tenant_console"].authz
+    assert rule(RawCtx(sub="op"), SimpleNamespace(op="list")).sub == "op"
+    with pytest.raises(AuthzDenied) as ei:
+        rule(RawCtx(sub="op"), SimpleNamespace(op="reload"))
+    assert ei.value.status == 403
 
 
-# ── 2. lecture seule ────────────────────────────────────────────────────────
+# ── 2. lecture seule (sauf le geste de prise d'effet) ───────────────────────
 
 def test_the_tracking_surface_cannot_write():
-    """Aucune face du suivi n'est un verbe d'écriture — ni en REST, ni en MCP.
+    """Le SUIVI reste sans verbe d'écriture — la seule exception est `reload`
+    (`admin.tenants_reload`, POST) : il n'écrit RIEN en base, il fait relire au
+    process ce que le runbook a déclaré (la moitié « prise d'effet » de 0052 B4).
 
     Se prouve sur le REGISTRE (ce qui est monté), pas sur les noms de ce module :
     une capacité tenant ajoutée ailleurs, avec un POST, tombe ici aussi.
     """
     for c in _caps():
+        if c.key == "admin.tenants_reload":
+            assert c.rest.verb == "POST"
+            continue
         verbe = c.rest.verb if c.rest else "GET"
         assert verbe == "GET", (
             f"{c.key} expose {verbe} : déclarer un tenant est un runbook de "
-            "provisioning (instance Logto + client OAuth + hosts) et le registre "
-            "d'émetteurs est construit AU BOOT — une écriture ici laisserait croire "
-            "qu'une ligne en base suffit.")
+            "provisioning (instance Logto + client OAuth + hosts) — une écriture "
+            "ici laisserait croire qu'une ligne en base suffit.")
 
 
 # ── 3. l'écart base ↔ registre du process ───────────────────────────────────

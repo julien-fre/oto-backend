@@ -24,7 +24,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from .. import db, tenancy, tool_alias
-from ._authz import PLATFORM_ADMIN
+from ._authz import ADMIN_BY_OP, PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding, cap_limit
 from .registry import CAPABILITIES
 
@@ -126,12 +126,14 @@ class TenantDetail(BaseModel):
 
 
 class TenantConsoleOut(BaseModel):
-    """Enveloppe op-aware : `list` rend `tenants`+`totals`, `get` rend `tenant`.
-    Déclarée en union plutôt qu'en intersection (vide) — cf. dette de sortie."""
+    """Enveloppe op-aware : `list` rend `tenants`+`totals`, `get` rend `tenant`,
+    `reload` rend `reload`. Déclarée en union plutôt qu'en intersection (vide) —
+    cf. dette de sortie."""
     days: int
     tenants: Optional[list[TenantRow]] = None
     totals: Optional[TenantTotals] = None
     tenant: Optional[Any] = None
+    reload: Optional[Any] = None
 
 
 def _live_registry() -> dict:
@@ -193,8 +195,34 @@ def _tenant(ctx: ResolvedCtx, inp: TenantInput) -> dict:
     return {"tenant": _decorate(fiche, _live_registry()), "days": inp.days}
 
 
+class ReloadInput(BaseModel):
+    """Aucun paramètre : le reload relit la base telle qu'elle est."""
+
+
+class ReloadOut(BaseModel):
+    reloaded: bool
+    tenants: list[str] = Field(description="Slugs présents dans le registre APRÈS reload.")
+    issuers: int = Field(description="Émetteurs acceptés par le verifier après reload.")
+    verifier_updated: bool = Field(
+        description="False = process sans serveur construit (tests, scripts) — le "
+                    "registre en mémoire a bougé, pas la vérification de jetons.")
+
+
+def _reload(ctx: ResolvedCtx, inp: ReloadInput) -> dict:
+    """La moitié « prise d'effet » du provisionnement (0052 B4) : le runbook déclare
+    (instance d'annuaire, client OAuth, hosts, ligne `tenants`) ; CE geste fait lire
+    la déclaration par le process qui tourne — fin du verdict `pending_restart` sans
+    fenêtre de redémarrage. Import LOCAL de `server` : ce module est chargé par lui.
+
+    ⚠️ Par-process : prod et preprod partagent la base mais pas leur registre —
+    recharger l'un ne recharge pas l'autre (même topologie que les `.env`)."""
+    from .. import server
+    rapport = server.reload_tenant_registry()
+    return {"reloaded": True, **rapport}
+
+
 class TenantConsoleInput(BaseModel):
-    op: Literal["list", "get"] = "list"
+    op: Literal["list", "get", "reload"] = "list"
     slug: Optional[str] = None
     days: int = _DEFAULT_DAYS
 
@@ -205,6 +233,8 @@ class TenantConsoleInput(BaseModel):
 
 
 def _console(ctx: ResolvedCtx, inp: TenantConsoleInput) -> dict:
+    if inp.op == "reload":
+        return {"days": inp.days, "reload": _reload(ctx, ReloadInput())}
     if inp.op == "get":
         if not (inp.slug or "").strip():
             raise AuthzDenied(400, "missing_slug", "`slug` requis pour op=get.")
@@ -221,9 +251,19 @@ CAPABILITIES += [
                Output=TenantDetail, authz=PLATFORM_ADMIN,
                description="Fiche d'un tenant : ses compteurs et les listes derrière.",
                rest=RestBinding("GET", "/api/admin/tenants/{slug}")),
+    Capability(key="admin.tenants_reload", handler=_reload, Input=ReloadInput,
+               Output=ReloadOut, authz=SUPER_ADMIN,
+               description="Recharge le registre d'émetteurs depuis la base, sans "
+                           "redémarrer — fin du verdict pending_restart pour CE process.",
+               rest=RestBinding("POST", "/api/admin/tenants/reload")),
     Capability(
         key="admin.tenant_console", handler=_console, Input=TenantConsoleInput,
-        Output=TenantConsoleOut, authz=PLATFORM_ADMIN,
+        Output=TenantConsoleOut,
+        # Lectures = PLATFORM_ADMIN (comme les autres lentilles) ; `reload` touche ce
+        # que le process AUTHENTIFIE (les émetteurs acceptés) = SUPER_ADMIN, déclaré
+        # au niveau capacité via le combinateur op-aware — jamais dans le handler.
+        authz=ADMIN_BY_OP({"list": PLATFORM_ADMIN, "get": PLATFORM_ADMIN,
+                           "reload": SUPER_ADMIN}),
         description=(
             "[platform admin] Tenant tracking (identity tier, ADR 0052). op=list → one "
             "row per declared tenant: issuer + jwks + hosts + oauth client + dashboard "
@@ -235,7 +275,11 @@ CAPABILITIES += [
             "(default 30), and `orgs_desalignees` — orgs attached to this tenant whose "
             "creator is qualified under another one. op=get (`slug`) adds the lists "
             "behind those counters (orgs, accounts by activity, misaligned orgs). "
-            "Read-only: declaring a tenant is a provisioning runbook, not an API."),
+            "Declaring a tenant remains a provisioning runbook, not an API — but "
+            "op=reload (super_admin) makes THIS process re-read the declarations "
+            "without a restart: the issuer registry and the accepted issuers are "
+            "swapped live, which clears `pending_restart`. Per-process: prod and "
+            "preprod share the DB but not their registry."),
         mcp="oto_admin_tenant",
     ),
 ]

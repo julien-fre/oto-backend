@@ -116,7 +116,11 @@ Mistral). **Détail : `docs/auth-logto.md`** (jetons API, registre d'émetteurs,
 > servi, sous quel émetteur, avec quelles orgs/comptes/appels. Trois choses à savoir avant d'y toucher :
 > **(1) lecture seule** — le provisionnement reste un runbook et le registre est bâti AU BOOT, d'où le
 > verdict `pending_restart` (déclaré en base, absent du registre ⟹ ses jetons sont encore rejetés) plutôt
-> qu'un formulaire ; **(2) les deux rattachements sont comptés SÉPARÉMENT** (`orgs.tenant_id` vs la
+> qu'un formulaire. **Depuis le 23/08, la prise d'effet ne demande plus de restart** :
+> `oto_admin_tenant op=reload` / `POST /api/admin/tenants/reload` (SUPER_ADMIN,
+> `server.reload_tenant_registry`) relit la base et swappe atomiquement le registre installé ET les
+> émetteurs acceptés du verifier vivant — échec de lecture ⟹ rien n'est écrit, l'ancien registre reste
+> entier. ⚠️ Par-process : recharger la preprod ne recharge pas la prod (même topologie que les `.env`) ; **(2) les deux rattachements sont comptés SÉPARÉMENT** (`orgs.tenant_id` vs la
 > qualification du sub) et l'écart est nommé `orgs_desalignees` — en dériver un chiffre unique le ferait
 > mentir ; **(3) c'est le premier LECTEUR de `orgs.tenant_id`** : le garde-fou L1 est passé d'une
 > interdiction totale à une **allowlist** de deux fichiers (`test_tenant_l1_migration.py`) — un chemin de
