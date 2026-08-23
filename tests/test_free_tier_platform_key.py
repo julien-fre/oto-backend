@@ -18,6 +18,11 @@ def _no_byo_no_grant(monkeypatch):
     monkeypatch.setattr(access.credentials_store, "list_platform_instances", lambda p: [])
     monkeypatch.setattr(access.credentials_store, "get_credential",
                         lambda et, eid, p, account="": "PLAT")
+    # serper est CHAÎNÉ depuis la vague 2 de L5 (grants_chain) : la résolution
+    # consulte les arêtes avant le repli. Aucune arête = état MUET ⟹ le free-tier
+    # d'avant, à l'identique — ce que ce fichier teste.
+    from oto_mcp import grants_chain
+    monkeypatch.setattr(grants_chain.db_grants, "edges_for", lambda ref, grantees: [])
     yield
 
 
