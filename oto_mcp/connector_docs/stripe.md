@@ -1,7 +1,7 @@
 ## prerequisite — clé api stripe
 
 crée une **clé restreinte** dans Stripe (Dashboard → Developers → API keys → « Create restricted key » — voir la [doc des clés](https://docs.stripe.com/keys)), puis colle-la dans oto.
-- des permissions en **lecture** suffisent pour tout ce que ce connecteur sait faire : rien ici ne déplace d'argent
+- des permissions en **lecture** suffisent pour interroger clients/abonnements/factures/paiements/solde — **rien de tout ça ne déplace d'argent**. écrire dans le catalogue (produits, prix, coupons, codes promo, lignes de facture, liens de paiement) demande en plus les scopes d'**écriture** correspondants sur la clé restreinte (ex. Products/Prices/Coupons/Promotion codes write) — sans eux, Stripe refuse ces écritures avec un 403
 - une clé restreinte (`rk_…`) est préférable à une clé secrète (`sk_…`) : elle limite ce que la clé peut atteindre même si elle fuite, et Stripe la recommande explicitement pour les agents IA
 - ⚠️ une clé **publiable** (`pk_…`) est refusée : c'est le jeton du navigateur, il ne peut lire ni client ni facture
 - le **mode** se lit dans la clé : `rk_test_…` / `sk_test_…` = mode test, `rk_live_…` / `sk_live_…` = mode réel. Les deux mondes sont séparés — un client de test n'existe pas en réel, et inversement
@@ -25,12 +25,15 @@ deux champs facultatifs à côté de la clé :
 - « a-t-on des litiges en cours ? » → `stripe_payment(op="list_disputes")` — attention à `evidence_details.due_by`, l'argent est déjà retiré du solde pendant ce temps
 - « fais-moi un lien de paiement pour cette offre » → `stripe_catalog(op="list_prices")` puis `stripe_checkout(op="create_link", price_id="price_…")`
 - « ajoute 200 € sur sa prochaine facture » → `stripe_invoice(op="add_item", customer_id="cus_…", amount=20000, currency="eur")`
+- « crée un code -20% pour le lancement » → `stripe_catalog(op="create_coupon", percent_off=20, duration="once", name="LAUNCH20")` (rend un `coupon_id`) puis `stripe_catalog(op="create_promotion_code", coupon_id="cp_…", code="LAUNCH20")` — le coupon est la RÈGLE de remise, la promotion code est le TEXTE que le client tape
+- « désactive ce code promo » → `stripe_catalog(op="update_promotion_code", promotion_code_id="promo_…", active=false)` — les redemptions déjà faites ne sont pas touchées, seuls les usages futurs sont bloqués
+- « quels codes promo sont actifs ? » → `stripe_catalog(op="list_promotion_codes", active=true)`
 
 ## note — ce que ce connecteur ne fera jamais
 
 rembourser, résilier un abonnement, finaliser/envoyer/encaisser une facture, virer de l'argent, clore un litige, supprimer un client : **aucune de ces opérations n'est atteignable**, et pas seulement par choix de configuration — les méthodes correspondantes n'existent pas dans la librairie sous-jacente. faites-les depuis votre dashboard Stripe, où elles sont tracées et confirmées.
 
-ce qui reste possible en écriture est délibérément sans conséquence financière directe : créer/modifier un client, poser une ligne sur une prochaine facture, créer une facture **au brouillon**, gérer le catalogue produits/prix, créer un lien de paiement (page hébergée par Stripe — aucun numéro de carte ne passe par oto, et personne n'est débité tant qu'un humain n'a pas payé).
+ce qui reste possible en écriture est délibérément sans conséquence financière directe : créer/modifier un client, poser une ligne sur une prochaine facture, créer une facture **au brouillon**, gérer le catalogue produits/prix/coupons/codes promo, créer un lien de paiement (page hébergée par Stripe — aucun numéro de carte ne passe par oto, et personne n'est débité tant qu'un humain n'a pas payé). un coupon/code promo ne fait rien tout seul : il ne s'applique qu'au moment où un client paie via un lien/checkout qui l'accepte, ou qu'on l'attache soi-même à un abonnement depuis le dashboard.
 
 ## note — trois pièges vérifiés en live le 2026-08-22
 
