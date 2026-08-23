@@ -74,3 +74,72 @@ def test_active_membership_tables_are_pre_treated():
         f"tables à `is_active` unique non pré-traitées par migrate_sub : {sorted(manquantes)}. "
         "Les ajouter à `_MEMBERSHIP_TABLES` (sinon le merge de comptes lève "
         "UniqueViolation en prod, en silence côté CI).")
+
+
+def test_migrate_sub_sub_bearing_columns_are_triaged():
+    """Le tripwire INVERSE — celui dont l'absence a coûté `orgs.personal_of` (14
+    espaces personnels en double, 14/08) puis les neuf colonnes du dossier du 23/08
+    (déroulés, activité, CGU, déclencheurs, réservations, options comp invisibles au
+    compte fusionné) : `test_sub_columns_inventory_matches_ddl` vérifie que les
+    entrées LISTÉES existent, jamais qu'une colonne porteuse d'un identifiant de
+    compte SOIT listée.
+
+    Ici : toute colonne du DDL dont le nom appartient à la famille « porte un sub »
+    doit être TRIAGÉE — repointée (`_SUB_COLUMNS`), pré-traitée (`_PK_SUB_TABLES`,
+    `_MEMBERSHIP_TABLES`), ou dans l'allowlist ci-dessous AVEC sa raison. Une
+    colonne neuve de cette famille arrive donc ROUGE : le triage (repointer ou
+    abandonner, et pourquoi) devient un acte explicite, plus un oubli.
+    """
+    from oto_mcp.db.users import _MEMBERSHIP_TABLES, _PK_SUB_TABLES
+
+    NAMES = ("sub|old_sub|new_sub|effective_sub|owner_sub|grantee_sub|accepted_sub|"
+             "personal_of|requested_by|resolved_by|granted_by|created_by|set_by|"
+             "invited_by|published_by|principal_id|entity_id|grantee_id|owner_id")
+    porteurs: set[tuple[str, str]] = set()
+    for m in re.finditer(r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\n\);",
+                         _SCHEMA, re.S):
+        table, body = m.group(1), m.group(2)
+        for lm in re.finditer(rf"^\s*({NAMES})\s+TEXT", body, re.M):
+            porteurs.add((table, lm.group(1)))
+    for am in re.finditer(
+            rf"ALTER TABLE (\w+) ADD COLUMN IF NOT EXISTS ({NAMES})\s+TEXT",
+            _INIT_SRC):
+        porteurs.add((am.group(1), am.group(2)))
+    assert porteurs, "le parse du DDL ne trouve plus de colonne porteuse — test à réparer"
+
+    # Hors inventaire, chacune pour une raison STRUCTURELLE (pas un oubli) :
+    allow = {
+        # L'ENTITÉ du coffre entre dans l'AAD : une ligne repointée sans rechiffrement
+        # est indéchiffrable — pire qu'absente (0052 §Migrer : l'utilisateur repose
+        # ses clés, jamais d'UPDATE ici).
+        ("connector_credentials", "entity_id"),
+        # Repointée par l'étape 3 bis de migrate_sub, FILTRÉE sur grantee_kind='user'
+        # (la colonne porte aussi des ids d'org) — pas un UPDATE nu d'inventaire.
+        ("grants", "grantee_id"),
+        # owner_type ∈ {org, group} : ces owner_id sont des ids numériques, jamais un
+        # sub (les procédures user n'existent pas dans cette table).
+        ("org_instructions", "owner_id"), ("org_instruction_revisions", "owner_id"),
+        # La marque d'espace personnel : étape 2 quater (index unique ⟹ démarquage
+        # conditionnel, pas un UPDATE nu). Vécu 14/08.
+        ("orgs", "personal_of"),
+        # La table d'alias EST le produit du merge — la repointer se mordrait la queue.
+        ("sub_aliases", "old_sub"), ("sub_aliases", "new_sub"),
+        # Étape 2 : PK sub ⟹ DELETE du frais puis repointage, pas un UPDATE nu.
+        ("user_account_profile", "sub"),
+        # Le sujet même du merge (étapes 1 et 4).
+        ("users", "sub"),
+    }
+    couvertes = (set(_SUB_COLUMNS)
+                 | {(t, c) for t, c, _ in _PK_SUB_TABLES}
+                 | {(t, "sub") for t, _ in _MEMBERSHIP_TABLES}
+                 | allow)
+    manquantes = porteurs - couvertes
+    assert not manquantes, (
+        "colonnes porteuses d'un sub NON triagées par migrate_sub :\n  "
+        + "\n  ".join(f"{t}.{c}" for t, c in sorted(manquantes))
+        + "\nLes repointer (_SUB_COLUMNS / _PK_SUB_TABLES), les traiter à part, ou "
+          "les ajouter à l'allowlist de ce test AVEC leur raison.")
+    mortes = allow - porteurs
+    assert not mortes, (
+        f"entrées d'allowlist sans colonne DDL correspondante : {sorted(mortes)} — "
+        "retirer l'entrée (la colonne a disparu) ou réparer le parse.")

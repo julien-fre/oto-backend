@@ -132,6 +132,23 @@ _PK_SUB_TABLES = (
     ("unipile_operated_accounts", "sub", ("provider",)),
     ("connector_account_grants", "owner_sub", ("provider", "grantee_sub")),
     ("connector_account_grants", "grantee_sub", ("owner_sub", "provider")),
+    # Dossier du 23/08 (les colonnes à sub que le merge ABANDONNAIT — cf. le tripwire
+    # `test_migrate_sub_sub_bearing_columns_are_triaged`) :
+    # - l'acceptation CGU suit la personne : sans repointage, le compte fusionné se
+    #   voyait redemander des CGU déjà acceptées. Les deux comptes ont accepté ⟹ en
+    #   doublon on garde la ligne du canonique (l'acceptation la plus fraîche).
+    ("legal_acceptances", "sub", ("doc_slug",)),
+    # - la réservation de connecteur (gouvernance d'équipe/org) visait un identifiant
+    #   mort : le membre re-fusionné perdait l'accès réservé. `principal_id` mélange
+    #   group_id numérique et sub — un sub Logto n'est jamais un entier, l'UPDATE
+    #   `col=old_sub` ne peut toucher que les lignes user (même argument que
+    #   `resource_grants.principal_id`).
+    ("connector_acl", "principal_id",
+     ("scope_type", "scope_id", "connector", "principal_type")),
+    # - une option offerte (comp) cessait de s'appliquer au compte fusionné — le
+    #   symptôme nommé par la carte CLAUDE.md. `entity_id` mélange org_id numérique
+    #   et sub : même argument de non-collision.
+    ("option_comps", "entity_id", ("entity_type", "option")),
 )
 
 # Inventaire des colonnes keyed-by-sub à repointer (issue oto-backend#56). Plain
@@ -163,12 +180,27 @@ _SUB_COLUMNS = [
     # existe encore et la prod y écrit pendant la fenêtre : les DEUX se repointent,
     # sinon une bascule de tenant orphelinerait ce que la conversion recopiera après.
     ("guides", "owner_id"), ("nodes", "owner_id"),
+    # l'HISTORIQUE de la personne (dossier du 23/08 — ces lignes survivaient au merge
+    # rattachées à un identifiant mort, donc invisibles au compte fusionné : déroulés
+    # et activité perdus de vue, déclencheurs orphelins) :
+    ("runs", "sub"), ("project_activity", "sub"), ("runner_triggers", "sub"),
+    ("tool_calls", "effective_sub"),
     # attribution (soft)
     ("projects", "created_by"),
     ("orgs", "created_by"),
     ("org_invitations", "invited_by"), ("org_invitations", "accepted_sub"),
     ("org_groups", "created_by"), ("org_instructions", "set_by"),
     ("org_instruction_revisions", "set_by"), ("doctrine_library", "published_by"),
+    # attribution (soft), dossier du 23/08 — qui a écrit/résolu/accordé quoi. Sans
+    # repointage ces signatures pointaient un compte supprimé (affichage « inconnu »
+    # au mieux, jointure vide au pire). `set_by` du coffre est HORS AAD (`_aad` =
+    # entity/connector/account) : le repointer ne rend rien indéchiffrable.
+    ("usage_signals", "resolved_by"), ("docs", "created_by"),
+    ("project_files", "created_by"),
+    ("doc_change_requests", "requested_by"), ("doc_change_requests", "resolved_by"),
+    ("scheduled_emails", "created_by"), ("connector_credentials", "set_by"),
+    ("connector_account_grants", "granted_by"), ("connector_acl", "granted_by"),
+    ("option_comps", "granted_by"), ("grants", "created_by"),
 ]
 
 
@@ -325,6 +357,18 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
         # 3. repointer toutes les colonnes sub.
         for table, col in _SUB_COLUMNS:
             conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s", (new_sub, old_sub))
+        # 3 bis. Les ARÊTES du modèle d'accès (blueprint ADR 0053, L5) : `grantee_id`
+        #    porte un sub quand `grantee_kind='user'` — sans repointage, un compte
+        #    fusionné perdait ses grants de clé plateforme (la chaîne dit MUET, repli
+        #    free-tier au mieux, rien au pire). Filtré par kind, pas dans
+        #    `_SUB_COLUMNS` : `grantee_id` porte aussi des ids d'org. Pas de contrainte
+        #    unique sur (resource, grantee) : si les DEUX comptes portaient une arête
+        #    vivante vers la même instance, les deux survivent et « la plus favorable
+        #    gagne » (sémantique 0053-D5, déjà celle des arêtes multiples). Les
+        #    compteurs suivent l'arête par id — rien à toucher.
+        conn.execute(
+            "UPDATE grants SET grantee_id=%s WHERE grantee_kind='user' AND grantee_id=%s",
+            (new_sub, old_sub))
         # coffre user : on repointe l'AUTEUR, jamais l'ENTITÉ.
         #
         # `_aad(entity_type, entity_id, connector, account)` — l'entité entre dans l'AAD,

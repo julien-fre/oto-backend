@@ -144,13 +144,18 @@ Mistral). **Détail : `docs/auth-logto.md`** (jetons API, registre d'émetteurs,
 > est démarqué — jamais archivé automatiquement, « cet espace n'a jamais servi » ne se
 > décide pas au fond d'une transaction de merge.
 >
-> ⚠️ **Neuf autres colonnes portent un sub sans être repointées** (dérivation par mention
-> dans le DDL : `runs.sub`, `project_activity.sub`, `legal_acceptances.sub`,
-> `runner_triggers.sub`, `connector_acl.principal_id`, `option_comps.entity_id`,
-> `usage_signals.resolved_by`). Sans FK, ces lignes SURVIVENT au merge — mais rattachées à
-> un identifiant mort, donc invisibles au compte fusionné : déroulés et activité perdus de
-> vue, CGU à ré-accepter, et une **option offerte au compte d'origine cesse de s'appliquer**.
-> Chacune demande un arbitrage (repointer ou abandonner avec sa raison) — non traité.
+> ✅ **Les colonnes à sub que le merge abandonnait sont TRIAGÉES depuis le 23/08.**
+> L'historique (`runs.sub`, `project_activity.sub`, `runner_triggers.sub`,
+> `tool_calls.effective_sub`) et les attributions (`resolved_by`/`created_by`/
+> `granted_by`/`set_by`/`requested_by` de 10 tables) sont repointés par `_SUB_COLUMNS` ;
+> `legal_acceptances`, `connector_acl.principal_id` et `option_comps.entity_id` passent
+> par le patron PK (`_PK_SUB_TABLES` — sub jamais numérique ⟹ l'UPDATE ne touche que les
+> lignes user) ; les arêtes `grants.grantee_id` ont leur étape filtrée (3 bis). Le trou de
+> méthode est fermé par le **tripwire inverse** `test_migrate_sub_sub_bearing_columns_are_
+> triaged` : toute colonne du DDL de la famille « porte un sub » doit être repointée,
+> pré-traitée ou allowlistée AVEC sa raison — une colonne neuve arrive rouge. Restent
+> hors repointage, par construction : `connector_credentials.entity_id` (AAD) et la
+> mécanique du merge lui-même (`sub_aliases`, `users.sub`, `orgs.personal_of`).
 
 > **⚠️ CUTOVER ADR 0040 (2026-07-06) — `.ninja`↔`.cx` inversés.** Désormais **PROD =
 > `mcp.oto.cx`** (:9103, audience canonique `mcp.oto.cx/mcp`, dashboard `manage.oto.cx`) et
