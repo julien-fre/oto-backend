@@ -750,6 +750,11 @@ def register(mcp: FastMCP) -> None:
                 "minimum_amount_currency": "eur"}`.
             limit/starting_after: list pagination.
 
+        ⚠️ Verified live 2026-08-23: a promotion code's `expires_at` cannot be
+        LATER than its coupon's `redeem_by` — Stripe rejects it outright,
+        naming both timestamps. And on a promotion code object, the coupon it
+        applies is under `promotion.coupon` (with `promotion.type == "coupon"`),
+        NOT a top-level `coupon` field — that flat shape was retired.
         """
         client = _client()
         if op == "list_products":

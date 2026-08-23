@@ -35,11 +35,13 @@ rembourser, résilier un abonnement, finaliser/envoyer/encaisser une facture, vi
 
 ce qui reste possible en écriture est délibérément sans conséquence financière directe : créer/modifier un client, poser une ligne sur une prochaine facture, créer une facture **au brouillon**, gérer le catalogue produits/prix/coupons/codes promo, créer un lien de paiement (page hébergée par Stripe — aucun numéro de carte ne passe par oto, et personne n'est débité tant qu'un humain n'a pas payé). un coupon/code promo ne fait rien tout seul : il ne s'applique qu'au moment où un client paie via un lien/checkout qui l'accepte, ou qu'on l'attache soi-même à un abonnement depuis le dashboard.
 
-## note — trois pièges vérifiés en live le 2026-08-22
+## note — pièges vérifiés en live le 2026-08-22 (facture/lien/prix) et le 2026-08-23 (coupons/codes promo)
 
 - **une facture brouillon n'attrape pas les lignes en attente sans qu'on le demande.** poser une ligne puis créer la facture rendait `total=0` et zéro ligne, le montant restant en suspens — un « facture créée » parfaitement faux. `stripe_invoice(op="create_draft")` passe donc `pending_items="include"` par défaut ; mettez `"exclude"` si vous voulez vraiment un brouillon vide
 - **un lien de paiement peut exiger un code de taxe sur le produit** (comptes éligibles aux paiements gérés) : `400 « the product tax code is missing »`. correctif → `stripe_catalog(op="update_product", product_id=…, tax_code="txcd_10000000")` (services génériques), puis recréer le lien
 - **le montant d'un prix Stripe est immuable.** « changer le prix » = créer un nouveau prix et désactiver l'ancien (`op="update_price", active=false`) ; `update_price` refuse explicitement un `unit_amount`
+- **créer un code promo a changé de forme sur les comptes récents** (vérifié sur un compte réel en version d'API `2026-07-29.dahlia`, la version par défaut d'un compte neuf) : Stripe a retiré le champ à plat `coupon` au profit d'un objet `promotion` imbriqué. C'est géré en interne (`coupon_id` reste le paramètre côté `stripe_catalog`), rien à changer côté usage — mais si vous lisez la réponse brute d'un code promo, le coupon appliqué est sous `promotion.coupon`, plus sous `coupon`
+- **`expires_at` d'un code promo ne peut pas dépasser le `redeem_by` de son coupon** — Stripe refuse purement et simplement, en nommant les deux horodatages, si vous posez une expiration de code plus lointaine que la date limite du coupon lui-même
 
 ## note — bornes de lecture
 
