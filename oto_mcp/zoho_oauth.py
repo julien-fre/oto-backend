@@ -188,9 +188,16 @@ def redirect_uri() -> str:
     return oauth_flow.redirect_uri("/api/zoho/oauth/callback")
 
 
-def make_state(sub: str, org_id: int, connector: str, data_center: str) -> str:
+def make_state(sub: str, org_id: int, connector: str, data_center: str,
+               return_app: str = "") -> str:
+    """`return_app` = le FRONT qui a demandé le consentement. Il DOIT voyager dans le
+    state signé : le callback est appelé par Zoho, sans session, donc c'est la seule
+    mémoire du demandeur qui survit à l'aller-retour. Déjà résolu contre la liste
+    fermée par l'appelant (`oauth_flow.resolve_return_app`) — on ne signe jamais une
+    valeur de client brute."""
     return oauth_flow.sign_state(_AUDIENCE, {"sub": sub, "org": org_id,
-                                             "c": connector, "dc": data_center})
+                                             "c": connector, "dc": data_center,
+                                             "a": return_app})
 
 
 def verify_state(state: str) -> Optional[dict]:
@@ -204,14 +211,17 @@ def verify_state(state: str) -> Optional[dict]:
         return None
     if not isinstance(d.get("sub"), str) or not isinstance(d.get("org"), int):
         return None
+    # `a` absent = state signé AVANT ce champ et encore vivant dans la fenêtre du
+    # TTL : on dégrade vers le défaut historique plutôt que de rejeter un
+    # consentement en cours (même tolérance que salesforce).
     return {"sub": d["sub"], "org": d["org"], "connector": d["c"],
-            "data_center": d["dc"]}
+            "data_center": d["dc"], "return_app": d.get("a") or ""}
 
 
 # --- flux --------------------------------------------------------------------
 
 def build_auth_url(sub: str, org_id: int, connector: str, data_center: str,
-                   app: Optional[dict] = None) -> str:
+                   app: Optional[dict] = None, return_app: str = "") -> str:
     """URL de consentement Zoho. `access_type=offline` + `prompt=consent` sont
     REQUIS pour obtenir un refresh_token (sans eux Zoho ne renvoie qu'un access
     token d'une heure, et la connexion meurt silencieusement au bout d'une heure)."""
@@ -230,7 +240,7 @@ def build_auth_url(sub: str, org_id: int, connector: str, data_center: str,
         "redirect_uri": redirect_uri(),
         "access_type": "offline",
         "prompt": "consent",
-        "state": make_state(sub, org_id, connector, dc),
+        "state": make_state(sub, org_id, connector, dc, return_app),
     })
     return f"{_ACCOUNTS[dc]}/oauth/v2/auth?{q}"
 

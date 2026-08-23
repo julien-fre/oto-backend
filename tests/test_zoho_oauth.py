@@ -76,7 +76,24 @@ def test_we_call_an_api_that_actually_accepts_sub():
 def test_state_roundtrip():
     st = z.make_state("u1", 35, "zohodesk", DC)
     assert z.verify_state(st) == {"sub": "u1", "org": 35,
-                                  "connector": "zohodesk", "data_center": DC}
+                                  "connector": "zohodesk", "data_center": DC,
+                                  "return_app": ""}
+
+
+def test_state_carries_the_front_that_asked():
+    """Le callback est appelé par Zoho, sans session : le state est la SEULE mémoire
+    du demandeur qui survit à l'aller-retour."""
+    st = z.make_state("u1", 35, "zoho", DC, "tulina")
+    assert z.verify_state(st)["return_app"] == "tulina"
+
+
+def test_state_signed_before_the_field_still_verifies():
+    """Tolérance aux states émis AVANT `return_app` et encore vivants dans la fenêtre
+    du TTL : on dégrade vers le défaut, on ne casse pas un consentement en cours."""
+    from oto_mcp import oauth_flow
+    st = oauth_flow.sign_state(z._AUDIENCE, {"sub": "u1", "org": 35,
+                                             "c": "zoho", "dc": DC})
+    assert z.verify_state(st)["return_app"] == ""
 
 
 def test_forged_state_is_rejected():

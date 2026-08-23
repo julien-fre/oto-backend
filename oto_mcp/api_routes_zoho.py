@@ -44,12 +44,30 @@ def make_routes(
     def _app_url() -> str:
         return config.dashboard_url()
 
+    def _retour(suffix: str, return_app: str = "", org_id: "int | None" = None) -> str:
+        """Où renvoyer le navigateur après le consentement Zoho.
+
+        `return_app` = le front qui a DEMANDÉ la connexion, relu du state signé (`""`
+        quand le state n'a pas pu être lu : on n'a alors aucun moyen de savoir qui
+        rappeler, cas dégradé assumé). Tant que cette URL était codée sur
+        oto-dashboard, un utilisateur de Tulina finissait son consentement chez un
+        autre produit.
+
+        Le défaut reste `/console/connectors` À L'OCTET PRÈS : c'est un chemin propre
+        au dashboard, que le patron générique `return_url` ne connaît pas — y
+        retomber renverrait l'appelant historique sur `/connectors`."""
+        from . import oauth_flow
+        if oauth_flow.resolve_return_app(return_app):
+            return oauth_flow.return_url(return_app, suffix, org=org_id)
+        return f"{_app_url()}/console/connectors{suffix}"
+
     async def callback(request: Request) -> Response:
         code = request.query_params.get("code")
         state = request.query_params.get("state")
         parsed = zoho_oauth.verify_state(state) if state else None
         if not code or not parsed:
-            return RedirectResponse(f"{_app_url()}/console/connectors?zoho=error",
+            # State illisible : ni `return_app` ni `org` (ils vivent dedans).
+            return RedirectResponse(_retour("?zoho=error"),
                                     status_code=302)
 
         def _finish() -> None:
@@ -70,9 +88,11 @@ def make_routes(
             # le diagnostic va au journal, sans secret (#284).
             logger.warning("zoho oauth callback failed: %s", type(e).__name__)
             return RedirectResponse(
-                f"{_app_url()}/console/connectors?zoho=error", status_code=302)
+                _retour("?zoho=error", parsed["return_app"], parsed["org"]),
+                status_code=302)
         return RedirectResponse(
-            f"{_app_url()}/console/connectors?{parsed['connector']}=connected",
+            _retour(f"?{parsed['connector']}=connected",
+                    parsed["return_app"], parsed["org"]),
             status_code=302)
 
     return [Route("/api/zoho/oauth/callback", callback, methods=["GET"])]

@@ -150,8 +150,14 @@ def _pending_action_for(connector: str):
 def _start_flow(ctx, connector: str, values: dict) -> dict:
     """Point d'entrée du flux générique — même corps que la capacité `me.zoho_connect`,
     dont il partage le handler pour qu'il n'existe qu'UNE façon de démarrer."""
+    from .. import oauth_flow
     from ..capabilities import zoho_connect
-    return zoho_connect.start_for(ctx, connector, (values.get("data_center") or "").lower())
+    # `app` est une clé CACHÉE, pas un `FlowParam` déclaré : le front la passe hors
+    # formulaire (le client sait qui il est), elle ne doit jamais devenir un champ
+    # visible. Résolue ICI, une seule fois, contre la liste fermée — jamais signée brute.
+    return zoho_connect.start_for(
+        ctx, connector, (values.get("data_center") or "").lower(),
+        oauth_flow.resolve_return_app(values.get("app")))
 
 
 for _c in ("zoho", "zohodesk", "zohoanalytics"):
