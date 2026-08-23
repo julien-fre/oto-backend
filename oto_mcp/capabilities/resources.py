@@ -114,16 +114,25 @@ def _notify_grant(sharer_sub: str, resource_type: str, rid: str, to_email: str,
     tracé — ne casse JAMAIS l'action métier. Ne notifie que les principals `user` :
     pour une org/un groupe destinataire, « qui reçoit » reste à trancher (#77)."""
     try:
-        app_url = config.dashboard_url()
+        # L'adresse ET la marque suivent le DESTINATAIRE, pas nous : c'est lui qui
+        # ouvre le lien. `front_for` les dérive de son tenant ; `(None, None)` = oto,
+        # donc le comportement d'avant pour tout compte de la plateforme.
+        # Ici l'adresse suffit — on pointe la racine du produit, pas une vue : aucun
+        # patron de chemin n'est nécessaire (contrairement aux liens de projet).
+        dest_sub = (db.get_user_by_email(to_email) or {}).get("sub")
+        base, marque = config.front_for(dest_sub)
+        app_url = base or config.dashboard_url()
+        brand = marque or "oto"
         sharer = _owner_label("user", sharer_sub)
         name = _resource_name(resource_type, rid)
         type_label = _TYPE_LABELS.get(resource_type, "ressource")
         if event == "transfer":
             return email.send_resource_transferred_email(
-                to_email, type_label=type_label, name=name, app_url=app_url, sharer=sharer)
+                to_email, type_label=type_label, name=name, app_url=app_url,
+                sharer=sharer, brand=brand)
         return email.send_resource_shared_email(
             to_email, type_label=type_label, name=name, permission=permission,
-            app_url=app_url, sharer=sharer)
+            app_url=app_url, sharer=sharer, brand=brand)
     except Exception as e:  # best-effort
         log.warning("notify(%s %s %s → %s) failed: %s",
                     event, resource_type, rid, to_email, e)
