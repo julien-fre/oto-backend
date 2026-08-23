@@ -59,6 +59,63 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
   évolue avec le code du connecteur → sa place reste le repo (docstring, `_SERVER_INSTRUCTIONS`),
   versionné avec l'outil.
 
+## La forme d'une procédure : digest d'ouverture + schéma
+
+**Toute procédure s'ouvre sur son digest d'auto-amélioration** — `> **Self-improvement
+digest** — …` en premier bloc : ce que le dernier déroulé a appris et ce qui a été
+corrigé, DATÉ ; une procédure qui n'a jamais tourné le dit en une phrase. C'est le seul
+bloc d'une procédure où un fait daté est à sa place. ⚠️ **Jamais fabriqué** : sourcé sur
+le journal des runs, sur le relevé daté que le corps porte déjà, ou rien — un digest
+décoratif est pire que pas de digest, il se lit comme une preuve. `procedure_digest`
+garde la seule chose qu'un serveur peut voir (le bloc est-il là, ET en tête) et rend
+`digest_warning`, même régime non bloquant que le reste.
+
+⚠️ **La PLACE du digest vient du rendu** : la page d'un process retire un H1 de tête qui
+répète le nom de la procédure (`stripLeadingTitleHeading`) et affiche le sien. Le digest
+se pose donc SOUS ce H1 quand il existe (au-dessus, le titre resterait orphelin en
+milieu de page), et en tout premier quand le corps n'en a pas (`## Goal`…).
+
+## Le schéma est une section requise (tulina-app-front#108)
+
+Une procédure embarque un **dessin** de son process, et ce n'est pas une illustration :
+le front en fait la **vue par défaut** de la page de la procédure — une procédure sans
+dessin s'y affiche en état vide. Emplacement fixe : juste après le tableau « At a
+glance » (ou après l'intro s'il n'y en a pas), **avant le premier titre de phase**.
+
+⚠️ **RIEN entre le tableau et le dessin**, et c'est encore le rendu qui commande : quand
+le corps dessine, la page retire le titre « At a glance » ET son tableau
+(`stripDiagramSummary` — les deux disent la même chose, le dessin le dit mieux ; le
+tableau reste dans le CORPS, que l'agent exécutant lit). Ce qui traînait entre les deux
+se retrouve donc orphelin juste au-dessus du dessin. Une note qui explique le TABLEAU
+passe au-dessus de lui ; ce qui explique le DESSIN va directement dessous.
+
+⚠️ **La grammaire du dessin est un CONTRAT, pas un style.** Le bloc n'est pas
+typographié tel quel : il est **reparsé en graphe** (`src/lib/ascii-diagram.ts` côté
+front) puis redessiné en cartes. Tout ce que la grammaire ne couvre pas est *refusé* —
+le parseur préfère refuser plutôt que dessiner faux — et retombe en caractères bruts.
+Le front ne regarde qu'**UN** bloc fencé **non tagué** : un dessin dans un ```text ne
+sera jamais rendu. Le guide porte aussi les bornes de **densité** (titre ~40 c.,
+détail UNE phrase de ~80 c. — ~60 c. pour deux étapes côte à côte, raison de sortie ~35 c.,
+note de sortie latérale ~50 c., noms d'outils en note de marge et jamais dans le détail) :
+le texte est REFLOWÉ à l'affichage, donc la largeur de la boîte n'est pas la borne — la
+carte rendue l'est. La grammaire complète + un exemple qui rend vivent dans le guide
+plateforme **`procedure-flowchart`** (`oto_mcp/guides/procedure-flowchart.md`), cité par
+le socle injecté à chaque session (`instructions._SECRET_SAUCE`) et par la description
+de `oto_procedure op=set`.
+
+Côté serveur, `procedure_diagram.diagram_check` ajoute un **`diagram_warning`** au
+retour d'écriture (org **et** équipe), dans le même régime non bloquant que
+`unresolved_tools` / `slot_warnings` (ADR 0014/0035) : la procédure est enregistrée, sa
+page se rendra vide. ⚠️ Le check est **volontairement grossier** — il porte les deux
+seuils du `isDrawing` du front (≥ 3 lignes portant un glyphe, ≥ 20 glyphes au total) et
+rien d'autre. Rejouer la grammaire ici fabriquerait **deux vérités** qui divergeraient au
+premier changement de rendu : ce module répond « l'auteur a-t-il dessiné ? », jamais « le
+dessin est-il valide ? ». Seul le rendu de la page tranche.
+
+⚠️ Un **refus** aurait cassé toute réécriture des ~14 procédures vivantes qui n'avaient
+pas de dessin — et le premier effet d'une garde bloquante aurait été qu'on cesse
+d'écrire des procédures.
+
 ## Renommer un outil = migrer les procédures
 
 Une procédure référence ses outils par `<tool:slug>` (ADR 0014), et ces refs vivent **en DB, par

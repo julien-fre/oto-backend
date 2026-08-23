@@ -24,7 +24,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import (access, db, group_store, guide_store, org_store, roles,
+from .. import (access, db, group_store, guide_store, org_store,
+                procedure_diagram, procedure_digest, roles,
                 slots as slots_mod, tool_registry)
 from ._authz import ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER, ORG_MEMBER_OF, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -208,7 +209,9 @@ class InstructionWritten(BaseModel):
     Les checks croisés sont **non bloquants par conception** (ADR 0014/0035) : ils
     signalent le drift, ils ne refusent pas l'écriture. Donc `ok: true` avec des
     `unresolved_tools` ou des `unresolved_slots` non vides = **la procédure est
-    enregistrée ET cassée**. C'est le seul endroit où ça se voit.
+    enregistrée ET cassée**. C'est le seul endroit où ça se voit. `diagram_warning`
+    (tulina-app-front#108) est du même régime : la procédure est enregistrée, mais sa
+    page se rendra en état vide faute de schéma.
 
     `slots` renvoyé est l'état EFFECTIF après écriture (envoyer `slots: null` conserve
     l'existant, donc l'écho peut différer de ce qui a été posté)."""
@@ -231,6 +234,14 @@ class InstructionWritten(BaseModel):
     unreferenced_slots: Optional[list[str]] = None
     slot_warnings: Optional[list[str]] = None
     suggested_slots: Optional[list] = None
+    # Le SCHÉMA de la procédure (tulina-app-front#108) : le front en fait la vue par
+    # défaut de la page du process, donc une procédure sans dessin s'y affiche vide.
+    # `None` = le check a tourné et n'a rien à dire ; la clé est toujours présente,
+    # pour qu'un client sache distinguer « rien à signaler » d'un serveur trop vieux.
+    diagram_warning: Optional[str] = None
+    # Le DIGEST d'ouverture (`procedure_digest`) : ce que le dernier déroulé a appris.
+    # Même régime — la procédure est enregistrée, il lui manque son bloc d'ouverture.
+    digest_warning: Optional[str] = None
 
 
 class InstructionDeleted(BaseModel):
@@ -252,6 +263,9 @@ class InstructionReverted(BaseModel):
     slug: str
     version: int
     reverted_from: int
+    # Un retour en arrière peut ramener un corps d'avant le schéma OU le digest requis.
+    diagram_warning: Optional[str] = None
+    digest_warning: Optional[str] = None
 
 
 # ── Inputs — palier membre (org active, pas d'org_id) ───────────────────────
@@ -528,7 +542,9 @@ async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
     return {"ok": True, "org_id": org_id, "slug": norm, "version": version, "set": True,
             **({"reverted_from": inp.from_version} if inp.from_version is not None else {}),
             **await tool_registry.write_check(body_md),
-            **slots_mod.slots_check(body_md, effective_slots)}
+            **slots_mod.slots_check(body_md, effective_slots),
+            **procedure_diagram.diagram_check(body_md),
+            **procedure_digest.digest_check(body_md)}
 
 
 def _delete_instruction(ctx: ResolvedCtx, inp) -> dict:
@@ -591,7 +607,11 @@ def _instruction_revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:
     version = org_store.set_instruction(ctx.org_id, slug, old["body_md"], title=old["title"],
                                         description=old["description"], set_by=ctx.sub,
                                         slots=old.get("slots") or [])
-    return {"ok": True, "slug": slug, "version": version, "reverted_from": inp.version}
+    # Revenir en arrière peut RAMENER une procédure d'avant le schéma requis : le signal
+    # part ici aussi (la face MCP passe par `_set_instruction`, qui l'a déjà).
+    return {"ok": True, "slug": slug, "version": version, "reverted_from": inp.version,
+            **procedure_diagram.diagram_check(old["body_md"]),
+            **procedure_digest.digest_check(old["body_md"])}
 
 
 def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
@@ -653,8 +673,16 @@ CAPABILITIES += [
                      "`slots` = the procedure's REQUIRED ENTITIES [{name, type: tableau|"
                      "connecteur|base, description?, connector?}] — reference them BY NAME "
                      "in the prose as <slot:name> (never a hardcoded instance: the project "
-                     "binds name→instance). Response returns cross-check warnings "
-                     "(unresolved/unreferenced slots, suggestions). `org` pins the write to "
+                     "binds name→instance). EVERY procedure OPENS with "
+                     "`> **Self-improvement digest** — …` (what the last run taught and "
+                     "what was fixed, dated) and must carry a FLOWCHART (one "
+                     "untagged fenced block drawn in box characters, right after the « At a "
+                     "glance » table and before the first phase heading) — it is the DEFAULT "
+                     "view of the process page; read the `procedure-flowchart` guide first. "
+                     "Response returns cross-check warnings "
+                     "(unresolved/unreferenced slots, suggestions, `digest_warning`, "
+                     "`diagram_warning`). "
+                     "`org` pins the write to "
                      "an EXPLICIT org id (default = your active org) — pass it to stay robust "
                      "if a reconnect dropped your session org; you must be org_admin of it."),
         rest=RestBinding("PUT", "/api/me/instructions/{slug}"),
