@@ -138,6 +138,20 @@ _WRAP = 'font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#2
 _FAINT = 'color:#7a6c50;font-size:13px'
 
 
+def _bouton(app_url: str | None, libelle: str) -> str:
+    """Le bouton d'ouverture, ou RIEN.
+
+    Le lien d'un projet dépend d'un patron déclaré par le tenant : le produit du
+    partenaire n'a pas forcément cette vue, et coller NOTRE chemin sous SON domaine
+    fabriquerait un lien mort — pire qu'une absence, parce qu'un lien mort ne se
+    diagnostique pas, il se subit (cf. `links.py`). Un email est un lien AFFICHÉ, pas
+    une redirection : on n'écrit rien plutôt que d'envoyer quelque part."""
+    if not app_url:
+        return ""
+    return (f'<p><a href="{_esc(app_url)}" style="{_BTN}">{_esc(libelle)}</a></p>'
+            f'<p style="{_FAINT}">{_esc(app_url)}</p>')
+
+
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
                       inviter: str | None = None, *, brand: str = "oto") -> bool:
     """Email d'invitation à rejoindre `brand`. True si envoyé, False sinon.
@@ -167,19 +181,19 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
 
 def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
                                permission: str, app_url: str,
-                               sharer: str | None = None) -> bool:
+                               sharer: str | None = None, brand: str = "oto") -> bool:
     """Email à un utilisateur avec qui on vient de PARTAGER une ressource (projet,
     datastore, doctrine). Best-effort (False si non envoyé) — un échec ne casse
     jamais le partage. Voix funnel : FR, vouvoiement + minuscules."""
     droit = "en lecture" if permission == "read" else "en écriture"
     titre = f"{type_label} « {name} »" if name else f"un {type_label}"
     who = f"{_esc(sharer)} a partagé" if sharer else "on a partagé"
-    subject = (f"{name} — {type_label} partagé avec vous sur oto" if name
-               else f"un {type_label} partagé avec vous sur oto")
+    subject = (f"{name} — {type_label} partagé avec vous sur {brand}" if name
+               else f"un {type_label} partagé avec vous sur {brand}")
     html = (
         f'<div style="{_WRAP}">'
-        f'<p>{who} avec vous {_esc(titre)} ({droit}) sur oto.</p>'
-        f'<p><a href="{_esc(app_url)}" style="{_BTN}">ouvrir dans oto</a></p>'
+        f'<p>{who} avec vous {_esc(titre)} ({droit}) sur {_esc(brand)}.</p>'
+        f'<p><a href="{_esc(app_url)}" style="{_BTN}">ouvrir dans {_esc(brand)}</a></p>'
         f'<p style="{_FAINT}">{_esc(app_url)}</p>'
         f'</div>'
     )
@@ -187,18 +201,19 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
 
 
 def send_resource_transferred_email(to: str, *, type_label: str, name: str | None,
-                                    app_url: str, sharer: str | None = None) -> bool:
+                                    app_url: str, sharer: str | None = None,
+                                    brand: str = "oto") -> bool:
     """Email à un utilisateur à qui on vient de TRANSFÉRER la propriété d'une
     ressource (ADR 0030). Best-effort. Voix funnel : FR, vouvoiement + minuscules."""
     titre = f"{type_label} « {name} »" if name else f"un {type_label}"
     who = f"{_esc(sharer)} vous a transféré" if sharer else "on vous a transféré"
-    subject = (f"{name} — {type_label} transféré à vous sur oto" if name
-               else f"un {type_label} transféré à vous sur oto")
+    subject = (f"{name} — {type_label} transféré à vous sur {brand}" if name
+               else f"un {type_label} transféré à vous sur {brand}")
     html = (
         f'<div style="{_WRAP}">'
-        f'<p>{who} la propriété de <strong>{_esc(titre)}</strong> sur oto — '
+        f'<p>{who} la propriété de <strong>{_esc(titre)}</strong> sur {_esc(brand)} — '
         f'vous en êtes désormais propriétaire.</p>'
-        f'<p><a href="{_esc(app_url)}" style="{_BTN}">ouvrir dans oto</a></p>'
+        f'<p><a href="{_esc(app_url)}" style="{_BTN}">ouvrir dans {_esc(brand)}</a></p>'
         f'<p style="{_FAINT}">{_esc(app_url)}</p>'
         f'</div>'
     )
@@ -206,37 +221,38 @@ def send_resource_transferred_email(to: str, *, type_label: str, name: str | Non
 
 
 def send_change_request_email(to: str, *, project_name: str | None, doc_title: str | None,
-                              proposer: str | None, is_create: bool, app_url: str) -> bool:
+                              proposer: str | None, is_create: bool,
+                              app_url: str | None = None,
+                              brand: str = "oto") -> bool:
     """Email à un VALIDATEUR : une proposition de modification attend sa décision
     (« les lecteurs proposent / les auteurs valident », oto/#6). Best-effort. Voix
     funnel : FR, vouvoiement + minuscules."""
     what = "une nouvelle page" if is_create else f"une modification de « {doc_title} »" if doc_title else "une modification"
     where = f" dans « {project_name} »" if project_name else ""
     who = f"{_esc(proposer)} propose" if proposer else "on propose"
-    subject = f"proposition à valider sur oto{f' — {project_name}' if project_name else ''}"
+    subject = f"proposition à valider sur {brand}{f' — {project_name}' if project_name else ''}"
     html = (
         f'<div style="{_WRAP}">'
-        f'<p>{who} {_esc(what)}{_esc(where)} sur oto — votre validation est attendue.</p>'
-        f'<p><a href="{_esc(app_url)}" style="{_BTN}">revoir et décider</a></p>'
-        f'<p style="{_FAINT}">{_esc(app_url)}</p>'
+        f'<p>{who} {_esc(what)}{_esc(where)} sur {_esc(brand)} — votre validation est attendue.</p>'
+        f'{_bouton(app_url, "revoir et décider")}'
         f'</div>'
     )
     return _send(to, subject, html)
 
 
 def send_change_request_resolved_email(to: str, *, project_name: str | None, doc_title: str | None,
-                                       accepted: bool, app_url: str) -> bool:
+                                       accepted: bool, app_url: str | None = None,
+                                       brand: str = "oto") -> bool:
     """Email au PROPOSEUR : sa proposition a été acceptée ou refusée (oto/#6).
     Best-effort. Voix funnel : FR, vouvoiement + minuscules."""
     verdict = "acceptée" if accepted else "refusée"
     what = f"votre proposition sur « {doc_title} »" if doc_title else "votre proposition"
     where = f" dans « {project_name} »" if project_name else ""
-    subject = f"proposition {verdict} sur oto{f' — {project_name}' if project_name else ''}"
+    subject = f"proposition {verdict} sur {brand}{f' — {project_name}' if project_name else ''}"
     html = (
         f'<div style="{_WRAP}">'
-        f'<p>{_esc(what)}{_esc(where)} a été <strong>{verdict}</strong> sur oto.</p>'
-        f'<p><a href="{_esc(app_url)}" style="{_BTN}">ouvrir dans oto</a></p>'
-        f'<p style="{_FAINT}">{_esc(app_url)}</p>'
+        f'<p>{_esc(what)}{_esc(where)} a été <strong>{verdict}</strong> sur {_esc(brand)}.</p>'
+        f'{_bouton(app_url, f"ouvrir dans {brand}")}'
         f'</div>'
     )
     return _send(to, subject, html)
