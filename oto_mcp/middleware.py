@@ -82,6 +82,30 @@ class ToolAliasMiddleware(Middleware):
                            exc_info=True)
             return tools
 
+    async def on_initialize(self, context, call_next):
+        """`serverInfo` au nom du PRODUIT — le dernier recoin de la classe de défaut
+        que ce middleware ferme : les outils disaient `tulina_…` mais le handshake
+        annonçait encore `oto`. `name` suit le `tool_prefix` déclaré (l'identifiant,
+        cohérent avec les noms d'outils), `title` le nom du tenant (le libellé
+        humain). Rien de déclaré ⟹ l'annonce d'avant, à l'octet près (fail-open)."""
+        result = await call_next(context)
+        if result is None or getattr(result, "serverInfo", None) is None:
+            return result
+        try:
+            name, title = tool_alias.server_identity_for(current_user_sub_from_token())
+            if not name and not title:
+                return result
+            maj = {}
+            if name:
+                maj["name"] = name
+            if title:
+                maj["title"] = title
+            return result.model_copy(
+                update={"serverInfo": result.serverInfo.model_copy(update=maj)})
+        except Exception:  # noqa: BLE001 — une identité d'affichage ne casse pas un handshake
+            logger.warning("renommage du serverInfo échoué (fail-open)", exc_info=True)
+            return result
+
     async def on_call_tool(self, context, call_next):
         prefix = self._prefix()
         if not prefix:

@@ -473,3 +473,77 @@ async def test_un_renommage_qui_echoue_sert_la_liste_canonique(
                             method="tools/list")
     rendus = await ToolAliasMiddleware().on_list_tools(ctx, lambda _c: _renvoie(tools))
     assert {t.name for t in rendus} == {t.name for t in tools}
+
+
+# ── 7. Le handshake annonce le produit, pas la plateforme ────────────────────
+
+def _handshake():
+    return mt.InitializeResult(
+        protocolVersion="2025-06-18", capabilities=mt.ServerCapabilities(),
+        serverInfo=mt.Implementation(name="oto", version="1.0.0"))
+
+
+async def _serverinfo_servi(monkeypatch, sub):
+    _comme(monkeypatch, sub)
+    ctx = MiddlewareContext(
+        message=mt.InitializeRequest(
+            method="initialize",
+            params=mt.InitializeRequestParams(
+                protocolVersion="2025-06-18", capabilities=mt.ClientCapabilities(),
+                clientInfo=mt.Implementation(name="client", version="0"))),
+        method="initialize")
+    rendu = await ToolAliasMiddleware().on_initialize(
+        ctx, lambda _c: _renvoie(_handshake()))
+    return rendu.serverInfo
+
+
+@pytest.mark.asyncio
+async def test_le_handshake_dun_compte_plateforme_est_inchange(
+        tenant_avec_prefixe, monkeypatch):
+    info = await _serverinfo_servi(monkeypatch, _SUB_PLATEFORME)
+    assert (info.name, info.title) == ("oto", None)
+
+
+@pytest.mark.asyncio
+async def test_le_handshake_porte_le_nom_du_produit(tenant_avec_prefixe, monkeypatch):
+    """`serverInfo.name` disait `oto` dans le produit du partenaire pendant que tous
+    ses outils s'appelaient `acme_…`. `name` suit le préfixe (l'identifiant), `title`
+    le nom déclaré du tenant (le libellé humain)."""
+    info = await _serverinfo_servi(monkeypatch, _SUB_TENANT)
+    assert (info.name, info.title) == ("acme", "Acme")
+    assert info.version == "1.0.0", "la version reste celle du serveur"
+
+
+@pytest.mark.asyncio
+async def test_sans_prefixe_le_handshake_garde_lidentifiant_mais_prend_le_libelle(
+        tenant_sans_prefixe, monkeypatch):
+    """Un tenant sans `tool_prefix` garde `name=oto` (ses outils s'appellent encore
+    `oto_…` — renommer l'un sans l'autre ferait diverger les deux) ; son `name` de
+    tenant, lui, est DÉCLARÉ (il sert déjà la découverte PRM) donc le `title` le suit."""
+    info = await _serverinfo_servi(monkeypatch, _SUB_TENANT)
+    assert (info.name, info.title) == ("oto", "Acme")
+
+
+@pytest.mark.asyncio
+async def test_sans_compte_le_handshake_est_inchange(tenant_avec_prefixe, monkeypatch):
+    info = await _serverinfo_servi(monkeypatch, None)
+    assert (info.name, info.title) == ("oto", None)
+
+
+@pytest.mark.asyncio
+async def test_un_handshake_qui_echoue_sert_lannonce_canonique(
+        tenant_avec_prefixe, monkeypatch):
+    """Une identité d'affichage ne coûte jamais la connexion (fail-open, provoqué)."""
+    _comme(monkeypatch, _SUB_TENANT)
+    monkeypatch.setattr(tool_alias, "server_identity_for",
+                        lambda *_a: (_ for _ in ()).throw(RuntimeError("boum")))
+    ctx = MiddlewareContext(
+        message=mt.InitializeRequest(
+            method="initialize",
+            params=mt.InitializeRequestParams(
+                protocolVersion="2025-06-18", capabilities=mt.ClientCapabilities(),
+                clientInfo=mt.Implementation(name="client", version="0"))),
+        method="initialize")
+    rendu = await ToolAliasMiddleware().on_initialize(
+        ctx, lambda _c: _renvoie(_handshake()))
+    assert rendu.serverInfo.name == "oto"

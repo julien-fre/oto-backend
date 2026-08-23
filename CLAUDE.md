@@ -106,8 +106,10 @@ Mistral). **Détail : `docs/auth-logto.md`** (jetons API, registre d'émetteurs,
 >   possible** : prod et preprod partagent la base (§Infra), donc la colonne posée vaut
 >   pour les deux — la seule fenêtre de test est le décalage des redémarrages. La face
 >   REST reste en canonique : ses écritures sont keyées par nom, et le dashboard d'un
->   tenant n'est pas le nôtre. Reste NON traité, même classe : `serverInfo.name` du
->   `initialize` vaut toujours `oto`.
+>   tenant n'est pas le nôtre. **`serverInfo` du `initialize` est traduit aussi
+>   (23/08)** : `name` suit le `tool_prefix` déclaré, `title` le nom du tenant
+>   (`tool_alias.server_identity_for` + hook `on_initialize` du même middleware) —
+>   rien de déclaré ⟹ l'annonce d'avant, à l'octet près.
 >
 > **Le suivi est un ÉCRAN depuis le 15/08** (`capabilities/tenants_admin.py` + `db.list_tenants_overview`,
 > REST `/api/admin/tenants[/{slug}]`, MCP `oto_admin_tenant`, dashboard `/platform/tenants`) : qui est

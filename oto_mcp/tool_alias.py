@@ -111,26 +111,49 @@ def _is_connector_namespace(prefix: str) -> bool:
         return True
 
 
-def prefix_for(sub: Optional[str]) -> str:
-    """Le préfixe d'outils du tenant de ce compte, ou `""`.
+def _tenant_entry(sub: Optional[str]):
+    """L'entrée de registre du tenant TIERS de ce compte, ou None (compte de la
+    plateforme, sub absent, registre illisible).
 
     **Aucun accès DB** — le registre d'émetteurs est en mémoire (bâti au boot). C'est
     ce qui autorise l'appel depuis un middleware, dans la boucle (serveur MONO-LOOP).
     """
     if not sub:
-        return ""
+        return None
     try:
         from . import tenancy
         registre = tenancy.current()
         slug = registre.tenant_of(sub)
         if not slug or slug == tenancy.PRIMARY_SLUG:
-            return ""
-        entry = next((e for e in registre.entries() if e.slug == slug), None)
-        return normalize_prefix(getattr(entry, "tool_prefix", "")) if entry else ""
+            return None
+        return next((e for e in registre.entries() if e.slug == slug), None)
     except Exception:  # noqa: BLE001 — un nom d'outil ne casse jamais un appel
-        logger.warning("résolution du préfixe d'outils impossible (fail-open)",
-                       exc_info=True)
-        return ""
+        logger.warning("résolution du tenant impossible (fail-open)", exc_info=True)
+        return None
+
+
+def prefix_for(sub: Optional[str]) -> str:
+    """Le préfixe d'outils du tenant de ce compte, ou `""`."""
+    entry = _tenant_entry(sub)
+    return normalize_prefix(getattr(entry, "tool_prefix", "")) if entry else ""
+
+
+def server_identity_for(sub: Optional[str]) -> tuple[str, str]:
+    """`(name, title)` que le handshake `initialize` doit annoncer — `("", "")` =
+    inchangé (compte de la plateforme, tenant sans déclaration, erreur).
+
+    Même défaut, dernier recoin : `serverInfo.name` valait `oto` dans le produit
+    d'un partenaire, alors que les outils s'y appellent `<prefix>_…`. Même doctrine
+    que le préfixe et les liens : **rien n'est renommé par défaut** — `name` suit le
+    `tool_prefix` déclaré (l'identifiant, cohérent avec les noms d'outils), `title`
+    suit le `name` du tenant (le libellé humain, celui du PRM). Un tenant qui n'a
+    rien déclaré garde l'annonce d'avant, et ça se voit — pas de patron, pas de nom.
+    """
+    entry = _tenant_entry(sub)
+    if entry is None:
+        return ("", "")
+    return (normalize_prefix(getattr(entry, "tool_prefix", "")),
+            str(getattr(entry, "name", "") or ""))
 
 
 def public(name: str, prefix: str) -> str:
