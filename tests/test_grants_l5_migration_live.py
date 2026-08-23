@@ -148,9 +148,10 @@ def test_migration_leaves_the_vault_row_untouched(live):
     assert _rows("SELECT * FROM connector_credentials WHERE connector = 'fullenrich'") == before
 
 
-def test_migration_ignores_the_nine_other_connectors(live):
-    """Test différentiel, côté données : une clé plateforme `serper` avec des grants
-    ne produit AUCUNE arête tant que le connecteur n'est pas basculé."""
+def test_migration_seeds_a_wave2_connector(live):
+    """Vague 2 (23/08) : une clé plateforme `serper` avec des grants produit ses
+    arêtes au boot — `share_down` ∪ `rate_limit_by`, quota compris. C'est l'ancien
+    test différentiel INVERSÉ : serper est basculé, le seed le couvre."""
     _seed_prod_shaped_platform_key()
     _exec("DELETE FROM connector_credentials WHERE connector = 'serper'")
     _exec("INSERT INTO connector_credentials (entity_type, entity_id, connector, "
@@ -158,7 +159,24 @@ def test_migration_ignores_the_nine_other_connectors(live):
           "('platform', 'env', 'serper', '', 'x', 'open', '[\"user:a\"]'::jsonb, "
           "'{\"rate_limit_by\": {\"user:a\": 50}}'::jsonb)")
     live()
-    assert not [e for e in _edges() if "serper" in e["resource_id"]]
+    arete = [e for e in _edges() if e["resource_id"] == "platform:serper:env"]
+    assert len(arete) == 1
+    assert (arete[0]["grantee_kind"], arete[0]["grantee_id"]) == ("user", "a")
+    assert arete[0]["constraints"].get("quota") == 50
+
+
+def test_migration_ignores_an_unchained_connector(live):
+    """Test différentiel, côté données : une clé plateforme `unipile` (hors chaîne —
+    son mode plateforme est gouverné par option comp + comptes opérés) ne produit
+    AUCUNE arête, quels que soient ses grants."""
+    _seed_prod_shaped_platform_key()
+    _exec("DELETE FROM connector_credentials WHERE connector = 'unipile'")
+    _exec("INSERT INTO connector_credentials (entity_type, entity_id, connector, "
+          "account, secret_enc, share_mode, share_down, meta) VALUES "
+          "('platform', 'env', 'unipile', '', 'x', 'open', '[\"user:a\"]'::jsonb, "
+          "'{\"rate_limit_by\": {\"user:a\": 50}}'::jsonb)")
+    live()
+    assert not [e for e in _edges() if "unipile" in e["resource_id"]]
 
 
 # ── Le comptage (0053-D7) ──────────────────────────────────────────────────────
