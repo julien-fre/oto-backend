@@ -151,16 +151,27 @@ def test_org_scope_is_the_ACTIVE_org_never_membership():
     assert grants_chain.grantee_scopes("s", None) == [("user", "s")]
 
 
-# ── 3. Les neuf autres connecteurs : pas une requête ───────────────────────────
+# ── 3. Le périmètre : qui est basculé, qui ne l'est pas ────────────────────────
 
+# Les connecteurs à `platform_key_open` — fait de PRODUIT, inchangé par la vague 2 :
+# basculer un connecteur sur la chaîne n'éteint pas son free-tier (celle décision-là
+# se prend connecteur par connecteur, mesure de rayon en main — fullenrich seul l'a eue).
 FREE_TIER_OTHERS = ("serper", "hunter", "reddit", "sirene", "kaspr",
                     "unipile", "apollo", "serpapi", "searchapi")
 
+# Vague 2 (23/08) : chaînés SANS toucher leur flag — arêtes semées au boot, révocation
+# vraie, metering d'arête ; un appelant sans arête retombe sur le chemin ouvert.
+WAVE2 = ("serper", "hunter", "apollo", "serpapi", "kaspr", "reddit")
 
-def test_the_other_nine_never_touch_the_chain(monkeypatch):
-    """Test DIFFÉRENTIEL : toute lecture de chaîne explose. Les neuf autres
-    connecteurs à clé plateforme résolvent quand même — donc aucun d'eux ne passe par
-    une ligne de ce lot."""
+# Jamais chaînés, et pourquoi : unipile (mode plateforme gouverné par option comp +
+# comptes opérés, pas par share_down), searchapi/sirene (pas de clé plateforme posée).
+NEVER_CHAINED = ("unipile", "searchapi", "sirene")
+
+
+def test_unchained_connectors_never_touch_the_chain(monkeypatch):
+    """Test DIFFÉRENTIEL : toute lecture de chaîne explose. Les connecteurs hors
+    périmètre résolvent quand même — donc aucun d'eux ne passe par une ligne de ce
+    lot."""
     def boom(*a, **k):  # pragma: no cover - doit ne jamais être appelé
         raise AssertionError("un connecteur non basculé a consulté la chaîne")
 
@@ -169,24 +180,61 @@ def test_the_other_nine_never_touch_the_chain(monkeypatch):
                         lambda p: [{"label": "env", "share_mode": "open",
                                     "share_down": [], "share_side": [],
                                     "meta": {"rate_limit": 42}}])
-    for provider in FREE_TIER_OTHERS:
+    for provider in NEVER_CHAINED:
         assert access._platform_grant_meta("s", provider, None) == {
             "label": "env", "daily_quota": 42}, provider
 
 
+def test_wave2_open_key_without_edges_resolves_like_legacy(monkeypatch):
+    """Le rayon de la vague 2 est NUL pour qui n'a pas d'arête : un connecteur
+    chaîné mais à clé OUVERTE rend, pour un appelant que la chaîne ne connaît pas,
+    exactement ce que rendait l'ancien chemin (état MUET → repli identique)."""
+    monkeypatch.setattr(db_grants, "edges_for", lambda ref, grantees: [])
+    monkeypatch.setattr(credentials_store, "list_platform_instances",
+                        lambda p: [{"label": "env", "share_mode": "open",
+                                    "share_down": [], "share_side": [],
+                                    "meta": {"rate_limit": 42}}])
+    for provider in WAVE2:
+        assert access._platform_grant_meta("s", provider, None) == \
+            access._legacy_platform_grant_meta("s", provider, None), provider
+        assert access._platform_grant_meta("s", provider, None) == {
+            "label": "env", "daily_quota": 42}, provider
+
+
+def test_wave2_revocation_cuts_access_even_on_open_key(monkeypatch):
+    """Ce que la vague 2 CHANGE : une arête révoquée coupe l'accès plateforme d'un
+    connecteur chaîné, même à clé ouverte — sans elle, révoquer un grant serait un
+    no-op (le free-tier re-accorderait aussitôt)."""
+    monkeypatch.setattr(credentials_store, "list_platform_instances",
+                        lambda p: [{"label": "env", "share_mode": "open",
+                                    "share_down": [], "share_side": [],
+                                    "meta": {"rate_limit": 42}}])
+    for provider in WAVE2:
+        ref = f"platform:{provider}:env"
+        monkeypatch.setattr(db_grants, "edges_for", lambda r, g, _ref=ref: [
+            {"id": 1, "resource_kind": "connector_instance", "resource_id": _ref,
+             "grantor_kind": "platform", "grantor_id": "platform",
+             "grantee_kind": "user", "grantee_id": "s",
+             "constraints": {}, "parent_id": None, "source": "manual",
+             "created_by": "t", "created_at": "2026-08-23 00:00:00",
+             "revoked_at": "2026-08-23 01:00:00"}])
+        assert access._platform_grant_meta("s", provider, None) is None, provider
+
+
 def test_only_fullenrich_lost_its_free_tier_flag():
-    """`platform_key_open` s'éteint pour CE connecteur seulement. Le flag survivant
-    des neuf autres est un fait de produit (leur clé reste ouverte) — l'éteindre en
-    passant serait couper un free-tier sans le décider."""
+    """`platform_key_open` s'éteint pour fullenrich seulement — vague 2 comprise :
+    chaîner un connecteur n'éteint PAS son free-tier. Le flag survivant des neuf
+    autres est un fait de produit — l'éteindre en passant serait couper un free-tier
+    sans le décider (le rayon de fullenrich était mesuré nul, pas les leurs)."""
     assert providers.REGISTRY["fullenrich"].platform_key_open is False
     still_open = {n for n, c in providers.REGISTRY.items() if c.platform_key_open}
     assert still_open == set(FREE_TIER_OTHERS), sorted(still_open)
 
 
-def test_the_lot_covers_exactly_one_connector():
-    """« Un connecteur à quota d'abord, les 9 autres ensuite. » Élargir le périmètre
-    est une décision, pas un ajout de nom dans un frozenset."""
-    assert grants_chain.CHAIN_CONNECTORS == frozenset({"fullenrich"})
+def test_the_lot_covers_pilot_plus_wave2():
+    """« Un connecteur à quota d'abord, les 9 autres ensuite » : vague 2 du 23/08
+    (GO Alexis). Élargir encore reste une décision, pas un ajout de nom."""
+    assert grants_chain.CHAIN_CONNECTORS == frozenset({"fullenrich", *WAVE2})
 
 
 # ── 4. L'écriture : accorder n'enlève plus rien ────────────────────────────────
@@ -208,15 +256,15 @@ def test_granting_never_touches_the_vault_row(monkeypatch):
 
 
 def test_granting_a_non_migrated_connector_still_uses_the_old_write_path(monkeypatch):
-    """Le pendant du test précédent : pour les neuf autres, l'écriture reste
-    exactement celle d'avant (elle passe bien par le coffre)."""
+    """Le pendant du test précédent : pour un connecteur HORS chaîne, l'écriture
+    reste exactement celle d'avant (elle passe bien par le coffre)."""
     touched = []
     monkeypatch.setattr(credentials_store, "_connect",
                         lambda: (_ for _ in ()).throw(RuntimeError("coffre touché")))
     monkeypatch.setattr(grants_chain, "grant",
                         lambda *a, **k: touched.append(a))
     with pytest.raises(RuntimeError, match="coffre touché"):
-        credentials_store.platform_grant("serper", "user:x", daily_quota=200)
+        credentials_store.platform_grant("unipile", "user:x", daily_quota=200)
     assert touched == []
 
 
@@ -346,4 +394,4 @@ def test_a_non_migrated_connector_never_reaches_the_chain_counter(monkeypatch):
     monkeypatch.setattr(access.db, "increment_usage", lambda sub, p: None)
     monkeypatch.setattr(grants_chain, "record_usage",
                         lambda *a, **k: pytest.fail("connecteur non basculé compté"))
-    access.record_platform_usage("serper", 3)
+    access.record_platform_usage("unipile", 3)

@@ -69,7 +69,24 @@ logger = logging.getLogger(__name__)
 # n'ont aucune arête à migrer — ils ne prouveraient rien. Et le fait décisif : les
 # deux seuls sujets à avoir appelé fullenrich en trois mois sont **exactement** les
 # deux qui portent un grant. Le rayon réel est nul.
-CHAIN_CONNECTORS = frozenset({"fullenrich"})
+#
+# **Vague 2 (23/08, GO Alexis « tout ce qui est dévable »)** : les connecteurs à
+# clé plateforme ET grants passent à la chaîne — leurs arêtes sont semées au boot
+# (`_seed_platform_grants_as_edges`), leurs grants/révocations passent par ici,
+# leur usage débite l'arête. **À la différence du pilote, leur `platform_key_open`
+# n'est PAS éteint** : le rayon de fullenrich avait été mesuré NUL (les deux seuls
+# appelants étaient les deux grantees), celui de serper ne l'est pas (9 759 appels
+# /30 j). Couper un free-tier se décide connecteur par connecteur, mesure en main —
+# jusqu'à cette décision, un appelant SANS arête retombe sur le chemin ouvert
+# (état MUET, identique), et un appelant à arête RÉVOQUÉE est coupé (la révocation
+# devient vraie, c'est le but). Restent dehors : `unipile` (son mode plateforme est
+# gouverné par option comp + comptes opérés, pas par share_down), `searchapi` (pas
+# de clé plateforme) et `sirene` (idem).
+CHAIN_CONNECTORS = frozenset({
+    "fullenrich",                                     # pilote (12/08), flag éteint
+    "serper", "hunter", "apollo", "serpapi", "kaspr", # vague 2 — flag intact
+    "reddit",                                         # vague 2 — 0 arête, no-op prouvé
+})
 
 # Le propriétaire d'une clé plateforme (0053-D3 : « la plateforme est un scope
 # propriétaire comme les autres »). Convention maison — `platform` n'a pas d'id,
