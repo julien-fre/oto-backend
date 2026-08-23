@@ -40,6 +40,24 @@ def make_routes(
     def _app_url() -> str:
         return config.dashboard_url()
 
+    def _retour(statut: str, sub: "str | None" = None) -> str:
+        """Où renvoyer le navigateur après le consentement Folk.
+
+        Le retour était codé sur le dashboard oto : un utilisateur d'un front
+        partenaire (Tulina) finissait son consentement chez un produit qu'il n'a
+        pas. `links.link_for` résout le patron du TENANT depuis le `sub` — que le
+        callback tient déjà, relu du state signé — donc aucune modification du
+        front n'est nécessaire ici.
+
+        Pas de patron chez le tenant ⟹ `None` ⟹ destination historique À L'OCTET
+        PRÈS (`/?folk=<statut>`). On ne bascule PAS sur `redirect_for`, dont le
+        repli générique (`/connectors?connector=…`) changerait l'atterrissage de
+        l'appelant historique."""
+        from . import links
+        cible = links.link_for("connector_return", sub=sub, connector="folk") if sub else None
+        return cible or f"{{_app_url()}}/?folk={{statut}}"
+
+
     async def start(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
         if err:
@@ -52,14 +70,16 @@ def make_routes(
         state = request.query_params.get("state")
         parsed = folk_oauth.verify_state(state) if state else None
         if not code or not parsed:
-            return RedirectResponse(f"{_app_url()}/?folk=error", status_code=302)
+            return RedirectResponse(_retour("error"), status_code=302)
         sub, verifier_pkce = parsed
         try:
             tokens = folk_oauth.exchange_code(code, verifier_pkce)
             folk_oauth.persist_token(sub, tokens)
         except Exception:
-            return RedirectResponse(f"{_app_url()}/?folk=error", status_code=302)
-        return RedirectResponse(f"{_app_url()}/?folk=connected", status_code=302)
+            # `sub` est connu ici (relu du state) : même un échec renvoie la personne
+            # chez ELLE, pas chez nous.
+            return RedirectResponse(_retour("error", sub), status_code=302)
+        return RedirectResponse(_retour("connected", sub), status_code=302)
 
     async def status(request: Request) -> JSONResponse:
         sub, err = await authenticate(request, verifier)
