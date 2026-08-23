@@ -155,8 +155,10 @@ def test_client_exposes_methods_called_by_tools():
                  "list_charges", "get_charge", "list_refunds", "get_refund",
                  "list_disputes", "get_dispute", "list_products", "get_product",
                  "create_product", "update_product", "list_prices", "get_price",
-                 "create_price", "update_price", "list_coupons",
-                 "list_promotion_codes", "list_payment_links", "get_payment_link",
+                 "create_price", "update_price", "list_coupons", "get_coupon",
+                 "create_coupon", "update_coupon", "list_promotion_codes",
+                 "get_promotion_code", "create_promotion_code", "update_promotion_code",
+                 "list_payment_links", "get_payment_link",
                  "get_payment_link_line_items", "create_payment_link",
                  "update_payment_link", "list_checkout_sessions",
                  "get_checkout_session", "get_checkout_session_line_items",
@@ -388,6 +390,134 @@ def test_create_price_requires_the_three_fields_stripe_needs():
                                    recurring_interval="month")
         assert cls.return_value.create_price.call_args.kwargs["recurring"] == {
             "interval": "month"}
+    finally:
+        patcher.stop()
+
+
+# --- catalogue : coupons & promotion codes -------------------------------------
+
+def test_create_coupon_requires_duration_and_exactly_one_discount_kind():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = _tool(m, "stripe_catalog")
+        with pytest.raises(McpError, match="requiert `duration`"):
+            fn(op="create_coupon", percent_off=20)
+        with pytest.raises(McpError, match="`percent_off` OU `amount_off`"):
+            fn(op="create_coupon", duration="once")
+        with pytest.raises(McpError, match="`percent_off` OU `amount_off`"):
+            fn(op="create_coupon", duration="once", percent_off=20, amount_off=500,
+               currency="eur")
+        cls.return_value.create_coupon.assert_not_called()
+
+        fn(op="create_coupon", duration="once", percent_off=20, name="LAUNCH20")
+        assert cls.return_value.create_coupon.call_args.kwargs == {
+            "percent_off": 20, "duration": "once", "name": "LAUNCH20"}
+    finally:
+        patcher.stop()
+
+
+def test_create_coupon_amount_off_requires_currency():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = _tool(m, "stripe_catalog")
+        with pytest.raises(McpError, match="requiert aussi `currency`"):
+            fn(op="create_coupon", duration="once", amount_off=500)
+        fn(op="create_coupon", duration="once", amount_off=500, currency="eur")
+        assert cls.return_value.create_coupon.call_args.kwargs["currency"] == "eur"
+    finally:
+        patcher.stop()
+
+
+def test_create_coupon_repeating_requires_duration_in_months():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = _tool(m, "stripe_catalog")
+        with pytest.raises(McpError, match="duration_in_months"):
+            fn(op="create_coupon", duration="repeating", percent_off=10)
+        fn(op="create_coupon", duration="repeating", percent_off=10, duration_in_months=3)
+        cls.return_value.create_coupon.assert_called_once()
+    finally:
+        patcher.stop()
+
+
+def test_update_coupon_only_accepts_name_and_metadata():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = _tool(m, "stripe_catalog")
+        with pytest.raises(McpError, match="requiert `coupon_id`"):
+            fn(op="update_coupon", name="x")
+        with pytest.raises(McpError, match="rien d'autre de modifiable"):
+            fn(op="update_coupon", coupon_id="cp_1")
+        fn(op="update_coupon", coupon_id="cp_1", name="renamed")
+        cls.return_value.update_coupon.assert_called_once_with("cp_1", name="renamed")
+    finally:
+        patcher.stop()
+
+
+def test_create_promotion_code_requires_a_coupon():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = _tool(m, "stripe_catalog")
+        with pytest.raises(McpError, match="requiert `coupon_id`"):
+            fn(op="create_promotion_code", code="LAUNCH20")
+        fn(op="create_promotion_code", coupon_id="cp_1", code="LAUNCH20",
+           restrictions={"first_time_transaction": True})
+        assert cls.return_value.create_promotion_code.call_args.kwargs == {
+            "coupon": "cp_1", "code": "LAUNCH20",
+            "restrictions": {"first_time_transaction": True}}
+    finally:
+        patcher.stop()
+
+
+def test_create_coupon_refuses_a_stray_promotion_code_text():
+    """`code` est le texte d'une PROMOTION CODE, pas d'un coupon — le confondre
+    ferait croire à tort que le coupon lui-même porte ce texte."""
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        with pytest.raises(McpError, match="op='create_coupon' n'utilise pas"):
+            _tool(m, "stripe_catalog")(op="create_coupon", duration="once",
+                                       percent_off=20, code="LAUNCH20")
+        cls.return_value.create_coupon.assert_not_called()
+    finally:
+        patcher.stop()
+
+
+def test_create_promotion_code_refuses_a_stray_active_flag():
+    """Un code neuf est actif par défaut chez Stripe — `active` n'existe qu'en
+    modification (`update_promotion_code`), pas à la création."""
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        with pytest.raises(McpError, match="op='create_promotion_code' n'utilise pas"):
+            _tool(m, "stripe_catalog")(op="create_promotion_code", coupon_id="cp_1",
+                                       active=False)
+        cls.return_value.create_promotion_code.assert_not_called()
+    finally:
+        patcher.stop()
+
+
+def test_list_promotion_codes_filters_by_coupon():
+    """Un `coupon_id` fourni mais silencieusement ignoré rendrait TOUS les
+    codes du compte en laissant croire qu'ils appartiennent à ce coupon —
+    même piège que `stripe_invoice(op='list', invoice_id=…)`."""
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        _tool(m, "stripe_catalog")(op="list_promotion_codes", coupon_id="cp_1")
+        assert cls.return_value.list_promotion_codes.call_args.kwargs["coupon"] == "cp_1"
+    finally:
+        patcher.stop()
+
+
+def test_update_promotion_code_can_deactivate():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = _tool(m, "stripe_catalog")
+        with pytest.raises(McpError, match="requiert `promotion_code_id`"):
+            fn(op="update_promotion_code", active=False)
+        with pytest.raises(McpError, match="requiert .active. ou .metadata."):
+            fn(op="update_promotion_code", promotion_code_id="promo_1")
+        fn(op="update_promotion_code", promotion_code_id="promo_1", active=False)
+        cls.return_value.update_promotion_code.assert_called_once_with(
+            "promo_1", active=False)
     finally:
         patcher.stop()
 

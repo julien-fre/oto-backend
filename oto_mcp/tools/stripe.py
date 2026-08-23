@@ -107,9 +107,10 @@ def _upstream_message(e) -> str:
     tail = f" (request_id {req})" if req else ""
     if status in (401, 403):
         return (f"Stripe a rejeté la clé (HTTP {status}) — soit elle est invalide, soit "
-                f"c'est une clé RESTREINTE à laquelle il manque la permission de lecture "
-                f"pour cette ressource. Stripe Dashboard → Developers → API keys.{tail} "
-                f"{detail}")
+                f"c'est une clé RESTREINTE à laquelle il manque la permission de lecture OU "
+                f"D'ÉCRITURE pour cette ressource (une écriture, ex. create_coupon, demande "
+                f"le scope Write, pas seulement Read). Stripe Dashboard → Developers → "
+                f"API keys.{tail} {detail}")
     if status == 404:
         return (f"Stripe : objet introuvable. Vérifie l'identifiant, et surtout le MODE : "
                 f"un objet de test n'existe pas en mode réel, et inversement.{tail} {detail}")
@@ -665,9 +666,13 @@ def register(mcp: FastMCP) -> None:
     def stripe_catalog(
         op: Literal["list_products", "get_product", "create_product", "update_product",
                     "list_prices", "get_price", "create_price", "update_price",
-                    "list_coupons", "list_promotion_codes"] = "list_products",
+                    "list_coupons", "get_coupon", "create_coupon", "update_coupon",
+                    "list_promotion_codes", "get_promotion_code", "create_promotion_code",
+                    "update_promotion_code"] = "list_products",
         product_id: Optional[str] = None,
         price_id: Optional[str] = None,
+        coupon_id: Optional[str] = None,
+        promotion_code_id: Optional[str] = None,
         name: Optional[str] = None,
         description: Optional[str] = None,
         tax_code: Optional[str] = None,
@@ -677,6 +682,15 @@ def register(mcp: FastMCP) -> None:
         recurring_interval: Optional[Literal["day", "week", "month", "year"]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         code: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        percent_off: Optional[float] = None,
+        amount_off: Optional[int] = None,
+        duration: Optional[Literal["once", "repeating", "forever"]] = None,
+        duration_in_months: Optional[int] = None,
+        max_redemptions: Optional[int] = None,
+        redeem_by: Optional[int] = None,
+        expires_at: Optional[int] = None,
+        restrictions: Optional[Dict[str, Any]] = None,
         limit: Optional[int] = None,
         starting_after: Optional[str] = None,
     ) -> object:
@@ -687,24 +701,60 @@ def register(mcp: FastMCP) -> None:
         touches `active`, `metadata` and `nickname`. Say that rather than
         appearing to edit an amount.
 
-        Deleting a product or price is not available here; deactivate instead.
+        A **coupon** is the discount RULE (percent_off/amount_off, how long it
+        applies); a **promotion code** is the TEXT a customer actually types at
+        checkout, and always points at one coupon. Create the coupon first, then
+        one or more promotion codes for it — several codes ("LAUNCH20",
+        "PARTNER20") can share the same underlying coupon/discount.
+
+        Deleting a product, price or coupon is not available here (and a Coupon
+        has no `active` flag to toggle); revoke a promotion code instead
+        (`update_promotion_code`, `active=false`) — the redemption rule stays on
+        file but nothing more can be redeemed with it.
 
         Args:
-            op: "list_products" (default) and the other nine verbs.
+            op: "list_products" (default) and the other fifteen verbs.
             product_id: REQUIRED by "get_product"/"update_product"/"create_price";
                 filters "list_prices".
             price_id: REQUIRED by "get_price"/"update_price".
-            name: REQUIRED by "create_product". description/metadata: writes.
+            coupon_id: REQUIRED by "get_coupon"/"update_coupon", and by
+                "create_promotion_code" (the discount rule the new code applies).
+            promotion_code_id: REQUIRED by "get_promotion_code"/"update_promotion_code".
+            name: REQUIRED by "create_product". On "create_coupon"/"update_coupon",
+                what the customer sees on their invoice (optional).
+            description/metadata: writes, several ops.
             tax_code: on "create_product"/"update_product" — e.g. "txcd_10000000"
                 (general services). Needed before a payment link can be created
                 on accounts eligible for managed payments (verified live).
             active: filter on lists; on "update_product"/"update_price",
-                `active=false` retires it from sale without deleting anything.
-            unit_amount: "create_price", in cents. currency: "create_price".
+                `active=false` retires it from sale without deleting anything; on
+                "update_promotion_code", `active=false` revokes the code.
+            unit_amount: "create_price", in cents. currency: "create_price",
+                and "create_coupon" when paired with `amount_off`.
             recurring_interval: "create_price" — omit for a one-off price.
-            code: "list_promotion_codes" filter.
+            code: "list_promotion_codes" filter; on "create_promotion_code", the
+                literal text the customer types (omit to let Stripe generate one).
+            customer_id: "create_promotion_code" — restricts the code to one
+                customer (omit for account-wide).
+            percent_off/amount_off: "create_coupon" — exactly ONE of the two
+                (`amount_off` needs `currency` alongside it).
+            duration: REQUIRED by "create_coupon" — "once" | "repeating" | "forever".
+            duration_in_months: "create_coupon", REQUIRED when `duration="repeating"`.
+            max_redemptions: "create_coupon"/"create_promotion_code" — caps total uses.
+            redeem_by: "create_coupon" — Unix timestamp after which the coupon
+                itself can no longer be attached to a new subscription/order.
+            expires_at: "create_promotion_code" — Unix timestamp after which this
+                CODE stops working (the coupon behind it can outlive it).
+            restrictions: "create_promotion_code" — e.g.
+                `{"first_time_transaction": true}` or `{"minimum_amount": 5000,
+                "minimum_amount_currency": "eur"}`.
             limit/starting_after: list pagination.
 
+        ⚠️ Verified live 2026-08-23: a promotion code's `expires_at` cannot be
+        LATER than its coupon's `redeem_by` — Stripe rejects it outright,
+        naming both timestamps. And on a promotion code object, the coupon it
+        applies is under `promotion.coupon` (with `promotion.type == "coupon"`),
+        NOT a top-level `coupon` field — that flat shape was retired.
         """
         client = _client()
         if op == "list_products":
@@ -719,8 +769,71 @@ def register(mcp: FastMCP) -> None:
                 limit=_limit(limit), starting_after=starting_after))
         if op == "list_promotion_codes":
             return _run(lambda: client.list_promotion_codes(
-                code=code, active=active, limit=_limit(limit),
+                code=code, coupon=coupon_id, active=active, limit=_limit(limit),
                 starting_after=starting_after))
+        if op == "get_coupon":
+            if not coupon_id:
+                raise _bad("op='get_coupon' requiert `coupon_id`")
+            return _run(lambda: client.get_coupon(coupon_id))
+        if op == "create_coupon":
+            if not duration:
+                raise _bad("op='create_coupon' requiert `duration` "
+                           "('once', 'repeating' ou 'forever')")
+            if duration == "repeating" and duration_in_months is None:
+                raise _bad("op='create_coupon' avec duration='repeating' requiert "
+                           "aussi `duration_in_months`")
+            if (percent_off is None) == (amount_off is None):
+                raise _bad("op='create_coupon' requiert `percent_off` OU `amount_off` "
+                           "— l'un des deux, jamais les deux, jamais aucun")
+            if amount_off is not None and not currency:
+                raise _bad("op='create_coupon' avec `amount_off` requiert aussi `currency`")
+            _refuse_ignored(op, "`code` est le texte d'une promotion_code, pas d'un coupon "
+                            "— crée le coupon puis op='create_promotion_code' pour poser le "
+                            "texte tapé par le client", code=code)
+            body = {k: v for k, v in dict(
+                percent_off=percent_off,
+                amount_off=amount_off, currency=currency if amount_off is not None else None,
+                duration=duration, duration_in_months=duration_in_months, name=name,
+                max_redemptions=max_redemptions, redeem_by=redeem_by,
+                metadata=metadata).items() if v is not None}
+            return _run(lambda: client.create_coupon(**body))
+        if op == "update_coupon":
+            if not coupon_id:
+                raise _bad("op='update_coupon' requiert `coupon_id`")
+            body = {k: v for k, v in dict(name=name, metadata=metadata).items()
+                    if v is not None}
+            if not body:
+                raise _bad("op='update_coupon' requiert `name` ou `metadata` — un coupon "
+                           "Stripe n'a rien d'autre de modifiable (montant/durée figés, "
+                           "comme le montant d'un prix)")
+            return _run(lambda: client.update_coupon(coupon_id, **body))
+        if op == "get_promotion_code":
+            if not promotion_code_id:
+                raise _bad("op='get_promotion_code' requiert `promotion_code_id`")
+            return _run(lambda: client.get_promotion_code(promotion_code_id))
+        if op == "create_promotion_code":
+            if not coupon_id:
+                raise _bad("op='create_promotion_code' requiert `coupon_id` — le coupon "
+                           "(règle de remise) que ce code applique. Cherche-le avec "
+                           "op='list_coupons', ou crée-le d'abord avec op='create_coupon'.")
+            _refuse_ignored(op, "un code neuf est actif par défaut — utilise "
+                            "op='update_promotion_code' pour le désactiver après coup",
+                            active=active)
+            body = {k: v for k, v in dict(
+                coupon=coupon_id, code=code, customer=customer_id,
+                max_redemptions=max_redemptions, expires_at=expires_at,
+                restrictions=restrictions, metadata=metadata).items() if v is not None}
+            return _run(lambda: client.create_promotion_code(**body))
+        if op == "update_promotion_code":
+            if not promotion_code_id:
+                raise _bad("op='update_promotion_code' requiert `promotion_code_id`")
+            body = {k: v for k, v in dict(active=active, metadata=metadata).items()
+                    if v is not None}
+            if not body:
+                raise _bad("op='update_promotion_code' requiert `active` ou `metadata` — "
+                           "rien d'autre n'est modifiable après création (le code, le "
+                           "coupon lié et les restrictions sont figés)")
+            return _run(lambda: client.update_promotion_code(promotion_code_id, **body))
         if op == "get_product":
             if not product_id:
                 raise _bad("op='get_product' requiert `product_id`")
