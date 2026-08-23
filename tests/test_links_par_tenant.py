@@ -144,3 +144,34 @@ def test_des_patrons_illisibles_valent_aucun_lien():
             assert links.link_for("doc", sub="delta:u", id=1) is None, valeur
         finally:
             tenancy.install(avant)
+
+
+# --- retour de consentement des connecteurs « fédérés » (folk, atlassian) ------
+#
+# Ces callbacks sont appelés PAR LE FOURNISSEUR, sans session : le `sub` ne leur
+# arrive que par le state signé. Ils l'avaient déjà — ils ne s'en servaient pas, et
+# renvoyaient tout le monde à la RACINE du dashboard oto.
+
+def test_le_retour_federe_suit_le_tenant(registre):
+    """`connector_return` porte le connecteur : un seul patron sert folk, atlassian
+    et les suivants, sans que le tenant ait à en déclarer un par connecteur."""
+    assert links.link_for("connector_return", sub="acme:u", org=7,
+                          connector="folk") is None  # acme n'a pas cette vue
+
+
+def test_sans_patron_le_callback_retombe_sur_lhistorique(registre):
+    """C'est ce `None` qui fait retomber le callback sur `/?folk=connected`, à
+    l'octet près. Un tenant mal configuré ne doit jamais produire un lien MORT —
+    l'ancienne destination vaut mieux qu'une page qui n'existe pas."""
+    for connecteur in ("folk", "atlassian"):
+        assert links.link_for("connector_return", sub="acme:u",
+                              connector=connecteur) is None
+
+
+def test_chez_nous_le_retour_federe_reste_le_notre(registre):
+    """Tenant primaire (pas de `sub`, ou le nôtre) : `link_for` sert NOS chemins,
+    et le callback garde sa destination historique."""
+    # L'adresse par défaut vient de l'env (cutover ADR 0040) : on la DÉRIVE plutôt
+    # que de la figer, sinon le test suit le domaine du jour et pas la règle.
+    assert links.link_for("connector_return", connector="folk") == \
+        f"{config.dashboard_url()}/connectors?connector=folk"
