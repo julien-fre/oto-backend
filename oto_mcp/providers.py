@@ -311,6 +311,8 @@ _CATEGORY_BY_CONNECTOR = {
     "ahrefs": "Prospection",
     # paiements & analytics produit
     "stripe": "Finance", "posthog": "Dev",
+    # identification des visiteurs du site (IP → entreprise)
+    "snitcher": "Prospection",
 }
 
 # Éditeur (publisher) par connecteur — CURÉ. Défaut "Otomata" (connecteurs maison /
@@ -340,6 +342,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
     "firecrawl": "Firecrawl", "apify": "Apify",
     "theirstack": "TheirStack", "origami": "Origami", "lightfield": "Lightfield", "forager": "Forager.ai", "stripe": "Stripe", "posthog": "PostHog",
+    "snitcher": "Snitcher",
     "n8n": "n8n", "make": "Make", "zapier": "Zapier",
     # open-data FR → éditeur = la source publique
     "sirene": "INSEE", "culture": "Ministère de la Culture",
@@ -429,6 +432,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
     "firecrawl": "firecrawl.dev", "apify": "apify.com",
     "theirstack": "theirstack.com", "origami": "origami.chat", "lightfield": "lightfield.app", "forager": "forager.ai", "stripe": "stripe.com", "posthog": "posthog.com",
+    "snitcher": "snitcher.com",
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "promptwatch": "promptwatch.com",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
@@ -1537,6 +1541,21 @@ _REGISTRY_LIST = [
                            required=False,
                            help="épingle la clé sur UN projet ; sinon résolu "
                                 "automatiquement depuis la clé"),
+       )),
+    # snitcher : identification des visiteurs du site web — quelles ENTREPRISES
+    # visitent, avec sessions/événements par visite (dont les valeurs des
+    # formulaires soumis), contacts (reveal email = crédit payant), segments,
+    # tags et custom fields. keyed api_key (Bearer Personal Access Token,
+    # dashboard → Settings → Account → API), byo-only : un PAT est lié à UN
+    # compte Snitcher, une clé plateforme n'aurait pas de sens.
+    _c("snitcher", ["snitcher"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Snitcher",
+       help="identification des entreprises qui visitent votre site : "
+            "organisations, sessions, contacts, segments, tags, custom fields",
+       href="https://snitcher.com", credential_fields=(
+           CredentialField("key", "Personal Access Token", secret=True,
+                           help="Snitcher → Settings → Account → API → "
+                                "Generate New Token"),
        )),
 ]
 
