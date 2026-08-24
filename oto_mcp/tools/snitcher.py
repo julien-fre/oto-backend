@@ -21,8 +21,19 @@ endpoints of the official OpenAPI spec (fetched 2026-08-23):
 **No param is silently ignored**: an op that doesn't use a provided argument
 REFUSES instead of ignoring it (silae `_refuse_ignored`).
 
-Spec-only so far — awaiting a live pass with a real test key; this docstring
-gets stamped with confirmed behavior once that runs.
+**Live-tested 2026-08-24** with a real trial token (workspace tulina.ai):
+24 of 27 endpoints exercised — every read, the full tag cycle, the full
+custom-field cycle (definitions + values, then cleaned up). NOT exercised:
+reveal_email (spends a credit), workspace create/delete/invite. Two findings
+that diverge from the published spec, both stamped on the oto-core client:
+- **`op="search"` takes FLAT conditions only** — nested FilterGroups 422
+  live despite the spec allowing them; and the accepted `field` set is
+  visit-centric (last_seen, first_seen, tag, sessions, pageviews,
+  time_on_site, url, referrer, source), NOT firmographics — filter by
+  company name via op="list" `name=`, or use segments.
+- **Response envelopes vary by endpoint** (top-level Laravel pagination on
+  lists, bare objects on gets, empty bodies on deletes) — tools return them
+  as-is.
 """
 from __future__ import annotations
 
@@ -211,15 +222,20 @@ def register(mcp: FastMCP) -> None:
             op: "list" (default, simple filters) | "search" (advanced
                 boolean filters) | "get" | "tag" | "untag".
             organisation_uuid: REQUIRED by get/tag/untag.
-            filters: REQUIRED by "search" — a FilterGroup:
-                {"operator": "AND"|"OR", "conditions": [{"field", "comparison",
-                "value"?, "unit"?} | nested FilterGroup, ...]}. Comparisons:
-                equal, not_equal, contains, not_contains, starts_with,
-                ends_with, doesnt_start_with, doesnt_end_with, in, not_in,
-                between, not_between, greater_than, less_than,
-                greater_than_or_equal, less_than_or_equal,
-                less_than_x_units_ago, more_than_x_units_ago (numeric value +
-                unit second|minute|hour|day|week|month|year), set, not_set,
+            filters: REQUIRED by "search" — {"operator": "AND"|"OR",
+                "conditions": [{"field", "comparison", "value"?, "unit"?},
+                ...]}. ⚠️ FLAT conditions only — nesting a group inside
+                `conditions` is rejected live (422). Fields accepted (live
+                -confirmed): last_seen, first_seen, tag, sessions, pageviews,
+                time_on_site, url, referrer, source. Firmographics (name,
+                industry, size…) are NOT filterable here — use op="list"
+                with `name=`, or a segment. Comparisons: equal, not_equal,
+                contains, not_contains, starts_with, ends_with,
+                doesnt_start_with, doesnt_end_with, in, not_in, between,
+                not_between, greater_than, less_than, greater_than_or_equal,
+                less_than_or_equal, less_than_x_units_ago,
+                more_than_x_units_ago (numeric value + unit
+                second|minute|hour|day|week|month|year), set, not_set,
                 is_true, is_false.
             segment_uuid: list/search — narrow to a saved segment
                 (snitcher_workspace op="segments").
