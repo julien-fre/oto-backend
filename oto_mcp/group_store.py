@@ -233,8 +233,8 @@ def clear_active_group(sub: str) -> None:
 
 # --- secrets de groupe (coffre chiffré, entity_type='group') ----------------
 
-def get_group_secret(group_id: int, provider: str) -> Optional[str]:
-    return credentials_store.get_credential("group", str(group_id), provider)
+def get_group_secret(group_id: int, provider: str, account: str = "") -> Optional[str]:
+    return credentials_store.get_credential("group", str(group_id), provider, account)
 
 
 def has_group_secret(group_id: int, provider: str) -> bool:
@@ -242,18 +242,19 @@ def has_group_secret(group_id: int, provider: str) -> bool:
 
 
 def set_group_secret(group_id: int, provider: str, api_key: str,
-                     set_by: Optional[str] = None, meta: Optional[dict] = None) -> None:
+                     set_by: Optional[str] = None, meta: Optional[dict] = None,
+                     account: str = "") -> None:
     """Pose/rote un secret partagé du groupe. Mêmes providers org-partageables que
     les secrets d'org (validés par le registre)."""
     connectors.require_credential("org", provider)  # même éligibilité que l'org
     if not api_key:
         raise ValueError("api_key requise")
     credentials_store.set_credential(
-        "group", str(group_id), provider, api_key, set_by=set_by, meta=meta)
+        "group", str(group_id), provider, api_key, set_by=set_by, meta=meta, account=account)
 
 
-def delete_group_secret(group_id: int, provider: str) -> bool:
-    return credentials_store.clear_credential("group", str(group_id), provider)
+def delete_group_secret(group_id: int, provider: str, account: str = "") -> bool:
+    return credentials_store.clear_credential("group", str(group_id), provider, account=account)
 
 
 def list_group_secrets(group_id: int) -> list[dict]:

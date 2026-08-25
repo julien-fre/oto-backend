@@ -16,11 +16,15 @@ from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 
 class IdentitiesInput(BaseModel):
     connector: str                       # nom de connecteur (path {connector})
+    # Phase 2 (2026-08-25) : `org` / `group` = les comptes nommés du palier partagé
+    # (backend keyed générique seulement). Défaut : les tiens.
+    scope: str = "member"
 
 
 class SetIdentityInput(BaseModel):
     connector: str                       # path {connector}
     identity_id: str                     # body — id renvoyé par connectors.identities
+    scope: str = "member"                # `org`/`group` : admin du palier requis
 
 
 class IdentityOwner(BaseModel):
@@ -118,9 +122,31 @@ def _require_known_connector(name: str) -> None:
         f"Connecteur inconnu : `{name}`. Slugs valides : `oto_connector(op='list')`.")
 
 
+def _require_scope(ctx: ResolvedCtx, scope: str, *, write: bool) -> None:
+    """`member` : toujours. `org` / `group` : membre de l'org (lecture) ; admin du
+    palier pour choisir le défaut (écriture) — la clé partagée est celle de tous."""
+    if scope not in connector_identities.SCOPES:
+        raise AuthzDenied(400, "bad_scope", f"scope inconnu : `{scope}`.")
+    if scope == "member" or not write:
+        return
+    from .. import access, roles
+    org = access.current_org(ctx.sub)
+    if org is None:
+        raise AuthzDenied(400, "no_org_context", "Aucune org de contexte.")
+    if scope == "org" and not roles.is_org_admin(ctx.sub, org):
+        raise AuthzDenied(403, "forbidden", "Admin d'org requis pour choisir le compte d'org.")
+    if scope == "group":
+        gid = access.current_group(ctx.sub)
+        if gid is None:
+            raise AuthzDenied(400, "no_group_context", "Aucune équipe de contexte.")
+        if not roles.can_admin_group(ctx.sub, gid):
+            raise AuthzDenied(403, "forbidden", "Admin d'équipe requis pour choisir le compte d'équipe.")
+
+
 async def _list(ctx: ResolvedCtx, inp: IdentitiesInput) -> dict:
     _require_known_connector(inp.connector)
-    ids = connector_identities.list_identities(ctx.sub, inp.connector)
+    _require_scope(ctx, inp.scope, write=False)
+    ids = connector_identities.list_identities(ctx.sub, inp.connector, inp.scope)
     if inspect.isawaitable(ids):
         ids = await ids
     return {
@@ -132,8 +158,9 @@ async def _list(ctx: ResolvedCtx, inp: IdentitiesInput) -> dict:
 
 async def _set_default(ctx: ResolvedCtx, inp: SetIdentityInput) -> dict:
     _require_known_connector(inp.connector)
+    _require_scope(ctx, inp.scope, write=True)
     try:
-        res = connector_identities.select_identity(ctx.sub, inp.connector, inp.identity_id)
+        res = connector_identities.select_identity(ctx.sub, inp.connector, inp.identity_id, inp.scope)
         if inspect.isawaitable(res):
             res = await res
     except ValueError as e:

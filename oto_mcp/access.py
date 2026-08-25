@@ -883,13 +883,17 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
         # (iso-comportement avec l'ancien chemin ; vécu test_call_axes_account).
         g = group() if callable(group) else group
         if g is not None:
-            payload = probe.group(g, provider)
-            if payload is not None:
-                yield CascadeRung("group", "group", str(g), payload)
+            hit = probe.group(g, provider)
+            if hit is not None:
+                # Sonde de fetch multi-compte : (payload, account) — la sonde de
+                # présence répond un booléen, le barreau reste mono ('').
+                payload, account = hit if isinstance(hit, tuple) else (hit, "")
+                yield CascadeRung("group", "group", str(g), payload, account)
         if org is not None:
-            payload = probe.org(org, provider)
-            if payload is not None:
-                yield CascadeRung("org", "org", str(org), payload)
+            hit = probe.org(org, provider)
+            if hit is not None:
+                payload, account = hit if isinstance(hit, tuple) else (hit, "")
+                yield CascadeRung("org", "org", str(org), payload, account)
     if want != "byo":
         con = connectors.connector_for_provider(provider)
         if con is not None and "platform" in con.auth_modes:
@@ -950,51 +954,84 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # le premier palier : plus aucun credential per-user org-agnostique.
     active_org = current_org(sub)
 
+    def _pick_account(entity_type: str, entity_id: str, mprov: str, where: str) -> tuple:
+        """Le compte EFFECTIF d'un palier multi-compte = account explicite (param) >
+        axe d'appel `_account=` (#108) > épinglage projet > compte unique auto >
+        défaut posé (`oto_identity(op='set')`) > McpError — jamais de repli muet vers
+        un AUTRE compte (anti-usurpation). '' = mono legacy. Renvoie `(compte,
+        explicite)` : un compte NOMMÉ par l'appelant (param/axe/épinglage) peut vivre
+        à un palier plus bas (Phase 2 : l'org a « eu », le membre non) — le palier
+        qui ne l'a pas passe la main, et seul le DERNIER palier à clé lève. Un
+        compte choisi automatiquement n'est jamais cherché ailleurs."""
+        eff = (account if account is not None
+               else session_org.current_call_account() or project_pinned_identity(mprov))
+        if eff is not None:
+            return eff, True
+        accts = credentials_store.list_accounts(entity_type, entity_id, mprov)
+        if len(accts) == 1:
+            return accts[0]["account"], False
+        if len(accts) == 0:
+            return "", False
+        # Plusieurs comptes : le défaut posé via `oto_identity(op='set')`
+        # (meta.is_default, `connector_identities._keyed_select`) tranche.
+        defaults = [a for a in accts if (a.get("meta") or {}).get("is_default")]
+        if len(defaults) == 1:
+            return defaults[0]["account"], False
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(
+                f"Plusieurs comptes `{mprov}` configurés {where}, aucun (ou "
+                f"plusieurs) marqué par défaut — précise lequel "
+                f"(oto_identity(op='list') pour les lister, "
+                f"oto_identity(op='set') pour en fixer un par défaut)."
+            )))
+
+    def _not_found(eff: str, mprov: str) -> McpError:
+        return McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(
+                f"Compte `{eff}` introuvable pour `{mprov}` — vérifie avec "
+                f"oto_identity(op='list'), ou pose-le sur {_ACCOUNT_URL}."
+            )))
+
     def _member_fetch(msub: str, morg: int, mprov: str) -> Optional[tuple]:
-        """Sonde MEMBRE du fetch : sélection du compte en multi-compte (« 2 Zoho ») =
-        account explicite (param) > axe d'appel `_account=` (#108) > épinglage projet
-        > compte unique auto > défaut posé (`oto_identity(op='set')`) > McpError —
-        jamais de repli muet vers un autre compte/l'org/la plateforme (anti-usurpation).
-        '' = mono-compte legacy. Un compte explicite/épinglé introuvable LÈVE (on
+        """Sonde MEMBRE du fetch : sélection du compte en multi-compte (« 2 Zoho »),
+        cf. `_pick_account`. Un compte explicite/épinglé introuvable LÈVE (on
         n'agit pas sous une autre identité)."""
         if not _is_multi_account(mprov):
             key = db.get_member_api_key(msub, morg, mprov)
             return (key, "") if key else None
-        eff = (account if account is not None
-               else session_org.current_call_account() or project_pinned_identity(mprov))
-        if eff is None:
-            accts = credentials_store.list_accounts(
-                credentials_store.MEMBER, credentials_store.member_id(morg, msub), mprov)
-            if len(accts) == 1:
-                eff = accts[0]["account"]
-            elif len(accts) == 0:
-                eff = ""
-            else:
-                # Plusieurs comptes : le défaut posé via `oto_identity(op='set')`
-                # (meta.is_default, `connector_identities._keyed_select`) tranche —
-                # jusqu'ici il était écrit au coffre mais jamais relu ici, donc un
-                # défaut posé côté dashboard/agent n'avait aucun effet sur la
-                # résolution : chaque appel non épinglé restait en erreur.
-                defaults = [a for a in accts if (a.get("meta") or {}).get("is_default")]
-                if len(defaults) == 1:
-                    eff = defaults[0]["account"]
-                else:
-                    raise McpError(ErrorData(
-                        code=INVALID_PARAMS,
-                        message=(
-                            f"Plusieurs comptes `{mprov}` configurés dans cette org, "
-                            f"aucun (ou plusieurs) marqué par défaut — précise lequel "
-                            f"(oto_identity(op='list') pour les lister, "
-                            f"oto_identity(op='set') pour en fixer un par défaut)."
-                        )))
+        eff, explicit = _pick_account(credentials_store.MEMBER,
+                                      credentials_store.member_id(morg, msub),
+                                      mprov, "dans cette org")
         key = db.get_member_api_key(msub, morg, mprov, eff)
+        if eff and not key and not explicit:
+            raise _not_found(eff, mprov)
+        # Nommé mais absent ici : peut-être une clé partagée (équipe/org) — on
+        # passe la main, sans jamais prendre un autre compte à ce palier.
+        return (key, eff) if key else None
+
+    def _group_fetch(gid: int, mprov: str):
+        """Sonde ÉQUIPE du fetch : même sélection de compte que le membre (Phase 2).
+        Mono-compte → la lecture historique (account='')."""
+        if not _is_multi_account(mprov):
+            return group_store.get_group_secret(gid, mprov)
+        eff, explicit = _pick_account("group", str(gid), mprov, "pour ton équipe")
+        key = group_store.get_group_secret(gid, mprov, eff)
+        if eff and not key and not explicit:
+            raise _not_found(eff, mprov)
+        return (key, eff) if key else None
+
+    def _org_fetch(oid: int, mprov: str):
+        """Sonde ORG du fetch : même sélection de compte que le membre (Phase 2)."""
+        if not _is_multi_account(mprov):
+            return org_store.get_org_secret(oid, mprov)
+        eff, explicit = _pick_account("org", str(oid), mprov, "pour ton org")
+        key = org_store.get_org_secret(oid, mprov, eff)
         if eff and not key:
-            raise McpError(ErrorData(
-                code=INVALID_PARAMS,
-                message=(
-                    f"Compte `{eff}` introuvable pour `{mprov}` — vérifie avec "
-                    f"oto_identity(op='list'), ou pose-le sur {_ACCOUNT_URL}."
-                )))
+            # Dernier palier à clé : un compte nommé introuvable partout lève ici
+            # (le palier plateforme n'a pas de comptes).
+            raise _not_found(eff, mprov)
         return (key, eff) if key else None
 
     # Marche unique de la cascade (walker) — la sonde fetch ne déchiffre que le
@@ -1002,7 +1039,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # `group` passé en LAZY : l'équipe active (lookup DB) n'est résolue que si
     # aucun barreau plus proche n'a gagné.
     probe = CascadeProbe(member=_member_fetch, member_cross=FETCH_PROBE.member_cross,
-                         group=FETCH_PROBE.group, org=FETCH_PROBE.org,
+                         group=_group_fetch, org=_org_fetch,
                          platform=FETCH_PROBE.platform)
     win = cascade_winner(sub, provider, org=active_org,
                          group=lambda: current_group(sub),

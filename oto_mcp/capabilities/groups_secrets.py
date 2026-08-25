@@ -10,7 +10,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import connectors, credentials_store, group_store
+from .. import providers, connectors, credentials_store, group_store
 from ._authz import GROUP_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -24,11 +24,14 @@ class SetGroupSecretInput(BaseModel):
     api_key: str = ""                  # connecteurs mono-champ (clé simple)
     fields: Optional[dict[str, str]] = None   # connecteurs multi-champs (zoho/silae…)
     base_url: Optional[str] = None
+    # Multi-compte (Phase 2, 2026-08-25) : nom du compte à ce palier ("" = mono legacy).
+    account: str = ""
 
 
 class DeleteGroupSecretInput(BaseModel):
     group_id: int
     provider: str
+    account: str = ""
 
 
 # --- Sorties ----------------------------------------------------------------
@@ -91,12 +94,21 @@ def _set_secret(ctx: ResolvedCtx, inp: SetGroupSecretInput) -> dict:
         secret = credentials_store.secret_from_input(inp.provider, inp.api_key, inp.fields)
     except ValueError as e:
         raise AuthzDenied(400, str(e), "Credential incomplet ou vide.")
-    group_store.set_group_secret(inp.group_id, inp.provider, secret, set_by=ctx.sub, meta=meta)
+    account = (inp.account or "").strip()
+    con = providers.REGISTRY.get(inp.provider)
+    if con is not None and con.auth_multi_account:
+        # Même règle de coexistence qu'au palier membre : '' et comptes nommés ne
+        # cohabitent pas ; au 1er compte NOMMÉ, la ligne '' devient « principal ».
+        try:
+            credentials_store.ensure_named_coexistence("group", str(inp.group_id), inp.provider, account)
+        except credentials_store.NamedAccountRequired as e:
+            raise AuthzDenied(409, "account_required", str(e))
+    group_store.set_group_secret(inp.group_id, inp.provider, secret, set_by=ctx.sub, meta=meta, account=account)
     return {"ok": True, "group_id": inp.group_id, "provider": inp.provider}
 
 
 def _delete_secret(ctx: ResolvedCtx, inp: DeleteGroupSecretInput) -> dict:
-    deleted = group_store.delete_group_secret(inp.group_id, inp.provider)
+    deleted = group_store.delete_group_secret(inp.group_id, inp.provider, account=(inp.account or "").strip())
     return {"ok": True, "group_id": inp.group_id, "provider": inp.provider, "deleted": deleted}
 
 

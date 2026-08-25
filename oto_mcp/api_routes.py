@@ -1133,21 +1133,13 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # connecteur. '' (mono legacy) et comptes nommés ne doivent pas coexister
         # (sinon la désambiguïsation à la résolution voit un '' impossible à désigner).
         if c.auth_multi_account:
-            existing = [r["account"] for r in
-                        credentials_store.list_accounts(credentials_store.MEMBER, eid, provider)]
-            if account:
-                # Backfill lazy : au 1er compte NOMMÉ, la ligne '' migre vers un label
-                # (« principal », suffixé si déjà pris ou = à l'account posé).
-                if "" in existing:
-                    taken, target, i = set(existing) | {account}, "principal", 2
-                    while target in taken:
-                        target, i = f"principal-{i}", i + 1
-                    credentials_store.rename_account(
-                        credentials_store.MEMBER, eid, provider, "", target)
-            elif any(a for a in existing):
-                return _json_error(
-                    request, 409, "account_required",
-                    "Ce connecteur a déjà des comptes nommés — précise `account`.")
+            # Backfill lazy : au 1er compte NOMMÉ, la ligne '' migre vers un label
+            # (« principal », suffixé si pris) — règle partagée avec les paliers org/groupe.
+            try:
+                credentials_store.ensure_named_coexistence(
+                    credentials_store.MEMBER, eid, provider, account)
+            except credentials_store.NamedAccountRequired as e:
+                return _json_error(request, 409, "account_required", str(e))
         # Connexion en DEUX temps : le formulaire ne collecte que les PRÉREQUIS, le
         # champ décisif (refresh_token) arrive par le consentement. Sans reprise, une
         # simple correction de champ après connexion repackerait un blob SANS lui —
@@ -1224,21 +1216,23 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # Scope de la déconnexion (miroir de la pose) : member (défaut), org, group.
         # Effacer un secret partagé exige d'être admin du scope.
         scope = (request.query_params.get("scope") or "member").strip()
+        # Multi-compte : `?account=` cible un compte précis ('' = mono legacy) —
+        # à chaque palier depuis la Phase 2 (2026-08-25).
+        account = (request.query_params.get("account") or "").strip()
         if scope == "org":
             if not roles.is_org_admin(sub, org_id):
                 return _json_error(request, 403, "forbidden")
-            credentials_store.clear_credential(credentials_store.ORG, str(org_id), provider)
-            return _json(request, {"ok": True, "provider": provider, "scope": scope})
+            credentials_store.clear_credential(credentials_store.ORG, str(org_id), provider,
+                                               account=account)
+            return _json(request, {"ok": True, "provider": provider, "account": account, "scope": scope})
         if scope == "group":
             group_id = access.current_group(sub)
             if group_id is None:
                 return _json_error(request, 400, "no_group_context")
             if not roles.can_admin_group(sub, group_id):
                 return _json_error(request, 403, "forbidden")
-            credentials_store.clear_credential("group", str(group_id), provider)
-            return _json(request, {"ok": True, "provider": provider, "scope": scope})
-        # Multi-compte : `?account=` cible un compte précis ('' = mono legacy).
-        account = (request.query_params.get("account") or "").strip()
+            credentials_store.clear_credential("group", str(group_id), provider, account=account)
+            return _json(request, {"ok": True, "provider": provider, "account": account, "scope": scope})
         credentials_store.clear_credential(
             credentials_store.MEMBER, credentials_store.member_id(org_id, sub), provider,
             account=account)

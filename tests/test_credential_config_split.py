@@ -62,8 +62,8 @@ def _wire(monkeypatch, *, user=None, group=None, org=None, meta=None,
     monkeypatch.setattr(access.credentials_store, "list_member_orgs_for",
                         lambda sub, con: [])
     monkeypatch.setattr(access.org_store, "get_personal_org", lambda sub: None)
-    monkeypatch.setattr(access.group_store, "get_group_secret", lambda gid, prov: group)
-    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: org)
+    monkeypatch.setattr(access.group_store, "get_group_secret", lambda gid, prov, account="": group)
+    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov, account="": org)
     monkeypatch.setattr(
         access.credentials_store, "get_credential_with_meta",
         lambda et, eid, prov, account="": {"meta": meta or {}, "secret": "x", "set_at": None})
