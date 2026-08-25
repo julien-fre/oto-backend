@@ -823,6 +823,12 @@ def _init_db_once() -> None:
         # toolbox pour l'existant ; les pairs créés ensuite reçoivent le SOCLE
         # curé au seed lazy (session_visibility).
         _conn_sel.backfill_preexisting(conn)
+        # Backfill ONE-SHOT #2 (sentinelle propre, 25/08) : le socle « sans
+        # credential » chez les pairs DÉJÀ seedés. Sans lui, basculer le socle ne
+        # toucherait que les comptes créés après le déploiement — la demande était
+        # « pour tous les utilisateurs ». N'écrase jamais un choix explicite
+        # (ON CONFLICT DO NOTHING) et respecte l'exposé de l'org.
+        _conn_sel.backfill_no_credential_socle(conn)
         # #295 — les sélections d'un connecteur DÉPOSÉ suivent son renommage. #279
         # (lot 3) a déposé `linkedin` au profit d'`aiark` (même fournisseur, même
         # client, même pool de crédits : la distinction n'était qu'un mode d'auth),

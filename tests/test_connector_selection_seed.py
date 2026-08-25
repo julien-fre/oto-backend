@@ -8,25 +8,38 @@ SOCLE `default_active`, le backfill one-shot reconstitue le VISIBLE d'avant
 from oto_mcp import connector_selection, providers
 
 # Tripwire de curation : le socle est un choix PRODUIT explicite — décision du
-# 16/07 : socle VIDE (aucun connecteur pré-installé ; l'agent guide depuis les
-# tools spine + le catalogue injecté). Y remettre un connecteur = l'assumer ici
-# EN MÊME TEMPS que le registre (pas d'élargissement du départ par accident).
-_SOCLE: set[str] = set()
+# 25/08 (remplace le socle VIDE du 16/07) : tout connecteur SANS credential
+# démarre installé. La liste est écrite en dur ICI alors que le registre la
+# DÉRIVE, et c'est exprès : le tripwire n'a de valeur que s'il casse quand la
+# dérivation change de résultat. Un connecteur open data ajouté demain fera
+# échouer ce test — l'assumer ici est le geste attendu, pas un accident.
+# `web` en est ABSENT à dessein : sans credential côté client, mais ses barreaux
+# hauts brûlent serper + Browserbase (clés Oto) — cf. l'exclusion explicite dans
+# providers.py.
+_SOCLE: set[str] = {
+    "culture", "droit", "foncier", "frenchtech", "gr",
+    "infosec", "justicelibre", "osm", "sante", "urba",
+}
 
 
 def test_default_active_socle_is_the_curated_set():
     assert set(providers.DEFAULT_ACTIVE_CONNECTORS) == _SOCLE
 
 
-def test_naked_account_guidance_is_injected():
-    """Le compte nu n'est viable que si l'agent est GUIDÉ : le bloc A statique doit
-    porter le mode d'emploi (installer via oto_connector op=select, pont oto_call)
-    et l'en-tête du catalogue doit dire que rien n'est installé d'office."""
+def test_socle_guidance_is_injected():
+    """Le socle n'est viable que si l'agent sait ce qu'il a ET ce qu'il n'a pas : le
+    bloc A doit porter le mode d'emploi (installer via oto_connector op=select, pont
+    oto_call) et dire que le départ se limite à l'open data — sinon l'agent conclut
+    d'une toolbox courte que la capacité n'existe pas.
+
+    Garde-fou de cohérence : la promesse « sans configuration » ne doit plus englober
+    le free tier (serper/hunter), qui n'est PAS pré-installé depuis le 25/08."""
     from oto_mcp import instructions
     surface = instructions.render()
-    assert "Le compte démarre nu" in surface
+    assert "Le compte démarre sur l'open data" in surface
     assert "oto_connector(op='select'" in surface
-    assert "Aucune n'est installée d'office" in surface
+    assert "Seules les capacités SANS credential (open data) sont installées d'office" in surface
+    assert "Le compte démarre nu" not in surface
 
 
 # ── backfill one-shot (faux conn : rejoue le contrat SQL sans PG) ──────────────
@@ -106,3 +119,63 @@ def test_backfill_hidden_set_is_the_frozen_history():
     # migration, pas au produit).
     assert connector_selection._BACKFILL_HIDDEN == {
         "attio", "brevoauto", "pennylaneged", "resend", "scaleway", "http", "bridge"}
+
+
+# ── backfill du socle « sans credential » (25/08) ──────────────────────────────
+
+def _socle_conn(**kw):
+    """Faux conn dont l'exposé plateforme couvre tout le socle + un intrus keyé."""
+    act = [{"scope_type": "platform", "scope_id": 0, "connector": n, "enabled": True}
+           for n in sorted(providers.DEFAULT_ACTIVE_CONNECTORS | {"hubspot"})]
+    return _FakeConn(activation=act, **kw)
+
+
+def test_socle_backfill_installs_the_socle_for_existing_pairs():
+    """Le geste ATTENDU : un membre déjà seedé (donc hors du seed lazy) reçoit
+    quand même le socle — c'est tout l'objet de la passe."""
+    conn = _socle_conn(pairs=[{"sub": "u1", "org_id": 7}])
+    connector_selection.backfill_no_credential_socle(conn)
+    got = {c for (_s, _o, c) in conn.selected}
+    assert got == set(providers.DEFAULT_ACTIVE_CONNECTORS)
+    assert all(s == "u1" and o == 7 for (s, o, _c) in conn.selected)
+
+
+def test_socle_backfill_never_installs_outside_the_socle():
+    """L'exposé de l'org est plus large que le socle (hubspot y est) : la passe ne
+    doit installer QUE le socle, jamais « tout ce qui est exposé » — la confusion
+    exacte que faisait le backfill 0050, dont le contrat était l'inverse."""
+    conn = _socle_conn(pairs=[{"sub": "u1", "org_id": 7}])
+    connector_selection.backfill_no_credential_socle(conn)
+    assert "hubspot" not in {c for (_s, _o, c) in conn.selected}
+
+
+def test_socle_backfill_respects_the_org_exposure_ceiling():
+    """Un connecteur du socle coupé au niveau ORG ne doit pas entrer par la bande."""
+    act = [{"scope_type": "platform", "scope_id": 0, "connector": n, "enabled": True}
+           for n in sorted(providers.DEFAULT_ACTIVE_CONNECTORS)]
+    act.append({"scope_type": "org", "scope_id": 7, "connector": "osm", "enabled": False})
+    conn = _FakeConn(activation=act, pairs=[{"sub": "u1", "org_id": 7}])
+    connector_selection.backfill_no_credential_socle(conn)
+    assert "osm" not in {c for (_s, _o, c) in conn.selected}
+    assert "culture" in {c for (_s, _o, c) in conn.selected}
+
+
+def test_socle_backfill_is_one_shot():
+    """Sentinelle : sans elle, un membre qui désinstalle se le verrait réinstaller
+    à CHAQUE boot — le backfill deviendrait une politique permanente."""
+    conn = _socle_conn(sentinel_present=True, pairs=[{"sub": "u1", "org_id": 7}])
+    connector_selection.backfill_no_credential_socle(conn)
+    assert conn.selected == []
+
+
+def test_socle_backfill_marks_its_own_sentinel():
+    conn = _socle_conn(pairs=[{"sub": "u1", "org_id": 7}])
+    connector_selection.backfill_no_credential_socle(conn)
+    # `VALUES (%s, 0)` : l'org_id est en dur dans le SQL, un seul param lié.
+    assert (connector_selection._SOCLE_MARK,) in conn.seeded
+
+
+def test_socle_backfill_uses_a_distinct_sentinel_from_adr0050():
+    """Deux passes indépendantes : partager la sentinelle ferait sauter la seconde
+    sur toute base ayant déjà vu la première — c'est-à-dire la prod."""
+    assert connector_selection._SOCLE_MARK != connector_selection._BACKFILL_MARK

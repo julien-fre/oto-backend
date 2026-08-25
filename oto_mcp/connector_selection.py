@@ -273,3 +273,85 @@ def backfill_preexisting(conn) -> None:
         "ON CONFLICT (sub, org_id) DO NOTHING",
         (_BACKFILL_MARK,),
     )
+
+
+# --- backfill one-shot du socle « sans credential » (décision 25/08) ----------
+
+# Sentinelle propre à CETTE passe (même table, même convention que ci-dessus : un
+# sub impossible). Distincte de `_BACKFILL_MARK` — les deux passes sont
+# indépendantes et un pair peut avoir vu l'une sans l'autre.
+_SOCLE_MARK = "#no-cred-socle-backfill"
+
+
+def backfill_no_credential_socle(conn) -> None:
+    """One-shot (reçoit le `conn` de `db.init_db`) : installe le socle
+    `DEFAULT_ACTIVE_CONNECTORS` chez les (sub, org) DÉJÀ seedés.
+
+    Sans cette passe, basculer le socle ne toucherait que les comptes créés
+    APRÈS le déploiement : `seed_active` est gardé par `is_seeded`, et tout pair
+    existant porte déjà sa ligne. « Pour tous les utilisateurs » (demande du
+    25/08) EXIGE donc une passe explicite sur l'existant.
+
+    Trois garde-fous, dans cet ordre d'importance :
+    - `ON CONFLICT DO NOTHING` : un membre qui a PAUSÉ ou désinstallé un de ces
+      connecteurs garde son choix. On n'installe que là où il n'y a aucune ligne,
+      donc aucun avis exprimé.
+    - intersection avec l'EXPOSÉ de l'org (même `_resolve` que le backfill 0050,
+      même source `connector_availability`) : un connecteur qu'une org a coupé au
+      niveau plateforme/org ne s'installe pas chez ses membres par la bande.
+    - sentinelle : ne rejoue jamais. Un membre qui désinstalle ensuite ne se le
+      voit pas réinstaller au boot suivant.
+
+    Le socle est lu à CHAUD (`providers.DEFAULT_ACTIVE_CONNECTORS`), pas figé
+    comme `_BACKFILL_HIDDEN` : ce dernier reconstituait un fait HISTORIQUE, ici on
+    pose l'état voulu au moment de la passe."""
+    from . import providers
+
+    done = conn.execute(
+        "SELECT 1 FROM connector_selection_seeded WHERE sub = %s AND org_id = 0",
+        (_SOCLE_MARK,),
+    ).fetchone()
+    if done:
+        return
+    socle = set(providers.DEFAULT_ACTIVE_CONNECTORS)
+    if not socle:
+        # Socle vide = rien à poser, mais on marque quand même : la passe est
+        # datée du 25/08, pas « en attente d'un socle non vide ».
+        conn.execute(
+            "INSERT INTO connector_selection_seeded (sub, org_id) VALUES (%s, 0) "
+            "ON CONFLICT (sub, org_id) DO NOTHING",
+            (_SOCLE_MARK,),
+        )
+        return
+    from .connector_activation import _resolve
+
+    rows = conn.execute(
+        "SELECT scope_type, scope_id, connector, enabled FROM connector_availability "
+        "WHERE scope_type IN ('platform', 'org')").fetchall()
+    global_map: dict[str, bool] = {}
+    overrides: dict[int, dict[str, bool]] = {}
+    for r in rows:
+        if r["scope_type"] == "platform":
+            global_map[r["connector"]] = bool(r["enabled"])
+        else:
+            overrides.setdefault(int(r["scope_id"]), {})[r["connector"]] = bool(r["enabled"])
+    # Ici on vise les pairs DÉJÀ seedés (l'inverse du backfill 0050, qui prenait
+    # `EXCEPT ... seeded`) : un pair non seedé recevra le socle tout seul à sa
+    # première session, par le chemin nominal.
+    pairs = conn.execute(
+        "SELECT sub, org_id FROM org_members "
+        "UNION SELECT sub, 0 FROM users").fetchall()
+    for p in pairs:
+        exposed = _resolve(global_map, overrides.get(p["org_id"], {}))
+        for name in sorted(socle & exposed):
+            conn.execute(
+                "INSERT INTO user_selected_connectors (sub, org_id, connector, state) "
+                "VALUES (%s, %s, %s, 'active') "
+                "ON CONFLICT (sub, org_id, connector) DO NOTHING",
+                (p["sub"], p["org_id"], name),
+            )
+    conn.execute(
+        "INSERT INTO connector_selection_seeded (sub, org_id) VALUES (%s, 0) "
+        "ON CONFLICT (sub, org_id) DO NOTHING",
+        (_SOCLE_MARK,),
+    )

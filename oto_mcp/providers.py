@@ -1585,12 +1585,45 @@ ORG_SHAREABLE_PROVIDERS: frozenset = frozenset(c.name for c in _REGISTRY_LIST if
 QUOTA_DEFAULTS: dict = {c.name: c.default_quota for c in _REGISTRY_LIST if c.default_quota}
 # Socle curé (ADR 0050) : les connecteurs installés d'office (state='active') au
 # seed de la sélection d'un NOUVEAU (sub, org). Le reste de l'exposé = library.
-# ⚠️ Politique actuelle (décision 16/07) : socle VIDE — aucun connecteur n'est
-# pré-installé ; l'agent guide l'utilisateur depuis les tools spine (`oto_connector`
-# op=list/select, `oto_call`) et le catalogue injecté. Le mécanisme reste : poser
-# default_active=True sur un connecteur le remettrait au départ.
+# ⚠️ Politique actuelle (décision 25/08, remplace le socle VIDE du 16/07) : tout
+# connecteur qui n'exige AUCUN credential démarre installé. Le compte nu était un
+# pari sur le guidage — l'agent devait deviner l'existence d'une capacité pour la
+# proposer ; sur l'open data (aucune clé, aucun quota, zéro coût) ce détour ne
+# protégeait rien.
+# DÉRIVÉ, pas une liste : `CREDENTIAL_PROVIDERS` ci-dessus est déjà le complément
+# exact de « sans credential » (ni `keyed`, ni `credential_fields`, ni
+# `secret_kind`). Un connecteur open data ajouté demain entre donc dans le socle
+# sans qu'on y pense — c'est le sens de « tous les connecteurs sans credential ».
+# ⚠️ Portée de cet automatisme : les NOUVEAUX (sub, org) seulement. Le backfill
+# de l'existant (`connector_selection.backfill_no_credential_socle`) est un
+# one-shot à sentinelle, donc un INSTANTANÉ du socle au jour de son passage : il
+# ne rejouera pas pour un connecteur ajouté après. Élargir le socle chez les
+# comptes DÉJÀ seedés demande une nouvelle passe (nouvelle sentinelle).
+# `default_active=True` reste l'override manuel pour forcer un connecteur À clé
+# dans le socle.
+# ⚠️ Le socle NE contient PAS les `platform_key_open` (serper, apollo, hunter,
+# kaspr, reddit, searchapi, serpapi, sirene, unipile) : le client n'y pose pas de
+# clé, mais c'est celle d'Oto qui paie à l'appel (7 des 9 portent un quota par
+# membre). Les pré-installer est une décision de DÉPENSE, pas d'ergonomie —
+# arbitrage Julien du 25/08 : non.
+# EXCEPTION au prédicat : « sans credential » se lit dans le registre, mais le
+# registre ment ici par omission. `web` déclare secret_kind="none" / auth_modes
+# vide — le client n'y pose effectivement rien — alors que ses barreaux hauts
+# consomment des clés PLATEFORME : le rendu hosted passe par serper (clé résolue
+# `tools/web.py:184`, comptée `record_platform_usage("serper")` :189) et le
+# barreau navigateur par Browserbase (clés d'env, `browserbase.is_configured()`),
+# celui-là sans le moindre quota. C'est donc de la dépense Oto par appel, la
+# CATÉGORIE même écartée le 25/08 — pas une capacité gratuite.
+# Pour l'installer d'office quand même : poser `default_active=True` sur son
+# entrée du registre (l'override manuel passe AVANT cette exclusion).
+_PLATFORM_PAID_DESPITE_NO_CREDENTIAL: frozenset = frozenset({"web"})
+
 DEFAULT_ACTIVE_CONNECTORS: frozenset = frozenset(
-    c.name for c in _REGISTRY_LIST if c.default_active
+    c.name for c in _REGISTRY_LIST
+    if c.default_active or (
+        c.name not in CREDENTIAL_PROVIDERS
+        and c.name not in _PLATFORM_PAID_DESPITE_NO_CREDENTIAL
+    )
 )
 
 # Connecteurs d'envoi d'email → transport effectif. Un expéditeur appartient à un
