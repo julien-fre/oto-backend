@@ -287,6 +287,7 @@ _CATEGORY_BY_CONNECTOR = {
     "lighton": "Knowledge",
     "promptwatch": "Marketing",
     "lighton": "Knowledge", "granola": "Knowledge",
+    "airtable": "Knowledge",
     "planity": "Métier",
     "atlassian": "Métier", "linear": "Métier",
     "hubspot": "Prospection", "apollo": "Prospection", "zerobounce": "Prospection",
@@ -332,6 +333,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "fireflies": "Fireflies.ai",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "granola": "Granola",
     "notion": "Notion", "figma": "Figma", "supabase": "Supabase", "grain": "Grain",
+    "airtable": "Airtable",
     "zoho": "Zoho", "zohodesk": "Zoho", "zohoanalytics": "Zoho",
     "salesforce": "Salesforce", "pipedrive": "Pipedrive", "sellsy": "Sellsy",
     "greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby",
@@ -361,6 +363,12 @@ _PUBLISHER_BY_CONNECTOR = {
 # ce que le connecteur couvre concrètement, pas de superlatifs. Premier lot =
 # les données France (le différenciateur du catalogue) ; compléter au fil de l'eau.
 _DESCRIPTION_BY_CONNECTOR = {
+    "airtable": (
+        "Les bases Airtable en lecture ET en écriture : lister et filtrer des lignes "
+        "(formules, vues, tris), en créer, mettre à jour ou rapprocher par upsert, "
+        "commenter, joindre des fichiers. Le schéma est exposé aussi (tables, champs, "
+        "types et options), donc l'agent découvre les colonnes avant d'écrire dedans."
+    ),
     "sirene": (
         "Les données d'entreprise françaises unifiées : recherche multicritère, "
         "fiche agrégée (identité + bilans INPI + événements BODACC), dirigeants, "
@@ -445,6 +453,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "lusha": "lusha.com",
     # Productivité & infra
     "notion": "notion.so", "figma": "figma.com", "supabase": "supabase.com",
+    "airtable": "airtable.com",
     "fireflies": "fireflies.ai",
     "granola": "granola.ai",
     "linear": "linear.app",
@@ -1556,6 +1565,22 @@ _REGISTRY_LIST = [
            CredentialField("key", "Personal Access Token", secret=True,
                            help="Snitcher → Settings → Account → API → "
                                 "Generate New Token"),
+       )),
+    # airtable : bases / tables / champs / lignes / commentaires / pièces jointes /
+    # sync CSV — toute la section « Base data » de la Web API, PLUS le schéma, sans
+    # lequel un agent ne peut pas écrire une ligne (il lui faut les noms et types de
+    # colonnes). keyed api_key (Bearer Personal Access Token), **byo-only** : un PAT
+    # Airtable porte à la fois des scopes ET une liste de bases nommément accordées —
+    # une clé plateforme exposerait les bases d'Otomata à toutes les orgs.
+    _c("airtable", ["airtable"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Airtable",
+       help="bases, tables, champs, lignes, commentaires, pièces jointes, sync CSV",
+       href="https://airtable.com", credential_fields=(
+           CredentialField("key", "Personal Access Token", secret=True,
+                           help="airtable.com/create/tokens → créer un token, cocher "
+                                "les scopes data.records:*, data.recordComments:* et "
+                                "schema.bases:* PUIS ajouter les bases dans « Access » "
+                                "(les scopes seuls ne donnent accès à aucune base)"),
        )),
 ]
 
