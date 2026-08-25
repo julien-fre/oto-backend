@@ -144,8 +144,8 @@ def test_archiver_rend_la_place(store):
 
 
 def test_l_espace_personnel_ne_prend_pas_de_place(store):
-    """Il est posé d'office et son archivage est refusé : le facturer rendait le
-    plafond réel inférieur d'un au plafond annoncé."""
+    """Il est posé d'office, sans que le compte l'ait demandé : le facturer rendait
+    le plafond réel inférieur d'un au plafond annoncé."""
     _perso(store, SUB)
     assert store.count_orgs_created_by(SUB) == 0
 
@@ -203,9 +203,11 @@ def test_la_sequence_du_cul_de_sac(store, plafond, monkeypatch):
         _creer(SUB, "Un de trop")
     assert refus.value.status == 429 and refus.value.code == "org_quota"
 
-    # L'espace personnel ne peut pas être rendu : il n'est donc pas une place.
+    # L'espace personnel d'AUTRUI ne peut pas être rendu : il n'est de toute façon
+    # pas une de nos places (depuis 2026-08-25 le sien, lui, est supprimable — voir
+    # `test_le_solo_supprime_son_espace_personnel`).
     with pytest.raises(AuthzDenied) as perso:
-        _archiver(SUB, store.get_personal_org(SUB))
+        _archiver(SUB, _perso(store, AUTRE, "L'espace d'autrui"))
     assert perso.value.code == "personal_org"
 
     assert _archiver(SUB, ids[0])["archived"] is True
@@ -228,3 +230,52 @@ def test_le_refus_dit_le_compte_et_le_remede(store, plafond, monkeypatch):
     msg = refus.value.message
     assert f"{plafond}/{plafond}" in msg      # le compte courant, pas que le plafond
     assert "rchive" in msg                    # le geste qui libère une place
+
+
+# ── l'espace personnel d'un compte SOLO ──────────────────────────────────────
+#
+# Un user seul n'a QUE son espace personnel : le refuser en bloc le laissait sans
+# aucun moyen de supprimer quoi que ce soit (front : le bouton était même caché).
+# Ce qui reste refusé, c'est ce qui n'est pas à lui, ou ce qui strandrait autrui.
+
+
+def test_le_solo_supprime_son_espace_personnel(store, monkeypatch):
+    """Le geste que le compte solo n'avait pas : son unique espace s'archive, sort
+    des listings, et relâche le slot `personal_of` (sinon `ensure_personal_org`
+    boucle sur une UniqueViolation à chaque boot)."""
+    monkeypatch.setattr(session_org, "current_session_id", lambda: None)
+    perso = _perso(store, SUB)
+
+    assert _archiver(SUB, perso)["archived"] is True
+    assert [o["org_id"] for o in store.list_orgs_for_user(SUB)] == []
+    assert store.get_personal_org(SUB) is None
+    with store._connect() as c:
+        row = c.execute("SELECT personal_of, archived_at FROM orgs WHERE id = %s",
+                        (perso,)).fetchone()
+    assert row["personal_of"] is None and row["archived_at"] is not None
+
+
+def test_l_espace_personnel_d_autrui_reste_refuse(store, monkeypatch):
+    """`ORG_ADMIN_OF` s'obtient aussi par escalade platform_admin : sans cette garde,
+    ce chemin self-service effacerait l'espace PRIVÉ d'un tiers."""
+    monkeypatch.setattr(session_org, "current_session_id", lambda: None)
+    autrui = _perso(store, AUTRE)
+
+    with pytest.raises(AuthzDenied) as refus:
+        _archiver(SUB, autrui)
+    assert refus.value.status == 400 and refus.value.code == "personal_org"
+    assert store.get_personal_org(AUTRE) == autrui   # intact
+
+
+def test_un_espace_perso_qui_gagne_un_membre_n_est_plus_perso(store, monkeypatch):
+    """Pourquoi la capacité ne porte PAS de garde « et seulement s'il est seul » :
+    elle serait morte. Le store tient déjà l'invariant — `add_org_member` efface
+    `personal_of` au 2ᵉ membre (correctif 2026-08-04) — donc « perso » implique
+    « solo », et l'espace qui a gagné un coéquipier s'archive par la voie ordinaire."""
+    monkeypatch.setattr(session_org, "current_session_id", lambda: None)
+    perso = _perso(store, SUB)
+    store.add_org_member(perso, AUTRE, "org_member")
+
+    assert store.is_personal_org(perso) is False
+    assert store.get_personal_org(SUB) is None
+    assert _archiver(SUB, perso)["archived"] is True

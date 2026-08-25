@@ -95,13 +95,30 @@ def _update_org(ctx: ResolvedCtx, inp: UpdateOrgInput) -> dict:
 def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
     """Self-service : un org_admin archive (soft-delete) SA propre org. Réutilise
     `org_store.archive_org` (masque partout, réversible en DB, rebascule les membres
-    orphelins). Refuse l'espace personnel (recréé au boot). Si l'org archivée était
-    l'org de session courante, on lève l'override → plus de bracelet pendouillant."""
+    orphelins). Si l'org archivée était l'org de session courante, on lève
+    l'override → plus de bracelet pendouillant.
+
+    **Espace personnel (2026-08-25).** Il n'est plus refusé en bloc : un compte SOLO
+    n'a QUE lui, le refus le laissait donc sans rien à supprimer du tout. Ce qui reste
+    refusé, c'est l'espace perso de QUELQU'UN D'AUTRE : `ORG_ADMIN_OF` s'obtient aussi
+    par escalade platform_admin, et ce chemin self-service ne doit pas effacer l'espace
+    privé d'un tiers (la console admin a le sien).
+
+    Pas de garde « et seulement s'il est seul » en plus : elle serait morte. Un espace
+    perso EST mono-membre par construction — `add_org_member` efface `personal_of` dès
+    qu'un 2ᵉ membre distinct arrive (org_store.py, correctif 2026-08-04), l'org tombant
+    alors dans le cas ordinaire ci-dessous.
+
+    ⚠️ Ce n'est pas une suppression de compte : `archive_org` relâche bien le slot
+    `personal_of`, mais `ensure_personal_org` (backfill au boot) recrée ensuite un
+    espace perso VIDE et neuf pour ce user. L'appelant perd son contenu des listings,
+    pas sa capacité à revenir."""
     if not org_store.get_org(inp.org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
-    if org_store.is_personal_org(inp.org_id):
+    if org_store.is_personal_org(inp.org_id) and org_store.get_personal_org(ctx.sub) != inp.org_id:
         raise AuthzDenied(400, "personal_org",
-                          "Ton espace personnel ne peut pas être supprimé.")
+                          "L'espace personnel d'un autre utilisateur ne peut pas être "
+                          "supprimé ici.")
     archived = org_store.archive_org(inp.org_id)
     if archived:
         sid = session_org.current_session_id()
@@ -128,8 +145,10 @@ CAPABILITIES += [
         authz=ORG_ADMIN_OF("org_id"), Output=OrgArchived,
         description=("Archive (delete) an organization you administer: it disappears "
                      "from every listing and its members fall back to their other "
-                     "orgs. Reversible in DB, data is kept. You must be org_admin; "
-                     "your personal space cannot be archived."),
+                     "orgs. Reversible in DB, data is kept. You must be org_admin. "
+                     "You may archive YOUR OWN personal space when you are its only "
+                     "member (a fresh, empty one is provisioned again on the next "
+                     "backfill) — never someone else's."),
         rest=RestBinding("DELETE", "/api/orgs/{id}", _ID),
         refresh_visibility=True,  # org active archivée → recharge la toolbox (repli)
     ),
