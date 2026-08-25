@@ -45,6 +45,35 @@ BULK_ACTIONS = {
 }
 
 
+def _found_digest(data: dict) -> dict:
+    """Ce qui a VRAIMENT été trouvé, par axe — `data` porte toujours la clé de
+    l'axe demandé, même vide, donc sa seule présence ne dit rien.
+
+    Formes relevées en live (au-delà du schéma publié) : `email` porte `email`
+    et un `status` de vérification (`deliverable`/`undeliverable`), `phone`
+    porte `phone`, `linkedin` porte un profil complet — ou `{}` quand le profil
+    n'a pas pu être résolu. `notFound` n'est PAS fiable : on l'a vu à `false`
+    sur une charge sans numéro.
+    """
+    found = {}
+    email = (data.get("email") or {}).get("email")
+    if email:
+        found["email"] = email
+    status = (data.get("email") or {}).get("status")
+    if status:
+        found["email_status"] = status
+    phone = (data.get("phone") or {}).get("phone")
+    if phone:
+        found["phone"] = phone
+    linkedin = data.get("linkedin") or {}
+    if linkedin:
+        found["linkedin"] = {
+            k: v for k, v in linkedin.items()
+            if k in ("firstName", "lastName", "tagline", "locationName", "linkedinUrl")
+        } or True
+    return found
+
+
 def register(mcp: FastMCP) -> None:
     from oto.tools.lemlist import LemlistClient
 
@@ -257,6 +286,12 @@ def register(mcp: FastMCP) -> None:
         existing lead and lemlist writes the result back onto it. Async too:
         returns an `enrichment_id` for `lemlist_enrich_result`.
 
+        Only works on a lead still AWAITING REVIEW — lemlist answers
+        `400 "lemrich is not available for lead reviewed"` once a lead has been
+        reviewed, which is the state of every lead in a campaign without
+        review-before-send. For anyone else, enrich the person with
+        `lemlist_enrich` and write the result back yourself.
+
         Args:
             lead_id: the lead's `_id`, as returned by `lemlist_create_lead`.
 
@@ -296,9 +331,17 @@ def register(mcp: FastMCP) -> None:
                 per person, so pass them all here in one go).
 
         Returns `results`: one entry per id, `{enrichment_id, status, done,
-        input, data}`. `status` is `done`, `in-progress` or `not-found`. `data`
-        holds what was found, e.g. `{"email": {"email": "john@lempire.co",
-        "notFound": false}}`. `all_done` says whether every id has settled.
+        input, data, found}`. `status` is `done`, `in-progress` or `not-found`.
+        `data` is lemlist's raw payload; `found` is the digest to read — only
+        the axes that actually carry a value (`email`, `email_status`
+        `deliverable`/`undeliverable`, `phone`, `linkedin`). An axis key is
+        present in `data` even when empty, so presence alone means nothing, and
+        `notFound: false` has been seen on a payload with no number.
+
+        A result can come back `done` with nothing in it: lemlist sometimes
+        flips the status before the payload lands. Such an entry carries a
+        `warning` and is NOT counted in `all_done` — poll it once more before
+        concluding nothing was found (a poll costs no credits).
         """
         ids = [enrichment_id] if isinstance(enrichment_id, str) else list(enrichment_id)
         client, _ = _client()
@@ -306,21 +349,48 @@ def register(mcp: FastMCP) -> None:
         for eid in ids:
             res = client.get_enrichment(eid)
             status = res.get("enrichmentStatus", "unknown")
-            results.append({
+            data = res.get("data") or {}
+            row = {
                 "enrichment_id": res.get("enrichmentId", eid),
                 "status": status,
                 # `not-found` est terminal aussi : re-poller ne le fera pas
                 # apparaître, c'est un id inconnu de lemlist.
                 "done": status in ("done", "not-found"),
                 "input": res.get("input", {}),
-                "data": res.get("data", {}),
-            })
+                "data": data,
+                "found": _found_digest(data),
+            }
+            if status == "done" and not row["found"]:
+                # Observé en live : lemlist bascule parfois sur `done` AVANT que
+                # la charge utile soit posée (un `data` vide, puis peuplé au
+                # relevé suivant). Sans ce garde-fou, un agent lit « done + rien »
+                # et conclut « pas trouvé » sur une donnée qui arrive juste après.
+                # Un relevé ne coûte pas de crédit : autant le refaire une fois.
+                row["warning"] = (
+                    "done but empty — lemlist sometimes flips to done before the "
+                    "payload lands. Poll once more (~15s) before concluding "
+                    "nothing was found."
+                )
+            results.append(row)
         pending = [r["enrichment_id"] for r in results if not r["done"]]
+        settling = [r["enrichment_id"] for r in results if r.get("warning")]
+        # `all_done` ne parle QUE de ce qui tourne encore : un résultat
+        # légitimement vide (personne introuvable) le resterait à jamais, et un
+        # agent qui boucle sur `all_done` ne s'arrêterait plus. Le re-relevé
+        # d'un `done` vide est une SUGGESTION, à faire une fois — pas une
+        # condition de sortie.
         out = {"results": results, "all_done": not pending}
-        if pending:
+        if settling:
+            out["recheck_suggested"] = settling
+        if pending or settling:
+            bits = []
+            if pending:
+                bits.append(f"{len(pending)} still running")
+            if settling:
+                bits.append(f"{len(settling)} done-but-empty (re-poll ONCE, "
+                            "then treat as not found)")
             out["next_step"] = (
-                f"{len(pending)} still running — call lemlist_enrich_result "
-                "again in ~15-30s with the pending ids."
+                ", ".join(bits) + " — call lemlist_enrich_result again in ~15-30s."
             )
         return out
 

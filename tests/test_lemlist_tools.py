@@ -397,3 +397,80 @@ def test_enrich_bulk_falls_back_to_position_when_metadata_is_unusable():
             {"email": "b@acme.fr", "actions": ["find_email"]},
         ])
         assert [r["index"] for r in out["submitted"]] == [0, 1]
+
+
+# --- ce que le live a appris (2026-08-25, clé réelle Folk GTM) ----------------
+
+
+def test_enrich_result_flags_done_but_empty_as_not_settled():
+    # Relevé en live : lemlist bascule parfois sur `done` avant d'avoir posé la
+    # charge utile (`data` vide, peuplé au relevé suivant). Compter ça comme
+    # terminé ferait conclure « pas trouvé » sur une donnée qui arrive juste après.
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        client_cls.return_value.get_enrichment.return_value = {
+            "enrichmentId": "enr_1", "enrichmentStatus": "done", "input": {}, "data": {},
+        }
+        out = _tool("lemlist_enrich_result").fn(enrichment_id="enr_1")
+
+        assert "warning" in out["results"][0]
+        assert out["recheck_suggested"] == ["enr_1"]
+        # …mais `all_done` reste vrai : un résultat légitimement vide le
+        # resterait pour toujours, et une boucle `while not all_done` ne
+        # terminerait jamais. Le re-relevé est une suggestion, pas une attente.
+        assert out["all_done"] is True
+
+
+def test_enrich_result_digests_only_what_carries_a_value():
+    # `data` porte la clé de l'axe demandé même vide, et `notFound: false` a été
+    # vu sur une charge sans numéro : seule la valeur fait foi.
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        client_cls.return_value.get_enrichment.return_value = {
+            "enrichmentId": "enr_1", "enrichmentStatus": "done", "input": {},
+            "data": {
+                "email": {"email": "aaron.levie@box.com", "notFound": False,
+                          "status": "deliverable"},
+                "phone": {"notFound": False},        # pas de numéro malgré notFound=false
+                "linkedin": {},                       # profil non résolu
+            },
+        }
+        out = _tool("lemlist_enrich_result").fn(enrichment_id="enr_1")
+
+        found = out["results"][0]["found"]
+        assert found["email"] == "aaron.levie@box.com"
+        assert found["email_status"] == "deliverable"
+        assert "phone" not in found
+        assert "linkedin" not in found
+        assert out["all_done"] is True
+        assert "warning" not in out["results"][0]
+
+
+def test_enrich_result_digests_a_verify_only_payload():
+    # `verify_email` seul ne rend qu'un statut, sans adresse.
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        client_cls.return_value.get_enrichment.return_value = {
+            "enrichmentId": "enr_1", "enrichmentStatus": "done", "input": {},
+            "data": {"email": {"status": "undeliverable"}},
+        }
+        out = _tool("lemlist_enrich_result").fn(enrichment_id="enr_1")
+
+        assert out["results"][0]["found"] == {"email_status": "undeliverable"}
+        assert out["all_done"] is True
+
+
+def test_enrich_result_digests_a_linkedin_profile():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        client_cls.return_value.get_enrichment.return_value = {
+            "enrichmentId": "enr_1", "enrichmentStatus": "done", "input": {},
+            "data": {"linkedin": {"firstName": "Bill", "lastName": "Gates",
+                                  "tagline": "Chair, Gates Foundation",
+                                  "linkedinMemberId": "251749025"}},
+        }
+        out = _tool("lemlist_enrich_result").fn(enrichment_id="enr_1")
+
+        li = out["results"][0]["found"]["linkedin"]
+        assert li["firstName"] == "Bill"
+        assert "linkedinMemberId" not in li  # digest, pas recopie du profil entier
