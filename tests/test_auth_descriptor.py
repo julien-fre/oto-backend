@@ -54,11 +54,21 @@ def test_hosted_is_unipile_only():
 
 
 def test_multi_account_providers():
-    # google (OAuth N comptes) + zoho (self-clients keyed multi-compte, « 2 Zoho »)
-    # + browser (N sites derrière login : un compte = un host, oto-private#79)
-    # + folk (N clés API personnelles nommées, ex. plusieurs workspaces Folk).
+    # Curés : google (OAuth N comptes), zoho (self-clients keyed « 2 Zoho »),
+    # browser (N sites derrière login, oto-private#79), folk (historique).
     multi = {c.name for c in _REGISTRY_LIST if c.auth_multi_account}
-    assert multi == {"google", "zoho", "browser", "folk"}, multi
+    assert {"google", "zoho", "browser", "folk"} <= multi, multi
+    # Par défaut (2026-08-25) : TOUT connecteur à clé d'API — le coffre est
+    # segmenté par `account` sur chaque ligne, la résolution membre traite un
+    # compte unique comme avant, et l'axe `_account=` n'est émis que là.
+    for c in _REGISTRY_LIST:
+        keyed = (c.auth_method == "secret" and c.secret_kind in ("api_key", "basic_auth")
+                 and not c.personal_cross_org)
+        if keyed:
+            assert c.auth_multi_account, c.name
+        elif c.name not in {"google", "zoho", "browser", "folk"}:
+            # OAuth/cookie/none, hosted/remote, cross-org : mono-compte.
+            assert not c.auth_multi_account, c.name
 
 
 def test_catalog_exposes_auth():
@@ -70,6 +80,6 @@ def test_catalog_exposes_auth():
     assert g["secret_kind"] == "oauth"
     assert cat["serper"]["auth"] == {
         "method": "secret",
-        "cardinality": "single",
+        "cardinality": "multi_account",
         "fields": [{"name": "key", "label": "API key", "secret": True, "required": True, "help": ""}],
     }

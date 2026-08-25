@@ -323,7 +323,7 @@ def _unipile_select(sub: str, identity_id: str) -> dict:
 
 
 # --- Backend keyed GÉNÉRIQUE : N credentials du coffre (account=label libre) ---
-# Pour tout connecteur multi-compte (providers.MULTI_ACCOUNT_PROVIDERS) SANS backend
+# Pour tout connecteur multi-compte (`Connector.auth_multi_account`) SANS backend
 # spécifique (google en a un) : les comptes = les lignes du coffre au scope MEMBRE de
 # l'org de contexte, le défaut = `meta.is_default`. Ex. « 2 Zoho » (self-clients FR/US).
 
@@ -370,11 +370,14 @@ _SELECTORS = {"google": _google_select, "unipile": _unipile_select}
 
 def _register_keyed_multi_account() -> None:
     """Enregistre le backend keyed générique pour tout connecteur multi-compte
-    (providers.MULTI_ACCOUNT_PROVIDERS) qui n'a pas déjà un backend spécifique
-    (google). Closures liant le nom du connecteur (défaut d'arg = capture par valeur)."""
+    (`Connector.auth_multi_account` — depuis 2026-08-25, toute clé d'API l'est par
+    défaut, plus seulement la liste curée `MULTI_ACCOUNT_PROVIDERS`) qui n'a pas
+    déjà un backend spécifique (google, unipile). Closures liant le nom du
+    connecteur (défaut d'arg = capture par valeur)."""
     from . import providers
-    for name in providers.MULTI_ACCOUNT_PROVIDERS:
-        if name in _LISTERS:
+    for con in providers._REGISTRY_LIST:
+        name = con.name
+        if not con.auth_multi_account or name in _LISTERS:
             continue
         _LISTERS[name] = lambda sub, c=name: _keyed_list(sub, c)
         _SELECTORS[name] = lambda sub, iid, c=name: _keyed_select(sub, c, iid)

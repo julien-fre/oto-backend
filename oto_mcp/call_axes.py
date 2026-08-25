@@ -152,13 +152,79 @@ async def resolve_org_guarded(org: object) -> int:
 # ── Axe _account= (connecteurs multi-compte) ──────────────────────────────────
 
 def _has_account_axis(name: str) -> bool:
-    """Le tool porte-t-il un CHOIX de compte/identité ? Deux familles (ADR 0024/0051) :
-    - **multi-credential** (`auth_multi_account`) : N clés pour une entité (google, « 2 Zoho ») ;
+    """Le tool ADVERTISE-t-il l'axe compte dans son schéma, STATIQUEMENT ? Deux familles
+    (ADR 0024/0051), toutes deux CURÉES :
+    - **multi-credential à backend spécifique** (`MULTI_ACCOUNT_PROVIDERS` : google
+      « N comptes OAuth », zoho « 2 Zoho », browser, folk) ;
     - **porteur d'identités** (`personal_cross_org`) : 1 clé → N identités opérées
       (unipile : le compte LinkedIn/WhatsApp à opérer — le tien, ou un compte accordé #55).
-    Dérivé du registre via le namespace. Les caps spine (`oto_*`) → None → exclus."""
+
+    ⚠️ Depuis 2026-08-25, TOUT connecteur à clé d'API est multi-compte
+    (`Connector.auth_multi_account`) — mais l'axe n'est PAS advertisé statiquement sur
+    tous : chaque propriété d'axe est recopiée dans le schéma de chaque tool à chaque
+    handshake (test_call_axes_budget : ~50 connecteurs de plus = la moitié de la
+    surface). Il l'est **dynamiquement** là où il a un sens pour l'appelant — les
+    connecteurs où il détient ≥ 2 clés (`account_axis_advertised_for`) — et il est
+    **accepté** à l'appel sur tout connecteur multi-compte (`accepts_account_axis`),
+    advertisé ou non. Dérivé du registre via le namespace ; spine (`oto_*`) → None → exclus."""
+    con = providers.connector_for_namespace(namespace_of(name))
+    return con is not None and (con.name in providers.MULTI_ACCOUNT_PROVIDERS
+                                or con.personal_cross_org)
+
+
+def accepts_account_axis(name: str) -> bool:
+    """Le tool LIT-il `_account=` s'il est fourni ? Fonctionnel, pas cosmétique : tout
+    connecteur multi-compte (clé d'API par défaut, backends curés, porteurs d'identités).
+    Un agent qui a listé ses comptes (`oto_identity(op='list')`) peut viser l'un d'eux
+    même si le schéma ne l'annonçait pas — le schéma n'annonce que ce qui a un sens
+    pour lui (cf. `account_axis_advertised_for`)."""
     con = providers.connector_for_namespace(namespace_of(name))
     return con is not None and (con.auth_multi_account or con.personal_cross_org)
+
+
+def account_axis_advertised_for(sub: Optional[str]) -> set[str]:
+    """Connecteurs (noms) pour lesquels l'APPELANT détient ≥ 2 comptes au palier membre
+    de son org de contexte — là, et là seulement, `_account=` vaut d'être annoncé dans
+    le schéma (un compte unique se résout tout seul, cf. access.py `_member_fetch`).
+    UNE requête par tools/list ; jamais d'exception (une liste d'outils ne tombe pas
+    pour un coffre injoignable → axe non annoncé, encore accepté à l'appel)."""
+    if not sub:
+        return set()
+    try:
+        from . import access, credentials_store
+        org = access.current_org(sub)
+        if org is None:
+            return set()
+        counts: dict[str, int] = {}
+        for row in credentials_store.list_credentials(
+                credentials_store.MEMBER, credentials_store.member_id(org, sub)):
+            counts[row["connector"]] = counts.get(row["connector"], 0) + 1
+        by_name = {c.name: c for c in providers._REGISTRY_LIST}
+        return {name for name, n in counts.items()
+                if n >= 2 and name in by_name and by_name[name].auth_multi_account}
+    except Exception:
+        logger.exception("account_axis_advertised_for: relevé des comptes impossible")
+        return set()
+
+
+def axes_for_listing(name: str, advertised_accounts: set[str]) -> list["CallAxis"]:
+    """Axes à ANNONCER dans le schéma de ce tool : les statiques (`axes_for`) + l'axe
+    compte quand l'appelant détient plusieurs comptes de ce connecteur."""
+    axes = axes_for(name)
+    if advertised_accounts and not any(a.param == ACCOUNT.param for a in axes):
+        con = providers.connector_for_namespace(namespace_of(name))
+        if con is not None and con.name in advertised_accounts:
+            axes = [*axes, ACCOUNT]
+    return axes
+
+
+def axes_for_call(name: str) -> list["CallAxis"]:
+    """Axes LUS à l'appel : les statiques + l'axe compte sur tout connecteur qui
+    l'accepte (annoncé ou non)."""
+    axes = axes_for(name)
+    if accepts_account_axis(name) and not any(a.param == ACCOUNT.param for a in axes):
+        axes = [*axes, ACCOUNT]
+    return axes
 
 
 async def _pin_account(value: object) -> list[UndoEntry]:
