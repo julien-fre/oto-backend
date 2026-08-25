@@ -447,6 +447,20 @@ def test_field_create_and_update(client):
     _assert_no_stray_write(client)
 
 
+def test_field_update_refuses_type_and_options_instead_of_dropping_them(client):
+    """`op='update'` ne transmet jamais `type`/`options` à l'API (immutables chez
+    Airtable) : les accepter en silence rendrait un 200 de renommage à un agent qui
+    croit avoir changé le schéma — le repli silencieux que le repo refuse."""
+    for extra in ({"options": {"choices": [{"name": "X"}]}}, {"type": "singleSelect"}):
+        with pytest.raises(McpError) as e:
+            _tool("airtable_field")(
+                base_id="app1", table_id="tbl1", op="update", field_id="fld1",
+                name="Statut", **extra)
+        assert "options" in str(e.value)
+        _assert_no_stray_write(client)
+        client.update_field.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # airtable_base
 

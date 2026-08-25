@@ -710,6 +710,12 @@ def register(mcp: FastMCP) -> None:
                 description=description, options=options,
             ))
 
+        if type is not None or options is not None:
+            raise _bad(
+                "op='update' ne transmet ni `type` ni `options` — l'API Airtable ne "
+                "permet PAS de changer le type ou les options d'un champ existant. "
+                "Recréer le champ (op='create') est la seule voie."
+            )
         if name is None and description is None:
             raise _bad(
                 "op='update' requiert `name` et/ou `description` — l'API Airtable ne "
