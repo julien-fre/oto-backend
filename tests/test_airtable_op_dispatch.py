@@ -144,16 +144,41 @@ def test_opless_tools_have_no_op_parameter():
 
 
 def test_record_list_paginates_and_announces_the_rest(client):
-    """La pagination suit l'`offset` opaque, et une liste tronquée le DIT."""
-    client.list_records.side_effect = [
-        {"records": [{"id": f"rec{i}"} for i in range(100)], "offset": "o1"},
-        {"records": [{"id": f"recb{i}"} for i in range(100)], "offset": "o2"},
-    ]
+    """La pagination suit l'`offset` opaque, et une liste incomplète le DIT.
+
+    ⚠️ Le cœur du test est la TAILLE demandée à la dernière page. Avec un plafond de
+    150 et des pages de 100, redemander 100 puis couper à 150 jetterait 50 lignes déjà
+    lues — et l'`offset` rendu reprendrait APRÈS elles : la réponse annoncerait où
+    reprendre tout en ayant fait disparaître ces 50 lignes. La 2ᵉ page doit donc
+    demander 50, pas 100.
+    """
+    seq = {"n": 0}
+
+    def _page(base_id, table, **kw):
+        seq["n"] += 1
+        size = kw["page_size"]
+        return {"records": [{"id": f"rec{seq['n']}-{i}"} for i in range(size)],
+                "offset": f"o{seq['n']}"}
+
+    client.list_records.side_effect = _page
     out = _tool("airtable_record")(base_id="app1", table="tbl1", max_records=150)
-    assert out["count"] == 150
+    sizes = [c.kwargs["page_size"] for c in client.list_records.call_args_list]
+    assert sizes == [100, 50], "la dernière page doit tomber PILE sur le plafond"
+    assert out["count"] == 150 and len(out["records"]) == 150
     assert out["more"] is True and out["offset"] == "o2"
     assert client.list_records.call_args_list[1].kwargs["offset"] == "o1"
     _assert_no_stray_write(client)
+
+
+def test_record_list_never_discards_a_page_it_already_read(client):
+    """Aucune ligne lue n'est jetée : `count` == ce que le tool rend vraiment, et
+    l'`offset` reprend juste après la dernière ligne rendue."""
+    client.list_records.side_effect = [
+        {"records": [{"id": f"rec{i}"} for i in range(40)]},  # pas d'offset : fini
+    ]
+    out = _tool("airtable_record")(base_id="app1", table="tbl1", max_records=150)
+    assert out["count"] == 40 and "more" not in out and "offset" not in out
+    assert client.list_records.call_args.kwargs["page_size"] == 100
 
 
 def test_record_get_requires_record_id(client):

@@ -231,6 +231,11 @@ def register(mcp: FastMCP) -> None:
     def _batched(items: list, call, *, key: str) -> dict:
         """Découpe en lots de 10, espace les requêtes, rend un reçu HONNÊTE.
 
+        La boucle vit ICI et pas dans le client oto-core parce que c'est ici qu'on peut
+        en rendre compte : le budget d'invoke (45 s) et le reçu partiel appartiennent à
+        la couche qui répond à l'agent. Un client qui découperait en douce rendrait « ça
+        a marché » ou lèverait, sans jamais pouvoir dire « 30 écrits sur 50 ».
+
         `call(chunk)` fait UNE requête. Trois régimes d'échec, délibérément distincts :
         - **401/403** → la clé est mauvaise pour toute la suite : on lève tout de suite
           plutôt que de répéter N fois le même refus.
@@ -260,6 +265,9 @@ def register(mcp: FastMCP) -> None:
                                "error": _upstream_message(e)})
                 continue
             except ValueError as e:
+                # Garde du client (taille de lot) : c'est un défaut de CE code, pas un
+                # refus d'Airtable. Il doit crier une fois, pas se déguiser en N échecs
+                # amont dans le reçu.
                 raise _bad(str(e))
             done.extend(result.get(key) or [])
         receipt: dict[str, Any] = {
@@ -279,22 +287,26 @@ def register(mcp: FastMCP) -> None:
     def _paginate(fetch, key: str, limit: int) -> dict:
         """Suit l'`offset` opaque d'Airtable jusqu'à `limit` items ou `_MAX_PAGES`.
 
-        Rend TOUJOURS l'`offset` restant s'il en reste : une liste tronquée le DIT, elle
-        ne fait pas croire qu'on a tout lu.
+        `fetch(offset, page_size)` rend UNE page. La taille demandée RÉTRÉCIT à
+        l'approche du plafond, pour que la dernière page tombe pile dessus — sans ça il
+        faudrait couper la page finale, et l'`offset` rendu reprendrait APRÈS les items
+        jetés : une poignée de lignes disparaîtrait en silence, alors même que la
+        réponse annonce où reprendre. Rien n'est donc jamais tronqué ici ; s'il reste
+        des pages, la réponse le DIT (`more` + `offset`).
         """
         items: list = []
         offset: Optional[str] = None
         pages = 0
         while True:
-            page = fetch(offset) or {}
+            page = fetch(offset, max(1, min(100, limit - len(items)))) or {}
             items.extend(page.get(key) or [])
             offset = page.get("offset")
             pages += 1
             if not offset or len(items) >= limit or pages >= _MAX_PAGES:
                 break
             time.sleep(_RATE_DELAY)
-        out: dict[str, Any] = {key: items[:limit], "count": min(len(items), limit)}
-        if offset or len(items) > limit:
+        out: dict[str, Any] = {key: items, "count": len(items)}
+        if offset:
             out["offset"] = offset
             out["more"] = True
         return out
@@ -392,7 +404,7 @@ def register(mcp: FastMCP) -> None:
         if op == "list":
             long_formula = len(filter_by_formula or "") > _FORMULA_URL_LIMIT
 
-            def _page(off):
+            def _page(off, size):
                 if long_formula:
                     # Mêmes critères, dans le CORPS : une formule de cette taille ferait
                     # dépasser la longueur d'URL admise et Airtable la rejetterait.
@@ -401,7 +413,7 @@ def register(mcp: FastMCP) -> None:
                         "filterByFormula": filter_by_formula,
                         "view": view,
                         "sort": sort,
-                        "pageSize": min(100, max_records),
+                        "pageSize": size,
                         "cellFormat": cell_format,
                         "timeZone": time_zone,
                         "userLocale": user_locale,
@@ -415,7 +427,7 @@ def register(mcp: FastMCP) -> None:
                     filter_by_formula=filter_by_formula,
                     view=view,
                     sort=sort,
-                    page_size=min(100, max_records),
+                    page_size=size,
                     cell_format=cell_format,
                     time_zone=time_zone,
                     user_locale=user_locale,
@@ -531,9 +543,8 @@ def register(mcp: FastMCP) -> None:
 
         if op == "list":
             return _run(lambda: _paginate(
-                lambda off: client.list_comments(
-                    base_id, table, record_id,
-                    page_size=min(100, max_comments), offset=off,
+                lambda off, size: client.list_comments(
+                    base_id, table, record_id, page_size=size, offset=off,
                 ),
                 "comments", max_comments,
             ))
@@ -737,7 +748,10 @@ def register(mcp: FastMCP) -> None:
 
         if op == "list":
             out = _run(lambda: _paginate(
-                lambda off: client.list_bases(offset=off), "bases", max_bases))
+                # `GET /meta/bases` n'a pas de `pageSize` : il rend 1000 bases par page,
+                # `size` est donc ignoré ici. `max_bases` borne le nombre de PAGES lues,
+                # pas la coupe du résultat — on ne jette jamais ce qu'on a déjà lu.
+                lambda off, _size: client.list_bases(offset=off), "bases", max_bases))
             if not out["bases"]:
                 out["hint"] = (
                     "Aucune base accordée à ce token. Ouvrir airtable.com/create/tokens, "

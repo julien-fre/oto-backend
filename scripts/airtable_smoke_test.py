@@ -255,12 +255,30 @@ def main() -> int:  # noqa: C901 — un smoke est une suite linéaire, pas une a
                 _verdict("PATCH …/fields/{fieldId}", False,
                          "non exercé (AIRTABLE_SMOKE_SCHEMA absent)")
         finally:
-            if created:
-                print(f"\n→ nettoyage : suppression des {len(created)} ligne(s) créée(s)")
-                gone = record_tool(base_id=base_id, table=table_id, op="delete",
-                                   record_ids=created)
-                print(f"  ✓ {gone['succeeded']}/{gone['total']} supprimée(s)"
-                      + (f" — RESTE : {gone['failed']}" if gone["failed"] else ""))
+            # Le nettoyage RELIT la table au lieu de se fier aux ids accumulés : si
+            # l'upsert a créé des lignes puis levé, `created` ne les connaît pas, et
+            # elles resteraient dans une base réelle. Le tampon est la seule référence
+            # qui survit à n'importe quel point de sortie.
+            print(f"\n→ nettoyage : recherche des lignes {stamp!r}")
+            try:
+                leftovers = record_tool(
+                    base_id=base_id, table=table_id, max_records=200,
+                    filter_by_formula=f"FIND('{stamp}', {{{primary_name}}}) > 0")
+                ids = [r["id"] for r in leftovers["records"]]
+                unknown = [i for i in ids if i not in created]
+                if unknown:
+                    print(f"  (dont {len(unknown)} ligne(s) qu'aucun id accumulé ne "
+                          f"connaissait — c'est précisément pourquoi on relit)")
+                if not ids:
+                    print("  ✓ rien à supprimer")
+                else:
+                    gone = record_tool(base_id=base_id, table=table_id, op="delete",
+                                       record_ids=ids)
+                    print(f"  ✓ {gone['succeeded']}/{gone['total']} supprimée(s)"
+                          + (f" — RESTE : {gone['failed']}" if gone["failed"] else ""))
+            except Exception as e:  # noqa: BLE001
+                print(f"  ✗ nettoyage impossible ({str(e)[:160]}) — supprimer À LA MAIN "
+                      f"les lignes contenant {stamp!r}, ids connus : {created}")
 
     print("\nVerdicts :")
     print("\n".join(_VERDICTS))
