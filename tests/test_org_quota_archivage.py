@@ -247,12 +247,41 @@ def test_le_solo_supprime_son_espace_personnel(store, monkeypatch):
     perso = _perso(store, SUB)
 
     assert _archiver(SUB, perso)["archived"] is True
-    assert [o["org_id"] for o in store.list_orgs_for_user(SUB)] == []
-    assert store.get_personal_org(SUB) is None
+
     with store._connect() as c:
         row = c.execute("SELECT personal_of, archived_at FROM orgs WHERE id = %s",
                         (perso,)).fetchone()
     assert row["personal_of"] is None and row["archived_at"] is not None
+    assert perso not in [o["org_id"] for o in store.list_orgs_for_user(SUB)]
+
+
+def test_le_solo_ne_reste_pas_sans_aucune_org(store, monkeypatch):
+    """« Tout user a TOUJOURS une org maison » (db/users.py) est un invariant que le
+    reste du backend suppose : le geste qui vide le compte le rétablit dans la foulée,
+    au lieu de le laisser org-less jusqu'au prochain boot. L'espace reposé est NEUF —
+    l'ancien reste archivé, hors de tous les listings."""
+    monkeypatch.setattr(session_org, "current_session_id", lambda: None)
+    perso = _perso(store, SUB)
+
+    _archiver(SUB, perso)
+
+    repose = store.get_personal_org(SUB)
+    assert repose is not None and repose != perso
+    assert store.get_active_org(SUB) == repose
+    assert [o["org_id"] for o in store.list_orgs_for_user(SUB)] == [repose]
+
+
+def test_l_espace_repose_ne_l_est_que_si_le_compte_est_VIDE(store, monkeypatch):
+    """Le filet ne se déclenche que sur zéro org restante : archiver un espace parmi
+    d'autres ne doit pas faire surgir un espace perso que le compte n'a pas demandé."""
+    monkeypatch.setattr(session_org, "current_session_id", lambda: None)
+    a = _espace(store, SUB, "Espace A")
+    _espace(store, SUB, "Espace B")
+
+    _archiver(SUB, a)
+
+    assert store.get_personal_org(SUB) is None
+    assert len(store.list_orgs_for_user(SUB)) == 1
 
 
 def test_l_espace_personnel_d_autrui_reste_refuse(store, monkeypatch):
