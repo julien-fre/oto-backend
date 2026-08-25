@@ -341,3 +341,59 @@ def test_bulk_action_vocabulary_matches_the_client():
 
     assert BULK_ACTIONS == LemlistClient.ENRICH_BULK_ACTIONS
     assert BULK_ACTIONS["verify_email"] == "verify"
+
+
+def test_enrich_bulk_records_one_platform_usage_per_person():
+    # Un bulk est facturé à la personne : compter 1 pour l'appel sous-facturerait
+    # un lot de 40 d'un facteur 40.
+    key = patch("oto_mcp.access.resolve_api_key", return_value=("platform-key", True))
+    cls = patch("oto.tools.lemlist.LemlistClient")
+    rec = patch("oto_mcp.access.record_platform_usage")
+    with key, cls as client_cls, rec as record:
+        client_cls.return_value.bulk_enrich.return_value = [
+            {"id": "enr_1"}, {"id": "enr_2"}, {"id": "enr_3"},
+        ]
+        _tool("lemlist_enrich_bulk").fn(people=[
+            {"email": f"a{i}@acme.fr", "actions": ["find_email"]} for i in range(3)
+        ])
+        record.assert_called_once_with("lemlist", 3)
+
+
+def test_enrich_result_union_survives_the_mcp_validation_boundary():
+    # Les autres tests appellent `tool.fn` — la fonction brute, sans la
+    # validation pydantic de FastMCP. Ici on passe par `tool.run`, le vrai
+    # chemin d'un client MCP, pour que `str | list[str]` soit prouvé des deux
+    # côtés et pas seulement dans la boucle Python.
+    def _run(payload, side_effect):
+        key, cls = _with_fake_client()
+        with key, cls as client_cls:
+            client_cls.return_value.get_enrichment.side_effect = side_effect
+            tool = _tool("lemlist_enrich_result")
+            res = asyncio.run(tool.run(payload))
+            return res.structured_content
+
+    def _done(eid):
+        return {"enrichmentId": eid, "enrichmentStatus": "done", "input": {}, "data": {}}
+
+    out = _run({"enrichment_id": ["enr_1", "enr_2"]}, [_done("enr_1"), _done("enr_2")])
+    assert [r["enrichment_id"] for r in out["results"]] == ["enr_1", "enr_2"]
+
+    out = _run({"enrichment_id": "enr_1"}, [_done("enr_1")])
+    assert [r["enrichment_id"] for r in out["results"]] == ["enr_1"]
+
+
+def test_enrich_bulk_falls_back_to_position_when_metadata_is_unusable():
+    # lemlist renvoie `metadata` dans deux formes différentes dans sa propre
+    # doc : la lire aveuglément casserait l'appariement.
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        inst.bulk_enrich.return_value = [
+            {"id": "enr_1", "metadata": "some_id"},   # chaîne nue
+            {"id": "enr_2", "metadata": {"index": "1"}},
+        ]
+        out = _tool("lemlist_enrich_bulk").fn(people=[
+            {"email": "a@acme.fr", "actions": ["find_email"]},
+            {"email": "b@acme.fr", "actions": ["find_email"]},
+        ])
+        assert [r["index"] for r in out["submitted"]] == [0, 1]

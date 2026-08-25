@@ -385,10 +385,22 @@ def register(mcp: FastMCP) -> None:
             items.append(item)
 
         raw = client.bulk_enrich(items)
-        _record_if_platform(is_platform)
+        if is_platform:
+            # Un bulk est facturé À LA PERSONNE : la consommation est le nombre
+            # d'entrées soumises, pas 1 pour l'appel (même règle que FullEnrich).
+            access.record_platform_usage("lemlist", len(items))
         submitted = []
         for i, entry in enumerate(raw if isinstance(raw, list) else []):
-            row = {"index": i}
+            # `metadata` est renvoyé tel quel par lemlist, mais sa forme n'est
+            # pas stable (leur propre exemple montre `{"id": ...}` ET une
+            # chaîne nue) : on s'en sert quand il porte bien l'index qu'on a
+            # posé, sinon on retombe sur la position — les entrées reviennent
+            # dans l'ordre soumis.
+            meta = entry.get("metadata")
+            index = i
+            if isinstance(meta, dict) and str(meta.get("index", "")).isdigit():
+                index = int(meta["index"])
+            row = {"index": index}
             if entry.get("id"):
                 row["enrichment_id"] = entry["id"]
             if entry.get("error"):
