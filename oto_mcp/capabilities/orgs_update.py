@@ -8,16 +8,20 @@ REST (self `/api/orgs/{id}` + admin `/api/admin/orgs/{id}`), comme membres/secre
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from .. import org_store, session_org
+from ..db import users as db_users
 from ._authz import ORG_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
+
+_log = logging.getLogger(__name__)
 
 
 class OrgIdInput(BaseModel):
@@ -95,13 +99,35 @@ def _update_org(ctx: ResolvedCtx, inp: UpdateOrgInput) -> dict:
 def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
     """Self-service : un org_admin archive (soft-delete) SA propre org. Réutilise
     `org_store.archive_org` (masque partout, réversible en DB, rebascule les membres
-    orphelins). Refuse l'espace personnel (recréé au boot). Si l'org archivée était
-    l'org de session courante, on lève l'override → plus de bracelet pendouillant."""
+    orphelins). Si l'org archivée était l'org de session courante, on lève
+    l'override → plus de bracelet pendouillant.
+
+    **Espace personnel (2026-08-25).** Il n'est plus refusé en bloc : un compte SOLO
+    n'a QUE lui, le refus le laissait donc sans rien à supprimer du tout. Ce qui reste
+    refusé, c'est l'espace perso de QUELQU'UN D'AUTRE : `ORG_ADMIN_OF` s'obtient aussi
+    par escalade platform_admin, et ce chemin self-service ne doit pas effacer l'espace
+    privé d'un tiers (la console admin a le sien).
+
+    Pas de garde « et seulement s'il est seul » en plus : elle serait morte. Un espace
+    perso EST mono-membre par construction — `add_org_member` efface `personal_of` dès
+    qu'un 2ᵉ membre distinct arrive (org_store.py, correctif 2026-08-04), l'org tombant
+    alors dans le cas ordinaire ci-dessous.
+
+    ⚠️ Ce n'est pas une suppression de compte. Si ce geste laisse l'appelant SANS
+    aucune org, on lui repose immédiatement un espace perso VIDE et neuf — son contenu
+    quitte les listings, pas sa capacité à revenir. Ce n'est pas une politesse : « tout
+    user a TOUJOURS une org maison » est un invariant que tout le backend suppose
+    (db/users.py), et `backfill_personal_orgs` ne le réparerait qu'au PROCHAIN boot —
+    entre les deux, le compte traverse le système en org-less. Le faire ici évite
+    aussi que le backfill ne vienne, des heures plus tard, tamponner `personal_of` sur
+    l'espace que l'utilisateur se serait recréé entre-temps
+    (`_reclaim_or_create_personal` ne réclame que faute de perso existante)."""
     if not org_store.get_org(inp.org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
-    if org_store.is_personal_org(inp.org_id):
+    if org_store.is_personal_org(inp.org_id) and org_store.get_personal_org(ctx.sub) != inp.org_id:
         raise AuthzDenied(400, "personal_org",
-                          "Ton espace personnel ne peut pas être supprimé.")
+                          "L'espace personnel d'un autre utilisateur ne peut pas être "
+                          "supprimé ici.")
     archived = org_store.archive_org(inp.org_id)
     if archived:
         sid = session_org.current_session_id()
@@ -109,6 +135,19 @@ def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
         if present and ov == inp.org_id:
             session_org.set_override(sid, None)
             session_org.clear_group_override(sid)
+        # Plus une seule org pour l'appelant (le cas SOLO qui supprime son unique
+        # espace) : on rétablit l'invariant tout de suite. `ensure_personal_org` est
+        # celui du boot, avec son projet « Découverte » — donc exactement l'accueil
+        # d'un compte neuf, pas un état inventé pour l'occasion. Best-effort : la
+        # suppression, elle, a réussi, et le backfill du prochain boot reste le filet.
+        if not org_store.list_orgs_for_user(ctx.sub):
+            try:
+                u = db_users.get_user(ctx.sub) or {}
+                org_store.ensure_personal_org(ctx.sub, email=u.get("email"),
+                                              name=u.get("name"))
+            except Exception:
+                _log.warning("archive_org: espace perso non recréé pour %s", ctx.sub,
+                             exc_info=True)
     return {"ok": True, "org_id": inp.org_id, "archived": archived}
 
 
@@ -128,8 +167,10 @@ CAPABILITIES += [
         authz=ORG_ADMIN_OF("org_id"), Output=OrgArchived,
         description=("Archive (delete) an organization you administer: it disappears "
                      "from every listing and its members fall back to their other "
-                     "orgs. Reversible in DB, data is kept. You must be org_admin; "
-                     "your personal space cannot be archived."),
+                     "orgs. Reversible in DB, data is kept. You must be org_admin. "
+                     "You may archive YOUR OWN personal space — never someone else's. "
+                     "Archiving your last remaining org immediately provisions a fresh, "
+                     "empty personal space so you are never left without one."),
         rest=RestBinding("DELETE", "/api/orgs/{id}", _ID),
         refresh_visibility=True,  # org active archivée → recharge la toolbox (repli)
     ),
