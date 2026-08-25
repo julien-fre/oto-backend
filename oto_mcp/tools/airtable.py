@@ -228,7 +228,7 @@ def register(mcp: FastMCP) -> None:
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
 
-    def _batched(items: list, call, *, key: str) -> dict:
+    def _batched(items: list, call, *, key: str, also: tuple[str, ...] = ()) -> dict:
         """Découpe en lots de 10, espace les requêtes, rend un reçu HONNÊTE.
 
         La boucle vit ICI et pas dans le client oto-core parce que c'est ici qu'on peut
@@ -244,6 +244,11 @@ def register(mcp: FastMCP) -> None:
         - **autre 4xx** → l'échec est propre à ce lot : on l'enregistre et on continue.
         """
         done: list = []
+        # Listes SECONDAIRES rendues par Airtable qu'un lot ne doit pas perdre : sur un
+        # upsert, `createdRecords`/`updatedRecords` sont la seule chose qui dise ce qui
+        # a été CRÉÉ plutôt que rapproché — les laisser tomber rendrait un reçu qui
+        # compte juste et ne répond pas à la question qu'on pose à un upsert.
+        extra: dict[str, list] = {k: [] for k in also}
         failed: list[dict] = []
         aborted: Optional[str] = None
         chunks = _chunks(items, _BATCH_SIZE)
@@ -270,12 +275,15 @@ def register(mcp: FastMCP) -> None:
                 # amont dans le reçu.
                 raise _bad(str(e))
             done.extend(result.get(key) or [])
+            for k in also:
+                extra[k].extend(result.get(k) or [])
         receipt: dict[str, Any] = {
             "total": len(items),
             "succeeded": len(done),
             "failed": failed,
             key: done,
         }
+        receipt.update({k: v for k, v in extra.items() if v})
         if aborted:
             receipt["aborted"] = aborted
             receipt["resume_hint"] = (
@@ -357,7 +365,8 @@ def register(mcp: FastMCP) -> None:
           each carrying its `id`). PATCH by default: untouched fields keep their value.
         - **"upsert"** — ⚠️ WRITES: `records` matched against existing rows on
           `merge_on` (1-3 field names) — matched rows are updated, unmatched ones
-          created. The reply separates `createdRecords` from `updatedRecords`.
+          created. The reply counts each (`created` / `updated`) and lists their ids
+          under `createdRecords` / `updatedRecords`.
         - **"delete"** — ⚠️ WRITES: one row (`record_id`) or many (`record_ids`).
           Irreversible.
 
@@ -485,8 +494,10 @@ def register(mcp: FastMCP) -> None:
                 base_id, table, chunk, replace=replace, typecast=typecast or None,
                 perform_upsert=upsert,
                 return_fields_by_field_id=return_fields_by_field_id or None,
-            ), key="records")
+            ), key="records", also=("createdRecords", "updatedRecords"))
             receipt["merged_on"] = merge
+            receipt["created"] = len(receipt.get("createdRecords") or [])
+            receipt["updated"] = len(receipt.get("updatedRecords") or [])
             return receipt
 
         # delete

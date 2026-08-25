@@ -531,3 +531,32 @@ def test_long_formula_switches_to_the_post_form(client):
     client.list_records.assert_not_called()
     assert client.list_records_post.call_args.args[2]["filterByFormula"] == formula
     _assert_no_stray_write(client)
+
+
+def test_upsert_receipt_says_what_was_created_versus_matched(client):
+    """La question qu'on pose à un upsert est « lesquelles étaient nouvelles ? ».
+    Airtable y répond par `createdRecords`/`updatedRecords` ; un reçu de lot qui ne
+    garderait que `records` compterait juste et ne répondrait pas."""
+    def _side(b, t, chunk, **k):
+        n = len(chunk)
+        return {"records": [{"id": f"rec{i}"} for i in range(n)],
+                "createdRecords": [f"rec{i}" for i in range(n // 2)],
+                "updatedRecords": [f"rec{i}" for i in range(n // 2, n)]}
+
+    client.update_records.side_effect = _side
+    out = _tool("airtable_record")(
+        base_id="app1", table="tbl1", op="upsert", merge_on=["Email"],
+        records=[{"Email": f"{i}@b.c"} for i in range(12)])
+    assert out["succeeded"] == 12
+    # 2 lots (10 + 2) : 5+1 créées, 5+1 rapprochées — les DEUX lots sont cumulés.
+    assert out["created"] == 6 and out["updated"] == 6
+    assert len(out["createdRecords"]) == 6 and len(out["updatedRecords"]) == 6
+
+
+def test_plain_batch_receipt_carries_no_empty_upsert_keys(client):
+    """Un create ordinaire ne doit pas traîner des clés d'upsert vides."""
+    client.create_records.side_effect = lambda b, t, chunk, **k: {
+        "records": [{"id": f"rec{i}"} for i in range(len(chunk))]}
+    out = _tool("airtable_record")(
+        base_id="app1", table="tbl1", op="create", records=[{"Nom": "a"}])
+    assert "createdRecords" not in out and "updatedRecords" not in out
