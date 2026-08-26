@@ -1323,10 +1323,18 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) ->
     # cessait alors de résoudre pendant que `has_org_secret` disait « configuré »
     # (review #399 F3). Pas de compte nommable ici : aucun sub, aucun axe d'appel.
     def _anon_org_fetch(oid: int, mprov: str):
-        if not _is_multi_account(mprov):
-            return org_store.get_org_secret(oid, mprov)
+        # Mono D'ABORD : la ligne `''` historique répond sans lire la table des
+        # comptes (zéro coût ajouté pour les orgs pré-migration, et le contrat des
+        # tests qui stubbent `get_org_secret` seul reste entier). La sélection
+        # nommée n'est tentée QUE si la ligne mono manque — le cas F3, où
+        # `ensure_named_coexistence` l'a migrée vers « principal ».
+        key = org_store.get_org_secret(oid, mprov)
+        if key or not _is_multi_account(mprov):
+            return key
         eff = _shared_auto_account("org", str(oid), mprov,
                                    "pour l'org de ce projet", scope="org")
+        if not eff:
+            return None
         key = org_store.get_org_secret(oid, mprov, eff)
         return (key, eff) if key else None
 
