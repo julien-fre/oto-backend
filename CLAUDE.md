@@ -185,6 +185,15 @@ appel : `clé membre (sub, org) > group_secret > org_secret > platform_grant` (c
 platform gaté sur `auth_modes`). **Détail : `docs/roles-and-resolution.md`** (paliers,
 grants/quota, platform keys, providers byo-only).
 
+> **Multi-compte par défaut (2026-08-26, reprise #399)** : tout connecteur **keyé**
+> (`method=secret`, `api_key`/`basic_auth`) est multi-compte — comptes **nommés**
+> possibles aux paliers **membre/équipe/org**, sélection par `_account=` (axe
+> d'appel, accepté partout — `oto_call` compris — annoncé seulement où ≥ 2 clés)
+> ou param `account` ou défaut `is_default`. Un compte nommé introuvable à un
+> palier passe la main ; introuvable partout ⇒ « introuvable » après la marche,
+> jamais un repli plateforme silencieux. L'endpoint anonyme sélectionne le compte
+> d'org comme le chemin réel (jamais `''` en dur). Détail : doc ci-dessus.
+
 > **Scope MEMBRE (ADR 0033)** : plus de credential per-user org-agnostique — la clé
 > BYO est keyée `(sub, org)` (coffre `entity_type='member'`, AAD lié à l'org ; google
 > + unipile inclus, seuls les mounts oauth fédérés restent scope user). L'org de scope

@@ -114,7 +114,7 @@ def test_resolution_failure_mentions_reachable_team(monkeypatch):
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access.db, "get_member_api_key", lambda *a, **k: None)
     monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a, **k: [])
-    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: None)
+    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov, account="": None)
     _wire_reachable(monkeypatch)
     with pytest.raises(McpError) as e:
         access._resolve_credential_impl("zoho", "byo", "u1")
@@ -132,7 +132,7 @@ def test_resolution_failure_lists_other_org(monkeypatch):
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access.db, "get_member_api_key", lambda *a, **k: None)
     monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a, **k: [])
-    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: None)
+    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov, account="": None)
     _wire_reachable(monkeypatch, secret_groups=(),
                     orgs=[{"org_id": 167, "name": "Movinmotion Test"}])
     monkeypatch.setattr(access.org_store, "has_org_secret",
@@ -152,7 +152,7 @@ def test_resolution_failure_plain_without_team(monkeypatch):
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access.db, "get_member_api_key", lambda *a, **k: None)
     monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a, **k: [])
-    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: None)
+    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov, account="": None)
     _wire_reachable(monkeypatch, secret_groups=())
     with pytest.raises(McpError) as e:
         access._resolve_credential_impl("zoho", "byo", "u1")

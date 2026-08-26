@@ -46,6 +46,21 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 4. Instance **plateforme** (grant/free-tier, ADR 0044 §F) avec quota.
 5. Rien → McpError actionnable + **instances à portée** (voir walker ci-dessous).
 
+> **Multi-compte par défaut (2026-08-26, reprise #399).** Tout connecteur **à clé
+> d'API** (`method=secret`, secret `api_key`/`basic_auth`) est **multi-compte**
+> (`Connector.auth_multi_account`) : des comptes **nommés** peuvent coexister aux
+> paliers **membre, équipe et org** (segment `account` du coffre ; la ligne legacy
+> `''` migre vers « principal » au premier compte nommé, `ensure_named_coexistence`).
+> Sélection = param `account` / axe d'appel `_account=` / épinglage projet > compte
+> unique auto > défaut `is_default` (`oto_identity op='set'`, scopes member/org/group).
+> L'axe `_account=` est **accepté à l'appel partout** (`axes_for_call`, `oto_call`
+> compris) et **annoncé** dans le schéma seulement où l'appelant détient ≥ 2 clés
+> (`axes_for_listing`). Invariant : un compte NOMMÉ introuvable à un palier **passe
+> la main** au suivant ; s'il n'existe à aucun palier à clé, la résolution **lève
+> « introuvable »** après la marche — jamais un repli plateforme silencieux. La
+> résolution **anonyme** (`<slug>.mcp.oto.cx`) sélectionne le compte d'org comme le
+> chemin réel (unique/défaut), jamais `''` en dur.
+
 ## Walker de cascade — source unique (2026-07-16)
 
 La cascade ci-dessus vit dans **`access.walk_cascade`** (générateur paramétré

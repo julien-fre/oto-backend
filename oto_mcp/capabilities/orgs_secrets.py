@@ -12,7 +12,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import connectors, credentials_store, org_store
+from .. import providers, connectors, credentials_store, org_store
 from ._authz import ORG_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 
@@ -58,11 +58,14 @@ class SetSecretInput(BaseModel):
     api_key: str = ""                  # connecteurs mono-champ (clé simple)
     fields: Optional[dict[str, str]] = None   # connecteurs multi-champs (zoho/silae…)
     base_url: Optional[str] = None     # connecteurs remote uniquement (endpoint du bridge)
+    # Multi-compte (Phase 2, 2026-08-25) : nom du compte à ce palier ("" = mono legacy).
+    account: str = ""
 
 
 class DeleteSecretInput(BaseModel):
     org_id: int
     provider: str
+    account: str = ""
 
 
 def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
@@ -77,12 +80,21 @@ def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
         secret = credentials_store.secret_from_input(inp.provider, inp.api_key, inp.fields)
     except ValueError as e:
         raise AuthzDenied(400, str(e), "Credential incomplet ou vide.")
-    org_store.set_org_secret(inp.org_id, inp.provider, secret, set_by=ctx.sub, meta=meta)
+    account = (inp.account or "").strip()
+    con = providers.REGISTRY.get(inp.provider)
+    if con is not None and con.auth_multi_account:
+        # Même règle de coexistence qu'au palier membre : '' et comptes nommés ne
+        # cohabitent pas ; au 1er compte NOMMÉ, la ligne '' devient « principal ».
+        try:
+            credentials_store.ensure_named_coexistence("org", str(inp.org_id), inp.provider, account)
+        except credentials_store.NamedAccountRequired as e:
+            raise AuthzDenied(409, "account_required", str(e))
+    org_store.set_org_secret(inp.org_id, inp.provider, secret, set_by=ctx.sub, meta=meta, account=account)
     return {"ok": True, "org_id": inp.org_id, "provider": inp.provider}
 
 
 def _delete_secret(ctx: ResolvedCtx, inp: DeleteSecretInput) -> dict:
-    deleted = org_store.delete_org_secret(inp.org_id, inp.provider)
+    deleted = org_store.delete_org_secret(inp.org_id, inp.provider, account=(inp.account or "").strip())
     return {"ok": True, "org_id": inp.org_id, "provider": inp.provider, "deleted": deleted}
 
 
