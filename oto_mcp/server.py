@@ -459,6 +459,12 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
         org_store.backfill_personal_orgs()
     except Exception as e:
         logger.warning("backfill_personal_orgs at _build_mcp failed: %s", e)
+    # Orgs nées à NULL avant que `create_org` ne dérive le front lui-même (console
+    # admin, orgs perso) → front de leur tenant. One-shot idempotent.
+    try:
+        org_store.backfill_org_front()
+    except Exception as e:
+        logger.warning("backfill_org_front at _build_mcp failed: %s", e)
     # ADR 0033 : credentials per-user (hors oauth) → scope membre (sub, org maison).
     # Re-chiffrement (l'AAD change) — APRÈS backfill_personal_orgs (org maison garantie).
     # One-shot idempotent, no-op aux boots suivants.

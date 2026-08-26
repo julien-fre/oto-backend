@@ -60,7 +60,9 @@ def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
         raise AuthzDenied(400, "missing_name", "Nom d'org requis.")
     target = (inp.admin or "").strip()
     admin_sub = ctx.sub if target.lower() in ("", _SELF) else _resolve_target(target)
-    org_id = org_store.create_org(name, created_by=ctx.sub)
+    # Le front suit le RESPONSABLE, pas l'opérateur : provisionner une org Tulina
+    # depuis un compte oto doit produire une org Tulina (`front_of`, cf. create_org).
+    org_id = org_store.create_org(name, created_by=ctx.sub, front_of=admin_sub)
     org_store.add_org_member(org_id, admin_sub, "org_admin")
     # superset REST({id}) + MCP({org_id,name}) ; `admin_sub` rend la custody explicite
     # dans la réponse plutôt qu'implicite dans le code.

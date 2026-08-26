@@ -19,7 +19,11 @@ import secrets
 from typing import Optional
 
 _log = logging.getLogger(__name__)
+# Le tenant de la plateforme (sub NU) — `tenancy.PRIMARY_SLUG`, sans importer le
+# registre dans le store : seul `backfill_org_front` en a besoin, en SQL.
+_PRIMARY_TENANT = "oto"
 
+from . import config
 from . import credentials_store
 from . import connectors
 from . import db
@@ -78,15 +82,26 @@ def has_org_secret(org_id: int, provider: str) -> bool:
 
 def create_org(name: str, created_by: Optional[str] = None,
                front_base_url: Optional[str] = None,
-               front_brand: Optional[str] = None) -> int:
-    """Crée une org. `front_base_url`/`front_brand` = le front qui l'héberge, DÉRIVÉ
-    du tenant de son créateur par l'appelant (`config.front_for`) et posé ici même :
+               front_brand: Optional[str] = None,
+               front_of: Optional[str] = None) -> int:
+    """Crée une org. `front_base_url`/`front_brand` = le front qui l'héberge :
     NULL/NULL = oto, le défaut. Écrits à l'INSERT plutôt qu'en seconde écriture — une
     org ne doit jamais exister, fût-ce un instant, sans la marque de ses liens
-    sortants. Cf. les colonnes `orgs.front_*` (db/_init) et `org_front` ci-dessous."""
+    sortants. Cf. les colonnes `orgs.front_*` (db/_init) et `org_front` ci-dessous.
+
+    **Dérivé ICI quand l'appelant ne le pose pas** (`config.front_for`), du tenant de
+    `front_of` — le compte pour qui l'org est créée — sinon de `created_by`. c1896d0
+    avait confié la dérivation à l'appelant, et un seul des trois créateurs d'org la
+    faisait (`capabilities/orgs.py`) : la console admin et l'org PERSO semée à
+    l'inscription repartaient à NULL — donc toute invitation émise depuis un espace
+    perso d'un tenant tiers pointait `oto.cx` (vécu le 26/08 : Growth Room, org 269,
+    30 orgs perso Tulina dans le même état). Un écrivain unique ne peut pas oublier.
+    Passer explicitement `None, None` n'est pas « pas de front », c'est « dérive »."""
     name = (name or "").strip()
     if not name:
         raise ValueError("nom d'org requis")
+    if front_base_url is None and front_brand is None:
+        front_base_url, front_brand = config.front_for(front_of or created_by)
     with _connect() as conn:
         row = conn.execute(
             "INSERT INTO orgs (name, created_by, front_base_url, front_brand) "
@@ -747,6 +762,36 @@ def ensure_personal_org(sub: str, email: Optional[str] = None, name: Optional[st
     if get_active_org(sub) is None:   # nouveau user / ex-perso → la perso devient maison
         set_active_org(sub, pid)
     return pid
+
+
+def backfill_org_front() -> dict:
+    """Idempotent (boot) : une org créée par un compte d'un tenant tiers porte le
+    front de ce tenant — rattrape les lignes nées à NULL avant que `create_org` ne
+    dérive lui-même (cf. sa docstring). Joint sur le PRÉFIXE du `created_by`
+    (`<slug>:`), la même classification que `tenancy.tenant_of`, contre la table
+    `tenants` — la source du `dashboard_url`, pas le registre du process, dont la
+    péremption est justement l'autre façon de produire ces NULL.
+
+    Ne touche JAMAIS une org du tenant `oto` : son créateur porte un sub NU, qui ne
+    matche aucun préfixe `slug:`. Ne touche jamais une ligne déjà posée. Un tenant
+    sans `dashboard_url` ne pose rien (même inertie que `config.front_for`)."""
+    with _connect() as conn:
+        rows = conn.execute(
+            """
+            UPDATE orgs o
+               SET front_base_url = t.dashboard_url, front_brand = t.slug
+              FROM tenants t
+             WHERE o.front_base_url IS NULL AND o.front_brand IS NULL
+               AND t.slug <> %(primary)s AND t.dashboard_url IS NOT NULL
+               AND o.created_by LIKE t.slug || ':%%'
+            RETURNING o.id, t.slug
+            """,
+            {"primary": _PRIMARY_TENANT},
+        ).fetchall()
+    if rows:
+        _log.info("backfill_org_front: %d org(s) rattachée(s) à leur front : %s",
+                  len(rows), ", ".join(f"#{r['id']}→{r['slug']}" for r in rows))
+    return {"updated": len(rows)}
 
 
 def backfill_personal_orgs() -> dict:

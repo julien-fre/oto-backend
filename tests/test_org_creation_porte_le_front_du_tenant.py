@@ -116,3 +116,70 @@ def test_le_front_nest_pas_declarable_par_lappelant(registre, creation_sans_db):
     pas — et c'est le contrat d'entrée qu'il faudrait ensuite retirer aux
     intégrateurs. `CreateOrgInput` doit donc rester à un seul champ."""
     assert set(orgs.CreateOrgInput.model_fields) == {"name"}
+
+
+# --- la dérivation vit dans le STORE : aucun créateur ne peut l'oublier ----------
+
+@pytest.fixture
+def insert_capture(monkeypatch):
+    """`_connect` factice : capture les paramètres de l'INSERT de `create_org`."""
+    vus = {}
+
+    class _Conn:
+        def execute(self, sql, params=None):
+            if "INSERT INTO orgs" in sql:
+                vus["params"] = params
+            class _R:
+                def fetchone(_s):
+                    return {"id": 4243}
+            return _R()
+
+    class _Ctx:
+        def __enter__(self):
+            return _Conn()
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(org_store, "_connect", lambda: _Ctx())
+    return vus
+
+
+def test_le_store_derive_le_front_quand_personne_ne_le_pose(registre, insert_capture):
+    """Le trou du 26/08 : deux des trois créateurs d'org ne dérivaient rien. Désormais
+    l'appel nu — celui de la console admin et de l'org perso — pose quand même."""
+    org_store.create_org("Perso", created_by="acme:u-1")
+    _, _, base, brand = insert_capture["params"]
+    assert (base, brand) == ("https://app.acme.test", "acme")
+
+
+def test_le_store_ne_marque_pas_une_org_oto(registre, insert_capture):
+    org_store.create_org("Une org oto", created_by="bn01jfy76a5n")
+    assert insert_capture["params"][2:] == (None, None)
+
+
+def test_le_front_suit_le_responsable_pas_loperateur(registre, insert_capture):
+    """Console admin : un opérateur oto provisionne une org POUR un compte Acme —
+    elle doit être une org Acme (`front_of`), `created_by` restant l'opérateur."""
+    org_store.create_org("Pour Acme", created_by="bn01jfy76a5n", front_of="acme:u-1")
+    _, created_by, base, brand = insert_capture["params"]
+    assert created_by == "bn01jfy76a5n"
+    assert (base, brand) == ("https://app.acme.test", "acme")
+
+
+def test_un_front_pose_par_lappelant_nest_pas_rederive(registre, insert_capture):
+    """`capabilities/orgs.py` dérive déjà et passe le résultat : le store le garde."""
+    org_store.create_org("X", created_by="acme:u-1",
+                         front_base_url="https://app.acme.test", front_brand="acme")
+    assert insert_capture["params"][2:] == ("https://app.acme.test", "acme")
+
+
+def test_la_console_admin_passe_le_front_du_responsable(registre, monkeypatch):
+    from oto_mcp.capabilities import orgs_admin
+    vus = {}
+    monkeypatch.setattr(org_store, "create_org",
+                        lambda name, created_by=None, **kw: vus.update(kw) or 4244)
+    monkeypatch.setattr(org_store, "add_org_member", lambda *a, **k: None)
+    monkeypatch.setattr(orgs_admin, "_resolve_target", lambda t: "acme:u-1")
+    orgs_admin._create_org(ResolvedCtx(sub="bn01jfy76a5n"),
+                           orgs_admin.CreateOrgInput(name="Pour Acme", admin="u@acme.test"))
+    assert vus["front_of"] == "acme:u-1"
