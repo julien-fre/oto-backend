@@ -199,3 +199,23 @@ def test_upstream_401_is_a_clear_key_error():
             asyncio.run(m.get_tool("waalaxy_campaign")).fn()
     finally:
         patcher.stop()
+
+
+def test_add_receipt_edge_cases():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = asyncio.run(m.get_tool("waalaxy_prospect")).fn
+        # importé mais sans addToCampaignCode alors qu'une campagne était demandée → signalé
+        cls.return_value.add_prospects.return_value = {"result": [{"importCode": "success"}]}
+        out = fn(prospect_list_id="l1", campaign_id="c1", prospect={"url": URL})
+        assert out["enrolled"] == 0 and out["failed"][0]["code"] == "not_enrolled"
+        # réponse plus courte que le lot → total reste 3, manquants signalés
+        out = fn(prospect_list_id="l1", prospects=[{"url": URL}, {"url": URL + "2"}, {"url": URL + "3"}])
+        assert out["total"] == 3 and out["imported"] == 1 and "warning" in out
+        assert [f["code"] for f in out["failed"]] == ["no_result", "no_result"]
+        # corps inattendu → forme complète, `failed` lisible
+        cls.return_value.add_prospects.return_value = True
+        out = fn(prospect_list_id="l1", prospect={"url": URL})
+        assert out["imported"] == 0 and out["failed"][0]["code"] == "unexpected_response"
+    finally:
+        patcher.stop()
