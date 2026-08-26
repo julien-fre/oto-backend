@@ -157,7 +157,8 @@ def test_org_scope_is_the_ACTIVE_org_never_membership():
 # basculer un connecteur sur la chaîne n'éteint pas son free-tier (celle décision-là
 # se prend connecteur par connecteur, mesure de rayon en main — fullenrich seul l'a eue).
 FREE_TIER_OTHERS = ("serper", "hunter", "reddit", "sirene", "kaspr",
-                    "unipile", "apollo", "serpapi", "searchapi")
+                    "unipile", "apollo", "serpapi", "searchapi",
+                    "tavily")  # 26/08 : socle recherche web, ouvert sans quota (GO Julien)
 
 # Vague 2 (23/08) : chaînés SANS toucher leur flag — arêtes semées au boot, révocation
 # vraie, metering d'arête ; un appelant sans arête retombe sur le chemin ouvert.
@@ -165,7 +166,7 @@ WAVE2 = ("serper", "hunter", "apollo", "serpapi", "kaspr", "reddit")
 
 # Jamais chaînés, et pourquoi : unipile (mode plateforme gouverné par option comp +
 # comptes opérés, pas par share_down), searchapi/sirene (pas de clé plateforme posée).
-NEVER_CHAINED = ("unipile", "searchapi", "sirene")
+NEVER_CHAINED = ("unipile", "searchapi", "sirene", "tavily")
 
 
 def test_unchained_connectors_never_touch_the_chain(monkeypatch):
