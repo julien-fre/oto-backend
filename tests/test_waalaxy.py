@@ -38,10 +38,14 @@ def _fake_key(monkeypatch):
 
 
 def _fn_with_mock_client():
+    """`WaalaxyClient` mocké sauf `build_add_prospects_body` (pure, gardée réelle
+    pour que dry_run exerce les vraies gardes)."""
     from fastmcp import FastMCP
+    from oto.tools.waalaxy.client import WaalaxyClient as real
 
     patcher = patch("oto.tools.waalaxy.client.WaalaxyClient")
     cls = patcher.start()
+    cls.build_add_prospects_body = staticmethod(real.build_add_prospects_body)
     m = FastMCP("t")
     waalaxy.register(m)
     return m, cls, patcher
@@ -62,7 +66,7 @@ def test_waalaxy_is_keyed_byo_only_connector():
 
 def test_waalaxy_has_onboarding_doc():
     kinds = {s.kind for s in providers.REGISTRY["waalaxy"].doc_sections}
-    assert {"prerequisite", "usage"} <= kinds
+    assert {"prerequisite", "usage", "note"} <= kinds
 
 
 def test_tools_register_under_namespace_with_descriptions(all_tools):
@@ -72,19 +76,25 @@ def test_tools_register_under_namespace_with_descriptions(all_tools):
         assert all_tools[name].description, f"{name} has no description"
 
 
-def test_verify_probe_registered():
-    _m, _cls, patcher = _fn_with_mock_client()
+def test_verify_probe_registered_and_checks_body():
+    m, cls, patcher = _fn_with_mock_client()
     try:
         assert connector_verify.supports("waalaxy")
+        cls.return_value.test_connection.return_value = True
+        waalaxy._verify({"key": "k"})
+        cls.return_value.test_connection.return_value = {"html": "…"}
+        with pytest.raises(RuntimeError, match="pas répondu true"):
+            waalaxy._verify({"key": "k"})
     finally:
-        # Sans le stop, WaalaxyClient reste un MagicMock pour le reste du process
-        # et le test de jointure ci-dessous devient vacueux (un mock a tout).
         patcher.stop()
+    import oto.tools.waalaxy.client as real
+    assert not isinstance(real.WaalaxyClient, type(cls)), "patch leaked"
 
 
 def test_client_exposes_methods_called_by_tools():
     from oto.tools.waalaxy.client import WaalaxyClient
-    for meth in ("test_connection", "list_prospect_lists", "list_campaigns", "add_prospects"):
+    for meth in ("test_connection", "list_prospect_lists", "list_campaigns", "add_prospects",
+                 "build_add_prospects_body"):
         assert callable(getattr(WaalaxyClient, meth, None)), f"WaalaxyClient.{meth} manquant"
 
 
@@ -131,6 +141,11 @@ def test_add_dry_run_returns_payload_without_calling():
         assert out["would_post"]["moveDuplicatesToOtherList"] is True
         assert "canCreateDuplicates" not in out["would_post"]
         cls.return_value.add_prospects.assert_not_called()
+        with pytest.raises(McpError, match="1000"):
+            fn(prospect_list_id="l1", dry_run=True,
+               prospect={"url": URL, "customVariables": [{"label": "a", "value": "x" * 1001}]})
+        with pytest.raises(McpError, match="origin"):
+            fn(prospect_list_id="l1", prospect={"url": URL}, origin="", dry_run=True)
     finally:
         patcher.stop()
 
@@ -182,5 +197,25 @@ def test_upstream_401_is_a_clear_key_error():
         cls.return_value.list_campaigns.side_effect = UpstreamHTTPError(401, {"title": "Unauthorized"})
         with pytest.raises(McpError, match="rejeté la clé"):
             asyncio.run(m.get_tool("waalaxy_campaign")).fn()
+    finally:
+        patcher.stop()
+
+
+def test_add_receipt_edge_cases():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = asyncio.run(m.get_tool("waalaxy_prospect")).fn
+        # importé mais sans addToCampaignCode alors qu'une campagne était demandée → signalé
+        cls.return_value.add_prospects.return_value = {"result": [{"importCode": "success"}]}
+        out = fn(prospect_list_id="l1", campaign_id="c1", prospect={"url": URL})
+        assert out["enrolled"] == 0 and out["failed"][0]["code"] == "not_enrolled"
+        # réponse plus courte que le lot → total reste 3, manquants signalés
+        out = fn(prospect_list_id="l1", prospects=[{"url": URL}, {"url": URL + "2"}, {"url": URL + "3"}])
+        assert out["total"] == 3 and out["imported"] == 1 and "warning" in out
+        assert [f["code"] for f in out["failed"]] == ["no_result", "no_result"]
+        # corps inattendu → forme complète, `failed` lisible
+        cls.return_value.add_prospects.return_value = True
+        out = fn(prospect_list_id="l1", prospect={"url": URL})
+        assert out["imported"] == 0 and out["failed"][0]["code"] == "unexpected_response"
     finally:
         patcher.stop()
