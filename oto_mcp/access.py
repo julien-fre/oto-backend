@@ -769,6 +769,10 @@ class CascadeProbe:
 # sondes réelles : la clé existe au coffre mais la cascade la traite comme absente
 # → la résolution ET le statut sautent le barreau membre (le niveau du dessous prend
 # le relais). Elle reste listée par `oto_instance op=list` (KeyStack), réactivable.
+# ⚠️ La sonde membre du chemin de RÉSOLUTION n'est PAS celle-ci : c'est `_member_fetch`
+# (dans `_resolve_credential_impl`), qui porte la sélection multi-compte — elle doit
+# rendre le MÊME verdict de suspension (vécu #401 : elle ne le lisait pas, une clé
+# suspendue gagnait quand même pendant que le KeyStack annonçait le relais).
 PRESENCE_PROBE = CascadeProbe(
     member=lambda s, o, p: ((True, "") if db.has_member_api_key(s, o, p)
                             and not db.member_instance_suspended(s, o, p) else None),
@@ -956,9 +960,17 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         > compte unique auto > défaut posé (`oto_identity(op='set')`) > McpError —
         jamais de repli muet vers un autre compte/l'org/la plateforme (anti-usurpation).
         '' = mono-compte legacy. Un compte explicite/épinglé introuvable LÈVE (on
-        n'agit pas sous une autre identité)."""
+        n'agit pas sous une autre identité).
+
+        Une instance SUSPENDUE (lot 2 / ADR 0044 §KeyStack) est traitée comme absente :
+        le barreau membre passe son tour et le niveau du dessous (groupe/org/plateforme)
+        prend le relais — même verdict que les sondes PRESENCE/FETCH, sinon la
+        résolution réelle contredit ce que le KeyStack annonce (#401). Suspendre est
+        un acte du membre sur SA clé : le relais est le contrat, pas une usurpation."""
         if not _is_multi_account(mprov):
             key = db.get_member_api_key(msub, morg, mprov)
+            if key and db.member_instance_suspended(msub, morg, mprov):
+                return None
             return (key, "") if key else None
         eff = (account if account is not None
                else session_org.current_call_account() or project_pinned_identity(mprov))
@@ -995,6 +1007,11 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
                     f"Compte `{eff}` introuvable pour `{mprov}` — vérifie avec "
                     f"oto_identity(op='list'), ou pose-le sur {_ACCOUNT_URL}."
                 )))
+        # Suspension PAR compte (le `account` de connectors.instances.suspend) :
+        # une clé existante mais mise de côté saute le barreau — après le check
+        # « introuvable » ci-dessus, qui garde sa sémantique (absent ≠ suspendu).
+        if key and db.member_instance_suspended(msub, morg, mprov, eff):
+            return None
         return (key, eff) if key else None
 
     # Marche unique de la cascade (walker) — la sonde fetch ne déchiffre que le

@@ -141,6 +141,7 @@ def _wire_multi_account(monkeypatch, provider, org, sub, accounts, keys):
     monkeypatch.setattr(credentials_store, "member_id", lambda o, s: f"{o}:{s}")
     monkeypatch.setattr(db, "get_member_api_key",
                         lambda s, o, p, account="": keys.get(account))
+    monkeypatch.setattr(db, "member_instance_suspended", lambda *a, **k: False)
 
 
 def test_resolve_reads_account_axis(monkeypatch):
@@ -181,6 +182,7 @@ def _wire_multi_account_with_meta(monkeypatch, provider, org, sub, accounts_meta
     monkeypatch.setattr(credentials_store, "member_id", lambda o, s: f"{o}:{s}")
     monkeypatch.setattr(db, "get_member_api_key",
                         lambda s, o, p, account="": keys.get(account))
+    monkeypatch.setattr(db, "member_instance_suspended", lambda *a, **k: False)
 
 
 def test_no_pin_resolves_to_the_marked_default(monkeypatch):

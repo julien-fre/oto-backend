@@ -49,6 +49,8 @@ def _wire(monkeypatch, *, user=None, group=None, org=None,
     # list_accounts pour désambiguïser → aucun compte nommé ici ⇒ account='' (mono
     # legacy), le stub get_credential ci-dessus tranche la présence/absence.
     monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a, **k: [])
+    monkeypatch.setattr(access.credentials_store, "instance_suspended",
+                        lambda *a, **k: False)
     monkeypatch.setattr(access, "current_group", lambda sub: active_group)
     monkeypatch.setattr(access, "current_org", lambda sub: active_org)
     monkeypatch.setattr(access.group_store, "get_group_secret",

@@ -25,6 +25,8 @@ def _wire(monkeypatch):
     monkeypatch.setattr(access, "project_pinned_identity", lambda prov: None)
     monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: None)
     monkeypatch.setattr(access.db, "insert_tool_call", lambda payload: None)
+    monkeypatch.setattr(access.db, "member_instance_suspended",
+                        lambda *a, **k: False)
     yield
 
 

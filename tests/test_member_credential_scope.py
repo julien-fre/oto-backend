@@ -52,6 +52,8 @@ def _wire_resolution(monkeypatch, *, org_of_key: int, current: int):
     monkeypatch.setattr(
         access.db, "get_member_api_key",
         lambda sub, org, prov: "K-MEMBER" if org == org_of_key else None)
+    monkeypatch.setattr(access.db, "member_instance_suspended",
+                        lambda *a, **k: False)
     monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: None)
     monkeypatch.setattr(access.db, "insert_tool_call", lambda payload: None)
 
