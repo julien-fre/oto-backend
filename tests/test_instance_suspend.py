@@ -72,8 +72,14 @@ def _wire_real_resolution(monkeypatch, *, suspended, org=1):
                         lambda s, o, p, *a, **k: "MK")
     monkeypatch.setattr(access.db, "member_instance_suspended",
                         lambda s, o, p, *a, **k: suspended)
-    monkeypatch.setattr(access.group_store, "get_group_secret", lambda g, p: None)
-    monkeypatch.setattr(access.org_store, "get_org_secret", lambda o, p: "OK")
+    # Multi-compte par défaut (reprise #399) : la sélection liste les comptes
+    # avant de lire la clé ; aucun compte nommé ici → ligne legacy `account=''`.
+    monkeypatch.setattr(access.credentials_store, "list_accounts",
+                        lambda *a, **k: [])
+    monkeypatch.setattr(access.group_store, "get_group_secret",
+                        lambda g, p, account="": None)
+    monkeypatch.setattr(access.org_store, "get_org_secret",
+                        lambda o, p, account="": "OK")
     monkeypatch.setattr(access.db, "insert_tool_call", lambda payload: None)
 
 
