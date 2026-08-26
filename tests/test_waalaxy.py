@@ -1,0 +1,176 @@
+"""Connecteur Waalaxy — prospection LinkedIn, API publique import-only
+(developers.waalaxy.com).
+
+Verrouille : l'entrée de registre (keyed byo-only, catégorie Prospection), la
+doc how-to, la surface MCP (3 tools avec description — régression du piège
+f-string-docstring), la sonde « tester la connexion », la jointure
+tool↔client oto-core, l'exclusivité prospect/prospects, le dry_run, et le
+reçu qui lit les codes par item (Waalaxy répond 200 même en échec).
+"""
+import asyncio
+from unittest.mock import patch
+
+import pytest
+from mcp.shared.exceptions import McpError
+
+from oto_mcp import connector_verify, providers
+from oto_mcp.tool_visibility import namespace_of
+from oto_mcp.tools import waalaxy
+
+EXPECTED_TOOLS = {"waalaxy_prospect_list", "waalaxy_campaign", "waalaxy_prospect"}
+URL = "https://www.linkedin.com/in/jane-doe"
+
+
+@pytest.fixture(scope="module")
+def all_tools():
+    from fastmcp import FastMCP
+    from oto_mcp.tools import register_all
+
+    m = FastMCP("t")
+    register_all(m)
+    return {t.name: t for t in asyncio.run(m._list_tools())}
+
+
+@pytest.fixture(autouse=True)
+def _fake_key(monkeypatch):
+    monkeypatch.setattr(
+        "oto_mcp.access.resolve_api_key", lambda provider, account=None: ("k", False))
+
+
+def _fn_with_mock_client():
+    from fastmcp import FastMCP
+
+    patcher = patch("oto.tools.waalaxy.client.WaalaxyClient")
+    cls = patcher.start()
+    m = FastMCP("t")
+    waalaxy.register(m)
+    return m, cls, patcher
+
+
+def test_waalaxy_is_keyed_byo_only_connector():
+    c = providers.REGISTRY["waalaxy"]
+    assert c.kind == "tools"
+    assert c.keyed and c.secret_kind == "api_key"
+    assert c.auth_modes == frozenset({"byo_user", "byo_org"})
+    assert c.default_active is False
+    assert "waalaxy" in providers.KEY_PROVIDERS
+    assert c.category == "Prospection"
+    assert c.publisher_name == "Waalaxy"
+    assert providers._LOGO_DOMAIN_BY_CONNECTOR["waalaxy"] == "waalaxy.com"
+    assert [f.name for f in c.credential_fields] == ["key"]
+
+
+def test_waalaxy_has_onboarding_doc():
+    kinds = {s.kind for s in providers.REGISTRY["waalaxy"].doc_sections}
+    assert {"prerequisite", "usage"} <= kinds
+
+
+def test_tools_register_under_namespace_with_descriptions(all_tools):
+    assert EXPECTED_TOOLS <= set(all_tools)
+    for name in EXPECTED_TOOLS:
+        assert namespace_of(name) == "waalaxy"
+        assert all_tools[name].description, f"{name} has no description"
+
+
+def test_verify_probe_registered():
+    _fn_with_mock_client()
+    assert connector_verify.supports("waalaxy")
+
+
+def test_client_exposes_methods_called_by_tools():
+    from oto.tools.waalaxy.client import WaalaxyClient
+    for meth in ("test_connection", "list_prospect_lists", "list_campaigns", "add_prospects"):
+        assert callable(getattr(WaalaxyClient, meth, None)), f"WaalaxyClient.{meth} manquant"
+
+
+def test_list_tools_delegate():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        cls.return_value.list_prospect_lists.return_value = [{"_id": "l1"}]
+        assert asyncio.run(m.get_tool("waalaxy_prospect_list")).fn() == [{"_id": "l1"}]
+        cls.return_value.list_campaigns.return_value = {"total": 0, "campaigns": []}
+        assert asyncio.run(m.get_tool("waalaxy_campaign")).fn()["total"] == 0
+    finally:
+        patcher.stop()
+
+
+def test_add_requires_exactly_one_of_prospect_prospects_and_list_id():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = asyncio.run(m.get_tool("waalaxy_prospect")).fn
+        with pytest.raises(McpError, match="exactement un"):
+            fn(prospect_list_id="l1")
+        with pytest.raises(McpError, match="exactement un"):
+            fn(prospect_list_id="l1", prospect={"url": URL}, prospects=[{"url": URL}])
+        with pytest.raises(McpError, match="prospect_list_id"):
+            fn(prospect={"url": URL})
+        with pytest.raises(McpError, match="url"):
+            fn(prospect_list_id="l1", prospect={"customProfile": {}})
+        with pytest.raises(McpError, match="LinkedIn"):
+            fn(prospect_list_id="l1", prospect={"url": "https://acme.com"})
+        with pytest.raises(McpError, match="max 100"):
+            fn(prospect_list_id="l1", prospects=[{"url": URL}] * 101)
+        cls.return_value.add_prospects.assert_not_called()
+    finally:
+        patcher.stop()
+
+
+def test_add_dry_run_returns_payload_without_calling():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = asyncio.run(m.get_tool("waalaxy_prospect")).fn
+        out = fn(prospect_list_id="l1", campaign_id="c1", prospect={"url": URL},
+                 move_duplicates_to_other_list=True, dry_run=True)
+        assert out["dry_run"] is True and out["total"] == 1
+        assert out["would_post"]["campaignId"] == "c1"
+        assert out["would_post"]["moveDuplicatesToOtherList"] is True
+        assert "canCreateDuplicates" not in out["would_post"]
+        cls.return_value.add_prospects.assert_not_called()
+    finally:
+        patcher.stop()
+
+
+def test_add_receipt_reads_per_item_codes():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = asyncio.run(m.get_tool("waalaxy_prospect")).fn
+        cls.return_value.add_prospects.return_value = {"result": [
+            {"importCode": "success", "addToCampaignCode": "success",
+             "prospect": {"_id": "p1", "profile": {}}},
+            {"importCode": "duplicated_prospect", "message": "already exists"},
+            {"importCode": "success", "addToCampaignCode": "already_in_campaign"},
+        ]}
+        out = fn(prospect_list_id="l1", campaign_id="c1",
+                 prospects=[{"url": URL}, {"url": URL + "2"}, {"url": URL + "3"}])
+        assert (out["total"], out["imported"], out["enrolled"]) == (3, 2, 1)
+        assert [f["code"] for f in out["failed"]] == ["duplicated_prospect", "already_in_campaign"]
+        assert out["failed"][0]["url"] == URL + "2"
+        assert out["failed"][1]["stage"] == "campaign"
+        cls.return_value.add_prospects.assert_called_once()
+        args, kwargs = cls.return_value.add_prospects.call_args
+        assert args[1] == "l1" and kwargs["campaign_id"] == "c1" and kwargs["origin"] == "oto"
+    finally:
+        patcher.stop()
+
+
+def test_add_single_prospect_receipt_without_campaign():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        fn = asyncio.run(m.get_tool("waalaxy_prospect")).fn
+        cls.return_value.add_prospects.return_value = {"result": [{"importCode": "max_limit_crm"}]}
+        out = fn(prospect_list_id="l1", prospect={"url": URL})
+        assert out["imported"] == 0 and "enrolled" not in out
+        assert out["failed"][0]["code"] == "max_limit_crm"
+    finally:
+        patcher.stop()
+
+
+def test_upstream_401_is_a_clear_key_error():
+    from oto.tools.common.errors import UpstreamHTTPError
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        cls.return_value.list_campaigns.side_effect = UpstreamHTTPError(401, {"title": "Unauthorized"})
+        with pytest.raises(McpError, match="rejeté la clé"):
+            asyncio.run(m.get_tool("waalaxy_campaign")).fn()
+    finally:
+        patcher.stop()
