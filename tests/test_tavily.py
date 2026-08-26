@@ -44,9 +44,10 @@ def test_tavily_is_keyed_with_open_platform_key():
     assert c.kind == "tools"
     assert c.keyed and c.secret_kind == "api_key"
     assert c.auth_modes == frozenset({"byo_user", "byo_org", "platform"})
-    # socle de recherche web : clé plateforme utilisable sans grant, sans quota.
+    # socle de recherche web : clé plateforme utilisable sans grant, quota par
+    # défaut 100/mois (0 serait ILLIMITÉ — falsy dans access.py, revue #407).
     assert c.platform_key_open is True
-    assert c.default_quota == 0
+    assert c.default_quota == 100
     assert "tavily" in providers.KEY_PROVIDERS
     assert c.category == "Prospection"
     assert c.publisher_name == "Tavily"

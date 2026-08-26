@@ -1,8 +1,9 @@
 """Tavily — recherche web et lecture de pages taillées pour un agent (tavily.com).
 
 Wrappe `oto.tools.tavily.client.TavilyClient`. keyed `api_key` (Bearer `tvly-…`),
-byo user/org **et** clé plateforme ouverte (quota 0 = illimité) : la recherche web
-est un socle, on ne fait pas payer le ticket d'entrée.
+byo user/org **et** clé plateforme ouverte (quota 100/mois — garde conservatrice,
+cf. providers.py) : la recherche web est un socle, on ne fait pas payer le ticket
+d'entrée.
 
 Quatre gestes, tous synchrones :
 - `tavily_search` : recherche web → extraits cités + réponse synthétique optionnelle.
@@ -23,6 +24,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Optional, Union
 
+import requests
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
@@ -87,6 +89,8 @@ def register(mcp: FastMCP) -> None:
             raise _bad(str(e))
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
+        except (requests.ConnectionError, requests.Timeout) as e:
+            raise _bad(f"Tavily injoignable (réseau/timeout) — réessaie plus tard. {e}")
 
     # --- recherche ----------------------------------------------------------
 
@@ -211,7 +215,9 @@ def register(mcp: FastMCP) -> None:
                 url, instructions=instructions, max_depth=max_depth,
                 max_breadth=max_breadth, limit=limit, select_paths=select_paths,
                 exclude_paths=exclude_paths, allow_external=allow_external,
-                timeout_s=_CRAWL_TIMEOUT_S)
+                # budget Tavily 40 s ⟹ le HTTP local n'attend jamais les 160 s
+                # du défaut client (contrainte mono-loop, cf. conventions)
+                timeout_s=_CRAWL_TIMEOUT_S, timeout=45)
 
     # --- crawl (synchrone, borné) -------------------------------------------
 
@@ -257,7 +263,7 @@ def register(mcp: FastMCP) -> None:
                 max_breadth=max_breadth, limit=limit, select_paths=select_paths,
                 exclude_paths=exclude_paths, allow_external=allow_external,
                 extract_depth=extract_depth, format=format,
-                timeout_s=_CRAWL_TIMEOUT_S)
+                timeout_s=_CRAWL_TIMEOUT_S, timeout=45)
 
 
 def _cap_limit(limit: Optional[int]) -> int:
