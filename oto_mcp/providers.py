@@ -610,8 +610,8 @@ _REGISTRY_LIST = [
        secret_kind="api_key", default_quota=5,
        label="FullEnrich", help="enrichissement waterfall", href="https://app.fullenrich.com"),
     # dropcontact : enrichissement contact + entreprise (email/téléphone/SIRENE) en
-    # batch async (submit/fetch, même idiome que fullenrich). byo-only (pay-per-
-    # crédit, chacun connecte son compte) — pas de clé plateforme.
+    # batch async (submit/fetch, même idiome que fullenrich). byo par défaut ;
+    # clé plateforme GRANT-ONLY depuis le 26/08 (#405, GTM crédits — jamais ouverte).
     _c("dropcontact", ["dropcontact"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
@@ -625,8 +625,9 @@ _REGISTRY_LIST = [
        label="Folk", help="CRM — contacts, companies, deals & custom objects",
        href="https://app.folk.app"),
     # checkcrm : wrappe l'API v1 de l'app "enrichment" de Julien (job-change check
-    # LinkedIn + gestion des subsidiaries) — byo-only, chaque org configure sa
-    # propre clé enrichment (voir enrichment/docs/sf-api.md). Nommé "checkcrm" (un
+    # LinkedIn + gestion des subsidiaries) — byo par défaut, chaque org configure sa
+    # propre clé enrichment (voir enrichment/docs/sf-api.md) ; clé plateforme
+    # GRANT-ONLY depuis le 26/08 (#405). Nommé "checkcrm" (un
     # seul token, pas de underscore) : namespace_of prend le 1er token avant "_",
     # "check_crm" romprait le préfixe des tools check_crm_* (résoudrait "check").
     _c("checkcrm", ["checkcrm"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
@@ -667,9 +668,9 @@ _REGISTRY_LIST = [
        href="https://www.unipile.com",
        modules=("unipile", "whatsapp", "telegram", "instagram", "messenger", "twitter")),
     # topograph : KYB — données + documents normalisés de 100+ registres publics
-    # européens via une seule API REST. byo-only (pay-per-request, chacun connecte
-    # son compte ; clé d'org partageable), keyed api_key (en-tête x-api-key résolu
-    # côté client). Pas de clé plateforme. Hors socle : opt-in.
+    # européens via une seule API REST. byo par défaut (pay-per-request ; clé d'org
+    # partageable), keyed api_key (en-tête x-api-key résolu côté client) ; clé
+    # plateforme GRANT-ONLY depuis le 26/08 (#405). Hors socle : opt-in.
     _c("topograph", ["topograph"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
@@ -734,8 +735,9 @@ _REGISTRY_LIST = [
            CredentialField("project_id", "Project ID Scaleway", secret=False, reveal=True),
            CredentialField("region", "Région TEM (déf. fr-par)", secret=False, reveal=True),
        )),
-    # lusha : recherche + reveal (emails/téléphones) de contacts, byo-only (pas
-    # de clé plateforme). Auth = header `api_key` plat (pas OAuth), 1 seul
+    # lusha : recherche + reveal (emails/téléphones) de contacts, byo par défaut ;
+    # clé plateforme GRANT-ONLY depuis le 26/08 (#405). Auth = header `api_key`
+    # plat (pas OAuth), 1 seul
     # endpoint câblé pour l'instant (search-and-enrich).
     _c("lusha", ["lusha"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
@@ -878,9 +880,9 @@ _REGISTRY_LIST = [
     # (developers.cognism.com). Client REST synchrone dans oto-core
     # (`oto.tools.cognism`), tools curés dans `tools/cognism.py`. Cascade de clé
     # standard (`resolve_api_key`) — BYO org couvre le besoin "une clé pour tout
-    # l'org" sans ouvrir de grant plateforme (pas d'accord commercial Otomata↔
-    # Cognism à ce jour, donc PAS de mode "platform" ici, contrairement à AI Ark/
-    # Kaspr). search_contacts/search_accounts = preview only (flags `has*`, pas
+    # l'org" ; mode "platform" GRANT-ONLY depuis le 26/08 (#405, GTM crédits —
+    # ce doc disait l'inverse jusque-là, faute d'accord commercial Otomata↔Cognism).
+    # search_contacts/search_accounts = preview only (flags `has*`, pas
     # d'email/téléphone réel) ; redeem_contacts/redeem_accounts = reveal complet
     # (consomme des crédits) ; enrich_contact/enrich_account = lookup par
     # identité (email/LinkedIn/nom+société). DSL de filtre (~150 champs)
@@ -1285,9 +1287,9 @@ _REGISTRY_LIST = [
        help="scraping & SERP via proxy (coquille vide — à implémenter)",
        href="https://brightdata.com"),
     # cloro : veille AI-search (ChatGPT/Gemini/Perplexity/Copilot/Grok/AI Mode) +
-    # SERP Google en JSON. keyed api_key, **BYOK** (byo user/org) — PAS de mode
-    # plateforme (décision produit : chaque org pose SA clé cloro, pas de clé oto
-    # partagée ; signaux #210-212). Sans mode platform, plus de quota daily oto.
+    # SERP Google en JSON. keyed api_key, byo par défaut ; mode plateforme
+    # GRANT-ONLY depuis le 26/08 (#405, GTM crédits) — renverse la décision produit
+    # des signaux #210-212 (« chaque org pose SA clé »), quota 0, jamais ouverte.
     _c("cloro", ["cloro"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
@@ -1295,9 +1297,9 @@ _REGISTRY_LIST = [
        help="veille AI-search (ChatGPT, Gemini, Perplexity…) + SERP Google JSON",
        href="https://cloro.dev"),
     # firecrawl : une URL → markdown propre (rendu JS, nav retirée) ; map/crawl pour
-    # un site entier, search pour du web + contenu. keyed api_key, **BYOK** (byo
-    # user/org) — facturation au crédit chez l'éditeur, donc pas de clé oto partagée
-    # (même raisonnement que cloro).
+    # un site entier, search pour du web + contenu. keyed api_key, byo par défaut
+    # (facturation au crédit chez l'éditeur) ; clé plateforme GRANT-ONLY depuis le
+    # 26/08 (#405, GTM crédits).
     _c("firecrawl", ["firecrawl"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
@@ -1306,8 +1308,8 @@ _REGISTRY_LIST = [
        href="https://firecrawl.dev"),
     # apify : catalogue d'« actors » (scrapers hébergés prêts à l'emploi — Google
     # Maps, LinkedIn, Amazon…) qu'on lance avec un JSON d'entrée et dont on lit le
-    # dataset. keyed api_key, **BYOK** : un run se facture à l'usage sur le compte
-    # de l'org.
+    # dataset. keyed api_key, byo par défaut (un run se facture à l'usage sur le
+    # compte de l'org) ; clé plateforme GRANT-ONLY depuis le 26/08 (#405).
     _c("apify", ["apify"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
@@ -1318,9 +1320,9 @@ _REGISTRY_LIST = [
     # --- signaux de recrutement + campagnes sortantes — câblés 2026-08-17 ----
     # theirstack : offres d'emploi par employeur + technologies détectées dans les
     # offres (technographie : ERP, CRM…). Deux endpoints POST dont le corps est la
-    # DSL de filtres éditeur, passée telle quelle. keyed api_key (Bearer), **BYOK**
-    # (byo user/org) — facturation au crédit, au record ENTREPRISE rendu, donc pas de
-    # clé oto partagée. Couverture partielle sur les PME : `data: []` est normal.
+    # DSL de filtres éditeur, passée telle quelle. keyed api_key (Bearer), byo par
+    # défaut — facturation au crédit, au record ENTREPRISE rendu ; clé plateforme
+    # GRANT-ONLY depuis le 26/08 (#405). Couverture PME partielle : `data: []` est normal.
     # Lecture seule.
     _c("theirstack", ["theirstack"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
