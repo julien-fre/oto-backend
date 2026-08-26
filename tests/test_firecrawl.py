@@ -42,13 +42,13 @@ def _tool(name):
 
 # --- registre -----------------------------------------------------------------
 
-def test_firecrawl_is_keyed_byo_only_connector():
+def test_firecrawl_is_keyed_connector_platform_grant_only():
     c = providers.REGISTRY["firecrawl"]
     assert c.kind == "tools"
     assert c.keyed and c.secret_kind == "api_key"
-    assert c.auth_modes == frozenset({"byo_user", "byo_org"})
-    # byo-only : Firecrawl facture au crédit → pas de clé oto partagée.
-    assert "platform" not in c.auth_modes
+    assert c.auth_modes == frozenset({"byo_user", "byo_org", "platform"})
+    # platform sur grant explicite (revente au crédit) : jamais en libre-service.
+    assert c.platform_key_open is False
     assert c.default_quota == 0
     assert "firecrawl" in providers.KEY_PROVIDERS
     assert c.category == "Prospection"

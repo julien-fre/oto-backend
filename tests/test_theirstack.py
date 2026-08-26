@@ -47,12 +47,12 @@ def _tool(name):
 
 # --- registre -----------------------------------------------------------------
 
-def test_theirstack_is_keyed_byo_only_connector():
+def test_theirstack_is_keyed_connector_platform_grant_only():
     c = providers.REGISTRY["theirstack"]
     assert c.kind == "tools"
     assert c.keyed and c.secret_kind == "api_key"
-    assert c.auth_modes == frozenset({"byo_user", "byo_org"})
-    assert "platform" not in c.auth_modes          # facturé au crédit → pas de clé oto
+    assert c.auth_modes == frozenset({"byo_user", "byo_org", "platform"})
+    assert c.platform_key_open is False           # revente au crédit → grant explicite
     assert c.default_active is False               # deny-by-default
     assert c.default_quota == 0
     assert "theirstack" in providers.KEY_PROVIDERS

@@ -609,7 +609,8 @@ _REGISTRY_LIST = [
     # dropcontact : enrichissement contact + entreprise (email/téléphone/SIRENE) en
     # batch async (submit/fetch, même idiome que fullenrich). byo-only (pay-per-
     # crédit, chacun connecte son compte) — pas de clé plateforme.
-    _c("dropcontact", ["dropcontact"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("dropcontact", ["dropcontact"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="Dropcontact", help="enrichissement contact + entreprise (email/téléphone/SIRENE)",
        href="https://www.dropcontact.com"),
@@ -625,7 +626,8 @@ _REGISTRY_LIST = [
     # propre clé enrichment (voir enrichment/docs/sf-api.md). Nommé "checkcrm" (un
     # seul token, pas de underscore) : namespace_of prend le 1er token avant "_",
     # "check_crm" romprait le préfixe des tools check_crm_* (résoudrait "check").
-    _c("checkcrm", ["checkcrm"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("checkcrm", ["checkcrm"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="Check CRM", help="job-change check + subsidiaries (enrichment API)",
        href="https://enrichment-two.vercel.app"),
@@ -665,7 +667,8 @@ _REGISTRY_LIST = [
     # européens via une seule API REST. byo-only (pay-per-request, chacun connecte
     # son compte ; clé d'org partageable), keyed api_key (en-tête x-api-key résolu
     # côté client). Pas de clé plateforme. Hors socle : opt-in.
-    _c("topograph", ["topograph"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("topograph", ["topograph"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="Topograph",
        help="KYB — données & documents entreprise (registres européens)",
@@ -731,7 +734,8 @@ _REGISTRY_LIST = [
     # lusha : recherche + reveal (emails/téléphones) de contacts, byo-only (pas
     # de clé plateforme). Auth = header `api_key` plat (pas OAuth), 1 seul
     # endpoint câblé pour l'instant (search-and-enrich).
-    _c("lusha", ["lusha"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("lusha", ["lusha"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="Lusha", help="recherche + reveal de contacts (emails/téléphones)",
        publisher="Lusha", href="https://www.lusha.com"),
@@ -879,7 +883,8 @@ _REGISTRY_LIST = [
     # identité (email/LinkedIn/nom+société). DSL de filtre (~150 champs)
     # documentée dans le guide `cognism-filters`, pas dans les docstrings tool.
     _c("cognism", ["cognism"],
-       auth_modes={"byo_user", "byo_org"}, keyed=True,
+       auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="Cognism",
        help="B2B contact & company search, reveal, and identity enrichment",
@@ -1067,10 +1072,12 @@ _REGISTRY_LIST = [
        label="Apollo.io",
        help="prospection B2B (organizations, people, job postings)",
        href="https://app.apollo.io"),
-    _c("zerobounce", ["zerobounce"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("zerobounce", ["zerobounce"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key", label="ZeroBounce",
        help="vérification de délivrabilité email", href="https://www.zerobounce.net"),
-    _c("hithorizons", ["hithorizons"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("hithorizons", ["hithorizons"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key", label="HitHorizons",
        help="données entreprise européennes (recherche + détails)",
        href="https://www.hithorizons.com"),
@@ -1278,7 +1285,8 @@ _REGISTRY_LIST = [
     # SERP Google en JSON. keyed api_key, **BYOK** (byo user/org) — PAS de mode
     # plateforme (décision produit : chaque org pose SA clé cloro, pas de clé oto
     # partagée ; signaux #210-212). Sans mode platform, plus de quota daily oto.
-    _c("cloro", ["cloro"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("cloro", ["cloro"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="Cloro",
        help="veille AI-search (ChatGPT, Gemini, Perplexity…) + SERP Google JSON",
@@ -1287,7 +1295,8 @@ _REGISTRY_LIST = [
     # un site entier, search pour du web + contenu. keyed api_key, **BYOK** (byo
     # user/org) — facturation au crédit chez l'éditeur, donc pas de clé oto partagée
     # (même raisonnement que cloro).
-    _c("firecrawl", ["firecrawl"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("firecrawl", ["firecrawl"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="Firecrawl",
        help="pages web en markdown propre — scrape, crawl d'un site, map, search",
@@ -1296,7 +1305,8 @@ _REGISTRY_LIST = [
     # Maps, LinkedIn, Amazon…) qu'on lance avec un JSON d'entrée et dont on lit le
     # dataset. keyed api_key, **BYOK** : un run se facture à l'usage sur le compte
     # de l'org.
-    _c("apify", ["apify"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("apify", ["apify"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="Apify",
        help="scrapers hébergés prêts à l'emploi (Google Maps, LinkedIn, Amazon…) via le Store",
@@ -1309,7 +1319,8 @@ _REGISTRY_LIST = [
     # (byo user/org) — facturation au crédit, au record ENTREPRISE rendu, donc pas de
     # clé oto partagée. Couverture partielle sur les PME : `data: []` est normal.
     # Lecture seule.
-    _c("theirstack", ["theirstack"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+    _c("theirstack", ["theirstack"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
        secret_kind="api_key",
        label="TheirStack",
        help="offres d'emploi par employeur + technologies utilisées (ERP…)",
