@@ -323,7 +323,7 @@ _CATEGORY_BY_CONNECTOR = {
     # recherche web / scraping
     "aiark": "Prospection", "cognism": "Prospection",
     "serpapi": "Prospection", "searchapi": "Prospection", "brightdata": "Prospection", "cloro": "Prospection",
-    "firecrawl": "Prospection", "apify": "Prospection",
+    "firecrawl": "Prospection", "apify": "Prospection", "tavily": "Prospection",
     # signaux de recrutement + campagnes sortantes
     "theirstack": "Prospection", "origami": "Prospection", "lightfield": "CRM", "forager": "Prospection",
     # ATS / talent sourcing (RH)
@@ -366,7 +366,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "recruitee": "Recruitee", "teamtailor": "Teamtailor", "spott": "Spott",
     "serpapi": "SerpApi",
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
-    "firecrawl": "Firecrawl", "apify": "Apify",
+    "firecrawl": "Firecrawl", "apify": "Apify", "tavily": "Tavily",
     "theirstack": "TheirStack", "origami": "Origami", "lightfield": "Lightfield", "forager": "Forager.ai", "stripe": "Stripe", "posthog": "PostHog",
     "snitcher": "Snitcher",
     "n8n": "n8n", "make": "Make", "zapier": "Zapier",
@@ -462,7 +462,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "greenhouse": "greenhouse.io", "lever": "lever.co", "ashby": "ashbyhq.com",
     "recruitee": "recruitee.com", "teamtailor": "teamtailor.com", "spott": "spott.io",
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
-    "firecrawl": "firecrawl.dev", "apify": "apify.com",
+    "firecrawl": "firecrawl.dev", "apify": "apify.com", "tavily": "tavily.com",
     "theirstack": "theirstack.com", "origami": "origami.chat", "lightfield": "lightfield.app", "forager": "forager.ai", "stripe": "stripe.com", "posthog": "posthog.com",
     "snitcher": "snitcher.com",
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
@@ -1292,6 +1292,15 @@ _REGISTRY_LIST = [
        label="Firecrawl",
        help="pages web en markdown propre — scrape, crawl d'un site, map, search",
        href="https://firecrawl.dev"),
+    # tavily : recherche web + extract/crawl/map « pour agent » (réponse sourcée en
+    # un appel). keyed api_key ; byo user/org ET clé plateforme OUVERTE, quota 0
+    # (illimité) : socle de recherche web, pas de ticket d'entrée — même posture
+    # que sirene/unipile.
+    _c("tavily", ["tavily"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
+       secret_kind="api_key", default_quota=0, platform_key_open=True,
+       label="Tavily",
+       help="recherche web pour agent (réponse sourcée), extract, crawl et map de site",
+       href="https://app.tavily.com"),
     # apify : catalogue d'« actors » (scrapers hébergés prêts à l'emploi — Google
     # Maps, LinkedIn, Amazon…) qu'on lance avec un JSON d'entrée et dont on lit le
     # dataset. keyed api_key, **BYOK** : un run se facture à l'usage sur le compte
