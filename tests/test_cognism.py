@@ -48,12 +48,13 @@ def test_cognism_is_classic_keyed_connector():
     assert "cognism" in providers.KEY_PROVIDERS
 
 
-def test_cognism_is_byo_only_no_platform_mode():
-    # Pas d'accord commercial Otomata<->Cognism a ce jour : BYO user/org
-    # seulement, contrairement a AI Ark/Kaspr qui ouvrent "platform".
+def test_cognism_platform_mode_is_grant_only():
+    # Revente au crédit : "platform" accepté, mais jamais en libre-service
+    # (platform_key_open=False, quota 0) — comme AI Ark.
     c = providers.REGISTRY["cognism"]
-    assert c.auth_modes == frozenset({"byo_user", "byo_org"})
-    assert "platform" not in c.auth_modes
+    assert c.auth_modes == frozenset({"byo_user", "byo_org", "platform"})
+    assert c.platform_key_open is False
+    assert c.default_quota == 0
 
 
 def test_cognism_deny_by_default():

@@ -35,11 +35,12 @@ def all_tools():
 
 # --- registre -----------------------------------------------------------------
 
-def test_checkcrm_is_keyed_byo_only_connector():
+def test_checkcrm_is_keyed_connector_platform_grant_only():
     c = providers.REGISTRY["checkcrm"]
     assert c.kind == "tools"
     assert c.keyed and c.secret_kind == "api_key"
-    assert c.auth_modes == frozenset({"byo_user", "byo_org"})
+    assert c.auth_modes == frozenset({"byo_user", "byo_org", "platform"})
+    assert c.platform_key_open is False   # revente au crédit, sur grant explicite
     assert "checkcrm" in providers.KEY_PROVIDERS
 
 

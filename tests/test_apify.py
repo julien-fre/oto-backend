@@ -42,13 +42,13 @@ def _tool(name):
 
 # --- registre -----------------------------------------------------------------
 
-def test_apify_is_keyed_byo_only_connector():
+def test_apify_is_keyed_connector_platform_grant_only():
     c = providers.REGISTRY["apify"]
     assert c.kind == "tools"
     assert c.keyed and c.secret_kind == "api_key"
-    assert c.auth_modes == frozenset({"byo_user", "byo_org"})
-    # byo-only : un run est facturé sur le compte Apify de l'org.
-    assert "platform" not in c.auth_modes
+    assert c.auth_modes == frozenset({"byo_user", "byo_org", "platform"})
+    # platform sur grant explicite (revente au crédit) : jamais en libre-service.
+    assert c.platform_key_open is False
     assert c.default_quota == 0
     assert "apify" in providers.KEY_PROVIDERS
     assert c.category == "Prospection"
