@@ -337,7 +337,7 @@ _CATEGORY_BY_CONNECTOR = {
     # paiements & analytics produit
     "stripe": "Finance", "posthog": "Dev",
     # identification des visiteurs du site (IP → entreprise)
-    "snitcher": "Prospection",
+    "snitcher": "Prospection", "waalaxy": "Prospection",
 }
 
 # Éditeur (publisher) par connecteur — CURÉ. Défaut "Otomata" (connecteurs maison /
@@ -368,7 +368,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "searchapi": "SearchApi", "brightdata": "Bright Data", "cloro": "Cloro",
     "firecrawl": "Firecrawl", "apify": "Apify",
     "theirstack": "TheirStack", "origami": "Origami", "lightfield": "Lightfield", "forager": "Forager.ai", "stripe": "Stripe", "posthog": "PostHog",
-    "snitcher": "Snitcher",
+    "snitcher": "Snitcher", "waalaxy": "Waalaxy",
     "n8n": "n8n", "make": "Make", "zapier": "Zapier",
     # open-data FR → éditeur = la source publique
     "sirene": "INSEE", "culture": "Ministère de la Culture",
@@ -464,7 +464,7 @@ _LOGO_DOMAIN_BY_CONNECTOR = {
     "serpapi": "serpapi.com", "searchapi": "searchapi.io", "brightdata": "brightdata.com", "cloro": "cloro.dev",
     "firecrawl": "firecrawl.dev", "apify": "apify.com",
     "theirstack": "theirstack.com", "origami": "origami.chat", "lightfield": "lightfield.app", "forager": "forager.ai", "stripe": "stripe.com", "posthog": "posthog.com",
-    "snitcher": "snitcher.com",
+    "snitcher": "snitcher.com", "waalaxy": "waalaxy.com",
     "aiark": "ai-ark.com", "cognism": "cognism.com", "lighton": "lighton.ai",
     "promptwatch": "promptwatch.com",
     "n8n": "n8n.io", "make": "make.com", "zapier": "zapier.com",
@@ -1605,6 +1605,21 @@ _REGISTRY_LIST = [
            CredentialField("key", "Personal Access Token", secret=True,
                            help="Snitcher → Settings → Account → API → "
                                 "Generate New Token"),
+       )),
+    # waalaxy : automatisation de prospection LinkedIn. API publique IMPORT-ONLY
+    # (4 endpoints : test, listes, campagnes actives, ajout de prospects à une
+    # liste ± campagne) — pas de lecture/suppression de prospects, pas d'inbox,
+    # pas de stats. keyed api_key (Bearer zpka_…, app → Settings → CRM Sync,
+    # plans Advanced/Business), byo-only : une clé = UN siège Waalaxy (= un
+    # compte LinkedIn), une clé plateforme n'aurait pas de sens.
+    _c("waalaxy", ["waalaxy"], auth_modes={"byo_user", "byo_org"}, keyed=True,
+       secret_kind="api_key", label="Waalaxy",
+       help="prospection LinkedIn : pousser des prospects dans une liste et une "
+            "campagne Waalaxy",
+       href="https://app.waalaxy.com", credential_fields=(
+           CredentialField("key", "Clé API (zpka_…)", secret=True,
+                           help="Waalaxy → Settings → CRM Sync → Generate API key "
+                                "(plan Advanced ou Business)"),
        )),
     # airtable : bases / tables / champs / lignes / commentaires / pièces jointes /
     # sync CSV — toute la section « Base data » de la Web API, PLUS le schéma, sans
