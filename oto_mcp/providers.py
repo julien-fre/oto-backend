@@ -572,7 +572,10 @@ _REGISTRY_LIST = [
        label="Lemlist", help="cold outreach", href="https://app.lemlist.com"),
     _c("kaspr", ["kaspr"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
        secret_kind="api_key", default_quota=5, platform_key_open=True,
-       label="Kaspr", help="enrichissement", href="https://app.kaspr.io"),
+       label="Kaspr", help="enrichissement", href="https://app.kaspr.io",
+       # logo.dev sert une bannière marketing pour kaspr.io (pas la marque) →
+       # override sur le favicon officiel (K blanc sur dégradé, 160×160).
+       logo_url="https://www.kaspr.io/hubfs/2023%20-%20Kaspr%20Brand%20Logos/favicon.png"),
     _c("pennylane", ["pennylane"], auth_modes={"byo_user", "byo_org"}, keyed=True,
        secret_kind="api_key",
        label="Pennylane", help="compta", href="https://app.pennylane.com"),
