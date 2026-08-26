@@ -37,7 +37,7 @@ def _patch(monkeypatch, *, known_emails=None):
     known = known_emails or {}
     created, members = [], []
     monkeypatch.setattr(oa.org_store, "create_org",
-                        lambda name, created_by: created.append((name, created_by)) or NEW_ORG)
+                        lambda name, created_by, **kw: created.append((name, created_by)) or NEW_ORG)
     monkeypatch.setattr(oa.org_store, "add_org_member",
                         lambda oid, sub, role: members.append((oid, sub, role)))
     monkeypatch.setattr("oto_mcp.capabilities.orgs_members.db.get_user_by_email",
