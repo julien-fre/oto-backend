@@ -37,6 +37,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
+import requests
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
@@ -72,13 +73,24 @@ def _upstream_message(e) -> str:
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
     """« Tester la connexion » : GET /integrations/test, prévu exactement pour ça."""
     from oto.tools.waalaxy.client import WaalaxyClient
-    WaalaxyClient(api_key=fields["key"]).test_connection()
+    res = WaalaxyClient(api_key=fields["key"]).test_connection()
+    if res is not True:
+        raise RuntimeError(f"Waalaxy /integrations/test n'a pas répondu true : {res!r} "
+                           "(clé sans accès API ? plan Advanced/Business requis)")
 
 
 def _receipt(raw: Any, prospects: List[Dict[str, Any]], campaign_id: Optional[str]) -> Dict[str, Any]:
-    items = (raw or {}).get("result") if isinstance(raw, dict) else None
+    """Lean receipt over Waalaxy's per-item codes. `total` is always the number
+    of prospects SENT; a response shorter/longer than the batch is reported,
+    never silently truncated, and an unexpected body still yields the full
+    shape (so `failed` is always readable)."""
+    total = len(prospects)
+    items = raw.get("result") if isinstance(raw, dict) else None
     if not isinstance(items, list):
-        return {"total": len(prospects), "raw": raw}
+        return {"total": total, "imported": 0, "items": [],
+                "failed": [{"index": None, "url": None, "code": "unexpected_response",
+                            "message": "Waalaxy a répondu 200 sans tableau `result`"}],
+                "raw": raw, **({"enrolled": 0} if campaign_id else {})}
     imported = enrolled = 0
     failed: List[Dict[str, Any]] = []
     lean: List[Dict[str, Any]] = []
@@ -86,7 +98,7 @@ def _receipt(raw: Any, prospects: List[Dict[str, Any]], campaign_id: Optional[st
         item = item or {}
         code = item.get("importCode")
         camp = item.get("addToCampaignCode")
-        url = prospects[i].get("url") if i < len(prospects) else None
+        url = prospects[i].get("url") if i < total else None
         prospect = item.get("prospect") or {}
         profile = prospect.get("profile") or {}
         row: Dict[str, Any] = {"index": i, "url": url, "importCode": code,
@@ -95,19 +107,26 @@ def _receipt(raw: Any, prospects: List[Dict[str, Any]], campaign_id: Optional[st
         if campaign_id:
             row["addToCampaignCode"] = camp
         lean.append(row)
-        if code in _IMPORT_OK:
+        ok = code in _IMPORT_OK
+        if ok:
             imported += 1
         else:
             failed.append({"index": i, "url": url, "code": code, "message": item.get("message")})
-        if campaign_id:
+        if campaign_id and ok:
             if camp == "success":
                 enrolled += 1
-            elif camp is not None and code in _IMPORT_OK:
-                failed.append({"index": i, "url": url, "code": camp,
+            else:
+                failed.append({"index": i, "url": url, "code": camp or "not_enrolled",
                                "message": item.get("message"), "stage": "campaign"})
-    out: Dict[str, Any] = {"total": len(items), "imported": imported, "failed": failed, "items": lean}
+    out: Dict[str, Any] = {"total": total, "imported": imported, "failed": failed, "items": lean}
     if campaign_id:
         out["enrolled"] = enrolled
+    if len(items) != total:
+        out["warning"] = (f"Waalaxy a rendu {len(items)} résultats pour {total} prospects envoyés — "
+                          "l'appariement par position est incertain, vérifie dans l'app")
+        for i in range(len(items), total):
+            failed.append({"index": i, "url": prospects[i].get("url"), "code": "no_result",
+                           "message": "aucun résultat rendu par Waalaxy pour ce prospect"})
     return out
 
 
@@ -128,6 +147,8 @@ def register(mcp: FastMCP) -> None:
             raise _bad(str(e))
         except UpstreamHTTPError as e:
             raise _bad(_upstream_message(e))
+        except (requests.ConnectionError, requests.Timeout) as e:
+            raise _bad(f"Waalaxy injoignable (réseau/timeout) — réessaie plus tard. {e}")
 
     @mcp.tool()
     def waalaxy_prospect_list(op: Literal["list"] = "list") -> object:
@@ -240,17 +261,10 @@ def register(mcp: FastMCP) -> None:
             should_overwrite_custom_profile_data=should_overwrite_custom_profile_data,
             add_existing_prospect_in_campaign=add_existing_prospect_in_campaign,
         )
+        # Same guards + same body as the real call: the preview cannot diverge.
+        body = _run(lambda: WaalaxyClient.build_add_prospects_body(
+            batch, prospect_list_id, origin=origin, **flags))
         if dry_run:
-            body: Dict[str, Any] = {"prospects": batch, "prospectListId": prospect_list_id,
-                                    "origin": {"name": origin}}
-            if campaign_id:
-                body["campaignId"] = campaign_id
-            for key, val in (("canCreateDuplicates", can_create_duplicates),
-                             ("moveDuplicatesToOtherList", move_duplicates_to_other_list),
-                             ("shouldOverwriteCustomProfileData", should_overwrite_custom_profile_data),
-                             ("addExistingProspectInCampaign", add_existing_prospect_in_campaign)):
-                if val is not None:
-                    body[key] = bool(val)
             return {"dry_run": True, "total": len(batch), "would_post": body}
         raw = _run(lambda: _client().add_prospects(batch, prospect_list_id, origin=origin, **flags))
         return _receipt(raw, batch, campaign_id)

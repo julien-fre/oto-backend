@@ -38,10 +38,14 @@ def _fake_key(monkeypatch):
 
 
 def _fn_with_mock_client():
+    """`WaalaxyClient` mocké sauf `build_add_prospects_body` (pure, gardée réelle
+    pour que dry_run exerce les vraies gardes)."""
     from fastmcp import FastMCP
+    from oto.tools.waalaxy.client import WaalaxyClient as real
 
     patcher = patch("oto.tools.waalaxy.client.WaalaxyClient")
     cls = patcher.start()
+    cls.build_add_prospects_body = staticmethod(real.build_add_prospects_body)
     m = FastMCP("t")
     waalaxy.register(m)
     return m, cls, patcher
@@ -62,7 +66,7 @@ def test_waalaxy_is_keyed_byo_only_connector():
 
 def test_waalaxy_has_onboarding_doc():
     kinds = {s.kind for s in providers.REGISTRY["waalaxy"].doc_sections}
-    assert {"prerequisite", "usage"} <= kinds
+    assert {"prerequisite", "usage", "note"} <= kinds
 
 
 def test_tools_register_under_namespace_with_descriptions(all_tools):
@@ -72,14 +76,25 @@ def test_tools_register_under_namespace_with_descriptions(all_tools):
         assert all_tools[name].description, f"{name} has no description"
 
 
-def test_verify_probe_registered():
-    _fn_with_mock_client()
-    assert connector_verify.supports("waalaxy")
+def test_verify_probe_registered_and_checks_body():
+    m, cls, patcher = _fn_with_mock_client()
+    try:
+        assert connector_verify.supports("waalaxy")
+        cls.return_value.test_connection.return_value = True
+        waalaxy._verify({"key": "k"})
+        cls.return_value.test_connection.return_value = {"html": "…"}
+        with pytest.raises(RuntimeError, match="pas répondu true"):
+            waalaxy._verify({"key": "k"})
+    finally:
+        patcher.stop()
+    import oto.tools.waalaxy.client as real
+    assert not isinstance(real.WaalaxyClient, type(cls)), "patch leaked"
 
 
 def test_client_exposes_methods_called_by_tools():
     from oto.tools.waalaxy.client import WaalaxyClient
-    for meth in ("test_connection", "list_prospect_lists", "list_campaigns", "add_prospects"):
+    for meth in ("test_connection", "list_prospect_lists", "list_campaigns", "add_prospects",
+                 "build_add_prospects_body"):
         assert callable(getattr(WaalaxyClient, meth, None)), f"WaalaxyClient.{meth} manquant"
 
 
@@ -126,6 +141,11 @@ def test_add_dry_run_returns_payload_without_calling():
         assert out["would_post"]["moveDuplicatesToOtherList"] is True
         assert "canCreateDuplicates" not in out["would_post"]
         cls.return_value.add_prospects.assert_not_called()
+        with pytest.raises(McpError, match="1000"):
+            fn(prospect_list_id="l1", dry_run=True,
+               prospect={"url": URL, "customVariables": [{"label": "a", "value": "x" * 1001}]})
+        with pytest.raises(McpError, match="origin"):
+            fn(prospect_list_id="l1", prospect={"url": URL}, origin="", dry_run=True)
     finally:
         patcher.stop()
 
