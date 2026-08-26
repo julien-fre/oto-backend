@@ -2,8 +2,9 @@
 a campaign.
 
 Wraps `oto.tools.waalaxy.client.WaalaxyClient` (developers.waalaxy.com,
-Bearer `wa_live_…` key — app → Settings → CRM Sync → Generate API key,
-Advanced/Business plans). keyed `api_key`, byo-only: a key is bound to ONE
+Bearer key `zpka_…` — app → Settings → CRM Sync → Generate API key,
+Advanced/Business plans; the docs show `wa_live_…`, real keys are Zuplo
+`zpka_…` ones). keyed `api_key`, byo-only: a key is bound to ONE
 Waalaxy seat (its LinkedIn account), a platform key makes no sense.
 
 The public API is **import-only** — 4 endpoints, 3 tools (one per business
@@ -20,11 +21,17 @@ no stats via the API — those live in the app only.
 
 ⚠️ `waalaxy_prospect(op="add")` gets HTTP 200 from Waalaxy even when every
 item failed: the tool reads the per-item `importCode`/`addToCampaignCode` and
-returns a receipt `{total, imported, enrolled, failed: [{index, url, code,
-message}]}` PLUS the raw `result` so nothing is lost.
+returns a lean receipt `{total, imported, enrolled, failed: [{index, url,
+code, message}], items: [{index, url, importCode, addToCampaignCode,
+prospect_id, publicIdentifier}]}` — the raw response embeds the FULL prospect
+object per item (~2 KB: LinkedIn ids, picture URL, history…), which would
+flood the agent on a 100-prospect batch.
 
-Not live-tested (no key at build time, 2026-08-26): built from the official
-API reference + its embedded OpenAPI schema.
+**Live-tested 2026-08-26** with a real key: test probe, both lists, dry_run,
+one real import (success — Waalaxy auto-enriched the profile from LinkedIn:
+headline, region, company website, birthday) and its re-import
+(`duplicated_prospect`, `message` null in practice). Not exercised: campaign
+enrolment (the seat's only campaign is a real one) and the duplicate flags.
 """
 from __future__ import annotations
 
@@ -49,7 +56,7 @@ def _upstream_message(e) -> str:
     status = e.status_code
     if status in (401, 403):
         return (f"Waalaxy a rejeté la clé (HTTP {status}) — vérifie la clé API posée sur ce "
-                "connecteur (Waalaxy : Settings → CRM Sync → API key ; plan Advanced ou "
+                "connecteur (Waalaxy : Settings → CRM Sync → API key, format zpka_… ; plan Advanced ou "
                 "Business requis).")
     if status == 404:
         return f"Waalaxy : ressource introuvable (HTTP 404) — {e.body}"
@@ -74,11 +81,20 @@ def _receipt(raw: Any, prospects: List[Dict[str, Any]], campaign_id: Optional[st
         return {"total": len(prospects), "raw": raw}
     imported = enrolled = 0
     failed: List[Dict[str, Any]] = []
+    lean: List[Dict[str, Any]] = []
     for i, item in enumerate(items):
         item = item or {}
         code = item.get("importCode")
         camp = item.get("addToCampaignCode")
         url = prospects[i].get("url") if i < len(prospects) else None
+        prospect = item.get("prospect") or {}
+        profile = prospect.get("profile") or {}
+        row: Dict[str, Any] = {"index": i, "url": url, "importCode": code,
+                               "prospect_id": prospect.get("_id"),
+                               "publicIdentifier": profile.get("publicIdentifier")}
+        if campaign_id:
+            row["addToCampaignCode"] = camp
+        lean.append(row)
         if code in _IMPORT_OK:
             imported += 1
         else:
@@ -89,7 +105,7 @@ def _receipt(raw: Any, prospects: List[Dict[str, Any]], campaign_id: Optional[st
             elif camp is not None and code in _IMPORT_OK:
                 failed.append({"index": i, "url": url, "code": camp,
                                "message": item.get("message"), "stage": "campaign"})
-    out: Dict[str, Any] = {"total": len(items), "imported": imported, "failed": failed, "result": items}
+    out: Dict[str, Any] = {"total": len(items), "imported": imported, "failed": failed, "items": lean}
     if campaign_id:
         out["enrolled"] = enrolled
     return out
@@ -182,8 +198,10 @@ def register(mcp: FastMCP) -> None:
         `API-<origin>` on each imported prospect.
 
         Receipt: `{total, imported, enrolled?, failed: [{index, url, code,
-        message, stage?}], result}` — `result` is Waalaxy's raw per-item
-        array (`importCode`, `addToCampaignCode`, `prospect{_id, profile}`).
+        message, stage?}], items: [{index, url, importCode,
+        addToCampaignCode?, prospect_id, publicIdentifier}]}` — `prospect_id`
+        is the Waalaxy prospect `_id` (null on failure). Waalaxy auto-enriches
+        the profile from LinkedIn on import (headline, region, company…).
         ⚠️ Waalaxy answers 200 even when every item failed; read `failed`.
         Codes: importCode ∈ success | duplicated_prospect |
         prospect_successfully_moved_to_another_list |

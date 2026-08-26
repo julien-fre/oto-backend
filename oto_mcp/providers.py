@@ -1593,7 +1593,7 @@ _REGISTRY_LIST = [
     # waalaxy : automatisation de prospection LinkedIn. API publique IMPORT-ONLY
     # (4 endpoints : test, listes, campagnes actives, ajout de prospects à une
     # liste ± campagne) — pas de lecture/suppression de prospects, pas d'inbox,
-    # pas de stats. keyed api_key (Bearer wa_live_…, app → Settings → CRM Sync,
+    # pas de stats. keyed api_key (Bearer zpka_…, app → Settings → CRM Sync,
     # plans Advanced/Business), byo-only : une clé = UN siège Waalaxy (= un
     # compte LinkedIn), une clé plateforme n'aurait pas de sens.
     _c("waalaxy", ["waalaxy"], auth_modes={"byo_user", "byo_org"}, keyed=True,
@@ -1601,7 +1601,7 @@ _REGISTRY_LIST = [
        help="prospection LinkedIn : pousser des prospects dans une liste et une "
             "campagne Waalaxy",
        href="https://app.waalaxy.com", credential_fields=(
-           CredentialField("key", "Clé API (wa_live_…)", secret=True,
+           CredentialField("key", "Clé API (zpka_…)", secret=True,
                            help="Waalaxy → Settings → CRM Sync → Generate API key "
                                 "(plan Advanced ou Business)"),
        )),

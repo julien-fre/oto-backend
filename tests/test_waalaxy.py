@@ -146,6 +146,10 @@ def test_add_receipt_reads_per_item_codes():
         assert [f["code"] for f in out["failed"]] == ["duplicated_prospect", "already_in_campaign"]
         assert out["failed"][0]["url"] == URL + "2"
         assert out["failed"][1]["stage"] == "campaign"
+        assert "result" not in out
+        assert out["items"][0] == {"index": 0, "url": URL, "importCode": "success",
+                                   "addToCampaignCode": "success", "prospect_id": "p1",
+                                   "publicIdentifier": None}
         cls.return_value.add_prospects.assert_called_once()
         args, kwargs = cls.return_value.add_prospects.call_args
         assert args[1] == "l1" and kwargs["campaign_id"] == "c1" and kwargs["origin"] == "oto"
@@ -160,6 +164,7 @@ def test_add_single_prospect_receipt_without_campaign():
         cls.return_value.add_prospects.return_value = {"result": [{"importCode": "max_limit_crm"}]}
         out = fn(prospect_list_id="l1", prospect={"url": URL})
         assert out["imported"] == 0 and "enrolled" not in out
+        assert "addToCampaignCode" not in out["items"][0]
         assert out["failed"][0]["code"] == "max_limit_crm"
     finally:
         patcher.stop()
