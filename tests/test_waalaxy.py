@@ -73,8 +73,13 @@ def test_tools_register_under_namespace_with_descriptions(all_tools):
 
 
 def test_verify_probe_registered():
-    _fn_with_mock_client()
-    assert connector_verify.supports("waalaxy")
+    _m, _cls, patcher = _fn_with_mock_client()
+    try:
+        assert connector_verify.supports("waalaxy")
+    finally:
+        # Sans le stop, WaalaxyClient reste un MagicMock pour le reste du process
+        # et le test de jointure ci-dessous devient vacueux (un mock a tout).
+        patcher.stop()
 
 
 def test_client_exposes_methods_called_by_tools():

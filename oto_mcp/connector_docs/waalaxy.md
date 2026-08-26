@@ -14,7 +14,7 @@ l'API Waalaxy est **import-only** : elle sert à alimenter Waalaxy, pas à le li
 - « montre-moi ce qui partirait sans l'envoyer » → même appel avec `dry_run=true` : rend le payload exact, zéro appel Waalaxy
 - pattern typique : sourcing ailleurs (Apollo, Pharow, un datastore Tulina…) → `waalaxy_prospect(op="add")` → Waalaxy déroule invitations/messages tout seul
 
-## ⚠️ notes
+## note — pièges & limites
 
 - **Waalaxy répond 200 même si TOUS les prospects ont échoué** : lire `failed` dans le reçu (`{total, imported, enrolled, failed: [{index, url, code, message}], items: [{index, url, importCode, prospect_id, publicIdentifier}]}`), jamais le seul statut HTTP. Codes fréquents : `duplicated_prospect` (déjà dans une autre liste — passer `move_duplicates_to_other_list=true` ou `can_create_duplicates=true`, ce dernier exige la permission import_duplicates du compte), `max_limit_crm` (quota CRM du plan atteint), `already_in_campaign`, `cant_add_prospect_campaign_is_archived`
 - `customProfile` ne remplit que les champs vides d'un prospect existant, sauf `should_overwrite_custom_profile_data=true`
