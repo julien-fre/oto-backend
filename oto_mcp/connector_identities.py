@@ -43,21 +43,37 @@ def register(connector: str, lister, selector) -> None:
     _SELECTORS[connector] = selector
 
 
-def list_identities(sub: str, connector: str):
+SCOPES = ("member", "org", "group")
+
+
+def list_identities(sub: str, connector: str, scope: str = "member"):
     """Identités joignables par le credential résolu du `sub` pour `connector`.
     [] si non supporté (ou rien à choisir, ex. clé plateforme unipile). Peut
-    renvoyer un awaitable (backend async enregistré via `register`)."""
+    renvoyer un awaitable (backend async enregistré via `register`).
+    `scope` (Phase 2) : `org`/`group` listent les comptes nommés du palier partagé
+    — backend keyed générique seulement ; les backends spécifiques (google,
+    unipile) sont par-membre, un autre scope y répond []."""
     fn = _LISTERS.get(connector)
-    return fn(sub) if fn else []
+    if not fn:
+        return []
+    if scope != "member":
+        return fn(sub, scope) if connector in _KEYED else []
+    return fn(sub)
 
 
-def select_identity(sub: str, connector: str, identity_id: str):
+def select_identity(sub: str, connector: str, identity_id: str, scope: str = "member"):
     """Choisit l'identité `identity_id`. Lève `ValueError` si non supporté ou si
     l'id n'existe pas pour ce credential (anti-binding arbitraire). Peut renvoyer
-    un awaitable (backend async enregistré via `register`)."""
+    un awaitable (backend async enregistré via `register`). `scope` : cf.
+    `list_identities` ; le contrôle d'accès du palier partagé (admin d'org /
+    d'équipe) vit dans la capacité, pas ici."""
     fn = _SELECTORS.get(connector)
     if not fn:
         raise ValueError(f"Le connecteur `{connector}` ne gère pas le choix de compte.")
+    if scope != "member":
+        if connector not in _KEYED:
+            raise ValueError(f"Le connecteur `{connector}` n'a de comptes qu'au palier membre.")
+        return fn(sub, identity_id, scope)
     return fn(sub, identity_id)
 
 
@@ -323,18 +339,33 @@ def _unipile_select(sub: str, identity_id: str) -> dict:
 
 
 # --- Backend keyed GÉNÉRIQUE : N credentials du coffre (account=label libre) ---
-# Pour tout connecteur multi-compte (providers.MULTI_ACCOUNT_PROVIDERS) SANS backend
+# Pour tout connecteur multi-compte (`Connector.auth_multi_account`) SANS backend
 # spécifique (google en a un) : les comptes = les lignes du coffre au scope MEMBRE de
 # l'org de contexte, le défaut = `meta.is_default`. Ex. « 2 Zoho » (self-clients FR/US).
 
-def _keyed_list(sub: str, connector: str) -> list[dict]:
+def keyed_entity(sub: str, scope: str) -> "tuple[str, str] | None":
+    """L'entité du coffre visée par un `scope` (member | org | group) pour `sub`, ou
+    None sans org/équipe de contexte. Phase 2 (2026-08-25) : les comptes nommés
+    existent aussi aux paliers partagés."""
     from . import access, credentials_store
     org = access.current_org(sub)
     if org is None:
+        return None
+    if scope == "org":
+        return ("org", str(org))
+    if scope == "group":
+        gid = access.current_group(sub)
+        return None if gid is None else ("group", str(gid))
+    return (credentials_store.MEMBER, credentials_store.member_id(org, sub))
+
+
+def _keyed_list(sub: str, connector: str, scope: str = "member") -> list[dict]:
+    from . import credentials_store
+    ent = keyed_entity(sub, scope)
+    if ent is None:
         return []
-    eid = credentials_store.member_id(org, sub)
     out = []
-    for row in credentials_store.list_accounts(credentials_store.MEMBER, eid, connector):
+    for row in credentials_store.list_accounts(ent[0], ent[1], connector):
         acct = row["account"]
         meta = row.get("meta") or {}
         out.append({
@@ -347,37 +378,42 @@ def _keyed_list(sub: str, connector: str) -> list[dict]:
     return out
 
 
-def _keyed_select(sub: str, connector: str, identity_id: str) -> dict:
-    from . import access, credentials_store
-    org = access.current_org(sub)
-    if org is None:
-        raise ValueError("Aucune org de contexte — impossible de choisir un compte.")
-    eid = credentials_store.member_id(org, sub)
-    accounts = [r["account"] for r in
-                credentials_store.list_accounts(credentials_store.MEMBER, eid, connector)]
+def _keyed_select(sub: str, connector: str, identity_id: str, scope: str = "member") -> dict:
+    from . import credentials_store
+    ent = keyed_entity(sub, scope)
+    if ent is None:
+        raise ValueError("Aucune org/équipe de contexte — impossible de choisir un compte.")
+    accounts = [r["account"] for r in credentials_store.list_accounts(ent[0], ent[1], connector)]
     if identity_id not in accounts:
         raise ValueError(f"Compte `{identity_id}` inconnu pour {connector}.")
     # Défaut UNIQUE : pose is_default sur la ligne choisie, le retire des autres.
     for acct in accounts:
-        credentials_store.update_meta(credentials_store.MEMBER, eid, connector, acct,
+        credentials_store.update_meta(ent[0], ent[1], connector, acct,
                                       {"is_default": acct == identity_id})
     return {"id": identity_id, "label": identity_id, "is_default": True, "channel": None}
 
 
 _LISTERS = {"google": _google_list, "unipile": _unipile_list}
 _SELECTORS = {"google": _google_select, "unipile": _unipile_select}
+# Connecteurs servis par le backend keyed GÉNÉRIQUE (seul à connaître les paliers
+# partagés) — rempli par `_register_keyed_multi_account`.
+_KEYED: set[str] = set()
 
 
 def _register_keyed_multi_account() -> None:
     """Enregistre le backend keyed générique pour tout connecteur multi-compte
-    (providers.MULTI_ACCOUNT_PROVIDERS) qui n'a pas déjà un backend spécifique
-    (google). Closures liant le nom du connecteur (défaut d'arg = capture par valeur)."""
+    (`Connector.auth_multi_account` — depuis 2026-08-25, toute clé d'API l'est par
+    défaut, plus seulement la liste curée `MULTI_ACCOUNT_PROVIDERS`) qui n'a pas
+    déjà un backend spécifique (google, unipile). Closures liant le nom du
+    connecteur (défaut d'arg = capture par valeur)."""
     from . import providers
-    for name in providers.MULTI_ACCOUNT_PROVIDERS:
-        if name in _LISTERS:
+    for con in providers._REGISTRY_LIST:
+        name = con.name
+        if not con.auth_multi_account or name in _LISTERS:
             continue
-        _LISTERS[name] = lambda sub, c=name: _keyed_list(sub, c)
-        _SELECTORS[name] = lambda sub, iid, c=name: _keyed_select(sub, c, iid)
+        _KEYED.add(name)
+        _LISTERS[name] = lambda sub, scope="member", c=name: _keyed_list(sub, c, scope)
+        _SELECTORS[name] = lambda sub, iid, scope="member", c=name: _keyed_select(sub, c, iid, scope)
 
 
 _register_keyed_multi_account()

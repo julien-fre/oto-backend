@@ -23,7 +23,7 @@ def _wire(monkeypatch):
     monkeypatch.setattr(access, "current_group", lambda sub: None)
     monkeypatch.setattr(access.connectors, "connector_for_provider", lambda p: _MultiCon())
     monkeypatch.setattr(access, "project_pinned_identity", lambda prov: None)
-    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: None)
+    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov, account="": None)
     monkeypatch.setattr(access.db, "insert_tool_call", lambda payload: None)
     monkeypatch.setattr(access.db, "member_instance_suspended",
                         lambda *a, **k: False)
@@ -62,10 +62,13 @@ def test_explicit_account_resolves(monkeypatch):
 
 
 def test_explicit_account_missing_raises_no_fallthrough(monkeypatch):
-    # Un org secret EXISTE, mais un account explicite introuvable ne doit PAS y
-    # retomber (agir sous une autre identité que celle demandée = usurpation).
+    # Un org secret EXISTE (mono, ''), mais un account explicite introuvable ne doit
+    # PAS y retomber (agir sous une autre identité que celle demandée = usurpation).
+    # Phase 2 : le nom demandé est cherché à CHAQUE palier à clé — ici l'org ne
+    # l'a pas non plus, donc on lève ; il n'est jamais remplacé par un autre compte.
     _vault(monkeypatch, {"zoho-fr": "K1"})
-    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: "ORGKEY")
+    monkeypatch.setattr(access.org_store, "get_org_secret",
+                        lambda oid, prov, account="": "ORGKEY" if account == "" else None)
     with pytest.raises(McpError):
         access.resolve_credential("zoho", sub="u1", account="zoho-de", emit_on_failure=False)
 

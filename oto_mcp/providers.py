@@ -207,8 +207,30 @@ class Connector:
     @property
     def auth_multi_account(self) -> bool:
         """Le credential est-il multi-compte — N grants pour une même entité
-        (ADR 0024) ? Aujourd'hui seul Google (N comptes OAuth liés)."""
-        return self.name in MULTI_ACCOUNT_PROVIDERS
+        (ADR 0024) ?
+
+        Par DÉFAUT pour tout connecteur à clé d'API (`method=secret`, secret
+        `api_key`/`basic_auth`) : le coffre est déjà segmenté par `account`
+        sur chaque ligne, la résolution membre (access.py `_member_fetch`)
+        traite un compte unique — la ligne legacy `account=''` comprise —
+        exactement comme avant, et l'axe d'appel `_account=` (call_axes.py)
+        n'est émis que sur ces tools. Une clé posée hier reste donc la clé
+        d'aujourd'hui ; ce qui change est qu'on peut en poser une deuxième,
+        nommée, sans attendre qu'un connecteur soit ajouté à la main à la
+        liste curée. Celle-ci (`MULTI_ACCOUNT_PROVIDERS`) reste la source pour
+        les backends d'identité SPÉCIFIQUES (google : OAuth N comptes ;
+        browser : un compte = un site) et les `fields` multi-champs déjà
+        multi-comptes (zoho).
+
+        Hors périmètre, volontairement : OAuth/cookie/none (N comptes = N
+        grants, un autre problème), hosted/remote (pas de clé à poser), et
+        les connecteurs `personal_cross_org` (unipile), dont le barreau
+        cross-org de la cascade est mono-compte par construction."""
+        if self.name in MULTI_ACCOUNT_PROVIDERS:
+            return True
+        return (self.auth_method == "secret"
+                and self.secret_kind in ("api_key", "basic_auth")
+                and not self.personal_cross_org)
 
     @property
     def auth(self) -> dict:
@@ -259,12 +281,14 @@ class Connector:
 # éventuel futur connecteur browser local.
 BROWSER_PROVIDERS = frozenset()
 
-# Connecteurs dont le credential est MULTI-COMPTE — N grants liés à une même
-# entité (ADR 0024). Google (N comptes OAuth), zoho (self-clients FR/US),
-# `browser` (N sites derrière login : un compte = un host, un Context Browserbase
-# par site — cf. tools/browser.py), et `folk` (N clés API nommées d'un même
-# membre — ex. plusieurs workspaces/équipes Folk — sélectionnées par nom via
-# l'axe d'appel `_account=`, cf. call_axes.py). Les autres sessions/oauth
+# Connecteurs multi-compte CURÉS — N grants liés à une même entité (ADR 0024)
+# pour un mécanisme qui ne se déduit pas de la clé : Google (N comptes OAuth),
+# zoho (self-clients FR/US, secret `fields`), `browser` (N sites derrière
+# login : un compte = un host, un Context Browserbase par site — cf.
+# tools/browser.py), et `folk` (historique : N clés API nommées d'un même
+# membre). Depuis 2026-08-25, TOUT connecteur à clé d'API est multi-compte par
+# défaut (`Connector.auth_multi_account`) — folk n'a plus besoin d'être ici, il
+# y reste pour dire d'où vient le mécanisme. Les autres sessions/oauth
 # (crunchbase, atlassian…) restent mono-compte par entité.
 MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho", "browser", "folk"})
 

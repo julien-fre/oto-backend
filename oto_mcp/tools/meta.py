@@ -385,7 +385,11 @@ def register(mcp: FastMCP) -> None:
         # Axes-contexte d'appel (ADR 0038). oto_call s'exécute HORS middleware → les
         # axes des tools plats (org/group/project/instance/account/run_id) ne sont pas
         # posés pour nous. On rejoue NOUS-MÊMES la boucle applies-gated du middleware
-        # plat (`call_axes.axes_for`, ordre AXES → le plus spécifique co-pose son org) :
+        # plat (`call_axes.axes_for_call` — les axes LUS, pas les seuls ANNONCÉS :
+        # `_account=` est accepté sur tout connecteur multi-compte même quand le
+        # schéma ne l'advertise pas, sinon `strip_unconsumed_axes` l'avale et l'appel
+        # part sur le compte par défaut, sans erreur — review #399 F1 ;
+        # ordre AXES → le plus spécifique co-pose son org) :
         # chaque axe présent dans `arguments` (ou le param top-level `_org=`, folded
         # ci-dessous) est GARDÉ+POSÉ puis RETIRÉ des args. Posé AVANT le try de run pour
         # qu'un refus de garde PROPAGE (McpError) au lieu d'être capturé comme une erreur
@@ -396,7 +400,7 @@ def register(mcp: FastMCP) -> None:
         call_axes.reject_legacy_axis_names(args, getattr(tool, "parameters", None))
         undo: list = []
         try:
-            for axis in call_axes.axes_for(name):
+            for axis in call_axes.axes_for_call(name):
                 if axis.param in args:
                     undo.extend(await axis.pin_for(args.pop(axis.param), name))
         except BaseException:

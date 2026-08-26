@@ -122,6 +122,9 @@ def test_anon_resolve_dispatch(monkeypatch):
 
 def test_anon_resolver_platform_open_key(monkeypatch):
     monkeypatch.setattr(org_store, "get_org_secret", lambda o, p: None)
+    # serper est multi-compte : sans ligne mono, le barreau org tente la sélection
+    # nommée — aucun compte posé dans ce scénario.
+    monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a: [])
     # ADR 0044 §F R3 : instance plateforme 'open' (free-tier) servie à l'anon.
     monkeypatch.setattr(access.credentials_store, "list_platform_instances",
                         lambda p: [{"label": "plat", "share_mode": "open", "share_down": [],
@@ -136,6 +139,7 @@ def test_anon_resolver_platform_open_key(monkeypatch):
 def test_anon_resolver_fail_closed(monkeypatch):
     from mcp.shared.exceptions import McpError
     monkeypatch.setattr(org_store, "get_org_secret", lambda o, p: None)
+    monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a: [])
     monkeypatch.setattr(access.credentials_store, "list_platform_instances", lambda p: [])
     # want=byo → jamais de palier plateforme
     with pytest.raises(McpError):

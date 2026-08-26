@@ -57,15 +57,16 @@ def get_active_org(sub: str) -> Optional[int]:
         return int(row["org_id"]) if row else None
 
 
-def get_org_secret(org_id: int, provider: str) -> Optional[str]:
-    """Clé du secret partagé `provider` possédé par l'org, ou None.
+def get_org_secret(org_id: int, provider: str, account: str = "") -> Optional[str]:
+    """Clé du secret partagé `provider` possédé par l'org, ou None. `account`
+    discrimine le multi-compte au palier org ('' = mono legacy).
 
     La restriction aux providers org-partageables (`byo_org`) est portée par la
     couche access et le write-path (`org_secret_meta`).
 
     Lit le coffre chiffré `connector_credentials` (entité 'org', déchiffre).
     """
-    return credentials_store.get_credential("org", str(org_id), provider)
+    return credentials_store.get_credential("org", str(org_id), provider, account)
 
 
 def has_org_secret(org_id: int, provider: str) -> bool:
@@ -812,7 +813,7 @@ def get_org_role(org_id: int, sub: str) -> Optional[str]:
 
 
 def set_org_secret(org_id: int, provider: str, api_key: str, set_by: Optional[str] = None,
-                   meta: Optional[dict] = None) -> None:
+                   meta: Optional[dict] = None, account: str = "") -> None:
     """Pose/rote le secret partagé `provider` de l'org. `provider` validé comme
     org-partageable (byo_org : exclut slack/linkedin, inclut mm org-only) via le
     registre — plus restrictif que KEY_PROVIDERS puisque mm n'est pas keyed.
@@ -828,12 +829,11 @@ def set_org_secret(org_id: int, provider: str, api_key: str, set_by: Optional[st
     if not api_key:
         raise ValueError("api_key requise")
     # Coffre chiffré, source unique (entité 'org').
-    credentials_store.set_credential(
-        "org", str(org_id), provider, api_key, set_by=set_by, meta=meta)
+    credentials_store.set_credential("org", str(org_id), provider, api_key, set_by=set_by, meta=meta, account=account)
 
 
-def delete_org_secret(org_id: int, provider: str) -> bool:
-    return credentials_store.clear_credential("org", str(org_id), provider)
+def delete_org_secret(org_id: int, provider: str, account: str = "") -> bool:
+    return credentials_store.clear_credential("org", str(org_id), provider, account=account)
 
 
 def list_org_secrets(org_id: int) -> list[dict]:

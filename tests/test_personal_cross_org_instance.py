@@ -75,8 +75,10 @@ def _wire_resolution(monkeypatch, *, current, key_orgs, personal=None):
         lambda sub, org, prov, account="": f"K-{org}" if org in key_orgs else None)
     monkeypatch.setattr(access.db, "member_instance_suspended",
                         lambda *a, **k: False)
-    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov: None)
+    monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov, account="": None)
     monkeypatch.setattr(access.db, "insert_tool_call", lambda payload: None)
+    # Multi-compte par défaut (2026-08-25) : la sonde membre liste les comptes d'abord.
+    monkeypatch.setattr(credentials_store, "list_accounts", lambda *a, **k: [])
     monkeypatch.setattr(credentials_store, "list_member_orgs_for",
                         lambda sub, con: sorted(key_orgs, reverse=True))
     monkeypatch.setattr(access.org_store, "get_personal_org", lambda sub: personal)

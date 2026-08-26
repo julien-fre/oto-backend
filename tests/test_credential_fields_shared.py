@@ -54,9 +54,9 @@ def _wire(monkeypatch, *, user=None, group=None, org=None,
     monkeypatch.setattr(access, "current_group", lambda sub: active_group)
     monkeypatch.setattr(access, "current_org", lambda sub: active_org)
     monkeypatch.setattr(access.group_store, "get_group_secret",
-                        lambda gid, prov: group)
+                        lambda gid, prov, account="": group)
     monkeypatch.setattr(access.org_store, "get_org_secret",
-                        lambda oid, prov: org)
+                        lambda oid, prov, account="": org)
 
 
 def test_user_secret_wins(monkeypatch):

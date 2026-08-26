@@ -616,6 +616,36 @@ def _is_multi_account(provider: str) -> bool:
     return con is not None and con.auth_multi_account
 
 
+def _shared_auto_account(entity_type: str, entity_id: str, provider: str,
+                         where: str, scope: Optional[str] = None) -> str:
+    """Compte AUTOMATIQUE d'un palier multi-compte, quand l'appelant n'en a nommé
+    aucun : compte unique auto > défaut posé (`oto_identity(op='set')`,
+    meta.is_default) > '' si aucun compte > McpError d'ambiguïté. Module-level parce
+    que partagé entre la résolution réelle (`_pick_account`) et la résolution ANONYME
+    (`_resolve_credential_anon`) — l'endpoint `<slug>.mcp.oto.cx` doit sélectionner
+    le compte d'org comme le barreau org du chemin réel, jamais lire `''` en dur
+    (`ensure_named_coexistence` migre la ligne `''` vers « principal » au premier
+    compte nommé — review #399 F3). `scope` non-None ⇒ les refs `oto_identity` du
+    message d'ambiguïté portent le scope du palier (org/group)."""
+    accts = credentials_store.list_accounts(entity_type, entity_id, provider)
+    if len(accts) == 1:
+        return accts[0]["account"]
+    if not accts:
+        return ""
+    defaults = [a for a in accts if (a.get("meta") or {}).get("is_default")]
+    if len(defaults) == 1:
+        return defaults[0]["account"]
+    sc = f", scope='{scope}'" if scope else ""
+    raise McpError(ErrorData(
+        code=INVALID_PARAMS,
+        message=(
+            f"Plusieurs comptes `{provider}` configurés {where}, aucun (ou "
+            f"plusieurs) marqué par défaut — précise lequel "
+            f"(oto_identity(op='list'{sc}) pour les lister, "
+            f"oto_identity(op='set'{sc}) pour en fixer un par défaut)."
+        )))
+
+
 def personal_instance_org(sub: str, provider: str,
                           exclude_org: Optional[int] = None) -> Optional[int]:
     """Org portant l'instance PERSONNELLE cross-org de `sub` pour un connecteur
@@ -782,6 +812,11 @@ PRESENCE_PROBE = CascadeProbe(
     platform=lambda s, p, o: _platform_grant_meta(s, p, o),
 )
 
+# ⚠️ Les sondes org/group de FETCH_PROBE lisent le compte MONO (`account=''`) : les
+# chemins qui doivent voir les comptes NOMMÉS d'un palier partagé (résolution réelle
+# `_org_fetch`/`_group_fetch`, résolution anonyme `_anon_org_fetch`) composent leur
+# propre CascadeProbe par-dessus — ne pas brancher FETCH_PROBE tel quel sur un
+# nouveau chemin de résolution d'un connecteur multi-compte (review #399 F3).
 FETCH_PROBE = CascadeProbe(
     member=lambda s, o, p: ((lambda k: (k, "") if k
                              and not db.member_instance_suspended(s, o, p) else None)(
@@ -887,13 +922,17 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
         # (iso-comportement avec l'ancien chemin ; vécu test_call_axes_account).
         g = group() if callable(group) else group
         if g is not None:
-            payload = probe.group(g, provider)
-            if payload is not None:
-                yield CascadeRung("group", "group", str(g), payload)
+            hit = probe.group(g, provider)
+            if hit is not None:
+                # Sonde de fetch multi-compte : (payload, account) — la sonde de
+                # présence répond un booléen, le barreau reste mono ('').
+                payload, account = hit if isinstance(hit, tuple) else (hit, "")
+                yield CascadeRung("group", "group", str(g), payload, account)
         if org is not None:
-            payload = probe.org(org, provider)
-            if payload is not None:
-                yield CascadeRung("org", "org", str(org), payload)
+            hit = probe.org(org, provider)
+            if hit is not None:
+                payload, account = hit if isinstance(hit, tuple) else (hit, "")
+                yield CascadeRung("org", "org", str(org), payload, account)
     if want != "byo":
         con = connectors.connector_for_provider(provider)
         if con is not None and "platform" in con.auth_modes:
@@ -954,64 +993,96 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # le premier palier : plus aucun credential per-user org-agnostique.
     active_org = current_org(sub)
 
+    # Compte NOMMÉ par l'appelant — account explicite (param) > axe d'appel
+    # `_account=` (#108) > épinglage projet — résolu UNE fois, avant la marche :
+    # il sert à chaque palier (`_pick_account`) ET à la garde post-marche (un
+    # compte nommé introuvable partout LÈVE, jamais un repli — review #399 F2).
+    # None = rien de nommé (sélection automatique par palier).
+    named_account = None
+    if _is_multi_account(provider):
+        named_account = (account if account is not None
+                         else session_org.current_call_account()
+                         or project_pinned_identity(provider))
+
+    def _pick_account(entity_type: str, entity_id: str, mprov: str, where: str,
+                      scope: Optional[str] = None) -> tuple:
+        """Le compte EFFECTIF d'un palier multi-compte = compte nommé (cf.
+        `named_account`) > compte unique auto > défaut posé (`oto_identity(op='set')`)
+        > McpError — jamais de repli muet vers un AUTRE compte (anti-usurpation).
+        '' = mono legacy. Renvoie `(compte, explicite)` : un compte NOMMÉ par
+        l'appelant peut vivre à un palier plus bas (Phase 2 : l'org a « eu », le
+        membre non) — le palier qui ne l'a pas passe la main, et c'est la garde
+        POST-MARCHE qui lève s'il n'existe nulle part. Un compte choisi
+        automatiquement n'est jamais cherché ailleurs."""
+        if named_account is not None:
+            return named_account, True
+        return _shared_auto_account(entity_type, entity_id, mprov, where, scope), False
+
+    def _not_found(eff: str, mprov: str) -> McpError:
+        return McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(
+                f"Compte `{eff}` introuvable pour `{mprov}` — vérifie avec "
+                f"oto_identity(op='list'), ou pose-le sur {_ACCOUNT_URL}."
+            )))
+
     def _member_fetch(msub: str, morg: int, mprov: str) -> Optional[tuple]:
-        """Sonde MEMBRE du fetch : sélection du compte en multi-compte (« 2 Zoho ») =
-        account explicite (param) > axe d'appel `_account=` (#108) > épinglage projet
-        > compte unique auto > défaut posé (`oto_identity(op='set')`) > McpError —
-        jamais de repli muet vers un autre compte/l'org/la plateforme (anti-usurpation).
-        '' = mono-compte legacy. Un compte explicite/épinglé introuvable LÈVE (on
+        """Sonde MEMBRE du fetch : sélection du compte en multi-compte (« 2 Zoho »),
+        cf. `_pick_account`. Un compte explicite/épinglé introuvable LÈVE (on
         n'agit pas sous une autre identité).
 
-        Une instance SUSPENDUE (lot 2 / ADR 0044 §KeyStack) est traitée comme absente :
-        le barreau membre passe son tour et le niveau du dessous (groupe/org/plateforme)
-        prend le relais — même verdict que les sondes PRESENCE/FETCH, sinon la
-        résolution réelle contredit ce que le KeyStack annonce (#401). Suspendre est
-        un acte du membre sur SA clé : le relais est le contrat, pas une usurpation."""
+        Une instance SUSPENDUE (lot 2 / ADR 0044 §KeyStack) est traitée comme
+        absente : le barreau membre passe son tour et le niveau du dessous
+        (groupe/org/plateforme) prend le relais — même verdict que les sondes
+        PRESENCE/FETCH, sinon la résolution réelle contredit ce que le KeyStack
+        annonce (#401). Suspendre est un acte du membre sur SA clé : le relais est
+        le contrat, pas une usurpation. (Compte NOMMÉ suspendu : le relais ne va
+        jamais jusqu'à la clé plateforme — la garde post-marche du compte nommé
+        lève, review #399 F2.)"""
         if not _is_multi_account(mprov):
             key = db.get_member_api_key(msub, morg, mprov)
             if key and db.member_instance_suspended(msub, morg, mprov):
                 return None
             return (key, "") if key else None
-        eff = (account if account is not None
-               else session_org.current_call_account() or project_pinned_identity(mprov))
-        if eff is None:
-            accts = credentials_store.list_accounts(
-                credentials_store.MEMBER, credentials_store.member_id(morg, msub), mprov)
-            if len(accts) == 1:
-                eff = accts[0]["account"]
-            elif len(accts) == 0:
-                eff = ""
-            else:
-                # Plusieurs comptes : le défaut posé via `oto_identity(op='set')`
-                # (meta.is_default, `connector_identities._keyed_select`) tranche —
-                # jusqu'ici il était écrit au coffre mais jamais relu ici, donc un
-                # défaut posé côté dashboard/agent n'avait aucun effet sur la
-                # résolution : chaque appel non épinglé restait en erreur.
-                defaults = [a for a in accts if (a.get("meta") or {}).get("is_default")]
-                if len(defaults) == 1:
-                    eff = defaults[0]["account"]
-                else:
-                    raise McpError(ErrorData(
-                        code=INVALID_PARAMS,
-                        message=(
-                            f"Plusieurs comptes `{mprov}` configurés dans cette org, "
-                            f"aucun (ou plusieurs) marqué par défaut — précise lequel "
-                            f"(oto_identity(op='list') pour les lister, "
-                            f"oto_identity(op='set') pour en fixer un par défaut)."
-                        )))
+        eff, explicit = _pick_account(credentials_store.MEMBER,
+                                      credentials_store.member_id(morg, msub),
+                                      mprov, "dans cette org")
         key = db.get_member_api_key(msub, morg, mprov, eff)
-        if eff and not key:
-            raise McpError(ErrorData(
-                code=INVALID_PARAMS,
-                message=(
-                    f"Compte `{eff}` introuvable pour `{mprov}` — vérifie avec "
-                    f"oto_identity(op='list'), ou pose-le sur {_ACCOUNT_URL}."
-                )))
+        if eff and not key and not explicit:
+            raise _not_found(eff, mprov)
         # Suspension PAR compte (le `account` de connectors.instances.suspend) :
         # une clé existante mais mise de côté saute le barreau — après le check
-        # « introuvable » ci-dessus, qui garde sa sémantique (absent ≠ suspendu).
+        # « introuvable », qui garde sa sémantique (absent ≠ suspendu).
         if key and db.member_instance_suspended(msub, morg, mprov, eff):
             return None
+        # Nommé mais absent ici : peut-être une clé partagée (équipe/org) — on
+        # passe la main, sans jamais prendre un autre compte à ce palier.
+        return (key, eff) if key else None
+
+    def _group_fetch(gid: int, mprov: str):
+        """Sonde ÉQUIPE du fetch : même sélection de compte que le membre (Phase 2).
+        Mono-compte → la lecture historique (account='')."""
+        if not _is_multi_account(mprov):
+            return group_store.get_group_secret(gid, mprov)
+        eff, explicit = _pick_account("group", str(gid), mprov, "pour ton équipe",
+                                      scope="group")
+        key = group_store.get_group_secret(gid, mprov, eff)
+        if eff and not key and not explicit:
+            raise _not_found(eff, mprov)
+        return (key, eff) if key else None
+
+    def _org_fetch(oid: int, mprov: str):
+        """Sonde ORG du fetch : même sélection de compte que le membre (Phase 2).
+        Un compte NOMMÉ absent ici passe la main comme les autres paliers — c'est
+        la garde post-marche qui lève (le walker peut ne jamais atteindre ce
+        barreau : org de contexte None, connecteur non org-partageable)."""
+        if not _is_multi_account(mprov):
+            return org_store.get_org_secret(oid, mprov)
+        eff, explicit = _pick_account("org", str(oid), mprov, "pour ton org",
+                                      scope="org")
+        key = org_store.get_org_secret(oid, mprov, eff)
+        if eff and not key and not explicit:
+            raise _not_found(eff, mprov)
         return (key, eff) if key else None
 
     # Marche unique de la cascade (walker) — la sonde fetch ne déchiffre que le
@@ -1019,11 +1090,21 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # `group` passé en LAZY : l'équipe active (lookup DB) n'est résolue que si
     # aucun barreau plus proche n'a gagné.
     probe = CascadeProbe(member=_member_fetch, member_cross=FETCH_PROBE.member_cross,
-                         group=FETCH_PROBE.group, org=FETCH_PROBE.org,
+                         group=_group_fetch, org=_org_fetch,
                          platform=FETCH_PROBE.platform)
     win = cascade_winner(sub, provider, org=active_org,
                          group=lambda: current_group(sub),
                          probe=probe, want=want)
+
+    # Garde post-marche (review #399 F2) : un compte NOMMÉ (param/axe/épinglage)
+    # qui n'a gagné à AUCUN palier à clé lève « introuvable » — jamais une clé
+    # PLATEFORME en silence (le palier plateforme n'a pas de comptes : y répondre
+    # sous un autre credential que celui demandé serait une usurpation), jamais le
+    # message générique « aucune clé ». Couvre les barreaux que le walker n'atteint
+    # pas : org de contexte None, connecteur multi non org-partageable (google,
+    # browser, planity…).
+    if named_account and (win is None or win.mode == "platform"):
+        raise _not_found(named_account, provider)
 
     if win is None:
         # byo-only : pas de palier plateforme (mounts basic_auth, multi-secrets).
@@ -1256,8 +1337,33 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) ->
     # Walker avec sub=None : les barreaux membre/groupe se sautent d'eux-mêmes →
     # cascade réduite org > plateforme (ADR 0044 §F R3 : anon → instance 'open'
     # free-tier, ou 'closed' dont le share_down vise `org:<org_id>`).
+    # ⚠️ Le barreau org sélectionne son COMPTE comme le chemin réel (`_org_fetch` :
+    # unique/`is_default`), jamais `''` en dur — `ensure_named_coexistence` migre la
+    # ligne mono vers « principal » au premier compte nommé, et l'endpoint anonyme
+    # cessait alors de résoudre pendant que `has_org_secret` disait « configuré »
+    # (review #399 F3). Pas de compte nommable ici : aucun sub, aucun axe d'appel.
+    def _anon_org_fetch(oid: int, mprov: str):
+        # Mono D'ABORD : la ligne `''` historique répond sans lire la table des
+        # comptes (zéro coût ajouté pour les orgs pré-migration, et le contrat des
+        # tests qui stubbent `get_org_secret` seul reste entier). La sélection
+        # nommée n'est tentée QUE si la ligne mono manque — le cas F3, où
+        # `ensure_named_coexistence` l'a migrée vers « principal ».
+        key = org_store.get_org_secret(oid, mprov)
+        if key or not _is_multi_account(mprov):
+            return key
+        eff = _shared_auto_account("org", str(oid), mprov,
+                                   "pour l'org de ce projet", scope="org")
+        if not eff:
+            return None
+        key = org_store.get_org_secret(oid, mprov, eff)
+        return (key, eff) if key else None
+
+    probe = CascadeProbe(member=FETCH_PROBE.member,
+                         member_cross=FETCH_PROBE.member_cross,
+                         group=FETCH_PROBE.group, org=_anon_org_fetch,
+                         platform=FETCH_PROBE.platform)
     win = cascade_winner(None, provider, org=org_id, group=None,
-                         probe=FETCH_PROBE, want=want)
+                         probe=probe, want=want)
     if win is None:
         if want == "byo":
             raise McpError(ErrorData(
@@ -1268,7 +1374,8 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) ->
             message=(f"L'endpoint anonyme ne peut pas résoudre `{provider}` : configure "
                      f"une clé d'org, ou grant une clé plateforme à l'org du projet.")))
     if win.mode == "org":
-        return ResolvedCredential(provider, win.payload, False, "org", "org", str(org_id))
+        return ResolvedCredential(provider, win.payload, False, "org", "org",
+                                  str(org_id), account=win.account)
     grant = win.payload
     return ResolvedCredential(provider, grant["secret"], True, "platform",
                               credentials_store.PLATFORM, grant["label"])

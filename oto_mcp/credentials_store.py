@@ -682,6 +682,32 @@ def clear_credential(entity_type: str, entity_id: str, connector: str, conn=None
         return _delete(c, entity_type, entity_id, connector, account)
 
 
+class NamedAccountRequired(ValueError):
+    """Le connecteur porte déjà des comptes NOMMÉS à ce palier : un nouveau credential
+    doit dire lequel il est (`account`), sinon la résolution verrait un '' impossible
+    à désigner."""
+
+
+def ensure_named_coexistence(entity_type: str, entity_id: str, connector: str,
+                             account: str) -> None:
+    """Cohérence des comptes d'un connecteur multi-compte à UN palier, avant une pose.
+    '' (mono legacy) et comptes nommés ne coexistent pas : au premier compte NOMMÉ,
+    la ligne '' migre vers un label (« principal », suffixé si pris) ; poser un ''
+    là où des comptes nommés existent lève `NamedAccountRequired`. Même règle pour
+    le membre (route `/api/settings/api-keys`) et les paliers partagés (org/groupe,
+    capacités `org.secret.set` / `group.secret.set`)."""
+    existing = [r["account"] for r in list_accounts(entity_type, entity_id, connector)]
+    if account:
+        if "" in existing:
+            taken, target, i = set(existing) | {account}, "principal", 2
+            while target in taken:
+                target, i = f"principal-{i}", i + 1
+            rename_account(entity_type, entity_id, connector, "", target)
+    elif any(a for a in existing):
+        raise NamedAccountRequired(
+            "Ce connecteur a déjà des comptes nommés — précise `account`.")
+
+
 def rename_account(entity_type: str, entity_id: str, connector: str,
                    old_account: str, new_account: str) -> bool:
     """Renomme le segment `account` d'un credential. Re-chiffre (l'AAD lie le

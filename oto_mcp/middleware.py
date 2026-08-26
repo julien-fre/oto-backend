@@ -386,9 +386,18 @@ class CallContextMiddleware(Middleware):
         ça, `additionalProperties:false` ferait rejeter l'axe côté client. Les tools
         de capacité (`_org=`) sont schématisés par `_mcp_adapter`, pas ici."""
         tools = await call_next(context)
+        # Axe compte DYNAMIQUE : annoncé sur les connecteurs où l'appelant détient
+        # plusieurs clés (une requête, threadpool — chemin inbound mono-loop). Sans sub
+        # (endpoint anonyme) → rien de plus que les axes statiques.
+        sub = None
+        try:
+            sub = current_user_sub_from_token()
+        except Exception:
+            pass
+        advertised = await run_in_threadpool(call_axes.account_axis_advertised_for, sub)
         out = []
         for t in tools:
-            axes = call_axes.axes_for(t.name)
+            axes = call_axes.axes_for_listing(t.name, advertised)
             if axes:
                 t = t.model_copy(update={
                     "parameters": call_axes.inject_schema(t.parameters, axes)})
@@ -430,7 +439,7 @@ class CallContextMiddleware(Middleware):
             # puis RETIRÉS des arguments avant le dispatch (la fonction du tool ne les
             # déclare pas → elle validerait en erreur sinon). Les seams de résolution
             # existants (resolve_credential…) lisent la ContextVar.
-            for axis in call_axes.axes_for(name):
+            for axis in call_axes.axes_for_call(name):
                 if axis.param in args:
                     undo.extend(await axis.pin_for(args.pop(axis.param), name))
             return await call_next(context)
