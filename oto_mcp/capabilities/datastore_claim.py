@@ -9,7 +9,8 @@ mécanique déjà en base.
 
 Deux gestes, REST-only :
 
-- `me.datastore.claim_next` — POST …/claim_next          : la prochaine ligne libre ;
+- `me.datastore.claim_next` — POST …/claim_next          : la prochaine ligne libre
+  (`max_claims` optionnel : plafond de reprises pour cette passe, #433) ;
 - `me.datastore.claim_row`  — POST …/rows/{row_id}/claim : CETTE ligne-là.
 
 `mcp=None` sur les deux, opt-out explicite : la face agent de `claim_next` existe déjà
@@ -50,6 +51,9 @@ class ClaimNextInput(BaseModel):
     worker: str = ""
     filter: Optional[dict] = None
     lease_s: Optional[int] = None
+    # Plafond de reprises pour CETTE passe (#433) — il serre le `lifecycle.max_claims`
+    # du tableau sans le modifier. Absent = la déclaration du tableau fait foi.
+    max_claims: Optional[int] = None
 
 
 class ClaimRowInput(BaseModel):
@@ -62,7 +66,9 @@ class ClaimRowInput(BaseModel):
 class ClaimResult(BaseModel):
     namespace: str
     # La ligne réservée, colonnes libres du tableau + son bail (`_claimed_by`,
-    # `_claimed_until`). `null` sur `claim_next` quand il n'y a plus rien à réserver.
+    # `_claimed_until`) + ce que la file sait d'elle (`_claims`, et `_abandon` si le
+    # plafond de reprises l'en a sortie). `null` sur `claim_next` quand il n'y a plus
+    # rien à réserver.
     row: Optional[dict] = None
     # Défaut de configuration relevé au claim (statut sans état
     # terminal) : le worker qui réserve est celui que ça concerne.
@@ -93,7 +99,7 @@ def _claim_next(ctx: ResolvedCtx, inp: ClaimNextInput) -> dict:
     try:
         row = make_store(ctx.sub).claim_next(
             inp.namespace, worker=worker, filter=inp.filter,
-            warnings=warnings, trace=trace, **_lease(inp))
+            max_claims=inp.max_claims, warnings=warnings, trace=trace, **_lease(inp))
     except NamespaceNotFound:
         raise AuthzDenied(404, "namespace_not_found")
     except NamespaceReadOnly:

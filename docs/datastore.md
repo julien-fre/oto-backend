@@ -6,7 +6,7 @@ description: >-
   user_datastores + datastore_rows (JSONB natif, uuid7, _created/_updated_at auto),
   chargé hors gate d'activation (provider=None, ADR 0011), partage DB-only via
   datastore_shares, deep-link dashboard via data_url. Couvre les surfaces MCP data_*
-  et REST /api/datastore/*, l'auth double (JWT Logto ou API token oto_*), l'OAuth
+  et REST /api/datastore/*, la file de travail (bail, plafond de reprises), l'auth double (JWT Logto ou API token oto_*), l'OAuth
   Google per-user multi-compte (flux /api/google/oauth/*, refresh token chiffré,
   scopes Sheets/Drive/Gmail/Tasks et gotcha CASA gmail.modify restricted), et la
   procédure de setup GCP one-shot. À consulter pour ajouter ou déboguer le datastore,
@@ -175,6 +175,62 @@ peut-être encore quelqu'un.
 ⚠️ **Écrire un état terminal ne libère plus la ligne** — le store émet une notice à la
 place. Un tableau dont le statut n'a aucun état terminal est une file qui ne libère
 rien : `set_schema` le signale à la pose.
+
+**Le plafond de reprises : distinguer « ça tourne » de « ça tourne à vide » (#433).**
+Depuis que la ligne réservée est liée au run, la conclusion d'un traitement la libère —
+c'est le design. Effet de bord mesuré au rodage d'une campagne : un agent qui réserve,
+enquête, puis conclut SANS écrire rend sa ligne dans la minute, et le job suivant la
+reprend pour refaire le même faux départ. **Deux lignes servies deux fois en dix
+minutes, aucune écriture** — et rien qui le dise, puisque les jobs se terminent en
+`done`. Un ordonnanceur de flotte ne peut pas borner ça par ligne : il ignore laquelle
+l'agent a réservée. **Seul le serveur le sait.**
+
+D'où un compteur porté par la LIGNE (colonne `datastore_rows.claims`, rendue `_claims`) :
+il monte à chaque réservation — `claim_next` comme `claim_row`, renouvellement compris —
+et **retombe à zéro à la première écriture réussie**. C'est cette remise à zéro qui
+sépare « reprise après un vrai travail » de « faux départ répété » ; rien d'autre ne
+les distingue de l'extérieur.
+
+La garde est **OPT-IN et déclarée**, sur le cycle de vie du champ `role="status"` :
+
+```
+lifecycle: {
+  states: ["a_traiter", "traite", "echec"],
+  transitions: {"a_traiter": ["traite", "echec"], "echec": ["a_traiter"]},
+  terminal: ["traite", "echec"],
+  max_claims: 3,              # réservations SANS écriture tolérées
+  abandon_state: "echec"      # DOIT être un état terminal déclaré
+}
+```
+
+Les deux clés vont ensemble et se refusent à la pose : `max_claims` sans
+`abandon_state` (garde qui ne pourrait pas s'appliquer), `abandon_state` non terminal
+(la ligne reviendrait dans la file qu'elle vient de quitter), `max_claims` qui n'est pas
+un entier ≥ 1. Ni l'une ni l'autre déclarée = **aucun plafond**, comportement historique.
+`data_claim_next` accepte un `max_claims` qui SERRE la déclaration pour une passe (un
+ordonnanceur peut être plus strict que le tableau) ; l'état d'abandon, lui, reste une
+affaire de schéma.
+
+Au-delà du plafond, le serveur verse la ligne dans `abandon_state`, pose le motif dans
+une colonne de plateforme (`abandon_reason`, rendue `_abandon` : « abandonnée après 3
+réservations sans écriture, plafond 3 » — le motif **cite ses chiffres**, le plafond
+ayant pu changer depuis), libère le bail, et **journalise** (tableau, ligne, compteur).
+Deux moments d'évaluation, et deux seulement :
+
+- **au relâchement sans écriture** (`data_release`, et `run_finish` qui libère tout ce
+  que le run tenait) — le cas nominal du faux départ ;
+- **au claim**, en filet, avant de servir : c'est ce qui rattrape le bail expiré que
+  personne n'a relâché (l'agent mort), sans quoi ce chemin contournerait le plafond.
+
+⚠️ Une ligne sous bail **actif** n'est jamais abandonnée : son titulaire travaille
+encore, et lui retirer la ligne serait la course que le bail existe pour empêcher.
+
+Une ligne abandonnée **quitte la file quel que soit le filtre du client** : le pick de
+`claim_next` exclut `abandon_reason IS NOT NULL`, filet de plateforme indépendant de ce
+que l'appelant filtre. Elle reste lisible, et réparable : toute écriture réussie remet
+le compteur à zéro ET efface le motif, donc la rouvre. ⚠️ Rouvrir son **statut** suppose
+que le cycle de vie déclare la transition de retour (`"echec": ["a_traiter"]`) — la
+plateforme verse la ligne dans l'état d'abandon, elle ne s'autorise pas à l'en sortir.
 
 Refus de schéma : `ds_append`/`ds_update_row` traduisent `RowValidationError` en
 **400 `row_invalid`** (détail = les champs/transitions fautifs), pas en 500 — c'est le
@@ -455,6 +511,7 @@ mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser 
 | `db/paths.py` | désigner une valeur : `email` · `email.origine` · `contacts[0].email` · `contacts[].email` |
 | `db/query.py` | construire filtres/tris/agrégats — **PUR**, ne touche jamais une connexion |
 | `db/rowlock.py` | le bail d'une ligne (file de travail) |
+| `db/rowabandon.py` | le plafond de reprises : quand la file cesse de tourner à vide |
 | `db/datastore_ns.py` | le TABLEAU : existence, nom, propriété, partages |
 | `db/datastore.py` | les LIGNES : CRUD + clé métier/index |
 | `datastore_errors.py` | les refus — **aucune dépendance**, importable de partout |

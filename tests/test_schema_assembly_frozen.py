@@ -36,10 +36,12 @@ import re
 
 from oto_mcp.db import _schema, schema
 
-# Empreinte de `_SCHEMA` au moment de la découpe par domaine (commit de ce test).
-# Cf. l'avertissement du docstring avant de la toucher.
-EMPREINTE = "abad28fefa5fa14f136f58443d5ff46ac6772c5d86d1cb44ae427b07c66eabda"
-LONGUEUR = 101907
+# Empreinte de `_SCHEMA`, mise à jour dans le commit qui change le DDL —
+# jamais recopiée d'un côté d'un conflit : deux lots qui touchent le DDL
+# la recalculent sur le résultat FUSIONNÉ, sinon la garde valide un DDL que
+# personne n'a servi. Cf. l'avertissement du docstring avant de la toucher.
+EMPREINTE = "fb06985a542809e80bea6047972e98d272b16504f4560c3d20359ef17a6bdffb"
+LONGUEUR = 102487
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
 

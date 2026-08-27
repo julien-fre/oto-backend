@@ -304,6 +304,12 @@ def _init_db_once() -> None:
         # défaut = instantané (PG 11+), aucune réécriture, aucun verrou long — la
         # base est partagée avec la production.
         conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claimed_run TEXT")
+        # Plafond de reprises par ligne (#433) : compteur de réservations sans
+        # écriture + motif d'abandon. `DEFAULT` sur table existante ne réécrit rien
+        # (PG >= 11) — la fenêtre de healthcheck n'en voit pas la couleur, et aucun
+        # backfill n'est requis (0 est bien l'état d'une ligne jamais réservée).
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claims INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS abandon_reason TEXT")
         # #317 : le rôle `title` devient une PRÉSENTATION (`display`). Conversion
         # ADDITIVE — le `role` reste en place, seuls les lecteurs changent de source ;
         # son retrait est l'étape suivante du dossier, une fois la bascule vérifiée.

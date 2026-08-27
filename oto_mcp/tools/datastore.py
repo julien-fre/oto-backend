@@ -368,6 +368,12 @@ def register(mcp: FastMCP) -> None:
           writing a "final" state does NOT free the row (#317). Release is a gesture
           of the LOCK — data_release, or closing your run — never an inference from
           a business value.
+        - work-queue ceiling: `lifecycle.max_claims: <int >= 1>` +
+          `lifecycle.abandon_state: "<terminal state>"` — a row claimed that many
+          times WITHOUT a successful write leaves the queue in that state, with a
+          platform reason in `_abandon`. Both go together: a ceiling without an
+          abandon state, or an abandon state that is not terminal, is REFUSED here.
+          Counter (`_claims`) resets on the first successful write to the row.
 
         SEMANTIC SEARCH (#67 V2.2 — opt-in per namespace): pass `semantic_search=true`
         to make this namespace's ROWS findable by MEANING via oto_search (not just exact
@@ -496,7 +502,7 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def data_claim_next(namespace: str, worker: str, filter: Optional[dict] = None,
-                        lease_s: int = 900) -> dict:
+                        lease_s: int = 900, max_claims: Optional[int] = None) -> dict:
         """Atomically claim the NEXT unprocessed row of a namespace (work queue).
 
         The primitive for draining a table with N parallel (sub-)agents without
@@ -515,6 +521,15 @@ def register(mcp: FastMCP) -> None:
         worker that died without closing anything. While you hold a row, nobody else
         can write it.
 
+        The row carries `_claims` = how many times it has been claimed since the
+        last successful write. A row claimed over and over WITHOUT a write is a
+        queue running empty: past `lifecycle.max_claims` (declared on the table, or
+        `max_claims` here for this pass) the server moves it to
+        `lifecycle.abandon_state`, stamps `_abandon` with the reason, and STOPS
+        serving it — whatever your filter says. It stays readable and repairable:
+        an explicit data_write puts it back in the queue and resets the counter.
+        Neither declared nor passed = no ceiling (historic behaviour).
+
         `namespace` also accepts `slot:<name>` (table bound by the active project).
         """
         store = _acting_store()
@@ -522,7 +537,8 @@ def register(mcp: FastMCP) -> None:
         warnings: list = []
         try:
             row = store.claim_next(namespace, worker=worker, filter=filter,
-                                   lease_s=lease_s, warnings=warnings)
+                                   lease_s=lease_s, max_claims=max_claims,
+                                   warnings=warnings)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except NamespaceNotFound:
