@@ -5,7 +5,7 @@ unique du widget credential de la `ConnectorCard`. Ces tests verrouillent la
 dérivation (pas de drift entre `secret_kind`/`kind` et `auth`) sans toucher le
 comportement runtime (B1 = additif, no-op).
 """
-from oto_mcp.providers import _REGISTRY_LIST, public_catalog
+from oto_mcp.providers import _REGISTRY_LIST, REGISTRY, public_catalog
 
 _METHODS = {"secret", "oauth", "cookie", "remote", "hosted", "none"}
 
@@ -75,6 +75,19 @@ def test_multi_account_providers():
             assert not c.auth_multi_account, c.name
 
 
+def test_account_noun_says_the_provider_word():
+    """Le descripteur porte le MOT que l'utilisateur emploie chez ce fournisseur —
+    un compte Slack du coffre est un workspace, un compte Zoho une organisation, un
+    compte du navigateur connecté un site. C'est le registre qui connaît ce
+    vocabulaire ; l'écran l'affiche tel quel (oto-dashboard#121)."""
+    assert REGISTRY["slack"].auth["account_noun"] == "workspace"
+    assert REGISTRY["zoho"].auth["account_noun"] == "organisation"
+    assert REGISTRY["browser"].auth["account_noun"] == "site"
+    # Défaut : « compte » — jamais vide, l'écran n'a pas de repli à écrire.
+    assert REGISTRY["serper"].auth["account_noun"] == "compte"
+    assert all(c.auth["account_noun"] for c in _REGISTRY_LIST)
+
+
 def test_catalog_exposes_auth():
     cat = {c["name"]: c for c in public_catalog()}
     g = cat["google"]
@@ -85,5 +98,6 @@ def test_catalog_exposes_auth():
     assert cat["serper"]["auth"] == {
         "method": "secret",
         "cardinality": "multi_account",
+        "account_noun": "compte",
         "fields": [{"name": "key", "label": "API key", "secret": True, "required": True, "help": ""}],
     }

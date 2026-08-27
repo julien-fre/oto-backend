@@ -125,6 +125,10 @@ class Connector:
     # `auth_method` oauth/cookie/hosted), pas par ce drapeau. Tripwire :
     # test_single_account_write_guard.
     single_account: bool = False
+    # Mot métier d'un compte chez CE fournisseur, quand « compte » sonne faux : un
+    # compte Slack du coffre est un workspace, un compte Zoho une organisation.
+    # Vide = « compte ». Publié dans le descripteur `auth` et affiché tel quel.
+    account_noun: str = ""
 
     @property
     def org_shareable(self) -> bool:
@@ -257,6 +261,11 @@ class Connector:
         return {
             "method": self.auth_method,
             "cardinality": "multi_account" if self.auth_multi_account else "single",
+            # Le MOT que l'utilisateur emploie pour un compte de ce connecteur, quand
+            # « compte » est faux chez lui : un compte Slack du coffre EST un workspace.
+            # Le front l'affiche tel quel (oto-dashboard#121) — c'est le registre qui
+            # connaît le vocabulaire du fournisseur, pas l'écran.
+            "account_noun": self.account_noun or "compte",
             "fields": [
                 {"name": f.name, "label": f.label, "secret": f.secret,
                  "required": f.required, "help": f.help}
@@ -527,7 +536,7 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
        publisher="", logo_url=None, kind="tools", mount_url=None,
        mount_strip_prefix=None,
        credential_fields=(), modules=(), hosted_auth=False,
-       personal_cross_org=False, single_account=False) -> Connector:
+       personal_cross_org=False, single_account=False, account_noun="") -> Connector:
     return Connector(
         name=name, namespaces=tuple(namespaces), availability=availability,
         auth_modes=frozenset(auth_modes), keyed=keyed, personal_session=personal_session,
@@ -539,6 +548,7 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
         credential_fields=tuple(credential_fields),
         modules=tuple(modules), hosted_auth=hosted_auth,
         personal_cross_org=personal_cross_org, single_account=single_account,
+        account_noun=account_noun,
     )
 
 
@@ -611,7 +621,7 @@ _REGISTRY_LIST = [
     # Slack est émis par installation de l'app dans un workspace. Choix à l'appel
     # par `_account=` ; la lib `oto.tools.slack` sait déjà servir N workspaces.
     _c("slack", ["slack"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
-       personal_session=False, label="Slack",
+       personal_session=False, label="Slack", account_noun="workspace",
        help="messagerie Slack (bot token xoxb- et/ou user token xoxp-)",
        href="https://slack.com", credential_fields=(
            CredentialField("bot_token", "Bot token (xoxb-)", secret=True,
@@ -1016,7 +1026,7 @@ _REGISTRY_LIST = [
     # est physiologiquement personnelle. Hors socle, installable depuis la library ;
     # `browser_eval` (JS arbitraire) reste masqué par défaut (DEFAULT_HIDDEN_TOOLS).
     _c("browser", ["browser"], auth_modes={"byo_user"}, personal_session=True,
-       secret_kind="cookie", label="Navigateur connecté",
+       secret_kind="cookie", label="Navigateur connecté", account_noun="site",
        help="lire un site derrière login — un login par site, session Browserbase"),
     # namespaces = préfixes RÉELS des tools (namespace_of = 1er token avant `_`) :
     # gmail_* / tasks_*. PAS "data" : datastore est un SPINE plateforme (ADR 0016),
@@ -1121,7 +1131,7 @@ _REGISTRY_LIST = [
     # (zoho : clé d'org/groupe partageable — équipe sales partage un self-client).
     # `data_center` (non-secret) sélectionne la région Zoho (com/eu/in…).
     _c("zoho", ["zoho"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
-       label="Zoho CRM",
+       label="Zoho CRM", account_noun="organisation",
        help="CRM Zoho (CRUD modules, notes)", href="https://crm.zoho.com",
        credential_fields=(
            CredentialField("client_id", "Client ID", secret=True,
