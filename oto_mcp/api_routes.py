@@ -53,6 +53,9 @@ from .tool_visibility import (
 from .api_routes_base import (  # noqa: F401 — ré-export de compatibilité
     AuthFn, _allowed_origins, _authenticate, _cors_headers, _json, _json_error,
     _maybe_view_as, bind, options_handler)
+# Handlers par DOMAINE (découpe du 2026-08-27) : chaque module porte des fonctions
+# de module, testables seules ; la table de routes ci-dessous reste ici.
+from . import api_routes_public as public
 
 logger = logging.getLogger(__name__)
 
@@ -368,159 +371,6 @@ class RestCallLogger:
 def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     from starlette.routing import Route
 
-    async def favicon(request: Request) -> Response:
-        """Favicon de marque servi sur mcp.oto.cx (mark canonique, aligné oto.cx).
-
-        L'endpoint MCP n'a pas de page HTML racine → un navigateur/annuaire qui
-        sonde `/favicon.svg` ou `/favicon.ico` tombait sur un 404 (aucune icône
-        de marque). On sert le mark Otomata (source unique `brand.py`) sur les
-        deux chemins.
-        """
-        from . import brand
-        return Response(
-            brand.FAVICON_SVG,
-            media_type="image/svg+xml",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
-
-    async def mcp_catalog(request: Request) -> JSONResponse:
-        """Liste publique des tools MCP exposés — alimente l'autodoc oto.ninja.
-
-        Pas d'auth : la doc des tools (nom, description, schémas) est de toute
-        façon découvrable via tools/list du protocole MCP. CORS large pour
-        permettre fetch côté oto.ninja.
-        """
-        if mcp_instance is None:
-            return _json(request, {"tools": []})
-        try:
-            tools = await mcp_instance.list_tools(run_middleware=False)
-        except Exception as e:
-            return _json_error(request, 500, f"list_tools_failed:{e}")
-        payload = []
-        # (Le filtre « bridges remote per-namespace » a été retiré — ADR 0034 B4 :
-        # le namespace `bridge` est générique, aucun nom client n'atteint l'autodoc.)
-        for t in tools:
-            # Tool object exposes name, description, parameters (input schema),
-            # output_schema. Some attributes may be None depending on the type.
-            payload.append({
-                "name": t.name,
-                "description": (t.description or "").strip(),
-                "input_schema": getattr(t, "parameters", None),
-                "output_schema": getattr(t, "output_schema", None),
-            })
-        return _json(request, {"tools": payload, "count": len(payload)})
-
-    async def openapi_doc(request: Request) -> JSONResponse:
-        """Descriptif OpenAPI de l'API REST — **dérivé** du registre de capacités et
-        de la table de routes VIVANTE (`request.app.routes`), donc jamais désynchronisé.
-
-        Pas d'auth, comme `/api/mcp/catalog` : un descriptif d'API décrit des FORMES,
-        aucune valeur. Sans lui, chaque intégrateur redécouvre la surface par sondage
-        de chemins — et conclut faux (cf. `openapi.py`). `/api/admin/*` est exclu.
-        """
-        try:
-            routes = getattr(request.app, "routes", None)
-        except Exception:                                   # pas d'app Starlette exposée
-            routes = None
-        base = str(request.base_url).rstrip("/") or None
-        return _json(request, openapi.build(routes, server_url=base))
-
-    async def connectors_catalog(request: Request) -> JSONResponse:
-        """Catalogue des connecteurs (registre source unique), auth optionnelle.
-
-        Cran d'activation (ADR 0010) filtré EN AMONT de la visibilité : un
-        connecteur non activé (master global OFF sans override d'org ON) n'apparaît
-        pas dans la vue PRODUIT (anonyme + non-admin). L'**admin voit tout le
-        registre** — sa vue de gouvernance sert justement à activer/désactiver.
-        Ensuite, visibilité : anonyme → self-serve seuls (les `platform_granted`,
-        dont les bridges client-sensibles ADR 0003, sont deny-by-default comme sur
-        la face MCP) ; non-admin authentifié → + ceux dont un namespace est entitled
-        pour le sub (override d'org appliqué via son org active).
-        """
-        cat = connectors.public_catalog()
-        if not request.headers.get("authorization"):
-            exposed = connector_activation.exposed_connectors(None)
-            cat = [c for c in cat if c["name"] in exposed]
-            cat = [c for c in cat if c["availability"] != "platform_granted"]
-            return _json(request, {"connectors": cat})
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_platform_operator(sub):
-            # Visibilité par l'activation (master × override d'org). Un connecteur à
-            # clé plateforme réservé (ex. scaleway) est tenu hors des orgs non
-            # autorisées par son activation (master OFF + override org ON), plus par
-            # un grant de namespace (retiré, ADR 0031).
-            # Org de CONTEXTE (seam ADR 0023 : consultation X-Oto-Org > maison) —
-            # le catalogue suit l'org consultée au dashboard, comme status_for.
-            exposed = connector_activation.exposed_connectors(access.current_org(sub))
-            cat = [c for c in cat if c["name"] in exposed]
-        return _json(request, {"connectors": cat})
-
-    async def doctrines_library_public(request: Request) -> JSONResponse:
-        """Catalogue PUBLIC des doctrines (bibliothèque/marketplace) — pas d'auth.
-
-        Alimente le site vitrine oto.ninja. Deny-by-default : `visibility='public'`
-        UNIQUEMENT (jamais 'unlisted' ni les brouillons d'org). Filtres gros grain
-        en query params (`q`/`category`/`author`) ; le filtrage fin reste client.
-        Route écrite à la main car l'adaptateur REST des capacités authentifie
-        toujours (l'anonyme ne peut pas y passer).
-        """
-        q = request.query_params
-        try:
-            limit = min(int(q.get("limit", "100")), 200)
-        except ValueError:
-            limit = 100
-        items = org_store.list_library(
-            query=q.get("q"), category=q.get("category"),
-            author_kind=q.get("author"), include_unlisted=False, limit=limit)
-        return _json(request, {"doctrines": items})
-
-    async def doctrines_library_public_get(request: Request) -> JSONResponse:
-        """Une doctrine PUBLIQUE complète (markdown) par slug — vitrine, pas d'auth.
-        Public-only : une entrée 'unlisted' n'est jamais servie ici."""
-        entry = org_store.get_library_entry(
-            slug=request.path_params["slug"], include_unlisted=False)
-        if not entry:
-            return _json_error(request, 404, "unknown_entry")
-        return _json(request, entry)
-
-    async def guides_library_public(request: Request) -> JSONResponse:
-        """Catalogue PUBLIC des guides PLATEFORME — pas d'auth.
-
-        Même rôle que `doctrines_library_public` : alimenter la vitrine (snapshot
-        build-time du site) et rendre lisible par un humain ce que l'agent charge
-        via `oto_guide`. Deny-by-default par CONSTRUCTION plutôt que par filtre :
-        `list_guides_for()` sans `sub` ni `org_id` ne rend que le scope plateforme
-        — un guide d'org ou d'user ne peut pas fuir ici, même par erreur d'appel.
-        """
-        return _json(request, {"guides": guide_store.list_guides_for()})
-
-    async def guides_library_public_get(request: Request) -> JSONResponse:
-        """Un guide PLATEFORME complet (markdown) par slug — vitrine, pas d'auth.
-        `scope='platform'` est EXPLICITE : sans lui, `read_guide_scoped` cherche
-        aussi org puis user, ce qu'une route anonyme ne doit jamais faire."""
-        g = guide_store.read_guide_scoped(request.path_params["slug"], scope="platform")
-        if not g:
-            return _json_error(request, 404, "unknown_guide")
-        return _json(request, g)
-
-    async def invite_preview(request: Request) -> JSONResponse:
-        """Aperçu PUBLIC d'une invitation (pas d'auth — le token est le secret).
-        Alimente la page d'accueil « vous êtes invité·e » avant la création de
-        compte : email visé + inviteur, pour accompagner l'onboarding."""
-        p = org_store.preview_invitation(request.path_params.get("token", ""))
-        if not p:
-            return _json_error(request, 404, "invalid_or_expired")
-        return _json(request, p)
-
-    async def invite_preview_by_code(request: Request) -> JSONResponse:
-        """Aperçu PUBLIC d'une invitation d'org par code court (/invitation/<code>)."""
-        p = org_store.preview_invitation_by_code(request.path_params.get("code", ""))
-        if not p:
-            return _json_error(request, 404, "invalid_or_expired")
-        return _json(request, p)
-
     async def me(request: Request) -> JSONResponse:
         sub, err = await _authenticate(request, verifier)
         if err:
@@ -831,42 +681,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         if payload is None:
             return HTMLResponse(_upload_page_html(None), status_code=401)
         return HTMLResponse(_upload_page_html(upload_tokens.target_label(payload["target"])))
-
-    async def public_doc(request: Request) -> JSONResponse:
-        """Lecture publique d'un doc partagé par token (gap #4a) — PAS d'auth,
-        lecture seule. Le dashboard rend le markdown sur sa route publique /p/d/<token>."""
-        token = request.path_params.get("token", "")
-        doc = db.get_doc_by_public_token(token) if token else None
-        if not doc:
-            return _json_error(request, 404, "not_found")
-        return _json(request, {"title": doc["title"], "body_md": doc["body_md"],
-                               "updated_at": doc.get("updated_at")})
-
-    async def public_doc_view(request: Request) -> Response:
-        """Page de partage PUBLIQUE d'un doc — route `/p/d/<token>`, **server-rendered**
-        pour être lisible par un agent (WebFetch sans JS) autant que par un navigateur.
-        Négocie sur `Accept` : `application/json` → JSON, `text/markdown` → markdown brut,
-        sinon HTML autoporté (`public_doc_page`). PAS d'auth, lecture seule."""
-        from . import public_doc_page
-        token = request.path_params.get("token", "")
-        doc = db.get_doc_by_public_token(token) if token else None
-        accept = request.headers.get("accept", "").lower()
-        wants_json = "application/json" in accept
-        if not doc:
-            if wants_json:
-                return _json_error(request, 404, "not_found")
-            return HTMLResponse(public_doc_page.render_missing(), status_code=404)
-        title, body_md = doc["title"], doc.get("body_md") or ""
-        if wants_json:
-            return _json(request, {"title": title, "body_md": body_md,
-                                   "updated_at": doc.get("updated_at")})
-        if "text/markdown" in accept:
-            md = f"# {title}\n\n{body_md}" if title else body_md
-            return PlainTextResponse(md, media_type="text/markdown; charset=utf-8",
-                                     headers={"Cache-Control": "public, max-age=300"})
-        html_page = public_doc_page.render(title=title, body_md=body_md,
-                                           updated_at=doc.get("updated_at"))
-        return HTMLResponse(html_page, headers={"Cache-Control": "public, max-age=300"})
 
     def _org_logo_gate(request: Request, sub: str):
         """Renvoie (org_id, err). 400 id invalide, 404 org inconnue, 403 non-admin."""
@@ -1631,29 +1445,29 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     billing_webhook_routes = api_routes_billing.make_routes(options_handler)
 
     return [
-        Route("/favicon.svg", favicon, methods=["GET"]),
-        Route("/favicon.ico", favicon, methods=["GET"]),
-        Route("/api/mcp/catalog", mcp_catalog, methods=["GET"]),
+        Route("/favicon.svg", public.favicon, methods=["GET"]),
+        Route("/favicon.ico", public.favicon, methods=["GET"]),
+        Route("/api/mcp/catalog", bind(public.mcp_catalog, mcp_instance=mcp_instance), methods=["GET"]),
         Route("/api/mcp/catalog", options_handler, methods=["OPTIONS"]),
         # Descriptif de l'API REST, dérivé (cf. openapi.py). Servi aux deux chemins
         # usuels : un intégrateur sonde l'un ou l'autre, aucun n'est plus canonique.
-        Route("/openapi.json", openapi_doc, methods=["GET"]),
+        Route("/openapi.json", public.openapi_doc, methods=["GET"]),
         Route("/openapi.json", options_handler, methods=["OPTIONS"]),
-        Route("/api/openapi.json", openapi_doc, methods=["GET"]),
+        Route("/api/openapi.json", public.openapi_doc, methods=["GET"]),
         Route("/api/openapi.json", options_handler, methods=["OPTIONS"]),
-        Route("/api/connectors", connectors_catalog, methods=["GET"]),
+        Route("/api/connectors", bind(public.connectors_catalog, verifier=verifier), methods=["GET"]),
         Route("/api/connectors", options_handler, methods=["OPTIONS"]),
-        Route("/api/doctrines/library", doctrines_library_public, methods=["GET"]),
+        Route("/api/doctrines/library", public.doctrines_library_public, methods=["GET"]),
         Route("/api/doctrines/library", options_handler, methods=["OPTIONS"]),
-        Route("/api/doctrines/library/{slug}", doctrines_library_public_get, methods=["GET"]),
+        Route("/api/doctrines/library/{slug}", public.doctrines_library_public_get, methods=["GET"]),
         Route("/api/doctrines/library/{slug}", options_handler, methods=["OPTIONS"]),
-        Route("/api/guides/library", guides_library_public, methods=["GET"]),
+        Route("/api/guides/library", public.guides_library_public, methods=["GET"]),
         Route("/api/guides/library", options_handler, methods=["OPTIONS"]),
-        Route("/api/guides/library/{slug}", guides_library_public_get, methods=["GET"]),
+        Route("/api/guides/library/{slug}", public.guides_library_public_get, methods=["GET"]),
         Route("/api/guides/library/{slug}", options_handler, methods=["OPTIONS"]),
-        Route("/api/invitations/code/{code}", invite_preview_by_code, methods=["GET"]),
+        Route("/api/invitations/code/{code}", public.invite_preview_by_code, methods=["GET"]),
         Route("/api/invitations/code/{code}", options_handler, methods=["OPTIONS"]),
-        Route("/api/invitations/{token}", invite_preview, methods=["GET"]),
+        Route("/api/invitations/{token}", public.invite_preview, methods=["GET"]),
         Route("/api/invitations/{token}", options_handler, methods=["OPTIONS"]),
         Route("/api/me", me, methods=["GET"]),
         Route("/api/me", options_handler, methods=["OPTIONS"]),
@@ -1667,7 +1481,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/me/projects/{project_id:int}/files/{file_id:int}", options_handler, methods=["OPTIONS"]),
         Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", project_file_public, methods=["POST"]),
         Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", options_handler, methods=["OPTIONS"]),
-        Route("/api/public/docs/{token}", public_doc, methods=["GET"]),
+        Route("/api/public/docs/{token}", public.public_doc, methods=["GET"]),
         Route("/api/public/docs/{token}", options_handler, methods=["OPTIONS"]),
         # Réception d'un upload signé out-of-bande (#105) — jeton dans l'URL, pas de JWT.
         # PUT/POST = agent (curl brut) / formulaire humain (multipart) ; GET = page d'upload.
@@ -1676,7 +1490,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/upload/{token}", options_handler, methods=["OPTIONS"]),
         # Page de partage publique server-rendered (lisible par un agent, ADR gap
         # « pages SPA non lisibles »). Servie sous dashboard.oto.ninja via Caddy.
-        Route("/p/d/{token}", public_doc_view, methods=["GET"]),
+        Route("/p/d/{token}", public.public_doc_view, methods=["GET"]),
         Route("/api/orgs/{id}/logo", org_logo_save, methods=["POST"]),
         Route("/api/orgs/{id}/logo", org_logo_clear, methods=["DELETE"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),

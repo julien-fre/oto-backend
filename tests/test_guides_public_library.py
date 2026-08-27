@@ -20,7 +20,9 @@ import types
 
 import pytest
 
-from oto_mcp import api_routes
+# Les handlers publics ont quitté `api_routes` pour `api_routes_public` le
+# 2026-08-27 ; la TABLE de routes, elle, reste assemblée par `api_routes`.
+from oto_mcp import api_routes, api_routes_public
 
 
 def _req(path: str, **params):
@@ -55,7 +57,7 @@ def test_la_liste_ne_demande_ni_user_ni_org(monkeypatch):
         seen["sub"], seen["org_id"] = sub, org_id
         return [{"slug": "claude-tag", "scope": "platform", "title": "T", "description": "d"}]
 
-    monkeypatch.setattr(api_routes.guide_store, "list_guides_for", _list)
+    monkeypatch.setattr(api_routes_public.guide_store, "list_guides_for", _list)
     resp = asyncio.run(_routes()["/api/guides/library"](_req("/api/guides/library")))
     assert seen == {"sub": None, "org_id": None}, "un scope non-plateforme deviendrait atteignable"
     assert _body(resp)["guides"][0]["scope"] == "platform"
@@ -69,7 +71,7 @@ def test_le_detail_epingle_le_scope_plateforme(monkeypatch):
         return {"slug": slug, "scope": "platform", "title": "T",
                 "description": "d", "body_md": "# corps"}
 
-    monkeypatch.setattr(api_routes.guide_store, "read_guide_scoped", _read)
+    monkeypatch.setattr(api_routes_public.guide_store, "read_guide_scoped", _read)
     resp = asyncio.run(_routes()["/api/guides/library/{slug}"](
         _req("/api/guides/library/claude-tag", slug="claude-tag")))
     assert seen == {"slug": "claude-tag", "scope": "platform"}, \
@@ -78,7 +80,7 @@ def test_le_detail_epingle_le_scope_plateforme(monkeypatch):
 
 
 def test_guide_inconnu_404(monkeypatch):
-    monkeypatch.setattr(api_routes.guide_store, "read_guide_scoped",
+    monkeypatch.setattr(api_routes_public.guide_store, "read_guide_scoped",
                         lambda *a, **k: None)
     resp = asyncio.run(_routes()["/api/guides/library/{slug}"](
         _req("/api/guides/library/nope", slug="nope")))
