@@ -9,7 +9,7 @@ oto n'a pas encore d'app Slack publiée (« connecter en un clic ») : tu crées
 ## setup — créer l'app en collant un manifeste (le plus court)
 
 1. va sur [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → choisis **From a manifest** (pas « AI agent » ni « Starter app » : ce sont des gabarits d'app conversationnelle, sans rapport)
-2. choisis le workspace, puis colle **ce manifeste** — il déclare déjà tous les scopes dont les outils oto ont besoin :
+2. choisis le workspace. L'éditeur qui s'ouvre est **déjà rempli** d'un exemple (`display_information: name: Demo App`) : **sélectionne tout et remplace-le** — coller par-dessus sans vider soude les deux manifestes et Slack refuse (« Nested mappings are not allowed in compact mappings »). Le manifeste à mettre à la place, qui déclare déjà tous les scopes dont les outils oto ont besoin :
 
 ```yaml
 display_information:
