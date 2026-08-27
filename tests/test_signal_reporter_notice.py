@@ -165,3 +165,23 @@ def test_un_refus_ne_se_dit_pas_refuse_a_celui_qui_a_signale():
 
     assert "non retenu" in envoyes["html"]
     assert "refusé" not in envoyes["html"]
+
+
+def test_le_rattrapage_historique_est_borne_dans_le_temps():
+    """Le défaut le plus coûteux de ce lot, et il n'a rien cassé de visible : le
+    backfill « les anciens arbitrages sont réputés annoncés » n'avait pas de borne,
+    donc il RE-TOURNAIT à chaque démarrage et marquait « déjà annoncé » tout ce qui
+    venait d'être arbitré sans avoir encore été envoyé. Il a avalé les 62 premiers
+    retours réels, entre l'arbitrage et l'envoi, sans un mot.
+
+    Un backfill est un geste UNIQUE : il doit se reconnaître à ce qu'il rattrape —
+    une population fermée — et jamais à l'état dans lequel il met les lignes, sinon
+    il devient une purge permanente déguisée en migration."""
+    import pathlib
+    src = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "db" / "_init.py"
+    txt = src.read_text(encoding="utf-8")
+    i = txt.index("SET notified_at = resolved_at")
+    fenetre = txt[i:i + 400]
+    assert "resolved_at <" in fenetre and "2026-08-20" in fenetre, (
+        "le rattrapage de `notified_at` doit être BORNÉ à la population historique. "
+        "Sans borne il se rejoue à chaque boot et mange les retours en attente.")

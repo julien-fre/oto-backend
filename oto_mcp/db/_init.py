@@ -601,8 +601,18 @@ def _init_db_once() -> None:
         # sur la pile en cours — n'a pas besoin d'un mode à part : il tombe du
         # REGROUPEMENT, une fois la pile arbitrée.
         conn.execute("ALTER TABLE usage_signals ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ")
+        # ⚠️ BORNÉ DANS LE TEMPS, et la borne est le cœur du correctif. Sans elle
+        # ce rattrapage re-tourne à CHAQUE démarrage et marque « déjà annoncé » tout
+        # ce qui vient d'être arbitré sans avoir encore été envoyé — il a mangé les
+        # 62 premiers retours réels, en silence, entre l'arbitrage et l'envoi. Un
+        # backfill est un geste UNIQUE : il doit se reconnaître à ce qu'il rattrape,
+        # pas à l'état où il met les lignes, sinon il devient une purge permanente.
+        # 2026-08-20 : au-dessus du dernier arbitrage historique (15/08) et sous le
+        # premier arbitrage de ce lot (27/08 19:59) — la frontière est franche, il
+        # n'y a rien entre les deux.
         conn.execute("UPDATE usage_signals SET notified_at = resolved_at "
-                     "WHERE resolved_at IS NOT NULL AND notified_at IS NULL")
+                     "WHERE resolved_at IS NOT NULL AND notified_at IS NULL "
+                     "AND resolved_at < TIMESTAMPTZ '2026-08-20 00:00:00+00'")
         # Unipile revendeur (org_id porté au compte + plafond par org).
         conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS org_id BIGINT REFERENCES orgs(id) ON DELETE SET NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_unipile_accounts_org ON unipile_accounts(org_id)")
