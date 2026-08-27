@@ -144,7 +144,7 @@ def _excerpt(response) -> str:
         return ""
     try:
         text = (response.text or "").strip()
-    except Exception:  # noqa: BLE001 — un corps illisible ne doit jamais masquer le statut
+    except Exception:  # noqa: SILENT — le corps est un BONUS, le statut est le contrat : un corps indécodable (encodage cassé, flux coupé) ne doit ni lever ni bruiter, il s'efface et l'erreur part avec son seul statut
         return ""
     if len(text) > BODY_EXCERPT:
         text = text[:BODY_EXCERPT].rstrip() + "…"

@@ -516,7 +516,13 @@ def merge_with_existing(entity_type: str, entity_id: str, connector: str,
         return dict(provided)          # mono-champ, ou saisie déjà complète
     try:
         existing = get_credential(entity_type, entity_id, connector, account)
-    except Exception:  # noqa: BLE001 — un coffre illisible ne bloque pas une repose complète
+    except Exception:
+        # Une ligne illisible (écrite sous une clé de chiffrement périmée) ne doit pas
+        # interdire de la RÉÉCRIRE en entier — mais elle se journalise : c'est un fait
+        # d'exploitation, pas un détail.
+        logger.warning("merge credential : coffre illisible pour %s/%s/%s (account=%r) "
+                       "— saisie prise telle quelle",
+                       entity_type, entity_id, connector, account, exc_info=True)
         return dict(provided)
     if not existing:
         return dict(provided)
