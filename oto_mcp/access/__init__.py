@@ -42,15 +42,18 @@ partagé, il était aussi le goulot de tous les chantiers de connecteurs. La
 découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
 `tests/test_access_surface_frozen.py`).
 
-| module      | ce qu'il porte                                                  |
-| ----------- | --------------------------------------------------------------- |
-| `scope`     | qui agit, sous quelle org/équipe/projet ; rôle plateforme ; ce que le projet ÉPINGLE ; `_UNSET` |
-| `quotas`    | ce qui est métré (quota jour, usage) et ce qui est payé (option, comp, abonnement) |
-| `cascade`   | le walker UNIQUE `perso > cross-org > équipe > org > plateforme`, ses trois sondes, le palier plateforme |
-| `rbac`      | qui a le droit : RBAC connecteur org/équipe, tools masqués, garde d'instance, instances à portée, redaction |
-| `resolve`   | la résolution réelle d'un credential (chemin chaud) + l'endpoint anonyme |
-| `views`     | les vues minces : clé, champs, mount, mode, option levée, résolvabilité d'une org |
-| `status`    | le snapshot par connecteur de `/api/me`                          |
+- `scope`   — qui agit : rôle plateforme, org/équipe/projet de l'appel, ce que le
+              projet ÉPINGLE, `_UNSET`. Ne dépend de rien.
+- `quotas`  — ce qui est métré (quota jour, usage) et ce qui est payé (option
+              payante, comp admin, abonnement).
+- `cascade` — le walker UNIQUE `perso > cross-org > équipe > org > plateforme`,
+              ses trois sondes, le palier plateforme.
+- `rbac`    — qui a le droit : RBAC connecteur org/équipe, tools masqués, garde
+              d'instance et prêts, instances à portée, filtre de redaction.
+- `resolve` — la résolution réelle d'un credential (chemin chaud) + l'anonyme.
+- `views`   — les vues minces : clé, champs, mount, mode, option levée,
+              résolvabilité d'une org.
+- `status`  — le snapshot par connecteur de `/api/me`.
 
 Le graphe est un DAG strict — aucun cycle, chaque flèche va vers le bas :
 

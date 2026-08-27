@@ -23,8 +23,6 @@ from . import scope
 
 # DÉRIVÉ du registre source unique (package `providers/`) : quota daily par
 # provider (fallback si pas d'env ni de grant).
-
-
 _QUOTA_DEFAULTS = connectors.QUOTA_DEFAULTS
 
 

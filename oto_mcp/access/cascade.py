@@ -27,8 +27,6 @@ from . import scope
 # secret peut être POSSÉDÉ par une org et partagé (auth_mode byo_org) — exclut
 # slack (xoxp = identité perso) et les sessions per-user (linkedin/google/
 # whatsapp/crunchbase). Gate les barreaux groupe/org du walker.
-
-
 ORG_SHAREABLE_PROVIDERS = connectors.ORG_SHAREABLE_PROVIDERS
 
 
