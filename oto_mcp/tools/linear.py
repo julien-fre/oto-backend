@@ -26,6 +26,17 @@ REFUSES rather than dropping it (`_only`, allow-list per op — same contract
 as Fireflies' `_refuse_ignored`, expressed as an allow-list instead of a
 per-op deny-list since every op here has a small, disjoint param set).
 
+**Fenêtre de lecture sur `linear_issue op=list`** (signaux #561 et #568) :
+`updated_after`/`updated_before`/`created_after`/`created_before` bornent la
+lecture CÔTÉ SERVEUR (`IssueFilter.updatedAt`/`createdAt`, des `DateComparator`
+que le schéma portait déjà), et `order_by` choisit entre `createdAt` — le défaut
+de Linear — et `updatedAt`. L'ordre est **décroissant**, ce que rien n'annonçait :
+relevé le 24/08/2026 contre un workspace réel, une issue créée le 26 juillet mais
+modifiée le 21 août se trouvait loin dans la pagination, si bien qu'un run ne
+pouvait pas s'arrêter à la première page hors fenêtre. Contrairement à Attio,
+il n'y avait rien à refuser ici : GraphQL rejette DUREMENT un champ de filtre
+inconnu, donc aucun risque de filtre avalé en silence.
+
 **Live-tested 2026-08-21** against a real workspace, through this tool layer
 (not just the raw client) — full create/get/update/delete lifecycle on
 issues, projects, and webhooks, param-guard behavior confirmed, everything
@@ -138,11 +149,20 @@ def register(mcp: FastMCP) -> None:
         due_date: Optional[str] = None,
         estimate: Optional[int] = None,
         parent_id: Optional[str] = None,
+        updated_after: Optional[str] = None,
+        updated_before: Optional[str] = None,
+        created_after: Optional[str] = None,
+        created_before: Optional[str] = None,
+        order_by: Optional[Literal["createdAt", "updatedAt"]] = None,
         first: Optional[int] = None,
         after: Optional[str] = None,
     ) -> object:
         """A Linear issue — list/filter, full-text search, fetch one,
         create, update, archive (reversible), or delete (moves to trash).
+
+        op="list" sorts by `createdAt` DESCENDING unless `order_by` says
+        otherwise, so a stale issue updated yesterday can sit on any page:
+        bound the read with `updated_after` rather than walking and filtering.
 
         Args:
             op: "list" (default, filter by ids) | "get" | "search"
@@ -159,25 +179,39 @@ def register(mcp: FastMCP) -> None:
                 fields. `priority`: 0=none, 1=urgent, 2=high, 3=normal,
                 4=low (Linear's own scale). `due_date`: ISO 8601 date.
             parent_id: op="create" only — makes this a sub-issue.
+            updated_after/updated_before/created_after/created_before:
+                op="list" only — ISO 8601 UTC bounds applied SERVER-side
+                (inclusive). One day of changes = `updated_after` +
+                `updated_before`.
+            order_by: op="list" only — "createdAt" (Linear's default) or
+                "updatedAt". Descending either way.
             first/after: op="list"/"search" only — cursor pagination
                 (`after` = previous call's `pageInfo.endCursor`).
         """
         c = _client()
         if op == "list":
             _only(op, {"team_id", "project_id", "cycle_id", "assignee_id",
-                        "state_id", "first", "after"},
+                        "state_id", "updated_after", "updated_before",
+                        "created_after", "created_before", "order_by",
+                        "first", "after"},
                   issue_id=issue_id, query=query, title=title, description=description,
                   priority=priority, label_ids=label_ids, due_date=due_date,
                   estimate=estimate, parent_id=parent_id)
             return _run(lambda: c.list_issues(
                 team_id=team_id, project_id=project_id, cycle_id=cycle_id,
-                assignee_id=assignee_id, state_id=state_id, first=_page(first), after=after))
+                assignee_id=assignee_id, state_id=state_id,
+                updated_after=updated_after, updated_before=updated_before,
+                created_after=created_after, created_before=created_before,
+                order_by=order_by, first=_page(first), after=after))
         if op == "get":
             _require(op, issue_id=issue_id)
             _only(op, {"issue_id"}, team_id=team_id, project_id=project_id, cycle_id=cycle_id,
                   assignee_id=assignee_id, state_id=state_id, query=query, title=title,
                   description=description, priority=priority, label_ids=label_ids,
                   due_date=due_date, estimate=estimate, parent_id=parent_id,
+                  updated_after=updated_after, updated_before=updated_before,
+                  created_after=created_after, created_before=created_before,
+                  order_by=order_by,
                   first=first, after=after)
             return _run(lambda: c.get_issue(issue_id))
         if op == "search":
@@ -186,14 +220,20 @@ def register(mcp: FastMCP) -> None:
                   issue_id=issue_id, project_id=project_id, cycle_id=cycle_id,
                   assignee_id=assignee_id, state_id=state_id, title=title,
                   description=description, priority=priority, label_ids=label_ids,
-                  due_date=due_date, estimate=estimate, parent_id=parent_id)
+                  due_date=due_date, estimate=estimate, parent_id=parent_id,
+                  updated_after=updated_after, updated_before=updated_before,
+                  created_after=created_after, created_before=created_before,
+                  order_by=order_by)
             return _run(lambda: c.search_issues(query, team_id=team_id, first=_page(first), after=after))
         if op == "create":
             _require(op, title=title, team_id=team_id)
             _only(op, {"title", "team_id", "description", "assignee_id", "state_id",
                         "priority", "label_ids", "project_id", "cycle_id", "parent_id",
                         "due_date", "estimate"},
-                  issue_id=issue_id, query=query, first=first, after=after)
+                  issue_id=issue_id, query=query, first=first, after=after,
+                  updated_after=updated_after, updated_before=updated_before,
+                  created_after=created_after, created_before=created_before,
+                  order_by=order_by)
             return _run(lambda: c.create_issue(
                 title, team_id, description=description, assignee_id=assignee_id,
                 state_id=state_id, priority=priority, label_ids=label_ids,
@@ -204,7 +244,10 @@ def register(mcp: FastMCP) -> None:
             _only(op, {"issue_id", "title", "description", "assignee_id", "state_id",
                         "priority", "label_ids", "project_id", "cycle_id",
                         "due_date", "estimate"},
-                  team_id=team_id, query=query, parent_id=parent_id, first=first, after=after)
+                  team_id=team_id, query=query, parent_id=parent_id, first=first, after=after,
+                  updated_after=updated_after, updated_before=updated_before,
+                  created_after=created_after, created_before=created_before,
+                  order_by=order_by)
             return _run(lambda: c.update_issue(
                 issue_id, title=title, description=description, assignee_id=assignee_id,
                 state_id=state_id, priority=priority, label_ids=label_ids,
@@ -216,6 +259,9 @@ def register(mcp: FastMCP) -> None:
                   assignee_id=assignee_id, state_id=state_id, query=query, title=title,
                   description=description, priority=priority, label_ids=label_ids,
                   due_date=due_date, estimate=estimate, parent_id=parent_id,
+                  updated_after=updated_after, updated_before=updated_before,
+                  created_after=created_after, created_before=created_before,
+                  order_by=order_by,
                   first=first, after=after)
             return _run(lambda: c.archive_issue(issue_id))
         if op == "delete":
@@ -224,6 +270,9 @@ def register(mcp: FastMCP) -> None:
                   assignee_id=assignee_id, state_id=state_id, query=query, title=title,
                   description=description, priority=priority, label_ids=label_ids,
                   due_date=due_date, estimate=estimate, parent_id=parent_id,
+                  updated_after=updated_after, updated_before=updated_before,
+                  created_after=created_after, created_before=created_before,
+                  order_by=order_by,
                   first=first, after=after)
             return _run(lambda: c.delete_issue(issue_id))
         raise _bad(f"op inconnu: {op!r}")

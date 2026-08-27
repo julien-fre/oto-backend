@@ -122,9 +122,13 @@ def test_issue_list_refuses_non_list_params():
 
         cls.return_value.list_issues.return_value = {"nodes": [], "pageInfo": {}}
         fn(op="list", team_id="t1")
+        # Les bornes de date et `order_by` (signaux #561/#568) voyagent aussi,
+        # à None quand l'appelant n'en veut pas — cf. test_linear_issue_window.py.
         cls.return_value.list_issues.assert_called_once_with(
             team_id="t1", project_id=None, cycle_id=None, assignee_id=None,
-            state_id=None, first=50, after=None)
+            state_id=None, updated_after=None, updated_before=None,
+            created_after=None, created_before=None, order_by=None,
+            first=50, after=None)
     finally:
         patcher.stop()
 

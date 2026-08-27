@@ -47,6 +47,29 @@ paramètres, pas le comptage) :
   "objects" OU "lists"). Les confondre ferait porter à un même `identifier` deux
   sens selon l'op.
 
+**Ce que chaque listing sait faire, et ce qu'il ne saura jamais** (relevé le
+27/08/2026 par différentiel contre l'API réelle, cf.
+`tests/test_attio_listing_window.py` ici et dans oto-core). Quatre signaux
+d'usage — dont #586 et #597, resignalé onze jours plus tard — venaient d'une
+procédure quotidienne qui n'atteignait PAS les comptes rendus d'appels du jour :
+
+| objet      | pagination                    | tri                   | fenêtre de date          |
+|------------|-------------------------------|-----------------------|--------------------------|
+| `note`     | `limit` (déf. 10, max 50) + `offset` | **aucun**      | **aucune**               |
+| `task`     | `limit` (déf. 500, max 1000) + `offset` | `sort`       | **aucune**               |
+| `meeting`  | `limit` (déf. 50, max 200) + `cursor` | `sort`          | `ends_from`/`starts_before` |
+
+⚠️ Attio **AVALE** les paramètres de requête qu'il ne connaît pas en rendant 200
+(`/v2/notes` accepte `sort=`, `created_at[gte]` et même `zzz_inconnu=x` sans
+rien filtrer). D'où la règle tenue ici : on n'expose que ce que l'amont honore
+VRAIMENT, et un tri ou une date qui n'existent pas ne sont pas simulés côté
+client sur une page tronquée — ce serait un filtre qui ment. Deux paramètres
+mentaient d'ailleurs déjà : `attio_task(completed=)` partait en `completed=`
+alors qu'Attio attend `is_completed` (corrigé dans oto-core, le nom du tool ne
+change pas), et `attio_meeting(offset=)` était ignoré par l'API (`offset=2000`
+rendait la même première page) — remplacé par `cursor`, et l'ancien argument est
+désormais REFUSÉ en le nommant plutôt qu'accepté sans effet.
+
 ⚠️ Ce module ÉCRIT sur un CRM RÉEL (données clients) : `op="create"`/`"update"`/
 `"delete"` d'`attio_record`, `attio_note`, `attio_task`, `attio_list`,
 `attio_entry` et `attio_comment`. Le défaut de CHAQUE tool est une LECTURE
@@ -77,6 +100,13 @@ _EntryOp = Literal["query", "get", "create", "update", "delete"]
 _MemberOp = Literal["list", "get"]
 _CommentOp = Literal["threads", "thread", "get", "create", "delete"]
 _MeetingOp = Literal["list", "get", "recordings", "recording", "transcript"]
+# Tris admis par l'amont — l'enum du schéma évite un aller-retour sur un 400
+# opaque (« Query params validation error », sans dire ce qui était permis).
+# ⚠️ Pas d'équivalent sur les notes : `/v2/notes` n'a AUCUN tri (il AVALE le
+# paramètre en rendant 200), donc rien à déclarer là-bas.
+_TaskSort = Literal["created_at:asc", "created_at:desc",
+                     "completed_at:asc", "completed_at:desc"]
+_MeetingSort = Literal["start_asc", "start_desc"]
 _ObjectOp = Literal["list", "get", "views"]
 _AttributeOp = Literal["list", "get", "options", "statuses"]
 
@@ -235,6 +265,8 @@ def register(mcp: FastMCP) -> None:
         parent_record_id: Optional[str] = None,
         title: Optional[str] = None,
         content: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
     ) -> dict:
         """A note attached to a record — list, read, create, delete.
 
@@ -247,6 +279,13 @@ def register(mcp: FastMCP) -> None:
           API does not support editing a note body — to change a note, delete it
           and create a new one.
 
+        ⚠️ **op="list" returns OLDEST first, 10 at a time by default, and Attio
+        offers no sort and no date filter here** (unknown query params are
+        swallowed with a 200, so a date filter would be a lie). Recent notes are
+        therefore at the END: page `offset` by 50 until a page is shorter than
+        `limit`. There is no total count. When the record is known, scoping on
+        `parent_object`+`parent_record_id` is far cheaper.
+
         Args:
             op: list (default) | get | create | delete.
             note_id: op="get"/"delete" — the note ID.
@@ -256,6 +295,8 @@ def register(mcp: FastMCP) -> None:
                 required on op="create" (the record to attach the note to).
             title: op="create" — note title.
             content: op="create" — markdown body.
+            limit: op="list" — 1-50, Attio's default is 10.
+            offset: op="list" — notes to skip; the only way to reach recent ones.
         """
         if op not in _NOTE_OPS:
             raise _bad(_one_of("op", _NOTE_OPS))
@@ -264,6 +305,7 @@ def register(mcp: FastMCP) -> None:
         if op == "list":
             result = client.notes.list(
                 parent_object=parent_object, parent_record_id=parent_record_id,
+                limit=limit, offset=offset,
             )
         elif op == "get":
             result = client.notes.get(_need(note_id, "note_id", op))
@@ -295,12 +337,17 @@ def register(mcp: FastMCP) -> None:
         assignee_id: Optional[str] = None,
         linked_object: Optional[str] = None,
         linked_record_id: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort: Optional[_TaskSort] = None,
     ) -> dict:
         """A task — list, read, create, update, delete.
 
         `op`:
         - **"list"** (default): list tasks — optionally filtered by completion
-          status (`completed`).
+          status (`completed`), paged (`limit`/`offset`) and sorted (`sort`).
+          Attio's default is OLDEST first (`created_at:asc`) — pass
+          `sort="created_at:desc"` to read recent tasks. No date filter exists.
         - **"get"**: get a single task by ID.
         - **"create"** — ⚠️ WRITES: create a task, optionally linked to a record.
         - **"update"** — ⚠️ WRITES: update a task. The Attio API only allows
@@ -321,13 +368,18 @@ def register(mcp: FastMCP) -> None:
             linked_object: companies | people (also deals on op="update") — pair
                 with `linked_record_id`.
             linked_record_id: record ID under that object.
+            limit: op="list" — 1-1000, Attio's default is 500.
+            offset: op="list" — tasks to skip.
+            sort: op="list" — created_at:asc (Attio's default) | created_at:desc
+                | completed_at:asc | completed_at:desc.
         """
         if op not in _TASK_OPS:
             raise _bad(_one_of("op", _TASK_OPS))
         client, is_platform = _client()
 
         if op == "list":
-            result = client.tasks.list(completed=completed)
+            result = client.tasks.list(completed=completed, limit=limit,
+                                        offset=offset, sort=sort)
         elif op == "get":
             result = client.tasks.get(_need(task_id, "task_id", op))
         elif op == "create":
@@ -637,13 +689,19 @@ def register(mcp: FastMCP) -> None:
         op: _MeetingOp = "list",
         meeting_id: Optional[str] = None,
         call_recording_id: Optional[str] = None,
-        limit: int = 50,
-        offset: int = 0,
+        limit: Optional[int] = None,
+        cursor: Optional[str] = None,
+        sort: Optional[_MeetingSort] = None,
+        ends_from: Optional[str] = None,
+        starts_before: Optional[str] = None,
     ) -> dict:
         """A meeting (calendar event synced into Attio) and its call recordings.
 
         `op`:
-        - **"list"** (default): list meetings. Paginated (`limit` / `offset`).
+        - **"list"** (default): list meetings. The only object in this connector
+          Attio can window by date (`ends_from` / `starts_before`) and sort
+          (`sort`). Pagination is by CURSOR, not offset: pass the response's
+          `pagination.next_cursor` back as `cursor`; a null one means the end.
         - **"get"**: get a single meeting by ID.
         - **"recordings"**: list the call recordings of a meeting.
         - **"recording"**: get a single call recording by ID.
@@ -655,15 +713,20 @@ def register(mcp: FastMCP) -> None:
             op: list (default) | get | recordings | recording | transcript.
             meeting_id: every op but "list" — the meeting ID.
             call_recording_id: op="recording"/"transcript" — the recording ID.
-            limit: op="list" — max meetings (default 50).
-            offset: op="list" — pagination offset.
+            limit: op="list" — 1-200, Attio's default is 50.
+            cursor: op="list" — previous response's pagination.next_cursor.
+            sort: op="list" — start_asc (Attio's default) | start_desc.
+            ends_from: op="list" — ISO 8601; meetings ending at/after it.
+            starts_before: op="list" — ISO 8601; meetings starting before it.
         """
         if op not in _MEETING_OPS:
             raise _bad(_one_of("op", _MEETING_OPS))
         client, is_platform = _client()
 
         if op == "list":
-            result = client.meetings.list(limit=limit, offset=offset)
+            result = client.meetings.list(limit=limit, cursor=cursor, sort=sort,
+                                           ends_from=ends_from,
+                                           starts_before=starts_before)
         elif op == "get":
             result = client.meetings.get(_need(meeting_id, "meeting_id", op))
         elif op == "recordings":

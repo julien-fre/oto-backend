@@ -157,9 +157,12 @@ def test_note_ops_route_to_the_right_client_method(client, op, kwargs, method):
 
 
 def test_note_list_scopes_on_the_parent_when_given(client):
+    # Les bornes de page (`limit`/`offset`, ajoutées pour les signaux #586/#597)
+    # voyagent aussi : on n'assertionne donc que le SCOPE, pas le dict entier —
+    # cf. tests/test_attio_listing_window.py pour la fenêtre elle-même.
     _tool("attio_note")(op="list", parent_object="deals", parent_record_id="r1")
-    assert client.notes.list.call_args.kwargs == {
-        "parent_object": "deals", "parent_record_id": "r1"}
+    kwargs = client.notes.list.call_args.kwargs
+    assert kwargs["parent_object"] == "deals" and kwargs["parent_record_id"] == "r1"
 
 
 @pytest.mark.parametrize("op,kwargs,method", [
@@ -179,7 +182,7 @@ def test_task_completed_filters_the_listing_and_is_not_a_setter(client):
     la signature fusionnée : les confondre ferait cocher une tâche en croyant la
     chercher."""
     _tool("attio_task")(op="list", completed=False)
-    assert client.tasks.list.call_args.kwargs == {"completed": False}
+    assert client.tasks.list.call_args.kwargs["completed"] is False
     client.tasks.update.assert_not_called()
 
 
