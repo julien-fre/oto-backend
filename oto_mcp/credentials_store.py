@@ -371,26 +371,50 @@ def pack_secret(connector: str, fields: dict) -> str:
     return json.dumps(fields)
 
 
+class SecretUnpackError(RuntimeError):
+    """Le secret stocké ne se relit pas selon le format déclaré par le connecteur.
+
+    C'est une erreur **de coffre**, et elle doit se lire comme telle. Tant que
+    `unpack_secret` rendait `{}` sur un secret illisible, le client était instancié
+    **sans identifiants** et l'échec remontait comme une erreur d'authentification
+    DU FOURNISSEUR : on accusait la clé du client là où la cause était chez nous
+    (clé maître périmée ⇒ `InvalidTag`, cas vécu ; inventaire des silences du
+    2026-08-27, site B6)."""
+
+
 def unpack_secret(connector: str, secret: str) -> dict:
     """Inverse de `pack_secret` : reconstruit le dict des champs depuis la string
     stockée. Pour l'affichage (champs non-secrets) ET la résolution in-process
-    (un client multi-secrets comme Silae s'instancie avec ces kwargs)."""
+    (un client multi-secrets comme Silae s'instancie avec ces kwargs).
+
+    **Lève `SecretUnpackError` si le secret ne se relit pas** — jamais `{}`, qui
+    produirait un client sans identifiants (cf. la classe ci-dessus)."""
     c = connectors.REGISTRY.get(connector)
     schema = c.secret_fields if c is not None else ()
     if c is not None and c.secret_kind == "basic_auth":
         import base64
         try:
             email, _, password = base64.b64decode(secret).decode().partition(":")
-        except Exception:
-            return {}
+        except Exception as e:
+            raise SecretUnpackError(
+                f"credential `{connector}` illisible : le blob `basic_auth` stocké "
+                f"n'est pas du base64 `email:password` ({type(e).__name__}). "
+                f"Reposer le credential, ou vérifier la clé maître du coffre.")
         return {"email": email, "password": password}
     if len(schema) <= 1:
         return {(schema[0].name if schema else "key"): secret}
     try:
         loaded = json.loads(secret)
-        return loaded if isinstance(loaded, dict) else {}
-    except (ValueError, TypeError):
-        return {}
+    except (ValueError, TypeError) as e:
+        raise SecretUnpackError(
+            f"credential `{connector}` illisible : le blob multi-champs stocké n'est "
+            f"pas du JSON ({type(e).__name__}). Reposer le credential, ou vérifier "
+            f"la clé maître du coffre.")
+    if not isinstance(loaded, dict):
+        raise SecretUnpackError(
+            f"credential `{connector}` illisible : le blob multi-champs stocké est un "
+            f"`{type(loaded).__name__}` JSON, pas un objet de champs.")
+    return loaded
 
 
 def split_secret_config(connector: str, fields: dict) -> tuple[dict, dict]:
@@ -460,10 +484,14 @@ def _reveal(row, entity_type: str, entity_id: str, connector: str, account: str)
 
 def get_credential(entity_type: str, entity_id: str, connector: str, account: str = "") -> Optional[str]:
     """Secret en CLAIR du connecteur pour cette entité (et ce `account` pour le
-    multi-compte ; '' = mono-compte), ou None. Déchiffrement JIT si la ligne est
-    chiffrée (secret_enc) ; fallback plaintext (secret) pour les lignes
-    non-migrées / chiffrement désactivé. Lève si le connecteur ne peut pas porter
-    un credential à ce niveau d'entité (user→byo_user, org→org-partageable).
+    multi-compte ; '' = mono-compte), ou None. Déchiffrement JIT de `secret_enc`.
+    Lève si le connecteur ne peut pas porter un credential à ce niveau d'entité
+    (user→byo_user, org→org-partageable).
+
+    ⚠️ Cette docstring a annoncé jusqu'au 2026-08-27 un « fallback plaintext (secret)
+    pour les lignes non-migrées » : **la branche n'existe plus**. Le SELECT ne lit que
+    `secret_enc` et `_reveal` LÈVE sur échec de déchiffrement — il n'y a aucun chemin
+    plaintext. Carte périmée corrigée avec l'inventaire des silences.
 
     Primitive de déchiffrement : appelée par resolve_api_key (résolution, injecte
     au connecteur) ET api_key_get (lecture de SA clé par le propriétaire).
