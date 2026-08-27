@@ -141,12 +141,18 @@ async def project_file_public(request: Request, *, verifier: JWTVerifier) -> JSO
     except Exception:
         return _json_error(request, 400, "invalid_json")
     make_public = bool(isinstance(body, dict) and body.get("public"))
+    # La bascule S3 d'ABORD, la base ENSUITE : la ligne ne dit « public » ou « privé »
+    # que si l'ACL a effectivement bougé. Les deux sens lèvent la même `MediaError`
+    # (cf. `media_store.make_private`) — une ACL refusée est un refus rendu au client,
+    # jamais un `{"ok": true}` sur un fichier resté ouvert.
     try:
-        public_url = media_store.make_public(existing["s3_key"]) if make_public else None
+        if make_public:
+            public_url = media_store.make_public(existing["s3_key"])
+        else:
+            public_url = None
+            media_store.make_private(existing["s3_key"])
     except media_store.MediaError as e:
         return _json_error(request, e.status, e.code)
-    if not make_public:
-        media_store.make_private(existing["s3_key"])
     row = db.set_project_file_public(file_id, make_public, public_url)
     db.log_project_activity(pid, sub, "project.file_public",
                             f"{existing.get('title') or existing.get('filename')}:{make_public}")

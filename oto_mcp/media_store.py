@@ -322,10 +322,17 @@ def make_public(key: str) -> str:
 
 
 def make_private(key: str) -> None:
-    """Repasse un objet en privé (best-effort)."""
+    """Repasse un objet en `private`. **Lève** `MediaError` si l'ACL n'a pas bougé.
+
+    Symétrique de `make_public` — et ce n'est pas cosmétique. Tant que cette bascule
+    était best-effort, une ACL refusée laissait l'objet `public-read` avec son URL
+    permanente pendant que l'appelant persistait « privé » et rendait `{"ok": true}` :
+    l'écran disait privé, le fichier ne l'était pas (inventaire des silences du
+    2026-08-27, site B1). L'asymétrie ÉTAIT le bug ; la symétrie est la correction.
+    """
     if not key:
         return
     try:
         _get_client().put_object_acl(Bucket=_bucket(), Key=key, ACL="private")
-    except Exception:
-        pass
+    except Exception as e:
+        raise MediaError(500, "acl_failed", str(e))
