@@ -118,7 +118,10 @@ def test_aucune_adresse_de_tableau_de_bord_nest_ecrite_en_dur():
     c'est exactement comme ça que la prod a servi la preprod."""
     import pathlib
     autorises = {  # commentaires, listes d'origines CORS : jamais un lien rendu
-        "api_routes.py", "public_doc_page.py",
+        # `api_routes_base.py` depuis le 2026-08-27 : la liste d'origines CORS
+        # (`_allowed_origins`) a suivi les primitives partagées hors d'`api_routes.py`
+        # lors de la découpe par domaine. Même raison, autre fichier.
+        "api_routes_base.py", "public_doc_page.py",
     }
     fautifs = []
     for f in pathlib.Path("oto_mcp").rglob("*.py"):
