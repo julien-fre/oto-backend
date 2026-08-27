@@ -161,8 +161,18 @@ class Connector:
 
     @property
     def doc_sections(self) -> tuple:
-        """Sections de doc « how-to » (CURÉ, contenu dans `connector_docs.py`) —
-        dérivé par nom. Lazy import : garde ce module pur au niveau module."""
+        """Sections de doc « how-to » (CURÉ) — un markdown par connecteur,
+        `connector_docs/<nom>.md`, joint par NOM. `connector_docs.py` n'en porte
+        que le parseur et la résolution des marqueurs, plus aucune prose. Lazy
+        import : garde ce module pur au niveau module.
+
+        ⚠️ Cette ligne a dit « contenu dans `connector_docs.py` » jusqu'au
+        27/08/2026 : vrai à l'écriture, faux depuis la migration du 02/08 (la
+        prose est passée du dict Python aux markdown), et recopiée telle quelle
+        au découpage du registre du 27/08. Un audit du 27/08 en a conclu qu'il
+        restait 153 lignes de prose curée à ventiler dans `providers/<nom>.py` —
+        le déplacement était fait depuis trois semaines. Une carte périmée coûte
+        plus qu'une carte absente : elle est lue avec confiance."""
         from ..connector_docs import DOC_SECTIONS
         return DOC_SECTIONS.get(self.name, ())
 
