@@ -493,3 +493,13 @@ exécuter une déclaration n'est pas deviner une convention.
 > list --filter k:v` (oto-cli) envoie un `filter` que la route ignorait en silence
 > depuis le passage à `page_rows` — il rend désormais 400. Le paramètre est mort côté
 > serveur, pas côté client.
+
+## `data_write` — deux sémantiques à connaître (sorties de la description de l'outil le 27/08)
+
+Ces deux paragraphes vivaient dans la description de `data_write` servie au modèle (ajoutés entre v1.148 et v1.151). Ils en sont retirés le 27/08 pour un essai A/B : la fréquence des appels d'outil malformés d'une campagne est passée de 21 % à 62 % sur la vague lancée juste après v1.151.0, et **la longueur des descriptions d'outils est le seul changement sur le chemin de cette campagne** (sensibilité à la longueur d'instruction mesurée le 15/08). Le comportement, lui, est inchangé et reste servi par les réponses de l'outil (`valeurs_effacees`, refus nommant la ligne).
+
+- **Ne pas nommer un champ le laisse intact ; le nommer avec `null` (ou `""`) l'EFFACE.** Deux gestes différents — un `null` glissé dans un payload (variable non remplie, gabarit à moitié rempli) détruit la valeur en place. Les effacements reviennent dans `valeurs_effacees` (champ, ligne, valeur PERDUE) pour réécrire ce qu'on n'a pas voulu vider.
+- **Un LOT n'est pas atomique** : il s'arrête à la première ligne que le schéma refuse, et les lignes d'AVANT restent écrites. Le refus nomme cette ligne (son index dans le lot, sa clé métier quand il y en a une) et dit combien de lignes ont atterri — reprendre de là plutôt que rejouer le lot entier.
+
+Si l'essai montre que la longueur ne pèse pas, les deux paragraphes reviennent dans la description (ils y sont utiles) ; s'il montre qu'elle pèse, la règle devient : **les descriptions d'outils portent le contrat minimal, le détail vit dans les réponses et les guides**.
+
