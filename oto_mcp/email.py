@@ -289,6 +289,12 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto") -> boo
     n = len(items)
     subject = (f"{n} retour{'s' if n > 1 else ''} de vos agents sur {brand} : "
                f"ce qu'il en est")
+    # ⚠️ Aucune f-string imbriquée portant un backslash ici : la box tourne en
+    # **Python 3.10**, où « f-string expression part cannot include a backslash » est
+    # une SyntaxError — alors qu'un venv local en 3.12+ la compile sans broncher. Le
+    # boot preprod est mort dessus le 27/08, et ni les tests ni la CI ne l'ont vu :
+    # les deux tournent sur un Python plus récent que le serveur. D'où des morceaux
+    # assemblés en clair plutôt qu'une expression trop maligne.
     lignes = []
     for it in items:
         verdict, puce = _VERDICT.get(str(it.get("status")), ("traité", "·"))
@@ -297,25 +303,27 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto") -> boo
         # Le corps est de la PROSE LIBRE écrite par un agent : on en donne assez pour
         # que la personne reconnaisse de quoi on parle, jamais tout — c'est un rappel,
         # pas une archive.
-        extrait = _esc((str(it.get("body") or "").strip().replace("\n", " "))[:180])
+        brut = str(it.get("body") or "").strip().replace("\n", " ")
+        extrait = _esc(brut[:180])
         note = _esc(str(it.get("resolution") or "").strip())
+
+        date_html = f' <span style="{_FAINT}">({_esc(quand)})</span>' if quand else ""
+        extrait_html = f'<br><span style="{_FAINT}">« {extrait}… »</span>' if extrait else ""
+        note_html = f"<br>{note}" if note else ""
         lignes.append(
-            f'<p style="margin:0 0 14px">'
-            f'<strong>{puce} {_esc(verdict)}</strong> — {cible}'
-            f'{f" <span style=\'{_FAINT}\'>({_esc(quand)})</span>" if quand else ""}'
-            f'{f"<br><span style=\'{_FAINT}\'>« {extrait}… »</span>" if extrait else ""}'
-            f'{f"<br>{note}" if note else ""}'
-            f'</p>')
-    html = (
-        f'<div style="{_WRAP}">'
-        f'<p>vos agents ont remonté {n} retour{"s" if n > 1 else ""} sur {_esc(brand)}. '
-        f'voici ce qu\'il en est advenu.</p>'
-        + "".join(lignes) +
-        f'<p style="{_FAINT}">ces retours sont émis automatiquement par vos agents '
-        f'quand un outil se comporte mal ou qu\'une capacité leur manque. '
-        f'répondez à ce mail si l\'un d\'eux mérite d\'être rouvert.</p>'
-        f'</div>'
-    )
+            f'<p style="margin:0 0 14px"><strong>{puce} {_esc(verdict)}</strong> — '
+            f'{cible}{date_html}{extrait_html}{note_html}</p>')
+
+    intro = (f'vos agents ont remonté {n} retour{"s" if n > 1 else ""} sur '
+             f'{_esc(brand)}. voici ce qu\'il en est advenu.')
+    pied = ("ces retours sont émis automatiquement par vos agents quand un outil se "
+            "comporte mal ou qu\'une capacité leur manque. répondez à ce mail si "
+            "l\'un d\'eux mérite d\'être rouvert.")
+    html = (f'<div style="{_WRAP}">'
+            f'<p>{intro}</p>'
+            + "".join(lignes)
+            + f'<p style="{_FAINT}">{pied}</p>'
+            f'</div>')
     return _send(to, subject, html)
 
 
