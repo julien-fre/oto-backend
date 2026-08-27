@@ -245,7 +245,7 @@ class Connector:
         Par DÉFAUT pour tout connecteur dont le credential se POSE (`method=secret`
         — clé simple `api_key`/`basic_auth` **ou** multi-champs `fields`) : le coffre
         est déjà segmenté par `account` sur chaque ligne, la résolution membre
-        (access.py `_member_fetch`) traite un compte unique — la ligne legacy
+        (access/resolve.py `_member_fetch`) traite un compte unique — la ligne legacy
         `account=''` comprise — exactement comme avant. Une clé posée hier reste
         donc la clé d'aujourd'hui ; ce qui change est qu'on peut en poser une
         deuxième, nommée. `MULTI_ACCOUNT_PROVIDERS` ne sert plus qu'aux backends

@@ -597,7 +597,7 @@ def _init_db_once() -> None:
         # `?|` = scan indexé au lieu d'un seq scan de tout le coffre).
         conn.execute("CREATE INDEX IF NOT EXISTS idx_conn_cred_share_side ON connector_credentials USING gin (share_side)")
         # Retrait du rôle `guest` (2026-06-15) : défaut → member + migration des
-        # lignes existantes (guest était un alias sans effet, cf. access.py).
+        # lignes existantes (guest était un alias sans effet, cf. access/scope.py).
         conn.execute("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'member'")
         conn.execute("UPDATE users SET role = 'member' WHERE role = 'guest'")
         # Retrait de la waitlist alpha + referral (ADR 0013 supersédé) : inscription

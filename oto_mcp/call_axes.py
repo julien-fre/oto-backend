@@ -185,7 +185,7 @@ def accepts_account_axis(name: str) -> bool:
 def account_axis_advertised_for(sub: Optional[str]) -> set[str]:
     """Connecteurs (noms) pour lesquels l'APPELANT détient ≥ 2 comptes au palier membre
     de son org de contexte — là, et là seulement, `_account=` vaut d'être annoncé dans
-    le schéma (un compte unique se résout tout seul, cf. access.py `_member_fetch`).
+    le schéma (un compte unique se résout tout seul, cf. access/resolve.py `_member_fetch`).
     UNE requête par tools/list ; jamais d'exception (une liste d'outils ne tombe pas
     pour un coffre injoignable → axe non annoncé, encore accepté à l'appel)."""
     if not sub:

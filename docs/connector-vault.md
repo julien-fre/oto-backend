@@ -6,7 +6,7 @@ description: >-
   (dataclass Connector, 3 axes disponibilité/visibilité/credential, schéma multi-champs
   secret_fields dérivé), coffre chiffré unique connector_credentials (table 4-col PK
   entity_type/entity_id/connector/account, AES-256-GCM obligatoire via crypto.py,
-  master key en Scaleway Secret Manager), et résolution access.py (resolve_api_key,
+  master key en Scaleway Secret Manager), et résolution access/ (resolve_api_key,
   resolve_credential_fields, resolve_mount_token, status_for,
   list_datastore_namespaces_granted_to).
   Inclut le packing multi-champs, Google multi-compte, LinkedIn/Crunchbase en coffre,
@@ -67,7 +67,7 @@ Enveloppe **AES-256-GCM**, **obligatoire** (`set_credential`/`_pk_encrypt` chiff
 - `platform_keys` : secret dans `api_key_enc` (même pattern, AAD `platform_keys:{provider}:{label}`).
 - Dump Postgres = **ciphertext only**. Pas de rotation de clé (key_ref réservé). Perte de master key = perte totale → Secret Manager versionné + escrow.
 
-## Résolution + accès (`access.py`)
+## Résolution + accès (`access/`)
 
 `resolve_api_key(provider) -> (api_key, is_platform)` : (1) clé membre scopée (sub, org de contexte) (`get_member_api_key`→coffre, entity `member`/`{org}:{sub}`, ADR 0033) ; (2) org secret (si `byo_org` + org active) ; (3) platform grant + quota ; (4) McpError actionnable. Le connecteur **`bridge`** universel (ADR 0034) se résout par les **champs standard** (`resolve_credential_fields("bridge")` → `base_url`/`token`/`label`, cascade membre > groupe > org), raise actionnable si absent, **jamais de fallback SOPS serveur** — plus de `meta.base_url` (l'ex-`resolve_remote_credential` per-namespace retiré en B4).
 `resolve_credential_fields(provider) -> dict` : credential **multi-champs byo_user** (ex. `silae` : client_id/client_secret/subscription_key) — lit le coffre + `unpack_secret`. **byo-only, pas de platform key ni quota** (le credential EST le grant). Pour les clients in-process s'instanciant avec plusieurs secrets.

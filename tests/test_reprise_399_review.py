@@ -6,7 +6,7 @@ F1 (tools/meta.py, `oto_call`) : la boucle de rejeu des axes lit `axes_for_call`
 consommé, `strip_unconsumed_axes` l'avale SANS erreur et l'appel part sur le compte
 par défaut.
 
-F2 (access.py) : « seul le dernier palier à clé lève » avait deux trous quand un
+F2 (access/resolve.py) : « seul le dernier palier à clé lève » avait deux trous quand un
 compte est NOMMÉ (param / axe `_account=` / épinglage projet) :
   (a) org de contexte None → barreaux membre ET org sautés → `_account=x` explicite
       résolvait la clé PLATEFORME en silence (usurpation d'identité de credential) ;
@@ -16,7 +16,7 @@ compte est NOMMÉ (param / axe `_account=` / épinglage projet) :
 La garde vit désormais APRÈS la marche : compte nommé + gagnant None/platform ⇒
 « Compte introuvable », jamais un repli.
 
-F3 (access.py) : l'endpoint MCP anonyme (`<slug>.mcp.oto.cx`) lisait le barreau org
+F3 (access/resolve.py) : l'endpoint MCP anonyme (`<slug>.mcp.oto.cx`) lisait le barreau org
 en `account=''` EN DUR ; or `ensure_named_coexistence` migre la ligne `''` vers
 « principal » au premier compte nommé → l'endpoint cessait de résoudre le provider
 pendant que `has_org_secret` (account-blind) disait « configuré ». La sonde anonyme

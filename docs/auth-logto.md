@@ -89,7 +89,7 @@ renvoyé quand même (Claude, redirect pré-enregistré, jamais cassé).
 **Onboarding actuel = self-serve ouvert.** Le tenant a sign-up activé par
 email magic link, sans allowlist. Quiconque trouve l'URL peut s'inscrire,
 mais c'est sans risque pour les clés serveur car les platform keys ne sont
-accessibles qu'avec un grant explicite (cf. `access.py`).
+accessibles qu'avec un grant explicite (cf. `access/`).
 
 ## Jetons d'API `oto_` — authentification non-interactive
 

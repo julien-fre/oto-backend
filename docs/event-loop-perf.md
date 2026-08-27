@@ -51,7 +51,7 @@ py-spy sur la box, MainThread, **3 relevés sur 6** (dont ≥4 s consécutives) 
 
 ```
 psycopg execute ← has_credential (credentials_store.py) ← has_member_api_key
-  ← walk_cascade (access.py) ← status_for ← _resolve_context (instructions.py)
+  ← walk_cascade (access/cascade.py) ← status_for ← _resolve_context (instructions.py)
   ← _c_layers ← session_layers ← compose_session
   ← on_initialize (middleware.py)          ← LE chemin async
 ```
