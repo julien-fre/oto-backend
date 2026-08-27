@@ -6,6 +6,9 @@ valeurs par DÉFAUT. Trois sites où le défaut est plus dangereux que la demand
 
 - **B2** `POST /api/me/tokens` — `{"scopes": …}` mal formé ⇒ `scopes=None` ⇒ **jeton
   API NON PORTÉ** (droits pleins du sub) émis à la place du jeton borné demandé.
+  *(Ces deux routes sont devenues des capacités le 2026-08-27 : leur couverture est
+  rejouée par la vraie chaîne de l'adaptateur dans `test_api_tokens_capability.py` —
+  cf. le bloc B2/B3 plus bas.)*
 - **B3** `POST /api/admin/users/{sub}/tokens` — idem côté super-admin, plus
   `ttl_days=None` : jeton non porté **et sans expiration**, émis pour un tiers.
 - **B4** `capabilities/_rest_adapter` — corps ignoré sur les ~200 routes de capacité
@@ -19,7 +22,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import types
 
 import pytest
 
@@ -72,75 +74,23 @@ def test_corps_valide_mais_pas_un_objet_leve_invalid_body():
     assert e.value.code == "invalid_body"
 
 
-# ── B2 : un jeton NON PORTÉ ne s'émet jamais par accident ────────────────────
-
-@pytest.fixture
-def me_tokens(monkeypatch):
-    """Route `me_tokens_create` montée avec ses seams stubbés ; on capte ce que
-    `create_api_token` reçoit — c'est là que se lit le succès déguisé."""
-    from oto_mcp import api_routes_datastore as D
-
-    emis = []
-
-    async def _auth(request, verifier, **kw):
-        return "u-1", None
-
-    monkeypatch.setattr(D.db, "create_api_token",
-                        lambda sub, **kw: emis.append(kw) or "oto_secret")
-    monkeypatch.setattr(D.db, "list_api_tokens", lambda sub: [])
-    monkeypatch.setattr(D, "make_store", lambda sub: types.SimpleNamespace(
-        list_namespaces=lambda: [{"namespace": "clients"}]))
-
-    from oto_mcp.api_routes_base import (_cors_headers, _json, _json_error,
-                                         options_handler)
-    routes = D.make_routes(verifier=object(), authenticate=_auth,
-                           json_response=_json, json_error=_json_error,
-                           cors_headers=_cors_headers, options_handler=options_handler)
-    handler = {r.name: r.endpoint for r in routes}["me_tokens_create"]
-    return handler, emis
-
-
-def test_scopes_illisibles_ne_produisent_pas_un_jeton_non_porte(me_tokens):
-    handler, emis = me_tokens
-    resp = asyncio.run(handler(_req(b'{"label": "ci", "scopes": {"namespaces": ["clients"')))
-    assert resp.status_code == 400 and _body(resp)["error"] == "invalid_json"
-    assert emis == [], "un jeton a été émis alors que la portée demandée était illisible"
-
-
-def test_sans_corps_le_jeton_cli_par_defaut_reste_possible(me_tokens):
-    handler, emis = me_tokens
-    resp = asyncio.run(handler(_req(b"")))
-    assert resp.status_code == 201
-    assert emis and emis[0]["scopes"] is None and emis[0]["label"] == "cli"
-
-
-# ── B3 : côté super-admin, non porté ET sans expiration ──────────────────────
-
-@pytest.fixture
-def admin_tokens(monkeypatch):
-    from oto_mcp import api_routes_admin as A
-
-    emis = []
-
-    async def _auth(request, verifier, **kw):
-        return "u-admin", None
-
-    monkeypatch.setattr(A, "_authenticate", _auth)
-    monkeypatch.setattr(A.access, "is_super_admin", lambda sub: True)
-    monkeypatch.setattr(A.db, "get_user", lambda sub: {"sub": sub})
-    monkeypatch.setattr(A.db, "create_api_token",
-                        lambda sub, **kw: emis.append(kw) or "oto_secret")
-    return A, emis
-
-
-def test_admin_corps_illisible_n_emet_pas_de_jeton_eternel(admin_tokens):
-    A, emis = admin_tokens
-    resp = asyncio.run(A.admin_tokens_create(
-        _req(b'{"ttl_days": 7, "scopes": {', path="/api/admin/users/u-2/tokens",
-             path_params={"sub": "u-2"}),
-        verifier=object()))
-    assert resp.status_code == 400 and _body(resp)["error"] == "invalid_json"
-    assert emis == [], "jeton non porté et sans expiration émis pour un tiers"
+# ── B2 et B3 : ils vivent désormais dans le test de la CAPACITÉ ──────────────
+#
+# ⚠️ Les deux sites les plus chers de l'inventaire — `POST /api/me/tokens` et
+# `POST /api/admin/users/{sub}/tokens`, où une portée illisible faisait émettre un jeton
+# NON PORTÉ (et, côté admin, sans expiration) — ne sont plus des routes écrites à la
+# main : ce sont des capacités (`capabilities/api_tokens.py`, 2026-08-27).
+#
+# Leur couverture n'est pas perdue, elle a CHANGÉ DE NIVEAU : elle est rejouée par la
+# vraie chaîne de l'adaptateur REST dans
+# `tests/test_api_tokens_capability.py::test_une_PORTEE_illisible_ne_produit_JAMAIS_un_jeton_non_porte`
+# — paramétré sur les DEUX paliers —, avec son pendant indispensable,
+# `test_un_corps_ABSENT_reste_un_jeton_cli_non_porte` : c'est la distinction absent /
+# illisible qui est le cœur du seam, pas le refus seul.
+#
+# Les garder ici aurait exigé de monter des handlers qui n'existent plus. Même patron
+# que `test_platform_access_surface.py` (#302, puis lot 4 du même chantier) : le test
+# suit son objet, il ne reste pas à exercer un fantôme.
 
 
 # ── B4 : l'adaptateur des ~200 routes de capacité ────────────────────────────

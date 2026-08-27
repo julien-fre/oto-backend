@@ -26,13 +26,12 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
 
 | famille | où | régime |
 | --- | --- | --- |
-| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
+| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, **les jetons API**, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
 | primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api_routes_base.py` | partagées par tous les modules ; **ré-exportées** par `api_routes` |
 | favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques doctrines & guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api_routes_public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
 | `/api/me/avatar`, `/api/orgs/{id}/logo` | `api_routes_media.py` | multipart → hors couche capacité |
 | fichiers bruts d'un projet, `/api/me/projects/{id}/export` | `api_routes_projects.py` | multipart / binaire |
 | `/api/upload/{token}` (PUT/POST/GET) | `api_routes_uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
-| `/api/admin/platform-keys*`, `/api/admin/users/{sub}/tokens*` | `api_routes_admin.py` | `allow_api_token=False` : un jeton ne fabrique pas de jeton |
 | SIRENE, accords, datastore, contact, **webhook Unipile**, webhook Mollie, **callbacks OAuth** zoho/google/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
 
 - `GET /api/me` + `GET /api/me/calls` + `GET /api/me/activity-summary` — **le compte**,
@@ -199,7 +198,31 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
   déjà servis par `oto_connector_activation`.
 - `GET /api/admin/users` + `POST /api/admin/users/{sub}/role` — admin only
 - `POST /api/admin/users/{sub}/grants/{key_id}` body `{daily_quota}` — set/update quota par grant (admin only)
-- `GET|POST /api/admin/users/{sub}/tokens` + `DELETE /api/admin/users/{sub}/tokens/{token_id}` — issue/list/revoke tokens API on behalf of a user (admin only)
+- `GET|POST /api/me/tokens` + `DELETE …/{token_id}`, `GET|POST /api/admin/users/{sub}/tokens`
+  + `DELETE …/{token_id}`, `GET|POST /api/admin/platform-keys` + `DELETE …/{provider}/{label}`
+  — **les jetons API et les clés plateforme**, capacités `me.token.*`,
+  `platform.token.*` et `platform.key.{list,create,delete}` depuis le 2026-08-27
+  (`capabilities/api_tokens.py` ; `api_routes_admin.py` supprimé).
+  ⚠️ **Les six routes de jetons portent `RestBinding.allow_api_token=False`** : un jeton
+  `oto_` y est refusé (`403 api_token_forbidden`). Un jeton qui peut en créer d'autres
+  rend sa fuite auto-entretenue — révoquer le jeton fuité ne suffit plus. C'est ce cran,
+  absent de l'adaptateur jusque-là, qui retenait ces routes en écriture manuelle ; il
+  vit désormais sur le binding, et un test le vérifie en JOUANT les six routes (pas en
+  relisant le descripteur : c'est son application qui est la garde).
+  ⚠️ **Le secret d'un jeton n'est rendu QU'À LA CRÉATION** — il n'est stocké que haché.
+  `scopes: null` = jeton non porté (pleins pouvoirs du sub) ; sinon il est borné à des
+  tableaux/projets nommés (`token_scopes`). **Trois asymétries membre/admin conservées** :
+  la création membre rend **201** et l'admin **200** ; le `DELETE` membre rend `{ok}` et
+  l'admin `{ok, id}` ; seul le palier MEMBRE refuse un tableau que l'émetteur ne voit pas
+  (`400 unknown_namespace` — sinon le jeton serait muet et on le croirait branché), et
+  seul le palier ADMIN accepte un `ttl_days` (qui n'est retenu que s'il est fait de
+  chiffres : `-1` ou un texte donnent « pas d'expiration »).
+  Les **clés plateforme** (ADR 0044 §F) ne rendent jamais leur secret — provider, libellé,
+  date de pose. Refus : `400 invalid_provider`, `400 missing_fields`,
+  `400 invalid_platform_provider`, `404 unknown_key`. ⚠️ Un corps JSON **illisible** rend
+  désormais `400 invalid_provider` et non `400 invalid_json` (même statut).
+  **Aucune face MCP** sur les neuf : la garde des jetons n'aurait aucun sens si un outil
+  faisait le même geste, et `api_key` est un secret brut.
 - `GET /api/admin/monitoring/summary?days=` + `GET /api/admin/monitoring/calls?limit=&sub=&tool=&errors=&days=` — journal des appels MCP, agrégats + brut (admin only, cf. §Monitoring)
 - `GET /api/orgs/{id}/monitoring/{summary,calls,calls/{call_id},connectors,adoption,runs,runs/{run_id},gaps,tool-quality}` — **les mêmes lentilles au niveau ORG** (`capabilities/org_monitoring.py`, autz `ORG_ADMIN_OF`, face MCP `oto_org_monitoring`). Scope = `tool_calls.org_id`/`usage_signals.org_id` (ce qui a été émis SOUS l'org), jamais l'appartenance des membres. `adoption` n'existe qu'à cet étage (membre par membre : actif / jamais actif / bloqué par un connecteur). ⚠️ `calls/{call_id}` et `runs/{run_id}` rendent **404** hors de l'org (id séquentiel devinable). Sert la page dashboard `/org/monitoring`. Cf. `docs/monitoring.md` §Trois étages.
 - `GET /api/admin/tenants?days=` + `GET /api/admin/tenants/{slug}?days=` — **suivi de l'étage tenant** (ADR 0052 ; `capabilities/tenants_admin.py`, autz `PLATFORM_ADMIN`, face MCP `oto_admin_tenant` op=list|get). Par tenant : configuration d'annuaire (émetteur, jwks, hosts, client OAuth, dashboard, chemins de lien), **état dans le process** (`loaded` / `pending_restart` — le registre d'émetteurs est bâti AU BOOT, donc un tenant déclaré depuis n'authentifie encore personne), et l'empreinte sur la fenêtre (orgs via `orgs.tenant_id`, comptes via la qualification du sub, comptes actifs, appels MCP). ⚠️ Ces deux rattachements sont des sources INDÉPENDANTES : `orgs_desalignees` compte les orgs du tenant créées par un compte relevant d'un autre, et la fiche en donne la liste. **Lecture seule** — déclarer un tenant est un runbook de provisioning, pas une route. Sert la page dashboard `/platform/tenants`.

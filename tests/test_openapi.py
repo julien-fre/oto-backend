@@ -67,13 +67,19 @@ def test_admin_surface_is_not_published():
 
 
 def test_handwritten_routes_are_listed_without_schema():
-    # ⚠️ Le chemin d'exemple était `…/datastore/…/rows` : il est passé en capacité
-    # (#302), donc décrit AVEC son schéma — l'exemple s'est mis à prouver le
-    # contraire de ce qu'il énonce. On prend un chemin encore écrit à la main.
+    # ⚠️ Cet exemple a rouillé DEUX FOIS : `…/datastore/…/rows` d'abord (passé en
+    # capacité, #302), puis `/api/me/tokens` (passé en capacité le 2026-08-27). Chaque
+    # fois, l'exemple s'était mis à prouver le contraire de ce qu'il énonce.
+    #
+    # Le choix est donc désormais un chemin qui ne PEUT PAS devenir une capacité :
+    # `/api/upload/{token}` n'a pas de JWT (le jeton scellé de l'URL fait foi) et reçoit
+    # un corps BRUT ou un multipart — or l'adaptateur authentifie toujours et attend du
+    # JSON. Il est classé NATURE, et le restera. Un exemple choisi pour ce qu'il est,
+    # plutôt que pour ce qu'il n'a pas encore été.
     doc = openapi.build([
-        _FakeRoute("/api/me/tokens", ["GET", "POST", "OPTIONS"]),
+        _FakeRoute("/api/upload/{token}", ["GET", "POST", "OPTIONS"]),
     ])
-    item = doc["paths"]["/api/me/tokens"]
+    item = doc["paths"]["/api/upload/{token}"]
     assert set(item) == {"get", "post"}          # OPTIONS n'est pas une opération
     assert "requestBody" not in item["post"]     # forme non dérivable, dit comme tel
     assert item["get"]["tags"] == ["_legacy"]

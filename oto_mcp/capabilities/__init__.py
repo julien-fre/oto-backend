@@ -67,6 +67,10 @@ from . import unipile_me  # noqa: F401 — me.unipile.{connect,reconcile,status,
 # deux fédérations MCP (atlassian, folkmcp) et Google (multi-compte). Ex-routes écrites
 # à la main ; les CALLBACKS restent écrits à la main (302 sans auth, hors du moule).
 from . import federated_oauth  # noqa: F401 — me.federation.{atlassian,folkmcp,google}.*
+# JETONS API `oto_` + CLÉS PLATEFORME (#121) — ex-routes écrites à la main. Les six
+# routes de jetons portent `RestBinding.allow_api_token=False` : un jeton ne fabrique
+# pas de jeton. C'est ce cran, absent de l'adaptateur jusqu'ici, qui les y retenait.
+from . import api_tokens  # noqa: F401 — me.token.*, platform.token.*, platform.key.{list,create,delete}
 # RBAC connecteur interne à l'org (ADR 0025) — restreindre un connecteur à des départements/membres.
 from . import connectors_acl  # noqa: F401 — connectors.acl.{list,grant,revoke}
 # Toolbox du MEMBRE (#121) — ex-routes écrites à la main : liste, registre, bascule
