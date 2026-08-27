@@ -356,7 +356,7 @@ def list_usage_signals(
     limit = max(1, min(int(limit), 1000))
     sql = ("SELECT s.id, s.created_at, s.sub, u.email, u.name, s.org_id, s.signal, "
            "s.kind, s.target, s.body, s.session_id, s.source, s.status, "
-           "s.resolved_at, s.resolved_by, s.resolution "
+           "s.resolved_at, s.resolved_by, s.resolution, s.notified_at "
            "FROM usage_signals s LEFT JOIN users u ON u.sub = s.sub")
     clauses, params = [], []
     if signal:
@@ -396,7 +396,7 @@ def set_usage_signal_status(
                 """
                 UPDATE usage_signals
                    SET status = 'open', resolved_at = NULL, resolved_by = NULL,
-                       resolution = NULL
+                       resolution = NULL, notified_at = NULL
                  WHERE id = %s
                 RETURNING id, signal, kind, target, status, resolved_at, resolved_by,
                           resolution
@@ -408,7 +408,7 @@ def set_usage_signal_status(
                 """
                 UPDATE usage_signals
                    SET status = %s, resolved_at = NOW(), resolved_by = %s,
-                       resolution = %s
+                       resolution = %s, notified_at = NULL
                  WHERE id = %s
                 RETURNING id, signal, kind, target, status, resolved_at, resolved_by,
                           resolution
@@ -416,6 +416,48 @@ def set_usage_signal_status(
                 (status, by, note, signal_id),
             ).fetchone()
         return dict(row) if row else None
+
+
+def pending_signal_notices() -> list[dict]:
+    """Ce qui a été ARBITRÉ sans que son auteur l'ait appris — la matière du retour.
+
+    Seuls les états TERMINAUX comptent : `acknowledged` n'est pas une réponse, et
+    annoncer « on l'a lu » userait le canal avant d'avoir rien dit. Un signal
+    ré-arbitré revient ici (le changement d'état efface `notified_at`), sinon un
+    « traité » corrigé en « refusé » resterait su sous sa première version.
+
+    Rendu à plat, trié par destinataire puis par date : le regroupement se fait chez
+    l'appelant, qui est aussi celui qui décide d'envoyer. ⚠️ On joint l'email ICI
+    plutôt que de le résoudre plus tard : un compte supprimé depuis le signalement
+    n'a plus d'adresse, et il vaut mieux le voir dans la file que découvrir un envoi
+    silencieusement perdu."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """
+            SELECT s.id, s.sub, u.email, u.name, s.signal, s.kind, s.target, s.body,
+                   s.created_at, s.status, s.resolution, s.resolved_at
+            FROM usage_signals s LEFT JOIN users u ON u.sub = s.sub
+            WHERE s.status = ANY(%s) AND s.notified_at IS NULL AND s.sub IS NOT NULL
+            ORDER BY s.sub, s.created_at
+            """,
+            (list(SIGNAL_TERMINAL),),
+        ).fetchall()]
+
+
+def mark_signals_notified(signal_ids: list) -> int:
+    """Marque ces signaux comme annoncés à leur auteur. Rend le nombre de lignes.
+
+    Appelé APRÈS un envoi réussi, jamais avant : un mail qui échoue doit rester dû.
+    L'inverse — marquer puis envoyer — ferait disparaître le retour au premier
+    hoquet du mailer, et personne ne le saurait."""
+    ids = [int(i) for i in signal_ids or []]
+    if not ids:
+        return 0
+    with _connect() as conn:
+        return conn.execute(
+            "UPDATE usage_signals SET notified_at = NOW() WHERE id = ANY(%s)",
+            (ids,),
+        ).rowcount
 
 
 def count_usage_signals_by_status() -> dict:

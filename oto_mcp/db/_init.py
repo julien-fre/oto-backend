@@ -592,6 +592,17 @@ def _init_db_once() -> None:
                      "END IF; END $$")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_signals_status "
                      "ON usage_signals(status, created_at DESC)")
+        # Le RETOUR à celui qui a signalé (#451). Les 331 signaux DÉJÀ arbitrés avant
+        # ce lot sont marqués comme annoncés : leurs auteurs n'ont effectivement rien
+        # reçu, mais les rattraper enverrait des nouvelles de décisions vieilles de
+        # deux mois — et en masse, puisque 3 personnes portent 168 des 204 signaux
+        # encore ouverts (dont 2 externes, à 51 et 53). Le retour vaut pour ce qu'on
+        # arbitre À PARTIR D'ICI. Le rattrapage voulu — un récapitulatif par personne
+        # sur la pile en cours — n'a pas besoin d'un mode à part : il tombe du
+        # REGROUPEMENT, une fois la pile arbitrée.
+        conn.execute("ALTER TABLE usage_signals ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ")
+        conn.execute("UPDATE usage_signals SET notified_at = resolved_at "
+                     "WHERE resolved_at IS NOT NULL AND notified_at IS NULL")
         # Unipile revendeur (org_id porté au compte + plafond par org).
         conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS org_id BIGINT REFERENCES orgs(id) ON DELETE SET NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_unipile_accounts_org ON unipile_accounts(org_id)")

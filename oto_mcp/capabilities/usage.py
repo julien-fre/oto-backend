@@ -16,7 +16,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
 
-from .. import db, org_store
+from .. import config, db, email as mailer, org_store
 from ._authz import PLATFORM_ADMIN, SUB_ONLY
 from ._types import AuthzDenied, cap_limit, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -209,6 +209,105 @@ def _set_signal_status(ctx: ResolvedCtx, inp: SetSignalStatusInput) -> dict:
     return {"ok": True, "signal": row, "counts": db.count_usage_signals_by_status()}
 
 
+class NotifyReportersInput(BaseModel):
+    op: Literal["preview", "send"] = "preview"
+    # Restreint l'envoi à ces destinataires (emails ou subs). Vide = tout le monde.
+    # Sert à sortir par paliers plutôt que d'un coup sur des tiers.
+    only: Optional[list[str]] = None
+
+
+class ReporterDigest(BaseModel):
+    """Ce qu'UNE personne va recevoir (ou vient de recevoir)."""
+    sub: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+    brand: str = "oto"
+    count: int
+    signal_ids: list[int]
+    resolved: int = 0
+    declined: int = 0
+    sent: Optional[bool] = None      # None en aperçu — rien n'a été envoyé
+    reason: Optional[str] = None     # pourquoi rien ne partira (adresse inconnue…)
+
+
+class NotifyReportersOutput(BaseModel):
+    op: str
+    recipients: list[ReporterDigest]
+    total_signals: int
+    sent: int = 0                    # nombre d'envois RÉUSSIS (0 en aperçu)
+
+
+def _group_notices() -> list[dict]:
+    """Les retours en attente, REGROUPÉS par personne — l'unité d'envoi.
+
+    Le regroupement vit ici et pas en SQL parce que c'est lui qui porte la décision
+    du lot : une personne = un mail, quel que soit le nombre de signaux. En SQL on
+    aurait une agrégation à défaire côté Python pour rendre les lignes."""
+    par_sub: dict[str, dict] = {}
+    for row in db.pending_signal_notices():
+        sub = str(row.get("sub"))
+        g = par_sub.setdefault(sub, {
+            "sub": sub, "email": row.get("email"), "name": row.get("name"),
+            "items": [], "resolved": 0, "declined": 0})
+        g["items"].append(row)
+        if row.get("status") == "declined":
+            g["declined"] += 1
+        else:
+            g["resolved"] += 1
+    return list(par_sub.values())
+
+
+def _notify_reporters(ctx: ResolvedCtx, inp: NotifyReportersInput) -> dict:
+    """Rend leur réponse à ceux qui ont signalé — en aperçu, ou pour de bon.
+
+    **L'envoi est un ACTE, jamais un effet de bord.** Ces mails partent chez des
+    tiers (partenaires, contributeurs) sous notre marque : `op=preview` est le
+    défaut, et il ne touche à rien. C'est aussi ce qui rend le rattrapage d'une pile
+    arbitrée sûr — on regarde qui reçoit quoi avant que ça parte.
+
+    `only` restreint aux destinataires nommés (email ou sub) : sortir par paliers
+    plutôt que d'un coup. Un envoi qui échoue ne marque PAS ses signaux — ils
+    restent dus au prochain passage, et c'est la seule façon qu'un hoquet du mailer
+    ne fasse pas disparaître un retour en silence."""
+    cible = {str(x).strip().lower() for x in (inp.only or []) if str(x).strip()}
+    groupes, envois = [], 0
+    for g in _group_notices():
+        if cible and not ({str(g["sub"]).lower(), str(g.get("email") or "").lower()} & cible):
+            continue
+        _base, marque = config.front_for(g["sub"])
+        fiche = {
+            "sub": g["sub"], "email": g.get("email"), "name": g.get("name"),
+            # La marque sous laquelle CE destinataire nous connaît : écrire « oto »
+            # à l'utilisateur d'un partenaire est un faux, même si tout le reste est
+            # juste.
+            "brand": marque or "oto",
+            "count": len(g["items"]),
+            "signal_ids": [int(i["id"]) for i in g["items"]],
+            "resolved": g["resolved"], "declined": g["declined"],
+            # TOUJOURS présent, y compris en aperçu (où il vaut None = « rien n'a été
+            # tenté »). Un champ absent obligerait le lecteur à deviner s'il manque
+            # parce qu'on n'a pas envoyé ou parce que l'envoi a échoué.
+            "sent": None, "reason": None,
+        }
+        if not g.get("email"):
+            # Compte supprimé ou sans adresse : on le MONTRE au lieu de perdre
+            # l'envoi en silence. Les signaux restent dus.
+            fiche["sent"] = False
+            fiche["reason"] = "aucune adresse connue pour ce compte"
+        elif inp.op == "send":
+            ok = mailer.send_signal_digest_email(
+                g["email"], items=g["items"], brand=fiche["brand"])
+            fiche["sent"] = bool(ok)
+            if ok:
+                db.mark_signals_notified(fiche["signal_ids"])
+                envois += 1
+            else:
+                fiche["reason"] = "le mailer a refusé l'envoi — les signaux restent dus"
+        groupes.append(fiche)
+    return {"op": inp.op, "recipients": groupes,
+            "total_signals": sum(g["count"] for g in groupes), "sent": envois}
+
+
 CAPABILITIES += [
     Capability(
         key="usage.feedback", handler=_feedback, Input=FeedbackInput, authz=SUB_ONLY,
@@ -247,4 +346,14 @@ CAPABILITIES += [
                            "(won't do — `note` REQUIRED, say why) | resolved (done). "
                            "note = what was decided, and why.",
                rest=RestBinding("POST", "/api/admin/usage/signals/{signal_id}/status")),
+    Capability(key="usage.notify_reporters", handler=_notify_reporters,
+               Input=NotifyReportersInput, authz=PLATFORM_ADMIN,
+               Output=NotifyReportersOutput,
+               description="Tell the people whose agents reported a signal what was "
+                           "decided. ONE grouped email per person, never one per "
+                           "signal. op=preview (default, sends NOTHING — shows who "
+                           "would get what) / send (actually sends, then marks them "
+                           "notified; a failed send stays owed). `only` = restrict to "
+                           "these emails/subs, to roll out in stages.",
+               rest=RestBinding("POST", "/api/admin/usage/notify-reporters")),
 ]

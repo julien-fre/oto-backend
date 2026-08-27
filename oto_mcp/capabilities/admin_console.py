@@ -339,7 +339,11 @@ CAPABILITIES += [
                      "resolved, or 'pending' = everything left to arbitrate) / set_status "
                      "(`signal_id`, `status`, `note` = what was decided — REQUIRED to "
                      "decline). Four states: open (nobody looked yet), acknowledged (read, "
-                     "not decided), declined (won't do), resolved (done)."),
+                     "not decided), declined (won't do), resolved (done). "
+                     "op=notify_preview (who would be told what was decided about "
+                     "their agents' signals — sends NOTHING) / notify_send (actually "
+                     "sends ONE grouped email per person, never one per signal; "
+                     "`only` = restrict to these emails/subs)."),
         mcp="oto_admin_signal",
     ),
 ]

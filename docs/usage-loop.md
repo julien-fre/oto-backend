@@ -52,6 +52,35 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
   - `resolved` — traité. Aucune note exigée (le travail livré parle de lui-même).
   Le backlog vivant = `signals?status=pending` (= open ∪ acknowledged). `pending` est un
   FILTRE, pas un état.
+- **Le retour à celui qui a signalé (#451, 27/08)** : `POST /api/admin/usage/notify-reporters`
+  (MCP `oto_admin_signal(op='notify_preview'|'notify_send')`, PLATFORM_ADMIN). Colonne
+  `usage_signals.notified_at` — NULL = son auteur ne sait pas encore ; effacée à chaque
+  changement d'état, pour qu'un signal ré-arbitré soit re-annoncé.
+  - **UN mail par PERSONNE, jamais un par signal.** Ce n'est pas une commodité : mesuré le
+    27/08, 3 personnes portaient 168 des 204 signaux en attente, dont deux externes à 51 et
+    53. Un envoi par signal aurait expédié cinquante mails d'affilée à un partenaire le jour
+    où l'on vide la pile — la seule chose pire que le silence. Arbitrer 1 signal ⟹ un mail
+    d'une ligne ; en arbitrer 53 ⟹ un mail de 53 lignes. Un seul chemin, les deux régimes,
+    et le rattrapage d'une pile tombe du regroupement sans mode à part.
+  - **`preview` est le défaut et ne touche à rien.** Ces mails partent chez des tiers sous
+    notre marque : l'envoi est un ACTE (`notify_send`), et `only` permet de sortir par
+    paliers. Deux `op` plutôt qu'un booléen `send=` — envoyer chez des tiers ne doit pas
+    tenir à un drapeau qu'on oublie de mettre à False.
+  - **Un envoi raté reste dû** : on marque APRÈS l'envoi, jamais avant. L'inverse ferait
+    disparaître le retour au premier hoquet du mailer, sans que personne le sache. Une
+    adresse inconnue (compte supprimé) se VOIT dans la réponse au lieu de se perdre.
+  - **Seuls les états terminaux font un retour** : « on l'a lu » n'est pas une réponse, et
+    l'annoncer userait le canal avant d'avoir rien dit.
+  - ⚠️ **Le mail dit « vos agents », jamais « vous ».** Ces retours sont écrits par des
+    agents en session sous le compte de quelqu'un qui n'a le plus souvent jamais su qu'ils
+    existaient ; « votre signalement » lui attribuerait des mots qu'il n'a pas écrits.
+    Et un `declined` s'écrit **« non retenu »** : le rapporteur a rendu service, on veut
+    qu'il signale encore.
+  - ⚠️ La marque est celle du DESTINATAIRE (`config.front_for`) — écrire « oto » à
+    l'utilisateur d'un partenaire est un faux, même quand tout le reste est juste.
+  - Les 331 signaux arbitrés AVANT ce lot sont marqués annoncés par la migration : leurs
+    auteurs n'ont rien reçu, mais leur envoyer des nouvelles de décisions vieilles de deux
+    mois n'aiderait personne. Le retour vaut pour ce qu'on arbitre à partir de là.
 
   ⚠️ **L'état se lit dans la colonne `status`, jamais dans `resolved_at IS NULL`.** Le trio
   `resolved_at/resolved_by/resolution` porte désormais le DERNIER ARBITRAGE, quel qu'il soit

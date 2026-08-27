@@ -139,7 +139,12 @@ CREATE TABLE IF NOT EXISTS usage_signals (
     -- `status` qui dit l'état, JAMAIS `resolved_at IS NOT NULL`.
     resolved_at TIMESTAMPTZ,     -- quand l'arbitrage a été posé
     resolved_by TEXT,            -- sub de l'opérateur qui a arbitré
-    resolution TEXT              -- note libre : ce qui a été décidé, et pourquoi
+    resolution TEXT,             -- note libre : ce qui a été décidé, et pourquoi
+    -- Le RETOUR à celui qui a signalé (#451) : date à laquelle l'arbitrage courant
+    -- lui a été annoncé. NULL = il ne sait pas encore. Remis à NULL à CHAQUE
+    -- changement d'état, pour qu'un signal ré-arbitré soit re-annoncé — sinon un
+    -- « traité » corrigé en « refusé » resterait su sous sa première version.
+    notified_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_usage_signals_signal ON usage_signals(signal, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_signals_target ON usage_signals(signal, target, created_at DESC);

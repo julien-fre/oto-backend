@@ -258,6 +258,67 @@ def send_change_request_resolved_email(to: str, *, project_name: str | None, doc
     return _send(to, subject, html)
 
 
+# Ce qu'un état d'arbitrage DIT à celui qui a signalé — pas le mot interne.
+# « declined » se traduit « non retenu » et jamais « refusé » : le rapporteur a rendu
+# service en signalant, et le mot qui blesse est celui qu'on retient.
+_VERDICT = {
+    "resolved": ("traité", "✓"),
+    "declined": ("non retenu", "—"),
+}
+
+
+def send_signal_digest_email(to: str, *, items: list, brand: str = "oto") -> bool:
+    """UN email pour TOUS les retours arbitrés d'une personne (#451). Best-effort.
+
+    **Groupé par construction, et c'est la raison d'être de ce gabarit.** Mesuré le
+    27/08 : 3 personnes portaient 168 des 204 signaux en attente, dont deux externes à
+    51 et 53. Un envoi par signal aurait donc expédié cinquante mails d'affilée à un
+    partenaire le jour où l'on vide la pile. Arbitrer un signal ⟹ un mail d'une ligne ;
+    en arbitrer cinquante ⟹ un mail de cinquante lignes. Un seul chemin, les deux
+    régimes.
+
+    ⚠️ **On dit « vos agents », jamais « vous ».** Ces retours sont émis par des agents
+    en session, sous le compte de cette personne — qui n'a le plus souvent jamais su
+    qu'ils existaient. Lui écrire « votre signalement » serait lui attribuer des mots
+    qu'elle n'a pas écrits, et rendre le mail incompréhensible.
+
+    `items` = dicts `{status, target, created_at, body, resolution}`. Voix funnel :
+    FR, vouvoiement + minuscules."""
+    if not items:
+        return False
+    n = len(items)
+    subject = (f"{n} retour{'s' if n > 1 else ''} de vos agents sur {brand} : "
+               f"ce qu'il en est")
+    lignes = []
+    for it in items:
+        verdict, puce = _VERDICT.get(str(it.get("status")), ("traité", "·"))
+        quand = str(it.get("created_at") or "")[:10]
+        cible = _esc(str(it.get("target") or "")) or "(sans cible)"
+        # Le corps est de la PROSE LIBRE écrite par un agent : on en donne assez pour
+        # que la personne reconnaisse de quoi on parle, jamais tout — c'est un rappel,
+        # pas une archive.
+        extrait = _esc((str(it.get("body") or "").strip().replace("\n", " "))[:180])
+        note = _esc(str(it.get("resolution") or "").strip())
+        lignes.append(
+            f'<p style="margin:0 0 14px">'
+            f'<strong>{puce} {_esc(verdict)}</strong> — {cible}'
+            f'{f" <span style=\'{_FAINT}\'>({_esc(quand)})</span>" if quand else ""}'
+            f'{f"<br><span style=\'{_FAINT}\'>« {extrait}… »</span>" if extrait else ""}'
+            f'{f"<br>{note}" if note else ""}'
+            f'</p>')
+    html = (
+        f'<div style="{_WRAP}">'
+        f'<p>vos agents ont remonté {n} retour{"s" if n > 1 else ""} sur {_esc(brand)}. '
+        f'voici ce qu\'il en est advenu.</p>'
+        + "".join(lignes) +
+        f'<p style="{_FAINT}">ces retours sont émis automatiquement par vos agents '
+        f'quand un outil se comporte mal ou qu\'une capacité leur manque. '
+        f'répondez à ce mail si l\'un d\'eux mérite d\'être rouvert.</p>'
+        f'</div>'
+    )
+    return _send(to, subject, html)
+
+
 def render_composed_email(
     body: str,
     *,
