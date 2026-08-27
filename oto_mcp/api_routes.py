@@ -58,6 +58,7 @@ from .api_routes_base import (  # noqa: F401 — ré-export de compatibilité
 from . import api_routes_public as public
 from . import api_routes_account as account
 from . import api_routes_media as media
+from . import api_routes_projects as projects
 
 logger = logging.getLogger(__name__)
 
@@ -102,19 +103,6 @@ def _upload_page_html(label: str | None) -> str:
         'button{padding:.55rem 1.1rem;border:0;border-radius:.5rem;background:#4f46e5;color:#fff;font:inherit;cursor:pointer}'
         'button:hover{background:#4338ca}.msg{min-height:1.5rem}.ok{color:#16a34a}.err{color:#dc2626}'
         '</style></head><body>' + body + '</body></html>')
-
-
-def _project_org_context_error(request: Request, sub: str, pid: int):
-    """Gate de CONTEXTE d'org (ADR 0023) des routes projet par-id : le projet doit être
-    visible dans l'org de CONSULTATION (`access.current_org`), pas seulement accessible
-    à l'acteur via une AUTRE de ses orgs (fuite cross-org — cf. l'incident projet). Le
-    pendant REST du gate de la capacité `oto_project`. Renvoie une 404 non-disclosante
-    si hors contexte, sinon None. Les routes d'ÉCRITURE gardent en plus leur check de
-    permission `can_access(write)`."""
-    from . import ownership
-    if ownership.visible_in_org(sub, access.current_org(sub), "project", str(pid)):
-        return None
-    return _json_error(request, 404, "unknown_project")
 
 
 # ── View-as (ADR 0023) : consultation d'une org dans le dashboard ───────────
@@ -379,116 +367,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     # validation et le packing dérivent du schéma — zéro branche par connecteur.
     # cookie/oauth ont des flux dédiés (crunchbase/brevo via Live View Browserbase,
     # google via OAuth) → `secret_fields` vide → exclus ici.
-    # --- Fichiers bruts d'un projet — carte « Autre document » (ADR 0032 §3) ---
-    # Upload multipart (PDF/HTML…) → hors couche capacité (corps binaire, pas JSON).
-    # Blob DURABLE+privé en Object Storage ; accès par presigned à la lecture.
-
-    def _signed(row: dict) -> dict:
-        from . import media_store
-        key = row.pop("s3_key", None)
-        try:
-            row["download_url"] = media_store.presign_get(key) if key else None
-        except media_store.MediaError:
-            row["download_url"] = None
-        return row
-
-    async def project_files_list(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        pid = int(request.path_params["project_id"])
-        if not db.get_project_by_id(pid):
-            return _json_error(request, 404, "unknown_project")
-        if (e := _project_org_context_error(request, sub, pid)):
-            return e
-        return _json(request, {"files": [_signed(r) for r in db.list_project_files(pid)]})
-
-    async def project_files_upload(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        from . import ownership, media_store
-        pid = int(request.path_params["project_id"])
-        if not db.get_project_by_id(pid):
-            return _json_error(request, 404, "unknown_project")
-        if (e := _project_org_context_error(request, sub, pid)):
-            return e
-        if not ownership.can_access(sub, "project", str(pid), "write"):
-            return _json_error(request, 403, "forbidden")
-        try:
-            form = await request.form()
-        except Exception:
-            return _json_error(request, 400, "invalid_multipart")
-        upload = form.get("file")
-        if upload is None or not hasattr(upload, "read"):
-            return _json_error(request, 400, "missing_file")
-        data = await upload.read()
-        filename = getattr(upload, "filename", None) or "file"
-        content_type = getattr(upload, "content_type", None) or "application/octet-stream"
-        title = (str(form.get("title") or "")).strip() or None
-        description = (str(form.get("description") or "")).strip() or None
-        try:
-            key = media_store.upload_object("project-files", str(pid), data, content_type, filename)
-        except media_store.MediaError as e:
-            return _json_error(request, e.status, e.code)
-        row = db.add_project_file(pid, key, filename, mime=content_type,
-                                  size_bytes=len(data), title=title,
-                                  description=description, created_by=sub)
-        db.log_project_activity(pid, sub, "project.file_add", title or filename)
-        return _json(request, {"ok": True, "file": _signed(row)})
-
-    async def project_file_delete(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        from . import ownership, media_store
-        pid = int(request.path_params["project_id"])
-        file_id = int(request.path_params["file_id"])
-        existing = db.get_project_file(file_id)
-        if not existing or existing["project_id"] != pid:
-            return _json_error(request, 404, "unknown_file")
-        if (e := _project_org_context_error(request, sub, pid)):
-            return e
-        if not ownership.can_access(sub, "project", str(pid), "write"):
-            return _json_error(request, 403, "forbidden")
-        db.delete_project_file(file_id)
-        media_store.delete_by_key(existing["s3_key"])
-        db.log_project_activity(pid, sub, "project.file_delete",
-                                existing.get("title") or existing.get("filename"))
-        return _json(request, {"ok": True})
-
-    async def project_file_public(request: Request) -> JSONResponse:
-        """Bascule le partage public d'un fichier (ADR 0032 §3, B4b) : ACL S3
-        public-read ↔ private, URL publique permanente persistée."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        from . import ownership, media_store
-        pid = int(request.path_params["project_id"])
-        file_id = int(request.path_params["file_id"])
-        existing = db.get_project_file(file_id)
-        if not existing or existing["project_id"] != pid:
-            return _json_error(request, 404, "unknown_file")
-        if (e := _project_org_context_error(request, sub, pid)):
-            return e
-        if not ownership.can_access(sub, "project", str(pid), "write"):
-            return _json_error(request, 403, "forbidden")
-        try:
-            body = await request.json()
-        except Exception:
-            return _json_error(request, 400, "invalid_json")
-        make_public = bool(isinstance(body, dict) and body.get("public"))
-        try:
-            public_url = media_store.make_public(existing["s3_key"]) if make_public else None
-        except media_store.MediaError as e:
-            return _json_error(request, e.status, e.code)
-        if not make_public:
-            media_store.make_private(existing["s3_key"])
-        row = db.set_project_file_public(file_id, make_public, public_url)
-        db.log_project_activity(pid, sub, "project.file_public",
-                                f"{existing.get('title') or existing.get('filename')}:{make_public}")
-        return _json(request, {"ok": True, "file": _signed(row)})
-
     async def _do_signed_upload(request: Request, payload: dict, data: bytes,
                                 ct: str | None) -> JSONResponse:
         """Cœur commun des réceptions d'upload signé : autz réappliquée → borne de
@@ -933,27 +811,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
             return _json_error(request, 404, "unknown_token")
         return _json(request, {"ok": True, "id": token_id})
 
-    async def me_project_export(request: Request) -> Response:
-        """Export d'un projet (KB) en ZIP d'arborescence markdown (oto/#6 B2 —
-        réversibilité). Accès LECTURE requis. Les pages deviennent des .md ; une page
-        à enfants → dossier + `_index.md`."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        try:
-            pid = int(request.path_params["id"])
-        except (KeyError, ValueError):
-            return _json_error(request, 400, "bad_project")
-        if not ownership.can_access(sub, "project", str(pid), "read"):
-            return _json_error(request, 403, "forbidden")
-        proj = db.get_project_by_id(pid) or {}
-        docs = db.list_docs_for_project(pid)
-        blob = await run_in_threadpool(doc_export.build_export, docs,
-                                       doc_export._slug(proj.get("name") or "kb", pid))
-        fname = f"{doc_export._slug(proj.get('name') or 'export', pid)}.zip"
-        return Response(blob, media_type="application/zip",
-                        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
-
     async def my_tools_list(request: Request) -> JSONResponse:
         """Liste tous les tools du serveur avec l'état (enabled/disabled)
         pour l'utilisateur courant.
@@ -1239,12 +1096,12 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/me/avatar", bind(media.avatar_save, verifier=verifier), methods=["POST"]),
         Route("/api/me/avatar", bind(media.avatar_clear, verifier=verifier), methods=["DELETE"]),
         Route("/api/me/avatar", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files", project_files_list, methods=["GET"]),
-        Route("/api/me/projects/{project_id:int}/files", project_files_upload, methods=["POST"]),
+        Route("/api/me/projects/{project_id:int}/files", bind(projects.project_files_list, verifier=verifier), methods=["GET"]),
+        Route("/api/me/projects/{project_id:int}/files", bind(projects.project_files_upload, verifier=verifier), methods=["POST"]),
         Route("/api/me/projects/{project_id:int}/files", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files/{file_id:int}", project_file_delete, methods=["DELETE"]),
+        Route("/api/me/projects/{project_id:int}/files/{file_id:int}", bind(projects.project_file_delete, verifier=verifier), methods=["DELETE"]),
         Route("/api/me/projects/{project_id:int}/files/{file_id:int}", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", project_file_public, methods=["POST"]),
+        Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", bind(projects.project_file_public, verifier=verifier), methods=["POST"]),
         Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", options_handler, methods=["OPTIONS"]),
         Route("/api/public/docs/{token}", public.public_doc, methods=["GET"]),
         Route("/api/public/docs/{token}", options_handler, methods=["OPTIONS"]),
@@ -1297,7 +1154,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/admin/users/{sub}/tokens/{token_id}", options_handler, methods=["OPTIONS"]),
         Route("/api/me/activity-summary", bind(account.me_activity_summary, verifier=verifier), methods=["GET"]),
         Route("/api/me/activity-summary", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{id}/export", me_project_export, methods=["GET"]),
+        Route("/api/me/projects/{id}/export", bind(projects.me_project_export, verifier=verifier), methods=["GET"]),
         Route("/api/me/projects/{id}/export", options_handler, methods=["OPTIONS"]),
         *datastore_routes,
         *sirene_routes,
