@@ -12,7 +12,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import providers, connectors, credentials_store, org_store
+from .. import connectors, credentials_store, org_store
 from ._authz import ORG_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 
@@ -81,14 +81,14 @@ def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
     except ValueError as e:
         raise AuthzDenied(400, str(e), "Credential incomplet ou vide.")
     account = (inp.account or "").strip()
-    con = providers.REGISTRY.get(inp.provider)
-    if con is not None and con.auth_multi_account:
-        # Même règle de coexistence qu'au palier membre : '' et comptes nommés ne
-        # cohabitent pas ; au 1er compte NOMMÉ, la ligne '' devient « principal ».
-        try:
-            credentials_store.ensure_named_coexistence("org", str(inp.org_id), inp.provider, account)
-        except credentials_store.NamedAccountRequired as e:
-            raise AuthzDenied(409, "account_required", str(e))
+    # Même garde de pose qu'au palier membre (source unique, #409) : coexistence des
+    # comptes si le connecteur est multi, refus nommé du compte nommé s'il est mono.
+    try:
+        credentials_store.guard_account_write("org", str(inp.org_id), inp.provider, account)
+    except credentials_store.NamedAccountRequired as e:
+        raise AuthzDenied(409, "account_required", str(e))
+    except credentials_store.SingleAccountConnector as e:
+        raise AuthzDenied(400, "single_account_connector", str(e))
     org_store.set_org_secret(inp.org_id, inp.provider, secret, set_by=ctx.sub, meta=meta, account=account)
     return {"ok": True, "org_id": inp.org_id, "provider": inp.provider}
 

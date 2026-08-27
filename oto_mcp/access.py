@@ -610,8 +610,10 @@ def _emit_connector_failure(provider: str, sub: str) -> None:
 
 def _is_multi_account(provider: str) -> bool:
     """Le connecteur porte-t-il plusieurs comptes dans le coffre (segment `account`,
-    registre `providers.MULTI_ACCOUNT_PROVIDERS`) ? Gate le chemin de sélection de
-    compte ; un connecteur mono-compte garde la résolution historique (account='')."""
+    propriété `Connector.auth_multi_account`) ? Gate le chemin de sélection de compte ;
+    un connecteur mono-compte garde la résolution historique (account=''). ⚠️ Depuis
+    #409 la propriété couvre aussi les credentials MULTI-CHAMPS (slack, silae…) —
+    `MULTI_ACCOUNT_PROVIDERS` n'en est plus la source, seulement un override."""
     con = connectors.connector_for_provider(provider)
     return con is not None and con.auth_multi_account
 

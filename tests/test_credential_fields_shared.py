@@ -97,6 +97,10 @@ def test_non_shareable_ignores_group_org(monkeypatch):
                         lambda *a, **k: None)
     monkeypatch.setattr(access, "current_group", lambda sub: 7)
     monkeypatch.setattr(access, "current_org", lambda sub: 42)
+    # silae est multi-compte depuis #409 (credential multi-champs) : la sélection
+    # de compte interroge le coffre — aucun compte posé ici.
+    monkeypatch.setattr(access.credentials_store, "list_accounts",
+                        lambda et, eid, con: [])
     called = {"group": False, "org": False}
     monkeypatch.setattr(access.group_store, "get_group_secret",
                         lambda *a: called.__setitem__("group", True) or "x")

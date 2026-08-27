@@ -185,14 +185,26 @@ appel : `clé membre (sub, org) > group_secret > org_secret > platform_grant` (c
 platform gaté sur `auth_modes`). **Détail : `docs/roles-and-resolution.md`** (paliers,
 grants/quota, platform keys, providers byo-only).
 
-> **Multi-compte par défaut (2026-08-26, reprise #399)** : tout connecteur **keyé**
-> (`method=secret`, `api_key`/`basic_auth`) est multi-compte — comptes **nommés**
-> possibles aux paliers **membre/équipe/org**, sélection par `_account=` (axe
+> **Multi-compte par défaut (2026-08-26, reprise #399 ; étendu #409 le 27/08)** : tout
+> connecteur dont le credential se **POSE** (`method=secret` — clé simple
+> `api_key`/`basic_auth` **ou** multi-champs `fields`) est multi-compte — comptes
+> **nommés** possibles aux paliers **membre/équipe/org**, sélection par `_account=` (axe
 > d'appel, accepté partout — `oto_call` compris — annoncé seulement où ≥ 2 clés)
 > ou param `account` ou défaut `is_default`. Un compte nommé introuvable à un
 > palier passe la main ; introuvable partout ⇒ « introuvable » après la marche,
 > jamais un repli plateforme silencieux. L'endpoint anonyme sélectionne le compte
 > d'org comme le chemin réel (jamais `''` en dur). Détail : doc ci-dessus.
+>
+> ⚠️ **Le nombre de champs du credential ne dit RIEN de la cardinalité** (#409). `fields`
+> était hors règle jusqu'au 27/08 : Slack (`bot_token` + `user_token`) en tombait
+> mono-compte, alors qu'un token Slack est émis par INSTALLATION dans un workspace — et
+> **poser un 2ᵉ compte écrivait une ligne que la résolution n'allait jamais lire**, sans
+> refus. D'où deux acquis : la règle couvre `fields` (Slack sert N workspaces, un compte
+> = un workspace), et **la pose d'un compte nommé sur un connecteur mono-compte est
+> REFUSÉE** (`credentials_store.guard_account_write`, source unique des trois surfaces
+> déclaratives membre/org/équipe → 400 `single_account_connector`). Un connecteur qui
+> aurait une vraie raison de fournisseur d'être mono s'exclut par `single_account` DANS
+> son entrée de registre, jamais par une liste transverse — aujourd'hui sans porteur.
 
 > **Scope MEMBRE (ADR 0033)** : plus de credential per-user org-agnostique — la clé
 > BYO est keyée `(sub, org)` (coffre `entity_type='member'`, AAD lié à l'org ; google

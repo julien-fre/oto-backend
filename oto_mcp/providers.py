@@ -116,6 +116,15 @@ class Connector:
     # chaque org ». Sans ce flag, un credential membre reste strictement `(sub, org)`
     # (ADR 0033) — la valeur par défaut ne change rien pour les ~autres connecteurs.
     personal_cross_org: bool = False
+    # Exclusion EXPLICITE du multi-compte (oto-backend#409) : le fournisseur lui-même
+    # impose un compte unique par entité. À poser SEULEMENT pour une raison de
+    # fournisseur, motivée ici même — jamais pour la forme du credential (le nombre
+    # de champs ne dit rien de la cardinalité : un token Slack est émis par
+    # installation, deux champs ou pas). Sans porteur aujourd'hui : les deux familles
+    # réellement mono le sont par une condition STRUCTURELLE (`personal_cross_org`,
+    # `auth_method` oauth/cookie/hosted), pas par ce drapeau. Tripwire :
+    # test_single_account_write_guard.
+    single_account: bool = False
 
     @property
     def org_shareable(self) -> bool:
@@ -209,27 +218,35 @@ class Connector:
         """Le credential est-il multi-compte — N grants pour une même entité
         (ADR 0024) ?
 
-        Par DÉFAUT pour tout connecteur à clé d'API (`method=secret`, secret
-        `api_key`/`basic_auth`) : le coffre est déjà segmenté par `account`
-        sur chaque ligne, la résolution membre (access.py `_member_fetch`)
-        traite un compte unique — la ligne legacy `account=''` comprise —
-        exactement comme avant, et l'axe d'appel `_account=` (call_axes.py)
-        n'est émis que sur ces tools. Une clé posée hier reste donc la clé
-        d'aujourd'hui ; ce qui change est qu'on peut en poser une deuxième,
-        nommée, sans attendre qu'un connecteur soit ajouté à la main à la
-        liste curée. Celle-ci (`MULTI_ACCOUNT_PROVIDERS`) reste la source pour
-        les backends d'identité SPÉCIFIQUES (google : OAuth N comptes ;
-        browser : un compte = un site) et les `fields` multi-champs déjà
-        multi-comptes (zoho).
+        Par DÉFAUT pour tout connecteur dont le credential se POSE (`method=secret`
+        — clé simple `api_key`/`basic_auth` **ou** multi-champs `fields`) : le coffre
+        est déjà segmenté par `account` sur chaque ligne, la résolution membre
+        (access.py `_member_fetch`) traite un compte unique — la ligne legacy
+        `account=''` comprise — exactement comme avant. Une clé posée hier reste
+        donc la clé d'aujourd'hui ; ce qui change est qu'on peut en poser une
+        deuxième, nommée. `MULTI_ACCOUNT_PROVIDERS` ne sert plus qu'aux backends
+        d'identité SPÉCIFIQUES (google : OAuth N comptes ; browser : un compte =
+        un site) et à l'annonce STATIQUE de l'axe `_account=` (call_axes.py).
+
+        ⚠️ **Le nombre de champs du credential ne dit RIEN de la cardinalité.**
+        Jusqu'au 2026-08-27, `fields` était hors règle : Slack (`bot_token` +
+        `user_token`) en tombait mono-compte alors qu'un token Slack est émis par
+        INSTALLATION dans un workspace (N installations = N tokens indépendants) —
+        un trou de règle, pas une raison de fournisseur. Poser un 2ᵉ compte y
+        écrivait une ligne que la résolution n'allait jamais lire (oto-backend#409).
 
         Hors périmètre, volontairement : OAuth/cookie/none (N comptes = N
-        grants, un autre problème), hosted/remote (pas de clé à poser), et
+        consentements, un autre problème), hosted/remote (pas de clé à poser), et
         les connecteurs `personal_cross_org` (unipile), dont le barreau
-        cross-org de la cascade est mono-compte par construction."""
+        cross-org de la cascade est mono-compte par construction. Un cas qui
+        n'entre dans aucune de ces familles s'exclut par `single_account`, DANS
+        son entrée de registre et avec son motif — jamais par une liste transverse."""
         if self.name in MULTI_ACCOUNT_PROVIDERS:
             return True
+        if self.single_account:
+            return False
         return (self.auth_method == "secret"
-                and self.secret_kind in ("api_key", "basic_auth")
+                and self.secret_kind in ("api_key", "basic_auth", "fields")
                 and not self.personal_cross_org)
 
     @property
@@ -290,6 +307,12 @@ BROWSER_PROVIDERS = frozenset()
 # défaut (`Connector.auth_multi_account`) — folk n'a plus besoin d'être ici, il
 # y reste pour dire d'où vient le mécanisme. Les autres sessions/oauth
 # (crunchbase, atlassian…) restent mono-compte par entité.
+# Depuis 2026-08-27 (oto-backend#409) la règle couvre aussi les credentials
+# MULTI-CHAMPS : zoho n'a plus besoin d'y être non plus. Il y reste — comme folk —
+# parce que cette liste garde un second rôle, distinct de la cardinalité : elle
+# porte l'annonce STATIQUE de l'axe `_account=` dans le schéma des tools
+# (`call_axes._has_account_axis`), là où les autres ne l'annoncent que
+# dynamiquement, dès que l'appelant détient 2 comptes.
 MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho", "browser", "folk"})
 
 # Catégorie d'usage (domaine) par connecteur — CURÉE (pas dérivable), tunable.
@@ -504,7 +527,7 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
        publisher="", logo_url=None, kind="tools", mount_url=None,
        mount_strip_prefix=None,
        credential_fields=(), modules=(), hosted_auth=False,
-       personal_cross_org=False) -> Connector:
+       personal_cross_org=False, single_account=False) -> Connector:
     return Connector(
         name=name, namespaces=tuple(namespaces), availability=availability,
         auth_modes=frozenset(auth_modes), keyed=keyed, personal_session=personal_session,
@@ -515,7 +538,7 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
         mount_url=mount_url, mount_strip_prefix=mount_strip_prefix,
         credential_fields=tuple(credential_fields),
         modules=tuple(modules), hosted_auth=hosted_auth,
-        personal_cross_org=personal_cross_org,
+        personal_cross_org=personal_cross_org, single_account=single_account,
     )
 
 
@@ -582,9 +605,11 @@ _REGISTRY_LIST = [
     # slack : messagerie. BYO 100% configurable par org/user (#25) — credential
     # MULTI-CHAMPS (bot token xoxb- ET/OU user token xoxp-, au moins un requis),
     # résolu via resolve_credential_fields (modèle silae/zoho, PAS keyed). byo_user
-    # OU byo_org (un workspace partagé par l'org = son bot token). Le workspace est
-    # implicite = celui des tokens posés. Fallback de lecture du credential legacy
-    # (token unique pré-multichamps) dans tools/slack.py.
+    # OU byo_org (un workspace partagé par l'org = son bot token). Fallback de lecture
+    # du credential legacy (token unique pré-multichamps) dans tools/slack.py.
+    # MULTI-WORKSPACE (#409) : un compte du coffre = un workspace, puisqu'un token
+    # Slack est émis par installation de l'app dans un workspace. Choix à l'appel
+    # par `_account=` ; la lib `oto.tools.slack` sait déjà servir N workspaces.
     _c("slack", ["slack"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
        personal_session=False, label="Slack",
        help="messagerie Slack (bot token xoxb- et/ou user token xoxp-)",

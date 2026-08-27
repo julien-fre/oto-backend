@@ -54,20 +54,24 @@ def test_hosted_is_unipile_only():
 
 
 def test_multi_account_providers():
-    # Curés : google (OAuth N comptes), zoho (self-clients keyed « 2 Zoho »),
+    # Curés : google (OAuth N comptes), zoho (self-clients « 2 Zoho »),
     # browser (N sites derrière login, oto-private#79), folk (historique).
     multi = {c.name for c in _REGISTRY_LIST if c.auth_multi_account}
     assert {"google", "zoho", "browser", "folk"} <= multi, multi
-    # Par défaut (2026-08-25) : TOUT connecteur à clé d'API — le coffre est
-    # segmenté par `account` sur chaque ligne, la résolution membre traite un
-    # compte unique comme avant, et l'axe `_account=` n'est émis que là.
+    # Par défaut : TOUT connecteur dont le credential se POSE — clé simple
+    # (2026-08-25) comme multi-champs (#409, 2026-08-27). Le coffre est segmenté
+    # par `account` sur chaque ligne, la résolution traite un compte unique comme
+    # avant. Le NOMBRE DE CHAMPS ne dit rien de la cardinalité : Slack en a deux
+    # et porte pourtant un workspace par installation.
     for c in _REGISTRY_LIST:
-        keyed = (c.auth_method == "secret" and c.secret_kind in ("api_key", "basic_auth")
-                 and not c.personal_cross_org)
-        if keyed:
+        posed = (c.auth_method == "secret"
+                 and c.secret_kind in ("api_key", "basic_auth", "fields")
+                 and not c.personal_cross_org and not c.single_account)
+        if posed:
             assert c.auth_multi_account, c.name
         elif c.name not in {"google", "zoho", "browser", "folk"}:
-            # OAuth/cookie/none, hosted/remote, cross-org : mono-compte.
+            # OAuth/cookie/none, hosted/remote, cross-org, exclusion explicite :
+            # mono-compte.
             assert not c.auth_multi_account, c.name
 
 

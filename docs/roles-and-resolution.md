@@ -46,8 +46,9 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 4. Instance **plateforme** (grant/free-tier, ADR 0044 §F) avec quota.
 5. Rien → McpError actionnable + **instances à portée** (voir walker ci-dessous).
 
-> **Multi-compte par défaut (2026-08-26, reprise #399).** Tout connecteur **à clé
-> d'API** (`method=secret`, secret `api_key`/`basic_auth`) est **multi-compte**
+> **Multi-compte par défaut (2026-08-26, reprise #399 ; étendu #409 le 27/08).** Tout
+> connecteur dont le credential se **POSE** (`method=secret` — clé simple
+> `api_key`/`basic_auth` **ou** multi-champs `fields`) est **multi-compte**
 > (`Connector.auth_multi_account`) : des comptes **nommés** peuvent coexister aux
 > paliers **membre, équipe et org** (segment `account` du coffre ; la ligne legacy
 > `''` migre vers « principal » au premier compte nommé, `ensure_named_coexistence`).
@@ -60,6 +61,25 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 > « introuvable »** après la marche — jamais un repli plateforme silencieux. La
 > résolution **anonyme** (`<slug>.mcp.oto.cx`) sélectionne le compte d'org comme le
 > chemin réel (unique/défaut), jamais `''` en dur.
+
+> **Le nombre de champs ne dit rien de la cardinalité — et un compte nommé refusé vaut
+> mieux qu'un compte nommé ignoré (#409, 27/08).** Deux acquis d'un même défaut.
+> **(1)** `fields` était hors de la règle : Slack (`bot_token` + `user_token`) en tombait
+> mono-compte, alors qu'un token Slack est émis par INSTALLATION dans un workspace (N
+> installations = N tokens indépendants, auth par requête sans état) et que la lib
+> `oto.tools.slack` sert déjà N workspaces — c'était la couche résolution qui figeait la
+> cardinalité à 1. La règle couvre donc les credentials multi-champs ; un compte du coffre
+> = un workspace, choisi par `_account=`. **(2)** Le coffre stocke N lignes par (entité,
+> connecteur, compte) pour TOUS les connecteurs, mais seule la résolution d'un
+> multi-compte va les lire : poser un compte nommé sur un mono-compte écrivait une ligne
+> parfaitement valide que rien n'irait chercher. C'est désormais un **refus nommé** —
+> `credentials_store.guard_account_write`, appelée sans condition par les trois surfaces
+> déclaratives (membre `/api/settings/api-keys`, `org.secret.set`, `group.secret.set`),
+> qui tranche sur le registre AVANT toute lecture du coffre : multi ⟹ cohérence des noms
+> (409 `account_required`), mono ⟹ 400 `single_account_connector`. Un connecteur qui
+> aurait une vraie raison de fournisseur d'être mono s'exclut par `single_account` dans
+> son entrée de registre — jamais par une liste transverse, et aujourd'hui sans porteur
+> (tripwire `test_single_account_write_guard`).
 
 ## Walker de cascade — source unique (2026-07-16)
 
