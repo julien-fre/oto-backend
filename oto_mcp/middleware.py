@@ -327,6 +327,11 @@ class EmptyResultMiddleware(Middleware):
     structure qu'on vient d'en retirer. Sous `ToolAlias` parce que le gabarit se
     cherche au nom CANONIQUE de l'outil.
 
+    Couvre les deux formes du vide, dont la plus sournoise : un outil qui rend `[]` ou
+    `None` ne produit **aucun bloc de contenu** (FastMCP 3.4.2), donc un tour
+    littéralement muet pour le modèle. La phrase remplace ce silence ; elle ne
+    fabrique jamais de JSON pour le combler.
+
     Ne touche QUE le canal texte : `structuredContent` garde la structure vide pour
     les clients qui parsent (et la face REST, qui ne passe pas par cette chaîne, ne
     change pas d'un octet).
@@ -336,8 +341,7 @@ class EmptyResultMiddleware(Middleware):
         result = await call_next(context)
         if getattr(result, "is_error", False):
             return result
-        payload = redaction.extract_payload(result)
-        if not redaction.is_empty_payload(payload):
+        if not redaction.sert_du_vide(result):
             return result
         return redaction.render_empty(result, getattr(context.message, "name", "") or "")
 

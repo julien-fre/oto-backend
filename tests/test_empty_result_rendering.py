@@ -36,13 +36,18 @@ def _banc(fn, *, nom: str = "recherche"):
     return m
 
 
-def _servir(m: FastMCP, nom: str = "recherche"):
-    """Ce que le CLIENT reçoit : (texte servi, canal structuré)."""
+def _servir_brut(m: FastMCP, nom: str = "recherche"):
+    """Le résultat tel que le client le reçoit, blocs de contenu compris."""
     async def appel():
         async with Client(m) as c:
-            r = await c.call_tool(nom, {})
-            return "".join(getattr(b, "text", "") for b in r.content), r.structured_content
+            return await c.call_tool(nom, {})
     return asyncio.run(appel())
+
+
+def _servir(m: FastMCP, nom: str = "recherche"):
+    """Ce que le CLIENT reçoit : (texte servi, canal structuré)."""
+    r = _servir_brut(m, nom)
+    return "".join(getattr(b, "text", "") for b in r.content), r.structured_content
 
 
 def _outil_vide(payload):
@@ -125,6 +130,101 @@ def test_une_erreur_n_est_pas_reecrite():
         getattr(b, "text", "") for b in r.content)
 
 
+# --- Le vide MUET : zéro bloc de contenu ------------------------------------
+# `_convert_to_content([])` ne rend AUCUN bloc (idem `None`), là où `[1]` rend un bloc
+# texte. Un tour sans contenu est le pire cas : le modèle ne reçoit littéralement rien.
+
+def test_une_liste_vide_produit_exactement_un_bloc_texte():
+    """Forme de `fr_directors` sur un SIREN sans dirigeant."""
+    def recherche() -> list[dict]:
+        return []
+
+    r = _servir_brut(_banc(recherche))
+    assert len(r.content) == 1
+    assert type(r.content[0]).__name__ == "TextContent"
+    assert r.content[0].text == redaction.EMPTY_MESSAGE_DEFAULT
+
+
+def test_une_liste_vide_non_annotee_produit_exactement_un_bloc_texte():
+    """Sans annotation, FastMCP ne pose même pas d'enveloppe `{"result": …}` : le
+    résultat est muet sur les DEUX canaux."""
+    def recherche():
+        return []
+
+    r = _servir_brut(_banc(recherche))
+    assert len(r.content) == 1
+    assert r.content[0].text == redaction.EMPTY_MESSAGE_DEFAULT
+
+
+def test_un_retour_none_produit_exactement_un_bloc_texte():
+    def recherche():
+        return None
+
+    r = _servir_brut(_banc(recherche))
+    assert len(r.content) == 1
+    assert r.content[0].text == redaction.EMPTY_MESSAGE_DEFAULT
+
+
+def test_une_liste_non_vide_est_servie_a_l_identique():
+    """Le témoin : hors du vide, rien ne bouge."""
+    def recherche() -> list[int]:
+        return [1]
+
+    r = _servir_brut(_banc(recherche))
+    assert len(r.content) == 1
+    assert r.content[0].text == "[1]"
+    assert r.structured_content == {"result": [1]}
+
+
+def test_le_gabarit_par_outil_vaut_aussi_pour_le_vide_muet():
+    def fr_accords_search() -> list[dict]:
+        return []
+
+    r = _servir_brut(_banc(fr_accords_search, nom="fr_accords_search"),
+                     nom="fr_accords_search")
+    assert len(r.content) == 1
+    assert r.content[0].text == "Aucun accord déposé pour ce SIREN."
+
+
+# --- Ce qui ressemble à un vide sans en être un ------------------------------
+
+def test_un_accuse_d_ecriture_garde_sa_structure():
+    """« Opération réussie, 0 supprimé » n'est PAS « aucun résultat ». Répondre
+    « Aucun résultat pour cette recherche. » à qui vient de supprimer zéro ligne
+    effacerait le seul fait utile de la réponse : que l'opération a abouti."""
+    accuse = {"ok": True, "deleted": []}
+    texte, structure = _servir(_banc(_outil_vide(accuse), nom="data_write"),
+                               nom="data_write")
+    assert redaction.is_empty_payload(accuse) is False
+    assert '"ok":true' in texte.replace(" ", "").lower()
+    assert "deleted" in texte
+    assert structure == accuse
+
+
+def test_une_notice_de_troncature_garde_sa_structure():
+    """Une réponse coupée par un plafond n'est pas une absence de résultat : la
+    rendre en phrase ferait conclure « il n'y a rien » là où le plafond a coupé
+    avant d'avoir cherché. Forme réelle d'un client oto-core (sellsy) :
+    `{"data": [...], "pages": …, "truncated": …}`."""
+    tronque = {"data": [], "pages": 3, "truncated": True}
+    texte, structure = _servir(_banc(_outil_vide(tronque)))
+    assert redaction.is_empty_payload(tronque) is False
+    assert "truncated" in texte
+    assert structure == tronque
+
+
+def test_une_notice_de_troncature_imbriquee_garde_sa_structure():
+    """`fr_accords_search` — l'outil même de l'incident — porte sa notice un cran
+    plus bas : `effectifs_filter.truncated` dit que le vivier est PLUS GRAND que le
+    plafond examiné, donc que la réponse n'est pas exhaustive."""
+    tronque = {"results": [], "total_count": 0, "effectifs_filter": {"truncated": True}}
+    texte, _ = _servir(_banc(_outil_vide(tronque), nom="fr_accords_search"),
+                       nom="fr_accords_search")
+    assert redaction.is_empty_payload(tronque) is False
+    assert "truncated" in texte
+    assert redaction.EMPTY_MESSAGES["fr_accords_search"] not in texte
+
+
 # --- La règle de détection, isolée -----------------------------------------
 
 @pytest.mark.parametrize("payload", [
@@ -132,10 +232,13 @@ def test_une_erreur_n_est_pas_reecrite():
     VIDE_CAPTURE,
     {"rows": []},
     {"results": [], "total_count": 0},
-    {"result": []},                       # l'enveloppe fastmcp d'un retour `list`
+    {"result": []},                        # l'enveloppe fastmcp d'un retour `list`
     {"items": [], "hits": [], "count": 0},
-    {"rows": [], "_account": "client-x"},  # un scalaire à côté ne réveille rien
-    {"rows": [], "next_cursor": None},
+    {"total_count": 0},                    # le compteur seul suffit à affirmer le vide
+    {"rows": [], "_account": "client-x"},   # un scalaire à côté ne réveille rien
+    {"rows": [], "next_cursor": None},      # un curseur nul ne dit rien de plus
+    {"data": [], "pages": 0, "truncated": False},  # notice PRÉSENTE mais négative
+    {"rows": [], "warnings": []},          # une notice VIDE ne dit rien
 ])
 def test_est_vide(payload):
     assert redaction.is_empty_payload(payload) is True
@@ -145,12 +248,25 @@ def test_est_vide(payload):
     None,
     "",
     0,
-    {},                                    # aucune collection : rien à dire du vide
+    {},                                     # aucun signal reconnu : rien à affirmer
     {"ok": True},
     {"rows": [{"id": 1}]},
-    {"rows": [], "total_count": 3},        # un compteur non nul CONTREDIT la collection
-    {"rows": [], "items": [{"id": 1}]},    # une seule collection peuplée suffit
-    {"data": {"rows": []}},                # le vide ne se cherche qu'à la racine
+    {"rows": [], "total_count": 3},         # un compteur non nul CONTREDIT la collection
+    {"rows": [], "items": [{"id": 1}]},     # une seule collection peuplée suffit
+    {"data": {"rows": []}},                 # le signal ne se cherche qu'à la racine
+    {"ok": True, "deleted": []},            # accusé d'écriture : `deleted` n'est pas
+                                            # une collection reconnue
+    {"created": [], "skipped": []},         # idem, un bilan d'écriture n'est pas un vide
+    {"total": 0, "succeeded": 0, "failed": []},   # webflow : le COMPTEUR d'un accusé
+    {"total": 0, "imported": 0, "items": []},     # waalaxy : « succès, 0 élément »
+    {"dry_run": True, "would_create": []},        # une simulation n'a rien cherché
+    {"rows": [], "truncated": True},        # coupé par un plafond ≠ rien trouvé
+    {"results": [], "warning": "quota"},    # un avertissement doit rester lisible
+    {"count": 0, "results": [], "note": "No company found."},   # gr : notice à côté
+    {"rows": [], "_etablissements_truncated": 25},   # famille `*_truncated`
+    {"items": [], "texte_tronque": True},            # famille `*_tronqu*`
+    {"results": [], "filtre_ca_avertissement": "…"},  # famille `*avertissement*`
+    {"data": "une chaîne"},                 # clé reconnue mais valeur non-liste : ignorée
 ])
 def test_n_est_pas_vide(payload):
     assert redaction.is_empty_payload(payload) is False
@@ -170,7 +286,27 @@ def _outils_montes() -> list[str]:
     return [t.name for t in asyncio.run(server.mcp.list_tools(run_middleware=False))]
 
 
-def test_aucun_outil_monte_ne_rend_une_structure_pour_un_vide():
+def _vides_reconnus() -> list[dict]:
+    """Un payload vide par SIGNAL reconnu — c'est la forme, et elle seule, qui décide.
+
+    La garde ne porte que sur les outils « rendant une collection reconnue ou un
+    compteur », et ce périmètre se prend par la FORME plutôt que par le schéma de
+    sortie : sur les 610 outils montés, 514 déclarent un `output_schema`, mais la
+    seule propriété qu'on y trouve est le `result` de l'enveloppe fastmcp, et aucun
+    n'est typé `array`. Un schéma déclaré ne dit donc pas quel outil rend une
+    collection ; l'exercer le dit.
+    """
+    return ([{cle: []} for cle in redaction._COLLECTION_KEYS]
+            + [{cle: 0} for cle in redaction._COUNTER_KEYS])
+
+
+def test_chaque_signal_de_vide_est_bien_reconnu():
+    """La liste FERMÉE est le contrat : chaque clé qui y entre doit valoir signal."""
+    for payload in _vides_reconnus():
+        assert redaction.is_empty_payload(payload) is True, payload
+
+
+def test_aucun_gabarit_declare_ne_porte_de_structure():
     noms = _outils_montes()
     # Garde-fou de l'instrument : un registre vide ferait passer ce test à vide.
     assert len(noms) > 300, f"registre d'outils suspect ({len(noms)}) — banc invalide"
@@ -182,16 +318,20 @@ def test_aucun_outil_monte_ne_rend_une_structure_pour_un_vide():
         "exactement le déclencheur qu'on retire.")
 
 
-def test_chaque_outil_monte_sert_une_phrase_sur_un_vide():
+def test_aucun_outil_ne_sert_de_structure_sur_un_vide_reconnu():
     """La règle est GÉNÉRIQUE : elle se juge sur la forme du résultat, jamais sur le
-    nom de l'outil. On le prouve sur tout le montage plutôt que sur un échantillon."""
-    for nom in _outils_montes():
+    nom de l'outil. On le prouve sur tout le montage — chaque outil monté croisé avec
+    chaque signal de vide reconnu — plutôt que sur un échantillon écrit à la main."""
+    noms = _outils_montes()
+    assert len(noms) > 300, f"registre d'outils suspect ({len(noms)}) — banc invalide"
+    for nom in noms:
         phrase = redaction.empty_message(nom)
-        rendu = redaction.render_empty(_ResultatFactice(VIDE_CAPTURE), nom)
-        texte = "".join(getattr(b, "text", "") for b in rendu.content)
-        assert texte == phrase, nom
-        assert not any(c in texte for c in "[]{}"), nom
-        assert rendu.structured_content == VIDE_CAPTURE, nom
+        for payload in _vides_reconnus():
+            rendu = redaction.render_empty(_ResultatFactice(payload), nom)
+            texte = "".join(getattr(b, "text", "") for b in rendu.content)
+            assert texte == phrase, (nom, payload)
+            assert not any(c in texte for c in "[]{}"), (nom, payload)
+            assert rendu.structured_content == payload, (nom, payload)
 
 
 class _ResultatFactice:

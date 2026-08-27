@@ -107,13 +107,61 @@ consigne pendant trois heures avant qu'une capture du texte final ne montre le
 mécanisme — le défaut est **invisible partout où le vide est l'exception, et
 dominant là où il est la norme**.
 
-**Détection** (`redaction.is_empty_payload`, volontairement syntaxique — elle ne
-connaît aucun outil) : une **liste** sans élément ; un **dict** qui porte au moins
-une collection (toute clé dont la valeur est une liste), les a **toutes** vides, et
-dont tout compteur présent (`total_count`, `total`, `count`) vaut 0. Un compteur non
-nul **contredit** la collection vide → on rend la structure telle quelle plutôt que
-d'affirmer un vide. Un scalaire, un dict **sans** collection, une collection peuplée
-ne sont pas vides ; le vide ne se cherche **qu'à la racine**.
+**Seam unique** : `redaction.sert_du_vide(result)`, appelé au seul endroit où oto
+rend le résultat à FastMCP. Aucune retouche par outil.
+
+⚠️ **Le vide MUET, le pire cas.** Un outil qui rend `[]` ou `None` ne produit
+**aucun bloc de contenu** (`_convert_to_content`, FastMCP 3.4.2) — là où `[1]` rend
+un bloc texte et un dict rend son JSON. Le modèle reçoit alors un tour littéralement
+sans contenu, et c'est cette absence qui le fait dérailler (`fr_directors` sur un
+SIREN sans dirigeant). La phrase remplace ce silence ; elle ne **fabrique jamais** de
+JSON pour le combler. Un retour `[1]` reste servi à l'identique.
+
+**Détection** (`redaction.is_empty_payload`) : un résultat est vide quand il
+**l'affirme**, jamais parce qu'il en a vaguement l'air. Une **liste** sans élément ;
+un **dict** qui porte l'un des deux signaux reconnus :
+
+- un **compteur** — `total_count`, `total`, `count` — qui vaut 0 ;
+- une **clé de collection RECONNUE** dont la valeur est une liste sans élément. La
+  liste est **FERMÉE**, déclarée dans `redaction._COLLECTION_KEYS` : `rows`,
+  `results`, `items`, `matches`, `hits`, `data`, `entries`, `calls`, `jobs`,
+  `documents`, `records`, `files`, `messages`, `events`, `result`.
+
+Quatre contradictions **disqualifient**, parce qu'elles portent une information que
+la phrase effacerait :
+
+- une collection reconnue **non** vide, ou un compteur **non nul** ;
+- une **notice** truthy — `note`, `hint`, `warning(s)`, `notices`, `error(s)`,
+  `partial(_errors)`, `hors_schema`, plus les **familles** `*truncat*`, `*tronqu*`,
+  `*warning*`, `*avertissement*` (le suffixe est trop productif pour une liste
+  fermée : `_etablissements_truncated`, `{champ}_truncated` en clé dynamique chez
+  unipile, `texte_tronque`, `truncated_results`, `filtre_ca_avertissement`).
+  Cherchée à la racine **et un cran plus bas** — `fr_accords_search`, l'outil même de
+  l'incident, porte la sienne sous `effectifs_filter.truncated` ;
+- un **accusé d'écriture** (`ok`, `dry_run`, `created`, `deleted`, `failed`,
+  `succeeded`, `imported`, `would_*`…). Le nom de la collection ne suffit **pas** à
+  les écarter : ils portent aussi les signaux reconnus —
+  `{"total": len(items), "succeeded": …, "failed": []}` (webflow) et
+  `{"total": total, "imported": 0, "items": [], …}` (waalaxy) seraient lus comme
+  vides **par le compteur**.
+
+⚠️ **La liste fermée sous-détecte, et c'est assumé.** Ce backend ne nomme pas ses
+collections de façon uniforme : les capacités en exposent à elles seules ~90
+(`instances`, `seats`, `guides`, `signals`, `namespaces`…), et airtable calcule la
+sienne à l'exécution (`{key: items}`). Mieux vaut servir une structure de trop
+qu'affirmer un vide à tort. Le **compteur** rattrape l'essentiel, la convention maison
+étant de poser `count: len(...)` à côté de la collection (34 sites sur 41).
+
+⚠️ **La liste fermée est le cœur du garde-fou.** La première version disait « toute
+clé dont la valeur est une liste » : elle lisait l'**accusé d'écriture**
+`{"ok": true, "deleted": []}` comme un résultat vide et répondait « aucun résultat »
+à qui venait de supprimer zéro ligne. `deleted`, `created`, `skipped` ne sont pas des
+collections de résultats — un bilan d'écriture se rend tel quel. Y ajouter une clé
+demande la même preuve que les autres : un outil qui la rend vraiment.
+
+Une clé reconnue dont la valeur n'est **pas** une liste (`data` porte souvent un
+objet) n'est ni signal ni contradiction : elle est ignorée. Le signal ne se cherche
+**qu'à la racine**.
 
 **Phrase servie** (`redaction.EMPTY_MESSAGES`) : le gabarit déclaré pour l'outil,
 sinon `EMPTY_MESSAGE_DEFAULT`. La table vit dans la couche de rendu, pas au registre

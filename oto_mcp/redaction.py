@@ -131,8 +131,54 @@ EMPTY_MESSAGES: dict[str, str] = {
     "fr_accords_search": "Aucun accord déposé pour ce SIREN.",
 }
 
+# Clés de COLLECTION reconnues — liste FERMÉE, et c'est tout l'intérêt : « toute clé
+# dont la valeur est une liste » faisait lire un accusé d'écriture (`{"ok": true,
+# "deleted": []}`) comme un résultat vide, et répondre « aucun résultat » à qui venait
+# de supprimer zéro ligne. Relevé du 2026-08-27 sur `tools/` + `capabilities/` :
+#   rows/results/items/data  — le gros des connecteurs (`sheets`, `datastore`, `fr_stock`,
+#                              `unipile`, `foncier`, `lemlist` ; `data` aussi chez sellsy,
+#                              `{"data": rows, "pages": …, "truncated": …}`)
+#   result                   — l'enveloppe fastmcp d'un retour `list` (98 outils)
+#   records                  — airtable (clé DYNAMIQUE `{key: items}`), salesforce
+#   files/messages/events    — `drive_file`, `gmail_message`/`messenger_chat`, `calendar_event`
+#   calls/jobs/documents/hits — `oto_admin_monitoring`, `runner_jobs`, `me_legal`, `oto_search`
+#   matches/entries          — AUCUNE occurrence relevée ; conservées du contrat arbitré.
+# ⚠️ Ce backend ne nomme PAS ses collections de façon uniforme : les capacités à elles
+# seules en exposent ~90 (`instances`, `seats`, `guides`, `signals`, `namespaces`…), et
+# airtable calcule la sienne à l'exécution. La liste fermée sous-détecte donc beaucoup —
+# c'est le sens du compromis : mieux vaut servir une structure de trop qu'affirmer un
+# vide à tort. Le second signal rattrape l'essentiel, la convention maison étant de
+# poser `count: len(...)` à côté de la collection (34 sites sur 41).
+_COLLECTION_KEYS = (
+    "rows", "results", "items", "matches", "hits", "data", "entries",
+    "calls", "jobs", "documents", "records", "files", "messages", "events",
+    "result",
+)
+
 # Clés reconnues comme compteur de volume à côté d'une collection.
 _COUNTER_KEYS = ("total_count", "total", "count")
+
+# Clés de NOTICE : un avertissement que l'agent doit voir MÊME quand la collection est
+# vide — une réponse tronquée n'est pas une absence de résultat, et la rendre en phrase
+# ferait conclure « il n'y a rien » là où le plafond a coupé avant d'avoir cherché.
+_NOTICE_KEYS = ("note", "hint", "warning", "warnings", "notices",
+                "error", "errors", "partial", "partial_errors", "hors_schema")
+
+# Les mêmes, en FAMILLES : le suffixe est trop productif pour une liste fermée —
+# `_etablissements_truncated` (fr), `text_truncated`/`{champ}_truncated` (unipile, clé
+# dynamique), `texte_tronque` (fr), `truncated_results`/`truncated_companies`
+# (theirstack), `filtre_ca_avertissement`/`finances_avertissement` (fr), `slot_warnings`.
+_NOTICE_FRAGMENTS = ("truncat", "tronqu", "warning", "avertissement")
+
+# Accusés d'ÉCRITURE : « opération réussie, 0 élément » n'est pas « rien trouvé ». Le
+# nom de la collection ne suffit pas à les écarter, parce qu'ils portent AUSSI les
+# signaux reconnus — `{"total": len(items), "succeeded": …, "failed": []}` (webflow) et
+# `{"total": total, "imported": 0, "items": [], …}` (waalaxy) seraient lus comme vides
+# par le compteur. On les écarte donc explicitement.
+_WRITE_ACK_KEYS = ("ok", "dry_run", "created", "updated", "deleted", "removed",
+                   "added", "skipped", "failed", "succeeded", "imported",
+                   "submitted", "sent", "revoked", "cleared", "dropped",
+                   "released", "trashed", "archived")
 
 
 def empty_message(tool_name: str) -> str:
@@ -141,35 +187,110 @@ def empty_message(tool_name: str) -> str:
     return EMPTY_MESSAGES.get(tool_name) or EMPTY_MESSAGE_DEFAULT
 
 
+def _est_compteur(valeur) -> bool:
+    # `True` est un `int` en Python : un drapeau nommé `count` n'est pas un volume.
+    return isinstance(valeur, int) and not isinstance(valeur, bool)
+
+
+def _cle_parle(cle: str, valeur) -> bool:
+    """Une clé qui porte une information, donc TRUTHY — un `truncated: false` ou un
+    `warnings: []` ne disent rien et ne doivent rien disqualifier."""
+    if not valeur:
+        return False
+    bas = cle.lower()
+    return bas in _NOTICE_KEYS or any(f in bas for f in _NOTICE_FRAGMENTS)
+
+
+def _porte_une_notice(payload: dict) -> bool:
+    """Un avertissement, à la racine ou dans un sous-dict immédiat (`fr_accords_search`
+    porte le sien sous `effectifs_filter.truncated`, l'outil même de l'incident)."""
+    for niveau in (payload, *(v for v in payload.values() if isinstance(v, dict))):
+        if any(_cle_parle(c, v) for c, v in niveau.items()):
+            return True
+    return False
+
+
+def _est_un_accuse_d_ecriture(payload: dict) -> bool:
+    return any(c in _WRITE_ACK_KEYS or c.startswith("would_") for c in payload)
+
+
 def is_empty_payload(payload) -> bool:
-    """Vrai quand le payload ne porte AUCUN résultat.
+    """Vrai quand le payload dit « je n'ai rien trouvé » — et RIEN d'autre.
 
-    Règle volontairement SYNTAXIQUE — elle ne connaît aucun outil :
-    - une **liste** est vide si elle n'a pas d'élément ;
-    - un **dict** est vide si (a) il porte au moins une collection — toute clé dont
-      la valeur est une liste, `rows`/`items`/`results`/`data`/`hits` comprises —,
-      (b) elles sont TOUTES vides, et (c) tout compteur présent (`total_count`,
-      `total`, `count`) vaut 0 ; un compteur non nul CONTREDIT la collection vide,
-      et on rend alors la structure telle quelle plutôt que d'affirmer un vide ;
-    - tout le reste n'est PAS vide : un scalaire, un dict SANS collection, une
-      collection non vide. Une clé scalaire à côté d'une collection vide (l'écho
-      `_account`, un curseur) ne l'empêche pas — le vide se juge sur les collections.
+    Une **liste** est vide si elle n'a pas d'élément. Un **dict** est vide s'il
+    l'AFFIRME, par l'un des deux signaux reconnus :
+    - un **compteur** (`total_count`, `total`, `count`) qui vaut 0 ;
+    - une **clé de collection reconnue** (`_COLLECTION_KEYS`) dont la valeur est une
+      liste sans élément.
 
-    Le vide ne se cherche qu'à la RACINE : une collection vide imbriquée sous un
+    Quatre contradictions le disqualifient, parce qu'elles portent une information que
+    la phrase effacerait :
+    - une collection reconnue NON vide, ou un compteur non nul — la structure est
+      alors rendue telle quelle plutôt que d'affirmer un vide qu'elle dément ;
+    - une **notice** (`truncated`, `warning`, `note`, `hint`…) : une réponse coupée par
+      un plafond, ou assortie d'un conseil, n'est pas une absence de résultat ;
+    - un **accusé d'écriture** (`ok`, `deleted`, `failed`, `imported`, `would_*`…) :
+      « opération réussie, 0 élément » n'est pas « rien trouvé ».
+
+    Une clé de collection reconnue dont la valeur n'est PAS une liste (`data` porte
+    souvent un objet) n'est ni un signal ni une contradiction : elle est ignorée. Le
+    signal ne se cherche qu'à la RACINE — une collection vide imbriquée sous un
     résultat par ailleurs peuplé n'est pas un résultat vide.
     """
     if isinstance(payload, list):
         return not payload
     if not isinstance(payload, dict):
         return False
-    collections = [v for v in payload.values() if isinstance(v, list)]
-    if not collections or any(collections):
-        return False
+
+    vide = False
+    for cle in _COLLECTION_KEYS:
+        valeur = payload.get(cle)
+        if not isinstance(valeur, list):
+            continue
+        if valeur:
+            return False
+        vide = True
     for cle in _COUNTER_KEYS:
         valeur = payload.get(cle)
-        if isinstance(valeur, int) and not isinstance(valeur, bool) and valeur != 0:
+        if not _est_compteur(valeur):
+            continue
+        if valeur != 0:
             return False
-    return True
+        vide = True
+    if not vide:
+        return False
+    return not _porte_une_notice(payload) and not _est_un_accuse_d_ecriture(payload)
+
+
+def _enveloppe_vide(payload) -> bool:
+    """`{"result": …}` est l'enveloppe que FastMCP pose sur un retour NON-dict : la
+    reconnaître évite de confondre « l'outil n'a rien rendu » avec « l'outil a rendu
+    la valeur 0 »."""
+    return (isinstance(payload, dict) and set(payload) == {"result"}
+            and payload["result"] in (None, [], {}, ""))
+
+
+def sert_du_vide(result) -> bool:
+    """Vrai quand ce `ToolResult` ne porte RIEN pour le modèle. Seule porte d'entrée
+    du rendu du vide — le middleware ne juge pas lui-même.
+
+    Deux chemins, mesurés sur le FastMCP servi (3.4.2) :
+
+    - **zéro bloc de contenu.** `_convert_to_content([])` — et `None` — ne rend
+      AUCUN bloc, là où `[1]` rend un bloc texte et un dict rend son JSON. Le canal
+      texte est alors littéralement muet : le modèle reçoit un tour sans contenu, et
+      c'est cette absence-là qui le fait dérailler en production (`fr_directors` sur
+      un SIREN sans dirigeant). Une phrase vaut mieux que rien — et il n'est pas
+      question de fabriquer un JSON pour combler le trou.
+    - **un bloc, mais une collection vide dedans** : `is_empty_payload` tranche.
+
+    Le zéro-bloc ne suffit pas seul : on vérifie que le canal structuré ne porte pas
+    davantage, sans quoi un résultat riche servi hors canal texte serait effacé.
+    """
+    if getattr(result, "content", None):
+        return is_empty_payload(extract_payload(result))
+    payload = extract_payload(result)
+    return payload is None or _enveloppe_vide(payload) or is_empty_payload(payload)
 
 
 def render_empty(result, tool_name: str):
