@@ -15,6 +15,29 @@ description: >-
 
 # REST API (consommée par oto.ninja /account)
 
+## Où vit chaque famille (découpe du 2026-08-27)
+
+`api_routes.py` **assemble** et ne contient plus aucun handler : `make_routes` monte les
+modules de routes, monte la couche capacité, et rend la table ordonnée des chemins écrits
+à la main. L'ORDRE de cette table est un contrat — Starlette prend le PREMIER match, donc
+`…/tools/registry` doit précéder `…/tools/{name}`. Elle est figée par
+`tests/test_api_routes_table_frozen.py` : retirer, ajouter ou réordonner un chemin fait
+rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajout.
+
+| famille | où | régime |
+| --- | --- | --- |
+| ~200 chemins générés (projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
+| primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api_routes_base.py` | partagées par tous les modules ; **ré-exportées** par `api_routes` |
+| favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques doctrines & guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api_routes_public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
+| `/api/me`, `/api/me/calls`, `/api/me/activity-summary` | `api_routes_account.py` | scopé (sub, org active) |
+| `/api/me/avatar`, `/api/orgs/{id}/logo` | `api_routes_media.py` | multipart → hors couche capacité |
+| fichiers bruts d'un projet, `/api/me/projects/{id}/export` | `api_routes_projects.py` | multipart / binaire |
+| `/api/upload/{token}` (PUT/POST/GET) | `api_routes_uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
+| `/api/settings/api-keys/{provider}`, `/api/me/connectors/{name}/session/*` | `api_routes_credentials.py` | pose d'un secret : dashboard-only par design |
+| `/api/me/tools*` | `api_routes_tools.py` | miroir REST d'`oto_list_my_tools`/`oto_call` (dette nommée) |
+| `/api/admin/platform-keys*`, `/api/admin/users/{sub}/tokens*` | `api_routes_admin.py` | `allow_api_token=False` : un jeton ne fabrique pas de jeton |
+| SIRENE, accords, datastore, contact, connecteurs, webhook Mollie, OAuth zoho/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
+
 - `GET /api/me` — profil + role + statut LinkedIn + statut providers (mode/key/quota) + `active_org`/`active_org_name`/`org_role` + `avatar_url`/`active_org_logo_url`
 - `POST|DELETE /api/me/avatar` — upload (multipart `file`, png/jpeg/webp ≤ 2 Mo) / efface l'avatar user → Scaleway Object Storage, URL publique en DB
 - `POST|DELETE /api/orgs/{id}/logo` — upload / efface le logo **uploadé** d'org (org_admin, multipart `file`). Le logo AFFICHÉ (`logo_url` des lectures + `active_org_logo_url` de `/api/me`) est l'**effectif** : upload sinon dérivé du CDN logo.dev via le `domain` déclaré (`org_store.effective_logo_url`, token `LOGODEV_TOKEN`) ; `logo_custom` (fiche org) dit si un upload existe.
@@ -33,7 +56,7 @@ description: >-
 - `GET /api/admin/monitoring/summary?days=` + `GET /api/admin/monitoring/calls?limit=&sub=&tool=&errors=&days=` — journal des appels MCP, agrégats + brut (admin only, cf. §Monitoring)
 - `GET /api/orgs/{id}/monitoring/{summary,calls,calls/{call_id},connectors,adoption,runs,runs/{run_id},gaps,tool-quality}` — **les mêmes lentilles au niveau ORG** (`capabilities/org_monitoring.py`, autz `ORG_ADMIN_OF`, face MCP `oto_org_monitoring`). Scope = `tool_calls.org_id`/`usage_signals.org_id` (ce qui a été émis SOUS l'org), jamais l'appartenance des membres. `adoption` n'existe qu'à cet étage (membre par membre : actif / jamais actif / bloqué par un connecteur). ⚠️ `calls/{call_id}` et `runs/{run_id}` rendent **404** hors de l'org (id séquentiel devinable). Sert la page dashboard `/org/monitoring`. Cf. `docs/monitoring.md` §Trois étages.
 - `GET /api/admin/tenants?days=` + `GET /api/admin/tenants/{slug}?days=` — **suivi de l'étage tenant** (ADR 0052 ; `capabilities/tenants_admin.py`, autz `PLATFORM_ADMIN`, face MCP `oto_admin_tenant` op=list|get). Par tenant : configuration d'annuaire (émetteur, jwks, hosts, client OAuth, dashboard, chemins de lien), **état dans le process** (`loaded` / `pending_restart` — le registre d'émetteurs est bâti AU BOOT, donc un tenant déclaré depuis n'authentifie encore personne), et l'empreinte sur la fenêtre (orgs via `orgs.tenant_id`, comptes via la qualification du sub, comptes actifs, appels MCP). ⚠️ Ces deux rattachements sont des sources INDÉPENDANTES : `orgs_desalignees` compte les orgs du tenant créées par un compte relevant d'un autre, et la fiche en donne la liste. **Lecture seule** — déclarer un tenant est un runbook de provisioning, pas une route. Sert la page dashboard `/platform/tenants`.
-- **Palier org** (`api_routes_orgs.py`, projection 1:1 des meta-tools `oto_admin_*org*` / `oto_list_orgs`) :
+- **Palier org** (100 % en CAPACITÉS — `capabilities/orgs*.py` ; ⚠️ cette ligne renvoyait à `api_routes_orgs.py` jusqu'au 2026-08-27, fichier **supprimé** lors de la migration : projection 1:1 des meta-tools `oto_admin_*org*` / `oto_list_orgs`) :
   - self-service : `GET|POST /api/me/orgs` (**`POST` = `org.create` self-serve**, créateur→org_admin, cap `OTO_MCP_MAX_ORGS_PER_USER`) ; `GET /api/orgs/{id}` ; `POST|DELETE /api/orgs/{id}/members[/{sub}]` + `PUT|DELETE /api/orgs/{id}/secrets/{provider}` (org_admin)
   - **invitations — feature cascade plateforme/org/équipe** (le scope est DÉRIVÉ des cibles : org_id NULL = plateforme, org_id seul = org, org_id+group_id = équipe). Trois faces émettrices, une seule acceptation :
     - **org** : `POST|GET /api/orgs/{id}/invitations` + `DELETE …/{inv}` (org_admin ; `oto_org` op=invite).

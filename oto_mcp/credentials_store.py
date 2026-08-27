@@ -410,7 +410,7 @@ def secret_from_input(
 ) -> str:
     """String secret à stocker pour un set-path PARTAGÉ (org/groupe), selon la forme
     du connecteur — SOURCE UNIQUE des capacités org.secret.set / group.secret.set
-    (miroir du set-path user `api_routes.api_key_save`).
+    (miroir du set-path user `api_routes_credentials.api_key_save`).
 
     - mono-champ (≤1 `secret_field`, api_key) → la valeur brute ;
     - multi-champs (≥2, ex. zoho/silae) → chaque champ `required` non vide, les

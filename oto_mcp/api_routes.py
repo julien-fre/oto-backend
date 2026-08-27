@@ -1,34 +1,50 @@
-"""REST API consommée par le frontend oto.ninja (page de gestion de compte).
+"""ASSEMBLAGE de l'API REST `/api/*` — la table de routes, et rien d'autre.
 
-Endpoints (ce fichier — gestion compte, providers,
-tools, admin, WhatsApp) :
-- `GET    /api/me`                            → infos user + rôle + statut keys
-- `GET    /api/settings/api-keys/{provider}`  → état/clé (tout connecteur byo_user à secret simple)
-- `POST   /api/settings/api-keys/{provider}`  → pose le credential : `api_key`→`{key}` ; `basic_auth`→`{email,password}`
-- `DELETE /api/settings/api-keys/{provider}`  → efface
-- `GET    /api/me/tools` + `POST/DELETE /api/me/tools/{name}` → toggle tools per-user
-- `GET    /api/admin/*`                       → admin (users, platform-keys, grants, tokens)
+Depuis la découpe du 2026-08-27, ce fichier ne contient plus de handler : il
+**monte**. `make_routes` fait trois choses, dans cet ordre — appeler les
+`make_routes` des modules de routes historiques, monter la couche capacité
+(ADR 0009, deux faces générées d'un descripteur unique), et rendre la table
+ordonnée des chemins écrits à la main. L'ORDRE de cette table est un contrat
+(Starlette prend le PREMIER match : `…/tools/registry` doit précéder
+`…/tools/{name}`), donc elle se lit d'un seul endroit.
 
-Endpoints datastore / Google OAuth / API tokens : voir `api_routes_datastore.py`.
-Endpoints SIRENE stock : voir `api_routes_sirene.py`.
-Endpoints organisation (`/api/me/orgs`, `/api/orgs/*`, `/api/admin/orgs/*`,
-`/api/admin/namespace-grants*`) : voir `api_routes_orgs.py` — projection REST du
-palier org (mêmes fonctions de service que les meta-tools MCP `oto_admin_*org*`).
+Les handlers vivent par DOMAINE, chacun une fonction de module appelable seule :
 
-Auth : Bearer JWT Logto **ou** API token long-lived (préfixe `oto_`), vérifié
-via `_authenticate`. Le frontend obtient le token Logto via `@logto/vue`. La
-CLI utilise un API token issu sur `/account` (stocké en SOPS sous `OTO_API_KEY`).
+| module                     | domaine                                              |
+| -------------------------- | ---------------------------------------------------- |
+| `api_routes_base.py`       | primitives partagées (auth, CORS, JSON, OPTIONS, `bind`) |
+| `api_routes_public.py`     | surfaces sans auth : favicon, catalogues, bibliothèques, invitations, docs partagés |
+| `api_routes_account.py`    | `/api/me`, journal d'appels, activité                 |
+| `api_routes_media.py`      | avatar user, logo d'org (multipart)                   |
+| `api_routes_projects.py`   | fichiers bruts d'un projet, export ZIP                |
+| `api_routes_uploads.py`    | réception d'un upload signé (`/api/upload/{token}`)   |
+| `api_routes_credentials.py`| pose de credential membre, session navigateur         |
+| `api_routes_tools.py`      | toolbox du membre (liste, fiche, test)                |
+| `api_routes_admin.py`      | clés plateforme, jetons émis pour un tiers            |
 
-CORS : limité aux origines oto.ninja (+ localhost en dev).
+Les modules ANTÉRIEURS à la découpe gardent leur forme : datastore, sirene,
+accords, atlassian, folk, zoho, salesforce, connectors, contact, billing —
+ils exposent un `make_routes(...)` qui reçoit les primitives en paramètres.
+
+Ce fichier garde aussi les deux MIDDLEWARES ASGI de la face REST, dont l'ordre de
+pose (dans `server.py`) est un contrat dont dépendent des colonnes de monitoring :
+`ViewAsMiddleware` (org/équipe/user de consultation, ADR 0023) et `RestCallLogger`
+(une ligne `tool_calls(kind='rest')` par requête, ADR 0017).
+
+Le reste du palier ORG (`/api/me/orgs`, `/api/orgs/*`, `/api/admin/orgs/*`) est
+100 % en capacités depuis la migration qui a supprimé `api_routes_orgs.py` — ce
+docstring y renvoyait encore le 2026-08-27, vers un fichier qui n'existe plus.
+
+Auth : Bearer JWT Logto **ou** jeton API long-lived (préfixe `oto_`), vérifié par
+`api_routes_base._authenticate` (ré-exporté ici). CORS : origines oto.cx/oto.ninja
+(+ localhosts en dev), `_allowed_origins`.
 """
 from __future__ import annotations
 
-import os
 from typing import Iterable
 
 import asyncio
 import base64
-import html as _html
 import json
 import logging
 import re
@@ -37,222 +53,34 @@ import time
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.requests import Request
 from starlette.concurrency import run_in_threadpool
-from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
-                                  Response, StreamingResponse)
 
-from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, openapi, org_store, ownership, token_scopes, tool_registry
+from . import (api_routes_accords, api_routes_atlassian, api_routes_billing,
+               api_routes_connectors, api_routes_contact, api_routes_datastore,
+               api_routes_folk, api_routes_salesforce, api_routes_sirene,
+               api_routes_zoho, db, tenancy)
 from .capabilities import _rest_adapter as _cap_rest_adapter
 from .capabilities import registry as _cap_registry
-from . import auth_hooks, guide_store, tenancy
-from .tool_visibility import (
-    PROTECTED_TOOLS, is_default_hidden, is_testable, namespace_of)
+# Primitives partagées (auth, CORS, réponses JSON, préflight, `bind`) : elles ont
+# quitté ce fichier pour `api_routes_base.py` le 2026-08-27, sous les modules de
+# domaine qui les appellent (sinon l'import serait circulaire). RÉ-EXPORTÉES ici :
+# `api_routes._authenticate` / `_cors_headers` / `_json` … restent valides.
+from .api_routes_base import (  # noqa: F401 — ré-export de compatibilité
+    AuthFn, _allowed_origins, _authenticate, _cors_headers, _json, _json_error,
+    _maybe_view_as, bind, options_handler)
+# Handlers par DOMAINE (découpe du 2026-08-27) : chaque module porte des fonctions
+# de module, testables seules ; la table de routes ci-dessous reste ici.
+from . import api_routes_public as public
+from . import api_routes_account as account
+from . import api_routes_media as media
+from . import api_routes_projects as projects
+from . import api_routes_uploads as uploads
+from . import api_routes_credentials as credentials
+from . import api_routes_tools as tools
+from . import api_routes_admin as admin
 
 logger = logging.getLogger(__name__)
 
 
-def _allowed_origins() -> list[str]:
-    raw = os.environ.get("OTO_MCP_CORS_ORIGINS")
-    if raw:
-        return [o.strip() for o in raw.split(",") if o.strip()]
-    return [
-        "https://oto.cx",                   # domaine marketing canonique (cutover ADR 0040)
-        "https://www.oto.cx",
-        "https://manage.oto.cx",            # oto-dashboard PROD (cutover ADR 0040)
-        "https://oto.ninja",                # preprod/canari + redirections
-        "https://www.oto.ninja",
-        "https://app.oto.ninja",
-        "https://otomata.tech",             # formulaire de contact vitrine
-        "https://www.otomata.tech",
-        "https://app.tulina.ai",            # front Tulina PROD (box tulina-0)
-        "https://tulina.oto.zone",          # front Tulina PREPROD (même box, :3001)
-        "http://localhost:5173",
-        "http://localhost:4173",
-        "http://localhost:5182",
-        "http://localhost:5184",
-        "http://localhost:5192",            # oto-dashboard dev (ADR 0007)
-        "http://localhost:5193",            # front Tulina dev, ports alternatifs (tulina-app-front#90)
-        "http://localhost:5194",
-        "http://localhost:5195",
-        "http://localhost:5196",
-        "https://dashboard.otoninja.dev",   # oto-dashboard via Caddy local
-        "https://dashboard.oto.ninja",      # oto-dashboard prod
-    ]
-
-
-
-def _cors_headers(origin: str | None) -> dict[str, str]:
-    if origin and origin in _allowed_origins():
-        return {
-            "Access-Control-Allow-Origin": origin,
-            "Access-Control-Allow-Credentials": "true",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Oto-Org, X-Oto-Group, X-Oto-View-As",
-            "Access-Control-Max-Age": "600",
-            "Vary": "Origin",
-        }
-    return {}
-
-
-def _maybe_view_as(real_sub: str, apply_view_as: bool) -> str:
-    """Applique le « voir en tant que » (axe user, REST lecture seule) : si un sub
-    de consultation est posé pour la requête (par ViewAsMiddleware, qui a DÉJÀ validé
-    opérateur + cible + GET), renvoie ce sub cible ; sinon le sub réel. `apply_view_as`
-    False = chemin du middleware lui-même (qui doit voir le sub RÉEL pour gater)."""
-    if not apply_view_as:
-        return real_sub
-    from . import session_org
-    target = session_org.current_view_user()
-    return target if (target and target != real_sub) else real_sub
-
-
-async def _authenticate(
-    request: Request,
-    verifier: JWTVerifier,
-    *,
-    allow_query_token: bool = False,
-    apply_view_as: bool = True,
-    allow_api_token: bool = True,
-) -> tuple[str | None, JSONResponse | None]:
-    """Résout l'appelant (JWT Logto **ou** jeton API `oto_`) et **garde la portée**.
-
-    `allow_api_token=False` = route réservée à une **session interactive** : un
-    porteur de jeton y est refusé. Réservé à la gestion des jetons eux-mêmes — un
-    jeton qui peut en créer d'autres rend sa fuite auto-entretenue (révoquer le
-    jeton fuité ne suffit plus, l'attaquant s'en est fait un second, non-expirant).
-    """
-    auth = request.headers.get("authorization", "")
-    token: str | None = None
-    if auth.lower().startswith("bearer "):
-        token = auth[7:].strip()
-    elif allow_query_token:
-        # Fallback pour SSE via EventSource (qui n'autorise pas les headers).
-        token = request.query_params.get("token")
-    if not token:
-        return None, _json_error(request, 401, "missing_bearer")
-
-    # API token long-lived (CLI) : préfixe `oto_` → lookup hash en DB.
-    # Pas de upsert_user ici : la FK CASCADE garantit que si la row user a
-    # été supprimée, le token a été supprimé avec.
-    if token.startswith("oto_"):
-        if not allow_api_token:
-            token_scopes.set_current(None)
-            return None, _json_error(
-                request, 403, "api_token_forbidden",
-                "La gestion des jetons demande une session interactive (JWT) — "
-                "un jeton API ne peut ni lister, ni créer, ni révoquer de jeton.")
-        # DB HORS de la loop (threadpool) : un blip DB ne doit jamais geler le
-        # serveur mono-loop entier (vécu 2026-07-02, py-spy : getconn wait ici).
-        row = await run_in_threadpool(db.verify_api_token, token)
-        if not row:
-            token_scopes.set_current(None)
-            return None, _json_error(request, 401, "invalid_api_token")
-        # Portée du jeton (`token_scopes`) : posée à CHAQUE requête (None comprise),
-        # puis gate deny-by-default. Un jeton non porté (`scopes` NULL) est inchangé.
-        scopes = row.get("scopes")
-        token_scopes.set_current(scopes)
-        if not token_scopes.authorize(scopes, request.method, request.url.path):
-            granted = []
-            if token_scopes.namespaces(scopes):
-                granted.append(f"les tableaux {sorted(token_scopes.namespaces(scopes))}")
-            if token_scopes.projects(scopes):
-                granted.append(f"les projets {sorted(token_scopes.projects(scopes))}")
-            return None, _json_error(
-                request, 403, "token_scope_forbidden",
-                f"Ce jeton est porté : il n'ouvre que {' et '.join(granted)}, en "
-                "lecture ou écriture selon sa portée. Rien d'autre de l'organisation "
-                "ne lui est accessible.")
-        return _maybe_view_as(row["sub"], apply_view_as), None
-
-    # Sinon, JWT Logto (session interactive) — jamais de portée de jeton.
-    token_scopes.set_current(None)
-    access_token = await verifier.verify_token(token)
-    if not access_token or not getattr(access_token, "claims", None):
-        return None, _json_error(request, 401, "invalid_token")
-    sub = access_token.claims.get("sub")
-    if not sub:
-        return None, _json_error(request, 401, "missing_sub")
-    # Bascule de tenant (B1) : pendant la fenêtre, canonicaliser le sub AVANT l'upsert
-    # (un vieux token de l'ancien tenant en drain → compte migré, sinon il re-créerait
-    # le compte supprimé). Gaté env → no-op hors bascule.
-    if os.environ.get("OTO_MCP_TENANT_MIGRATION_ISS"):
-        sub = await run_in_threadpool(db.resolve_sub, sub)
-    # upsert_user = DB à CHAQUE requête REST → threadpool (jamais dans la loop).
-    await run_in_threadpool(
-        lambda: db.upsert_user(sub, email=access_token.claims.get("email"),
-                               name=access_token.claims.get("name"),
-                               iss=access_token.claims.get("iss")))
-    return _maybe_view_as(sub, apply_view_as), None
-
-
-def _json_error(request: Request, status: int, code: str,
-                detail: str | None = None) -> JSONResponse:
-    payload = {"error": code}
-    if detail:
-        payload["detail"] = detail
-    return JSONResponse(
-        payload,
-        status_code=status,
-        headers=_cors_headers(request.headers.get("origin")),
-    )
-
-
-def _json(request: Request, payload: dict, status: int = 200) -> JSONResponse:
-    return JSONResponse(
-        payload, status_code=status, headers=_cors_headers(request.headers.get("origin"))
-    )
-
-
-def _upload_page_html(label: str | None) -> str:
-    """Page d'upload autoportée d'un lien signé (#105, fallback humain). `label` None
-    = lien invalide/expiré (message, sans formulaire). Le POST du fichier se fait vers
-    la MÊME URL (multipart `file`), en fetch, avec accusé/erreur affiché."""
-    if label is None:
-        body = ('<h1>Lien d’upload invalide ou expiré</h1>'
-                '<p>Demande à l’assistant de régénérer un lien.</p>')
-    else:
-        safe = _html.escape(label)
-        body = (
-            f'<h1>Déposer un fichier</h1><p class="tgt">Destination : <b>{safe}</b></p>'
-            '<form id="f"><input type="file" name="file" id="file" required>'
-            '<button type="submit">Envoyer</button></form>'
-            '<p id="msg" class="msg"></p>'
-            '<script>'
-            'const f=document.getElementById("f"),m=document.getElementById("msg");'
-            'f.addEventListener("submit",async e=>{e.preventDefault();'
-            'const fi=document.getElementById("file");'
-            'if(!fi.files.length){return}'
-            'const fd=new FormData();fd.append("file",fi.files[0]);'
-            'm.textContent="Envoi…";m.className="msg";'
-            'try{const r=await fetch(location.href,{method:"POST",body:fd});'
-            'const j=await r.json().catch(()=>({}));'
-            'if(r.ok){f.style.display="none";m.textContent="✓ Reçu. Tu peux fermer cette page.";m.className="msg ok"}'
-            'else{m.textContent="Échec : "+(j.error||r.status)+(j.detail?" — "+j.detail:"");m.className="msg err"}'
-            '}catch(err){m.textContent="Erreur réseau.";m.className="msg err"}});'
-            '</script>')
-    return (
-        '<!doctype html><html lang="fr"><head><meta charset="utf-8">'
-        '<meta name="viewport" content="width=device-width,initial-scale=1">'
-        '<title>Upload — oto</title><style>'
-        ':root{color-scheme:light dark}'
-        'body{font:16px/1.5 system-ui,sans-serif;max-width:34rem;margin:12vh auto;padding:0 1.2rem}'
-        'h1{font-size:1.5rem;margin:0 0 .6rem}.tgt{color:#666}'
-        'form{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin:1.4rem 0}'
-        'button{padding:.55rem 1.1rem;border:0;border-radius:.5rem;background:#4f46e5;color:#fff;font:inherit;cursor:pointer}'
-        'button:hover{background:#4338ca}.msg{min-height:1.5rem}.ok{color:#16a34a}.err{color:#dc2626}'
-        '</style></head><body>' + body + '</body></html>')
-
-
-def _project_org_context_error(request: Request, sub: str, pid: int):
-    """Gate de CONTEXTE d'org (ADR 0023) des routes projet par-id : le projet doit être
-    visible dans l'org de CONSULTATION (`access.current_org`), pas seulement accessible
-    à l'acteur via une AUTRE de ses orgs (fuite cross-org — cf. l'incident projet). Le
-    pendant REST du gate de la capacité `oto_project`. Renvoie une 404 non-disclosante
-    si hors contexte, sinon None. Les routes d'ÉCRITURE gardent en plus leur check de
-    permission `can_access(write)`."""
-    from . import ownership
-    if ownership.visible_in_org(sub, access.current_org(sub), "project", str(pid)):
-        return None
-    return _json_error(request, 404, "unknown_project")
 
 
 # ── View-as (ADR 0023) : consultation d'une org dans le dashboard ───────────
@@ -511,1192 +339,6 @@ class RestCallLogger:
 def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     from starlette.routing import Route
 
-    async def options_handler(request: Request) -> Response:
-        return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
-
-    async def favicon(request: Request) -> Response:
-        """Favicon de marque servi sur mcp.oto.cx (mark canonique, aligné oto.cx).
-
-        L'endpoint MCP n'a pas de page HTML racine → un navigateur/annuaire qui
-        sonde `/favicon.svg` ou `/favicon.ico` tombait sur un 404 (aucune icône
-        de marque). On sert le mark Otomata (source unique `brand.py`) sur les
-        deux chemins.
-        """
-        from . import brand
-        return Response(
-            brand.FAVICON_SVG,
-            media_type="image/svg+xml",
-            headers={"Cache-Control": "public, max-age=86400"},
-        )
-
-    async def mcp_catalog(request: Request) -> JSONResponse:
-        """Liste publique des tools MCP exposés — alimente l'autodoc oto.ninja.
-
-        Pas d'auth : la doc des tools (nom, description, schémas) est de toute
-        façon découvrable via tools/list du protocole MCP. CORS large pour
-        permettre fetch côté oto.ninja.
-        """
-        if mcp_instance is None:
-            return _json(request, {"tools": []})
-        try:
-            tools = await mcp_instance.list_tools(run_middleware=False)
-        except Exception as e:
-            return _json_error(request, 500, f"list_tools_failed:{e}")
-        payload = []
-        # (Le filtre « bridges remote per-namespace » a été retiré — ADR 0034 B4 :
-        # le namespace `bridge` est générique, aucun nom client n'atteint l'autodoc.)
-        for t in tools:
-            # Tool object exposes name, description, parameters (input schema),
-            # output_schema. Some attributes may be None depending on the type.
-            payload.append({
-                "name": t.name,
-                "description": (t.description or "").strip(),
-                "input_schema": getattr(t, "parameters", None),
-                "output_schema": getattr(t, "output_schema", None),
-            })
-        return _json(request, {"tools": payload, "count": len(payload)})
-
-    async def openapi_doc(request: Request) -> JSONResponse:
-        """Descriptif OpenAPI de l'API REST — **dérivé** du registre de capacités et
-        de la table de routes VIVANTE (`request.app.routes`), donc jamais désynchronisé.
-
-        Pas d'auth, comme `/api/mcp/catalog` : un descriptif d'API décrit des FORMES,
-        aucune valeur. Sans lui, chaque intégrateur redécouvre la surface par sondage
-        de chemins — et conclut faux (cf. `openapi.py`). `/api/admin/*` est exclu.
-        """
-        try:
-            routes = getattr(request.app, "routes", None)
-        except Exception:                                   # pas d'app Starlette exposée
-            routes = None
-        base = str(request.base_url).rstrip("/") or None
-        return _json(request, openapi.build(routes, server_url=base))
-
-    async def connectors_catalog(request: Request) -> JSONResponse:
-        """Catalogue des connecteurs (registre source unique), auth optionnelle.
-
-        Cran d'activation (ADR 0010) filtré EN AMONT de la visibilité : un
-        connecteur non activé (master global OFF sans override d'org ON) n'apparaît
-        pas dans la vue PRODUIT (anonyme + non-admin). L'**admin voit tout le
-        registre** — sa vue de gouvernance sert justement à activer/désactiver.
-        Ensuite, visibilité : anonyme → self-serve seuls (les `platform_granted`,
-        dont les bridges client-sensibles ADR 0003, sont deny-by-default comme sur
-        la face MCP) ; non-admin authentifié → + ceux dont un namespace est entitled
-        pour le sub (override d'org appliqué via son org active).
-        """
-        cat = connectors.public_catalog()
-        if not request.headers.get("authorization"):
-            exposed = connector_activation.exposed_connectors(None)
-            cat = [c for c in cat if c["name"] in exposed]
-            cat = [c for c in cat if c["availability"] != "platform_granted"]
-            return _json(request, {"connectors": cat})
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_platform_operator(sub):
-            # Visibilité par l'activation (master × override d'org). Un connecteur à
-            # clé plateforme réservé (ex. scaleway) est tenu hors des orgs non
-            # autorisées par son activation (master OFF + override org ON), plus par
-            # un grant de namespace (retiré, ADR 0031).
-            # Org de CONTEXTE (seam ADR 0023 : consultation X-Oto-Org > maison) —
-            # le catalogue suit l'org consultée au dashboard, comme status_for.
-            exposed = connector_activation.exposed_connectors(access.current_org(sub))
-            cat = [c for c in cat if c["name"] in exposed]
-        return _json(request, {"connectors": cat})
-
-    async def doctrines_library_public(request: Request) -> JSONResponse:
-        """Catalogue PUBLIC des doctrines (bibliothèque/marketplace) — pas d'auth.
-
-        Alimente le site vitrine oto.ninja. Deny-by-default : `visibility='public'`
-        UNIQUEMENT (jamais 'unlisted' ni les brouillons d'org). Filtres gros grain
-        en query params (`q`/`category`/`author`) ; le filtrage fin reste client.
-        Route écrite à la main car l'adaptateur REST des capacités authentifie
-        toujours (l'anonyme ne peut pas y passer).
-        """
-        q = request.query_params
-        try:
-            limit = min(int(q.get("limit", "100")), 200)
-        except ValueError:
-            limit = 100
-        items = org_store.list_library(
-            query=q.get("q"), category=q.get("category"),
-            author_kind=q.get("author"), include_unlisted=False, limit=limit)
-        return _json(request, {"doctrines": items})
-
-    async def doctrines_library_public_get(request: Request) -> JSONResponse:
-        """Une doctrine PUBLIQUE complète (markdown) par slug — vitrine, pas d'auth.
-        Public-only : une entrée 'unlisted' n'est jamais servie ici."""
-        entry = org_store.get_library_entry(
-            slug=request.path_params["slug"], include_unlisted=False)
-        if not entry:
-            return _json_error(request, 404, "unknown_entry")
-        return _json(request, entry)
-
-    async def guides_library_public(request: Request) -> JSONResponse:
-        """Catalogue PUBLIC des guides PLATEFORME — pas d'auth.
-
-        Même rôle que `doctrines_library_public` : alimenter la vitrine (snapshot
-        build-time du site) et rendre lisible par un humain ce que l'agent charge
-        via `oto_guide`. Deny-by-default par CONSTRUCTION plutôt que par filtre :
-        `list_guides_for()` sans `sub` ni `org_id` ne rend que le scope plateforme
-        — un guide d'org ou d'user ne peut pas fuir ici, même par erreur d'appel.
-        """
-        return _json(request, {"guides": guide_store.list_guides_for()})
-
-    async def guides_library_public_get(request: Request) -> JSONResponse:
-        """Un guide PLATEFORME complet (markdown) par slug — vitrine, pas d'auth.
-        `scope='platform'` est EXPLICITE : sans lui, `read_guide_scoped` cherche
-        aussi org puis user, ce qu'une route anonyme ne doit jamais faire."""
-        g = guide_store.read_guide_scoped(request.path_params["slug"], scope="platform")
-        if not g:
-            return _json_error(request, 404, "unknown_guide")
-        return _json(request, g)
-
-    async def invite_preview(request: Request) -> JSONResponse:
-        """Aperçu PUBLIC d'une invitation (pas d'auth — le token est le secret).
-        Alimente la page d'accueil « vous êtes invité·e » avant la création de
-        compte : email visé + inviteur, pour accompagner l'onboarding."""
-        p = org_store.preview_invitation(request.path_params.get("token", ""))
-        if not p:
-            return _json_error(request, 404, "invalid_or_expired")
-        return _json(request, p)
-
-    async def invite_preview_by_code(request: Request) -> JSONResponse:
-        """Aperçu PUBLIC d'une invitation d'org par code court (/invitation/<code>)."""
-        p = org_store.preview_invitation_by_code(request.path_params.get("code", ""))
-        if not p:
-            return _json_error(request, 404, "invalid_or_expired")
-        return _json(request, p)
-
-    async def me(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        user = db.get_user(sub) or {}
-        status = access.status_for(sub)
-        # `active_org` = org EFFECTIVE (ADR 0023) : via `current_org` elle reflète
-        # la consultation view-as (header X-Oto-Org) si posée, sinon la maison. Le
-        # front scope ses vues là-dessus. `home_org` (ci-dessous) = le défaut brut.
-        active_org = access.current_org(sub)
-        active_org_name = None
-        active_org_logo_url = None
-        org_role = None
-        active_org_require_mfa = False
-        if active_org is not None:
-            o = org_store.get_org(active_org)
-            active_org_name = o["name"] if o else None
-            # Logo EFFECTIF (upload > dérivé logo.dev du domaine déclaré).
-            active_org_logo_url = org_store.effective_logo_url(o) if o else None
-            org_role = org_store.get_org_role(active_org, sub)
-            # MFA obligatoire de l'org (2ᵉ facteur imposé au login des membres,
-            # enforcé par Logto via l'org miroir — cf. mfa_mirror).
-            active_org_require_mfa = org_store.get_org_mfa(active_org)["require_mfa"]
-        # Consultation d'une org tierce EN LECTURE SEULE par un opérateur plateforme :
-        # org active posée (par X-Oto-Org) mais aucun rôle réel dans cette org. Le front
-        # affiche un bandeau + traite l'écran en lecture (le backend rejette déjà toute
-        # mutation — GET-only au middleware). Un membre a toujours un rôle → False.
-        active_org_readonly = (
-            active_org is not None and org_role is None
-            and access.is_platform_operator(sub)
-        )
-        # Org perso (espace privé mono-membre) : le front adapte son vocabulaire
-        # (principe 9 du CDC connecteurs — un « solo » ne lit jamais « org »/« équipe »).
-        active_org_is_personal = (
-            active_org is not None and org_store.is_personal_org(active_org))
-        # Org MAISON (défaut persistant, colonne) — exposée distinctement pour que
-        # le front affiche « ton défaut » et l'action « définir comme maison ».
-        home_org = org_store.get_active_org(sub)
-        home_org_name = None
-        if home_org is not None and home_org != active_org:
-            ho = org_store.get_org(home_org)
-            home_org_name = ho["name"] if ho else None
-        elif home_org is not None:
-            home_org_name = active_org_name
-        # Sous-palier groupe (ADR 0012) : équipe EFFECTIVE (consultation ?? maison,
-        # ADR 0023) + rôle effectif (escalade). `home_group` = défaut persistant.
-        active_group = access.current_group(sub)
-        active_group_name = None
-        group_role = None
-        if active_group is not None:
-            from . import roles
-            g = group_store.get_group(active_group)
-            active_group_name = g["name"] if g else None
-            group_role = roles.effective_group_role(sub, active_group)
-        home_group = group_store.get_active_group(sub)
-        home_group_name = None
-        if home_group is not None and home_group != active_group:
-            hg = group_store.get_group(home_group)
-            home_group_name = hg["name"] if hg else None
-        elif home_group is not None:
-            home_group_name = active_group_name
-        return _json(request, {
-            "sub": sub,
-            "email": user.get("email"),
-            "name": user.get("name"),
-            "avatar_url": user.get("avatar_url"),
-            # Préférence de langue de l'UI dashboard ('en'|'fr'), NULL = non définie
-            # (le front retombe sur la langue du navigateur). Écrite via PUT /api/me/locale.
-            "locale": user.get("locale"),
-            "role": status["role"],
-            "active_org": active_org,
-            "active_org_name": active_org_name,
-            "active_org_logo_url": active_org_logo_url,
-            "org_role": org_role,
-            "active_org_readonly": active_org_readonly,
-            "active_org_is_personal": active_org_is_personal,
-            "active_org_require_mfa": active_org_require_mfa,
-            "home_org": home_org,
-            "home_org_name": home_org_name,
-            "active_group": active_group,
-            "active_group_name": active_group_name,
-            "group_role": group_role,
-            "home_group": home_group,
-            "home_group_name": home_group_name,
-            # Feature flags par-déploiement (dark launch) : le dashboard dérive sa
-            # nav de l'effet backend (ex. billing masqué en prod tant que le PSP
-            # n'est pas live) — une seule source, pas de flag front dupliqué.
-            "features": {"billing": billing.is_enabled()},
-            # crunchbase = connecteur `personal_session` standard → exposé dans
-            # `providers` (comme brevo), plus de bloc dédié (ADR 0026).
-            "providers": status["providers"],
-        })
-
-    # Saisie de credential per-user, GÉNÉRIQUE (modèle multi-champs, ADR 0011) :
-    # tout connecteur `byo_user` qui déclare un schéma de saisie (`secret_fields` :
-    # api_key 1 champ, basic_auth 2 champs, silae 3 champs…). Le formulaire, la
-    # validation et le packing dérivent du schéma — zéro branche par connecteur.
-    # cookie/oauth ont des flux dédiés (crunchbase/brevo via Live View Browserbase,
-    # google via OAuth) → `secret_fields` vide → exclus ici.
-    # --- Avatar user + logo d'org (Object Storage) -------------------------
-    # Upload multipart → ne passe PAS par la couche capacité (ADR 0009 = corps
-    # JSON pydantic). URL publique persistée en clair (pas un secret).
-
-    async def _read_upload(request: Request):
-        """Parse un multipart, renvoie (data: bytes, err: JSONResponse|None)."""
-        try:
-            form = await request.form()
-        except Exception:
-            return None, _json_error(request, 400, "invalid_multipart")
-        upload = form.get("file")
-        if upload is None or not hasattr(upload, "read"):
-            return None, _json_error(request, 400, "missing_file")
-        return await upload.read(), None
-
-    async def avatar_save(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        data, err = await _read_upload(request)
-        if err:
-            return err
-        from . import media_store
-        try:
-            url = media_store.upload_image("avatars", sub, data, "")
-        except media_store.MediaError as e:
-            return _json_error(request, e.status, e.code)
-        old = (db.get_user(sub) or {}).get("avatar_url")
-        db.set_avatar_url(sub, url)
-        if old and old != url:
-            media_store.delete_by_url(old)
-        return _json(request, {"ok": True, "avatar_url": url})
-
-    async def avatar_clear(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        old = (db.get_user(sub) or {}).get("avatar_url")
-        db.set_avatar_url(sub, None)
-        if old:
-            from . import media_store
-            media_store.delete_by_url(old)
-        return _json(request, {"ok": True})
-
-    # --- Fichiers bruts d'un projet — carte « Autre document » (ADR 0032 §3) ---
-    # Upload multipart (PDF/HTML…) → hors couche capacité (corps binaire, pas JSON).
-    # Blob DURABLE+privé en Object Storage ; accès par presigned à la lecture.
-
-    def _signed(row: dict) -> dict:
-        from . import media_store
-        key = row.pop("s3_key", None)
-        try:
-            row["download_url"] = media_store.presign_get(key) if key else None
-        except media_store.MediaError:
-            row["download_url"] = None
-        return row
-
-    async def project_files_list(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        pid = int(request.path_params["project_id"])
-        if not db.get_project_by_id(pid):
-            return _json_error(request, 404, "unknown_project")
-        if (e := _project_org_context_error(request, sub, pid)):
-            return e
-        return _json(request, {"files": [_signed(r) for r in db.list_project_files(pid)]})
-
-    async def project_files_upload(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        from . import ownership, media_store
-        pid = int(request.path_params["project_id"])
-        if not db.get_project_by_id(pid):
-            return _json_error(request, 404, "unknown_project")
-        if (e := _project_org_context_error(request, sub, pid)):
-            return e
-        if not ownership.can_access(sub, "project", str(pid), "write"):
-            return _json_error(request, 403, "forbidden")
-        try:
-            form = await request.form()
-        except Exception:
-            return _json_error(request, 400, "invalid_multipart")
-        upload = form.get("file")
-        if upload is None or not hasattr(upload, "read"):
-            return _json_error(request, 400, "missing_file")
-        data = await upload.read()
-        filename = getattr(upload, "filename", None) or "file"
-        content_type = getattr(upload, "content_type", None) or "application/octet-stream"
-        title = (str(form.get("title") or "")).strip() or None
-        description = (str(form.get("description") or "")).strip() or None
-        try:
-            key = media_store.upload_object("project-files", str(pid), data, content_type, filename)
-        except media_store.MediaError as e:
-            return _json_error(request, e.status, e.code)
-        row = db.add_project_file(pid, key, filename, mime=content_type,
-                                  size_bytes=len(data), title=title,
-                                  description=description, created_by=sub)
-        db.log_project_activity(pid, sub, "project.file_add", title or filename)
-        return _json(request, {"ok": True, "file": _signed(row)})
-
-    async def project_file_delete(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        from . import ownership, media_store
-        pid = int(request.path_params["project_id"])
-        file_id = int(request.path_params["file_id"])
-        existing = db.get_project_file(file_id)
-        if not existing or existing["project_id"] != pid:
-            return _json_error(request, 404, "unknown_file")
-        if (e := _project_org_context_error(request, sub, pid)):
-            return e
-        if not ownership.can_access(sub, "project", str(pid), "write"):
-            return _json_error(request, 403, "forbidden")
-        db.delete_project_file(file_id)
-        media_store.delete_by_key(existing["s3_key"])
-        db.log_project_activity(pid, sub, "project.file_delete",
-                                existing.get("title") or existing.get("filename"))
-        return _json(request, {"ok": True})
-
-    async def project_file_public(request: Request) -> JSONResponse:
-        """Bascule le partage public d'un fichier (ADR 0032 §3, B4b) : ACL S3
-        public-read ↔ private, URL publique permanente persistée."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        from . import ownership, media_store
-        pid = int(request.path_params["project_id"])
-        file_id = int(request.path_params["file_id"])
-        existing = db.get_project_file(file_id)
-        if not existing or existing["project_id"] != pid:
-            return _json_error(request, 404, "unknown_file")
-        if (e := _project_org_context_error(request, sub, pid)):
-            return e
-        if not ownership.can_access(sub, "project", str(pid), "write"):
-            return _json_error(request, 403, "forbidden")
-        try:
-            body = await request.json()
-        except Exception:
-            return _json_error(request, 400, "invalid_json")
-        make_public = bool(isinstance(body, dict) and body.get("public"))
-        try:
-            public_url = media_store.make_public(existing["s3_key"]) if make_public else None
-        except media_store.MediaError as e:
-            return _json_error(request, e.status, e.code)
-        if not make_public:
-            media_store.make_private(existing["s3_key"])
-        row = db.set_project_file_public(file_id, make_public, public_url)
-        db.log_project_activity(pid, sub, "project.file_public",
-                                f"{existing.get('title') or existing.get('filename')}:{make_public}")
-        return _json(request, {"ok": True, "file": _signed(row)})
-
-    async def _do_signed_upload(request: Request, payload: dict, data: bytes,
-                                ct: str | None) -> JSONResponse:
-        """Cœur commun des réceptions d'upload signé : autz réappliquée → borne de
-        taille → consommation à usage unique → matérialisation. DB sync → threadpool."""
-        from . import upload_tokens
-        sub, target = payload["sub"], payload["target"]
-        try:
-            await run_in_threadpool(upload_tokens.check_target_access, sub, target)
-        except upload_tokens.UploadError as e:
-            return _json_error(request, e.status, e.code)
-        if not data:
-            return _json_error(request, 400, "empty_body")
-        if len(data) > upload_tokens.max_bytes():
-            return _json_error(request, 413, "content_too_large")
-        # Consommer AVANT de matérialiser (anti-rejeu / double-écriture).
-        if not await run_in_threadpool(db.consume_upload_token, payload["jti"]):
-            return _json_error(request, 409, "token_already_used")
-        try:
-            result = await run_in_threadpool(upload_tokens.materialize, sub, target, data, ct)
-        except upload_tokens.UploadError as e:
-            return _json_error(request, e.status, e.code)
-        return _json(request, result)
-
-    async def upload_receive(request: Request) -> JSONResponse:
-        """Réception d'un upload signé (issue #105) : PAS de JWT — le jeton signé DANS
-        l'URL fait foi (scellé sub/org/cible, TTL, usage unique). Deux voies :
-        **PUT** = un agent avec shell y pousse le corps brut (`curl --data-binary`) ;
-        **POST** multipart `file` = le formulaire humain (fallback claude.ai). On
-        matérialise en RÉAPPLIQUANT l'autz de la cible. Accusé léger, jamais le body."""
-        from . import upload_tokens
-        payload = upload_tokens.verify(request.path_params.get("token", ""))
-        if payload is None:
-            return _json_error(request, 401, "invalid_or_expired_token")
-        if request.method == "POST":
-            try:
-                form = await request.form()
-            except Exception:
-                return _json_error(request, 400, "invalid_multipart")
-            upload = form.get("file")
-            if upload is None or not hasattr(upload, "read"):
-                return _json_error(request, 400, "missing_file")
-            data = await upload.read()
-            ct = getattr(upload, "content_type", None)
-        else:  # PUT — corps brut
-            data = await request.body()
-            ct = request.headers.get("content-type")
-        return await _do_signed_upload(request, payload, data, ct)
-
-    async def upload_form(request: Request) -> Response:
-        """Page HTML d'upload d'un lien signé (GET) — **fallback humain** quand l'agent
-        n'a pas de shell (claude.ai lui transmet ce lien). Le jeton n'est PAS consommé
-        au GET (seulement au POST du fichier). Autoportée (aucun asset externe)."""
-        from . import upload_tokens
-        payload = upload_tokens.verify(request.path_params.get("token", ""))
-        if payload is None:
-            return HTMLResponse(_upload_page_html(None), status_code=401)
-        return HTMLResponse(_upload_page_html(upload_tokens.target_label(payload["target"])))
-
-    async def public_doc(request: Request) -> JSONResponse:
-        """Lecture publique d'un doc partagé par token (gap #4a) — PAS d'auth,
-        lecture seule. Le dashboard rend le markdown sur sa route publique /p/d/<token>."""
-        token = request.path_params.get("token", "")
-        doc = db.get_doc_by_public_token(token) if token else None
-        if not doc:
-            return _json_error(request, 404, "not_found")
-        return _json(request, {"title": doc["title"], "body_md": doc["body_md"],
-                               "updated_at": doc.get("updated_at")})
-
-    async def public_doc_view(request: Request) -> Response:
-        """Page de partage PUBLIQUE d'un doc — route `/p/d/<token>`, **server-rendered**
-        pour être lisible par un agent (WebFetch sans JS) autant que par un navigateur.
-        Négocie sur `Accept` : `application/json` → JSON, `text/markdown` → markdown brut,
-        sinon HTML autoporté (`public_doc_page`). PAS d'auth, lecture seule."""
-        from . import public_doc_page
-        token = request.path_params.get("token", "")
-        doc = db.get_doc_by_public_token(token) if token else None
-        accept = request.headers.get("accept", "").lower()
-        wants_json = "application/json" in accept
-        if not doc:
-            if wants_json:
-                return _json_error(request, 404, "not_found")
-            return HTMLResponse(public_doc_page.render_missing(), status_code=404)
-        title, body_md = doc["title"], doc.get("body_md") or ""
-        if wants_json:
-            return _json(request, {"title": title, "body_md": body_md,
-                                   "updated_at": doc.get("updated_at")})
-        if "text/markdown" in accept:
-            md = f"# {title}\n\n{body_md}" if title else body_md
-            return PlainTextResponse(md, media_type="text/markdown; charset=utf-8",
-                                     headers={"Cache-Control": "public, max-age=300"})
-        html_page = public_doc_page.render(title=title, body_md=body_md,
-                                           updated_at=doc.get("updated_at"))
-        return HTMLResponse(html_page, headers={"Cache-Control": "public, max-age=300"})
-
-    def _org_logo_gate(request: Request, sub: str):
-        """Renvoie (org_id, err). 400 id invalide, 404 org inconnue, 403 non-admin."""
-        from . import roles
-        try:
-            org_id = int(request.path_params["id"])
-        except (ValueError, KeyError):
-            return None, _json_error(request, 400, "invalid_id")
-        if not org_store.get_org(org_id):
-            return None, _json_error(request, 404, "unknown_org")
-        if not roles.is_org_admin(sub, org_id):
-            return None, _json_error(request, 403, "forbidden")
-        return org_id, None
-
-    async def org_logo_save(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        org_id, err = _org_logo_gate(request, sub)
-        if err:
-            return err
-        data, err = await _read_upload(request)
-        if err:
-            return err
-        from . import media_store
-        try:
-            url = media_store.upload_image("org-logos", str(org_id), data, "")
-        except media_store.MediaError as e:
-            return _json_error(request, e.status, e.code)
-        old = (org_store.get_org(org_id) or {}).get("logo_url")
-        org_store.set_org_logo(org_id, url)
-        if old and old != url:
-            media_store.delete_by_url(old)
-        return _json(request, {"ok": True, "logo_url": url})
-
-    async def org_logo_clear(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        org_id, err = _org_logo_gate(request, sub)
-        if err:
-            return err
-        old = (org_store.get_org(org_id) or {}).get("logo_url")
-        org_store.set_org_logo(org_id, None)
-        if old:
-            from . import media_store
-            media_store.delete_by_url(old)
-        return _json(request, {"ok": True})
-
-    # Saisie de credential per-user, GÉNÉRIQUE (dérivée du registre, pas une liste
-    # hardcodée) : tout connecteur `byo_user` dont le secret est un "secret simple"
-    # — `api_key` (la clé) ou `basic_auth` (base64("email:password"), ex. planity).
-    # cookie/oauth ont des flows dédiés (crunchbase / google) → exclus ici.
-    _SETTABLE_KINDS = {"api_key", "basic_auth"}
-
-    def _credentialable(provider: str):
-        c = connectors.connector_for_provider(provider)
-        if c is None or not connectors.is_byo_user(provider) or not c.secret_fields:
-            return None
-        return c
-
-    async def api_key_save(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        provider = request.path_params["provider"]
-        c = _credentialable(provider)
-        if c is None:
-            return _json_error(request, 404, "unknown_provider")
-        # RBAC connecteur (ADR 0025) : aligner la POSE sur l'USAGE — un membre non
-        # autorisé sur un connecteur RESTREINT dans son org ne peut pas poser de clé
-        # perso (sinon une clé inerte serait posable en direct, hors UI). Même seam
-        # que la résolution (`require_connector_access`), pas de règle dupliquée.
-        from mcp.shared.exceptions import McpError
-        try:
-            access.require_connector_access(provider, sub)
-        except McpError as e:
-            return _json_error(request, 403, "connector_restricted", e.error.message)
-        try:
-            body = await request.json()
-        except Exception:
-            return _json_error(request, 400, "invalid_json")
-        if not isinstance(body, dict):
-            return _json_error(request, 400, "invalid_body")
-        # Chaque champ `required` doit être non vide ; un champ facultatif
-        # (connecteur « ET/OU » type slack) peut être omis, mais il faut au moins
-        # un champ posé au total. Le packing (raw/base64/json) est encapsulé dans
-        # credentials_store.pack_secret.
-        from . import credentials_store
-        fields: dict[str, str] = {}
-        missing: list[str] = []
-        for f in c.secret_fields:
-            val = credentials_store.clean_field_value(f, body.get(f.name))
-            if not val:
-                if f.required:
-                    missing.append(f.label or f.name)
-                continue
-            fields[f.name] = val
-        # NOMMER le champ manquant : un « missing_credentials » sec oblige à deviner
-        # lequel des cinq champs bloque — vécu 28/07, un `data_center` vide a fait
-        # échouer six tentatives de pose sans que rien ne le dise.
-        if missing:
-            return _json_error(request, 400, "missing_credentials",
-                               "champ(s) requis vide(s) : " + ", ".join(missing))
-        if not fields:
-            return _json_error(request, 400, "missing_credentials",
-                               "aucun champ renseigné.")
-        db.upsert_user(sub)
-        account = (body.get("account") or "").strip()
-        # Scope MEMBRE (ADR 0033) : la clé est posée DANS l'org de contexte (org
-        # consultée au dashboard via X-Oto-Org, sinon maison) — plus de credential
-        # per-user org-agnostique. Poser en consultant movinmotion = scoper movinmotion.
-        org_id = access.current_org(sub)
-        if org_id is None:
-            return _json_error(request, 400, "no_org_context")
-        eid = credentials_store.member_id(org_id, sub)
-        # Garde de pose (source unique, #409) : multi-compte → cohérence des comptes
-        # de CE membre ('' et comptes nommés ne coexistent pas, sinon la
-        # désambiguïsation à la résolution voit un '' impossible à désigner ; au 1er
-        # compte NOMMÉ la ligne '' migre vers « principal »). Mono-compte → un compte
-        # nommé est REFUSÉ, jamais écrit puis ignoré.
-        try:
-            credentials_store.guard_account_write(
-                credentials_store.MEMBER, eid, provider, account)
-        except credentials_store.NamedAccountRequired as e:
-            return _json_error(request, 409, "account_required", str(e))
-        except credentials_store.SingleAccountConnector as e:
-            return _json_error(request, 400, "single_account_connector", str(e))
-        # Connexion en DEUX temps : le formulaire ne collecte que les PRÉREQUIS, le
-        # champ décisif (refresh_token) arrive par le consentement. Sans reprise, une
-        # simple correction de champ après connexion repackerait un blob SANS lui —
-        # l'UI dirait « enregistré » et le connecteur casserait au 1er appel d'outil.
-        # Gardé sur la MÊME source unique que la sonde ci-dessous (`status_hints`) :
-        # un connecteur qui déclare un état déclare, de fait, que son credential se
-        # complète hors formulaire.
-        from . import status_hints
-        if status_hints.credential_state(provider, fields) is not None:
-            declared = {f.name for f in c.secret_fields}
-            prior = credentials_store.get_credential_with_meta(
-                credentials_store.MEMBER, eid, provider, account=account) or {}
-            if prior.get("secret"):
-                fields = {**{k: v for k, v in
-                             credentials_store.unpack_secret(provider, prior["secret"]).items()
-                             if k not in declared and v},
-                          **fields}
-        # Verify-avant-persist (#106) : si le connecteur expose une sonde, on TESTE la
-        # connexion avec les champs candidats AVANT d'écrire — un credential qui
-        # n'authentifie pas n'est jamais persisté (l'erreur remonte à la SAISIE, pas au
-        # 1er appel d'outil, plus tard et hors contexte). `config` vide : les
-        # connecteurs de ce chemin (zoho/brevo…) portent tout dans `fields` ; le dsn
-        # unipile passe par un flux dédié, pas api_key_save. Sans sonde → pose directe.
-        from . import connector_verify, status_hints
-        verified = False
-        # ⚠️ Connexion en DEUX temps : un credential VOLONTAIREMENT incomplet (app
-        # OAuth posée, consentement à venir) échoue la sonde PAR CONSTRUCTION. Le
-        # refuser ici crée un blocage circulaire — on ne peut pas poser l'app, donc
-        # jamais consentir, donc jamais compléter le credential. Vécu 28/07 : six
-        # tentatives de pose Zoho, toutes rejetées, sans chemin de sortie.
-        # L'état déclaré (`status_hints`, source unique) dit si l'incomplétude est
-        # ATTENDUE ; dans ce cas on saute la sonde et on persiste — l'étape suivante
-        # est portée par le verdict de la fiche.
-        st = status_hints.credential_state(provider, fields)
-        pending = st is not None and not st.complete
-        if connector_verify.supports(provider) and not pending:
-            try:
-                await connector_verify.run(provider, fields)
-            except McpError as e:
-                return _json_error(request, 400, "verify_failed", e.error.message)
-            except Exception as e:  # noqa: BLE001 — l'échec d'auth EST le résultat
-                return _json_error(request, 400, "verify_failed", str(e))
-            verified = True
-        secret = credentials_store.pack_secret(provider, fields)
-        meta = None
-        if verified:
-            from datetime import datetime, timezone
-            meta = {"verified_at": datetime.now(timezone.utc).isoformat()}
-        credentials_store.set_credential(
-            credentials_store.MEMBER, eid, provider, secret, set_by=sub,
-            account=account, meta=meta)
-        return _json(request, {"ok": True, "provider": provider, "org_id": org_id,
-                               "account": account, "verified": verified,
-                               # `pending_action` = ce credential est enregistré mais
-                               # demande une étape de plus (consentement OAuth…).
-                               "pending_action": st.next_action if pending else None})
-
-    async def api_key_clear(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        provider = request.path_params["provider"]
-        # Effacer est générique : tout connecteur byo_user (clé multi-champs OU
-        # session navigateur sans champ, ex. brevo/crunchbase). On ne dépend PAS de
-        # `secret_fields` comme GET/SAVE — sinon la déconnexion d'une session
-        # Browserbase 404 (route `/api/settings/crunchbase` retirée par ADR 0026).
-        c = connectors.connector_for_provider(provider)
-        if c is None or not connectors.is_byo_user(provider):
-            return _json_error(request, 404, "unknown_provider")
-        from . import credentials_store, roles
-        org_id = access.current_org(sub)
-        if org_id is None:
-            return _json_error(request, 400, "no_org_context")
-        # Scope de la déconnexion (miroir de la pose) : member (défaut), org, group.
-        # Effacer un secret partagé exige d'être admin du scope.
-        scope = (request.query_params.get("scope") or "member").strip()
-        # Multi-compte : `?account=` cible un compte précis ('' = mono legacy) —
-        # à chaque palier depuis la Phase 2 (2026-08-25).
-        account = (request.query_params.get("account") or "").strip()
-        if scope == "org":
-            if not roles.is_org_admin(sub, org_id):
-                return _json_error(request, 403, "forbidden")
-            credentials_store.clear_credential(credentials_store.ORG, str(org_id), provider,
-                                               account=account)
-            return _json(request, {"ok": True, "provider": provider, "account": account, "scope": scope})
-        if scope == "group":
-            group_id = access.current_group(sub)
-            if group_id is None:
-                return _json_error(request, 400, "no_group_context")
-            if not roles.can_admin_group(sub, group_id):
-                return _json_error(request, 403, "forbidden")
-            credentials_store.clear_credential("group", str(group_id), provider, account=account)
-            return _json(request, {"ok": True, "provider": provider, "account": account, "scope": scope})
-        credentials_store.clear_credential(
-            credentials_store.MEMBER, credentials_store.member_id(org_id, sub), provider,
-            account=account)
-        return _json(request, {"ok": True, "provider": provider, "account": account, "scope": "member"})
-
-    # --- Connexion par session navigateur (brevo, crunchbase) — la VOIE PRODUIT :
-    # le bouton « Connecter » du dashboard ouvre une Live View Browserbase en iframe,
-    # l'utilisateur se logue, puis « finalize » vérifie + persiste le Context. Même
-    # corps de logique que les tools MCP `<name>_connect_start/_status` (seam partagé
-    # `browser_session`). `start` est BLOQUANT (HTTP Browserbase) → `to_thread`.
-    async def session_start(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        from . import browser_session
-        name = request.path_params["name"]
-        if not browser_session.is_session_connector(name):
-            return _json_error(request, 404, "not_a_session_connector")
-        # Connecteur GÉNÉRIQUE (`browser`, oto-private#79) : le SITE vient de l'appel —
-        # `?url=` ouvre la Live View sur la page de connexion demandée. Absent (les
-        # connecteurs à site unique) ⇒ la `login_url` enregistrée, comportement inchangé.
-        url = (request.query_params.get("url") or "").strip() or None
-        try:
-            out = await asyncio.to_thread(
-                lambda: browser_session.start(sub, name, login_url=url))
-        except browser_session.SessionError as e:
-            return _json_error(request, 503, "browserbase_unavailable", str(e))
-        return _json(request, out)
-
-    async def session_finalize(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        from . import browser_session
-        name = request.path_params["name"]
-        if not browser_session.is_session_connector(name):
-            return _json_error(request, 404, "not_a_session_connector")
-        try:
-            body = await request.json()
-        except Exception:
-            return _json_error(request, 400, "invalid_json")
-        context_id = (body or {}).get("context_id")
-        session_id = (body or {}).get("session_id")
-        if not context_id or not session_id:
-            return _json_error(request, 400, "missing_params")
-        # Niveau de configuration de l'instance (ADR 0038/0044) : member (défaut, ma
-        # session perso), org (partagée à toute l'org), group (partagée à l'équipe).
-        # Les niveaux partagés exigent d'être admin du scope + connecteur org-partageable.
-        scope = ((body or {}).get("scope") or "member").strip()
-        if scope not in ("member", "org", "group"):
-            return _json_error(request, 400, "invalid_scope")
-        from . import roles
-        group_id = None
-        if scope in ("org", "group"):
-            org_id = access.current_org(sub)
-            if org_id is None:
-                return _json_error(request, 400, "no_org_context")
-            if not connectors.is_org_shareable(name):
-                return _json_error(request, 400, "not_org_shareable")
-            if scope == "org":
-                if not roles.is_org_admin(sub, org_id):
-                    return _json_error(request, 403, "forbidden")
-            else:
-                group_id = access.current_group(sub)
-                if group_id is None:
-                    return _json_error(request, 400, "no_group_context")
-                if not roles.can_admin_group(sub, group_id):
-                    return _json_error(request, 403, "forbidden")
-        # Compte du coffre visé — connecteur générique : le site (host). `force` =
-        # persister sans la vérification générique de login (refusé par le seam pour
-        # un connecteur à site unique, dont le verify est une vraie sonde d'API).
-        account = ((body or {}).get("account") or "").strip()
-        force = bool((body or {}).get("force"))
-        try:
-            connected = await browser_session.finalize(
-                sub, name, context_id, session_id, scope=scope, group_id=group_id,
-                account=account, force=force)
-        except browser_session.SessionError as e:
-            return _json_error(request, 502, "session_verify_failed", str(e))
-        return _json(request, {"connected": connected, "scope": scope,
-                               "account": account})
-
-    async def api_key_get(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        provider = request.path_params["provider"]
-        c = _credentialable(provider)
-        if c is None:
-            return _json_error(request, 404, "unknown_provider")
-        from . import credentials_store
-        org_id = access.current_org(sub)
-        secret = (credentials_store.get_credential(
-                      credentials_store.MEMBER,
-                      credentials_store.member_id(org_id, sub), provider)
-                  if org_id is not None else None)
-        if not secret:
-            return _json_error(request, 404, "not_configured")
-        # GÉNÉRIQUE : on dépack et on ne renvoie que les champs `reveal` (l'api_key,
-        # pour copier) ou non-`secret` (l'email). Jamais un mot de passe / secret.
-        fields = credentials_store.unpack_secret(provider, secret)
-        out: dict = {"provider": provider, "configured": True}
-        for f in c.secret_fields:
-            if f.reveal or not f.secret:
-                out[f.name] = fields.get(f.name)
-        return _json(request, out)
-
-    async def admin_platform_keys_list(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        # ADR 0044 §F : instances scope PLATFORM du coffre unifié (plus platform_keys). Le
-        # secret n'est JAMAIS déchiffré/renvoyé — identité (provider, label, set_at) seulement.
-        return _json(request, {"platform_keys": credentials_store.list_platform_credentials()})
-
-    async def admin_platform_key_create(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        try:
-            body = await request.json()
-        except Exception:
-            return _json_error(request, 400, "invalid_json")
-        if not isinstance(body, dict):
-            return _json_error(request, 400, "invalid_body")
-        provider = (body.get("provider") or "").strip()
-        label = (body.get("label") or "").strip()
-        api_key = (body.get("api_key") or "").strip()
-        if provider not in db.KEY_PROVIDERS:
-            return _json_error(request, 400, "invalid_provider")
-        if not label or not api_key:
-            return _json_error(request, 400, "missing_fields")
-        # ADR 0044 §F : la clé plateforme est une instance scope PLATFORM du coffre unifié
-        # (fin de platform_keys).
-        try:
-            credentials_store.set_credential(credentials_store.PLATFORM, label, provider,
-                                             api_key, set_by=sub)
-        except ValueError as e:
-            return _json_error(request, 400, "invalid_platform_provider", str(e))
-        return _json(request, {"provider": provider, "label": label})
-
-    async def admin_platform_key_delete(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        provider = (request.path_params.get("provider") or "").strip()
-        label = (request.path_params.get("label") or "").strip()
-        # ADR 0044 §F : supprime l'instance plateforme (ses grants vivent sur sa ligne
-        # share_down/meta → partent avec elle, pas d'orphelin).
-        if not credentials_store.clear_credential(credentials_store.PLATFORM, label, provider):
-            return _json_error(request, 404, "unknown_key")
-        return _json(request, {"ok": True, "provider": provider, "label": label})
-
-    # Gestion des jetons (palier admin) : `allow_api_token=False` — même règle que
-    # `/api/me/tokens`, un jeton ne fabrique pas de jeton. Ici l'enjeu est pire :
-    # ces routes émettent pour un sub TIERS.
-    async def admin_tokens_list(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier, allow_api_token=False)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        target_sub = request.path_params["sub"]
-        if not db.get_user(target_sub):
-            return _json_error(request, 404, "unknown_user")
-        return _json(request, {"tokens": db.list_api_tokens(target_sub)})
-
-    async def admin_tokens_create(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier, allow_api_token=False)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        target_sub = request.path_params["sub"]
-        if not db.get_user(target_sub):
-            return _json_error(request, 404, "unknown_user")
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        label = (body or {}).get("label") or "cli"
-        ttl_raw = (body or {}).get("ttl_days")
-        ttl_days = int(ttl_raw) if isinstance(ttl_raw, (int, str)) and str(ttl_raw).isdigit() else None
-        try:
-            scopes = token_scopes.parse((body or {}).get("scopes"))
-        except token_scopes.ScopeError as e:
-            return _json_error(request, 400, "invalid_scopes", str(e))
-        token = db.create_api_token(target_sub, label=label.strip()[:32],
-                                    ttl_days=ttl_days, scopes=scopes)
-        return _json(request, {"token": token, "label": label, "ttl_days": ttl_days,
-                               "scopes": scopes})
-
-    async def admin_tokens_delete(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier, allow_api_token=False)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        target_sub = request.path_params["sub"]
-        try:
-            token_id = int(request.path_params["token_id"])
-        except ValueError:
-            return _json_error(request, 400, "invalid_id")
-        ok = db.delete_api_token(target_sub, token_id)
-        if not ok:
-            return _json_error(request, 404, "unknown_token")
-        return _json(request, {"ok": True, "id": token_id})
-
-    # Les lentilles admin `/api/admin/monitoring/*` sont devenues des CAPACITÉS
-    # (`capabilities/monitoring.py`, mêmes chemins + console MCP oto_admin_monitoring).
-
-    def _monitoring_days(request: Request, default: int = 7) -> int:
-        try:
-            return int(request.query_params.get("days", str(default)))
-        except ValueError:
-            return default
-
-    async def me_project_export(request: Request) -> Response:
-        """Export d'un projet (KB) en ZIP d'arborescence markdown (oto/#6 B2 —
-        réversibilité). Accès LECTURE requis. Les pages deviennent des .md ; une page
-        à enfants → dossier + `_index.md`."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        try:
-            pid = int(request.path_params["id"])
-        except (KeyError, ValueError):
-            return _json_error(request, 400, "bad_project")
-        if not ownership.can_access(sub, "project", str(pid), "read"):
-            return _json_error(request, 403, "forbidden")
-        proj = db.get_project_by_id(pid) or {}
-        docs = db.list_docs_for_project(pid)
-        blob = await run_in_threadpool(doc_export.build_export, docs,
-                                       doc_export._slug(proj.get("name") or "kb", pid))
-        fname = f"{doc_export._slug(proj.get('name') or 'export', pid)}.zip"
-        return Response(blob, media_type="application/zip",
-                        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
-
-    async def me_activity_summary(request: Request) -> JSONResponse:
-        """Activité de CE workspace pour l'utilisateur courant (MES appels dans l'org
-        active), fenêtre `?days=` (défaut 7). Scopé (org active, self) → l'overview
-        d'un workspace ne montre plus l'activité plateforme-wide ni celle des autres
-        membres/orgs (oto/#5.2). Pas de gate admin : chacun voit sa propre activité.
-        Un workspace neuf sans appel → agrégats vides (comportement attendu)."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        active_org = access.current_org(sub)
-        return _json(request, db.tool_call_stats(
-            since_days=_monitoring_days(request), org_id=active_org, sub=sub))
-
-    async def my_calls(request: Request) -> JSONResponse:
-        """Journal des appels MCP de l'utilisateur courant (sa propre activité).
-        Filtres `?limit=`/`?tool=`/`?errors=1`/`?days=`. Scopé au sub du token ET à
-        l'**org active** (consultation `X-Oto-Org` ?? maison, seam `current_org`, ADR 0023)
-        — un user ne voit QUE ses propres appels DANS l'org chargée (≠ /api/admin/monitoring
-        qui agrège tout le monde et reste admin-only)."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        qp = request.query_params
-        try:
-            limit = int(qp.get("limit", "200"))
-        except ValueError:
-            limit = 200
-        since_days: int | None = None
-        if qp.get("days"):
-            try:
-                since_days = int(qp["days"])
-            except ValueError:
-                since_days = None
-        calls = db.list_tool_calls(
-            limit=limit,
-            sub=sub,
-            org_id=access.current_org(sub),
-            tool_name=qp.get("tool") or None,
-            errors_only=qp.get("errors") in ("1", "true"),
-            since_days=since_days,
-        )
-        return _json(request, {"calls": calls})
-
-    async def my_tools_list(request: Request) -> JSONResponse:
-        """Liste tous les tools du serveur avec l'état (enabled/disabled)
-        pour l'utilisateur courant.
-        """
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-
-        all_names: set[str] = set()
-        if mcp_instance is not None:
-            # run_middleware=False : appelé hors session MCP (contexte REST), la
-            # chaîne de middleware n'a pas de Context FastMCP et lèverait → on
-            # veut la liste statique complète, le filtrage disabled est fait
-            # juste après via `disabled`. (cf. _list_all_tool_names)
-            tools = await mcp_instance.list_tools(run_middleware=False)
-            all_names = {t.name for t in tools}
-
-        disabled = set(db.list_user_disabled_tools(sub, access.current_org(sub) or 0))
-        # Le middleware retire déjà les disabled de `list_tools` selon le sub
-        # courant (celui de la requête REST = même token). On ré-ajoute donc
-        # les disabled pour avoir la vue complète.
-        all_names |= disabled
-
-        return _json(request, {
-            "tools": [
-                {"name": n, "enabled": n not in disabled,
-                 "protected": n in PROTECTED_TOOLS}
-                for n in sorted(all_names)
-            ],
-        })
-
-    async def my_tools_registry(request: Request) -> JSONResponse:
-        """Registre résolu des tools exposés (ADR 0014) : nom + description
-        (1ʳᵉ ligne de la docstring = champ MCP `description`, source de vérité du
-        modèle) + source `native`/`federated`. Alimente la résolution des
-        marqueurs `<tool:slug>` d'une doctrine, l'autocomplétion et le manifeste
-        « outils référencés ». Les namespaces grant-only (bridges) sont exclus."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        try:
-            reg = await tool_registry.build_registry(mcp_instance)
-        except Exception as e:
-            return _json_error(request, 500, f"list_tools_failed:{e}")
-        out = sorted(reg.values(), key=lambda e: e["name"])
-        return _json(request, {"tools": out, "count": len(out)})
-
-    async def my_tools_disable(request: Request) -> JSONResponse:
-        """Désactive un tool pour l'utilisateur courant (live)."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        name = request.path_params["name"]
-        if name in PROTECTED_TOOLS:
-            return _json_error(request, 400, f"protected_tool:{name}")
-        org = access.current_org(sub) or 0
-        db.add_user_disabled_tool(sub, name, org)
-        db.remove_user_enabled_tool(sub, name, org)  # lève un éventuel override positif
-        return _json(request, {"ok": True, "name": name, "enabled": False})
-
-    async def my_tools_enable(request: Request) -> JSONResponse:
-        """Réactive un tool pour l'utilisateur courant (live).
-
-        Visibilité-only (ADR 0031) — même modèle que le meta-tool `oto_enable_tool` :
-        activer = préférence d'affichage, pas une autorisation (accès réel gardé au
-        call-time : credential + require_connector_access ADR 0025 + activation).
-        """
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        name = request.path_params["name"]
-        org = access.current_org(sub) or 0
-        db.remove_user_disabled_tool(sub, name, org)
-        # Override positif requis pour rendre visible un masqué-par-défaut.
-        if is_default_hidden(name):
-            db.add_user_enabled_tool(sub, name, org)
-        return _json(request, {"ok": True, "name": name, "enabled": True})
-
-    async def _tool_by_name(name: str):
-        """Objet Tool FastMCP par nom (ou None). `run_middleware=False` : hors
-        session MCP (contexte REST) la chaîne de middleware n'a pas de Context."""
-        if mcp_instance is None:
-            return None
-        tools = await mcp_instance.list_tools(run_middleware=False)
-        for t in tools:
-            if t.name == name:
-                return t
-        return None
-
-    async def my_tool_detail(request: Request) -> JSONResponse:
-        """Fiche d'un outil : description complète + schémas d'entrée/sortie
-        (JSON Schema dérivé par FastMCP) + connecteur + état perso + testabilité.
-
-        Alimente le panneau « en savoir plus » de la fiche connecteur (dashboard) —
-        détail utile pour comprendre un outil (surtout open-data FOD) et, s'il est
-        testable, générer un formulaire de test."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        name = request.path_params["name"]
-        tool = await _tool_by_name(name)
-        if tool is None:
-            return _json_error(request, 404, f"unknown_tool:{name}")
-        ns = namespace_of(name)
-        conn = connectors.connector_for_namespace(ns)
-        disabled = set(db.list_user_disabled_tools(sub, access.current_org(sub) or 0))
-        federated = bool(conn and conn.kind == "mount")
-        return _json(request, {
-            "name": name,
-            "description": (tool.description or "").strip(),
-            "input_schema": getattr(tool, "parameters", None),
-            "output_schema": getattr(tool, "output_schema", None),
-            "namespace": ns,
-            "connector": ({"name": conn.name, "label": conn.label} if conn else None),
-            "source": "federated" if federated else "native",
-            "enabled": name not in disabled,
-            "protected": name in PROTECTED_TOOLS,
-            "default_hidden": is_default_hidden(name),
-            "testable": is_testable(name),
-        })
-
-    async def my_tool_call(request: Request) -> JSONResponse:
-        """Exécute un outil TESTABLE sous l'identité de l'appelant (bouton « tester »
-        du dashboard). Bornée aux connecteurs open-data en lecture seule
-        (`is_testable`) — jamais un outil à effet de bord. Les gates de call-time
-        (credential, RBAC connecteur, activation) s'appliquent normalement : le
-        sub-override REST fait résoudre la bonne identité (`resolve_api_key`/
-        `current_org`). L'erreur d'un outil est renvoyée EN DONNÉE (`ok:false`) —
-        voir ce que renvoie l'outil (y compris son erreur) EST le but du test."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        name = request.path_params["name"]
-        if not is_testable(name):
-            return _json_error(request, 403, f"not_testable:{name}")
-        tool = await _tool_by_name(name)
-        if tool is None:
-            return _json_error(request, 404, f"unknown_tool:{name}")
-        fn = getattr(tool, "fn", None)
-        if fn is None:
-            return _json_error(request, 400, f"not_callable:{name}")
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        # Accepte {"arguments": {...}} ou l'objet d'arguments brut.
-        args = body.get("arguments") if isinstance(body, dict) and "arguments" in body else body
-        if not isinstance(args, dict):
-            args = {}
-
-        async def _invoke():
-            if asyncio.iscoroutinefunction(fn):
-                return await fn(**args)
-            return await run_in_threadpool(lambda: fn(**args))
-
-        started = time.monotonic()
-        with auth_hooks.sub_override(sub):
-            try:
-                result = await asyncio.wait_for(_invoke(), timeout=45)
-            except asyncio.TimeoutError:
-                return _json(request, {"ok": False, "name": name,
-                                       "error": "timeout (>45s)"})
-            except TypeError as e:
-                # Mauvais arguments (param inconnu / manquant) : signal actionnable.
-                return _json_error(request, 400, f"bad_arguments:{e}")
-            except Exception as e:  # noqa: BLE001 — l'erreur d'outil est le résultat
-                return _json(request, {"ok": False, "name": name, "error": str(e)})
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        # Sérialisation défensive : un tool peut renvoyer un objet non-JSON.
-        try:
-            safe = json.loads(json.dumps(result, default=str, ensure_ascii=False))
-        except Exception:
-            safe = str(result)
-        return _json(request, {"ok": True, "name": name, "result": safe,
-                               "elapsed_ms": elapsed_ms})
-
     datastore_routes = api_routes_datastore.make_routes(
         verifier=verifier,
         authenticate=_authenticate,
@@ -1777,94 +419,94 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     billing_webhook_routes = api_routes_billing.make_routes(options_handler)
 
     return [
-        Route("/favicon.svg", favicon, methods=["GET"]),
-        Route("/favicon.ico", favicon, methods=["GET"]),
-        Route("/api/mcp/catalog", mcp_catalog, methods=["GET"]),
+        Route("/favicon.svg", public.favicon, methods=["GET"]),
+        Route("/favicon.ico", public.favicon, methods=["GET"]),
+        Route("/api/mcp/catalog", bind(public.mcp_catalog, mcp_instance=mcp_instance), methods=["GET"]),
         Route("/api/mcp/catalog", options_handler, methods=["OPTIONS"]),
         # Descriptif de l'API REST, dérivé (cf. openapi.py). Servi aux deux chemins
         # usuels : un intégrateur sonde l'un ou l'autre, aucun n'est plus canonique.
-        Route("/openapi.json", openapi_doc, methods=["GET"]),
+        Route("/openapi.json", public.openapi_doc, methods=["GET"]),
         Route("/openapi.json", options_handler, methods=["OPTIONS"]),
-        Route("/api/openapi.json", openapi_doc, methods=["GET"]),
+        Route("/api/openapi.json", public.openapi_doc, methods=["GET"]),
         Route("/api/openapi.json", options_handler, methods=["OPTIONS"]),
-        Route("/api/connectors", connectors_catalog, methods=["GET"]),
+        Route("/api/connectors", bind(public.connectors_catalog, verifier=verifier), methods=["GET"]),
         Route("/api/connectors", options_handler, methods=["OPTIONS"]),
-        Route("/api/doctrines/library", doctrines_library_public, methods=["GET"]),
+        Route("/api/doctrines/library", public.doctrines_library_public, methods=["GET"]),
         Route("/api/doctrines/library", options_handler, methods=["OPTIONS"]),
-        Route("/api/doctrines/library/{slug}", doctrines_library_public_get, methods=["GET"]),
+        Route("/api/doctrines/library/{slug}", public.doctrines_library_public_get, methods=["GET"]),
         Route("/api/doctrines/library/{slug}", options_handler, methods=["OPTIONS"]),
-        Route("/api/guides/library", guides_library_public, methods=["GET"]),
+        Route("/api/guides/library", public.guides_library_public, methods=["GET"]),
         Route("/api/guides/library", options_handler, methods=["OPTIONS"]),
-        Route("/api/guides/library/{slug}", guides_library_public_get, methods=["GET"]),
+        Route("/api/guides/library/{slug}", public.guides_library_public_get, methods=["GET"]),
         Route("/api/guides/library/{slug}", options_handler, methods=["OPTIONS"]),
-        Route("/api/invitations/code/{code}", invite_preview_by_code, methods=["GET"]),
+        Route("/api/invitations/code/{code}", public.invite_preview_by_code, methods=["GET"]),
         Route("/api/invitations/code/{code}", options_handler, methods=["OPTIONS"]),
-        Route("/api/invitations/{token}", invite_preview, methods=["GET"]),
+        Route("/api/invitations/{token}", public.invite_preview, methods=["GET"]),
         Route("/api/invitations/{token}", options_handler, methods=["OPTIONS"]),
-        Route("/api/me", me, methods=["GET"]),
+        Route("/api/me", bind(account.me, verifier=verifier), methods=["GET"]),
         Route("/api/me", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/avatar", avatar_save, methods=["POST"]),
-        Route("/api/me/avatar", avatar_clear, methods=["DELETE"]),
+        Route("/api/me/avatar", bind(media.avatar_save, verifier=verifier), methods=["POST"]),
+        Route("/api/me/avatar", bind(media.avatar_clear, verifier=verifier), methods=["DELETE"]),
         Route("/api/me/avatar", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files", project_files_list, methods=["GET"]),
-        Route("/api/me/projects/{project_id:int}/files", project_files_upload, methods=["POST"]),
+        Route("/api/me/projects/{project_id:int}/files", bind(projects.project_files_list, verifier=verifier), methods=["GET"]),
+        Route("/api/me/projects/{project_id:int}/files", bind(projects.project_files_upload, verifier=verifier), methods=["POST"]),
         Route("/api/me/projects/{project_id:int}/files", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files/{file_id:int}", project_file_delete, methods=["DELETE"]),
+        Route("/api/me/projects/{project_id:int}/files/{file_id:int}", bind(projects.project_file_delete, verifier=verifier), methods=["DELETE"]),
         Route("/api/me/projects/{project_id:int}/files/{file_id:int}", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", project_file_public, methods=["POST"]),
+        Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", bind(projects.project_file_public, verifier=verifier), methods=["POST"]),
         Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", options_handler, methods=["OPTIONS"]),
-        Route("/api/public/docs/{token}", public_doc, methods=["GET"]),
+        Route("/api/public/docs/{token}", public.public_doc, methods=["GET"]),
         Route("/api/public/docs/{token}", options_handler, methods=["OPTIONS"]),
         # Réception d'un upload signé out-of-bande (#105) — jeton dans l'URL, pas de JWT.
         # PUT/POST = agent (curl brut) / formulaire humain (multipart) ; GET = page d'upload.
-        Route("/api/upload/{token}", upload_receive, methods=["PUT", "POST"]),
-        Route("/api/upload/{token}", upload_form, methods=["GET"]),
+        Route("/api/upload/{token}", uploads.upload_receive, methods=["PUT", "POST"]),
+        Route("/api/upload/{token}", uploads.upload_form, methods=["GET"]),
         Route("/api/upload/{token}", options_handler, methods=["OPTIONS"]),
         # Page de partage publique server-rendered (lisible par un agent, ADR gap
         # « pages SPA non lisibles »). Servie sous dashboard.oto.ninja via Caddy.
-        Route("/p/d/{token}", public_doc_view, methods=["GET"]),
-        Route("/api/orgs/{id}/logo", org_logo_save, methods=["POST"]),
-        Route("/api/orgs/{id}/logo", org_logo_clear, methods=["DELETE"]),
+        Route("/p/d/{token}", public.public_doc_view, methods=["GET"]),
+        Route("/api/orgs/{id}/logo", bind(media.org_logo_save, verifier=verifier), methods=["POST"]),
+        Route("/api/orgs/{id}/logo", bind(media.org_logo_clear, verifier=verifier), methods=["DELETE"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/calls", my_calls, methods=["GET"]),
+        Route("/api/me/calls", bind(account.my_calls, verifier=verifier), methods=["GET"]),
         Route("/api/me/calls", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/tools", my_tools_list, methods=["GET"]),
+        Route("/api/me/tools", bind(tools.my_tools_list, verifier=verifier, mcp_instance=mcp_instance), methods=["GET"]),
         Route("/api/me/tools", options_handler, methods=["OPTIONS"]),
         # `registry` AVANT `{name}` sinon Starlette le capture comme nom de tool.
-        Route("/api/me/tools/registry", my_tools_registry, methods=["GET"]),
+        Route("/api/me/tools/registry", bind(tools.my_tools_registry, verifier=verifier, mcp_instance=mcp_instance), methods=["GET"]),
         Route("/api/me/tools/registry", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/tools/{name}", my_tools_disable, methods=["POST"]),
-        Route("/api/me/tools/{name}", my_tools_enable, methods=["DELETE"]),
+        Route("/api/me/tools/{name}", bind(tools.my_tools_disable, verifier=verifier), methods=["POST"]),
+        Route("/api/me/tools/{name}", bind(tools.my_tools_enable, verifier=verifier), methods=["DELETE"]),
         Route("/api/me/tools/{name}", options_handler, methods=["OPTIONS"]),
         # Fiche + test d'un outil (dashboard) — suffixes distincts de `{name}` nu.
-        Route("/api/me/tools/{name}/detail", my_tool_detail, methods=["GET"]),
+        Route("/api/me/tools/{name}/detail", bind(tools.my_tool_detail, verifier=verifier, mcp_instance=mcp_instance), methods=["GET"]),
         Route("/api/me/tools/{name}/detail", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/tools/{name}/call", my_tool_call, methods=["POST"]),
+        Route("/api/me/tools/{name}/call", bind(tools.my_tool_call, verifier=verifier, mcp_instance=mcp_instance), methods=["POST"]),
         Route("/api/me/tools/{name}/call", options_handler, methods=["OPTIONS"]),
         # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs_instructions.py),
         # monté par capability_routes plus bas.
-        Route("/api/settings/api-keys/{provider}", api_key_get, methods=["GET"]),
-        Route("/api/settings/api-keys/{provider}", api_key_save, methods=["POST"]),
-        Route("/api/settings/api-keys/{provider}", api_key_clear, methods=["DELETE"]),
+        Route("/api/settings/api-keys/{provider}", bind(credentials.api_key_get, verifier=verifier), methods=["GET"]),
+        Route("/api/settings/api-keys/{provider}", bind(credentials.api_key_save, verifier=verifier), methods=["POST"]),
+        Route("/api/settings/api-keys/{provider}", bind(credentials.api_key_clear, verifier=verifier), methods=["DELETE"]),
         Route("/api/settings/api-keys/{provider}", options_handler, methods=["OPTIONS"]),
         # Connexion par session navigateur (brevo/crunchbase) — Live View depuis le dashboard.
-        Route("/api/me/connectors/{name}/session/start", session_start, methods=["POST"]),
+        Route("/api/me/connectors/{name}/session/start", bind(credentials.session_start, verifier=verifier), methods=["POST"]),
         Route("/api/me/connectors/{name}/session/start", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/connectors/{name}/session/finalize", session_finalize, methods=["POST"]),
+        Route("/api/me/connectors/{name}/session/finalize", bind(credentials.session_finalize, verifier=verifier), methods=["POST"]),
         Route("/api/me/connectors/{name}/session/finalize", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/platform-keys", admin_platform_keys_list, methods=["GET"]),
-        Route("/api/admin/platform-keys", admin_platform_key_create, methods=["POST"]),
+        Route("/api/admin/platform-keys", bind(admin.admin_platform_keys_list, verifier=verifier), methods=["GET"]),
+        Route("/api/admin/platform-keys", bind(admin.admin_platform_key_create, verifier=verifier), methods=["POST"]),
         Route("/api/admin/platform-keys", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/platform-keys/{provider}/{label}", admin_platform_key_delete, methods=["DELETE"]),
+        Route("/api/admin/platform-keys/{provider}/{label}", bind(admin.admin_platform_key_delete, verifier=verifier), methods=["DELETE"]),
         Route("/api/admin/platform-keys/{provider}/{label}", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/users/{sub}/tokens", admin_tokens_list, methods=["GET"]),
-        Route("/api/admin/users/{sub}/tokens", admin_tokens_create, methods=["POST"]),
+        Route("/api/admin/users/{sub}/tokens", bind(admin.admin_tokens_list, verifier=verifier), methods=["GET"]),
+        Route("/api/admin/users/{sub}/tokens", bind(admin.admin_tokens_create, verifier=verifier), methods=["POST"]),
         Route("/api/admin/users/{sub}/tokens", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/users/{sub}/tokens/{token_id}", admin_tokens_delete, methods=["DELETE"]),
+        Route("/api/admin/users/{sub}/tokens/{token_id}", bind(admin.admin_tokens_delete, verifier=verifier), methods=["DELETE"]),
         Route("/api/admin/users/{sub}/tokens/{token_id}", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/activity-summary", me_activity_summary, methods=["GET"]),
+        Route("/api/me/activity-summary", bind(account.me_activity_summary, verifier=verifier), methods=["GET"]),
         Route("/api/me/activity-summary", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{id}/export", me_project_export, methods=["GET"]),
+        Route("/api/me/projects/{id}/export", bind(projects.me_project_export, verifier=verifier), methods=["GET"]),
         Route("/api/me/projects/{id}/export", options_handler, methods=["OPTIONS"]),
         *datastore_routes,
         *sirene_routes,
