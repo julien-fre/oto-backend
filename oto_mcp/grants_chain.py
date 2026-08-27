@@ -268,6 +268,7 @@ def record_usage(sub: str, provider: str, active_org: Optional[int],
     autre appel."""
     if not is_chained(provider):
         return
+    verdict = None
     try:
         verdict = platform_rung(sub, provider, active_org)
         if verdict is None or not verdict.granted or verdict.grant_id is None:
@@ -275,8 +276,16 @@ def record_usage(sub: str, provider: str, active_org: Optional[int],
         db_grants.bump_counter(verdict.grant_id, calls)
         _journal_counters(provider, sub, verdict)
     except Exception:  # noqa: BLE001
-        # Le metering ne casse jamais un appel qui a réussi.
-        logger.debug("grants-chain: débit de compteur échoué", exc_info=True)
+        # Le fail-open est JUSTE : le metering ne casse jamais un appel qui a réussi.
+        # C'est le NIVEAU qui en faisait un silence — `debug` ne sort pas en prod, donc
+        # « le quota n'a pas bougé » n'était imputable à rien (inventaire des silences
+        # du 2026-08-27, site B10). La ligne porte de quoi retrouver l'arête et
+        # rattraper le compte à la main.
+        logger.warning(
+            "grants-chain: débit de compteur ÉCHOUÉ — provider=%s sub=%s org=%s "
+            "grant=%s calls=%s (l'appel a réussi, le quota n'a PAS bougé)",
+            provider, sub, active_org,
+            getattr(verdict, "grant_id", None), calls, exc_info=True)
 
 
 def _journal_counters(provider: str, sub: str, verdict: ChainVerdict) -> None:
