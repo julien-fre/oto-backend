@@ -417,3 +417,53 @@ ssh -i ~/.ssh/alexis root@<box> \
   "cd /opt/oto-mcp && ./.venv/bin/python -m scripts.issue_token <SUB> cli"
 # → imprime un `oto_…` à stocker dans SOPS comme OTO_API_KEY
 ```
+
+## Découpé par COUTURES depuis le 13/08 (#325)
+
+**Découpé par COUTURES depuis le 13/08 (#325)** — le fichier est l'unité d'occupation
+d'une session sur un tree partagé, et quatre chantiers ont dû entrer dans les trois
+mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser un lot :
+
+| module | ce qu'il porte |
+|---|---|
+| `db/paths.py` | désigner une valeur : `email` · `email.origine` · `contacts[0].email` · `contacts[].email` |
+| `db/query.py` | construire filtres/tris/agrégats — **PUR**, ne touche jamais une connexion |
+| `db/rowlock.py` | le bail d'une ligne (file de travail) |
+| `db/datastore_ns.py` | le TABLEAU : existence, nom, propriété, partages |
+| `db/datastore.py` | les LIGNES : CRUD + clé métier/index |
+| `datastore_errors.py` | les refus — **aucune dépendance**, importable de partout |
+| `datastore_columns.py` | la colonne côté Python : fusion des couches, résolution des anciens noms |
+| `datastore_schema_ops.py` | poser/retoucher/nettoyer le FORMAT (mixin du store) |
+| `datastore.py` | le store qui COMPOSE — gros par nature |
+
+Déplacements PURS : `db/datastore.py` et `datastore.py` ré-exportent, la surface plate
+`db.<fn>` est figée par `tests/test_db_surface_frozen.py` (cliquet : on peut ajouter,
+jamais retirer). ⚠️ Une scission fait dormir les noms hérités des globals dans les
+branches rares — balayage figé par `tests/test_datastore_ns_duplicate.py`.
+
+## Ce qu'oto SAIT d'un champ, et ce qu'il ne saura jamais (14/08)
+
+⚠️ **Ce qu'oto SAIT d'un champ, et ce qu'il ne saura jamais** (tranché par Alexis le
+14/08). Oto gère les **types standards** : un `number` se trie numériquement, une date
+chronologiquement — l'ignorer donnait `10, 100, 2, 9` (livré v1.112.0). Il ne gère PAS
+l'interprétation métier d'une VALEUR : que `20_49` soit une tranche INSEE qui suit
+`1_2` est le savoir du consommateur, jamais celui d'oto. Entre les deux, l'ordre des
+`options` déclarées au schéma **est honoré** — parce que c'est une DEMANDE adressée à
+oto, pas une compréhension qu'il aurait du métier. Même frontière que `flat_alias` :
+exécuter une déclaration n'est pas deviner une convention.
+
+## La face REST est 100 % DÉRIVÉE depuis le 2026-08-12 (#302)
+
+> **La face REST est 100 % DÉRIVÉE depuis le 2026-08-12 (#302)** : les 17 routes
+> écrites à la main d'`api_routes_datastore.py` (10 chemins) sont des capacités
+> (`capabilities/datastore_{namespaces,rows,schema,sharing}.py`, aux côtés de
+> `claim`/`activity`/`columns` déjà migrés) — mêmes chemins, mêmes réponses, **mêmes
+> codes** (201 sur les créations), mais entrée et sortie déclarées : les 22 opérations
+> datastore de `/api/openapi.json` portent désormais un schéma de réponse, contre 5
+> avant. `mcp=None` partout : les tools `data_*` sont inchangés, ce lot n'a migré que
+> le REST. Trois crans ont été ajoutés au moule pour que ce soit possible sans casser
+> le fil (`RestBinding.status`/`body_field`/`reads_body`, cf. §Couche capacité).
+> ⚠️ Le refus de champ inconnu s'applique donc maintenant à ces chemins : `oto data
+> list --filter k:v` (oto-cli) envoie un `filter` que la route ignorait en silence
+> depuis le passage à `page_rows` — il rend désormais 400. Le paramètre est mort côté
+> serveur, pas côté client.

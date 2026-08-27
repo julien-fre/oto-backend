@@ -1129,17 +1129,18 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         if org_id is None:
             return _json_error(request, 400, "no_org_context")
         eid = credentials_store.member_id(org_id, sub)
-        # Multi-compte (« 2 Zoho ») : cohérence des comptes de CE membre pour le
-        # connecteur. '' (mono legacy) et comptes nommés ne doivent pas coexister
-        # (sinon la désambiguïsation à la résolution voit un '' impossible à désigner).
-        if c.auth_multi_account:
-            # Backfill lazy : au 1er compte NOMMÉ, la ligne '' migre vers un label
-            # (« principal », suffixé si pris) — règle partagée avec les paliers org/groupe.
-            try:
-                credentials_store.ensure_named_coexistence(
-                    credentials_store.MEMBER, eid, provider, account)
-            except credentials_store.NamedAccountRequired as e:
-                return _json_error(request, 409, "account_required", str(e))
+        # Garde de pose (source unique, #409) : multi-compte → cohérence des comptes
+        # de CE membre ('' et comptes nommés ne coexistent pas, sinon la
+        # désambiguïsation à la résolution voit un '' impossible à désigner ; au 1er
+        # compte NOMMÉ la ligne '' migre vers « principal »). Mono-compte → un compte
+        # nommé est REFUSÉ, jamais écrit puis ignoré.
+        try:
+            credentials_store.guard_account_write(
+                credentials_store.MEMBER, eid, provider, account)
+        except credentials_store.NamedAccountRequired as e:
+            return _json_error(request, 409, "account_required", str(e))
+        except credentials_store.SingleAccountConnector as e:
+            return _json_error(request, 400, "single_account_connector", str(e))
         # Connexion en DEUX temps : le formulaire ne collecte que les PRÉREQUIS, le
         # champ décisif (refresh_token) arrive par le consentement. Sans reprise, une
         # simple correction de champ après connexion repackerait un blob SANS lui —

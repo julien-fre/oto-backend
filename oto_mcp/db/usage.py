@@ -113,7 +113,12 @@ def _run_closure(start: str = "s") -> str:
       sa clôture au propriétaire. Sans elle, un `run_finish` tapé par un tiers sur un
       run_id deviné donnerait au journal une issue que la table refuse — c'est-à-dire
       très exactement la deuxième vérité qu'on est en train de fermer.
-    La DERNIÈRE clôture gagne : un agent peut rejouer `run_finish`."""
+    La DERNIÈRE clôture gagne : un agent peut rejouer `run_finish`.
+
+    ⚠️ Chercher par `args->>'run_id'` n'est indexable que par EXPRESSION :
+    `idx_tool_calls_run_finish_ref` (`_init.py`) est ce qui rend ce LATERAL
+    exécutable — sans lui il parcourt le journal ENTIER à chaque run, et
+    l'incident du 2026-08-27 (185 s de boucle tenue) revient tel quel."""
     return f"""
             LEFT JOIN LATERAL (
                 SELECT created_at, args
@@ -236,6 +241,22 @@ def project_run_tools(project_id: int, limit: int = 200) -> list[str]:
     return [r["tool"] for r in rows]
 
 
+_PROJECT_SCOPE = (
+    " AND s.run_id IN (SELECT run_id FROM runs WHERE project_id = %s)")
+"""Prédicat d'ouverture qui borne `_runs_from_journal` à UN projet.
+
+⚠️ Le `WHERE x.project_id` du SELECT extérieur ne suffit pas : il filtre le RÉSULTAT
+d'un CTE qui a déjà reconstruit **tous** les runs de la plateforme — un LATERAL
+`max(created_at)` par `run_start`, plus la clôture, sur les ~900 k lignes du journal.
+Le coût suivait donc le journal entier, pas le projet : incident du 2026-08-27, où
+chaque `oto_project` tenait la boucle 185 s (les appels DB de ce module sont
+synchrones, cf. `docs/event-loop-perf.md`) et gelait la plateforme entière —
+tenants tiers compris. Poussé dans le CTE, le semi-join part d'`idx_runs_project` et
+seuls les runs du projet sont reconstruits.
+
+Littéral de ce module, comme tout `extra` (le `%s` est lié, jamais interpolé)."""
+
+
 def project_runs(project_id: int, doctrine: Optional[str] = None,
                  limit: int = 20) -> list[dict]:
     """Derniers runs d'un projet (plus récent d'abord), optionnellement filtrés sur une
@@ -246,11 +267,12 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
     filtre `doctrine` inclus : filtrer sur la colonne de la table ferait apparaître dans
     la pastille d'une procédure un run que le journal rattache à une autre."""
     doctrine_clause = " AND j.doctrine = %s" if doctrine is not None else ""
-    params: list = [project_id] + ([doctrine] if doctrine is not None else []) + [limit]
+    params: list = ([project_id, project_id]
+                    + ([doctrine] if doctrine is not None else []) + [limit])
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             f"""
-            WITH j AS ({_runs_from_journal()})
+            WITH j AS ({_runs_from_journal(_PROJECT_SCOPE)})
             SELECT j.run_id, j.label, j.doctrine, j.outcome, j.started_at,
                    j.finished_at, j.last_seen_at
               FROM runs x JOIN j ON j.run_id = x.run_id
@@ -271,14 +293,14 @@ def project_run_stats(project_id: int) -> dict:
     with _connect() as conn:
         row = conn.execute(
             f"""
-            WITH j AS ({_runs_from_journal()})
+            WITH j AS ({_runs_from_journal(_PROJECT_SCOPE)})
             SELECT count(*) AS n,
                    array_agg(DISTINCT j.doctrine)
                        FILTER (WHERE j.doctrine IS NOT NULL) AS doctrines
               FROM runs x JOIN j ON j.run_id = x.run_id
              WHERE x.project_id = %s
             """,
-            (project_id,),
+            (project_id, project_id),
         ).fetchone()
     return {"runs": int(row["n"] or 0), "doctrines": list(row["doctrines"] or [])}
 

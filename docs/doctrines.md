@@ -190,3 +190,21 @@ refuse le préfixe (un slot binde un tableau existant). Bloc A : §« Slots » (
 seedée en DB — une évolution du texte passe par `oto_admin_platform_instructions`, pas
 seulement la constante). Grandfathering : procédure sans slots / nom nu = inchangés.
 Restent B4 (inventaire dérivé) + B5 (vérifications) — épic otomata-private#59.
+
+## Agent readme (cumulable) & procédures — le vocabulaire produit
+
+Vocabulaire produit (unbundle 2026-07) : **agent readme** = prose libre **injectée à
+chaque session**, cumulée du général au spécifique — **plateforme** (bloc A) → **org** →
+**équipe active** → **user**. Les 4 étages vivent dans `guides` delivery='init' (0042) ET
+**s'éditent par UNE surface** depuis le 28/07 (§Convergence des surfaces) : la capacité
+`me.guide{,s}` — `oto_guide(op=…, scope=…, delivery='init')` en MCP, `/api/me/guides/{scope}/readme`
+(+ variantes `/api/{orgs,groups}/{id}/…` pour viser une cible explicite) en REST. ⚠️ Le
+routage `claude_md`→`guides` qui vivait DANS `org_store`/`group_store` est RETIRÉ : le store
+de procédures ne sert plus le readme (`get_instruction` → None, `set_instruction` → ValueError),
+les appelants qui le veulent lisent `guide_store.init_guide_body(scope, id)`. `me.agent_readme` +
+`/api/me/agent-readme` + `db.{get,set}_user_readme` supprimés (table `user_agent_readme` laissée
+en place — elle sert encore de source au backfill de boot ; son DROP est une migration à part). Chaque niveau passe par `_apply_vars`
+({{org}}/{{user}}/{{équipe}}/{{connecteurs_actifs}}). **Procédure** = doctrine nommée
+(skill), chargée à la demande — les identifiants de code (`_DOCTRINE_GET_TOOL`, tables,
+`docs/doctrines.md`) gardent le mot doctrine. Prose opératoire versionnée par org,
+**détail : `docs/doctrines.md`**.

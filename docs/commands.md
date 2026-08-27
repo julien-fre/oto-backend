@@ -45,6 +45,30 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 #   import sys; sys.meta_path = [f for f in sys.meta_path
 #                                if "__editable__" not in type(f).__module__]
 # Puis re-valider en important LE MODULE NEUF : il doit lever ImportError dans le clone.
+# ⚠️ **3e piège (26/08) : le venv porte une COPIE FIGÉE d'oto-core.** `.venv` a une
+# version INSTALLÉE de la lib (`pip show oto-core`), pas un lien vers le checkout — elle
+# ne bouge donc pas quand le tronc bump son pin. Le mode d'échec va dans les DEUX sens :
+#   • trop VIEUX → `ModuleNotFoundError: oto.tools.<neuf>` en masse (48 échecs + 33 erreurs
+#     vécus le 26/08 sur airtable/tavily/waalaxy) : un faux ROUGE qu'on impute au tronc ou
+#     à son propre lot, alors que rien n'est cassé ;
+#   • trop RÉCENT (ou PYTHONPATH sur un checkout en avance) → un vert local sur des méthodes
+#     que le pin du tronc n'a PAS : faux VERT, et la garde version-skew le rattrape en CI.
+# Parade — viser un checkout À JOUR, et le mettre à jour d'abord :
+#   git -C /data/oto/oto-core pull --rebase --autostash
+#   PYTHONPATH=/data/oto/oto-core .venv/bin/python -m pytest -q
+# Valider l'instrument AVANT de conclure (même réflexe que les deux pièges ci-dessus) :
+#   PYTHONPATH=/data/oto/oto-core .venv/bin/python -c \
+#     "import oto.tools as t; print(t.__path__)"     # doit pointer DANS /data/oto/oto-core
+# et comparer la version du checkout au pin du tronc :
+#   grep -m1 '^version' /data/oto/oto-core/pyproject.toml
+#   grep -o 'oto-core.git@v[0-9.]*' pyproject.toml   # les deux doivent coïncider
+
+# Tests À BASE (fixture `pg_dsn`) : elle prend `OTO_TEST_PG_DSN` s'il existe, sinon monte
+# un PostgreSQL JETABLE via docker (`docker run --rm`, supprimé en fin de session). Sans
+# l'un ni l'autre, ces tests sont **SKIPPÉS** — et un vert local sans base ne vaut RIEN
+# contre la CI qui en a une (tronc cassé une heure ainsi le 23/08). Vérifier le compte de
+# skips : `pytest -q -rs` ne doit montrer AUCUN skip motivé par l'absence de PostgreSQL.
+
 # Convention : tester la LOGIQUE PURE (helpers hors DB, ex. `effective_for_group`,
 # `_connector_blocked`/seams) + les gardes de capacité par stub ; le chemin SQL est vérifié
 # au déploiement (le job `test` du CI tourne le vrai suite avec toutes les deps).
@@ -99,3 +123,7 @@ with psycopg.connect(os.environ[\"DATABASE_URL\"]) as c:
 # ≠ InvalidTag ; status_for = credential_status, jamais get_credential_with_meta) :
 # docs/connector-vault.md §Déchiffrer un credential ad-hoc.
 ```
+
+## Pin oto-core — une version déployée = une coordonnée reproductible
+
+- **`oto-core[browser]` PINNÉ sur un tag git** (`@ git+…@vX.Y.Z` dans `pyproject.toml`, plus `@main` flottant ni dép `oto-cli`) : une version déployée = coordonnée reproductible. ⚠️ **`pip` ne réinstalle PAS une dép VCS déjà présente** (`oto-core` "satisfait" quelle que soit sa version) → `pip install -e .` seul ne monte JAMAIS oto-core au tag bumpé. Le deploy **force-réinstalle** oto-core depuis le tag lu du `pyproject` (`pip install --force-reinstall …@$tag`). Bump connecteurs = tag oto-core + édit du pin + deploy (PAS de `git pull` box). Cf. ADR 0020. ⚠️ **Symptôme trompeur en LOCAL** : des tests rouges peuvent être un venv en retard sur le pin, pas du code cassé (05/08 : 17 tests d'un connecteur neuf échouaient, son module n'existant pas dans l'oto-core installé). Réaligner avant de conclure — `uv pip install --python .venv/bin/python --force-reinstall --no-deps "oto-core[…] @ git+…@<tag du pyproject>"`. (⚠️ box `otomata-0` a un VIEUX oto-mcp décommissionné/stoppé avec un editable legacy `oto-cli` pré-split — ne pas s'y fier, le runtime live est la box dédiée.) ⚠️ **Le pin est un champ que TOUTES les sessions // éditent → régressions silencieuses récurrentes** : vécu 2026-07-07, un commit concurrent a réécrit le pin `v1.18.0→v1.17.0` et **cassé un tool déployé SANS erreur** (le tool était enregistré, sa méthode absente de l'ancien oto-core → `AttributeError` seulement à l'appel). Toujours bumper en **superset** (tag haut ⊇ tags bas) ; à la moindre divergence de pin en merge/rebase, **garder la version haute**.

@@ -175,3 +175,22 @@ Implémentation :
 Limite : la **récupération par magic-link email** reste un mono-facteur (backlog, cf.
 `infra/docs/logto.md`). Le vrai **step-up par appel** (`acr_values`) n'existe pas dans
 Logto → non implémentable côté serveur ; l'enforcement est donc au **login**.
+
+## CUTOVER ADR 0040 (2026-07-06) — `.ninja` ↔ `.cx` inversés
+
+> **⚠️ CUTOVER ADR 0040 (2026-07-06) — `.ninja`↔`.cx` inversés.** Désormais **PROD =
+> `mcp.oto.cx`** (:9103, audience canonique `mcp.oto.cx/mcp`, dashboard `manage.oto.cx`) et
+> **PREPROD = `mcp.oto.ninja`** (:9105, audience `mcp.oto.ninja/mcp`, dashboard `manage.oto.ninja`).
+> DB découplée (backends inchangés, seuls domaines/audiences/dashboards ont basculé ; prod
+> reste sur `otomata-main`). ⚠️ **Logto = 2 instances** : la vraie prod/preprod = **`auth.oto.ninja`**
+> (creds SOPS `LOGTO_NINJA_MGMT_*`), PAS `auth.oto.zone`. Les mentions `mcp.oto.ninja=prod`
+> ailleurs dans ce fichier sont **antérieures au cutover**.
+>
+> ⚠️ **`MCP_AUDIENCE_ALT` est une LISTE (virgules) : ÉTENDRE, jamais remplacer.** Un
+> `sed 's|^MCP_AUDIENCE_ALT=.*|…|'` écrase les audiences déjà déclarées — sans erreur au
+> boot, le service démarre : la casse ne se voit qu'au premier `invalid_token` d'un client.
+> Vécu 03/08 (Tulina) : la preprod portait `mcp-canari.oto.ninja/mcp`, l'écraser aurait coupé
+> le canari. Chaque environnement a SA liste (`/opt/oto-mcp/.env` ≠ `/opt/oto-mcp-canari/.env`) :
+> poser une audience sur l'un ne la pose PAS sur l'autre — le symptôme est alors « ça marche en
+> prod, pas en preprod ». Même règle pour tout env-liste partagé (`OTO_MCP_CORS_ORIGINS`,
+> `MAILER_FROM_DOMAINS`, SPF, redirect URIs OAuth) : lire la valeur, y ajouter, réécrire.

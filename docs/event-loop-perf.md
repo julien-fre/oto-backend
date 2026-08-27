@@ -1,4 +1,10 @@
-# Perf event-loop — le serveur est MONO-LOOP (les 2 modes de gel)
+# Perf event-loop — le serveur est MONO-LOOP (les 3 modes de gel)
+
+> ⚠️ Ce titre a dit « les 2 modes » jusqu'au 2026-08-27, et c'était vrai à l'écriture :
+> les deux modes connus étaient des **placements** d'I/O (un handler async sans await,
+> puis un middleware). Le mode n°3 ci-dessous est d'une autre nature — le placement est
+> correct, c'est la requête elle-même qui est lente — et il ne se corrige pas comme les
+> deux autres.
 
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.
 
@@ -84,6 +90,51 @@ calllog `server._calllog_sink` → `auth_hooks.current_user_sub_from_token` →
 `db.upsert_user` (écriture + commit dans la boucle). Chacun est UNE requête ou trois,
 là où la composition en faisait des dizaines — d'où l'ordre de traitement.
 
+## Mode n°3 — la requête est au BON endroit, mais elle est lente (incident du 27/08)
+
+Les deux modes ci-dessus sont des erreurs de **placement** : du I/O sync là où il ne
+devait pas être. Celui-ci n'en est pas une — le handler est `def` sync, donc routé en
+threadpool comme la règle l'exige — et il gèle quand même, parce qu'**une requête assez
+lente gèle depuis n'importe où**. Le threadpool borne la concurrence, pas la durée : sous
+charge, les threads occupés par la même requête lente refluent sur la boucle (attente de
+connexion au pool, sérialisation des callbacks), et `loop_watch` nomme la boucle tenue.
+
+**Ce que ça donnait** (prod, 08:28→08:47 le 2026-08-27) : `mcp.oto.cx` et `mcp.tulina.ai`
+injoignables, gels de **185 s toutes les ~3 min** — donc gelé en continu —, `PoolTimeout:
+couldn't get a connection after 5.00 sec` en cascade, 29 connexions en attente d'accept
+sur le socket, CPU calme. Les workers runner timeoutaient à 60 s et redémarraient, ce qui
+**rejouait l'appel coûteux** : la panne s'auto-entretenait.
+
+**Pourquoi la table de discrimination du §suivant n'aide pas ici** : ce mode a
+exactement la signature du n°2 — `loop_watch` parle, py-spy montre MainThread dans
+`psycopg execute`. Le seul moyen de les séparer est de **lire la stack jusqu'à la
+requête** et d'aller l'`EXPLAIN` :
+
+```
+wait (psycopg/connection.py) ← execute ← project_run_stats (db/usage.py)
+  ← audit_project ← _project (capabilities/projects.py)   ← handler SYNC, bien placé
+```
+
+**La cause** : `_runs_from_journal` retrouve la clôture d'un run par `args->>'run_id'` —
+une **expression**, qu'aucun index ne portait. Chaque run reconstruit valait donc un
+parcours complet de `tool_calls` : 639 ms et 911 882 lignes filtrées l'unité, × 9 350
+runs. Remède = `idx_tool_calls_run_finish_ref` (index partiel d'expression, 624 kB) :
+185 s → 268 ms sur le pire projet, 639 ms → 0,05 ms sur la sonde unitaire.
+
+**Trois leçons, dans l'ordre où elles coûtent cher :**
+- **Un JSONB interrogé dans un `WHERE` est un index d'expression qui manque.** La colonne
+  homonyme (`tool_calls.run_id`) existait juste à côté et donnait l'illusion de couvrir le
+  chemin — elle sert l'autre LATERAL, pas celui-là.
+- **Sortir le I/O de la boucle ne corrige PAS ce mode**, il le déguise : le serveur
+  répondrait, la lecture resterait à 185 s. Le réflexe des modes 1 et 2 est ici un
+  contresens.
+- **La lenteur suit le VOLUME, donc elle arrive sans qu'on ait rien changé.** Le coût
+  était proportionnel au journal entier ; la campagne pilote a porté un projet à 96 % des
+  runs de la plateforme, et le seuil a été franchi un matin, sans déploiement. Une lecture
+  dont le coût ne se borne pas au scope demandé est une panne à retardement — d'où le
+  second correctif du même lot : les deux lectures par projet poussent leur filtre DANS le
+  CTE, au lieu de filtrer le résultat d'une reconstruction déjà faite pour tout le monde.
+
 ## Un 502 en rafale n'est pas forcément un gel — la 2ᵉ cause (#352, nuit du 15-16/08)
 
 ⚠️ **À lire avant de conclure « c'est encore le gel ».** Ce document a servi, du 15/08 au
@@ -168,3 +219,11 @@ requêtes HTTP et `initialize`) plus le `clientInfo` du handshake, stocké dans
 `tool_calls.args` — noter que le connecteur Mistral ne surcharge pas le clientInfo du SDK
 Python, donc la base ne montre qu'un générique `client_name='mcp'` : **le nom du produit
 ne se lit que dans le User-Agent HTTP**.
+
+## Corollaire de méthode (27/08)
+
+Le 3ᵉ mode n'est pas un I/O mal placé mais une **requête lente** (JSONB sans index
+d'expression : 185 s de boucle tenue, prod + tenant tiers à terre) — même signature py-spy
+que le 2ᵉ, remède opposé : indexer, pas déplacer. Corollaire de méthode : **une lecture dont
+le coût suit le VOLUME TOTAL et non le scope demandé est une panne à retardement, qui se
+déclenche sans déploiement.**

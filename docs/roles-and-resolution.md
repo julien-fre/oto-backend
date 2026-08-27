@@ -46,8 +46,9 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 4. Instance **plateforme** (grant/free-tier, ADR 0044 §F) avec quota.
 5. Rien → McpError actionnable + **instances à portée** (voir walker ci-dessous).
 
-> **Multi-compte par défaut (2026-08-26, reprise #399).** Tout connecteur **à clé
-> d'API** (`method=secret`, secret `api_key`/`basic_auth`) est **multi-compte**
+> **Multi-compte par défaut (2026-08-26, reprise #399 ; étendu #409 le 27/08).** Tout
+> connecteur dont le credential se **POSE** (`method=secret` — clé simple
+> `api_key`/`basic_auth` **ou** multi-champs `fields`) est **multi-compte**
 > (`Connector.auth_multi_account`) : des comptes **nommés** peuvent coexister aux
 > paliers **membre, équipe et org** (segment `account` du coffre ; la ligne legacy
 > `''` migre vers « principal » au premier compte nommé, `ensure_named_coexistence`).
@@ -60,6 +61,25 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 > « introuvable »** après la marche — jamais un repli plateforme silencieux. La
 > résolution **anonyme** (`<slug>.mcp.oto.cx`) sélectionne le compte d'org comme le
 > chemin réel (unique/défaut), jamais `''` en dur.
+
+> **Le nombre de champs ne dit rien de la cardinalité — et un compte nommé refusé vaut
+> mieux qu'un compte nommé ignoré (#409, 27/08).** Deux acquis d'un même défaut.
+> **(1)** `fields` était hors de la règle : Slack (`bot_token` + `user_token`) en tombait
+> mono-compte, alors qu'un token Slack est émis par INSTALLATION dans un workspace (N
+> installations = N tokens indépendants, auth par requête sans état) et que la lib
+> `oto.tools.slack` sert déjà N workspaces — c'était la couche résolution qui figeait la
+> cardinalité à 1. La règle couvre donc les credentials multi-champs ; un compte du coffre
+> = un workspace, choisi par `_account=`. **(2)** Le coffre stocke N lignes par (entité,
+> connecteur, compte) pour TOUS les connecteurs, mais seule la résolution d'un
+> multi-compte va les lire : poser un compte nommé sur un mono-compte écrivait une ligne
+> parfaitement valide que rien n'irait chercher. C'est désormais un **refus nommé** —
+> `credentials_store.guard_account_write`, appelée sans condition par les trois surfaces
+> déclaratives (membre `/api/settings/api-keys`, `org.secret.set`, `group.secret.set`),
+> qui tranche sur le registre AVANT toute lecture du coffre : multi ⟹ cohérence des noms
+> (409 `account_required`), mono ⟹ 400 `single_account_connector`. Un connecteur qui
+> aurait une vraie raison de fournisseur d'être mono s'exclut par `single_account` dans
+> son entrée de registre — jamais par une liste transverse, et aujourd'hui sans porteur
+> (tripwire `test_single_account_write_guard`).
 
 ## Walker de cascade — source unique (2026-07-16)
 
@@ -132,3 +152,38 @@ datastore non plus (spine PG, aucun credential — ADR 0016).
 > toute autre écriture scope user. Migration coffre = `credentials_store.
 > backfill_member_scope()` au boot (re-chiffrement — l'AAD change, pas d'UPDATE ;
 > destination = org maison ; ligne indéchiffrable laissée inerte).
+
+## Multi-compte par défaut (2026-08-26, reprise #399 ; étendu #409 le 27/08)
+
+> **Multi-compte par défaut (2026-08-26, reprise #399 ; étendu #409 le 27/08)** : tout
+> connecteur dont le credential se **POSE** (`method=secret` — clé simple
+> `api_key`/`basic_auth` **ou** multi-champs `fields`) est multi-compte — comptes
+> **nommés** possibles aux paliers **membre/équipe/org**, sélection par `_account=` (axe
+> d'appel, accepté partout — `oto_call` compris — annoncé seulement où ≥ 2 clés)
+> ou param `account` ou défaut `is_default`. Un compte nommé introuvable à un
+> palier passe la main ; introuvable partout ⇒ « introuvable » après la marche,
+> jamais un repli plateforme silencieux. L'endpoint anonyme sélectionne le compte
+> d'org comme le chemin réel (jamais `''` en dur). Détail : doc ci-dessus.
+>
+> ⚠️ **Le nombre de champs du credential ne dit RIEN de la cardinalité** (#409). `fields`
+> était hors règle jusqu'au 27/08 : Slack (`bot_token` + `user_token`) en tombait
+> mono-compte, alors qu'un token Slack est émis par INSTALLATION dans un workspace — et
+> **poser un 2ᵉ compte écrivait une ligne que la résolution n'allait jamais lire**, sans
+> refus. D'où deux acquis : la règle couvre `fields` (Slack sert N workspaces, un compte
+> = un workspace), et **la pose d'un compte nommé sur un connecteur mono-compte est
+> REFUSÉE** (`credentials_store.guard_account_write`, source unique des trois surfaces
+> déclaratives membre/org/équipe → 400 `single_account_connector`). Un connecteur qui
+> aurait une vraie raison de fournisseur d'être mono s'exclut par `single_account` DANS
+> son entrée de registre, jamais par une liste transverse — aujourd'hui sans porteur.
+
+## Scope MEMBRE — le résumé qu'en donnait la carte
+
+> **Scope MEMBRE (ADR 0033)** : plus de credential per-user org-agnostique — la clé
+> BYO est keyée `(sub, org)` (coffre `entity_type='member'`, AAD lié à l'org ; google
+> + unipile inclus, seuls les mounts oauth fédérés restent scope user). L'org de scope
+> = seam `current_org`, à la pose comme à la résolution.
+> **Détail (helpers db, state HMAC google, migration) : `docs/roles-and-resolution.md` §Scope MEMBRE**.
+
+## Seam substrat `access.resolve_credential` (ADR 0024)
+
+**Seam substrat (ADR 0024)** : `access.resolve_credential(provider, want, sub?)` marche la cascade UNE fois → `ResolvedCredential{key, is_platform, mode, config, fields}` ; `resolve_api_key`/`resolve_credential_fields` = vues minces dessus (les ~15 tools keyed inchangés). `config` = **config non-secrète appariée à la clé gagnante** (endpoint/host : `dsn` unipile, `base_url` n8n/make, `data_center` zoho — `config_fields` `secret=False` ∪ meta public) → ne JAMAIS recâbler un résolveur d'endpoint par-connecteur. `access.credential_mode_for(sub, provider)` = le `mode` sans déchiffrer (détection BYO = `mode ∈ {user,group,org}`, jamais un check user-only). **La cascade elle-même = walker unique `access.walk_cascade`** (sonde présence /api/me vs fetch résolution) — ne jamais la recopier dans un call-site, contrat gardé par `test_cascade_walker.py` ; détail : `docs/roles-and-resolution.md` §Walker. ⚠️ **Le dashboard en porte un MIROIR d'affichage** (`lib/keyStack.ts`, oto-dashboard — il annonce à l'utilisateur quelle clé prendrait le relais s'il retire la sienne) : aucun test ne relie les deux repos, donc changer l'ordre des paliers ou ce qui est lu à chacun (ex. le groupe **actif** seul) ne casse rien — ça fait **mentir l'UI**. Vécu 04/08 : la pile annonçait comme relais des clés d'équipes non actives, que la cascade ne lit jamais.

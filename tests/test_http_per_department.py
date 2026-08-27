@@ -27,7 +27,11 @@ def dept(monkeypatch):
     monkeypatch.setattr(access, "require_connector_access", lambda p, s: None)
     monkeypatch.setattr(access, "current_org", lambda sub: ORG)
     from oto_mcp import org_store
-    monkeypatch.setattr(org_store, "get_org_secret", lambda org, prov: None)  # pas de secret ORG
+    # `http` est multi-compte depuis #409 (credential multi-champs) : les paliers
+    # partagés passent par la sélection de compte, donc les seams prennent le
+    # segment `account` (ici la ligne mono '' de chaque département).
+    monkeypatch.setattr(org_store, "get_org_secret",
+                        lambda org, prov, account="": None)  # pas de secret ORG
     vault = {
         (FINANCE, "http"): pack_secret("http", {
             "base_url": "https://mm-bridge.oto.zone/finance", "auth_mode": "bearer",
@@ -37,7 +41,10 @@ def dept(monkeypatch):
             "token": "TOK-SALES"}),
     }
     monkeypatch.setattr(group_store, "get_group_secret",
-                        lambda gid, prov: vault.get((gid, prov)))
+                        lambda gid, prov, account="": vault.get((gid, prov)))
+    monkeypatch.setattr(credentials_store, "list_accounts",
+                        lambda et, eid, con: ([{"account": ""}]
+                                              if (int(eid), con) in vault else []))
     return vault
 
 

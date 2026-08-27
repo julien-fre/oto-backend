@@ -86,3 +86,14 @@ KO, service down, **rollback auto**. (Vécu : `doc_change_requests(project_id)`.
 au même endroit (ex. `doc_links`, `doc_embeddings` : table + index créés ensemble sur une
 table fraîche = sûr). Corollaire extension : `CREATE EXTENSION vector` doit précéder
 `_SCHEMA` si une table de `_SCHEMA` utilise `halfvec`/`vector`.
+
+## PROD et PREPROD partagent la MÊME base (constaté 07/08)
+
+> ⚠️ **PROD et PREPROD partagent la MÊME base** (constaté 07/08 : DSN **identiques** — même
+> hôte, même DB — entre `/opt/oto-mcp/.env` et `/opt/oto-mcp-canari/.env`). Le « DB découplée »
+> du bloc CUTOVER plus haut ne décrit **pas** l'état réel. Deux conséquences pratiques : une
+> donnée écrite depuis la preprod est **la donnée de prod** (pas un bac à sable) ; et toute
+> config portée par une COLONNE ne peut avoir qu'**une** valeur pour les deux environnements
+> — ce qui exclut de distinguer prod/preprod par la base (vécu sur `orgs.front_base_url`, où
+> la preprod émet donc des liens vers le front de prod). Vérifier avant de raisonner dessus :
+> comparer les DSN par hash, jamais en les lisant en clair.

@@ -43,3 +43,19 @@ champ transport sur l'expéditeur).
 > (`_visible_catalog`). Master-OFF non accordé → invisible (fin du levier inerte
 > « coupé par la plateforme »). Filtre sur le **cap master**, pas sur `effective`
 > (un override OFF d'org doit rester réactivable).
+
+## Front qui héberge l'org (invitations, 07/08)
+
+> **Front qui héberge l'org (invitations, 07/08).** oto-backend sert plusieurs produits
+> depuis une instance (oto, Tulina) : deux colonnes `orgs.front_base_url` / `front_brand`
+> (NULL = oto) portent le front d'une org, lues par `emit_invitation` — base du lien
+> `/invitation/<code>`, marque du texte du mail, **et pas de magic-link** dès qu'un front
+> tiers est posé (l'OTT est minté sur NOTRE Logto : il serait inerte sur l'émetteur dédié
+> du tiers, soit un échec de connexion silencieux). **Dérivé de l'org CIBLE, jamais déclaré
+> par l'appelant** — sinon c'est un champ d'API publique (REST + surface MCP) qu'il faudra
+> retirer à l'arrivée de l'étage tenant (ADR 0052, où ces colonnes remontent d'un cran), et
+> une invitation pourrait prétendre venir d'un front auquel l'org n'appartient pas. Les 3
+> niveaux de la cascade en héritent sans rien porter. La marque s'arrête au TEXTE :
+> l'expéditeur reste `_MAIL_FROM`, un domaine d'envoi tiers supposerait sa vérification TEM.
+> ⚠️ Aucune surface n'édite ces colonnes (UPDATE à la main) : une nouvelle org sous front
+> tiers naît donc sous marque oto tant que personne ne la renseigne.

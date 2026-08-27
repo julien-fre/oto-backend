@@ -126,9 +126,11 @@ def _fetch_catalog(connector: connectors.Connector) -> list:
     # ne doit JAMAIS crasher le register (sinon 502). [] = pas d'outils fédérés,
     # le reste d'oto intact ; un restart après stabilisation re-fetchera.
     try:
-        # Mount SANS auth (ex. justicelibre) : endpoint hébergé PUBLIC, aucun token
+        # Mount SANS auth (`auth_modes` VIDE) : endpoint hébergé PUBLIC, aucun token
         # ni user connecté requis → on liste directement au boot (le catalogue est
         # product-level et anonyme). Chemin dédié, avant toute résolution de token.
+        # Branche générique sans consommateur vivant depuis le retrait de
+        # `justicelibre` (2026-08-21) — verrouillée par tests/test_mount_noauth.py.
         if not connector.auth_modes:
             async def _list_noauth():
                 client = Client(StreamableHttpTransport(connector.mount_url))
@@ -171,9 +173,10 @@ def _make_factory(connector: connectors.Connector):
     """client_factory per-appel : token DU user courant, gating au call-time."""
     ns = connector.namespaces[0]
 
-    # Mount SANS auth (ex. justicelibre) : endpoint public, pas de credential
+    # Mount SANS auth (`auth_modes` VIDE) : endpoint public, pas de credential
     # per-user → forward direct, sans header Authorization ni gate de token. Le
     # gating d'exposition reste porté par connector_activation (opt-in par org).
+    # Branche générique sans consommateur vivant depuis le retrait de `justicelibre`.
     if not connector.auth_modes:
         async def factory_noauth() -> Client:
             return Client(StreamableHttpTransport(connector.mount_url))

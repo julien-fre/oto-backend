@@ -164,3 +164,45 @@ capacités n'a pas sa place dans un index.
   Capacités `connectors.activation.{group_list,set_group,clear_group}` +
   `connectors.acl.{group_list,group_grant,group_revoke}` (GROUP_*). REST
   `/api/groups/{id}/connectors[/{name}]/activation` + `.../access`.
+
+## Ce que la carte en disait (migré le 2026-08-27)
+
+Une org se subdivise en **groupes** (départements/équipes) avec un **chef
+d'équipe** (`group_role='group_admin'`). La gestion des droits est **centralisée**
+dans `roles.py` (escalade descendante, source unique) :
+
+```
+platform_admin ⊇ org_admin ⊇ group_admin (chef) ⊇ member
+```
+
+Les combinateurs d'autz (`capabilities/_authz.py`) délèguent à `roles`
+(`is_org_admin`, `can_admin_group`, `can_read_group`, `effective_group_role`) —
+plus d'escalade recopiée à la main. Combinateurs : `GROUP_ADMIN_OF`,
+`GROUP_MEMBER_OF` (en plus de `ORG_*`).
+
+Un groupe **gouverne 3 ressources** par délégation de l'org (⚠️ **substrat unifié le
+10/07/2026** — chantiers du cadrage objets/visibilité : plus de tables jumelles par
+grain, le scope est une COLONNE ; migrations vivantes sur la DB partagée = playbook
+**`docs/live-migrations.md`**) :
+- **secrets partagés** — coffre `connector_credentials` (entity_type='group') ;
+  cascade `resolve_api_key` = **user_key > secret groupe actif > secret org active > grant plateforme**.
+- **doctrine & skills** — table UNIFIÉE `org_instructions` (`owner_type='group'`,
+  `owner_id=group_id`, `org_id`=org parente ; ex-jumelle `org_group_instructions`
+  DROPpée) ; `oto_procedure(op='get')` sert org **puis** groupe actif (complément,
+  chaque skill taggée `scope`). Les procédures d'équipe ont un `id` (ownership 0030).
+- **gouvernance de connecteur** — le chef d'équipe peut COUPER un connecteur et le
+  RÉSERVER à des membres, pour son équipe seulement. **Invariant monotone** :
+  l'équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse (platform ⊇ org ⊇ group).
+  Détail (paliers, fail-open indépendant, capacités) : `docs/groups-and-roles.md`.
+
+**Groupe actif** : ≤1 par sub (`org_group_members.is_active`, index partiel),
+**invariant** = appartient à l'org active. `set_active_group` pose aussi l'org
+active ; `set_active_org` efface le groupe actif. `oto_use_group` /
+`PUT /api/me/active-group` (+ `oto_clear_group` / `DELETE`).
+
+Stores : `group_store.py` (miroir d'`org_store` au grain groupe). `org_store`
+n'importe PAS `group_store` (SQL direct pour l'invariant org↔groupe → pas de
+cycle). Surfaces : capacités `capabilities/groups*.py` (REST `/api/orgs/{id}/groups`,
+`/api/groups/{id}*`, `/api/me/active-group` + MCP `oto_*_group*`). `/api/me`
+expose `active_group`/`active_group_name`/`group_role` ; `providers[].mode` peut
+valoir `group`. **Détails : `docs/groups-and-roles.md`.**

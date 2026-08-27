@@ -688,6 +688,37 @@ class NamedAccountRequired(ValueError):
     à désigner."""
 
 
+class SingleAccountConnector(ValueError):
+    """Ce connecteur ne résout PAS les comptes nommés : sa cascade lit la ligne mono
+    (`account=''`). Accepter un compte nommé écrirait une ligne parfaitement valide
+    que rien n'irait jamais lire (oto-backend#409)."""
+
+
+def guard_account_write(entity_type: str, entity_id: str, connector: str,
+                        account: str) -> None:
+    """Garde de pose d'un credential, commune aux TROIS surfaces déclaratives
+    (membre `/api/settings/api-keys`, `org.secret.set`, `group.secret.set`).
+
+    Le coffre stocke N lignes par (entité, connecteur, compte) pour TOUS les
+    connecteurs, mais seule la résolution d'un connecteur multi-compte va les lire.
+    D'où la règle : **effet ou refus nommé**, jamais « accepté puis ignoré ».
+    - multi-compte → cohérence des noms (`ensure_named_coexistence`) ;
+    - mono-compte (ou connecteur hors registre) + compte nommé → refus, en disant
+      quel connecteur et quel compte, parce que c'est ce que l'appelant doit corriger.
+
+    Tranche sur le REGISTRE, avant toute lecture du coffre : un refus ne doit pas
+    dépendre de l'état des comptes déjà posés."""
+    con = connectors.connector_for_provider(connector)
+    if con is not None and con.auth_multi_account:
+        ensure_named_coexistence(entity_type, entity_id, connector, account)
+        return
+    if account:
+        raise SingleAccountConnector(
+            f"Le connecteur `{connector}` ne gère qu'un seul compte par entité : "
+            f"son credential se résout sans nom de compte, donc `{account}` ne "
+            f"serait jamais lu. Repose-le sans `account`.")
+
+
 def ensure_named_coexistence(entity_type: str, entity_id: str, connector: str,
                              account: str) -> None:
     """Cohérence des comptes d'un connecteur multi-compte à UN palier, avant une pose.

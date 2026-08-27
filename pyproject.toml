@@ -11,6 +11,12 @@ dependencies = [
     # (SHA backend + ce pin). PyPI ne reçoit pas chaque merge (publish manuel, lag) →
     # on tague oto-core et on bump CE pin par PR. Bump = éditer le tag ici ; rollback
     # = revert ce commit (ramène aussi le bon oto-core). Cf. ADR 0020 (deploy/canari).
+    # v1.96.0 = folk interactions EN LECTURE (past/upcoming/get/update/delete) +
+    # collection tasks, successeur des reminders que Folk a dépréciés le 13/08/2026 —
+    # le connecteur affirmait qu'on ne pouvait relire QUE la date d'un échange, pas son
+    # contenu : faux de lui, pas de Folk. Corrige deux bugs PRÉEXISTANTS trouvés en live
+    # (dateTime requis par create_interaction, entity requis dans le PATCH d'une
+    # interaction — 422 opaques jusque-là), oto-core#61 ;
     # v1.95.0 = tavily (recherche web + extract/crawl/map — oto-core#59) + waalaxy
     # builder pur / 2xx non-JSON typé (oto-core#60) + connect borné 10 s tavily —
     # UN seul tag pour les deux connecteurs, aucun ordre de merge ne fait régresser ce pin ;
@@ -73,7 +79,7 @@ dependencies = [
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.95.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.96.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome

@@ -272,3 +272,20 @@ comptabilité de miroir. Le défaut coupe donc le texte à **600 caractères** (
   un paramètre optionnel de plus ne traite pas le signal.
 - ⚠️ **Tronquer le texte SEUL ne suffisait pas** (0,76 de la page brute, encore ~46 Ko) :
   c'est la conjonction extrait + projection qui fait tomber le coût par post.
+
+## Lots 2-3 (10/08, #279) — les 5 autres canaux, et `linkedin` déposé au profit d'`aiark`
+
+> **Lots 2-3 (10/08, même issue)** : les 5 autres canaux passent à `{whatsapp,telegram,
+> instagram,messenger,twitter}_chat(op=list|read|send)` — 15 → 5, factory commune, le canal
+> reste dans le NOM (trouvabilité) ; et **le connecteur `linkedin` est DÉPOSÉ** au profit
+> d'`aiark`, dont les tools deviennent `linkedin_aiark_*` (6 → 3 : `search` op=people|companies,
+> `person` op=export|reverse|mobile, `credits`). Les deux connecteurs étaient le même vendeur
+> et le même client `AiArkClient`, ne différant que par le mode d'auth = une distinction
+> d'INSTANCE (ADR 0038/0044 §F), qui coûtait de poser deux fois la même clé pour un seul pool
+> de crédits (ADR 0024). Rien à migrer au coffre : aucun grant n'y était posé, ses 5 tools
+> étaient **montés et inopérants** depuis leur mise en service. `linkedin_aiark_credits` REFUSE
+> en mode plateforme (le solde du pool oto n'est pas celui de l'appelant). Domaine complet :
+> **62 → 17 tools** ; catalogue **665 → 619**.
+> ⚠️ **Reste à faire au tag prod** : migrer `user_selected_connectors` (119 lignes `linkedin`
+> → `aiark`, dédoublonnées) — la DB est partagée preprod/prod, la migrer avant le tag
+> retirerait le connecteur de 119 toolbox encore servies par l'ancien code.
