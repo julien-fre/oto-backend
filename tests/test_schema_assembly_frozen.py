@@ -38,8 +38,8 @@ from oto_mcp.db import _schema, schema
 
 # Empreinte de `_SCHEMA` au moment de la découpe par domaine (commit de ce test).
 # Cf. l'avertissement du docstring avant de la toucher.
-EMPREINTE = "64a822006c8da1ba3876e11ab0b60dabd8ec015496a3365854c0bf20d16845b1"
-LONGUEUR = 91749
+EMPREINTE = "36e0a3ee8f00393529f454faeaefedf869c898d5024c2744a4370377f70f66d8"
+LONGUEUR = 92984
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
 

@@ -102,8 +102,6 @@ platform.user.list
 platform.user.set_role
 resources.govern
 usage.gaps
-usage.resolve_signal
 usage.run
 usage.runs
-usage.signals
 usage.tool_quality

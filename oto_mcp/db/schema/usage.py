@@ -120,10 +120,27 @@ CREATE TABLE IF NOT EXISTS usage_signals (
     body TEXT,                   -- description libre
     session_id TEXT,             -- corrélation session (face-agent) ; NULL côté humain
     source TEXT NOT NULL DEFAULT 'agent',  -- 'agent' (MCP) | 'human' (REST dashboard)
-    resolved_at TIMESTAMPTZ,     -- NULL = ouvert ; date = signal traité
-    resolved_by TEXT,            -- sub de l'opérateur ayant résolu
-    resolution TEXT              -- note libre : ce qui a été fait
+    -- L'ARBITRAGE (#450) : où en est ce signal. Quatre états, parce que deux ne
+    -- suffisaient pas — « ouvert » confondait ce que personne n'a lu avec ce qu'on a
+    -- lu sans savoir qu'en faire, et il n'existait aucune façon de dire non. Un stock
+    -- où le refus est indicible ne peut que monter : on ne distingue pas le retard du
+    -- désaccord. Mesuré le 27/08 : 203 ouverts, dont 125 de plus d'une semaine, et
+    -- zéro arbitrage depuis le 16/08.
+    --   open         reçu, personne ne l'a encore regardé
+    --   acknowledged lu, décision PAS prise — l'état qui manquait
+    --   declined     décidé de ne pas traiter (motif obligatoire)
+    --   resolved     traité
+    status TEXT NOT NULL DEFAULT 'open',
+    -- ⚠️ Le trio ci-dessous porte le DERNIER ARBITRAGE, pas la seule résolution : il
+    -- est posé à chaque changement d'état (sauf retour à `open`, qui l'efface). Les
+    -- noms datent des deux états d'origine et n'ont pas été migrés — renommer trois
+    -- colonnes d'une table servie coûterait plus que la clarté gagnée, mais c'est
+    -- `status` qui dit l'état, JAMAIS `resolved_at IS NOT NULL`.
+    resolved_at TIMESTAMPTZ,     -- quand l'arbitrage a été posé
+    resolved_by TEXT,            -- sub de l'opérateur qui a arbitré
+    resolution TEXT              -- note libre : ce qui a été décidé, et pourquoi
 );
 CREATE INDEX IF NOT EXISTS idx_usage_signals_signal ON usage_signals(signal, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_signals_target ON usage_signals(signal, target, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_usage_signals_status ON usage_signals(status, created_at DESC);
 """

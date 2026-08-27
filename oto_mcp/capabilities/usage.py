@@ -18,7 +18,7 @@ from pydantic import BaseModel, field_validator
 
 from .. import db, org_store
 from ._authz import PLATFORM_ADMIN, SUB_ONLY
-from ._types import cap_limit, Capability, ResolvedCtx, RestBinding
+from ._types import AuthzDenied, cap_limit, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 
@@ -99,7 +99,9 @@ class DaysInput(BaseModel):
 class SignalsInput(BaseModel):
     signal: Optional[str] = None
     target: Optional[str] = None
-    status: Optional[str] = None   # 'open' | 'resolved' | None (tous)
+    # open | acknowledged | declined | resolved, ou 'pending' (= à arbitrer :
+    # open ∪ acknowledged), ou None (tous).
+    status: Optional[str] = None
     limit: int = 200
 
     @field_validator("limit")
@@ -108,10 +110,55 @@ class SignalsInput(BaseModel):
         return cap_limit(v, 200)
 
 
-class ResolveSignalInput(BaseModel):
+class SetSignalStatusInput(BaseModel):
     signal_id: int
-    note: Optional[str] = None     # ce qui a été fait
-    resolved: bool = True          # False = ré-ouvrir
+    status: Literal["open", "acknowledged", "declined", "resolved"]
+    note: Optional[str] = None     # ce qui a été décidé, et pourquoi
+
+
+class SignalRow(BaseModel):
+    """Un signal tel qu'il est SERVI. Le corps est de la prose libre écrite par un
+    agent : il n'a pas de forme, et n'en aura pas."""
+    id: int
+    created_at: Optional[str] = None
+    sub: Optional[str] = None
+    email: Optional[str] = None      # rapporteur (LEFT JOIN users) — NULL si compte parti
+    name: Optional[str] = None
+    org_id: Optional[int] = None
+    signal: Optional[str] = None     # tool_feedback | gap
+    kind: Optional[str] = None
+    target: Optional[str] = None     # feedback : l'outil ; gap : l'intention
+    body: Optional[str] = None
+    session_id: Optional[str] = None
+    source: Optional[str] = None     # agent | human
+    status: Optional[str] = None     # open | acknowledged | declined | resolved
+    # Le dernier ARBITRAGE, pas la seule résolution : posé aussi par `acknowledged`
+    # et `declined`, effacé par un retour à `open`. Les noms datent des deux états
+    # d'origine — c'est `status` qui dit l'état.
+    resolved_at: Optional[str] = None
+    resolved_by: Optional[str] = None
+    resolution: Optional[str] = None
+
+
+class SignalsPage(BaseModel):
+    """Une page de signaux + l'état de TOUTE la pile.
+
+    Les deux vont ensemble : une page de 200 lignes ne dit pas si la pile en compte
+    203 ou 2 000, et c'est ce chiffre qu'on vient chercher. `counts` porte les quatre
+    états — ceux à zéro compris — plus `pending` (open ∪ acknowledged), la seule
+    question qu'un opérateur pose vraiment."""
+    signals: list[SignalRow]
+    counts: dict[str, int]
+
+
+class SignalArbitrated(BaseModel):
+    """Résultat d'un arbitrage. `ok: false` + `error: "not_found"` quand l'id
+    n'existe pas — un 404 déguisé en 200, forme historique de cette console."""
+    ok: bool
+    signal: Optional[SignalRow] = None
+    counts: Optional[dict[str, int]] = None
+    error: Optional[str] = None
+    id: Optional[int] = None       # l'id demandé, quand il est introuvable
 
 
 def _runs(ctx: ResolvedCtx, inp: RunsInput) -> dict:
@@ -131,16 +178,35 @@ def _tool_quality(ctx: ResolvedCtx, inp: DaysInput) -> dict:
 
 
 def _signals(ctx: ResolvedCtx, inp: SignalsInput) -> dict:
+    _valid = set(db.SIGNAL_STATUSES) | {db.SIGNAL_PENDING}
+    if inp.status is not None and inp.status not in _valid:
+        raise AuthzDenied(
+            400, "unknown_status",
+            f"statut inconnu {inp.status!r} — filtre par "
+            f"{', '.join(sorted(_valid))}, ou omets-le pour tout voir.")
+    # Les COMPTES accompagnent toujours la page : une page de 200 lignes ne dit pas
+    # si la pile en compte 203 ou 2 000, et c'est ce chiffre qu'on vient chercher en
+    # ouvrant la liste.
     return {"signals": db.list_usage_signals(
-        inp.signal, inp.target, inp.limit, status=inp.status)}
+                inp.signal, inp.target, inp.limit, status=inp.status),
+            "counts": db.count_usage_signals_by_status()}
 
 
-def _resolve_signal(ctx: ResolvedCtx, inp: ResolveSignalInput) -> dict:
-    row = db.resolve_usage_signal(
-        inp.signal_id, resolved_by=ctx.sub, note=inp.note, resolved=inp.resolved)
+def _set_signal_status(ctx: ResolvedCtx, inp: SetSignalStatusInput) -> dict:
+    # Un refus SANS motif est le défaut qu'on vient fermer sous un autre nom : la
+    # pile redeviendrait un endroit où des signaux disparaissent sans qu'on sache
+    # pourquoi. `resolved` n'exige rien — le travail livré parle de lui-même, et
+    # l'exiger ferait écrire « fait » 200 fois.
+    if inp.status == "declined" and not (inp.note or "").strip():
+        raise AuthzDenied(
+            400, "missing_note",
+            "Refuser demande un motif : `note` = pourquoi ce signal ne sera pas "
+            "traité. Sans lui, un refus est indistinguable d'un oubli.")
+    row = db.set_usage_signal_status(
+        inp.signal_id, status=inp.status, by=ctx.sub, note=inp.note)
     if row is None:
         return {"ok": False, "error": "not_found", "id": inp.signal_id}
-    return {"ok": True, "signal": row}
+    return {"ok": True, "signal": row, "counts": db.count_usage_signals_by_status()}
 
 
 CAPABILITIES += [
@@ -165,14 +231,20 @@ CAPABILITIES += [
     Capability(key="usage.tool_quality", handler=_tool_quality, Input=DaysInput, authz=PLATFORM_ADMIN,
                rest=RestBinding("GET", "/api/admin/usage/tool-quality")),
     Capability(key="usage.signals", handler=_signals, Input=SignalsInput, authz=PLATFORM_ADMIN,
+               Output=SignalsPage,
                description="List usage signals (feedback/gap) reported about oto, most recent "
-                           "first. Filters: signal ('tool_feedback'|'gap'), target, status "
-                           "('open'|'resolved'). Platform-admin only.",
+                           "first, plus `counts` per status over the WHOLE table. Filters: "
+                           "signal ('tool_feedback'|'gap'), target, status "
+                           "('open'|'acknowledged'|'declined'|'resolved', or 'pending' = "
+                           "everything not yet arbitrated). Platform-admin only.",
                rest=RestBinding("GET", "/api/admin/usage/signals")),
-    Capability(key="usage.resolve_signal", handler=_resolve_signal, Input=ResolveSignalInput,
-               authz=PLATFORM_ADMIN,
-               description="Mark a usage signal (feedback/gap) as resolved. signal_id = the "
-                           "signal's id (from oto_admin list / usage.signals). note = what was "
-                           "done about it. resolved=false re-opens it.",
-               rest=RestBinding("POST", "/api/admin/usage/signals/{signal_id}/resolve")),
+    Capability(key="usage.set_signal_status", handler=_set_signal_status,
+               Input=SetSignalStatusInput, authz=PLATFORM_ADMIN,
+               Output=SignalArbitrated,
+               description="Arbitrate a usage signal. signal_id = the signal's id (from "
+                           "usage.signals). status = open (back to the pile, clears the "
+                           "arbitration) | acknowledged (read, not decided yet) | declined "
+                           "(won't do — `note` REQUIRED, say why) | resolved (done). "
+                           "note = what was decided, and why.",
+               rest=RestBinding("POST", "/api/admin/usage/signals/{signal_id}/status")),
 ]

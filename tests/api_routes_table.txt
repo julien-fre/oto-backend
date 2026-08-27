@@ -269,8 +269,8 @@ GET,HEAD /api/admin/usage/tool-quality -> _handler
 OPTIONS /api/admin/usage/tool-quality -> options_handler
 GET,HEAD /api/admin/usage/signals -> _handler
 OPTIONS /api/admin/usage/signals -> options_handler
-POST /api/admin/usage/signals/{signal_id}/resolve -> _handler
-OPTIONS /api/admin/usage/signals/{signal_id}/resolve -> options_handler
+POST /api/admin/usage/signals/{signal_id}/status -> _handler
+OPTIONS /api/admin/usage/signals/{signal_id}/status -> options_handler
 GET,HEAD /api/admin/monitoring/summary -> _handler
 OPTIONS /api/admin/monitoring/summary -> options_handler
 GET,HEAD /api/admin/monitoring/rest -> _handler

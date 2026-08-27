@@ -111,7 +111,7 @@ _SURFACE = """
     rename_datastore_namespace_by_id reparent_datastore_namespace
     reparent_project replace_doc_chunk_embeddings resolve_datastore_ns
     resolve_doc_change_request resolve_sub resolve_unipile_pending
-    resolve_usage_signal resource_ids_with_edges rest_call_stats
+    resource_ids_with_edges rest_call_stats
     retry_billing_at revoke_edges revoke_resource_grant save_extracted_text
     schedule_next_billing search search_briefs_semantic
     search_datastore_rows_fts search_datastore_rows_semantic search_docs_fts

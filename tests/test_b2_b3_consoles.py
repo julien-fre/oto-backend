@@ -114,15 +114,21 @@ def test_admin_doctrine_routes(monkeypatch):
 
 def test_admin_signal_routes(monkeypatch):
     monkeypatch.setattr(usage, "_signals", _tag("list"))
-    monkeypatch.setattr(usage, "_resolve_signal", _tag("resolve"))
+    monkeypatch.setattr(usage, "_set_signal_status", _tag("set_status"))
     S = ac.SignalAdminInput
-    out = ac._signal(CTX, S(op="list", signal="gap", status="open"))
+    out = ac._signal(CTX, S(op="list", signal="gap", status="pending"))
     assert out["called"] == "list" and out["inp"].signal == "gap"
-    out = ac._signal(CTX, S(op="resolve", signal_id=9, note="fixed"))
-    assert out["called"] == "resolve" and out["inp"].resolved is True
+    out = ac._signal(CTX, S(op="set_status", signal_id=9, status="acknowledged"))
+    assert out["called"] == "set_status" and out["inp"].status == "acknowledged"
+    # Les deux arguments du verbe sont exigés SÉPARÉMENT : un `set_status` sans état
+    # est la faute la plus probable en reprenant l'ancien `resolve`, et retomber sur
+    # un défaut (« resolved ») arbitrerait à la place de l'opérateur.
     with pytest.raises(AuthzDenied) as e:
-        ac._signal(CTX, S(op="resolve"))
+        ac._signal(CTX, S(op="set_status", status="resolved"))
     assert e.value.code == "missing_signal_id"
+    with pytest.raises(AuthzDenied) as e:
+        ac._signal(CTX, S(op="set_status", signal_id=9))
+    assert e.value.code == "missing_status"
 
 
 # ── oto_org ──────────────────────────────────────────────────────────────────
@@ -238,7 +244,7 @@ def test_consoles_carry_the_mcp_surface():
         "org.doctrine.admin_get", "org.doctrine.admin_list",
         "org.instruction.admin_set", "org.instruction.admin_delete",
         "library.list", "library.get", "library.publish", "library.fork", "library.unpublish",
-        "usage.signals", "usage.resolve_signal",
+        "usage.signals", "usage.set_signal_status",
         "org.create", "org.update", "org.archive", "org.invite.create", "org.invite.accept",
         "org.email_settings.get", "org.email_settings.set",
         "org.mfa.get", "org.mfa.set",

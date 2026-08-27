@@ -322,6 +322,23 @@ def insert_usage_signal(
         return int(row["id"])
 
 
+# Les quatre états d'ARBITRAGE d'un signal (#450). Deux ne suffisaient pas :
+# « ouvert » confondait ce que personne n'a lu avec ce qu'on a lu sans savoir qu'en
+# faire, et il n'existait aucune façon de dire non. Un stock où le refus est
+# indicible ne peut que monter — on n'y distingue plus le retard du désaccord.
+SIGNAL_STATUSES = ("open", "acknowledged", "declined", "resolved")
+
+# Ce qui est ARBITRÉ — donc ce qui sort de la pile. `declined` en fait partie : un
+# refus est une décision, pas un abandon, et c'est exactement ce que l'ancien modèle
+# ne savait pas exprimer.
+SIGNAL_TERMINAL = ("declined", "resolved")
+
+# Filtre de commodité, PAS un état : « ce qui reste à arbitrer ». Il existe parce que
+# c'est la seule question qu'un opérateur pose vraiment en ouvrant la pile, et que
+# depuis qu'il y a quatre états, `open` seul n'y répond plus.
+SIGNAL_PENDING = "pending"
+
+
 def list_usage_signals(
     signal: Optional[str] = None, target: Optional[str] = None, limit: int = 200,
     status: Optional[str] = None,
@@ -329,22 +346,27 @@ def list_usage_signals(
     """Signaux récents (récent d'abord), filtrables par type / cible / statut —
     base des projections (qualité d'outil, manques) du barreau 4.
 
-    status: 'open' (resolved_at IS NULL) | 'resolved' (NOT NULL) | None (tous).
-    Joint l'email/nom du rapporteur (LEFT JOIN users) pour l'UI admin."""
+    `status` : l'un des `SIGNAL_STATUSES`, ou `'pending'` (= tout ce qui n'est pas
+    arbitré : open ∪ acknowledged), ou None (tous). Joint l'email/nom du rapporteur
+    (LEFT JOIN users) pour l'UI admin.
+
+    ⚠️ Le filtre lit la COLONNE `status`, jamais `resolved_at IS NULL` : depuis
+    #450 un signal arbitré peut l'être en `declined`, qui porte lui aussi une date
+    — la dériver de la date rendrait un refus indistinguable d'un traitement."""
     limit = max(1, min(int(limit), 1000))
     sql = ("SELECT s.id, s.created_at, s.sub, u.email, u.name, s.org_id, s.signal, "
-           "s.kind, s.target, s.body, s.session_id, s.source, s.resolved_at, "
-           "s.resolved_by, s.resolution "
+           "s.kind, s.target, s.body, s.session_id, s.source, s.status, "
+           "s.resolved_at, s.resolved_by, s.resolution "
            "FROM usage_signals s LEFT JOIN users u ON u.sub = s.sub")
     clauses, params = [], []
     if signal:
         clauses.append("s.signal = %s"); params.append(signal)
     if target:
         clauses.append("s.target = %s"); params.append(target)
-    if status == "open":
-        clauses.append("s.resolved_at IS NULL")
-    elif status == "resolved":
-        clauses.append("s.resolved_at IS NOT NULL")
+    if status == SIGNAL_PENDING:
+        clauses.append("s.status <> ALL(%s)"); params.append(list(SIGNAL_TERMINAL))
+    elif status:
+        clauses.append("s.status = %s"); params.append(status)
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY s.created_at DESC LIMIT %s"
@@ -353,34 +375,67 @@ def list_usage_signals(
         return [dict(r) for r in conn.execute(sql, tuple(params)).fetchall()]
 
 
-def resolve_usage_signal(
-    signal_id: int, *, resolved_by: Optional[str], note: Optional[str] = None,
-    resolved: bool = True,
+def set_usage_signal_status(
+    signal_id: int, *, status: str, by: Optional[str], note: Optional[str] = None,
 ) -> Optional[dict]:
-    """Marque un signal traité (ou le ré-ouvre si resolved=False). Renvoie la row
-    mise à jour, ou None si l'id n'existe pas."""
+    """Pose l'arbitrage d'un signal. Renvoie la row à jour, ou None si l'id n'existe pas.
+
+    Remplace `resolve_usage_signal` (#450) : le verbe « résoudre » ne pouvait dire
+    ni « je l'ai lu » ni « je ne le ferai pas », les deux gestes qui manquaient.
+
+    Le retour à `open` EFFACE la trace d'arbitrage — un signal remis dans la pile n'a
+    plus été arbitré, et garder l'ancienne note ferait lire une décision qui n'a plus
+    cours. Tout autre état la POSE : c'est le dernier arbitrage qui compte, pas le
+    premier."""
+    if status not in SIGNAL_STATUSES:
+        raise ValueError(
+            f"statut inconnu {status!r} — les états sont {', '.join(SIGNAL_STATUSES)}")
     with _connect() as conn:
-        if resolved:
+        if status == "open":
             row = conn.execute(
                 """
                 UPDATE usage_signals
-                   SET resolved_at = NOW(), resolved_by = %s, resolution = %s
+                   SET status = 'open', resolved_at = NULL, resolved_by = NULL,
+                       resolution = NULL
                  WHERE id = %s
-                RETURNING id, signal, kind, target, resolved_at, resolved_by, resolution
+                RETURNING id, signal, kind, target, status, resolved_at, resolved_by,
+                          resolution
                 """,
-                (resolved_by, note, signal_id),
+                (signal_id,),
             ).fetchone()
         else:
             row = conn.execute(
                 """
                 UPDATE usage_signals
-                   SET resolved_at = NULL, resolved_by = NULL, resolution = NULL
+                   SET status = %s, resolved_at = NOW(), resolved_by = %s,
+                       resolution = %s
                  WHERE id = %s
-                RETURNING id, signal, kind, target, resolved_at, resolved_by, resolution
+                RETURNING id, signal, kind, target, status, resolved_at, resolved_by,
+                          resolution
                 """,
-                (signal_id,),
+                (status, by, note, signal_id),
             ).fetchone()
         return dict(row) if row else None
+
+
+def count_usage_signals_by_status() -> dict:
+    """`{état: n}` sur TOUTE la table, plus `pending` (open ∪ acknowledged).
+
+    Rendu à chaque `op=list` : sans lui, une page de 200 lignes ne dit pas si la pile
+    en compte 203 ou 2 000, et c'est précisément le chiffre qu'on vient chercher.
+    Les états à zéro figurent — un état absent de la réponse se lit « pas encore
+    implémenté », pas « personne ne l'a utilisé »."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT status, count(*) AS n FROM usage_signals GROUP BY status"
+        ).fetchall()
+    par_etat = {s: 0 for s in SIGNAL_STATUSES}
+    for r in rows:
+        par_etat[str(r["status"])] = int(r["n"])
+    par_etat[SIGNAL_PENDING] = sum(
+        n for s, n in par_etat.items()
+        if s in SIGNAL_STATUSES and s not in SIGNAL_TERMINAL)
+    return par_etat
 
 
 def list_runs(limit: int = 100, *, org_id: Optional[int] = None) -> list[dict]:

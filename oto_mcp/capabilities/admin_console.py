@@ -222,16 +222,22 @@ async def _unipile_seat(ctx: ResolvedCtx, inp: UnipileSeatAdminInput) -> dict:
                          "`account_id` requis pour release.")))
 
 
-# ── oto_admin_signal : list / resolve (boucle d'usage, ADR 0017) ─────────────
+# ── oto_admin_signal : list / set_status (boucle d'usage, ADR 0017) ──────────
+#
+# `op=resolve` a été REMPLACÉ par `op=set_status` (#450) : le verbe « résoudre »
+# ne savait dire ni « je l'ai lu, je ne sais pas encore » ni « je ne le ferai pas »,
+# qui sont précisément les deux gestes de triage qui manquaient. Un signal qu'on
+# refuse n'est pas résolu, et le forcer dans ce mot rendait le refus invisible.
 class SignalAdminInput(BaseModel):
-    op: Literal["list", "resolve"]
+    op: Literal["list", "set_status"]
     signal: Optional[str] = None      # list : tool_feedback | gap
     target: Optional[str] = None      # list
-    status: Optional[str] = None      # list : open | resolved | None (tous)
+    # list : open | acknowledged | declined | resolved | pending | None (tous)
+    # set_status : l'état à poser (pending n'en est pas un — c'est un filtre)
+    status: Optional[str] = None
     limit: int = 200                  # list
-    signal_id: Optional[int] = None   # resolve
-    note: Optional[str] = None        # resolve
-    resolved: bool = True             # resolve : False = ré-ouvrir
+    signal_id: Optional[int] = None   # set_status
+    note: Optional[str] = None        # set_status : ce qui a été décidé, et pourquoi
 
 
 def _signal(ctx: ResolvedCtx, inp: SignalAdminInput) -> dict:
@@ -239,9 +245,13 @@ def _signal(ctx: ResolvedCtx, inp: SignalAdminInput) -> dict:
     if inp.op == "list":
         return usage._signals(ctx, usage.SignalsInput(
             signal=inp.signal, target=inp.target, status=inp.status, limit=inp.limit))
-    return usage._resolve_signal(ctx, usage.ResolveSignalInput(
-        signal_id=_need(inp.signal_id, "missing_signal_id", "`signal_id` requis pour resolve."),
-        note=inp.note, resolved=inp.resolved))
+    return usage._set_signal_status(ctx, usage.SetSignalStatusInput(
+        signal_id=_need(inp.signal_id, "missing_signal_id",
+                        "`signal_id` requis pour set_status."),
+        status=_need(inp.status, "missing_status",
+                     "`status` requis pour set_status : open | acknowledged | "
+                     "declined | resolved."),
+        note=inp.note))
 
 
 CAPABILITIES += [
@@ -324,9 +334,12 @@ CAPABILITIES += [
         key="admin.signal", handler=_signal, Input=SignalAdminInput,
         authz=PLATFORM_ADMIN,
         description=("Usage signals reported about oto (feedback/gap; platform admin). "
-                     "op=list (most recent first; filters `signal` tool_feedback|gap, "
-                     "`target`, `status` open|resolved) / resolve (`signal_id`, optional "
-                     "`note` = what was done; resolved=false re-opens)."),
+                     "op=list (most recent first + `counts` per status; filters `signal` "
+                     "tool_feedback|gap, `target`, `status` open|acknowledged|declined|"
+                     "resolved, or 'pending' = everything left to arbitrate) / set_status "
+                     "(`signal_id`, `status`, `note` = what was decided — REQUIRED to "
+                     "decline). Four states: open (nobody looked yet), acknowledged (read, "
+                     "not decided), declined (won't do), resolved (done)."),
         mcp="oto_admin_signal",
     ),
 ]

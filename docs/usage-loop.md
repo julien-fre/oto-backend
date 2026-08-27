@@ -8,7 +8,8 @@ description: >-
   pile session FastMCP, runs imbriqués OK), et capacité feedback (signal
   tool_feedback|gap → table durable usage_signals hors prune 30j). Détaille les
   projections admin /api/admin/usage/* (runs, gaps, tool-quality, signals filtrables
-  open/resolved) et la résolution de signaux via oto_admin_signal (op=resolve). À charger
+  par les quatre états d'arbitrage) et l'arbitrage de signaux via oto_admin_signal
+  (op=set_status). À charger
   pour comprendre comment tracer un déroulé d'agent, remonter un gap d'outil, ou
   déboguer un run_id manquant sur les appels.
 adr:
@@ -36,10 +37,33 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
   (hors prune 30j). `gap` = cas d'usage non couvert (l'agent capte la demande non satisfaite).
 - **Projections** (opérateur) : `/api/admin/usage/{runs,runs/{id},gaps,tool-quality,signals}`
   (`capabilities/usage.py`, PLATFORM_ADMIN) → vue dashboard `UsageView.vue` (« usage & déroulés »).
-  `signals` filtrable par `status` (`open|resolved`) ; face MCP `oto_admin_signal(op='list')` (console ADR 0047).
-- **Résolution** : un signal se marque traité via `POST /api/admin/usage/signals/{id}/resolve`
-  (MCP `oto_admin_resolve_signal`, PLATFORM_ADMIN) — colonnes `resolved_at/resolved_by/resolution`
-  (NULL = ouvert) ; `resolved=false` ré-ouvre. Le backlog vivant = `signals?status=open`.
+  `signals` filtrable par `status` ; la réponse porte AUSSI `counts` (la pile entière par
+  état — une page ne dit pas si le stock fait 203 ou 2 000). Face MCP
+  `oto_admin_signal(op='list')` (console ADR 0047).
+- **Arbitrage — QUATRE états** (#450, 27/08) : `POST /api/admin/usage/signals/{id}/status`
+  (MCP `oto_admin_signal(op='set_status')`, PLATFORM_ADMIN).
+  - `open` — reçu, personne ne l'a regardé. Le retour à cet état EFFACE la trace
+    d'arbitrage : un signal remis dans la pile n'a plus été arbitré, et garder l'ancienne
+    note ferait lire une décision qui n'a plus cours.
+  - `acknowledged` — lu, décision pas prise. **C'est l'état qui manquait**, et où vit
+    l'essentiel d'une pile de retours.
+  - `declined` — décidé de ne pas traiter. **`note` obligatoire** : sans motif, un refus
+    est indistinguable d'un oubli.
+  - `resolved` — traité. Aucune note exigée (le travail livré parle de lui-même).
+  Le backlog vivant = `signals?status=pending` (= open ∪ acknowledged). `pending` est un
+  FILTRE, pas un état.
+
+  ⚠️ **L'état se lit dans la colonne `status`, jamais dans `resolved_at IS NULL`.** Le trio
+  `resolved_at/resolved_by/resolution` porte désormais le DERNIER ARBITRAGE, quel qu'il soit
+  — un signal refusé porte lui aussi une date. Le dériver de la date rendrait un refus
+  indistinguable d'un traitement, et le compteur mentirait dans le sens qui arrange.
+
+  **Pourquoi ce lot** : deux états ne suffisaient pas, et la mesure du 27/08 le montre —
+  534 signaux reçus depuis le 19/06, **203 ouverts dont 125 de plus d'une semaine**, et
+  **zéro arbitrage depuis le 16/08** pendant que 118 arrivaient. Un stock où le refus est
+  indicible ne peut que monter : on n'y distingue plus le retard du désaccord, donc on
+  cesse de le lire — et la boucle d'usage devient muette tout en continuant d'enregistrer.
+  (327 des 331 arbitrages passés sont d'une seule personne : la boucle s'arrête avec elle.)
 - **Harnais impératif** : `_SERVER_INSTRUCTIONS` pousse l'agent à réflexer oto, encadrer
   par `run_start/finish` et émettre `feedback`.
 - Déféré (otomata#32) : `why`-par-appel.

@@ -561,6 +561,37 @@ def _init_db_once() -> None:
         conn.execute("ALTER TABLE usage_signals ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ")
         conn.execute("ALTER TABLE usage_signals ADD COLUMN IF NOT EXISTS resolved_by TEXT")
         conn.execute("ALTER TABLE usage_signals ADD COLUMN IF NOT EXISTS resolution TEXT")
+        # ARBITRAGE en 4 états (#450) — deux ne suffisaient pas : « ouvert »
+        # confondait le non-lu et le lu-sans-décision, et refuser était indicible.
+        # Additive et idempotente : la colonne naît à 'open', le backfill donne
+        # 'resolved' à ce que l'ancien modèle appelait résolu. Aucune ligne ne change
+        # de SENS au passage — c'est la même information, enfin nommée (vérifié sur la
+        # base servie avant le lot : 0 ligne où `status='resolved'` contredirait
+        # `resolved_at IS NOT NULL`).
+        #
+        # ⚠️ Le `AND status = 'open'` du backfill n'est PAS une simple garde
+        # d'idempotence : il rend la migration AUTO-RÉPARATRICE, et c'est ce qui
+        # permet de livrer en preprod avant le tag prod. Prod et preprod partagent la
+        # base : pendant la fenêtre où la prod tourne encore sur l'ancien code, une
+        # résolution qu'elle écrit pose `resolved_at` sans toucher `status` — le
+        # signal paraîtrait ouvert. Le boot suivant le rattrape. La clause protège
+        # aussi ce qu'elle ne doit pas toucher : `acknowledged` et `declined` portent
+        # eux aussi une date d'arbitrage, et un backfill sans elle les promouvrait
+        # tous en « traité » — un refus deviendrait un traitement, silencieusement.
+        conn.execute("ALTER TABLE usage_signals ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'open'")
+        conn.execute("UPDATE usage_signals SET status = 'resolved' "
+                     "WHERE resolved_at IS NOT NULL AND status = 'open'")
+        # La contrainte APRÈS le backfill : posée avant, elle passerait quand même
+        # (le défaut est valide) mais l'ordre dit l'intention — on ne contraint
+        # jamais une colonne dont on n'a pas encore réparé le contenu.
+        conn.execute("DO $$ BEGIN "
+                     "IF NOT EXISTS (SELECT 1 FROM pg_constraint "
+                     "WHERE conname='usage_signals_status') THEN "
+                     "ALTER TABLE usage_signals ADD CONSTRAINT usage_signals_status "
+                     "CHECK (status IN ('open','acknowledged','declined','resolved')); "
+                     "END IF; END $$")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_usage_signals_status "
+                     "ON usage_signals(status, created_at DESC)")
         # Unipile revendeur (org_id porté au compte + plafond par org).
         conn.execute("ALTER TABLE unipile_accounts ADD COLUMN IF NOT EXISTS org_id BIGINT REFERENCES orgs(id) ON DELETE SET NULL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_unipile_accounts_org ON unipile_accounts(org_id)")
