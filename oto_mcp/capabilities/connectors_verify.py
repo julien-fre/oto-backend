@@ -157,6 +157,7 @@ def _record_health(provider: str, scope: "tuple | None", ok: bool, error: "str |
         credentials_store.update_meta(
             scope[0], scope[1], provider, "",
             {"health_ko": (not ok), "health_reason": (error if not ok else None)})
+    # noqa: SILENT — dette déclarée : le flag de santé non écrit devrait se journaliser (#424, verdict C)
     except Exception:  # noqa: BLE001 — la santé est un bonus, jamais bloquant
         pass
 
@@ -190,6 +191,7 @@ async def _verify(ctx: ResolvedCtx, inp: VerifyInput) -> dict:
         res = probe(fields, config, **kw)
         if inspect.isawaitable(res):
             await res
+    # noqa: SILENT — l'erreur d'auth EST le résultat de la sonde, rendue à l'appelant
     except Exception as e:  # noqa: BLE001 — l'erreur d'auth EST le résultat
         ok = False
         error = e.error.message if isinstance(e, McpError) else str(e)

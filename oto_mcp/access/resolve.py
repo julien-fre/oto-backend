@@ -71,6 +71,7 @@ class ResolvedCredential:
             try:
                 row = credentials_store.get_credential_with_meta(
                     self.entity_type, self.entity_id, self.provider, self.account)
+            # noqa: SILENT — config non-secrète absente ⇒ la clé gagnante reste utilisable
             except Exception:
                 row = None
             if row:
@@ -138,6 +139,7 @@ def _emit_connector_failure(provider: str, sub: str) -> None:
     d'exception qui masquerait la McpError d'origine (le monitoring ne casse pas le service)."""
     try:
         org = scope.current_org(sub)
+    # noqa: SILENT — le signal d'usage ne casse jamais la résolution qu'il observe
     except Exception:
         org = None
     try:

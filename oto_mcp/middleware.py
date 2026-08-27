@@ -50,6 +50,7 @@ class ToolAliasMiddleware(Middleware):
     def _prefix() -> str:
         try:
             return tool_alias.prefix_for(current_user_sub_from_token())
+        # noqa: SILENT — dette déclarée : préfixe de tenant perdu ⇒ notre identité servie (#424, verdict C)
         except Exception:  # noqa: BLE001 — un nom d'outil ne casse jamais un appel
             return ""
 
@@ -172,6 +173,7 @@ class UserDisabledToolsMiddleware(Middleware):
         result = await call_next(context)
         try:
             sub = current_user_sub_from_token()
+        # noqa: SILENT — dette déclarée : sub avalé, la requête devient anonyme sans dire pourquoi (#424, verdict C)
         except Exception:
             sub = None
         if not sub:
@@ -260,6 +262,7 @@ class DynamicInstructionsMiddleware(Middleware):
                 return result
         try:
             sub = current_user_sub_from_token()
+        # noqa: SILENT — dette déclarée : sub avalé, la requête devient anonyme sans dire pourquoi (#424, verdict C)
         except Exception:
             sub = None
         if not sub:
@@ -275,6 +278,7 @@ class DynamicInstructionsMiddleware(Middleware):
         tools = await call_next(context)
         try:
             sub = current_user_sub_from_token()
+        # noqa: SILENT — dette déclarée : sub avalé, la requête devient anonyme sans dire pourquoi (#424, verdict C)
         except Exception:
             sub = None
         if not sub:
@@ -445,6 +449,7 @@ class CallContextMiddleware(Middleware):
         sub = None
         try:
             sub = current_user_sub_from_token()
+        # noqa: SILENT — axe compte dynamique optionnel : sans lui, les axes statiques suffisent
         except Exception:
             pass
         advertised = await run_in_threadpool(call_axes.account_axis_advertised_for, sub)
@@ -552,6 +557,7 @@ class ErrorEnvelopeMiddleware(Middleware):
                 try:
                     hint = (hint or "") + await run_in_threadpool(
                         _reachable_suffix, info.connector)
+                # noqa: SILENT — dette déclarée : le hint « une clé existe à portée » disparaît (#424, verdict C)
                 except Exception:  # noqa: BLE001
                     pass
             if hint:

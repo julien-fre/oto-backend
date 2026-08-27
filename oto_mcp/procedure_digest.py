@@ -78,5 +78,6 @@ def digest_check(body_md: str) -> dict:
     Best-effort — un check ne casse jamais une écriture."""
     try:
         return {"digest_warning": None if has_digest(body_md) else WARNING}
+    # noqa: SILENT — contrôle de forme optionnel : pas d'avertissement plutôt qu'un faux
     except Exception:  # noqa: BLE001 — cf. `slots_check`
         return {"digest_warning": None}

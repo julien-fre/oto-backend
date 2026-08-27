@@ -114,6 +114,7 @@ def _redirect_ok(uri: str) -> bool:
         return False
     try:
         p = urlparse(uri)
+    # noqa: SILENT — fail-closed : un redirect_uri douteux est refusé, sans dire pourquoi
     except Exception:
         return False
     host = (p.hostname or "").lower().rstrip(".")

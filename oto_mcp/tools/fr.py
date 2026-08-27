@@ -293,6 +293,7 @@ def register(mcp: FastMCP) -> None:
         def _safe(label, fn, *fn_args):
             try:
                 return fn(*fn_args)
+            # noqa: SILENT — l'échec par source est rendu dans partial_errors
             except Exception as exc:  # dégradation gracieuse par sous-source
                 partial_errors[label] = f"{type(exc).__name__}: {exc}"
                 return None
@@ -404,6 +405,7 @@ def register(mcp: FastMCP) -> None:
         def _one(s: str) -> dict:
             try:
                 return _fr_profile(s)
+            # noqa: SILENT — l'échec par siren est rendu dans la ligne de résultat
             except Exception as exc:  # un SIREN en échec ne fait pas tomber le lot
                 return {"error": f"{type(exc).__name__}: {exc}", "siren": s}
 

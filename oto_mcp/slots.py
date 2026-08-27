@@ -172,6 +172,7 @@ def slots_check(body_md: str, slots: Optional[list]) -> dict:
                     {"name": con, "type": "connecteur", "connector": con,
                      "reason": f"la prose référence des tools `{con}` (connecteur à identités) "
                                "sans slot déclaré — le projet ne saura pas quel compte binder."})
+    # noqa: SILENT — dette déclarée : l'avertissement de slot manquant disparaît (#424, verdict C)
     except Exception:  # noqa: BLE001 — check best-effort, jamais bloquant
         pass
     return result

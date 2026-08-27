@@ -97,6 +97,7 @@ def dashboard_url_for(sub: Optional[str]) -> str:
         propre = next((e.dashboard_url for e in registre.entries()
                        if e.slug == slug and e.dashboard_url), "")
         return propre or dashboard_url()
+    # noqa: SILENT — dette déclarée : on sert NOTRE marque au tenant partenaire (#424, verdict C)
     except Exception:  # noqa: BLE001
         return dashboard_url()
 
@@ -136,5 +137,6 @@ def front_for(sub: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         base = next((e.dashboard_url for e in registre.entries()
                      if e.slug == slug and e.dashboard_url), "")
         return (base, slug) if base else (None, None)
+    # noqa: SILENT — dette déclarée : on sert NOTRE front au tenant partenaire (#424, verdict C)
     except Exception:  # noqa: BLE001
         return (None, None)

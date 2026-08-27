@@ -56,6 +56,7 @@ async def _vies(vat9: str) -> dict | None:
             r = await c.get(_VIES.format(n=vat9), headers=_HEADERS)
         r.raise_for_status()
         d = r.json()
+    # noqa: SILENT — dette déclarée : VIES en panne indiscernable de « TVA introuvable » (#424 Q1)
     except Exception:
         return None
     return {

@@ -56,6 +56,7 @@ def ns_not_found(sub: Optional[str], namespace: str) -> AuthzDenied:
                 404, "namespace_not_found",
                 f"« {namespace} » existe, mais dans une autre de tes organisations : "
                 f"{where}. Rejoue la requête avec l'en-tête « X-Oto-Org: {first} ».")
+    # noqa: SILENT — suggestion de tableau voisin : absente plutôt que fausse
     except Exception:  # noqa: BLE001 — un indice ne doit jamais casser la réponse
         pass
     return AuthzDenied(404, "namespace_not_found")

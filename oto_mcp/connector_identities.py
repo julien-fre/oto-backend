@@ -216,10 +216,12 @@ def _unipile_live_status_map(sub: str) -> dict:
             try:  # sonde de vraie liveness (#236) : users/me 401 = session morte
                 if not cli.account_alive(aid):
                     status = "disconnected"
+            # noqa: SILENT — best-effort : garde le statut de compte sur incident de sonde
             except Exception:
                 pass  # best-effort : garde le status de compte sur incident sonde
             out[aid] = status
         return out
+    # noqa: SILENT — sonde de statut live indisponible ⇒ statut stocké conservé
     except Exception:
         return {}
 
@@ -239,6 +241,7 @@ def _unipile_list(sub: str) -> list[dict]:
     if cli is not None:  # BYO : les comptes de la clé (liste existante)
         try:
             accounts = cli.list_accounts()
+        # noqa: SILENT — sonde de statut live indisponible ⇒ statut stocké conservé
         except Exception:
             accounts = []
         for a in accounts:

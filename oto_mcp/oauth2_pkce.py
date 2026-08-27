@@ -50,12 +50,14 @@ def verify_state(secret: bytes, state: str, ttl: int) -> Optional[tuple[str, str
     p_b64, sig_b64 = state.split(".", 1)
     try:
         payload, sig = b64url_decode(p_b64), b64url_decode(sig_b64)
+    # noqa: SILENT — fail-closed : un callback ne distingue jamais les causes d'un refus
     except Exception:
         return None
     if not hmac.compare_digest(sig, hmac.new(secret, payload, hashlib.sha256).digest()):
         return None
     try:
         data = json.loads(payload)
+    # noqa: SILENT — fail-closed : un callback ne distingue jamais les causes d'un refus
     except Exception:
         return None
     if int(time.time()) - int(data.get("ts", 0)) > ttl:

@@ -154,6 +154,7 @@ def register(mcp: FastMCP) -> None:
         for key, fn in blocks.items():
             try:
                 out[key] = fn()
+            # noqa: SILENT — l'échec par couche est rendu dans la ligne de résultat
             except Exception as e:  # noqa: BLE001 — dégrader par bloc
                 out[key] = {"error": f"{type(e).__name__}: {e}"}
         return out

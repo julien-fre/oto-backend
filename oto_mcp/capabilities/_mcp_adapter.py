@@ -37,6 +37,7 @@ def _org_echo(org_id: int) -> dict:
         from .. import org_store
         org = org_store.get_org(org_id)
         return {"id": org_id, "name": (org or {}).get("name")}
+    # noqa: SILENT — écho d'org : l'id suffit quand le nom n'est pas lisible
     except Exception:
         return {"id": org_id}
 

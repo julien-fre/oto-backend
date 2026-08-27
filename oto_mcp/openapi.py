@@ -91,6 +91,7 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
     """Opération OpenAPI d'un binding + les définitions `$defs` à hisser."""
     try:
         schema = cap.Input.model_json_schema(ref_template="#/components/schemas/{model}")
+    # noqa: SILENT — schéma d'entrée illisible ⇒ document amputé, jamais absent
     except Exception:                                  # modèle exotique → sans schéma
         schema = {}
     defs = schema.pop("$defs", {}) if isinstance(schema, dict) else {}
@@ -115,6 +116,7 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
         try:
             out = cap.Output.model_json_schema(
                 ref_template="#/components/schemas/{model}")
+        # noqa: SILENT — schéma de sortie illisible ⇒ document amputé, jamais absent
         except Exception:                              # modèle exotique → sans schéma
             out = {}
         if isinstance(out, dict):

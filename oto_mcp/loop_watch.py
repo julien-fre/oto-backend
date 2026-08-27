@@ -42,6 +42,7 @@ def enable() -> None:
                 import sentry_sdk
                 sentry_sdk.capture_message(
                     f"event loop bloquée {duration:.1f}s par {name}", level="error")
+            # noqa: SILENT — la sonde de boucle ne casse jamais la boucle qu'elle observe
             except Exception:  # la capture ne doit jamais casser la loop
                 pass
 

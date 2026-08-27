@@ -159,6 +159,7 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
             try:
                 from oto.tools.unipile import make_unipile_client
                 alive = make_unipile_client(api_key=api_key).account_alive(mine["account_id"])
+            # noqa: SILENT — fail-soft documenté : sonde indisponible ⇒ compte tenu pour vivant
             except Exception:  # noqa: BLE001 — sonde best-effort, jamais bloquante
                 alive = True
             if alive:

@@ -75,6 +75,7 @@ def make_routes(
         try:
             tokens = folk_oauth.exchange_code(code, verifier_pkce)
             folk_oauth.persist_token(sub, tokens)
+        # noqa: SILENT — un callback renvoie la personne CHEZ ELLE, sans détailler l'échec
         except Exception:
             # `sub` est connu ici (relu du state) : même un échec renvoie la personne
             # chez ELLE, pas chez nous.

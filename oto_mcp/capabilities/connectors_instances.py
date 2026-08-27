@@ -342,6 +342,7 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
         from .. import roles as _roles
         try:
             org_admin = _roles.is_org_admin(sub, org)
+        # noqa: SILENT — dette déclarée : énumération partielle rendue comme complète (#424, verdict C)
         except Exception:
             org_admin = False
         groups = (group_store.list_groups(org) if org_admin

@@ -207,6 +207,7 @@ def stamp_rank_vector(conn, table: str, where: str, params: tuple = ()) -> None:
             conn.execute(
                 f"UPDATE {table} SET {RANK_VECTOR_COLUMN} = {_vec(expr)} WHERE {where}",
                 params)
+    # noqa: SILENT — le tampon de rang est un enrichissement, pas une condition d'écriture
     except Exception:                      # noqa: BLE001 — jamais au prix de l'écriture
         pass
 

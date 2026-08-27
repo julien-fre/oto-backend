@@ -37,6 +37,7 @@ def _catalog(ctx: ResolvedCtx, inp: _CatalogInput) -> dict:
     for cap in registry.CAPABILITIES:
         try:
             schema = cap.Input.model_json_schema()
+        # noqa: SILENT — schéma illisible ⇒ entrée de catalogue amputée, jamais absente
         except Exception:
             schema = {}
         out.append({

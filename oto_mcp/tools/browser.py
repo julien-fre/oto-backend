@@ -55,6 +55,7 @@ def _sub() -> str:
     sub = None
     try:
         sub = current_user_sub_from_token()
+    # noqa: SILENT — dette déclarée : sub avalé (#424, verdict C — seam commun)
     except Exception:
         pass
     if not sub:

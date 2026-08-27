@@ -62,6 +62,7 @@ def current_tool_event_id() -> Optional[str]:
     """Event id Sentry de l'appel courant, ou None (nominal / Sentry off)."""
     try:
         return _LAST_EVENT_ID.get()
+    # noqa: SILENT — hors contexte de requête : pas d'event_id à corréler
     except Exception:
         return None
 
@@ -124,6 +125,7 @@ class SentryToolErrorMiddleware(Middleware):
                         scope.set_tag("mcp.tool", context.message.name)
                         try:
                             sub = current_user_sub_from_token()
+                        # noqa: SILENT — sans sub, la trace reste anonyme plutôt que fausse
                         except Exception:
                             sub = None
                         if sub:
@@ -136,6 +138,7 @@ class SentryToolErrorMiddleware(Middleware):
                         # L'id retourné (None si Sentry est off ou l'event droppé par
                         # `before_send`) devient le lien journal → traceback.
                         _LAST_EVENT_ID.set(sentry_sdk.capture_exception(e))
+                # noqa: SILENT — la capture ne doit jamais masquer l'erreur d'origine
                 except Exception:
                     # La capture ne doit jamais masquer l'erreur d'origine.
                     pass

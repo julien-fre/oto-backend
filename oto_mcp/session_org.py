@@ -281,6 +281,7 @@ def current_session_id() -> Optional[str]:
 
         sid = getattr(get_context(), "session_id", None)
         return sid or None
+    # noqa: SILENT — hors contexte de session : pas d'identifiant à corréler
     except Exception:
         return None
 

@@ -109,6 +109,7 @@ def _analytics_orgs(ctx: ResolvedCtx, inp: AnalyticsOrgsInput) -> dict:  # noqa:
     try:
         fields = access.resolve_credential(
             "zohoanalytics", want="byo", sub=ctx.sub, emit_on_failure=False).fields or {}
+    # noqa: SILENT — dette déclarée : erreur de coffre lue comme « pas de credential » (#424, verdict C)
     except Exception:  # noqa: BLE001
         fields = {}
     if not fields.get("refresh_token"):

@@ -42,6 +42,7 @@ def _resolve_slug(slug: str) -> Optional[int]:
         for o in org_store.list_all_orgs():
             if org_store.normalize_slug(o.get("name") or "") == slug:
                 return o.get("id")
+    # noqa: SILENT — fail-closed : slug non résolu ⇒ pas d'org, pas de fuite de cause
     except Exception:
         return None
     return None

@@ -132,6 +132,7 @@ def release_session(session_id: str) -> None:
     try:
         _req("POST", f"/sessions/{session_id}",
              {"projectId": _project(), "status": "REQUEST_RELEASE"})
+    # noqa: SILENT — best-effort : la session hébergée expire seule sur timeout
     except Exception:
         pass  # best-effort (la session expire seule sur timeout)
 

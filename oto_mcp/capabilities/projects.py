@@ -766,6 +766,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                     out["slot_schema"] = res["status"]
                     if res.get("warning"):
                         out["warning"] = res["warning"]
+            # noqa: SILENT — dette déclarée : le lot d'avertissements tombe d'un bloc (#424, verdict C)
             except Exception:  # noqa: BLE001 — provisionnement opportuniste
                 pass
         # #218/#219 — lier un connecteur « aveugle » à un projet ORG-owned : si le
@@ -786,6 +787,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                 if why:
                     out["unresolvable_connector"] = why
                     out["warning"] = why
+            # noqa: SILENT — dette déclarée : le lot d'avertissements tombe d'un bloc (#424, verdict C)
             except Exception:  # noqa: BLE001 — warning best-effort, le link a réussi
                 pass
         # B5 — complétude au link : lier une procédure dont des slots ne sont pas
@@ -803,6 +805,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                         f"projet : {', '.join(missing)} — binde chacun "
                         f"(`oto_project op=link project_id={inp.project_id} target_type=… "
                         "target_ref=… slot='<name>'`) avant de l'exécuter ici.")
+            # noqa: SILENT — dette déclarée : le lot d'avertissements tombe d'un bloc (#424, verdict C)
             except Exception:  # noqa: BLE001 — warning best-effort, le link a réussi
                 pass
         return out

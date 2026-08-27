@@ -27,6 +27,7 @@ def make_routes(options_handler: Callable[[Request], Awaitable[Response]]) -> li
             return PlainTextResponse("ok")
         try:
             form = await request.form()
+        # noqa: SILENT — ACK délibéré : un webhook rejoué en boucle est pire (compteur à poser, #424)
         except Exception:
             return PlainTextResponse("ok")
         payment_id = (form.get("id") or "").strip()

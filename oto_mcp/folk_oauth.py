@@ -202,6 +202,7 @@ def access_token_for(sub: str) -> Optional[str]:
             exp = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             if exp.timestamp() - time.time() < 60:  # 60s d'avance
                 needs_refresh = True
+        # noqa: SILENT — credential illisible ⇒ refresh forcé, jamais un jeton périmé servi
         except Exception:
             needs_refresh = True
     if needs_refresh:

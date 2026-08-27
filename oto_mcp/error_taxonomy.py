@@ -131,6 +131,7 @@ def _arg_error_message(exc) -> str:
                 manquants.append(cle)
             else:
                 autres.append(f"{cle} ({d.get('msg') or kind})")
+    # noqa: SILENT — message d'aide dégradé, la taxonomie rend son défaut
     except Exception:      # forme pydantic inattendue : on ne casse pas le message
         return "Arguments invalides — vérifie les paramètres de l'outil."
     bouts = []
@@ -158,6 +159,7 @@ def _is_oauth_exchange_refused(exc) -> bool:
     très tôt par le middleware Sentry."""
     try:
         from .oauth_flow import OAuthExchangeRefused
+    # noqa: SILENT — prédicat de forme : indécidable ⇒ False (pas d'OAuth deviné)
     except Exception:
         return False
     return any(isinstance(e, OAuthExchangeRefused) for e in _chain(exc))
@@ -242,6 +244,7 @@ def _connector_of_tool(name: str) -> Optional[str]:
         from .tool_visibility import namespace_of
         con = providers.connector_for_namespace(namespace_of(name))
         return con.name if con else None
+    # noqa: SILENT — hint d'appartenance connecteur : absent plutôt que faux
     except Exception:
         return None
 
@@ -266,6 +269,7 @@ def _surviving_siblings(name: str) -> Optional[list[str]]:
         ns = namespace_of(name)
         voisins = sorted(t for t in connus if namespace_of(t) == ns)
         return voisins or None
+    # noqa: SILENT — hint de fratrie : absent plutôt que faux
     except Exception:
         return None
 

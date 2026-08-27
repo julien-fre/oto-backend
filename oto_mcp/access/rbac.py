@@ -243,6 +243,7 @@ def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dic
                         if gid not in seen_gids and group_store.has_group_secret(gid, provider):
                             out.append({"kind": "group", "id": gid, "name": g["name"]})
                             seen_gids.add(gid)
+            # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
             except Exception:
                 pass
         for o in org_store.list_orgs_for_user(sub):
@@ -253,6 +254,7 @@ def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dic
                     or db.has_member_api_key(sub, oid, provider)):
                 out.append({"kind": "org", "id": oid,
                             "name": o.get("name") or f"org {oid}"})
+    # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
     except Exception:
         return out
     return out
@@ -272,6 +274,7 @@ def reachable_team_key(sub: str, org: Optional[int], provider: str,
         for g in groups:
             if group_store.has_group_secret(g["group_id"], provider):
                 return {"id": g["group_id"], "name": g["name"]}
+    # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
     except Exception:
         return None
     return None
@@ -309,6 +312,7 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
                     groups += [{"group_id": g["id"], "name": g["name"]}
                                for g in group_store.list_groups(org)
                                if g["id"] not in known]
+            # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
             except Exception:
                 pass
             for g in groups:
@@ -329,6 +333,7 @@ def reachable_instances_map(sub: str, org: Optional[int]) -> dict[str, list[dict
                 if p and p in cascade.ORG_SHAREABLE_PROVIDERS:
                     _add(p, {"kind": "org", "id": oid,
                              "name": o.get("name") or f"org {oid}"})
+    # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
     except Exception:
         return out
     return out

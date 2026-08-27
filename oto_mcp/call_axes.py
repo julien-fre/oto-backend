@@ -114,6 +114,7 @@ def require_axis_sub(axis: str) -> str:
     sub = None
     try:
         sub = current_user_sub_from_token()
+    # noqa: SILENT — dette déclarée : sub avalé sur l'axe d'appel (#424, verdict C)
     except Exception:
         pass
     if not sub:

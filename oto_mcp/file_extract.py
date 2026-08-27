@@ -152,6 +152,7 @@ def _extract_pdf(data: bytes) -> Extraction:
             # qu'après avoir essayé.
             try:
                 reader.decrypt("")
+            # noqa: SILENT — PDF protégé : le verdict ENCRYPTED est rendu à l'appelant
             except Exception:
                 return Extraction(ENCRYPTED, detail="pdf protégé par mot de passe")
         n_pages = len(reader.pages)
@@ -161,6 +162,7 @@ def _extract_pdf(data: bytes) -> Extraction:
             (p.extract_text() or "") for p in reader.pages)
     except FileNotDecryptedError:
         return Extraction(ENCRYPTED, detail="pdf protégé par mot de passe")
+    # noqa: SILENT — verdict FAILED + type d'exception rendus à l'appelant
     except (PdfReadError, Exception) as e:            # tronqué, corrompu, inattendu
         return Extraction(FAILED, detail=type(e).__name__)
     return Extraction(OK, texte, pages=n_pages,
@@ -210,6 +212,7 @@ def _zip_declares_entities(data: bytes) -> Optional[Extraction]:
                     return Extraction(
                         REJECTED_DTD,
                         detail=f"déclaration d'entités XML dans « {it.filename} »")
+    # noqa: SILENT — pas un zip lisible : la lib rendra `failed`
     except Exception:
         return None                       # pas un zip lisible : la lib dira `failed`
     return None
@@ -233,6 +236,7 @@ def _zip_too_large(data: bytes) -> Optional[Extraction]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             total = sum(i.file_size for i in z.infolist())
+    # noqa: SILENT — pas un zip lisible : la lib rendra `failed`
     except Exception:
         return None                       # pas un zip lisible : la lib dira `failed`
     if total > MAX_UNCOMPRESSED_BYTES:
@@ -270,6 +274,7 @@ def _extract_docx(data: bytes) -> Extraction:
             for row in t.rows:
                 parts.extend(c.text for c in row.cells)
         texte, tronque = _join_bounded(parts)
+    # noqa: SILENT — verdict FAILED + type d'exception rendus à l'appelant
     except Exception as e:
         return Extraction(FAILED, detail=type(e).__name__)
     return Extraction(OK, texte,
@@ -298,6 +303,7 @@ def _extract_xlsx(data: bytes) -> Extraction:
 
         texte, tronque = _join_bounded(_cellules())
         wb.close()
+    # noqa: SILENT — verdict FAILED + type d'exception rendus à l'appelant
     except Exception as e:
         return Extraction(FAILED, detail=type(e).__name__)
     return Extraction(OK, texte,

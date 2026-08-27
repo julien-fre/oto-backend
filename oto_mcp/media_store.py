@@ -189,6 +189,7 @@ def delete_by_url(url: str) -> None:
         if not key:
             return
         _get_client().delete_object(Bucket=_bucket(), Key=key)
+    # noqa: SILENT — best-effort : un orphelin S3 ne casse jamais la requête user
     except Exception:
         pass  # best-effort : un orphelin ne doit jamais casser la requête user
 
@@ -307,6 +308,7 @@ def delete_by_key(key: str) -> None:
         return
     try:
         _get_client().delete_object(Bucket=_bucket(), Key=key)
+    # noqa: SILENT — best-effort : un orphelin S3 ne casse jamais la requête user
     except Exception:
         pass
 

@@ -200,6 +200,7 @@ def _current_run() -> Optional[str]:
     from . import session_org
     try:
         return session_org.current_call_run()
+    # noqa: SILENT — hors run : pas de corrélation d'exécution à poser
     except Exception:      # noqa: BLE001 — hors contexte de requête (script, test)
         return None
 

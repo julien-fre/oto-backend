@@ -61,6 +61,7 @@ def _extract_one(f: dict) -> str:
     fid = int(f["id"])
     try:
         data = media_store.fetch_object(f["s3_key"])
+    # noqa: SILENT — l'échec est PERSISTÉ sur le fichier (status FAILED + detail)
     except Exception as e:  # noqa: BLE001 — stockage : reprenable, borné par `attempts`
         detail = getattr(e, "code", None) or type(e).__name__
         db.save_extracted_text(fid, status=file_extract.FAILED, detail=str(detail))

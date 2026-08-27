@@ -82,6 +82,7 @@ def _detail(r: httpx.Response) -> str:
             # Mollie: {status, title, detail, field?}
             return str(body.get("detail") or body.get("title") or body)[:300]
         return str(body)[:300]
+    # noqa: SILENT — corps non-JSON : le texte brut EST le détail rendu
     except Exception:
         return (r.text or "")[:300]
 

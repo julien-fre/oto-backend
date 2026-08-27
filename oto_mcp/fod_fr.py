@@ -109,6 +109,7 @@ def search_aides(insee=None, code_postal=None, effectif=None, nature=None,
         if e.response.status_code == 400:
             try:
                 detail = e.response.json().get("detail", e.response.text)
+            # noqa: SILENT — corps non-JSON : on re-lève juste après avec le texte brut
             except Exception:
                 detail = e.response.text
             raise ValueError(detail) from e
