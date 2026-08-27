@@ -7,10 +7,20 @@ folk fournit une clé api personnelle. récupère-la dans les [réglages api/dé
 
 ## usage — ce que tu peux faire
 
-gère ton crm folk (personnes/contacts, entreprises, deals ou tout autre objet custom) + notes, interactions et rappels depuis claude. Tout passe par `folk_record` (paramètre `entity`) — il n'y a pas de tool séparé `folk_company`/`folk_contact`/`folk_deal`.
+gère ton crm folk (personnes/contacts, entreprises, deals ou tout autre objet custom) + notes, interactions et tâches depuis claude. Tout passe par `folk_record` (paramètre `entity`) — il n'y a pas de tool séparé `folk_company`/`folk_contact`/`folk_deal`.
 - « trouve le contact dupont » → `folk_record(op="search")` (entity `person`), puis `folk_record(op="get")` pour la fiche
 - « ajoute jean dupont, cto chez acme » → `folk_record(op="create")` (entity `person`)
 - « log un appel sur ce contact » → `folk_record(op="create")` (entity `interaction`, type/titre/contenu)
+- « qu'est-ce qu'on s'est dit avec dupont ? » → `folk_record(op="search", entity="interaction", entity_id="per_…")` : emails, événements d'agenda, messages whatsapp et interactions loggées que folk garde sur cette fiche, puis `op="get"` (avec le même `entity_id`) pour le corps complet d'une seule
+  - ⚠️ **correctif** : ce document a longtemps affirmé que folk ne disait QUE *quand* on avait parlé à quelqu'un, jamais *quoi*. C'était faux — c'était vrai du connecteur, qui n'exposait que la création d'interaction, pas de folk, dont les endpoints de lecture existaient déjà (en open beta)
+  - une interaction n'est pas adressable seule : `entity_id` (la personne/société porteuse) est **obligatoire** en recherche, lecture et suppression
+  - `when="past"` par défaut (ce qui a eu lieu) ; `"upcoming"` pour ce qui est prévu, `"all"` pour les deux — le défaut MASQUE donc l'à-venir
+  - le corps peut revenir vide sans que l'interaction le soit : chaque interaction porte un `privacyLevel`, et `subjectOnly`/`sensitive`/`internal` cachent le contenu à qui n'était pas dans la conversation. la clé est byo → tu vois ce que voit SON propriétaire
+- « qu'est-ce qui reste ouvert sur ce contact ? » → `folk_record(op="search", entity="task", entity_id="per_…", filters={"completedAt": {"empty": True}})` ; pour clore : `folk_record(op="mark_done", ids=[...])` (jusqu'à 50 d'un coup), `op="mark_todo"` pour rouvrir
+  - ⚠️ **rappels dépréciés** : folk a déprécié `/reminders` le 13/08/2026 (retrait annoncé février 2027) au profit des **tâches**, qui font strictement plus (description markdown, filtres par échéance/assigné/complétion, et un vrai suivi de complétion). `entity="reminder"` marche encore, mais écris tout ce qui est nouveau en `entity="task"`
+  - une tâche ne se termine JAMAIS toute seule chez folk (contrairement à un rappel qui se marque « déclenché ») : `completedAt` ne bouge que sur un `mark_done`/`mark_todo` explicite — et il est refusé dans un `op="update"`
+  - ❓ non documenté par folk et non vérifié : les rappels DÉJÀ posés remontent-ils aussi dans `entity="task"` ? à trancher avant de considérer un rappel comme lisible côté tâches
+  - ⚠️ pas d'événement webhook `task.*` chez folk à ce jour — seuls les `reminder.*` existent
 - « crée un deal dans le groupe X » → `folk_record(op="create")` (entity `deal`), et `folk_record(op="search", entity="deal")` pour les lister — `object_type` est auto-découvert si omis (voir note ci-dessous) ; ne le passer explicitement que si le groupe a PLUSIEURS objets custom au-delà de person/company (l'auto-découverte lève alors une erreur qui les liste)
 - « ajoute ces 20 contacts » → `folk_record(op="create")` (entity `person`, `items=[...]`) en un seul appel
 - « crée un groupe Leads privé » → `folk_group(op="create", name="Leads", visibility="private")`

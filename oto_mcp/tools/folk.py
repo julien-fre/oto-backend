@@ -1,4 +1,4 @@
-"""Folk CRM — groups, people, companies, deals, notes, interactions, reminders, webhooks.
+"""Folk CRM — groups, people, companies, deals, notes, interactions, tasks, webhooks.
 
 Wrappe `oto.tools.folk.FolkClient` (API publique https://developer.folk.app).
 Clé résolue par appel via `access.resolve_api_key("folk")` — provider byo-only
@@ -15,9 +15,13 @@ pas le comptage) :
   `object_type`, `id`/`ids`, `dry_run`) ; seul change le porteur de données
   (`filters` en lecture, `item`/`items` en création, `fields` en mise à jour).
   `entity` y joue le rôle que `module` joue chez Zoho : person | company | deal |
-  note | interaction | reminder. Les ex-`folk_list_deals` / `folk_list_notes` /
-  `folk_list_reminders` / `folk_get_reminder` y entrent SANS ajouter un
-  paramètre : ce sont `op="search"` / `op="get"` sur une autre `entity`.
+  note | interaction | task | reminder. Les ex-`folk_list_deals` /
+  `folk_list_notes` / `folk_list_reminders` / `folk_get_reminder` y entrent SANS
+  ajouter un paramètre : ce sont `op="search"` / `op="get"` sur une autre
+  `entity`. `mark_done`/`mark_todo` sont les deux seules ops à ne valoir que
+  pour UNE entité (la tâche) : chez Folk la complétion est un endpoint à part
+  (`POST /tasks/{id}/mark-as-done`), refusé dans un PATCH — la replier dans
+  `op="update"` aurait menti sur ce que fait l'appel.
 - **`folk_group`** (list/create/update/custom_fields/get_custom_field/
   create_custom_field/update_custom_field/members/add_member/remove_member/
   update_member) — reste à part : ni `id`/`ids` (jamais bulk — un workspace a
@@ -55,7 +59,27 @@ temps total, pas la cadence Folk).
 des clés Python snake_case (`first_name`, `company_id`...) ; `op="update"` prend
 les noms de champs bruts de l'API Folk en camelCase (`jobTitle`,
 `customFieldValues`...). Ne pas transposer l'un vers l'autre — voir le docstring
-de `folk_record`.
+de `folk_record`. Deux mots changent AUSSI de sens entre create et update, et
+sont refusés explicitement plutôt que renvoyés en 422 opaque : `type` devient
+`activityType` au PATCH d'une interaction, et `completedAt` (écrivable à la
+création d'une tâche) n'est pas patchable — c'est `op="mark_done"`.
+
+**Interactions : lecture, pas seulement écriture.** Le connecteur n'a longtemps
+exposé que `create_interaction`, d'où la croyance — écrite noir sur blanc dans
+la doc de ce connecteur — qu'on ne pouvait pas RELIRE ce qui s'était dit avec
+un contact. C'était vrai du connecteur, pas de Folk : `GET /interactions/past`,
+`/upcoming`, `/{id}` (+ PATCH et DELETE) existent, en open beta. Ils sont
+maintenant branchés sur `op="search"/"get"/"update"/"delete"`. Une interaction
+n'est PAS adressable seule : `entity.id` (la personne/société porteuse) est
+obligatoire en query sur listing/get/delete — d'où le paramètre `entity_id`.
+
+**Rappels → tâches.** Folk a déprécié `/reminders` le 2026-08-13 (retrait
+annoncé pour février 2027) au profit de `/tasks`, qui fait strictement plus :
+`description` markdown, filtres réels (échéance, assigné, complété ou non), et
+un suivi de complétion que les rappels n'ont jamais eu. `entity="reminder"`
+continue de marcher — le déprécié n'est pas le cassé — mais rien de nouveau ne
+devrait s'y brancher. Ce qui N'EST PAS documenté par Folk et reste à vérifier :
+si les rappels déjà posés remontent ou non dans `list_tasks`.
 """
 from __future__ import annotations
 
@@ -184,15 +208,32 @@ def _merge_group_ids(current_groups, add, remove) -> list[dict]:
 # valeurs admises n'existent que dans la prose de la docstring, et rien ne contraint
 # le client. `_Entity` borne l'UNION des entités (= tout ce qu'au moins une op
 # accepte) ; le sous-ensemble admis PAR op reste gardé par les tuples ci-dessous.
-_Entity = Literal["person", "company", "deal", "note", "interaction", "reminder"]
-_RecordOp = Literal["search", "get", "create", "update", "delete", "add_to_group"]
+_Entity = Literal["person", "company", "deal", "note", "interaction", "task",
+                  "reminder"]
+_RecordOp = Literal["search", "get", "create", "update", "delete",
+                    "add_to_group", "mark_done", "mark_todo"]
 
-_SEARCH_ENTITIES = ("person", "company", "deal", "note", "reminder")
-_GET_ENTITIES = ("person", "company", "deal", "reminder")
-_CREATE_ENTITIES = ("person", "company", "deal", "note", "interaction", "reminder")
-_UPDATE_ENTITIES = ("person", "company", "deal", "note", "reminder")
-_DELETE_ENTITIES = ("person", "company", "deal", "note", "reminder")
+_SEARCH_ENTITIES = ("person", "company", "deal", "note", "interaction", "task",
+                    "reminder")
+_GET_ENTITIES = ("person", "company", "deal", "interaction", "task", "reminder")
+_CREATE_ENTITIES = ("person", "company", "deal", "note", "interaction", "task",
+                    "reminder")
+_UPDATE_ENTITIES = ("person", "company", "deal", "note", "interaction", "task",
+                    "reminder")
+_DELETE_ENTITIES = ("person", "company", "deal", "note", "interaction", "task",
+                    "reminder")
 _GROUP_ENTITIES = ("person", "company")
+# `mark_done`/`mark_todo` n'existent que sur la tâche : chez Folk la complétion
+# est un appel À PART (`POST /tasks/{id}/mark-as-done`), jamais un PATCH — une
+# tâche ne se termine pas toute seule, contrairement à un rappel qui se marque
+# « déclenché » sur son propre calendrier.
+_MARK_ENTITIES = ("task",)
+
+# Entités dont l'id n'est adressable QUE via l'entité parente : Folk exige
+# `entity.id` en query sur get/delete d'une interaction (il n'existe pas de
+# « lire l'interaction lit_… » tout court), et sur ses deux endpoints de
+# listing.
+_ENTITY_ID_REQUIRED = ("interaction",)
 
 # Champs acceptés par `op="create"` par entité — miroir des paramètres nommés
 # des méthodes `FolkClient.create_*` (snake_case Python, PAS les noms de
@@ -211,7 +252,28 @@ _CREATE_FIELDS = {
     "deal": {"name", "people_ids", "company_ids", "custom_fields"},
     "note": {"entity_id", "content", "visibility"},
     "interaction": {"entity_id", "type", "title", "content", "date_time"},
+    "task": {"entity_id", "title", "due_at", "due_time", "description",
+             "recurrence_frequency", "assigned_users", "is_public"},
     "reminder": {"entity_id", "name", "recurrence_rule", "visibility"},
+}
+
+# Champs qu'un `op="update"` doit REFUSER, avec le chemin à prendre à la place.
+# Deux pièges hérités d'asymétries de l'API Folk elle-même — sans ce garde,
+# chacun rend un 422 opaque là où l'appelant a juste pris le mauvais mot :
+#   - `type` est le nom du champ à la CRÉATION d'une interaction, mais le PATCH
+#     l'appelle `activityType` (même valeur, autre clé) ;
+#   - `completedAt` s'écrit à la création d'une tâche, mais le PATCH le refuse
+#     (`additionalProperties: false`) : compléter, c'est `op="mark_done"`.
+_UPDATE_FORBIDDEN_FIELDS = {
+    "interaction": {
+        "type": "le PATCH d'une interaction nomme ce champ `activityType` "
+                "(c'est `type` seulement à la création).",
+    },
+    "task": {
+        "completedAt": "la complétion d'une tâche n'est pas un PATCH — "
+                       "utiliser op='mark_done' (ou op='mark_todo' pour la "
+                       "rouvrir).",
+    },
 }
 
 # Filtres acceptés par `op="search"` sur note/reminder : Folk n'expose qu'un
@@ -222,14 +284,31 @@ _CREATE_FIELDS = {
 _SUBRECORD_FILTERS = {"entity_id"}
 
 
+def _reject_forbidden_update_fields(entity: str, fields: dict) -> None:
+    """Refuse, en le NOMMANT, un champ qui existe ailleurs sur la même entité
+    mais pas dans son PATCH. Sans ça l'appelant reçoit un 422 Folk opaque
+    (`unrecognized_keys`) sur un mot qu'il a lu dans ce même docstring — au
+    rayon création."""
+    for name, why in _UPDATE_FORBIDDEN_FIELDS.get(entity, {}).items():
+        if name in fields:
+            raise _bad(f"op='update' entity='{entity}' : champ `{name}` "
+                       f"refusé — {why}")
+
+
 def _get_one(c, entity: str, id: str, group_id: Optional[str] = None,
-             object_type: str = "deals"):
+             object_type: str = "deals", entity_id: Optional[str] = None):
     """Récupère l'état courant d'un record, pour diff/preview `dry_run`.
 
     Renvoie `None` pour `note` : Folk n'a PAS d'endpoint get-par-id pour les
     notes (`client.py` n'expose que list/create/update/delete) — un gap
     permanent de l'API, pas un raccourci d'implémentation. Les previews
-    update/delete d'une note dégradent en conséquence (pas de diff possible)."""
+    update/delete d'une note dégradent en conséquence (pas de diff possible).
+
+    Renvoie `None` pour une `interaction` dont l'appelant n'a pas donné
+    `entity_id` : là c'est un gap de l'APPEL, pas de l'API — Folk sait relire
+    l'interaction, mais seulement scopée à son entité parente. Même
+    dégradation d'aperçu que la note, plutôt qu'un refus : `op="update"` sur
+    une interaction, lui, n'a pas besoin de `entity_id`."""
     if entity == "person":
         return c.get_person(id)
     if entity == "company":
@@ -238,6 +317,10 @@ def _get_one(c, entity: str, id: str, group_id: Optional[str] = None,
         if not group_id:
             raise _bad("group_id requis pour entity='deal'.")
         return c.get_deal(group_id, id, object_type=object_type)
+    if entity == "interaction":
+        return c.get_interaction(id, entity_id) if entity_id else None
+    if entity == "task":
+        return c.get_task(id)
     if entity == "reminder":
         return c.get_reminder(id)
     return None
@@ -284,6 +367,8 @@ def _create_one(c, entity: str, fields: Optional[dict] = None,
         return c.create_note(**fields)
     if entity == "interaction":
         return c.create_interaction(**fields)
+    if entity == "task":
+        return c.create_task(**fields)
     if entity == "reminder":
         return c.create_reminder(**fields)
     raise _bad(f"entity doit être l'un de {_CREATE_ENTITIES}.")
@@ -293,11 +378,13 @@ def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
                  group_id: Optional[str] = None, object_type: str = "deals",
                  add_to_groups: Optional[list[str]] = None,
                  remove_from_groups: Optional[list[str]] = None,
-                 dry_run: bool = False):
+                 dry_run: bool = False, entity_id: Optional[str] = None):
     fields = dict(fields or {})
+    _reject_forbidden_update_fields(entity, fields)
     current = None
     if add_to_groups or remove_from_groups or dry_run:
-        current = _get_one(c, entity, id, group_id=group_id, object_type=object_type)
+        current = _get_one(c, entity, id, group_id=group_id,
+                           object_type=object_type, entity_id=entity_id)
     if add_to_groups or remove_from_groups:
         if entity not in _GROUP_ENTITIES:
             raise _bad("add_to_groups/remove_from_groups ne valent que pour "
@@ -325,15 +412,21 @@ def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
         return c.update_deal(group_id, id, object_type=object_type, **fields)
     if entity == "note":
         return c.update_note(id, **fields)
+    if entity == "interaction":
+        return c.update_interaction(id, **fields)
+    if entity == "task":
+        return c.update_task(id, **fields)
     if entity == "reminder":
         return c.update_reminder(id, **fields)
     raise _bad(f"entity doit être l'un de {_UPDATE_ENTITIES}.")
 
 
 def _delete_one(c, entity: str, id: str, group_id: Optional[str] = None,
-                 object_type: str = "deals", dry_run: bool = False):
+                 object_type: str = "deals", dry_run: bool = False,
+                 entity_id: Optional[str] = None):
     if dry_run:
-        current = _get_one(c, entity, id, group_id=group_id, object_type=object_type)
+        current = _get_one(c, entity, id, group_id=group_id,
+                           object_type=object_type, entity_id=entity_id)
         if current is not None:
             return {"id": id, "would_delete": current}
         return {"id": id, "would_delete": None, "current_available": False}
@@ -347,9 +440,30 @@ def _delete_one(c, entity: str, id: str, group_id: Optional[str] = None,
         return c.delete_deal(group_id, id, object_type=object_type)
     if entity == "note":
         return c.delete_note(id)
+    if entity == "interaction":
+        return c.delete_interaction(id, _need(entity_id, "entity_id", "delete"))
+    if entity == "task":
+        return c.delete_task(id)
     if entity == "reminder":
         return c.delete_reminder(id)
     raise _bad(f"entity doit être l'un de {_DELETE_ENTITIES}.")
+
+
+def _mark_one(c, id: str, done: bool, completed_at: Optional[str] = None,
+              dry_run: bool = False):
+    """`op="mark_done"` / `op="mark_todo"` sur UNE tâche.
+
+    L'aperçu relit la tâche : il fait voir ce qui va être clos (titre,
+    échéance) et son `completedAt` actuel — refermer une tâche déjà close, ou
+    en rouvrir une jamais complétée, est un no-op silencieux côté Folk."""
+    if dry_run:
+        current = c.get_task(id)
+        return {"id": id,
+                "would_mark": "done" if done else "todo",
+                "current": current}
+    if done:
+        return c.mark_task_done(id, completed_at=completed_at)
+    return c.mark_task_todo(id)
 
 
 # 50 reste une limite d'ergonomie d'appel (pas de constat précis dérrière),
@@ -490,27 +604,64 @@ def register(mcp: FastMCP) -> None:
         remove_from_groups: Optional[list[str]] = None,
         group_id: Optional[str] = None,
         object_type: Optional[str] = None,
+        entity_id: Optional[str] = None,
+        when: Optional[Literal["past", "upcoming", "all"]] = None,
         dry_run: bool = False,
     ) -> dict:
         """Folk CRM records — people (contacts), companies, deals (or any other
-        custom object), notes, interactions, reminders: search, read, create,
-        update, delete, add to a group. This is the tool for "find/add/update a
-        contact", "look up a company", "list deals" etc. — Folk has no separate
-        `folk_company`/`folk_contact`/`folk_deal` tool; `entity` picks the noun.
+        custom object), notes, interactions, tasks, reminders: search, read,
+        create, update, delete, add to a group, mark a task done. This is the
+        tool for "find/add/update a contact", "look up a company", "list deals",
+        "what did we say to X", "what's still open on X" etc. — Folk has no
+        separate `folk_company`/`folk_contact`/`folk_deal` tool; `entity` picks
+        the noun.
 
         `entity` scopes every op (person | company | deal | note | interaction |
-        reminder); `op` picks the verb:
+        task | reminder); `op` picks the verb:
 
         - **"search"** (default): search records of that entity. Fetches ALL
           matching pages — always pass `filters` on a large workspace. Works on
-          person, company, deal, note and reminder.
-        - **"get"**: fetch one record by ID (full record). person, company, deal
-          and reminder only — Folk has NO get-by-id endpoint for notes.
+          every entity, but three of them are addressed by their PARENT record
+          rather than by a query: note and reminder take
+          `filters={"entity_id": …}`, interaction takes `entity_id` (required)
+          + `when`.
+        - **"get"**: fetch one record by ID (full record). Every entity except
+          note — Folk has NO get-by-id endpoint for notes. `interaction`
+          additionally needs `entity_id` (see below).
         - **"create"**: create one (`item`) or several (`items`, ≤50) records.
         - **"update"**: PATCH one (`id`) or several (`items`, ≤50) records —
           only the given fields change.
         - **"delete"**: delete one (`id`) or several (`ids`, ≤50) records.
           Irreversible.
+        - **"mark_done"** / **"mark_todo"**: close / reopen one (`id`) or
+          several (`ids`, ≤50) **tasks**. `entity="task"` only, and a separate
+          op on purpose: Folk refuses `completedAt` in a task PATCH. Nothing in
+          Folk ever completes a task on its own — it only moves when something
+          calls this.
+
+        📖 **Reading what actually happened.** `entity="interaction"` is
+        readable, not just writable: `op="search"` returns the emails, calendar
+        events, WhatsApp messages and manually-logged interactions Folk holds
+        for a person or company, `op="get"` returns one in full. (These four
+        endpoints are in Folk's **open beta** — the shape may still move.) Two
+        limits worth knowing before you rely on the content: each interaction
+        carries a `privacyLevel`, and `subjectOnly`/`sensitive`/`internal` hide
+        the body from anyone who wasn't in the conversation — the API key is
+        BYO, so what comes back is what ITS owner is allowed to see; and an
+        org-level field-redaction policy, where one is set, can strip fields on
+        top of that. An empty `content` is therefore a permission outcome, not
+        proof the interaction was empty.
+
+        ⏳ **Tasks, not reminders.** `entity="reminder"` still works but Folk
+        **deprecated** it on 2026-08-13 (removal announced for February 2027);
+        `entity="task"` is the successor and does strictly more — a markdown
+        `description`, real filters (due date, assignee, completed-or-not), and
+        completion tracking, which reminders never had. Write new work as
+        tasks. Field mapping if you're porting: name→title,
+        recurrence_rule→due_at/due_time + recurrence_frequency,
+        visibility→is_public. ⚠️ Whether reminders already created also show up
+        under `entity="task"` is NOT documented by Folk and untested — check
+        before assuming a reminder is visible as a task.
         - **"add_to_group"**: add one (`id`) or several (`ids`, ≤50) existing
           people/companies to ONE group (`group_id` = the target group). The
           inverse of `op="update"`'s `add_to_groups` (which batches *groups* for
@@ -542,26 +693,43 @@ def register(mcp: FastMCP) -> None:
             deal: {name*, people_ids, company_ids, custom_fields}
             note: {entity_id*, content*, visibility}
             interaction: {entity_id*, type*, title*, content, date_time}
+            task: {entity_id*, title*, due_at*, due_time, description,
+                recurrence_frequency, assigned_users, is_public}
             reminder: {entity_id*, name*, recurrence_rule*, visibility}
+                — DEPRECATED by Folk, use task.
+
+        `task` field notes: `due_at` is a date "YYYY-MM-DD", `due_time` an
+        optional "HH:mm"; `description` is markdown; `recurrence_frequency` ∈
+        weekday | weekly | biweekly | monthly | quarterly | yearly;
+        `assigned_users` takes user IDs **or** emails (a list of either, or of
+        {"id"}/{"email"} dicts) — never both in the same call, Folk rejects a
+        mixed list; `is_public` false = visible only to the assignees. Omit
+        `assigned_users` and the task lands on the API key's owner.
 
         Args:
             entity: "person" (a contact), "company", "deal" (or any other
                 custom object collection — see `object_type`), "note",
-                "interaction" or "reminder" — see each op for the ones it
-                accepts (interactions have no update/delete endpoint in Folk,
-                notes have no get-by-id, add_to_group is person/company only).
-            op: search (default) | get | create | update | delete | add_to_group.
-            id: the record ID (the deal_id for a deal, rmd_… for a reminder) —
-                op="get", and solo mode of update/delete/add_to_group.
-            ids: record IDs — bulk mode of delete/add_to_group (deal IDs for
-                entity="deal").
+                "interaction", "task" or "reminder" (deprecated — see above) —
+                see each op for the ones it accepts (notes have no get-by-id,
+                add_to_group is person/company only, mark_done/mark_todo are
+                task only).
+            op: search (default) | get | create | update | delete |
+                add_to_group | mark_done | mark_todo.
+            id: the record ID (the deal_id for a deal, tsk_… for a task,
+                rmd_… for a reminder) — op="get", and solo mode of
+                update/delete/add_to_group/mark_done/mark_todo.
+            ids: record IDs — bulk mode of delete/add_to_group/mark_done/
+                mark_todo (deal IDs for entity="deal").
             item: op="create" solo — fields for ONE record, see the per-entity
                 shape below.
             items: op="create" bulk — fields for MULTIPLE records, same shape as
                 `item`, one dict per record. op="update" bulk — one
                 `{"id", "fields", "add_to_groups", "remove_from_groups"}` per
                 record, same field vocabulary as below.
-            fields: op="update" solo — Folk API field names, camelCase (e.g.
+            fields: op="mark_done" — optionally {"completedAt": "<ISO 8601>"};
+                omitted, the task is stamped as completed now. Not accepted by
+                op="mark_todo".
+                op="update" solo — Folk API field names, camelCase (e.g.
                 {"jobTitle": "CTO"}, {"industry": "SaaS"}, ou champs custom d'un
                 deal). Optionnel si seuls `add_to_groups`/`remove_from_groups`
                 sont fournis.
@@ -577,7 +745,21 @@ def register(mcp: FastMCP) -> None:
                 {field: {op: value}} — op ∈ eq, not_eq, like, not_like, empty,
                 not_empty, gt (dates), in / not_in (relations). For `note` and
                 `reminder`, Folk only has ONE filter: {"entity_id": "<id>"} (the
-                person/company/deal the note or reminder hangs off).
+                person/company/deal the note or reminder hangs off) — or pass
+                `entity_id` directly, same thing.
+                For `interaction`, Folk exposes NO filter at all: use
+                `entity_id` + `when`.
+                For `task`, filters are `{field: {operator: value}}` over a
+                CLOSED set — dueAt (eq/not_eq/gt/lt), createdAt (gt/lt),
+                completedAt (empty/not_empty/gt/lt), assigneeUserId (in/not_in),
+                entity (in/not_in). A bare value means `eq` on dueAt and `in` on
+                entity/assigneeUserId; the two others demand an explicit
+                operator. There is NO `like` here, unlike people/companies — an
+                unknown field or operator is refused, naming what exists.
+                Open tasks on someone: `entity_id="per_…"` +
+                filters={"completedAt": {"empty": True}}. Overdue and still
+                open: filters={"dueAt": {"lt": "<today>"},
+                "completedAt": {"empty": True}}.
             max_results: op="search" — truncate the response (default 100).
                 `count` reports the REAL total, so a `count` above the number of
                 `results` means the list was cut.
@@ -595,6 +777,20 @@ def register(mcp: FastMCP) -> None:
                 the deal lives — on create, all record(s) land in this one group,
                 Folk deals aren't creatable across groups in a single call). Ne
                 PAS le passer pour person/company hors des deux cas ci-dessus.
+            entity_id: the PARENT record (person `per_…`, company `com_…`, or
+                object `obj_…`) a sub-record hangs off. **Required** for
+                entity="interaction" on search/get/delete — Folk has no "read
+                interaction lit_…" on its own, an interaction is only
+                addressable through the record it belongs to. Optional, and
+                purely a convenience, on search for note/reminder/task (same as
+                filters={"entity_id": …} / filters={"entity": …}). NOT used by
+                op="create": there the parent record goes inside `item`.
+            when: op="search" on entity="interaction" only — "past" (default:
+                what already happened — the one you want for "what did we say
+                to X"), "upcoming" (scheduled ahead), or "all" (both, with
+                `past_count`/`upcoming_count` in the receipt). ⚠️ The default
+                HIDES upcoming interactions: a `count` under "past" is not the
+                total Folk holds for that record.
             object_type: custom-object collection name — `deal` only. Omit it:
                 the tool auto-discovers this group's real deal object name
                 (tries "deals", and on a 404 reads the correct one out of
@@ -616,7 +812,9 @@ def register(mcp: FastMCP) -> None:
                 sans le "from".
 
         Returns:
-            search: {"entity", "count", "results"}.
+            search: {"entity", "count", "results"} — plus "when" for
+                interactions (and "past_count"/"upcoming_count" when
+                when="all").
             get: the record.
             create solo: the created record, or {"dry_run": true, "would_create": {...}}.
             create bulk: {"total", "succeeded", "created": [{"index","id"}],
@@ -631,6 +829,11 @@ def register(mcp: FastMCP) -> None:
             delete bulk: {"total", "succeeded", "failed": [{"index","id","error"}]},
                 or dry_run: {"dry_run": true, "total", "would_delete": [...],
                 "failed": [...]}.
+            mark_done/mark_todo solo: the task, or {"dry_run": true, "id",
+                "would_mark", "current"}.
+            mark_done/mark_todo bulk: {"total", "succeeded", "failed":
+                [{"index","id","error"}]}, or dry_run: {"dry_run": true,
+                "total", "would_mark": [...], "failed": [...]}.
         """
         def _require_deal_group() -> None:
             """Commun aux 5 ops qui acceptent entity="deal" (pas add_to_group,
@@ -648,10 +851,75 @@ def register(mcp: FastMCP) -> None:
             if object_type is None:
                 object_type = _resolve_deal_object_type(_client(), group_id)
 
+        # Un paramètre qui ne s'applique pas à CE couple (op, entity) doit être
+        # refusé, jamais ignoré : silencieusement avalé, il fait croire à un
+        # filtre appliqué ou à un parent pris en compte. C'est la même famille
+        # d'erreur que la claim corrigée en tête de module — une lecture qui
+        # rend moins que ce que l'appelant croit avoir demandé.
+        if when is not None and not (op == "search" and entity == "interaction"):
+            raise _bad("`when` ne vaut que pour op='search' sur "
+                       "entity='interaction' (past | upcoming | all).")
+        if entity_id is not None and not (
+                (op == "search" and entity in ("note", "reminder", "interaction",
+                                               "task"))
+                or (op in ("get", "delete", "update")
+                    and entity == "interaction")):
+            raise _bad(
+                f"`entity_id` ne vaut pas pour op='{op}' entity='{entity}'. "
+                + ("À la création, l'entité porteuse est un CHAMP du record — "
+                   "elle peut différer d'un item à l'autre dans un lot — donc "
+                   "`item={'entity_id': 'per_…', …}`, pas un paramètre de "
+                   "l'appel." if op == "create" else
+                   "C'est l'entité PORTEUSE d'une note/interaction/tâche/"
+                   "rappel (search), ou celle qui rend une interaction "
+                   "adressable (get/update/delete). Pour lister les membres "
+                   "d'un groupe : `group_id`."))
+
         if op == "search":
             if entity not in _SEARCH_ENTITIES:
                 raise _bad(f"op='search' : entity doit être l'un de {_SEARCH_ENTITIES}.")
             f = dict(filters or {})
+            if entity == "interaction":
+                if f:
+                    raise _bad(
+                        "op='search' entity='interaction' : Folk n'expose aucun "
+                        "filtre ici — passer `entity_id` (la personne/société "
+                        "porteuse) et, au besoin, `when`.")
+                _need(entity_id, "entity_id", "search (entity='interaction')")
+                c = _client()
+                bucket = when or "past"
+                past = (c.list_past_interactions(entity_id)
+                        if bucket in ("past", "all") else [])
+                upcoming = (c.list_upcoming_interactions(entity_id)
+                            if bucket in ("upcoming", "all") else [])
+                found = past + upcoming
+                out = {"entity": entity, "when": bucket, "count": len(found),
+                       "results": found[:max_results]}
+                if bucket == "all":
+                    # Les deux listes viennent d'endpoints distincts et le
+                    # record ne dit pas de laquelle il sort : sans ce détail,
+                    # un `count` agrégé ne se relit pas.
+                    out.update(past_count=len(past),
+                               upcoming_count=len(upcoming))
+                return out
+            if entity == "task":
+                if entity_id:
+                    if "entity" in f:
+                        raise _bad("passer `entity_id` OU filters={'entity': …}, "
+                                   "pas les deux.")
+                    f["entity"] = entity_id
+                c = _client()
+                try:
+                    found = c.list_tasks(f)
+                except ValueError as e:
+                    # Le client valide champs ET opérateurs contre la doc Folk :
+                    # sa ValueError nomme déjà ce qui existe, on la rend telle
+                    # quelle plutôt qu'en « erreur interne ».
+                    raise _bad(str(e))
+                return {"entity": entity, "count": len(found),
+                        "results": found[:max_results]}
+            if entity in ("note", "reminder") and entity_id:
+                f.setdefault("entity_id", entity_id)
             if entity in ("note", "reminder"):
                 unknown = set(f) - _SUBRECORD_FILTERS
                 if unknown:
@@ -692,8 +960,10 @@ def register(mcp: FastMCP) -> None:
             _need(id, "id", op)
             if entity == "deal":
                 _require_deal_group()
+            if entity in _ENTITY_ID_REQUIRED:
+                _need(entity_id, "entity_id", f"{op} (entity='{entity}')")
             return _get_one(_client(), entity, id, group_id=group_id,
-                            object_type=object_type)
+                            object_type=object_type, entity_id=entity_id)
 
         if op == "create":
             if (item is None) == (items is None):
@@ -727,8 +997,7 @@ def register(mcp: FastMCP) -> None:
                            "remove_from_groups) pour UN record, soit `items` pour "
                            "plusieurs — pas les deux, pas ni l'un ni l'autre.")
             if entity not in _UPDATE_ENTITIES:
-                raise _bad(f"op='update' : entity doit être l'un de {_UPDATE_ENTITIES} "
-                           "(interactions have no update endpoint in Folk).")
+                raise _bad(f"op='update' : entity doit être l'un de {_UPDATE_ENTITIES}.")
             if entity == "deal":
                 _require_deal_group()
             c = _client()
@@ -736,7 +1005,8 @@ def register(mcp: FastMCP) -> None:
                 result = _update_one(
                     c, entity, id, fields=fields, group_id=group_id,
                     object_type=object_type, add_to_groups=add_to_groups,
-                    remove_from_groups=remove_from_groups, dry_run=dry_run)
+                    remove_from_groups=remove_from_groups, dry_run=dry_run,
+                    entity_id=entity_id)
                 return {"dry_run": True, **result} if dry_run else result
 
             def _one(it):
@@ -747,7 +1017,7 @@ def register(mcp: FastMCP) -> None:
                     group_id=group_id, object_type=object_type,
                     add_to_groups=it.get("add_to_groups"),
                     remove_from_groups=it.get("remove_from_groups"),
-                    dry_run=dry_run)
+                    dry_run=dry_run, entity_id=it.get("entity_id", entity_id))
 
             results = _bulk_run(items, _one)
             failed = [{"index": i, "id": items[i].get("id"), "error": val}
@@ -764,24 +1034,68 @@ def register(mcp: FastMCP) -> None:
                 raise _bad("op='delete' : fournir soit `id` (un seul record) soit "
                            "`ids` (plusieurs) — pas les deux, pas ni l'un ni l'autre.")
             if entity not in _DELETE_ENTITIES:
-                raise _bad(f"op='delete' : entity doit être l'un de {_DELETE_ENTITIES} "
-                           "(interactions have no delete endpoint in Folk).")
+                raise _bad(f"op='delete' : entity doit être l'un de {_DELETE_ENTITIES}.")
             if entity == "deal":
                 _require_deal_group()
+            if entity in _ENTITY_ID_REQUIRED:
+                # Exigé ICI plutôt que dans `_delete_one` : sinon un dry_run
+                # sans `entity_id` rendrait un aperçu vide au lieu de dire ce
+                # qui manque, et l'appel réel échouerait juste après.
+                _need(entity_id, "entity_id", f"{op} (entity='{entity}')")
             c = _client()
             if id is not None:
                 result = _delete_one(c, entity, id, group_id=group_id,
-                                     object_type=object_type, dry_run=dry_run)
+                                     object_type=object_type, dry_run=dry_run,
+                                     entity_id=entity_id)
                 return {"dry_run": True, **result} if dry_run else result
             results = _bulk_run(
                 ids, lambda rid: _delete_one(c, entity, rid, group_id=group_id,
-                                             object_type=object_type, dry_run=dry_run))
+                                             object_type=object_type,
+                                             dry_run=dry_run,
+                                             entity_id=entity_id))
             failed = [{"index": i, "id": ids[i], "error": val}
                       for i, ok, val in results if not ok]
             if dry_run:
                 would_delete = [{"index": i, **val} for i, ok, val in results if ok]
                 return {"dry_run": True, "total": len(ids),
                         "would_delete": would_delete, "failed": failed}
+            return {"total": len(ids), "succeeded": len(ids) - len(failed),
+                    "failed": failed}
+
+        if op in ("mark_done", "mark_todo"):
+            if entity not in _MARK_ENTITIES:
+                raise _bad(f"op='{op}' : entity doit être l'un de "
+                           f"{_MARK_ENTITIES} — seule la tâche a une notion de "
+                           "complétion (un rappel se déclenche tout seul, il "
+                           "ne se termine pas).")
+            if (id is None) == (ids is None):
+                raise _bad(f"op='{op}' : fournir soit `id` (une seule tâche) "
+                           "soit `ids` (plusieurs) — pas les deux, pas ni l'un "
+                           "ni l'autre.")
+            done = op == "mark_done"
+            completed_at = (fields or {}).get("completedAt") if done else None
+            unknown = set(fields or {}) - ({"completedAt"} if done else set())
+            if unknown:
+                raise _bad(
+                    f"op='{op}' : champ(s) {sorted(unknown)} ignoré(s) ici — "
+                    + ("seul `fields={'completedAt': …}` est accepté (défaut : "
+                       "maintenant)." if done
+                       else "cette op ne prend aucun champ."))
+            c = _client()
+            if id is not None:
+                result = _mark_one(c, id, done, completed_at=completed_at,
+                                   dry_run=dry_run)
+                return {"dry_run": True, **result} if dry_run else result
+            results = _bulk_run(
+                ids, lambda tid: _mark_one(c, tid, done,
+                                           completed_at=completed_at,
+                                           dry_run=dry_run))
+            failed = [{"index": i, "id": ids[i], "error": val}
+                      for i, ok, val in results if not ok]
+            if dry_run:
+                would_mark = [{"index": i, **val} for i, ok, val in results if ok]
+                return {"dry_run": True, "total": len(ids),
+                        "would_mark": would_mark, "failed": failed}
             return {"total": len(ids), "succeeded": len(ids) - len(failed),
                     "failed": failed}
 
@@ -815,8 +1129,8 @@ def register(mcp: FastMCP) -> None:
             return {"total": len(ids), "succeeded": len(ids) - len(failed),
                     "failed": failed}
 
-        raise _bad("op doit être 'search', 'get', 'create', 'update', 'delete' "
-                   "ou 'add_to_group'")
+        raise _bad("op doit être 'search', 'get', 'create', 'update', 'delete', "
+                   "'add_to_group', 'mark_done' ou 'mark_todo'")
 
     # --- groups + group custom fields + group members -------------------------
     #

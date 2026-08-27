@@ -28,11 +28,12 @@ from oto.tools.common.errors import UpstreamHTTPError
 # ni par une op mutante autre que la sienne, ni par un dry_run.
 _MUTATORS = (
     "create_person", "create_company", "create_deal", "create_note",
-    "create_interaction", "create_reminder",
+    "create_interaction", "create_task", "create_reminder",
     "update_person", "update_company", "update_deal", "update_note",
-    "update_reminder",
+    "update_interaction", "update_task", "update_reminder",
     "delete_person", "delete_company", "delete_deal", "delete_note",
-    "delete_reminder",
+    "delete_interaction", "delete_task", "delete_reminder",
+    "mark_task_done", "mark_task_todo",
     "create_webhook", "update_webhook",
 )
 
@@ -104,6 +105,8 @@ def test_folk_webhook_default_op_lists_and_writes_nothing(client):
     ("company", {}, "list_companies"),
     ("deal", {"group_id": "grp_1"}, "list_deals"),
     ("note", {}, "list_notes"),
+    ("interaction", {"entity_id": "per_A"}, "list_past_interactions"),
+    ("task", {}, "list_tasks"),
     ("reminder", {}, "list_reminders"),
 ])
 def test_search_routes_to_the_right_client_method(client, entity, kwargs, method):
@@ -117,6 +120,8 @@ def test_search_routes_to_the_right_client_method(client, entity, kwargs, method
     ("person", {}, "get_person"),
     ("company", {}, "get_company"),
     ("deal", {"group_id": "grp_1"}, "get_deal"),
+    ("interaction", {"entity_id": "per_A"}, "get_interaction"),
+    ("task", {}, "get_task"),
     ("reminder", {}, "get_reminder"),
 ])
 def test_get_routes_to_the_right_client_method(client, entity, kwargs, method):
@@ -246,10 +251,18 @@ def test_search_reminder_refuses_group_id_rather_than_ignoring_it(client):
     client.list_reminders.assert_not_called()
 
 
-def test_search_refuses_interaction(client):
-    """Folk n'expose aucun `list_interactions` — `op="create"` reste le seul verbe."""
-    with pytest.raises(McpError, match="entity doit être"):
+def test_search_interaction_requires_its_parent_entity(client):
+    """Ce test disait l'inverse : « Folk n'expose aucun `list_interactions` —
+    `op="create"` reste le seul verbe ». C'était faux. Folk expose bien
+    past/upcoming/get (open beta) ; c'est le connecteur qui ne les branchait
+    pas, et cette croyance a fini écrite dans sa doc.
+
+    Ce qui est vrai, et que ce test verrouille à la place : une interaction
+    n'est pas adressable seule — sans `entity_id`, on refuse en le NOMMANT
+    plutôt que de lister le workspace (ce qui n'existe pas)."""
+    with pytest.raises(McpError, match="entity_id"):
         _tool("folk_record")(entity="interaction", op="search")
+    client.list_past_interactions.assert_not_called()
 
 
 # --- folk_record : écritures ---------------------------------------------------
@@ -429,7 +442,8 @@ def test_webhook_dry_run_never_writes(client):
 
 @pytest.mark.parametrize("tool,kwargs,expected", [
     ("folk_record", {"entity": "person"},
-     "'search', 'get', 'create', 'update', 'delete' ou 'add_to_group'"),
+     "'search', 'get', 'create', 'update', 'delete', 'add_to_group', "
+     "'mark_done' ou 'mark_todo'"),
     ("folk_group", {}, "'list', 'create', 'update', 'custom_fields', "
      "'get_custom_field', 'create_custom_field', 'update_custom_field', "
      "'members', 'add_member', 'remove_member', 'update_member'"),
@@ -459,3 +473,246 @@ def test_record_missing_required_arg_names_the_op_and_the_arg(client, op, kwargs
     msg = str(e.value)
     assert missing in msg and op in msg
     _assert_silent(client)
+
+
+# --- folk_record : interactions en LECTURE ------------------------------------
+#
+# Le connecteur n'exposait que la création d'interaction — d'où l'affirmation,
+# écrite dans sa doc et dans un test, que folk ne dit jamais CE qui s'est dit.
+# Faux : `/interactions/past|upcoming|{id}` existent (open beta). Ces tests
+# verrouillent le routage ET les deux pièges qui restent vrais.
+
+
+def test_search_interaction_defaults_to_past_and_says_so(client):
+    client.list_past_interactions.return_value = [{"id": "lit_1"}]
+    out = _tool("folk_record")(entity="interaction", op="search", entity_id="per_A")
+    client.list_past_interactions.assert_called_once_with("per_A")
+    client.list_upcoming_interactions.assert_not_called()
+    # Le défaut masque l'à-venir : le reçu doit PORTER le bucket, sinon un
+    # `count` se relit comme un total qu'il n'est pas.
+    assert out["when"] == "past"
+    assert out["count"] == 1
+
+
+def test_search_interaction_upcoming(client):
+    client.list_upcoming_interactions.return_value = [{"id": "lit_2"}]
+    out = _tool("folk_record")(entity="interaction", op="search",
+                               entity_id="per_A", when="upcoming")
+    client.list_past_interactions.assert_not_called()
+    assert out["when"] == "upcoming" and out["count"] == 1
+
+
+def test_search_interaction_all_splits_the_two_counts(client):
+    """Les deux listes viennent d'endpoints distincts et le record ne dit pas
+    duquel il sort : un `count` agrégé sans détail ne se relit pas."""
+    client.list_past_interactions.return_value = [{"id": "a"}, {"id": "b"}]
+    client.list_upcoming_interactions.return_value = [{"id": "c"}]
+    out = _tool("folk_record")(entity="interaction", op="search",
+                               entity_id="per_A", when="all")
+    assert (out["count"], out["past_count"], out["upcoming_count"]) == (3, 2, 1)
+    assert [r["id"] for r in out["results"]] == ["a", "b", "c"]
+
+
+def test_when_is_refused_on_other_entities(client):
+    """`when` n'a de sens que sur l'interaction — silencieusement ignoré
+    ailleurs, il ferait croire à un filtre appliqué."""
+    with pytest.raises(McpError, match="when"):
+        _tool("folk_record")(entity="task", op="search", when="past")
+    with pytest.raises(McpError, match="when"):
+        _tool("folk_record")(entity="interaction", op="get", id="lit_1",
+                             entity_id="per_A", when="past")
+
+
+def test_entity_id_is_refused_where_it_would_be_ignored(client):
+    """Un `entity_id` posé sur une recherche de personnes ne veut rien dire :
+    l'avaler ferait croire à un filtre appliqué (le bon paramètre est
+    `group_id`)."""
+    with pytest.raises(McpError, match="entity_id"):
+        _tool("folk_record")(entity="person", op="search", entity_id="per_A")
+    client.list_people.assert_not_called()
+
+
+def test_search_interaction_refuses_filters(client):
+    with pytest.raises(McpError, match="aucun filtre"):
+        _tool("folk_record")(entity="interaction", op="search",
+                             entity_id="per_A", filters={"title": "café"})
+
+
+def test_get_interaction_requires_entity_id(client):
+    with pytest.raises(McpError, match="entity_id"):
+        _tool("folk_record")(entity="interaction", op="get", id="lit_1")
+    client.get_interaction.assert_not_called()
+
+
+def test_get_interaction_passes_its_parent(client):
+    _tool("folk_record")(entity="interaction", op="get", id="lit_1",
+                         entity_id="per_A")
+    client.get_interaction.assert_called_once_with("lit_1", "per_A")
+    _assert_silent(client)
+
+
+def test_update_interaction_rejects_the_create_vocabulary(client):
+    """`type` à la création, `activityType` au PATCH : la même valeur sous deux
+    clés. Sans ce garde, l'appelant lit `type` dans le docstring (rayon
+    création) et récolte un 422 opaque."""
+    with pytest.raises(McpError, match="activityType"):
+        _tool("folk_record")(entity="interaction", op="update", id="lit_1",
+                             fields={"type": "coffee"})
+    client.update_interaction.assert_not_called()
+
+
+def test_update_interaction_routes(client):
+    _tool("folk_record")(entity="interaction", op="update", id="lit_1",
+                         fields={"activityType": "coffee"})
+    client.update_interaction.assert_called_once_with("lit_1", activityType="coffee")
+    _assert_silent(client, "update_interaction")
+
+
+def test_delete_interaction_requires_entity_id_even_in_dry_run(client):
+    """Exigé AVANT l'aperçu : sinon le dry_run rendrait un `would_delete: None`
+    rassurant, et l'appel réel échouerait juste après."""
+    with pytest.raises(McpError, match="entity_id"):
+        _tool("folk_record")(entity="interaction", op="delete", id="lit_1",
+                             dry_run=True)
+    with pytest.raises(McpError, match="entity_id"):
+        _tool("folk_record")(entity="interaction", op="delete", id="lit_1")
+    client.delete_interaction.assert_not_called()
+
+
+def test_delete_interaction_routes(client):
+    _tool("folk_record")(entity="interaction", op="delete", id="lit_1",
+                         entity_id="per_A")
+    client.delete_interaction.assert_called_once_with("lit_1", "per_A")
+    _assert_silent(client, "delete_interaction")
+
+
+# --- folk_record : tâches (successeur des rappels) ----------------------------
+
+
+def test_search_task_maps_entity_id_onto_the_entity_filter(client):
+    client.list_tasks.return_value = []
+    _tool("folk_record")(entity="task", op="search", entity_id="per_A",
+                         filters={"completedAt": {"empty": True}})
+    client.list_tasks.assert_called_once_with(
+        {"completedAt": {"empty": True}, "entity": "per_A"})
+    _assert_silent(client)
+
+
+def test_search_task_refuses_both_spellings_of_the_parent(client):
+    with pytest.raises(McpError, match="pas les deux"):
+        _tool("folk_record")(entity="task", op="search", entity_id="per_A",
+                             filters={"entity": "per_B"})
+
+
+def test_search_task_surfaces_the_client_filter_refusal(client):
+    """Le client valide champs ET opérateurs contre la doc Folk. Sa ValueError
+    nomme déjà ce qui existe : elle doit ressortir telle quelle, pas en
+    « erreur interne »."""
+    client.list_tasks.side_effect = ValueError("filtre de tâche inconnu : 'title'")
+    with pytest.raises(McpError, match="filtre de tâche inconnu"):
+        _tool("folk_record")(entity="task", op="search", filters={"title": "x"})
+
+
+def test_create_task_routes(client):
+    _tool("folk_record")(entity="task", op="create",
+                         item={"entity_id": "per_A", "title": "Relancer",
+                               "due_at": "2026-09-01"})
+    client.create_task.assert_called_once_with(
+        entity_id="per_A", title="Relancer", due_at="2026-09-01")
+    _assert_silent(client, "create_task")
+
+
+def test_create_task_rejects_the_reminder_vocabulary(client):
+    """Porter un rappel vers une tâche renomme les champs (name→title,
+    recurrence_rule→due_at + recurrence_frequency) : le refus doit LISTER les
+    champs acceptés, pas laisser passer un payload muet."""
+    with pytest.raises(McpError, match="champ\\(s\\) inconnu\\(s\\)"):
+        _tool("folk_record")(entity="task", op="create",
+                             item={"entity_id": "per_A", "name": "Relancer",
+                                   "recurrence_rule": "RRULE:FREQ=WEEKLY"})
+    client.create_task.assert_not_called()
+
+
+def test_create_refuses_entity_id_at_the_call_level(client):
+    """À la création, l'entité porteuse est un CHAMP du record (elle peut
+    différer d'un item à l'autre dans un lot) : l'accepter en paramètre la
+    ferait taire silencieusement."""
+    with pytest.raises(McpError, match="CHAMP du record"):
+        _tool("folk_record")(entity="task", op="create", entity_id="per_A",
+                             item={"title": "T", "due_at": "2026-09-01"})
+    client.create_task.assert_not_called()
+
+
+def test_update_task_rejects_completed_at(client):
+    """`completedAt` s'écrit à la création mais PAS au PATCH
+    (`additionalProperties: false` chez Folk) — compléter, c'est `mark_done`."""
+    with pytest.raises(McpError, match="mark_done"):
+        _tool("folk_record")(entity="task", op="update", id="tsk_1",
+                             fields={"completedAt": "2026-08-27T10:00:00.000Z"})
+    client.update_task.assert_not_called()
+
+
+def test_mark_done_routes_and_defaults_the_timestamp_to_the_client(client):
+    _tool("folk_record")(entity="task", op="mark_done", id="tsk_1")
+    client.mark_task_done.assert_called_once_with("tsk_1", completed_at=None)
+    _assert_silent(client, "mark_task_done")
+
+
+def test_mark_done_accepts_an_explicit_timestamp(client):
+    _tool("folk_record")(entity="task", op="mark_done", id="tsk_1",
+                         fields={"completedAt": "2026-08-26T10:00:00.000Z"})
+    client.mark_task_done.assert_called_once_with(
+        "tsk_1", completed_at="2026-08-26T10:00:00.000Z")
+
+
+def test_mark_done_refuses_stray_fields(client):
+    with pytest.raises(McpError, match="completedAt"):
+        _tool("folk_record")(entity="task", op="mark_done", id="tsk_1",
+                             fields={"title": "nope"})
+    client.mark_task_done.assert_not_called()
+
+
+def test_mark_todo_takes_no_fields(client):
+    with pytest.raises(McpError, match="aucun champ"):
+        _tool("folk_record")(entity="task", op="mark_todo", id="tsk_1",
+                             fields={"completedAt": "2026-08-26T10:00:00.000Z"})
+    _tool("folk_record")(entity="task", op="mark_todo", id="tsk_1")
+    client.mark_task_todo.assert_called_once_with("tsk_1")
+
+
+def test_mark_bulk_closes_many_and_reports_per_item(client):
+    """Le cas d'usage qui a motivé tout ça : refermer d'un coup les tâches
+    posées sur un contact."""
+    client.mark_task_done.side_effect = [
+        {"id": "tsk_1"},
+        UpstreamHTTPError(422, {"error": {"message": "boom"}}, service="folk"),
+        {"id": "tsk_3"}]
+    out = _tool("folk_record")(entity="task", op="mark_done",
+                               ids=["tsk_1", "tsk_2", "tsk_3"])
+    assert out["total"] == 3 and out["succeeded"] == 2
+    assert [f["id"] for f in out["failed"]] == ["tsk_2"]
+
+
+def test_mark_dry_run_reads_but_writes_nothing(client):
+    client.get_task.return_value = {"id": "tsk_1", "completedAt": None}
+    out = _tool("folk_record")(entity="task", op="mark_done", id="tsk_1",
+                               dry_run=True)
+    assert out["dry_run"] is True and out["would_mark"] == "done"
+    assert out["current"]["completedAt"] is None
+    _assert_silent(client)
+
+
+def test_mark_is_task_only(client):
+    """Un rappel se marque « déclenché » tout seul, il ne se termine pas : lui
+    proposer mark_done mentirait sur ce que fait l'appel."""
+    with pytest.raises(McpError, match="entity doit être"):
+        _tool("folk_record")(entity="reminder", op="mark_done", id="rmd_1")
+    _assert_silent(client)
+
+
+def test_reminder_entity_still_works_deprecated_is_not_broken(client):
+    """Folk a déprécié /reminders (retrait annoncé février 2027), pas coupé :
+    l'entité doit continuer de répondre tant que l'endpoint répond."""
+    client.list_reminders.return_value = []
+    _tool("folk_record")(entity="reminder", op="search")
+    client.list_reminders.assert_called_once()
