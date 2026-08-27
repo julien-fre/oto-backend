@@ -809,7 +809,10 @@ def register(mcp: FastMCP) -> None:
                 `entity="note"` (pas de get-par-id côté Folk), dégrade en
                 `{"fields": ..., "current_available": False}` (update) ou un
                 record `None` + `"current_available": False` (delete) — aperçu
-                sans le "from".
+                sans le "from". Même dégradation sur un `op="update"`
+                d'interaction SANS `entity_id` — mais là c'est réparable :
+                le PATCH lui-même n'en a pas besoin, seule la relecture d'avant/
+                après en dépend. Passer `entity_id` pour obtenir un vrai diff.
 
         Returns:
             search: {"entity", "count", "results"} — plus "when" for
