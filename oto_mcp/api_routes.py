@@ -56,6 +56,7 @@ from .api_routes_base import (  # noqa: F401 — ré-export de compatibilité
 # Handlers par DOMAINE (découpe du 2026-08-27) : chaque module porte des fonctions
 # de module, testables seules ; la table de routes ci-dessous reste ici.
 from . import api_routes_public as public
+from . import api_routes_account as account
 
 logger = logging.getLogger(__name__)
 
@@ -370,99 +371,6 @@ class RestCallLogger:
 
 def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     from starlette.routing import Route
-
-    async def me(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        user = db.get_user(sub) or {}
-        status = access.status_for(sub)
-        # `active_org` = org EFFECTIVE (ADR 0023) : via `current_org` elle reflète
-        # la consultation view-as (header X-Oto-Org) si posée, sinon la maison. Le
-        # front scope ses vues là-dessus. `home_org` (ci-dessous) = le défaut brut.
-        active_org = access.current_org(sub)
-        active_org_name = None
-        active_org_logo_url = None
-        org_role = None
-        active_org_require_mfa = False
-        if active_org is not None:
-            o = org_store.get_org(active_org)
-            active_org_name = o["name"] if o else None
-            # Logo EFFECTIF (upload > dérivé logo.dev du domaine déclaré).
-            active_org_logo_url = org_store.effective_logo_url(o) if o else None
-            org_role = org_store.get_org_role(active_org, sub)
-            # MFA obligatoire de l'org (2ᵉ facteur imposé au login des membres,
-            # enforcé par Logto via l'org miroir — cf. mfa_mirror).
-            active_org_require_mfa = org_store.get_org_mfa(active_org)["require_mfa"]
-        # Consultation d'une org tierce EN LECTURE SEULE par un opérateur plateforme :
-        # org active posée (par X-Oto-Org) mais aucun rôle réel dans cette org. Le front
-        # affiche un bandeau + traite l'écran en lecture (le backend rejette déjà toute
-        # mutation — GET-only au middleware). Un membre a toujours un rôle → False.
-        active_org_readonly = (
-            active_org is not None and org_role is None
-            and access.is_platform_operator(sub)
-        )
-        # Org perso (espace privé mono-membre) : le front adapte son vocabulaire
-        # (principe 9 du CDC connecteurs — un « solo » ne lit jamais « org »/« équipe »).
-        active_org_is_personal = (
-            active_org is not None and org_store.is_personal_org(active_org))
-        # Org MAISON (défaut persistant, colonne) — exposée distinctement pour que
-        # le front affiche « ton défaut » et l'action « définir comme maison ».
-        home_org = org_store.get_active_org(sub)
-        home_org_name = None
-        if home_org is not None and home_org != active_org:
-            ho = org_store.get_org(home_org)
-            home_org_name = ho["name"] if ho else None
-        elif home_org is not None:
-            home_org_name = active_org_name
-        # Sous-palier groupe (ADR 0012) : équipe EFFECTIVE (consultation ?? maison,
-        # ADR 0023) + rôle effectif (escalade). `home_group` = défaut persistant.
-        active_group = access.current_group(sub)
-        active_group_name = None
-        group_role = None
-        if active_group is not None:
-            from . import roles
-            g = group_store.get_group(active_group)
-            active_group_name = g["name"] if g else None
-            group_role = roles.effective_group_role(sub, active_group)
-        home_group = group_store.get_active_group(sub)
-        home_group_name = None
-        if home_group is not None and home_group != active_group:
-            hg = group_store.get_group(home_group)
-            home_group_name = hg["name"] if hg else None
-        elif home_group is not None:
-            home_group_name = active_group_name
-        return _json(request, {
-            "sub": sub,
-            "email": user.get("email"),
-            "name": user.get("name"),
-            "avatar_url": user.get("avatar_url"),
-            # Préférence de langue de l'UI dashboard ('en'|'fr'), NULL = non définie
-            # (le front retombe sur la langue du navigateur). Écrite via PUT /api/me/locale.
-            "locale": user.get("locale"),
-            "role": status["role"],
-            "active_org": active_org,
-            "active_org_name": active_org_name,
-            "active_org_logo_url": active_org_logo_url,
-            "org_role": org_role,
-            "active_org_readonly": active_org_readonly,
-            "active_org_is_personal": active_org_is_personal,
-            "active_org_require_mfa": active_org_require_mfa,
-            "home_org": home_org,
-            "home_org_name": home_org_name,
-            "active_group": active_group,
-            "active_group_name": active_group_name,
-            "group_role": group_role,
-            "home_group": home_group,
-            "home_group_name": home_group_name,
-            # Feature flags par-déploiement (dark launch) : le dashboard dérive sa
-            # nav de l'effet backend (ex. billing masqué en prod tant que le PSP
-            # n'est pas live) — une seule source, pas de flag front dupliqué.
-            "features": {"billing": billing.is_enabled()},
-            # crunchbase = connecteur `personal_session` standard → exposé dans
-            # `providers` (comme brevo), plus de bloc dédié (ADR 0026).
-            "providers": status["providers"],
-        })
 
     # Saisie de credential per-user, GÉNÉRIQUE (modèle multi-champs, ADR 0011) :
     # tout connecteur `byo_user` qui déclare un schéma de saisie (`secret_fields` :
@@ -1116,15 +1024,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
             return _json_error(request, 404, "unknown_token")
         return _json(request, {"ok": True, "id": token_id})
 
-    # Les lentilles admin `/api/admin/monitoring/*` sont devenues des CAPACITÉS
-    # (`capabilities/monitoring.py`, mêmes chemins + console MCP oto_admin_monitoring).
-
-    def _monitoring_days(request: Request, default: int = 7) -> int:
-        try:
-            return int(request.query_params.get("days", str(default)))
-        except ValueError:
-            return default
-
     async def me_project_export(request: Request) -> Response:
         """Export d'un projet (KB) en ZIP d'arborescence markdown (oto/#6 B2 —
         réversibilité). Accès LECTURE requis. Les pages deviennent des .md ; une page
@@ -1145,49 +1044,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         fname = f"{doc_export._slug(proj.get('name') or 'export', pid)}.zip"
         return Response(blob, media_type="application/zip",
                         headers={"Content-Disposition": f'attachment; filename="{fname}"'})
-
-    async def me_activity_summary(request: Request) -> JSONResponse:
-        """Activité de CE workspace pour l'utilisateur courant (MES appels dans l'org
-        active), fenêtre `?days=` (défaut 7). Scopé (org active, self) → l'overview
-        d'un workspace ne montre plus l'activité plateforme-wide ni celle des autres
-        membres/orgs (oto/#5.2). Pas de gate admin : chacun voit sa propre activité.
-        Un workspace neuf sans appel → agrégats vides (comportement attendu)."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        active_org = access.current_org(sub)
-        return _json(request, db.tool_call_stats(
-            since_days=_monitoring_days(request), org_id=active_org, sub=sub))
-
-    async def my_calls(request: Request) -> JSONResponse:
-        """Journal des appels MCP de l'utilisateur courant (sa propre activité).
-        Filtres `?limit=`/`?tool=`/`?errors=1`/`?days=`. Scopé au sub du token ET à
-        l'**org active** (consultation `X-Oto-Org` ?? maison, seam `current_org`, ADR 0023)
-        — un user ne voit QUE ses propres appels DANS l'org chargée (≠ /api/admin/monitoring
-        qui agrège tout le monde et reste admin-only)."""
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        qp = request.query_params
-        try:
-            limit = int(qp.get("limit", "200"))
-        except ValueError:
-            limit = 200
-        since_days: int | None = None
-        if qp.get("days"):
-            try:
-                since_days = int(qp["days"])
-            except ValueError:
-                since_days = None
-        calls = db.list_tool_calls(
-            limit=limit,
-            sub=sub,
-            org_id=access.current_org(sub),
-            tool_name=qp.get("tool") or None,
-            errors_only=qp.get("errors") in ("1", "true"),
-            since_days=since_days,
-        )
-        return _json(request, {"calls": calls})
 
     async def my_tools_list(request: Request) -> JSONResponse:
         """Liste tous les tools du serveur avec l'état (enabled/disabled)
@@ -1469,7 +1325,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/invitations/code/{code}", options_handler, methods=["OPTIONS"]),
         Route("/api/invitations/{token}", public.invite_preview, methods=["GET"]),
         Route("/api/invitations/{token}", options_handler, methods=["OPTIONS"]),
-        Route("/api/me", me, methods=["GET"]),
+        Route("/api/me", bind(account.me, verifier=verifier), methods=["GET"]),
         Route("/api/me", options_handler, methods=["OPTIONS"]),
         Route("/api/me/avatar", avatar_save, methods=["POST"]),
         Route("/api/me/avatar", avatar_clear, methods=["DELETE"]),
@@ -1494,7 +1350,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/orgs/{id}/logo", org_logo_save, methods=["POST"]),
         Route("/api/orgs/{id}/logo", org_logo_clear, methods=["DELETE"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/calls", my_calls, methods=["GET"]),
+        Route("/api/me/calls", bind(account.my_calls, verifier=verifier), methods=["GET"]),
         Route("/api/me/calls", options_handler, methods=["OPTIONS"]),
         Route("/api/me/tools", my_tools_list, methods=["GET"]),
         Route("/api/me/tools", options_handler, methods=["OPTIONS"]),
@@ -1530,7 +1386,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/admin/users/{sub}/tokens", options_handler, methods=["OPTIONS"]),
         Route("/api/admin/users/{sub}/tokens/{token_id}", admin_tokens_delete, methods=["DELETE"]),
         Route("/api/admin/users/{sub}/tokens/{token_id}", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/activity-summary", me_activity_summary, methods=["GET"]),
+        Route("/api/me/activity-summary", bind(account.me_activity_summary, verifier=verifier), methods=["GET"]),
         Route("/api/me/activity-summary", options_handler, methods=["OPTIONS"]),
         Route("/api/me/projects/{id}/export", me_project_export, methods=["GET"]),
         Route("/api/me/projects/{id}/export", options_handler, methods=["OPTIONS"]),
