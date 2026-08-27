@@ -33,18 +33,18 @@ le résultat porte un `found` qui ne liste que ce qui a vraiment une valeur : em
 
 `enrich_lead` a une contrainte : il ne marche que sur un lead **en attente de review**. sur un lead déjà passé en review — c'est-à-dire tous ceux d'une campagne sans review-before-send — lemlist répond `lemrich is not available for lead reviewed`. sinon : enrichir la personne avec l'enrichissement autonome et reporter le résultat soi-même.
 
-## gotcha — enrichir à l'insertion vs enrichir tout court
+## note — enrichir à l'insertion vs enrichir tout court
 
 les mêmes quatre axes existent **aussi** en options de `lemlist_create_lead`, appliquées au lead au moment où il entre dans la campagne. c'est le bon geste quand la campagne est la destination. quand tu veux juste la donnée — la poser dans un tableau, la croiser, la qualifier avant de décider — passe par l'enrichissement autonome : pas de campagne, pas de lead créé au passage.
 
-## gotcha — lemlist n'est pas la seule source d'enrichissement
+## note — lemlist n'est pas la seule source d'enrichissement
 
 oto porte plusieurs enrichisseurs (FullEnrich en waterfall multi-provider, Dropcontact, Kaspr, Hunter…). lemlist vaut surtout quand le contact est déjà dans ton outreach, ou pour rester sur un seul fournisseur et un seul compteur de crédits. pour un taux de réussite téléphone maximal sur un lot froid, compare avec FullEnrich.
 
-## gotcha — un `done` vide n'est pas forcément un « pas trouvé »
+## note — un `done` vide n'est pas forcément un « pas trouvé »
 
 lemlist bascule parfois sur `done` **avant** d'avoir posé la charge utile : le relevé rend `done` avec un `data` vide, et le relevé suivant contient la donnée. c'est intermittent, pas systématique. le tool signale ces cas (`recheck_suggested`) : refaire **un** relevé avant de conclure que rien n'a été trouvé — ça ne coûte rien. après ce second relevé, un résultat toujours vide est un vrai « pas trouvé » (c'est le cas d'un profil LinkedIn que lemlist n'arrive pas à résoudre).
 
-## gotcha — le domaine d'entreprise est un indice, pas un filtre
+## note — le domaine d'entreprise est un indice, pas un filtre
 
 lemlist rapproche sur ce qu'il peut et peut rendre un email sur un **autre** domaine que celui fourni : une recherche sur `zendesk.com` a rendu une adresse `@genesys.com`, la personne ayant changé d'employeur. c'est en général ce qu'on veut — mais si tu comptais sur le domaine comme garantie, vérifie le résultat.

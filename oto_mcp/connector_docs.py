@@ -47,6 +47,12 @@ KINDS = ("prerequisite", "setup", "usage", "note")
 
 # `## kind — titre` (tiret cadratin ou simple : les deux passent à la saisie).
 _TITRE = re.compile(r"^##\s+(" + "|".join(KINDS) + r")\s*[—-]\s*(.+?)\s*$")
+# Un titre de section qui RESSEMBLE au patron mais dont le premier mot n'est pas un
+# kind connu. Sans lui, `## plusieurs workspaces — …` ne matchait rien : la ligne
+# tombait dans le CORPS de la section précédente, `##` compris, et le texte
+# s'affichait au mauvais endroit — dans le prérequis, montré avant connexion. Vécu
+# le 2026-08-27 sur la doc Slack. Un titre mal nommé se signale, il ne s'avale pas.
+_TITRE_SUSPECT = re.compile(r"^##\s+([a-zA-Z][\w -]*?)\s*[—-]\s*(.+?)\s*$")
 _MARQUEUR = re.compile(r"\{\{callback:([^}]+)\}\}")
 
 
@@ -86,7 +92,14 @@ def _parse(texte: str, source: str) -> tuple[DocSection, ...]:
         if m:
             _fermer()
             kind, titre, corps = m.group(1), m.group(2), []
-        elif kind is not None:
+            continue
+        suspect = _TITRE_SUSPECT.match(ligne)
+        if suspect and suspect.group(1) not in KINDS:
+            logger.warning(
+                "connector_docs/%s : section `%s` — kind inconnu, la section entière "
+                "part dans le corps de la précédente. Attendus : %s",
+                source, suspect.group(1), ", ".join(KINDS))
+        if kind is not None:
             corps.append(ligne)
         elif ligne.strip():
             # Texte avant tout titre : il ne serait affiché nulle part. On le signale

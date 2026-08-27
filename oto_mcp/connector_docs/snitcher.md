@@ -18,7 +18,7 @@ snitcher identifie les ENTREPRISES derrière le trafic anonyme de votre site, en
 - « quels segments existent ? » → `snitcher_workspace(op="segments")` — leurs uuids filtrent organisations et sessions
 - « note le tier de ce compte » → `snitcher_custom_field(op="set", organisation_uuid="...", key="account_tier", value="enterprise")` — `op="set_many"` pose jusqu'à 50 champs d'un coup, les clés inconnues sont créées automatiquement (type inféré)
 
-## ⚠️ notes
+## note — ⚠️ ce qui coûte, ce qui détruit, ce qui s'exclut
 
 - `snitcher_contact(op="reveal_email")` est le SEUL appel payant (crédits) — tout le reste est lecture ou écriture gratuite (tags, custom fields, admin workspace)
 - `snitcher_workspace(op="delete")` détruit le workspace ET son historique de visites — irréversible, à confirmer explicitement avec l'utilisateur

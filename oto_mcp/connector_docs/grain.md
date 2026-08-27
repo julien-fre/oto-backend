@@ -17,7 +17,7 @@ grain donne accès aux enregistrements de réunion, transcripts et données d'or
 - « quelles équipes / quels users / quels types de réunion existent ? » → `grain_org(op="users"|"teams"|"meeting_types")`
 - « les réunions Customer Support de cette équipe qui parlent d'onboarding » → `grain_recording(op="list", filter={"team": "...", "meeting_type": "...", "title_search": "onboarding"})` — les trois filtres se combinent, confirmé en live (ids via `grain_org`)
 
-## ⚠️ note — un Personal Access Token voit AUSSI les réunions des autres
+## note — ⚠️ un Personal Access Token voit AUSSI les réunions des autres
 
 **Vérifié en live le 2026-08-20** sur un vrai workspace : `grain_recording(op="list")` sans filtre `attendance` rend les enregistrements `share_state="public"` de **toute l'organisation**, pas seulement ceux du porteur du token — constaté concrètement : des réunions enregistrées par des collègues, où le porteur du PAT n'était même pas participant, sont remontées en premier (tri chronologique). C'est le comportement documenté par Grain (« Personal notes » + « Public notes : workspace-visible notes »), pas un bug — mais ça surprend si on s'attend à un scope « mes réunions seulement ».
 
