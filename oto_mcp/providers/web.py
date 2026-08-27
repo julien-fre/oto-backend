@@ -1,0 +1,23 @@
+"""Déclaration de registre du connecteur `web`.
+
+Domicile unique de son entrée : `providers/__init__.py` l'AGRÈGE (il ne la
+décrit pas). Cf. `providers/_model.py` pour le contrat de `Connector`.
+"""
+from __future__ import annotations
+
+from ._model import _c
+
+# Le lecteur qui ESCALADE (#348) : fetch nu → scraper serper → navigateur
+# jetable opt-in. Capacité NUE (ADR 0010 : les fournisseurs des crans ne
+# sont pas substituables par l'appelant, c'est une cascade) ; pas de
+# credential propre — chaque cran résout le sien (serper par la cascade,
+# Browserbase par la config plateforme).
+CONNECTOR = _c(
+    "web", ["web"], secret_kind="none",
+    label="Lecteur web",
+    help="lire une page publique qui se défend — fetch, puis scraper, "
+         "puis navigateur jetable (opt-in coûté)",
+)
+
+CATEGORY = "Web"
+SANS_LOGO_DE_MARQUE = True
