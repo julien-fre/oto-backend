@@ -169,6 +169,12 @@ CREATE INDEX IF NOT EXISTS idx_doc_links_to ON doc_links(to_doc);
 """
 
 # activité et fichiers d'un projet
+# ⚠️ Ce fragment s'OUVRE sur l'index de `doc_change_requests`, dont la table est
+# déclarée ~90 lignes plus haut (dans PROJECTS) : ce n'est pas une faute de frappe,
+# c'est la position exacte qu'il occupait dans le littéral d'origine, entre les
+# embeddings et `project_activity`. La découpe par domaine était un déplacement PUR
+# — le remonter auprès de sa table changerait la chaîne servie, donc l'empreinte
+# gelée par `tests/test_schema_assembly_frozen.py`. Cf. docs/migrations-versionnees.md §2.7.
 PROJECT_FILES = """CREATE INDEX IF NOT EXISTS idx_doc_change_requests_doc ON doc_change_requests(doc_id, status, created_at DESC);
 
 -- Journal d'activité d'un projet (incrément 5) : qui a fait quoi, quand. Alimenté
