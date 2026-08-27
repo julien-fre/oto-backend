@@ -62,6 +62,7 @@ from . import api_routes_projects as projects
 from . import api_routes_uploads as uploads
 from . import api_routes_credentials as credentials
 from . import api_routes_tools as tools
+from . import api_routes_admin as admin
 
 logger = logging.getLogger(__name__)
 
@@ -324,113 +325,6 @@ class RestCallLogger:
 def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     from starlette.routing import Route
 
-    async def admin_platform_keys_list(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        # ADR 0044 §F : instances scope PLATFORM du coffre unifié (plus platform_keys). Le
-        # secret n'est JAMAIS déchiffré/renvoyé — identité (provider, label, set_at) seulement.
-        return _json(request, {"platform_keys": credentials_store.list_platform_credentials()})
-
-    async def admin_platform_key_create(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        try:
-            body = await request.json()
-        except Exception:
-            return _json_error(request, 400, "invalid_json")
-        if not isinstance(body, dict):
-            return _json_error(request, 400, "invalid_body")
-        provider = (body.get("provider") or "").strip()
-        label = (body.get("label") or "").strip()
-        api_key = (body.get("api_key") or "").strip()
-        if provider not in db.KEY_PROVIDERS:
-            return _json_error(request, 400, "invalid_provider")
-        if not label or not api_key:
-            return _json_error(request, 400, "missing_fields")
-        # ADR 0044 §F : la clé plateforme est une instance scope PLATFORM du coffre unifié
-        # (fin de platform_keys).
-        try:
-            credentials_store.set_credential(credentials_store.PLATFORM, label, provider,
-                                             api_key, set_by=sub)
-        except ValueError as e:
-            return _json_error(request, 400, "invalid_platform_provider", str(e))
-        return _json(request, {"provider": provider, "label": label})
-
-    async def admin_platform_key_delete(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        provider = (request.path_params.get("provider") or "").strip()
-        label = (request.path_params.get("label") or "").strip()
-        # ADR 0044 §F : supprime l'instance plateforme (ses grants vivent sur sa ligne
-        # share_down/meta → partent avec elle, pas d'orphelin).
-        if not credentials_store.clear_credential(credentials_store.PLATFORM, label, provider):
-            return _json_error(request, 404, "unknown_key")
-        return _json(request, {"ok": True, "provider": provider, "label": label})
-
-    # Gestion des jetons (palier admin) : `allow_api_token=False` — même règle que
-    # `/api/me/tokens`, un jeton ne fabrique pas de jeton. Ici l'enjeu est pire :
-    # ces routes émettent pour un sub TIERS.
-    async def admin_tokens_list(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier, allow_api_token=False)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        target_sub = request.path_params["sub"]
-        if not db.get_user(target_sub):
-            return _json_error(request, 404, "unknown_user")
-        return _json(request, {"tokens": db.list_api_tokens(target_sub)})
-
-    async def admin_tokens_create(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier, allow_api_token=False)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        target_sub = request.path_params["sub"]
-        if not db.get_user(target_sub):
-            return _json_error(request, 404, "unknown_user")
-        try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        label = (body or {}).get("label") or "cli"
-        ttl_raw = (body or {}).get("ttl_days")
-        ttl_days = int(ttl_raw) if isinstance(ttl_raw, (int, str)) and str(ttl_raw).isdigit() else None
-        try:
-            scopes = token_scopes.parse((body or {}).get("scopes"))
-        except token_scopes.ScopeError as e:
-            return _json_error(request, 400, "invalid_scopes", str(e))
-        token = db.create_api_token(target_sub, label=label.strip()[:32],
-                                    ttl_days=ttl_days, scopes=scopes)
-        return _json(request, {"token": token, "label": label, "ttl_days": ttl_days,
-                               "scopes": scopes})
-
-    async def admin_tokens_delete(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier, allow_api_token=False)
-        if err:
-            return err
-        if not access.is_super_admin(sub):
-            return _json_error(request, 403, "forbidden")
-        target_sub = request.path_params["sub"]
-        try:
-            token_id = int(request.path_params["token_id"])
-        except ValueError:
-            return _json_error(request, 400, "invalid_id")
-        ok = db.delete_api_token(target_sub, token_id)
-        if not ok:
-            return _json_error(request, 404, "unknown_token")
-        return _json(request, {"ok": True, "id": token_id})
-
     datastore_routes = api_routes_datastore.make_routes(
         verifier=verifier,
         authenticate=_authenticate,
@@ -586,15 +480,15 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/me/connectors/{name}/session/start", options_handler, methods=["OPTIONS"]),
         Route("/api/me/connectors/{name}/session/finalize", bind(credentials.session_finalize, verifier=verifier), methods=["POST"]),
         Route("/api/me/connectors/{name}/session/finalize", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/platform-keys", admin_platform_keys_list, methods=["GET"]),
-        Route("/api/admin/platform-keys", admin_platform_key_create, methods=["POST"]),
+        Route("/api/admin/platform-keys", bind(admin.admin_platform_keys_list, verifier=verifier), methods=["GET"]),
+        Route("/api/admin/platform-keys", bind(admin.admin_platform_key_create, verifier=verifier), methods=["POST"]),
         Route("/api/admin/platform-keys", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/platform-keys/{provider}/{label}", admin_platform_key_delete, methods=["DELETE"]),
+        Route("/api/admin/platform-keys/{provider}/{label}", bind(admin.admin_platform_key_delete, verifier=verifier), methods=["DELETE"]),
         Route("/api/admin/platform-keys/{provider}/{label}", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/users/{sub}/tokens", admin_tokens_list, methods=["GET"]),
-        Route("/api/admin/users/{sub}/tokens", admin_tokens_create, methods=["POST"]),
+        Route("/api/admin/users/{sub}/tokens", bind(admin.admin_tokens_list, verifier=verifier), methods=["GET"]),
+        Route("/api/admin/users/{sub}/tokens", bind(admin.admin_tokens_create, verifier=verifier), methods=["POST"]),
         Route("/api/admin/users/{sub}/tokens", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/users/{sub}/tokens/{token_id}", admin_tokens_delete, methods=["DELETE"]),
+        Route("/api/admin/users/{sub}/tokens/{token_id}", bind(admin.admin_tokens_delete, verifier=verifier), methods=["DELETE"]),
         Route("/api/admin/users/{sub}/tokens/{token_id}", options_handler, methods=["OPTIONS"]),
         Route("/api/me/activity-summary", bind(account.me_activity_summary, verifier=verifier), methods=["GET"]),
         Route("/api/me/activity-summary", options_handler, methods=["OPTIONS"]),
