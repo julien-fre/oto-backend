@@ -42,6 +42,13 @@ oto_mcp/
 ├── api_routes_<domaine>.py # les handlers : public, account, media, projects, uploads, credentials, tools, admin
 ├── access.py         # rôles member/admin, resolve_api_key, quotas, status_for
 ├── db/               # store PG (package) : _conn (pool/connexion), _schema (DDL), _init (migrations) + 1 module/domaine (users, keys, usage, datastore, projects, opendata…). Surface plate `db.<fn>` via __init__
+├── org_store/        # palier ORG (package, découpé le 2026-08-27) : orgs (la fiche), members (appartenance + MAISON),
+│                     #   vault (secrets), settings (redaction/email/MFA), personal (org perso + boot),
+│                     #   invitations (plateforme/org/équipe), instructions (procédures), library (doctrines publiées).
+│                     #   DAG à 2 étages : {personal, invitations} → {orgs, members} ; library → instructions.
+│                     #   Surface plate `org_store.<fn>` via __init__, qui REDESCEND les écritures sur le module
+│                     #   propriétaire (sinon un monkeypatch de test serait mort en silence). Cliquet :
+│                     #   `tests/test_org_store_surface_frozen.py` (surface, signatures, DAG, 500 lignes).
 
 ├── auth_hooks.py     # current_user_sub_from_token() pour le contexte tool
 └── config.py         # require_env
@@ -331,8 +338,9 @@ ressources** par délégation de l'org : secrets partagés (cascade `user_key > 
 active > plateforme`), doctrine & skills, gouvernance de connecteur.
 ⚠️ **Invariant monotone** : l'équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse
 (platform ⊇ org ⊇ group). ⚠️ **Groupe actif** : ≤1 par sub, il appartient à l'org active.
-⚠️ `org_store` n'importe PAS `group_store` (SQL direct pour l'invariant org↔groupe, pas de
-cycle). ⚠️ Migrations vivantes sur la DB partagée = playbook `docs/live-migrations.md`.
+⚠️ **Aucun module du package `org_store/` n'importe `group_store`** (SQL direct dans
+`org_store/members.py` pour l'invariant org↔groupe, pas de cycle) — la règle a survécu à la
+découpe du 2026-08-27 et est désormais **vérifiée** (`test_org_store_surface_frozen.py`). ⚠️ Migrations vivantes sur la DB partagée = playbook `docs/live-migrations.md`.
 **Détail : `docs/groups-and-roles.md`.**
 
 ## Fédération MCP & comptes (otomata#16)

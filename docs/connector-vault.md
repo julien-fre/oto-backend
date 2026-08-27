@@ -56,7 +56,7 @@ connector_credentials(entity_type, entity_id, connector, account, secret_enc,
 - `account` = discriminant **multi-compte** ('' = mono ; ex. email Google). 1 ligne par compte connecté.
 - `secret_enc` = enveloppe chiffrée (pas de colonne plaintext). `meta` = satellites NON-secrets (user_agent linkedin/crunchbase, access_token/expires_at/scopes/is_default google).
 
-Store = `credentials_store.py` (calqué `org_store.py`, réutilise `db._connect`, jamais d'import circulaire) :
+Store = `credentials_store.py` (calqué sur le palier org, réutilise `db._connect`, jamais d'import circulaire) :
 `get_credential` / `get_credential_with_meta` (secret+meta+set_at, déchiffre) / `credential_status` (présence+meta SANS déchiffrer, pour /api/me) / `has_credential` / `set_credential` (chiffre) / `clear_credential` / `update_meta` (merge JSONB sans re-chiffrer) / `list_accounts`.
 - **Packing multi-champs** : `pack_secret(connector, fields)` / `unpack_secret(connector, secret)` encodent les `secret_fields` dans l'unique `secret_enc` — 3 formats selon la forme : 1 champ (`api_key`) = valeur brute (back-compat) ; `basic_auth` = `base64("email:password")` (format de fil que le mount distant décode, ex. planity-mcp) ; ≥2 champs = `json`. L'endpoint de saisie et `resolve_credential_fields` passent par là.
 
@@ -76,7 +76,7 @@ Enveloppe **AES-256-GCM**, **obligatoire** (`set_credential`/`_pk_encrypt` chiff
 
 ## Palier org
 
-Tables `orgs`/`org_members`(index partiel `org_members_one_active`)/`org_entitlements` ; `org_store.py` ; 12 meta-tools `oto_admin_*` (`tools/orgs.py`). Entité = **user ET org, 2 niveaux** (perso prime sur org).
+Tables `orgs`/`org_members`(index partiel `org_members_one_active`)/`org_entitlements` ; `org_store/` (`orgs.py` la fiche, `members.py` l'appartenance, `vault.py` les secrets) ; 12 meta-tools `oto_admin_*` (`tools/orgs.py`). Entité = **user ET org, 2 niveaux** (perso prime sur org).
 
 ## Folds des secrets de session (cible : coffre unique)
 

@@ -22,7 +22,12 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp"
 # fichier_relatif -> raison pour laquelle lire la MAISON en direct y est correct.
 ALLOWED = {
     "access.py": "le seam current_org lui-même : la maison est son REPLI terminal.",
-    "org_store.py": "le store qui la définit (set-path, invariants internes).",
+    # `org_store.py` jusqu'au 2026-08-27 : le store d'org a été découpé en package.
+    # L'entrée est REMPLACÉE par le seul module qui appelle vraiment la maison —
+    # la découpe rétrécit donc l'allowlist au lieu de la reconduire en bloc
+    # (`members.py` la DÉFINIT sans jamais l'appeler ; les 6 autres l'ignorent).
+    "org_store/personal.py": "le store qui la POSE : `ensure_personal_org` fait "
+                             "de l'org perso la maison quand le user n'en a aucune.",
     # `api_routes.py` jusqu'au 2026-08-27 : le handler `/api/me` a suivi la
     # découpe par domaine. Même call-site, même raison, autre fichier.
     "api_routes_account.py": "exposition `home_org` de /api/me (« ton défaut », distinct "
