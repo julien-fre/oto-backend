@@ -147,7 +147,16 @@ CREATE TABLE IF NOT EXISTS tool_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_tool_calls_created_at ON tool_calls(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_sub ON tool_calls(sub);
-CREATE INDEX IF NOT EXISTS idx_tool_calls_server_tool ON tool_calls(server, tool, created_at);
+-- ⚠️ Nom HÉRITÉ de l'ancienne table `tool_call_log` : c'est le nom que porte la base
+-- de prod, et le redéclarer sous un nom propre y créerait un SECOND index identique.
+-- Il n'était déclaré NULLE PART jusqu'au 2026-08-27 — la prod l'avait, un environnement
+-- neuf ne l'aurait pas eu, alors que `tool = %s` est un filtre de trois lectures et que
+-- cet index sert 11,6 M fois. Le DDL et la base avaient divergé dans les deux sens : il
+-- manquait celui-ci, et il déclarait `idx_tool_calls_server_tool (server, tool, …)`,
+-- retiré le même jour — 82 Mo, ZÉRO lecture depuis la création de la base, car `server`
+-- n'est jamais un critère de filtre : en tête d'index composite, il rendait l'index
+-- inutilisable pour le seul filtre qui existe.
+CREATE INDEX IF NOT EXISTS idx_tool_call_log_tool ON tool_calls(tool);
 -- Lentilles d'activité du datastore (ADR 0046 b4) : corrélation par `ns_id` résolu.
 -- Index d'EXPRESSION partiel — seules les lignes `data_*` portent un ns_id, donc
 -- l'index reste petit et la lecture d'un tableau ne scanne plus tout le journal.
