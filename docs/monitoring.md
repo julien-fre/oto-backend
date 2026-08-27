@@ -183,3 +183,21 @@ c'est ce qui permet d'éprouver le chemin réel sans engager la moitié irréver
 ⚠️ **La rétention à 90 jours n'effacera rien avant fin octobre 2026** : à sa mise en
 place, le journal ne remontait qu'au 28/07. Un premier passage qui ne supprime rien est
 le comportement attendu, pas une panne.
+
+## Error tracking (Sentry)
+
+Exceptions backend → **Sentry SaaS** (gaté `OTO_SENTRY_DSN`, no-op si absent →
+le serveur boote sans). Deux captures : **500 des routes REST `/api/*`** via
+l'intégration Starlette (auto) ; **exceptions des tools MCP** via
+`SentryToolErrorMiddleware` (`sentry_setup.py`) — une erreur de tool est une erreur
+JSON-RPC en **HTTP 200**, invisible à l'intégration Starlette, donc capturée là où
+l'exception est vivante (vrai traceback, tag `mcp.tool` + `user.id=sub`). RGPD :
+`send_default_pii=False`, **jamais** les args d'appel dans l'event. `before_send`
+**droppe les 4xx amont** (`HTTP 4xx` d'une API tierce = input rejeté, pas un bug
+backend). Env box : `OTO_SENTRY_{DSN,ENV,RELEASE,TRACES_SAMPLE_RATE}` ; région **EU**
+`de.sentry.io` (org slug `otomata-vz`). Surveillance/triage = doctrine oto
+`surveillance-erreurs` (token API en SOPS `sentry_api_token`).
+Un appel sur un tool HORS toolbox de session (la visibilité filtre `tools/list`,
+pas `tools/call`) = erreur **GÉRÉE actionnable** `tool_not_mounted`
+(`error_taxonomy` : oto_call immédiat / `oto_connector op=select`), droppée de
+Sentry — plus jamais un « Erreur interne du serveur » opaque (vécu 16/07, #224/#225).

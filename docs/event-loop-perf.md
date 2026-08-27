@@ -219,3 +219,11 @@ requêtes HTTP et `initialize`) plus le `clientInfo` du handshake, stocké dans
 `tool_calls.args` — noter que le connecteur Mistral ne surcharge pas le clientInfo du SDK
 Python, donc la base ne montre qu'un générique `client_name='mcp'` : **le nom du produit
 ne se lit que dans le User-Agent HTTP**.
+
+## Corollaire de méthode (27/08)
+
+Le 3ᵉ mode n'est pas un I/O mal placé mais une **requête lente** (JSONB sans index
+d'expression : 185 s de boucle tenue, prod + tenant tiers à terre) — même signature py-spy
+que le 2ᵉ, remède opposé : indexer, pas déplacer. Corollaire de méthode : **une lecture dont
+le coût suit le VOLUME TOTAL et non le scope demandé est une panne à retardement, qui se
+déclenche sans déploiement.**

@@ -133,3 +133,17 @@ Pour les non-tech : extension Chrome Oto Companion (repo `oto-app/extension/`,
 MV3) qui capture le couple `(li_at, user_agent)` et le push automatiquement
 via `POST /api/settings/linkedin` (auth Logto PKCE). Auto-resync via
 `chrome.cookies.onChanged` quand LinkedIn rotate la session.
+
+## Ce que la carte en résumait (migré le 2026-08-27)
+
+Plus AUCUN browser sur la box : les connecteurs d'**API privée cookie-bound**
+(`brevo`, `crunchbase`, `pennylaneged`) passent par **Browserbase** (Chrome hébergé,
+Context per-user = la session loguée au coffre, Live View pour le login interactif,
+`run_fetch` same-origin). Connexion = dashboard (`browser_session.py`, un seul corps
+REST+MCP, `login_url` obligatoire au register). LinkedIn = **Unipile** (tools/linkedin
+supprimé) ; l'injection de cookie `li_at` côté serveur déconnecte l'user (#5).
+S'y ajoute le connecteur **générique `browser`** (oto-private#79) : **lire** N sites
+derrière login sans un connecteur par site — **un site = un compte du coffre** (host,
+donc un Context par site), `browser_fetch` rend la page **complète** (≠ `run_fetch`,
+tronqué à 400 c.), verify générique = cookies sur le host (+ échappatoire `force`),
+`browser_eval` masqué par défaut.

@@ -144,3 +144,21 @@ docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/t
 > (200 uniquement pour un slug **publié** → borne l'émission de certs). `publish_mcp` est la **seule** action
 > par projet — **zéro DNS** à chaque publication. **Surface web** : annuaire public **oto.ninja/apps**
 > (`web/AppsView.vue`) via `GET /api/public/mcp-projects` (CORS `*`, liste les projets `anonymous` publiés).
+
+## Le projet — ce que la carte en disait (migré le 2026-08-27)
+
+Conteneur de travail **possédé** : brief + liens typés (`project_links` : tableau/
+procédure/connecteur/**doc** — `doc` = une page Documents attachée) + docs en arbre. Capacités `oto_project`/`oto_doc` ;
+partage/transfert via `oto_resource`. S'y greffent : **livraison client cascade**
+(#52), **endpoint MCP + partage navigable par projet** — un projet publié est servi sur
+son sous-domaine dédié, modes **anonymous** (`<slug>.mcp.oto.cx`, sans login + listé) /
+**secret** (`<slug>.share.oto.cx`, URL non devinable = **UI navigable** lecture seule des
+procédures/tableaux/docs, rendu server-side `share_ui`, + MCP au path `/mcp`) / **org**
+(authentifié) ; sonde credential-less **non bloquante** → `mcp_unresolvable_tools` en
+warning ; annuaire oto.ninja/apps. (Le partage public **chiffré** `/p/p` a été retiré,
+supplanté par ce partage navigable live.) La page navigable (`share_ui`) est un **canal
+d'acquisition** : hero « brancher », connecteurs en pastilles (logo + tooltip + lien fiche),
+tableau riche (recherche/tri/filtres), et CTA **« Ajouter à mon Oto »** → capacité
+`me.import_project` (`POST /api/me/projects/import`) qui **forke un projet publié par slug**
+dans l'org active (structure only, jamais de credentials ; idempotent via `projects.copied_from`).
+**Détail : `docs/projects.md`**.

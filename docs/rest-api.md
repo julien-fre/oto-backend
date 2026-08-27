@@ -101,3 +101,34 @@ chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/
     route ajoutée demain est refusée sans qu'on ait à y penser.
   - ⚠️ La portée nomme le tableau par son **nom** (ce que l'URL adresse), pas par son id :
     après un renommage, ré-émettre le jeton.
+
+## Descriptif dérivé + jetons portés (03/08)
+
+> **Descriptif dérivé + jetons portés (03/08).** `GET /openapi.json` (et
+> `/api/openapi.json`) sert un OpenAPI **dérivé** du registre de capacités + de la table
+> de routes vivante (`openapi.py`) — sans auth, `/api/admin/*` exclu. Il existe parce que
+> la surface était *indescriptible* : après l'ADR 0047, le verbe vit dans le corps (`op`),
+> donc un intégrateur qui sonde `/api/projects` tombe sur 404 et conclut « pas de REST »,
+> alors que `POST /api/me/projects {"op":"list"}` sert tout le métier projet. Côté sécurité,
+> deux crans sur les jetons `oto_` : leur **gestion** exige une session interactive
+> (`allow_api_token=False` sur `/api/me/tokens*` + miroirs admin — un jeton ne fabrique
+> plus de jeton, une fuite n'est plus auto-entretenue), et un jeton peut naître **porté**
+> (`token_scopes.py`, `user_api_tokens.scopes`) : deny-by-default borné à des tableaux
+> nommés en read/write. `scopes` NULL = jeton historique, inchangé. Depuis le 03/08 la
+> portée nomme aussi des **projets** (`{"projects": {"12": "read"}}`), servis par
+> `GET /api/me/projects/{id}` — la forme POST porte sa cible dans le CORPS, donc aucune
+> portée ne peut la borner : **ce qu'un jeton porté atteint doit se lire dans le chemin.**
+> C'est la règle à garder en tête avant d'ouvrir une nouvelle surface aux intégrations.
+
+## CORS — la liste du code est MORTE en prod comme en preprod
+
+⚠️ **CORS : la liste du code est MORTE en prod comme en preprod.** `_allowed_origins()`
+(`api_routes.py`) n'est qu'un **fallback** — les DEUX box posent `OTO_MCP_CORS_ORIGINS`
+dans leur `.env`, qui **écrase** la liste. Ajouter une origine au code, la déployer et
+constater que rien ne change est un piège vécu (30/07, front Tulina) : le tag prod avait
+été posé pour une raison inexacte. **Ajouter une origine = éditer l'env des deux box +
+restart** (`/opt/oto-mcp/.env`, `/opt/oto-mcp-canari/.env`) ; le code ne sert qu'aux
+environnements neufs. Diagnostic en 1 appel, sans lire le `.env` : `curl -X OPTIONS
+https://mcp.oto.cx/api/mcp/catalog -H 'Origin: <x>'` → l'en-tête `Access-Control-Allow-Origin`
+revient si l'origine passe. ⚠️ Ne pas déduire « c'est la liste du code » du seul fait qu'une
+origine du défaut est acceptée : l'override en contient une copie.

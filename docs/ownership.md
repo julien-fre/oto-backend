@@ -73,3 +73,24 @@ sont des reliques nullable, **DROP différé** (Phase H) après cutover prod vé
 > maison). Filets gardés : `ownership` accepte encore `owner_type='user'` **en lecture**
 > (reliquat) ; `session_visibility` `prof_org = active_org or 0` (défensif). `org_id=0`
 > purgé des profils de visibilité.
+
+## Le seam `ownership` — ce que la carte en disait
+
+`ownership.py` = seam unique : ressource possédée par `(owner_type∈{user,group,org},
+owner_id)` + partages `resource_grants` (deny-by-default). **Deux plans jamais
+confondus** : `can_access` (contenu, privacy by default) vs `can_govern` (gouvernance,
+escalade roles.py). ⚠️ **Une LISTE de contenu scope sur `active_owner(current_org)`,
+JAMAIS `owner_pairs()`** (union de toutes les orgs = fuite fail-open ; tripwire
+`test_owner_scope_tripwire.py`). Plus de « perso » : tout user a une org perso dédiée
+(`orgs.personal_of`), défauts de création = org active.
+**Détail (datastore pilote, oto_resource, migration, abolition du perso) : `docs/ownership.md`**.
+
+## Partage unifié audience × rôle (ADR 0048)
+
+> **Partage unifié audience × rôle (ADR 0048).** Le grant porte un **rôle**
+> `resource_grants.role ∈ {viewer, editor, manager}` (`permission` read/write reste la
+> projection CONTENU dérivée → SQL du plan contenu inchangé). `manager` (gérant) rend la
+> **gouvernance grantable** : `can_govern = owner ∪ grant gérant ∪ escalade roles.py` ; le
+> **transfert** reste `can_transfer = owner ∪ escalade` (jamais un gérant). Surface unique
+> `oto_resource op=share` : axe **audience** (person/team/org→grant ; public/secret→publication
+> projet ; private→dépublier) × **rôle**. Rétro-compat `permission` en entrée.

@@ -43,3 +43,24 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
 - **Harnais impératif** : `_SERVER_INSTRUCTIONS` pousse l'agent à réflexer oto, encadrer
   par `run_start/finish` et émettre `feedback`.
 - Déféré (otomata#32) : `why`-par-appel.
+
+## Un run silencieux ne s'annonce plus « en cours » (13/08, #311)
+
+> **Un run silencieux ne s'annonce plus « en cours » (13/08, #311).** 15 des 16 runs
+> « ouverts » de prod n'avaient plus donné signe de vie depuis 1 jour à 1 mois : des
+> conversations terminées sans clôture déclarée. Le silence est **dérivé à la lecture**
+> (`run_status`, 48 h sans appel rattaché) — jamais stocké : une colonne d'état écrite par
+> un démon pourrait mentir à son tour, ce qui est le défaut qu'on ferme. `last_seen_at`
+> remonte de `_runs_from_journal`, donc les 4 lectures en héritent d'un coup.
+> ⚠️ **Le vocabulaire d'issue vient de l'ADR, pas de la mesure** : `abandoned` est retiré
+> (absent d'ADR 0058-D5) ; `failed` RESTE bien qu'il n'ait jamais servi non plus, parce que
+> D5 le porte. **La mesure tranche ce que l'ADR laisse ouvert, jamais ce qu'elle a fermé.**
+
+## Runs persistés (#50, amende le « state-only » d'ADR 0017)
+
+> **Runs persistés (#50, amende le « state-only » d'ADR 0017).** La métadonnée
+> sémantique d'un run (label / doctrine / outcome) vit désormais dans la table `runs`
+> (`db.insert_run`/`finish_run`/`recent_runs`) — la pile session-scopée de
+> `doctrine_run.py` reste la **source du run actif** (stampe `tool_calls.run_id`),
+> `run_start`/`run_finish` y ajoutent la trace durable (best-effort, off-loop). Sert
+> l'anticipation du contexte injecté (instructions bloc C) + la boucle d'usage dashboard.
