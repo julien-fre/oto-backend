@@ -230,9 +230,11 @@ _GROUP_ENTITIES = ("person", "company")
 _MARK_ENTITIES = ("task",)
 
 # Entités dont l'id n'est adressable QUE via l'entité parente : Folk exige
-# `entity.id` en query sur get/delete d'une interaction (il n'existe pas de
-# « lire l'interaction lit_… » tout court), et sur ses deux endpoints de
-# listing.
+# `entity.id` sur les DEUX endpoints de listing, sur le get et le delete (en
+# query), et sur le PATCH (dans le corps) — il n'existe pas de « lire
+# l'interaction lit_… » tout court. Le PATCH a été vérifié en live le
+# 2026-08-27 : la spec OpenAPI ne marque pas `entity` requis, Folk répond
+# pourtant 422 `path: ['entity'], Required` sans lui.
 _ENTITY_ID_REQUIRED = ("interaction",)
 
 # Champs acceptés par `op="create"` par entité — miroir des paramètres nommés
@@ -304,11 +306,9 @@ def _get_one(c, entity: str, id: str, group_id: Optional[str] = None,
     permanent de l'API, pas un raccourci d'implémentation. Les previews
     update/delete d'une note dégradent en conséquence (pas de diff possible).
 
-    Renvoie `None` pour une `interaction` dont l'appelant n'a pas donné
-    `entity_id` : là c'est un gap de l'APPEL, pas de l'API — Folk sait relire
-    l'interaction, mais seulement scopée à son entité parente. Même
-    dégradation d'aperçu que la note, plutôt qu'un refus : `op="update"` sur
-    une interaction, lui, n'a pas besoin de `entity_id`."""
+    Le cas « interaction sans `entity_id` » ne se produit plus : les trois ops
+    qui appellent `_get_one` sur une interaction (get, update, delete) l'exigent
+    toutes en amont. Le garde reste par sûreté."""
     if entity == "person":
         return c.get_person(id)
     if entity == "company":
@@ -413,7 +413,9 @@ def _update_one(c, entity: str, id: str, fields: Optional[dict] = None,
     if entity == "note":
         return c.update_note(id, **fields)
     if entity == "interaction":
-        return c.update_interaction(id, **fields)
+        return c.update_interaction(
+            id, _need(entity_id, "entity_id", "update (entity='interaction')"),
+            **fields)
     if entity == "task":
         return c.update_task(id, **fields)
     if entity == "reminder":
@@ -641,27 +643,44 @@ def register(mcp: FastMCP) -> None:
 
         📖 **Reading what actually happened.** `entity="interaction"` is
         readable, not just writable: `op="search"` returns the emails, calendar
-        events, WhatsApp messages and manually-logged interactions Folk holds
-        for a person or company, `op="get"` returns one in full. (These four
-        endpoints are in Folk's **open beta** — the shape may still move.) Two
-        limits worth knowing before you rely on the content: each interaction
-        carries a `privacyLevel`, and `subjectOnly`/`sensitive`/`internal` hide
-        the body from anyone who wasn't in the conversation — the API key is
-        BYO, so what comes back is what ITS owner is allowed to see; and an
-        org-level field-redaction policy, where one is set, can strip fields on
-        top of that. An empty `content` is therefore a permission outcome, not
-        proof the interaction was empty.
+        events and manually-logged interactions Folk holds for a person or
+        company. (These endpoints are in Folk's **open beta** — the shape may
+        still move.) Three things verified live on 2026-08-27, each of which
+        changes how you use it:
 
-        ⏳ **Tasks, not reminders.** `entity="reminder"` still works but Folk
-        **deprecated** it on 2026-08-13 (removal announced for February 2027);
-        `entity="task"` is the successor and does strictly more — a markdown
-        `description`, real filters (due date, assignee, completed-or-not), and
-        completion tracking, which reminders never had. Write new work as
-        tasks. Field mapping if you're porting: name→title,
+        - **`op="search"` gives you `content: {subject, snippet}` — NOT the
+          body.** The full `body` only comes back from `op="get"` on one
+          interaction. So a sweep tells you what was discussed; reading what was
+          actually *said* costs one `get` per interaction.
+        - **`privacyLevel` withholds the body, not the subject.** On
+          `subjectOnly`/`sensitive`/`internal`, `get` still returns subject and
+          snippet but `body` is simply absent. The key is BYO, so what comes
+          back is what ITS owner may see. A missing `body` is a permission
+          outcome, not an empty interaction.
+        - **Imported interactions are read-only.** Folk refuses `op="update"`
+          and `op="delete"` on anything it pulled in from email, calendar or
+          WhatsApp — those belong to their source. Only `interactionType:
+          "logged"` records are writable.
+
+        An org-level field-redaction policy, where one is set, can strip fields
+        on top of all that.
+
+        ⏳ **Tasks, not reminders — and they are the SAME records.** Folk
+        **deprecated** `/reminders` on 2026-08-13 (removal announced for
+        February 2027) in favour of `/tasks`. Verified live on 2026-08-27:
+        the two are **one store with two views**, not two collections. A
+        workspace with 30 reminders has exactly those 30 as tasks, sharing the
+        same UUID under a different prefix — `rmd_<uuid>` and `tsk_<uuid>` are
+        the same record, and swapping the prefix resolves in both directions.
+
+        So nothing is stranded: a reminder created before the switch is
+        readable, filterable and closable as a task today, and `op="mark_done"`
+        works on it. Use `entity="task"` for everything new — it does strictly
+        more (a markdown `description`, real filters on due date / assignee /
+        completion, and completion tracking, which the reminder view has no
+        verb for). Field mapping when porting: name→title,
         recurrence_rule→due_at/due_time + recurrence_frequency,
-        visibility→is_public. ⚠️ Whether reminders already created also show up
-        under `entity="task"` is NOT documented by Folk and untested — check
-        before assuming a reminder is visible as a task.
+        visibility→is_public.
         - **"add_to_group"**: add one (`id`) or several (`ids`, ≤50) existing
           people/companies to ONE group (`group_id` = the target group). The
           inverse of `op="update"`'s `add_to_groups` (which batches *groups* for
@@ -693,6 +712,10 @@ def register(mcp: FastMCP) -> None:
             deal: {name*, people_ids, company_ids, custom_fields}
             note: {entity_id*, content*, visibility}
             interaction: {entity_id*, type*, title*, content, date_time}
+                — `date_time` is REQUIRED by Folk even though it reads as
+                optional here; omitted, it defaults to now rather than failing
+                with an opaque 422 (which is what the connector did until
+                2026-08-27).
             task: {entity_id*, title*, due_at*, due_time, description,
                 recurrence_frequency, assigned_users, is_public}
             reminder: {entity_id*, name*, recurrence_rule*, visibility}
@@ -762,7 +785,14 @@ def register(mcp: FastMCP) -> None:
                 "completedAt": {"empty": True}}.
             max_results: op="search" — truncate the response (default 100).
                 `count` reports the REAL total, so a `count` above the number of
-                `results` means the list was cut.
+                `results` means the list was cut. **`entity="interaction"` is
+                the exception**: Folk offers no filter there and serves 30 per
+                page, and one active contact can hold hundreds (>360 measured
+                on a single record), so the search STOPS at `max_results`
+                instead of draining the collection — `count` is what came back
+                and `truncated: true` says more exists. Ask for a bigger
+                `max_results` to go deeper; there is no way to ask Folk for
+                "the newest 10" more cheaply than reading one page of 30.
             add_to_groups: op="update" — rattacher une **person** ou **company**
                 À des groupes (`folk_group` pour les IDs), sans toucher ses
                 autres groupes — solo mode only.
@@ -779,9 +809,11 @@ def register(mcp: FastMCP) -> None:
                 PAS le passer pour person/company hors des deux cas ci-dessus.
             entity_id: the PARENT record (person `per_…`, company `com_…`, or
                 object `obj_…`) a sub-record hangs off. **Required** for
-                entity="interaction" on search/get/delete — Folk has no "read
-                interaction lit_…" on its own, an interaction is only
-                addressable through the record it belongs to. Optional, and
+                entity="interaction" on search/get/update/delete — Folk has no
+                "read interaction lit_…" on its own, an interaction is only
+                addressable through the record it belongs to (in the query for
+                get/delete, in the body for the PATCH). In bulk update each
+                item may carry its own. Optional, and
                 purely a convenience, on search for note/reminder/task (same as
                 filters={"entity_id": …} / filters={"entity": …}). NOT used by
                 op="create": there the parent record goes inside `item`.
@@ -809,15 +841,14 @@ def register(mcp: FastMCP) -> None:
                 `entity="note"` (pas de get-par-id côté Folk), dégrade en
                 `{"fields": ..., "current_available": False}` (update) ou un
                 record `None` + `"current_available": False` (delete) — aperçu
-                sans le "from". Même dégradation sur un `op="update"`
-                d'interaction SANS `entity_id` — mais là c'est réparable :
-                le PATCH lui-même n'en a pas besoin, seule la relecture d'avant/
-                après en dépend. Passer `entity_id` pour obtenir un vrai diff.
+                sans le "from". Une interaction, elle, a toujours son
+                `entity_id` (les trois ops l'exigent), donc son diff est
+                toujours réel.
 
         Returns:
-            search: {"entity", "count", "results"} — plus "when" for
-                interactions (and "past_count"/"upcoming_count" when
-                when="all").
+            search: {"entity", "count", "results"} — plus "when" and
+                "truncated" for interactions (and "past_count"/
+                "upcoming_count" when when="all").
             get: the record.
             create solo: the created record, or {"dry_run": true, "would_create": {...}}.
             create bulk: {"total", "succeeded", "created": [{"index","id"}],
@@ -891,19 +922,34 @@ def register(mcp: FastMCP) -> None:
                 _need(entity_id, "entity_id", "search (entity='interaction')")
                 c = _client()
                 bucket = when or "past"
-                past = (c.list_past_interactions(entity_id)
+                # On tire `max_results + 1` par seau, pas la collection
+                # entière : Folk ne filtre pas les interactions et les sert
+                # par pages de 30, donc un contact actif en a des centaines
+                # (mesuré : >360 sur une seule fiche). Le +1 sert à SAVOIR
+                # qu'il en reste sans payer une page de plus pour le dire.
+                cap = max_results + 1
+                past = (c.list_past_interactions(entity_id, max_items=cap)
                         if bucket in ("past", "all") else [])
-                upcoming = (c.list_upcoming_interactions(entity_id)
+                upcoming = (c.list_upcoming_interactions(entity_id, max_items=cap)
                             if bucket in ("upcoming", "all") else [])
                 found = past + upcoming
-                out = {"entity": entity, "when": bucket, "count": len(found),
-                       "results": found[:max_results]}
+                results = found[:max_results]
+                out = {"entity": entity, "when": bucket, "count": len(results),
+                       # `count` est ici ce qui est RENDU, pas le total du
+                       # workspace : sur les autres entités on connaît le
+                       # total parce qu'on a tout tiré, ici on a délibérément
+                       # arrêté. Le dire, plutôt que de laisser lire un
+                       # `count` comme un inventaire.
+                       "truncated": len(found) > max_results,
+                       "results": results}
                 if bucket == "all":
                     # Les deux listes viennent d'endpoints distincts et le
                     # record ne dit pas de laquelle il sort : sans ce détail,
-                    # un `count` agrégé ne se relit pas.
-                    out.update(past_count=len(past),
-                               upcoming_count=len(upcoming))
+                    # un `count` agrégé ne se relit pas. `past` est en tête,
+                    # donc la césure se déduit de la position.
+                    n_past = min(len(past), len(results))
+                    out.update(past_count=n_past,
+                               upcoming_count=len(results) - n_past)
                 return out
             if entity == "task":
                 if entity_id:
@@ -1001,6 +1047,12 @@ def register(mcp: FastMCP) -> None:
                            "plusieurs — pas les deux, pas ni l'un ni l'autre.")
             if entity not in _UPDATE_ENTITIES:
                 raise _bad(f"op='update' : entity doit être l'un de {_UPDATE_ENTITIES}.")
+            if entity in _ENTITY_ID_REQUIRED and entity_id is None and not (
+                    items and all("entity_id" in it for it in items)):
+                # En lot, chaque item peut porter le sien (plusieurs
+                # interactions sur des fiches différentes) ; sinon il faut
+                # celui de l'appel.
+                _need(entity_id, "entity_id", f"{op} (entity='{entity}')")
             if entity == "deal":
                 _require_deal_group()
             c = _client()

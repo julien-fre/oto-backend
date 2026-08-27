@@ -486,8 +486,9 @@ def test_record_missing_required_arg_names_the_op_and_the_arg(client, op, kwargs
 def test_search_interaction_defaults_to_past_and_says_so(client):
     client.list_past_interactions.return_value = [{"id": "lit_1"}]
     out = _tool("folk_record")(entity="interaction", op="search", entity_id="per_A")
-    client.list_past_interactions.assert_called_once_with("per_A")
+    client.list_past_interactions.assert_called_once_with("per_A", max_items=101)
     client.list_upcoming_interactions.assert_not_called()
+    assert out["truncated"] is False
     # Le défaut masque l'à-venir : le reçu doit PORTER le bucket, sinon un
     # `count` se relit comme un total qu'il n'est pas.
     assert out["when"] == "past"
@@ -510,6 +511,7 @@ def test_search_interaction_all_splits_the_two_counts(client):
     out = _tool("folk_record")(entity="interaction", op="search",
                                entity_id="per_A", when="all")
     assert (out["count"], out["past_count"], out["upcoming_count"]) == (3, 2, 1)
+    assert out["truncated"] is False
     assert [r["id"] for r in out["results"]] == ["a", "b", "c"]
 
 
@@ -557,15 +559,26 @@ def test_update_interaction_rejects_the_create_vocabulary(client):
     création) et récolte un 422 opaque."""
     with pytest.raises(McpError, match="activityType"):
         _tool("folk_record")(entity="interaction", op="update", id="lit_1",
-                             fields={"type": "coffee"})
+                             entity_id="per_A", fields={"type": "coffee"})
     client.update_interaction.assert_not_called()
 
 
 def test_update_interaction_routes(client):
     _tool("folk_record")(entity="interaction", op="update", id="lit_1",
-                         fields={"activityType": "coffee"})
-    client.update_interaction.assert_called_once_with("lit_1", activityType="coffee")
+                         entity_id="per_A", fields={"activityType": "coffee"})
+    client.update_interaction.assert_called_once_with(
+        "lit_1", "per_A", activityType="coffee")
     _assert_silent(client, "update_interaction")
+
+
+def test_update_interaction_requires_entity_id(client):
+    """La spec OpenAPI ne marque pas `entity` requis dans le corps du PATCH.
+    Live 2026-08-27 : Folk répond quand même 422 `path: ['entity'], Required`.
+    On l'exige donc AVANT l'appel, avec un message qui le nomme."""
+    with pytest.raises(McpError, match="entity_id"):
+        _tool("folk_record")(entity="interaction", op="update", id="lit_1",
+                             fields={"activityType": "coffee"})
+    client.update_interaction.assert_not_called()
 
 
 def test_delete_interaction_requires_entity_id_even_in_dry_run(client):
@@ -716,3 +729,29 @@ def test_reminder_entity_still_works_deprecated_is_not_broken(client):
     client.list_reminders.return_value = []
     _tool("folk_record")(entity="reminder", op="search")
     client.list_reminders.assert_called_once()
+
+
+def test_search_interaction_stops_early_and_admits_it(client):
+    """Folk ne filtre pas les interactions et les sert par pages de 30 : une
+    fiche active en porte des centaines (>360 mesuré). La recherche s'arrête
+    donc à `max_results` au lieu de vider la collection — et le dit, sinon un
+    `count` de 5 se lit comme « il y en a cinq »."""
+    client.list_past_interactions.return_value = [{"id": f"lit_{i}"} for i in range(6)]
+    out = _tool("folk_record")(entity="interaction", op="search",
+                               entity_id="per_A", max_results=5)
+    # max_results + 1 : de quoi SAVOIR qu'il en reste, sans payer une page de plus.
+    client.list_past_interactions.assert_called_once_with("per_A", max_items=6)
+    assert out["count"] == 5 and len(out["results"]) == 5
+    assert out["truncated"] is True
+
+
+def test_search_interaction_all_counts_follow_the_truncation(client):
+    """En `when="all"` les deux compteurs doivent décrire ce qui est RENDU :
+    si la troncature tombe au milieu du seau `past`, `upcoming_count` est 0,
+    pas le nombre d'interactions à venir dans folk."""
+    client.list_past_interactions.return_value = [{"id": f"p{i}"} for i in range(4)]
+    client.list_upcoming_interactions.return_value = [{"id": "u1"}]
+    out = _tool("folk_record")(entity="interaction", op="search",
+                               entity_id="per_A", when="all", max_results=2)
+    assert (out["count"], out["past_count"], out["upcoming_count"]) == (2, 2, 0)
+    assert out["truncated"] is True
