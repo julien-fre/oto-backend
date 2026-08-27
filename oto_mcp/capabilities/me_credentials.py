@@ -33,6 +33,11 @@ _PATH = "/api/settings/api-keys/{provider}"
 
 class CredentialGetInput(BaseModel):
     provider: str
+    # Palier lu — `member` (le tien, défaut), `group` ou `org` ; les deux derniers
+    # exigent d'être admin du palier, exactement comme pour le retrait.
+    scope: str = "member"
+    # Compte NOMMÉ précis ; vide = le compte mono historique.
+    account: str = ""
 
 
 class CredentialSetInput(BaseModel):
@@ -53,12 +58,24 @@ class CredentialClearInput(BaseModel):
 # --- Sorties ----------------------------------------------------------------
 
 class CredentialState(BaseModel):
-    """État du credential personnel. **Aucun secret n'en sort** : seuls les champs
-    déclarés `reveal` (une clé d'API, pour la recopier) ou non secrets (un email)
-    sont rendus — jamais un mot de passe, jamais un jeton."""
+    """État d'un credential, au palier demandé. **Aucun secret n'en sort** : seuls les
+    champs déclarés `reveal` (une clé d'API, pour la recopier) ou non secrets (une
+    URL de base, un email) sont rendus — jamais un mot de passe, jamais un jeton.
+
+    ⚠️ C'est ce qui rend une modification PARTIELLE praticable : on relit la config
+    non-secrète pour la corriger, et le secret qu'on ne peut pas relire est complété
+    côté serveur à l'écriture (#448). L'un sans l'autre était un piège."""
     model_config = ConfigDict(extra="allow")   # les champs révélables varient par connecteur
     provider: str
     configured: bool
+    # Palier effectivement lu, et compte visé ('' = compte mono).
+    # ⚠️ **Préfixés `read_` À DESSEIN.** Ce corps est PLAT et ses autres clés sont
+    # celles du connecteur : `http` déclare un champ nommé `scope` (les scopes
+    # oauth2). Un `scope:` d'enveloppe l'aurait écrasé — la valeur révélable serait
+    # partie en silence, ou l'enveloppe aurait menti. Toute clé ajoutée ici doit
+    # rester impossible à confondre avec un `credential_field`.
+    read_scope: str = "member"
+    read_account: str = ""
 
 
 class CredentialSaved(BaseModel):
@@ -84,14 +101,47 @@ class CredentialCleared(BaseModel):
 
 # --- Garde partagée ---------------------------------------------------------
 
-def _credentialable(provider: str):
-    """Connecteur qui accepte un credential PERSONNEL saisi (registre, jamais une
-    liste en dur) : `byo_user` avec un schéma de saisie. Les flux dédiés (session
-    navigateur, OAuth) n'ont pas de formulaire et passent ailleurs."""
+def _credentialable(provider: str, scope: str = "member"):
+    """Connecteur qui accepte un credential SAISI à ce palier (registre, jamais une
+    liste en dur) : un schéma de saisie, plus l'éligibilité du palier — `byo_user`
+    au palier membre, org-partageable aux paliers équipe et org. Les flux dédiés
+    (session navigateur, OAuth) n'ont pas de formulaire et passent ailleurs.
+
+    ⚠️ L'éligibilité était `byo_user` QUEL QUE SOIT le palier jusqu'au 2026-08-27 :
+    un connecteur purement `byo_org` — `http`, donc TOUS les ponts clients (ADR
+    0003/0037) — se faisait répondre « connecteur inconnu » en lecture comme en
+    retrait à l'échelle équipe ou org. C'est la racine du formulaire vide décrit
+    par oto-backend#448."""
     c = connectors.connector_for_provider(provider)
-    if c is None or not connectors.is_byo_user(provider) or not c.secret_fields:
+    if c is None or not c.secret_fields:
         return None
-    return c
+    eligible = (connectors.is_org_shareable(provider) if scope in ("org", "group")
+                else connectors.is_byo_user(provider))
+    return c if eligible else None
+
+
+def _scoped_entity(ctx: ResolvedCtx, scope: str, org_id) -> tuple[str, str]:
+    """L'entité du coffre visée par un palier, et le droit qu'elle exige.
+
+    Source unique de la lecture et du retrait : `member` (soi, aucune condition
+    au-delà du contexte d'org), `group` (admin de l'équipe ACTIVE), `org` (admin
+    de l'org de contexte). L'org_admin subsume l'admin d'équipe (`can_admin_group`)."""
+    if scope == "org":
+        if org_id is None:
+            raise AuthzDenied(400, "no_org_context", "Aucune org de contexte.")
+        if not roles.is_org_admin(ctx.sub, org_id):
+            raise AuthzDenied(403, "forbidden", "Admin d'org requis.")
+        return credentials_store.ORG, str(org_id)
+    if scope == "group":
+        group_id = access.current_group(ctx.sub)
+        if group_id is None:
+            raise AuthzDenied(400, "no_group_context", "Aucune équipe de contexte.")
+        if not roles.can_admin_group(ctx.sub, group_id):
+            raise AuthzDenied(403, "forbidden", "Admin d'équipe requis.")
+        return "group", str(group_id)
+    if org_id is None:
+        raise AuthzDenied(400, "no_org_context", "Aucune org de contexte.")
+    return credentials_store.MEMBER, credentials_store.member_id(org_id, ctx.sub)
 
 
 def _org_of(sub: str) -> int:
@@ -103,22 +153,45 @@ def _org_of(sub: str) -> int:
 
 # --- Handlers ---------------------------------------------------------------
 
+_NOT_CONFIGURED = {
+    "member": "Aucun credential posé pour toi.",
+    "group": "Aucun credential posé pour ton équipe active.",
+    "org": "Aucun credential posé pour ton org.",
+}
+
+
 def _get(ctx: ResolvedCtx, inp: CredentialGetInput) -> dict:
-    c = _credentialable(inp.provider)
+    """Les champs RÉVÉLABLES d'un credential, à n'importe quel palier.
+
+    Mêmes règles qu'au palier membre (`reveal` ou non-secret), même coffre : ce qui
+    change est l'entité lue et le droit exigé. Jusqu'au 2026-08-27, l'entité était
+    `MEMBER` EN DUR — un credential d'équipe ou d'org n'avait donc aucune surface
+    capable d'en rendre la `base_url`, alors que le registre la déclare `reveal=True`
+    (oto-backend#448). Le formulaire vide n'était pas un choix d'UI : le backend
+    n'avait rien à servir."""
+    scope = (inp.scope or "member").strip() or "member"
+    c = _credentialable(inp.provider, scope)
     if c is None:
         raise AuthzDenied(404, "unknown_provider", f"Connecteur inconnu : `{inp.provider}`.")
     org_id = access.current_org(ctx.sub)
-    secret = (credentials_store.get_credential(
-                  credentials_store.MEMBER,
-                  credentials_store.member_id(org_id, ctx.sub), inp.provider)
-              if org_id is not None else None)
+    if org_id is None and scope == "member":
+        # Historique : sans org de contexte, la lecture de SA clé dit « rien de posé »
+        # plutôt que de refuser — on ne change pas cette réponse-là.
+        raise AuthzDenied(404, "not_configured", _NOT_CONFIGURED["member"])
+    entity_type, entity_id = _scoped_entity(ctx, scope, org_id)
+    account = (inp.account or "").strip()
+    secret = credentials_store.get_credential(
+        entity_type, entity_id, inp.provider, account=account)
     if not secret:
-        raise AuthzDenied(404, "not_configured", "Aucun credential posé pour toi.")
+        raise AuthzDenied(404, "not_configured", _NOT_CONFIGURED.get(scope, _NOT_CONFIGURED["member"]))
     fields = credentials_store.unpack_secret(inp.provider, secret)
     out: dict = {"provider": inp.provider, "configured": True}
     for f in c.secret_fields:
         if f.reveal or not f.secret:
             out[f.name] = fields.get(f.name)
+    # Après les champs du connecteur, et sous des noms qui ne peuvent pas en être
+    # un — cf. la note de `CredentialState`.
+    out["read_scope"], out["read_account"] = scope, account
     return out
 
 
@@ -138,32 +211,28 @@ async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
         raise AuthzDenied(403, "connector_restricted", e.error.message)
 
     body = inp.fields
-    # Chaque champ `required` doit être non vide ; un champ facultatif (connecteur
-    # « ET/OU » type slack) peut être omis, mais il faut au moins un champ au total.
-    fields: dict[str, str] = {}
-    missing: list[str] = []
-    for f in c.secret_fields:
-        val = credentials_store.clean_field_value(f, body.get(f.name))
-        if not val:
-            if f.required:
-                missing.append(f.label or f.name)
-            continue
-        fields[f.name] = val
-    # NOMMER le champ manquant : un « missing_credentials » sec oblige à deviner lequel
-    # des cinq champs bloque — vécu 28/07, un `data_center` vide a fait échouer six
-    # tentatives de pose sans que rien ne le dise.
-    if missing:
-        raise AuthzDenied(400, "missing_credentials",
-                          "champ(s) requis vide(s) : " + ", ".join(missing))
-    if not fields:
-        raise AuthzDenied(400, "missing_credentials", "aucun champ renseigné.")
-
     db.upsert_user(ctx.sub)
     account = (body.get("account") or "").strip()
     # Scope MEMBRE (ADR 0033) : la clé est posée DANS l'org de contexte — poser en
     # consultant une org, c'est scoper cette org.
     org_id = _org_of(ctx.sub)
     eid = credentials_store.member_id(org_id, ctx.sub)
+    # Écriture PARTIELLE (#448) : les champs absents du corps sont complétés par le
+    # coffre, côté serveur. Un champ envoyé vide reste vide — c'est un effacement
+    # explicite, et le formulaire du dashboard, qui poste tous ses champs, ne change
+    # pas de comportement.
+    merged = credentials_store.merge_with_existing(
+        credentials_store.MEMBER, eid, inp.provider, account, body)
+    # Validation de saisie — SOURCE UNIQUE des trois paliers (membre ici, équipe et
+    # org via `secret_from_input`) : jeu fermé des valeurs, champs que le
+    # discriminant rend pertinents, `required` non vides parmi eux. Un champ
+    # facultatif (connecteur « ET/OU » type slack) reste omissible, mais il faut au
+    # moins un champ au total.
+    try:
+        fields = credentials_store.validate_fields(inp.provider, merged)
+    except ValueError as e:
+        raise AuthzDenied(400, getattr(e, "code", str(e)),
+                          getattr(e, "message", "Credential incomplet ou vide."))
     # Garde de pose (#409, source unique des trois surfaces déclaratives) : cohérence
     # des noms si le connecteur est multi-compte, refus nommé s'il est mono.
     try:
@@ -222,36 +291,27 @@ def _clear(ctx: ResolvedCtx, inp: CredentialClearInput) -> dict:
     # Effacer est générique : tout connecteur `byo_user`, y compris une session
     # navigateur sans champ de saisie (brevo/crunchbase) — on ne dépend donc PAS de
     # `secret_fields` comme la lecture et la pose.
+    scope = (inp.scope or "member").strip() or "member"
+    if scope not in ("member", "group", "org"):
+        scope = "member"
     c = connectors.connector_for_provider(inp.provider)
-    if c is None or not connectors.is_byo_user(inp.provider):
+    eligible = (connectors.is_org_shareable(inp.provider) if scope in ("org", "group")
+                else connectors.is_byo_user(inp.provider))
+    if c is None or not eligible:
         raise AuthzDenied(404, "unknown_provider", f"Connecteur inconnu : `{inp.provider}`.")
     org_id = _org_of(ctx.sub)
     account = (inp.account or "").strip()
-    scope = (inp.scope or "member").strip()
-
-    if scope == "org":
-        if not roles.is_org_admin(ctx.sub, org_id):
-            raise AuthzDenied(403, "forbidden", "Admin d'org requis.")
-        credentials_store.clear_credential(credentials_store.ORG, str(org_id),
-                                           inp.provider, account=account)
-    elif scope == "group":
-        group_id = access.current_group(ctx.sub)
-        if group_id is None:
-            raise AuthzDenied(400, "no_group_context", "Aucune équipe de contexte.")
-        if not roles.can_admin_group(ctx.sub, group_id):
-            raise AuthzDenied(403, "forbidden", "Admin d'équipe requis.")
-        credentials_store.clear_credential("group", str(group_id), inp.provider,
-                                           account=account)
-    else:
-        scope = "member"
-        credentials_store.clear_credential(
-            credentials_store.MEMBER, credentials_store.member_id(org_id, ctx.sub),
-            inp.provider, account=account)
+    entity_type, entity_id = _scoped_entity(ctx, scope, org_id)
+    credentials_store.clear_credential(entity_type, entity_id, inp.provider,
+                                       account=account)
     return {"ok": True, "provider": inp.provider, "account": account, "scope": scope}
 
 
 _DOC_SET = (
-    "Pose (ou remplace) TON credential pour un connecteur, dans l'org de contexte. "
+    "Pose (ou met à jour) TON credential pour un connecteur, dans l'org de contexte. "
+    "Les champs ABSENTS du corps sont complétés par ce qui est déjà au coffre, côté "
+    "serveur — changer une URL sans repasser la clé est un geste d'un champ. Un champ "
+    "envoyé VIDE est un effacement explicite, pas une omission. "
     "Le corps est un objet plat dont les clés sont les `credential_fields` du "
     "connecteur — publiés par `GET /api/connectors` — plus, optionnellement, "
     "`account` : le NOM du compte visé quand le connecteur en porte plusieurs (un "
@@ -263,8 +323,11 @@ _DOC_SET = (
     "testé AVANT d'être écrit quand le connecteur expose une sonde."
 )
 _DOC_GET = (
-    "L'état de TON credential pour un connecteur : posé ou non, et les seuls champs "
-    "révélables (une clé d'API à recopier, un email). Un secret ne se relit jamais."
+    "L'état d'un credential pour un connecteur : posé ou non, et les seuls champs "
+    "révélables (une URL de base à corriger, une clé d'API à recopier, un email). Un "
+    "secret ne se relit jamais. `scope` : `member` (le tien, défaut), `group` ou "
+    "`org` — ces deux-là exigent d'être admin du palier, comme pour le retrait. "
+    "`account` cible un compte nommé précis ; vide = le compte unique."
 )
 _DOC_CLEAR = (
     "Retire un credential. `scope` : `member` (le tien, défaut), `org` ou `group` — "

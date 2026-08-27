@@ -53,9 +53,15 @@ class GroupSecretSet(BaseModel):
     vigueur pour l'équipe » — c'est ce qui rend un test de bout en bout trompeur si on
     n'a pas d'abord basculé son équipe active.
 
-    ⚠️ C'est un **REMPLACEMENT**, jamais un merge : pour un connecteur multi-champs
-    (zoho, silae…), `fields` doit porter TOUS les champs requis — en envoyer un
-    sous-ensemble est refusé (400), pas complété par l'existant.
+    ⚠️ Une clé ABSENTE du corps est **complétée par l'existant** (merge côté serveur,
+    #448) ; une clé présente mais VIDE est un effacement explicite. Envoyer tous les
+    champs reste donc un remplacement complet — ce que fait le formulaire du
+    dashboard. Ce qui devient possible est « je change l'URL, je ne touche pas à la
+    clé », sans avoir à retrouver un secret que rien ne restitue.
+    ⚠️ Ceci a dit « REMPLACEMENT, jamais un merge — un sous-ensemble est refusé (400) »
+    jusqu'au 2026-08-27 : c'était vrai, et c'était le piège. Combiné à l'absence de
+    lecture révélante à ce palier, modifier un champ non secret obligeait à réécrire
+    un secret irrécupérable.
 
     ⚠️ `ok: true` dit « écrit et chiffré », **pas** « ce credential fonctionne » : rien
     n'est appelé chez le fournisseur ici. Tester = `POST /api/me/connectors/{provider}/verify`.
@@ -89,12 +95,22 @@ def _set_secret(ctx: ResolvedCtx, inp: SetGroupSecretInput) -> dict:
     meta, code = connectors.org_secret_meta(inp.provider, base_url)
     if code:
         raise AuthzDenied(400, code, f"Provider/base_url invalide : {code}.")
+    account = (inp.account or "").strip()
+    # Écriture PARTIELLE (#448) : les champs absents du corps sont complétés par le
+    # coffre, côté serveur — le secret ne repasse jamais par le client. C'est ce qui
+    # permet à un admin d'équipe de repointer une `base_url` sans détenir le bearer.
+    fields = inp.fields
+    if fields is not None:
+        fields = credentials_store.merge_with_existing(
+            "group", str(inp.group_id), inp.provider, account, fields)
     # Mono-champ (api_key) ou multi-champs (fields packés) — source unique.
     try:
-        secret = credentials_store.secret_from_input(inp.provider, inp.api_key, inp.fields)
+        secret = credentials_store.secret_from_input(inp.provider, inp.api_key, fields)
     except ValueError as e:
-        raise AuthzDenied(400, str(e), "Credential incomplet ou vide.")
-    account = (inp.account or "").strip()
+        # Refus NOMMÉ quand la validation en porte un (#449) : « champ(s) requis
+        # vide(s) : Nom du header » vaut mieux qu'un « incomplet » à deviner.
+        raise AuthzDenied(400, getattr(e, "code", str(e)),
+                          getattr(e, "message", "Credential incomplet ou vide."))
     # Même garde de pose qu'au palier membre (source unique, #409) : coexistence des
     # comptes si le connecteur est multi, refus nommé du compte nommé s'il est mono.
     try:

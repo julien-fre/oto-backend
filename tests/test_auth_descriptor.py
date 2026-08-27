@@ -99,5 +99,26 @@ def test_catalog_exposes_auth():
         "method": "secret",
         "cardinality": "multi_account",
         "account_noun": "compte",
-        "fields": [{"name": "key", "label": "API key", "secret": True, "required": True, "help": ""}],
+        # Pas de champ qui en sélectionne d'autres : le cas des ~90 connecteurs à
+        # schéma plat. `when`/`choices` vides = « ce champ vaut toujours, en saisie
+        # libre » — ils sont TOUJOURS publiés pour que le front n'ait pas de repli
+        # à écrire (#449).
+        "field_discriminator": "",
+        "fields": [{"name": "key", "label": "API key", "secret": True,
+                    "required": True, "help": "", "when": [], "choices": []}],
     }
+    # Et le descripteur `credential_fields` du catalogue est LE MÊME objet que
+    # `auth["fields"]` — les deux listes décrivaient la même chose à deux endroits.
+    assert cat["serper"]["credential_fields"] == cat["serper"]["auth"]["fields"]
+
+
+def test_le_catalogue_publie_de_quoi_filtrer_un_formulaire_a_modes():
+    """Un connecteur dont un champ SÉLECTIONNE les autres (`http` : `auth_mode`)
+    publie tout ce qu'il faut pour ne montrer que les champs qui servent — sans que
+    le front connaisse le connecteur (#449)."""
+    http = {c["name"]: c for c in public_catalog()}["http"]
+    assert http["auth"]["field_discriminator"] == "auth_mode"
+    by_name = {f["name"]: f for f in http["auth"]["fields"]}
+    assert by_name["auth_mode"]["choices"][:2] == ["bearer", "header"]
+    assert by_name["client_secret"]["when"] == ["oauth2"]
+    assert by_name["token"]["when"] == ["bearer", "header", "query"]

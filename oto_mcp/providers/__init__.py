@@ -438,12 +438,11 @@ def public_catalog() -> list[dict]:
             "category": c.category,    # axe utilisateur (curé) — ADR 0011
             # Schéma de saisie du credential (modèle générique multi-champs) — le
             # dashboard rend le formulaire en bouclant dessus. Jamais de valeur,
-            # juste la forme (name/label/secret).
-            "credential_fields": [
-                {"name": f.name, "label": f.label, "secret": f.secret,
-                 "required": f.required, "help": f.help}
-                for f in c.secret_fields
-            ],
+            # juste la forme (name/label/secret/when/choices).
+            # DÉRIVÉ de `auth["fields"]`, pas recopié : les deux listes décrivaient la
+            # même chose à deux endroits, et un champ ajouté à l'une manquait à
+            # l'autre en silence (constaté en ajoutant `when`/`choices`, #449).
+            "credential_fields": c.auth["fields"],
             # Free-tier (ADR 0031) : clé plateforme ouverte sans grant, quota gratuit
             # par user/jour. Le dashboard affiche un badge « gratuit : N/j » côté USER.
             "free_tier": {"daily_quota": c.default_quota} if c.platform_key_open else None,

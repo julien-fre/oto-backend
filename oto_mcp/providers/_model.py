@@ -46,6 +46,18 @@ class CredentialField:
     # significatif (mot de passe) → strip des bords seul. Cf.
     # credentials_store.clean_field_value.
     whitespace_significant: bool = False
+    # Valeurs PERTINENTES du champ discriminant du connecteur (`field_discriminator`)
+    # pour ce champ-ci. Vide (défaut) = le champ vaut quel que soit le discriminant —
+    # donc RIEN NE CHANGE pour les ~90 connecteurs qui n'en déclarent pas.
+    # Renseigné, il dit deux choses d'un coup : le champ ne s'AFFICHE que pour ces
+    # valeurs, et son `required` ne s'APPLIQUE que là. Ex. `http` : `header_name` est
+    # requis, mais seulement en `auth_mode=header`. Cf. `Connector.fields_for`.
+    when: tuple[str, ...] = ()
+    # Jeu FERMÉ de valeurs acceptées (un `select`, pas un champ libre). Vide = libre.
+    # À réserver aux champs qui discriminent ou dont une faute de frappe casse
+    # silencieusement : une valeur hors liste est refusée à l'ÉCRITURE, avec le jeu
+    # attendu dans le message.
+    choices: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -131,6 +143,12 @@ class Connector:
     # compte Slack du coffre est un workspace, un compte Zoho une organisation.
     # Vide = « compte ». Publié dans le descripteur `auth` et affiché tel quel.
     account_noun: str = ""
+    # Nom du champ dont la VALEUR sélectionne les autres (`auth_mode` chez `http`).
+    # Vide (défaut) = credential à schéma plat : tous les champs valent toujours.
+    # Renseigné, il active `fields_for` : un formulaire qui ne montre que ce qui
+    # sert, et une validation à l'écriture qui refuse un mode incohérent au lieu de
+    # l'accepter et d'échouer au premier appel réel (oto-backend#449).
+    field_discriminator: str = ""
 
     @property
     def org_shareable(self) -> bool:
@@ -286,12 +304,35 @@ class Connector:
             # Le front l'affiche tel quel (oto-dashboard#121) — c'est le registre qui
             # connaît le vocabulaire du fournisseur, pas l'écran.
             "account_noun": self.account_noun or "compte",
+            # Le champ dont la valeur sélectionne les autres, quand il y en a un
+            # (`auth_mode` chez `http`) : le front n'a pas à connaître le connecteur
+            # pour n'afficher que les champs qui servent — il lit `when` (#449).
+            "field_discriminator": self.field_discriminator,
             "fields": [
                 {"name": f.name, "label": f.label, "secret": f.secret,
-                 "required": f.required, "help": f.help}
+                 "required": f.required, "help": f.help,
+                 "when": list(f.when), "choices": list(f.choices)}
                 for f in self.secret_fields
             ],
         }
+
+    def fields_for(self, values: dict) -> tuple[CredentialField, ...]:
+        """Les champs PERTINENTS d'une saisie, le discriminant une fois connu.
+
+        Sans `field_discriminator`, c'est `secret_fields` — le cas des ~90 autres
+        connecteurs. Avec, on retire les champs qu'aucune valeur du discriminant ne
+        rend utiles : `header_name` n'a rien à faire dans un formulaire `bearer`,
+        et son `required` n'a rien à y refuser.
+
+        ⚠️ Discriminant ABSENT ou vide = tout est pertinent. C'est volontaire : à ce
+        stade la saisie n'a pas encore choisi, et masquer serait deviner. Le refus
+        d'une valeur hors `choices` est le travail de l'écriture, pas d'ici."""
+        if not self.field_discriminator:
+            return self.secret_fields
+        picked = str(values.get(self.field_discriminator) or "").strip().lower()
+        if not picked:
+            return self.secret_fields
+        return tuple(f for f in self.secret_fields if not f.when or picked in f.when)
 
     @property
     def secret_fields(self) -> tuple[CredentialField, ...]:
@@ -356,7 +397,8 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
        publisher="", logo_url=None, kind="tools", mount_url=None,
        mount_strip_prefix=None,
        credential_fields=(), modules=(), hosted_auth=False,
-       personal_cross_org=False, single_account=False, account_noun="") -> Connector:
+       personal_cross_org=False, single_account=False, account_noun="",
+       field_discriminator="") -> Connector:
     """Factory d'une entrée de registre — appelée par `providers/<nom>.py`.
 
     Ajouter un CHAMP par connecteur = l'ajouter à `Connector` ET ici, puis le
@@ -373,5 +415,5 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
         credential_fields=tuple(credential_fields),
         modules=tuple(modules), hosted_auth=hosted_auth,
         personal_cross_org=personal_cross_org, single_account=single_account,
-        account_noun=account_noun,
+        account_noun=account_noun, field_discriminator=field_discriminator,
     )

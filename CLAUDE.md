@@ -142,6 +142,16 @@ call-site** ; `access.resolve_credential` rend aussi la **config non-secrète ap
 gagnante**, donc **ne JAMAIS recâbler un résolveur d'endpoint par-connecteur** (ADR 0024).
 ⚠️ Le dashboard en porte un **MIROIR d'affichage** (`lib/keyStack.ts`) qu'aucun test ne relie :
 en changer l'ordre ne casse rien, **ça fait mentir l'UI**.
+⚠️ **Un credential se LIT à son palier et s'ÉCRIT par MERGE depuis le 27/08**
+(oto-backend#448) : `me.credential.get` prend un `scope` (`member` défaut / `group` /
+`org`, admin du palier exigé) et rend les champs `reveal` — jamais un secret ; et un
+`fields` partiel est **complété côté serveur** (clé absente = conservée, clé présente
+et vide = effacée, donc le formulaire qui poste tout reste un remplacement). Les deux
+n'ont de sens qu'ensemble : lecture impossible + remplacement total = piège à perte de
+données, vécu sur un pont client. ⚠️ L'éligibilité de ces routes suit le PALIER
+(`is_byo_user` au membre, `is_org_shareable` au-dessus) — elle testait `is_byo_user`
+partout, ce qui rendait « inconnu » tout connecteur `byo_org` pur, donc **tous les
+ponts clients**. Détail : `docs/connector-vault.md`.
 ⚠️ **L'instance de connecteur est un OBJET depuis le 27/08** (`connector_instances`, lot L6 du
 chantier tenant & instances — R1 tranché « la table à côté ») : elle a un **id stable**,
 `inst:{id}`, servi à côté du `ref` composé par `GET /api/me/connector-instances`. La table est

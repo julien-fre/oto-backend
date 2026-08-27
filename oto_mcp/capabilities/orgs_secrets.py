@@ -75,12 +75,21 @@ def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
     meta, code = connectors.org_secret_meta(inp.provider, base_url)
     if code:
         raise AuthzDenied(400, code, f"Provider/base_url invalide : {code}.")
+    account = (inp.account or "").strip()
+    # Écriture PARTIELLE (#448) : mêmes règles qu'au palier équipe — les champs
+    # absents sont complétés par le coffre, côté serveur ; un champ vide efface.
+    fields = inp.fields
+    if fields is not None:
+        fields = credentials_store.merge_with_existing(
+            "org", str(inp.org_id), inp.provider, account, fields)
     # Mono-champ (api_key) ou multi-champs (fields packés) — source unique.
     try:
-        secret = credentials_store.secret_from_input(inp.provider, inp.api_key, inp.fields)
+        secret = credentials_store.secret_from_input(inp.provider, inp.api_key, fields)
     except ValueError as e:
-        raise AuthzDenied(400, str(e), "Credential incomplet ou vide.")
-    account = (inp.account or "").strip()
+        # Refus NOMMÉ quand la validation en porte un (#449) : « champ(s) requis
+        # vide(s) : Nom du header » vaut mieux qu'un « incomplet » à deviner.
+        raise AuthzDenied(400, getattr(e, "code", str(e)),
+                          getattr(e, "message", "Credential incomplet ou vide."))
     # Même garde de pose qu'au palier membre (source unique, #409) : coexistence des
     # comptes si le connecteur est multi, refus nommé du compte nommé s'il est mono.
     try:

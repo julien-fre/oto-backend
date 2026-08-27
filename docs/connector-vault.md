@@ -39,11 +39,47 @@ Invariants verrouillés par `tests/test_providers_registry_snapshot.py` : le reg
 - **A. Disponibilité** : `availability` ∈ {`self_serve`, `platform_granted`}. platform_granted = grant-only (deny-by-default, ex. `mm`, `gocardless`).
 - **B. Visibilité** : `default_active` (ADR 0050 — socle installé d'office au seed d'un nouveau (sub, org) ; **vide depuis le 16/07** : tout le catalogue est en library installable, l'agent guide).
 - **C. Credential** : `auth_modes` ⊆ {`byo_user`, `byo_org`, `platform`} ; `keyed` (résolu via `resolve_api_key`) ; `secret_kind` (api_key/basic_auth/fields/refresh_token/oauth/cookie/none) ; `personal_session` ; `env_secret_name` ; `default_quota`.
-- **Modèle de saisie multi-champs** (ADR 0011) : `secret_fields` (propriété) = schéma de saisie du credential — `credential_fields` explicites (`CredentialField` name/label/secret/reveal) ou dérivés du `secret_kind` (`api_key`=1 champ `key` ; `basic_auth`=`email`+`password`). Vide pour `cookie`/`oauth`/`none` (flux dédiés). SOURCE UNIQUE du formulaire dashboard, de l'endpoint `/api/settings/api-keys`, de `status_for` et du packing — zéro branche par connecteur (ex. Silae = 3 champs déclarés, aucun code spécifique).
+- **Modèle de saisie multi-champs** (ADR 0011) : `secret_fields` (propriété) = schéma de saisie du credential — `credential_fields` explicites (`CredentialField` name/label/secret/reveal/**when**/**choices**) ou dérivés du `secret_kind` (`api_key`=1 champ `key` ; `basic_auth`=`email`+`password`). Vide pour `cookie`/`oauth`/`none` (flux dédiés). SOURCE UNIQUE du formulaire dashboard, de l'endpoint `/api/settings/api-keys`, de `status_for` et du packing — zéro branche par connecteur (ex. Silae = 3 champs déclarés, aucun code spécifique).
+- **Un champ peut en SÉLECTIONNER d'autres** (`Connector.field_discriminator`, 2026-08-27) : `http` déclare `auth_mode`, et chaque champ dit par `when=` les modes qui le rendent pertinent. `Connector.fields_for(valeurs)` en dérive les champs à afficher ET ceux dont le `required` s'applique ; `choices=` ferme le jeu de valeurs d'un champ. Le descripteur `auth` publie les trois (`field_discriminator`, `when`, `choices`) pour que le front filtre **sans connaître le connecteur**. Discriminant absent (les ~90 autres) = comportement inchangé.
 - **Chargement** : `Connector.modules` = modules `tools/<m>.py` à importer (kind="tools" ; défaut = nom du provider). Voir §Chargement dérivé.
 
 **Tout dérive du registre** (mêmes symboles, ré-export) : `KEY_PROVIDERS`, `ORG_SHAREABLE_PROVIDERS`, `ADMIN_GRANT_ONLY_NAMESPACES`, `QUOTA_DEFAULTS`, `ENV_SECRET_NAMES`, `DEFAULT_BUNDLE/PRESET`. Plus de listes en dur parallèles. `GET /api/connectors` = vue publique.
 Helpers : `require_keyed`, `is_byo_user`, `is_org_shareable`, `require_credential(entity_type, name)` (user→byo_user, org→org-partageable).
+
+## Lire et modifier un credential — révélation et écriture partielle
+
+Deux règles qui n'ont de sens qu'**ensemble** (oto-backend#448, 2026-08-27) :
+
+- **La lecture révélante existe à TOUS les paliers.** `me.credential.get` prend un
+  `scope` (`member` défaut / `group` / `org`, les deux derniers gardés admin du
+  palier, l'org_admin subsumant l'admin d'équipe) et rend les champs déclarés
+  `reveal` ou non secrets. **Aucun secret n'en sort, à aucun palier.**
+- **L'écriture est un MERGE côté serveur.** Une clé absente du corps est complétée
+  depuis le coffre (`credentials_store.merge_with_existing`) ; une clé présente mais
+  **vide est un effacement explicite**. Le formulaire du dashboard, qui poste tous
+  ses champs, garde donc son comportement de remplacement.
+
+⚠️ **Le merge se fait dans la même ligne, jamais par le client.** L'AAD dérive de
+`entity_type/entity_id/connector/account` : relire, fusionner et rechiffrer sur place
+ne la change pas. Le secret ne repasse à aucun moment sur le fil.
+
+⚠️ **Le corps rendu par le GET est PLAT** : ses autres clés sont celles du connecteur.
+`http` déclare un champ nommé `scope` (les scopes oauth2) — d'où les clés d'enveloppe
+`read_scope`/`read_account`, préfixées à dessein. Toute clé ajoutée à ce corps doit
+rester impossible à confondre avec un `credential_field`.
+
+**Ce que ça a coûté avant** : jusqu'au 2026-08-27, `_get` lisait `MEMBER` **en dur** et
+`groups_secrets` n'exposait que set/delete. Un credential d'équipe n'avait donc aucune
+surface capable d'en rendre la `base_url`, alors que le registre la déclare
+`reveal=True` — et l'écriture étant un remplacement total, changer cette URL exigeait
+de réécrire un bearer que rien ne restituait. Piège à perte de données par
+construction, sur le chemin de TOUS les ponts clients (ADR 0003/0037). Un repointage
+de pont en production a été abandonné devant ce formulaire.
+
+⚠️ Défaut de la même famille, corrigé avec : l'éligibilité de ces trois routes testait
+`is_byo_user` **quel que soit le palier** — un connecteur purement `byo_org` comme
+`http` se faisait répondre « connecteur inconnu » en lecture comme en retrait, même à
+un admin d'org. C'est `is_org_shareable` qui décide aux paliers équipe et org.
 
 ## Coffre — `connector_credentials` (table unique)
 

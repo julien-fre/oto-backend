@@ -429,6 +429,102 @@ def split_secret_config(connector: str, fields: dict) -> tuple[dict, dict]:
     return secrets, config
 
 
+class CredentialFieldsInvalid(ValueError):
+    """Refus NOMMÉ d'une saisie de credential : le `code` pour la machine, la phrase
+    pour l'humain — et pour l'agent qui la lira.
+
+    Reste une `ValueError` dont le `str()` est le code : les call-sites qui font
+    `AuthzDenied(400, str(e), …)` continuent de rendre le même code qu'avant."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(code)
+        self.code = code
+        self.message = message
+
+
+def _guard_choices(c, provided: dict) -> None:
+    """Refuse une valeur hors du jeu FERMÉ d'un champ (`CredentialField.choices`).
+
+    Sans cette garde, `auth_mode='hedaer'` s'écrit `ok: true` et n'échoue qu'au
+    premier appel réel — la famille accepté-puis-échoue (oto-backend#449)."""
+    for f in (c.secret_fields if c is not None else ()):
+        if not f.choices:
+            continue
+        raw = clean_field_value(f, provided.get(f.name))
+        picked = str(raw or "").strip()
+        if picked and picked.lower() not in f.choices:
+            raise CredentialFieldsInvalid(
+                "invalid_field_value",
+                f"{f.label or f.name} : « {picked} » n'est pas une valeur attendue "
+                f"({' | '.join(f.choices)}).")
+
+
+def validate_fields(connector: str, provided: dict) -> dict:
+    """Les champs RETENUS d'une saisie multi-champs, ou un refus nommé.
+
+    SOURCE UNIQUE des trois set-paths (membre, équipe, org) : jeu fermé d'abord
+    (`choices`), puis les seuls champs que le discriminant rend PERTINENTS
+    (`Connector.fields_for`), et parmi eux les `required` doivent être non vides.
+
+    ⚠️ **Les champs non pertinents sont ÉCARTÉS, pas stockés** : repasser un
+    connecteur d'`oauth2` à `bearer` ne laisse pas traîner un `client_secret` mort
+    dans le coffre. C'est voulu — un champ qu'aucun mode ne lit n'a pas à survivre
+    à un changement de mode."""
+    c = connectors.REGISTRY.get(connector)
+    _guard_choices(c, provided)
+    relevant = c.fields_for(provided) if c is not None else ()
+    kept: dict[str, str] = {}
+    missing: list[str] = []
+    for f in relevant:
+        val = clean_field_value(f, provided.get(f.name))
+        if not val:
+            if f.required:
+                missing.append(f.label or f.name)
+            continue
+        kept[f.name] = val
+    # NOMMER le champ manquant : un « missing_credentials » sec oblige à deviner
+    # lequel des douze champs bloque (vécu 28/07 sur un `data_center` vide).
+    if missing:
+        raise CredentialFieldsInvalid(
+            "missing_credentials", "champ(s) requis vide(s) : " + ", ".join(missing))
+    if not kept:
+        raise CredentialFieldsInvalid("missing_credentials", "aucun champ renseigné.")
+    return kept
+
+
+def merge_with_existing(entity_type: str, entity_id: str, connector: str,
+                        account: str, provided: dict) -> dict:
+    """Complète une saisie PARTIELLE par ce qui est déjà au coffre (oto-backend#448).
+
+    Règle unique : **seule une clé ABSENTE du corps est reprise de l'existant**. Une
+    clé présente mais vide reste vide — c'est un effacement explicite. Le formulaire
+    du dashboard, qui envoie tous ses champs, garde donc exactement son comportement
+    d'avant ; ce qui devient possible est « je change l'URL, je ne touche pas à la clé ».
+
+    ⚠️ **Le merge se fait ICI, côté serveur.** L'existant est relu et rechiffré dans
+    la MÊME ligne (l'AAD dérive de `entity_type/entity_id/connector/account`, tous
+    inchangés) : le secret ne repasse jamais par le client. C'est ce qui permet de
+    repointer une `base_url` sans détenir le bearer — le piège à perte de données que
+    formait « lecture impossible + écriture par remplacement total ».
+
+    Un existant ILLISIBLE (ligne écrite sous une clé de chiffrement périmée) n'est pas
+    une erreur ici : on rend la saisie telle quelle, et la validation nommera ce qui
+    manque. Une repose complète doit rester possible quand le coffre ne se relit plus."""
+    c = connectors.REGISTRY.get(connector)
+    declared = {f.name for f in (c.secret_fields if c is not None else ())}
+    if len(declared) < 2 or declared <= set(provided):
+        return dict(provided)          # mono-champ, ou saisie déjà complète
+    try:
+        existing = get_credential(entity_type, entity_id, connector, account)
+    except Exception:  # noqa: BLE001 — un coffre illisible ne bloque pas une repose complète
+        return dict(provided)
+    if not existing:
+        return dict(provided)
+    prior = unpack_secret(connector, existing)
+    return {**{k: v for k, v in prior.items() if k in declared and k not in provided},
+            **provided}
+
+
 def secret_from_input(
     connector: str, api_key: Optional[str] = None, fields: Optional[dict] = None,
 ) -> str:
@@ -437,30 +533,19 @@ def secret_from_input(
     (miroir du set-path user `api_routes_credentials.api_key_save`).
 
     - mono-champ (≤1 `secret_field`, api_key) → la valeur brute ;
-    - multi-champs (≥2, ex. zoho/silae) → chaque champ `required` non vide, les
-      champs facultatifs (« ET/OU » type slack) omissibles mais ≥1 champ au total,
-      packés via `pack_secret`.
+    - multi-champs (≥2, ex. zoho/silae) → `validate_fields` (jeu fermé, pertinence
+      par discriminant, `required` non vides), packés via `pack_secret`.
 
-    Lève `ValueError(code)` actionnable : `empty_api_key` (mono vide) ou
-    `missing_credentials` (multi : champ requis absent/vide, ou aucun champ)."""
+    Lève `CredentialFieldsInvalid` (une `ValueError`) actionnable : `empty_api_key`
+    (mono vide), `missing_credentials` (champ requis absent/vide, ou aucun champ) ou
+    `invalid_field_value` (valeur hors jeu fermé)."""
     c = connectors.REGISTRY.get(connector)
     sfields = c.secret_fields if c is not None else ()
     if len(sfields) >= 2:
-        provided = fields or {}
-        packed: dict[str, str] = {}
-        for f in sfields:
-            val = clean_field_value(f, provided.get(f.name))
-            if not val:
-                if f.required:
-                    raise ValueError("missing_credentials")
-                continue
-            packed[f.name] = val
-        if not packed:
-            raise ValueError("missing_credentials")
-        return pack_secret(connector, packed)
+        return pack_secret(connector, validate_fields(connector, fields or {}))
     key = (api_key or "").strip()
     if not key:
-        raise ValueError("empty_api_key")
+        raise CredentialFieldsInvalid("empty_api_key", "clé d'API vide.")
     return key
 
 
