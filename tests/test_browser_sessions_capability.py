@@ -193,25 +193,32 @@ def test_un_verify_impossible_est_un_502_qui_porte_son_message(monkeypatch, socl
 
 # --- Ce qui CHANGE pour un appelant -----------------------------------------
 
-def test_un_corps_malforme_rend_missing_params_et_non_invalid_json(monkeypatch, socle):
-    """**Écart visible, assumé.** L'adaptateur avale un corps JSON illisible (il le
-    traite comme absent) ; la route rendait `400 invalid_json`, elle rend désormais
-    `400 missing_params` — même statut, code différent. Aucun consommateur n'envoie de
-    JSON malformé, et le refus reste actionnable."""
+def test_un_corps_qui_n_est_pas_un_objet_est_refuse_nommement(monkeypatch, socle):
+    """Le corps qui n'a pas la forme attendue est REFUSÉ, et sous son vrai nom.
+
+    ⚠️ Ce test a affirmé le contraire jusqu'au 2026-08-27 : « l'adaptateur avale un
+    corps JSON illisible (il le traite comme absent) », écart qualifié d'assumé, avec
+    `400 missing_params` pour verdict. C'était le site B4 de l'inventaire des silences
+    — un corps ignoré sur les ~200 routes de capacité générées — et le test le
+    GRAVAIT. `missing_params` accuse l'appelant de n'avoir rien envoyé alors qu'il a
+    envoyé quelque chose d'inexploitable : ce n'est pas le même diagnostic.
+
+    (`call(body=…)` sérialise ce qu'on lui donne : ce corps-ci part donc comme une
+    CHAÎNE JSON valide, d'où `invalid_body`. Le corps qui ne parse pas du tout —
+    `invalid_json` — s'exerce sur des octets bruts dans
+    `tests/test_corps_json_illisible_refuse.py`.)"""
     stub_authz(monkeypatch)
     code, out = call("me.browser_session.finalize", path_params={"name": "brevo"},
                      body="{pas du json")
-    assert code == 400 and out["error"] == "missing_params"
+    assert code == 400 and out["error"] == "invalid_body"
 
 
-def test_un_corps_non_objet_ne_fait_plus_de_500(monkeypatch, socle):
-    """**Écart visible, et c'est une correction.** `(body or {}).get(...)` sur une LISTE
-    levait `AttributeError` → 500. L'adaptateur ne fusionne qu'un objet, donc le corps
-    est vu comme absent → `400 missing_params`. Un corps malformé ne doit pas rendre
-    une erreur serveur."""
+def test_un_corps_non_objet_est_refuse_sans_500(monkeypatch, socle):
+    """`(body or {}).get(...)` sur une LISTE levait `AttributeError` → 500. Le refus
+    reste un 400, et il NOMME ce qui cloche : un objet était attendu."""
     stub_authz(monkeypatch)
     code, out = _finalize([1, 2])
-    assert code == 400 and out["error"] == "missing_params"
+    assert code == 400 and out["error"] == "invalid_body"
 
 
 def test_un_champ_inconnu_est_desormais_refuse(monkeypatch, socle):
