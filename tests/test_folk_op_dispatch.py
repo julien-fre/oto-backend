@@ -695,11 +695,22 @@ def test_mark_todo_takes_no_fields(client):
 
 def test_mark_bulk_closes_many_and_reports_per_item(client):
     """Le cas d'usage qui a motivé tout ça : refermer d'un coup les tâches
-    posées sur un contact."""
-    client.mark_task_done.side_effect = [
-        {"id": "tsk_1"},
-        UpstreamHTTPError(422, {"error": {"message": "boom"}}, service="folk"),
-        {"id": "tsk_3"}]
+    posées sur un contact.
+
+    ⚠️ Le `side_effect` est une FONCTION de l'id, pas une liste positionnelle.
+    `_bulk_run` répartit les items sur un `ThreadPoolExecutor` et les récolte en
+    `as_completed` : l'ordre d'appel n'est pas celui des `ids`, donc une liste
+    positionnelle attribue l'échec à l'item que l'ordonnanceur a servi en
+    deuxième — pas à `tsk_2`. Le test tombait ainsi une fois sur deux selon la
+    charge de la machine (vu le 2026-08-27, deux suites en parallèle). Un banc
+    qui suppose un ordre là où le code n'en promet aucun mesure l'ordonnanceur,
+    pas le système."""
+    def _done(task_id, **kw):
+        if task_id == "tsk_2":
+            raise UpstreamHTTPError(422, {"error": {"message": "boom"}}, service="folk")
+        return {"id": task_id}
+
+    client.mark_task_done.side_effect = _done
     out = _tool("folk_record")(entity="task", op="mark_done",
                                ids=["tsk_1", "tsk_2", "tsk_3"])
     assert out["total"] == 3 and out["succeeded"] == 2
