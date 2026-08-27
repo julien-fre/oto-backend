@@ -1,0 +1,156 @@
+"""B5, B8 et B9 de l'inventaire des silences (27/08) : l'identité ne se dégrade pas en silence.
+
+- **B5** `resolve_sub` — pendant la fenêtre de bascule de tenant, un hoquet DB rendait
+  le sub NON canonicalisé : le porteur d'un vieux jeton était servi **sous son compte
+  d'AVANT migration** (coffre, org, projets), sans une ligne de trace.
+- **B8** `upsert_user` → `ensure_personal_org` — le compte naissait **sans org maison**.
+  Tout ce qui en dépend échouait plus tard, ailleurs, sans cause remontable.
+- **B9** `upsert_user` → `reconcile_signup_with_invitation` — l'invité d'une org
+  s'inscrivait et **ne rejoignait jamais l'org**, avec une invitation orpheline.
+
+Les tests décrivent le SYSTÈME : ce que l'appelant reçoit, ce que le journal porte,
+et l'ordre dans lequel les deux effets de première inscription sont tentés.
+"""
+from __future__ import annotations
+
+import contextlib
+import logging
+import os
+
+import pytest
+
+from oto_mcp import auth_hooks
+from oto_mcp.db import users as db_users
+
+
+# ── le banc : `_connect` remplacé par un curseur scriptable ──────────────────
+
+class _Row(dict):
+    pass
+
+
+class _Conn:
+    def __init__(self, row=None, boum: BaseException = None):
+        self._row, self._boum = row, boum
+        self.vues = []
+
+    def execute(self, sql, params=()):
+        self.vues.append(sql)
+        if self._boum is not None:
+            raise self._boum
+        return self
+
+    def fetchone(self):
+        return self._row
+
+
+def _connect_factory(conn):
+    @contextlib.contextmanager
+    def _c():
+        yield conn
+    return _c
+
+
+# ── B5 : un sub non canonicalisé n'est jamais servi ──────────────────────────
+
+def test_resolve_sub_rend_l_alias(monkeypatch):
+    conn = _Conn(row=_Row(new_sub="sub-migre"))
+    monkeypatch.setattr(db_users, "_connect", _connect_factory(conn))
+    assert db_users.resolve_sub("sub-vieux") == "sub-migre"
+
+
+def test_resolve_sub_sans_alias_rend_le_sub(monkeypatch):
+    monkeypatch.setattr(db_users, "_connect", _connect_factory(_Conn(row=None)))
+    assert db_users.resolve_sub("sub-1") == "sub-1"
+
+
+def test_resolve_sub_leve_au_lieu_de_servir_l_ancien_compte(monkeypatch):
+    """Le cœur de B5 : sur un hoquet DB, rendre le sub d'entrée = servir la requête
+    sous le compte d'AVANT migration. Le refus doit être bruyant."""
+    monkeypatch.setattr(db_users, "_connect",
+                        _connect_factory(_Conn(boum=RuntimeError("pool épuisé"))))
+    with pytest.raises(RuntimeError):
+        db_users.resolve_sub("sub-vieux")
+
+
+def test_le_seam_mcp_ne_reclasse_pas_l_echec_en_absence_de_jeton(monkeypatch):
+    """`current_user_sub_from_token` attrapait tout : l'échec de canonicalisation y
+    devenait « pas de jeton » et la requête repartait anonyme, sans un mot. Le seam
+    doit laisser passer l'échec d'IDENTITÉ (il garde sa tolérance à l'absence de
+    contexte fastmcp, testée par ailleurs)."""
+    monkeypatch.setenv("OTO_MCP_TENANT_MIGRATION_ISS", "https://ancien.logto.app")
+    monkeypatch.setenv("OTO_MCP_DEV_SUB", "sub-dev-de-secours")
+
+    class _Tok:
+        claims = {"sub": "sub-vieux", "email": "a@b.c", "iss": "https://ancien.logto.app"}
+
+    monkeypatch.setattr(auth_hooks, "_sub_override", type(auth_hooks._sub_override)("x", default=None))
+    import fastmcp.server.dependencies as deps
+    monkeypatch.setattr(deps, "get_access_token", lambda: _Tok())
+    from oto_mcp import db
+    monkeypatch.setattr(db, "resolve_sub", lambda s: (_ for _ in ()).throw(RuntimeError("pool épuisé")))
+
+    with pytest.raises(RuntimeError):
+        auth_hooks.current_user_sub_from_token()
+
+
+# ── B8 / B9 : un compte ne naît pas à moitié ─────────────────────────────────
+
+@pytest.fixture
+def signup(monkeypatch):
+    """Le VRAI premier insert : `RETURNING (xmax = 0)` rend `inserted=True`."""
+    monkeypatch.setattr(db_users, "_connect",
+                        _connect_factory(_Conn(row=_Row(inserted=True))))
+    from oto_mcp import org_store
+    faits = []
+    monkeypatch.setattr(org_store, "reconcile_signup_with_invitation",
+                        lambda sub, email: faits.append("invitation"))
+    monkeypatch.setattr(org_store, "ensure_personal_org",
+                        lambda sub, email=None, name=None: faits.append("org_maison"))
+    return faits
+
+
+def test_signup_nominal_ne_leve_pas(signup):
+    db_users.upsert_user("u-1", email="a@b.c", name="A")
+    assert signup == ["invitation", "org_maison"]
+
+
+def test_org_maison_manquante_est_une_erreur_nommee(signup, monkeypatch, caplog):
+    from oto_mcp import org_store
+    monkeypatch.setattr(org_store, "ensure_personal_org",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("UniqueViolation")))
+    caplog.set_level(logging.DEBUG, logger=db_users.logger.name)
+
+    with pytest.raises(db_users.OnboardingIncomplet) as e:
+        db_users.upsert_user("u-1", email="a@b.c", name="A")
+    assert "ensure_personal_org" in str(e.value)
+
+    erreurs = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert erreurs, "aucune trace de l'échec"
+    assert "u-1" in erreurs[0].getMessage() and "a@b.c" in erreurs[0].getMessage()
+
+
+def test_invitation_non_honoree_est_une_erreur_nommee(signup, monkeypatch):
+    from oto_mcp import org_store
+    monkeypatch.setattr(org_store, "reconcile_signup_with_invitation",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("timeout")))
+
+    with pytest.raises(db_users.OnboardingIncomplet) as e:
+        db_users.upsert_user("u-1", email="a@b.c", name="A")
+    assert "reconcile_signup_with_invitation" in str(e.value)
+    # L'échec de l'un ne dispense pas de tenter l'autre : les deux sont tentés, et
+    # l'erreur finale dit lesquels ont manqué.
+    assert signup == ["org_maison"]
+
+
+def test_un_login_ordinaire_ne_declenche_rien(monkeypatch):
+    """`inserted=False` (UPDATE) : aucun effet de première inscription, aucun risque
+    de lever sur le trajet chaud de CHAQUE requête."""
+    monkeypatch.setattr(db_users, "_connect",
+                        _connect_factory(_Conn(row=_Row(inserted=False))))
+    from oto_mcp import org_store
+    monkeypatch.setattr(org_store, "ensure_personal_org",
+                        lambda *a, **k: pytest.fail("ne doit pas être appelé"))
+    monkeypatch.setattr(org_store, "reconcile_signup_with_invitation",
+                        lambda *a, **k: pytest.fail("ne doit pas être appelé"))
+    db_users.upsert_user("u-1", email="a@b.c")

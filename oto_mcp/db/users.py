@@ -21,6 +21,32 @@ logger = logging.getLogger(__name__)
 from ._conn import _connect
 
 
+class OnboardingIncomplet(RuntimeError):
+    """Une première inscription n'a pas produit ce qu'elle promet.
+
+    Le compte existe (la ligne `users` est écrite et validée), mais l'un de ses deux
+    effets de naissance a échoué : l'org maison, ou l'invitation d'org à honorer.
+    Ces deux échecs étaient avalés — `except Exception: pass` — jusqu'au 2026-08-27
+    (`docs/silences-2026-08-27.md`, sites B8 et B9). Un compte sans org maison ne
+    plante pas là où il naît : il plante plus tard, ailleurs, et sans cause
+    remontable (cf. `backfill_member_scope`, qui logue « pas d'org maison pour %s »
+    sans jamais pouvoir dire pourquoi).
+
+    ⚠️ **Ce que ce refus ne fait PAS** : annuler la ligne `users`. Elle est validée
+    par sa propre transaction avant que les effets ne tournent, et le gate
+    `inserted` ne se re-déclenche pas au login suivant — donc un échec DURABLE
+    laisse un compte sans espace après ce seul cri. Le rattrapage reste
+    `org_store.backfill_personal_orgs`, rejoué à chaque boot. Rendre la naissance
+    ATOMIQUE est un lot à part, hors du périmètre de la correction des silences.
+    """
+
+    def __init__(self, sub: str, manques: list):
+        self.sub, self.manques = sub, list(manques)
+        super().__init__(
+            f"inscription incomplète pour {sub} : " + ", ".join(self.manques) +
+            " — le compte existe mais pas ce qui devait naître avec lui")
+
+
 def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = None,
                 iss: Optional[str] = None) -> None:
     """Create the user row if missing, refresh email/name if known.
@@ -43,26 +69,39 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
             """,
             (sub, email, name),
         ).fetchone()
+    # Les DEUX effets de première inscription sont tentés, PUIS l'échec est rendu :
+    # que l'un tombe ne dispense pas de l'autre, et l'erreur finale dit lesquels ont
+    # manqué. Ils n'étaient ni journalisés ni remontés jusqu'au 2026-08-27 (sites B8
+    # et B9 de `docs/silences-2026-08-27.md`) — un compte naissait alors à moitié, et
+    # tout ce qui en dépendait échouait plus tard, ailleurs, sans cause remontable.
+    manques: list = []
     if row and row.get("inserted") and email:
         # Réconciliation invitation↔signup : un invité d'org qui s'inscrit (par
         # n'importe quel chemin, pas seulement le lien /invite) voit son invitation
         # d'org en attente honorée par l'email vérifié → il rejoint directement
         # l'org au lieu de rester avec une invitation orpheline. Synchrone (une
-        # fois, au 1er insert) mais best-effort : un échec ne casse pas l'auth.
+        # fois, au 1er insert).
         try:
             from .. import org_store
             org_store.reconcile_signup_with_invitation(sub, email)
         except Exception:
-            pass
+            logger.error("upsert_user: invitation d'org NON honorée au signup "
+                         "(sub=%s email=%s) — l'invité ne rejoint pas son org",
+                         sub, email, exc_info=True)
+            manques.append("reconcile_signup_with_invitation")
     if row and row.get("inserted"):
         # Suppression du perso (otomata-private) : tout user a TOUJOURS une org maison.
         # Si l'inscription ne l'a pas déjà rattaché à une org (invitation d'org
-        # ci-dessus), on lui crée son espace. Idempotent, best-effort, hors gate email.
+        # ci-dessus), on lui crée son espace. Idempotent, hors gate email.
         try:
             from .. import org_store
             org_store.ensure_personal_org(sub, email=email, name=name)
         except Exception:
-            pass
+            logger.error("upsert_user: org maison NON créée (sub=%s email=%s) — "
+                         "le compte naîtrait sans espace", sub, email, exc_info=True)
+            manques.append("ensure_personal_org")
+    if manques:
+        raise OnboardingIncomplet(sub, manques)
     # Bascule de tenant (B1, otomata#35) : sur un login du NOUVEAU tenant, fusionner
     # l'ancien compte (même email) → ce sub. Gaté par env `OTO_MCP_TENANT_MIGRATION_ISS`
     # (dormant hors fenêtre de bascule). Idempotent, best-effort, à chaque login
@@ -206,15 +245,18 @@ _SUB_COLUMNS = [
 
 def resolve_sub(sub: str) -> str:
     """Canonicalise un sub via sub_aliases (vieux token d'un tenant en drain →
-    compte migré). Renvoie le sub inchangé si pas d'alias (cas normal)."""
+    compte migré). Renvoie le sub inchangé si pas d'alias (cas normal).
+
+    ⚠️ **Ne rattrape RIEN.** Rendre le sub d'entrée sur un hoquet DB, c'est servir la
+    requête sous le compte d'AVANT migration — coffre, org, projets — et sans une
+    ligne de trace (`docs/silences-2026-08-27.md`, site B5). « Je ne sais pas qui tu
+    es » et « tu es celui-ci » ne sont pas la même réponse : la première se lève, elle
+    ne se devine pas."""
     if not sub:
         return sub
-    try:
-        with _connect() as conn:
-            row = conn.execute("SELECT new_sub FROM sub_aliases WHERE old_sub=%s", (sub,)).fetchone()
-        return row["new_sub"] if row else sub
-    except Exception:
-        return sub
+    with _connect() as conn:
+        row = conn.execute("SELECT new_sub FROM sub_aliases WHERE old_sub=%s", (sub,)).fetchone()
+    return row["new_sub"] if row else sub
 
 
 _ROLE_RANK = {"member": 0, "admin": 1, "super_admin": 2}
