@@ -381,7 +381,7 @@ _PUBLISHER_BY_CONNECTOR = {
     "dropcontact": "Dropcontact",
     "unipile": "Unipile", "pennylane": "Pennylane", "gocardless": "GoCardless",
     "silae": "Silae", "attio": "Attio", "crunchbase": "Crunchbase",
-    "slack": "Slack", "whatsapp": "WhatsApp", "google": "Google",
+    "slack": "Slack", "google": "Google",
     "planity": "Planity", "atlassian": "Atlassian", "linear": "Linear",
     "hubspot": "HubSpot", "apollo": "Apollo", "zerobounce": "ZeroBounce",
     "hithorizons": "HitHorizons", "phantombuster": "Phantombuster",
