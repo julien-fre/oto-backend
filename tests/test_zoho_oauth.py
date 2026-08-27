@@ -51,9 +51,23 @@ def test_app_fields_reads_the_cascade(monkeypatch):
 
 
 def test_app_fields_is_empty_before_any_credential(monkeypatch):
-    """Première connexion : rien de posé — état NOMINAL, pas une erreur."""
-    monkeypatch.setattr(z.access, "resolve_credential",
-                        lambda *a, **k: (_ for _ in ()).throw(ValueError("none")))
+    """Première connexion : rien de posé — état NOMINAL, pas une erreur.
+
+    ⚠️ Le stub lève la vraie exception de la cascade, une **`McpError`** : c'est elle,
+    et elle seule, qui dit « pas encore de credential ». Il levait un `ValueError`
+    jusqu'au 2026-08-27 — une exception que `resolve_credential` ne produit jamais.
+    Tant qu'`app_fields` attrapait `Exception`, l'écart ne se voyait pas ; il cachait
+    précisément le défaut B7 de l'inventaire des silences (une erreur de COFFRE se
+    lisait comme « pas de credential » et faisait basculer sur l'app d'éditeur oto).
+    Même leçon que `test_we_call_an_api_that_actually_accepts_sub` ci-dessous : un
+    stub qui ment sur la forme du réel masque le bug qu'on croit tester."""
+    from mcp.shared.exceptions import McpError
+    from mcp.types import ErrorData, INVALID_PARAMS
+
+    def _aucun_credential(*a, **k):
+        raise McpError(ErrorData(code=INVALID_PARAMS, message="Aucune clé zoho posée"))
+
+    monkeypatch.setattr(z.access, "resolve_credential", _aucun_credential)
     assert z.app_fields("zoho", "u1") == {}
     assert z.has_app("zoho", "u1") is False
 

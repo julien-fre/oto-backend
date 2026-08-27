@@ -41,6 +41,7 @@ import logging
 import urllib.parse
 from typing import Optional
 
+from mcp.shared.exceptions import McpError
 
 from . import access, credentials_store, oauth_flow, providers
 
@@ -122,10 +123,17 @@ def app_fields(connector: str, sub: str, data_center: str = "") -> dict:
     # n'a pas de paramètre `sub` : on est dans une route REST, hors contexte MCP, où
     # le sub ambiant n'existe pas. `emit_on_failure=False` — c'est une SONDE qui avale
     # l'échec, elle ne doit pas polluer le signal d'usage (ADR 0017).
+    #
+    # ⚠️ On n'attrape QUE la `McpError` de la cascade — c'est elle, et elle seule,
+    # qui dit « pas encore de credential ». Attraper `Exception` faisait basculer
+    # SILENCIEUSEMENT sur l'app d'éditeur oto au moindre hoquet de coffre
+    # (déchiffrement, DB) : l'org qui a posé SON app pour la voir dans ses logs Zoho
+    # ne la voyait plus, et rien ne le disait (inventaire des silences du 2026-08-27,
+    # site B7). Une erreur de coffre est un refus, pas une absence.
     try:
         byo = access.resolve_credential(
             connector, want="byo", sub=sub, emit_on_failure=False).fields or {}
-    except Exception:  # noqa: BLE001 — pas encore de credential
+    except McpError:  # état NOMINAL : aucun credential apporté à ce niveau
         byo = {}
     if byo.get("client_id") and byo.get("client_secret"):
         return byo
