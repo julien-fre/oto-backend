@@ -11,8 +11,11 @@ description: >-
   connector_schemas, cap 1000 clés) car les API tierces (Unipile, Apollo…) ne
   publient pas de schéma de réponse. Couvre le dry-run preview (capacité
   org.field_filters.preview, REST POST /api/orgs/{id}/field-filters/{service}/preview)
-  et le moteur FieldFilter d'oto-core (mask/pseudonym/generalize/hash/drop). À lire
-  pour configurer ou étendre la rédaction de PII dans une org.
+  et le moteur FieldFilter d'oto-core (mask/pseudonym/generalize/hash/drop). Porte
+  enfin la règle de rendu du VIDE (EmptyResultMiddleware) : un résultat sans aucun
+  résultat se sert au modèle en PHRASE dans le canal texte, jamais en structure nue.
+  À lire pour configurer ou étendre la rédaction de PII dans une org, ou pour toucher
+  à la couche qui met en forme le résultat servi à l'agent.
 ---
 
 # Rédaction de champs (anonymisation des sorties connecteurs)
@@ -84,8 +87,103 @@ Actions : `mask` (preserve email/phone/iban, keep_first/last), `pseudonym` (kind
 matchée à valeur **liste de scalaires** (`emails: [...]`) est masquée **élément par
 élément** (corrigé v1.10.0/1.10.1 — sinon fuite ; couvre aussi les listes mixtes).
 
+## Le VIDE se sert en PHRASE, jamais en structure nue
+
+**Règle** (2026-08-27, `otomata-tech/oto#32`) : un résultat d'outil qui ne porte
+**aucun** résultat part au modèle sous forme de **phrase seule** dans le canal texte
+— `structuredContent` gardant, lui, la structure vide intacte. Générique, appliquée
+par `middleware.EmptyResultMiddleware` à **tout** outil : ce n'est pas un correctif
+par connecteur.
+
+**L'incident fondateur.** Une flotte d'agents interrogeait une base sur des cibles
+souvent absentes. Le `{"total_count": 0, "rows": []}` rendu tel quel dans le canal
+texte faisait **dégénérer le décodage du modèle** : recopie de la structure, boucle
+sur des centaines de `]}`, reprise en prose — et le fournisseur encadrait toute la
+sortie comme un **appel d'outil dont le nom est la narration**, renvoyé au client.
+Un runner en une passe ne joue pas cet appel : le travail est perdu, la ligne
+repayée à l'identique. **16 des 26 faux départs d'une campagne, 10 des 11 d'une
+vague de production**, ~23 k jetons par job perdu. Trois sessions ont soupçonné la
+consigne pendant trois heures avant qu'une capture du texte final ne montre le
+mécanisme — le défaut est **invisible partout où le vide est l'exception, et
+dominant là où il est la norme**.
+
+**Seam unique** : `redaction.sert_du_vide(result)`, appelé au seul endroit où oto
+rend le résultat à FastMCP. Aucune retouche par outil.
+
+⚠️ **Le vide MUET, le pire cas.** Un outil qui rend `[]` ou `None` ne produit
+**aucun bloc de contenu** (`_convert_to_content`, FastMCP 3.4.2) — là où `[1]` rend
+un bloc texte et un dict rend son JSON. Le modèle reçoit alors un tour littéralement
+sans contenu, et c'est cette absence qui le fait dérailler (`fr_directors` sur un
+SIREN sans dirigeant). La phrase remplace ce silence ; elle ne **fabrique jamais** de
+JSON pour le combler. Un retour `[1]` reste servi à l'identique.
+
+**Détection** (`redaction.is_empty_payload`) : un résultat est vide quand il
+**l'affirme**, jamais parce qu'il en a vaguement l'air. Une **liste** sans élément ;
+un **dict** qui porte l'un des deux signaux reconnus :
+
+- un **compteur** — `total_count`, `total`, `count` — qui vaut 0 ;
+- une **clé de collection RECONNUE** dont la valeur est une liste sans élément. La
+  liste est **FERMÉE**, déclarée dans `redaction._COLLECTION_KEYS` : `rows`,
+  `results`, `items`, `matches`, `hits`, `data`, `entries`, `calls`, `jobs`,
+  `documents`, `records`, `files`, `messages`, `events`, `result`.
+
+Quatre contradictions **disqualifient**, parce qu'elles portent une information que
+la phrase effacerait :
+
+- une collection reconnue **non** vide, ou un compteur **non nul** ;
+- une **notice** truthy — `note`, `hint`, `warning(s)`, `notices`, `error(s)`,
+  `partial(_errors)`, `hors_schema`, plus les **familles** `*truncat*`, `*tronqu*`,
+  `*warning*`, `*avertissement*` (le suffixe est trop productif pour une liste
+  fermée : `_etablissements_truncated`, `{champ}_truncated` en clé dynamique chez
+  unipile, `texte_tronque`, `truncated_results`, `filtre_ca_avertissement`).
+  Cherchée à la racine **et un cran plus bas** — `fr_accords_search`, l'outil même de
+  l'incident, porte la sienne sous `effectifs_filter.truncated` ;
+- un **accusé d'écriture** (`ok`, `dry_run`, `created`, `deleted`, `failed`,
+  `succeeded`, `imported`, `would_*`…). Le nom de la collection ne suffit **pas** à
+  les écarter : ils portent aussi les signaux reconnus —
+  `{"total": len(items), "succeeded": …, "failed": []}` (webflow) et
+  `{"total": total, "imported": 0, "items": [], …}` (waalaxy) seraient lus comme
+  vides **par le compteur**.
+
+⚠️ **La liste fermée sous-détecte, et c'est assumé.** Ce backend ne nomme pas ses
+collections de façon uniforme : les capacités en exposent à elles seules ~90
+(`instances`, `seats`, `guides`, `signals`, `namespaces`…), et airtable calcule la
+sienne à l'exécution (`{key: items}`). Mieux vaut servir une structure de trop
+qu'affirmer un vide à tort. Le **compteur** rattrape l'essentiel, la convention maison
+étant de poser `count: len(...)` à côté de la collection (34 sites sur 41).
+
+⚠️ **La liste fermée est le cœur du garde-fou.** La première version disait « toute
+clé dont la valeur est une liste » : elle lisait l'**accusé d'écriture**
+`{"ok": true, "deleted": []}` comme un résultat vide et répondait « aucun résultat »
+à qui venait de supprimer zéro ligne. `deleted`, `created`, `skipped` ne sont pas des
+collections de résultats — un bilan d'écriture se rend tel quel. Y ajouter une clé
+demande la même preuve que les autres : un outil qui la rend vraiment.
+
+Une clé reconnue dont la valeur n'est **pas** une liste (`data` porte souvent un
+objet) n'est ni signal ni contradiction : elle est ignorée. Le signal ne se cherche
+**qu'à la racine**.
+
+**Phrase servie** (`redaction.EMPTY_MESSAGES`) : le gabarit déclaré pour l'outil,
+sinon `EMPTY_MESSAGE_DEFAULT`. La table vit dans la couche de rendu, pas au registre
+des connecteurs : un outil n'a pas à savoir comment on le rend.
+
+⚠️ **Jamais phrase + structure dans le même canal texte** — y rajouter la structure
+« pour information » rétablirait exactement le déclencheur qu'on retire.
+
+⚠️ **L'ordre des middlewares EST la moitié du correctif** : `EmptyResultMiddleware`
+est monté **juste sous `ToolAliasMiddleware`**, donc plus externe que la rédaction et
+que l'écho de compte — qui réémettent tous deux le payload en JSON dans le canal
+texte (`rebuild_result`). Plus interne, la structure serait rétablie juste après
+avoir été retirée. Contrat figé par `tests/test_middleware_order.py`.
+
+⚠️ **La face REST ne change pas d'un octet** : elle ne partage aucun code de rendu
+avec la chaîne MCP (`_rest_adapter` → `_json`), et continue de servir la structure
+vide aux clients qui parsent.
+
 ## Surfaces & fichiers
-- backend : `middleware.py` (FieldRedactionMiddleware), `connector_schema_store.py`,
+- backend : `redaction.py` (logique partagée : extraction, rédaction, réémission,
+  **rendu du vide**), `middleware.py` (FieldRedactionMiddleware, EmptyResultMiddleware),
+  `connector_schema_store.py`,
   `field_filter_defaults.py` (SERVER_DEFAULTS vide + TEMPLATES), `connector_field_schema.py`
   (curé, libellés), `capabilities/orgs_field_filters.py` (get/set/preview), `db.py`
   (`connector_schemas`).
