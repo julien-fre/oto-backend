@@ -17,6 +17,10 @@ où ils se sont produits :
 D'où la règle qui gouverne ce module : **une date de bail illisible REFUSE l'écriture
 au lieu de l'ouvrir.** Un bail dont on ne sait pas s'il court protège peut-être encore
 quelqu'un ; l'ignorance ne se résout pas en faveur de l'écrivain.
+
+Le bail dit qui tient la ligne. Il ne dit pas combien de fois on l'a tenue pour rien :
+c'est le plafond de reprises (`rowabandon`, #433), armé aux deux réservations et jugé
+à chaque relâchement.
 """
 from __future__ import annotations
 
@@ -24,17 +28,39 @@ from typing import Optional
 
 from ._conn import _connect
 from .query import _ds_filter_clauses
+from .rowabandon import abandonner_les_lignes_a_bout
+
+# Les colonnes rendues avec une ligne réservée : son bail, et ce que la file sait
+# d'elle — combien de fois elle a été prise sans être écrite, et le motif si elle
+# en est sortie (#433).
+_RENDU = ("RETURNING row_id, created_at, updated_at, data, claimed_by, "
+          "claimed_until, claims, abandon_reason")
 
 
 def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
                          filters: Optional[list] = None,
-                         run_id: Optional[str] = None) -> Optional[dict]:
+                         run_id: Optional[str] = None,
+                         max_claims: Optional[int] = None) -> Optional[dict]:
     """Claim atomique de la prochaine row claimable du namespace (ordre de
     création — row_id uuid7 monotone). `filters` = mêmes filtres whitelistés que
     la lecture (`_ds_filter_clauses`), typiquement `[{field:'status',op:'eq',…}]`.
-    Renvoie la row (avec bail posé) ou None si plus rien à traiter."""
+    Renvoie la row (avec bail posé) ou None si plus rien à traiter.
+
+    `max_claims` surcharge le plafond de reprises déclaré au schéma (#433) pour
+    cette passe. La réservation INCRÉMENTE le compteur de la ligne : c'est
+    l'écriture qui le remet à zéro, jamais le fait de la reprendre.
+
+    ⚠️ La passe d'abandon tourne AVANT le pick, hors de sa transaction : elle
+    ramasse les lignes à bout que personne n'a relâchées (agent mort, bail
+    expiré) — le relâchement, lui, s'occupe du cas nominal."""
+    abandonner_les_lignes_a_bout(ns_id, max_claims=max_claims)
     fclauses, fparams = _ds_filter_clauses(filters)
-    where = "WHERE ns_id = %s AND (claimed_until IS NULL OR claimed_until < NOW())"
+    # `abandon_reason IS NULL` est un filet de PLATEFORME, indépendant du filtre du
+    # client : une ligne sortie de la file ne se sert plus, même à un appelant qui
+    # ne filtre sur rien. Le filtre dit ce que l'appelant veut ; ceci dit ce que le
+    # tableau a le droit de servir.
+    where = ("WHERE ns_id = %s AND abandon_reason IS NULL "
+             "AND (claimed_until IS NULL OR claimed_until < NOW())")
     params: list = [ns_id, *fparams]
     for c in fclauses:
         where += f" AND {c}"
@@ -48,9 +74,10 @@ def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
             return None
         row = conn.execute(
             "UPDATE datastore_rows SET claimed_by = %s, "
-            "claimed_until = NOW() + (%s || ' seconds')::interval, claimed_run = %s "
+            "claimed_until = NOW() + (%s || ' seconds')::interval, claimed_run = %s, "
+            "claims = claims + 1 "
             "WHERE ns_id = %s AND row_id = %s "
-            "RETURNING row_id, created_at, updated_at, data, claimed_by, claimed_until",
+            + _RENDU,
             (str(worker), int(lease_seconds), run_id, ns_id, picked["row_id"]),
         ).fetchone()
         return dict(row) if row else None
@@ -68,14 +95,28 @@ def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
     concurrents sur la même row, un seul repart avec le bail.
 
     None = row absente OU sous bail actif d'un AUTRE worker ; les distinguer coûte
-    une relecture, laissée à l'appelant (chemin d'échec seulement)."""
+    une relecture, laissée à l'appelant (chemin d'échec seulement).
+
+    ⚠️ Le compteur de reprises monte ici aussi (#433) — mais sur une PRISE, pas sur
+    un renouvellement : reprendre une ligne dont le bail a lâché compte, la garder
+    non. `claim_next`, lui, n'a pas la nuance à porter : sa clause d'éligibilité
+    exclut déjà le bail actif, donc il ne renouvelle jamais rien."""
     with _connect() as conn:
         row = conn.execute(
             "UPDATE datastore_rows SET claimed_by = %s, "
-            "claimed_until = NOW() + (%s || ' seconds')::interval, claimed_run = %s "
+            "claimed_until = NOW() + (%s || ' seconds')::interval, claimed_run = %s, "
+            # RÉSERVER, c'est PRENDRE une ligne : un nouveau titulaire, ou une ligne
+            # dont le bail a lâché. Le titulaire qui renouvelle ne la prend pas — elle
+            # ne lui a jamais échappé — donc son geste ne consomme pas le plafond
+            # (#433) : sur une file pilotée à la main, rafraîchir son écran est le
+            # geste le plus banal, et le compter la viderait de ses lignes.
+            # ⚠️ Les colonnes lues dans le SET sont celles d'AVANT l'UPDATE (PG) :
+            # `claimed_until` désigne bien le bail que cet appel remplace.
+            "claims = claims + CASE WHEN claimed_until IS NULL "
+            "                       OR claimed_until < NOW() THEN 1 ELSE 0 END "
             "WHERE ns_id = %s AND row_id = %s AND (claimed_until IS NULL "
             "OR claimed_until < NOW() OR claimed_by = %s) "
-            "RETURNING row_id, created_at, updated_at, data, claimed_by, claimed_until",
+            + _RENDU,
             (str(worker), int(lease_seconds), run_id, ns_id, row_id, str(worker)),
         ).fetchone()
         return dict(row) if row else None
@@ -107,10 +148,19 @@ def datastore_release_by_run(run_id: str) -> int:
     if not run_id:
         return 0
     with _connect() as conn:
-        cur = conn.execute(
+        liberees = conn.execute(
             "UPDATE datastore_rows SET claimed_by = NULL, claimed_until = NULL, "
-            "claimed_run = NULL WHERE claimed_run = %s", (str(run_id),))
-        return cur.rowcount or 0
+            "claimed_run = NULL WHERE claimed_run = %s "
+            "RETURNING ns_id, row_id", (str(run_id),)).fetchall()
+    # Un run qui se ferme sans avoir écrit est LE geste que le plafond mesure : le
+    # traitement s'est conclu, la ligne revient intacte. L'évaluation suit la
+    # libération, jamais l'inverse — une ligne encore sous bail n'est pas à bout.
+    par_tableau: dict = {}
+    for r in liberees:
+        par_tableau.setdefault(int(r["ns_id"]), []).append(r["row_id"])
+    for ns_id, ids in par_tableau.items():
+        abandonner_les_lignes_a_bout(ns_id, row_ids=ids)
+    return len(liberees)
 
 
 def datastore_active_lease(ns_id: int, row_id: str) -> Optional[dict]:
@@ -134,7 +184,8 @@ def datastore_claimed_rows(ns_id: int) -> list[dict]:
     `claimed_until`), plus ancien bail d'abord."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until "
+            "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until, "
+            "       claims, abandon_reason "
             "FROM datastore_rows WHERE ns_id = %s AND claimed_by IS NOT NULL "
             "ORDER BY claimed_until ASC",
             (ns_id,),
@@ -155,4 +206,9 @@ def datastore_release_claim(ns_id: int, row_id: str, worker: Optional[str]) -> b
             f"WHERE ns_id = %s AND row_id = %s AND claimed_by IS NOT NULL{guard}",
             params,
         )
-        return (cur.rowcount or 0) > 0
+        libere = (cur.rowcount or 0) > 0
+    if libere:
+        # Rendre la ligne sans l'avoir écrite est le cas NOMINAL du faux départ :
+        # c'est ici, à la ligne qu'on vient de relâcher, que le plafond se juge.
+        abandonner_les_lignes_a_bout(ns_id, row_ids=[row_id])
+    return libere

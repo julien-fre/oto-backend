@@ -14,7 +14,9 @@ s'étend au-delà du rendu (0016) avec quatre couches OPT-IN :
 - **cycle de vie** : `lifecycle: {states, transitions, terminal?}` sur le field
   `role="status"` — état inconnu ou transition non déclarée = refus ;
 - **états terminaux** : `terminal` explicite, sinon dérivés (état sans transition
-  sortante) — le store libère le claim de file de travail en y entrant.
+  sortante) — le store libère le claim de file de travail en y entrant ;
+- **plafond de reprises** : `lifecycle.max_claims` + `lifecycle.abandon_state` —
+  une ligne réservée N fois sans qu'une écriture n'aboutisse quitte la file.
 
 Défaut (aucune de ces clés) = comportement 0016 inchangé : schéma de rendu SOFT.
 Les erreurs sont des *listes de messages actionnables* — le store les joint dans
@@ -461,6 +463,30 @@ def is_terminal_status(schema: Optional[dict], value: Any) -> bool:
     return value is not None and str(value) in terminal_states(schema)
 
 
+def max_claims_of(schema: Optional[dict]) -> Optional[int]:
+    """Plafond de réservations SANS écriture (`lifecycle.max_claims`), ou None =
+    garde inactive — le comportement historique, qu'aucune déclaration n'arme.
+
+    Une valeur présente mais inutilisable LÈVE : la déclaration est refusée à la
+    pose (`validate_schema_def`), donc un plafond illisible ici ne peut venir que
+    d'une écriture hors surface. L'ignorer rendrait la garde inerte en silence —
+    exactement le défaut que ce plafond existe pour fermer."""
+    lc = lifecycle_of(schema) or {}
+    if "max_claims" not in lc:
+        return None
+    v = lc.get("max_claims")
+    if isinstance(v, bool) or not isinstance(v, int) or v < 1:
+        raise ValueError(f"lifecycle.max_claims doit être un entier >= 1 (déclaré : {v!r})")
+    return v
+
+
+def abandon_state_of(schema: Optional[dict]) -> Optional[str]:
+    """L'état où verser une ligne qui a atteint son plafond de reprises
+    (`lifecycle.abandon_state`). None = non déclaré."""
+    v = (lifecycle_of(schema) or {}).get("abandon_state")
+    return str(v) if v is not None else None
+
+
 def merge_fields(current: list, patch: list) -> tuple[list, list[str], list[str]]:
     """Fusionne `patch` dans `current` PAR CLÉ → `(fields, ajoutés, modifiés)`.
 
@@ -688,6 +714,28 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
             for t in lc.get("terminal") or []:
                 if str(t) not in known:
                     errors.append(f"lifecycle.terminal: état inconnu {t!r}")
+        # Le plafond de reprises (#433) et son état d'abandon vont ENSEMBLE : un
+        # plafond sans état où verser la ligne serait une garde qui ne peut pas
+        # s'appliquer, et un état non terminal la remettrait dans la file qu'elle
+        # vient de quitter. Les deux se refusent à la pose, là où le tableau se
+        # déclare — pas au premier claim d'une campagne déjà lancée.
+        plafond = lc.get("max_claims")
+        if plafond is not None and (isinstance(plafond, bool)
+                                    or not isinstance(plafond, int) or plafond < 1):
+            errors.append(
+                f"lifecycle.max_claims doit être un entier >= 1 (reçu {plafond!r}) — "
+                "c'est le nombre de réservations SANS écriture qu'une ligne supporte "
+                "avant de quitter la file")
+        abandon = lc.get("abandon_state")
+        if plafond is not None and abandon is None:
+            errors.append(
+                "lifecycle.max_claims exige lifecycle.abandon_state — l'état terminal "
+                "où verser une ligne réservée N fois sans écriture")
+        if abandon is not None and str(abandon) not in terminal_states(schema):
+            errors.append(
+                f"lifecycle.abandon_state: {abandon!r} n'est pas un état terminal déclaré "
+                "(ajoute-le à lifecycle.terminal) — une ligne abandonnée reviendrait "
+                "sinon dans la file qu'elle vient de quitter")
     else:
         # lifecycle posé sur un field non-status = erreur de placement (silencieux sinon)
         for f in _fields(schema):

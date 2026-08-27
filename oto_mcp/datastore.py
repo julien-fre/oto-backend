@@ -7,6 +7,8 @@ la row renvoyée :
 
 - `_id` : identifiant uuid7-like (col `row_id`).
 - `_created_at` / `_updated_at` : timestamps (colonnes dédiées).
+- `_claims` / `_abandon` : ce que la file de travail sait de la ligne —
+  réservations sans écriture, et motif si le plafond l'en a sortie (#433).
 
 Plus de dépendance Google : la vérité est en base, types préservés nativement
 par JSONB (fin de la sentinelle `__j:` de l'ère Sheets). La propriété et le partage
@@ -344,6 +346,14 @@ class DatastorePg(SchemaOpsMixin):
         if row.get("claimed_by") is not None:
             out["_claimed_by"] = row["claimed_by"]
             out["_claimed_until"] = row.get("claimed_until")
+        # Ce que la file sait de la ligne (#433). Rendus SEULEMENT s'ils portent
+        # quelque chose : un `_claims: 0` sur chaque ligne de chaque tableau serait
+        # du bruit dans toutes les lectures, pour une file que la plupart n'ouvrent
+        # jamais. Voir « déjà tentée 2 fois » est ce qui change une décision.
+        if row.get("claims"):
+            out["_claims"] = row["claims"]
+        if row.get("abandon_reason"):
+            out["_abandon"] = row["abandon_reason"]
         return out
 
     # --- schéma v2 : validation d'écriture + cycle de vie (ADR 0046) ---------
@@ -1226,6 +1236,7 @@ class DatastorePg(SchemaOpsMixin):
 
     def claim_next(self, namespace: str, *, worker: str,
                    filter: Optional[dict] = None, lease_s: int = 900,
+                   max_claims: Optional[int] = None,
                    warnings: Optional[list] = None,
                    trace: Optional[dict] = None) -> Optional[dict]:
         """Pick + claim atomique de la prochaine row claimable (bail NULL ou
@@ -1236,7 +1247,11 @@ class DatastorePg(SchemaOpsMixin):
 
         `warnings` = liste OUT (patron `trace`) où est déposé, le cas échéant, le
         défaut de configuration qui rend l'auto-release inopérante — le worker qui
-        claim est celui que ça concerne, et il peut alors libérer explicitement."""
+        claim est celui que ça concerne, et il peut alors libérer explicitement.
+
+        `max_claims` serre, pour cette passe, le plafond de reprises déclaré au
+        schéma (#433) : la ligne réservée N fois sans écriture quitte la file. Sans
+        déclaration ni paramètre, la garde ne s'arme pas."""
         worker = (worker or "").strip()
         if not worker:
             raise ValueError("worker requis (libellé stable rejoué sur release)")
@@ -1244,7 +1259,7 @@ class DatastorePg(SchemaOpsMixin):
         filters = _filter_clauses(filter, None)
         row = db.datastore_claim_next(ns_id, worker=worker,
                                       lease_seconds=int(lease_s), filters=filters,
-                                      run_id=_current_run())
+                                      run_id=_current_run(), max_claims=max_claims)
         if row is not None:
             self._after_claim(ns_id, warnings=warnings, trace=trace)
         return self._row_to_dict(row, self._schema_of(ns_id)) if row else None

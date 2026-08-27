@@ -27,7 +27,8 @@ from .datastore_errors import RowValidationError
 
 # Les colonnes de la PLATEFORME : elles vivent dans la ligne sans être des
 # données de l'utilisateur — ni purgeables, ni écrasables par une écriture.
-_META_COLS = ("_id", "_created_at", "_updated_at", "_claimed_by", "_claimed_until")
+_META_COLS = ("_id", "_created_at", "_updated_at", "_claimed_by", "_claimed_until",
+              "_claims", "_abandon")
 
 
 def _writes_layers(new: Any) -> bool:

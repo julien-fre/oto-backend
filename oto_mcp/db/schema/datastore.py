@@ -66,6 +66,15 @@ CREATE TABLE IF NOT EXISTS datastore_rows (
     -- Mesure qui a rendu ① nécessaire : UNE ligne en production portait un bail, tenu
     -- depuis 18 jours par un worker disparu — invisible de tous.
     claimed_run TEXT,
+    -- Réservations SANS écriture depuis la dernière écriture réussie (#433). Une
+    -- file peut tourner à vide : l'agent réserve, enquête, conclut sans rien
+    -- écrire, la ligne revient, et le suivant refait le même faux départ. Le
+    -- compteur est remis à 0 par toute écriture de la ligne ; au-delà du plafond
+    -- déclaré (`lifecycle.max_claims`), la ligne passe dans `lifecycle.
+    -- abandon_state` et `abandon_reason` porte le motif — non NULL = hors file,
+    -- quel que soit le filtre du client.
+    claims INTEGER NOT NULL DEFAULT 0,
+    abandon_reason TEXT,
     PRIMARY KEY (ns_id, row_id)
 );
 

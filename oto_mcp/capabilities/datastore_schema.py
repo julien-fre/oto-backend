@@ -143,7 +143,10 @@ CAPABILITIES += [
             "Returns `{namespace, schema}` — `schema` is null when none is declared, "
             "which is a normal state, not an error. Read it BEFORE amending: "
             "`data_set_schema` posts the schema WHOLE, it does not merge, so adding one "
-            "field means re-posting the existing definition plus that field."
+            "field means re-posting the existing definition plus that field. "
+            "The work-queue rules live on the `role:\"status\"` field, under `lifecycle`: "
+            "`states`/`transitions`/`terminal`, plus `max_claims` + `abandon_state` — the "
+            "ceiling of claims WITHOUT a write past which a row leaves the queue."
         ),
     ),
 ]

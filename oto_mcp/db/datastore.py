@@ -116,7 +116,11 @@ def datastore_upsert_row(ns_id: int, row_id: str, data: dict) -> tuple[dict, boo
             "        (SELECT semantic_search FROM user_datastores WHERE id = %s)) "
             # data change ⟹ re-dirty ⟺ namespace opt-in sémantique (#67 V2.2).
             "ON CONFLICT (ns_id, row_id) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW(), "
-            "  embed_dirty = (SELECT semantic_search FROM user_datastores WHERE id = datastore_rows.ns_id) "
+            "  embed_dirty = (SELECT semantic_search FROM user_datastores WHERE id = datastore_rows.ns_id), "
+            # Écrire, c'est repartir de zéro (#433) : le compteur de reprises ne mesure
+            # que les réservations SANS écriture, et le motif d'abandon tombe avec lui —
+            # une ligne réparée à la main revient dans la file.
+            "  claims = 0, abandon_reason = NULL "
             "RETURNING row_id, created_at, updated_at, data, (xmax = 0) AS inserted",
             (ns_id, row_id, json.dumps(data), ns_id),
         ).fetchone()
@@ -396,7 +400,8 @@ def datastore_rows_by_ids(ns_id: int, row_ids: list) -> dict:
 def datastore_get_row(ns_id: int, row_id: str) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
-            "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until "
+            "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until, "
+            "       claims, abandon_reason "
             "FROM datastore_rows WHERE ns_id = %s AND row_id = %s",
             (ns_id, row_id),
         ).fetchone()
@@ -453,7 +458,8 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
         params.extend([limit, offset])
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until "
+            "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until, "
+            "       claims, abandon_reason "
             f"FROM datastore_rows {where} ORDER BY {order_sql}{tail}",
             tuple(params),
         ).fetchall()
@@ -477,7 +483,8 @@ def datastore_list_rows_after(ns_id: int, *, after_row_id: Optional[str] = None,
     params.append(limit)
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until "
+            "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until, "
+            "       claims, abandon_reason "
             f"FROM datastore_rows {where} ORDER BY row_id ASC LIMIT %s",
             tuple(params),
         ).fetchall()
@@ -550,7 +557,10 @@ def datastore_update_row(ns_id: int, row_id: str, data: dict, updated_at: str) -
     """Remplace `data` (le store a déjà fusionné le patch) + `updated_at`."""
     with _connect() as conn:
         row = conn.execute(
-            "UPDATE datastore_rows SET data = %s::jsonb, updated_at = %s::timestamptz "
+            "UPDATE datastore_rows SET data = %s::jsonb, updated_at = %s::timestamptz, "
+            # cf. `datastore_upsert_row` : toute écriture de la ligne remet le
+            # compteur de reprises à zéro et la rouvre à la file (#433).
+            "       claims = 0, abandon_reason = NULL "
             "WHERE ns_id = %s AND row_id = %s "
             "RETURNING row_id, created_at, updated_at, data",
             (json.dumps(data), updated_at, ns_id, row_id),
@@ -600,7 +610,10 @@ def datastore_merge_row_locked(ns_id: int, row_id: str, apply_fn, updated_at: st
                 current = json.loads(current) if current else {}
             merged = apply_fn(current)
             row = conn.execute(
-                "UPDATE datastore_rows SET data = %s::jsonb, updated_at = %s::timestamptz "
+                "UPDATE datastore_rows SET data = %s::jsonb, updated_at = %s::timestamptz, "
+                # cf. `datastore_upsert_row` : toute écriture de la ligne remet le
+                # compteur de reprises à zéro et la rouvre à la file (#433).
+                "       claims = 0, abandon_reason = NULL "
                 "WHERE ns_id = %s AND row_id = %s "
                 "RETURNING row_id, created_at, updated_at, data",
                 (json.dumps(merged), updated_at, ns_id, row_id),

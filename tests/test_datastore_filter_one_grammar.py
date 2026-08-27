@@ -19,12 +19,19 @@ import psycopg
 import pytest
 
 
+# Les DEUX tables que la file touche : les lignes, et le tableau dont `claim_next`
+# lit la politique de plafond de reprises (#433).
+_TABLES = ("user_datastores", "datastore_rows")
+
+
 def _ddl() -> str:
     from oto_mcp.db import _schema
     src = _schema._SCHEMA
-    i = src.index("CREATE TABLE IF NOT EXISTS datastore_rows")
-    j = src.index("\n);", i) + 3
-    return src[i:j].replace("REFERENCES user_datastores(id) ON DELETE CASCADE", "")
+    morceaux = []
+    for table in _TABLES:
+        i = src.index(f"CREATE TABLE IF NOT EXISTS {table}")
+        morceaux.append(src[i:src.index("\n);", i) + 3])
+    return "\n".join(morceaux)
 
 
 @pytest.fixture()
@@ -36,8 +43,11 @@ def store(pg_dsn, monkeypatch):
     monkeypatch.setattr(_conn, "_database_url", lambda: pg_dsn)
     from oto_mcp.datastore import DatastorePg
     with psycopg.connect(pg_dsn, autocommit=True) as c:
-        c.execute("DROP TABLE IF EXISTS datastore_rows")
+        for table in reversed(_TABLES):
+            c.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
         c.execute(_ddl())
+        c.execute("INSERT INTO user_datastores (id, owner_type, owner_id, namespace) "
+                  "VALUES (1, 'user', 'u-1', 't')")
         for i, jour in enumerate(["2026-05-01", "2026-06-15", "2026-07-20"]):
             c.execute(
                 "INSERT INTO datastore_rows (ns_id, row_id, data) "
@@ -48,7 +58,8 @@ def store(pg_dsn, monkeypatch):
         monkeypatch.setattr(s, "_ns_of", lambda ns_id: {"schema": None, "namespace": "t"})
         monkeypatch.setattr(s, "_after_claim", lambda *a, **k: None)
         yield s
-        c.execute("DROP TABLE IF EXISTS datastore_rows")
+        for table in reversed(_TABLES):
+            c.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
 
 
 _APRES_JUIN = {"posted_at": {"gte": "2026-06-01"}}
