@@ -359,6 +359,22 @@ def _observe_schema(service: str, payload) -> None:
     connector_schema_store.observe(service, payload)
 
 
+def _cible(name: str, args: dict) -> str:
+    """L'outil réellement VISÉ par l'appel. `oto_call` en dispatche un autre (ADR
+    0036) : c'est son `name` qui dit de quel connecteur il s'agit, pas le sien.
+
+    Sans ça, l'écho de compte se taisait précisément là où il sert le plus. Le
+    schéma MCP est figé au handshake : une session ouverte AVANT la pose d'un
+    second compte ne voit pas l'axe `_account=` sur les outils du connecteur, donc
+    l'agent n'a d'autre voie que `oto_call` pour viser un workspace — et c'est
+    exactement l'appel qui ne lui disait pas sous quelle identité il était parti.
+    Vécu en vrai le 27/08, sur le premier double workspace Slack."""
+    if name != "oto_call":
+        return name
+    vise = args.get("name")
+    return vise if isinstance(vise, str) and vise else name
+
+
 def _echo_account(result, tool_name: str):
     """Dit à l'agent SOUS QUEL COMPTE l'appel est parti, quand il en a plusieurs.
 
@@ -479,7 +495,7 @@ class CallContextMiddleware(Middleware):
             for axis in call_axes.axes_for_call(name):
                 if axis.param in args:
                     undo.extend(await axis.pin_for(args.pop(axis.param), name))
-            return _echo_account(await call_next(context), name)
+            return _echo_account(await call_next(context), _cible(name, args))
         finally:
             for reset, tok in reversed(undo):
                 reset(tok)

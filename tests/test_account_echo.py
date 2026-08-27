@@ -79,3 +79,28 @@ def test_un_champ_metier_du_meme_nom_n_est_jamais_ecrase(trace):
     session_org.note_call_trace(resolved_connector="slack", resolved_account="client-x")
     out = middleware._echo_account(_Result({"_account": "à moi"}), "slack_post_message")
     assert _payload(out) == {"_account": "à moi"}
+
+
+# --- Le dispatch universel (`oto_call`) -------------------------------------
+
+def test_l_echo_suit_l_outil_VISE_par_oto_call(trace):
+    """`oto_call` dispatche un autre outil : c'est SON `name` qui dit le connecteur.
+
+    Sans ça, l'écho se taisait là où il sert le plus — le schéma étant figé au
+    handshake, une session ouverte avant la pose d'un second compte n'a que
+    `oto_call` pour viser un workspace."""
+    session_org.note_call_trace(resolved_connector="slack", resolved_account="client-x")
+    assert middleware._cible("oto_call", {"name": "slack_list_channels"}) == "slack_list_channels"
+    out = middleware._echo_account(_Result({"channels": []}),
+                                   middleware._cible("oto_call", {"name": "slack_list_channels"}))
+    assert _payload(out) == {"channels": [], "_account": "client-x"}
+
+
+def test_oto_call_sans_cible_lisible_reste_lui_meme(trace):
+    """Un appel malformé ne doit pas faire deviner un connecteur au hasard."""
+    assert middleware._cible("oto_call", {}) == "oto_call"
+    assert middleware._cible("oto_call", {"name": 42}) == "oto_call"
+
+
+def test_un_outil_direct_n_est_pas_reinterprete(trace):
+    assert middleware._cible("slack_post_message", {"name": "autre_chose"}) == "slack_post_message"
