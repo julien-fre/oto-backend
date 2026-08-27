@@ -80,9 +80,14 @@ def project(payload: Any, *, drop: Iterable[str] = (), items_path: Optional[str]
 RAW = "*"  # `fields=["*"]` — le chemin vers le brut, même jeton que data_rows/le feed
 
 
+_HINT_TRI = (f'Vue de tri. Corps et colonnes écartés : `fields=["{RAW}"]` '
+             "rend la ligne entière, `fields=[…]` choisit.")
+
+
 def summarize(rows: list[dict], *, body_fields: Iterable[str],
               fields: Optional[Iterable[str]] = None,
-              always: Iterable[str] = ()) -> tuple[list[dict], Optional[dict]]:
+              always: Iterable[str] = (),
+              hint: Optional[str] = None) -> tuple[list[dict], Optional[dict]]:
     """Vue de LISTE : un corps devient sa TAILLE, jamais un extrait.
 
     Une liste est une étape de NAVIGATION — elle sert à décider quoi ouvrir ensuite,
@@ -100,6 +105,13 @@ def summarize(rows: list[dict], *, body_fields: Iterable[str],
     `body_fields` = les colonnes-corps. `fields` : omis → vue de tri ; `["*"]` → le
     brut ; `[…]` → exactement ces clés, plus `always` (de quoi ADRESSER l'élément
     ensuite — sans quoi la liste rendrait des lignes inutilisables).
+
+    `hint` remplace la phrase servie dans la notice. Le seam ne sert pas que des LISTES :
+    la même projection s'applique à une page unique — lecture projetée, et surtout ACCUSÉ
+    d'écriture (`oto_doc` op=update/patch, signaux #506/#530). Dire « vue de tri » à un
+    agent qui vient d'écrire serait faux, et une notice fausse est pire qu'absente : elle
+    est lue avec confiance. C'est un paramètre plutôt qu'une seconde fonction — deux
+    façons de projeter divergeraient (leçon `fr_get`, cf. l'en-tête du module).
 
     Rend `(rows, notice)` — `notice` NOMME ce qui a été écarté et le chemin vers le
     brut ; `None` quand rien ne l'a été."""
@@ -126,6 +138,4 @@ def summarize(rows: list[dict], *, body_fields: Iterable[str],
         dropped |= {k for row in rows for k in row if k not in keep}
     if not dropped:
         return out, None
-    return out, {"omitted": sorted(dropped),
-                 "hint": f'Vue de tri. Corps et colonnes écartés : `fields=["{RAW}"]` '
-                         "rend la ligne entière, `fields=[…]` choisit."}
+    return out, {"omitted": sorted(dropped), "hint": hint or _HINT_TRI}

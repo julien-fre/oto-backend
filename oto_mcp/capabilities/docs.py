@@ -141,7 +141,10 @@ class DocInput(BaseModel):
     mode: Optional[Literal["replace", "append", "prepend"]] = None  # patch : défaut replace
     to_project: Optional[int] = None    # move : projet cible (déplacer la page + son sous-arbre)
     pages: Optional[list[dict]] = None  # bulk_create : [{title, body_md?, kind?, description?, parent_index?}]
-    fields: Optional[list[str]] = None  # list : projection — omis = vue de tri, ["*"] = la page entière
+    # Projection de SORTIE, honorée par list/get/create/update/patch/move (`_FIELDS_OPS`)
+    # et REFUSÉE ailleurs. Omis : la liste rend son index, `get` la page entière, une
+    # écriture son accusé. `["*"]` = la page entière partout.
+    fields: Optional[list[str]] = None
 
 
 def _require(cond, code: str, msg: str, status: int = 400) -> None:
@@ -186,6 +189,56 @@ def _view(row: dict, sub: Optional[str] = None) -> dict:
     return out
 
 
+# Colonnes gardées quoi qu'on demande : de quoi ADRESSER la page ensuite (la relire, la
+# patcher, la situer dans l'arbre). UNE seule liste pour la liste, la lecture projetée et
+# l'accusé d'écriture — trois règles d'adressage divergeraient à la première évolution.
+_ALWAYS = ("id", "project_id", "parent_id", "title")
+
+# Les ops qui savent PROJETER leur sortie. Passer `fields` ailleurs est REFUSÉ, pas avalé :
+# c'est la leçon générale du signal #461, où `op=get` acceptait `fields` et rendait quand
+# même les ~30 K caractères de la page. Un argument accepté-et-ignoré coûte exactement ce
+# qu'il prétendait économiser, et rien ne le signale à l'appelant.
+_FIELDS_OPS = frozenset({"list", "get", "create", "update", "patch", "move"})
+
+# La phrase servie dans la notice d'un ACCUSÉ d'écriture. Distincte de « vue de tri » :
+# l'agent ne trie pas, il vient d'écrire — lui dire le contraire l'enverrait relire.
+_HINT_ACCUSE = ("Accusé d'écriture : la page est enregistrée, son corps n'est pas rejoué "
+                "— tu viens de l'écrire. "
+                '`fields=["*"]` le rend, `fields=[…]` choisit les colonnes.')
+
+
+def _projected(row: dict, sub: Optional[str], fields: Optional[list[str]], *,
+               brut_par_defaut: bool, hint: Optional[str] = None) -> dict:
+    """Une page passée au MÊME seam de projection que la liste (`summarize`).
+
+    **La décision de forme, et son pourquoi (signaux #461, #506, #525, #530) :**
+
+    - Une **LECTURE** (`op=get`) rend la page ENTIÈRE par défaut : livrer le contenu EST
+      son travail, et le dashboard en dépend (la revue de proposition affiche le `body_md`
+      de cette réponse). Elle honore `fields` quand on lui en donne — le cas courant étant
+      « relis-moi juste le `rev` avant de patcher », que `update`/`patch` exigent.
+    - Une **ÉCRITURE** (`create`/`update`/`patch`/`move`) rend un **ACCUSÉ** par défaut :
+      identité, titre, `rev`, `updated_at`, et la TAILLE du corps. L'appelant vient
+      d'écrire ce corps — le lui rejouer ne lui apprend rien et lui coûte tout : sur les
+      deux pages réelles de la KB d'un client (128 K et 85 K caractères), la réponse
+      dépassait le plafond de résultat du client, si bien qu'**une écriture RÉUSSIE était
+      rendue à l'agent comme un échec** (#530). Un agent qui lit cet échec au premier degré
+      réécrit — double écriture — ou déclare l'opération ratée. Le corps reste à un
+      `fields=["*"]` de distance.
+    - Ce n'est pas une exception mais un RALLIEMENT : les écritures qui ne passaient pas
+      par `_view` rendent déjà un accusé (`bulk_create`, `delete`, `set_public`). Les
+      quatre ci-dessus étaient les dernières à rejouer la page.
+
+    ⚠️ Projeter ≠ tronquer : on retire des COLONNES et on le DIT (`projection`), on ne
+    coupe jamais un texte — sinon l'agent croit avoir lu."""
+    if fields is None and brut_par_defaut:
+        return _view(row, sub)
+    rows, notice = output_projection.summarize(
+        [_view(row, sub)], body_fields=("body_md",), fields=fields,
+        always=_ALWAYS, hint=hint)
+    return {**rows[0], **({"projection": notice} if notice else {})}
+
+
 def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     sub = ctx.sub
     if sub is None:
@@ -193,6 +246,16 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         # les VERBES (lecture seule). `_can(None, …)` borne le PÉRIMÈTRE au projet.
         _require(inp.op in _SHARED_READ_OPS, "forbidden",
                  "Lecture seule sur un projet partagé.", 403)
+
+    # `fields` se valide UNE fois, pour toutes les ops — et APRÈS l'autz, pour qu'un
+    # appelant anonyme se heurte au 403 plutôt qu'à un 400 qui lui décrirait la surface.
+    if inp.fields is not None:
+        _require(inp.op in _FIELDS_OPS, "unsupported_fields",
+                 f"`fields` ne s'applique qu'aux ops {', '.join(sorted(_FIELDS_OPS))} — "
+                 f"op={inp.op} rend une forme fixe. Retire-le.")
+        _require(bool(inp.fields), "empty_fields",
+                 "`fields` est une liste vide : omets-le pour la vue par défaut, passe "
+                 '`["*"]` pour la page entière, ou nomme les colonnes voulues.')
 
     if inp.op == "create":
         _require(inp.project_id is not None, "missing_project", "`project_id` requis.")
@@ -216,7 +279,8 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                             body_md=inp.body_md or "", kind=(inp.kind or "doc"), created_by=sub,
                             description=inp.description)
         db.log_project_activity(int(inp.project_id), sub, "doc.create", inp.title.strip())
-        return _view(db.get_doc_by_id(did), sub)
+        return _projected(db.get_doc_by_id(did), sub, inp.fields,
+                          brut_par_defaut=False, hint=_HINT_ACCUSE)
 
     if inp.op == "bulk_create":
         # A4 (#6) : créer N pages en UN appel (33 pages ≠ 33 allers-retours). Arbre en un
@@ -303,14 +367,11 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         _require(_can(sub, inp.project_id, "read"), "forbidden", "Accès refusé.", 403)
         # Une liste sert à choisir quoi ouvrir : elle rend l'INDEX de l'arbre, pas les
         # corps (37 pages = 201 K caractères, refusés par le client). `body_length`
-        # remplace `body_md` ; `fields=["*"]` rend le brut.
-        _require(inp.fields is None or bool(inp.fields), "empty_fields",
-                 "`fields` est une liste vide : omets-le pour la vue de tri, passe "
-                 '`["*"]` pour les pages entières, ou nomme les colonnes voulues.')
+        # remplace `body_md` ; `fields=["*"]` rend le brut. (`fields` est validé en tête
+        # de `_doc`, pour toutes les ops d'un coup — voir `_FIELDS_OPS`.)
         rows, notice = output_projection.summarize(
             [_view(d, sub) for d in db.list_docs_for_project(int(inp.project_id))],
-            body_fields=("body_md",), fields=inp.fields,
-            always=("id", "project_id", "parent_id", "title"))
+            body_fields=("body_md",), fields=inp.fields, always=_ALWAYS)
         return {"project_id": inp.project_id, "docs": rows,
                 **({"projection": notice} if notice else {})}
 
@@ -339,7 +400,9 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
 
     if inp.op == "get":
         _require(_can(sub, pid, "read"), "forbidden", "Accès refusé.", 403)
-        return _view(row, sub)
+        # Une lecture nue rend la page entière ; `fields` est HONORÉ quand il est là
+        # (#461/#525 : lire le seul `rev` avant un patch ne doit plus coûter la page).
+        return _projected(row, sub, inp.fields, brut_par_defaut=True)
 
     if inp.op == "revisions":
         _require(_can(sub, pid, "read"), "forbidden", "Accès refusé.", 403)
@@ -407,7 +470,8 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                      f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
                      f"Relis-le (op=get) et refais ton édition sur la version à jour.", 409)
         db.log_project_activity(pid, sub, "doc.update", row.get("title"))
-        return _view(db.get_doc_by_id(int(inp.doc_id)), sub)
+        return _projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
+                          brut_par_defaut=False, hint=_HINT_ACCUSE)
 
     if inp.op == "patch":
         # Édition PARTIELLE par section (top5 #3) : ne touche QUE la section `section`
@@ -442,7 +506,10 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                      f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
                      f"Relis-le (op=get) et refais ton patch sur la version à jour.", 409)
         db.log_project_activity(pid, sub, "doc.patch", f"{row.get('title')} § {inp.section}")
-        out = _view(db.get_doc_by_id(int(inp.doc_id)), sub)
+        # #530 : c'est le patch qui souffrait le plus — il existe précisément pour éditer
+        # une page trop longue pour être lue entière, et il en rendait le corps complet.
+        out = _projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
+                         brut_par_defaut=False, hint=_HINT_ACCUSE)
         if removed:
             out["removed_subsections"] = removed
             out["warning"] = (
@@ -482,7 +549,8 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
                                    position=inp.position)
         db.log_project_activity(pid, sub, "doc.move_out", f"{row.get('title')} → projet {tgt}")
         db.log_project_activity(tgt, sub, "doc.move_in", row.get("title"))
-        out = _view(db.get_doc_by_id(int(inp.doc_id)), sub)
+        out = _projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
+                         brut_par_defaut=False, hint=_HINT_ACCUSE)
         out["moved_count"] = n
         return out
 
@@ -502,7 +570,9 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
     else:
         target_parent = None
     db.move_doc(int(inp.doc_id), target_parent, position=inp.position)
-    return _view(db.get_doc_by_id(int(inp.doc_id)), sub)
+    # Un déplacement ne touche à aucun contenu : rejouer le corps est du pur poids.
+    return _projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
+                      brut_par_defaut=False, hint=_HINT_ACCUSE)
 
 
 CAPABILITIES += [
@@ -521,7 +591,9 @@ CAPABILITIES += [
             "`body_md_length`, NOT the bodies — pick a page here, then op=get it. "
             '`fields=["*"]` returns whole pages, `fields=[…]` picks columns) / search (project_id + '
             "query → full-text hits {id,title,kind,snippet}: LOCATE a page, then get its "
-            "content) / get (returns `rev`, an ETag) / update (title/body_md/kind, full body; "
+            "content) / get (the whole page, incl. `rev`, an ETag; pass `fields=[…]` to read "
+            'ONLY those columns — `fields=["id","rev"]` gets the rev for an optimistic patch '
+            "without paying for the body) / update (title/body_md/kind, full body; "
             "snapshots the prior version; pass `expected_rev` from op=get for optimistic "
             "conflict detection → 409 if the page changed since) / patch (edit ONE section in "
             "place: `section`=its markdown heading + `body_md` = the section's BODY, WITHOUT "
@@ -531,6 +603,10 @@ CAPABILITIES += [
             "NESTED sub-sections are part of it — replacing a `###` also replaces its "
             "`####` children (the response then lists `removed_subsections`). To keep "
             "them, target the sub-heading itself or use mode=append) / "
+            "A SUCCESSFUL WRITE (create/update/patch/move) returns a RECEIPT, not the page: "
+            "id, title, `rev`, `updated_at` and `body_md_length` — you just wrote the body, "
+            'so it is not replayed back at you. Add `fields=["*"]` if you really want the '
+            "stored page back, or `fields=[…]` to pick columns. / "
             "A page's `description` is a chapô you STORE: leave it out and the index "
             "DERIVES one from the first prose line of the body (marked `description_derived`), "
             "so it moves with every body edit — that is not an overwrite. Pass `description` "
