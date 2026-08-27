@@ -148,11 +148,14 @@ _KNOWN: dict[str, str] = {
     "/favicon.ico": NATURE,
     #
     # --- DETTE — verbes de dashboard authentifiés, à migrer en capacités.
-    # Compte, profil, activité : le cœur de ce que lit le dashboard.
-    "/api/me": DEBT,
+    # ⚠️ Le COMPTE a quitté cette liste le 2026-08-27 : `GET /api/me`,
+    # `/api/me/calls` et `/api/me/activity-summary` sont des capacités
+    # (`capabilities/me_account.py` — `me.{get,calls,activity_summary}`), et
+    # `api_routes_account.py` a été SUPPRIMÉ, vidé de ses trois handlers. Mêmes
+    # chemins, mêmes codes, même corps sur le fil ; entrée ET sortie déclarées, donc
+    # `GET /api/me` — la première requête de tout front qui se branche — est enfin
+    # décrite dans `/api/openapi.json`.
     "/api/me/avatar": DEBT,
-    "/api/me/activity-summary": DEBT,
-    "/api/me/calls": DEBT,
     # Fichiers bruts d'un projet + export — le reste du domaine projet est déjà en
     # capacités (`/api/me/projects` sert tout le métier en `op=`), ces quatre-là non.
     "/api/me/projects/{project_id:int}/files": DEBT,
@@ -160,14 +163,17 @@ _KNOWN: dict[str, str] = {
     "/api/me/projects/{project_id:int}/files/{file_id:int}/public": DEBT,
     "/api/me/projects/{id}/export": DEBT,
     "/api/orgs/{id}/logo": DEBT,
-    # Toolbox du membre : miroir REST de `oto_list_my_tools`/`oto_enable_tool`/
-    # `oto_disable_tool`/`oto_tool_schema`/`oto_call` — deux implémentations du même
-    # métier, exactement la dette que ce garde-fou nomme.
-    "/api/me/tools": DEBT,
-    "/api/me/tools/registry": DEBT,
-    "/api/me/tools/{name}": DEBT,
-    "/api/me/tools/{name}/detail": DEBT,
-    "/api/me/tools/{name}/call": DEBT,
+    # ⚠️ La TOOLBOX DU MEMBRE a quitté cette liste le 2026-08-27 : les six routes
+    # `/api/me/tools*` sont des capacités (`capabilities/tools_me.py` —
+    # `me.tools.{list,registry,disable,enable,detail,call}`), et `api_routes_tools.py`
+    # a été SUPPRIMÉ. Migration EN BLOC, par contrainte de ROUTAGE : `{name}` capture un
+    # segment, donc `…/tools/registry` doit précéder `…/tools/{name}` — or les routes de
+    # capacité sont montées à la FIN de `make_routes`, migrer l'une sans l'autre aurait
+    # fait servir `registry` comme un nom d'outil.
+    #     Le miroir MCP (`oto_list_my_tools`/`oto_enable_tool`/`oto_disable_tool`, nommé
+    # DETTE dans `test_platform_tools_are_capabilities.py`) n'est PAS remboursé ici : les
+    # deux faces n'ont pas la même forme, les unifier casserait l'une des deux. Décision
+    # de contrat, suivie en oto-backend#429.
     # Pose/lecture de credential et connexion par session navigateur. La pose d'un
     # secret est dashboard-only par DESIGN (jamais un argument MCP, il transiterait
     # dans le contexte LLM) — mais une capacité peut être REST-only (binding `mcp`
@@ -230,7 +236,7 @@ def test_rest_debt_only_shrinks():
     pas une dette, elle la RÉVÈLE. Toute autre hausse est un relâchement.
     """
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 38, (
+    assert len(debt) <= 29, (
         f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
         "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
 

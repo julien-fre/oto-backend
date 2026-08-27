@@ -26,19 +26,33 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
 
 | famille | où | régime |
 | --- | --- | --- |
-| ~200 chemins générés (projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
+| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
 | primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api_routes_base.py` | partagées par tous les modules ; **ré-exportées** par `api_routes` |
 | favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques doctrines & guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api_routes_public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
-| `/api/me`, `/api/me/calls`, `/api/me/activity-summary` | `api_routes_account.py` | scopé (sub, org active) |
 | `/api/me/avatar`, `/api/orgs/{id}/logo` | `api_routes_media.py` | multipart → hors couche capacité |
 | fichiers bruts d'un projet, `/api/me/projects/{id}/export` | `api_routes_projects.py` | multipart / binaire |
 | `/api/upload/{token}` (PUT/POST/GET) | `api_routes_uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
 | `/api/settings/api-keys/{provider}`, `/api/me/connectors/{name}/session/*` | `api_routes_credentials.py` | pose d'un secret : dashboard-only par design |
-| `/api/me/tools*` | `api_routes_tools.py` | miroir REST d'`oto_list_my_tools`/`oto_call` (dette nommée) |
 | `/api/admin/platform-keys*`, `/api/admin/users/{sub}/tokens*` | `api_routes_admin.py` | `allow_api_token=False` : un jeton ne fabrique pas de jeton |
 | SIRENE, accords, datastore, contact, connecteurs, webhook Mollie, OAuth zoho/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
 
-- `GET /api/me` — profil + role + statut LinkedIn + statut providers (mode/key/quota) + `active_org`/`active_org_name`/`org_role` + `avatar_url`/`active_org_logo_url`
+- `GET /api/me` + `GET /api/me/calls` + `GET /api/me/activity-summary` — **le compte**,
+  capacités `me.{get,calls,activity_summary}` depuis le 2026-08-27
+  (`capabilities/me_account.py` ; `api_routes_account.py` supprimé). **Pas de face MCP** —
+  l'identité d'une session MCP est `oto_whoami`, l'activité se lit par les lentilles de
+  monitoring. `GET /api/me` rend profil + rôle plateforme + `providers` (accès effectif
+  par connecteur : mode/clé/quota) + `features.billing` + le couple **`active_*` / `home_*`** :
+  `active_org`/`active_group` sont les valeurs EFFECTIVES de la requête (seam `current_org`,
+  ADR 0023 — la consultation `X-Oto-Org` l'emporte), `home_*` le défaut persistant. Un front
+  qui scope ses vues sur `home_org` affiche les données d'une autre org que celle qu'il
+  annonce. `active_org_readonly` = opérateur plateforme en consultation (bandeau + écran en
+  lecture). Les deux lentilles d'activité sont scopées **(sub, org active)** : jamais un
+  autre membre, jamais une autre org — filtres `?limit=` (défaut 200, plafond dur 1000),
+  `?tool=` (nom EXACT), `?errors=1|true` (littéral : `?errors=yes` ne filtre pas), `?days=`.
+  ⚠️ **Le repli de saisie est conservé** : `?days=abc` rend 200 avec la fenêtre par défaut,
+  jamais un 400 — c'est le comportement servi depuis toujours. En revanche un **paramètre
+  inconnu** est désormais refusé (400 `unknown_fields`, champ nommé) là où il était ignoré
+  en silence : c'est la garde de l'adaptateur, et c'est le seul écart visible de la migration.
 - `POST|DELETE /api/me/avatar` — upload (multipart `file`, png/jpeg/webp ≤ 2 Mo) / efface l'avatar user → Scaleway Object Storage, URL publique en DB
 - `POST|DELETE /api/orgs/{id}/logo` — upload / efface le logo **uploadé** d'org (org_admin, multipart `file`). Le logo AFFICHÉ (`logo_url` des lectures + `active_org_logo_url` de `/api/me`) est l'**effectif** : upload sinon dérivé du CDN logo.dev via le `domain` déclaré (`org_store.effective_logo_url`, token `LOGODEV_TOKEN`) ; `logo_custom` (fiche org) dit si un upload existe.
 - `PATCH /api/orgs/{id}` (+ miroir `/api/admin/orgs/{id}`) — profil d'org (org_admin) : `name`, `description`, **`domain`** (domaine de marque, normalisé `org_store.normalize_domain` — `""` efface, saisie URL tolérée, invalide → 400 `invalid_domain`), `industry`, `location`. Capacité `org.update` (MCP `oto_org(op='update')`, console ADR 0047).
@@ -56,7 +70,29 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
   existent), `400 single_account_connector` (compte nommé sur un connecteur qui ne les
   résout pas), `400 verify_failed` (sonde avant persistance, #106). `DELETE` prend
   `?scope=member|org|group` (admin du palier pour les deux derniers) et `?account=`.
-- `GET /api/me/tools` + `POST|DELETE /api/me/tools/{name}` — toggle individuel d'un tool MCP
+- `GET /api/me/tools` + `GET /api/me/tools/registry` + `POST|DELETE /api/me/tools/{name}`
+  + `GET …/{name}/detail` + `POST …/{name}/call` — **la toolbox du membre**, capacités
+  `me.tools.{list,registry,disable,enable,detail,call}` depuis le 2026-08-27
+  (`capabilities/tools_me.py` ; `api_routes_tools.py` supprimé).
+  ⚠️ **`POST` DÉSACTIVE, `DELETE` RÉACTIVE** — le chemin nomme la ligne de denylist, pas
+  le tool : la poser masque, la retirer démasque. Contre-intuitif, historique, figé par
+  test. La bascule est **visibilité-only** (ADR 0031) : `enabled` est une préférence
+  d'affichage, jamais une autorisation — l'accès réel reste gardé au call-time
+  (credential + RBAC connecteur ADR 0025 + activation). Un tool **protégé** (anti-lockout)
+  refuse le masquage en `400 protected_tool:<nom>`.
+  `…/registry` = le registre BOOT (ADR 0014), immunisé à la visibilité de session : il dit
+  ce qui EXISTE, pas ce qui m'est visible ; sa `description` est un résumé d'une ligne, la
+  fiche complète est `…/detail`. **`…/registry` doit précéder `…/{name}`** dans la table,
+  sinon `registry` est servi comme un nom d'outil — les six ont migré EN BLOC pour ça.
+  `…/{name}/call` exécute un outil **testable** (open-data en lecture seule) sous
+  l'identité de l'appelant ; son corps est **libre** (il EST les arguments, nus ou
+  enveloppés dans `{"arguments": {…}}`, d'où `body_field`) et ⚠️ **l'erreur de l'outil
+  revient en DONNÉE — `ok:false` en 200** : la voir est le but du test. Les 4xx disent
+  qu'on n'a pas pu lancer (`403 not_testable:` — qui passe **avant** la résolution du nom,
+  donc un outil inconnu rend 403 et non 404 —, `400 bad_arguments:`).
+  **Pas de face MCP** : `oto_list_my_tools`/`oto_enable_tool`/`oto_disable_tool` restent
+  écrits à la main, leurs formes diffèrent de celles-ci — réconciliation suivie en
+  oto-backend#429.
 - `GET /api/me/instructions` (index des procédures ; le readme d'org est un guide `delivery=init`, plus servi ici) + `GET|PUT|DELETE /api/me/instructions/{slug}` + `GET /api/me/instructions/{slug}/versions` + `POST /api/me/instructions/{slug}/revert` — procédures de l'**org active** (le slug `claude_md` est RÉSERVÉ au readme et refusé ici) (cf. §Doctrines). Lecture = membre ; écriture = `org_admin` (ou platform admin). Édité par le dashboard (`/procedures`). ⚠️ Le `PUT` renvoie un **`diagram_warning`** (toujours présent ; `null` = rien à signaler) quand le corps n'embarque pas le SCHÉMA requis de la procédure — non bloquant, comme `unresolved_tools`/`slot_warnings` (cf. §Doctrines).
 - `GET|PUT|DELETE /api/me/guides/{scope}/{slug}` (+ `GET /api/me/guides`) — **la prose d'instruction**, un seul primitif sur deux axes (ADR 0042 §Convergence des surfaces) : `scope` ∈ platform|org|group|user × `delivery` ∈ `on-demand` (défaut, un how-to chargé au besoin) | `init` (**readme injecté à chaque session**, slug canonique `readme` — corps vide = couche effacée). Miroir REST d'`oto_guide`, mêmes handlers. Écriture gatée par scope (platform_admin / org_admin / chef d'équipe / self). Variantes par-id pour viser une org/équipe précise plutôt que l'active : `GET|PUT /api/orgs/{id}/guides/{scope}/{slug}` et `/api/groups/{id}/guides/{scope}/{slug}`. *(Remplace `GET|PUT /api/me/agent-readme`, retiré le 2026-07-28.)*
 - `POST|DELETE /api/me/projects/{id}/public-share` — **partage public CHIFFRÉ** d'un projet (ADR 0032 §3, zero-knowledge). Le dashboard chiffre le snapshot (brief + pages) côté navigateur et POSTe uniquement `{ciphertext}` ; renvoie `{token, public_base_url}`. Écriture = `ownership.can_access(project, write)`. La clé de déchiffrement n'atteint JAMAIS le serveur (fragment d'URL).
