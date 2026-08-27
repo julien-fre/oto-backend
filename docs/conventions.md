@@ -303,8 +303,19 @@ Le contenu n'a pas changé — seule sa place a bougé.
   notes (sauf update body, limite API), tasks, lists, entries, workspace_members,
   comments, threads, meetings, call_recordings + meta (objects, attributes). Pas
   de quota plateforme — chaque user pose sa clé sur `/account`. **Gotcha** :
-  `attio_list_threads` renvoie 400 sans `parent_object`/`parent_record_id` —
-  toujours filtrer par parent.
+  `attio_comment op="threads"` renvoie 400 sans `parent_object`/`parent_record_id`
+  — toujours filtrer par parent (le nom `attio_list_threads` cité ici jusqu'au
+  27/08 n'existe plus depuis la consolidation ADR 0047 du 11/08).
+  ⚠️ **Attio AVALE les query params qu'il ne connaît pas en rendant 200** — un
+  filtre inventé y ressemble à un filtre qui marche. Vérifié le 27/08 par
+  différentiel (valeur absurde : 400 = param reconnu, 200 = param avalé) après
+  quatre signaux d'usage : deux paramètres ne filtraient RIEN en prod
+  (`tasks.list` envoyait `completed` là où Attio attend `is_completed` ;
+  `meetings.list` envoyait un `offset` qui n'existe pas dans son contrat — seul
+  `cursor` pagine). Corollaire tenu depuis : on n'expose que ce que l'amont
+  honore, `/v2/notes` n'a donc **ni tri ni filtre de date**, et sa page par
+  défaut (10, les plus ANCIENNES) est annoncée dans la docstring au lieu d'être
+  subie.
 
 ## Les rows PG sont des DICTS, jamais positionnels (vécu 2026-06-25)
 
