@@ -23,8 +23,13 @@ from __future__ import annotations
 import pathlib
 import re
 
+from oto_mcp.db import _schema
+
 _DB = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "db"
-_SCHEMA_SRC = (_DB / "_schema.py").read_text(encoding="utf-8")
+# Le DDL n'est plus un fichier mais un ASSEMBLAGE (`db/schema/<domaine>.py`
+# concaténés dans un ordre figé) : on lit la chaîne SERVIE, seule chose dont les
+# ordres et les formes ci-dessous soient des propriétés.
+_SCHEMA_SRC = _schema._SCHEMA
 _INIT_SRC = (_DB / "_init.py").read_text(encoding="utf-8")
 # Les ordres SQL de `_init` sont écrits en littéraux Python adjacents ("…" "…") pour
 # tenir la largeur : on les recolle une fois, sinon chaque motif devrait connaître la

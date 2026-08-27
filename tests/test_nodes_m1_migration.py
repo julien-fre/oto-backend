@@ -22,9 +22,14 @@ from __future__ import annotations
 import pathlib
 import re
 
+from oto_mcp.db import _schema
+
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _DB = _ROOT / "oto_mcp" / "db"
-_SCHEMA_SRC = (_DB / "_schema.py").read_text(encoding="utf-8")
+# Le DDL n'est plus un fichier mais un ASSEMBLAGE (`db/schema/<domaine>.py`
+# concaténés dans un ordre figé) : on lit la chaîne SERVIE, seule chose dont les
+# ordres et les formes ci-dessous soient des propriétés.
+_SCHEMA_SRC = _schema._SCHEMA
 _INIT_SRC = (_DB / "_init.py").read_text(encoding="utf-8")
 _GUIDES_SRC = (_DB / "guides.py").read_text(encoding="utf-8")
 
@@ -219,6 +224,10 @@ def test_nothing_else_touches_nodes_yet():
     for path in (_ROOT / "oto_mcp").rglob("*.py"):
         rel = str(path.relative_to(_ROOT))
         if rel in allowed:
+            continue
+        # Les fragments de DDL (`db/schema/*`) sont l'ex-contenu de `_schema.py`,
+        # déjà admis ci-dessus : déclarer une table n'est pas la lire.
+        if rel.startswith("oto_mcp/db/schema/"):
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
             if re.search(r"\b(FROM|INTO|UPDATE|TABLE|JOIN) nodes\b", line):
