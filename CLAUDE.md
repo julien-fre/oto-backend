@@ -456,6 +456,8 @@ revalidés à chaque appel, jamais de repli silencieux).
 `current_user_sub_from_token`).
 **Détail : `docs/monitoring.md`**.
 
+> **Rétention 90 jours depuis le 2026-08-27** (le journal n'en avait aucune : 47 % de la base, ×10 de croissance en deux semaines sous une campagne de runner). Au-delà, chaque mois clos part en CSV compressé **privé** sur l'Object Storage puis est effacé — travail mensuel sur la box (`deploy/archive_tool_calls.py`, `oto-journal-archive.timer`), **jamais dans le processus MCP** (mono-boucle, et c'est ce journal qui l'a gelé le même jour). ⚠️ **Ce n'est PAS une purge de logs** : la table est aussi la **source de vérité des exécutions** — un run est reconstruit depuis ses faits, qui sont deux lignes d'ici. `run_start`/`run_finish` sont donc **exemptés de toute suppression** (~3 % du volume) ; les effacer effacerait l'historique des runs. La suppression n'est autorisée que par une **relecture** de l'archive recomptée contre la base — la taille déposée ne prouve rien du contenu. Détail : `docs/monitoring.md` §Rétention.
+
 > **L'observabilité a trois étages (05/08).** Le journal servait deux sièges — « moi »
 > (`/api/me/{activity-summary,calls}`) et « toute la plateforme » — et rien entre les
 > deux : un responsable d'org n'avait que l'export brut d'audit (#67). `capabilities/

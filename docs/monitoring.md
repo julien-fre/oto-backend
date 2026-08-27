@@ -140,3 +140,46 @@ plateforme avec `org_id` posé, **plus une** qui n'existe qu'à cet étage, et *
 `op=call` compare `row.org_id` et rend le **même 404** qu'un id inexistant ; `op=run`
 filtre en SQL puis 404 sur timeline vide. Testé par `tests/test_org_monitoring.py` — un
 handler ajouté sans sa garde y casse.
+
+## Rétention : 90 jours en ligne, le reste en froid (posé le 2026-08-27)
+
+Le journal n'avait **aucune** rétention : 47 % de la base, et une croissance passée de
+9 600 à ~90 000 lignes/jour en deux semaines sous la charge d'une campagne de runner.
+Décidé par Alexis le 27/08 : **90 jours consultables**, au-delà chaque mois clos part en
+CSV compressé sur l'Object Storage (`journal/tool_calls/YYYY-MM.csv.gz`, objet **privé**)
+avant d'être effacé de la base. Travail mensuel `oto-journal-archive.timer` (le 3 à
+04:45 UTC), script versionné `deploy/archive_tool_calls.py`.
+
+**Ce n'est pas une purge de logs, et c'est le point à comprendre avant d'y toucher.**
+Cette table est à double emploi : journal d'observabilité, ET **source de vérité des
+exécutions** — un run n'est pas stocké, il est reconstruit depuis ses faits, qui sont
+deux lignes d'ici (`run_start` / `run_finish`). Les effacer effacerait l'historique des
+runs. Ils sont donc **exemptés de toute suppression** ; ils pèsent ~3 % du volume, les
+garder indéfiniment ne coûte rien. ⚠️ Conséquence assumée : un run dont les appels
+ordinaires ont été archivés garde son ouverture, sa clôture et son issue, mais son
+« dernier signe de vie » retombe sur sa date d'ouverture (`last_seen_at` se dérive du
+dernier appel rattaché) — sans effet sur un run clos, et un run resté ouvert depuis plus
+de 90 jours est de toute façon lu comme silencieux.
+
+**Trois précautions dans le script, chacune payée par une mesure du jour même :**
+- **La suppression n'est autorisée que par une RELECTURE de l'archive** (téléchargée,
+  décompressée, parsée, recomptée contre la base). Comparer la taille déposée à la taille
+  locale prouve que l'upload n'a rien perdu — pas que l'export contenait tout, ni qu'il se
+  relit. Sur une opération irréversible, la seule preuve est de refaire le chemin.
+- **Le mois doit être ENTIÈREMENT sorti de la fenêtre.** Archiver un mois à cheval
+  déposerait un fichier incomplet que la passe suivante ne compléterait pas (l'objet
+  existe déjà) : des lignes effacées sans copie nulle part.
+- **Ne jamais compter les enregistrements en comptant les sauts de ligne** du flux CSV :
+  `args` et `error` en contiennent. Mesuré ici — 12 830 « lignes » annoncées pour 12 459
+  enregistrements réels. Le seul compte juste est celui de la base.
+
+**Où il tourne** : sur la box, en travail planifié, jamais dans le processus MCP —
+mono-boucle, et c'est ce même journal qui l'a gelé le 27/08. Un verrou consultatif PG
+protège de deux exécutions simultanées (prod et preprod partagent la base). Options :
+`--dry-run` (dit ce qui partirait), `--export-only` (dépose et vérifie sans supprimer —
+c'est ce qui permet d'éprouver le chemin réel sans engager la moitié irréversible),
+`--retention-days N` (ou `OTO_JOURNAL_RETENTION_DAYS`).
+
+⚠️ **La rétention à 90 jours n'effacera rien avant fin octobre 2026** : à sa mise en
+place, le journal ne remontait qu'au 28/07. Un premier passage qui ne supprime rien est
+le comportement attendu, pas une panne.

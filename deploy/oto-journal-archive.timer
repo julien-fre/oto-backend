@@ -1,0 +1,14 @@
+[Unit]
+Description=Archivage mensuel du journal d'appels oto
+
+[Timer]
+# Le 3 du mois : le mois sortant est clos depuis deux jours, et le créneau est calme.
+# Décalé de l'hygiène disque (04:17) pour ne pas se disputer le disque — l'export y
+# écrit un temporaire de plusieurs centaines de Mo.
+OnCalendar=*-*-03 04:45:00
+# Une box éteinte au créneau ne saute pas le mois.
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

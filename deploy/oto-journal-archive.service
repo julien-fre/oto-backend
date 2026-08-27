@@ -1,0 +1,19 @@
+[Unit]
+# Archive puis purge le journal d'appels au-delà de la rétention (cf. archive_tool_calls.py).
+# Hors du processus MCP à dessein : celui-ci est mono-boucle, et c'est précisément ce
+# journal qui l'a gelé le 2026-08-27 quand une de ses lectures est devenue lente.
+Description=Archivage du journal d'appels oto (rétention + froid S3)
+Documentation=file:///opt/oto-mcp/deploy/archive_tool_calls.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Le script lit DATABASE_URL et OTO_MCP_S3_* — le même environnement que le backend,
+# jamais une copie (une copie divergerait le jour d'une rotation de clé).
+EnvironmentFile=/opt/oto-mcp/.env
+ExecStart=/opt/oto-mcp/.venv/bin/python3 /usr/local/sbin/oto-journal-archive.py
+# Un export volumineux ne doit pas concurrencer le service qui répond aux utilisateurs.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3h
