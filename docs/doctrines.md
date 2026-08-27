@@ -121,7 +121,7 @@ d'écrire des procédures.
 Une procédure référence ses outils par `<tool:slug>` (ADR 0014), et ces refs vivent **en DB, par
 org** — hors du repo. Un renommage d'outil est donc un breaking qui traverse le **code ET les
 données**, dont le CI ne voit que la moitié : `test_tools_client_methods_exist` garde le skew
-tool↔oto-core, `connector_docs.py` se relit en PR, mais **rien ne lit `org_instructions`**. Une
+tool↔oto-core, `connector_docs/<nom>.md` se relit en PR, mais **rien ne lit `org_instructions`**. Une
 suite verte ne dit donc rien de l'état des procédures.
 
 Vécu le 2026-07-31 (consolidation pennylane 25→9 outils, v1.38.0, ADR 0047 étendu aux

@@ -9,6 +9,17 @@ Ce `__init__` ré-exporte l'intégralité du namespace de ces sous-modules pour 
 la surface `db.<symbole>` (publics + privés consommés à l'extérieur comme
 `db._connect` / `db._ds_filter_clauses`) reste plate et stable. Les modules
 n'ont pas de dépendance circulaire : tout pointe vers `_conn` puis `users`.
+
+⚠️ **Aucun module de ce package n'est importé par son nom ailleurs** — c'est
+précisément l'effet recherché : les appelants écrivent `db.<fn>`. Un inventaire
+qui cherche des IMPORTS STATIQUES les déclare donc tous orphelins, et c'est un
+faux positif systématique : 8 modules (`connector_grants`, `datastore_embed`,
+`emails`, `google`, `keys`, `tenants`, `tokens`, `visibility`) n'ont aucun
+importeur hors d'ici alors que chacune de leurs fonctions est appelée en prod.
+Pour juger qu'un module d'ici est mort, chercher ses SYMBOLES (`db.<fn>`, y
+compris posés par `monkeypatch.setattr`), jamais son nom de module — puis croiser
+avec `tests/test_db_surface_frozen.py`, qui fige la surface plate : un nom qui y
+figure ne se retire qu'en retirant sa ligne, délibérément.
 """
 from __future__ import annotations
 
