@@ -2,7 +2,7 @@
 
 Wrappe `oto.tools.tavily.client.TavilyClient`. keyed `api_key` (Bearer `tvly-…`),
 byo user/org **et** clé plateforme ouverte (quota 100/mois — garde conservatrice,
-cf. providers.py) : la recherche web est un socle, on ne fait pas payer le ticket
+cf. providers/tavily.py) : la recherche web est un socle, on ne fait pas payer le ticket
 d'entrée.
 
 Quatre gestes, tous synchrones :

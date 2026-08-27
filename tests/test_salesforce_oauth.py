@@ -1,6 +1,6 @@
 """salesforce_oauth — live "Connect" flow for the per-customer Salesforce
-Connected App. THE only way to obtain refresh_token now — providers.py no
-longer declares a refresh_token field at all (full replacement, not
+Connected App. THE only way to obtain refresh_token now — the registry entry
+(providers/salesforce.py) no longer declares a refresh_token field at all (full replacement, not
 coexistence with a manual-paste path).
 
 Unlike folk_oauth/atlassian_oauth (one Otomata-owned client, no DB lookup to

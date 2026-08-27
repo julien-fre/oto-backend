@@ -72,7 +72,7 @@ PROTECTED_TOOLS: frozenset[str] = frozenset(
 
 
 # Namespaces SPINE plateforme, TOUJOURS montés (hors gate connecteur) : datastore
-# (`data_*` — substrat PG natif, cf. providers.py « PAS un connecteur »), boucle
+# (`data_*` — substrat PG natif, cf. providers/google.py « PAS un connecteur »), boucle
 # d'usage (`run_*`, `feedback`). Trop de noms `data_*` pour les lister → on protège
 # le namespace entier. Le namespace `oto` n'y est PAS (il porte les `oto_admin_*`
 # gatés par rôle) → ses tools spine sont listés par NOM dans PROTECTED_TOOLS.

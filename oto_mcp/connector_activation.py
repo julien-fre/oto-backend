@@ -1,6 +1,6 @@
 """Cran d'activation des connecteurs — gouvernance DB (ADR 0010, décision 4).
 
-**Déclaration (registre `providers.py`) ≠ activation (cette table).** Un connecteur
+**Déclaration (registre `providers/`) ≠ activation (cette table).** Un connecteur
 déclaré en code ne s'expose PAS du seul fait d'être déclaré : il faut une ligne
 d'activation. Résolution, l'échelle des scopes primant du plus proche au plus large :
 
@@ -38,7 +38,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS connector_availability (
     scope_type TEXT NOT NULL CHECK (scope_type IN ('platform','org','group')),
     scope_id   TEXT NOT NULL DEFAULT '',   -- '' pour platform ; org.id / group.id en texte sinon
-    connector  TEXT NOT NULL,              -- nom de connecteur (registre providers.py)
+    connector  TEXT NOT NULL,              -- nom de connecteur (registre providers/)
     enabled    BOOLEAN NOT NULL,
     set_by     TEXT,
     set_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),

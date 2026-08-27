@@ -70,7 +70,7 @@ def register_all(mcp: FastMCP) -> None:
     # Connecteurs — chargement DÉRIVÉ DU REGISTRE (ADR 0010/0011, #24). Fin de la
     # liste hardcodée : pour chaque provider `kind="tools"`, on importe ses
     # modules `tools/<m>.py` (`Connector.modules`, défaut = le nom du provider) et
-    # on appelle `register(mcp)`. Le registre `providers.py` est l'UNIQUE source.
+    # on appelle `register(mcp)`. Le registre `providers/` est l'UNIQUE source.
     #
     # - `kind="mount"` (atlassian/planity) et `kind="remote"` sont EXCLUS : déjà
     #   gérés par mount.register / remote.register (génériques) ci-dessus.

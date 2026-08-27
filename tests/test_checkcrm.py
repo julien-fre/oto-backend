@@ -1,7 +1,7 @@
 """Check CRM connector — wraps Julien's "enrichment" job-change-check API
 (https://enrichment-two.vercel.app/v1). Locks in: the registry entry (keyed
 byo-only api_key, no platform mode), the curated MCP surface under the
-`checkcrm` namespace (not `check_crm` — see providers.py comment on
+`checkcrm` namespace (not `check_crm` — see providers/checkcrm.py comment on
 namespace_of), the tool↔client join (version-skew guard), the client's request
 shaping (X-API-Key header, not Authorization), and the add_subsidiary
 solo/batch merge (batch aborts whole-hog on a 401/403, per-item error

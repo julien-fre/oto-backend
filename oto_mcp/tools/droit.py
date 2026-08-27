@@ -2,7 +2,7 @@
 
 Référence légale française (par opposition à l'identité entreprise, namespace `fr`) :
 le DROIT applicable, pas les données d'une société. Trois namespaces sous une même
-carte de connecteur (`droit` au registre `providers.py`) :
+carte de connecteur (`droit` au registre, `providers/droit.py`) :
 
 - `juris_*` — jurisprudence (fonds DILA Cass/CE + CEDH/CJUE/Judilibre live) ;
 - `loi_*`   — codes consolidés versionnés (LEGI, texte en vigueur à une date) ;

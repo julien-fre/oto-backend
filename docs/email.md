@@ -4,7 +4,9 @@
 
 
 Envoi d'email modélisé **par connecteur** (la config/gestion email s'exprime comme
-celle d'un connecteur, pas une page à part). **Deux connecteurs** (`providers.py`) :
+celle d'un connecteur, pas une page à part). **Deux connecteurs** (déclarés dans `providers/scaleway.py` et
+`providers/resend.py` ; le routage expéditeur→transport reste
+`providers.EMAIL_CONNECTOR_TRANSPORT`) :
 `scaleway` (**BYO-org depuis le 2026-07-01** : `auth_modes={byo_org}`,
 `secret_kind="fields"` — `secret_key`+`project_id`+`region` du compte Scaleway TEM
 de L'ORG ; transport = API TEM en direct `email.send_via_scaleway_tem`, plus de

@@ -1,6 +1,6 @@
 """Brightdata — coquille vide (scaffold).
 
-Connecteur câblé côté plateforme (entrée registre `providers.py` + clé platform +
+Connecteur câblé côté plateforme (entrée `providers/brightdata.py` + clé platform +
 quota), mais **aucun tool fonctionnel** n'est encore exposé : les produits Bright
 Data (SERP API, Web Unlocker, Web Scraper/Datasets) restent à implémenter.
 

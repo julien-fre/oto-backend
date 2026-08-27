@@ -7,7 +7,7 @@ description: >-
   l'interdiction d'écrire une adresse en dur, les jetons de contexte d'appel réservés,
   le budget de ce qu'un outil renvoie, l'ordre des middlewares MCP, la contrainte
   MONO-LOOP (aucun I/O bloquant), et le cycle d'un connecteur (cran d'activation,
-  registre `connectors.py`, credential multi-champs, sonde de connexion, doc how-to,
+  registre `providers/`, credential multi-champs, sonde de connexion, doc how-to,
   aucune résolution de secret hors DB/env). À lire avant d'écrire du code ici, et avant
   d'ajouter un garde-fou ou un connecteur.
 ---
@@ -129,7 +129,17 @@ Le contenu n'a pas changé — seule sa place a bougé.
   réponse, donc « quel connecteur rend le plus gros payload ? » reste sans réponse et le 8ᵉ cas
   sera découvert par l'utilisateur qui s'y cogne (oto-backend#340).
 - Nouveau connecteur = (1) un fichier `tools/<service>.py` exposant `register(mcp)`,
-  (2) une **entrée au registre `providers.py`**. `register_all` (`tools/__init__.py`)
+  (2) un fichier **`providers/<service>.py`** portant sa **déclaration de registre**
+  (`CONNECTOR = _c(…)` + ses constantes curées `CATEGORY`/`PUBLISHER`/`DESCRIPTION`/
+  `LOGO_DOMAIN`), (3) **une ligne dans `_DECLARATIONS`** (`providers/__init__.py`),
+  qui fixe l'ordre. ⚠️ **La déclaration ne va PAS dans `tools/<service>.py`** : ce
+  module importe `..access` (qui importe le registre — cycle) et `register_all` le
+  charge en try/except, donc une dép optionnelle manquante retirerait le connecteur
+  du CATALOGUE, pas seulement ses outils. Le registre reste pur, sans dépendance ;
+  `providers/<service>.py` l'est. Le module de déclaration porte le nom du
+  connecteur (refusé à l'import sinon) et son domicile est verrouillé dans les deux
+  sens par `tests/test_providers_registry_snapshot.py` (fichier sans ligne = dort
+  invisible ; ligne sans fichier = import cassé). `register_all` (`tools/__init__.py`)
   **DÉRIVE le chargement du registre** (#24, fin de la liste hardcodée) : il boucle
   sur les providers `kind="tools"` et importe `Connector.modules` (défaut = nom du
   provider ; renseigner `modules` si module ≠ nom, ou plusieurs modules par provider —
@@ -234,7 +244,7 @@ Le contenu n'a pas changé — seule sa place a bougé.
   migré `bridge`→`http` le 2026-07-16 (credential au groupe finance, réseau VPC
   privé). Le concept « remote data-driven » (base_url sur un provider hors registre)
   subsiste dans `org_secret_meta`, mais **sans entrée de catalogue** `kind="remote"`.
-- **Tool API-keyé = déclarer le connecteur dans le registre `connectors.py`**
+- **Tool API-keyé = déclarer le connecteur dans le registre** (`providers/<nom>.py`)
   (avec `keyed=True` + `auth_modes`) — `KEY_PROVIDERS` et tout le reste en
   dérivent. Le coffre `connector_credentials` est générique (pas de colonne
   par provider) : aucune migration de schéma à ajouter. Sinon `resolve_api_key`

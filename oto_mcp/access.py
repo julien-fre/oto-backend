@@ -59,7 +59,7 @@ ADMIN = "admin"
 SUPER_ADMIN = "super_admin"
 ROLES = (MEMBER, ADMIN, SUPER_ADMIN)
 
-# DÉRIVÉS du registre source unique (connectors.py) :
+# DÉRIVÉS du registre source unique (package `providers/`) :
 # - _QUOTA_DEFAULTS : quota daily par provider (fallback si pas d'env/grant).
 # - ORG_SHAREABLE_PROVIDERS : providers dont le secret peut être POSSÉDÉ par une
 #   org et partagé (auth_mode byo_org) — exclut slack (xoxp = identité perso) et
