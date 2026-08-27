@@ -640,6 +640,14 @@ def register(mcp: FastMCP) -> None:
           op on purpose: Folk refuses `completedAt` in a task PATCH. Nothing in
           Folk ever completes a task on its own — it only moves when something
           calls this.
+        - **"add_to_group"**: add one (`id`) or several (`ids`, ≤50) existing
+          people/companies to ONE group (`group_id` = the target group). The
+          inverse of `op="update"`'s `add_to_groups` (which batches *groups* for
+          *one* record) — this batches *records* into *one* group. Reads each
+          record's current groups and writes back the union (Folk's `groups`
+          field is replace-all on PATCH), so existing group membership is
+          preserved. A record already in the group is a no-op success, not an
+          error.
 
         📖 **Reading what actually happened.** `entity="interaction"` is
         readable, not just writable: `op="search"` returns the emails, calendar
@@ -681,14 +689,6 @@ def register(mcp: FastMCP) -> None:
         verb for). Field mapping when porting: name→title,
         recurrence_rule→due_at/due_time + recurrence_frequency,
         visibility→is_public.
-        - **"add_to_group"**: add one (`id`) or several (`ids`, ≤50) existing
-          people/companies to ONE group (`group_id` = the target group). The
-          inverse of `op="update"`'s `add_to_groups` (which batches *groups* for
-          *one* record) — this batches *records* into *one* group. Reads each
-          record's current groups and writes back the union (Folk's `groups`
-          field is replace-all on PATCH), so existing group membership is
-          preserved. A record already in the group is a no-op success, not an
-          error.
 
         The four write ops are **solo OR bulk depending on which param you
         pass**: exactly one of `item`/`items` (create), `id`/`items` (update),
@@ -1132,7 +1132,7 @@ def register(mcp: FastMCP) -> None:
             unknown = set(fields or {}) - ({"completedAt"} if done else set())
             if unknown:
                 raise _bad(
-                    f"op='{op}' : champ(s) {sorted(unknown)} ignoré(s) ici — "
+                    f"op='{op}' : champ(s) {sorted(unknown)} refusé(s) ici — "
                     + ("seul `fields={'completedAt': …}` est accepté (défaut : "
                        "maintenant)." if done
                        else "cette op ne prend aucun champ."))
