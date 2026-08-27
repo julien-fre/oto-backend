@@ -831,22 +831,11 @@ _REGISTRY_LIST = [
        label="Planity",
        help="agenda + caisse Planity (RDV, clients, CA, stats) — MCP fédéré",
        href="https://planity-mcp.oto.zone"),
-    # justicelibre : MCP fédéré (kind=mount) SANS auth — endpoint hébergé PUBLIC
-    # (justicelibre.org/mcp, Streamable HTTP, aucune clé ni compte ; MIT + Licence
-    # Ouverte Etalab 2.0). Droit français & européen : législation (LEGI/JORF/KALI)
-    # + jurisprudence (Cass/Judilibre, Conseil d'État, Conseil constitutionnel,
-    # CEDH, CJUE, CNIL). `auth_modes` VIDE = **mount no-auth** : tools/mount.py fetch
-    # le catalogue et forward SANS token per-user (chemin dédié, pas de
-    # resolve_mount_token). Opt-in par org : master OFF au registre d'activation, une
-    # org l'active via l'écran connector activation (le mount suit —
-    # `_db_activated_mounts`). Hors bundle par défaut.
-    _c("justicelibre", ["justicelibre"], kind="mount",
-       mount_url="https://justicelibre.org/mcp",
-       auth_modes=frozenset(), secret_kind="none",
-       label="JusticeLibre",
-       help="droit français & européen — législation + jurisprudence "
-            "(Légifrance/Judilibre/CE/CC/CEDH/CJUE), MCP fédéré, sources ouvertes",
-       href="https://justicelibre.org"),
+    # (Le connecteur `justicelibre` — mount no-auth vers justicelibre.org/mcp — a été
+    # RETIRÉ le 2026-08-21 : la fédération MCP est en sommeil, son master était OFF
+    # en prod et le connecteur n'était plus qu'un reste. La branche « mount no-auth »
+    # de tools/mount.py (auth_modes VIDE) reste, générique et sans consommateur
+    # vivant — cf. docs/federation.md.)
     # aiark : connecteur classique (kind="tools", ex-mount fédéré #152 → requalifié
     # #160). Client REST synchrone dans oto-core (`oto.tools.aiark`), tools curés
     # dans `tools/aiark.py` (contrat LLM), cascade de clé standard
