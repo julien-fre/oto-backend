@@ -201,6 +201,49 @@ def ORG_ADMIN_OF(field: str):
     return rule
 
 
+def ORG_ADMIN_OF_LIVE(field: str):
+    """`ORG_ADMIN_OF`, PLUS le refus d'une org **ARCHIVÉE** — la mutation d'un espace
+    que toutes les lectures déclarent hors d'atteinte (signal d'usage #467, 15/08).
+
+    Le défaut, vécu sur l'org #229 : `oto_org op=update` a RÉUSSI et l'a renommée,
+    pendant que `_org=229` répondait « Tu n'es membre d'aucune org #229 » et qu'elle
+    n'apparaissait dans aucun listing. Un même espace était donc à la fois mutable et
+    inexistant, selon l'axe emprunté.
+
+    La racine est une asymétrie de seam, pas une garde oubliée : les lectures joignent
+    `orgs` et filtrent `archived_at IS NULL`, tandis que `get_org_role` lit `org_members`
+    SEULE — `archived_at` ne l'atteint jamais, donc `roles.is_org_admin` reste True sur
+    une org archivée et `ORG_ADMIN_OF` laisse passer. On ne redresse pas le rôle
+    lui-même (cf. `org_store.is_archived_org` : sur un soft-delete il reste vrai, et
+    `org.archive` en dépend pour son idempotence) — on redresse ce que la capacité en
+    déduit, ICI, au niveau où l'autz se déclare (ADR 0009 §7), jamais dans un handler.
+
+    ⚠️ **Ne pas généraliser à `org.archive`** : son contrat public promet qu'archiver
+    deux fois répond `ok:true, archived:false` (« c'était déjà fait »). Lui donner cette
+    règle changerait un idempotent documenté en 409, et casserait tout client qui
+    retente une suppression dont il a perdu la réponse.
+
+    409 (et non 403) : le droit est bien là — c'est l'ÉTAT de la ressource qui refuse.
+    Un « Réservé à un org_admin » serait faux ET muet, et enverrait chercher du côté
+    des permissions un problème qui n'y est pas."""
+    base = ORG_ADMIN_OF(field)
+
+    def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+        ctx = base(raw, inp)   # appartenance/escalade d'abord : un non-admin n'apprend
+                               # pas au passage qu'une org archivée existe.
+        from .. import org_store
+        if org_store.is_archived_org(ctx.org_id):
+            raise AuthzDenied(
+                409, "org_archived",
+                f"Espace #{ctx.org_id} archivé : il ne se modifie plus. L'archivage l'a "
+                "sorti de tous les listings et a rendu sa place à ton quota de création — "
+                "le renommer ne récupère rien. Sa restauration n'est pas self-service "
+                "(les données restent en base) : crée un nouvel espace, ou fais restaurer "
+                "celui-ci par un administrateur.")
+        return ctx
+    return rule
+
+
 def ORG_ADMIN_OPT(field: str):
     """Écriture org-admin **self-service par défaut, épinglable explicitement**.
 

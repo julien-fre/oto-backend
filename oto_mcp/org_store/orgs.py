@@ -202,6 +202,32 @@ def archive_org(org_id: int) -> bool:
             return True
 
 
+def is_archived_org(org_id: int) -> bool:
+    """L'org est-elle archivée (soft-delete) ? Inconnue ⟹ False — « archivée » est un
+    ÉTAT, pas une absence : c'est `get_org` qui répond de l'existence, et confondre les
+    deux ferait rendre `unknown_org` sur une org bien présente mais archivée.
+
+    Ce prédicat existe parce que le palier org le lisait de deux façons contradictoires
+    (signal d'usage #467, 15/08). Toutes les LECTURES joignent `orgs` et filtrent
+    `archived_at IS NULL` (`list_orgs_for_user`, `resolve_org_for_user`, `list_all_orgs`,
+    `get_personal_org`) : l'org archivée n'existe plus pour elles. Le RÔLE, lui, sort de
+    `get_org_role`, qui lit `org_members` SEULE — sans jointure sur `orgs`, donc
+    `archived_at` ne l'atteint pas. `roles.is_org_admin` rendait donc True sur une org
+    archivée, et `org.update` la renommait pendant que `_org=<id>` répondait à la même
+    personne qu'elle n'était membre de rien.
+
+    On ne corrige PAS `get_org_role` : sur un soft-delete les membres sont conservés, le
+    rôle reste un fait vrai, et `org.archive` a besoin qu'il survive à l'archivage pour
+    rester idempotent. C'est ce que la CAPACITÉ en déduit qui devait changer — d'où un
+    prédicat explicite, lu par la règle d'autz `ORG_ADMIN_OF_LIVE` (capabilities/_authz.py)
+    plutôt qu'une clause de plus enfouie dans un handler."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT archived_at FROM orgs WHERE id = %s", (org_id,)
+        ).fetchone()
+        return bool(row and row["archived_at"] is not None)
+
+
 # --- baseline de connecteurs proposés par l'org (ADR 0019) ------------------
 
 def get_org_default_connectors(org_id: int) -> Optional[list[str]]:

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from .. import org_store, session_org
 from ..db import users as db_users
-from ._authz import ORG_ADMIN_OF
+from ._authz import ORG_ADMIN_OF, ORG_ADMIN_OF_LIVE
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -154,7 +154,13 @@ def _archive_org(ctx: ResolvedCtx, inp: OrgIdInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="org.update", handler=_update_org, Input=UpdateOrgInput,
-        authz=ORG_ADMIN_OF("org_id"), Output=OrgUpdated,
+        # `_LIVE` : org_admin **d'une org vivante**. Une org archivée est sortie de tous
+        # les listings et n'est plus joignable par `_org=` — la laisser renommable était
+        # l'incohérence du signal #467 (renommage réussi sur l'org #229 pendant que la
+        # lecture répondait « tu n'es membre d'aucune org #229 »). Le refus part d'ici,
+        # pas du handler : l'autz se déclare au niveau capacité (ADR 0009 §7).
+        # ⚠️ `org.archive` ci-dessous garde `ORG_ADMIN_OF` — voir son commentaire.
+        authz=ORG_ADMIN_OF_LIVE("org_id"), Output=OrgUpdated,
         description=("Update an organization's profile (name, description, brand "
                      "domain like acme.com, industry, location). The domain also "
                      "drives the org logo when none is uploaded. "
@@ -164,6 +170,10 @@ CAPABILITIES += [
     ),
     Capability(
         key="org.archive", handler=_archive_org, Input=OrgIdInput,
+        # PAS `ORG_ADMIN_OF_LIVE`, délibérément : `OrgArchived` promet qu'archiver une
+        # org DÉJÀ archivée répond `ok:true, archived:false` (« c'était déjà fait »).
+        # Refuser l'org archivée ici changerait cet idempotent documenté en 409 et
+        # casserait tout client qui retente une suppression dont il a perdu la réponse.
         authz=ORG_ADMIN_OF("org_id"), Output=OrgArchived,
         description=("Archive (delete) an organization you administer: it disappears "
                      "from every listing and its members fall back to their other "

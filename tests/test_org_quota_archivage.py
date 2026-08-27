@@ -29,7 +29,7 @@ from contextlib import contextmanager
 import pytest
 
 from oto_mcp import org_store, session_org
-from oto_mcp.capabilities import orgs, orgs_update
+from oto_mcp.capabilities import orgs, orgs_reads, orgs_update
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.db import _conn as _conn_mod, _init, _schema, users as db_users
 
@@ -308,3 +308,198 @@ def test_un_espace_perso_qui_gagne_un_membre_n_est_plus_perso(store, monkeypatch
     assert store.is_personal_org(perso) is False
     assert store.get_personal_org(SUB) is None
     assert _archiver(SUB, perso)["archived"] is True
+
+
+# ── #467 : ce que l'archivage ferme, il doit le fermer PARTOUT ───────────────
+#
+# Quatrième signal du 15-16/08, et le seul qui ne parle pas du compte : sur l'org
+# archivée #229, `oto_org op=update` a RÉUSSI et l'a renommée, pendant que tous les
+# autres axes la déclaraient hors d'atteinte — `_org=229` sur `oto_project op=list`
+# refusé (« Tu n'es membre d'aucune org #229 »), et l'org absente d'`oto_list_orgs`.
+#
+# La racine est une asymétrie de seam, pas un oubli de garde :
+#
+#   - les LECTURES passent par `list_orgs_for_user`, qui JOINT `orgs` et filtre
+#     `archived_at IS NULL` → l'org archivée n'existe plus pour elles ;
+#   - le RÔLE, lui, sort de `get_org_role`, qui lit `org_members` SEULE, sans
+#     jointure sur `orgs` : `archived_at` ne l'atteint jamais. `roles.is_org_admin`
+#     rend donc True sur une org archivée, `ORG_ADMIN_OF` laisse passer, et le
+#     handler ne vérifie que l'EXISTENCE de la ligne (`get_org` ne filtre pas non
+#     plus l'archivage).
+#
+# On ne corrige pas `get_org_role` : le rôle sur une org archivée reste VRAI (les
+# membres sont conservés, c'est un soft-delete), et `org.archive` a besoin que le
+# rôle survive à l'archivage pour rester idempotent. Ce qui doit changer, c'est ce
+# que la CAPACITÉ en déduit — d'où une règle d'autz dédiée, déclarée au niveau
+# capacité comme toutes les autres (ADR 0009 §7), jamais un `if` dans le handler.
+
+
+def _authz_de(key: str):
+    """La règle d'autz DÉCLARÉE par la capacité `key`, prise dans le registre.
+
+    Le test vise la déclaration, pas le combinateur : brancher la bonne règle est
+    précisément ce qui manquait, et une assertion sur `_authz.ORG_ADMIN_OF_LIVE`
+    resterait verte si `org.update` continuait d'être déclarée avec l'ancienne."""
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    for c in CAPABILITIES:
+        if c.key == key:
+            return c.authz
+    raise AssertionError(f"capacité `{key}` absente du registre")
+
+
+@pytest.fixture()
+def sans_escalade(monkeypatch):
+    """Neutralise les DEUX chemins d'escalade que `ORG_ADMIN_OF` porte en plus de
+    l'appartenance (platform_admin, opérateur en consultation) : ils ne sont pas le
+    sujet, et les laisser vivants ferait passer le test par un chemin qui n'est pas
+    celui du signal. Le rôle réel, lui, sort bien du banc PG."""
+    from oto_mcp import access, roles, session_org as so
+    monkeypatch.setattr(roles, "is_platform_admin", lambda sub: False)
+    monkeypatch.setattr(so, "current_view_org", lambda: None)
+    monkeypatch.setattr(access, "is_platform_operator", lambda sub: False)
+    monkeypatch.setattr(access, "get_user_role", lambda sub: "user")
+
+
+def test_l_org_archivee_ne_se_renomme_plus(store, sans_escalade):
+    """Le geste exact du signal : org archivée, puis renommage. Il réussissait."""
+    from oto_mcp.capabilities._types import RawCtx
+
+    oid = _espace(store, SUB, "Ciao Capital")
+    autz = _authz_de("org.update")
+    inp = orgs_update.UpdateOrgInput(org_id=oid, name="Renommée")
+
+    # Tant qu'elle est vivante, rien ne change : l'admin la renomme.
+    assert autz(RawCtx(sub=SUB), inp).org_id == oid
+
+    store.archive_org(oid)
+
+    with pytest.raises(AuthzDenied) as refus:
+        autz(RawCtx(sub=SUB), inp)
+    assert refus.value.status == 409 and refus.value.code == "org_archived"
+
+
+def test_le_refus_de_l_org_archivee_dit_ce_qui_cloche_et_la_suite(store, sans_escalade):
+    """Règle de la maison, née des trois autres signaux : un refus NOMME l'état qui
+    bloque et ce qu'il reste à faire. « Réservé à un org_admin » aurait été faux (il
+    l'EST) et muet sur l'archivage — l'appelant aurait cherché du côté des droits."""
+    from oto_mcp.capabilities._types import RawCtx
+
+    oid = _espace(store, SUB, "Ciao Capital")
+    store.archive_org(oid)
+
+    with pytest.raises(AuthzDenied) as refus:
+        _authz_de("org.update")(RawCtx(sub=SUB),
+                                orgs_update.UpdateOrgInput(org_id=oid, name="X"))
+    msg = refus.value.message
+    assert "rchiv" in msg                      # l'état qui bloque, nommé
+    assert str(oid) in msg                      # DE QUEL espace on parle
+    assert "restaur" in msg.lower()             # et que la restauration n'est pas self-service
+
+
+def test_les_deux_axes_disent_desormais_la_meme_chose(store, sans_escalade):
+    """Le fond de #467 : une org ne doit pas être MUTABLE par quelqu'un à qui la
+    lecture répond qu'il n'en est pas membre. On fige l'accord des deux seams."""
+    from oto_mcp.capabilities._types import RawCtx
+
+    oid = _espace(store, SUB, "Ciao Capital")
+    store.archive_org(oid)
+
+    # axe lecture / entrée : inchangé, il refusait déjà
+    with pytest.raises(ValueError):
+        store.resolve_org_for_user(SUB, str(oid))
+    # axe écriture : il refuse enfin aussi
+    with pytest.raises(AuthzDenied):
+        _authz_de("org.update")(RawCtx(sub=SUB),
+                                orgs_update.UpdateOrgInput(org_id=oid, name="X"))
+
+
+def test_archiver_reste_idempotent_sur_une_org_deja_archivee(store, sans_escalade):
+    """La contre-épreuve, et la raison pour laquelle `org.archive` NE prend PAS la
+    nouvelle règle : son contrat public (`OrgArchived`) promet qu'archiver deux fois
+    répond `ok: true, archived: false` — « c'était déjà fait ». Lui interdire l'org
+    archivée transformerait cet idempotent documenté en 409, et un client qui
+    retente une suppression perdue casserait."""
+    from oto_mcp.capabilities._types import RawCtx
+
+    oid = _espace(store, SUB, "Ciao Capital")
+    store.archive_org(oid)
+
+    ctx = _authz_de("org.archive")(RawCtx(sub=SUB), orgs_update.OrgIdInput(org_id=oid))
+    assert ctx.org_id == oid
+
+
+def test_un_patch_partiel_n_efface_pas_les_champs_omis(store):
+    """La question laissée ouverte par #467 : le renommage de l'org archivée avait
+    rendu `description`/`industry`/`location` vides, et le rapporteur ne pouvait pas
+    savoir de l'extérieur s'il les avait EFFACÉS. Réponse : non — `update_org` ne
+    construit un `SET` que pour les champs non-None (None = conserver, chaîne vide =
+    effacer). Ils étaient déjà vides. On l'épingle plutôt que de le laisser reposer
+    sur une relecture."""
+    oid = _espace(store, SUB, "Espace A")
+    store.update_org(oid, description="une description", industry="SaaS",
+                     location="Marseille")
+
+    store.update_org(oid, name="Renommé")
+
+    o = store.get_org(oid)
+    assert o["name"] == "Renommé"
+    assert (o["description"], o["industry"], o["location"]) == \
+           ("une description", "SaaS", "Marseille")
+
+
+# ── #464 (2ᵉ demande) : le compte se lit AVANT le mur ────────────────────────
+#
+# Le premier signal portait DEUX demandes ; ec976b0 n'a traité que la première (que
+# le refus dise le compte et le remède). La seconde reste : « surface the count
+# before the wall, so a procedure can warn at 9 of 10 rather than fail at 11 ».
+# Un plafond qui ne se lit qu'en s'y cognant coûte un tour à chaque procédure qui
+# crée des espaces — et celle qui l'a signalé (prospect KB) en crée un par run.
+
+
+def test_la_liste_de_mes_espaces_porte_le_quota(store, plafond, monkeypatch):
+    """`oto_list_orgs` est l'outil par lequel un agent regarde ses espaces : c'est là
+    que le compte doit être lisible, sans avoir à tenter une création pour l'apprendre."""
+    monkeypatch.setattr(session_org, "current_session_id", lambda: None)
+    _perso(store, SUB)
+    _creer(SUB, "Espace 0")
+
+    out = orgs_reads._list_my_orgs(ResolvedCtx(sub=SUB), orgs_reads.NoInput())
+
+    assert out["quota"] == {"created": 1, "cap": plafond, "remaining": plafond - 1}
+
+
+def test_le_quota_lu_est_CELUI_qui_refuse(store, plafond, monkeypatch):
+    """Le piège que ce lot doit fermer définitivement : deux comptes qui divergent.
+    Si la liste comptait autrement que le refus, on aurait remplacé un mur muet par
+    un mur qui MENT — pire. On exerce donc la frontière : la liste annonce 0 place
+    restante exactement quand la création refuse."""
+    monkeypatch.setattr(session_org, "current_session_id", lambda: None)
+    _perso(store, SUB)
+    ids = [_creer(SUB, f"Espace {i}")["org_id"] for i in range(plafond)]
+
+    out = orgs_reads._list_my_orgs(ResolvedCtx(sub=SUB), orgs_reads.NoInput())
+    assert out["quota"]["remaining"] == 0
+    with pytest.raises(AuthzDenied):
+        _creer(SUB, "Un de trop")
+
+    # ... et l'archivage rend la place des DEUX côtés à la fois.
+    _archiver(SUB, ids[0])
+    out = orgs_reads._list_my_orgs(ResolvedCtx(sub=SUB), orgs_reads.NoInput())
+    assert out["quota"]["remaining"] == 1
+    assert _creer(SUB, "Le remplaçant")["org_id"] not in ids
+
+
+def test_le_quota_ne_compte_ni_l_archive_ni_le_perso(store, plafond, monkeypatch):
+    """Même règle de comptage que `count_orgs_created_by`, vue depuis la liste : elle
+    ne peut pas redevenir un total historique sans que ce test tombe."""
+    monkeypatch.setattr(session_org, "current_session_id", lambda: None)
+    _perso(store, SUB)
+    a = _creer(SUB, "Espace A")["org_id"]
+    _creer(SUB, "Espace B")
+    _archiver(SUB, a)
+
+    out = orgs_reads._list_my_orgs(ResolvedCtx(sub=SUB), orgs_reads.NoInput())
+    assert out["quota"]["created"] == 1
+    # et la liste elle-même ne montre ni l'archivée ni... l'espace perso, qui lui EST
+    # listé (il est bien à moi) : c'est le QUOTA qui l'exclut, pas la liste.
+    assert a not in [o["org_id"] for o in out["orgs"]]

@@ -73,18 +73,44 @@ class ClearOrgResult(BaseModel):
     how_to: Optional[str] = None
 
 
+def org_quota(sub: str) -> dict:
+    """Où en est ce compte face au plafond de création — **source unique**, lue par le
+    refus d'`org.create` ET par la liste `org.list` (`oto_list_orgs`).
+
+    Le premier signal (#464, 15/08) portait deux demandes ; ec976b0 n'avait traité que
+    la première (que le refus dise le compte et le remède). La seconde était : rendre le
+    compte lisible **avant** le mur, pour qu'une procédure prévienne à 9 sur 10 au lieu
+    d'échouer au 11ᵉ. Un plafond qui ne s'apprend qu'en s'y cognant coûte un tour à
+    chaque procédure qui crée des espaces — et celle qui l'a signalé en crée un par run.
+
+    Le rendre en UN endroit est le point : deux comptes qui divergeraient (une liste qui
+    annonce une place restante là où la création refuse) seraient pires que le mur muet
+    d'origine — on aurait remplacé un silence par un mensonge. `remaining` est borné à 0
+    plutôt que de partir négatif : un compte peut dépasser le plafond par un chemin qui
+    ne passe pas par ici (création admin, baisse de `OTO_MCP_MAX_ORGS_PER_USER`), et
+    « -3 places restantes » ne veut rien dire pour l'appelant.
+
+    `created` compte ce qui OCCUPE une place — ni les archivées, ni l'espace personnel
+    (cf. `org_store.count_orgs_created_by`, qui porte la règle et son pourquoi)."""
+    created = org_store.count_orgs_created_by(sub)
+    return {"created": created, "cap": _MAX_ORGS_PER_USER,
+            "remaining": max(0, _MAX_ORGS_PER_USER - created)}
+
+
 def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
     """Self-serve : crée un espace, en fait l'admin, le bascule actif."""
     # Le compte est relu pour le DIRE : un refus qui n'annonce que son plafond laisse
     # l'appelant sans moyen de savoir ce qui l'occupe ni comment redescendre — et
     # l'archivage, seul geste qui libère une place, n'est deviné par personne.
-    created = org_store.count_orgs_created_by(ctx.sub)
-    if created >= _MAX_ORGS_PER_USER:
+    quota = org_quota(ctx.sub)
+    if quota["remaining"] == 0:
         raise AuthzDenied(
             429, "org_quota",
-            f"Limite d'espaces créés atteinte : {created}/{_MAX_ORGS_PER_USER}. "
+            f"Limite d'espaces créés atteinte : {quota['created']}/{quota['cap']}. "
             "Archive un espace que tu n'utilises plus pour libérer une place — "
-            "l'archivage est réversible et ton espace personnel n'est pas compté.")
+            "l'archivage est réversible et ton espace personnel n'est pas compté. "
+            "Ce compte se lit sans se cogner au mur : `oto_list_orgs` le rend "
+            "(bloc `quota`).")
     name = inp.name.strip()
     if not name:
         raise AuthzDenied(400, "invalid_name", "Nom d'espace requis.")

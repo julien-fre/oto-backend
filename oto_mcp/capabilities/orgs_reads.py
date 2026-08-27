@@ -16,6 +16,10 @@ from pydantic import BaseModel
 
 from .. import billing, db, org_store
 from ._authz import ORG_MEMBER_OF, PLATFORM_ADMIN, SUB_ONLY
+# Le quota de création vit avec la capacité qui REFUSE (`org.create`) : le lire ici
+# plutôt que le recalculer est ce qui garantit que la liste et le refus ne pourront
+# jamais annoncer deux nombres différents (#464).
+from .orgs import org_quota
 from ._types import Capability, ResolvedCtx, RestBinding
 
 from .registry import CAPABILITIES
@@ -56,8 +60,24 @@ class MyOrgEntry(BaseModel):
     active: bool
 
 
+class OrgQuota(BaseModel):
+    """Où tu en es du plafond d'espaces CRÉÉS, lisible **avant** de s'y cogner (#464).
+
+    `created` ne compte que ce qui occupe encore une place : ni les espaces archivés
+    (l'archivage rend sa place), ni ton espace personnel (posé d'office, non
+    supprimable en tant que tel). `created` peut donc être plus petit que le nombre
+    d'entrées d'`orgs` ci-dessus — l'espace perso y figure, il est bien à toi.
+    ⚠️ Le plafond porte sur les espaces que TU as créés : rejoindre celui d'autrui
+    n'en consomme aucun, et une org dont tu es membre sans l'avoir créée n'y entre pas.
+    `remaining == 0` ⟹ la prochaine création sera refusée (429 `org_quota`)."""
+    created: int
+    cap: int
+    remaining: int
+
+
 class MyOrgs(BaseModel):
     orgs: list[MyOrgEntry]
+    quota: OrgQuota
     # Id de l'org maison. **None est un état atteignable** (aucune ligne
     # d'appartenance active), pas une erreur : le repli est l'espace personnel.
     active_org: Optional[int] = None
@@ -167,7 +187,10 @@ def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
             "member_count": len(org_store.list_org_members(o["org_id"])),
             "my_role": o["org_role"], "role": o["org_role"], "active": o["is_active"],
         })
-    return {"orgs": orgs, "active_org": active}
+    # Le quota voyage avec la liste : c'est l'outil par lequel un agent regarde ses
+    # espaces, donc le seul endroit où il peut apprendre qu'il approche du mur sans
+    # tenter une création pour le découvrir (#464, 2ᵉ demande).
+    return {"orgs": orgs, "active_org": active, "quota": org_quota(ctx.sub)}
 
 
 def _list_all_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
