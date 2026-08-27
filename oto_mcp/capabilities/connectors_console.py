@@ -292,14 +292,20 @@ CAPABILITIES += [
         key="connectors.console.identity", handler=_identity, Input=IdentityInput,
         authz=SUB_ONLY,
         description=(
-            "Connected identities/accounts your credential can act as for a connector (e.g. "
-            "the LinkedIn accounts under your shared Unipile key, or your Google accounts). "
-            "op=list → each operable account with `is_default`, plus `granted:true`+`owner` "
-            "when a peer shared THEIRS with you (#55). **To act as one for a SINGLE call, pass "
-            "`account=<id>` on that tool** (e.g. linkedin_unipile_search(account=<id>, …)) — an "
-            "EPHEMERAL pin: it's how you use a granted account without changing your default, "
-            "and needs NO reconnection or key setup. op=set (`identity_id` from op=list) sets "
-            "your PERSISTENT default identity instead (rejects an id your credential can't reach)."),
+            "Connected identities/accounts your credential can act as for a connector — the "
+            "Slack workspaces you posted tokens for, the LinkedIn accounts under your shared "
+            "Unipile key, your Google accounts. op=list → each operable account with "
+            "`is_default`, plus `granted:true`+`owner` when a peer shared THEIRS with you "
+            "(#55). **To act as one for a SINGLE call, pass `_account=<id>` on that tool** "
+            "(e.g. slack_post_message(_account='client-x', …)) — an EPHEMERAL pin: it's how "
+            "you use a granted account, or post to the other workspace, without changing your "
+            "default, and it needs NO reconnection or key setup. ⚠️ The parameter is "
+            "`_account`, WITH the underscore: the bare name belongs to the tools that have a "
+            "business `account` argument of their own. op=set (`identity_id` from op=list) "
+            "sets your PERSISTENT default identity instead (rejects an id your credential "
+            "can't reach). With a single account posted, nothing to do — it resolves alone; "
+            "with several and no default, a call without `_account` is REFUSED rather than "
+            "sent under the wrong identity."),
         mcp="oto_identity",
     ),
     Capability(
