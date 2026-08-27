@@ -200,9 +200,12 @@ grain, le scope est une COLONNE ; migrations vivantes sur la DB partagée = play
 active ; `set_active_org` efface le groupe actif. `oto_use_group` /
 `PUT /api/me/active-group` (+ `oto_clear_group` / `DELETE`).
 
-Stores : `group_store.py` (miroir d'`org_store` au grain groupe). `org_store`
-n'importe PAS `group_store` (SQL direct pour l'invariant org↔groupe → pas de
-cycle). Surfaces : capacités `capabilities/groups*.py` (REST `/api/orgs/{id}/groups`,
+Stores : `group_store.py` (miroir d'`org_store` au grain groupe). **Aucun module
+du package `org_store/` n'importe `group_store`** : l'invariant org↔groupe est
+tenu en SQL direct dans `org_store/members.py` (`remove_org_member` sort le membre
+de tous les groupes de l'org, `set_active_org` invalide le groupe actif) → pas de
+cycle. Règle **vérifiée** depuis la découpe du 2026-08-27 par
+`tests/test_org_store_surface_frozen.py`, plus seulement tenue à la main. Surfaces : capacités `capabilities/groups*.py` (REST `/api/orgs/{id}/groups`,
 `/api/groups/{id}*`, `/api/me/active-group` + MCP `oto_*_group*`). `/api/me`
 expose `active_group`/`active_group_name`/`group_role` ; `providers[].mode` peut
 valoir `group`. **Détails : `docs/groups-and-roles.md`.**

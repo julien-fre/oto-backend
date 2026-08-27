@@ -51,7 +51,7 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
   d'historique sauf `delete`).
 - **Store** : `org_instructions(org_id, slug PK partiel, title, description, body_md, version,
   set_by, created_at, updated_at)` + `org_instruction_revisions(org_id, slug, version PK, …)`
-  (`db._SCHEMA`, palier org) ; accès dans `org_store.py` (`get/list/search/set/delete_instruction`,
+  (`db._SCHEMA`, palier org) ; accès dans `org_store/instructions.py` (`get/list/search/set/delete_instruction`,
   `list_instruction_versions`, `normalize_slug`, `BASE_SLUG`). **En clair** (prose, pas un
   credential → hors coffre chiffré). **Pas de cache** : lecture DB à l'appel. Écriture sérialisée
   par `(org, slug)` via verrou advisory (mirroir `add_org_member`).
