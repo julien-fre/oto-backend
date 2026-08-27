@@ -30,6 +30,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from . import access, db, org_store
+from .json_body import InvalidJsonBody, read_json_body
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,9 @@ def make_routes(
         if err:
             return err
         try:
-            body = await request.json()
-        except Exception:
-            body = {}
+            body = await read_json_body(request)
+        except InvalidJsonBody as e:
+            return json_error(request, 400, e.code, e.detail)
         # Corps partagé REST + MCP (`unipile_connect_start`, feedback #131) :
         # gates + nonce + hosted_auth_link vivent dans `unipile_connect`.
         from . import unipile_connect

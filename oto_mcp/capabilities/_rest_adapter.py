@@ -22,6 +22,7 @@ from starlette.routing import Route
 
 logger = logging.getLogger(__name__)
 
+from ..json_body import InvalidJsonBody, read_json_body
 from ._types import AuthzDenied, Capability, NotModified, RawCtx
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
@@ -39,19 +40,28 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         if request.query_params:
             data.update(dict(request.query_params))
         if request.method in ("POST", "PUT", "PATCH") or binding.reads_body:
+            # Un corps illisible est REFUSÉ, jamais ignoré — c'est le même principe
+            # que la garde des champs inconnus vingt lignes plus bas, et il lui
+            # manquait exactement ce cas : la garde couvrait « un champ que je ne
+            # connais pas », pas « un corps que je ne comprends pas ». Sur ~200 routes
+            # générées, l'appelant recevait un 200 et des valeurs par défaut
+            # (`docs/silences-2026-08-27.md`, site B4). Un corps ABSENT reste `{}` :
+            # les routes sans argument ne changent pas de contrat.
             try:
-                body = await request.json()
-                if isinstance(body, dict):
-                    if binding.body_field:
-                        # Corps LIBRE (les colonnes d'une ligne de tableau) : il ne se
-                        # fusionne pas clé par clé, il EST la valeur d'un champ déclaré.
-                        # Cf. `RestBinding.body_field` — la garde ci-dessous continue
-                        # donc de couvrir la query string et les params de chemin.
-                        data[binding.body_field] = body
-                    else:
-                        data.update(body)
-            except Exception:
-                pass
+                body = await read_json_body(request)
+            except InvalidJsonBody as e:
+                logger.warning("capacité %s : corps de requête refusé (%s)",
+                               cap.key, e.code)
+                return json_error(request, 400, e.code, e.detail)
+            if body:
+                if binding.body_field:
+                    # Corps LIBRE (les colonnes d'une ligne de tableau) : il ne se
+                    # fusionne pas clé par clé, il EST la valeur d'un champ déclaré.
+                    # Cf. `RestBinding.body_field` — la garde ci-dessous continue
+                    # donc de couvrir la query string et les params de chemin.
+                    data[binding.body_field] = body
+                else:
+                    data.update(body)
         # path params : mapping explicite placeholder->champ Input, sinon nom identique.
         for ph, value in request.path_params.items():
             field = (binding.path_map or {}).get(ph, ph)

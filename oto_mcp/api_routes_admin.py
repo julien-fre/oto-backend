@@ -29,6 +29,7 @@ from starlette.responses import JSONResponse
 
 from . import access, credentials_store, db, token_scopes
 from .api_routes_base import _authenticate, _json, _json_error
+from .json_body import InvalidJsonBody, read_json_body
 
 
 async def admin_platform_keys_list(request: Request, *, verifier: JWTVerifier) -> JSONResponse:
@@ -110,15 +111,19 @@ async def admin_tokens_create(request: Request, *, verifier: JWTVerifier) -> JSO
     target_sub = request.path_params["sub"]
     if not db.get_user(target_sub):
         return _json_error(request, 404, "unknown_user")
+    # Corps illisible ⇒ REFUS, jamais un jeton. Même défaut qu'en `me_tokens_create`
+    # (site B2), en pire : le jeton émis pour un TIERS était non porté **et sans
+    # expiration** — `ttl_days` retombait sur None avec le reste
+    # (`docs/silences-2026-08-27.md`, site B3).
     try:
-        body = await request.json()
-    except Exception:
-        body = {}
-    label = (body or {}).get("label") or "cli"
-    ttl_raw = (body or {}).get("ttl_days")
+        body = await read_json_body(request)
+    except InvalidJsonBody as e:
+        return _json_error(request, 400, e.code, e.detail)
+    label = body.get("label") or "cli"
+    ttl_raw = body.get("ttl_days")
     ttl_days = int(ttl_raw) if isinstance(ttl_raw, (int, str)) and str(ttl_raw).isdigit() else None
     try:
-        scopes = token_scopes.parse((body or {}).get("scopes"))
+        scopes = token_scopes.parse(body.get("scopes"))
     except token_scopes.ScopeError as e:
         return _json_error(request, 400, "invalid_scopes", str(e))
     token = db.create_api_token(target_sub, label=label.strip()[:32],
