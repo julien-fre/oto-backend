@@ -88,6 +88,7 @@ def _anon_project_tableau_ns_ids(project_id: Optional[int]) -> frozenset:
                 if ns:
                     ids.add(int(ns["id"]))
         return frozenset(ids)
+    # noqa: SILENT — hint anonyme : ensemble vide plutôt qu'une liste fausse
     except Exception:  # noqa: BLE001
         return frozenset()
 
@@ -110,6 +111,7 @@ def _project_hint(namespace: str) -> Optional[str]:
                 f"si c'est une sortie du projet, lie-le : `oto_project op=link "
                 f"project_id={pid} target_type=tableau target_ref=<id du namespace> "
                 "(+ slot='<name>' s'il réalise un slot de procédure)`.")
+    # noqa: SILENT — dette déclarée : le hint de projet disparaît en silence (#424, verdict C)
     except Exception:  # noqa: BLE001
         return None
 
@@ -126,6 +128,7 @@ def _namespace_keys(store, namespace: str) -> set[str]:
     try:
         ns_id = store._resolve(namespace)
         return set(db.datastore_row_keys(ns_id))
+    # noqa: SILENT — clés de namespace illisibles ⇒ pas d'avertissement de frappe
     except Exception:  # noqa: BLE001
         return set()
 
@@ -169,6 +172,7 @@ def _unknown_filter_keys(store, namespace: str, filter, filters=None) -> set[str
     # exactement le genre de silence que ce warning existe pour combattre.
     try:
         known = set(dsv2.top_level_keys(store.get_schema(namespace)))
+    # noqa: SILENT — schéma illisible ⇒ repli sur l'échantillon, l'avertissement survit
     except Exception:  # noqa: BLE001
         known = set()
     try:
@@ -182,6 +186,7 @@ def _unknown_filter_keys(store, namespace: str, filter, filters=None) -> set[str
         # sans être ni déclarée ni forcément dans l'échantillon.
         return {k for k in unknown
                 if k not in _namespace_keys(store, namespace)} if unknown else set()
+    # noqa: SILENT — dernier recours : colonne orpheline non déclarée, pas d'avertissement
     except Exception:  # noqa: BLE001
         return set()
 
@@ -201,6 +206,7 @@ def _row_not_found_hint(store, namespace: str, row_id: object) -> str:
                         f"utilise `filter={{\"{key}\": \"{row_id}\"}}`, son `_id` est "
                         f"`{hit[0].get('_id')}`")
             return f"{msg} ; pour la clé métier `{key}`, utilise `filter={{\"{key}\": …}}`"
+    # noqa: SILENT — dette déclarée : le hint « ligne introuvable » disparaît (#424, verdict C)
     except Exception:  # noqa: BLE001
         pass
     return msg
@@ -853,6 +859,7 @@ def register(mcp: FastMCP) -> None:
         from prefab_ui.components import (  # type: ignore
             Card, Column, DataTable, DataTableColumn, Heading, Text,
         )
+    # noqa: SILENT — extra `apps` absent ⇒ pas d'app, les tools JSON suffisent
     except Exception:  # pragma: no cover - extra `apps` absent
         return
 

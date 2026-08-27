@@ -326,6 +326,7 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
             else:
                 entry["status"] = "skipped"
                 entry["reason"] = "external_or_unresolved"
+        # noqa: SILENT — l'échec est rendu par entrée (status/reason) dans le rapport de cascade
         except Exception as e:   # une entité ratée ne casse pas la livraison
             entry["status"] = "failed"
             entry["reason"] = str(e)

@@ -29,6 +29,7 @@ def new_run_id() -> str:
 async def _read_stack(ctx: Any) -> list[dict]:
     try:
         stack = await ctx.get_state(_STACK_KEY)
+    # noqa: SILENT — pile de doctrine illisible ⇒ vide, la doctrine reste servie
     except Exception:
         return []
     return list(stack) if isinstance(stack, list) else []

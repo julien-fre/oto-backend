@@ -175,6 +175,7 @@ def _has_editor_app(connector: str) -> bool:
     rendra un message actionnable)."""
     try:
         return bool(credentials_store.list_editor_apps(connector))
+    # noqa: SILENT — fail-open : une panne de lecture ne doit pas cacher le bouton
     except Exception:  # noqa: BLE001
         return False
 

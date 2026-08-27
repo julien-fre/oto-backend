@@ -23,6 +23,7 @@ def register(mcp: FastMCP) -> None:
         from prefab_ui.components import (  # type: ignore
             Card, Column, DataTable, DataTableColumn, Heading, Markdown, Text,
         )
+    # noqa: SILENT — extra `apps` absent ⇒ pas d'app, les tools JSON suffisent
     except Exception:  # pragma: no cover - extra `apps` absent
         return
 

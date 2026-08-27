@@ -844,6 +844,7 @@ def classify_vault_rows(rows) -> dict:
         be["total"] += 1
         try:
             crypto.decrypt(r["secret_enc"], _aad(et, eid, cn, acct))  # jetée
+        # noqa: SILENT — l'inventaire COMPTE les lignes indéchiffrables — c'est son objet
         except Exception:
             bc["undecryptable"] += 1
             be["undecryptable"] += 1

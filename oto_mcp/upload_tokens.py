@@ -97,6 +97,7 @@ def verify(token: str) -> Optional[dict]:
     try:
         payload = _b64url_decode(p_b64)
         sig = _b64url_decode(sig_b64)
+    # noqa: SILENT — fail-closed : toute erreur de vérification ⇒ jeton refusé
     except Exception:
         return None
     expected = hmac.new(_secret(), payload, hashlib.sha256).digest()
@@ -104,6 +105,7 @@ def verify(token: str) -> Optional[dict]:
         return None
     try:
         data = json.loads(payload)
+    # noqa: SILENT — fail-closed : toute erreur de vérification ⇒ jeton refusé
     except Exception:
         return None
     if data.get("typ") != "upload":

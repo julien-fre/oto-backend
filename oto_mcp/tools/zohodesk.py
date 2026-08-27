@@ -100,6 +100,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
         try:
             call(client)
             return  # au moins une surface lisible → credential utilisable
+        # noqa: SILENT — scope manquant collecté puis rendu dans le message de la sonde
         except Exception as e:  # noqa: BLE001 — l'erreur provider EST le retour de sonde
             if "SCOPE" in str(e).upper():
                 missing.append(f"{label} → {scope}")

@@ -181,6 +181,7 @@ class ToolCallLogger(Middleware):
         }
         try:
             row.update({k: v for k, v in self.identity().items() if k in ("sub", "email")})
+        # noqa: SILENT — dette déclarée : le journal ne casse pas le service, mais l'échec devrait se voir (#424)
         except Exception:
             pass
         t0 = time.monotonic()
@@ -207,6 +208,7 @@ class ToolCallLogger(Middleware):
         }
         try:
             row.update({k: v for k, v in self.identity().items() if k in ("sub", "email")})
+        # noqa: SILENT — dette déclarée : le journal ne casse pas le service, mais l'échec devrait se voir (#424)
         except Exception:
             pass
         t0 = time.monotonic()

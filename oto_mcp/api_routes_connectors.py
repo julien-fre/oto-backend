@@ -95,6 +95,7 @@ def make_routes(
         logger.info("unipile webhook raw=%s", raw[:2000])
         try:
             body = json.loads(raw) if raw else {}
+        # noqa: SILENT — ACK délibéré : un webhook rejoué en boucle est pire (compteur à poser, #424)
         except Exception:
             return JSONResponse({"ok": True})
         # Format réel confirmé (instrumenté 2026-06-18) :

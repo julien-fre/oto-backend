@@ -131,6 +131,7 @@ def verify_state(state: str) -> Optional[tuple[str, int]]:
     try:
         payload = _b64url_decode(p_b64)
         sig = _b64url_decode(sig_b64)
+    # noqa: SILENT — fail-closed : un callback ne distingue jamais les causes d'un refus
     except Exception:
         return None
     expected = hmac.new(_state_secret(), payload, hashlib.sha256).digest()
@@ -138,6 +139,7 @@ def verify_state(state: str) -> Optional[tuple[str, int]]:
         return None
     try:
         data = json.loads(payload)
+    # noqa: SILENT — fail-closed : un callback ne distingue jamais les causes d'un refus
     except Exception:
         return None
     if int(time.time()) - int(data.get("ts", 0)) > _STATE_TTL:
@@ -265,6 +267,7 @@ def _no_account_message(sub: str, org_id: Optional[int], account: Optional[str])
     try:
         connectes = [a["google_email"] for a in db.list_google_accounts(sub, org_id)
                      if a.get("google_email")]
+    # noqa: SILENT — message d'aide : liste de comptes connectés absente plutôt que fausse
     except Exception:      # jamais transformer une erreur d'entrée en panne
         connectes = []
     dash = "https://manage.oto.cx/ (section Google)"
@@ -310,6 +313,7 @@ def credentials_for(sub: str, account: Optional[str] = None):
             # 60s d'avance pour éviter de cracher en plein appel
             if exp.timestamp() - time.time() < 60:
                 needs_refresh = True
+        # noqa: SILENT — credential illisible ⇒ refresh forcé, jamais un jeton périmé servi
         except Exception:
             needs_refresh = True
 
@@ -396,6 +400,7 @@ def revoke(sub: str, account: Optional[str] = None) -> None:
         # empêcher la suppression. Le contrat de revoke = supprimer en DB.
         try:
             row = db.get_google_oauth(sub, org_id, account=email)
+        # noqa: SILENT — dette déclarée : credential indéchiffrable ⇒ on supprime quand même (#424)
         except Exception:
             row = None
         if row and row.get("refresh_token"):
@@ -407,6 +412,7 @@ def revoke(sub: str, account: Optional[str] = None) -> None:
                     data={"token": row["refresh_token"]},
                     timeout=10,
                 )
+            # noqa: SILENT — dette déclarée : le refresh_token reste vivant chez Google (#424, verdict C)
             except Exception:
                 pass  # on supprime quand même en DB
     db.delete_google_oauth(sub, org_id, account=account)

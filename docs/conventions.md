@@ -6,10 +6,11 @@ description: >-
   décrire (le système, pas l'intention), le montage réel comme seul banc d'un garde-fou,
   l'interdiction d'écrire une adresse en dur, les jetons de contexte d'appel réservés,
   le budget de ce qu'un outil renvoie, l'ordre des middlewares MCP, la contrainte
-  MONO-LOOP (aucun I/O bloquant), et le cycle d'un connecteur (cran d'activation,
-  registre `providers/`, credential multi-champs, sonde de connexion, doc how-to,
-  aucune résolution de secret hors DB/env). À lire avant d'écrire du code ici, et avant
-  d'ajouter un garde-fou ou un connecteur.
+  MONO-LOOP (aucun I/O bloquant), l'interdiction du silence (un `except` large doit
+  re-lever, journaliser ou refuser en nommant), et le cycle d'un connecteur (cran
+  d'activation, registre `providers/`, credential multi-champs, sonde de connexion,
+  doc how-to, aucune résolution de secret hors DB/env). À lire avant d'écrire du code
+  ici, et avant d'ajouter un garde-fou ou un connecteur.
 ---
 
 # Conventions du backend
@@ -69,6 +70,32 @@ Le contenu n'a pas changé — seule sa place a bougé.
   vérifier le contrat de l'appelant qui en dépend), et après toute scission de module un
   balayage des noms lus sans être importés ni définis (test grossier niveau module,
   suffisant pour le nom hérité d'un fichier scindé).
+- **Le refus est bruyant, la divergence est muette — un `except` large doit DIRE
+  quelque chose (27/08).** Un `except Exception` qui ne re-lève pas, ne journalise pas
+  et ne rend pas de refus nommé ne rattrape pas la panne : il la traduit en SUCCÈS.
+  L'appelant reçoit une valeur de repli et croit avoir été servi. Inventaire par AST du
+  27/08 : **333** handlers n'atteignaient jamais un `raise`, dont **dix** produisaient
+  un défaut cher — un jeton API **non porté** émis parce que le corps JSON demandant sa
+  portée était illisible, un fichier annoncé « privé » resté `public-read` avec son URL
+  permanente, un porteur de vieux jeton servi **sous son compte d'avant migration**, un
+  client instancié **sans identifiants** parce que le blob du coffre ne se relisait pas.
+  Trois d'entre eux avaient, à moins de vingt lignes, un commentaire qui interdisait mot
+  pour mot ce qu'ils faisaient : **la règle écrite ne tient pas, le forçage tient**.
+  Garde-fou : `scripts/lint_silences.py`, exercé par `tests/test_no_silent_except.py`
+  (qui prouve aussi qu'il MORD, sur sept formes de silence et cinq formes de catch-all).
+  Un handler passe s'il fait l'une de ces trois choses, n'importe où dans son corps :
+  **re-lever**, **journaliser** (`logger.warning/error/exception` — un `print` ne compte
+  pas), ou **rendre un refus nommé** (`json_error`/`_json_error`, fabriques DÉCLARÉES —
+  un `return JSONResponse(...)` nu ne dit pas s'il refuse ou s'il sert). Un `except`
+  ÉTROIT (`except ValueError`) n'est pas concerné : c'est une décision, pas un filet.
+  L'unique échappatoire est `# noqa: SILENT — <raison>`, sur la ligne du `except` ou
+  juste au-dessus à son indentation ; **la raison est obligatoire** (un `# noqa: SILENT`
+  nu est refusé, sinon l'échappatoire devient le chemin par défaut). Les **168** sites
+  existants sont annotés : dette DÉCLARÉE, pas permis — les uns nomment un choix
+  (fail-open de visibilité dont le backstop dur est au call-time, fail-closed d'un
+  callback qui ne distingue jamais les causes d'un refus, ACK de webhook), les autres
+  portent « dette déclarée … (#424, verdict C) » et attendent leur lot.
+  **Détail : `docs/silences-2026-08-27.md`.**
 - **Tree partagé entre sessions : deux sessions ne partagent JAMAIS un fichier — le
   séquencement prime, le staging n'est qu'un filet.** Vécu 13/08 (main rouge) : un
   `git add <chemin>` EXPLICITE a absorbé ~148 lignes du WIP d'une session voisine dans

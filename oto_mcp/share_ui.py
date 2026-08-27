@@ -528,6 +528,7 @@ def _connectors_from_tools(tools: list[str]) -> tuple[list[dict], list[str]]:
     try:
         from . import providers
         from .tool_visibility import namespace_of
+    # noqa: SILENT — page publique : la liste de connecteurs se dégrade, la page reste servie
     except Exception:  # noqa: BLE001
         return [], list(tools)
 
@@ -536,6 +537,7 @@ def _connectors_from_tools(tools: list[str]) -> tuple[list[dict], list[str]]:
     for t in tools:
         try:
             ns = namespace_of(t)
+        # noqa: SILENT — page publique : namespace indéterminé ⇒ pas de logo, pas d'erreur
         except Exception:  # noqa: BLE001
             ns = ""
         if ns not in groups:
@@ -549,6 +551,7 @@ def _connectors_from_tools(tools: list[str]) -> tuple[list[dict], list[str]]:
         con = None
         try:
             con = providers.connector_for_namespace(ns)
+        # noqa: SILENT — page publique : connecteur inconnu ⇒ ligne générique
         except Exception:  # noqa: BLE001
             con = None
         if con is None:
@@ -556,6 +559,7 @@ def _connectors_from_tools(tools: list[str]) -> tuple[list[dict], list[str]]:
             continue
         try:
             logo = con.logo_url_for()
+        # noqa: SILENT — page publique : logo absent ⇒ monogramme côté UI
         except Exception:  # noqa: BLE001
             logo = None
         label = getattr(con, "name", ns) or ns

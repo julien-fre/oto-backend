@@ -55,6 +55,7 @@ def _namespace_help(ns: str) -> str:
     try:
         con = providers.connector_for_namespace(ns)
         return f"{con.label} {con.help}" if con else ""
+    # noqa: SILENT — aide de namespace absente plutôt que fausse
     except Exception:
         return ""
 
@@ -70,6 +71,7 @@ def _tool_prefix() -> str:
     langues."""
     try:
         return tool_alias.prefix_for(current_user_sub_from_token())
+    # noqa: SILENT — dette déclarée : préfixe d'outil perdu ⇒ notre identité servie (#424, verdict C)
     except Exception:  # noqa: BLE001 — fail-open : les noms canoniques
         return ""
 
@@ -78,6 +80,7 @@ def _require_sub() -> str:
     sub = None
     try:
         sub = current_user_sub_from_token()
+    # noqa: SILENT — dette déclarée : sub avalé (#424, verdict C — seam commun)
     except Exception:
         pass
     if not sub:
@@ -125,6 +128,7 @@ async def _trace_target_call(sub: Optional[str], name: str, args: dict, ok: bool
             c = get_context()
             session_id = c.session_id
             run_id = await doctrine_run.active_run_id(c)
+        # noqa: SILENT — dette déclarée : la trace d'appel indirect disparaît (#424, verdict C)
         except Exception:
             pass
         row = {
@@ -174,10 +178,12 @@ def register(mcp: FastMCP) -> None:
         admin_hidden: set[str] = set()
         try:
             admin_hidden |= access.org_admin_hidden_tools(access.current_org(sub))
+        # noqa: SILENT — fail-open par palier, calqué sur compute_hidden_tools
         except Exception:
             pass
         try:
             admin_hidden |= access.group_admin_hidden_tools(access.current_group(sub))
+        # noqa: SILENT — fail-open par palier, calqué sur compute_hidden_tools
         except Exception:
             pass
         # run_middleware=False : on veut la liste complète (y compris les
@@ -362,6 +368,7 @@ def register(mcp: FastMCP) -> None:
         sub = None
         try:
             sub = current_user_sub_from_token()
+        # noqa: SILENT — sans sub (stdio local) tout le catalogue est déjà accessible
         except Exception:
             pass
 
@@ -428,6 +435,7 @@ def register(mcp: FastMCP) -> None:
                 message=f"Arguments invalides pour `{demande}` — voir `input_schema`.",
                 data={"input_schema": getattr(tool, "parameters", None),
                       "errors": e.errors()}))
+        # noqa: SILENT — l'échec de l'outil appelé est rendu dans ok/err au demandeur
         except Exception as e:  # noqa: BLE001 — l'erreur de la cible EST un résultat
             ok, err = False, str(e)
             # `tool` reprend le nom DEMANDÉ : l'agent le relit pour réessayer, et un

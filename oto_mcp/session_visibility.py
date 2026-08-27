@@ -211,11 +211,13 @@ async def apply_session_visibility(ctx, sub: str, *, reset: bool = False) -> Non
     if reset:
         try:
             await reset_visibility(ctx)
+        # noqa: SILENT — fail-open par palier, déjà journalisé par _log_visibility_failure
         except Exception as e:
             _log_visibility_failure("reset", sub, e)
     if not to_hide:
         return
     try:
         await disable_components(ctx, names=to_hide, components={"tool"})
+    # noqa: SILENT — fail-open par palier, déjà journalisé par _log_visibility_failure
     except Exception as e:
         _log_visibility_failure("apply", sub, e)

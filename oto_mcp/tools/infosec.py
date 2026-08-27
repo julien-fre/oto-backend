@@ -199,6 +199,7 @@ async def _subdomains(d: str, limit: int) -> dict:
                 r.raise_for_status()
                 rows = r.json()
                 break
+            # noqa: SILENT — retry borné ; le dernier échec est rendu par l'appelant
             except Exception as e:
                 last_err = type(e).__name__
                 await asyncio.sleep(1.5 * (attempt + 1))
@@ -250,6 +251,7 @@ async def _tls(host: str, port: int) -> dict:
 
     try:
         return await asyncio.to_thread(probe)
+    # noqa: SILENT — l'échec est rendu dans le résultat (error), pas avalé
     except Exception as e:
         return {"host": host, "port": port, "error": f"{type(e).__name__}: {e}"}
 
@@ -260,6 +262,7 @@ async def _headers(d: str) -> dict:
         async with httpx.AsyncClient(timeout=15, follow_redirects=True,
                                      headers={"user-agent": _UA}) as c:
             r = await c.get(f"https://{d}")
+    # noqa: SILENT — l'échec est rendu dans le résultat (error), pas avalé
     except Exception as e:
         return {"domain": d, "error": f"{type(e).__name__}: {e}"}
     h = {k.lower(): v for k, v in r.headers.items()}

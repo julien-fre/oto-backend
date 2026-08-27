@@ -132,6 +132,7 @@ def _pending_action_for(connector: str):
             # (sonde d'affichage, ne fausse pas le signal d'usage).
             f = access.resolve_credential(
                 connector, want="byo", sub=sub, emit_on_failure=False).fields
+        # noqa: SILENT — sonde d'affichage : sans credential, pas d'action en attente à proposer
         except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
             return None
         st = _credential_state_for(connector)(f)
@@ -241,6 +242,7 @@ def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (
             return  # lecture réelle OK → credential utilisable
         except McpError:
             raise
+        # noqa: SILENT — scope absent pour CE module ⇒ essayer le suivant, verdict rendu à la fin
         except Exception as e:  # noqa: BLE001 — l'erreur provider EST le retour de la sonde
             if "OAUTH_SCOPE_MISMATCH" in str(e):
                 scope_missing = True   # scope absent pour CE module — essayer le suivant

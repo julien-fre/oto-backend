@@ -142,6 +142,7 @@ def _salesforce_pending_action(sub: str, org, group, entry: dict):  # noqa: ARG0
         # d'affichage, elle ne doit pas fausser le signal d'usage.
         fields = access.resolve_credential(
             "salesforce", want="byo", sub=sub, emit_on_failure=False).fields
+    # noqa: SILENT — sonde d'affichage : sans credential, pas d'action en attente à proposer
     except Exception:  # noqa: BLE001 — fail-open, jamais /api/me en erreur
         return None
     st = _salesforce_credential_state(fields)
@@ -296,6 +297,7 @@ def _rotation_writer_for(jeton_lu: str, instance: tuple | None = None):
         return _rotation_writer(_Cible(etype, eid, reste[0] if reste else ""), jeton_lu)
     try:
         rc = access.resolve_credential("salesforce", emit_on_failure=False)
+    # noqa: SILENT — dette déclarée : le jeton rafraîchi n'est pas persisté (#424, verdict C)
     except Exception:  # noqa: BLE001 — pas de credential résolu = rien à persister
         return None
     if rc.entity_type is None or (rc.fields or {}).get("refresh_token") != jeton_lu:

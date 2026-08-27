@@ -102,6 +102,7 @@ async def _search(ctx: ResolvedCtx, inp: SearchInput) -> dict:
     try:
         from . import connectors_selection
         catalog = connectors_selection._visible_catalog(ctx)
+    # noqa: SILENT — source de recherche optionnelle (catalogue connecteurs)
     except Exception:  # noqa: BLE001
         pass
 

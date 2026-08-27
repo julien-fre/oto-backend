@@ -111,6 +111,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
         try:
             u = db.get_user(sub) or {}
             user_name = (u.get("name") or u.get("email") or "").strip()
+        # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)
         except Exception:
             pass
 
@@ -118,6 +119,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
     if sub:
         try:
             role = roles.effective_org_role(sub, org_id) or ""
+        # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)
         except Exception:
             pass
 
@@ -129,6 +131,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
         if gid is not None:
             group_id = gid
             group_name = ((group_store.get_group(gid) or {}).get("name") or "").strip()
+    # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)
     except Exception:
         pass
 
@@ -140,6 +143,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
                 name for name, st in providers_status.items()
                 if st.get("mode") in ("user", "group", "org", "platform")
             )
+        # noqa: SILENT — dette déclarée : l'agent croit n'avoir aucune clé (#424, verdict C — le pire)
         except Exception:
             pass
 
@@ -153,6 +157,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
         rows += [r for r in db.list_projects_granted_to(principals)
                  if r.get("id") not in seen]
         projects = [r.get("name") or f"#{r.get('id')}" for r in rows[:5]]
+    # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)
     except Exception:
         pass
 
@@ -160,6 +165,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
     if sub:
         try:
             runs = db.recent_runs(sub, org_id, limit=5)
+        # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)
         except Exception:
             pass
 
@@ -170,6 +176,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
     if sub:
         try:
             proposals = db.list_change_requests_by_requester(sub, since_days=7)[:5]
+        # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)
         except Exception:
             pass
 
@@ -179,6 +186,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
     if sub:
         try:
             profile = db.get_account_profile(sub).get("profile") or {}
+        # noqa: SILENT — dette déclarée : bloc de contexte de handshake amputé en silence (#424, verdict C)
         except Exception:
             pass
 
@@ -337,6 +345,7 @@ def _org_readme_only(org_id: int) -> str:
     try:
         from . import org_store
         name = (org_store.get_org(org_id) or {}).get("name") or f"#{org_id}"
+    # noqa: SILENT — nom d'org non lisible ⇒ « #id », le README reste servi
     except Exception:
         name = f"#{org_id}"
     return f"{_README_ORG_HEADER} ({name})\n\n{body}"
@@ -429,6 +438,7 @@ def compose_published_project(project_id: int) -> str | None:
     try:
         from . import db
         row = db.get_project_by_id(int(project_id)) or {}
+    # noqa: SILENT — projet publié non composable ⇒ pas d'instruction, jamais une fausse
     except Exception:  # noqa: BLE001 — fail-open, surface statique
         return None
     if not row:

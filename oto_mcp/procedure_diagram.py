@@ -77,5 +77,6 @@ def diagram_check(body_md: str) -> dict:
     n'a rien trouvé à dire. Best-effort — un check ne casse jamais une écriture."""
     try:
         return {"diagram_warning": None if has_diagram(body_md) else WARNING}
+    # noqa: SILENT — contrôle de forme optionnel : pas d'avertissement plutôt qu'un faux
     except Exception:  # noqa: BLE001 — cf. `slots_check`
         return {"diagram_warning": None}

@@ -155,6 +155,7 @@ class _IatGatedVerifier(JWTVerifier):
         else:
             try:
                 result = await verifier.verify_token(token)
+            # noqa: SILENT — dette déclarée : panne JWKS de tenant ⇒ vague de 401 sans une ligne (#424, verdict C)
             except Exception:
                 result = None
         if not result:
@@ -629,6 +630,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
             if trace:
                 row["args"] = {**(row.get("args") or {}),
                                **{k: v for k, v in trace.items() if k in _TRACED_ARGS}}
+        # noqa: SILENT — dette déclarée : tout l'enrichissement du journal tombe d'un bloc (#424, verdict C)
         except Exception:
             pass
         # to_thread : l'INSERT PG (pool psycopg sync) ne doit pas bloquer

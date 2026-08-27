@@ -125,6 +125,7 @@ def extract_text(html_str: str) -> tuple:
     p = _TextExtractor()
     try:
         p.feed(html_str)
+    # noqa: SILENT — extraction de texte optionnelle : le HTML brut reste rendu
     except Exception:  # noqa: BLE001 — un HTML monstrueux ne casse pas la lecture
         pass
     brut = "".join(p.parts)
@@ -182,6 +183,7 @@ def register(mcp: FastMCP) -> None:
 
         try:
             key, is_platform = access.resolve_api_key("serper")
+        # noqa: SILENT — dette déclarée : erreur de coffre lue comme « pas de clé serper » (#424, verdict C)
         except Exception:  # noqa: BLE001 — pas de clé = cran indisponible, pas une panne
             return None
         res = SerperClient(api_key=key).scrape_page(url, include_markdown=True)

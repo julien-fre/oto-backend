@@ -296,12 +296,14 @@ async def _call(ctx: ResolvedCtx, inp: ToolCallInput) -> dict:
         except TypeError as e:
             # Mauvais arguments (param inconnu / manquant) : signal actionnable.
             raise AuthzDenied(400, f"bad_arguments:{e}")
+        # noqa: SILENT — voir l'erreur de l'outil EST le but du bouton « tester »
         except Exception as e:  # noqa: BLE001 — l'erreur d'outil est le résultat
             return {"ok": False, "name": inp.name, "error": str(e)}
     elapsed_ms = int((time.monotonic() - started) * 1000)
     # Sérialisation défensive : un tool peut renvoyer un objet non-JSON.
     try:
         safe = json.loads(json.dumps(result, default=str, ensure_ascii=False))
+    # noqa: SILENT — sérialisation défensive : un tool peut rendre un objet non-JSON
     except Exception:  # noqa: BLE001
         safe = str(result)
     return {"ok": True, "name": inp.name, "result": safe, "elapsed_ms": elapsed_ms}

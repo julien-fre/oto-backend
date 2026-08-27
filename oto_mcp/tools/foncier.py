@@ -81,6 +81,7 @@ try:
         Card, Column, DataTable, DataTableColumn, Heading, Text,
     )
     _PREFAB_UI_AVAILABLE = True
+# noqa: SILENT — extra `apps` absent ⇒ pas de tool *_app, les tools JSON restent
 except Exception:  # pragma: no cover - extra `apps` absent
     _PREFAB_UI_AVAILABLE = False
 
@@ -692,6 +693,7 @@ def register(mcp: FastMCP) -> None:
         if parcelle and parcelle.get("geometry"):
             try:
                 bati = bdtopo.bati_parcelle(parcelle["geometry"], contenance_m2=parcelle.get("contenance_m2"))
+            # noqa: SILENT — couche bâti optionnelle sur la fiche site
             except Exception:
                 bati = None
         with Card() as card:

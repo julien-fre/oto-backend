@@ -135,6 +135,7 @@ def _cors_of(request, json_response) -> dict:
         modele = json_response(request, {}, status=200)
         return {k: v for k, v in modele.headers.items()
                 if k.lower().startswith("access-control-")}
+    # noqa: SILENT — sans origine lisible, pas d'en-tête CORS : le navigateur tranchera
     except Exception:
         return {}
 

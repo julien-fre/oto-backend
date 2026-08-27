@@ -65,6 +65,7 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     try:
         member_groups = (group_store.list_groups_for_user(sub, active_org)
                          if active_org is not None else [])
+    # noqa: SILENT — fail-open par palier : un hoquet d'équipe ne prive pas l'org de sa fiche
     except Exception:
         member_groups = []
     try:
@@ -266,6 +267,7 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
                 if m.get("health_ko"):
                     entry["health_ko"] = True
                     entry["health_reason"] = m.get("health_reason")
+        # noqa: SILENT — fail-open par palier sur la fiche de statut
         except Exception:  # noqa: BLE001 — la santé est un bonus, jamais bloquant
             pass
     return out

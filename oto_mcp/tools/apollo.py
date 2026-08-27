@@ -379,6 +379,7 @@ def register(mcp: FastMCP) -> None:
             index = _field_index(_custom_fields())
         except McpError:
             raise
+        # noqa: SILENT — l'avertissement « ids non vérifiés » est rendu à l'agent
         except Exception as e:  # noqa: BLE001 — le catalogue est un CONFORT, pas un verrou
             return (f"ids non vérifiés : le catalogue des champs n'a pas pu être lu "
                     f"({type(e).__name__}: {e}). `GET typed_custom_fields` demande "
@@ -598,6 +599,7 @@ def register(mcp: FastMCP) -> None:
                         and (d.get("modality") or "contact") == modality]
             except McpError:
                 raise
+            # noqa: SILENT — l'avertissement « doublons non vérifiés » est rendu à l'agent
             except Exception as e:  # noqa: BLE001
                 dup_note = (f"doublons non vérifiés : le catalogue n'a pas pu être "
                             f"lu ({type(e).__name__}: {e}).")

@@ -117,6 +117,7 @@ def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = Non
         if _mig and iss.rstrip("/") == _mig:
             try:
                 reconcile_tenant_migration(sub, email_hint=email)
+            # noqa: SILENT — réconciliation de tenant dormante (gate env), idempotente au login suivant
             except Exception:
                 pass
 
@@ -553,6 +554,7 @@ def get_account_profile(sub: str) -> dict:
     if isinstance(profile, str):  # selon le driver, JSONB peut revenir en texte
         try:
             profile = json.loads(profile)
+        # noqa: SILENT — profil d'onboarding illisible ⇒ fiche sans profil, jamais d'échec d'auth
         except Exception:
             profile = {}
     return {"profile": profile or {}, "updated_at": row["updated_at"]}

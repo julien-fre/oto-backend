@@ -55,6 +55,7 @@ def _c() -> httpx.Client:
 def _detail(r: httpx.Response) -> str:
     try:
         return r.json().get("detail", r.text)
+    # noqa: SILENT — corps non-JSON : le texte brut EST le détail rendu
     except Exception:
         return r.text
 

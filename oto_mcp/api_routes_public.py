@@ -89,6 +89,7 @@ async def openapi_doc(request: Request) -> JSONResponse:
     """
     try:
         routes = getattr(request.app, "routes", None)
+    # noqa: SILENT — document OpenAPI servi même si la table de routes n'est pas lisible
     except Exception:                                   # pas d'app Starlette exposée
         routes = None
     base = str(request.base_url).rstrip("/") or None

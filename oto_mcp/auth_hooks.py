@@ -47,6 +47,7 @@ def current_client_id_from_token() -> Optional[str]:
         token = get_access_token()
         if token and getattr(token, "claims", None):
             return token.claims.get("azp") or token.claims.get("client_id")
+    # noqa: SILENT — hors contexte de requête MCP : pas de client OAuth à nommer
     except Exception:
         pass
     return None
@@ -66,6 +67,7 @@ def current_user_sub_from_token() -> Optional[str]:
     try:
         from fastmcp.server.dependencies import get_access_token  # type: ignore
         token = get_access_token()
+    # noqa: SILENT — hors contexte de requête MCP (REST, dev local) : repli sur OTO_MCP_DEV_SUB
     except Exception:  # noqa: BLE001 — hors contexte de requête MCP (REST, dev local)
         token = None
     if token and getattr(token, "claims", None):

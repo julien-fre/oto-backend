@@ -32,6 +32,7 @@ def _tz(quiet_hours: Optional[dict]) -> ZoneInfo:
     name = (quiet_hours or {}).get("tz") or DEFAULT_QUIET_HOURS["tz"]
     try:
         return ZoneInfo(name)
+    # noqa: SILENT — fuseau invalide ⇒ le défaut documenté des quiet-hours
     except Exception:
         return ZoneInfo(DEFAULT_QUIET_HOURS["tz"])
 
@@ -119,6 +120,7 @@ def _send_one(row: dict) -> None:
         else:
             ok = email._send(row["to_email"], row["subject"], row["body_html"],
                              reply_to=reply_to, from_email=from_hdr)
+    # noqa: SILENT — l'échec est PERSISTÉ sur la ligne (mark_scheduled_failed)
     except Exception as e:  # déchiffrement, réseau… → échec de cette tentative
         db.mark_scheduled_failed(row["id"], f"{type(e).__name__}: {e}")
         return

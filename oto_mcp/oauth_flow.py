@@ -95,12 +95,14 @@ def read_state(audience: str, state: Optional[str], *,
     b64_body, b64_sig = state.split(".", 1)
     try:
         body, sig = _b64url_decode(b64_body), _b64url_decode(b64_sig)
+    # noqa: SILENT — fail-closed : un callback ne distingue jamais les causes d'un refus
     except Exception:  # noqa: BLE001
         return None
     if not hmac.compare_digest(sig, hmac.new(_secret(), body, hashlib.sha256).digest()):
         return None
     try:
         data = json.loads(body)
+    # noqa: SILENT — fail-closed : un callback ne distingue jamais les causes d'un refus
     except Exception:  # noqa: BLE001
         return None
     if not isinstance(data, dict) or data.get("aud") != audience:

@@ -377,6 +377,7 @@ def _project_instance(member_mode: bool) -> Optional[dict]:
                 for l in db.list_project_links(pid)
             ],
         }
+    # noqa: SILENT — instance de projet non résolue ⇒ pas d'épinglage, pas d'erreur
     except Exception:
         return None
 

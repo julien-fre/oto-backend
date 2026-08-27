@@ -38,6 +38,7 @@ def _org_subscribed(org_id: int, option: str) -> bool:
     jamais échouer la lecture de la liste)."""
     try:
         return db.has_option_comp("org", str(org_id), option)
+    # noqa: SILENT — option payante illisible ⇒ non souscrite (fail-closed du payant)
     except Exception:
         return False
 

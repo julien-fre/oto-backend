@@ -98,6 +98,7 @@ def _client() -> HttpConnectorClient:
         ))
     try:
         f = access.resolve_credential_fields("http")
+    # noqa: SILENT — dette déclarée : erreur de coffre lue comme « pas de credential » (#424, verdict C)
     except Exception:
         f = {}
     base_url = (f.get("base_url") or "").strip()

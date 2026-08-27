@@ -33,6 +33,7 @@ def _require_sub() -> str:
     sub = None
     try:
         sub = current_user_sub_from_token()
+    # noqa: SILENT — dette déclarée : sub avalé (#424, verdict C — seam commun)
     except Exception:
         pass
     if not sub:
@@ -73,6 +74,7 @@ def register(mcp: FastMCP) -> None:
             logger.warning("whoami: get_user failed: %s", e)
         try:
             role = access.get_user_role(sub)
+        # noqa: SILENT — rôle non lisible ⇒ non affiché, jamais deviné
         except Exception:
             role = None
 

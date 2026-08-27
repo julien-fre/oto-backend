@@ -207,6 +207,7 @@ def _doctrine_refs_by_ns(org_id: int | None) -> dict[str, set]:
             for ns in tool_registry.namespaces_in(d.get("body_md") or ""):
                 refs.setdefault(ns, set()).add(slug)
         return refs
+    # noqa: SILENT — refs de doctrine illisibles ⇒ overlay vide, catalogue servi
     except Exception:
         return {}
 

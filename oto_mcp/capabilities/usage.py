@@ -56,6 +56,7 @@ def _correlation() -> tuple[str, Optional[str]]:
         from fastmcp.server.dependencies import get_context
         ctx = get_context()
         return "agent", ctx.session_id
+    # noqa: SILENT — corrélation indéterminée ⇒ « human » par défaut
     except Exception:
         return "human", None
 
@@ -63,6 +64,7 @@ def _correlation() -> tuple[str, Optional[str]]:
 def _active_org(sub: str) -> Optional[int]:
     try:
         return org_store.get_active_org(sub)
+    # noqa: SILENT — org active indéterminée ⇒ vue non filtrée
     except Exception:
         return None
 

@@ -84,6 +84,7 @@ def observe(service: str, payload: Any) -> None:
                 _cache[service] = cur
             if _merge(cur, found):
                 db.upsert_connector_schema(service, _serialize(cur))
+    # noqa: SILENT — l'observation de schéma est optionnelle, jamais bloquante
     except Exception:
         pass
 

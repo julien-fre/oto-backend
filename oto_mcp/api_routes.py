@@ -145,6 +145,7 @@ async def _peek_op(receive):
         try:
             data = json.loads(body)
             op = data.get("op") if isinstance(data, dict) else None
+        # noqa: SILENT — corps non-JSON légitime sur /mcp : la sonde d'op n'a rien à dire
         except Exception:
             op = None
     i = 0
@@ -263,6 +264,7 @@ def _claimed_sub(request: Request) -> str | None:
         pad = parts[1] + "=" * (-len(parts[1]) % 4)
         claims = json.loads(base64.urlsafe_b64decode(pad))
         return tenancy.current().qualify_claims(claims)
+    # noqa: SILENT — sub revendiqué illisible ⇒ pas de view-as, la requête reste la sienne
     except Exception:
         return None
 

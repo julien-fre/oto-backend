@@ -50,6 +50,7 @@ def _http_error(e) -> McpError:
         import json
         payload = json.loads(e.content.decode()) if getattr(e, "content", None) else {}
         detail = (payload.get("error") or {}).get("message") or ""
+    # noqa: SILENT — corps d'erreur non-JSON : le message brut reste rendu
     except Exception:  # noqa: BLE001
         pass
     detail = detail or (getattr(e, "reason", None) or "").strip() or "erreur inconnue"

@@ -407,6 +407,15 @@ aucune adresse en dur, jetons de contexte réservés, budget de ce qu'un outil r
 ordre des middlewares, contrainte MONO-LOOP, et le cycle complet d'un connecteur.
 **À lire avant d'écrire du code ici.**
 
+⚠️ **Le refus est bruyant, la divergence est muette — et le CI le vérifie.** Un
+`except Exception` qui ne re-lève pas, ne journalise pas et ne rend pas de refus nommé
+transforme une panne en succès : l'appelant reçoit une valeur de repli et croit avoir
+été servi. `scripts/lint_silences.py` (tripwire `tests/test_no_silent_except.py`) le
+refuse ; l'unique échappatoire est `# noqa: SILENT — <raison>`, sur la ligne du
+`except` ou juste au-dessus, **raison obligatoire**. Les 168 sites existants sont
+annotés : c'est de la dette DÉCLARÉE, pas un permis. **Détail et inventaire :
+`docs/silences-2026-08-27.md`.**
+
 ## Commands
 
 Tests, déploiement, logs, inspection DB : **`docs/commands.md`** — avec les pièges qui coûtent une heure (le venv sans pytest, le clone qui teste en réalité le tree partagé, le registre d'outils vide hors serveur).
@@ -432,6 +441,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 |---|---|
 | `conventions.md` | les **règles de travail** du backend, chacune née d'un incident daté. À lire avant d'écrire du code ici. |
 | `commands.md` | recettes tests / deploy / logs / inspection DB + leurs pièges, et le **pin oto-core**. |
+| `silences-2026-08-27.md` | inventaire AST des `except` muets, les 10 « succès déguisés » corrigés, et le garde-fou `lint_silences` + sa convention `# noqa: SILENT`. |
 | `couches-et-capacites.md` | les 4 couches ADR 0004 et la **couche capacité** ADR 0009 (deux faces, une déclaration ; refus de champ inconnu ; console admin `*_op`). |
 | `connector-model.md` | **carte d'ensemble** : les 3 couches d'un connecteur (disponibilité / authentification / option), la matrice des niveaux, le vocabulaire canonique, le seam `access.has_option`. **À lire en premier** avant de toucher activation/clés/options. |
 | `connector-vault.md` | registre source unique (package `providers/`, 1 module de déclaration par connecteur), coffre chiffré unique `connector_credentials`, enveloppe AES-256-GCM **obligatoire**, résolution + palier org, **l'instance objet `connector_instances` + `inst:{id}` (lot L6)**, credentials qui se consomment à l'usage (rotation), application d'org ≠ jeton d'identité. |

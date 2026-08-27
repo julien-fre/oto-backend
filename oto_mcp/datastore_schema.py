@@ -1021,6 +1021,7 @@ def _read_keys() -> frozenset:
     for nom in ("datastore_schema.py", "datastore.py"):
         try:
             arbre = ast.parse((ici / nom).read_text(encoding="utf-8"))
+        # noqa: SILENT — clés de schéma illisibles ⇒ ensemble vide, la lecture continue
         except Exception:      # source illisible (zip, .pyc seul) : on n'invente pas
             return frozenset()
         for n in ast.walk(arbre):
