@@ -540,6 +540,16 @@ def _init_db_once() -> None:
         conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS session_id TEXT")
         conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS run_id TEXT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id, created_at) WHERE run_id IS NOT NULL")
+        # ⚠️ La CLÔTURE d'un run se retrouve par `args->>'run_id'`, pas par la colonne
+        # (`_run_closure` explique pourquoi : `run_finish` n'est pas corrélable, sa
+        # colonne `run_id` est vide sur tout l'historique). Sans index d'expression,
+        # chaque run reconstruit coûtait un parcours COMPLET du journal — 639 ms et
+        # 911 882 lignes filtrées l'unité, mesuré le 2026-08-27 : × 9 350 runs, la
+        # lecture tenait la boucle 185 s et gelait la plateforme entière, tenants
+        # tiers compris. Avec l'index : 0,05 ms. Partiel (9 k lignes, 624 kB).
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_run_finish_ref "
+                     "ON tool_calls ((args->>'run_id'), created_at DESC) "
+                     "WHERE tool = 'run_finish'")
         # Org de l'appel (#67, scope d'audit exact) — extension OTO-LOCALE.
         conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS org_id BIGINT")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_org ON tool_calls(org_id, created_at DESC) WHERE org_id IS NOT NULL")
