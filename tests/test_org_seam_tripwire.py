@@ -21,7 +21,10 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp"
 
 # fichier_relatif -> raison pour laquelle lire la MAISON en direct y est correct.
 ALLOWED = {
-    "access.py": "le seam current_org lui-même : la maison est son REPLI terminal.",
+    # `access.py` jusqu'au 2026-08-27 : le seam a suivi la découpe d'`access` en
+    # package. Même call-site, même raison, autre fichier — et le fichier est
+    # PLUS étroit qu'avant (le seam et rien d'autre), donc la garde se resserre.
+    "access/scope.py": "le seam current_org lui-même : la maison est son REPLI terminal.",
     # `org_store.py` jusqu'au 2026-08-27 : le store d'org a été découpé en package.
     # L'entrée est REMPLACÉE par le seul module qui appelle vraiment la maison —
     # la découpe rétrécit donc l'allowlist au lieu de la reconduire en bloc

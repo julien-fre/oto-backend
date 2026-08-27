@@ -40,7 +40,14 @@ oto_mcp/
 ├── api_routes.py     # ASSEMBLAGE SEUL : table de routes /api/* (l'ordre est un contrat) + les 2 middlewares ASGI
 ├── api_routes_base.py      # ce que tous les handlers partagent : _authenticate, CORS, _json/_json_error, OPTIONS, bind
 ├── api_routes_<domaine>.py # les handlers : public, account, media, projects, uploads, credentials, tools, admin
-├── access.py         # rôles member/admin, resolve_api_key, quotas, status_for
+├── access/           # rôles, contexte, cascade de credentials, quotas (package depuis le 27/08 — 2 000 lignes en 7 modules). Surface plate `access.<fn>` via __init__, cf. ci-dessous
+│   ├── scope.py      #   qui agit : rôle plateforme, current_org/group/project, ce que le projet ÉPINGLE
+│   ├── quotas.py     #   ce qui est métré (quota jour, usage) et ce qui est payé (option, comp, abonnement)
+│   ├── cascade.py    #   le WALKER unique perso > cross-org > équipe > org > plateforme + ses 3 sondes
+│   ├── rbac.py       #   qui a le droit : RBAC connecteur org/équipe, tools masqués, garde d'instance, redaction
+│   ├── resolve.py    #   la résolution réelle d'un credential (chemin chaud) + l'endpoint anonyme
+│   ├── views.py      #   vues minces : resolve_api_key/_fields, mount, credential_mode_for, option_open
+│   └── status.py     #   le snapshot par connecteur de /api/me
 ├── db/               # store PG (package) : _conn (pool/connexion), _schema (DDL), _init (migrations) + 1 module/domaine (users, keys, usage, datastore, projects, opendata…). Surface plate `db.<fn>` via __init__
 ├── org_store/        # palier ORG (package, découpé le 2026-08-27) : orgs (la fiche), members (appartenance + MAISON),
 │                     #   vault (secrets), settings (redaction/email/MFA), personal (org perso + boot),
@@ -135,6 +142,15 @@ call-site** ; `access.resolve_credential` rend aussi la **config non-secrète ap
 gagnante**, donc **ne JAMAIS recâbler un résolveur d'endpoint par-connecteur** (ADR 0024).
 ⚠️ Le dashboard en porte un **MIROIR d'affichage** (`lib/keyStack.ts`) qu'aucun test ne relie :
 en changer l'ordre ne casse rien, **ça fait mentir l'UI**.
+⚠️ **`access` est un PACKAGE depuis le 27/08** (7 modules par sujet, arbre ci-dessus) : on
+édite le module du sujet, jamais un fourre-tout. La surface reste **plate** — `access.<nom>`
+rend ce qu'il rendait, privés compris, et une écriture sur la façade
+(`monkeypatch.setattr(access, …)`) traverse jusqu'au sous-module qui définit le nom.
+Deux règles à l'intérieur : un frère s'appelle **par son module** (`scope.current_org(...)`,
+jamais un nom importé — c'est ce qui garde le point de patch unique), et les dépendances
+descendent (`scope < quotas/cascade < rbac < resolve/status < views`) — un besoin qui
+referme la boucle **descend** le symbole partagé d'un étage. Cliquet :
+`tests/test_access_surface_frozen.py`.
 **Détail : `docs/roles-and-resolution.md`.**
 
 ## REST API (consommée par le dashboard / oto.ninja)

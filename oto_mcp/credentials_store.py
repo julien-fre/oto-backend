@@ -235,7 +235,7 @@ def platform_revoke(provider: str, scope: str, label: "str | None" = None) -> No
 # (`accounts.zoho.eu` rejette un client `.com`), donc la région fait partie de la clé.
 #
 # ⚠️ **L'invariant qui rend ce rangement sûr** : `walk_cascade` ne propose le palier
-# plateforme que si le connecteur déclare `auth_modes ∋ 'platform'` (access.py). Les
+# plateforme que si le connecteur déclare `auth_modes ∋ 'platform'` (access/cascade.py). Les
 # connecteurs à consentement ne le déclarent pas ⟹ une app d'éditeur n'est JAMAIS
 # résolue comme credential d'appel. Conséquences voulues : elle n'ouvre aucune donnée
 # par elle-même, et un membre qui n'a pas encore consenti ne peut pas hériter d'une app

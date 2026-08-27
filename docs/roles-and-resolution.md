@@ -3,7 +3,7 @@ title: Rôles + résolution de clé API
 type: reference
 description: >-
   Référence des 3 paliers de rôles plateforme oto-backend (member < admin < super_admin,
-  définis dans access.py/roles.py, bootstrap via OTO_MCP_ADMIN_SUB) et de la cascade
+  définis dans access/scope.py + roles.py, bootstrap via OTO_MCP_ADMIN_SUB) et de la cascade
   de résolution de clé API par appel : clé membre BYO scopée (sub, org) [ADR 0033] > grant explicite user_grants
   (quota daily) > McpError actionnable. Détaille les platform_keys en DB uniquement
   (plus de SOPS ; la POSE du secret brut est dashboard-only, le MCP ne porte que les
@@ -21,7 +21,7 @@ adr:
 > ⚠️ Le **stockage** des credentials est le **coffre chiffré unique `connector_credentials`** (cf. `docs/connector-vault.md`). Les colonnes legacy `users.<provider>_api_key`/`org_secrets`/`user_google_oauth` ont été **purgées** (DROP, 2026-06-11) ; chiffrement **obligatoire** (plus de plaintext). La résolution ci-dessous reste valide dans sa cascade, lit le coffre via `credentials_store`.
 
 Le rôle (`users.role`) décide de l'accès à l'admin UI, sur **3 paliers**
-(`ROLES = (member, admin, super_admin)`, cf. `access.py`/`roles.py`) :
+(`ROLES = (member, admin, super_admin)`, cf. `access/scope.py` + `roles.py`) :
 
 - **super_admin** : le tout-puissant — escalade `org_admin` de TOUTE org +
   `group_admin` de TOUT groupe (`roles.is_platform_admin` = super), gestion des
@@ -81,7 +81,41 @@ Résolution par appel (`resolve_api_key` / `resolve_credential`) :
 > son entrée de registre — jamais par une liste transverse, et aujourd'hui sans porteur
 > (tripwire `test_single_account_write_guard`).
 
-## Walker de cascade — source unique (2026-07-16)
+## Où vit quoi — le package `access/` (découpe du 2026-08-27)
+
+`oto_mcp/access.py` (2 000 lignes, quatre sujets, 67 commits en 60 jours) est
+devenu le package `oto_mcp/access/`. **Rien n'a changé de ce qui est servi** : le
+découpage est un déplacement pur, la surface `access.<nom>` est identique au nom
+près (cliquet `tests/test_access_surface_frozen.py`).
+
+| module              | ce qu'il porte                                                        |
+| ------------------- | --------------------------------------------------------------------- |
+| `access/scope.py`   | rôle plateforme (`get_user_role`, `is_super_admin`, `is_platform_operator`), contexte de l'appel (`current_org`/`current_group`/`current_project`, `_UNSET`), appartenance à un scope de partage, ce que le projet ÉPINGLE (`project_pinned_identity`/`_instance`, slots) |
+| `access/quotas.py`  | `quota_for`, `_org_unmetered`, `record_platform_usage`, `paid_option_for`, `has_option` |
+| `access/cascade.py` | `walk_cascade`/`cascade_winner`, `CascadeRung`/`CascadeProbe`, `PRESENCE_PROBE`/`FETCH_PROBE`/`preloaded_presence_probe`, le palier plateforme, `ORG_SHAREABLE_PROVIDERS` |
+| `access/rbac.py`    | `rbac_denied_connectors` (+ équipe), `org_admin_hidden_tools` (+ équipe), `require_connector_access`, `guard_instance_access`, `reachable_instances`(+`_map`, `_team_key`), `resolve_field_filter` |
+| `access/resolve.py` | `ResolvedCredential`, `resolve_credential` et son `_impl`, la résolution d'une instance épinglée, `_resolve_credential_anon` |
+| `access/views.py`   | `resolve_api_key`, `resolve_credential_fields`, `resolve_mount_token`, `unipile_api_key_for`, `credential_mode_for`, `option_open`, `connector_resolvable_for_org`, `BYO_MODES` |
+| `access/status.py`  | `status_for` (le snapshot `/api/me`) et ses deux préchargements |
+
+Les dépendances **descendent**, sans cycle (garde dans le même fichier de test) :
+
+```
+scope  ←  quotas ,  cascade  ←  rbac  ←  resolve ,  status  ←  views
+```
+
+Deux règles internes, et elles ne sont pas cosmétiques :
+
+- **un frère s'appelle par son MODULE** (`scope.current_org(...)`), jamais par un
+  nom importé. C'est ce qui dit au lecteur d'où vient la fonction, ET ce qui garde
+  un point de patch unique : la façade propage toute écriture
+  (`monkeypatch.setattr(access, "current_org", …)`, l'idiome d'environ deux cents
+  endroits de la suite) au sous-module qui définit le nom ;
+- **une locale ne porte pas le nom d'un frère**. Vécu à la découpe : `status_for`
+  tenait ses compteurs du jour dans une locale `quotas`, et l'appel
+  `quotas.quota_for(...)` est parti chercher la méthode sur un dict.
+
+## Walker de cascade — source unique (2026-07-16, `access/cascade.py`)
 
 La cascade ci-dessus vit dans **`access.walk_cascade`** (générateur paramétré
 par sonde : `PRESENCE_PROBE` sans déchiffrement pour `/api/me`, `FETCH_PROBE`
@@ -99,7 +133,7 @@ le drawer reçoit le même signal via `status_for.team_key_group`.
 
 Quota daily per-grant : colonne `user_grants.daily_quota` (posé par l'admin
 au moment du grant). Si NULL, fallback sur env `OTO_MCP_QUOTA_<PROVIDER>_DAILY`
-ou `_QUOTA_DEFAULTS` dans `access.py`. User key bypass quota.
+ou `_QUOTA_DEFAULTS` dans `access/quotas.py`. User key bypass quota.
 
 **Les platform keys vivent en DB uniquement** (coffre `platform_keys` — plus de
 bootstrap SOPS/env au boot, oto-mcp#12). Poser/roter une clé = surface admin :

@@ -42,7 +42,7 @@ from ._model import (  # noqa: F401  — surface publique historique du module
 
 # --- l'ORDRE du registre, explicite ------------------------------------------
 # L'ordre de déclaration ne gouverne AUCUN calcul : ni `KEY_PROVIDERS` ni le
-# registre ne sont indexés par position, et `status_for` (access.py) les ITÈRE
+# registre ne sont indexés par position, et `status_for` (access/status.py) les ITÈRE
 # pour remplir `out["providers"][nom]`, un dict par NOM. Il ne survit que comme
 # ordre de SÉRIALISATION — donc d'affichage (catalogue, primer de namespaces,
 # `status_for`). C'est quand même un ordre qu'on VEUT stable : il est écrit ici,
@@ -345,7 +345,7 @@ def require_credential(entity_type: str, name: str) -> None:
         # Un byo_user pur (sessions linkedin/google) reste posable en équipe aussi.
         # ⚠️ NE PAS exiger byo_user ici : un connecteur org-only (http « un par
         # département », #183) DOIT pouvoir poser son secret d'équipe sans devenir
-        # byo_user (ce qui réactiverait à tort le palier membre — cf. access.py).
+        # byo_user (ce qui réactiverait à tort le palier membre — cf. access/cascade.py).
         if not (is_org_shareable(name) or is_byo_user(name)):
             raise ValueError(f"{name!r} n'accepte pas de credential de groupe")
     else:  # user

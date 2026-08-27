@@ -11,7 +11,7 @@ from ._model import _c
 # un appel). keyed api_key ; byo user/org ET clé plateforme OUVERTE (socle de
 # recherche web, pas de ticket d'entrée). ⚠️ quota 100/mois depuis le 26/08 :
 # la PR #407 posait 0, qui n'est PAS « petit » mais ILLIMITÉ (0 falsy dans
-# access.py) — or un crawl coûte jusqu'à 20 crédits l'appel. 100 = garde
+# access/quotas.py) — or un crawl coûte jusqu'à 20 crédits l'appel. 100 = garde
 # conservatrice type serper (200), réversible en un chiffre.
 CONNECTOR = _c(
     "tavily", ["tavily"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
