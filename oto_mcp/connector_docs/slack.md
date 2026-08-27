@@ -1,27 +1,63 @@
 ## prerequisite — il te faut une app Slack installée sur ton workspace
 
-oto ne fait pas d'écran oauth Slack : tu **colles les tokens** d'une app installée sur ton workspace. C'est une manœuvre unique par workspace, côté Slack.
-- **bot token** (`xoxb-`) : lire les canaux, poster sous l'identité de l'app
-- **user token** (`xoxp-`) : poster **en ton nom**, et chercher (`search:read` n'existe qu'en user token)
+oto n'a pas encore d'app Slack publiée (« connecter en un clic ») : tu crées **ta** app dans ton workspace et tu colles ses tokens ici. Une manœuvre unique par workspace, ~5 minutes.
+- **bot token** (`xoxb-`) : lire les canaux, poster sous l'identité de l'app. C'est le token nominal.
+- **user token** (`xoxp-`) : poster **en ton nom**, et chercher (`search:read` n'existe qu'en user token). Optionnel.
 - l'un des deux suffit ; les deux ensemble = lecture par le bot + post en ton nom
 - à défaut, un admin peut te grant la clé plateforme de ton org
 
-## setup — où prendre les deux tokens
+## setup — créer l'app en collant un manifeste (le plus court)
 
-1. crée une app sur [api.slack.com/apps](https://api.slack.com/apps) (« from scratch »), en choisissant le workspace visé
-2. dans la section des permissions oauth, déclare les scopes selon l'usage :
-   - lire et poster comme l'app (**bot**) : `channels:read`, `groups:read`, `channels:history`, `groups:history`, `chat:write`, `users:read.email`, `im:write`
-   - poster en ton nom (**user**) : les mêmes en version user, plus `search:read` si tu veux la recherche
-3. installe l'app sur le workspace : Slack affiche alors le **Bot User OAuth Token** (`xoxb-`) et, si tu as demandé des scopes user, le **User OAuth Token** (`xoxp-`)
-4. colle-les sur la fiche du connecteur slack dans oto — rien d'autre à configurer
+1. va sur [api.slack.com/apps](https://api.slack.com/apps) → **Create New App** → choisis **From a manifest** (pas « AI agent » ni « Starter app » : ce sont des gabarits d'app conversationnelle, sans rapport)
+2. choisis le workspace, puis colle **ce manifeste** — il déclare déjà tous les scopes dont les outils oto ont besoin :
 
-⚠️ **un scope ne remplace pas l'appartenance au canal** : pour lire un canal privé (et un canal public dont il n'est pas membre), le bot doit y être invité. Sinon Slack répond `not_in_channel`, qui n'est pas un problème de token.
+```yaml
+display_information:
+  name: Oto
+  description: Lit et écrit dans Slack pour votre agent Oto
+features:
+  bot_user:
+    display_name: Oto
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - channels:read
+      - channels:history
+      - groups:read
+      - groups:history
+      - im:read
+      - im:history
+      - im:write
+      - mpim:read
+      - mpim:history
+      - users:read
+      - users:read.email
+      - chat:write
+      - reactions:write
+      - files:read
+    user:
+      - search:read
+      - chat:write
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
+```
 
-référence Slack : [installer une app avec oauth v2](https://api.slack.com/authentication/oauth-v2) · [choisir ses scopes](https://api.slack.com/scopes)
+3. **Create**, puis **Install to Workspace** et autorise
+4. dans **OAuth & Permissions**, copie le **Bot User OAuth Token** (`xoxb-`) et, si tu veux poster en ton nom, le **User OAuth Token** (`xoxp-`)
+5. colle-les ici — rien d'autre à configurer
+
+*(sans manifeste : **Blank app**, puis déclare les mêmes scopes à la main dans OAuth & Permissions avant d'installer. Le manifeste évite exactement cette étape.)*
+
+⚠️ **un scope ne remplace pas l'appartenance au canal** : pour lire un canal privé — et un canal public où il n'est pas — le bot doit y être **invité** (`/invite @Oto`). Sinon Slack répond `not_in_channel`, ce qui ressemble à tort à un problème de token.
+
+référence Slack : [créer une app depuis un manifeste](https://api.slack.com/reference/manifests) · [installer avec oauth v2](https://api.slack.com/authentication/oauth-v2)
 
 ## setup — plusieurs workspaces, un compte par workspace
 
-un token Slack est émis **par installation** : deux workspaces = deux jeux de tokens indépendants. Refais les étapes ci-dessus dans le second workspace, puis pose-les comme un **second compte nommé** du connecteur (un nom par workspace, ex. `otomata`, `client-x`).
+un token Slack est émis **par installation** : deux workspaces = deux jeux de tokens indépendants. Refais l'installation dans le second workspace (le même manifeste), puis pose ses tokens comme un **second compte nommé** du connecteur (un nom par workspace, ex. `otomata`, `client-x`).
 - le premier compte n'a pas besoin de nom ; à partir du deuxième, chacun porte le sien
 - viser l'un d'eux à l'appel : `_account="<nom>"` sur l'outil (`oto_identity(op='list')` pour les lister)
 - en fixer un par défaut : `oto_identity(op='set', connector='slack', identity_id='<nom>')`
