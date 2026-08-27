@@ -341,7 +341,7 @@ SIGNAL_PENDING = "pending"
 
 def list_usage_signals(
     signal: Optional[str] = None, target: Optional[str] = None, limit: int = 200,
-    status: Optional[str] = None,
+    status: Optional[str] = None, org_id: Optional[int] = None,
 ) -> list[dict]:
     """Signaux récents (récent d'abord), filtrables par type / cible / statut —
     base des projections (qualité d'outil, manques) du barreau 4.
@@ -363,6 +363,12 @@ def list_usage_signals(
         clauses.append("s.signal = %s"); params.append(signal)
     if target:
         clauses.append("s.target = %s"); params.append(target)
+    if org_id is not None:
+        # Scope ORG : les signaux ÉMIS SOUS cette org (`usage_signals.org_id`, seam
+        # `current_org` au moment du signalement) — jamais l'appartenance de leur
+        # auteur, exactement comme le journal d'audit. Un même rapporteur travaillant
+        # pour trois clients ne verse donc pas ses retours dans les trois.
+        clauses.append("s.org_id = %s"); params.append(int(org_id))
     if status == SIGNAL_PENDING:
         clauses.append("s.status <> ALL(%s)"); params.append(list(SIGNAL_TERMINAL))
     elif status:

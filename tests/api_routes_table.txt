@@ -445,6 +445,8 @@ GET,HEAD /api/orgs/{id}/monitoring/calls -> _handler
 OPTIONS /api/orgs/{id}/monitoring/calls -> options_handler
 GET,HEAD /api/orgs/{id}/monitoring/calls/{call_id} -> _handler
 OPTIONS /api/orgs/{id}/monitoring/calls/{call_id} -> options_handler
+GET,HEAD /api/orgs/{id}/monitoring/signals -> _handler
+OPTIONS /api/orgs/{id}/monitoring/signals -> options_handler
 GET,HEAD /api/orgs/{id}/monitoring/connectors -> _handler
 OPTIONS /api/orgs/{id}/monitoring/connectors -> options_handler
 GET,HEAD /api/orgs/{id}/monitoring/adoption -> _handler

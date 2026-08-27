@@ -117,3 +117,21 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
 > `doctrine_run.py` reste la **source du run actif** (stampe `tool_calls.run_id`),
 > `run_start`/`run_finish` y ajoutent la trace durable (best-effort, off-loop). Sert
 > l'anticipation du contexte injecté (instructions bloc C) + la boucle d'usage dashboard.
+
+- **Un responsable d'ORG lit le CORPS de ses signaux (27/08)** :
+  `oto_org_monitoring(op='signals', org_id=…)` + `GET /api/orgs/{id}/monitoring/signals`,
+  autz `ORG_ADMIN_OF`. Les lentilles `gaps`/`tool_quality` rendaient l'intitulé et le
+  NOMBRE ; la cause est dans la prose, et elle n'était servie que par la capacité
+  PLATEFORME. **Le manque a coûté cinq jours à cinq clients d'un revendeur** : leur
+  ingestion quotidienne échouait chaque matin, les agents le signalaient fidèlement, et
+  les responsables voyaient « 8 manques » sans jamais pouvoir savoir lesquels — alors
+  que la prose disait « le projet de destination a été archivé le 21/08 », une cause
+  qu'aucun compteur ne peut porter.
+  - Scope = `usage_signals.org_id`, ce qui a été **ÉMIS SOUS** l'org — jamais
+    l'appartenance du rapporteur. Un prestataire qui travaille pour trois clients ne
+    verse pas ses retours dans les trois.
+  - `resolved_by` est **retiré** : qui a tranché chez nous est notre conduite interne.
+    La `resolution`, elle, descend — c'est la réponse qu'on lui doit.
+  - ⚠️ Pas de vue TENANT : un revendeur consulte org par org. Elle se fera quand l'étage
+    tenant (ADR 0052) portera le rattachement — la bâtir aujourd'hui sur `front_brand`
+    reviendrait à s'appuyer sur une colonne qui doit remonter d'un cran.

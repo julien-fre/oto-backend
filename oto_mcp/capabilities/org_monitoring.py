@@ -389,6 +389,60 @@ def _gaps(ctx: ResolvedCtx, inp: OrgDaysInput) -> dict:
     return {"gaps": db.aggregate_gaps(inp.days, org_id=inp.org_id)}
 
 
+class OrgSignalRow(BaseModel):
+    """Un signal tel qu'un responsable d'ORG le voit. `resolved_by` est absent : qui a
+    tranché chez nous est notre conduite interne, pas la sienne. La NOTE, elle, est là
+    — c'est la réponse qu'on lui doit."""
+    id: int
+    created_at: Optional[str] = None
+    sub: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    org_id: Optional[int] = None
+    signal: Optional[str] = None       # tool_feedback | gap
+    kind: Optional[str] = None
+    target: Optional[str] = None
+    body: Optional[str] = None         # LA prose — ce que les compteurs ne disent pas
+    session_id: Optional[str] = None
+    source: Optional[str] = None
+    status: Optional[str] = None
+    resolved_at: Optional[str] = None
+    resolution: Optional[str] = None
+    notified_at: Optional[str] = None
+
+
+class OrgSignals(BaseModel):
+    org_id: int
+    signals: list[OrgSignalRow]
+    count: int
+
+
+def _signals(ctx: ResolvedCtx, inp: "OrgMonitoringInput") -> dict:
+    """Les signaux BRUTS de cette org — le CORPS, pas seulement le compte.
+
+    **C'est ce qui manquait, et le manque a coûté cinq jours à cinq clients.** Les
+    lentilles `gaps` et `tool_quality` rendent l'intitulé et le nombre ; la cause est
+    dans la prose. « le projet de destination a été archivé le 21/08 » ne se déduit
+    d'aucun compteur — un responsable voyait donc « 8 manques » sans jamais pouvoir
+    savoir lesquels, et l'écran d'org le disait explicitement : « pas de drill-down,
+    le corps est servi par une capacité PLATEFORME ».
+
+    Le corps est de la prose libre écrite par un agent SOUS un compte de cette org.
+    Le rendre à l'`org_admin` suit exactement la règle du journal d'audit : ce qui a
+    été émis sous l'org appartient à l'org. Le scope est `usage_signals.org_id`,
+    JAMAIS l'appartenance du rapporteur — un prestataire qui travaille pour trois
+    clients ne verse pas ses retours dans les trois.
+
+    Ce que ça ne rend pas : l'arbitrage plateforme (`resolved_by`), qui est notre
+    conduite interne, pas la leur."""
+    lignes = db.list_usage_signals(
+        signal=inp.signal, target=inp.tool, limit=inp.limit or 200,
+        status=inp.status, org_id=inp.org_id)
+    for s in lignes:
+        s.pop("resolved_by", None)
+    return {"org_id": inp.org_id, "signals": lignes, "count": len(lignes)}
+
+
 def _tool_quality(ctx: ResolvedCtx, inp: OrgDaysInput) -> dict:
     return {"tools": db.aggregate_tool_feedback(inp.days, org_id=inp.org_id)}
 
@@ -397,7 +451,7 @@ def _tool_quality(ctx: ResolvedCtx, inp: OrgDaysInput) -> dict:
 
 class OrgMonitoringInput(BaseModel):
     op: Literal["summary", "calls", "call", "connectors", "adoption",
-                "runs", "run", "gaps", "tool_quality", "export"]
+                "runs", "run", "gaps", "tool_quality", "signals", "export"]
     org_id: int
     days: Optional[int] = None            # fenêtre (défaut 7 ; adoption/gaps/tool_quality : 30)
     limit: Optional[int] = None           # calls (200) / runs (100) / export (1000)
@@ -409,6 +463,8 @@ class OrgMonitoringInput(BaseModel):
     min_duration_ms: Optional[int] = None  # calls : appels lents
     error_contains: Optional[str] = None  # calls : recherche dans le message d'erreur
     call_id: Optional[int] = None         # call (requis)
+    signal: Optional[str] = None          # signals : tool_feedback | gap
+    status: Optional[str] = None          # signals : open|acknowledged|declined|resolved|pending
     since: Optional[str] = None           # export : borne basse ISO
     until: Optional[str] = None           # export : borne haute ISO
 
@@ -452,6 +508,11 @@ def _console(ctx: ResolvedCtx, inp: OrgMonitoringInput) -> dict:
         return _gaps(ctx, OrgDaysInput(org_id=oid, days=inp.days or 30))
     if inp.op == "tool_quality":
         return _tool_quality(ctx, OrgDaysInput(org_id=oid, days=inp.days or 30))
+    if inp.op == "signals":
+        # Passe l'Input consolidé tel quel : cette lentille lit `signal`/`status`,
+        # deux champs qui n'existent sur aucun des Input par-op. En fabriquer un
+        # quatrième pour deux champs ajouterait une forme à garder d'accord.
+        return _signals(ctx, inp)
     # export : le journal d'audit org existe déjà (#67) — même autz, même scope,
     # on le REBRANCHE plutôt que d'en écrire un second.
     return audit_log._export(ctx, audit_log.AuditExportInput(
@@ -470,6 +531,12 @@ CAPABILITIES += [
     Capability(key="org.monitoring.call", handler=_call, Input=OrgCallInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgCall,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/calls/{call_id}", _ID)),
+    Capability(key="org.monitoring.signals", handler=_signals, Input=OrgMonitoringInput,
+               authz=_ADMIN_OF, mcp=None, Output=OrgSignals,
+               description="Raw usage signals REPORTED UNDER this org — the BODY, not "
+                           "just the count. Filters: `signal` (tool_feedback|gap), "
+                           "`tool` (target), `status`. Org admin only.",
+               rest=RestBinding("GET", "/api/orgs/{id}/monitoring/signals", _ID)),
     Capability(key="org.monitoring.connectors", handler=_connectors, Input=OrgWindowInput,
                authz=_ADMIN_OF, mcp=None, Output=OrgConnectorHealth,
                rest=RestBinding("GET", "/api/orgs/{id}/monitoring/connectors", _ID)),
@@ -501,7 +568,10 @@ CAPABILITIES += [
             "`min_duration_ms`, `error_contains`) / call (`call_id`) / runs · run "
             "(`run_id` → timeline) / connectors (which connector fails to resolve for "
             "your members) / gaps · tool_quality (what YOUR members reported missing or "
-            "broken) / export (audit log, `since`/`until` ISO — compliance evidence). "
+            "broken, AGGREGATED) / signals (the same reports RAW, with their body — the "
+            "counts say how many, only the body says why; filters `signal` "
+            "tool_feedback|gap, `tool`, `status`) / export (audit log, `since`/`until` "
+            "ISO — compliance evidence). "
             "Everything is scoped to calls EMITTED UNDER this org, never to membership. "
             "Platform-wide investigation is oto_admin_monitoring (platform admin)."),
         mcp="oto_org_monitoring",

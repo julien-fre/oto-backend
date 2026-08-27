@@ -131,7 +131,7 @@ def test_all_surfaces_are_org_admin_scoped():
     La règle est la même instance partagée — on vérifie qu'aucune capacité n'y échappe."""
     from oto_mcp.capabilities.registry import CAPABILITIES
     caps = [c for c in CAPABILITIES if c.key.startswith("org.monitoring.")]
-    assert len(caps) == 10                       # 9 lentilles REST + la console MCP
+    assert len(caps) == 11                       # 10 lentilles REST + la console MCP
     assert all(c.authz is om._ADMIN_OF for c in caps)
 
 
@@ -151,5 +151,6 @@ def test_rest_paths_are_org_scoped_in_the_path():
         "/api/orgs/{id}/monitoring/runs/{run_id}",
         "/api/orgs/{id}/monitoring/gaps",
         "/api/orgs/{id}/monitoring/tool-quality",
+        "/api/orgs/{id}/monitoring/signals",
     }
     assert all(p.startswith("/api/orgs/{id}/") for p in paths)
