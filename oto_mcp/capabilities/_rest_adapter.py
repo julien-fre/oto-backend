@@ -53,6 +53,12 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                 logger.warning("capacité %s : corps de requête refusé (%s)",
                                cap.key, e.code)
                 return json_error(request, 400, e.code, e.detail)
+            # `if body:` — un corps `{}` EXPLICITE ne se distingue pas d'un corps
+            # absent une fois parsé, donc il laisse le champ à son défaut au lieu de
+            # recevoir `{}`. Vérifié inerte sur les quatre capacités à `body_field` :
+            # `fields` vaut `{}` par défaut, `row`/`patch` ont une default_factory, et
+            # `arguments` (défaut `None`) est normalisé par son handler — un test le
+            # fige (`test_tools_me_capability`, cas `({}, {})`).
             if body:
                 if binding.body_field:
                     # Corps LIBRE (les colonnes d'une ligne de tableau) : il ne se
