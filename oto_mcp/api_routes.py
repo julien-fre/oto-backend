@@ -1,34 +1,50 @@
-"""REST API consommée par le frontend oto.ninja (page de gestion de compte).
+"""ASSEMBLAGE de l'API REST `/api/*` — la table de routes, et rien d'autre.
 
-Endpoints (ce fichier — gestion compte, providers,
-tools, admin, WhatsApp) :
-- `GET    /api/me`                            → infos user + rôle + statut keys
-- `GET    /api/settings/api-keys/{provider}`  → état/clé (tout connecteur byo_user à secret simple)
-- `POST   /api/settings/api-keys/{provider}`  → pose le credential : `api_key`→`{key}` ; `basic_auth`→`{email,password}`
-- `DELETE /api/settings/api-keys/{provider}`  → efface
-- `GET    /api/me/tools` + `POST/DELETE /api/me/tools/{name}` → toggle tools per-user
-- `GET    /api/admin/*`                       → admin (users, platform-keys, grants, tokens)
+Depuis la découpe du 2026-08-27, ce fichier ne contient plus de handler : il
+**monte**. `make_routes` fait trois choses, dans cet ordre — appeler les
+`make_routes` des modules de routes historiques, monter la couche capacité
+(ADR 0009, deux faces générées d'un descripteur unique), et rendre la table
+ordonnée des chemins écrits à la main. L'ORDRE de cette table est un contrat
+(Starlette prend le PREMIER match : `…/tools/registry` doit précéder
+`…/tools/{name}`), donc elle se lit d'un seul endroit.
 
-Endpoints datastore / Google OAuth / API tokens : voir `api_routes_datastore.py`.
-Endpoints SIRENE stock : voir `api_routes_sirene.py`.
-Endpoints organisation (`/api/me/orgs`, `/api/orgs/*`, `/api/admin/orgs/*`,
-`/api/admin/namespace-grants*`) : voir `api_routes_orgs.py` — projection REST du
-palier org (mêmes fonctions de service que les meta-tools MCP `oto_admin_*org*`).
+Les handlers vivent par DOMAINE, chacun une fonction de module appelable seule :
 
-Auth : Bearer JWT Logto **ou** API token long-lived (préfixe `oto_`), vérifié
-via `_authenticate`. Le frontend obtient le token Logto via `@logto/vue`. La
-CLI utilise un API token issu sur `/account` (stocké en SOPS sous `OTO_API_KEY`).
+| module                     | domaine                                              |
+| -------------------------- | ---------------------------------------------------- |
+| `api_routes_base.py`       | primitives partagées (auth, CORS, JSON, OPTIONS, `bind`) |
+| `api_routes_public.py`     | surfaces sans auth : favicon, catalogues, bibliothèques, invitations, docs partagés |
+| `api_routes_account.py`    | `/api/me`, journal d'appels, activité                 |
+| `api_routes_media.py`      | avatar user, logo d'org (multipart)                   |
+| `api_routes_projects.py`   | fichiers bruts d'un projet, export ZIP                |
+| `api_routes_uploads.py`    | réception d'un upload signé (`/api/upload/{token}`)   |
+| `api_routes_credentials.py`| pose de credential membre, session navigateur         |
+| `api_routes_tools.py`      | toolbox du membre (liste, fiche, test)                |
+| `api_routes_admin.py`      | clés plateforme, jetons émis pour un tiers            |
 
-CORS : limité aux origines oto.ninja (+ localhost en dev).
+Les modules ANTÉRIEURS à la découpe gardent leur forme : datastore, sirene,
+accords, atlassian, folk, zoho, salesforce, connectors, contact, billing —
+ils exposent un `make_routes(...)` qui reçoit les primitives en paramètres.
+
+Ce fichier garde aussi les deux MIDDLEWARES ASGI de la face REST, dont l'ordre de
+pose (dans `server.py`) est un contrat dont dépendent des colonnes de monitoring :
+`ViewAsMiddleware` (org/équipe/user de consultation, ADR 0023) et `RestCallLogger`
+(une ligne `tool_calls(kind='rest')` par requête, ADR 0017).
+
+Le reste du palier ORG (`/api/me/orgs`, `/api/orgs/*`, `/api/admin/orgs/*`) est
+100 % en capacités depuis la migration qui a supprimé `api_routes_orgs.py` — ce
+docstring y renvoyait encore le 2026-08-27, vers un fichier qui n'existe plus.
+
+Auth : Bearer JWT Logto **ou** jeton API long-lived (préfixe `oto_`), vérifié par
+`api_routes_base._authenticate` (ré-exporté ici). CORS : origines oto.cx/oto.ninja
+(+ localhosts en dev), `_allowed_origins`.
 """
 from __future__ import annotations
 
-import os
 from typing import Iterable
 
 import asyncio
 import base64
-import html as _html
 import json
 import logging
 import re
@@ -37,15 +53,13 @@ import time
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.requests import Request
 from starlette.concurrency import run_in_threadpool
-from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
-                                  Response, StreamingResponse)
 
-from . import access, api_routes_accords, api_routes_atlassian, api_routes_billing, api_routes_connectors, api_routes_contact, api_routes_datastore, api_routes_folk, api_routes_salesforce, api_routes_sirene, api_routes_zoho, billing, connector_activation, connectors, credentials_store, db, doc_export, group_store, openapi, org_store, ownership, token_scopes, tool_registry
+from . import (api_routes_accords, api_routes_atlassian, api_routes_billing,
+               api_routes_connectors, api_routes_contact, api_routes_datastore,
+               api_routes_folk, api_routes_salesforce, api_routes_sirene,
+               api_routes_zoho, db, tenancy)
 from .capabilities import _rest_adapter as _cap_rest_adapter
 from .capabilities import registry as _cap_registry
-from . import auth_hooks, guide_store, tenancy
-from .tool_visibility import (
-    PROTECTED_TOOLS, is_default_hidden, is_testable, namespace_of)
 # Primitives partagées (auth, CORS, réponses JSON, préflight, `bind`) : elles ont
 # quitté ce fichier pour `api_routes_base.py` le 2026-08-27, sous les modules de
 # domaine qui les appellent (sinon l'import serait circulaire). RÉ-EXPORTÉES ici :
