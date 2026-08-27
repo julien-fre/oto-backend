@@ -485,10 +485,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/me/tools/{name}/call", options_handler, methods=["OPTIONS"]),
         # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs_instructions.py),
         # monté par capability_routes plus bas.
-        Route("/api/settings/api-keys/{provider}", bind(credentials.api_key_get, verifier=verifier), methods=["GET"]),
-        Route("/api/settings/api-keys/{provider}", bind(credentials.api_key_save, verifier=verifier), methods=["POST"]),
-        Route("/api/settings/api-keys/{provider}", bind(credentials.api_key_clear, verifier=verifier), methods=["DELETE"]),
-        Route("/api/settings/api-keys/{provider}", options_handler, methods=["OPTIONS"]),
         # Connexion par session navigateur (brevo/crunchbase) — Live View depuis le dashboard.
         Route("/api/me/connectors/{name}/session/start", bind(credentials.session_start, verifier=verifier), methods=["POST"]),
         Route("/api/me/connectors/{name}/session/start", options_handler, methods=["OPTIONS"]),

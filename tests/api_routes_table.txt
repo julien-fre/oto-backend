@@ -54,10 +54,6 @@ GET,HEAD /api/me/tools/{name}/detail -> my_tool_detail
 OPTIONS /api/me/tools/{name}/detail -> options_handler
 POST /api/me/tools/{name}/call -> my_tool_call
 OPTIONS /api/me/tools/{name}/call -> options_handler
-GET,HEAD /api/settings/api-keys/{provider} -> api_key_get
-POST /api/settings/api-keys/{provider} -> api_key_save
-DELETE /api/settings/api-keys/{provider} -> api_key_clear
-OPTIONS /api/settings/api-keys/{provider} -> options_handler
 POST /api/me/connectors/{name}/session/start -> session_start
 OPTIONS /api/me/connectors/{name}/session/start -> options_handler
 POST /api/me/connectors/{name}/session/finalize -> session_finalize
@@ -378,6 +374,12 @@ POST /api/me/connectors/{provider}/verify -> _handler
 OPTIONS /api/me/connectors/{provider}/verify -> options_handler
 GET,HEAD /api/me/connectors/{provider}/effect -> _handler
 OPTIONS /api/me/connectors/{provider}/effect -> options_handler
+GET,HEAD /api/settings/api-keys/{provider} -> _handler
+OPTIONS /api/settings/api-keys/{provider} -> options_handler
+POST /api/settings/api-keys/{provider} -> _handler
+OPTIONS /api/settings/api-keys/{provider} -> options_handler
+DELETE /api/settings/api-keys/{provider} -> _handler
+OPTIONS /api/settings/api-keys/{provider} -> options_handler
 GET,HEAD /api/groups/{id}/connectors/activation -> _handler
 OPTIONS /api/groups/{id}/connectors/activation -> options_handler
 PUT /api/groups/{id}/connectors/{name}/activation -> _handler

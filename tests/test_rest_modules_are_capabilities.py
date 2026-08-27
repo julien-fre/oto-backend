@@ -172,7 +172,6 @@ _KNOWN: dict[str, str] = {
     # secret est dashboard-only par DESIGN (jamais un argument MCP, il transiterait
     # dans le contexte LLM) — mais une capacité peut être REST-only (binding `mcp`
     # retiré, cf. `set_platform_key`) : c'est bien de la dette, pas une nature.
-    "/api/settings/api-keys/{provider}": DEBT,
     "/api/me/connectors/{name}/session/start": DEBT,
     "/api/me/connectors/{name}/session/finalize": DEBT,
     # Palier admin. ⚠️ Les deux routes `tokens` portent `allow_api_token=False` (un

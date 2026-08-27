@@ -47,6 +47,9 @@ from . import connectors_connect  # noqa: F401 — me.connector_connect (POST /a
 from . import salesforce_connect  # noqa: F401 — me.salesforce_connect (oto_salesforce_connect ; REST = le chemin fixe /connect)
 from . import zoho_connect  # noqa: F401 — me.zoho_connect (oto_zoho_connect + GET /api/zoho/oauth/{start,modes})
 from . import connectors_verify  # noqa: F401 — connectors.verify (sonde de credential — MCP via oto_instance op=verify)
+# Credential PERSONNEL (pose/état/retrait) — REST-only, un secret ne passe pas
+# en argument d'outil. Ex-routes écrites à la main d'`api_routes.py` (#121).
+from . import me_credentials  # noqa: F401 — me.credential.{get,set,clear}
 # Plafond DUR d'org (ADR 0022) — override d'activation per-org, éditable org_admin.
 from . import connectors_activation  # noqa: F401 — connectors.activation.{org_list,set_org,clear_org}
 # RBAC connecteur interne à l'org (ADR 0025) — restreindre un connecteur à des départements/membres.

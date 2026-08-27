@@ -43,7 +43,19 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
 - `POST|DELETE /api/orgs/{id}/logo` — upload / efface le logo **uploadé** d'org (org_admin, multipart `file`). Le logo AFFICHÉ (`logo_url` des lectures + `active_org_logo_url` de `/api/me`) est l'**effectif** : upload sinon dérivé du CDN logo.dev via le `domain` déclaré (`org_store.effective_logo_url`, token `LOGODEV_TOKEN`) ; `logo_custom` (fiche org) dit si un upload existe.
 - `PATCH /api/orgs/{id}` (+ miroir `/api/admin/orgs/{id}`) — profil d'org (org_admin) : `name`, `description`, **`domain`** (domaine de marque, normalisé `org_store.normalize_domain` — `""` efface, saisie URL tolérée, invalide → 400 `invalid_domain`), `industry`, `location`. Capacité `org.update` (MCP `oto_org(op='update')`, console ADR 0047).
 - `POST|DELETE /api/settings/linkedin` — cookie li_at + UA
-- `POST|DELETE /api/settings/api-keys/{serper|hunter|sirene}` — user key
+- `GET|POST|DELETE /api/settings/api-keys/{provider}` — **ton credential** pour un
+  connecteur, dans l'org de contexte (capacités `me.credential.{get,set,clear}` depuis
+  le 2026-08-27 ; **pas de face MCP** — un secret brut ne passe pas en argument d'outil).
+  Le **corps du POST est plat et dynamique** : ses clés sont les `credential_fields` du
+  connecteur (publiés par `GET /api/connectors`), plus `account` — le nom du compte visé
+  quand le connecteur en porte plusieurs (le mot d'usage est dans `auth.account_noun` :
+  « workspace » pour Slack). D'où le cran `body_field` du binding : sans lui, la garde de
+  champ inconnu refuserait chaque clé de credential. Refus nommés : `404 unknown_provider`,
+  `403 connector_restricted` (RBAC ADR 0025 — la pose suit l'usage), `400 missing_credentials`
+  (le champ vide est NOMMÉ), `409 account_required` (pose anonyme là où des comptes nommés
+  existent), `400 single_account_connector` (compte nommé sur un connecteur qui ne les
+  résout pas), `400 verify_failed` (sonde avant persistance, #106). `DELETE` prend
+  `?scope=member|org|group` (admin du palier pour les deux derniers) et `?account=`.
 - `GET /api/me/tools` + `POST|DELETE /api/me/tools/{name}` — toggle individuel d'un tool MCP
 - `GET /api/me/instructions` (index des procédures ; le readme d'org est un guide `delivery=init`, plus servi ici) + `GET|PUT|DELETE /api/me/instructions/{slug}` + `GET /api/me/instructions/{slug}/versions` + `POST /api/me/instructions/{slug}/revert` — procédures de l'**org active** (le slug `claude_md` est RÉSERVÉ au readme et refusé ici) (cf. §Doctrines). Lecture = membre ; écriture = `org_admin` (ou platform admin). Édité par le dashboard (`/procedures`). ⚠️ Le `PUT` renvoie un **`diagram_warning`** (toujours présent ; `null` = rien à signaler) quand le corps n'embarque pas le SCHÉMA requis de la procédure — non bloquant, comme `unresolved_tools`/`slot_warnings` (cf. §Doctrines).
 - `GET|PUT|DELETE /api/me/guides/{scope}/{slug}` (+ `GET /api/me/guides`) — **la prose d'instruction**, un seul primitif sur deux axes (ADR 0042 §Convergence des surfaces) : `scope` ∈ platform|org|group|user × `delivery` ∈ `on-demand` (défaut, un how-to chargé au besoin) | `init` (**readme injecté à chaque session**, slug canonique `readme` — corps vide = couche effacée). Miroir REST d'`oto_guide`, mêmes handlers. Écriture gatée par scope (platform_admin / org_admin / chef d'équipe / self). Variantes par-id pour viser une org/équipe précise plutôt que l'active : `GET|PUT /api/orgs/{id}/guides/{scope}/{slug}` et `/api/groups/{id}/guides/{scope}/{slug}`. *(Remplace `GET|PUT /api/me/agent-readme`, retiré le 2026-07-28.)*
