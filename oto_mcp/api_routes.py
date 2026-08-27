@@ -57,6 +57,7 @@ from .api_routes_base import (  # noqa: F401 — ré-export de compatibilité
 # de module, testables seules ; la table de routes ci-dessous reste ici.
 from . import api_routes_public as public
 from . import api_routes_account as account
+from . import api_routes_media as media
 
 logger = logging.getLogger(__name__)
 
@@ -378,50 +379,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     # validation et le packing dérivent du schéma — zéro branche par connecteur.
     # cookie/oauth ont des flux dédiés (crunchbase/brevo via Live View Browserbase,
     # google via OAuth) → `secret_fields` vide → exclus ici.
-    # --- Avatar user + logo d'org (Object Storage) -------------------------
-    # Upload multipart → ne passe PAS par la couche capacité (ADR 0009 = corps
-    # JSON pydantic). URL publique persistée en clair (pas un secret).
-
-    async def _read_upload(request: Request):
-        """Parse un multipart, renvoie (data: bytes, err: JSONResponse|None)."""
-        try:
-            form = await request.form()
-        except Exception:
-            return None, _json_error(request, 400, "invalid_multipart")
-        upload = form.get("file")
-        if upload is None or not hasattr(upload, "read"):
-            return None, _json_error(request, 400, "missing_file")
-        return await upload.read(), None
-
-    async def avatar_save(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        data, err = await _read_upload(request)
-        if err:
-            return err
-        from . import media_store
-        try:
-            url = media_store.upload_image("avatars", sub, data, "")
-        except media_store.MediaError as e:
-            return _json_error(request, e.status, e.code)
-        old = (db.get_user(sub) or {}).get("avatar_url")
-        db.set_avatar_url(sub, url)
-        if old and old != url:
-            media_store.delete_by_url(old)
-        return _json(request, {"ok": True, "avatar_url": url})
-
-    async def avatar_clear(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        old = (db.get_user(sub) or {}).get("avatar_url")
-        db.set_avatar_url(sub, None)
-        if old:
-            from . import media_store
-            media_store.delete_by_url(old)
-        return _json(request, {"ok": True})
-
     # --- Fichiers bruts d'un projet — carte « Autre document » (ADR 0032 §3) ---
     # Upload multipart (PDF/HTML…) → hors couche capacité (corps binaire, pas JSON).
     # Blob DURABLE+privé en Object Storage ; accès par presigned à la lecture.
@@ -589,54 +546,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         if payload is None:
             return HTMLResponse(_upload_page_html(None), status_code=401)
         return HTMLResponse(_upload_page_html(upload_tokens.target_label(payload["target"])))
-
-    def _org_logo_gate(request: Request, sub: str):
-        """Renvoie (org_id, err). 400 id invalide, 404 org inconnue, 403 non-admin."""
-        from . import roles
-        try:
-            org_id = int(request.path_params["id"])
-        except (ValueError, KeyError):
-            return None, _json_error(request, 400, "invalid_id")
-        if not org_store.get_org(org_id):
-            return None, _json_error(request, 404, "unknown_org")
-        if not roles.is_org_admin(sub, org_id):
-            return None, _json_error(request, 403, "forbidden")
-        return org_id, None
-
-    async def org_logo_save(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        org_id, err = _org_logo_gate(request, sub)
-        if err:
-            return err
-        data, err = await _read_upload(request)
-        if err:
-            return err
-        from . import media_store
-        try:
-            url = media_store.upload_image("org-logos", str(org_id), data, "")
-        except media_store.MediaError as e:
-            return _json_error(request, e.status, e.code)
-        old = (org_store.get_org(org_id) or {}).get("logo_url")
-        org_store.set_org_logo(org_id, url)
-        if old and old != url:
-            media_store.delete_by_url(old)
-        return _json(request, {"ok": True, "logo_url": url})
-
-    async def org_logo_clear(request: Request) -> JSONResponse:
-        sub, err = await _authenticate(request, verifier)
-        if err:
-            return err
-        org_id, err = _org_logo_gate(request, sub)
-        if err:
-            return err
-        old = (org_store.get_org(org_id) or {}).get("logo_url")
-        org_store.set_org_logo(org_id, None)
-        if old:
-            from . import media_store
-            media_store.delete_by_url(old)
-        return _json(request, {"ok": True})
 
     # Saisie de credential per-user, GÉNÉRIQUE (dérivée du registre, pas une liste
     # hardcodée) : tout connecteur `byo_user` dont le secret est un "secret simple"
@@ -1327,8 +1236,8 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/invitations/{token}", options_handler, methods=["OPTIONS"]),
         Route("/api/me", bind(account.me, verifier=verifier), methods=["GET"]),
         Route("/api/me", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/avatar", avatar_save, methods=["POST"]),
-        Route("/api/me/avatar", avatar_clear, methods=["DELETE"]),
+        Route("/api/me/avatar", bind(media.avatar_save, verifier=verifier), methods=["POST"]),
+        Route("/api/me/avatar", bind(media.avatar_clear, verifier=verifier), methods=["DELETE"]),
         Route("/api/me/avatar", options_handler, methods=["OPTIONS"]),
         Route("/api/me/projects/{project_id:int}/files", project_files_list, methods=["GET"]),
         Route("/api/me/projects/{project_id:int}/files", project_files_upload, methods=["POST"]),
@@ -1347,8 +1256,8 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # Page de partage publique server-rendered (lisible par un agent, ADR gap
         # « pages SPA non lisibles »). Servie sous dashboard.oto.ninja via Caddy.
         Route("/p/d/{token}", public.public_doc_view, methods=["GET"]),
-        Route("/api/orgs/{id}/logo", org_logo_save, methods=["POST"]),
-        Route("/api/orgs/{id}/logo", org_logo_clear, methods=["DELETE"]),
+        Route("/api/orgs/{id}/logo", bind(media.org_logo_save, verifier=verifier), methods=["POST"]),
+        Route("/api/orgs/{id}/logo", bind(media.org_logo_clear, verifier=verifier), methods=["DELETE"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
         Route("/api/me/calls", bind(account.my_calls, verifier=verifier), methods=["GET"]),
         Route("/api/me/calls", options_handler, methods=["OPTIONS"]),
