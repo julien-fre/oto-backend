@@ -116,6 +116,20 @@ def _brut(ns_id: int, row_id: str) -> dict:
     return dict(r or {})
 
 
+def _un_id(st, ns) -> str:
+    """L'id de l'unique ligne du tableau, sans passer par la file — la réserver
+    pour connaître son id fausserait le compteur qu'on mesure."""
+    return st.list_rows(ns)[0]["_id"]
+
+
+def _expirer_le_bail(ns_id: int, row_id: str) -> None:
+    """Le titulaire disparaît sans relâcher : son bail cesse de protéger."""
+    from oto_mcp.db._conn import _connect
+    with _connect() as conn:
+        conn.execute("UPDATE datastore_rows SET claimed_until = NOW() - interval '1 hour' "
+                     "WHERE ns_id = %s AND row_id = %s", (ns_id, row_id))
+
+
 def _tourner_a_vide(st, ns, tours: int) -> str:
     """`tours` réservations suivies d'un relâchement, sans une seule écriture."""
     dernier = ""
@@ -255,13 +269,64 @@ def test_rouvrir_une_ligne_abandonnee_exige_une_transition_de_retour(live):
     assert _brut(ns_id, rid)["abandon_reason"] is None      # la ligne rouvre quand même
 
 
+# ══ réserver ≠ renouveler ═══════════════════════════════════════════════════
+
+def test_le_renouvellement_du_titulaire_ne_consomme_pas_le_plafond(plafonne):
+    """Une réservation, c'est PRENDRE une ligne : un nouveau titulaire, ou une
+    ligne dont le bail a lâché. Le titulaire qui rafraîchit son écran ne la prend
+    pas — elle ne lui a jamais échappé. Compter ce geste ferait payer le plafond
+    à une file pilotée à la main, où rafraîchir est le geste le plus banal."""
+    st, ns, ns_id = plafonne
+    rid = _un_id(st, ns)
+
+    premiere = st.claim_row(ns, rid, worker="ecran-sarah")
+    assert premiere["_claims"] == 1
+
+    encore = premiere
+    for _ in range(4):
+        encore = st.claim_row(ns, rid, worker="ecran-sarah")
+
+    assert encore["_claims"] == 1
+    assert _brut(ns_id, rid)["abandon_reason"] is None      # le plafond de 3 est intact
+
+
+def test_reprendre_une_ligne_dont_le_bail_a_lache_compte(plafonne):
+    """L'autre moitié de la règle : dès que le bail ne protège plus, la ligne
+    était reprenable par n'importe qui — la reprendre EST une réservation, que ce
+    soit un collègue ou le même écran revenu plus tard."""
+    st, ns, ns_id = plafonne
+    rid = _un_id(st, ns)
+
+    st.claim_row(ns, rid, worker="ecran-sarah")
+    _expirer_le_bail(ns_id, rid)
+    autre = st.claim_row(ns, rid, worker="ecran-jules")
+    assert autre["_claims"] == 2
+
+    _expirer_le_bail(ns_id, rid)
+    revenu = st.claim_row(ns, rid, worker="ecran-jules")    # le MÊME, après expiration
+    assert revenu["_claims"] == 3
+
+
+def test_claim_next_ne_peut_pas_servir_une_ligne_sous_bail_actif(plafonne):
+    """Le pick n'a pas besoin de la même nuance : sa clause d'éligibilité exclut
+    déjà le bail actif, donc il ne renouvelle jamais rien. Gravé pour que ça
+    reste vrai — c'est ce qui rend le compteur juste des deux côtés."""
+    st, ns, ns_id = plafonne
+
+    tenue = st.claim_next(ns, worker="agent-1")
+    assert tenue["_claims"] == 1
+
+    assert st.claim_next(ns, worker="agent-2") is None
+    assert st.claim_next(ns, worker="agent-1") is None      # même le titulaire
+    assert _brut(ns_id, tenue["_id"])["claims"] == 1        # rien n'a bougé
+
+
 # ══ le filet des baux expirés ═══════════════════════════════════════════════
 
 def test_un_bail_expire_sans_relachement_compte_aussi(plafonne):
     """L'agent qui MEURT ne relâche rien : son bail expire, et la ligne
     redevient servable. Sans évaluation au claim, ce chemin-là contournerait le
     plafond indéfiniment."""
-    from oto_mcp.db._conn import _connect
     st, ns, ns_id = plafonne
 
     rid = ""
@@ -269,9 +334,7 @@ def test_un_bail_expire_sans_relachement_compte_aussi(plafonne):
         row = st.claim_next(ns, worker="agent-mort")
         assert row is not None
         rid = row["_id"]
-        with _connect() as conn:      # le bail expire, personne ne relâche
-            conn.execute("UPDATE datastore_rows SET claimed_until = NOW() - interval '1 hour' "
-                         "WHERE ns_id = %s AND row_id = %s", (ns_id, rid))
+        _expirer_le_bail(ns_id, rid)      # le bail lâche, personne ne relâche
 
     assert st.claim_next(ns, worker="agent-mort") is None
     assert _brut(ns_id, rid)["data"]["statut"] == "echec"

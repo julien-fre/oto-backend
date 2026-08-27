@@ -186,8 +186,11 @@ minutes, aucune écriture** — et rien qui le dise, puisque les jobs se termine
 l'agent a réservée. **Seul le serveur le sait.**
 
 D'où un compteur porté par la LIGNE (colonne `datastore_rows.claims`, rendue `_claims`) :
-il monte à chaque réservation — `claim_next` comme `claim_row`, renouvellement compris —
-et **retombe à zéro à la première écriture réussie**. C'est cette remise à zéro qui
+il monte à chaque **prise** — `claim_next` comme `claim_row` — et **retombe à zéro à la
+première écriture réussie**. Prendre, c'est acquérir une ligne libre ou dont le bail a
+lâché ; le titulaire qui **renouvelle** son propre bail ne la prend pas (elle ne lui a
+jamais échappé) et ne consomme donc rien : sur une file pilotée à la main, rafraîchir son
+écran est le geste le plus banal, et le compter viderait le tableau de ses lignes. C'est cette remise à zéro qui
 sépare « reprise après un vrai travail » de « faux départ répété » ; rien d'autre ne
 les distingue de l'extérieur.
 

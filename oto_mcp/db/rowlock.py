@@ -97,15 +97,23 @@ def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
     None = row absente OU sous bail actif d'un AUTRE worker ; les distinguer coûte
     une relecture, laissée à l'appelant (chemin d'échec seulement).
 
-    ⚠️ Une réservation est une réservation : le compteur de reprises monte ici
-    aussi (#433), renouvellement compris. Sur une file pilotée à la main, un écran
-    rafraîchi N fois sans écrire consomme donc le plafond — c'est le prix d'un
-    compteur qui ne se laisse pas contourner par le chemin le moins gardé."""
+    ⚠️ Le compteur de reprises monte ici aussi (#433) — mais sur une PRISE, pas sur
+    un renouvellement : reprendre une ligne dont le bail a lâché compte, la garder
+    non. `claim_next`, lui, n'a pas la nuance à porter : sa clause d'éligibilité
+    exclut déjà le bail actif, donc il ne renouvelle jamais rien."""
     with _connect() as conn:
         row = conn.execute(
             "UPDATE datastore_rows SET claimed_by = %s, "
             "claimed_until = NOW() + (%s || ' seconds')::interval, claimed_run = %s, "
-            "claims = claims + 1 "
+            # RÉSERVER, c'est PRENDRE une ligne : un nouveau titulaire, ou une ligne
+            # dont le bail a lâché. Le titulaire qui renouvelle ne la prend pas — elle
+            # ne lui a jamais échappé — donc son geste ne consomme pas le plafond
+            # (#433) : sur une file pilotée à la main, rafraîchir son écran est le
+            # geste le plus banal, et le compter la viderait de ses lignes.
+            # ⚠️ Les colonnes lues dans le SET sont celles d'AVANT l'UPDATE (PG) :
+            # `claimed_until` désigne bien le bail que cet appel remplace.
+            "claims = claims + CASE WHEN claimed_until IS NULL "
+            "                       OR claimed_until < NOW() THEN 1 ELSE 0 END "
             "WHERE ns_id = %s AND row_id = %s AND (claimed_until IS NULL "
             "OR claimed_until < NOW() OR claimed_by = %s) "
             + _RENDU,
