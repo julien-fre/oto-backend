@@ -142,6 +142,19 @@ call-site** ; `access.resolve_credential` rend aussi la **config non-secrète ap
 gagnante**, donc **ne JAMAIS recâbler un résolveur d'endpoint par-connecteur** (ADR 0024).
 ⚠️ Le dashboard en porte un **MIROIR d'affichage** (`lib/keyStack.ts`) qu'aucun test ne relie :
 en changer l'ordre ne casse rien, **ça fait mentir l'UI**.
+⚠️ **L'instance de connecteur est un OBJET depuis le 27/08** (`connector_instances`, lot L6 du
+chantier tenant & instances — R1 tranché « la table à côté ») : elle a un **id stable**,
+`inst:{id}`, servi à côté du `ref` composé par `GET /api/me/connector-instances`. La table est
+posée **à côté** du coffre (l'AAD lie le ciphertext aux 4 colonnes de SA ligne, pas à sa table
+⟹ zéro rechiffrement), et le lien est le **quadruplet** `owner_type/owner_id/connector/account`
+= la PK du coffre, en FK **logique**. **Rien ne la lit encore côté résolution** — ni
+`walk_cascade`, ni `resolve_credential`, ni le coffre : c'est le lot L7, et un garde-fou AST
+(`tests/test_connector_instances_l6.py`) fait tomber le premier lecteur hors allowlist.
+⚠️ L'instance naît **au boot** (backfill idempotent d'`_init`), pas à la pose : `id` peut donc
+manquer sur une clé toute neuve, et **`ref` reste la référence à repasser** (`inst:` se parse
+mais se fait refuser nommément par les deux gardes de pose). `label`, `config`, `visibility`
+(R9) et `parent_id` (sous-instances) sont **posés et inertes** : leur domicile reste `meta`,
+leur dérivation est un lot. Détail : `docs/connector-vault.md`.
 ⚠️ **`access` est un PACKAGE depuis le 27/08** (7 modules par sujet, arbre ci-dessus) : on
 édite le module du sujet, jamais un fourre-tout. La surface reste **plate** — `access.<nom>`
 rend ce qu'il rendait, privés compris, et une écriture sur la façade
@@ -421,7 +434,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `commands.md` | recettes tests / deploy / logs / inspection DB + leurs pièges, et le **pin oto-core**. |
 | `couches-et-capacites.md` | les 4 couches ADR 0004 et la **couche capacité** ADR 0009 (deux faces, une déclaration ; refus de champ inconnu ; console admin `*_op`). |
 | `connector-model.md` | **carte d'ensemble** : les 3 couches d'un connecteur (disponibilité / authentification / option), la matrice des niveaux, le vocabulaire canonique, le seam `access.has_option`. **À lire en premier** avant de toucher activation/clés/options. |
-| `connector-vault.md` | registre source unique (package `providers/`, 1 module de déclaration par connecteur), coffre chiffré unique `connector_credentials`, enveloppe AES-256-GCM **obligatoire**, résolution + palier org, credentials qui se consomment à l'usage (rotation), application d'org ≠ jeton d'identité. |
+| `connector-vault.md` | registre source unique (package `providers/`, 1 module de déclaration par connecteur), coffre chiffré unique `connector_credentials`, enveloppe AES-256-GCM **obligatoire**, résolution + palier org, **l'instance objet `connector_instances` + `inst:{id}` (lot L6)**, credentials qui se consomment à l'usage (rotation), application d'org ≠ jeton d'identité. |
 | `roles-and-resolution.md` | rôles (3 paliers), cascade de résolution de clé, grants/platform keys, multi-compte, scope MEMBRE, walker de cascade. |
 | `auth-logto.md` | auth Logto ES384, discovery RFC 9728, façade DCR, jetons `oto_`, MFA par org, cutover `.ninja`↔`.cx`. |
 | `tenants.md` | l'étage d'identité au-dessus des orgs (ADR 0052) : émetteur dédié, préfixe d'outils, écran de suivi, pièges d'une bascule de compte. |

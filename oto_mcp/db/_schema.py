@@ -44,6 +44,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.doctrine.DOCTRINE,        # doctrines d'org, révisions, bibliothèque
     schema.orgs.GROUPS,              # équipes et leurs membres
     schema.connectors.CREDENTIALS,   # coffre des credentials (ADR 0002/0033)
+    schema.connectors.INSTANCES,     # instances de connecteur (blueprint 0053-D9, L6)
     schema.billing.OPTION_COMPS,     # options offertes
     schema.users.ALIASES,            # alias de sub (bascule de compte)
     schema.connectors.SCHEMAS,       # schémas d'outils mis en cache

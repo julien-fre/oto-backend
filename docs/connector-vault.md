@@ -10,6 +10,8 @@ description: >-
   resolve_credential_fields, resolve_mount_token, status_for,
   list_datastore_namespaces_granted_to).
   Inclut le packing multi-champs, Google multi-compte, LinkedIn/Crunchbase en coffre,
+  l'instance comme OBJET (table connector_instances posée A COTE du coffre, id stable
+  inst:{id}, lot L6 du chantier tenant & instances),
   et le modèle de connecteur remote (ADR 0003, pilote = un connecteur remote client). À consulter pour
   tout ajout de connecteur, débogage de credential, ou compréhension du chiffrement.
 adr:
@@ -104,6 +106,72 @@ limite : les `config_fields` packés dans `secret_enc` (ex. `data_center`) ne
 sortent pas — seule la part `meta` est projetée en `config`. Le « gagnant » de la
 cascade reste dit par `status_for` (une seule vérité) ; la projection ne porte
 que l'ordre de proximité (tri membre < groupe < org < plateforme).
+
+## L'instance, OBJET — `connector_instances` (lot L6, blueprint ADR 0053-D9)
+
+Depuis le 2026-08-27, une instance de connecteur **existe comme objet**, dans une table
+posée **à côté** du coffre : `connector_instances(id, connector, owner_type, owner_id,
+account, label, config, visibility, parent_id, created_at, revoked_at)`. Arbitrage R1,
+prononcé par Alexis : *« la table à côté »*.
+
+**Pourquoi à côté et pas dans le coffre.** L'AAD lie le ciphertext aux **quatre colonnes
+d'identité de SA ligne** (`credentials_store._aad`), pas à la table qui la porte : une
+table posée à côté, la ligne du secret gardant ses quatre colonnes, donne l'identifiant
+stable **sans un octet de rechiffrement**. Une fois le rechiffrement hors de l'équation,
+ce qui décide est le fond : le modèle prévoit des instances **sans secret** — une
+instance `http` qui ne fige qu'une `base_url` (0057), une sous-instance qui ne pose
+qu'une *détermination* (« le compte d'Alexandra », 0053-D9-3). Un objet qui n'est plus un
+credential n'a rien à faire dans une table qui l'est.
+
+**Le lien avec le coffre est le quadruplet, et c'est une FK LOGIQUE** —
+`owner_type`/`owner_id`/`connector`/`account` **sont** `entity_type`/`entity_id`/
+`connector`/`account`, à l'octet près. Pas de FK déclarée, délibérément : le coffre n'a
+aucune clé de substitution (sa PK **est** ce quadruplet, donc rien à quoi un
+`credential_id` pourrait pointer), et une vraie FK interdirait les instances sans secret
+le jour où elles arrivent. Le sens du pointeur suit la même lecture : un `instance_id`
+posé **sur** le coffre serait perdu à chaque `rename_account` (= `_upsert` d'une ligne
+neuve + `_delete` de l'ancienne, et la liste de colonnes de l'INSERT ne le nommerait
+pas), donc réparable seulement en éditant les primitives d'écriture du coffre.
+
+**Une instance vivante par ligne de coffre**, tenu par la base : index UNIQUE **partiel**
+sur le quadruplet (`WHERE revoked_at IS NULL`). Son **jumeau non partiel** n'est pas un
+doublon : le backfill demande « existe-t-il une instance, **archivée comprise** ? » —
+c'est ce qui l'empêche de *ressusciter* une instance retirée à la main entre deux boots.
+⚠️ Ne pas les « harmoniser » : leurs deux lectures sont opposées (même partage des rôles
+qu'entre `idx_grants_grantee` et `idx_grants_resource_grantee`).
+
+**Ce que le backfill de boot fait, et ne fait pas.** `_init.init_db` nomme chaque ligne du
+coffre (idempotent, en lots, journalisé, rejoué à chaque boot) — et **laisse `label` et
+`config` vides** : le nom affiché reste dérivé de `meta.label`, la config publique vit
+dans `meta`, et les `config_fields` packés vivent dans le ciphertext. Aucune ligne du
+coffre n'est touchée, aucun secret déchiffré. Un `entity_type` hors vocabulaire est
+compté et journalisé, jamais inventé — le CHECK de la table emporterait sinon la
+transaction de schéma entière, sur une base partagée avec la production.
+
+⚠️ **L'instance naît au BOOT, pas à la pose.** C'est le prix assumé de ne toucher aucun
+chemin d'écriture du coffre : une clé posée depuis le dernier boot n'a pas encore
+d'identifiant, et le boot suivant la rattrape.
+
+**Ce que rien ne fait encore.** Ni la cascade (`access.walk_cascade`), ni la résolution
+(`access.resolve_credential`), ni le coffre ne lisent cette table — c'est le lot L7.
+L'intention est gardée par `tests/test_connector_instances_l6.py` (sonde AST + allowlist
+de cinq fichiers), pas par de la vigilance. La `visibility` (R9) et `parent_id`
+(sous-instances) sont **posées et inertes** : leur dérivation est un lot.
+
+### `inst:{id}` — la forme de fil
+
+`instance_refs.make_instance_ref(id)` rend `inst:{id}`, et `parse_ref` accepte désormais
+**les deux grammaires** : les refs composés sont déjà distribués (bindings de slot B5,
+axe `_instance=`, `resource_id` des arêtes de `grants`) et rien ne les réécrit ici.
+`GET /api/me/connector-instances` sert donc `id` **en plus** de `ref` — résolu en **une**
+requête pour toute la liste, **fail-open** (l'identifiant n'est consommé par rien encore ;
+faire tomber le listing des clés de quelqu'un pour lui serait hors de proportion), donc
+**`id` peut être absent** et le client garde `ref`.
+
+⚠️ **`inst:` se PARSE mais ne se résout pas.** Les deux gardes de pose — l'axe
+`_instance=` (`access.rbac.guard_instance_access`) et le binding de projet — le refusent
+**nommément** : sans cette branche, un `inst:` s'entendrait dire que « les refs
+`platform:` ne s'épinglent pas », un message faux qui envoie chercher au mauvais endroit.
 
 ## Credentials qui se CONSOMMENT à l'usage (rotation)
 

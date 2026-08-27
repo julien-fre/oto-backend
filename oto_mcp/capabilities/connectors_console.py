@@ -286,7 +286,8 @@ CAPABILITIES += [
         description=(
             "Connector INSTANCES (connector x auth/config; the secret is never returned). "
             "op=list (instances visible to you by proximity — member/group/org/platform, "
-            "optional filters `connector`, `level`; `ref` = stable pin handle for instance=) "
+            "optional filters `connector`, `level`; `id` = `inst:<n>`, the instance's stable "
+            "identifier — may be missing, and `ref` stays the pin handle for instance=) "
             "/ lend (lend YOUR instance of `connector` to a peer `to`=sub, revoke=true takes "
             "it back — ADR 0044 share_side) / verify (side-effect-free credential probe of "
             "`connector` → {ok, error}; level=auto tests the credential that resolves for "

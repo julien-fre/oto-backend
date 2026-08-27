@@ -113,6 +113,18 @@ def test_migrate_sub_sub_bearing_columns_are_triaged():
         # est indéchiffrable — pire qu'absente (0052 §Migrer : l'utilisateur repose
         # ses clés, jamais d'UPDATE ici).
         ("connector_credentials", "entity_id"),
+        # L'instance (lot L6) SUIT la ligne de coffre : son `owner_id` EST
+        # l'`entity_id` juste au-dessus, et le lien entre les deux est ce quadruplet.
+        # Repointer l'instance seule la DÉTACHERAIT de sa ligne de coffre — un objet
+        # qui désigne une clé qui n'existe pas, strictement pire que rien. Elle ne
+        # peut donc pas être repointée tant que la ligne du coffre ne l'est pas, et
+        # la ligne du coffre ne l'est jamais (l'AAD). Le compte migré repose ses clés,
+        # le boot suivant nomme les lignes neuves.
+        # ⚠️ RÉSIDU NOMMÉ : l'instance de l'ancien sub reste VIVANTE alors que sa
+        # ligne de coffre est abandonnée. Personne ne la lit encore ; l'archiver est
+        # le travail du lot qui fait suivre l'instance aux déplacements du coffre
+        # (renommage de compte compris) — celui-là même qui commencera à la lire.
+        ("connector_instances", "owner_id"),
         # Repointée par l'étape 3 bis de migrate_sub, FILTRÉE sur grantee_kind='user'
         # (la colonne porte aussi des ids d'org) — pas un UPDATE nu d'inventaire.
         ("grants", "grantee_id"),
