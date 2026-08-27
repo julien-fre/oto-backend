@@ -120,7 +120,13 @@ def _note_resolved_instance(rc: ResolvedCredential) -> ResolvedCredential:
     try:
         ref = instance_refs.ref_for_credential(
             rc.entity_type or "", rc.entity_id or "", rc.provider, rc.account)
-        session_org.note_call_trace(instance=ref)
+        # `instance` = l'empreinte pour le JOURNAL. `resolved_*` = de quoi le dire à
+        # l'AGENT au retour de l'appel (écho `_account`, `CallContextMiddleware`) :
+        # sans ça il poste sur l'un de ses deux workspaces sans jamais savoir lequel.
+        # Le connecteur est noté AVEC le compte : un outil composite peut résoudre un
+        # credential auxiliaire, et l'écho ne doit annoncer que le connecteur appelé.
+        session_org.note_call_trace(instance=ref, resolved_connector=rc.provider,
+                                    resolved_account=rc.account)
     except Exception:  # noqa: BLE001
         logger.debug("relevé d'instance échoué", exc_info=True)
     return rc
@@ -211,10 +217,11 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         return cascade._shared_auto_account(entity_type, entity_id, mprov, where, scope), False
 
     def _not_found(eff: str, mprov: str) -> McpError:
+        noun = cascade.account_noun(mprov).capitalize()
         return McpError(ErrorData(
             code=INVALID_PARAMS,
             message=(
-                f"Compte `{eff}` introuvable pour `{mprov}` — vérifie avec "
+                f"{noun} `{eff}` introuvable pour `{mprov}` — vérifie avec "
                 f"oto_identity(op='list'), ou pose-le sur {_ACCOUNT_URL}."
             )))
 

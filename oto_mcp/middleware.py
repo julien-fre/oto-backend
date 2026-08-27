@@ -359,6 +359,43 @@ def _observe_schema(service: str, payload) -> None:
     connector_schema_store.observe(service, payload)
 
 
+def _echo_account(result, tool_name: str):
+    """Dit à l'agent SOUS QUEL COMPTE l'appel est parti, quand il en a plusieurs.
+
+    Un agent qui détient deux workspaces Slack en visait un — par défaut posé, par
+    épinglage de projet ou par `_account=` — sans que rien ne le lui confirme :
+    l'identité effective ne vivait que dans le journal, qu'il ne lit pas. Un envoi
+    sous la mauvaise identité ne se rattrape pas ; le minimum est de la nommer.
+
+    Trois gardes, dans cet ordre :
+    - **compte NOMMÉ seulement** : en mono-compte la ligne du coffre est anonyme
+      (`account=''`) ⟹ aucun écho, aucun bruit ajouté à 99 % des réponses ;
+    - **même connecteur que l'outil appelé** : un outil composite peut résoudre un
+      credential auxiliaire, et annoncer CE compte-là serait un mensonge ;
+    - **payload dict** : une liste ou du texte est rendu tel quel.
+
+    Posé ici plutôt que dans un middleware de plus : c'est le pendant naturel de ce
+    que ce middleware fait à l'aller (poser le contexte de l'appel), et il est plus
+    EXTERNE que la rédaction — donc l'écho n'est ni redacté, ni observé comme un
+    champ du connecteur par la capture de schéma. Best-effort : un écho ne fait
+    jamais échouer un appel qui a réussi.
+    """
+    try:
+        if getattr(result, "is_error", False):
+            return result
+        trace = session_org.current_call_trace() or {}
+        account = trace.get("resolved_account") or ""
+        if not account or trace.get("resolved_connector") != namespace_of(tool_name):
+            return result
+        payload = redaction.extract_payload(result)
+        if not isinstance(payload, dict) or "_account" in payload:
+            return result
+        return redaction.rebuild_result(result, {**payload, "_account": account})
+    except Exception:  # noqa: BLE001 — un écho ne casse pas un appel réussi
+        logger.debug("écho du compte impossible", exc_info=True)
+        return result
+
+
 class CallContextMiddleware(Middleware):
     """Pose le contexte d'appel (`_org=`) AVANT toute la chaîne middleware, pour que la
     résolution du handler ET les hooks post-tool (rédaction de champs, calllog) voient
@@ -442,7 +479,7 @@ class CallContextMiddleware(Middleware):
             for axis in call_axes.axes_for_call(name):
                 if axis.param in args:
                     undo.extend(await axis.pin_for(args.pop(axis.param), name))
-            return await call_next(context)
+            return _echo_account(await call_next(context), name)
         finally:
             for reset, tok in reversed(undo):
                 reset(tok)

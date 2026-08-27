@@ -71,6 +71,12 @@ class ConnectorIdentities(BaseModel):
     # connecteur sans identités).
     supported: bool
     identities: list[Identity]
+    # Le MOT du fournisseur pour un compte de ce connecteur — « workspace » chez
+    # Slack, « organisation » chez Zoho, « site » pour le navigateur connecté,
+    # « compte » par défaut. Servi ici parce que c'est la réponse que lit celui qui
+    # CHOISIT : parler de « compte » pour un espace Slack l'oblige à traduire, et ni
+    # l'agent ni l'écran n'ont de moyen de deviner le vocabulaire du fournisseur.
+    noun: str = "compte"
 
 
 class SelectedIdentity(BaseModel):
@@ -149,9 +155,11 @@ async def _list(ctx: ResolvedCtx, inp: IdentitiesInput) -> dict:
     ids = connector_identities.list_identities(ctx.sub, inp.connector, inp.scope)
     if inspect.isawaitable(ids):
         ids = await ids
+    from .. import access
     return {
         "connector": inp.connector,
         "supported": connector_identities.supports(inp.connector),
+        "noun": access.account_noun(inp.connector),
         "identities": ids,
     }
 

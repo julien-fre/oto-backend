@@ -189,14 +189,20 @@ class IdentityInput(BaseModel):
     op: Literal["list", "set"]
     connector: str
     identity_id: Optional[str] = None          # set
+    # Palier visé : les MIENS (défaut), ceux de mon équipe active, ceux de mon org.
+    # La face REST le portait déjà ; la face agent ne pouvait voir que les siens —
+    # donc un membre servi par la clé de son org ne pouvait pas savoir sous quels
+    # comptes elle peut agir, ni lequel est le défaut.
+    scope: Literal["member", "org", "group"] = "member"
 
 
 async def _identity(ctx: ResolvedCtx, inp: IdentityInput) -> dict:
     ids = connectors_identities
     if inp.op == "list":
-        return await ids._list(ctx, ids.IdentitiesInput(connector=inp.connector))
+        return await ids._list(ctx, ids.IdentitiesInput(
+            connector=inp.connector, scope=inp.scope))
     return await ids._set_default(ctx, ids.SetIdentityInput(
-        connector=inp.connector,
+        connector=inp.connector, scope=inp.scope,
         identity_id=_need(inp.identity_id, "missing_identity", "`identity_id` requis pour set.")))
 
 

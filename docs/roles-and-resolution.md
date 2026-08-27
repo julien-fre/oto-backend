@@ -115,6 +115,30 @@ Deux règles internes, et elles ne sont pas cosmétiques :
   tenait ses compteurs du jour dans une locale `quotas`, et l'appel
   `quotas.quota_for(...)` est parti chercher la méthode sur un dict.
 
+> **Ce que l'AGENT voit du choix de compte (27/08).** Le multi-compte n'existe pour lui
+> que par quatre surfaces, et chacune avait un trou :
+> - **le schéma** — l'axe `_account=` apparaît sur les outils du connecteur dès qu'il
+>   détient ≥ 2 clés (`account_axis_advertised_for`), pas avant : recopier l'axe partout
+>   doublerait le handshake. Il reste ACCEPTÉ partout (`accepts_account_axis`).
+> - **l'aide d'`oto_identity`** — elle disait de passer `account=<id>`, le nom NU, alors
+>   que les jetons ont été préfixés justement parce qu'il entrait en collision avec les
+>   arguments métier (28/07). Un agent qui la suivait échouait. Elle nomme `_account`,
+>   avec un exemple qui marche ; tripwire `test_identity_hint_names_the_axis` (il compare
+>   à `call_axes.ACCOUNT.param`, pas à une constante recopiée).
+> - **le refus** — « Plusieurs **workspaces** `slack` … précise lequel avec `_account=` »
+>   au lieu de « plusieurs comptes » : le mot vient du registre (`access.account_noun`,
+>   dérivé de `Connector.account_noun`), et le message porte le geste qui débloque.
+>   Même chose pour « Workspace `X` introuvable ». `oto_identity op=list` rend `noun`.
+> - **l'écho** — la réponse d'un appel servi par un compte NOMMÉ porte `_account`
+>   (`middleware._echo_account`, posé par `CallContextMiddleware` au retour). Sans lui,
+>   l'agent postait sur l'un de ses deux workspaces sans jamais savoir lequel : l'identité
+>   effective ne vivait que dans le journal, qu'il ne lit pas. Trois gardes : compte nommé
+>   seulement (mono ⟹ aucun bruit), même connecteur que l'outil appelé (un tool composite
+>   résout des credentials auxiliaires), payload dict. L'écho est injecté **au-dessus de
+>   la rédaction** — sinon il serait redacté, et la capture passive de schéma
+>   l'enregistrerait comme un champ du connecteur.
+> - `oto_identity` porte enfin `scope` côté agent (member/org/group), comme la face REST.
+
 ## Walker de cascade — source unique (2026-07-16, `access/cascade.py`)
 
 La cascade ci-dessus vit dans **`access.walk_cascade`** (générateur paramétré

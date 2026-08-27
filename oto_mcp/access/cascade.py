@@ -40,6 +40,16 @@ def _is_multi_account(provider: str) -> bool:
     return con is not None and con.auth_multi_account
 
 
+def account_noun(provider: str) -> str:
+    """Le MOT du fournisseur pour un compte de ce connecteur — « workspace » chez Slack,
+    « organisation » chez Zoho, « site » pour le navigateur connecté, « compte » par
+    défaut (`Connector.account_noun`). Sert les messages que l'AGENT lit au moment où il
+    est bloqué : « plusieurs comptes slack » l'oblige à traduire, « plusieurs
+    workspaces » lui dit ce qu'il cherche. Jamais vide."""
+    con = connectors.connector_for_provider(provider)
+    return (getattr(con, "account_noun", "") or "compte") if con else "compte"
+
+
 def _shared_auto_account(entity_type: str, entity_id: str, provider: str,
                          where: str, scope: Optional[str] = None) -> str:
     """Compte AUTOMATIQUE d'un palier multi-compte, quand l'appelant n'en a nommé
@@ -60,12 +70,13 @@ def _shared_auto_account(entity_type: str, entity_id: str, provider: str,
     if len(defaults) == 1:
         return defaults[0]["account"]
     sc = f", scope='{scope}'" if scope else ""
+    noun = account_noun(provider)
     raise McpError(ErrorData(
         code=INVALID_PARAMS,
         message=(
-            f"Plusieurs comptes `{provider}` configurés {where}, aucun (ou "
-            f"plusieurs) marqué par défaut — précise lequel "
-            f"(oto_identity(op='list'{sc}) pour les lister, "
+            f"Plusieurs {noun}s `{provider}` configurés {where}, aucun (ou "
+            f"plusieurs) marqué par défaut — précise lequel avec `_account=\"<nom>\"` "
+            f"sur cet appel (oto_identity(op='list'{sc}) pour les lister, "
             f"oto_identity(op='set'{sc}) pour en fixer un par défaut)."
         )))
 
