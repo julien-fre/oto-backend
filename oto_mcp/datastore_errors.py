@@ -13,16 +13,27 @@ la tenait était l'objet même du mécanisme.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
 
 
 class RowValidationError(ValueError):
     """Écriture refusée par le schéma strict / le cycle de vie (ADR 0046 B/C).
-    Le message liste les champs fautifs — actionnable, jamais un refus muet."""
+    Le message liste les champs fautifs — actionnable, jamais un refus muet.
 
-    def __init__(self, errors: list[str]):
+    `row` = la DÉSIGNATION de la ligne fautive, quand le geste en visait plusieurs
+    (#412). Un lot de 200 lignes qui refuse en nommant le champ et la valeur, mais
+    pas la ligne, fait chercher à la main dans un fichier client de 8 910 lignes :
+    le coût n'est pas les lignes non écrites, c'est le temps de trouver la fautive.
+    Le store la connaît — il valide ligne par ligne — l'information existait et ne
+    sortait pas."""
+
+    def __init__(self, errors: list[str], *, row: Optional[str] = None):
         self.errors = errors
-        super().__init__("écriture refusée par le schéma : " + " ; ".join(errors))
+        self.row = row
+        tete = "écriture refusée par le schéma"
+        if row:
+            tete += f" · {row}"
+        super().__init__(tete + " : " + " ; ".join(errors))
 
 
 class InvalidCursor(ValueError):

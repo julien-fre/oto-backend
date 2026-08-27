@@ -242,6 +242,21 @@ chemin (`contacts[].tel`), et il est **vide hors strict** — là, le champ libr
 droit explicite du contrat, pas une anomalie. Refuser franchement aurait été plus net,
 mais aurait cassé cette liberté : ce qui manquait était un signal, pas une barrière.
 
+**Ce que l'écriture VIDE se dit aussi (13/08, #407/#408/#409).** Ne pas nommer un champ
+le laisse intact ; le nommer avec `null` (ou `""`) l'EFFACE. Deux gestes différents, et
+le second est indiscernable d'un `None` de sérialisation dans un payload — variable non
+peuplée, gabarit à demi rempli, aller-retour de lecture. Toute réponse d'écriture porte
+donc `valeurs_effacees` (`{ligne, champ, valeur}` — la valeur PERDUE, sans quoi il n'y a
+rien à rétablir) + `valeurs_effacees_hint`, relevé dans les deux chemins qui fusionnent
+(`update_row`, `_merge_into_row`) et servi par le même `off_schema_report()`. Bornes :
+20 effacements nommés, une valeur rendue jusqu'à 300 caractères puis remplacée par sa
+TAILLE. Le geste reste PERMIS — vider une valeur fausse n'a pas d'autre porte.
+⚠️ **Erreur d'attribution à connaître** : trois signaux du 13/08 accusaient l'écriture
+partielle d'avoir mis à `null` un champ *qu'elle ne nommait pas*. Le journal des appels
+dit l'inverse (`tool_calls` 224531 puis 224704, même ligne) — huit minutes plus tôt, la
+même session avait écrit `row={'moteur': None, …}` ligne par ligne. La règle du merge
+tenait ; c'est le silence qui a fait chercher le défaut au mauvais endroit.
+
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
 du LLM. Un namespace peut déclarer une **clé métier** au schéma (`schema.key`, ex.
@@ -253,6 +268,17 @@ appendées. Renvoie `{inserted, updated, count, key, ids}`. Cœur : `store.write
 préférer `oto_upload_url(target='datastore')` (push NDJSON/CSV out-of-bande → même batch-upsert ;
 ns_id scellé au mint, autz réappliquée via `ownership.can_access(datastore_namespace, write)`).
 Cf. `docs/projects.md` §push out-of-bande (issue #105).
+
+⚠️ **Un lot N'EST PAS atomique, et son refus le dit (#412).** Il s'arrête à la première
+ligne que le schéma refuse ; celles d'avant sont écrites et le RESTENT. Le refus nomme
+donc la ligne autant que le champ — index dans le lot, valeur de la clé métier — et
+combien de lignes ont atterri, parce que c'est ce qui décide de la reprise (rejouer le
+lot entier re-fusionne les premières, ou les duplique sans clé métier). Vécu sur un
+import de 8 910 lignes par lots de 200 : une adresse sans arobase dans le fichier
+client, et le coût n'était pas les 199 lignes perdues avec elle mais le temps de la
+retrouver. `DatastorePg._designation_de_lot` + `RowValidationError(row=…)` — le refus
+garde sa CLASSE (les surfaces s'en servent pour choisir leur code), seule sa
+désignation change.
 
 Auth :
 - MCP tools : Logto JWT comme les autres tools.

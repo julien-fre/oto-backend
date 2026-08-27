@@ -428,6 +428,17 @@ def register(mcp: FastMCP) -> None:
         write — it is how you catch a renamed field you kept writing under its old
         name. Absent = everything you wrote is in the declared format.
 
+        NOT NAMING a field leaves it untouched; NAMING it with `null` (or `""`)
+        ERASES it. Two different gestures — a `null` that slipped into your payload
+        (an unfilled variable, a half-populated template) destroys the value in
+        place. Erasures come back in `valeurs_effacees` — field, row, and the LOST
+        value — so you can rewrite what you did not mean to clear.
+
+        A BATCH is NOT atomic: it stops at the first row the schema refuses, and the
+        rows BEFORE it stay written. The refusal names that row (its index in the
+        batch, and its business key when one is in effect) and says how many rows
+        landed — resume from there rather than replaying the whole batch.
+
         ⚠️ The namespace must EXIST first (create it with `data_create_namespace`);
         writing to an unknown namespace raises "namespace inconnu" — it is NOT
         auto-created. New JSON KEYS within an existing namespace, however, do

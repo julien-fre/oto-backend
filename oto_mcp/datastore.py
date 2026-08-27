@@ -64,6 +64,8 @@ from .datastore_columns import (  # noqa: E402,F401
     _resolve_metrics,
     _to_path,
     _writes_layers,
+    effacements,
+    effacements_report,
 )
 
 
@@ -224,6 +226,11 @@ class DatastorePg(SchemaOpsMixin):
         self.off_schema: set = set()
         self.off_options: dict = {}
         self.off_notices: set = set()
+        # Ce que ce geste a VIDÉ (#407/#408/#409) : les colonnes qu'il nomme avec une
+        # valeur vide alors qu'elles portaient quelque chose, et la valeur perdue.
+        # Même portée que les relevés ci-dessus (un store par requête), même union
+        # sur un lot — mais une LISTE : la ligne fait partie de l'information.
+        self.off_erased: list = []
 
     # --- résolution namespace -> ns_id ---------------------------------------
 
@@ -494,6 +501,10 @@ class DatastorePg(SchemaOpsMixin):
         # répète pas 500 fois la même phrase.
         if self.off_notices:
             out["notices"] = sorted(self.off_notices)
+        # Ce que le geste a VIDÉ (#407/#408/#409). Clé DISTINCTE des précédentes : ce
+        # n'est ni une colonne inconnue ni une valeur hors d'une liste, c'est une
+        # valeur qui N'EST PLUS — la seule des quatre qui ait détruit quelque chose.
+        out.update(effacements_report(self.off_erased))
         return out
 
     # Le message que voient les tableaux dont l'écriture d'un état final libérait la
@@ -818,6 +829,10 @@ class DatastorePg(SchemaOpsMixin):
         def _apply(current: dict) -> dict:
             merged = dict(current or {})
             prev_status = merged.get(sk) if sk else None
+            # Relevé AVANT la fusion : après, l'ancienne valeur n'existe plus nulle
+            # part. Posé sur le store seulement une fois la validation passée — un
+            # refus n'a rien effacé, l'annoncer ferait chercher un dégât imaginaire.
+            vidages = effacements(current, user_data, row_id)
             # Colonne par colonne, pour que l'origine survive à une écriture
             # ordinaire. Un `update` en bloc l'emporterait avec le reste — et
             # silencieusement, puisque remplacer une valeur est le geste normal.
@@ -825,6 +840,7 @@ class DatastorePg(SchemaOpsMixin):
                 merged[_k] = _merge_column(merged.get(_k), _v)
             self._check_row(schema, merged, prev_status=prev_status,
                             written=set(user_data))
+            self.off_erased.extend(vidages)
             return merged
 
         result = db.datastore_merge_row_locked(ns_id, row_id, _apply, _now_iso(),
@@ -877,48 +893,87 @@ class DatastorePg(SchemaOpsMixin):
         ns_id = self._resolve(namespace, write=True)
         return self._write_rows_to_ns(ns_id, rows, key=key or self.declared_key(namespace))
 
+    @staticmethod
+    def _designation_de_lot(rang: int, total: int, key: Optional[str],
+                            data: Any, faites: int) -> str:
+        """COMMENT retrouver la ligne fautive d'un lot, et OÙ le lot s'est arrêté (#412).
+
+        Le refus nommait le champ et la valeur, jamais la ligne : sur un import de
+        8 910 lignes par lots de 200, retrouver la fautive coûtait plus cher que les
+        199 lignes perdues avec elle. Le store valide ligne par ligne — il SAIT
+        laquelle échoue, l'information existait et ne sortait pas.
+
+        ⚠️ On y ajoute ce que le signal croyait acquis et qui est FAUX : **le lot
+        n'est pas atomique**. Les lignes qui précèdent la fautive sont écrites et le
+        restent. C'est ce qui décide de la reprise — rejouer le lot entier
+        re-fusionnerait les premières (ou les dupliquerait, sans clé métier)."""
+        ref = ""
+        if key and isinstance(data, dict) and data.get(key) is not None:
+            ref = f" ({key}={data[key]})"
+        etat = (f"{faites} ligne{'s' if faites > 1 else ''} déjà "
+                f"écrite{'s' if faites > 1 else ''} avant l'arrêt, aucune après "
+                f"— reprends le lot à la ligne {rang}" if faites
+                else "aucune ligne écrite avant l'arrêt")
+        return f"ligne {rang}/{total} du lot{ref} · {etat}"
+
     def _write_rows_to_ns(self, ns_id: int, rows: list, *, key: Optional[str]) -> dict:
         """Cœur du batch, keyé par `ns_id` déjà résolu (réutilisable hors contexte
         d'org — matérialisation d'un upload signé, où l'org de session est absente).
         Le schéma v2 (validation/lifecycle, ADR 0046) s'applique à CHAQUE row du
-        lot, sur son résultat mergé — une row fautive fait échouer le lot avec le
-        champ en cause (pas d'écriture partielle silencieuse au-delà)."""
+        lot, sur son résultat mergé — une row fautive fait échouer le lot en NOMMANT
+        la ligne autant que le champ (#412), et en disant ce qui est déjà écrit."""
         schema = self._schema_of(ns_id)
         inserted, updated, ids = 0, 0, []
-        for data in rows:
-            if not isinstance(data, dict):
-                raise ValueError("chaque row doit être un objet")
-            self._reject_misplaced_id(data, None, batch=True)
-            user_data = {k: v for k, v in data.items() if k not in _META_COLS}
-            kv = user_data.get(key) if key else None
-            if key and kv is not None and str(kv) != "":
-                existing_id = db.datastore_find_row_id_by_key(ns_id, key, kv)
-                if existing_id is not None:
+        total = len(rows)
+        for rang, data in enumerate(rows, 1):
+            try:
+                if not isinstance(data, dict):
+                    raise ValueError("chaque row doit être un objet")
+                self._reject_misplaced_id(data, None, batch=True)
+                user_data = {k: v for k, v in data.items() if k not in _META_COLS}
+                kv = user_data.get(key) if key else None
+                if key and kv is not None and str(kv) != "":
+                    existing_id = db.datastore_find_row_id_by_key(ns_id, key, kv)
+                    if existing_id is not None:
+                        self._merge_into_row(ns_id, existing_id, user_data, schema=schema)
+                        updated += 1
+                        ids.append(existing_id)
+                        continue
+                self._check_row(schema, user_data)
+                try:
+                    row = db.datastore_insert_row(ns_id, _new_id(), user_data)
+                except UniqueViolation:
+                    # Course perdue sous l'index UNIQUE de clé métier (#109 ch.3) : un
+                    # write concurrent vient d'insérer la même clé entre le lookup et
+                    # l'insert — c'est PRÉCISÉMENT le doublon que la contrainte empêche.
+                    # On converge en update (même merge que le chemin nominal). La clé
+                    # violée est la clé DÉCLARÉE du namespace (l'index ne porte qu'elle),
+                    # qui peut différer d'un `key` explicite passé à l'appel.
+                    dk = ((db.get_datastore_namespace_by_id(ns_id) or {}).get("schema")
+                          or {}).get("key")
+                    dkv = user_data.get(dk) if dk else None
+                    existing_id = (db.datastore_find_row_id_by_key(ns_id, dk, dkv)
+                                   if dk and dkv is not None else None)
+                    if existing_id is None:
+                        raise  # violation inexpliquée → erreur franche, pas de repli muet
                     self._merge_into_row(ns_id, existing_id, user_data, schema=schema)
                     updated += 1
                     ids.append(existing_id)
                     continue
-            self._check_row(schema, user_data)
-            try:
-                row = db.datastore_insert_row(ns_id, _new_id(), user_data)
-            except UniqueViolation:
-                # Course perdue sous l'index UNIQUE de clé métier (#109 ch.3) : un
-                # write concurrent vient d'insérer la même clé entre le lookup et
-                # l'insert — c'est PRÉCISÉMENT le doublon que la contrainte empêche.
-                # On converge en update (même merge que le chemin nominal). La clé
-                # violée est la clé DÉCLARÉE du namespace (l'index ne porte qu'elle),
-                # qui peut différer d'un `key` explicite passé à l'appel.
-                dk = ((db.get_datastore_namespace_by_id(ns_id) or {}).get("schema")
-                      or {}).get("key")
-                dkv = user_data.get(dk) if dk else None
-                existing_id = (db.datastore_find_row_id_by_key(ns_id, dk, dkv)
-                               if dk and dkv is not None else None)
-                if existing_id is None:
-                    raise  # violation inexpliquée → erreur franche, pas de repli muet
-                self._merge_into_row(ns_id, existing_id, user_data, schema=schema)
-                updated += 1
-                ids.append(existing_id)
-                continue
+            except RowValidationError as e:
+                # Le refus GARDE sa classe : les surfaces s'en servent pour choisir
+                # leur code (`capabilities/datastore_rows`), et un refus de schéma
+                # dans un lot reste un refus de schéma. Seule sa désignation change.
+                raise RowValidationError(
+                    e.errors,
+                    row=self._designation_de_lot(rang, total, key, data,
+                                                 inserted + updated)) from None
+            except ValueError as e:
+                # Les autres refus de row (`id` égaré, `_id` dans un lot, row qui
+                # n'est pas un objet) nomment déjà LEUR faute, jamais la ligne.
+                raise ValueError(
+                    f"{self._designation_de_lot(rang, total, key, data, inserted + updated)}"
+                    f" : {e}") from None
             inserted += 1
             ids.append(row["row_id"])
         return {"inserted": inserted, "updated": updated, "count": inserted + updated,
@@ -1130,6 +1185,10 @@ class DatastorePg(SchemaOpsMixin):
         status_key = (dsv2.status_field(schema) or {}).get("key")
         prev_status = data.get(status_key) if status_key else None
         self._trace(trace, ns_id, ns, prev_status=prev_status)
+        # MÊME relevé que la fusion : le patch par `id` est le geste qui a vidé
+        # `moteur` en production le 13/08 — et il l'a fait en le NOMMANT (#407/#408/
+        # #409). Relevé avant la boucle, sur l'état lu en base.
+        vidages = effacements(data, patch, row_id)
         written = set()
         for k, v in patch.items():
             if k in _META_COLS:
@@ -1143,6 +1202,7 @@ class DatastorePg(SchemaOpsMixin):
         # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).
         # Seule la borne de longueur se limite aux clés du patch (#383).
         self._check_row(schema, data, prev_status=prev_status, written=written)
+        self.off_erased.extend(vidages)
         try:
             self._assert_writable(ns_id, row_id)
             row = db.datastore_update_row(ns_id, row_id, data, _now_iso())

@@ -201,6 +201,95 @@ def _refuse_dotted_names(user_data: Optional[dict]) -> None:
                 "invisible au filtre et au tri du même nom. Rien n'a été écrit."])
 
 
+# ── ce qu'une écriture VIDE (#407/#408/#409) ──────────────────────────────────
+#
+# Le pendant de la règle du merge. « Une écriture ne touche que ce qu'elle nomme »
+# dit ce qui SURVIT ; il restait à dire ce qui TOMBE. Nommer un champ avec `null`
+# l'efface — c'est le seul geste qui vide une valeur fausse, donc il reste permis —
+# mais il est indiscernable, dans un payload, d'un `None` de sérialisation : une
+# variable non peuplée, un gabarit à demi rempli, un aller-retour de lecture.
+#
+# Vécu le 13/08/2026 (org 226, tableau `edition-essais`) : une session a écrit
+# `row={'moteur': None, 'siren': …}` ligne par ligne, a reçu des succès ordinaires,
+# et a découvert le champ vidé huit minutes plus tard — en l'imputant à l'écriture
+# d'enrichissement suivante, qui ne nommait pas `moteur` et ne l'avait pas touché
+# (trois signaux, #407/#408/#409, sur une cause qui n'était pas la leur). L'écriture
+# a fait ce qu'on lui demandait ; c'est ce qu'elle en a DIT qui manquait.
+#
+# Même patron que `hors_schema` (#294) et `hors_options` (#319) : on n'empêche rien,
+# on nomme. Et on nomme la VALEUR PERDUE — sans elle il n'y a rien à rétablir.
+
+# Deux bornes, pour qu'un relevé reste lisible par un agent : le nombre
+# d'effacements nommés, et la taille d'une valeur rendue. Au-delà, on dit la TAILLE
+# plutôt qu'un extrait — un extrait ferait croire qu'on tient la valeur.
+_EFFACEMENTS_NOMMES = 20
+_VALEUR_RENDUE_MAX = 300
+
+
+def _valeur_posee(new: Any) -> tuple:
+    """`(l'écriture touche-t-elle la VALEUR ?, la valeur qu'elle pose)`.
+
+    Écrire `{"origine": …}` seul ne touche pas la valeur (c'est toute la règle de
+    `_merge_column`) : ce n'est donc jamais un effacement, même si la colonne
+    finissait vide pour une autre raison."""
+    if not _writes_layers(new):
+        return True, new
+    if dsv2.VALUE_LAYER in new:
+        return True, new[dsv2.VALUE_LAYER]
+    return False, None
+
+
+def effacements(existing: Optional[dict], user_data: Optional[dict],
+                row_id: Optional[str] = None) -> list[dict]:
+    """Les colonnes que ce geste VIDE : il les nomme, avec une valeur vide, là où
+    la ligne portait quelque chose. Une par entrée, avec la valeur PERDUE.
+
+    Le vide se juge DÉBALLÉ (`unwrap`) des deux côtés, comme tout ce qui juge une
+    valeur : une colonne à couches dont la `valeur` tombe est vidée au même titre
+    qu'un scalaire, et une colonne qui ne portait que son `origine` n'avait déjà
+    pas de valeur à perdre."""
+    sortie: list[dict] = []
+    for cle, neuf in (user_data or {}).items():
+        if cle in _META_COLS:
+            continue
+        touche, posee = _valeur_posee(neuf)
+        if not touche or not dsv2._is_empty(posee):
+            continue
+        ancienne = dsv2.unwrap((existing or {}).get(cle))
+        if dsv2._is_empty(ancienne):
+            continue                      # rien à perdre : on ne fait pas de bruit
+        sortie.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
+    return sortie
+
+
+def _valeur_rendue(valeur: Any) -> Any:
+    """La valeur perdue, ou sa TAILLE quand la rendre coûterait la réponse."""
+    n = len(valeur) if isinstance(valeur, str) else len(str(valeur))
+    if n <= _VALEUR_RENDUE_MAX:
+        return valeur
+    return (f"<{n} caractères — la valeur complète n'est plus lisible ici, "
+            "elle n'est plus en base non plus>")
+
+
+def effacements_report(records: list) -> dict:
+    """Le relevé des effacements, prêt à fusionner dans une réponse d'écriture.
+
+    `{}` quand rien n'a été vidé — le cas normal ne porte pas de clé parasite."""
+    if not records:
+        return {}
+    nommes = [{**r, "valeur": _valeur_rendue(r.get("valeur"))}
+              for r in records[:_EFFACEMENTS_NOMMES]]
+    reste = len(records) - len(nommes)
+    hint = ("une valeur vide (`null`, `\"\"`) dans le payload EFFACE la valeur en "
+            "place — ce n'est PAS la même chose que ne pas nommer le champ, qui le "
+            "laisse intact. Si l'effacement n'était pas voulu (variable non peuplée, "
+            "gabarit à demi rempli), réécris les valeurs ci-dessus : elles ne sont "
+            "plus en base.")
+    if reste:
+        hint += f" {len(records)} effacements au total, {len(nommes)} nommés ici."
+    return {"valeurs_effacees": nommes, "valeurs_effacees_hint": hint}
+
+
 def _merge_column(existing: Any, new: Any) -> Any:
     """Fusion d'UNE colonne. **Aucune couche ne s'écrit implicitement, dans aucun sens.**
 
