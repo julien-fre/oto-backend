@@ -164,6 +164,17 @@ def test_job_search_defaults_are_preserved(client):
     assert (kw["language"], kw["max_results"], kw["no_cache"]) == ("en", 50, False)
 
 
+def test_job_search_hands_back_the_freshness_block_untouched(client):
+    """Le client oto-core garantit qu'un `jobs_results` vide a été CONSTATÉ frais
+    (signal #456) et le dit dans `oto_freshness`. Cette garantie ne vaut que si
+    l'agent la reçoit : une projection posée ici plus tard la ferait disparaître
+    en silence, et un zéro redeviendrait ininterprétable."""
+    client.search_jobs.return_value = {
+        "jobs_results": [], "oto_freshness": {"age_seconds": 4, "refetched": True}}
+    r = _tool("serpapi_jobs")(op="search", query="Editis")
+    assert r["oto_freshness"] == {"age_seconds": 4, "refetched": True}
+
+
 def test_job_details_passes_the_job_id(client):
     _tool("serpapi_jobs")(op="details", job_id="abc")
     assert client.get_job_details.call_args.kwargs == {"job_id": "abc"}

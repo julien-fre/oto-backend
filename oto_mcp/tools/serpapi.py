@@ -18,6 +18,18 @@ par mot-clé — leurs paramètres ne recouvrent pas ceux des autres :
 `serpapi_google_flights` (departure_id/arrival_id/dates, aucun `query`),
 `serpapi_google_hotels` (check_in/check_out/adults).
 
+⚠️ **Un résultat VIDE n'est jamais resservi par un cache** (signal d'usage #456,
+2026-08-27) : SerpApi mémorisait une heure durant les réponses à zéro résultat —
+et le cache d'arête Cloudflare devant lui aussi — ce qui transformait une absence
+momentanée en absence PERMANENTE et fausse. Sur un connecteur qui sert
+d'indicateur d'activité (« une maison qui recrute se développe »), un zéro figé
+est indiscernable d'une vraie absence, et une campagne qui traite chaque ligne une
+seule fois n'a aucun moyen de le rattraper. La garantie est portée par le client
+oto-core (`_empty_must_be_fresh`) : un vide périmé est refait en forçant
+`no_cache`, un NON-vide garde le droit au cache. Elle vaut partout où le tableau
+de résultats est nommé — toujours pour `serpapi_jobs`, sur `results_key=` pour
+`serpapi_search`.
+
 Clé résolue par appel via `access.resolve_api_key("serpapi")` : user key
 (`/account`) ou credential partagé de l'org si posé, sinon clé plateforme + quota
 daily pour les members. Pourquoi SerpApi en plus de Serper : SerpApi a des moteurs
@@ -185,6 +197,11 @@ def register(mcp: FastMCP) -> None:
             max_results: with `results_key`, auto-paginate up to this many. No-op
                 if the engine returns no `serpapi_pagination.next_page_token`.
             results_key: result array to paginate/cap (e.g. "organic_results").
+                Naming it also buys the empty-result freshness guarantee: an
+                empty array is then re-issued rather than served from cache, and
+                the payload gains an `oto_freshness` block (`age_seconds`,
+                `refetched`). Without it the payload passes through untouched —
+                the client will not guess which array carries the answer.
         """
         payload = _shared_params(
             engine, query=query, country=country, language=language,
@@ -211,7 +228,11 @@ def register(mcp: FastMCP) -> None:
         `op` :
         - **"search"** (default) : search Google Jobs for live job postings.
           Returns the SerpApi payload incl. `jobs_results` (each with a `job_id`
-          usable in op="details").
+          usable in op="details") and an `oto_freshness` block — `age_seconds`
+          (how old the answer actually is: ~0 = just scraped, a large value = a
+          cache served it) and `refetched` (whether a stale empty was re-issued
+          for you). **An empty `jobs_results` is always freshly observed**, so a
+          zero here can be read as a real absence of postings.
         - **"details"** : fetch the full detail of one job posting by its Google
           Jobs `job_id` (apply options, full description) — `job_id` comes from
           op="search".
@@ -226,7 +247,9 @@ def register(mcp: FastMCP) -> None:
             country: op="search" — 2-letter code, e.g. "fr", "us" (Google `gl`).
             language: op="search" — language code (Google `hl`).
             max_results: op="search" — max postings (pagination handled).
-            no_cache: op="search" — force fresh results.
+            no_cache: op="search" — force a fresh scrape even when the answer is
+                NOT empty (slower: 5-20 s instead of ~0 s). You do NOT need it to
+                trust a zero — an empty result is never served from cache.
             job_id: op="details" — Google Jobs job id, from op="search".
         """
         if op == "search":
