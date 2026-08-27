@@ -315,3 +315,117 @@ def test_la_condition_mord_sur_le_resultat_fusionne():
     errs = dsv2.validate_row(schema, {"qualification": merged})
     assert errs and "motif_ecartement" in errs[0], \
         "la condition juge le résultat fusionné, couches comprises"
+
+
+# ── #377 : la cible d'un required_when peut être une COUCHE ───────────────────
+#
+# Le cas réel de campagne : exiger la JUSTIFICATION quand la qualification prend
+# certaines valeurs. La justification n'est pas une colonne sœur — c'est la couche
+# `comment` de la qualification elle-même, celle que l'agent écrit du même geste.
+#
+# Avant #377 cette déclaration était ACCEPTÉE à la pose puis refusait toute
+# écriture déclenchante, **y compris celle qui portait le commentaire** : le
+# contrôle cherchait une colonne littérale `qualification.comment`, que
+# `_refuse_dotted_names` interdit précisément d'écrire. Une contrainte
+# insatisfiable par construction — pire qu'inerte, puisque la pose avait l'air
+# d'avoir marché.
+
+QUALIF_SCHEMA = {"fields": [
+    {"key": "siren", "type": "text"},
+    {"key": "qualification", "type": "text"},
+    {"key": "qualification.comment", "type": "text", "label": "Justification",
+     "required_when": {"qualification": ["hors_perimetre", "dormante_ou_introuvable"]}},
+]}
+
+
+def test_la_cible_de_couche_est_acceptee_a_la_pose():
+    assert dsv2.validate_schema_def(QUALIF_SCHEMA) == []
+
+
+def test_la_couche_requise_mord_quand_elle_manque():
+    for q in ("hors_perimetre", "dormante_ou_introuvable"):
+        errs = dsv2.validate_row(QUALIF_SCHEMA, {"siren": "1", "qualification": q})
+        assert errs and "qualification.comment" in errs[0], \
+            f"la justification doit être exigée sur {q}"
+
+
+def test_la_couche_requise_passe_quand_elle_est_ecrite():
+    """LE défaut de #377 : cette écriture-là était refusée. La justification est
+    écrite EN COUCHES sur la colonne qualifiée — le geste nominal d'un agent."""
+    assert dsv2.validate_row(QUALIF_SCHEMA, {
+        "siren": "1",
+        "qualification": {"valeur": "hors_perimetre",
+                          "comment": "NAF 68.20A — hors périmètre santé"},
+    }) == []
+
+
+def test_hors_condition_la_couche_n_est_pas_exigee():
+    assert dsv2.validate_row(
+        QUALIF_SCHEMA, {"siren": "1", "qualification": "en_activite"}) == []
+
+
+def test_une_colonne_nue_ne_porte_aucune_couche():
+    """La colonne écrite en scalaire n'a pas de couche `comment` : la contrainte
+    mord. Sans quoi il suffirait d'écrire la valeur nue pour échapper au motif."""
+    errs = dsv2.validate_row(
+        QUALIF_SCHEMA, {"siren": "1", "qualification": "hors_perimetre"})
+    assert errs and "qualification.comment" in errs[0]
+
+
+def test_la_couche_d_une_colonne_inconnue_est_refusee_nommement():
+    """Sans base déclarée, la cible ne désigne rien — et la contrainte serait
+    insatisfiable en silence, le défaut même qu'on ferme."""
+    errs = dsv2.validate_schema_def({"fields": [
+        {"key": "qualification", "type": "text"},
+        {"key": "inexistante.comment", "required_when": {"qualification": "x"}}]})
+    assert errs and "inexistante" in errs[0], errs
+
+
+def test_un_suffixe_qui_n_est_pas_une_couche_est_refuse():
+    """`qualification.commnet` (faute de frappe) et `qualification.valeur` (la
+    valeur se désigne par le nom NU) ne sont pas des cibles : refus nommé plutôt
+    qu'une colonne littérale fantôme."""
+    for mauvaise in ("qualification.commnet", "qualification.valeur"):
+        errs = dsv2.validate_schema_def({"fields": [
+            {"key": "qualification", "type": "text"},
+            {"key": mauvaise, "required_when": {"qualification": "x"}}]})
+        assert errs and "couche" in errs[0].lower(), f"{mauvaise} doit être refusé"
+
+
+def test_une_cible_de_couche_ne_declare_pas_de_colonne():
+    """Une couche n'est pas une colonne : elle ne nomme pas la ligne, ne porte pas
+    son statut, ne se subdivise pas. Ces clés seraient LUES NULLE PART — la forme
+    acceptée-inerte que #347 a fermée."""
+    for cle, valeur in (("role", "status"), ("display", "title"),
+                        ("fields", [{"key": "x"}]), ("flat_alias", "q{n}_{attr}")):
+        errs = dsv2.validate_schema_def({"fields": [
+            {"key": "qualification", "type": "text"},
+            {"key": "qualification.comment", cle: valeur}]})
+        assert errs and cle in errs[0], f"`{cle}` sur une couche doit être refusé"
+
+
+def test_le_type_et_la_borne_portent_sur_la_valeur_de_la_couche():
+    """Ce qui juge, déballe — et ce qui est jugé ici est le TEXTE du commentaire,
+    pas l'enveloppe de la colonne."""
+    schema = {"fields": [
+        {"key": "q", "type": "text"},
+        {"key": "q.comment", "type": "text", "max_length": 20, "required": True}]}
+    assert dsv2.validate_row(schema, {"q": {"valeur": "x", "comment": "court"}}) == []
+    errs = dsv2.validate_row(
+        schema, {"q": {"valeur": "x", "comment": "beaucoup trop long pour la borne"}})
+    assert errs and "20" in errs[0], errs
+
+
+def test_la_cible_de_couche_active_la_validation():
+    """Elle déclare un requis : sans activation, la contrainte serait posée pour rien."""
+    assert dsv2.validation_active(
+        {"fields": [{"key": "q"}, {"key": "q.comment", "required_when": {"q": "x"}}]})
+
+
+def test_une_couche_n_est_pas_annoncee_comme_colonne_mesurable():
+    """`top_level_bounds` sert une requête `data->>clé` — un chemin de couche n'en
+    est pas un. L'y laisser ferait mesurer une colonne littérale qui n'existe pas,
+    donc rendre « aucune ligne hors borne » sur un tableau non vérifié."""
+    assert dsv2.top_level_bounds({"fields": [
+        {"key": "q", "type": "text"},
+        {"key": "q.comment", "type": "text", "max_length": 20}]}) == {}

@@ -117,6 +117,35 @@ def unwrap(value: Any) -> Any:
     return value
 
 
+def split_layer(field: str) -> tuple:
+    """`email.comment` → `("email", "comment")` ; `email` → `("email", None)`.
+
+    Ne coupe qu'au DERNIER point, et seulement si le suffixe est une couche connue :
+    un champ légitimement nommé `taux.2024` reste un nom de colonne entier. Le
+    vocabulaire est FERMÉ, donc l'ambiguïté est décidable — pas de devinette. La
+    valeur, elle, se désigne par le nom NU (`email`), jamais `email.valeur` : c'est
+    pourquoi `VALEUR_LAYER` n'est pas un suffixe coupable.
+
+    ⚠️ Domicile ICI depuis #377, plus dans `db/paths` : la validation de schéma en a
+    besoin, et `db.paths` importe déjà ce module — l'inverse ferait un cycle.
+    `db.paths.split_layer` la ré-exporte, si bien que la grammaire reste à UN endroit
+    pour le SQL comme pour le schéma. Deux copies, c'est le défaut qu'on a déjà payé :
+    le même chemin répondait juste sur un verbe et faux sur trois."""
+    base, sep, last = str(field).rpartition(".")
+    if sep and base and last in LAYER_KEYS:
+        return base, last
+    return str(field), None
+
+
+def layer_value(column: Any, layer: str) -> Any:
+    """La valeur d'UNE couche d'une colonne — `None` si la colonne n'en porte pas.
+
+    Une colonne écrite en scalaire (`"hors_perimetre"`) n'a aucune couche : sa
+    justification est ABSENTE, et c'est bien ce qu'un requis doit constater. Sans ce
+    `None`, il suffirait d'écrire la valeur nue pour échapper au motif."""
+    return column.get(layer) if isinstance(column, dict) else None
+
+
 FLAT_ALIAS = "flat_alias"
 _ALIAS_SLOTS = ("{n}", "{attr}")
 
@@ -265,11 +294,18 @@ def max_length_of(field: dict) -> Optional[int]:
 def top_level_bounds(schema: Optional[dict]) -> dict[str, int]:
     """`{clé: max_length}` des champs BORNÉS de premier niveau — ceux qu'une requête
     SQL sait mesurer (`data->>clé`). Sert l'avertissement « des lignes existantes
-    dépassent déjà » à la pose du schéma."""
+    dépassent déjà » à la pose du schéma.
+
+    ⚠️ Les cibles de COUCHE (#377) en sont exclues : `data->>'q.comment'` mesurerait
+    une colonne littérale qui n'existe pas, donc rendrait « aucune ligne hors borne »
+    sur un tableau que personne n'a vérifié — un silence qui ferait croire la table
+    conforme. La borne, elle, s'applique bien : `validate_row` la fait respecter sur
+    la valeur de la couche. Ce qui manque ici est l'avertissement sur l'EXISTANT,
+    et il manque franchement plutôt qu'en mentant."""
     out: dict[str, int] = {}
     for f in _fields(schema):
         key, ml = f.get("key"), max_length_of(f)
-        if isinstance(key, str) and key and ml:
+        if isinstance(key, str) and key and ml and not split_layer(key)[1]:
             out[key] = ml
     return out
 
@@ -296,7 +332,10 @@ def top_level_enum_options(schema: Optional[dict]) -> dict:
     out: dict = {}
     for f in _fields(schema):
         key = f.get("key")
-        if not key or f.get("type") != "enum":
+        # Même raison que `top_level_bounds` : une cible de couche n'est pas
+        # interrogeable par `data->>champ`, l'annoncer ferait porter le réglage
+        # d'un écran sur une colonne qui n'existe pas.
+        if not key or f.get("type") != "enum" or split_layer(key)[1]:
             continue
         opts = [str(o) for o in (f.get("options") or [])]
         if opts:
@@ -380,9 +419,14 @@ def validation_active(schema: Optional[dict]) -> bool:
     `max_length` compte au même titre que `required` — sans quoi une borne posée
     sur un schéma qui n'a aucun requis serait INERTE, silencieusement (signal
     #383). Elle est cherchée en PROFONDEUR (sous-records inclus), là où
-    required/required_when restent au premier niveau : élargir ces deux-là
-    activerait rétroactivement la validation de schémas déjà posés, alors que
-    déclarer une borne EST la demande de la faire respecter."""
+    required/required_when sont lus sur les seules entrées DÉCLARÉES ICI : élargir
+    ces deux-là activerait rétroactivement la validation de schémas déjà posés,
+    alors que déclarer une borne EST la demande de la faire respecter.
+
+    ⚠️ « entrée déclarée ici » ≠ « colonne » depuis #377 : une cible de COUCHE
+    (`qualification.comment`) est une entrée de cette liste comme une autre, et
+    active donc bien la validation. Ce qui reste hors de portée, c'est la
+    profondeur — un requis enfoui dans un sous-record."""
     if not isinstance(schema, dict):
         return False
     if schema.get("strict"):
@@ -653,6 +697,14 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
     return errors
 
 
+# Ce qu'une COLONNE seule peut déclarer — donc ce qu'une cible de couche ne peut pas.
+# Chacune désigne la colonne en tant que telle : nommer la ligne (`display`), porter
+# son statut (`role`), se subdiviser (`fields`/`of`), répondre à un ancien nom plat
+# (`flat_alias`). Posées sur une couche, elles ne seraient lues nulle part — la forme
+# acceptée-inerte que #347 a fermée.
+_COLUMN_ONLY_KEYS = ("display", "fields", "of", FLAT_ALIAS, "role")
+
+
 def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
     for f in fields:
         key = f.get("key")
@@ -660,6 +712,37 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
         if not isinstance(key, str) or not key:
             errors.append(f"{fpath}: key manquante")
             continue
+        # Cible de COUCHE (#377) : `qualification.comment` contraint la couche du
+        # même nom SUR la colonne `qualification` — ce n'est pas une colonne de
+        # plus. Toute autre forme pointée se refuse ICI plutôt que d'être stockée :
+        # elle ne désignerait rien, et une contrainte qui ne désigne rien n'est pas
+        # inerte, elle est INSATISFIABLE — c'est le défaut de #377, où la pose
+        # passait et toute écriture déclenchante était ensuite refusée, y compris
+        # celle qui portait bien la justification.
+        base, layer = split_layer(key)
+        if layer:
+            if not any(str(x.get("key") or "") == base
+                       for x in fields if isinstance(x, dict)):
+                errors.append(
+                    f"{fpath}: la couche `{layer}` porte sur la colonne `{base}`, "
+                    f"qui n'est pas déclarée ici — déclare-la, ou corrige le nom. "
+                    f"Une contrainte sur une colonne absente ne pourrait jamais "
+                    f"être satisfaite.")
+            interdites = [k for k in _COLUMN_ONLY_KEYS if k in f]
+            if interdites:
+                errors.append(
+                    f"{fpath}: {', '.join(repr(k) for k in interdites)} ne se "
+                    f"déclare que sur une COLONNE, pas sur une couche — une couche "
+                    f"ne nomme pas la ligne, ne porte pas son statut et ne se "
+                    f"subdivise pas. Sur `{key}` ces clés ne seraient lues nulle "
+                    f"part : déplace-les sur `{base}`.")
+        elif "." in key:
+            errors.append(
+                f"{fpath}: `{key}` n'est pas un nom de colonne — un point ne "
+                f"désigne qu'une couche, et les couches sont "
+                f"{', '.join(LAYER_KEYS)}. La valeur, elle, se désigne par le nom "
+                f"NU (`{key.rpartition('.')[0]}`). Une colonne littérale portant un "
+                f"point serait invisible au filtre et au tri du même nom.")
         ftype = f.get("type")
         if ftype is not None and ftype not in SCALAR_TYPES + COMPOSITE_TYPES:
             errors.append(f"{fpath}: type inconnu {ftype!r}")
@@ -804,7 +887,18 @@ def _row_errors(fields: list, data: dict, path: str,
         # borne et les options — pas son enveloppe. Sans ça un schéma strict refuse
         # toute écriture en couches, donc la primitive est inutilisable là où elle
         # sert le plus.
-        value = unwrap(data.get(key))
+        #
+        # Une clé POINTÉE (#377) désigne une couche : `qualification.comment` est la
+        # justification portée par la colonne `qualification`, pas une colonne du
+        # même nom. Le contrôle lisait `data["qualification.comment"]` — un nom que
+        # `_refuse_dotted_names` interdit précisément d'ÉCRIRE : la contrainte ne
+        # pouvait donc jamais être satisfaite, et refusait jusqu'aux écritures qui
+        # portaient bien le commentaire. Accepté à la pose, bloquant à l'écriture :
+        # un cran plus grave qu'inerte, parce que la déclaration avait l'air d'avoir
+        # pris.
+        base, layer = split_layer(key)
+        value = (layer_value(data.get(base), layer) if layer
+                 else unwrap(data.get(key)))
         required = bool(f.get("required"))
         rw = f.get("required_when")
         if not required and isinstance(rw, dict) and rw:

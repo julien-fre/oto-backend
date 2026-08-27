@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 
-from ..datastore_schema import LAYER_KEYS, VALUE_LAYER
+from ..datastore_schema import VALUE_LAYER, split_layer  # noqa: F401 — ré-export
 
 __all__ = [
     "FIELD_VALUE_PARAM_SQL", "LAYER_VALUE_PARAM_SQL", "ROW_VALUES_TEXT_SQL",
@@ -130,16 +130,11 @@ ROW_VALUES_TEXT_SQL = (
 )
 
 
-def split_layer(field: str) -> tuple:
-    """`email.source` → `("email", "source")` ; `email` → `("email", None)`.
-
-    Ne coupe qu'au DERNIER point, et seulement si le suffixe est une couche connue :
-    un champ légitimement nommé `taux.2024` reste un nom de colonne entier. Le
-    vocabulaire est FERMÉ, donc l'ambiguïté est décidable — pas de devinette."""
-    base, sep, last = str(field).rpartition(".")
-    if sep and base and last in LAYER_KEYS:
-        return base, last
-    return str(field), None
+# `split_layer` vit dans `datastore_schema` depuis #377 et n'est que RÉ-EXPORTÉE ici
+# (les appelants la connaissent sous `db.split_layer`). Elle a déménagé parce que la
+# validation de schéma en a besoin, et que ce module importe déjà `datastore_schema` :
+# la garder ici en aurait fait une seconde copie, et une grammaire de chemin en deux
+# exemplaires est exactement ce que ce module existe pour empêcher.
 
 
 _LIST_PATH_RE = re.compile(r"^(?P<col>[^\[\]]+)\[(?P<rang>\d*)\]\.(?P<reste>.+)$")
