@@ -37,7 +37,9 @@ oto_mcp/
 │                     #   Séparé de tools/ : le registre doit rester PUR (tools/ importe
 │                     #   access → le registre, et se charge en try/except — une dép
 │                     #   optionnelle manquante retirerait le connecteur du catalogue).
-├── api_routes.py     # /api/me, /api/settings/*, /api/admin/* (CORS oto.ninja)
+├── api_routes.py     # ASSEMBLAGE SEUL : table de routes /api/* (l'ordre est un contrat) + les 2 middlewares ASGI
+├── api_routes_base.py      # ce que tous les handlers partagent : _authenticate, CORS, _json/_json_error, OPTIONS, bind
+├── api_routes_<domaine>.py # les handlers : public, account, media, projects, uploads, credentials, tools, admin
 ├── access.py         # rôles member/admin, resolve_api_key, quotas, status_for
 ├── db/               # store PG (package) : _conn (pool/connexion), _schema (DDL), _init (migrations) + 1 module/domaine (users, keys, usage, datastore, projects, opendata…). Surface plate `db.<fn>` via __init__
 
@@ -71,6 +73,13 @@ garde posée au SEAM, **sans allowlist**, tripwire `test_rest_rejects_unknown_fi
 ⚠️ **Secret brut jamais en argument MCP** — la pose de secret est dashboard-only (binding
 `mcp` retiré) ; le MCP ne porte que les droits/grants.
 **Détail : `docs/couches-et-capacites.md`.**
+
+La face REST **assemble** et n'implémente plus : depuis le 2026-08-27, `api_routes.py`
+ne contient aucun handler (`make_routes` : 1 370 lignes et 52 handlers imbriqués → ~180
+lignes de montage), les handlers vivent par domaine dans `api_routes_<domaine>.py`.
+⚠️ La table est FIGÉE par `tests/test_api_routes_table_frozen.py` — retirer, ajouter ou
+RÉORDONNER un chemin fait rouge (Starlette prend le premier match), et régénérer
+`tests/api_routes_table.txt` EST la déclaration de l'ajout. **Détail : `docs/rest-api.md`.**
 
 ## Auth — Logto
 

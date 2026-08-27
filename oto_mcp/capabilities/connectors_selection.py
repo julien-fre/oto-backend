@@ -174,7 +174,7 @@ class UnsetDefaultResult(BaseModel):
 
 def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
     """Catalogue exposé pour l'org active du caller — miroir du filtrage de
-    `api_routes.connectors_catalog` : activation (plafond) + RBAC org (ADR 0025).
+    `api_routes_public.connectors_catalog` : activation (plafond) + RBAC org (ADR 0025).
     L'admin plateforme voit tout l'exposé."""
     exposed = connector_activation.exposed_connectors(ctx.org_id)
     is_admin = access.is_platform_operator(ctx.sub)

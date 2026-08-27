@@ -20,7 +20,16 @@ oto-mcp porte aujourd'hui 4 métiers ; ils sont des **couches à frontière à s
 
 - **backend-core** (le centre) : `db`, `credentials_store`, `org_store`, `access`, `crypto`, `connectors`, `auth_hooks`. Identité (`sub`), coffre, orgs, grants/quotas, résolution.
 - **adaptateur MCP** : `server`, `tools/*`, `middleware`, `tool_visibility`.
-- **adaptateur REST** : `api_routes`.
+- **adaptateur REST** : `api_routes*`. `api_routes.py` **assemble** — il monte les modules de routes,
+  monte la couche capacité, et rend la table ordonnée des chemins écrits à la main ; il ne contient
+  plus un seul handler depuis la découpe du 2026-08-27. Les handlers vivent par DOMAINE
+  (`api_routes_public|account|media|projects|uploads|credentials|tools|admin.py`), chacun une
+  fonction de module appelable seule ; `api_routes_base.py` porte ce qu'ils partagent
+  (`_authenticate`, CORS, `_json`/`_json_error`, préflight `OPTIONS`, `bind`) et `api_routes` les
+  RÉ-EXPORTE, donc `api_routes._authenticate` reste valide. Les modules antérieurs
+  (`api_routes_datastore|sirene|accords|…`) gardent leur patron : `make_routes(...)` reçoit ces
+  primitives en PARAMÈTRES — forme née du même besoin d'éviter le cycle d'import, non touchée.
+  Table + ordre des middlewares ASGI figés par `tests/test_api_routes_table_frozen.py`.
 - **runtime connecteurs** : `tools/*` (in-process) + `tools/remote` (forward bridges).
 
 **Règle** : adaptateurs + runtime → dépendent du backend-core, **jamais l'inverse** ; et ils l'appellent **par interface** (`access.resolve_*`), pas par accès table croisé — pour qu'un seam puisse devenir un service (broker de credentials) sans réécriture. ✅ Le seam **résolution** (le candidat broker) est consolidé dans `access` : `resolve_api_key` / `resolve_credential_fields` / `resolve_crunchbase_session`. C'est la frontière qui doit rester nette (elle peut devenir un service). `tools/meta` (visibilité) et `tools/datastore` (partage) appellent `db` en direct, et **c'est OK** : par le principe ADR 0004 (« pas de discipline d'interface sans force ») ils ne sont pas des candidats-services → pas de reroute dogmatique.
