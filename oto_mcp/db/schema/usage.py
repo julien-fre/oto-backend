@@ -108,7 +108,8 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_ns ON tool_calls ((args->>'ns_id'), cr
 -- sur un outil + cas d'usage non couverts (gap). DURABLE (hors prune 30j de
 -- tool_calls) : c'est le signal qui pilote révisions d'outils/doctrines + backlog.
 -- Le face-agent est AUSSI un tool_call (auto-journalisé, corrélé run_id) ; cette
--- table porte le CONTENU durable. Table neuve → indexes inline sûrs.
+-- table porte le CONTENU durable. Les colonnes NÉES AVEC ELLE ont leurs indexes
+-- inline ci-dessous ; celles ajoutées ensuite par ALTER ont les leurs dans init_db.
 CREATE TABLE IF NOT EXISTS usage_signals (
     id BIGSERIAL PRIMARY KEY,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -142,5 +143,12 @@ CREATE TABLE IF NOT EXISTS usage_signals (
 );
 CREATE INDEX IF NOT EXISTS idx_usage_signals_signal ON usage_signals(signal, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_signals_target ON usage_signals(signal, target, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_usage_signals_status ON usage_signals(status, created_at DESC);
+-- ⚠️ PAS d'index sur `status` ici. La colonne est ajoutée par ALTER dans init_db, et
+-- sur une table qui EXISTE le CREATE TABLE ci-dessus est un no-op : elle n'existe donc
+-- pas encore à ce point du DDL. Son index vit avec son ALTER, comme idx_tool_calls_run
+-- et idx_tool_calls_org. Le commentaire du bloc précédent le dit déjà ; l'oublier a
+-- coûté un boot en échec (`column "status" does not exist`) et un rollback automatique
+-- de la preprod le 27/08 — le même piège que le 2026-06-25, à trois lignes de son
+-- propre avertissement. La mention « table neuve → indexes inline sûrs » plus haut ne
+-- vaut QUE pour les colonnes nées avec la table.
 """
