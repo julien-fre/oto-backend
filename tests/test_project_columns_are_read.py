@@ -20,9 +20,10 @@ Le garde-fou croise le DDL : c'est le DDL qui fait foi, pas une liste tenue à l
 import pathlib
 import re
 
+from oto_mcp.db import _schema as _schema_mod
 from oto_mcp.db.projects import _PROJECT_COLS
 
-_SCHEMA = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "db" / "_schema.py"
+_DB = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "db"
 
 # Colonnes délibérément NON relues. Une entrée ici est une décision, pas un oubli.
 NOT_READ = {
@@ -38,7 +39,7 @@ NOT_READ = {
 def _ddl_columns() -> set[str]:
     """Colonnes de `CREATE TABLE projects` (+ les `ADD COLUMN` de migration, qui sont
     la vraie porte d'entrée d'une colonne neuve sur une base vivante)."""
-    schema = _SCHEMA.read_text(encoding="utf-8")
+    schema = _schema_mod._SCHEMA
     block = re.search(r"CREATE TABLE IF NOT EXISTS projects \((.*?)\n\);", schema, re.S)
     assert block, "table `projects` introuvable dans _schema.py"
     cols = set()
@@ -53,7 +54,7 @@ def _ddl_columns() -> set[str]:
 
 
 def _init_added_columns() -> set[str]:
-    init = (_SCHEMA.parent / "_init.py").read_text(encoding="utf-8")
+    init = (_DB / "_init.py").read_text(encoding="utf-8")
     return set(re.findall(
         r"ALTER TABLE projects ADD COLUMN IF NOT EXISTS ([a-z_][a-z0-9_]*)", init))
 

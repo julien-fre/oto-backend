@@ -30,8 +30,13 @@ from __future__ import annotations
 
 import pathlib
 
+from oto_mcp.db import _schema
+
 _DB = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "db"
-_SCHEMA_SRC = (_DB / "_schema.py").read_text(encoding="utf-8")
+# Le DDL n'est plus un fichier mais un ASSEMBLAGE (`db/schema/<domaine>.py`
+# concaténés dans un ordre figé) : on lit la chaîne SERVIE, seule chose dont les
+# ordres et les formes ci-dessous soient des propriétés.
+_SCHEMA_SRC = _schema._SCHEMA
 _INIT_SRC = (_DB / "_init.py").read_text(encoding="utf-8")
 
 
@@ -81,9 +86,12 @@ def test_only_the_tracking_read_touches_tenant_id():
         for line in src.splitlines():
             if "tenant_id" not in line:
                 continue
-            # Ni la DDL (`_schema`), ni la migration (`_init`), ni un commentaire
-            # — Python ou SQL — ne sont des LECTEURS de la colonne.
+            # Ni la DDL (`_schema` et les fragments de `db/schema/`), ni la
+            # migration (`_init`), ni un commentaire — Python ou SQL — ne sont des
+            # LECTEURS de la colonne.
             if path.name in ("_init.py", "_schema.py"):
+                continue
+            if path.parent.name == "schema" and path.parent.parent.name == "db":
                 continue
             if line.lstrip().startswith(("#", "--")):
                 continue

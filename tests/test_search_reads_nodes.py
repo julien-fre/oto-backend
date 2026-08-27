@@ -177,8 +177,10 @@ def test_nothing_of_the_legacy_table_is_dropped():
     ddl = "\n".join(S.index_ddl())
     assert "idx_guides_fts ON guides" in ddl
     assert "idx_guides_trgm ON guides" in ddl
-    for path in (_DB / "_init.py", _DB / "_schema.py", _DB / "search.py",
-                 _DB / "aux_embed.py", _DB / "guides.py"):
+    # `db/schema/*` = le DDL, ex-corps de `_schema.py` : balayé au même titre.
+    for path in (_DB / "_init.py", _DB / "search.py",
+                 _DB / "aux_embed.py", _DB / "guides.py",
+                 *sorted((_DB / "schema").glob("*.py"))):
         src = path.read_text(encoding="utf-8")
         offenders = [l.strip() for l in src.splitlines()
                      if re.search(r"DROP\s+(TABLE|INDEX|COLUMN).*guides", l, re.I)]

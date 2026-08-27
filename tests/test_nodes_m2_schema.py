@@ -16,9 +16,14 @@ from __future__ import annotations
 import pathlib
 import re
 
+from oto_mcp.db import _schema
+
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 _DB = _ROOT / "oto_mcp" / "db"
-_SCHEMA_SRC = (_DB / "_schema.py").read_text(encoding="utf-8")
+# Le DDL n'est plus un fichier mais un ASSEMBLAGE (`db/schema/<domaine>.py`
+# concaténés dans un ordre figé) : on lit la chaîne SERVIE, seule chose dont les
+# ordres et les formes ci-dessous soient des propriétés.
+_SCHEMA_SRC = _schema._SCHEMA
 _INIT_SRC = (_DB / "_init.py").read_text(encoding="utf-8")
 
 
@@ -71,8 +76,9 @@ def test_the_lot_adds_and_never_takes_away():
     sort appartient au lot qui suivra le tag prod (docs/live-migrations.md)."""
     targets = r"(docs|projects|doc_revisions|doc_links|doc_embeddings|doc_change_requests)"
     offenders = []
-    for path in (_DB / "_init.py", _DB / "_schema.py", _DB / "nodes.py",
-                 _DB / "blocks.py"):
+    # `db/schema/*` = le DDL, ex-corps de `_schema.py` : balayé au même titre.
+    for path in (_DB / "_init.py", _DB / "nodes.py", _DB / "blocks.py",
+                 *sorted((_DB / "schema").glob("*.py"))):
         if not path.exists():
             continue
         for line in path.read_text(encoding="utf-8").splitlines():
