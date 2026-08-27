@@ -6,6 +6,14 @@ seulement — le secret n'est NI déchiffré NI renvoyé (lecteurs non-déchiffr
 uniquement : `list_credentials`, grants, `list_platform_keys_meta`). Zéro table
 nouvelle, zéro chemin d'écriture, `resolve_credential`/`status_for` intouchés.
 
+LOT L6 (blueprint ADR 0053-D9, R1 tranché le 27/08) : chaque instance projetée porte
+désormais, en PLUS de son `ref`, l'identifiant STABLE de la table
+`connector_instances` (`id = "inst:{n}"`). La projection reste ce qu'elle était — une
+lecture du coffre, zéro déchiffrement, zéro écriture : le seul ajout est **une** requête
+qui traduit les quadruplets de coffre en identifiants, fail-open. Rien d'autre ne lit
+encore ces instances (ni la cascade, ni la résolution) ; `ref` reste la référence qu'on
+repasse (les gardes de pose refusent `inst:` nommément, cf. `access.rbac`).
+
 EXCLUSIONS (assumées, documentées) :
 - résidus `entity_type='user'` (mounts oauth fédérés atlassian/folkmcp)
   — hors cascade de travail by design (ADR 0033) ;
@@ -79,6 +87,19 @@ class ConnectorInstance(BaseModel):
     seulement `daily_quota` (grant) ou `set_at` (free-tier)."""
     model_config = ConfigDict(extra="allow")
 
+    # L'IDENTIFIANT STABLE de l'instance (`inst:{id}`, lot L6) — la forme CIBLE,
+    # servie EN PLUS de `ref` et destinée à le remplacer (lui et le `connectionId`
+    # du shell). Ce que `ref` ne sait pas faire : survivre au renommage d'un compte
+    # ou du label d'une clé plateforme (le ref composé projette la clé du coffre, qui
+    # DÉPLACE la ligne au renommage), désigner une sous-instance, désigner une
+    # instance sans secret.
+    # ⚠️ **Peut être absent**, et le client doit le supporter : l'instance est nommée
+    # au BOOT (backfill de `_init`), donc une clé posée depuis le dernier boot n'a pas
+    # encore d'identifiant. Tant que la bascule n'est pas faite, `ref` reste la
+    # référence à repasser (`_instance=`, bindings) — `id` est là pour être stocké et
+    # préparé, pas encore pour être épinglé (les gardes de pose le refusent nommément).
+    # Opaque comme `ref` : à repasser tel quel, jamais à parser.
+    id: Optional[str] = None
     # Handle opaque et STABLE, cible d'un pin `_instance=`. Ne pas le parser.
     ref: str
     connector: str
@@ -154,7 +175,15 @@ def _instance_name(connector: str, meta_label, account: str = "",
     return clabel
 
 
-def _cred_instance(level: str, owner: dict, ref: str, row: dict) -> dict:
+def _vault_key(entity_type: str, entity_id, connector: str, account: str) -> tuple:
+    """La clé à quatre colonnes d'une ligne de coffre — le LIEN vers son instance
+    (`connector_instances`), qui porte le même quadruplet. Convention du coffre :
+    `account` vaut `''` en mono-compte, jamais None."""
+    return (entity_type, str(entity_id), connector, account or "")
+
+
+def _cred_instance(level: str, owner: dict, ref: str, row: dict,
+                   vault_key: Optional[tuple] = None) -> dict:
     """Projette une ligne du coffre (forme `list_credentials`) en instance.
     `meta` sort déjà filtré `_public_meta` à la source ; on ré-applique
     `public_meta` en défense en profondeur (jamais un bearer vers le client).
@@ -173,6 +202,9 @@ def _cred_instance(level: str, owner: dict, ref: str, row: dict) -> dict:
         "set_by": row.get("set_by"),
         "set_at": row.get("set_at"),
         "via": "credential",
+        # Clé PRIVÉE, retirée avant sérialisation (`_stamp_instance_ids`) : elle ne
+        # sert qu'à résoudre l'identifiant stable en UNE requête pour toute la liste.
+        "_vault_key": vault_key,
     }
     if meta.get("is_default"):
         inst["is_default"] = True
@@ -193,6 +225,10 @@ def _platform_instance(provider: str, label: str, via: str, extra: dict) -> dict
         "owner": {"type": "platform", "label": label},
         "name": _instance_name(provider, None, key_label=label),
         "via": via,
+        # ADR 0044 §F : une clé plateforme EST une ligne du coffre — `entity_type`
+        # 'platform', `entity_id` = son label. Elle a donc une instance comme les
+        # autres, y compris quand elle est atteinte par un grant ou le free-tier.
+        "_vault_key": _vault_key(credentials_store.PLATFORM, label, provider, ""),
         **extra,
     }
 
@@ -243,6 +279,40 @@ def _shared_owner(entity_type: str, entity_id: str) -> dict:
     return {"type": entity_type, "id": entity_id}
 
 
+def _stamp_instance_ids(out: list[dict]) -> None:
+    """Pose `id = inst:{id}` sur chaque instance qui en a un, et RETIRE la clé privée.
+
+    **Une seule requête pour toute la liste** (`instance_ids_for_vault_rows`) : la
+    projection tourne inline sur un serveur mono-loop, contre une base managée
+    distante — un lookup par instance ferait N allers-retours sur une surface qui en
+    rend des dizaines.
+
+    **Fail-open loggé**, comme les sections « partagé avec moi » et « perso cross-org »
+    de cette même liste : `id` est un identifiant d'affichage que rien ne consomme
+    encore, `ref` reste servi et suffit. Faire tomber le listing des clés d'un
+    utilisateur parce que la table des instances n'a pas répondu serait hors de
+    proportion. La contrepartie est explicite dans le modèle de sortie : **`id` peut
+    être absent** — d'une indisponibilité comme d'une instance pas encore nommée par
+    un boot.
+
+    ⚠️ La clé privée `_vault_key` est retirée dans TOUS les cas (le modèle de sortie
+    est `extra="allow"` : ce qui reste dans le dict part sur le fil).
+    """
+    cles = [i.get("_vault_key") for i in out]
+    for i in out:
+        i.pop("_vault_key", None)
+    try:
+        ids = db.instance_ids_for_vault_rows([k for k in cles if k])
+    except Exception:
+        logger.warning("instances: identifiants stables indisponibles (fail-open)",
+                       exc_info=True)
+        return
+    for inst, cle in zip(out, cles):
+        iid = ids.get(cle) if cle else None
+        if iid is not None:
+            inst["id"] = instance_refs.make_instance_ref(iid)
+
+
 def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
     # Handler SYNC exécuté INLINE par les adaptateurs de capacité (pattern des
     # capacités existantes — pas de threadpool ici) : requêtes courtes indexées.
@@ -259,7 +329,9 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                 "member", {"type": "user", "id": sub},
                 instance_refs.make_member_ref(org, sub, row["connector"],
                                               row.get("account") or ""),
-                row))
+                row,
+                _vault_key(credentials_store.MEMBER, member_eid, row["connector"],
+                           row.get("account") or "")))
 
         # 2. GROUPES — les groupes que je peux LIRE (miroir de `can_read_group`,
         # la garde de résolution) : mes groupes, et TOUS les groupes de l'org pour
@@ -282,7 +354,9 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                     "group", owner,
                     instance_refs.make_group_ref(gid, row["connector"],
                                                  row.get("account") or ""),
-                    row))
+                    row,
+                    _vault_key("group", gid, row["connector"],
+                               row.get("account") or "")))
 
         # 3. ORG — secrets de l'org active, visibles de tout membre (précédent :
         # la fiche org les liste déjà aux membres).
@@ -291,7 +365,9 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                 "org", {"type": "org", "id": org},
                 instance_refs.make_org_ref(org, row["connector"],
                                            row.get("account") or ""),
-                row))
+                row,
+                _vault_key("org", org, row["connector"],
+                           row.get("account") or "")))
 
     # 4. PLATEFORME — grants user + org + free-tier. La cascade ne résout qu'UNE
     # clé plateforme par provider (user_grant > org_grant > free_tier) → dédup
@@ -356,7 +432,9 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
         if ref is None or ref in existing_refs:
             continue
         existing_refs.add(ref)
-        inst = _cred_instance(et, _shared_owner(et, eid), ref, row)
+        inst = _cred_instance(et, _shared_owner(et, eid), ref, row,
+                              _vault_key(et, eid, row["connector"],
+                                         row.get("account") or ""))
         inst["via"] = "shared_with_me"
         out.append(inst)
 
@@ -382,8 +460,11 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                     if ref in existing_refs:
                         continue
                     existing_refs.add(ref)
-                    inst = _cred_instance("member", {"type": "user", "id": sub},
-                                          ref, row)
+                    inst = _cred_instance(
+                        "member", {"type": "user", "id": sub}, ref, row,
+                        _vault_key(credentials_store.MEMBER,
+                                   credentials_store.member_id(other_org, sub),
+                                   provider, row.get("account") or ""))
                     inst["via"] = "personal_cross_org"
                     out.append(inst)
     except Exception:
@@ -402,6 +483,9 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
     # Préférence §C portée par le TRI : membre < groupe < org < plateforme.
     out.sort(key=lambda i: (i["connector"], _LEVEL_RANK[i["level"]],
                             i.get("account") or ""))
+    # L'identifiant stable, EN DERNIER : après les filtres, pour ne résoudre que ce
+    # qui sort, et parce que la clé privée doit disparaître de TOUT ce qui sort.
+    _stamp_instance_ids(out)
     return {"instances": out, "count": len(out)}
 
 
@@ -415,8 +499,10 @@ CAPABILITIES += [
         description=(
             "List the connector INSTANCES (connector x auth/config) visible to you in the active "
             "org, by proximity: yours (member), your groups', the org's, then platform grants. "
-            "Metadata only — the secret is never returned. `ref` is a stable opaque handle "
-            "(future binding target). Contrast with oto_identity (operable accounts of ONE "
+            "Metadata only — the secret is never returned. `id` (`inst:<n>`) is the stable "
+            "identifier of the instance and will replace `ref`; it may be missing on a key set "
+            "since the last boot, so keep using `ref` as the pin handle for now. Both are "
+            "opaque: pass them back as-is. Contrast with oto_identity (operable accounts of ONE "
             "connector) and oto_connector op=list (catalog of TYPES)."),
         rest=RestBinding("GET", "/api/me/connector-instances"),
     ),

@@ -12,6 +12,7 @@ import time
 
 import psycopg
 
+from . import connector_instances
 from ._conn import _connect
 from ._schema import _SCHEMA
 
@@ -982,6 +983,18 @@ def _init_db_once() -> None:
         # ne fait qu'INSÉRER dans `grants` ; aucune ligne du coffre n'est touchée, donc
         # la prod qui tourne l'ancien code sur CETTE MÊME base ne voit rien.
         _seed_platform_grants_as_edges(conn)
+        # === Lot L6 (blueprint ADR 0053-D9 · R1 tranché le 27/08 : « la table à
+        # === côté ») : chaque ligne de coffre reçoit une INSTANCE, donc un id stable.
+        # DERNIER, et pour la raison des conversions M2/M3 et de L5 : il LIT
+        # `connector_credentials`, que ce boot vient de faire évoluer. Purement
+        # ADDITIF — il n'INSÈRE que dans `connector_instances`, aucune ligne du
+        # coffre n'est touchée, aucun secret déchiffré, l'AAD ne bouge pas ⟹ la prod
+        # qui tourne l'ancien code sur CETTE MÊME base ne voit rien. **Rien ne lit
+        # encore ces instances côté résolution** : l'existant est NOMMÉ, pas déplacé.
+        posees = connector_instances.name_vault_rows_as_instances(conn)
+        if posees:
+            logger.info("L6 instances: %d instance(s) nommée(s) — inventaire %s",
+                        posees, connector_instances.connector_instance_counts(conn))
     # Lot M2 : le corps des nœuds se parse en BLOCS (0054-D2/0063-D2). HORS de la
     # transaction de schéma, et pour deux raisons : le parse lit les nœuds que la
     # conversion vient de COMMITER, et c'est du Python sur du texte — pas du DDL.

@@ -11,10 +11,11 @@ clé porte son `provider` et un label).
 
 Grammaire (segments joints par `:`) :
 
+    inst:{id}                                   ← lot L6, la forme CIBLE
     member:{org_id}:{sub}:{connector}[:{account}]
     group:{group_id}:{connector}[:{account}]
     org:{org_id}:{connector}[:{account}]
-    platform:{platform_key_id}
+    platform:{connector}:{label}
 
 - Les segments LIBRES (`sub`, `account`, `connector`) sont percent-encodés
   (`urllib.parse.quote(s, safe="")`) → le `split(":")` reste non-ambigu même si
@@ -28,10 +29,19 @@ Grammaire (segments joints par `:`) :
 - Côté client le ref est OPAQUE : il se stocke et se repasse tel quel, jamais
   reconstruit. En B4 il est output-only (accepté nulle part en entrée).
 
-Plan de survie B5 : la table `connector_instances` portera une colonne
-`ref TEXT UNIQUE` backfillée à l'IDENTIQUE (les bindings posés contre des refs
-B4 restent valides) ; les instances neuves recevront `inst:{id}` et `parse_ref`
-acceptera les deux formes.
+**`inst:{id}` — lot L6 (blueprint ADR 0053-D9, R1 tranché le 27/08).** La table
+`connector_instances` donne à chaque instance un identifiant STABLE, et c'est lui
+la forme cible : un ref composé projette la clé du coffre, donc il CASSE à tout
+renommage (de compte, de label de clé plateforme — `rename_account` re-chiffre et
+déplace la ligne), et il ne sait pas désigner une sous-instance (0053-D9-3) ni une
+instance sans secret (0057). L'id survit à tout cela.
+
+**Les deux formes sont acceptées EN LECTURE**, et ce n'est pas une transition
+molle : les refs composés sont déjà distribués (bindings de slot B5, axe
+`_instance=` B6, `resource_id` des arêtes de `grants`), et rien ne les réécrit dans
+ce lot. `parse_ref` rend donc un `InstanceRef` de niveau `inst` — qui ne porte
+qu'un `instance_id`, sans connecteur ni propriétaire : les résoudre demande la
+base, et ce module reste PUR (aucun import d'oto_mcp, aucune requête).
 """
 from __future__ import annotations
 
@@ -39,18 +49,26 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import quote, unquote
 
-_LEVELS = ("member", "group", "org", "platform")
+_LEVELS = ("inst", "member", "group", "org", "platform")
 
 
 @dataclass(frozen=True)
 class InstanceRef:
-    """Ref décomposé. `connector` est None pour `platform` (porté par la clé)."""
-    level: str                          # member | group | org | platform
-    connector: Optional[str]            # renseigné pour tous (ADR 0044 §F : plateforme aussi)
+    """Ref décomposé.
+
+    `level='inst'` (lot L6) est le cas à part, et délibérément pauvre : il ne porte
+    qu'`instance_id`. Un `inst:{id}` ne dit RIEN du connecteur ni du propriétaire —
+    c'est exactement sa valeur (l'id survit aux renommages qui cassent un ref
+    composé), et c'est pourquoi le résoudre demande la base
+    (`db.connector_instances.instance_by_id`), pas ce module, qui reste pur.
+    """
+    level: str                          # inst | member | group | org | platform
+    connector: Optional[str]            # renseigné pour tous SAUF `inst` (ADR 0044 §F : plateforme aussi)
     org_id: Optional[int] = None
     sub: Optional[str] = None
     group_id: Optional[int] = None
     label: Optional[str] = None         # platform : label de la clé plateforme
+    instance_id: Optional[int] = None   # inst : l'identifiant stable (lot L6)
     account: str = ""
 
 
@@ -78,6 +96,15 @@ def make_platform_ref(connector: str, label: str) -> str:
     # ADR 0044 §F : la clé plateforme est une instance du coffre (fin du surrogate
     # platform_keys.id) → ref (connector, label), comme les autres scopes.
     return f"platform:{quote(connector, safe='')}:{quote(label, safe='')}"
+
+
+def make_instance_ref(instance_id: int) -> str:
+    """La forme CIBLE (lot L6) : l'identifiant stable de `connector_instances`.
+
+    Opaque comme les autres — `inst:` n'est pas une invitation à parser l'entier,
+    c'est ce qui rend les deux grammaires distinguables sans ambiguïté (aucun niveau
+    composé ne commence par ce segment)."""
+    return f"inst:{int(instance_id)}"
 
 
 def ref_for_credential(entity_type: str, entity_id: str, connector: str,
@@ -108,6 +135,8 @@ def ref_for_credential(entity_type: str, entity_id: str, connector: str,
 def format_ref(r: InstanceRef) -> str:
     """Inverse de `parse_ref` — re-sérialise un ref décomposé (messages d'erreur,
     ré-affichage). Roundtrip exact avec les make_*."""
+    if r.level == "inst":
+        return make_instance_ref(r.instance_id)
     if r.level == "member":
         return make_member_ref(r.org_id, r.sub, r.connector, r.account)
     if r.level == "group":
@@ -132,6 +161,11 @@ def parse_ref(ref: str) -> InstanceRef:
     level = parts[0]
     if level not in _LEVELS or any(p == "" for p in parts):
         raise ValueError("invalid_instance_ref")
+    if level == "inst":
+        # Lot L6 : `inst:{id}` (2 segments), l'identifiant stable et rien d'autre.
+        if len(parts) != 2:
+            raise ValueError("invalid_instance_ref")
+        return InstanceRef(level="inst", connector=None, instance_id=_int(parts[1]))
     if level == "platform":
         # ADR 0044 §F : `platform:{connector}:{label}` (3 segments).
         if len(parts) != 3:

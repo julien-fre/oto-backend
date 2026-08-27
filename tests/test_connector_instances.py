@@ -123,6 +123,13 @@ def seams(monkeypatch):
     pas de super_admin. Chaque test relève les seams qui l'intéressent en
     peuplant `env.vault` / re-monkeypatchant dans le namespace du module."""
     vault: dict = {}   # (entity_type, entity_id) -> [rows]
+    # Lot L6 : le quadruplet de coffre → identifiant stable. Vide par défaut (une
+    # base où le backfill de boot n'a encore rien nommé), peuplé par les tests qui
+    # s'y intéressent. Stubbé ICI plutôt que laissé tomber en fail-open : sans ça la
+    # projection réussirait sans jamais exercer le chemin qu'on croit tester.
+    instances: dict = {}
+    monkeypatch.setattr(ci.db, "instance_ids_for_vault_rows",
+                        lambda keys: {k: instances[k] for k in keys if k in instances})
     monkeypatch.setattr(ci.credentials_store, "list_credentials",
                         lambda et, eid: list(vault.get((et, eid), [])))
     monkeypatch.setattr(ci.group_store, "list_groups_for_user",
@@ -140,7 +147,7 @@ def seams(monkeypatch):
     monkeypatch.setattr(roles_mod, "is_org_admin", lambda sub, org: False)
     monkeypatch.setattr(ci, "providers", SimpleNamespace(
         REGISTRY=_FAKE_REGISTRY, PERSONAL_CROSS_ORG_PROVIDERS=frozenset()))
-    return SimpleNamespace(vault=vault, monkeypatch=monkeypatch)
+    return SimpleNamespace(vault=vault, instances=instances, monkeypatch=monkeypatch)
 
 
 def _run(connector=None, level=None, org_id=ORG, sub=SUB):
@@ -466,3 +473,66 @@ def test_shared_with_me_scopes_include_my_groups(seams):
                               lambda scopes: captured.setdefault("scopes", scopes) and [])
     _run()
     assert captured["scopes"] == [f"user:{SUB}", "group:2"]
+
+
+# ─── 6. Lot L6 — l'identifiant stable servi à côté du ref ────────────────────
+# Ce que la surface gagne : `id = "inst:{n}"`, la forme qui remplacera `ref` (et le
+# `connectionId` du shell). Ce qu'elle ne perd pas : `ref`, qui reste la référence à
+# repasser tant que rien ne résout un `inst:`.
+
+def test_l6_l_identifiant_stable_est_servi_a_cote_du_ref(seams):
+    seams.vault[_member_key()] = [_row("zoho", "alexandra")]
+    seams.instances[(credentials_store.MEMBER, credentials_store.member_id(ORG, SUB),
+                     "zoho", "alexandra")] = 412
+    inst = _run()["instances"][0]
+    assert inst["id"] == "inst:412"
+    assert inst["ref"] == "member:8:usr_x:zoho:alexandra", (
+        "`ref` reste servi : il est déjà distribué (bindings, arêtes de `grants`) et "
+        "ce lot ne le réécrit nulle part")
+
+
+def test_l6_la_cle_plateforme_a_son_identifiant_elle_aussi(seams):
+    """ADR 0044 §F : une clé plateforme EST une ligne du coffre (entity_type
+    'platform', entity_id = son label) — donc une instance, y compris quand elle est
+    atteinte par le free-tier."""
+    seams.monkeypatch.setattr(
+        ci.credentials_store, "list_platform_credentials",
+        lambda provider=None: [{"provider": "serpapi", "label": "env",
+                                "set_at": "2026-07-01"}])
+    seams.instances[("platform", "env", "serpapi", "")] = 7
+    inst = _run(connector="serpapi")["instances"][0]
+    assert (inst["via"], inst["id"]) == ("free_tier", "inst:7")
+
+
+def test_l6_une_instance_pas_encore_nommee_n_a_simplement_pas_d_id(seams):
+    """Le backfill nomme au BOOT : une clé posée depuis n'a pas encore d'identifiant.
+    C'est une ABSENCE de champ, pas un `null` ni une erreur — et c'est pourquoi le
+    client doit garder `ref` jusqu'à la bascule."""
+    seams.vault[_member_key()] = [_row("zoho")]
+    inst = _run()["instances"][0]
+    assert "id" not in inst and inst["ref"]
+
+
+def test_l6_l_indisponibilite_des_identifiants_ne_casse_pas_le_listing(seams, caplog):
+    """Fail-open loggé, comme les sections « partagé avec moi » et « perso cross-org »
+    de cette même liste : `id` n'est consommé par rien encore, faire tomber le
+    listing des clés de quelqu'un pour ça serait hors de proportion."""
+    def _boom(keys):
+        raise RuntimeError("base indisponible")
+    seams.monkeypatch.setattr(ci.db, "instance_ids_for_vault_rows", _boom)
+    seams.vault[_member_key()] = [_row("zoho")]
+    with caplog.at_level(logging.WARNING):
+        out = _run()
+    assert out["count"] == 1 and "id" not in out["instances"][0]
+    assert any("identifiants stables" in r.message for r in caplog.records)
+
+
+def test_l6_la_cle_privee_du_quadruplet_ne_part_jamais_sur_le_fil(seams):
+    """`ConnectorInstance` est `extra="allow"` : tout ce qui reste dans le dict est
+    sérialisé. Le quadruplet de coffre est un détail d'implémentation — et nommer
+    l'entité qui détient une clé n'a rien à faire dans une réponse."""
+    seams.vault[_member_key()] = [_row("zoho")]
+    seams.vault[("org", str(ORG))] = [_row("hunter")]
+    out = ci.ConnectorInstances.model_validate(_run())
+    for inst in out.instances:
+        assert not [k for k in inst.model_dump().keys() if k.startswith("_")]

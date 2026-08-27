@@ -705,6 +705,12 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                     _require(False, "invalid_instance_ref",
                              f"`instance_ref` invalide : {inp.instance_ref!r} "
                              "(un ref s'obtient via oto_instance(op='list')).")
+                # Lot L6 : `inst:{id}` se PARSE mais ne se résout pas encore (L7).
+                # Le refuser nommément évite le message « une instance `None` » que
+                # produirait la garde de connecteur juste en dessous.
+                _require(iref.level != "inst", "instance_not_pinnable",
+                         "L'identifiant d'instance `inst:` n'est pas encore bindable : "
+                         "repasse le `ref` rendu par oto_instance(op='list').")
                 _require(iref.connector == target_ref, "instance_mismatch",
                          f"Ce ref est une instance `{iref.connector}`, pas "
                          f"`{target_ref}` (le connecteur du lien).")

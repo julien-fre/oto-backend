@@ -158,6 +158,16 @@ def guard_instance_access(sub: str, ref) -> Optional[int]:
     résolution d'un binding de projet (re-garde pour l'APPELANT, qui n'est pas
     forcément celui qui a bindé)."""
     from .. import group_store, roles
+    # Lot L6 : `parse_ref` accepte désormais l'identifiant stable `inst:{id}` — mais
+    # RIEN ne le résout encore (la résolution par identifiant est L7). Sans cette
+    # branche, un `inst:` tomberait dans le refus final et s'entendrait dire que
+    # « les refs platform: ne s'épinglent pas » : un message faux est pire qu'un
+    # refus, il envoie chercher au mauvais endroit.
+    if ref.level == "inst":
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=("L'identifiant d'instance `inst:` n'est pas encore épinglable : "
+                     "repasse le `ref` rendu par oto_instance(op='list').")))
     if ref.level == "member":
         if ref.sub == sub:                       # owner : ma propre instance
             if not roles.is_org_member(sub, ref.org_id):
