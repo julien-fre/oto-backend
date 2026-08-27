@@ -531,7 +531,16 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .middleware import ToolAliasMiddleware
     instance.add_middleware(ToolAliasMiddleware())
 
-    # 1. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) : pose la
+    # 1. Rendu du VIDE en PHRASE (otomata-tech/oto#32) : un résultat sans aucun
+    # résultat ne part JAMAIS en structure nue dans le canal texte, qui fait dégénérer
+    # le décodage du modèle. Plus EXTERNE que la rédaction et que l'écho de compte,
+    # qui réémettent le payload en JSON — tourner avant eux rétablirait la structure
+    # qu'on vient d'en retirer ; sous `ToolAlias`, dont il lui faut le nom canonique
+    # pour trouver le gabarit de l'outil.
+    from .middleware import EmptyResultMiddleware
+    instance.add_middleware(EmptyResultMiddleware())
+
+    # 2. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) : pose la
     # ContextVar `_CALL_ORG` AVANT le reste de la chaîne et la reset APRÈS, pour que
     # le handler ET les hooks post-tool (rédaction, calllog) lisent la MÊME org que
     # l'appel. Garde d'appartenance au point d'entrée.
@@ -540,19 +549,19 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
         CallContextMiddleware(_mcp_adapter.reserved_org_tool_names(_cap_registry.CAPABILITIES))
     )
 
-    # 2. Rédaction des champs sensibles du RÉSULTAT des tools (ADR 0009/0015) selon la
+    # 3. Rédaction des champs sensibles du RÉSULTAT des tools (ADR 0009/0015) selon la
     # politique de l'org active — sous le contexte d'appel (lit la bonne org), au-dessus
     # de tout le reste (retouche le résultat final en sortie).
     from .middleware import FieldRedactionMiddleware
     instance.add_middleware(FieldRedactionMiddleware())
 
-    # 3. Contrat d'erreur uniforme rendu à l'agent (D2, #124) : réécrit toute exception
+    # 4. Contrat d'erreur uniforme rendu à l'agent (D2, #124) : réécrit toute exception
     # de tool en McpError scrubbée + data {code, retryable, hint}. Plus externe que
     # Sentry et le calllog → eux voient l'erreur BRUTE, l'enveloppe normalise en dernier.
     from .middleware import ErrorEnvelopeMiddleware
     instance.add_middleware(ErrorEnvelopeMiddleware())
 
-    # 4. Filtrage per-user des tools (toggle individuel sur /account) — au-dessus du
+    # 5. Filtrage per-user des tools (toggle individuel sur /account) — au-dessus du
     # calllog : un refus de gate (tool_not_mounted) n'est pas journalisé (inchangé).
     from .middleware import DynamicInstructionsMiddleware, UserDisabledToolsMiddleware
     instance.add_middleware(UserDisabledToolsMiddleware())
@@ -644,7 +653,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
         ToolCallLogger(_calllog_sink, server="oto", identity=_calllog_identity)
     )
 
-    # 7. Capture des exceptions de tools vers Sentry (no-op si OTO_SENTRY_DSN absent) —
+    # 8. Capture des exceptions de tools vers Sentry (no-op si OTO_SENTRY_DSN absent) —
     # INNERMOST : au plus près du handler, capture le vrai traceback AVANT le calllog
     # (qui pourra stamper l'event_id) et l'enveloppe (qui scrubbe). Les erreurs de tool
     # sont des erreurs JSON-RPC en HTTP 200 → invisibles à l'intégration Starlette.

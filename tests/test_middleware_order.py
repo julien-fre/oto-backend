@@ -10,7 +10,11 @@ invariants gardés ici :
   (au RETOUR), donc après le filtrage de visibilité. Plus interne, une partie de la
   chaîne verrait le nom du tenant : le journal se scinderait en deux noms pour un
   seul outil, et un gate par namespace tomberait fail-open sur un namespace inconnu.
-- `CallContextMiddleware` juste dessous — sa ContextVar `_CALL_ORG` doit rester posée
+- `EmptyResultMiddleware` juste dessous — il sert un résultat VIDE en PHRASE, et doit
+  donc tourner APRÈS tout ce qui réémet le payload en JSON dans le canal texte (la
+  rédaction, l'écho de compte). Plus interne, la structure qu'il vient de retirer du
+  texte y serait rétablie par le middleware suivant (oto#32).
+- `CallContextMiddleware` sous lui — sa ContextVar `_CALL_ORG` doit rester posée
   pendant que la rédaction ET le calllog (plus internes… donc ajoutés après) relisent
   `current_org`. Ajouté ailleurs, un appel `_org=` est rédigé/audité sous l'org MAISON
   (bug vécu : il était innermost jusqu'au 2026-08-02).
@@ -27,6 +31,7 @@ from oto_mcp import server
 
 OURS = [
     "ToolAliasMiddleware",
+    "EmptyResultMiddleware",
     "CallContextMiddleware",
     "FieldRedactionMiddleware",
     "ErrorEnvelopeMiddleware",

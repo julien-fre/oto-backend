@@ -11,6 +11,10 @@ Politique (ADR 0009/0015) : la policy de l'org active gouverne l'exposition.
 `RedactionWithheld`) plutôt que de laisser fuiter le brut. Absence de policy
 (`is_empty`), échec de résolution sur un service sans défaut serveur, ou payload
 non-structuré = passe-through (sentinelle `PASSTHROUGH`).
+
+Ce module porte aussi le **rendu du VIDE** (`is_empty_payload`/`render_empty`) :
+un résultat sans aucun résultat se sert au modèle **en phrase**, jamais en
+structure nue. Cf. `EMPTY_MESSAGES` pour la règle et son incident fondateur.
 """
 from __future__ import annotations
 
@@ -110,4 +114,82 @@ def withheld_result(name: str):
             type="text",
             text=f"[oto] rédaction de « {name} » impossible — sortie retenue par sécurité.")],
         is_error=True,
+    )
+
+
+# --- Rendu du VIDE : une phrase, jamais une structure nue ---------------------
+
+# Phrase servie quand l'outil ne déclare pas la sienne.
+EMPTY_MESSAGE_DEFAULT = "Aucun résultat pour cette recherche."
+
+# Gabarit par outil — table de DÉCLARATION, pas de logique : le rendu du vide est
+# générique, seul le mot juste appartient à l'outil. Clé = nom CANONIQUE (le
+# préfixe de tenant est rétabli plus haut dans la chaîne). Déclarée ici, dans la
+# couche de rendu, plutôt qu'au registre des connecteurs : la table est lue sur le
+# chemin chaud de CHAQUE appel, et un outil n'a pas à savoir comment on le rend.
+EMPTY_MESSAGES: dict[str, str] = {
+    "fr_accords_search": "Aucun accord déposé pour ce SIREN.",
+}
+
+# Clés reconnues comme compteur de volume à côté d'une collection.
+_COUNTER_KEYS = ("total_count", "total", "count")
+
+
+def empty_message(tool_name: str) -> str:
+    """Phrase à servir pour un résultat vide de `tool_name` : son gabarit déclaré,
+    sinon la phrase générique."""
+    return EMPTY_MESSAGES.get(tool_name) or EMPTY_MESSAGE_DEFAULT
+
+
+def is_empty_payload(payload) -> bool:
+    """Vrai quand le payload ne porte AUCUN résultat.
+
+    Règle volontairement SYNTAXIQUE — elle ne connaît aucun outil :
+    - une **liste** est vide si elle n'a pas d'élément ;
+    - un **dict** est vide si (a) il porte au moins une collection — toute clé dont
+      la valeur est une liste, `rows`/`items`/`results`/`data`/`hits` comprises —,
+      (b) elles sont TOUTES vides, et (c) tout compteur présent (`total_count`,
+      `total`, `count`) vaut 0 ; un compteur non nul CONTREDIT la collection vide,
+      et on rend alors la structure telle quelle plutôt que d'affirmer un vide ;
+    - tout le reste n'est PAS vide : un scalaire, un dict SANS collection, une
+      collection non vide. Une clé scalaire à côté d'une collection vide (l'écho
+      `_account`, un curseur) ne l'empêche pas — le vide se juge sur les collections.
+
+    Le vide ne se cherche qu'à la RACINE : une collection vide imbriquée sous un
+    résultat par ailleurs peuplé n'est pas un résultat vide.
+    """
+    if isinstance(payload, list):
+        return not payload
+    if not isinstance(payload, dict):
+        return False
+    collections = [v for v in payload.values() if isinstance(v, list)]
+    if not collections or any(collections):
+        return False
+    for cle in _COUNTER_KEYS:
+        valeur = payload.get(cle)
+        if isinstance(valeur, int) and not isinstance(valeur, bool) and valeur != 0:
+            return False
+    return True
+
+
+def render_empty(result, tool_name: str):
+    """Réémet un `ToolResult` dont le canal TEXTE ne porte que la phrase, le canal
+    structuré restant INTACT — le client qui parse garde sa structure vide.
+
+    C'est la structure DANS LE TEXTE qui fait dégénérer le décodage du modèle, pas
+    son existence : un `{"total_count": 0, "rows": []}` servi en texte a fait boucler
+    une flotte d'agents sur des centaines de `]}` avant qu'ils n'encadrent leur propre
+    narration en appel d'outil — 16 des 26 faux départs d'une campagne et 10 des 11
+    d'une vague de production (2026-08-27, otomata-tech/oto#32).
+
+    Phrase SEULE : y rajouter la structure « pour information » rétablirait très
+    exactement le déclencheur qu'on retire.
+    """
+    from fastmcp.tools.tool import ToolResult
+    from mcp.types import TextContent
+    return ToolResult(
+        content=[TextContent(type="text", text=empty_message(tool_name))],
+        structured_content=getattr(result, "structured_content", None),
+        meta=getattr(result, "meta", None),
+        is_error=False,
     )

@@ -479,7 +479,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `usage-loop.md` | boucle d'usage ADR 0017 (calllog + feedback + déroulés), runs persistés, run silencieux. |
 | `monitoring.md` | monitoring & investigation des appels (trois étages, recette d'enquête, rétention 90 j + archivage froid, Sentry). |
 | `event-loop-perf.md` | les **3** modes de gel mono-loop + protections + recettes py-spy/aiodebug. ⚠️ Le 3ᵉ (27/08) n'est pas un I/O mal placé mais une **requête lente** : même signature py-spy que le 2ᵉ, remède opposé — indexer, pas déplacer. |
-| `redaction.md` | rédaction de champs : middleware unique, rien par défaut + templates 1-clic, **schéma OBSERVÉ**, dry-run preview, moteur `FieldFilter` (oto-core). |
+| `redaction.md` | rédaction de champs **et rendu du résultat servi** : middleware unique, rien par défaut + templates 1-clic, **schéma OBSERVÉ**, dry-run preview, moteur `FieldFilter` (oto-core) — et la règle **« un résultat VIDE se sert en PHRASE, jamais en structure nue »** (oto#32, 27/08/2026). |
 | `live-migrations.md` | migrations vivantes sur la DB partagée canari/prod : la danse en N lots promus, les techniques, les pièges — et le fait que **prod et preprod partagent la base**. |
 | `sirene-stock.md` | stock SIRENE en DuckDB sur parquet INSEE : source S3, perfs, refresh, `fr_stock_*`, routes REST. |
 | `connector-test-gate-theirstack-origami.md` | la porte de test LOCALE des deux connecteurs de prospection (unitaire, lecture live, écriture sur un espace jetable) : ce qu'un contributeur externe doit avoir fait passer avant de pousser, sans serveur qui tourne. |
