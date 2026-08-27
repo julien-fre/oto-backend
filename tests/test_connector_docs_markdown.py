@@ -13,12 +13,14 @@ ce qui est pire qu'une doc absente : personne ne s'en aperçoit.
 from __future__ import annotations
 
 import pathlib
+import re
 
 import pytest
 
 from oto_mcp import connector_docs, providers
 
 _DIR = pathlib.Path(connector_docs.__file__).parent / "connector_docs"
+_PROVIDERS_DIR = pathlib.Path(providers.__file__).parent
 
 
 def test_les_fichiers_sont_tous_lus():
@@ -38,6 +40,51 @@ def test_chaque_fichier_correspond_a_un_connecteur_reel():
     orphelins = sorted({f.stem for f in _DIR.glob("*.md")} - set(providers.REGISTRY))
     assert not orphelins, (
         f"{orphelins} : doc sans connecteur correspondant au registre.")
+
+
+def test_chaque_section_servie_vient_de_son_seul_markdown():
+    """UN domicile, exactement : ce que le catalogue sert pour un connecteur est
+    EXACTEMENT ce que `connector_docs/<nom>.md` contient — pas une section de plus
+    (une seconde source qui s'ajouterait), pas une de moins.
+
+    `Connector.doc_sections` est la propriété que consomment le catalogue public et les
+    fiches ; ce test la tient à sa source unique. Un jour où l'on y ajouterait un repli
+    (« si pas de markdown, prendre la constante du module de déclaration »), la doc
+    aurait deux domiciles et plus personne ne saurait lequel est servi."""
+    for nom, c in providers.REGISTRY.items():
+        servies = c.doc_sections
+        if not servies:
+            continue
+        fichier = _DIR / f"{nom}.md"
+        assert fichier.is_file(), (
+            f"{nom} : le catalogue sert {len(servies)} section(s) sans "
+            f"connector_docs/{nom}.md — il existe donc une SECONDE source")
+        attendues = tuple(
+            connector_docs.DocSection(s.kind, s.title, connector_docs._resoudre(s.body_md))
+            for s in connector_docs._parse(fichier.read_text(encoding="utf-8"), fichier.name))
+        assert servies == attendues, (
+            f"{nom} : les sections servies diffèrent de connector_docs/{nom}.md")
+
+
+def test_la_prose_ne_se_pose_pas_dans_le_module_de_declaration():
+    """TRIPWIRE — depuis que le registre est un fichier par connecteur, poser la doc
+    à côté de `CONNECTOR` dans `providers/<nom>.py` est le geste naturel. Un audit du
+    27/08/2026 l'a proposé tel quel, sur la foi d'une docstring périmée qui logeait
+    encore la prose dans `connector_docs.py`.
+
+    Rien ne la lirait : `_fichiers()` globe `connector_docs/*.md` et rien d'autre. La
+    fiche s'afficherait sans doc, sans erreur nulle part — le pire mode d'échec, celui
+    que personne ne remarque."""
+    coupables = []
+    for f in sorted(_PROVIDERS_DIR.glob("*.py")):
+        txt = f.read_text(encoding="utf-8")
+        for constante in ("DOC_SECTIONS", "DOC_SECTION", "DOCS", "DOC"):
+            if re.search(rf"^{constante}\s*[:=]", txt, re.M):
+                coupables.append(
+                    f"providers/{f.name} : constante {constante} — la prose d'un "
+                    f"connecteur va dans connector_docs/{f.stem}.md, pas dans son "
+                    "module de déclaration (rien ne l'y lirait)")
+    assert not coupables, "\n".join(coupables)
 
 
 def test_les_sections_portent_un_kind_valide_et_un_titre():
