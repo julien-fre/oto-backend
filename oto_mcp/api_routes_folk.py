@@ -58,11 +58,6 @@ def make_routes(
         return cible or f"{{_app_url()}}/?folk={{statut}}"
 
 
-    async def start(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        return json_response(request, {"auth_url": folk_oauth.build_auth_url(sub)})
 
     async def callback(request: Request) -> Response:
         # Folk (Stytch) redirige ici (pas d'auth Logto) ; l'identité vient du state signé.
@@ -82,24 +77,8 @@ def make_routes(
             return RedirectResponse(_retour("error", sub), status_code=302)
         return RedirectResponse(_retour("connected", sub), status_code=302)
 
-    async def status(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        return json_response(request, folk_oauth.status_for(sub))
 
-    async def disconnect(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        return json_response(request, {"ok": True, "disconnected": folk_oauth.disconnect(sub)})
 
     return [
-        Route("/api/folkmcp/oauth/start", start, methods=["GET"]),
-        Route("/api/folkmcp/oauth/start", options_handler, methods=["OPTIONS"]),
         Route("/api/folkmcp/oauth/callback", callback, methods=["GET"]),
-        Route("/api/folkmcp/oauth/status", status, methods=["GET"]),
-        Route("/api/folkmcp/oauth/status", options_handler, methods=["OPTIONS"]),
-        Route("/api/folkmcp/oauth", disconnect, methods=["DELETE"]),
-        Route("/api/folkmcp/oauth", options_handler, methods=["OPTIONS"]),
     ]

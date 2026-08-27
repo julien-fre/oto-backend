@@ -88,21 +88,19 @@ _KNOWN: dict[str, str] = {
     # capacités (`capabilities/datastore_*.py`). Mêmes chemins, mêmes réponses,
     # entrée ET sortie déclarées. Une dette qu'on rembourse, pas une nature qu'on
     # découvre. `…/rows/{row_id}/activity` et `…/claim*` étaient déjà des capacités.
-    # OAuth Google : les VERBES (le callback ci-dessus est, lui, par nature).
-    "/api/google/oauth": DEBT,
-    "/api/google/oauth/start": DEBT,
-    "/api/google/oauth/status": DEBT,
-    "/api/google/oauth/default": DEBT,
+    # ⚠️ Les VERBES OAuth ont quitté cette liste le 2026-08-27 — Google ici, les deux
+    # fédérations MCP plus bas : `…/oauth/{start,status}`, `DELETE …/oauth` et
+    # `POST /api/google/oauth/default` sont des capacités (`capabilities/federated_oauth.py`).
+    # Seuls les CALLBACKS restent écrits à la main, et par NATURE : le fournisseur y
+    # redirige le NAVIGATEUR (302, sans en-tête d'auth) alors que l'adaptateur authentifie
+    # toujours et répond en JSON.
     # Jetons CLI/API de l'utilisateur.
     "/api/me/tokens": DEBT,
     "/api/me/tokens/{token_id}": DEBT,
-    # Fédération MCP per-user (mêmes verbes répétés par connecteur fédéré).
-    "/api/atlassian/oauth/start": DEBT,
-    "/api/atlassian/oauth/status": DEBT,
-    "/api/atlassian/oauth": DEBT,
-    "/api/folkmcp/oauth/start": DEBT,
-    "/api/folkmcp/oauth/status": DEBT,
-    "/api/folkmcp/oauth": DEBT,
+    # (La fédération MCP per-user — atlassian, folkmcp — a migré le 2026-08-27 avec les
+    #  verbes Google ci-dessus : mêmes trois verbes, `capabilities/federated_oauth.py`.
+    #  Leurs chemins NOMMENT leur connecteur, ce qui est une dette de FRONT désormais
+    #  comptée dans `tests/test_connector_flow.py::_NOMMES_TOLERES`.)
 
     # ======================================================================
     # `api_routes.py` — LE FICHIER PRINCIPAL, hors radar jusqu'au 2026-08-11
@@ -242,7 +240,7 @@ def test_rest_debt_only_shrinks():
     pas une dette, elle la RÉVÈLE. Toute autre hausse est un relâchement.
     """
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 22, (
+    assert len(debt) <= 12, (
         f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
         "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
 

@@ -99,35 +99,62 @@ def test_tout_connecteur_a_deux_temps_declare_son_flux():
         "aucun flux : le front ne pourra pas proposer le geste.")
 
 
-# Chemin de connexion NOMMÉ d'après un connecteur, toléré parce qu'il est ANTÉRIEUR à
-# la règle et qu'il est déjà supersédé. Cette liste ne doit que se vider.
+# Verbes qui composent un FLUX de connexion. Le filtre d'origine cherchait « connect »
+# dans la clé — il ne voyait donc ni `…start`, ni `…status`, ni `…revoke`, alors que ce
+# sont les autres moitiés du même geste. Élargi le 2026-08-27 en migrant les verbes OAuth
+# fédérés : sans ça, la moitié de la famille passait sous le radar.
+_VERBES_DE_FLUX = ("connect", ".start", ".status", ".disconnect", ".revoke")
+
+# Chemins de connexion NOMMÉS d'après un connecteur, tolérés parce qu'ils sont ANTÉRIEURS
+# à la règle et qu'ils portent un contrat de FRONT. Cette liste ne doit que se vider.
 _NOMMES_TOLERES = {
     # ⚠️ Découvert par CE garde-fou le 2026-08-27, en migrant la messagerie hébergée en
-    # capacité : le chemin existait depuis toujours, mais il était écrit à la main —
-    # or ce test ne parcourt QUE le registre de capacités. Même angle mort que le glob
-    # de `test_rest_modules_are_capabilities` avant #286 : un garde-fou ne voit que là
-    # où il regarde, et rendre un objet visible est ce qui fait apparaître sa dette.
+    # capacité : le chemin existait depuis toujours, mais il était écrit à la main — or ce
+    # test ne parcourt QUE le registre de capacités. Même angle mort que le glob de
+    # `test_rest_modules_are_capabilities` avant #286 : un garde-fou ne voit que là où il
+    # regarde, et rendre un objet visible est ce qui fait apparaître sa dette.
     #
-    # Il est déjà SUPERSÉDÉ par `me.connector_connect`
-    # (`POST /api/me/connectors/{name}/connect`, le chemin fixe qui ne nomme personne) —
-    # les deux appellent le MÊME `unipile_connect.hosted_auth_url`, donc ils ne peuvent
-    # pas diverger. Ce qui manque est la bascule du FRONT ; le jour où elle a lieu, on
-    # retire la capacité et cette ligne avec.
+    # Déjà SUPERSÉDÉ par `me.connector_connect` (`POST /api/me/connectors/{name}/connect`,
+    # le chemin fixe qui ne nomme personne) — les deux appellent le MÊME
+    # `unipile_connect.hosted_auth_url`, donc ils ne peuvent pas diverger. Ce qui manque
+    # est la bascule du FRONT ; le jour où elle a lieu, on retire la capacité et la ligne.
     "me.unipile.connect",
+
+    # --- La FÉDÉRATION MCP per-user, découverte le même jour, pour la même raison.
+    #
+    # `/api/<nom>/oauth/{start,status}` + `DELETE /api/<nom>/oauth` sont le **contrat du
+    # widget de fédération du dashboard** : celui-ci est GÉNÉRIQUE et construit son URL à
+    # partir du nom du connecteur (`/api/${name}/oauth/…`, oto-dashboard
+    # `src/api/console.ts`). Les vider n'est donc PAS un travail de backend — il faut
+    # d'abord que le widget passe à un chemin fixe qui ne nomme personne, comme l'ont fait
+    # zoho et salesforce en v1.19.0. C'est une DETTE DE FRONT, nommée ici pour qu'elle
+    # cesse d'être invisible.
+    "me.federation.atlassian.start",
+    "me.federation.atlassian.status",
+    "me.federation.atlassian.disconnect",
+    "me.federation.folkmcp.start",
+    "me.federation.folkmcp.status",
+    "me.federation.folkmcp.disconnect",
+    "me.federation.google.start",
+    "me.federation.google.status",
+    "me.federation.google.revoke",
 }
 
 
 def test_aucune_face_rest_de_connexion_nommee_dapres_un_connecteur():
-    """Les chemins `/api/<nom>/oauth/start` ont été RETIRÉS une fois le dashboard de prod
-    passé au chemin fixe (v1.19.0). Il ne reste qu'une face REST pour démarrer un flux,
-    et son chemin ne nomme personne — hors `_NOMMES_TOLERES`, qui est daté et se vide."""
+    """Les chemins `/api/<nom>/oauth/start` ont été RETIRÉS pour zoho et salesforce une
+    fois le dashboard de prod passé au chemin fixe (v1.19.0). Aucune face REST de flux ne
+    doit nommer un connecteur — hors `_NOMMES_TOLERES`, qui est daté et se vide."""
     from oto_mcp.capabilities import registry
     for cap in registry.CAPABILITIES:
-        if cap.rest is None or "connect" not in cap.key or cap.key in _NOMMES_TOLERES:
+        if cap.key in _NOMMES_TOLERES:
             continue
-        for n in providers.REGISTRY:
-            assert f"/{n}/" not in cap.rest.path, (
-                f"{cap.key} expose une face REST nommée : {cap.rest.path}")
+        if not any(v in cap.key for v in _VERBES_DE_FLUX):
+            continue
+        for binding in cap.rest_bindings():
+            for n in providers.REGISTRY:
+                assert f"/{n}/" not in binding.path, (
+                    f"{cap.key} expose une face REST nommée : {binding.path}")
 
 
 def test_la_tolerance_de_chemin_nomme_ne_ment_pas():
@@ -138,8 +165,23 @@ def test_la_tolerance_de_chemin_nomme_ne_ment_pas():
     fantomes = sorted(_NOMMES_TOLERES - connues)
     assert not fantomes, (
         f"Ces capacités n'existent plus : {fantomes}. Retire-les de `_NOMMES_TOLERES` — "
-        "si `me.unipile.connect` est partie, c'est que le front a basculé sur le chemin "
-        "fixe, et la tolérance n'a plus lieu d'être.")
+        "leur disparition signifie que le front a basculé sur un chemin fixe, et la "
+        "tolérance n'a plus lieu d'être.")
+
+
+def test_la_tolerance_ne_couvre_que_des_chemins_reellement_nommes():
+    """Une tolérance pour un chemin qui ne nomme AUCUN connecteur serait une exemption
+    gratuite : elle blanchirait la clé sans que rien ne l'exige."""
+    from oto_mcp.capabilities import registry
+    par_cle = {c.key: c for c in registry.CAPABILITIES}
+    inutiles = sorted(
+        k for k in _NOMMES_TOLERES
+        if k in par_cle and not any(f"/{n}/" in b.path
+                                    for b in par_cle[k].rest_bindings()
+                                    for n in providers.REGISTRY))
+    assert not inutiles, (
+        f"Ces tolérances ne servent à rien : {inutiles}. Leur chemin ne nomme aucun "
+        "connecteur — retire-les.")
 
 
 def test_le_demarrage_generique_partage_le_handler_des_capacites_nommees():
