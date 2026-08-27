@@ -1,7 +1,7 @@
 """Routes REST `/api/admin/connectors/activation` — gouvernance du cran
 d'activation des connecteurs (ADR 0010, B4). Admin only.
 
-Le code DÉCLARE les connecteurs (registre `providers.py`) ; la DB décide
+Le code DÉCLARE les connecteurs (registre `providers/`) ; la DB décide
 lesquels sont EXPOSÉS (`connector_activation`). Cet endpoint est la surface qui
 permet à un admin de basculer le master global (et un override par org) sans SQL.
 

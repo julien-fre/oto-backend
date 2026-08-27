@@ -36,7 +36,7 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS user_selected_connectors (
     sub         TEXT   NOT NULL,
     org_id      BIGINT NOT NULL DEFAULT 0,   -- 0 = espace perso (ADR 0015)
-    connector   TEXT   NOT NULL,             -- nom de connecteur (registre providers.py)
+    connector   TEXT   NOT NULL,             -- nom de connecteur (registre providers/)
     state       TEXT   NOT NULL DEFAULT 'active',  -- 'active' | 'paused'
     selected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (sub, org_id, connector)

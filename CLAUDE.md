@@ -32,6 +32,11 @@ oto.ninja sous `/account` et parle au MCP via REST.
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
 ├── tools/            # 1 module par connecteur, chacun expose register(mcp)
+├── providers/        # le REGISTRE : 1 module de déclaration par connecteur
+│                     #   (`CONNECTOR = _c(…)`), `__init__` AGRÈGE, `_model` = la forme.
+│                     #   Séparé de tools/ : le registre doit rester PUR (tools/ importe
+│                     #   access → le registre, et se charge en try/except — une dép
+│                     #   optionnelle manquante retirerait le connecteur du catalogue).
 ├── api_routes.py     # /api/me, /api/settings/*, /api/admin/* (CORS oto.ninja)
 ├── access.py         # rôles member/admin, resolve_api_key, quotas, status_for
 ├── db/               # store PG (package) : _conn (pool/connexion), _schema (DDL), _init (migrations) + 1 module/domaine (users, keys, usage, datastore, projects, opendata…). Surface plate `db.<fn>` via __init__
@@ -383,7 +388,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `commands.md` | recettes tests / deploy / logs / inspection DB + leurs pièges, et le **pin oto-core**. |
 | `couches-et-capacites.md` | les 4 couches ADR 0004 et la **couche capacité** ADR 0009 (deux faces, une déclaration ; refus de champ inconnu ; console admin `*_op`). |
 | `connector-model.md` | **carte d'ensemble** : les 3 couches d'un connecteur (disponibilité / authentification / option), la matrice des niveaux, le vocabulaire canonique, le seam `access.has_option`. **À lire en premier** avant de toucher activation/clés/options. |
-| `connector-vault.md` | registre source unique (`connectors.py`), coffre chiffré unique `connector_credentials`, enveloppe AES-256-GCM **obligatoire**, résolution + palier org, credentials qui se consomment à l'usage (rotation), application d'org ≠ jeton d'identité. |
+| `connector-vault.md` | registre source unique (package `providers/`, 1 module de déclaration par connecteur), coffre chiffré unique `connector_credentials`, enveloppe AES-256-GCM **obligatoire**, résolution + palier org, credentials qui se consomment à l'usage (rotation), application d'org ≠ jeton d'identité. |
 | `roles-and-resolution.md` | rôles (3 paliers), cascade de résolution de clé, grants/platform keys, multi-compte, scope MEMBRE, walker de cascade. |
 | `auth-logto.md` | auth Logto ES384, discovery RFC 9728, façade DCR, jetons `oto_`, MFA par org, cutover `.ninja`↔`.cx`. |
 | `tenants.md` | l'étage d'identité au-dessus des orgs (ADR 0052) : émetteur dédié, préfixe d'outils, écran de suivi, pièges d'une bascule de compte. |

@@ -2,7 +2,7 @@
 title: Connector vault — registre + coffre chiffré + résolution
 type: reference
 description: >-
-  Architecture centrale des credentials oto-backend : registre source unique connectors.py
+  Architecture centrale des credentials oto-backend : registre source unique providers/
   (dataclass Connector, 3 axes disponibilité/visibilité/credential, schéma multi-champs
   secret_fields dérivé), coffre chiffré unique connector_credentials (table 4-col PK
   entity_type/entity_id/connector/account, AES-256-GCM obligatoire via crypto.py,
@@ -22,9 +22,18 @@ adr:
 Substrat unique des connecteurs, credentials et accès d'oto-mcp. Déployé en prod (2026-06).
 Chiffrement **obligatoire** : tous les secrets vivent chiffrés (`secret_enc`), plus aucune colonne plaintext ni dual-write (purge legacy 2026-06-11). Un serveur sans `OTO_MCP_MASTER_KEY` boote mais tout write de credential échoue fort.
 
-## Registre — source unique (`connectors.py`)
+## Registre — source unique (package `providers/`)
 
-Module pur (aucun import oto_mcp, comme `tool_visibility.py`). Une dataclass `Connector` par connecteur, 3 axes orthogonaux :
+Package pur (aucun import oto_mcp, comme `tool_visibility.py`). Une dataclass `Connector` par connecteur, 3 axes orthogonaux :
+
+**Où ça vit** (découpage 2026-08-27, ex-`providers.py` monolithique de 1 900 lignes) :
+- `providers/<nom>.py` — le **domicile unique** d'un connecteur : `CONNECTOR = _c(…)`, ses commentaires, et ses constantes curées `CATEGORY` / `PUBLISHER` / `DESCRIPTION` / `LOGO_DOMAIN` / `SANS_LOGO_DE_MARQUE`. Le module porte le nom du connecteur (vérifié à l'import).
+- `providers/_model.py` — la **forme** : `CredentialField`, `Connector`, la factory `_c`. Un nouveau CHAMP par connecteur s'ajoute ici, puis se renseigne dans le module du connecteur — jamais dans une liste transverse indexée par nom (c'est ce qu'ont acté `single_account` et `account_noun`, oto-backend#409).
+- `providers/__init__.py` — l'**agrégateur** : `_DECLARATIONS` (l'ordre, écrit à la main — jamais un `glob`) + toutes les dérivations. Il ne décrit aucun connecteur.
+
+⚠️ La déclaration ne vit **pas** dans `tools/<nom>.py` (le module d'outils du même connecteur) : celui-ci importe `..access`, qui importe le registre — cycle — et `register_all` le charge en try/except, si bien qu'une dépendance optionnelle manquante retirerait le connecteur du **catalogue**, pas seulement ses outils. Le registre doit rester pur et sans dépendance.
+
+Invariants verrouillés par `tests/test_providers_registry_snapshot.py` : le registre EST la concaténation des déclarations, chaque déclaration a exactement un domicile (les deux sens), l'ordre est déterministe.
 - **A. Disponibilité** : `availability` ∈ {`self_serve`, `platform_granted`}. platform_granted = grant-only (deny-by-default, ex. `mm`, `gocardless`).
 - **B. Visibilité** : `default_active` (ADR 0050 — socle installé d'office au seed d'un nouveau (sub, org) ; **vide depuis le 16/07** : tout le catalogue est en library installable, l'agent guide).
 - **C. Credential** : `auth_modes` ⊆ {`byo_user`, `byo_org`, `platform`} ; `keyed` (résolu via `resolve_api_key`) ; `secret_kind` (api_key/basic_auth/fields/refresh_token/oauth/cookie/none) ; `personal_session` ; `env_secret_name` ; `default_quota`.

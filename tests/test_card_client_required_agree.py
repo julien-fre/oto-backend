@@ -3,7 +3,7 @@
 
 Deux repos, deux déclarations du même fait — « ce champ est-il nécessaire ? » :
 
-- la **carte** (`providers.py`) est le contrat avec l'UTILISATEUR : elle pilote le
+- la **carte** (`providers/<nom>.py`) est le contrat avec l'UTILISATEUR : elle pilote le
   formulaire dashboard, la validation REST et le packing au coffre
   (`CredentialField.required`) ;
 - le **client** (oto-core) est le contrat avec l'API : `self.x = x or require_secret(…)`

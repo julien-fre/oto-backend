@@ -47,7 +47,7 @@ class MyConnectorsInput(BaseModel):
 
 
 class ConnectorActionInput(BaseModel):
-    name: str                            # nom de connecteur (registre providers.py)
+    name: str                            # nom de connecteur (registre providers/)
 
 
 class RecommendInput(BaseModel):

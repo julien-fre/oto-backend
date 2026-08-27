@@ -1,8 +1,8 @@
 """Salesforce OAuth — live "Connect" flow. THE only way to obtain the
 `refresh_token` now — the old manual Postman-style acquisition (paste a
 Callback URL that led nowhere on our side, copy an authorization code out of
-the browser's address bar, exchange it by hand) is gone: `providers.py`'s
-Salesforce entry no longer declares a `refresh_token` field at all, only
+the browser's address bar, exchange it by hand) is gone: the registry entry
+(`providers/salesforce.py`) no longer declares a `refresh_token` field at all, only
 `client_id`/`client_secret`/`login_url`.
 
 Unlike every other live-OAuth flow oto has (google/atlassian/folkmcp),

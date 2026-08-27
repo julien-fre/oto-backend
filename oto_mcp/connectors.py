@@ -1,9 +1,10 @@
-"""DÉPRÉCIÉ — ré-export de `providers.py` (ADR 0010, barreau 0).
+"""DÉPRÉCIÉ — ré-export du registre `providers/` (ADR 0010, barreau 0).
 
-L'axe **connexion/credential** a été extrait dans `providers.py` (renommage pur,
-no-behavior-change). Ce module reste un shim le temps de basculer les imports
+L'axe **connexion/credential** a été extrait dans `providers` (renommage pur,
+no-behavior-change ; devenu un PACKAGE le 2026-08-27, un module de déclaration
+par connecteur). Ce module reste un shim le temps de basculer les imports
 (`from . import connectors` → `from . import providers`). **Ne rien ajouter ici :
-éditer `providers.py`.** Suivi : otomata#24.
+déclarer le connecteur dans `providers/<nom>.py`.** Suivi : otomata#24.
 """
 from __future__ import annotations
 

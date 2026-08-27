@@ -42,7 +42,7 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
   toute la plateforme. Deny-by-default.
 - **Override par org** : `connector_activation` ligne `org_id=<X>` → force on/off pour cette
   org (sinon hérite du master).
-- **`availability`** (registre `providers.py`) : `self_serve` (l'user l'installe lui-même, BYO
+- **`availability`** (registre `providers/`, déclaré dans `providers/<nom>.py`) : `self_serve` (l'user l'installe lui-même, BYO
   possible) | `platform_granted` (deny-by-default, débloqué par un **grant de namespace** admin).
 - Appliqué à la **visibilité par session** (middleware) + au catalogue `/api/connectors`.
 - Surfaces : `/platform/connectors` (master + clé plateforme, super_admin) ; `/org/connectors`

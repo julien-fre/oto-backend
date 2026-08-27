@@ -1,6 +1,6 @@
 """Fabrique d'acquisition OAuth2 — la danse `authorization_code`, écrite UNE fois.
 
-Le registre de connecteurs sait déclarer un credential (`providers.py`), le coffre
+Le registre de connecteurs sait déclarer un credential (`providers/`), le coffre
 le chiffrer, la cascade le résoudre. Mais rien ne savait l'**ACQUÉRIR** : chaque
 connecteur OAuth réécrivait le flux de bout en bout. Mesuré le 2026-07-28 :
 `verify_state` ×6, `exchange_code` ×5, `build_auth_url` ×5, `_state_secret` ×5 —

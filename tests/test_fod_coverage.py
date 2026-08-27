@@ -183,7 +183,7 @@ def test_every_fod_data_module_is_wired_or_decided():
     }
     assert not orphans, (
         f"modules data france_opendata ORPHELINS (ni câblés ni décidés) : {orphans} "
-        "— câbler dans un tools/*.py (+ registre providers.py), ou documenter la "
+        "— câbler dans un tools/*.py (+ déclaration providers/<nom>.py), ou documenter la "
         "non-exposition dans FOD_NOT_EXPOSED avec sa raison")
 
 

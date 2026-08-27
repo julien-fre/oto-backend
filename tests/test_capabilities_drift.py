@@ -62,7 +62,7 @@ def test_tools_module_derivation_matches_filesystem():
     orphan = files - derived - _EXPLICIT_TOOL_MODULES
     assert not orphan, (
         f"tools/<m>.py ni dérivés du registre ni chargés explicitement: {sorted(orphan)} "
-        "— déclarer le connecteur dans providers.py, ou l'ajouter à _EXPLICIT_TOOL_MODULES si c'est un module spine")
+        "— déclarer le connecteur dans providers/<nom>.py, ou l'ajouter à _EXPLICIT_TOOL_MODULES si c'est un module spine")
 
 
 def test_tools_namespaces_are_matchable():
