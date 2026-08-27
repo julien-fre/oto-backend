@@ -204,19 +204,29 @@ def test_la_fiche_d_un_outil_inconnu_est_un_404_nomme(monkeypatch, socle):
     ({"arguments": {"siren": "123"}}, {"siren": "123"}),  # ENVELOPPÉS
     ({}, {}),
     (None, {}),                                           # aucun corps
-    ([1, 2], {}),                                         # corps non-objet
     ({"arguments": "x"}, {}),                             # enveloppe non-objet
 ])
 def test_les_deux_formes_du_corps_et_leurs_degenerescences(monkeypatch, socle,
                                                            corps, attendu):
     """Sans `body_field`, la garde de champ inconnu refuserait `siren` — un 400 sur
-    chaque test d'outil. Et les quatre dégénérescences doivent donner « aucun
-    argument », jamais une erreur : c'est le comportement servi depuis toujours."""
+    chaque test d'outil. Un corps ABSENT ou une enveloppe qui n'est pas un objet
+    donnent « aucun argument », jamais une erreur."""
     stub_authz(monkeypatch)
     code, out = call("me.tools.call", path_params={"name": "fr_get"}, body=corps)
     assert code == 200, out
     assert out["result"] == {"echo": attendu}
     assert out["ok"] is True and isinstance(out["elapsed_ms"], int)
+
+
+def test_un_corps_qui_n_est_pas_un_objet_est_refuse(monkeypatch, socle):
+    """`[1, 2]` figurait parmi les « dégénérescences » ci-dessus, rendues en 200 avec
+    zéro argument. C'est le site B4 de l'inventaire des silences du 2026-08-27 : une
+    liste n'a pas de champs à fusionner, l'ignorer sert un appel que personne n'a
+    demandé. Le corps ABSENT, lui, reste bien « aucun argument » — la ligne du dessus
+    le garde."""
+    stub_authz(monkeypatch)
+    code, out = call("me.tools.call", path_params={"name": "fr_get"}, body=[1, 2])
+    assert code == 400 and out["error"] == "invalid_body"
 
 
 def test_l_erreur_de_l_outil_revient_en_donnee_pas_en_4xx(monkeypatch, socle):

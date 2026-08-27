@@ -75,9 +75,13 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
   sans le verify générique, réservé aux connecteurs account-aware. Autres refus :
   `404 not_a_session_connector`, `400 missing_params`, `400 invalid_scope`,
   `503 browserbase_unavailable`, `502 session_verify_failed` (les deux derniers portent
-  un détail actionnable). ⚠️ Un corps JSON **malformé** rend désormais `400 missing_params`
-  et non `400 invalid_json` (même statut), et un corps **non-objet** rend `400` là où il
-  levait une **500**.
+  un détail actionnable). ⚠️ **Corrigé le 2026-08-27** : ce paragraphe annonçait qu'un
+  corps JSON **malformé** rendait `400 missing_params` — l'adaptateur de capacités
+  l'avalait alors comme un corps absent, et c'était le site B4 de l'inventaire des
+  silences. Il rend maintenant `400 invalid_json` (corps illisible) ou `400 invalid_body`
+  (JSON valide mais pas un objet), sur les ~200 routes générées.
+  `missing_params` accusait l'appelant de n'avoir rien envoyé alors qu'il avait envoyé
+  quelque chose d'inexploitable.
 - `GET|POST|DELETE /api/settings/api-keys/{provider}` — **ton credential** pour un
   connecteur, dans l'org de contexte (capacités `me.credential.{get,set,clear}` depuis
   le 2026-08-27 ; **pas de face MCP** — un secret brut ne passe pas en argument d'outil).

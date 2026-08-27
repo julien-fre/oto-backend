@@ -28,6 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Route
 
+from .json_body import InvalidJsonBody, read_json_body
 from .oauth_facade import _cors, _redirect_ok
 
 logger = logging.getLogger("oto_mcp.anon_oauth")
@@ -96,10 +97,16 @@ def make_routes() -> list[Route]:
     async def register(request):
         if request.method == "OPTIONS":
             return JSONResponse({}, headers=_cors())
+        # Corps ABSENT ⇒ `{}` : un client qui s'enregistre sans métadonnées garde
+        # exactement le comportement d'avant. Corps ILLISIBLE ⇒ 400 nommé — RFC 7591
+        # §3.1 attend un document JSON, et deviner à sa place enregistrerait un client
+        # dont les `redirect_uris` ne sont pas ceux qu'il a écrits.
         try:
-            body = await request.json()
-        except Exception:
-            body = {}
+            body = await read_json_body(request)
+        except InvalidJsonBody as e:
+            return JSONResponse({"error": "invalid_client_metadata",
+                                 "error_description": e.detail},
+                                status_code=400, headers=_cors())
         return JSONResponse({
             "client_id": _ANON_CLIENT_ID,
             "client_id_issued_at": int(time.time()),

@@ -27,6 +27,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from .json_body import InvalidJsonBody, read_json_body
+
 _log = logging.getLogger("oto_mcp.oauth_facade")
 
 
@@ -406,10 +408,15 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
     async def dcr(request: Request) -> JSONResponse:
         if request.method == "OPTIONS":
             return JSONResponse({}, headers=_cors())
+        # Corps ABSENT ⇒ `{}` (comportement d'avant conservé) ; corps ILLISIBLE ⇒
+        # 400 nommé plutôt qu'un client_id partagé émis sur des métadonnées devinées.
         try:
-            body = await request.json()
-        except Exception:
-            body = {}
+            body = await read_json_body(request)
+        except InvalidJsonBody as e:
+            _log.warning("DCR refusé — corps illisible (%s)", e.code)
+            return JSONResponse({"error": "invalid_client_metadata",
+                                 "error_description": e.detail},
+                                status_code=400, headers=_cors())
         # Défense en profondeur (audit 2026-06-13) : on n'émet le client_id
         # partagé QUE pour des redirect_uris connus. L'enforcement réel reste
         # Logto au `/authorize` (cf. invariant ci-dessus), mais fail-fast ici

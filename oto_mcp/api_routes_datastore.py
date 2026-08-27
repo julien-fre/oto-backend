@@ -37,6 +37,7 @@ from starlette.routing import Route
 
 from . import access, db, google_oauth, token_scopes
 from .datastore import make_store
+from .json_body import InvalidJsonBody, read_json_body
 
 
 # Type alias for the auth helper passed in from api_routes.
@@ -131,10 +132,10 @@ def make_routes(
         if err:
             return err
         try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        account = (body.get("account") if isinstance(body, dict) else None) or ""
+            body = await read_json_body(request)
+        except InvalidJsonBody as e:
+            return json_error(request, 400, e.code, e.detail)
+        account = body.get("account") or ""
         account = account.strip()
         if not account:
             return json_error(request, 400, "missing_account")
@@ -162,12 +163,16 @@ def make_routes(
         sub, err = await authenticate(request, verifier, allow_api_token=False)
         if err:
             return err
+        # Corps illisible ⇒ REFUS, jamais un jeton. Le silence d'avant produisait le
+        # cas le plus dangereux : `scopes` mal formé ⇒ `scopes=None` ⇒ jeton NON PORTÉ
+        # (les droits pleins du sub) à la place du jeton borné demandé — l'inverse
+        # exact de ce que redoute le commentaire vingt lignes plus bas
+        # (`docs/silences-2026-08-27.md`, site B2). Corps ABSENT ⇒ `{}` : le jeton
+        # `cli` non porté par défaut reste émissible, et c'est le contrat.
         try:
-            body = await request.json()
-        except Exception:
-            body = {}
-        if not isinstance(body, dict):
-            body = {}
+            body = await read_json_body(request)
+        except InvalidJsonBody as e:
+            return json_error(request, 400, e.code, e.detail)
         label = body.get("label") or "cli"
         # Portée optionnelle (`token_scopes`) : absente ⇒ jeton non porté (il EST le
         # sub). Présente ⇒ jeton borné à des tableaux nommés — la forme à confier à
