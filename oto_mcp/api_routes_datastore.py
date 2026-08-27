@@ -1,29 +1,24 @@
-"""Routes REST Google OAuth + jetons API.
+"""Ce qui reste ici : le CALLBACK Google OAuth, et les jetons API.
 
-Extrait de `api_routes.py` pour respecter la limite 500 LOC.
+Le nom du fichier est un vestige — il est le point d'accroche d'`api_routes.py`, et deux
+vagues de migration l'ont déjà vidé :
 
-⚠️ **Le datastore a quitté ce module le 2026-08-12 (#302)** : ses 17 routes écrites à
-la main sont des CAPACITÉS (`capabilities/datastore_{namespaces,rows,schema,sharing,
-claim,activity,columns}.py`) — mêmes chemins, mêmes réponses, mais entrée ET sortie
-déclarées, donc décrites dans `/api/openapi.json`. Le nom du fichier est resté (il est
-le point d'accroche de `api_routes.py`) ; ce qu'il porte, non.
+- **2026-08-12 (#302)** : les 17 routes du datastore sont devenues des CAPACITÉS
+  (`capabilities/datastore_*.py`) — mêmes chemins, mêmes réponses, entrée ET sortie
+  déclarées, donc décrites dans `/api/openapi.json` ;
+- **2026-08-27** : les VERBES Google OAuth (`start`, `status`, `DELETE`, `default`) →
+  `capabilities/federated_oauth.py`, avec ceux d'atlassian et de folkmcp.
 
-Endpoints exposés :
+⚠️ **Le CALLBACK, lui, ne migrera pas.** Google y redirige le NAVIGATEUR de
+l'utilisateur : pas d'en-tête d'auth (l'identité vient du `state` HMAC-signé) et la
+réponse est une **302** vers la page connecteurs, pas du JSON. Or `_rest_adapter`
+authentifie toujours et répond toujours en JSON. Il est hors du moule par construction,
+et classé par NATURE comme les autres callbacks OAuth.
 
-- `GET    /api/google/oauth/start`              → renvoie {auth_url}
-- `GET    /api/google/oauth/callback`           → no auth (Google redirige)
-- `GET    /api/google/oauth/status`             → {connected, granted_at, scopes}
-- `DELETE /api/google/oauth`                    → révoque
-
-- `GET    /api/me/tokens`                       → liste tokens CLI (sans plaintext)
-- `POST   /api/me/tokens`                       → crée un token, renvoie le plaintext (one-shot)
-- `DELETE /api/me/tokens/{token_id}`            → révoque
-
-Auth : Bearer JWT Logto **ou** API token long-lived (préfixe `oto_`),
-résolu via `_authenticate` (partagé avec `api_routes.py`).
-
-⚠️ La création d'un jeton PORTÉ lit le catalogue des tableaux (pour refuser un nom
-que l'émetteur ne voit pas) : c'est la seule attache qui reste avec le datastore.
+Restent aussi les **jetons API** (`/api/me/tokens*`), réservés à une session interactive
+(`allow_api_token=False` : un jeton ne fabrique pas de jeton). ⚠️ La création d'un jeton
+PORTÉ lit le catalogue des tableaux — pour refuser un nom que l'émetteur ne voit pas —
+et c'est la seule attache qui reste avec le datastore.
 """
 from __future__ import annotations
 
@@ -65,15 +60,6 @@ def make_routes(
 
     # --- Google OAuth ----------------------------------------------------
 
-    async def google_oauth_start(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        try:
-            url = google_oauth.build_auth_url(sub)
-        except RuntimeError as e:
-            return json_error(request, 500, f"oauth_misconfigured: {e}")
-        return json_response(request, {"auth_url": url})
 
     async def google_oauth_callback(request: Request) -> Response:
         # Pas d'auth Logto — Google redirige depuis le navigateur user.
@@ -96,53 +82,8 @@ def make_routes(
         # `?datastore=connected` retiré.
         return RedirectResponse(url=f"{_app_url()}/console/connectors?google=connected", status_code=302)
 
-    async def google_oauth_status(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        accounts = google_oauth.list_accounts(sub)
-        default = next((a for a in accounts if a.get("is_default")), None)
-        return json_response(request, {
-            "connected": bool(accounts),
-            # Compat : champs au niveau racine = compte par défaut.
-            "granted_at": default["granted_at"] if default else None,
-            "scopes": default["scopes"].split() if default and default.get("scopes") else [],
-            "accounts": [
-                {
-                    "email": a.get("google_email"),
-                    "is_default": a.get("is_default", False),
-                    "scopes": a["scopes"].split() if a.get("scopes") else [],
-                    "granted_at": a.get("granted_at"),
-                }
-                for a in accounts
-            ],
-        })
 
-    async def google_oauth_revoke(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        # ?account=<email> révoque un compte précis ; absent = tous.
-        account = request.query_params.get("account") or None
-        google_oauth.revoke(sub, account=account)
-        return json_response(request, {"ok": True, "account": account})
 
-    async def google_oauth_set_default(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        try:
-            body = await read_json_body(request)
-        except InvalidJsonBody as e:
-            return json_error(request, 400, e.code, e.detail)
-        account = body.get("account") or ""
-        account = account.strip()
-        if not account:
-            return json_error(request, 400, "missing_account")
-        org_id = access.current_org(sub)
-        if org_id is None or not db.set_default_google_account(sub, org_id, account):
-            return json_error(request, 404, "unknown_account")
-        return json_response(request, {"ok": True, "default": account})
 
     # --- API tokens (CLI auth) -------------------------------------------
 
@@ -233,15 +174,7 @@ def make_routes(
 
     return [
         # Google OAuth
-        Route("/api/google/oauth/start", google_oauth_start, methods=["GET"]),
-        Route("/api/google/oauth/start", options_handler, methods=["OPTIONS"]),
         Route("/api/google/oauth/callback", google_oauth_callback, methods=["GET"]),
-        Route("/api/google/oauth/status", google_oauth_status, methods=["GET"]),
-        Route("/api/google/oauth/status", options_handler, methods=["OPTIONS"]),
-        Route("/api/google/oauth", google_oauth_revoke, methods=["DELETE"]),
-        Route("/api/google/oauth/default", google_oauth_set_default, methods=["POST"]),
-        Route("/api/google/oauth/default", options_handler, methods=["OPTIONS"]),
-        Route("/api/google/oauth", options_handler, methods=["OPTIONS"]),
         # API tokens
         Route("/api/me/tokens", me_tokens_list, methods=["GET"]),
         Route("/api/me/tokens", me_tokens_create, methods=["POST"]),

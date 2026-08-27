@@ -26,14 +26,14 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
 
 | famille | où | régime |
 | --- | --- | --- |
-| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
+| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
 | primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api_routes_base.py` | partagées par tous les modules ; **ré-exportées** par `api_routes` |
 | favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques doctrines & guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api_routes_public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
 | `/api/me/avatar`, `/api/orgs/{id}/logo` | `api_routes_media.py` | multipart → hors couche capacité |
 | fichiers bruts d'un projet, `/api/me/projects/{id}/export` | `api_routes_projects.py` | multipart / binaire |
 | `/api/upload/{token}` (PUT/POST/GET) | `api_routes_uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
 | `/api/admin/platform-keys*`, `/api/admin/users/{sub}/tokens*` | `api_routes_admin.py` | `allow_api_token=False` : un jeton ne fabrique pas de jeton |
-| SIRENE, accords, datastore, contact, **webhook Unipile**, webhook Mollie, OAuth zoho/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
+| SIRENE, accords, datastore, contact, **webhook Unipile**, webhook Mollie, **callbacks OAuth** zoho/google/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
 
 - `GET /api/me` + `GET /api/me/calls` + `GET /api/me/activity-summary` — **le compte**,
   capacités `me.{get,calls,activity_summary}` depuis le 2026-08-27
@@ -147,6 +147,32 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
   **Pas de face MCP** : la face agent de ce geste est `me.connector_connect`
   (`POST /api/me/connectors/{name}/connect`), qui **supersède** `…/unipile/connect` —
   celui-ci vit jusqu'à la bascule du front.
+- `GET /api/{atlassian,folkmcp,google}/oauth/start` + `…/oauth/status` +
+  `DELETE /api/{atlassian,folkmcp,google}/oauth` + `POST /api/google/oauth/default` —
+  **les VERBES du consentement OAuth per-user**, capacités
+  `me.federation.{atlassian,folkmcp,google}.*` depuis le 2026-08-27
+  (`capabilities/federated_oauth.py`). Les **callbacks** (`…/oauth/callback`, un par
+  fournisseur) restent écrits à la main et le resteront : le fournisseur y redirige le
+  NAVIGATEUR (302, sans en-tête d'auth), or l'adaptateur authentifie toujours et répond
+  en JSON — hors du moule par construction.
+  **Deux familles, pas trois.** `atlassian` et `folkmcp` fédèrent un MCP distant (jeton
+  per-user au coffre, injecté par `tools/mount.py`) : leur surface est identique au champ
+  près, et cette symétrie est **contractuelle** — le dashboard les pilote par un client
+  GÉNÉRIQUE (`/api/${name}/oauth/…`). `google` est à part : multi-compte, donc un statut
+  plus riche et un verbe de plus.
+  ⚠️ **Les champs racine de `google/oauth/status` (`granted_at`, `scopes`) décrivent le
+  compte PAR DÉFAUT**, pas l'union des comptes — héritage du mono-compte ; la vérité
+  multi-compte est `accounts`. Sans défaut posé, la racine est vide alors que `connected`
+  est vrai. ⚠️ **`DELETE /api/google/oauth` SANS `?account=` révoque TOUS les comptes** —
+  `account: null` en réponse veut dire « tous », pas « aucun ». Un `500
+  oauth_misconfigured:` signale une app OAuth mal configurée côté PLATEFORME, pas une
+  erreur de l'appelant.
+  ⚠️ **Ces chemins NOMMENT leur connecteur**, ce que `test_connector_flow.py` interdit
+  depuis que zoho et salesforce sont passés au chemin fixe (v1.19.0). Ils y sont tolérés
+  NOMMÉMENT : les vider suppose que le widget de fédération du dashboard cesse de
+  construire son URL à partir du nom du connecteur — **dette de front**, pas de backend.
+  **Pas de face MCP** : ouvrir une page de consentement demande un navigateur, et le
+  pendant agent générique existe (`me.connector_connect`).
 - `GET|POST|DELETE /api/admin/connectors/activation` + `GET|POST /api/admin/connectors/{provider}/platform-access`
   — **le palier PLATEFORME des connecteurs**, capacités
   `platform.connector.{activation_list,activation_set,activation_clear,access_list,access_set}`

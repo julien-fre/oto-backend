@@ -54,11 +54,6 @@ def make_routes(
         return cible or f"{{_app_url()}}/?atlassian={{statut}}"
 
 
-    async def start(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        return json_response(request, {"auth_url": atlassian_oauth.build_auth_url(sub)})
 
     async def callback(request: Request) -> Response:
         # Atlassian redirige ici (pas d'auth Logto) ; l'identité vient du state signé.
@@ -78,24 +73,8 @@ def make_routes(
             return RedirectResponse(_retour("error", sub), status_code=302)
         return RedirectResponse(_retour("connected", sub), status_code=302)
 
-    async def status(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        return json_response(request, atlassian_oauth.status_for(sub))
 
-    async def disconnect(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
-        if err:
-            return err
-        return json_response(request, {"ok": True, "disconnected": atlassian_oauth.disconnect(sub)})
 
     return [
-        Route("/api/atlassian/oauth/start", start, methods=["GET"]),
-        Route("/api/atlassian/oauth/start", options_handler, methods=["OPTIONS"]),
         Route("/api/atlassian/oauth/callback", callback, methods=["GET"]),
-        Route("/api/atlassian/oauth/status", status, methods=["GET"]),
-        Route("/api/atlassian/oauth/status", options_handler, methods=["OPTIONS"]),
-        Route("/api/atlassian/oauth", disconnect, methods=["DELETE"]),
-        Route("/api/atlassian/oauth", options_handler, methods=["OPTIONS"]),
     ]

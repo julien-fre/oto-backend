@@ -63,6 +63,10 @@ from . import platform_connectors  # noqa: F401 — platform.connector.{activati
 # délier. Ex-routes écrites à la main ; le WEBHOOK reste écrit à la main (non
 # authentifié par nature, gardé par un nonce).
 from . import unipile_me  # noqa: F401 — me.unipile.{connect,reconcile,status,disconnect}
+# VERBES du consentement OAuth per-user (#121) — démarrer / lire / déconnecter, pour les
+# deux fédérations MCP (atlassian, folkmcp) et Google (multi-compte). Ex-routes écrites
+# à la main ; les CALLBACKS restent écrits à la main (302 sans auth, hors du moule).
+from . import federated_oauth  # noqa: F401 — me.federation.{atlassian,folkmcp,google}.*
 # RBAC connecteur interne à l'org (ADR 0025) — restreindre un connecteur à des départements/membres.
 from . import connectors_acl  # noqa: F401 — connectors.acl.{list,grant,revoke}
 # Toolbox du MEMBRE (#121) — ex-routes écrites à la main : liste, registre, bascule
