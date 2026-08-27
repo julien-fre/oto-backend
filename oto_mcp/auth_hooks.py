@@ -57,21 +57,27 @@ def current_user_sub_from_token() -> Optional[str]:
     override = _sub_override.get()
     if override:
         return override
+    # ⚠️ Le `try` ne couvre QUE la récupération du jeton — absence de contexte fastmcp,
+    # import indisponible : là, retomber sur `OTO_MCP_DEV_SUB` est le comportement voulu.
+    # Il couvrait aussi la canonicalisation ci-dessous, et c'est ce qui rendait le refus
+    # de `resolve_sub` inopérant : un échec d'IDENTITÉ y était reclassé en « pas de
+    # jeton » et la requête repartait anonyme, sans un mot (`docs/silences-2026-08-27.md`,
+    # site B5). Un échec d'identité se lève ; il ne se dégrade pas en anonymat.
     try:
         from fastmcp.server.dependencies import get_access_token  # type: ignore
         token = get_access_token()
-        if token and getattr(token, "claims", None):
-            sub = token.claims.get("sub")
-            if sub:
-                # Bascule de tenant (B1, otomata#35) : pendant la fenêtre, canonicaliser
-                # le sub (vieux token en drain → compte migré) et déclencher la migration
-                # pour les users MCP-only. Gaté env → no-op (et aucun coût) hors bascule.
-                if os.environ.get("OTO_MCP_TENANT_MIGRATION_ISS"):
-                    from . import db
-                    sub = db.resolve_sub(sub)
-                    db.upsert_user(sub, email=token.claims.get("email"),
-                                   name=token.claims.get("name"), iss=token.claims.get("iss"))
-                return sub
-    except Exception:
-        pass
+    except Exception:  # noqa: BLE001 — hors contexte de requête MCP (REST, dev local)
+        token = None
+    if token and getattr(token, "claims", None):
+        sub = token.claims.get("sub")
+        if sub:
+            # Bascule de tenant (B1, otomata#35) : pendant la fenêtre, canonicaliser
+            # le sub (vieux token en drain → compte migré) et déclencher la migration
+            # pour les users MCP-only. Gaté env → no-op (et aucun coût) hors bascule.
+            if os.environ.get("OTO_MCP_TENANT_MIGRATION_ISS"):
+                from . import db
+                sub = db.resolve_sub(sub)
+                db.upsert_user(sub, email=token.claims.get("email"),
+                               name=token.claims.get("name"), iss=token.claims.get("iss"))
+            return sub
     return os.environ.get("OTO_MCP_DEV_SUB")
