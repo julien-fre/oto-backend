@@ -50,19 +50,93 @@ péremption → épic sécurité auth/MCP #35 ; ④ MRTR (`resultType: "input_re
 remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 `*_connect_status` sont déjà des handles), une standardisation possible.
 
-## Où vit le savoir MCP (rangé le 2026-08-28)
+## Ce que les clients font vraiment du protocole — relevés datés
 
-Trois domiciles, un rôle chacun — **chercher dans oto AVANT de re-dériver** (coût vécu le
-28/08 : une journée à retrouver depuis le code et la spec ce qui était écrit depuis un
-mois, deux affirmations fausses publiées puis corrigées) :
+La spec dit ce qu'un serveur peut émettre ; elle ne dit pas ce qu'un client en montre au
+modèle. **Cet écart se mesure, il ne se déduit pas.** Chaque relevé ci-dessous est daté et
+porte sa façon d'être reconstaté — un relevé qu'on ne sait pas refaire est une croyance.
+(Les décisions d'architecture qui s'appuient dessus vivent dans le dossier de conception
+interne ; côté oto, la page « Protocole MCP » n'est qu'un pointeur vers ce fichier.)
 
-| quoi | où |
-|---|---|
-| **Décisions & architecture** (spec 2026-07-28, `server/discover`, budget P12, canaux fiables) | oto, projet 180 « oto headless », **page 480** (doc B §13.5) |
-| **Relevés clients** — ce que les clients transmettent RÉELLEMENT au modèle, mesuré et daté, avec la façon de reconstater (troncature 2048 de Claude Code, claude.ai qui ne montre rien, 1re ligne d'une description = contrat de sélection, coût d'une injection en résultat, épisode du filet stateful) | oto, projet 180, **page 1178** |
-| **Ce qui contraint le code d'ICI** (veille SEP ci-dessus, liste de migration, tripwires) | ce fichier |
+### Relevé 1 — le champ `instructions` du handshake n'atteint pas le modèle (28/08/2026)
 
-Deux règles issues des relevés, appliquées dans CE repo : la première ligne d'une
-description d'outil est une phrase complète, courte, autonome (175 outils à reprendre) ;
-et toute livraison de contexte est **sans état conservé entre appels** (ADR 0038 — le
-« filet » à registre mémoire a été posé puis retiré le 28/08, cf. page 1178).
+Nos instructions composées font 17 292 caractères (socle 8 458 + catalogue 8 832, puis les
+couches par-personne : contexte résolu, readme d'org, d'équipe, d'utilisateur).
+
+| client | le serveur émet | ce que le modèle voit |
+|---|---|---|
+| Claude Code | oui, en entier | **les 2 048 premiers caractères**, coupés en plein mot, sans avertir (constante du bundle client, simple log debug) |
+| claude.ai | oui, même chemin serveur | **rien** — la session testée ne reçoit aucun bloc d'instructions |
+
+Conséquences ici : les couches personnalisées commencent au caractère 17 292 — les readme
+d'org/équipe/utilisateur n'étaient **jamais** délivrés sous Claude Code (promesse ADR 0042
+non tenue sur ce client), et l'écran « ce que voit l'agent » montre ce que le serveur
+**compose**, pas ce que le client **reçoit**.
+
+**Reconstater** : comparer la coupe à 2 048 de `instructions.compose_session()` avec la fin
+du bloc reçu par une session Claude Code branchée sur oto (il se termine par
+`… [truncated]`). Le 28/08, les deux tombaient au même caractère, au milieu du mot
+« dessous ». Côté claude.ai : demander à une session ce qu'elle voit du connecteur.
+
+**Et le canal s'affaiblit dans la spec `2026-07-28`** : `initialize` disparaît,
+`instructions` déménage dans le résultat de `server/discover` — que le serveur DOIT
+implémenter mais que **le client est libre de ne jamais appeler**. D'un canal toujours émis
+mais mal rendu, on passe à un canal qui peut n'être jamais sollicité. Aucun plafond de
+taille n'est documenté dans la spec : les 2 048 sont une décision de client.
+(⚠️ `cacheScope: "private"` obligatoire sur ce résultat — cf. le point ① de la liste de
+migration ci-dessus : notre `instructions` est composé par (sub, org).)
+
+### Relevé 2 — la 1re ligne d'une description d'outil est un contrat de sélection (28/08/2026)
+
+Sur les 556 outils servis : **68 % ont une description multi-lignes**, et **84 % du texte
+des descriptions vit après la première ligne** — invisible au moment où le modèle choisit
+un outil, chez au moins un client qui ne montre que la première ligne. **175 premières
+lignes s'arrêtent au milieu d'une phrase** (rédigées comme des paragraphes).
+
+**Deux troncatures distinctes, à ne pas confondre** : la nôtre (un saut de ligne au
+mauvais endroit — réparable) et un plafond de longueur côté client (constaté sur une
+première ligne complète de 81 caractères, coupée 2 caractères avant sa fin). Des premières
+lignes **courtes et complètes** protègent des deux.
+
+**Règle d'écriture** : la première ligne = une phrase complète, courte, autonome —
+impérative si l'outil est une amorce (`oto_context` : « CALL THIS FIRST… »). Le détail
+vient après, pour l'appel.
+
+**Reconstater** : réchauffer le registre hors serveur (`register_all` + `warm_registry`,
+cf. `docs/commands.md`) et compter.
+
+### Relevé 3 — les canaux fiables, et ce qu'ils coûtent (28/08/2026)
+
+Ce qui **arrive toujours** au modèle : les descriptions d'outils, et les résultats
+d'outils.
+
+**Mais l'injection dans un résultat se paie cher** : le bloc de contexte fait 12 889
+caractères ≈ 3 000–3 500 jetons — mesuré sur une chaîne d'enrichissement en production,
+**plus que le coût facturé d'un traitement entier** (~2 500 jetons, le reste servi du
+cache). Et il arrive en **fin de préfixe** : jamais réutilisé par le cache du fournisseur,
+payé plein tarif à chaque livraison. Sur une flotte, il double le coût du job qui le
+reçoit.
+
+**Contrainte dure, vécue le 28/08** : toute livraison dans un résultat doit être **sans
+état conservé entre appels** (ADR 0038). Un « filet » livrant le bloc à la première
+réponse d'outil, avec un registre mémoire « déjà servi » à fenêtre de 30 min, a vécu
+quelques heures en prod (v1.155.0) avant retrait le jour même : le registre était un état
+de session keyé sur une identité — et sous un jeton partagé par une flotte, la livraison
+dépendait de qui avait appelé en dernier. Deux mesures utiles de l'épisode : une **balise**
+explicite (« ceci n'est PAS le résultat de l'outil ») suffit à empêcher la recopie dans les
+livrables (0 trace sur 14 fiches produites pendant la fenêtre) ; et une livraison « une
+fois par identité » rend deux exécutions du même travail **non comparables** — rédhibitoire
+pour toute mesure agentique.
+
+### Ce que ces relevés bornent
+
+- Le contexte injecté d'office doit être **bref** — deux raisons indépendantes convergent :
+  la troncature client et le coût par livraison. Garde-fou visé : un budget mesuré en CI,
+  seuils par couche, release cassée au-delà.
+- Le catalogue des capacités (8 832 caractères, la moitié de la composition) est le premier
+  candidat au retrait : déjà interrogeable à la demande (`oto_list_my_tools`,
+  `oto_tool_schema`).
+- Un **garde-fou métier** (« validation avant envoi externe ») ne se confie pas à de la
+  prose qu'un client peut ne pas transmettre : il se fait respecter **côté serveur, sur
+  l'outil qui engage**, en refus nommé.
+- Chantier : #478.
