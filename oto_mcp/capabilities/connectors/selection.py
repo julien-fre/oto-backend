@@ -246,7 +246,18 @@ def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
 # Champs conservés en mode COMPACT (défaut MCP) : identité + axes de tri + état.
 # Les gros champs (doc_sections/auth/credential_fields/description/namespaces) ne
 # reviennent qu'en `verbose=True` (dashboard, setup credential). Cf. #109.
-_COMPACT_KEYS = ("name", "label", "help", "family", "category", "availability", "logo_url")
+# `secret_kind` est dans le COMPACT, et pas seulement dans la carte verbeuse :
+# c'est le seul scalaire qui distingue « ce connecteur ne demande aucune clé »
+# (open data — `none`) de « il en demande une que tu n'as pas encore ». Sans lui
+# au chargement, un tableau ne peut pas le dire, et l'absence d'entrée dans
+# `providers` ne suffit PAS à trancher : `scaleway`, `http`, `atlassian` et
+# `folkmcp` en sont absents eux aussi tout en exigeant un credential. Le front
+# affichait donc « Not connected » sur OpenStreetMap jusqu'à ce qu'on ouvre la
+# carte, où le verbeux disait « Included » (constaté en prod le 2026-08-29).
+# Scalaire déjà calculé, aucun coût : le compact évite `auth`/`credential_fields`
+# pour leurs listes, pas pour un mot.
+_COMPACT_KEYS = ("name", "label", "help", "family", "category", "availability",
+                 "logo_url", "secret_kind")
 
 
 def _toolbox_scope(ctx: ResolvedCtx) -> Optional[dict]:

@@ -369,6 +369,23 @@ class Connector:
             # (`auth_mode` chez `http`) : le front n'a pas à connaître le connecteur
             # pour n'afficher que les champs qui servent — il lit `when` (#449).
             "field_discriminator": self.field_discriminator,
+            # Le CANAL hébergé de ce connecteur, quand il en porte un (split unipile
+            # du 2026-08-28). Sans lui, un écran qui rend la face « connecter un
+            # compte » ne peut pas savoir LEQUEL des six canaux sa carte représente —
+            # et la seule issue est une liste des six recopiée dans le front, qui
+            # s'affiche identique sur les six cartes. C'est exactement la panne
+            # constatée : la carte WhatsApp proposait de connecter LinkedIn,
+            # Telegram, Instagram… et affichait leur état de connexion comme le sien.
+            # Minuscule, comme le paramètre du flux — le coffre, lui, majuscule.
+            "hosted_channel": (self.hosted_channel or "").lower() or None,
+            # Le connecteur qui DÉTIENT le credential, quand ce n'est pas celui-ci
+            # (`credential_of`). Un connecteur qui délègue n'a AUCUN champ à saisir
+            # (`secret_fields` est vide par construction, cf. plus bas) : un écran qui
+            # lui propose quand même « pose ta propre clé » propose un geste sans
+            # effet, la clé qu'il poserait n'étant lue par personne. Le nom du porteur
+            # plutôt qu'un booléen : c'est LUI que l'écran doit nommer pour dire où le
+            # geste se fait vraiment.
+            "credential_of": self.credential_of,
             "fields": [
                 {"name": f.name, "label": f.label, "secret": f.secret,
                  "required": f.required, "help": f.help,

@@ -107,6 +107,12 @@ def test_catalog_exposes_auth():
         # libre » — ils sont TOUJOURS publiés pour que le front n'ait pas de repli
         # à écrire (#449).
         "field_discriminator": "",
+        # Un connecteur ORDINAIRE ne porte ni canal hébergé ni délégation — les
+        # deux clés sont TOUJOURS publiées (`None` ici) plutôt qu'omises, même
+        # règle que `when`/`choices` ci-dessus : le front lit une forme unique,
+        # sans repli à écrire pour la clé absente.
+        "hosted_channel": None,
+        "credential_of": None,
         "fields": [{"name": "key", "label": "API key", "secret": True,
                     "required": True, "help": "", "when": [], "choices": []}],
     }
@@ -125,3 +131,24 @@ def test_le_catalogue_publie_de_quoi_filtrer_un_formulaire_a_modes():
     assert by_name["auth_mode"]["choices"][:2] == ["bearer", "header"]
     assert by_name["client_secret"]["when"] == ["oauth2"]
     assert by_name["token"]["when"] == ["bearer", "header", "query"]
+
+
+def test_catalog_expose_le_canal_heberge_et_la_delegation():
+    """Les deux faits dont l'ÉCRAN a besoin pour rendre une carte de canal.
+
+    Sans `hosted_channel`, le front ne sait pas lequel des six canaux sa carte
+    représente : il n'a d'autre issue qu'une liste des six recopiée, donc rendue
+    à l'identique sur les sept cartes — la carte WhatsApp proposant de connecter
+    LinkedIn (constaté en prod, corrigé côté front en v1.17.0). Sans
+    `credential_of`, il ne sait pas que la carte n'a aucun champ à elle et lui
+    propose « pose ta propre clé », un geste sans effet."""
+    cat = {c["name"]: c for c in public_catalog()}
+    # Un canal : il EST un canal, et sa clé est ailleurs.
+    assert cat["whatsapp"]["auth"]["hosted_channel"] == "whatsapp"
+    assert cat["whatsapp"]["auth"]["credential_of"] == "unipile"
+    # Minuscule côté catalogue, majuscule côté coffre — le front ne voit que la
+    # première, et `linkedin_unipile` est le seul dont le nom ne vaut pas canal.
+    assert cat["linkedin_unipile"]["auth"]["hosted_channel"] == "linkedin"
+    # Le COMPTE porte la clé : pas un canal, ne délègue à personne.
+    assert cat["unipile"]["auth"]["hosted_channel"] is None
+    assert cat["unipile"]["auth"]["credential_of"] is None
