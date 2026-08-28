@@ -174,6 +174,17 @@ def _init_db_once() -> None:
         # souscription il n'y avait donc RIEN à relire, et un second customer Mollie
         # naissait à chaque tentative (vécu le 25/08). Additif, NULL sur l'historique.
         conn.execute("ALTER TABLE billing_payments ADD COLUMN IF NOT EXISTS customer_id TEXT")
+        # #486 : la décomposition fiscale de CHAQUE tentative de débit. `amount` porte
+        # désormais le TTC réellement passé au PSP ; le HT, le taux (en points de base)
+        # et la TVA sont figés à côté. Additif et NULLABLE — surtout pas de backfill :
+        # les encaissements antérieurs au 28/08/2026 ont réellement été débités du HT
+        # sans TVA, et leur inventer une décomposition ferait mentir le journal sur ce
+        # que le PSP a pris. `amount_ht IS NULL` = « ligne d'avant la règle ».
+        for _col, _type in (("amount_ht", "INTEGER"), ("vat_rate_bps", "INTEGER"),
+                            ("vat_amount", "INTEGER"), ("country_code", "TEXT"),
+                            ("vat_scheme", "TEXT")):
+            conn.execute(f"ALTER TABLE billing_payments "
+                         f"ADD COLUMN IF NOT EXISTS {_col} {_type}")
         # ADR 0032 §2 : le lien projet→entité porte un `role` (pourquoi cette entité est ici).
         conn.execute("ALTER TABLE project_links ADD COLUMN IF NOT EXISTS role TEXT")
         # ADR 0032 §4 (B2) : surcharge contextuelle préfaite du lien (connecteur → identité/instructions).

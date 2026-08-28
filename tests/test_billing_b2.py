@@ -32,9 +32,19 @@ def test_add_period_year_and_december():
 
 # ── subscribe ────────────────────────────────────────────────────────────────
 
-def _wire_subscribe(monkeypatch, existing=None, *, in_flight=None, journal_customer=None):
+# Identité de facturation française par défaut : depuis #486, `subscribe` REFUSE
+# sans elle — un org qui souscrit en a donc forcément une, et la câbler ici est ce
+# qui garde ces tests sur leur sujet (le cycle), pas sur la TVA.
+IDENTITE_FR = {"legal_name": "ACME SAS", "country_code": "FR", "vat_number": None,
+               "address_line": "1 rue de la Paix", "postal_code": "13001",
+               "city": "Marseille"}
+
+
+def _wire_subscribe(monkeypatch, existing=None, *, in_flight=None,
+                    journal_customer=None, identity=IDENTITE_FR):
     calls = {}
     monkeypatch.setattr(db_billing, "get_org_subscription", lambda org: existing)
+    monkeypatch.setattr(db_billing, "get_billing_identity", lambda org: identity)
     monkeypatch.setattr(db_billing, "insert_billing_payment",
                         lambda *a, **k: calls.setdefault("insert", (a, k)) or 1)
     # #493 : la souscription se garde sur un paiement DÉJÀ EN VOL, et le customer
@@ -69,7 +79,13 @@ def test_subscribe_happy_path(monkeypatch):
     assert out["checkout_url"].startswith("https://www.mollie.com/checkout/")
     assert calls["customer"]["metadata"] == {"org_id": "42"}
     amount, kw = calls["payment"]
-    assert amount == billing.PLANS["premium"]["amount"]
+    # #486 : ce qui part au PSP est le TTC, pas le prix HT du palier. 49,00 € HT
+    # + 20 % = 58,80 € — c'est ce montant-là que le client voit débité.
+    ht = billing.PLANS["premium"]["amount"]
+    assert amount == ht + ht // 5 == 5880
+    assert out["amount_ht"] == ht and out["amount_ttc"] == 5880
+    assert out["vat_rate_bps"] == 2000 and out["vat_amount"] == 980
+    assert out["vat_scheme"] == "fr_ttc" and out["vat_mention"] is None
     assert kw["method"] == "creditcard"                  # 'card' → page carte
     assert kw["metadata"] == {"org_id": "42", "plan": "premium"}   # le plan voyage
     assert calls["insert"][0][:2] == (42, "initial")

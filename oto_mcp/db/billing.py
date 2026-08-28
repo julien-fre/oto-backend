@@ -269,16 +269,77 @@ def insert_billing_payment(
     status: str = "processing",
     attempt: int = 1,
     customer_id: Optional[str] = None,
+    tax: Optional[dict] = None,
 ) -> int:
+    """Journalise une tentative. `amount` = ce qui part RÉELLEMENT au PSP, donc le
+    TTC depuis #486 ; `tax` (la sortie de `billing_vat.tax_for`) fige la
+    décomposition à côté. `tax=None` n'existe que pour les tests et les chemins
+    historiques — une ligne sans décomposition est une ligne qu'on ne saura pas
+    facturer."""
+    t = tax or {}
     with _connect() as conn:
         row = conn.execute(
             "INSERT INTO billing_payments (org_id, kind, amount, currency, "
-            "payment_intent_id, payment_id, status, attempt, customer_id) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            "payment_intent_id, payment_id, status, attempt, customer_id, "
+            "amount_ht, vat_rate_bps, vat_amount, country_code, vat_scheme) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (org_id, kind, amount, currency, payment_intent_id, payment_id,
-             status, attempt, customer_id),
+             status, attempt, customer_id,
+             t.get("amount_ht"), t.get("vat_rate_bps"), t.get("vat_amount"),
+             t.get("country_code"), t.get("vat_scheme")),
         ).fetchone()
     return int(row["id"])
+
+
+# ── billing_identities (l'identité de facturation, #486) ─────────────────────
+
+def get_billing_identity(org_id: int) -> Optional[dict]:
+    """L'identité de facturation de l'org, ou `None` — jamais un gabarit vide : une
+    identité absente et une identité incomplète se traitent différemment (la seconde
+    dit déjà quelque chose du client)."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT * FROM billing_identities WHERE org_id = %s", (org_id,)
+        ).fetchone()
+
+
+def upsert_billing_identity(
+    org_id: int,
+    *,
+    legal_name: str,
+    country_code: str,
+    vat_number: Optional[str] = None,
+    address_line: Optional[str] = None,
+    address_line2: Optional[str] = None,
+    postal_code: Optional[str] = None,
+    city: Optional[str] = None,
+    billing_email: Optional[str] = None,
+) -> None:
+    """Pose ou REMPLACE l'identité (c'est un formulaire, pas un journal) — un champ
+    omis est donc effacé, et l'appelant poste toujours l'identité entière. Ce qui a
+    déjà été facturé n'en dépend pas : `billing_payments` a figé sa propre
+    décomposition au moment du débit."""
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO billing_identities
+                (org_id, legal_name, country_code, vat_number, address_line,
+                 address_line2, postal_code, city, billing_email)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (org_id) DO UPDATE SET
+                legal_name = EXCLUDED.legal_name,
+                country_code = EXCLUDED.country_code,
+                vat_number = EXCLUDED.vat_number,
+                address_line = EXCLUDED.address_line,
+                address_line2 = EXCLUDED.address_line2,
+                postal_code = EXCLUDED.postal_code,
+                city = EXCLUDED.city,
+                billing_email = EXCLUDED.billing_email,
+                updated_at = NOW()
+            """,
+            (org_id, legal_name, country_code, vat_number, address_line,
+             address_line2, postal_code, city, billing_email),
+        )
 
 
 def last_customer_id_for_org(org_id: int) -> Optional[str]:

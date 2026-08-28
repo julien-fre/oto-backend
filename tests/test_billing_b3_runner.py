@@ -19,9 +19,20 @@ def _sub(**over) -> dict:
     return base
 
 
-def _wire(monkeypatch, *, attempts_before=0, payment=None, payment_exc=None):
+# L'échéance est prélevée TTC depuis #486, au taux de l'identité de facturation
+# lue AU MOMENT du prélèvement — le même seam que `subscribe`. Une org abonnée en a
+# forcément une (subscribe l'exige) : on la câble ici pour que ces tests restent sur
+# le dunning, et un test dédié couvre l'org dont l'identité s'est cassée.
+IDENTITE_FR = {"legal_name": "ACME SAS", "country_code": "FR", "vat_number": None,
+               "address_line": "1 rue de la Paix", "postal_code": "13001",
+               "city": "Marseille"}
+
+
+def _wire(monkeypatch, *, attempts_before=0, payment=None, payment_exc=None,
+          identity=IDENTITE_FR):
     state = {"journal": [], "updates": [], "schedule": None, "retry": None,
              "status": None}
+    monkeypatch.setattr(db_billing, "get_billing_identity", lambda org: identity)
     monkeypatch.setattr(db_billing, "count_renewal_attempts",
                         lambda org, since: attempts_before)
     monkeypatch.setattr(db_billing, "insert_billing_payment",
@@ -52,7 +63,13 @@ def test_renewal_success_anchors_on_period_end(monkeypatch):
     state = _wire(monkeypatch)
     assert billing_runner._charge_one(_sub(), NOW) == "renewed"
     amount, kw = state["charge"]
-    assert amount == billing.PLANS["premium"]["amount"]
+    # #486 : le renouvellement prélève le TTC, exactement comme la souscription —
+    # 49,00 € HT + 20 % = 58,80 €. Un renouvellement resté au HT aurait signifié que
+    # le client paie deux montants différents selon le mois.
+    assert amount == 5880 == billing.PLANS["premium"]["amount"] * 6 // 5
+    # …et la décomposition est journalisée sur la tentative, pas seulement débitée.
+    assert state["journal"][-1][1]["tax"]["vat_scheme"] == "fr_ttc"
+    assert state["journal"][-1][0][2] == 5880
     assert kw["customer_id"] == "cst_1" and kw["mandate_id"] == "mdt_1"
     # idempotency_key déterministe période+tentative (anti double-débit)
     assert kw["idempotency_key"] == "org42-2026-07-06-a1"
@@ -100,6 +117,18 @@ def test_unknown_plan_or_missing_mandate_skips(monkeypatch):
     assert billing_runner._charge_one(_sub(plan="gold"), NOW) == "skipped"
     assert billing_runner._charge_one(_sub(mandate_id=None), NOW) == "skipped"
     assert "charge" not in state               # aucun débit tenté
+
+
+def test_une_identite_devenue_incalculable_bloque_le_prelevement(monkeypatch):
+    """#486 : sans identité exploitable, il n'y a pas de montant CORRECT à prendre.
+
+    Le runner ne retombe donc pas sur le HT « en attendant » — c'est exactement ce
+    que ce lot répare. Rien n'est débité, rien n'est journalisé, et le cycle n'est
+    pas décalé : l'échéance reste due et repartira dès l'identité réparée."""
+    state = _wire(monkeypatch, identity=None)
+    assert billing_runner._charge_one(_sub(), NOW) == "tax_blocked"
+    assert "charge" not in state and state["journal"] == []
+    assert state["schedule"] is None and state["retry"] is None
 
 
 # ── réconciliation ───────────────────────────────────────────────────────────

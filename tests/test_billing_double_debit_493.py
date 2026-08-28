@@ -33,7 +33,9 @@ from oto_mcp.db import billing as db_billing
 
 ORG = 219
 RETURN_URL = "https://dashboard.oto.cx/org/billing?billing=return"
-PRIX = billing.PLANS["standard"]["amount"]
+PRIX_HT = billing.PLANS["standard"]["amount"]
+# Ce que le PSP encaisse réellement depuis #486 : 19,00 € HT + 20 % = 22,80 €.
+PRIX = PRIX_HT + PRIX_HT // 5
 
 
 # ── l'horloge du scénario ────────────────────────────────────────────────────
@@ -136,11 +138,21 @@ class _Store:
 
     TERMINAL_PAYMENT_STATUSES = db_billing.TERMINAL_PAYMENT_STATUSES
 
+    # Depuis #486, `subscribe` exige une identité de facturation : l'org 219 en a
+    # une (française), sinon elle n'aurait jamais pu payer. Le rejeu la porte donc,
+    # et les montants du scénario sont des TTC.
+    IDENTITE = {"legal_name": "ACME SAS", "country_code": "FR", "vat_number": None,
+                "address_line": "1 rue de la Paix", "postal_code": "13001",
+                "city": "Marseille"}
+
     def __init__(self, clock: _Timeline):
         self.clock = clock
         self.rows: list[dict] = []
         self.sub: dict | None = None
         self.upserts = 0
+
+    def get_billing_identity(self, org_id):
+        return self.IDENTITE
 
     def _out(self, row: dict) -> dict:
         return {**row, "created_at": self.clock.stamp(row["at"])}
@@ -151,11 +163,13 @@ class _Store:
     # — billing_payments —
     def insert_billing_payment(self, org_id, kind, amount, *, currency="eur",
                                payment_intent_id=None, payment_id=None,
-                               status="processing", attempt=1, customer_id=None):
+                               status="processing", attempt=1, customer_id=None,
+                               tax=None):
         row = {"id": len(self.rows) + 1, "org_id": org_id, "kind": kind,
                "amount": amount, "currency": currency, "status": status,
                "payment_intent_id": payment_intent_id, "payment_id": payment_id,
-               "attempt": attempt, "customer_id": customer_id, "at": self.clock.t}
+               "attempt": attempt, "customer_id": customer_id, "at": self.clock.t,
+               **(tax or {})}
         self.rows.append(row)
         return row["id"]
 
