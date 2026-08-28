@@ -185,55 +185,46 @@ def _init_db_once() -> None:
                             ("vat_scheme", "TEXT")):
             conn.execute(f"ALTER TABLE billing_payments "
                          f"ADD COLUMN IF NOT EXISTS {_col} {_type}")
-        # #487 : `legal_acceptances` devient un HISTORIQUE — une ligne par acceptation,
-        # plus d'upsert qui écrase. Deux mouvements, et l'ordre compte.
+        # #487 : le journal des acceptations. LOT A, ADDITIF — la table
+        # `legal_acceptances` et sa PK `(sub, doc_slug)` restent INTACTES, parce que
+        # le code servi en PRODUCTION y fait encore son `ON CONFLICT (sub, doc_slug)`
+        # et que prod et preprod partagent la base (`docs/live-migrations.md`).
+        # Retirer cette unicité — ce qu'un historique dans la même table exigerait —
+        # casserait le `POST /api/me/legal/accept` de la prod, c'est-à-dire le gate
+        # CGU de l'INSCRIPTION, pendant toute la fenêtre entre le déploiement preprod
+        # et le tag. Le journal est donc une table NEUVE (`_schema.py`), et
+        # `legal_acceptances` devient une projection maintenue en écriture double le
+        # temps de la fenêtre. Son retrait est l'issue #507, et il a sa garde : ne pas
+        # l'exécuter tant que la prod ne sert pas le code qui lit le journal.
         #
-        # 1. Le one-shot, gardé sur l'ABSENCE de la colonne `id` (donc joué une seule
-        #    fois, et jamais sur une install vierge où `BIGSERIAL` l'a déjà créée) :
-        #    id surrogate backfillé par séquence, puis bascule de la PK. Les lignes
-        #    existantes RESTENT — elles deviennent simplement la première (et pour
-        #    l'instant la seule) acceptation de leur doc, avec `context`/`ip`/
-        #    `user_agent`/`org_id` à NULL : on ne sait pas d'où elles viennent, et le
-        #    deviner serait une reconstitution.
+        # RECOPIE À CHAQUE BOOT, et non un one-shot : pendant la fenêtre, la prod
+        # écrit dans la projection SEULE (elle ne connaît pas le journal). Sans cette
+        # reprise, une acceptation donnée en prod entre le boot preprod et le tag ne
+        # rejoindrait JAMAIS le journal — et comme le journal est ce que le gate lit,
+        # elle serait invisible : on redemanderait ses CGU à quelqu'un qui vient de
+        # les accepter. Le boot du tag de prod rattrape donc tout ce que la fenêtre a
+        # produit. C'est le patron « copie legacy→cible à CHAQUE boot » du playbook ;
+        # après le drop de #507, la garde `to_regclass` la rend inerte.
         #
-        # ⚠️ **Ce lot est le SEUL DDL destructif du dépôt sur une table vivante**
-        #    (`docs/live-migrations.md` : prod et preprod partagent la base). Retirer
-        #    la PK `(sub, doc_slug)` casse l'arbitre `ON CONFLICT (sub, doc_slug)` du
-        #    code PROD tant qu'il n'a pas été promu — `POST /api/me/legal/accept` y
-        #    répondrait 500. Il n'y a pas de découpe possible : un historique et une
-        #    unicité `(sub, doc_slug)` ne peuvent pas coexister. La fenêtre se ferme
-        #    donc par le SÉQUENCEMENT — ce lot part en preprod et en prod d'un seul
-        #    mouvement — pas par un lot intermédiaire.
-        _legal_a_un_id = conn.execute(
-            "SELECT 1 FROM information_schema.columns "
-            "WHERE table_name = 'legal_acceptances' AND column_name = 'id'"
-        ).fetchone()
-        if not _legal_a_un_id:
-            conn.execute("ALTER TABLE legal_acceptances ADD COLUMN id BIGINT")
-            conn.execute("CREATE SEQUENCE IF NOT EXISTS legal_acceptances_id_seq "
-                         "OWNED BY legal_acceptances.id")
-            conn.execute("UPDATE legal_acceptances SET id = nextval('legal_acceptances_id_seq') "
-                         "WHERE id IS NULL")
-            conn.execute("ALTER TABLE legal_acceptances ALTER COLUMN id "
-                         "SET DEFAULT nextval('legal_acceptances_id_seq')")
-            conn.execute("ALTER TABLE legal_acceptances ALTER COLUMN id SET NOT NULL")
-            conn.execute("ALTER TABLE legal_acceptances "
-                         "DROP CONSTRAINT IF EXISTS legal_acceptances_pkey")
-            conn.execute("ALTER TABLE legal_acceptances ADD CONSTRAINT "
-                         "legal_acceptances_event_pkey PRIMARY KEY (id)")
-        # 2. Les colonnes de trace, additives et NULLABLES (l'existant ne bouge pas) :
-        #    un consentement n'est opposable que daté ET situé.
-        for _col, _type in (("context", "TEXT"), ("org_id", "BIGINT"),
-                            ("ip", "TEXT"), ("user_agent", "TEXT")):
-            conn.execute(f"ALTER TABLE legal_acceptances "
-                         f"ADD COLUMN IF NOT EXISTS {_col} {_type}")
-        # L'index sert la SEULE lecture du gate (`DISTINCT ON (doc_slug) … ORDER BY
-        # doc_slug, accepted_at DESC`) : sans lui, chaque passage de LegalGate trie
-        # tout l'historique du sub. Il vit ICI et pas dans `_schema.py` — la règle du
-        # `CREATE INDEX` d'une colonne ajoutée par migration (`docs/live-migrations.md`) :
-        # posé après l'ALTER, il couvre aussi l'install vierge.
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_legal_acceptances_dernier "
-                     "ON legal_acceptances (sub, doc_slug, accepted_at DESC, id DESC)")
+        # Idempotente par anti-jointure sur (sub, doc, version, accepted_at) : une
+        # ligne déjà recopiée ne l'est pas deux fois, et une acceptation RÉÉCRITE par
+        # la prod (nouvelle version, ou même version restampée) entre bien, puisque
+        # son `accepted_at` a changé. L'index `idx_legal_events_dernier` sert
+        # l'anti-jointure comme il sert la lecture du gate.
+        #
+        # `context`/`ip`/`user_agent`/`org_id` restent NULS sur ces lignes : la
+        # projection ne les a jamais portés, et les inventer ferait mentir une trace
+        # dont tout l'intérêt est de servir de preuve.
+        if conn.execute("SELECT to_regclass('legal_acceptances') AS t").fetchone()["t"]:
+            conn.execute("""
+                INSERT INTO legal_acceptance_events (sub, doc_slug, version, accepted_at)
+                SELECT l.sub, l.doc_slug, l.version, l.accepted_at
+                  FROM legal_acceptances l
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM legal_acceptance_events e
+                      WHERE e.sub = l.sub AND e.doc_slug = l.doc_slug
+                        AND e.version = l.version AND e.accepted_at = l.accepted_at)
+            """)
         # ADR 0032 §2 : le lien projet→entité porte un `role` (pourquoi cette entité est ici).
         conn.execute("ALTER TABLE project_links ADD COLUMN IF NOT EXISTS role TEXT")
         # ADR 0032 §4 (B2) : surcharge contextuelle préfaite du lien (connecteur → identité/instructions).

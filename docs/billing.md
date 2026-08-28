@@ -76,34 +76,59 @@ Une **échéance** : le consentement a été donné à la souscription, `billing
 ne le rejoue pas — `_charge_one` ne prend d'ailleurs pas de `sub`, et un test le
 fige.
 
-### La trace est un HISTORIQUE, et elle situe l'acte
+### La trace est un JOURNAL, et elle situe l'acte
 
-`legal_acceptances` portait une PK `(sub, doc_slug)` et l'écriture était un upsert :
-accepter les CGV 2.0 **effaçait** la trace de l'acceptation des CGV 1.0. Une
-acceptation prouvée par une ligne mutable n'est pas une preuve — c'est le dernier
-état d'une preuve.
+`legal_acceptances` portait une ligne par `(sub, doc_slug)`, écrasée à chaque
+acceptation : accepter les CGV 2.0 **effaçait** la trace de l'acceptation des CGV
+1.0. Une acceptation prouvée par une ligne mutable n'est pas une preuve — c'est le
+dernier état d'une preuve.
 
-Depuis le 28/08/2026, **une ligne par acceptation** (id surrogate en PK), avec
-`context`, `org_id` (l'org de session = le **payeur**, ADR 0043), `ip` et
-`user_agent`. La lecture du gate prend la ligne **la plus récente** de chaque
-document (`DISTINCT ON`, départagée par `id` : `accepted_at` vaut `NOW()`, donc
-l'horloge de la *transaction* — les trois documents d'un achat portent la même).
+La source de vérité est désormais **`legal_acceptance_events`** : une ligne par
+acceptation, jamais écrasée, avec `context`, `org_id` (l'org de session = le
+**payeur**, ADR 0043), `ip` et `user_agent`. **C'est la seule table que les gates
+lisent** — le refus `legal_required` comme le statut de `me.legal` — via la ligne la
+plus récente de chaque document (`DISTINCT ON`, départagée par `id` : `accepted_at`
+vaut `NOW()`, l'horloge de la *transaction*, et les trois documents d'un achat
+portent la même).
 
 L'IP et le user-agent viennent de la requête via `client_trace`, posé par
 l'adaptateur REST autour du handler (un handler ne voit pas la requête, ADR 0004) ;
 l'IP réelle se lit `CF-Connecting-IP` > **premier** hop de `X-Forwarded-For` >
 socket. Hors requête REST, les deux valent `NULL` — une trace absente reste absente.
 
-⚠️ **Les lignes antérieures au 28/08/2026 ont leurs quatre satellites à `NULL`** :
-`context IS NULL` veut dire « contexte non tracé », surtout pas « access ». Leur
-inventer un contexte ferait mentir la trace là où elle sert de preuve.
+### Le pont : `legal_acceptances` devient une projection, et elle a une date de fin
 
-⚠️ **Le seul DDL destructif du dépôt sur une table vivante.** Un historique et une
-unicité `(sub, doc_slug)` ne peuvent pas coexister : la migration retire la PK, ce
-qui casse l'arbitre `ON CONFLICT (sub, doc_slug)` du code **prod** tant qu'il n'a
-pas été promu (`POST /api/me/legal/accept` y répondrait 500). Il n'y a pas de
-découpe en lots possible (`docs/live-migrations.md`) — la fenêtre se ferme par le
-**séquencement** : ce lot part en preprod et en prod d'un seul mouvement.
+**Rien n'est retiré à la production.** `legal_acceptances` garde sa PK
+`(sub, doc_slug)` : le code servi en prod avant ce lot y fait son
+`INSERT … ON CONFLICT (sub, doc_slug)`, et prod et preprod partagent la base
+(`docs/live-migrations.md`). La lui retirer casserait son
+`POST /api/me/legal/accept` — le gate CGU de l'**inscription** — pendant toute la
+fenêtre entre le déploiement preprod et le tag. Un journal et cette unicité ne
+pouvant pas coexister, le journal est une table **neuve**, et celle-ci devient une
+**projection** que le nouveau code continue d'écrire.
+
+Trois propriétés à ne pas confondre avec un fallback :
+
+1. **L'écriture est double, dans la MÊME transaction** — pendant la fenêtre, journal
+   et projection ne peuvent pas diverger.
+2. **La lecture est unique** : rien ne consulte plus la projection. Si elle disait
+   autre chose, aucune réponse ne changerait (un test le fige).
+3. **La recopie tourne à CHAQUE boot**, pas une fois. Pendant la fenêtre, la prod
+   écrit dans la projection **seule** ; sans reprise, une acceptation donnée en prod
+   entre le boot preprod et le tag ne rejoindrait jamais le journal — et comme le
+   journal est ce que le gate lit, on redemanderait ses CGU à quelqu'un qui vient de
+   les accepter. Le boot du tag rattrape tout ce que la fenêtre a produit.
+   Idempotente par anti-jointure sur `(sub, doc, version, accepted_at)`.
+
+⚠️ **Ce pont a une date de démolition : l'issue #507**, à faire au tag **suivant**
+celui qui embarque ce lot, avec sa garde — refus d'exécuter tant que la production ne
+sert pas le code qui lit le journal. C'est ce drop-là qui sera destructif, et à ce
+moment-là il ne cassera plus rien.
+
+Les lignes recopiées de la projection ont leurs quatre satellites à `NULL` :
+`context IS NULL` veut dire « acceptation d'avant le journal », surtout pas
+« access ». Leur inventer un contexte ferait mentir la trace là où elle sert de
+preuve.
 
 ## Le montant débité est un TTC, et le pays le décide (#486)
 
@@ -291,7 +316,8 @@ ni réseau, ni horloge), `db/billing.py` (les trois tables + les files),
 REST-only — payer est un acte humain, pas d'URL de paiement dans un contexte LLM),
 `capabilities/billing_identity.py` (l'identité de facturation, même régime),
 `billing_consent.py` + `legal_docs.py` (le consentement d'achat et la source de
-vérité des documents), `capabilities/me_legal.py` (l'acceptation, REST-only),
+vérité des documents), `db/legal.py` (le journal, la projection transitoire et le
+pont), `capabilities/me_legal.py` (l'acceptation, REST-only),
 `billing_runner.py` (échéances, dunning, sweeps, reprises). La surface entière est
 gatée par `OTO_BILLING_ENABLED=1` (dark launch ADR 0043) et la boucle de fond par
 `OTO_BILLING_RUNNER_ENABLED` (défaut : allumée dès que le billing l'est). La clé

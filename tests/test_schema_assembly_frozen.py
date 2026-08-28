@@ -49,14 +49,15 @@ from oto_mcp.db import _schema, schema
 # décomposition fiscale de chaque tentative. Les colonnes existent aussi en ALTER
 # dans `_init.py` : la base est PARTAGÉE prod/preprod, le CREATE TABLE ne sert
 # qu'aux installs vierges.
-# 2026-08-28 (#487) : `legal_acceptances` devient un HISTORIQUE — id surrogate en PK
-# (nommée `legal_acceptances_event_pkey`, pas le nom par défaut : la migration droppe
-# `legal_acceptances_pkey`, qui viserait sinon la PK d'une install vierge), fin de
-# l'unicité `(sub, doc_slug)`, et quatre colonnes nullables qui SITUENT l'acte
-# (context, org_id, ip, user_agent). ⚠️ Seul DDL **destructif** du dépôt sur une table
-# vivante : cf. le bloc de `_init.py`, qui dit pourquoi il ne se découpe pas en lots.
-EMPREINTE = "aedf1f3eb9ce58428822f64df23a71288ee6aa161f7fec8f928964a129422b0b"
-LONGUEUR = 106328
+# 2026-08-28 (#487) : le JOURNAL des acceptations, table NEUVE
+# (`legal_acceptance_events` + son index). **Lot A additif** : `legal_acceptances` et
+# sa PK `(sub, doc_slug)` ne bougent PAS — le code servi en prod y fait encore son
+# `ON CONFLICT`, et la base est partagée. La projection devient transitoire (écriture
+# double datée) et part avec l'issue #507 ; c'est ce drop-là qui sera le DDL
+# destructif, une fois la prod sur le code qui lit le journal.
+EMPREINTE = "c66c7fdc39c9a458474244331d23f4af40dce2fef9f82fd35ff89660a22150fb"
+LONGUEUR = 107466
+
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
 
