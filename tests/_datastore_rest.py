@@ -42,17 +42,28 @@ def stub_authz(monkeypatch, *, org_id: int = 35, role: str = "member") -> None:
 
 def call(key: str, *, path_params: Optional[dict] = None, body=None,
          query: bytes = b"", sub: str = "u-1", no_body: bool = False,
-         binding_index: int = 0) -> tuple[int, dict]:
+         binding_index: int = 0,
+         headers: Optional[list] = None) -> tuple[int, dict]:
     """Joue la route de la capacité `key` et rend `(code HTTP, corps décodé)`.
 
     `no_body=True` = requête SANS corps du tout (le geste de supervision du dashboard,
     qui poste sans rien) — à ne pas confondre avec un corps `{}`.
+
+    `headers` = en-têtes ASGI bruts `[(b"nom", b"valeur")]`, pour les capacités qui
+    lisent l'empreinte du client (IP réelle, user-agent) : c'est l'adaptateur qui la
+    pose, donc elle ne se teste qu'en passant par ici.
     """
     capability = cap(key)
     binding = capability.rest_bindings()[binding_index]
 
-    def _json_error(_req, status, code, detail=None):
-        return JSONResponse({"error": code, "detail": detail}, status_code=status)
+    def _json_error(_req, status, code, detail=None, details=None):
+        # `details` = la forme STRUCTURÉE d'un refus (`AuthzDenied.details`), que
+        # l'adaptateur ne passe QUE lorsqu'il y en a une. Le stub la rend comme la
+        # vraie enveloppe : présente seulement si posée.
+        corps = {"error": code, "detail": detail}
+        if details:
+            corps["details"] = details
+        return JSONResponse(corps, status_code=status)
 
     def _json_response(_req, payload, status=200):
         return JSONResponse(payload, status_code=status)
@@ -78,7 +89,7 @@ def call(key: str, *, path_params: Optional[dict] = None, body=None,
         return {"type": "http.request", "body": brut, "more_body": False}
 
     req = Request({"type": "http", "method": binding.verb, "path": binding.path,
-                   "headers": [], "query_string": query,
+                   "headers": headers or [], "query_string": query,
                    "path_params": path_params or {}}, _receive)
     rep = asyncio.run(handler(req))
     return rep.status_code, json.loads(bytes(rep.body))

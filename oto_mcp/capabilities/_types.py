@@ -41,13 +41,27 @@ class ResolvedCtx:
 
 class AuthzDenied(Exception):
     """Refus d'autz **neutre au transport**. `status` = code HTTP de référence
-    (401/403/404/400) ; `code` = jeton machine stable ; `message` = détail."""
+    (401/403/404/400) ; `code` = jeton machine stable ; `message` = détail.
 
-    def __init__(self, status: int, code: str, message: str = ""):
+    `details` = ce que le refus a de STRUCTURÉ, quand une phrase ne suffit pas au
+    client pour agir. Optionnel et rare par construction : un refus se lit d'abord
+    par son `code` et se comprend par son `message`. Le cas qui l'a fait naître
+    (#487) est un tunnel de paiement à deux préalables — le client doit savoir
+    QUELS documents, à QUELLE version et à QUELLE adresse, pour les afficher ; les
+    recomposer en parsant une phrase française serait un contrat déguisé.
+
+    Rendu par la face REST dans l'enveloppe d'erreur (`{"error", "detail",
+    "details"}`), en plus du message, jamais à sa place. La face MCP ne rend que le
+    message : son protocole n'a pas d'enveloppe d'erreur structurée, et les seules
+    capacités qui posent `details` aujourd'hui sont REST-only (billing)."""
+
+    def __init__(self, status: int, code: str, message: str = "",
+                 details: Optional[dict] = None):
         super().__init__(message or code)
         self.status = status
         self.code = code
         self.message = message
+        self.details = details
 
 
 # Une règle d'autz : (identité brute, input validé) -> contexte résolu, ou lève AuthzDenied.

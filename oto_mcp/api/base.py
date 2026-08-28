@@ -171,10 +171,17 @@ async def _authenticate(
 
 
 def _json_error(request: Request, status: int, code: str,
-                detail: str | None = None) -> JSONResponse:
+                detail: str | None = None,
+                details: dict | None = None) -> JSONResponse:
+    """L'enveloppe d'erreur REST : `error` (jeton machine), `detail` (la phrase),
+    et `details` — la forme STRUCTURÉE du refus quand il y en a une (ADR 0009 :
+    `AuthzDenied.details`). Additive : une erreur qui n'en pose pas rend exactement
+    le corps d'avant, et aucun client n'a à connaître la clé pour lire les autres."""
     payload = {"error": code}
     if detail:
         payload["detail"] = detail
+    if details:
+        payload["details"] = details
     return JSONResponse(
         payload,
         status_code=status,

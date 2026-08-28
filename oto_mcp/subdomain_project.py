@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from . import config, session_org
+from . import client_trace, config, session_org
 
 logger = logging.getLogger(__name__)
 
@@ -163,16 +163,21 @@ def _check_bucket(key: tuple[str, int], now: float) -> bool:
 
 
 def _client_ip(scope, headers: dict) -> str:
-    """IP réelle du client derrière Cloudflare/Caddy : `CF-Connecting-IP` > 1er hop de
-    `X-Forwarded-For` > IP de socket. Un endpoint anonyme est CF-proxied (ADR infra)."""
-    cf = headers.get(b"cf-connecting-ip")
-    if cf:
-        return cf.decode("latin-1").strip()
-    xff = headers.get(b"x-forwarded-for")
-    if xff:
-        return xff.decode("latin-1").split(",")[0].strip()
+    """IP réelle du client derrière Cloudflare/Caddy, pour la clé de rate-limit.
+
+    La RÈGLE (ordre des en-têtes) vit dans `client_trace.pick_ip` — partagée avec la
+    trace de consentement, qui répond à la même question depuis un autre transport.
+    Ici on ne fait que traduire les en-têtes ASGI (octets) et donner à l'absence son
+    nom local : `"unknown"`, une clé de seau comme une autre, jamais `None`.
+    """
+    def _texte(nom: bytes):
+        brut = headers.get(nom)
+        return brut.decode("latin-1") if brut else None
+
     client = scope.get("client")
-    return client[0] if client else "unknown"
+    return client_trace.pick_ip(_texte(b"cf-connecting-ip"),
+                                _texte(b"x-forwarded-for"),
+                                client[0] if client else None) or "unknown"
 
 
 async def _send_html(send, body: str, status: int = 200) -> None:
