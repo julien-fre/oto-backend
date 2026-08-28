@@ -148,3 +148,83 @@ CAPACITES: dict = {
     "org.doctrine.admin_list": "org.guide.admin_list",
     "admin.doctrine": "admin.guide",
 }
+
+
+# ── Clés de réponse (lot B3) ────────────────────────────────────────────────
+# ancienne clé SERVIE → clé d'aujourd'hui. Le doublage est **additif** : le handler
+# écrit la clé d'aujourd'hui, `avec_anciennes_cles` recopie l'ancienne à côté. Au lot
+# D on retire l'appel, et les anciennes disparaissent d'un geste.
+#
+# ⚠️ Une clé de réponse est ce qu'un client LIT. La renommer sec, c'est rendre `null`
+# là où il attendait une valeur — sans erreur, sans log, sans que rien ne s'allume.
+# C'est la panne la plus chère de la liste, et la plus silencieuse.
+CLES: dict = {
+    "doctrine_id": "guide_id",
+    "doctrine_version": "guide_version",
+    "doctrine_ref_count": "guide_ref_count",
+    "doctrines": "guides",
+    "group_doctrine": "group_guide",
+    "doctrine": "guide",
+}
+
+
+def avec_les_deux_noms(payload: dict) -> dict:
+    """Chaque clé de `CLES` servie sous SES DEUX noms, quel que soit celui écrit.
+
+    Bidirectionnel à dessein : certains payloads naissent déjà en vocabulaire
+    d'aujourd'hui (un handler qu'on vient d'écrire), d'autres en vocabulaire d'hier
+    (une ligne SQL, dont la COLONNE ne se renomme qu'au lot B4 — la base est partagée
+    prod/preprod). Deux fonctions symétriques auraient créé deux façons de se tromper.
+
+    **NON récursif, et jamais posé globalement.** Il s'appelle site par site, sur des
+    payloads qu'on a nommés. Un passage automatique sur toute réponse traverserait
+    aussi les données de l'utilisateur — la ligne d'un tableau dont il a nommé une
+    colonne « doctrine » gagnerait une colonne fantôme. Une compatibilité ne doit
+    jamais inventer un champ dans la donnée de quelqu'un.
+
+    Une clé déjà présente n'est jamais écrasée : le producteur garde le dernier mot.
+    """
+    out = dict(payload)
+    for ancienne, actuelle in CLES.items():
+        if actuelle in out and ancienne not in out:
+            out[ancienne] = out[actuelle]
+        elif ancienne in out and actuelle not in out:
+            out[actuelle] = out[ancienne]
+    return out
+
+
+def lignes_avec_les_deux_noms(lignes) -> list:
+    """`avec_les_deux_noms` sur chaque ligne d'une liste (un journal de runs)."""
+    return [avec_les_deux_noms(l) if isinstance(l, dict) else l for l in lignes or ()]
+
+
+# ── Codes d'erreur (lot B3) ─────────────────────────────────────────────────
+# ancien code → code d'aujourd'hui. Un code d'erreur ne se DOUBLE pas — il n'y a
+# qu'un champ `error` — donc le nouveau prend la place, et l'ancien est conservé dans
+# `details.legacy_code`. Un client qui teste `error == "unknown_doctrine"` a un mois
+# pour aller lire `details.legacy_code`, ou mieux, le nouveau code.
+CODES: dict = {
+    "unknown_doctrine": "unknown_guide",
+}
+
+
+def details_avec_code_dhier(code_actuel: str, details=None) -> dict:
+    """Les `details` d'un refus, augmentés du code d'hier quand il y en a un."""
+    ancien = next((a for a, n in CODES.items() if n == code_actuel), None)
+    if not ancien:
+        return details or {}
+    return {**(details or {}), "legacy_code": ancien}
+
+
+# ── Noms de schéma OpenAPI (lot B3) ─────────────────────────────────────────
+# ancien nom de composant → nom d'aujourd'hui. Publié dans `components.schemas` comme
+# un `$ref` vers le nouveau, marqué déprécié : un client généré qui référence
+# `#/components/schemas/DoctrineMeta` continue de résoudre.
+#
+# ⚠️ Cette table ne porte que les noms qui étaient VRAIMENT des composants. Un modèle
+# `Output` de premier niveau n'en est pas un — son schéma est INLINE dans la réponse
+# 200, et son nom n'y apparaît que comme `title`, ce qu'aucun `$ref` ne peut viser.
+# `DoctrineView` était dans ce cas ; le renommer n'engage personne.
+SCHEMAS: dict = {
+    "DoctrineMeta": "GuideMeta",
+}

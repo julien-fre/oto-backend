@@ -31,7 +31,7 @@ from starlette.requests import Request
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                  Response)
 
-from .. import access, providers, db, guide_store, openapi, org_store
+from .. import access, deprecations, providers, db, guide_store, openapi, org_store
 from ..connectors import activation as connector_activation
 from .base import _authenticate, _json, _json_error
 
@@ -147,7 +147,9 @@ async def guide_library_public(request: Request) -> JSONResponse:
     items = org_store.list_library(
         query=q.get("q"), category=q.get("category"),
         author_kind=q.get("author"), include_unlisted=False, limit=limit)
-    return _json(request, {"doctrines": items})
+    # Les deux noms le temps du préavis (#519) : le build de la vitrine lit encore
+    # `doctrines`, et il est déployé ailleurs que dans ce dépôt.
+    return _json(request, deprecations.avec_les_deux_noms({"guides": items}))
 
 
 async def guide_library_public_get(request: Request) -> JSONResponse:

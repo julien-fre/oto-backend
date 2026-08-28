@@ -12,7 +12,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from ... import (group_store, guide_store, org_store, procedure_diagram,
+from ... import (deprecations, group_store, guide_store, org_store, procedure_diagram,
                 procedure_digest, roles)
 from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -76,22 +76,26 @@ class GroupInstructionIndexEntry(BaseModel):
 class GroupInstructionsBundle(BaseModel):
     """Readme d'équipe + index de ses procédures.
 
-    ⚠️ **`doctrine` est le corps MARKDOWN BRUT, pas un objet de métadonnées** — c'est
+    ⚠️ **Chaque clé est servie sous DEUX noms** le temps du préavis (#519) :
+    `guide`/`guide_version` (aujourd'hui) et `doctrine`/`doctrine_version`, qui s'en
+    vont le 27/09/2026 — cf. `docs/alias-deprecies.md`.
+
+    ⚠️ **`guide` est le corps MARKDOWN BRUT, pas un objet de métadonnées** — c'est
     l'écart de forme avec le bundle d'org, qui rend là un `{exists, version,
     updated_at}`. Chaîne vide = pas de readme.
 
-    ⚠️ **`doctrine_version` est un faux compteur** : il vaut `1` s'il existe un readme,
+    ⚠️ **`guide_version` est un faux compteur** : il vaut `1` s'il existe un readme,
     `null` sinon, et n'atteint JAMAIS 2. Le readme d'équipe est de la prose plate sans
     historique (ADR 0042) ; l'afficher comme un numéro de révision promet un versionnage
     qui n'existe pas — et `POST …/revert` sur ce slug ne le rembobinera pas.
 
     ⚠️ **Un readme vide peut être un incident, pas une absence** : sa lecture est
-    **fail-open** — une erreur de base rend `null`, donc exactement `doctrine: ""` +
-    `doctrine_version: null`, indiscernable d'une équipe qui n'a rien écrit. Ne pas
+    **fail-open** — une erreur de base rend `null`, donc exactement `guide: ""` +
+    `guide_version: null`, indiscernable d'une équipe qui n'a rien écrit. Ne pas
     proposer « créer le readme » sur cette seule foi si l'action écrase.
 
     ⚠️ `instructions` **exclut le readme** (slug réservé `claude_md`). L'asymétrie va
-    plus loin : le readme annoncé par `doctrine` est **introuvable** par
+    plus loin : le readme annoncé par `guide` est **introuvable** par
     `GET …/instructions/claude_md` (404) — il vit sur la surface guide, pas ici.
 
     ⚠️ **`can_edit` est le seul champ de tout le domaine `group.*` qui dit la vérité sur
@@ -99,8 +103,10 @@ class GroupInstructionsBundle(BaseModel):
     platform_admin), là où `GroupBrief.my_role` ne rend que l'appartenance explicite.
     `can_edit: true` avec `my_role: null` n'est pas une incohérence — c'est un org_admin."""
     group_id: int
-    doctrine: str
-    doctrine_version: Optional[int] = None
+    guide: str
+    guide_version: Optional[int] = None
+    doctrine: str                          # ALIAS déprécié (retrait 27/09/2026)
+    doctrine_version: Optional[int] = None  # ALIAS déprécié (retrait 27/09/2026)
     instructions: list[GroupInstructionIndexEntry]
     can_edit: bool
 
@@ -222,13 +228,13 @@ class GroupInstructionReverted(BaseModel):
 def _list(ctx: ResolvedCtx, inp: GroupIdInput) -> dict:
     # Readme d'équipe = guide `delivery='init'` (ADR 0042), lu sur sa surface.
     base_body = guide_store.init_guide_body("group", inp.group_id) or ""
-    return {
+    return deprecations.avec_les_deux_noms({
         "group_id": inp.group_id,
-        "doctrine": base_body,
-        "doctrine_version": 1 if base_body else None,
+        "guide": base_body,
+        "guide_version": 1 if base_body else None,
         "instructions": group_store.list_group_instructions(inp.group_id),
         "can_edit": roles.can_admin_group(ctx.sub, inp.group_id),
-    }
+    })
 
 
 def _get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:

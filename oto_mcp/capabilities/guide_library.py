@@ -26,7 +26,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from .. import access, org_store, procedure_diagram, procedure_digest, roles
+from .. import access, deprecations, org_store, procedure_diagram, procedure_digest, roles
 from ._authz import ORG_MEMBER, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -123,8 +123,12 @@ class LibraryList(BaseModel):
 
     ⚠️ Ne contient QUE les entrées `public` : une entrée `unlisted` existe et reste
     lisible par son slug exact (library.get), mais n'apparaît jamais ici. Une liste
-    vide ne prouve donc pas qu'une doctrine n'existe pas."""
-    doctrines: list[LibraryEntrySummary]
+    vide ne prouve donc pas qu'un guide n'existe pas.
+
+    ⚠️ La liste est servie sous SES DEUX noms — `guides` (aujourd'hui) et `doctrines`,
+    qui s'en va le 27/09/2026 (#519), cf. `docs/alias-deprecies.md`."""
+    guides: list[LibraryEntrySummary]
+    doctrines: list[LibraryEntrySummary]     # ALIAS déprécié (retrait 27/09/2026)
 
 
 class LibraryEntry(BaseModel):
@@ -275,9 +279,9 @@ def _author_for(ctx: ResolvedCtx) -> tuple[str, Optional[int], str]:
 
 
 def _list(ctx: ResolvedCtx, inp: LibraryListInput) -> dict:
-    return {"doctrines": org_store.list_library(
+    return deprecations.avec_les_deux_noms({"guides": org_store.list_library(
         query=inp.query, category=inp.category, author_kind=inp.author_kind,
-        include_unlisted=False, limit=inp.limit)}
+        include_unlisted=False, limit=inp.limit)})
 
 
 def _get(ctx: ResolvedCtx, inp: LibraryGetInput) -> dict:
@@ -297,8 +301,11 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
     org_id = _require_org_admin(ctx, "Publier")
     src = org_store.get_instruction(org_id, inp.slug)
     if not src:
-        raise AuthzDenied(404, "unknown_doctrine",
-                          f"Doctrine `{inp.slug}` absente de ton org active.")
+        # Code d'aujourd'hui + code d'hier dans `details.legacy_code` : un code
+        # d'erreur ne se double pas, il n'y a qu'un champ `error` (#519).
+        raise AuthzDenied(404, "unknown_guide",
+                          f"Guide `{inp.slug}` absent de ton org active.",
+                          deprecations.details_avec_code_dhier("unknown_guide"))
     kind, author_org_id, display = _author_for(ctx)
     try:
         row = org_store.publish_guide(
