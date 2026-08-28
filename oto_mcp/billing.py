@@ -6,8 +6,11 @@ PSP-agnostique par conception ADR 0043) :
   (`sequenceType=first` — 3DS carte ou collecte IBAN + mandat SEPA gérés par eux,
   UN seul flux) et journalise le paiement ;
 - `confirm` LIT le paiement au retour du payeur (et en réconciliation) : encaissé
-  (`paid`) → récupère le mandat réutilisable né du checkout et pose le miroir
-  `active` — c'est LUI qui ouvre l'entitlement, jamais le redirect brut ;
+  (`paid`) → journalise l'encaissement AUSSITÔT, puis récupère le mandat réutilisable
+  né du checkout et pose le miroir `active` — c'est LUI qui ouvre l'entitlement,
+  jamais le redirect brut. Le mandat met quelques minutes à apparaître chez Mollie :
+  tant que la fenêtre court, son absence est une ATTENTE (`pending_mandate`), jamais
+  un refus servi au payeur — voir #493 ;
 - `cancel` marque la résiliation à fin de période (l'entitlement court jusqu'à
   `current_period_end` ; le billing_runner fera la bascule).
 
@@ -24,8 +27,9 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from . import mollie_client
 from . import db
@@ -36,6 +40,18 @@ from .db import billing as db_billing
 from .db._conn import _normalize_value
 
 logger = logging.getLogger(__name__)
+
+# Le mandat réutilisable ne naît pas AVEC l'encaissement : chez Mollie il apparaît
+# quelques minutes après (1,4 s après le paiement du 25/08, il n'existait pas ;
+# visible à +5 min). Cette fenêtre est donc la durée pendant laquelle une
+# souscription est « en vol » — pendant laquelle un mandat absent est une COURSE et
+# non un refus, et pendant laquelle ouvrir un second checkout ne peut que débiter
+# deux fois (#493).
+PENDING_WINDOW = timedelta(minutes=30)
+# Cadence de re-sonde suggérée au client tant que le mandat n'est pas visible.
+MANDATE_RETRY_AFTER_S = 15
+# Nom du paramètre qui porte l'identité du paiement sur l'URL de retour navigateur.
+RETURN_REF_PARAM = "payment_ref"
 
 
 def is_enabled() -> bool:
@@ -134,6 +150,87 @@ def webhook_url() -> str:
 
 # ── souscription ─────────────────────────────────────────────────────────────
 
+def _elapsed_since(value, now: datetime) -> Optional[timedelta]:
+    """Temps écoulé depuis un horodatage, quelle que soit sa forme.
+
+    Le journal est relu NORMALISÉ par le row factory (« YYYY-MM-DD HH:MM:SS », sans
+    fuseau, donc UTC implicite) ; Mollie, lui, rend de l'ISO 8601 à offset (parfois
+    suffixé `Z`, que `fromisoformat` ne lit pas avant 3.11). `None` = horodatage
+    illisible ou absent — l'appelant décide, il ne devine pas.
+    """
+    if isinstance(value, datetime):
+        return now - (value if value.tzinfo else value.replace(tzinfo=timezone.utc))
+    if isinstance(value, str) and value:
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        # noqa: SILENT — horodatage illisible : on rend None, et l'appelant tranche
+        except ValueError:
+            return None
+        return now - (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc))
+    return None
+
+
+def _since_paid(payment: dict, row: dict, now: datetime) -> Optional[timedelta]:
+    """Depuis combien de temps l'argent est-il PRIS ?
+
+    C'est cette durée-là, pas l'âge du checkout, qui décide si un mandat manquant est
+    une course ou un incident : une page de paiement peut rester ouverte une
+    demi-heure avant d'être payée. `paidAt` du PSP fait donc foi ; à défaut on
+    retombe sur l'ouverture du checkout, qui ne peut que MAJORER le délai réel (le
+    paiement lui est forcément postérieur) — jamais l'inverse, donc jamais une
+    attente écourtée sans le savoir."""
+    since = _elapsed_since(payment.get("paidAt"), now)
+    if since is not None:
+        return since
+    return _elapsed_since(row.get("created_at"), now)
+
+
+def _age_label(age: Optional[timedelta]) -> str:
+    if age is None:
+        return "à l'instant"
+    s = int(age.total_seconds())
+    return f"{s} s" if s < 120 else f"{s // 60} min"
+
+
+def _return_url_with_ref(return_url: str, payment_id: str) -> str:
+    """Ajoute `?payment_ref=tr_…` à l'URL de retour du navigateur (en écrasant une
+    valeur déjà posée), sans toucher au reste de la query string du dashboard."""
+    parts = urlparse(return_url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+             if k != RETURN_REF_PARAM]
+    query.append((RETURN_REF_PARAM, payment_id))
+    return urlunparse(parts._replace(query=urlencode(query)))
+
+
+def _payment_pending_message(in_flight: dict, now: datetime) -> str:
+    """Le refus dit QUI occupe la place, depuis quand, et ce qu'il reste à faire —
+    le remède n'est pas le même selon que l'argent est déjà pris ou non."""
+    ref = in_flight.get("payment_intent_id") or f"ligne {in_flight.get('id')}"
+    statut = in_flight.get("status")
+    age = _age_label(_elapsed_since(in_flight.get("created_at"), now))
+    suite = (
+        "il est DÉJÀ ENCAISSÉ : l'abonnement s'ouvre seul dès que le mandat est "
+        "disponible chez le PSP, quelques minutes plus tard"
+        if statut == "paid" else
+        "sa page de paiement est encore payable : la terminer ou la laisser expirer"
+    )
+    return (f"payment_pending: une souscription est déjà en cours pour cette org "
+            f"(paiement {ref}, statut {statut}, ouvert il y a {age}) — {suite}. "
+            f"Ouvrir un second paiement débiterait deux fois.")
+
+
+def _org_customer_id(org_id: int, existing: Optional[dict]) -> Optional[str]:
+    """Le customer Mollie de l'org — un seul, pour toujours (#493).
+
+    Il se lit sur le miroir quand il existe, SINON sur le journal : le miroir n'est
+    posé qu'à `confirm`, donc au deuxième clic d'une souscription en cours il n'y a
+    encore rien à relire. C'est là qu'un second customer naissait, avec son propre
+    mandat — celui que le rejeu MIT ne tirera jamais."""
+    if existing and existing.get("customer_id"):
+        return existing["customer_id"]
+    return db_billing.last_customer_id_for_org(org_id)
+
+
 def subscribe(org_id: int, plan: str, return_url: str, *,
               method: str = "card") -> dict:
     """Ouvre la souscription. UN seul flux (Mollie unifie carte et SEPA) : premier
@@ -141,7 +238,14 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
     Mollie où le payeur finit le geste (3DS carte, ou saisie IBAN + acceptation du
     mandat SEPA). `method` ∈ {card, sepa} restreint la page ; le mandat réutilisable
     naît à l'encaissement. Le miroir n'est PAS posé ici — il naît à `confirm`
-    (paiement constaté), qui relit le plan de la `metadata` du paiement."""
+    (paiement constaté), qui relit le plan de la `metadata` du paiement.
+
+    **Une seule souscription en vol à la fois** (#493) : tant qu'un premier paiement
+    de moins de `PENDING_WINDOW` n'a pas définitivement échoué, un second checkout
+    est refusé (`payment_pending`). C'est le geste le plus banal du monde — payer,
+    voir un échec, recliquer — et c'est lui qui a débité 38 € un abonnement à 19 €.
+    Corollaire assumé : résilier puis re-souscrire dans la demi-heure est refusé le
+    temps que la fenêtre s'écoule, le refus disant quel paiement l'occupe."""
     meta = PLANS.get(plan)
     if meta is None:
         raise ValueError(f"unknown_plan: {plan!r} (plans : {', '.join(PLANS)})")
@@ -154,7 +258,12 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
     if existing and existing["status"] == "active" and not existing.get("canceled_at"):
         raise ValueError("already_subscribed: l'org a déjà un abonnement actif")
 
-    customer_id = existing["customer_id"] if existing and existing.get("customer_id") else None
+    now = datetime.now(timezone.utc)
+    in_flight = db_billing.pending_initial_payment(org_id, since=now - PENDING_WINDOW)
+    if in_flight:
+        raise ValueError(_payment_pending_message(in_flight, now))
+
+    customer_id = _org_customer_id(org_id, existing)
     if not customer_id:
         cust = mollie_client.create_customer(
             name=f"Otomata org {org_id}", metadata={"org_id": str(org_id)})
@@ -169,33 +278,66 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
         metadata={"org_id": str(org_id), "plan": plan})
     db_billing.insert_billing_payment(
         org_id, "initial", meta["amount"], currency=meta["currency"],
-        payment_intent_id=payment["id"], status=payment.get("status", "open"))
+        payment_intent_id=payment["id"], status=payment.get("status", "open"),
+        customer_id=customer_id)
+    # Le retour navigateur doit DIRE quel paiement il vient de conclure. Mollie
+    # n'ajoute rien à `redirectUrl`, et cette URL se fixe à la création — où l'id du
+    # paiement n'existe pas encore : on la ré-écrit donc juste après, le paiement
+    # étant encore ouvert. Un refus de Mollie ne casse pas un checkout payable pour
+    # un confort : `confirm` retombe sur le plus récent non conclu et le webhook,
+    # lui, connaît toujours l'identité du paiement — mais on le DIT.
+    try:
+        mollie_client.update_payment(
+            payment["id"],
+            redirect_url=_return_url_with_ref(return_url, payment["id"]))
+    except mollie_client.MollieError as e:
+        logger.warning("billing: URL de retour non datée du paiement %s (org %s) — "
+                       "le retour navigateur devra deviner : %s",
+                       payment["id"], org_id, e)
     return {"checkout_url": mollie_client.checkout_url(payment),
             "payment_intent_id": payment["id"], "plan": plan, "method": method}
 
 
 def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
-    """Fait avancer la souscription en cours : lit un paiement initial ouvert ;
-    encaissé (`paid`) → récupère le mandat réutilisable né du checkout, pose le
-    miroir `active` (carte comme SEPA — même chemin). Idempotent : re-confirmer un
-    abonnement déjà actif est un no-op informatif.
+    """Fait avancer la souscription en cours : lit un premier paiement non conclu ;
+    encaissé (`paid`) → journalise l'encaissement, récupère le mandat réutilisable né
+    du checkout, pose le miroir `active` (carte comme SEPA — même chemin). Idempotent :
+    re-confirmer un abonnement déjà actif est un no-op informatif.
 
     `payment_ref` = l'identifiant du paiement à traiter, quand l'appelant le
     connaît. Le **webhook** le connaît (c'est celui qu'il vient de recevoir) et
-    DOIT le passer ; le **polling** ne le connaît pas et prend le plus récent, ce
-    qui reste correct pour lui. Sans ce paramètre, l'identité du paiement encaissé
-    se perdait entre le webhook et ce chemin (#291)."""
+    DOIT le passer ; le **retour navigateur** le porte désormais aussi (#493, il est
+    daté sur l'URL de retour) ; le **polling** ne le connaît pas et prend le plus
+    récent, ce qui reste correct pour lui. Sans ce paramètre, l'identité du paiement
+    encaissé se perdait entre le webhook et ce chemin (#291).
+
+    Encaissé sans mandat encore visible = `pending_mandate`, PAS un refus : le mandat
+    réutilisable apparaît quelques minutes après le paiement chez Mollie (#493)."""
     sub_row = db_billing.get_org_subscription(org_id)
-    open_initial = [
+    # Idempotence D'ABORD. Elle tenait jusqu'ici au fait qu'un paiement confirmé
+    # sortait de la file (`paid` = terminal) ; depuis #493 un encaissement RESTE
+    # candidat tant que le miroir n'est pas posé, donc sans ce garde-fou explicite
+    # re-confirmer un abonnement ouvert repousserait `current_period_end` d'une
+    # période à chaque appel. Un abonnement résilié (canceled_at) n'est pas concerné :
+    # il peut légitimement re-souscrire, exactement comme dans `subscribe`.
+    if sub_row and sub_row["status"] == "active" and not sub_row.get("canceled_at"):
+        return {"status": "active", "plan": sub_row["plan"]}
+
+    # Candidats = les premiers paiements qui n'ont pas DÉFINITIVEMENT échoué. `paid`
+    # en fait partie (#493) : l'encaissement est journalisé dès son constat, avant le
+    # contrôle de mandat, donc un paiement réussi dont l'abonnement reste à ouvrir se
+    # présente ici avec un statut terminal. Seuls failed/canceled/expired sortent.
+    failed = set(db_billing.TERMINAL_PAYMENT_STATUSES) - {"paid"}
+    candidates = [
         # ⚠️ `limit` explicite : au défaut (20), un `initial` ouvert plus ancien
         # devenait carrément INVISIBLE dès qu'une org avait vingt lignes de paiement
         # — donc jamais confirmé, sans le moindre message.
         p for p in db_billing.list_billing_payments(org_id, limit=200)
         if p["kind"] == "initial"
-        and p["status"] not in db_billing.TERMINAL_PAYMENT_STATUSES
+        and p["status"] not in failed
         and p.get("payment_intent_id")
     ]
-    if not open_initial:
+    if not candidates:
         if sub_row and sub_row["status"] == "active":
             return {"status": "active", "plan": sub_row["plan"]}
         raise ValueError("no_pending_subscription: aucun paiement initial en cours")
@@ -208,16 +350,16 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
     # `confirm` regardait la plus récente, la trouvait non payée, et rendait
     # `pending` : encaissé, aucun droit ouvert, aucune erreur nulle part.
     if payment_ref:
-        row = next((p for p in open_initial if p["payment_intent_id"] == payment_ref), None)
+        row = next((p for p in candidates if p["payment_intent_id"] == payment_ref), None)
         if row is None:
-            # Le paiement visé n'est pas (ou plus) un initial ouvert de cette org :
+            # Le paiement visé n'est pas (ou plus) un initial en cours de cette org :
             # on ne se rabat PAS sur un autre, ce serait confirmer sur la foi d'un
             # encaissement qui concerne autre chose.
             raise ValueError(
                 f"unknown_payment: le paiement {payment_ref} n'est pas un paiement "
                 "initial en cours pour cette org")
     else:
-        row = open_initial[0]  # le plus récent (list_billing_payments trie DESC)
+        row = candidates[0]  # le plus récent (list_billing_payments trie DESC)
     payment = mollie_client.get_payment(row["payment_intent_id"])
     pstatus = str(payment.get("status") or "")
 
@@ -228,15 +370,41 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
         # pas encaissé : le payeur est peut-être encore sur la page de checkout.
         return {"status": "pending", "payment_status": pstatus}
 
-    # encaissé → le mandat réutilisable existe désormais sur le customer.
+    # ENCAISSÉ. On le grave AVANT tout le reste (#493) : le journal doit dire ce que
+    # le PSP a fait, pas ce que nous avons su en faire. Le statut n'était écrit
+    # qu'après le mandat, le plan et la pose du miroir — un paiement réellement
+    # débité restait donc `open` au journal dès que l'une de ces étapes échouait, et
+    # `subscribe` ne se gardait sur rien.
+    db_billing.update_billing_payment(row["id"], status="paid",
+                                      payment_id=payment["id"])
+
+    # encaissé → le mandat réutilisable naît sur le customer… quelques minutes plus
+    # tard. À 1,4 s il n'existe pas encore.
+    now = datetime.now(timezone.utc)
     customer_id = payment.get("customerId")
     mandate = mollie_client.valid_mandate(customer_id) if customer_id else None
     if not mandate:
-        # payé mais pas de mandat valide → pas de récurrence possible : on ne pose
-        # PAS un abonnement qu'on ne saura pas renouveler (ADR : jamais de fallback
-        # silencieux). Cas à investiguer (méthode non récurrente sur la page).
+        age = _since_paid(payment, row, now)
+        if age is None or age < PENDING_WINDOW:
+            # COURSE, pas échec : servir un refus au payeur ici, c'est lui annoncer
+            # un échec sur un paiement réussi — et il repaie (incident du 25/08).
+            # L'abonnement s'ouvrira au prochain passage : re-sonde du navigateur,
+            # webhook, ou rattrapage du billing_runner.
+            logger.info("billing: org %s encaissée (paiement %s), mandat pas encore "
+                        "visible (%s) — en attente", org_id, row["payment_intent_id"],
+                        _age_label(age))
+            return {"status": "pending_mandate", "payment_status": "paid",
+                    "retry_after": MANDATE_RETRY_AFTER_S}
+        # Passé la fenêtre, ce n'est plus une course : encaissé sans mandat
+        # réutilisable = récurrence impossible. On ne pose PAS un abonnement qu'on ne
+        # saura pas renouveler (ADR : jamais de fallback silencieux) — c'est le SEUL
+        # cas où le refus `no_mandate` a jamais été vrai, il le reste.
+        logger.error("billing: org %s encaissée (paiement %s) SANS mandat après %s — "
+                     "récurrence impossible, reprise manuelle",
+                     org_id, row["payment_intent_id"], _age_label(age))
         raise RuntimeError(
-            "no_mandate: premier paiement encaissé sans mandat valide — récurrence "
+            "no_mandate: premier paiement encaissé sans mandat valide après "
+            f"{int(PENDING_WINDOW.total_seconds() // 60)} min — récurrence "
             "impossible, vérifier le moyen de paiement de la page de checkout")
 
     plan = (payment.get("metadata") or {}).get("plan")
@@ -245,10 +413,7 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
     meta = PLANS[plan]
     method = mollie_client.method_from_mollie(payment.get("method"))
 
-    now = datetime.now(timezone.utc)
     period_end = _add_period(now, meta["interval"])
-    db_billing.update_billing_payment(row["id"], status="paid",
-                                      payment_id=payment["id"])
     db_billing.upsert_org_subscription(
         org_id, plan=plan, method=method, provider="mollie",
         customer_id=customer_id, mandate_id=mandate["id"],
@@ -335,12 +500,18 @@ def admin_clear_plan(org_id: int) -> dict:
 def process_webhook(payment_id: str) -> str:
     """Traite un rappel webhook Mollie (le corps ne porte QUE l'id du paiement —
     on re-fetch l'objet avec NOTRE clé, jamais de confiance dans le POST). Retourne
-    l'issue (log) : 'ignored' | 'confirmed' | 'updated' | 'unchanged'.
+    l'issue (log) : 'ignored' | 'confirmed' | 'awaiting_mandate' | 'not_confirmed'
+    | 'updated' | 'unchanged'.
 
     Sécurité : un id inconnu de notre journal est ignoré (un POST forgé ne
     déclenche rien) ; un premier paiement `paid` rejoue `confirm` (idempotent) ;
     sinon on aligne le statut journalisé. Complément du polling (billing_runner),
-    pas un remplacement."""
+    pas un remplacement.
+
+    'awaiting_mandate' = encaissement pris en compte, mandat pas encore né chez
+    Mollie (#493). C'est le cas NOMINAL du webhook, qui arrive une seconde après le
+    paiement : le compter comme un incident enverrait chercher un défaut là où il
+    n'y en a pas."""
     row = db_billing.get_billing_payment_by_ref(payment_id)
     if not row:
         return "ignored"
@@ -362,6 +533,13 @@ def process_webhook(payment_id: str) -> str:
         # Et on rend l'issue RÉELLE : annoncer « confirmed » quoi qu'il arrive faisait
         # affirmer au journal le contraire de ce qui s'était passé, ce qui est pire
         # qu'un silence — on cherche l'incident ailleurs.
+        if out.get("status") == "pending_mandate":
+            # Le mandat naît quelques minutes après l'encaissement : à l'instant du
+            # webhook il n'existe pas encore. Rien à investiguer — la reprise est déjà
+            # câblée (re-sonde du navigateur, rattrapage du billing_runner).
+            logger.info("webhook: paiement %s encaissé (org %s), mandat pas encore "
+                        "visible — abonnement en attente", payment_id, row["org_id"])
+            return "awaiting_mandate"
         if out.get("status") != "active":
             logger.error("webhook: paiement %s encaissé (org %s), abonnement toujours "
                          "%s — investiguer", payment_id, row["org_id"], out.get("status"))

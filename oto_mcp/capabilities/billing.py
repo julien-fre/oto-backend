@@ -30,6 +30,14 @@ class SubscribeInput(BaseModel):
     # paiement (carte ou IBAN + mandat) sur la page de checkout hébergée.
 
 
+class ConfirmInput(BaseModel):
+    # Le retour de la page hébergée porte `?payment_ref=tr_…` (posé sur l'URL de
+    # retour par billing.subscribe) : le navigateur DIT quel paiement il vient de
+    # conclure, au lieu de laisser le serveur prendre « le plus récent ». Optionnel :
+    # un client qui ne l'a pas (polling, vieux front) garde le comportement d'avant.
+    payment_ref: Optional[str] = None
+
+
 class PaymentsInput(BaseModel):
     limit: int = 20
 
@@ -185,13 +193,27 @@ class ConfirmResult(BaseModel):
     ⚠️ `status` décrit la SOUSCRIPTION, pas le paiement — le brut du PSP est
     `payment_status`. Appel idempotent : re-confirmer un abonnement déjà actif rend
     `{status:'active', plan}` seul, sans method ni current_period_end ; leur absence
-    n'est donc pas une anomalie."""
+    n'est donc pas une anomalie.
+
+    Toutes les branches sont des **200** : `confirm` décrit l'avancement d'une
+    souscription, il ne signale une erreur que lorsque l'appel lui-même est fautif
+    (paiement inconnu, aucune souscription en cours). Un paiement RÉUSSI ne produit
+    donc jamais de code d'erreur — c'est exactement ce qui a fait repayer un client
+    le 25/08 (#493)."""
     status: str = Field(
         description="'active' = encaissé, mandat récupéré, miroir posé, accès OUVERT. "
                     "'pending' = pas encore encaissé (le payeur est peut-être encore "
-                    "sur la page) : re-poller. 'failed' = paiement failed/canceled/"
+                    "sur la page) : re-poller. 'pending_mandate' = ENCAISSÉ, mais le "
+                    "mandat réutilisable n'existe pas encore chez le PSP (il naît "
+                    "quelques minutes après le paiement) : l'argent est pris, l'accès "
+                    "s'ouvrira seul — re-poller après `retry_after`, et surtout ne PAS "
+                    "reproposer de payer. 'failed' = paiement failed/canceled/"
                     "expired, l'org n'est PAS abonnée et il faut re-souscrire (aucune "
                     "reprise possible sur ce paiement).")
+    retry_after: Optional[int] = Field(
+        default=None,
+        description="Délai conseillé avant la re-sonde, en SECONDES. Porté par la "
+                    "branche 'pending_mandate' uniquement.")
     plan: Optional[str] = Field(default=None, description="Palier activé — relu de la "
                                                           "metadata du paiement. Présent "
                                                           "sur 'active' seulement.")
@@ -208,8 +230,8 @@ class ConfirmResult(BaseModel):
     payment_status: Optional[str] = Field(
         default=None,
         description="État BRUT du paiement chez Mollie (open, pending, authorized, "
-                    "paid, failed, canceled, expired). Porté par les branches 'pending' "
-                    "et 'failed' uniquement.")
+                    "paid, failed, canceled, expired). Porté par les branches 'pending', "
+                    "'pending_mandate' (où il vaut toujours 'paid') et 'failed'.")
 
 
 class Payment(BaseModel):
@@ -253,7 +275,13 @@ def _domain(fn, *args):
     except ValueError as e:
         msg = str(e)
         code = msg.split(":", 1)[0].strip() if ":" in msg else "billing_error"
-        raise AuthzDenied(409 if code in ("already_subscribed",) else 400, code, msg)
+        # `payment_pending` = un premier paiement de cette org est encore en vol
+        # (#493). C'est un CONFLIT d'état, pas une entrée invalide : le client n'a
+        # rien à corriger, il a à attendre — et surtout pas à ouvrir un second
+        # paiement, ce qui débiterait deux fois.
+        raise AuthzDenied(
+            409 if code in ("already_subscribed", "payment_pending") else 400,
+            code, msg)
     except MollieError as e:
         raise AuthzDenied(502, "psp_error", e.detail)
     except RuntimeError as e:
@@ -285,8 +313,8 @@ def _subscribe(ctx: ResolvedCtx, inp: SubscribeInput) -> dict:
     return _domain(call)
 
 
-def _confirm(ctx: ResolvedCtx, inp: NoInput) -> dict:
-    return _domain(billing.confirm, ctx.org_id)
+def _confirm(ctx: ResolvedCtx, inp: ConfirmInput) -> dict:
+    return _domain(billing.confirm, ctx.org_id, inp.payment_ref)
 
 
 def _cancel(ctx: ResolvedCtx, inp: NoInput) -> dict:
@@ -328,7 +356,7 @@ _BILLING_CAPS = [
         rest=RestBinding("POST", "/api/me/billing/subscribe"),
     ),
     Capability(
-        key="billing.confirm", handler=_confirm, Input=NoInput,
+        key="billing.confirm", handler=_confirm, Input=ConfirmInput,
         authz=ORG_ADMIN, Output=ConfirmResult,
         rest=RestBinding("POST", "/api/me/billing/confirm"),
     ),

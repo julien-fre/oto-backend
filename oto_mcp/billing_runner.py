@@ -16,6 +16,11 @@ scheduler.py) fait tout le cycle à intervalle horaire :
    terminaux (checkout fermé post-paiement, prélèvement SEPA qui se dénoue en
    plusieurs jours…) ; un premier paiement jamais encaissé finit `expired`
    (Mollie expire les paiements ouverts ; garde-fou TTL 48 h en secours).
+5. **Encaissements en attente de mandat** (#493) : un premier paiement `paid`
+   dont l'abonnement n'est pas ouvert. Il est TERMINAL au journal (l'encaissement
+   est gravé dès son constat) donc invisible de la file ci-dessus — sans cette
+   reprise, un payeur qui ferme son onglet pendant la course au mandat resterait
+   débité et sans droits.
 
 Sans MOLLIE_API_KEY le tick est un no-op silencieux (le serveur vit sans
 billing). Un tick raté ne tue jamais la boucle.
@@ -36,6 +41,10 @@ _RETRY_DELAY = timedelta(days=3)
 _MAX_ATTEMPTS = 3
 _GRACE = timedelta(days=14)
 _INITIAL_INTENT_TTL = timedelta(hours=48)
+# Au-delà, un encaissement sans abonnement n'est plus une course mais un incident
+# ouvert : `confirm` le refuse (`no_mandate`) et le rejouer chaque heure n'apprend
+# plus rien. Même borne que le TTL du premier paiement — un seul horizon de reprise.
+_MANDATE_CATCHUP_WINDOW = _INITIAL_INTENT_TTL
 
 # statuts Mollie d'un paiement MIT qui valent encaissement (ou en cours de
 # dénouement — `pending` = prélèvement SEPA soumis ; la réconciliation/webhook
@@ -122,12 +131,10 @@ def _reconcile_one(row: dict, now: datetime) -> None:
     status = str(mollie_client.get_payment(ref).get("status") or "")
     if row.get("kind") == "initial" and status == "paid":
         # encaissé sur la page hébergée sans que confirm ait tourné (onglet
-        # fermé) : on termine la pose du miroir nous-mêmes.
-        try:
-            billing.confirm(row["org_id"])
-        except Exception as e:
-            log.warning("billing_runner: confirm de rattrapage org %s : %s",
-                        row["org_id"], e)
+        # fermé) : on termine la pose du miroir nous-mêmes. On DIT lequel — la
+        # leçon de #291 vaut ici comme au webhook : « le plus récent » peut être un
+        # autre checkout de la même org.
+        _catch_up(row["org_id"], ref)
         return
     if status and status != row["status"]:
         db_billing.update_billing_payment(row["id"], status=status)
@@ -139,6 +146,15 @@ def _reconcile_one(row: dict, now: datetime) -> None:
         created_dt = created if isinstance(created, datetime) else None
         if created_dt and now - created_dt > _INITIAL_INTENT_TTL:
             db_billing.update_billing_payment(row["id"], status="expired")
+
+
+def _catch_up(org_id: int, payment_ref: str) -> None:
+    """Termine la pose du miroir pour un encaissement constaté hors `confirm`."""
+    try:
+        billing.confirm(org_id, payment_ref=payment_ref)
+    except Exception as e:
+        log.warning("billing_runner: confirm de rattrapage org %s (paiement %s) : %s",
+                    org_id, payment_ref, e)
 
 
 def tick() -> dict:
@@ -166,6 +182,17 @@ def tick() -> dict:
         except mollie_client.MollieError as e:
             log.warning("billing_runner: réconciliation paiement %s : %s",
                         row.get("id"), e)
+
+    # Encaissements dont l'abonnement attend encore son mandat (#493). Ces lignes
+    # sont `paid`, donc terminales, donc hors de la file ci-dessus : sans cette
+    # reprise, personne ne re-interrogerait le mandat une fois l'onglet fermé.
+    for row in db_billing.paid_initials_awaiting_subscription(
+            since=now - _MANDATE_CATCHUP_WINDOW):
+        ref = row.get("payment_intent_id") or row.get("payment_id")
+        if not ref:
+            continue
+        _catch_up(row["org_id"], ref)
+        counts["mandate_catchup"] = counts.get("mandate_catchup", 0) + 1
     return counts
 
 

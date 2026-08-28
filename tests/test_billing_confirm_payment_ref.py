@@ -12,6 +12,8 @@ et la base stubbés, jamais le seam qu'ils vérifient.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from oto_mcp import billing
@@ -47,9 +49,10 @@ class _Db:
     TERMINAL_PAYMENT_STATUSES = TERMINAL
 
 
-def _payment(pid, ref, status="open"):
+def _payment(pid, ref, status="open", age=timedelta(seconds=2)):
     return {"id": pid, "payment_intent_id": ref, "kind": "initial",
-            "status": status, "org_id": 7}
+            "status": status, "org_id": 7,
+            "created_at": datetime.now(timezone.utc) - age}
 
 
 @pytest.fixture
@@ -107,8 +110,14 @@ def test_une_reference_inconnue_ne_se_rabat_sur_personne(deux_checkouts):
 
 def test_le_webhook_n_annonce_pas_un_succes_qu_il_n_a_pas_constate(monkeypatch):
     """`confirmed` était rendu quoi qu'il arrive : le journal affirmait le contraire
-    de ce qui s'était passé, ce qui envoie chercher l'incident ailleurs."""
-    db = _Db([_payment(1, "tr_X")])
+    de ce qui s'était passé, ce qui envoie chercher l'incident ailleurs.
+
+    Le paiement est daté HORS de la fenêtre de mandat : dedans, un mandat absent est
+    une course normale (`awaiting_mandate`), pas un incident — cf. le test suivant."""
+    vieux = _payment(1, "tr_X")
+    vieux["created_at"] = (datetime.now(timezone.utc)
+                           - billing.PENDING_WINDOW - timedelta(minutes=1))
+    db = _Db([vieux])
     monkeypatch.setattr(billing, "db_billing", db)
     monkeypatch.setattr(billing.mollie_client, "get_payment",
                         lambda ref: {"id": ref, "status": "paid", "customerId": "cst_1",
@@ -118,6 +127,22 @@ def test_le_webhook_n_annonce_pas_un_succes_qu_il_n_a_pas_constate(monkeypatch):
 
     assert billing.process_webhook("tr_X") == "not_confirmed"
     assert db.upserted == []
+
+
+def test_le_webhook_ne_crie_pas_sur_une_course_de_mandat(monkeypatch):
+    """#493 : le webhook arrive une seconde après l'encaissement, le mandat n'existe
+    pas encore. Le compter comme un incident envoie chercher un défaut là où il n'y
+    en a pas — et l'encaissement, lui, doit être journalisé tout de suite."""
+    db = _Db([_payment(1, "tr_X")])
+    monkeypatch.setattr(billing, "db_billing", db)
+    monkeypatch.setattr(billing.mollie_client, "get_payment",
+                        lambda ref: {"id": ref, "status": "paid", "customerId": "cst_1",
+                                     "metadata": {"plan": "standard"}})
+    monkeypatch.setattr(billing.mollie_client, "valid_mandate", lambda cid: None)
+
+    assert billing.process_webhook("tr_X") == "awaiting_mandate"
+    assert db.upserted == []
+    assert db.updated == [(1, {"status": "paid", "payment_id": "tr_X"})]
 
 
 def test_un_initial_ouvert_ancien_reste_visible(monkeypatch):

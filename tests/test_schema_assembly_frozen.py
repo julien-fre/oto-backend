@@ -40,8 +40,10 @@ from oto_mcp.db import _schema, schema
 # jamais recopiée d'un côté d'un conflit : deux lots qui touchent le DDL
 # la recalculent sur le résultat FUSIONNÉ, sinon la garde valide un DDL que
 # personne n'a servi. Cf. l'avertissement du docstring avant de la toucher.
-EMPREINTE = "fb06985a542809e80bea6047972e98d272b16504f4560c3d20359ef17a6bdffb"
-LONGUEUR = 102487
+# 2026-08-28 (#493) : `billing_payments.customer_id` — le journal porte le customer
+# Mollie de la tentative, seule mémoire du customer d'une org avant le 1ᵉʳ `confirm`.
+EMPREINTE = "a04b373236840a9d9d1b554a1391123663dbc9d115e361102dab5cff78719ab1"
+LONGUEUR = 102582
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
 

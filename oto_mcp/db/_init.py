@@ -169,6 +169,11 @@ def _init_db_once() -> None:
         # Lien journal → traceback Sentry (investigation) : l'event id capturé pour
         # l'appel. Additif, NULL sur tout l'historique (non reconstructible).
         conn.execute("ALTER TABLE tool_calls ADD COLUMN IF NOT EXISTS sentry_event_id TEXT")
+        # #493 : le journal de paiement porte le customer Mollie de la tentative. Le
+        # miroir `org_subscriptions` n'est posé qu'à `confirm` — entre deux clics de
+        # souscription il n'y avait donc RIEN à relire, et un second customer Mollie
+        # naissait à chaque tentative (vécu le 25/08). Additif, NULL sur l'historique.
+        conn.execute("ALTER TABLE billing_payments ADD COLUMN IF NOT EXISTS customer_id TEXT")
         # ADR 0032 §2 : le lien projet→entité porte un `role` (pourquoi cette entité est ici).
         conn.execute("ALTER TABLE project_links ADD COLUMN IF NOT EXISTS role TEXT")
         # ADR 0032 §4 (B2) : surcharge contextuelle préfaite du lien (connecteur → identité/instructions).

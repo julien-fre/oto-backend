@@ -120,11 +120,34 @@ def test_reconcile_paid_initial_replays_confirm(monkeypatch):
     monkeypatch.setattr(billing_runner.mollie_client, "get_payment",
                         lambda i: {"status": "paid"})
     monkeypatch.setattr(billing_runner.billing, "confirm",
-                        lambda org: called.update(org=org))
+                        lambda org, payment_ref=None: called.update(
+                            org=org, ref=payment_ref))
     billing_runner._reconcile_one({"id": 5, "org_id": 42, "kind": "initial",
                                    "payment_id": None, "payment_intent_id": "tr_1",
                                    "status": "open"}, NOW)
     assert called["org"] == 42                 # onglet fermé → rattrapage miroir
+    # #291/#493 : le rattrapage DIT lequel — « le plus récent » peut être un autre
+    # checkout de la même org.
+    assert called["ref"] == "tr_1"
+
+
+def test_tick_reprend_les_encaissements_sans_mandat(monkeypatch):
+    """#493 : un encaissement est journalisé `paid` dès son constat, donc TERMINAL,
+    donc invisible de `open_billing_payments`. Sans cette seconde file, un payeur qui
+    ferme son onglet pendant la course au mandat reste débité et sans droits."""
+    called = []
+    monkeypatch.setattr(billing_runner.mollie_client, "is_configured", lambda: True)
+    monkeypatch.setattr(db_billing, "sweep_period_end_cancellations", lambda: [])
+    monkeypatch.setattr(db_billing, "sweep_grace_expired", lambda: [])
+    monkeypatch.setattr(db_billing, "due_subscriptions", lambda: [])
+    monkeypatch.setattr(db_billing, "open_billing_payments", lambda: [])
+    monkeypatch.setattr(db_billing, "paid_initials_awaiting_subscription",
+                        lambda **k: [{"org_id": 42, "payment_intent_id": "tr_1",
+                                      "payment_id": None}])
+    monkeypatch.setattr(billing_runner.billing, "confirm",
+                        lambda org, payment_ref=None: called.append((org, payment_ref)))
+    assert billing_runner.tick() == {"mandate_catchup": 1}
+    assert called == [(42, "tr_1")]
 
 
 def test_reconcile_stale_initial_payment_expires(monkeypatch):
@@ -153,6 +176,8 @@ def test_tick_sweeps_and_counts(monkeypatch):
     monkeypatch.setattr(db_billing, "sweep_grace_expired", lambda: [2, 3])
     monkeypatch.setattr(db_billing, "due_subscriptions", lambda: [])
     monkeypatch.setattr(db_billing, "open_billing_payments", lambda: [])
+    monkeypatch.setattr(db_billing, "paid_initials_awaiting_subscription",
+                        lambda **k: [])
     assert billing_runner.tick() == {"closed": 3}
 
 

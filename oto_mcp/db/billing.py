@@ -268,16 +268,76 @@ def insert_billing_payment(
     payment_id: Optional[str] = None,
     status: str = "processing",
     attempt: int = 1,
+    customer_id: Optional[str] = None,
 ) -> int:
     with _connect() as conn:
         row = conn.execute(
             "INSERT INTO billing_payments (org_id, kind, amount, currency, "
-            "payment_intent_id, payment_id, status, attempt) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            "payment_intent_id, payment_id, status, attempt, customer_id) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (org_id, kind, amount, currency, payment_intent_id, payment_id,
-             status, attempt),
+             status, attempt, customer_id),
         ).fetchone()
     return int(row["id"])
+
+
+def last_customer_id_for_org(org_id: int) -> Optional[str]:
+    """Le dernier customer Mollie sur lequel on a fait payer cette org.
+
+    UN customer par org, pour toujours (#493) : le miroir `org_subscriptions` ne le
+    porte qu'APRÈS `confirm`, donc entre l'ouverture d'un checkout et sa conclusion
+    il n'y a que le journal pour s'en souvenir — et sans cette lecture, chaque
+    tentative de souscription créait un customer de plus chez le PSP (dont les
+    mandats survivent à la tentative abandonnée).
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT customer_id FROM billing_payments "
+            "WHERE org_id = %s AND customer_id IS NOT NULL "
+            "ORDER BY created_at DESC LIMIT 1",
+            (org_id,),
+        ).fetchone()
+    return row["customer_id"] if row else None
+
+
+def pending_initial_payment(org_id: int, *, since) -> Optional[dict]:
+    """La souscription DÉJÀ EN VOL de l'org, s'il y en a une depuis `since`.
+
+    « En vol » = tout premier paiement qui n'est pas un ÉCHEC DÉFINITIF : `open`
+    (page de checkout encore payable) comme `paid` (encaissé, miroir pas encore
+    posé — il manque le mandat). Les deux interdisent d'ouvrir un second checkout :
+    c'est exactement l'enchaînement qui a débité deux fois le 25/08 (#493), un
+    payeur qui voit un échec sur un paiement réussi et reclique.
+    """
+    failed = sorted(TERMINAL_PAYMENT_STATUSES - {"paid"})
+    placeholders = ",".join(["%s"] * len(failed))
+    with _connect() as conn:
+        return conn.execute(
+            f"SELECT * FROM billing_payments WHERE org_id = %s AND kind = 'initial' "
+            f"AND status NOT IN ({placeholders}) AND created_at > %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (org_id, *failed, since),
+        ).fetchone()
+
+
+def paid_initials_awaiting_subscription(limit: int = 50, *, since) -> list[dict]:
+    """Premiers paiements ENCAISSÉS dont l'abonnement n'est toujours pas ouvert.
+
+    Depuis #493 un encaissement est journalisé `paid` dès qu'il est constaté — donc
+    il quitte la file de réconciliation (`open_billing_payments`, qui ne regarde que
+    le non-terminal) AVANT que le mandat n'existe. Sans cette seconde file, un payeur
+    qui ferme son onglet pendant la course au mandat resterait débité et sans droits,
+    et plus rien côté serveur ne reprendrait la main.
+    """
+    with _connect() as conn:
+        return list(conn.execute(
+            "SELECT p.* FROM billing_payments p "
+            "WHERE p.kind = 'initial' AND p.status = 'paid' AND p.created_at > %s "
+            "  AND NOT EXISTS (SELECT 1 FROM org_subscriptions s "
+            "                  WHERE s.org_id = p.org_id AND s.status = 'active') "
+            "ORDER BY p.created_at ASC LIMIT %s",
+            (since, limit),
+        ))
 
 
 def update_billing_payment(
