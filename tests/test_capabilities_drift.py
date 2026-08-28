@@ -17,7 +17,7 @@ from oto_mcp.capabilities import _mcp_adapter, _rest_adapter, registry
 # (≠ un nouveau connecteur, qui n'a RIEN à ajouter ici).
 _EXPLICIT_TOOL_MODULES = {
     "meta", "profile", "whoami", "guide", "email", "datastore", "docs_app",
-    "doctrine_run", "remote", "mount",
+    "guide_run", "remote", "mount",
 }
 
 

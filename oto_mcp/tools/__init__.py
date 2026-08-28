@@ -58,8 +58,8 @@ def register_all(mcp: FastMCP) -> None:
     # Runs / déroulés (ADR 0017) — verbes run_start/finish (spine). Le run_id posé
     # en état de session est stampé sur chaque tool_call par le sink calllog. Pas
     # de dépendance externe.
-    from . import doctrine_run
-    doctrine_run.register(mcp)
+    from . import guide_run
+    guide_run.register(mcp)
 
     # Connecteurs mount (fédération MCP, otomata#16) — monte un MCP distant via
     # proxy FastMCP, credential per-user injecté par requête. Inerte tant

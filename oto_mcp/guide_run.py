@@ -5,7 +5,7 @@ doctrine nommée (champ `doctrine`), soit un run one-shot/ad-hoc (sans `doctrine
 Le `run_id` actif vit dans l'**état de session FastMCP** (session-scopé, TTL natif),
 sous forme de **pile** (runs imbriqués : un run peut en démarrer un autre).
 
-- `run_start` (tools/doctrine_run.py) **pousse** un run.
+- `run_start` (tools/guide_run.py) **pousse** un run.
 - Le sink calllog (`server._calllog_sink`) lit le run **actif** (sommet de pile) et
   **stampe** chaque `tool_call` avec — corrélation côté serveur, l'agent ne thread rien.
 - `run_finish` **dépile** (par run_id, robuste à l'imbrication).
@@ -19,7 +19,7 @@ import uuid
 from typing import Any, Optional
 
 # Clé d'état de session (préfixée oto pour ne pas collisionner avec d'autres états).
-_STACK_KEY = "oto_doctrine_runs"
+_STACK_KEY = "oto_guide_runs"
 
 
 def new_run_id() -> str:

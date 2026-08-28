@@ -6,7 +6,7 @@ import logging
 from fastmcp.server.middleware import Middleware
 from starlette.concurrency import run_in_threadpool
 
-from .. import call_axes, doctrine_run, redaction, session_org
+from .. import call_axes, guide_run, redaction, session_org
 from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import namespace_of
 
@@ -136,7 +136,7 @@ class CallContextMiddleware(Middleware):
             # or il n'est posé que si l'appelant l'a passé, ce qu'un agent ne fait pas.
             # Une seule lecture des deux sources, ici, plutôt qu'une par seam.
             if not session_org.current_call_run():
-                actif = await doctrine_run.active_run_id(context)
+                actif = await guide_run.active_run_id(context)
                 if actif:
                     undo.append((session_org.reset_call_run,
                                  session_org.set_call_run(actif)))

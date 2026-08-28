@@ -1,7 +1,7 @@
 """Publier dans la bibliothèque est BORNÉ À L'AUTEUR (oto-backend#292).
 
 Le nom public EST l'adresse (`UNIQUE (slug)` ; toute l'API adresse par slug, et
-un `unlisted` se lit par slug exact). Il est donc possédé : `publish_doctrine`
+un `unlisted` se lit par slug exact). Il est donc possédé : `publish_guide`
 faisait un `ON CONFLICT (slug) DO UPDATE` qui réécrivait corps ET auteur sans
 regarder à qui appartenait l'entrée en conflit — une org devenait silencieusement
 propriétaire de l'entrée d'une autre, qui perdait jusqu'au droit de la dépublier
@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp import org_store
-from oto_mcp.capabilities import doctrine_library as lib
+from oto_mcp.capabilities import guide_library as lib
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 
@@ -36,7 +36,7 @@ class _R:
 
 class _Library:
     """Un faux `doctrine_library` en mémoire — juste assez de SQL pour exercer le
-    VRAI `publish_doctrine` (verrou advisory, lecture d'appartenance, upsert)."""
+    VRAI `publish_guide` (verrou advisory, lecture d'appartenance, upsert)."""
 
     def __init__(self, rows=None):
         self.rows: dict[str, dict] = dict(rows or {})
@@ -90,7 +90,7 @@ def _org_ctx(sub: str, org_id: int) -> ResolvedCtx:
 @pytest.fixture
 def surface(monkeypatch):
     """La surface `library.publish` avec ses seuls voisins stubbés : le store de
-    doctrines d'org, les orgs, les rôles. `publish_doctrine` reste le vrai."""
+    doctrines d'org, les orgs, les rôles. `publish_guide` reste le vrai."""
     store = _Library()
     monkeypatch.setattr(org_store, "_connect", lambda: store)
     monkeypatch.setattr(org_store, "get_instruction",
@@ -157,7 +157,7 @@ def test_le_store_refuse_une_entree_org_sans_proprietaire(surface):
     """Sans `author_org_id`, l'entrée naît hors de portée du contrôle
     d'appartenance ET indépublicable par son auteur."""
     with pytest.raises(ValueError, match="author_org_id"):
-        org_store.publish_doctrine(slug="orpheline", body_md="# x",
+        org_store.publish_guide(slug="orpheline", body_md="# x",
                                    author_kind="org", author_org_id=None)
 
 

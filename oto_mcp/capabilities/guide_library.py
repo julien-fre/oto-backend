@@ -301,7 +301,7 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
                           f"Doctrine `{inp.slug}` absente de ton org active.")
     kind, author_org_id, display = _author_for(ctx)
     try:
-        row = org_store.publish_doctrine(
+        row = org_store.publish_guide(
             slug=inp.public_slug or inp.slug,
             title=inp.title if inp.title is not None else (src.get("title") or ""),
             description=inp.description if inp.description is not None else (src.get("description") or ""),
@@ -347,7 +347,7 @@ def _unpublish(ctx: ResolvedCtx, inp: UnpublishInput) -> dict:
                  and roles.is_org_admin(ctx.sub, entry["author_org_id"]))
     if not (is_author or access.is_platform_operator(ctx.sub)):
         raise AuthzDenied(403, "forbidden", "Réservé à l'auteur ou à un admin plateforme.")
-    return {"unpublished": org_store.unpublish_doctrine(inp.id)}
+    return {"unpublished": org_store.unpublish_guide(inp.id)}
 
 
 CAPABILITIES += [

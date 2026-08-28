@@ -139,7 +139,7 @@ def _key_grant(ctx: ResolvedCtx, inp: KeyGrantInput) -> dict:
 
 
 # ── oto_admin_doctrine : get / list / set / delete (org ciblée, ADR 0047 B2) ─
-class DoctrineAdminInput(BaseModel):
+class GuideAdminInput(BaseModel):
     op: Literal["get", "list", "set", "delete"]
     org_id: int
     slug: Optional[str] = None        # get (None = base+index) / set (None = base) / delete
@@ -154,14 +154,14 @@ class DoctrineAdminInput(BaseModel):
     slots: Optional[list] = None      # set (ADR 0035)
 
 
-async def _doctrine(ctx: ResolvedCtx, inp: DoctrineAdminInput) -> dict:
+async def _doctrine(ctx: ResolvedCtx, inp: GuideAdminInput) -> dict:
     from .orgs import instructions as oi
     if inp.op == "get":
-        return await oi._get_doctrine(ctx, oi.AdminDoctrineGetInput(
+        return await oi._get_guide(ctx, oi.AdminGuideGetInput(
             org_id=inp.org_id, slug=inp.slug, scope=inp.scope or "org",
             version=inp.version, with_history=inp.with_history))
     if inp.op == "list":
-        return oi._list_doctrines(ctx, oi.AdminDoctrineListInput(
+        return oi._list_guides(ctx, oi.AdminGuideListInput(
             org_id=inp.org_id, query=inp.query, scope=inp.scope))
     if inp.op == "set":
         return await oi._set_instruction(ctx, oi.AdminInstrSetInput(
@@ -347,7 +347,7 @@ CAPABILITIES += [
         mcp="oto_admin_key_grant",
     ),
     Capability(
-        key="admin.doctrine", handler=_doctrine, Input=DoctrineAdminInput,
+        key="admin.doctrine", handler=_doctrine, Input=GuideAdminInput,
         authz=ADMIN_BY_OP({"get": ORG_MEMBER_OF("org_id"), "list": ORG_MEMBER_OF("org_id"),
                            "set": ORG_ADMIN_OF("org_id"), "delete": ORG_ADMIN_OF("org_id")}),
         description=("[ADMIN] Another org's doctrine, by `org_id` (cross-org = platform "

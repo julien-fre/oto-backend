@@ -4,7 +4,7 @@ bibliothèque publique, en tant qu'auteur **Otomata**.
 Contrairement à `seed_doctrine_library` (qui publie les skills d'une org
 existante), ce script publie directement des doctrines **versionnées au repo**
 (`doctrines/talent-sourcing/*.md`) — pas besoin d'org source. Idempotent :
-`publish_doctrine` fait un upsert par slug (ré-exécuter incrémente la version
+`publish_guide` fait un upsert par slug (ré-exécuter incrémente la version
 sans dupliquer).
 
 Chaque markdown porte un front-matter `---` (slug, title, description, category,
@@ -71,7 +71,7 @@ def main() -> None:
         if not body.strip():
             print(f"  ⚠ {path.name} : corps vide, ignoré", file=sys.stderr)
             continue
-        row = org_store.publish_doctrine(
+        row = org_store.publish_guide(
             slug=slug,
             title=meta.get("title") or "",
             description=meta.get("description") or "",

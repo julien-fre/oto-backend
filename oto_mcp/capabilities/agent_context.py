@@ -7,7 +7,7 @@ neuf) :
 1. **instructions** — les instructions serveur statiques (`instructions.render()` :
    posture + bootstrap + boucle d'usage + catalogue de namespaces dérivé du registre).
 2. **doctrine** — la doctrine d'org effective (bundle session-start), via le handler
-   canonique `orgs_instructions._get_doctrine` (réemploi, pas de duplication).
+   canonique `orgs_instructions._get_guide` (réemploi, pas de duplication).
 3. **tools** — les outils EFFECTIVEMENT visibles pour `(sub, org active)`, via la
    logique de visibilité canonique `session_visibility.compute_hidden_tools` (même
    calcul que le handshake MCP), regroupés par namespace.
@@ -117,7 +117,7 @@ async def _tools_view(ctx: ResolvedCtx) -> dict:
 
 
 async def _agent_context(ctx: ResolvedCtx, inp: AgentContextInput) -> dict:
-    doctrine = await orgs_instructions._get_doctrine(
+    doctrine = await orgs_instructions._get_guide(
         ctx, types.SimpleNamespace(slug=None, scope=None, version=None,
                                    org_id=None, with_history=False))
     # Instructions RÉELLEMENT reçues = artefact composé A/C (#50), même chemin que

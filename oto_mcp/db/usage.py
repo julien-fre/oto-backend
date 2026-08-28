@@ -307,7 +307,7 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
     L'axe PROJET vient de l'index (`runs.project_id`), tout le reste du journal — le
     filtre `doctrine` inclus : filtrer sur la colonne de la table ferait apparaître dans
     la pastille d'une procédure un run que le journal rattache à une autre."""
-    doctrine_clause = " AND j.doctrine = %s" if doctrine is not None else ""
+    guide_clause = " AND j.doctrine = %s" if doctrine is not None else ""
     params: list = ([project_id, project_id]
                     + ([doctrine] if doctrine is not None else []) + [limit])
     with _connect() as conn:
@@ -317,7 +317,7 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
             SELECT j.run_id, j.label, j.doctrine, j.outcome, j.started_at,
                    j.finished_at, j.last_seen_at
               FROM runs x JOIN j ON j.run_id = x.run_id
-             WHERE x.project_id = %s{doctrine_clause}
+             WHERE x.project_id = %s{guide_clause}
              ORDER BY j.started_at DESC LIMIT %s
             """,
             tuple(params),

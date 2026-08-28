@@ -8,7 +8,7 @@ def _catalog(monkeypatch, entries):
     monkeypatch.setattr(CS, "_visible_catalog", lambda ctx: list(entries))
     monkeypatch.setattr(CS.connector_selection, "list_selection", lambda sub, org: {})
     monkeypatch.setattr(CS.org_store, "get_org_default_connectors", lambda org: [])
-    monkeypatch.setattr(CS, "_doctrine_refs_by_ns", lambda org: {})
+    monkeypatch.setattr(CS, "_guide_refs_by_ns", lambda org: {})
 
 
 # ── #109 : projection compacte par défaut, plein sur verbose ──

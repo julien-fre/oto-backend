@@ -224,7 +224,7 @@ def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
     return out
 
 
-def _doctrine_refs_by_ns(org_id: int | None) -> dict[str, set]:
+def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
     """namespace → ensemble des doctrines de l'org qui le référencent (`<tool:slug>`).
     Vide si pas d'org. Dérivation pure depuis les bodies de doctrine (posture
     « doctrine-only », ADR 0024) — best-effort, ne fait jamais échouer la lecture."""
@@ -321,7 +321,7 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     org_id = ctx.org_id or 0
     selection = connector_selection.list_selection(ctx.sub, org_id)
     recommended = set(org_store.get_org_default_connectors(ctx.org_id) or []) if ctx.org_id else set()
-    doc_refs = _doctrine_refs_by_ns(ctx.org_id)
+    doc_refs = _guide_refs_by_ns(ctx.org_id)
     # Découvrabilité : une clé peut exister à portée (équipe dont je suis membre,
     # autre org) sans que la cascade la lise — le connecteur paraît alors « vide »
     # dans la library alors qu'il est utilisable en épinglant. Jusqu'ici l'info

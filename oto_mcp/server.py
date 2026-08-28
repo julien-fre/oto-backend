@@ -597,7 +597,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
         try:
             from fastmcp.server.dependencies import get_context
 
-            from . import doctrine_run
+            from . import guide_run
 
             ctx = get_context()
             row["session_id"] = ctx.session_id
@@ -607,9 +607,9 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
             row["request_id"] = str(ctx.request_id) if ctx.request_id is not None else None
             # run_id de l'appel : axe explicite `_run_id=` EN PRIORITÉ (modèle sans état
             # de session, #108 — la pile session-scopée ne survit pas au renouvellement
-            # du Mcp-Session-Id), repli sur la pile session de `doctrine_run`.
+            # du Mcp-Session-Id), repli sur la pile session de `guide_run`.
             from . import session_org
-            row["run_id"] = session_org.current_call_run() or await doctrine_run.active_run_id(ctx)
+            row["run_id"] = session_org.current_call_run() or await guide_run.active_run_id(ctx)
             # Org de l'appel (#67) : seam current_org du caller dans CE contexte de
             # session → scope exact du journal d'audit org. NULL hors org.
             from . import access

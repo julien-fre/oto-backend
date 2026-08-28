@@ -41,7 +41,7 @@ def _wire(monkeypatch, *, catalog=(_ROW,), selection=None, option_ok=True,
     monkeypatch.setattr(CS.connector_selection, "list_selection",
                         lambda sub, org: dict(selection or {}))
     monkeypatch.setattr(CS.org_store, "get_org_default_connectors", lambda org: [])
-    monkeypatch.setattr(CS, "_doctrine_refs_by_ns", lambda org: {})
+    monkeypatch.setattr(CS, "_guide_refs_by_ns", lambda org: {})
     monkeypatch.setattr(CS.access, "reachable_instances_map", lambda sub, org: {})
     monkeypatch.setattr(CS.access, "option_open",
                         lambda sub, name, org=None: option_ok)

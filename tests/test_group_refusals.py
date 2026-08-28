@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp import group_store, org_store
-from oto_mcp.capabilities.groups import core as groups, doctrine as groups_doctrine
+from oto_mcp.capabilities.groups import core as groups, guide as groups_guide
 from oto_mcp.capabilities._types import AuthzDenied
 
 
@@ -29,10 +29,10 @@ def test_ecrire_le_readme_comme_procedure_est_un_400_nomme(monkeypatch):
     monkeypatch.setattr(group_store, "set_group_instruction",
                         lambda *a, **k: appels.append(a) or 1)
 
-    inp = groups_doctrine.InstrSetInput(
+    inp = groups_guide.InstrSetInput(
         group_id=7, slug=org_store.BASE_SLUG, body_md="peu importe")
     with pytest.raises(AuthzDenied) as e:
-        groups_doctrine._set(_Ctx(), inp)
+        groups_guide._set(_Ctx(), inp)
 
     assert e.value.status == 400
     assert e.value.code == "reserved_slug"
@@ -45,8 +45,8 @@ def test_ecrire_le_readme_comme_procedure_est_un_400_nomme(monkeypatch):
 def test_un_slug_normal_passe_toujours(monkeypatch):
     """Garde-fou du garde-fou : le refus ne doit pas manger les procédures légitimes."""
     monkeypatch.setattr(group_store, "set_group_instruction", lambda *a, **k: 3)
-    out = groups_doctrine._set(
-        _Ctx(), groups_doctrine.InstrSetInput(group_id=7, slug="relance", body_md="x"))
+    out = groups_guide._set(
+        _Ctx(), groups_guide.InstrSetInput(group_id=7, slug="relance", body_md="x"))
     assert out["version"] == 3 and out["slug"] == "relance"
 
 

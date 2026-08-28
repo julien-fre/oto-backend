@@ -1,4 +1,4 @@
-"""DDL du domaine « doctrine » — fragment du schéma assemblé par `db/_schema.py`.
+"""DDL du domaine « procédures » — fragment du schéma assemblé par `db/_schema.py`.
 
 Ce module ne porte QUE du DDL, en chaînes SQL, et n'est jamais exécuté seul :
 `_schema._SCHEMA` concatène tous les domaines dans un ordre FIGÉ (les FK en
@@ -11,8 +11,12 @@ particulier le piège du `CREATE INDEX` sur une colonne ajoutée par migration.
 """
 from __future__ import annotations
 
-# doctrines d'org, révisions, bibliothèque
-DOCTRINE = """
+# Procédures d'org, révisions, bibliothèque publique.
+#
+# ⚠️ Le DDL ci-dessous est FIGÉ au lot A de #519 : la base est PARTAGÉE
+# prod/preprod, donc `doctrine_library` et ses index gardent leur nom servi.
+# Alias de compatibilité — renommage additif (vue puis bascule) au lot B.
+PROCEDURES = """
 -- Procédures (doctrines/skills) — table UNIQUE, possédée par un SCOPE (chantier
 -- procédures, cadrage 10/07) : `owner_type/owner_id` ('org' = procédure d'org,
 -- 'group' = procédure d'équipe à la fusion B2 d'org_group_instructions ; `org_id`

@@ -11,7 +11,7 @@ import pathlib
 
 from oto_mcp import (guide_store, instructions, procedure_diagram as pd,
                      procedure_digest as pdg)
-from oto_mcp.capabilities.groups import doctrine as gd
+from oto_mcp.capabilities.groups import guide as gd
 from oto_mcp.capabilities.orgs import instructions as oi
 
 _GUIDE = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp" / "guides" / "procedure-flowchart.md"
@@ -179,14 +179,14 @@ def test_the_set_tool_description_names_the_guide():
 def test_publish_and_fork_carry_the_warning(monkeypatch):
     """Publier ou forker, c'est faire circuler une procédure : le manque de schéma
     part avec elle, donc le signal aussi."""
-    from oto_mcp.capabilities import doctrine_library as dl
+    from oto_mcp.capabilities import guide_library as dl
 
     monkeypatch.setattr(dl, "_require_org_admin", lambda ctx, verb: 7)
     monkeypatch.setattr(dl, "_author_for", lambda ctx: ("org", 7, "Acme"))
     monkeypatch.setattr(dl.org_store, "get_instruction",
                         lambda org, slug: {"body_md": "Sans dessin.", "title": "t",
                                            "description": "d", "slots": []})
-    monkeypatch.setattr(dl.org_store, "publish_doctrine",
+    monkeypatch.setattr(dl.org_store, "publish_guide",
                         lambda **k: {"id": 1, "slug": "s", "version": 1, "visibility": "public"})
 
     class _P:

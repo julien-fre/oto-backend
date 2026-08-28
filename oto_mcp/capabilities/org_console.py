@@ -18,7 +18,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel
 
 from . import scheduled_emails
-from .groups import core as groups, doctrine as groups_doctrine, invites as groups_invites, members as groups_members
+from .groups import core as groups, guide as groups_guide, invites as groups_invites, members as groups_members
 from .orgs import core as orgs, email_settings as orgs_email_settings, field_filters as orgs_field_filters, invites as orgs_invites, mfa as orgs_mfa, update as orgs_update
 from ._authz import (
     BY_OP,
@@ -169,7 +169,7 @@ def _group(ctx: ResolvedCtx, inp: GroupInput) -> dict:
         return groups_invites._invite_create(ctx, groups_invites.GroupInviteCreateInput(
             group_id=gid, email=inp.email, role=inp.role or "group_member",
             send_email=inp.send_email))
-    return groups_doctrine._set(ctx, groups_doctrine.InstrSetInput(
+    return groups_guide._set(ctx, groups_guide.InstrSetInput(
         group_id=gid,
         slug=_need(inp.slug, "missing_slug", "`slug` requis pour set_instruction."),
         body_md=_need(inp.body_md, "missing_body", "`body_md` requis pour set_instruction."),

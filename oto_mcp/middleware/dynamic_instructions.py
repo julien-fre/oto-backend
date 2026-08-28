@@ -11,7 +11,7 @@ from ..auth.hooks import current_user_sub_from_token
 logger = logging.getLogger(__name__)
 
 
-_DOCTRINE_GET_TOOL = "oto_procedure"
+_GUIDE_GET_TOOL = "oto_procedure"
 _GUIDE_TOOL = "oto_guide"
 
 # « Cette session n'est pas un endpoint de projet publié » — distinct de « projet
@@ -114,7 +114,7 @@ class DynamicInstructionsMiddleware(Middleware):
             # Deux loaders de prose on-demand, même canal de découverte : l'index
             # per-(sub, org) enrichit la description de l'outil qui les charge.
             extra = {
-                _DOCTRINE_GET_TOOL: instructions.skills_index_md(org_id),
+                _GUIDE_GET_TOOL: instructions.skills_index_md(org_id),
                 _GUIDE_TOOL: guide_store.guides_index_md(sub, org_id),
             }
             if not any(extra.values()):

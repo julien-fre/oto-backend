@@ -211,7 +211,7 @@ def test_nothing_else_touches_nodes_yet():
     surface des lignes est un autre lot, paginé par curseur : un « ouvrir » qui ramène
     43 584 lignes n'est pas une fiche, c'est un export déguisé.
 
-    **Le lot ⑧ ajoute une ÉCRITURE le 21/08** : `convert_doctrines` dans `db/nodes.py`
+    **Le lot ⑧ ajoute une ÉCRITURE le 21/08** : `convert_guides` dans `db/nodes.py`
     (déjà inscrit) — les procédures deviennent des nœuds. Elle ferme un trou visible
     depuis la naissance du rail : un partage direct de procédure ne désignait aucun
     nœud, donc n'entrait pas dans la section « Partagé ». Rien de neuf n'est lu ici —

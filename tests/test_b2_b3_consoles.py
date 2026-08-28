@@ -13,8 +13,8 @@ import pytest
 from oto_mcp.capabilities import admin_console as ac
 from oto_mcp.capabilities import org_console as oc
 from oto_mcp.capabilities import procedure_console as pc
-from oto_mcp.capabilities import doctrine_library, scheduled_emails, usage
-from oto_mcp.capabilities.groups import core as groups, doctrine as groups_doctrine, members as groups_members
+from oto_mcp.capabilities import guide_library, scheduled_emails, usage
+from oto_mcp.capabilities.groups import core as groups, guide as groups_guide, members as groups_members
 from oto_mcp.capabilities.orgs import core as orgs, email_settings as orgs_email_settings, field_filters as orgs_field_filters, instructions as orgs_instructions, invites as orgs_invites, mfa as orgs_mfa, update as orgs_update
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
@@ -33,15 +33,15 @@ def _atag(name):
 
 # ── oto_procedure ────────────────────────────────────────────────────────────
 def test_procedure_routes(monkeypatch):
-    monkeypatch.setattr(orgs_instructions, "_get_doctrine", _atag("get"))
-    monkeypatch.setattr(orgs_instructions, "_list_doctrines", _tag("list"))
+    monkeypatch.setattr(orgs_instructions, "_get_guide", _atag("get"))
+    monkeypatch.setattr(orgs_instructions, "_list_guides", _tag("list"))
     monkeypatch.setattr(orgs_instructions, "_set_instruction", _atag("set"))
     monkeypatch.setattr(orgs_instructions, "_delete_instruction", _tag("delete"))
-    monkeypatch.setattr(doctrine_library, "_list", _tag("library_list"))
-    monkeypatch.setattr(doctrine_library, "_get", _tag("library_get"))
-    monkeypatch.setattr(doctrine_library, "_publish", _tag("publish"))
-    monkeypatch.setattr(doctrine_library, "_fork", _tag("fork"))
-    monkeypatch.setattr(doctrine_library, "_unpublish", _tag("unpublish"))
+    monkeypatch.setattr(guide_library, "_list", _tag("library_list"))
+    monkeypatch.setattr(guide_library, "_get", _tag("library_get"))
+    monkeypatch.setattr(guide_library, "_publish", _tag("publish"))
+    monkeypatch.setattr(guide_library, "_fork", _tag("fork"))
+    monkeypatch.setattr(guide_library, "_unpublish", _tag("unpublish"))
     P = pc.ProcedureInput
     run = lambda inp: asyncio.run(pc._procedure(CTX, inp))
     out = run(P(op="get", slug="s1", scope=None))
@@ -74,21 +74,21 @@ def test_procedure_required_fields():
 
 
 def test_procedure_carries_skills_index_anchor():
-    """L'index des skills est appendu par le middleware sur `_DOCTRINE_GET_TOOL` —
+    """L'index des skills est appendu par le middleware sur `_GUIDE_GET_TOOL` —
     il DOIT pointer le tool console (sinon l'index n'est plus servi nulle part),
     et rester un tool MCP réellement monté (garde du bug d'origine)."""
     from oto_mcp.middleware import dynamic_instructions
-    assert orgs_instructions._DOCTRINE_GET_TOOL == "oto_procedure"
-    assert dynamic_instructions._DOCTRINE_GET_TOOL == "oto_procedure"
+    assert orgs_instructions._GUIDE_GET_TOOL == "oto_procedure"
+    assert dynamic_instructions._GUIDE_GET_TOOL == "oto_procedure"
 
 
 # ── oto_admin_doctrine / oto_admin_signal ────────────────────────────────────
 def test_admin_doctrine_routes(monkeypatch):
-    monkeypatch.setattr(orgs_instructions, "_get_doctrine", _atag("get"))
-    monkeypatch.setattr(orgs_instructions, "_list_doctrines", _tag("list"))
+    monkeypatch.setattr(orgs_instructions, "_get_guide", _atag("get"))
+    monkeypatch.setattr(orgs_instructions, "_list_guides", _tag("list"))
     monkeypatch.setattr(orgs_instructions, "_set_instruction", _atag("set"))
     monkeypatch.setattr(orgs_instructions, "_delete_instruction", _tag("delete"))
-    D = ac.DoctrineAdminInput
+    D = ac.GuideAdminInput
     run = lambda inp: asyncio.run(ac._doctrine(CTX, inp))
     out = run(D(op="get", org_id=5))
     assert out["called"] == "get" and out["inp"].org_id == 5
@@ -184,7 +184,7 @@ def test_group_routes(monkeypatch):
     monkeypatch.setattr(groups, "_list_my_groups", _tag("list_mine"))
     monkeypatch.setattr(groups_members, "_add_member", _tag("add"))
     monkeypatch.setattr(groups_members, "_remove_member", _tag("remove"))
-    monkeypatch.setattr(groups_doctrine, "_set", _tag("set_instruction"))
+    monkeypatch.setattr(groups_guide, "_set", _tag("set_instruction"))
     G = oc.GroupInput
     assert oc._group(CTX, G(op="create", org_id=1, name="Ventes"))["called"] == "create"
     # list = MES équipes (org active), sémantique de l'ex-oto_list_groups (list_mine).

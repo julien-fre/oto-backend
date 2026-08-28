@@ -23,7 +23,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
-from .. import (access, call_axes, db, doctrine_run, providers, redaction,
+from .. import (access, call_axes, db, guide_run, providers, redaction,
                 tool_alias, tool_registry)
 from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import (
@@ -127,7 +127,7 @@ async def _trace_target_call(sub: Optional[str], name: str, args: dict, ok: bool
             from fastmcp.server.dependencies import get_context
             c = get_context()
             session_id = c.session_id
-            run_id = await doctrine_run.active_run_id(c)
+            run_id = await guide_run.active_run_id(c)
         # noqa: SILENT — dette déclarée : la trace d'appel indirect disparaît (#424, verdict C)
         except Exception:
             pass

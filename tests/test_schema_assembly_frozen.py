@@ -63,8 +63,14 @@ from oto_mcp.db import _schema, schema
 # avoir. Elle référence `billing_payments`, d'où sa place APRÈS le fragment
 # SUBSCRIPTIONS dans `_schema.ASSEMBLAGE` : une FK vers une table pas encore créée
 # échoue sur une base vierge.
-EMPREINTE = "a913da569c8e2a3f9ae630fcb093207fb5aeae393e173526872c25a7160dd8db"
-LONGUEUR = 111233
+# 2026-08-28 (#519, lot A) : AUCUN changement de SQL. Un seul COMMENTAIRE bouge —
+# il pointait un module que ce lot renomme en `guide_run.py` ; un
+# pointeur par nom de fichier qui survit à un renommage est un pointeur mort.
+# Les objets servis (table `doctrine_library`, colonne `runs.doctrine`, index
+# `idx_doctrine_library_*`) ne bougent PAS : la base est partagée prod/preprod,
+# leur renommage est additif et part au lot B.
+EMPREINTE = "3180b6b383d4e8d0d7387100ab79189b64269919aaaf55a9fd7f7711f2b95f79"
+LONGUEUR = 111230
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

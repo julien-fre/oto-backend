@@ -166,7 +166,7 @@ def _enrich_project(row: dict) -> dict:
     }
 
 
-def _enrich_doctrine(row: dict) -> dict:
+def _enrich_guide(row: dict) -> dict:
     return {
         "resource_type": "doctrine",
         "resource_id": str(row["id"]),
@@ -204,7 +204,7 @@ _OPS: dict[str, dict] = {
         "list_for_owners": lambda owners: org_store.list_instructions_for_orgs(
             [int(i) for (t, i) in owners if t == "org"]),
         "get_by_id": lambda i: org_store.get_instruction_by_id(i),
-        "enrich": _enrich_doctrine,
+        "enrich": _enrich_guide,
     },
 }
 

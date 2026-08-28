@@ -43,7 +43,7 @@ class LibrarySlugTaken(Exception):
     non-disclosant du gate d'org, ADR 0023)."""
 
 
-def publish_doctrine(*, slug: str, title: str = "", description: str = "",
+def publish_guide(*, slug: str, title: str = "", description: str = "",
                      body_md: str, author_kind: str, author_org_id: Optional[int] = None,
                      author_display: str = "", category: str = "",
                      tags: Optional[list] = None, visibility: str = "public",
@@ -204,7 +204,7 @@ def fork_into_org(*, entry_id: int, org_id: int, new_slug: Optional[str] = None,
     }
 
 
-def unpublish_doctrine(entry_id: int) -> bool:
+def unpublish_guide(entry_id: int) -> bool:
     """Retire une entrée publiée. False si elle n'existait pas."""
     with _connect() as conn:
         cur = conn.execute("DELETE FROM doctrine_library WHERE id = %s", (entry_id,))

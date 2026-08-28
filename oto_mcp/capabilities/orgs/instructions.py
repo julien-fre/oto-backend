@@ -1,6 +1,6 @@
 """Doctrine & instructions d'ORG (ADR 0009) — domaine migré en capacités.
 
-Miroir d'`groups_doctrine` au grain org. Une opération co-déclarée une fois, ses
+Miroir d'`groups_guide` au grain org. Une opération co-déclarée une fois, ses
 deux faces (MCP + REST) dérivées par les adaptateurs → fin de la duplication
 d'autz `_resolve_org_write` (MCP) vs `_active_org_edit` (REST).
 
@@ -15,7 +15,7 @@ Deux paliers, par combinateur d'autz (pas de branche `org_id` à la main) :
 Les handlers lisent `ctx.org_id` (injecté par l'autz) → **partagés** entre les
 deux paliers. La doctrine de **groupe** est lisible en mode membre
 (`scope="group"`, complément du département actif) ; son écriture reste dans
-`groups_doctrine`. Modèle versionné (slug réservé `claude_md` = doctrine de base).
+`groups_guide`. Modèle versionné (slug réservé `claude_md` = doctrine de base).
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ _BASE = org_store.BASE_SLUG
 # l'usage compte. UNE source pour le nom : sert de `mcp=` de la capacité de lecture
 # ET de filtre dans `_instruction_usage` → plus de chaîne magique à dériver (le bug
 # d'origine : un filtre sur un nom d'outil mort renvoyait toujours 0).
-_DOCTRINE_GET_TOOL = "oto_procedure"
+_GUIDE_GET_TOOL = "oto_procedure"
 
 
 # ── Sorties ─────────────────────────────────────────────────────────────────
@@ -289,7 +289,7 @@ class EmptyInput(BaseModel):
     pass
 
 
-class DoctrineGetInput(BaseModel):
+class GuideGetInput(BaseModel):
     slug: Optional[str] = None
     doctrine_id: Optional[int] = None   # lecture par ID STABLE (ADR 0032) — y compris une doctrine PARTAGÉE à ton org (grant read, livraison #52)
     scope: str = "org"
@@ -297,7 +297,7 @@ class DoctrineGetInput(BaseModel):
     with_history: bool = False
 
 
-class DoctrineListInput(BaseModel):
+class GuideListInput(BaseModel):
     query: Optional[str] = None
     scope: Optional[str] = None
 
@@ -328,7 +328,7 @@ class InstrSetInput(BaseModel):
     org: Optional[int] = None
 
 
-class DoctrineDeleteInput(BaseModel):
+class GuideDeleteInput(BaseModel):
     slug: str
     # #69 : idem set — org explicite optionnelle (None = org active).
     org: Optional[int] = None
@@ -340,7 +340,7 @@ class RevertInput(BaseModel):
 
 
 # ── Inputs — palier admin (org ciblée par org_id) ───────────────────────────
-class AdminDoctrineGetInput(BaseModel):
+class AdminGuideGetInput(BaseModel):
     org_id: int
     slug: Optional[str] = None
     scope: str = "org"
@@ -348,7 +348,7 @@ class AdminDoctrineGetInput(BaseModel):
     with_history: bool = False
 
 
-class AdminDoctrineListInput(BaseModel):
+class AdminGuideListInput(BaseModel):
     org_id: int
     query: Optional[str] = None
     scope: Optional[str] = None
@@ -399,7 +399,7 @@ def _project_instance(member_mode: bool) -> Optional[dict]:
 
 
 # ── Handlers (core ; org_id depuis ctx → partagés membre/admin) ─────────────
-async def _get_doctrine(ctx: ResolvedCtx, inp) -> dict:
+async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
     """Bundle session-start (slug omis) OU une doctrine nommée. En mode membre
     (`inp.org_id` absent) complète avec la doctrine du département actif."""
     org_id = ctx.org_id
@@ -454,13 +454,13 @@ async def _get_doctrine(ctx: ResolvedCtx, inp) -> dict:
             index += [{"slug": i["slug"], "title": i["title"],
                        "description": i["description"], "scope": "group"}
                       for i in group_store.list_group_instructions(group_id)]
-        doctrine_body = base_body
+        guide_body = base_body
         pi = _project_instance(member_mode)
         return {
-            "org_id": org_id, "org": o["name"] if o else None, "doctrine": doctrine_body,
+            "org_id": org_id, "org": o["name"] if o else None, "doctrine": guide_body,
             "group_id": group_id, "group": group_name, "group_doctrine": group_doctrine,
             "doctrines": index,
-            "referenced_tools": await tool_registry.manifest_for(doctrine_body, group_doctrine),
+            "referenced_tools": await tool_registry.manifest_for(guide_body, group_doctrine),
             **({"project_instance": pi} if pi else {}),
         }
 
@@ -493,7 +493,7 @@ async def _get_doctrine(ctx: ResolvedCtx, inp) -> dict:
     return out
 
 
-def _list_doctrines(ctx: ResolvedCtx, inp) -> dict:
+def _list_guides(ctx: ResolvedCtx, inp) -> dict:
     """Catalogue des doctrines nommées (slug/title/description/version, sans corps)."""
     org_id = ctx.org_id
     member_mode = getattr(inp, "org_id", None) is None
@@ -643,11 +643,11 @@ def _instruction_revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:
 
 def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
     """Usage d'une doctrine (ADR 0014) : nb de chargements par l'agent, appelants,
-    série journalière 30j — dérivé de `tool_calls` (`_DOCTRINE_GET_TOOL`), scopé org."""
+    série journalière 30j — dérivé de `tool_calls` (`_GUIDE_GET_TOOL`), scopé org."""
     slug = org_store.normalize_slug(inp.slug)
     subs = [m["sub"] for m in org_store.list_org_members(ctx.org_id)]
     slug_filter = None if slug == _BASE else slug
-    u = db.instruction_usage(subs, _DOCTRINE_GET_TOOL, slug_filter, days=30)
+    u = db.instruction_usage(subs, _GUIDE_GET_TOOL, slug_filter, days=30)
     today = date.today()
     series = [u["daily"].get(str(today - timedelta(days=29 - i)), 0) for i in range(30)]
     return {"slug": slug, "count": u["count"], "callers": u["callers"], "series": series}
@@ -656,7 +656,7 @@ def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
 CAPABILITIES += [
     # ── Lectures membre (org active) ────────────────────────────────────────
     Capability(
-        key="org.doctrine.get", handler=_get_doctrine, Input=DoctrineGetInput,
+        key="org.doctrine.get", handler=_get_guide, Input=GuideGetInput,
         authz=SUB_ONLY, Output=DoctrineView,
         description=("Operational doctrine of your active org. The base doctrine is now "
                      "INJECTED into your session instructions at connect — call this with "
@@ -715,7 +715,7 @@ CAPABILITIES += [
         rest=RestBinding("PUT", "/api/me/instructions/{slug}"),
     ),
     Capability(
-        key="org.instruction.delete", handler=_delete_instruction, Input=DoctrineDeleteInput,
+        key="org.instruction.delete", handler=_delete_instruction, Input=GuideDeleteInput,
         authz=ORG_ADMIN_OPT("org"), Output=InstructionDeleted,
         description=("Delete a doctrine and its history (org_admin). Pass the EXACT slug. "
                      "`org` pins to an explicit org id (default = active org; must be "
@@ -723,7 +723,7 @@ CAPABILITIES += [
         rest=RestBinding("DELETE", "/api/me/instructions/{slug}"),
     ),
     Capability(
-        key="org.instruction.archive", handler=_archive_instruction, Input=DoctrineDeleteInput,
+        key="org.instruction.archive", handler=_archive_instruction, Input=GuideDeleteInput,
         authz=ORG_ADMIN_OPT("org"), Output=InstructionArchived,
         description=("Retire a doctrine WITHOUT destroying it (org_admin) — prefer this "
                      "to `delete` whenever the point is 'stop using it', not 'erase it'. "
@@ -740,13 +740,13 @@ CAPABILITIES += [
     ),
     # ── Palier admin (org ciblée par org_id ; cross-org = platform admin) ────
     Capability(
-        key="org.doctrine.admin_get", handler=_get_doctrine, Input=AdminDoctrineGetInput,
+        key="org.doctrine.admin_get", handler=_get_guide, Input=AdminGuideGetInput,
         authz=ORG_MEMBER_OF("org_id"),
         description="[ADMIN] Read another org's doctrine by id (base+index, or one skill).",
         rest=RestBinding("GET", "/api/admin/orgs/{id}/instructions/{slug}", _OID_SLUG),
     ),
     Capability(
-        key="org.doctrine.admin_list", handler=_list_doctrines, Input=AdminDoctrineListInput,
+        key="org.doctrine.admin_list", handler=_list_guides, Input=AdminGuideListInput,
         authz=ORG_MEMBER_OF("org_id"),
         description="[ADMIN] List another org's named doctrines by id (incl. base doctrine).",
         rest=RestBinding("GET", "/api/admin/orgs/{id}/instructions", _OID),

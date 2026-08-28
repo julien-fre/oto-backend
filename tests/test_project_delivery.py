@@ -219,7 +219,7 @@ def test_doctrine_owner_none_for_slug_ref():
 
 def test_doctrine_reparent_rejects_user_owner():
     with pytest.raises(ValueError):
-        ownership._doctrine_reparent("77", "user", "u1")
+        ownership._guide_reparent("77", "user", "u1")
 
 
 def test_doctrine_listed_in_resource_ops():
@@ -228,7 +228,7 @@ def test_doctrine_listed_in_resource_ops():
 
 # ── oto_get_doctrine(doctrine_id) : lecture par id + grants ──────────────────
 
-def _wire_doctrine_read(monkeypatch, *, can_access):
+def _wire_guide_read(monkeypatch, *, can_access):
     monkeypatch.setattr(oi.org_store, "get_instruction_by_id",
                         lambda i: {"id": 77, "org_id": 42, "slug": "process",
                                    "title": "T", "description": "d", "version": 3,
@@ -242,25 +242,25 @@ def _wire_doctrine_read(monkeypatch, *, can_access):
 
 
 def test_get_doctrine_by_id_with_grant(monkeypatch):
-    _wire_doctrine_read(monkeypatch, can_access=True)
-    out = asyncio.run(oi._get_doctrine(ResolvedCtx(sub="client", org_id=35),
-                                       oi.DoctrineGetInput(doctrine_id=77)))
+    _wire_guide_read(monkeypatch, can_access=True)
+    out = asyncio.run(oi._get_guide(ResolvedCtx(sub="client", org_id=35),
+                                       oi.GuideGetInput(doctrine_id=77)))
     # l'org_id rendu = l'org PROPRIÉTAIRE de la doctrine, pas l'org active du lecteur
     assert out["org_id"] == 42 and out["doctrine_id"] == 77
     assert out["slug"] == "process" and out["body_md"] == "corps"
 
 
 def test_get_doctrine_by_id_denied_without_grant(monkeypatch):
-    _wire_doctrine_read(monkeypatch, can_access=False)
+    _wire_guide_read(monkeypatch, can_access=False)
     with pytest.raises(AuthzDenied) as e:
-        asyncio.run(oi._get_doctrine(ResolvedCtx(sub="intrus", org_id=9),
-                                     oi.DoctrineGetInput(doctrine_id=77)))
+        asyncio.run(oi._get_guide(ResolvedCtx(sub="intrus", org_id=9),
+                                     oi.GuideGetInput(doctrine_id=77)))
     assert e.value.status == 403
 
 
 def test_get_doctrine_by_id_unknown_404(monkeypatch):
-    _wire_doctrine_read(monkeypatch, can_access=True)
+    _wire_guide_read(monkeypatch, can_access=True)
     with pytest.raises(AuthzDenied) as e:
-        asyncio.run(oi._get_doctrine(ResolvedCtx(sub="client", org_id=35),
-                                     oi.DoctrineGetInput(doctrine_id=999)))
+        asyncio.run(oi._get_guide(ResolvedCtx(sub="client", org_id=35),
+                                     oi.GuideGetInput(doctrine_id=999)))
     assert e.value.code == "unknown_doctrine"

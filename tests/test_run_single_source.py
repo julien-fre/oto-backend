@@ -243,7 +243,7 @@ async def test_la_cloture_est_stampee_sous_son_run(monkeypatch):
 
     from oto_mcp import db, session_org
     from oto_mcp.auth import hooks as auth_hooks
-    from oto_mcp.tools import doctrine_run as drt
+    from oto_mcp.tools import guide_run as drt
 
     class _SessionCtx:
         def __init__(self):

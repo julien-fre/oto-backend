@@ -53,7 +53,7 @@ def test_usage_tool_name_is_a_mounted_tool():
     """L'outil interrogé par l'usage doctrine DOIT être un tool MCP réellement
     monté — sinon le filtre `tool_calls` renvoie 0 (cause du bug initial)."""
     names = {c.mcp for c in registry.caps_with_mcp()}
-    assert oi._DOCTRINE_GET_TOOL in names
+    assert oi._GUIDE_GET_TOOL in names
 
 
 # ── Combinateur d'autz ORG_ADMIN (org active) ───────────────────────────────
@@ -135,8 +135,8 @@ def test_get_doctrine_includes_project_instance(monkeypatch):
     async def _manifest(*a, **k):
         return []
     monkeypatch.setattr(oi.tool_registry, "manifest_for", _manifest)
-    out = asyncio.run(oi._get_doctrine(ResolvedCtx(sub="u1", org_id=3),
-                                       oi.DoctrineGetInput(slug="prospection")))
+    out = asyncio.run(oi._get_guide(ResolvedCtx(sub="u1", org_id=3),
+                                       oi.GuideGetInput(slug="prospection")))
     assert out["slug"] == "prospection"
     assert out["project_instance"]["project_id"] == 7
 
@@ -150,8 +150,8 @@ def test_get_doctrine_no_project_no_instance(monkeypatch):
     async def _manifest(*a, **k):
         return []
     monkeypatch.setattr(oi.tool_registry, "manifest_for", _manifest)
-    out = asyncio.run(oi._get_doctrine(ResolvedCtx(sub="u1", org_id=3),
-                                       oi.DoctrineGetInput(slug="prospection")))
+    out = asyncio.run(oi._get_guide(ResolvedCtx(sub="u1", org_id=3),
+                                       oi.GuideGetInput(slug="prospection")))
     assert "project_instance" not in out
 
 

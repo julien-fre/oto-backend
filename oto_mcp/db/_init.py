@@ -1034,7 +1034,7 @@ def _init_db_once() -> None:
         # jointure ne rend rien et la page reste orpheline jusqu'au boot suivant.
         # Un arbre à moitié posé, qu'aucune erreur ne signale.
         if conn.execute("SELECT to_regclass('projects') AS t").fetchone()["t"]:
-            from .nodes import (convert_docs, convert_doctrines, convert_projects,
+            from .nodes import (convert_docs, convert_guides, convert_projects,
                                 convert_rows, convert_tables)
             convert_projects(conn)
             if conn.execute("SELECT to_regclass('docs') AS t").fetchone()["t"]:
@@ -1056,7 +1056,7 @@ def _init_db_once() -> None:
             # supposer que le backfill a déjà tourné.
             if conn.execute(
                     "SELECT to_regclass('org_instructions') AS t").fetchone()["t"]:
-                convert_doctrines(conn)
+                convert_guides(conn)
             # === Lot M3 (#301) : les TABLEAUX → nœuds-tableaux ===
             # Le namespace devient une POSITION dans l'arbre (0054-D4) : sous le
             # nœud du projet qui lie le tableau, sinon à la racine de son
