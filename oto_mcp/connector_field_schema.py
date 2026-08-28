@@ -14,7 +14,7 @@ redacter. Schéma incomplet/absent = acceptable : l'UI garde une saisie de champ
 Forme par champ :
     {"name": <clé feuille>, "label": <libellé UI>, "type": <hint>, "sensitive": <bool>}
 
-La rédaction est appliquée à la frontière des tools (`middleware.FieldRedactionMiddleware`)
+La rédaction est appliquée à la frontière des tools (`middleware.field_redaction.FieldRedactionMiddleware`)
 pour TOUS les connecteurs ; ce registre n'a donc plus à suivre un câblage client. À
 étendre quand un connecteur émet des champs notables à proposer au dashboard.
 """

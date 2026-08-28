@@ -76,7 +76,7 @@ PROTECTED_TOOLS: frozenset[str] = frozenset(
 # d'usage (`run_*`, `feedback`). Trop de noms `data_*` pour les lister → on protège
 # le namespace entier. Le namespace `oto` n'y est PAS (il porte les `oto_admin_*`
 # gatés par rôle) → ses tools spine sont listés par NOM dans PROTECTED_TOOLS.
-# Miroir de meta._NON_DISPATCHABLE / middleware._SPINE_SERVICES.
+# Miroir de meta._NON_DISPATCHABLE / middleware.field_redaction._SPINE_SERVICES.
 PROTECTED_NAMESPACES: frozenset[str] = frozenset({"data", "run", "feedback"})
 
 

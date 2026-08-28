@@ -528,7 +528,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # `_org=`, rédaction par namespace, visibilité, journal), et renomme la liste
     # servie en dernier, après le filtrage de visibilité. Inerte pour le tenant `oto`
     # et pour tout tenant qui ne déclare pas de préfixe (cf. `tool_alias`).
-    from .middleware import ToolAliasMiddleware
+    from .middleware.alias import ToolAliasMiddleware
     instance.add_middleware(ToolAliasMiddleware())
 
     # 1. Rendu du VIDE en PHRASE (otomata-tech/oto#32) : un résultat sans aucun
@@ -537,14 +537,14 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # qui réémettent le payload en JSON — tourner avant eux rétablirait la structure
     # qu'on vient d'en retirer ; sous `ToolAlias`, dont il lui faut le nom canonique
     # pour trouver le gabarit de l'outil.
-    from .middleware import EmptyResultMiddleware
+    from .middleware.empty_result import EmptyResultMiddleware
     instance.add_middleware(EmptyResultMiddleware())
 
     # 2. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) : pose la
     # ContextVar `_CALL_ORG` AVANT le reste de la chaîne et la reset APRÈS, pour que
     # le handler ET les hooks post-tool (rédaction, calllog) lisent la MÊME org que
     # l'appel. Garde d'appartenance au point d'entrée.
-    from .middleware import CallContextMiddleware
+    from .middleware.call_context import CallContextMiddleware
     instance.add_middleware(
         CallContextMiddleware(_mcp_adapter.reserved_org_tool_names(_cap_registry.CAPABILITIES))
     )
@@ -552,18 +552,19 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # 3. Rédaction des champs sensibles du RÉSULTAT des tools (ADR 0009/0015) selon la
     # politique de l'org active — sous le contexte d'appel (lit la bonne org), au-dessus
     # de tout le reste (retouche le résultat final en sortie).
-    from .middleware import FieldRedactionMiddleware
+    from .middleware.field_redaction import FieldRedactionMiddleware
     instance.add_middleware(FieldRedactionMiddleware())
 
     # 4. Contrat d'erreur uniforme rendu à l'agent (D2, #124) : réécrit toute exception
     # de tool en McpError scrubbée + data {code, retryable, hint}. Plus externe que
     # Sentry et le calllog → eux voient l'erreur BRUTE, l'enveloppe normalise en dernier.
-    from .middleware import ErrorEnvelopeMiddleware
+    from .middleware.error_envelope import ErrorEnvelopeMiddleware
     instance.add_middleware(ErrorEnvelopeMiddleware())
 
     # 5. Filtrage per-user des tools (toggle individuel sur /account) — au-dessus du
     # calllog : un refus de gate (tool_not_mounted) n'est pas journalisé (inchangé).
-    from .middleware import DynamicInstructionsMiddleware, UserDisabledToolsMiddleware
+    from .middleware.disabled_tools import UserDisabledToolsMiddleware
+    from .middleware.dynamic_instructions import DynamicInstructionsMiddleware
     instance.add_middleware(UserDisabledToolsMiddleware())
     # Injection de la doctrine de base de l'org dans les instructions du `initialize`
     # (canal fiable, par-(sub,org) — otomata-private#49, amende ADR 0014).
@@ -681,7 +682,7 @@ def build_root_app(app, anon_app):
        héritaient de la connexion empoisonnée dans son pool keep-alive. La garde
        complète la réponse à la place du client parti, et n'attrape QUE cette classe
        (toute autre exception traverse). Elle ne touche NI la chaîne de middlewares
-       FastMCP (leur ordre est un contrat, cf. `tests/test_middleware_order.py`) NI la
+       FastMCP (leur ordre est un contrat, cf. `tests/middleware/test_middleware_order.py`) NI la
        lib `mcp`.
 
     Fonction séparée de `main` pour que l'assemblage soit VÉRIFIABLE : `main` démarre

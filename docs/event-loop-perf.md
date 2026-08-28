@@ -53,7 +53,7 @@ py-spy sur la box, MainThread, **3 relevés sur 6** (dont ≥4 s consécutives) 
 psycopg execute ← has_credential (credentials_store.py) ← has_member_api_key
   ← walk_cascade (access/cascade.py) ← status_for ← _resolve_context (instructions.py)
   ← _c_layers ← session_layers ← compose_session
-  ← on_initialize (middleware.py)          ← LE chemin async
+  ← on_initialize (middleware/…)          ← LE chemin async
 ```
 
 `DynamicInstructionsMiddleware.on_initialize` composait l'artefact A/C **dans la
@@ -71,7 +71,7 @@ indépendantes, à connaître avant de croire un chemin couvert :
    **doit** `await call_next(context)` → il passerait le critère même énuméré. Le blocage
    arrive APRÈS cet await, dans le même scope.
 
-D'où un garde-fou de nature différente, `tests/test_no_blocking_db_in_middleware.py` :
+D'où un garde-fou de nature différente, `tests/middleware/test_no_blocking_db_in_middleware.py` :
 il n'analyse pas le source, il **observe le thread**. Le seam unique d'emprunt de
 connexion (`db._conn._get_pool`) est remplacé par un mouchard qui note le thread
 appelant puis refuse ; le chemin est vert ssi il a **réellement** tenté d'atteindre la

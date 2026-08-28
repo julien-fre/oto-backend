@@ -239,7 +239,7 @@ async def test_the_middleware_pins_the_active_run_from_the_stack():
     Ici on exerce le MIDDLEWARE : une pile de run, aucun jeton `_run_id=`, et on
     vérifie que le run est posé pendant le handler."""
     from oto_mcp import doctrine_run, session_org
-    from oto_mcp.middleware import CallContextMiddleware
+    from oto_mcp.middleware.call_context import CallContextMiddleware
 
     vu = {}
 

@@ -5,7 +5,7 @@ Point unique qui CLASSE une exception de tool remontée par fastmcp (catégorie 
 
 - `sentry_setup` : décider si une erreur est un bug backend (report) ou gérée (drop) —
   les prédicats `_is_*` ci-dessous ;
-- `ErrorEnvelopeMiddleware` (`middleware.py`) : rendre à l'agent une erreur au **contrat
+- `ErrorEnvelopeMiddleware` (`middleware/error_envelope.py`) : rendre à l'agent une erreur au **contrat
   uniforme** `{code, retryable, hint}`, sans stacktrace / route interne / id technique
   (`classify` + `scrub`).
 

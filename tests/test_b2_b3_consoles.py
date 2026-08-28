@@ -89,9 +89,9 @@ def test_procedure_carries_skills_index_anchor():
     """L'index des skills est appendu par le middleware sur `_DOCTRINE_GET_TOOL` —
     il DOIT pointer le tool console (sinon l'index n'est plus servi nulle part),
     et rester un tool MCP réellement monté (garde du bug d'origine)."""
-    from oto_mcp import middleware
+    from oto_mcp.middleware import dynamic_instructions
     assert orgs_instructions._DOCTRINE_GET_TOOL == "oto_procedure"
-    assert middleware._DOCTRINE_GET_TOOL == "oto_procedure"
+    assert dynamic_instructions._DOCTRINE_GET_TOOL == "oto_procedure"
 
 
 # ── oto_admin_doctrine / oto_admin_signal ────────────────────────────────────

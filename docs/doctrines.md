@@ -149,7 +149,7 @@ acceptées à l'appel, précisément pour que la prose déjà écrite aboutisse.
 **Livraison au LLM = injection, plus un appel d'outil (otomata-private#49 puis #50, amende ADR 0014).**
 Le canal FIABLE de bootstrap = les `instructions` du `initialize` (FastMCP les relit par
 session ; Claude rehandshake par conversation). `DynamicInstructionsMiddleware.on_initialize`
-(`middleware.py`) **remplace** `result.instructions` par `instructions.compose_session(sub, org_id)`
+(`middleware/dynamic_instructions.py`) **remplace** `result.instructions` par `instructions.compose_session(sub, org_id)`
 — un **artefact composé de 2 blocs** (`instructions.py`, #50 ; l'ex-bloc B onboarding a été
 retiré le 2026-07-01 — l'onboarding est un projet, ADR 0032 §7) :
 - **bloc A « secret sauce »** (posture + boucle d'usage + **catalogue de namespaces** dérivé) —

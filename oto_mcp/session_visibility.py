@@ -1,6 +1,6 @@
 """Calcul + application de la visibilité des tools d'une session MCP.
 
-Extrait de `middleware.UserDisabledToolsMiddleware` (ADR 0009/0011/0015) pour
+Extrait de `middleware.disabled_tools.UserDisabledToolsMiddleware` (ADR 0009/0011/0015) pour
 être **rejoué après une bascule de profil** (org/groupe actif) sans dupliquer la
 logique — « derive don't duplicate ».
 

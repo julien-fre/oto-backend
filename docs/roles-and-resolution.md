@@ -130,7 +130,7 @@ Deux règles internes, et elles ne sont pas cosmétiques :
 >   dérivé de `Connector.account_noun`), et le message porte le geste qui débloque.
 >   Même chose pour « Workspace `X` introuvable ». `oto_identity op=list` rend `noun`.
 > - **l'écho** — la réponse d'un appel servi par un compte NOMMÉ porte `_account`
->   (`middleware._echo_account`, posé par `CallContextMiddleware` au retour). Sans lui,
+>   (`middleware.call_context._echo_account`, posé par `CallContextMiddleware` au retour). Sans lui,
 >   l'agent postait sur l'un de ses deux workspaces sans jamais savoir lequel : l'identité
 >   effective ne vivait que dans le journal, qu'il ne lit pas. Trois gardes : compte nommé
 >   seulement (mono ⟹ aucun bruit), même connecteur que l'outil appelé (un tool composite

@@ -10,7 +10,7 @@ import pytest
 from mcp.shared.exceptions import McpError
 
 from oto_mcp import call_axes, org_store, session_org
-from oto_mcp.middleware import CallContextMiddleware
+from oto_mcp.middleware.call_context import CallContextMiddleware
 
 
 @pytest.fixture(autouse=True)

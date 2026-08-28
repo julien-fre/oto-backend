@@ -9,7 +9,7 @@ leurs faces REST ne bougent pas.
 
 ⚠️ L'index des doctrines nommées (skills) est APPENDU à la description de CE
 tool par `DynamicInstructionsMiddleware.on_list_tools` (via `_DOCTRINE_GET_TOOL`,
-middleware.py) — les skills ne sont pas des outils, c'est leur seul canal de
+middleware/dynamic_instructions.py) — les skills ne sont pas des outils, c'est leur seul canal de
 découverte. Le filtre d'usage (`org.instruction.usage`) compte les appels sur ce
 nom de tool.
 """
