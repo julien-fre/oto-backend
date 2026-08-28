@@ -28,7 +28,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Sequence
 
 from . import providers, crypto
 from .db import _connect, connector_instances
@@ -83,6 +83,36 @@ def get_instance_sharing(entity_type: str, entity_id: str, connector: str,
     if not row:
         return [], []
     return (row["share_down"] or []), (row["share_side"] or [])
+
+
+def sharing_for_vault_rows(
+        keys: "Sequence[tuple[str, str, str, str]]") -> dict[tuple, tuple[str, list, list]]:
+    """`{quadruplet: (share_mode, share_down, share_side)}` — EN LOT.
+
+    Sert la visibilité dérivée (R9), qui a besoin du partage de CHAQUE instance listée.
+    **Une seule requête, jamais une par instance** : même raison que
+    `db.instance_ids_for_vault_rows` — la projection tourne inline sur un serveur
+    mono-loop, contre une base managée distante, et elle en rend des dizaines.
+
+    ⚠️ Ces trois colonnes ne sont volontairement PAS ajoutées à `list_credentials` :
+    sa forme part telle quelle vers le front (`capabilities/admin_console`), donc y
+    ajouter des clés changerait une charge servie."""
+    uniques = sorted({(k[0], str(k[1]), k[2], k[3] or "") for k in keys})
+    if not uniques:
+        return {}
+    clause = ", ".join(["(%s, %s, %s, %s)"] * len(uniques))
+    params: list = []
+    for k in uniques:
+        params += list(k)
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT entity_type, entity_id, connector, account, share_mode, "
+            "share_down, share_side FROM connector_credentials "
+            f"WHERE (entity_type, entity_id, connector, account) IN ({clause})",
+            params).fetchall()
+    return {(r["entity_type"], r["entity_id"], r["connector"], r["account"]):
+            (r["share_mode"], r["share_down"] or [], r["share_side"] or [])
+            for r in rows}
 
 
 def list_shared_with(scopes: list) -> list[dict]:

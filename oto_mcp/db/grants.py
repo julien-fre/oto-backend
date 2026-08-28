@@ -154,6 +154,24 @@ def live_edges_for_grantee(grantee_kind: str, grantee_id: str,
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 
+def live_grantees_for_resource(resource_id: str) -> list[str]:
+    """Les scopes (`user:<sub>` / `org:<id>` / …) que les arêtes VIVANTES visant cette
+    ressource accordent — le sens INVERSE de `live_edges_for_grantee`.
+
+    Sert la visibilité dérivée (R9) : « qui peut la résoudre » se lit en partant de
+    l'instance, pas du bénéficiaire. Servi par `idx_grants_resource_grantee` — l'index
+    NON PARTIEL du comptage, qui porte `resource_id` en tête ; c'est le même parcours
+    qu'une lecture de quota, avec un prédicat de plus. Hors chemin chaud (une
+    projection de listing), et jamais appelé pour un connecteur non basculé.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT grantee_kind, grantee_id FROM grants "
+            "WHERE resource_id = %s AND revoked_at IS NULL "
+            "ORDER BY grantee_kind, grantee_id", (resource_id,)).fetchall()
+    return [f"{r['grantee_kind']}:{r['grantee_id']}" for r in rows]
+
+
 def resource_ids_with_edges(resource_ids: Iterable[str]) -> set[str]:
     """Parmi `resource_ids`, ceux qui portent au moins une arête (révoquée comprise).
     Sert les surfaces d'inventaire ; hors chemin chaud."""
