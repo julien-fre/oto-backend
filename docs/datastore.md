@@ -424,10 +424,10 @@ droit explicite du contrat, pas une anomalie. Refuser franchement aurait été p
 mais aurait cassé cette liberté : ce qui manquait était un signal, pas une barrière.
 
 **Ce que l'écriture VIDE se dit aussi (13/08, #407/#408/#409).** Ne pas nommer un champ
-le laisse intact ; le nommer avec `null` (ou `""`) l'EFFACE. Deux gestes différents, et
-le second est indiscernable d'un `None` de sérialisation dans un payload — variable non
-peuplée, gabarit à demi rempli, aller-retour de lecture. Toute réponse d'écriture porte
-donc `valeurs_effacees` (`{ligne, champ, valeur}` — la valeur PERDUE, sans quoi il n'y a
+le laisse intact ; le nommer avec `null` l'EFFACE. Deux gestes différents, et le second
+est indiscernable d'un `None` de sérialisation dans un payload — variable non peuplée,
+gabarit à demi rempli, aller-retour de lecture. Toute réponse d'écriture porte donc
+`valeurs_effacees` (`{ligne, champ, valeur}` — la valeur PERDUE, sans quoi il n'y a
 rien à rétablir) + `valeurs_effacees_hint`, relevé dans les deux chemins qui fusionnent
 (`update_row`, `_merge_into_row`) et servi par le même `off_schema_report()`. Bornes :
 20 effacements nommés, une valeur rendue jusqu'à 300 caractères puis remplacée par sa
@@ -437,6 +437,28 @@ partielle d'avoir mis à `null` un champ *qu'elle ne nommait pas*. Le journal de
 dit l'inverse (`tool_calls` 224531 puis 224704, même ligne) — huit minutes plus tôt, la
 même session avait écrit `row={'moteur': None, …}` ligne par ligne. La règle du merge
 tenait ; c'est le silence qui a fait chercher le défaut au mauvais endroit.
+
+⚠️ **Une chaîne vide n'est PAS une valeur (28/08, #608) — et l'annoncer ne suffisait
+pas.** Un client a perdu un signal de recrutement daté parce que son lot de sourcing
+portait `best_signal: ""` dans son **gabarit** de ligne : un gabarit s'écrit une fois et
+se réutilise sur toutes les lignes, donc un champ vide dans un gabarit était un vecteur
+de perte à CHAQUE merge. La valeur n'a été rétablie que grâce à `valeurs_effacees`.
+La cause tenait à une contradiction interne : `_is_empty` (le validateur) traite `""`,
+`[]` et `{}` en **absence** — pas de contrôle de type, et « champ requis manquant » sur
+un champ requis — pendant que `_merge_column` les traitait en **valeur** et les laissait
+écraser. Tranché pour l'absence : **un vide non-`null` ne DÉPLACE jamais une valeur, il
+ne peut s'écrire que là où il n'y a rien.** C'est ce que rend une source muette, pas une
+demande d'effacement ; `null`, lui, ne se fabrique pas tout seul dans un gabarit.
+La règle est volontairement étroite — là où la colonne était déjà vide, le geste passe
+tel quel, donc **créer** une ligne depuis un gabarit ne change pas de comportement — et
+elle se DIT : `valeurs_ignorees` + `valeurs_ignorees_hint`, clé distincte de
+`valeurs_effacees` parce que les valeurs qu'elle nomme sont **encore en base**. Un
+seul parcours (`datastore_columns.arbitrer_les_vides`) rend le payload corrigé et les
+deux relevés : les faire diverger serait rejouer le défaut. Une écriture en couches qui
+pose `{"valeur": "", "origine": …}` garde son origine — écarter la valeur vide n'emporte
+pas ce qui l'accompagne (#326). Un refus dur a été écarté : 8 897 cellules à chaîne vide
+sur 59 tableaux en production le 28/08, plus 5 643 listes vides sur 11 — les refuser
+rétroactivement casserait des tableaux qui n'ont rien demandé.
 
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte

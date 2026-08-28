@@ -185,16 +185,22 @@ def test_le_null_nomme_efface_et_le_dit(table):
 
 def test_le_null_du_lot_efface_et_le_dit_aussi(table):
     """Le même relevé sur le chemin de fusion par clé métier — les deux chemins
-    d'écriture ont déjà divergé une fois sur cette famille de règles (#322)."""
+    d'écriture ont déjà divergé une fois sur cette famille de règles (#322).
+
+    ⚠️ Ce test portait `origine_ligne: ""` et concluait « vider avec une chaîne vide
+    est un effacement comme un autre ». Il était VERT, et il gravait le défaut de
+    #608 : son nom parlait de `null`, son corps prescrivait la chaîne vide. Un test
+    qui décrit le geste qu'on croit équivalent, plutôt que celui qu'on veut, protège
+    la divergence au lieu de la révéler."""
     st, ns, ns_id, rid = table
 
-    st.write_rows(ns, [{"siren": "377768379", "origine_ligne": ""}], key="siren")
+    st.write_rows(ns, [{"siren": "377768379", "origine_ligne": None}], key="siren")
     releve = st.off_schema_report()
 
-    assert _donnees(ns_id, rid).get("origine_ligne") == ""
+    assert _donnees(ns_id, rid).get("origine_ligne") is None
     assert [(e["champ"], e["valeur"]) for e in releve.get("valeurs_effacees") or []] \
         == [("origine_ligne", "fichier-client")], \
-        "vider avec une chaîne vide est un effacement comme un autre"
+        "`null` reste le geste qui vide — sinon la valeur serait prise en otage"
 
 
 def test_ecrire_une_valeur_ne_signale_aucun_effacement(table):
@@ -257,3 +263,90 @@ def test_le_lot_refuse_dit_ce_quil_a_deja_ecrit(table):
     assert _cardinal(ns_id) == 2, "le témoin + la première du lot : rien n'est annulé"
     assert "1 ligne" in str(exc.value), \
         "le refus dit combien de lignes il laisse derrière lui"
+
+
+# ══ ④ la chaîne vide d'un gabarit de lot : une ABSENCE, pas un effacement ════
+#
+# #608, remonté par un client le 28/08/2026 (org 270, tableau `koncile-accounts`).
+# Un lot de sourcing portait `best_signal: ""` dans son GABARIT de ligne — la forme
+# normale d'un lot : un gabarit écrit une fois, réutilisé sur toutes les lignes. Sur
+# la ligne appariée par la clé métier, la chaîne vide a effacé un signal de
+# recrutement daté, réel, déjà en base. Il a été rétabli parce que `valeurs_effacees`
+# (#407/#408/#409) l'a nommé — mais annoncer une perte n'est pas l'éviter.
+#
+# ⚠️ Le défaut n'est PAS celui d'hier. Hier on annonçait un effacement par `null`
+# NOMMÉ, geste délibéré. Ici la question est en amont : **une chaîne vide est-elle
+# une valeur ?** Le serveur répondait NON à la validation (`_is_empty` la traite en
+# absence : elle ne subit aucun contrôle de type, et elle déclenche « champ requis
+# manquant ») et OUI à la fusion (elle écrase). Deux réponses contradictoires sur la
+# même donnée, dans le même appel.
+
+def test_la_chaine_vide_du_lot_nefface_pas(table):
+    """LE défaut de #608 : la chaîne vide d'un gabarit détruisait la valeur en place.
+
+    Une source qui ne rend rien pour un champ ne dit pas « oublie ce que tu savais » :
+    elle ne dit rien. Le geste qui vide reste disponible, il est explicite (`null`)."""
+    st, ns, ns_id, rid = table
+
+    st.write_rows(ns, [{"siren": "377768379", "origine_ligne": ""}], key="siren")
+
+    assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client", \
+        "un lot d'enrichissement dont une source est muette ne détruit rien"
+
+
+def test_la_chaine_vide_ignoree_le_dit(table):
+    """Le silence dans l'AUTRE sens serait le même défaut retourné : un appelant qui
+    voulait vraiment vider doit apprendre que son geste n'a rien fait, et par quoi le
+    remplacer. On n'empêche pas sans le dire — même patron que `valeurs_effacees`."""
+    st, ns, ns_id, rid = table
+
+    st.write_rows(ns, [{"siren": "377768379", "origine_ligne": ""}], key="siren")
+    releve = st.off_schema_report()
+
+    ignores = releve.get("valeurs_ignorees")
+    assert ignores, "ignorer sans le dire, c'est le défaut de #608 dans l'autre sens"
+    assert [(e["champ"], e["valeur"]) for e in ignores] \
+        == [("origine_ligne", "fichier-client")], \
+        "le champ, et la valeur qui a SURVÉCU — de quoi juger si c'est ce qu'on voulait"
+    assert "null" in (releve.get("valeurs_ignorees_hint") or "").lower(), \
+        "le relevé nomme le geste qui vide VRAIMENT"
+
+
+def test_la_chaine_vide_sur_un_champ_deja_vide_ne_dit_rien(table):
+    """Le bruit est le premier ennemi d'un avertissement : un gabarit qui porte `""`
+    sur trente champs jamais renseignés ne doit pas produire trente lignes de relevé.
+    Rien n'a été préservé, il n'y a rien à arbitrer."""
+    st, ns, ns_id, rid = table
+
+    st.write_rows(ns, [{"siren": "377768379", "entreprise_email": ""}], key="siren")
+
+    assert "valeurs_ignorees" not in st.off_schema_report()
+
+
+def test_la_chaine_vide_nefface_pas_non_plus_par_id(table):
+    """L'autre chemin d'écriture. Les deux ont déjà divergé une fois sur cette
+    famille de règles (#322), et c'est le patch par `id` qui est le geste le plus
+    courant d'un agent : une règle câblée d'un seul côté ne protège personne."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"origine_ligne": ""})
+
+    assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client"
+    assert st.off_schema_report().get("valeurs_ignorees"), "et il le dit ici aussi"
+
+
+def test_la_valeur_vide_ecartee_nemporte_pas_lorigine_quelle_accompagne(table):
+    """« Une écriture ne touche que ce qu'elle nomme » vaut aussi quand on ÉCARTE.
+
+    Un rattrapage de socle pose `{"valeur": …, "origine": …}` sur toute une colonne ;
+    si la source est muette, la valeur vide est écartée — mais l'origine, elle, a été
+    nommée délibérément et doit s'écrire. Sauter la colonne entière rejouerait #326
+    par la porte de derrière."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"origine_ligne": {"valeur": "", "origine": "apollo"}})
+
+    apres = _donnees(ns_id, rid)
+    assert apres.get("origine_ligne") == {"valeur": "fichier-client",
+                                          "origine": "apollo"}, \
+        "la valeur survit, l'origine s'écrit — chacune selon ce qui a été nommé"

@@ -63,6 +63,9 @@ class SchemaOut(BaseModel):
     # #389 : les clés de validation que cette version applique — la seule parade au
     # décalage entre le code écrit et la version servie.
     enforced: list = []
+    # #416 : ce que le schéma SERVI contient et qu'oto ne lit pas. Absent (None) dans
+    # le cas normal — un champ toujours présent finirait ignoré comme un ornement.
+    warning: Optional[str] = None
 
 
 def _get_schema(ctx: ResolvedCtx, inp: GetSchemaInput) -> dict:
@@ -79,8 +82,24 @@ def _get_schema(ctx: ResolvedCtx, inp: GetSchemaInput) -> dict:
     # autant qu'à la pose — sans quoi il faudrait ÉCRIRE un schéma pour savoir ce que
     # le serveur applique, c'est-à-dire produire un effet de bord pour poser une
     # question.
-    return {"namespace": namespace, "schema": schema,
-            "enforced": dsv2.enforced_keys()}
+    out = {"namespace": namespace, "schema": schema,
+           "enforced": dsv2.enforced_keys()}
+    # #416 : le garde des clés non lues existait, mais UNIQUEMENT à la pose — et un
+    # schéma déjà pollué ne se repose jamais. Mesuré en production le 28/08 : trois
+    # tableaux (9 454 lignes) portent un attribut `enum` résiduel à côté de l'`options`
+    # qui, elle, fait foi. Leur auteur a reçu l'avertissement il y a des semaines ou ne
+    # l'a jamais reçu ; leurs LECTEURS, eux, en ont besoin à chaque lecture, parce que
+    # c'est là que la contradiction se consomme.
+    #
+    # ⚠️ On AVERTIT, on ne nettoie pas. Réécrire le schéma d'un client pour en retirer
+    # une clé serait détruire une déclaration qu'il a posée et que le datastore
+    # s'engage à TRANSPORTER (les consommateurs y mettent les leurs) — et une
+    # migration qui retouche des schémas se rejoue à chaque boot. Le résidu est
+    # inerte : ce qui nuisait, c'était son silence.
+    avert = dsv2.unknown_keys_read_warning(dsv2.unknown_declaration_keys(schema))
+    if avert:
+        out["warning"] = avert
+    return out
 
 
 # ⚠️ Le champ d'ENTRÉE doit s'appeler `schema` — c'est le nom sur le fil, et la garde
@@ -171,7 +190,11 @@ CAPABILITIES += [
             "(required, max_length, pattern…): check what you are about to declare "
             "against it, rather than against documentation — a key posted but not "
             "enforced looks like a contract and is not one, and one enforced only after "
-            "the next deploy freezes rows all at once, weeks after the cause."
+            "the next deploy freezes rows all at once, weeks after the cause. "
+            "`warning` appears only when the stored schema carries declaration keys oto "
+            "does NOT read — typically a leftover `enum` sitting beside the `options` "
+            "that actually constrains the field. When it does, trust the key the warning "
+            "names: the unread one is a residue, whatever it says."
         ),
     ),
 ]

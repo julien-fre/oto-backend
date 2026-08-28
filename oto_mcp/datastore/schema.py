@@ -1645,6 +1645,39 @@ def unknown_keys_warning(inconnues: list[dict]) -> str:
     return msg
 
 
+def unknown_keys_read_warning(inconnues: list[dict]) -> str:
+    """Le MÊME relevé, dit au LECTEUR d'un schéma plutôt qu'à son auteur (#416).
+
+    ⚠️ Ce n'est pas une variante de style : l'avertissement de pose demande « vouliez-
+    vous écrire `options` ? », question qui n'a aucun sens pour qui lit le schéma d'un
+    tableau qu'il n'a pas déclaré — il n'a rien voulu écrire, il cherche à savoir à
+    quoi s'en tenir. Ce qu'il lui faut, c'est **laquelle des deux clés fait foi**.
+
+    Le défaut mesuré : un champ portant à la fois `enum` (jamais lue) et `options`
+    (qui contraint) donne deux réponses contradictoires à « quelles valeurs sont
+    admises ». Un agent se fie au plus court, `enum` — qui a l'air le plus officiel —
+    et se restreint à tort, ou attend un rejet qui n'arrivera jamais.
+
+    La liste vient de `unknown_declaration_keys`, comme à la pose : une seule
+    dérivation, deux formulations. Le jour où une clé entre dans le vocabulaire lu,
+    les deux messages s'éteignent ensemble."""
+    if not inconnues:
+        return ""
+    champs = ", ".join(f"{e['field']} ({', '.join(e['keys'])})" for e in inconnues[:5])
+    # Ce qui FAIT FOI, quand la clé morte a une cousine vivante : c'est la seule
+    # information qui permette d'écrire juste sans reposer le schéma.
+    autorite = sorted({v for e in inconnues for v in (e.get("near_miss") or {}).values()})
+    msg = (f"Ce schéma porte des clés qu'oto NE LIT PAS : {champs}"
+           + (" …" if len(inconnues) > 5 else "")
+           + ". Elles sont stockées et rendues fidèlement, mais ne contraignent RIEN "
+             "— ne t'y fie pas pour savoir ce qui est admis.")
+    if autorite:
+        msg += (" Ce qui fait foi : " + ", ".join(f"`{k}`" for k in autorite)
+                + ". En cas de contradiction entre les deux, c'est cette clé-là qui "
+                  "décide, et l'autre est un résidu.")
+    return msg
+
+
 # ── Options déclarées mais non appliquées (#319) ─────────────────────────────
 #
 # `validation_active` ne s'arme que sur `strict` / `required` / `required_when` /

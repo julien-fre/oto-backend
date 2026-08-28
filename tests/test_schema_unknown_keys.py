@@ -129,3 +129,69 @@ def test_nested_fields_are_inspected_too():
     assert e["occupant.statut"]["near_miss"] == {"enum": "options"}
     assert "contacts[].role_contact" in e
     assert e["contacts[].role_contact"]["near_miss"] == {"choices": "options"}
+
+
+# ── #416 : le garde existait, mais seulement à la POSE ───────────────────────
+#
+# Signal #416 (13/08, org 226, `edition-vivier`) : des champs déclarés `enum` portent
+# un attribut de tête `enum` désynchronisé de leurs `options`. Vérifié empiriquement
+# par l'auteur du signal — `data_write` accepte les valeurs présentes dans `options`
+# et absentes d'`enum` : c'est bien `options` qui fait foi. Mais `data_get_schema`
+# servait les DEUX attributs contradictoires sans un mot, et un agent se fie au plus
+# court, `enum`, qui a l'air le plus officiel.
+#
+# Le défaut n'était donc pas l'absence de garde : `unknown_declaration_keys` nomme
+# `enum` depuis #316. C'est qu'il ne parlait qu'à la POSE — or un schéma déjà pollué
+# ne se repose jamais. Mesuré en production le 28/08 : trois tableaux, 40 champs
+# porteurs de la clé, 9 454 lignes. Aucun de leurs lecteurs n'a jamais vu
+# l'avertissement.
+
+def test_le_lecteur_dun_schema_pollue_est_averti_lui_aussi():
+    """La lecture est le moment où la contradiction se CONSOMME : c'est là qu'un agent
+    choisit entre `enum` et `options`."""
+    schema = {"fields": [{"key": "retraitement", "type": "enum",
+                          "enum": ["non", "oui"],
+                          "options": ["non", "budget", "outil", "epuise"]}]}
+
+    msg = dsv2.unknown_keys_read_warning(dsv2.unknown_declaration_keys(schema))
+
+    assert msg, "un schéma contradictoire servi sans un mot, c'est le défaut de #416"
+    assert "retraitement" in msg and "enum" in msg
+
+
+def test_lavertissement_de_lecture_nomme_la_cle_qui_FAIT_FOI():
+    """⚠️ Ce n'est pas le message de la pose reformulé. Celui-là demande « vouliez-vous
+    écrire `options` ? » — question sans objet pour qui LIT le schéma d'un tableau
+    qu'il n'a pas déclaré. Ce qu'il lui faut, c'est laquelle des deux clés décide."""
+    schema = {"fields": [{"key": "version_procedure", "type": "enum",
+                          "enum": ["v5"], "options": ["v5", "v6"]}]}
+    inconnues = dsv2.unknown_declaration_keys(schema)
+
+    lecture = dsv2.unknown_keys_read_warning(inconnues)
+    pose = dsv2.unknown_keys_warning(inconnues)
+
+    assert "`options`" in lecture and "fait foi" in lecture
+    assert "vouliez-vous" not in lecture.lower(), \
+        "le lecteur n'a rien voulu écrire : il cherche à quoi s'en tenir"
+    assert "Vouliez-vous" in pose, "la pose, elle, s'adresse bien à un auteur"
+
+
+def test_une_cle_residuelle_a_valeur_nulle_compte_quand_meme():
+    """L'état RÉEL des trois tableaux mesurés le 28/08 : `options` a été resynchronisée
+    et l'attribut `enum` est retombé à `null` — mais la CLÉ est toujours là, servie à
+    chaque lecture. Un relevé qui ne regarderait que les valeurs la manquerait, et le
+    résidu resterait invisible jusqu'à ce qu'on lui redonne une liste."""
+    schema = {"fields": [{"key": "suivi", "type": "enum", "enum": None,
+                          "options": ["a_traiter", "cloturee"]}]}
+
+    assert _cles(schema)["suivi"]["keys"] == ["enum"]
+    assert dsv2.unknown_keys_read_warning(dsv2.unknown_declaration_keys(schema))
+
+
+def test_un_schema_propre_ne_porte_aucun_avertissement_de_lecture():
+    """Le bruit est le premier ennemi d'un avertissement : la très grande majorité des
+    tableaux sont sains et leur lecture ne doit rien porter du tout."""
+    schema = {"fields": [{"key": "suivi", "type": "enum",
+                          "options": ["a_traiter", "cloturee"]}]}
+
+    assert dsv2.unknown_keys_read_warning(dsv2.unknown_declaration_keys(schema)) == ""

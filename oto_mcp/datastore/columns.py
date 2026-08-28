@@ -202,7 +202,7 @@ def _refuse_dotted_names(user_data: Optional[dict]) -> None:
                 "invisible au filtre et au tri du même nom. Rien n'a été écrit."])
 
 
-# ── ce qu'une écriture VIDE (#407/#408/#409) ──────────────────────────────────
+# ── ce qu'une écriture VIDE (#407/#408/#409), et ce qui n'est PAS un vide (#608) ─
 #
 # Le pendant de la règle du merge. « Une écriture ne touche que ce qu'elle nomme »
 # dit ce qui SURVIT ; il restait à dire ce qui TOMBE. Nommer un champ avec `null`
@@ -219,6 +219,47 @@ def _refuse_dotted_names(user_data: Optional[dict]) -> None:
 #
 # Même patron que `hors_schema` (#294) et `hors_options` (#319) : on n'empêche rien,
 # on nomme. Et on nomme la VALEUR PERDUE — sans elle il n'y a rien à rétablir.
+#
+# ══ #608 (28/08/2026) : LA CHAÎNE VIDE N'EST PAS UNE VALEUR ═══════════════════
+#
+# Annoncer une perte n'est pas l'éviter. Un client (org 270, `koncile-accounts`) a
+# perdu un signal de recrutement daté parce que son lot de sourcing portait
+# `best_signal: ""` dans son GABARIT de ligne — la forme NORMALE d'un lot : un
+# gabarit écrit une fois, réutilisé sur toutes les lignes. Il a été rétabli grâce à
+# `valeurs_effacees` ci-dessus ; c'est le seul hasard qui a sauvé la donnée.
+#
+# **Une chaîne vide est-elle une valeur, ou une absence de valeur ?** Le serveur
+# répondait les DEUX, dans le même appel :
+#
+#   - `_is_empty` (le validateur) répond ABSENCE : une chaîne vide ne subit aucun
+#     contrôle de type, et sur un champ requis elle produit « champ requis
+#     manquant » — c'est-à-dire, mot pour mot, « tu n'as rien fourni » ;
+#   - `_merge_column` répondait VALEUR : elle écrasait ce qui était en place.
+#
+# Deux réponses contradictoires sur la même donnée. On tranche pour l'ABSENCE, et
+# ce n'est pas un arbitrage de goût : une chaîne vide (comme une liste ou un objet
+# vides) est ce que produit une SOURCE MUETTE — un enrichissement qui n'a rien
+# trouvé, un gabarit à demi peuplé, un champ de formulaire jamais rempli. Aucun de
+# ces gestes ne veut dire « oublie ce que tu savais ». `null`, lui, ne se fabrique
+# pas tout seul dans un gabarit de lot : il reste LE geste qui vide.
+#
+# D'où la règle, qui tient en une phrase :
+#
+#   **un vide non-`null` ne DÉPLACE jamais une valeur — il ne peut s'écrire que là
+#   où il n'y a rien.**
+#
+# Elle est volontairement plus étroite que « la chaîne vide est ignorée » : là où la
+# colonne était déjà vide (ou absente), le geste passe tel quel, donc CRÉER une
+# ligne à partir d'un gabarit ne change pas de comportement. On ne se protège que
+# de la DESTRUCTION, qui est le seul dégât irréversible.
+#
+# ⚠️ Et on le DIT (`valeurs_ignorees`) : ignorer en silence serait le défaut de #608
+# retourné — un appelant qui voulait vraiment vider croirait avoir vidé. Le relevé
+# nomme le champ, la valeur qui a SURVÉCU, et le geste à employer pour vider pour de
+# bon. Un refus dur a été écarté : un lot de 500 lignes qui casse sur un gabarit
+# imparfait coûte plus cher que la valeur qu'on préserve, et le tableau qui écrit
+# `""` depuis des mois n'a rien demandé (8 897 cellules vides mesurées en production
+# le 28/08, sur 59 tableaux — les refuser rétroactivement casserait 59 clients).
 
 # Deux bornes, pour qu'un relevé reste lisible par un agent : le nombre
 # d'effacements nommés, et la taille d'une valeur rendue. Au-delà, on dit la TAILLE
@@ -240,27 +281,56 @@ def _valeur_posee(new: Any) -> tuple:
     return False, None
 
 
-def effacements(existing: Optional[dict], user_data: Optional[dict],
-                row_id: Optional[str] = None) -> list[dict]:
-    """Les colonnes que ce geste VIDE : il les nomme, avec une valeur vide, là où
-    la ligne portait quelque chose. Une par entrée, avec la valeur PERDUE.
+def _sans_la_valeur(neuf: Any) -> Any:
+    """Ce qui reste de l'écriture d'une colonne quand on lui RETIRE sa valeur vide.
+
+    `None` = plus rien à écrire, la colonne n'est pas touchée du tout. Une écriture
+    en couches qui pose AUSSI une origine (`{"valeur": "", "origine": "apollo"}`)
+    garde son origine : « une écriture ne touche que ce qu'elle nomme » vaut dans ce
+    sens-là aussi — écarter la valeur vide ne doit pas emporter ce qui l'accompagne."""
+    if not _writes_layers(neuf):
+        return None
+    reste = {k: v for k, v in neuf.items() if k != dsv2.VALUE_LAYER}
+    return reste or None
+
+
+def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
+                       row_id: Optional[str] = None) -> tuple:
+    """`(ce que l'écriture pose VRAIMENT, ce qu'elle efface, ce qu'on a écarté)`.
+
+    UN seul parcours pour les deux relevés et pour la correction du payload : les
+    trois répondent à la même question — « ce geste fait-il tomber une valeur en
+    place ? » — et les faire diverger, c'est exactement le défaut de #608 (le
+    validateur et la fusion ne s'accordaient pas sur ce qu'est un vide).
 
     Le vide se juge DÉBALLÉ (`unwrap`) des deux côtés, comme tout ce qui juge une
     valeur : une colonne à couches dont la `valeur` tombe est vidée au même titre
     qu'un scalaire, et une colonne qui ne portait que son `origine` n'avait déjà
     pas de valeur à perdre."""
-    sortie: list[dict] = []
+    pose: dict = {}
+    effaces: list[dict] = []
+    ignores: list[dict] = []
     for cle, neuf in (user_data or {}).items():
-        if cle in _META_COLS:
-            continue
         touche, posee = _valeur_posee(neuf)
-        if not touche or not dsv2._is_empty(posee):
+        if (cle in _META_COLS or not touche or not dsv2._is_empty(posee)):
+            pose[cle] = neuf
             continue
         ancienne = dsv2.unwrap((existing or {}).get(cle))
         if dsv2._is_empty(ancienne):
-            continue                      # rien à perdre : on ne fait pas de bruit
-        sortie.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
-    return sortie
+            pose[cle] = neuf              # rien à perdre : on ne fait pas de bruit
+            continue
+        if posee is None:
+            # `null` NOMMÉ : le geste explicite d'effacement. Il s'exécute — vider
+            # une valeur fausse n'a pas d'autre porte — et il se dit.
+            effaces.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
+            pose[cle] = neuf
+            continue
+        # Vide non-`null` sur une valeur en place : la valeur survit (#608).
+        ignores.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
+        reste = _sans_la_valeur(neuf)
+        if reste is not None:
+            pose[cle] = reste
+    return pose, effaces, ignores
 
 
 def _valeur_rendue(valeur: Any) -> Any:
@@ -272,23 +342,51 @@ def _valeur_rendue(valeur: Any) -> Any:
             "elle n'est plus en base non plus>")
 
 
+def _nommes(records: list) -> tuple:
+    """Les entrées rendues (bornées, valeurs raccourcies) et le reste non nommé."""
+    nommes = [{**r, "valeur": _valeur_rendue(r.get("valeur"))}
+              for r in records[:_EFFACEMENTS_NOMMES]]
+    return nommes, len(records) - len(nommes)
+
+
 def effacements_report(records: list) -> dict:
     """Le relevé des effacements, prêt à fusionner dans une réponse d'écriture.
 
-    `{}` quand rien n'a été vidé — le cas normal ne porte pas de clé parasite."""
+    `{}` quand rien n'a été vidé — le cas normal ne porte pas de clé parasite.
+
+    ⚠️ Depuis #608, `null` est le SEUL vide qui arrive ici : la phrase ne cite donc
+    plus la chaîne vide parmi les valeurs qui effacent, sous peine de prescrire le
+    geste qu'on vient de désarmer."""
     if not records:
         return {}
-    nommes = [{**r, "valeur": _valeur_rendue(r.get("valeur"))}
-              for r in records[:_EFFACEMENTS_NOMMES]]
-    reste = len(records) - len(nommes)
-    hint = ("une valeur vide (`null`, `\"\"`) dans le payload EFFACE la valeur en "
-            "place — ce n'est PAS la même chose que ne pas nommer le champ, qui le "
-            "laisse intact. Si l'effacement n'était pas voulu (variable non peuplée, "
-            "gabarit à demi rempli), réécris les valeurs ci-dessus : elles ne sont "
-            "plus en base.")
+    nommes, reste = _nommes(records)
+    hint = ("un `null` NOMMÉ dans le payload EFFACE la valeur en place — ce n'est "
+            "PAS la même chose que ne pas nommer le champ, qui le laisse intact. Si "
+            "l'effacement n'était pas voulu (variable non peuplée, gabarit à demi "
+            "rempli), réécris les valeurs ci-dessus : elles ne sont plus en base.")
     if reste:
         hint += f" {len(records)} effacements au total, {len(nommes)} nommés ici."
     return {"valeurs_effacees": nommes, "valeurs_effacees_hint": hint}
+
+
+def ignores_report(records: list) -> dict:
+    """Le relevé des vides ÉCARTÉS (#608) : ce que le geste aurait détruit.
+
+    Clé DISTINCTE de `valeurs_effacees`, et c'est le point : celle-là nomme une
+    valeur qui N'EST PLUS, celle-ci nomme une valeur qui EST ENCORE LÀ. Les
+    confondre ferait réécrire des valeurs déjà en place — ou pire, ferait croire à
+    une perte."""
+    if not records:
+        return {}
+    nommes, reste = _nommes(records)
+    hint = ("une valeur VIDE non-`null` (chaîne vide, liste vide, objet vide) ne "
+            "remplace pas une valeur déjà en place : c'est ce que rend une source "
+            "muette ou un gabarit à demi peuplé, pas une demande d'effacement. Les "
+            "valeurs ci-dessus sont INTACTES en base — il n'y a rien à rétablir. "
+            "Pour vider un champ pour de bon, nomme-le avec `null`.")
+    if reste:
+        hint += f" {len(records)} champs préservés au total, {len(nommes)} nommés ici."
+    return {"valeurs_ignorees": nommes, "valeurs_ignorees_hint": hint}
 
 
 def _merge_column(existing: Any, new: Any) -> Any:

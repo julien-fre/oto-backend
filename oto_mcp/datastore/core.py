@@ -66,8 +66,9 @@ from .columns import (  # noqa: E402,F401
     _resolve_metrics,
     _to_path,
     _writes_layers,
-    effacements,
+    arbitrer_les_vides,
     effacements_report,
+    ignores_report,
 )
 
 
@@ -229,11 +230,15 @@ class DatastorePg(SchemaOpsMixin):
         self.off_schema: set = set()
         self.off_options: dict = {}
         self.off_notices: set = set()
-        # Ce que ce geste a VIDÉ (#407/#408/#409) : les colonnes qu'il nomme avec une
-        # valeur vide alors qu'elles portaient quelque chose, et la valeur perdue.
+        # Ce que ce geste a VIDÉ (#407/#408/#409) : les colonnes qu'il nomme avec un
+        # `null` alors qu'elles portaient quelque chose, et la valeur perdue.
         # Même portée que les relevés ci-dessus (un store par requête), même union
         # sur un lot — mais une LISTE : la ligne fait partie de l'information.
         self.off_erased: list = []
+        # Et ce qu'il aurait vidé sans la règle de #608 : les colonnes qu'il nomme
+        # avec un vide non-`null` par-dessus une valeur en place. Liste SÉPARÉE
+        # d'`off_erased` — l'une nomme ce qui n'est plus, l'autre ce qui est resté.
+        self.off_ignored: list = []
 
     # --- résolution namespace -> ns_id ---------------------------------------
 
@@ -516,6 +521,10 @@ class DatastorePg(SchemaOpsMixin):
         # n'est ni une colonne inconnue ni une valeur hors d'une liste, c'est une
         # valeur qui N'EST PLUS — la seule des quatre qui ait détruit quelque chose.
         out.update(effacements_report(self.off_erased))
+        # #608 : ce que le geste aurait détruit et qu'on a préservé. CINQUIÈME clé,
+        # distincte des quatre autres — les valeurs qu'elle nomme sont ENCORE en
+        # base, et c'est toute la différence avec `valeurs_effacees`.
+        out.update(ignores_report(self.off_ignored))
         return out
 
     # Le message que voient les tableaux dont l'écriture d'un état final libérait la
@@ -855,18 +864,25 @@ class DatastorePg(SchemaOpsMixin):
         def _apply(current: dict) -> dict:
             merged = dict(current or {})
             prev_status = merged.get(sk) if sk else None
-            # Relevé AVANT la fusion : après, l'ancienne valeur n'existe plus nulle
-            # part. Posé sur le store seulement une fois la validation passée — un
-            # refus n'a rien effacé, l'annoncer ferait chercher un dégât imaginaire.
-            vidages = effacements(current, user_data, row_id)
+            # Arbitrage AVANT la fusion : après, l'ancienne valeur n'existe plus
+            # nulle part. Il rend d'un coup ce que l'écriture pose VRAIMENT (les
+            # vides non-`null` qui auraient déplacé une valeur en sont retirés,
+            # #608) et les deux relevés. Posés sur le store seulement une fois la
+            # validation passée — un refus n'a rien effacé, l'annoncer ferait
+            # chercher un dégât imaginaire.
+            pose, vidages, ecartes = arbitrer_les_vides(current, user_data, row_id)
             # Colonne par colonne, pour que l'origine survive à une écriture
             # ordinaire. Un `update` en bloc l'emporterait avec le reste — et
             # silencieusement, puisque remplacer une valeur est le geste normal.
-            for _k, _v in user_data.items():
+            for _k, _v in pose.items():
                 merged[_k] = _merge_column(merged.get(_k), _v)
+            # ⚠️ `written` reste l'ensemble des clés que l'appelant a NOMMÉES, pas
+            # celles qu'on a retenues : une borne de longueur ou un motif ne doit pas
+            # se réarmer sur une colonne préservée, dont la valeur n'a pas bougé.
             self._check_row(schema, merged, prev_status=prev_status,
-                            written=set(user_data))
+                            written=set(pose))
             self.off_erased.extend(vidages)
+            self.off_ignored.extend(ecartes)
             return merged
 
         result = db.datastore_merge_row_locked(ns_id, row_id, _apply, _now_iso(),
@@ -1211,12 +1227,14 @@ class DatastorePg(SchemaOpsMixin):
         status_key = (dsv2.status_field(schema) or {}).get("key")
         prev_status = data.get(status_key) if status_key else None
         self._trace(trace, ns_id, ns, prev_status=prev_status)
-        # MÊME relevé que la fusion : le patch par `id` est le geste qui a vidé
+        # MÊME arbitrage que la fusion : le patch par `id` est le geste qui a vidé
         # `moteur` en production le 13/08 — et il l'a fait en le NOMMANT (#407/#408/
-        # #409). Relevé avant la boucle, sur l'état lu en base.
-        vidages = effacements(data, patch, row_id)
+        # #409). Fait avant la boucle, sur l'état lu en base. Les deux chemins
+        # d'écriture ont déjà divergé une fois sur cette famille de règles (#322) :
+        # ils partagent donc la fonction, pas seulement l'intention.
+        pose, vidages, ecartes = arbitrer_les_vides(data, patch, row_id)
         written = set()
-        for k, v in patch.items():
+        for k, v in pose.items():
             if k in _META_COLS:
                 continue
             # MÊME fusion que le batch : l'origine survit ici aussi. Elle avait été
@@ -1229,6 +1247,7 @@ class DatastorePg(SchemaOpsMixin):
         # Seule la borne de longueur se limite aux clés du patch (#383).
         self._check_row(schema, data, prev_status=prev_status, written=written)
         self.off_erased.extend(vidages)
+        self.off_ignored.extend(ecartes)
         try:
             self._assert_writable(ns_id, row_id)
             row = db.datastore_update_row(ns_id, row_id, data, _now_iso())

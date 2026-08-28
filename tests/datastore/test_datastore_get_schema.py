@@ -82,3 +82,45 @@ def test_an_unknown_namespace_is_a_404_not_a_crash(monkeypatch):
 class _Ctx:
     sub = "u1"
     org_id = None
+
+
+# ── #416 : la lecture porte l'avertissement, la surface aussi ────────────────
+
+def _lire(monkeypatch, schema):
+    """La capacité EXERCÉE, pas seulement la fonction qui met en forme la phrase.
+
+    Un garde-fou se prouve sur le chemin réel : c'est `data_get_schema` qui sert le
+    schéma contradictoire, et c'est donc lui qui doit porter l'avertissement — le
+    vérifier sur le formateur seul laisserait le câblage non couvert."""
+    class _S:
+        def get_schema(self, ns):
+            return schema
+    monkeypatch.setattr(CAP, "make_store", lambda sub: _S())
+    return CAP._get_schema(_Ctx(), CAP.GetSchemaInput(namespace="vivier"))
+
+
+def test_le_schema_servi_avec_une_cle_morte_porte_son_avertissement(monkeypatch):
+    """#416 : `unknown_declaration_keys` existait déjà, mais ne parlait qu'à la POSE
+    — et un schéma déjà pollué ne se repose jamais. Trois tableaux mesurés en
+    production le 28/08 (9 454 lignes) servaient un `enum` résiduel à côté de
+    l'`options` qui fait foi, sans un mot."""
+    out = _lire(monkeypatch, {"fields": [
+        {"key": "retraitement", "type": "enum", "enum": ["non", "oui"],
+         "options": ["non", "budget", "outil", "epuise"]}]})
+
+    assert "retraitement" in out["warning"]
+    assert "`options`" in out["warning"], "le lecteur doit savoir laquelle décide"
+
+
+def test_un_schema_sain_ne_porte_pas_la_cle_warning(monkeypatch):
+    """Une clé toujours présente devient un ornement qu'on cesse de lire — et c'est
+    l'avertissement UTILE qu'on perd avec elle."""
+    out = _lire(monkeypatch, {"fields": [
+        {"key": "retraitement", "type": "enum", "options": ["non", "budget"]}]})
+
+    assert "warning" not in out
+
+
+def test_un_tableau_sans_schema_ne_declenche_rien(monkeypatch):
+    """L'état le plus courant du datastore (schema-free) traverse sans bruit."""
+    assert "warning" not in _lire(monkeypatch, None)
