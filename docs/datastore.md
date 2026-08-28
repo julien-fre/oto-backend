@@ -720,10 +720,14 @@ personne le voie.
    générique.** Ce que `origine` doit porter est un contrat **par champ**, déclaré par le
    schéma ou la procédure : sur la plupart des champs, un NOM DE SOURCE (`client`,
    `registre`, `apollo`…) — une origine qui y recopie la valeur est hors vocabulaire et se
-   **réécrit** vers le bon nom ; mais sur d'autres champs (mesuré le 28/08 sur un vivier :
-   `raison_sociale`, `nom_commercial`), `origine` **conserve la valeur d'entrée du
-   client**, et « origine identique à la valeur » y est précisément le cas « retrouvée
-   identique » que la restitution attend (743 + 383 lignes). ⚠️ **« Purger là où l'origine
+   **réécrit** vers le bon nom ; mais sur d'autres champs, `origine` **conserve la valeur
+   d'entrée du client** (avant enrichissement ou réattribution), et « origine identique à
+   la valeur » y est précisément le cas « retrouvée identique » que la restitution attend.
+   ⚠️ **La liste des champs à entrée conservée est PROPRE À CHAQUE TABLEAU et se RELÈVE
+   avant toute purge — jamais de mémoire, jamais d'un autre tableau** : sur le vivier du
+   28/08 c'étaient `raison_sociale`, `nom_commercial` (743 + 383 « identiques ») et
+   `charge_affaires` (79 origines = l'attribution du fichier client avant réattribution
+   métier, écrites par la consigne en cours) — illustration du jour, pas définition. ⚠️ **« Purger là où l'origine
    égale la valeur » détruit donc exactement la mesure attendue** sur ces champs : une
    purge NOMME les champs où l'origine doit être une source, ne touche jamais ceux où elle
    conserve l'entrée, **commence par un EXTRAIT des valeurs supprimées** (namespace,
