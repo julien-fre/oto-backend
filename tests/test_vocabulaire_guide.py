@@ -55,22 +55,22 @@ import re
 RACINE = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp"
 MOT = re.compile("doctrine", re.I)
 
-# ── Plafonds relevés à la fin du lot B3 de #519 (2026-08-28) ─────────────────
+# ── Plafonds relevés à la fin du lot B4 de #519 (2026-08-29) ─────────────────
 # Chaque entrée porte la RAISON pour laquelle le mot y survit. Une entrée sans
 # raison servie n'a rien à faire ici : elle se renomme.
 #
-# Total : 267 (fin du lot A) → 266 (B1) → 262 (B2) → 226 (B3). Le lot B rembourse
-# par étapes ; le compte descend à chaque PR, jamais l'inverse. Zéro au lot D (#526).
+# Total : 267 (fin du lot A) → 266 (B1) → 262 (B2) → 226 (B3) → 217 (B4). Le lot B
+# rembourse par étapes ; le compte descend à chaque PR, jamais l'inverse. Zéro au
+# lot D (#526).
 #
 # ⚠️ Le mot se CONCENTRE autant qu'il recule : chaque lot en retire des fichiers de
 # métier et en pose dans `deprecations.py`, où il est une DONNÉE (la table des
 # anciens noms) et non un usage. C'est le mouvement voulu — un alias déclaré à un
 # seul endroit s'enlève d'un geste au lot D.
 PLAFONDS: dict[str, int] = {
-    # — Clé de réponse `doctrines` (le build de la vitrine la lit) ; nom de la
-    #   table `doctrine_library` dans un commentaire de routage.
+    # — Clé de réponse `doctrines`, servie à côté de `guides` (le build de la
+    #   vitrine lit encore l'ancienne, et il vit hors de ce dépôt).
     "oto_mcp/api/public.py": 1,
-    "oto_mcp/api/routes.py": 1,
     # — Description servie (l'outil s'appelle `oto_admin_guide` depuis B1, la
     #   capacité `admin.guide` depuis B2 ; l'ancien nom d'outil et les anciens
     #   chemins sont servis en ALIAS datés, cf. `oto_mcp/deprecations.py`).
@@ -113,8 +113,10 @@ PLAFONDS: dict[str, int] = {
     "oto_mcp/capabilities/usage.py": 2,
     # — Emploi GÉNÉRIQUE dans une doc de connecteur servie au catalogue.
     "oto_mcp/connectors/docs/ahrefs.md": 1,
-    # — `ALTER TABLE doctrine_library` (nom d'objet en base).
-    "oto_mcp/db/_init.py": 1,
+    # — `ALTER TABLE` de colonne + la VUE `guide_library` posée dessus (lot B4).
+    #   Le DDL est le seul endroit qui nomme encore la table : au lot D, le renommage
+    #   physique ne touche aucune ligne de Python (garde : test_guide_library_view).
+    "oto_mcp/db/_init.py": 2,
     # — `resource_type = 'doctrine'` + clé `doctrine_version` d'un JSON de nœud.
     "oto_mcp/db/nodes.py": 2,
     # — DDL FIGÉ (base partagée prod/preprod ; le renommage est additif, lot B) :
@@ -131,7 +133,9 @@ PLAFONDS: dict[str, int] = {
     # — Colonne `runs.doctrine`, clé `doctrine_version` des args journalisés,
     #   alias SQL `AS doctrine`/`AS doctrines` (donc clés de réponse).
     "oto_mcp/db/usage.py": 31,
-    # — Nom de table `doctrine_library` dans l'inventaire des colonnes de sub.
+    # — L'inventaire des colonnes porteuses d'un `sub`, vérifié CONTRE LE DDL : une
+    #   vue n'y apparaît pas, donc cette entrée reste sur la TABLE (sinon le
+    #   garde-fou devient aveugle à une entrée morte). Elle suit la table au lot D.
     "oto_mcp/db/users.py": 1,
     # — LA table des noms SERVIS dépréciés (lot B, retrait daté au lot D #526).
     #   C'est le seul fichier où le mot est une DONNÉE et non un usage : il y entre
@@ -149,12 +153,10 @@ PLAFONDS: dict[str, int] = {
     # — Bloc d'instructions SERVI au `initialize` + index servi dans la
     #   description d'`oto_procedure` + lecture de la clé `doctrine`.
     "oto_mcp/instructions.py": 7,
-    # — Nom de table `doctrine_library`.
-    "oto_mcp/org_store/__init__.py": 1,
+
     # — Kind d'ownership `doctrine` + `resource_type='doctrine'`.
     "oto_mcp/org_store/instructions.py": 2,
-    # — Table `doctrine_library` dans le SQL.
-    "oto_mcp/org_store/library.py": 8,
+
     # — Le kind `doctrine` enregistré au registre des ressources possédées.
     "oto_mcp/ownership.py": 1,
     # — Colonne `runs.doctrine` + clé de réponse `doctrines`.

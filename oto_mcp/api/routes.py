@@ -437,9 +437,9 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/connectors", bind(public.connectors_catalog, verifier=verifier), methods=["GET"]),
         Route("/api/connectors", options_handler, methods=["OPTIONS"]),
         # ⚠️ DEUX bibliothèques, deux objets : `/api/guide-library` = le MARCHÉ des
-        # guides publiés par les orgs (table `doctrine_library`, forkables) ;
-        # `/api/guides/library` = les guides PLATEFORME. Les noms se ressemblaient
-        # déjà avant ce lot — ils ne désignent toujours pas la même chose.
+        # guides publiés par les orgs (vue `guide_library`, forkables) ;
+        # `/api/guides/library` = les guides PLATEFORME (table `guides`). Les noms se
+        # ressemblaient déjà avant ce lot — ils ne désignent pas la même chose.
         Route("/api/guide-library", public.guide_library_public, methods=["GET"]),
         Route("/api/guide-library", options_handler, methods=["OPTIONS"]),
         Route("/api/guide-library/{slug}", public.guide_library_public_get, methods=["GET"]),

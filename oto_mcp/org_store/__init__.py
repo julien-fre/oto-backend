@@ -12,7 +12,7 @@ près, et aucun appelant n'a bougé.
     personal      l'org perso (`personal_of`) + le rattrapage de boot
     invitations   plateforme / org / équipe : émission, listing, acceptation
     instructions  les procédures d'org (`org_instructions`), versionnées
-    library       la bibliothèque publique de guides (`doctrine_library`)
+    library       la bibliothèque publique de guides (vue `guide_library`)
 
 Le graphe interne est un **DAG à deux étages**, sans cycle possible :
 

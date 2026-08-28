@@ -90,14 +90,14 @@ Une ligne par surface. « Forme » dit comment les deux noms coexistent.
 | Paramètre d'entrée | `run_start(doctrine=)` | `run_start(guide=)` | les deux acceptés | B3 |
 | Code d'erreur | `unknown_doctrine` | `unknown_guide` | l'ancien dans `details.legacy_code` | B3 |
 | Schéma OpenAPI | `DoctrineMeta` | `GuideMeta` | `$ref` déprécié vers le neuf | B3 |
+| Relation en base | table `doctrine_library` | vue `guide_library` | la vue sert, la table reste ; le renommage physique est au lot D | B4 |
 
-*(Cette table se remplit au fil du lot B : objets en base en B4.)*
-
-Ce qui reste EN BASE, et ne peut donc pas se doubler — table `doctrine_library`,
-colonne `runs.doctrine`, valeur d'énumération `missing_doctrine`, kind d'ownership
-`doctrine` (`resource_grants.resource_type`), clé `doctrine_version` écrite dans les
-`props` d'un nœud : **lot B4**, en additif (vue d'abord), parce que la base est
-partagée prod/preprod (ADR 0065).
+Ce qui reste EN BASE et **n'a pas de doublure** — colonne `runs.doctrine`, valeur
+d'énumération `missing_doctrine` (contrainte `CHECK`), kind d'ownership `doctrine`
+(`resource_grants.resource_type`, une VALEUR de ligne), clé `doctrine_version` écrite
+dans les `props` d'un nœud : ce sont des **données déjà écrites**, pas des noms.
+Aucune vue ne les renomme ; il faut les migrer, et une migration de données est un
+acte nommé et daté (ADR 0065 étage 2), pas une ligne de boot. **Lot D, #526.**
 
 ⚠️ **`DoctrineView` n'est pas dans cette table**, et ce n'est pas un oubli : un
 modèle `Output` de premier niveau n'est pas un composant OpenAPI. Son schéma est
@@ -153,6 +153,22 @@ nouveau prend la place, l'ancien est conservé dans `details.legacy_code`.
    répond plus du tout.
 
 ## Comment c'est fait, côté serveur
+
+**La relation en base** : la table garde son nom, une **vue** `guide_library` porte
+celui d'aujourd'hui, et tout le code passe par elle — au lot D, il ne restera qu'à
+droper la vue et renommer la table, sans toucher une ligne de Python. La vue est
+recréée à CHAQUE boot, **après tous les `ALTER`** : une vue `SELECT *` fige ses
+colonnes à sa création (vérifié sur PostgreSQL 16), donc posée avant un
+`ADD COLUMN` elle masquerait la colonne neuve — sans erreur, sans log, avec un `None`
+là où le code attend une valeur. Elle est auto-updatable : `INSERT` avec DEFAULT et
+`RETURNING`, `ON CONFLICT DO UPDATE`, `UPDATE`, `DELETE` la traversent — mesuré sur
+une vraie base, pas supposé (`tests/test_guide_library_view.py`, qui compare aussi
+les colonnes des deux relations).
+
+⚠️ Une exception assumée : `db/users.py` (l'inventaire des colonnes porteuses d'un
+`sub`) nomme encore la TABLE. Cet inventaire est vérifié contre le DDL, où une vue
+n'apparaît pas ; y mettre la vue rendrait ce garde-fou aveugle à une entrée
+réellement morte.
 
 **Les chemins REST** : l'ancien chemin reste monté (`oto_mcp/api/alias_routes.py`) et
 répond **308** vers le nouveau. Quatre crans, chacun payé par un incident possible :

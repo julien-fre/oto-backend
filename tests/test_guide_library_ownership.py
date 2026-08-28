@@ -35,8 +35,12 @@ class _R:
 
 
 class _Library:
-    """Un faux `doctrine_library` en mémoire — juste assez de SQL pour exercer le
-    VRAI `publish_guide` (verrou advisory, lecture d'appartenance, upsert)."""
+    """Un faux `guide_library` en mémoire — juste assez de SQL pour exercer le VRAI
+    `publish_guide` (verrou advisory, lecture d'appartenance, upsert).
+
+    ⚠️ La relation s'appelle `guide_library` : c'est une VUE sur la table, et tout le
+    code passe par elle (#519 lot B4). Que l'upsert traverse réellement une vue est
+    prouvé sur une base RÉELLE — `tests/test_guide_library_view.py` — pas ici."""
 
     def __init__(self, rows=None):
         self.rows: dict[str, dict] = dict(rows or {})
@@ -57,11 +61,11 @@ class _Library:
         self.seen.append(s)
         if s.startswith("SELECT pg_advisory_xact_lock"):
             return _R(None)
-        if s.startswith("SELECT version") and "FROM doctrine_library WHERE slug" in s:
+        if s.startswith("SELECT version") and "FROM guide_library WHERE slug" in s:
             assert "author_kind" in s and "author_org_id" in s, \
                 "sans lire l'appartenance, l'upsert écrase l'entrée d'une autre org"
             return _R(self.rows.get(params[0]))
-        if s.startswith("INSERT INTO doctrine_library"):
+        if s.startswith("INSERT INTO guide_library"):
             (slug, title, description, body_md, slots, author_kind, author_org_id,
              author_display, category, tags, visibility, source_org_id, source_slug,
              forked_from, version, published_by) = params

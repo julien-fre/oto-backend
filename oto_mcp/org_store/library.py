@@ -1,4 +1,4 @@
-"""La BIBLIOTHÈQUE PUBLIQUE de guides (table `doctrine_library`).
+"""La BIBLIOTHÈQUE PUBLIQUE de guides (vue `guide_library`).
 
 Le catalogue cherchable des guides publiés : publier (borné à son auteur),
 lister, lire, dépublier — et **forker** une entrée dans son org, ce qui la
@@ -15,7 +15,14 @@ from . import instructions
 from ..db import _connect
 
 
-# --- bibliothèque publique de guides (marketplace, table doctrine_library) ---
+# --- bibliothèque publique de guides (marketplace) ---
+#
+# ⚠️ Tout passe par la VUE `guide_library`, jamais par la table qui la porte :
+# le renommage physique est un acte de TAG (base partagée prod/preprod, #519
+# lot D / #526), et ce module ne doit alors plus bouger d'une ligne. La vue est
+# auto-updatable — `INSERT … RETURNING`, `ON CONFLICT DO UPDATE`, `UPDATE` et
+# `DELETE` y passent (mesuré sur PostgreSQL 16, rejoué par
+# `tests/test_guide_library_view.py`).
 #
 # Un catalogue cherchable de guides PUBLIÉS, chaque entrée portant un AUTEUR
 # ('otomata' = la plateforme, ou 'org' = un créateur privé). Preview + fork dans
@@ -81,7 +88,7 @@ def publish_guide(*, slug: str, title: str = "", description: str = "",
         with conn.transaction():
             conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"dl:{slug}",))
             cur = conn.execute(
-                "SELECT version, author_kind, author_org_id FROM doctrine_library "
+                "SELECT version, author_kind, author_org_id FROM guide_library "
                 "WHERE slug = %s", (slug,)
             ).fetchone()
             if cur and (cur["author_kind"], cur["author_org_id"]) != (author_kind, author_org_id):
@@ -89,7 +96,7 @@ def publish_guide(*, slug: str, title: str = "", description: str = "",
             new_version = (cur["version"] + 1) if cur else 1
             row = conn.execute(
                 f"""
-                INSERT INTO doctrine_library
+                INSERT INTO guide_library
                     (slug, title, description, body_md, slots, author_kind, author_org_id,
                      author_display, category, tags, visibility, source_org_id,
                      source_slug, forked_from, version, published_by, updated_at)
@@ -145,7 +152,7 @@ def list_library(*, query: Optional[str] = None, category: Optional[str] = None,
     sel = _LIBRARY_META_COLS + (", body_md" if q else "")
     with _connect() as conn:
         rows = conn.execute(
-            f"SELECT {sel} FROM doctrine_library{clause} "
+            f"SELECT {sel} FROM guide_library{clause} "
             f"ORDER BY updated_at DESC LIMIT %s",
             tuple(params) + (int(limit),),
         ).fetchall()
@@ -168,12 +175,12 @@ def get_library_entry(*, entry_id: Optional[int] = None, slug: Optional[str] = N
     with _connect() as conn:
         if entry_id is not None:
             row = conn.execute(
-                f"SELECT {_LIBRARY_COLS} FROM doctrine_library WHERE id = %s{vis}",
+                f"SELECT {_LIBRARY_COLS} FROM guide_library WHERE id = %s{vis}",
                 (entry_id,),
             ).fetchone()
         else:
             row = conn.execute(
-                f"SELECT {_LIBRARY_COLS} FROM doctrine_library WHERE slug = %s{vis}",
+                f"SELECT {_LIBRARY_COLS} FROM guide_library WHERE slug = %s{vis}",
                 (instructions.normalize_slug(slug),),
             ).fetchone()
     return dict(row) if row else None
@@ -207,5 +214,5 @@ def fork_into_org(*, entry_id: int, org_id: int, new_slug: Optional[str] = None,
 def unpublish_guide(entry_id: int) -> bool:
     """Retire une entrée publiée. False si elle n'existait pas."""
     with _connect() as conn:
-        cur = conn.execute("DELETE FROM doctrine_library WHERE id = %s", (entry_id,))
+        cur = conn.execute("DELETE FROM guide_library WHERE id = %s", (entry_id,))
         return (cur.rowcount or 0) > 0
