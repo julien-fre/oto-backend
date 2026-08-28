@@ -129,6 +129,46 @@ def test_les_formats_nationaux_attendus_passent(pays, numero):
     assert billing_vat.check_vat_number(pays, numero) == numero
 
 
+# Un numéro TYPE par État membre, à la forme officielle (VIES / Commission
+# européenne). Le test ci-dessous n'est pas une redite du précédent : celui-là
+# vérifiait que chaque pays A un format, celui-ci que ce format ACCEPTE un numéro
+# valide. Une expression régulière fautive sur un pays que personne n'exerce
+# fermerait la souscription à ses clients sans qu'aucun test ne rougisse — et le
+# symptôme serait « votre numéro de TVA est invalide » sur un numéro correct.
+_NUMEROS_TYPES = {
+    "AT": "ATU12345678", "BE": "BE0123456789", "BG": "BG123456789",
+    "CY": "CY12345678L", "CZ": "CZ12345678", "DE": "DE123456789",
+    "DK": "DK12345678", "EE": "EE123456789", "ES": "ESA1234567Z",
+    "FI": "FI12345678", "FR": "FR12345678901", "GR": "EL123456789",
+    "HR": "HR12345678901", "HU": "HU12345678", "IE": "IE1234567FA",
+    "IT": "IT12345678901", "LT": "LT123456789", "LU": "LU12345678",
+    "LV": "LV12345678901", "MT": "MT12345678", "NL": "NL123456789B01",
+    "PL": "PL1234567890", "PT": "PT123456789", "RO": "RO1234567890",
+    "SE": "SE123456789012", "SI": "SI12345678", "SK": "SK1234567890",
+}
+
+
+@pytest.mark.parametrize("pays, numero", sorted(_NUMEROS_TYPES.items()))
+def test_chacun_des_vingt_sept_accepte_un_numero_de_sa_forme(pays, numero):
+    assert billing_vat.check_vat_number(pays, numero) == numero
+    # …et le client passe bien en autoliquidation, pas seulement le contrôle.
+    assert billing_vat.tax_for(1900, pays, numero)["vat_scheme"] == (
+        "fr_ttc" if pays == "FR" else "reverse_charge")
+
+
+def test_la_table_des_numeros_types_couvre_exactement_l_union():
+    """Sinon le test paramétré ci-dessus laisserait un pays hors du filet en
+    silence, ce qui est précisément le mode d'échec qu'il vise."""
+    assert set(_NUMEROS_TYPES) == billing_vat.EU_COUNTRIES
+
+
+@pytest.mark.parametrize("numero", ["IE1234567A", "IE1A23456B", "IE1234567FA"])
+def test_l_irlande_a_trois_formes_legales_et_les_trois_passent(numero):
+    """Le seul pays des 27 dont le format officiel est une alternance — la source
+    fréquente d'un refus à tort sur un numéro parfaitement valide."""
+    assert billing_vat.check_vat_number("IE", numero) == numero
+
+
 def test_le_numero_est_normalise_avant_d_etre_controle():
     """Un numéro se recopie d'un PDF : espaces, points et tirets arrivent avec. Les
     refuser serait refuser une saisie correcte."""
