@@ -242,7 +242,17 @@ refus de champ inconnu) ; OAuth Google per-user câblé ici. Où poser un lot : 
 ⚠️ La surface plate `db.<fn>` est un **cliquet** (`tests/test_db_surface_frozen.py` : on peut
 ajouter, jamais retirer). ⚠️ Oto gère les **types standards**, **jamais l'interprétation métier
 d'une VALEUR** — entre les deux, l'ordre des `options` déclarées au schéma est honoré, parce
-que c'est une DEMANDE adressée à oto, pas une compréhension du métier.
+que c'est une DEMANDE adressée à oto, pas une compréhension du métier. Même frontière pour
+`field.pattern` (28/08) : la forme d'un code se contraint, une grammaire structurée se refuse.
+⚠️ **Une expression régulière posée par un appelant s'exécute dans la boucle UNIQUE** : un
+motif à explosion combinatoire coûte le serveur entier, et un garde syntaxique ne suffit pas
+(mesuré : `.*.*.*.*.*.*.*z` sur 60 caractères = 14,8 s, sans un seul groupe quantifié). D'où
+un BUDGET calculé sur l'arbre du motif contre la borne du champ — ce qui rend `max_length`
+obligatoire avec `pattern`, et refuse **à la pose**, en nommant, ce qu'on ne sait pas majorer.
+⚠️ **Une pose de schéma REMPLACE** : sa réponse porte `declarations_effacees` (ce qu'elle
+vient de retirer, valeurs comprises — elle en est la seule copie) et `enforced` (les clés de
+validation que CETTE version applique, établies en faisant tourner le validateur, jamais
+listées). Pour ÉDITER, `data_patch_schema` fusionne par clé et ne peut pas détruire.
 **Détail : `docs/datastore.md`.**
 
 ## Propriété de ressource — primitive `ownership` (ADR 0030)
