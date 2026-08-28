@@ -80,16 +80,21 @@ def instance_id_for_vault_row(owner_type: str, owner_id: str, connector: str,
     return row["id"] if row else None
 
 
-def instance_ids_for_vault_rows(
-        keys: Sequence[tuple[str, str, str, str]]) -> dict[tuple[str, str, str, str], int]:
-    """Résolution EN LOT des quadruplets → id, pour une projection qui en tient des
-    dizaines (`GET /api/me/connector-instances`).
+def instances_for_vault_rows(
+        keys: Sequence[tuple[str, str, str, str]]) -> dict[tuple[str, str, str, str], dict]:
+    """Résolution EN LOT des quadruplets → `{id, visibility}`, pour une projection qui
+    en tient des dizaines (`GET /api/me/connector-instances`).
 
     **Une seule requête**, jamais une par instance : la projection tourne sur un
     serveur MONO-LOOP, et N lookups par PK y coûtent N allers-retours vers une base
     managée DISTANTE — le mode de panne que `docs/event-loop-perf.md` documente. Les
     couples sont comparés colonne à colonne (`(a,b,c,d) IN ((…),(…))`), servis par
-    `idx_connector_instances_vault`."""
+    `idx_connector_instances_vault`.
+
+    Rend `visibility` avec l'id parce que les deux se lisent au même endroit et
+    servent la même réponse : la SURCHARGE du propriétaire (R9) entre dans le calcul
+    de `visible_to`, et aller la chercher séparément doublerait la requête pour une
+    colonne de la même ligne."""
     uniques = sorted({(k[0], str(k[1]), k[2], k[3] or "") for k in keys})
     if not uniques:
         return {}
@@ -99,11 +104,20 @@ def instance_ids_for_vault_rows(
         params += list(k)
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, owner_type, owner_id, connector, account FROM connector_instances "
+            "SELECT id, owner_type, owner_id, connector, account, visibility "
+            "FROM connector_instances "
             "WHERE revoked_at IS NULL AND (owner_type, owner_id, connector, account) "
             f"IN ({clause})", params).fetchall()
-    return {(r["owner_type"], r["owner_id"], r["connector"], r["account"]): r["id"]
-            for r in rows}
+    return {(r["owner_type"], r["owner_id"], r["connector"], r["account"]):
+            {"id": r["id"], "visibility": r["visibility"]} for r in rows}
+
+
+def instance_ids_for_vault_rows(
+        keys: Sequence[tuple[str, str, str, str]]) -> dict[tuple[str, str, str, str], int]:
+    """`{quadruplet: id}` — la forme d'origine (pièce 1), DÉRIVÉE de la précédente et
+    pas une seconde requête. Conservée parce que la surface `db.<fn>` est un cliquet :
+    on y ajoute, on n'en retire jamais."""
+    return {k: v["id"] for k, v in instances_for_vault_rows(keys).items()}
 
 
 def instance_by_id(instance_id: int, conn=None) -> Optional[dict]:

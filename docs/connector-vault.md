@@ -240,6 +240,63 @@ pièce 2 ce cas ne naît plus que d'un geste manuel en base (archiver une instan
 laissant vivre sa clé). Ce n'est donc pas au filet de le rattraper, c'est à l'**invariant**
 de le montrer.
 
+### Qui VOIT une instance — R9, la visibilité dérivée
+
+Arbitrage prononcé par Alexis le 27/08 : *« la visibilité est une propriété de
+l'INSTANCE »*, dérivée de la chaîne — **découvrable par les scopes sous son
+propriétaire, dans la même org, jamais cross-org**, avec surcharge explicite du
+propriétaire. Le domicile de la dérivation est
+`oto_mcp/connectors/instance_visibility.py` ; `GET /api/me/connector-instances` et
+`oto_instance op=list` servent le résultat en `visible_to`.
+
+**Ce que ça n'est PAS, et c'est la moitié du lot.** `visible_to` ne filtre rien,
+n'élargit aucune liste, ne gate aucun appel. Un non-membre continue de voir *aucune
+clé configurée* — la divulgation (« il existe un accès à demander, et chez qui ») reste
+une question **produit**, que R9 range dans un réglage d'org opt-in, plus tard. Ce qui
+est livré est **descriptif** : la même liste qu'avant, où chaque instance dit qui la
+voit.
+
+**Pourquoi la question est dérivable.** 0053-D2 a retiré l'enjeu de protection —
+masquer ne protège de rien, tout se refuse à l'appel. Ce qui reste est de l'ergonomie,
+et sa réponse honnête est *qui peut la résoudre la voit*. La résolution est déjà écrite
+une fois pour toutes dans `access.cascade.walk_cascade` ; la dérivation l'**inverse**.
+
+| Palier | Audience | Gate |
+|---|---|---|
+| membre (et le résidu `user`) | `user:<sub>` — la personne, jamais le couple `(org, sub)` | — |
+| équipe | `group:<id>` | `org_shareable` : sinon **personne** (la clé existe, la cascade ne la lit jamais) |
+| org | `org:<id>` | idem |
+| plateforme | les bénéficiaires | `auth_modes ∋ platform` : sinon **personne** |
+| *tous* | + `share_side` (prêts nominatifs, ADR 0044) — une **extension**, jamais une allowlist ; peut viser hors de l'org | — |
+
+Le palier plateforme est le seul dont l'audience n'est pas structurelle. Trois issues,
+dans l'ordre où la résolution les prend : la **chaîne accorde** (0053, L5) ⟹ les
+bénéficiaires des arêtes vivantes ; la **chaîne refuse** (des arêtes existent, toutes
+révoquées) ⟹ personne, **sans repli** (c'est ce qui rend une révocation vraie) ; la
+**chaîne est muette** ⟹ l'ancien chemin, à l'identique (`closed` ⟹ l'allowlist ;
+`open` ⟹ l'allowlist si elle existe, sinon `platform`, le mot de l'audience non bornée).
+
+**La surcharge** vit dans `connector_instances.visibility` : `inherited` (défaut — la
+dérivation décide), `hidden` (le propriétaire seul), `org` (l'org du propriétaire en
+plus). ⚠️ **Rien ne l'écrit aujourd'hui** — les deux autres branches sont écrites et
+testées, pas servies ; le geste qui les pose est un lot produit, et un test fige
+l'absence d'écrivain. ⚠️ `hidden` est un cran d'**ergonomie**, pas de sécurité : celui
+qui résout continue de résoudre, il cesse seulement de la voir listée.
+
+⚠️ **Le risque du lot, et son garde-fou.** Inverser un walker, c'est risquer d'en
+écrire une deuxième copie — le défaut que `keyStack.ts` porte déjà côté dashboard, et
+qui ne casse pas : il **ment**. Deux réponses, toutes deux mécaniques : (1) aucune règle
+n'est recopiée — les gates sont lus à leur source (le registre, les colonnes de partage
+du coffre, `grants_chain`), et un registre consulté deux fois n'est pas une duplication ;
+(2) `tests/test_instance_visibility.py` **confronte** l'audience dérivée au verdict réel
+de `walk_cascade` sur un vrai PostgreSQL, pour deux appelants aux droits différents. Si
+les deux divergent, ce test rougit.
+
+**Coût** : deux requêtes en lot pour toute la liste (les identifiants et le partage),
+jamais deux par instance ; plus, pour les seules clés plateforme d'un connecteur
+basculé, la lecture de leurs arêtes. Fail-open loggé et **séparé** de celui de `id` :
+le partage peut tomber sans emporter l'identifiant.
+
 ### Nettoyer les orphelines d'avant la pièce 2 — une commande, pas un boot
 
 Entre la pièce 1 (le boot NOMMAIT chaque ligne de coffre) et la pièce 2 (la pose nomme,

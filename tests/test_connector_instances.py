@@ -128,8 +128,19 @@ def seams(monkeypatch):
     # s'y intéressent. Stubbé ICI plutôt que laissé tomber en fail-open : sans ça la
     # projection réussirait sans jamais exercer le chemin qu'on croit tester.
     instances: dict = {}
-    monkeypatch.setattr(ci.db, "instance_ids_for_vault_rows",
-                        lambda keys: {k: instances[k] for k in keys if k in instances})
+    monkeypatch.setattr(
+        ci.db, "instances_for_vault_rows",
+        lambda keys: {k: {"id": instances[k], "visibility": visibilites.get(k, "inherited")}
+                      for k in keys if k in instances})
+    # Le partage de chaque ligne (R9) : `(share_mode, share_down, share_side)`. Défaut
+    # `open`/vide = la polarité du coffre pour un palier BYO. Stubbé ICI, comme les
+    # identifiants : laissé au fail-open, `visible_to` serait simplement absent et les
+    # tests passeraient sans exercer la dérivation.
+    visibilites: dict = {}
+    partages: dict = {}
+    monkeypatch.setattr(
+        ci.credentials_store, "sharing_for_vault_rows",
+        lambda keys: {k: partages.get(k, ("open", [], [])) for k in keys})
     monkeypatch.setattr(ci.credentials_store, "list_credentials",
                         lambda et, eid: list(vault.get((et, eid), [])))
     monkeypatch.setattr(ci.group_store, "list_groups_for_user",
@@ -147,7 +158,8 @@ def seams(monkeypatch):
     monkeypatch.setattr(roles_mod, "is_org_admin", lambda sub, org: False)
     monkeypatch.setattr(ci, "providers", SimpleNamespace(
         REGISTRY=_FAKE_REGISTRY, PERSONAL_CROSS_ORG_PROVIDERS=frozenset()))
-    return SimpleNamespace(vault=vault, instances=instances, monkeypatch=monkeypatch)
+    return SimpleNamespace(vault=vault, instances=instances, partages=partages,
+                           visibilites=visibilites, monkeypatch=monkeypatch)
 
 
 def _run(connector=None, level=None, org_id=ORG, sub=SUB):
@@ -504,10 +516,11 @@ def test_l6_la_cle_plateforme_a_son_identifiant_elle_aussi(seams):
     assert (inst["via"], inst["id"]) == ("free_tier", "inst:7")
 
 
-def test_l6_une_instance_pas_encore_nommee_n_a_simplement_pas_d_id(seams):
-    """Le backfill nomme au BOOT : une clé posée depuis n'a pas encore d'identifiant.
-    C'est une ABSENCE de champ, pas un `null` ni une erreur — et c'est pourquoi le
-    client doit garder `ref` jusqu'à la bascule."""
+def test_l6_une_instance_INTROUVABLE_n_a_simplement_pas_d_id(seams):
+    """Depuis la pièce 2 l'instance naît à la POSE, donc ce cas n'est plus « la clé
+    est trop fraîche » — c'est une ligne de coffre que la table des instances ne
+    connaît pas (un écart, que la commande de maintenance répare). La surface le rend
+    par une ABSENCE de champ, pas un `null` ni une erreur : le client garde `ref`."""
     seams.vault[_member_key()] = [_row("zoho")]
     inst = _run()["instances"][0]
     assert "id" not in inst and inst["ref"]
@@ -519,12 +532,84 @@ def test_l6_l_indisponibilite_des_identifiants_ne_casse_pas_le_listing(seams, ca
     listing des clés de quelqu'un pour ça serait hors de proportion."""
     def _boom(keys):
         raise RuntimeError("base indisponible")
-    seams.monkeypatch.setattr(ci.db, "instance_ids_for_vault_rows", _boom)
+    seams.monkeypatch.setattr(ci.db, "instances_for_vault_rows", _boom)
     seams.vault[_member_key()] = [_row("zoho")]
     with caplog.at_level(logging.WARNING):
         out = _run()
     assert out["count"] == 1 and "id" not in out["instances"][0]
     assert any("identifiants stables" in r.message for r in caplog.records)
+
+
+# ─── 7. R9 — l'audience DÉRIVÉE, servie à côté de l'identifiant ──────────────
+# Ce que la surface gagne : `visible_to`, les scopes qui DÉCOUVRENT l'instance,
+# calculé à chaque appel depuis la chaîne d'accès. La dérivation elle-même, et sa
+# confrontation au walker réel, vivent dans `test_instance_visibility.py` ; ici on ne
+# teste que le CÂBLAGE — que la surface l'appelle avec les bons arguments et sait s'en
+# passer.
+
+def test_r9_l_audience_est_servie_a_cote_de_l_identifiant(seams):
+    """Une clé de membre n'est vue que de son propriétaire. Le scope est celui de la
+    PERSONNE, pas du couple (org, sub) : c'est ce que le coffre porte en `entity_id`,
+    et ce que la dérivation doit défaire."""
+    seams.vault[_member_key()] = [_row("zoho")]
+    seams.instances[(credentials_store.MEMBER,
+                     credentials_store.member_id(ORG, SUB), "zoho", "")] = 1
+    assert _run()["instances"][0]["visible_to"] == [f"user:{SUB}"]
+
+
+def test_r9_le_pret_nominatif_elargit_l_audience_servie(seams):
+    """La surface passe bien `share_side` à la dérivation — un prêt (ADR 0044) est une
+    EXTENSION, et sans ce câblage il serait simplement invisible dans la réponse."""
+    seams.vault[_member_key()] = [_row("zoho")]
+    cle = (credentials_store.MEMBER, credentials_store.member_id(ORG, SUB), "zoho", "")
+    seams.instances[cle] = 1
+    seams.partages[cle] = ("open", [], ["user:usr_pair"])
+    assert _run()["instances"][0]["visible_to"] == ["user:usr_pair", f"user:{SUB}"]
+
+
+def test_r9_la_surcharge_du_proprietaire_prime_sur_la_derivation(seams):
+    """La colonne `visibility` porte la SURCHARGE, pas l'audience. `hidden` ramène au
+    propriétaire seul — un cran d'ergonomie, jamais de sécurité : celui qui résout
+    continue de résoudre."""
+    seams.vault[_member_key()] = [_row("zoho")]
+    cle = (credentials_store.MEMBER, credentials_store.member_id(ORG, SUB), "zoho", "")
+    seams.instances[cle] = 1
+    seams.partages[cle] = ("open", [], ["user:usr_pair"])
+    seams.visibilites[cle] = "hidden"
+    assert _run()["instances"][0]["visible_to"] == [f"user:{SUB}"]
+
+
+def test_r9_une_audience_indisponible_n_empeche_pas_de_servir_l_identifiant(seams, caplog):
+    """Deux fail-open distincts, et c'est voulu : le partage peut tomber sans emporter
+    l'identifiant, qui vient d'une autre table. Une réponse amputée d'un champ
+    descriptif vaut mieux qu'un listing de clés qui ne sort pas."""
+    def _boom(keys):
+        raise RuntimeError("base indisponible")
+    seams.monkeypatch.setattr(ci.credentials_store, "sharing_for_vault_rows", _boom)
+    seams.vault[_member_key()] = [_row("zoho")]
+    seams.instances[(credentials_store.MEMBER,
+                     credentials_store.member_id(ORG, SUB), "zoho", "")] = 1
+    with caplog.at_level(logging.WARNING):
+        inst = _run()["instances"][0]
+    assert inst["id"] == "inst:1" and "visible_to" not in inst
+    assert any("partage" in r.message for r in caplog.records)
+
+
+def test_r9_la_liste_n_est_ni_elargie_ni_restreinte_par_l_audience(seams):
+    """⚠️ LE test de R9 côté produit : `visible_to` est DESCRIPTIF. Une instance dont
+    l'audience ne contient pas l'appelant reste listée si elle l'était (ici : la clé
+    de l'org, que l'appelant voit par appartenance), et rien de nouveau n'apparaît.
+    La divulgation (« il existe un accès à demander, et chez qui ») reste une question
+    produit, rangée par R9 dans un réglage d'org opt-in."""
+    seams.vault[("org", str(ORG))] = [_row("hunter")]
+    avant = _run()
+    cle = ("org", str(ORG), "hunter", "")
+    seams.instances[cle] = 2
+    seams.partages[cle] = ("open", [], [])
+    apres = _run()
+    assert avant["count"] == apres["count"] == 1
+    assert [i["ref"] for i in avant["instances"]] == [i["ref"] for i in apres["instances"]]
+    assert apres["instances"][0]["visible_to"] == [f"org:{ORG}"]
 
 
 def test_l6_la_cle_privee_du_quadruplet_ne_part_jamais_sur_le_fil(seams):

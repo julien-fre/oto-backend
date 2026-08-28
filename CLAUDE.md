@@ -210,6 +210,16 @@ la référence à repasser (`inst:` se parse mais se fait refuser nommément par
 de pose) ; `label`, `config`, `visibility` (R9) et `parent_id` (sous-instances) restent
 **posés et inertes** (leur domicile reste `meta`). Invariant, sa requête et les cas limites :
 `docs/connector-vault.md`.
+⚠️ **Qui VOIT une instance est DÉRIVÉ, pas stocké** (R9, tranché le 27/08) : `visible_to`
+(scopes `user:` / `group:` / `org:` / `platform`) se calcule à l'appel depuis la chaîne
+d'accès — domicile `connectors/instance_visibility.py`, servi par `oto_instance op=list`.
+`connector_instances.visibility` ne porte que la SURCHARGE du propriétaire (`inherited`
+par défaut, et **rien ne l'écrit encore**). ⚠️ **Descriptif, pas filtrant** : la liste
+n'est ni élargie ni restreinte, un non-membre voit toujours « aucune clé configurée » —
+la divulgation est un lot produit. Le risque du lot est d'écrire un SECOND walker (le
+défaut de `keyStack.ts`, qui ne casse pas : il ment) ; garde-fou = aucune règle recopiée
+(gates lus au registre) **+** un test qui confronte l'audience dérivée à `walk_cascade`
+sur un vrai PostgreSQL.
 ⚠️ **`access` est un PACKAGE depuis le 27/08** (7 modules par sujet, arbre ci-dessus) : on
 édite le module du sujet, jamais un fourre-tout. La surface reste **plate** — `access.<nom>`
 rend ce qu'il rendait, privés compris, et une écriture sur la façade

@@ -15,7 +15,10 @@ encore ces instances (ni la cascade, ni la résolution) ; `ref` reste la référ
 repasse (les gardes de pose refusent `inst:` nommément, cf. `access.rbac`).
 PIÈCE 2 (28/08) : l'instance naît désormais à la POSE, dans la transaction du coffre —
 cette projection n'a pas bougé d'un octet, mais son `id` ne manque plus par fraîcheur de
-la clé, seulement par fail-open.
+la clé, seulement par fail-open. Elle sert en plus `visible_to` (R9, tranché le 27/08) :
+les scopes qui DÉCOUVRENT l'instance, dérivés de la chaîne d'accès par
+`connectors.instance_visibility`. ⚠️ **Descriptif, pas filtrant** — la liste n'est ni
+élargie ni restreinte, et un non-membre continue de voir « aucune clé configurée ».
 
 EXCLUSIONS (assumées, documentées) :
 - résidus `entity_type='user'` (mounts oauth fédérés atlassian/folkmcp)
@@ -52,6 +55,7 @@ from pydantic import BaseModel, ConfigDict
 # list_platform_keys (qui déchiffre), jamais les formes appauvries
 # list_org_secrets/list_group_secrets (elles écrasent account/meta/secret_kind).
 from ... import access, credentials_store, db, group_store, instance_refs, providers
+from ...connectors import instance_visibility
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
@@ -99,7 +103,7 @@ class ConnectorInstance(BaseModel):
     # ⚠️ **Peut être absent**, et le client doit le supporter — mais plus pour la raison
     # d'hier : depuis la pièce 2 (28/08) l'instance naît à la POSE, dans la transaction
     # du coffre, donc une clé fraîche a son identifiant. La seule absence restante est
-    # le fail-open de `_stamp_instance_ids` (la requête n'a pas répondu). Tant que la
+    # le fail-open de `_stamp_instance_identity` (la requête n'a pas répondu). Tant que la
     # bascule n'est pas faite, `ref` reste la référence à repasser (`_instance=`,
     # bindings) — `id` est là pour être stocké et préparé, pas encore pour être épinglé
     # (les gardes de pose le refusent nommément).
@@ -137,6 +141,17 @@ class ConnectorInstance(BaseModel):
     # mais elle reste listée et réactivable — un `suspended` n'est pas une absence.
     suspended: Optional[bool] = None
     daily_quota: Optional[int] = None       # paliers plateforme grantés seulement
+    # QUI VOIT cette instance (R9, tranché le 27/08) — scopes `user:<sub>` /
+    # `group:<id>` / `org:<id>` / `platform` (tout le monde : une clé plateforme en
+    # free-tier). DÉRIVÉ de la chaîne d'accès, jamais stocké : qui peut la résoudre la
+    # voit, et la colonne `visibility` de l'instance ne porte que la SURCHARGE du
+    # propriétaire (`inherited` par défaut, donc rien à surcharger aujourd'hui).
+    # ⚠️ **Descriptif, pas filtrant** : ce champ n'élargit ni ne restreint cette liste,
+    # et un non-membre continue de voir « aucune clé configurée ». La divulgation
+    # (« il existe un accès à demander, et chez qui ») reste une question produit,
+    # rangée par R9 dans un réglage d'org opt-in.
+    # ⚠️ **Peut être absent** — même fail-open que `id`.
+    visible_to: Optional[list[str]] = None
 
 
 class ConnectorInstances(BaseModel):
@@ -207,7 +222,7 @@ def _cred_instance(level: str, owner: dict, ref: str, row: dict,
         "set_by": row.get("set_by"),
         "set_at": row.get("set_at"),
         "via": "credential",
-        # Clé PRIVÉE, retirée avant sérialisation (`_stamp_instance_ids`) : elle ne
+        # Clé PRIVÉE, retirée avant sérialisation (`_stamp_instance_identity`) : elle ne
         # sert qu'à résoudre l'identifiant stable en UNE requête pour toute la liste.
         "_vault_key": vault_key,
     }
@@ -284,21 +299,23 @@ def _shared_owner(entity_type: str, entity_id: str) -> dict:
     return {"type": entity_type, "id": entity_id}
 
 
-def _stamp_instance_ids(out: list[dict]) -> None:
-    """Pose `id = inst:{id}` sur chaque instance qui en a un, et RETIRE la clé privée.
+def _stamp_instance_identity(out: list[dict]) -> None:
+    """Pose `id = inst:{id}` et `visible_to` sur chaque instance, et RETIRE la clé privée.
 
-    **Une seule requête pour toute la liste** (`instance_ids_for_vault_rows`) : la
-    projection tourne inline sur un serveur mono-loop, contre une base managée
-    distante — un lookup par instance ferait N allers-retours sur une surface qui en
-    rend des dizaines.
+    **Deux requêtes pour toute la liste**, jamais deux par instance : l'une rend
+    `(id, visibility)` depuis la table des instances, l'autre le partage de chaque
+    ligne de coffre. La projection tourne inline sur un serveur mono-loop, contre une
+    base managée distante — un lookup par instance ferait N allers-retours sur une
+    surface qui en rend des dizaines. (Les clés plateforme d'un connecteur basculé
+    lisent en plus leurs arêtes ; il y en a une poignée, et c'est le seul palier dont
+    l'audience n'est pas structurelle.)
 
     **Fail-open loggé**, comme les sections « partagé avec moi » et « perso cross-org »
-    de cette même liste : `id` est un identifiant d'affichage que rien ne consomme
-    encore, `ref` reste servi et suffit. Faire tomber le listing des clés d'un
-    utilisateur parce que la table des instances n'a pas répondu serait hors de
-    proportion. La contrepartie est explicite dans le modèle de sortie : **`id` peut
-    être absent** — d'une indisponibilité comme d'une instance pas encore nommée par
-    un boot.
+    de cette même liste : `id` et `visible_to` sont descriptifs, rien ne les consomme
+    encore, et `ref` reste servi. Faire tomber le listing des clés d'un utilisateur
+    parce que la table des instances n'a pas répondu serait hors de proportion. La
+    contrepartie est explicite dans le modèle de sortie : **les deux peuvent être
+    absents**.
 
     ⚠️ La clé privée `_vault_key` est retirée dans TOUS les cas (le modèle de sortie
     est `extra="allow"` : ce qui reste dans le dict part sur le fil).
@@ -306,16 +323,31 @@ def _stamp_instance_ids(out: list[dict]) -> None:
     cles = [i.get("_vault_key") for i in out]
     for i in out:
         i.pop("_vault_key", None)
+    vraies = [k for k in cles if k]
     try:
-        ids = db.instance_ids_for_vault_rows([k for k in cles if k])
+        connues = db.instances_for_vault_rows(vraies)
     except Exception:
         logger.warning("instances: identifiants stables indisponibles (fail-open)",
                        exc_info=True)
         return
+    try:
+        partages = credentials_store.sharing_for_vault_rows(vraies)
+    except Exception:
+        logger.warning("instances: partage indisponible — `visible_to` omis (fail-open)",
+                       exc_info=True)
+        partages = None
     for inst, cle in zip(out, cles):
-        iid = ids.get(cle) if cle else None
-        if iid is not None:
-            inst["id"] = instance_refs.make_instance_ref(iid)
+        ligne = connues.get(cle) if cle else None
+        if ligne is None:
+            continue
+        inst["id"] = instance_refs.make_instance_ref(ligne["id"])
+        if partages is None:
+            continue
+        mode, down, side = partages.get(cle, ("open", [], []))
+        inst["visible_to"] = instance_visibility.derive(
+            cle[0], cle[1], cle[2], account=cle[3],
+            visibility=ligne["visibility"], share_mode=mode,
+            share_down=down, share_side=side)
 
 
 def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
@@ -498,9 +530,10 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
     # Préférence §C portée par le TRI : membre < groupe < org < plateforme.
     out.sort(key=lambda i: (i["connector"], _LEVEL_RANK[i["level"]],
                             i.get("account") or ""))
-    # L'identifiant stable, EN DERNIER : après les filtres, pour ne résoudre que ce
-    # qui sort, et parce que la clé privée doit disparaître de TOUT ce qui sort.
-    _stamp_instance_ids(out)
+    # L'identité (identifiant stable + audience dérivée), EN DERNIER : après les
+    # filtres, pour ne résoudre que ce qui sort, et parce que la clé privée doit
+    # disparaître de TOUT ce qui sort.
+    _stamp_instance_identity(out)
     return {"instances": out, "count": len(out)}
 
 
@@ -517,7 +550,10 @@ CAPABILITIES += [
             "Metadata only — the secret is never returned. `id` (`inst:<n>`) is the stable "
             "identifier of the instance and will replace `ref`; it is set as soon as the key is "
             "stored, but may still be missing if it could not be read, so keep using `ref` as "
-            "the pin handle for now. Both are opaque: pass them back as-is. Contrast with "
+            "the pin handle for now. Both are opaque: pass them back as-is. `visible_to` "
+            "lists the scopes that can DISCOVER each instance (`user:<sub>`, `group:<id>`, "
+            "`org:<id>`, or `platform` for a key open to everyone), derived from the access "
+            "chain — it describes the instance, it does not filter this list. Contrast with "
             "oto_identity (operable accounts of ONE connector) and oto_connector op=list "
             "(catalog of TYPES)."),
         rest=RestBinding("GET", "/api/me/connector-instances"),
