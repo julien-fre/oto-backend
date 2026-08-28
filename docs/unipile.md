@@ -1,16 +1,84 @@
-# Unipile — messagerie hébergée (WhatsApp/Telegram/Instagram/LinkedIn)
+# Unipile — le compte, et ses six connexions
 
 > Extrait du CLAUDE.md (refactor 2026-07-02) — domicile du détail ; le CLAUDE.md garde le résumé + pointeur.
 
+## Le split du 2026-08-28 — six connexions à côté du compte
+
+**`unipile` est le code de production, à une ligne près.** Il garde sa clé, son
+hosted-auth, son flux multi-canal, son label, ses modules. La seule chose que le
+split lui retire, ce sont ses six namespaces de canal — parce qu'un namespace
+n'appartient qu'à UN connecteur, et que chaque canal en devient un :
+
+| connecteur | namespace | canal | label | module `tools/` |
+|---|---|---|---|---|
+| `unipile` | `unipile` | — (le compte, et un flux « connecter un canal ») | Messagerie hébergée (Unipile) | `unipile` |
+| `linkedin_unipile` | `linkedin_unipile` | `LINKEDIN` | LinkedIn | `unipile` |
+| `whatsapp` | `whatsapp` | `WHATSAPP` | WhatsApp | `whatsapp` |
+| `telegram` | `telegram` | `TELEGRAM` | Telegram | `telegram` |
+| `instagram` | `instagram` | `INSTAGRAM` | Instagram | `instagram` |
+| `messenger` | `messenger` | `MESSENGER` | Messenger | `messenger` |
+| `twitter` | `twitter` | `TWITTER` | X (Twitter) | `twitter` |
+
+**Pourquoi.** Un connecteur est l'unité de gouvernance : activation, ACL d'org,
+sélection de membre, visibilité des tools, carte. Avec sept namespaces sous un seul
+nom, ces cinq choses étaient indivisibles — réserver WhatsApp à un département sans
+ouvrir LinkedIn était impossible, et installer WhatsApp montait 40 outils LinkedIn.
+
+**Les noms de tools ne bougent pas.** `linkedin_unipile_*`, `whatsapp_chat`… sont un
+CONTRAT consommé hors dépôt (procédures en base de plusieurs orgs, guides plateforme
+servis depuis la DB, métrage `tulina-usage`). Ce qui change, c'est la CARTE : elle
+porte le nom du réseau (« LinkedIn », « WhatsApp »), renvoie à sa marque, et ne
+nomme pas le fournisseur — ce qu'on connecte, c'est son compte LinkedIn. Unipile
+reste nommé sur la carte `unipile`, qui EST le compte.
+
+**La ligne de partage, et c'est la seule chose à retenir :**
+
+| la question | la réponse | le nom à employer |
+|---|---|---|
+| qui a le DROIT d'appeler ? | activation, ACL, sélection, visibilité, pin `_instance=` | le nom **NU** (`whatsapp`) |
+| avec quelle CLÉ ? | coffre, cascade, quota, clé plateforme, option | `providers.credential_provider(nom)` → `unipile` |
+
+Le seam est `Connector.credential_of` ; la normalisation vit **dans `walk_cascade` et
+nulle part ailleurs** — résolution, miroir de mode et statut le traversent tous les
+trois, donc ils ne peuvent pas répondre trois choses différentes. Normaliser dans
+chacun rouvrirait la divergence du 2026-07-07 (carte « clé d'org » verte + « Bloqué »
+rouge). Conséquences : un canal n'est pas dans `CREDENTIAL_PROVIDERS` (pose refusée,
+le refus NOMME le porteur), n'est pas `org_shareable`, n'a pas de `secret_fields`, et
+ne recopie **pas** `platform_key_open` (propriété de la clé — le recopier serait la
+configuration morte qui a produit la panne all-users de #245). `personal_cross_org`,
+lui, EST recopié : `call_axes` résout par namespace et c'est ce drapeau qui porte
+l'axe `_account=`, donc les comptes accordés (#55).
+
+**Deux façons de connecter un canal, à dessein** : le flux multi-canal du compte
+(code de production) et le flux sans paramètre de chaque carte de canal — le canal y
+est dérivé de `Connector.hosted_channel`, on ne peut pas démarrer une connexion
+WhatsApp depuis la carte Telegram.
+
+**Ce qui n'a PAS bougé** : les tables de comptes (`unipile_accounts`,
+`connector_account_grants`, `unipile_operated_accounts`, `unipile_pending`) étaient
+déjà keyées par CANAL (`provider` = `LINKEDIN`/`WHATSAPP`/…), jamais par connecteur.
+
+**Ce qui a dû migrer** (boot, idempotent, `db/_init.py` — trois fail-* qui penchent
+dans deux directions opposées et n'auraient rien levé) : `connector_availability`
+(pas de ligne ⟹ **OFF** : la messagerie s'éteindrait pour tous), `connector_acl` (pas
+de ligne ⟹ **OUVERT** : une restriction d'org s'évaporerait), `user_selected_connectors`
+(non-sélectionné ⟹ **MASQUÉ** : les membres perdraient la surface), plus
+`orgs.default_connectors`. Fan-out 1→6 en `ON CONFLICT DO NOTHING` ; `unipile`
+SURVIT (c'est un split, pas un renommage). Aucun des six noms n'a jamais été un
+connecteur, donc aucune ligne fossile à purger. Tests contre un vrai PostgreSQL :
+`tests/connectors/test_unipile_split_fanout.py`.
+
+---
 
 Tools `whatsapp_chat` / `telegram_chat` / `instagram_chat` / `messenger_chat` /
-`twitter_chat` (`op=list|read|send`) = messagerie **hébergée Unipile**, sous le connecteur `unipile`
-(`modules`/namespaces = `unipile, whatsapp, telegram, instagram`). Générés par la
-factory `tools/unipile.register_messaging_tools(mcp, channel)` — l'API `/chats`
-d'Unipile est channel-agnostic ; chaque tool résout l'`account_id` du canal pour le
-user (no-fallback, `tools/unipile.unipile_client(provider)`).
+`twitter_chat` (`op=list|read|send`) = messagerie **hébergée Unipile**, chacun sous
+**son** connecteur (cf. le tableau ci-dessus). Générés par la factory
+`tools/unipile.register_messaging_tools(mcp, channel)` — l'API `/chats` d'Unipile est
+channel-agnostic ; chaque tool résout l'`account_id` du canal pour le user
+(no-fallback, `tools/unipile.unipile_client(provider)`, qui résout le credential
+**sous le connecteur du canal** pour que l'ACL de ce canal morde).
 
-> **⚠️ La surface LinkedIn s'appelle `linkedin_unipile_*` depuis le 2026-08-10**
+> **⚠️ La surface LinkedIn s'appelle `linkedin_*` depuis le 2026-08-10**
 > (ADR 0010 §Amendement + ADR 0047 §Amendement, oto-backend#279) : **38 tools
 > `unipile_*` → 8 tools à `op=`** — `search`, `facets`, `profile`, `chat`, `post`,
 > `network`, `account`, `job`. Deux raisons cumulées : le namespace portait le
@@ -22,10 +90,10 @@ user (no-fallback, `tools/unipile.unipile_client(provider)`).
 >
 > Conséquence technique : `namespace_of` résout désormais au **plus long préfixe déclaré
 > au registre** (`tool_visibility.py`) et non plus au 1er token — sans quoi
-> `linkedin_unipile_*` tomberait sous le connecteur `linkedin` (AI Ark) : mauvais
+> `linkedin_*` tomberait sous le connecteur `linkedin` (AI Ark) : mauvais
 > credential, mauvaise activation, mauvaise sélection. Le changement est additif (aucun
 > autre namespace n'est multi-token) et verrouillé par
-> `tests/test_linkedin.py::test_linkedin_unipile_namespace_resolves_to_unipile`.
+> `tests/test_linkedin.py::test_linkedin_namespace_resolves_to_unipile`.
 >
 > **`unipile_connect_start` garde son nom** : il est multi-canal
 > (`channel=linkedin|whatsapp|…`), donc il n'appartient à aucune capacité. Sa place
@@ -305,6 +373,14 @@ comptabilité de miroir. Le défaut coupe donc le texte à **600 caractères** (
   c'est la conjonction extrait + projection qui fait tomber le coût par post.
 
 ## Lots 2-3 (10/08, #279) — les 5 autres canaux, et `linkedin` déposé au profit d'`aiark`
+
+> ⚠️ **Section HISTORIQUE — les noms de tools qu'elle donne sont périmés depuis le
+> 2026-08-28.** Elle décrit la période où l'on croyait que DEUX fournisseurs se
+> disputaient la capacité « LinkedIn », d'où les suffixes `linkedin_unipile_*` /
+> `linkedin_aiark_*`. La prémisse était fausse : AI Ark vend de la donnée, la
+> session EST LinkedIn. Les tools sont aujourd'hui `aiark_*` et `linkedin_*` (cf.
+> §Le split plus haut). Ce qui suit reste utile pour comprendre POURQUOI les
+> suffixes ont existé — pas pour savoir comment les tools s'appellent.
 
 > **Lots 2-3 (10/08, même issue)** : les 5 autres canaux passent à `{whatsapp,telegram,
 > instagram,messenger,twitter}_chat(op=list|read|send)` — 15 → 5, factory commune, le canal

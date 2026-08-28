@@ -73,3 +73,49 @@ def test_unipile_forbidden_short_circuits(monkeypatch):
         raise AssertionError("ne doit pas être appelé")
     monkeypatch.setattr(unipile, "status_for", boom)
     assert unipile._status_pending_action("u1", 1, None, {"mode": "forbidden"}) is None
+
+
+# ── hooks des cartes de CANAL (split du 2026-08-28) : « Connecte ton compte X » ──
+#
+# Le hook `unipile` ci-dessus reste (code de production) : il parle pour la carte du
+# COMPTE, et se tait dès qu'UN canal est lié. Les six cartes de canal ont chacune
+# leur hook, qui parle pour LEUR canal — c'est ce qui permet de dire à quelqu'un
+# qui a LinkedIn qu'il lui reste WhatsApp à brancher.
+
+def _st6(subscribed=True, linkedin=False, whatsapp=False):
+    def ch(connected):
+        return {"connected": connected, "account_id": None,
+                "account_name": None, "connected_at": None}
+    return {"subscribed": subscribed, "mode": "platform", "byo": False,
+            "channels": {"linkedin": ch(linkedin), "whatsapp": ch(whatsapp)}}
+
+
+def test_chaque_canal_a_son_hook_et_le_compte_garde_le_sien():
+    for canal in ("linkedin_unipile", "whatsapp", "telegram",
+                  "instagram", "messenger", "twitter"):
+        assert status_hints.has_hook(canal), canal
+    assert status_hints.has_hook("unipile")
+
+
+def test_un_canal_lie_ne_fait_pas_taire_les_autres(monkeypatch):
+    """Le hook global du compte se tait dès le PREMIER canal connecté ; celui
+    d'une carte de canal ne regarde que le sien."""
+    monkeypatch.setattr(unipile, "status_for",
+                        lambda sub, *, org, group: _st6(linkedin=True))
+    entry = {"mode": "platform"}
+    assert unipile._status_pending_action("u1", 1, None, entry) is None
+    assert unipile._channel_pending_action("linkedin", "LinkedIn")(
+        "u1", 1, None, entry) is None
+    assert unipile._channel_pending_action("whatsapp", "WhatsApp")(
+        "u1", 1, None, entry) == "Connecte ton compte WhatsApp"
+
+
+def test_canal_option_fermee_et_sans_cle(monkeypatch):
+    monkeypatch.setattr(unipile, "status_for",
+                        lambda sub, *, org, group: _st6(subscribed=False))
+    hook = unipile._channel_pending_action("whatsapp", "WhatsApp")
+    assert hook("u1", 1, None, {"mode": "platform"}) is None
+    def boom(sub, *, org, group):
+        raise AssertionError("ne doit pas être appelé")
+    monkeypatch.setattr(unipile, "status_for", boom)
+    assert hook("u1", 1, None, {"mode": "forbidden"}) is None

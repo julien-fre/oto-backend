@@ -48,9 +48,13 @@ def test_fields_only_for_secret_or_hosted_method():
                 f"{c.name}: fields hors method secret/hosted"
 
 
-def test_hosted_is_unipile_only():
+def test_hosted_le_compte_et_ses_six_canaux():
+    """`hosted` = « on connecte un COMPTE TIERS par un flux hébergé ».
+
+    Depuis le split du 2026-08-28 : le compte `unipile` (code de production, flux
+    multi-canal inchangé) ET ses six canaux, un flux hébergé par carte."""
     hosted = {c.name for c in _REGISTRY_LIST if c.auth_method == "hosted"}
-    assert hosted == {"unipile"}, hosted
+    assert hosted == {"unipile", "linkedin_unipile", "whatsapp", "telegram", "instagram", "messenger", "twitter"}, hosted
 
 
 def test_multi_account_providers():

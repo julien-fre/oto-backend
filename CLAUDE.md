@@ -316,14 +316,22 @@ qui forke un projet publié dans l'org active — **structure only, jamais de cr
 
 ## Messagerie & LinkedIn (Unipile)
 
-Tools `{whatsapp,telegram,instagram,messenger,twitter}_chat` + **`linkedin_unipile_*`** =
+**Sept connecteurs depuis le 2026-08-28** : `unipile` = le **compte** (code de production,
+à une ligne près : il perd ses six namespaces de canal), et six **connexions** — `linkedin_unipile`,
+`whatsapp`, `telegram`, `instagram`, `messenger`, `twitter` — une carte au nom du réseau, un gate
+et un flux hébergé chacune. **Les noms de tools ne bougent pas** (contrat hors dépôt). ⚠️ **Deux
+questions, deux noms** : ce qui GATE (activation, ACL, sélection, visibilité) prend le nom NU ; ce
+qui touche à la CLÉ prend `providers.credential_provider(nom)` → `unipile` (`Connector.credential_of`,
+normalisé **dans `walk_cascade` seulement**). Les confondre rejoue la divergence du 2026-07-07.
+
+Tools `{whatsapp,telegram,instagram,messenger,twitter}_chat` + **`linkedin_*`** =
 **Unipile hébergé** (factory channel-agnostic, `account_id` per-membre `(sub, org_id,
 provider)` ADR 0033, **no-fallback anti-usurpation**). Mode plateforme (clé partagée + grant +
 option comp), DSN par credential, sélecteur d'identité, comptes partagés autorisés (#55 —
 grants revalidés à chaque appel, **jamais de repli silencieux**).
 ⚠️ **`namespace_of` résout au plus long préfixe DÉCLARÉ au registre**, plus au 1er token —
-sans quoi `linkedin_unipile_*` tomberait sous le connecteur `linkedin` (mauvais
-credential/activation/sélection). Tripwire `tests/test_linkedin.py`.
+sans quoi `linkedin_unipile_*` (session opérée) et `linkedin_aiark_*` (donnée achetée, connecteur
+`aiark`, intouché) tomberaient sous un même gate. Tripwire `tests/test_linkedin.py`.
 **Détail : `docs/unipile.md`.**
 
 ## Monitoring des appels MCP
@@ -535,7 +543,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `search-and-kb.md` | `oto_search` : RRF lexical+sémantique, grains matchés, invariant « cherchable ⇔ lisible », épine, backlinks, propositions. |
 | `doctrines.md` | doctrine & skills d'org (`oto_procedure`, versionnée), forme d'une procédure (digest + schéma), agent readme, **renommer un outil = migrer les procédures** (refs `<tool:slug>` en DB, angle mort du CI). |
 | `onboarding-et-profil.md` | onboarding = un projet « Découverte », fiche « situation avec oto » (`me.profile`), `oto_whoami`. |
-| `unipile.md` | messagerie hébergée : mode plateforme, DSN, sélecteur d'identité, comptes partagés (#55), renommage `linkedin_unipile_*`. |
+| `unipile.md` | **le split compte/canaux (28/08)**, mode plateforme, DSN, sélecteur d'identité, comptes partagés (#55), historique des renommages LinkedIn. |
 | `browser-automation.md` | substrat Browserbase (Context/Live View/run_fetch), connecteurs brevo/crunchbase/pennylaneged, connecteur générique `browser`, LinkedIn isolation de session. |
 | `email.md` | envoi per-org par connecteur (scaleway BYO TEM + resend), différé/quiet hours, front qui héberge l'org. |
 | `federation.md` | fédération MCP : mount (per-user) vs remote/bridge (org). |
