@@ -176,23 +176,107 @@ c'est ce qui l'empêche de *ressusciter* une instance retirée à la main entre 
 ⚠️ Ne pas les « harmoniser » : leurs deux lectures sont opposées (même partage des rôles
 qu'entre `idx_grants_grantee` et `idx_grants_resource_grantee`).
 
-**Ce que le backfill de boot fait, et ne fait pas.** `_init.init_db` nomme chaque ligne du
-coffre (idempotent, en lots, journalisé, rejoué à chaque boot) — et **laisse `label` et
-`config` vides** : le nom affiché reste dérivé de `meta.label`, la config publique vit
-dans `meta`, et les `config_fields` packés vivent dans le ciphertext. Aucune ligne du
-coffre n'est touchée, aucun secret déchiffré. Un `entity_type` hors vocabulaire est
-compté et journalisé, jamais inventé — le CHECK de la table emporterait sinon la
-transaction de schéma entière, sur une base partagée avec la production.
+### L'instance naît à la POSE (pièce 2, 2026-08-28)
 
-⚠️ **L'instance naît au BOOT, pas à la pose.** C'est le prix assumé de ne toucher aucun
-chemin d'écriture du coffre : une clé posée depuis le dernier boot n'a pas encore
-d'identifiant, et le boot suivant la rattrape.
+Jusqu'au 27/08 l'instance naissait **au boot** — le prix assumé de ne toucher aucun chemin
+d'écriture du coffre, et une fenêtre pendant laquelle une clé fraîche n'avait pas
+d'identifiant. La pièce 2 ferme la fenêtre, et le fait **au fond**.
+
+**Un seul point d'accroche, parce qu'il n'y en a qu'un à avoir.** Le relevé est net : il
+existe **un seul `INSERT INTO connector_credentials`** et **un seul `DELETE`** dans tout
+le dépôt — `credentials_store._upsert` et `._delete`. Toutes les surfaces déclaratives
+(clé membre, clé d'org, clé d'équipe, clé plateforme, jeton d'API, session navigateur,
+flux OAuth google/zoho/salesforce/folk/atlassian) y aboutissent par `set_credential` /
+`clear_credential`. Accrocher la naissance aux surfaces aurait demandé une dizaine de
+crochets pour le même effet, avec une chance sur dix d'en oublier un.
+
+| Geste sur le coffre | Effet sur l'instance |
+|---|---|
+| poser une clé (n'importe quelle surface) | **naissance**, dans la même transaction |
+| roter le secret d'une clé existante | rien — c'est la même instance |
+| retirer une clé | **archivage** (`revoked_at`), jamais un `DELETE` |
+| reposer une clé retirée | une instance **NEUVE** (id neuf) ; l'archivée reste archivée |
+| renommer un compte (`rename_account`) | l'instance **SUIT**, elle garde son id |
+| supprimer une équipe · déconnecter tous les comptes Google · retirer une app d'éditeur | archivage de toutes les instances visées |
+| accorder/retirer un accès plateforme, suspendre, marquer un défaut, rafraîchir un jeton | rien — ces gestes n'écrivent que du partage ou du `meta` |
+| basculer un compte vers un autre annuaire (`migrate_sub`) | rien, **et c'est le point** (voir plus bas) |
+
+**Pourquoi le renommage a son geste à lui.** `rename_account` rechiffre — l'`account`
+entre dans l'AAD — donc il écrit une ligne neuve et supprime l'ancienne. Laissé aux seuls
+crochets, il tuerait l'instance et en ferait naître une autre : soit exactement ce qu'un
+ref composé fait déjà, et qu'on remplace. Le déplacement se fait donc **en premier**, dans
+la même transaction ; après lui les deux crochets sont des non-événements. Le geste rend
+un `RenameOutcome` et **ne tait jamais un archivage** : si une instance vivante occupait
+déjà l'arrivée (un écart), l'arrivée gagne, le départ s'archive, et l'objet rendu dit
+lequel au profit duquel.
+
+**Une bascule de compte ne détache pas l'instance de sa ligne.** Migrer un sub vers
+l'annuaire d'un tenant ne repointe **jamais** `connector_credentials.entity_id` (l'AAD :
+la ligne deviendrait indéchiffrable ; l'utilisateur repose ses clés). La ligne reste donc
+en place, vivante — et son instance aussi. Repointer l'instance seule la **détacherait**
+de sa ligne : un objet qui désigne une clé qui n'existe pas, strictement pire que rien.
+Le garde-fou d'inventaire (`tests/test_migrate_sub_inventory.py`) portait la consigne
+inverse jusqu'au 28/08 ; elle est corrigée sur place.
+
+**Ce que la pièce 2 NE fait pas.** `config` reste **inerte** — la config publique vit
+toujours dans `meta`, les `config_fields` packés vivent dans le ciphertext (les sortir
+suppose de déchiffrer, c'est un lot à part). `label` reste vide, le nom affiché reste
+dérivé. `visibility` et `parent_id` restent posés et inertes.
+
+**Ce que le filet de boot fait, et ne fait pas.** `_init.init_db` continue de nommer les
+lignes de coffre orphelines (idempotent, en lots, journalisé, rejoué à chaque boot) — mais
+c'est désormais un **filet**, plus le chemin de naissance : après ce lot il ne nomme plus
+rien (0 ligne, mesuré en preprod). Il laisse `label` et `config` vides. Aucune ligne du
+coffre n'est touchée, aucun secret déchiffré. Un `entity_type` hors vocabulaire est compté
+et journalisé, jamais inventé — le CHECK de la table emporterait sinon la transaction de
+schéma entière, sur une base partagée avec la production. ⚠️ **À la POSE, le même cas est
+un refus NOMMÉ** (`db.connector_instances.OwnerKindUnknown`) qui emporte la pose entière :
+nommer fait désormais partie de poser, et une clé que rien ne désigne n'a pas à naître.
+
+⚠️ **L'angle mort du filet, nommé plutôt que bouché.** Sa garde `NOT EXISTS` ne filtre pas
+`revoked_at` : il **refuse** de nommer une ligne de coffre qui porte déjà une instance
+archivée — c'est ce qui l'empêche de ressusciter une instance retirée à la main. Après la
+pièce 2 ce cas ne naît plus que d'un geste manuel en base (archiver une instance en
+laissant vivre sa clé). Ce n'est donc pas au filet de le rattraper, c'est à l'**invariant**
+de le montrer.
+
+### L'invariant, et la requête qui le dit
+
+> Chaque ligne de coffre a **exactement une** instance vivante, et chaque instance vivante
+> a **sa** ligne de coffre.
+
+Les deux sens comptent : une instance orpheline (« je désigne une clé qui n'existe pas »)
+est au moins aussi grave qu'une clé sans nom, et un binding ou une arête peuvent la
+nommer. La requête vit dans `tests/test_connector_instances_birth_live.py`
+(`INVARIANT_SQL`), où elle est exercée sur les deux écarts — et c'est la même qu'on joue
+en preprod après un merge :
+
+```sql
+SELECT COALESCE(c.entity_type, i.owner_type) AS owner_type,
+       COALESCE(c.entity_id,   i.owner_id)   AS owner_id,
+       COALESCE(c.connector,   i.connector)  AS connector,
+       COALESCE(c.account,     i.account)    AS account,
+       CASE WHEN i.id IS NULL THEN 'coffre sans instance'
+            ELSE 'instance sans ligne de coffre' END AS ecart
+  FROM connector_credentials c
+  FULL OUTER JOIN (SELECT * FROM connector_instances WHERE revoked_at IS NULL) i
+    ON  i.owner_type = c.entity_type AND i.owner_id = c.entity_id
+    AND i.connector  = c.connector   AND i.account  = c.account
+ WHERE c.entity_type IS NULL OR i.id IS NULL
+ ORDER BY 1, 2, 3, 4;
+```
+
+Zéro ligne = l'invariant tient. Les instances **archivées** sont hors périmètre des deux
+côtés : c'est leur raison d'être (une consommation ou un partage passés doivent rester
+relisibles).
 
 **Ce que rien ne fait encore.** Ni la cascade (`access.walk_cascade`), ni la résolution
-(`access.resolve_credential`), ni le coffre ne lisent cette table — c'est le lot L7.
-L'intention est gardée par `tests/test_connector_instances_l6.py` (sonde AST + allowlist
-de cinq fichiers), pas par de la vigilance. La `visibility` (R9) et `parent_id`
-(sous-instances) sont **posées et inertes** : leur dérivation est un lot.
+(`access.resolve_credential`) ne lisent cette table — c'est le lot L7. Le coffre, lui, y
+**écrit** depuis la pièce 2, et n'y lit jamais : l'intention est gardée à deux grains par
+`tests/test_connector_instances_l6.py` — une allowlist de **six** fichiers, et, à
+l'intérieur du coffre, un relevé AST par FONCTION qui n'admet que les cinq primitives
+d'écriture. Un lecteur de credential qui se mettrait à lire les instances ferait dépendre
+la désignation d'une clé d'autre chose que du quadruplet ; c'est le lot L7, avec sa revue.
 
 ### `inst:{id}` — la forme de fil
 
@@ -202,7 +286,10 @@ axe `_instance=`, `resource_id` des arêtes de `grants`) et rien ne les réécri
 `GET /api/me/connector-instances` sert donc `id` **en plus** de `ref` — résolu en **une**
 requête pour toute la liste, **fail-open** (l'identifiant n'est consommé par rien encore ;
 faire tomber le listing des clés de quelqu'un pour lui serait hors de proportion), donc
-**`id` peut être absent** et le client garde `ref`.
+**`id` peut être absent** et le client garde `ref`. ⚠️ Depuis la pièce 2 (28/08), une
+absence n'est plus jamais « la clé est trop fraîche » : elle ne peut venir que du
+fail-open. La phrase servie a été corrigée en conséquence — c'est le seul changement
+d'empreinte du lot.
 
 ⚠️ **`inst:` se PARSE mais ne se résout pas.** Les deux gardes de pose — l'axe
 `_instance=` (`access.rbac.guard_instance_access`) et le binding de projet — le refusent

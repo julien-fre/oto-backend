@@ -173,9 +173,9 @@ def delete_google_oauth(sub: str, org_id: int, account: Optional[str] = None) ->
     with _connect() as conn:
         with conn.transaction():
             if account is None:
-                conn.execute(
-                    "DELETE FROM connector_credentials "
-                    "WHERE entity_type=%s AND entity_id=%s AND connector=%s", (et, eid, GOOGLE))
+                # Par la primitive du coffre et non par un `DELETE` brut (L6 pièce 2) :
+                # sans elle, les instances des comptes déconnectés resteraient vivantes.
+                credentials_store.clear_connector_credentials(et, eid, GOOGLE, conn=conn)
                 return
             credentials_store.clear_credential(et, eid, GOOGLE, account=account, conn=conn)
             # promotion du défaut : lire le RESTANT dans CETTE transaction (voit le delete)

@@ -197,11 +197,19 @@ posée **à côté** du coffre (l'AAD lie le ciphertext aux 4 colonnes de SA lig
 = la PK du coffre, en FK **logique**. **Rien ne la lit encore côté résolution** — ni
 `walk_cascade`, ni `resolve_credential`, ni le coffre : c'est le lot L7, et un garde-fou AST
 (`tests/test_connector_instances_l6.py`) fait tomber le premier lecteur hors allowlist.
-⚠️ L'instance naît **au boot** (backfill idempotent d'`_init`), pas à la pose : `id` peut donc
-manquer sur une clé toute neuve, et **`ref` reste la référence à repasser** (`inst:` se parse
-mais se fait refuser nommément par les deux gardes de pose). `label`, `config`, `visibility`
-(R9) et `parent_id` (sous-instances) sont **posés et inertes** : leur domicile reste `meta`,
-leur dérivation est un lot. Détail : `docs/connector-vault.md`.
+⚠️ **L'instance naît à la POSE depuis le 28/08** (pièce 2) : elle est écrite par le coffre
+lui-même, dans la MÊME transaction que le secret, et le point d'accroche est l'**entonnoir
+unique d'écriture** (`credentials_store._upsert`/`._delete` — un seul `INSERT` et un seul
+`DELETE` sur `connector_credentials` dans tout le dépôt), jamais les surfaces. Retirer
+**archive** (`revoked_at`, jamais un `DELETE`) ; **renommer un compte fait SUIVRE l'instance,
+qui garde son id** ; une bascule de compte (`migrate_sub`) ne touche ni la ligne ni son
+instance (l'AAD — les deux restent appariées). Le backfill d'`_init` devient un **filet**
+(0 ligne attendue). ⚠️ Le coffre ÉCRIT l'instance, il ne la LIT jamais : deux garde-fous, une
+allowlist de fichiers **et** un relevé AST par fonction à l'intérieur du coffre. `ref` reste
+la référence à repasser (`inst:` se parse mais se fait refuser nommément par les deux gardes
+de pose) ; `label`, `config`, `visibility` (R9) et `parent_id` (sous-instances) restent
+**posés et inertes** (leur domicile reste `meta`). Invariant, sa requête et les cas limites :
+`docs/connector-vault.md`.
 ⚠️ **`access` est un PACKAGE depuis le 27/08** (7 modules par sujet, arbre ci-dessus) : on
 édite le module du sujet, jamais un fourre-tout. La surface reste **plate** — `access.<nom>`
 rend ce qu'il rendait, privés compris, et une écriture sur la façade

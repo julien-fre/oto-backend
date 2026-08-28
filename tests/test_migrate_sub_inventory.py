@@ -120,10 +120,14 @@ def test_migrate_sub_sub_bearing_columns_are_triaged():
         # peut donc pas être repointée tant que la ligne du coffre ne l'est pas, et
         # la ligne du coffre ne l'est jamais (l'AAD). Le compte migré repose ses clés,
         # le boot suivant nomme les lignes neuves.
-        # ⚠️ RÉSIDU NOMMÉ : l'instance de l'ancien sub reste VIVANTE alors que sa
-        # ligne de coffre est abandonnée. Personne ne la lit encore ; l'archiver est
-        # le travail du lot qui fait suivre l'instance aux déplacements du coffre
-        # (renommage de compte compris) — celui-là même qui commencera à la lire.
+        # ⚠️ CORRIGÉ le 2026-08-28 (L6 pièce 2), qui EST « le lot qui fait suivre
+        # l'instance aux déplacements du coffre » : il n'y a rien à archiver ici. La
+        # ligne du coffre n'est pas SUPPRIMÉE par une bascule de compte, seulement
+        # abandonnée en place — instance et ligne restent donc appariées, et
+        # l'invariant (chaque ligne vivante ↔ une instance vivante, dans les deux
+        # sens) tient. Archiver l'instance seule le CASSERAIT, à l'endroit précis où
+        # la version précédente de ce commentaire proposait de le faire. Le compte
+        # migré repose ses clés : ce sont des instances neuves, nommées à la pose.
         ("connector_instances", "owner_id"),
         # Repointée par l'étape 3 bis de migrate_sub, FILTRÉE sur grantee_kind='user'
         # (la colonne porte aussi des ids d'org) — pas un UPDATE nu d'inventaire.

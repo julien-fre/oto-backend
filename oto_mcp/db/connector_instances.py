@@ -23,6 +23,17 @@ sous-instance qui ne pose qu'une détermination).
 `resolve_credential` ne connaissent pas cette table (lot L7). La seule lecture
 servie aujourd'hui est la PROJECTION `GET /api/me/connector-instances`, qui n'en
 tire qu'un identifiant d'affichage.
+
+**Pièce 2 — l'instance naît à la POSE, plus au boot.** Les trois primitives
+d'écriture ci-dessous (`name_vault_row`, `revoke_instances_for_vault_rows`,
+`move_instance_to_account`) sont appelées par le coffre lui-même, DANS sa
+transaction : la ligne du secret et son instance commitent ou rollbackent ensemble.
+Elles ne sont appelées de nulle part ailleurs — le point d'accroche est l'entonnoir
+d'écriture du coffre (`credentials_store._upsert` / `._delete`), pas les surfaces :
+il n'existe qu'UN `INSERT` et qu'UN `DELETE` sur `connector_credentials` dans tout
+le dépôt, et toutes les surfaces déclaratives (clé membre, org, groupe, plateforme,
+session navigateur, OAuth) y aboutissent. `name_vault_rows_as_instances` reste, et
+devient un FILET : après ce lot il ne nomme plus rien (0 ligne, mesuré en preprod).
 """
 from __future__ import annotations
 
@@ -116,6 +127,120 @@ def connector_instance_counts(conn=None) -> dict[str, int]:
     return {r["owner_type"]: r["n"] for r in rows}
 
 
+# ── L'écriture : naître, mourir, suivre ────────────────────────────────────────
+#
+# Trois primitives, appelées par le COFFRE et par lui seul, dans SA transaction.
+# Aucune ne décide quoi que ce soit : elles enregistrent qu'une ligne de coffre vient
+# d'apparaître, de disparaître, ou de changer de compte. La politique (qui voit, qui
+# résout, qui partage) continue de vivre ailleurs.
+
+
+class OwnerKindUnknown(ValueError):
+    """Le type de propriétaire n'est pas au vocabulaire de la table.
+
+    Refus NOMMÉ, et pas un repli : nommer une ligne de coffre est désormais une partie
+    de sa pose, donc un type inconnu doit faire échouer la pose ENTIÈRE plutôt que de
+    laisser naître une clé que rien ne désigne. Sans cette classe, l'appelant se
+    prendrait une violation de CHECK PostgreSQL — vraie, mais illisible, et qui ne dit
+    pas quelle valeur corriger. Mesuré en prod avant la pièce 1 : **zéro** ligne de
+    coffre hors vocabulaire (133 lignes énumérées) ; ce refus garde le zéro."""
+
+
+def name_vault_row(conn, owner_type: str, owner_id: str, connector: str,
+                   account: str = "") -> None:
+    """Donne son instance à une ligne de coffre qu'on vient d'écrire. Idempotent.
+
+    **Une seule instruction**, et c'est ce qui la rend sûre : un `SELECT` suivi d'un
+    `INSERT` laisserait la fenêtre où deux poses concurrentes de la même clé créent
+    deux instances. L'inférence porte sur l'index unique PARTIEL — d'où le prédicat
+    répété dans le `ON CONFLICT` : sans lui PostgreSQL ne sait pas quel index viser et
+    refuse. Le partiel est voulu : une instance ARCHIVÉE n'interdit pas d'en poser une
+    neuve sur la même ligne (reposer une clé retirée doit donner un id NEUF, jamais
+    ressusciter l'histoire close d'un partage qu'on avait coupé).
+
+    Un aller-retour SQL de plus par pose de clé, dans la transaction existante — une
+    pose n'est pas un chemin chaud (la PROJECTION, elle, en lit des dizaines et reste
+    à une requête)."""
+    if owner_type not in OWNER_KINDS:
+        raise OwnerKindUnknown(
+            f"type de propriétaire d'instance inconnu : {owner_type!r} "
+            f"(attendu {list(OWNER_KINDS)}) — la ligne de coffre ne peut pas être "
+            "nommée, donc elle ne se pose pas.")
+    conn.execute(
+        "INSERT INTO connector_instances (connector, owner_type, owner_id, account) "
+        "VALUES (%s, %s, %s, %s) "
+        "ON CONFLICT (owner_type, owner_id, connector, account) "
+        "WHERE revoked_at IS NULL DO NOTHING",
+        (connector, owner_type, str(owner_id), account or ""))
+
+
+def revoke_instances_for_vault_rows(conn, owner_type: str, owner_id: str,
+                                    connector: "str | None" = None,
+                                    account: "str | None" = None) -> int:
+    """Archive les instances VIVANTES qui nomment ces lignes de coffre. Jamais un
+    DELETE (0053-D7 : un binding, une arête ou une consommation qui les désignent
+    doivent pouvoir les relire après le retrait).
+
+    Le filtre se resserre de gauche à droite : sans `connector`, toutes les instances
+    de l'entité (suppression d'un groupe) ; avec `connector` et sans `account`, tous
+    les comptes de ce connecteur (déconnexion de tous les comptes Google). C'est ce
+    qui permet aux trois retraits en MASSE du dépôt de passer par ici plutôt que par
+    un `DELETE` brut qui laisserait les instances vivantes derrière lui.
+
+    Inconditionnel et idempotent : appelé sur une ligne déjà absente, il ne fait rien
+    — et appelé sur une instance vivante sans ligne de coffre, il RÉPARE l'écart."""
+    sql = ("UPDATE connector_instances SET revoked_at = NOW() "
+           "WHERE owner_type = %s AND owner_id = %s AND revoked_at IS NULL")
+    params: list = [owner_type, str(owner_id)]
+    if connector is not None:
+        sql += " AND connector = %s"
+        params.append(connector)
+        if account is not None:
+            sql += " AND account = %s"
+            params.append(account or "")
+    return conn.execute(sql, tuple(params)).rowcount or 0
+
+
+def move_instance_to_account(conn, owner_type: str, owner_id: str, connector: str,
+                             old_account: str, new_account: str) -> "tuple[bool, int | None, int | None]":
+    """Fait SUIVRE l'instance à un renommage de compte — **son id ne change pas**.
+
+    C'est la raison d'être du lot exercée sur le seul geste qui DÉPLACE une ligne de
+    coffre : `rename_account` rechiffre (l'`account` entre dans l'AAD), donc il écrit
+    une ligne neuve et supprime l'ancienne. Laissé aux seuls crochets de pose et de
+    retrait, il tuerait l'instance et en ferait naître une autre — soit exactement le
+    ref composé qu'on remplace. D'où l'appel EXPLICITE, **avant** l'écriture du
+    coffre : après lui, le crochet de pose trouve l'instance déjà vivante à l'arrivée
+    (il ne fait rien) et le crochet de retrait n'en trouve plus au départ (il ne fait
+    rien non plus).
+
+    Rend `(déplacée, id_archivé, id_conservé)`. Le cas où une instance vivante existe
+    DÉJÀ à l'arrivée est une réparation d'écart (une instance sans sa ligne de
+    coffre) : l'arrivée gagne, le départ s'archive — et le geste le DIT, il ne
+    l'avale pas."""
+    arrivee = instance_id_for_vault_row(owner_type, owner_id, connector,
+                                        new_account, conn=conn)
+    depart = instance_id_for_vault_row(owner_type, owner_id, connector,
+                                       old_account, conn=conn)
+    if arrivee is not None:
+        if depart is not None and depart != arrivee:
+            conn.execute("UPDATE connector_instances SET revoked_at = NOW() "
+                         "WHERE id = %s", (depart,))
+            logger.warning(
+                "L6 instances: renommage %s/%s %s '%s' -> '%s' — instance %d ARCHIVÉE "
+                "au profit de %d, qui existait déjà (écart réparé : une instance "
+                "vivante sans sa ligne de coffre)",
+                owner_type, owner_id, connector, old_account, new_account,
+                depart, arrivee)
+            return (False, depart, arrivee)
+        return (False, None, arrivee)
+    if depart is None:
+        return (False, None, None)
+    conn.execute("UPDATE connector_instances SET account = %s WHERE id = %s",
+                 (new_account or "", depart))
+    return (True, None, depart)
+
+
 # ── Le backfill de boot ────────────────────────────────────────────────────────
 
 # Taille de lot du backfill. Le volume réel est de l'ordre de la centaine de lignes
@@ -160,9 +285,23 @@ def name_vault_rows_as_instances(conn, batch: int = BACKFILL_BATCH) -> int:
     second domicile pour une donnée que rien ne lit encore. Aucune ligne du coffre
     n'est lue en écriture, aucun secret n'est déchiffré, l'AAD ne bouge pas.
 
-    Tourne à CHAQUE boot (pas de marqueur « déjà fait ») et c'est délibéré : une clé
-    posée entre deux boots est nommée au suivant, sans qu'aucun chemin d'écriture du
-    coffre n'ait à connaître cette table. Rend le nombre d'instances créées."""
+    Tourne à CHAQUE boot (pas de marqueur « déjà fait ») et c'est délibéré. ⚠️ **Depuis
+    la pièce 2, c'est un FILET, plus le chemin de naissance** : la pose crée l'instance
+    dans sa propre transaction, donc un boot ne trouve plus rien à nommer (0 ligne,
+    mesuré en preprod). On le garde pour ce qu'un filet fait : rattraper les lignes
+    posées avant le lot, et celles qu'un chemin d'écriture futur poserait sans passer
+    par l'entonnoir.
+
+    ⚠️ **Son angle mort, nommé plutôt que bouché** : la garde `NOT EXISTS` ne filtre pas
+    `revoked_at`, donc le filet REFUSE de nommer une ligne de coffre qui porte déjà une
+    instance ARCHIVÉE — c'est ce qui l'empêche de ressusciter une instance retirée à la
+    main entre deux boots. Après la pièce 2, ce cas ne naît plus que d'un geste manuel
+    en base (archiver une instance en laissant vivre sa clé). Ce n'est donc pas au
+    filet de le rattraper : c'est à la requête d'INVARIANT de le montrer — elle vit
+    dans `tests/test_connector_instances_birth_live.py` (`INVARIANT_SQL`) et dit les
+    deux sens en un passage.
+
+    Rend le nombre d'instances créées."""
     total = 0
     while True:
         cur = conn.execute(_BACKFILL_SQL, (batch,))

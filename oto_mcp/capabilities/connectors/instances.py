@@ -13,6 +13,9 @@ lecture du coffre, zéro déchiffrement, zéro écriture : le seul ajout est **u
 qui traduit les quadruplets de coffre en identifiants, fail-open. Rien d'autre ne lit
 encore ces instances (ni la cascade, ni la résolution) ; `ref` reste la référence qu'on
 repasse (les gardes de pose refusent `inst:` nommément, cf. `access.rbac`).
+PIÈCE 2 (28/08) : l'instance naît désormais à la POSE, dans la transaction du coffre —
+cette projection n'a pas bougé d'un octet, mais son `id` ne manque plus par fraîcheur de
+la clé, seulement par fail-open.
 
 EXCLUSIONS (assumées, documentées) :
 - résidus `entity_type='user'` (mounts oauth fédérés atlassian/folkmcp)
@@ -93,11 +96,13 @@ class ConnectorInstance(BaseModel):
     # ou du label d'une clé plateforme (le ref composé projette la clé du coffre, qui
     # DÉPLACE la ligne au renommage), désigner une sous-instance, désigner une
     # instance sans secret.
-    # ⚠️ **Peut être absent**, et le client doit le supporter : l'instance est nommée
-    # au BOOT (backfill de `_init`), donc une clé posée depuis le dernier boot n'a pas
-    # encore d'identifiant. Tant que la bascule n'est pas faite, `ref` reste la
-    # référence à repasser (`_instance=`, bindings) — `id` est là pour être stocké et
-    # préparé, pas encore pour être épinglé (les gardes de pose le refusent nommément).
+    # ⚠️ **Peut être absent**, et le client doit le supporter — mais plus pour la raison
+    # d'hier : depuis la pièce 2 (28/08) l'instance naît à la POSE, dans la transaction
+    # du coffre, donc une clé fraîche a son identifiant. La seule absence restante est
+    # le fail-open de `_stamp_instance_ids` (la requête n'a pas répondu). Tant que la
+    # bascule n'est pas faite, `ref` reste la référence à repasser (`_instance=`,
+    # bindings) — `id` est là pour être stocké et préparé, pas encore pour être épinglé
+    # (les gardes de pose le refusent nommément).
     # Opaque comme `ref` : à repasser tel quel, jamais à parser.
     id: Optional[str] = None
     # Handle opaque et STABLE, cible d'un pin `_instance=`. Ne pas le parser.
@@ -510,10 +515,11 @@ CAPABILITIES += [
             "List the connector INSTANCES (connector x auth/config) visible to you in the active "
             "org, by proximity: yours (member), your groups', the org's, then platform grants. "
             "Metadata only — the secret is never returned. `id` (`inst:<n>`) is the stable "
-            "identifier of the instance and will replace `ref`; it may be missing on a key set "
-            "since the last boot, so keep using `ref` as the pin handle for now. Both are "
-            "opaque: pass them back as-is. Contrast with oto_identity (operable accounts of ONE "
-            "connector) and oto_connector op=list (catalog of TYPES)."),
+            "identifier of the instance and will replace `ref`; it is set as soon as the key is "
+            "stored, but may still be missing if it could not be read, so keep using `ref` as "
+            "the pin handle for now. Both are opaque: pass them back as-is. Contrast with "
+            "oto_identity (operable accounts of ONE connector) and oto_connector op=list "
+            "(catalog of TYPES)."),
         rest=RestBinding("GET", "/api/me/connector-instances"),
     ),
 ]
