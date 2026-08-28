@@ -185,6 +185,55 @@ def _init_db_once() -> None:
                             ("vat_scheme", "TEXT")):
             conn.execute(f"ALTER TABLE billing_payments "
                          f"ADD COLUMN IF NOT EXISTS {_col} {_type}")
+        # #487 : `legal_acceptances` devient un HISTORIQUE — une ligne par acceptation,
+        # plus d'upsert qui écrase. Deux mouvements, et l'ordre compte.
+        #
+        # 1. Le one-shot, gardé sur l'ABSENCE de la colonne `id` (donc joué une seule
+        #    fois, et jamais sur une install vierge où `BIGSERIAL` l'a déjà créée) :
+        #    id surrogate backfillé par séquence, puis bascule de la PK. Les lignes
+        #    existantes RESTENT — elles deviennent simplement la première (et pour
+        #    l'instant la seule) acceptation de leur doc, avec `context`/`ip`/
+        #    `user_agent`/`org_id` à NULL : on ne sait pas d'où elles viennent, et le
+        #    deviner serait une reconstitution.
+        #
+        # ⚠️ **Ce lot est le SEUL DDL destructif du dépôt sur une table vivante**
+        #    (`docs/live-migrations.md` : prod et preprod partagent la base). Retirer
+        #    la PK `(sub, doc_slug)` casse l'arbitre `ON CONFLICT (sub, doc_slug)` du
+        #    code PROD tant qu'il n'a pas été promu — `POST /api/me/legal/accept` y
+        #    répondrait 500. Il n'y a pas de découpe possible : un historique et une
+        #    unicité `(sub, doc_slug)` ne peuvent pas coexister. La fenêtre se ferme
+        #    donc par le SÉQUENCEMENT — ce lot part en preprod et en prod d'un seul
+        #    mouvement — pas par un lot intermédiaire.
+        _legal_a_un_id = conn.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'legal_acceptances' AND column_name = 'id'"
+        ).fetchone()
+        if not _legal_a_un_id:
+            conn.execute("ALTER TABLE legal_acceptances ADD COLUMN id BIGINT")
+            conn.execute("CREATE SEQUENCE IF NOT EXISTS legal_acceptances_id_seq "
+                         "OWNED BY legal_acceptances.id")
+            conn.execute("UPDATE legal_acceptances SET id = nextval('legal_acceptances_id_seq') "
+                         "WHERE id IS NULL")
+            conn.execute("ALTER TABLE legal_acceptances ALTER COLUMN id "
+                         "SET DEFAULT nextval('legal_acceptances_id_seq')")
+            conn.execute("ALTER TABLE legal_acceptances ALTER COLUMN id SET NOT NULL")
+            conn.execute("ALTER TABLE legal_acceptances "
+                         "DROP CONSTRAINT IF EXISTS legal_acceptances_pkey")
+            conn.execute("ALTER TABLE legal_acceptances ADD CONSTRAINT "
+                         "legal_acceptances_event_pkey PRIMARY KEY (id)")
+        # 2. Les colonnes de trace, additives et NULLABLES (l'existant ne bouge pas) :
+        #    un consentement n'est opposable que daté ET situé.
+        for _col, _type in (("context", "TEXT"), ("org_id", "BIGINT"),
+                            ("ip", "TEXT"), ("user_agent", "TEXT")):
+            conn.execute(f"ALTER TABLE legal_acceptances "
+                         f"ADD COLUMN IF NOT EXISTS {_col} {_type}")
+        # L'index sert la SEULE lecture du gate (`DISTINCT ON (doc_slug) … ORDER BY
+        # doc_slug, accepted_at DESC`) : sans lui, chaque passage de LegalGate trie
+        # tout l'historique du sub. Il vit ICI et pas dans `_schema.py` — la règle du
+        # `CREATE INDEX` d'une colonne ajoutée par migration (`docs/live-migrations.md`) :
+        # posé après l'ALTER, il couvre aussi l'install vierge.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_legal_acceptances_dernier "
+                     "ON legal_acceptances (sub, doc_slug, accepted_at DESC, id DESC)")
         # ADR 0032 §2 : le lien projet→entité porte un `role` (pourquoi cette entité est ici).
         conn.execute("ALTER TABLE project_links ADD COLUMN IF NOT EXISTS role TEXT")
         # ADR 0032 §4 (B2) : surcharge contextuelle préfaite du lien (connecteur → identité/instructions).

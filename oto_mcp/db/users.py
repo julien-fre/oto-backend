@@ -174,10 +174,8 @@ _PK_SUB_TABLES = (
     ("connector_account_grants", "grantee_sub", ("owner_sub", "provider")),
     # Dossier du 23/08 (les colonnes à sub que le merge ABANDONNAIT — cf. le tripwire
     # `test_migrate_sub_sub_bearing_columns_are_triaged`) :
-    # - l'acceptation CGU suit la personne : sans repointage, le compte fusionné se
-    #   voyait redemander des CGU déjà acceptées. Les deux comptes ont accepté ⟹ en
-    #   doublon on garde la ligne du canonique (l'acceptation la plus fraîche).
-    ("legal_acceptances", "sub", ("doc_slug",)),
+    # (`legal_acceptances` était ici jusqu'au 28/08 ; elle est passée en simple
+    #  repointage — voir `_SUB_COLUMNS`.)
     # - la réservation de connecteur (gouvernance d'équipe/org) visait un identifiant
     #   mort : le membre re-fusionné perdait l'accès réservé. `principal_id` mélange
     #   group_id numérique et sub — un sub Logto n'est jamais un entier, l'UPDATE
@@ -225,6 +223,15 @@ _SUB_COLUMNS = [
     # et activité perdus de vue, déclencheurs orphelins) :
     ("runs", "sub"), ("project_activity", "sub"), ("runner_triggers", "sub"),
     ("tool_calls", "effective_sub"),
+    # L'acceptation des documents légaux suit la personne : sans repointage, le
+    # compte fusionné se voyait redemander des CGU déjà acceptées. Elle était traitée
+    # comme une clé (déduplication sur `(sub, doc_slug)`) tant que la table portait
+    # UNE ligne par doc ; depuis #487 c'est un HISTORIQUE, sans plus aucune unicité —
+    # un UPDATE nu est donc à la fois suffisant et le seul geste correct : la
+    # déduplication SUPPRIMERAIT des preuves de consentement pour cause de doublon,
+    # alors que deux acceptations du même document par deux comptes de la même
+    # personne sont deux faits distincts, tous deux vrais.
+    ("legal_acceptances", "sub"),
     # attribution (soft)
     ("projects", "created_by"),
     ("orgs", "created_by"),
