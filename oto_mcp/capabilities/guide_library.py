@@ -133,12 +133,12 @@ class LibraryList(BaseModel):
 
 class LibraryEntry(BaseModel):
     """Une entrée COMPLÈTE, corps inclus. ⚠️ Rendue à plat, sans enveloppe : les
-    champs sont à la racine de la réponse (pas de clé `doctrine`)."""
+    champs sont à la racine de la réponse (pas de clé d'enveloppe)."""
     id: int = Field(description="Identifiant de l'entrée publiée.")
     slug: str = Field(description="Slug public.")
     title: str = Field(description="Titre affiché ('' si absent).")
     description: str = Field(description="Résumé ('' si absent).")
-    body_md: str = Field(description="Le corps markdown intégral de la doctrine — la "
+    body_md: str = Field(description="Le corps markdown intégral du guide — la "
                                      "matière à lire avant de forker. Jamais vide : une "
                                      "publication au corps vide est refusée.")
     slots: list = Field(default_factory=list,
@@ -180,7 +180,7 @@ class PublishResult(BaseModel):
     donc pas toujours une création. Le slug d'une entrée appartenant à une AUTRE
     org (ou à la plateforme) est refusé, jamais repris : 409 `slug_taken`."""
     published: bool = Field(description="Toujours `true` : un échec ne rend pas "
-                                        "`published:false`, il lève (404 doctrine "
+                                        "`published:false`, il lève (404 guide "
                                         "absente, 403 sans org_admin, 409 nom déjà "
                                         "pris par une autre org). Ne pas le tester "
                                         "comme un booléen d'issue.")
@@ -202,7 +202,7 @@ class PublishResult(BaseModel):
 
 
 class ForkResult(BaseModel):
-    """Accusé de fork : la doctrine publique a été COPIÉE dans l'org active comme
+    """Accusé de fork : le guide public a été COPIÉ dans l'org active comme
     nouveau skill versionné. Copie ponctuelle, sans lien vivant — republier la
     source ne mettra jamais à jour le fork."""
     forked: bool = Field(description="Toujours `true` (un échec lève : 404 entrée "
@@ -293,7 +293,7 @@ def _get(ctx: ResolvedCtx, inp: LibraryGetInput) -> dict:
     # publie pas (reste un skill d'org privé). Cf. CLAUDE.md §Bibliothèque.
     entry = org_store.get_library_entry(slug=inp.slug, include_unlisted=True)
     if not entry:
-        raise AuthzDenied(404, "unknown_entry", f"Doctrine publique `{inp.slug}` inconnue.")
+        raise AuthzDenied(404, "unknown_entry", f"Guide public `{inp.slug}` inconnu.")
     return entry
 
 
@@ -336,7 +336,7 @@ def _fork(ctx: ResolvedCtx, inp: ForkInput) -> dict:
     org_id = _require_org_admin(ctx, "Forker")
     entry = org_store.get_library_entry(slug=inp.slug, include_unlisted=True)
     if not entry:
-        raise AuthzDenied(404, "unknown_entry", f"Doctrine publique `{inp.slug}` inconnue.")
+        raise AuthzDenied(404, "unknown_entry", f"Guide public `{inp.slug}` inconnu.")
     res = org_store.fork_into_org(entry_id=entry["id"], org_id=org_id,
                                   new_slug=inp.new_slug, set_by=ctx.sub)
     # Le fork est une écriture de procédure comme une autre : l'org repart avec un
@@ -360,7 +360,7 @@ def _unpublish(ctx: ResolvedCtx, inp: UnpublishInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="library.list", handler=_list, Input=LibraryListInput, authz=SUB_ONLY,
-        description="Browse/search the PUBLIC doctrine library (a marketplace of skills/"
+        description="Browse/search the PUBLIC guide library (a marketplace of skills/"
                     "templates). Each entry has an author (Otomata or a private creator). "
                     "Filter by query / category / author_kind (otomata|org). Returns metadata "
                     "+ snippet, not the full body — use oto_procedure op=library_get for that.",
@@ -369,7 +369,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="library.get", handler=_get, Input=LibraryGetInput, authz=SUB_ONLY,
-        description="Read one public-library doctrine in full (markdown body) by its public "
+        description="Read one public-library guide in full (markdown body) by its public "
                     "slug — preview before forking it into your org with oto_procedure op=fork. "
                     "Also serves `unlisted` entries by exact slug (unlisted = shared by link, "
                     "never in the catalog), not a private-org secret.",
@@ -378,7 +378,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="library.publish", handler=_publish, Input=PublishInput, authz=ORG_MEMBER,
-        description="Publish one of your org's named doctrines (skills) to the PUBLIC library "
+        description="Publish one of your org's named guides (skills) to the PUBLIC library "
                     "so others can find and fork it. Requires org_admin of your active org. "
                     "slug = the org skill to publish ; visibility = public | unlisted. "
                     "Public names are unique and OWNED: re-publishing your own entry bumps its "
@@ -389,7 +389,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="library.fork", handler=_fork, Input=ForkInput, authz=ORG_MEMBER,
-        description="Fork (copy) a public-library doctrine into your active org as a new "
+        description="Fork (copy) a public-library guide into your active org as a new "
                     "versioned skill. Requires org_admin of your active org. slug = the public "
                     "entry ; new_slug optional (defaults to source slug, de-duplicated).",
         Output=ForkResult,
@@ -397,7 +397,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="library.unpublish", handler=_unpublish, Input=UnpublishInput, authz=SUB_ONLY,
-        description="Remove a doctrine you published from the public library (author org_admin "
+        description="Remove a guide you published from the public library (author org_admin "
                     "or platform admin). id = the library entry id.",
         Output=UnpublishResult,
         rest=RestBinding("DELETE", "/api/me/guide-library/{id}"),

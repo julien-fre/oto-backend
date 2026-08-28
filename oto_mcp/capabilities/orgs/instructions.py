@@ -10,7 +10,7 @@ Deux paliers, par combinateur d'autz (pas de branche `org_id` à la main) :
   outil console `oto_procedure` (op=get/list/set/delete, ADR 0047 — ex 4 tools par-verbe).
 - **admin** : org ciblée par `org_id` (cross-org = platform admin via l'escalade
   `roles`). Lecture = `ORG_MEMBER_OF` ; écriture = `ORG_ADMIN_OF`. Chemins
-  `/api/admin/orgs/{id}/*`, outils `oto_admin_*_doctrine`.
+  `/api/admin/orgs/{id}/*`, outil `oto_admin_guide`.
 
 Les handlers lisent `ctx.org_id` (injecté par l'autz) → **partagés** entre les
 deux paliers. Le guide de **groupe** est lisible en mode membre
@@ -269,7 +269,7 @@ class InstructionArchived(BaseModel):
     """Archivage d'une procédure — l'alternative NON destructive à la suppression.
     La ligne et TOUT son historique de révisions restent en base ; ce qui change,
     c'est qu'elle disparaît de tous les listings, y compris ceux que l'IA lit
-    (l'index de skills derrière `oto_procedure`, `op=list`, l'index de doctrine),
+    (l'index de skills derrière `oto_procedure`, `op=list`, l'index de guides),
     donc l'agent cesse de la proposer et de la suivre. `archived` ne vaut jamais
     `false` (un slug absent lève un 404) : c'est une constante d'écho.
 
@@ -688,12 +688,12 @@ CAPABILITIES += [
     Capability(
         key="org.guide.get", handler=_get_guide, Input=GuideGetInput,
         authz=SUB_ONLY, Output=GuideView,
-        description=("Operational doctrine of your active org. The base doctrine is now "
+        description=("Operational guide of your active org. The base guide is now "
                      "INJECTED into your session instructions at connect — call this with "
                      "`slug` to load ONE named skill's full markdown (list skills with "
                      "oto_procedure op=list). No-arg returns base + index, e.g. to refresh "
                      "after switching org with oto_use_org. `scope=group` targets your "
-                     "active department. `doctrine_id` loads a doctrine by its STABLE id "
+                     "active department. `guide_id` loads a guide by its STABLE id "
                      "(project procedure links) — including one SHARED to you/your org "
                      "by another org (delivered project)."),
         # Face REST par ID stable : résolution des liens `procedure` d'un projet côté
@@ -724,8 +724,8 @@ CAPABILITIES += [
     Capability(
         key="org.instruction.set", handler=_set_instruction, Input=InstrSetInput,
         authz=ORG_ADMIN_OPT("org"), Output=InstructionWritten,
-        description=("Write your org's doctrine (org_admin). Each write bumps the version "
-                     "and archives a snapshot. slug omitted = base doctrine; given = a named "
+        description=("Write your org's guide (org_admin). Each write bumps the version "
+                     "and archives a snapshot. slug omitted = base guide; given = a named "
                      "skill. `from_version` restores a past version as a new one (revert). "
                      "`slots` = the procedure's REQUIRED ENTITIES [{name, type: tableau|"
                      "connecteur|base, description?, connector?}] — reference them BY NAME "
@@ -747,7 +747,7 @@ CAPABILITIES += [
     Capability(
         key="org.instruction.delete", handler=_delete_instruction, Input=GuideDeleteInput,
         authz=ORG_ADMIN_OPT("org"), Output=InstructionDeleted,
-        description=("Delete a doctrine and its history (org_admin). Pass the EXACT slug. "
+        description=("Delete a guide and its history (org_admin). Pass the EXACT slug. "
                      "`org` pins to an explicit org id (default = active org; must be "
                      "org_admin of it)."),
         rest=RestBinding("DELETE", "/api/me/instructions/{slug}"),
@@ -755,7 +755,7 @@ CAPABILITIES += [
     Capability(
         key="org.instruction.archive", handler=_archive_instruction, Input=GuideDeleteInput,
         authz=ORG_ADMIN_OPT("org"), Output=InstructionArchived,
-        description=("Retire a doctrine WITHOUT destroying it (org_admin) — prefer this "
+        description=("Retire a guide WITHOUT destroying it (org_admin) — prefer this "
                      "to `delete` whenever the point is 'stop using it', not 'erase it'. "
                      "The procedure and its whole version history stay in place; it simply "
                      "leaves every listing, including the skills index you read, so it "
@@ -772,25 +772,25 @@ CAPABILITIES += [
     Capability(
         key="org.guide.admin_get", handler=_get_guide, Input=AdminGuideGetInput,
         authz=ORG_MEMBER_OF("org_id"),
-        description="[ADMIN] Read another org's doctrine by id (base+index, or one skill).",
+        description="[ADMIN] Read another org's guide by id (base+index, or one skill).",
         rest=RestBinding("GET", "/api/admin/orgs/{id}/instructions/{slug}", _OID_SLUG),
     ),
     Capability(
         key="org.guide.admin_list", handler=_list_guides, Input=AdminGuideListInput,
         authz=ORG_MEMBER_OF("org_id"),
-        description="[ADMIN] List another org's named doctrines by id (incl. base doctrine).",
+        description="[ADMIN] List another org's named guides by id (incl. base guide).",
         rest=RestBinding("GET", "/api/admin/orgs/{id}/instructions", _OID),
     ),
     Capability(
         key="org.instruction.admin_set", handler=_set_instruction, Input=AdminInstrSetInput,
         authz=ORG_ADMIN_OF("org_id"),
-        description="[ADMIN] Write another org's doctrine by id (cross-org = platform admin).",
+        description="[ADMIN] Write another org's guide by id (cross-org = platform admin).",
         rest=RestBinding("PUT", "/api/admin/orgs/{id}/instructions/{slug}", _OID_SLUG),
     ),
     Capability(
         key="org.instruction.admin_delete", handler=_delete_instruction, Input=AdminSlugInput,
         authz=ORG_ADMIN_OF("org_id"),
-        description="[ADMIN] Delete another org's doctrine by id and its history.",
+        description="[ADMIN] Delete another org's guide by id and its history.",
         rest=RestBinding("DELETE", "/api/admin/orgs/{id}/instructions/{slug}", _OID_SLUG),
     ),
 ]

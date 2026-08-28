@@ -103,7 +103,7 @@ def register(mcp: FastMCP) -> None:
         résolus côté serveur. Triés par date d'échec décroissante.
 
         ⚠️ Faits seulement, pas d'action décidée : « relancer vs refaire un
-        mandat » reste un jugement métier (agent/doctrine). Et tant que
+        mandat » reste un jugement métier (agent/guide). Et tant que
         will_attempt_retry est True, ne rien émettre — GoCardless va retenter.
 
         Args:

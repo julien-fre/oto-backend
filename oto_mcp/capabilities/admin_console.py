@@ -350,9 +350,9 @@ CAPABILITIES += [
         key="admin.guide", handler=_guide, Input=GuideAdminInput,
         authz=ADMIN_BY_OP({"get": ORG_MEMBER_OF("org_id"), "list": ORG_MEMBER_OF("org_id"),
                            "set": ORG_ADMIN_OF("org_id"), "delete": ORG_ADMIN_OF("org_id")}),
-        description=("[ADMIN] Another org's doctrine, by `org_id` (cross-org = platform "
+        description=("[ADMIN] Another org's guide, by `org_id` (cross-org = platform "
                      "admin). op=get (`slug` = one skill, none = base+index; `scope=group`) "
-                     "/ list (named doctrines incl. base) / set (write: omit slug = base; "
+                     "/ list (named guides incl. base) / set (write: omit slug = base; "
                      "`from_version` restores; `slots` = required entities ADR 0035) / "
                      "delete (exact `slug`, drops history)."),
         mcp="oto_admin_guide",

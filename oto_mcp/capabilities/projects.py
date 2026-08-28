@@ -1154,7 +1154,7 @@ CAPABILITIES += [
             "<tool:> refs + tools actually used by the project's runs, plus connectors "
             "from links & declared slots) — never retype a tool list: derive, then curate. "
             "runs (optional target_ref = a linked procedure's stable id) = the project's "
-            "recent runs (label/doctrine/outcome), filtered to that procedure when given. "
+            "recent runs (label/guide/outcome), filtered to that procedure when given. "
             "OMIT project_id on op=runs and you get YOUR OWN still-open runs instead, "
             "each with its `run_id` — that is how you find a run you opened and lost "
             "the id of, so you can finally close it with run_finish. Across every org, "

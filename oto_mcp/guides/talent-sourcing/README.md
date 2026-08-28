@@ -1,11 +1,12 @@
 # Guides partagés — jeu « talent sourcing » (bibliothèque publique)
 
 Guides **versionnés au repo** publiés dans la bibliothèque publique (table
-`doctrine_library`, nom SERVI — cf. #519 lot B) sous l'auteur **Otomata** : un
+vue `guide_library`) sous l'auteur **Otomata** : un
 catalogue de skills que n'importe quelle org peut **forker**
 (`oto_procedure(op='fork')`) dans son espace.
 
-Diffère de `scripts/seed_doctrine_library.py` (qui publie les skills d'une org
+Diffère de `scripts/seed_doctrine_library.py` (le nom du SCRIPT, inchangé ; il
+publie les skills d'une org
 existante) : ici les guides sont des fichiers markdown, pas besoin d'org source.
 
 ## ⚠️ Deux foyers sous un même toit, et ils ne se sèment PAS pareil

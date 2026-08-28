@@ -260,7 +260,7 @@ class GroupUpdated(BaseModel):
 
 class GroupDeleted(BaseModel):
     """Suppression d'une équipe. **Irréversible et large** : partent avec elle les
-    appartenances, la doctrine d'équipe et son historique de versions (cascade FK) et
+    appartenances, le guide d'équipe et son historique de versions (cascade FK) et
     **les credentials partagés de l'équipe** (purgés explicitement du coffre, hors FK).
     La réponse ne dit rien de ce qui a été détruit.
 
@@ -442,7 +442,7 @@ CAPABILITIES += [
                      "way to act under it. NO session state (ADR 0038): pass "
                      "`group=<id>` directly on each group-scoped call (its parent org "
                      "is derived). Your default group is changed in the dashboard "
-                     "only. The group decides which group doctrine and shared "
+                     "only. The group decides which group guide and shared "
                      "secrets apply."),
         mcp="oto_use_group",
         rest=RestBinding("PUT", "/api/me/active-group"),  # REST : équipe maison
@@ -480,7 +480,7 @@ CAPABILITIES += [
     Capability(
         key="group.delete", handler=_delete_group, Input=GroupIdInput,
         authz=GROUP_ADMIN_OF("group_id"), Output=GroupDeleted,
-        description="Delete a group you lead (members/doctrine/secrets purged).",
+        description="Delete a group you lead (members/guide/secrets purged).",
         rest=RestBinding("DELETE", "/api/groups/{id}", _GID),
     ),
 ]
