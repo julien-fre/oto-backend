@@ -50,6 +50,34 @@ péremption → épic sécurité auth/MCP #35 ; ④ MRTR (`resultType: "input_re
 remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 `*_connect_status` sont déjà des handles), une standardisation possible.
 
+## ⚠️ Lire d'abord ce qui existe dans oto
+
+**Le travail de fond sur la spec `2026-07-28` a déjà été fait, et il vit dans oto**, pas
+ici : projet **180 « oto headless »**, page **480** — *Doc JB — B. Architecture technique*,
+§13.5 « conséquences de la spec 2026-07-28 » (31/07/2026). Elle tranche déjà ce que cette
+veille ne faisait qu'effleurer :
+
+- `server/discover` **remplace** `initialize` et **porte `instructions`** — donc le champ
+  ne disparaît pas ;
+- il est **optionnel côté client**, « donc `guide` et **l'injection dans les résultats de
+  tools** restent les canaux fiables » — l'architecture du filet, écrite un mois avant
+  qu'on le construise ;
+- la composition du contexte **doit tenir dans une requête ordinaire**, pas d'assemblage
+  lourd ;
+- l'identité du serveur voyage dans `_meta` et ne sert **jamais** une décision de
+  sécurité ;
+- le budget de contexte a un nom et un job CI : **P12** — « mesure du handshake, seuils
+  par couche ; au-delà du budget, la release casse », noyau visé **< 5k jetons**.
+
+**Coût vécu de ne pas l'avoir lu (2026-08-28)** : une journée à re-dériver ces points
+depuis le code et la spec, deux affirmations fausses publiées puis corrigées, et un filet
+construit sans savoir qu'il était déjà la réponse désignée. Le premier réflexe sur une
+question de protocole est `oto_search`, pas `grep`.
+
+**Répartition** : la stratégie et les décisions vivent dans oto (page 480) ; **ce
+document-ci porte les RELEVÉS** — ce que les clients font réellement, mesuré et daté, avec
+la façon de le reconstater. Les deux se citent, aucun ne recopie l'autre.
+
 ## Ce que les CLIENTS font vraiment du protocole — relevé, pas spec
 
 La spec dit ce qu'un serveur peut émettre ; elle ne dit pas ce qu'un client en montre
