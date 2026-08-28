@@ -45,7 +45,7 @@ def _wire(monkeypatch, *, user=None, group=None, org=None,
     monkeypatch.setattr(access, "current_user_sub_or_raise", lambda: "u1")
     monkeypatch.setattr(access.credentials_store, "get_credential",
                         lambda et, eid, prov, *a, **k: user)
-    # zoho est multi-compte (MULTI_ACCOUNT_PROVIDERS) : la résolution consulte
+    # zoho est multi-compte (dérivé de `fields`) : la résolution consulte
     # list_accounts pour désambiguïser → aucun compte nommé ici ⇒ account='' (mono
     # legacy), le stub get_credential ci-dessus tranche la présence/absence.
     monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a, **k: [])

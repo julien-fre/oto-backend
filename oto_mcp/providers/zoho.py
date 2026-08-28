@@ -14,6 +14,10 @@ from ._model import CredentialField, _c
 CONNECTOR = _c(
     "zoho", ["zoho"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
     label="Zoho CRM", account_noun="organisation",
+    # Pas de `cardinality` : `fields` la dérive en multi depuis oto-backend#409.
+    # Seule l'annonce STATIQUE de l'axe reste curée — un utilisateur Zoho a en
+    # pratique plusieurs organisations, l'axe vaut d'être au schéma d'emblée.
+    account_axis_static=True,
     help="CRM Zoho (CRUD modules, notes)", href="https://crm.zoho.com",
     credential_fields=(
         CredentialField("client_id", "Client ID", secret=True,

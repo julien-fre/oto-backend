@@ -12,11 +12,14 @@ from ._model import _c
 # profondeur ; celui-ci sert le besoin inverse — lire N sites (média payant,
 # intranet, back-office sans API) sans un cycle de dev par site. **Multi-compte** :
 # un compte du coffre = un site (host), donc un Context Browserbase par site
-# (sessions isolées, cf. MULTI_ACCOUNT_PROVIDERS). byo_user : une session loguée
+# (sessions isolées, cf. `cardinality`). byo_user : une session loguée
 # est physiologiquement personnelle. Hors socle, installable depuis la library ;
 # `browser_eval` (JS arbitraire) reste masqué par défaut (DEFAULT_HIDDEN_TOOLS).
 CONNECTOR = _c(
     "browser", ["browser"], auth_modes={"byo_user"}, personal_session=True,
+    # Session cookie ⟹ la dérivation dirait mono ; or ici un compte est un SITE
+    # (un Context Browserbase par host), et il y en a par définition plusieurs.
+    cardinality="multi", account_axis_static=True,
     secret_kind="cookie", label="Navigateur connecté", account_noun="site",
     help="lire un site derrière login — un login par site, session Browserbase",
 )

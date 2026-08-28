@@ -90,17 +90,74 @@ def test_excluded_families_stay_single_account(name):
     assert providers.REGISTRY[name].auth_multi_account is False
 
 
-def test_single_account_flag_excludes_a_connector():
-    """L'exclusion se déclare DANS l'entrée de registre du connecteur, jamais par
-    appartenance à une liste transverse."""
-    con = providers._c("faux", ["faux"], auth_modes={"byo_user"},
-                       secret_kind="fields", single_account=True,
-                       credential_fields=(providers.CredentialField("a", "A"),))
-    assert con.auth_multi_account is False
+def test_la_cardinalite_declaree_prime_sur_la_derivation():
+    """Elle se déclare DANS l'entrée du connecteur, jamais par appartenance à une
+    liste transverse — et dans les DEUX sens : `mono` là où la dérivation dirait
+    multi, `multi` là où elle dirait mono."""
+    mono = providers._c("faux", ["faux"], auth_modes={"byo_user"},
+                        secret_kind="fields", cardinality="mono",
+                        credential_fields=(providers.CredentialField("a", "A"),))
+    assert mono.auth_multi_account is False        # `fields` dérivait multi
+
+    multi = providers._c("faux2", ["faux2"], auth_modes={"byo_user"},
+                         secret_kind="cookie", cardinality="multi")
+    assert multi.auth_multi_account is True        # `cookie` dérivait mono
 
 
-def test_no_connector_claims_single_account_today():
-    """Tripwire : le mécanisme d'exclusion existe SANS porteur — aucun connecteur
-    servi n'a aujourd'hui de raison de fournisseur d'être mono-compte. En ajouter
-    un est une décision explicite, qui casse ce test et se motive en revue."""
-    assert [c.name for c in providers._REGISTRY_LIST if c.single_account] == []
+def test_aucun_connecteur_ne_se_declare_MONO_aujourd_hui():
+    """Tripwire : le sens `mono` existe SANS porteur — aucun connecteur servi n'a
+    aujourd'hui de raison de FOURNISSEUR d'être mono-compte (ceux qui le sont le sont
+    par une condition structurelle, testée juste au-dessus). En ajouter un est une
+    décision explicite, qui casse ce test et se motive en revue."""
+    assert [c.name for c in providers._REGISTRY_LIST if c.cardinality == "mono"] == []
+
+
+def test_seuls_deux_connecteurs_se_declarent_MULTI_et_on_sait_pourquoi():
+    """Le sens `multi` a exactement deux porteurs, et c'est la MESURE qui les a
+    désignés : ceux dont le descripteur d'auth dit faux. `zoho` et `folk`, longtemps
+    dans la liste transverse, n'y sont PAS — la dérivation les rend multi toute seule
+    depuis que la règle couvre les credentials multi-champs. Les garder déclarés
+    aurait reconduit la liste sous un autre nom."""
+    assert sorted(c.name for c in providers._REGISTRY_LIST
+                  if c.cardinality == "multi") == ["browser", "google"]
+    for nom in ("zoho", "folk"):
+        con = providers.REGISTRY[nom]
+        assert con.cardinality == "" and con.auth_multi_account is True, nom
+
+
+def test_la_liste_transverse_de_cardinalite_a_DISPARU():
+    """⚠️ LE test du lot (tranché par Alexis le 27/08 : « ce qui gêne, c'est la LISTE
+    elle-même »). Sonde le NOM dans tout le code servi : une constante réintroduite
+    ailleurs, sous le même nom ou un autre, rouvrirait le même défaut — une propriété
+    de connecteur qui vit loin du connecteur."""
+    import ast
+    import pathlib
+    racine = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp"
+    porteurs = []
+    for p in racine.rglob("*.py"):
+        # Sonde AST, pas un `grep` de ligne : la prose a le DROIT de dire que la liste
+        # a existé — c'est même ce qu'on veut y lire. Ce qu'on cherche est un ACCÈS,
+        # un nom ou un attribut ; commentaires et docstrings disparaissent avec l'AST.
+        arbre = ast.parse(p.read_text(encoding="utf-8"))
+        for n in ast.walk(arbre):
+            nom = (n.id if isinstance(n, ast.Name)
+                   else n.attr if isinstance(n, ast.Attribute)
+                   else n.target.id if isinstance(n, ast.AnnAssign)
+                   and isinstance(n.target, ast.Name) else None)
+            if nom == "MULTI_ACCOUNT_PROVIDERS":
+                porteurs.append(f"{p.name}:{getattr(n, 'lineno', '?')}")
+    assert not porteurs, (
+        f"la liste transverse de cardinalité est de retour : {porteurs}. Une propriété "
+        "de connecteur se déclare dans l'entrée du connecteur (`cardinality`), à côté "
+        "de ce qu'elle qualifie.")
+
+
+def test_l_annonce_STATIQUE_de_l_axe_compte_n_est_plus_la_cardinalite():
+    """Les deux rôles que la liste confondait sont séparés, et c'est ce qui la rendait
+    indéboulonnable : l'annonce statique parle du SCHÉMA des tools (recopié à chaque
+    handshake, donc curé), la cardinalité parle du COFFRE. Quatre connecteurs annoncent
+    statiquement ; 74 sont multi-compte."""
+    statiques = sorted(c.name for c in providers._REGISTRY_LIST if c.account_axis_static)
+    assert statiques == ["browser", "folk", "google", "zoho"]
+    multi = [c.name for c in providers._REGISTRY_LIST if c.auth_multi_account]
+    assert set(statiques) < set(multi) and len(multi) > len(statiques)

@@ -438,7 +438,7 @@ _KEYED: set[str] = set()
 def _register_keyed_multi_account() -> None:
     """Enregistre le backend keyed générique pour tout connecteur multi-compte
     (`Connector.auth_multi_account` — depuis 2026-08-25, toute clé d'API l'est par
-    défaut, plus seulement la liste curée `MULTI_ACCOUNT_PROVIDERS`) qui n'a pas
+    défaut ; la liste curée a été retirée le 29/08) qui n'a pas
     déjà un backend spécifique (google, unipile). Closures liant le nom du
     connecteur (défaut d'arg = capture par valeur)."""
     from .. import providers
