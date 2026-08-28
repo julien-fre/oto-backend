@@ -16,7 +16,7 @@ adr:
 
 # Guides & instructions d'org
 
-> ⚠️ **« doctrine » = « guide » depuis le 28/08/2026** (#519) : le mot a disparu de l'interne du backend (modules, symboles, prose). Les noms SERVIS qui le portent encore — outil `oto_admin_doctrine`, capacités `org.doctrine.*` / `admin.doctrine`, chemins `/api/[me/]doctrines/…`, clés `doctrine_id` / `doctrine_version` / `doctrines` / `group_doctrine`, table `doctrine_library`, colonne `runs.doctrine` — sont des **alias de compatibilité** jusqu'au lot B, qui les renomme avec préavis.
+> ⚠️ **« doctrine » = « guide » depuis le 28/08/2026** (#519) : le mot a disparu de l'interne du backend (modules, symboles, prose). Les noms SERVIS qui le portent encore se **doublent** au lot B — le nouveau nom naît, l'ancien reste servi avec une date de retrait écrite (premier tag à partir du 27/09/2026 ; retrait = lot D, #526). **Table unique de ces alias : [`alias-deprecies.md`](alias-deprecies.md).** Déjà fait : l'outil s'appelle `oto_admin_guide` (son ancien nom répond encore).
 
 Prose opératoire métier (workflows validés, règles, vocabulaire) pour les users qui pilotent
 oto **sans produit applicatif dédié** (ex. un process avoir compta client
