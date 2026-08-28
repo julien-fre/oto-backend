@@ -347,7 +347,7 @@ CAPABILITIES += [
         mcp="oto_admin_key_grant",
     ),
     Capability(
-        key="admin.doctrine", handler=_guide, Input=GuideAdminInput,
+        key="admin.guide", handler=_guide, Input=GuideAdminInput,
         authz=ADMIN_BY_OP({"get": ORG_MEMBER_OF("org_id"), "list": ORG_MEMBER_OF("org_id"),
                            "set": ORG_ADMIN_OF("org_id"), "delete": ORG_ADMIN_OF("org_id")}),
         description=("[ADMIN] Another org's doctrine, by `org_id` (cross-org = platform "

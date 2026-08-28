@@ -6,7 +6,7 @@ description: >-
   onboarding, connecteurs), settings LinkedIn/API-keys/tools, guide org
   /api/me/instructions*, palier org (CRUD orgs, membres, secrets, invitations,
   entitlements namespace), admin users/grants/tokens/monitoring, billing Stripe,
-  bibliothèque publique de guides (doctrine_library, visibilité public/unlisted).
+  bibliothèque publique de guides (`/api/guide-library`, visibilité public/unlisted).
   Détaille les règles CORS (oto.ninja, app.oto.ninja, dashboard.oto.ninja), l'autz
   (même JWTVerifier ES384 que /mcp, audience mcp.oto.ninja), et les gotchas secrets
   (jamais la clé en réponse, providers per-user refusés en org secrets). À charger
@@ -278,19 +278,44 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - **Bibliothèque publique de guides** (marketplace de skills, table `doctrine_library`) :
   capacités `library.*` (`capabilities/guide_library.py`, montage auto MCP+REST) —
   `library.list/get` (`SUB_ONLY`, MCP `oto_procedure` op=library_list/library_get + REST
-  `GET /api/me/doctrines/library[/{slug}]`), `library.publish`/`library.fork` (`ORG_MEMBER` +
+  `GET /api/me/guide-library[/{slug}]`), `library.publish`/`library.fork` (`ORG_MEMBER` +
   gate org_admin en handler, MCP `oto_procedure` op=publish/fork + REST
-  `POST /api/me/doctrines/{publish,fork}`), `library.unpublish` (auteur/PLATFORM_ADMIN, `DELETE
-  /api/me/doctrines/library/{id}`). **Auteur** = `otomata` si publieur platform-operator, sinon
-  l'`org`. **Fork** réutilise `org_store.set_instruction` → skill d'org versionné. Surface
-  ANONYME pour la vitrine : routes écrites à la main `GET /api/doctrines/library[/{slug}]`
+  `POST /api/me/guide-library/{publish,fork}`), `library.unpublish` (auteur/PLATFORM_ADMIN,
+  `DELETE /api/me/guide-library/{id}`). **Auteur** = `otomata` si publieur platform-operator,
+  sinon l'`org`. **Fork** réutilise `org_store.set_instruction` → skill d'org versionné. Surface
+  ANONYME pour la vitrine : routes écrites à la main `GET /api/guide-library[/{slug}]`
   (deny-by-default `visibility='public'`, l'adaptateur capacité authentifie toujours).
+  ⚠️ **`/api/guide-library` ≠ `/api/guides/library`** : le premier est le MARCHÉ des guides
+  publiés par les orgs (forkables), le second les guides PLATEFORME. Deux objets, deux
+  tables — la ressemblance des noms est ancienne, elle ne dit pas une parenté.
+  ⚠️ Ces chemins s'appelaient `/api/[me/]doctrines/…` jusqu'au 2026-08-28 (#519) ; les
+  anciens répondent **308** jusqu'au retrait — cf. `docs/alias-deprecies.md`.
   **`visibility`** : `public` (dans le catalogue) vs `unlisted` = **lien non listé** (style
   YouTube) — servie par `library.get` (slug exact, tout user authentifié) mais **jamais**
   listée (`list` force `include_unlisted=False`) ni servie en anonyme. Partage par lien, pas
   un secret d'org : un guide sensible ne se publie pas (reste un skill d'org privé).
 - CORS : `oto.ninja`, `app.oto.ninja`, `dashboard.oto.ninja` (+ localhosts dev) — défaut dans `_allowed_origins`, override `OTO_MCP_CORS_ORIGINS`. `account.oto.zone` retiré (surface compte décommissionnée → dashboard.oto.ninja)
 - Même `JWTVerifier` que `/mcp` — partage l'audience `https://mcp.oto.ninja/mcp`
+
+## Renommer un chemin servi : on double, on date, on retire
+
+Un chemin `/api/*` est un contrat avec des appelants qui vivent **hors de ce dépôt**.
+Le renommer sec ne casse rien en CI — ça casse en production, chez quelqu'un d'autre,
+sans trace. La forme retenue (#519, lot B) :
+
+1. le **nouveau chemin** est la vraie route (capacité, autz, décrite dans l'OpenAPI) ;
+2. l'**ancien** reste monté et répond **308** — même méthode, même corps, query string
+   reportée. Ni 301 ni 302 : ils autorisent le client à retomber en `GET`, ce qui
+   transforme un `POST` en no-op silencieux ;
+3. il porte les en-têtes `Deprecation` / `Sunset`, est marqué `deprecated: true` dans
+   `/openapi.json` avec son remplaçant et sa date, et **s'en va à une date écrite** ;
+4. il est monté **en dernier** — un alias ne capture que ce que rien d'autre ne sert ;
+5. le préflight `OPTIONS` n'est **jamais** redirigé, et la 308 porte les en-têtes CORS :
+   un navigateur vérifie CORS sur chaque réponse d'une chaîne de redirections.
+
+Déclaration unique : `oto_mcp/deprecations.REST` (montage `api/alias_routes.py`,
+document `openapi._alias_deprecies`, garde `tests/api/test_alias_deprecies_rest.py`).
+**Table des alias en cours et de leur date : `docs/alias-deprecies.md`.**
 
 ## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
 

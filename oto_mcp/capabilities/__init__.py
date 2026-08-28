@@ -39,7 +39,7 @@ from . import billing  # noqa: F401 — billing.{plans,status,subscribe,confirm,
 from . import billing_identity  # noqa: F401 — me.billing.identity.{get,set} (#486)
 from . import billing_invoices  # noqa: F401 — me.billing.invoices.list (#488)
 # Guide & instructions d'org (ADR 0009) — CRUD guide + usage, membre + admin.
-import oto_mcp.capabilities.orgs.instructions  # noqa: F401 — org.{doctrine.*, instruction.*}  (clés SERVIES, lot B)
+import oto_mcp.capabilities.orgs.instructions  # noqa: F401 — org.{guide.*, instruction.*}
 # Bibliothèque publique de guides (marketplace) — list/get/publish/fork/unpublish.
 from . import guide_library  # noqa: F401 — library.{list,get,publish,fork,unpublish}
 # Sélection de connecteurs (marketplace, ADR 0019) — me/select/pause/unselect.
@@ -95,7 +95,7 @@ import oto_mcp.capabilities.connectors.force  # noqa: F401 — connectors.force.
 import oto_mcp.capabilities.connectors.instances  # noqa: F401 — connectors.instances.list (ADR 0038 B4)
 # Console admin consolidée par concept (ADR 0009, fusion *_op) — réutilise les handlers
 # de domaine. À importer APRÈS eux (orgs_admin/reads/members, users_admin).
-from . import admin_console  # noqa: F401 — admin.{org,org_member,user,key_grant,doctrine,signal}
+from . import admin_console  # noqa: F401 — admin.{org,org_member,user,key_grant,guide,signal}
 # Console connecteurs consolidée (ADR 0047 B1, fusion *_op) — porte les 6 tools MCP de la
 # famille (activation/access/connector/instance/identity/account_access) ; les modules
 # ci-dessus gardent leurs faces REST. À importer APRÈS eux.

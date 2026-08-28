@@ -35,7 +35,7 @@
 # dans sa voisine. Le jour où ces surfaces seront converties, une seule convention
 # de nommage de la cible suffirait à rendre l'enveloppe non vide.
 admin.capabilities
-admin.doctrine
+admin.guide
 admin.invite
 admin.key_grant
 admin.monitoring
@@ -73,8 +73,8 @@ org.admin.create
 org.admin.get
 org.admin.list
 org.console
-org.doctrine.admin_get
-org.doctrine.admin_list
+org.guide.admin_get
+org.guide.admin_list
 org.instruction.admin_delete
 org.instruction.admin_set
 org.monitoring.console

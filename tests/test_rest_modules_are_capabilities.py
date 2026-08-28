@@ -113,15 +113,19 @@ _KNOWN: dict[str, str] = {
     #
     # --- NATURE — servies SANS AUTH, donc hors contrat capacité par CONSTRUCTION :
     # `_rest_adapter` authentifie TOUJOURS, un anonyme ne peut pas y passer.
-    # L'argument est déjà écrit dans le code (`doctrines_library_public` : « route
+    # L'argument est déjà écrit dans le code (`guide_library_public` : « route
     # écrite à la main car l'adaptateur REST des capacités authentifie toujours »).
     # Quatre d'entre elles sont même consommées par un PROGRAMME, sans en-tête
     # d'auth : le build du site vitrine (`oto-websites/web/scripts/refresh-catalog.mjs`
     # → catalog/connectors/guides/guides) et celui de docs.oto.cx
     # (`sites/docs.oto.cx/scripts/refresh-openapi.mjs` → openapi.json).
     "/api/mcp/catalog": NATURE,
-    "/api/doctrines/library": NATURE,
-    "/api/doctrines/library/{slug}": NATURE,
+    # ⚠️ DEUX bibliothèques : `/api/guide-library` = le MARCHÉ des guides publiés par
+    # les orgs (forkables) ; `/api/guides/library` = les guides PLATEFORME. Le premier
+    # s'appelait `/api/doctrines/library` jusqu'au 2026-08-28 (#519) — son ancien
+    # chemin est plus bas, en alias.
+    "/api/guide-library": NATURE,
+    "/api/guide-library/{slug}": NATURE,
     "/api/guides/library": NATURE,
     "/api/guides/library/{slug}": NATURE,
     # Descriptif de la surface REST : décrit des FORMES, aucune valeur. Servi aux
@@ -209,6 +213,22 @@ _KNOWN: dict[str, str] = {
     # LLM) — mais une capacité peut être REST-only (`mcp=None`), c'était donc bien de la
     # dette et pas une nature. Le pendant AGENT du même geste existe et c'est
     # `me.connector_connect` (`POST /api/me/connectors/{name}/connect`).
+    # --- NATURE — ALIAS DÉPRÉCIÉS, retrait le 27/09/2026 (#519, retrait suivi en
+    # #526). Ces chemins ne portent AUCUN métier : ils répondent 308 vers le chemin
+    # d'aujourd'hui, et s'en vont à une date écrite (`oto_mcp/deprecations.REST`).
+    # Ce n'est donc pas de la dette — il n'y a rien à migrer, il y a une date à
+    # tenir. Ils quittent cette liste au lot D, avec le module qui les déclare.
+    # Montés EN DERNIER dans `make_routes` : un alias ne capture que ce que rien
+    # d'autre ne sert.
+    "/api/doctrines/library": NATURE,
+    "/api/doctrines/library/{slug}": NATURE,
+    "/api/me/doctrines/library": NATURE,
+    "/api/me/doctrines/library/{slug}": NATURE,
+    "/api/me/doctrines/library/{id}": NATURE,
+    "/api/me/doctrines/publish": NATURE,
+    "/api/me/doctrines/fork": NATURE,
+    "/api/me/doctrines/{doctrine_id}": NATURE,
+    #
     # (Le palier admin — clés plateforme et jetons émis pour un tiers — a migré le
     #  2026-08-27 avec le palier membre ci-dessus. `api_routes_admin.py` a été SUPPRIMÉ.
     #  Le commentaire qui vivait ici disait « un cran que `_rest_adapter` ne sait pas

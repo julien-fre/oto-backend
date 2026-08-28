@@ -68,9 +68,41 @@ Une ligne par surface. « Forme » dit comment les deux noms coexistent.
 | Surface | Ancien nom (part le 27/09/2026) | Nouveau nom | Forme | Lot |
 | --- | --- | --- | --- | --- |
 | Outil MCP | `oto_admin_doctrine` | `oto_admin_guide` | les deux listés et appelables ; l'ancien porte l'avis en tête de sa description | B1 |
+| Chemin REST | `GET /api/doctrines/library` | `GET /api/guide-library` | 308 | B2 |
+| Chemin REST | `GET /api/doctrines/library/{slug}` | `GET /api/guide-library/{slug}` | 308 | B2 |
+| Chemin REST | `GET /api/me/doctrines/library` | `GET /api/me/guide-library` | 308 | B2 |
+| Chemin REST | `GET /api/me/doctrines/library/{slug}` | `GET /api/me/guide-library/{slug}` | 308 | B2 |
+| Chemin REST | `DELETE /api/me/doctrines/library/{id}` | `DELETE /api/me/guide-library/{id}` | 308 | B2 |
+| Chemin REST | `POST /api/me/doctrines/publish` | `POST /api/me/guide-library/publish` | 308 | B2 |
+| Chemin REST | `POST /api/me/doctrines/fork` | `POST /api/me/guide-library/fork` | 308 | B2 |
+| Chemin REST | `GET /api/me/doctrines/{doctrine_id}` | `GET /api/me/guides/{guide_id}` | 308 | B2 |
+| Clé de capacité | `org.doctrine.get` | `org.guide.get` | **renommée, sans alias** (voir plus bas) | B2 |
+| Clé de capacité | `org.doctrine.admin_get` | `org.guide.admin_get` | idem | B2 |
+| Clé de capacité | `org.doctrine.admin_list` | `org.guide.admin_list` | idem | B2 |
+| Clé de capacité | `admin.doctrine` | `admin.guide` | idem | B2 |
 
-*(Cette table se remplit au fil du lot B : capacités et chemins REST en B2, clés de
-réponse et schémas en B3, objets en base en B4.)*
+*(Cette table se remplit au fil du lot B : clés de réponse et schémas en B3, objets en
+base en B4.)*
+
+⚠️ **`/api/guide-library` n'est PAS `/api/guides/library`.** Le premier est le
+**marché** des guides publiés par les orgs (forkables, table `doctrine_library`) ; le
+second, les guides **plateforme**. Les deux existaient déjà côte à côte sous des noms
+qui se ressemblent ; c'est ce qui interdisait de renommer `/api/doctrines/library` en
+`/api/guides/library` — le nom était pris par un autre objet.
+
+### Pourquoi les clés de capacité n'ont pas d'alias
+
+Une clé de capacité ne sort du serveur qu'à deux endroits : `/api/admin/capabilities`
+— le navigateur d'objets de la plateforme, réservé à l'admin plateforme, sans
+intégrateur tiers — et l'`operationId` de `/openapi.json`. Seul le second engage
+quelqu'un dehors, et il est **préservé sur l'entrée dépréciée du chemin d'avant**. Il
+n'y a donc rien à aliaser.
+
+⚠️ L'`operationId` suit la **capacité**, pas le chemin. Quand la clé ne change pas
+(`library.list`), c'est le NOUVEAU chemin qui en hérite : regénérer un client ne
+renomme aucune méthode, seule l'URL bouge. L'entrée dépréciée reçoit alors un id
+dérivé de son chemin — deux entrées ne peuvent pas partager un `operationId` sans
+faire disparaître une méthode d'un client généré, en silence.
 
 ## Ce qu'un consommateur doit faire
 
@@ -80,6 +112,22 @@ réponse et schémas en B3, objets en base en B4.)*
    répond plus du tout.
 
 ## Comment c'est fait, côté serveur
+
+**Les chemins REST** : l'ancien chemin reste monté (`oto_mcp/api/alias_routes.py`) et
+répond **308** vers le nouveau. Quatre crans, chacun payé par un incident possible :
+
+- **308, pas 301/302.** Les deux derniers autorisent le client à retomber en `GET` :
+  un `POST …/publish` deviendrait un `GET` — 405, ou pire, un no-op silencieux.
+- **La query string est reportée.** Le build de la vitrine appelle
+  `…?limit=200` ; la perdre rendrait 100 entrées au lieu de 200, sans code d'erreur.
+- **Les en-têtes CORS sont sur la redirection elle-même**, et le préflight `OPTIONS`
+  n'est jamais redirigé. Un navigateur vérifie CORS sur chaque réponse d'une chaîne ;
+  et un `OPTIONS` redirigé le ferait abandonner avant d'essayer la vraie requête.
+- **Les alias sont montés EN DERNIER.** Un alias ne peut alors capturer que ce que
+  rien d'autre ne sert : impossible qu'un de ses placeholders éclipse une vraie route.
+
+L'ancien chemin porte aussi `Deprecation: true` et `Sunset: <date>` — un intégrateur
+qui lit ses logs voit la date sans ouvrir cette page.
 
 **Les outils MCP** : le doublage se fait au **bord du protocole**, dans
 `ToolAliasMiddleware` (`oto_mcp/middleware/alias.py`), le middleware le plus externe.
