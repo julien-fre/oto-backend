@@ -125,7 +125,11 @@ def _refus(e, channel: Optional[str] = None) -> ValueError:
             "Slack refuse : " + cible + " est archivé — on n'y poste plus et on ne le "
             "rejoint plus. Désarchive-le dans Slack, ou vise un autre canal.")
 
-    return ValueError("Slack refuse (" + code + ") sur " + cible + ".")
+    # Défaut : on NOMME le code Slack sans rien broder autour. Et pas de « sur ce
+    # canal » quand l'appel n'en visait pas un (recherche d'utilisateur, ouverture
+    # de DM) — une localisation inventée envoie chercher au mauvais endroit.
+    return ValueError("Slack refuse (" + code + ")"
+                      + (" sur " + cible if channel else "") + ".")
 
 
 def register(mcp: FastMCP) -> None:

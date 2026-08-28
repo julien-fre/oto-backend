@@ -290,6 +290,18 @@ def test_thread_not_found_reste_lisible(slack):
         _fn(m, "slack_read_thread")(channel="C1", thread_ts="1000000000.000000")
 
 
+def test_un_refus_sans_canal_n_invente_pas_de_canal(slack):
+    """`slack_find_user_by_email` ne vise aucun canal : lui répondre « sur ce
+    canal » enverrait chercher au mauvais endroit. Le refus par défaut nomme le
+    code Slack, et rien de plus."""
+    m, client = slack
+    client.find_user_by_email.side_effect = _err("users_not_found")
+    with pytest.raises(ValueError) as e:
+        _fn(m, "slack_find_user_by_email")(email="jean@exemple.fr")
+    msg = str(e.value)
+    assert "users_not_found" in msg and "canal" not in msg
+
+
 # --- surface --------------------------------------------------------------------
 
 def test_les_nouveaux_tools_sont_montes_et_decrits(slack):
