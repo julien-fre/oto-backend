@@ -427,6 +427,19 @@ def _init_db_once() -> None:
         conn.execute("ALTER TABLE org_instructions ALTER COLUMN id SET DEFAULT nextval('org_instructions_id_seq')")
         conn.execute("ALTER TABLE org_instructions ALTER COLUMN id SET NOT NULL")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_org_instructions_id ON org_instructions(id)")
+        # Archivage (soft-delete) d'une procédure : masquée de tous les listings —
+        # y compris ceux que l'IA lit (`skills_index_md`, `oto_procedure op=list`,
+        # l'index de doctrine) — mais la ligne ET son historique de révisions
+        # restent intacts. C'est l'alternative NON destructive à `delete`, qui lui
+        # supprime `org_instruction_revisions` avec. NULL = vivante. Même forme
+        # que `projects.archived_at` / `orgs.archived_at`.
+        #
+        # Lot A (additif pur, cf. docs/live-migrations.md) : canari et prod
+        # partagent la base, mais une colonne nullable qu'aucun code prod ne lit
+        # ne peut rien casser. Fenêtre assumée le temps de la promotion : une
+        # procédure archivée depuis canari reste visible en prod jusqu'à ce que
+        # prod tourne ce code — elle n'est pas perdue, juste pas encore masquée.
+        conn.execute("ALTER TABLE org_instructions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
         # B3 : migrer les liens projet→procédure de slug vers l'id de doctrine (org-owned ;
         # les projets user-owned gardent le slug, résolu à la lecture côté front). Idempotent
         # (guard `!~ '^[0-9]+$'` = pas déjà un id ; JOIN = seulement si la doctrine existe).

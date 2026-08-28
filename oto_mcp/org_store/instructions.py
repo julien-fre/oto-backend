@@ -75,12 +75,22 @@ def get_instruction(org_id: int, slug: str, version: Optional[int] = None) -> Op
 
 def list_instructions(org_id: int, include_base: bool = False) -> list[dict]:
     """Métadonnées des instructions (SANS body) = l'index des skills. Exclut la
-    doctrine de base sauf `include_base` (surface admin)."""
+    doctrine de base sauf `include_base` (surface admin), et TOUJOURS les
+    procédures archivées.
+
+    Toujours, faute d'appelant qui veuille le contraire : le jour où une surface
+    admin voudra les voir, elle ajoutera son paramètre avec son besoin sous les
+    yeux. C'est le point de l'archivage : cette fonction alimente aussi bien
+    l'index que l'IA lit (`instructions.skills_index_md`, qui enrichit la
+    description d'`oto_procedure` au tools/list) que `oto_procedure op=list`.
+    Une procédure retirée du service doit cesser d'être proposée à l'agent — un
+    archivage qui la laisserait dans cet index ne serait qu'un habillage."""
     # `owner_type='org'` : post-fusion (chantier procédures, cadrage 10/07) la table
     # porte aussi les lignes GROUP (org_id = org parente) — une liste d'org ne doit
     # jamais les ratisser.
     where = ("owner_type = 'org' AND org_id = %s" if include_base
              else "owner_type = 'org' AND org_id = %s AND slug <> %s")
+    where += " AND archived_at IS NULL"
     params: tuple = (org_id,) if include_base else (org_id, BASE_SLUG)
     with _connect() as conn:
         rows = conn.execute(
@@ -110,7 +120,9 @@ def search_instructions(org_id: int, query: str, include_base: bool = False) -> 
     if not q:
         return []
     like = f"%{q}%"
-    base_filter = "" if include_base else "AND slug <> %s "
+    # Archivées exclues sans option d'inclusion : chercher, c'est chercher ce qui
+    # est en service (même raison que `list_instructions`).
+    base_filter = "AND archived_at IS NULL " + ("" if include_base else "AND slug <> %s ")
     head: tuple = (org_id,) if include_base else (org_id, BASE_SLUG)
     with _connect() as conn:
         rows = conn.execute(
@@ -202,6 +214,25 @@ def list_instruction_versions(org_id: int, slug: str) -> list[dict]:
             (org_id, slug),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def archive_instruction(org_id: int, slug: str) -> bool:
+    """Archive une procédure (soft-delete) : elle sort de tous les listings, la
+    ligne et ses révisions restent. False si elle n'existait pas.
+
+    Idempotent en pratique — ré-archiver rafraîchit l'horodatage plutôt que
+    d'échouer, le résultat visé (« elle n'est plus en service ») étant déjà
+    atteint. Pas de désarchivage sur cette surface : même choix que
+    `db/projects.archive_project`, dont l'inverse n'existe pas non plus côté
+    app. Ce qu'archiver garantit ici, c'est que RIEN n'est détruit — contrairement
+    à `delete_instruction` juste en dessous, qui emporte l'historique."""
+    slug = normalize_slug(slug)
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE org_instructions SET archived_at = NOW(), updated_at = NOW() "
+            "WHERE owner_type = 'org' AND org_id = %s AND slug = %s", (org_id, slug)
+        )
+        return (cur.rowcount or 0) > 0
 
 
 def delete_instruction(org_id: int, slug: str) -> bool:
@@ -319,7 +350,10 @@ def list_instructions_for_orgs(org_ids: list[int]) -> list[dict]:
         rows = conn.execute(
             "SELECT id, org_id, slug, title, description, version, updated_at "
             "FROM org_instructions "
-            "WHERE owner_type = 'org' AND org_id = ANY(%s) AND slug <> %s ORDER BY org_id, slug",
+            "WHERE owner_type = 'org' AND org_id = ANY(%s) AND slug <> %s "
+            # Archivée = hors service : elle ne se propose plus comme ressource
+            # à lier à un projet.
+            "AND archived_at IS NULL ORDER BY org_id, slug",
             (org_ids, BASE_SLUG),
         ).fetchall()
         return [dict(r) for r in rows]

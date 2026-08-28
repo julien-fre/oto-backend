@@ -153,3 +153,44 @@ def test_get_doctrine_no_project_no_instance(monkeypatch):
     out = asyncio.run(oi._get_doctrine(ResolvedCtx(sub="u1", org_id=3),
                                        oi.DoctrineGetInput(slug="prospection")))
     assert "project_instance" not in out
+
+
+class _Slug(BaseModel):
+    slug: str
+
+
+# ── Archivage : le retrait NON destructif d'une procédure ───────────────────
+# La capacité existe parce que `delete` emporte `org_instruction_revisions` avec
+# elle : jusqu'ici, « je ne veux plus que l'agent suive cette procédure » n'avait
+# d'autre expression que la destruction de tout son historique.
+def test_archive_route_and_capability_registered():
+    pairs = {(b.verb, b.path) for c in registry.caps_with_rest() for b in c.rest_bindings()}
+    assert ("POST", "/api/me/instructions/{slug}/archive") in pairs
+    cap = next(c for c in registry.CAPABILITIES if c.key == "org.instruction.archive")
+    # Même palier que `set`/`delete` : écrire la doctrine d'une org est org_admin.
+    assert cap.authz is not None
+
+
+def test_archive_handler_marks_and_404s(monkeypatch):
+    seen: list = []
+    monkeypatch.setattr(oi.org_store, "normalize_slug", lambda s: (s or "").strip().lower())
+
+    monkeypatch.setattr(oi.org_store, "archive_instruction",
+                        lambda org_id, slug: seen.append((org_id, slug)) or True)
+    out = oi._archive_instruction(ResolvedCtx(sub="u1", org_id=7), _Slug(slug="Daily-Digest"))
+    assert seen == [(7, "daily-digest")], "le slug doit être normalisé avant l'écriture"
+    assert out == {"ok": True, "org_id": 7, "slug": "daily-digest", "archived": True}
+
+    # Un slug absent est un 404, pas un `archived: false` silencieux — même
+    # contrat d'écho que la suppression.
+    monkeypatch.setattr(oi.org_store, "archive_instruction", lambda org_id, slug: False)
+    with pytest.raises(AuthzDenied) as e:
+        oi._archive_instruction(ResolvedCtx(sub="u1", org_id=7), _Slug(slug="nope"))
+    assert e.value.status == 404 and e.value.code == "not_found"
+
+
+def test_archive_rejects_empty_slug(monkeypatch):
+    monkeypatch.setattr(oi.org_store, "normalize_slug", lambda s: "")
+    with pytest.raises(AuthzDenied) as e:
+        oi._archive_instruction(ResolvedCtx(sub="u1", org_id=7), _Slug(slug="   "))
+    assert e.value.status == 400 and e.value.code == "invalid_slug"

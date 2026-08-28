@@ -254,6 +254,22 @@ class InstructionDeleted(BaseModel):
     deleted: bool
 
 
+class InstructionArchived(BaseModel):
+    """Archivage d'une procédure — l'alternative NON destructive à la suppression.
+    La ligne et TOUT son historique de révisions restent en base ; ce qui change,
+    c'est qu'elle disparaît de tous les listings, y compris ceux que l'IA lit
+    (l'index de skills derrière `oto_procedure`, `op=list`, l'index de doctrine),
+    donc l'agent cesse de la proposer et de la suivre. `archived` ne vaut jamais
+    `false` (un slug absent lève un 404) : c'est une constante d'écho.
+
+    Pas de désarchivage sur cette surface, même choix que pour les projets : la
+    procédure est récupérable en base, pas d'un clic dans l'app."""
+    ok: bool
+    org_id: Optional[int] = None
+    slug: str
+    archived: bool
+
+
 class InstructionReverted(BaseModel):
     """Restauration d'une version passée. ⚠️ **`version` est un numéro NEUF, pas celui
     qu'on restaure** : revenir à la v2 d'une procédure en v6 produit une v7 dont le
@@ -558,6 +574,16 @@ def _delete_instruction(ctx: ResolvedCtx, inp) -> dict:
     return {"ok": True, "org_id": ctx.org_id, "slug": norm, "deleted": True}
 
 
+def _archive_instruction(ctx: ResolvedCtx, inp) -> dict:
+    norm = org_store.normalize_slug(inp.slug)
+    if not norm:
+        raise AuthzDenied(400, "invalid_slug", "slug requis.")
+    archived = org_store.archive_instruction(ctx.org_id, norm)
+    if not archived:
+        raise AuthzDenied(404, "not_found", f"Instruction `{norm}` absente.")
+    return {"ok": True, "org_id": ctx.org_id, "slug": norm, "archived": True}
+
+
 # ── Handlers REST-only (org active) ─────────────────────────────────────────
 def _instructions_list(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
     """Doctrine de base (meta) + index des instructions nommées de l'org active.
@@ -695,6 +721,17 @@ CAPABILITIES += [
                      "`org` pins to an explicit org id (default = active org; must be "
                      "org_admin of it)."),
         rest=RestBinding("DELETE", "/api/me/instructions/{slug}"),
+    ),
+    Capability(
+        key="org.instruction.archive", handler=_archive_instruction, Input=DoctrineDeleteInput,
+        authz=ORG_ADMIN_OPT("org"), Output=InstructionArchived,
+        description=("Retire a doctrine WITHOUT destroying it (org_admin) — prefer this "
+                     "to `delete` whenever the point is 'stop using it', not 'erase it'. "
+                     "The procedure and its whole version history stay in place; it simply "
+                     "leaves every listing, including the skills index you read, so it "
+                     "stops being offered and followed. Pass the EXACT slug. `org` pins to "
+                     "an explicit org id (default = active org; must be org_admin of it)."),
+        rest=RestBinding("POST", "/api/me/instructions/{slug}/archive"),
     ),
     Capability(
         key="org.instruction.revert", handler=_instruction_revert, Input=RevertInput,
