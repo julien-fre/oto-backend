@@ -23,8 +23,8 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
-from .. import (access, call_axes, db, guide_run, providers, redaction,
-                tool_alias, tool_registry)
+from .. import (access, call_axes, db, deprecations, guide_run, providers,
+                redaction, tool_alias, tool_registry)
 from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import (
     PROTECTED_TOOLS,
@@ -245,8 +245,10 @@ def register(mcp: FastMCP) -> None:
         # elle, s'écrit en canonique — sinon le même outil s'y retrouverait deux fois,
         # et le toggle ne mordrait plus après un changement de préfixe. Le retour
         # reprend la forme MONTRÉE, celle que l'agent vient de lire dans sa liste.
+        # Il peut aussi être un nom DÉPRÉCIÉ (#519) : `tools/list` le sert, donc il
+        # doit se résoudre ici — un nom listé et injoignable est pire qu'absent.
         prefix = _tool_prefix()
-        name = tool_alias.canonical(name, prefix)
+        name = deprecations.tool_canonique(tool_alias.canonical(name, prefix))
         all_tools = await ctx.fastmcp.list_tools(run_middleware=False)
         known = {t.name for t in all_tools}
         if name not in known:
@@ -276,7 +278,7 @@ def register(mcp: FastMCP) -> None:
         """
         sub = _require_sub()
         prefix = _tool_prefix()
-        name = tool_alias.canonical(name, prefix)
+        name = deprecations.tool_canonique(tool_alias.canonical(name, prefix))
         # SÉCURITÉ — visibilité-only (ADR 0031) : (dés)activer un outil = préférence
         # d'AFFICHAGE, jamais une autorisation. Rendre un outil visible ne donne PAS
         # accès à son credential. L'accès réel d'un connecteur sensible est gardé au
@@ -308,7 +310,8 @@ def register(mcp: FastMCP) -> None:
         """
         _require_sub()
         prefix = _tool_prefix()
-        demande, name = name, tool_alias.canonical(name, prefix)
+        demande, name = name, deprecations.tool_canonique(
+            tool_alias.canonical(name, prefix))
         tool = await _resolve_tool(ctx, name)
         if tool is None:
             raise McpError(ErrorData(
