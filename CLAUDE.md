@@ -230,6 +230,18 @@ REST `/api/sirene/*` (noms de routes **inchangés** — `oto-cli`/`oto-core` en 
 <1 s) ; le parquet = lookups ponctuels, **bulk** (`fr_stock_enrich` = 1 scan) et énumération
 exhaustive >10k. **Détail : `docs/sirene-stock.md`.**
 
+⚠️ **`categorie_entreprise` (PME/ETI/GE) est calculée par l'INSEE sur le périmètre GROUPE,
+jamais sur l'entité** — une filiale minuscule sort en « GE ». C'est un faux négatif de
+ciblage vécu (4 leads sur 5 écartés à tort). **`fr_groupe`** (`tools/fr_groupe.py`, #337)
+sépare les deux : il remonte/descend la chaîne par les **mandataires personnes morales du
+RNE**, commissaires aux comptes exclus, chaque lien qualifié (`forte` = détention impliquée /
+`moyenne` = mandat social / `faible` = ni l'un ni l'autre). ⚠️ **Le RBE est fermé au public
+depuis le 31/07/2024** : une SAS sans mandataire personne morale sort `indeterminee`, ce qui
+ne veut PAS dire « indépendante » — et le descendant s'appuie sur l'index plein texte amont
+(qui indexe les dirigeants), donc il rend un ÉCHANTILLON dès `candidats_tronques=true`. Le
+contrat amont vérifié (ce que `q` sait faire, les bornes 25/page et 10 000) vit dans la
+docstring du module.
+
 ## Recherche transverse & KB projets (suivi oto-private#67)
 
 **`oto_search`** (capacité `me.search`, MCP + `GET /api/me/search`) = LE verbe « retrouver »,
