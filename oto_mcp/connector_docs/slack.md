@@ -24,6 +24,7 @@ oauth_config:
     bot:
       - channels:read
       - channels:history
+      - channels:join
       - groups:read
       - groups:history
       - im:read
@@ -51,7 +52,9 @@ settings:
 
 *(sans manifeste : **Blank app**, puis déclare les mêmes scopes à la main dans OAuth & Permissions avant d'installer. Le manifeste évite exactement cette étape.)*
 
-⚠️ **un scope ne remplace pas l'appartenance au canal** : pour lire un canal privé — et un canal public où il n'est pas — le bot doit y être **invité** (`/invite @Oto`). Sinon Slack répond `not_in_channel`, ce qui ressemble à tort à un problème de token.
+⚠️ **un scope ne remplace pas l'appartenance au canal.** sans appartenance, Slack répond `not_in_channel` — ce qui ressemble à tort à un problème de token. deux cas, et un seul est automatisable :
+- **canal public** : `slack_join_channel` fait entrer l'app toute seule (c'est à quoi sert le scope `channels:join` du manifeste ci-dessus)
+- **canal privé** : aucune API Slack ne permet de s'y inviter. un humain déjà membre doit taper `/invite @Oto` dans le canal — oto ne peut pas le faire à sa place, et le dit au lieu de laisser croire à une panne
 
 référence Slack : [créer une app depuis un manifeste](https://api.slack.com/reference/manifests) · [installer avec oauth v2](https://api.slack.com/authentication/oauth-v2)
 
@@ -68,5 +71,7 @@ un token Slack est émis **par installation** : deux workspaces = deux jeux de t
 envoie et lis des messages slack en ton nom depuis claude.
 - « envoie un message dans #general » → `slack_post_message`
 - « dm jean par email » → `slack_find_user_by_email` puis `slack_open_dm` puis `slack_post_message`
-- « lis les derniers messages de ce canal » → `slack_read_history`
+- « lis les derniers messages de ce canal » → `slack_read_history` (messages de premier niveau ; `oldest`/`latest` pour ne lire qu'une fenêtre)
+- « qu'est-ce qui s'est dit dans ce fil ? » → `slack_read_thread` — les **réponses** d'un fil, que `slack_read_history` ne rend pas (il n'en montre que le compteur)
+- « fais entrer oto dans #canal » → `slack_join_channel` (canaux publics uniquement)
 - « réagis 👍 à ce message » → `slack_add_reaction`
