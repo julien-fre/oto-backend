@@ -58,10 +58,14 @@ rien ne rendait navigable et que rien ne tenait.
   finder est ajouté à `sys.meta_path`, donc un import resté sur l'ancien chemin
   (`from .. import datastore_schema as dsv2`) continue de résoudre — sur le fichier
   d'AVANT, dans un autre checkout. La suite passe au vert sur du code qui n'existe plus
-  dans la branche, et c'est la CI qui l'apprend. Deux parades, à faire les deux : un
-  **balayage AST** des imports qui visent encore la famille déplacée (le grep rate les
-  listes `from .. import a, x as y, b`), et une exécution de la suite avec le finder
-  editable RETIRÉ de `sys.meta_path`.
+  dans la branche, et c'est la CI qui l'apprend. La parade est un test, pas une
+  discipline : `tests/test_no_editable_fallback.py` vérifie une propriété du RÉSULTAT —
+  **tout `oto_mcp.*` chargé vient du répertoire de ce dépôt** — donc il ne connaît aucun
+  nom de module et reste vrai au déplacement suivant. Il est inerte en CI (aucun autre
+  checkout n'y existe) et mord en LOCAL, là où le défaut vit. À la main, en plus, quand
+  on déplace une famille : un **balayage AST** des imports qui la visent encore — le
+  grep, lui, rate les listes `from .. import a, x as y, b`, et c'est exactement là que
+  le cas de 2026-08-28 se cachait.
 
 ## Les règles, chacune née d'un incident daté
 

@@ -59,7 +59,7 @@ def register_with(monkeypatch):
     ⚠️ `fr.register()` CAPTURE `fod_fr.entreprises` dans une fermeture — patcher
     après l'enregistrement n'a aucun effet. Le stub doit donc être posé AVANT.
     """
-    from oto_mcp import fod_fr
+    from oto_mcp.fod import fr as fod_fr
     from oto_mcp.tools import fr
 
     def _make(identity):

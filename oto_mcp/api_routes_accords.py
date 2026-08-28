@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from oto_mcp import fod_fr
+from oto_mcp.fod import fr as fod_fr
 
 AuthFn = Callable[..., Awaitable[tuple]]
 

@@ -69,7 +69,7 @@ def _split_legal_form(query: Optional[str]) -> Optional[tuple[str, str]]:
 
 
 def register(mcp: FastMCP) -> None:
-    from .. import fod_fr  # données entreprise + INSEE keyé (passthrough) + index BOAMP/ACCO → service FOD
+    from ..fod import fr as fod_fr  # données entreprise + INSEE keyé (passthrough) + index BOAMP/ACCO → service FOD
 
     # Données entreprise open-data servies par le service FOD dédié (ADR 0028) — le
     # backend n'exécute plus ces appels (dont l'INPI DuckDB, workload lourd) in-process.
@@ -812,7 +812,7 @@ def register(mcp: FastMCP) -> None:
             return {"error": "not_found", "id_or_numero": id_or_numero}
         if not include_text:
             return result
-        from .. import fod_ccn
+        from ..fod import ccn as fod_ccn
         # Le texte se demande par ID DILA : l'appelant a pu nommer l'acte par son
         # numéro de dépôt (T…), que Légifrance ne connaît pas.
         text = fod_ccn.accords_text(result.get("id") or id_or_numero)
@@ -855,7 +855,7 @@ def register(mcp: FastMCP) -> None:
         text is absent) + `lien_construit` (best-effort Légifrance pattern,
         not guaranteed to resolve).
         """
-        from .. import fod_ccn
+        from ..fod import ccn as fod_ccn
         return fod_ccn.accords_text(acco_id, offset=offset)
 
     # Jurisprudence / codes / conventions collectives (juris_*/loi_*/ccn_*) ont

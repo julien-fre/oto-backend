@@ -23,7 +23,7 @@ from fastmcp import FastMCP
 
 
 def register(mcp: FastMCP) -> None:
-    from .. import fod_urba
+    from ..fod import urba as fod_urba
 
     # Enveloppe réglementaire servie par le service FOD dédié (ADR 0028 B3) — le
     # backend n'exécute plus ces appels (dont l'IRIS DuckDB) in-process. Objets proxy
@@ -69,7 +69,7 @@ def register(mcp: FastMCP) -> None:
             query: alternative keyword (e.g. "hauteur maximale", "emprise au sol").
             max_extraits: max passages returned (1-50). context_lignes: lines kept after each hit.
         """
-        from oto_mcp import fod_reglement
+        from oto_mcp.fod import reglement as fod_reglement
 
         return fod_reglement.extraits(idurba, zone=zone, query=query,
                                       max_extraits=max_extraits, context_lignes=context_lignes)

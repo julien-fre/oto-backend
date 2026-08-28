@@ -8,7 +8,7 @@ carte de connecteur (`droit` au registre, `providers/droit.py`) :
 - `loi_*`   — codes consolidés versionnés (LEGI, texte en vigueur à une date) ;
 - `ccn_*`   — conventions collectives de branche (KALI/DILA).
 
-Toutes ces sources sont servies par le **service FOD** (`fod_juris`/`fod_loi`/`fod_ccn`
+Toutes ces sources sont servies par le **service FOD** (`fod/juris`/`fod/loi`/`fod/ccn`
 → HTTP, `FOD_BASE_URL`), pas par un client lib en direct. Extraites du connecteur
 `sirene`/`fr` (elles y étaient crammées sous « INSEE SIRENE », publisher trompeur).
 
@@ -101,7 +101,7 @@ def register(mcp: FastMCP) -> None:
             kali_id: op="get" — DILA article id returned by op="search"
                 (KALIARTI000…).
         """
-        from .. import fod_ccn
+        from ..fod import ccn as fod_ccn
 
         if op == "search":
             return fod_ccn.search(_need(query, "query", op), idcc=idcc,
@@ -128,7 +128,7 @@ def register(mcp: FastMCP) -> None:
                 TITLE only.
             limit: Max results (default 20, max 100).
         """
-        from .. import fod_ccn
+        from ..fod import ccn as fod_ccn
         return fod_ccn.conventions(idcc=idcc, query=query, limit=limit)
 
     # --- Codes consolidés (LEGI, via service FOD) ---
@@ -176,7 +176,7 @@ def register(mcp: FastMCP) -> None:
             en_vigueur: op="search" — only versions in force today (default True).
             limit: op="search" — max results (default 20, max 50).
         """
-        from .. import fod_loi
+        from ..fod import loi as fod_loi
 
         if op == "get":
             return fod_loi.article(_need(code, "code", op),
@@ -194,7 +194,7 @@ def register(mcp: FastMCP) -> None:
         """List the 22 French consolidated codes covered (alias → LEGITEXT +
         label). Discovery helper for loi_article — both its `code` argument and
         its op="search" filter."""
-        from .. import fod_loi
+        from ..fod import loi as fod_loi
         return fod_loi.codes()
 
     # --- Jurisprudence (fonds DILA + CEDH/CJUE/live, via service FOD) ---
@@ -247,7 +247,7 @@ def register(mcp: FastMCP) -> None:
             decision_id: op="get" — id returned by op="search" (JURITEXT…,
                 CETATEXT…, CONSTEXT…, CNILTEXT…).
         """
-        from .. import fod_juris
+        from ..fod import juris as fod_juris
 
         if op == "search":
             return fod_juris.search(_need(query, "query", op), fond=fond,

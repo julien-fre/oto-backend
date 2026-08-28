@@ -55,10 +55,10 @@ def fr_get(monkeypatch):
     # Les données entreprise passent par les proxies FOD (fod_fr) depuis B2a :
     # on stube les proxies, pas les classes de clients lib. SIRENE (keyé) reste
     # in-process via oto.tools.sirene.SireneClient — non touché par fr_get.
-    monkeypatch.setattr("oto_mcp.fod_fr.entreprises", _Entreprises())
-    monkeypatch.setattr("oto_mcp.fod_fr.inpi", _Inpi())
-    monkeypatch.setattr("oto_mcp.fod_fr.bodacc", _Bodacc())
-    monkeypatch.setattr("oto_mcp.fod_fr.egapro", _Noop())
+    monkeypatch.setattr("oto_mcp.fod.fr.entreprises", _Entreprises())
+    monkeypatch.setattr("oto_mcp.fod.fr.inpi", _Inpi())
+    monkeypatch.setattr("oto_mcp.fod.fr.bodacc", _Bodacc())
+    monkeypatch.setattr("oto_mcp.fod.fr.egapro", _Noop())
     monkeypatch.setattr("oto.tools.sirene.SireneClient", _Noop)
     from oto_mcp.tools import fr
     reg = _Reg()

@@ -13,7 +13,7 @@ from fastmcp import FastMCP
 
 
 def register(mcp: FastMCP) -> None:
-    from .. import fod_osm
+    from ..fod import osm as fod_osm
 
     overpass = fod_osm.overpass
 

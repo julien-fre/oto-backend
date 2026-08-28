@@ -34,7 +34,7 @@ def permis_search(monkeypatch):
             calls.append({"kind": kind, **kw})
             return {"total": 142, "page": 1, "page_size": kw.get("page_size"), "permis": []}
 
-    from oto_mcp import fod_foncier
+    from oto_mcp.fod import foncier as fod_foncier
     from oto_mcp.tools import foncier
 
     monkeypatch.setattr(fod_foncier, "sitadel", _Sitadel())

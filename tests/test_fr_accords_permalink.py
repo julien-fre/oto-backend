@@ -41,8 +41,8 @@ _TEXT = {"texte": "Article 1 — …", "texte_chars": 14, "tronque": False,
 
 @pytest.fixture()
 def tools(monkeypatch):
-    monkeypatch.setattr("oto_mcp.fod_fr.get_acco", lambda x: dict(_ACCO))
-    monkeypatch.setattr("oto_mcp.fod_ccn.accords_text",
+    monkeypatch.setattr("oto_mcp.fod.fr.get_acco", lambda x: dict(_ACCO))
+    monkeypatch.setattr("oto_mcp.fod.ccn.accords_text",
                         lambda x, offset=0: dict(_TEXT))
     from oto_mcp.tools import fr
     reg = _Reg()
