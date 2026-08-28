@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS usage (
 -- posée par calllog.ToolCallLogger (succès comme échec). Schéma CANONIQUE
 -- calllog (contrat inter-projets, domicile = socle otomata-mcp/logging.py ;
 -- l'ex-lib otomata-calllog est décommissionnée, otomata-calllog#1).
--- Volumétrie bornée par un prune au boot (cf. prune_tool_calls + init_db).
+-- Volumétrie bornée par le timer `oto-journal-archive` (export S3 du mois PUIS
+-- suppression, `OTO_JOURNAL_RETENTION_DAYS`) — plus par un prune au boot, qui
+-- supprimait sans archiver et vidait d'avance ce que l'archive devait prendre
+-- (ADR 0065 lot 0, oto-backend#426).
 -- `sub` nullable : les appels stdio local non authentifiés n'ont pas d'identité.
 CREATE TABLE IF NOT EXISTS tool_calls (
     id BIGSERIAL PRIMARY KEY,

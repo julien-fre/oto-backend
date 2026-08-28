@@ -1145,8 +1145,18 @@ def prune_tool_calls(keep_days: int = 30) -> int:
     Cette purge en devient le corollaire naturel — l'index ne survit pas à ce qu'il
     indexe.
 
-    Appelé au boot (`init_db`, `OTO_MCP_CALL_LOG_RETENTION_DAYS`). Retourne le nombre de
-    lignes de JOURNAL supprimées (contrat inchangé) ; le compte de runs part au log.
+    ⚠️ **N'est plus appelée au boot** (ADR 0065, lot 0). Elle supprimait le journal
+    à 30 jours **sans l'archiver**, ce qui vidait d'avance ce que le timer
+    `oto-journal-archive` (posé le 27/08) devait exporter au froid S3 : mesuré le
+    2026-08-28, zéro ligne au-delà de 30 j dans une table de 969 314 — l'archive
+    n'aurait jamais trouvé un seul mois complet à prendre. La rétention du journal
+    appartient désormais à `deploy/archive_tool_calls.py`, qui exporte PUIS supprime ;
+    la moitié « runs sans faits » est devenue `prune_orphan_runs`, jouée par
+    `oto-mcp maintenance retention`. Cette fonction reste, exercée par
+    `tests/test_run_retention.py` et appelable à la main.
+
+    Retourne le nombre de lignes de JOURNAL supprimées (contrat inchangé) ; le compte
+    de runs part au log.
     """
     keep_days = max(1, int(keep_days))
     with _connect() as conn:
@@ -1159,6 +1169,34 @@ def prune_tool_calls(keep_days: int = 30) -> int:
         logger.info("prune (>%d j) : %d ligne(s) de journal, %d run(s) sans faits",
                     keep_days, n_calls, n_runs)
     return n_calls
+
+
+def prune_orphan_runs(keep_days: int = 30) -> int:
+    """Efface les ÉTIQUETTES de runs dont les faits ont disparu du journal (#289).
+
+    Un run EST ses faits ; sa ligne `runs` n'est qu'un index. Une fois le journal du
+    mois archivé au froid et supprimé, l'étiquette resterait à annoncer « prospection
+    Q3 → done » au-dessus d'une page vide. Même borne que le journal, donc, mais
+    exécutée APRÈS lui — d'où sa sortie de `prune_tool_calls` : les deux moitiés
+    n'ont plus le même exécutant (l'archive pour le journal, le timer de maintenance
+    pour les étiquettes)."""
+    with _connect() as conn:
+        n = conn.execute(_PRUNE_ORPHAN_RUNS, (max(1, int(keep_days)),)).rowcount or 0
+    if n:
+        logger.info("runs sans faits (>%d j) : %d effacé(s)", keep_days, n)
+    return n
+
+
+def count_orphan_runs(keep_days: int = 30) -> int:
+    """Ce que `prune_orphan_runs` effacerait — la moitié « à blanc » de la commande."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM runs r "
+            " WHERE COALESCE(r.finished_at, r.started_at) < NOW() - make_interval(days => %s)"
+            "   AND NOT EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.run_id = r.run_id)",
+            (max(1, int(keep_days)),),
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
 
 def usage_today_map(sub: str) -> dict[str, int]:

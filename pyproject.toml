@@ -167,7 +167,10 @@ dev = [
 ]
 
 [project.scripts]
-oto-mcp = "oto_mcp.server:main"
+# Aiguillage : nu → le serveur ; `maintenance <travail>` → oto_mcp.maintenance.
+# Il passe par `oto_mcp.cli` et non par `oto_mcp.server` parce qu'importer ce
+# dernier construit une instance MCP complète au niveau module (ADR 0065).
+oto-mcp = "oto_mcp.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

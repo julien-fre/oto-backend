@@ -521,6 +521,39 @@ refuse ; l'unique échappatoire est `# noqa: SILENT — <raison>`, sur la ligne 
 annotés : c'est de la dette DÉCLARÉE, pas un permis. **Détail et inventaire :
 `docs/silences-2026-08-27.md`.**
 
+## Le démarrage — ce qui a le droit d'y tourner (ADR 0065)
+
+**Au boot, le DDL additif et rien d'autre.** `oto-mcp` → `oto_mcp/cli.py` → `server.main`
+→ `_prepare_database()` **une seule fois par process** (drapeau `_PREPARED`) : `init_db()`
+puis les six backfills/seeds one-shot. `_build_mcp` est appelé **deux** fois (instance
+anonyme au niveau module, authentifiée dans `main`) — la garde est là pour ça. Chaque
+étape se chronomètre dans le journal (`boot: <étape> <n> ms`).
+
+⚠️ **La fenêtre du healthcheck est FINIE : 120 s**, sonde directe `127.0.0.1:9103`
+(`deploy/oto-backend.sh`). Boot prod/préprod mesuré 36-39 s, dont **≈ 1,5 s de base**
+depuis le lot 0 — le reste est l'import Python et les deux `_build_mcp`. Un lot qui
+ajoute un travail one-shot au boot doit le mesurer **avant** de poser son tag.
+
+**Ce qui n'a rien à faire au boot va en maintenance** — `oto_mcp/maintenance.py`,
+commandes `oto-mcp maintenance retention | blocks | key-indexes | check-boot | all`,
+tirées par `deploy/oto-mcp-maintenance.timer` (quotidien, posé et activé par le script
+de déploiement, **prod seulement** : la base est partagée, deux exécutants se
+disputeraient les mêmes lignes). Le critère : **un travail dont le coût suit la taille
+de la base n'est pas une migration, c'est un cron.**
+
+**La rétention du journal a UN propriétaire** : `oto-journal-archive` (export S3 du mois
+puis suppression, `OTO_JOURNAL_RETENTION_DAYS`). Le boot n'en a plus. ⚠️ Jusqu'au
+2026-08-28 il purgeait à 30 j **sans archiver** et vidait donc d'avance ce que l'archive
+devait prendre — un chiffre de monitoring lu avant cette date ne porte qu'un mois.
+
+**Le garde-fou** : `tests/test_boot_order_replay.py` rejoue l'ORDRE du boot (DDL assemblé
+PUIS les ALTER) contre un vrai PostgreSQL, en **transaction annulée**, et compare
+l'empreinte de schéma avant/après. C'est ce qui manquait le 27/08 (#450) : un index posé
+sur une colonne née d'un ALTER — le DDL seul passait, la migration seule passait, seul
+leur **ordre** échouait. Jouable contre une base servie : `oto-mcp maintenance check-boot`.
+
+**Détail et chiffres : `docs/migrations-versionnees.md` §1.**
+
 ## Commands
 
 Tests, déploiement, logs, inspection DB : **`docs/commands.md`** — avec les pièges qui coûtent une heure (le venv sans pytest, le clone qui teste en réalité le tree partagé, le registre d'outils vide hors serveur).
@@ -576,6 +609,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `event-loop-perf.md` | les **3** modes de gel mono-loop + protections + recettes py-spy/aiodebug. ⚠️ Le 3ᵉ (27/08) n'est pas un I/O mal placé mais une **requête lente** : même signature py-spy que le 2ᵉ, remède opposé — indexer, pas déplacer. |
 | `redaction.md` | rédaction de champs **et rendu du résultat servi** : middleware unique, rien par défaut + templates 1-clic, **schéma OBSERVÉ**, dry-run preview, moteur `FieldFilter` (oto-core) — et la règle **« un résultat VIDE se sert en PHRASE, jamais en structure nue »** (oto#32, 27/08/2026). |
 | `live-migrations.md` | migrations vivantes sur la DB partagée canari/prod : la danse en N lots promus, les techniques, les pièges — et le fait que **prod et preprod partagent la base**. |
+| `migrations-versionnees.md` | ce que le boot exécute, mesuré : l'inventaire des 297 ordres, les 79 ALTER inertes, les 30 non additifs — et §1.3/§1.4, **l'état depuis le lot 0 de l'ADR 0065** (un `init_db` par process, la maintenance en timer, la rétention du journal rendue à l'archivage qu'elle annulait, la répartition chiffrée des 36-39 s de boot). |
 | `sirene-stock.md` | stock SIRENE en DuckDB sur parquet INSEE : source S3, perfs, refresh, `fr_stock_*`, routes REST. |
 | `connector-test-gate-theirstack-origami.md` | la porte de test LOCALE des deux connecteurs de prospection (unitaire, lecture live, écriture sur un espace jetable) : ce qu'un contributeur externe doit avoir fait passer avant de pousser, sans serveur qui tourne. |
 | `billing.md` | abonnement par org (ADR 0043) : le modèle sans objet subscription Mollie, **le mandat qui naît quelques minutes APRÈS l'encaissement** (une course, pas un échec), les 3 invariants anti-double-débit, les deux files de reprise du runner, **la règle de TVA par pays et le montant débité en TTC** (#486), **le gate de consentement d'achat et la trace d'acceptation historisée** (#487), **la facture Pennylane émise à chaque encaissement** — clé de la compta d'Otomata dans l'env, numérotation chez le fournisseur, PDF stocké, avoir sur remboursement (#488) — et l'incident du 25/08/2026. |

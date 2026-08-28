@@ -1,0 +1,15 @@
+[Unit]
+Description=Maintenance quotidienne du backend oto
+
+[Timer]
+# 03:20, tous les jours : loin des heures ouvrées, et AVANT le créneau de
+# l'archivage du journal (04:45 le 3 du mois). L'ordre compte dans ce sens-là :
+# l'archive EXPORTE un mois au froid puis le supprime ; les étiquettes de runs
+# qu'elle rend orphelines sont ramassées au tir suivant de cette maintenance-ci.
+OnCalendar=*-*-* 03:20:00
+# Une box éteinte au créneau ne saute pas le jour.
+Persistent=true
+RandomizedDelaySec=20m
+
+[Install]
+WantedBy=timers.target

@@ -4,8 +4,9 @@ type: reference
 description: >-
   Référence du journal d'appels d'oto-backend : ToolCallLogger (oto_mcp/calllog.py)
   via hook on_call_tool, table tool_calls (kind mcp|rest|connector, corrélation
-  session_id/run_id/org_id/client_id/sentry_event_id), prune au boot via
-  OTO_MCP_CALL_LOG_RETENTION_DAYS (défaut 30j). Décrit les surfaces d'investigation —
+  session_id/run_id/org_id/client_id/sentry_event_id), rétention portée par le timer
+  d'archivage (OTO_JOURNAL_RETENTION_DAYS, défaut 90 j) et non plus par un prune au
+  boot — ADR 0065 lot 0. Décrit les surfaces d'investigation —
   console MCP oto_admin_monitoring + /platform/monitoring (plateforme),
   oto_org_monitoring + /org/monitoring (org_admin, mêmes lentilles bornées à SON org),
   /api/me/* (membre) — servies par les mêmes capacités. À consulter pour comprendre ce
@@ -59,11 +60,19 @@ refus d'entrée) n'est pas capturée par Sentry (`before_send` la droppe), donc 
 Une ligne en erreur sans event id est donc normale — et informative : c'est un refus, pas
 un bug.
 
-Volumétrie bornée par un prune au boot (`prune_tool_calls` dans `init_db`, rétention
-`OTO_MCP_CALL_LOG_RETENTION_DAYS`, défaut 30 j).
+Volumétrie bornée par le timer `oto-journal-archive` : il EXPORTE au froid S3 les mois
+entiers au-delà de `OTO_JOURNAL_RETENTION_DAYS` (défaut **90 j**), puis les supprime.
 
-**Un déroulé s'efface entier** (#289) : le même prune retire, dans la même transaction,
-les lignes `runs` qui viennent de perdre tous leurs faits. Un run *est* ses faits (ADR
+⚠️ **Corrigé le 2026-08-28 (ADR 0065 lot 0, oto-backend#426), et il faut le savoir pour
+lire un chiffre ancien** : jusque-là le boot purgeait `tool_calls` à **30 jours sans
+archiver**, donc plus court que la politique écrite — et il vidait d'avance ce que
+l'archive posée le 27/08 devait prendre (mesuré : 0 ligne au-delà de 30 j sur 969 314).
+La rétention effective était d'un mois, personne ne l'avait décidé, et rien n'était parti
+au froid. Depuis, elle a **un seul propriétaire**, l'archive. Le premier mois réellement
+archivé sera août 2026, au tir du 2026-12-03.
+
+**Un déroulé s'efface entier** (#289) : à la même borne, `oto-mcp maintenance retention`
+(timer quotidien) retire les lignes `runs` qui viennent de perdre tous leurs faits. Un run *est* ses faits (ADR
 0058-D2) et sa page est assemblée à la lecture — garder l'étiquette au-delà rendait, au
 31ᵉ jour, une page VIDE sous une ligne qui annonçait « done ». Deux gardes : l'étiquette
 d'un run **encore vivant** (ouvert il y a 40 jours, appelé hier) n'est jamais touchée, et

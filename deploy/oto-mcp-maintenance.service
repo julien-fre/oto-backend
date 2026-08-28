@@ -1,0 +1,25 @@
+[Unit]
+# Les travaux de maintenance du backend, SORTIS du démarrage (ADR 0065, lot 0 —
+# oto-backend#426). Purge du fil des runs et des étiquettes orphelines, re-projection
+# des blocs de nœuds, index d'unicité de clé métier par namespace : trois travaux à la
+# forme d'un cron qui tournaient dans la fenêtre du healthcheck de chaque déploiement,
+# et dont le coût suit la taille de la base — donc le seul poste du boot capable de
+# faire rollbacker un déploiement sain sans que rien n'ait changé dans le lot.
+# Même modèle que oto-journal-archive : hors du processus MCP, qui est mono-boucle.
+Description=Maintenance du backend oto (purge, re-projection, index)
+Documentation=file:///opt/oto-mcp/oto_mcp/maintenance.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Le même environnement que le backend, jamais une copie (une copie divergerait le
+# jour d'une rotation de clé) : DATABASE_URL et les fenêtres de rétention.
+EnvironmentFile=/opt/oto-mcp/.env
+WorkingDirectory=/opt/oto-mcp
+ExecStart=/opt/oto-mcp/.venv/bin/oto-mcp maintenance all
+# Ne doit jamais concurrencer le service qui répond aux utilisateurs.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1h
+SyslogIdentifier=oto-mcp-maintenance

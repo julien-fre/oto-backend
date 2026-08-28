@@ -350,10 +350,43 @@ def test_a_native_node_is_never_purged(live):
 
 
 # ── le corps devient des blocs ───────────────────────────────────────────────
+#
+# ⚠️ **La projection a QUITTÉ le boot** (ADR 0065 lot 0, oto-backend#426) : elle est
+# devenue un travail de maintenance tiré par un timer quotidien. En régime stable elle
+# ne coûtait qu'une sonde, mais une ROTATION DE MARQUEUR la fait re-parser tout le
+# corpus — celle de `blocks_md5` vers `blocks_md5_v2` a re-parsé 1 526 nœuds, soit
+# ~19 s ajoutées à la fenêtre du healthcheck par un lot qui l'ignorait.
+#
+# La SÉMANTIQUE gardée ici est intacte : ce qui change, c'est le moment. Les tests
+# enchaînent donc « le boot PUIS la passe » là où ils n'appelaient que le boot.
 
 def _blocks_of(node_id: int) -> list[dict]:
     return _rows("SELECT public_id, position, type, props FROM blocks "
                  "WHERE node_id = %s ORDER BY position", (node_id,))
+
+
+def _passe_de_blocs() -> int:
+    """La passe de maintenance qui projette les corps en blocs."""
+    from oto_mcp import maintenance
+    return maintenance.blocks()["parsed"]
+
+
+def test_le_boot_seul_ne_projette_plus_les_blocs(live):
+    """Le contrat qui a changé, rendu explicite : `init_db` ne parse plus rien.
+
+    Sans ce test, la sortie de la projection hors du boot ne serait attestée que par
+    l'absence d'un appel — donc par rien, et un lot pourrait l'y remettre sans que
+    la suite bronche."""
+    from oto_mcp.db import create_project
+
+    pid = create_project("org", "42", "Boot seul", brief_md="un\n\ndeux\n")
+    live()
+    nid = _node_of_project(pid)["id"]
+    assert _blocks_of(nid) == [], (
+        "le boot a projeté des blocs — ce travail appartient à "
+        "`oto-mcp maintenance blocks` depuis l'ADR 0065")
+    _passe_de_blocs()
+    assert len(_blocks_of(nid)) == 2
 
 
 def test_the_body_of_a_converted_page_becomes_blocks(live):
@@ -365,7 +398,7 @@ def test_the_body_of_a_converted_page_becomes_blocks(live):
     body = "# Titre\n\nDu texte.\n\n```py\nprint(1)\n```\n"
     pid = create_project("org", "42", "Avec du corps")
     did = create_doc(pid, "Page à blocs", body_md=body)
-    live()
+    live(); _passe_de_blocs()
 
     blocks = _blocks_of(_node_of_doc(did)["id"])
     assert [b["type"] for b in blocks] == ["text", "text", "code"]
@@ -381,40 +414,40 @@ def test_the_blocks_rebuild_the_body_character_for_character(live):
 
     brief = "Contexte\n\n- un\n- deux\n\n```sh\nls -la\n```\n\nFin.\n"
     pid = create_project("org", "42", "Brief riche", brief_md=brief)
-    live()
+    live(); _passe_de_blocs()
     blocks = _blocks_of(_node_of_project(pid)["id"])
     assert len(blocks) > 1
     assert "".join(b["props"]["md"] for b in blocks) == brief
 
 
 def test_reparsing_is_a_no_op(live):
-    """Le marqueur (`props->>'blocks_md5'`) évite de reparser à chaque boot — et
+    """Le marqueur (`props->>'blocks_md5_v2'`) évite de reparser à chaque passe — et
     surtout de fabriquer des adresses neuves à chaque fois. Une adresse de bloc qui
-    change à chaque redémarrage ne serait pas une adresse."""
+    change à chaque tir de timer ne serait pas une adresse."""
     from oto_mcp.db import create_project
 
     pid = create_project("org", "42", "Stable", brief_md="un\n\ndeux\n")
-    live()
+    live(); _passe_de_blocs()
     nid = _node_of_project(pid)["id"]
     before = _blocks_of(nid)
     assert len(before) == 2
-    live()
+    live(); _passe_de_blocs()
     assert _blocks_of(nid) == before
 
 
 def test_editing_the_body_reparses_it(live):
     """Les blocs sont une PROJECTION du corps tant que l'écriture n'est pas
     basculée : un corps édité (par la prod, sur cette même base) doit voir ses blocs
-    refaits au boot suivant, sinon la page et ses blocs divergent en silence."""
+    refaits à la passe suivante, sinon la page et ses blocs divergent en silence."""
     from oto_mcp.db import create_project, update_project
 
     pid = create_project("org", "42", "Évolutif", brief_md="une seule ligne\n")
-    live()
+    live(); _passe_de_blocs()
     nid = _node_of_project(pid)["id"]
     assert len(_blocks_of(nid)) == 1
 
     update_project(pid, brief_md="un\n\ndeux\n\ntrois\n")
-    live()
+    live(); _passe_de_blocs()
     blocks = _blocks_of(nid)
     assert [b["props"]["md"] for b in blocks] == ["un\n\n", "deux\n\n", "trois\n"]
 
@@ -425,12 +458,12 @@ def test_an_emptied_body_leaves_no_orphan_blocks(live):
     from oto_mcp.db import create_project, update_project
 
     pid = create_project("org", "42", "À vider", brief_md="du contenu\n")
-    live()
+    live(); _passe_de_blocs()
     nid = _node_of_project(pid)["id"]
     assert _blocks_of(nid)
 
     update_project(pid, brief_md="")
-    live()
+    live(); _passe_de_blocs()
     assert _blocks_of(nid) == []
 
 

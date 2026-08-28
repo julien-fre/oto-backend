@@ -124,6 +124,31 @@ with psycopg.connect(os.environ[\"DATABASE_URL\"]) as c:
 # docs/connector-vault.md §Déchiffrer un credential ad-hoc.
 ```
 
+## Maintenance — les travaux qui ont quitté le boot (ADR 0065 lot 0)
+
+```bash
+# Sur la box, avec l'environnement du service (jamais une copie du .env) :
+sudo systemctl start oto-mcp-maintenance.service          # la passe complète, à la main
+sudo journalctl -u oto-mcp-maintenance -n 50 --no-pager   # ce qu'elle a fait, avec ses durées
+systemctl list-timers oto-mcp-maintenance.timer           # le prochain tir
+
+# Un travail seul, et d'abord À BLANC — sur une base PARTAGÉE prod/preprod, la
+# première question devant une purge est « combien de lignes ? ».
+sudo -E env $(cat /opt/oto-mcp/.env | xargs) \
+  /opt/oto-mcp/.venv/bin/oto-mcp maintenance retention --dry-run
+#   retention | blocks | key-indexes | all      les travaux du timer
+#   check-boot                                  rejoue l'ORDRE du boot en transaction
+#                                               ANNULÉE — un diagnostic sans effet,
+#                                               jouable contre la base servie
+#   key-index-rebuild                           ⚠️ #421, n'a JAMAIS tourné en prod :
+#                                               l'appeler est une décision, pas une
+#                                               routine (hors `all`, hors timer)
+```
+
+⚠️ **Le timer n'est posé qu'en PROD**, par `deploy/oto-backend.sh` au tag (jamais à la
+main, jamais en crontab) : prod et preprod partagent la base, deux exécutants se
+disputeraient les mêmes lignes.
+
 ## Pin oto-core — une version déployée = une coordonnée reproductible
 
 - **`oto-core[browser]` PINNÉ sur un tag git** (`@ git+…@vX.Y.Z` dans `pyproject.toml`, plus `@main` flottant ni dép `oto-cli`) : une version déployée = coordonnée reproductible. ⚠️ **`pip` ne réinstalle PAS une dép VCS déjà présente** (`oto-core` "satisfait" quelle que soit sa version) → `pip install -e .` seul ne monte JAMAIS oto-core au tag bumpé. Le deploy **force-réinstalle** oto-core depuis le tag lu du `pyproject` (`pip install --force-reinstall …@$tag`). Bump connecteurs = tag oto-core + édit du pin + deploy (PAS de `git pull` box). Cf. ADR 0020. ⚠️ **Symptôme trompeur en LOCAL** : des tests rouges peuvent être un venv en retard sur le pin, pas du code cassé (05/08 : 17 tests d'un connecteur neuf échouaient, son module n'existant pas dans l'oto-core installé). Réaligner avant de conclure — `uv pip install --python .venv/bin/python --force-reinstall --no-deps "oto-core[…] @ git+…@<tag du pyproject>"`. (⚠️ box `otomata-0` a un VIEUX oto-mcp décommissionné/stoppé avec un editable legacy `oto-cli` pré-split — ne pas s'y fier, le runtime live est la box dédiée.) ⚠️ **Le pin est un champ que TOUTES les sessions // éditent → régressions silencieuses récurrentes** : vécu 2026-07-07, un commit concurrent a réécrit le pin `v1.18.0→v1.17.0` et **cassé un tool déployé SANS erreur** (le tool était enregistré, sa méthode absente de l'ancien oto-core → `AttributeError` seulement à l'appel). Toujours bumper en **superset** (tag haut ⊇ tags bas) ; à la moindre divergence de pin en merge/rebase, **garder la version haute**.

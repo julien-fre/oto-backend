@@ -2,21 +2,23 @@
 title: Migrations versionnées — note de conception
 type: explanation
 description: >-
-  L'inventaire mesuré de ce que `db/_init.py` exécute à CHAQUE démarrage (143 ALTER
+  L'inventaire mesuré de ce que `db/_init.py` exécute à chaque démarrage (143 ALTER
   écrits, 297 ordres SQL réellement émis, 40 écritures dont le coût suit la taille de
-  la base, plus quatre travaux de maintenance hors transaction), la datation de chaque
-  migration, les 79 devenues inertes, deux défauts constatés au passage — puis trois
-  options pour sortir les migrations du chemin de démarrage, avec leurs risques et ce
-  que chacune change pour la fenêtre de healthcheck. AUCUNE recommandation : le choix
-  est une décision d'architecture (ADR), ce document lui fournit ses chiffres.
+  la base), la datation de chaque migration, les 79 devenues inertes, deux défauts
+  constatés au passage — et, depuis le lot 0 de l'ADR 0065 (2026-08-28), ce que le
+  boot fait RÉELLEMENT : un `init_db` au lieu de trois, la maintenance passée en
+  timer, la rétention du journal rendue à l'archivage qu'elle annulait, et la
+  répartition chiffrée des 36-39 s de démarrage (§1.2 — la base n'en pèse que 6,4).
 ---
 
 # Migrations versionnées — note de conception
 
-> **Ce document ne décide rien.** Il mesure l'existant, l'inventorie, et pose trois
-> options avec leurs risques. Le choix relève d'une ADR — c'est un changement de
-> régime pour un mécanisme qui touche une base **partagée prod/preprod**, pas une
-> amélioration qu'on glisse dans un lot.
+> **Ce document ne décidait rien** : il mesurait l'existant, l'inventoriait, et posait
+> trois options avec leurs risques. **Le choix est fait depuis** — ADR 0065 du
+> 2026-08-27, option C — et son **lot 0 est livré** (oto-backend#426, 2026-08-28) :
+> la §1 ci-dessous décrit donc un état RÉVOLU, conservé parce qu'il explique
+> pourquoi ; la §1.3 dit ce que le boot fait maintenant. Le reste (§2 à §5) reste
+> l'inventaire du régime en place, que les lots 1 et 2 attaqueront.
 >
 > Rédigé le 2026-08-27, en marge du lot qui a découpé `db/_schema.py` par domaine
 > (déplacement pur, DDL inchangé au caractère près). Ce lot n'a **pas** touché
@@ -57,7 +59,7 @@ rangement de `_init.py` n'est pas un problème de fichiers. C'est le symptôme d
 mécanisme qui rejoue tout l'historique à chaque démarrage parce qu'il n'a aucune
 notion de « déjà fait ». C'est ce que les trois options adressent.
 
-## 1. Ce que le boot fait aujourd'hui, mesuré
+## 1. Le boot : ce qu’il faisait, ce que ça coûtait, ce qu’il fait depuis le lot 0
 
 Mesures du 2026-08-27, `init_db()` rejoué contre un PostgreSQL 17 jetable
 (`pgvector/pgvector:pg17`, conteneur local, RTT négligeable, base **sans données**),
@@ -93,49 +95,106 @@ rend la mesure locale rassurante à tort. Les 154 `ALTER` no-op, eux, sont born�
 bon marché : ils **ne sont pas** le problème de la fenêtre de healthcheck. Ils sont
 le problème de la lisibilité et du risque d'écriture.
 
-### 1.1 Le boot n'est plus une migration, c'est un ordonnanceur de maintenance
+### 1.1 Le boot était devenu un ordonnanceur de maintenance — il ne l'est plus
 
-C'est le constat le plus important de cette note, et il déborde le sujet des ALTER.
-Après avoir commité sa transaction de schéma, `init_db` enchaîne **quatre travaux
-qui n'ont rien de DDL**, tous sur le chemin du démarrage, tous `fail-open` (une
-exception est loggée, pas relevée), tous à coût croissant avec la base :
+*(état jusqu'au 2026-08-28 ; corrigé par le lot 0 de l'ADR 0065, cf. §1.3.)*
 
-| travail | ce qu'il fait | ce dont le coût dépend |
-| --- | --- | --- |
-| `backfill_node_blocks()` (`db/blocks.py`) | parse le corps markdown des nœuds en blocs, en Python | nombre de nœuds modifiés |
-| `prune_tool_calls(30 j)` (`db/usage.py`) | purge du journal d'appels **et** des runs devenus orphelins — deux `DELETE` non bornés, sur sa propre connexion | volume du journal |
-| `prune_run_messages(30 j)` (`db/run_thread.py`) | purge du fil des runs hébergés | volume du fil |
-| `_ensure_datastore_key_indexes()` | par namespace : résorption des doublons puis `CREATE UNIQUE INDEX` | nombre de namespaces × leurs lignes |
+C'était le constat le plus important de cette note, et il débordait le sujet des ALTER.
+Après avoir commité sa transaction de schéma, `init_db` enchaînait **quatre travaux
+qui n'ont rien de DDL**, tous sur le chemin du démarrage, tous `fail-open`, tous à coût
+croissant avec la base :
+
+| travail | ce qu'il fait | ce dont le coût dépend | mesuré le 28/08 |
+| --- | --- | --- | --- |
+| `backfill_node_blocks()` | parse le corps markdown des nœuds en blocs, en Python | nombre de nœuds modifiés | 130 ms en régime stable — **mais ~19 s à chaque rotation de marqueur** (1 526 nœuds × 4 allers-retours) |
+| `prune_tool_calls(30 j)` | purge du journal **et** des runs orphelins — deux `DELETE` non bornés | volume du journal | < 10 ms — parce qu'il n'y avait plus rien à purger, et c'est le problème (§1.4) |
+| `prune_run_messages(30 j)` | purge du fil des runs hébergés | volume du fil | 20 ms |
+| `_ensure_datastore_key_indexes()` | par namespace : résorption des doublons puis `CREATE UNIQUE INDEX` | nombre de namespaces × leurs lignes | **644 ms** pour 204 namespaces, zéro index manquant |
 
 Et à l'intérieur de la transaction, cinq conversions de contenu appelées depuis
 `db/nodes.py` (`convert_projects`, `convert_docs`, `convert_guides`,
-`convert_tables`, `convert_rows`) plus `db/guides.py` et `db/aux_embed.py`.
+`convert_tables`, `convert_rows`) plus `db/guides.py` et `db/aux_embed.py`. Celles-là
+**restent au boot** : elles sont additives, idempotentes, dans la transaction, et leur
+coût mesuré est négligeable.
 
-**Conséquence pour le choix** : une solution qui ne s'occuperait que des `ALTER`
-laisserait sur le chemin de démarrage la totalité du travail dont la durée est
-imprévisible. La rétention du journal en est l'exemple le plus net
-(`OTO_MCP_CALL_LOG_RETENTION_DAYS`) : c'est un travail périodique, il a la forme
-d'un `cron` — le dépôt en porte d'ailleurs un, `deploy/oto-journal-archive.timer` —
-et il s'exécute pourtant dans la fenêtre de healthcheck de chaque déploiement.
+**Un cinquième travail ne tournait pas du tout.** `migrate_business_key_indexes()` était
+appelée à la dernière ligne d'`init_db`, *après* la boucle de retry — dont le corps
+`return` en cas de succès et `raise` à la dernière tentative. Aucun chemin ne
+l'atteignait, et ce depuis #318. C'est oto-backend#421 ; le lot 0 a retiré l'appel mort
+et en a fait une commande explicite, **sans timer** — la faire tourner pour la première
+fois est une décision, pas un effet de bord.
 
-### 1.2 Ce qui consomme la fenêtre de healthcheck, par ordre de gravité
+### 1.2 Ce qui consommait la fenêtre de healthcheck, mesuré
 
-Le déploiement prod (`tag v*` → `deploy.yml` → script serveur `oto-backend.sh`,
-hors dépôt) enchaîne reset → install → restart → **smoke HTTP** → rollback auto si
-le smoke échoue. La fenêtre observée est d'environ **60 s** (21/08, cf. CLAUDE.md
-racine) et elle est **finie** : un lot qui ajoute du travail one-shot au boot doit
-l'élargir *avant* de poser son tag, sinon un déploiement sain est rollbacké.
+La fenêtre est de **120 s** depuis le 2026-08-27 (`deploy/oto-backend.sh`, sonde directe
+sur `127.0.0.1:9103` — elle interrogeait le canari depuis le 06/07). Le boot préprod
+relevé au journal le 28/08 : 39 s, 40 s, 39 s, 36 s (« Started » → « Application startup
+complete »).
 
-1. **Les travaux de maintenance et les backfills** (§1.1 et §2.4) — le seul poste
-   qui grandit avec la base, donc le seul qui transformera un jour un déploiement
-   vert en rollback sans que rien n'ait changé dans le lot.
-2. **L'attente de verrous.** `init_db` prend un advisory lock de transaction (un
-   seul migrateur à la fois : prod et preprod bootent sur la même base) puis pose
-   `lock_timeout = 5 s`. Sur `DeadlockDetected`/`LockNotAvailable`, la transaction
-   **entière** est rejouée, jusqu'à `OTO_MCP_INIT_DB_ATTEMPTS = 3`, avec 2 s puis
-   4 s d'attente. Pire cas : ~6 s d'attente + 3 traversées complètes.
-3. **Les 297 allers-retours** eux-mêmes, bornés et petits, payés à chaque
-   redémarrage.
+Répartition mesurée le 2026-08-28 contre la base servie (RDB managée, **RTT 3,14 ms par
+ordre** — c'est lui qui convertit un nombre d'allers-retours en secondes) :
+
+| poste | coût unitaire | fois par boot | total |
+| --- | ---: | ---: | ---: |
+| `init_db` (297 ordres en régime stable) | 0,93 s | **3** | 2,8 s |
+| `_ensure_datastore_key_indexes` (204 namespaces, 1 aller-retour chacun) | 0,64 s | **3** | 1,9 s |
+| `backfill_personal_orgs` (82 users × 2 allers-retours) | 0,58 s | **2** | 1,2 s |
+| `backfill_node_blocks` (la sonde, no-op) | 0,13 s | **3** | 0,4 s |
+| les quatre autres backfills + les deux purges | < 30 ms | 2-3 | ~0,1 s |
+| **total base** | | | **≈ 6,4 s** |
+
+**Deux enseignements, et le second est le plus utile.** D'abord : `init_db` était appelé
+**trois** fois par boot et les six backfills **deux** fois (`_build_mcp` est appelé pour
+l'instance anonyme puis pour l'authentifiée, et `main` rappelait `init_db` par-dessus) —
+c'est ce que le lot 0 corrige, pour ~4,5 s. Ensuite : **la base ne pesait que 6,4 s des
+36-39 s**. Le reste — une trentaine de secondes — est l'import Python et **deux
+`_build_mcp` complets** (`register_all` + montage des capacités). C'est là qu'est le
+gras du démarrage, et ce n'est pas un problème de migrations.
+
+### 1.3 Ce que le boot fait depuis le lot 0 (2026-08-28)
+
+1. **Une seule préparation de base par process** (`server._prepare_database`, gardée par
+   un drapeau de module) : un `init_db`, un tour de backfills. La garde est au point
+   d'appel et **pas** dans `init_db`, qui doit rester rejouable — c'est ainsi que les
+   tests prouvent son idempotence.
+2. **Les quatre travaux de maintenance sont sortis**, chacun devenu une commande nommée
+   dans `oto_mcp/maintenance.py` : `oto-mcp maintenance retention | blocks |
+   key-indexes | all`, tirée par `deploy/oto-mcp-maintenance.timer` (quotidien, posé et
+   activé par `deploy/oto-backend.sh`, **prod seulement** — la base est partagée, deux
+   exécutants se disputeraient les mêmes lignes).
+3. **Chaque étape du boot se chronomètre dans le journal** (`boot: <étape> <n> ms`) —
+   « on décide sur mesure, pas sur intuition ».
+4. **L'ordre du boot est rejouable hors du démarrage** : `apply_boot_schema(conn)` +
+   `replay_boot_schema_dry(conn)` (transaction annulée), gardés par
+   `tests/test_boot_order_replay.py`, et jouables contre une base servie par
+   `oto-mcp maintenance check-boot`. C'est le garde-fou qui manquait le 27/08 (#450) :
+   un index posé dans le DDL sur une colonne née d'un `ALTER` — ni le DDL seul ni la
+   migration seule ne pouvaient l'attraper, **seul leur ordre échouait**.
+
+### 1.4 Le défaut que le lot 0 a mis au jour : la purge annulait l'archive
+
+Le boot supprimait le journal à **30 jours, sans l'archiver**. Le timer
+`oto-journal-archive` posé le 2026-08-27 exporte au froid S3 les **mois entiers** au-delà
+de **90 jours** — il n'aurait donc jamais trouvé un seul mois à prendre. Mesuré le
+28/08 : `tool_calls` = 969 314 lignes, dont **0 au-delà de 30 jours**. Ce n'était pas une
+politique de rétention en double, c'était une politique qui en annulait une autre en
+silence, et la plus courte gagnait.
+
+Depuis le lot 0, la rétention du journal a **un seul propriétaire** : l'archive, qui
+exporte puis supprime, à `OTO_JOURNAL_RETENTION_DAYS` (90 par défaut, la même variable
+des deux côtés). Le boot ne purge plus rien ; la moitié « runs devenus orphelins » de
+`prune_tool_calls` est passée dans la commande de maintenance, à la même borne.
+
+**Ce que ça change en volumétrie, et pourquoi ce n'est pas un problème de latence** : le
+journal en ligne passe d'un mois à trois-quatre (360 Mo de table + 168 Mo d'index →
+environ le triple ; base entière 923 Mo aujourd'hui), et le premier vrai archivage
+tombera le 2026-12-03 (le premier mois entièrement passé sous la nouvelle borne est août
+2026). Les lectures servies, elles, **ne ralentissent pas** : mesuré le 28/08, le bloc
+`tool_call_stats` sur sa fenêtre par défaut coûte 309 ms et passe par un *Index Only
+Scan* sur `idx_tool_calls_kind (kind, created_at)` — **borné par la fenêtre demandée, pas
+par la taille de la table** ; idem pour le listing admin (`idx_tool_calls_created_at`,
+0,4 ms) et la vue par org (`idx_tool_calls_org`, 3,2 ms). Ce qui grandit est le disque,
+pas le temps de réponse.
 
 ## 2. L'inventaire
 
@@ -274,12 +333,16 @@ Tous ont plus d'un mois. Aucun ne peut être supprimé sans la vérification de 
 et pour les `DROP` la vérification est inverse (la colonne doit être **absente**
 partout).
 
-### 2.7 Deux défauts constatés au passage, **non corrigés**
+### 2.7 Deux défauts constatés au passage
 
-Relevés pendant l'inventaire ; ils ne relèvent pas du lot de découpe, qui était un
-déplacement pur. Ils sont notés ici pour ne pas se perdre.
+Relevés pendant l'inventaire de découpe ; le premier a été traité par le lot 0 de
+l'ADR 0065 (2026-08-28), le second reste ouvert.
 
-1. **`migrate_business_key_indexes()` ne tourne jamais.** Elle est appelée à la
+1. **`migrate_business_key_indexes()` ne tournait jamais** — *traité, oto-backend#421*.
+   Le lot 0 a retiré l'appel mort et en a fait `oto-mcp maintenance
+   key-index-rebuild`, **hors du timer** : la fonction est maintenant appelable, mais
+   la faire tourner pour la première fois reste une décision (elle reconstruit tous
+   les index de clé métier de la production). Le constat d'origine : Elle est appelée à la
    dernière ligne d'`init_db`, *après* la boucle de retry — dont le corps `return`
    en cas de succès et `raise` à la dernière tentative. Aucun chemin n'atteint donc
    l'appel, et `attempts` ne peut pas valoir 0 (`max(1, …)`). **Vérifié
