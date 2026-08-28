@@ -17,7 +17,7 @@ le TRADUIRE aux deux bords du protocole :
     tools/call   ←  `tulina_doc`  redevient `oto_doc`     (ce que le serveur sait)
 
 **Les deux noms sont acceptés à l'appel**, et ce n'est pas de la complaisance : la
-prose déjà écrite (procédures d'org, guides, corps de doctrine, messages d'erreur)
+prose déjà écrite (procédures d'org, guides, corps de guide, messages d'erreur)
 cite les noms canoniques et personne ne peut la réécrire d'un coup. Un agent qui suit
 une procédure de 2026-07 doit continuer à aboutir.
 
@@ -143,7 +143,7 @@ def server_identity_for(sub: Optional[str]) -> tuple[str, str]:
     inchangé (compte de la plateforme, tenant sans déclaration, erreur).
 
     Même défaut, dernier recoin : `serverInfo.name` valait `oto` dans le produit
-    d'un partenaire, alors que les outils s'y appellent `<prefix>_…`. Même doctrine
+    d'un partenaire, alors que les outils s'y appellent `<prefix>_…`. Même parti pris
     que le préfixe et les liens : **rien n'est renommé par défaut** — `name` suit le
     `tool_prefix` déclaré (l'identifiant, cohérent avec les noms d'outils), `title`
     suit le `name` du tenant (le libellé humain, celui du PRM). Un tenant qui n'a

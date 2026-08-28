@@ -95,7 +95,7 @@ def insert_tool_call(row: dict) -> None:
 #                    dit vrai.
 #
 # D'où les deux fragments ci-dessous : ils sont la SEULE façon de lire un run. Rejoindre
-# `runs` ailleurs pour un label, une doctrine ou une issue, c'est rouvrir la 2ᵉ vérité.
+# `runs` ailleurs pour un label, un guide ou une issue, c'est rouvrir la 2ᵉ vérité.
 
 
 def _run_closure(start: str = "s") -> str:
@@ -134,7 +134,7 @@ def _run_closure(start: str = "s") -> str:
 
 def _runs_from_journal(extra: str = "") -> str:
     """Le run RECONSTRUIT depuis ses faits : l'ouverture (`run_start`) porte label,
-    doctrine, acteur, org et date de début ; la clôture porte l'issue et la date de fin.
+    guide, acteur, org et date de début ; la clôture porte l'issue et la date de fin.
     `outcome` NULL = pas de fait de clôture = run ouvert.
 
     `last_seen_at` = le dernier signe de vie du run (son appel le plus récent, à
@@ -325,7 +325,7 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
 
 
 def project_run_stats(project_id: int) -> dict:
-    """Nombre de runs d'un projet + slugs de doctrines déroulées (distincts) — sert
+    """Nombre de runs d'un projet + slugs de guides déroulés (distincts) — sert
     l'inertie de l'audit de liens (ADR 0035 B5 : procédure liée jamais déroulée).
 
     JOIN (pas LEFT JOIN) sur les faits : un index sans déroulé journalisé ne compte pas
@@ -790,11 +790,11 @@ def list_tool_calls_for_org(
 def instruction_usage(
     subs: list[str], tool: str, slug: Optional[str], days: int = 30
 ) -> dict:
-    """Usage d'une doctrine dérivé de `tool_calls` (ADR 0014, « doctrine = process
+    """Usage d'un guide dérivé de `tool_calls` (ADR 0014, « guide = process
     = log d'usage ») : combien de fois elle a été chargée par l'agent, par qui,
     et la distribution journalière sur `days` jours.
 
-    `tool` = le tool de lecture de doctrine (oto_procedure ; slug=None pour la base, sinon filtré par
+    `tool` = le tool de lecture de guide (oto_procedure ; slug=None pour la base, sinon filtré par
     `args->>'slug'` pour une skill). Scopé aux `subs` (membres de
     l'org). Lecture pure ; renvoie {count, callers, daily{date:str -> n}}.
     """

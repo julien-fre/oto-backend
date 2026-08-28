@@ -1,6 +1,6 @@
 """Capacité « déclencheurs du runner » — la config qui fabrique des jobs (R3).
 
-Deux faces, et c'est un choix de doctrine : un déclencheur est de la CONFIG
+Deux faces, et c'est un choix de principe : un déclencheur est de la CONFIG
 utilisateur, pas de la plomberie worker. « Tous les matins à 8h05, joue la
 veille » doit pouvoir se poser EN CONVERSATION (`oto_trigger`) comme au
 dashboard — c'est le `/schedule` du produit. La file de jobs, elle, reste

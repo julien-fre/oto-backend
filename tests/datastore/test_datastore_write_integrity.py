@@ -146,7 +146,7 @@ def test_le_champ_omis_survit_a_lecriture_par_id(table):
 
 
 def test_le_champ_omis_survit_au_lot_par_cle_metier(table):
-    """Le second geste incriminé (#407) : l'upsert par clé métier. La doctrine de
+    """Le second geste incriminé (#407) : l'upsert par clé métier. Le guide de
     fusion vaut sur CE chemin aussi — elle avait déjà manqué une fois (#322), d'où
     la vérification des deux."""
     st, ns, ns_id, rid = table

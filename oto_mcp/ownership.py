@@ -413,12 +413,12 @@ register_kind(
 )
 
 
-# --- Kind `doctrine` (épic « couverture des autres types », prérequis #52) ----
-# L'owner d'une doctrine est porté par `org_instructions.owner_type/owner_id`
+# --- Kind `guide` (épic « couverture des autres types », prérequis #52) ----
+# L'owner d'un guide est porté par `org_instructions.owner_type/owner_id`
 # (chantier procédures, cadrage 10/07 — 'org', et 'group' à la fusion B2 des
 # procédures d'équipe ; il dérivait d'`org_id` avant). resource_id = l'id
 # surrogate stable (ADR 0032 « stop using slug »). Le partage (grant read à
-# une org cliente) rend la doctrine lisible cross-org par id via oto_procedure(op='get').
+# une org cliente) rend le guide lisible cross-org par id via oto_procedure(op='get').
 
 def _guide_owner(rid: str) -> Optional[tuple[str, str]]:
     if not str(rid).isdigit():   # relique : des liens legacy portent encore un slug
@@ -433,7 +433,7 @@ def _guide_owner(rid: str) -> Optional[tuple[str, str]]:
 
 def _guide_reparent(rid: str, new_owner_type: str, new_owner_id: str) -> None:
     if new_owner_type != "org":
-        raise ValueError("une doctrine est un objet d'org — transfert vers une org uniquement")
+        raise ValueError("un guide est un objet d'org — transfert vers une org uniquement")
     org_store.reparent_instruction(int(rid), int(new_owner_id))
 
 

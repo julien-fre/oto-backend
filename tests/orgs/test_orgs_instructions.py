@@ -1,9 +1,9 @@
-"""Domaine doctrine/instructions d'org migré en capacités (ADR 0009).
+"""Domaine guide/instructions d'org migré en capacités (ADR 0009).
 
 Couvre : préservation du contrat REST `/api/me/instructions*`, présence des outils
 MCP (membre + admin), la garde anti-dérive sur le nom d'outil compté par l'usage
 (le bug d'origine), le combinateur d'autz `ORG_ADMIN`, et le support des handlers
-asynchrones par l'adaptateur (doctrine + manifeste).
+asynchrones par l'adaptateur (guide + manifeste).
 """
 import asyncio
 
@@ -34,7 +34,7 @@ def test_member_instruction_routes_preserved():
         assert vp in pairs, vp
 
 
-def test_doctrine_mcp_tools_present():
+def test_guide_mcp_tools_present():
     # ADR 0047 B2 : la face MCP est consolidée — oto_procedure (membre + bibliothèque)
     # et oto_admin_doctrine (palier admin) remplacent les 8 tools par-verbe.
     names = {c.mcp for c in registry.caps_with_mcp()}
@@ -50,7 +50,7 @@ def test_doctrine_mcp_tools_present():
 
 # ── Garde anti-dérive (le bug d'origine) ────────────────────────────────────
 def test_usage_tool_name_is_a_mounted_tool():
-    """L'outil interrogé par l'usage doctrine DOIT être un tool MCP réellement
+    """L'outil interrogé par l'usage guide DOIT être un tool MCP réellement
     monté — sinon le filtre `tool_calls` renvoie 0 (cause du bug initial)."""
     names = {c.mcp for c in registry.caps_with_mcp()}
     assert oi._GUIDE_GET_TOOL in names
@@ -126,7 +126,7 @@ def test_project_instance_lists_entities(monkeypatch):
     assert fr["config"]["identity_id"] == "acc_1"
 
 
-def test_get_doctrine_includes_project_instance(monkeypatch):
+def test_get_guide_includes_project_instance(monkeypatch):
     _wire_project(monkeypatch, 7)
     monkeypatch.setattr(oi.org_store, "get_instruction",
                         lambda org, slug, version=None: {"slug": "prospection", "title": "T",
@@ -141,7 +141,7 @@ def test_get_doctrine_includes_project_instance(monkeypatch):
     assert out["project_instance"]["project_id"] == 7
 
 
-def test_get_doctrine_no_project_no_instance(monkeypatch):
+def test_get_guide_no_project_no_instance(monkeypatch):
     _wire_project(monkeypatch, None)
     monkeypatch.setattr(oi.org_store, "get_instruction",
                         lambda org, slug, version=None: {"slug": "prospection", "title": "T",
@@ -167,7 +167,7 @@ def test_archive_route_and_capability_registered():
     pairs = {(b.verb, b.path) for c in registry.caps_with_rest() for b in c.rest_bindings()}
     assert ("POST", "/api/me/instructions/{slug}/archive") in pairs
     cap = next(c for c in registry.CAPABILITIES if c.key == "org.instruction.archive")
-    # Même palier que `set`/`delete` : écrire la doctrine d'une org est org_admin.
+    # Même palier que `set`/`delete` : écrire le guide d'une org est org_admin.
     assert cap.authz is not None
 
 

@@ -162,7 +162,7 @@ def test_client_exposes_methods_called_directly_by_tools():
 
 
 def test_no_tool_reaches_a_destructive_management_write():
-    """Doctrine Silae : le client porte delete/patch en entier, aucun tool ne les
+    """Guide Silae : le client porte delete/patch en entier, aucun tool ne les
     atteint — supprimer/republier est un acte délibéré, jamais un effet de bord."""
     import ast
     import inspect

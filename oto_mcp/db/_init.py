@@ -474,7 +474,7 @@ def _init_db_once() -> None:
         # gap #4a : partage public d'un doc (token de lien public, lookup indexé).
         conn.execute("ALTER TABLE docs ADD COLUMN IF NOT EXISTS public_token TEXT")
         # ADR 0032 (« stop using slug ») : id surrogate stable + globalement unique pour
-        # les doctrines. `org_instructions` garde (org_id, slug) comme clé naturelle
+        # les guides. `org_instructions` garde (org_id, slug) comme clé naturelle
         # interne ; l'`id` devient l'identité PUBLIQUE (URL, project_links, runs). Backfill
         # des lignes existantes via une séquence (idempotent).
         conn.execute("ALTER TABLE org_instructions ADD COLUMN IF NOT EXISTS id BIGINT")
@@ -485,7 +485,7 @@ def _init_db_once() -> None:
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS uq_org_instructions_id ON org_instructions(id)")
         # Archivage (soft-delete) d'une procédure : masquée de tous les listings —
         # y compris ceux que l'IA lit (`skills_index_md`, `oto_procedure op=list`,
-        # l'index de doctrine) — mais la ligne ET son historique de révisions
+        # l'index de guide) — mais la ligne ET son historique de révisions
         # restent intacts. C'est l'alternative NON destructive à `delete`, qui lui
         # supprime `org_instruction_revisions` avec. NULL = vivante. Même forme
         # que `projects.archived_at` / `orgs.archived_at`.
@@ -496,9 +496,9 @@ def _init_db_once() -> None:
         # procédure archivée depuis canari reste visible en prod jusqu'à ce que
         # prod tourne ce code — elle n'est pas perdue, juste pas encore masquée.
         conn.execute("ALTER TABLE org_instructions ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ")
-        # B3 : migrer les liens projet→procédure de slug vers l'id de doctrine (org-owned ;
+        # B3 : migrer les liens projet→procédure de slug vers l'id de guide (org-owned ;
         # les projets user-owned gardent le slug, résolu à la lecture côté front). Idempotent
-        # (guard `!~ '^[0-9]+$'` = pas déjà un id ; JOIN = seulement si la doctrine existe).
+        # (guard `!~ '^[0-9]+$'` = pas déjà un id ; JOIN = seulement si le guide existe).
         conn.execute("""
             UPDATE project_links pl SET target_ref = oi.id::text
             FROM projects p JOIN org_instructions oi ON oi.org_id = p.owner_id::bigint

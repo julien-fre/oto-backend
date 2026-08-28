@@ -65,7 +65,7 @@ class ProjectInput(BaseModel):
     include: Optional[list[str]] = None
     from_doc: Optional[int] = None     # enraciner l'épine sur un nœud (drill)
     depth: Optional[int] = None        # profondeur (défaut 2)
-    target_ref: Optional[str] = None   # datastore.id | doctrine slug | connecteur name | doc.id (page Documents)
+    target_ref: Optional[str] = None   # datastore.id | guide slug | connecteur name | doc.id (page Documents)
     label: Optional[str] = None        # nom d'affichage (link)
     role: Optional[str] = None         # pourquoi cette entité est ici / son rôle dans le projet (ADR 0032 §2)
     config: Optional[dict] = None      # surcharge contextuelle PRÉFAITE du lien (ADR 0032 §4) — connecteur : {identity_id?, instructions_md?} (legacy : identité dans config ; multi-binding : voir identity_ref) ; tableau : {provision?: "shared"|"empty"|"seeded"} = comment la COPIE de projet traite ce tableau (ADR 0032 §6)
@@ -192,9 +192,9 @@ def _require_active_org_visible(ctx: ResolvedCtx, row: dict) -> None:
 
 
 def _procedure_ref_to_id(org_id: Optional[int], ref: str) -> str:
-    """Réf de procédure (ADR 0032) → l'ID stable de la doctrine. Accepte déjà un id
+    """Réf de procédure (ADR 0032) → l'ID stable du guide. Accepte déjà un id
     (chiffres) ou un slug (résolu dans l'org du projet) ; fallback = laisser tel quel
-    (doctrine introuvable / hors org → pas de casse, résolu à la lecture côté front)."""
+    (guide introuvable / hors org → pas de casse, résolu à la lecture côté front)."""
     if not ref or ref.isdigit() or org_id is None:
         return ref
     inst = org_store.get_instruction(int(org_id), ref)
@@ -583,7 +583,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
 
     if inp.op == "runs":
         # Derniers runs (ADR 0017) d'une procédure liée — pastille ok/échec du viewer.
-        # `target_ref` = id stable de la doctrine → résolu en slug (clé de `runs.doctrine`) ;
+        # `target_ref` = id stable du guide → résolu en slug (clé de `runs.doctrine`) ;
         # omis = tous les runs du projet. Read seul (gate de contexte d'org déjà passée).
         from .. import org_store  # local (org_store est shadowé en local par d'autres branches)
         slug: Optional[str] = None
@@ -702,7 +702,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         _require(inp.target_type and inp.target_ref, "missing_target",
                  "`target_type` et `target_ref` requis.")
         # ADR 0032 « stop using slug » : une procédure est référencée par l'ID STABLE de
-        # la doctrine. On accepte un slug (naturel côté agent) OU un id et on stocke l'id
+        # le guide. On accepte un slug (naturel côté agent) OU un id et on stocke l'id
         # (idem à l'unlink pour matcher les lignes migrées).
         target_ref = inp.target_ref
         identity_ref = inp.identity_ref

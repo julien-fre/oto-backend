@@ -19,7 +19,7 @@ consommateur (oto-core#36).
   clés nommées** : celle-ci ne peut pas faire disparaître un champ imprévu, seulement
   ceux qu'on a écrits. Et l'opt-in ne servait personne — mesuré, aucun agent branché en
   direct ne passait `compact` : il ne peut pas savoir qu'il existe avant d'avoir lu le
-  schéma, et la doctrine qui le pilote ne nomme aucun outil par choix. **Une économie
+  schéma, et le guide qui le pilote ne nomme aucun outil par choix. **Une économie
   qu'il faut connaître pour en bénéficier ne bénéficie à personne** : le défaut servait
   le cas rare et faisait payer le cas général.
 

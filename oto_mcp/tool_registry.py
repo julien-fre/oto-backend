@@ -1,4 +1,4 @@
-"""Résolution des références d'outils d'une doctrine (ADR 0014).
+"""Résolution des références d'outils d'un guide (ADR 0014).
 
 Source UNIQUE partagée par les deux faces :
 - REST `/api/me/tools/registry` (le dashboard résout les `<tool:slug>` côté UI) ;
@@ -52,7 +52,7 @@ def ref_names(text: str) -> list[str]:
 
 def namespaces_in(text: str) -> set[str]:
     """Namespaces (1er token avant `_`) des outils référencés `<tool:slug>` dans
-    `text`. Sert le compteur « référencé par N doctrines » (posture doctrine-only,
+    `text`. Sert le compteur « référencé par N guides » (posture guide-only,
     ADR 0024) — dérivation pure, sans toucher au registre live."""
     return {n.split("_", 1)[0] for n in ref_names(text)}
 
@@ -68,7 +68,7 @@ def blurb(description: str | None, limit: int = _BLURB_CHARS) -> str:
     """Résumé d'une ligne d'un outil, borné. Pur — testable sans registre.
 
     Règle unique du produit pour « décrire un outil en une ligne » : le catalogue
-    (`oto_list_my_tools`) et le manifeste de doctrine s'en servent tous les deux, avec
+    (`oto_list_my_tools`) et le manifeste de guide s'en servent tous les deux, avec
     des budgets différents. Le budget compte : le catalogue rend ~350 entrées d'un coup."""
     para = (description or "").strip().split("\n\n", 1)[0]
     text = " ".join(para.split())
@@ -238,7 +238,7 @@ def resolve_refs(names: list[str], registry: dict[str, dict]) -> list[dict]:
 async def manifest_for(*texts: str, mcp_instance=None) -> list[dict]:
     """Manifeste « outils référencés » des corps `texts` (base + groupe, ou un
     skill). **Court-circuit zéro-coût** : aucune liste de tools n'est construite
-    si les corps ne citent aucun outil (cas des doctrines legacy en backticks).
+    si les corps ne citent aucun outil (cas des guides legacy en backticks).
     `mcp_instance` omise = l'instance liée au boot (`bind`)."""
     names: list[str] = []
     seen: set[str] = set()

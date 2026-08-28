@@ -12,7 +12,7 @@ faible au plus fort) :
 - **super_admin** (le tout-puissant) : tout l'opérationnel + escalade
   `org_admin` de TOUTES les orgs et `group_admin` de TOUS les groupes,
   gestion des rôles plateforme, platform keys, émission de tokens, écriture
-  sur les orgs tierces (entitlements, doctrine d'une autre org), création d'org.
+  sur les orgs tierces (entitlements, guide d'une autre org), création d'org.
   Bootstrap : env `OTO_MCP_ADMIN_SUB` force ce sub en **super_admin** quoi
   qu'il y ait en DB.
 

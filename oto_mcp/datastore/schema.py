@@ -297,7 +297,7 @@ def max_length_of(field: dict) -> Optional[int]:
 def pattern_of(field: dict) -> Optional[str]:
     """Le motif déclaré sur un field, S'IL est exploitable en sûreté — sinon None.
 
-    Même doctrine que `max_length_of` : volontairement muette sur une déclaration
+    Même parti pris que `max_length_of` : volontairement muette sur une déclaration
     qu'on ne sait pas exécuter, parce qu'un schéma déjà en base — posé quand la clé
     était encore ignorée — ne doit pas faire exploser une écriture. C'est
     `_validate_fields_def` qui REFUSE, à la pose, devant celui qui peut corriger.

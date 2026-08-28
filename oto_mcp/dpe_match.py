@@ -38,7 +38,7 @@ def attach_dpe_to_sales(
     max_dist_m: float = 30,
 ) -> None:
     """Mute `mutations` en place : attache le DPE matché (maison) ou la liste DPE
-    du bâtiment (appartement). Voir docstring module pour la doctrine d'appariement."""
+    du bâtiment (appartement). Voir docstring module pour la règle d'appariement."""
     for m in mutations:
         lat, lon = m.get("latitude"), m.get("longitude")
         if lat is None or lon is None:

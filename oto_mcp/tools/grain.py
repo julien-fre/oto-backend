@@ -17,7 +17,7 @@ distincts que Granola, donc pas de fusion à 2 comme pour ce dernier :
   parce que ce sont des octets bruts, pas du JSON (op=download/create_upload_url).
 - `grain_hook` — CRUD complet des webhooks (op=list/create/delete) — pas
   destructeur de DONNÉE utilisateur, juste de la plomberie d'intégration
-  (même doctrine que `granola_webhook_endpoint`).
+  (même parti pris que `granola_webhook_endpoint`).
 - `grain_org` — les 3 listes sans filtre (users/teams/meeting_types),
   fusionnées en un seul tool tant elles sont triviales (op=users/teams/
   meeting_types).

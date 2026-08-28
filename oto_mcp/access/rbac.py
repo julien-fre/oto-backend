@@ -41,7 +41,7 @@ def rbac_denied_connectors(sub: str, org: Optional[int]) -> set:
     gouverne l'ACL (`org_connector_access`), lui en interdire l'USAGE était une
     incohérence (un connecteur réservé à une équipe restait inaccessible — et même
     invisible — à l'admin de l'org). LÈVE sur hoquet DB : chaque surface garde sa
-    propre doctrine fail-open (le call-time logue, les listings best-effort)."""
+    propre règle fail-open (le call-time logue, les listings best-effort)."""
     if org is None:
         return set()
     if scope.is_super_admin(sub):
@@ -83,7 +83,7 @@ def org_admin_hidden_tools(org: Optional[int]) -> set:
     org_admin qui a masqué le tool le voit masqué, et se le réactive lui-même
     comme n'importe qui (cohérent avec DEFAULT_HIDDEN_TOOLS aujourd'hui). LÈVE sur
     hoquet DB : chaque surface (session_visibility, oto_list_my_tools) garde sa
-    propre doctrine fail-open, indépendante du palier équipe."""
+    propre règle fail-open, indépendante du palier équipe."""
     if org is None:
         return set()
     return set(db.list_org_disabled_tools(org))

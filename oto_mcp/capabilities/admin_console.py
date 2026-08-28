@@ -154,7 +154,7 @@ class GuideAdminInput(BaseModel):
     slots: Optional[list] = None      # set (ADR 0035)
 
 
-async def _doctrine(ctx: ResolvedCtx, inp: GuideAdminInput) -> dict:
+async def _guide(ctx: ResolvedCtx, inp: GuideAdminInput) -> dict:
     from .orgs import instructions as oi
     if inp.op == "get":
         return await oi._get_guide(ctx, oi.AdminGuideGetInput(
@@ -347,7 +347,7 @@ CAPABILITIES += [
         mcp="oto_admin_key_grant",
     ),
     Capability(
-        key="admin.doctrine", handler=_doctrine, Input=GuideAdminInput,
+        key="admin.doctrine", handler=_guide, Input=GuideAdminInput,
         authz=ADMIN_BY_OP({"get": ORG_MEMBER_OF("org_id"), "list": ORG_MEMBER_OF("org_id"),
                            "set": ORG_ADMIN_OF("org_id"), "delete": ORG_ADMIN_OF("org_id")}),
         description=("[ADMIN] Another org's doctrine, by `org_id` (cross-org = platform "

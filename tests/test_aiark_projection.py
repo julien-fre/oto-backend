@@ -2,7 +2,7 @@
 
 Signal #364 : « every call with size=100 returns 2.8-3.2M characters and blows the token
 limit, forcing a spill-to-file + jq parse for EVERY page. 11 pages fetched in this run =
-11 forced file round-trips. » Les doctrines de sourcing paginent les grands viviers — le
+11 forced file round-trips. » Les guides de sourcing paginent les grands viviers — le
 surcoût est donc PAR PAGE, et un agent sans shell (client MCP nu, n8n) cale tout court.
 
 L'enregistrement ci-dessous est une CAPTURE d'un retour réel du 14/08 (élagué à ses clés,

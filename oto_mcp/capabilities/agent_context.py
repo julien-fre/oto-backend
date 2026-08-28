@@ -6,7 +6,7 @@ neuf) :
 
 1. **instructions** — les instructions serveur statiques (`instructions.render()` :
    posture + bootstrap + boucle d'usage + catalogue de namespaces dérivé du registre).
-2. **doctrine** — la doctrine d'org effective (bundle session-start), via le handler
+2. **guide** — le guide d'org effectif (bundle session-start), via le handler
    canonique `orgs_instructions._get_guide` (réemploi, pas de duplication).
 3. **tools** — les outils EFFECTIVEMENT visibles pour `(sub, org active)`, via la
    logique de visibilité canonique `session_visibility.compute_hidden_tools` (même
@@ -76,7 +76,7 @@ class AgentContextView(BaseModel):
     # Le MÊME artefact, décomposé. Invariant tenu par `instructions.session_layers` :
     # `"\n\n".join(couches non vides) == instructions`.
     layers: list[ContextLayer]
-    # La doctrine d'org résolue, telle que la sert `oto_get_doctrine` — forme non
+    # Le guide d'org résolu, tel que le sert `oto_get_doctrine` — forme non
     # redéclarée ici pour ne pas en tenir deux copies.
     doctrine: dict
     tools: ToolsView
@@ -152,7 +152,7 @@ CAPABILITIES += [
 # (tools/list_changed) et les credentials (résolution par appel, ADR 0038) suivent, mais
 # le bloc C (readme org+équipe, guides, procédures) reste gelé. `oto_context` laisse
 # l'agent TIRER ce bloc C frais pour le scope EFFECTIF — `ctx.org_id` respecte les jetons
-# org=/project=/group= de l'appel. Focalisé (bloc C seul, pas la doctrine ni les tools) :
+# org=/project=/group= de l'appel. Focalisé (bloc C seul, pas le guide ni les tools) :
 # c'est ce qui change au switch (leçon D1 : ne pas gonfler la sortie).
 class ContextInput(BaseModel):
     pass

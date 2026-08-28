@@ -9,10 +9,11 @@ idempotent, n'écrase JAMAIS une ligne éditée), pour provisionner un environne
 neuf. Droits : lecture = tout authentifié (platform) / org active / self ; écriture =
 platform_admin / org_admin / self.
 
-Distinct des **doctrines nommées** (procédures d'ORG, per-org DB, `oto_procedure`,
+Distinct des **guides nommés** (procédures d'ORG, per-org DB, `oto_procedure`,
 avec slots/versions/publish) et des readmes INIT (delivery='init', injectés au
 handshake) : la notion d'« instructions server » a deux étages — toujours-injecté
-(bloc A/C) vs chargé-à-la-demande (guides / doctrines), découvert par un index sans
+(bloc A/C) vs chargé-à-la-demande (guides plateforme / procédures d'org), découvert
+sans
 coût de prompt.
 """
 from __future__ import annotations
@@ -246,7 +247,7 @@ def delete_guide(scope: str, owner_id: str, slug: str) -> bool:
 def guides_index_md(sub: Optional[str] = None, org_id: Optional[int] = None) -> str:
     """Index markdown des guides VISIBLES par le caller (plateforme ∪ org active ∪ user)
     — enrichit la description de `oto_guide` au `tools/list`, per-(sub, org), même pattern
-    que `skills_index_md` pour les doctrines. Sans sub/org = plateforme seule (stdio/boot).
+    que `skills_index_md` pour les guides. Sans sub/org = plateforme seule (stdio/boot).
     '' si aucun guide."""
     guides = list_guides_for(sub, org_id)
     if not guides:

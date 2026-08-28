@@ -56,7 +56,7 @@ def test_build_registry_serves_boot_cache_despite_session_filtering():
         reg = await tool_registry.build_registry(mcp)
         assert set(reg) == set(full), "le cache boot doit ignorer la visibilité de session"
 
-        # Le manifeste d'une doctrine citant bridge_* les résout donc `status=ok`.
+        # Le manifeste d'un guide citant bridge_* les résout donc `status=ok`.
         manifest = await tool_registry.manifest_for(
             "<tool:bridge_call> <tool:bridge_describe>")
         assert [t["status"] for t in manifest] == ["ok", "ok"]

@@ -212,11 +212,11 @@ def test_apply_tableau_names_resolves_by_id():
 
 def test_apply_procedure_titles_resolves_by_id():
     # Un lien procédure sans label doit rester lisible : `title` résolu depuis l'id
-    # stable de la doctrine (ADR 0032 « stop using slug »).
+    # stable du guide (ADR 0032 « stop using slug »).
     links = [
         {"target_type": "procedure", "target_ref": "25"},       # résolu
         {"target_type": "procedure", "target_ref": "recette"},  # slug legacy → ignoré
-        {"target_type": "procedure", "target_ref": "99"},       # doctrine disparue → pas de clé
+        {"target_type": "procedure", "target_ref": "99"},       # guide disparu → pas de clé
         {"target_type": "tableau", "target_ref": "25"},         # pas une procédure → ignoré
     ]
     PJ._apply_procedure_titles(links, {25: "Recette unitaire"})

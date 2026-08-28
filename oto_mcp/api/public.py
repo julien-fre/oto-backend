@@ -11,7 +11,7 @@ de docs.oto.cx (`refresh-openapi.mjs` → openapi.json).
 - `GET /api/mcp/catalog`                   → catalogue des tools MCP (autodoc)
 - `GET /openapi.json` + `/api/openapi.json` → descriptif REST dérivé (`openapi.py`)
 - `GET /api/connectors`                    → catalogue des connecteurs (auth OPTIONNELLE)
-- `GET /api/doctrines/library[/{slug}]`    → bibliothèque publique de doctrines
+- `GET /api/doctrines/library[/{slug}]`    → bibliothèque publique de guides
 - `GET /api/guides/library[/{slug}]`       → guides PLATEFORME
 - `GET /api/invitations/{token}` + `/code/{code}` → aperçu d'invitation (le jeton EST le secret)
 - `GET /api/public/docs/{token}`           → doc partagé (JSON)
@@ -131,7 +131,7 @@ async def connectors_catalog(request: Request, *, verifier: JWTVerifier) -> JSON
 
 
 async def doctrines_library_public(request: Request) -> JSONResponse:
-    """Catalogue PUBLIC des doctrines (bibliothèque/marketplace) — pas d'auth.
+    """Catalogue PUBLIC des guides (bibliothèque/marketplace) — pas d'auth.
 
     Alimente le site vitrine oto.ninja. Deny-by-default : `visibility='public'`
     UNIQUEMENT (jamais 'unlisted' ni les brouillons d'org). Filtres gros grain
@@ -151,7 +151,7 @@ async def doctrines_library_public(request: Request) -> JSONResponse:
 
 
 async def doctrines_library_public_get(request: Request) -> JSONResponse:
-    """Une doctrine PUBLIQUE complète (markdown) par slug — vitrine, pas d'auth.
+    """Un guide PUBLIC complet (markdown) par slug — vitrine, pas d'auth.
     Public-only : une entrée 'unlisted' n'est jamais servie ici."""
     entry = org_store.get_library_entry(
         slug=request.path_params["slug"], include_unlisted=False)

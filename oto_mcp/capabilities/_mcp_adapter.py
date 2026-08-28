@@ -77,7 +77,7 @@ def _make_tool(cap: Capability):
             inp = cap.Input(**kwargs)                 # validation (seule source : Input)
             ctx = cap.authz(raw, inp)                 # autz (peut lire inp pour ORG_ADMIN_OF)
             result = cap.handler(ctx, inp)            # handler core
-            if inspect.isawaitable(result):           # handler async (ex. doctrine + manifeste)
+            if inspect.isawaitable(result):           # handler async (ex. guide + manifeste)
                 result = await result
         except AuthzDenied as d:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=d.message or d.code))

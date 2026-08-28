@@ -84,7 +84,7 @@ def make_routes(
         sub, org_id, scope, verifier_pkce, group_id, return_app = parsed
         # RE-GARDE du droit d'écrire au scope demandé. `build_auth_url` l'a vérifié
         # au /start, mais le state vit 10 min : entre le clic et le retour, l'auteur
-        # a pu perdre son rôle. Doctrine maison (ADR 0038, ce qui a fermé #108) :
+        # a pu perdre son rôle. Parti pris maison (ADR 0038, ce qui a fermé #108) :
         # une autorisation se re-vérifie à la RÉSOLUTION, pas seulement à la pose.
         from .. import roles
         allowed = True

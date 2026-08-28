@@ -34,12 +34,12 @@ def register_all(mcp: FastMCP) -> None:
     # `tools/list` — `DynamicInstructionsMiddleware`, par NOM de tool.)
 
     # Email — envoi d'un message à contenu libre (rédigé par l'agent) via le mailer
-    # Otomata. Brique d'onboarding piloté par l'agent (doctrine + datastore). Spine,
+    # Otomata. Brique d'onboarding piloté par l'agent (guide + datastore). Spine,
     # hors gate d'activation ; gaté super_admin dans le handler + masqué par défaut.
     from . import email
     email.register(mcp)
 
-    # Le palier organization (orgs/membres/secrets/switch + doctrine/instructions)
+    # Le palier organization (orgs/membres/secrets/switch + guide/instructions)
     # est 100% migré en capacités (ADR 0009) — monté par `_mcp_adapter`/`_rest_adapter`
     # depuis `capabilities.registry`, plus aucun `tools/orgs.py`.
 

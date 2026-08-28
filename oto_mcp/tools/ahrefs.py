@@ -24,7 +24,7 @@ rapports où les identifiants valides ont été vérifiés en doc (voir
 `_DEFAULT_SELECT`) — ailleurs `select` reste requis tel quel, jamais deviné.
 
 **Écritures : lecture + création exposées, suppression/patch NON exposées**
-(doctrine Silae — `tools/silae.py`) : `AhrefsClient` porte les 22 endpoints
+(guide Silae — `tools/silae.py`) : `AhrefsClient` porte les 22 endpoints
 Management en entier (delete_projects, update_project,
 delete_project_keywords, untag_project_keywords, delete_project_competitors,
 delete_keyword_list_keywords, delete_brand_radar_prompts,

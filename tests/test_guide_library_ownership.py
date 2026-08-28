@@ -11,7 +11,7 @@ Ce que ces tests figent :
 - republier LA SIENNE marche comme avant (version + corps remplacé) ;
 - publier sous le nom d'une AUTRE org est refusé, et le refus est
   **non-disclosant** (ne nomme ni l'org, ni le titre, ni le fait que ce soit
-  « la doctrine de quelqu'un ») ;
+  « le guide de quelqu'un ») ;
 - l'upsert ne peut pas transférer l'appartenance même si le garde sautait
   (`author_kind`/`author_org_id` absents du `DO UPDATE SET`) ;
 - une org active est exigée AVANT l'escalade plateforme (sinon : 500 au fork,
@@ -90,7 +90,7 @@ def _org_ctx(sub: str, org_id: int) -> ResolvedCtx:
 @pytest.fixture
 def surface(monkeypatch):
     """La surface `library.publish` avec ses seuls voisins stubbés : le store de
-    doctrines d'org, les orgs, les rôles. `publish_guide` reste le vrai."""
+    guides d'org, les orgs, les rôles. `publish_guide` reste le vrai."""
     store = _Library()
     monkeypatch.setattr(org_store, "_connect", lambda: store)
     monkeypatch.setattr(org_store, "get_instruction",

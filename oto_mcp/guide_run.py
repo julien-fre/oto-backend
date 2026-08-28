@@ -1,7 +1,7 @@
 """Runs — pile de runs en état de session (ADR 0017, barreau 1-2).
 
 Un **run** = un déroulé borné (`run_start` → `run_finish`) : soit l'exécution d'une
-doctrine nommée (champ `doctrine`), soit un run one-shot/ad-hoc (sans `doctrine`).
+guide nommé (champ `doctrine`, nom SERVI), soit un run one-shot/ad-hoc (sans lui).
 Le `run_id` actif vit dans l'**état de session FastMCP** (session-scopé, TTL natif),
 sous forme de **pile** (runs imbriqués : un run peut en démarrer un autre).
 
@@ -29,15 +29,15 @@ def new_run_id() -> str:
 async def _read_stack(ctx: Any) -> list[dict]:
     try:
         stack = await ctx.get_state(_STACK_KEY)
-    # noqa: SILENT — pile de doctrine illisible ⇒ vide, la doctrine reste servie
+    # noqa: SILENT — pile de guide illisible ⇒ vide, le guide reste servi
     except Exception:
         return []
     return list(stack) if isinstance(stack, list) else []
 
 
-async def push_run(ctx: Any, run_id: str, label: str, doctrine: Optional[str] = None) -> None:
+async def push_run(ctx: Any, run_id: str, label: str, guide: Optional[str] = None) -> None:
     stack = await _read_stack(ctx)
-    stack.append({"run_id": run_id, "label": label, "doctrine": doctrine})
+    stack.append({"run_id": run_id, "label": label, "guide": guide})
     await ctx.set_state(_STACK_KEY, stack)
 
 

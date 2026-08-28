@@ -128,7 +128,7 @@ async def test_un_run_ad_hoc_ne_prétend_à_aucune_version(monkeypatch, run_star
 
 @pytest.mark.asyncio
 async def test_un_slug_inconnu_ouvre_le_run_sans_version(monkeypatch, run_start_fn):
-    """Un slug qui ne désigne rien de lisible ici (doctrine d'un autre foyer, faute de
+    """Un slug qui ne désigne rien de lisible ici (guide d'un autre foyer, faute de
     frappe) : pas de version, mais le run s'ouvre — l'empreinte n'est pas un gate."""
     _wire(monkeypatch)
     out, trace = await _start(run_start_fn, label="?", doctrine="ce-slug-nexiste-pas")

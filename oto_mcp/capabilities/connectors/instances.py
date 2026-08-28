@@ -236,7 +236,7 @@ def _platform_instance(provider: str, label: str, via: str, extra: dict) -> dict
 def _hidden_connectors(sub: str, org: Optional[int]) -> set:
     """Filtre RBAC ADR 0025 — MIROIR de `access.require_connector_access` en mode
     filtre, via le seam unique `rbac_denied_connectors` (escalade super_admin +
-    org_admin incluse). Même doctrine fail-open loggé que le pré-gate (gate de
+    org_admin incluse). Même parti pris fail-open loggé que le pré-gate (gate de
     confort sur un listing ; la résolution réelle re-gate en dur à l'appel).
     Sans org active : pas de filtre."""
     try:

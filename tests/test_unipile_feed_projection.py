@@ -137,7 +137,7 @@ def test_le_texte_est_un_extrait_et_la_coupe_est_marquee(feed):
 
 
 def test_le_defaut_garde_de_quoi_trier_et_agir(feed):
-    """La vue par défaut doit porter tout ce dont la doctrine `veille-linkedin` se
+    """La vue par défaut doit porter tout ce dont le guide `veille-linkedin` se
     sert : classer (auteur, headline, date, texte, traction) et restituer (`post_url`),
     dédupliquer et rouvrir (`urn`)."""
     it = feed(op="feed", limit=40)["items"][0]

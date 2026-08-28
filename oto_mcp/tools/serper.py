@@ -27,7 +27,7 @@ from .. import access, output_projection
 # en direct sur le MCP ne le passe JAMAIS — six `serper_search` avec `query` seul sur une
 # fiche, six réponses entières —, et il n'a aucune raison de le faire : il ne sait pas que
 # le paramètre existe avant d'avoir lu le schéma, et rien ne lui dit que c'est important.
-# Une doctrine ne peut pas le lui apprendre non plus, celle qui pilote ces agents ne nomme
+# Un guide ne peut pas le lui apprendre non plus, celle qui pilote ces agents ne nomme
 # aucun outil (par choix : c'est ce qui la protège des renommages). **Un paramètre
 # d'économie qu'il faut connaître pour en bénéficier ne bénéficie à personne** — sur une
 # conversation d'enrichissement réelle, 6 800 tokens de sorties d'outils pour 784 de

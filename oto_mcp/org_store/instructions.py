@@ -1,4 +1,4 @@
-"""Les PROCÉDURES d'org (table `org_instructions`) : doctrine versionnée.
+"""Les PROCÉDURES d'org (table `org_instructions`) : guide versionné.
 
 Le modèle unifié servi par `oto_procedure` : lecture/écriture/recherche d'une
 procédure d'org, son historique de versions, et sa vie de **ressource possédée**
@@ -21,10 +21,10 @@ from ..db import _connect
 _log = logging.getLogger(__name__)
 
 
-# --- instructions d'org : doctrine de base + skills versionnés ----------------
+# --- instructions d'org : guide de base + skills versionnés ----------------
 #
 # Modèle unifié servi par oto_procedure(op='get') / oto_*_instruction(s). Le slug réservé
-# BASE_SLUG ("claude_md") = la doctrine de base (servie d'office) ; les autres =
+# BASE_SLUG ("claude_md") = le guide de base (servi d'office) ; les autres =
 # des skills chargés à la demande. En clair (prose, hors coffre), lu à l'appel
 # (pas de cache). Écriture = incrément de version + snapshot d'historique.
 
@@ -75,7 +75,7 @@ def get_instruction(org_id: int, slug: str, version: Optional[int] = None) -> Op
 
 def list_instructions(org_id: int, include_base: bool = False) -> list[dict]:
     """Métadonnées des instructions (SANS body) = l'index des skills. Exclut la
-    doctrine de base sauf `include_base` (surface admin), et TOUJOURS les
+    guide de base sauf `include_base` (surface admin), et TOUJOURS les
     procédures archivées.
 
     Toujours, faute d'appelant qui veuille le contraire : le jour où une surface
@@ -102,8 +102,8 @@ def list_instructions(org_id: int, include_base: bool = False) -> list[dict]:
 
 
 def list_instruction_bodies(org_id: int) -> list[dict]:
-    """Slug + body_md des instructions d'une org (hors doctrine de base) — pour
-    dériver les références d'outils `<tool:slug>` (compteur « doctrine-only », ADR 0024)."""
+    """Slug + body_md des instructions d'une org (hors guide de base) — pour
+    dériver les références d'outils `<tool:slug>` (compteur « guide-only », ADR 0024)."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT slug, body_md FROM org_instructions "
@@ -253,8 +253,8 @@ def delete_instruction(org_id: int, slug: str) -> bool:
     return removed
 
 
-# --- doctrine = ressource possédée (ADR 0030, épic « couverture des autres types »,
-# livraison de projet #52) : l'identité PUBLIQUE d'une doctrine est son `id` surrogate
+# --- guide = ressource possédée (ADR 0030, épic « couverture des autres types »,
+# livraison de projet #52) : l'identité PUBLIQUE d'un guide est son `id` surrogate
 # (ADR 0032 « stop using slug ») ; son propriétaire est porté par `owner_type/owner_id`
 # (chantier procédures, cadrage 10/07 — 'org' aujourd'hui, 'group' à la fusion B2 ; il
 # dérivait d'`org_id` avant). Ces fonctions alimentent le kind `doctrine`
@@ -274,7 +274,7 @@ def get_instruction_by_id(instruction_id: int) -> Optional[dict]:
 
 def _free_instruction_slug(conn, org_id: int, slug: str) -> str:
     """Slug libre dans `org_id` : le slug tel quel, sinon suffixé (-2, -3…). On ne
-    remplace JAMAIS une doctrine existante de l'org cible (livraison non destructive)."""
+    remplace JAMAIS un guide existant de l'org cible (livraison non destructive)."""
     candidate = slug
     for i in range(2, 100):
         row = conn.execute(
@@ -290,12 +290,12 @@ def _free_instruction_slug(conn, org_id: int, slug: str) -> str:
 
 def copy_instruction_to_org(instruction_id: int, dest_org_id: int,
                             set_by: Optional[str] = None) -> dict:
-    """Copie une doctrine dans une AUTRE org (livraison par transfert de projet, #52) :
-    nouvelle doctrine v1 chez la cible (slug suffixé si pris — jamais d'écrasement),
+    """Copie un guide dans une AUTRE org (livraison par transfert de projet, #52) :
+    nouveau guide v1 chez la cible (slug suffixé si pris — jamais d'écrasement),
     l'originale reste intacte chez la source. Renvoie {id, slug, org_id} de la copie."""
     src = get_instruction_by_id(instruction_id)
     if src is None:
-        raise ValueError(f"doctrine #{instruction_id} introuvable")
+        raise ValueError(f"guide #{instruction_id} introuvable")
     with _connect() as conn:
         dest_slug = _free_instruction_slug(conn, dest_org_id, src["slug"])
     set_instruction(dest_org_id, dest_slug, src["body_md"],
@@ -306,13 +306,13 @@ def copy_instruction_to_org(instruction_id: int, dest_org_id: int,
 
 
 def reparent_instruction(instruction_id: int, new_org_id: int) -> str:
-    """Déplace une doctrine vers une autre org (transfert d'ownership ADR 0030, id
+    """Déplace un guide vers une autre org (transfert d'ownership ADR 0030, id
     surrogate stable). Slug suffixé si pris chez la cible ; l'historique suit quand
     il ne collisionne pas (sinon il reste chez la source — append-only, pas de perte).
     Renvoie le slug final chez la cible."""
     src = get_instruction_by_id(instruction_id)
     if src is None:
-        raise ValueError(f"doctrine #{instruction_id} introuvable")
+        raise ValueError(f"guide #{instruction_id} introuvable")
     if int(src["org_id"]) == int(new_org_id):
         return src["slug"]
     with _connect() as conn:
@@ -337,12 +337,12 @@ def reparent_instruction(instruction_id: int, new_org_id: int) -> str:
             )
     except Exception:
         _log.warning("reparent_instruction: historique laissé chez la source "
-                     "(collision revisions, doctrine #%s)", instruction_id)
+                     "(collision revisions, guide #%s)", instruction_id)
     return dest_slug
 
 
 def list_instructions_for_orgs(org_ids: list[int]) -> list[dict]:
-    """Doctrines (hors base) des orgs données — plan GOUVERNANCE (métadonnées + org_id,
+    """Guides (hors base) des orgs données — plan GOUVERNANCE (métadonnées + org_id,
     sans body). Alimente `oto_resource(op=list, resource_type='doctrine')`."""
     if not org_ids:
         return []
@@ -360,7 +360,7 @@ def list_instructions_for_orgs(org_ids: list[int]) -> list[dict]:
 
 
 def list_all_instructions() -> list[dict]:
-    """Toutes les doctrines nommées (vue opérateur plateforme — gouvernance)."""
+    """Tous les guides nommés (vue opérateur plateforme — gouvernance)."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, org_id, slug, title, description, version, updated_at "

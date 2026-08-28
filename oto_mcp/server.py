@@ -503,7 +503,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     if transport in ("http", "streamable_http") and verifier is not None:
         kwargs["auth"] = _build_auth(verifier)
     instance = FastMCP("oto", instructions=_SERVER_INSTRUCTIONS, **kwargs)
-    # Lier l'instance pour que les handlers de capacité (doctrine) résolvent le
+    # Lier l'instance pour que les handlers de capacité (guide) résolvent le
     # manifeste « referenced_tools » sans se faire passer l'instance.
     from . import tool_registry
     tool_registry.bind(instance)
@@ -578,7 +578,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .middleware.disabled_tools import UserDisabledToolsMiddleware
     from .middleware.dynamic_instructions import DynamicInstructionsMiddleware
     instance.add_middleware(UserDisabledToolsMiddleware())
-    # Injection de la doctrine de base de l'org dans les instructions du `initialize`
+    # Injection du guide de base de l'org dans les instructions du `initialize`
     # (canal fiable, par-(sub,org) — otomata-private#49, amende ADR 0014).
     instance.add_middleware(DynamicInstructionsMiddleware())
     # Journalisation des appels MCP (middleware inliné `calllog.py`, table tool_calls,
@@ -592,7 +592,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
 
     async def _calllog_sink(row: dict) -> None:
         # Corrélation (ADR 0017) : stampe session_id (session mcp) + run_id (déroulé
-        # de doctrine actif) AVANT l'insert. Best-effort — un contexte absent
+        # de guide actif) AVANT l'insert. Best-effort — un contexte absent
         # (ex. pas de session) ne casse jamais la journalisation.
         try:
             from fastmcp.server.dependencies import get_context

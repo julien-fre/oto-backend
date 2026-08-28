@@ -2,7 +2,7 @@
 
 Quatre objets métier : `oto_org` (cycle de vie : create/update/archive +
 invitations), `oto_org_settings` (les réglages d'org par domaine : email / mfa /
-field_filters), `oto_group` (équipes : create/list/membres/doctrine d'équipe),
+field_filters), `oto_group` (équipes : create/list/membres/guide d'équipe),
 `oto_scheduled_emails` (file d'envoi différé). Handlers de domaine réutilisés
 tels quels, faces REST intactes.
 

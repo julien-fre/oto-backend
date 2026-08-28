@@ -650,8 +650,8 @@ def build_page(project: dict, path: str, *, offset: int = 0,
         if section == "procedures":
             # Le LIEN, pas seulement l'id : il porte le nom donné à la procédure DANS ce
             # projet (`label`) et la raison de sa présence (`role`). La page affichait le
-            # `title` de la doctrine et rien d'autre — un déroulé opératoire livré sans
-            # dire ce qu'on vient y chercher (oto-dashboard#119). Le titre de la doctrine
+            # `title` du guide et rien d'autre — un déroulé opératoire livré sans
+            # dire ce qu'on vient y chercher (oto-dashboard#119). Le titre du guide
             # reste le repli, pour un lien posé sans label.
             link = next((l for l in links
                          if l.get("target_type") == "procedure"

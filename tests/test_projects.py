@@ -572,7 +572,7 @@ def test_activity_carries_actor_identity(seams, monkeypatch):
 
 
 def test_runs_resolves_procedure_to_slug(seams, monkeypatch):
-    # target_ref = id stable de doctrine → résolu en slug (clé de runs.doctrine).
+    # target_ref = id stable de guide → résolu en slug (clé de runs.doctrine).
     monkeypatch.setattr(P.org_store, "get_instruction_by_id",
                         lambda i: {"id": i, "slug": "relance"} if i == 42 else None)
     seen = {}

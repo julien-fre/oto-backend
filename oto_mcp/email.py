@@ -183,7 +183,7 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
                                permission: str, app_url: str,
                                sharer: str | None = None, brand: str = "oto") -> bool:
     """Email à un utilisateur avec qui on vient de PARTAGER une ressource (projet,
-    datastore, doctrine). Best-effort (False si non envoyé) — un échec ne casse
+    datastore, guide). Best-effort (False si non envoyé) — un échec ne casse
     jamais le partage. Voix funnel : FR, vouvoiement + minuscules."""
     droit = "en lecture" if permission == "read" else "en écriture"
     titre = f"{type_label} « {name} »" if name else f"un {type_label}"

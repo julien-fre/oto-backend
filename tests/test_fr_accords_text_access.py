@@ -1,6 +1,6 @@
 """Le texte d'un accord se demande sur place (signal #346).
 
-`fr_accords_get` ne rendait que des métadonnées, alors que la doctrine et
+`fr_accords_get` ne rendait que des métadonnées, alors que le guide et
 l'usage attendu (« fr_accords_get pour lire l'accord ») laissaient croire au
 contraire : quatre agents sur quatre, pendant un même run, ont dû découvrir
 seuls que le texte vivait dans un autre outil. Ça compte au-delà du confort —

@@ -1,13 +1,13 @@
 """Console procédures MCP consolidée (ADR 0047, B2) — `oto_procedure`.
 
-Réunit les 9 tools MCP du domaine doctrine/procédure membre en UN : lecture
+Réunit les 9 tools MCP du domaine guide/procédure membre en UN : lecture
 (`get`/`list`, ex-`oto_get_doctrine`/`oto_list_doctrines`), écriture
 (`set`/`delete`, org_admin, épinglable `_org=` #69) et bibliothèque publique
 (`library_list`/`library_get`/`publish`/`fork`/`unpublish`). Les handlers de
 domaine (`orgs_instructions`, `guide_library`) sont réutilisés tels quels ;
 leurs faces REST ne bougent pas.
 
-⚠️ L'index des doctrines nommées (skills) est APPENDU à la description de CE
+⚠️ L'index des guides nommés (skills) est APPENDU à la description de CE
 tool par `DynamicInstructionsMiddleware.on_list_tools` (via `_GUIDE_GET_TOOL`,
 middleware/dynamic_instructions.py) — les skills ne sont pas des outils, c'est leur seul canal de
 découverte. Le filtre d'usage (`org.instruction.usage`) compte les appels sur ce

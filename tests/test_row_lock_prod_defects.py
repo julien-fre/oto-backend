@@ -107,7 +107,7 @@ def test_a_lease_read_as_a_string_still_protects(table):
 
 
 def test_an_unreadable_lease_refuses_rather_than_opens(table):
-    """Doctrine maison : pas de fallback, on lève. Un bail dont on ne sait pas s'il
+    """Parti pris maison : pas de fallback, on lève. Un bail dont on ne sait pas s'il
     court protège encore quelqu'un — l'ignorance ne doit pas se résoudre en faveur de
     l'écrivain, qui est précisément ce que faisait le fail-open."""
     from oto_mcp.datastore.core import DatastorePg, RowLocked

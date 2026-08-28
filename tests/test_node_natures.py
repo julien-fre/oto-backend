@@ -47,7 +47,7 @@ def test_la_cle_derivee_est_l_ID_jamais_le_SLUG():
 
     Dériver l'identifiant d'un nœud du slug aurait produit une adresse qui change au
     premier renommage — exactement la classe de défaut que #362 vient de retirer sur les
-    blocs. Et c'est l'`id` que `resource_grants` désigne pour une doctrine.
+    blocs. Et c'est l'`id` que `resource_grants` désigne pour un guide.
     """
     sql = db_nodes.CONVERT_GUIDES_TO_NODES_SQL
     assert "md5('prc:' || (d.id)" in sql

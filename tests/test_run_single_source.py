@@ -141,7 +141,7 @@ def test_la_pastille_de_projet_sert_le_journal(divergent):
     assert run["outcome"] == "failed" and run["doctrine"] == "prospection-ete"
 
 
-def test_le_filtre_de_doctrine_dune_pastille_lit_le_journal(divergent):
+def test_le_filtre_de_guide_dune_pastille_lit_le_journal(divergent):
     """La pastille d'une procédure filtre par slug : lu de l'index, un run se rangerait
     sous la procédure qu'il n'a pas déroulée."""
     assert [r["run_id"] for r in usage.project_runs(9, doctrine="prospection-ete")] == ["r1"]

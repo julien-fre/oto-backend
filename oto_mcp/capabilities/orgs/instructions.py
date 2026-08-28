@@ -1,4 +1,4 @@
-"""Doctrine & instructions d'ORG (ADR 0009) — domaine migré en capacités.
+"""Guide & instructions d'ORG (ADR 0009) — domaine migré en capacités.
 
 Miroir d'`groups_guide` au grain org. Une opération co-déclarée une fois, ses
 deux faces (MCP + REST) dérivées par les adaptateurs → fin de la duplication
@@ -13,9 +13,9 @@ Deux paliers, par combinateur d'autz (pas de branche `org_id` à la main) :
   `/api/admin/orgs/{id}/*`, outils `oto_admin_*_doctrine`.
 
 Les handlers lisent `ctx.org_id` (injecté par l'autz) → **partagés** entre les
-deux paliers. La doctrine de **groupe** est lisible en mode membre
+deux paliers. Le guide de **groupe** est lisible en mode membre
 (`scope="group"`, complément du département actif) ; son écriture reste dans
-`groups_guide`. Modèle versionné (slug réservé `claude_md` = doctrine de base).
+`groups_guide`. Modèle versionné (slug réservé `claude_md` = guide de base).
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ from ..registry import CAPABILITIES
 _OID = {"id": "org_id"}
 _OID_SLUG = {"id": "org_id", "slug": "slug"}
 _BASE = org_store.BASE_SLUG
-# Outil MCP qui charge la doctrine (donc loggé dans `tool_calls`) → c'est lui que
+# Outil MCP qui charge le guide (donc loggé dans `tool_calls`) → c'est lui que
 # l'usage compte. UNE source pour le nom : sert de `mcp=` de la capacité de lecture
 # ET de filtre dans `_instruction_usage` → plus de chaîne magique à dériver (le bug
 # d'origine : un filtre sur un nom d'outil mort renvoyait toujours 0).
@@ -291,7 +291,7 @@ class EmptyInput(BaseModel):
 
 class GuideGetInput(BaseModel):
     slug: Optional[str] = None
-    doctrine_id: Optional[int] = None   # lecture par ID STABLE (ADR 0032) — y compris une doctrine PARTAGÉE à ton org (grant read, livraison #52)
+    doctrine_id: Optional[int] = None   # lecture par ID STABLE (ADR 0032) — y compris un guide PARTAGÉ à ton org (grant read, livraison #52)
     scope: str = "org"
     version: Optional[int] = None
     with_history: bool = False
@@ -400,8 +400,8 @@ def _project_instance(member_mode: bool) -> Optional[dict]:
 
 # ── Handlers (core ; org_id depuis ctx → partagés membre/admin) ─────────────
 async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
-    """Bundle session-start (slug omis) OU une doctrine nommée. En mode membre
-    (`inp.org_id` absent) complète avec la doctrine du département actif."""
+    """Bundle session-start (slug omis) OU un guide nommé. En mode membre
+    (`inp.org_id` absent) complète avec le guide du département actif."""
     org_id = ctx.org_id
     member_mode = getattr(inp, "org_id", None) is None
     slug = inp.slug
@@ -409,7 +409,7 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
     version = inp.version
 
     # Lecture par ID STABLE (ADR 0032 « stop using slug ») — le chemin des liens de
-    # projet ET des doctrines PARTAGÉES cross-org (grant read via oto_resource, #52) :
+    # projet ET des guides PARTAGÉS cross-org (grant read via oto_resource, #52) :
     # l'accès passe par le seam ownership (membre de l'org propriétaire ∪ grants),
     # pas par l'org active.
     doctrine_id = getattr(inp, "doctrine_id", None)
@@ -434,7 +434,7 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
                 "referenced_tools": await tool_registry.manifest_for(instr["body_md"])}
 
     if slug is None:
-        # Début de session : doctrine de base + index (vide gracieux si pas d'org).
+        # Début de session : guide de base + index (vide gracieux si pas d'org).
         if org_id is None:
             return {"org_id": None, "org": None, "doctrine": "", "group_id": None,
                     "group": None, "group_doctrine": "", "doctrines": [], "referenced_tools": []}
@@ -464,7 +464,7 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
             **({"project_instance": pi} if pi else {}),
         }
 
-    # Une doctrine nommée précise.
+    # Un guide nommé précis.
     if scope == "group" and member_mode:
         group_id = access.current_group(ctx.sub)
         if group_id is None:
@@ -494,7 +494,7 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
 
 
 def _list_guides(ctx: ResolvedCtx, inp) -> dict:
-    """Catalogue des doctrines nommées (slug/title/description/version, sans corps)."""
+    """Catalogue des guides nommés (slug/title/description/version, sans corps)."""
     org_id = ctx.org_id
     member_mode = getattr(inp, "org_id", None) is None
     query = inp.query
@@ -503,7 +503,7 @@ def _list_guides(ctx: ResolvedCtx, inp) -> dict:
         return {"org_id": None, "doctrines": []}
     out: list = []
     if scope in (None, "org"):
-        include_base = not member_mode  # la surface admin inclut la doctrine de base
+        include_base = not member_mode  # la surface admin inclut le guide de base
         rows = (org_store.search_instructions(org_id, query, include_base=include_base) if query
                 else org_store.list_instructions(org_id, include_base=include_base))
         out += [{**r, "scope": "org"} for r in rows]
@@ -539,7 +539,7 @@ async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
     body_md = (body_md or "").strip()
     if not body_md:
         raise AuthzDenied(400, "body_md_required", "body_md vide (ou fournis `from_version`).")
-    # Injecté dans la doctrine de base servie à chaque session → caper la taille.
+    # Injecté dans le guide de base servi à chaque session → caper la taille.
     if len(body_md.encode()) > 64 * 1024:
         raise AuthzDenied(400, "body_too_large", "body_md > 64 KB.")
     if norm == _BASE:
@@ -586,7 +586,7 @@ def _archive_instruction(ctx: ResolvedCtx, inp) -> dict:
 
 # ── Handlers REST-only (org active) ─────────────────────────────────────────
 def _instructions_list(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
-    """Doctrine de base (meta) + index des instructions nommées de l'org active.
+    """Guide de base (meta) + index des instructions nommées de l'org active.
     Bundle vide en 200 si pas d'org active (consommé par l'overview)."""
     org_id = ctx.org_id
     if org_id is None:
@@ -642,7 +642,7 @@ def _instruction_revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:
 
 
 def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
-    """Usage d'une doctrine (ADR 0014) : nb de chargements par l'agent, appelants,
+    """Usage d'un guide (ADR 0014) : nb de chargements par l'agent, appelants,
     série journalière 30j — dérivé de `tool_calls` (`_GUIDE_GET_TOOL`), scopé org."""
     slug = org_store.normalize_slug(inp.slug)
     subs = [m["sub"] for m in org_store.list_org_members(ctx.org_id)]
@@ -667,7 +667,7 @@ CAPABILITIES += [
                      "(project procedure links) — including one SHARED to you/your org "
                      "by another org (delivered project)."),
         # Face REST par ID stable : résolution des liens `procedure` d'un projet côté
-        # dashboard — y compris un projet LIVRÉ (doctrine d'une autre org, grant read).
+        # dashboard — y compris un projet LIVRÉ (guide d'une autre org, grant read).
         rest=RestBinding("GET", "/api/me/doctrines/{doctrine_id}"),
     ),
     Capability(

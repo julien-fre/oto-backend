@@ -158,7 +158,7 @@ def test_the_guide_states_the_density_limits():
         assert token in body, token
 
 
-def test_the_base_doctrine_still_asks_for_the_drawing():
+def test_the_base_guide_still_asks_for_the_drawing():
     """Le socle injecté à chaque session est le seul endroit où l'agent apprend que
     le dessin est requis AVANT d'écrire. S'il tombe, plus personne ne dessine."""
     socle = instructions._SECRET_SAUCE

@@ -228,7 +228,7 @@ def test_org_admin_opt_denies_without_active_org(monkeypatch):
 # --- ORG_MEMBER_OPT (lecture self-service par défaut, épinglable par `org`) -
 # Régression oto-backend feedback #278 : `oto_procedure(op=get, slug, org=Y)`
 # ignorait `org` (résolvait dans l'org maison de l'appelant, pas Y). Miroir lecture
-# d'ORG_ADMIN_OPT — l'axe `org=` d'ADR 0038 doit charger une doctrine cross-org.
+# d'ORG_ADMIN_OPT — l'axe `org=` d'ADR 0038 doit charger un guide cross-org.
 
 def test_org_member_opt_falls_back_to_active_when_absent():
     """Sans `org` → org active (42), sans garde (c'est la sienne) — parité SUB_ONLY."""
@@ -277,7 +277,7 @@ def test_group_member_of_unknown_group(monkeypatch):
     C'était un 404 `unknown_group` : le test d'existence passait AVANT celui
     d'appartenance, donc un non-membre apprenait si l'équipe #N existe. Le palier org
     ne fait pas ça (`ORG_MEMBER_OF` ne teste que l'appartenance), et les deux paliers
-    appliquent par ailleurs la même doctrine de refus non-disclosant.
+    appliquent par ailleurs la même parti pris de refus non-disclosant.
 
     Le prix, assumé : un administrateur légitime qui se trompe d'identifiant reçoit
     lui aussi 403 au lieu de 404 — exactement ce que le palier org lui rend déjà.

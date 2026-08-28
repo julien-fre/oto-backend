@@ -83,13 +83,13 @@ def test_procedure_carries_skills_index_anchor():
 
 
 # ── oto_admin_doctrine / oto_admin_signal ────────────────────────────────────
-def test_admin_doctrine_routes(monkeypatch):
+def test_admin_guide_routes(monkeypatch):
     monkeypatch.setattr(orgs_instructions, "_get_guide", _atag("get"))
     monkeypatch.setattr(orgs_instructions, "_list_guides", _tag("list"))
     monkeypatch.setattr(orgs_instructions, "_set_instruction", _atag("set"))
     monkeypatch.setattr(orgs_instructions, "_delete_instruction", _tag("delete"))
     D = ac.GuideAdminInput
-    run = lambda inp: asyncio.run(ac._doctrine(CTX, inp))
+    run = lambda inp: asyncio.run(ac._guide(CTX, inp))
     out = run(D(op="get", org_id=5))
     assert out["called"] == "get" and out["inp"].org_id == 5
     assert run(D(op="list", org_id=5))["called"] == "list"

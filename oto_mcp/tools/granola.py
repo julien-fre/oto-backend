@@ -17,7 +17,7 @@ argument fourni REFUSE plutôt que de l'ignorer (silae `_refuse_ignored`) —
 `granola_content(op="list_notes", note_id=...)` rendrait TOUTES les notes en
 laissant croire que `note_id` a filtré sur une seule.
 
-**Webhook endpoints : CRUD complet exposé**, contrairement à la doctrine
+**Webhook endpoints : CRUD complet exposé**, contrairement au guide
 Management d'Ahrefs (lecture+création seulement) — supprimer/désactiver un
 webhook endpoint n'est pas destructeur de DONNÉE utilisateur (notes,
 transcripts…), c'est de la plomberie d'intégration, faible rayon d'effet.

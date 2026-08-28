@@ -3,8 +3,8 @@
 `run_start` ouvre un run (mint un `run_id`, le pousse dans l'état de session) ;
 chaque appel d'outil jusqu'à `run_finish` est **attribué à ce run** par le sink
 calllog (corrélation côté serveur, l'agent ne thread rien). Un run avec `doctrine`
-= l'exécution d'une doctrine nommée (répétable) ; sans `doctrine` = un run one-shot
-(ad-hoc), même trace. Le chargement d'une doctrine reste `oto_procedure(op='get')`
+= l'exécution d'un guide nommé (répétable) ; sans `doctrine` = un run one-shot
+(ad-hoc), même trace. Le chargement d'un guide reste `oto_procedure(op='get')`
 (inchangé). Spine plateforme : chargé explicitement dans `register_all`, hors gate
 d'activation.
 """
@@ -32,7 +32,7 @@ def _procedure_version(sub: str | None, slug: str) -> int | None:
     """Version COURANTE de la procédure `slug`, lue dans l'ordre où
     `oto_procedure(op='get')` la sert : l'org active d'abord, l'équipe active en
     complément. None si le slug ne désigne aucune procédure — un run ad-hoc, une
-    doctrine d'un autre foyer, ou un slug inventé.
+    guide d'un autre foyer, ou un slug inventé.
 
     Lecture DB ⇒ appelée HORS boucle (`asyncio.to_thread`)."""
     from .. import access, group_store, org_store
@@ -82,7 +82,7 @@ async def _note_procedure_version(doctrine: str | None) -> int | None:
 
 async def _persist_open(run_id: str, label: str, doctrine: str | None) -> None:
     """Trace durable de l'ouverture (best-effort, off-loop). La pile session reste
-    la source du run actif ; ceci ne fait qu'ajouter label/doctrine en base."""
+    la source du run actif ; ceci ne fait qu'ajouter label/guide en base."""
     try:
         from .. import access, db
         from ..auth.hooks import current_user_sub_from_token

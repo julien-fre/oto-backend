@@ -59,7 +59,7 @@ PROTECTED_TOOLS: frozenset[str] = frozenset(
      "oto_use_group", "oto_clear_group",
      # Boucle d'usage (ADR 0017) — les instructions plateforme MANDATENT leur
      # emploi systématique (signaler un gap, encadrer un run) : un toggle qui les
-     # masque rend la doctrine inapplicable et le gap invisible. Jamais
+     # masque rend le guide inapplicable et le gap invisible. Jamais
      # désactivables ni masquables.
      "feedback", "run_start", "run_finish",
      # Famille projet (ADR 0032) — même raison : le bloc C injecte « Projets

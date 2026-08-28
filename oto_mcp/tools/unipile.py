@@ -52,7 +52,7 @@ _FEED_SORT_ORDER = "MEMBER_SETTING"  # honore le tri choisi sur la home LinkedIn
 # par défaut — ADR 0047 §Amendement du 11/08 : le chemin paresseux doit être le juste.
 _FEED_DEFAULT_FIELDS = (
     "urn", "post_url",                              # adresser le post + le citer
-    "author_name", "author_headline",               # qui parle (la doctrine trie dessus)
+    "author_name", "author_headline",               # qui parle (le guide trie dessus)
     "posted_at",                                    # fraîcheur
     "text",                                         # de quoi ça parle (tronqué)
     "content_type", "content_title",                # …et de quoi le post est FAIT
