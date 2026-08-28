@@ -120,6 +120,79 @@ def test_la_surface_nomme_sa_cible_dans_le_chemin():
     assert (b.verb, b.path) == ("POST", "/api/admin/usage/signals/{signal_id}/org")
 
 
+# ── La console MCP : le geste doit être atteignable depuis un agent ─────────────────
+#
+# La route REST a été livrée seule (`e21e0ad`). Un signal mal aiguillé se corrige donc
+# depuis le dashboard, et l'agent qui vient de constater l'erreur — souvent celui-là même
+# dont l'appel a omis son jeton d'org — n'a rien pour la réparer. La plateforme sait faire
+# le geste, l'agent ne l'atteint pas : c'est le même trou que la visibilité admin, une
+# surface plus bas.
+
+
+def _console(**kw):
+    from oto_mcp.capabilities import admin_console as AC
+    return AC._signal(CTX, AC.SignalAdminInput(**kw))
+
+
+def test_le_reaiguillage_est_atteignable_depuis_la_console(store):
+    """Le geste littéral : « ce signal parle de l'espace 2, il est posé sur le 246 »."""
+    out = _console(op="reroute", signal_id=468, to_org="2")
+    assert out["ok"] is True
+    assert out["signal"]["org_id"] == 2
+    assert out["previous_org_id"] == 246
+
+
+def test_la_console_sait_remonter_un_signal_a_la_plateforme(store):
+    """`platform` en toutes lettres : sur une console, tous les champs sont optionnels,
+    donc un `org_id` absent et un `org_id: null` sont INDISTINGUABLES (vérifié : fastmcp
+    remplit les défauts avant d'appeler le handler, `model_fields_set` ne tranche rien).
+    Le mot dit la destination au lieu de la laisser tomber d'un défaut."""
+    out = _console(op="reroute", signal_id=468, to_org="platform")
+    assert out["ok"] is True
+    assert out["signal"]["org_id"] is None
+    assert out["previous_org_id"] == 246
+
+
+def test_une_destination_non_dite_est_REFUSEE(store):
+    """Le cœur de l'invariant que porte `RerouteSignalInput` : `None` n'est pas « ne rien
+    changer », c'est la plateforme. Sur une console où tout est optionnel, le seul moyen de
+    tenir cette exigence est de refuser la destination muette — sinon un `reroute` étourdi
+    sortirait le signal de son espace sans que personne ne l'ait demandé."""
+    with pytest.raises(AuthzDenied) as refus:
+        _console(op="reroute", signal_id=468)
+    assert refus.value.status == 400
+    assert "to_org" in refus.value.message
+
+
+def test_une_destination_qui_n_est_pas_un_espace_est_REFUSEE(store):
+    """Un mot de travers ne doit pas se faire lire comme « la plateforme »."""
+    with pytest.raises(AuthzDenied) as refus:
+        _console(op="reroute", signal_id=468, to_org="chez moi")
+    assert refus.value.status == 400
+    assert "chez moi" in refus.value.message
+
+
+def test_la_console_verifie_l_espace_de_destination(store):
+    """La garde du handler traverse la console : un id inexistant enterrerait le signal."""
+    with pytest.raises(AuthzDenied) as refus:
+        _console(op="reroute", signal_id=468, to_org="999")
+    assert refus.value.status == 404
+
+
+def test_la_console_annonce_ce_qu_elle_sait_faire():
+    """Un op livré mais absent de la description est invisible ; une description qui
+    promet un op absent est pire — l'agent bute sur un refus de schéma. Les deux listes
+    doivent dire la même chose."""
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    import typing
+
+    capa = next(c for c in CAPABILITIES if c.key == "admin.signal")
+    ops = typing.get_args(capa.Input.model_fields["op"].annotation)
+    for op in ops:
+        assert f"op={op}" in capa.description or f"/ {op} " in capa.description, (
+            f"`{op}` est servi par oto_admin_signal et sa description ne le dit pas.")
+
+
 # ── Ce qu'on n'a PAS fait, et qui doit le rester ────────────────────────────────────
 
 def test_aucune_suppression_de_signal_n_existe():

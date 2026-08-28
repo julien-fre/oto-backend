@@ -229,15 +229,48 @@ async def _unipile_seat(ctx: ResolvedCtx, inp: UnipileSeatAdminInput) -> dict:
 # qui sont précisément les deux gestes de triage qui manquaient. Un signal qu'on
 # refuse n'est pas résolu, et le forcer dans ce mot rendait le refus invisible.
 class SignalAdminInput(BaseModel):
-    op: Literal["list", "set_status"]
+    op: Literal["list", "set_status", "reroute"]
     signal: Optional[str] = None      # list : tool_feedback | gap
     target: Optional[str] = None      # list
     # list : open | acknowledged | declined | resolved | pending | None (tous)
     # set_status : l'état à poser (pending n'en est pas un — c'est un filtre)
     status: Optional[str] = None
     limit: int = 200                  # list
-    signal_id: Optional[int] = None   # set_status
+    signal_id: Optional[int] = None   # set_status / reroute
     note: Optional[str] = None        # set_status : ce qui a été décidé, et pourquoi
+    # reroute : la destination, `<id>` d'un espace ou `platform` en toutes lettres.
+    #
+    # Une CHAÎNE, et pas l'`org_id: Optional[int]` de la route REST, parce que la
+    # contrainte n'est pas la même. Là-bas le champ est REQUIS et `None` y est une
+    # destination — la plateforme — jamais « ne rien changer » : l'écriture est
+    # toujours un choix. Ici tous les champs d'une console sont optionnels par
+    # construction, et fastmcp remplit les défauts avant d'appeler le handler
+    # (vérifié) — un `org_id` omis et un `org_id: null` arrivent donc RIGOUREUSEMENT
+    # identiques, et `model_fields_set` ne tranche rien. Le mot rétablit la
+    # distinction : absent = non dit (refusé), `platform` = voulu.
+    to_org: Optional[str] = None
+
+
+def _destination(brut: Optional[str]) -> Optional[int]:
+    """`<id>` → l'espace, `platform` → la plateforme, rien → un refus qui le dit.
+
+    Aucun repli : un mot de travers ne doit pas se faire lire comme « la plateforme »,
+    sans quoi une faute de frappe sortirait le signal de son espace en silence — le
+    défaut même qu'on répare, en pire (plus personne ne le voit et rien ne le dit)."""
+    val = (brut or "").strip()
+    if not val:
+        raise AuthzDenied(
+            400, "missing_to_org",
+            "`to_org` requis pour reroute : l'id de l'espace de destination, ou "
+            "`platform` pour l'en sortir sans le rattacher ailleurs. Une destination "
+            "non dite serait un déplacement que personne n'a demandé.")
+    if val.lower() == "platform":
+        return None
+    if not val.lstrip("+").isdigit():
+        raise AuthzDenied(
+            400, "invalid_to_org",
+            f"`to_org={val}` n'est ni un id d'espace ni `platform`.")
+    return int(val)
 
 
 def _signal(ctx: ResolvedCtx, inp: SignalAdminInput) -> dict:
@@ -245,6 +278,11 @@ def _signal(ctx: ResolvedCtx, inp: SignalAdminInput) -> dict:
     if inp.op == "list":
         return usage._signals(ctx, usage.SignalsInput(
             signal=inp.signal, target=inp.target, status=inp.status, limit=inp.limit))
+    if inp.op == "reroute":
+        return usage._reroute_signal(ctx, usage.RerouteSignalInput(
+            signal_id=_need(inp.signal_id, "missing_signal_id",
+                            "`signal_id` requis pour reroute."),
+            org_id=_destination(inp.to_org)))
     return usage._set_signal_status(ctx, usage.SetSignalStatusInput(
         signal_id=_need(inp.signal_id, "missing_signal_id",
                         "`signal_id` requis pour set_status."),
@@ -340,6 +378,10 @@ CAPABILITIES += [
                      "(`signal_id`, `status`, `note` = what was decided — REQUIRED to "
                      "decline). Four states: open (nobody looked yet), acknowledged (read, "
                      "not decided), declined (won't do), resolved (done). "
+                     "op=reroute (`signal_id`, `to_org` = the workspace id it was "
+                     "really about, or `platform` to lift it out — a signal filed "
+                     "against the wrong workspace is MOVED, never deleted: only its "
+                     "address was wrong, the fact is real). "
                      "op=notify_preview (who would be told what was decided about "
                      "their agents' signals — sends NOTHING) / notify_send (actually "
                      "sends ONE grouped email per person, never one per signal; "

@@ -77,8 +77,16 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
     bon (les deux lentilles d'org comptent par `org_id`), là où une suppression ferait
     la première moitié, perdrait la seconde, et rouvrirait sous un autre nom la porte
     que `declined` referme en exigeant un motif.
-  - ⚠️ **Pas encore de face MCP** : `oto_admin_signal` vit dans `admin_console.py` et
-    n'a pas été touché — la console y gagnera un `op='reroute'`.
+  - **Face MCP `oto_admin_signal(op='reroute')`** (28/08) : la route avait été livrée
+    seule, donc l'agent qui venait de constater l'erreur — souvent celui dont l'appel
+    avait omis le jeton d'org — n'avait rien pour la réparer et repassait par le
+    dashboard. ⚠️ **La destination s'y écrit `to_org`, une CHAÎNE** : `<id>` ou
+    `platform` en toutes lettres, jamais l'`org_id` de la route. Sur une console tous
+    les champs sont optionnels et **fastmcp remplit les défauts avant d'appeler le
+    handler** — un `org_id` omis et un `org_id: null` y arrivent rigoureusement
+    identiques, `model_fields_set` compris. Le mot rétablit l'invariant de la route
+    (« l'écriture est toujours un choix ») : absent = refusé en nommant ce qui manque,
+    `platform` = voulu. Un mot de travers est refusé, jamais lu comme la plateforme.
 - **Le retour à celui qui a signalé (#451, 27/08)** : `POST /api/admin/usage/notify-reporters`
   (MCP `oto_admin_signal(op='notify_preview'|'notify_send')`, PLATFORM_ADMIN). Colonne
   `usage_signals.notified_at` — NULL = son auteur ne sait pas encore ; effacée à chaque
