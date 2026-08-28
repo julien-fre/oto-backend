@@ -218,7 +218,7 @@ def test_consoles_carry_the_mcp_surface():
     caps = {c.key: c for c in CAPABILITIES}
     expected = {
         "org.procedure.console": "oto_procedure",
-        "admin.doctrine": "oto_admin_guide",
+        "admin.guide": "oto_admin_guide",
         "admin.signal": "oto_admin_signal",
         "org.console": "oto_org",
         "org.settings.console": "oto_org_settings",
@@ -228,8 +228,8 @@ def test_consoles_carry_the_mcp_surface():
     for key, mcp in expected.items():
         assert caps[key].mcp == mcp, key
     demoted = [
-        "org.doctrine.get", "org.instruction.set", "org.instruction.delete",
-        "org.doctrine.admin_get", "org.doctrine.admin_list",
+        "org.guide.get", "org.instruction.set", "org.instruction.delete",
+        "org.guide.admin_get", "org.guide.admin_list",
         "org.instruction.admin_set", "org.instruction.admin_delete",
         "library.list", "library.get", "library.publish", "library.fork", "library.unpublish",
         "usage.signals", "usage.set_signal_status",

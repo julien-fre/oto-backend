@@ -658,7 +658,7 @@ def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
 CAPABILITIES += [
     # ── Lectures membre (org active) ────────────────────────────────────────
     Capability(
-        key="org.doctrine.get", handler=_get_guide, Input=GuideGetInput,
+        key="org.guide.get", handler=_get_guide, Input=GuideGetInput,
         authz=SUB_ONLY, Output=DoctrineView,
         description=("Operational doctrine of your active org. The base doctrine is now "
                      "INJECTED into your session instructions at connect — call this with "
@@ -670,7 +670,10 @@ CAPABILITIES += [
                      "by another org (delivered project)."),
         # Face REST par ID stable : résolution des liens `procedure` d'un projet côté
         # dashboard — y compris un projet LIVRÉ (guide d'une autre org, grant read).
-        rest=RestBinding("GET", "/api/me/doctrines/{doctrine_id}"),
+        # ⚠️ Le placeholder dit `guide_id`, le champ d'`Input` dit encore
+        # `doctrine_id` : `path_map` porte l'écart, et le champ suivra au lot B3.
+        rest=RestBinding("GET", "/api/me/guides/{guide_id}",
+                         {"guide_id": "doctrine_id"}),
     ),
     Capability(
         key="org.instruction.list", handler=_instructions_list, Input=EmptyInput,
@@ -742,13 +745,13 @@ CAPABILITIES += [
     ),
     # ── Palier admin (org ciblée par org_id ; cross-org = platform admin) ────
     Capability(
-        key="org.doctrine.admin_get", handler=_get_guide, Input=AdminGuideGetInput,
+        key="org.guide.admin_get", handler=_get_guide, Input=AdminGuideGetInput,
         authz=ORG_MEMBER_OF("org_id"),
         description="[ADMIN] Read another org's doctrine by id (base+index, or one skill).",
         rest=RestBinding("GET", "/api/admin/orgs/{id}/instructions/{slug}", _OID_SLUG),
     ),
     Capability(
-        key="org.doctrine.admin_list", handler=_list_guides, Input=AdminGuideListInput,
+        key="org.guide.admin_list", handler=_list_guides, Input=AdminGuideListInput,
         authz=ORG_MEMBER_OF("org_id"),
         description="[ADMIN] List another org's named doctrines by id (incl. base doctrine).",
         rest=RestBinding("GET", "/api/admin/orgs/{id}/instructions", _OID),

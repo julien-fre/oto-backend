@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
+from . import deprecations
 from .capabilities import registry
 from .capabilities._types import Capability, RestBinding
 
@@ -173,6 +174,14 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
     return op, defs
 
 
+def _handwritten_operation_id(verb: str, path: str) -> str:
+    """L'`operationId` d'un chemin qui n'est dérivé d'aucune capacité — donc dérivé
+    de son CHEMIN. Un seul endroit : les routes écrites à la main et les alias
+    dépréciés se ressemblent trop pour que deux recettes divergent."""
+    corps = path.strip("/").replace("/", "_").replace("{", "").replace("}", "")
+    return f"{verb.lower()}_{corps}"
+
+
 def _handwritten(routes: Iterable) -> dict:
     """Routes Starlette écrites à la main : chemin + méthodes, sans schéma.
 
@@ -181,6 +190,7 @@ def _handwritten(routes: Iterable) -> dict:
     des migrations en capacités (`test_rest_modules_are_capabilities.py`).
     """
     out: dict = {}
+    alias = {a.ancien for a in deprecations.REST}
     for route in routes or ():
         path = getattr(route, "path", None)
         methods = getattr(route, "methods", None)
@@ -188,6 +198,8 @@ def _handwritten(routes: Iterable) -> dict:
             continue
         if path.startswith(_ADMIN_PREFIX):
             continue
+        if path in alias:
+            continue      # décrit par `_alias_deprecies` : « déprécié », pas « legacy »
         item = out.setdefault(_openapi_path(path), {})
         params = [_param(ph, "path", {"type": "string"}, True)
                   for ph in _placeholders(path)]
@@ -196,7 +208,7 @@ def _handwritten(routes: Iterable) -> dict:
             if v in ("options", "head") or v in item:
                 continue
             item[v] = {
-                "operationId": f"{v}_{path.strip('/').replace('/', '_').replace('{', '').replace('}', '')}",
+                "operationId": _handwritten_operation_id(v, path),
                 "summary": f"{verb} {path}",
                 "description": "Route écrite à la main : forme du corps non dérivable "
                                "(elle n'est pas encore une capacité).",
@@ -208,10 +220,55 @@ def _handwritten(routes: Iterable) -> dict:
     return {p: i for p, i in out.items() if i}
 
 
+def _alias_deprecies() -> dict:
+    """Les anciens chemins, décrits comme ce qu'ils sont : **dépréciés et datés**.
+
+    Ils sont DÉCLARÉS (`deprecations.REST`), pas relevés dans la table vivante :
+    un intégrateur qui lit ce document doit y voir la date de retrait même quand
+    le document est bâti sans table de routes.
+
+    Trois choses que l'entrée porte et qu'un `deprecated: true` seul ne dirait pas :
+    le chemin de REMPLACEMENT (sinon « déprécié » n'est qu'un reproche), la DATE
+    (sinon rien ne dit quand agir), et l'`operationId` HISTORIQUE — le nom de méthode
+    qu'un client généré s'est donné, qu'on ne fait pas changer pour rien.
+    """
+    out: dict = {}
+    for alias in deprecations.REST:
+        item = out.setdefault(_openapi_path(alias.ancien), {})
+        item[alias.verbe.lower()] = {
+            "operationId": alias.operation_id or _handwritten_operation_id(
+                alias.verbe, alias.ancien),
+            "summary": f"Déprécié : utilisez {alias.nouveau} "
+                       f"(retrait le {deprecations.date_de_retrait()})",
+            "description": (
+                f"Ancien chemin, conservé le temps du préavis. Il répond **308** vers "
+                f"`{alias.nouveau}` — même méthode, même corps, query string reportée "
+                f"— et **cesse de répondre au premier tag posé à partir du "
+                f"{deprecations.date_de_retrait()}**. Bascule sur le nouveau chemin : "
+                f"il sert déjà, à l'identique."),
+            "deprecated": True,
+            "tags": ["_deprecated"],
+            "security": [{"bearerAuth": []}],
+            "parameters": [_param(ph, "path", {"type": "string"}, True)
+                           for ph in _placeholders(alias.ancien)],
+            "responses": {
+                "308": {"description": f"Redirection permanente vers {alias.nouveau}",
+                        "headers": {
+                            "Location": {"schema": {"type": "string"}},
+                            "Sunset": {"description": "date de retrait (JJ/MM/AAAA)",
+                                       "schema": {"type": "string"}},
+                        }},
+            },
+        }
+    return out
+
+
 def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None) -> dict:
     """Document OpenAPI 3.1 complet. `routes` = table de routes vivante (facultative :
     sans elle, seules les capacités sont décrites)."""
     paths = _handwritten(routes)
+    for chemin, item in _alias_deprecies().items():
+        paths.setdefault(chemin, {}).update(item)
     schemas: dict = {}
     for cap in registry.CAPABILITIES:
         if not cap.is_exposed():

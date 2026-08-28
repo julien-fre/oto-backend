@@ -72,7 +72,7 @@ from .base import (  # noqa: F401 — ré-export de compatibilité
     _maybe_view_as, bind, options_handler)
 # Handlers par DOMAINE (découpe du 2026-08-27) : chaque module porte des fonctions
 # de module, testables seules ; la table de routes ci-dessous reste ici.
-from . import public
+from . import alias_routes, public
 from . import media
 from . import projects
 from . import uploads
@@ -436,10 +436,14 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/openapi.json", options_handler, methods=["OPTIONS"]),
         Route("/api/connectors", bind(public.connectors_catalog, verifier=verifier), methods=["GET"]),
         Route("/api/connectors", options_handler, methods=["OPTIONS"]),
-        Route("/api/doctrines/library", public.doctrines_library_public, methods=["GET"]),
-        Route("/api/doctrines/library", options_handler, methods=["OPTIONS"]),
-        Route("/api/doctrines/library/{slug}", public.doctrines_library_public_get, methods=["GET"]),
-        Route("/api/doctrines/library/{slug}", options_handler, methods=["OPTIONS"]),
+        # ⚠️ DEUX bibliothèques, deux objets : `/api/guide-library` = le MARCHÉ des
+        # guides publiés par les orgs (table `doctrine_library`, forkables) ;
+        # `/api/guides/library` = les guides PLATEFORME. Les noms se ressemblaient
+        # déjà avant ce lot — ils ne désignent toujours pas la même chose.
+        Route("/api/guide-library", public.guide_library_public, methods=["GET"]),
+        Route("/api/guide-library", options_handler, methods=["OPTIONS"]),
+        Route("/api/guide-library/{slug}", public.guide_library_public_get, methods=["GET"]),
+        Route("/api/guide-library/{slug}", options_handler, methods=["OPTIONS"]),
         Route("/api/guides/library", public.guides_library_public, methods=["GET"]),
         Route("/api/guides/library", options_handler, methods=["OPTIONS"]),
         Route("/api/guides/library/{slug}", public.guides_library_public_get, methods=["GET"]),
@@ -479,4 +483,8 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         *connectors_routes,
         *contact_routes,
         *billing_webhook_routes,
+        # EN DERNIER, et c'est la garde : un alias déprécié ne peut capturer que ce
+        # que rien d'autre ne sert. Monté plus haut, un de ses placeholders pourrait
+        # éclipser une vraie route sans que rien ne le dise (#519, retrait #526).
+        *alias_routes.make_routes(options_handler),
     ]

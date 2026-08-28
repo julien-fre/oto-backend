@@ -55,22 +55,26 @@ import re
 RACINE = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp"
 MOT = re.compile("doctrine", re.I)
 
-# ── Plafonds relevés à la fin du lot B1 de #519 (2026-08-28) ─────────────────
+# ── Plafonds relevés à la fin du lot B2 de #519 (2026-08-28) ─────────────────
 # Chaque entrée porte la RAISON pour laquelle le mot y survit. Une entrée sans
 # raison servie n'a rien à faire ici : elle se renomme.
 #
-# Total : 267 (fin du lot A) → 266 (fin de B1). Le lot B rembourse par étapes ; le
-# compte descend à chaque PR, jamais l'inverse. Zéro au lot D (#526).
+# Total : 267 (fin du lot A) → 266 (B1) → 262 (B2). Le lot B rembourse par étapes ;
+# le compte descend à chaque PR, jamais l'inverse. Zéro au lot D (#526).
+#
+# ⚠️ Le mot se CONCENTRE autant qu'il recule : B2 a retiré 17 occurrences de cinq
+# fichiers de métier et en a posé 18 dans `deprecations.py`, où elles sont une
+# DONNÉE (la table des anciens noms) et non un usage. C'est le mouvement voulu — un
+# alias déclaré à un seul endroit s'enlève d'un geste au lot D.
 PLAFONDS: dict[str, int] = {
-    # — Chemins REST servis `/api/[me/]doctrines/…` + les deux handlers publics
-    #   dont le NOM est figé dans `tests/api/api_routes_table.txt`.
-    "oto_mcp/api/public.py": 7,
-    "oto_mcp/api/routes.py": 6,
-    # — Clés de capacité servies : `org.doctrine.*`, `admin.doctrine`.
-    "oto_mcp/capabilities/__init__.py": 2,
-    # — Description servie (l'outil s'appelle `oto_admin_guide` depuis B1 ; son
-    #   ancien nom est servi en ALIAS daté, cf. `oto_mcp/deprecations.py`).
-    "oto_mcp/capabilities/admin_console.py": 3,
+    # — Clé de réponse `doctrines` (le build de la vitrine la lit) ; nom de la
+    #   table `doctrine_library` dans un commentaire de routage.
+    "oto_mcp/api/public.py": 1,
+    "oto_mcp/api/routes.py": 1,
+    # — Description servie (l'outil s'appelle `oto_admin_guide` depuis B1, la
+    #   capacité `admin.guide` depuis B2 ; l'ancien nom d'outil et les anciens
+    #   chemins sont servis en ALIAS datés, cf. `oto_mcp/deprecations.py`).
+    "oto_mcp/capabilities/admin_console.py": 2,
     # — Clé de réponse `doctrine` + description servie.
     "oto_mcp/capabilities/agent_context.py": 4,
     # — Clé de réponse `doctrine_ref_count`.
@@ -81,18 +85,18 @@ PLAFONDS: dict[str, int] = {
     "oto_mcp/capabilities/groups/core.py": 3,
     # — Clés de réponse `doctrine` / `doctrine_version` + descriptions servies.
     "oto_mcp/capabilities/groups/guide.py": 13,
-    # — Chemins `/api/me/doctrines/*`, code d'erreur `unknown_doctrine`, clé
-    #   `doctrines`, descriptions servies.
-    "oto_mcp/capabilities/guide_library.py": 21,
+    # — Code d'erreur `unknown_doctrine`, clé de réponse `doctrines`, descriptions
+    #   servies. Les chemins sont partis en B2 (`/api/me/guide-library…`).
+    "oto_mcp/capabilities/guide_library.py": 16,
     # — Description servie.
     "oto_mcp/capabilities/org_console.py": 1,
     # — Clé de réponse `doctrine` + docstring de `RunRow` (servie en OpenAPI).
     "oto_mcp/capabilities/org_monitoring.py": 4,
     # — Le gros morceau : clés `doctrine`/`doctrines`/`doctrine_id`/`group_doctrine`,
-    #   capacités `org.doctrine.*`, chemin `/api/me/doctrines/{doctrine_id}`, code
-    #   `unknown_doctrine`, kind d'ownership `doctrine`, modèles `DoctrineView` et
-    #   `DoctrineMeta` (noms de schéma dans `/openapi.json`), descriptions servies.
-    "oto_mcp/capabilities/orgs/instructions.py": 61,
+    #   code `unknown_doctrine`, kind d'ownership `doctrine`, modèles `DoctrineView`
+    #   et `DoctrineMeta` (noms de schéma dans `/openapi.json`), descriptions
+    #   servies. Clés de capacité et chemin renommés en B2.
+    "oto_mcp/capabilities/orgs/instructions.py": 58,
     # — Paramètre servi `doctrine_id` + descriptions.
     "oto_mcp/capabilities/procedure_console.py": 8,
     # — Kind d'ownership `doctrine` + colonne `runs.doctrine` + description.
@@ -130,7 +134,7 @@ PLAFONDS: dict[str, int] = {
     #   C'est le seul fichier où le mot est une DONNÉE et non un usage : il y entre
     #   au moment où une surface est renommée, et le fichier entier disparaît au
     #   retrait. Un plafond qui MONTE ici pendant que le total baisse est normal.
-    "oto_mcp/deprecations.py": 1,
+    "oto_mcp/deprecations.py": 19,
     # — Prose d'onboarding SERVIE à l'agent.
     "oto_mcp/discovery.py": 1,
     # — Le paramètre servi `doctrine` de `run_start`, nommé dans le docstring.

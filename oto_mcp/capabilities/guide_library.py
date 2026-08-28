@@ -358,7 +358,7 @@ CAPABILITIES += [
                     "Filter by query / category / author_kind (otomata|org). Returns metadata "
                     "+ snippet, not the full body — use oto_procedure op=library_get for that.",
         Output=LibraryList,
-        rest=RestBinding("GET", "/api/me/doctrines/library"),
+        rest=RestBinding("GET", "/api/me/guide-library"),
     ),
     Capability(
         key="library.get", handler=_get, Input=LibraryGetInput, authz=SUB_ONLY,
@@ -367,7 +367,7 @@ CAPABILITIES += [
                     "Also serves `unlisted` entries by exact slug (unlisted = shared by link, "
                     "never in the catalog), not a private-org secret.",
         Output=LibraryEntry,
-        rest=RestBinding("GET", "/api/me/doctrines/library/{slug}"),
+        rest=RestBinding("GET", "/api/me/guide-library/{slug}"),
     ),
     Capability(
         key="library.publish", handler=_publish, Input=PublishInput, authz=ORG_MEMBER,
@@ -378,7 +378,7 @@ CAPABILITIES += [
                     "version, a name held by someone else is refused (409) — pick another "
                     "public_slug.",
         Output=PublishResult,
-        rest=RestBinding("POST", "/api/me/doctrines/publish"),
+        rest=RestBinding("POST", "/api/me/guide-library/publish"),
     ),
     Capability(
         key="library.fork", handler=_fork, Input=ForkInput, authz=ORG_MEMBER,
@@ -386,13 +386,13 @@ CAPABILITIES += [
                     "versioned skill. Requires org_admin of your active org. slug = the public "
                     "entry ; new_slug optional (defaults to source slug, de-duplicated).",
         Output=ForkResult,
-        rest=RestBinding("POST", "/api/me/doctrines/fork"),
+        rest=RestBinding("POST", "/api/me/guide-library/fork"),
     ),
     Capability(
         key="library.unpublish", handler=_unpublish, Input=UnpublishInput, authz=SUB_ONLY,
         description="Remove a doctrine you published from the public library (author org_admin "
                     "or platform admin). id = the library entry id.",
         Output=UnpublishResult,
-        rest=RestBinding("DELETE", "/api/me/doctrines/library/{id}"),
+        rest=RestBinding("DELETE", "/api/me/guide-library/{id}"),
     ),
 ]

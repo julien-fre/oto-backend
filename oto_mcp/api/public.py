@@ -2,16 +2,16 @@
 
 Ce qu'elles ont en commun n'est pas un sujet métier mais un régime : l'adaptateur
 REST des capacités authentifie TOUJOURS, donc une surface anonyme ne peut pas y
-passer et reste écrite à la main (l'argument est déjà dans `doctrines_library_public`).
+passer et reste écrite à la main (l'argument est déjà dans `guide_library_public`).
 Quatre d'entre elles sont consommées par un PROGRAMME sans en-tête : le build du
-site vitrine (`refresh-catalog.mjs` → catalog/connectors/doctrines/guides) et celui
+site vitrine (`refresh-catalog.mjs` → catalog/connectors/bibliothèque/guides) et celui
 de docs.oto.cx (`refresh-openapi.mjs` → openapi.json).
 
 - `GET /favicon.svg` + `/favicon.ico`      → mark de marque (l'endpoint MCP n'a pas de page racine)
 - `GET /api/mcp/catalog`                   → catalogue des tools MCP (autodoc)
 - `GET /openapi.json` + `/api/openapi.json` → descriptif REST dérivé (`openapi.py`)
 - `GET /api/connectors`                    → catalogue des connecteurs (auth OPTIONNELLE)
-- `GET /api/doctrines/library[/{slug}]`    → bibliothèque publique de guides
+- `GET /api/guide-library[/{slug}]`        → bibliothèque publique de guides (marketplace)
 - `GET /api/guides/library[/{slug}]`       → guides PLATEFORME
 - `GET /api/invitations/{token}` + `/code/{code}` → aperçu d'invitation (le jeton EST le secret)
 - `GET /api/public/docs/{token}`           → doc partagé (JSON)
@@ -130,7 +130,7 @@ async def connectors_catalog(request: Request, *, verifier: JWTVerifier) -> JSON
     return _json(request, {"connectors": cat})
 
 
-async def doctrines_library_public(request: Request) -> JSONResponse:
+async def guide_library_public(request: Request) -> JSONResponse:
     """Catalogue PUBLIC des guides (bibliothèque/marketplace) — pas d'auth.
 
     Alimente le site vitrine oto.ninja. Deny-by-default : `visibility='public'`
@@ -150,7 +150,7 @@ async def doctrines_library_public(request: Request) -> JSONResponse:
     return _json(request, {"doctrines": items})
 
 
-async def doctrines_library_public_get(request: Request) -> JSONResponse:
+async def guide_library_public_get(request: Request) -> JSONResponse:
     """Un guide PUBLIC complet (markdown) par slug — vitrine, pas d'auth.
     Public-only : une entrée 'unlisted' n'est jamais servie ici."""
     entry = org_store.get_library_entry(
@@ -163,7 +163,7 @@ async def doctrines_library_public_get(request: Request) -> JSONResponse:
 async def guides_library_public(request: Request) -> JSONResponse:
     """Catalogue PUBLIC des guides PLATEFORME — pas d'auth.
 
-    Même rôle que `doctrines_library_public` : alimenter la vitrine (snapshot
+    Même rôle que `guide_library_public` : alimenter la vitrine (snapshot
     build-time du site) et rendre lisible par un humain ce que l'agent charge
     via `oto_guide`. Deny-by-default par CONSTRUCTION plutôt que par filtre :
     `list_guides_for()` sans `sub` ni `org_id` ne rend que le scope plateforme

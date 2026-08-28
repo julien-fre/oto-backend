@@ -26,6 +26,8 @@ ne s'ajoute pas ici.
 from __future__ import annotations
 
 import datetime
+from typing import NamedTuple
+from urllib.parse import quote
 
 # Premier tag `vX.Y.Z` posé à partir de cette date (décision du 28/08/2026 + 30 j).
 RETRAIT = datetime.date(2026, 9, 27)
@@ -65,3 +67,84 @@ def tool_canonique(nom: str) -> str:
 def tools_deprecies_de(canonique: str) -> tuple:
     """Les anciens noms d'un outil, à servir à côté du sien. Vide si aucun."""
     return tuple(sorted(a for a, c in TOOLS.items() if c == canonique))
+
+
+# ── Chemins REST (lot B2) ───────────────────────────────────────────────────
+class AliasRest(NamedTuple):
+    """Un ancien chemin REST, monté en **308** vers son chemin d'aujourd'hui.
+
+`ancien` et `nouveau` s'écrivent chacun avec SES propres placeholders — ceux de
+    la route réellement montée de chaque côté, pour que le chemin publié dans
+    `/openapi.json` et dans la doc soit celui qu'on lit dans la table de routes.
+    `params` porte l'écart quand un placeholder change de nom en route ; seule la
+    VALEUR capturée voyage.
+    """
+    verbe: str
+    ancien: str
+    nouveau: str
+    # placeholder de `ancien` → placeholder de `nouveau`, quand ils diffèrent.
+    # Jamais muté (une valeur par défaut de NamedTuple est partagée).
+    params: dict = {}
+    # L'`operationId` HISTORIQUE de ce chemin, quand plus personne ne le réclame.
+    #
+    # ⚠️ L'`operationId` suit la CAPACITÉ, pas le chemin — c'est le nom de méthode
+    # qu'un client généré s'est donné pour une opération. Quand la clé de capacité ne
+    # change pas (`library.list`), le NOUVEAU chemin hérite de l'id : regénérer le
+    # client ne renomme rien, seule l'URL bouge. C'est le bon résultat, et ça
+    # interdit de donner le même id à l'entrée dépréciée (un `operationId` est unique
+    # dans un document OpenAPI — garde-fou `test_openapi.py`). Elle en reçoit alors un
+    # dérivé de son chemin, laissé à `""` ici.
+    #
+    # Un seul cas le renseigne : la clé a changé AUSSI (`org.doctrine.get` →
+    # `org.guide.get`), l'id historique n'est plus réclamé par personne, et le garder
+    # sur l'ancien chemin laisse un client déjà généré retrouver sa méthode.
+    operation_id: str = ""
+
+
+REST: tuple = (
+    # Bibliothèque publique de guides (marketplace) — servie sans auth, consommée
+    # par le build de la vitrine et par un `fetch` de navigateur.
+    AliasRest("GET", "/api/doctrines/library", "/api/guide-library"),
+    AliasRest("GET", "/api/doctrines/library/{slug}", "/api/guide-library/{slug}"),
+    # ⚠️ ORDRE — `library` AVANT `{doctrine_id}` : le second capture un segment, et
+    # servirait `library` comme un identifiant. C'est exactement ce que faisait la
+    # table d'avant ce lot (le chemin `…/doctrines/library` y était inatteignable).
+    AliasRest("GET", "/api/me/doctrines/library", "/api/me/guide-library"),
+    AliasRest("GET", "/api/me/doctrines/library/{slug}",
+              "/api/me/guide-library/{slug}"),
+    AliasRest("DELETE", "/api/me/doctrines/library/{id}",
+              "/api/me/guide-library/{id}"),
+    AliasRest("POST", "/api/me/doctrines/publish", "/api/me/guide-library/publish"),
+    AliasRest("POST", "/api/me/doctrines/fork", "/api/me/guide-library/fork"),
+    AliasRest("GET", "/api/me/doctrines/{doctrine_id}", "/api/me/guides/{guide_id}",
+              {"doctrine_id": "guide_id"}, "org_doctrine_get_get"),
+)
+
+
+def cible(alias: AliasRest, path_params: dict, query: str = "") -> str:
+    """Le chemin de destination d'un alias, params de chemin injectés.
+
+    La query string est REPORTÉE telle quelle : la vitrine appelle
+    `…/library?limit=200`, et un 308 qui la perdrait rendrait 100 entrées au lieu
+    de 200 — une régression qu'aucun code d'erreur ne signale.
+    """
+    chemin = alias.nouveau
+    for nom, valeur in (path_params or {}).items():
+        cible_nom = alias.params.get(nom, nom)
+        chemin = chemin.replace("{" + cible_nom + "}", quote(str(valeur), safe=""))
+    return f"{chemin}?{query}" if query else chemin
+
+
+# ── Clés de capacité (lot B2) ───────────────────────────────────────────────
+# ancienne clé → clé d'aujourd'hui. ⚠️ **Renommées SANS alias**, et c'est un choix :
+# une clé de capacité ne sort du serveur qu'à deux endroits — `/api/admin/capabilities`
+# (le navigateur d'objets de la plateforme, réservé à l'admin plateforme, sans
+# intégrateur tiers) et l'`operationId` de `/openapi.json`. Ce second est le seul qui
+# engage quelqu'un dehors, et il est préservé : l'entrée DÉPRÉCIÉE du chemin d'avant
+# le porte (`AliasRest.operation_id`). Il n'y a donc rien à aliaser.
+CAPACITES: dict = {
+    "org.doctrine.get": "org.guide.get",
+    "org.doctrine.admin_get": "org.guide.admin_get",
+    "org.doctrine.admin_list": "org.guide.admin_list",
+    "admin.doctrine": "admin.guide",
+}
