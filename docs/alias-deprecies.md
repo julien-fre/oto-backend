@@ -145,6 +145,22 @@ qu'il lit, et échoue.
 ⚠️ **Un code d'erreur, lui, ne se double pas** — il n'y a qu'un champ `error`. Le
 nouveau prend la place, l'ancien est conservé dans `details.legacy_code`.
 
+### La prose, elle, n'a pas d'alias
+
+Un texte se réécrit — il n'a pas deux noms. Le lot B5 est donc **le seul endroit du
+chantier où l'ancien mot disparaît pour de bon** : le socle d'instructions injecté au
+`initialize`, les descriptions d'outils et de capacités, les docstrings des modèles
+`Output` (servis comme `description` du schéma 200), les messages d'erreur.
+
+⚠️ **Ce lot-là se PRÉAVISE avant le tag**, pas avant le merge : le socle d'instructions
+est ce qu'un agent lit en début de session, sans passer par `tools/list`. C'est la
+seule partie du chantier qu'un client ne peut pas ignorer.
+
+Ce qui RESTE dans la prose servie après B5 n'est plus de la prose : ce sont des
+**valeurs** qu'un agent passe ou lit — `resource_type ∈ {…, doctrine}`,
+`kind=missing_doctrine`, le paramètre `doctrine` de `run_start`, `doctrine_id`. Elles
+vivent en base ou sont des alias datés ; elles partent au lot D.
+
 ## Ce qu'un consommateur doit faire
 
 1. **Lire la liste ci-dessus** et chercher les anciens noms dans son code.

@@ -523,7 +523,7 @@ CAPABILITIES += [
             "project, doctrine}. DELIVER A FULL PROJECT (#52): share/transfer a project "
             "with cascade=true to carry its linked entities in one gesture — linked "
             "tableaux get the same share/transfer, linked procedures are share-granted "
-            "read (readable cross-org via oto_procedure op=get doctrine_id) or COPIED into "
+            "read (readable cross-org via oto_procedure op=get guide_id) or COPIED into "
             "the target org on transfer (link re-pointed, source untouched), connector "
             "links report `recipient_credential` (the recipient plugs their own key; the "
             "project's pre-made identity/instructions overrides travel with it); docs & "

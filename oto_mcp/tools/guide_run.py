@@ -2,8 +2,8 @@
 
 `run_start` ouvre un run (mint un `run_id`, le pousse dans l'état de session) ;
 chaque appel d'outil jusqu'à `run_finish` est **attribué à ce run** par le sink
-calllog (corrélation côté serveur, l'agent ne thread rien). Un run avec `doctrine`
-= l'exécution d'un guide nommé (répétable) ; sans `doctrine` = un run one-shot
+calllog (corrélation côté serveur, l'agent ne thread rien). Un run avec `guide`
+= l'exécution d'un guide nommé (répétable) ; sans `guide` = un run one-shot
 (ad-hoc), même trace. Le chargement d'un guide reste `oto_procedure(op='get')`
 (inchangé). Spine plateforme : chargé explicitement dans `register_all`, hors gate
 d'activation.
@@ -52,7 +52,7 @@ def _procedure_version(sub: str | None, slug: str) -> int | None:
 async def _note_procedure_version(guide: str | None) -> int | None:
     """L'EMPREINTE du run : QUELLE version de la procédure il exécute.
 
-    `runs.doctrine` ne porte qu'un **slug**, alors que les procédures sont versionnées
+    La colonne du journal ne porte qu'un **slug**, alors que les procédures sont versionnées
     (`org_instructions.version`, snapshot par version dans `org_instruction_revisions`).
     Un run n'enregistrait donc pas ce qu'il a réellement déroulé : rejouer « la même
     procédure » trois semaines plus tard, c'est en jouer une autre sans le savoir.

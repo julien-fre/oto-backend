@@ -62,5 +62,5 @@ sourcer large mais qualifié, enrichir les coordonnées, qualifier, puis approch
   les demandes de suppression.
 - **Une source unique par candidat.** Avant de créer, cherche un doublon
   (`*_search_candidates` / `*_candidates?email=`) — un candidat = une fiche ATS.
-- Encadre tes déroulés : `run_start("talent-sourcing", doctrine="talent-sourcing")` →
+- Encadre tes déroulés : `run_start("talent-sourcing", guide="talent-sourcing")` →
   `run_finish(run_id, outcome)`. Un manque (outil/donnée) → `report_gap`.

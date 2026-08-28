@@ -114,7 +114,7 @@ class RegistryEntry(BaseModel):
 class ToolsRegistryView(BaseModel):
     """Le registre BOOT, immunisé à la visibilité de session (#75) : il répond « cet
     outil existe-t-il dans le produit ? », jamais « m'est-il visible ici ? ». C'est ce
-    qui alimente la résolution des marqueurs `<tool:slug>` d'une doctrine."""
+    qui alimente la résolution des marqueurs `<tool:slug>` d'un guide."""
     tools: list[RegistryEntry]
     count: int
 
@@ -318,7 +318,7 @@ _DOC_LIST = (
 )
 _DOC_REGISTRY = (
     "Le registre résolu des outils du produit : nom, résumé d'une ligne, origine "
-    "(native ou fédérée). C'est la matière des marqueurs `<tool:slug>` d'une doctrine "
+    "(native ou fédérée). C'est la matière des marqueurs `<tool:slug>` d'un guide "
     "et de l'autocomplétion. Immunisé à la visibilité de session — il dit ce qui "
     "EXISTE, pas ce qui m'est visible."
 )

@@ -241,7 +241,7 @@ CAPABILITIES += [
             "invite (`group_id`, optional `email` + `role` group_member|group_admin, "
             "send_email=false returns the link — invites a NEW person into the team, joining "
             "the org too on accept) / remove_member (`group_id`, `target`) / set_instruction "
-            "(`group_id`, `slug`, `body_md` — the team's doctrine, served on top of the "
+            "(`group_id`, `slug`, `body_md` — the team's guide, served on top of the "
             "org's). To switch team, use oto_use_group. Team shared secrets are set on the "
             "dashboard (never via MCP)."),
         mcp="oto_group",

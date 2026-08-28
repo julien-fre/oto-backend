@@ -203,7 +203,7 @@ def test_skills_index_md(monkeypatch):
         {"slug": "b", "title": "Skill B", "description": ""},
     ])
     out = instr.skills_index_md(7)
-    assert out.startswith("Doctrines nommées")
+    assert out.startswith("Guides nommés")
     assert "- a — Skill A : fait A" in out
     assert "- b — Skill B" in out and "Skill B :" not in out
 

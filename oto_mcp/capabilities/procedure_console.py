@@ -1,7 +1,7 @@
 """Console procédures MCP consolidée (ADR 0047, B2) — `oto_procedure`.
 
 Réunit les 9 tools MCP du domaine guide/procédure membre en UN : lecture
-(`get`/`list`, ex-`oto_get_doctrine`/`oto_list_doctrines`), écriture
+(`get`/`list`), écriture
 (`set`/`delete`, org_admin, épinglable `_org=` #69) et bibliothèque publique
 (`library_list`/`library_get`/`publish`/`fork`/`unpublish`). Les handlers de
 domaine (`orgs_instructions`, `guide_library`) sont réutilisés tels quels ;
@@ -109,9 +109,9 @@ CAPABILITIES += [
             "publish": ORG_MEMBER, "fork": ORG_MEMBER, "unpublish": SUB_ONLY,
         }),
         description=(
-            "Your org's procedures (named doctrines / skills) + the public library. The base "
-            "doctrine is INJECTED at connect — op=get with `slug` loads ONE skill's full "
-            "markdown (`scope=group` targets your active department; `doctrine_id` loads by "
+            "Your org's procedures (named guides / skills) + the public library. The base "
+            "guide is INJECTED at connect — op=get with `slug` loads ONE skill's full "
+            "markdown (`scope=group` targets your active department; `guide_id` loads by "
             "STABLE id, incl. one SHARED to your org; `org` pins the read to an EXPLICIT org "
             "id you are a member of — cross-org load of a named skill by slug) / list (catalog: "
             "slug/title/description, "

@@ -1366,7 +1366,7 @@ def register(mcp: FastMCP) -> None:
           page `limit=100` rend 90-100 items, pas 100. Pour charger tout un réseau :
           dédupliquer par `member_id` (JAMAIS l'offset), garder ≤8 pages en parallèle
           (au-delà : 502 en cascade), prouver le tarissement par 2 passes décalées.
-          Doctrine dédiée : `bulk-load-reseau`.
+          Guide dédié : `bulk-load-reseau`.
         - **"invitations"** : les invitations de connexion. `direction`='received'
           (reçues, à accepter) ou 'sent' (envoyées, en attente). Paginé — `limit`
           (défaut 50 : sans borne le backlog entier dépasse la limite de tokens).

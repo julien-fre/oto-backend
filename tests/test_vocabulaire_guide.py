@@ -55,123 +55,98 @@ import re
 RACINE = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp"
 MOT = re.compile("doctrine", re.I)
 
-# ── Plafonds relevés à la fin du lot B4 de #519 (2026-08-29) ─────────────────
+# ── Plafonds relevés à la fin du lot B5 de #519 (2026-08-29) ─────────────────
 # Chaque entrée porte la RAISON pour laquelle le mot y survit. Une entrée sans
 # raison servie n'a rien à faire ici : elle se renomme.
 #
-# Total : 267 (fin du lot A) → 266 (B1) → 262 (B2) → 226 (B3) → 217 (B4). Le lot B
-# rembourse par étapes ; le compte descend à chaque PR, jamais l'inverse. Zéro au
-# lot D (#526).
+# Total : 267 (fin du lot A) → 266 (B1) → 262 (B2) → 226 (B3) → 217 (B4) → 162 (B5).
+# Le compte descend à chaque PR, jamais l'inverse. Zéro au lot D (#526).
 #
-# ⚠️ Le mot se CONCENTRE autant qu'il recule : chaque lot en retire des fichiers de
-# métier et en pose dans `deprecations.py`, où il est une DONNÉE (la table des
-# anciens noms) et non un usage. C'est le mouvement voulu — un alias déclaré à un
-# seul endroit s'enlève d'un geste au lot D.
+# ⚠️ **Le lot B est fini : ce qui reste ne relève plus du vocabulaire.** Trois
+# familles, et une seule d'entre elles se lit encore comme un « mot à changer » :
+#
+#   1. **Des alias SERVIS, datés** — clés de réponse, paramètres d'entrée, codes
+#      d'erreur. Ils s'en vont le 27/09/2026 avec le reste, en retirant les appels à
+#      `deprecations.avec_les_deux_noms` (lot D, #526).
+#   2. **Des DONNÉES déjà écrites en base** — colonne `runs.doctrine`, valeur
+#      `missing_doctrine` d'un CHECK, kind d'ownership `doctrine` dans
+#      `resource_grants.resource_type`, clé `doctrine_version` des `props` d'un nœud,
+#      DDL de la table. Aucune vue ne les renomme : il faut une migration nommée
+#      (ADR 0065 étage 2), sur une base PARTAGÉE prod/preprod. Ce n'est pas un
+#      renommage, c'est un lot.
+#   3. **La table des alias elle-même** (`deprecations.py`), qui disparaît en entier.
+#
+# ⚠️ Le compte ne regarde QUE `oto_mcp/`. Trois scripts d'exploitation portent encore
+# le mot dans leur NOM de fichier (`scripts/seed_doctrine_library.py`,
+# `seed_talent_doctrines.py`, `smoke_capability_doctrine_library.py`) : hors du radar,
+# et volontairement pas renommés ici — un opérateur a ces commandes dans ses runbooks.
+# Suivi dans #526.
 PLAFONDS: dict[str, int] = {
-    # — Clé de réponse `doctrines`, servie à côté de `guides` (le build de la
-    #   vitrine lit encore l'ancienne, et il vit hors de ce dépôt).
+    # — Clé de réponse `doctrines`, servie à côté de `guides` (le build de la vitrine
+    #   lit encore l'ancienne, et il vit hors de ce dépôt).
     "oto_mcp/api/public.py": 1,
-    # — Description servie (l'outil s'appelle `oto_admin_guide` depuis B1, la
-    #   capacité `admin.guide` depuis B2 ; l'ancien nom d'outil et les anciens
-    #   chemins sont servis en ALIAS datés, cf. `oto_mcp/deprecations.py`).
-    "oto_mcp/capabilities/admin_console.py": 2,
-    # — Clé de réponse `doctrine` + description servie.
-    "oto_mcp/capabilities/agent_context.py": 4,
-    # — Clé de réponse `doctrine_ref_count`.
+    # — Clé de réponse `doctrine`, servie à côté de `guide`.
+    "oto_mcp/capabilities/agent_context.py": 3,
+    "oto_mcp/capabilities/org_monitoring.py": 2,
+    "oto_mcp/capabilities/projects.py": 2,
+    # — Clé de réponse `doctrine_ref_count`, servie à côté de `guide_ref_count`.
     "oto_mcp/capabilities/connectors/selection.py": 2,
     # — Champ `run_doctrine` d'un `Output` qui NE CORRESPOND PAS au payload servi
     #   (il porte `doctrine`/`guide`) : divergence antérieure à #519, laissée telle
     #   quelle pour ne pas mêler une correction de contrat à un lot de vocabulaire.
     "oto_mcp/capabilities/datastore/activity.py": 3,
-    # — Docstrings de modèles `Output` (servies dans `/openapi.json`) + descriptions.
-    "oto_mcp/capabilities/groups/core.py": 3,
-    # — Clés de réponse `doctrine`/`doctrine_version`, servies À CÔTÉ de
-    #   `guide`/`guide_version` depuis B3.
+    # — Clés de réponse `doctrine`/`doctrine_version`, servies à côté des `guide*`.
     "oto_mcp/capabilities/groups/guide.py": 8,
-    # — Clé de réponse `doctrines` (servie à côté de `guides`) + descriptions.
-    #   Chemins renommés en B2, code d'erreur en B3.
-    "oto_mcp/capabilities/guide_library.py": 13,
-    # — Description servie.
-    "oto_mcp/capabilities/org_console.py": 1,
-    # — Clé de réponse `doctrine`, servie à côté de `guide` depuis B3.
-    "oto_mcp/capabilities/org_monitoring.py": 2,
-    # — Clés de réponse `doctrine`/`doctrines`/`doctrine_id`/`group_doctrine`,
-    #   servies à côté des `guide*` depuis B3 ; paramètre `doctrine_id` toujours
-    #   accepté ; kind d'ownership `doctrine` (valeur EN BASE, lot B4) ; descriptions
-    #   servies (lot B5). Clés de capacité, chemin et modèles renommés en B2/B3.
-    "oto_mcp/capabilities/orgs/instructions.py": 26,
-    # — Paramètre servi `doctrine_id` + descriptions.
-    "oto_mcp/capabilities/procedure_console.py": 8,
-    # — Kind d'ownership `doctrine` + colonne `runs.doctrine` + description.
-    "oto_mcp/capabilities/projects.py": 3,
-    # — Kind de ressource `doctrine` (valeur en base, `resource_grants`), motif
-    #   `doctrine_needs_org_owner`, descriptions servies.
-    "oto_mcp/capabilities/resources.py": 11,
-    # — Descriptions servies.
-    "oto_mcp/capabilities/tools_me.py": 2,
-    # — Valeur d'énumération servie `missing_doctrine` (+ le commentaire qui la décrit).
+    # — Clé de réponse `doctrines`, servie à côté de `guides`.
+    "oto_mcp/capabilities/guide_library.py": 2,
+    # — Clés de réponse `doctrine`/`doctrines`/`doctrine_id`/`group_doctrine` servies
+    #   à côté des `guide*` ; paramètre `doctrine_id` toujours accepté ; code d'erreur
+    #   d'hier ; kind d'ownership `doctrine` (VALEUR en base, lot D).
+    "oto_mcp/capabilities/orgs/instructions.py": 11,
+    "oto_mcp/capabilities/procedure_console.py": 3,
+    # — Kind de ressource `doctrine` (valeur en base, `resource_grants`), le motif
+    #   `doctrine_needs_org_owner`, et l'énuméré `resource_type` servi qui les nomme.
+    "oto_mcp/capabilities/resources.py": 10,
+    # — Valeur d'énumération servie `missing_doctrine` (contrainte CHECK en base).
     "oto_mcp/capabilities/usage.py": 2,
-    # — Emploi GÉNÉRIQUE dans une doc de connecteur servie au catalogue.
-    "oto_mcp/connectors/docs/ahrefs.md": 1,
-    # — `ALTER TABLE` de colonne + la VUE `guide_library` posée dessus (lot B4).
-    #   Le DDL est le seul endroit qui nomme encore la table : au lot D, le renommage
-    #   physique ne touche aucune ligne de Python (garde : test_guide_library_view).
+    # — DDL et migration de colonne : le SEUL endroit qui nomme encore la table. La
+    #   vue `guide_library` porte le nom d'aujourd'hui et tout le code passe par elle
+    #   (garde : `tests/test_guide_library_view.py`).
     "oto_mcp/db/_init.py": 2,
-    # — `resource_type = 'doctrine'` + clé `doctrine_version` d'un JSON de nœud.
-    "oto_mcp/db/nodes.py": 2,
-    # — DDL FIGÉ (base partagée prod/preprod ; le renommage est additif, lot B) :
-    #   table `doctrine_library`, ses index, colonne `runs.doctrine`, valeur
-    #   `missing_doctrine`, et les commentaires SQL qui les décrivent.
+    "oto_mcp/db/schema/procedures.py": 14,
+    # — DDL FIGÉ (base partagée prod/preprod) : colonne `runs.doctrine`, valeur
+    #   `missing_doctrine`, et les commentaires qui les décrivent.
     "oto_mcp/db/schema/connectors.py": 1,
     "oto_mcp/db/schema/orgs.py": 1,
-    "oto_mcp/db/schema/procedures.py": 14,
     "oto_mcp/db/schema/projects.py": 1,
     "oto_mcp/db/schema/runs.py": 4,
     "oto_mcp/db/schema/usage.py": 2,
-    # — Valeur de kind `doctrine` dans la table des familles de grant.
+    # — `resource_type = 'doctrine'` + clé `doctrine_version` d'un JSON de nœud :
+    #   des DONNÉES écrites, pas des noms.
+    "oto_mcp/db/nodes.py": 2,
     "oto_mcp/db/shell.py": 2,
-    # — Colonne `runs.doctrine`, clé `doctrine_version` des args journalisés,
-    #   alias SQL `AS doctrine`/`AS doctrines` (donc clés de réponse).
+    "oto_mcp/org_store/instructions.py": 2,
+    "oto_mcp/ownership.py": 1,
+    # — Colonne `runs.doctrine`, clé `doctrine_version` des args journalisés, alias
+    #   SQL `AS doctrine`/`AS doctrines` (donc clés de réponse).
     "oto_mcp/db/usage.py": 31,
+    "oto_mcp/project_audit.py": 2,
     # — L'inventaire des colonnes porteuses d'un `sub`, vérifié CONTRE LE DDL : une
     #   vue n'y apparaît pas, donc cette entrée reste sur la TABLE (sinon le
     #   garde-fou devient aveugle à une entrée morte). Elle suit la table au lot D.
     "oto_mcp/db/users.py": 1,
     # — LA table des noms SERVIS dépréciés (lot B, retrait daté au lot D #526).
-    #   C'est le seul fichier où le mot est une DONNÉE et non un usage : il y entre
-    #   au moment où une surface est renommée, et le fichier entier disparaît au
-    #   retrait. Un plafond qui MONTE ici pendant que le total baisse est normal.
+    #   Le seul fichier où le mot est une DONNÉE et non un usage : il y entre au
+    #   moment où une surface est renommée, et le fichier entier disparaît au retrait.
     "oto_mcp/deprecations.py": 31,
-    # — Prose d'onboarding SERVIE à l'agent.
-    "oto_mcp/discovery.py": 1,
-    # — Le paramètre servi `doctrine` de `run_start`, nommé dans le docstring.
+    # — Le paramètre `doctrine` de `run_start` (accepté à côté de `guide`), ses clés
+    #   de réponse, et l'arg tracé `doctrine_version` (écrit dans `tool_calls.args`).
     "oto_mcp/guide_run.py": 1,
-    # — Nom de table `doctrine_library` + nom du script de seed.
-    "oto_mcp/guides/talent-sourcing/README.md": 3,
-    # — Paramètre servi `doctrine=` de `run_start` dans un exemple.
-    "oto_mcp/guides/talent-sourcing/talent-sourcing.md": 1,
-    # — Bloc d'instructions SERVI au `initialize` + index servi dans la
-    #   description d'`oto_procedure` + lecture de la clé `doctrine`.
-    "oto_mcp/instructions.py": 7,
-
-    # — Kind d'ownership `doctrine` + `resource_type='doctrine'`.
-    "oto_mcp/org_store/instructions.py": 2,
-
-    # — Le kind `doctrine` enregistré au registre des ressources possédées.
-    "oto_mcp/ownership.py": 1,
-    # — Colonne `runs.doctrine` + clé de réponse `doctrines`.
-    "oto_mcp/project_audit.py": 2,
-    # — Primer SERVI (catalogue des concepts spine).
-    "oto_mcp/providers/__init__.py": 1,
-    # — Arg tracé `doctrine_version` (écrit dans `tool_calls.args`) + `runs.doctrine`.
+    "oto_mcp/tools/guide_run.py": 6,
+    "oto_mcp/instructions.py": 4,
     "oto_mcp/server.py": 3,
-    # — Emploi GÉNÉRIQUE dans une description servie.
-    "oto_mcp/tools/gocardless.py": 1,
-    # — Paramètre `doctrine` de `run_start` (accepté à côté de `guide`) et ses clés
-    #   de réponse, servies à côté des `guide*` depuis B3.
-    "oto_mcp/tools/guide_run.py": 9,
-    # — Emploi GÉNÉRIQUE dans une description servie.
-    "oto_mcp/tools/unipile.py": 1,
+    # — Nom du SCRIPT de semis, inchangé (un opérateur l'a dans ses runbooks).
+    "oto_mcp/guides/talent-sourcing/README.md": 2,
 }
 
 

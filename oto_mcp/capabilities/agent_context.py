@@ -143,7 +143,7 @@ CAPABILITIES += [
         authz=SUB_ONLY, Output=AgentContextView,
         description="The exact oto context this user's Claude receives: static server "
                     "instructions (posture + derived namespace catalog), effective org "
-                    "doctrine, and the tools currently visible for the active org.",
+                    "guide, and the tools currently visible for the active org.",
         rest=RestBinding("GET", "/api/me/agent-context"),
     ),
 ]
