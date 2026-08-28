@@ -19,7 +19,8 @@ from __future__ import annotations
 import json
 import sys
 
-from oto_mcp import db, google_oauth
+from oto_mcp import db
+from oto_mcp.auth import google as google_oauth
 
 
 _TYPE_PREFIX = "__j:"  # sentinelle de typage de l'ère Sheets

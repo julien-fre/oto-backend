@@ -139,7 +139,7 @@ def test_la_decouverte_dun_host_declare_pointe_la_facade_sur_ce_host(
     demande un enregistrement automatique que Logto self-hosted ne fait pas. L'annuaire
     du tenant est atteint UN CRAN plus loin, dans la métadonnée servie par la façade.
     """
-    from oto_mcp.oauth_facade import tenant_discovery_for_host
+    from oto_mcp.auth.facade import tenant_discovery_for_host
     as_url, nom = tenant_discovery_for_host("mcp.acme.test")
     assert as_url == "https://mcp.acme.test/"
     assert nom == "Acme", "le nom du tenant doit être servi, pas son identifiant"
@@ -148,7 +148,7 @@ def test_la_decouverte_dun_host_declare_pointe_la_facade_sur_ce_host(
 def test_la_decouverte_dun_host_libre_ne_change_rien(registre_avec_partenaire):
     """LE garde-fou d'inertie : tant qu'aucun tenant ne réclame un host, la
     découverte doit rendre exactement ce qu'elle rendait avant ce lot."""
-    from oto_mcp.oauth_facade import tenant_discovery_for_host
+    from oto_mcp.auth.facade import tenant_discovery_for_host
     assert tenant_discovery_for_host("mcp.oto.cx") is None
 
 
@@ -162,7 +162,7 @@ def test_le_nom_retombe_sur_lidentifiant_si_absent():
     avant = tenancy.current()
     tenancy.install(tenancy.IssuerRegistry(entries))
     try:
-        from oto_mcp.oauth_facade import tenant_discovery_for_host
+        from oto_mcp.auth.facade import tenant_discovery_for_host
         assert tenant_discovery_for_host("mcp.acme.test")[1] == "acme"
     finally:
         tenancy.install(avant)
@@ -179,7 +179,7 @@ def _prm(host: str) -> dict:
     from starlette.applications import Starlette
     from starlette.testclient import TestClient
 
-    from oto_mcp import oauth_facade
+    from oto_mcp.auth import facade as oauth_facade
     app = Starlette(routes=oauth_facade.make_routes("https://mcp.oto.cx", "app-x"))
     with TestClient(app) as client:
         r = client.get("/.well-known/oauth-protected-resource", headers={"host": host})
@@ -243,7 +243,7 @@ def test_la_metadonnee_du_host_route_vers_lannuaire_du_tenant(registre_avec_clie
     """La façade s'annonce elle-même comme serveur (l'issuer, c'est le host), mais
     envoie autoriser et échanger le jeton chez le TENANT. Les deux moitiés sont
     nécessaires : l'une pour l'enregistrement, l'autre pour l'identité."""
-    from oto_mcp.oauth_facade import as_metadata
+    from oto_mcp.auth.facade import as_metadata
     md = as_metadata("https://mcp.acme.test", "https://auth.acme.test/oidc")
     assert md["issuer"] == "https://mcp.acme.test/"
     assert md["authorization_endpoint"] == "https://auth.acme.test/oidc/auth"
@@ -255,7 +255,7 @@ def test_la_metadonnee_du_host_route_vers_lannuaire_du_tenant(registre_avec_clie
 
 def test_la_metadonnee_dun_host_libre_est_inchangee(registre_avec_client, monkeypatch):
     monkeypatch.setenv("LOGTO_ENDPOINT", "https://auth.oto.ninja")
-    from oto_mcp.oauth_facade import as_metadata
+    from oto_mcp.auth.facade import as_metadata
     md = as_metadata("https://mcp.oto.cx")
     assert md["issuer"] == "https://mcp.oto.cx/"
     assert md["authorization_endpoint"] == "https://auth.oto.ninja/oidc/auth"

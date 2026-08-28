@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import credentials_store, salesforce_oauth as so
+from oto_mcp import credentials_store
+from oto_mcp.auth import salesforce as so
 
 APP = {"client_id": "ci-org", "client_secret": "cs-org",
        "login_url": "https://x.my.salesforce.com"}

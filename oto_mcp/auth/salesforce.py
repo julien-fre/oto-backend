@@ -49,7 +49,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import credentials_store, oauth2_pkce, oauth_flow, org_store
+from .. import credentials_store, org_store
+from . import pkce as oauth2_pkce, flow as oauth_flow
 
 # Audience du state (`oauth_flow.sign_state`) : un state émis pour Salesforce ne vaut
 # QUE pour le callback Salesforce. Avant la fabrique, cinq flux signaient au même
@@ -65,7 +66,7 @@ _CALLBACK_PATH = "/api/salesforce/oauth/callback"
 SCOPES = "api refresh_token"
 
 def _ctx_org(sub: str) -> int:
-    from . import access  # lazy: avoid any import cycle at boot
+    from .. import access  # lazy: avoid any import cycle at boot
     org = access.current_org(sub)
     if org is None:
         raise RuntimeError(
@@ -76,7 +77,7 @@ def _ctx_org(sub: str) -> int:
 
 
 def _ctx_group(sub: str) -> int:
-    from . import access  # lazy: avoid any import cycle at boot
+    from .. import access  # lazy: avoid any import cycle at boot
     group = access.current_group(sub)
     if group is None:
         raise RuntimeError(
@@ -227,13 +228,13 @@ def build_auth_url(sub: str, scope: str = "member", return_app: Optional[str] = 
     org_id = _ctx_org(sub)
     group_id: Optional[int] = None
     if scope == "org":
-        from . import roles
+        from .. import roles
         if not roles.is_org_admin(sub, org_id):
             raise PermissionError(
                 "Seul un org_admin peut connecter Salesforce au nom de toute l'org."
             )
     elif scope == "group":
-        from . import roles
+        from .. import roles
         group_id = _ctx_group(sub)
         if not roles.can_admin_group(sub, group_id):
             raise PermissionError(
@@ -273,7 +274,7 @@ def exchange_code(code: str, client_id: str, client_secret: str, login_url: str,
     (corps form-encodé, jamais de secret en query string, erreur sans URL) ; ici on ne
     garde que le `code_verifier` PKCE et la traduction du message en indice actionnable
     (`_sf_error_hint`, partagé avec la sonde)."""
-    from .tools.salesforce import _sf_error_hint
+    from ..tools.salesforce import _sf_error_hint
     try:
         return oauth_flow.exchange_code(
             f"{_clean_login_url(login_url)}/services/oauth2/token",
@@ -330,7 +331,7 @@ async def persist_token(sub: str, org_id: int, scope: str, token_response: dict,
     if scope == "org":
         org_store.set_org_secret(org_id, "salesforce", secret, set_by=sub, meta=meta)
     elif scope == "group":
-        from . import group_store
+        from .. import group_store
         group_store.set_group_secret(group_id, "salesforce", secret, set_by=sub, meta=meta)
     else:
         credentials_store.set_credential(entity_type, entity_id, "salesforce", secret,

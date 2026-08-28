@@ -29,7 +29,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from . import db, token_scopes
+from . import db
+from .auth import token_scopes
 
 # Signature de `_authenticate`, telle que la consomment les modules de routes.
 AuthFn = Callable[..., Awaitable["tuple[str | None, JSONResponse | None]"]]

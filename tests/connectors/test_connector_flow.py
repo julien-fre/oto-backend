@@ -215,7 +215,9 @@ async def _both_flows(monkeypatch) -> dict[str, dict]:
     neutralisés) et rend ce que chacun sert à l'appelant."""
     from types import SimpleNamespace
 
-    from oto_mcp import access, salesforce_oauth, zoho_oauth
+    from oto_mcp import access
+    from oto_mcp.auth import salesforce as salesforce_oauth
+    from oto_mcp.auth import zoho as zoho_oauth
     monkeypatch.setattr(zoho_oauth, "app_fields", lambda *a, **k: {})
     monkeypatch.setattr(zoho_oauth, "build_auth_url",
                         lambda *a, **k: "https://accounts.zoho.eu/oauth/v2/auth?x=1")

@@ -37,9 +37,9 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import db
-from .connectors import flow as connector_flow
-from .connectors import link as connector_link
+from .. import db
+from ..connectors import flow as connector_flow
+from ..connectors import link as connector_link
 
 
 SCOPES = [
@@ -105,7 +105,7 @@ def _b64url_decode(s: str) -> bytes:
 def _ctx_org(sub: str) -> int:
     """Org de contexte (seam `current_org`, ADR 0023) — le scope MEMBRE des comptes
     Google (ADR 0033 B3). Lève une erreur actionnable plutôt qu'un scope silencieux."""
-    from . import access  # lazy : évite tout cycle d'import au boot
+    from .. import access  # lazy : évite tout cycle d'import au boot
     org = access.current_org(sub)
     if org is None:
         raise RuntimeError(
@@ -297,7 +297,7 @@ def credentials_for(sub: str, account: Optional[str] = None):
     Lève RuntimeError actionnable si pas de compte connecté.
     """
     if account is None:
-        from . import access  # lazy : évite tout cycle d'import au boot
+        from .. import access  # lazy : évite tout cycle d'import au boot
         account = access.project_pinned_identity("google")
     org_id = _ctx_org(sub)
     row = db.get_google_oauth(sub, org_id, account=account)
@@ -338,7 +338,7 @@ def credentials_for(sub: str, account: Optional[str] = None):
 
 def list_accounts(sub: str) -> list[dict]:
     """Comptes Google connectés du user DANS l'org de contexte (email, défaut, scopes)."""
-    from . import access  # lazy
+    from .. import access  # lazy
     return db.list_google_accounts(sub, access.current_org(sub))
 
 
@@ -367,7 +367,7 @@ def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
     d'app Google configurée), pas une panne : traduit en erreur nommée, l'appelant
     saura que réessayer n'y changera rien.
     """
-    from .capabilities._types import AuthzDenied
+    from ..capabilities._types import AuthzDenied
     try:
         return connector_flow.FlowStart(auth_url=build_auth_url(ctx.sub))
     except RuntimeError as e:

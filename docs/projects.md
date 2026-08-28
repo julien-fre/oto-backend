@@ -129,7 +129,7 @@ docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/t
 >   le slug existant (ne casse pas l'URL déjà distribuée). Le dispatch traite `anonymous`/`secret` sur le même
 >   chemin (`access_mode in ("anonymous","secret")`).
 > - **`org`** : JWT Logto, **épingle l'org** ; le sous-domaine est enregistré comme **resource Logto**
->   (`oauth_facade.ensure_api_resource`) + verifier **multi-audience** + PRM **host-aware**.
+>   (`auth.facade.ensure_api_resource`) + verifier **multi-audience** + PRM **host-aware**.
 >
 > **Host-routing** (`subdomain_project.HostDispatch`, monté `root_app` dans `server.main`) : une **2ᵉ app
 > FastMCP sans auth** (`anon_mcp = mcp`, **réutilise l'instance no-auth module-level** — ne PAS en
@@ -138,7 +138,7 @@ docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/t
 > text/html`) → **landing HTML** rendue **live depuis la ligne projet** (`anon_landing.render`, name/brief_md/
 > mcp_tools) ; Claude/Mistral (`POST`) → MCP (rewrite path `/`→`/mcp`, `_root_to_mcp` — Claude tape la racine).
 > Fichiers : `subdomain_project.py` (routing + rate-limit + `/api/mcp/tls-check` + `/api/public/mcp-projects`),
-> `anon_visibility.py` (allowlist fail-closed), `anon_oauth.py` (shim OAuth **auto-approve**, `.well-known/*`
+> `anon_visibility.py` (allowlist fail-closed), `auth/anon.py` (shim OAuth **auto-approve**, `.well-known/*`
 > + `/register` + `/authorize`→302 sans login + `/token`→`anon-…`), `anon_landing.py` (HTML charté).
 > **Infra** : **wildcard** `*.mcp.oto.cx` (CF-proxied) + Caddy **on-demand TLS** gaté par `/api/mcp/tls-check`
 > (200 uniquement pour un slug **publié** → borne l'émission de certs). `publish_mcp` est la **seule** action

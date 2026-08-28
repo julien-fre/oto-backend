@@ -24,7 +24,8 @@ import pytest
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 
-from oto_mcp import auth_hooks, call_axes, db, org_store, ownership, session_org
+from oto_mcp import call_axes, db, org_store, ownership, session_org
+from oto_mcp.auth import hooks as auth_hooks
 from oto_mcp.middleware.call_context import CallContextMiddleware
 from oto_mcp.tools import doctrine_run as drt
 

@@ -15,7 +15,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from . import access, google_oauth
+from . import access
+from .auth import google as google_oauth
 
 # Plafond par défaut : Pennylane accepte 100 Mo, mais on borne pour ne pas charger
 # un fichier géant en RAM par mégarde. Override par appel via `max_bytes`.

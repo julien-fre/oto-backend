@@ -34,7 +34,7 @@ from typing import Optional
 import sentry_sdk
 from fastmcp.server.middleware import Middleware
 
-from .auth_hooks import current_client_id_from_token, current_user_sub_from_token
+from .auth.hooks import current_client_id_from_token, current_user_sub_from_token
 # Classifieurs partagés (D2, #124) : source unique de la taxonomie d'exceptions,
 # consommée aussi par `ErrorEnvelopeMiddleware`. Ré-exportés ici (les tests et le
 # reste du module les référencent via `sentry_setup`).

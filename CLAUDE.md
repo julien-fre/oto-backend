@@ -38,6 +38,12 @@ fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
 ```
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
+├── auth/             # QUI parle au serveur, et comment un credential s'ACQUIERT.
+│                     #   Entrant : hooks (le sub du jeton), facade (façade DCR devant
+│                     #   Logto), token_scopes (portée d'un jeton `oto_…`), anon (shim
+│                     #   OAuth des endpoints publics). Sortant : flow (la danse
+│                     #   `authorization_code`, écrite UNE fois), pkce, puis un module
+│                     #   par fournisseur — atlassian, folk, google, salesforce, zoho.
 ├── connectors/       # le connecteur côté PLATEFORME : activation, selection, identities,
 │                     #   link, flow, verify, field_schema, schema_store + `docs/` (la
 │                     #   fiche how-to en markdown) et `docs_reader`. ⚠️ trois voisins à
@@ -78,7 +84,6 @@ oto_mcp/
 │                     #   propriétaire (sinon un monkeypatch de test serait mort en silence). Cliquet :
 │                     #   `tests/test_org_store_surface_frozen.py` (surface, signatures, DAG, 500 lignes).
 
-├── auth_hooks.py     # current_user_sub_from_token() pour le contexte tool
 └── config.py         # require_env
 
 deploy/
@@ -93,7 +98,7 @@ L'extension Chrome (Oto Companion) vit dans `oto-app/extension/` (repo
 `POST /api/settings/linkedin` + endpoints `/api/whatsapp/pair/*` (SSE).
 
 **4 couches à frontière à sens unique** (ADR 0004) : **backend-core** (`db`,
-`credentials_store`, `org_store`, `access`, `crypto`, `providers`, `auth_hooks`) —
+`credentials_store`, `org_store`, `access`, `crypto`, `providers`, `auth.hooks`) —
 **adaptateur MCP** — **adaptateur REST** — **runtime connecteurs**. Adaptateurs et runtime
 dépendent du backend-core, **jamais l'inverse**, et l'appellent **par interface**
 (`access.resolve_*`), pas par accès table croisé.
@@ -119,7 +124,7 @@ RÉORDONNER un chemin fait rouge (Starlette prend le premier match), et régén�
 ## Auth — Logto
 
 JWT Logto **ES384** (défaut RS256 = tout rejeté), discovery RFC 9728 sur 401,
-façade DCR self-service (`oauth_facade.py`) pour les clients sans DCR (Claude/ChatGPT/
+façade DCR self-service (`auth/facade.py`) pour les clients sans DCR (Claude/ChatGPT/
 Mistral). **Détail : `docs/auth-logto.md`** (jetons API, registre d'émetteurs, env, onboarding).
 
 ⚠️ **Logto = 2 instances** : la vraie prod/preprod = **`auth.oto.ninja`** (creds SOPS

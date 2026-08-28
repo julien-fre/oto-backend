@@ -83,10 +83,10 @@ def resolve_mount_token(provider: str) -> str:
     # OAuth fédéré : token avec refresh transparent.
     # Le résolveur connector-spécifique vit hors d'access (refresh = flow OAuth).
     if provider == "atlassian":
-        from .. import atlassian_oauth
+        from ..auth import atlassian as atlassian_oauth
         token = atlassian_oauth.access_token_for(sub)
     elif provider == "folkmcp":
-        from .. import folk_oauth
+        from ..auth import folk as folk_oauth
         token = folk_oauth.access_token_for(sub)
     else:
         # Mount non-oauth (basic_auth, ex. planity) : credential posé via la carte

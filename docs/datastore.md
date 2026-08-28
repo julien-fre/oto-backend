@@ -150,7 +150,7 @@ agent) :
 `worker` (libellé stable de celui qui réserve) est **exigé aux deux claims** : c'est la
 garde rejouée au release. D'où le second cran, sur `POST …/rows/{row_id}/release` :
 corps `{worker}` ⇒ libération **gardée** (`release_claim`) ; corps vide ⇒ libération
-**forcée** (supervision dashboard), mais **refusée à un jeton porté** (`token_scopes.
+**forcée** (supervision dashboard), mais **refusée à un jeton porté** (`auth.token_scopes.
 current()` non None → 400 `worker_required`). Un jeton porté est le vecteur des
 intégrations multi-utilisateurs : y laisser le forcé, c'est laisser chacun retirer la
 ligne de son collègue. Côté portée, réserver **est une écriture** (`_ALLOWED` : les deux

@@ -34,7 +34,8 @@ from typing import Any, Optional, Union
 
 from pydantic import BaseModel
 
-from .. import access, credentials_store, db, token_scopes
+from .. import access, credentials_store, db
+from ..auth import token_scopes
 from ._authz import SUB_ONLY, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

@@ -14,7 +14,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from oto_mcp import error_taxonomy as T
-from oto_mcp import google_oauth as G
+from oto_mcp.auth import google as G
 
 
 # ── ③ l'erreur d'arguments nomme la clé fautive ─────────────────────────────────

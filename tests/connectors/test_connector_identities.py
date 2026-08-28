@@ -29,7 +29,7 @@ class _FakeUnipile:
 
 def test_google_list_and_select(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: 39)
-    monkeypatch.setattr("oto_mcp.google_oauth.list_accounts",
+    monkeypatch.setattr("oto_mcp.auth.google.list_accounts",
                         lambda sub: [{"google_email": "a@x.io", "is_default": True},
                                      {"google_email": "b@x.io", "is_default": False}])
     ids = connector_identities.list_identities("u1", "google")

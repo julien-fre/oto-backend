@@ -12,7 +12,7 @@ import time
 
 import pytest
 
-from oto_mcp import oauth_flow as of
+from oto_mcp.auth import flow as of
 
 
 @pytest.fixture(autouse=True)
@@ -174,7 +174,7 @@ def _modules_with(pattern: str) -> list[str]:
     un module migré garde des enveloppes minces `verify_state`/`exchange_code` qui
     délèguent — les compter ferait mentir la mesure)."""
     import pathlib, re
-    root = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp"
+    root = pathlib.Path(__file__).resolve().parents[2] / "oto_mcp"
     return sorted(p.name for p in root.glob("*.py")
                   if p.name != "oauth_flow.py"
                   and re.search(pattern, p.read_text(encoding="utf-8")))
@@ -204,7 +204,7 @@ def test_zoho_no_longer_reimplements_the_flow():
     """Régression de la migration du jour : Zoho ne signe plus, n'échange plus, ne
     dérive plus son URI — il délègue."""
     import inspect
-    from oto_mcp import zoho_oauth
+    from oto_mcp.auth import zoho as zoho_oauth
     src = inspect.getsource(zoho_oauth)
     assert "hmac.new(" not in src and "base64.urlsafe" not in src
     assert "oauth_flow.sign_state" in src and "oauth_flow.read_state" in src

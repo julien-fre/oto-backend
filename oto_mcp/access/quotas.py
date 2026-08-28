@@ -18,7 +18,7 @@ import os
 from typing import Optional
 
 from .. import providers, db, grants_chain
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 from . import scope
 
 # DÉRIVÉ du registre source unique (package `providers/`) : quota daily par

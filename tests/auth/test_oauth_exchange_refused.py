@@ -15,7 +15,7 @@ connecteurs — disparaîtrait derrière le bruit des refus normaux.
 from __future__ import annotations
 
 from oto_mcp.error_taxonomy import _is_expected_error
-from oto_mcp.oauth_flow import OAuthExchangeRefused, OAuthFlowError
+from oto_mcp.auth.flow import OAuthExchangeRefused, OAuthFlowError
 
 
 def test_refusal_is_a_managed_error():

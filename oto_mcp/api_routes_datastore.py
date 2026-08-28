@@ -27,7 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import google_oauth
+from .auth import google as google_oauth
 
 
 # Type alias for the auth helper passed in from api_routes.

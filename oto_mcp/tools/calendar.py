@@ -33,7 +33,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, google_oauth
+from .. import access
+from ..auth import google as google_oauth
 
 
 def _client_for_user(account: Optional[str] = None):

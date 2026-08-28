@@ -241,7 +241,8 @@ async def test_la_cloture_est_stampee_sous_son_run(monkeypatch):
     ligne-là. Un objet, une clôture, une timeline qui la contient."""
     from fastmcp import FastMCP
 
-    from oto_mcp import auth_hooks, db, session_org
+    from oto_mcp import db, session_org
+    from oto_mcp.auth import hooks as auth_hooks
     from oto_mcp.tools import doctrine_run as drt
 
     class _SessionCtx:

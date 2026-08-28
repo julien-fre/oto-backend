@@ -4,7 +4,7 @@
   seule (FOD & co) — jamais un outil à effet de bord (email, write, messagerie).
 - `sub_override` fait résoudre la bonne identité côté REST le temps d'un appel.
 """
-from oto_mcp import auth_hooks
+from oto_mcp.auth import hooks as auth_hooks
 from oto_mcp.tool_visibility import TESTABLE_NAMESPACES, is_testable, namespace_of
 
 

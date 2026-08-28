@@ -37,7 +37,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, file_content, file_source, google_oauth
+from .. import access, file_content, file_source
+from ..auth import google as google_oauth
 
 # Ops de `gmail_message`, dans l'ordre lectures → écritures. Source unique : la
 # validation d'entrée ET le message de refus en dérivent, donc une op ajoutée ne

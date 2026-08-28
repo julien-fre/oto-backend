@@ -47,7 +47,8 @@ from typing import Any, Optional
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .. import access, auth_hooks, providers, db, tool_registry
+from .. import access, providers, db, tool_registry
+from ..auth import hooks as auth_hooks
 from ..tool_visibility import (
     PROTECTED_TOOLS, is_default_hidden, is_testable, namespace_of)
 from ._authz import SUB_ONLY

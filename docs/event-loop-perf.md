@@ -117,7 +117,7 @@ index guides, sync), `UserDisabledToolsMiddleware.on_initialize` →
 `session_visibility.compute_hidden_tools` (`async def` qui fait 3 requêtes sync avant son
 premier await), le combinateur d'autz `ORG_MEMBER` de `capabilities/_authz.py` appelé
 depuis `_rest_adapter._handler` (`current_org` sync, relevé py-spy), et le sink du
-calllog `server._calllog_sink` → `auth_hooks.current_user_sub_from_token` →
+calllog `server._calllog_sink` → `auth.hooks.current_user_sub_from_token` →
 `db.upsert_user` (écriture + commit dans la boucle). Chacun est UNE requête ou trois,
 là où la composition en faisait des dizaines — d'où l'ordre de traitement.
 

@@ -64,7 +64,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from starlette.concurrency import run_in_threadpool
 
 from . import providers, session_org
-from .auth_hooks import current_user_sub_from_token
+from .auth.hooks import current_user_sub_from_token
 from .tool_visibility import namespace_of
 
 logger = logging.getLogger(__name__)

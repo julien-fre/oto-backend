@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import zoho_oauth
+from oto_mcp.auth import zoho as zoho_oauth
 
 
 def _consent_fields():

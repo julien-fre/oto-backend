@@ -118,7 +118,8 @@ def _federation(nom: str, module_attr: str):
     HTTP et lisent la config au chargement, on ne les tire pas à l'import du registre.
     """
     def _module():
-        from .. import atlassian_oauth, folk_oauth
+        from ..auth import atlassian as atlassian_oauth
+        from ..auth import folk as folk_oauth
         return {"atlassian_oauth": atlassian_oauth, "folk_oauth": folk_oauth}[module_attr]
 
     def _start(ctx: ResolvedCtx, inp: OAuthStartInput) -> dict:
@@ -163,7 +164,7 @@ def _federation(nom: str, module_attr: str):
 # --- Google (multi-compte) --------------------------------------------------
 
 def _google_start(ctx: ResolvedCtx, inp: OAuthStartInput) -> dict:
-    from .. import google_oauth
+    from ..auth import google as google_oauth
     try:
         url = google_oauth.build_auth_url(ctx.sub)
     except RuntimeError as e:
@@ -173,7 +174,7 @@ def _google_start(ctx: ResolvedCtx, inp: OAuthStartInput) -> dict:
 
 
 def _google_status(ctx: ResolvedCtx, inp: OAuthStatusInput) -> dict:
-    from .. import google_oauth
+    from ..auth import google as google_oauth
     accounts = google_oauth.list_accounts(ctx.sub)
     default = next((a for a in accounts if a.get("is_default")), None)
     return {
@@ -194,7 +195,7 @@ def _google_status(ctx: ResolvedCtx, inp: OAuthStatusInput) -> dict:
 
 
 def _google_revoke(ctx: ResolvedCtx, inp: GoogleRevokeInput) -> dict:
-    from .. import google_oauth
+    from ..auth import google as google_oauth
     # ?account=<email> révoque un compte précis ; absent = tous.
     account = inp.account or None
     google_oauth.revoke(ctx.sub, account=account)

@@ -32,7 +32,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
 
 from .. import access, db, email as mailer, org_store, providers, roles, scheduler
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
 

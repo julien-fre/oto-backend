@@ -27,7 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from .json_body import InvalidJsonBody, read_json_body
+from ..json_body import InvalidJsonBody, read_json_body
 
 _log = logging.getLogger("oto_mcp.oauth_facade")
 
@@ -187,7 +187,7 @@ def logto_user_primary_email(sub: str) -> str | None:
     demanderait ses credentials de management, qu'on n'a pas (oto-backend#274)."""
     import requests
 
-    from .tenancy import require_primary_tenant
+    from ..tenancy import require_primary_tenant
     # AVANT le try : le message doit remonter à l'appelant, pas être absorbé par le
     # fail-safe ci-dessous (qui, lui, couvre les pannes réseau/Logto).
     require_primary_tenant(sub, "lecture de l'email primaire Logto")
@@ -341,7 +341,7 @@ def tenant_discovery_for_host(host: str):
     serveur dans l'un et un autre dans l'autre enverrait le client faire un aller-
     retour entre deux annuaires, panne bien plus obscure que celle qu'on corrige.
     """
-    from . import tenancy
+    from .. import tenancy
     entry = tenancy.current().for_host(host)
     if entry is None:
         return None
@@ -355,7 +355,7 @@ def _host_of(request) -> str:
 def tenant_for_host(host: str):
     """L'entrée de registre servie par ce host, ou None. Sert les routes de la façade
     (métadonnée + enregistrement), qui doivent toutes viser le MÊME annuaire."""
-    from . import tenancy
+    from .. import tenancy
     return tenancy.current().for_host(host)
 
 
@@ -384,8 +384,8 @@ def make_routes(public_url: str, claude_app_id: str) -> list[Route]:
         # Sous-domaine d'un projet org PUBLIÉ → resource = ce sous-domaine ; sinon
         # canonique (identique à fastmcp). valid_org_audience = motif + existence DB.
         candidate = f"https://{host}/mcp"
-        from . import subdomain_project
-        from .config import mcp_audience_alt_hosts
+        from .. import subdomain_project
+        from ..config import mcp_audience_alt_hosts
         # Host réclamé par un tenant → SON émetteur et SON nom ; sinon rien ne change.
         tenant = tenant_discovery_for_host(host)
         as_url, resource_name = tenant if tenant else ("", "oto MCP")

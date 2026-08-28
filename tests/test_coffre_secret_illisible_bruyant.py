@@ -20,7 +20,8 @@ import pytest
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from oto_mcp import credentials_store, zoho_oauth
+from oto_mcp import credentials_store
+from oto_mcp.auth import zoho as zoho_oauth
 
 
 # ── B6 : un secret illisible est une erreur de COFFRE, nommée ────────────────

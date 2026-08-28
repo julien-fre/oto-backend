@@ -21,7 +21,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, providers, status_hints, zoho_oauth
+from .. import access, providers, status_hints
+from ..auth import zoho as zoho_oauth
 from ..connectors import flow as connector_flow
 from ..connectors import verify as connector_verify
 
@@ -152,7 +153,7 @@ def _pending_action_for(connector: str):
 def _start_flow(ctx, connector: str, values: dict) -> dict:
     """Point d'entrée du flux générique — même corps que la capacité `me.zoho_connect`,
     dont il partage le handler pour qu'il n'existe qu'UNE façon de démarrer."""
-    from .. import oauth_flow
+    from ..auth import flow as oauth_flow
     from ..capabilities import zoho_connect
     # `app` est une clé CACHÉE, pas un `FlowParam` déclaré : le front la passe hors
     # formulaire (le client sait qui il est), elle ne doit jamais devenir un champ

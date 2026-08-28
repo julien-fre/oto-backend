@@ -19,7 +19,7 @@ import os
 
 import pytest
 
-from oto_mcp import auth_hooks
+from oto_mcp.auth import hooks as auth_hooks
 from oto_mcp.db import users as db_users
 
 

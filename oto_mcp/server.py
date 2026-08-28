@@ -588,7 +588,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
 
     from .calllog import ToolCallLogger
 
-    from .auth_hooks import current_user_sub_from_token
+    from .auth.hooks import current_user_sub_from_token
 
     async def _calllog_sink(row: dict) -> None:
         # Corrélation (ADR 0017) : stampe session_id (session mcp) + run_id (déroulé
@@ -617,7 +617,7 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
             # Application cliente porteuse du grant (`azp` — claude.ai, Claude Code,
             # ChatGPT…) : axe télémétrie par surface. Contexte copié par create_task
             # → le token est lisible ici comme dans le handler.
-            from .auth_hooks import current_client_id_from_token
+            from .auth.hooks import current_client_id_from_token
             row["client_id"] = current_client_id_from_token()
             # #117 — le compte relu APRÈS exécution du handler, là où `row["sub"]` est
             # celui capturé à l'ENTRÉE (middleware, avant `call_next`). Les deux DOIVENT
@@ -750,7 +750,7 @@ def main():
         # connecteur custom, même sans auth → sans ces routes, DCR 404 = « impossible de
         # s'inscrire ». Le shim auto-approuve (zéro login) et délivre un token sans privilège
         # (l'app anonyme /mcp ne le vérifie pas). Inséré avant le catch /mcp de FastMCP.
-        from . import anon_oauth
+        from .auth import anon as anon_oauth
         for route in reversed(anon_oauth.make_routes()):
             anon_app.router.routes.insert(0, route)
 
@@ -769,7 +769,7 @@ def main():
         # client_id. No-op si OTO_MCP_CLAUDE_APP_ID absent (paste manuel conservé).
         claude_app_id = os.environ.get("OTO_MCP_CLAUDE_APP_ID")
         if claude_app_id:
-            from . import oauth_facade
+            from .auth import facade as oauth_facade
             for route in reversed(oauth_facade.make_routes(
                     require_env("OTO_MCP_PUBLIC_URL"), claude_app_id)):
                 app.router.routes.insert(0, route)

@@ -6,7 +6,7 @@ description: >-
   algorithme ES384 (gotcha RS256 → tout rejeté), discovery OAuth RFC 9728 via
   WWW-Authenticate sur 401, registre d'émetteurs `issuer → (tenant, verifier)` et
   qualification du sub par tenant (ADR 0052 — le tenant `oto` garde un sub NU, l'AAD
-  du coffre en dérive), et façade DCR (oauth_facade.py) qui émule le Dynamic
+  du coffre en dérive), et façade DCR (auth/facade.py) qui émule le Dynamic
   Client Registration absent de Logto pour permettre l'auto-installation par Claude,
   ChatGPT et Mistral sans client_id fixe. Inclut les variables d'environnement
   requises (LOGTO_ENDPOINT, LOGTO_ENDPOINT_ALT, OTO_MCP_CLAUDE_APP_ID,
@@ -40,7 +40,7 @@ sur le primaire, qui le rejette.
   inchangé. Tenant tiers : `"<slug>:<sub>"`. Un seul qualificateur
   (`tenancy.qualify`), appelé aux deux endroits où un jeton devient un sub —
   `_IatGatedVerifier.verify_token` (les faces MCP et REST partagent l'instance, donc
-  `api_routes._authenticate` et `auth_hooks` en héritent) et `api_routes._claimed_sub`
+  `api_routes._authenticate` et `auth.hooks` en héritent) et `api_routes._claimed_sub`
   (attribution du journal REST, qui décode sans vérifier). La qualification est le
   DERNIER geste : un jeton recalé par l'audience ou l'iat-gate n'a jamais produit de sub.
   Un jeton d'API `oto_` sort avant : son sub vient de `users`, déjà qualifié.
@@ -72,7 +72,7 @@ par personne**. Et au lot **L3bis** : la migration des comptes existants vers un
 `JWTVerifier` est RS256 → tous les tokens rejetés. Vérifié sur
 `GET /oidc/jwks`.
 
-Logto self-hosted n'expose pas DCR. La **façade DCR** (`oauth_facade.py`) le
+Logto self-hosted n'expose pas DCR. La **façade DCR** (`auth/facade.py`) le
 supplée : métadonnée AS augmentée (`registration_endpoint` à nous) + à chaque
 `POST /oauth/register` elle **enregistre dynamiquement le `redirect_uri` du client
 dans l'app Logto partagée** (Management API via M2M dédié `OTO_MCP_LOGTO_M2M_*`)
@@ -101,7 +101,7 @@ chemin, un runtime **non interactif** (Claude Tag dans Slack, une CI) n'avait qu
 `client_credentials`, donc une app Logto par intégration, donc un compte machine
 orphelin (ni email, ni dashboard, org à poser par `PUT /api/me/active-org` faute d'UI).
 
-⚠️ **Un jeton PORTÉ (`scopes`) est refusé ici** : son gate `token_scopes.authorize`
+⚠️ **Un jeton PORTÉ (`scopes`) est refusé ici** : son gate `auth.token_scopes.authorize`
 raisonne sur méthode + chemin HTTP, notions absentes d'un appel MCP — l'accepter
 élargirait sa portée en silence. Fail-closed figé par `tests/test_mcp_api_token.py`.
 Procédure côté utilisateur = guide plateforme `claude-tag` (+ template public
@@ -147,7 +147,7 @@ Implémentation :
 - Source de vérité = PG oto : `orgs.require_mfa` (drapeau) + `orgs.logto_org_id` (id du
   miroir). L'org Logto n'a **aucune autorité** (juste l'enforcement au login).
 - `mfa_mirror.py` = provisioning + sync (client Management API organizations, réutilise
-  le M2M `oauth_facade._mgmt_token`). `ensure_mirror`/`disable_mirror`/`sync_members` ;
+  le M2M `auth.facade._mgmt_token`). `ensure_mirror`/`disable_mirror`/`sync_members` ;
   `on_membership_changed(org_id)` branché sur `org_store.add/remove_org_member`
   (import paresseux, best-effort). ⚠️ Le roster miroir = **tous** les membres, jamais
   filtré sur `org_members.is_active` (ce flag = l'org active par défaut du sub, pas
@@ -163,7 +163,7 @@ Implémentation :
   filtrage muet ferait dire « MFA actif » à une org mixte). Les deux helpers de fil
   (`_add_logto_members`, `_remove_logto_member`) refusent en plus un sub qualifié
   (`tenancy.require_primary_tenant` → `ForeignTenantDirectory`), même garde que
-  `oauth_facade.logto_user_primary_email` : administrer un annuaire tiers demanderait
+  `auth.facade.logto_user_primary_email` : administrer un annuaire tiers demanderait
   ses credentials de management, que la table `tenants` ne porte pas.
 - Capacité `org.mfa.{get,set}` (`capabilities/orgs_mfa.py`) → `oto_get/set_org_mfa`
   + REST `/api/orgs/{id}/mfa` (`ORG_MEMBER`/`ORG_ADMIN`). **Pas de fail-open** :

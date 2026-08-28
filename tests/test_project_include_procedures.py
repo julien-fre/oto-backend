@@ -166,7 +166,7 @@ def test_the_include_does_not_widen_a_scoped_token():
     motif ne matcherait plus, la boucle tomberait au `return False` final… ou pire,
     un motif relâché laisserait passer. On garde donc le comportement plutôt que la
     lecture du code."""
-    from oto_mcp import token_scopes
+    from oto_mcp.auth import token_scopes
 
     porte_12 = {"projects": {"12": "read"}}
 

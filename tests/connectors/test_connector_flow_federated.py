@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import atlassian_oauth, folk_oauth, google_oauth
+from oto_mcp.auth import atlassian as atlassian_oauth
+from oto_mcp.auth import folk as folk_oauth
+from oto_mcp.auth import google as google_oauth
 from oto_mcp.connectors import flow as connector_flow
 from oto_mcp.capabilities._types import AuthzDenied
 

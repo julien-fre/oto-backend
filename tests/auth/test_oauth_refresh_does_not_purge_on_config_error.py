@@ -1,8 +1,8 @@
 """Un 4xx de CONFIGURATION ne doit pas détruire un credential valide.
 
 Les trois flux OAuth fédérés purgent le credential quand leur `_refresh` lève
-`*ReauthRequired` (`clear_credential` puis `return None`, atlassian_oauth.py ~:196,
-folk_oauth.py ~:207). C'est juste quand le GRANT est mort —
+`*ReauthRequired` (`clear_credential` puis `return None`, auth/atlassian.py ~:196,
+auth/folk.py ~:207). C'est juste quand le GRANT est mort —
 l'utilisateur doit re-consentir de toute façon.
 
 Mais jusqu'ici, TOUT 400/401 levait cette exception. Or un serveur d'autorisation
@@ -16,7 +16,7 @@ Ce fichier verrouille la règle ET son application dans les trois modules.
 """
 import pytest
 
-from oto_mcp import oauth_flow
+from oto_mcp.auth import flow as oauth_flow
 
 
 # --- la règle -----------------------------------------------------------------
@@ -77,12 +77,12 @@ def _patch_post(monkeypatch, mod, resp):
 
 
 @pytest.mark.parametrize("modname,excname", [
-    ("atlassian_oauth", "AtlassianReauthRequired"),
-    ("folk_oauth", "FolkReauthRequired"),
+    ("atlassian", "AtlassianReauthRequired"),
+    ("folk", "FolkReauthRequired"),
 ])
 def test_dead_grant_still_raises_reauth(monkeypatch, modname, excname):
     import importlib
-    mod = importlib.import_module(f"oto_mcp.{modname}")
+    mod = importlib.import_module(f"oto_mcp.auth.{modname}")
     exc = getattr(mod, excname)
     _patch_post(monkeypatch, mod, _Resp(400, '{"error":"invalid_grant"}'))
     with pytest.raises(exc):
@@ -90,15 +90,15 @@ def test_dead_grant_still_raises_reauth(monkeypatch, modname, excname):
 
 
 @pytest.mark.parametrize("modname,excname", [
-    ("atlassian_oauth", "AtlassianReauthRequired"),
-    ("folk_oauth", "FolkReauthRequired"),
+    ("atlassian", "AtlassianReauthRequired"),
+    ("folk", "FolkReauthRequired"),
 ])
 def test_config_error_does_NOT_raise_reauth(monkeypatch, modname, excname):
     """TRIPWIRE — le cœur du correctif : sur `invalid_client`, l'exception de réauth
     ne doit PAS être levée, sinon l'appelant purge. Une autre erreur remonte, c'est
     voulu : un incident de config doit se voir."""
     import importlib
-    mod = importlib.import_module(f"oto_mcp.{modname}")
+    mod = importlib.import_module(f"oto_mcp.auth.{modname}")
     exc = getattr(mod, excname)
     _patch_post(monkeypatch, mod, _Resp(400, '{"error":"invalid_client"}'))
     with pytest.raises(Exception) as e:

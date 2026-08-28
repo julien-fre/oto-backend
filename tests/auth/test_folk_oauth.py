@@ -13,7 +13,7 @@ os.environ.setdefault("OTO_MCP_OAUTH_STATE_SECRET", "test-secret")
 os.environ.setdefault("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja")
 os.environ.setdefault("FOLK_OAUTH_CLIENT_ID", "cid-test")
 
-from oto_mcp import folk_oauth  # noqa: E402
+from oto_mcp.auth import folk as folk_oauth  # noqa: E402
 
 
 def _auth_params(sub="sub-123"):
@@ -55,7 +55,7 @@ def test_state_roundtrip_recovers_sub_and_verifier():
     sub, verifier = got
     assert sub == "sub-xyz"
     # le verifier du state correspond au challenge de l'URL (S256)
-    from oto_mcp import oauth2_pkce
+    from oto_mcp.auth import pkce as oauth2_pkce
     assert oauth2_pkce.b64url(
         __import__("hashlib").sha256(verifier.encode()).digest()
     ) == q["code_challenge"][0]

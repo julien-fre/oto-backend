@@ -55,7 +55,7 @@ def client(monkeypatch):
     factory = MagicMock(return_value=inst)
     monkeypatch.setattr(tc, "TasksClient", factory)
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
-    monkeypatch.setattr("oto_mcp.google_oauth.credentials_for",
+    monkeypatch.setattr("oto_mcp.auth.google.credentials_for",
                         lambda sub, account=None: MagicMock(name=f"creds:{account}"))
     inst._factory = factory
     return inst
@@ -235,7 +235,7 @@ def test_account_selects_the_google_account(monkeypatch, client, tool, kwargs):
     """`account` = l'email du compte Google ciblé (multi-compte, ADR 0033) — il doit
     atteindre la résolution de credential, pas être avalé."""
     seen = {}
-    monkeypatch.setattr("oto_mcp.google_oauth.credentials_for",
+    monkeypatch.setattr("oto_mcp.auth.google.credentials_for",
                         lambda sub, account=None: seen.update(sub=sub, account=account))
     _call(tool, account="alexis@otomata.tech", **kwargs)
     assert seen == {"sub": "sub-1", "account": "alexis@otomata.tech"}
@@ -246,6 +246,6 @@ def test_a_missing_google_account_is_an_actionable_error(monkeypatch, client):
     doit ressortir en McpError lisible, pas en 500."""
     def _boom(sub, account=None):
         raise RuntimeError("Aucun compte Google connecté")
-    monkeypatch.setattr("oto_mcp.google_oauth.credentials_for", _boom)
+    monkeypatch.setattr("oto_mcp.auth.google.credentials_for", _boom)
     with pytest.raises(McpError, match="Aucun compte Google"):
         _call("tasks_task", op="list")

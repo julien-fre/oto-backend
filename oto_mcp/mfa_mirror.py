@@ -24,7 +24,7 @@ import logging
 import requests
 
 from . import org_store, tenancy
-from .oauth_facade import _UA, _logto_base, _mgmt_token
+from .auth.facade import _UA, _logto_base, _mgmt_token
 
 _log = logging.getLogger("oto_mcp.mfa_mirror")
 _TIMEOUT = 15

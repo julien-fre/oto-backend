@@ -31,7 +31,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 
 from .. import access, browser_session, browserbase
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 
 # Couple (API privée, page d'origine) propre à Crunchbase. Le `fetch` est
 # same-origin avec l'app (www.crunchbase.com) → il porte les cookies de session ;

@@ -36,7 +36,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, providers, credentials_store
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 
 log = logging.getLogger("oto_mcp.tools.mount")
 CATALOG_TIMEOUT = 20
@@ -109,10 +109,10 @@ def _catalog_token(connector: providers.Connector, sub: str) -> str | None:
     """Token (d'un user connecté) pour récupérer le catalogue PARTAGÉ au boot.
     Connector-spécifique pour le refresh OAuth."""
     if connector.name == "atlassian":
-        from .. import atlassian_oauth
+        from ..auth import atlassian as atlassian_oauth
         return atlassian_oauth.access_token_for(sub)
     if connector.name == "folkmcp":
-        from .. import folk_oauth
+        from ..auth import folk as folk_oauth
         return folk_oauth.access_token_for(sub)
     return credentials_store.get_credential("user", sub, connector.name)
 

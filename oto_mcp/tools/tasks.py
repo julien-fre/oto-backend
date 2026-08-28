@@ -28,7 +28,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, google_oauth
+from .. import access
+from ..auth import google as google_oauth
 
 # Ops de `tasks_task`, et le libellé de refus qui les NOMME (source unique : un op
 # ajouté ici doit apparaître dans le message, sinon l'agent ne peut pas se corriger).
