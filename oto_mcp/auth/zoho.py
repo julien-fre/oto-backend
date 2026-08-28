@@ -43,7 +43,8 @@ from typing import Optional
 
 from mcp.shared.exceptions import McpError
 
-from . import access, credentials_store, oauth_flow, providers
+from .. import access, credentials_store, providers
+from . import flow as oauth_flow
 
 logger = logging.getLogger(__name__)
 

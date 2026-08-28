@@ -17,7 +17,8 @@ import types
 
 import pytest
 
-from oto_mcp import api_routes, token_scopes
+from oto_mcp import api_routes
+from oto_mcp.auth import token_scopes
 
 
 def _req(method: str, path: str, token: str = "oto_deadbeef"):

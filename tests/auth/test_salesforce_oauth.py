@@ -20,7 +20,7 @@ import pytest
 os.environ.setdefault("OTO_MCP_OAUTH_STATE_SECRET", "test-secret")
 os.environ.setdefault("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja")
 
-from oto_mcp import salesforce_oauth  # noqa: E402
+from oto_mcp.auth import salesforce as salesforce_oauth  # noqa: E402
 
 
 # --- state round-trip ---------------------------------------------------------
@@ -53,7 +53,7 @@ def test_state_missing_app_key_defaults_to_empty_string():
     """État signé AVANT ce champ (déploiement à cheval sur la fenêtre de 10 min du
     state) : `app` absent ne doit pas invalider tout le state, juste dégrader vers
     la chaîne vide (⇒ retour oto-dashboard historique, pas une connexion perdue)."""
-    from oto_mcp import oauth_flow
+    from oto_mcp.auth import flow as oauth_flow
     forged = oauth_flow.sign_state("salesforce",
                                    {"sub": "s", "org": 1, "scope": "member", "v": "x"})
     got = salesforce_oauth.verify_state(forged)
@@ -63,7 +63,7 @@ def test_state_missing_app_key_defaults_to_empty_string():
 def test_group_scope_state_without_group_id_is_rejected():
     # make_state pose toujours group_id en scope "group" (build_auth_url est son seul
     # appelant), mais verify_state ne doit pas faire confiance à un payload qui l'omet.
-    from oto_mcp import oauth_flow
+    from oto_mcp.auth import flow as oauth_flow
     forged = oauth_flow.sign_state("salesforce",
                                    {"sub": "s", "org": 1, "scope": "group", "v": "x"})
     assert salesforce_oauth.verify_state(forged) is None
@@ -73,7 +73,7 @@ def test_state_of_another_flow_is_rejected():
     """Un state VALIDEMENT signé mais émis pour un AUTRE flux ne passe pas ici —
     c'est la raison d'être de l'audience (`oauth_flow`) : avant elle, tous les flux
     signaient au même format avec le même secret."""
-    from oto_mcp import oauth_flow
+    from oto_mcp.auth import flow as oauth_flow
     zoho_state = oauth_flow.sign_state("zoho",
                                        {"sub": "s", "org": 1, "scope": "member", "v": "x"})
     assert salesforce_oauth.verify_state(zoho_state) is None
@@ -90,7 +90,7 @@ def test_expired_state_is_rejected(monkeypatch):
     state = salesforce_oauth.make_state("sub-1", 1, "member", "v")
     # Fast-forward past the TTL by patching time.time for verify_state's check.
     import time as time_mod
-    from oto_mcp import oauth_flow
+    from oto_mcp.auth import flow as oauth_flow
     real_time = time_mod.time
     monkeypatch.setattr(time_mod, "time", lambda: real_time() + oauth_flow.DEFAULT_STATE_TTL + 1)
     assert salesforce_oauth.verify_state(state) is None
@@ -99,7 +99,7 @@ def test_expired_state_is_rejected(monkeypatch):
 def test_invalid_scope_in_payload_is_rejected():
     # Un state signé avec un scope inventé (impossible via make_state, mais
     # verify_state ne doit pas faire confiance au payload les yeux fermés).
-    from oto_mcp import oauth_flow
+    from oto_mcp.auth import flow as oauth_flow
     forged = oauth_flow.sign_state("salesforce",
                                    {"sub": "s", "org": 1, "scope": "bogus", "v": "x"})
     assert salesforce_oauth.verify_state(forged) is None

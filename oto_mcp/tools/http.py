@@ -26,7 +26,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from oto.tools.http import HttpConnectorClient
 
 from .. import access
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 
 log = logging.getLogger("oto_mcp.tools.http")
 TIMEOUT = 45

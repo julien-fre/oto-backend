@@ -15,7 +15,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import db, oauth_facade, org_store
+from .. import db, org_store
+from ..auth import facade as oauth_facade
 from .. import email as email_mod  # alias : le param `email` d'emit_invitation masquerait le module
 from ._authz import ORG_ADMIN_OF, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding

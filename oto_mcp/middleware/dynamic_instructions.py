@@ -6,7 +6,7 @@ import logging
 from fastmcp.server.middleware import Middleware
 from starlette.concurrency import run_in_threadpool
 
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
 

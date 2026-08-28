@@ -28,8 +28,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 from starlette.routing import Route
 
-from .json_body import InvalidJsonBody, read_json_body
-from .oauth_facade import _cors, _redirect_ok
+from ..json_body import InvalidJsonBody, read_json_body
+from .facade import _cors, _redirect_ok
 
 logger = logging.getLogger("oto_mcp.anon_oauth")
 

@@ -37,7 +37,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, file_content, google_oauth
+from .. import access, file_content
+from ..auth import google as google_oauth
 
 
 def _bad(msg: str) -> McpError:

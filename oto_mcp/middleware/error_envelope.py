@@ -7,7 +7,7 @@ from mcp.types import ErrorData
 from starlette.concurrency import run_in_threadpool
 
 from .. import error_taxonomy
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 
 
 def _reachable_suffix(connector: str) -> str:

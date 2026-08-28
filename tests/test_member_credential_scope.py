@@ -157,10 +157,12 @@ def test_backfill_member_scope_routes_families(monkeypatch):
 
 # --- 4. tripwire : plus d'écriture au scope 'user' hors famille oauth -------------
 
+# Chemins RELATIFS à `oto_mcp/` : depuis le rangement par domaine, ces modules
+# vivent dans `auth/` et un simple nom de fichier ne les désignerait plus.
 _OAUTH_FAMILY_FILES = {
     # Mounts OAuth fédérés — SEULS écrivains légitimes du scope ('user', sub)
     # restants (barreau ultérieur d'ADR 0033). Google est passé au scope membre en B3.
-    "memento_oauth.py", "atlassian_oauth.py", "folk_oauth.py",
+    "auth/memento.py", "auth/atlassian.py", "auth/folk.py",
 }
 
 
@@ -171,7 +173,7 @@ def test_no_user_scope_credential_writes_outside_oauth_family():
     offenders = []
     pattern = re.compile(r'set_credential\(\s*["\']user["\']')
     for f in root.rglob("*.py"):
-        if f.name in _OAUTH_FAMILY_FILES:
+        if f.relative_to(root).as_posix() in _OAUTH_FAMILY_FILES:
             continue
         if pattern.search(f.read_text(encoding="utf-8")):
             offenders.append(str(f.relative_to(root)))
@@ -186,7 +188,7 @@ def test_google_state_carries_org(monkeypatch):
     # L'org du DÉMARRAGE voyage dans le state HMAC jusqu'au callback (qui vient de
     # Google, sans headers de consultation) — roundtrip + rejet des vieux formats.
     monkeypatch.setenv("OTO_MCP_OAUTH_STATE_SECRET", "test-secret")
-    from oto_mcp import google_oauth
+    from oto_mcp.auth import google as google_oauth
     state = google_oauth.make_state("u1", 42)
     assert google_oauth.verify_state(state) == ("u1", 42)
     # un state sans org (format pré-B3) est refusé, pas interprété org-agnostique

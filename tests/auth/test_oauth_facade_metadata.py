@@ -9,7 +9,7 @@ dans le PRM `authorization_servers`. Le PRM passe l'URL par `AnyHttpUrl`
 import pytest
 from pydantic import AnyHttpUrl
 
-from oto_mcp.oauth_facade import as_metadata, as_oidc_metadata
+from oto_mcp.auth.facade import as_metadata, as_oidc_metadata
 
 
 @pytest.fixture(autouse=True)

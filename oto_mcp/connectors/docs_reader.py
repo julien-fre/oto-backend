@@ -73,7 +73,7 @@ def _resoudre(corps: str) -> str:
     le client. Résolu à la LECTURE, jamais à l'import."""
     if "{{callback:" not in corps:
         return corps
-    from .. import oauth_flow
+    from ..auth import flow as oauth_flow
     return _MARQUEUR.sub(lambda m: oauth_flow.redirect_uri(m.group(1)), corps)
 
 

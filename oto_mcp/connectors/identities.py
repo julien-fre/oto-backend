@@ -80,7 +80,7 @@ def select_identity(sub: str, connector: str, identity_id: str, scope: str = "me
 # --- Google : N credentials du coffre (account=email) -----------------------
 
 def _google_list(sub: str) -> list[dict]:
-    from .. import google_oauth
+    from ..auth import google as google_oauth
     return [{"id": a["google_email"], "label": a["google_email"], "status": "ok",
              "is_default": a["is_default"], "channel": None}
             for a in google_oauth.list_accounts(sub) if a.get("google_email")]

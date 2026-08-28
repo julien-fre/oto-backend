@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import access, providers, credentials_store, zoho_oauth
+from oto_mcp import access, providers, credentials_store
+from oto_mcp.auth import zoho as zoho_oauth
 
 
 # --- l'invariant ---------------------------------------------------------------

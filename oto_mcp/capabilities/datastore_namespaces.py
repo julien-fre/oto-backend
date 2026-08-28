@@ -29,7 +29,8 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .. import db, roles, token_scopes
+from .. import db, roles
+from ..auth import token_scopes
 from ..datastore.core import NamespaceExists, NamespaceForbidden, NamespaceNotFound, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding

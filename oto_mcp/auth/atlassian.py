@@ -1,30 +1,23 @@
-"""Folk OAuth — flow web per-user pour fédérer le MCP officiel de Folk (#85).
+"""Atlassian OAuth — flow web per-user pour fédérer le Rovo Remote MCP (#40).
 
-Folk héberge un MCP distant (mcp.folk.app/mcp) dont le serveur d'autorisation est
-**Stytch** (RFC 9728). Découverte live (2026-07-01,
-`api.stytch.folk.app/.well-known/oauth-authorization-server`) :
-  authorization_endpoint : https://app.folk.app/oauth/authorize
-  token_endpoint         : https://api.stytch.folk.app/v1/oauth2/token
-  registration_endpoint  : https://api.stytch.folk.app/v1/oauth2/register  (DCR)
-  PKCE S256, grants authorization_code + refresh_token, `none` supporté.
+Atlassian héberge un MCP distant (mcp.atlassian.com/v1/mcp, Jira + Confluence)
+avec SON PROPRE serveur d'autorisation OAuth 2.1 (RFC 8414), DCR + PKCE.
+Découverte live (2026-06-22, `.well-known/oauth-authorization-server`) :
+  authorization_endpoint : https://mcp.atlassian.com/v1/authorize
+  token_endpoint         : https://cf.mcp.atlassian.com/v1/token
+  registration_endpoint  : https://cf.mcp.atlassian.com/v1/register  (DCR)
+  PKCE S256, grants authorization_code + refresh_token.
 
-Client **public** (comme atlassian) : DCR `token_endpoint_auth_method=none` (pas de
-client_secret) → échange/refresh en `client_id` + `code_verifier`, sans Basic auth.
-Le `client_id` est auto-enregistré une fois (cache coffre plateforme) ou fourni via
-`FOLK_OAUTH_CLIENT_ID`.
+Client **public** : la DCR rend `token_endpoint_auth_method=none` (pas de
+client_secret) → échange/refresh en `client_id` + `code_verifier`, SANS Basic
+auth (client public, pas de secret). Le `client_id` est enregistré une fois par
+DCR et fourni via `ATLASSIAN_OAUTH_CLIENT_ID`. La sélection du site Atlassian
+Cloud (cloudid) est gérée par l'AS Atlassian — rien à porter côté oto.
 
-Le MCP de Folk s'auth UNIQUEMENT par OAuth (pas de clé API — c'est le connecteur
-natif `folk` qui, lui, tape l'API REST à la clé). Ce module sert donc le connecteur
-fédéré `folkmcp`, distinct et coexistant (per-user visibility, ADR 0011/0031).
-
-Comme atlassian : le refresh_token (long-lived) est le `secret` chiffré du
-coffre ; l'access_token (bearer, dérivé) vit dans `meta`, rafraîchi de façon
-transparente. Le proxy de tools/mount.py l'injecte par requête
+Comme google : le refresh_token (long-lived) est le `secret` chiffré du
+coffre ; l'access_token (bearer ~1h, dérivé) vit dans `meta` et est rafraîchi de
+façon transparente. Le proxy de tools/mount.py l'injecte par requête
 (access.resolve_mount_token → access_token_for).
-
-⚠️ À confirmer au 1ᵉʳ consent live : le **scope** exact requis par le MCP Folk pour
-lire/écrire le workspace (`full_access` déclaré côté openid-configuration ;
-défaut ci-dessous, surchargeable par `FOLK_OAUTH_SCOPE`).
 """
 from __future__ import annotations
 
@@ -33,32 +26,31 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from . import credentials_store, oauth2_pkce, oauth_flow
-from .connectors import flow as connector_flow
-from .connectors import link as connector_link
+from .. import credentials_store
+from . import pkce as oauth2_pkce, flow as oauth_flow
+from ..connectors import flow as connector_flow
+from ..connectors import link as connector_link
 
-_AUTH_URL = "https://app.folk.app/oauth/authorize"
-_TOKEN_URL = "https://api.stytch.folk.app/v1/oauth2/token"
-_REGISTER_URL = "https://api.stytch.folk.app/v1/oauth2/register"
-# Identifiant de ressource RFC 8707/9728 (valeur exacte du PRM de mcp.folk.app).
-_MCP_RESOURCE = "https://mcp.folk.app"
-_CONNECTOR = "folkmcp"
+_AUTH_URL = "https://mcp.atlassian.com/v1/authorize"
+_TOKEN_URL = "https://cf.mcp.atlassian.com/v1/token"
+_REGISTER_URL = "https://cf.mcp.atlassian.com/v1/register"
+_MCP_RESOURCE = "https://mcp.atlassian.com/v1/mcp"
+_CONNECTOR = "atlassian"
 # Entité « plateforme » du coffre où l'on cache le client_id DCR (public, pas un
 # secret) — auto-enregistré une fois, partagé par tous les users.
 _CLIENT_ENTITY = ("platform", "")
 _STATE_TTL = 600  # 10 min
-# offline_access = condition du refresh_token ; openid = base OIDC ; full_access =
-# accès workspace (déclaré côté openid-configuration). Surchargeable une fois le
-# flow validé en live (le MCP peut exiger un scope différent).
-_DEFAULT_SCOPE = "openid offline_access full_access"
+# offline_access = condition du refresh_token. Les scopes d'outils (jira/confluence)
+# sont consentis via l'AS Atlassian ; surchargeable une fois le flow validé en live.
+_DEFAULT_SCOPE = "offline_access"
 
 
 def _scope() -> str:
-    return os.environ.get("FOLK_OAUTH_SCOPE", _DEFAULT_SCOPE)
+    return os.environ.get("ATLASSIAN_OAUTH_SCOPE", _DEFAULT_SCOPE)
 
 
 def _register_client() -> str:
-    """DCR d'un client PUBLIC sur l'AS Stytch (token_endpoint_auth_method=none,
+    """DCR d'un client PUBLIC sur l'AS Atlassian (token_endpoint_auth_method=none,
     pas de secret) → renvoie le client_id. Le redirect_uri DOIT matcher au callback."""
     import requests
     r = requests.post(_REGISTER_URL, json={
@@ -72,15 +64,15 @@ def _register_client() -> str:
     r.raise_for_status()
     cid = r.json().get("client_id")
     if not cid:
-        raise RuntimeError("DCR Folk (Stytch) sans client_id")
+        raise RuntimeError("DCR Atlassian sans client_id")
     return cid
 
 
 def _client_id() -> str:
-    """client_id OAuth — ZÉRO env requise. Override `FOLK_OAUTH_CLIENT_ID` si posée ;
-    sinon cache coffre (entité plateforme) ; sinon **auto-DCR** (client public) puis
-    cache. La DB gouverne — pas de provisioning manuel."""
-    env = os.environ.get("FOLK_OAUTH_CLIENT_ID")
+    """client_id OAuth — ZÉRO env requise. Override `ATLASSIAN_OAUTH_CLIENT_ID` si
+    posée ; sinon cache coffre (entité plateforme) ; sinon **auto-DCR** (client
+    public) puis cache. La DB gouverne — pas de provisioning manuel."""
+    env = os.environ.get("ATLASSIAN_OAUTH_CLIENT_ID")
     if env:
         return env
     cached = credentials_store.get_credential(*_CLIENT_ENTITY, _CONNECTOR)
@@ -93,7 +85,7 @@ def _client_id() -> str:
 
 def reset_client_id() -> None:
     """Purge le client_id caché → re-DCR au prochain `_client_id()`. À appeler si
-    l'AS rejette le client (`invalid_client` : registration purgée côté Stytch)."""
+    l'AS rejette le client (`invalid_client` : registration purgée côté Atlassian)."""
     credentials_store.clear_credential(*_CLIENT_ENTITY, _CONNECTOR)
 
 
@@ -106,7 +98,7 @@ def _state_secret() -> bytes:
 
 def _redirect_uri() -> str:
     base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
-    return f"{base}/api/folkmcp/oauth/callback"
+    return f"{base}/api/atlassian/oauth/callback"
 
 
 def build_auth_url(sub: str) -> str:
@@ -117,7 +109,6 @@ def build_auth_url(sub: str) -> str:
         "redirect_uri": _redirect_uri(),
         "response_type": "code",
         "scope": _scope(),
-        "resource": _MCP_RESOURCE,
         "code_challenge": challenge,
         "code_challenge_method": "S256",
         "state": oauth2_pkce.make_state(_state_secret(), sub, verifier),
@@ -143,7 +134,6 @@ def exchange_code(code: str, verifier: str) -> dict:
             "redirect_uri": _redirect_uri(),
             "code_verifier": verifier,
             "client_id": _client_id(),
-            "resource": _MCP_RESOURCE,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=15,
@@ -156,7 +146,7 @@ def persist_token(sub: str, token_response: dict) -> None:
     refresh_token = token_response.get("refresh_token")
     if not refresh_token:
         raise RuntimeError(
-            "Folk (Stytch) n'a pas émis de refresh_token (vérifie le scope offline_access).")
+            "Atlassian n'a pas émis de refresh_token (vérifie le scope offline_access).")
     credentials_store.set_credential(
         "user", sub, _CONNECTOR, secret=refresh_token, set_by=sub,
         meta={
@@ -166,8 +156,8 @@ def persist_token(sub: str, token_response: dict) -> None:
     )
 
 
-class FolkReauthRequired(Exception):
-    """Refresh token Folk mort (invalid_grant) → l'user doit reconnecter."""
+class AtlassianReauthRequired(Exception):
+    """Refresh token Atlassian mort (invalid_grant) → l'user doit reconnecter."""
 
 
 def _refresh(refresh_token: str) -> dict:
@@ -175,7 +165,7 @@ def _refresh(refresh_token: str) -> dict:
     r = requests.post(
         _TOKEN_URL,
         data={"grant_type": "refresh_token", "refresh_token": refresh_token,
-              "client_id": _client_id(), "resource": _MCP_RESOURCE},
+              "client_id": _client_id()},
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         timeout=15,
     )
@@ -184,14 +174,14 @@ def _refresh(refresh_token: str) -> dict:
     # remonter, pas effacer un refresh_token valide. Règle unique : `oauth_flow`.
     body = (r.text or "")[:300]
     if r.status_code in (400, 401) and oauth_flow.grant_is_dead(r.status_code, body):
-        raise FolkReauthRequired(body)
+        raise AtlassianReauthRequired(body)
     r.raise_for_status()
     return r.json()
 
 
 def access_token_for(sub: str) -> Optional[str]:
-    """Access token Folk valide pour ce sub (refresh transparent si expiré), ou None
-    si le user n'a pas connecté le MCP Folk."""
+    """Access token Atlassian valide pour ce sub (refresh transparent si expiré),
+    ou None si le user n'a pas connecté Atlassian."""
     cred = credentials_store.get_credential_with_meta("user", sub, _CONNECTOR)
     if not cred or not cred.get("secret"):
         return None
@@ -210,7 +200,7 @@ def access_token_for(sub: str) -> Optional[str]:
     if needs_refresh:
         try:
             resp = _refresh(cred["secret"])
-        except FolkReauthRequired:
+        except AtlassianReauthRequired:
             # Grant mort : purge → status_for repasse « non connecté », l'UI reconnecte.
             credentials_store.clear_credential("user", sub, _CONNECTOR)
             return None
@@ -248,7 +238,9 @@ def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
 
     Il existait — mais **hors du point de passage** : une route REST écrite à la main
     rendait `{auth_url}` par coïncidence, sans que rien ne l'y oblige, et le garde-fou
-    qui impose la forme commune ne voit que les capacités.
+    qui impose la forme commune ne voit que les capacités. Le front devait donc garder
+    une fonction par connecteur là où le seam existe précisément pour qu'il n'ait pas à
+    savoir lequel il branche.
     """
     return connector_flow.FlowStart(auth_url=build_auth_url(ctx.sub))
 
@@ -256,8 +248,8 @@ def _start_flow(ctx, values: dict) -> "connector_flow.FlowStart":
 connector_flow.declare(
     _CONNECTOR,
     start=_start_flow,
-    label="Autoriser oto chez Folk",
-    callback_path="/api/folkmcp/oauth/callback",
+    label="Autoriser oto chez Atlassian",
+    callback_path="/api/atlassian/oauth/callback",
 )
 
 

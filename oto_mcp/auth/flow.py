@@ -35,7 +35,7 @@ import time
 from typing import Optional
 
 import requests
-from . import config
+from .. import config
 
 DEFAULT_STATE_TTL = 600   # 10 min — le temps de lire un écran de consentement
 

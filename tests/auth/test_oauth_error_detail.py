@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import oauth_flow
+from oto_mcp.auth import flow as oauth_flow
 from oto_mcp.tools.salesforce import _sf_error_hint
 
 

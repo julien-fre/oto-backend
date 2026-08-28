@@ -19,7 +19,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import atlassian_oauth
+from .auth import atlassian as atlassian_oauth
 from . import config
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]

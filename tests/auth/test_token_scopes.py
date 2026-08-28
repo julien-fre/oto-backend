@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import token_scopes as ts
+from oto_mcp.auth import token_scopes as ts
 
 READ_ONLY = {"namespaces": {"leads-accords-dormants": "read"}}
 WRITABLE = {"namespaces": {"leads-accords-dormants": "write"}}

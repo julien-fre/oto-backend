@@ -25,7 +25,7 @@ from pydantic import ValidationError
 
 from .. import (access, call_axes, db, doctrine_run, providers, redaction,
                 tool_alias, tool_registry)
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import (
     PROTECTED_TOOLS,
     is_default_hidden,

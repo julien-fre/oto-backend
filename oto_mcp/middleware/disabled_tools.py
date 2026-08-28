@@ -5,7 +5,7 @@ import logging
 
 from fastmcp.server.middleware import Middleware
 
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 from ..session_visibility import apply_session_visibility
 
 logger = logging.getLogger(__name__)

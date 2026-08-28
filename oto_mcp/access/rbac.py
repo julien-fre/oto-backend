@@ -27,7 +27,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import credentials_store, db, group_store, org_store
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 from . import cascade, scope
 
 logger = logging.getLogger(__name__)

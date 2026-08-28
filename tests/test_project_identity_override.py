@@ -70,7 +70,7 @@ def test_fail_soft_on_error(wire, monkeypatch):
 # ── Câblage : google_oauth.credentials_for honore le projet actif (incrément B) ──
 
 def test_credentials_for_applies_project_pin(monkeypatch):
-    from oto_mcp import google_oauth
+    from oto_mcp.auth import google as google_oauth
     seen = {}
     monkeypatch.setattr(access, "project_pinned_identity", lambda connector: "pinned@x.co")
     monkeypatch.setattr(access, "current_org", lambda sub: 39)
@@ -82,7 +82,7 @@ def test_credentials_for_applies_project_pin(monkeypatch):
 
 
 def test_credentials_for_explicit_account_wins(monkeypatch):
-    from oto_mcp import google_oauth
+    from oto_mcp.auth import google as google_oauth
     seen = {}
     # Un compte explicite passé par l'appelant prime sur le pin du projet (jamais lu).
     monkeypatch.setattr(access, "project_pinned_identity",
@@ -96,7 +96,7 @@ def test_credentials_for_explicit_account_wins(monkeypatch):
 
 
 def test_credentials_for_no_project_keeps_default(monkeypatch):
-    from oto_mcp import google_oauth
+    from oto_mcp.auth import google as google_oauth
     seen = {}
     monkeypatch.setattr(access, "project_pinned_identity", lambda connector: None)  # pas de projet/pin
     monkeypatch.setattr(access, "current_org", lambda sub: 39)

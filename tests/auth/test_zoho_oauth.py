@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from oto_mcp import zoho_oauth as z
+from oto_mcp.auth import zoho as z
 
 DC = "eu"
 APP = {"client_id": "1000.ORGAPP", "client_secret": "org-secret"}
@@ -104,7 +104,7 @@ def test_state_carries_the_front_that_asked():
 def test_state_signed_before_the_field_still_verifies():
     """Tolérance aux states émis AVANT `return_app` et encore vivants dans la fenêtre
     du TTL : on dégrade vers le défaut, on ne casse pas un consentement en cours."""
-    from oto_mcp import oauth_flow
+    from oto_mcp.auth import flow as oauth_flow
     st = oauth_flow.sign_state(z._AUDIENCE, {"sub": "u1", "org": 35,
                                              "c": "zoho", "dc": DC})
     assert z.verify_state(st)["return_app"] == ""

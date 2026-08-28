@@ -408,7 +408,7 @@ def _call_prm(host, valid, monkeypatch):
     import asyncio
     import json as _json
     from starlette.requests import Request
-    from oto_mcp import oauth_facade
+    from oto_mcp.auth import facade as oauth_facade
     monkeypatch.setattr(sp, "valid_org_audience", lambda a: valid)
     routes = oauth_facade.make_routes("https://mcp.oto.ninja", "appid")
     prm = next(r for r in routes if r.path == "/.well-known/oauth-protected-resource/mcp")
@@ -439,7 +439,7 @@ def test_prm_unpublished_subdomain_falls_back(monkeypatch):
 
 
 def test_ensure_api_resource_idempotent(monkeypatch):
-    from oto_mcp import oauth_facade
+    from oto_mcp.auth import facade as oauth_facade
     calls = {"post": 0}
 
     class _Resp:

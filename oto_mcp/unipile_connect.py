@@ -61,7 +61,7 @@ def _return_to(app: "str | None", org_id: "int | None", suffix: str) -> str:
     `app` inconnu ou absent ⟹ destination historique, à l'octet près. On ne fait
     JAMAIS confiance à une valeur de client au-delà d'un lookup dans la liste
     fermée `RETURN_APPS` (`resolve_return_app` s'en charge)."""
-    from . import oauth_flow
+    from .auth import flow as oauth_flow
     if oauth_flow.resolve_return_app(app):
         return oauth_flow.return_url(app, suffix, org=org_id)
     return f"{config.dashboard_url()}/console/connections{suffix}"

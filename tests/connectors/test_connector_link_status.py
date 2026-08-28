@@ -23,7 +23,9 @@ from oto_mcp import providers
 from oto_mcp.connectors import link as connector_link
 
 # L'import est CE qui déclare : ces modules s'enregistrent au niveau module.
-from oto_mcp import atlassian_oauth, folk_oauth, google_oauth  # noqa: F401,E402
+from oto_mcp.auth import atlassian as atlassian_oauth
+from oto_mcp.auth import folk as folk_oauth
+from oto_mcp.auth import google as google_oauth  # noqa: F401,E402
 
 
 def _federated() -> set[str]:

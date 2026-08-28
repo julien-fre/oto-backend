@@ -31,7 +31,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, google_oauth
+from .. import access
+from ..auth import google as google_oauth
 
 # Ops de `sheets_spreadsheet`. Vérifiées AVANT toute construction de client : une op
 # inconnue ne doit atteindre aucune méthode du client, jamais retomber sur un défaut.

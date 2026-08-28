@@ -45,7 +45,7 @@ l'exemple de la spec — un intermédiaire servirait le readme d'une org à une 
 point ① ne visait que `tools/list` ; il vise les deux ; ② suppression de la résumabilité SSE ⟹ un stream cassé se rejoue
 en requête neuve : les outils longs (browser, INPI, fullenrich) doivent être
 **idempotents** ; ③ DCR déprécié au profit des Client ID Metadata Documents — notre
-façade DCR (`oauth_facade.py`, palliatif du Logto self-hosted sans DCR) a une date de
+façade DCR (`auth/facade.py`, palliatif du Logto self-hosted sans DCR) a une date de
 péremption → épic sécurité auth/MCP #35 ; ④ MRTR (`resultType: "input_required"`)
 remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 `*_connect_status` sont déjà des handles), une standardisation possible.

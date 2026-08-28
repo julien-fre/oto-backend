@@ -19,7 +19,7 @@ description: >-
 > son émetteur, son host, son client OAuth et ses 10 comptes qualifiés. Trois règles en
 > sont sorties, toutes contre-intuitives, toutes payées en prod :
 > - ⚠️ **La découverte annonce la FAÇADE sur le host du tenant, JAMAIS son émetteur en
->   direct.** Annoncer l'émetteur paraît plus honnête et retire `oauth_facade` du chemin —
+>   direct.** Annoncer l'émetteur paraît plus honnête et retire `auth.facade` du chemin —
 >   or elle existe parce que Logto self-hosted **ne fait pas de DCR** : le client échoue sur
 >   « l'enregistrement automatique n'est pas pris en charge ». La façade s'annonce comme
 >   serveur (issuer = le host) et route autorisation/jeton/clés vers l'annuaire du tenant.

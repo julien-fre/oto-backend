@@ -24,7 +24,10 @@ import pytest
 
 from _datastore_rest import call, stub_authz
 
-from oto_mcp import atlassian_oauth, db, folk_oauth, google_oauth
+from oto_mcp import db
+from oto_mcp.auth import atlassian as atlassian_oauth
+from oto_mcp.auth import folk as folk_oauth
+from oto_mcp.auth import google as google_oauth
 from oto_mcp.capabilities import federated_oauth as fo
 
 _COMPTES = [

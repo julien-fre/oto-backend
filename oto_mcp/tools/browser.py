@@ -39,7 +39,7 @@ from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 
 from .. import access, browser_session, browserbase
 from ..connectors import identities as connector_identities
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 
 _CONNECTOR = "browser"
 

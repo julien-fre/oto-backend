@@ -464,7 +464,7 @@ def reconcile_tenant_migration(new_sub: str, email_hint: Optional[str] = None) -
             if not pre:
                 return False
         # Email AUTORITATIF (source de vérité) — la décision de merge se prend ici.
-        from ..oauth_facade import logto_user_primary_email
+        from ..auth.facade import logto_user_primary_email
         from ..tenancy import ForeignTenantDirectory
         try:
             email = logto_user_primary_email(new_sub)

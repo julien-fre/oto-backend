@@ -19,7 +19,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import session_org
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 from ..session_visibility import apply_session_visibility
 from ._types import (AuthzDenied, Capability, NotModified, RawCtx,
                      apply_flat_signature)

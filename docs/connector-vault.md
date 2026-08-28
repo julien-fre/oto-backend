@@ -119,7 +119,7 @@ Tables `orgs`/`org_members`(index partiel `org_members_one_active`)/`org_entitle
 ## Folds des secrets de session (cible : coffre unique)
 
 - **LinkedIn / Crunchbase** : cookie chiffré dans `secret_enc`, UA dans `meta` ; `db.set/get/clear_linkedin_cookie`/`crunchbase_session` sur le coffre ; statut /api/me via `credential_status` (sans déchiffrer).
-- **Google OAuth multi-compte** : `connector='google'`, `account=email` ; refresh_token chiffré, access_token/expires_at/scopes/is_default/granted_at dans `meta`. Les 6 fns db (`set/get/list/set_default/delete_google_oauth`, `update_google_access_token`) sur le coffre ; `update_google_access_token` = `update_meta` (merge, sans re-chiffrer). Flow OAuth `google_oauth.py` inchangé (seule la couche stockage change). ⚠️ access_token reste en **clair dans `meta`** (bearer ~1h, dérivé) ; seul le refresh_token (`secret_enc`) est chiffré.
+- **Google OAuth multi-compte** : `connector='google'`, `account=email` ; refresh_token chiffré, access_token/expires_at/scopes/is_default/granted_at dans `meta`. Les 6 fns db (`set/get/list/set_default/delete_google_oauth`, `update_google_access_token`) sur le coffre ; `update_google_access_token` = `update_meta` (merge, sans re-chiffrer). Flow OAuth `auth/google.py` inchangé (seule la couche stockage change). ⚠️ access_token reste en **clair dans `meta`** (bearer ~1h, dérivé) ; seul le refresh_token (`secret_enc`) est chiffré.
 
 ## Connecteurs remote — bridges (ADR 0003, pilote mm)
 
@@ -245,7 +245,7 @@ Deux corollaires qui coûtent cher quand on les découvre en production :
 
 ### Application ≠ jeton
 
-Corollaire de modèle, visible sur Salesforce (`salesforce_oauth.py`) : l'**application**
+Corollaire de modèle, visible sur Salesforce (`auth/salesforce.py`) : l'**application**
 OAuth (`client_id`/`client_secret`/`login_url`) est une **infrastructure d'org** — un
 admin la pose une fois ; le **refresh token** est une **identité** — il appartient à qui
 consent.
@@ -273,7 +273,7 @@ articles-only). Avec, il ne reste que le geste utile : consentir.
   app OAuth est enregistrée dans **sa** région (`accounts.zoho.eu` rejette un client
   `.com`), donc la région fait partie de la clé. Accesseurs
   `credentials_store.{set,get,list,clear}_editor_app`.
-- **Ordre de lecture** (`zoho_oauth.app_fields`) : le BYO **prime** (membre > équipe >
+- **Ordre de lecture** (`auth.zoho.app_fields`) : le BYO **prime** (membre > équipe >
   org) — une org qui veut voir SON app dans ses logs la pose et rien ne change pour
   elle ; l'app d'éditeur n'est le repli que si personne n'a rien apporté.
 - ⚠️ **Invariant qui rend le rangement sûr** : `walk_cascade` ne propose le palier

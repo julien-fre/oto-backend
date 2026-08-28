@@ -46,7 +46,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 
 from .. import access, browser_session, browserbase
-from ..auth_hooks import current_user_sub_from_token
+from ..auth.hooks import current_user_sub_from_token
 
 # Origine de la SPA — toutes les routes internes (DMS, direct_uploads, crm) en
 # dérivent. La page chargée pour porter la session est same-origin (un chemin de

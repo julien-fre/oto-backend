@@ -69,7 +69,7 @@ async def _note_procedure_version(doctrine: str | None) -> int | None:
         return None
     try:
         from .. import session_org
-        from ..auth_hooks import current_user_sub_from_token
+        from ..auth.hooks import current_user_sub_from_token
         sub = current_user_sub_from_token()
         version = await asyncio.to_thread(_procedure_version, sub, doctrine)
     except Exception:
@@ -85,7 +85,7 @@ async def _persist_open(run_id: str, label: str, doctrine: str | None) -> None:
     la source du run actif ; ceci ne fait qu'ajouter label/doctrine en base."""
     try:
         from .. import access, db
-        from ..auth_hooks import current_user_sub_from_token
+        from ..auth.hooks import current_user_sub_from_token
         sub = current_user_sub_from_token()
         org_id = access.current_org(sub) if sub else None
         project_id = access.current_project() if sub else None  # projet actif gelé (ADR 0032 B3)
@@ -100,7 +100,7 @@ async def _persist_open(run_id: str, label: str, doctrine: str | None) -> None:
 async def _persist_close(run_id: str, outcome: str, note: str | None) -> None:
     try:
         from .. import db
-        from ..auth_hooks import current_user_sub_from_token
+        from ..auth.hooks import current_user_sub_from_token
         # Scope par sub : on ne clôt QUE son propre run (un run_id d'autrui — session
         # réutilisée, #108 — ne peut pas être fermé). No-op si run_id/sub ne matchent pas.
         await asyncio.to_thread(db.finish_run, run_id, outcome, note,

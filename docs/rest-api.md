@@ -250,7 +250,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   relisant le descripteur : c'est son application qui est la garde).
   ⚠️ **Le secret d'un jeton n'est rendu QU'À LA CRÉATION** — il n'est stocké que haché.
   `scopes: null` = jeton non porté (pleins pouvoirs du sub) ; sinon il est borné à des
-  tableaux/projets nommés (`token_scopes`). **Trois asymétries membre/admin conservées** :
+  tableaux/projets nommés (`auth.token_scopes`). **Trois asymétries membre/admin conservées** :
   la création membre rend **201** et l'admin **200** ; le `DELETE` membre rend `{ok}` et
   l'admin `{ok, id}` ; seul le palier MEMBRE refuse un tableau que l'émetteur ne voit pas
   (`400 unknown_namespace` — sinon le jeton serait muet et on le croirait branché), et
@@ -316,7 +316,7 @@ chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/
   Sinon une fuite est **auto-entretenue** — l'attaquant s'émet un second jeton (non-expirant)
   avant qu'on révoque le premier, et peut révoquer les jetons légitimes. Émettre un jeton
   redevient un acte humain, ce qui borne la gravité réelle d'une fuite à la portée du jeton.
-- **Portée opt-in** (`token_scopes.py`, colonne `user_api_tokens.scopes` JSONB) : à la
+- **Portée opt-in** (`auth/token_scopes.py`, colonne `user_api_tokens.scopes` JSONB) : à la
   création, `POST /api/me/tokens {"label":"scout", "scopes":{"namespaces":{"leads":"read"}}}`
   rend un jeton **porté** — deny-by-default, il n'ouvre QUE les tableaux nommés, en `read`
   ou `write` (write ⊃ read), et **rien d'autre** : ni `/api/me`, ni les connecteurs, ni les
@@ -329,7 +329,7 @@ chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/
     tableaux de la portée, droits **rabattus** sur ceux du jeton (`permission`/`can_write`/
     `can_govern`) — sans lui une intégration n'aurait pas le schéma de son tableau
     (`page_rows` ne le rend pas) et ne pourrait pas peindre ses colonnes.
-  - La table des routes autorisées (`token_scopes._ALLOWED`) est la **seule** porte : une
+  - La table des routes autorisées (`auth.token_scopes._ALLOWED`) est la **seule** porte : une
     route ajoutée demain est refusée sans qu'on ait à y penser.
   - ⚠️ La portée nomme le tableau par son **nom** (ce que l'URL adresse), pas par son id :
     après un renommage, ré-émettre le jeton.
@@ -345,7 +345,7 @@ chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/
 > deux crans sur les jetons `oto_` : leur **gestion** exige une session interactive
 > (`allow_api_token=False` sur `/api/me/tokens*` + miroirs admin — un jeton ne fabrique
 > plus de jeton, une fuite n'est plus auto-entretenue), et un jeton peut naître **porté**
-> (`token_scopes.py`, `user_api_tokens.scopes`) : deny-by-default borné à des tableaux
+> (`auth/token_scopes.py`, `user_api_tokens.scopes`) : deny-by-default borné à des tableaux
 > nommés en read/write. `scopes` NULL = jeton historique, inchangé. Depuis le 03/08 la
 > portée nomme aussi des **projets** (`{"projects": {"12": "read"}}`), servis par
 > `GET /api/me/projects/{id}` — la forme POST porte sa cible dans le CORPS, donc aucune

@@ -33,7 +33,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from . import salesforce_oauth
+from .auth import salesforce as salesforce_oauth
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def make_routes(
         désinstallé puis réinstallé le connecteur en boucle pendant cinq heures.
         Nom générique : une clé nommée d'après un connecteur obligerait chaque surface
         à en connaître le nom, exactement ce qu'on retire partout ailleurs."""
-        from . import oauth_flow
+        from .auth import flow as oauth_flow
         return oauth_flow.return_url(
             return_app, f"?connector=salesforce&connect={etat}", org=org_id)
 

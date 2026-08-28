@@ -158,7 +158,7 @@ def _is_oauth_exchange_refused(exc) -> bool:
     Import local : `oauth_flow` importe la config au chargement, et ce module est importé
     très tôt par le middleware Sentry."""
     try:
-        from .oauth_flow import OAuthExchangeRefused
+        from .auth.flow import OAuthExchangeRefused
     # noqa: SILENT — prédicat de forme : indécidable ⇒ False (pas d'OAuth deviné)
     except Exception:
         return False

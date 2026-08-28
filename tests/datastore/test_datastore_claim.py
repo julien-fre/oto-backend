@@ -18,7 +18,7 @@ import pytest
 from _datastore_rest import call, stub_authz
 
 from oto_mcp.datastore import core as D
-from oto_mcp import token_scopes
+from oto_mcp.auth import token_scopes
 from oto_mcp.capabilities import datastore_claim as dsc
 from oto_mcp.capabilities import datastore_rows as dsr
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
