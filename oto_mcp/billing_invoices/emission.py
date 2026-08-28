@@ -148,17 +148,21 @@ def _verifier_montants(doc: dict, attendu_ttc: int, attendu_ht: int, ref: str) -
 
     Le contrôle attrape ce qu'aucun autre ne peut voir : un code de TVA qui ferait
     calculer 20 % là où le régime est à 0 %. Un champ absent n'est PAS un écart —
-    on ne bloque pas une facture sur une réponse plus pauvre qu'attendu, on le dit."""
+    on ne bloque pas une facture sur une réponse plus pauvre qu'attendu, on le dit.
+
+    Comparaison en VALEUR ABSOLUE des deux côtés : un avoir est une facture aux
+    montants négatifs (convention Pennylane), et l'appelant passe déjà des attendus
+    positifs. Comparer les signes ferait échouer tout avoir."""
     ttc, ht = _cents(doc.get("currency_amount")), _cents(doc.get("currency_amount_before_tax"))
     if ttc is None and ht is None:
         logger.warning("facturation: brouillon %s sans total lisible — contrôle de "
                        "montant impossible, finalisation quand même", ref)
         return
     ecarts = []
-    if ttc is not None and ttc != attendu_ttc:
-        ecarts.append(f"TTC {ttc} ≠ {attendu_ttc} centimes débités")
-    if ht is not None and ht != attendu_ht:
-        ecarts.append(f"HT {ht} ≠ {attendu_ht} centimes")
+    if ttc is not None and abs(ttc) != attendu_ttc:
+        ecarts.append(f"TTC {abs(ttc)} ≠ {attendu_ttc} centimes débités")
+    if ht is not None and abs(ht) != attendu_ht:
+        ecarts.append(f"HT {abs(ht)} ≠ {attendu_ht} centimes")
     if ecarts:
         raise InvoiceRefused(
             "amount_mismatch",
@@ -245,21 +249,26 @@ def billing_contact(org_id: int, identity: Optional[dict] = None) -> Optional[st
     return None
 
 
-def _notifier(row: dict, org_id: int) -> None:
-    """Envoie l'e-mail une seule fois par document (`emailed_at`). Best-effort :
-    un e-mail non parti ne remet pas en cause la facture."""
+def _notifier(row: dict, org_id: int) -> dict:
+    """Envoie l'e-mail une seule fois par document (`emailed_at`), et rend la ligne
+    À JOUR — l'envoi est un fait qui s'écrit, l'appelant ne doit pas rendre au
+    client une ligne qui l'ignore.
+
+    Best-effort : un e-mail non parti ne remet pas en cause la facture, qui est
+    émise, numérotée et téléchargeable. L'échec se lit à `emailed_at IS NULL`."""
     if row.get("emailed_at") or row.get("status") != "issued":
-        return
+        return row
     to = billing_contact(org_id)
     if not to:
         logger.warning("facturation: aucune adresse de facturation pour l'org %s — "
                        "document %s non notifié", org_id, row.get("number") or row["id"])
-        return
+        return row
     vue = dict(row)
     vue["vat_mention"] = billing_vat.mention_for(row.get("vat_scheme") or "")
-    lien = links.link_for("billing")
-    if mail.send_invoice_email(to, vue, app_url=lien):
-        db_invoices.mark_billing_invoice_emailed(row["id"], to)
+    if not mail.send_invoice_email(to, vue, app_url=links.link_for("billing")):
+        return row
+    db_invoices.mark_billing_invoice_emailed(row["id"], to)
+    return db_invoices.get_billing_invoice(row["id"]) or row
 
 
 # ── facture ──────────────────────────────────────────────────────────────────
@@ -287,8 +296,7 @@ def ensure_invoice_for_payment(payment_row: dict, *,
     row = db_invoices.ensure_billing_invoice(org_id, row_id, kind="invoice",
                                              payment_ref=ref)
     if row["status"] == "issued":
-        _notifier(row, org_id)
-        return row
+        return _notifier(row, org_id)
 
     label_plan, interval = _plan_meta(org_id, plan)
     date = _paid_at(payment_row)
@@ -312,8 +320,7 @@ def ensure_invoice_for_payment(payment_row: dict, *,
         return db_invoices.get_billing_invoice(row["id"])
     logger.info("facturation: org %s — facture %s émise pour le paiement %s",
                 org_id, row.get("number"), row_id)
-    _notifier(row, org_id)
-    return row
+    return _notifier(row, org_id)
 
 
 # ── avoir ────────────────────────────────────────────────────────────────────
@@ -352,8 +359,7 @@ def ensure_credit_note_for_refund(payment_row: dict,
                          "%s centimes alors que l'avoir %s n'en couvre que %s : "
                          "avoir complémentaire à émettre À LA MAIN",
                          org_id, row_id, refunded_cents, row.get("number"), deja)
-        _notifier(row, org_id)
-        return row
+        return _notifier(row, org_id)
 
     if not facture or facture.get("status") != "issued":
         # Un avoir annule une facture : sans facture émise, il n'a rien à annuler.
@@ -395,8 +401,7 @@ def ensure_credit_note_for_refund(payment_row: dict,
         return db_invoices.get_billing_invoice(row["id"])
     logger.info("facturation: org %s — avoir %s émis (%s centimes) sur la facture %s",
                 org_id, row.get("number"), ttc, facture.get("number"))
-    _notifier(row, org_id)
-    return row
+    return _notifier(row, org_id)
 
 
 # ── les deux points d'appel du cycle de paiement ─────────────────────────────
@@ -446,10 +451,17 @@ def sweep(limit: int = 25) -> dict:
     """Le filet du `billing_runner` : facturer ce qui ne l'a pas été, réessayer ce
     qui a échoué. Compteurs pour le journal du tick."""
     counts: dict[str, int] = {}
+    # Les paiements traités ci-dessous viennent d'être tentés : sans cette mémoire,
+    # la file d'attente les reprendrait dans le MÊME tick, et `attempts` compterait
+    # deux essais là où il n'y a eu qu'une occasion.
+    vus: set[int] = set()
     for payment_row in db_invoices.paid_payments_without_invoice(limit):
         ensure_invoice_for_payment(payment_row)
+        vus.add(payment_row["id"])
         counts["invoice_new"] = counts.get("invoice_new", 0) + 1
     for row in db_invoices.pending_billing_invoices(limit):
+        if row["payment_row_id"] in vus:
+            continue
         payment_row = db_invoices.billing_payment_row(row["payment_row_id"])
         if not payment_row:
             continue

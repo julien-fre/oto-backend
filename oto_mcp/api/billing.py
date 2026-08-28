@@ -14,10 +14,13 @@ Même exception, même précédent que l'export ZIP d'un projet
 (`api/projects.py::me_project_export`). La LISTE, elle, reste une capacité
 (`capabilities/billing_invoices.py`).
 
-⚠️ Cette seconde route n'est montée que si `OTO_BILLING_ENABLED=1` — même gate que
-les capacités billing, pour que la surface facturation apparaisse ou disparaisse
-d'un bloc. Le webhook, lui, est monté toujours : Mollie doit obtenir un 200 même
-quand le billing dort.
+⚠️ Les deux sont montées **toujours**, gate ou pas — à la différence des capacités
+billing, qui disparaissent de la table quand `OTO_BILLING_ENABLED` n'est pas posé.
+Une route écrite à la main est déclarée dans deux cliquets (la table de routes figée
+et `test_rest_modules_are_capabilities`), et une route qui apparaît ou disparaît
+selon l'environnement les ferait mentir l'un ou l'autre selon la machine. Le gate
+vit donc DANS le handler : billing dormant ⟹ 404, ce qui est exactement ce que voit
+un client d'une route absente.
 """
 from __future__ import annotations
 
@@ -65,6 +68,10 @@ def make_routes(options_handler: Callable[[Request], Awaitable[Response]],
         l'org de session est celle qu'on facture. `roles.is_org_member` porte
         l'escalade admin plateforme, comme la règle `ORG_MEMBER_OF` des capacités.
         """
+        if not billing.is_enabled():
+            # Billing dormant (dark launch ADR 0043) : la surface n'existe pas pour
+            # ce déploiement. Même réponse qu'une route absente.
+            return json_error(request, 404, "billing_disabled")
         sub, err = await authenticate(request, verifier)
         if err:
             return err
@@ -88,7 +95,12 @@ def make_routes(options_handler: Callable[[Request], Awaitable[Response]],
             return json_error(request, 409, "pdf_not_available",
                               "Le PDF de ce document n'a pas encore été récupéré "
                               "auprès du fournisseur — il le sera automatiquement.")
-        nom = row.get("pdf_filename") or f"facture-{invoice_id}.pdf"
+        # Le nom de fichier dérive d'une valeur venue du fournisseur (le numéro de
+        # facture) et atterrit dans un EN-TÊTE : on en retire guillemets et sauts de
+        # ligne. Même réflexe que `email._no_crlf` — une donnée d'amont ne compose
+        # pas un en-tête sans passer par un filtre.
+        brut = row.get("pdf_filename") or f"facture-{invoice_id}.pdf"
+        nom = "".join(c for c in brut if c not in '"\r\n\x00') or f"facture-{invoice_id}.pdf"
         return Response(row["pdf"], media_type="application/pdf",
                         headers={"Content-Disposition": f'attachment; filename="{nom}"'})
 
@@ -96,7 +108,7 @@ def make_routes(options_handler: Callable[[Request], Awaitable[Response]],
         Route("/api/billing/webhook", webhook, methods=["POST"]),
         Route("/api/billing/webhook", options_handler, methods=["OPTIONS"]),
     ]
-    if billing.is_enabled() and authenticate is not None:
+    if authenticate is not None:
         routes += [
             Route("/api/me/billing/invoices/{id}/pdf", invoice_pdf, methods=["GET"]),
             Route("/api/me/billing/invoices/{id}/pdf", options_handler,
