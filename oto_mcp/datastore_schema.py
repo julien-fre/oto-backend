@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from functools import lru_cache
 from datetime import datetime
 from typing import Any, Optional
 
@@ -291,6 +292,28 @@ def max_length_of(field: dict) -> Optional[int]:
     # Une borne sur un composite n'a pas de sens (longueur de quoi ?) et la
     # définition la refuse ; si elle traîne dans un vieux schéma, on l'ignore.
     return None if field.get("type") in COMPOSITE_TYPES else ml
+
+
+def pattern_of(field: dict) -> Optional[str]:
+    """Le motif déclaré sur un field, S'IL est exploitable en sûreté — sinon None.
+
+    Même doctrine que `max_length_of` : volontairement muette sur une déclaration
+    qu'on ne sait pas exécuter, parce qu'un schéma déjà en base — posé quand la clé
+    était encore ignorée — ne doit pas faire exploser une écriture. C'est
+    `_validate_fields_def` qui REFUSE, à la pose, devant celui qui peut corriger.
+
+    Trois conditions, chacune vérifiée à la pose : une chaîne, sur un champ scalaire,
+    et sur un champ BORNÉ. La borne n'est pas un confort — c'est elle qui rend le
+    coût du motif majorable (cf. `pattern_refusal`)."""
+    src = field.get("pattern")
+    if not isinstance(src, str) or not src:
+        return None
+    if field.get("type") in COMPOSITE_TYPES:
+        return None
+    ml = max_length_of(field)
+    if not ml or ml > PATTERN_MAX_SUBJECT:
+        return None
+    return None if pattern_refusal(src, ml) else src
 
 
 def top_level_bounds(schema: Optional[dict]) -> dict[str, int]:
@@ -649,6 +672,179 @@ def queue_release_warning(schema: Optional[dict]) -> Optional[str]:
             "`data_release` après chaque verdict. Cf. guide `work-queue`.")
 
 
+# ── `pattern` : la FORME d'une valeur, quand la taille ne suffit pas (#387) ───
+#
+# Jumeau de `max_length`, et il répond à ce que la borne ne sait PAS dire. Cas
+# mesuré : un champ qui doit porter une énumération de catégories séparées par des
+# points-virgules, pas une phrase de positionnement. Les longueurs des deux formes
+# se recouvrent (20 à 207 caractères) — borner à 150 tue les deux, borner à 250
+# n'attrape rien. Ce qui les sépare est la STRUCTURE.
+#
+# ⚠️ **Une expression fournie par un appelant est une arme.** Elle s'exécute à
+# chaque écriture, DANS la boucle unique du serveur : un motif à explosion
+# combinatoire n'y coûte pas une requête, il coûte le serveur entier — même famille
+# que la bombe de décompression (docs/conventions.md, 13/08).
+#
+# Un garde purement SYNTAXIQUE (« pas de groupe quantifié ») ne suffit pas, et c'est
+# une mesure, pas une intuition — sans un seul groupe ni une seule alternance :
+#     `.*.*.*.*.*z`       sur  80 caractères ....   0,75 s
+#     `.*.*.*.*.*.*.*z`   sur  60 caractères ....  14,8  s
+# Ce qui explose est le nombre de FAÇONS de découper le sujet, pas la forme du motif.
+#
+# D'où un BUDGET calculé sur l'arbre du motif : le produit, quantificateur par
+# quantificateur, du nombre de longueurs qu'il peut prendre — une majoration de
+# l'espace de recherche du moteur. Il se calcule CONTRE la longueur du sujet, ce qui
+# exige `max_length` sur le même champ : sans sujet borné il n'y a pas de budget,
+# donc pas de garantie, et un motif dont on ne sait pas majorer le coût est refusé
+# en le disant. Tout ce que l'analyse ne reconnaît pas est refusé de la même façon —
+# fail-closed : un motif accepté par ignorance est exactement le défaut à éviter.
+
+PATTERN_MAX_SRC = 200          # longueur du MOTIF
+PATTERN_MAX_SUBJECT = 1000     # borne maximale d'un champ qui porte un motif
+PATTERN_BUDGET = 100_000       # explorations majorées tolérées
+
+
+def _re_parser():
+    """Le parseur d'expressions de la stdlib — `re._parser` (3.11+) ou `sre_parse`
+    (3.10, la version de la box). Aucun des deux : on ne sait plus majorer, donc on
+    ne laisse plus passer un motif (le refus vit dans `pattern_refusal`)."""
+    try:
+        from re import _parser as p          # 3.11+
+        return p
+    except ImportError:
+        pass
+    try:
+        import sre_parse as p                # 3.10
+        return p
+    except ImportError:                      # pragma: no cover — stdlib amputée
+        return None
+
+
+# Ce qu'on refuse en le NOMMANT, plutôt qu'en rendant « motif invalide » : chacune
+# de ces constructions sort du modèle de coût, aucune n'a de majoration simple.
+_PATTERN_REFUSES = {
+    "GROUPREF": "une référence arrière",
+    "GROUPREF_EXISTS": "un groupe conditionnel",
+    "ASSERT": "une assertion avant/arrière",
+    "ASSERT_NOT": "une assertion négative",
+}
+
+# Feuilles : elles consomment un caractère (ou zéro pour une ancre), sans choix.
+_PATTERN_FEUILLES = {"LITERAL", "NOT_LITERAL", "IN", "ANY", "AT", "RANGE",
+                     "CATEGORY", "NEGATE", "ANY_ALL"}
+
+
+class _MotifTropCher(Exception):
+    """Le motif sort du budget, ou de ce que l'analyse sait majorer."""
+
+
+def _op_name(op) -> str:
+    return getattr(op, "name", None) or str(op)
+
+
+def _sub_budget(sub, cap: int) -> float:
+    """Le budget d'une séquence — PRODUIT des budgets de ses termes.
+
+    Le produit, pas la somme : le moteur revient en arrière, donc il explore le
+    produit cartésien des découpages que ses termes autorisent. C'est exactement ce
+    que la mesure de `.*.*.*z` montre, et c'est pourquoi une majoration additive
+    laisserait passer la famille polynomiale."""
+    total = 1.0
+    for op, av in sub:
+        total *= _node_budget(op, av, cap)
+        if total > PATTERN_BUDGET:
+            raise _MotifTropCher(
+                f"il autorise plus de {PATTERN_BUDGET} découpages d'une valeur de "
+                f"{cap} caractères")
+    return total
+
+
+def _node_budget(op, av, cap: int) -> float:
+    nom = _op_name(op)
+    if nom in _PATTERN_FEUILLES:
+        return 1.0
+    if nom in _PATTERN_REFUSES:
+        raise _MotifTropCher(
+            _PATTERN_REFUSES[nom] + " : cette construction n'a pas de coût "
+            "majorable, oto ne l'exécute pas")
+    if nom in ("MAX_REPEAT", "MIN_REPEAT", "POSSESSIVE_REPEAT"):
+        lo, hi, corps = av
+        # `MAXREPEAT` (le sentinelle de `*`/`+`) vaut 2**32-1 : le sujet étant borné,
+        # c'est la borne du champ qui plafonne le nombre de répétitions réelles.
+        hi = cap if hi > cap else hi
+        lo = cap if lo > cap else lo
+        longueurs = float(max(hi - lo, 0) + 1)
+        interne = _sub_budget(corps, cap)
+        if interne > 1.0:
+            # Un corps qui offre DÉJÀ un choix, répété : l'espace de recherche est
+            # `interne ** répétitions`. C'est la famille `(a+)+` / `(a|aa)*`, celle
+            # dont le coût est exponentiel — on ne la borne pas, on la refuse.
+            raise _MotifTropCher(
+                "un groupe qui offre déjà plusieurs découpages y est répété "
+                "(`(a+)+`, `(a|aa)*`) — l'exploration y est exponentielle")
+        return longueurs
+    if nom == "SUBPATTERN":
+        return _sub_budget(av[3], cap)
+    if nom == "ATOMIC_GROUP":
+        return _sub_budget(av, cap)
+    if nom == "BRANCH":
+        # Une alternance NON répétée coûte la somme de ses branches — `^(oui|non)$`
+        # reste bon marché. Répétée, elle tombe dans le cas ci-dessus.
+        return float(sum(_sub_budget(b, cap) for b in av[1])) or 1.0
+    raise _MotifTropCher(
+        f"il emploie une construction que l'analyse de coût ne reconnaît pas "
+        f"({nom}) — oto n'exécute que ce dont elle sait majorer le prix")
+
+
+def pattern_refusal(src: str, max_length: int) -> Optional[str]:
+    """La RAISON de refuser ce motif sur un champ borné à `max_length`, ou None.
+
+    Rendue en clair et adressée à l'auteur : un refus qui dit « motif invalide » ne
+    laisse rien à corriger, et c'est ici — à la pose — qu'il reste corrigible."""
+    if not isinstance(src, str) or not src:
+        return "un motif est une chaîne non vide"
+    if len(src) > PATTERN_MAX_SRC:
+        return (f"{len(src)} caractères, maximum {PATTERN_MAX_SRC} — au-delà, le "
+                "coût d'exécution n'est plus majorable de façon utile")
+    try:
+        re.compile(src)
+    except re.error as e:
+        return f"expression invalide ({e})"
+    parseur = _re_parser()
+    if parseur is None:                      # pragma: no cover
+        return ("le parseur d'expressions de la stdlib est introuvable : oto ne "
+                "peut pas majorer le coût de ce motif, donc ne l'exécute pas")
+    try:
+        arbre = parseur.parse(src)
+    except Exception as e:                   # noqa: SILENT — traduit en refus nommé
+        return f"expression illisible par l'analyse de coût ({e})"
+    try:
+        _sub_budget(arbre, int(max_length))
+    except _MotifTropCher as e:
+        return str(e)
+    return None
+
+
+@lru_cache(maxsize=256)
+def _pattern_re(src: str):
+    """Le motif compilé, mémorisé — il s'exécute à chaque écriture de ligne."""
+    return re.compile(src)
+
+
+def top_level_patterns(schema: Optional[dict]) -> dict:
+    """`{clé: motif}` des champs de premier niveau porteurs d'un motif EXPLOITABLE.
+
+    Même restriction que `top_level_bounds` et `top_level_enum_options` : ce que
+    `data->>clé` sait relire sur l'existant. Sert l'avertissement « des lignes
+    existantes ne suivent déjà pas ce motif » à la pose du schéma."""
+    out: dict = {}
+    for f in _fields(schema):
+        cle, motif = f.get("key"), pattern_of(f)
+        if isinstance(cle, str) and cle and motif and not split_layer(cle)[1]:
+            out[cle] = motif
+    return out
+
+
 # ── validation de la DÉFINITION du schéma ────────────────────────────────────
 
 def validate_schema_def(schema: Optional[dict]) -> list[str]:
@@ -839,6 +1035,39 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
                 errors.append(
                     f"{fpath}: max_length ne borne qu'un champ scalaire "
                     f"(type={ftype} — borne le sous-champ concerné)")
+        # #387 : le motif se refuse ICI, devant celui qui le pose — jamais à
+        # l'écriture d'une ligne trois semaines plus tard. Un motif fautif accepté
+        # puis inerte est le pire des deux mondes : son auteur croit avoir posé un
+        # contrat. Trois refus, chacun nommant sa raison.
+        motif = f.get("pattern")
+        if motif is not None:
+            bornes = max_length_of(f)
+            if not isinstance(motif, str) or not motif:
+                errors.append(
+                    f"{fpath}: pattern doit être une expression régulière (une "
+                    f"chaîne non vide), reçu {motif!r}")
+            elif ftype in COMPOSITE_TYPES:
+                errors.append(
+                    f"{fpath}: pattern ne contraint qu'un champ scalaire "
+                    f"(type={ftype} — pose-le sur le sous-champ concerné)")
+            elif not bornes:
+                # La borne n'est pas un confort : c'est elle qui rend le coût du
+                # motif majorable. Sans sujet borné, aucune garantie — et le motif
+                # tourne dans la boucle UNIQUE du serveur, à chaque écriture.
+                errors.append(
+                    f"{fpath}: pattern exige max_length sur le même champ — le coût "
+                    f"d'un motif se majore contre la longueur de ce qu'il lit, et "
+                    f"oto n'exécute pas ce dont elle ne sait pas majorer le prix "
+                    f"(borne le champ, puis repose le motif)")
+            elif bornes > PATTERN_MAX_SUBJECT:
+                errors.append(
+                    f"{fpath}: pattern sur un champ borné à {bornes} caractères — "
+                    f"maximum {PATTERN_MAX_SUBJECT} : au-delà, contraindre la FORME "
+                    f"d'une valeur n'a plus de sens et son coût n'est plus majorable")
+            else:
+                raison = pattern_refusal(motif, bornes)
+                if raison:
+                    errors.append(f"{fpath}: pattern {motif!r} refusé — {raison}")
 
 
 # ── validation d'une ROW à l'écriture ────────────────────────────────────────
@@ -980,12 +1209,32 @@ def _row_errors(fields: list, data: dict, path: str,
             # sinon le refus fait deviner de combien on dépasse.
             errors.append(f"{fpath}: {len(value)} éléments, maximum {mi}")
         ml = max_length_of(f)
-        if ml and (written is None or key in written):
+        pose = written is None or key in written
+        trop_long = False
+        if ml and pose:
             n = len(value) if isinstance(value, str) else len(str(value))
             if n > ml:
                 # La longueur CONSTATÉE autant que la borne : un refus qui ne dit
                 # pas de combien on dépasse fait deviner (signal #383).
                 errors.append(f"{fpath}: {n} caractères, maximum {ml}")
+                trop_long = True
+        # #387 : la FORME, là où la taille ne sépare rien. Restreint aux clés que le
+        # geste ÉCRIT, comme la borne et pour la même raison : la validation porte
+        # sur le résultat MERGÉ, donc sans cette restriction une ligne déjà non
+        # conforme deviendrait inécritable pour n'importe quel patch, y compris sur
+        # un champ sans rapport (23 lignes gelées chez un client, oto-backend#284).
+        # Sauté quand la valeur dépasse déjà la borne : c'est ELLE qui garantit que
+        # le motif s'exécute sur un sujet de taille connue — et le refus est déjà
+        # posé, l'ajouter en double ne dirait rien de plus.
+        motif = pattern_of(f)
+        if motif and pose and not trop_long:
+            texte = value if isinstance(value, str) else str(value)
+            if not _pattern_re(motif).search(texte):
+                # La valeur CONSTATÉE autant que le motif attendu : sans le motif, le
+                # refus ne laisse rien à corriger ; sans la valeur, il fait relire la
+                # ligne pour savoir ce qui coince.
+                errors.append(
+                    f"{fpath}: {texte!r} ne suit pas le motif `{motif}`")
     return errors
 
 

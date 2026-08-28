@@ -88,6 +88,7 @@ class SchemaOpsMixin:
                                 # mais pas interrogeables en profondeur.
                                 dsv2.json_depth_warning(dsv2.json_fields_depth(schema)),
                                 self._overlong_warning(ns_id, schema),
+                                self._offpattern_warning(ns_id, schema),
                                 self._offending_enum_warning(ns_id, schema),
                                 self._orphan_columns_warning(ns_id, schema)) if w]
         if warnings:
@@ -188,6 +189,59 @@ class SchemaOpsMixin:
                 "écritures futures sont refusées, ces lignes-là restent en place "
                 "jusqu'à ce qu'on réécrive le champ (un patch d'un AUTRE champ "
                 "passe).")
+
+    @staticmethod
+    def _offpattern_warning(ns_id: int, schema: Optional[dict]) -> Optional[str]:
+        """Des rows existantes ne suivent DÉJÀ PAS un motif fraîchement posé (#387).
+
+        Pendant exact de `_overlong_warning`, pour la même raison : un schéma ne vaut
+        que pour l'avenir, mais l'ordre normal des choses est d'écrire d'abord et de
+        formaliser ensuite — au moment où le motif arrive, la table est pleine. Sans
+        ce relevé elle *paraît* conforme (elle a un format) tout en portant des
+        valeurs que le format condamne.
+
+        AVERTIT, ne refuse pas — et le motif ne gèle rien : comme la borne, il ne
+        juge que les clés qu'un geste ÉCRIT, donc un patch d'un autre champ passe.
+
+        Le verdict se calcule ICI, en Python, sur les valeurs distinctes rendues par
+        la base : c'est le MÊME moteur d'expressions que celui qui refusera les
+        écritures. Le poser en SQL (`~` de PostgreSQL) ferait compter par un moteur
+        et refuser par un autre, dont les dialectes divergent — un avertissement qui
+        annonce un nombre que le refus ne confirme pas est pire que pas
+        d'avertissement du tout."""
+        motifs = dsv2.top_level_patterns(schema)
+        if not motifs:
+            return None
+        releve = db.datastore_field_values(ns_id, list(motifs))
+        detail, tronque = [], False
+        for champ, motif in sorted(motifs.items()):
+            vu = releve.get(champ) or {}
+            hors = [v for v in vu.get("values") or []
+                    if not dsv2._pattern_re(motif).search(str(v["value"]))]
+            if not hors:
+                continue
+            tronque = tronque or bool(vu.get("truncated"))
+            lignes = sum(int(v["rows"]) for v in hors)
+            echantillon = ", ".join(f"« {v['value']} » ({v['rows']})"
+                                    for v in hors[:3])
+            detail.append(
+                f"  `{champ}` : {lignes} ligne(s) hors motif `{motif}` — "
+                + echantillon
+                + (f", et {len(hors) - 3} autre(s) valeur(s)" if len(hors) > 3
+                   else ""))
+        if not detail:
+            return None
+        msg = ("motif posé sur des données qui n'y répondent pas :\n"
+               + "\n".join(detail)
+               + "\nCes lignes restent en place ; elles seront refusées au geste "
+                 "qui RÉÉCRIT ce champ (un patch d'un autre champ passe). Corrige-"
+                 "les, ou élargis le motif.")
+        if tronque:
+            # Un relevé partiel qui se présenterait comme un total rassurerait
+            # exactement là où il ne faut pas.
+            msg += (" ⚠️ Trop de valeurs distinctes pour toutes les examiner : ce "
+                    "compte est un PLANCHER, pas un total.")
+        return msg
 
     @staticmethod
     def _offending_enum_warning(ns_id: int, schema: Optional[dict]) -> Optional[str]:

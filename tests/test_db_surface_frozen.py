@@ -48,7 +48,8 @@ _SURFACE = """
     datastore_aggregate datastore_claim_next datastore_claim_row
     datastore_claimed_rows datastore_count_rows datastore_delete_row
     datastore_drop_column datastore_drop_key_index datastore_embed
-    datastore_ensure_key_index datastore_find_row_id_by_key datastore_get_row
+    datastore_ensure_key_index datastore_field_values
+    datastore_find_row_id_by_key datastore_get_row
     datastore_has_key_index datastore_insert_row datastore_key_dup_groups
     datastore_list_rows datastore_list_rows_after
     datastore_merge_key_duplicates datastore_merge_row_locked

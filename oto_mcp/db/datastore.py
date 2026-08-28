@@ -241,6 +241,39 @@ def datastore_offending_enum_values(ns_id: int, options: dict,
     return sorted(out, key=lambda d: d["rows"], reverse=True)
 
 
+def datastore_field_values(ns_id: int, fields, cap: int = 20000) -> dict:
+    """Valeurs DISTINCTES déjà en base, par champ — `{champ: {values, truncated}}`,
+    `values` = `[{value, rows}]`, la plus fréquente d'abord.
+
+    Rend la donnée BRUTE plutôt qu'un verdict, et c'est le point : le contrôle qui
+    l'exploite (le motif `pattern` de #387) doit s'exécuter avec le MÊME moteur que
+    celui qui refusera les écritures. Poser le prédicat en SQL — l'opérateur `~` de
+    PostgreSQL — ferait juger l'existant par un second moteur d'expressions, dont le
+    dialecte diverge de Python sur `\\d`, `\\w` et les drapeaux : l'avertissement
+    annoncerait alors un nombre de lignes que le refus ne confirmerait pas.
+
+    `truncated` est rendu plutôt que subi : au-delà de `cap` valeurs distinctes, le
+    relevé est PARTIEL et le dit — un compte tronqué qui se présente comme un total
+    rassure exactement là où il ne faut pas."""
+    from psycopg import sql as _sql
+    out: dict = {}
+    with _connect() as conn:
+        for field in fields or []:
+            q = _sql.SQL(
+                "SELECT {v} AS value, COUNT(*) AS rows "
+                "FROM datastore_rows WHERE ns_id = %s "
+                "AND {v} IS NOT NULL AND {v} <> '' "
+                "GROUP BY 1 ORDER BY 2 DESC LIMIT %s"
+            ).format(v=field_value_sql(field))
+            rows = conn.execute(q, (ns_id, int(cap) + 1)).fetchall()
+            out[field] = {
+                "values": [{"value": r["value"], "rows": int(r["rows"])}
+                           for r in rows[:cap]],
+                "truncated": len(rows) > cap,
+            }
+    return out
+
+
 def datastore_drop_column(ns_id: int, key: str) -> int:
     """Retire la clé `key` du blob `data` de TOUTES les rows du namespace. Renvoie le
     nombre de rows modifiées (0 = la colonne n'existait dans aucune).

@@ -359,10 +359,17 @@ def register(mcp: FastMCP) -> None:
           contacts = list of {nom, titre, email}).
         - write validation: `field.required: true`, type conformity,
           `field.required_when: {"<field>": "<value>"}` (e.g. deliverables required
-          when status="qualified"), and `field.max_length: <int>` on a SCALAR field
-          — active when `strict: true` or any field has required/required_when/
-          max_length. A non-conforming write FAILS naming the culprit (max_length
-          reports the actual length AND the bound).
+          when status="qualified"), `field.max_length: <int>` on a SCALAR field, and
+          `field.pattern: "<regex>"` for its SHAPE when the size does not separate
+          anything (a code, a snake_case identifier) — `re.search`, so anchor it
+          yourself (`^…$`). `pattern` REQUIRES `max_length` on the same field (≤1000):
+          the cost of a regex is bounded against what it reads, and oto refuses what
+          it cannot price — an ambiguous repeated group, a backreference, a lookaround
+          are rejected AT DECLARATION TIME, each naming why.
+          Validation is active when `strict: true` or any field has required/
+          required_when/max_length. A non-conforming write FAILS naming the culprit
+          (max_length reports the actual length AND the bound; pattern reports the
+          value it saw AND the motif).
           Bound the fields meant to hold ONE short value (a job title, a city): a
           column that collects reasoning stops being groupable/filterable. The
           bound applies to the keys a write actually SETS, so rows already over it

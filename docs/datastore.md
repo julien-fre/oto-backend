@@ -266,6 +266,49 @@ cacherait des données réelles, alors que le contrat 0016 promet qu'un champ li
 *s'affiche* et que #294 vient de trancher « signaler, jamais refuser ni masquer ». On
 supprime la colonne ou on la déclare ; on ne la rend pas invisible.
 
+**Contraindre la FORME d'une valeur (#387).** `field.pattern` — jumeau de
+`field.max_length`, et il dit ce que la borne ne sait pas dire. Cas mesuré : un champ qui
+doit porter une ÉNUMÉRATION de catégories séparées par des points-virgules, pas une
+phrase de positionnement ; les longueurs des deux formes se recouvrent (20 à 207
+caractères), donc borner à 150 tue les deux et borner à 250 n'attrape rien — **ce qui les
+sépare est la structure**. Avant ce lot, `pattern` était accepté sans erreur et jamais
+appliqué : le pire des deux mondes, puisque celui qui le pose croit avoir posé un contrat.
+Le motif s'applique en `re.search` (donc il s'ancre lui-même : `^…$`), sur les seules clés
+que le geste ÉCRIT — même restriction que la borne, et même raison : la validation portant
+sur le mergé, une ligne déjà non conforme serait sinon inécritable pour n'importe quel
+patch, y compris sur un champ sans rapport. Le refus cite la valeur CONSTATÉE et le motif
+attendu. À la pose, `set_schema` avertit des lignes déjà hors motif
+(`_offpattern_warning`), et ce verdict se calcule **en Python** sur les valeurs distinctes
+rendues par `db.datastore_field_values` : le poser en SQL (`~` de PostgreSQL) ferait
+compter par un moteur d'expressions et refuser par un autre, dont les dialectes divergent.
+
+⚠️ **Une expression fournie par un appelant est une arme, et le serveur est mono-loop** :
+un motif à explosion combinatoire n'y coûte pas une requête, il coûte le serveur entier —
+même famille que la bombe de décompression (`docs/conventions.md`). Un garde purement
+SYNTAXIQUE (« pas de groupe quantifié ») ne suffit pas, et c'est une mesure, pas une
+intuition : sans un seul groupe ni une seule alternance, `.*.*.*.*.*z` sur 80 caractères
+prend 0,75 s et `.*.*.*.*.*.*.*z` sur 60 caractères prend **14,8 s**. Ce qui explose est
+le nombre de FAÇONS de découper le sujet. D'où un **budget** calculé sur l'arbre du motif
+(`dsv2.pattern_refusal`) : le produit, quantificateur par quantificateur, du nombre de
+longueurs qu'il peut prendre — une majoration de l'espace de recherche du moteur, plafonnée
+à `PATTERN_BUDGET` (100 000). Il se calcule **contre la longueur du sujet**, ce qui rend
+`max_length` OBLIGATOIRE sur un champ porteur de motif (≤ 1 000) : sans sujet borné il n'y
+a pas de budget, donc pas de garantie. Sont refusés à la POSE, chacun en nommant sa raison :
+la regex invalide, le motif > 200 caractères, le groupe ambigu répété (`(a+)+`, `(a|aa)*`),
+la référence arrière, les assertions avant/arrière, et **toute construction que l'analyse
+ne reconnaît pas** (fail-closed — un motif accepté par ignorance est exactement le défaut
+à éviter). Conséquence assumée : le même motif est accepté sur un champ borné à 250 et
+refusé sur un champ borné à 1 000, et une grammaire structurée (`^[^;]+(;[^;]+)*$`) est
+refusée — l'interprétation métier d'une valeur n'est pas le métier d'oto.
+⚠️ L'analyse emprunte le parseur de la stdlib, `re._parser` (3.11+) ou `sre_parse` (3.10,
+**la version de la box**) : les deux chemins sont exercés au banc, et l'absence des deux
+refuse tout motif plutôt que de laisser passer.
+⚠️ **Aucun `pattern` n'existait en base au moment de la pose du garde** (inventaire du
+28/08 sur les 210 schémas de production : 185 `max_length`, 0 `pattern`) — ce lot ne peut
+donc geler aucune ligne existante. Un motif hérité qui ne passerait pas le garde reste
+INERTE à l'écriture (`pattern_of` est muette, comme `max_length_of` sur une borne mal
+formée) mais fait REFUSER la prochaine pose du schéma : c'est là qu'on peut encore corriger.
+
 **Retoucher un schéma sans le détruire (#388).** `data_set_schema` REMPLACE — bon geste
 pour POSER un format, piège pour l'ÉDITER : deux appels indiscernables (même méthode,
 même succès, même réponse) n'ont pas le même effet selon que l'appelant a patché en
