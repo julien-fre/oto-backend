@@ -119,12 +119,18 @@ def test_la_table_nait_au_boot_avec_sa_forme(live):
         "FROM information_schema.columns WHERE table_name = 'connector_instances'")}
     assert set(cols) == {
         "id", "connector", "owner_type", "owner_id", "account", "label", "config",
-        "visibility", "parent_id", "created_at", "revoked_at"}, sorted(cols)
+        "visibility", "parent_id", "created_at", "revoked_at",
+        # Le MOTIF de l'archivage (pièce 2) : sans lui, « l'utilisateur a retiré sa
+        # clé » et « on a réparé une orpheline » sont le même événement.
+        "revoked_reason"}, sorted(cols)
     assert cols["account"]["is_nullable"] == "NO", (
         "`account` suit la convention du coffre (`''` = mono-compte) : nullable, il "
         "rendrait l'index unique aveugle.")
     assert cols["visibility"]["column_default"].startswith("'inherited'")
     assert cols["revoked_at"]["is_nullable"] == "YES"
+    assert cols["revoked_reason"]["is_nullable"] == "YES", (
+        "le motif est NULLABLE et sans CHECK : son vocabulaire est fermé par le code "
+        "qui écrit, pas par la base — sinon le prochain motif est une migration.")
 
 
 def test_les_deux_index_sont_la_paire_partiel_et_non_partiel(live):

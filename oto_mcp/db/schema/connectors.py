@@ -163,6 +163,13 @@ CREATE TABLE IF NOT EXISTS connector_instances (
     -- (0053-D7) : une consommation, un partage ou un binding qui la désignent
     -- doivent pouvoir la relire après son retrait.
     revoked_at TIMESTAMPTZ,
+    -- POURQUOI elle a été archivée. Sans ce mot, un archivage est muet six mois plus
+    -- tard : impossible de distinguer « l'utilisateur a retiré sa clé » (le cas normal)
+    -- de « on a réparé une orpheline d'avant le lot » (un geste de maintenance, jamais
+    -- une décision d'utilisateur). NULLABLE et sans CHECK : les valeurs sont posées par
+    -- ce dépôt seul (`credential_removed`, `renamed_onto_existing`, `vault_row_missing`)
+    -- et un vocabulaire fermé ici n'ajouterait qu'une migration au prochain motif.
+    revoked_reason TEXT,
     -- Contraintes NOMMÉES (docs/live-migrations.md) : un futur DROP CONSTRAINT ne
     -- peut pas viser autre chose que ce qu'il croit viser.
     CONSTRAINT connector_instances_owner_type_check

@@ -103,8 +103,8 @@ def _instances(vivantes=None):
         ou = " WHERE revoked_at IS NULL"
     elif vivantes is False:
         ou = " WHERE revoked_at IS NOT NULL"
-    return _rows("SELECT id, owner_type, owner_id, connector, account, revoked_at "
-                 f"FROM connector_instances{ou} "
+    return _rows("SELECT id, owner_type, owner_id, connector, account, revoked_at, "
+                 f"revoked_reason FROM connector_instances{ou} "
                  "ORDER BY owner_type, owner_id, connector, account, id")
 
 
@@ -240,6 +240,9 @@ def test_retirer_une_cle_archive_son_instance(live):
     assert cs.clear_credential("member", MEMBER, "hunter") is True
     archivees = _instances(vivantes=False)
     assert [r["id"] for r in archivees] == [ident]
+    assert archivees[0]["revoked_reason"] == "credential_removed", (
+        "un archivage muet est indistinguable six mois plus tard d'une réparation "
+        "de maintenance — le motif est ce qui les sépare")
     assert _instances(vivantes=True) == []
     assert not _ecarts()
 
@@ -368,6 +371,8 @@ def test_un_renommage_vers_une_instance_deja_vivante_le_DIT(live):
     assert issue.archived_instance_id == depart
     assert issue.kept_instance_id == arrivee
     assert [i["id"] for i in _instances(vivantes=True)] == [arrivee]
+    assert [i["revoked_reason"] for i in _instances(vivantes=False)] == \
+        ["renamed_onto_existing"]
 
 
 # ─── 4. Le filet de boot, et l'invariant ─────────────────────────────────────
@@ -437,3 +442,57 @@ def test_une_bascule_de_compte_ne_detache_pas_l_instance_de_sa_ligne(live):
     users.migrate_sub(SUB, "usr_neuf")
     assert _quad(_instances(vivantes=True)) == [("member", MEMBER, "hunter", "")]
     assert not _ecarts()
+
+
+# ─── 5. La maintenance : archiver les orphelines d'AVANT la pièce 2 ──────────
+
+def test_l_orpheline_se_liste_et_s_archive_avec_son_motif(live):
+    """Le geste de réparation, exercé dans le sens que la pièce 2 ne peut plus créer
+    mais que la base servie porte encore (2 lignes mesurées le 28/08, sur 139).
+
+    Il ARCHIVE, il ne supprime pas : si un binding ou une arête a nommé l'orpheline,
+    « elle a été retirée » et « elle n'a jamais existé » ne sont pas le même verdict.
+    Et il pose son MOTIF — sans lui, six mois plus tard, cet archivage-là serait
+    indistinguable du retrait ordinaire d'une clé par son propriétaire."""
+    from oto_mcp import credentials_store as cs
+    from oto_mcp.db import connector_instances as ci
+
+    cs.set_credential("member", MEMBER, "hunter", "k", set_by=SUB)   # celle-ci va bien
+    _exec("INSERT INTO connector_instances (connector, owner_type, owner_id, account) "
+          "VALUES ('hunter', 'org', '99', '')")                      # l'orpheline
+
+    orphelines = ci.list_orphan_instances()
+    assert _quad(orphelines) == [("org", "99", "hunter", "")]
+
+    assert ci.archive_orphan_instances() == 1
+    assert ci.list_orphan_instances() == []
+    assert _quad(_instances(vivantes=True)) == [("member", MEMBER, "hunter", "")]
+    assert [i["revoked_reason"] for i in _instances(vivantes=False)] == \
+        ["vault_row_missing"]
+    assert not _ecarts()
+
+
+def test_archiver_les_orphelines_est_IDEMPOTENT(live):
+    """Le prédicat est « vivante ET sans ligne de coffre » : une fois archivées, elles
+    n'y répondent plus. C'est ce qui permet de relancer la commande sans réfléchir —
+    et ce qui fait qu'elle ne mordra jamais sur une instance saine."""
+    from oto_mcp.db import connector_instances as ci
+
+    _exec("INSERT INTO connector_instances (connector, owner_type, owner_id, account) "
+          "VALUES ('hunter', 'org', '99', '')")
+    assert ci.archive_orphan_instances() == 1
+    assert ci.archive_orphan_instances() == 0
+    assert len(_instances(vivantes=False)) == 1
+
+
+def test_la_maintenance_ne_touche_PAS_une_instance_saine(live):
+    """La contre-épreuve, et la seule qui compte pour une commande qu'on lancera sur
+    la base servie : ce qui a sa ligne de coffre reste vivant."""
+    from oto_mcp import credentials_store as cs
+    from oto_mcp.db import connector_instances as ci
+
+    cs.set_credential("member", MEMBER, "hunter", "k", set_by=SUB)
+    cs.set_credential("org", str(ORG), "hunter", "k", set_by=SUB)
+    assert ci.archive_orphan_instances() == 0
+    assert len(_instances(vivantes=True)) == 2
+    assert _instances(vivantes=False) == []

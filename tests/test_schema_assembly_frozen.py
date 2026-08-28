@@ -69,8 +69,14 @@ from oto_mcp.db import _schema, schema
 # Les objets servis (table `doctrine_library`, colonne `runs.doctrine`, index
 # `idx_doctrine_library_*`) ne bougent PAS : la base est partagée prod/preprod,
 # leur renommage est additif et part au lot B.
-EMPREINTE = "3180b6b383d4e8d0d7387100ab79189b64269919aaaf55a9fd7f7711f2b95f79"
-LONGUEUR = 111230
+# 2026-08-28 (L6 pièce 2, maintenance) : `connector_instances.revoked_reason`, une
+# colonne NULLABLE. Additive et sans index : le `CREATE TABLE` ne sert qu'aux installs
+# vierges, la base PARTAGÉE la reçoit par l'`ALTER TABLE ... ADD COLUMN IF NOT EXISTS`
+# de `_init.py`. Rien n'est retiré ni contraint — la prod qui tourne l'ancien code ne
+# la lit pas. Elle porte POURQUOI une instance a été archivée : sans elle, « la clé a
+# été retirée » et « on a réparé une orpheline d'avant le lot » sont indistinguables.
+EMPREINTE = "d648d509f473208ef1f250af9a466acfb8236d0cf4b869c4e103ec182b285430"
+LONGUEUR = 111781
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -240,6 +240,39 @@ pièce 2 ce cas ne naît plus que d'un geste manuel en base (archiver une instan
 laissant vivre sa clé). Ce n'est donc pas au filet de le rattraper, c'est à l'**invariant**
 de le montrer.
 
+### Nettoyer les orphelines d'avant la pièce 2 — une commande, pas un boot
+
+Entre la pièce 1 (le boot NOMMAIT chaque ligne de coffre) et la pièce 2 (la pose nomme,
+le retrait archive), **chaque suppression de credential fabriquait une orpheline** : la
+ligne partait, l'instance restait vivante. Mesuré sur la base servie le 2026-08-28,
+avant déploiement : **2 orphelines** sur 139 instances vivantes (`member … slack` et
+`org … aiark`) — exactement les retraits qui contournaient l'entonnoir. La pièce 2 ferme
+la source ; elle ne nettoie pas le passé, parce que nettoyer n'est pas le travail d'un
+boot.
+
+```
+# sur la box, après déploiement — dry-run par défaut : liste, n'écrit rien
+cd /opt/oto-mcp && ./.venv/bin/python -m scripts.archive_orphan_instances
+#   --apply pour écrire
+```
+
+Le script **archive** (`revoked_at`, motif `vault_row_missing`), jamais un DELETE : si un
+binding ou une arête a nommé l'orpheline, « elle a été retirée » et « elle n'a jamais
+existé » ne sont pas le même verdict. **Idempotent** — son prédicat est « vivante ET sans
+ligne de coffre », donc un second passage rend 0, et il ne peut pas mordre sur une
+instance saine.
+
+⚠️ **Hors du boot, délibérément** (ADR 0065). Le filet de démarrage ne sait qu'insérer ;
+lui faire archiver au boot ferait d'un ordonnanceur de maintenance un écrivain de masse
+sur une base **partagée avec la production**.
+
+**Le motif (`revoked_reason`), et pourquoi il vaut une colonne.** Sans lui, un archivage
+est muet six mois plus tard : impossible de distinguer « l'utilisateur a retiré sa clé »
+d'une réparation de maintenance. Trois valeurs, posées par ce dépôt seul :
+`credential_removed` (le cas normal), `renamed_onto_existing` (un renommage vers une
+instance déjà vivante), `vault_row_missing` (ce script). Nullable et sans `CHECK` — le
+vocabulaire est fermé par le code qui écrit, sinon le prochain motif est une migration.
+
 ### L'invariant, et la requête qui le dit
 
 > Chaque ligne de coffre a **exactement une** instance vivante, et chaque instance vivante
