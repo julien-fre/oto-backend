@@ -60,5 +60,5 @@ _SPINE_SERVICES = {"oto", "run", "feedback", "data"}
 
 
 def _observe_schema(service: str, payload) -> None:
-    from .. import connector_schema_store
+    from ..connectors import schema_store as connector_schema_store
     connector_schema_store.observe(service, payload)

@@ -19,15 +19,14 @@ from typing import Callable, Optional
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import (connectors, credentials_store, db, grants_chain, group_store,
-                org_store)
+from .. import (providers, credentials_store, db, grants_chain, group_store, org_store)
 from . import scope
 
 # DÉRIVÉ du registre source unique (package `providers/`) : providers dont le
 # secret peut être POSSÉDÉ par une org et partagé (auth_mode byo_org) — exclut
 # slack (xoxp = identité perso) et les sessions per-user (linkedin/google/
 # whatsapp/crunchbase). Gate les barreaux groupe/org du walker.
-ORG_SHAREABLE_PROVIDERS = connectors.ORG_SHAREABLE_PROVIDERS
+ORG_SHAREABLE_PROVIDERS = providers.ORG_SHAREABLE_PROVIDERS
 
 
 def _is_multi_account(provider: str) -> bool:
@@ -36,7 +35,7 @@ def _is_multi_account(provider: str) -> bool:
     un connecteur mono-compte garde la résolution historique (account=''). ⚠️ Depuis
     #409 la propriété couvre aussi les credentials MULTI-CHAMPS (slack, silae…) —
     `MULTI_ACCOUNT_PROVIDERS` n'en est plus la source, seulement un override."""
-    con = connectors.connector_for_provider(provider)
+    con = providers.connector_for_provider(provider)
     return con is not None and con.auth_multi_account
 
 
@@ -46,7 +45,7 @@ def account_noun(provider: str) -> str:
     défaut (`Connector.account_noun`). Sert les messages que l'AGENT lit au moment où il
     est bloqué : « plusieurs comptes slack » l'oblige à traduire, « plusieurs
     workspaces » lui dit ce qu'il cherche. Jamais vide."""
-    con = connectors.connector_for_provider(provider)
+    con = providers.connector_for_provider(provider)
     return (getattr(con, "account_noun", "") or "compte") if con else "compte"
 
 
@@ -332,7 +331,7 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
     configurés au-delà du gagnant restent affichables). Chaque gate (byo_user,
     ORG_SHAREABLE, personal_cross_org, éligibilité plateforme, `want='byo'`)
     vit ICI — plus jamais dans un call-site."""
-    if sub is not None and org is not None and connectors.is_byo_user(provider):
+    if sub is not None and org is not None and providers.is_byo_user(provider):
         hit = probe.member(sub, org, provider)
         if hit is not None:
             payload, account = hit
@@ -341,7 +340,7 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
     # Instance personnelle cross-org (#172, amende ADR 0033) : connecteur par-personne
     # (unipile) → ma clé posée dans une AUTRE org me suit (même sub, zéro usurpation).
     # Mono-compte seulement. Prime sur les paliers partagés, comme la clé locale.
-    if (sub is not None and connectors.is_personal_cross_org(provider)
+    if (sub is not None and providers.is_personal_cross_org(provider)
             and not _is_multi_account(provider)):
         pio = personal_instance_org(sub, provider, exclude_org=org)
         if pio is not None:
@@ -369,7 +368,7 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
                 payload, account = hit if isinstance(hit, tuple) else (hit, "")
                 yield CascadeRung("org", "org", str(org), payload, account)
     if want != "byo":
-        con = connectors.connector_for_provider(provider)
+        con = providers.connector_for_provider(provider)
         if con is not None and "platform" in con.auth_modes:
             grant = probe.platform(sub, provider, org)
             if grant:

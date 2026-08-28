@@ -17,7 +17,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from . import db
+from .. import db
 
 _SCALAR_TYPE = {bool: "boolean", int: "number", float: "number", str: "string", type(None): "null"}
 

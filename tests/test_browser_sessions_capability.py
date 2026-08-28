@@ -47,7 +47,7 @@ def socle(monkeypatch):
     monkeypatch.setattr(browser_session, "finalize", _finalize)
     monkeypatch.setattr(bs.access, "current_org", lambda sub: 35)
     monkeypatch.setattr(bs.access, "current_group", lambda sub: 7)
-    monkeypatch.setattr(bs.connectors, "is_org_shareable", lambda n: True)
+    monkeypatch.setattr(bs.providers, "is_org_shareable", lambda n: True)
     monkeypatch.setattr(bs.roles, "is_org_admin", lambda sub, oid: True)
     monkeypatch.setattr(bs.roles, "can_admin_group", lambda sub, gid: True)
     return vus
@@ -154,7 +154,7 @@ def test_l_ordre_des_refus_du_scope_partage(monkeypatch, socle, scope, patch,
     stub_authz(monkeypatch)
     champ, valeur = patch
     cible = bs.access if champ.startswith("current") else (
-        bs.connectors if champ == "is_org_shareable" else bs.roles)
+        bs.providers if champ == "is_org_shareable" else bs.roles)
     monkeypatch.setattr(cible, champ, (lambda *a, **k: valeur))
     got, out = _finalize(dict(_OK, scope=scope))
     assert (got, out["error"]) == (code, attendu)

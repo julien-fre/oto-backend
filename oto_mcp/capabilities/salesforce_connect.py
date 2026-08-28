@@ -21,7 +21,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import connector_flow, salesforce_oauth
+from .. import salesforce_oauth
+from ..connectors import flow as connector_flow
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES

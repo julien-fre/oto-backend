@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import logging
 
-from .. import (connector_link, connectors, credentials_store, db, group_store,
-                status_hints)
+from .. import providers, credentials_store, db, group_store, status_hints
+from ..connectors import link as connector_link
 from . import cascade, quotas, rbac, scope
 
 logger = logging.getLogger(__name__)
@@ -138,7 +138,7 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     # résout par le secret d'équipe/org — l'ex-check user-only affichait
     # `forbidden` avec une clé d'org qui résolvait, l'UI mentait ; corrigé
     # 2026-07-16). Permet au dashboard d'afficher « configuré / remove ».
-    for c in connectors.REGISTRY.values():
+    for c in providers.REGISTRY.values():
         if (c.name in out["providers"] or not c.secret_fields
                 or "byo_user" not in c.auth_modes):
             continue
@@ -167,7 +167,7 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     # expose juste « configuré + depuis quand » pour que la carte rende son widget
     # session (ADR 0026 prévoyait `providers` sans jamais l'alimenter → /api/me ne
     # disait plus rien sur ces sessions ; corrigé 2026-06-30).
-    for c in connectors.REGISTRY.values():
+    for c in providers.REGISTRY.values():
         if c.name in out["providers"] or c.secret_kind != "cookie":
             continue
         shareable = c.name in cascade.ORG_SHAREABLE_PROVIDERS
@@ -224,7 +224,7 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     # pas leur credential au même endroit (scope legacy ("user", sub) pour atlassian et
     # folkmcp, une ligne PAR COMPTE pour google). La TRADUCTION vers `ProviderStatus` —
     # la forme que le dashboard lit — se fait ici, une fois.
-    for c in connectors.REGISTRY.values():
+    for c in providers.REGISTRY.values():
         if c.name in out["providers"] or c.secret_kind != "oauth":
             continue
         link = connector_link.state(c.name, sub) if sub else None

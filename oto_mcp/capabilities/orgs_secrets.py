@@ -2,7 +2,7 @@
 
 Même réconciliation que les membres : MCP platform-admin-only vs REST org_admin
 self-service → unifié sur **`ORG_ADMIN_OF`**. Multi-binding (self + admin). La
-validation provider/base_url passe par **`connectors.org_secret_meta`** (source
+validation provider/base_url passe par **`providers.org_secret_meta`** (source
 unique — le REST l'utilisait déjà ; le MCP avait une validation à la main,
 supprimée). Les secrets ne sont jamais renvoyés en clair.
 """
@@ -12,7 +12,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import connectors, credentials_store, org_store
+from .. import providers, credentials_store, org_store
 from ._authz import ORG_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 
@@ -72,7 +72,7 @@ def _set_secret(ctx: ResolvedCtx, inp: SetSecretInput) -> dict:
     if not org_store.get_org(inp.org_id):
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
     base_url = (inp.base_url or "").strip() or None
-    meta, code = connectors.org_secret_meta(inp.provider, base_url)
+    meta, code = providers.org_secret_meta(inp.provider, base_url)
     if code:
         raise AuthzDenied(400, code, f"Provider/base_url invalide : {code}.")
     account = (inp.account or "").strip()

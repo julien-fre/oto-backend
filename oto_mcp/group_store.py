@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from . import connectors, credentials_store
+from . import providers, credentials_store
 from .db import _connect
 from .org_store import BASE_SLUG, _snippet, normalize_slug
 
@@ -246,7 +246,7 @@ def set_group_secret(group_id: int, provider: str, api_key: str,
                      account: str = "") -> None:
     """Pose/rote un secret partagé du groupe. Mêmes providers org-partageables que
     les secrets d'org (validés par le registre)."""
-    connectors.require_credential("org", provider)  # même éligibilité que l'org
+    providers.require_credential("org", provider)  # même éligibilité que l'org
     if not api_key:
         raise ValueError("api_key requise")
     credentials_store.set_credential(

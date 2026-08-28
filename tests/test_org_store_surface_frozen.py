@@ -65,7 +65,7 @@ FROZEN = (
     '_scope_of', '_snippet', '_sync_mfa_mirror', 'accept_invitation',
     'accept_invitation_by_code', 'add_org_member', 'annotations', 'archive_org',
     'backfill_org_front', 'backfill_personal_orgs', 'cancel_scheduled_email',
-    'claim_kb_project', 'clear_kb_project', 'config', 'connectors',
+    'claim_kb_project', 'clear_kb_project', 'config',
     'copy_instruction_to_org', 'count_orgs_created_by', 'create_invitation',
     'create_org', 'credentials_store', 'db', 'delete_instruction',
     'delete_org_secret', 'effective_logo_url', 'ensure_personal_org',

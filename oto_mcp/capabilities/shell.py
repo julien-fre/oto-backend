@@ -44,8 +44,8 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .. import (access, connector_selection, group_store, org_store,
-                run_status)
+from .. import access, group_store, org_store, run_status
+from ..connectors import selection as connector_selection
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
 from ._types import Capability, NotModified, ResolvedCtx, RestBinding

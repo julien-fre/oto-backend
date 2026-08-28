@@ -80,14 +80,14 @@ def select_identity(sub: str, connector: str, identity_id: str, scope: str = "me
 # --- Google : N credentials du coffre (account=email) -----------------------
 
 def _google_list(sub: str) -> list[dict]:
-    from . import google_oauth
+    from .. import google_oauth
     return [{"id": a["google_email"], "label": a["google_email"], "status": "ok",
              "is_default": a["is_default"], "channel": None}
             for a in google_oauth.list_accounts(sub) if a.get("google_email")]
 
 
 def _google_select(sub: str, identity_id: str) -> dict:
-    from . import access, db
+    from .. import access, db
     org = access.current_org(sub)
     if org is None or not db.set_default_google_account(sub, org, identity_id):
         raise ValueError(f"Compte Google inconnu : {identity_id}")
@@ -105,12 +105,12 @@ def _own_unipile_account_id(sub: str, provider: str) -> str | None:
     incohérent). Seul cross-org restant : **BYO** (#172) — la clé membre me suit dans
     une autre org → compte pris dans la MÊME org que la clé (`personal_instance_org`),
     clé et compte appariés. None si aucun."""
-    from . import access, connectors, db
+    from .. import access, providers, db
     org = access.current_org(sub)
     acc = db.get_unipile_account_id(sub, org, provider)
     if acc:
         return acc
-    if connectors.is_personal_cross_org("unipile"):
+    if providers.is_personal_cross_org("unipile"):
         pio = access.personal_instance_org(sub, "unipile", exclude_org=org)
         if pio is not None:
             return db.get_unipile_account_id(sub, pio, provider)
@@ -120,7 +120,7 @@ def _own_unipile_account_id(sub: str, provider: str) -> str | None:
 def _own_account_ids(sub: str, provider: str) -> set[str]:
     """Tous les `account_id` VIVANTS propres au sub sur ce canal (toutes orgs) — set
     de garde du pin `_account=` (le sien, en plus des comptes accordés)."""
-    from . import db
+    from .. import db
     p = provider.upper()
     return {a["account_id"] for a in db.list_unipile_accounts(sub)
             if (a.get("provider") or "").upper() == p}
@@ -141,7 +141,7 @@ def resolve_operated_account_id(sub: str, provider: str) -> str | None:
     soi (un message parti sous la mauvaise identité est irréversible).
     Pas de pin ni de pointeur → compte connecté propre (org de contexte OU instance
     perso cross-org, #172)."""
-    from . import db, session_org
+    from .. import db, session_org
     pin = session_org.current_call_account()
     if pin:
         if pin in db.granted_accounts_for(sub, provider) or pin in _own_account_ids(sub, provider):
@@ -166,7 +166,7 @@ def _unipile_chosen(sub: str, provider: str) -> str | None:
     """Compte effectivement opéré pour l'affichage `is_default` (pointeur valide
     sinon compte propre) — version fail-soft de `resolve_operated_account_id`
     (une liste d'identités ne doit pas lever sur un pointeur orphelin)."""
-    from . import db
+    from .. import db
     op = db.get_operated_account(sub, provider)
     if op and op["account_id"] in db.granted_accounts_for(sub, provider):
         return op["account_id"]
@@ -175,7 +175,7 @@ def _unipile_chosen(sub: str, provider: str) -> str | None:
 
 def _unipile_client(sub: str):
     """(client, byo) — résout clé+DSN du credential BYO ; None si non-BYO/absent."""
-    from . import access
+    from .. import access
     if access.credential_mode_for(sub, "unipile") not in access.BYO_MODES:
         return None  # revente (clé plateforme) → hosted-auth, pas de sélecteur
     rc = access.resolve_credential("unipile", want="byo", sub=sub)
@@ -202,7 +202,7 @@ def _unipile_live_status_map(sub: str) -> dict:
     budget assumé, un appel users/me par compte hébergé, au clic sur le sélecteur).
     Fail-soft : `{}` si indisponible (l'appelant retombe sur « ok », comportement
     d'avant) ; sonde best-effort PAR compte (un incident garde le status de compte)."""
-    from . import access
+    from .. import access
     try:
         rc = access.resolve_credential("unipile", want="auto", sub=sub)
         from oto.tools.unipile import make_unipile_client
@@ -227,7 +227,7 @@ def _unipile_live_status_map(sub: str) -> dict:
 
 
 def _unipile_list(sub: str) -> list[dict]:
-    from . import db
+    from .. import db
     granted = [g for g in db.list_account_grants_to(sub) if g.get("active")]
     out = []
     cli = _unipile_client(sub)
@@ -266,7 +266,7 @@ def _unipile_list(sub: str) -> list[dict]:
         # faux positif (bouton « Use this account » inerte, vécu 2026-07-08).
         accounts = db.list_unipile_accounts(sub)
         if accounts:  # org résolue seulement s'il y a quelque chose à filtrer
-            from . import access
+            from .. import access
             org = access.current_org(sub)
             accounts = [a for a in accounts if a.get("org_id") == org]
         for a in accounts:
@@ -303,7 +303,7 @@ def _unipile_list(sub: str) -> list[dict]:
 
 
 def _unipile_select(sub: str, identity_id: str) -> dict:
-    from . import db
+    from .. import db
     # 1) Compte ACCORDÉ (#55) : pose le POINTEUR « identité opérée » — ne touche
     #    JAMAIS la ligne de connexion `unipile_accounts` du grantee. La validation
     #    = le grant vivant (deny-by-default), pas la clé.
@@ -331,7 +331,7 @@ def _unipile_select(sub: str, identity_id: str) -> dict:
     # Scope membre (ADR 0033 B4) : le binding vaut dans l'org de contexte. BYO →
     # pas un siège plateforme (platform_seat=False), cohérent avec unipile_connect.
     # Bascule de connexion = retour-à-soi sur ce canal → efface le pointeur opéré (#55).
-    from . import access
+    from .. import access
     org = access.current_org(sub)
     if org is None:
         raise ValueError("Aucune org de contexte — impossible de rattacher le compte.")
@@ -350,7 +350,7 @@ def keyed_entity(sub: str, scope: str) -> "tuple[str, str] | None":
     """L'entité du coffre visée par un `scope` (member | org | group) pour `sub`, ou
     None sans org/équipe de contexte. Phase 2 (2026-08-25) : les comptes nommés
     existent aussi aux paliers partagés."""
-    from . import access, credentials_store
+    from .. import access, credentials_store
     org = access.current_org(sub)
     if org is None:
         return None
@@ -363,7 +363,7 @@ def keyed_entity(sub: str, scope: str) -> "tuple[str, str] | None":
 
 
 def _keyed_list(sub: str, connector: str, scope: str = "member") -> list[dict]:
-    from . import credentials_store
+    from .. import credentials_store
     ent = keyed_entity(sub, scope)
     if ent is None:
         return []
@@ -382,7 +382,7 @@ def _keyed_list(sub: str, connector: str, scope: str = "member") -> list[dict]:
 
 
 def _keyed_select(sub: str, connector: str, identity_id: str, scope: str = "member") -> dict:
-    from . import credentials_store
+    from .. import credentials_store
     ent = keyed_entity(sub, scope)
     if ent is None:
         raise ValueError("Aucune org/équipe de contexte — impossible de choisir un compte.")
@@ -409,7 +409,7 @@ def _register_keyed_multi_account() -> None:
     défaut, plus seulement la liste curée `MULTI_ACCOUNT_PROVIDERS`) qui n'a pas
     déjà un backend spécifique (google, unipile). Closures liant le nom du
     connecteur (défaut d'arg = capture par valeur)."""
-    from . import providers
+    from .. import providers
     for con in providers._REGISTRY_LIST:
         name = con.name
         if not con.auth_multi_account or name in _LISTERS:

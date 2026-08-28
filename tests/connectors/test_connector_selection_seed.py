@@ -5,7 +5,8 @@ réel est prouvé au déploiement) : le seed d'un nouveau (sub, org) reçoit le
 SOCLE `default_active`, le backfill one-shot reconstitue le VISIBLE d'avant
 (exposé − ex-default_hidden) et ne rejoue jamais (sentinelle).
 """
-from oto_mcp import connector_selection, providers
+from oto_mcp import providers
+from oto_mcp.connectors import selection as connector_selection
 
 # Tripwire de curation : le socle est un choix PRODUIT explicite — décision du
 # 16/07 : socle VIDE (aucun connecteur pré-installé ; l'agent guide depuis les

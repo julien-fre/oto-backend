@@ -18,7 +18,7 @@ description: >-
 
 oto-mcp porte aujourd'hui 4 métiers ; ils sont des **couches à frontière à sens unique** (ADR 0004) :
 
-- **backend-core** (le centre) : `db`, `credentials_store`, `org_store`, `access`, `crypto`, `connectors`, `auth_hooks`. Identité (`sub`), coffre, orgs, grants/quotas, résolution.
+- **backend-core** (le centre) : `db`, `credentials_store`, `org_store`, `access`, `crypto`, `providers`, `auth_hooks`. Identité (`sub`), coffre, orgs, grants/quotas, résolution.
 - **adaptateur MCP** : `server`, `tools/*`, `middleware`, `tool_visibility`.
 - **adaptateur REST** : `api_routes*`. `api_routes.py` **assemble** — il monte les modules de routes,
   monte la couche capacité, et rend la table ordonnée des chemins écrits à la main ; il ne contient

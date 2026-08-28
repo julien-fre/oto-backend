@@ -15,7 +15,7 @@ import psycopg
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
-from .. import connectors
+from .. import providers
 
 def _normalize_value(v: Any) -> Any:
     # Match the string shape SQLite returned ("YYYY-MM-DD HH:MM:SS") so downstream
@@ -43,10 +43,10 @@ def _str_dict_row(cursor):
 
 # Providers supportés pour les user keys. DÉRIVÉ du registre source unique
 # (`providers/`) — ne plus éditer ici, déclarer le connecteur dans le registre.
-KEY_PROVIDERS = connectors.KEY_PROVIDERS
+KEY_PROVIDERS = providers.KEY_PROVIDERS
 # Ensemble plus large des providers pouvant détenir un credential (keyed + sessions
 # cookie + byo multi-champs) — garde-fou d'écriture `keys._check_provider`.
-CREDENTIAL_PROVIDERS = connectors.CREDENTIAL_PROVIDERS
+CREDENTIAL_PROVIDERS = providers.CREDENTIAL_PROVIDERS
 
 
 _pool: Optional[ConnectionPool] = None

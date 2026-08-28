@@ -16,7 +16,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .. import connector_flow
+from ..connectors import flow as connector_flow
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

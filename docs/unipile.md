@@ -96,7 +96,7 @@ de paiement).
 > et voyage avec la clé via `resolve_credential` (défaut env `UNIPILE_DSN`=api25, instance
 > plateforme). Une clé BYO porte N comptes → capacités génériques **`connectors.identities`/
 > `set_default_identity`** (REST `/api/connectors/{c}/identities[/default]`, registre
-> `connector_identities.py` ; unipile = `list_accounts` sur clé+DSN, **valide id∈liste**
+> `connectors/identities.py` ; unipile = `list_accounts` sur clé+DSN, **valide id∈liste**
 > anti-binding, **BYO-only** — en revente la liste est vide, hosted-auth conservé). Vue admin
 > **sièges clé plateforme** `GET /api/admin/unipile/seats` (super_admin, `db.unipile_account_owners`) :
 > réconcilie les comptes de l'instance partagée ↔ leur owner oto (flag **orphelin**).

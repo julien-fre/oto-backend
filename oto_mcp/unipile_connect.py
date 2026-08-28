@@ -16,7 +16,8 @@ import secrets
 
 from mcp.shared.exceptions import McpError
 
-from . import access, connector_flow, db
+from . import access, db
+from .connectors import flow as connector_flow
 from . import config
 
 logger = logging.getLogger(__name__)
@@ -374,7 +375,7 @@ async def _start_flow(ctx, values: dict):
     L'ancienne route REST continue de servir ses deux issues telle quelle jusqu'à la
     bascule du front — ce lot ne la touche pas.
     """
-    from . import connector_flow
+    from .connectors import flow as connector_flow
     from .capabilities._types import AuthzDenied
     try:
         out = await hosted_auth_url(

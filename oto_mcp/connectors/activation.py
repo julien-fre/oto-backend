@@ -92,7 +92,7 @@ def seed_initial(conn) -> None:
                      "WHERE scope_type = 'platform'").fetchone()["n"]
     if n:
         return
-    from . import providers  # registre source unique (pur, pas d'import oto_mcp)
+    from .. import providers  # registre source unique (pur, pas d'import oto_mcp)
 
     for name in providers.REGISTRY:
         conn.execute(
@@ -123,7 +123,7 @@ def effective_for_group(exposed: set[str], group_cut: set[str]) -> set[str]:
 
 def is_exposed(connector: str, org_id: Optional[int] = None) -> bool:
     """exposé = override d'org si défini, sinon master plateforme, sinon OFF."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         if org_id is not None:
@@ -145,7 +145,7 @@ def is_exposed(connector: str, org_id: Optional[int] = None) -> bool:
 def exposed_connectors(org_id: Optional[int] = None) -> set[str]:
     """Ensemble des connecteurs exposés (résout override d'org vs master en un
     scan). Pour filtrer le catalogue / le chargement en une requête."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         rows = conn.execute(
@@ -165,7 +165,7 @@ def list_activations() -> list[dict]:
     """Toutes les lignes master plateforme + overrides d'org, pour la surface admin.
     Projection HISTORIQUE conservée : `org_id` (None = master) — les appelants
     (REST admin) n'ont pas bougé à l'unification."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         rows = conn.execute(
@@ -184,7 +184,7 @@ def list_activations() -> list[dict]:
 def set_activation(connector: str, enabled: bool, org_id: Optional[int] = None,
                    set_by: Optional[str] = None) -> None:
     """Pose/maj l'activation : master plateforme si `org_id` None, sinon override d'org."""
-    from . import db
+    from .. import db
 
     scope_type, scope_id = ("platform", "") if org_id is None else ("org", str(org_id))
     with db._connect() as conn:
@@ -199,7 +199,7 @@ def set_activation(connector: str, enabled: bool, org_id: Optional[int] = None,
 
 def clear_activation(connector: str, org_id: int) -> None:
     """Supprime un override d'org → le connecteur retombe sur le master plateforme."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         conn.execute(
@@ -215,7 +215,7 @@ def group_cut_connectors(group_id: int) -> set[str]:
     """Connecteurs COUPÉS pour l'équipe (lignes `enabled=FALSE`). L'exposition
     effective d'un membre = `exposed_connectors(org) - group_cut_connectors(équipe
     active)` — invariant monotone : l'équipe ne peut que retrancher."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         rows = conn.execute(
@@ -228,7 +228,7 @@ def group_cut_connectors(group_id: int) -> set[str]:
 
 def list_group_activations(group_id: int) -> list[dict]:
     """Lignes de coupure de l'équipe (surface admin d'équipe)."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         return [dict(r) for r in conn.execute(
@@ -242,7 +242,7 @@ def set_group_activation(group_id: int, connector: str, enabled: bool,
                          set_by: Optional[str] = None) -> None:
     """Pose une coupure d'équipe. `enabled` DOIT être False (restrict-only) — la
     garde métier (invariant monotone) est dans la capacité ; ici on stocke."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         conn.execute(
@@ -256,7 +256,7 @@ def set_group_activation(group_id: int, connector: str, enabled: bool,
 
 def clear_group_activation(group_id: int, connector: str) -> None:
     """Retire la coupure d'équipe → le connecteur retombe sur l'exposition de l'org."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         conn.execute(

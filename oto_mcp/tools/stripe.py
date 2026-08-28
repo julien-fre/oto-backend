@@ -51,7 +51,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access
+from ..connectors import verify as connector_verify
 
 # Stripe borne ses listes à 100 et retombe SILENCIEUSEMENT à 10 quand `limit`
 # est omis. On pose donc toujours une valeur explicite.

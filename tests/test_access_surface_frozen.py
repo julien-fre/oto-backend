@@ -44,7 +44,7 @@ _SURFACE = """
     _platform_quota _reachable_hint _resolve_credential_anon
     _resolve_credential_impl _resolve_pinned_instance _resolve_platform_grant
     _shared_auto_account _sub_matches_scopes annotations cascade_winner
-    connector_link connector_resolvable_for_org connectors credential_mode_for
+    connector_link connector_resolvable_for_org credential_mode_for
     credentials_store current_group current_org current_project
     current_user_sub_from_token current_user_sub_or_raise dataclass db
     get_user_role grants_chain group_admin_hidden_tools
@@ -75,7 +75,7 @@ def test_aucun_nom_ne_quitte_la_surface_plate():
 
 def test_l_inventaire_n_est_pas_vide():
     """Un inventaire vidé par accident rendrait le test vert et inutile."""
-    assert len(_SURFACE) == 93
+    assert len(_SURFACE) == 92
 
 
 def test_une_ecriture_sur_la_facade_traverse_les_sous_modules(monkeypatch):

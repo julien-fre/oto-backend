@@ -16,20 +16,21 @@ le `sub` dans TOUTES ses orgs — résolution de proximité, pas seulement pin
 import pytest
 from mcp.shared.exceptions import McpError
 
-from oto_mcp import access, connectors, connector_identities, credentials_store
+from oto_mcp import access, providers, credentials_store
+from oto_mcp.connectors import identities as connector_identities
 
 
 # --- 1. flag registre -----------------------------------------------------------
 
 def test_unipile_is_personal_cross_org():
-    assert connectors.is_personal_cross_org("unipile") is True
-    assert "unipile" in connectors.PERSONAL_CROSS_ORG_PROVIDERS
+    assert providers.is_personal_cross_org("unipile") is True
+    assert "unipile" in providers.PERSONAL_CROSS_ORG_PROVIDERS
 
 
 def test_ordinary_connector_is_not_personal_cross_org():
     # Un connecteur à clé partagée classique reste strictement (sub, org) — ADR 0033.
-    assert connectors.is_personal_cross_org("pennylane") is False
-    assert connectors.is_personal_cross_org("google") is False
+    assert providers.is_personal_cross_org("pennylane") is False
+    assert providers.is_personal_cross_org("google") is False
 
 
 # --- 2. choix déterministe de l'org porteuse ------------------------------------

@@ -1,12 +1,12 @@
 """Doc « how-to » user-facing des connecteurs — un MARKDOWN par connecteur.
 
-Le contenu vit dans `connector_docs/<nom>.md`, à côté du code, éditable sans toucher
+Le contenu vit dans `connectors/docs/<nom>.md`, à côté du code, éditable sans toucher
 à Python. C'était auparavant un dict de 850 lignes ici même : écrire de la prose dans
 des chaînes Python décourage de la tenir à jour, et ça s'est vu — la doc Salesforce
 décrivait encore un modèle d'application que Salesforce a depuis désactivé.
 
 **Format.** Un fichier = un connecteur, nommé comme lui (`tools/<nom>.py` ⟷
-`connector_docs/<nom>.md`). Chaque section est un titre de niveau 2 :
+`connectors/docs/<nom>.md`). Chaque section est un titre de niveau 2 :
 
     ## <kind> — <titre>
 
@@ -41,7 +41,7 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-_DIR = pathlib.Path(__file__).parent / "connector_docs"
+_DIR = pathlib.Path(__file__).parent / "docs"
 
 KINDS = ("prerequisite", "setup", "usage", "note")
 
@@ -73,7 +73,7 @@ def _resoudre(corps: str) -> str:
     le client. Résolu à la LECTURE, jamais à l'import."""
     if "{{callback:" not in corps:
         return corps
-    from . import oauth_flow
+    from .. import oauth_flow
     return _MARQUEUR.sub(lambda m: oauth_flow.redirect_uri(m.group(1)), corps)
 
 
@@ -96,7 +96,7 @@ def _parse(texte: str, source: str) -> tuple[DocSection, ...]:
         suspect = _TITRE_SUSPECT.match(ligne)
         if suspect and suspect.group(1) not in KINDS:
             logger.warning(
-                "connector_docs/%s : section `%s` — kind inconnu, la section entière "
+                "connectors/docs/%s : section `%s` — kind inconnu, la section entière "
                 "part dans le corps de la précédente. Attendus : %s",
                 source, suspect.group(1), ", ".join(KINDS))
         if kind is not None:
@@ -104,7 +104,7 @@ def _parse(texte: str, source: str) -> tuple[DocSection, ...]:
         elif ligne.strip():
             # Texte avant tout titre : il ne serait affiché nulle part. On le signale
             # plutôt que de le laisser disparaître en silence.
-            logger.warning("connector_docs/%s : texte hors section, ignoré : %.60s",
+            logger.warning("connectors/docs/%s : texte hors section, ignoré : %.60s",
                            source, ligne.strip())
     _fermer()
     return tuple(sections)
@@ -115,7 +115,7 @@ def _fichiers() -> dict[str, tuple[DocSection, ...]]:
     """Lu une fois par processus : le contenu est statique, livré avec le code."""
     out: dict[str, tuple[DocSection, ...]] = {}
     if not _DIR.is_dir():
-        logger.warning("connector_docs/ absent : les fiches seront sans doc")
+        logger.warning("connectors/docs/ absent : les fiches seront sans doc")
         return out
     for f in sorted(_DIR.glob("*.md")):
         sections = _parse(f.read_text(encoding="utf-8"), f.name)

@@ -17,13 +17,13 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from .. import connectors, db, grants_chain
+from .. import providers, db, grants_chain
 from ..auth_hooks import current_user_sub_from_token
 from . import scope
 
 # DÉRIVÉ du registre source unique (package `providers/`) : quota daily par
 # provider (fallback si pas d'env ni de grant).
-_QUOTA_DEFAULTS = connectors.QUOTA_DEFAULTS
+_QUOTA_DEFAULTS = providers.QUOTA_DEFAULTS
 
 
 # Add-on payant requis par un connecteur (couche 3, ADR 0043). None = aucun. HOME

@@ -20,7 +20,7 @@ adr:
 > **Pourquoi ce doc.** Un connecteur (unipile, google, pennylane, sirene…) a son
 > comportement gouverné par **trois couches indépendantes** qui se confondent vite.
 > Cette page est la carte canonique : avant de toucher activation / clés / options,
-> lire ici. Sources de vérité code : `connector_activation.py`, `access.resolve_api_key`,
+> lire ici. Sources de vérité code : `connectors/activation.py`, `access.resolve_api_key`,
 > `access.has_option`.
 
 Pour qu'un connecteur **marche** pour un utilisateur, les **trois** doivent être OK :

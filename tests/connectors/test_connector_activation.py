@@ -5,7 +5,7 @@ gouvernance. Les helpers DB (`is_exposed`/`exposed_connectors`) ne font
 qu'alimenter cette résolution depuis les rows ; leur chemin SQL est vérifié au
 déploiement (table + seed au boot).
 """
-from oto_mcp.connector_activation import _resolve
+from oto_mcp.connectors.activation import _resolve
 
 
 def test_master_global():

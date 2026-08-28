@@ -176,7 +176,7 @@ def callback_url(connector: str) -> Optional[str]:
     f = _FLOWS.get(connector)
     if not f or not f.callback_path:
         return None
-    from . import oauth_flow
+    from .. import oauth_flow
     return oauth_flow.redirect_uri(f.callback_path)
 
 

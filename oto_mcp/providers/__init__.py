@@ -408,7 +408,9 @@ def public_catalog() -> list[dict]:
     """Vue publique (GET /api/connectors) — sans secret, pour le frontend."""
     # Lazy : le registre des backends d'identités se remplit à l'import des modules
     # tools/* (register_all au boot) — on le lit à la demande, jamais à l'import.
-    from .. import connector_flow, connector_identities, connector_verify
+    from ..connectors import flow as connector_flow
+    from ..connectors import identities as connector_identities
+    from ..connectors import verify as connector_verify
     return [
         {
             "name": c.name,

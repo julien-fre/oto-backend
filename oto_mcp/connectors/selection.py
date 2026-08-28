@@ -65,7 +65,7 @@ def init_schema(conn) -> None:
 def list_selection(sub: str, org_id: int = 0) -> dict[str, str]:
     """Sélections du membre dans une org : `{connector: state}`. Les connecteurs
     absents de la map sont *non-sélectionnés*."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         rows = conn.execute(
@@ -77,7 +77,7 @@ def list_selection(sub: str, org_id: int = 0) -> dict[str, str]:
 
 def state_of(sub: str, connector: str, org_id: int = 0) -> str | None:
     """État d'un connecteur pour le membre : 'active' | 'paused' | None (non-sélectionné)."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         row = conn.execute(
@@ -94,7 +94,7 @@ def set_state(sub: str, connector: str, state: str, org_id: int = 0) -> None:
     """Sélectionne (ou bascule actif↔pause) un connecteur pour le membre. Upsert."""
     if state not in STATES:
         raise ValueError(f"état de sélection invalide: {state!r} (∈ {STATES})")
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         conn.execute(
@@ -109,7 +109,7 @@ def set_state(sub: str, connector: str, state: str, org_id: int = 0) -> None:
 def unselect(sub: str, connector: str, org_id: int = 0) -> bool:
     """Retire un connecteur de la sélection du membre (→ retour library).
     Renvoie True si une ligne existait."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         cur = conn.execute(
@@ -123,7 +123,7 @@ def unselect(sub: str, connector: str, org_id: int = 0) -> bool:
 
 def is_seeded(sub: str, org_id: int = 0) -> bool:
     """True si ce (sub, org) a déjà reçu sa sélection initiale (cf. `seed_active`)."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         row = conn.execute(
@@ -139,7 +139,7 @@ def seed_active(sub: str, connectors: set[str], org_id: int = 0) -> None:
     le SOCLE curé `default_active ∩ exposé` (ADR 0050, `session_visibility`).
     Le reste de l'exposé démarre non-sélectionné (→ library). Idempotent, ne
     réécrit jamais une sélection existante."""
-    from . import db
+    from .. import db
 
     with db._connect() as conn:
         for name in connectors:
@@ -232,7 +232,7 @@ def backfill_preexisting(conn) -> None:
     ).fetchone()
     if done:
         return
-    from .connector_activation import _resolve
+    from .activation import _resolve
 
     # Table UNIFIÉE `connector_availability` (chantier ACL, cadrage 10/07) — peuplée
     # AVANT ce backfill par `connector_activation.init_schema` (copie legacy) : cf.

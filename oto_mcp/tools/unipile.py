@@ -22,7 +22,9 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_flow, connector_verify, db, session_org, status_hints
+from .. import access, db, session_org, status_hints
+from ..connectors import flow as connector_flow
+from ..connectors import verify as connector_verify
 
 logger = logging.getLogger(__name__)
 
@@ -536,7 +538,8 @@ def unipile_client(provider: str = "LINKEDIN"):
     quelle (la clé résolue est indépendante du compte).
     """
     from oto.tools.unipile import make_unipile_client
-    from .. import connector_identities, subdomain_project
+    from .. import subdomain_project
+    from ..connectors import identities as connector_identities
     rc = access.resolve_credential("unipile", want="auto")
     anon = subdomain_project.current_anon_context()
     if anon is not None:

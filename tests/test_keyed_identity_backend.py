@@ -6,7 +6,8 @@ lister = lignes MEMBER de l'org de contexte, select = pose meta.is_default UNIQU
 """
 import pytest
 
-from oto_mcp import access, connector_identities as ci, credentials_store, providers
+from oto_mcp import access, credentials_store, providers
+from oto_mcp.connectors import identities as ci
 
 
 def test_zoho_registered_generic():

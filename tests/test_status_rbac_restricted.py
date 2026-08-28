@@ -30,7 +30,7 @@ def snapshot(monkeypatch):
     monkeypatch.setattr(access, "get_user_role", lambda sub: "member")
     monkeypatch.setattr(access.group_store, "list_groups_for_user", lambda s, o: [])
     monkeypatch.setattr(access.db, "KEY_PROVIDERS", ("pennylane", "serper"))
-    monkeypatch.setattr(access.connectors, "REGISTRY", {})
+    monkeypatch.setattr(access.providers, "REGISTRY", {})
     monkeypatch.setattr(access.credentials_store, "list_credentials", lambda *a, **k: [])
     return monkeypatch
 

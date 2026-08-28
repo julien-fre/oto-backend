@@ -21,7 +21,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import connector_flow, credentials_store
+from .. import credentials_store
+from ..connectors import flow as connector_flow
 from ._authz import SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

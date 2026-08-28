@@ -9,7 +9,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from .. import connector_identities
+from ..connectors import identities as connector_identities
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 

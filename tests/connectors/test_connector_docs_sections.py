@@ -21,7 +21,7 @@ import re
 
 import pytest
 
-from oto_mcp.connector_docs import KINDS, _DIR
+from oto_mcp.connectors.docs_reader import KINDS, _DIR
 
 # Ce que le parseur accepte, écrit ici sous une forme LISIBLE (le patron du module
 # est construit par jointure) : `## kind — titre`, tiret cadratin ou simple.

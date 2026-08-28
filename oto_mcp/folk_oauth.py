@@ -33,7 +33,9 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from . import connector_flow, connector_link, credentials_store, oauth2_pkce, oauth_flow
+from . import credentials_store, oauth2_pkce, oauth_flow
+from .connectors import flow as connector_flow
+from .connectors import link as connector_link
 
 _AUTH_URL = "https://app.folk.app/oauth/authorize"
 _TOKEN_URL = "https://api.stytch.folk.app/v1/oauth2/token"

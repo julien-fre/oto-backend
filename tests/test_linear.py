@@ -13,7 +13,8 @@ import asyncio
 import pytest
 from mcp.shared.exceptions import McpError
 
-from oto_mcp import connector_verify, providers
+from oto_mcp import providers
+from oto_mcp.connectors import verify as connector_verify
 from oto_mcp.tool_visibility import namespace_of
 from oto_mcp.tools import linear
 

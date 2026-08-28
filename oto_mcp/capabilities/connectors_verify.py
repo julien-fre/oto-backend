@@ -15,7 +15,8 @@ from typing import Literal, Optional
 from mcp.shared.exceptions import McpError
 from pydantic import BaseModel, ConfigDict
 
-from .. import access, connector_verify, credentials_store, status_hints
+from .. import access, credentials_store, status_hints
+from ..connectors import verify as connector_verify
 from ._authz import ORG_ADMIN, ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 

@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 from mcp.shared.exceptions import McpError
 
-from oto_mcp import connector_verify
+from oto_mcp.connectors import verify as connector_verify
 
 EXPECTED_TOOLS = {"pipedrive_record", "pipedrive_search", "pipedrive_note",
                   "pipedrive_lead", "pipedrive_users"}

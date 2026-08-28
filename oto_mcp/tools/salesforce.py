@@ -46,7 +46,9 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_flow, connector_verify, status_hints
+from .. import access, status_hints
+from ..connectors import flow as connector_flow
+from ..connectors import verify as connector_verify
 
 
 def _bad(msg: str) -> McpError:
@@ -220,7 +222,7 @@ def _sf_hint_for(low: str) -> str:
         # chacune envoie sa propre redirect_uri. Une URL en dur y désignait toujours la
         # prod — donc un utilisateur de preprod lisait « doit être exactement <prod> »
         # alors que son backend envoyait autre chose. Le message accusait la victime.
-        from .. import connector_flow
+        from ..connectors import flow as connector_flow
         attendue = connector_flow.callback_url("salesforce") or "l'URL affichée sur la fiche"
         return ("Callback URL de la Connected App incorrecte — doit être exactement "
                 f"{attendue} (vérifie qu'il n'y a pas d'espace ni de slash final en trop).")

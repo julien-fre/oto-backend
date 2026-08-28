@@ -61,7 +61,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access
+from ..connectors import verify as connector_verify
 
 # Ops de chaque objet, lectures → écritures. Source unique : le SCHÉMA MCP
 # (`Literal` → `enum` JSON), la validation d'entrée ET le message de refus en dérivent.

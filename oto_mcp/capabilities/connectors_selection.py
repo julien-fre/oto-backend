@@ -22,7 +22,9 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from .. import access, connector_activation, connector_selection, org_store, providers, tool_registry
+from .. import access, org_store, providers, tool_registry
+from ..connectors import activation as connector_activation
+from ..connectors import selection as connector_selection
 from ._authz import ORG_ADMIN_OF, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -261,7 +263,7 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
         # tout le monde — « pose d'abord les identifiants de l'application », y compris
         # à qui n'a plus rien à poser depuis qu'oto publie la sienne.
         if inp.verbose and base.get("connect"):
-            from .. import connector_flow
+            from ..connectors import flow as connector_flow
             base = {**base, "connect": {
                 **base["connect"],
                 "callback_url": connector_flow.callback_url(c["name"]),

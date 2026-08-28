@@ -3,7 +3,7 @@ anonyme, résolution de credential sans sub, visibilité allowlist, dispatch par
 """
 import pytest
 
-from oto_mcp import access, anon_visibility as av, connectors, db, org_store
+from oto_mcp import access, anon_visibility as av, providers, db, org_store
 from oto_mcp import subdomain_project as sp
 
 

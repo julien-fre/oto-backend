@@ -10,7 +10,7 @@ import pytest
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from oto_mcp import connector_verify
+from oto_mcp.connectors import verify as connector_verify
 from oto_mcp.capabilities import connectors_verify as cv
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.tools import zoho

@@ -1,7 +1,7 @@
 """Secrets partagés d'un groupe (ADR 0012).
 
 Autz = `GROUP_ADMIN_OF`. Les secrets de groupe utilisent la MÊME validation
-provider/base_url que les secrets d'org (`connectors.org_secret_meta`, source
+provider/base_url que les secrets d'org (`providers.org_secret_meta`, source
 unique) et le même coffre chiffré (entity_type='group').
 """
 from __future__ import annotations
@@ -10,7 +10,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import connectors, credentials_store, group_store
+from .. import providers, credentials_store, group_store
 from ._authz import GROUP_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -92,7 +92,7 @@ class GroupSecretDeleted(BaseModel):
 
 def _set_secret(ctx: ResolvedCtx, inp: SetGroupSecretInput) -> dict:
     base_url = (inp.base_url or "").strip() or None
-    meta, code = connectors.org_secret_meta(inp.provider, base_url)
+    meta, code = providers.org_secret_meta(inp.provider, base_url)
     if code:
         raise AuthzDenied(400, code, f"Provider/base_url invalide : {code}.")
     account = (inp.account or "").strip()

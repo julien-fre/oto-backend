@@ -66,7 +66,7 @@ def test_aiark_tools_register_under_namespace(all_tools):
 def test_aiark_verify_is_probe_not_tool(all_tools):
     # « tester la connexion » = sonde générique (oto_instance op=verify), plus un
     # tool MCP dédié par connecteur.
-    from oto_mcp import connector_verify
+    from oto_mcp.connectors import verify as connector_verify
     assert "linkedin_aiark_verify_key" not in all_tools
     assert connector_verify.supports("aiark")
 
