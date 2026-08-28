@@ -708,3 +708,44 @@ Ces deux paragraphes vivaient dans la description de `data_write` servie au mod�
 
 Si l'essai montre que la longueur ne pèse pas, les deux paragraphes reviennent dans la description (ils y sont utiles) ; s'il montre qu'elle pèse, la règle devient : **les descriptions d'outils portent le contrat minimal, le détail vit dans les réponses et les guides**.
 
+
+## Provenance : une origine se CORRIGE, elle ne se supprime pas (28/08)
+
+Deux règles, sorties d'un incident de mission (14/08 → 28/08) où une purge de couches
+`origine` « hors vocabulaire » a été prise, quinze jours plus tard, pour la destruction
+d'une pièce contractuelle — et où l'écran qui la restituait était resté vide sans que
+personne le voie.
+
+1. **Une couche `origine` se corrige, elle ne se purge pas — et jamais sur un critère
+   générique.** Ce que `origine` doit porter est un contrat **par champ**, déclaré par le
+   schéma ou la procédure : sur la plupart des champs, un NOM DE SOURCE (`client`,
+   `registre`, `apollo`…) — une origine qui y recopie la valeur est hors vocabulaire et se
+   **réécrit** vers le bon nom ; mais sur d'autres champs, `origine` **conserve la valeur
+   d'entrée du client** (avant enrichissement ou réattribution), et « origine identique à
+   la valeur » y est précisément le cas « retrouvée identique » que la restitution attend.
+   ⚠️ **La liste des champs à entrée conservée est PROPRE À CHAQUE TABLEAU et se RELÈVE
+   avant toute purge — jamais de mémoire, jamais d'un autre tableau** : sur le vivier du
+   28/08 c'étaient `raison_sociale`, `nom_commercial` (743 + 383 « identiques ») et
+   `charge_affaires` (79 origines = l'attribution du fichier client avant réattribution
+   métier, écrites par la consigne en cours) — illustration du jour, pas définition. ⚠️ **« Purger là où l'origine
+   égale la valeur » détruit donc exactement la mesure attendue** sur ces champs : une
+   purge NOMME les champs où l'origine doit être une source, ne touche jamais ceux où elle
+   conserve l'entrée, **commence par un EXTRAIT des valeurs supprimées** (namespace,
+   row_id, chemin, valeur) déposé hors du tableau, et passe par l'outil (`data_write`,
+   journalisé) — jamais par un SQL direct que le journal des appels ne voit pas. Le cas
+   « retrouvée identique » se restitue aussi par comparaison avec la colonne `initial_of`
+   déclarée au schéma.
+2. **Une bascule de calcul se vérifie contre la donnée RÉELLE avant de servir.** Un
+   consommateur qui passe « d'une colonne dédiée à la couche native » parce que c'est plus
+   élégant vérifie d'abord que la couche est REMPLIE sur les lignes qu'il sert
+   (`data_aggregate` sur le chemin, compte par ligne) — sinon l'écran est vide et le
+   reste : personne ne regarde un écran vide. Même famille que « un filtre ignoré en
+   silence » : tester par différentiel, pas à la lecture.
+
+Corollaire de conversion : quand une colonne devient une colonne-liste
+(`datastore-colonne-tableau.md`), la provenance des feuilles DOIT suivre (« la provenance
+vit au grain feuille »). Sur le cas du 28/08 elle a suivi — mais parce que la procédure
+portait déjà la source dans chaque élément (511 contacts sur 515), pas parce que la
+conversion la garantit : vérifier après conversion que le compte des origines par feuille
+égale celui d'avant, et ne pas lire l'absence d'une colonne SUPPRIMÉE par la conversion
+comme une perte de provenance.
