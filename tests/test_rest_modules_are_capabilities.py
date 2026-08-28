@@ -155,7 +155,6 @@ _KNOWN: dict[str, str] = {
     "/favicon.svg": NATURE,
     "/favicon.ico": NATURE,
     #
-    # --- DETTE — verbes de dashboard authentifiés, à migrer en capacités.
     # ⚠️ Le COMPTE a quitté cette liste le 2026-08-27 : `GET /api/me`,
     # `/api/me/calls` et `/api/me/activity-summary` sont des capacités
     # (`capabilities/me_account.py` — `me.{get,calls,activity_summary}`), et
@@ -163,14 +162,30 @@ _KNOWN: dict[str, str] = {
     # chemins, mêmes codes, même corps sur le fil ; entrée ET sortie déclarées, donc
     # `GET /api/me` — la première requête de tout front qui se branche — est enfin
     # décrite dans `/api/openapi.json`.
-    "/api/me/avatar": DEBT,
-    # Fichiers bruts d'un projet + export — le reste du domaine projet est déjà en
-    # capacités (`/api/me/projects` sert tout le métier en `op=`), ces quatre-là non.
-    "/api/me/projects/{project_id:int}/files": DEBT,
-    "/api/me/projects/{project_id:int}/files/{file_id:int}": DEBT,
-    "/api/me/projects/{project_id:int}/files/{file_id:int}/public": DEBT,
-    "/api/me/projects/{id}/export": DEBT,
-    "/api/orgs/{id}/logo": DEBT,
+    "/api/me/avatar": NATURE,                            # POST multipart
+    # ⚠️ Les cinq chemins de forme JSON de cette famille sont partis en capacités le
+    # 2026-08-27 (`capabilities/media_and_files.py`) : `DELETE /api/me/avatar`,
+    # `DELETE /api/orgs/{id}/logo`, la LISTE des fichiers d'un projet, la SUPPRESSION
+    # d'un fichier et la bascule de son partage. Ce qui reste ci-dessous n'est plus de
+    # la dette : c'est de la NATURE, et pour une raison qui ne bougera pas.
+    # --- NATURE — HORS DU MOULE PAR CONSTRUCTION, reclassées le 2026-08-27.
+    #
+    # `_rest_adapter` lit un corps JSON et répond en JSON. Ces quatre-là ne peuvent donc
+    # pas être des capacités sans déformer l'adaptateur pour elles seules :
+    #   - trois `POST` **multipart** (avatar, logo d'org, dépôt d'un fichier de projet) :
+    #     le corps est BINAIRE, il n'y a pas de modèle pydantic à en dériver ;
+    #   - un `GET` qui rend un **ZIP** (`application/zip` + `Content-Disposition`), pas
+    #     du JSON.
+    # Même raison que `/api/upload/{token}`, classé NATURE depuis toujours. Leurs
+    # jumelles de forme JSON, elles, SONT des capacités — c'est bien la FORME qui
+    # tranche, pas le domaine.
+    #
+    # ⚠️ Trois de ces chemins sont donc MIXTES : leur `POST` (ou leur `GET`) est écrit à
+    # la main, leur autre verbe est généré. C'est sans effet sur le routage — Starlette
+    # rend un `Match.PARTIAL` sur méthode non trouvée et poursuit son balayage.
+    "/api/me/projects/{project_id:int}/files": NATURE,   # POST multipart
+    "/api/me/projects/{id}/export": NATURE,              # réponse application/zip
+    "/api/orgs/{id}/logo": NATURE,                       # POST multipart
     # ⚠️ La TOOLBOX DU MEMBRE a quitté cette liste le 2026-08-27 : les six routes
     # `/api/me/tools*` sont des capacités (`capabilities/tools_me.py` —
     # `me.tools.{list,registry,disable,enable,detail,call}`), et `api_routes_tools.py`
@@ -231,21 +246,31 @@ def test_no_new_handwritten_rest_route():
         "doit refléter le réel, jamais mentir.")
 
 
-def test_rest_debt_only_shrinks():
-    """La dette est NOMMÉE et COMPTÉE (« no silent caps » : un plafond tu est un
-    plafond oublié). Ce plafond ne doit que baisser, au fil des migrations.
+def test_rest_debt_stays_at_zero():
+    """✅ **La dette REST vaut ZÉRO depuis le 2026-08-27, et ce test la maintient là.**
 
-    ⚠️ **Il est passé de 37 à 49 le 2026-08-11 (#286), et c'est le SEUL cas où
-    l'élargir est légitime** : on ne l'a pas relevé pour accueillir du NEUF, mais
-    pour cesser d'ignorer de l'ANCIEN. Les 21 routes ajoutées vivaient déjà dans
-    `api_routes.py`, hors de portée du glob depuis toujours ; les compter ne crée
-    pas une dette, elle la RÉVÈLE. Toute autre hausse est un relâchement.
+    Il a longtemps mesuré un plafond qui ne devait que baisser (« no silent caps » : un
+    plafond tu est un plafond oublié). Il n'y a plus rien à mesurer : les 38 routes
+    écrites à la main qui restaient ont été portées en capacités en huit lots, et les
+    chemins encore montés à la main sont TOUS de nature, chacun avec sa raison écrite
+    dans `_KNOWN` — callback de redirection, webhook, surface anonyme, API consommée par
+    un programme externe, corps multipart, réponse non-JSON.
+
+    **Le garde-fou survit au chantier, il change juste de rôle** : de compteur, il
+    devient CLIQUET. Une route neuve écrite à la main a désormais deux issues, et deux
+    seulement — naître capacité, ou être classée `NATURE` ici **avec sa raison**. La
+    reclasser `DEBT` rouvrirait une dette qu'on vient de fermer : c'est un acte, pas un
+    réglage, et il doit se voir en revue.
+
+    (Le troisième garde-fou de la famille, `test_no_new_handwritten_rest_route`, refuse
+    déjà toute route absente de `_KNOWN` : ensemble, les deux rendent impossible
+    d'ajouter une route à la main sans le déclarer.)
     """
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 6, (
-        f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
-        "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
-
+    assert not debt, (
+        f"la dette REST est rouverte ({len(debt)} route(s)) : {debt}. Elle valait ZÉRO ; "
+        "une route écrite à la main naît CAPACITÉ (`oto_mcp/capabilities/`), ou se "
+        "classe `NATURE` avec sa raison. Il n'y a plus de troisième voie.")
 
 def test_zoho_start_and_modes_are_capabilities_not_routes():
     """Régression de la migration du jour : ces deux verbes ont quitté le REST

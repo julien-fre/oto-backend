@@ -24,13 +24,28 @@ modules de routes, monte la couche capacité, et rend la table ordonnée des che
 `tests/test_api_routes_table_frozen.py` : retirer, ajouter ou réordonner un chemin fait
 rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajout.
 
+✅ **La dette REST vaut ZÉRO depuis le 2026-08-27.** Les 38 routes écrites à la main
+qu'il restait sont devenues des capacités en huit lots ; les **36 chemins encore montés
+à la main sont tous de NATURE**, chacun avec sa raison écrite dans
+`tests/test_rest_modules_are_capabilities.py::_KNOWN` — callback de redirection,
+webhook, surface anonyme, API consommée par un programme externe, corps **multipart**,
+réponse **non-JSON**. Ce n'est pas le domaine qui tranche, c'est la **forme** : sur
+`/api/me/avatar`, le `DELETE` est une capacité et le `POST` multipart n'en sera jamais une.
+
+Le garde-fou ne mesure donc plus une dette, il est devenu un **cliquet**
+(`test_rest_debt_stays_at_zero`) : une route neuve écrite à la main a **deux issues, et
+deux seulement** — naître capacité, ou être classée `NATURE` **avec sa raison**. La
+classer `DEBT` rouvrirait ce qui vient d'être fermé : c'est un acte, pas un réglage.
+Avec `test_no_new_handwritten_rest_route`, qui refuse toute route absente de `_KNOWN`,
+il devient impossible d'ajouter une route à la main sans le déclarer.
+
 | famille | où | régime |
 | --- | --- | --- |
-| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, **les jetons API**, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
+| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, **les jetons API**, **les fichiers de projet**, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
 | primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api_routes_base.py` | partagées par tous les modules ; **ré-exportées** par `api_routes` |
 | favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques doctrines & guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api_routes_public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
-| `/api/me/avatar`, `/api/orgs/{id}/logo` | `api_routes_media.py` | multipart → hors couche capacité |
-| fichiers bruts d'un projet, `/api/me/projects/{id}/export` | `api_routes_projects.py` | multipart / binaire |
+| `POST /api/me/avatar`, `POST /api/orgs/{id}/logo` | `api_routes_media.py` | **multipart** → hors du moule par CONSTRUCTION (classé `NATURE`) |
+| `POST` d'un fichier de projet, `/api/me/projects/{id}/export` | `api_routes_projects.py` | **multipart / ZIP** → hors du moule (classé `NATURE`) |
 | `/api/upload/{token}` (PUT/POST/GET) | `api_routes_uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
 | SIRENE, accords, datastore, contact, **webhook Unipile**, webhook Mollie, **callbacks OAuth** zoho/google/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
 
@@ -51,7 +66,31 @@ rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajo
   jamais un 400 — c'est le comportement servi depuis toujours. En revanche un **paramètre
   inconnu** est désormais refusé (400 `unknown_fields`, champ nommé) là où il était ignoré
   en silence : c'est la garde de l'adaptateur, et c'est le seul écart visible de la migration.
-- `POST|DELETE /api/me/avatar` — upload (multipart `file`, png/jpeg/webp ≤ 2 Mo) / efface l'avatar user → Scaleway Object Storage, URL publique en DB
+- `POST|DELETE /api/me/avatar` — upload (multipart `file`, png/jpeg/webp ≤ 2 Mo) / efface
+  l'avatar user → Scaleway Object Storage, URL publique en DB. ⚠️ **Les deux verbes ne
+  vivent plus au même endroit** : le `DELETE` est la capacité `me.avatar.clear` depuis le
+  2026-08-27 ; le `POST`, multipart, reste écrit à la main et **classé `NATURE`** —
+  l'adaptateur lit du JSON, un corps binaire est hors du moule par construction. C'est la
+  FORME qui tranche, pas le domaine. Effacer purge aussi l'objet stocké (pas d'orphelin).
+- `GET|DELETE /api/me/projects/{project_id}/files` + `POST …/files/{file_id}/public` —
+  **les fichiers bruts d'un projet**, capacités `me.project_file.{list,delete,set_public}`
+  depuis le 2026-08-27 (`capabilities/media_and_files.py`). Le **dépôt** (`POST …/files`,
+  multipart) et l'**export ZIP** (`GET /api/me/projects/{id}/export`) restent écrits à la
+  main, classés `NATURE`. ⚠️ **`s3_key` ne sort jamais** : chaque ligne rend une
+  `download_url` **signée et temporaire** (elle expire — ne pas la mettre en cache),
+  tandis que `public_url` est permanente tant que le partage est ouvert. Un stockage muet
+  rend `download_url: null` sans faire disparaître la ligne. Lecture bornée à l'org de
+  **consultation** (ADR 0023) : un projet visible via une AUTRE de mes orgs rend `404
+  unknown_project`, non-disclosante. ⚠️ **`public` est désormais REQUIS** sur la bascule
+  de partage : le handler d'origine traitait un corps sans `public` comme « rendre
+  privé », donc un client mal formé **départageait un fichier en silence, avec un 200**.
+  Un corps sans `public` (ou illisible) rend maintenant `400 invalid_input` — on refuse
+  plutôt qu'on agit.
+- ⚠️ **Duplication assumée** entre `me.project_file.{list,delete}` (REST, dashboard) et
+  `me.project_files` (MCP `oto_project_files`, agent) : les RÉPONSES sont les mêmes, ce
+  qui diffère est la forme des REFUS (la face MCP joint un message à ses 404) et l'entrée
+  (`op` + `project_id` contre des paramètres de chemin). Les fusionner changerait les
+  corps servis au dashboard — même famille de décision que la toolbox (oto-backend#429).
 - `POST|DELETE /api/orgs/{id}/logo` — upload / efface le logo **uploadé** d'org (org_admin, multipart `file`). Le logo AFFICHÉ (`logo_url` des lectures + `active_org_logo_url` de `/api/me`) est l'**effectif** : upload sinon dérivé du CDN logo.dev via le `domain` déclaré (`org_store.effective_logo_url`, token `LOGODEV_TOKEN`) ; `logo_custom` (fiche org) dit si un upload existe.
 - `PATCH /api/orgs/{id}` (+ miroir `/api/admin/orgs/{id}`) — profil d'org (org_admin) : `name`, `description`, **`domain`** (domaine de marque, normalisé `org_store.normalize_domain` — `""` efface, saisie URL tolérée, invalide → 400 `invalid_domain`), `industry`, `location`. Capacité `org.update` (MCP `oto_org(op='update')`, console ADR 0047).
 - `POST|DELETE /api/settings/linkedin` — cookie li_at + UA

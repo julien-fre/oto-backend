@@ -71,6 +71,10 @@ from . import federated_oauth  # noqa: F401 — me.federation.{atlassian,folkmcp
 # routes de jetons portent `RestBinding.allow_api_token=False` : un jeton ne fabrique
 # pas de jeton. C'est ce cran, absent de l'adaptateur jusqu'ici, qui les y retenait.
 from . import api_tokens  # noqa: F401 — me.token.*, platform.token.*, platform.key.{list,create,delete}
+# Ce qui reste de forme JSON dans les images et les fichiers de projet (#121). Leurs
+# voisines multipart et l'export ZIP sont hors du moule par CONSTRUCTION et restent
+# écrites à la main, reclassées NATURE.
+from . import media_and_files  # noqa: F401 — me.avatar.clear, org.logo.clear, me.project_file.*
 # RBAC connecteur interne à l'org (ADR 0025) — restreindre un connecteur à des départements/membres.
 from . import connectors_acl  # noqa: F401 — connectors.acl.{list,grant,revoke}
 # Toolbox du MEMBRE (#121) — ex-routes écrites à la main : liste, registre, bascule

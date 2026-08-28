@@ -438,15 +438,9 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/invitations/{token}", public.invite_preview, methods=["GET"]),
         Route("/api/invitations/{token}", options_handler, methods=["OPTIONS"]),
         Route("/api/me/avatar", bind(media.avatar_save, verifier=verifier), methods=["POST"]),
-        Route("/api/me/avatar", bind(media.avatar_clear, verifier=verifier), methods=["DELETE"]),
         Route("/api/me/avatar", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files", bind(projects.project_files_list, verifier=verifier), methods=["GET"]),
         Route("/api/me/projects/{project_id:int}/files", bind(projects.project_files_upload, verifier=verifier), methods=["POST"]),
         Route("/api/me/projects/{project_id:int}/files", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files/{file_id:int}", bind(projects.project_file_delete, verifier=verifier), methods=["DELETE"]),
-        Route("/api/me/projects/{project_id:int}/files/{file_id:int}", options_handler, methods=["OPTIONS"]),
-        Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", bind(projects.project_file_public, verifier=verifier), methods=["POST"]),
-        Route("/api/me/projects/{project_id:int}/files/{file_id:int}/public", options_handler, methods=["OPTIONS"]),
         Route("/api/public/docs/{token}", public.public_doc, methods=["GET"]),
         Route("/api/public/docs/{token}", options_handler, methods=["OPTIONS"]),
         # Réception d'un upload signé out-of-bande (#105) — jeton dans l'URL, pas de JWT.
@@ -458,7 +452,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # « pages SPA non lisibles »). Servie sous dashboard.oto.ninja via Caddy.
         Route("/p/d/{token}", public.public_doc_view, methods=["GET"]),
         Route("/api/orgs/{id}/logo", bind(media.org_logo_save, verifier=verifier), methods=["POST"]),
-        Route("/api/orgs/{id}/logo", bind(media.org_logo_clear, verifier=verifier), methods=["DELETE"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
         # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs_instructions.py),
         # monté par capability_routes plus bas.
