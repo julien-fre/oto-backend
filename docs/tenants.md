@@ -30,6 +30,16 @@ description: >-
 >   équivalent chez lui : coller nos chemins sous son domaine fabrique des liens morts, pire
 >   qu'un lien à notre marque. Un lien AFFICHÉ peut valoir `None` ; une REDIRECTION (retour
 >   OAuth) aboutit toujours (`redirect_for`) — on ne peut pas « ne pas rediriger ».
+> - ⚠️ **Nos propres patrons par défaut se vérifient contre le ROUTEUR du front, pas de
+>   mémoire.** Corrigé le 28/08 : `DEFAULT_PATHS["doc"]` a dit `/docs/{id}` du 13/08 au
+>   28/08 — un chemin que le tableau de bord ne route pas (il ne connaît que la section
+>   `/documents`, sans id) et que son attrape-tout renvoie sur `/overview`. Le lien
+>   n'aurait affiché aucune erreur : il aurait ouvert la page d'accueil en se faisant
+>   passer pour la page demandée. Il n'avait aucun appelant, ce qui l'a gardé invisible un
+>   mois — c'est-à-dire le lien mort que ce module interdit, posé chez nous. Le vrai
+>   chemin d'une page l'ouvre DANS son projet (`/projects/{project_id}?doc={id}`) : une
+>   page n'a pas d'écran à elle. **Un patron sans appelant n'est pas inerte, il est
+>   simplement non testé** — n'en déclarer un qu'avec ce qui l'utilise.
 > - **Le socle d'instructions suit le tenant** (`guides` scope `tenant`, owner = le slug) :
 >   sinon l'assistant d'un partenaire se présente sous NOTRE marque à chaque session.
 > - ⚠️ **Le socle ne suffisait pas : les OUTILS aussi portaient notre nom.** Dans la

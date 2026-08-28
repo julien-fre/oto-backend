@@ -149,7 +149,16 @@ docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/t
 
 Conteneur de travail **possédé** : brief + liens typés (`project_links` : tableau/
 procédure/connecteur/**doc** — `doc` = une page Documents attachée) + docs en arbre. Capacités `oto_project`/`oto_doc` ;
-partage/transfert via `oto_resource`. S'y greffent : **livraison client cascade**
+partage/transfert via `oto_resource`.
+⚠️ **« C'est où ? » a une réponse SERVIE** (#599, 28/08) : un projet et une page portent
+`url`, l'adresse pour les LIRE chez le lecteur — dérivée du seam `links.link_for`, comme
+celle d'un tableau (`data_url`), donc elle suit le front du tenant et vaut `null` quand
+son produit n'a pas cette vue. Elle survit à toutes les projections (l'accusé d'écriture
+est justement le moment où l'on demande où aller). **Ne jamais la reconstruire côté
+appelant** : un patron d'URL appris par cœur fabrique des liens plausibles et faux le
+jour où la route bouge — c'est ce que faisait le contournement qui a produit le signal.
+À ne pas confondre avec `mcp_url`/`share_url`, qui décrivent la PUBLICATION du projet
+vers l'extérieur ; `url`, c'est où on le lit chez soi. S'y greffent : **livraison client cascade**
 (#52), **endpoint MCP + partage navigable par projet** — un projet publié est servi sur
 son sous-domaine dédié, modes **anonymous** (`<slug>.mcp.oto.cx`, sans login + listé) /
 **secret** (`<slug>.share.oto.cx`, URL non devinable = **UI navigable** lecture seule des
