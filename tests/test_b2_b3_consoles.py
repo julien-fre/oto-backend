@@ -1,4 +1,4 @@
-"""Consoles B2/B3 (ADR 0047, *_op) : oto_procedure, oto_admin_doctrine,
+"""Consoles B2/B3 (ADR 0047, *_op) : oto_procedure, oto_admin_guide,
 oto_admin_signal, oto_org, oto_org_settings, oto_group, oto_scheduled_emails.
 
 Routage op → handler de domaine réutilisé + champs requis + bascule des
@@ -82,7 +82,7 @@ def test_procedure_carries_skills_index_anchor():
     assert dynamic_instructions._GUIDE_GET_TOOL == "oto_procedure"
 
 
-# ── oto_admin_doctrine / oto_admin_signal ────────────────────────────────────
+# ── oto_admin_guide / oto_admin_signal ────────────────────────────────────
 def test_admin_guide_routes(monkeypatch):
     monkeypatch.setattr(orgs_instructions, "_get_guide", _atag("get"))
     monkeypatch.setattr(orgs_instructions, "_list_guides", _tag("list"))
@@ -218,7 +218,7 @@ def test_consoles_carry_the_mcp_surface():
     caps = {c.key: c for c in CAPABILITIES}
     expected = {
         "org.procedure.console": "oto_procedure",
-        "admin.doctrine": "oto_admin_doctrine",
+        "admin.doctrine": "oto_admin_guide",
         "admin.signal": "oto_admin_signal",
         "org.console": "oto_org",
         "org.settings.console": "oto_org_settings",

@@ -138,7 +138,7 @@ def _key_grant(ctx: ResolvedCtx, inp: KeyGrantInput) -> dict:
     return users_admin._revoke_org_key(ctx, users_admin.OrgRevokeKeyInput(org_id=org_id, provider=provider))
 
 
-# ── oto_admin_doctrine : get / list / set / delete (org ciblée, ADR 0047 B2) ─
+# ── oto_admin_guide : get / list / set / delete (org ciblée, ADR 0047 B2) ────
 class GuideAdminInput(BaseModel):
     op: Literal["get", "list", "set", "delete"]
     org_id: int
@@ -355,7 +355,7 @@ CAPABILITIES += [
                      "/ list (named doctrines incl. base) / set (write: omit slug = base; "
                      "`from_version` restores; `slots` = required entities ADR 0035) / "
                      "delete (exact `slug`, drops history)."),
-        mcp="oto_admin_doctrine",
+        mcp="oto_admin_guide",
     ),
     Capability(
         key="admin.invite", handler=_invite, Input=InviteAdminInput,

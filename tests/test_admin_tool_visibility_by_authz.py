@@ -45,7 +45,7 @@ class _Ctx:
 OUTILS = [
     "oto_admin_org",              # ADMIN_BY_OP : create/archive SUPER, list/get PLATFORM
     "oto_admin_org_member",       # ADMIN_BY_OP : 4 ops ORG_ADMIN_OF, list PLATFORM
-    "oto_admin_doctrine",         # ADMIN_BY_OP : ORG_MEMBER_OF / ORG_ADMIN_OF
+    "oto_admin_guide",         # ADMIN_BY_OP : ORG_MEMBER_OF / ORG_ADMIN_OF
     "oto_admin_signal",           # PLATFORM_ADMIN
     "oto_admin_monitoring",       # PLATFORM_ADMIN
     "oto_admin_unipile_seat",     # SUPER_ADMIN
@@ -83,7 +83,7 @@ async def test_un_org_admin_voit_le_geste_que_son_autz_lui_accorde(toolbox):
     répondre 403 : c'est l'autz qui tranche à l'appel, comme toujours."""
     caches = await toolbox("member")
     assert "oto_admin_org_member" not in caches
-    assert "oto_admin_doctrine" not in caches      # ORG_MEMBER_OF / ORG_ADMIN_OF
+    assert "oto_admin_guide" not in caches      # ORG_MEMBER_OF / ORG_ADMIN_OF
 
 
 @pytest.mark.asyncio
@@ -138,7 +138,7 @@ async def test_un_outil_ordinaire_n_est_jamais_concerne(toolbox):
 # par ici — c'est le moment où l'on regarde à qui il apparaîtra, plutôt que de le
 # découvrir dans la toolbox de tout le monde.
 PLANCHERS = {
-    "oto_admin_doctrine": None,            # ORG_MEMBER_OF / ORG_ADMIN_OF
+    "oto_admin_guide": None,            # ORG_MEMBER_OF / ORG_ADMIN_OF
     "oto_admin_invite": "operator",
     "oto_admin_key_grant": "operator",     # list PLATFORM, grant/revoke SUPER
     "oto_admin_monitoring": "operator",

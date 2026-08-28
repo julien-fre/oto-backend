@@ -55,9 +55,12 @@ import re
 RACINE = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp"
 MOT = re.compile("doctrine", re.I)
 
-# ── Plafonds relevés à la fin du lot A de #519 (2026-08-28) ──────────────────
+# ── Plafonds relevés à la fin du lot B1 de #519 (2026-08-28) ─────────────────
 # Chaque entrée porte la RAISON pour laquelle le mot y survit. Une entrée sans
 # raison servie n'a rien à faire ici : elle se renomme.
+#
+# Total : 267 (fin du lot A) → 266 (fin de B1). Le lot B rembourse par étapes ; le
+# compte descend à chaque PR, jamais l'inverse. Zéro au lot D (#526).
 PLAFONDS: dict[str, int] = {
     # — Chemins REST servis `/api/[me/]doctrines/…` + les deux handlers publics
     #   dont le NOM est figé dans `tests/api/api_routes_table.txt`.
@@ -65,8 +68,9 @@ PLAFONDS: dict[str, int] = {
     "oto_mcp/api/routes.py": 6,
     # — Clés de capacité servies : `org.doctrine.*`, `admin.doctrine`.
     "oto_mcp/capabilities/__init__.py": 2,
-    # — Outil MCP servi `oto_admin_doctrine` + sa description.
-    "oto_mcp/capabilities/admin_console.py": 5,
+    # — Description servie (l'outil s'appelle `oto_admin_guide` depuis B1 ; son
+    #   ancien nom est servi en ALIAS daté, cf. `oto_mcp/deprecations.py`).
+    "oto_mcp/capabilities/admin_console.py": 3,
     # — Clé de réponse `doctrine` + description servie.
     "oto_mcp/capabilities/agent_context.py": 4,
     # — Clé de réponse `doctrine_ref_count`.
@@ -122,6 +126,11 @@ PLAFONDS: dict[str, int] = {
     "oto_mcp/db/usage.py": 31,
     # — Nom de table `doctrine_library` dans l'inventaire des colonnes de sub.
     "oto_mcp/db/users.py": 1,
+    # — LA table des noms SERVIS dépréciés (lot B, retrait daté au lot D #526).
+    #   C'est le seul fichier où le mot est une DONNÉE et non un usage : il y entre
+    #   au moment où une surface est renommée, et le fichier entier disparaît au
+    #   retrait. Un plafond qui MONTE ici pendant que le total baisse est normal.
+    "oto_mcp/deprecations.py": 1,
     # — Prose d'onboarding SERVIE à l'agent.
     "oto_mcp/discovery.py": 1,
     # — Le paramètre servi `doctrine` de `run_start`, nommé dans le docstring.

@@ -7,7 +7,7 @@ from fastmcp.server.middleware import Middleware
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData
 
-from .. import tool_alias
+from .. import deprecations, tool_alias
 from ..auth.hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,15 @@ class ToolAliasMiddleware(Middleware):
 
     Fail-open partout : pas de sub (endpoint anonyme, découverte), pas de préfixe
     déclaré, ou erreur ⟹ les noms canoniques, à l'octet près.
+
+    **Deuxième traduction, même bord : les noms DÉPRÉCIÉS** (`deprecations.TOOLS`,
+    #519). Un outil renommé est servi sous ses DEUX noms — le nouveau, et l'ancien
+    avec un avis de retrait daté en tête de sa description — et les deux s'appellent.
+    Ce n'est pas la même règle que le préfixe de tenant (celle-là dépend de QUI
+    appelle, celle-ci de rien), mais c'est le même endroit : le seul où un nom peut
+    être traduit sans que le reste du serveur l'apprenne. Le mettre ailleurs
+    obligerait chaque gate, la denylist, le journal et les refs `<tool:slug>` à
+    connaître les deux noms — et à diverger le jour où l'un d'eux l'oublie.
     """
 
     @staticmethod
@@ -50,8 +59,38 @@ class ToolAliasMiddleware(Middleware):
         except Exception:  # noqa: BLE001 — un nom d'outil ne casse jamais un appel
             return ""
 
+    @staticmethod
+    def _avec_alias_deprecies(tools):
+        """L'ancien nom d'un outil renommé, servi À CÔTÉ du nouveau (#519).
+
+        Dérivé de la liste RÉELLEMENT servie, jamais du registre : l'alias hérite
+        donc du filtrage de visibilité de son outil — un outil masqué pour ce compte
+        ne réapparaît pas par son ancien nom. Un alias qui tomberait sur un nom déjà
+        pris est abandonné (le nom réel gagne) : la conséquence d'une collision
+        serait qu'un outil en éclipse un autre sans que personne ne le voie.
+        """
+        if not deprecations.TOOLS:
+            return tools
+        pris = {t.name for t in tools}
+        out = list(tools)
+        for t in tools:
+            for ancien in deprecations.tools_deprecies_de(t.name):
+                if ancien in pris:
+                    continue
+                pris.add(ancien)
+                out.append(t.model_copy(update={
+                    "name": ancien,
+                    "description": deprecations.avis(t.name) + (t.description or ""),
+                }))
+        return out
+
     async def on_list_tools(self, context, call_next):
         tools = await call_next(context)
+        try:
+            tools = self._avec_alias_deprecies(tools)
+        except Exception:  # noqa: BLE001 — un avis de dépréciation ne casse pas une liste
+            logger.warning("alias dépréciés non servis (fail-open, noms canoniques)",
+                           exc_info=True)
         prefix = self._prefix()
         if not prefix:
             return tools
@@ -105,16 +144,19 @@ class ToolAliasMiddleware(Middleware):
 
     async def on_call_tool(self, context, call_next):
         prefix = self._prefix()
-        if not prefix:
-            return await call_next(context)
         name = getattr(context.message, "name", "") or ""
-        canonical = tool_alias.canonical(name, prefix)
+        # Les deux traductions se composent, dans cet ordre : un ancien nom porté
+        # par le préfixe d'un tenant (`acme_admin_…`) revient d'abord au canonique de
+        # plateforme, puis au nom d'aujourd'hui.
+        canonical = deprecations.tool_canonique(tool_alias.canonical(name, prefix))
         if canonical != name:
             context = context.copy(
                 message=context.message.model_copy(update={"name": canonical}))
         try:
             return await call_next(context)
         except McpError as e:
+            if not prefix:
+                raise
             raise self._erreur_traduite(e, prefix) from e
 
     @staticmethod

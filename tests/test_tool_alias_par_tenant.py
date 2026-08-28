@@ -464,7 +464,12 @@ async def test_un_renommage_qui_echoue_sert_la_liste_canonique(
         tenant_avec_prefixe, monkeypatch):
     """L'autre chemin de rattrapage, PROVOQUÉ. `tools/list` est le premier échange
     d'une session : une exception ici ne coûterait pas un nom mal affiché, elle
-    coûterait la connexion."""
+    coûterait la connexion.
+
+    Ce qui est gardé : **aucun outil ne disparaît**, et aucun ne porte le nom du
+    tenant. Pas l'égalité stricte des deux listes — le même hook sert aussi les
+    alias DÉPRÉCIÉS (#519), qui ne dépendent pas du préfixe et n'ont donc aucune
+    raison de tomber avec lui."""
     _comme(monkeypatch, _SUB_TENANT)
     monkeypatch.setattr(tool_alias, "public",
                         lambda *_a: (_ for _ in ()).throw(RuntimeError("boum")))
@@ -472,7 +477,9 @@ async def test_un_renommage_qui_echoue_sert_la_liste_canonique(
     ctx = MiddlewareContext(message=mt.ListToolsRequest(method="tools/list"),
                             method="tools/list")
     rendus = await ToolAliasMiddleware().on_list_tools(ctx, lambda _c: _renvoie(tools))
-    assert {t.name for t in rendus} == {t.name for t in tools}
+    noms = {t.name for t in rendus}
+    assert {t.name for t in tools} <= noms, "un outil a disparu de la liste servie"
+    assert not any(n.startswith("acme_") for n in noms)
 
 
 # ── 7. Le handshake annonce le produit, pas la plateforme ────────────────────

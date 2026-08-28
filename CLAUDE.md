@@ -453,10 +453,11 @@ Passer son org/groupe **explicitement** via le kwarg `org`/`group`.
 **Agent readme** = prose libre **injectée à chaque session**, cumulée du général au spécifique
 (plateforme → org → équipe active → user) ; les 4 étages vivent dans `guides` delivery='init'
 et **s'éditent par UNE surface**, la capacité `me.guide{,s}` (ADR 0042). **Procédure** =
-guide nommé, chargé à la demande. ⚠️ Le mot « doctrine » a quitté l'interne le
-28/08/2026 (#519) ; il ne survit que dans les noms SERVIS (outil `oto_admin_doctrine`,
-capacités `org.doctrine.*`, chemins `/api/[me/]doctrines/…`, clés `doctrine_id` &
-consorts, table `doctrine_library`), alias de compatibilité jusqu'au lot B.
+guide nommé, chargé à la demande. ⚠️ **Le produit a changé de mot le 28/08/2026**
+(#519) : il dit « guide », plus jamais l'ancien. L'interne est propre (lot A) ; les noms
+SERVIS se DOUBLENT au lot B — le nouveau naît, l'ancien reste servi avec **une date de
+retrait écrite** (premier tag à partir du 27/09/2026 ; retrait = lot D, #526).
+**La liste unique de ces alias, leur forme et leur date : `docs/alias-deprecies.md`.**
 ⚠️ **Une procédure s'OUVRE sur son digest et embarque son SCHÉMA — deux sections requises.**
 Le digest n'est **jamais fabriqué** (sourcé sur le journal des runs, ou rien). La grammaire du
 dessin est un **CONTRAT** (reparsé en graphe) : **UN** seul bloc fencé **non tagué** — guide
