@@ -269,6 +269,39 @@ FETCH_PROBE = CascadeProbe(
 )
 
 
+def group_secret_map(groups: Optional[list] = None) -> dict:
+    """`{group_id: {connecteurs dont l'équipe détient un secret}}` — UNE lecture par
+    équipe, jamais une par (équipe × connecteur).
+
+    Deux appelants posent CETTE question sur le chemin `/api/me` : le barreau `group`
+    de la sonde préchargée, et le hint `team_key_group` de `status_for`. Le second
+    interrogeait la base par connecteur (`has_group_secret`), et comme il ne se
+    déclenche que sur les connecteurs `forbidden` — la majorité d'un compte réel — il
+    coûtait à lui seul 67 allers-retours là où l'inventaire était DÉJÀ chargé à côté
+    de lui. D'où l'extraction en fonction nommée : les deux la construisent chacun,
+    par la même lecture.
+
+    Chacun la sienne, et NON une carte passée de l'un à l'autre : `preloaded_presence_probe`
+    est un seam de test (stubbé par lambda dans trois fichiers), et lui ajouter un
+    paramètre casse ces stubs pour économiser une lecture PAR ÉQUIPE — une à trois,
+    contre les soixante-sept que ce lot retire. Le partage coûterait plus qu'il ne rend.
+
+    ⚠️ Même définition de « détient » que la sonde préchargée, à dessein : la présence
+    d'une ligne dans `list_credentials`. `has_credential` y ajoute `secret_enc IS NOT
+    NULL` (la colonne est nullable en schéma, quoi qu'en dise son commentaire). Sur ce
+    point la carte n'invente rien — elle ALIGNE le hint sur le verdict que la cascade
+    rend déjà, au lieu de le laisser répondre par un chemin qui pourrait diverger.
+    """
+    from .. import credentials_store as cs
+
+    par_groupe: dict = {}
+    for g in (groups or []):
+        gid = int(g["group_id"] if isinstance(g, dict) else g)
+        par_groupe[gid] = {r["connector"]
+                           for r in cs.list_credentials("group", str(gid))}
+    return par_groupe
+
+
 def preloaded_presence_probe(sub: str, *, org: Optional[int],
                              groups: Optional[list] = None) -> CascadeProbe:
     """`PRESENCE_PROBE`, mais préchargée : les mêmes réponses, en quelques lectures.
@@ -293,6 +326,7 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
       seuls connecteurs qui l'atteignent : le gain ne paie pas le risque ;
     - `personal_instance_org` est appelé par le WALKER, pas par la sonde (un appel,
       12 ms) — le précharger supposerait de toucher au walker, ce qu'on refuse.
+
     """
     from .. import credentials_store as cs
 
@@ -307,11 +341,7 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
                 if not r.get("account"):
                     suspendues.add(r["connector"])
 
-    par_groupe: dict = {}
-    for g in (groups or []):
-        gid = int(g["group_id"] if isinstance(g, dict) else g)
-        par_groupe[gid] = {r["connector"]
-                           for r in cs.list_credentials("group", str(gid))}
+    par_groupe = group_secret_map(groups)
 
     org_secrets: set = set()
     if org is not None:

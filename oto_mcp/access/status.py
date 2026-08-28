@@ -68,12 +68,32 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
     # noqa: SILENT — fail-open par palier : un hoquet d'équipe ne prive pas l'org de sa fiche
     except Exception:
         member_groups = []
+    # TROISIÈME préchargement (28/08) : la carte des secrets d'équipe. Elle était
+    # DÉJÀ construite à l'intérieur de la sonde pour le barreau `group` — mais le hint
+    # `team_key_group`, quinze lignes plus bas, la redemandait à la base connecteur par
+    # connecteur. Et comme il ne se déclenche QUE sur les `forbidden`, c'est-à-dire la
+    # majorité d'un compte réel, il coûtait à lui seul 67 allers-retours (une seule
+    # équipe ; autant de plus par équipe) — plus que tout ce que les deux
+    # préchargements précédents avaient retiré du barreau org. On la construit donc ici,
+    # une fois, et on la passe aux DEUX.
+    #
+    # La sonde construit LA SIENNE de son côté (`group_secret_map` est la fonction
+    # partagée, pas la carte) : lui passer celle-ci demanderait un paramètre de plus
+    # sur une fonction que trois fichiers de tests stubbent par lambda. Une lecture par
+    # équipe payée deux fois — une à trois en tout — contre soixante-sept retirées.
+    #
+    # Elle suit la même règle que ses aînées : bâtie sur `active_org`/`member_groups`,
+    # donc sur le SUJET du snapshot, jamais sur le requérant.
     try:
+        secrets_par_equipe = cascade.group_secret_map(member_groups)
         sonde = cascade.preloaded_presence_probe(sub, org=active_org, groups=member_groups)
     except Exception:      # une accélération, jamais un prérequis
         logger.warning("status_for: préchargement des credentials indisponible",
                        exc_info=True)
         sonde = cascade.PRESENCE_PROBE
+        # None (et pas {}) : une carte vide FERAIT TAIRE le hint sur des équipes qui
+        # détiennent la clé. Le repli doit relire, pas répondre « aucune ».
+        secrets_par_equipe = None
     try:
         quotas_du_jour = db.usage_today_map(sub)
     except Exception:
@@ -141,7 +161,8 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
             # l'avoir active) : rien ne résout mais une clé existe → l'UI doit le
             # dire au lieu d'un « pas de clé » sec.
             "team_key_group": (rbac.reachable_team_key(sub, active_org, provider,
-                                                  groups=member_groups)
+                                                  groups=member_groups,
+                                                  secrets_by_group=secrets_par_equipe)
                                if mode == "forbidden" else None),
         }
 
@@ -182,7 +203,8 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
             "quota_used_today": 0,
             "quota_daily": None,
             "team_key_group": (rbac.reachable_team_key(sub, active_org, c.name,
-                                                  groups=member_groups)
+                                                  groups=member_groups,
+                                                  secrets_by_group=secrets_par_equipe)
                                if mode == "forbidden" else None),
         }
 
