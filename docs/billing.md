@@ -1,4 +1,4 @@
-# Facturation par org (ADR 0043) — le modèle, et le double débit du 25/08
+# Facturation par org (ADR 0043) — le modèle, la TVA, et le double débit du 25/08
 
 ## Ce que Mollie voit, et ce qu'il ne voit pas
 
@@ -6,9 +6,12 @@
 pour comprendre un abonnement oto ne rend rien : ADR 0043 pose le miroir local
 `org_subscriptions` comme source de vérité, PSP-agnostique. Mollie ne connaît que
 des **paiements** : un `sequenceType=first` au checkout, puis des `recurring` (MIT)
-rejoués par `billing_runner.tick()` sur `customerId` + `mandateId`. Deux tables et
-c'est tout — `org_subscriptions` (PK `org_id`, donc **un** abonnement par org,
+rejoués par `billing_runner.tick()` sur `customerId` + `mandateId`. Deux tables le
+reflètent — `org_subscriptions` (PK `org_id`, donc **un** abonnement par org,
 structurellement) et `billing_payments` (journal, `kind` ∈ `initial` | `renewal`).
+Une troisième, `billing_identities`, ne reflète rien de Mollie : elle dit **qui
+paie et depuis quel pays**, et c'est elle qui décide du montant (voir la TVA,
+plus bas).
 
 Trois objets Mollie, trois durées de vie :
 
@@ -19,6 +22,89 @@ Trois objets Mollie, trois durées de vie :
 | **mandat** (`mdt_…`) | **quelques minutes APRÈS** l'encaissement du 1ᵉʳ paiement | jusqu'à révocation |
 
 La troisième ligne est le piège central, et il a coûté 19 € au premier client.
+
+## Le montant débité est un TTC, et le pays le décide (#486)
+
+**Le prix d'un palier est un HORS TAXES.** Jusqu'au 28/08/2026 c'était ce HT qui
+partait au PSP : un client « à 19 € » était débité de 19,00 € alors que la TVA
+française de 20 % est due par Otomata quoi qu'il arrive. Sur l'encaissement réel,
+aucune facture correcte n'était émettable.
+
+Le taux dépend du **pays du payeur** — donc il faut le connaître **avant** de
+débiter. D'où l'ordre imposé : identité de facturation d'abord, paiement ensuite.
+
+### La règle (cadre du 28/08/2026)
+
+| client | régime (`vat_scheme`) | taux | mention portée sur la facture |
+| --- | --- | --- | --- |
+| **France** | `fr_ttc` | 20 % | — |
+| **UE hors FR, n° de TVA** | `reverse_charge` | 0 % | autoliquidation, art. 196 dir. 2006/112/CE |
+| **UE hors FR, SANS numéro** | *refus* `vat_consumer_unsupported` | — | guichet OSS non en place |
+| **hors UE** | `export` | 0 % | hors champ, art. 259-1 du CGI |
+
+Le refus du particulier européen hors France est un **choix**, pas un trou : le
+guichet OSS impose de collecter la TVA du pays du client, de la déclarer et de la
+reverser. Tant qu'il n'existe pas, encaisser serait une TVA due et non collectée —
+on refuse de souscrire plutôt que de facturer faux.
+
+⚠️ **La forme d'un numéro de TVA n'est pas sa validité.** `billing_vat` contrôle le
+préfixe du pays et la grammaire nationale ; il ne dit pas que le numéro existe.
+**La vérification VIES est un TODO nommé sur #486** — c'est un appel réseau tiers,
+hors du lot. D'ici là, un numéro bien formé mais inexistant fait passer un client en
+autoliquidation à tort, et la régularisation est manuelle.
+
+⚠️ **La Grèce est `GR` en ISO-3166-1 et `EL` en TVA intracommunautaire.** C'est la
+seule divergence des 27, et un contrôle naïf « le numéro commence par le code pays »
+refuserait tout numéro grec valide.
+
+⚠️ **Un code pays inconnu est REFUSÉ, jamais traité en export.** « FR » mal tapé
+sortirait de l'Union et passerait un client français à 0 % — un manque à gagner
+fiscal parfaitement silencieux. D'où la liste ISO-3166-1 en dur.
+
+### Un seul calcul, deux chemins de débit
+
+`billing.tax_for_org` est le **seam unique** : la souscription
+(`billing.subscribe`) et l'échéance (`billing_runner._charge_one`) l'appellent tous
+les deux. Deux calculs auraient divergé au premier changement de règle, et la
+divergence se serait vue sur une facture, pas dans un test — un client ne peut pas
+payer 22,80 € le premier mois et 19,00 € les suivants.
+
+Une identité devenue incalculable au moment d'une échéance ne fait **pas** retomber
+le runner sur le HT : il rend `tax_blocked`, ne prélève rien, ne décale pas le cycle
+(l'échéance reste due) et le journalise en `error`. Un montant approximatif serait
+pire qu'un mois non prélevé.
+
+### Ce qui est journalisé, et ce qui ne l'est PAS
+
+`billing_payments.amount` porte ce qui a **réellement** été passé au PSP, donc le
+TTC ; `amount_ht`, `vat_rate_bps`, `vat_amount`, `country_code` et `vat_scheme`
+figent la décomposition **à l'instant du débit** — elle ne suit pas un déménagement
+ultérieur de l'org.
+
+⚠️ **Les deux encaissements du 25/08 ne sont pas réécrits.** Ils ont réellement été
+débités de 19,00 € sans TVA, et `amount_ht IS NULL` est ce qui les distingue d'une
+ligne calculée. **Un `null` ici veut dire « ligne d'avant la règle », jamais
+« zéro »** — un zéro affirmerait une exonération qui n'a pas eu lieu.
+
+Le taux est en **points de base** (`vat_rate_bps`, 2000 = 20 %) et jamais en
+flottant : il sert à calculer des centimes, et une colonne `NUMERIC` ressortirait en
+`Decimal`, que le sérialiseur JSON des réponses refuse — 500 à la lecture.
+
+### Ce que voient les surfaces
+
+`subscribe` rend la décomposition **avant** d'envoyer sur la page hébergée (sinon le
+payeur découvre le TTC chez Mollie) ; `confirm` la relit du journal ; `status`
+annonce le TTC de la **prochaine** échéance, dérivé de l'identité courante, et pose
+`vat_blocked` quand il ne peut pas le calculer — un abonnement `active` avec un
+`vat_blocked` posé signale une échéance que le runner ne pourra pas prélever.
+`me.billing.identity` (GET/PUT `/api/me/billing/identity`) lit et pose la fiche, et
+rend toujours `missing` : la même liste que celle nommée par le refus
+`billing_identity_required`.
+
+⚠️ **Point de droit resté ouvert** (conseil, pas code) : le « hors UE = 0 % » du
+cadre ne distingue pas le professionnel du particulier, alors que les services
+électroniques rendus à un particulier peuvent relever du pays de consommation. La
+règle appliquée est celle du cadre.
 
 ## Le mandat est une COURSE, pas un état
 
@@ -105,9 +191,11 @@ du 2ᵉ paiement et la révocation du mandat orphelin né du second customer.
 
 ## Où c'est écrit
 
-`billing.py` (le cycle), `db/billing.py` (les deux tables + les files),
+`billing.py` (le cycle), `billing_vat.py` (la règle de TVA, **pure** : ni base,
+ni réseau, ni horloge), `db/billing.py` (les trois tables + les files),
 `mollie_client.py` (la surface PSP), `capabilities/billing.py` (les six capacités
 REST-only — payer est un acte humain, pas d'URL de paiement dans un contexte LLM),
+`capabilities/billing_identity.py` (l'identité de facturation, même régime),
 `billing_runner.py` (échéances, dunning, sweeps, reprises). La surface entière est
 gatée par `OTO_BILLING_ENABLED=1` (dark launch ADR 0043) et la boucle de fond par
 `OTO_BILLING_RUNNER_ENABLED` (défaut : allumée dès que le billing l'est). La clé
