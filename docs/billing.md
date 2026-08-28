@@ -1,4 +1,4 @@
-# Facturation par org (ADR 0043) — le modèle, la TVA, et le double débit du 25/08
+# Facturation par org (ADR 0043) — le modèle, la TVA, le consentement, et le double débit du 25/08
 
 ## Ce que Mollie voit, et ce qu'il ne voit pas
 
@@ -22,6 +22,88 @@ Trois objets Mollie, trois durées de vie :
 | **mandat** (`mdt_…`) | **quelques minutes APRÈS** l'encaissement du 1ᵉʳ paiement | jusqu'à révocation |
 
 La troisième ligne est le piège central, et il a coûté 19 € au premier client.
+
+## On ne vend pas sans consentement (#487)
+
+`legal_docs.py` déclarait depuis toujours un contexte **`purchase`** (CGU + CGV +
+DPA) que **personne n'appelait** : `billing.subscribe` ne consultait pas
+`legal_acceptances`, et le tunnel n'affichait aucune mention légale. Publier des
+CGV ne les rend opposables à personne — il faut une **acceptation horodatée**.
+
+`subscribe` prend donc l'appelant (`sub`, **obligatoire** : accepter est un acte de
+personne, pas d'organisation) et refuse **409 `legal_required`** tant que les trois
+documents ne sont pas acceptés **à leur version courante**. Un bump de version dans
+`legal_docs.CURRENT_DOCS` rouvre le gate ; une acceptation périmée ne vaut pas.
+
+### Deux préalables, un seul aller-retour
+
+**L'ordre est celui du tunnel : identité de facturation, puis consentement.** Le
+payeur accepte des CGV *pour un montant*, et le montant n'existe qu'une fois le
+pays connu (c'est lui qui décide de la TVA, §#486). Faire consentir d'abord et
+chiffrer ensuite ferait accepter un prix qui n'a pas encore été annoncé — le
+consentement est le **dernier geste avant la page de paiement**.
+
+Mais ordonner n'est pas refuser un à la fois. Les deux manques sont évalués
+ensemble et rendus ensemble :
+
+```json
+{ "error": "billing_identity_required",
+  "detail": "billing_identity_required: … legal_required: …",
+  "details": { "blockers": [
+    { "code": "billing_identity_required", "message": "… champs à renseigner : …" },
+    { "code": "legal_required", "context": "purchase",
+      "message": "… CGU 3.0 (https://oto.cx/terms), CGV 2.0 (…), DPA 2.0 (…) …",
+      "documents": [ { "slug": "terms", "label": "CGU", "version": "3.0",
+                       "url": "https://oto.cx/terms", "accepted_version": null } ] } ] } }
+```
+
+- Le **code de tête** est celui du **premier** manque — les codes historiques
+  (`billing_identity_required`, `vat_consumer_unsupported`) sont donc inchangés
+  quand ils sont seuls. ⚠️ **Avec deux manques, il n'en nomme qu'un : c'est
+  `details.blockers` qu'un client doit lire.**
+- `accepted_version` distingue « jamais accepté » (`null`) de « accepté à une
+  version périmée » — sans lui, le payeur est renvoyé chercher une case cochée.
+- **Rien ne part chez le PSP** tant qu'un préalable manque : un refus après
+  création laisserait un customer et une page payable derrière lui.
+
+Le tunnel répare avec `POST /api/me/billing/identity` puis
+`POST /api/me/legal/accept {"context": "purchase"}`, et relance `subscribe`.
+
+### Ce qui ne demande PAS de consentement
+
+Un **abonnement offert** (`admin_set_plan`, `comp`) : rien n'y est vendu ni débité.
+Une **échéance** : le consentement a été donné à la souscription, `billing_runner`
+ne le rejoue pas — `_charge_one` ne prend d'ailleurs pas de `sub`, et un test le
+fige.
+
+### La trace est un HISTORIQUE, et elle situe l'acte
+
+`legal_acceptances` portait une PK `(sub, doc_slug)` et l'écriture était un upsert :
+accepter les CGV 2.0 **effaçait** la trace de l'acceptation des CGV 1.0. Une
+acceptation prouvée par une ligne mutable n'est pas une preuve — c'est le dernier
+état d'une preuve.
+
+Depuis le 28/08/2026, **une ligne par acceptation** (id surrogate en PK), avec
+`context`, `org_id` (l'org de session = le **payeur**, ADR 0043), `ip` et
+`user_agent`. La lecture du gate prend la ligne **la plus récente** de chaque
+document (`DISTINCT ON`, départagée par `id` : `accepted_at` vaut `NOW()`, donc
+l'horloge de la *transaction* — les trois documents d'un achat portent la même).
+
+L'IP et le user-agent viennent de la requête via `client_trace`, posé par
+l'adaptateur REST autour du handler (un handler ne voit pas la requête, ADR 0004) ;
+l'IP réelle se lit `CF-Connecting-IP` > **premier** hop de `X-Forwarded-For` >
+socket. Hors requête REST, les deux valent `NULL` — une trace absente reste absente.
+
+⚠️ **Les lignes antérieures au 28/08/2026 ont leurs quatre satellites à `NULL`** :
+`context IS NULL` veut dire « contexte non tracé », surtout pas « access ». Leur
+inventer un contexte ferait mentir la trace là où elle sert de preuve.
+
+⚠️ **Le seul DDL destructif du dépôt sur une table vivante.** Un historique et une
+unicité `(sub, doc_slug)` ne peuvent pas coexister : la migration retire la PK, ce
+qui casse l'arbitre `ON CONFLICT (sub, doc_slug)` du code **prod** tant qu'il n'a
+pas été promu (`POST /api/me/legal/accept` y répondrait 500). Il n'y a pas de
+découpe en lots possible (`docs/live-migrations.md`) — la fenêtre se ferme par le
+**séquencement** : ce lot part en preprod et en prod d'un seul mouvement.
 
 ## Le montant débité est un TTC, et le pays le décide (#486)
 
@@ -208,6 +290,8 @@ ni réseau, ni horloge), `db/billing.py` (les trois tables + les files),
 `mollie_client.py` (la surface PSP), `capabilities/billing.py` (les six capacités
 REST-only — payer est un acte humain, pas d'URL de paiement dans un contexte LLM),
 `capabilities/billing_identity.py` (l'identité de facturation, même régime),
+`billing_consent.py` + `legal_docs.py` (le consentement d'achat et la source de
+vérité des documents), `capabilities/me_legal.py` (l'acceptation, REST-only),
 `billing_runner.py` (échéances, dunning, sweeps, reprises). La surface entière est
 gatée par `OTO_BILLING_ENABLED=1` (dark launch ADR 0043) et la boucle de fond par
 `OTO_BILLING_RUNNER_ENABLED` (défaut : allumée dès que le billing l'est). La clé

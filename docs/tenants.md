@@ -110,9 +110,11 @@ description: >-
 > L'historique (`runs.sub`, `project_activity.sub`, `runner_triggers.sub`,
 > `tool_calls.effective_sub`) et les attributions (`resolved_by`/`created_by`/
 > `granted_by`/`set_by`/`requested_by` de 10 tables) sont repointés par `_SUB_COLUMNS` ;
-> `legal_acceptances`, `connector_acl.principal_id` et `option_comps.entity_id` passent
-> par le patron PK (`_PK_SUB_TABLES` — sub jamais numérique ⟹ l'UPDATE ne touche que les
-> lignes user) ; les arêtes `grants.grantee_id` ont leur étape filtrée (3 bis). Le trou de
+> `connector_acl.principal_id` et `option_comps.entity_id` passent par le patron PK
+> (`_PK_SUB_TABLES` — sub jamais numérique ⟹ l'UPDATE ne touche que les lignes user) ;
+> `legal_acceptances` y était aussi **jusqu'au 28/08** — devenue un historique (#487),
+> elle n'a plus d'unicité, donc un simple repointage suffit et la déduplication
+> SUPPRIMERAIT des consentements pour cause de doublon ; les arêtes `grants.grantee_id` ont leur étape filtrée (3 bis). Le trou de
 > méthode est fermé par le **tripwire inverse** `test_migrate_sub_sub_bearing_columns_are_
 > triaged` : toute colonne du DDL de la famille « porte un sub » doit être repointée,
 > pré-traitée ou allowlistée AVEC sa raison — une colonne neuve arrive rouge. Restent

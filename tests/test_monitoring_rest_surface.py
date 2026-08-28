@@ -17,10 +17,16 @@ from oto_mcp.capabilities.registry import CAPABILITIES
 
 
 class FakeReq:
+    """Le minimum qu'une Request Starlette expose à l'adaptateur — `headers` et
+    `client` compris : il y lit l'empreinte du client (IP réelle, user-agent) pour
+    la poser autour du handler (#487)."""
+
     def __init__(self, query=None, path_params=None, method="GET"):
         self.query_params = query or {}
         self.path_params = path_params or {}
         self.method = method
+        self.headers = {}
+        self.client = None
 
     async def json(self):
         return {}

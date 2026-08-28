@@ -28,7 +28,9 @@ def test_self_serve_refuses_custom_plan(monkeypatch):
         "custom": True})
     monkeypatch.setattr(db_billing, "get_org_subscription", lambda org: None)
     with pytest.raises(ValueError, match="custom_plan"):
-        billing.subscribe(42, "devis", "https://oto.cx/billing")
+        # `sub` est obligatoire depuis #487, mais le palier sur devis est refusé
+        # AVANT tout préalable — le catalogue tranche en premier.
+        billing.subscribe(42, "devis", "https://oto.cx/billing", sub="u-1")
 
 
 def test_plan_carries_no_cap_and_unmetered():
