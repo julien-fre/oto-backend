@@ -224,9 +224,30 @@ def register(mcp: FastMCP) -> None:
             return {"archived": results}
 
         if op == "trash":
-            trashed = []
-            for mid in _need(message_ids, "message_ids", op):
-                res = await asyncio.to_thread(client.trash_message, mid)
+            # Gmail n'a pas de corbeille en lot : c'est un appel par message,
+            # donc une boucle — et donc une écriture PARTIELLE possible. Si le
+            # 3ᵉ échoue, les deux premiers SONT à la corbeille ; laisser
+            # l'exception nue remonter ne dirait à l'agent qu'« échec », il
+            # conclurait « rien n'est parti » et rejouerait une écriture déjà
+            # faite. C'est le défaut que décrit le signal #227 (une action
+            # appliquée dont l'appelant n'apprend rien), et la même faute que
+            # #600 : annoncer un échec sur un succès. On nomme les trois lots.
+            ids = list(_need(message_ids, "message_ids", op))
+            trashed: list = []
+            for i, mid in enumerate(ids):
+                try:
+                    res = await asyncio.to_thread(client.trash_message, mid)
+                except Exception as e:  # noqa: BLE001 — re-levée nommée, avec l'état réel
+                    restants = ids[i + 1:]
+                    raise _bad(
+                        "Corbeille PARTIELLE — l'écriture s'arrête au premier "
+                        "échec, mais ce qui précède a bien eu lieu. "
+                        f"DÉJÀ à la corbeille ({len(trashed)}) : {trashed}. "
+                        f"ÉCHEC sur `{mid}` : {type(e).__name__}: {e}. "
+                        f"NON TENTÉS ({len(restants)}) : {restants}. "
+                        "Ne rejoue que les non-tentés — retenter les premiers "
+                        "n'est pas nécessaire."
+                    ) from e
                 trashed.append(res.get("id", mid))
             return {"trashed": trashed}
 

@@ -267,9 +267,16 @@ _FETCH_JS = """async ({base, path, method, body}) => {
         headers: {"content-type": "application/json"},
         body: body ? JSON.stringify(body) : undefined,
     });
+    // Le corps d'une Response ne se lit qu'UNE fois : `r.json()` VERROUILLE le
+    // flux avant même d'échouer, donc un `catch` qui rappelle `r.text()` lève
+    // « body stream already read » et masque la réponse RÉELLE. Vécu en prod le
+    // 27/08 sur un DELETE de dossier GED : la suppression était partie, le tool
+    // a répondu « Erreur interne du serveur. » (signal #600, tool_calls#1039702).
+    // On lit le texte une seule fois, puis on le parse.
+    const txt = await r.text();
     let data;
-    try { data = await r.json(); }
-    catch (e) { data = {raw: (await r.text()).slice(0, 400)}; }
+    try { data = txt ? JSON.parse(txt) : null; }
+    catch (e) { data = {raw: txt.slice(0, 400)}; }
     return {status: r.status, data};
 }"""
 

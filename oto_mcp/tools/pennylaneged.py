@@ -65,9 +65,16 @@ _FETCH_JS = """async ({path, method, body}) => {
         method, credentials: "include", headers,
         body: body ? JSON.stringify(body) : undefined,
     });
+    // Le corps d'une Response ne se lit qu'UNE fois : `r.json()` VERROUILLE le
+    // flux avant même d'échouer, donc un `catch` qui rappelle `r.text()` lève
+    // « body stream already read » et masque la réponse RÉELLE. Vécu en prod le
+    // 27/08 sur un DELETE de dossier GED : la suppression était partie, le tool
+    // a répondu « Erreur interne du serveur. » (signal #600, tool_calls#1039702).
+    // On lit le texte une seule fois, puis on le parse.
+    const txt = await r.text();
     let data;
-    try { data = await r.json(); }
-    catch (e) { data = {raw: (await r.text()).slice(0, 400)}; }
+    try { data = txt ? JSON.parse(txt) : null; }
+    catch (e) { data = {raw: txt.slice(0, 400)}; }
     return {status: r.status, data};
 }"""
 
@@ -105,10 +112,20 @@ def _company_app(company_id: int) -> str:
 
 
 
-async def _call(app: str, path: str, method: str = "GET",
-                body: Optional[dict] = None) -> dict:
-    """Exécute un appel d'API interne depuis la session Browserbase de l'user. Renvoie
-    le `{status, data}` brut décodé. Lève une McpError actionnable sinon."""
+async def _call_raw(app: str, path: str, method: str = "GET",
+                    body: Optional[dict] = None) -> dict:
+    """L'appel d'API interne, rendu BRUT : `{status, data}`.
+
+    Séparé de `_call` parce qu'une ÉCRITURE a besoin du `status` pour se
+    prononcer : un `DELETE` réussi répond `204` **sans corps**, et `_call` en
+    faisait un `{}` indistinguable d'une réponse vide (signal #600).
+
+    ⚠️ Le `except` ne peut pas se limiter à `BrowserbaseError` : la panne de
+    #600 était une erreur **playwright** (`Page.evaluate: TypeError…`) levée
+    depuis la page, d'une classe que le substrat ne convertit pas. Elle
+    remontait donc nue jusqu'à la taxonomie d'erreurs, qui l'a servie à l'agent
+    en « Erreur interne du serveur. » — un message qui ne dit ni ce qu'on a
+    tenté, ni que l'écriture était peut-être passée. On nomme les deux."""
     if not browserbase.is_configured():
         raise _err("Browserbase non configuré côté plateforme "
                    "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)
@@ -116,15 +133,34 @@ async def _call(app: str, path: str, method: str = "GET",
     try:
         res = await browserbase.run_page_eval(
             ctx_id, app, _FETCH_JS, {"path": path, "method": method, "body": body})
-    except browserbase.BrowserbaseError as e:
-        raise _err(f"Exécution Browserbase échouée : {e}", code=INTERNAL_ERROR)
+    except McpError:
+        raise
+    except Exception as e:  # noqa: BLE001 — re-levée nommée juste en dessous
+        # La requête peut être PARTIE avant la panne : sur une écriture, dire
+        # « échec » serait affirmer plus qu'on ne sait (#600).
+        incertitude = ("" if method.upper() == "GET" else
+                       " L'appel était peut-être déjà parti : l'écriture PEUT AVOIR "
+                       "eu lieu — relis l'arborescence (`pennylaneged_tree`) avant "
+                       "de retenter.")
+        raise _err(f"Appel Pennylane GED échoué — {method.upper()} {path} : "
+                   f"{type(e).__name__}: {e}.{incertitude}",
+                   code=INTERNAL_ERROR) from e
     st = res.get("status")
     if st in (401, 403):
         raise _err("Session Pennylane expirée / déconnectée — relance `pennylaneged_connect_start`.")
     if not (200 <= (st or 0) < 300):
         raise _err(f"Pennylane GED a renvoyé {st} : {str(res.get('data'))[:200]}",
                    code=INTERNAL_ERROR)
-    data = res.get("data")
+    return {"status": st, "data": res.get("data")}
+
+
+async def _call(app: str, path: str, method: str = "GET",
+                body: Optional[dict] = None) -> dict:
+    """`_call_raw` réduit au CORPS décodé — la forme qu'attendent les lectures.
+
+    C'est ici que vit la mise en forme pour l'agent, pas dans `_call_raw` : une
+    écriture a besoin du `status` brut pour se prononcer sur son propre acte."""
+    data = (await _call_raw(app, path, method, body)).get("data")
     # L'API interne renvoie parfois un TABLEAU nu (ex. `/dms/items/tree`). MCP exige
     # que le structured_content d'un tool soit un objet (dict) ou None — JAMAIS une
     # liste (sinon `ValueError: structured_content must be a dict` → tool cassé, vu
@@ -206,20 +242,103 @@ def register(mcp: FastMCP) -> None:
     # --- Résolution « où » (control plane) ----------------------------------
     @mcp.tool()
     async def pennylaneged_companies(page: int = 1) -> dict:
-        """Liste les sociétés accessibles (côté cabinet) pour résoudre le `company_id`
-        cible d'une opération GED.
+        """Liste les sociétés du portefeuille (côté cabinet) — résout le `company_id`
+        cible d'une opération GED, et porte la fiche de gestion de chaque dossier.
 
-        Tape la route interne `/crm/flow_companies` (paginée). Renvoie la réponse brute
-        (un tableau nu est enveloppé sous `items`) : chaque société porte son `id`
-        (= `company_id` à passer aux autres tools), son `name` et son `client_code`. Le
-        SIREN n'est pas dans cette liste — pour désambiguïser un homonyme, croiser avec
-        `/companies/{id}/context` (`reg_no`).
+        ⚠️ **Le portefeuille d'un cabinet vit ICI**, pas dans le connecteur keyé
+        `pennylane` : son API publique est MONO-SOCIÉTÉ et ses « customers » sont les
+        clients FACTURÉS par une société, pas les dossiers gérés. Cherché là, le
+        portefeuille est introuvable — vécu par une cliente le 2026-08-28.
+
+        Tape `/crm/flow_companies` et renvoie la réponse BRUTE :
+        `{companies: [...], pagination: {page, pageSize, pages, totalEntries,
+        hasNextPage}}`. **20 sociétés par page** — un portefeuille de cabinet se
+        parcourt donc en plusieurs appels, pilotés par `hasNextPage`/`pages`.
+
+        Chaque société porte BIEN PLUS que son `id` (= `company_id`) et son `name` —
+        c'est la fiche de gestion complète du dossier (relevé 2026-08-28) :
+
+        - **identité** : `legal_form` (forme juridique, ex. `fr_sas`), `trade_name`,
+          `client_code`, `file_type`, `is_demo`/`is_training`/`is_fake` ;
+        - **fiscal** : `vat_regime` + `vat_frequency` (régime de TVA et périodicité —
+          réglages SÉPARÉS), `current_fiscal_year` (`{start, finish}`),
+          `cash_based_accounting`, `number_of_employees` ;
+        - **équipe du dossier** : `accountant` (collaborateur en charge, avec email),
+          `accounting_supervisor`, `accounting_manager`, `substitute_accountant`,
+          `manager`, `legal_manager`, `social_manager`, `legal_collaborator`,
+          `social_collaborator`, `external_auditor` ;
+        - **état d'avancement** : `transactions` (`pending`, `accounting_needed`,
+          `validation_needed`…), `supplier_invoices`, `customer_invoices`,
+          `document_requests` (pièces réclamées au client), `bank_accounts`
+          (connectées / déconnectées / importées à la main) ;
+        - **abonnement** : `subscription_plan`, `saas_plan`, `churns_on`, `confidential`.
+
+        De quoi bâtir un tableau de bord de portefeuille, pas seulement résoudre un id.
+
+        ⚠️ Deux valeurs à NE PAS interpréter à l'aveugle, faute de doc Pennylane : les
+        valeurs de `vat_regime` (`standard` observé ; les trois régimes FR sont franchise
+        en base / réel simplifié / réel normal) et la forme du `client_code` (UUID sur un
+        dossier de TEST, alors que Pennylane documente un « code client » saisissable au
+        paramétrage). Relever les valeurs distinctes sur un VRAI portefeuille avant d'en
+        faire une colonne lisible ou une clé de rapprochement.
+
+        ABSENTS d'ici : le SIREN, et la **catégorie fiscale** (IS/IR) — Pennylane la
+        distingue du « régime fiscal » et la range dans les paramètres du dossier. Les
+        deux se cherchent ailleurs : `/companies/{id}/context` (`reg_no`) ou la page de
+        paramétrage du dossier.
+
+        ⚠️ Coût : UNE session navigateur par appel — 350 dossiers = 18 pages = 18
+        sessions ouvertes puis refermées.
 
         Args:
             page: page de pagination (1-based).
         """
         qs = urlencode({"page": max(1, int(page))})
         return await _call(f"{_ORIGIN}/", f"/crm/flow_companies?{qs}")
+
+    @mcp.tool()
+    async def pennylaneged_company(company_id: int) -> dict:
+        """Fiche d'UNE société : identité légale + paramétrage FISCAL et TVA.
+
+        Complète `pennylaneged_companies` (le portefeuille) là où elle s'arrête. C'est
+        ICI, et nulle part ailleurs, que vivent les trois réglages que Pennylane
+        distingue et qu'AUCUNE API publique ne rend (relevé 2026-08-28) :
+
+        - `fiscal_category` — catégorie fiscale, ex. `bic_is` (BIC à l'IS) : c'est le
+          « IS / IR » du dossier permanent ;
+        - `fiscal_regime` — régime fiscal, ex. `fr_rn` (réel normal) ;
+        - `vat_frequency`, `vat_day_of_month`, `submitted_to_vat_from`, `vat_number`,
+          `default_input_vat_rate` / `default_output_vat_rate` (ex. `FR_200`) — la TVA.
+
+        ⚠️ **Trois champs, trois notions — ne pas les fondre en une colonne.** Le
+        `vat_regime` que rend `pennylaneged_companies` (ex. `standard`) est le régime de
+        TVA ; il est DISTINCT de `fiscal_regime` (`fr_rn`) et de `fiscal_category`
+        (`bic_is`). Les confondre produit un export faux.
+
+        Porte aussi ce que la liste n'a pas : `reg_no` (**le SIREN**), `legal_form_code`
+        (code INSEE de forme juridique, ex. `5710` = SAS), `share_capital`,
+        `creation_date` / `cessation_date`, `address` / `postal_code` / `city`,
+        `business_description`, `invoicing_software`, `cash_based_accounting`,
+        `resumption_status`, `dms_activated`.
+
+        Tape `/companies/{cid}/context`. Les blocs de drapeaux de fonctionnalité de la
+        réponse (`experiments`, `companyFeaturesAbility`, `userFeaturesAbility`) sont
+        ÉCARTÉS : volumineux et sans valeur métier, ils noieraient la fiche.
+
+        ⚠️ UN appel = UNE société = UNE session navigateur. Enrichir un portefeuille
+        entier coûte donc un appel PAR dossier — à mettre en regard du volume.
+
+        Args:
+            company_id: id de la société (cf. `pennylaneged_companies`).
+        """
+        cid = int(company_id)
+        res = await _call(_company_app(cid), f"/companies/{cid}/context")
+        company = res.get("company")
+        if not company:
+            raise _err(f"Réponse `context` inattendue pour la société {cid} : "
+                       f"{str(res)[:200]}", code=INTERNAL_ERROR)
+        return {"company": company, "firm": res.get("firm"),
+                "user_role": res.get("userRole")}
 
     # --- Arborescence / dossiers --------------------------------------------
     @mcp.tool()
@@ -333,6 +452,12 @@ def register(mcp: FastMCP) -> None:
             item_id: id de l'item DMS à supprimer (cf. `pennylaneged_tree`).
             company_id: id de la société (cf. `pennylaneged_companies`).
         """
-        cid = int(company_id)
-        return await _call(_company_app(cid),
-                           f"/companies/{cid}/dms/items/{int(item_id)}", "DELETE")
+        cid, iid = int(company_id), int(item_id)
+        # Une DELETE réussie répond 204 SANS corps : rendre le corps (`{}`) ne
+        # dit rien à l'agent de l'acte qu'il vient de commettre, et c'est
+        # précisément ce qui lui manquait dans #600. On confirme ce qu'on a
+        # supprimé, avec le code qui l'atteste.
+        res = await _call_raw(_company_app(cid),
+                              f"/companies/{cid}/dms/items/{iid}", "DELETE")
+        return {"deleted": True, "item_id": iid, "company_id": cid,
+                "status": res.get("status")}

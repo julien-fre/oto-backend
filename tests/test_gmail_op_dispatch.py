@@ -352,3 +352,50 @@ def test_compose_refuses_a_new_message_without_a_recipient(client):
     with pytest.raises(McpError, match="`to` requis"):
         _call("gmail_compose", body="hi")
     client.send.assert_not_called()
+
+
+# --- une écriture PARTIELLE ne se raconte pas comme un échec total ------------
+#
+# Signal #227 (16/07) : « `gmail_modify` (action=trash sur un draft) : aucun
+# retour pendant 300 s → abort côté client, **alors que l'action a bien été
+# exécutée** ». L'enquête du 28/08 a écarté la cause telle qu'elle est décrite :
+# `gmail_modify` n'existe plus (consolidé en `gmail_message`, ADR 0047), ses 10
+# appels journalisés plafonnent à 661 ms, aucun tool `gmail_*` n'a jamais dépassé
+# 8,7 s sur 399 appels, et chaque appel client part déjà en `asyncio.to_thread`
+# (donc hors de la boucle). Rien ici ne pouvait pendre 300 s.
+#
+# Reste le défaut DURABLE que le signal décrit bien, lui, et qui vit toujours :
+# une écriture appliquée dont l'appelant n'apprend rien. `op="trash"` boucle sur
+# `message_ids` ; si le 3ᵉ échoue, les deux premiers SONT à la corbeille et
+# l'agent ne voit qu'un refus nu. Il conclut « rien n'est parti » et rejoue —
+# le scénario exact de #227, et la même faute que #600 (annoncer un échec sur
+# un succès).
+
+def test_une_corbeille_partielle_dit_ce_qui_est_deja_parti(client):
+    """Le refus doit nommer les messages DÉJÀ mis à la corbeille : sans ça,
+    l'agent croit à un échec total et rejoue une écriture déjà faite (#227)."""
+    faits: list = []
+
+    def _trash(mid):
+        if mid == "m3":
+            raise RuntimeError("Gmail 503")
+        faits.append(mid)
+        return {"id": mid}
+
+    client.trash_message.side_effect = _trash
+    with pytest.raises(McpError) as e:
+        _call("gmail_message", op="trash", message_ids=["m1", "m2", "m3", "m4"])
+    msg = str(e.value)
+    assert faits == ["m1", "m2"], "on s'arrête au premier échec, sans rejouer"
+    assert "m1" in msg and "m2" in msg, "ce qui est DÉJÀ à la corbeille est nommé"
+    assert "m3" in msg, "celui qui a échoué aussi"
+    assert "m4" in msg, "et ceux qui n'ont pas été tentés"
+    assert "Gmail 503" in msg, "et la panne d'origine"
+
+
+def test_une_corbeille_entierement_reussie_ne_change_pas_de_forme(client):
+    """Le chemin nominal garde son contrat : `{'trashed': [...]}` — la
+    correction de #227 ne doit se voir que sur l'échec partiel."""
+    client.trash_message.side_effect = lambda mid: {"id": mid}
+    assert _call("gmail_message", op="trash", message_ids=["m1", "m2"]) == \
+        {"trashed": ["m1", "m2"]}
