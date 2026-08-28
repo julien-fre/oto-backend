@@ -26,7 +26,7 @@ ouvrir LinkedIn était impossible, et installer WhatsApp montait 40 outils Linke
 
 **Les noms de tools ne bougent pas.** `linkedin_unipile_*`, `whatsapp_chat`… sont un
 CONTRAT consommé hors dépôt (procédures en base de plusieurs orgs, guides plateforme
-servis depuis la DB, métrage `tulina-usage`). Ce qui change, c'est la CARTE : elle
+servis depuis la DB, un métrage d'usage). Ce qui change, c'est la CARTE : elle
 porte le nom du réseau (« LinkedIn », « WhatsApp »), renvoie à sa marque, et ne
 nomme pas le fournisseur — ce qu'on connecte, c'est son compte LinkedIn. Unipile
 reste nommé sur la carte `unipile`, qui EST le compte.

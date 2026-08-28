@@ -304,3 +304,85 @@ def test_le_gate_dacces_porte_le_nom_NU_pas_celui_du_porteur(monkeypatch):
     assert marches == ["whatsapp"], "la cascade reçoit le nom nu…"
     # …et c'est ELLE qui normalise, une fois, en son sein (cf. walk_cascade).
     assert providers.credential_provider(marches[0]) == "unipile"
+
+
+# --- l'autre moitié de la frontière : une identité DÉJÀ épinglée ---------------
+#
+# Le test ci-dessus neutralise le pin (`current_call_instance` → None) pour isoler
+# le gate. C'est exactement le chemin qui manquait : sous un pin, la résolution ne
+# descend jamais jusqu'à la cascade, donc rien ne vérifiait que le nom passé AU
+# COFFRE avait été normalisé lui aussi. Il ne l'était pas — le pin était reconnu
+# (comparaison au porteur) puis perdu à la lecture (nom nu), et `require_credential`
+# levait un `ValueError` brut sur tout appel de canal fait sous un pin.
+
+
+class _RefEpingle:
+    """Ref d'instance membre pointant la ligne du COMPTE — la seule qui existe :
+    un canal n'a pas de ligne au coffre, c'est tout le sens de la délégation."""
+    level = "member"
+    org_id = 1
+    group_id = None
+    account = ""
+    connector = "unipile"
+
+
+@pytest.mark.parametrize("canal", ["linkedin_unipile", "whatsapp"])
+def test_une_identite_epinglee_resout_sur_la_cle_du_compte(monkeypatch, canal):
+    """Un appel de canal fait sous `_instance=` doit RÉSOUDRE, pas lever.
+
+    La ligne épinglée est rangée sous le compte ; la lecture doit donc le nommer,
+    comme la comparaison qui vient de l'accepter. Sans le correctif, ce test lève
+    `ValueError: 'whatsapp' ne porte pas de credential …` — le refus de
+    `require_credential`, déclenché par le connecteur qu'on lui passe."""
+    from oto_mcp.access import resolve as res
+
+    lus = []
+
+    def _get_credential(etype, eid, connector, account=""):
+        lus.append(connector)
+        providers.require_credential(etype, connector)   # ce que fait le vrai coffre
+        return "SECRET"
+
+    monkeypatch.setattr(res.credentials_store, "get_credential", _get_credential)
+    monkeypatch.setattr(res.rbac, "require_connector_access", lambda p, sub=None: None)
+    monkeypatch.setattr(res.session_org, "current_call_instance", lambda: _RefEpingle())
+    monkeypatch.setattr(res.session_org, "current_call_account", lambda: None)
+    monkeypatch.setattr(res.scope, "current_org", lambda s: 1)
+    monkeypatch.setattr(res.scope, "current_group", lambda s: None)
+
+    rc = res._resolve_credential_impl(canal, "auto", "u1")
+
+    assert rc.secret == "SECRET"
+    assert lus == ["unipile"], "le coffre doit être lu sous le COMPTE, pas sous le canal"
+
+
+@pytest.mark.parametrize("canal", ["linkedin_unipile", "whatsapp"])
+def test_un_projet_relie_a_une_instance_resout_aussi(monkeypatch, canal):
+    """Même frontière sur le binding de PROJET (ADR 0038 B5), qui partage la
+    lecture. Le garde d'accès à l'instance reste appelé — le binding a été posé par
+    quelqu'un d'autre que l'appelant possiblement."""
+    from oto_mcp.access import resolve as res
+
+    lus, gardes = [], []
+
+    def _get_credential(etype, eid, connector, account=""):
+        lus.append(connector)
+        providers.require_credential(etype, connector)
+        return "SECRET"
+
+    monkeypatch.setattr(res.credentials_store, "get_credential", _get_credential)
+    monkeypatch.setattr(res.rbac, "require_connector_access", lambda p, sub=None: None)
+    monkeypatch.setattr(res.rbac, "guard_instance_access",
+                        lambda sub, ref: gardes.append(ref))
+    monkeypatch.setattr(res.session_org, "current_call_instance", lambda: None)
+    monkeypatch.setattr(res.session_org, "current_call_account", lambda: None)
+    monkeypatch.setattr(res.scope, "project_pinned_instance",
+                        lambda p: _RefEpingle() if p == "unipile" else None)
+    monkeypatch.setattr(res.scope, "current_org", lambda s: 1)
+    monkeypatch.setattr(res.scope, "current_group", lambda s: None)
+
+    rc = res._resolve_credential_impl(canal, "auto", "u1")
+
+    assert rc.secret == "SECRET"
+    assert lus == ["unipile"], "le coffre doit être lu sous le COMPTE, pas sous le canal"
+    assert gardes, "l'accès à l'instance bindée reste gardé pour l'APPELANT"

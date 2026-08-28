@@ -180,7 +180,11 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     porteur = providers.credential_provider(provider)
     pinned = session_org.current_call_instance()
     if pinned is not None and getattr(pinned, "connector", None) == porteur:
-        return _resolve_pinned_instance(provider, sub, pinned)
+        # La LECTURE du coffre nomme le porteur, comme la comparaison au-dessus :
+        # la ligne épinglée est rangée sous lui, et `require_credential` REFUSE le
+        # nom d'un délégant. Passer le nom nu ici levait un `ValueError` brut sur
+        # tout appel de canal fait sous un pin — le pin était reconnu puis perdu.
+        return _resolve_pinned_instance(porteur, sub, pinned)
 
     # Binding de PROJET (ADR 0038 B5) : le projet de l'appel (`_project=`) binde une
     # instance pour ce provider → résolution EN DUR, RE-GARDÉE pour l'APPELANT (le
@@ -190,7 +194,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     bound = scope.project_pinned_instance(porteur)
     if bound is not None:
         rbac.guard_instance_access(sub, bound)
-        return _resolve_pinned_instance(provider, sub, bound)
+        return _resolve_pinned_instance(porteur, sub, bound)
 
     # Scope MEMBRE (ADR 0033) : « ma clé » n'existe QUE dans l'org de contexte —
     # posée dans l'org A, elle ne résout pas depuis l'org B. L'org est résolue via

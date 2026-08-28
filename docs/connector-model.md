@@ -43,8 +43,13 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
 >
 > | la question | ce qu'elle gouverne | le nom à employer |
 > |---|---|---|
-> | qui a le DROIT d'appeler ? | couche 1 + `require_connector_access` + pin `_instance=` | le nom **NU** |
-> | avec quelle CLÉ ? | couche 2, couche 3, quota, clé plateforme | `providers.credential_provider(nom)` |
+> | qui a le DROIT d'appeler ? | couche 1 + `require_connector_access` | le nom **NU** |
+> | avec quelle CLÉ ? | couche 2, couche 3, quota, clé plateforme, **pin `_instance=`** | `providers.credential_provider(nom)` |
+>
+> Le pin `_instance=` est du côté **clé** parce qu'un ref d'instance nomme une LIGNE
+> du coffre, et qu'un délégant n'en a aucune : il se compare *et* se lit sous le
+> porteur. Ne normaliser que la comparaison fait reconnaître le pin puis le perdre
+> à la lecture (`require_credential` refuse le nom d'un délégant).
 >
 > La normalisation vit dans **`walk_cascade`** — le seam que traversent la résolution,
 > le miroir de mode et le statut. La refaire ailleurs, c'est rouvrir la divergence du

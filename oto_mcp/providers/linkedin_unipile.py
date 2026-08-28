@@ -20,7 +20,7 @@ from .unipile import channel
 # un gate distinct. Verrouillé par tests/test_linkedin.py.
 #
 # Les noms de tools sont un CONTRAT consommé hors dépôt (procédures en base de
-# plusieurs orgs, guides plateforme, métrage `tulina-usage`) : le split du
+# plusieurs orgs, guides plateforme, un métrage d'usage) : le split du
 # 2026-08-28 ne les touche pas. Ce qui change, c'est la CARTE — elle s'appelle
 # « LinkedIn », renvoie à linkedin.com et ne nomme pas le fournisseur : ce que la
 # personne connecte, c'est son compte LinkedIn. Unipile reste nommé sur la carte
