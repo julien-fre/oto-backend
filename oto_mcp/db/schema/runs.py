@@ -15,7 +15,7 @@ from __future__ import annotations
 RUNS = """
 -- Runs / déroulés (ADR 0017, amende le « state-only » du barreau 1-2) : la
 -- métadonnée SÉMANTIQUE d'un run (label, doctrine, outcome) est désormais PERSISTÉE
--- — la pile session-scopée de `doctrine_run.py` reste la source du run ACTIF (pour
+-- — la pile session-scopée de `guide_run.py` reste la source du run ACTIF (pour
 -- stamper `tool_calls.run_id`), mais elle meurt avec la conversation. Cette table
 -- donne la trace durable « l'user a déroulé telle doctrine, terminée tel outcome »
 -- → anticipation du contexte injecté (#50 bloc C) + boucle d'usage dashboard. Le

@@ -4,7 +4,7 @@ Trois pièces, testées au grain unitaire (style monkeypatch maison) :
 - `oto_resource` : partage à une ORG (`org_id`) + `cascade=true` sur share/transfer
   d'un projet — tableaux suivent le geste, procédures grantées read (share) ou
   copiées + lien re-pointé (transfer), connecteurs rapportés `recipient_credential`.
-- kind `doctrine` du seam ownership (owner DÉRIVÉ d'org_id).
+- kind `guide` du seam ownership (owner DÉRIVÉ d'org_id).
 - `oto_get_doctrine(doctrine_id=…)` : lecture par id honorant les grants (le chemin
   de consommation cross-org du client).
 """
@@ -128,7 +128,7 @@ def test_share_cascade_carries_linked_entities(monkeypatch):
     out = R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
                                             resource_id="7", org_id=35,
                                             permission="write", cascade=True))
-    # tableau gouverné → même geste, même permission ; doctrine → READ toujours.
+    # tableau gouverné → même geste, même permission ; guide → READ toujours.
     assert ("datastore_namespace", "11", "org", "35", "write") in calls["grants"]
     assert ("doctrine", "77", "org", "35", "read") in calls["grants"]
     by_ref = {(e["target_type"], e["target_ref"]): e for e in out["cascade"]}
@@ -165,7 +165,7 @@ def test_transfer_cascade_to_org(monkeypatch):
     assert by_ref[("procedure", "77")]["new_ref"] == "501"
 
 
-def test_transfer_cascade_to_user_skips_doctrine(monkeypatch):
+def test_transfer_cascade_to_user_skips_guide(monkeypatch):
     calls = _wire(monkeypatch)
     monkeypatch.setattr(R.db, "get_user_by_email", lambda e: {"sub": "u2", "email": e})
     out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
@@ -205,30 +205,30 @@ def test_unshare_cascade_revokes_linked(monkeypatch):
         {("tableau", "11"), ("procedure", "77")}
 
 
-# ── kind `doctrine` (ownership, owner dérivé d'org_id) ───────────────────────
+# ── kind `guide` (ownership, owner dérivé d'org_id) ───────────────────────
 
-def test_doctrine_owner_derives_from_org(monkeypatch):
+def test_guide_owner_derives_from_org(monkeypatch):
     monkeypatch.setattr(ownership.org_store, "get_instruction_by_id",
                         lambda i: {"id": 77, "org_id": 42, "slug": "process"})
     assert ownership.owner_of("doctrine", "77") == ("org", "42")
 
 
-def test_doctrine_owner_none_for_slug_ref():
+def test_guide_owner_none_for_slug_ref():
     assert ownership.owner_of("doctrine", "vieux-slug") is None
 
 
-def test_doctrine_reparent_rejects_user_owner():
+def test_guide_reparent_rejects_user_owner():
     with pytest.raises(ValueError):
-        ownership._doctrine_reparent("77", "user", "u1")
+        ownership._guide_reparent("77", "user", "u1")
 
 
-def test_doctrine_listed_in_resource_ops():
+def test_guide_listed_in_resource_ops():
     assert "doctrine" in R._OPS
 
 
 # ── oto_get_doctrine(doctrine_id) : lecture par id + grants ──────────────────
 
-def _wire_doctrine_read(monkeypatch, *, can_access):
+def _wire_guide_read(monkeypatch, *, can_access):
     monkeypatch.setattr(oi.org_store, "get_instruction_by_id",
                         lambda i: {"id": 77, "org_id": 42, "slug": "process",
                                    "title": "T", "description": "d", "version": 3,
@@ -241,26 +241,26 @@ def _wire_doctrine_read(monkeypatch, *, can_access):
     monkeypatch.setattr(oi.tool_registry, "manifest_for", _manifest)
 
 
-def test_get_doctrine_by_id_with_grant(monkeypatch):
-    _wire_doctrine_read(monkeypatch, can_access=True)
-    out = asyncio.run(oi._get_doctrine(ResolvedCtx(sub="client", org_id=35),
-                                       oi.DoctrineGetInput(doctrine_id=77)))
-    # l'org_id rendu = l'org PROPRIÉTAIRE de la doctrine, pas l'org active du lecteur
+def test_get_guide_by_id_with_grant(monkeypatch):
+    _wire_guide_read(monkeypatch, can_access=True)
+    out = asyncio.run(oi._get_guide(ResolvedCtx(sub="client", org_id=35),
+                                       oi.GuideGetInput(doctrine_id=77)))
+    # l'org_id rendu = l'org PROPRIÉTAIRE du guide, pas l'org active du lecteur
     assert out["org_id"] == 42 and out["doctrine_id"] == 77
     assert out["slug"] == "process" and out["body_md"] == "corps"
 
 
-def test_get_doctrine_by_id_denied_without_grant(monkeypatch):
-    _wire_doctrine_read(monkeypatch, can_access=False)
+def test_get_guide_by_id_denied_without_grant(monkeypatch):
+    _wire_guide_read(monkeypatch, can_access=False)
     with pytest.raises(AuthzDenied) as e:
-        asyncio.run(oi._get_doctrine(ResolvedCtx(sub="intrus", org_id=9),
-                                     oi.DoctrineGetInput(doctrine_id=77)))
+        asyncio.run(oi._get_guide(ResolvedCtx(sub="intrus", org_id=9),
+                                     oi.GuideGetInput(doctrine_id=77)))
     assert e.value.status == 403
 
 
-def test_get_doctrine_by_id_unknown_404(monkeypatch):
-    _wire_doctrine_read(monkeypatch, can_access=True)
+def test_get_guide_by_id_unknown_404(monkeypatch):
+    _wire_guide_read(monkeypatch, can_access=True)
     with pytest.raises(AuthzDenied) as e:
-        asyncio.run(oi._get_doctrine(ResolvedCtx(sub="client", org_id=35),
-                                     oi.DoctrineGetInput(doctrine_id=999)))
+        asyncio.run(oi._get_guide(ResolvedCtx(sub="client", org_id=35),
+                                     oi.GuideGetInput(doctrine_id=999)))
     assert e.value.code == "unknown_doctrine"

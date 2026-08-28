@@ -156,7 +156,7 @@ def test_le_budget_refuse_le_meme_motif_sur_un_champ_plus_LARGE():
 
 def test_un_motif_stocke_hors_garde_n_explose_pas_a_l_ecriture():
     """Un schéma posé quand la clé était encore ignorée ne doit pas faire exploser
-    une écriture — même doctrine que `max_length_of` (muette sur une déclaration mal
+    une écriture — même parti pris que `max_length_of` (muette sur une déclaration mal
     formée). La pose, elle, le refuse : c'est là qu'on peut encore corriger."""
     stocke = {"fields": [{"key": "x", "max_length": 250, "pattern": "(a+)+$"}]}
     assert _ecrit(stocke, {"x": "a" * 200}) == []

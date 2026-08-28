@@ -27,7 +27,7 @@ from mcp.shared.exceptions import McpError
 from oto_mcp import call_axes, db, org_store, ownership, session_org
 from oto_mcp.auth import hooks as auth_hooks
 from oto_mcp.middleware.call_context import CallContextMiddleware
-from oto_mcp.tools import doctrine_run as drt
+from oto_mcp.tools import guide_run as drt
 
 
 # ── Doubles : l'état de session (push_run) et le message de l'appel ──────────
@@ -123,7 +123,7 @@ async def test_le_projet_de_lappel_est_gele_dans_le_run(monkeypatch, run_start_f
     assert out["dispatched"] == {"label": "prospection Q3", "doctrine": "prospection"}
     assert rec["project_id"] == 9                  # la colonne cesse d'être morte
     assert rec["org_id"] == 42                     # org PROPRIÉTAIRE du projet, co-posée
-    assert rec["doctrine"] == "prospection" and rec["run_id"] == out["result"]["run_id"]
+    assert rec["guide"] == "prospection" and rec["run_id"] == out["result"]["run_id"]
 
 
 @pytest.mark.asyncio

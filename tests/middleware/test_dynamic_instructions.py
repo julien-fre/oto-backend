@@ -1,7 +1,7 @@
 """Instructions injectées au `initialize` — artefact composé A/C (#50).
 
 Bloc A (secret sauce DB→seed + catalogue dérivé, toujours injecté), bloc C (contexte
-résolu + fiche profil + doctrine d'org avec variables). L'onboarding n'est plus un bloc
+résolu + fiche profil + guide d'org avec variables). L'onboarding n'est plus un bloc
 (c'est un projet, ADR 0032 §7). Style `asyncio.run` + monkeypatch des seams.
 """
 import asyncio
@@ -230,19 +230,19 @@ def _run_list(tools, sub, monkeypatch):
     return asyncio.run(mw.DynamicInstructionsMiddleware().on_list_tools(object(), call_next))
 
 
-def test_on_list_tools_enriches_get_doctrine(monkeypatch):
+def test_on_list_tools_enriches_get_guide(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: 7)
     monkeypatch.setattr(instr, "skills_index_md", lambda org: "INDEX-BLOCK")
     monkeypatch.setattr(guide_store, "guides_index_md", lambda sub, org: "")
-    tools = [_FakeTool("fr_get", "search"), _FakeTool("oto_procedure", "load doctrine")]
+    tools = [_FakeTool("fr_get", "search"), _FakeTool("oto_procedure", "load guide")]
     out = {t.name: t for t in _run_list(tools, "u1", monkeypatch)}
     assert out["fr_get"].description == "search"
-    assert "load doctrine" in out["oto_procedure"].description
+    assert "load guide" in out["oto_procedure"].description
     assert "INDEX-BLOCK" in out["oto_procedure"].description
 
 
 def test_on_list_tools_enriches_guide_per_caller(monkeypatch):
-    # oto_guide reçoit l'index per-(sub, org) — plateforme ∪ org ∪ user — pas la doctrine.
+    # oto_guide reçoit l'index per-(sub, org) — plateforme ∪ org ∪ user — pas le guide.
     monkeypatch.setattr(access, "current_org", lambda sub: 7)
     monkeypatch.setattr(instr, "skills_index_md", lambda org: "")
     monkeypatch.setattr(guide_store, "guides_index_md", lambda sub, org: "GUIDES-BLOCK")

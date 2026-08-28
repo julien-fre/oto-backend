@@ -10,7 +10,7 @@ from oto_mcp.capabilities._types import ResolvedCtx
 
 
 def test_assembles_layers(monkeypatch):
-    # Pas d'org active, pas d'instance liée → doctrine vide + tools indispo. Le bloc A
+    # Pas d'org active, pas d'instance liée → guide vide + tools indispo. Le bloc A
     # (secret sauce + catalogue dérivé) est toujours présent ; plus de gate onboarded.
     monkeypatch.setattr(ac.tool_registry, "bound_instance", lambda: None)
     ctx = ResolvedCtx(sub="u1", org_id=None)

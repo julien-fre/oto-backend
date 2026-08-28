@@ -25,7 +25,7 @@ Le rôle (`users.role`) décide de l'accès à l'admin UI, sur **3 paliers**
 
 - **super_admin** : le tout-puissant — escalade `org_admin` de TOUTE org +
   `group_admin` de TOUT groupe (`roles.is_platform_admin` = super), gestion des
-  rôles plateforme, platform keys, émission de tokens, écriture + doctrine
+  rôles plateforme, platform keys, émission de tokens, écriture + guide
   d'orgs tierces, création d'org, bypass namespace grant-only. Bootstrap env
   `OTO_MCP_ADMIN_SUB` → super_admin. Combinateur d'autz `SUPER_ADMIN`.
 - **admin** (palier OPÉRATIONNEL intermédiaire) : supervision plateforme —

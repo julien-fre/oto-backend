@@ -1,4 +1,4 @@
-"""`DynamicInstructionsMiddleware` — le contexte doctrine injecté dans la surface LLM."""
+"""`DynamicInstructionsMiddleware` — le contexte guide injecté dans la surface LLM."""
 from __future__ import annotations
 
 import logging
@@ -11,7 +11,7 @@ from ..auth.hooks import current_user_sub_from_token
 logger = logging.getLogger(__name__)
 
 
-_DOCTRINE_GET_TOOL = "oto_procedure"
+_GUIDE_GET_TOOL = "oto_procedure"
 _GUIDE_TOOL = "oto_guide"
 
 # « Cette session n'est pas un endpoint de projet publié » — distinct de « projet
@@ -48,14 +48,14 @@ def _session_instructions(sub: str) -> str:
 
 
 class DynamicInstructionsMiddleware(Middleware):
-    """Injecte le contexte doctrine de l'org dans la surface vue par le LLM, par-(sub,
-    org), au lieu de dépendre d'un appel volontaire de lecture de doctrine (canal fragile,
+    """Injecte le contexte guide de l'org dans la surface vue par le LLM, par-(sub,
+    org), au lieu de dépendre d'un appel volontaire de lecture de guide (canal fragile,
     otomata-private#49, amende ADR 0014). Deux points d'injection, selon la NATURE :
 
     - **artefact composé** (blocs A/C, #50) → `on_initialize` REMPLACE
       `result.instructions` par `instructions.compose_session(sub, org)`
       (le « cheval de Troie », relu par session ; Claude rehandshake par conversation).
-    - **index des doctrines NOMMÉES** (skills) → `on_list_tools` enrichit la
+    - **index des guides NOMMÉS** (skills) → `on_list_tools` enrichit la
       **description de `oto_procedure`** (l'outil qui les charge). Les skills ne sont
       PAS des outils → absents de `tools/list` → ce serait leur seul canal. Co-localisé
       avec le loader plutôt qu'un bloc dans les instructions.
@@ -114,7 +114,7 @@ class DynamicInstructionsMiddleware(Middleware):
             # Deux loaders de prose on-demand, même canal de découverte : l'index
             # per-(sub, org) enrichit la description de l'outil qui les charge.
             extra = {
-                _DOCTRINE_GET_TOOL: instructions.skills_index_md(org_id),
+                _GUIDE_GET_TOOL: instructions.skills_index_md(org_id),
                 _GUIDE_TOOL: guide_store.guides_index_md(sub, org_id),
             }
             if not any(extra.values()):
@@ -126,6 +126,6 @@ class DynamicInstructionsMiddleware(Middleware):
                 for t in tools
             ]
         except Exception:
-            logger.warning("enrichissement d'index (doctrine/guide) échoué pour sub=%s "
+            logger.warning("enrichissement d'index (procédures/guides) échoué pour sub=%s "
                            "(fail-open)", sub, exc_info=True)
             return tools

@@ -213,7 +213,7 @@ def test_payslip_detail_passes_dossier_matricule_periode_in_that_order(
 
 def test_variables_to_enter_stays_a_single_capability(client):
     """Pas d'`op` : une seule capacité. Le tool est resté INCHANGÉ par la
-    consolidation (même nom, même signature) — ses refs doctrine survivent."""
+    consolidation (même nom, même signature) — ses refs guide survivent."""
     import inspect
 
     fn = _tool("silae_variables_to_enter")

@@ -217,7 +217,7 @@ def test_le_compte_suit_la_convention_du_coffre_et_n_est_pas_nullable():
 
 
 def test_l_instance_s_archive_elle_ne_se_supprime_pas():
-    """Même doctrine que `grants` (0053-D7) : un binding, un grant ou une consommation
+    """Même parti pris que `grants` (0053-D7) : un binding, un grant ou une consommation
     qui désignent une instance doivent pouvoir la relire après son retrait."""
     debut = _SCHEMA_SRC.index("CREATE TABLE IF NOT EXISTS connector_instances")
     corps = _SCHEMA_SRC[debut:debut + _SCHEMA_SRC[debut:].index(");")]

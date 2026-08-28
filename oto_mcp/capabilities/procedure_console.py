@@ -1,14 +1,14 @@
 """Console procédures MCP consolidée (ADR 0047, B2) — `oto_procedure`.
 
-Réunit les 9 tools MCP du domaine doctrine/procédure membre en UN : lecture
+Réunit les 9 tools MCP du domaine guide/procédure membre en UN : lecture
 (`get`/`list`, ex-`oto_get_doctrine`/`oto_list_doctrines`), écriture
 (`set`/`delete`, org_admin, épinglable `_org=` #69) et bibliothèque publique
 (`library_list`/`library_get`/`publish`/`fork`/`unpublish`). Les handlers de
-domaine (`orgs_instructions`, `doctrine_library`) sont réutilisés tels quels ;
+domaine (`orgs_instructions`, `guide_library`) sont réutilisés tels quels ;
 leurs faces REST ne bougent pas.
 
-⚠️ L'index des doctrines nommées (skills) est APPENDU à la description de CE
-tool par `DynamicInstructionsMiddleware.on_list_tools` (via `_DOCTRINE_GET_TOOL`,
+⚠️ L'index des guides nommés (skills) est APPENDU à la description de CE
+tool par `DynamicInstructionsMiddleware.on_list_tools` (via `_GUIDE_GET_TOOL`,
 middleware/dynamic_instructions.py) — les skills ne sont pas des outils, c'est leur seul canal de
 découverte. Le filtre d'usage (`org.instruction.usage`) compte les appels sur ce
 nom de tool.
@@ -19,7 +19,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from . import doctrine_library
+from . import guide_library
 from .orgs import instructions as orgs_instructions
 from ._authz import BY_OP, ORG_ADMIN_OPT, ORG_MEMBER, ORG_MEMBER_OPT, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx
@@ -58,20 +58,20 @@ class ProcedureInput(BaseModel):
 
 
 async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
-    oi, lib = orgs_instructions, doctrine_library
+    oi, lib = orgs_instructions, guide_library
     if inp.op == "get":
-        return await oi._get_doctrine(ctx, oi.DoctrineGetInput(
+        return await oi._get_guide(ctx, oi.GuideGetInput(
             slug=inp.slug, doctrine_id=inp.doctrine_id, scope=inp.scope or "org",
             version=inp.version, with_history=inp.with_history))
     if inp.op == "list":
-        return oi._list_doctrines(ctx, oi.DoctrineListInput(query=inp.query, scope=inp.scope))
+        return oi._list_guides(ctx, oi.GuideListInput(query=inp.query, scope=inp.scope))
     if inp.op == "set":
         return await oi._set_instruction(ctx, oi.InstrSetInput(
             slug=inp.slug, body_md=inp.body_md, title=inp.title,
             description=inp.description, from_version=inp.from_version,
             slots=inp.slots, org=inp.org))
     if inp.op == "delete":
-        return oi._delete_instruction(ctx, oi.DoctrineDeleteInput(
+        return oi._delete_instruction(ctx, oi.GuideDeleteInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour delete."), org=inp.org))
     if inp.op == "library_list":
         return lib._list(ctx, lib.LibraryListInput(
@@ -129,6 +129,6 @@ CAPABILITIES += [
             "body by public slug) / publish (share one of your org's skills; visibility="
             "public|unlisted) / fork (copy a public entry into your org, optional `new_slug`) "
             "/ unpublish (`id`)."),
-        mcp=orgs_instructions._DOCTRINE_GET_TOOL,
+        mcp=orgs_instructions._GUIDE_GET_TOOL,
     ),
 ]

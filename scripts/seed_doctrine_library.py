@@ -2,7 +2,7 @@
 
 Publie les skills nommés d'une org (par défaut l'org Otomata) dans
 `doctrine_library` en tant qu'auteur **Otomata** (author_kind='otomata',
-visibility='public'). Idempotent : `publish_doctrine` fait un upsert par slug
+visibility='public'). Idempotent : `publish_guide` fait un upsert par slug
 (ré-exécuter incrémente la version sans dupliquer).
 
 Usage (sur la box) :
@@ -37,7 +37,7 @@ def main() -> None:
         full = org_store.get_instruction(org_id, slug)
         if not full:
             continue
-        row = org_store.publish_doctrine(
+        row = org_store.publish_guide(
             slug=slug, title=full.get("title") or "", description=full.get("description") or "",
             body_md=full["body_md"], author_kind="otomata", author_org_id=None,
             author_display="Otomata", category=meta.get("category") or "",

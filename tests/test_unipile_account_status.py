@@ -9,7 +9,7 @@ utilisateur qui signale « ça ne marche pas »). Relevé le 28/08 : cet outil n
 
 Le signal offrait deux sorties : renommer, ou faire exister `op='status'`. On fait
 exister l'op — c'est ce que le nom promet, et un renommage casserait les appels qui
-marchent (ainsi que les procédures qui citent le nom, cf. `docs/doctrines.md`).
+marchent (ainsi que les procédures qui citent le nom, cf. `docs/guides.md`).
 
 Contrainte NON négociable : `op='status'` doit répondre `connected:false` quand rien
 n'est lié. S'il LEVAIT dans ce cas (ce que fait `unipile_client()`, par refus de

@@ -5,7 +5,7 @@ Le stock KALI DILA (~290k articles, ~1,4k conteneurs) est ingéré et indexé (F
 dans le chemin d'une requête MCP. Ce module sert la recherche d'articles, le texte
 intégral et la résolution IDCC→convention depuis ce stock partagé.
 
-Pas de fallback (même doctrine qu'ADR 0028) : service indisponible/mal configuré
+Pas de fallback (même parti pris qu'ADR 0028) : service indisponible/mal configuré
 ⟹ erreur actionnable.
 
 Config (env de process) : `FOD_BASE_URL` + `FOD_API_TOKEN` — le service FOD unique

@@ -11,7 +11,7 @@ from ._model import _c
 # self_serve : chacun connecte SON propre compte GoCardless (sandbox ou prod) —
 # PAS de clé plateforme partagée, donc rien de sensible à gater par grant. Reste
 # hors socle → opt-in, pas imposé. L'org MM
-# y pose le token de son compte de service pour le POC avoirs (doctrine d'une org client).
+# y pose le token de son compte de service pour le POC avoirs (guide d'une org client).
 CONNECTOR = _c(
     "gocardless", ["gocardless"], availability="self_serve",
     auth_modes={"byo_user", "byo_org"}, keyed=True, secret_kind="api_key",

@@ -1,6 +1,6 @@
 """Audit des liens d'un projet (ADR 0035, B5) — les liens vérifiés comme des refs.
 
-Pendant projet des « refs mortes » de doctrine (0014) : un pointeur déclaré qui ne
+Pendant projet des « refs mortes » de guide (0014) : un pointeur déclaré qui ne
 correspond plus au réel devient une **alarme**, pas un silence. Quatre signaux,
 tous NON bloquants (dérivation pure, best-effort) :
 - **dead_links** : la cible ne résout plus (tableau sans namespace, procédure
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 def _resolved_procedure(link: dict):
     """L'instruction d'un lien `procedure`, ou None (réf non numérique legacy /
-    doctrine disparue). Import paresseux (pas de cycle au boot)."""
+    guide disparu). Import paresseux (pas de cycle au boot)."""
     from . import org_store
     ref = str(link.get("target_ref") or "")
     if not ref.isdigit():

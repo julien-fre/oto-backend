@@ -2,7 +2,7 @@
 
 Couvre : validation de la déclaration (structure dure, messages actionnables),
 le parsing des refs de prose, la vérification croisée non bloquante (`slots_check`),
-et le câblage dans la capacité d'écriture (`oto_set_doctrine` : slots validés,
+et le câblage dans la capacité d'écriture (`oto_procedure(op='set')` : slots validés,
 transmis au store, restaurés par from_version, check dans la réponse).
 B1 = canari no-op : AUCUN test de résolution runtime (B3).
 """
@@ -108,7 +108,7 @@ def test_check_never_raises(monkeypatch):
     assert r["unresolved_slots"] == ["x"]
 
 
-# ── Câblage capacité (oto_set_doctrine) ──────────────────────────────────────
+# ── Câblage capacité (`oto_procedure(op='set')`) ─────────────────────────────
 def _wire_set(monkeypatch, existing=None):
     calls = {}
 

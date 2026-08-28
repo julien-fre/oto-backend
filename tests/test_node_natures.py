@@ -47,9 +47,9 @@ def test_la_cle_derivee_est_l_ID_jamais_le_SLUG():
 
     Dériver l'identifiant d'un nœud du slug aurait produit une adresse qui change au
     premier renommage — exactement la classe de défaut que #362 vient de retirer sur les
-    blocs. Et c'est l'`id` que `resource_grants` désigne pour une doctrine.
+    blocs. Et c'est l'`id` que `resource_grants` désigne pour un guide.
     """
-    sql = db_nodes.CONVERT_DOCTRINES_TO_NODES_SQL
+    sql = db_nodes.CONVERT_GUIDES_TO_NODES_SQL
     assert "md5('prc:' || (d.id)" in sql
     assert "d.slug" not in sql.split("public_id")[0]     # jamais dans la clé dérivée
 
@@ -57,8 +57,8 @@ def test_la_cle_derivee_est_l_ID_jamais_le_SLUG():
 def test_la_conversion_est_REJOUABLE_et_purge_ce_qui_a_disparu():
     # Même contrat que les trois autres familles : ON CONFLICT newer-wins, et une
     # procédure supprimée ne laisse pas son nœud derrière elle.
-    assert "ON CONFLICT ON CONSTRAINT nodes_public_id_key" in db_nodes.CONVERT_DOCTRINES_TO_NODES_SQL
-    purge = db_nodes.PURGE_DOCTRINE_NODES_SQL
+    assert "ON CONFLICT ON CONSTRAINT nodes_public_id_key" in db_nodes.CONVERT_GUIDES_TO_NODES_SQL
+    purge = db_nodes.PURGE_GUIDE_NODES_SQL
     assert "props->>'legacy' = 'prc'" in purge
     # ⚠️ Le prédicat sur `legacy` est ce qui rend la purge sûre : un nœud NATIF n'a pas
     # cette clé, donc n'est jamais candidat. Le relâcher effacerait le contenu neuf.
@@ -74,7 +74,7 @@ def test_le_pont_grant_vers_noeud_couvre_les_procedures():
 
 
 def test_une_procedure_convertie_porte_son_role_et_ses_slots():
-    sql = db_nodes.CONVERT_DOCTRINES_TO_NODES_SQL
+    sql = db_nodes.CONVERT_GUIDES_TO_NODES_SQL
     assert "'role', 'procedure'" in sql        # le rôle, jamais un `kind`
     assert "'slug', d.slug" in sql             # le slug reste ADRESSABLE, en propriété
     assert "'slots'" in sql

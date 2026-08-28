@@ -81,14 +81,14 @@ FROZEN = (
     'list_orgs_for_user', 'list_pending_invitations_for_email',
     'list_platform_invitations', 'list_scheduled_emails', 'logging', 'logodev',
     'normalize_domain', 'normalize_slug', 'org_email_quiet_hours', 'org_front',
-    'preview_invitation', 'preview_invitation_by_code', 'publish_doctrine', 're',
+    'preview_invitation', 'preview_invitation_by_code', 'publish_guide', 're',
     'reconcile_signup_with_invitation', 'remove_org_member', 'reparent_instruction',
     'resolve_org_for_user', 'resolve_sender', 'revoke_group_invitation',
     'revoke_invitation', 'revoke_platform_invitation', 'search_instructions',
     'secrets', 'set_active_org', 'set_instruction', 'set_org_default_connectors',
     'set_org_email_settings', 'set_org_field_filters', 'set_org_logo',
     'set_org_logto_org_id', 'set_org_require_mfa', 'set_org_secret',
-    'unpublish_doctrine', 'update_org', 'upsert_user'
+    'unpublish_guide', 'update_org', 'upsert_user'
 )
 
 # nom -> str(inspect.signature(...)) relevé sur le même commit.
@@ -166,7 +166,7 @@ FROZEN_SIGNATURES = {
     'org_front': "(org_id: 'Optional[int]') -> 'tuple[Optional[str], Optional[str]]'",
     'preview_invitation': "(token: 'str') -> 'Optional[dict]'",
     'preview_invitation_by_code': "(code: 'str') -> 'Optional[dict]'",
-    'publish_doctrine': "(*, slug: 'str', title: 'str' = '', description: 'str' = '', body_md: 'str', author_kind: 'str', author_org_id: 'Optional[int]' = None, author_display: 'str' = '', category: 'str' = '', tags: 'Optional[list]' = None, visibility: 'str' = 'public', source_org_id: 'Optional[int]' = None, source_slug: 'Optional[str]' = None, forked_from: 'Optional[int]' = None, published_by: 'Optional[str]' = None, slots: 'Optional[list]' = None) -> 'dict'",
+    'publish_guide': "(*, slug: 'str', title: 'str' = '', description: 'str' = '', body_md: 'str', author_kind: 'str', author_org_id: 'Optional[int]' = None, author_display: 'str' = '', category: 'str' = '', tags: 'Optional[list]' = None, visibility: 'str' = 'public', source_org_id: 'Optional[int]' = None, source_slug: 'Optional[str]' = None, forked_from: 'Optional[int]' = None, published_by: 'Optional[str]' = None, slots: 'Optional[list]' = None) -> 'dict'",
     'reconcile_signup_with_invitation': "(sub: 'str', email: 'str') -> 'Optional[dict]'",
     'remove_org_member': "(org_id: 'int', sub: 'str') -> 'bool'",
     'reparent_instruction': "(instruction_id: 'int', new_org_id: 'int') -> 'str'",
@@ -185,7 +185,7 @@ FROZEN_SIGNATURES = {
     'set_org_logto_org_id': "(org_id: 'int', logto_org_id: 'Optional[str]') -> 'bool'",
     'set_org_require_mfa': "(org_id: 'int', require: 'bool') -> 'bool'",
     'set_org_secret': "(org_id: 'int', provider: 'str', api_key: 'str', set_by: 'Optional[str]' = None, meta: 'Optional[dict]' = None, account: 'str' = '') -> 'None'",
-    'unpublish_doctrine': "(entry_id: 'int') -> 'bool'",
+    'unpublish_guide': "(entry_id: 'int') -> 'bool'",
     'update_org': "(org_id: 'int', name: 'Optional[str]' = None, description: 'Optional[str]' = None, domain: 'Optional[str]' = None, industry: 'Optional[str]' = None, location: 'Optional[str]' = None) -> 'bool'",
     'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, iss: 'Optional[str]' = None) -> 'None'",
 }

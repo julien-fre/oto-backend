@@ -15,7 +15,7 @@ Les invariants gardés ici, dans l'ordre de ce qui coûterait le plus cher :
    namespace, visibilité, journal `tool_calls`, références `<tool:slug>`) continue de
    lire un seul nom pour un seul outil.
 3. **Les deux noms sont acceptés à l'appel.** La prose déjà écrite (procédures,
-   guides, doctrines) cite les canoniques : un agent qui suit une procédure de
+   guides, guides) cite les canoniques : un agent qui suit une procédure de
    2026-07 doit continuer à aboutir.
 4. **La liste et la consigne parlent la même langue.** Traduire la liste sans traduire
    la prose injectée ferait rappeler `oto_doc` par l'agent — et réafficher `Oto doc`
@@ -141,7 +141,7 @@ async def test_le_serveur_ne_voit_jamais_le_nom_du_tenant(
 
 @pytest.mark.asyncio
 async def test_le_nom_canonique_reste_appelable(tenant_avec_prefixe, monkeypatch):
-    """Les procédures, guides et doctrines déjà écrits citent les canoniques — et
+    """Les procédures, guides et guides déjà écrits citent les canoniques — et
     personne ne peut les réécrire d'un coup."""
     assert await _nom_recu_par_le_serveur(monkeypatch, _SUB_TENANT, "oto_doc") == "oto_doc"
 

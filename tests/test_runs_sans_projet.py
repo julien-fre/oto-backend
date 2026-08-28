@@ -121,7 +121,7 @@ def test_nommer_un_projet_rend_toujours_les_deroules_DU_PROJET(monkeypatch):
                                      "owner_id": "1", "brief_md": ""})
     monkeypatch.setattr(P, "_require_active_org_visible", lambda ctx, row: None)
     monkeypatch.setattr(P.db, "project_runs",
-                        lambda pid, doctrine=None: [{"run_id": "r-projet"}])
+                        lambda pid, guide=None: [{"run_id": "r-projet"}])
     out = P._project(CTX, P.ProjectInput(op="runs", project_id=12))
     assert out["id"] == 12
     assert [r["run_id"] for r in out["runs"]] == ["r-projet"]

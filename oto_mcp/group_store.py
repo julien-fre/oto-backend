@@ -6,7 +6,7 @@ Miroir d'`org_store` au grain groupe. Les tables (`org_groups`,
 coffre chiffré `connector_credentials` (entity_type='group'), comme ceux d'org.
 
 Un groupe gouverne DEUX ressources par délégation de l'org (décision produit) :
-- **doctrine** (org_group_instructions) — servie en complément de celle de l'org ;
+- **guide** (org_group_instructions) — servi en complément de celle de l'org ;
 - **secrets partagés** (coffre, entity_type='group') — résolus avant ceux de l'org.
 
 Sens unique (ADR 0004) : dépend de `db`/`org_store`/`credentials_store`/
@@ -85,7 +85,7 @@ def update_group(group_id: int, name: Optional[str] = None,
 
 
 def delete_group(group_id: int) -> bool:
-    """Supprime un groupe (cascade : membres, doctrine, revisions). Les secrets
+    """Supprime un groupe (cascade : membres, guide, revisions). Les secrets
     de groupe (coffre) sont purgés explicitement (hors FK)."""
     with _connect() as conn:
         with conn.transaction():
@@ -268,9 +268,9 @@ def list_group_secrets(group_id: int) -> list[dict]:
     return out
 
 
-# --- doctrine & skills du groupe (miroir org_store, table org_group_*) ------
+# --- guide & skills du groupe (miroir org_store, table org_group_*) ------
 #
-# Même modèle versionné que la doctrine d'org : slug réservé BASE_SLUG = base,
+# Même modèle versionné que le guide d'org : slug réservé BASE_SLUG = base,
 # autres = skills. En clair (prose). normalize_slug/_snippet réutilisés d'org_store.
 
 # Chantier procédures (cadrage 10/07, B2) : les procédures d'équipe vivent dans la

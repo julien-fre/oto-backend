@@ -292,7 +292,7 @@ def test_multi_account_refusal_surfaces_as_invalid_params(monkeypatch):
     the key has access to several accounts and none was pinned. That's a
     caller-fixable input problem — it must reach the agent as `McpError`
     (`INVALID_PARAMS`), not propagate as an unhandled exception (which would
-    land in Sentry as a backend defect, per this repo's own doctrine)."""
+    land in Sentry as a backend defect, per this repo's own guide)."""
     inst = MagicMock()
     inst.search_job_posts.side_effect = ValueError(
         "forager: this API key has access to multiple accounts (1 (A), 2 (B)) — "

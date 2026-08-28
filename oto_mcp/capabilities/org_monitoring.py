@@ -199,6 +199,10 @@ class OrgAdoption(BaseModel):
     members: list[AdoptionMember]
 
 
+# ⚠️ ALIAS DE COMPATIBILITÉ (#519, lot B) — le mot « doctrine » ci-dessous est SERVI :
+# le champ `doctrine` est une clé de réponse, et le docstring de `RunRow` sort tel
+# quel dans `/openapi.json` comme `description` de son schéma. Ni l'un ni l'autre ne
+# bouge au lot A ; ils deviennent `guide` au lot B, avec les autres clés servies.
 class RunRow(BaseModel):
     """Un déroulé. `slug` est un alias de compat = `doctrine` s'il y en a une, sinon
     `label` — pas un troisième identifiant.

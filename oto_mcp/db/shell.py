@@ -47,7 +47,7 @@ _HORS_LIGNES = "n.kind <> 'ligne'"
 # Le pont est donc gratuit et bidirectionnel — le re-keying des grants sur `public_id`
 # (chantier M-h) reste dû, mais il ne bloque pas cette lecture.
 #
-# ✅ **`doctrine` a sa famille depuis le 21/08.** Ce commentaire a dit le contraire
+# ✅ **La famille du kind `doctrine` existe depuis le 21/08.** Ce commentaire a dit le contraire
 # jusque-là — « les procédures ne sont pas encore des nœuds, leur partage est compté et
 # rendu à part » — et c'était vrai à l'écriture : `grants_sans_noeud` existait pour
 # qu'une section « Partagé » incomplète ne se lise pas comme « rien de partagé ». La

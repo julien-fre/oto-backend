@@ -104,7 +104,7 @@ def main() -> None:
     print("  ✓")
 
     print("→ publication 'unlisted' : invisible de la liste publique anonyme")
-    org_store.publish_doctrine(slug="secret-skill", body_md="# Secret", author_kind="otomata",
+    org_store.publish_guide(slug="secret-skill", body_md="# Secret", author_kind="otomata",
                                author_display="Otomata", visibility="unlisted")
     assert not org_store.list_library(include_unlisted=False)
     assert org_store.get_library_entry(slug="secret-skill", include_unlisted=False) is None

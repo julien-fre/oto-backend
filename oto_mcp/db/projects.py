@@ -411,10 +411,10 @@ def _apply_tableau_name_refs(links: list[dict], existing: set) -> None:
 
 
 def _apply_procedure_titles(links: list[dict], title_by_id: dict[int, str]) -> None:
-    """Attache le TITRE de la doctrine à chaque lien `procedure` (résolu depuis l'id
+    """Attache le TITRE du guide à chaque lien `procedure` (résolu depuis l'id
     stable porté par `target_ref`, ADR 0032 « stop using slug ») — sans lui, un lien
     posé sans `label` (agent) s'affiche comme un id nu. Pur (mutation en place). Ref
-    non numérique (slug legacy) / doctrine disparue → pas de clé `title`."""
+    non numérique (slug legacy) / guide disparu → pas de clé `title`."""
     for l in links:
         if l.get("target_type") == "procedure" and str(l.get("target_ref", "")).isdigit():
             t = title_by_id.get(int(l["target_ref"]))
@@ -429,7 +429,7 @@ def list_project_links(project_id: int) -> list[dict]:
     Les liens `tableau` sont enrichis du **nom** de leur namespace (`namespace`) : l'agent
     adresse « le tableau de ce projet » (par rôle/label) → nom réel pour `data_*`, sans
     nom en dur (ADR 0032 §6, adressage par rôle après provisioning template→instance).
-    Les liens `procedure` sont enrichis du **titre** de leur doctrine (`title`), même
+    Les liens `procedure` sont enrichis du **titre** de leur guide (`title`), même
     logique : `target_ref` est un id stable, un lien sans `label` doit rester lisible."""
     with _connect() as conn:
         rows = conn.execute(
@@ -471,7 +471,7 @@ def list_project_links(project_id: int) -> list[dict]:
                 (name_refs,),
             ).fetchall()
             _apply_tableau_name_refs(out, {r["namespace"] for r in erows})
-        # Idem pour les titres de doctrine des procédures (id stable, ADR 0032).
+        # Idem pour les titres de guide des procédures (id stable, ADR 0032).
         doc_ids = [int(l["target_ref"]) for l in out
                    if l.get("target_type") == "procedure" and str(l.get("target_ref", "")).isdigit()]
         if doc_ids:

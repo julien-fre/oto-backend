@@ -166,7 +166,7 @@ def _enrich_project(row: dict) -> dict:
     }
 
 
-def _enrich_doctrine(row: dict) -> dict:
+def _enrich_guide(row: dict) -> dict:
     return {
         "resource_type": "doctrine",
         "resource_id": str(row["id"]),
@@ -197,14 +197,14 @@ _OPS: dict[str, dict] = {
         "get_by_id": lambda i: db.get_project_by_id(i),
         "enrich": _enrich_project,
     },
-    # Doctrine = objet d'ORG (owner dérivé d'org_id, jamais user/group) → list_for_owners
+    # Guide = objet d'ORG (owner dérivé d'org_id, jamais user/group) → list_for_owners
     # ne retient que les paires ('org', id).
     "doctrine": {
         "list_all": lambda: org_store.list_all_instructions(),
         "list_for_owners": lambda owners: org_store.list_instructions_for_orgs(
             [int(i) for (t, i) in owners if t == "org"]),
         "get_by_id": lambda i: org_store.get_instruction_by_id(i),
-        "enrich": _enrich_doctrine,
+        "enrich": _enrich_guide,
     },
 }
 
@@ -270,8 +270,8 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
     les entités liées (`project_links`). Par entité gouvernée par l'acteur :
     - `tableau`  → même geste (grant au même principal — user/org/groupe, `can_access`
       honore les trois via `AccessorScope.principal_pairs` / transfert au même owner) ;
-    - `procedure`→ share = grant READ sur la doctrine (lisible cross-org par id via
-      oto_procedure op=get) ; transfer vers une org = COPIE de la doctrine chez la cible
+    - `procedure`→ share = grant READ sur le guide (lisible cross-org par id via
+      oto_procedure op=get) ; transfer vers une org = COPIE du guide chez la cible
       + re-pointage du lien (l'originale reste chez la source — zéro casse des autres
       projets qui la référencent) ;
     - `connecteur` → rien à propager : le destinataire branche SON credential (la

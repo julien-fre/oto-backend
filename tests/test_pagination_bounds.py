@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp.capabilities.billing import PaymentsInput
-from oto_mcp.capabilities.doctrine_library import LibraryListInput
+from oto_mcp.capabilities.guide_library import LibraryListInput
 from oto_mcp.capabilities.search import SearchInput
 
 # (modèle, plafond attendu) — le plancher est 1 partout.

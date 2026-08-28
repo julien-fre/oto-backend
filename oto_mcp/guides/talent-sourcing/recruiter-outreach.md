@@ -8,7 +8,7 @@ tags: recrutement, outreach, sequence, linkedin, email
 
 # Approche candidat (outreach recruteur)
 
-Skill de la doctrine `talent-sourcing`. Transformer un profil qualifié en
+Skill du guide `talent-sourcing`. Transformer un profil qualifié en
 **conversation**. La personnalisation > le volume : un message ciblé bat dix
 copier-coller.
 

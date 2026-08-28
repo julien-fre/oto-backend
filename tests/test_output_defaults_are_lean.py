@@ -4,7 +4,7 @@
 passait JAMAIS — six `serper_search` avec `query` seul sur une seule fiche, six
 réponses Google entières. Et il n'avait aucune raison de faire autrement : il ne peut
 pas savoir qu'un paramètre existe avant d'avoir lu le schéma, rien ne lui dit qu'il
-compte, et la doctrine qui le pilote ne nomme aucun outil (par choix). **Une économie
+compte, et le guide qui le pilote ne nomme aucun outil (par choix). **Une économie
 qu'il faut connaître pour en bénéficier ne bénéficie à personne** — 83 % du coût
 d'une conversation d'enrichissement était dans les sorties d'outils.
 

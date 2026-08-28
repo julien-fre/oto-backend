@@ -14,7 +14,7 @@ Un rôle supérieur **subsume** les inférieurs (escalade descendante) :
 Avant ADR 0012, l'escalade était recopiée à la main dans chaque combinateur
 d'autz (`role == access.ADMIN or org_store.get_org_role(...) == 'org_admin'`).
 Ce module la centralise pour que les combinateurs (`_authz`), la résolution de
-secrets (`access`) et la doctrine (`tools/orgs`) partagent la MÊME logique —
+secrets (`access`) et le guide (`tools/orgs`) partagent la MÊME logique —
 ajouter un palier (le groupe) en un seul endroit, pas dans dix.
 
 Sens unique (ADR 0004) : lit `access`/`org_store`/`group_store`, jamais l'inverse.
@@ -119,7 +119,7 @@ def is_org_member(sub: str, org_id: int) -> bool:
 # --- palier groupe (chef d'équipe / département) ----------------------------
 
 def can_admin_group(sub: str, group_id: int) -> bool:
-    """Peut ADMINISTRER le groupe (membres, secrets, doctrine) ?
+    """Peut ADMINISTRER le groupe (membres, secrets, guide) ?
 
     Vrai pour le chef d'équipe (`group_admin` explicite) ET, par subsomption,
     pour l'org_admin du groupe parent et le platform_admin. Un org_admin n'a
@@ -133,7 +133,7 @@ def can_admin_group(sub: str, group_id: int) -> bool:
 
 
 def can_read_group(sub: str, group_id: int) -> bool:
-    """Peut LIRE le groupe (détail, doctrine, liste des secrets sans valeur) ?
+    """Peut LIRE le groupe (détail, guide, liste des secrets sans valeur) ?
 
     Tout membre du groupe, plus quiconque peut l'administrer (org_admin/platform).
     Un simple membre de l'org NON membre du groupe ne le lit pas (les ressources

@@ -8,7 +8,7 @@ tags: recrutement, sourcing, boolean, x-ray, linkedin
 
 # Recherche booléenne & X-ray
 
-Skill de la doctrine `talent-sourcing`. Trouver les bons profils = bien formuler
+Skill du guide `talent-sourcing`. Trouver les bons profils = bien formuler
 la requête. Deux leviers : **booléen** (sur LinkedIn/ATS) et **X-ray** (Google qui
 indexe LinkedIn et autres).
 

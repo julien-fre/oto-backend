@@ -1,6 +1,6 @@
-"""La BIBLIOTHÈQUE PUBLIQUE de doctrines (table `doctrine_library`).
+"""La BIBLIOTHÈQUE PUBLIQUE de guides (table `doctrine_library`).
 
-Le catalogue cherchable des doctrines publiées : publier (borné à son auteur),
+Le catalogue cherchable des guides publiés : publier (borné à son auteur),
 lister, lire, dépublier — et **forker** une entrée dans son org, ce qui la
 transforme en procédure d'org versionnée.
 
@@ -15,9 +15,9 @@ from . import instructions
 from ..db import _connect
 
 
-# --- bibliothèque publique de doctrines (marketplace, table doctrine_library) ---
+# --- bibliothèque publique de guides (marketplace, table doctrine_library) ---
 #
-# Un catalogue cherchable de doctrines PUBLIÉES, chaque entrée portant un AUTEUR
+# Un catalogue cherchable de guides PUBLIÉS, chaque entrée portant un AUTEUR
 # ('otomata' = la plateforme, ou 'org' = un créateur privé). Preview + fork dans
 # son org (copie versionnée via set_instruction). En clair (prose publiable).
 # Deny-by-default sur la surface anonyme : visibility='public' uniquement, jamais
@@ -43,7 +43,7 @@ class LibrarySlugTaken(Exception):
     non-disclosant du gate d'org, ADR 0023)."""
 
 
-def publish_doctrine(*, slug: str, title: str = "", description: str = "",
+def publish_guide(*, slug: str, title: str = "", description: str = "",
                      body_md: str, author_kind: str, author_org_id: Optional[int] = None,
                      author_display: str = "", category: str = "",
                      tags: Optional[list] = None, visibility: str = "public",
@@ -183,7 +183,7 @@ def fork_into_org(*, entry_id: int, org_id: int, new_slug: Optional[str] = None,
                   set_by: Optional[str] = None) -> dict:
     """Copie une entrée de la bibliothèque dans org_instructions de `org_id` sous
     un nouveau slug (défaut = slug source, suffixé -2/-3… si collision). Réutilise
-    set_instruction → la doctrine forkée devient un skill d'org versionné (v1)."""
+    set_instruction → le guide forké devient un skill d'org versionné (v1)."""
     entry = get_library_entry(entry_id=entry_id, include_unlisted=True)
     if not entry:
         raise ValueError("entrée de bibliothèque inconnue")
@@ -204,7 +204,7 @@ def fork_into_org(*, entry_id: int, org_id: int, new_slug: Optional[str] = None,
     }
 
 
-def unpublish_doctrine(entry_id: int) -> bool:
+def unpublish_guide(entry_id: int) -> bool:
     """Retire une entrée publiée. False si elle n'existait pas."""
     with _connect() as conn:
         cur = conn.execute("DELETE FROM doctrine_library WHERE id = %s", (entry_id,))

@@ -27,7 +27,7 @@ import oto_mcp.capabilities.groups.core  # noqa: F401 — group.create/list/list
 import oto_mcp.capabilities.groups.members  # noqa: F401 — group.member.{add,set_role,remove}
 import oto_mcp.capabilities.groups.invites  # noqa: F401 — group.invite.{create,list,revoke} (invitation d'équipe)
 import oto_mcp.capabilities.groups.secrets  # noqa: F401 — group.secret.{set,delete}
-import oto_mcp.capabilities.groups.doctrine  # noqa: F401 — group.instruction.{list,get,set,delete,versions,revert}
+import oto_mcp.capabilities.groups.guide  # noqa: F401 — group.instruction.{list,get,set,delete,versions,revert}
 # Signaux d'usage (ADR 0017) — feedback volontaire sur un outil + remontée des manques.
 from . import usage  # noqa: F401 — usage.feedback (signal=tool_feedback|gap) + projections
 # Lentilles monitoring + console d'investigation (après usage : la console réutilise ses handlers).
@@ -38,10 +38,10 @@ from . import tenant_legal_docs_admin  # noqa: F401 — admin.legal_docs.{list,s
 from . import billing  # noqa: F401 — billing.{plans,status,subscribe,confirm,cancel,payments}
 from . import billing_identity  # noqa: F401 — me.billing.identity.{get,set} (#486)
 from . import billing_invoices  # noqa: F401 — me.billing.invoices.list (#488)
-# Doctrine & instructions d'org (ADR 0009) — CRUD doctrine + usage, membre + admin.
-import oto_mcp.capabilities.orgs.instructions  # noqa: F401 — org.{doctrine.*, instruction.*}
-# Bibliothèque publique de doctrines (marketplace) — list/get/publish/fork/unpublish.
-from . import doctrine_library  # noqa: F401 — library.{list,get,publish,fork,unpublish}
+# Guide & instructions d'org (ADR 0009) — CRUD guide + usage, membre + admin.
+import oto_mcp.capabilities.orgs.instructions  # noqa: F401 — org.{doctrine.*, instruction.*}  (clés SERVIES, lot B)
+# Bibliothèque publique de guides (marketplace) — list/get/publish/fork/unpublish.
+from . import guide_library  # noqa: F401 — library.{list,get,publish,fork,unpublish}
 # Sélection de connecteurs (marketplace, ADR 0019) — me/select/pause/unselect.
 import oto_mcp.capabilities.connectors.selection  # noqa: F401 — connectors.{me,select,pause,unselect}
 import oto_mcp.capabilities.connectors.identities  # noqa: F401 — connectors.{identities,set_default_identity} (ADR 0024)
@@ -100,7 +100,7 @@ from . import admin_console  # noqa: F401 — admin.{org,org_member,user,key_gra
 # famille (activation/access/connector/instance/identity/account_access) ; les modules
 # ci-dessus gardent leurs faces REST. À importer APRÈS eux.
 import oto_mcp.capabilities.connectors.console  # noqa: F401 — connectors.console.{activation,access,connector,instance,identity,account_access}
-# Console procédures (ADR 0047 B2) — oto_procedure (doctrine membre + bibliothèque publique).
+# Console procédures (ADR 0047 B2) — oto_procedure (guide membre + bibliothèque publique).
 from . import procedure_console  # noqa: F401 — org.procedure.console
 # Console org/équipe (ADR 0047 B3) — oto_org, oto_org_settings, oto_group, oto_scheduled_emails.
 from . import org_console  # noqa: F401 — org.console + org.settings.console + group.console + org.scheduled_emails.console

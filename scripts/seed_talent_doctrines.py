@@ -1,11 +1,17 @@
-"""Seed des doctrines PARTAGÉES « talent sourcing / RH / ATS » dans la
+"""Seed des guides PARTAGÉS « talent sourcing / RH / ATS » dans la
 bibliothèque publique, en tant qu'auteur **Otomata**.
 
 Contrairement à `seed_doctrine_library` (qui publie les skills d'une org
-existante), ce script publie directement des doctrines **versionnées au repo**
-(`doctrines/talent-sourcing/*.md`) — pas besoin d'org source. Idempotent :
-`publish_doctrine` fait un upsert par slug (ré-exécuter incrémente la version
+existante), ce script publie directement des guides **versionnés au repo**
+(`oto_mcp/guides/talent-sourcing/*.md`) — pas besoin d'org source. Idempotent :
+`publish_guide` fait un upsert par slug (ré-exécuter incrémente la version
 sans dupliquer).
+
+⚠️ Ces fichiers vivent dans un SOUS-dossier de `oto_mcp/guides/`, et c'est un
+choix : `guide_store.list_file_guides` ne balaie que `guides/*.md` (glob NON
+récursif), donc ce qui est ici n'est PAS semé au boot comme guide plateforme.
+Un fichier posé à la RACINE de `oto_mcp/guides/` le serait, lui — le garde-fou
+est `tests/test_guides_seeds_foyer.py`.
 
 Chaque markdown porte un front-matter `---` (slug, title, description, category,
 tags), parsé sans dépendance externe (pas de pyyaml requis).
@@ -13,7 +19,7 @@ tags), parsé sans dépendance externe (pas de pyyaml requis).
 Usage (sur la box) :
     cd /opt/oto-mcp && ./.venv/bin/python -m scripts.seed_talent_doctrines [dir]
 
-`dir` par défaut = `doctrines/talent-sourcing/` relatif à la racine du repo.
+`dir` par défaut = `oto_mcp/guides/talent-sourcing/` relatif à la racine du repo.
 """
 from __future__ import annotations
 
@@ -22,8 +28,9 @@ from pathlib import Path
 
 from oto_mcp import db, org_store
 
-# Racine repo = parent de scripts/. Le dossier des doctrines partagées.
-_DEFAULT_DIR = Path(__file__).resolve().parent.parent / "doctrines" / "talent-sourcing"
+# Racine repo = parent de scripts/. Le dossier des guides partagés.
+_DEFAULT_DIR = (Path(__file__).resolve().parent.parent
+                / "oto_mcp" / "guides" / "talent-sourcing")
 
 
 def parse_front_matter(text: str) -> tuple[dict, str]:
@@ -71,7 +78,7 @@ def main() -> None:
         if not body.strip():
             print(f"  ⚠ {path.name} : corps vide, ignoré", file=sys.stderr)
             continue
-        row = org_store.publish_doctrine(
+        row = org_store.publish_guide(
             slug=slug,
             title=meta.get("title") or "",
             description=meta.get("description") or "",

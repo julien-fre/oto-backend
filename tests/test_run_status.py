@@ -116,8 +116,8 @@ def test_le_tool_de_cloture_ne_redeclare_pas_le_vocabulaire():
     """TRIPWIRE — la liste a divergé de la prose du bloc A pendant des mois, ce qui est
     la façon la plus discrète de mentir à un agent : le schéma dit une chose,
     l'instruction une autre. Une seule source, partagée."""
-    from oto_mcp.tools import doctrine_run
-    assert doctrine_run._OUTCOMES is run_status.OUTCOMES
+    from oto_mcp.tools import guide_run
+    assert guide_run._OUTCOMES is run_status.OUTCOMES
 
 
 def test_la_prose_injectee_ne_propose_plus_le_mot_mort():

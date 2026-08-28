@@ -6,8 +6,8 @@ neuf) :
 
 1. **instructions** — les instructions serveur statiques (`instructions.render()` :
    posture + bootstrap + boucle d'usage + catalogue de namespaces dérivé du registre).
-2. **doctrine** — la doctrine d'org effective (bundle session-start), via le handler
-   canonique `orgs_instructions._get_doctrine` (réemploi, pas de duplication).
+2. **guide** — le guide d'org effectif (bundle session-start), via le handler
+   canonique `orgs_instructions._get_guide` (réemploi, pas de duplication).
 3. **tools** — les outils EFFECTIVEMENT visibles pour `(sub, org active)`, via la
    logique de visibilité canonique `session_visibility.compute_hidden_tools` (même
    calcul que le handshake MCP), regroupés par namespace.
@@ -76,7 +76,7 @@ class AgentContextView(BaseModel):
     # Le MÊME artefact, décomposé. Invariant tenu par `instructions.session_layers` :
     # `"\n\n".join(couches non vides) == instructions`.
     layers: list[ContextLayer]
-    # La doctrine d'org résolue, telle que la sert `oto_get_doctrine` — forme non
+    # Le guide d'org résolu, tel que le sert `oto_get_doctrine` — forme non
     # redéclarée ici pour ne pas en tenir deux copies.
     doctrine: dict
     tools: ToolsView
@@ -117,7 +117,7 @@ async def _tools_view(ctx: ResolvedCtx) -> dict:
 
 
 async def _agent_context(ctx: ResolvedCtx, inp: AgentContextInput) -> dict:
-    doctrine = await orgs_instructions._get_doctrine(
+    guide = await orgs_instructions._get_guide(
         ctx, types.SimpleNamespace(slug=None, scope=None, version=None,
                                    org_id=None, with_history=False))
     # Instructions RÉELLEMENT reçues = artefact composé A/C (#50), même chemin que
@@ -129,7 +129,7 @@ async def _agent_context(ctx: ResolvedCtx, inp: AgentContextInput) -> dict:
         "org_id": ctx.org_id,
         "instructions": "\n\n".join(l["body"] for l in layers if l["body"]),
         "layers": [{**l, "chars": len(l["body"])} for l in layers if l["body"]],
-        "doctrine": doctrine,
+        "doctrine": guide,   # clé SERVIE (alias, lot B)
         "tools": await _tools_view(ctx),
     }
 
@@ -152,7 +152,7 @@ CAPABILITIES += [
 # (tools/list_changed) et les credentials (résolution par appel, ADR 0038) suivent, mais
 # le bloc C (readme org+équipe, guides, procédures) reste gelé. `oto_context` laisse
 # l'agent TIRER ce bloc C frais pour le scope EFFECTIF — `ctx.org_id` respecte les jetons
-# org=/project=/group= de l'appel. Focalisé (bloc C seul, pas la doctrine ni les tools) :
+# org=/project=/group= de l'appel. Focalisé (bloc C seul, pas le guide ni les tools) :
 # c'est ce qui change au switch (leçon D1 : ne pas gonfler la sortie).
 class ContextInput(BaseModel):
     pass

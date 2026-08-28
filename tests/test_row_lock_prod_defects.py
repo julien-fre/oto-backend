@@ -107,7 +107,7 @@ def test_a_lease_read_as_a_string_still_protects(table):
 
 
 def test_an_unreadable_lease_refuses_rather_than_opens(table):
-    """Doctrine maison : pas de fallback, on lève. Un bail dont on ne sait pas s'il
+    """Parti pris maison : pas de fallback, on lève. Un bail dont on ne sait pas s'il
     court protège encore quelqu'un — l'ignorance ne doit pas se résoudre en faveur de
     l'écrivain, qui est précisément ce que faisait le fail-open."""
     from oto_mcp.datastore.core import DatastorePg, RowLocked
@@ -238,7 +238,7 @@ async def test_the_middleware_pins_the_active_run_from_the_stack():
 
     Ici on exerce le MIDDLEWARE : une pile de run, aucun jeton `_run_id=`, et on
     vérifie que le run est posé pendant le handler."""
-    from oto_mcp import doctrine_run, session_org
+    from oto_mcp import guide_run, session_org
     from oto_mcp.middleware.call_context import CallContextMiddleware
 
     vu = {}
@@ -254,7 +254,7 @@ async def test_the_middleware_pins_the_active_run_from_the_stack():
             self._state[k] = v
 
     ctx = _Ctx()
-    await doctrine_run.push_run(ctx, "run-empile", "campagne")
+    await guide_run.push_run(ctx, "run-empile", "campagne")
 
     class _Msg:
         name, arguments = "data_claim_next", {"namespace": "t", "worker": "w"}

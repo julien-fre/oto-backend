@@ -198,7 +198,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
 
 
 def _apply_vars(body: str, ctx: dict) -> str:
-    """Substitue les variables d'auto-contexte dans la doctrine d'org. Les tokens
+    """Substitue les variables d'auto-contexte dans le guide d'org. Les tokens
     inconnus sont laissés tels quels (intention de l'auteur)."""
     from datetime import date
     projets = " · ".join(ctx.get("projects") or []) or "—"
@@ -291,7 +291,7 @@ def _c_layers(sub: str | None, org_id: int | None) -> list[dict]:
     # Readmes « init » cumulés du général au spécifique (org → équipe → user) : le
     # MÊME primitif de guide, rendu uniformément par scope (ADR 0042). Chaque scope =
     # (owner, en-tête) ; corps lu via `guide_store.init_guide_body`, variables
-    # substituées. Ordre = cumul de doctrine ; un scope vide est omis.
+    # substituées. Ordre = cumul de guide ; un scope vide est omis.
     layers = [{"key": "context", "label": "ton contexte oto", "body": _format_context(ctx)}]
     profile_md = _format_profile(ctx.get("profile") or {})
     if profile_md:
@@ -418,7 +418,7 @@ def session_layers(sub: str | None, org_id: int | None) -> list[dict]:
 
 def compose_session(sub: str | None, org_id: int | None) -> str:
     """L'artefact injecté pour UNE session : bloc A (toujours) + bloc C (contexte +
-    doctrine, si org). Runtime. Fail-open géré dans chaque bloc (un bloc qui échoue
+    guide, si org). Runtime. Fail-open géré dans chaque bloc (un bloc qui échoue
     retombe sur son seed / est omis)."""
     return "\n\n".join(l["body"] for l in session_layers(sub, org_id) if l["body"])
 
@@ -470,11 +470,11 @@ def seed_platform_blocks() -> None:
 
 
 def skills_index_md(org_id: int | None) -> str:
-    """Index markdown des doctrines NOMMÉES (skills) d'une org — `slug — titre :
+    """Index markdown des guides NOMMÉS (skills) d'une org — `slug — titre :
     description`, SANS les corps. Sert à enrichir DYNAMIQUEMENT la description de
     l'outil `oto_procedure` au `tools/list` (les skills ne sont PAS des outils →
     absents de `tools/list`, donc invisibles sans ça). Fail-open : '' si pas d'org /
-    aucune doctrine / erreur."""
+    aucun guide / erreur."""
     if org_id is None:
         return ""
     try:

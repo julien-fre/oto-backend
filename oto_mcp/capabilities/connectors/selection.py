@@ -106,7 +106,7 @@ class MyConnectorRow(BaseModel):
     # connecteur `recommended` peut très bien être `not_selected`.
     recommended: bool
     # Nombre de procédures d'org qui citent un namespace du connecteur — dérivé
-    # des bodies de doctrine, best-effort (0 sur incident de lecture, pas d'erreur).
+    # des bodies de guide, best-effort (0 sur incident de lecture, pas d'erreur).
     doctrine_ref_count: int
     paid_option: Optional[str] = None       # option payante requise (couche 3), None = aucune
     # `true` = l'option est levée OU aucune n'est requise. Ne dit RIEN du credential :
@@ -224,10 +224,10 @@ def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
     return out
 
 
-def _doctrine_refs_by_ns(org_id: int | None) -> dict[str, set]:
-    """namespace → ensemble des doctrines de l'org qui le référencent (`<tool:slug>`).
-    Vide si pas d'org. Dérivation pure depuis les bodies de doctrine (posture
-    « doctrine-only », ADR 0024) — best-effort, ne fait jamais échouer la lecture."""
+def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
+    """namespace → ensemble des guides de l'org qui le référencent (`<tool:slug>`).
+    Vide si pas d'org. Dérivation pure depuis les bodies de guide (posture
+    « guide-only », ADR 0024) — best-effort, ne fait jamais échouer la lecture."""
     if not org_id:
         return {}
     try:
@@ -237,7 +237,7 @@ def _doctrine_refs_by_ns(org_id: int | None) -> dict[str, set]:
             for ns in tool_registry.namespaces_in(d.get("body_md") or ""):
                 refs.setdefault(ns, set()).add(slug)
         return refs
-    # noqa: SILENT — refs de doctrine illisibles ⇒ overlay vide, catalogue servi
+    # noqa: SILENT — refs de guide illisibles ⇒ overlay vide, catalogue servi
     except Exception:
         return {}
 
@@ -321,7 +321,7 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     org_id = ctx.org_id or 0
     selection = connector_selection.list_selection(ctx.sub, org_id)
     recommended = set(org_store.get_org_default_connectors(ctx.org_id) or []) if ctx.org_id else set()
-    doc_refs = _doctrine_refs_by_ns(ctx.org_id)
+    doc_refs = _guide_refs_by_ns(ctx.org_id)
     # Découvrabilité : une clé peut exister à portée (équipe dont je suis membre,
     # autre org) sans que la cascade la lise — le connecteur paraît alors « vide »
     # dans la library alors qu'il est utilisable en épinglant. Jusqu'ici l'info

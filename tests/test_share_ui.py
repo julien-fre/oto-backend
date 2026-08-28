@@ -104,7 +104,7 @@ def test_procedure_allowed(monkeypatch):
     monkeypatch.setattr(org_store, "get_instruction_by_id",
                         lambda rid: {"title": "Enrichissement", "body_md": "# Étapes\n\n1. Chercher"})
     html, status = share_ui.build_page(_PROJECT, "/procedures/11", connect_url="u")
-    # Le titre affiché est le `label` DU LIEN (« Enrichir »), pas celui de la doctrine :
+    # Le titre affiché est le `label` DU LIEN (« Enrichir »), pas celui du guide :
     # c'est le nom que le projet lui donne (oto-dashboard#119).
     assert status == 200 and "Enrichir" in html and "Étapes" in html
 
@@ -283,7 +283,7 @@ def test_index_shows_the_role_of_each_linked_entity(monkeypatch):
 
 
 def test_the_label_still_wins_over_the_procedure_title(monkeypatch):
-    """Le `label` du lien est le nom choisi POUR CE PROJET ; le titre de la doctrine
+    """Le `label` du lien est le nom choisi POUR CE PROJET ; le titre du guide
     n'est qu'un repli quand le lien n'en porte pas."""
     _wire(monkeypatch, links=_LINKS_WITH_ROLE)
     html, _ = share_ui.build_page(_PROJECT, "/", connect_url="https://x/mcp")
@@ -316,21 +316,21 @@ def test_a_page_uses_its_chapo_as_role(monkeypatch):
 
 
 def test_procedure_page_shows_the_project_label_and_role(monkeypatch):
-    """La page d'une procédure affichait le `title` de la DOCTRINE et rien d'autre : un
+    """La page d'une procédure affichait le `title` de la procédure et rien d'autre : un
     déroulé opératoire livré sans dire ce qu'on vient y chercher. Le nom qui compte est
     celui donné DANS ce projet (`label`), et le `role` dit pourquoi elle est là."""
     _wire(monkeypatch, links=_LINKS_WITH_ROLE)
     monkeypatch.setattr(org_store, "get_instruction_by_id",
-                        lambda i: {"title": "Titre canonique de la doctrine",
+                        lambda i: {"title": "Titre canonique du guide",
                                    "body_md": "# Déroulé"})
     html, status = share_ui.build_page(_PROJECT, "/procedures/11", connect_url="https://x/mcp")
     assert status == 200
     assert "Enrichir" in html                                   # le label du lien
     assert "Ce que chaque agent worker exécute" in html         # le role
-    assert "Titre canonique de la doctrine" not in html         # le title n'est qu'un repli
+    assert "Titre canonique du guide" not in html         # le title n'est qu'un repli
 
 
-def test_procedure_page_falls_back_to_the_doctrine_title(monkeypatch):
+def test_procedure_page_falls_back_to_the_guide_title(monkeypatch):
     """Un lien posé sans label (l'agent lie souvent ainsi) doit rester lisible."""
     _wire(monkeypatch, links=[{"target_type": "procedure", "target_ref": "11"}])
     monkeypatch.setattr(org_store, "get_instruction_by_id",

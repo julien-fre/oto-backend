@@ -3,8 +3,8 @@
 `run_start` ouvre un run (mint un `run_id`, le pousse dans l'état de session) ;
 chaque appel d'outil jusqu'à `run_finish` est **attribué à ce run** par le sink
 calllog (corrélation côté serveur, l'agent ne thread rien). Un run avec `doctrine`
-= l'exécution d'une doctrine nommée (répétable) ; sans `doctrine` = un run one-shot
-(ad-hoc), même trace. Le chargement d'une doctrine reste `oto_procedure(op='get')`
+= l'exécution d'un guide nommé (répétable) ; sans `doctrine` = un run one-shot
+(ad-hoc), même trace. Le chargement d'un guide reste `oto_procedure(op='get')`
 (inchangé). Spine plateforme : chargé explicitement dans `register_all`, hors gate
 d'activation.
 """
@@ -17,7 +17,7 @@ from fastmcp import Context, FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import doctrine_run as dr, run_status
+from .. import guide_run as dr, run_status
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def _procedure_version(sub: str | None, slug: str) -> int | None:
     """Version COURANTE de la procédure `slug`, lue dans l'ordre où
     `oto_procedure(op='get')` la sert : l'org active d'abord, l'équipe active en
     complément. None si le slug ne désigne aucune procédure — un run ad-hoc, une
-    doctrine d'un autre foyer, ou un slug inventé.
+    guide d'un autre foyer, ou un slug inventé.
 
     Lecture DB ⇒ appelée HORS boucle (`asyncio.to_thread`)."""
     from .. import access, group_store, org_store
@@ -49,7 +49,7 @@ def _procedure_version(sub: str | None, slug: str) -> int | None:
     return None
 
 
-async def _note_procedure_version(doctrine: str | None) -> int | None:
+async def _note_procedure_version(guide: str | None) -> int | None:
     """L'EMPREINTE du run : QUELLE version de la procédure il exécute.
 
     `runs.doctrine` ne porte qu'un **slug**, alors que les procédures sont versionnées
@@ -65,24 +65,24 @@ async def _note_procedure_version(doctrine: str | None) -> int | None:
 
     Best-effort, comme tout ce qui entoure un run : une version indisponible n'empêche
     jamais un déroulé de s'ouvrir."""
-    if not doctrine:
+    if not guide:
         return None
     try:
         from .. import session_org
         from ..auth.hooks import current_user_sub_from_token
         sub = current_user_sub_from_token()
-        version = await asyncio.to_thread(_procedure_version, sub, doctrine)
+        version = await asyncio.to_thread(_procedure_version, sub, guide)
     except Exception:
         logger.warning("version de procédure indisponible pour %r (best-effort)",
-                       doctrine, exc_info=True)
+                       guide, exc_info=True)
         return None
     session_org.note_call_trace(doctrine_version=version)
     return version
 
 
-async def _persist_open(run_id: str, label: str, doctrine: str | None) -> None:
+async def _persist_open(run_id: str, label: str, guide: str | None) -> None:
     """Trace durable de l'ouverture (best-effort, off-loop). La pile session reste
-    la source du run actif ; ceci ne fait qu'ajouter label/doctrine en base."""
+    la source du run actif ; ceci ne fait qu'ajouter label/guide en base."""
     try:
         from .. import access, db
         from ..auth.hooks import current_user_sub_from_token
@@ -91,7 +91,7 @@ async def _persist_open(run_id: str, label: str, doctrine: str | None) -> None:
         project_id = access.current_project() if sub else None  # projet actif gelé (ADR 0032 B3)
         await asyncio.to_thread(
             db.insert_run, run_id, sub=sub, org_id=org_id, label=label,
-            doctrine=doctrine, project_id=project_id)
+            guide=guide, project_id=project_id)
     except Exception:
         logger.warning("persistance run_start échouée pour run_id=%s (best-effort)",
                        run_id, exc_info=True)

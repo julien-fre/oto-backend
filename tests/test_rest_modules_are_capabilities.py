@@ -117,7 +117,7 @@ _KNOWN: dict[str, str] = {
     # écrite à la main car l'adaptateur REST des capacités authentifie toujours »).
     # Quatre d'entre elles sont même consommées par un PROGRAMME, sans en-tête
     # d'auth : le build du site vitrine (`oto-websites/web/scripts/refresh-catalog.mjs`
-    # → catalog/connectors/doctrines/guides) et celui de docs.oto.cx
+    # → catalog/connectors/guides/guides) et celui de docs.oto.cx
     # (`sites/docs.oto.cx/scripts/refresh-openapi.mjs` → openapi.json).
     "/api/mcp/catalog": NATURE,
     "/api/doctrines/library": NATURE,

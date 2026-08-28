@@ -198,7 +198,7 @@ n'a que **trois** appels dans tout `tool_calls`, et les trois ont échoué.
 
 On a fait exister l'op plutôt que de renommer : le renommage aurait cassé les appels qui
 marchent **et les procédures qui citent le nom** (refs `<tool:slug>` en DB, cf.
-`docs/doctrines.md`). Deux propriétés non négociables, toutes deux tirées du mode de
+`docs/guides.md`). Deux propriétés non négociables, toutes deux tirées du mode de
 panne :
 
 - **Ça RÉPOND, ça ne lève pas.** Sans compte lié, `unipile_client()` lève (refus de

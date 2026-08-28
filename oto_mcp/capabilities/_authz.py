@@ -333,7 +333,7 @@ def ORG_MEMBER_OPT(field: str):
 
     Si `input.<field>` (un org_id) est fourni → sémantique `ORG_MEMBER_OF` : garde
     d'appartenance sur l'org NOMMÉE et l'injecte (lecture cross-org par jeton `_org=`,
-    ADR 0038 — un accompagnant hors de l'org cible charge une doctrine nommée par slug).
+    ADR 0038 — un accompagnant hors de l'org cible charge un guide nommé par slug).
     Sinon → org active depuis l'état serveur, **gracieux si absente** (`org_id=None`,
     comme `SUB_ONLY`) : le bundle de session (slug omis) reste servi vide hors org, et
     un `get` par slug sans org lève `no_active_org` au handler. Même garde
@@ -362,7 +362,7 @@ def GROUP_MEMBER_OF(field: str):
         # ne teste que l'appartenance). L'ordre inverse faisait apprendre à un
         # non-membre SI l'équipe #N existe : mince (un entier, sans nom ni contenu),
         # mais c'était une divergence non décidée entre deux paliers qui appliquent
-        # par ailleurs la même doctrine de refus non-disclosant (#300).
+        # par ailleurs la même parti pris de refus non-disclosant (#300).
         # `can_read_group` rend False sur un groupe inexistant ⟹ même 403 dans les
         # deux cas, ce qui est exactement le but.
         if not roles.can_read_group(sub, group_id):

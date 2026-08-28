@@ -123,7 +123,7 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         try:
             ctx = cap.authz(RawCtx(sub=sub), inp)
             result = cap.handler(ctx, inp)
-            if inspect.isawaitable(result):           # handler async (ex. doctrine + manifeste)
+            if inspect.isawaitable(result):           # handler async (ex. guide + manifeste)
                 result = await result
         except AuthzDenied as d:
             # `message` EN 4e ARG, sinon il est jeté et le client ne voit qu'un code nu.

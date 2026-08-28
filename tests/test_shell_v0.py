@@ -61,7 +61,7 @@ def test_le_pont_vers_les_grants_est_le_MEME_calcul_que_la_conversion():
 
 
 def test_les_TROIS_natures_de_partage_designent_un_noeud():
-    """Depuis le lot ⑧, `doctrine` a sa famille de conversion.
+    """Depuis le lot ⑧, `guide` a sa famille de conversion.
 
     ⚠️ Ce test affirmait le contraire jusqu'au 21/08 — « une procédure partagée est
     comptée faute de nœud » — et c'était vrai : le compteur existait pour qu'une section

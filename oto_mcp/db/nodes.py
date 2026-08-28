@@ -305,15 +305,15 @@ def convert_projects(conn) -> None:
 # `kind = 'page'` comme tout le reste : une procédure est de la prose possédée par un
 # scope. 0054-D5 — le genre dit ce que l'objet EST, et ce qu'il JOUE (procédure, agent)
 # est un rôle porté en propriété, jamais un `kind` de plus. Même arbitrage qu'au lot ⑦.
-_FAMILY_DOCTRINE = "prc"
+_FAMILY_GUIDE = "prc"
 
-CONVERT_DOCTRINES_TO_NODES_SQL = f"""
+CONVERT_GUIDES_TO_NODES_SQL = f"""
     INSERT INTO nodes (public_id, kind, owner_type, owner_id, props,
                        created_at, updated_at)
-    SELECT {_public_id_sql(_FAMILY_DOCTRINE, 'd.id')},
+    SELECT {_public_id_sql(_FAMILY_GUIDE, 'd.id')},
            '{_KIND}', d.owner_type, d.owner_id,
            jsonb_strip_nulls(jsonb_build_object(
-               'legacy', '{_FAMILY_DOCTRINE}', 'legacy_id', d.id,
+               'legacy', '{_FAMILY_GUIDE}', 'legacy_id', d.id,
                'role', 'procedure',
                'slug', d.slug,
                'title', COALESCE(NULLIF(d.title, ''), d.slug),
@@ -335,27 +335,27 @@ CONVERT_DOCTRINES_TO_NODES_SQL = f"""
 
 # Le propriétaire d'une procédure change sans que son contenu bouge (transfert de
 # ressource) : comme pour un projet, il ne peut pas dépendre d'un newer-wins.
-RECONCILE_DOCTRINE_NODES_SQL = f"""
+RECONCILE_GUIDE_NODES_SQL = f"""
     UPDATE nodes n
        SET owner_type = d.owner_type, owner_id = d.owner_id
       FROM org_instructions d
-     WHERE n.public_id = {_public_id_sql(_FAMILY_DOCTRINE, 'd.id')}
+     WHERE n.public_id = {_public_id_sql(_FAMILY_GUIDE, 'd.id')}
        AND (n.owner_type, n.owner_id) IS DISTINCT FROM (d.owner_type, d.owner_id)
 """
 
-PURGE_DOCTRINE_NODES_SQL = f"""
+PURGE_GUIDE_NODES_SQL = f"""
     DELETE FROM nodes n
-     WHERE n.props->>'legacy' = '{_FAMILY_DOCTRINE}'
+     WHERE n.props->>'legacy' = '{_FAMILY_GUIDE}'
        AND NOT EXISTS (SELECT 1 FROM org_instructions d
                         WHERE d.id = (n.props->>'legacy_id')::bigint)
 """
 
 
-def convert_doctrines(conn) -> None:
+def convert_guides(conn) -> None:
     """Procédures → nœuds : contenu, propriétaire, purge. Rejouable."""
-    conn.execute(CONVERT_DOCTRINES_TO_NODES_SQL)
-    conn.execute(RECONCILE_DOCTRINE_NODES_SQL)
-    conn.execute(PURGE_DOCTRINE_NODES_SQL)
+    conn.execute(CONVERT_GUIDES_TO_NODES_SQL)
+    conn.execute(RECONCILE_GUIDE_NODES_SQL)
+    conn.execute(PURGE_GUIDE_NODES_SQL)
 
 
 def convert_docs(conn) -> None:

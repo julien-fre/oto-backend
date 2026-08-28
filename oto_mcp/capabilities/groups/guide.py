@@ -1,9 +1,9 @@
-"""Doctrine & skills d'un GROUPE (ADR 0012) — éditeur self-service du chef d'équipe.
+"""Guide & skills d'un GROUPE (ADR 0012) — éditeur self-service du chef d'équipe.
 
-Miroir de la doctrine d'org au grain groupe : lecture = membre du groupe
+Miroir du guide d'org au grain groupe : lecture = membre du groupe
 (`GROUP_MEMBER_OF`), écriture = chef d'équipe (`GROUP_ADMIN_OF`, escalade
-org_admin/platform). Modèle versionné (slug réservé `claude_md` = doctrine de
-base servie en complément de celle de l'org par `oto_procedure(op='get')`). Édité par le
+org_admin/platform). Modèle versionné (slug réservé `claude_md` = guide de
+base servi en complément de celle de l'org par `oto_procedure(op='get')`). Édité par le
 dashboard via REST `/api/groups/{id}/instructions*`.
 """
 from __future__ import annotations
@@ -54,7 +54,7 @@ class InstrRevertInput(BaseModel):
 
 # --- Sorties ----------------------------------------------------------------
 #
-# ⚠️ Ce palier est le MIROIR de la doctrine d'org (`orgs_instructions`), mais le
+# ⚠️ Ce palier est le MIROIR du guide d'org (`orgs_instructions`), mais le
 # miroir est INFIDÈLE sur trois points qu'un front factorisé prendra de plein fouet :
 #   · `list` rend `doctrine` en **chaîne brute** ici, en **objet** `{exists, version,
 #     updated_at}` côté org — même nom de clé, deux types ;

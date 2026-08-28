@@ -41,7 +41,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.orgs.MEMBERSHIP,          # appartenance et invitations
     schema.guides.GUIDES,            # instructions plateforme et guides (ADR 0042)
     schema.nodes.NODES,              # nœuds de contenu et blocs
-    schema.doctrine.DOCTRINE,        # doctrines d'org, révisions, bibliothèque
+    schema.procedures.PROCEDURES,    # procédures d'org, révisions, bibliothèque
     schema.orgs.GROUPS,              # équipes et leurs membres
     schema.connectors.CREDENTIALS,   # coffre des credentials (ADR 0002/0033)
     schema.connectors.INSTANCES,     # instances de connecteur (blueprint 0053-D9, L6)

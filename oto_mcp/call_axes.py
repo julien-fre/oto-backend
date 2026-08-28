@@ -403,7 +403,7 @@ def _is_run_correlatable_tool(name: str) -> bool:
 
 async def _pin_run(value: object) -> list[UndoEntry]:
     """Épingle le run_id de l'appel courant (corrélation calllog, modèle sans état de
-    session : la pile session-scopée de `doctrine_run` ne survit pas au renouvellement
+    session : la pile session-scopée de `guide_run` ne survit pas au renouvellement
     de session claude.ai). Le sink calllog lit `current_call_run()` EN PRIORITÉ, repli
     sur la pile. Pas de garde : un run_id est un identifiant opaque de corrélation, pas
     un axe de droits. None/'' ⇒ inerte."""

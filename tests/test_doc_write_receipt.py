@@ -61,7 +61,7 @@ PETIT = _corps(85_000)
 
 
 def _page(body: str, doc_id: int = 662) -> dict:
-    return {"id": doc_id, "project_id": 153, "parent_id": None, "title": "Doctrine",
+    return {"id": doc_id, "project_id": 153, "parent_id": None, "title": "Guide",
             "description": None, "position": 0, "body_md": body, "kind": "doc",
             "created_at": "2026-08-01 09:00:00", "updated_at": "2026-08-27 11:04:00"}
 
@@ -111,7 +111,7 @@ def test_l_accuse_porte_de_quoi_ENCHAINER_sans_relire(seams):
     out = D._doc(CTX, D.DocInput(op="update", doc_id=662, body_md="corps refondu"))
     assert out["id"] == 662 and out["rev"] == "9f2c41a"
     assert out["updated_at"] == "2026-08-27 11:04:00"
-    assert out["title"] == "Doctrine" and out["project_id"] == 153
+    assert out["title"] == "Guide" and out["project_id"] == 153
     # Et le retour NOMME ce qu'il a écarté + le chemin vers le brut (jamais muet).
     assert out["projection"]["omitted"] == ["body_md"]
     assert 'fields=["*"]' in out["projection"]["hint"]

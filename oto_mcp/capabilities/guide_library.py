@@ -1,6 +1,6 @@
-"""Capacités « bibliothèque publique de doctrines » (marketplace de skills).
+"""Capacités « bibliothèque publique de guides » (marketplace de skills).
 
-Un catalogue cherchable et partageable de doctrines PUBLIÉES, chaque entrée
+Un catalogue cherchable et partageable de guides PUBLIÉS, chaque entrée
 portant un AUTEUR : **Otomata** (la plateforme) ou un **créateur privé** (une
 org). Co-déclarées MCP + REST (ADR 0009) :
 
@@ -18,7 +18,7 @@ org). Co-déclarées MCP + REST (ADR 0009) :
 - dépublication = l'auteur (org_admin de l'org auteur) ou un admin plateforme.
 
 Handlers SYNC (les adaptateurs n'awaitent pas). Le fork réutilise
-`org_store.set_instruction` → la doctrine forkée devient un skill d'org versionné.
+`org_store.set_instruction` → le guide forké devient un skill d'org versionné.
 """
 from __future__ import annotations
 
@@ -285,7 +285,7 @@ def _get(ctx: ResolvedCtx, inp: LibraryGetInput) -> dict:
     # une entrée `unlisted` est servie par SLUG EXACT à tout user authentifié
     # (`include_unlisted=True`), mais n'apparaît JAMAIS dans le catalogue
     # (`_list` force `include_unlisted=False`) ni sur la surface anonyme. C'est un
-    # partage par lien — pas un secret d'org. Une doctrine vraiment sensible ne se
+    # partage par lien — pas un secret d'org. Un guide vraiment sensible ne se
     # publie pas (reste un skill d'org privé). Cf. CLAUDE.md §Bibliothèque.
     entry = org_store.get_library_entry(slug=inp.slug, include_unlisted=True)
     if not entry:
@@ -301,7 +301,7 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
                           f"Doctrine `{inp.slug}` absente de ton org active.")
     kind, author_org_id, display = _author_for(ctx)
     try:
-        row = org_store.publish_doctrine(
+        row = org_store.publish_guide(
             slug=inp.public_slug or inp.slug,
             title=inp.title if inp.title is not None else (src.get("title") or ""),
             description=inp.description if inp.description is not None else (src.get("description") or ""),
@@ -347,7 +347,7 @@ def _unpublish(ctx: ResolvedCtx, inp: UnpublishInput) -> dict:
                  and roles.is_org_admin(ctx.sub, entry["author_org_id"]))
     if not (is_author or access.is_platform_operator(ctx.sub)):
         raise AuthzDenied(403, "forbidden", "Réservé à l'auteur ou à un admin plateforme.")
-    return {"unpublished": org_store.unpublish_doctrine(inp.id)}
+    return {"unpublished": org_store.unpublish_guide(inp.id)}
 
 
 CAPABILITIES += [

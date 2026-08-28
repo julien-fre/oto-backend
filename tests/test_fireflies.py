@@ -231,7 +231,7 @@ def test_transcript_upload_refuses_list_only_search_params():
     entirely on op='upload' (a conditional expression ending
     `if op != "upload" else None`), so `keyword`/`scope`/etc were silently
     dropped instead of refused — contradicting the module's own "no param is
-    ever silently dropped" doctrine."""
+    ever silently dropped" guide."""
     m, cls, patcher = _fn_with_mock_client()
     try:
         fn = asyncio.run(m.get_tool("fireflies_transcript")).fn

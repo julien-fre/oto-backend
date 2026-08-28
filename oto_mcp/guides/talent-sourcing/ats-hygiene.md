@@ -8,7 +8,7 @@ tags: recrutement, ats, greenhouse, lever, ashby, hygiene
 
 # Hygiène de l'ATS
 
-Skill de la doctrine `talent-sourcing`. Un ATS propre = des décisions fiables et
+Skill du guide `talent-sourcing`. Un ATS propre = des décisions fiables et
 un pipeline lisible. Vaut pour les connecteurs **Greenhouse**, **Lever**, **Ashby**,
 **Teamtailor** et **Recruitee** (surfaces analogues, vocabulaire ci-dessous).
 

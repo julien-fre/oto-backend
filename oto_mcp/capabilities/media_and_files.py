@@ -72,7 +72,7 @@ class ProjectFilePublicInput(BaseModel):
     # valait donc « rendre privé », en silence. Combiné à l'adaptateur — qui avale un
     # corps illisible et le traite comme absent —, un JSON malformé aurait DÉPARTAGÉ le
     # fichier en rendant 200, là où la route rendait un 400 franc. On refuse plutôt que
-    # d'agir : c'est la doctrine du dépôt, et ici l'action silencieuse était destructrice.
+    # d'agir : c'est la règle du dépôt, et ici l'action silencieuse était destructrice.
     public: bool
 
 

@@ -95,7 +95,7 @@ def insert_tool_call(row: dict) -> None:
 #                    dit vrai.
 #
 # D'où les deux fragments ci-dessous : ils sont la SEULE façon de lire un run. Rejoindre
-# `runs` ailleurs pour un label, une doctrine ou une issue, c'est rouvrir la 2ᵉ vérité.
+# `runs` ailleurs pour un label, un guide ou une issue, c'est rouvrir la 2ᵉ vérité.
 
 
 def _run_closure(start: str = "s") -> str:
@@ -134,7 +134,7 @@ def _run_closure(start: str = "s") -> str:
 
 def _runs_from_journal(extra: str = "") -> str:
     """Le run RECONSTRUIT depuis ses faits : l'ouverture (`run_start`) porte label,
-    doctrine, acteur, org et date de début ; la clôture porte l'issue et la date de fin.
+    guide, acteur, org et date de début ; la clôture porte l'issue et la date de fin.
     `outcome` NULL = pas de fait de clôture = run ouvert.
 
     `last_seen_at` = le dernier signe de vie du run (son appel le plus récent, à
@@ -166,7 +166,7 @@ def _runs_from_journal(extra: str = "") -> str:
 
 def insert_run(
     run_id: str, *, sub: Optional[str], org_id: Optional[int], label: str,
-    doctrine: Optional[str] = None, project_id: Optional[int] = None,
+    guide: Optional[str] = None, project_id: Optional[int] = None,
 ) -> None:
     """Pose l'INDEX d'un run (best-effort, idempotent sur `run_id`).
 
@@ -178,7 +178,7 @@ def insert_run(
         conn.execute(
             "INSERT INTO runs (run_id, sub, org_id, project_id, label, doctrine) "
             "VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (run_id) DO NOTHING",
-            (run_id, sub, org_id, project_id, label, doctrine),
+            (run_id, sub, org_id, project_id, label, guide),
         )
 
 
@@ -298,7 +298,7 @@ seuls les runs du projet sont reconstruits.
 Littéral de ce module, comme tout `extra` (le `%s` est lié, jamais interpolé)."""
 
 
-def project_runs(project_id: int, doctrine: Optional[str] = None,
+def project_runs(project_id: int, guide: Optional[str] = None,
                  limit: int = 20) -> list[dict]:
     """Derniers runs d'un projet (plus récent d'abord), optionnellement filtrés sur une
     `doctrine` (slug) — alimente la pastille ok/échec du viewer de procédure (refonte UX,
@@ -307,9 +307,9 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
     L'axe PROJET vient de l'index (`runs.project_id`), tout le reste du journal — le
     filtre `doctrine` inclus : filtrer sur la colonne de la table ferait apparaître dans
     la pastille d'une procédure un run que le journal rattache à une autre."""
-    doctrine_clause = " AND j.doctrine = %s" if doctrine is not None else ""
+    guide_clause = " AND j.doctrine = %s" if guide is not None else ""
     params: list = ([project_id, project_id]
-                    + ([doctrine] if doctrine is not None else []) + [limit])
+                    + ([guide] if guide is not None else []) + [limit])
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             f"""
@@ -317,7 +317,7 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
             SELECT j.run_id, j.label, j.doctrine, j.outcome, j.started_at,
                    j.finished_at, j.last_seen_at
               FROM runs x JOIN j ON j.run_id = x.run_id
-             WHERE x.project_id = %s{doctrine_clause}
+             WHERE x.project_id = %s{guide_clause}
              ORDER BY j.started_at DESC LIMIT %s
             """,
             tuple(params),
@@ -325,7 +325,7 @@ def project_runs(project_id: int, doctrine: Optional[str] = None,
 
 
 def project_run_stats(project_id: int) -> dict:
-    """Nombre de runs d'un projet + slugs de doctrines déroulées (distincts) — sert
+    """Nombre de runs d'un projet + slugs de guides déroulés (distincts) — sert
     l'inertie de l'audit de liens (ADR 0035 B5 : procédure liée jamais déroulée).
 
     JOIN (pas LEFT JOIN) sur les faits : un index sans déroulé journalisé ne compte pas
@@ -790,11 +790,11 @@ def list_tool_calls_for_org(
 def instruction_usage(
     subs: list[str], tool: str, slug: Optional[str], days: int = 30
 ) -> dict:
-    """Usage d'une doctrine dérivé de `tool_calls` (ADR 0014, « doctrine = process
+    """Usage d'un guide dérivé de `tool_calls` (ADR 0014, « guide = process
     = log d'usage ») : combien de fois elle a été chargée par l'agent, par qui,
     et la distribution journalière sur `days` jours.
 
-    `tool` = le tool de lecture de doctrine (oto_procedure ; slug=None pour la base, sinon filtré par
+    `tool` = le tool de lecture de guide (oto_procedure ; slug=None pour la base, sinon filtré par
     `args->>'slug'` pour une skill). Scopé aux `subs` (membres de
     l'org). Lecture pure ; renvoie {count, callers, daily{date:str -> n}}.
     """

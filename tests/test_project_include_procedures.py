@@ -99,8 +99,8 @@ def test_an_unreadable_procedure_is_absent_not_an_error(store, monkeypatch):
     assert cap._linked_procedures("sub-lecteur", LIENS) == []
 
 
-def test_ownership_is_consulted_for_the_doctrine_not_the_project(store, monkeypatch):
-    """Le seam est interrogé sur la DOCTRINE (`doctrine`, son id), pas sur le projet —
+def test_ownership_is_consulted_for_the_guide_not_the_project(store, monkeypatch):
+    """Le seam est interrogé sur la PROCÉDURE (`doctrine`, son id), pas sur le projet —
     sinon le partage cross-org d'une procédure serait décidé par l'accès au projet qui
     la lie, ce qui n'est pas la même question."""
     vus = []

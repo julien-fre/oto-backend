@@ -5,7 +5,7 @@ description: >-
   Explique l'architecture des groupes (départements) dans oto-backend : hiérarchie
   de droits centralisée dans roles.py (platform_admin ⊇ org_admin ⊇ group_admin ⊇
   member, escalade descendante), les deux ressources gouvernées par délégation
-  (secrets partagés dans connector_credentials entity_type='group', doctrine/skills
+  (secrets partagés dans connector_credentials entity_type='group', guide/skills
   org_group_instructions), et la cascade
   de résolution user_key > secret groupe actif > secret org > grant plateforme (ADR 0012).
   Détaille le schéma DB (org_groups, org_group_members avec index partiel one_active,
@@ -19,7 +19,7 @@ adr:
 
 > Statut : implémenté sur la branche `claude/group-principles-departments-k3qa6u`.
 > À relier à un ADR du méta-repo (`otomata/docs/adr/0012-*`) au moment du merge.
-> Voir aussi `connector-vault.md` (coffre) et `CLAUDE.md` §Visibility / §Doctrines.
+> Voir aussi `connector-vault.md` (coffre) et `CLAUDE.md` §Visibility / §Guides.
 
 ## Pourquoi
 
@@ -62,7 +62,7 @@ l'org** (le reste — entitlements de namespace gouverné — reste au niveau or
 
 | Ressource | Stockage | Résolution |
 |-----------|----------|------------|
-| **Doctrine & skills** | `org_group_instructions` (+ revisions), en clair | `get_claude_md()` sert org **puis** groupe actif (complément) |
+| **Guide & skills** | `org_group_instructions` (+ revisions), en clair | `get_claude_md()` sert org **puis** groupe actif (complément) |
 | **Secrets partagés** | coffre `connector_credentials` (entity_type='group') | cascade `resolve_api_key` |
 
 ### Cascade de résolution des secrets (ADR 0012)
@@ -128,7 +128,7 @@ groupe (hors FK) sont purgés explicitement par `delete_group`.
   (409 `group_unadministrable`). `add` étant un upsert, il porte la garde comme
   `set_role` (avant #280 il rétrogradait ce que l'autre refusait).
 - **secrets** (`groups/secrets.py`) : `group.secret.{set,delete}`.
-- **doctrine** (`groups/doctrine.py`) : `group.instruction.{list,get,set,delete,
+- **guide** (`groups/guide.py`) : `group.instruction.{list,get,set,delete,
   versions,revert}` — lecture = membre, écriture = chef. Édité par le dashboard
   via `REST /api/groups/{id}/instructions*`.
 
@@ -186,7 +186,7 @@ grain, le scope est une COLONNE ; migrations vivantes sur la DB partagée = play
 **`docs/live-migrations.md`**) :
 - **secrets partagés** — coffre `connector_credentials` (entity_type='group') ;
   cascade `resolve_api_key` = **user_key > secret groupe actif > secret org active > grant plateforme**.
-- **doctrine & skills** — table UNIFIÉE `org_instructions` (`owner_type='group'`,
+- **guide & skills** — table UNIFIÉE `org_instructions` (`owner_type='group'`,
   `owner_id=group_id`, `org_id`=org parente ; ex-jumelle `org_group_instructions`
   DROPpée) ; `oto_procedure(op='get')` sert org **puis** groupe actif (complément,
   chaque skill taggée `scope`). Les procédures d'équipe ont un `id` (ownership 0030).
