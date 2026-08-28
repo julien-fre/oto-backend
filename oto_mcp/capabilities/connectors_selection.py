@@ -18,16 +18,20 @@ session suivante (`session_visibility`).
 """
 from __future__ import annotations
 
+import logging
 from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from .. import access, org_store, providers, tool_registry
+from .. import access, org_store, providers, session_org, tool_registry
 from ..connectors import activation as connector_activation
+from ..connectors import readiness as connector_readiness
 from ..connectors import selection as connector_selection
 from ._authz import ORG_ADMIN_OF, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+
+logger = logging.getLogger(__name__)
 
 # Mapping placeholder de route {id} → champ Input `org_id` (routes réelles en {id}).
 _ID = {"id": "org_id"}
@@ -113,6 +117,23 @@ class MyConnectorRow(BaseModel):
     # prouve pas qu'il n'y en a aucune : le batch ne couvre pas « ma clé membre
     # dans une autre org » (limite assumée d'`access.reachable_instances_map`).
     reachable_instances: Optional[list[ReachableInstance]] = None
+    # ── Aptitude EFFECTIVE (#476) — présents SEULEMENT sur une lecture ciblée
+    # (`name=`), cf. `readiness` sur l'enveloppe. `state` répond « l'ai-je installé ? »,
+    # `ready` répond « est-ce que ça marche ? » : ORTHOGONAUX, et le signal est né de
+    # leur confusion. Détail des couches et du coût : `connectors/readiness.py`.
+    ready: Optional[bool] = None
+    # La PREMIÈRE couche qui manque : paid_option_off | no_credential | over_quota |
+    # pending_step. Absent quand `ready` est vrai.
+    not_ready: Optional[str] = None
+    next_step: Optional[str] = None         # le geste, rendu tel quel (jamais reformulé)
+
+
+class ToolboxScope(BaseModel):
+    """L'écart entre l'org pour laquelle la SESSION a été montée et celle que l'appel
+    ÉPINGLE (#577). Présent seulement quand les deux diffèrent — cf. `_toolbox_scope`."""
+    mounted_for_org: Optional[int] = None
+    listing_for_org: Optional[int] = None
+    note: str
 
 
 class MyConnectors(BaseModel):
@@ -122,6 +143,13 @@ class MyConnectors(BaseModel):
     # Écho de la projection demandée — dit au client si les lignes portent la carte
     # complète ou la vue compacte (les deux formes sortent du MÊME champ).
     verbose: bool
+    # `computed` (lecture ciblée `name=`) | `not_computed` (catalogue : trop cher,
+    # cf. `connectors/readiness.py`) | `unavailable` (la lecture des couches a échoué).
+    # DIT toujours quelque chose : une absence muette de `ready` se lisait « rien à
+    # signaler », et c'est ce raccourci qui a coûté cinq jours (#476).
+    readiness: str = "not_computed"
+    readiness_hint: Optional[str] = None    # le geste pour l'obtenir, quand on ne l'a pas
+    toolbox_scope: Optional[ToolboxScope] = None
 
 
 class ConnectorSelectionState(BaseModel):
@@ -220,6 +248,75 @@ def _doctrine_refs_by_ns(org_id: int | None) -> dict[str, set]:
 _COMPACT_KEYS = ("name", "label", "help", "family", "category", "availability", "logo_url")
 
 
+def _toolbox_scope(ctx: ResolvedCtx) -> Optional[dict]:
+    """L'écart entre l'org pour laquelle la SESSION a été montée et celle que l'appel
+    épingle — ou None s'il n'y en a pas (signal #577).
+
+    Prouvé par différentiel sur la prod le 28/08/2026. La boîte à outils d'une session
+    MCP est calculée AU HANDSHAKE (`session_visibility.compute_hidden_tools`, appelé à
+    `on_initialize`) : à cet instant aucun jeton `_org=` n'existe, donc `current_org`
+    retombe sur l'org MAISON. Une session planifiée épingle ensuite `_org=` à CHAQUE
+    appel — mais le registre d'outils, lui, est figé pour la maison. Le sub qui fait
+    tourner la procédure de #577 a pour maison l'org 42 (`folk`, `grain` sélectionnés)
+    et travaille sur l'org 196 (treize connecteurs, dont `granola`, `slack`, `linear`).
+    D'où « aucun outil de connecteur ne remonte » — alors que les sept cités ont tous
+    répondu du premier coup via `oto_call`.
+
+    C'est un défaut de VISIBILITÉ, jamais d'accès ni de credential. Nulle part la carte
+    ne le disait : trois matinées (20-22/08) de faux rapports « Linear est en panne ».
+
+    Ne se dit QUE sur écart réel : un champ toujours présent devient du bruit qu'on
+    cesse de lire. Pas de jeton d'appel (face REST du dashboard) ⟹ pas de session MCP
+    dont la boîte pourrait diverger ⟹ rien à annoncer."""
+    call_org = session_org.current_call_org()
+    if call_org is None:
+        return None
+    home = org_store.get_active_org(ctx.sub)
+    if home == call_org:
+        return None
+    return {
+        "mounted_for_org": home,
+        "listing_for_org": call_org,
+        "note": (
+            f"La boîte à outils de cette session a été montée pour l'org {home} (ton "
+            f"org maison au moment du handshake), pas pour l'org {call_org} que cet "
+            f"appel épingle : les outils des connecteurs actifs ici peuvent ne PAS "
+            f"être listés. Ils restent appelables par "
+            f"`oto_call(name=..., arguments={{...}})` — un outil absent de la liste "
+            f"n'est PAS un connecteur en panne."),
+    }
+
+
+def _with_readiness(ctx: ResolvedCtx, row: dict) -> dict:
+    """Pose `ready` / `not_ready` / `next_step` sur LA ligne demandée, et renvoie ce
+    que l'enveloppe doit dire du calcul.
+
+    Fail-VISIBLE et non fail-open : si les couches ne se lisent pas, on rend
+    `readiness:"unavailable"` au lieu d'omettre `ready` en silence. Omettre serait
+    reproduire le défaut même de #476 — une absence que l'appelant lit « rien à
+    signaler »."""
+    try:
+        diag = connector_readiness.diagnose(
+            ctx.sub, row["name"], org=ctx.org_id,
+            # Explicite : `credential_mode_for` le re-dériverait sinon (73 % du temps
+            # d'une carte mesurée), et surtout le contexte doit être celui du SUJET.
+            group=access.current_group(ctx.sub))
+    except Exception:
+        logger.warning("readiness indisponible pour %s (fail-visible)", row["name"],
+                       exc_info=True)
+        return {"readiness": "unavailable",
+                "readiness_hint": ("L'état réel n'a pas pu être lu (couches "
+                                   "clé/option indisponibles) — `state` ci-dessus ne "
+                                   "dit QUE ta sélection, pas si le connecteur marche.")}
+    if diag is None:
+        row["ready"] = True
+    else:
+        row["ready"] = False
+        row["not_ready"] = diag.reason
+        row["next_step"] = diag.next_step
+    return {"readiness": "computed"}
+
+
 def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
     org_id = ctx.org_id or 0
     selection = connector_selection.list_selection(ctx.sub, org_id)
@@ -292,7 +389,26 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
         if reach.get(c["name"]):
             row["reachable_instances"] = reach[c["name"]]
         connectors.append(row)
-    return {"connectors": connectors, "verbose": inp.verbose}
+    out: dict = {"connectors": connectors, "verbose": inp.verbose}
+    # Verdict d'aptitude (#476) — sur une lecture CIBLÉE seulement. Mesuré sur la prod
+    # le 28/08/2026 : le rendre sur tout le catalogue coûte 1 993 ms pour 90
+    # connecteurs, sur un serveur MONO-LOOP. On ne le calcule donc pas — mais on le
+    # DIT, sinon l'absence de `ready` se relit « rien à signaler », qui est
+    # précisément le raccourci qu'on répare.
+    if inp.name and connectors:
+        out.update(_with_readiness(ctx, connectors[0]))
+    else:
+        out["readiness"] = "not_computed"
+        out["readiness_hint"] = (
+            "État réel non calculé sur un catalogue (trop cher pour un serveur "
+            "mono-loop). `state` ne dit QUE ta sélection : pour savoir si un "
+            "connecteur MARCHE, redemande-le seul — "
+            "`oto_connector(op='list', name='<connecteur>')` rend alors `ready` et, "
+            "s'il ne l'est pas, l'étape qui manque.")
+    tb = _toolbox_scope(ctx)
+    if tb is not None:
+        out["toolbox_scope"] = tb
+    return out
 
 
 def _require_exposed(ctx: ResolvedCtx, name: str) -> None:
@@ -421,7 +537,11 @@ CAPABILITIES += [
                     "full card (doc, auth descriptor, credential fields). Filter with state="
                     "active|paused|not_selected, or with name=<connector> to read the state of "
                     "a SINGLE connector (pair it with verbose=true instead of pulling the whole "
-                    "catalog).",
+                    "catalog). ⚠️ `state` is only YOUR SELECTION — it does NOT say the connector "
+                    "works. A name=<connector> lookup also returns `ready` (key resolves, paid "
+                    "option open, no step left) plus `not_ready`/`next_step` when it doesn't; the "
+                    "whole catalog returns readiness:not_computed (too costly) rather than a "
+                    "silent blank, so ask by name before concluding a connector is connected.",
         rest=RestBinding("GET", "/api/me/connectors"),
     ),
     Capability(

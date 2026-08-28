@@ -139,6 +139,61 @@ l'activation du plan (`billing.apply_plan_entitlements`).
 
 ---
 
+## Lire les trois couches ENSEMBLE — `ready`, et pourquoi il a fallu l'inventer
+
+⚠️ **`state` ne dit PAS si le connecteur marche.** Ajouté le 28/08/2026 après les
+signaux #476, #504, #574 et #452 — quatre formes d'un même défaut : *une surface
+publie UNE couche en laissant croire qu'elle répond pour les trois*.
+
+Le cas fondateur (**#476**, org 196, 16/08) : la carte rendait `state:"active"` +
+`recommended:true`, `oto_instance(op="verify")` répondait `ok:true` — et rien ne
+pouvait partir, aucun canal hébergé n'était lié. **Trois lectures vertes, capacité
+absente.** L'opérateur a lu « active » comme « connecté », ce qui est la lecture
+naturelle, et a cherché **cinq jours** au mauvais endroit. Chaque surface disait vrai
+séparément :
+
+| surface | ce qu'elle SAIT | ce qu'on lui faisait dire |
+|---|---|---|
+| `state` (`connectors.me`) | le membre l'a installé dans sa boîte à outils | « il est connecté » |
+| `oto_instance op=verify` | la clé résolue répond | « tout est bon » |
+| `oto_identity op=list` | les comptes liés | (vide, sans dire pourquoi — #504) |
+
+**Le seam qui les lit ensemble : `oto_mcp/connectors/readiness.py`** (`diagnose`), qui
+rend la **PREMIÈRE** couche manquante dans l'ordre `option (3) → clé (2) → quota →
+étape restante` — plus le geste, relayé tel quel depuis `status_hints`. Deux surfaces le
+consomment, et **une troisième formulation est interdite** : c'est ce qui avait déjà fait
+diverger `option_ok` et `status_for.subscribed` (corrigé le 07/07/2026).
+
+- **carte connecteur** → `ready` / `not_ready` / `next_step`, sur une lecture **ciblée**
+  (`op='list', name=…`). Sur le catalogue entier : `readiness:"not_computed"` + le geste
+  pour l'obtenir. Ce n'est pas de la pudeur — **mesuré sur la prod le 28/08 : 1 993 ms
+  pour 90 connecteurs** (≈22 ms l'unité, une marche de cascade chacun), sur un serveur
+  MONO-LOOP ; un connecteur seul coûte ~244 ms. La règle qui en sort vaut au-delà d'ici :
+  **dire « je n'ai pas calculé » coûte moins cher que rassurer à tort.**
+- **liste d'identités** → `reason` + `next_step` sur `identities: []` (#504).
+
+⚠️ **`ready` n'inclut PAS l'état de sélection** (`not_selected` / `paused`), et c'est
+volontaire : un connecteur non sélectionné reste **appelable par `oto_call`** (dispatch
+universel, ADR 0036). La sélection gouverne la **visibilité** des outils, jamais
+l'aptitude — les mélanger recréerait la confusion de #476 sous un autre nom.
+
+### La quatrième confusion : la boîte à outils n'est pas l'org de l'appel (#577)
+
+La toolbox d'une session MCP est calculée **au handshake**
+(`session_visibility.compute_hidden_tools`, sur `on_initialize`) : à cet instant aucun
+jeton `_org=` n'existe, donc `current_org` retombe sur l'**org maison**. Une session
+planifiée épingle ensuite `_org=` à **chaque appel** — mais le registre d'outils, lui,
+reste figé sur la maison. Prouvé par différentiel le 28/08 : le sub qui fait tourner la
+procédure de #577 a pour maison l'org **42** (`folk`, `grain`) et travaille sur l'org
+**196** (treize connecteurs). Les sept outils « manquants » **existaient, résolvaient, et
+ont répondu du premier coup via `oto_call`** — trois matinées de faux rapports « Linear
+est en panne » (20-22/08).
+
+`connectors.me` NOMME désormais l'écart (`toolbox_scope`), et seulement quand il y en a
+un : un champ toujours présent devient du bruit qu'on cesse de lire.
+
+---
+
 ## Récap — « activer unipile pour quelqu'un »
 
 1. **Disponible** ? unipile master ON (✓ par défaut).

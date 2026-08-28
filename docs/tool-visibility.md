@@ -17,6 +17,27 @@ description: >-
 
 `UserDisabledToolsMiddleware` (`middleware/disabled_tools.py`) applique au handshake `initialize` les visibility rules natives fastmcp (`disable_components` via `_visibility_rules` session state). Plus de filtrage manuel `on_list_tools`/`on_call_tool` — fastmcp émet `tools/list_changed` automatiquement quand les rules changent. Le **calcul** de la denylist `(sub, org active)` + son application vivent dans **`session_visibility.py`** (`compute_hidden_tools` / `apply_session_visibility(ctx, sub, *, reset=…)`), partagés entre le middleware (handshake) et le **refresh à chaud** post-bascule.
 
+### ⚠️ La toolbox est celle de l'org MAISON, pas de l'org que l'appel épingle (#577)
+
+Le calcul lit `access.current_org(sub)` — mais il tourne à **`on_initialize`**, où aucun
+jeton `_org=` n'existe encore : le seam retombe donc sur la **maison**. Une session
+planifiée (runner, procédure) épingle ensuite `_org=` à **chaque appel**, sur une toolbox
+figée pour une AUTRE org.
+
+Prouvé par différentiel sur la prod le 28/08/2026 : le sub qui fait tourner
+`daily-brain-ingestion` a pour maison l'org **42** (`folk`, `grain` sélectionnés) et
+travaille sur l'org **196** (treize connecteurs, dont `granola`, `slack`, `linear`,
+`folk`). Le `ToolSearch` de Step 0 n'a rendu que les outils méta et spine — et les sept
+outils réputés « manquants » **existaient, résolvaient, et ont répondu du premier coup
+via `oto_call`** (vérifié par `connectors/readiness.diagnose` : `granola` et `linear`
+sont `READY` sur 196 pour ce sub). Coût réel : trois matinées de faux rapports « Linear
+est en panne » (20-22/08/2026).
+
+**Un outil absent de la liste n'est donc PAS un connecteur en panne.** En attendant que
+la toolbox suive l'org épinglée, `connectors.me` NOMME l'écart (`toolbox_scope`, cf.
+`docs/connector-model.md`) — et seulement quand il y en a un, un champ toujours présent
+devenant du bruit qu'on cesse de lire.
+
 ## Source de vérité + retrait des presets
 
 Source de vérité = tables PG `user_disabled_tools(sub, tool_name)` (négatif) + `user_enabled_tools(sub, tool_name)` (override positif). **Les presets de tools (snapshots nommés + baselines ALLOWLIST org/équipe) ont été retirés le 2026-07-03** (commit `3951a57` — masquaient tout ce qui n'était pas listé, lourd à maintenir : un tool ajouté après coup arrivait masqué par défaut pour toute baseline posée).

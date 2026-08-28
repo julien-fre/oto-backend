@@ -5,6 +5,7 @@ d'une clé BYO). Le dashboard pose dessus le picker (liste + défaut)."""
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
@@ -12,6 +13,8 @@ from pydantic import BaseModel, ConfigDict
 from ..connectors import identities as connector_identities
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+
+logger = logging.getLogger(__name__)
 
 
 class IdentitiesInput(BaseModel):
@@ -77,6 +80,16 @@ class ConnectorIdentities(BaseModel):
     # CHOISIT : parler de « compte » pour un espace Slack l'oblige à traduire, et ni
     # l'agent ni l'écran n'ont de moyen de deviner le vocabulaire du fournisseur.
     noun: str = "compte"
+    # ── Pourquoi la liste est VIDE (signal #504) ── présents SEULEMENT sur `[]`.
+    # `no_credential` | `paid_option_off` | `over_quota` (une couche manque, cf.
+    # `connectors/readiness.py`) | `no_identity_connected` (tout est en place, il
+    # reste à en connecter un). Le défaut de #504 n'était pas le CONTENU de la
+    # liste — vérifié sur la prod le 28/08, elle était vide parce qu'il n'y avait
+    # rien à lister — c'était son SILENCE : `[]` ne disait pas s'il n'y avait aucun
+    # compte, aucune clé, ou une clé qui ne voit rien, et l'appelant a inventé la
+    # mauvaise cause pendant quatre jours.
+    reason: Optional[str] = None
+    next_step: Optional[str] = None         # le geste, rendu tel quel
 
 
 class SelectedIdentity(BaseModel):
@@ -156,12 +169,55 @@ async def _list(ctx: ResolvedCtx, inp: IdentitiesInput) -> dict:
     if inspect.isawaitable(ids):
         ids = await ids
     from .. import access
-    return {
+    noun = access.account_noun(inp.connector)
+    out = {
         "connector": inp.connector,
         "supported": connector_identities.supports(inp.connector),
-        "noun": access.account_noun(inp.connector),
+        "noun": noun,
         "identities": ids,
     }
+    if not ids:
+        out.update(_why_empty(ctx, inp.connector, noun))
+    return out
+
+
+def _why_empty(ctx: ResolvedCtx, connector: str, noun: str) -> dict:
+    """Le POURQUOI d'une liste vide (#504) — jamais un `[]` muet.
+
+    Ce que le signal affirmait : « `oto_identity(op=list, connector=unipile)` renvoie
+    `identities:[]` alors que le compte LinkedIn est connecté et opérationnel ».
+    Ce que la prod montre (vérifié le 28/08/2026) : les trois lectures de ce compte
+    datent du 14/08 à 14:00:44, 14:00:55 et 14:02:09 — le compte, lui, a été lié à
+    **14:03:30**. Rejouée aujourd'hui sur le même sub, la liste rend bien le compte.
+    Elle était vide parce qu'il n'y avait rien à lister ; le défaut RÉEL est le
+    silence, qui a laissé conclure au bug pendant quatre jours.
+
+    Même famille que #476 (cf. `connectors/readiness.py`), et même seam : une couche
+    manquante se nomme ici comme là-bas. `[]` sans aucune couche manquante veut dire
+    exactement une chose — rien n'est encore connecté — et ça se dit aussi.
+
+    Fail-VISIBLE : si le diagnostic ne se lit pas, on le DIT (`reason:"unknown"`)
+    plutôt que de rendre à nouveau une liste vide sans explication."""
+    from .. import access
+    from ..connectors import readiness as connector_readiness
+    try:
+        diag = connector_readiness.diagnose(
+            ctx.sub, connector, org=ctx.org_id, group=access.current_group(ctx.sub))
+    except Exception:
+        logger.warning("diagnostic d'identités vide indisponible pour %s (fail-visible)",
+                       connector, exc_info=True)
+        return {"reason": "unknown",
+                "next_step": (f"Liste vide, et l'état des couches (clé, option) n'a "
+                              f"pas pu être lu — vérifie `{connector}` avec "
+                              f"oto_connector(op='list', name='{connector}').")}
+    # `pending_step` ⟹ c'est bien « aucun compte lié » : on le nomme dans le
+    # vocabulaire de CETTE surface, en relayant le geste du connecteur tel quel.
+    if diag is None or diag.reason == connector_readiness.PENDING_STEP:
+        return {"reason": "no_identity_connected",
+                "next_step": (diag.next_step if diag is not None
+                              else connector_readiness.no_identity_step(
+                                  ctx.sub, connector, noun))}
+    return {"reason": diag.reason, "next_step": diag.next_step}
 
 
 async def _set_default(ctx: ResolvedCtx, inp: SetIdentityInput) -> dict:
@@ -179,8 +235,10 @@ async def _set_default(ctx: ResolvedCtx, inp: SetIdentityInput) -> dict:
 CAPABILITIES_DOC_LIST = (
     "List the connected identities/accounts your credential can act as for a connector "
     "(e.g. the LinkedIn accounts under your Unipile key, or your Google accounts), with "
-    "which one is currently the default. Empty when the connector has no identity choice "
-    "(or uses a shared platform key — connect via hosted auth instead)."
+    "which one is currently the default. An EMPTY list always says why: `reason` is "
+    "no_credential / paid_option_off / over_quota (a layer is missing) or "
+    "no_identity_connected (everything resolves, nothing linked yet), with `next_step`. "
+    "Never read an empty list as a bug before reading its reason."
 )
 CAPABILITIES_DOC_SET = (
     "Choose which connected identity/account to act as for a connector (identity_id from "

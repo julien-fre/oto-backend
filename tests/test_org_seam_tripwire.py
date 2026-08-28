@@ -46,6 +46,15 @@ ALLOWED = {
                                    "du requérant (feedback actor-scoped seam).",
     "capabilities/usage.py": "fallback de télémétrie (tag d'un signal si ctx.org_id "
                              "absent) — métadonnée best-effort, pas un accès.",
+    "capabilities/connectors_selection.py": "signal #577 : la carte connecteur NOMME "
+                                            "l'écart entre l'org pour laquelle la "
+                                            "session a été montée (la maison, lue au "
+                                            "handshake où aucun jeton `_org=` n'existe "
+                                            "encore) et celle que l'appel épingle. Les "
+                                            "DEUX valeurs sont l'information — passer "
+                                            "par `current_org` rendrait deux fois la "
+                                            "même et effacerait précisément le fait à "
+                                            "signaler. Affichage, jamais une résolution.",
     "capabilities/projects.py": "listing des projets (#5.1) : un partage PERSONNEL "
                                 "(grant ('user',sub), org-agnostique) ne s'AFFICHE que "
                                 "dans l'org de RATTACHEMENT (la maison) — comparaison "
