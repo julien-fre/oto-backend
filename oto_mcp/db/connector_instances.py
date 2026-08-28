@@ -54,7 +54,14 @@ OWNER_KINDS = ("platform", "tenant", "org", "group", "member", "user")
 _OWNER_KINDS_SQL = "(" + ", ".join(f"'{k}'" for k in OWNER_KINDS) + ")"
 
 _INSTANCE_COLS = ("id, connector, owner_type, owner_id, account, label, config, "
-                  "visibility, parent_id, created_at, revoked_at")
+                  "visibility, parent_id, created_at, revoked_at, revoked_reason")
+
+# Les motifs d'archivage POSÉS par ce dépôt. Constante et pas CHECK en base : le
+# vocabulaire n'est fermé que par le code qui écrit, et un CHECK ferait une migration
+# du prochain motif.
+REVOKED_CREDENTIAL_REMOVED = "credential_removed"      # le cas normal : la clé a été retirée
+REVOKED_RENAMED_ONTO_EXISTING = "renamed_onto_existing"  # renommage vers une instance déjà vivante
+REVOKED_VAULT_ROW_MISSING = "vault_row_missing"        # maintenance : orpheline d'avant la pièce 2
 
 
 def instance_id_for_vault_row(owner_type: str, owner_id: str, connector: str,
@@ -176,7 +183,8 @@ def name_vault_row(conn, owner_type: str, owner_id: str, connector: str,
 
 def revoke_instances_for_vault_rows(conn, owner_type: str, owner_id: str,
                                     connector: "str | None" = None,
-                                    account: "str | None" = None) -> int:
+                                    account: "str | None" = None,
+                                    reason: str = REVOKED_CREDENTIAL_REMOVED) -> int:
     """Archive les instances VIVANTES qui nomment ces lignes de coffre. Jamais un
     DELETE (0053-D7 : un binding, une arête ou une consommation qui les désignent
     doivent pouvoir les relire après le retrait).
@@ -189,9 +197,9 @@ def revoke_instances_for_vault_rows(conn, owner_type: str, owner_id: str,
 
     Inconditionnel et idempotent : appelé sur une ligne déjà absente, il ne fait rien
     — et appelé sur une instance vivante sans ligne de coffre, il RÉPARE l'écart."""
-    sql = ("UPDATE connector_instances SET revoked_at = NOW() "
+    sql = ("UPDATE connector_instances SET revoked_at = NOW(), revoked_reason = %s "
            "WHERE owner_type = %s AND owner_id = %s AND revoked_at IS NULL")
-    params: list = [owner_type, str(owner_id)]
+    params: list = [reason, owner_type, str(owner_id)]
     if connector is not None:
         sql += " AND connector = %s"
         params.append(connector)
@@ -224,8 +232,9 @@ def move_instance_to_account(conn, owner_type: str, owner_id: str, connector: st
                                        old_account, conn=conn)
     if arrivee is not None:
         if depart is not None and depart != arrivee:
-            conn.execute("UPDATE connector_instances SET revoked_at = NOW() "
-                         "WHERE id = %s", (depart,))
+            conn.execute("UPDATE connector_instances SET revoked_at = NOW(), "
+                         "revoked_reason = %s WHERE id = %s",
+                         (REVOKED_RENAMED_ONTO_EXISTING, depart))
             logger.warning(
                 "L6 instances: renommage %s/%s %s '%s' -> '%s' — instance %d ARCHIVÉE "
                 "au profit de %d, qui existait déjà (écart réparé : une instance "
@@ -239,6 +248,66 @@ def move_instance_to_account(conn, owner_type: str, owner_id: str, connector: st
     conn.execute("UPDATE connector_instances SET account = %s WHERE id = %s",
                  (new_account or "", depart))
     return (True, None, depart)
+
+
+# ── La maintenance : l'ORPHELINE ──────────────────────────────────────────────
+#
+# Une instance vivante SANS ligne de coffre est un objet qui désigne une clé qui
+# n'existe pas — et qu'un binding, une arête ou une consommation peuvent nommer. Elles
+# ne naissent plus depuis la pièce 2 (retirer une clé archive son instance dans la même
+# transaction), mais celles d'AVANT restent : entre le filet de boot qui nommait, et un
+# retrait qui ne débaptisait pas, chaque suppression de credential en fabriquait une.
+# Mesuré sur la base servie le 2026-08-28 : **2** sur 139 instances vivantes.
+#
+# ⚠️ **Ce nettoyage n'est PAS au boot** (ADR 0065) et ce n'est pas une précaution de
+# style : le filet de boot, lui, ne peut pas le faire — il ne sait qu'INSÉRER, et le
+# faire archiver au démarrage transformerait un ordonnanceur de maintenance en écrivain
+# de masse sur une base partagée avec la production. C'est une commande EXPLICITE
+# (`scripts/archive_orphan_instances.py`), à sec par défaut, lancée une fois, à la main.
+
+
+def list_orphan_instances(conn=None) -> list[dict]:
+    """Les instances VIVANTES dont la ligne de coffre n'existe pas (ou plus).
+
+    Le sens que la requête d'invariant appelle « instance sans ligne de coffre ». On
+    rend les lignes ENTIÈRES et pas un compte : ce qui se supprime se regarde d'abord,
+    et l'appelant (le script) les imprime avant d'écrire quoi que ce soit."""
+    sql = f"""
+    SELECT {_INSTANCE_COLS} FROM connector_instances i
+     WHERE i.revoked_at IS NULL
+       AND NOT EXISTS (
+           SELECT 1 FROM connector_credentials c
+            WHERE c.entity_type = i.owner_type AND c.entity_id = i.owner_id
+              AND c.connector = i.connector    AND c.account   = i.account)
+     ORDER BY i.owner_type, i.owner_id, i.connector, i.account
+    """
+    if conn is not None:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+    with _connect() as c:
+        return [dict(r) for r in c.execute(sql).fetchall()]
+
+
+def archive_orphan_instances(conn=None) -> int:
+    """Archive les orphelines, motif `vault_row_missing`. Rend le nombre archivé.
+
+    **Idempotent par construction** : le prédicat est « vivante ET sans ligne de
+    coffre » ; une fois archivées, elles n'y répondent plus. Rejouer rend 0.
+
+    Archive, jamais un DELETE — même règle que partout ailleurs ici (0053-D7) : si
+    l'une d'elles a été désignée par un binding ou une arête, on veut pouvoir répondre
+    « elle a été retirée », pas « elle n'a jamais existé »."""
+    sql = """
+    UPDATE connector_instances i SET revoked_at = NOW(), revoked_reason = %s
+     WHERE i.revoked_at IS NULL
+       AND NOT EXISTS (
+           SELECT 1 FROM connector_credentials c
+            WHERE c.entity_type = i.owner_type AND c.entity_id = i.owner_id
+              AND c.connector = i.connector    AND c.account   = i.account)
+    """
+    if conn is not None:
+        return conn.execute(sql, (REVOKED_VAULT_ROW_MISSING,)).rowcount or 0
+    with _connect() as c:
+        return c.execute(sql, (REVOKED_VAULT_ROW_MISSING,)).rowcount or 0
 
 
 # ── Le backfill de boot ────────────────────────────────────────────────────────

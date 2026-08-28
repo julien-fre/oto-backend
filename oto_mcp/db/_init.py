@@ -911,6 +911,12 @@ def _init_db_once() -> None:
         # Portée opt-in d'un jeton API (`token_scopes.py`) : NULL = jeton non porté
         # (pleins pouvoirs du sub) → additif pur, aucun jeton existant n'est touché.
         conn.execute("ALTER TABLE user_api_tokens ADD COLUMN IF NOT EXISTS scopes JSONB")
+        # L6 pièce 2 : le MOTIF d'un archivage d'instance. La base est PARTAGÉE
+        # prod/preprod — le `CREATE TABLE` du schéma ne sert qu'aux installs vierges,
+        # une table déjà là ne reçoit ses colonnes que par cet `ALTER`. Additif,
+        # nullable, sans index : aucun travail au boot (ADR 0065).
+        conn.execute("ALTER TABLE connector_instances "
+                     "ADD COLUMN IF NOT EXISTS revoked_reason TEXT")
         _drop_legacy_plaintext_stores(conn)
         # Décommission du substrat « fact graph » (ex-ADR 0008/0027) : le schéma
         # factgraph et toutes ses tables sont supprimés (idempotent). Plus aucune
