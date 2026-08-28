@@ -465,6 +465,14 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
     # `subscribe` ne se gardait sur rien.
     db_billing.update_billing_payment(row["id"], status="paid",
                                       payment_id=payment["id"])
+    # La facture suit l'ENCAISSEMENT, pas l'ouverture des droits (#488) : elle est
+    # due même si le mandat n'est pas né et que le miroir n'est pas encore posé —
+    # sinon le cas du 25/08 (argent pris, abonnement pas ouvert) resterait sans
+    # document. Le palier vient de la metadata du paiement, seul endroit où il vit
+    # pendant le checkout ; le miroir, lui, n'existe pas encore au premier passage.
+    from . import billing_invoices as factures     # import tardif : le paquet lit `billing`
+    factures.facturer_encaissement(row["id"],
+                                   plan=(payment.get("metadata") or {}).get("plan"))
 
     # encaissé → le mandat réutilisable naît sur le customer… quelques minutes plus
     # tard. À 1,4 s il n'existe pas encore.
@@ -602,7 +610,7 @@ def process_webhook(payment_id: str) -> str:
     """Traite un rappel webhook Mollie (le corps ne porte QUE l'id du paiement —
     on re-fetch l'objet avec NOTRE clé, jamais de confiance dans le POST). Retourne
     l'issue (log) : 'ignored' | 'confirmed' | 'awaiting_mandate' | 'not_confirmed'
-    | 'updated' | 'unchanged'.
+    | 'updated' | 'unchanged' | 'refunded'.
 
     Sécurité : un id inconnu de notre journal est ignoré (un POST forgé ne
     déclenche rien) ; un premier paiement `paid` rejoue `confirm` (idempotent) ;
@@ -618,6 +626,19 @@ def process_webhook(payment_id: str) -> str:
         return "ignored"
     payment = mollie_client.get_payment(payment_id)
     status = str(payment.get("status") or "")
+
+    # REMBOURSEMENT (#488). Mollie appelle le MÊME webhook qu'un changement de
+    # statut quand un remboursement est créé ou change d'état — les remboursements
+    # n'ont pas d'URL à eux (docs.mollie.com/docs/webhooks). Le paiement reste
+    # `paid` : c'est `amountRefunded`, absent tant que rien n'est remboursé, qui
+    # porte l'information. Traité AVANT le reste, et il conclut : la facture, elle,
+    # a été émise quand le paiement est passé `paid`.
+    rembourse = mollie_client.cents_from_amount(payment.get("amountRefunded"))
+    if rembourse:
+        from . import billing_invoices as factures  # import tardif : le paquet lit `billing`
+        factures.avoir_remboursement(row["id"], rembourse)
+        return "refunded"
+
     if row["kind"] == "initial" and status == "paid":
         # On passe l'identifiant du paiement ENCAISSÉ : sans lui, `confirm` repartait
         # du plus récent et pouvait confirmer un autre paiement — ou rien (#291).
@@ -648,5 +669,11 @@ def process_webhook(payment_id: str) -> str:
         return "confirmed"
     if status and status != row["status"]:
         db_billing.update_billing_payment(row["id"], status=status)
+        if status == "paid":
+            # Une ÉCHÉANCE encaissée : le premier paiement, lui, passe par `confirm`
+            # (branche du dessus), qui facture déjà. Sans cette ligne, une échéance
+            # attendrait le tick du runner pour être facturée.
+            from . import billing_invoices as factures   # import tardif
+            factures.facturer_encaissement(row["id"])
         return "updated"
     return "unchanged"

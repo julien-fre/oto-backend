@@ -1,4 +1,4 @@
-# Facturation par org (ADR 0043) — le modèle, la TVA, le consentement, et le double débit du 25/08
+# Facturation par org (ADR 0043) — le modèle, la TVA, le consentement, les factures, et le double débit du 25/08
 
 ## Ce que Mollie voit, et ce qu'il ne voit pas
 
@@ -225,6 +225,210 @@ cadre ne distingue pas le professionnel du particulier, alors que les services
 électroniques rendus à un particulier peuvent relever du pays de consommation. La
 règle appliquée est celle du cadre.
 
+## Les factures (#488) — Pennylane émet, nous traçons
+
+**Chaque encaissement produit une facture.** Jusqu'au 28/08/2026 la plateforme
+débitait sans jamais émettre de document : un client professionnel — a fortiori un
+cabinet comptable — n'avait ni facture ni PDF, et le tableau de bord ne montrait
+qu'un journal de tentatives (`billing.payments`), qui n'est ni une facture ni un
+reçu. Mollie n'y pouvait rien : il facture Otomata pour ses frais, il n'émet aucun
+document au client final.
+
+### Ce qui déclenche une facture : l'ENCAISSEMENT, pas l'abonnement
+
+Dès qu'une ligne de `billing_payments` passe à `paid`, un document est dû — que le
+mandat soit né ou non, que le miroir d'abonnement soit posé ou non. Faire dépendre
+la facture de l'ouverture des droits laisserait sans document exactement le cas du
+25/08 : de l'argent pris, un abonnement pas encore ouvert.
+
+| chemin | quand |
+| --- | --- |
+| `billing.confirm` | retour navigateur, webhook d'un premier paiement, rattrapage |
+| `billing.process_webhook` | échéance dont Mollie annonce l'encaissement |
+| `billing_runner` (balayage, en fin de tick) | **le filet** — tout ce que les deux premiers ont raté |
+
+Le balayage n'est pas une redondance de confort : c'est lui qui rend vraie la phrase
+**« jamais un paiement sans trace de facture »**. Les deux appels en ligne ne font
+que raccourcir le délai entre le paiement et le document.
+
+⚠️ **L'émission ne fait jamais échouer un paiement.** Un appel Pennylane peut
+refuser, expirer, ou n'avoir pas de clé ; laisser l'exception remonter dans
+`confirm` rendrait une erreur au payeur **sur un paiement réussi** — la faute exacte
+de #493, celle qui a fait repayer un client. Elle est donc absorbée, et ce n'est pas
+un repli silencieux : la tentative est écrite (`billing_invoices`, `status='pending'`
+— c'est le `invoice_pending` de l'issue), sa cause est **nommée** (`error_code`),
+elle est journalisée en `error`, et la reprise horaire la rejoue jusqu'à ce qu'elle
+aboutisse. **Un `pending` qui dure est un incident visible, pas un oubli.**
+
+### Qui émet, avec quelle clé
+
+**Pennylane**, sur la comptabilité d'**Otomata** — et c'est un point à ne pas
+confondre. Le connecteur `pennylane` du catalogue est **clé-par-utilisateur**
+(`auth_modes = {byo_user, byo_org}`) : chacun pose sa clé sur
+`manage.oto.cx/api-keys` et ne voit que sa propre compta. Cette clé-là ne peut pas
+servir ici, et `access.resolve_api_key` résout de toute façon dans le contexte de
+l'appelant — que le webhook du PSP et la boucle de fond n'ont pas.
+
+La clé de facturation vient donc de l'**environnement du process**,
+`OTO_PENNYLANE_API_KEY`, exactement comme `MOLLIE_API_KEY` : deux comptes
+fournisseurs d'Otomata, résolus au boot depuis **Scaleway Secret Manager**, jamais
+SOPS, jamais le coffre. La ranger au coffre en scope `PLATFORM` aurait fait entrer
+la compta d'Otomata dans la mécanique de partage du marketplace (`platform_grant`,
+`share_down`) — un mécanisme conçu pour PRÊTER une clé, sur la seule clé qu'on ne
+prêtera jamais.
+
+⚠️ **Clé absente ⟹ `pennylane_unconfigured`**, journalisé sur la ligne, avec le nom
+de la variable à poser. Aucun encaissement n'est perdu pour autant.
+
+### La numérotation appartient à Pennylane
+
+`billing_invoices` est une table de **trace**, pas un registre de factures : le
+document, son numéro (`invoice_number`) et sa valeur probante vivent chez Pennylane.
+Numéroter ici aurait créé une **seconde série** sur les mêmes recettes — deux séries
+concurrentes est exactement ce qu'un contrôle reproche.
+
+### Le geste, dans l'ordre
+
+1. **le client** — retrouvé chez Pennylane par sa référence externe `oto-org-<id>`
+   (filtre serveur, un seul appel), sinon créé depuis `billing_identities` : raison
+   sociale, adresse, pays. Le **n° de TVA intracommunautaire** est posé juste après
+   (`update_customer`) : sans lui, la mention d'autoliquidation ne vaut rien ;
+2. **le brouillon** — une ligne libre « Abonnement `<palier>` — période du … au … »,
+   prix unitaire HT en décimal, code de TVA dérivé du régime, et la mention légale
+   en texte libre imprimé sur le PDF ;
+3. **le contrôle** — le total du brouillon doit être **celui qui a été débité**.
+   C'est la seule raison d'être du passage par un brouillon, et le seul contrôle
+   capable d'attraper un code de TVA qui ferait calculer 20 % là où le régime est à
+   0 %. Un écart ⟹ **rien n'est finalisé** (`amount_mismatch`) : une facture
+   finalisée ne se supprime plus, elle ne se corrige que par un avoir ;
+4. **la finalisation** — c'est elle qui donne le numéro et le PDF. Le document servi
+   n'est jamais un brouillon ; sa date est celle de l'encaissement et son échéance
+   le même jour (il constate un règlement déjà fait, il n'en appelle aucun).
+
+### Les codes de TVA envoyés à Pennylane
+
+| régime (`vat_scheme`) | code Pennylane | mention portée sur le PDF |
+| --- | --- | --- |
+| `fr_ttc` | `FR_200` (dérivé du taux : 2000 points de base → `FR_200`) | — |
+| `reverse_charge` | `crossborder` | autoliquidation, art. 196 dir. 2006/112/CE |
+| `export` | `extracom` | hors champ, art. 259-1 du CGI |
+
+⚠️ **Le rapprochement des deux codes à 0 % reste à confirmer avec le conseil.**
+L'énumération Pennylane porte `crossborder` (transfrontalier) et `extracom` (hors
+Union) sans les définir ; celui retenu est celui des termes. Les deux étant à 0 %,
+le **total de la facture est juste dans les deux cas** — c'est le compte de produit
+qui dépend du bon code. Aucun contrôle de montant ne peut donc attraper une erreur
+ici : seule la relecture du plan comptable le peut. C'est une ligne à changer
+(`billing_invoices/pennylane.py`).
+
+### Où est le PDF
+
+**Dans notre base**, colonne `pdf` (`BYTEA`), téléchargé à l'émission. L'URL rendue
+par Pennylane (`public_file_url`) **expire en 30 minutes** : la conserver comme
+« lien vers la facture » aurait donné un lien mort une demi-heure plus tard — dans
+un e-mail, on ne s'en apercevrait qu'en le voyant échouer chez le client. Elle est
+gardée comme trace de provenance, jamais servie.
+
+Deux surfaces, et la seconde n'est pas une capacité :
+
+- `GET /api/me/billing/invoices` — capacité `me.billing.invoices.list` (membre de
+  l'org active) : factures et avoirs, avec `pdf_path` quand un fichier existe ;
+- `GET /api/me/billing/invoices/{id}/pdf` — route **écrite à la main**
+  (`api/billing.py`), parce qu'un handler de capacité rend un `dict` que
+  l'adaptateur emballe en JSON : il ne peut pas servir `application/pdf`. Même
+  exception, même précédent que l'export ZIP d'un projet. Son autorisation porte sur
+  l'org **qui porte la facture**, pas sur l'org active — ce lien s'ouvre depuis un
+  e-mail, où rien ne garantit l'org de session. Un id d'une autre org rend **404**,
+  jamais 403 : un « interdit » confirmerait l'existence du document.
+
+**Pourquoi la base et non l'objet.** `media_store` ne sert que des images, et il
+produit des URL **publiques** — inadapté à une facture. Un document pèse quelques
+dizaines de kilo-octets et il en naît un par org et par mois : l'ordre de grandeur
+est la centaine de méga-octets par an sur la RDB managée, ce qui ne justifie pas un
+second système de stockage aujourd'hui. Le jour où il le justifiera, la bascule est
+locale : seuls `set_billing_invoice_pdf` / `get_billing_invoice_pdf` la connaissent.
+
+⚠️ **Aucune lecture ne fait `SELECT *` sur `billing_invoices`.** Le row factory ne
+normalise que les dates : des octets remontés dans un dict servi en JSON feraient
+une 500 à la sérialisation, sur le chemin le moins emprunté de la surface. Le PDF a
+son getter dédié, et la liste ne le voit jamais. Même famille de piège que le
+`NUMERIC` qui ressort en `Decimal` (#486).
+
+### L'e-mail — et pourquoi le PDF n'y est PAS joint
+
+Le document part au contact de facturation (`billing_identities.billing_email`,
+sinon le premier org_admin par ancienneté) via le relais transactionnel
+`otomata-mailer`. Best-effort : un e-mail non parti ne remet rien en cause, il se lit
+à `emailed_at IS NULL`.
+
+⚠️ **Le relais n'accepte pas de pièce jointe** : `POST mailer.oto.zone/api/send` ne
+prend que `{from, to, cc, replyTo, subject, html}` et son `sendMail` ne passe aucun
+`attachments` à nodemailer (`otomata-tech/otomata-auth-mailer`, `src/send.ts` +
+`src/index.ts`). L'e-mail porte donc le numéro, les montants, la période et un lien
+vers l'espace facturation. **Joindre le PDF demande une décision**, pas une
+correction au passage : ouvrir `attachments` sur le mailer (autre dépôt), ou laisser
+**Pennylane** l'envoyer lui-même (`POST customer_invoices/{id}/send_by_email`, déjà
+exposé par oto-core) au prix d'un expéditeur et d'un gabarit qui ne sont pas les
+nôtres.
+
+### L'avoir sur remboursement
+
+Mollie **n'a pas d'URL propre aux remboursements** : c'est le webhook du **paiement**
+qui rappelle quand un remboursement est créé ou change d'état, et le paiement reste
+`paid` — c'est `amountRefunded`, absent tant que rien n'est remboursé, qui porte
+l'information. `process_webhook` le lit et émet un **avoir Pennylane lié** à la
+facture (le lien se pose par `link_credit_note` ; l'attribut `credited_invoice_id`
+de la création est cassé côté fournisseur, changelog Pennylane).
+
+Un avoir est une facture aux montants **négatifs** (convention Pennylane) et notre
+ligne les porte négatifs aussi. Sur un remboursement **partiel**, la ventilation
+suit la proportion remboursée et la TVA est le **reste** — jamais recalculée au
+taux, sinon la somme des deux ne retomberait pas sur ce qui a été rendu au client.
+
+⚠️ **Un seul avoir par paiement** (clé `(paiement, kind)`). Un **second**
+remboursement partiel sur le même paiement ne produira donc pas un second document :
+le cas est journalisé en `error` en nommant l'écart, et demande un avoir manuel. Une
+clé par remboursement supposerait de suivre les objets `refund` de Mollie, que le
+webhook ne porte pas.
+
+### Idempotence
+
+`UNIQUE (payment_row_id, kind)` sur `billing_invoices`. C'est la **contrainte** qui
+garantit qu'un webhook rejoué ne crée pas une seconde facture — pas une lecture
+préalable, que deux webhooks simultanés franchiraient tous les deux. Côté Pennylane,
+la référence externe `oto-payment-<tr_…>` (et `oto-refund-<tr_…>`) joue le même rôle :
+une reprise après un crash retrouve le brouillon déjà créé et le finalise, au lieu
+d'émettre un second document.
+
+⚠️ La colonne s'appelle `payment_row_id` et non `payment_id` : elle porte l'id de la
+**ligne de journal** (`billing_payments.id`), alors que `billing_payments.payment_id`
+porte, lui, l'identifiant Mollie `tr_…`. Le nom dit lequel est lequel.
+
+### Les deux encaissements du 25/08/2026 ne sont PAS facturés automatiquement
+
+Ils ont été débités du **HT sans TVA**, avant que la règle n'existe, et `amount_ht
+IS NULL` est ce qui les distingue (§#486). **Sans décomposition fiscale, aucune
+facture conforme n'est calculable** : en fabriquer une reviendrait à inventer une TVA
+qui n'a jamais été collectée. La file de reprise les exclut par ce prédicat, et
+aucune ligne `pending` n'est créée pour eux — elle sonnerait pour toujours.
+
+**Le geste manuel, à faire une fois** (Alexis, dans l'interface Pennylane) :
+
+1. retrouver ou créer le client de l'org payeuse, avec la référence externe
+   `oto-org-<id>` — c'est la clé sur laquelle les factures suivantes se
+   rapprocheront, et deux fiches client pour la même org sépareraient l'historique ;
+2. émettre **une facture par encaissement**, datée du jour du débit, d'un montant
+   **TTC de 19,00 €** — le montant réellement pris. Il faut donc le traiter comme un
+   TTC et faire ressortir la TVA à l'intérieur (15,83 € HT + 3,17 € de TVA à 20 %),
+   et non ajouter 20 % par-dessus : le client n'a jamais payé 22,80 €, et une facture
+   qui l'affirmerait serait fausse ;
+3. l'un des deux est le **double débit** de l'incident : il appelle un remboursement,
+   donc un avoir, et non une facture à conserver. Trancher l'ordre avec le
+   remboursement (cf. §« L'incident du 2026-08-25 », dont le remboursement et la
+   révocation du mandat orphelin restent dus) ;
+4. rien à écrire dans `billing_invoices` : la table trace ce que le serveur a émis.
+   Y poser une ligne à la main ferait croire à une émission automatique.
+
 ## Le mandat est une COURSE, pas un état
 
 Le mandat réutilisable ne naît pas avec l'encaissement : chez Mollie il apparaît
@@ -312,14 +516,21 @@ du 2ᵉ paiement et la révocation du mandat orphelin né du second customer.
 
 `billing.py` (le cycle), `billing_vat.py` (la règle de TVA, **pure** : ni base,
 ni réseau, ni horloge), `db/billing.py` (les trois tables + les files),
+`billing_invoices/` (le paquet de la FACTURE : `pennylane.py` = le seam fournisseur
+et la clé de la compta d'Otomata, `emission.py` = le cycle facture/avoir/reprise,
+`mail.py` = l'e-mail au contact de facturation), `db/billing_invoices.py` (la table
+de trace), `capabilities/billing_invoices.py` (la liste) et la route de
+téléchargement du PDF dans `api/billing.py`,
 `mollie_client.py` (la surface PSP), `capabilities/billing.py` (les six capacités
 REST-only — payer est un acte humain, pas d'URL de paiement dans un contexte LLM),
 `capabilities/billing_identity.py` (l'identité de facturation, même régime),
 `billing_consent.py` + `legal_docs.py` (le consentement d'achat et la source de
 vérité des documents), `db/legal.py` (le journal, la projection transitoire et le
 pont), `capabilities/me_legal.py` (l'acceptation, REST-only),
-`billing_runner.py` (échéances, dunning, sweeps, reprises). La surface entière est
-gatée par `OTO_BILLING_ENABLED=1` (dark launch ADR 0043) et la boucle de fond par
-`OTO_BILLING_RUNNER_ENABLED` (défaut : allumée dès que le billing l'est). La clé
-`MOLLIE_API_KEY` vient de l'**env du process** (Scaleway Secret Manager au boot),
-jamais de SOPS.
+`billing_runner.py` (échéances, dunning, sweeps, reprises — **le balayage des
+factures y est le dernier geste du tick**). La surface entière est gatée par
+`OTO_BILLING_ENABLED=1` (dark launch ADR 0043) et la boucle de fond par
+`OTO_BILLING_RUNNER_ENABLED` (défaut : allumée dès que le billing l'est). Les deux
+clés fournisseur — `MOLLIE_API_KEY` (le PSP) et `OTO_PENNYLANE_API_KEY` (la compta
+d'Otomata) — viennent de l'**env du process** (Scaleway Secret Manager au boot),
+jamais de SOPS ni du coffre.

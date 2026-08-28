@@ -114,3 +114,70 @@ CREATE TABLE IF NOT EXISTS billing_identities (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 """
+
+# factures et avoirs émis chez Pennylane (#488)
+INVOICES = """
+-- Facture (ou avoir) émise pour UN paiement d'abonnement (#488). Table de TRACE :
+-- le document lui-même vit chez Pennylane, qui porte la numérotation continue —
+-- inventer une numérotation ici aurait créé une seconde série, et deux séries
+-- concurrentes sur les mêmes recettes est exactement ce qu'un contrôle reproche.
+--
+-- La ligne naît AVANT l'appel au fournisseur, en `pending` : un encaissement doit
+-- laisser une trace de facture même quand l'émission échoue (clé plateforme absente,
+-- Pennylane en panne). C'est ce que le journal appelle `invoice_pending` — l'état
+-- se répare par une reprise (`billing_runner`), il ne se perd pas.
+--
+-- ⚠️ `pdf` est un BYTEA : aucune lecture ne fait `SELECT *` sur cette table.
+-- Le row factory ne normalise que les dates ; des octets remontés dans un dict
+-- servi en JSON feraient une 500 à la sérialisation, sur un chemin peu emprunté.
+-- Le PDF a son propre getter (`get_invoice_pdf`), les listes ne le voient jamais.
+--
+-- ⚠️ La clé d'idempotence est `(payment_row_id, kind)` et non `payment_row_id` seul :
+-- un remboursement produit un AVOIR, second document du même paiement, avec son
+-- propre numéro et son propre PDF. Un webhook rejoué ne peut donc créer ni une
+-- seconde facture ni un second avoir.
+CREATE TABLE IF NOT EXISTS billing_invoices (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+    -- ⚠️ `payment_row_id` = l'id de la LIGNE de journal (billing_payments.id), pas
+    -- `billing_payments.payment_id` qui porte, lui, l'identifiant Mollie `tr_…`.
+    -- Les deux se seraient appelés `payment_id` ; le nom dit lequel est lequel.
+    payment_row_id BIGINT NOT NULL REFERENCES billing_payments(id) ON DELETE CASCADE,
+    payment_ref TEXT,                       -- tr_… (forensics + référence externe)
+    kind TEXT NOT NULL DEFAULT 'invoice',   -- 'invoice' | 'credit_note'
+    status TEXT NOT NULL DEFAULT 'pending', -- 'pending' (tentative journalisée) | 'issued'
+    external_reference TEXT,                -- la clé de rapprochement envoyée à Pennylane
+    pennylane_customer_id BIGINT,
+    pennylane_invoice_id BIGINT,
+    credited_invoice_id BIGINT,             -- avoir : la facture Pennylane qu'il annule
+    number TEXT,                            -- numéro DE PENNYLANE (numérotation continue)
+    currency TEXT NOT NULL DEFAULT 'eur',
+    -- Recopiés du paiement au moment de l'émission : la facture fige ce qui a été
+    -- débité, elle ne suit pas un déménagement ultérieur de l'org (même règle que
+    -- billing_payments). Un avoir les porte en NÉGATIF.
+    amount_ht INTEGER,
+    vat_rate_bps INTEGER,
+    vat_amount INTEGER,
+    amount_ttc INTEGER,
+    vat_scheme TEXT,                        -- fr_ttc | reverse_charge | export
+    period_start TIMESTAMPTZ,               -- période d'abonnement couverte
+    period_end TIMESTAMPTZ,
+    issued_at TIMESTAMPTZ,                  -- date PORTÉE par la facture (le paidAt du PSP)
+    pdf BYTEA,                              -- le document, tel que Pennylane l'a rendu
+    pdf_filename TEXT,
+    pdf_url TEXT,                           -- ⚠️ URL Pennylane, EXPIRE en 30 min : trace, pas un lien
+    emailed_at TIMESTAMPTZ,
+    email_to TEXT,
+    attempts SMALLINT NOT NULL DEFAULT 0,
+    error_code TEXT,                        -- pourquoi l'émission n'a pas abouti
+    error_detail TEXT,
+    last_attempt_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (payment_row_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_billing_invoices_org
+    ON billing_invoices(org_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_invoices_pending
+    ON billing_invoices(created_at) WHERE status = 'pending';
+"""

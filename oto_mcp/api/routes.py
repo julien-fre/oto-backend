@@ -416,8 +416,12 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         _json, _json_error, options_handler,
     )
 
-    # Webhook Mollie (ADR 0043) — non authentifié, réconciliation événementielle.
-    billing_webhook_routes = api_routes_billing.make_routes(options_handler)
+    # Billing écrit à la main (ADR 0043, #488) : le webhook Mollie (non authentifié)
+    # et le téléchargement du PDF d'une facture (authentifié — un octet n'est pas du
+    # JSON, il ne peut donc pas passer par la couche capacité).
+    billing_webhook_routes = api_routes_billing.make_routes(
+        options_handler, verifier=verifier, authenticate=_authenticate,
+        json_error=_json_error)
 
     return [
         Route("/favicon.svg", public.favicon, methods=["GET"]),

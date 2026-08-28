@@ -26,6 +26,11 @@ scheduler.py) fait tout le cycle à intervalle horaire :
    est gravé dès son constat) donc invisible de la file ci-dessus — sans cette
    reprise, un payeur qui ferme son onglet pendant la course au mandat resterait
    débité et sans droits.
+6. **Factures** (#488) : tout encaissement sans document, et toute émission restée
+   en attente (clé Pennylane absente, fournisseur en panne, identité incomplète).
+   Placé en DERNIER pour lire l'état que les cinq étapes précédentes viennent
+   d'écrire. C'est LUI la garantie « jamais un paiement sans trace de facture » —
+   les appels en ligne de `confirm` et du webhook ne font que raccourcir le délai.
 
 Sans MOLLIE_API_KEY le tick est un no-op silencieux (le serveur vit sans
 billing). Un tick raté ne tue jamais la boucle.
@@ -212,6 +217,17 @@ def tick() -> dict:
             continue
         _catch_up(row["org_id"], ref)
         counts["mandate_catchup"] = counts.get("mandate_catchup", 0) + 1
+
+    # FACTURES (#488), en DERNIER : ce balayage lit l'état laissé par tout ce qui
+    # précède — l'échéance qui vient d'être encaissée et le rattrapage de mandat
+    # sont donc facturés dans le MÊME tick, pas une heure plus tard. C'est lui qui
+    # rend vraie la phrase « jamais un paiement sans trace de facture » : les appels
+    # en ligne de `confirm` et du webhook ne font que raccourcir le délai.
+    try:
+        from . import billing_invoices
+        counts.update(billing_invoices.sweep())
+    except Exception as e:  # noqa: BLE001 — la facturation ne casse pas le cycle de paiement
+        log.error("billing_runner: balayage des factures échoué — %s", e, exc_info=True)
     return counts
 
 

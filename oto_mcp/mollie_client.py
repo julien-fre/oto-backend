@@ -108,6 +108,23 @@ def amount_field(cents: int, currency: str = "eur") -> dict:
     return {"currency": currency.upper(), "value": f"{cents / 100:.2f}"}
 
 
+def cents_from_amount(amount: Any) -> int:
+    """L'inverse : un objet montant Mollie → des CENTIMES entiers. `0` si absent ou
+    illisible.
+
+    Sert `amountRefunded`, que Mollie ne pose sur un paiement QUE lorsqu'un
+    remboursement existe (#488) — d'où le zéro par défaut : « pas de champ » et
+    « rien de remboursé » se traitent pareil, et un remboursement de zéro n'existe
+    pas."""
+    if not isinstance(amount, dict):
+        return 0
+    try:
+        return round(float(amount.get("value")) * 100)
+    # noqa: SILENT — montant illisible : on ne DEVINE pas un remboursement
+    except (TypeError, ValueError):
+        return 0
+
+
 # ── sonde ────────────────────────────────────────────────────────────────────
 
 def ping() -> bool:

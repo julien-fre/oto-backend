@@ -182,6 +182,14 @@ _KNOWN: dict[str, str] = {
     # rend un `Match.PARTIAL` sur méthode non trouvée et poursuit son balayage.
     "/api/me/projects/{project_id:int}/files": NATURE,   # POST multipart
     "/api/me/projects/{id}/export": NATURE,              # réponse application/zip
+    # Le PDF d'une facture (#488). Même raison que l'export ci-dessus, et elle est
+    # STRUCTURELLE, pas de la dette : un handler de capacité rend un `dict` que
+    # l'adaptateur emballe en `JSONResponse` — il ne peut pas servir des octets.
+    # La LISTE des factures, elle, est bien une capacité
+    # (`me.billing.invoices.list`). Montée en toutes circonstances, gate ou pas :
+    # une route qui apparaît selon l'environnement ferait mentir ce cliquet sur une
+    # machine et pas sur l'autre. Le dark launch vit dans le handler (404).
+    "/api/me/billing/invoices/{id}/pdf": NATURE,         # réponse application/pdf
     "/api/orgs/{id}/logo": NATURE,                       # POST multipart
     # ⚠️ La TOOLBOX DU MEMBRE a quitté cette liste le 2026-08-27 : les six routes
     # `/api/me/tools*` sont des capacités (`capabilities/tools_me.py` —
