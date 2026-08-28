@@ -721,6 +721,21 @@ class DatastorePg(SchemaOpsMixin):
                 return self._row_to_dict(
                     self._merge_into_row(ns_id, existing_id, user_data, schema=schema),
                     schema)
+        # #390 (3ᵉ demande) : une ligne CRÉÉE sans la clé métier déclarée est non
+        # rapprochable — aucune écriture ultérieure ne la retrouvera par sa clé, et
+        # le batch qui dédouble passera à côté. C'est la forme résiduelle de
+        # l'incident : une 501ᵉ ligne sans SIREN née avec tout l'enrichissement,
+        # sans une erreur. Les deux autres portes (adresse égarée dans `row`, `id`
+        # nu) sont désormais fermées ; celle-ci n'a pas d'adresse du tout, donc rien
+        # à refuser — on NOMME, comme `hors_schema`. Mesuré avant de la poser :
+        # 197 tableaux à clé déclarée, 50 024 lignes, 3 sans clé. Elle ne parlera
+        # quasiment jamais, et c'est ce qui la rendra lisible.
+        if key and (kv is None or str(kv) == ""):
+            self.off_notices.add(
+                f"ligne créée SANS `{key}`, la clé métier de ce tableau : elle ne "
+                f"sera rapprochée par personne — ni une réécriture, ni un lot qui "
+                f"dédouble sur cette clé. Si elle visait une ligne existante, c'est "
+                f"data_write(id=…) ; sinon renseigne `{key}`.")
         self._check_row(schema, user_data)
         try:
             row = db.datastore_insert_row(ns_id, _new_id(), user_data)

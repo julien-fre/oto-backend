@@ -300,6 +300,25 @@ déjà servie depuis le 13/08 par `unknown_keys_warning` (#316, avec near-miss) 
 `options_not_enforced_warning` (#319). `enforced` en est la moitié positive, la seule
 qu'un client puisse vérifier contre le serveur qui lui répond.
 
+**Une ligne créée sans la clé métier le DIT (#390, 3ᵉ demande).** Les deux premières
+sont servies depuis le 13-15/08 : le bail protège l'ÉCRITURE et pas seulement
+l'attribution (`_lease_guard` sous le verrou de ligne, `_assert_writable` sur les gestes
+qui n'en ouvrent pas, titulaire reconnu par son RUN ou par `writing_as`), et l'adresse
+égarée est traitée (`_id` dans `row` PROMU en adresse de fusion, un `id` nu non déclaré
+REFUSÉ en nommant la ligne fantôme). Restait le cas sans adresse du tout : une insertion
+franche sur un tableau dont le schéma déclare une clé métier, mais dont la ligne ne la
+porte pas. Elle est légitime — un tableau se remplit souvent avant d'avoir sa clé — mais
+aucune écriture ultérieure ne la retrouvera, et le lot qui dédouble passera à côté :
+c'est la forme résiduelle de l'incident (une 501ᵉ ligne sans SIREN née avec tout
+l'enrichissement, sans une erreur). D'où une `notice` sur `append_row`, pas un refus,
+sans I/O supplémentaire (la clé est déjà résolue pour la dédup).
+⚠️ **Mesuré avant de la poser** : 197 tableaux à clé métier déclarée, 50 024 lignes,
+**3** sans clé. L'avertissement ne parlera quasiment jamais — c'est ce qui le rendra
+lisible le jour où il parlera.
+⚠️ **La 2ᵉ demande du signal — refuser une insertion sans `id` quand des baux sont actifs
+sur le tableau — est écartée** : elle imposerait une lecture des baux à CHAQUE insertion,
+sur le chemin chaud, pour couvrir un cas que les deux gardes d'adresse ferment déjà.
+
 **Contraindre la FORME d'une valeur (#387).** `field.pattern` — jumeau de
 `field.max_length`, et il dit ce que la borne ne sait pas dire. Cas mesuré : un champ qui
 doit porter une ÉNUMÉRATION de catégories séparées par des points-virgules, pas une
