@@ -540,6 +540,18 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .middleware.empty_result import EmptyResultMiddleware
     instance.add_middleware(EmptyResultMiddleware())
 
+    # 1 bis. FILET de contexte (oto-backend#478) : le bloc de l'org est livré dans la
+    # PREMIÈRE réponse d'outil d'une session qui ne l'a pas chargé. Le canal prévu —
+    # `instructions` de l'`initialize` — n'est pas fiable : Claude Code le tronque à
+    # 2048 caractères, claude.ai ne le montre pas au modèle. Or ce bloc porte les
+    # garde-fous de l'org (« fais valider avant tout envoi externe ») : tant qu'il
+    # dépend d'un appel volontaire à `oto_context`, un agent qui va droit à
+    # `email_send` ne l'a jamais lu. AJOUTE au canal texte, ne remplace rien.
+    # Au-dessus de la rédaction et de l'écho de compte, qui réémettent le payload et
+    # feraient disparaître le bloc ; sous `ToolAlias`, dont il lui faut le nom canonique.
+    from .middleware.context_net import ContextNetMiddleware
+    instance.add_middleware(ContextNetMiddleware())
+
     # 2. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) : pose la
     # ContextVar `_CALL_ORG` AVANT le reste de la chaîne et la reset APRÈS, pour que
     # le handler ET les hooks post-tool (rédaction, calllog) lisent la MÊME org que

@@ -165,13 +165,30 @@ def _context(ctx: ResolvedCtx, inp: ContextInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="me.context", handler=_context, Input=ContextInput, authz=SUB_ONLY,
-        description="Reload YOUR contextual instructions for the CURRENT effective scope "
-                    "(org + team agent-readme, guides index, procedures index, recent "
-                    "projects/runs). Your injected context is frozen at connection time; "
-                    "after you switch org/team/project — or pass org=/project=/group= on "
-                    "this call — the toolbox and credentials follow but this prose does "
-                    "NOT. Call it to act on the right org/team's knowledge, not the one "
-                    "you connected under.",
+        # ⚠️ **La 1re ligne est un CONTRAT DE SÉLECTION** : c'est tout ce que certains
+        # clients montrent au modèle au moment de choisir un outil. Phrase complète,
+        # courte, autonome, impérative — le reste est du détail pour l'appel.
+        #
+        # Elle a dit « Reload YOUR contextual instructions » jusqu'au 2026-08-28, ce qui
+        # se lisait comme un rechargement OPTIONNEL après coup, et annonçait un contexte
+        # « frozen at connection time » — c'est-à-dire un mécanisme qu'on croyait fiable.
+        # Il ne l'est pas : le champ `instructions` du handshake est tronqué à 2048
+        # caractères par Claude Code et n'atteint pas le modèle sur claude.ai
+        # (oto-backend#478). Cet outil est donc, en pratique, le SEUL canal sûr — d'où
+        # l'impératif. Une description d'outil, elle, arrive toujours.
+        description="CALL THIS FIRST, before any other oto tool — it carries your org's "
+                    "working rules and guardrails.\n"
+                    "Returns the contextual instructions for your CURRENT effective scope: "
+                    "org + team agent-readme, guides index, procedures index, recent "
+                    "projects/runs.\n"
+                    "⚠️ The same context is also injected at connection time, but do NOT "
+                    "assume you received it: several clients truncate it, and some drop it "
+                    "entirely. If you have not read it in this session, you are missing "
+                    "rules your org expects you to follow — including when an action needs "
+                    "human validation before it goes out.\n"
+                    "Call it again after you switch org/team/project — or pass "
+                    "org=/project=/group= here: the toolbox and credentials follow the "
+                    "switch, this prose does not.",
         mcp="oto_context",
     ),
 ]
