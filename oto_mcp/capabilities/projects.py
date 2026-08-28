@@ -16,7 +16,7 @@ import re
 import secrets
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from .. import (config, db, group_store, org_store, output_projection, ownership,
                 roles, session_org)
@@ -893,7 +893,32 @@ def _linked_procedures(sub: str, links: list[dict]) -> list[dict]:
 class ProjectReadInput(BaseModel):
     """Lire UN projet, désigné par l'URL."""
     project_id: int
-    include: Optional[list[str]] = None
+    # ⚠️ `| str` n'est pas une facilité, c'est la FORME RÉELLE de cette entrée : cette
+    # capacité n'a qu'une face REST en GET, donc son `include` arrive de la QUERY
+    # STRING, où une URL ne sait pas dire « liste ». L'adaptateur verse
+    # `{"include": "procedures"}` — une chaîne — et un champ `list[str]` nu la refuse.
+    # Conséquence vécue (#367) : `GET /api/me/projects/12?include=procedures`, la
+    # requête littérale du besoin partenaire ET celle que la description de cette
+    # capacité annonce, répondait `400 invalid_input` depuis sa livraison du 13/08
+    # (c46d81e) — livrée, testée, et inatteignable. Les tests d'alors vérifiaient que
+    # le champ était DÉCLARÉ ; ils décrivaient l'intention, pas le montage.
+    # Même patron que `node_rows.filter`, pour la même raison.
+    include: Optional[list[str] | str] = None
+
+    @field_validator("include", mode="after")
+    @classmethod
+    def _en_liste(cls, v):
+        """La query string normalisée UNE fois, ici, pour que le handler ne voie
+        jamais qu'une liste.
+
+        La virgule sépare : la forme répétée (`?include=a&include=b`) est
+        inutilisable en amont — l'adaptateur aplatit la query string et ne garde que
+        la DERNIÈRE valeur, donc `a` disparaîtrait sans un mot. Entre une syntaxe à
+        apprendre et une perte muette, on prend la syntaxe."""
+        if v is None:
+            return None
+        brut = v if isinstance(v, list) else str(v).split(",")
+        return [m for m in (str(x).strip() for x in brut) if m]
 
 
 class ProjectAudit(BaseModel):
@@ -1037,9 +1062,11 @@ CAPABILITIES += [
             "already have oto_project. Exists so a SCOPED api token can be granted one "
             "project and nothing else ({\"projects\": {\"12\": \"read\"}}), which the "
             "POST form cannot express — its target sits in the body. "
-            "Optional include=procedures adds the BODY of the linked procedures "
+            "Optional ?include=procedures adds the BODY of the linked procedures "
             "(title, version, body_md) so a reader can see the rule that produced a "
-            "record; omitted, the response is byte-for-byte unchanged."
+            "record; omitted, the response is byte-for-byte unchanged. Ask for "
+            "several with ONE comma-separated value (?include=spine,procedures) — "
+            "repeating the parameter keeps only the last one."
         ),
         mcp=None,
         # `:int` et non `{project_id}` nu : le motif de portée (`token_scopes`)
