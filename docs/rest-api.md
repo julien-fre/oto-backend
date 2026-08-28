@@ -292,6 +292,29 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - CORS : `oto.ninja`, `app.oto.ninja`, `dashboard.oto.ninja` (+ localhosts dev) — défaut dans `_allowed_origins`, override `OTO_MCP_CORS_ORIGINS`. `account.oto.zone` retiré (surface compte décommissionnée → dashboard.oto.ninja)
 - Même `JWTVerifier` que `/mcp` — partage l'audience `https://mcp.oto.ninja/mcp`
 
+## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
+
+L'adaptateur verse la query string telle quelle — `dict(request.query_params)`, donc **des
+chaînes**. Pydantic coerce `str`→`int`/`bool`, **jamais `str`→`list`** : un `Input` qui
+déclare `list[...]` sur une capacité liée en `GET`/`DELETE` répond `400 invalid_input`, et
+le refus ne nomme même pas le champ. `?include=procedures` sur `me.project_read` a vécu
+ainsi quinze jours — déclaré, testé, documenté, inatteignable (livré le 13/08 par
+`c46d81e`, réparé le 28/08 par `22b7dc9`) : les tests d'alors vérifiaient que le champ
+était DÉCLARÉ, personne n'avait tapé l'URL.
+
+**Le patron de la maison** : déclarer `Optional[list[str] | str]` — c'est la forme RÉELLE
+de l'entrée, pas une facilité — et normaliser une fois, au bord ; ou poser un
+`field_validator(mode="before")` qui découpe. **Séparateur = la virgule** : la forme
+répétée `?k=a&k=b` est inutilisable, `dict(query_params)` l'aplatit et ne garde que la
+DERNIÈRE valeur, donc `a` disparaîtrait sans un mot. Entre une syntaxe à apprendre et une
+perte muette, on prend la syntaxe.
+
+**Garde au seam** : `tests/test_rest_query_list_fields.py` balaye le registre, exige une
+**valeur d'exemple valide** par champ liste (`EXEMPLES`) et exerce le vrai handler avec
+cette URL. Un champ liste neuf sans exemple fait rouge — c'est cette ligne qui oblige à
+taper l'URL une fois, l'étape qui a manqué à #367. Trois champs concernés au 28/08 :
+`me.project_read.include`, `me.search.kinds`, `me.node.rows.filter`, tous atteignables.
+
 ## Descriptif OpenAPI — `GET /openapi.json` (aussi `/api/openapi.json`)
 
 **Sans auth**, comme `/api/mcp/catalog` : un descriptif décrit des FORMES, aucune valeur.
