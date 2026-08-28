@@ -204,3 +204,75 @@ def test_rejouer_le_boot_est_idempotent(live):
                          (org,)).fetchone()["n"]
     assert n == 1, "rejouer le boot ne duplique rien"
     assert db_billing.list_billing_payments(org)[0]["amount_ht"] == 1900
+
+
+# ── la capacité, de bout en bout ─────────────────────────────────────────────
+
+def _ctx(org: int):
+    from oto_mcp.capabilities._types import ResolvedCtx
+    return ResolvedCtx(sub="u-test", org_id=org)
+
+
+def test_la_capacite_normalise_ce_qu_elle_ecrit(live):
+    """Un formulaire reçoit ce qu'on y colle : un pays en minuscules, un numéro de
+    TVA recopié d'un PDF avec ses espaces et ses points, des libellés à rallonge.
+    La normalisation se fait AVANT l'écriture — une identité stockée doit être
+    exploitable telle quelle par la règle, sinon le refus surviendrait au moment du
+    paiement, c'est-à-dire trop tard pour être utile."""
+    from oto_mcp.capabilities import billing_identity as cap
+
+    org = _org()
+    vue = cap._identity_set(_ctx(org), cap.IdentityInput(
+        legal_name=" ACME SAS ", country_code="be", vat_number="be 0123.456789",
+        address_line=" 2 rue Neuve ", postal_code=" 1000 ", city=" Bruxelles "))
+
+    assert vue["identity"]["country_code"] == "BE"
+    assert vue["identity"]["vat_number"] == "BE0123456789"
+    assert vue["identity"]["legal_name"] == "ACME SAS"
+    assert vue["missing"] == []
+    assert (vue["vat_scheme"], vue["vat_rate_bps"]) == ("reverse_charge", 0)
+    # …et la lecture rend exactement la même vue (même forme des deux côtés).
+    assert cap._identity_get(_ctx(org), cap.NoInput()) == vue
+
+
+def test_une_saisie_fautive_est_un_400_un_etat_bloquant_un_409(live):
+    """Deux natures de refus, deux codes. Le pays inconnu et le numéro d'un autre
+    pays sont des SAISIES à corriger (400) ; l'identité absente et le particulier
+    européen sont des ÉTATS de l'org (409) — le corps de l'appel est correct, c'est
+    l'org qui n'est pas en état d'être débitée."""
+    from oto_mcp.capabilities import billing_identity as cap
+    from oto_mcp.capabilities._types import AuthzDenied
+
+    org = _org()
+    for champs in ({"country_code": "XX"},
+                   {"country_code": "BE", "vat_number": "FR12345678901"}):
+        with pytest.raises(AuthzDenied) as e:
+            cap._identity_set(_ctx(org), cap.IdentityInput(
+                legal_name="X", address_line="a", postal_code="b", city="c", **champs))
+        assert e.value.status == 400
+
+
+def test_une_societe_allemande_s_enregistre_mais_ne_peut_pas_souscrire(live):
+    """La frontière du lot, et elle est délibérée : on ne refuse pas d'ENREGISTRER
+    l'identité d'une société allemande — elle est parfaitement valide. On refuse de
+    la DÉBITER sans numéro de TVA, faute de guichet OSS. La fiche est donc acceptée,
+    et `vat_blocked` prévient l'écran AVANT que l'utilisateur n'atteigne le tunnel —
+    plutôt que de lui faire remplir un formulaire pour le refuser au paiement."""
+    from oto_mcp.capabilities import billing_identity as cap
+
+    org = _org()
+    vue = cap._identity_set(_ctx(org), cap.IdentityInput(
+        legal_name="ACME GmbH", country_code="DE", address_line="Hauptstr. 1",
+        postal_code="10115", city="Berlin"))
+
+    assert vue["identity"]["country_code"] == "DE"
+    assert vue["missing"] == [], "l'identité est COMPLÈTE — ce n'est pas ça qui bloque"
+    assert vue["vat_scheme"] is None
+    assert vue["vat_blocked"] == "vat_consumer_unsupported"
+
+    # …et le même client AVEC un numéro passe en autoliquidation, sans rien d'autre
+    # à changer : c'est bien le numéro qui manquait, pas le pays qui était exclu.
+    vue = cap._identity_set(_ctx(org), cap.IdentityInput(
+        legal_name="ACME GmbH", country_code="DE", vat_number="DE123456789",
+        address_line="Hauptstr. 1", postal_code="10115", city="Berlin"))
+    assert (vue["vat_scheme"], vue["vat_blocked"]) == ("reverse_charge", None)
