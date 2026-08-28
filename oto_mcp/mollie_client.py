@@ -1,7 +1,8 @@
 """Client HTTP mince vers l'API Mollie v2 (ADR 0043 — PSP, bascule Stancer→Mollie).
 
 Périmètre = ce que le billing par org consomme : customers, payments (first =
-page de checkout hébergée / recurring = rejeu MIT off-session), mandates
+page de checkout hébergée / recurring = rejeu MIT off-session, update = amende
+l'URL de retour d'un checkout encore ouvert), mandates
 (card OU SEPA, créés par le premier paiement). Surface calquée sur le spec
 officiel (https://docs.mollie.com/reference).
 
@@ -193,6 +194,26 @@ def create_recurring_payment(
 
 def get_payment(payment_id: str) -> dict:
     return _req("GET", f"/v2/payments/{payment_id}")
+
+
+def update_payment(payment_id: str, *, redirect_url: Optional[str] = None,
+                   webhook_url: Optional[str] = None,
+                   description: Optional[str] = None,
+                   metadata: Optional[dict] = None) -> dict:
+    """Amende un paiement encore ouvert (`PATCH /v2/payments/{id}`).
+
+    Le seul usage : DATER l'URL de retour de l'identifiant du paiement (#493).
+    Mollie n'ajoute rien à `redirectUrl`, et cette URL se fixe à la CRÉATION — où
+    l'id du paiement n'existe pas encore. D'où la ré-écriture juste après, tant que
+    le paiement est `open` : le navigateur revient alors en disant lequel il vient
+    de conclure, au lieu de laisser `confirm` deviner.
+    """
+    body: dict[str, Any] = {}
+    for k, v in (("redirectUrl", redirect_url), ("webhookUrl", webhook_url),
+                 ("description", description), ("metadata", metadata)):
+        if v is not None:
+            body[k] = v
+    return _req("PATCH", f"/v2/payments/{payment_id}", json=body)
 
 
 def checkout_url(payment: dict) -> Optional[str]:

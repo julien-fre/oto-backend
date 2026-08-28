@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS billing_payments (
     currency TEXT NOT NULL DEFAULT 'eur',
     payment_intent_id TEXT,                 -- tr_xxx (premier paiement, page hébergée)
     payment_id TEXT,                        -- tr_xxx (MIT rejoué / id résolu)
+    customer_id TEXT,                       -- cst_xxx (le customer Mollie de CETTE tentative)
     status TEXT NOT NULL,                   -- statut Mollie observé
     attempt SMALLINT NOT NULL DEFAULT 1,    -- n° de tentative (retries du runner)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
