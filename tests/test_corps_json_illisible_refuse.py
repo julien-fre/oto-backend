@@ -117,7 +117,7 @@ def test_l_adaptateur_refuse_un_corps_illisible():
     async def _auth(request, verifier):
         return "u-1", None
 
-    from oto_mcp.api_routes_base import _json, _json_error
+    from oto_mcp.api.base import _json, _json_error
     handler = RA._make_handler(cap, cap.rest, object(), _auth, _json, _json_error)
 
     resp = asyncio.run(handler(_req(b'{"label": ', path="/api/test/echo")))

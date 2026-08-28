@@ -1,6 +1,6 @@
 """Capacités « le tableau lui-même » : lister, créer, renommer, supprimer, ouvrir (#302).
 
-Cinq chemins qui vivaient en routes écrites à la main (`api_routes_datastore.py`) et
+Cinq chemins qui vivaient en routes écrites à la main (`api/datastore.py`) et
 n'avaient donc **ni schéma d'entrée ni schéma de sortie** : un intégrateur qui génère
 son client depuis `/api/openapi.json` n'en tirait rien, alors que le datastore est
 l'écran central du produit. Mêmes chemins, mêmes réponses, mêmes refus — c'est une

@@ -1,6 +1,6 @@
 """La messagerie hébergée côté membre, en capacité : mêmes chemins, MÊMES REPLIS.
 
-Les quatre routes `/api/me/unipile*` ont quitté `api_routes_connectors.py` pour
+Les quatre routes `/api/me/unipile*` ont quitté `api/connectors.py` pour
 `capabilities/unipile_me.py` (27/08). Le webhook, lui, RESTE écrit à la main : Unipile
 l'appelle sans en-tête d'auth, et l'adaptateur REST authentifie toujours.
 

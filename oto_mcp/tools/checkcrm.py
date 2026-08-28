@@ -27,7 +27,7 @@ from .. import access
 # helpers are private to that file, so this is duplicated rather than reaching
 # into another connector's internals).
 #
-# Cap derived from the REST tool-invoke path's hard timeout (`api_routes.py`,
+# Cap derived from the REST tool-invoke path's hard timeout (`api/routes.py`,
 # `asyncio.wait_for(_invoke(), timeout=45)`): at ~0.15s courtesy delay between
 # calls plus enrichment's own per-item latency, this aims for a comfortable
 # margin under 45s rather than cutting it close.

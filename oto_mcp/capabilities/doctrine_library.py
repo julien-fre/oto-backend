@@ -6,7 +6,7 @@ org). Co-déclarées MCP + REST (ADR 0009) :
 
 - lecture (`library.list`/`library.get`) = tout user authentifié (`SUB_ONLY`) ;
   la surface ANONYME pour la vitrine est servie à part par des routes écrites à
-  la main dans `api_routes` (l'adaptateur REst des capacités authentifie toujours).
+  la main dans `api.routes` (l'adaptateur REst des capacités authentifie toujours).
 - publication / fork = org_admin de l'**org active** (injectée par `ORG_MEMBER`,
   jamais d'un param client → verrou IDOR ; l'org est REQUISE même pour un
   platform-operator, cf. `_require_org_admin`) ; un publieur **platform-operator**

@@ -1,7 +1,7 @@
 """Capacités monitoring / investigation plateforme (ADR 0009/0017, console ADR 0047).
 
 Les lentilles d'observabilité `/api/admin/monitoring/*` migrent des routes écrites
-main d'`api_routes.py` vers des capacités co-déclarées — mêmes chemins, même autz
+main d'`api/routes.py` vers des capacités co-déclarées — mêmes chemins, même autz
 (PLATFORM_ADMIN), mêmes payloads (contrat dashboard inchangé) — et gagnent leur
 face MCP via la console consolidée `oto_admin_monitoring(op=…)` : l'agent
 plateforme investigue EN SESSION (drill-down agrégats → journal filtré → fiche

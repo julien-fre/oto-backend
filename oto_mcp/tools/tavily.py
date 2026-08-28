@@ -32,7 +32,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 from ..connectors import verify as connector_verify
 
-# Le chemin REST d'invocation d'outil coupe à 45 s (`api_routes.py`) : un crawl
+# Le chemin REST d'invocation d'outil coupe à 45 s (`api/routes.py`) : un crawl
 # synchrone doit rendre avant. Au-delà, c'est `firecrawl_crawl` (job asynchrone).
 _CRAWL_TIMEOUT_S = 40
 _CRAWL_MAX_PAGES = 100

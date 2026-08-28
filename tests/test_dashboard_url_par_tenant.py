@@ -117,15 +117,19 @@ def test_aucune_adresse_de_tableau_de_bord_nest_ecrite_en_dur():
     """TRIPWIRE — une adresse en dur redevient invisible à la première relecture, et
     c'est exactement comme ça que la prod a servi la preprod."""
     import pathlib
+    # Chemins RELATIFS à `oto_mcp/` : depuis le rangement par domaine, un nom de
+    # fichier ne dit plus de quel module il s'agit (`base.py` en désignerait
+    # plusieurs).
     autorises = {  # commentaires, listes d'origines CORS : jamais un lien rendu
-        # `api_routes_base.py` depuis le 2026-08-27 : la liste d'origines CORS
-        # (`_allowed_origins`) a suivi les primitives partagées hors d'`api_routes.py`
+        # `api/base.py` depuis le 2026-08-27 : la liste d'origines CORS
+        # (`_allowed_origins`) a suivi les primitives partagées hors d'`api/routes.py`
         # lors de la découpe par domaine. Même raison, autre fichier.
-        "api_routes_base.py", "public_doc_page.py",
+        "api/base.py", "public_doc_page.py",
     }
     fautifs = []
-    for f in pathlib.Path("oto_mcp").rglob("*.py"):
-        if f.name in autorises:
+    racine = pathlib.Path("oto_mcp")
+    for f in racine.rglob("*.py"):
+        if f.relative_to(racine).as_posix() in autorises:
             continue
         for n, ligne in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
             nu = ligne.strip()

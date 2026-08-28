@@ -48,7 +48,7 @@ explicite de l'appelant.
 delete) et plafonne à **5 requêtes/seconde par base** ; un 429 impose **30 secondes**
 d'attente. Le client oto-core ne boucle pas : c'est ce module qui découpe en lots de 10,
 espace les requêtes de 200 ms et plafonne à `_MAX_ITEMS` records par appel — plafond
-DÉRIVÉ du budget d'invoke de 45 s (`api_routes.py`), pas deviné. Sur 429 on **n'attend
+DÉRIVÉ du budget d'invoke de 45 s (`api/routes.py`), pas deviné. Sur 429 on **n'attend
 pas** les 30 s (l'appel mourrait en timeout sans dire ce qui a été écrit) : on s'arrête et
 on rend un reçu partiel qui NOMME ce qui est passé et ce qui ne l'est pas.
 """
@@ -83,7 +83,7 @@ _BASE_OPS = get_args(_BaseOp)
 # une valeur qui gouverne le découpage. `test_batch_size_matches_the_core_client` casse
 # si oto-core change d'avis.
 _BATCH_SIZE = 10
-# Plafond d'items par appel, DÉRIVÉ du budget d'invoke (45 s, `api_routes.py`) :
+# Plafond d'items par appel, DÉRIVÉ du budget d'invoke (45 s, `api/routes.py`) :
 # 200 records = 20 requêtes de 10 × (200 ms de courtoisie + ~300 ms de latence) ≈ 10 s.
 _MAX_ITEMS = 200
 # 5 requêtes/seconde par base côté Airtable → 200 ms entre deux requêtes.

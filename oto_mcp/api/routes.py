@@ -12,11 +12,11 @@ Les handlers vivent par DOMAINE, chacun une fonction de module appelable seule :
 
 | module                     | domaine                                              |
 | -------------------------- | ---------------------------------------------------- |
-| `api_routes_base.py`       | primitives partagées (auth, CORS, JSON, OPTIONS, `bind`) |
-| `api_routes_public.py`     | surfaces sans auth : favicon, catalogues, bibliothèques, invitations, docs partagés |
-| `api_routes_media.py`      | avatar user, logo d'org (multipart)                   |
-| `api_routes_projects.py`   | fichiers bruts d'un projet, export ZIP                |
-| `api_routes_uploads.py`    | réception d'un upload signé (`/api/upload/{token}`)   |
+| `api/base.py`       | primitives partagées (auth, CORS, JSON, OPTIONS, `bind`) |
+| `api/public.py`     | surfaces sans auth : favicon, catalogues, bibliothèques, invitations, docs partagés |
+| `api/media.py`      | avatar user, logo d'org (multipart)                   |
+| `api/projects.py`   | fichiers bruts d'un projet, export ZIP                |
+| `api/uploads.py`    | réception d'un upload signé (`/api/upload/{token}`)   |
 
 Les modules ANTÉRIEURS à la découpe gardent leur forme : datastore, sirene,
 accords, atlassian, folk, zoho, salesforce, connectors, contact, billing —
@@ -50,25 +50,32 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.requests import Request
 from starlette.concurrency import run_in_threadpool
 
-from . import (api_routes_accords, api_routes_atlassian, api_routes_billing,
-               api_routes_connectors, api_routes_contact, api_routes_datastore,
-               api_routes_folk, api_routes_salesforce, api_routes_sirene,
-               api_routes_zoho, db, tenancy)
-from .capabilities import _rest_adapter as _cap_rest_adapter
-from .capabilities import registry as _cap_registry
+from .. import db, tenancy
+from . import (accords as api_routes_accords,
+               atlassian as api_routes_atlassian,
+               billing as api_routes_billing,
+               connectors as api_routes_connectors,
+               contact as api_routes_contact,
+               datastore as api_routes_datastore,
+               folk as api_routes_folk,
+               salesforce as api_routes_salesforce,
+               sirene as api_routes_sirene,
+               zoho as api_routes_zoho)
+from ..capabilities import _rest_adapter as _cap_rest_adapter
+from ..capabilities import registry as _cap_registry
 # Primitives partagées (auth, CORS, réponses JSON, préflight, `bind`) : elles ont
-# quitté ce fichier pour `api_routes_base.py` le 2026-08-27, sous les modules de
+# quitté ce fichier pour `base.py` le 2026-08-27, sous les modules de
 # domaine qui les appellent (sinon l'import serait circulaire). RÉ-EXPORTÉES ici :
-# `api_routes._authenticate` / `_cors_headers` / `_json` … restent valides.
-from .api_routes_base import (  # noqa: F401 — ré-export de compatibilité
+# `api.routes._authenticate` / `_cors_headers` / `_json` … restent valides.
+from .base import (  # noqa: F401 — ré-export de compatibilité
     AuthFn, _allowed_origins, _authenticate, _cors_headers, _json, _json_error,
     _maybe_view_as, bind, options_handler)
 # Handlers par DOMAINE (découpe du 2026-08-27) : chaque module porte des fonctions
 # de module, testables seules ; la table de routes ci-dessous reste ici.
-from . import api_routes_public as public
-from . import api_routes_media as media
-from . import api_routes_projects as projects
-from . import api_routes_uploads as uploads
+from . import public
+from . import media
+from . import projects
+from . import uploads
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +193,7 @@ class ViewAsMiddleware:
         sub, err = await _authenticate(request, self._verifier, apply_view_as=False)
         if err:  # non authentifié → la route rendra son 401 ; pas de view-as
             return await self.app(scope, receive, send)
-        from . import access, db, group_store, org_store, roles, session_org
+        from .. import access, db, group_store, org_store, roles, session_org
         read_only = False  # consultation en LECTURE SEULE (view-as user OU inspection org opérateur)
         if view_user:  # « voir en tant que » : opérateur plateforme + cible existe + LECTURE SEULE
             if not await run_in_threadpool(access.is_platform_operator, sub):

@@ -47,7 +47,7 @@ READ, WRITE = "read", "write"
 # `write` contient `read` : un jeton en écriture lit aussi.
 _IMPLIES = {READ: frozenset({READ}), WRITE: frozenset({READ, WRITE})}
 
-# Portée du jeton de la requête courante — posée par `api_routes._authenticate` à
+# Portée du jeton de la requête courante — posée par `api.routes._authenticate` à
 # CHAQUE requête (None comprise : jamais de valeur rémanente d'une requête voisine).
 # ContextVar = par tâche asyncio, donc par requête. Lue par les handlers qui doivent
 # FILTRER leur réponse (la liste des tableaux) plutôt que la refuser en bloc.

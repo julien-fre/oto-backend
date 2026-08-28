@@ -25,8 +25,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from .auth import zoho as zoho_oauth
-from . import config
+from ..auth import zoho as zoho_oauth
+from .. import config
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ def make_routes(
         Le défaut reste `/console/connectors` À L'OCTET PRÈS : c'est un chemin propre
         au dashboard, que le patron générique `return_url` ne connaît pas — y
         retomber renverrait l'appelant historique sur `/connectors`."""
-        from .auth import flow as oauth_flow
+        from ..auth import flow as oauth_flow
         if oauth_flow.resolve_return_app(return_app):
             return oauth_flow.return_url(return_app, suffix, org=org_id)
         return f"{_app_url()}/console/connectors{suffix}"

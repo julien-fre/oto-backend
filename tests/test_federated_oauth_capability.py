@@ -1,7 +1,7 @@
 """Les verbes du consentement OAuth per-user, en capacités : mêmes chemins, mêmes codes.
 
-Dix routes `/api/{atlassian,folkmcp,google}/oauth*` ont quitté `api_routes_atlassian.py`,
-`api_routes_folk.py` et `api_routes_datastore.py` pour `capabilities/federated_oauth.py`
+Dix routes `/api/{atlassian,folkmcp,google}/oauth*` ont quitté `api/atlassian.py`,
+`api/folk.py` et `api/datastore.py` pour `capabilities/federated_oauth.py`
 (27/08). Les **callbacks** restent écrits à la main : le fournisseur y redirige le
 navigateur (302, sans auth), l'adaptateur REST authentifie toujours et répond en JSON.
 

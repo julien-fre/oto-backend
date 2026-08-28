@@ -32,7 +32,7 @@ connecter Google (plus de `412 google_not_connected`). Le partage est **DB-only*
 permission Drive). `data_url` renvoie un **deep-link dashboard** (`/console/data`),
 pas une URL de Sheet. Code : `datastore/core.py` (`DatastorePg`) + `tools/datastore.py`
 (face MCP) + `capabilities/datastore_*.py` (face REST, depuis #302 — plus
-`api_routes_datastore.py`, qui n'en porte plus rien) + fonctions `db.datastore_*`.
+`api/datastore.py`, qui n'en porte plus rien) + fonctions `db.datastore_*`.
 
 > **Export/sync vers un provider tiers** (Sheets/Docs/Notion — édition humaine,
 > garantie de sortie) = projection optionnelle, **déférée à otomata#29**. C'est
@@ -686,7 +686,7 @@ exécuter une déclaration n'est pas deviner une convention.
 ## La face REST est 100 % DÉRIVÉE depuis le 2026-08-12 (#302)
 
 > **La face REST est 100 % DÉRIVÉE depuis le 2026-08-12 (#302)** : les 17 routes
-> écrites à la main d'`api_routes_datastore.py` (10 chemins) sont des capacités
+> écrites à la main d'`api/datastore.py` (10 chemins) sont des capacités
 > (`capabilities/datastore_{namespaces,rows,schema,sharing}.py`, aux côtés de
 > `claim`/`activity`/`columns` déjà migrés) — mêmes chemins, mêmes réponses, **mêmes
 > codes** (201 sur les créations), mais entrée et sortie déclarées : les 22 opérations

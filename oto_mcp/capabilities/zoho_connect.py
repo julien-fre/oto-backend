@@ -7,7 +7,7 @@ sont ramenés ici, et gagnent au passage une **face MCP** : l'agent peut fabriqu
 lien de consentement et le tendre à l'utilisateur, ce qui est précisément le geste
 utile en conversation.
 
-Ce qui RESTE en route écrite à la main (`api_routes_zoho.py`) : le **callback**.
+Ce qui RESTE en route écrite à la main (`api/zoho.py`) : le **callback**.
 Zoho y redirige le NAVIGATEUR — sans en-tête d'auth, avec une réponse 302 — ce
 qu'un contrat de capacité (JSON + autz) ne peut pas exprimer. C'est déclaré comme
 tel dans `test_rest_modules_are_capabilities.py`.

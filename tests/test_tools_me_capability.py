@@ -96,7 +96,7 @@ def test_registry_precede_le_motif_generique():
     """Le seul test qui compte pour l'ordre : on résout l'URL contre le VRAI routeur.
     Relire l'ordre du code prouverait que le code n'a pas bougé, pas qu'il route bien."""
     from starlette.routing import Match, Router
-    from oto_mcp import api_routes
+    from oto_mcp.api import routes as api_routes
 
     router = Router(routes=api_routes.make_routes(object(), mcp_instance=None))
     scope = {"type": "http", "method": "GET", "path": "/api/me/tools/registry",

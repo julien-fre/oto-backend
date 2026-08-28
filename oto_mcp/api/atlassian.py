@@ -19,8 +19,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from .auth import atlassian as atlassian_oauth
-from . import config
+from ..auth import atlassian as atlassian_oauth
+from .. import config
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
@@ -49,7 +49,7 @@ def make_routes(
         PRÈS (`/?atlassian=<statut>`). On ne bascule PAS sur `redirect_for`, dont le
         repli générique (`/connectors?connector=…`) changerait l'atterrissage de
         l'appelant historique."""
-        from . import links
+        from .. import links
         cible = links.link_for("connector_return", sub=sub, connector="atlassian") if sub else None
         return cible or f"{{_app_url()}}/?atlassian={{statut}}"
 

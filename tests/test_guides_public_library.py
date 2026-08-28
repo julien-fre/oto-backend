@@ -20,9 +20,10 @@ import types
 
 import pytest
 
-# Les handlers publics ont quitté `api_routes` pour `api_routes_public` le
-# 2026-08-27 ; la TABLE de routes, elle, reste assemblée par `api_routes`.
-from oto_mcp import api_routes, api_routes_public
+# Les handlers publics ont quitté `api.routes` pour `api/public` le
+# 2026-08-27 ; la TABLE de routes, elle, reste assemblée par `api.routes`.
+from oto_mcp.api import routes as api_routes
+from oto_mcp.api import public as api_routes_public
 
 
 def _req(path: str, **params):

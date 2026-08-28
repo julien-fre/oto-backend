@@ -16,7 +16,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
-from . import billing, mollie_client
+from .. import billing, mollie_client
 
 
 def make_routes(options_handler: Callable[[Request], Awaitable[Response]]) -> list[Route]:

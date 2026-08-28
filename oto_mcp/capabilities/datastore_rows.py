@@ -1,6 +1,6 @@
 """Capacités « les lignes » : page, fiche, écriture, suppression, file, agrégat (#302).
 
-Huit chemins qui vivaient en routes écrites à la main (`api_routes_datastore.py`).
+Huit chemins qui vivaient en routes écrites à la main (`api/datastore.py`).
 C'est le cœur de l'écran datastore, et c'était la plus grosse zone d'ombre du contrat
 d'API : ni entrée ni sortie déclarées, donc rien à générer chez un intégrateur.
 

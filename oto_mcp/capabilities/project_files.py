@@ -1,6 +1,6 @@
 """Documents bruts d'un projet exposés à l'AGENT (carte « Autre document », ADR 0032 §3).
 
-MCP-only : la face REST (upload multipart + list + delete) vit dans `api_routes`
+MCP-only : la face REST (upload multipart + list + delete) vit dans `api.routes`
 (corps binaire, hors couche capacité ADR 0009). Ici on donne à Claude la LECTURE
 de ce qui est attaché au projet — titre/description/résumé + une URL de
 téléchargement signée — et la SUPPRESSION (purger un doc périmé sans surface

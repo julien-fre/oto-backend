@@ -25,14 +25,14 @@ def _declarations():
     # EXACTEMENT ce que charge le boot, ni plus ni moins.
     #
     # `register_all` couvre les connecteurs à outils. Les fédérations OAuth, elles,
-    # sont importées au boot par `api_routes` en montant leurs routes : on importe
+    # sont importées au boot par `api.routes` en montant leurs routes : on importe
     # donc CE module, pas les leurs. La nuance n'est pas cosmétique — importer un
     # module de complaisance a masqué un vrai défaut le 12/08 : le flux hébergé était
     # déclaré dans un module que RIEN n'importe au boot (import paresseux dans les
     # handlers). Le test le voyait, la production non, et le catalogue de prod ne
     # l'a jamais servi. Un banc qui charge plus que le boot ne garde rien : il
     # certifie une couverture qui n'existe pas.
-    from oto_mcp import api_routes  # noqa: F401
+    from oto_mcp.api import routes as api_routes  # noqa: F401
 
 
 # --- le contrat du descripteur -------------------------------------------------

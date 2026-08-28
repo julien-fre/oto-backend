@@ -7,11 +7,11 @@ en phase.
 
 Il ne scanne que `oto_mcp/tools/` : une route **REST-only** passait donc à travers,
 alors qu'elle crée la même dette en miroir — le jour où l'agent en a besoin, on
-écrit un tool MCP à côté. Angle mort constaté le 2026-07-28 (`api_routes_zoho.py`
+écrit un tool MCP à côté. Angle mort constaté le 2026-07-28 (`api/zoho.py`
 ajouté à la main le jour même de la convergence, sans que rien ne le signale).
 
 ⚠️ **Ce garde-fou avait lui-même un angle mort, fermé le 2026-08-11 (#286).** Son
-glob disait `api_routes_*.py` — qui ne matche PAS `api_routes.py`, le fichier qui
+glob disait `api_routes_*.py` — qui ne matche PAS `api/routes.py`, le fichier qui
 porte le plus de routes. Trente-six chemins y vivaient invisibles pendant que le
 docstring promettait « la CI casse ». Un garde-fou qui couvre 45 chemins sur 81 en
 annonçant qu'il les couvre tous est pire qu'absent : on cesse de regarder. Le glob
@@ -33,10 +33,7 @@ La liste DEBT doit décroître, jamais s'étendre.
 """
 from __future__ import annotations
 
-import ast
-import pathlib
-
-ROOT = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp"
+from oto_mcp.api import routes as api_routes
 
 NATURE, DEBT = "nature", "debt"
 
@@ -70,7 +67,7 @@ _KNOWN: dict[str, str] = {
     # --- DETTE : verbes de dashboard écrits à la main, à migrer en capacités.
     # ⚠️ La MESSAGERIE HÉBERGÉE côté membre a quitté cette liste le 2026-08-27 :
     # `/api/me/unipile{,/connect,/reconcile}` sont des capacités
-    # (`capabilities/unipile_me.py`). `api_routes_connectors.py` ne porte plus QUE le
+    # (`capabilities/unipile_me.py`). `api/connectors.py` ne porte plus QUE le
     # webhook ci-dessus — le premier module de ce chantier dont il ne reste qu'une
     # route, et une route de NATURE.
     # (`/api/admin/unipile/seats` a quitté cette liste le 15/08 : inventaire ET
@@ -108,7 +105,7 @@ _KNOWN: dict[str, str] = {
     #  comptée dans `tests/test_connector_flow.py::_NOMMES_TOLERES`.)
 
     # ======================================================================
-    # `api_routes.py` — LE FICHIER PRINCIPAL, hors radar jusqu'au 2026-08-11
+    # `api/routes.py` — LE FICHIER PRINCIPAL, hors radar jusqu'au 2026-08-11
     # ======================================================================
     # Le glob ne matchait que `api_routes_<x>.py` : ces 36 chemins n'ont jamais été
     # vus (#286). Ils sont classés ici pour la PREMIÈRE fois — c'est de l'ancien
@@ -212,21 +209,41 @@ _KNOWN: dict[str, str] = {
 }
 
 
-def _handwritten_routes() -> dict[str, str]:
-    """`{chemin: module}` de toute `Route("…")` déclarée dans un `api_routes*.py`.
+class _FauxVerifieur:
+    """`make_routes` n'a besoin que d'un objet à passer : rien n'est vérifié ici."""
 
-    ⚠️ Le glob n'a PAS d'underscore avant l'étoile, et c'est le tout du correctif
-    #286 : `api_routes_*.py` excluait `api_routes.py`, le fichier principal.
+    def verify_token(self, token):  # pragma: no cover — jamais appelé
+        return None
+
+
+def _handwritten_routes() -> dict[str, str]:
+    """`{chemin: module}` des routes que le serveur monte À LA MAIN.
+
+    ⚠️ **Lu dans la TABLE SERVIE, pas dans un motif de nom de fichier (2026-08-28).**
+    Ce relevé se faisait par glob (`api_routes*.py`) + scan AST des `Route("…")`. Ce
+    glob a déjà eu un angle mort — `api_routes_*.py` excluait `api/routes.py`, le
+    fichier qui portait le plus de chemins, et le garde-fou a promis de couvrir 81
+    chemins en n'en voyant que 45 (#286). Un motif de NOM ne survit ni à un
+    renommage ni à un rangement : c'est le rangement par domaine (`api_routes*.py` →
+    `api/`) qui l'a re-cassé.
+
+    Le critère est désormais une propriété du RÉSULTAT, et elle dit exactement ce
+    qu'on veut dire : **une route est écrite à la main quand son endpoint est défini
+    dans `oto_mcp/api/`** — les routes dérivées d'une capacité, elles, sortent toutes
+    de `capabilities/_rest_adapter`. Le préflight partagé (`options_handler`, monté
+    par `bind` pour chaque chemin) n'est pas une route déclarée : il est écarté.
+
+    Équivalence VÉRIFIÉE au moment de la bascule : les deux mécanismes rendaient le
+    même ensemble de 36 chemins, à l'élément près.
     """
     out: dict[str, str] = {}
-    for path in sorted(ROOT.glob("api_routes*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                    and node.func.id == "Route" and node.args
-                    and isinstance(node.args[0], ast.Constant)
-                    and isinstance(node.args[0].value, str)):
-                out[node.args[0].value] = path.name
+    for route in api_routes.make_routes(_FauxVerifieur(), mcp_instance=None):
+        module = getattr(route.endpoint, "__module__", "")
+        if not module.startswith("oto_mcp.api"):
+            continue                       # dérivée d'une capacité : pas écrite ici
+        if getattr(route.endpoint, "__name__", "") == "options_handler":
+            continue                       # préflight partagé, monté par `bind`
+        out[route.path] = module
     return out
 
 

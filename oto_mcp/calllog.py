@@ -81,7 +81,7 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
     `tool` doit nommer le geste dans le vocabulaire de la surface MCP (`data_write`,
     `data_delete_row`, `data_release`) : les lectures du journal (parcours d'une
     ligne, activité d'un tableau) filtrent là-dessus, pas sur la route HTTP.
-    ⚠️ Distinct de la ligne de route posée par `api_routes.RestCallLogger`
+    ⚠️ Distinct de la ligne de route posée par `api.routes.RestCallLogger`
     (`tool='PATCH /api/…'`, sans args) : celle-là est de la télémétrie de surface,
     celle-ci porte le SENS du geste (quelle ligne, quels champs, quel état avant/après).
     """

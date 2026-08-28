@@ -34,7 +34,7 @@ rien ne rendait navigable et que rien ne tenait.
   domaine, ils font trois fichiers.
 - **Le module « nu » d'une famille devient `<package>/core.py`** — il n'a pas de
   préfixe à perdre (`datastore.py` → `datastore/core.py`). Exception nommée :
-  `api_routes.py` → `api/routes.py`, parce que ce module EST la table de routes.
+  `api/routes.py` → `api/routes.py`, parce que ce module EST la table de routes.
 - **Un déplacement est PUR** : `git mv`, imports mis à jour dans le même lot, et
   **aucun ré-export de compatibilité** — ni stub à l'ancien chemin, ni `import *`.
   Un chemin mort qui répond encore est un chemin qui ne meurt jamais.
@@ -85,7 +85,7 @@ rien ne rendait navigable et que rien ne tenait.
 - **Un garde-fou d'inventaire s'exerce sur le MONTAGE RÉEL, jamais sur une fixture
   partielle.** Trois cas en deux jours (11-12/08) où le banc du garde-fou divergeait du
   réel et le garde-fou **mentait par omission** : le glob anti-routes-manuelles voyait
-  45 chemins sur 81 (`api_routes_*.py` rate `api_routes.py`) ; `openapi.build()` local
+  45 chemins sur 81 (`api_routes_*.py` rate `api/routes.py`) ; `openapi.build()` local
   rend 138 opérations quand le document SERVI en porte 233 (les routes main n'existent
   que servies — **auditer le document servi, jamais le build**) ; l'inventaire des flux
   de connexion montait les tools sans les routes REST, or au boot réel ce sont les
@@ -308,7 +308,7 @@ rien ne rendait navigable et que rien ne tenait.
   pas de seed. L'absence est DÉCLARÉE dans `_SANS_LOGO_DE_MARQUE` (générique/maison :
   monogramme côté UI) + tripwire — sinon un oubli se confond avec un choix).
   Surface admin `/api/admin/connectors/activation`
-  (`api_routes_connectors.py`) + écran dashboard « connector activation ».
+  (`api/connectors.py`) + écran dashboard « connector activation ».
 - **Connecteur client-sensible = JAMAIS de code ici** : pont via le connecteur
   **`http` générique** (ADR 0037, amende 0034/0003/0011). Le connecteur historique
   **`bridge`** (`kind="remote"`, tools `bridge_describe`/`bridge_call`,

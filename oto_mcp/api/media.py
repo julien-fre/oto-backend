@@ -9,7 +9,7 @@ pydantic), d'où des routes écrites à la main. L'URL publique est persistée e
 logo.dev du domaine déclaré) : `org_store.effective_logo_url`.
 
 La table de routes (chemins, méthodes, ORDRE) reste assemblée dans
-`api_routes.make_routes` ; ce module ne porte que les handlers.
+`api.routes.make_routes` ; ce module ne porte que les handlers.
 """
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from . import db, org_store
-from .api_routes_base import _authenticate, _json, _json_error
+from .. import db, org_store
+from .base import _authenticate, _json, _json_error
 
 
 async def _read_upload(request: Request):
@@ -40,7 +40,7 @@ async def avatar_save(request: Request, *, verifier: JWTVerifier) -> JSONRespons
     data, err = await _read_upload(request)
     if err:
         return err
-    from . import media_store
+    from .. import media_store
     try:
         url = media_store.upload_image("avatars", sub, data, "")
     except media_store.MediaError as e:
@@ -59,14 +59,14 @@ async def avatar_clear(request: Request, *, verifier: JWTVerifier) -> JSONRespon
     old = (db.get_user(sub) or {}).get("avatar_url")
     db.set_avatar_url(sub, None)
     if old:
-        from . import media_store
+        from .. import media_store
         media_store.delete_by_url(old)
     return _json(request, {"ok": True})
 
 
 def _org_logo_gate(request: Request, sub: str):
     """Renvoie (org_id, err). 400 id invalide, 404 org inconnue, 403 non-admin."""
-    from . import roles
+    from .. import roles
     try:
         org_id = int(request.path_params["id"])
     except (ValueError, KeyError):
@@ -88,7 +88,7 @@ async def org_logo_save(request: Request, *, verifier: JWTVerifier) -> JSONRespo
     data, err = await _read_upload(request)
     if err:
         return err
-    from . import media_store
+    from .. import media_store
     try:
         url = media_store.upload_image("org-logos", str(org_id), data, "")
     except media_store.MediaError as e:
@@ -110,6 +110,6 @@ async def org_logo_clear(request: Request, *, verifier: JWTVerifier) -> JSONResp
     old = (org_store.get_org(org_id) or {}).get("logo_url")
     org_store.set_org_logo(org_id, None)
     if old:
-        from . import media_store
+        from .. import media_store
         media_store.delete_by_url(old)
     return _json(request, {"ok": True})

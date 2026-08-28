@@ -1,6 +1,6 @@
 """Images et fichiers de projet, en capacités : et le silence destructeur qu'on ferme.
 
-Cinq routes de forme JSON ont quitté `api_routes_media.py` / `api_routes_projects.py`
+Cinq routes de forme JSON ont quitté `api/media.py` / `api/projects.py`
 pour `capabilities/media_and_files.py` (27/08). Leurs quatre voisines — trois `POST`
 multipart et l'export ZIP — sont reclassées **NATURE** : l'adaptateur lit du JSON et
 répond en JSON, un corps binaire et une réponse `application/zip` sont hors du moule par

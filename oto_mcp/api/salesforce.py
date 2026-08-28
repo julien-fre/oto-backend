@@ -2,7 +2,7 @@
 Postman-style refresh-token acquisition (see salesforce_oauth.py's module
 docstring for the per-customer-Connected-App architecture this works around).
 
-Structure mirrors api_routes_folk.py / api_routes_atlassian.py:
+Structure mirrors api/folk.py / api/atlassian.py:
 - `GET /api/salesforce/oauth/callback` (no auth, Salesforce redirects) → exchange + persist
 
 Le `/start` n'est PAS ici : c'est une capacité (`capabilities/salesforce_connect.py`,
@@ -33,7 +33,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from .auth import salesforce as salesforce_oauth
+from ..auth import salesforce as salesforce_oauth
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ def make_routes(
         désinstallé puis réinstallé le connecteur en boucle pendant cinq heures.
         Nom générique : une clé nommée d'après un connecteur obligerait chaque surface
         à en connaître le nom, exactement ce qu'on retire partout ailleurs."""
-        from .auth import flow as oauth_flow
+        from ..auth import flow as oauth_flow
         return oauth_flow.return_url(
             return_app, f"?connector=salesforce&connect={etat}", org=org_id)
 
@@ -86,7 +86,7 @@ def make_routes(
         # au /start, mais le state vit 10 min : entre le clic et le retour, l'auteur
         # a pu perdre son rôle. Doctrine maison (ADR 0038, ce qui a fermé #108) :
         # une autorisation se re-vérifie à la RÉSOLUTION, pas seulement à la pose.
-        from . import roles
+        from .. import roles
         allowed = True
         if scope == "org":
             allowed = roles.is_org_admin(sub, org_id)

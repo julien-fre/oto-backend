@@ -4,7 +4,7 @@ Le backend n'exécute plus le scan SIRENE in-process : il appelle le service FOD
 dédié (box `fod-0`) qui porte le parquet partitionné par dept + les durcissements
 (sémaphore de concurrence + timeout). Ce module **réplique la surface de
 `france_opendata.sirene_stock`** (mêmes noms/signatures/retours) → les appelants
-(`tools/fr_stock`, `api_routes_sirene`) ne changent que leur import.
+(`tools/fr_stock`, `api/sirene`) ne changent que leur import.
 
 La plomberie HTTP (client, auth, retry, erreurs) vit dans `http` (partagée avec
 les autres clients FOD). Pas de fallback in-process (ADR 0028).

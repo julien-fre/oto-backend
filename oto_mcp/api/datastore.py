@@ -1,6 +1,6 @@
 """LA route qui reste écrite à la main de ce module : le CALLBACK Google OAuth.
 
-Le nom du fichier est un vestige — il est le point d'accroche d'`api_routes.py`, et
+Le nom du fichier est un vestige — il est le point d'accroche d'`api/routes.py`, et
 trois vagues de migration l'ont vidé de tout le reste :
 
 - **2026-08-12 (#302)** : les 17 routes du datastore sont devenues des capacités
@@ -27,7 +27,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from .auth import google as google_oauth
+from ..auth import google as google_oauth
 
 
 # Type alias for the auth helper passed in from api_routes.
@@ -49,7 +49,7 @@ def make_routes(
     """Construit ces routes.
 
     Les helpers `authenticate`/`json_response`/`json_error`/`cors_headers`/
-    `options_handler` sont passés depuis `api_routes.py` pour partager les
+    `options_handler` sont passés depuis `api/routes.py` pour partager les
     primitives (auth Logto + token, CORS).
     """
 
