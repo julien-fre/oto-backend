@@ -1,7 +1,7 @@
 """Ce que les capacités datastore partagent — aucun descripteur ici.
 
 Deux choses seulement, et les deux existaient déjà dans les routes écrites à la main
-qu'elles remplacent (`api_routes_datastore.py`) : le 404 qui dit OÙ vit un tableau, et
+qu'elles remplacent (`api/datastore.py`) : le 404 qui dit OÙ vit un tableau, et
 la garde de gouvernance d'un namespace. Les recopier dans chaque module de capacité
 aurait fait diverger le message d'erreur d'un chemin à l'autre — c'est exactement le
 drift que la couche capacité combat.

@@ -201,9 +201,9 @@ def test_les_quatre_capacites_declarent_leur_sortie_et_restent_rest_only():
 
 
 def test_le_datastore_na_plus_aucune_route_ecrite_a_la_main():
-    """La preuve de fin de lot : `api_routes_datastore` ne sert plus un seul chemin
+    """La preuve de fin de lot : `api/datastore` ne sert plus un seul chemin
     `/api/datastore/*` — ils sont tous dérivés d'un descripteur."""
-    from oto_mcp import api_routes_datastore as ard
+    from oto_mcp.api import datastore as ard
 
     async def _noop(request):
         return None

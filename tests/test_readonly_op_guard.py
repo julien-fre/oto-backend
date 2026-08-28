@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from oto_mcp.api_routes import _peek_op, _READ_OPS
+from oto_mcp.api.routes import _peek_op, _READ_OPS
 
 
 def _single_body(body: bytes):

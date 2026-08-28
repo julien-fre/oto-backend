@@ -1,6 +1,6 @@
 """Routes REST `/api/fr/accords/*` — le REPLI de la CLI sur les accords d'entreprise.
 
-Même raison d'être qu'`api_routes_sirene` : l'index ACCO vit dans le service FOD
+Même raison d'être qu'`api/sirene` : l'index ACCO vit dans le service FOD
 (réseau privé, injoignable depuis un poste), donc un client local ne peut pas
 l'interroger directement. Ces routes le republient derrière l'authentification
 habituelle, ce qui donne à `oto fr accords …` un chemin qui ne dépend pas du

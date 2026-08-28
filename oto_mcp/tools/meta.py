@@ -474,4 +474,4 @@ def register(mcp: FastMCP) -> None:
     #
     # Clés plateforme (list/set) RETIRÉES de la face MCP (2026-06-25) : poser une
     # clé brute = un secret en clair dans le contexte LLM → dashboard-only. CRUD
-    # servi par les routes REST `/api/admin/platform-keys*` (api_routes.py).
+    # servi par les routes REST `/api/admin/platform-keys*` (api/routes.py).

@@ -3,7 +3,7 @@
 `oto_upload_url(target=…)` rend une URL signée à usage unique + TTL court sur laquelle
 l'agent PUT le contenu depuis le disque (`curl --data-binary @fichier`), au lieu de le
 faire transiter INLINE par le contexte du LLM (coût tokens + troncature sur du verbatim).
-Le backend matérialise dans la cible (`PUT /api/upload/<token>`, `api_routes`) en
+Le backend matérialise dans la cible (`PUT /api/upload/<token>`, `api.routes`) en
 réappliquant l'autz. MCP-only : c'est une amorce d'action agent, pas une surface
 dashboard (le dashboard a déjà l'upload multipart humain).
 """

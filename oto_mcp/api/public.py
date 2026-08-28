@@ -21,7 +21,7 @@ de docs.oto.cx (`refresh-openapi.mjs` → openapi.json).
 le dashboard qui y scope son catalogue sur l'org active — d'où son `verifier`.
 
 La table de routes (chemins, méthodes, ORDRE) reste assemblée dans
-`api_routes.make_routes` : l'ordre de montage est un contrat, il se lit d'un seul
+`api.routes.make_routes` : l'ordre de montage est un contrat, il se lit d'un seul
 endroit. Ce module ne porte que les handlers.
 """
 from __future__ import annotations
@@ -31,9 +31,9 @@ from starlette.requests import Request
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                  Response)
 
-from . import access, providers, db, guide_store, openapi, org_store
-from .connectors import activation as connector_activation
-from .api_routes_base import _authenticate, _json, _json_error
+from .. import access, providers, db, guide_store, openapi, org_store
+from ..connectors import activation as connector_activation
+from .base import _authenticate, _json, _json_error
 
 
 async def favicon(request: Request) -> Response:
@@ -44,7 +44,7 @@ async def favicon(request: Request) -> Response:
     de marque). On sert le mark Otomata (source unique `brand.py`) sur les
     deux chemins.
     """
-    from . import brand
+    from .. import brand
     return Response(
         brand.FAVICON_SVG,
         media_type="image/svg+xml",
@@ -216,7 +216,7 @@ async def public_doc_view(request: Request) -> Response:
     pour être lisible par un agent (WebFetch sans JS) autant que par un navigateur.
     Négocie sur `Accept` : `application/json` → JSON, `text/markdown` → markdown brut,
     sinon HTML autoporté (`public_doc_page`). PAS d'auth, lecture seule."""
-    from . import public_doc_page
+    from .. import public_doc_page
     token = request.path_params.get("token", "")
     doc = db.get_doc_by_public_token(token) if token else None
     accept = request.headers.get("accept", "").lower()

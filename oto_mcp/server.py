@@ -27,7 +27,8 @@ from fastmcp.server.auth.providers.jwt import JWTVerifier
 from pydantic import AnyHttpUrl
 from starlette.concurrency import run_in_threadpool
 
-from . import api_routes, db, instructions, tenancy
+from . import db, instructions, tenancy
+from .api import routes as api_routes
 from .config import require_env, mcp_audience_alts
 from .tools import register_all
 

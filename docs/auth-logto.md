@@ -40,7 +40,7 @@ sur le primaire, qui le rejette.
   inchangé. Tenant tiers : `"<slug>:<sub>"`. Un seul qualificateur
   (`tenancy.qualify`), appelé aux deux endroits où un jeton devient un sub —
   `_IatGatedVerifier.verify_token` (les faces MCP et REST partagent l'instance, donc
-  `api_routes._authenticate` et `auth.hooks` en héritent) et `api_routes._claimed_sub`
+  `api.routes._authenticate` et `auth.hooks` en héritent) et `api.routes._claimed_sub`
   (attribution du journal REST, qui décode sans vérifier). La qualification est le
   DERNIER geste : un jeton recalé par l'audience ou l'iat-gate n'a jamais produit de sub.
   Un jeton d'API `oto_` sort avant : son sub vient de `users`, déjà qualifié.

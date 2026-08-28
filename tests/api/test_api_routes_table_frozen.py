@@ -4,7 +4,7 @@ Pourquoi. La surface `/api/*` est le contrat avec le dashboard, l'extension, la
 CLI, les fronts partenaires et les intégrations tierces. Rien ne la gardait : on
 pouvait retirer un chemin, changer une méthode ou renommer un endpoint sans qu'un
 seul test rougisse — la suite exerce des handlers, jamais la TABLE. Le trou s'est
-vu le 2026-08-27, en découpant `api_routes.py` (1 370 lignes de `make_routes`, 52
+vu le 2026-08-27, en découpant `api/routes.py` (1 370 lignes de `make_routes`, 52
 handlers imbriqués) : la seule preuve disponible que la découpe ne changeait rien
 a dû être fabriquée pour l'occasion, hors dépôt. Elle vit ici désormais.
 
@@ -25,11 +25,11 @@ la suite — celui-ci ne garde que la forme de la surface.
 Régénérer après un ajout ou une migration en capacité :
 
     python - <<'EOF'
-    from oto_mcp import api_routes
+    from oto_mcp.api import routes as api_routes
     import pathlib
     lignes = [f"{','.join(sorted(r.methods or []))} {r.path} -> {r.name}"
               for r in api_routes.make_routes(object())]
-    pathlib.Path("tests/api_routes_table.txt").write_text("\\n".join(lignes) + "\\n")
+    pathlib.Path("tests/api/api_routes_table.txt").write_text("\\n".join(lignes) + "\\n")
     EOF
 """
 from __future__ import annotations
@@ -37,7 +37,7 @@ from __future__ import annotations
 import ast
 import pathlib
 
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 ATTENDU = pathlib.Path(__file__).resolve().parent / "api_routes_table.txt"
 
 
@@ -47,7 +47,7 @@ class _FakeVerifier:
 
 
 def _servie() -> list[str]:
-    from oto_mcp import api_routes
+    from oto_mcp.api import routes as api_routes
     return [f"{','.join(sorted(getattr(r, 'methods', None) or []))} "
             f"{r.path} -> {r.name}"
             for r in api_routes.make_routes(_FakeVerifier(), mcp_instance=None)]
@@ -62,12 +62,12 @@ def test_table_de_routes_figee():
         f"{len(manquantes)} route(s) ne sont PLUS servies : {manquantes[:10]}\n"
         "Un chemin retiré casse ses appelants (dashboard, extension, CLI, fronts "
         "partenaires) sans qu'aucun autre test ne le voie. Si le retrait est "
-        "voulu, retire la ligne de `tests/api_routes_table.txt` DANS LE MÊME "
+        "voulu, retire la ligne de `tests/api/api_routes_table.txt` DANS LE MÊME "
         "commit et dis-le dans la PR.")
     assert not ajoutees, (
         f"{len(ajoutees)} route(s) NEUVES non déclarées : {ajoutees[:10]}\n"
         "Ajouter une route est légitime — l'ajouter en silence ne l'est pas. "
-        "Régénère `tests/api_routes_table.txt` (recette dans le docstring) : le "
+        "Régénère `tests/api/api_routes_table.txt` (recette dans le docstring) : le "
         "diff nomme le chemin, la revue le voit. Réflexe préalable : ce verbe "
         "doit-il naître CAPACITÉ (ADR 0042 §Convergence) plutôt que route écrite "
         "à la main ? cf. `test_rest_modules_are_capabilities.py`.")

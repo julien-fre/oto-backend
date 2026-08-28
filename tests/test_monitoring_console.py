@@ -57,7 +57,7 @@ def test_run_requires_run_id():
 
 
 def test_rest_paths_are_unchanged_for_the_dashboard():
-    """Les lentilles ont quitté `api_routes` pour la couche capacité : les CHEMINS
+    """Les lentilles ont quitté `api.routes` pour la couche capacité : les CHEMINS
     doivent rester identiques (le dashboard tape ces URLs, cf. api/console.ts) —
     une migration interne ne doit jamais casser une surface consommée."""
     from oto_mcp.capabilities.registry import CAPABILITIES

@@ -5,7 +5,7 @@ route REST écrite à la main. Calqué sur `zoho_connect.py` (même forme, même
 et comme lui, gagne une **face MCP** : l'agent peut fabriquer le lien et le tendre à
 l'utilisateur, ce qui est le geste utile en conversation.
 
-Ce qui RESTE en route écrite à la main (`api_routes_salesforce.py`) : le **callback**.
+Ce qui RESTE en route écrite à la main (`api/salesforce.py`) : le **callback**.
 Salesforce y redirige le NAVIGATEUR — sans en-tête d'auth, avec une réponse 302 — ce
 qu'un contrat de capacité (JSON + autz) ne peut pas exprimer. Déclaré comme tel dans
 `test_rest_modules_are_capabilities.py`.

@@ -16,7 +16,7 @@ routes par-id : le projet doit être visible dans l'org de CONSULTATION, pas
 seulement accessible à l'acteur via une AUTRE de ses orgs.
 
 La table de routes (chemins, méthodes, ORDRE) reste assemblée dans
-`api_routes.make_routes` ; ce module ne porte que les handlers.
+`api.routes.make_routes` ; ce module ne porte que les handlers.
 """
 from __future__ import annotations
 
@@ -25,8 +25,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from . import access, db, doc_export, ownership
-from .api_routes_base import _authenticate, _json, _json_error
+from .. import access, db, doc_export, ownership
+from .base import _authenticate, _json, _json_error
 
 
 def _project_org_context_error(request: Request, sub: str, pid: int):
@@ -36,14 +36,14 @@ def _project_org_context_error(request: Request, sub: str, pid: int):
     pendant REST du gate de la capacité `oto_project`. Renvoie une 404 non-disclosante
     si hors contexte, sinon None. Les routes d'ÉCRITURE gardent en plus leur check de
     permission `can_access(write)`."""
-    from . import ownership
+    from .. import ownership
     if ownership.visible_in_org(sub, access.current_org(sub), "project", str(pid)):
         return None
     return _json_error(request, 404, "unknown_project")
 
 
 def _signed(row: dict) -> dict:
-    from . import media_store
+    from .. import media_store
     key = row.pop("s3_key", None)
     try:
         row["download_url"] = media_store.presign_get(key) if key else None
@@ -68,7 +68,7 @@ async def project_files_upload(request: Request, *, verifier: JWTVerifier) -> JS
     sub, err = await _authenticate(request, verifier)
     if err:
         return err
-    from . import ownership, media_store
+    from .. import ownership, media_store
     pid = int(request.path_params["project_id"])
     if not db.get_project_by_id(pid):
         return _json_error(request, 404, "unknown_project")
@@ -103,7 +103,7 @@ async def project_file_delete(request: Request, *, verifier: JWTVerifier) -> JSO
     sub, err = await _authenticate(request, verifier)
     if err:
         return err
-    from . import ownership, media_store
+    from .. import ownership, media_store
     pid = int(request.path_params["project_id"])
     file_id = int(request.path_params["file_id"])
     existing = db.get_project_file(file_id)
@@ -126,7 +126,7 @@ async def project_file_public(request: Request, *, verifier: JWTVerifier) -> JSO
     sub, err = await _authenticate(request, verifier)
     if err:
         return err
-    from . import ownership, media_store
+    from .. import ownership, media_store
     pid = int(request.path_params["project_id"])
     file_id = int(request.path_params["file_id"])
     existing = db.get_project_file(file_id)

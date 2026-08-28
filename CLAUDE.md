@@ -38,6 +38,10 @@ fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
 ```
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
+├── api/              # la face REST `/api/*` : `routes` (la TABLE — son ordre est un
+│                     #   contrat), `base` (auth, CORS, `_json`, préflight, `bind`),
+│                     #   puis un module de handlers par domaine. ⚠️ Une route neuve
+│                     #   naît CAPACITÉ, pas ici : la dette REST vaut ZÉRO.
 ├── auth/             # QUI parle au serveur, et comment un credential s'ACQUIERT.
 │                     #   Entrant : hooks (le sub du jeton), facade (façade DCR devant
 │                     #   Logto), token_scopes (portée d'un jeton `oto_…`), anon (shim
@@ -64,9 +68,6 @@ oto_mcp/
 │                     #   Séparé de tools/ : le registre doit rester PUR (tools/ importe
 │                     #   access → le registre, et se charge en try/except — une dép
 │                     #   optionnelle manquante retirerait le connecteur du catalogue).
-├── api_routes.py     # ASSEMBLAGE SEUL : table de routes /api/* (l'ordre est un contrat) + les 2 middlewares ASGI
-├── api_routes_base.py      # ce que tous les handlers partagent : _authenticate, CORS, _json/_json_error, OPTIONS, bind
-├── api_routes_<domaine>.py # les handlers : public, account, media, projects, uploads, credentials, tools, admin
 ├── access/           # rôles, contexte, cascade de credentials, quotas (package depuis le 27/08 — 2 000 lignes en 7 modules). Surface plate `access.<fn>` via __init__, cf. ci-dessous
 │   ├── scope.py      #   qui agit : rôle plateforme, current_org/group/project, ce que le projet ÉPINGLE
 │   ├── quotas.py     #   ce qui est métré (quota jour, usage) et ce qui est payé (option, comp, abonnement)
@@ -114,12 +115,12 @@ garde posée au SEAM, **sans allowlist**, tripwire `test_rest_rejects_unknown_fi
 `mcp` retiré) ; le MCP ne porte que les droits/grants.
 **Détail : `docs/couches-et-capacites.md`.**
 
-La face REST **assemble** et n'implémente plus : depuis le 2026-08-27, `api_routes.py`
+La face REST **assemble** et n'implémente plus : depuis le 2026-08-27, `api/routes.py`
 ne contient aucun handler (`make_routes` : 1 370 lignes et 52 handlers imbriqués → ~180
 lignes de montage), les handlers vivent par domaine dans `api_routes_<domaine>.py`.
-⚠️ La table est FIGÉE par `tests/test_api_routes_table_frozen.py` — retirer, ajouter ou
+⚠️ La table est FIGÉE par `tests/api/test_api_routes_table_frozen.py` — retirer, ajouter ou
 RÉORDONNER un chemin fait rouge (Starlette prend le premier match), et régénérer
-`tests/api_routes_table.txt` EST la déclaration de l'ajout. **Détail : `docs/rest-api.md`.**
+`tests/api/api_routes_table.txt` EST la déclaration de l'ajout. **Détail : `docs/rest-api.md`.**
 
 ## Auth — Logto
 

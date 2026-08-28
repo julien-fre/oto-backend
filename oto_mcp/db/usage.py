@@ -911,7 +911,7 @@ def tool_call_stats(since_days: int = 7, *, org_id: Optional[int] = None,
 
 
 # `kind='rest'` porte DEUX natures de ligne (ADR 0046 b4) : la **route** posée par
-# `api_routes.RestCallLogger` (`tool='PATCH /api/datastore/…'`, avec durée) et le
+# `api.routes.RestCallLogger` (`tool='PATCH /api/datastore/…'`, avec durée) et le
 # **geste métier** posé par `calllog.log_rest_call` (`tool='data_write'`, sans durée).
 # Cette lentille-ci est une télémétrie de SURFACE → elle ne compte que les routes,
 # sinon chaque mutation du cockpit double-compterait et `by_route` listerait des

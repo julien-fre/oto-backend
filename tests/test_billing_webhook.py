@@ -73,7 +73,7 @@ def test_webhook_url_uses_public_base(monkeypatch):
 
 
 def test_webhook_route_registered_public():
-    from oto_mcp import api_routes_billing
+    from oto_mcp.api import billing as api_routes_billing
 
     routes = api_routes_billing.make_routes(lambda req: None)
     paths = {r.path for r in routes}

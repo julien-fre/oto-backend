@@ -17,7 +17,7 @@ import types
 
 import pytest
 
-from oto_mcp import api_routes
+from oto_mcp.api import routes as api_routes
 from oto_mcp.auth import token_scopes
 
 

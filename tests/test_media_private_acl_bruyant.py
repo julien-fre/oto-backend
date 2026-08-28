@@ -17,7 +17,7 @@ import types
 
 import pytest
 
-from oto_mcp import api_routes_projects as P
+from oto_mcp.api import projects as P
 from oto_mcp import media_store
 
 

@@ -17,12 +17,12 @@ description: >-
 
 ## Où vit chaque famille (découpe du 2026-08-27)
 
-`api_routes.py` **assemble** et ne contient plus aucun handler : `make_routes` monte les
+`api/routes.py` **assemble** et ne contient plus aucun handler : `make_routes` monte les
 modules de routes, monte la couche capacité, et rend la table ordonnée des chemins écrits
 à la main. L'ORDRE de cette table est un contrat — Starlette prend le PREMIER match, donc
 `…/tools/registry` doit précéder `…/tools/{name}`. Elle est figée par
-`tests/test_api_routes_table_frozen.py` : retirer, ajouter ou réordonner un chemin fait
-rouge, et régénérer `tests/api_routes_table.txt` EST la déclaration de l'ajout.
+`tests/api/test_api_routes_table_frozen.py` : retirer, ajouter ou réordonner un chemin fait
+rouge, et régénérer `tests/api/api_routes_table.txt` EST la déclaration de l'ajout.
 
 ✅ **La dette REST vaut ZÉRO depuis le 2026-08-27.** Les 38 routes écrites à la main
 qu'il restait sont devenues des capacités en huit lots ; les **36 chemins encore montés
@@ -42,11 +42,11 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 | famille | où | régime |
 | --- | --- | --- |
 | ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, **les jetons API**, **les fichiers de projet**, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
-| primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api_routes_base.py` | partagées par tous les modules ; **ré-exportées** par `api_routes` |
-| favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques doctrines & guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api_routes_public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
-| `POST /api/me/avatar`, `POST /api/orgs/{id}/logo` | `api_routes_media.py` | **multipart** → hors du moule par CONSTRUCTION (classé `NATURE`) |
-| `POST` d'un fichier de projet, `/api/me/projects/{id}/export` | `api_routes_projects.py` | **multipart / ZIP** → hors du moule (classé `NATURE`) |
-| `/api/upload/{token}` (PUT/POST/GET) | `api_routes_uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
+| primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api/base.py` | partagées par tous les modules ; **ré-exportées** par `api.routes` |
+| favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques doctrines & guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api/public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
+| `POST /api/me/avatar`, `POST /api/orgs/{id}/logo` | `api/media.py` | **multipart** → hors du moule par CONSTRUCTION (classé `NATURE`) |
+| `POST` d'un fichier de projet, `/api/me/projects/{id}/export` | `api/projects.py` | **multipart / ZIP** → hors du moule (classé `NATURE`) |
+| `/api/upload/{token}` (PUT/POST/GET) | `api/uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
 | SIRENE, accords, datastore, contact, **webhook Unipile**, webhook Mollie, **callbacks OAuth** zoho/google/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
 
 - `GET /api/me` + `GET /api/me/calls` + `GET /api/me/activity-summary` — **le compte**,
@@ -165,7 +165,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   **la messagerie hébergée côté membre**, capacités
   `me.unipile.{connect,reconcile,status,disconnect}` depuis le 2026-08-27
   (`capabilities/unipile_me.py`). Le **webhook** `POST /api/unipile/webhook` reste écrit
-  à la main dans `api_routes_connectors.py` : Unipile l'appelle server-to-server sans
+  à la main dans `api/connectors.py` : Unipile l'appelle server-to-server sans
   en-tête d'auth, il est gardé par un **nonce**, et il répond toujours 200 (un échec ne
   doit pas le faire rejouer en boucle).
   ⚠️ **`connect` a DEUX formes de succès** : `{url}` d'ordinaire, et
@@ -355,7 +355,7 @@ chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/
 ## CORS — la liste du code est MORTE en prod comme en preprod
 
 ⚠️ **CORS : la liste du code est MORTE en prod comme en preprod.** `_allowed_origins()`
-(`api_routes.py`) n'est qu'un **fallback** — les DEUX box posent `OTO_MCP_CORS_ORIGINS`
+(`api/routes.py`) n'est qu'un **fallback** — les DEUX box posent `OTO_MCP_CORS_ORIGINS`
 dans leur `.env`, qui **écrase** la liste. Ajouter une origine au code, la déployer et
 constater que rien ne change est un piège vécu (30/07, front Tulina) : le tag prod avait
 été posé pour une raison inexacte. **Ajouter une origine = éditer l'env des deux box +

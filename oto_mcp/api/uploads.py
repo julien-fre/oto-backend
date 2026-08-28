@@ -14,7 +14,7 @@ taille, puis consomme le jeton AVANT d'écrire — anti-rejeu et anti-double-éc
 L'accusé est léger : jamais le corps reçu.
 
 La table de routes (chemins, méthodes, ORDRE) reste assemblée dans
-`api_routes.make_routes` ; ce module ne porte que les handlers.
+`api.routes.make_routes` ; ce module ne porte que les handlers.
 """
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from . import db
-from .api_routes_base import _json, _json_error
+from .. import db
+from .base import _json, _json_error
 
 
 def _upload_page_html(label: str | None) -> str:
@@ -72,7 +72,7 @@ async def _do_signed_upload(request: Request, payload: dict, data: bytes,
                             ct: str | None) -> JSONResponse:
     """Cœur commun des réceptions d'upload signé : autz réappliquée → borne de
     taille → consommation à usage unique → matérialisation. DB sync → threadpool."""
-    from . import upload_tokens
+    from .. import upload_tokens
     sub, target = payload["sub"], payload["target"]
     try:
         await run_in_threadpool(upload_tokens.check_target_access, sub, target)
@@ -98,7 +98,7 @@ async def upload_receive(request: Request) -> JSONResponse:
     **PUT** = un agent avec shell y pousse le corps brut (`curl --data-binary`) ;
     **POST** multipart `file` = le formulaire humain (fallback claude.ai). On
     matérialise en RÉAPPLIQUANT l'autz de la cible. Accusé léger, jamais le body."""
-    from . import upload_tokens
+    from .. import upload_tokens
     payload = upload_tokens.verify(request.path_params.get("token", ""))
     if payload is None:
         return _json_error(request, 401, "invalid_or_expired_token")
@@ -122,7 +122,7 @@ async def upload_form(request: Request) -> Response:
     """Page HTML d'upload d'un lien signé (GET) — **fallback humain** quand l'agent
     n'a pas de shell (claude.ai lui transmet ce lien). Le jeton n'est PAS consommé
     au GET (seulement au POST du fichier). Autoportée (aucun asset externe)."""
-    from . import upload_tokens
+    from .. import upload_tokens
     payload = upload_tokens.verify(request.path_params.get("token", ""))
     if payload is None:
         return HTMLResponse(_upload_page_html(None), status_code=401)

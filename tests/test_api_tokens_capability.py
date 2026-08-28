@@ -1,7 +1,7 @@
 """Jetons API et clés plateforme, en capacités : et la garde qui les y retenait.
 
 Neuf routes ont quitté `api_routes_admin.py` (module supprimé) et
-`api_routes_datastore.py` pour `capabilities/api_tokens.py` (27/08).
+`api/datastore.py` pour `capabilities/api_tokens.py` (27/08).
 
 **Le cœur de ce fichier est le premier test.** Les six routes de jetons portaient
 `allow_api_token=False` — un jeton `oto_` ne peut ni lister, ni créer, ni révoquer de

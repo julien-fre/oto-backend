@@ -1,7 +1,7 @@
 """Le palier PLATEFORME des connecteurs, en capacité : mêmes chemins, mêmes codes.
 
 Les cinq routes `/api/admin/connectors/activation` et
-`/api/admin/connectors/{provider}/platform-access` ont quitté `api_routes_connectors.py`
+`/api/admin/connectors/{provider}/platform-access` ont quitté `api/connectors.py`
 pour `capabilities/platform_connectors.py` (27/08). C'est l'étage qui manquait : les
 paliers org et équipe de la même famille étaient déjà des capacités
 (`capabilities/connectors_activation.py`).

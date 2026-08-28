@@ -5,16 +5,16 @@ domaines appellent — l'authentification (`_authenticate`), les en-têtes CORS,
 deux fabriques de réponse JSON, le préflight `OPTIONS`, et `bind` (le passeur de
 dépendances explicites).
 
-**Pourquoi un module à part plutôt que `api_routes.py`.** Depuis la découpe du
+**Pourquoi un module à part plutôt que `api/routes.py`.** Depuis la découpe du
 2026-08-27, les handlers vivent dans des `api_routes_<domaine>.py` que
-`api_routes.py` importe pour assembler la table. S'ils allaient rechercher
-`_authenticate` dans `api_routes`, l'import serait circulaire ; la base est donc
-sous eux, jamais au-dessus. `api_routes` **ré-exporte** ces noms — `api_routes._authenticate`
-et `api_routes._cors_headers` restent valides pour les appelants (et les tests)
+`api/routes.py` importe pour assembler la table. S'ils allaient rechercher
+`_authenticate` dans `api.routes`, l'import serait circulaire ; la base est donc
+sous eux, jamais au-dessus. `api.routes` **ré-exporte** ces noms — `api.routes._authenticate`
+et `api.routes._cors_headers` restent valides pour les appelants (et les tests)
 d'avant la découpe.
 
-Les dix modules de routes ANTÉRIEURS à la découpe (`api_routes_datastore.py`,
-`api_routes_sirene.py`, …) reçoivent encore ces mêmes fonctions en PARAMÈTRES de
+Les dix modules de routes ANTÉRIEURS à la découpe (`api/datastore.py`,
+`api/sirene.py`, …) reçoivent encore ces mêmes fonctions en PARAMÈTRES de
 leur `make_routes` — c'est leur patron historique, né du même besoin d'éviter le
 cycle. Il n'a pas été touché : les convertir serait un second lot, sans effet sur
 ce qui est servi.
@@ -29,8 +29,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from . import db
-from .auth import token_scopes
+from .. import db
+from ..auth import token_scopes
 
 # Signature de `_authenticate`, telle que la consomment les modules de routes.
 AuthFn = Callable[..., Awaitable["tuple[str | None, JSONResponse | None]"]]
@@ -86,7 +86,7 @@ def _maybe_view_as(real_sub: str, apply_view_as: bool) -> str:
     False = chemin du middleware lui-même (qui doit voir le sub RÉEL pour gater)."""
     if not apply_view_as:
         return real_sub
-    from . import session_org
+    from .. import session_org
     target = session_org.current_view_user()
     return target if (target and target != real_sub) else real_sub
 

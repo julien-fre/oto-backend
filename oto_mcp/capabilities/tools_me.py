@@ -33,7 +33,7 @@ de ce chantier. La réconciliation est une décision de contrat — issue #429.
 `mcp_instance` était passé de `make_routes` jusqu'au handler ; il est désormais résolu
 à l'APPEL via `tool_registry.bound_instance()` (le singleton lié au boot par
 `server._build_mcp`). C'est le MÊME objet : `server.py` appelle `_build_mcp` — donc
-`tool_registry.bind` — puis `api_routes.make_routes(verifier, mcp_instance=mcp)` avec
+`tool_registry.bind` — puis `api.routes.make_routes(verifier, mcp_instance=mcp)` avec
 cette instance-là. Résoudre à l'appel plutôt qu'au montage est strictement plus juste
 (une re-liaison ultérieure serait suivie), et c'est déjà ce que fait `agent_context`.
 """

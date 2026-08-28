@@ -1,6 +1,6 @@
 """Routes REST OAuth Folk — fédération du MCP officiel de Folk per-user (#85).
 
-Flow web (calqué sur api_routes_atlassian.py) — routes ancrées sur le NOM du
+Flow web (calqué sur api/atlassian.py) — routes ancrées sur le NOM du
 connecteur `folkmcp` (le widget fédéré du dashboard appelle `/api/<name>/oauth/*`,
 name = `folkmcp`, comme atlassian) :
 - `GET    /api/folkmcp/oauth/start`    (auth Logto) → {auth_url} à ouvrir
@@ -23,8 +23,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
-from .auth import folk as folk_oauth
-from . import config
+from ..auth import folk as folk_oauth
+from .. import config
 
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
@@ -53,7 +53,7 @@ def make_routes(
         PRÈS (`/?folk=<statut>`). On ne bascule PAS sur `redirect_for`, dont le
         repli générique (`/connectors?connector=…`) changerait l'atterrissage de
         l'appelant historique."""
-        from . import links
+        from .. import links
         cible = links.link_for("connector_return", sub=sub, connector="folk") if sub else None
         return cible or f"{{_app_url()}}/?folk={{statut}}"
 

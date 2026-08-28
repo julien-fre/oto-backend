@@ -1,6 +1,6 @@
 """Le credential personnel, en capacité : mêmes chemins, mêmes refus, MÊME fil.
 
-Les trois routes `/api/settings/api-keys/{provider}` ont quitté `api_routes.py` pour
+Les trois routes `/api/settings/api-keys/{provider}` ont quitté `api/routes.py` pour
 `capabilities/me_credentials.py` (27/08). C'est la surface par laquelle tout le monde
 branche ses clés : une migration qui « promet d'être invisible » ne se prouve qu'en
 lisant ce qui part sur le fil, via la vraie chaîne de l'adaptateur REST.

@@ -1,6 +1,6 @@
 """Capacités d'administration centrées USER (ADR 0009).
 
-Migre le bloc user-admin (jadis REST-only, écrit main dans `api_routes.py`) vers
+Migre le bloc user-admin (jadis REST-only, écrit main dans `api/routes.py`) vers
 des capacités co-déclarées → faces MCP **et** REST dérivées d'une seule déclaration,
 sur les **mêmes chemins REST** (dashboard inchangé). Permet de setup complètement un
 compte depuis Claude : retrouver un user, voir son état, poser son rôle, lui grant une

@@ -1,7 +1,7 @@
 """Couche capacité (ADR 0009) : descripteurs co-déclarés + adaptateurs MCP/REST.
 
 Importer les modules de domaine ICI peuple `registry.CAPABILITIES` à l'import
-du package — avant que `server.py` / `api_routes.py` ne bouclent dessus.
+du package — avant que `server.py` / `api/routes.py` ne bouclent dessus.
 """
 from . import _mcp_adapter, _rest_adapter, registry
 from . import orgs  # noqa: F401 — peuple registry.CAPABILITIES (org.use_org)
@@ -48,7 +48,7 @@ from . import salesforce_connect  # noqa: F401 — me.salesforce_connect (oto_sa
 from . import zoho_connect  # noqa: F401 — me.zoho_connect (oto_zoho_connect + GET /api/zoho/oauth/{start,modes})
 from . import connectors_verify  # noqa: F401 — connectors.verify (sonde de credential — MCP via oto_instance op=verify)
 # Credential PERSONNEL (pose/état/retrait) — REST-only, un secret ne passe pas
-# en argument d'outil. Ex-routes écrites à la main d'`api_routes.py` (#121).
+# en argument d'outil. Ex-routes écrites à la main d'`api/routes.py` (#121).
 from . import me_credentials  # noqa: F401 — me.credential.{get,set,clear}
 # Connexion par SESSION NAVIGATEUR (ADR 0026) — l'autre voie de pose d'un credential,
 # par un login humain dans un navigateur hébergé. Ex-routes écrites à la main (#121).
@@ -116,7 +116,7 @@ from . import capabilities_catalog  # noqa: F401 — admin.capabilities (GET /ap
 from . import agent_context  # noqa: F401 — me.agent_context (GET /api/me/agent-context)
 # Guides ON-DEMAND (ADR 0042) — surface REST des how-to (miroir de l'outil MCP oto_guide).
 from . import guides  # noqa: F401 — me.guide (MCP oto_guide) + me.guides.{list,get,set,delete} (REST)
-# Le COMPTE (#121) — ex-routes écrites à la main d'`api_routes.py` : `GET /api/me`
+# Le COMPTE (#121) — ex-routes écrites à la main d'`api/routes.py` : `GET /api/me`
 # est la première requête de tout front qui se branche, et l'OpenAPI n'en décrivait rien.
 from . import me_account  # noqa: F401 — me.{get,calls,activity_summary}
 # Préférence de langue de l'UI dashboard (niveau USER, REST-only).

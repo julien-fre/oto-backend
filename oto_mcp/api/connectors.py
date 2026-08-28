@@ -7,7 +7,7 @@ entrée ET sortie déclarées :
 - la messagerie hébergée côté MEMBRE (`/api/me/unipile*`)
   → `capabilities/unipile_me.py`.
 
-Le nom du fichier est resté (il est le point d'accroche d'`api_routes.py`) ; ce qu'il
+Le nom du fichier est resté (il est le point d'accroche d'`api/routes.py`) ; ce qu'il
 porte, non.
 
 **Pourquoi le webhook ne migre pas, et ne migrera pas.** Unipile l'appelle
@@ -31,7 +31,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from . import db, org_store
+from .. import db, org_store
 
 logger = logging.getLogger(__name__)
 

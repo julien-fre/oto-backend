@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from oto_mcp import api_routes as ar
+from oto_mcp.api import routes as ar
 
 
 def test_normalize_route_collapses_ids():
