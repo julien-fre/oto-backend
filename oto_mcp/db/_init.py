@@ -1167,6 +1167,35 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
         logger.info("L6 instances: %d instance(s) nommée(s) — inventaire %s",
                     posees, connector_instances.connector_instance_counts(conn))
 
+    # ── #519 lot B4 : la bibliothèque publique s'appelle `guide_library` ─────────
+    #
+    # La TABLE garde son nom, et ce n'est pas de la timidité : la base est PARTAGÉE
+    # prod/preprod, donc un `ALTER TABLE … RENAME` mergé sur `main` renommerait sous
+    # la prod qui tourne encore l'ancien code. Le renommage physique est un acte de
+    # TAG — lot D (#526), et une migration NOMMÉE (ADR 0065 étage 2), pas une ligne
+    # de boot. Ici, une VUE porte le nom d'aujourd'hui et tout le code passe par
+    # elle : au lot D, il ne restera qu'à droper la vue et renommer la table, sans
+    # toucher une ligne de Python.
+    #
+    # Additive et idempotente, donc à sa place dans le DDL du boot (ADR 0065 étage
+    # 1) : elle n'écrit aucune donnée, ne lit aucune table, et coûte une écriture de
+    # catalogue.
+    #
+    # ⚠️ **En DERNIER, et c'est structurel.** Une vue `SELECT *` fige la liste de ses
+    # colonnes AU MOMENT de sa création (vérifié sur PostgreSQL) : créée avant un
+    # `ALTER TABLE … ADD COLUMN`, elle masquerait la colonne neuve — sans erreur,
+    # sans log, avec un `None` là où le code attend une valeur. La rejouer à CHAQUE
+    # boot, après tous les ALTER, la rend auto-entretenue ; `CREATE OR REPLACE`
+    # accepte l'ajout d'une colonne en fin de liste. Garde-fou :
+    # `tests/test_guide_library_view.py` compare les colonnes des deux relations sur
+    # une vraie base.
+    #
+    # La vue est AUTO-UPDATABLE (une table, pas d'agrégat) : `INSERT` avec DEFAULT et
+    # `RETURNING`, `ON CONFLICT DO UPDATE`, `UPDATE` et `DELETE` y passent tous —
+    # mesuré, pas supposé, et rejoué par le garde-fou.
+    conn.execute("CREATE OR REPLACE VIEW guide_library AS "
+                 "SELECT * FROM doctrine_library")
+
 
 def _drop_legacy_org_subscriptions(conn: psycopg.Connection) -> None:
     """org_subscriptions du modèle Stripe (retiré par oto-backend#82 le

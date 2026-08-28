@@ -240,6 +240,12 @@ _SUB_COLUMNS = [
     ("orgs", "created_by"),
     ("org_invitations", "invited_by"), ("org_invitations", "accepted_sub"),
     ("org_groups", "created_by"), ("org_instructions", "set_by"),
+    # ⚠️ La bibliothèque est le SEUL endroit du code qui nomme encore sa table plutôt
+    # que sa vue `guide_library` (#519 lot B4), et c'est délibéré : cet inventaire est
+    # vérifié CONTRE LE DDL (`test_migrate_sub_inventory`), où une vue n'apparaît pas.
+    # Y mettre la vue rendrait le garde-fou aveugle à une entrée réellement morte —
+    # or c'est lui qui empêche `migrate_sub` d'échouer en entier sur une table
+    # disparue. Cette ligne suit la table au lot D (#526).
     ("org_instruction_revisions", "set_by"), ("doctrine_library", "published_by"),
     # attribution (soft), dossier du 23/08 — qui a écrit/résolu/accordé quoi. Sans
     # repointage ces signatures pointaient un compte supprimé (affichage « inconnu »
