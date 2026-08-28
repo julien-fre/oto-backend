@@ -121,10 +121,14 @@ ne pas solliciter du tout. La conclusion pratique ne change pas — ne pas en d�
 mais le motif, si : ce n'est pas une suppression, c'est un passage d'obligatoire à
 optionnel.
 
-**Ce qu'on en a fait** (oto-backend#478) : le filet
-(`middleware/context_net.py`) livre le bloc dans la première réponse d'outil d'une
-session qui ne l'a pas chargé, et la première ligne d'`oto_context` est devenue un
-impératif. Les deux passent par des canaux qui, eux, arrivent toujours au modèle.
+**Ce qu'on en a fait** (oto-backend#478) : la première ligne d'`oto_context` est
+devenue un impératif — canal qui arrive toujours au modèle. Un « filet » livrant le
+bloc dans la première réponse d'outil a AUSSI vécu quelques heures (v1.155.0,
+2026-08-28) et a été **retiré le jour même** : son registre « déjà servi » à fenêtre
+de 30 min était un état de session côté serveur, interdit par ADR 0038 — et la
+conception d'origine (page 481 §11.3) l'excluait en toutes lettres : « l'assemblage
+doit tenir dans une requête ordinaire, **sans état conservé entre appels** ». Le
+successeur devra être sans état ; le besoin reste ouvert.
 
 ### `description` d'un outil — la PREMIÈRE LIGNE est un contrat de sélection
 

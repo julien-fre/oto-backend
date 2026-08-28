@@ -540,17 +540,16 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .middleware.empty_result import EmptyResultMiddleware
     instance.add_middleware(EmptyResultMiddleware())
 
-    # 1 bis. FILET de contexte (oto-backend#478) : le bloc de l'org est livré dans la
-    # PREMIÈRE réponse d'outil d'une session qui ne l'a pas chargé. Le canal prévu —
-    # `instructions` de l'`initialize` — n'est pas fiable : Claude Code le tronque à
-    # 2048 caractères, claude.ai ne le montre pas au modèle. Or ce bloc porte les
-    # garde-fous de l'org (« fais valider avant tout envoi externe ») : tant qu'il
-    # dépend d'un appel volontaire à `oto_context`, un agent qui va droit à
-    # `email_send` ne l'a jamais lu. AJOUTE au canal texte, ne remplace rien.
-    # Au-dessus de la rédaction et de l'écho de compte, qui réémettent le payload et
-    # feraient disparaître le bloc ; sous `ToolAlias`, dont il lui faut le nom canonique.
-    from .middleware.context_net import ContextNetMiddleware
-    instance.add_middleware(ContextNetMiddleware())
+    # ⚠️ Il y a EU ici un « filet de contexte » (v1.155.0, quelques heures le
+    # 2026-08-28) : le bloc de l'org livré dans la première réponse d'outil d'une
+    # session qui ne l'avait pas chargé, avec un registre mémoire « déjà servi » à
+    # fenêtre de 30 min. RETIRÉ le jour même : ce registre est un état de session
+    # côté serveur, interdit par ADR 0038 — et la conception d'origine (projet oto
+    # 180, page 481 §11.3) l'excluait déjà : « l'assemblage doit tenir dans une
+    # requête ordinaire, SANS ÉTAT CONSERVÉ ENTRE APPELS ». Le symptôme mesuré en
+    # prod (livraison dépendante de qui a appelé en dernier, sous un jeton partagé)
+    # était la conséquence directe de cet état. Un successeur devra être sans état ;
+    # le besoin, lui, reste ouvert : oto-backend#478.
 
     # 2. Contexte d'appel (`_org=`, modèle sans état de session, #108/#112) : pose la
     # ContextVar `_CALL_ORG` AVANT le reste de la chaîne et la reset APRÈS, pour que
