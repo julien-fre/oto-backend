@@ -476,6 +476,7 @@ def status(org_id: int) -> dict:
     if not row:
         return {"subscribed": False, "plans": plans()}
     meta = PLANS.get(row["plan"], {})
+    comp = row["provider"] == "comp"   # abonnement forcé par un admin (non payé)
     return {
         "subscribed": row["status"] in ("active", "past_due"),
         "plan": row["plan"], "label": meta.get("label"),
@@ -486,10 +487,15 @@ def status(org_id: int) -> dict:
         # l'org — donc il bouge si l'org déménage, ce qui est le comportement voulu
         # (c'est bien ce qui sera prélevé). Ce qui a DÉJÀ été pris se lit sur
         # billing.payments, qui a figé sa propre décomposition.
-        **billing_vat.tax_preview(meta.get("amount"),
-                                  db_billing.get_billing_identity(org_id)),
+        #
+        # ⚠️ SAUF sur un abonnement OFFERT : rien n'y sera jamais prélevé, donc il n'y
+        # a pas de TTC à annoncer — et poser `vat_blocked` sur une org offerte sans
+        # identité de facturation serait une FAUSSE alerte, sur un écran dont c'est
+        # tout le rôle de signaler les échéances en danger.
+        **(billing_vat.BLANK_PREVIEW if comp else billing_vat.tax_preview(
+            meta.get("amount"), db_billing.get_billing_identity(org_id))),
         "status": row["status"], "method": row["method"],
-        "comp": row["provider"] == "comp",   # abonnement forcé par un admin (non payé)
+        "comp": comp,
         "current_period_end": row.get("current_period_end"),
         "next_billing_at": row.get("next_billing_at"),
         "grace_until": row.get("grace_until"),

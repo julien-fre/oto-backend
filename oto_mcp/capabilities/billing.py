@@ -150,7 +150,10 @@ class BillingStatus(BaseModel):
         description="Pourquoi le TTC est inconnu : 'billing_identity_required' ou "
                     "'vat_consumer_unsupported'. `null` = rien ne bloque. Un "
                     "abonnement ACTIF avec un `vat_blocked` posé signale une échéance "
-                    "que le runner ne pourra pas prélever — à réparer.")
+                    "que le runner ne pourra pas prélever — à réparer. ⚠️ Sur un "
+                    "abonnement OFFERT (comp=true), les quatre champs de TVA valent "
+                    "TOUJOURS `null`, `vat_blocked` compris : rien n'y sera jamais "
+                    "prélevé, donc il n'y a ni TTC à annoncer ni alerte à lever.")
     currency: Optional[str] = Field(default=None, description="Devise du palier ('eur').")
     interval: Optional[str] = Field(default=None, description="'month' | 'year'.")
     status: Optional[str] = Field(

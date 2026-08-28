@@ -101,6 +101,18 @@ annonce le TTC de la **prochaine** échéance, dérivé de l'identité courante,
 rend toujours `missing` : la même liste que celle nommée par le refus
 `billing_identity_required`.
 
+⚠️ **Sur un abonnement OFFERT (`comp`), les champs de TVA de `status` valent tous
+`null`, `vat_blocked` compris** : rien n'y sera jamais prélevé, donc il n'y a ni
+TTC à annoncer ni alerte à lever — et poser `vat_blocked` sur une org offerte
+sans identité serait une fausse alerte sur l'écran dont c'est justement le rôle
+de signaler les échéances en danger.
+
+⚠️ **Enregistrer une identité et pouvoir souscrire sont deux choses.** L'identité
+d'une société allemande est parfaitement valide et s'enregistre (`missing` vide) ;
+c'est le DÉBIT qui est refusé sans numéro de TVA. `vat_blocked` prévient donc
+l'écran avant le tunnel, plutôt que de faire remplir un formulaire pour refuser
+au paiement.
+
 ⚠️ **Point de droit resté ouvert** (conseil, pas code) : le « hors UE = 0 % » du
 cadre ne distingue pas le professionnel du particulier, alors que les services
 électroniques rendus à un particulier peuvent relever du pays de consommation. La

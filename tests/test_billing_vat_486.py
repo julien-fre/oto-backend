@@ -383,6 +383,27 @@ def test_status_dit_pourquoi_le_ttc_est_inconnu_plutot_que_d_echouer(monkeypatch
     assert etat["vat_blocked"] == "billing_identity_required"
 
 
+def test_un_abonnement_OFFERT_n_annonce_ni_ttc_ni_blocage(monkeypatch):
+    """Un `comp` (forcé par un admin) n'est jamais prélevé : il n'y a pas de TTC à
+    annoncer, et poser `vat_blocked` sur une org offerte sans identité serait une
+    FAUSSE alerte — sur un écran dont c'est tout le rôle de signaler les échéances
+    en danger. On ne va même pas lire l'identité."""
+    lectures = []
+    monkeypatch.setattr(db_billing, "get_org_subscription", lambda org: {
+        "org_id": ORG, "plan": "standard", "status": "active", "method": "comp",
+        "provider": "comp", "current_period_end": None, "next_billing_at": None,
+        "grace_until": None, "canceled_at": None})
+    monkeypatch.setattr(db_billing, "get_billing_identity",
+                        lambda org: lectures.append(org))
+
+    etat = billing.status(ORG)
+    assert etat["comp"] is True and etat["subscribed"] is True
+    assert etat["amount"] == 1900, "le prix du palier reste indicatif"
+    assert etat["amount_ttc"] is None and etat["vat_scheme"] is None
+    assert etat["vat_blocked"] is None, "rien ne bloque : rien ne sera prélevé"
+    assert lectures == [], "inutile d'aller lire une identité qui ne servira pas"
+
+
 # ══ la capacité : refus servis en 409, pas en 400 ════════════════════════════
 
 def test_les_refus_de_tva_sont_des_conflits_d_etat_pas_des_entrees_invalides():
