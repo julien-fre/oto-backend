@@ -30,8 +30,10 @@ décompression).
 """
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import socket
+import time
 from html.parser import HTMLParser
 from typing import Optional
 from urllib.parse import urljoin, urlsplit
@@ -43,7 +45,8 @@ from mcp.types import INVALID_REQUEST, ErrorData
 
 from .. import access, browserbase
 
-_TIMEOUT = (10, 30)
+_TIMEOUT = (10, 30)              # borne CHAQUE socket — pas la lecture entière
+_DEADLINE_S = 45                 # budget GLOBAL du cran ① (cf. `_fetch_http`)
 _MAX_FETCH_BYTES = 3_000_000     # bytes décompressés lus au maximum (cran ①)
 _EMPTY_TEXT_CHARS = 200          # texte extrait plus court = coquille vide
 _MAX_REDIRECTS = 5
@@ -54,6 +57,27 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 
 def _bad(msg: str) -> McpError:
     return McpError(ErrorData(code=INVALID_REQUEST, message=msg))
+
+
+def _now() -> float:
+    """Indirection d'horloge — le budget global se teste sans dormir."""
+    return time.monotonic()
+
+
+def _meme_site(demande: str, servi: str) -> bool:
+    """`demande` et `servi` désignent-ils le MÊME site ?
+
+    Un `www.` en tête et un sous-domaine ne sont pas des écarts (`acme.fr` →
+    `www.acme.fr` → `shop.acme.fr` : même maison) ; deux domaines distincts en
+    sont un. Volontairement sans liste de suffixes publics : la règle « l'un est
+    suffixe de l'autre sur une frontière de label » n'a pas le trou du `.co.uk`
+    qu'aurait une comparaison des deux derniers labels — `acme.co.uk` et
+    `evil.co.uk` ne sont suffixes ni l'un ni l'autre, donc l'écart est ANNONCÉ."""
+    a = (demande or "").lower().removeprefix("www.")
+    b = (servi or "").lower().removeprefix("www.")
+    if not a or not b:
+        return False
+    return a == b or a.endswith("." + b) or b.endswith("." + a)
 
 
 # ── garde SSRF (cran ① seulement) ────────────────────────────────────────────
@@ -138,15 +162,41 @@ def extract_text(html_str: str) -> tuple:
 # ── cran ① : fetch HTTP nu, streamé, gardé ───────────────────────────────────
 def _fetch_http(url: str) -> dict:
     """{verdict, ok, status?, html?, final_url?} — les redirections sont
-    marchées À LA MAIN : chaque saut repasse la garde SSRF."""
+    marchées À LA MAIN : chaque saut repasse la garde SSRF.
+
+    ⚠️ `_TIMEOUT` borne chaque SOCKET, jamais la lecture entière : six sauts de
+    redirection valent six fois ce budget, et la boucle de streaming n'est
+    bornée par rien du tout (un serveur qui distille un octet à la fois tient la
+    connexion indéfiniment). Mesuré au journal de prod du 17/08 : 11 lectures
+    au-delà de 30 s, une à **57,5 s**. D'où un budget GLOBAL (`_DEADLINE_S`),
+    vérifié avant chaque saut ET pendant la lecture, qui rabote au passage le
+    timeout de socket sur ce qu'il reste. Le verdict DIT ce qu'il a tenté
+    (combien de sauts, où il en était) — un « timeout » nu n'apprend rien à
+    l'agent qui doit décider s'il réessaie (#491)."""
+    t0 = _now()
     courante = url
+    sauts = 0
+
+    def _delai(ou: str) -> dict:
+        ecoule = _now() - t0
+        return {"ok": False,
+                "verdict": ("délai global dépassé ({:.0f} s) {} — {} redirection(s) "
+                            "suivie(s), dernière cible : {}"
+                            .format(ecoule, ou, sauts, courante))}
+
     for _ in range(_MAX_REDIRECTS + 1):
+        reste = _DEADLINE_S - (_now() - t0)
+        if reste <= 0:
+            return _delai("avant le saut suivant")
         check_url_public(courante)
         try:
             r = requests.get(courante, stream=True, allow_redirects=False,
-                             timeout=_TIMEOUT, headers={"User-Agent": _UA})
+                             timeout=(min(_TIMEOUT[0], reste), min(_TIMEOUT[1], reste)),
+                             headers={"User-Agent": _UA})
         except requests.Timeout:
-            return {"ok": False, "verdict": "timeout"}
+            return {"ok": False,
+                    "verdict": "timeout après {} redirection(s), sur {}".format(
+                        sauts, courante)}
         except requests.RequestException as e:
             return {"ok": False, "verdict": f"réseau : {type(e).__name__}"}
         try:
@@ -155,17 +205,22 @@ def _fetch_http(url: str) -> dict:
                 if not cible:
                     return {"ok": False, "verdict": "redirection sans cible"}
                 courante = urljoin(courante, cible)
+                sauts += 1
                 continue
             if r.status_code >= 400:
                 return {"ok": False, "verdict": f"HTTP {r.status_code}",
                         "status": r.status_code}
             # Lecture STREAMÉE, cap sur les bytes DÉCOMPRESSÉS, arrêt PENDANT.
+            # Le budget se revérifie à chaque morceau : c'est ici qu'un serveur
+            # lent tenait la lecture 57 s (#491).
             morceaux, total = [], 0
             for chunk in r.iter_content(chunk_size=65536, decode_unicode=False):
                 morceaux.append(chunk)
                 total += len(chunk)
                 if total >= _MAX_FETCH_BYTES:
                     break
+                if _now() - t0 >= _DEADLINE_S:
+                    return _delai("pendant la lecture du corps")
             brut = b"".join(morceaux)
             html_str = brut.decode(r.encoding or "utf-8", errors="replace")
             return {"ok": True, "status": r.status_code, "html": html_str,
@@ -203,12 +258,21 @@ def register(mcp: FastMCP) -> None:
         (real fingerprint, patience — costs a browser session). Without
         `browser=true` the answer stops at ② and tells you what to do.
 
-        Returns `{content, title, final_url, chemin, tentatives, cout,
+        Returns `{content, title, final_url, hote, chemin, tentatives, cout,
         truncated}` — `chemin` = which path actually produced the content
         (`http` | `serper` | `browser`), `tentatives` = every path tried and
         why it moved on, `cout` = what the read cost (serper credits, browser
         session). A skipped path (no serper key, Browserbase not configured)
         is REPORTED, never silent.
+
+        ⚠️ `final_url` is the OBSERVED landing URL, or `null` when the path
+        used cannot report one (the hosted scraper follows redirects silently).
+        `hote` = `{demande, servi, conforme}` says whether the page actually
+        served belongs to the domain you asked for: `conforme` is `true`
+        (same site), `false` (a redirect took you elsewhere — the content is
+        that OTHER site's) or `null` (unknowable on this path). Anything but
+        `true` also sets `avertissement`. Never assume the body came from the
+        host you requested — read `hote`.
 
         Args:
             url: absolute public URL (http/https). Internal/private addresses
@@ -222,28 +286,69 @@ def register(mcp: FastMCP) -> None:
         tentatives: list = []
         cout = {"serper_credits": 0, "browser_session": False}
 
+        demande = urlsplit(url).hostname or ""
+
         def _sortie(chemin: str, content: str, title: str = "",
-                    final_url: str = "") -> dict:
-            return {"chemin": chemin, "content": content[:cap],
-                    "truncated": len(content) > cap, "title": title,
-                    "final_url": final_url or url, "tentatives": tentatives,
-                    "cout": cout}
+                    final_url: Optional[str] = None) -> dict:
+            """Assemble la réponse — et n'AFFIRME jamais l'URL finale.
+
+            Signal #491 : ce champ recopiait l'URL DEMANDÉE quand le cran n'en
+            observait aucune (`final_url or url`). Or serper suit les
+            redirections en silence et ne rend AUCUNE URL finale : le tool
+            jurait donc que la page venait de l'hôte demandé, sans rien en
+            savoir — et la seule parade de l'appelant (comparer `final_url` à
+            l'hôte demandé) était structurellement aveugle sur ce cran.
+
+            Désormais : `final_url` est OBSERVÉE ou `None`, `hote` porte le
+            verdict (`conforme` vaut `None` quand on ne sait pas), et tout ce
+            qui n'est pas un `True` franc se dit dans `avertissement`. C'est le
+            tool qui annonce l'écart, pas l'appelant qui doit y penser."""
+            servi = urlsplit(final_url).hostname if final_url else None
+            conforme = _meme_site(demande, servi) if servi else None
+            out = {"chemin": chemin, "content": content[:cap],
+                   "truncated": len(content) > cap, "title": title,
+                   "final_url": final_url,
+                   "hote": {"demande": demande, "servi": servi,
+                            "conforme": conforme},
+                   "tentatives": tentatives, "cout": cout}
+            if conforme is None:
+                out["avertissement"] = (
+                    "Impossible de confirmer quel site a répondu : le cran "
+                    "`{}` ne rend pas l'URL finale et suit les redirections "
+                    "sans le dire. Le contenu peut venir d'un autre domaine "
+                    "que `{}` — recoupe avant d'en tirer un fait.".format(
+                        chemin, demande))
+            elif conforme is False:
+                out["avertissement"] = (
+                    "Tu as demandé `{}` ; la page servie vient de `{}` "
+                    "(redirection suivie). Le contenu ci-dessus est celui de "
+                    "`{}` — vérifie que c'est bien le site voulu avant d'en "
+                    "tirer un fait.".format(demande, servi, servi))
+            return out
 
         # ── ① le fetch nu ────────────────────────────────────────────────────
-        res = _fetch_http(url)
+        # `requests` est SYNCHRONE et ce handler est `async def` (il `await` le
+        # cran ③) : exécuté tel quel, il gèle la boucle — donc TOUS les
+        # utilisateurs — le temps de la lecture. Mesuré au journal du 17/08 :
+        # 11 lectures > 30 s, une à 57,5 s (docs/event-loop-perf.md, mode n°1).
+        # Le garde-fou AST ne peut pas le voir : le handler `await` bien
+        # quelque chose, plus bas. D'où `to_thread` ici (#491).
+        res = await asyncio.to_thread(_fetch_http, url)
         if res.get("ok"):
             texte, title = extract_text(res["html"])
             contenu = res["html"] if as_html else texte
             if len(texte) >= _EMPTY_TEXT_CHARS:
                 tentatives.append({"cran": "http", "verdict": "lu"})
-                return _sortie("http", contenu, title, res.get("final_url", ""))
+                return _sortie("http", contenu, title, res.get("final_url") or None)
             tentatives.append({"cran": "http",
                                "verdict": f"coquille vide ({len(texte)} car. utiles)"})
         else:
             tentatives.append({"cran": "http", "verdict": res["verdict"]})
 
         # ── ② le scraper hébergé ─────────────────────────────────────────────
-        scrape = _serper_scrape(url)
+        # Même raison qu'au cran ① : `SerperClient` est synchrone (et s'auto-
+        # limite par un `time.sleep`), il n'a rien à faire dans la boucle.
+        scrape = await asyncio.to_thread(_serper_scrape, url)
         if scrape is None:
             tentatives.append({"cran": "serper",
                                "verdict": "sauté — aucune clé serper résolvable"})
@@ -280,4 +385,4 @@ def register(mcp: FastMCP) -> None:
             pass
         tentatives.append({"cran": "browser", "verdict": "lu"})
         return _sortie("browser", contenu, page.get("title") or "",
-                       page.get("final_url") or "")
+                       page.get("final_url") or None)

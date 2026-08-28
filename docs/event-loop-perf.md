@@ -33,6 +33,37 @@
   (`py-spy dump --pid $(systemctl show -p MainPID --value oto-mcp)` PENDANT un gel),
   moniteur Kuma timeout 30s (timeout=0 = aveugle aux gels). RDB upgradée pico→nano.
 
+## Le mode n°1 a lui aussi une porte dérobée : le handler qui `await`… plus bas
+
+Le garde-fou AST `test_no_blocking_async_handlers` demande « ce handler `async def`
+`await`-t-il quelque chose dans son propre scope ? ». Un handler qui fait du I/O
+**synchrone d'abord** et n'`await` qu'**ensuite** répond oui — et gèle quand même la
+boucle pendant tout le début.
+
+Cas vécu, trouvé le 28/08 en instruisant le signal #491 : `web_read` (`tools/web.py`)
+n'`await` que son cran ③ (le navigateur hébergé, opt-in), tout en bas ; ses crans ①
+(`requests`) et ② (`SerperClient`, qui s'auto-limite par un `time.sleep`) sont
+entièrement synchrones et tournaient dans la boucle. Journal de prod du 17/08 : **371
+lectures, 11 au-delà de 30 s, une à 57,5 s** — autant de boucle tenue pour tous les
+utilisateurs à la fois, sans que le garde-fou ait rien à redire.
+
+**Deux leçons, et la seconde est la plus chère :**
+- **« Le handler await » ne veut pas dire « le handler ne bloque pas ».** Le critère
+  utile est *où* se trouve le premier await par rapport au I/O — ce qu'un AST
+  own-scope ne peut pas décider. D'où, comme pour les middlewares, un test qui
+  **observe le thread** plutôt que le source (`test_les_crans_bloquants_ne_tournent_pas_dans_la_boucle`).
+- **Un timeout par socket n'est PAS un timeout de requête.** `_TIMEOUT = (10, 30)`
+  borne chaque connexion et chaque lecture de socket, jamais la lecture entière : six
+  sauts de redirection valent six fois le budget, et une boucle de streaming n'est
+  bornée par rien du tout. C'est ce qui produit les 57 s. Le remède est un **budget
+  global** vérifié entre les sauts ET pendant la lecture, qui rabote au passage le
+  timeout de socket sur ce qu'il reste — et dont le verdict **dit ce qu'il a tenté**
+  (combien de sauts, où il en était), sans quoi l'agent ne peut pas décider s'il
+  réessaie.
+
+⚠️ **À vérifier sur tout `async def` de `tools/`** dont l'await est conditionnel ou en
+fin de corps : c'est exactement la forme qui passe le garde-fou.
+
 ## Le mode n°2 a une SECONDE porte : les middlewares MCP (incident du 15/08)
 
 Même mode de gel (DB sync dans la boucle), autre famille de call-sites — et celle-là

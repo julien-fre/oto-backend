@@ -226,3 +226,174 @@ def test_le_cap_arrete_la_lecture_en_cours(monkeypatch):
     assert out["ok"] and len(out["html"]) <= W._MAX_FETCH_BYTES + 65536
     assert servis["n"] <= (W._MAX_FETCH_BYTES // 65536) + 1, \
         "la lecture s'arrête PENDANT — jamais accumuler-puis-tronquer"
+
+
+# ── #491 : ce que la réponse DIT de l'hôte réellement servi ──────────────────
+#
+# Signal #491 (17/08, `wrong_result`) : « web_read rend par intermittence le
+# contenu d'un AUTRE domaine que celui demandé (cross-contamination between
+# concurrent calls) ». L'enquête du 28/08 a réfuté la contamination et daté ce
+# qui reste :
+#
+#   1. le journal de prod du 17/08 porte 371 `web_read`, **tous du MÊME `sub`**
+#      (aucune minute avec deux appelants distincts) — il n'y a jamais eu deux
+#      utilisateurs à contaminer l'un par l'autre ;
+#   2. aucun état n'est partagé entre deux appels : `requests.get` ouvre sa
+#      propre connexion, `SerperClient` est instancié à chaque appel, une
+#      session Browserbase est ouverte puis relâchée par appel ;
+#   3. le cas cité (`www.calitex.fr` → `boutique.nydel-france.fr`) est une
+#      **redirection 301 légitime**, revérifiée en direct le 28/08 — elle n'est
+#      d'ailleurs visible qu'avec notre User-Agent, curl nu reçoit un 403 ;
+#   4. le second cas cité (`solidarmonde.fr` → `artisansdumonde.org`) n'existe
+#      pas au journal : le seul appel (`#357616`) a ÉCHOUÉ sur
+#      `Serper scrape 500`, et aucun appel de la plateforme n'a jamais porté
+#      `artisansdumonde` dans ses arguments.
+#
+# Reste un vrai défaut, et c'est celui qui a rendu l'accusation crédible : le
+# tool AFFIRMAIT une `final_url` qu'il ne connaissait pas. Sur le cran ②, serper
+# suit les redirections en silence et ne rend AUCUNE URL finale — `_sortie`
+# recopiait alors l'URL DEMANDÉE. La parade du rapporteur (« comparer
+# `final_url` à l'hôte demandé ») était donc structurellement aveugle sur ce
+# cran, et l'écart d'hôte du cran ① restait à sa charge.
+#
+# D'où la règle que ces tests figent : **`final_url` est OBSERVÉE ou elle est
+# `None`**, et un écart d'hôte est ANNONCÉ par le tool.
+
+def test_le_cran_serper_n_invente_pas_l_url_finale(monkeypatch):
+    """Serper ne dit pas où il a atterri ⟹ on ne le sait pas, et on le DIT."""
+    lire = _web_read(monkeypatch,
+                     fetch={"ok": False, "verdict": "HTTP 403", "status": 403},
+                     serper={"markdown": "du contenu venu d'on ne sait où. " * 20})
+    out = lire(url="https://acme.fr")
+    assert out["chemin"] == "serper"
+    assert out["final_url"] is None, \
+        "recopier l'URL demandée serait AFFIRMER une chose inconnue (#491)"
+    assert out["hote"] == {"demande": "acme.fr", "servi": None, "conforme": None}
+    assert "avertissement" in out
+
+
+def test_une_redirection_hors_domaine_est_annoncee(monkeypatch):
+    """Le cas `calitex.fr` → `boutique.nydel-france.fr` : redirection légitime,
+    mais l'appelant doit l'apprendre DU TOOL, pas d'une comparaison qu'il pense
+    à faire lui-même (#491)."""
+    lire = _web_read(monkeypatch,
+                     fetch={"ok": True, "status": 200, "html": _HTML_OK,
+                            "final_url": "https://boutique.nydel-france.fr/fr/",
+                            "verdict": "lu"})
+    out = lire(url="https://www.calitex.fr/")
+    assert out["final_url"] == "https://boutique.nydel-france.fr/fr/"
+    assert out["hote"] == {"demande": "www.calitex.fr",
+                           "servi": "boutique.nydel-france.fr",
+                           "conforme": False}
+    assert "boutique.nydel-france.fr" in out["avertissement"]
+    assert "calitex.fr" in out["avertissement"]
+
+
+def test_un_saut_vers_www_ou_un_sous_domaine_n_est_pas_un_ecart(monkeypatch):
+    """`acme.fr` → `www.acme.fr` (ou `shop.acme.fr`) est le MÊME site : crier au
+    loup à chaque redirection canonique rendrait l'avertissement inaudible."""
+    for servie in ("https://www.acme.fr/", "https://shop.acme.fr/x"):
+        lire = _web_read(monkeypatch,
+                         fetch={"ok": True, "status": 200, "html": _HTML_OK,
+                                "final_url": servie, "verdict": "lu"})
+        out = lire(url="https://acme.fr/")
+        assert out["hote"]["conforme"] is True, servie
+        assert "avertissement" not in out, servie
+
+
+def test_deux_lectures_successives_ne_se_contaminent_pas(monkeypatch):
+    """L'accusation de #491 prise au mot : deux lectures d'affilée rendent
+    CHACUNE son domaine. Aucun état partagé entre appels — ce test le fige pour
+    que l'absence de cache reste un choix, pas un hasard."""
+    pages = {
+        "https://un.fr": "<html><head><title>UN</title></head><body>"
+                         + "<p>le contenu de UN.</p>" * 30 + "</body></html>",
+        "https://deux.fr": "<html><head><title>DEUX</title></head><body>"
+                           + "<p>le contenu de DEUX.</p>" * 30 + "</body></html>",
+    }
+    monkeypatch.setattr(W, "_fetch_http",
+                        lambda url: {"ok": True, "status": 200, "html": pages[url],
+                                     "final_url": url, "verdict": "lu"})
+    lire = _web_read(monkeypatch, serper="absent")
+    a = lire(url="https://un.fr")
+    b = lire(url="https://deux.fr")
+    c = lire(url="https://un.fr")
+    assert (a["title"], b["title"], c["title"]) == ("UN", "DEUX", "UN")
+    assert "DEUX" not in a["content"] and "UN." not in b["content"]
+    assert [o["final_url"] for o in (a, b, c)] == \
+        ["https://un.fr", "https://deux.fr", "https://un.fr"]
+
+
+# ── #491 (2ᵉ défaut) : un appel qui pend gèle TOUT le monde ──────────────────
+#
+# Le même journal du 17/08 donne 11 lectures **au-delà de 30 s**, une à **57,5 s**.
+# `web_read` est `async def` (il `await` le cran ③), donc FastMCP l'exécute DANS
+# la boucle — mais ses crans ① et ② sont du I/O SYNCHRONE (`requests`,
+# `SerperClient`). 57 s de boucle tenue, pour tous les utilisateurs à la fois :
+# c'est le mode de gel n°1 de `docs/event-loop-perf.md`.
+#
+# Le garde-fou AST `test_no_blocking_async_handlers` ne peut PAS le voir : son
+# critère est « ce handler `await`-t-il quelque chose dans son propre scope ? »,
+# et celui-ci `await` bien — au cran ③, tout en bas. D'où un test qui n'analyse
+# pas le source mais OBSERVE le thread, comme le garde des middlewares.
+
+def test_les_crans_bloquants_ne_tournent_pas_dans_la_boucle(monkeypatch):
+    """Le fetch et le scraper sont synchrones : ils doivent sortir de la boucle."""
+    import threading
+
+    vus: list = []
+
+    def _faux_fetch(url):
+        vus.append(threading.current_thread())
+        return {"ok": True, "status": 200, "html": _HTML_OK,
+                "final_url": url, "verdict": "lu"}
+
+    monkeypatch.setattr(W, "_fetch_http", _faux_fetch)
+    monkeypatch.setattr(W.access, "resolve_api_key",
+                        lambda p: (_ for _ in ()).throw(RuntimeError("no key")))
+    reg = _Reg()
+    W.register(reg)
+    fn = reg.tools["web_read"]
+
+    boucle: list = []
+
+    async def _scenario():
+        boucle.append(threading.current_thread())
+        return await fn(url="https://acme.fr")
+
+    asyncio.run(_scenario())
+    assert vus and boucle, "la garde serait inerte si le fetch n'était pas atteint"
+    assert vus[0] is not boucle[0], \
+        "le fetch synchrone doit sortir de la boucle (asyncio.to_thread)"
+
+
+def test_la_lecture_a_un_budget_et_dit_ce_qu_elle_a_tente(monkeypatch):
+    """`_TIMEOUT` borne CHAQUE socket, jamais la lecture entière : six sauts de
+    redirection valent six fois le budget, et le streaming n'est borné par rien.
+    Il faut un délai GLOBAL — et son verdict doit dire ce qu'il a tenté (#491)."""
+    horloge = {"t": 0.0}
+    monkeypatch.setattr(W, "_now", lambda: horloge["t"])
+
+    class _FauxRedirect:
+        is_redirect = True
+        is_permanent_redirect = False
+        status_code = 302
+        headers = {"Location": "https://acme.fr/encore"}
+
+        def close(self):
+            pass
+
+    def _get(url, **kw):
+        horloge["t"] += 20.0        # chaque saut brûle 20 s
+        return _FauxRedirect()
+
+    monkeypatch.setattr(W.requests, "get", _get)
+    monkeypatch.setattr(W, "check_url_public", lambda u: None)
+
+    res = W._fetch_http("https://acme.fr/")
+    assert res["ok"] is False
+    assert "délai" in res["verdict"], f"verdict opaque : {res['verdict']!r}"
+    assert "redirection" in res["verdict"], \
+        "le verdict doit dire ce qu'il a tenté, pas seulement qu'il a renoncé"
+    assert horloge["t"] <= W._DEADLINE_S + 20.0, \
+        "le budget doit couper AVANT d'épuiser les 5 redirections"
