@@ -1,8 +1,8 @@
 ---
-title: Doctrines & instructions d'org
+title: Guides & instructions d'org
 type: reference
 description: >-
-  Référence du mécanisme de doctrine oto-backend : prose opératoire métier par org,
+  Référence du mécanisme de guide oto-backend : prose opératoire métier par org,
   structurée en skills identifiés par slug et versionnés dans org_instructions +
   org_instruction_revisions. Détaille la surface (consolidée en `oto_procedure`, ADR 0047 — op=get sans slug =
   call de début de session renvoyant base + index, avec slug = skill nommé ;
@@ -14,22 +14,24 @@ adr:
   - "0006"
 ---
 
-# Doctrines & instructions d'org
+# Guides & instructions d'org
+
+> ⚠️ **« doctrine » = « guide » depuis le 28/08/2026** (#519) : le mot a disparu de l'interne du backend (modules, symboles, prose). Les noms SERVIS qui le portent encore — outil `oto_admin_doctrine`, capacités `org.doctrine.*` / `admin.doctrine`, chemins `/api/[me/]doctrines/…`, clés `doctrine_id` / `doctrine_version` / `doctrines` / `group_doctrine`, table `doctrine_library`, colonne `runs.doctrine` — sont des **alias de compatibilité** jusqu'au lot B, qui les renomme avec préavis.
 
 Prose opératoire métier (workflows validés, règles, vocabulaire) pour les users qui pilotent
 oto **sans produit applicatif dédié** (ex. un process avoir compta client
 GoCardless → Pennylane → back-office, piloté directement depuis Claude sur un sous-ensemble
 de tools). oto est la maison naturelle de cette prose faute de produit. Aligné
 **ADR 0006** (harnais-vs-substrat, repo public `otomata-tech/oto`) : une org oto + sa
-doctrine = un **harnais sans état** (étage zéro) ; le jour où un workflow doit persister un
+guide = un **harnais sans état** (étage zéro) ; le jour où un workflow doit persister un
 pipeline/des statuts, il graduate en harnais à part.
 
 **Modèle = skills, à la Claude Code.** Une org possède des **instructions markdown**
 identifiées par `slug`, chacune versionnée :
-- La **doctrine de base** (slug réservé **interne** `BASE_SLUG`, jamais vu de l'user) est servie
+- Le **guide de base** (slug réservé **interne** `BASE_SLUG`, jamais vu de l'user) est servi
   d'office — accédée via `oto_procedure(op='get')` **sans slug**.
 - Les autres slugs = des **skills** chargés à la demande (progressive disclosure) : la
-  doctrine de base ne porte que l'**index** (slug + titre + quand-l'utiliser), le détail
+  guide de base ne porte que l'**index** (slug + titre + quand-l'utiliser), le détail
   se charge au besoin.
 
 **Surface = 4 tools** (refacto 2026-06-18, ex-11 ; « moins d'outils, plus d'args »). Un `org_id`
@@ -38,7 +40,7 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
 (`_resolve_org_read`/`_resolve_org_write`).
 - **Lecture** : `oto_procedure(op='get'[, slug, scope, version, with_history])` — sans `slug` =
   `{doctrine, group_doctrine, doctrines[]}` (base org + base groupe + index), le call de **DÉBUT DE
-  SESSION** ; avec `slug` = le markdown d'une doctrine nommée. `oto_procedure(op='list'[, query,
+  SESSION** ; avec `slug` = le markdown d'un guide nommé. `oto_procedure(op='list'[, query,
   scope])` = catalogue/recherche. Scopés à l'**org active** (+ groupe actif) — servis aux seuls
   membres. **Vide sans erreur** si pas d'org active (`_SERVER_INSTRUCTIONS` invite à `oto_procedure(op='get')`).
 - **Écriture** : `oto_procedure(op='set'[, body_md, slug, org, title, desc, from_version])` (base = slug
@@ -161,11 +163,11 @@ retiré le 2026-07-01 — l'onboarding est un projet, ADR 0032 §7) :
   (`_format_org_readme`/`_format_group_readme`/`_format_user_readme`), chacun avec substitution
   `{{org}}`/`{{user}}`/`{{équipe}}`/`{{connecteurs_actifs}}`.
 
-Donc **ne plus prescrire « appelle la lecture de doctrine au démarrage »** — la doctrine est injectée.
-Les **doctrines nommées (skills)** ne sont pas des outils → absentes de `tools/list` → `on_list_tools`
+Donc **ne plus prescrire « appelle la lecture de guide au démarrage »** — le guide est injecté.
+Les **guides nommés (skills)** ne sont pas des outils → absents de `tools/list` → `on_list_tools`
 **enrichit la description de `oto_procedure`** avec leur index per-org (`instructions.skills_index_md`,
 Tool non-frozen → `model_copy`). `render()` reste la surface STATIQUE (boot / fallback, sans DB).
-Tout **fail-open** (pas de sub/org/doctrine/DB → surface statique). Édition des blocs A/B : capacité
+Tout **fail-open** (pas de sub/org/guide/DB → surface statique). Édition des blocs A/B : capacité
 `oto_admin_platform_instructions` (+ REST `/api/admin/platform-instructions`, `PLATFORM_ADMIN`) →
 éditeur dashboard `/platform/instructions`. Transparence : `/api/me/agent-context` rend le même
 artefact composé. **Reste (#54)** : anticipation **pilotée** (message proactif amorcé par l'admin).
@@ -204,7 +206,6 @@ de procédures ne sert plus le readme (`get_instruction` → None, `set_instruct
 les appelants qui le veulent lisent `guide_store.init_guide_body(scope, id)`. `me.agent_readme` +
 `/api/me/agent-readme` + `db.{get,set}_user_readme` supprimés (table `user_agent_readme` laissée
 en place — elle sert encore de source au backfill de boot ; son DROP est une migration à part). Chaque niveau passe par `_apply_vars`
-({{org}}/{{user}}/{{équipe}}/{{connecteurs_actifs}}). **Procédure** = doctrine nommée
-(skill), chargée à la demande — les identifiants de code (`_DOCTRINE_GET_TOOL`, tables,
-`docs/doctrines.md`) gardent le mot doctrine. Prose opératoire versionnée par org,
-**détail : `docs/doctrines.md`**.
+({{org}}/{{user}}/{{équipe}}/{{connecteurs_actifs}}). **Procédure** = guide nommé
+(skill), chargé à la demande. Prose opératoire versionnée par org — le reste de ce
+document en détaille le mécanisme.

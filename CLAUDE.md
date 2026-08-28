@@ -83,7 +83,7 @@ oto_mcp/
 ├── db/               # store PG (package) : _conn (pool/connexion), _schema (DDL), _init (migrations) + 1 module/domaine (users, keys, usage, datastore, projects, opendata…). Surface plate `db.<fn>` via __init__
 ├── org_store/        # palier ORG (package, découpé le 2026-08-27) : orgs (la fiche), members (appartenance + MAISON),
 │                     #   vault (secrets), settings (redaction/email/MFA), personal (org perso + boot),
-│                     #   invitations (plateforme/org/équipe), instructions (procédures), library (doctrines publiées).
+│                     #   invitations (plateforme/org/équipe), instructions (procédures), library (guides publiés).
 │                     #   DAG à 2 étages : {personal, invitations} → {orgs, members} ; library → instructions.
 │                     #   Surface plate `org_store.<fn>` via __init__, qui REDESCEND les écritures sur le module
 │                     #   propriétaire (sinon un monkeypatch de test serait mort en silence). Cliquet :
@@ -354,7 +354,7 @@ Exceptions backend → **Sentry SaaS** (gaté `OTO_SENTRY_DSN`, no-op si absent)
 500 des routes REST (intégration Starlette) et exceptions des tools MCP
 (`SentryToolErrorMiddleware` — une erreur de tool est un JSON-RPC en HTTP 200, invisible à
 Starlette). ⚠️ RGPD : `send_default_pii=False`, **jamais** les args d'appel dans l'event ;
-`before_send` droppe les 4xx amont. Région **EU** `de.sentry.io` ; triage = doctrine oto
+`before_send` droppe les 4xx amont. Région **EU** `de.sentry.io` ; triage = guide oto
 `surveillance-erreurs`. **Détail : `docs/monitoring.md` §Error tracking.**
 
 ## Onboarding = un projet « Découverte » (ADR 0032 §7)
@@ -435,11 +435,14 @@ Passer son org/groupe **explicitement** via le kwarg `org`/`group`.
 **Agent readme** = prose libre **injectée à chaque session**, cumulée du général au spécifique
 (plateforme → org → équipe active → user) ; les 4 étages vivent dans `guides` delivery='init'
 et **s'éditent par UNE surface**, la capacité `me.guide{,s}` (ADR 0042). **Procédure** =
-doctrine nommée, chargée à la demande ; les identifiants de code gardent le mot *doctrine*.
+guide nommé, chargé à la demande. ⚠️ Le mot « doctrine » a quitté l'interne le
+28/08/2026 (#519) ; il ne survit que dans les noms SERVIS (outil `oto_admin_doctrine`,
+capacités `org.doctrine.*`, chemins `/api/[me/]doctrines/…`, clés `doctrine_id` &
+consorts, table `doctrine_library`), alias de compatibilité jusqu'au lot B.
 ⚠️ **Une procédure s'OUVRE sur son digest et embarque son SCHÉMA — deux sections requises.**
 Le digest n'est **jamais fabriqué** (sourcé sur le journal des runs, ou rien). La grammaire du
 dessin est un **CONTRAT** (reparsé en graphe) : **UN** seul bloc fencé **non tagué** — guide
-plateforme `procedure-flowchart`. **Détail : `docs/doctrines.md`.**
+plateforme `procedure-flowchart`. **Détail : `docs/guides.md`.**
 
 ## Groupes (départements) & hiérarchie de droits (ADR 0012)
 
@@ -447,7 +450,7 @@ Une org se subdivise en **groupes** (départements/équipes) avec un **chef d'é
 (`group_role='group_admin'`). Droits **centralisés dans `roles.py`** (escalade descendante,
 source unique) : `platform_admin ⊇ org_admin ⊇ group_admin ⊇ member`. Un groupe **gouverne 3
 ressources** par délégation de l'org : secrets partagés (cascade `user_key > groupe actif > org
-active > plateforme`), doctrine & skills, gouvernance de connecteur.
+active > plateforme`), guide & skills, gouvernance de connecteur.
 ⚠️ **Invariant monotone** : l'équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse
 (platform ⊇ org ⊇ group). ⚠️ **Groupe actif** : ≤1 par sub, il appartient à l'org active.
 ⚠️ **Aucun module du package `org_store/` n'importe `group_store`** (SQL direct dans
@@ -541,7 +544,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `datastore-colonne-tableau.md` | spec de la colonne-tableau (oto#22 barreau 2) : forme servie, couches d'un item, fonctions natives, non-définitions, chemin de migration en double-service. |
 | `projects.md` | projet (liens typés, docs), livraison client cascade, endpoint MCP + partage navigable par projet (`<slug>.{mcp,share}.oto.cx`). |
 | `search-and-kb.md` | `oto_search` : RRF lexical+sémantique, grains matchés, invariant « cherchable ⇔ lisible », épine, backlinks, propositions. |
-| `doctrines.md` | doctrine & skills d'org (`oto_procedure`, versionnée), forme d'une procédure (digest + schéma), agent readme, **renommer un outil = migrer les procédures** (refs `<tool:slug>` en DB, angle mort du CI). |
+| `guides.md` | guide & skills d'org (`oto_procedure`, versionnée), forme d'une procédure (digest + schéma), agent readme, **renommer un outil = migrer les procédures** (refs `<tool:slug>` en DB, angle mort du CI). |
 | `onboarding-et-profil.md` | onboarding = un projet « Découverte », fiche « situation avec oto » (`me.profile`), `oto_whoami`. |
 | `unipile.md` | **le split compte/canaux (28/08)**, mode plateforme, DSN, sélecteur d'identité, comptes partagés (#55), historique des renommages LinkedIn. |
 | `browser-automation.md` | substrat Browserbase (Context/Live View/run_fetch), connecteurs brevo/crunchbase/pennylaneged, connecteur générique `browser`, LinkedIn isolation de session. |

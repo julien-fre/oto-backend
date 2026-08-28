@@ -8,7 +8,7 @@ tags: recrutement, sourcing, ats, talent
 
 # Sourcing de talents — workflow de bout en bout
 
-Doctrine de base du recrutement avec oto : transformer un **brief de poste** en
+Guide de base du recrutement avec oto : transformer un **brief de poste** en
 un **pipeline de candidats qualifiés**, loggés proprement dans l'ATS. Les skills
 nommés (`boolean-search`, `candidate-screening`, `ats-hygiene`,
 `recruiter-outreach`) détaillent chaque étape — charge-les à la demande.
@@ -62,5 +62,5 @@ sourcer large mais qualifié, enrichir les coordonnées, qualifier, puis approch
   les demandes de suppression.
 - **Une source unique par candidat.** Avant de créer, cherche un doublon
   (`*_search_candidates` / `*_candidates?email=`) — un candidat = une fiche ATS.
-- Encadre tes déroulés : `doctrine_start("talent-sourcing")` →
-  `doctrine_finish(run_id, outcome)`. Un manque (outil/donnée) → `report_gap`.
+- Encadre tes déroulés : `run_start("talent-sourcing", doctrine="talent-sourcing")` →
+  `run_finish(run_id, outcome)`. Un manque (outil/donnée) → `report_gap`.

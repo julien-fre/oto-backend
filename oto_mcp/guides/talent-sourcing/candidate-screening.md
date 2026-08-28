@@ -8,7 +8,7 @@ tags: recrutement, screening, qualification, scorecard
 
 # Pré-qualification candidat (scorecard)
 
-Skill de la doctrine `talent-sourcing`. Objectif : décider **go / no-go / à creuser**
+Skill du guide `talent-sourcing`. Objectif : décider **go / no-go / à creuser**
 sur un profil, vite et sans biais, avec une trace réutilisable.
 
 ## La scorecard

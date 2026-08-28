@@ -4,7 +4,7 @@ type: reference
 description: >-
   Référence du flux d'événements de session unifié dans oto-backend (ADR 0017) :
   corrélation session_id + run_id sur tool_calls (colonnes OTO-locales, index dans
-  ALTER pas dans _SCHEMA), tools spine run_start/run_finish (tools/doctrine_run.py,
+  ALTER pas dans _SCHEMA), tools spine run_start/run_finish (tools/guide_run.py,
   pile session FastMCP, runs imbriqués OK), et capacité feedback (signal
   tool_feedback|gap → table durable usage_signals hors prune 30j). Détaille les
   projections admin /api/admin/usage/* (runs, gaps, tool-quality, signals filtrables
@@ -27,10 +27,11 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
   par `server._calllog_sink` qui lit `get_context().session_id` + le run actif. ⚠️ piège
   rattrapé : l'index sur `run_id` va dans le bloc **ALTER** d'`init_db` (après l'ADD COLUMN),
   **jamais** dans `_SCHEMA` (no-op sur table existante → `UndefinedColumn` au boot).
-- **Runs / déroulés** : tools spine `run_start`/`run_finish` (`tools/doctrine_run.py`) ;
-  `run_start(label, doctrine?)` ouvre une doctrine nommée (`doctrine`=slug) **ou** un run
+- **Runs / déroulés** : tools spine `run_start`/`run_finish` (`tools/guide_run.py`) ;
+  `run_start(label, doctrine?)` ouvre un guide nommé (`doctrine`=slug — nom de
+  paramètre SERVI) **ou** un run
   one-shot (sans `doctrine`), même trace. Le `run_id` vit dans une **pile en état de
-  session FastMCP** (`doctrine_run.py`, runs imbriqués OK), stampé sur chaque appel côté
+  session FastMCP** (`guide_run.py`, runs imbriqués OK), stampé sur chaque appel côté
   serveur — l'agent ne thread rien.
   - **Retrouver un `run_id` perdu** (#473, 28/08) : `oto_project op=runs` **sans**
     `project_id` rend MES déroulés encore OUVERTS, chacun avec son `run_id` et son état
@@ -151,9 +152,9 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
 ## Runs persistés (#50, amende le « state-only » d'ADR 0017)
 
 > **Runs persistés (#50, amende le « state-only » d'ADR 0017).** La métadonnée
-> sémantique d'un run (label / doctrine / outcome) vit désormais dans la table `runs`
+> sémantique d'un run (label / guide / outcome) vit désormais dans la table `runs`
 > (`db.insert_run`/`finish_run`/`recent_runs`) — la pile session-scopée de
-> `doctrine_run.py` reste la **source du run actif** (stampe `tool_calls.run_id`),
+> `guide_run.py` reste la **source du run actif** (stampe `tool_calls.run_id`),
 > `run_start`/`run_finish` y ajoutent la trace durable (best-effort, off-loop). Sert
 > l'anticipation du contexte injecté (instructions bloc C) + la boucle d'usage dashboard.
 

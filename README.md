@@ -27,7 +27,7 @@ Around the connectors, oto-mcp provides the platform plumbing:
   per-user keys, per-org/group shared secrets, and platform keys with quotas.
 - **Orgs, groups & roles** — `member < admin < super_admin`, org/department hierarchy,
   cascading key resolution (`user_key > group > org > platform_grant`).
-- **Per-user tool visibility**, presets, call monitoring, org doctrines/skills, and
+- **Per-user tool visibility**, presets, call monitoring, org guides/skills, and
   MCP federation (mount / remote bridge).
 
 ## Architecture
@@ -77,7 +77,7 @@ systemd service. Full procedure in [`deploy/DEPLOY.md`](deploy/DEPLOY.md).
 
 In-depth docs live under [`docs/`](docs/): `connector-vault.md` (the central
 architecture), `roles-and-resolution.md`, `auth-logto.md`, `rest-api.md`,
-`datastore.md`, `groups-and-roles.md`, `federation.md`, `doctrines.md`, `monitoring.md`,
+`datastore.md`, `groups-and-roles.md`, `federation.md`, `guides.md`, `monitoring.md`,
 `usage-loop.md`.
 
 Open source.

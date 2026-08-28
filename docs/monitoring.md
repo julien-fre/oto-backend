@@ -35,7 +35,7 @@ l'écriture**), `ok`, `error`, `duration_ms`, `created_at`.
 | colonne | ce qu'elle répond | posé par |
 |---|---|---|
 | `session_id` | quelle conversation MCP | `ctx.session_id` |
-| `run_id` | quel déroulé (`run_start`…`run_finish`) | jeton `_run_id=` puis pile `doctrine_run` |
+| `run_id` | quel déroulé (`run_start`…`run_finish`) | jeton `_run_id=` puis pile `guide_run` |
 | `org_id` | sous quelle org l'appel a été émis | seam `access.current_org` |
 | `client_id` | depuis quelle surface (claude.ai, Claude Code…) | claim `azp` du JWT |
 | `sentry_event_id` | où est le traceback | `SentryToolErrorMiddleware` |
@@ -195,7 +195,7 @@ l'exception est vivante (vrai traceback, tag `mcp.tool` + `user.id=sub`). RGPD :
 `send_default_pii=False`, **jamais** les args d'appel dans l'event. `before_send`
 **droppe les 4xx amont** (`HTTP 4xx` d'une API tierce = input rejeté, pas un bug
 backend). Env box : `OTO_SENTRY_{DSN,ENV,RELEASE,TRACES_SAMPLE_RATE}` ; région **EU**
-`de.sentry.io` (org slug `otomata-vz`). Surveillance/triage = doctrine oto
+`de.sentry.io` (org slug `otomata-vz`). Surveillance/triage = guide oto
 `surveillance-erreurs` (token API en SOPS `sentry_api_token`).
 Un appel sur un tool HORS toolbox de session (la visibilité filtre `tools/list`,
 pas `tools/call`) = erreur **GÉRÉE actionnable** `tool_not_mounted`

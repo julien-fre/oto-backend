@@ -36,7 +36,7 @@ la découpe du DDL vient de fixer — on obtient **97 blocs contigus de même do
 pour 226 instructions.
 
 Autrement dit : `projects` apparaît en **13 morceaux séparés**, `orgs` en 8,
-`doctrine` en 6, `usage` et `users` en 4. Les migrations sont écrites dans l'ordre
+`procedures` en 6, `usage` et `users` en 4. Les migrations sont écrites dans l'ordre
 **chronologique** — chaque lot ajoute à la fin, quel que soit son domaine — et cet
 ordre n'est pas commutatif :
 
@@ -108,7 +108,7 @@ exception est loggée, pas relevée), tous à coût croissant avec la base :
 | `_ensure_datastore_key_indexes()` | par namespace : résorption des doublons puis `CREATE UNIQUE INDEX` | nombre de namespaces × leurs lignes |
 
 Et à l'intérieur de la transaction, cinq conversions de contenu appelées depuis
-`db/nodes.py` (`convert_projects`, `convert_docs`, `convert_doctrines`,
+`db/nodes.py` (`convert_projects`, `convert_docs`, `convert_guides`,
 `convert_tables`, `convert_rows`) plus `db/guides.py` et `db/aux_embed.py`.
 
 **Conséquence pour le choix** : une solution qui ne s'occuperait que des `ALTER`
@@ -165,7 +165,7 @@ Domaines au sens de la découpe du DDL (`db/schema/<domaine>.py`).
 | `projects` | 28 | 25 | 21 | 3 |
 | `orgs` | 25 | 21 | 7 | 4 |
 | `usage` | 15 | 13 | 12 | 2 |
-| `doctrine` | 14 | 8 | 7 | 6 |
+| `procedures` | 14 | 8 | 7 | 6 |
 | `users` | 12 | 2 | 2 | 10 |
 | `datastore` | 11 | 8 | 6 | 3 |
 | `connectors` | 8 | 6 | 6 | 2 |
@@ -230,7 +230,7 @@ Un `ALTER TABLE t ADD COLUMN IF NOT EXISTS c` est **inerte** dès lors que `c`
 figure aussi dans le `CREATE TABLE` de `_SCHEMA` : une installation neuve reçoit la
 colonne par le DDL de base, et une base existante l'a reçue par l'ALTER, une fois,
 il y a des semaines. C'est le cas de **79 des 106** `ADD COLUMN` — 21 sur
-`projects`, 12 sur `usage`, 7 sur `doctrine`, `orgs` et `unipile`…
+`projects`, 12 sur `usage`, 7 sur `procedures`, `orgs` et `unipile`…
 
 **C'est le seul gain que cette note identifie comme indépendant des trois
 options** : ces 79 ordres sont supprimables sans changer de régime, à une condition

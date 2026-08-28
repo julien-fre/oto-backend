@@ -112,7 +112,7 @@ contrôle vérifie que la garde MORD (le même travail appelé nûment dans la b
 bien attrapé).
 
 ⚠️ **Restent à traiter, MÊME classe, non couverts** (nommés plutôt que balayés en pleine
-nuit d'incident) : `DynamicInstructionsMiddleware.on_list_tools` (org + index doctrine +
+nuit d'incident) : `DynamicInstructionsMiddleware.on_list_tools` (org + index guide +
 index guides, sync), `UserDisabledToolsMiddleware.on_initialize` →
 `session_visibility.compute_hidden_tools` (`async def` qui fait 3 requêtes sync avant son
 premier await), le combinateur d'autz `ORG_MEMBER` de `capabilities/_authz.py` appelé

@@ -3,10 +3,10 @@ title: REST API (consommée par oto.ninja /account)
 type: reference
 description: >-
   Inventaire des endpoints REST /api/* de oto-backend : profil /api/me (billing,
-  onboarding, connecteurs), settings LinkedIn/API-keys/tools, doctrine org
+  onboarding, connecteurs), settings LinkedIn/API-keys/tools, guide org
   /api/me/instructions*, palier org (CRUD orgs, membres, secrets, invitations,
   entitlements namespace), admin users/grants/tokens/monitoring, billing Stripe,
-  bibliothèque publique de doctrines (doctrine_library, visibilité public/unlisted).
+  bibliothèque publique de guides (doctrine_library, visibilité public/unlisted).
   Détaille les règles CORS (oto.ninja, app.oto.ninja, dashboard.oto.ninja), l'autz
   (même JWTVerifier ES384 que /mcp, audience mcp.oto.ninja), et les gotchas secrets
   (jamais la clé en réponse, providers per-user refusés en org secrets). À charger
@@ -41,9 +41,9 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 
 | famille | où | régime |
 | --- | --- | --- |
-| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, **les jetons API**, **les fichiers de projet**, projets, pages, procédures, ressources, orgs, doctrine, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
+| ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, **les jetons API**, **les fichiers de projet**, projets, pages, procédures, ressources, orgs, guide, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
 | primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api/base.py` | partagées par tous les modules ; **ré-exportées** par `api.routes` |
-| favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques doctrines & guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api/public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
+| favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques de procédures & de guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api/public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
 | `POST /api/me/avatar`, `POST /api/orgs/{id}/logo` | `api/media.py` | **multipart** → hors du moule par CONSTRUCTION (classé `NATURE`) |
 | `POST` d'un fichier de projet, `/api/me/projects/{id}/export` | `api/projects.py` | **multipart / ZIP** → hors du moule (classé `NATURE`) |
 | `/api/upload/{token}` (PUT/POST/GET) | `api/uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
@@ -156,7 +156,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   **Pas de face MCP** : `oto_list_my_tools`/`oto_enable_tool`/`oto_disable_tool` restent
   écrits à la main, leurs formes diffèrent de celles-ci — réconciliation suivie en
   oto-backend#429.
-- `GET /api/me/instructions` (index des procédures ; le readme d'org est un guide `delivery=init`, plus servi ici) + `GET|PUT|DELETE /api/me/instructions/{slug}` + `GET /api/me/instructions/{slug}/versions` + `POST /api/me/instructions/{slug}/revert` — procédures de l'**org active** (le slug `claude_md` est RÉSERVÉ au readme et refusé ici) (cf. §Doctrines). Lecture = membre ; écriture = `org_admin` (ou platform admin). Édité par le dashboard (`/procedures`). ⚠️ Le `PUT` renvoie un **`diagram_warning`** (toujours présent ; `null` = rien à signaler) quand le corps n'embarque pas le SCHÉMA requis de la procédure — non bloquant, comme `unresolved_tools`/`slot_warnings` (cf. §Doctrines).
+- `GET /api/me/instructions` (index des procédures ; le readme d'org est un guide `delivery=init`, plus servi ici) + `GET|PUT|DELETE /api/me/instructions/{slug}` + `GET /api/me/instructions/{slug}/versions` + `POST /api/me/instructions/{slug}/revert` — procédures de l'**org active** (le slug `claude_md` est RÉSERVÉ au readme et refusé ici) (cf. §Guides). Lecture = membre ; écriture = `org_admin` (ou platform admin). Édité par le dashboard (`/procedures`). ⚠️ Le `PUT` renvoie un **`diagram_warning`** (toujours présent ; `null` = rien à signaler) quand le corps n'embarque pas le SCHÉMA requis de la procédure — non bloquant, comme `unresolved_tools`/`slot_warnings` (cf. §Guides).
 - `GET|PUT|DELETE /api/me/guides/{scope}/{slug}` (+ `GET /api/me/guides`) — **la prose d'instruction**, un seul primitif sur deux axes (ADR 0042 §Convergence des surfaces) : `scope` ∈ platform|org|group|user × `delivery` ∈ `on-demand` (défaut, un how-to chargé au besoin) | `init` (**readme injecté à chaque session**, slug canonique `readme` — corps vide = couche effacée). Miroir REST d'`oto_guide`, mêmes handlers. Écriture gatée par scope (platform_admin / org_admin / chef d'équipe / self). Variantes par-id pour viser une org/équipe précise plutôt que l'active : `GET|PUT /api/orgs/{id}/guides/{scope}/{slug}` et `/api/groups/{id}/guides/{scope}/{slug}`. *(Remplace `GET|PUT /api/me/agent-readme`, retiré le 2026-07-28.)*
 - `POST|DELETE /api/me/projects/{id}/public-share` — **partage public CHIFFRÉ** d'un projet (ADR 0032 §3, zero-knowledge). Le dashboard chiffre le snapshot (brief + pages) côté navigateur et POSTe uniquement `{ciphertext}` ; renvoie `{token, public_base_url}`. Écriture = `ownership.can_access(project, write)`. La clé de déchiffrement n'atteint JAMAIS le serveur (fragment d'URL).
 - `GET /api/public/projects/{token}` — **sans auth** : renvoie `{ciphertext, updated_at}` du snapshot chiffré. Déchiffrement côté navigateur (route `/p/p/{token}#<clé>`). Pendant public de `GET /api/public/docs/{token}` (#4a).
@@ -275,8 +275,8 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   - **fiche admin user** : `GET /api/admin/users/{sub}` = identité + accès effectif par provider (`status_for`) + grants + namespaces + orgs (membership).
   - platform admin : `GET|POST /api/admin/orgs`, `GET /api/admin/orgs/{id}` (+ entitlements), `…/members*`, `…/secrets/{provider}`, `POST|DELETE /api/admin/orgs/{id}/entitlements/{namespace}`, `GET /api/admin/namespace-grants`, `POST|DELETE /api/admin/users/{sub}/namespace-grants/{namespace}`
   - secrets : jamais la clé en réponse (provider/base_url/set_at/set_by) ; providers per-user (slack/linkedin/google/whatsapp) refusés en `400` ; listing lu du coffre canonique `credentials_store` (legacy `org_secrets` plus dual-written sous chiffrement). Gating org_admin/membre via `org_store.get_org_role` (platform admin toujours autorisé). Révocation lazy sur sessions MCP ouvertes. Contrat front : `oto-app/docs/ORG_API_CONTRACT.md`.
-- **Bibliothèque publique de doctrines** (marketplace de skills, table `doctrine_library`) :
-  capacités `library.*` (`capabilities/doctrine_library.py`, montage auto MCP+REST) —
+- **Bibliothèque publique de guides** (marketplace de skills, table `doctrine_library`) :
+  capacités `library.*` (`capabilities/guide_library.py`, montage auto MCP+REST) —
   `library.list/get` (`SUB_ONLY`, MCP `oto_procedure` op=library_list/library_get + REST
   `GET /api/me/doctrines/library[/{slug}]`), `library.publish`/`library.fork` (`ORG_MEMBER` +
   gate org_admin en handler, MCP `oto_procedure` op=publish/fork + REST
@@ -288,7 +288,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   **`visibility`** : `public` (dans le catalogue) vs `unlisted` = **lien non listé** (style
   YouTube) — servie par `library.get` (slug exact, tout user authentifié) mais **jamais**
   listée (`list` force `include_unlisted=False`) ni servie en anonyme. Partage par lien, pas
-  un secret d'org : une doctrine sensible ne se publie pas (reste un skill d'org privé).
+  un secret d'org : un guide sensible ne se publie pas (reste un skill d'org privé).
 - CORS : `oto.ninja`, `app.oto.ninja`, `dashboard.oto.ninja` (+ localhosts dev) — défaut dans `_allowed_origins`, override `OTO_MCP_CORS_ORIGINS`. `account.oto.zone` retiré (surface compte décommissionnée → dashboard.oto.ninja)
 - Même `JWTVerifier` que `/mcp` — partage l'audience `https://mcp.oto.ninja/mcp`
 
