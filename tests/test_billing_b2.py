@@ -39,10 +39,25 @@ IDENTITE_FR = {"legal_name": "ACME SAS", "country_code": "FR", "vat_number": Non
                "address_line": "1 rue de la Paix", "postal_code": "13001",
                "city": "Marseille"}
 
+# Consentement d'achat par défaut : depuis #487, `subscribe` REFUSE tant que
+# l'appelant n'a pas accepté CGU + CGV + DPA à leur version courante. Une org qui
+# souscrit l'a donc forcément fait, et le câbler ici garde ces tests sur LEUR sujet.
+# Le gate lui-même est exercé par `test_billing_legal_gate_487.py`.
+SUB = "u-payeur"
+
+
+def _tout_accepte(monkeypatch):
+    from oto_mcp import db as oto_db, legal_docs
+    monkeypatch.setattr(oto_db, "get_legal_acceptances", lambda sub: {
+        slug: {"version": meta["version"], "accepted_at": "2026-08-28 09:00:00"}
+        for slug, meta in legal_docs.CURRENT_DOCS.items()})
+
+
 
 def _wire_subscribe(monkeypatch, existing=None, *, in_flight=None,
                     journal_customer=None, identity=IDENTITE_FR):
     calls = {}
+    _tout_accepte(monkeypatch)
     monkeypatch.setattr(db_billing, "get_org_subscription", lambda org: existing)
     monkeypatch.setattr(db_billing, "get_billing_identity", lambda org: identity)
     monkeypatch.setattr(db_billing, "insert_billing_payment",
@@ -75,7 +90,7 @@ def _wire_subscribe(monkeypatch, existing=None, *, in_flight=None,
 
 def test_subscribe_happy_path(monkeypatch):
     calls = _wire_subscribe(monkeypatch)
-    out = billing.subscribe(42, "premium", "https://otomata.tech/billing")
+    out = billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB)
     assert out["checkout_url"].startswith("https://www.mollie.com/checkout/")
     assert calls["customer"]["metadata"] == {"org_id": "42"}
     amount, kw = calls["payment"]
@@ -95,7 +110,7 @@ def test_subscribe_sepa_maps_to_directdebit(monkeypatch):
     # UN seul flux : method='sepa' restreint juste la page Mollie (mandat SEPA
     # collecté sur le checkout, plus de flux IBAN/OTP/ICS séparé).
     calls = _wire_subscribe(monkeypatch)
-    out = billing.subscribe(42, "premium", "https://otomata.tech/billing", method="sepa")
+    out = billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB, method="sepa")
     assert out["method"] == "sepa"
     assert calls["payment"][1]["method"] == "directdebit"
 
@@ -103,20 +118,20 @@ def test_subscribe_sepa_maps_to_directdebit(monkeypatch):
 def test_subscribe_rejects_unknown_plan_method_and_double(monkeypatch):
     _wire_subscribe(monkeypatch)
     with pytest.raises(ValueError, match="unknown_plan"):
-        billing.subscribe(42, "gold", "https://otomata.tech/billing")
+        billing.subscribe(42, "gold", "https://otomata.tech/billing", sub=SUB)
     with pytest.raises(ValueError, match="unknown_method"):
-        billing.subscribe(42, "premium", "https://otomata.tech/billing", method="wire")
+        billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB, method="wire")
     _wire_subscribe(monkeypatch, existing={"status": "active", "canceled_at": None,
                                            "customer_id": "cst_1", "plan": "premium"})
     with pytest.raises(ValueError, match="already_subscribed"):
-        billing.subscribe(42, "premium", "https://otomata.tech/billing")
+        billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB)
 
 
 def test_subscribe_reuses_customer(monkeypatch):
     calls = _wire_subscribe(monkeypatch, existing={
         "status": "canceled", "canceled_at": "2026-07-01", "customer_id": "cst_old",
         "plan": "premium"})
-    billing.subscribe(42, "premium", "https://otomata.tech/billing")
+    billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB)
     assert "customer" not in calls                       # pas de re-création
     assert calls["payment"][1]["customer_id"] == "cst_old"
 
@@ -126,7 +141,7 @@ def test_subscribe_reuses_customer_from_journal(monkeypatch):
     # qui se souvient du customer. Sans cette lecture, chaque tentative en créait un
     # nouveau chez Mollie, avec son propre mandat orphelin.
     calls = _wire_subscribe(monkeypatch, journal_customer="cst_journal")
-    billing.subscribe(42, "premium", "https://otomata.tech/billing")
+    billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB)
     assert "customer" not in calls
     assert calls["payment"][1]["customer_id"] == "cst_journal"
     assert calls["insert"][1]["customer_id"] == "cst_journal"   # journalisé, relisible
@@ -139,7 +154,7 @@ def test_subscribe_refuses_while_a_payment_is_in_flight(monkeypatch):
         "id": 7, "payment_intent_id": "tr_EN_VOL", "status": "paid",
         "created_at": datetime.now(timezone.utc) - timedelta(minutes=2)})
     with pytest.raises(ValueError) as e:
-        billing.subscribe(42, "premium", "https://otomata.tech/billing")
+        billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB)
     assert "payment_pending" in str(e.value)
     assert "tr_EN_VOL" in str(e.value) and "2 min" in str(e.value)
     assert "ENCAISSÉ" in str(e.value), "dire que l'argent est pris, pas juste refuser"
@@ -152,7 +167,7 @@ def test_le_refus_dit_quoi_faire_quand_la_page_est_encore_payable(monkeypatch):
         "id": 7, "payment_intent_id": "tr_OUVERT", "status": "open",
         "created_at": datetime.now(timezone.utc) - timedelta(minutes=3)})
     with pytest.raises(ValueError) as e:
-        billing.subscribe(42, "premium", "https://otomata.tech/billing")
+        billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB)
     assert "payment_pending" in str(e.value) and "payable" in str(e.value)
 
 
@@ -160,7 +175,7 @@ def test_subscribe_dates_the_return_url_with_the_payment(monkeypatch):
     # Le retour navigateur doit dire QUEL paiement il conclut (#493) : Mollie ne
     # l'ajoute pas, et l'URL se fixe avant que l'id n'existe → on la ré-écrit.
     calls = _wire_subscribe(monkeypatch)
-    billing.subscribe(42, "premium", "https://otomata.tech/billing?billing=return")
+    billing.subscribe(42, "premium", "https://otomata.tech/billing?billing=return", sub=SUB)
     pid, kw = calls["update"]
     assert pid == "tr_1"
     assert kw["redirect_url"] == ("https://otomata.tech/billing?"
@@ -178,7 +193,7 @@ def test_subscribe_survives_a_return_url_mollie_refuses(monkeypatch):
         raise MollieError(422, "redirectUrl invalid")
 
     monkeypatch.setattr(billing.mollie_client, "update_payment", boom)
-    out = billing.subscribe(42, "premium", "https://otomata.tech/billing")
+    out = billing.subscribe(42, "premium", "https://otomata.tech/billing", sub=SUB)
     assert out["checkout_url"].startswith("https://www.mollie.com/checkout/")
     assert calls["insert"][0][:2] == (42, "initial")      # le paiement est journalisé
 

@@ -31,6 +31,20 @@ ORG = 4242
 RETURN_URL = "https://dashboard.oto.cx/org/billing"
 HT = billing.PLANS["standard"]["amount"]          # 1900 c = 19,00 € HT
 
+# Consentement d'achat par défaut : depuis #487, `subscribe` REFUSE tant que
+# l'appelant n'a pas accepté CGU + CGV + DPA à leur version courante. Une org qui
+# souscrit l'a donc forcément fait, et le câbler ici garde ces tests sur LEUR sujet.
+# Le gate lui-même est exercé par `test_billing_legal_gate_487.py`.
+SUB = "u-payeur"
+
+
+def _tout_accepte(monkeypatch):
+    from oto_mcp import db as oto_db, legal_docs
+    monkeypatch.setattr(oto_db, "get_legal_acceptances", lambda sub: {
+        slug: {"version": meta["version"], "accepted_at": "2026-08-28 09:00:00"}
+        for slug, meta in legal_docs.CURRENT_DOCS.items()})
+
+
 
 def _identite(**over) -> dict:
     base = {"legal_name": "ACME SAS", "country_code": "FR", "vat_number": None,
@@ -224,7 +238,7 @@ def test_subscribe_refuse_sans_identite_et_nomme_les_champs(monkeypatch):
     un customer et une page payable derrière lui."""
     appels = _wire(monkeypatch, identity=None)
     with pytest.raises(ValueError) as e:
-        billing.subscribe(ORG, "standard", RETURN_URL)
+        billing.subscribe(ORG, "standard", RETURN_URL, sub=SUB)
     assert str(e.value).startswith("billing_identity_required:")
     for champ in billing_vat.REQUIRED_IDENTITY_FIELDS:
         assert champ in str(e.value)
@@ -234,7 +248,7 @@ def test_subscribe_refuse_sans_identite_et_nomme_les_champs(monkeypatch):
 def test_subscribe_refuse_un_particulier_de_l_union_hors_france(monkeypatch):
     appels = _wire(monkeypatch, identity=_identite(country_code="DE"))
     with pytest.raises(ValueError, match="vat_consumer_unsupported"):
-        billing.subscribe(ORG, "standard", RETURN_URL)
+        billing.subscribe(ORG, "standard", RETURN_URL, sub=SUB)
     assert appels == {}
 
 
@@ -243,7 +257,7 @@ def test_une_identite_incomplete_refuse_comme_une_identite_absente(monkeypatch):
     # même chose — voilà ce qu'il reste à fournir.
     _wire(monkeypatch, identity={"legal_name": "ACME", "country_code": "FR"})
     with pytest.raises(ValueError) as e:
-        billing.subscribe(ORG, "standard", RETURN_URL)
+        billing.subscribe(ORG, "standard", RETURN_URL, sub=SUB)
     assert "address_line, postal_code, city" in str(e.value)
 
 
@@ -252,6 +266,7 @@ def test_une_identite_incomplete_refuse_comme_une_identite_absente(monkeypatch):
 def _wire(monkeypatch, *, identity, existing=None):
     """Un PSP et un journal nus : on ne regarde ici que le MONTANT."""
     appels: dict = {}
+    _tout_accepte(monkeypatch)
 
     def journalise(*a, **k):
         appels["journal"] = (a, k)
@@ -275,7 +290,7 @@ def _wire(monkeypatch, *, identity, existing=None):
 
 def test_le_montant_debite_est_le_ttc_et_la_reponse_le_decompose(monkeypatch):
     appels = _wire(monkeypatch, identity=_identite())
-    out = billing.subscribe(ORG, "standard", RETURN_URL)
+    out = billing.subscribe(ORG, "standard", RETURN_URL, sub=SUB)
 
     montant, _ = appels["psp"]
     assert montant == 2280, "19,00 € HT + 20 % = 22,80 € — c'est CE montant qui est pris"
@@ -287,7 +302,7 @@ def test_le_montant_debite_est_le_ttc_et_la_reponse_le_decompose(monkeypatch):
 
 def test_le_journal_fige_la_decomposition_de_la_tentative(monkeypatch):
     appels = _wire(monkeypatch, identity=_identite())
-    billing.subscribe(ORG, "standard", RETURN_URL)
+    billing.subscribe(ORG, "standard", RETURN_URL, sub=SUB)
     args, kw = appels["journal"]
     assert args[2] == 2280, "le journal dit ce que le PSP a pris, donc le TTC"
     assert kw["tax"]["amount_ht"] == 1900 and kw["tax"]["vat_scheme"] == "fr_ttc"
@@ -297,7 +312,7 @@ def test_le_journal_fige_la_decomposition_de_la_tentative(monkeypatch):
 def test_un_assujetti_belge_est_debite_du_ht_sans_tva(monkeypatch):
     appels = _wire(monkeypatch,
                    identity=_identite(country_code="BE", vat_number="BE0123456789"))
-    out = billing.subscribe(ORG, "standard", RETURN_URL)
+    out = billing.subscribe(ORG, "standard", RETURN_URL, sub=SUB)
     assert appels["psp"][0] == 1900 == out["amount_ttc"]
     assert out["vat_scheme"] == "reverse_charge"
     assert "196" in out["vat_mention"]
@@ -308,7 +323,7 @@ def test_le_renouvellement_prend_exactement_le_meme_montant(monkeypatch):
     le premier mois et 19,00 € les suivants. Les deux chemins appellent le MÊME
     calcul, et ce test le prouve en comparant les montants réellement passés."""
     souscription = _wire(monkeypatch, identity=_identite())
-    billing.subscribe(ORG, "standard", RETURN_URL)
+    billing.subscribe(ORG, "standard", RETURN_URL, sub=SUB)
     premier = souscription["psp"][0]
 
     echeance: dict = {}
