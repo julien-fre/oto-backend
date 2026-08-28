@@ -76,13 +76,13 @@ _KNOWN: dict[str, str] = {
     # le cran d'activation et l'accès plateforme sont des capacités
     # (`capabilities/platform_connectors.py`). C'était l'étage qui manquait — les
     # paliers ORG et ÉQUIPE de la même famille étaient déjà des capacités
-    # (`capabilities/connectors_activation.py`), ce qui rendait la dette d'autant plus
+    # (`capabilities/connectors/activation.py`), ce qui rendait la dette d'autant plus
     # visible : un même métier décrit de deux façons selon l'étage.
     # ⚠️ Le 2026-08-12 (#302), le datastore a quitté cette liste EN ENTIER — onze
     # chemins, zéro reste : le tableau (`namespaces`, `namespaces/{ns}`, `…/url`),
     # les lignes (`…/rows`, `…/rows/{row_id}`, `…/rows/{row_id}/release`, `…/queue`,
     # `…/aggregate`), le schéma (`…/schema`) et le partage (`…/share`) sont des
-    # capacités (`capabilities/datastore_*.py`). Mêmes chemins, mêmes réponses,
+    # capacités (`capabilities/datastore/*.py`). Mêmes chemins, mêmes réponses,
     # entrée ET sortie déclarées. Une dette qu'on rembourse, pas une nature qu'on
     # découvre. `…/rows/{row_id}/activity` et `…/claim*` étaient déjà des capacités.
     # ⚠️ Les VERBES OAuth ont quitté cette liste le 2026-08-27 — Google ici, les deux

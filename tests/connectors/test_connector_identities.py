@@ -224,7 +224,7 @@ def test_unipile_hosted_scopes_accounts_to_current_org(monkeypatch):
 
 def test_unknown_connector_slug_is_an_error():
     # Feedback #162 : slug hors catalogue ≠ « connecteur sans identités ».
-    from oto_mcp.capabilities.connectors_identities import _require_known_connector
+    from oto_mcp.capabilities.connectors.identities import _require_known_connector
     from oto_mcp.capabilities._types import AuthzDenied
     _require_known_connector("unipile")  # catalogue → no-op
     with pytest.raises(AuthzDenied) as e:

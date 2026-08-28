@@ -52,7 +52,7 @@ def test_group_seam_allows_member(monkeypatch):
 # ── gardes de capacité (stub, pas de DB) ─────────────────────────────────────
 
 def test_group_acl_rejects_non_member(monkeypatch):
-    from oto_mcp.capabilities import connectors_acl as cap
+    from oto_mcp.capabilities.connectors import acl as cap
     from oto_mcp.capabilities._types import AuthzDenied
 
     monkeypatch.setattr(cap.providers, "connector_for_provider", lambda c: object())
@@ -64,7 +64,7 @@ def test_group_acl_rejects_non_member(monkeypatch):
 
 
 def test_group_acl_grant_ok(monkeypatch):
-    from oto_mcp.capabilities import connectors_acl as cap
+    from oto_mcp.capabilities.connectors import acl as cap
 
     monkeypatch.setattr(cap.providers, "connector_for_provider", lambda c: object())
     monkeypatch.setattr(cap.group_store, "is_group_member", lambda sub, gid: True)

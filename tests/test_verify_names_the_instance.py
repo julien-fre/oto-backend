@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp.capabilities import connectors_verify as cv
+from oto_mcp.capabilities.connectors import verify as cv
 
 
 class _Ctx:

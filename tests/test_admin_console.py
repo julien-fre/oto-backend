@@ -8,8 +8,8 @@ import pytest
 
 from oto_mcp import credentials_store
 from oto_mcp.capabilities import admin_console as ac
-from oto_mcp.capabilities import (
-    orgs_admin, orgs_members, orgs_reads, users_admin)
+from oto_mcp.capabilities import users_admin
+from oto_mcp.capabilities.orgs import admin as orgs_admin, members as orgs_members, reads as orgs_reads
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 CTX = ResolvedCtx(sub="admin", org_id=1)

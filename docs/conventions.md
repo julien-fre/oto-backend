@@ -28,7 +28,7 @@ dans les noms (`fod_*`, `datastore_*`, `api_routes_*`) — un classement réel, 
 rien ne rendait navigable et que rien ne tenait.
 
 - **Une famille de ≥ 4 fichiers devient un package, et les fichiers y perdent leur
-  marqueur de famille** : `datastore_schema.py` → `datastore/schema.py`. Une famille se
+  marqueur de famille** : `datastore/schema.py` → `datastore/schema.py`. Une famille se
   reconnaît au **préfixe** (`fod_*`) ou au **suffixe** quand il nomme le même domaine
   (`*_oauth` → `auth/`). Sous 4, on reste à plat : trois fichiers ne font pas un
   domaine, ils font trois fichiers.
@@ -38,7 +38,13 @@ rien ne rendait navigable et que rien ne tenait.
 - **Un déplacement est PUR** : `git mv`, imports mis à jour dans le même lot, et
   **aucun ré-export de compatibilité** — ni stub à l'ancien chemin, ni `import *`.
   Un chemin mort qui répond encore est un chemin qui ne meurt jamais.
-- **Un package neuf a un `__init__.py` SANS CODE** (une docstring, rien d'autre). Trois façades plates existent et sont
+- **Un package neuf a un `__init__.py` SANS CODE** (une docstring, rien d'autre).
+  Exception : un hub de DÉCLARATION (`capabilities/`) importe ses modules pour leur
+  effet de bord — et il le fait en **import absolu**
+  (`import oto_mcp.capabilities.orgs.members`), qui ne lie aucun nom court : sans quoi
+  `orgs/core` et `groups/core`, ou les trois `sharing`, se disputeraient un nom dans
+  le hub, et l'ORDRE des déclarations (qui fixe celui de la table de routes) serait
+  décidé par une collision. Trois façades plates existent et sont
   les seules : `db.<fn>`, `access.<fn>`, `org_store.<fn>` — chacune figée par un test
   de surface (`test_db_surface_frozen.py`, `test_access_surface_frozen.py`,
   `test_org_store_surface_frozen.py`). Elles sont un contrat assumé, pas un précédent.
@@ -53,6 +59,18 @@ rien ne rendait navigable et que rien ne tenait.
   déclenche la création du package, pas le premier qui en a l'intuition.
 - **Plafond de 500 lignes par fichier.** Un module qui le dépasse se découpe — mais
   découper est un refactor, jamais le passager clandestin d'un déplacement.
+- ⚠️ **Du code qui s'identifie par NOM DE FICHIER ne survit pas à un rangement.** Un
+  repère de code se dit en **chemin relatif au dépôt** — ou mieux, en **PROPRIÉTÉ du
+  résultat** : ce que la chose EST, pas où elle habite. Trois cas vécus dans la seule
+  vague du 27-28/08, tous rattrapés par un test et aucun par une relecture :
+  `datastore.schema._read_keys` relisait son propre source par nom de fichier et
+  rendait, déplacé, un vocabulaire VIDE — donc « aucune clé inconnue » sur tout schéma,
+  en silence ; le tripwire de scope credential reconnaissait ses trois exceptions par
+  `f.name`, or dans un package `folk.py` ne dit plus de quelle famille il relève ; et
+  l'allowlist du tripwire d'adresse de tableau de bord, même défaut avec `base.py`. Le
+  quatrième, `test_no_new_handwritten_rest_route`, globait `api_routes*.py` — il avait
+  DÉJÀ eu un angle mort sur ce motif (#286) : il lit désormais la table SERVIE et
+  demande où l'endpoint est **défini**, ce qu'aucun renommage ne peut plus fausser.
 - ⚠️ **Un déplacement se vérifie SANS le repli de l'install editable** (vécu 28/08,
   CI rouge / local vert). Le tree `/data/oto/backend` est installé en editable : son
   finder est ajouté à `sys.meta_path`, donc un import resté sur l'ancien chemin

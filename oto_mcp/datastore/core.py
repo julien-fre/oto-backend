@@ -1004,7 +1004,7 @@ class DatastorePg(SchemaOpsMixin):
                     continue
             except RowValidationError as e:
                 # Le refus GARDE sa classe : les surfaces s'en servent pour choisir
-                # leur code (`capabilities/datastore_rows`), et un refus de schéma
+                # leur code (`capabilities/datastore/rows`), et un refus de schéma
                 # dans un lot reste un refus de schéma. Seule sa désignation change.
                 raise RowValidationError(
                     e.errors,

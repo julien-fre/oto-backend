@@ -113,7 +113,7 @@ de paiement).
 > aux comptes accordés). Résolution : `connector_identities.resolve_operated_account_id`
 > — pointeur **revalidé contre les grants vivants À CHAQUE appel** (révocation =
 > effet immédiat) ; pointeur révoqué = **erreur explicite, jamais de repli** sur le
-> compte propre. Capacité `capabilities/connectors_account_grants.py`
+> compte propre. Capacité `capabilities/connectors/account_grants.py`
 > (`oto_{list,grant,revoke}_account_*`, REST `/api/me/connector-accounts/*` ; autz
 > `SUB_ONLY`, owner := ctx.sub par construction — pas d'escalade org_admin). ⚠️ La clé
 > du grantee doit joindre le compte (clé partagée org/plateforme OK ; owner sur une clé

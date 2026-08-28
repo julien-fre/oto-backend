@@ -10,7 +10,7 @@ import pytest
 from mcp.shared.exceptions import McpError
 
 from oto_mcp import access, credentials_store, group_store, roles, instance_refs, db, providers
-from oto_mcp.capabilities import connectors_sharing
+from oto_mcp.capabilities.connectors import sharing as connectors_sharing
 from oto_mcp.capabilities._types import AuthzDenied
 
 

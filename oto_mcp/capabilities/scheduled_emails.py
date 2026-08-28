@@ -5,7 +5,7 @@ de l'org). Ces capacités permettent de **lister** et d'**annuler** les emails e
 en attente. Lecture + annulation = membre de l'org (un envoi part au nom de l'org).
 
 Une déclaration → MCP `oto_*` + REST `/api/orgs/{id}/scheduled-emails`.
-Pattern de référence : `orgs_invites.py` (list + action par id).
+Pattern de référence : `orgs/invites.py` (list + action par id).
 """
 from __future__ import annotations
 

@@ -22,8 +22,8 @@ from _datastore_rest import call, stub_authz
 
 from oto_mcp import calllog
 from oto_mcp.datastore import journal as datastore_journal
-from oto_mcp.capabilities import datastore_activity as dsa
-from oto_mcp.capabilities import datastore_rows as dsr
+from oto_mcp.capabilities.datastore import activity as dsa
+from oto_mcp.capabilities.datastore import rows as dsr
 from oto_mcp.db import usage
 
 
@@ -136,7 +136,7 @@ def _wire_journal(monkeypatch) -> list[dict]:
 
 def _mount(monkeypatch, store):
     """Écrire une ligne est une CAPACITÉ depuis le 2026-08-12 (#302) : le journal se
-    vérifie donc sur `capabilities/datastore_rows.py`, par la vraie chaîne REST."""
+    vérifie donc sur `capabilities/datastore/rows.py`, par la vraie chaîne REST."""
     stub_authz(monkeypatch)
     monkeypatch.setattr(dsr, "make_store", lambda sub: store)
 

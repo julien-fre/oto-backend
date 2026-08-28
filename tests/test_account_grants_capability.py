@@ -4,7 +4,7 @@ compte à N'IMPORTE QUEL user oto, **y compris hors de ses orgs** (cross-org ass
 Deny-by-default, audité."""
 import pytest
 
-from oto_mcp.capabilities import connectors_account_grants as cap
+from oto_mcp.capabilities.connectors import account_grants as cap
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 

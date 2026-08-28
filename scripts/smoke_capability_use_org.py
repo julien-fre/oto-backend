@@ -18,7 +18,7 @@ from oto_mcp import db, org_store
 from oto_mcp.capabilities import _mcp_adapter, _rest_adapter, registry
 from oto_mcp.capabilities._authz import SUB_ONLY
 from oto_mcp.capabilities._types import AuthzDenied, RawCtx
-from oto_mcp.capabilities.orgs import UseOrgInput, _use_org
+from oto_mcp.capabilities.orgs.core import UseOrgInput, _use_org
 
 
 def main() -> None:

@@ -31,7 +31,7 @@ connecter Google (plus de `412 google_not_connected`). Le partage est **DB-only*
 (`datastore_shares` ; le destinataire lit via son propre `sub`, plus de
 permission Drive). `data_url` renvoie un **deep-link dashboard** (`/console/data`),
 pas une URL de Sheet. Code : `datastore/core.py` (`DatastorePg`) + `tools/datastore.py`
-(face MCP) + `capabilities/datastore_*.py` (face REST, depuis #302 — plus
+(face MCP) + `capabilities/datastore/*.py` (face REST, depuis #302 — plus
 `api/datastore.py`, qui n'en porte plus rien) + fonctions `db.datastore_*`.
 
 > **Export/sync vers un provider tiers** (Sheets/Docs/Notion — édition humaine,
@@ -54,7 +54,7 @@ Surfaces :
   `tools/foncier.py` (`foncier_*_app`).
 - REST `/api/datastore/*` — pour le CLI `oto data` + UI dashboard. **Face DÉRIVÉE
   depuis le 2026-08-12** (#302) : plus une seule route écrite à la main, tout vient
-  des capacités `capabilities/datastore_{namespaces,rows,schema,sharing,claim,
+  des capacités `capabilities/datastore/{namespaces,rows,schema,sharing,claim,
   activity,columns}.py`. Conséquences pratiques : les 22 opérations portent leur
   schéma d'entrée ET de réponse dans `/api/openapi.json` (un intégrateur les génère),
   et un **champ inconnu est refusé** (400 `unknown_fields`) au lieu d'être ignoré —
@@ -137,7 +137,7 @@ libérer, jamais réserver. Les fronts compensaient en écrivant un verrou **dan
 données** de la ligne — coopératif, donc non atomique (deux personnes qui cliquent à la
 même seconde obtiennent la même ligne), et deux colonnes à prévoir par tableau pour une
 mécanique déjà en base. Deux **capacités** REST-only comblent le trou
-(`capabilities/datastore_claim.py`, `mcp=None` assumé — `data_claim_next` tient la face
+(`capabilities/datastore/claim.py`, `mcp=None` assumé — `data_claim_next` tient la face
 agent) :
 
 - `POST …/claim_next` `{worker, filter?, lease_s?}` → la prochaine ligne libre, réservée
@@ -687,7 +687,7 @@ exécuter une déclaration n'est pas deviner une convention.
 
 > **La face REST est 100 % DÉRIVÉE depuis le 2026-08-12 (#302)** : les 17 routes
 > écrites à la main d'`api/datastore.py` (10 chemins) sont des capacités
-> (`capabilities/datastore_{namespaces,rows,schema,sharing}.py`, aux côtés de
+> (`capabilities/datastore/{namespaces,rows,schema,sharing}.py`, aux côtés de
 > `claim`/`activity`/`columns` déjà migrés) — mêmes chemins, mêmes réponses, **mêmes
 > codes** (201 sur les créations), mais entrée et sortie déclarées : les 22 opérations
 > datastore de `/api/openapi.json` portent désormais un schéma de réponse, contre 5

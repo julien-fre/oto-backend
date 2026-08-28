@@ -11,8 +11,8 @@ import pathlib
 
 from oto_mcp import (guide_store, instructions, procedure_diagram as pd,
                      procedure_digest as pdg)
-from oto_mcp.capabilities import groups_doctrine as gd
-from oto_mcp.capabilities import orgs_instructions as oi
+from oto_mcp.capabilities.groups import doctrine as gd
+from oto_mcp.capabilities.orgs import instructions as oi
 
 _GUIDE = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp" / "guides" / "procedure-flowchart.md"
 

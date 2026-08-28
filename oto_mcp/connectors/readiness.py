@@ -14,8 +14,8 @@ ne compte QUE les comptes liés. `docs/connector-model.md` nomme les trois couch
 depuis longtemps — il manquait l'endroit qui les lit ENSEMBLE, et le fait dire.
 
 Deux surfaces le consomment, et c'est la raison pour laquelle il vit ici plutôt que
-dans l'une d'elles : la carte connecteur (`capabilities/connectors_selection`, verdict
-`ready`) et la liste d'identités (`capabilities/connectors_identities`, le POURQUOI
+dans l'une d'elles : la carte connecteur (`capabilities/connectors/selection`, verdict
+`ready`) et la liste d'identités (`capabilities/connectors/identities`, le POURQUOI
 d'une liste vide — signal **#504**). Une seconde formulation du même verdict rouvrirait
 exactement la divergence qu'on répare — c'est déjà arrivé entre `option_ok` et
 `status_for.subscribed` (corrigé le 07/07/2026, cf. `access.option_open`).

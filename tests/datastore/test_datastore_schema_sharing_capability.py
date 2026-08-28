@@ -18,8 +18,8 @@ import pytest
 
 from _datastore_rest import Boom, call, cap, stub_authz
 
-from oto_mcp.capabilities import datastore_schema as dss
-from oto_mcp.capabilities import datastore_sharing as dsh
+from oto_mcp.capabilities.datastore import schema as dss
+from oto_mcp.capabilities.datastore import sharing as dsh
 from oto_mcp.datastore.core import NamespaceNotFound, NamespaceReadOnly
 
 NS = {"namespace": "vivier"}
@@ -104,9 +104,9 @@ def test_le_champ_dentree_sappelle_bien_schema():
 def gouvernance(monkeypatch):
     """Le tableau existe et l'acteur le gouverne — sauf si le test dit l'inverse."""
     etat = {"can_govern": True}
-    monkeypatch.setattr("oto_mcp.capabilities.datastore_common.make_store",
+    monkeypatch.setattr("oto_mcp.capabilities.datastore.common.make_store",
                         lambda sub: type("S", (), {"resolve_ns_id": lambda self, ns: 42})())
-    monkeypatch.setattr("oto_mcp.capabilities.datastore_common.ownership.can_govern",
+    monkeypatch.setattr("oto_mcp.capabilities.datastore.common.ownership.can_govern",
                         lambda *a: etat["can_govern"])
     monkeypatch.setattr(dsh.db, "get_user_by_email",
                         lambda email: {"sub": "u-2"} if email == "sarah@x.fr" else None)

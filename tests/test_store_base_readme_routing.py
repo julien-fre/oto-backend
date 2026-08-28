@@ -55,7 +55,7 @@ def test_stores_no_longer_carry_a_readme_shim():
 def test_session_bundle_reads_readmes_from_the_guide_surface(monkeypatch):
     import anyio
 
-    import oto_mcp.capabilities.orgs_instructions as OI
+    from oto_mcp.capabilities.orgs import instructions as OI
     from oto_mcp.capabilities._types import ResolvedCtx
 
     monkeypatch.setattr(OI.org_store, "get_org", lambda oid: {"name": "Acme"})

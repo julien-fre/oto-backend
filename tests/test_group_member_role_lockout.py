@@ -21,7 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import oto_mcp.capabilities.groups_members as gm
+from oto_mcp.capabilities.groups import members as gm
 from oto_mcp.capabilities._types import AuthzDenied
 
 ORG_ID = 3

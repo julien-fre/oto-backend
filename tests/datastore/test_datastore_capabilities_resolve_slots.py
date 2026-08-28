@@ -17,8 +17,8 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp import access
-from oto_mcp.capabilities import datastore_columns as cols
-from oto_mcp.capabilities import datastore_schema as sch
+from oto_mcp.capabilities.datastore import columns as cols
+from oto_mcp.capabilities.datastore import schema as sch
 
 
 class _Ctx:

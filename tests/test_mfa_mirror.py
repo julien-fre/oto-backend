@@ -12,7 +12,7 @@ Tous les appels réseau (requests) sont monkeypatchés au grain des helpers du m
 import pytest
 
 from oto_mcp import mfa_mirror
-from oto_mcp.capabilities import orgs_mfa
+from oto_mcp.capabilities.orgs import mfa as orgs_mfa
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.capabilities.registry import CAPABILITIES
 

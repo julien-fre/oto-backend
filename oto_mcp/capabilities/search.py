@@ -100,7 +100,7 @@ async def _search(ctx: ResolvedCtx, inp: SearchInput) -> dict:
     # le module search reste sous la couche capacité. Best-effort (source optionnelle).
     catalog: list[dict] = []
     try:
-        from . import connectors_selection
+        from .connectors import selection as connectors_selection
         catalog = connectors_selection._visible_catalog(ctx)
     # noqa: SILENT — source de recherche optionnelle (catalogue connecteurs)
     except Exception:  # noqa: BLE001

@@ -4,7 +4,7 @@ Le nom du fichier est un vestige — il est le point d'accroche d'`api/routes.py
 trois vagues de migration l'ont vidé de tout le reste :
 
 - **2026-08-12 (#302)** : les 17 routes du datastore sont devenues des capacités
-  (`capabilities/datastore_*.py`) ;
+  (`capabilities/datastore/*.py`) ;
 - **2026-08-27** : les VERBES Google OAuth (`start`, `status`, `DELETE`, `default`) →
   `capabilities/federated_oauth.py` ;
 - **2026-08-27** : les JETONS API (`/api/me/tokens*`) → `capabilities/api_tokens.py`,
@@ -95,19 +95,19 @@ def make_routes(
     # --- Datastore (PG natif, ADR 0016) ----------------------------------
 
     # Lister / créer / supprimer / renommer un tableau, et son deep-link, sont des
-    # CAPACITÉS (`capabilities/datastore_namespaces.py`, #302) : mêmes chemins, mêmes
+    # CAPACITÉS (`capabilities/datastore/namespaces.py`, #302) : mêmes chemins, mêmes
     # réponses, mais entrée ET sortie déclarées — donc décrites dans
     # `/api/openapi.json`, donc générables chez un intégrateur.
 
-    # Les LIGNES sont des CAPACITÉS (`capabilities/datastore_rows.py`, #302) : page,
+    # Les LIGNES sont des CAPACITÉS (`capabilities/datastore/rows.py`, #302) : page,
     # fiche, ajout, modification, suppression, file de travail et agrégat. Mêmes
     # chemins, mêmes réponses, mais entrée ET sortie déclarées — les deux corps LIBRES
     # (ajouter/modifier : les colonnes du tableau) le sont explicitement, par
     # `RestBinding.body_field`.
 
     # Le SCHÉMA (pose) et le PARTAGE sont des CAPACITÉS (#302) :
-    # `capabilities/datastore_schema.py` (la lecture y vivait déjà) et
-    # `capabilities/datastore_sharing.py`. Le corps du DELETE de partage — forme
+    # `capabilities/datastore/schema.py` (la lecture y vivait déjà) et
+    # `capabilities/datastore/sharing.py`. Le corps du DELETE de partage — forme
     # historique du client `oto-core` — est déclaré par `RestBinding.reads_body`.
 
     # Le TRANSFERT de propriété d'un datastore passe par la capacité UNIQUE `oto_resource`

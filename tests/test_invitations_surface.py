@@ -7,7 +7,7 @@ par token/code). Cf. capabilities/{orgs,groups,platform}_invites.py.
 import pytest
 
 from oto_mcp import org_store
-from oto_mcp.capabilities import orgs_invites as oi
+from oto_mcp.capabilities.orgs import invites as oi
 from oto_mcp.capabilities import registry
 
 

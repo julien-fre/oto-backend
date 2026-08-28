@@ -4,7 +4,7 @@ connecteur, scopé sur l'org. Visibilité only, re-masquable.
 """
 import pytest
 
-from oto_mcp.capabilities import connectors_force as cf
+from oto_mcp.capabilities.connectors import force as cf
 
 
 @pytest.mark.asyncio

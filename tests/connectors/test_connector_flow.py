@@ -246,7 +246,7 @@ async def test_le_contrat_publie_decrit_les_deux_flux_sans_champ_libre(monkeypat
     """Le modèle de réponse était ouvert (`extra="allow"`) avec deux champs
     optionnels : il DOCUMENTAIT l'incohérence au lieu de la fermer. Il doit
     maintenant décrire exactement ce que les deux flux servent."""
-    from oto_mcp.capabilities.connectors_connect import ConnectorConnectStarted
+    from oto_mcp.capabilities.connectors.connect import ConnectorConnectStarted
 
     assert ConnectorConnectStarted.model_config.get("extra") != "allow"
     attendus = set(ConnectorConnectStarted.model_fields)

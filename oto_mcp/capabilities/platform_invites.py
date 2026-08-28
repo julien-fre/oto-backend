@@ -15,7 +15,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from .. import org_store
-from . import orgs_invites
+from .orgs import invites as orgs_invites
 from ._authz import PLATFORM_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

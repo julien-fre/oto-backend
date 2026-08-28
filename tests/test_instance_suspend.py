@@ -15,7 +15,7 @@ est stubbée (vérifiée au déploiement).
 import pytest
 
 from oto_mcp import access
-from oto_mcp.capabilities import connectors_instances as ci
+from oto_mcp.capabilities.connectors import instances as ci
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 

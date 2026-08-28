@@ -351,7 +351,7 @@ def test_verify_capability_returns_pending_not_failure(monkeypatch):
     """La SONDE rend l'état au lieu d'un verdict d'échec quand le credential est
     volontairement incomplet. Sans ce `pending`, le dialogue du dashboard reste
     ouvert sur une correction impossible — « connecter ne fait rien » (vécu 28/07)."""
-    from oto_mcp.capabilities import connectors_verify as cv
+    from oto_mcp.capabilities.connectors import verify as cv
     from oto_mcp.tools import zoho  # noqa: F401 — déclare l'état
     import asyncio
 

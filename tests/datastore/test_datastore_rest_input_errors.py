@@ -23,7 +23,7 @@ import pytest
 
 from _datastore_rest import call, stub_authz
 
-from oto_mcp.capabilities import datastore_rows as dsr
+from oto_mcp.capabilities.datastore import rows as dsr
 from oto_mcp.datastore.core import RowValidationError
 
 
