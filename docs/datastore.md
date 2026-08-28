@@ -708,3 +708,32 @@ Ces deux paragraphes vivaient dans la description de `data_write` servie au mod�
 
 Si l'essai montre que la longueur ne pèse pas, les deux paragraphes reviennent dans la description (ils y sont utiles) ; s'il montre qu'elle pèse, la règle devient : **les descriptions d'outils portent le contrat minimal, le détail vit dans les réponses et les guides**.
 
+
+## Provenance : une origine se CORRIGE, elle ne se supprime pas (28/08)
+
+Deux règles, sorties d'un incident de mission (14/08 → 28/08) où une purge de couches
+`origine` « hors vocabulaire » a été prise, quinze jours plus tard, pour la destruction
+d'une pièce contractuelle — et où l'écran qui la restituait était resté vide sans que
+personne le voie.
+
+1. **Une couche `origine` se corrige, elle ne se purge pas.** Une origine qui porte la
+   VALEUR (l'URL du site) au lieu d'un NOM DE SOURCE (`client`, `apollo`…) est hors
+   vocabulaire : on la **réécrit** vers le bon nom de source (ici `client`), on ne la vide
+   pas. Le cas « valeur du client retrouvée identique » se restitue par comparaison avec
+   la colonne `initial_of` déclarée au schéma — jamais par une origine qui recopie la
+   valeur. **Une purge, si elle est inévitable, commence par un EXTRAIT des valeurs
+   supprimées** (namespace, row_id, chemin, valeur) déposé hors du tableau, et se fait par
+   l'outil (`data_write`, journalisé) — jamais par un SQL direct que le journal des
+   appels ne voit pas.
+2. **Une bascule de calcul se vérifie contre la donnée RÉELLE avant de servir.** Un
+   consommateur qui passe « d'une colonne dédiée à la couche native » parce que c'est plus
+   élégant vérifie d'abord que la couche est REMPLIE sur les lignes qu'il sert
+   (`data_aggregate` sur le chemin, compte par ligne) — sinon l'écran est vide et le
+   reste : personne ne regarde un écran vide. Même famille que « un filtre ignoré en
+   silence » : tester par différentiel, pas à la lecture.
+
+Corollaire de conversion : quand une colonne devient une colonne-liste
+(`datastore-colonne-tableau.md`), la provenance des feuilles DOIT suivre (« la provenance
+vit au grain feuille ») — une conversion qui recopie les valeurs sans leurs couches
+`origine` fabrique une perte silencieuse ; vérifier après conversion que le compte des
+origines par feuille égale celui d'avant.
