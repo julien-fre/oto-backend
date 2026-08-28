@@ -220,6 +220,13 @@ la divulgation est un lot produit. Le risque du lot est d'écrire un SECOND walk
 défaut de `keyStack.ts`, qui ne casse pas : il ment) ; garde-fou = aucune règle recopiée
 (gates lus au registre) **+** un test qui confronte l'audience dérivée à `walk_cascade`
 sur un vrai PostgreSQL.
+⚠️ **La cardinalité d'auth se DÉRIVE puis se DÉCLARE — plus aucune liste transverse**
+(29/08) : `MULTI_ACCOUNT_PROVIDERS` est RETIRÉE, elle confondait la cardinalité (le
+coffre) et l'annonce statique de l'axe `_account=` (le schéma des tools, curé) —
+devenue `account_axis_static`. Le défaut vient du descripteur d'auth (74/96 multi sans
+rien déclarer) ; `cardinality="mono"|"multi"` prime, et n'a que **deux** porteurs
+(`google`, `browser` — ceux dont le descripteur dit faux). Sonde AST : la liste ne peut
+pas revenir sous un autre nom. Détail : `docs/connector-vault.md`.
 ⚠️ **`access` est un PACKAGE depuis le 27/08** (7 modules par sujet, arbre ci-dessus) : on
 édite le module du sujet, jamais un fourre-tout. La surface reste **plate** — `access.<nom>`
 rend ce qu'il rendait, privés compris, et une écriture sur la façade

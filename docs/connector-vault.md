@@ -30,7 +30,36 @@ Package pur (aucun import oto_mcp, comme `tool_visibility.py`). Une dataclass `C
 
 **Où ça vit** (découpage 2026-08-27, ex-`providers.py` monolithique de 1 900 lignes) :
 - `providers/<nom>.py` — le **domicile unique** d'un connecteur : `CONNECTOR = _c(…)`, ses commentaires, et ses constantes curées `CATEGORY` / `PUBLISHER` / `DESCRIPTION` / `LOGO_DOMAIN` / `SANS_LOGO_DE_MARQUE`. Le module porte le nom du connecteur (vérifié à l'import).
-- `providers/_model.py` — la **forme** : `CredentialField`, `Connector`, la factory `_c`. Un nouveau CHAMP par connecteur s'ajoute ici, puis se renseigne dans le module du connecteur — jamais dans une liste transverse indexée par nom (c'est ce qu'ont acté `single_account` et `account_noun`, oto-backend#409).
+- `providers/_model.py` — la **forme** : `CredentialField`, `Connector`, la factory `_c`. Un nouveau CHAMP par connecteur s'ajoute ici, puis se renseigne dans le module du connecteur — jamais dans une liste transverse indexée par nom (c'est ce qu'ont acté `account_noun` puis `cardinality`, cf. ci-dessous).
+
+### La cardinalité d'auth — dérivée, déclarée, et plus jamais listée
+
+Tranché par Alexis le 2026-08-27 : *« ce qui gêne, c'est la LISTE elle-même »*. Trois
+crans, dans cet ordre :
+
+1. **Dérivée** du descripteur d'auth — multi dès que le credential se POSE
+   (`method=secret`, `secret_kind ∈ {api_key, basic_auth, fields}`, hors
+   `personal_cross_org`), mono sinon. C'est le cas normal : **74 connecteurs sur 96**
+   n'ont rien à déclarer.
+2. **Déclarée** par le connecteur, dans son entrée : `cardinality="mono"|"multi"`, à
+   côté de ce qu'elle qualifie et avec son motif. Deux porteurs, et c'est la **mesure**
+   qui les a désignés — ceux dont le descripteur dit faux : `google` (OAuth ⟹ dérivé
+   mono, mais N consentements = N comptes) et `browser` (cookie ⟹ dérivé mono, mais un
+   compte est un **site**). Aucun connecteur ne se déclare `mono` aujourd'hui : ceux
+   qui le sont le sont par une condition structurelle.
+3. *(à venir)* **Surchargée en base**, par org — le patron du bloc d'instructions
+   (constante = défaut, ligne DB = surcharge), pour qu'un élargissement ne demande pas
+   un déploiement.
+
+⚠️ **`MULTI_ACCOUNT_PROVIDERS` a été retirée le 2026-08-29**, et sa disparition EST le
+lot. Elle confondait deux choses sans rapport, et c'est ce qui la rendait
+indéboulonnable : la **cardinalité** (qui parle du coffre) et l'**annonce statique de
+l'axe `_account=`** (qui parle du schéma des tools, recopié à chaque handshake — donc
+curé, `test_call_axes_budget`). La seconde est devenue `account_axis_static`, sur les
+mêmes quatre connecteurs. ⚠️ `zoho` et `folk` n'ont **rien** à déclarer : depuis que la
+règle couvre les credentials multi-champs, la dérivation les rend multi toute seule —
+les garder déclarés aurait reconduit la liste sous un autre nom. Un test AST fige
+l'absence de la liste, sous ce nom ou un autre.
 - `providers/__init__.py` — l'**agrégateur** : `_DECLARATIONS` (l'ordre, écrit à la main — jamais un `glob`) + toutes les dérivations. Il ne décrit aucun connecteur.
 
 ⚠️ La déclaration ne vit **pas** dans `tools/<nom>.py` (le module d'outils du même connecteur) : celui-ci importe `..access`, qui importe le registre — cycle — et `register_all` le charge en try/except, si bien qu'une dépendance optionnelle manquante retirerait le connecteur du **catalogue**, pas seulement ses outils. Le registre doit rester pur et sans dépendance.

@@ -13,6 +13,9 @@ from ._model import _c
 CONNECTOR = _c(
     "folk", ["folk"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
+    # Pas de `cardinality` : `api_key` la dérive en multi. Seule l'annonce STATIQUE
+    # de l'axe reste curée (N clés nommées d'un même membre, usage historique).
+    account_axis_static=True,
     label="Folk", help="CRM — contacts, companies, deals & custom objects",
     href="https://app.folk.app",
 )

@@ -73,7 +73,7 @@ qui expose le substrat tel quel.
 - **Un site = un compte du coffre.** `account` = le host normalisé (`www.` retiré, casse et
   port normalisés) → **un Context Browserbase par site**, sessions isolées, jamais un profil
   fourre-tout mélangeant les credentials de N sites dans un seul secret. Mécanisme : le
-  multi-compte existant (`providers.MULTI_ACCOUNT_PROVIDERS`, ADR 0011/0024) — donc le
+  multi-compte existant (`Connector.cardinality="multi"`, ADR 0011/0024) — donc le
   picker d'identités du dashboard marche **sans code dédié** (backend keyed générique de
   `connector_identities`), et un `account` explicite introuvable **lève** côté `access`
   (jamais de repli muet sur le Context d'un autre site).

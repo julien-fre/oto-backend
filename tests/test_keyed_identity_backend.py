@@ -1,6 +1,6 @@
 """R1b — backend d'identités keyed générique (multi-compte, ex. « 2 Zoho »).
 
-Tout connecteur de providers.MULTI_ACCOUNT_PROVIDERS sans backend spécifique
+Tout connecteur multi-compte sans backend spécifique
 (google en a un) expose ses comptes du coffre via oto_connector_identities :
 lister = lignes MEMBER de l'org de contexte, select = pose meta.is_default UNIQUE.
 """
@@ -11,7 +11,7 @@ from oto_mcp.connectors import identities as ci
 
 
 def test_zoho_registered_generic():
-    assert "zoho" in providers.MULTI_ACCOUNT_PROVIDERS
+    assert providers.REGISTRY["zoho"].auth_multi_account
     assert ci.supports("zoho")
     # google garde son backend SPÉCIFIQUE (le générique ne l'écrase pas).
     assert ci._LISTERS["google"] is ci._google_list
@@ -20,7 +20,7 @@ def test_zoho_registered_generic():
 def test_folk_registered_generic():
     # folk : N clés API personnelles nommées (ex. plusieurs workspaces Folk),
     # même backend générique que zoho — aucun code par-connecteur requis.
-    assert "folk" in providers.MULTI_ACCOUNT_PROVIDERS
+    assert providers.REGISTRY["folk"].auth_multi_account
     assert ci.supports("folk")
     assert ci._LISTERS["folk"] is not ci._google_list
 

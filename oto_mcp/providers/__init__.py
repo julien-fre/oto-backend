@@ -34,7 +34,6 @@ import importlib
 
 from ._model import (  # noqa: F401  — surface publique historique du module
     BROWSER_PROVIDERS,
-    MULTI_ACCOUNT_PROVIDERS,
     Connector,
     CredentialField,
     _c,

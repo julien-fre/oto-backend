@@ -58,8 +58,9 @@ def test_hosted_le_compte_et_ses_six_canaux():
 
 
 def test_multi_account_providers():
-    # Curés : google (OAuth N comptes), zoho (self-clients « 2 Zoho »),
-    # browser (N sites derrière login, oto-private#79), folk (historique).
+    # google (OAuth N comptes) et browser (N sites derrière login, oto-private#79)
+    # DÉCLARENT `cardinality="multi"` : leur descripteur d'auth dit faux. zoho et
+    # folk, eux, ne déclarent RIEN — la dérivation les rend multi toute seule.
     multi = {c.name for c in _REGISTRY_LIST if c.auth_multi_account}
     assert {"google", "zoho", "browser", "folk"} <= multi, multi
     # Par défaut : TOUT connecteur dont le credential se POSE — clé simple
@@ -68,15 +69,13 @@ def test_multi_account_providers():
     # avant. Le NOMBRE DE CHAMPS ne dit rien de la cardinalité : Slack en a deux
     # et porte pourtant un workspace par installation.
     for c in _REGISTRY_LIST:
+        if c.cardinality:                       # déclaration explicite : elle prime
+            assert c.auth_multi_account is (c.cardinality == "multi"), c.name
+            continue
         posed = (c.auth_method == "secret"
                  and c.secret_kind in ("api_key", "basic_auth", "fields")
-                 and not c.personal_cross_org and not c.single_account)
-        if posed:
-            assert c.auth_multi_account, c.name
-        elif c.name not in {"google", "zoho", "browser", "folk"}:
-            # OAuth/cookie/none, hosted/remote, cross-org, exclusion explicite :
-            # mono-compte.
-            assert not c.auth_multi_account, c.name
+                 and not c.personal_cross_org)
+        assert c.auth_multi_account is posed, c.name
 
 
 def test_account_noun_says_the_provider_word():

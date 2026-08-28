@@ -155,8 +155,10 @@ async def resolve_org_guarded(org: object) -> int:
 def _has_account_axis(name: str) -> bool:
     """Le tool ADVERTISE-t-il l'axe compte dans son schéma, STATIQUEMENT ? Deux familles
     (ADR 0024/0051), toutes deux CURÉES :
-    - **multi-credential à backend spécifique** (`MULTI_ACCOUNT_PROVIDERS` : google
-      « N comptes OAuth », zoho « 2 Zoho », browser, folk) ;
+    - **annonce statique déclarée** (`Connector.account_axis_static` : google
+      « N comptes OAuth », zoho « 2 Zoho », browser, folk) — depuis le 29/08 c'est un
+      champ de l'entrée du connecteur, plus la liste transverse
+      `MULTI_ACCOUNT_PROVIDERS`, qui mélangeait cette annonce et la cardinalité ;
     - **porteur d'identités** (`personal_cross_org`) : 1 clé → N identités opérées
       (unipile : le compte LinkedIn/WhatsApp à opérer — le tien, ou un compte accordé #55).
 
@@ -169,8 +171,7 @@ def _has_account_axis(name: str) -> bool:
     **accepté** à l'appel sur tout connecteur multi-compte (`accepts_account_axis`),
     advertisé ou non. Dérivé du registre via le namespace ; spine (`oto_*`) → None → exclus."""
     con = providers.connector_for_namespace(namespace_of(name))
-    return con is not None and (con.name in providers.MULTI_ACCOUNT_PROVIDERS
-                                or con.personal_cross_org)
+    return con is not None and (con.account_axis_static or con.personal_cross_org)
 
 
 def accepts_account_axis(name: str) -> bool:

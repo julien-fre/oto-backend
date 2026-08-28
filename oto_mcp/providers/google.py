@@ -15,6 +15,9 @@ CONNECTOR = _c(
     "google", ["gmail", "tasks", "calendar", "sheets", "drive", "chat"],
     auth_modes={"byo_user"},
     personal_session=True, secret_kind="oauth",
+    # OAuth ⟹ la dérivation dirait mono ; or N consentements = N comptes, et le
+    # coffre porte une ligne par adresse. Déclaré ici, pas dans une liste transverse.
+    cardinality="multi", account_axis_static=True,
     label="Google", help="Gmail + Tasks + Calendar + Sheets + Drive + Chat (OAuth)",
     modules=("gmail", "tasks", "calendar", "sheets", "drive", "chat"),
 )

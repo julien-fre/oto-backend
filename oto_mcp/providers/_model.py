@@ -130,15 +130,31 @@ class Connector:
     # chaque org ». Sans ce flag, un credential membre reste strictement `(sub, org)`
     # (ADR 0033) — la valeur par défaut ne change rien pour les ~autres connecteurs.
     personal_cross_org: bool = False
-    # Exclusion EXPLICITE du multi-compte (oto-backend#409) : le fournisseur lui-même
-    # impose un compte unique par entité. À poser SEULEMENT pour une raison de
-    # fournisseur, motivée ici même — jamais pour la forme du credential (le nombre
-    # de champs ne dit rien de la cardinalité : un token Slack est émis par
-    # installation, deux champs ou pas). Sans porteur aujourd'hui : les deux familles
-    # réellement mono le sont par une condition STRUCTURELLE (`personal_cross_org`,
-    # `auth_method` oauth/cookie/hosted), pas par ce drapeau. Tripwire :
-    # test_single_account_write_guard.
-    single_account: bool = False
+    # LA CARDINALITÉ D'AUTH, déclarée — `"mono"` | `"multi"` | `""` (dérivée du
+    # descripteur d'auth, le cas normal). Tranché par Alexis le 2026-08-27 : « ce qui
+    # gêne, c'est la liste ELLE-MÊME » — la cardinalité se dérive par défaut et se
+    # déclare **par connecteur, dans son entrée**, jamais dans une liste transverse
+    # indexée par nom (c'est ce qui a emporté `MULTI_ACCOUNT_PROVIDERS`).
+    #
+    # À ne poser que pour une raison de FOURNISSEUR, motivée à côté de la déclaration
+    # — jamais pour la forme du credential : le nombre de champs ne dit rien de la
+    # cardinalité (un token Slack est émis par installation, deux champs ou pas), et
+    # c'était précisément le trou de règle d'oto-backend#409.
+    #
+    # ⚠️ **Le défaut du CODE, pas le dernier mot** : une ligne de `connector_settings`
+    # peut le surcharger par org (le patron du bloc d'instructions — constante =
+    # défaut, ligne DB = surcharge), pour qu'un élargissement ne demande pas un
+    # déploiement. Le seam qui tranche les deux est `connectors.cardinality`, pas
+    # cette propriété.
+    cardinality: str = ""
+    # Le connecteur ANNONCE-T-IL l'axe `_account=` dans le schéma de ses tools, sans
+    # attendre que l'appelant détienne deux comptes ? Rien à voir avec la cardinalité,
+    # et c'est pourquoi ça n'est plus le même champ : chaque propriété d'axe est
+    # recopiée dans le schéma de CHAQUE tool à chaque handshake (test_call_axes_budget),
+    # donc l'annonce statique est CURÉE — elle est réservée aux connecteurs dont
+    # l'appelant a, en pratique, toujours plusieurs comptes. Ailleurs l'axe reste
+    # annoncé DYNAMIQUEMENT (dès 2 comptes détenus) et ACCEPTÉ partout où il a un sens.
+    account_axis_static: bool = False
     # Mot métier d'un compte chez CE fournisseur, quand « compte » sonne faux : un
     # compte Slack du coffre est un workspace, un compte Zoho une organisation.
     # Vide = « compte ». Publié dans le descripteur `auth` et affiché tel quel.
@@ -296,15 +312,26 @@ class Connector:
         """Le credential est-il multi-compte — N grants pour une même entité
         (ADR 0024) ?
 
+        ⚠️ **C'est le défaut du CODE, pas la réponse servie.** Une ligne de
+        `connector_settings` peut le surcharger par org : l'appelant qui doit TRANCHER
+        passe par `connectors.cardinality.is_multi_account(connector, org)`, jamais par
+        cette propriété. Elle reste ici parce que le registre est PUR (aucun import
+        `oto_mcp`, aucune base) — et c'est ce qui la rend lisible d'un test.
+
         Par DÉFAUT pour tout connecteur dont le credential se POSE (`method=secret`
         — clé simple `api_key`/`basic_auth` **ou** multi-champs `fields`) : le coffre
         est déjà segmenté par `account` sur chaque ligne, la résolution membre
         (access/resolve.py `_member_fetch`) traite un compte unique — la ligne legacy
         `account=''` comprise — exactement comme avant. Une clé posée hier reste
         donc la clé d'aujourd'hui ; ce qui change est qu'on peut en poser une
-        deuxième, nommée. `MULTI_ACCOUNT_PROVIDERS` ne sert plus qu'aux backends
-        d'identité SPÉCIFIQUES (google : OAuth N comptes ; browser : un compte =
-        un site) et à l'annonce STATIQUE de l'axe `_account=` (call_axes.py).
+        deuxième, nommée.
+
+        **Une déclaration `cardinality` PRIME sur la dérivation** — les deux seuls
+        porteurs sont ceux dont le descripteur d'auth dit faux : `google` (OAuth, donc
+        dérivé mono, mais N consentements = N comptes) et `browser` (session cookie,
+        donc dérivé mono, mais un compte = un SITE). `zoho` et `folk`, longtemps dans
+        la liste transverse, n'ont rien à déclarer : la dérivation les rend multi toute
+        seule. C'est la mesure qui l'a montré, pas une intuition.
 
         ⚠️ **Le nombre de champs du credential ne dit RIEN de la cardinalité.**
         Jusqu'au 2026-08-27, `fields` était hors règle : Slack (`bot_token` +
@@ -317,12 +344,10 @@ class Connector:
         consentements, un autre problème), hosted/remote (pas de clé à poser), et
         les connecteurs `personal_cross_org` (unipile), dont le barreau
         cross-org de la cascade est mono-compte par construction. Un cas qui
-        n'entre dans aucune de ces familles s'exclut par `single_account`, DANS
+        n'entre dans aucune de ces familles se déclare `cardinality="mono"`, DANS
         son entrée de registre et avec son motif — jamais par une liste transverse."""
-        if self.name in MULTI_ACCOUNT_PROVIDERS:
-            return True
-        if self.single_account:
-            return False
+        if self.cardinality:
+            return self.cardinality == "multi"
         return (self.auth_method == "secret"
                 and self.secret_kind in ("api_key", "basic_auth", "fields")
                 and not self.personal_cross_org)
@@ -412,26 +437,21 @@ class Connector:
 # éventuel futur connecteur browser local.
 BROWSER_PROVIDERS = frozenset()
 
-# Connecteurs multi-compte CURÉS — N grants liés à une même entité (ADR 0024)
-# pour un mécanisme qui ne se déduit pas de la clé : Google (N comptes OAuth),
-# zoho (self-clients FR/US, secret `fields`), `browser` (N sites derrière
-# login : un compte = un host, un Context Browserbase par site — cf.
-# tools/browser.py), et `folk` (historique : N clés API nommées d'un même
-# membre). Depuis 2026-08-25, TOUT connecteur à clé d'API est multi-compte par
-# défaut (`Connector.auth_multi_account`) — folk n'a plus besoin d'être ici, il
-# y reste pour dire d'où vient le mécanisme. Les autres sessions/oauth
-# (crunchbase, atlassian…) restent mono-compte par entité.
-# Depuis 2026-08-27 (oto-backend#409) la règle couvre aussi les credentials
-# MULTI-CHAMPS : zoho n'a plus besoin d'y être non plus. Il y reste — comme folk —
-# parce que cette liste garde un second rôle, distinct de la cardinalité : elle
-# porte l'annonce STATIQUE de l'axe `_account=` dans le schéma des tools
-# (`call_axes._has_account_axis`), là où les autres ne l'annoncent que
-# dynamiquement, dès que l'appelant détient 2 comptes.
-# ⚠️ Liste TRANSVERSE, et c'est la dernière : la cardinalité d'auth se déclare
-# désormais PAR CONNECTEUR, dans son entrée (`single_account`, oto-backend#409) —
-# l'entrée est le domicile naturel d'un tel champ. Ce qui reste ici est le second
-# rôle de la liste (l'annonce STATIQUE de l'axe `_account=`), pas la cardinalité.
-MULTI_ACCOUNT_PROVIDERS = frozenset({"google", "zoho", "browser", "folk"})
+# ⚠️ **`MULTI_ACCOUNT_PROVIDERS` A ÉTÉ RETIRÉE le 2026-08-29** (lot L6 pièce 2 c),
+# et sa disparition EST le lot. C'était la dernière liste transverse indexée par nom,
+# et Alexis l'a tranché le 27/08 : « ce qui gêne, c'est la LISTE elle-même ». Elle
+# portait deux choses sans rapport, qui vivent désormais chacune dans l'entrée du
+# connecteur concerné, à côté de la déclaration qu'elle qualifie :
+#
+# · la CARDINALITÉ → `cardinality="multi"` — et seulement là où la dérivation dit
+#   faux : `google` (OAuth ⟹ dérivé mono, mais N consentements = N comptes) et
+#   `browser` (cookie ⟹ dérivé mono, mais un compte = un SITE). `zoho` et `folk` n'ont
+#   RIEN à déclarer : depuis que la règle couvre les credentials multi-champs, la
+#   dérivation les rend multi toute seule — ils n'étaient plus dans la liste que par
+#   habitude, et c'est la mesure qui l'a montré ;
+# · l'annonce STATIQUE de l'axe `_account=` → `account_axis_static=True`, sur les
+#   quatre. Ce rôle-là n'a jamais été la cardinalité (il parle du SCHÉMA des tools, pas
+#   du coffre) — les confondre dans une seule liste est ce qui la rendait indéboulonnable.
 
 
 def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=False,
@@ -441,7 +461,8 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
        publisher="", logo_url=None, kind="tools", mount_url=None,
        mount_strip_prefix=None,
        credential_fields=(), modules=(), hosted_auth=False,
-       personal_cross_org=False, single_account=False, account_noun="",
+       personal_cross_org=False, cardinality="", account_axis_static=False,
+       account_noun="",
        field_discriminator="", credential_of=None, hosted_channel=None) -> Connector:
     """Factory d'une entrée de registre — appelée par `providers/<nom>.py`.
 
@@ -458,7 +479,8 @@ def _c(name, namespaces, *, availability="self_serve", auth_modes=(), keyed=Fals
         mount_url=mount_url, mount_strip_prefix=mount_strip_prefix,
         credential_fields=tuple(credential_fields),
         modules=tuple(modules), hosted_auth=hosted_auth,
-        personal_cross_org=personal_cross_org, single_account=single_account,
+        personal_cross_org=personal_cross_org, cardinality=cardinality,
+        account_axis_static=account_axis_static,
         account_noun=account_noun, field_discriminator=field_discriminator,
         credential_of=credential_of, hosted_channel=hosted_channel,
     )

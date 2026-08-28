@@ -34,7 +34,8 @@ def _is_multi_account(provider: str) -> bool:
     propriété `Connector.auth_multi_account`) ? Gate le chemin de sélection de compte ;
     un connecteur mono-compte garde la résolution historique (account=''). ⚠️ Depuis
     #409 la propriété couvre aussi les credentials MULTI-CHAMPS (slack, silae…) —
-    `MULTI_ACCOUNT_PROVIDERS` n'en est plus la source, seulement un override."""
+    la cardinalité se DÉCLARE par connecteur (`cardinality`) et se dérive sinon —
+    plus aucune liste transverse depuis le 29/08."""
     con = providers.connector_for_provider(provider)
     return con is not None and con.auth_multi_account
 
