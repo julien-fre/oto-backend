@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import connector_verify
+from oto_mcp.connectors import verify as connector_verify
 
 
 @pytest.fixture(autouse=True)

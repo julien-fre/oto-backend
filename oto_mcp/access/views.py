@@ -19,7 +19,7 @@ from typing import Optional
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import connectors, credentials_store, db, org_store
+from .. import providers, credentials_store, db, org_store
 from . import cascade, quotas, resolve, scope
 
 
@@ -122,7 +122,7 @@ def unipile_api_key_for(sub: str) -> Optional[str]:
     # Instance personnelle cross-org (issue #172) : ma clé unipile posée dans une
     # autre org me suit (miroir de resolve_credential — le connect ne doit pas croire
     # « pas de BYO » alors que la résolution trouve ma clé perso ailleurs).
-    if connectors.is_personal_cross_org("unipile"):
+    if providers.is_personal_cross_org("unipile"):
         pio = cascade.personal_instance_org(sub, "unipile", exclude_org=active_org)
         if pio is not None:
             personal_key = db.get_member_api_key(sub, pio, "unipile")
@@ -134,7 +134,7 @@ def unipile_api_key_for(sub: str) -> Optional[str]:
             return org_key
     # Mode plateforme (ADR 0044 §F R3) : instance PLATFORM utilisable par sub. Gate sur
     # l'éligibilité `platform` du registre (défense en profondeur, comme resolve_api_key).
-    con = connectors.connector_for_provider("unipile")
+    con = providers.connector_for_provider("unipile")
     if con and "platform" in con.auth_modes:
         grant = cascade._resolve_platform_grant(sub, "unipile", active_org)
         if grant:
@@ -188,7 +188,7 @@ def connector_resolvable_for_org(provider: str, org_id: int) -> bool:
     (ADR 0032) servi par la clé de l'org propriétaire du projet : un endpoint sans
     login n'a pas de `user_key`/session per-user → oauth/cookie sont exclus de fait
     (pas de secret d'org pour eux). Miroir org-only de la cascade `resolve_credential`."""
-    con = connectors.connector_for_provider(provider)
+    con = providers.connector_for_provider(provider)
     if con is None:
         return False
     if con.secret_kind == "none":

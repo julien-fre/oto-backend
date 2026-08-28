@@ -19,7 +19,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import access, connector_activation, db, group_store, org_store, providers
+from .. import access, db, group_store, org_store, providers
+from ..connectors import activation as connector_activation
 from ._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, ORG_ADMIN_OF, ORG_MEMBER_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

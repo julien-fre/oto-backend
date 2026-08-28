@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 import pytest
 
-from oto_mcp import connector_verify, providers
+from oto_mcp import providers
+from oto_mcp.connectors import verify as connector_verify
 from oto_mcp.tool_visibility import namespace_of
 
 EXPECTED_TOOLS = {

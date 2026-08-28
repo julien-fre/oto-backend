@@ -15,7 +15,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify, status_hints
+from .. import access, status_hints
+from ..connectors import verify as connector_verify
 
 # Zoho héberge par data center régional : l'API Desk ET le refresh OAuth sont liés à
 # leur région d'émission (un self-client `.eu` tapant `desk.zoho.com`/`accounts.zoho.com`

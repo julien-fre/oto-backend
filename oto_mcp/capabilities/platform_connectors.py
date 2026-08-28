@@ -34,7 +34,8 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, StrictBool, StrictInt
 
-from .. import access, connector_activation, db, org_store, providers
+from .. import access, db, org_store, providers
+from ..connectors import activation as connector_activation
 from ._authz import PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

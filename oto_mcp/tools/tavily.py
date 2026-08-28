@@ -29,7 +29,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access
+from ..connectors import verify as connector_verify
 
 # Le chemin REST d'invocation d'outil coupe à 45 s (`api_routes.py`) : un crawl
 # synchrone doit rendre avant. Au-delà, c'est `firecrawl_crawl` (job asynchrone).

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from oto_mcp.connector_activation import effective_for_group
+from oto_mcp.connectors.activation import effective_for_group
 
 
 # ── résolution pure (l'invariant monotone) ───────────────────────────────────

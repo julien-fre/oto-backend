@@ -40,7 +40,7 @@ _SURFACE = """
     clear_connector_access clear_embed_dirty clear_group_connector_access
     clear_member_api_key clear_operated_account clear_operated_pointers_to
     clear_option_comp clear_row_dirty clear_unipile_account
-    connector_failure_stats connector_grants connectors consume_upload_token
+    connector_failure_stats connector_grants consume_upload_token
     contextmanager count_datastore_rows_for_ns count_renewal_attempts
     count_unipile_accounts_for_org counter_sum_today create_api_token
     create_datastore_namespace create_doc create_project

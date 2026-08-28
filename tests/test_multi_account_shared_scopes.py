@@ -7,7 +7,8 @@ Même sélection qu'au palier membre (`_pick_account`) : `_account=` explicite >
 import pytest
 from mcp.shared.exceptions import McpError
 
-from oto_mcp import access, connector_identities, credentials_store
+from oto_mcp import access, credentials_store
+from oto_mcp.connectors import identities as connector_identities
 
 
 class _MultiCon:
@@ -21,8 +22,8 @@ def _wire(monkeypatch):
     monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: 7)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
-    monkeypatch.setattr(access.connectors, "connector_for_provider", lambda p: _MultiCon())
-    monkeypatch.setattr(access.connectors, "is_byo_user", lambda p: True)
+    monkeypatch.setattr(access.providers, "connector_for_provider", lambda p: _MultiCon())
+    monkeypatch.setattr(access.providers, "is_byo_user", lambda p: True)
     monkeypatch.setattr(access, "project_pinned_identity", lambda prov: None)
     monkeypatch.setattr(access, "ORG_SHAREABLE_PROVIDERS", {"serper"})
     monkeypatch.setattr(access.db, "insert_tool_call", lambda payload: None)

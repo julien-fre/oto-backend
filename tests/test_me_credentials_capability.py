@@ -38,7 +38,7 @@ def vault(monkeypatch):
                         lambda *a, **k: None)
     monkeypatch.setattr(mc.credentials_store, "get_credential_with_meta",
                         lambda *a, **k: None)
-    from oto_mcp import connector_verify
+    from oto_mcp.connectors import verify as connector_verify
     monkeypatch.setattr(connector_verify, "supports", lambda p: False)
     return written
 

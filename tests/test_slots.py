@@ -78,7 +78,7 @@ def test_check_connector_coherence(monkeypatch):
     monkeypatch.setattr(slots_mod.providers, "REGISTRY", {"folk": _Con()})
     monkeypatch.setattr(slots_mod.providers, "connector_for_namespace",
                         lambda ns: _Con() if ns == "folk" else None)
-    from oto_mcp import connector_identities
+    from oto_mcp.connectors import identities as connector_identities
     monkeypatch.setattr(connector_identities, "_LISTERS", {"folk": lambda sub: []})
 
     # Connecteur déclaré + tool référencé → aucune alarme.

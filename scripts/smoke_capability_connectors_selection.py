@@ -9,7 +9,9 @@ Lancer :  DATABASE_URL=postgresql://poc:poc@localhost:5471/poc \
 """
 from __future__ import annotations
 
-from oto_mcp import connector_activation, connector_selection, db, org_store
+from oto_mcp import db, org_store
+from oto_mcp.connectors import activation as connector_activation
+from oto_mcp.connectors import selection as connector_selection
 from oto_mcp.capabilities import registry
 from oto_mcp.capabilities._types import AuthzDenied, RawCtx
 

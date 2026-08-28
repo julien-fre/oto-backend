@@ -17,7 +17,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify, output_projection
+from .. import access, output_projection
+from ..connectors import verify as connector_verify
 
 # ── Vue de tri d'une page de recherche ───────────────────────────────────────────
 # Une page `size=100` rendait 2,8 à 3,2 M de caractères : au-delà du plafond d'un tool

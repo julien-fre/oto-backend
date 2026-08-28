@@ -183,8 +183,8 @@ vide aux clients qui parsent.
 ## Surfaces & fichiers
 - backend : `redaction.py` (logique partagée : extraction, rédaction, réémission,
   **rendu du vide**), `middleware/field_redaction.py` + `middleware/empty_result.py`,
-  `connector_schema_store.py`,
-  `field_filter_defaults.py` (SERVER_DEFAULTS vide + TEMPLATES), `connector_field_schema.py`
+  `connectors/schema_store.py`,
+  `field_filter_defaults.py` (SERVER_DEFAULTS vide + TEMPLATES), `connectors/field_schema.py`
   (curé, libellés), `capabilities/orgs_field_filters.py` (get/set/preview), `db.py`
   (`connector_schemas`).
 - oto-core : `oto/tools/common/field_filter.py`.

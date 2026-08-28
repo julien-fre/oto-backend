@@ -35,7 +35,7 @@ from fastmcp.server.providers.proxy import ProxyTool
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connectors, credentials_store
+from .. import access, providers, credentials_store
 from ..auth_hooks import current_user_sub_from_token
 
 log = logging.getLogger("oto_mcp.tools.mount")
@@ -71,9 +71,9 @@ def _db_activated_mounts() -> set[str]:
     (ADR 0010/0011) appliqué au montage : activer un connecteur fédéré au catalogue
     le **monte** aussi, sans toucher à `OTO_MCP_MOUNTS_ENABLED`."""
     try:
-        from .. import connector_activation
+        from ..connectors import activation as connector_activation
         on = {r["connector"] for r in connector_activation.list_activations() if r.get("enabled")}
-        return {c.name for c in connectors.MOUNT_CONNECTORS if c.name in on}
+        return {c.name for c in providers.MOUNT_CONNECTORS if c.name in on}
     except Exception as e:
         log.warning("mount : lecture connector_activation échouée (%s) → 0 mount DB", e)
         return set()
@@ -90,9 +90,9 @@ def _enabled_mounts() -> set[str]:
     if raw is not None and raw.strip() == "":
         return set()  # kill-switch absolu
     if raw is not None and raw.strip() == "*":
-        return {c.name for c in connectors.MOUNT_CONNECTORS}
+        return {c.name for c in providers.MOUNT_CONNECTORS}
     if raw is None:
-        base = {c.name for c in connectors.MOUNT_CONNECTORS if c.name in _DEFAULT_ENABLED_MOUNTS}
+        base = {c.name for c in providers.MOUNT_CONNECTORS if c.name in _DEFAULT_ENABLED_MOUNTS}
     else:
         base = {n.strip() for n in raw.split(",") if n.strip()}
     return base | _db_activated_mounts()
@@ -105,7 +105,7 @@ def _run_sync(coro):
         return ex.submit(lambda: asyncio.run(coro)).result()
 
 
-def _catalog_token(connector: connectors.Connector, sub: str) -> str | None:
+def _catalog_token(connector: providers.Connector, sub: str) -> str | None:
     """Token (d'un user connecté) pour récupérer le catalogue PARTAGÉ au boot.
     Connector-spécifique pour le refresh OAuth."""
     if connector.name == "atlassian":
@@ -117,7 +117,7 @@ def _catalog_token(connector: connectors.Connector, sub: str) -> str | None:
     return credentials_store.get_credential("user", sub, connector.name)
 
 
-def _fetch_catalog(connector: connectors.Connector) -> list:
+def _fetch_catalog(connector: providers.Connector) -> list:
     """Liste d'outils du MCP distant, récupérée une fois au boot via le token
     d'un user déjà connecté. [] si personne n'est connecté ou si l'appel échoue
     (dégradation propre : pas d'outils fédérés, le reste d'oto intact)."""
@@ -169,7 +169,7 @@ def _fetch_catalog(connector: connectors.Connector) -> list:
         return []
 
 
-def _make_factory(connector: connectors.Connector):
+def _make_factory(connector: providers.Connector):
     """client_factory per-appel : token DU user courant, gating au call-time."""
     ns = connector.namespaces[0]
 
@@ -214,7 +214,7 @@ def _make_factory(connector: connectors.Connector):
     return factory
 
 
-def _register_one(mcp: FastMCP, c: connectors.Connector) -> int:
+def _register_one(mcp: FastMCP, c: providers.Connector) -> int:
     if not c.mount_url:
         log.warning("mount connector %s sans mount_url — ignoré", c.name)
         return 0
@@ -244,7 +244,7 @@ def refresh(mcp: FastMCP, connector_name: str) -> dict:
     (sans restart). Retire d'abord les outils précédemment montés, puis re-pose
     depuis le catalogue frais. Un nouvel outil distant devient visible au prochain
     `tools/list` des clients. Réservé admin (gating dans le méta-tool appelant)."""
-    c = connectors.REGISTRY.get(connector_name)
+    c = providers.REGISTRY.get(connector_name)
     if c is None or c.kind != "mount":
         raise ValueError(f"`{connector_name}` n'est pas un connecteur fédéré (kind=mount)")
     if connector_name not in _enabled_mounts():
@@ -269,7 +269,7 @@ def refresh(mcp: FastMCP, connector_name: str) -> dict:
 def register(mcp: FastMCP) -> None:
     enabled = _enabled_mounts()
     active = False
-    for c in connectors.MOUNT_CONNECTORS:
+    for c in providers.MOUNT_CONNECTORS:
         if c.name not in enabled:
             log.info("mount %s déclaré mais non activé (OTO_MCP_MOUNTS_ENABLED)", c.name)
             continue

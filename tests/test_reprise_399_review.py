@@ -122,8 +122,8 @@ def _wire(monkeypatch):
     monkeypatch.setattr(access, "require_connector_access", lambda p, s=None: None)
     monkeypatch.setattr(access, "current_org", lambda sub: 7)
     monkeypatch.setattr(access, "current_group", lambda sub: None)
-    monkeypatch.setattr(access.connectors, "connector_for_provider", lambda p: _Con())
-    monkeypatch.setattr(access.connectors, "is_byo_user", lambda p: True)
+    monkeypatch.setattr(access.providers, "connector_for_provider", lambda p: _Con())
+    monkeypatch.setattr(access.providers, "is_byo_user", lambda p: True)
     monkeypatch.setattr(access, "project_pinned_identity",
                         lambda prov, project_id=None: None)
     monkeypatch.setattr(access, "ORG_SHAREABLE_PROVIDERS", {"serper"})
@@ -151,7 +151,7 @@ def test_named_account_without_context_org_never_resolves_platform(monkeypatch):
     le gagnant serait la clé PLATEFORME — répondre avec elle à un `_account=x`
     explicite est une usurpation silencieuse. On refuse « introuvable »."""
     monkeypatch.setattr(access, "current_org", lambda sub: None)
-    monkeypatch.setattr(access.connectors, "connector_for_provider",
+    monkeypatch.setattr(access.providers, "connector_for_provider",
                         lambda p: _PlatCon())
     monkeypatch.setattr(access, "_resolve_platform_grant",
                         lambda s, p, o: {"label": "oto", "secret": "PK",
@@ -167,7 +167,7 @@ def test_unnamed_account_without_context_org_still_reaches_platform(monkeypatch)
     """Contre-épreuve : SANS compte nommé, le repli plateforme reste le comportement
     normal — la garde ne vise que le compte nommé."""
     monkeypatch.setattr(access, "current_org", lambda sub: None)
-    monkeypatch.setattr(access.connectors, "connector_for_provider",
+    monkeypatch.setattr(access.providers, "connector_for_provider",
                         lambda p: _PlatCon())
     monkeypatch.setattr(access, "_resolve_platform_grant",
                         lambda s, p, o: {"label": "oto", "secret": "PK",
@@ -185,7 +185,7 @@ def test_named_account_on_member_only_connector_says_not_found(monkeypatch):
     partagé n'existe (connecteur non org-shareable) → le message doit rester
     « Compte `x` introuvable » (comportement de main pour google/browser), pas le
     générique « Aucune clé configurée pour toi »."""
-    monkeypatch.setattr(access.connectors, "connector_for_provider",
+    monkeypatch.setattr(access.providers, "connector_for_provider",
                         lambda p: _MemberOnlyCon())
     monkeypatch.setattr(access, "ORG_SHAREABLE_PROVIDERS", set())
     monkeypatch.setattr(access, "_reachable_hint", lambda *a, **k: "")

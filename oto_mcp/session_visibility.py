@@ -18,8 +18,9 @@ import logging
 
 from fastmcp.server.transforms.visibility import disable_components, reset_visibility
 
-from . import (access, connector_activation, connector_selection, connectors,
-               credentials_store, db, org_store, providers)
+from . import access, providers, credentials_store, db, org_store
+from .connectors import activation as connector_activation
+from .connectors import selection as connector_selection
 from .error_taxonomy import _is_client_disconnect
 from .tool_visibility import (
     DEFAULT_HIDDEN_TOOLS,
@@ -101,7 +102,7 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
                 exposed, connector_activation.group_cut_connectors(active_group))
         to_hide |= {
             n for n in all_names
-            if (c := connectors.connector_for_namespace(namespace_of(n))) is not None
+            if (c := providers.connector_for_namespace(namespace_of(n))) is not None
             and c.name not in exposed
         }
     except Exception as e:
@@ -119,7 +120,7 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
         if deny:
             to_hide |= {
                 n for n in all_names
-                if (c := connectors.connector_for_namespace(namespace_of(n))) is not None
+                if (c := providers.connector_for_namespace(namespace_of(n))) is not None
                 and c.name in deny
             }
     except Exception as e:
@@ -133,7 +134,7 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
         if g_deny:
             to_hide |= {
                 n for n in all_names
-                if (c := connectors.connector_for_namespace(namespace_of(n))) is not None
+                if (c := providers.connector_for_namespace(namespace_of(n))) is not None
                 and c.name in g_deny
             }
     except Exception as e:
@@ -146,7 +147,7 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
     # pairs pré-0050 ont été backfillés avec leur visible d'alors (db._init).
     # Depuis peu : la baseline PLATEFORME est complétée par la baseline PROPRE à
     # l'org active (`org_store.get_org_default_connectors`, ex-« recommended »,
-    # posée par `connectors.recommend`) — un org_admin peut donc faire démarrer
+    # posée par `providers.recommend`) — un org_admin peut donc faire démarrer
     # SES nouveaux membres avec un socle non-vide, sans toucher au socle plateforme.
     # Fail-OPEN sur glitch (ergonomie, jamais une barrière : les gates call-time
     # restent) ; `oto_call` = échappatoire d'appel ponctuel d'un tool non listé
@@ -162,7 +163,7 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
         _sel = connector_selection.list_selection(sub, prof_org)
         to_hide |= {
             n for n in all_names
-            if (c := connectors.connector_for_namespace(namespace_of(n))) is not None
+            if (c := providers.connector_for_namespace(namespace_of(n))) is not None
             and _sel.get(c.name) != connector_selection.ACTIVE
         }
     except Exception as e:

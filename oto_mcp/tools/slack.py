@@ -19,7 +19,8 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
-from .. import access, connector_verify, file_content
+from .. import access, file_content
+from ..connectors import verify as connector_verify
 
 
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001 (config: contrat de sonde)

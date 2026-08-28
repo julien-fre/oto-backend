@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import connector_link, providers
+from oto_mcp import providers
+from oto_mcp.connectors import link as connector_link
 
 # L'import est CE qui déclare : ces modules s'enregistrent au niveau module.
 from oto_mcp import atlassian_oauth, folk_oauth, google_oauth  # noqa: F401,E402

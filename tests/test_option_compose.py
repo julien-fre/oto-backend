@@ -43,7 +43,7 @@ def calls(monkeypatch):
 
 def test_platform_option_grants_key(calls, monkeypatch):
     """Connecteur mode plateforme + clé posée → comp ET grant de la clé plateforme."""
-    monkeypatch.setattr(ua.connectors, "connector_for_provider",
+    monkeypatch.setattr(ua.providers, "connector_for_provider",
                         lambda p: _con({"byo_user", "platform"}))
     calls["instances"] = [{"label": "env"}]
     out = ua._set_option(CTX, ua.OptionInput(entity_type="user", entity_id="u1",
@@ -55,7 +55,7 @@ def test_platform_option_grants_key(calls, monkeypatch):
 
 def test_platform_option_no_key_is_flagged(calls, monkeypatch):
     """Connecteur revente SANS clé plateforme posée → comp mais état mort signalé."""
-    monkeypatch.setattr(ua.connectors, "connector_for_provider",
+    monkeypatch.setattr(ua.providers, "connector_for_provider",
                         lambda p: _con({"platform"}))
     # calls["instances"] reste [] (aucune clé plateforme posée)
     out = ua._set_option(CTX, ua.OptionInput(entity_type="user", entity_id="u1",
@@ -67,7 +67,7 @@ def test_platform_option_no_key_is_flagged(calls, monkeypatch):
 
 def test_byo_option_is_inert(calls, monkeypatch):
     """L'entité a sa propre clé (BYO) → grant posé mais signalé inerte."""
-    monkeypatch.setattr(ua.connectors, "connector_for_provider",
+    monkeypatch.setattr(ua.providers, "connector_for_provider",
                         lambda p: _con({"byo_user", "platform"}))
     calls["instances"] = [{"label": "env"}]
     monkeypatch.setattr(ua.db, "has_member_api_key", lambda sub, org, prov: True)
@@ -78,7 +78,7 @@ def test_byo_option_is_inert(calls, monkeypatch):
 
 def test_non_platform_option_is_plain_comp(calls, monkeypatch):
     """Option non liée à un connecteur plateforme → comp simple, aucun grant."""
-    monkeypatch.setattr(ua.connectors, "connector_for_provider", lambda p: None)
+    monkeypatch.setattr(ua.providers, "connector_for_provider", lambda p: None)
     out = ua._set_option(CTX, ua.OptionInput(entity_type="org", entity_id="3",
                                              option="some_addon", on=True))
     assert calls["comp"] == [("org", "3", "some_addon")]
@@ -88,7 +88,7 @@ def test_non_platform_option_is_plain_comp(calls, monkeypatch):
 
 def test_remove_option_revokes_grant(calls, monkeypatch):
     """Retirer la comp d'un connecteur plateforme retire aussi le grant (symétrie)."""
-    monkeypatch.setattr(ua.connectors, "connector_for_provider",
+    monkeypatch.setattr(ua.providers, "connector_for_provider",
                         lambda p: _con({"platform"}))
     calls["instances"] = [{"label": "env"}]
     out = ua._set_option(CTX, ua.OptionInput(entity_type="user", entity_id="u1",
@@ -99,7 +99,7 @@ def test_remove_option_revokes_grant(calls, monkeypatch):
 
 
 def test_org_scope_grants_org_key(calls, monkeypatch):
-    monkeypatch.setattr(ua.connectors, "connector_for_provider",
+    monkeypatch.setattr(ua.providers, "connector_for_provider",
                         lambda p: _con({"platform"}))
     calls["instances"] = [{"label": "env"}]
     out = ua._set_option(CTX, ua.OptionInput(entity_type="org", entity_id="5",

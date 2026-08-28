@@ -16,7 +16,7 @@ import logging
 import re
 from typing import Optional
 
-from . import connectors, crypto
+from . import providers, crypto
 from .db import _connect
 
 _WHITESPACE = re.compile(r"\s+")
@@ -159,7 +159,7 @@ def platform_grant(provider: str, scope: str, daily_quota: "int | None" = None,
         # (rien n'est effacé) — c'est ce qui rend le retour à l'ancien chemin possible.
         grants_chain.grant(provider, scope, daily_quota=daily_quota, label=label)
         return
-    con = connectors.REGISTRY.get(provider)
+    con = providers.REGISTRY.get(provider)
     free_tier = bool(con and getattr(con, "platform_key_open", False))
     with _connect() as conn:
         label = label or _latest_platform_label(conn, provider)
@@ -344,7 +344,7 @@ def public_meta(meta: Optional[dict]) -> dict:
 
 
 def _secret_kind(connector: str) -> str:
-    c = connectors.REGISTRY.get(connector)
+    c = providers.REGISTRY.get(connector)
     return c.secret_kind if c else "api_key"
 
 
@@ -359,7 +359,7 @@ def pack_secret(connector: str, fields: dict) -> str:
     - ≥2 champs (silae & co) → `json.dumps(fields)`.
 
     Inverse exact : `unpack_secret`."""
-    c = connectors.REGISTRY.get(connector)
+    c = providers.REGISTRY.get(connector)
     if c is not None and c.secret_kind == "basic_auth":
         import base64
         return base64.b64encode(
@@ -389,7 +389,7 @@ def unpack_secret(connector: str, secret: str) -> dict:
 
     **Lève `SecretUnpackError` si le secret ne se relit pas** — jamais `{}`, qui
     produirait un client sans identifiants (cf. la classe ci-dessus)."""
-    c = connectors.REGISTRY.get(connector)
+    c = providers.REGISTRY.get(connector)
     schema = c.secret_fields if c is not None else ()
     if c is not None and c.secret_kind == "basic_auth":
         import base64
@@ -422,7 +422,7 @@ def split_secret_config(connector: str, fields: dict) -> tuple[dict, dict]:
     du schéma déclaré (`Connector.secret_fields`). La config = champs non-secrets
     (endpoint/host : `base_url`, `data_center`, `org_id`…). Champ inconnu = traité
     comme secret (défaut prudent). Pur — pas d'accès coffre."""
-    c = connectors.REGISTRY.get(connector)
+    c = providers.REGISTRY.get(connector)
     is_secret = {f.name: f.secret for f in (c.secret_fields if c is not None else ())}
     secrets = {k: v for k, v in fields.items() if is_secret.get(k, True)}
     config = {k: v for k, v in fields.items() if not is_secret.get(k, True)}
@@ -470,7 +470,7 @@ def validate_fields(connector: str, provided: dict) -> dict:
     connecteur d'`oauth2` à `bearer` ne laisse pas traîner un `client_secret` mort
     dans le coffre. C'est voulu — un champ qu'aucun mode ne lit n'a pas à survivre
     à un changement de mode."""
-    c = connectors.REGISTRY.get(connector)
+    c = providers.REGISTRY.get(connector)
     _guard_choices(c, provided)
     relevant = c.fields_for(provided) if c is not None else ()
     kept: dict[str, str] = {}
@@ -510,7 +510,7 @@ def merge_with_existing(entity_type: str, entity_id: str, connector: str,
     Un existant ILLISIBLE (ligne écrite sous une clé de chiffrement périmée) n'est pas
     une erreur ici : on rend la saisie telle quelle, et la validation nommera ce qui
     manque. Une repose complète doit rester possible quand le coffre ne se relit plus."""
-    c = connectors.REGISTRY.get(connector)
+    c = providers.REGISTRY.get(connector)
     declared = {f.name for f in (c.secret_fields if c is not None else ())}
     if len(declared) < 2 or declared <= set(provided):
         return dict(provided)          # mono-champ, ou saisie déjà complète
@@ -545,7 +545,7 @@ def secret_from_input(
     Lève `CredentialFieldsInvalid` (une `ValueError`) actionnable : `empty_api_key`
     (mono vide), `missing_credentials` (champ requis absent/vide, ou aucun champ) ou
     `invalid_field_value` (valeur hors jeu fermé)."""
-    c = connectors.REGISTRY.get(connector)
+    c = providers.REGISTRY.get(connector)
     sfields = c.secret_fields if c is not None else ()
     if len(sfields) >= 2:
         return pack_secret(connector, validate_fields(connector, fields or {}))
@@ -587,7 +587,7 @@ def get_credential(entity_type: str, entity_id: str, connector: str, account: st
     Primitive de déchiffrement : appelée par resolve_api_key (résolution, injecte
     au connecteur) ET api_key_get (lecture de SA clé par le propriétaire).
     status_for utilise `has_credential` (présence, sans déchiffrer)."""
-    connectors.require_credential(entity_type, connector)
+    providers.require_credential(entity_type, connector)
     with _connect() as conn:
         row = conn.execute(
             "SELECT secret_enc FROM connector_credentials "
@@ -615,7 +615,7 @@ def get_credential_with_meta(entity_type: str, entity_id: str, connector: str,
         ).fetchone()
     meta = (row["meta"] if row else None) or {}
     if not meta.get("base_url"):
-        connectors.require_credential(entity_type, connector)
+        providers.require_credential(entity_type, connector)
     if not row:
         return None
     return {"secret": _reveal(row, entity_type, entity_id, connector, account),
@@ -779,7 +779,7 @@ def set_credential(
     registre ; sinon, garde d'éligibilité registre.
     """
     if not (meta and meta.get("base_url")):
-        connectors.require_credential(entity_type, connector)
+        providers.require_credential(entity_type, connector)
     if not secret:
         raise ValueError("secret requis")
     if conn is not None:
@@ -827,7 +827,7 @@ def guard_account_write(entity_type: str, entity_id: str, connector: str,
 
     Tranche sur le REGISTRE, avant toute lecture du coffre : un refus ne doit pas
     dépendre de l'état des comptes déjà posés."""
-    con = connectors.connector_for_provider(connector)
+    con = providers.connector_for_provider(connector)
     if con is not None and con.auth_multi_account:
         ensure_named_coexistence(entity_type, entity_id, connector, account)
         return
@@ -1027,7 +1027,7 @@ def backfill_member_scope() -> dict:
         ).fetchall()
     for r in rows:
         sub, connector, account = r["entity_id"], r["connector"], r["account"]
-        con = connectors.REGISTRY.get(connector)
+        con = providers.REGISTRY.get(connector)
         # Mounts oauth (atlassian/folkmcp) : flux fédérés encore scope 'user'
         # (barreau ultérieur).
         # Google, lui, migre depuis B3 (db/google.py au scope membre). Connecteur

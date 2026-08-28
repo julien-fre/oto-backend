@@ -40,7 +40,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access
+from ..connectors import verify as connector_verify
 
 # Scopes de lecture « cœur CRM » : une clé qui n'en a AUCUN authentifie mais ne peut
 # rien faire d'utile — la sonde doit le dire plutôt que de rendre un vert trompeur.

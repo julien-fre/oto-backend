@@ -10,7 +10,8 @@ import asyncio
 
 import pytest
 
-from oto_mcp import access, connector_identities as ci, connectors, db, unipile_connect as uc
+from oto_mcp import access, providers, db, unipile_connect as uc
+from oto_mcp.connectors import identities as ci
 from oto_mcp.tools import unipile
 
 SEAT = {"provider": "LINKEDIN", "account_id": "acc_seat", "account_name": "Moi",
@@ -58,7 +59,7 @@ def test_status_bound_here_wins_over_elsewhere(monkeypatch):
 def test_own_account_no_platform_fallback(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda s: 168)
     monkeypatch.setattr(db, "get_unipile_account_id", lambda s, o, p: None)
-    monkeypatch.setattr(connectors, "is_personal_cross_org", lambda p: True)
+    monkeypatch.setattr(providers, "is_personal_cross_org", lambda p: True)
     monkeypatch.setattr(access, "personal_instance_org",
                         lambda s, p, exclude_org=None: None)
     assert ci._own_unipile_account_id("sub1", "LINKEDIN") is None

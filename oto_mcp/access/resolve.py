@@ -22,8 +22,7 @@ from typing import Optional
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import (connectors, credentials_store, db, group_store, instance_refs,
-                org_store, session_org)
+from .. import (providers, credentials_store, db, group_store, instance_refs, org_store, session_org)
 from . import cascade, quotas, rbac, scope
 
 logger = logging.getLogger(__name__)
@@ -251,7 +250,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         key = db.get_member_api_key(msub, morg, mprov, eff)
         if eff and not key and not explicit:
             raise _not_found(eff, mprov)
-        # Suspension PAR compte (le `account` de connectors.instances.suspend) :
+        # Suspension PAR compte (le `account` de providers.instances.suspend) :
         # une clé existante mais mise de côté saute le barreau — après le check
         # « introuvable », qui garde sa sémantique (absent ≠ suspendu).
         if key and db.member_instance_suspended(msub, morg, mprov, eff):
@@ -398,7 +397,7 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) ->
     sans identité), pas de quota per-sub (le rate-limit du sous-domaine borne l'abus).
     Miroir org-only des paliers de `_resolve_credential_impl` — ce qui n'est pas résoluble
     au niveau org (oauth/cookie per-user) lève une McpError actionnable, fail-closed."""
-    con = connectors.connector_for_provider(provider)
+    con = providers.connector_for_provider(provider)
     if con is None:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Provider inconnu: {provider}"))
     if org_id is None:

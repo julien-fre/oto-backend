@@ -285,7 +285,8 @@ async def test_persist_token_merges_refresh_token_without_disturbing_other_field
         "client_id": "cid", "client_secret": "csecret",
         "login_url": "https://acme.my.salesforce.com",
     })
-    from oto_mcp import credentials_store, connector_verify
+    from oto_mcp import credentials_store
+    from oto_mcp.connectors import verify as connector_verify
     monkeypatch.setattr(credentials_store, "get_credential_with_meta", store.get_credential_with_meta)
     monkeypatch.setattr(credentials_store, "unpack_secret", store.unpack_secret)
     monkeypatch.setattr(credentials_store, "pack_secret", store.pack_secret)
@@ -321,7 +322,8 @@ async def test_persist_token_writes_to_org_scope_when_scope_is_org(monkeypatch):
     store = _FakeStore({
         "client_id": "cid", "client_secret": "csecret", "login_url": "https://acme.my.salesforce.com",
     })
-    from oto_mcp import credentials_store, connector_verify, org_store
+    from oto_mcp import credentials_store, org_store
+    from oto_mcp.connectors import verify as connector_verify
     monkeypatch.setattr(credentials_store, "get_credential_with_meta", store.get_credential_with_meta)
     monkeypatch.setattr(credentials_store, "unpack_secret", store.unpack_secret)
     monkeypatch.setattr(credentials_store, "pack_secret", store.pack_secret)
@@ -348,7 +350,8 @@ async def test_persist_token_writes_to_group_scope_when_scope_is_group(monkeypat
     store = _FakeStore({
         "client_id": "cid", "client_secret": "csecret", "login_url": "https://acme.my.salesforce.com",
     })
-    from oto_mcp import credentials_store, connector_verify, group_store
+    from oto_mcp import credentials_store, group_store
+    from oto_mcp.connectors import verify as connector_verify
     monkeypatch.setattr(credentials_store, "get_credential_with_meta", store.get_credential_with_meta)
     monkeypatch.setattr(credentials_store, "unpack_secret", store.unpack_secret)
     monkeypatch.setattr(credentials_store, "pack_secret", store.pack_secret)

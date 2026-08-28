@@ -18,7 +18,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import access, connector_flow, zoho_oauth
+from .. import access, zoho_oauth
+from ..connectors import flow as connector_flow
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

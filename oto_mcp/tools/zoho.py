@@ -21,8 +21,9 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import (access, connector_flow, connector_verify, connectors, status_hints,
-                zoho_oauth)
+from .. import access, providers, status_hints, zoho_oauth
+from ..connectors import flow as connector_flow
+from ..connectors import verify as connector_verify
 
 # Modules CRM standard sondés pour prouver un scope de LECTURE réel (au moins un
 # `ZohoCRM.modules.<m>.READ`). On passe au 1er lisible ; tous en scope-mismatch =
@@ -90,7 +91,7 @@ def _credential_state_for(connector: str):
                              "été donnée — clique « Autoriser oto chez Zoho » sur la "
                              "fiche du connecteur. (Ou colle un refresh token si tu "
                              "utilises un self client.)"))
-        con = connectors.REGISTRY.get(connector)
+        con = providers.REGISTRY.get(connector)
         manquants = tuple(f for f in (con.secret_fields if con else ())
                           if f.required and not fields.get(f.name)
                           and f.name not in zoho_oauth.PERSISTED_FIELDS)

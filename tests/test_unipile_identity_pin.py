@@ -4,7 +4,8 @@ Le compte épinglé POUR L'APPEL prime sur le pointeur maison, gardé (accordé 
 propre), éphémère, sans repli muet."""
 import pytest
 
-from oto_mcp import connector_identities as ci, session_org, db
+from oto_mcp import session_org, db
+from oto_mcp.connectors import identities as ci
 
 
 def _grants(mapping):

@@ -20,7 +20,7 @@ import pathlib
 
 import pytest
 
-from oto_mcp import connector_selection as sel
+from oto_mcp.connectors import selection as sel
 
 
 @pytest.fixture()
@@ -114,8 +114,8 @@ def test_other_connectors_are_never_touched(conn):
 
 # ── garde-fou d'ORDRE (actif sans PostgreSQL) ────────────────────────────────
 
-_SRC = (pathlib.Path(__file__).resolve().parent.parent
-        / "oto_mcp" / "connector_selection.py").read_text(encoding="utf-8")
+_SRC = (pathlib.Path(__file__).resolve().parents[2]
+        / "oto_mcp" / "connectors" / "selection.py").read_text(encoding="utf-8")
 
 
 def test_the_three_statements_stay_in_this_order():
@@ -133,6 +133,6 @@ def test_the_three_statements_stay_in_this_order():
 def test_the_boot_runs_the_linkedin_rename():
     """La consigne « à faire au tag » est devenue un geste de BOOT — c'est la leçon
     de #295, et elle ne tient que si l'appel est là."""
-    init_src = (pathlib.Path(__file__).resolve().parent.parent
+    init_src = (pathlib.Path(__file__).resolve().parents[2]
                 / "oto_mcp" / "db" / "_init.py").read_text(encoding="utf-8")
     assert 'rename_selection(conn, "linkedin", "aiark")' in init_src

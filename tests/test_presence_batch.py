@@ -62,8 +62,8 @@ def coffre(monkeypatch):
 
 
 def _providers() -> list[str]:
-    from oto_mcp import connectors
-    return sorted(connectors.REGISTRY)
+    from oto_mcp import providers
+    return sorted(providers.REGISTRY)
 
 
 def test_les_deux_sondes_rendent_le_MEME_verdict_sur_TOUT_le_registre(coffre):

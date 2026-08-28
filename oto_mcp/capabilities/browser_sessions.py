@@ -32,7 +32,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import access, connectors, roles
+from .. import access, providers, roles
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -122,7 +122,7 @@ async def _finalize(ctx: ResolvedCtx, inp: SessionFinalizeInput) -> dict:
         org_id = access.current_org(ctx.sub)
         if org_id is None:
             raise AuthzDenied(400, "no_org_context")
-        if not connectors.is_org_shareable(inp.name):
+        if not providers.is_org_shareable(inp.name):
             raise AuthzDenied(400, "not_org_shareable")
         if scope == "org":
             if not roles.is_org_admin(ctx.sub, org_id):

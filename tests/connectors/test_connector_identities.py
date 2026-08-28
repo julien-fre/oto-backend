@@ -6,7 +6,8 @@ import asyncio
 
 import pytest
 
-from oto_mcp import access, browserbase, connector_identities, credentials_store
+from oto_mcp import access, browserbase, credentials_store
+from oto_mcp.connectors import identities as connector_identities
 from oto_mcp.access import ResolvedCredential
 
 

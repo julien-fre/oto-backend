@@ -44,7 +44,7 @@ def test_le_prechargement_suit_le_SUJET_jamais_le_REQUERANT(monkeypatch):
     monkeypatch.setattr(access, "get_user_role", lambda sub: "member")
     monkeypatch.setattr(access.group_store, "list_groups_for_user", lambda s, o: [])
     monkeypatch.setattr(access.db, "KEY_PROVIDERS", ())
-    monkeypatch.setattr(access.connectors, "REGISTRY", {})
+    monkeypatch.setattr(access.providers, "REGISTRY", {})
 
     access.status_for("le_tiers", org=999, group=None)
     assert vus["org"] == 999, "le préchargement s'est construit sur une autre org"
@@ -59,7 +59,7 @@ def test_les_quotas_sont_lus_pour_le_SUJET(monkeypatch):
     monkeypatch.setattr(access, "get_user_role", lambda sub: "member")
     monkeypatch.setattr(access.group_store, "list_groups_for_user", lambda s, o: [])
     monkeypatch.setattr(access.db, "KEY_PROVIDERS", ())
-    monkeypatch.setattr(access.connectors, "REGISTRY", {})
+    monkeypatch.setattr(access.providers, "REGISTRY", {})
     access.status_for("le_tiers", org=999, group=None)
     assert vus["sub"] == "le_tiers"
 
@@ -94,7 +94,7 @@ def test_un_outil_ABSENT_de_la_map_vaut_zero_pas_None(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda s: 2)
     monkeypatch.setattr(access, "current_group", lambda s: None)
     monkeypatch.setattr(access.db, "KEY_PROVIDERS", ("serper", "hunter"))
-    monkeypatch.setattr(access.connectors, "REGISTRY", {})
+    monkeypatch.setattr(access.providers, "REGISTRY", {})
     out = access.status_for("u1")
     assert out["providers"]["hunter"]["quota_used_today"] == 0
 
@@ -118,7 +118,7 @@ def test_un_prechargement_de_quotas_en_PANNE_retombe_sur_la_lecture_unitaire(mon
     monkeypatch.setattr(access, "current_org", lambda s: 2)
     monkeypatch.setattr(access, "current_group", lambda s: None)
     monkeypatch.setattr(access.db, "KEY_PROVIDERS", ("serper",))
-    monkeypatch.setattr(access.connectors, "REGISTRY", {})
+    monkeypatch.setattr(access.providers, "REGISTRY", {})
     out = access.status_for("u1")
     assert appels == ["serper"]
     assert out["providers"]["serper"]["quota_used_today"] == 42
@@ -134,6 +134,6 @@ def test_une_sonde_prechargee_en_PANNE_retombe_sur_la_sonde_unitaire(monkeypatch
     monkeypatch.setattr(access, "current_org", lambda s: 2)
     monkeypatch.setattr(access, "current_group", lambda s: None)
     monkeypatch.setattr(access.db, "KEY_PROVIDERS", ())
-    monkeypatch.setattr(access.connectors, "REGISTRY", {})
+    monkeypatch.setattr(access.providers, "REGISTRY", {})
     # Ne lève pas : l'accélération est facultative, le snapshot ne l'est pas.
     assert "providers" in access.status_for("u1")

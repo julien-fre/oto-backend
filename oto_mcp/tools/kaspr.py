@@ -11,7 +11,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access
+from ..connectors import verify as connector_verify
 
 # La normalisation du slug LinkedIn (URL → slug nu, sinon Kaspr 500) vit dans le
 # client oto-core (`oto.tools.kaspr.client.linkedin_slug`), pas ici — logique

@@ -850,7 +850,7 @@ def _init_db_once() -> None:
         # Cran d'activation des connecteurs (ADR 0010, B1) — table + seed unique
         # (snapshot du registre courant à ON). Aucun lecteur encore (canari) :
         # le câblage catalogue/chargement suit en B2/B3.
-        from .. import connector_activation as _conn_act
+        from ..connectors import activation as _conn_act
         _conn_act.init_schema(conn)
         _conn_act.seed_initial(conn)
         # Chantier ACL (cadrage 10/07, B1) : copie legacy → `connector_acl` unifiée,
@@ -884,7 +884,7 @@ def _init_db_once() -> None:
         # lecteur encore (canari, no-behavior-change) ; le câblage lecture/mutation
         # (capacité connectors.me/select/pause) et le masquage pause au middleware
         # suivent en B3/B4/B5.
-        from .. import connector_selection as _conn_sel
+        from ..connectors import selection as _conn_sel
         _conn_sel.init_schema(conn)
         # ADR 0050 : passage au régime nominal « non-sélectionné = masqué ».
         # Backfill ONE-SHOT (sentinelle) des (sub, org) pré-existants avec ce

@@ -15,7 +15,9 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from .. import connector_field_schema, connector_schema_store, db, field_filter_defaults, org_store
+from .. import db, field_filter_defaults, org_store
+from ..connectors import field_schema as connector_field_schema
+from ..connectors import schema_store as connector_schema_store
 from ._authz import ORG_ADMIN_OF, ORG_MEMBER_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 

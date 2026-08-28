@@ -3,7 +3,8 @@ partagés (label owner), le select d'un compte accordé pose le POINTEUR sans to
 la ligne de connexion du grantee, le retour-à-soi efface le pointeur."""
 import pytest
 
-from oto_mcp import access, connector_identities
+from oto_mcp import access
+from oto_mcp.connectors import identities as connector_identities
 
 
 _GRANT = {

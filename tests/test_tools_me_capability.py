@@ -82,7 +82,7 @@ def socle(monkeypatch):
     class _Conn:
         name, label, kind = "sirene", "Entreprises FR", "native"
 
-    monkeypatch.setattr(tm.connectors, "connector_for_namespace",
+    monkeypatch.setattr(tm.providers, "connector_for_namespace",
                         lambda ns: _Conn() if ns == "fr" else None)
     from oto_mcp import providers
     monkeypatch.setattr(providers, "connector_for_namespace",

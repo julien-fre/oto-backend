@@ -47,7 +47,7 @@ from typing import Any, Optional
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .. import access, auth_hooks, connectors, db, tool_registry
+from .. import access, auth_hooks, providers, db, tool_registry
 from ..tool_visibility import (
     PROTECTED_TOOLS, is_default_hidden, is_testable, namespace_of)
 from ._authz import SUB_ONLY
@@ -241,7 +241,7 @@ async def _detail(ctx: ResolvedCtx, inp: ToolNameInput) -> dict:
     if tool is None:
         raise AuthzDenied(404, f"unknown_tool:{inp.name}")
     ns = namespace_of(inp.name)
-    conn = connectors.connector_for_namespace(ns)
+    conn = providers.connector_for_namespace(ns)
     disabled = set(db.list_user_disabled_tools(ctx.sub, access.current_org(ctx.sub) or 0))
     federated = bool(conn and conn.kind == "mount")
     return {

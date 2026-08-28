@@ -35,7 +35,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify, output_projection
+from .. import access, output_projection
+from ..connectors import verify as connector_verify
 
 # Ce qu'un balayage de sourcing lit sur une offre / une entreprise (`full=True` rend tout).
 _JOB_FIELDS = ("company", "job_title", "date_posted", "url", "location")

@@ -114,7 +114,7 @@ def test_les_champs_hors_mode_ne_sont_pas_stockes():
 
 def test_les_connecteurs_sans_discriminant_ne_changent_pas():
     """Les ~90 autres connecteurs n'ont pas de discriminant : mêmes champs qu'avant."""
-    from oto_mcp import connectors
-    for c in connectors.REGISTRY.values():
+    from oto_mcp import providers
+    for c in providers.REGISTRY.values():
         if not c.field_discriminator:
             assert c.fields_for({"auth_mode": "bearer"}) == c.secret_fields

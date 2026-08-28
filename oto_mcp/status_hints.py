@@ -8,7 +8,7 @@ générique (`ProviderStatus`), chaque connecteur ENREGISTRE ici un hook qui
 répond « quelle étape manque ? » — le front reste agnostique : il affiche le
 libellé tel quel comme verdict + CTA.
 
-Patron identique à `connector_verify.py` : registre passif, enregistrement à
+Patron identique à `connectors/verify.py` : registre passif, enregistrement à
 l'import du module connecteur, fail-open (un hook qui casse ne casse jamais
 /api/me).
 """

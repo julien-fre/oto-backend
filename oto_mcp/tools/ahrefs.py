@@ -66,7 +66,8 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, connector_verify
+from .. import access
+from ..connectors import verify as connector_verify
 
 # --- select par défaut, uniquement pour les rapports dont les colonnes ont
 # été vérifiées en doc (docs.ahrefs.com, 2026-08-20) — ailleurs `select` reste

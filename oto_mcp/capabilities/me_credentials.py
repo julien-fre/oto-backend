@@ -21,7 +21,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from .. import access, connectors, credentials_store, db, roles
+from .. import access, providers, credentials_store, db, roles
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -112,11 +112,11 @@ def _credentialable(provider: str, scope: str = "member"):
     0003/0037) — se faisait répondre « connecteur inconnu » en lecture comme en
     retrait à l'échelle équipe ou org. C'est la racine du formulaire vide décrit
     par oto-backend#448."""
-    c = connectors.connector_for_provider(provider)
+    c = providers.connector_for_provider(provider)
     if c is None or not c.secret_fields:
         return None
-    eligible = (connectors.is_org_shareable(provider) if scope in ("org", "group")
-                else connectors.is_byo_user(provider))
+    eligible = (providers.is_org_shareable(provider) if scope in ("org", "group")
+                else providers.is_byo_user(provider))
     return c if eligible else None
 
 
@@ -197,7 +197,8 @@ def _get(ctx: ResolvedCtx, inp: CredentialGetInput) -> dict:
 
 async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
     from mcp.shared.exceptions import McpError
-    from .. import connector_verify, status_hints
+    from .. import status_hints
+    from ..connectors import verify as connector_verify
 
     c = _credentialable(inp.provider)
     if c is None:
@@ -294,9 +295,9 @@ def _clear(ctx: ResolvedCtx, inp: CredentialClearInput) -> dict:
     scope = (inp.scope or "member").strip() or "member"
     if scope not in ("member", "group", "org"):
         scope = "member"
-    c = connectors.connector_for_provider(inp.provider)
-    eligible = (connectors.is_org_shareable(inp.provider) if scope in ("org", "group")
-                else connectors.is_byo_user(inp.provider))
+    c = providers.connector_for_provider(inp.provider)
+    eligible = (providers.is_org_shareable(inp.provider) if scope in ("org", "group")
+                else providers.is_byo_user(inp.provider))
     if c is None or not eligible:
         raise AuthzDenied(404, "unknown_provider", f"Connecteur inconnu : `{inp.provider}`.")
     org_id = _org_of(ctx.sub)

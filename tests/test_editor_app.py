@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import access, connectors, credentials_store, zoho_oauth
+from oto_mcp import access, providers, credentials_store, zoho_oauth
 
 
 # --- l'invariant ---------------------------------------------------------------
@@ -20,7 +20,7 @@ def test_zoho_has_no_platform_auth_mode():
     """Ce que le rangement de l'app d'éditeur suppose : zoho n'accepte PAS de
     credential plateforme d'accès. C'est ce qui rend `walk_cascade` aveugle à elle."""
     for name in ("zoho", "zohodesk", "zohoanalytics"):
-        con = connectors.REGISTRY.get(name)
+        con = providers.REGISTRY.get(name)
         assert con is not None, name
         assert "platform" not in con.auth_modes, (
             f"{name} a gagné le mode 'platform' : l'app d'éditeur deviendrait "

@@ -37,7 +37,9 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import connector_flow, connector_link, db
+from . import db
+from .connectors import flow as connector_flow
+from .connectors import link as connector_link
 
 
 SCOPES = [

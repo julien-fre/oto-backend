@@ -16,7 +16,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import access, connectors, credentials_store, db, group_store, org_store
+from .. import access, providers, credentials_store, db, group_store, org_store
 from ._authz import PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -199,7 +199,7 @@ def _compose_platform_grant(ctx: ResolvedCtx, inp: OptionInput, eid: str) -> Opt
 
     `None` = l'option n'est pas un connecteur en mode plateforme (rien à composer ;
     p.ex. une option non liée à un connecteur) → comp simple."""
-    con = connectors.connector_for_provider(inp.option)
+    con = providers.connector_for_provider(inp.option)
     if not con or "platform" not in con.auth_modes:
         return None
     if not credentials_store.list_platform_instances(inp.option):
@@ -229,7 +229,7 @@ def _compose_platform_revoke(inp: OptionInput, eid: str) -> Optional[dict]:
     """Symétrique de `_compose_platform_grant` : retirer la comp d'un connecteur en
     mode plateforme retire aussi le(s) grant(s) de sa clé plateforme — « retirer
     l'option » = retirer l'accès revente d'un bloc (couche 2 + couche 3)."""
-    con = connectors.connector_for_provider(inp.option)
+    con = providers.connector_for_provider(inp.option)
     if not con or "platform" not in con.auth_modes:
         return None
     scope = f"user:{eid}" if inp.entity_type == "user" else f"org:{eid}"

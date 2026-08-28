@@ -218,7 +218,8 @@ rien ne rendait navigable et que rien ne tenait.
   connecteur (refusé à l'import sinon) et son domicile est verrouillé dans les deux
   sens par `tests/test_providers_registry_snapshot.py` (fichier sans ligne = dort
   invisible ; ligne sans fichier = import cassé). `register_all` (`tools/__init__.py`)
-  **DÉRIVE le chargement du registre** (#24, fin de la liste hardcodée) : il boucle
+  **DÉRIVE le chargement du registre** (otomata-tech/oto-private#24, fin de la liste
+  hardcodée) : il boucle
   sur les providers `kind="tools"` et importe `Connector.modules` (défaut = nom du
   provider ; renseigner `modules` si module ≠ nom, ou plusieurs modules par provider —
   ex. `sirene`→`fr`, `google`→`gmail`/`datastore`/`tasks`). Chaque import en
@@ -295,7 +296,7 @@ rien ne rendait navigable et que rien ne tenait.
   le site fautif est identique de 1.27.2 à `main`/2.0.0, la PR upstream qui le garderait
   n'est pas mergée et le backport 1.x est refusé (`not_planned`).
 - **Cran d'activation (ADR 0010/0011)** : déclarer un connecteur ne l'expose PAS —
-  gate DB `connector_activation.py` (master global ± override org, deny-by-default).
+  gate DB `connectors/activation.py` (master global ± override org, deny-by-default).
   Gate à la **VISIBILITÉ par session** (`UserDisabledToolsMiddleware` + `connector_
   activation`, **fail-open**) : `register_all` charge tout inconditionnellement, le
   middleware masque les tools d'un connecteur non activé pour l'org → (dés)activer
@@ -340,7 +341,7 @@ rien ne rendait navigable et que rien ne tenait.
   (1 clé keyed + platform/quota) **ou** `resolve_credential_fields` (byo multi-champs
   sans quota, ex. `silae` : client_id/client_secret/subscription_key). `cookie`/`oauth`
   (linkedin/google) ont des flux dédiés → `secret_fields` vide.
-- **Sonde « tester la connexion » par connecteur** (`connector_verify.py`, registre
+- **Sonde « tester la connexion » par connecteur** (`connectors/verify.py`, registre
   calqué sur `browser_session.register`) : un connecteur enregistre une `_verify(fields)`
   qui **lève sur échec** (le message d'exception = le retour d'erreur). Capacité unique
   `connectors.verify` (MCP `oto_instance(op="verify")` — console ADR 0047 + REST `POST /api/me/connectors/{provider}/verify`,

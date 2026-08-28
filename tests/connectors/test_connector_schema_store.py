@@ -1,5 +1,5 @@
 """Extraction du schéma observé (squelette clés+types, sans valeurs) — forme réelle."""
-from oto_mcp import connector_schema_store as css
+from oto_mcp.connectors import schema_store as css
 
 _PROFILE = {
     "first_name": "Alexis", "last_name": "Laporte", "headline": "Founder",

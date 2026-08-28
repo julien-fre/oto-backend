@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .. import connectors
+from .. import providers
 from .. import credentials_store
 
 
@@ -41,10 +41,10 @@ def set_org_secret(org_id: int, provider: str, api_key: str, set_by: Optional[st
 
     Un connecteur **remote** (ADR 0003/0011) est défini par la DONNÉE : un `meta`
     avec `base_url` (endpoint du bridge) ⇒ pas d'entrée registre attendue (zéro nom
-    client en dur, cf. `connectors.org_secret_meta`). Sinon, garde d'éligibilité
+    client en dur, cf. `providers.org_secret_meta`). Sinon, garde d'éligibilité
     org-partageable via le registre."""
     if not (meta and meta.get("base_url")):
-        connectors.require_credential("org", provider)
+        providers.require_credential("org", provider)
     if not api_key:
         raise ValueError("api_key requise")
     # Coffre chiffré, source unique (entité 'org').

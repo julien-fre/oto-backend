@@ -38,6 +38,11 @@ fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
 ```
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
+├── connectors/       # le connecteur côté PLATEFORME : activation, selection, identities,
+│                     #   link, flow, verify, field_schema, schema_store + `docs/` (la
+│                     #   fiche how-to en markdown) et `docs_reader`. ⚠️ trois voisins à
+│                     #   ne pas confondre : `providers/` = le REGISTRE, `tools/` = les
+│                     #   outils servis à l'agent, `connectors/` = la gouvernance.
 ├── fod/              # les clients du service FOD (ADR 0028) : `http` = le transport
 │                     #   partagé, un module par domaine de données publiques FR.
 ├── datastore/        # le spine de records typés : core (le store qui COMPOSE), schema,
@@ -88,7 +93,7 @@ L'extension Chrome (Oto Companion) vit dans `oto-app/extension/` (repo
 `POST /api/settings/linkedin` + endpoints `/api/whatsapp/pair/*` (SSE).
 
 **4 couches à frontière à sens unique** (ADR 0004) : **backend-core** (`db`,
-`credentials_store`, `org_store`, `access`, `crypto`, `connectors`, `auth_hooks`) —
+`credentials_store`, `org_store`, `access`, `crypto`, `providers`, `auth_hooks`) —
 **adaptateur MCP** — **adaptateur REST** — **runtime connecteurs**. Adaptateurs et runtime
 dépendent du backend-core, **jamais l'inverse**, et l'appellent **par interface**
 (`access.resolve_*`), pas par accès table croisé.

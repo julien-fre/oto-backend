@@ -13,7 +13,8 @@ import asyncio
 import pytest
 from fastmcp import FastMCP
 
-from oto_mcp import connector_flow, providers, status_hints
+from oto_mcp import providers, status_hints
+from oto_mcp.connectors import flow as connector_flow
 from oto_mcp.tools import register_all
 
 
@@ -289,7 +290,7 @@ def test_aucune_url_de_retour_ecrite_en_dur_dans_la_prose_client():
     """TRIPWIRE — la doc et les messages d'erreur lus par un CLIENT ne doivent plus
     contenir de domaine en dur : ils sont servis aux deux environnements."""
     import pathlib as _p
-    for f in (_p.Path("oto_mcp/connector_docs.py"),
+    for f in (_p.Path("oto_mcp/connectors/docs_reader.py"),
               _p.Path("oto_mcp/tools/salesforce.py"),
               _p.Path("oto_mcp/tools/zoho.py")):
         src = f.read_text(encoding="utf-8")

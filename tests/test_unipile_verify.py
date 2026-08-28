@@ -6,7 +6,8 @@ et le fait que `register(mcp)` l'enregistre dans `connector_verify` (→ catalog
 
 import pytest
 
-from oto_mcp import connector_verify, credentials_store
+from oto_mcp import credentials_store
+from oto_mcp.connectors import verify as connector_verify
 from oto_mcp.tools import unipile
 
 

@@ -165,7 +165,7 @@ def slots_check(body_md: str, slots: Optional[list]) -> dict:
                     f"slot `{s['name']}` : aucun tool `<tool:{con}_…>` référencé dans la prose.")
         # L'inverse (suggestion, jamais un warning) : un tool d'un connecteur à
         # IDENTITÉS est cité sans slot connecteur déclaré → binding probablement requis.
-        from . import connector_identities
+        from .connectors import identities as connector_identities
         for con in sorted(referenced - declared_connectors):
             if connector_identities.supports(con):
                 result["suggested_slots"].append(

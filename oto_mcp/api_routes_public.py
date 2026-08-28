@@ -31,7 +31,8 @@ from starlette.requests import Request
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                  Response)
 
-from . import access, connector_activation, connectors, db, guide_store, openapi, org_store
+from . import access, providers, db, guide_store, openapi, org_store
+from .connectors import activation as connector_activation
 from .api_routes_base import _authenticate, _json, _json_error
 
 
@@ -108,7 +109,7 @@ async def connectors_catalog(request: Request, *, verifier: JWTVerifier) -> JSON
     la face MCP) ; non-admin authentifié → + ceux dont un namespace est entitled
     pour le sub (override d'org appliqué via son org active).
     """
-    cat = connectors.public_catalog()
+    cat = providers.public_catalog()
     if not request.headers.get("authorization"):
         exposed = connector_activation.exposed_connectors(None)
         cat = [c for c in cat if c["name"] in exposed]
