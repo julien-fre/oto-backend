@@ -412,22 +412,24 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
     # projet ET des guides PARTAGÉS cross-org (grant read via oto_resource, #52) :
     # l'accès passe par le seam ownership (membre de l'org propriétaire ∪ grants),
     # pas par l'org active.
-    doctrine_id = getattr(inp, "doctrine_id", None)
-    if doctrine_id is not None:
+    # ⚠️ `doctrine_id`, le code d'erreur `unknown_doctrine`, le kind `doctrine` et les
+    # messages ci-dessous sont SERVIS : ce sont des alias de compatibilité (#519, lot B).
+    guide_id = getattr(inp, "doctrine_id", None)
+    if guide_id is not None:
         from ... import ownership   # import paresseux (miroir _authz, zéro cycle au boot)
-        instr = org_store.get_instruction_by_id(int(doctrine_id))
+        instr = org_store.get_instruction_by_id(int(guide_id))
         if not instr:
             raise AuthzDenied(404, "unknown_doctrine",
-                              f"Aucune doctrine #{doctrine_id}.")
-        if not ownership.can_access(ctx.sub, "doctrine", str(doctrine_id), "read"):
+                              f"Aucune doctrine #{guide_id}.")
+        if not ownership.can_access(ctx.sub, "doctrine", str(guide_id), "read"):
             raise AuthzDenied(403, "forbidden", "Accès refusé à cette doctrine.")
         if version is not None:
             versioned = org_store.get_instruction(instr["org_id"], instr["slug"], version)
             if not versioned:
                 raise AuthzDenied(404, "unknown_doctrine",
-                                  f"Doctrine #{doctrine_id} : pas de version {version}.")
+                                  f"Doctrine #{guide_id} : pas de version {version}.")
             instr = {**versioned, "id": instr["id"]}
-        return {"org_id": instr["org_id"], "doctrine_id": int(doctrine_id),
+        return {"org_id": instr["org_id"], "doctrine_id": int(guide_id),
                 "scope": "org", "slug": instr["slug"], "title": instr["title"],
                 "description": instr["description"], "version": instr["version"],
                 "body_md": instr["body_md"], "slots": instr.get("slots") or [],
@@ -446,11 +448,11 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
                   "description": i["description"], "scope": "org"}
                  for i in org_store.list_instructions(org_id)]
         group_id = access.current_group(ctx.sub) if member_mode else None
-        group_name, group_doctrine = None, ""
+        group_name, group_guide = None, ""
         if group_id is not None:
             g = group_store.get_group(group_id)
             group_name = g["name"] if g else None
-            group_doctrine = guide_store.init_guide_body("group", group_id) or ""
+            group_guide = guide_store.init_guide_body("group", group_id) or ""
             index += [{"slug": i["slug"], "title": i["title"],
                        "description": i["description"], "scope": "group"}
                       for i in group_store.list_group_instructions(group_id)]
@@ -458,9 +460,9 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
         pi = _project_instance(member_mode)
         return {
             "org_id": org_id, "org": o["name"] if o else None, "doctrine": guide_body,
-            "group_id": group_id, "group": group_name, "group_doctrine": group_doctrine,
+            "group_id": group_id, "group": group_name, "group_doctrine": group_guide,
             "doctrines": index,
-            "referenced_tools": await tool_registry.manifest_for(guide_body, group_doctrine),
+            "referenced_tools": await tool_registry.manifest_for(guide_body, group_guide),
             **({"project_instance": pi} if pi else {}),
         }
 

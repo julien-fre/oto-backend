@@ -49,7 +49,7 @@ def _procedure_version(sub: str | None, slug: str) -> int | None:
     return None
 
 
-async def _note_procedure_version(doctrine: str | None) -> int | None:
+async def _note_procedure_version(guide: str | None) -> int | None:
     """L'EMPREINTE du run : QUELLE version de la procédure il exécute.
 
     `runs.doctrine` ne porte qu'un **slug**, alors que les procédures sont versionnées
@@ -65,22 +65,22 @@ async def _note_procedure_version(doctrine: str | None) -> int | None:
 
     Best-effort, comme tout ce qui entoure un run : une version indisponible n'empêche
     jamais un déroulé de s'ouvrir."""
-    if not doctrine:
+    if not guide:
         return None
     try:
         from .. import session_org
         from ..auth.hooks import current_user_sub_from_token
         sub = current_user_sub_from_token()
-        version = await asyncio.to_thread(_procedure_version, sub, doctrine)
+        version = await asyncio.to_thread(_procedure_version, sub, guide)
     except Exception:
         logger.warning("version de procédure indisponible pour %r (best-effort)",
-                       doctrine, exc_info=True)
+                       guide, exc_info=True)
         return None
     session_org.note_call_trace(doctrine_version=version)
     return version
 
 
-async def _persist_open(run_id: str, label: str, doctrine: str | None) -> None:
+async def _persist_open(run_id: str, label: str, guide: str | None) -> None:
     """Trace durable de l'ouverture (best-effort, off-loop). La pile session reste
     la source du run actif ; ceci ne fait qu'ajouter label/guide en base."""
     try:
@@ -91,7 +91,7 @@ async def _persist_open(run_id: str, label: str, doctrine: str | None) -> None:
         project_id = access.current_project() if sub else None  # projet actif gelé (ADR 0032 B3)
         await asyncio.to_thread(
             db.insert_run, run_id, sub=sub, org_id=org_id, label=label,
-            doctrine=doctrine, project_id=project_id)
+            guide=guide, project_id=project_id)
     except Exception:
         logger.warning("persistance run_start échouée pour run_id=%s (best-effort)",
                        run_id, exc_info=True)

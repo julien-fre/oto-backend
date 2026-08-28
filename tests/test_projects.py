@@ -577,8 +577,8 @@ def test_runs_resolves_procedure_to_slug(seams, monkeypatch):
                         lambda i: {"id": i, "slug": "relance"} if i == 42 else None)
     seen = {}
 
-    def _runs(pid, doctrine=None, limit=20):
-        seen["args"] = (pid, doctrine)
+    def _runs(pid, guide=None, limit=20):
+        seen["args"] = (pid, guide)
         return [{"run_id": "r1", "label": "run", "doctrine": "relance", "outcome": "done",
                  "started_at": "2026-07-01", "finished_at": "2026-07-01"}]
     monkeypatch.setattr(P.db, "project_runs", _runs)
@@ -590,8 +590,8 @@ def test_runs_resolves_procedure_to_slug(seams, monkeypatch):
 def test_runs_all_when_no_target(seams, monkeypatch):
     seen = {}
 
-    def _runs(pid, doctrine=None, limit=20):
-        seen["d"] = doctrine
+    def _runs(pid, guide=None, limit=20):
+        seen["d"] = guide
         return []
     monkeypatch.setattr(P.db, "project_runs", _runs)
     P._project(CTX, P.ProjectInput(op="runs", project_id=7))

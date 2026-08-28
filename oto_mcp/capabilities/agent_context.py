@@ -117,7 +117,7 @@ async def _tools_view(ctx: ResolvedCtx) -> dict:
 
 
 async def _agent_context(ctx: ResolvedCtx, inp: AgentContextInput) -> dict:
-    doctrine = await orgs_instructions._get_guide(
+    guide = await orgs_instructions._get_guide(
         ctx, types.SimpleNamespace(slug=None, scope=None, version=None,
                                    org_id=None, with_history=False))
     # Instructions RÉELLEMENT reçues = artefact composé A/C (#50), même chemin que
@@ -129,7 +129,7 @@ async def _agent_context(ctx: ResolvedCtx, inp: AgentContextInput) -> dict:
         "org_id": ctx.org_id,
         "instructions": "\n\n".join(l["body"] for l in layers if l["body"]),
         "layers": [{**l, "chars": len(l["body"])} for l in layers if l["body"]],
-        "doctrine": doctrine,
+        "doctrine": guide,   # clé SERVIE (alias, lot B)
         "tools": await _tools_view(ctx),
     }
 

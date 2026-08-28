@@ -592,7 +592,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             instr = org_store.get_instruction_by_id(int(ref)) if ref.isdigit() else None
             slug = (instr or {}).get("slug") or ref
         return {"id": inp.project_id, "target_ref": inp.target_ref,
-                "runs": db.project_runs(int(inp.project_id), doctrine=slug)}
+                "runs": db.project_runs(int(inp.project_id), guide=slug)}
 
     if inp.op == "handoff":
         # « Reprendre dans Claude » (B5b) : blob copier-coller qui charge ce projet.

@@ -3,7 +3,9 @@ title: Conventions du backend
 type: reference
 description: >-
   Les règles de travail du backend, chacune née d'un incident daté : ce qu'un test doit
-  décrire (le système, pas l'intention), le montage réel comme seul banc d'un garde-fou,
+  décrire (le système, pas l'intention), le **cliquet de vocabulaire** (« doctrine » →
+  guide/procédure) et la preuve par diff à vide qu'un renommage n'a touché que
+  l'interne, le montage réel comme seul banc d'un garde-fou,
   l'interdiction d'écrire une adresse en dur, les jetons de contexte d'appel réservés,
   le budget de ce qu'un outil renvoie, **où vit un fichier** (le dossier = le domaine),
   l'ordre des middlewares MCP, la contrainte
@@ -87,6 +89,26 @@ rien ne rendait navigable et que rien ne tenait.
 
 ## Les règles, chacune née d'un incident daté
 
+- **Le vocabulaire du produit se garde par un CLIQUET, pas par une règle de revue**
+  (2026-08-28, #519). « Doctrine » a été remplacé par **guide** (ADR 0042) et
+  **procédure** (ce qui s'exécute) dans tout l'interne. Une règle de vocabulaire ne
+  survit pas six mois : le mot revient par un copier-coller depuis un fichier voisin,
+  ou par un module neuf qui imite son aîné. `tests/test_vocabulaire_guide.py` compte
+  les occurrences par fichier dans `oto_mcp/` : **aucun fichier hors allowlist**, et un
+  fichier de l'allowlist **ne peut pas en porter plus** — un plafond qui n'est plus
+  atteint est refusé, sinon la marge libérée se remplirait en silence.
+- **Un renommage de vocabulaire n'a le droit de toucher QUE l'interne, et ça se
+  prouve** (2026-08-28, #519). La frontière n'est pas « code vs texte » — beaucoup de
+  PROSE sort du serveur : les `description=` de capacité, les descriptions de champ,
+  **les docstrings des modèles `Output`** (elles deviennent la `description` du schéma
+  200 dans `/openapi.json`, et le NOM de la classe devient
+  `#/components/schemas/<Nom>`), les blocs d'instructions injectés au `initialize`, les
+  messages d'erreur. Idem pour les identifiants : le **nom d'un handler REST** est figé
+  dans `tests/api/api_routes_table.txt`, donc le renommer change la table servie. La
+  preuve n'est pas une relecture, c'est un DIFF À VIDE : dumper avant/après le document
+  OpenAPI, la table de routes, l'inventaire `tools/list` (noms + schémas +
+  descriptions), la chaîne des middlewares et le DDL assemblé, puis exiger l'égalité
+  octet pour octet. Trois régressions de ce lot n'ont été vues que par ce diff.
 - **Un test qui affirme une INTENTION grave le bug.** Trois fois le 13/08 : des tests
   vérifiaient que la découverte annonçait l'émetteur du tenant, que le lien collait notre
   chemin sous leur domaine, que l'adresse valait `dashboard.oto.ninja` — tous verts, tous
