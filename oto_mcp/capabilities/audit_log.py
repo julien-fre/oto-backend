@@ -60,10 +60,13 @@ class AuditExport(BaseModel):
     ni curseur. Restreindre la fenêtre `since`/`until` est le seul moyen d'être sûr
     de tout voir.
 
-    ⚠️ **La rétention du journal est de ~30 jours** (purge au boot,
-    `OTO_MCP_CALL_LOG_RETENTION_DAYS`). Au-delà, les lignes n'existent plus : un
-    `since` ancien rend une fenêtre VIDE qui ressemble à « aucune activité ». Ce n'est
-    pas une pagination, c'est une disparition.
+    ⚠️ **La rétention du journal est de `OTO_JOURNAL_RETENTION_DAYS` jours, 90 par
+    défaut** — le timer d'archivage exporte le mois au froid puis le supprime. Au-delà,
+    les lignes n'existent plus ici : un `since` ancien rend une fenêtre VIDE qui
+    ressemble à « aucune activité ». Ce n'est pas une pagination, c'est une
+    disparition. ⚠️ **Avant le 2026-08-28, la fenêtre réelle n'était que d'un mois** :
+    le boot purgeait à 30 jours sans archiver (corrigé par l'ADR 0065 lot 0) — un
+    export portant sur une période antérieure est incomplet, et rien ne le dit.
 
     ⚠️ **Seuls les appels d'OUTILS MCP sont journalisés** (`kind='mcp'`). Les gestes
     faits au dashboard (poser une clé, changer un rôle) n'y figurent pas : ce journal

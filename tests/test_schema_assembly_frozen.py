@@ -75,8 +75,18 @@ from oto_mcp.db import _schema, schema
 # de `_init.py`. Rien n'est retiré ni contraint — la prod qui tourne l'ancien code ne
 # la lit pas. Elle porte POURQUOI une instance a été archivée : sans elle, « la clé a
 # été retirée » et « on a réparé une orpheline d'avant le lot » sont indistinguables.
-EMPREINTE = "d648d509f473208ef1f250af9a466acfb8236d0cf4b869c4e103ec182b285430"
-LONGUEUR = 111781
+# 2026-08-28 (ADR 0065 lot 0, #426) : **AUCUN ordre SQL n'a changé** — la seule
+# différence est un COMMENTAIRE SQL au-dessus de `tool_calls`, qui affirmait une
+# volumétrie « bornée par un prune au boot » devenue fausse (la rétention est passée au
+# timer d'archivage). L'empreinte porte la chaîne entière, commentaires compris, donc
+# elle bouge ; la preuve que l'EXÉCUTÉ est intact est ailleurs, et elle est plus forte :
+# `tests/test_boot_order_replay.py` compare l'empreinte de SCHÉMA (colonnes, index,
+# contraintes) avant et après un rejeu, et l'empreinte du `_SCHEMA` COMMENTAIRES
+# RETIRÉS est identique à celle de `main` (e1c50269…, 31 021 caractères).
+# ⚠️ Valeurs RECALCULÉES sur le résultat du rebase, jamais recopiées d'un côté :
+# quatre lots ont touché ce DDL le même jour.
+EMPREINTE = "7eeef4da697eeb058f6d80b1ade4ba10aecb24eb0ed2bcbb56bbfb1bd9029038"
+LONGUEUR = 111981
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

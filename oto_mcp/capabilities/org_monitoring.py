@@ -41,9 +41,14 @@ _ID = {"id": "org_id"}
 # Deux invariants valent pour TOUTES les lentilles de ce module, et ils décident
 # de ce qu'un chiffre veut dire :
 #
-# ① **Rétention ~30 jours** (`prune_tool_calls` au boot,
-#    `OTO_MCP_CALL_LOG_RETENTION_DAYS`). `days` accepte jusqu'à 365, mais au-delà de
-#    la rétention il n'y a plus de lignes : une fenêtre large ne rend pas plus
+# ① **Rétention `OTO_JOURNAL_RETENTION_DAYS` jours, 90 par défaut** — portée par le
+#    timer `oto-journal-archive`, qui EXPORTE le mois au froid S3 puis le supprime.
+#    ⚠️ Jusqu'au 2026-08-28 la fenêtre effective était de ~30 jours et personne ne
+#    l'avait décidé : le boot purgeait à 30 j sans archiver, donc plus court que la
+#    politique écrite, qu'il vidait d'avance (ADR 0065 lot 0, oto-backend#426). Un
+#    chiffre lu ici avant cette date porte donc au plus un mois d'histoire, quelle
+#    que soit la fenêtre demandée. `days` accepte jusqu'à 365, mais au-delà de la
+#    rétention il n'y a plus de lignes : une fenêtre large ne rend pas plus
 #    d'histoire, elle rend le même mois avec un dénominateur trompeur.
 # ② **Scope = ce qui a été ÉMIS SOUS cette org** (`tool_calls.org_id` / `usage_signals
 #    .org_id`), jamais l'appartenance. Un membre de N orgs n'apporte ici que son

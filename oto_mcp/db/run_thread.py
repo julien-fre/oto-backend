@@ -6,9 +6,11 @@ Trois règles portées par ce module, parce qu'elles sont plus sûres ici qu'en 
    écrivains concurrents ne produisent jamais deux tours au même rang — le second
    heurte l'UNIQUE et réessaie sur le rang suivant. Le worker n'invente jamais un
    rang, il reçoit celui qu'il a obtenu.
-2. **La purge est une fonction de CE module** (`prune_run_messages`), appelée au
-   boot comme `prune_tool_calls`. Le fil est l'état d'exécution, pas la vérité du
-   run : l'effacer n'ampute rien (ADR 0064-D3) — c'est le journal qui porte l'audit.
+2. **La purge est une fonction de CE module** (`prune_run_messages`), appelée par
+   `oto-mcp maintenance retention` (timer quotidien) et non plus au boot — elle avait
+   la forme d'un cron et n'avait rien à faire dans la fenêtre du healthcheck (ADR
+   0065 lot 0). Le fil est l'état d'exécution, pas la vérité du run : l'effacer
+   n'ampute rien (ADR 0064-D3) — c'est le journal qui porte l'audit.
 3. **Personne d'autre n'écrit dans cette table.** Le fil ne se corrige pas, ne se
    réordonne pas : append, lecture, purge. Un tour faux se raconte dans le tour
    suivant, comme dans une vraie conversation.
@@ -80,10 +82,23 @@ def get_run_head(run_id: str) -> Optional[dict]:
 def prune_run_messages(keep_days: int = 30) -> int:
     """Purge les tours plus vieux que `keep_days`. Le run et son journal restent
     entiers — un run hébergé dont le fil est purgé se reprend par le journal,
-    comme n'importe quel run (ADR 0064-D3)."""
+    comme n'importe quel run (ADR 0064-D3).
+
+    Jouée par `oto-mcp maintenance retention` (timer), plus au boot (ADR 0065)."""
     with _connect() as conn:
         cur = conn.execute(
             "DELETE FROM run_messages WHERE created_at < NOW() - make_interval(days => %s)",
             (int(keep_days),),
         )
         return cur.rowcount or 0
+
+
+def count_prunable_run_messages(keep_days: int = 30) -> int:
+    """Ce que `prune_run_messages` effacerait — la moitié « à blanc » de la commande."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM run_messages "
+            "WHERE created_at < NOW() - make_interval(days => %s)",
+            (int(keep_days),),
+        ).fetchone()
+        return int(row["n"]) if row else 0

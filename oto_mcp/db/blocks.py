@@ -336,19 +336,34 @@ def write_node_blocks(conn, node_id: int, body: str) -> int:
     return len(parsed)
 
 
+def count_stale_nodes() -> int:
+    """Combien de nœuds `backfill_node_blocks` aurait à re-parser — le « à blanc » de
+    la commande, et la sonde qui dit si une rotation de marqueur vient d'avoir lieu."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM nodes WHERE props ? 'body_md' "
+            f"AND (props->>'{_MARKER}') IS DISTINCT FROM md5(COALESCE(props->>'body_md', ''))"
+        ).fetchone()
+        return int(row["n"]) if row else 0
+
+
 def backfill_node_blocks(*, batch: int = 200) -> int:
     """Parse le corps des nœuds qui n'ont pas (ou plus) leurs blocs. Rejouable.
 
-    Appelé par `init_db` APRÈS la transaction de schéma (les nœuds convertis y sont
-    déjà commités). **Fail-open, par nœud** : ces blocs ne sont lus par aucune
-    surface — faire tomber un boot de production pour un markdown biscornu serait
+    Jouée par `oto-mcp maintenance blocks` (timer), **plus au boot** (ADR 0065, lot 0) :
+    en régime stable elle ne coûtait qu'une sonde, mais une ROTATION DE MARQUEUR la
+    fait re-parser tout le corpus — celle de `blocks_md5` vers `blocks_md5_v2` a
+    re-parsé 1 526 nœuds, soit ~19 s dans la fenêtre du healthcheck, ajoutées par un
+    lot qui ne savait pas les ajouter. **Fail-open, par nœud** : ces blocs ne sont lus
+    que par la vue d'un nœud (`db/node_view.py`), qui tolère d'être en retard d'un tir
+    de timer — faire tomber une passe de maintenance pour un markdown biscornu serait
     hors de proportion. L'échec est loggué et le nœud ÉCARTÉ de cette passe ; sans
     cet écart, il serait resélectionné indéfiniment (son marqueur n'ayant pas été
-    posé) et bloquerait tous les suivants. Il est retenté au boot d'après.
+    posé) et bloquerait tous les suivants. Il est retenté à la passe d'après.
 
     ⚠️ Le marqueur vit dans `props`, que la conversion RÉÉCRIT en newer-wins quand la
-    source change : un corps édité perd donc son marqueur et se re-parse au boot
-    suivant. C'est voulu — les blocs sont une projection tant que l'écriture n'est
+    source change : un corps édité perd donc son marqueur et se re-parse à la passe
+    suivante. C'est voulu — les blocs sont une projection tant que l'écriture n'est
     pas basculée."""
     done: int = 0
     skipped: list[int] = []

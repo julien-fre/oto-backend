@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 
 from fastmcp import FastMCP
 from fastmcp.server.auth import RemoteAuthProvider
@@ -447,34 +448,80 @@ _SERVER_INSTRUCTIONS = instructions.render()
 _TRACED_ARGS = ("ns_id", "doctrine_version", "instance")
 
 
-def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
+_PREPARED = False
+"""Vrai dès que `_prepare_database` a tourné DANS CE PROCESS. Garde par PROCESS et
+non par base : sur la base partagée prod/preprod, « déjà fait » n'est pas une
+propriété de la base (une autre instance a pu la migrer entre-temps, et le boot
+suivant doit quand même pouvoir la réparer) — c'est une propriété de CE démarrage."""
+
+
+def _timed(label: str):
+    """Chronomètre une étape du démarrage et la journalise. La première chose que
+    l'ADR 0065 demande d'instrumenter : « on décide sur mesure, pas sur intuition »."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm():
+        debut = time.monotonic()
+        try:
+            yield
+        finally:
+            logger.info("boot: %s %.0f ms", label, (time.monotonic() - debut) * 1000)
+    return _cm()
+
+
+def _prepare_database() -> None:
+    """Le schéma et les backfills one-shot — **une seule fois par process**.
+
+    Avant l'ADR 0065 lot 0, ce bloc vivait en tête de `_build_mcp`, appelé DEUX fois
+    (l'instance anonyme au niveau module, puis l'authentifiée dans `main`), plus un
+    `db.init_db()` nu dans `main` : **3 `init_db` et 2 tours de backfills par boot**.
+    Mesuré le 2026-08-28 sur la base servie (RTT 3,14 ms/ordre) : 2,8 s pour les trois
+    `init_db`, 1,2 s pour les deux `backfill_personal_orgs` (82 users × 2 allers-retours
+    chacun) — ~4,5 s rendus à la fenêtre du healthcheck, qui est finie (120 s).
+
+    La garde est ICI et pas dans `db.init_db` à dessein : `init_db()` doit rester
+    rejouable, c'est ainsi que les tests prouvent son idempotence (`init_db(); init_db()`
+    = no-op). Ce qui ne doit pas se rejouer, c'est le CHEMIN DU BOOT — et il est ici.
+
+    Fail-open, étape par étape, comme avant : un backfill qui casse ne doit pas
+    empêcher le serveur de répondre.
+    """
+    global _PREPARED
+    if _PREPARED:
+        return
+    _PREPARED = True
+    debut = time.monotonic()
     # init_db idempotent — utile pour que les tables existent avant que
     # le middleware (per-user disabled_tools) ne les interroge.
     try:
         db.init_db()
     except Exception as e:
-        logger.warning("init_db at _build_mcp failed: %s", e)
+        logger.warning("init_db at boot failed: %s", e)
     # Suppression du perso : tout user existant sans org reçoit son espace maison
     # (one-shot idempotent, no-op aux boots suivants).
     try:
         from . import org_store
-        org_store.backfill_personal_orgs()
+        with _timed("backfill_personal_orgs"):
+            org_store.backfill_personal_orgs()
     except Exception as e:
-        logger.warning("backfill_personal_orgs at _build_mcp failed: %s", e)
+        logger.warning("backfill_personal_orgs at boot failed: %s", e)
     # Orgs nées à NULL avant que `create_org` ne dérive le front lui-même (console
     # admin, orgs perso) → front de leur tenant. One-shot idempotent.
     try:
-        org_store.backfill_org_front()
+        with _timed("backfill_org_front"):
+            org_store.backfill_org_front()
     except Exception as e:
-        logger.warning("backfill_org_front at _build_mcp failed: %s", e)
+        logger.warning("backfill_org_front at boot failed: %s", e)
     # ADR 0033 : credentials per-user (hors oauth) → scope membre (sub, org maison).
     # Re-chiffrement (l'AAD change) — APRÈS backfill_personal_orgs (org maison garantie).
     # One-shot idempotent, no-op aux boots suivants.
     try:
         from . import credentials_store
-        credentials_store.backfill_member_scope()
+        with _timed("backfill_member_scope"):
+            credentials_store.backfill_member_scope()
     except Exception as e:
-        logger.warning("backfill_member_scope at _build_mcp failed: %s", e)
+        logger.warning("backfill_member_scope at boot failed: %s", e)
     # (Le backfill ADR 0044 §F R2 — clés plateforme legacy → instances scope PLATFORM —
     # a été RETIRÉ le 2026-07-28 : la fenêtre R2→R4 est close, `platform_keys` est droppée
     # par les migrations (`db/_init.py`) et les lectures passent par le coffre unifié. Il
@@ -483,21 +530,32 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     # ADR 0033 B4 : unipile_accounts au grain (sub, org, provider) — org de contexte
     # NOT NULL + platform_seat + PK composite. Même fenêtre (org maison garantie).
     try:
-        db.backfill_unipile_member_scope()
+        with _timed("backfill_unipile_member_scope"):
+            db.backfill_unipile_member_scope()
     except Exception as e:
-        logger.warning("backfill_unipile_member_scope at _build_mcp failed: %s", e)
+        logger.warning("backfill_unipile_member_scope at boot failed: %s", e)
     # Seed des blocs plateforme A/B (#50) s'ils n'existent pas (idempotent).
     try:
         instructions.seed_platform_blocks()
     except Exception as e:
-        logger.warning("seed_platform_blocks at _build_mcp failed: %s", e)
+        logger.warning("seed_platform_blocks at boot failed: %s", e)
     # Seed des guides plateforme on-demand depuis les fichiers `guides/*.md`
     # (idempotent — la DB est la source de vérité éditable, ADR 0042 tout-DB).
     try:
         from . import guide_store
-        guide_store.seed_platform_guides()
+        with _timed("seed_platform_guides"):
+            guide_store.seed_platform_guides()
     except Exception as e:
-        logger.warning("seed_platform_guides at _build_mcp failed: %s", e)
+        logger.warning("seed_platform_guides at boot failed: %s", e)
+    logger.info("boot: préparation de la base %.0f ms (une seule fois par process)",
+                (time.monotonic() - debut) * 1000)
+
+
+def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
+    # Le schéma et les backfills, UNE fois par process (ADR 0065 lot 0) : cette
+    # fonction est appelée deux fois (instance anonyme au niveau module, instance
+    # authentifiée dans `main`) et les deux tours faisaient le même travail.
+    _prepare_database()
 
     kwargs: dict = {}
     if transport in ("http", "streamable_http") and verifier is not None:
@@ -757,7 +815,11 @@ def main():
         verifier = _build_verifier()
         mcp = _build_mcp(transport, verifier)
 
-        db.init_db()
+        # (Le `db.init_db()` qui était ici a été RETIRÉ — ADR 0065 lot 0. C'était le
+        # TROISIÈME du boot : `_build_mcp` l'appelait déjà, deux fois, et il rejouait
+        # 297 ordres SQL sur une base managée pour un résultat déjà obtenu. La
+        # préparation de la base est désormais gardée par process, cf.
+        # `_prepare_database`.)
         app = mcp.http_app()
         # API REST consommée par oto.ninja (page de gestion de compte).
         # Insérée avant les routes FastMCP pour qu'elles matchent /api/* en priorité.

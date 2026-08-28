@@ -17,6 +17,23 @@ cd /opt/oto-mcp || exit 1
 HEALTH="http://127.0.0.1:9103/.well-known/oauth-authorization-server"   # prod EN DIRECT (mcp.oto.cx) — pas via Caddy
 PREV=$(git rev-parse HEAD)            # commit courant, pour rollback
 
+# Timers de maintenance (ADR 0065 lot 0) : poses et actives ICI, jamais a la main.
+# Les travaux qui tournaient au boot (purge, re-projection, index) sont sortis de la
+# fenetre du healthcheck ; c'est ce timer qui les tire. Idempotent : recopie l'unite
+# a chaque deploiement (elle est versionnee dans le depot, c'est elle qui fait foi),
+# recharge systemd, active. PROD SEULEMENT et pas dans oto-backend-canari.sh : prod et
+# preprod partagent la MEME base depuis le 07/08, deux executants ne feraient que se
+# disputer les memes lignes. Ne fait jamais echouer le deploiement : la maintenance
+# est un confort, le service qui repond est l'engagement.
+install_timers() {
+  for u in oto-mcp-maintenance.service oto-mcp-maintenance.timer; do
+    install -m 0644 "/opt/oto-mcp/deploy/$u" "/etc/systemd/system/$u" || return 0
+  done
+  systemctl daemon-reload || return 0
+  systemctl enable --now oto-mcp-maintenance.timer || return 0
+  echo "timer de maintenance actif : $(systemctl show -p NextElapseUSecRealtime --value oto-mcp-maintenance.timer)"
+}
+
 # reset -> reinstall -> restart, chaines : non-zero si une etape echoue.
 # pip NE reinstalle PAS une dep VCS deja presente -> on force-reinstalle oto-core
 # depuis le tag LU du pyproject (source unique, pas de hardcode).
@@ -38,6 +55,7 @@ healthy() {
 
 git fetch --tags --force origin || exit 1
 if deploy "$REF" && healthy; then
+  install_timers                        # APRES le healthcheck : hors du chemin critique
   echo "deploy prod OK ($REF)"; journalctl -u oto-mcp -n 10 --no-pager
 else
   echo "DEPLOIEMENT PROD KO ($REF) -> rollback vers $PREV"
