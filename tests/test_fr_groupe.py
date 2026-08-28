@@ -131,6 +131,12 @@ _REPERTOIRE = {
     "222222222": {"siren": "222222222", "nom_complet": "BOUCLE B",
                   "nature_juridique": "5499",
                   "dirigeants": [_pm("BOUCLE A", "111111111", "Gérant")]},
+    # Deux auditeurs, deux libellés : « commissaire » et « contrôleur » des comptes.
+    "444444440": {"siren": "444444440", "nom_complet": "ASSOCIATION AUDITEE",
+                  "nature_juridique": "9220",
+                  "dirigeants": [_KPMG,
+                                 _pm("CABINET X", "555555555",
+                                     "Contrôleur des comptes")]},
     # Un seul mandataire personne morale, et c'est un GIE dont on est MEMBRE.
     "333333333": {"siren": "333333333", "nom_complet": "EDITEUR ADHERENT",
                   "nature_juridique": "5710",
@@ -221,7 +227,18 @@ def test_le_commissaire_aux_comptes_n_est_jamais_un_parent(fr_groupe):
     assert "775726417" not in remontes   # KPMG
     assert "652044371" not in remontes   # Salustro Reydel
     # La réponse NOMME ce qu'elle a écarté, plutôt que de le faire en silence.
-    assert out["exclus"]["commissaires_aux_comptes"] >= 3
+    assert out["exclus"]["controle_des_comptes"] >= 3
+
+
+def test_le_CONTROLEUR_des_comptes_est_ecarte_comme_le_commissaire(fr_groupe):
+    """Trouvé en DÉNOMBRANT les qualités réelles du registre (1 101 mandataires
+    personnes morales sur 18 groupes, 2026-08-28), pas en relisant le code : la mention
+    « contrôleur des comptes » — l'auditeur des associations et des mutuelles — existe
+    à côté de « commissaire aux comptes », et une exclusion sur le seul mot
+    « commissaire » la laissait passer pour une filiale."""
+    out = fr_groupe(siren="444444440", op="ascendant")
+    assert out["liens"] == []
+    assert out["exclus"]["controle_des_comptes"] == 2
 
 
 def test_calmann_levy_est_un_GRAPHE_pas_une_chaine(fr_groupe):

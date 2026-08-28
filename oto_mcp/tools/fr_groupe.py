@@ -55,7 +55,13 @@ from mcp.types import ErrorData, INVALID_PARAMS
 # Un auditeur n'est ni un actionnaire ni un dirigeant : sans cette exclusion, KPMG,
 # Deloitte, RSM et Salustro Reydel deviennent la tête de groupe de la moitié de leurs
 # clients et contaminent toute la chaîne (le signal cite le cas CERALP / Bamboo).
-_CAC = "commissaire aux comptes"
+# ⚠️ DEUX mentions, pas une : le « contrôleur des comptes » est l'équivalent du
+# commissaire chez les associations et les mutuelles. Trouvé en dénombrant les qualités
+# RÉELLES du registre (1 101 mandataires personnes morales sur 18 groupes, 2026-08-28) —
+# 7 occurrences qui, avec la seule mention « commissaire », passaient pour des filiales.
+# Le dénombrement est la méthode : la liste écrite de mémoire en avait manqué une.
+_CONTROLE_DES_COMPTES = ("commissaire aux comptes", "contrôleur des comptes",
+                         "controleur des comptes")
 
 # `forte` — la qualité IMPLIQUE la détention : ces mentions ne sont portées que par un
 # associé au capital (SNC, SCS, sociétés civiles).
@@ -83,8 +89,9 @@ _CAVEAT = (
     "`confiance=\"indeterminee\"` comme « entreprise indépendante »."
 )
 _METHODE = (
-    "mandataires personnes morales du RNE (recherche-entreprises) ; commissaires aux "
-    "comptes exclus ; liens `faible`/`inconnue` rendus mais non traversés"
+    "mandataires personnes morales du RNE (recherche-entreprises) ; contrôle légal des "
+    "comptes exclu (commissaire aux comptes, contrôleur des comptes) ; liens "
+    "`faible`/`inconnue` rendus mais non traversés"
 )
 
 # Garde-fous de fan-out : un parcours en largeur sur un conglomérat explose vite, et
@@ -118,12 +125,13 @@ def confiance_du_lien(qualite: Optional[str]) -> str:
 
 
 def _mandataires(fiche: dict) -> tuple[list[dict], int, int]:
-    """(mandataires personnes morales exploitables, CAC écartés, sans SIREN écartés)."""
+    """(mandataires exploitables, contrôleurs des comptes écartés, sans SIREN écartés)."""
     gardes, cac, sans_siren = [], 0, 0
     for d in fiche.get("dirigeants") or []:
         if d.get("type_dirigeant") != "personne morale":
             continue
-        if _CAC in (d.get("qualite") or "").casefold():
+        qual = (d.get("qualite") or "").casefold()
+        if any(m in qual for m in _CONTROLE_DES_COMPTES):
             cac += 1
             continue
         if not d.get("siren"):
@@ -261,7 +269,7 @@ def register(mcp: FastMCP) -> None:
             "categorie_entreprise": fiche.get("categorie_entreprise"),
             "tetes": rendus, "liens": liens, "confiance": globale,
             "cycle": cycle, "tronque": tronque,
-            "exclus": {"commissaires_aux_comptes": cac, "sans_siren": sans_siren},
+            "exclus": {"controle_des_comptes": cac, "sans_siren": sans_siren},
             "appels_amont": len(fiches) + len(non_resolus),
             "methode": _METHODE, "caveat": _CAVEAT,
         }
@@ -345,8 +353,8 @@ def register(mcp: FastMCP) -> None:
         commandité / indéfiniment responsable) · **moyenne** = mandat social (président,
         administrateur, gérant) : gouvernance prouvée, contrôle suggéré · **faible** =
         ni l'un ni l'autre (membre de GIE, liquidateur) · **inconnue** = qualité non
-        répertoriée. Seuls forte et moyenne sont traversés. Les commissaires aux
-        comptes sont exclus (comptés dans `exclus`).
+        répertoriée. Seuls forte et moyenne sont traversés. Le contrôle légal des
+        comptes est exclu (commissaire OU contrôleur, comptés dans `exclus`).
 
         ⚠️ `confiance="indeterminee"` (aucun mandataire personne morale) ne veut PAS
         dire « indépendante » : le registre des bénéficiaires effectifs est fermé au
