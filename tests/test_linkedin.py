@@ -65,7 +65,11 @@ def test_aiark_absorbed_the_platform_mode():
 # --- les deux namespaces cohabitent, chacun sous SON connecteur ----------------
 
 @pytest.mark.parametrize("prefix,connector", [
-    ("linkedin_unipile_", "unipile"),
+    # Split du 2026-08-28 : le namespace `linkedin_unipile` a son PROPRE connecteur
+    # (le compte `unipile` ne garde que le sien). La règle testée — le plus long
+    # préfixe DÉCLARÉ — est inchangée ; c'est elle qui tient `linkedin_unipile_*`
+    # (session opérée) et `linkedin_aiark_*` (donnée achetée) séparés.
+    ("linkedin_unipile_", "linkedin_unipile"),
     ("linkedin_aiark_", "aiark"),
 ])
 def test_namespace_resolves_to_its_own_connector(all_tools, prefix, connector):
