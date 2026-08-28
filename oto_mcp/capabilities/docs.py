@@ -178,10 +178,34 @@ def _can(sub: Optional[str], project_id: int, want: str) -> bool:
 _SHARED_READ_OPS = frozenset({"list", "get", "revisions", "backlinks"})
 
 
+def _doc_url(sub: Optional[str], row: dict) -> Optional[str]:
+    """L'adresse de CETTE page chez ce lecteur, ou None (signal #599).
+
+    Le manque remonté : après `op=create`, la réponse porte l'id, le projet, le `rev`
+    — rien qui réponde à « et je la lis où ? ». Les contournements observés étaient
+    tous mauvais : rendre la page publique (inacceptable pour de l'interne), ou
+    RECONSTRUIRE l'adresse en lisant le routeur du tableau de bord — un patron appris
+    par cœur dans une consigne, qui fabrique des liens plausibles et faux dès que la
+    route bouge. L'adresse se sert donc d'ici, où elle est déjà connue, comme
+    `data_url` la sert pour un tableau depuis toujours.
+
+    `None` n'est pas un échec : le produit du lecteur peut n'avoir aucune vue de page
+    (`links.link_for`, « pas de patron, pas de lien »), et le patron d'un tenant peut
+    réclamer un paramètre qu'on ne porte pas ici — `{org}` par exemple, qu'une page ne
+    connaît pas sans une requête de plus par ligne de liste. Dans les deux cas la
+    réponse part SANS adresse, ce qui reste juste ; un lien mort, lui, ne se
+    diagnostique pas, il se subit."""
+    from .. import links
+    return links.link_for("doc", sub=sub, id=row.get("id"),
+                          project_id=row.get("project_id"))
+
+
 def _view(row: dict, sub: Optional[str] = None) -> dict:
     out = {k: row.get(k) for k in
            ("id", "project_id", "parent_id", "title", "description", "position",
             "body_md", "kind", "created_at", "updated_at")}
+    # L'adresse web de la page, à côté de son id (#599).
+    out["url"] = _doc_url(sub, row)
     # rev = ETag de contenu : à relire par le client et repasser en `expected_rev`
     # sur op=update pour détecter un écrasement concurrent (oto/#6).
     out["rev"] = db.doc_rev(row.get("title"), row.get("body_md"))
@@ -194,7 +218,10 @@ def _view(row: dict, sub: Optional[str] = None) -> dict:
 # Colonnes gardées quoi qu'on demande : de quoi ADRESSER la page ensuite (la relire, la
 # patcher, la situer dans l'arbre). UNE seule liste pour la liste, la lecture projetée et
 # l'accusé d'écriture — trois règles d'adressage divergeraient à la première évolution.
-_ALWAYS = ("id", "project_id", "parent_id", "title")
+# `url` en fait partie depuis #599 : l'accusé d'une écriture est justement le moment
+# où l'on demande « c'est où ? », et c'est le moment où la projection est la plus
+# agressive. Une adresse qu'une projection emporte ne répond jamais à la question.
+_ALWAYS = ("id", "project_id", "parent_id", "title", "url")
 
 # Les ops qui savent PROJETER leur sortie. Passer `fields` ailleurs est REFUSÉ, pas avalé :
 # c'est la leçon générale du signal #461, où `op=get` acceptait `fields` et rendait quand
@@ -698,13 +725,17 @@ CAPABILITIES += [
             "its `####` children (the response then lists `removed_subsections`). To keep "
             "them, target the sub-heading itself or use mode=append) / "
             "A SUCCESSFUL WRITE (create/update/patch/move) returns a RECEIPT, not the page: "
-            "id, title, `rev`, `updated_at` and `body_md_length` — you just wrote the body, "
+            "id, title, `url`, `rev`, `updated_at` and `body_md_length` — you just wrote the body, "
             'so it is not replayed back at you. Add `fields=["*"]` if you really want the '
             "stored page back, or `fields=[…]` to pick columns. / "
             "A page's `description` is a chapô you STORE: leave it out and the index "
             "DERIVES one from the first prose line of the body (marked `description_derived`), "
             "so it moves with every body edit — that is not an overwrite. Pass `description` "
             "explicitly to pin one that stops following the body. / "
+            "EVERY page carries `url` — the web address to READ it, in the reader's own "
+            "product. That is the answer to \"where is it?\": hand it over as-is, never "
+            "rebuild an address from a pattern. `null` means that reader's product has no "
+            "such view — then say where it lives (project + title) rather than invent a link. / "
             "revisions (doc_id → version history, newest first) / backlinks (doc_id → the "
             "pages that CITE this one). LINK PAGES with `[[Exact page title]]` in body_md — "
             "that wiki-link is the ONLY thing that creates a backlink (prose mentions, "

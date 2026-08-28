@@ -37,7 +37,18 @@ DEFAULT_PATHS: dict[str, str] = {
     "home": "",
     "table": "/data/{id}",
     "public_doc": "/p/d/{token}",
-    "doc": "/docs/{id}",
+    # ⚠️ A dit `/docs/{id}` du 2026-08-13 (41e7928) au 2026-08-28 — un chemin que
+    # NOTRE tableau de bord ne route pas : son routeur ne connaît que la section
+    # `/documents` (sans id), et son attrape-tout renvoie tout chemin inconnu sur
+    # `/overview`. Le lien n'aurait donc pas affiché d'erreur : il aurait ouvert la
+    # page d'accueil en se faisant passer pour la page demandée. Il n'a jamais eu
+    # d'appelant, ce qui l'a gardé invisible — et c'est très exactement le lien mort
+    # que ce module existe pour interdire, posé chez nous. Le VRAI chemin d'une page,
+    # celui que le front lui-même écrit (`searchNav.ts`, `InboxCard.vue`,
+    # `ProjectDetailView`), l'ouvre DANS son projet : une page n'a pas d'écran à elle.
+    # Conséquence : ce patron réclame `project_id`, et un appel qui ne le passe pas ne
+    # rend aucun lien (garde de `_render`) — jamais une adresse à trous.
+    "doc": "/projects/{project_id}?doc={id}",
     "project": "/projects/{id}",
     "connectors": "/connectors",
     "connector_return": "/connectors?connector={connector}",

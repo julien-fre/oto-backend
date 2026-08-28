@@ -110,9 +110,22 @@ def _mcp_url(slug: object, access: str) -> object:
     return f"https://{slug}.{dom}/mcp"
 
 
-def _view(row: dict) -> dict:
+def _project_web_url(sub: Optional[str], project_id) -> Optional[str]:
+    """L'adresse du projet chez ce lecteur, ou None (signal #599).
+
+    Même geste que `docs._doc_url`, et même raison : sans elle, « où je le lis ? » n'a
+    pas de réponse, et l'agent se rabat sur un patron d'URL deviné. `None` quand le
+    produit du lecteur n'a pas cette vue — jamais notre domaine servi à quelqu'un qui
+    n'a pas notre produit (`links`)."""
+    from .. import links
+    return links.link_for("project", sub=sub, id=project_id)
+
+
+def _view(row: dict, sub: Optional[str] = None) -> dict:
     return {
         "id": row["id"], "name": row["name"], "icon": row.get("icon"),
+        # L'adresse web du projet, à côté de son id (#599).
+        "url": _project_web_url(sub, row["id"]),
         "brief_md": row.get("brief_md", ""),
         "owner_type": row["owner_type"], "owner_id": row["owner_id"],
         # Org de CONTEXTE d'un projet perso (ADR 0030 amendé) — « moi, org ». NULL sinon.
@@ -152,7 +165,9 @@ def _projected(rows: list[dict], fields: Optional[list[str]]) -> dict:
              '`["*"]` pour les fiches entières, ou nomme les colonnes voulues.')
     rows, notice = output_projection.summarize(
         rows, body_fields=("brief_md", "mcp_instructions_md"), fields=fields,
-        always=("id", "name", "owner_type", "owner_id"))
+        # `url` est gardée quoi qu'on projette (#599) : « lequel j'ouvre ? » est
+        # exactement la question de l'index, et l'adresse en est la réponse.
+        always=("id", "name", "owner_type", "owner_id", "url"))
     return {"projects": rows, **({"projection": notice} if notice else {})}
 
 
@@ -270,7 +285,7 @@ def unpublish_project_mcp(sub: str, project_id: int) -> dict:
     gaté `can_govern`) — réutilisé par oto_project ET le « Partager » unifié (ADR 0048)."""
     db.set_project_mcp_publication(project_id, slug=None, access="off", tools=[])
     db.log_project_activity(project_id, sub, "project.unpublish_mcp", None)
-    return _view(db.get_project_by_id(project_id))
+    return _view(db.get_project_by_id(project_id), sub)
 
 
 def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
@@ -342,7 +357,7 @@ def publish_project_mcp(sub: str, row: dict, *, access_mode: str,
     if instructions_md is not None:
         db.set_project_mcp_instructions(project_id, instructions_md)
     db.log_project_activity(project_id, sub, "project.publish_mcp", f"{access_mode}:{slug}")
-    out = _view(db.get_project_by_id(project_id))
+    out = _view(db.get_project_by_id(project_id), sub)
     if resource_registered is not None:
         out["logto_resource_registered"] = resource_registered
     if unresolvable:
@@ -409,7 +424,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                                 inp.brief_md or "", created_by=sub,
                                 context_org_id=context_org)
         db.log_project_activity(pid, sub, "project.create", inp.name.strip())
-        return _view(db.get_project_by_id(pid))
+        return _view(db.get_project_by_id(pid), sub)
 
     if inp.op == "list":
         # Scopé à l'org active (seam `ownership.active_owner`) : charger une org ne
@@ -454,7 +469,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
             aud = project_audit.audit_project(r["id"], links, light=True)
             has_audit = bool(aud.get("dead_links") or aud.get("unbound_slots")
                              or aud.get("inert_procedures"))
-            return {**_view(r), "entity_count": len(links), "has_audit": has_audit,
+            return {**_view(r, sub), "entity_count": len(links), "has_audit": has_audit,
                     "shared": shared or grant_counts.get(r["id"], 0) > 0,
                     # `can_write` sur la LISTE (pastille « lecture ») — même source que op=get :
                     # un projet partagé en lecture seule remonte false. Own = accès effectif.
@@ -480,7 +495,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         # Modèles (is_template) lisibles par l'acteur — la bibliothèque copiable (B5a).
         # ADR 0049 : + les modèles PLATFORM-owned (bibliothèque plateforme), pour tous.
         owners = ownership.accessor_scope(sub).owner_pairs() + [("platform", "platform")]
-        return _projected([_view(r) for r in
+        return _projected([_view(r, sub) for r in
                            db.list_projects_for_owners(owners, templates_only=True)],
                           inp.fields)
 
@@ -500,7 +515,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
     if inp.op == "get":
         from .. import project_audit
         links = db.list_project_links(int(inp.project_id))
-        out = {**_view(row),
+        out = {**_view(row, sub),
                "can_write": ownership.can_access(sub, RTYPE, rid, "write"),
                "links": links,
                # B5 : liens vérifiés comme des refs — le lien mort remonte à l'agent
@@ -646,7 +661,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                           brief_md=inp.brief_md, is_template=inp.is_template,
                           icon=inp.icon)
         db.log_project_activity(int(inp.project_id), sub, "project.update", inp.name or None)
-        return _view(db.get_project_by_id(int(inp.project_id)))
+        return _view(db.get_project_by_id(int(inp.project_id)), sub)
 
     if inp.op == "copy":
         # Copier un projet qu'on peut LIRE (le sien ou un modèle) → nouveau projet
@@ -656,7 +671,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         _require(ctx.org_id is not None, "no_active_org", "Aucune org active.", 400)
         new_id, warnings = db.duplicate_project(int(inp.project_id), inp.name.strip(),
                                                 "org", str(ctx.org_id), copied_by=sub)
-        return {**_view(db.get_project_by_id(new_id)),
+        return {**_view(db.get_project_by_id(new_id), sub),
                 "links": db.list_project_links(new_id), "copied_from": inp.project_id,
                 "warnings": warnings}
 
@@ -933,6 +948,12 @@ class ProjectRead(BaseModel):
     `share_url` sont `null`."""
     id: int
     name: str
+    # L'adresse web du projet chez CE lecteur (#599) — `null` quand son produit n'a
+    # pas cette vue. Servie par le serveur, jamais reconstruite par l'appelant : un
+    # patron d'URL appris par cœur fabrique des liens plausibles et faux le jour où
+    # la route bouge. À ne pas confondre avec `mcp_url`/`share_url`, qui décrivent la
+    # PUBLICATION du projet vers l'extérieur ; `url`, c'est où on le lit chez soi.
+    url: Optional[str] = None
     icon: Optional[str] = None
     brief_md: str = ""
     owner_type: str                              # user | org | group | platform
@@ -1029,7 +1050,10 @@ CAPABILITIES += [
     Capability(
         key="me.project", handler=_project, Input=ProjectInput, authz=SUB_ONLY,
         description=(
-            "Projects (organization layer, ADR 0030 owned resource). op=create (name, "
+            "Projects (organization layer, ADR 0030 owned resource). EVERY project carries "
+            "`url` — the web address to OPEN it, in the reader's own product; hand it over "
+            "as-is when asked \"where is it?\", never rebuild one from a pattern (`null` = "
+            "that reader's product has no such view). op=create (name, "
             "optional brief_md; owner_type user|org + owner_id for a team project) / list "
             "(ORG-SCOPED: the ACTIVE org's projects + projects shared with it or with you — "
             "pass `org=<id>` to see another org's; every response echoes the "
