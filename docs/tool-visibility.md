@@ -54,6 +54,34 @@ Source de vérité = tables PG `user_disabled_tools(sub, tool_name)` (négatif) 
 
 Méta-tools exposés (`tools/meta.py`) : `oto_list_my_tools`, `oto_disable_tool`, `oto_enable_tool`, `oto_call`, `oto_tool_schema`. **`PROTECTED_TOOLS`** (`tool_visibility.py`, source unique) = quatre familles jamais masquables (default-hidden inclus) **ni désactivables** : méta-toolset + identité (`oto_list_my_tools`/`oto_enable_tool`/`oto_whoami`/`oto_profile`), échappatoires de contexte (`oto_use_org`/`oto_clear_org`/`oto_list_orgs`/`oto_use_group`/`oto_clear_group` — anti-lockout, vécu Sentry 2026-06-30), boucle d'usage (`feedback`/`run_start`/`run_finish` — mandatés par les instructions plateforme ADR 0017 : un toggle qui les masque rend le gap invisible), **dispatch universel** (`oto_call`/`oto_tool_schema` — ADR 0036 : appeler par son nom un outil NON listé (FOD, connecteur non activé) le temps d'un appel, sans muter la visibilité ; exécution par `Tool.run` HORS middleware → gates call-time intactes + rédaction ré-appliquée via `redaction.py`). Garde des deux faces (2026-07-02) : `oto_disable_tool` refuse, `POST /api/me/tools/{name}` → 400 `protected_tool` ; `GET /api/me/tools` expose `protected:bool` (toggle inerte dashboard).
 
+## Outils admin : c'est l'AUTORISATION qui masque, pas le nom (28/08)
+
+`compute_hidden_tools` masquait toute la famille `oto_admin_*` à qui n'était pas **super**
+admin — un test de préfixe, doublé d'un test de rôle trop haut. Deux gestes légitimes s'y
+perdaient : `oto_admin_org_member op=remove`, dont l'autz est `ORG_ADMIN_OF("org_id")` et
+dont le dashboard se sert depuis juin, était **injoignable depuis un agent** pour le
+responsable d'organisation à qui elle est destinée (#471) ; et un opérateur plateforme
+`admin` — le palier pour lequel `PLATFORM_ADMIN` a été écrit — ne voyait aucun outil admin
+non plus. ⚠️ **Le masquage bloque aussi l'appel** : fastmcp filtre `get_tool` comme
+`list_tools`, l'outil n'était donc pas seulement discret, il n'existait pas pour la session.
+
+Le masquage se **dérive maintenant de l'autz déclarée** (`_authz.platform_floor`), source
+unique — un nom ne porte pas un droit. Trois crans ordonnés : `None` (l'accès dépend d'une
+CIBLE que le handshake ne connaît pas — une org, une équipe, une ressource), `operator`
+(`PLATFORM_ADMIN`), `super` (`SUPER_ADMIN`). Le plancher d'un combinateur `ADMIN_BY_OP`/
+`BY_OP` = **le plus BAS de ses branches** : l'outil sert au moins une fois, ses autres ops
+continuent de répondre 403 à l'appel. `oto_admin_org_member` et `oto_admin_doctrine` sont
+donc visibles de tous ; les douze autres restent au palier plateforme.
+
+⚠️ Le défaut est `None`, soit **fail-open côté visibilité** — une règle future qui oublie
+de se déclarer rend son outil visible, jamais appelable. C'est le bon sens du fail : la
+visibilité est une gouvernance, pas une barrière (ADR 0031), donc l'erreur coûteuse est de
+CACHER un geste légitime, pas d'en montrer un de trop. Le **repli par le nom** subsiste
+pour les outils écrits à la main dont la garde vit dans le handler (`oto_admin_refresh_mount`) :
+rien n'y est déclaré, rien n'est dérivable, le préfixe reste le seul indice — au cran
+`operator`. Garde : `tests/test_admin_tool_visibility_by_authz.py`, qui fige aussi
+l'inventaire des planchers (poser un `oto_admin_*` neuf est une décision, pas un effet de bord).
+
 ## Refresh à chaud de la toolbox
 
 **Refresh à chaud de la toolbox sur bascule de profil** : une capacité qui change le profil de visibilité déclare `refresh_visibility=True` (`Capability`) ; l'adaptateur MCP (`capabilities/_mcp_adapter.py`) rejoue alors `apply_session_visibility(reset=True)` sur la session **courante** après le handler → `tools/list_changed` live. Posé sur `org.use_org`/`org.clear`/`org.create`/`org.set_home` + `group.use`/`group.clear`/`group.set_home`. Donc **`oto_use_org <org>` recharge la toolbox dans la conversation en cours** (les credentials, eux, basculent déjà — `resolve_api_key` relit l'org **via le seam `current_org`** à chaque appel, cf. §ADR 0023 ci-dessous).

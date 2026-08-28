@@ -29,6 +29,51 @@ def _require_sub(raw: RawCtx) -> str:
     return raw.sub
 
 
+# ── Plancher de rôle PLATEFORME d'une règle ──────────────────────────────────
+#
+# Ce que la couche capacité déclare, c'est QUI a le droit. La visibilité de session,
+# elle, veut savoir autre chose : « existe-t-il un appel que ce user pourrait faire
+# aboutir ? » — sinon montrer l'outil ne fait qu'alourdir son contexte. Les deux
+# questions ont la même source, et une seule : la règle d'autz. Le nom d'un outil,
+# lui, ne porte aucun droit (`oto_admin_org_member` accorde `remove` à un org_admin).
+#
+# Trois crans ORDONNÉS, et rien d'autre : `None` = rien à voir avec le rôle plateforme
+# (l'accès dépend de la CIBLE — une org, une équipe, une ressource — que le handshake
+# ne connaît pas), `operator` = `PLATFORM_ADMIN`, `super` = `SUPER_ADMIN`.
+#
+# ⚠️ Le défaut est `None`, donc **fail-open côté visibilité** : une règle future qui
+# oublie de se déclarer rend son outil visible, jamais appelable — l'autz continue de
+# refuser à l'appel. C'est le bon sens du fail : ADR 0031 dit que la visibilité est une
+# gouvernance, pas une barrière, et l'erreur coûteuse est de CACHER un geste légitime
+# (c'est celle qu'on répare ici), pas d'en montrer un de trop.
+PLATFORM_FLOORS: tuple[Optional[str], ...] = (None, "operator", "super")
+
+_RANG_PAR_ROLE_PLATEFORME = {"member": 0, "admin": 1, "super_admin": 2}
+
+
+def platform_floor(rule) -> Optional[str]:
+    """Le cran de rôle plateforme SANS LEQUEL aucun appel de `rule` ne peut aboutir."""
+    return getattr(rule, "platform_floor", None)
+
+
+def _lowest_floor(rules) -> Optional[str]:
+    """Plancher d'un combinateur = le plus BAS de ses branches.
+
+    C'est l'exigence pour que l'outil serve **au moins une fois** — pas pour qu'il
+    serve partout. `admin.org_member` réunit quatre ops `ORG_ADMIN_OF` et un `list`
+    plateforme : son plancher est donc `None`, et son `op=list` continue de répondre
+    403 à un org_admin. Prendre le plus HAUT re-créerait exactement le défaut réparé :
+    un outil caché à cause d'une op qui n'est pas celle qu'on voulait faire."""
+    floors = [platform_floor(r) for r in rules]
+    return min(floors, key=PLATFORM_FLOORS.index) if floors else None
+
+
+def meets_platform_floor(floor: Optional[str], role_plateforme: str) -> bool:
+    """Ce rôle plateforme atteint-il ce plancher ? Un rôle inconnu vaut `member`."""
+    return (_RANG_PAR_ROLE_PLATEFORME.get(role_plateforme, 0)
+            >= PLATFORM_FLOORS.index(floor))
+
+
 def SUB_ONLY(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
     """Tout user authentifié (datastore, méta user-tools, oto_use_org)."""
     sub = _require_sub(raw)
@@ -104,6 +149,13 @@ def SUPER_ADMIN(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
                        role=access.get_user_role(sub))
 
 
+# Les deux SEULES règles dont l'exigence est purement plateforme : elles se déclarent
+# ici, à côté de leur définition, pour qu'un changement de garde et son plancher ne
+# puissent pas partir chacun de leur côté.
+PLATFORM_ADMIN.platform_floor = "operator"
+SUPER_ADMIN.platform_floor = "super"
+
+
 def ADMIN_BY_OP(by_op: dict, *, field: str = "op"):
     """Autz **op-aware** : choisit la règle d'autz selon `input.<field>` (typiquement
     `op`). Permet à un outil consolidé `*_op` de réunir des verbes à paliers d'autz
@@ -119,6 +171,7 @@ def ADMIN_BY_OP(by_op: dict, *, field: str = "op"):
             raise AuthzDenied(400, "unsupported_op",
                               f"op `{op}` non supporté (attendu : {sorted(by_op)}).")
         return chosen(raw, inp)
+    rule.platform_floor = _lowest_floor(by_op.values())
     return rule
 
 
@@ -137,6 +190,7 @@ def BY_OP(rules: dict, *, fields: tuple[str, ...] = ("op",)):
                               f"combinaison `{key}` non supportée (attendu : "
                               f"{sorted(str(k) for k in rules)}).")
         return chosen(raw, inp)
+    rule.platform_floor = _lowest_floor(rules.values())
     return rule
 
 

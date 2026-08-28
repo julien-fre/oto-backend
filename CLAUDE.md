@@ -390,6 +390,11 @@ masquables ni désactivables** : méta-toolset + identité, échappatoires de co
 (anti-lockout), boucle d'usage, dispatch universel.
 ⚠️ **Gouvernance de visibilité, PAS une barrière de sécurité** (ADR 0031) — additif entre
 paliers : une équipe ne peut jamais RÉVÉLER un tool que l'org a masqué.
+⚠️ **Un outil admin est masqué par son AUTORISATION, jamais par son nom** (28/08) : le
+plancher de rôle plateforme est déclaré au niveau capacité (`_authz.platform_floor`), et
+celui d'un `ADMIN_BY_OP` est **le plus BAS de ses branches**. Le test de préfixe
+`oto_admin_*` rendait `op=remove` (autz `ORG_ADMIN_OF`) injoignable au responsable
+d'organisation — et le masquage bloque l'APPEL, pas seulement la liste.
 ⚠️ **Stdio local (sub=None) = accès complet.** **Détail : `docs/tool-visibility.md`.**
 
 ## Org/équipe : session vs maison vs consultation (ADR 0023, amende 0015)

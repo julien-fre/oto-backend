@@ -54,13 +54,15 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
         prof_org = active_org or 0
         disabled = set(db.list_user_disabled_tools(sub, prof_org))
         enabled_override = set(db.list_user_enabled_tools(sub, prof_org))
-        is_admin = access.is_super_admin(sub)
+        # Lu UNE fois : le plancher plateforme d'un outil se compare à un RÔLE,
+        # pas à un booléen — `admin` et `super_admin` n'ouvrent pas les mêmes.
+        role_plateforme = access.get_user_role(sub)
     except Exception as e:
         # Sur erreur DB : repli neutre (rien de désactivé). La sécurité d'accès ne
         # dépend PAS de cette visibilité — elle est gardée au call-time (credential
         # + require_connector_access ADR 0025 + activation + remote credential).
         logger.warning("Cannot read tool visibility for %s: %s", sub, e)
-        disabled, enabled_override, is_admin = set(), set(), False
+        disabled, enabled_override, role_plateforme = set(), set(), "member"
         active_org, prof_org = None, 0
     try:
         all_tools = await ctx.fastmcp.list_tools(run_middleware=False)
@@ -168,12 +170,9 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
         }
     except Exception as e:
         logger.warning("selection visibility skipped for %s (fail-open): %s", sub, e)
-    # Tools réservés au platform admin (`oto_admin_*`) : masqués aux non-admins.
-    # Inutiles à un user normal (l'autz les refuse à l'appel) → ils ne font
-    # qu'alourdir le contexte. Visibilité seulement ; l'autz PLATFORM_ADMIN reste
-    # enforced au call-time (jamais une barrière ici).
-    if not is_admin:
-        to_hide |= {n for n in all_names if n.startswith("oto_admin_")}
+    # Outils hors de portée : masqués d'après l'AUTORISATION DÉCLARÉE, pas d'après
+    # le nom. Visibilité seulement — l'autz reste appliquée à l'appel, ici comme avant.
+    to_hide |= _hors_de_portee_plateforme(all_names, role_plateforme)
     # Garde anti-lockout STRUCTUREL (signal d’usage #213) : AUCUN bloc de gating ci-dessus
     # (connecteur/RBAC/sélection/admin) ne peut masquer un tool SPINE/protégé. Jusqu'ici
     # le spine n'était sauvé que parce que son namespace ne résolvait aucun connecteur
@@ -181,6 +180,44 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
     # Ici c'est explicite et robuste — source unique `is_protected`.
     to_hide -= {n for n in all_names if is_protected(n)}
     return to_hide
+
+
+def _hors_de_portee_plateforme(all_names: set[str], role_plateforme: str) -> set[str]:
+    """Outils qu'AUCUN appel de ce user ne pourrait faire aboutir, d'après le plancher
+    de rôle plateforme que leur autorisation DÉCLARE (`capabilities/_authz.py`).
+
+    ⚠️ **Un nom ne porte pas un droit.** La règle d'avant masquait tout `oto_admin_*` à
+    qui n'était pas SUPER admin — deux erreurs dans une ligne. `oto_admin_org_member`
+    accorde `remove` à un `ORG_ADMIN_OF("org_id")` depuis juin et le dashboard s'en
+    sert : un responsable d'organisation était renvoyé au dashboard pour un geste que
+    son autorisation lui donne (#471). Et un opérateur plateforme `admin` — le palier
+    pour lequel `PLATFORM_ADMIN` a été écrit — ne voyait aucun outil admin non plus.
+    Le masquage bloque aussi l'APPEL (fastmcp filtre `get_tool`, pas seulement
+    `list_tools`), donc l'outil n'était pas seulement discret : il était injoignable.
+
+    ⚠️ Ce masquage est de la **gouvernance, pas une barrière** (ADR 0031) : la vraie
+    barrière est l'autz de la capacité, appliquée de toute façon à l'appel. Le risque
+    est donc asymétrique — montrer de trop ne donne aucun droit, masquer de trop rend
+    un geste légitime introuvable. D'où la règle : ne masquer que ce qui est
+    inatteignable PAR CONSTRUCTION, jamais ce qui dépend d'une cible (une org, une
+    équipe, une ressource) que le handshake ne connaît pas.
+
+    Repli par le NOM pour les outils écrits à la main (`oto_admin_refresh_mount`) :
+    leur garde vit dans leur handler, rien n'est déclaré ici, donc rien n'est
+    dérivable — le préfixe reste le seul indice, au cran `operator` (ce que ce
+    handler-là vérifie). Le jour où ils deviennent des capacités, ils tombent sous la
+    règle générale sans qu'on y pense."""
+    from .capabilities import _authz
+    from .capabilities.registry import CAPABILITIES
+
+    plancher_par_tool = {c.mcp: _authz.platform_floor(c.authz)
+                         for c in CAPABILITIES if c.mcp}
+    return {
+        n for n in all_names
+        if not _authz.meets_platform_floor(
+            plancher_par_tool.get(n, "operator" if n.startswith("oto_admin_") else None),
+            role_plateforme)
+    }
 
 
 def _log_visibility_failure(quoi: str, sub: str, e: BaseException) -> None:
