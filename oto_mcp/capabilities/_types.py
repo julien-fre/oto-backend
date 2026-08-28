@@ -101,6 +101,19 @@ class RestBinding:
     # « pas de corps sur un DELETE », sinon migrer une route pourrait faire apparaître
     # un 400 `unknown_fields` sur un corps jusque-là ignoré.
     reads_body: bool = False
+    # Route réservée à une SESSION INTERACTIVE : un porteur de jeton API `oto_` y est
+    # refusé (403 `api_token_forbidden`).
+    #
+    # Un seul usage, et c'est une GARDE, pas une préférence : la gestion des jetons
+    # eux-mêmes. Un jeton qui peut en créer d'autres rend sa fuite auto-entretenue —
+    # révoquer le jeton fuité ne suffit plus, l'attaquant s'en est fait un second, non
+    # expirant. Émettre un jeton reste donc un acte humain.
+    #
+    # Le cran vit sur le BINDING et non sur la capacité parce qu'il est propre au
+    # transport : côté MCP, la question ne se pose pas (l'appelant est déjà une session).
+    # Sans lui, migrer ces six routes aurait été une régression de sécurité — c'est pour
+    # ça qu'elles étaient restées écrites à la main.
+    allow_api_token: bool = True
     # Surface DÉCLARÉE PROVISOIRE : forme attendue, pas contrat figé. Publié tel quel
     # dans l'OpenAPI (`x-oto-provisoire: true`), la convention que le front a proposée
     # et qu'on a prise. Dire « provisoire » DANS le document est ce qui autorise à

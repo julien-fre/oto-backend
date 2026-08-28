@@ -17,7 +17,6 @@ Les handlers vivent par DOMAINE, chacun une fonction de module appelable seule :
 | `api_routes_media.py`      | avatar user, logo d'org (multipart)                   |
 | `api_routes_projects.py`   | fichiers bruts d'un projet, export ZIP                |
 | `api_routes_uploads.py`    | réception d'un upload signé (`/api/upload/{token}`)   |
-| `api_routes_admin.py`      | clés plateforme, jetons émis pour un tiers            |
 
 Les modules ANTÉRIEURS à la découpe gardent leur forme : datastore, sirene,
 accords, atlassian, folk, zoho, salesforce, connectors, contact, billing —
@@ -70,7 +69,6 @@ from . import api_routes_public as public
 from . import api_routes_media as media
 from . import api_routes_projects as projects
 from . import api_routes_uploads as uploads
-from . import api_routes_admin as admin
 
 logger = logging.getLogger(__name__)
 
@@ -464,16 +462,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
         # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs_instructions.py),
         # monté par capability_routes plus bas.
-        Route("/api/admin/platform-keys", bind(admin.admin_platform_keys_list, verifier=verifier), methods=["GET"]),
-        Route("/api/admin/platform-keys", bind(admin.admin_platform_key_create, verifier=verifier), methods=["POST"]),
-        Route("/api/admin/platform-keys", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/platform-keys/{provider}/{label}", bind(admin.admin_platform_key_delete, verifier=verifier), methods=["DELETE"]),
-        Route("/api/admin/platform-keys/{provider}/{label}", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/users/{sub}/tokens", bind(admin.admin_tokens_list, verifier=verifier), methods=["GET"]),
-        Route("/api/admin/users/{sub}/tokens", bind(admin.admin_tokens_create, verifier=verifier), methods=["POST"]),
-        Route("/api/admin/users/{sub}/tokens", options_handler, methods=["OPTIONS"]),
-        Route("/api/admin/users/{sub}/tokens/{token_id}", bind(admin.admin_tokens_delete, verifier=verifier), methods=["DELETE"]),
-        Route("/api/admin/users/{sub}/tokens/{token_id}", options_handler, methods=["OPTIONS"]),
         Route("/api/me/projects/{id}/export", bind(projects.me_project_export, verifier=verifier), methods=["GET"]),
         Route("/api/me/projects/{id}/export", options_handler, methods=["OPTIONS"]),
         *datastore_routes,

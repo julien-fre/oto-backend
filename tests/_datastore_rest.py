@@ -57,12 +57,22 @@ def call(key: str, *, path_params: Optional[dict] = None, body=None,
     def _json_response(_req, payload, status=200):
         return JSONResponse(payload, status_code=status)
 
-    async def _auth(_req, _verifier):
+    async def _auth(_req, _verifier, **kw):
+        # `**kw` : l'adaptateur passe `allow_api_token=False` sur les bindings réservés
+        # à une session interactive (gestion des jetons). Le stub l'accepte sans
+        # l'appliquer — c'est `test_api_tokens_capability.py` qui vérifie qu'il PART.
         return sub, None
 
     handler = _rest_adapter._make_handler(capability, binding, None, _auth,
                                           _json_response, _json_error)
-    brut = b"" if (body is None or no_body) else json.dumps(body).encode()
+    # `bytes` passe TEL QUEL : c'est le seul moyen d'envoyer un corps réellement
+    # malformé. Sérialisé, `"{pas du json"` deviendrait une CHAÎNE JSON valide — donc
+    # `invalid_body` au lieu d'`invalid_json`, et le test prouverait autre chose que ce
+    # qu'il annonce (le seam `json_body` distingue précisément ces deux cas).
+    if isinstance(body, (bytes, bytearray)) and not no_body:
+        brut = bytes(body)
+    else:
+        brut = b"" if (body is None or no_body) else json.dumps(body).encode()
 
     async def _receive():
         return {"type": "http.request", "body": brut, "more_body": False}

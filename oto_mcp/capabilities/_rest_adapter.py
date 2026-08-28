@@ -30,7 +30,13 @@ AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
 def _make_handler(cap: Capability, binding, verifier, authenticate, json_response, json_error):
     async def _handler(request: Request) -> JSONResponse:
-        sub, err = await authenticate(request, verifier)
+        # `allow_api_token` n'est passé QUE lorsqu'il vaut False : le défaut reste un
+        # appel à deux arguments, donc les appelants (et les stubs de test) écrits avant
+        # ce cran continuent de fonctionner tels quels.
+        if binding.allow_api_token:
+            sub, err = await authenticate(request, verifier)
+        else:
+            sub, err = await authenticate(request, verifier, allow_api_token=False)
         if err:
             return err
         data: dict = {}

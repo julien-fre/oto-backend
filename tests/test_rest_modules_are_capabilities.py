@@ -94,9 +94,14 @@ _KNOWN: dict[str, str] = {
     # Seuls les CALLBACKS restent écrits à la main, et par NATURE : le fournisseur y
     # redirige le NAVIGATEUR (302, sans en-tête d'auth) alors que l'adaptateur authentifie
     # toujours et répond en JSON.
-    # Jetons CLI/API de l'utilisateur.
-    "/api/me/tokens": DEBT,
-    "/api/me/tokens/{token_id}": DEBT,
+    # ⚠️ Les JETONS API ont quitté cette liste le 2026-08-27, palier membre ET palier
+    # admin (`capabilities/api_tokens.py`), avec les clés plateforme. Ce qui les y
+    # retenait était nommé quelques lignes plus bas depuis le début : le cran
+    # `allow_api_token=False`, « un jeton ne fabrique pas de jeton », que
+    # `_rest_adapter` ne savait pas exprimer. Il est désormais un champ du BINDING
+    # (`RestBinding.allow_api_token`) — déclaré au même endroit que le chemin, et
+    # vérifié en JOUANT les six routes (`tests/test_api_tokens_capability.py`), pas en
+    # relisant le descripteur : c'est l'application du cran qui est la garde.
     # (La fédération MCP per-user — atlassian, folkmcp — a migré le 2026-08-27 avec les
     #  verbes Google ci-dessus : mêmes trois verbes, `capabilities/federated_oauth.py`.
     #  Leurs chemins NOMMENT leur connecteur, ce qui est une dette de FRONT désormais
@@ -184,14 +189,11 @@ _KNOWN: dict[str, str] = {
     # LLM) — mais une capacité peut être REST-only (`mcp=None`), c'était donc bien de la
     # dette et pas une nature. Le pendant AGENT du même geste existe et c'est
     # `me.connector_connect` (`POST /api/me/connectors/{name}/connect`).
-    # Palier admin. ⚠️ Les deux routes `tokens` portent `allow_api_token=False` (un
-    # jeton ne fabrique pas de jeton) — un cran que `_rest_adapter` ne sait pas
-    # encore exprimer : c'est un travail de migration, pas une nature. Leurs miroirs
-    # membres (`/api/me/tokens*`) sont déjà classés en dette pour la même raison.
-    "/api/admin/platform-keys": DEBT,
-    "/api/admin/platform-keys/{provider}/{label}": DEBT,
-    "/api/admin/users/{sub}/tokens": DEBT,
-    "/api/admin/users/{sub}/tokens/{token_id}": DEBT,
+    # (Le palier admin — clés plateforme et jetons émis pour un tiers — a migré le
+    #  2026-08-27 avec le palier membre ci-dessus. `api_routes_admin.py` a été SUPPRIMÉ.
+    #  Le commentaire qui vivait ici disait « un cran que `_rest_adapter` ne sait pas
+    #  ENCORE exprimer : c'est un travail de migration, pas une nature » — c'est
+    #  exactement ce qui a été fait.)
 }
 
 
@@ -240,7 +242,7 @@ def test_rest_debt_only_shrinks():
     pas une dette, elle la RÉVÈLE. Toute autre hausse est un relâchement.
     """
     debt = sorted(p for p, kind in _KNOWN.items() if kind == DEBT)
-    assert len(debt) <= 12, (
+    assert len(debt) <= 6, (
         f"la dette REST a grossi ({len(debt)} routes) : {debt}. Elle doit "
         "DÉCROÎTRE — migre en capacité plutôt que d'élargir le plafond.")
 
