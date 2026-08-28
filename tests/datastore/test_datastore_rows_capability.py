@@ -1,7 +1,7 @@
 """Les lignes, en capacité : mêmes chemins, mêmes réponses, mêmes refus (#302).
 
 Huit chemins ont quitté les routes écrites à la main pour
-`capabilities/datastore_rows.py`. Ces tests font tourner la vraie chaîne de
+`capabilities/datastore/rows.py`. Ces tests font tourner la vraie chaîne de
 l'adaptateur REST et lisent ce qui part sur le fil — c'est la seule preuve qui vaille
 pour une migration qui promet d'être invisible.
 
@@ -24,7 +24,7 @@ import pytest
 
 from _datastore_rest import Boom, call, cap, stub_authz
 
-from oto_mcp.capabilities import datastore_rows as dsr
+from oto_mcp.capabilities.datastore import rows as dsr
 from oto_mcp.datastore.core import NamespaceNotFound, NamespaceReadOnly, RowNotFound
 
 NS = {"namespace": "vivier"}

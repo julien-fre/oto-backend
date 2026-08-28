@@ -5,15 +5,15 @@ d'une autre org demande l'en-tête `X-Oto-Org`, qui n'était nommé nulle part. 
 namespace bien réel répondait « namespace_not_found » — lu comme « il n'existe pas ».
 
 ⚠️ Le chemin de lecture est passé en CAPACITÉ le 2026-08-12 (#302). L'indice a suivi
-(`capabilities/datastore_common.ns_not_found`) : ces tests le prouvent sur la nouvelle
+(`capabilities/datastore/common.ns_not_found`) : ces tests le prouvent sur la nouvelle
 chaîne, sans rien changer à ce qu'ils exigent — c'était la condition de la migration.
 """
 import pytest
 
 from _datastore_rest import Boom, call, stub_authz
 
-from oto_mcp.capabilities import datastore_common as dc
-from oto_mcp.capabilities import datastore_rows as dsr
+from oto_mcp.capabilities.datastore import common as dc
+from oto_mcp.capabilities.datastore import rows as dsr
 from oto_mcp.datastore.core import NamespaceNotFound
 
 

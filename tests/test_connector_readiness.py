@@ -25,7 +25,7 @@ que la CARTE en publie, et ce qu'elle avoue ne pas avoir calculé.
 """
 import pytest
 
-import oto_mcp.capabilities.connectors_selection as CS
+from oto_mcp.capabilities.connectors import selection as CS
 import oto_mcp.connectors.readiness as RD
 from oto_mcp.capabilities._types import ResolvedCtx
 

@@ -19,8 +19,9 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 from .. import credentials_store, db
-from . import (orgs_admin, orgs_members, orgs_reads, platform_invites, unipile_seats,
-               users_admin)
+from . import platform_invites, unipile_seats, users_admin
+from .orgs import (admin as orgs_admin, members as orgs_members,
+                   reads as orgs_reads)
 from ._authz import ADMIN_BY_OP, ORG_ADMIN_OF, ORG_MEMBER_OF, PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES
@@ -154,7 +155,7 @@ class DoctrineAdminInput(BaseModel):
 
 
 async def _doctrine(ctx: ResolvedCtx, inp: DoctrineAdminInput) -> dict:
-    from . import orgs_instructions as oi
+    from .orgs import instructions as oi
     if inp.op == "get":
         return await oi._get_doctrine(ctx, oi.AdminDoctrineGetInput(
             org_id=inp.org_id, slug=inp.slug, scope=inp.scope or "org",

@@ -30,7 +30,7 @@ oto.ninja sous `/account` et parle au MCP via REST.
 
 ⚠️ **Le dossier d'un fichier EST son domaine** (tranché le 27/08) : une famille de
 ≥ 4 fichiers au même marqueur devient un package et les fichiers y perdent ce marqueur
-(`datastore_schema.py` → `datastore/schema.py`), `tests/` en est le miroir, et un
+(`datastore/schema.py` → `datastore/schema.py`), `tests/` en est le miroir, et un
 déplacement ne laisse **jamais** de ré-export à l'ancien chemin. La règle complète (le
 critère, le module « nu » en `core.py`, les trois façades d'exception, où naît un
 fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
@@ -38,6 +38,10 @@ fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
 ```
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
+├── capabilities/     # les CAPACITÉS (ADR 0009), sous-rangées par domaine : `orgs/`,
+│                     #   `connectors/`, `datastore/`, `groups/`. Le socle commun
+│                     #   (`registry`, `_authz`, `_types`, `_mcp_adapter`,
+│                     #   `_rest_adapter`) reste à la racine du package.
 ├── api/              # la face REST `/api/*` : `routes` (la TABLE — son ordre est un
 │                     #   contrat), `base` (auth, CORS, `_json`, préflight, `bind`),
 │                     #   puis un module de handlers par domaine. ⚠️ Une route neuve
@@ -113,6 +117,12 @@ garde posée au SEAM, **sans allowlist**, tripwire `test_rest_rejects_unknown_fi
 ⚠️ L'autz reste **déclarée au niveau capacité**, jamais redescendue dans le handler.
 ⚠️ **Secret brut jamais en argument MCP** — la pose de secret est dashboard-only (binding
 `mcp` retiré) ; le MCP ne porte que les droits/grants.
+⚠️ **`capabilities/` est SOUS-RANGÉ par domaine depuis le 28/08** : `orgs/`,
+`connectors/`, `datastore/`, `groups/` (les quatre familles de ≥ 4 modules), le socle
+commun (`registry`, `_authz`, `_types`, les deux adaptateurs) restant à la racine. Le
+hub `capabilities/__init__.py` déclare chaque module en **import absolu** — il ne lie
+aucun nom court, donc `orgs/core` et `groups/core` ne se disputent rien et l'ordre des
+déclarations reste celui qu'on lit.
 **Détail : `docs/couches-et-capacites.md`.**
 
 La face REST **assemble** et n'implémente plus : depuis le 2026-08-27, `api/routes.py`

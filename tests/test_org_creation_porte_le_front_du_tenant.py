@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp import config, org_store, tenancy
-from oto_mcp.capabilities import orgs
+from oto_mcp.capabilities.orgs import core as orgs
 from oto_mcp.capabilities._types import ResolvedCtx
 
 
@@ -174,7 +174,7 @@ def test_un_front_pose_par_lappelant_nest_pas_rederive(registre, insert_capture)
 
 
 def test_la_console_admin_passe_le_front_du_responsable(registre, monkeypatch):
-    from oto_mcp.capabilities import orgs_admin
+    from oto_mcp.capabilities.orgs import admin as orgs_admin
     vus = {}
     monkeypatch.setattr(org_store, "create_org",
                         lambda name, created_by=None, **kw: vus.update(kw) or 4244)

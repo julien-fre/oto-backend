@@ -29,7 +29,7 @@ def _resolve_sub(target: Optional[str]) -> Optional[str]:
     « les appels de jb@… », pas d'un sub opaque). None passe tel quel."""
     if not target:
         return None
-    from .orgs_members import _resolve_target
+    from .orgs.members import _resolve_target
     return _resolve_target(target)
 
 

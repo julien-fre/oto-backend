@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from oto_mcp import credentials_store, crypto, instance_refs
 from oto_mcp.db import keys as db_keys
-from oto_mcp.capabilities import connectors_instances as ci
+from oto_mcp.capabilities.connectors import instances as ci
 from oto_mcp.capabilities._authz import SUB_ONLY
 from oto_mcp.capabilities._types import AuthzDenied, RawCtx, ResolvedCtx
 

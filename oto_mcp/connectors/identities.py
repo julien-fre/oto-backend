@@ -25,7 +25,7 @@ d'un compte accordé = le grant lui-même (deny-by-default), pas `cli.list_accou
 
 ⚠️ Un backend enregistré peut être **async** (ex. exécution Browserbase) :
 `list_identities`/`select_identity` renvoient alors un awaitable — les capacités
-(`capabilities/connectors_identities.py`) awaitent le résultat le cas échéant.
+(`capabilities/connectors/identities.py`) awaitent le résultat le cas échéant.
 """
 from __future__ import annotations
 

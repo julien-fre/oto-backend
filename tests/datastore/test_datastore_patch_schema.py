@@ -18,7 +18,7 @@ import pytest
 
 from oto_mcp.datastore import core as dsm
 from oto_mcp.datastore import schema as dsv2
-from oto_mcp.capabilities import datastore_columns as dcc
+from oto_mcp.capabilities.datastore import columns as dcc
 from oto_mcp.datastore.core import DatastorePg
 
 from _datastore_rest import call, stub_authz

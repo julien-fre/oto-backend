@@ -13,21 +13,9 @@ import pytest
 from oto_mcp.capabilities import admin_console as ac
 from oto_mcp.capabilities import org_console as oc
 from oto_mcp.capabilities import procedure_console as pc
-from oto_mcp.capabilities import (
-    doctrine_library,
-    groups,
-    groups_doctrine,
-    groups_members,
-    orgs,
-    orgs_email_settings,
-    orgs_field_filters,
-    orgs_instructions,
-    orgs_invites,
-    orgs_mfa,
-    orgs_update,
-    scheduled_emails,
-    usage,
-)
+from oto_mcp.capabilities import doctrine_library, scheduled_emails, usage
+from oto_mcp.capabilities.groups import core as groups, doctrine as groups_doctrine, members as groups_members
+from oto_mcp.capabilities.orgs import core as orgs, email_settings as orgs_email_settings, field_filters as orgs_field_filters, instructions as orgs_instructions, invites as orgs_invites, mfa as orgs_mfa, update as orgs_update
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 CTX = ResolvedCtx(sub="alice", org_id=1)

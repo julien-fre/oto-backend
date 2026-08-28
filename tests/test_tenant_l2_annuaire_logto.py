@@ -33,7 +33,7 @@ import pytest
 
 from oto_mcp import mfa_mirror, tenancy
 from oto_mcp.auth import facade as oauth_facade
-from oto_mcp.capabilities import orgs_mfa
+from oto_mcp.capabilities.orgs import mfa as orgs_mfa
 from oto_mcp.capabilities._types import ResolvedCtx
 from oto_mcp.db import users
 

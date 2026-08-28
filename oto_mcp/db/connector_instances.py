@@ -3,7 +3,7 @@
 La table `connector_instances` est posée par `db/schema/connectors.py` ; ce module
 est son unique lecteur/écrivain. Il ne porte AUCUNE politique : ce qui est visible,
 ce qui résout, ce qui est partagé continue de se décider ailleurs (`access/`,
-`grants_chain`, `capabilities/connectors_instances`). Ici, des requêtes.
+`grants_chain`, `capabilities/connectors/instances`). Ici, des requêtes.
 
 ⚠️ **Trois voisins à ne pas confondre** : `connector_grants` (comptes opérés, #55),
 `grants` (le droit d'UTILISER une ressource, chaîne matérialisée 0053) et

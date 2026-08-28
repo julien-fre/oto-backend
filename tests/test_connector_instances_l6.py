@@ -62,7 +62,7 @@ _LECTEURS_ADMIS = {
     "db/__init__.py",                   # la façade plate `db.<fn>`
     "db/_init.py",                      # le backfill de boot
     "db/schema/connectors.py",          # le DDL
-    "capabilities/connectors_instances.py",  # la projection de lecture (la surface du lot)
+    "capabilities/connectors/instances.py",  # la projection de lecture (la surface du lot)
 }
 
 # La table, et les symboles du module — chercher le CONCEPT, pas seulement le nom de

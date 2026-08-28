@@ -18,7 +18,7 @@ import json
 
 import pytest
 
-from oto_mcp.capabilities import datastore_rows as dr
+from oto_mcp.capabilities.datastore import rows as dr
 from oto_mcp.capabilities._types import AuthzDenied
 
 

@@ -115,7 +115,7 @@ def ref_for_credential(entity_type: str, entity_id: str, connector: str,
 
     Domicile de la projection, parce qu'elle en avait trois : le relevé d'appel
     (`access.resolve_credential` — quelle clé a réellement servi), la liste des
-    instances prêtées (`capabilities/connectors_instances._shared_ref`) et les
+    instances prêtées (`capabilities/connectors/instances._shared_ref`) et les
     messages d'erreur. Le format vit ici (cf. en-tête), la projection aussi."""
     if entity_type == "member":
         org_id, _, sub = (entity_id or "").partition(":")

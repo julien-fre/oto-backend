@@ -95,7 +95,7 @@ def test_projection_org_admin_sees_all_departments(monkeypatch):
     # « Vu au niveau org » : l'org_admin voit les instances de TOUS les départements
     # dans la projection ; un membre simple ne voit que les groupes dont il est membre.
     from types import SimpleNamespace
-    import oto_mcp.capabilities.connectors_instances as ci
+    from oto_mcp.capabilities.connectors import instances as ci
     from oto_mcp.capabilities._types import ResolvedCtx
 
     rows = {str(FINANCE): [{"connector": "http", "account": "", "secret_kind": "fields",

@@ -460,7 +460,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         Route("/p/d/{token}", public.public_doc_view, methods=["GET"]),
         Route("/api/orgs/{id}/logo", bind(media.org_logo_save, verifier=verifier), methods=["POST"]),
         Route("/api/orgs/{id}/logo", options_handler, methods=["OPTIONS"]),
-        # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs_instructions.py),
+        # /api/me/instructions* — migré en capacités (ADR 0009, capabilities/orgs/instructions.py),
         # monté par capability_routes plus bas.
         Route("/api/me/projects/{id}/export", bind(projects.me_project_export, verifier=verifier), methods=["GET"]),
         Route("/api/me/projects/{id}/export", options_handler, methods=["OPTIONS"]),

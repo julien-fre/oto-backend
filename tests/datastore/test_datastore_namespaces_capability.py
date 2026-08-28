@@ -1,7 +1,7 @@
 """Le tableau lui-même, en capacité : mêmes chemins, mêmes réponses, mêmes refus (#302).
 
 Cinq chemins ont quitté les routes écrites à la main pour
-`capabilities/datastore_namespaces.py`. Une migration de plomberie ne vaut que si on
+`capabilities/datastore/namespaces.py`. Une migration de plomberie ne vaut que si on
 peut MONTRER qu'elle n'a rien changé au fil : ces tests font tourner la vraie chaîne de
 l'adaptateur REST (authenticate → validation → autz → handler) et lisent le code HTTP
 et le corps rendus, pas la logique reformulée.
@@ -15,7 +15,7 @@ import pytest
 
 from _datastore_rest import Boom, call as _call, cap as _cap, stub_authz
 
-from oto_mcp.capabilities import datastore_namespaces as dsn
+from oto_mcp.capabilities.datastore import namespaces as dsn
 from oto_mcp.capabilities.registry import CAPABILITIES
 from oto_mcp.datastore.core import NamespaceExists, NamespaceForbidden, NamespaceNotFound
 
@@ -151,7 +151,7 @@ def test_un_tableau_absent_garde_son_404_qui_dit_ou_il_vit(monkeypatch):
     """L'indice cross-org du signal #316 traverse la migration : c'est lui qui évite
     de lire « namespace_not_found » comme « il n'existe pas »."""
     monkeypatch.setattr(dsn, "make_store", lambda sub: Boom(NamespaceNotFound("v")))
-    from oto_mcp.capabilities import datastore_common as dc
+    from oto_mcp.capabilities.datastore import common as dc
     monkeypatch.setattr(dc.org_store, "list_orgs_for_user",
                         lambda sub: [{"org_id": 81, "name": "Mūcho"}])
     monkeypatch.setattr(dc.db, "list_datastore_namespaces_for_owners",
@@ -174,9 +174,9 @@ def test_le_renommage_passe_par_la_gouvernance_pas_par_un_role(store, monkeypatc
     """ADR 0030 : `can_govern` (owner ∪ escalade), jamais « est admin de l'org »."""
     vus: list = []
     store.v["resolve_ns_id"] = 42
-    monkeypatch.setattr("oto_mcp.capabilities.datastore_common.make_store",
+    monkeypatch.setattr("oto_mcp.capabilities.datastore.common.make_store",
                         lambda sub: store)
-    monkeypatch.setattr("oto_mcp.capabilities.datastore_common.ownership.can_govern",
+    monkeypatch.setattr("oto_mcp.capabilities.datastore.common.ownership.can_govern",
                         lambda sub, rt, rid: vus.append((sub, rt, rid)) or False)
     code, corps = _call("me.datastore.rename_namespace",
                         path_params={"namespace": "v"}, body={"name": "neuf"})
@@ -186,9 +186,9 @@ def test_le_renommage_passe_par_la_gouvernance_pas_par_un_role(store, monkeypatc
 
 def test_le_renommage_rend_le_nouveau_nom(store, monkeypatch):
     store.v["resolve_ns_id"] = 42
-    monkeypatch.setattr("oto_mcp.capabilities.datastore_common.make_store",
+    monkeypatch.setattr("oto_mcp.capabilities.datastore.common.make_store",
                         lambda sub: store)
-    monkeypatch.setattr("oto_mcp.capabilities.datastore_common.ownership.can_govern",
+    monkeypatch.setattr("oto_mcp.capabilities.datastore.common.ownership.can_govern",
                         lambda *a: True)
     monkeypatch.setattr(dsn.db, "rename_datastore_namespace_by_id", lambda i, n: None)
     assert _call("me.datastore.rename_namespace", path_params={"namespace": "v"},
@@ -197,9 +197,9 @@ def test_le_renommage_rend_le_nouveau_nom(store, monkeypatch):
 
 def test_une_collision_de_nom_rend_409_avec_le_message_du_store(store, monkeypatch):
     store.v["resolve_ns_id"] = 42
-    monkeypatch.setattr("oto_mcp.capabilities.datastore_common.make_store",
+    monkeypatch.setattr("oto_mcp.capabilities.datastore.common.make_store",
                         lambda sub: store)
-    monkeypatch.setattr("oto_mcp.capabilities.datastore_common.ownership.can_govern",
+    monkeypatch.setattr("oto_mcp.capabilities.datastore.common.ownership.can_govern",
                         lambda *a: True)
 
     def _boom(i, n):

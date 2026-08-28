@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp.datastore import core as D
-from oto_mcp.capabilities import datastore_schema as CAP
+from oto_mcp.capabilities.datastore import schema as CAP
 from oto_mcp.capabilities._types import AuthzDenied
 
 

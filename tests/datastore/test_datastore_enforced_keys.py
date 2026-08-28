@@ -93,7 +93,7 @@ def test_la_pose_annonce_ce_qu_elle_fera_respecter(monkeypatch):
 def test_la_lecture_l_annonce_aussi(monkeypatch):
     """Sans ça il faudrait ÉCRIRE un schéma pour savoir ce que le serveur exécute —
     un effet de bord pour poser une question."""
-    from oto_mcp.capabilities import datastore_schema as CAP
+    from oto_mcp.capabilities.datastore import schema as CAP
     from oto_mcp.capabilities._types import ResolvedCtx
 
     monkeypatch.setattr(CAP, "make_store",

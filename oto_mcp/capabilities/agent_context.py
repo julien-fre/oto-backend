@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from .. import instructions as _instructions
 from .. import session_visibility, tool_registry
-from . import orgs_instructions
+from .orgs import instructions as orgs_instructions
 from ._authz import SUB_ONLY
 from ._types import Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

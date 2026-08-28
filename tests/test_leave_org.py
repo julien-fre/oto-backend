@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import oto_mcp.capabilities.orgs_members as om
+from oto_mcp.capabilities.orgs import members as om
 from oto_mcp.capabilities._types import AuthzDenied
 
 

@@ -10,7 +10,7 @@ sur échec (le message d'exception = le retour d'erreur remonté à l'UI).
 Patron identique à `browser_session.register` / `connector_identities.register` : la
 logique vit dans le module `tools/<name>.py` du connecteur (qui appelle `register()` à
 son chargement) ; la SURFACE (capacité MCP+REST) est déclarée une seule fois dans
-`capabilities/connectors_verify.py`.
+`capabilities/connectors/verify.py`.
 """
 from __future__ import annotations
 

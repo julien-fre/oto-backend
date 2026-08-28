@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 import oto_mcp.capabilities.admin_console as ac
-import oto_mcp.capabilities.orgs_admin as oa
+from oto_mcp.capabilities.orgs import admin as oa
 from oto_mcp.capabilities._types import AuthzDenied
 
 NEW_ORG = 512
@@ -40,7 +40,7 @@ def _patch(monkeypatch, *, known_emails=None):
                         lambda name, created_by, **kw: created.append((name, created_by)) or NEW_ORG)
     monkeypatch.setattr(oa.org_store, "add_org_member",
                         lambda oid, sub, role: members.append((oid, sub, role)))
-    monkeypatch.setattr("oto_mcp.capabilities.orgs_members.db.get_user_by_email",
+    monkeypatch.setattr("oto_mcp.capabilities.orgs.members.db.get_user_by_email",
                         lambda e: ({"sub": known[e]} if e in known else None))
     return created, members
 

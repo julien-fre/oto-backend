@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp import group_store, org_store
-from oto_mcp.capabilities import groups, groups_doctrine
+from oto_mcp.capabilities.groups import core as groups, doctrine as groups_doctrine
 from oto_mcp.capabilities._types import AuthzDenied
 
 

@@ -40,7 +40,7 @@ def _ctx():
 
 def test_capability_refuses_expose(monkeypatch):
     """set_group refuse enabled=True — une équipe ne peut que restreindre."""
-    from oto_mcp.capabilities import connectors_activation as cap
+    from oto_mcp.capabilities.connectors import activation as cap
     from oto_mcp.capabilities._types import AuthzDenied
 
     monkeypatch.setattr(cap.providers, "REGISTRY", {"serper": object()})
@@ -52,7 +52,7 @@ def test_capability_refuses_expose(monkeypatch):
 
 def test_capability_requires_org_available(monkeypatch):
     """set_group (cut) refuse un connecteur que l'org n'expose pas (rien à couper)."""
-    from oto_mcp.capabilities import connectors_activation as cap
+    from oto_mcp.capabilities.connectors import activation as cap
     from oto_mcp.capabilities._types import AuthzDenied
 
     monkeypatch.setattr(cap.providers, "REGISTRY", {"serper": object()})
@@ -66,7 +66,7 @@ def test_capability_requires_org_available(monkeypatch):
 
 def test_capability_cut_ok(monkeypatch):
     """set_group (cut) d'un connecteur exposé par l'org → stocke la coupure."""
-    from oto_mcp.capabilities import connectors_activation as cap
+    from oto_mcp.capabilities.connectors import activation as cap
 
     monkeypatch.setattr(cap.providers, "REGISTRY", {"serper": object()})
     monkeypatch.setattr(cap.group_store, "get_group", lambda gid: {"id": gid, "org_id": 42})

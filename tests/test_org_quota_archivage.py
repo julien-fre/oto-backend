@@ -29,7 +29,7 @@ from contextlib import contextmanager
 import pytest
 
 from oto_mcp import org_store, session_org
-from oto_mcp.capabilities import orgs, orgs_reads, orgs_update
+from oto_mcp.capabilities.orgs import core as orgs, reads as orgs_reads, update as orgs_update
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 from oto_mcp.db import _conn as _conn_mod, _init, _schema, users as db_users
 

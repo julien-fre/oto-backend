@@ -295,7 +295,7 @@ def test_la_projection_sert_l_identifiant_a_cote_du_ref(live):
     """Bout en bout, contre la vraie base : le handler de
     `GET /api/me/connector-instances` lit le coffre, résout les identifiants et sert
     les deux. `ref` n'est pas remplacé — il est déjà distribué."""
-    from oto_mcp.capabilities import connectors_instances as ci
+    from oto_mcp.capabilities.connectors import instances as ci
     from oto_mcp.capabilities._types import ResolvedCtx
     from oto_mcp.db import connector_instances as ci_db
     _seed_coffre()
@@ -316,7 +316,7 @@ def test_une_cle_posee_depuis_le_dernier_boot_n_a_pas_encore_d_identifiant(live)
     """L'instance naît au BOOT, pas à la pose : c'est le prix assumé de ne toucher
     AUCUN chemin d'écriture du coffre dans ce lot. Le client doit donc supporter
     l'absence — d'où `id` optionnel, et `ref` maintenu."""
-    from oto_mcp.capabilities import connectors_instances as ci
+    from oto_mcp.capabilities.connectors import instances as ci
     from oto_mcp.capabilities._types import ResolvedCtx
     _seed_coffre()
     live()

@@ -17,19 +17,9 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel
 
-from . import (
-    groups,
-    groups_doctrine,
-    groups_invites,
-    groups_members,
-    orgs,
-    orgs_email_settings,
-    orgs_field_filters,
-    orgs_invites,
-    orgs_mfa,
-    orgs_update,
-    scheduled_emails,
-)
+from . import scheduled_emails
+from .groups import core as groups, doctrine as groups_doctrine, invites as groups_invites, members as groups_members
+from .orgs import core as orgs, email_settings as orgs_email_settings, field_filters as orgs_field_filters, invites as orgs_invites, mfa as orgs_mfa, update as orgs_update
 from ._authz import (
     BY_OP,
     GROUP_ADMIN_OF,

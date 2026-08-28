@@ -13,7 +13,7 @@ import asyncio
 import pytest
 
 from oto_mcp import ownership
-from oto_mcp.capabilities import orgs_instructions as oi
+from oto_mcp.capabilities.orgs import instructions as oi
 from oto_mcp.capabilities import resources as R
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 

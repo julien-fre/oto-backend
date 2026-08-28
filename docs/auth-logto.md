@@ -165,7 +165,7 @@ Implémentation :
   (`tenancy.require_primary_tenant` → `ForeignTenantDirectory`), même garde que
   `auth.facade.logto_user_primary_email` : administrer un annuaire tiers demanderait
   ses credentials de management, que la table `tenants` ne porte pas.
-- Capacité `org.mfa.{get,set}` (`capabilities/orgs_mfa.py`) → `oto_get/set_org_mfa`
+- Capacité `org.mfa.{get,set}` (`capabilities/orgs/mfa.py`) → `oto_get/set_org_mfa`
   + REST `/api/orgs/{id}/mfa` (`ORG_MEMBER`/`ORG_ADMIN`). **Pas de fail-open** :
   activation = provisionner AVANT le drapeau (Logto plante → drapeau non posé) ;
   désactivation = baisser `isMfaRequired` AVANT le drapeau (Logto plante → reste

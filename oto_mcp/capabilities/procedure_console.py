@@ -19,7 +19,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from . import doctrine_library, orgs_instructions
+from . import doctrine_library
+from .orgs import instructions as orgs_instructions
 from ._authz import BY_OP, ORG_ADMIN_OPT, ORG_MEMBER, ORG_MEMBER_OPT, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx
 from .registry import CAPABILITIES

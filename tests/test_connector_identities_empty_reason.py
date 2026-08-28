@@ -21,7 +21,7 @@ la mauvaise. Une seconde formulation du verdict rouvrirait la divergence.
 import asyncio
 
 from oto_mcp import access, providers, status_hints
-from oto_mcp.capabilities import connectors_identities as CI
+from oto_mcp.capabilities.connectors import identities as CI
 from oto_mcp.capabilities._types import ResolvedCtx
 
 
