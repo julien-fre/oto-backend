@@ -183,6 +183,7 @@ def store(monkeypatch):
 
     st = dsm.DatastorePg("u", acting_org=35)
     monkeypatch.setattr(st, "_resolve", lambda ns, write=False: 7)
+    monkeypatch.setattr(st, "_ns_of", lambda ns_id: {})
     monkeypatch.setattr(ops.db, "set_datastore_schema", lambda *a: None)
     monkeypatch.setattr(ops.db, "datastore_key_dup_groups", lambda *a: [])
     monkeypatch.setattr(ops.db, "datastore_drop_key_index", lambda *a: None)

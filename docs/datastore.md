@@ -362,6 +362,32 @@ REFUSÉE (un `remove` avalé sur une faute de frappe ferait croire au nettoyage)
 trois avertissements — la logique n'est pas doublée. ⚠️ `remove` sort le champ du
 **SCHÉMA** ; effacer la **COLONNE** des données reste `data_drop_column`.
 
+⚠️ **Et la POSE dit désormais ce qu'elle efface (28/08, remède A du même signal).** Le
+geste qui ne peut pas détruire ne suffisait pas : `set_schema` reste la bonne façon de
+POSER un format, et sa réponse ne disait rien de ce qu'elle emportait. Le point exact du
+signal est que **le mode d'écriture était indétectable côté appelant** — la même session,
+le même jour, sur le même tableau : sa migration a PRÉSERVÉ 78 notes de champ (elle
+patchait le schéma relu en mémoire), son remappage en a DÉTRUIT deux (il rebâtissait la
+liste), même méthode, même succès, réponse identique. Il fallait connaître son propre
+code pour savoir ce qu'on venait de perdre, ce qui est hors de portée d'un agent qui
+exécute une procédure écrite par un autre. C'est la forme exacte du défaut corrigé le
+27/08 sur les LIGNES (`valeurs_effacees`), et il reçoit le même remède : toute réponse de
+pose porte `declarations_effacees` + `declarations_effacees_hint`
+(`dsv2.declarations_effacees`/`_report`). Trois natures dans un seul relevé — un champ
+RETIRÉ (`retire: true`), les déclarations perdues sur un champ survivant (une note, une
+borne, des options), et les clés de TÊTE (`key`, `strict` — ce qu'on perd en premier est
+la clé métier et son index UNIQUE partiel). Le relevé descend dans les sous-records
+(`contacts[].email`, même convention de chemin que `unknown_declaration_keys`) et ne
+répète pas les enfants d'un champ déjà relevé comme retiré. **Les VALEURS y sont**, pas
+seulement les noms : après la pose, la réponse en est la seule copie — bornes de rendu
+20 entrées et 300 caractères par valeur, au-delà la TAILLE (projeter n'est pas tronquer).
+Seules les DISPARITIONS comptent : réécrire une note est un geste qui se nomme lui-même.
+⚠️ `patch_schema` passe son `remove` en `retraits_annonces` : le geste explicite ne crie
+pas sur lui-même, mais **le filet reste tendu pour tout le reste** — c'est le seul moyen
+de voir une fusion qui laisserait échapper quelque chose. ⚠️ Conséquence : `set_schema`
+RELIT le schéma en place avant de le remplacer (un `SELECT` de plus sur un geste rare) —
+un banc qui stubbe l'écriture doit désormais stubber aussi `_ns_of`.
+
 **Écrire hors du format se DIT, sans être refusé (#294).** Sur un namespace `strict`,
 un nom de champ que le schéma ne déclare pas est accepté (contrat 0016 : un champ libre
 s'affiche, il ne débloque rien) et la valeur persiste — mais dans une colonne hors

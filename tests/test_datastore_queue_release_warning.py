@@ -52,6 +52,8 @@ def test_set_schema_returns_the_warning(monkeypatch):
     monkeypatch.setattr(D.db, "datastore_drop_key_index", lambda ns_id: None)
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 7)
+    # `set_schema` relit le schéma en place avant de le remplacer (#388).
+    monkeypatch.setattr(s, "_ns_of", lambda ns_id: {})
 
     out = s.set_schema("vivier", {"fields": [_STATUS]})
     assert "warning" in out

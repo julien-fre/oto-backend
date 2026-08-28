@@ -324,6 +324,14 @@ def register(mcp: FastMCP) -> None:
         datetime|bool|json|object|list|url|email|enum",
         "display"?: "title", "role"?: "status|metric|note|qualif"}],
         "key"?: str, "strict"?: bool}.
+        ⚠️ This REPLACES the schema — it does not merge. Any setting absent from the
+        body you send DISAPPEARS (a field note, a bound, options, the business key and
+        its UNIQUE index). The response now names what it just removed
+        (`declarations_effacees`, with the lost VALUES — it is the only copy left) and
+        `enforced` (the validation keys THIS version applies). To EDIT a schema without
+        risking part of it, use `data_patch_schema`: it merges by key and cannot
+        destroy what it does not name.
+
         The optional top-level `"key"` names the field that is the row's BUSINESS KEY
         (e.g. "email", "siren"): batch writes (`data_write` rows=…, `oto_upload_url`)
         then UPSERT on it — same key value updates the existing row instead of

@@ -37,13 +37,19 @@ class SchemaOpsMixin:
         ns = db.get_datastore_namespace_by_id(ns_id)
         return (ns or {}).get("schema")
 
-    def set_schema(self, namespace: str, schema: Optional[dict]) -> dict:
+    def set_schema(self, namespace: str, schema: Optional[dict], *,
+                   retraits_annonces: Optional[list] = None) -> dict:
         """Pose (ou retire si None) le schéma typé d'un namespace. Exige le droit
         d'écriture. SOFT pour les champs (schéma de rendu, pas de validation des
         rows) — SAUF `schema.key` (#109 ch.3) : la clé métier déclarée devient une
         CONTRAINTE (index UNIQUE partiel `data->>key`) → dédup concurrent-safe et
         lookup indexé. Des doublons existants sur la clé = REFUS actionnable (on ne
-        pose pas un UNIQUE sur des données sales en silence)."""
+        pose pas un UNIQUE sur des données sales en silence).
+
+        `retraits_annonces` = les champs dont le retrait est DÉJÀ dit à l'appelant
+        (le `remove` d'un patch) : ils sortent du relevé d'effacement, sans quoi le
+        geste explicite crierait sur lui-même — et un avertissement qui crie à tort
+        est celui qu'on apprend à ignorer."""
         ns_id = self._resolve(namespace, write=True)
         if schema is not None and not isinstance(schema, dict):
             raise ValueError("schema doit être un objet {fields:[...]} ou null")
@@ -61,6 +67,12 @@ class SchemaOpsMixin:
                     f"dans les rows existantes (ex. {sample}). Résorbe-les d'abord "
                     f"(data_write avec key='{new_key}' merge les doublons, ou supprime "
                     "les rows en trop), puis re-déclare la clé.")
+        # Relevé AVANT l'écriture : après, l'ancien schéma n'existe plus nulle part
+        # — c'est exactement pour ça que la réponse doit le porter. Lu une fois la
+        # validation passée : un refus n'a rien effacé, l'annoncer ferait chercher
+        # un dégât imaginaire (même patron qu'`effacements` sur une ligne).
+        efface = dsv2.declarations_effacees(self._schema_of(ns_id), schema,
+                                            retraits_annonces)
         db.set_datastore_schema(ns_id, schema)
         if new_key:
             db.datastore_ensure_key_index(ns_id, new_key)
@@ -101,6 +113,12 @@ class SchemaOpsMixin:
                                 self._orphan_columns_warning(ns_id, schema)) if w]
         if warnings:
             out["warning"] = "\n".join(warnings)
+        # #388 : ce que CETTE pose vient de retirer, avec les valeurs perdues. Clé
+        # DISTINCTE de `warning` — les autres décrivent une configuration douteuse
+        # qui reste réparable ; celle-ci nomme quelque chose qui N'EST PLUS, et la
+        # réponse en est la seule copie. Même parti que `valeurs_effacees` sur une
+        # ligne : on n'empêche rien, on nomme.
+        out.update(dsv2.declarations_effacees_report(efface))
         return out
 
     def patch_schema(self, namespace: str, *, fields: Optional[list] = None,
@@ -147,7 +165,11 @@ class SchemaOpsMixin:
             out_schema["strict"] = bool(strict)
         if key is not None:
             out_schema["key"] = key
-        result = self.set_schema(namespace, out_schema)
+        # Le patch NOMME ce qu'il retire (`removed`) : le relevé d'effacement n'a
+        # donc rien à en redire. Il reste tendu pour tout le reste — c'est le seul
+        # moyen de voir une fusion qui laisserait échapper quelque chose.
+        result = self.set_schema(namespace, out_schema,
+                                 retraits_annonces=[str(k) for k in (remove or [])])
         return {**result, "added": added, "updated": updated,
                 "removed": [str(k) for k in (remove or [])]}
 

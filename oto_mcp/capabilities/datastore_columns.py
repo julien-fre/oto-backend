@@ -98,6 +98,11 @@ class PatchSchemaResult(BaseModel):
     removed: list = []
     # #389 : hérité de `set_schema`, par lequel le patch repasse.
     enforced: list = []
+    # #388 : ce que cette pose vient de RETIRER, avec les valeurs perdues — la
+    # réponse en est la seule copie. Clé distincte de `warning` : les autres décrivent
+    # une configuration douteuse et réparable, celle-ci nomme ce qui n'est plus.
+    declarations_effacees: list = []
+    declarations_effacees_hint: Optional[str] = None
     # Avertissements héréités de la pose du schéma (file de travail sans état
     # terminal, bornes posées sur des données hors borne, colonnes orphelines).
     warning: Optional[str] = None

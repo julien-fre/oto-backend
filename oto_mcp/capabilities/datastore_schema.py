@@ -111,6 +111,11 @@ class SchemaPosed(BaseModel):
     # posées sur des données déjà hors borne, colonnes orphelines) : présent seulement
     # quand il y a quelque chose à dire, et adressé à l'auteur du schéma.
     warning: Optional[str] = None
+    # #388 : ce que cette pose vient de RETIRER, avec les valeurs perdues — la
+    # réponse en est la seule copie. Clé distincte de `warning` : les autres décrivent
+    # une configuration douteuse et réparable, celle-ci nomme ce qui n'est plus.
+    declarations_effacees: list = []
+    declarations_effacees_hint: Optional[str] = None
 
 
 def _set_schema(ctx: ResolvedCtx, inp: SetSchemaInput) -> dict:
@@ -140,7 +145,9 @@ CAPABILITIES += [
         description=(
             "Pose (ou retire, avec `schema: null`) le schéma typé d'un tableau. "
             "Le schéma est posé ENTIER — relire avant d'amender. La réponse porte "
-            "`enforced` : les clés de validation que CETTE version applique."
+            "`enforced` (les clés de validation que CETTE version applique) et "
+            "`declarations_effacees` (ce que la pose vient de RETIRER, valeurs "
+            "comprises — elle en est la seule copie)."
         ),
     ),
     Capability(

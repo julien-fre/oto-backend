@@ -39,6 +39,9 @@ def store(monkeypatch):
     monkeypatch.setattr(dsm.db, "datastore_drop_key_index",
                         lambda ns_id: calls["drop"].append(ns_id))
     monkeypatch.setattr(dsm.db, "datastore_key_dup_groups", lambda ns_id, key: [])
+    # `set_schema` RELIT le schéma en place avant de le remplacer, pour nommer ce
+    # qu'il efface (#388) : sans ce stub le banc part chercher une vraie table.
+    monkeypatch.setattr(st, "_ns_of", lambda ns_id: {})
     return st, calls
 
 

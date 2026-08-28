@@ -1279,6 +1279,150 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     return errors
 
 
+# ── Ce qu'une POSE de schéma efface (#388) ───────────────────────────────────
+#
+# `set_schema` pose le schéma ENTIER, sans fusion. Le geste qui ne PEUT pas détruire
+# existe (`patch_schema`, fusion par clé), mais `set_schema` reste la bonne façon de
+# POSER un format — et rien dans sa réponse ne disait ce qu'il venait d'emporter.
+#
+# ⚠️ Le point qui fait le signal : **le mode d'écriture était indétectable côté
+# appelant**. Sur le même tableau, le même jour, la même session a fait les deux — sa
+# migration a PRÉSERVÉ 78 notes de champ (elle patchait le schéma relu en mémoire),
+# son remappage en a DÉTRUIT deux (il rebâtissait la liste). Même méthode, même
+# succès, réponse identique : il fallait connaître son propre code pour savoir ce
+# qu'on venait de perdre, ce qui est hors de portée d'un agent qui exécute une
+# procédure écrite par un autre. Deux incidents en deux jours, dont 52 notes.
+#
+# C'est la forme exacte du défaut corrigé le 27/08 sur les LIGNES (`valeurs_effacees`,
+# #407/#408/#409) : une écriture qui efface sans le dire. D'où le même parti, jusqu'au
+# nom — on n'empêche rien (retirer un champ est légitime), on NOMME. Et on rend les
+# VALEURS : après la pose, la réponse est la seule copie qui reste.
+
+# Ce qui décrit la STRUCTURE plutôt qu'un réglage : `key` identifie l'entrée,
+# `fields`/`of` portent les sous-champs — ceux-là sont relevés à leur propre chemin,
+# les compter deux fois ferait un relevé qui s'auto-amplifie.
+_DECL_STRUCTURELLES = ("key", "fields", "of")
+_DECL_NOMMEES = 20
+_DECL_VALEUR_MAX = 300
+
+
+def _field_index(schema: Optional[dict]) -> dict:
+    """`{chemin: field-def}` — même convention de chemin que
+    `unknown_declaration_keys` (`occupant.nom`, `contacts[].email`), pour qu'un agent
+    lise le même nom dans les deux relevés."""
+    out: dict = {}
+
+    def _visiter(fields: list, prefixe: str = "") -> None:
+        for f in fields:
+            if not isinstance(f, dict) or not f.get("key"):
+                continue
+            nom = f"{prefixe}{f['key']}"
+            out[nom] = f
+            if isinstance(f.get("fields"), list):
+                _visiter(f["fields"], f"{nom}.")
+            of = f.get("of")
+            if isinstance(of, dict) and isinstance(of.get("fields"), list):
+                _visiter(of["fields"], f"{nom}[].")
+
+    _visiter(_fields(schema))
+    return out
+
+
+def _sous_un_retire(chemin: str, retires: set) -> bool:
+    """Le champ vit-il SOUS un champ déjà relevé comme retiré ? Alors sa perte est
+    déjà dite par celle de son parent — la répéter gonflerait le compte sans rien
+    apprendre."""
+    return any(chemin != r and chemin.startswith(r) and chemin[len(r)] in ".["
+               for r in retires)
+
+
+def declarations_effacees(ancien: Optional[dict], nouveau: Optional[dict],
+                          annonces: Optional[list] = None) -> list[dict]:
+    """Ce que poser `nouveau` retire de `ancien` — `[{champ, retire, declarations}]`.
+
+    `champ = None` désigne la TÊTE du schéma (`key`, `strict`) : ce qu'on perd en
+    premier est `schema.key`, la clé métier, qui porte un index UNIQUE partiel — la
+    re-poster absente lève la contrainte sans que rien ne le signale.
+
+    `annonces` = les champs dont le retrait est DÉJÀ dit par l'appelant (le `remove`
+    d'un patch). Les taire n'affaiblit pas le filet : tout ce qui se perd en plus
+    reste relevé — c'est même le seul moyen de voir une fusion qui laisserait
+    échapper quelque chose. Et un avertissement qui crie sur un geste explicite est
+    celui qu'on apprend à ignorer, donc celui qui ruine les vrais.
+
+    Seules les DISPARITIONS comptent, jamais les changements de valeur : réécrire une
+    note est un geste qui se nomme lui-même ; la faire disparaître, non."""
+    if not isinstance(ancien, dict):
+        return []
+    tus = {str(a) for a in (annonces or [])}
+    sortie: list[dict] = []
+
+    tete_av = {k: v for k, v in ancien.items() if k != "fields"}
+    tete_ap = ({k: v for k, v in nouveau.items() if k != "fields"}
+               if isinstance(nouveau, dict) else {})
+    perdu = {k: v for k, v in tete_av.items() if k not in tete_ap}
+    if perdu:
+        sortie.append({"champ": None, "retire": False, "declarations": perdu})
+
+    av, ap = _field_index(ancien), _field_index(nouveau)
+    retires: set = set()
+    for chemin in sorted(av, key=len):            # les parents avant les enfants
+        fav = av[chemin]
+        if chemin not in ap:
+            retires.add(chemin)
+            if chemin in tus or _sous_un_retire(chemin, retires):
+                continue
+            sortie.append({
+                "champ": chemin, "retire": True,
+                "declarations": {k: v for k, v in fav.items()
+                                 if k not in _DECL_STRUCTURELLES}})
+            continue
+        if chemin in tus:
+            continue
+        fap = ap[chemin]
+        manquantes = {k: v for k, v in fav.items()
+                      if k not in _DECL_STRUCTURELLES and k not in fap}
+        if manquantes:
+            sortie.append({"champ": chemin, "retire": False,
+                           "declarations": manquantes})
+    return sortie
+
+
+def _decl_rendue(valeur: Any) -> Any:
+    """La déclaration perdue, ou sa TAILLE quand la rendre coûterait la réponse.
+
+    La taille, jamais un extrait : projeter n'est pas tronquer — un début de valeur
+    ferait croire qu'on l'a lue, alors qu'elle n'est plus nulle part."""
+    n = len(valeur) if isinstance(valeur, str) else len(str(valeur))
+    if n <= _DECL_VALEUR_MAX:
+        return valeur
+    return (f"<{n} caractères — la valeur complète n'est plus lisible ici, "
+            "elle n'est plus en base non plus>")
+
+
+def declarations_effacees_report(entrees: list) -> dict:
+    """Le relevé prêt à fusionner dans la réponse d'une pose de schéma.
+
+    `{}` quand rien n'a été retiré — le cas normal ne porte pas de clé parasite."""
+    if not entrees:
+        return {}
+    nommees = [{**e, "declarations": {k: _decl_rendue(v)
+                                      for k, v in e["declarations"].items()}}
+               for e in entrees[:_DECL_NOMMEES]]
+    hint = ("cette écriture RETIRE des déclarations que le schéma portait — poser un "
+            "schéma le REMPLACE, il ne le fusionne pas, donc tout réglage absent du "
+            "corps envoyé disparaît (une note de champ, une borne, des options, une "
+            "clé métier et son index UNIQUE). Si ce n'est pas voulu, repose les "
+            "valeurs ci-dessus : elles ne sont plus en base. Pour ÉDITER un format "
+            "sans risquer d'en perdre une part, `data_patch_schema` fusionne par clé "
+            "et ne peut pas détruire ce qu'il ne nomme pas.")
+    if len(entrees) > len(nommees):
+        hint += (f" {len(entrees)} entrées effacées au total, "
+                 f"{len(nommees)} nommées ici.")
+    return {"declarations_effacees": nommees,
+            "declarations_effacees_hint": hint}
+
+
 # ── Ce que CETTE version fait respecter (#389) ───────────────────────────────
 #
 # Le signal qui rendait les autres dangereux : il ne demandait pas une contrainte de
