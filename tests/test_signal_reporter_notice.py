@@ -185,3 +185,42 @@ def test_le_rattrapage_historique_est_borne_dans_le_temps():
     assert "resolved_at <" in fenetre and "2026-08-20" in fenetre, (
         "le rattrapage de `notified_at` doit être BORNÉ à la population historique. "
         "Sans borne il se rejoue à chaque boot et mange les retours en attente.")
+
+
+# ── La console MCP : deux gestes PROMIS depuis le 27/08, aucun atteignable ──────────
+#
+# `4b5355c` a ajouté `notify_preview`/`notify_send` à la description de
+# `oto_admin_signal` — l'intention était donc bien de les servir là — mais sans toucher
+# ni au `Literal` ni à l'aiguillage. Un agent qui suivait la description se faisait
+# refuser par le schéma du tool lui-même, sans rien pour comprendre que c'était la
+# description qui mentait. Corrigé le 28/08 ; la divergence est désormais tenue par un
+# test dans les DEUX sens (`test_signal_reaiguillage.py`).
+
+
+def _console(**kw):
+    from oto_mcp.capabilities import admin_console as AC
+    return AC._signal(CTX, AC.SignalAdminInput(**kw))
+
+
+def test_l_apercu_est_atteignable_depuis_la_console(monkeypatch, bouchon):
+    monkeypatch.setattr(cap.db, "pending_signal_notices",
+                        lambda: [_signal(1, "sub-a"), _signal(2, "sub-b", email="b@b.c")])
+    out = _console(op="notify_preview")
+    assert out["op"] == "preview" and out["total_signals"] == 2
+    assert bouchon["envois"] == [] and bouchon["marques"] == []
+
+
+def test_l_envoi_est_atteignable_depuis_la_console(monkeypatch, bouchon):
+    monkeypatch.setattr(cap.db, "pending_signal_notices", lambda: [_signal(1, "sub-a")])
+    out = _console(op="notify_send")
+    assert out["sent"] == 1 and len(bouchon["envois"]) == 1
+
+
+def test_only_traverse_la_console(monkeypatch, bouchon):
+    """Sortir par paliers doit valoir depuis un agent aussi — sinon le premier envoi
+    réel depuis la console est forcément un envoi à tout le monde."""
+    monkeypatch.setattr(cap.db, "pending_signal_notices",
+                        lambda: [_signal(1, "sub-a"), _signal(2, "sub-b", email="b@b.c")])
+    out = _console(op="notify_send", only=["b@b.c"])
+    assert [e[0] for e in bouchon["envois"]] == ["b@b.c"]
+    assert out["sent"] == 1

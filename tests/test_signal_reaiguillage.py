@@ -179,18 +179,34 @@ def test_la_console_verifie_l_espace_de_destination(store):
     assert refus.value.status == 404
 
 
-def test_la_console_annonce_ce_qu_elle_sait_faire():
-    """Un op livré mais absent de la description est invisible ; une description qui
-    promet un op absent est pire — l'agent bute sur un refus de schéma. Les deux listes
-    doivent dire la même chose."""
-    from oto_mcp.capabilities.registry import CAPABILITIES
+def test_la_console_annonce_EXACTEMENT_ce_qu_elle_sait_faire():
+    """Les deux sens, et le second est le plus coûteux.
+
+    Un op livré mais tu est simplement invisible. Un op ANNONCÉ mais absent est pire :
+    l'agent qui suit la description se fait refuser par le schéma du tool lui-même, sans
+    rien pour comprendre que c'est la description qui ment. Vécu ici — `4b5355c` a ajouté
+    `notify_preview`/`notify_send` à la description de `oto_admin_signal` en oubliant le
+    `Literal` et l'aiguillage : deux gestes promis à l'agent, aucun atteignable.
+    """
+    import re
     import typing
 
+    from oto_mcp.capabilities.registry import CAPABILITIES
+
     capa = next(c for c in CAPABILITIES if c.key == "admin.signal")
-    ops = typing.get_args(capa.Input.model_fields["op"].annotation)
-    for op in ops:
-        assert f"op={op}" in capa.description or f"/ {op} " in capa.description, (
-            f"`{op}` est servi par oto_admin_signal et sa description ne le dit pas.")
+    servis = set(typing.get_args(capa.Input.model_fields["op"].annotation))
+    annonces = set(re.findall(r"op=([a-z_]+)", capa.description))
+    # La description énumère aussi à la barre (« op=list … / set_status (…) »).
+    annonces |= {m for m in re.findall(r"/ ([a-z_]+) \(", capa.description)
+                 if m in servis or m.startswith("notify")}
+
+    assert not (servis - annonces), (
+        f"{sorted(servis - annonces)} : servis par oto_admin_signal, tus par sa "
+        "description — donc invisibles pour l'agent qui la lit.")
+    assert not (annonces - servis), (
+        f"{sorted(annonces - servis)} : promis par la description de oto_admin_signal, "
+        "absents du `Literal` — l'agent qui suit la description se fait refuser par le "
+        "schéma, et rien ne lui dit que c'est la description qui a tort.")
 
 
 # ── Ce qu'on n'a PAS fait, et qui doit le rester ────────────────────────────────────

@@ -88,7 +88,11 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
     (« l'écriture est toujours un choix ») : absent = refusé en nommant ce qui manque,
     `platform` = voulu. Un mot de travers est refusé, jamais lu comme la plateforme.
 - **Le retour à celui qui a signalé (#451, 27/08)** : `POST /api/admin/usage/notify-reporters`
-  (MCP `oto_admin_signal(op='notify_preview'|'notify_send')`, PLATFORM_ADMIN). Colonne
+  (MCP `oto_admin_signal(op='notify_preview'|'notify_send')`, PLATFORM_ADMIN). ⚠️ **Ces
+  deux `op` n'ont réellement existé que le 28/08** : le lot du 27 les avait ajoutés à la
+  description du tool en oubliant le `Literal` et l'aiguillage — annoncés à l'agent,
+  refusés par le schéma, et rien pour comprendre que c'était la description qui mentait.
+  Les deux listes sont désormais tenues égales dans les deux sens par un test. Colonne
   `usage_signals.notified_at` — NULL = son auteur ne sait pas encore ; effacée à chaque
   changement d'état, pour qu'un signal ré-arbitré soit re-annoncé.
   - **UN mail par PERSONNE, jamais un par signal.** Ce n'est pas une commodité : mesuré le

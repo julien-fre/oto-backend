@@ -229,7 +229,7 @@ async def _unipile_seat(ctx: ResolvedCtx, inp: UnipileSeatAdminInput) -> dict:
 # qui sont précisément les deux gestes de triage qui manquaient. Un signal qu'on
 # refuse n'est pas résolu, et le forcer dans ce mot rendait le refus invisible.
 class SignalAdminInput(BaseModel):
-    op: Literal["list", "set_status", "reroute"]
+    op: Literal["list", "set_status", "reroute", "notify_preview", "notify_send"]
     signal: Optional[str] = None      # list : tool_feedback | gap
     target: Optional[str] = None      # list
     # list : open | acknowledged | declined | resolved | pending | None (tous)
@@ -249,6 +249,8 @@ class SignalAdminInput(BaseModel):
     # identiques, et `model_fields_set` ne tranche rien. Le mot rétablit la
     # distinction : absent = non dit (refusé), `platform` = voulu.
     to_org: Optional[str] = None
+    # notify_* : restreint le retour à ces destinataires (emails ou subs). Vide = tous.
+    only: Optional[list[str]] = None
 
 
 def _destination(brut: Optional[str]) -> Optional[int]:
@@ -278,6 +280,13 @@ def _signal(ctx: ResolvedCtx, inp: SignalAdminInput) -> dict:
     if inp.op == "list":
         return usage._signals(ctx, usage.SignalsInput(
             signal=inp.signal, target=inp.target, status=inp.status, limit=inp.limit))
+    if inp.op.startswith("notify_"):
+        # Deux `op` plutôt qu'un booléen `send=`, et le préfixe le rappelle à chaque
+        # appel : ces mails partent chez des tiers sous notre marque, l'aperçu ne
+        # touche à rien et l'envoi est un ACTE. `preview` reste ce que fait un appel
+        # étourdi.
+        return usage._notify_reporters(ctx, usage.NotifyReportersInput(
+            op="send" if inp.op == "notify_send" else "preview", only=inp.only))
     if inp.op == "reroute":
         return usage._reroute_signal(ctx, usage.RerouteSignalInput(
             signal_id=_need(inp.signal_id, "missing_signal_id",
