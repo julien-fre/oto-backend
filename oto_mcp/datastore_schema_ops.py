@@ -66,7 +66,15 @@ class SchemaOpsMixin:
             db.datastore_ensure_key_index(ns_id, new_key)
         else:
             db.datastore_drop_key_index(ns_id)
-        out = {"namespace": namespace, "schema": schema}
+        # #389 : ce que CETTE version fait respecter, dit à celui qui pose. Le
+        # défaut n'était pas le vocabulaire mais le DÉCALAGE de déploiement — une
+        # borne écrite un jour et servie trois semaines plus tard gèle 75 lignes
+        # d'un coup, sans que personne ne relie l'effet à sa cause. Annoncé même
+        # quand le schéma ne déclare rien : c'est une propriété du SERVEUR, pas du
+        # schéma, et c'est justement quand on s'apprête à déclarer qu'on veut la
+        # connaître.
+        out = {"namespace": namespace, "schema": schema,
+               "enforced": dsv2.enforced_keys()}
         # Un statut sans état terminal = file de travail qui ne libère rien : le dire
         # ICI, à l'auteur du schéma, au moment où il le pose (les deux faces l'ont).
         warnings = [w for w in (dsv2.queue_release_warning(schema),

@@ -266,6 +266,40 @@ cacherait des données réelles, alors que le contrat 0016 promet qu'un champ li
 *s'affiche* et que #294 vient de trancher « signaler, jamais refuser ni masquer ». On
 supprime la colonne ou on la déclare ; on ne la rend pas invisible.
 
+**Dire ce que cette version fait respecter (#389).** Quatrième signal du même jour sur
+`data_set_schema`, et celui qui rendait les trois autres dangereux : il ne demandait pas
+une contrainte de plus, mais de savoir lesquelles MORDENT. Le vrai sujet n'est pas le
+vocabulaire, c'est le **décalage de déploiement** — `max_length: 60` posé sur quatre
+colonnes d'un tableau de production, code de validation écrit le jour même, version
+servie qui ne l'exécutait pas encore. Vérifié à l'époque : un PATCH idempotent rendait
+200 ; avec le code à jour, **75 lignes sur 600** devenaient inécritables. Profil de
+panne : effet DIFFÉRÉ au prochain déploiement, MASSIF et SIMULTANÉ, cause vieille de
+plusieurs semaines — personne ne relie « les agents n'écrivent plus sur ces lignes » à
+« quelqu'un a posé une borne un mardi », d'autant que l'erreur porte sur un champ que le
+patch refusé ne touchait pas.
+
+D'où **`enforced`** (`dsv2.enforced_keys()`), servi par les DEUX faces du schéma — à la
+pose (`set_schema`, donc aussi `patch_schema`) et à la LECTURE (`data_get_schema`), sans
+quoi il faudrait écrire un schéma pour poser une question. C'est une propriété du
+SERVEUR, pas du schéma : rendue même quand rien n'est déclaré, parce que c'est au moment
+où l'on s'apprête à déclarer qu'on veut la connaître.
+
+⚠️ **Le relevé s'établit en FAISANT TOURNER le validateur**, jamais en recopiant une
+liste : une sonde par clé = un schéma minimal + une ligne qui le viole, et la clé n'est
+annoncée que si `validate_row` refuse ici et maintenant. Une liste parallèle divergerait
+le jour où quelqu'un exécute une clé de plus (ou cesse d'en exécuter une) et se mettrait
+à mentir dans les deux sens — exactement ce que le signal reproche au silence. Même parti
+qu'`interpreted_keys` (dérivé du code), poussé d'un cran : dérivé du COMPORTEMENT, donc
+insensible à la façon dont le code est écrit. Les clés dont l'effet est d'ARMER autre
+chose portent en plus un **témoin** qui doit PASSER : `strict` n'interdit rien par
+lui-même, et sans témoin on l'annoncerait dès que la conformité de type est vérifiée,
+c'est-à-dire vrai par accident.
+
+La moitié NÉGATIVE du signal — « `pattern` reçu : stocké mais non appliqué » — était
+déjà servie depuis le 13/08 par `unknown_keys_warning` (#316, avec near-miss) et
+`options_not_enforced_warning` (#319). `enforced` en est la moitié positive, la seule
+qu'un client puisse vérifier contre le serveur qui lui répond.
+
 **Contraindre la FORME d'une valeur (#387).** `field.pattern` — jumeau de
 `field.max_length`, et il dit ce que la borne ne sait pas dire. Cas mesuré : un champ qui
 doit porter une ÉNUMÉRATION de catégories séparées par des points-virgules, pas une

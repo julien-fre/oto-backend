@@ -34,6 +34,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import access
+from .. import datastore_schema as dsv2
 from ..datastore import NamespaceNotFound, NamespaceReadOnly, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -59,6 +60,9 @@ class SchemaOut(BaseModel):
     # saurait pas distinguer « pas de schéma » de « tableau inconnu ».
     declared_schema: Optional[dict] = Field(default=None, alias="schema",
                                             serialization_alias="schema")
+    # #389 : les clés de validation que cette version applique — la seule parade au
+    # décalage entre le code écrit et la version servie.
+    enforced: list = []
 
 
 def _get_schema(ctx: ResolvedCtx, inp: GetSchemaInput) -> dict:
@@ -71,7 +75,12 @@ def _get_schema(ctx: ResolvedCtx, inp: GetSchemaInput) -> dict:
         schema = make_store(ctx.sub).get_schema(namespace)
     except NamespaceNotFound:
         raise AuthzDenied(404, "namespace_not_found")
-    return {"namespace": namespace, "schema": schema}
+    # #389 : la liste des clés de validation que CETTE version exécute. Servie ICI
+    # autant qu'à la pose — sans quoi il faudrait ÉCRIRE un schéma pour savoir ce que
+    # le serveur applique, c'est-à-dire produire un effet de bord pour poser une
+    # question.
+    return {"namespace": namespace, "schema": schema,
+            "enforced": dsv2.enforced_keys()}
 
 
 # ⚠️ Le champ d'ENTRÉE doit s'appeler `schema` — c'est le nom sur le fil, et la garde
@@ -95,6 +104,9 @@ class SchemaPosed(BaseModel):
     namespace: str
     declared_schema: Optional[dict] = Field(default=None, alias="schema",
                                             serialization_alias="schema")
+    # #389 : les clés de validation que cette version applique — la seule parade au
+    # décalage entre le code écrit et la version servie.
+    enforced: list = []
     # Défaut de configuration relevé à la pose (statut sans état terminal, bornes
     # posées sur des données déjà hors borne, colonnes orphelines) : présent seulement
     # quand il y a quelque chose à dire, et adressé à l'auteur du schéma.
@@ -127,7 +139,8 @@ CAPABILITIES += [
                          path="/api/datastore/namespaces/{namespace}/schema"),
         description=(
             "Pose (ou retire, avec `schema: null`) le schéma typé d'un tableau. "
-            "Le schéma est posé ENTIER — relire avant d'amender."
+            "Le schéma est posé ENTIER — relire avant d'amender. La réponse porte "
+            "`enforced` : les clés de validation que CETTE version applique."
         ),
     ),
     Capability(
@@ -140,13 +153,18 @@ CAPABILITIES += [
         rest=RestBinding(verb="GET", path="/api/datastore/namespaces/{namespace}/schema"),
         description=(
             "Read a namespace's declared TYPED schema (the one `data_set_schema` posts). "
-            "Returns `{namespace, schema}` — `schema` is null when none is declared, "
+            "Returns `{namespace, schema, enforced}` — `schema` is null when none is declared, "
             "which is a normal state, not an error. Read it BEFORE amending: "
             "`data_set_schema` posts the schema WHOLE, it does not merge, so adding one "
             "field means re-posting the existing definition plus that field. "
             "The work-queue rules live on the `role:\"status\"` field, under `lifecycle`: "
             "`states`/`transitions`/`terminal`, plus `max_claims` + `abandon_state` — the "
-            "ceiling of claims WITHOUT a write past which a row leaves the queue."
+            "ceiling of claims WITHOUT a write past which a row leaves the queue. "
+            "`enforced` lists the validation keys THIS deployment actually applies "
+            "(required, max_length, pattern…): check what you are about to declare "
+            "against it, rather than against documentation — a key posted but not "
+            "enforced looks like a contract and is not one, and one enforced only after "
+            "the next deploy freezes rows all at once, weeks after the cause."
         ),
     ),
 ]

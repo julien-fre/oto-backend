@@ -96,6 +96,8 @@ class PatchSchemaResult(BaseModel):
     added: list = []
     updated: list = []
     removed: list = []
+    # #389 : hérité de `set_schema`, par lequel le patch repasse.
+    enforced: list = []
     # Avertissements héréités de la pose du schéma (file de travail sans état
     # terminal, bornes posées sur des données hors borne, colonnes orphelines).
     warning: Optional[str] = None

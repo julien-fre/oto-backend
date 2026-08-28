@@ -1279,6 +1279,96 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     return errors
 
 
+# ── Ce que CETTE version fait respecter (#389) ───────────────────────────────
+#
+# Le signal qui rendait les autres dangereux : il ne demandait pas une contrainte de
+# plus, il demandait de savoir lesquelles MORDENT. Deux cas vécus le même jour, et le
+# second est le vrai sujet — l'écart n'était pas dans le vocabulaire mais dans le
+# DÉPLOIEMENT. `max_length: 60` posé sur quatre colonnes d'un tableau de production,
+# code de validation écrit le jour même, version déployée qui ne l'exécutait pas
+# encore : un PATCH idempotent rendait 200, et avec le code à jour 75 lignes sur 600
+# devenaient inécritables. Effet DIFFÉRÉ au prochain déploiement, MASSIF, SIMULTANÉ,
+# et de cause vieille de plusieurs semaines — personne ne relie « les agents
+# n'écrivent plus sur ces lignes » à « quelqu'un a posé une borne un mardi ».
+#
+# `unknown_declaration_keys` (#316) dit déjà la moitié NÉGATIVE — « cette clé, je ne
+# la lis pas ». Il manquait la moitié POSITIVE, la seule qu'un client puisse vérifier
+# contre le serveur qui lui répond plutôt que contre une documentation.
+#
+# ⚠️ **Le relevé s'établit en FAISANT TOURNER le validateur**, jamais en recopiant une
+# liste. Une liste parallèle diverge le jour où quelqu'un exécute une clé de plus (ou
+# cesse d'en exécuter une), et elle se met alors à mentir dans les deux sens — ce que
+# le signal reproche au silence. Chaque sonde est un schéma minimal + une ligne qui le
+# viole : la clé est annoncée si, et seulement si, `validate_row` refuse ici et
+# maintenant. C'est le même parti que `interpreted_keys` (dérivé du code), poussé d'un
+# cran : dérivé du COMPORTEMENT, donc insensible à la façon dont le code est écrit.
+
+# `(clé, schéma qui doit REFUSER, ligne fautive, témoin qui doit PASSER ou None)`.
+# Le témoin ne sert qu'aux clés dont l'effet est d'ARMER autre chose : `strict`
+# n'interdit rien par lui-même, il rend la conformité de type opposable. Sans le
+# témoin, on l'annoncerait dès que le type est vérifié, ce qui serait vrai par
+# accident.
+_ENFORCEMENT_PROBES = (
+    ("required",
+     {"fields": [{"key": "x", "required": True}]}, {}, None),
+    ("required_when",
+     {"fields": [{"key": "x", "required_when": {"y": "1"}}, {"key": "y"}]},
+     {"y": "1"}, None),
+    ("max_length",
+     {"fields": [{"key": "x", "max_length": 1}]}, {"x": "ab"}, None),
+    ("pattern",
+     {"fields": [{"key": "x", "max_length": 8, "pattern": "^ok$"}]},
+     {"x": "non"}, None),
+    ("max_items",
+     {"strict": True,
+      "fields": [{"key": "x", "type": "list", "of": {"type": "text"},
+                  "max_items": 1}]},
+     {"x": ["a", "b"]}, None),
+    ("options",
+     {"strict": True,
+      "fields": [{"key": "x", "type": "enum", "options": ["a"]}]},
+     {"x": "b"}, None),
+    ("type",
+     {"strict": True, "fields": [{"key": "x", "type": "number"}]},
+     {"x": "abc"}, None),
+    ("strict",
+     {"strict": True, "fields": [{"key": "x", "type": "number"}]}, {"x": "abc"},
+     ({"fields": [{"key": "x", "type": "number"}]}, {"x": "abc"})),
+    ("lifecycle",
+     {"fields": [{"key": "s", "role": "status",
+                  "lifecycle": {"states": ["a", "b"]}}]},
+     {"s": "z"}, None),
+)
+
+_ENFORCED: Optional[tuple] = None
+
+
+def reset_enforced_keys() -> None:
+    """Oublie le relevé mémorisé — pour un banc qui désarme une règle et vérifie que
+    l'annonce tombe avec elle."""
+    global _ENFORCED
+    _ENFORCED = None
+
+
+def enforced_keys() -> list[str]:
+    """Les clés de validation que CETTE version EXÉCUTE, triées.
+
+    Rendue à la pose ET à la lecture d'un schéma : un client peut donc vérifier que ce
+    qu'il déclare sera appliqué par le serveur qui lui répond — c'est la seule parade
+    au décalage entre le code écrit et la version servie."""
+    global _ENFORCED
+    if _ENFORCED is None:
+        vues = []
+        for cle, schema, row, temoin in _ENFORCEMENT_PROBES:
+            if not validate_row(schema, row):
+                continue                      # la règle n'existe pas ici
+            if temoin and validate_row(temoin[0], temoin[1]):
+                continue                      # elle refuse même sans la clé : pas elle
+            vues.append(cle)
+        _ENFORCED = tuple(sorted(vues))
+    return list(_ENFORCED)
+
+
 # ── Clés de déclaration non interprétées (#316) ──────────────────────────────
 #
 # Le cas réel : trois champs posés avec `enum: [...]` au lieu d'`options: [...]`.
