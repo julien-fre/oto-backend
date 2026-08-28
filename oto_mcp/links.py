@@ -50,6 +50,11 @@ DEFAULT_PATHS: dict[str, str] = {
     # rend aucun lien (garde de `_render`) — jamais une adresse à trous.
     "doc": "/projects/{project_id}?doc={id}",
     "project": "/projects/{id}",
+    # L'espace facturation du tableau de bord (`/org/billing`, cf. le routeur
+    # d'oto-dashboard) — c'est là que les factures se téléchargent. Un tenant qui
+    # ne déclare pas ce patron n'a pas cette vue : l'e-mail part alors sans bouton,
+    # plutôt qu'avec un lien mort.
+    "billing": "/org/billing",
     "connectors": "/connectors",
     "connector_return": "/connectors?connector={connector}",
     "import_project": "/import?slug={slug}",

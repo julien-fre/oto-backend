@@ -44,6 +44,7 @@ from . import (
     tokens,
     upload_tokens,
     billing,
+    billing_invoices,
     guides,
     legal,
     search,
@@ -61,7 +62,7 @@ _MODULES = (
     _conn, _schema, _init, users, tenants, unipile, connector_grants,
     connector_instances, grants, keys, usage,
     platform_instructions, visibility, emails, google, datastore, projects,
-    tokens, upload_tokens, billing, guides, legal, search, aux_embed,
+    tokens, upload_tokens, billing, billing_invoices, guides, legal, search, aux_embed,
     datastore_embed, run_thread, runner_jobs, runner_triggers,
 )
 _g = globals()

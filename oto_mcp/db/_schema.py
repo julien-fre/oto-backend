@@ -51,6 +51,7 @@ ASSEMBLAGE: tuple[str, ...] = (
     schema.emails.EMAILS,            # envois programmés
     schema.billing.SUBSCRIPTIONS,    # abonnements et paiements (ADR 0043)
     schema.billing.IDENTITIES,       # identité de facturation par org (#486)
+    schema.billing.INVOICES,         # factures et avoirs émis chez Pennylane (#488)
 )
 
 _SCHEMA = "".join(ASSEMBLAGE)

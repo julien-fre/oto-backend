@@ -55,8 +55,16 @@ from oto_mcp.db import _schema, schema
 # `ON CONFLICT`, et la base est partagée. La projection devient transitoire (écriture
 # double datée) et part avec l'issue #507 ; c'est ce drop-là qui sera le DDL
 # destructif, une fois la prod sur le code qui lit le journal.
-EMPREINTE = "c66c7fdc39c9a458474244331d23f4af40dce2fef9f82fd35ff89660a22150fb"
-LONGUEUR = 107466
+# 2026-08-28 (#488) : la FACTURE. Table NEUVE `billing_invoices` (+ ses deux index),
+# une ligne par document émis chez Pennylane pour un encaissement — ou par tentative
+# restée en attente. Lot ADDITIF : rien n'est retiré ni contraint sur les tables
+# existantes, la base étant partagée prod/preprod. Sa clé d'unicité est
+# `(payment_row_id, kind)` — un webhook rejoué ne crée ni seconde facture ni second
+# avoir. Elle référence `billing_payments`, d'où sa place APRÈS le fragment
+# SUBSCRIPTIONS dans `_schema.ASSEMBLAGE` : une FK vers une table pas encore créée
+# échoue sur une base vierge.
+EMPREINTE = "a913da569c8e2a3f9ae630fcb093207fb5aeae393e173526872c25a7160dd8db"
+LONGUEUR = 111233
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
