@@ -50,99 +50,19 @@ péremption → épic sécurité auth/MCP #35 ; ④ MRTR (`resultType: "input_re
 remplace elicitation/sampling : **pas une dette** ici (nos `*_connect_start` /
 `*_connect_status` sont déjà des handles), une standardisation possible.
 
-## ⚠️ Lire d'abord ce qui existe dans oto
+## Où vit le savoir MCP (rangé le 2026-08-28)
 
-**Le travail de fond sur la spec `2026-07-28` a déjà été fait, et il vit dans oto**, pas
-ici : projet **180 « oto headless »**, page **480** — *Doc JB — B. Architecture technique*,
-§13.5 « conséquences de la spec 2026-07-28 » (31/07/2026). Elle tranche déjà ce que cette
-veille ne faisait qu'effleurer :
+Trois domiciles, un rôle chacun — **chercher dans oto AVANT de re-dériver** (coût vécu le
+28/08 : une journée à retrouver depuis le code et la spec ce qui était écrit depuis un
+mois, deux affirmations fausses publiées puis corrigées) :
 
-- `server/discover` **remplace** `initialize` et **porte `instructions`** — donc le champ
-  ne disparaît pas ;
-- il est **optionnel côté client**, « donc `guide` et **l'injection dans les résultats de
-  tools** restent les canaux fiables » — l'architecture du filet, écrite un mois avant
-  qu'on le construise ;
-- la composition du contexte **doit tenir dans une requête ordinaire**, pas d'assemblage
-  lourd ;
-- l'identité du serveur voyage dans `_meta` et ne sert **jamais** une décision de
-  sécurité ;
-- le budget de contexte a un nom et un job CI : **P12** — « mesure du handshake, seuils
-  par couche ; au-delà du budget, la release casse », noyau visé **< 5k jetons**.
+| quoi | où |
+|---|---|
+| **Décisions & architecture** (spec 2026-07-28, `server/discover`, budget P12, canaux fiables) | oto, projet 180 « oto headless », **page 480** (doc B §13.5) |
+| **Relevés clients** — ce que les clients transmettent RÉELLEMENT au modèle, mesuré et daté, avec la façon de reconstater (troncature 2048 de Claude Code, claude.ai qui ne montre rien, 1re ligne d'une description = contrat de sélection, coût d'une injection en résultat, épisode du filet stateful) | oto, projet 180, **page 1178** |
+| **Ce qui contraint le code d'ICI** (veille SEP ci-dessus, liste de migration, tripwires) | ce fichier |
 
-**Coût vécu de ne pas l'avoir lu (2026-08-28)** : une journée à re-dériver ces points
-depuis le code et la spec, deux affirmations fausses publiées puis corrigées, et un filet
-construit sans savoir qu'il était déjà la réponse désignée. Le premier réflexe sur une
-question de protocole est `oto_search`, pas `grep`.
-
-**Répartition** : la stratégie et les décisions vivent dans oto (page 480) ; **ce
-document-ci porte les RELEVÉS** — ce que les clients font réellement, mesuré et daté, avec
-la façon de le reconstater. Les deux se citent, aucun ne recopie l'autre.
-
-## Ce que les CLIENTS font vraiment du protocole — relevé, pas spec
-
-La spec dit ce qu'un serveur peut émettre ; elle ne dit pas ce qu'un client en montre
-au modèle. **L'écart se mesure, il ne se déduit pas.** Ce tableau est un relevé daté :
-on y ajoute une ligne à chaque fois qu'on constate un écart, avec la façon de le
-reconstater.
-
-### `instructions` de l'`initialize` — canal NON fiable (relevé 2026-08-28)
-
-| client | le serveur émet | ce que le modèle voit |
-|---|---|---|
-| Claude Code | oui, > 2048 car. | **les 2048 premiers**, coupés en plein mot, sans avertir l'utilisateur (log debug côté client) |
-| claude.ai | oui, même chemin serveur | **rien** — d'après une session testée sur ce connecteur |
-
-**Comment le reconstater sans jeton** : composer `instructions.compose_session()` et
-comparer sa coupe à 2048 avec la fin du bloc reçu dans une session Claude Code. Le
-2026-08-28 les deux tombaient au même caractère, au milieu du mot « dessous ».
-
-**Ce que ça emportait chez nous** : les couches personnalisées (contexte résolu, agent
-readme d'org, d'équipe, d'utilisateur) commencent au caractère 17 292 de la
-composition — 8,4 fois au-delà du plafond. Elles n'étaient donc **jamais** délivrées
-sous Claude Code, alors qu'ADR 0042 en fait le primitif d'instruction livré à chaque
-session. Et l'écran de transparence `/api/me/agent-context` montrait ce que le serveur
-COMPOSE, pas ce que le client REÇOIT.
-
-⚠️ **Correction du 2026-08-28** — cette section a affirmé quelques heures que « le canal
-disparaît de toute façon, la spec supprime `instructions` ». **C'est faux, et l'erreur
-venait d'un raccourci** : SEP-2575 retire `initialize`, pas `instructions`. Vérifié à la
-source : le champ **déménage** dans le `DiscoverResult` de **`server/discover`**, que les
-serveurs **DOIVENT** implémenter.
-
-Mais le canal en sort **plus faible, pas plus fort**, et c'est ce qui compte pour nous :
-
-| | `initialize` (≤ 2025-11-25) | `server/discover` (2026-07-28) |
-|---|---|---|
-| le client l'appelle | **obligatoirement** (poignée de main) | **facultativement** — « a client may invoke any RPC inline » |
-| donc `instructions` est | toujours transmis, diversement rendu | **peut n'être jamais demandé** |
-
-On passe d'un canal toujours émis que le client rend mal, à un canal que le client peut
-ne pas solliciter du tout. La conclusion pratique ne change pas — ne pas en dépendre —
-mais le motif, si : ce n'est pas une suppression, c'est un passage d'obligatoire à
-optionnel.
-
-**Ce qu'on en a fait** (oto-backend#478) : la première ligne d'`oto_context` est
-devenue un impératif — canal qui arrive toujours au modèle. Un « filet » livrant le
-bloc dans la première réponse d'outil a AUSSI vécu quelques heures (v1.155.0,
-2026-08-28) et a été **retiré le jour même** : son registre « déjà servi » à fenêtre
-de 30 min était un état de session côté serveur, interdit par ADR 0038 — et la
-conception d'origine (page 481 §11.3) l'excluait en toutes lettres : « l'assemblage
-doit tenir dans une requête ordinaire, **sans état conservé entre appels** ». Le
-successeur devra être sans état ; le besoin reste ouvert.
-
-### `description` d'un outil — la PREMIÈRE LIGNE est un contrat de sélection
-
-Relevé le 2026-08-28 sur nos 556 outils : **381 (68 %) ont une description
-multi-lignes**, et **84 % du texte des descriptions vit après la première ligne**. Or
-c'est la première ligne qui décide de la sélection chez au moins un client. **175 de nos
-premières lignes s'arrêtent en plein milieu d'une phrase.**
-
-Deux troncatures distinctes, à ne pas confondre : la nôtre (un saut de ligne au mauvais
-endroit, réparable) et un plafond de longueur côté client, constaté sur une première
-ligne pourtant complète de 81 caractères, coupée deux caractères avant sa fin. Écrire
-des premières lignes **courtes et complètes** protège des deux.
-
-**Règle qui en découle** : la première ligne d'une description est un contrat de
-sélection — phrase complète, courte, autonome, impérative si l'outil est une amorce.
-Le détail vient après, pour l'appel.
-
+Deux règles issues des relevés, appliquées dans CE repo : la première ligne d'une
+description d'outil est une phrase complète, courte, autonome (175 outils à reprendre) ;
+et toute livraison de contexte est **sans état conservé entre appels** (ADR 0038 — le
+« filet » à registre mémoire a été posé puis retiré le 28/08, cf. page 1178).
