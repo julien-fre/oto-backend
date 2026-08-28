@@ -341,6 +341,13 @@ Deux surfaces, et la seconde n'est pas une capacité :
   e-mail, où rien ne garantit l'org de session. Un id d'une autre org rend **404**,
   jamais 403 : un « interdit » confirmerait l'existence du document.
 
+**Pourquoi la base et non l'objet.** `media_store` ne sert que des images, et il
+produit des URL **publiques** — inadapté à une facture. Un document pèse quelques
+dizaines de kilo-octets et il en naît un par org et par mois : l'ordre de grandeur
+est la centaine de méga-octets par an sur la RDB managée, ce qui ne justifie pas un
+second système de stockage aujourd'hui. Le jour où il le justifiera, la bascule est
+locale : seuls `set_billing_invoice_pdf` / `get_billing_invoice_pdf` la connaissent.
+
 ⚠️ **Aucune lecture ne fait `SELECT *` sur `billing_invoices`.** Le row factory ne
 normalise que les dates : des octets remontés dans un dict servi en JSON feraient
 une 500 à la sérialisation, sur le chemin le moins emprunté de la surface. Le PDF a
