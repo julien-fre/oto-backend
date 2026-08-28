@@ -321,13 +321,13 @@ def test_procedure_page_shows_the_project_label_and_role(monkeypatch):
     celui donné DANS ce projet (`label`), et le `role` dit pourquoi elle est là."""
     _wire(monkeypatch, links=_LINKS_WITH_ROLE)
     monkeypatch.setattr(org_store, "get_instruction_by_id",
-                        lambda i: {"title": "Titre canonique de la doctrine",
+                        lambda i: {"title": "Titre canonique du guide",
                                    "body_md": "# Déroulé"})
     html, status = share_ui.build_page(_PROJECT, "/procedures/11", connect_url="https://x/mcp")
     assert status == 200
     assert "Enrichir" in html                                   # le label du lien
     assert "Ce que chaque agent worker exécute" in html         # le role
-    assert "Titre canonique de la doctrine" not in html         # le title n'est qu'un repli
+    assert "Titre canonique du guide" not in html         # le title n'est qu'un repli
 
 
 def test_procedure_page_falls_back_to_the_guide_title(monkeypatch):

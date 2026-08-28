@@ -234,10 +234,10 @@ def test_on_list_tools_enriches_get_guide(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: 7)
     monkeypatch.setattr(instr, "skills_index_md", lambda org: "INDEX-BLOCK")
     monkeypatch.setattr(guide_store, "guides_index_md", lambda sub, org: "")
-    tools = [_FakeTool("fr_get", "search"), _FakeTool("oto_procedure", "load doctrine")]
+    tools = [_FakeTool("fr_get", "search"), _FakeTool("oto_procedure", "load guide")]
     out = {t.name: t for t in _run_list(tools, "u1", monkeypatch)}
     assert out["fr_get"].description == "search"
-    assert "load doctrine" in out["oto_procedure"].description
+    assert "load guide" in out["oto_procedure"].description
     assert "INDEX-BLOCK" in out["oto_procedure"].description
 
 
