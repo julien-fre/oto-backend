@@ -13,7 +13,7 @@ from fastmcp import FastMCP
 
 
 def register(mcp: FastMCP) -> None:
-    from .. import fod_frenchtech
+    from ..fod import frenchtech as fod_frenchtech
 
     # Écosystème French Tech servi par le service FOD (ADR 0028 B3) — proxy à surface
     # identique à FrenchTechClient (Aix-Marseille par défaut côté FOD).

@@ -15,7 +15,7 @@ from fastmcp import FastMCP
 
 
 def register(mcp: FastMCP) -> None:
-    from .. import fod_sante
+    from ..fod import sante as fod_sante
 
     # FINESS + HAS ESSMS (DuckDB distant) servis par le service FOD (ADR 0028 B3) —
     # plus d'exécution in-process. Proxies à surface identique aux clients france_opendata.

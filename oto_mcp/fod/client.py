@@ -6,14 +6,14 @@ dédié (box `fod-0`) qui porte le parquet partitionné par dept + les durcissem
 `france_opendata.sirene_stock`** (mêmes noms/signatures/retours) → les appelants
 (`tools/fr_stock`, `api_routes_sirene`) ne changent que leur import.
 
-La plomberie HTTP (client, auth, retry, erreurs) vit dans `fod_http` (partagée avec
+La plomberie HTTP (client, auth, retry, erreurs) vit dans `http` (partagée avec
 les autres clients FOD). Pas de fallback in-process (ADR 0028).
 """
 from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from .fod_http import get as _get, post as _post
+from .http import get as _get, post as _post
 
 
 # --- Surface identique à france_opendata.sirene_stock ----------------------

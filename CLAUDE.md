@@ -38,6 +38,8 @@ fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
 ```
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
+├── fod/              # les clients du service FOD (ADR 0028) : `http` = le transport
+│                     #   partagé, un module par domaine de données publiques FR.
 ├── datastore/        # le spine de records typés : core (le store qui COMPOSE), schema,
 │                     #   schema_ops, columns, errors, journal. `__init__` sans code.
 ├── middleware/       # la chaîne MCP, 1 module par middleware (alias, empty_result,

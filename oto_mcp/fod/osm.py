@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from .fod_http import get as _get
+from .http import get as _get
 
 
 class _Overpass:

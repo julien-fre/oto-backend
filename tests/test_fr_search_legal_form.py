@@ -57,7 +57,7 @@ def fr_search(monkeypatch):
         def get_directors(self, siren):
             return []
 
-    from oto_mcp import fod_fr
+    from oto_mcp.fod import fr as fod_fr
     from oto_mcp.tools import fr
 
     def _make(script):

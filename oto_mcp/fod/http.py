@@ -3,8 +3,8 @@
 Le backend n'exécute plus les workloads data in-process : il appelle le service
 FOD dédié (box `fod-0`) en HTTP. Ce module porte la **plomberie commune** —
 client httpx singleton, auth Bearer S2S, gestion d'erreurs, retry borné sur la
-saturation (503) — réutilisée par tous les clients de domaine (`fod_client` pour
-SIRENE, `fod_foncier`, puis fr/urba/sante/frenchtech).
+saturation (503) — réutilisée par tous les clients de domaine (`client` pour
+SIRENE, `foncier`, puis `fr`/`urba`/`sante`/`frenchtech`).
 
 Pas de fallback in-process (ADR 0028) : FOD indisponible/mal configuré ⟹ erreur
 actionnable, jamais un calcul local silencieux.

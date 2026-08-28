@@ -48,7 +48,8 @@ def clients(monkeypatch):
     `register()` lit `fod_foncier.<proxy>` À L'APPEL (bindings locaux) : patcher les
     attributs de module avant l'enregistrement suffit, sans toucher aux corps.
     """
-    from oto_mcp import fod_foncier, fod_urba
+    from oto_mcp.fod import foncier as fod_foncier
+    from oto_mcp.fod import urba as fod_urba
 
     mocks = {name: MagicMock(name=name) for name in _READ_ONLY_SURFACE}
     for name, mock in mocks.items():

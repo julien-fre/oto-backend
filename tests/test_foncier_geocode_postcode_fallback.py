@@ -47,7 +47,7 @@ def geocode(monkeypatch):
             calls.append({"adresse": adresse, "postcode": postcode, "citycode": citycode})
             return self.script(adresse, postcode)
 
-    from oto_mcp import fod_foncier
+    from oto_mcp.fod import foncier as fod_foncier
     from oto_mcp.tools import foncier
 
     def _make(script):

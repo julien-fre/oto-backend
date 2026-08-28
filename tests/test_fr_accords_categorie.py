@@ -12,7 +12,7 @@ filtré — le mode de panne qu'on ne voit pas (cf. `aiark_company_search(accoun
 """
 from __future__ import annotations
 
-from oto_mcp import fod_fr
+from oto_mcp.fod import fr as fod_fr
 
 
 def _capture(monkeypatch) -> dict:

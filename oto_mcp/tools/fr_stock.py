@@ -23,7 +23,7 @@ from typing import Optional
 
 from fastmcp import FastMCP
 
-from oto_mcp import fod_client as sirene_duckdb  # ADR 0028 : scan déporté sur FOD
+from oto_mcp.fod import client as sirene_duckdb  # ADR 0028 : scan déporté sur FOD
 
 
 def register(mcp: FastMCP) -> None:

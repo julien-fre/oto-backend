@@ -137,8 +137,8 @@ def _has_housenumber(candidates: list[dict]) -> bool:
 
 
 def register(mcp: FastMCP) -> None:
-    from .. import fod_foncier
-    from .. import fod_urba  # georisques (ICPE) — servi par FOD depuis B3
+    from ..fod import foncier as fod_foncier
+    from ..fod import urba as fod_urba  # georisques (ICPE) — servi par FOD depuis B3
 
     # Données de site servies par le service FOD dédié (ADR 0028) — le backend
     # n'exécute plus ces appels in-process. Objets proxy à surface identique aux

@@ -47,7 +47,7 @@ _FR_VIA_FOD = (
 # HAS ESSMS (parquet distant) = DuckDB isolé hors event-loop backend.
 _B3_VIA_FOD = (
     "client urba/sante/frenchtech consommé via le service FOD dédié "
-    "(oto_mcp/fod_urba|sante|frenchtech.py → /api/{urba,sante,frenchtech}/*, ADR "
+    "(oto_mcp/fod/{urba,sante,frenchtech}.py → /api/{urba,sante,frenchtech}/*, ADR "
     "0028 B3 — IRIS/HAS ESSMS = DuckDB isolé) — le tool reste exposé, plus via le "
     "client lib in-process"
 )
@@ -73,7 +73,7 @@ FOD_NOT_EXPOSED = {
     "enedis": _FONCIER_VIA_FOD,
     "dvf": _FONCIER_VIA_FOD,
     "dpe": _FONCIER_VIA_FOD,
-    "sitadel": _FONCIER_VIA_FOD,  # permis DiDo — via fod_foncier (B1) ; dernier ref lib (DIDO_PAGE_SIZES) inliné au B4
+    "sitadel": _FONCIER_VIA_FOD,  # permis DiDo — via fod/foncier (B1) ; dernier ref lib (DIDO_PAGE_SIZES) inliné au B4
     # Clients « fr » (données entreprise) consommés via le service FOD (B2a) :
     # entreprises/BODACC/Egapro = proxy HTTP live, INPI = DuckDB parquet isolé.
     # oto_mcp/fod_fr.py → /api/fr/*. INSEE SIRENE (keyé) reste, lui, au backend.
@@ -90,7 +90,7 @@ FOD_NOT_EXPOSED = {
               "par-appel, l'appel tourne sur FOD (oto_mcp/fod_fr.insee_* → "
               "/api/fr/insee/*), plus de SireneClient in-process (ADR 0028/0037)",
     # BOAMP : index PG + ingest MIGRÉS au service FOD (B2b) — le backend interroge
-    # /api/fr/tenders/* via fod_fr, ne porte plus la table ni boamp_ingest.
+    # /api/fr/tenders/* via fod/fr, ne porte plus la table ni boamp_ingest.
     "boamp": "index BOAMP (marchés publics) possédé par le service FOD (tables PG + "
              "ingest boamp_ingest côté fod-0) — le backend interroge /api/fr/tenders/* "
              "via oto_mcp/fod_fr.py, plus de client/ingest lib in-process (ADR 0028 B2b)",
@@ -142,7 +142,7 @@ def _fod_references() -> set[str]:
     clients FOD (ex. `oto.tools.sirene` → `france_opendata.sirene`) — le câblage
     passe alors par le wrapper, pas par un import FOD direct. Walk AST de
     `oto_mcp/**/*.py` — pas de faux positif docstring/commentaire."""
-    root = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp"
+    root = pathlib.Path(__file__).resolve().parents[2] / "oto_mcp"
     refs: set[str] = set()
     for p in root.rglob("*.py"):
         tree = ast.parse(p.read_text(encoding="utf-8"))

@@ -8,7 +8,7 @@ from __future__ import annotations
 from ._model import _c
 
 # droit : jurisprudence (juris_*) + codes consolidés (loi_*) + conventions
-# collectives (ccn_*), servis par le service FOD (fod_juris/loi/ccn). Extrait
+# collectives (ccn_*), servis par le service FOD (fod/juris, fod/loi, fod/ccn). Extrait
 # de `sirene`/`fr` (n'était pas de l'INSEE : DILA/Justice/Légifrance). Open
 # data, sans clé. 3 namespaces → 1 carte « Info légale FR ».
 CONNECTOR = _c(

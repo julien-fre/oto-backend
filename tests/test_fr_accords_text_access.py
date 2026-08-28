@@ -25,7 +25,8 @@ _TEXT = {"texte": "Article 5 - Régime de remboursement complémentaire…",
 
 def _call(monkeypatch, **kwargs):
     from fastmcp import FastMCP
-    from oto_mcp import fod_ccn, fod_fr
+    from oto_mcp.fod import ccn as fod_ccn
+    from oto_mcp.fod import fr as fod_fr
     from oto_mcp.tools import fr as fr_tool
 
     seen: dict = {}
@@ -65,7 +66,8 @@ def test_text_is_fetched_by_dila_id_not_by_deposit_number(monkeypatch):
 
 def test_unknown_agreement_is_not_a_text_call(monkeypatch):
     from fastmcp import FastMCP
-    from oto_mcp import fod_ccn, fod_fr
+    from oto_mcp.fod import ccn as fod_ccn
+    from oto_mcp.fod import fr as fod_fr
     from oto_mcp.tools import fr as fr_tool
 
     called = []

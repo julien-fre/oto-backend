@@ -2,7 +2,7 @@
 le 2026-08-11 : 9 tools → 5).
 
 Ce module n'avait AUCUN test : il ne faisait que passer le plat à trois clients FOD
-(`fod_ccn`/`fod_loi`/`fod_juris`), et une signature 1-pour-1 se relit à l'œil. La
+(`fod/ccn`/`fod/loi`/`fod/juris`), et une signature 1-pour-1 se relit à l'œil. La
 consolidation par `op=` déplace exactement là le risque : une op mal câblée appelle
 silencieusement la mauvaise fonction — et sur ce connecteur, « la mauvaise fonction »
 peut être **le mauvais CORPUS** (répondre du KALI à une question de code, ou du texte
@@ -24,12 +24,12 @@ from unittest.mock import MagicMock
 import pytest
 from mcp.shared.exceptions import McpError
 
-# Importés pour que `monkeypatch.setattr("oto_mcp.fod_*", …)` ait une cible : les
-# tools font `from .. import fod_ccn` À L'APPEL, donc c'est l'attribut du PAQUET
+# Importés pour que `monkeypatch.setattr("oto_mcp.fod.<corpus>", …)` ait une cible :
+# les tools font `from ..fod import ccn` À L'APPEL, donc c'est l'attribut du PAQUET
 # qui est lu (et donc celui qu'on remplace).
-import oto_mcp.fod_ccn  # noqa: F401
-import oto_mcp.fod_juris  # noqa: F401
-import oto_mcp.fod_loi  # noqa: F401
+import oto_mcp.fod.ccn  # noqa: F401
+import oto_mcp.fod.juris  # noqa: F401
+import oto_mcp.fod.loi  # noqa: F401
 
 
 def _tool(name: str):
@@ -58,7 +58,7 @@ def fod(monkeypatch):
              "loi": MagicMock(name="fod_loi"),
              "juris": MagicMock(name="fod_juris")}
     for corpus, mock in mocks.items():
-        monkeypatch.setattr(f"oto_mcp.fod_{corpus}", mock)
+        monkeypatch.setattr(f"oto_mcp.fod.{corpus}", mock)
     return mocks
 
 
