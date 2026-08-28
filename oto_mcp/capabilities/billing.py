@@ -4,10 +4,11 @@ Pas de face MCP par choix d'ADR : payer est un acte humain (dashboard), on ne
 fait pas transiter d'URL de paiement dans un contexte LLM. Souscrire/confirmer/
 résilier = org_admin ; consulter = tout membre de l'org active.
 
-L'**identité de facturation** (#486) suit le même régime : qui paie, depuis quel
-pays, sous quel numéro de TVA — c'est un formulaire d'administrateur, et le pays
-décide du montant réellement débité. Elle est donc REST-only elle aussi, et se
-pose AVANT le premier paiement (`billing.subscribe` la refuse absente).
+L'**identité de facturation** (#486) est le PRÉALABLE de ce cycle — le pays décide
+du montant réellement débité, et `billing.subscribe` refuse tant qu'elle n'est pas
+là (409 `billing_identity_required`). Elle vit à côté, dans
+`capabilities/billing_identity.py` : l'abonnement est un cycle, l'identité une
+fiche qu'on remplit une fois. Même régime REST-only, même gate de dark launch.
 """
 from __future__ import annotations
 
