@@ -45,7 +45,11 @@ def test_les_connecteurs_a_flux_sont_ceux_quon_attend():
     """
     assert set(connector_flow.entries()) == {
         "zoho", "zohodesk", "zohoanalytics", "salesforce",
-        "atlassian", "folkmcp", "google", "unipile"}
+        "atlassian", "folkmcp", "google",
+        # Le compte `unipile` GARDE son flux multi-canal (code de production) ; le
+        # split du 2026-08-28 ajoute un flux par canal, sans paramètre — le canal
+        # est dérivé du connecteur au lieu d'être choisi dans une liste.
+        "unipile", "linkedin_unipile", "whatsapp", "telegram", "instagram", "messenger", "twitter"}
 
 
 def test_le_descripteur_ne_porte_ni_url_ni_nom_de_capacite():
@@ -81,7 +85,13 @@ def test_le_catalogue_expose_la_forme_et_rien_pour_les_autres():
     assert cat["salesforce"]["connect"]["label"]
     assert cat["serper"]["connect"] is None       # 56 connecteurs sur 70
     # Le flux hébergé était l'exception (« pas encore déclaré ici ») : il ne l'est
-    # plus — son geste est déclaré comme les autres, avec son choix de canal.
+    # plus — son geste est déclaré comme les autres. Et depuis le split du
+    # 2026-08-28 il n'a même plus de paramètre : le canal est DÉRIVÉ du connecteur
+    # (une carte = un canal), au lieu d'être choisi dans une liste sur une carte
+    # qui en représentait six.
+    assert cat["whatsapp"]["connect"]["label"]
+    assert cat["whatsapp"]["connect"]["params"] == []
+    # Le compte garde son flux de production, avec son choix de canal.
     assert cat["unipile"]["connect"]["params"][0]["name"] == "channel"
 
 

@@ -78,7 +78,8 @@ def test_le_perimetre_nest_pas_vide():
     passer à vide (le mode de panne de tout test de totalité)."""
     besoin = _needs_a_flow()
     assert len(besoin) >= 10, f"périmètre suspect : {sorted(besoin)}"
-    assert {"salesforce", "zoho", "google", "unipile"} <= besoin
+    assert {"salesforce", "zoho", "google", "unipile", "whatsapp",
+            "linkedin_unipile"} <= besoin
 
 
 def test_un_etat_declare_implique_une_etape_declaree():

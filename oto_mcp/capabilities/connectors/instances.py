@@ -448,6 +448,15 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
     # membre). Dédup par ref (déjà listée si l'org de contexte EST l'org porteuse).
     try:
         for provider in providers.PERSONAL_CROSS_ORG_PROVIDERS:
+            # Un connecteur qui DÉLÈGUE son credential n'a aucune ligne au coffre :
+            # son instance perso est celle de son porteur, déjà listée sous lui. Le
+            # sonder coûterait une requête par canal pour une liste toujours vide.
+            # Un pin posé sur cette instance vaut BIEN pour les appels du canal :
+            # `_instance=` se compare ET se lit sous le porteur (access/resolve.py) —
+            # les deux, pas seulement la comparaison, sinon le pin est reconnu puis
+            # perdu au coffre.
+            if providers.delegates_credential(provider):
+                continue
             for other_org in credentials_store.list_member_orgs_for(sub, provider):
                 if org is not None and other_org == org:
                     continue

@@ -1,9 +1,17 @@
 """Unipile — LinkedIn & WhatsApp hébergés (recherche / scrape / messagerie).
 
-Clé résolue par appel via `access.resolve_api_key("unipile")` (keyed, cascade
-user > org). Le dsn (API v2 : gateway `api.unipile.com`) et l'account_id LinkedIn
-sont résolus côté client (env `UNIPILE_DSN`, défaut api.unipile.com ;
-auto-résolution du 1er compte LINKEDIN connecté).
+⚠️ **Un module, SEPT connecteurs** depuis le split du 2026-08-28 : `unipile` (le
+compte, qui porte la clé) et ses six canaux, dont `linkedin_unipile` sert ici. Les
+cinq autres ont leur propre `tools/<canal>.py`, qui appelle la factory de messagerie
+commune d'ici. Cf. `docs/unipile.md` §Le split.
+
+La clé est résolue par appel **sous le connecteur du CANAL**
+(`unipile_client` → `access.resolve_credential(<canal>)`), pas sous `unipile` : c'est
+ce qui fait mordre l'ACL et l'activation DE CE CANAL, le gate lisant le nom qu'on lui
+passe. La clé, elle, reste celle du compte — la délégation
+(`Connector.credential_of`) normalise dans la cascade. Le dsn (API v2 : gateway
+`api.unipile.com`) et l'account_id sont résolus côté client (env `UNIPILE_DSN`,
+défaut api.unipile.com).
 
 Pourquoi à côté du connecteur browser `linkedin` : la session vit chez Unipile
 (vrai Chrome + proxy résidentiel), ce qui contourne l'empreinte TLS et
@@ -22,7 +30,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, db, session_org, status_hints
+from .. import access, db, providers, session_org, status_hints
 from ..connectors import flow as connector_flow
 from ..connectors import verify as connector_verify
 
@@ -65,7 +73,7 @@ _FEED_ADDRESSING = ("urn",)         # jamais projeté hors du résultat : sans l
 
 # Longueur d'extrait par DÉFAUT de tout texte long rendu en LISTE par ce connecteur —
 # feed (#384) comme posts/commentaires d'un membre (#281). Un seul chiffre pour toute la
-# famille `linkedin_unipile_*` : l'agent l'apprend une fois. L'entête d'un post suffit à
+# famille `linkedin_*` : l'agent l'apprend une fois. L'entête d'un post suffit à
 # le trier (c'est ce que l'agent de #384 avait retenu à la main au jq) ; la coupe est
 # MARQUÉE (`text_truncated`) et `text_max_chars=None` rend le texte entier.
 _TEXT_EXCERPT_CHARS = 600
@@ -112,7 +120,7 @@ def _rate_limit_guard(sub: str) -> None:
             f"⏳ Unipile rate-limite ce compte LinkedIn — réessaie dans {_fmt_wait(until - now)} "
             "(délai demandé par Unipile : de quelques secondes après une rafale légère à "
             "~1h quand la cadence récente a été soutenue — c'est le délai affiché qui fait "
-            "foi, pas une moyenne). RALENTIS la cadence des appels linkedin_unipile_* plutôt que de "
+            "foi, pas une moyenne). RALENTIS la cadence des appels linkedin_* plutôt que de "
             "les enchaîner en rafale ; si l'attente est longue, passe à autre chose et "
             "reviens, plutôt que de sonder en boucle.")))
 
@@ -153,7 +161,7 @@ def _scrape(sub: str, fn):
         wait = _fmt_wait(_RATE_LIMIT_UNTIL[sub] - time.time())
         raise McpError(ErrorData(code=INVALID_PARAMS, message=(
             f"⏳ Unipile rate-limite ce compte LinkedIn ({e}). Réessaie dans {wait} et "
-            "RALENTIS : n'enchaîne pas des dizaines d'appels linkedin_unipile_* en rafale (c'est ce qui "
+            "RALENTIS : n'enchaîne pas des dizaines d'appels linkedin_* en rafale (c'est ce qui "
             "déclenche le throttle, puis dégrade et déconnecte le compte). Les fiches société "
             "déjà vues sont servies du cache — inutile de les relire.")))
 
@@ -472,11 +480,17 @@ def account_status(provider: str = "LINKEDIN") -> dict:
         # Le geste manquant vient du seam PARTAGÉ (option fermée ? aucune clé ? juste
         # un canal à lier ?) — la même réponse que la carte connecteur, pas une
         # seconde version qui divergerait.
+        # Diagnostiquer le CANAL, pas le compte : depuis le split, l'activation, l'ACL
+        # et la sélection qui peuvent bloquer CE canal sont les SIENNES. La couche
+        # « clé », elle, remonte au compte porteur — `readiness.diagnose` le fait
+        # lui-même (`credential_provider`), le message nomme donc la bonne carte.
+        canal_con = providers.connector_for_hosted_channel(provider)
+        nom = canal_con.name if canal_con else "unipile"
         diag = connector_readiness.diagnose(
-            sub, "unipile", org=org, group=access.current_group(sub))
+            sub, nom, org=org, group=access.current_group(sub))
         out["next_step"] = pointer_error or (
             diag.next_step if diag is not None
-            else connector_readiness.no_identity_step(sub, "unipile", "compte"))
+            else connector_readiness.no_identity_step(sub, nom, "compte"))
     elif alive is False:
         out["next_step"] = (
             f"Le compte {front} est bien lié, mais sa session est MORTE côté "
@@ -500,6 +514,43 @@ def _status_pending_action(sub: str, org, group, entry: dict):
 
 
 status_hints.register("unipile", _status_pending_action)
+
+
+def _channel_pending_action(canal: str, libelle: str):
+    """Hook `status_hints` d'UNE carte de canal (split du 2026-08-28).
+
+    La clé du compte résout et l'option est ouverte, mais CE canal n'est pas lié →
+    l'étape manquante est « connecte ton compte X ». Avant le split, le hook était
+    posé sur `unipile` et disait « Connecte un canal » tant qu'AUCUN des six ne
+    l'était : il se taisait dès le premier connecté, donc quelqu'un qui avait
+    LinkedIn ne s'entendait jamais dire qu'il lui restait WhatsApp à brancher. Une
+    carte par canal rend la question posable canal par canal — et la réponse utile.
+
+    (Fermé sur `canal` par une fabrique plutôt que par une closure de boucle : six
+    hooks qui fermeraient sur la variable d'itération diraient tous le dernier.)"""
+
+    def hook(sub: str, org, group, entry: dict):
+        if entry.get("mode") == "forbidden":
+            return None   # pas de clé → « à connecter »/« option » suffisent déjà
+        st = status_for(sub, org=org, group=group)
+        if not st["subscribed"]:
+            return None   # option fermée → le front rend déjà « option requise »
+        if st["channels"].get(canal, {}).get("connected"):
+            return None
+        return f"Connecte ton compte {libelle}"
+
+    return hook
+
+
+# Un hook par carte de canal. `unipile` n'en a plus : sa carte pose une CLÉ, elle
+# n'a aucun bouton pour connecter quoi que ce soit — un « Connecte un canal » y
+# serait une consigne sans geste.
+for _con in providers.REGISTRY.values():
+    if _con.hosted_channel:
+        status_hints.register(_con.name,
+                              _channel_pending_action(_con.hosted_channel.lower(),
+                                                      _con.label))
+del _con
 
 
 def admin_status_by_org(sub: str, orgs: list) -> list:
@@ -563,16 +614,32 @@ def _project_operated_account(anon, provider: str) -> str:
     Jamais de repli : ni sur un autre compte de l'org, ni sur le premier de l'abonnement.
     Un message parti sous la mauvaise identité est irréversible, et le destinataire du
     partage n'a aucun moyen de s'en apercevoir."""
-    declared = access.project_declared_identities("unipile", anon.project_id)
+    # ⚠️ DEUX noms de lien à lire depuis le split du 2026-08-28. Un lien écrit
+    # AVANT nomme le connecteur `unipile` (il n'y en avait qu'un, et le filtre par
+    # canal ci-dessous suffisait à lever l'ambiguïté) ; un lien écrit DEPUIS, depuis
+    # la carte du canal, nomme le canal. Ne lire que l'un des deux casse la moitié
+    # des projets — les anciens ou les nouveaux selon le nom retenu — et le casse en
+    # silence, puisque l'absence de lien se rend comme « ce projet ne déclare aucun
+    # compte ». Les liens ne sont volontairement PAS migrés : ils portent une
+    # identité choisie par une personne, et les deux noms restent vrais.
+    canal_con = providers.connector_for_hosted_channel(provider)
+    noms_de_lien = ["unipile"] + ([canal_con.name] if canal_con else [])
+    declared = [a for nom in noms_de_lien
+                for a in access.project_declared_identities(nom, anon.project_id)]
     if not declared:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
             message=(f"Ce projet partagé ne déclare aucun compte {provider.title()}. Son "
                      "propriétaire doit lier le connecteur AVEC une identité "
-                     "(`oto_project op=link target_type=connecteur target_ref=unipile "
-                     "identity_ref=<account_id>`) pour que l'endpoint puisse agir.")))
-    usable = [a for a in declared
-              if a in db.org_unipile_account_ids(anon.org_id, provider)]
+                     f"(`oto_project op=link target_type=connecteur "
+                     f"target_ref={noms_de_lien[-1]} identity_ref=<account_id>`) pour "
+                     "que l'endpoint puisse agir.")))
+    # Dédupliqué (ordre stable) : un projet qui déclare la MÊME identité sous les
+    # deux noms de lien déclare UN compte, pas deux — sans ça le garde-fou
+    # « plusieurs comptes ⟹ je ne devine pas » se déclencherait sur un projet
+    # parfaitement univoque, simplement parce qu'il a été relié après le split.
+    joignables = db.org_unipile_account_ids(anon.org_id, provider)
+    usable = list(dict.fromkeys(a for a in declared if a in joignables))
     if not usable:
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
@@ -620,7 +687,17 @@ def unipile_client(provider: str = "LINKEDIN"):
     from oto.tools.unipile import make_unipile_client
     from .. import subdomain_project
     from ..connectors import identities as connector_identities
-    rc = access.resolve_credential("unipile", want="auto")
+    # Résolution sous le connecteur du CANAL (split du 2026-08-28), pas sous
+    # `unipile` : c'est ce qui fait passer l'appel par les gates DE CE CANAL —
+    # `require_connector_access` (ACL d'org, backstop dur) est appliqué sur le nom
+    # que la résolution reçoit. Résoudre sous `unipile` gaterait les six canaux
+    # ensemble et une org qui a réservé WhatsApp à un département verrait le gate
+    # muet. La CLÉ, elle, reste celle du compte : la délégation
+    # (`Connector.credential_of`) la ramène sur `unipile` dans la cascade.
+    # Canal hors registre ⟹ on retombe sur le porteur (comportement d'avant).
+    canal_con = providers.connector_for_hosted_channel(provider)
+    rc = access.resolve_credential(canal_con.name if canal_con else "unipile",
+                                   want="auto")
     anon = subdomain_project.current_anon_context()
     if anon is not None:
         return make_unipile_client(
@@ -636,7 +713,12 @@ def unipile_client(provider: str = "LINKEDIN"):
     # (anti-usurpation + scope membre ADR 0033) OU lui est accordé par son propriétaire
     # (#55, grant vivant re-checké à cet appel), ET au canal demandé. Sinon défaut (fail-soft).
     org = access.current_org(sub)
-    pinned = access.project_pinned_identity("unipile")
+    # Même dualité de nom qu'au chemin anonyme (cf. `_project_operated_account`) :
+    # le canal d'abord — un lien posé depuis SA carte est le plus spécifique —, le
+    # compte ensuite pour les liens d'avant le split.
+    canal_con = providers.connector_for_hosted_channel(provider)
+    pinned = ((access.project_pinned_identity(canal_con.name) if canal_con else None)
+              or access.project_pinned_identity("unipile"))
     if pinned and (
         any(a.get("account_id") == pinned and a.get("provider") == provider
             and a.get("org_id") == org
@@ -1453,6 +1535,31 @@ connector_flow.declare(
                  ("telegram", "Telegram"), ("instagram", "Instagram"),
                  ("messenger", "Messenger"), ("twitter", "X (Twitter)"))),),
 )
+
+# ⚠️ **Un flux par CANAL, sans paramètre de canal** (split du 2026-08-28). Avant, un
+# seul flux `unipile` portait un `channel` à choisir dans une liste : la carte
+# demandait « lequel ? » parce qu'elle représentait les six. Maintenant chaque canal
+# a sa carte, donc son flux, et le canal est DÉRIVÉ du connecteur
+# (`Connector.hosted_channel`) au lieu d'être saisi. Le geste ne perd rien et gagne
+# une garde : on ne peut plus démarrer une connexion WhatsApp depuis la carte
+# Telegram. Le front n'a rien à changer — il rend `connect.params`, qui est
+# simplement vide ici.
+#
+# `unipile` lui-même n'a PLUS de flux : c'est le compte fournisseur, sa carte pose
+# une clé. Le tool `unipile_connect_start(channel=…)` reste, lui, multi-canal (il
+# n'appartient à aucune capacité — cf. le namespace `unipile`).
+for _con in providers.REGISTRY.values():
+    if not _con.hosted_channel:
+        continue
+    connector_flow.declare(
+        _con.name,
+        # `_ch` capturé par valeur (défaut d'argument) : une closure sur `_con`
+        # rendrait les six flux identiques, tous sur le dernier canal de la boucle.
+        start=(lambda ctx, values, _ch=_con.hosted_channel.lower():
+               _start_hosted_flow(ctx, {**values, "channel": _ch})),
+        label=f"Connecter mon compte {_con.label}",
+    )
+del _con
 
 
 async def _start_hosted_flow(ctx, values: dict):

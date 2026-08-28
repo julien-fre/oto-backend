@@ -172,19 +172,29 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # fallback (une instance demandée qui ne résout pas = erreur actionnable, pas
     # une autre identité). Un ref d'un AUTRE provider est ignoré ici (il ne visait
     # pas cette résolution — ex. résolution auxiliaire d'un tool composite).
+    # ⚠️ La comparaison se fait sur le PORTEUR du credential (délégation) : un ref
+    # d'instance nomme une ligne du COFFRE, et les six canaux unipile n'en ont pas —
+    # leurs clés vivent sous `unipile`. Comparer au nom nu ferait silencieusement
+    # ignorer le pin sur tout appel de canal (l'appel repartirait en cascade, donc
+    # potentiellement sur une AUTRE clé que celle demandée).
+    porteur = providers.credential_provider(provider)
     pinned = session_org.current_call_instance()
-    if pinned is not None and getattr(pinned, "connector", None) == provider:
-        return _resolve_pinned_instance(provider, sub, pinned)
+    if pinned is not None and getattr(pinned, "connector", None) == porteur:
+        # La LECTURE du coffre nomme le porteur, comme la comparaison au-dessus :
+        # la ligne épinglée est rangée sous lui, et `require_credential` REFUSE le
+        # nom d'un délégant. Passer le nom nu ici levait un `ValueError` brut sur
+        # tout appel de canal fait sous un pin — le pin était reconnu puis perdu.
+        return _resolve_pinned_instance(porteur, sub, pinned)
 
     # Binding de PROJET (ADR 0038 B5) : le projet de l'appel (`_project=`) binde une
     # instance pour ce provider → résolution EN DUR, RE-GARDÉE pour l'APPELANT (le
     # binding a été gardé pour celui qui l'a posé ; l'appelant d'un projet partagé
     # peut être un autre membre). `_instance=` explicite (ci-dessus) prime — le jeton
     # le plus spécifique de l'appel.
-    bound = scope.project_pinned_instance(provider)
+    bound = scope.project_pinned_instance(porteur)
     if bound is not None:
         rbac.guard_instance_access(sub, bound)
-        return _resolve_pinned_instance(provider, sub, bound)
+        return _resolve_pinned_instance(porteur, sub, bound)
 
     # Scope MEMBRE (ADR 0033) : « ma clé » n'existe QUE dans l'org de contexte —
     # posée dans l'org A, elle ne résout pas depuis l'org B. L'org est résolue via
@@ -322,11 +332,15 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         # JAMAIS résolu via une clé plateforme résiduelle (audité 2026-06-11).
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
+            # La clé se pose sur le PORTEUR (délégation) : renvoyer quelqu'un à
+            # « la section Whatsapp » de sa page compte, où il n'y a pas de champ,
+            # est un cul-de-sac. Le hint « une équipe a la clé » se cherche lui aussi
+            # sous le porteur — c'est là que les secrets partagés existent.
             message=(
-                f"Aucune clé `{provider}` configurée pour toi. Soit pose "
-                f"ta propre clé sur {_ACCOUNT_URL} (section {provider.capitalize()}), "
+                f"Aucune clé `{porteur}` configurée pour toi. Soit pose "
+                f"ta propre clé sur {_ACCOUNT_URL} (section {porteur.capitalize()}), "
                 f"soit demande à un admin de te grant un accès à une clé plateforme."
-                + rbac._reachable_hint(sub, active_org, provider)
+                + rbac._reachable_hint(sub, active_org, porteur)
             ),
         ))
 
@@ -338,7 +352,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # coffre unifié (share_mode/share_down = accès ; meta.rate_limit* = quota).
     # Le secret n'est déchiffré que pour l'instance gagnante.
     grant = win.payload
-    used = db.get_usage_today(sub, provider)
+    used = quotas.usage_today(sub, provider)
     limit = grant.get("daily_quota") or quotas.quota_for(provider)
     # ADR 0043 : une org abonnée à un plan `unmetered` n'a PLUS de quota sur les
     # clés plateforme — fin du micro-management des « credits d'appel ». Le plan
