@@ -13,12 +13,17 @@ prochain déplacement, et à celui d'après.
 
 Inerte en CI (aucun autre checkout n'y existe) : c'est en LOCAL qu'il mord, et c'est
 là que le défaut vit.
+
+Ses deux exemples se construisent hors du dépôt ou dedans, **jamais par un chemin
+écrit en dur** : un exemple dont le verdict dépend de l'endroit où le dépôt est
+posé prouve l'environnement, pas la garde.
 """
 from __future__ import annotations
 
+import contextlib
+import importlib.util
 import pathlib
 import sys
-import types
 
 from oto_mcp import server  # noqa: F401 — charge le boot réel, donc le gros du paquet
 
@@ -40,6 +45,24 @@ def _etrangers(modules) -> dict[str, str]:
     return out
 
 
+@contextlib.contextmanager
+def _charge(nom: str, fichier: pathlib.Path):
+    """Charge VRAIMENT `fichier` sous `nom` dans `sys.modules`, et l'en retire après.
+
+    Un `__file__` posé à la main prouverait la comparaison de chaînes ; ce qu'on veut
+    prouver, c'est le module tel que le finder editable le sert — donc un vrai
+    chargement, dont le `__file__` vient du fichier lui-même.
+    """
+    spec = importlib.util.spec_from_file_location(nom, fichier)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[nom] = mod
+    try:
+        spec.loader.exec_module(mod)
+        yield mod
+    finally:
+        sys.modules.pop(nom, None)
+
+
 def test_aucun_module_ne_vient_d_un_autre_checkout():
     etrangers = _etrangers(sys.modules)
     assert not etrangers, (
@@ -48,9 +71,29 @@ def test_aucun_module_ne_vient_d_un_autre_checkout():
         "chemin déplacé ; la suite ment tant qu'il résout ailleurs.")
 
 
-def test_le_garde_fou_mord():
+def test_le_garde_fou_mord(tmp_path):
     """Un garde-fou d'inventaire se prouve en lui présentant l'anomalie qu'il vise."""
-    faux = types.ModuleType("oto_mcp.parti_ailleurs")
-    faux.__file__ = "/data/oto/backend/oto_mcp/parti_ailleurs.py"
-    assert _etrangers({"oto_mcp.parti_ailleurs": faux}) == {
-        "oto_mcp.parti_ailleurs": "/data/oto/backend/oto_mcp/parti_ailleurs.py"}
+    ailleurs = tmp_path / "ailleurs" / "oto_mcp"
+    ailleurs.mkdir(parents=True)
+    fichier = ailleurs / "parti_ailleurs.py"
+    fichier.write_text('"""Le fichier d\'AVANT, resté dans l\'autre checkout."""\n')
+
+    with _charge("oto_mcp.parti_ailleurs", fichier):
+        signales = _etrangers(sys.modules)
+
+    assert signales.get("oto_mcp.parti_ailleurs") == str(fichier.resolve()), (
+        "un `oto_mcp.*` servi hors du dépôt doit être signalé ; il ne l'est pas, "
+        f"la garde est aveugle à ce qu'elle vise : {signales}")
+
+
+def test_le_garde_fou_laisse_passer_ce_qui_vient_D_ICI():
+    """L'autre sens : une garde qui signale tout ne signale rien."""
+    dedans = RACINE / "oto_mcp" / "fod" / "__init__.py"
+    assert dedans.is_file(), f"exemple introuvable dans le dépôt : {dedans}"
+
+    with _charge("oto_mcp.reste_ici", dedans):
+        signales = _etrangers(sys.modules)
+
+    assert "oto_mcp.reste_ici" not in signales, (
+        "un `oto_mcp.*` servi depuis CE dépôt ne doit pas être signalé ; la garde "
+        f"crie au loup et son verdict ne veut plus rien dire : {signales}")
