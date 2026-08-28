@@ -34,8 +34,8 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import access
-from .. import datastore_schema as dsv2
-from ..datastore import NamespaceNotFound, NamespaceReadOnly, make_store
+from ..datastore import schema as dsv2
+from ..datastore.core import NamespaceNotFound, NamespaceReadOnly, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .datastore_common import ns_not_found

@@ -94,7 +94,7 @@ def validate_slots(raw: object) -> list[dict]:
                 raise ValueError(f"`slots[{i}].schema` réservé au type `tableau`.")
             if not isinstance(schema, dict):
                 raise ValueError(f"`slots[{i}].schema` doit être un objet schéma datastore.")
-            from . import datastore_schema as dsv2
+            from .datastore import schema as dsv2
             errors = dsv2.validate_schema_def(schema)
             if errors:
                 raise ValueError(

@@ -14,7 +14,7 @@ signale, on n'empêche pas.
 """
 from __future__ import annotations
 
-from oto_mcp import datastore_schema as dsv2
+from oto_mcp.datastore import schema as dsv2
 
 
 def _cles(schema):

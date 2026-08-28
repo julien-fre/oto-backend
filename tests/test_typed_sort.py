@@ -65,7 +65,7 @@ def live(pg_dsn):
 def _monte(schema_fields, rows):
     """Un namespace neuf, son schéma, ses lignes — rend (store, namespace)."""
     from oto_mcp import db
-    from oto_mcp.datastore import make_store
+    from oto_mcp.datastore.core import make_store
 
     st = make_store("sub-test")
     ns = "t-" + uuid.uuid4().hex[:6]

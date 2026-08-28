@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 from starlette.concurrency import run_in_threadpool
 
-from .. import datastore as ds
+from ..datastore import core as ds
 from ..db import datastore as db_ds
 from ..db import node_view as db_node
 from ._authz import ORG_MEMBER

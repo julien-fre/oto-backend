@@ -28,8 +28,9 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .. import datastore_journal, token_scopes
-from ..datastore import (
+from .. import token_scopes
+from ..datastore import journal as datastore_journal
+from ..datastore.core import (
     NamespaceNotFound,
     NamespaceReadOnly,
     RowNotFound,

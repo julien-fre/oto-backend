@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import datastore_schema as dsv2
+from oto_mcp.datastore import schema as dsv2
 
 
 ENUM = {"key": "priorite", "type": "enum", "options": ["haute", "basse"]}
@@ -173,7 +173,7 @@ def live(pg_dsn):
 
 
 def _store():
-    from oto_mcp.datastore import make_store
+    from oto_mcp.datastore.core import make_store
     return make_store("sub-test")
 
 
@@ -207,7 +207,7 @@ def test_the_strict_table_still_refuses(live):
     import uuid
 
     from oto_mcp import db
-    from oto_mcp.datastore import RowValidationError
+    from oto_mcp.datastore.core import RowValidationError
     st = _store()
     ns = "t-" + uuid.uuid4().hex[:6]
     db.create_datastore_namespace("user", "sub-test", ns)

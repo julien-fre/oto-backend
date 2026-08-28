@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 
-from ..datastore_schema import VALUE_LAYER, split_layer  # noqa: F401 — ré-export
+from ..datastore.schema import VALUE_LAYER, split_layer  # noqa: F401 — ré-export
 
 __all__ = [
     "FIELD_VALUE_PARAM_SQL", "LAYER_VALUE_PARAM_SQL", "ROW_VALUES_TEXT_SQL",

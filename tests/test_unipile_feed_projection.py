@@ -80,7 +80,7 @@ def feed(monkeypatch):
 
     store = MagicMock()
     store.list_rows.return_value = list(ROWS)
-    monkeypatch.setattr("oto_mcp.datastore.make_store", lambda sub: store)
+    monkeypatch.setattr("oto_mcp.datastore.core.make_store", lambda sub: store)
     monkeypatch.setattr(U, "unipile_client", lambda *a, **k: MagicMock())
     monkeypatch.setattr("oto_mcp.access.current_user_sub_or_raise", lambda: "sub-1")
     monkeypatch.setattr(U, "_feed_is_stale", lambda sub, provider="LINKEDIN": False)

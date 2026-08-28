@@ -206,7 +206,7 @@ def _my_create(ctx: ResolvedCtx, inp: TokenCreateInput) -> dict:
         # pas dépasser les droits du sub, mais une faute de frappe produirait un jeton
         # muet qu'on croirait branché. Ce garde-fou n'existe qu'ici — au palier admin, le
         # catalogue visé n'est pas celui de l'émetteur.
-        from ..datastore import make_store
+        from ..datastore.core import make_store
         visible = {n["namespace"] for n in make_store(ctx.sub).list_namespaces()}
         missing = sorted(set(scopes["namespaces"]) - visible)
         if missing:

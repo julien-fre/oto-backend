@@ -28,9 +28,9 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import datastore_schema as dsv2
-from oto_mcp.datastore import DatastorePg
-from oto_mcp.datastore_errors import RowValidationError
+from oto_mcp.datastore import schema as dsv2
+from oto_mcp.datastore.core import DatastorePg
+from oto_mcp.datastore.errors import RowValidationError
 
 
 class _Db:
@@ -59,7 +59,7 @@ class _Db:
 
 
 def _monte(monkeypatch, schema=None):
-    import oto_mcp.datastore as ds
+    from oto_mcp.datastore import core as ds
     db = _Db()
     s = DatastorePg("u-1")
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False: 1)

@@ -67,7 +67,7 @@ def _upload_url(ctx: ResolvedCtx, inp: UploadUrlInput) -> dict:
         if not (inp.namespace and inp.namespace.strip()):
             raise AuthzDenied(400, "missing_namespace", "`namespace` requis.")
         ns = inp.namespace.strip()
-        from .. import datastore as ds  # lazy : évite tout cycle d'import au boot
+        from ..datastore import core as ds  # lazy : évite tout cycle d'import au boot
         store = ds.make_store(sub)
         try:
             ns_id = store.resolve_ns_id_for_write(ns)  # org active présente au mint

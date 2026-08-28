@@ -32,7 +32,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import access
-from ..datastore import NamespaceNotFound, NamespaceReadOnly, make_store
+from ..datastore.core import NamespaceNotFound, NamespaceReadOnly, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

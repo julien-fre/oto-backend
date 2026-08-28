@@ -239,7 +239,7 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
         return {"ok": True, "kind": "project_file", "file": row, "bytes": len(data)}
 
     if kind == "datastore":
-        from . import datastore as ds  # lazy : évite tout cycle d'import au boot
+        from .datastore import core as ds  # lazy : évite tout cycle d'import au boot
         rows = _parse_rows(data, target.get("format") or "ndjson")
         store = ds.make_store(sub)
         try:

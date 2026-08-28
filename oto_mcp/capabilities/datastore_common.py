@@ -19,7 +19,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .. import db, org_store, ownership
-from ..datastore import NamespaceNotFound, make_store
+from ..datastore.core import NamespaceNotFound, make_store
 from ._types import AuthzDenied
 
 # Phrase unique du champ de date des sorties datastore (cf. l'avertissement ci-dessus).
