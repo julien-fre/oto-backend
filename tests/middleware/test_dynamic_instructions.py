@@ -15,7 +15,7 @@ import oto_mcp.providers as providers
 import oto_mcp.roles as roles
 from oto_mcp import guide_store
 from oto_mcp import instructions as instr
-from oto_mcp import middleware as mw
+from oto_mcp.middleware import dynamic_instructions as mw
 
 
 # ── bloc plateforme A (DB override → seed) + catalogue dérivé toujours appendé ─

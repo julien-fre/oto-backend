@@ -11,7 +11,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST
 
 from oto_mcp.error_taxonomy import ErrorInfo, classify, jsonrpc_code, scrub
-from oto_mcp.middleware import ErrorEnvelopeMiddleware
+from oto_mcp.middleware.error_envelope import ErrorEnvelopeMiddleware
 
 
 class _Upstream(Exception):

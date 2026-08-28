@@ -7,7 +7,7 @@ import pytest
 from mcp.shared.exceptions import McpError
 
 from oto_mcp import access, call_axes, credentials_store, db, session_org
-from oto_mcp.middleware import CallContextMiddleware
+from oto_mcp.middleware.call_context import CallContextMiddleware
 
 
 # ── 1. Exposition sélective (applies) ────────────────────────────────────────
@@ -127,7 +127,7 @@ async def test_on_list_tools_advertises_only_where_applicable():
 
 @pytest.mark.asyncio
 async def test_on_list_tools_advertises_account_where_the_caller_has_several_keys(monkeypatch):
-    from oto_mcp import middleware as mwmod
+    from oto_mcp.middleware import call_context as mwmod
     mw = CallContextMiddleware(reserved_org_tools=set())
     tools = [_Tool("serper_search", {"type": "object", "properties": {}}),
              _Tool("hunter_domain_search", {"type": "object", "properties": {}})]

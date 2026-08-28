@@ -35,7 +35,7 @@ from ..tool_visibility import (
 
 # Méta/spine non dispatchables via `oto_call` (ADR 0036 §4) : déjà toujours visibles,
 # aucun intérêt à passer par le dispatch, et anti-boucle (`oto_call` sur lui-même).
-# Miroir de `middleware._SPINE_SERVICES`.
+# Miroir de `middleware.field_redaction._SPINE_SERVICES`.
 _NON_DISPATCHABLE: frozenset[str] = frozenset({"oto", "run", "feedback", "data"})
 
 # Budget d'une ligne de catalogue. ~350 entrées rendues d'un coup : chaque caractère

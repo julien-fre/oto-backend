@@ -1,6 +1,6 @@
 """Rédaction des champs sensibles du RÉSULTAT d'un tool — logique PARTAGÉE.
 
-Extraite de `middleware.FieldRedactionMiddleware` (chemin protocole `tools/call`)
+Extraite de `middleware.field_redaction.FieldRedactionMiddleware` (chemin protocole `tools/call`)
 pour être réutilisée par `oto_call` (dispatch universel, ADR 0036) : le dispatch
 exécute la cible via `Tool.run` **hors chaîne de middleware**, donc il doit
 ré-appliquer la rédaction lui-même — sinon un connecteur à PII

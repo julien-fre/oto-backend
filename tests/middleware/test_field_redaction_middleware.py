@@ -13,7 +13,8 @@ from fastmcp.tools.tool import ToolResult
 from mcp.types import TextContent
 from oto.tools.common import FieldFilter
 
-from oto_mcp import middleware, redaction
+from oto_mcp import redaction
+from oto_mcp.middleware import field_redaction
 from oto_mcp.field_filter_defaults import _CANDIDATE_PII
 
 
@@ -37,7 +38,7 @@ def _result(payload: dict, *, is_error=False, structured=True) -> ToolResult:
 
 def _run(name, result, *, ff=None, raises=False):
     """Exécute le middleware en patchant la résolution de FieldFilter."""
-    mw = middleware.FieldRedactionMiddleware()
+    mw = field_redaction.FieldRedactionMiddleware()
 
     if raises:
         def _resolve(_service):

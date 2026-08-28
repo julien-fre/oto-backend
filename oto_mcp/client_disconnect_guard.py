@@ -48,7 +48,7 @@ une exception soit acceptable :
   un event Sentry. Un test le fige (`tests/test_client_disconnect_guard.py`).
 
 **Middleware ASGI EXTERNE** : posé autour de l'app racine, il ne touche pas la chaîne de
-middlewares FastMCP (dont l'ordre est un contrat, cf. `tests/test_middleware_order.py`)
+middlewares FastMCP (dont l'ordre est un contrat, cf. `tests/middleware/test_middleware_order.py`)
 ni la lib `mcp` (non modifiée). Il est réversible d'une ligne dans `server.main`.
 """
 from __future__ import annotations

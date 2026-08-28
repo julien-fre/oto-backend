@@ -5,7 +5,8 @@ description: >-
   Les règles de travail du backend, chacune née d'un incident daté : ce qu'un test doit
   décrire (le système, pas l'intention), le montage réel comme seul banc d'un garde-fou,
   l'interdiction d'écrire une adresse en dur, les jetons de contexte d'appel réservés,
-  le budget de ce qu'un outil renvoie, l'ordre des middlewares MCP, la contrainte
+  le budget de ce qu'un outil renvoie, **où vit un fichier** (le dossier = le domaine),
+  l'ordre des middlewares MCP, la contrainte
   MONO-LOOP (aucun I/O bloquant), l'interdiction du silence (un `except` large doit
   re-lever, journaliser ou refuser en nommant), et le cycle d'un connecteur (cran
   d'activation, registre `providers/`, credential multi-champs, sonde de connexion,
@@ -17,6 +18,43 @@ description: >-
 
 Extrait de `CLAUDE.md` le 2026-08-19 : 281 lignes qui pesaient le quart de la carte.
 Le contenu n'a pas changé — seule sa place a bougé.
+
+## Où vit un fichier — le dossier EST le domaine
+
+Tranché le 2026-08-27. La règle tient en une phrase : **le dossier d'un fichier dit de
+quel domaine il relève**, et un préfixe dans un nom de fichier est un dossier qui
+s'ignore. `oto_mcp/` s'était mis à porter 127 modules à plat où le rangement se lisait
+dans les noms (`fod_*`, `datastore_*`, `api_routes_*`) — un classement réel, mais que
+rien ne rendait navigable et que rien ne tenait.
+
+- **Une famille de ≥ 4 fichiers devient un package, et les fichiers y perdent leur
+  marqueur de famille** : `datastore_schema.py` → `datastore/schema.py`. Une famille se
+  reconnaît au **préfixe** (`fod_*`) ou au **suffixe** quand il nomme le même domaine
+  (`*_oauth` → `auth/`). Sous 4, on reste à plat : trois fichiers ne font pas un
+  domaine, ils font trois fichiers.
+- **Le module « nu » d'une famille devient `<package>/core.py`** — il n'a pas de
+  préfixe à perdre (`datastore.py` → `datastore/core.py`). Exception nommée :
+  `api_routes.py` → `api/routes.py`, parce que ce module EST la table de routes.
+- **Un déplacement est PUR** : `git mv`, imports mis à jour dans le même lot, et
+  **aucun ré-export de compatibilité** — ni stub à l'ancien chemin, ni `import *`.
+  Un chemin mort qui répond encore est un chemin qui ne meurt jamais.
+- **Un package neuf a un `__init__.py` VIDE.** Trois façades plates existent et sont
+  les seules : `db.<fn>`, `access.<fn>`, `org_store.<fn>` — chacune figée par un test
+  de surface (`test_db_surface_frozen.py`, `test_access_surface_frozen.py`,
+  `test_org_store_surface_frozen.py`). Elles sont un contrat assumé, pas un précédent.
+- **`tests/` est le MIROIR de l'arbre** : un test va dans le dossier du module dont il
+  décrit le comportement, et **son nom de fichier ne change pas**
+  (`tests/middleware/test_middleware_order.py`). Renommer en plus casserait les dizaines
+  de citations `tests/test_<x>.py` qui vivent dans la doc et dans les docstrings — et
+  l'unicité des noms de fichiers est ce qui évite une collision de modules pytest
+  (`tests/` n'a pas d'`__init__.py`).
+- **Un fichier neuf** : s'il rejoint une famille existante, il naît dans son package,
+  sans préfixe. Sinon il naît à plat — et c'est le **quatrième** de son préfixe qui
+  déclenche la création du package, pas le premier qui en a l'intuition.
+- **Plafond de 500 lignes par fichier.** Un module qui le dépasse se découpe — mais
+  découper est un refactor, jamais le passager clandestin d'un déplacement.
+
+## Les règles, chacune née d'un incident daté
 
 - **Un test qui affirme une INTENTION grave le bug.** Trois fois le 13/08 : des tests
   vérifiaient que la découverte annonçait l'émetteur du tenant, que le lien collait notre
@@ -211,7 +249,7 @@ Le contenu n'a pas changé — seule sa place a bougé.
   `CallContext` → `FieldRedaction` → `ErrorEnvelope` → `UserDisabledTools` →
   `DynamicInstructions` → `ToolCallLogger` → `Sentry` (innermost : traceback brut au plus
   près du handler, et son `event_id` est posé AVANT que le calllog n'écrive la ligne).
-  Figé par `tests/test_middleware_order.py` — le changer demande de relire ses invariants.
+  Figé par `tests/middleware/test_middleware_order.py` — le changer demande de relire ses invariants.
 - **PERF — le serveur est MONO-LOOP : aucun I/O bloquant dans la boucle.** Un handler
   de tool qui n'`await` rien doit être `def` sync (threadpool) ; du DB sync dans un
   middleware = même règle (`run_in_threadpool`). Deux modes de gel vécus + garde-fous

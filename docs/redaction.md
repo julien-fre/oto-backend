@@ -25,7 +25,7 @@ l'agent (use-case d'origine : analyser un profil/CV candidat sans son identité)
 
 ## Principe : un middleware unique (pas de câblage par connecteur)
 
-`middleware.FieldRedactionMiddleware` (`on_call_tool`, **enregistré en dernier** dans
+`middleware.field_redaction.FieldRedactionMiddleware` (`on_call_tool`, **enregistré en dernier** dans
 `server._build_mcp` → enveloppe les autres, retouche le **résultat final**). Pour tout
 tool : `access.resolve_field_filter(namespace_of(name))` → applique le `FieldFilter`
 (oto-core) au résultat. Donc la rédaction est **disponible sur TOUS les connecteurs**
@@ -92,7 +92,7 @@ matchée à valeur **liste de scalaires** (`emails: [...]`) est masquée **élé
 **Règle** (2026-08-27, `otomata-tech/oto#32`) : un résultat d'outil qui ne porte
 **aucun** résultat part au modèle sous forme de **phrase seule** dans le canal texte
 — `structuredContent` gardant, lui, la structure vide intacte. Générique, appliquée
-par `middleware.EmptyResultMiddleware` à **tout** outil : ce n'est pas un correctif
+par `middleware.empty_result.EmptyResultMiddleware` à **tout** outil : ce n'est pas un correctif
 par connecteur.
 
 **L'incident fondateur.** Une flotte d'agents interrogeait une base sur des cibles
@@ -174,7 +174,7 @@ des connecteurs : un outil n'a pas à savoir comment on le rend.
 est monté **juste sous `ToolAliasMiddleware`**, donc plus externe que la rédaction et
 que l'écho de compte — qui réémettent tous deux le payload en JSON dans le canal
 texte (`rebuild_result`). Plus interne, la structure serait rétablie juste après
-avoir été retirée. Contrat figé par `tests/test_middleware_order.py`.
+avoir été retirée. Contrat figé par `tests/middleware/test_middleware_order.py`.
 
 ⚠️ **La face REST ne change pas d'un octet** : elle ne partage aucun code de rendu
 avec la chaîne MCP (`_rest_adapter` → `_json`), et continue de servir la structure
@@ -182,7 +182,7 @@ vide aux clients qui parsent.
 
 ## Surfaces & fichiers
 - backend : `redaction.py` (logique partagée : extraction, rédaction, réémission,
-  **rendu du vide**), `middleware.py` (FieldRedactionMiddleware, EmptyResultMiddleware),
+  **rendu du vide**), `middleware/field_redaction.py` + `middleware/empty_result.py`,
   `connector_schema_store.py`,
   `field_filter_defaults.py` (SERVER_DEFAULTS vide + TEMPLATES), `connector_field_schema.py`
   (curé, libellés), `capabilities/orgs_field_filters.py` (get/set/preview), `db.py`

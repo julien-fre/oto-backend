@@ -28,9 +28,21 @@ oto.ninja sous `/account` et parle au MCP via REST.
 
 ## Architecture
 
+⚠️ **Le dossier d'un fichier EST son domaine** (tranché le 27/08) : une famille de
+≥ 4 fichiers au même marqueur devient un package et les fichiers y perdent ce marqueur
+(`datastore_schema.py` → `datastore/schema.py`), `tests/` en est le miroir, et un
+déplacement ne laisse **jamais** de ré-export à l'ancien chemin. La règle complète (le
+critère, le module « nu » en `core.py`, les trois façades d'exception, où naît un
+fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
+
 ```
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
+├── middleware/       # la chaîne MCP, 1 module par middleware (alias, empty_result,
+│                     #   call_context, field_redaction, error_envelope, disabled_tools,
+│                     #   dynamic_instructions). L'ORDRE d'enregistrement est un contrat
+│                     #   et vit dans `server.py` — figé par
+│                     #   `tests/middleware/test_middleware_order.py`.
 ├── tools/            # 1 module par connecteur, chacun expose register(mcp)
 ├── providers/        # le REGISTRE : 1 module de déclaration par connecteur
 │                     #   (`CONNECTOR = _c(…)`), `__init__` AGRÈGE, `_model` = la forme.
@@ -414,7 +426,8 @@ migration vers la spec `2026-07-28`.
 **`docs/conventions.md`** — les règles de travail, chacune née d'un incident daté :
 test qui décrit le système et non l'intention, garde-fou exercé sur le montage RÉEL,
 aucune adresse en dur, jetons de contexte réservés, budget de ce qu'un outil renvoie,
-ordre des middlewares, contrainte MONO-LOOP, et le cycle complet d'un connecteur.
+**où vit un fichier** (le dossier = le domaine, familles de ≥ 4 en package, `tests/` en
+miroir), ordre des middlewares, contrainte MONO-LOOP, et le cycle complet d'un connecteur.
 **À lire avant d'écrire du code ici.**
 
 ⚠️ **Le refus est bruyant, la divergence est muette — et le CI le vérifie.** Un
@@ -449,7 +462,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 
 | doc | ce qu'il porte |
 |---|---|
-| `conventions.md` | les **règles de travail** du backend, chacune née d'un incident daté. À lire avant d'écrire du code ici. |
+| `conventions.md` | les **règles de travail** du backend, chacune née d'un incident daté, et **où vit un fichier** (le dossier = le domaine). À lire avant d'écrire du code ici. |
 | `commands.md` | recettes tests / deploy / logs / inspection DB + leurs pièges, et le **pin oto-core**. |
 | `silences-2026-08-27.md` | inventaire AST des `except` muets, les 10 « succès déguisés » corrigés, et le garde-fou `lint_silences` + sa convention `# noqa: SILENT`. |
 | `couches-et-capacites.md` | les 4 couches ADR 0004 et la **couche capacité** ADR 0009 (deux faces, une déclaration ; refus de champ inconnu ; console admin `*_op`). |

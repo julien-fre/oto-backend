@@ -32,7 +32,7 @@ import types
 
 import pytest
 
-from oto_mcp import middleware as mw
+from oto_mcp.middleware import dynamic_instructions as mw
 from oto_mcp.db import _conn
 
 

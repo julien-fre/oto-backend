@@ -79,7 +79,7 @@ def test_table_de_routes_figee():
 
 
 # --- Ordre des middlewares ASGI de la face REST -------------------------------
-# `test_middleware_order.py` fige ceux de la face MCP (chaîne fastmcp). Les ASGI,
+# `middleware/test_middleware_order.py` fige ceux de la face MCP (chaîne fastmcp). Les ASGI,
 # posés par `server.py` sur l'app Starlette, ne l'étaient PAS — alors que des
 # colonnes du journal en dépendent (docs/monitoring.md) : `RestCallLogger` est
 # ajouté EN DERNIER pour être le plus EXTERNE, donc chronométrer toute la requête,
@@ -98,7 +98,7 @@ def test_ordre_des_middlewares_asgi():
     `server.py`, pas au niveau module — les importer supposerait de booter."""
     tree = ast.parse((ROOT / "oto_mcp" / "server.py").read_text(encoding="utf-8"))
     # `app.add_middleware(...)` UNIQUEMENT : `mcp.add_middleware(...)` pose la chaîne
-    # MCP, gardée par `test_middleware_order.py` — deux contrats distincts.
+    # MCP, gardée par `middleware/test_middleware_order.py` — deux contrats distincts.
     poses = [ast.unparse(n.args[0]) for n in ast.walk(tree)
              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
              and n.func.attr == "add_middleware" and n.args

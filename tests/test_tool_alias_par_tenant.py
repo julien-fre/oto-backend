@@ -30,7 +30,7 @@ import pytest
 from fastmcp.server.middleware import MiddlewareContext
 
 from oto_mcp import instructions, providers, server, tenancy, tool_alias
-from oto_mcp.middleware import ToolAliasMiddleware
+from oto_mcp.middleware.alias import ToolAliasMiddleware
 
 _SUB_TENANT = "acme:u-1"
 _SUB_PLATEFORME = "bn01jfy76a5n"
@@ -62,7 +62,7 @@ def tenant_sans_prefixe():
 
 def _comme(monkeypatch, sub):
     """Le middleware et les tools méta lisent l'identité par le même hook."""
-    monkeypatch.setattr("oto_mcp.middleware.current_user_sub_from_token", lambda: sub)
+    monkeypatch.setattr("oto_mcp.middleware.alias.current_user_sub_from_token", lambda: sub)
 
 
 async def _liste_servie(monkeypatch, sub):

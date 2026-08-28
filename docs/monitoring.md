@@ -45,7 +45,7 @@ rester le plus EXTERNE et `SentryToolErrorMiddleware` le plus INTERNE : sinon `_
 est reset avant que le sink ne lise `current_org` (org d'audit fausse), ou l'event Sentry
 n'est pas encore capturé quand la ligne s'écrit. fastmcp exécute les middlewares dans
 l'**ordre d'ajout** (premier ajouté = plus externe). Contrat gardé par
-`tests/test_middleware_order.py`.
+`tests/middleware/test_middleware_order.py`.
 
 ## Ce qui n'est PAS tracé
 
