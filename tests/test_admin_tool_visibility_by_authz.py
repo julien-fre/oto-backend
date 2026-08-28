@@ -138,6 +138,9 @@ async def test_un_outil_ordinaire_n_est_jamais_concerne(toolbox):
 # par ici — c'est le moment où l'on regarde à qui il apparaîtra, plutôt que de le
 # découvrir dans la toolbox de tout le monde.
 PLANCHERS = {
+    # Surcharger une propriété de connecteur en base fait primer la donnée sur le code
+    # servi : c'est un acte de plateforme, jamais délégable à un opérateur.
+    "oto_admin_connector_setting": "super",
     "oto_admin_guide": None,            # ORG_MEMBER_OF / ORG_ADMIN_OF
     "oto_admin_invite": "operator",
     "oto_admin_key_grant": "operator",     # list PLATFORM, grant/revoke SUPER

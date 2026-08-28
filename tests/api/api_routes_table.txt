@@ -349,6 +349,8 @@ GET,HEAD /api/admin/connectors/{provider}/platform-access -> _handler
 OPTIONS /api/admin/connectors/{provider}/platform-access -> options_handler
 POST /api/admin/connectors/{provider}/platform-access -> _handler
 OPTIONS /api/admin/connectors/{provider}/platform-access -> options_handler
+POST /api/admin/connectors/settings -> _handler
+OPTIONS /api/admin/connectors/settings -> options_handler
 POST /api/me/unipile/connect -> _handler
 OPTIONS /api/me/unipile/connect -> options_handler
 POST /api/me/unipile/reconcile -> _handler

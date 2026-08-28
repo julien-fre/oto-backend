@@ -912,7 +912,7 @@ class SingleAccountConnector(ValueError):
 
 
 def guard_account_write(entity_type: str, entity_id: str, connector: str,
-                        account: str) -> None:
+                        account: str, org: Optional[int] = None) -> None:
     """Garde de pose d'un credential, commune aux TROIS surfaces déclaratives
     (membre `/api/settings/api-keys`, `org.secret.set`, `group.secret.set`).
 
@@ -923,10 +923,17 @@ def guard_account_write(entity_type: str, entity_id: str, connector: str,
     - mono-compte (ou connecteur hors registre) + compte nommé → refus, en disant
       quel connecteur et quel compte, parce que c'est ce que l'appelant doit corriger.
 
-    Tranche sur le REGISTRE, avant toute lecture du coffre : un refus ne doit pas
-    dépendre de l'état des comptes déjà posés."""
-    con = providers.connector_for_provider(connector)
-    if con is not None and con.auth_multi_account:
+    Tranche sur la CARDINALITÉ, avant toute lecture du coffre : un refus ne doit pas
+    dépendre de l'état des comptes déjà posés.
+
+    ⚠️ **Par `connectors.cardinality`, jamais par la propriété du registre** : une org
+    peut l'avoir surchargée en base (L6 pièce 2 c2), et c'est la MÊME fonction que lit
+    la résolution (`access.cascade._is_multi_account`). Une surcharge lue ici seulement
+    accepterait un deuxième compte que personne n'irait lire — le défaut exact
+    d'oto-backend#409, celui que cette garde existe pour fermer. `org` = l'org de
+    contexte ; les surfaces déclaratives la connaissent et la passent."""
+    from .connectors import cardinality
+    if cardinality.is_multi_account(connector, org):
         ensure_named_coexistence(entity_type, entity_id, connector, account)
         return
     if account:

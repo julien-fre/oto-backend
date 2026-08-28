@@ -181,7 +181,17 @@ def accepts_account_axis(name: str) -> bool:
     même si le schéma ne l'annonçait pas — le schéma n'annonce que ce qui a un sens
     pour lui (cf. `account_axis_advertised_for`)."""
     con = providers.connector_for_namespace(namespace_of(name))
-    return con is not None and (con.auth_multi_account or con.personal_cross_org)
+    if con is None:
+        return False
+    if con.personal_cross_org:
+        return True
+    # Volontairement org-AGNOSTIQUE : cet axe est lu par le middleware d'appel, où
+    # l'org de contexte coûterait une requête PAR APPEL. Et il n'autorise rien — il
+    # NOMME un compte, la résolution refuse (actionnable) si ce compte n'existe pas au
+    # palier. Le refuser rendrait en revanche une org ÉLARGIE par surcharge incapable
+    # de viser son second compte : la clé posée que rien ne va lire (oto-backend#409).
+    from .connectors import cardinality
+    return cardinality.accepted_anywhere(con.name)
 
 
 def account_axis_advertised_for(sub: Optional[str]) -> set[str]:

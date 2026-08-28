@@ -115,6 +115,42 @@ INSTANCES = """
 -- pas déplacé — l'intention est gardée par `tests/test_connector_instances_l6.py`,
 -- pas par de la vigilance, et le premier lecteur de résolution devra en retirer le
 -- garde-fou dans son propre commit.
+-- ─────────── Propriétés de connecteur SURCHARGEABLES (L6 pièce 2 c2) ───────────
+-- Le patron du bloc d'instructions, appliqué aux propriétés de connecteur : la
+-- CONSTANTE du registre est le défaut, une ligne ici est la SURCHARGE. Tranché par
+-- Alexis le 2026-08-27 — « la base peut primer sur le défaut du code », pour qu'un
+-- élargissement ne demande pas un déploiement.
+--
+-- Une seule `key` aujourd'hui : `cardinality` (`mono` | `multi`). La table est
+-- générique parce que la décision l'est (« les propriétés de connecteur »), pas parce
+-- qu'on anticipe : une colonne `cardinality` aurait fait une migration au deuxième
+-- besoin, et le registre en a une douzaine de candidates.
+--
+-- ⚠️ Elle est lue **au boot et sur rechargement explicite**, jamais à l'appel : la
+-- cardinalité est consultée jusqu'à quatre fois par appel d'outil, sur un serveur
+-- MONO-LOOP, contre une base managée distante (docs/event-loop-perf.md). Même patron
+-- que le registre d'émetteurs — et même conséquence, à dire dans la doc : le
+-- rechargement est PAR PROCESS.
+CREATE TABLE IF NOT EXISTS connector_settings (
+    -- Le scope de la surcharge. `platform` vaut pour tout le monde ; `org` ne vaut que
+    -- dans le contexte de CETTE org — la même lecture que partout ailleurs, l'org du
+    -- REQUÉRANT, jamais son appartenance.
+    scope_type TEXT NOT NULL,
+    scope_id TEXT NOT NULL,          -- 'platform' (convention maison) | id d'org
+    connector TEXT NOT NULL,         -- le nom du PORTEUR du credential (délégation résolue)
+    key TEXT NOT NULL,               -- 'cardinality'
+    value TEXT NOT NULL,             -- 'mono' | 'multi'
+    set_by TEXT,
+    set_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Contraintes NOMMÉES (docs/live-migrations.md).
+    CONSTRAINT connector_settings_scope_type_check
+        CHECK (scope_type IN ('platform', 'org')),
+    CONSTRAINT connector_settings_pkey
+        PRIMARY KEY (scope_type, scope_id, connector, key)
+);
+-- Pas d'index de plus : la table se lit ENTIÈREMENT (une poignée de lignes), au boot
+-- et au rechargement. Un index par `key` servirait une requête qui n'existe pas.
+
 CREATE TABLE IF NOT EXISTS connector_instances (
     -- L'identifiant STABLE, et la raison d'être du lot : il survit à ce qui casse un
     -- ref composé (renommage de label, de compte), et il donne aux sous-instances un

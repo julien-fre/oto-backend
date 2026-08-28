@@ -85,8 +85,14 @@ from oto_mcp.db import _schema, schema
 # RETIRÉS est identique à celle de `main` (e1c50269…, 31 021 caractères).
 # ⚠️ Valeurs RECALCULÉES sur le résultat du rebase, jamais recopiées d'un côté :
 # quatre lots ont touché ce DDL le même jour.
-EMPREINTE = "7eeef4da697eeb058f6d80b1ade4ba10aecb24eb0ed2bcbb56bbfb1bd9029038"
-LONGUEUR = 111981
+# 2026-08-29 (L6 pièce 2 c2) : la table NEUVE `connector_settings` — les propriétés
+# de connecteur surchargeables (`cardinality` aujourd'hui). Le patron du bloc
+# d'instructions : constante du registre = défaut, ligne DB = surcharge, pour qu'un
+# élargissement ne demande pas un déploiement. ADDITIVE : rien n'est retiré ni
+# contraint sur les tables existantes, et la prod qui tourne l'ancien code ne la lit
+# pas. Sans ligne posée, comportement et empreinte identiques.
+EMPREINTE = "6d6208467f8762a9b8131d7ac08b91be564bc0d5a85bcb581adb416f303ecf9e"
+LONGUEUR = 114111
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

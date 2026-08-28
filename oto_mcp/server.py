@@ -547,6 +547,18 @@ def _prepare_database() -> None:
             guide_store.seed_platform_guides()
     except Exception as e:
         logger.warning("seed_platform_guides at boot failed: %s", e)
+    # Surcharges de propriétés de connecteur (L6 pièce 2 c2) : LECTURE, pas travail —
+    # une poignée de lignes, chargées en mémoire pour que le chemin chaud n'ait jamais
+    # à les demander (la cardinalité est consultée jusqu'à 4× par appel d'outil, sur un
+    # serveur mono-loop). Ici plutôt qu'à la première résolution : au boot l'échec est
+    # journalisé et le process retombe sur les défauts du registre, c'est-à-dire le
+    # comportement d'avant le lot. ⚠️ PAR PROCESS — cf. `reload` de la capacité admin.
+    try:
+        from .connectors import cardinality
+        with _timed("load_connector_settings"):
+            cardinality.reload()
+    except Exception as e:
+        logger.warning("load_connector_settings at boot failed: %s", e)
     logger.info("boot: préparation de la base %.0f ms (une seule fois par process)",
                 (time.monotonic() - debut) * 1000)
 

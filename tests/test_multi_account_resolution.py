@@ -12,6 +12,11 @@ from oto_mcp import access
 
 
 class _MultiCon:
+    # `name` est requis depuis L6 pièce 2 c2 : la cardinalité peut être SURCHARGÉE en
+    # base par connecteur, donc la trancher demande de savoir de quel connecteur on
+    # parle. Un faux sans nom cassait ici, et c'est bien : un faux incomplet doit
+    # tomber quand le seam s'enrichit, pas répondre à côté.
+    name = "zoho"
     auth_multi_account = True
     auth_modes = ("byo",)
 
