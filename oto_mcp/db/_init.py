@@ -185,6 +185,46 @@ def _init_db_once() -> None:
                             ("vat_scheme", "TEXT")):
             conn.execute(f"ALTER TABLE billing_payments "
                          f"ADD COLUMN IF NOT EXISTS {_col} {_type}")
+        # #487 : le journal des acceptations. LOT A, ADDITIF — la table
+        # `legal_acceptances` et sa PK `(sub, doc_slug)` restent INTACTES, parce que
+        # le code servi en PRODUCTION y fait encore son `ON CONFLICT (sub, doc_slug)`
+        # et que prod et preprod partagent la base (`docs/live-migrations.md`).
+        # Retirer cette unicité — ce qu'un historique dans la même table exigerait —
+        # casserait le `POST /api/me/legal/accept` de la prod, c'est-à-dire le gate
+        # CGU de l'INSCRIPTION, pendant toute la fenêtre entre le déploiement preprod
+        # et le tag. Le journal est donc une table NEUVE (`_schema.py`), et
+        # `legal_acceptances` devient une projection maintenue en écriture double le
+        # temps de la fenêtre. Son retrait est l'issue #507, et il a sa garde : ne pas
+        # l'exécuter tant que la prod ne sert pas le code qui lit le journal.
+        #
+        # RECOPIE À CHAQUE BOOT, et non un one-shot : pendant la fenêtre, la prod
+        # écrit dans la projection SEULE (elle ne connaît pas le journal). Sans cette
+        # reprise, une acceptation donnée en prod entre le boot preprod et le tag ne
+        # rejoindrait JAMAIS le journal — et comme le journal est ce que le gate lit,
+        # elle serait invisible : on redemanderait ses CGU à quelqu'un qui vient de
+        # les accepter. Le boot du tag de prod rattrape donc tout ce que la fenêtre a
+        # produit. C'est le patron « copie legacy→cible à CHAQUE boot » du playbook ;
+        # après le drop de #507, la garde `to_regclass` la rend inerte.
+        #
+        # Idempotente par anti-jointure sur (sub, doc, version, accepted_at) : une
+        # ligne déjà recopiée ne l'est pas deux fois, et une acceptation RÉÉCRITE par
+        # la prod (nouvelle version, ou même version restampée) entre bien, puisque
+        # son `accepted_at` a changé. L'index `idx_legal_events_dernier` sert
+        # l'anti-jointure comme il sert la lecture du gate.
+        #
+        # `context`/`ip`/`user_agent`/`org_id` restent NULS sur ces lignes : la
+        # projection ne les a jamais portés, et les inventer ferait mentir une trace
+        # dont tout l'intérêt est de servir de preuve.
+        if conn.execute("SELECT to_regclass('legal_acceptances') AS t").fetchone()["t"]:
+            conn.execute("""
+                INSERT INTO legal_acceptance_events (sub, doc_slug, version, accepted_at)
+                SELECT l.sub, l.doc_slug, l.version, l.accepted_at
+                  FROM legal_acceptances l
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM legal_acceptance_events e
+                      WHERE e.sub = l.sub AND e.doc_slug = l.doc_slug
+                        AND e.version = l.version AND e.accepted_at = l.accepted_at)
+            """)
         # ADR 0032 §2 : le lien projet→entité porte un `role` (pourquoi cette entité est ici).
         conn.execute("ALTER TABLE project_links ADD COLUMN IF NOT EXISTS role TEXT")
         # ADR 0032 §4 (B2) : surcharge contextuelle préfaite du lien (connecteur → identité/instructions).

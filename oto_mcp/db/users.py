@@ -177,6 +177,9 @@ _PK_SUB_TABLES = (
     # - l'acceptation CGU suit la personne : sans repointage, le compte fusionné se
     #   voyait redemander des CGU déjà acceptées. Les deux comptes ont accepté ⟹ en
     #   doublon on garde la ligne du canonique (l'acceptation la plus fraîche).
+    #   ⚠️ Ceci est la PROJECTION (#487) : elle garde sa PK `(sub, doc_slug)`, donc
+    #   son patron ne change pas. Le JOURNAL, lui, n'a aucune unicité et se repointe
+    #   nu — cf. `legal_acceptance_events` dans `_SUB_COLUMNS`.
     ("legal_acceptances", "sub", ("doc_slug",)),
     # - la réservation de connecteur (gouvernance d'équipe/org) visait un identifiant
     #   mort : le membre re-fusionné perdait l'accès réservé. `principal_id` mélange
@@ -225,6 +228,13 @@ _SUB_COLUMNS = [
     # et activité perdus de vue, déclencheurs orphelins) :
     ("runs", "sub"), ("project_activity", "sub"), ("runner_triggers", "sub"),
     ("tool_calls", "effective_sub"),
+    # Le JOURNAL des acceptations légales (#487) — la source de vérité du gate, donc
+    # ce qui décide si le compte fusionné se voit redemander ses CGU. Aucune unicité :
+    # un UPDATE nu est à la fois suffisant et le seul geste CORRECT ici — dédupliquer
+    # SUPPRIMERAIT des preuves de consentement pour cause de doublon, alors que deux
+    # acceptations du même document par deux comptes de la même personne sont deux
+    # faits distincts, tous deux vrais.
+    ("legal_acceptance_events", "sub"),
     # attribution (soft)
     ("projects", "created_by"),
     ("orgs", "created_by"),

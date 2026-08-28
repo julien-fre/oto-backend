@@ -51,7 +51,9 @@ def acceptances(monkeypatch):
     state: dict[str, dict] = {}
     monkeypatch.setattr(db, "get_legal_acceptances", lambda sub: dict(state))
 
-    def _record(sub, items):
+    def _record(sub, items, **trace):
+        # `**trace` : les satellites de l'acceptation (contexte, org, IP, user-agent)
+        # ne changent rien au choix de la VERSION enregistrée, qui est le sujet ici.
         for slug, version in items:
             state[slug] = {"version": version, "accepted_at": "2026-08-20 10:00:00"}
     monkeypatch.setattr(db, "record_legal_acceptances", _record)

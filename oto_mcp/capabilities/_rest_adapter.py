@@ -22,6 +22,7 @@ from starlette.routing import Route
 
 logger = logging.getLogger(__name__)
 
+from .. import client_trace
 from ..json_body import InvalidJsonBody, read_json_body
 from ._types import AuthzDenied, Capability, NotModified, RawCtx
 
@@ -107,6 +108,18 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
             inp = cap.Input(**data)
         except ValidationError:
             return json_error(request, 400, "invalid_input")
+        # L'empreinte du client (IP réelle + user-agent) est posée AUTOUR du
+        # handler : elle est un fait de transport, et un handler ne voit pas la
+        # requête (ADR 0004). Une seule capacité la lit aujourd'hui — l'acceptation
+        # d'un document légal, qu'il faut pouvoir SITUER, pas seulement dater — mais
+        # elle vaut pour toutes les routes générées, donc elle se pose ici et pas
+        # dans une route. `finally` obligatoire : une ContextVar non reset fuit sur
+        # la requête suivante servie par la même tâche.
+        jeton_client = client_trace.set_current(
+            ip=client_trace.pick_ip(request.headers.get("cf-connecting-ip"),
+                                    request.headers.get("x-forwarded-for"),
+                                    request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent"))
         try:
             ctx = cap.authz(RawCtx(sub=sub), inp)
             result = cap.handler(ctx, inp)
@@ -119,7 +132,17 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
             # n'émet `detail` que s'il lui est passé. La face MCP, elle, rendait déjà
             # `d.message` — les deux surfaces disaient donc des choses différentes du
             # MÊME refus.
+            #
+            # `details` en 5e arg, et SEULEMENT s'il y en a : un refus structuré
+            # (#487) doit arriver entier au client, mais le passer inconditionnellement
+            # imposerait la signature à tous les `json_error` injectés — dont ceux des
+            # modules de routes historiques et des stubs de test.
+            if d.details:
+                return json_error(request, d.status, d.code, d.message or None,
+                                  details=d.details)
             return json_error(request, d.status, d.code, d.message or None)
+        finally:
+            client_trace.reset(jeton_client)
         if isinstance(result, NotModified):
             # 304 : **sans corps**, c'est la spec et c'est tout l'intérêt — le client
             # garde ce qu'il a en cache. Un 200 portant « rien n'a changé » ferait

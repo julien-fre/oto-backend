@@ -49,8 +49,15 @@ from oto_mcp.db import _schema, schema
 # décomposition fiscale de chaque tentative. Les colonnes existent aussi en ALTER
 # dans `_init.py` : la base est PARTAGÉE prod/preprod, le CREATE TABLE ne sert
 # qu'aux installs vierges.
-EMPREINTE = "d4ef7dc92da00471cc30181236a6b7acee6b078443db1c4b573e079c7ab7fde2"
-LONGUEUR = 104814
+# 2026-08-28 (#487) : le JOURNAL des acceptations, table NEUVE
+# (`legal_acceptance_events` + son index). **Lot A additif** : `legal_acceptances` et
+# sa PK `(sub, doc_slug)` ne bougent PAS — le code servi en prod y fait encore son
+# `ON CONFLICT`, et la base est partagée. La projection devient transitoire (écriture
+# double datée) et part avec l'issue #507 ; c'est ce drop-là qui sera le DDL
+# destructif, une fois la prod sur le code qui lit le journal.
+EMPREINTE = "c66c7fdc39c9a458474244331d23f4af40dce2fef9f82fd35ff89660a22150fb"
+LONGUEUR = 107466
+
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
 

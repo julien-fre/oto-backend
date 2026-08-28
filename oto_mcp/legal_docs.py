@@ -22,6 +22,8 @@ exactement les documents d'oto, jusqu'à ce qu'une ligne soit posée pour lui.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from . import db, tenancy
 
 # slug → métadonnées de la VERSION COURANTE (miroir de web/src/legal `current`).
@@ -56,3 +58,61 @@ def docs_for(tenant_slug: str) -> dict[str, dict[str, str]]:
     if not overrides:
         return CURRENT_DOCS
     return {slug: {**meta, **overrides.get(slug, {})} for slug, meta in CURRENT_DOCS.items()}
+
+
+# ── ce qui reste à accepter ──────────────────────────────────────────────────
+#
+# Un SEUL calcul du « reste à accepter », partagé par les deux gates qui s'en
+# servent : le gate d'accès du dashboard (`capabilities/me_legal`) et le gate
+# d'achat (`billing.subscribe`, #487). Deux calculs auraient divergé au premier
+# document ajouté à un contexte — et la divergence se serait vue en production,
+# sur un tunnel de paiement qui laisse passer ce que l'écran d'accès refuse.
+
+def is_current(acceptances: dict, docs: dict, slug: str) -> bool:
+    """Ce doc est-il accepté À LA VERSION COURANTE ? Une acceptation d'une version
+    antérieure ne compte pas — c'est tout l'intérêt du bump de version."""
+    accepte = acceptances.get(slug)
+    return accepte is not None and accepte["version"] == docs[slug]["version"]
+
+
+def missing_docs(acceptances: dict, docs: dict, slugs: list[str]) -> list[dict]:
+    """Les documents de `slugs` qui restent à accepter, DÉCRITS assez pour être
+    présentés à quelqu'un : slug, libellé, version courante, URL — et la version
+    déjà acceptée s'il y en a une.
+
+    `accepted_version` est ce qui distingue « jamais accepté » (None) de « accepté
+    à une version périmée » : un refus qui ne dit pas lequel des deux enverrait
+    l'utilisateur chercher une case qu'il a déjà cochée.
+
+    Fonction PURE : les acceptations et les docs arrivent en argument, la lecture
+    est à l'appelant (le statut du dashboard en fait UNE pour tous les contextes)."""
+    manquants = []
+    for slug in slugs:
+        if is_current(acceptances, docs, slug):
+            continue
+        accepte = acceptances.get(slug)
+        manquants.append({
+            "slug": slug,
+            "label": docs[slug]["label"],
+            "version": docs[slug]["version"],
+            "url": docs[slug]["url"],
+            "accepted_version": accepte["version"] if accepte else None,
+        })
+    return manquants
+
+
+def missing_for_sub(sub: Optional[str], context: str) -> list[dict]:
+    """`missing_docs` pour CE sub et CE contexte — la version qui lit la base.
+
+    Les documents sont ceux de SON tenant (un sub Tulina doit les CGU de Tulina,
+    pas celles d'oto) ; les acceptations sont les siennes, à la ligne la plus
+    récente de chaque doc.
+
+    `sub` absent ⟹ aucune acceptation ⟹ tout est dû : le gate se ferme, il ne
+    s'ouvre pas."""
+    required = CONTEXTS.get(context)
+    if required is None:
+        raise ValueError(f"unknown_context: contexte légal inconnu : {context!r}")
+    docs = docs_for(tenancy.current().tenant_of(sub))
+    acceptances = db.get_legal_acceptances(sub) if sub else {}
+    return missing_docs(acceptances, docs, required)
