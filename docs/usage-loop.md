@@ -32,6 +32,18 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
   one-shot (sans `doctrine`), même trace. Le `run_id` vit dans une **pile en état de
   session FastMCP** (`doctrine_run.py`, runs imbriqués OK), stampé sur chaque appel côté
   serveur — l'agent ne thread rien.
+  - **Retrouver un `run_id` perdu** (#473, 28/08) : `oto_project op=runs` **sans**
+    `project_id` rend MES déroulés encore OUVERTS, chacun avec son `run_id` et son état
+    lisible (`db.my_runs`). Sans ça, un agent qui perd le fil ne peut plus clore ce
+    qu'il a ouvert — `run_finish` n'accepte qu'un `run_id`, le bloc de contexte annonce
+    les déroulés par leur INTITULÉ, un run ouvert hors projet n'est rattaché à aucun, et
+    la seule surface qui portait l'identifiant (`oto_org_monitoring op=runs`) est une
+    lentille d'org_admin. Le déroulé restait « en cours » pour toujours — le régime
+    dominant, pas le cas rare (cf. §run silencieux).
+    ⚠️ **Scopé au `sub`, PAS à l'org** — délibérément, à la différence de toutes les
+    lentilles voisines : un run s'ouvre dans l'org active et l'agent en change en route,
+    donc borner à l'org courante cacherait exactement le run qu'on ne retrouve plus. La
+    propriété, elle, borne dur (la règle même de `finish_run`).
 - **Signaux volontaires** : capacité MCP+REST unique (`capabilities/usage.py`) `feedback`
   — axe explicite `signal` ∈ `tool_feedback | gap` → table **durable** `usage_signals`
   (hors prune 30j). `gap` = cas d'usage non couvert (l'agent capte la demande non satisfaite).
@@ -52,6 +64,21 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
   - `resolved` — traité. Aucune note exigée (le travail livré parle de lui-même).
   Le backlog vivant = `signals?status=pending` (= open ∪ acknowledged). `pending` est un
   FILTRE, pas un état.
+- **Ré-aiguillage — corriger l'ORG d'un signal** (#471, 28/08) :
+  `POST /api/admin/usage/signals/{id}/org` (PLATFORM_ADMIN, `org_id` requis, `null` =
+  plateforme). Pour un signal écrit AU SUJET d'un espace et déposé sur un AUTRE, parce
+  qu'un appel avait omis son jeton d'org — il y restait à jamais, compté dans les
+  lentilles d'un espace qui n'aurait jamais dû le voir. Seule l'ADRESSE bouge : corps,
+  état et arbitrage sont intacts, et la réponse porte `previous_org_id` (de quoi
+  vérifier le geste, et le défaire si c'est la destination qu'on a mal tapée).
+  - ⚠️ **Un signal ne se SUPPRIME pas, il se ré-aiguille** — décision du 28/08, tenue
+    par un test. Un signal est un FAIT (l'agent a réellement buté sur ce manque) et sa
+    ligne en est l'unique copie ; le déplacer le retire du mauvais espace ET le rend au
+    bon (les deux lentilles d'org comptent par `org_id`), là où une suppression ferait
+    la première moitié, perdrait la seconde, et rouvrirait sous un autre nom la porte
+    que `declined` referme en exigeant un motif.
+  - ⚠️ **Pas encore de face MCP** : `oto_admin_signal` vit dans `admin_console.py` et
+    n'a pas été touché — la console y gagnera un `op='reroute'`.
 - **Le retour à celui qui a signalé (#451, 27/08)** : `POST /api/admin/usage/notify-reporters`
   (MCP `oto_admin_signal(op='notify_preview'|'notify_send')`, PLATFORM_ADMIN). Colonne
   `usage_signals.notified_at` — NULL = son auteur ne sait pas encore ; effacée à chaque

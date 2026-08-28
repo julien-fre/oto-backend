@@ -465,6 +465,51 @@ def set_usage_signal_status(
         return dict(row) if row else None
 
 
+def reroute_usage_signal(signal_id: int, *, org_id: Optional[int]) -> Optional[dict]:
+    """Change l'ORGANISATION d'un signal. Rend la row à jour, ou None si l'id est inconnu.
+
+    Le défaut réparé (#471) : un signal écrit AU SUJET d'un espace et déposé sur un
+    AUTRE, parce qu'un appel avait omis son jeton d'org. `feedback` écrit et ne relit
+    rien, l'arbitrage pose un état et pas une adresse — la ligne restait donc là pour
+    toujours, comptée dans les lentilles d'un espace qui n'aurait jamais dû la voir.
+
+    **Déplacer, pas supprimer.** Un signal est un fait — l'agent a réellement buté sur
+    ce manque — et cette ligne en est l'unique copie. C'est son ADRESSE qui est fausse,
+    pas son existence : on la corrige, ce qui retire le signal du mauvais espace ET le
+    rend au bon (les deux lentilles d'org comptent par `org_id`). Une suppression ferait
+    la première moitié et perdrait la seconde, en plus de rouvrir la porte que
+    `set_usage_signal_status` referme — une pile où des lignes disparaissent sans
+    qu'on sache pourquoi.
+
+    `org_id=None` est légitime : un signal qui ne concerne aucun espace client remonte
+    au niveau plateforme. **L'existence de l'org cible se vérifie chez l'appelant**
+    (capacité) : ici on écrit, on ne juge pas — et une FK ne dirait pas au demandeur
+    quel espace il vient de nommer par erreur.
+
+    ⚠️ Le CORPS n'est jamais touché : ré-aiguiller déplace une adresse. Une réécriture
+    du texte serait une réécriture de l'histoire, ce que ce module refuse par ailleurs.
+    ⚠️ L'ARBITRAGE non plus : un signal déjà tranché reste tranché après son
+    déplacement — le changer d'espace ne change pas la décision prise à son sujet.
+    """
+    with _connect() as conn:
+        # L'org d'AVANT est rendue avec la ligne, dans la MÊME instruction : sans elle
+        # un ré-aiguillage ne se relit pas — ni pour le vérifier, ni pour le défaire si
+        # c'est la destination qu'on a tapée de travers. La lire en deux temps la
+        # laisserait dériver entre les deux.
+        row = conn.execute(
+            """
+            UPDATE usage_signals s SET org_id = %s
+              FROM (SELECT id, org_id FROM usage_signals WHERE id = %s) avant
+             WHERE s.id = avant.id
+            RETURNING s.id, s.created_at, s.sub, s.org_id, s.signal, s.kind, s.target,
+                      s.body, s.session_id, s.source, s.status, s.resolved_at,
+                      s.resolved_by, s.resolution, avant.org_id AS previous_org_id
+            """,
+            (int(org_id) if org_id is not None else None, signal_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def pending_signal_notices() -> list[dict]:
     """Ce qui a été ARBITRÉ sans que son auteur l'ait appris — la matière du retour.
 

@@ -211,6 +211,61 @@ def _set_signal_status(ctx: ResolvedCtx, inp: SetSignalStatusInput) -> dict:
     return {"ok": True, "signal": row, "counts": db.count_usage_signals_by_status()}
 
 
+class RerouteSignalInput(BaseModel):
+    signal_id: int
+    # `None` n'est PAS « ne rien changer » : c'est la plateforme, une destination comme
+    # une autre pour un signal qui ne concerne aucun espace client. Le champ est requis
+    # pour que l'écriture soit toujours un choix, jamais un défaut hérité.
+    org_id: Optional[int]
+
+
+class SignalRerouted(BaseModel):
+    """Un signal déplacé d'un espace à un autre. `previous_org_id` dit d'où il vient —
+    de quoi vérifier le geste, et le défaire si c'est la destination qu'on a mal tapée.
+
+    `ok: false` + `error: "not_found"` quand l'id n'existe pas : même forme historique
+    que l'arbitrage, un 404 déguisé en 200."""
+    ok: bool
+    signal: Optional[SignalRow] = None
+    previous_org_id: Optional[int] = None
+    counts: Optional[dict[str, int]] = None
+    error: Optional[str] = None
+    id: Optional[int] = None
+
+
+def _reroute_signal(ctx: ResolvedCtx, inp: RerouteSignalInput) -> dict:
+    """Corrige l'ORGANISATION d'un signal mal aiguillé (#471).
+
+    Le cas : un signal écrit au sujet d'un espace, déposé sur un autre parce qu'un
+    appel avait omis son jeton d'org. Il y restait à jamais — `feedback` écrit sans
+    relire, et l'arbitrage pose un état, pas une adresse.
+
+    **Ré-aiguiller plutôt que supprimer**, et c'est la décision du lot : un signal est
+    un FAIT (l'agent a réellement buté sur ce manque), et sa ligne en est l'unique
+    copie. Le déplacer le retire de l'espace qui n'aurait pas dû le voir ET le rend à
+    celui qui aurait dû — les deux lentilles d'org comptent par `org_id`. Le supprimer
+    ferait la première moitié, perdrait la seconde, et rouvrirait sous un autre nom la
+    porte que `_set_signal_status` referme en exigeant un motif pour tout refus : une
+    pile où des lignes disparaissent sans qu'on sache pourquoi.
+
+    L'org cible est VÉRIFIÉE avant l'écriture. Sans ce contrôle, une faute de frappe
+    enterrerait le signal dans un espace inexistant — le défaut qu'on répare, en pire :
+    plus personne ne le voit et rien ne le dit.
+    """
+    if inp.org_id is not None and org_store.get_org(int(inp.org_id)) is None:
+        raise AuthzDenied(
+            404, "unknown_org",
+            f"Aucune organisation #{inp.org_id} — vérifie l'id avant de déplacer le "
+            f"signal, sinon il devient invisible partout. `org_id: null` le remonte "
+            f"au niveau plateforme.")
+    row = db.reroute_usage_signal(inp.signal_id, org_id=inp.org_id)
+    if row is None:
+        return {"ok": False, "error": "not_found", "id": inp.signal_id}
+    precedent = row.pop("previous_org_id", None)
+    return {"ok": True, "signal": row, "previous_org_id": precedent,
+            "counts": db.count_usage_signals_by_status()}
+
+
 class NotifyReportersInput(BaseModel):
     op: Literal["preview", "send"] = "preview"
     # Restreint l'envoi à ces destinataires (emails ou subs). Vide = tout le monde.
@@ -348,6 +403,24 @@ CAPABILITIES += [
                            "(won't do — `note` REQUIRED, say why) | resolved (done). "
                            "note = what was decided, and why.",
                rest=RestBinding("POST", "/api/admin/usage/signals/{signal_id}/status")),
+    Capability(key="usage.reroute_signal", handler=_reroute_signal,
+               Input=RerouteSignalInput, authz=PLATFORM_ADMIN,
+               Output=SignalRerouted,
+               description="Move a usage signal to the org it was really about. For a "
+                           "signal filed against the WRONG workspace — an agent whose "
+                           "call omitted its org token — which otherwise stays there "
+                           "forever, counted in the lenses of a workspace that should "
+                           "never have seen it. signal_id = the signal's id (from "
+                           "usage.signals) ; org_id = where it belongs, or null for the "
+                           "platform. Only the address moves: body, status and "
+                           "arbitration are untouched, so the measure survives — which "
+                           "is why signals are rerouted and never deleted. "
+                           "Platform-admin only.",
+               # La cible se lit dans le CHEMIN (règle de la maison), et le sous-chemin
+               # dit ce qui bouge : `/org`, à côté de `/status`. Deux gestes distincts
+               # sur la même ligne, deux adresses — un `PATCH` fourre-tout ferait de
+               # l'arbitrage et du ré-aiguillage la même opération.
+               rest=RestBinding("POST", "/api/admin/usage/signals/{signal_id}/org")),
     Capability(key="usage.notify_reporters", handler=_notify_reporters,
                Input=NotifyReportersInput, authz=PLATFORM_ADMIN,
                Output=NotifyReportersOutput,

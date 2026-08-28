@@ -229,6 +229,8 @@ GET,HEAD /api/admin/usage/signals -> _handler
 OPTIONS /api/admin/usage/signals -> options_handler
 POST /api/admin/usage/signals/{signal_id}/status -> _handler
 OPTIONS /api/admin/usage/signals/{signal_id}/status -> options_handler
+POST /api/admin/usage/signals/{signal_id}/org -> _handler
+OPTIONS /api/admin/usage/signals/{signal_id}/org -> options_handler
 POST /api/admin/usage/notify-reporters -> _handler
 OPTIONS /api/admin/usage/notify-reporters -> options_handler
 GET,HEAD /api/admin/monitoring/summary -> _handler
