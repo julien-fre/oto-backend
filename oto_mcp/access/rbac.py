@@ -268,18 +268,33 @@ def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dic
 
 
 def reachable_team_key(sub: str, org: Optional[int], provider: str,
-                       groups: "Optional[list[dict]]" = None) -> Optional[dict]:
+                       groups: "Optional[list[dict]]" = None,
+                       secrets_by_group: "Optional[dict]" = None) -> Optional[dict]:
     """Première équipe de `org` dont `sub` est membre et qui détient un secret
     `provider` — le hint `team_key_group` de `status_for` (drawer). `groups` =
     liste pré-chargée de `list_groups_for_user` (hissée par l'appelant batch,
-    /api/me boucle sur ~50 providers). Best-effort, ne lève jamais."""
+    /api/me boucle sur ~50 providers). Best-effort, ne lève jamais.
+
+    `secrets_by_group` = la carte de `cascade.group_secret_map` quand l'appelant
+    l'a déjà construite. Sans elle le comportement est INCHANGÉ (une lecture par
+    équipe et par connecteur) : c'est ce que font les autres appelants et les
+    tests. Avec elle, `/api/me` cesse de payer un aller-retour par connecteur
+    `forbidden` — soit la majorité d'un compte réel, 67 lectures mesurées sur une
+    seule équipe, et autant de plus par équipe supplémentaire.
+
+    L'ORDRE est le contrat : la première équipe de `groups` qui détient le secret
+    gagne, carte ou pas. Répondre depuis la carte ne change que l'endroit où la
+    réponse est lue, jamais laquelle."""
     if org is None or provider not in cascade.ORG_SHAREABLE_PROVIDERS:
         return None
     try:
         if groups is None:
             groups = group_store.list_groups_for_user(sub, org)
         for g in groups:
-            if group_store.has_group_secret(g["group_id"], provider):
+            detient = (provider in secrets_by_group.get(int(g["group_id"]), ())
+                       if secrets_by_group is not None
+                       else group_store.has_group_secret(g["group_id"], provider))
+            if detient:
                 return {"id": g["group_id"], "name": g["name"]}
     # noqa: SILENT — fail-open de visibilité, backstop dur au call-time
     except Exception:
