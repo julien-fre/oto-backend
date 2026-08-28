@@ -222,6 +222,47 @@ def recent_runs(sub: str, org_id: Optional[int], limit: int = 5) -> list[dict]:
     return list(rows)
 
 
+def my_runs(sub: str, limit: int = 20, *, open_only: bool = False) -> list[dict]:
+    """MES déroulés, avec leur `run_id` — de quoi refermer ce qu'on a ouvert (#473).
+
+    Un agent qui perd le fil ne peut plus le clore : `run_finish` exige un `run_id`
+    que rien ne lui rend. Le bloc de contexte annonce bien « derniers déroulés », mais
+    par leur INTITULÉ ; `list_runs` porte l'id et reste réservé aux lentilles
+    d'opérateur (plateforme, ou org_admin) ; et un run ouvert HORS projet n'est
+    énumérable nulle part. Un déroulé sans identifiant reste donc ouvert pour
+    toujours — et c'est le régime dominant, pas le cas rare.
+
+    ⚠️ **Volontairement PAS scopé à une org**, à la différence de `recent_runs` et de
+    `list_runs`. Un run s'ouvre dans l'org active, et l'agent en change en cours de
+    route : borner à l'org courante rendrait inaccessible exactement le run qu'on ne
+    retrouve plus. Le scope de propriété, lui, est dur — `s.sub = %s`, la MÊME règle
+    que `finish_run` : on ne liste que ce qu'on aurait le droit de clore, donc lister
+    n'ouvre aucun accès qui n'existait pas.
+
+    `open_only` = les runs sans fait de clôture (`outcome IS NULL`), c'est-à-dire ceux
+    qui restent à refermer. Le silence de 48 h n'est PAS filtré ici : il se dérive à
+    la lecture (`run_status`), et un run muet est justement un run à clore.
+    """
+    limit = max(1, min(int(limit), 200))
+    # Le filtre porte sur la COLONNE DÉRIVÉE de la CTE (`j.outcome`), jamais sur les
+    # alias internes de `_runs_from_journal` : son `extra` est contractuellement un
+    # prédicat sur l'ouverture (`s`), et s'y glisser un prédicat sur la clôture ferait
+    # dépendre cette lecture de la forme interne d'un helper partagé.
+    ouverts = "\n             WHERE j.outcome IS NULL" if open_only else ""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"""
+            WITH j AS ({_runs_from_journal(" AND s.sub = %s")})
+            SELECT j.run_id, j.label, j.doctrine, j.doctrine_version, j.org_id,
+                   x.project_id, j.started_at, j.finished_at, j.outcome, j.last_seen_at
+              FROM j LEFT JOIN runs x ON x.run_id = j.run_id{ouverts}
+             ORDER BY j.started_at DESC LIMIT %s
+            """,
+            (sub, limit),
+        ).fetchall()
+    return list(rows)
+
+
 def project_run_tools(project_id: int, limit: int = 200) -> list[str]:
     """Outils réellement APPELÉS par les runs d'un projet — la part « usage observé »
     de l'inventaire dérivé (ADR 0035 B4 : surface d'un projet = refs des procédures

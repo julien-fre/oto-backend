@@ -499,6 +499,28 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                            db.list_projects_for_owners(owners, templates_only=True)],
                           inp.fields)
 
+    if inp.op == "runs" and inp.project_id is None:
+        # « Fermer un déroulé dont on a perdu l'identifiant » (#473). `run_finish`
+        # n'accepte qu'un `run_id`, et rien ne le rendait à son propriétaire : le bloc
+        # de contexte annonce les derniers déroulés par leur INTITULÉ, et un run ouvert
+        # hors projet n'était énumérable nulle part. Il restait donc « en cours » pour
+        # toujours — le régime dominant, pas le cas rare (15 des 16 runs ouverts
+        # mesurés en prod, cf. `run_status`).
+        #
+        # Ce n'est PAS un repli silencieux du cas « projet manquant » : c'est une
+        # portée DÉCLARÉE, que la réponse nomme (`scope`, `open_only`). Toutes les
+        # autres ops par-id continuent de refuser en nommant leur manque, juste en
+        # dessous.
+        #
+        # Ouverts SEULEMENT, parce que c'est la question posée — « qu'est-ce qu'il me
+        # reste à refermer ? » — et qu'un historique complet noierait deux runs à clore
+        # sous vingt runs déjà clos. Les runs d'un PROJET, eux, se demandent en nommant
+        # le projet, et rendent tout (c'est la pastille ok/échec du viewer).
+        from .. import run_status
+        runs = db.my_runs(sub, limit=20, open_only=True)
+        return {"scope": "mine", "open_only": True,
+                "runs": [{**r, "status": run_status.describe(r)} for r in runs]}
+
     # ops ciblées : project_id requis + existence
     _require(inp.project_id is not None, "missing_project", "`project_id` requis.")
     rid = str(inp.project_id)
@@ -1133,6 +1155,10 @@ CAPABILITIES += [
             "from links & declared slots) — never retype a tool list: derive, then curate. "
             "runs (optional target_ref = a linked procedure's stable id) = the project's "
             "recent runs (label/doctrine/outcome), filtered to that procedure when given. "
+            "OMIT project_id on op=runs and you get YOUR OWN still-open runs instead, "
+            "each with its `run_id` — that is how you find a run you opened and lost "
+            "the id of, so you can finally close it with run_finish. Across every org, "
+            "since a run you cannot find is usually one you opened elsewhere. "
             "lint (optional stale_days, default 90) = KB health of this project's pages: "
             "stale (untouched since), empty (trivial body), duplicate_titles (likely merges). "
             "publish_mcp (mcp_slug + mcp_access anonymous|secret|org + mcp_tools = the fixed "
