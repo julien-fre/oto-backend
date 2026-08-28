@@ -158,7 +158,7 @@ def test_materialize_datastore_batch(monkeypatch):
 
         def off_schema_report(self):
             return {"hors_schema": ["actualite_sociale"], "hors_schema_hint": "…"}
-    import oto_mcp.datastore as ds
+    from oto_mcp.datastore import core as ds
     monkeypatch.setattr(ds, "make_store", lambda sub: FakeStore())
     target = {"kind": "datastore", "ns_id": 7, "namespace": "boites",
               "format": "ndjson", "key": "siren"}
@@ -175,7 +175,7 @@ def test_mint_datastore_seals_resolved_ns_id(monkeypatch):
     class FakeStore:
         def resolve_ns_id_for_write(self, ns): return 42
         def declared_key(self, ns): return "email"
-    import oto_mcp.datastore as ds
+    from oto_mcp.datastore import core as ds
     monkeypatch.setattr(ds, "make_store", lambda sub: FakeStore())
     monkeypatch.setattr(ut, "check_target_access", lambda sub, target: None)
     out = U._upload_url(CTX, U.UploadUrlInput(target="datastore", namespace="contacts"))

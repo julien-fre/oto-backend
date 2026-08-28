@@ -31,8 +31,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import datastore_journal
-from ..datastore import (
+from ..datastore import journal as datastore_journal
+from ..datastore.core import (
     NamespaceNotFound,
     NamespaceReadOnly,
     RowClaimed,

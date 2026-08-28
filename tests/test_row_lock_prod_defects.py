@@ -72,7 +72,7 @@ def table(live):
 
 
 def _store(sub="sub-agent"):
-    from oto_mcp.datastore import make_store
+    from oto_mcp.datastore.core import make_store
     return make_store(sub)
 
 
@@ -95,7 +95,7 @@ def test_a_lease_read_as_a_string_still_protects(table):
 
     On vérifie donc la protection SUR LA FORME RÉELLE de la donnée, pas sur une forme
     de laboratoire."""
-    from oto_mcp.datastore import RowLocked
+    from oto_mcp.datastore.core import RowLocked
     ns, ns_id = table
 
     _store().claim_next(ns, worker="agent-1")     # bail posé, date rendue en chaîne
@@ -110,7 +110,7 @@ def test_an_unreadable_lease_refuses_rather_than_opens(table):
     """Doctrine maison : pas de fallback, on lève. Un bail dont on ne sait pas s'il
     court protège encore quelqu'un — l'ignorance ne doit pas se résoudre en faveur de
     l'écrivain, qui est précisément ce que faisait le fail-open."""
-    from oto_mcp.datastore import DatastorePg, RowLocked
+    from oto_mcp.datastore.core import DatastorePg, RowLocked
 
     guard = DatastorePg._lease_guard("r0")
     with pytest.raises(RowLocked):
@@ -122,7 +122,7 @@ def test_an_expired_lease_read_as_a_string_does_not_block(table):
     """Le pendant : la chaîne est PARSÉE, donc un bail expiré rendu en texte cesse
     bien de protéger. Sans le parse, on refuserait des écritures parfaitement
     légitimes — l'erreur symétrique de celle qu'on corrige."""
-    from oto_mcp.datastore import DatastorePg
+    from oto_mcp.datastore.core import DatastorePg
 
     passe = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
     DatastorePg._lease_guard("r0")({"claimed_by": "mort", "claimed_until": passe,
@@ -133,7 +133,7 @@ def test_a_batch_no_longer_writes_over_someone_elses_row(table):
     """Le chemin par lot passe par la fusion : sa protection était inerte, donc un
     lot écrivait sur les lignes d'autrui **sans un mot**. C'était le contournement
     utilisé en production."""
-    from oto_mcp.datastore import RowLocked
+    from oto_mcp.datastore.core import RowLocked
     ns, ns_id = table
 
     _store().claim_next(ns, worker="agent-1")
@@ -202,7 +202,7 @@ def test_closing_the_run_frees_the_campaign(table):
 def test_the_refusal_carries_the_way_out(table):
     """Un 500 ne dit rien. Le refus doit porter QUI tient, JUSQU'À QUAND et COMMENT
     lever — c'est ce que l'agent bloqué n'avait pas."""
-    from oto_mcp.datastore import RowLocked
+    from oto_mcp.datastore.core import RowLocked
     ns, ns_id = table
 
     _store().claim_next(ns, worker="agent-1")

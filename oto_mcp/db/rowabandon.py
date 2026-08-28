@@ -25,7 +25,7 @@ from __future__ import annotations
 import logging
 from typing import NamedTuple, Optional
 
-from ..datastore_schema import (
+from ..datastore.schema import (
     abandon_state_of,
     max_claims_of,
     status_field,

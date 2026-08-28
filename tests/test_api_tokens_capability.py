@@ -26,7 +26,8 @@ from starlette.responses import JSONResponse
 
 from _datastore_rest import cap, call, stub_authz
 
-from oto_mcp import credentials_store, datastore
+from oto_mcp import credentials_store
+from oto_mcp.datastore import core as datastore
 from oto_mcp.capabilities import _rest_adapter, api_tokens as at
 
 _JETONS = [{"id": 7, "label": "cli", "created_at": "2026-08-01", "last_used_at": None,

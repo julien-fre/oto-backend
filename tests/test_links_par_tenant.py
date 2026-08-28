@@ -120,7 +120,7 @@ def test_une_redirection_sans_type_connu_mene_au_moins_quelque_part(registre):
 # --- les surfaces --------------------------------------------------------------
 
 def test_le_lien_dun_tableau_disparait_chez_un_partenaire_sans_tableaux(registre):
-    from oto_mcp.datastore import _ns_url
+    from oto_mcp.datastore.core import _ns_url
     assert _ns_url(203, "acme:u") is None
     assert _ns_url(203, "bn01jfy76a5n") == f"{config.dashboard_url()}/data/203"
 

@@ -22,8 +22,9 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import datastore_journal, db
-from ..datastore import NamespaceNotFound, RowNotFound, make_store
+from .. import db
+from ..datastore import journal as datastore_journal
+from ..datastore.core import NamespaceNotFound, RowNotFound, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES

@@ -1127,7 +1127,7 @@ def register(mcp: FastMCP) -> None:
                 `None` = texte intégral).
         """
         if op == "feed":
-            from ..datastore import make_store, NamespaceNotFound
+            from ..datastore.core import make_store, NamespaceNotFound
 
             sub = access.current_user_sub_or_raise()
             client = unipile_client()

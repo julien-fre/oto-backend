@@ -30,7 +30,7 @@ donc **hors gate d'activation** et **sans dépendance externe** — marche sans
 connecter Google (plus de `412 google_not_connected`). Le partage est **DB-only**
 (`datastore_shares` ; le destinataire lit via son propre `sub`, plus de
 permission Drive). `data_url` renvoie un **deep-link dashboard** (`/console/data`),
-pas une URL de Sheet. Code : `datastore.py` (`DatastorePg`) + `tools/datastore.py`
+pas une URL de Sheet. Code : `datastore/core.py` (`DatastorePg`) + `tools/datastore.py`
 (face MCP) + `capabilities/datastore_*.py` (face REST, depuis #302 — plus
 `api_routes_datastore.py`, qui n'en porte plus rien) + fonctions `db.datastore_*`.
 
@@ -85,7 +85,7 @@ désormais AUSSI une ligne **sémantique** dans la même table `tool_calls`
 (`kind='rest'`), nommée dans le **vocabulaire des tools MCP** (`data_write`,
 `data_delete_row`, `data_release`) et portant `namespace`/`ns_id`/`id`/`fields`/
 `from_status`/`to_status`. Helper unique `calllog.log_rest_call` (best-effort, hors
-chemin chaud) ; colle datastore dans `datastore_journal.py`. Lectures : capacités
+chemin chaud) ; colle datastore dans `datastore/journal.py`. Lectures : capacités
 `me.datastore.row_activity` (`GET …/rows/{row_id}/activity`) et `me.datastore.activity`
 (`GET …/activity`, `?limit=` borné 200) — elles ne filtrent plus `kind='mcp'`, et
 résolvent `sub → email` **à la lecture** (un lot par page : `tool_calls.email` n'est
@@ -502,7 +502,7 @@ Google pour le datastore se voit aussi demander l'accès Gmail. Choix assumé
 
 **Toute colonne a des sous-champs** — ce n'est pas une forme que certaines valeurs
 adoptent, c'est le contrat. Une colonne « plate » est simplement une colonne dont les
-sous-champs sont vides. Vocabulaire FERMÉ, source unique dans `datastore_schema.py` :
+sous-champs sont vides. Vocabulaire FERMÉ, source unique dans `datastore/schema.py` :
 `valeur` (la colonne elle-même) + trois couches, `origine` · `comment` · `link`.
 
 **Le nom nu rend toujours la VALEUR.** `row["email"]` rend un e-mail, provenance ou
@@ -639,15 +639,16 @@ mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser 
 | `db/rowabandon.py` | le plafond de reprises : quand la file cesse de tourner à vide |
 | `db/datastore_ns.py` | le TABLEAU : existence, nom, propriété, partages |
 | `db/datastore.py` | les LIGNES : CRUD + clé métier/index |
-| `datastore_errors.py` | les refus — **aucune dépendance**, importable de partout |
-| `datastore_columns.py` | la colonne côté Python : fusion des couches, résolution des anciens noms |
-| `datastore_schema_ops.py` | poser/retoucher/nettoyer le FORMAT (mixin du store) |
-| `datastore.py` | le store qui COMPOSE — gros par nature |
+| `datastore/errors.py` | les refus — **aucune dépendance**, importable de partout |
+| `datastore/columns.py` | la colonne côté Python : fusion des couches, résolution des anciens noms |
+| `datastore/schema.py` | le FORMAT : le vocabulaire déclaré et sa validation |
+| `datastore/schema_ops.py` | poser/retoucher/nettoyer le FORMAT (mixin du store) |
+| `datastore/core.py` | le store qui COMPOSE — gros par nature |
 
-Déplacements PURS : `db/datastore.py` et `datastore.py` ré-exportent, la surface plate
+Déplacements PURS : `db/datastore.py` et `datastore/core.py` ré-exportent, la surface plate
 `db.<fn>` est figée par `tests/test_db_surface_frozen.py` (cliquet : on peut ajouter,
 jamais retirer). ⚠️ Une scission fait dormir les noms hérités des globals dans les
-branches rares — balayage figé par `tests/test_datastore_ns_duplicate.py`.
+branches rares — balayage figé par `tests/datastore/test_datastore_ns_duplicate.py`.
 
 ## Ce qu'oto SAIT d'un champ, et ce qu'il ne saura jamais (14/08)
 

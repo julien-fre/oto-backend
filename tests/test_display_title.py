@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import datastore_schema as dsv2
+from oto_mcp.datastore import schema as dsv2
 
 
 def test_display_names_the_row_without_touching_its_type():

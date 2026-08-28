@@ -38,7 +38,7 @@ rien ne rendait navigable et que rien ne tenait.
 - **Un déplacement est PUR** : `git mv`, imports mis à jour dans le même lot, et
   **aucun ré-export de compatibilité** — ni stub à l'ancien chemin, ni `import *`.
   Un chemin mort qui répond encore est un chemin qui ne meurt jamais.
-- **Un package neuf a un `__init__.py` VIDE.** Trois façades plates existent et sont
+- **Un package neuf a un `__init__.py` SANS CODE** (une docstring, rien d'autre). Trois façades plates existent et sont
   les seules : `db.<fn>`, `access.<fn>`, `org_store.<fn>` — chacune figée par un test
   de surface (`test_db_surface_frozen.py`, `test_access_surface_frozen.py`,
   `test_org_store_surface_frozen.py`). Elles sont un contrat assumé, pas un précédent.
@@ -53,6 +53,15 @@ rien ne rendait navigable et que rien ne tenait.
   déclenche la création du package, pas le premier qui en a l'intuition.
 - **Plafond de 500 lignes par fichier.** Un module qui le dépasse se découpe — mais
   découper est un refactor, jamais le passager clandestin d'un déplacement.
+- ⚠️ **Un déplacement se vérifie SANS le repli de l'install editable** (vécu 28/08,
+  CI rouge / local vert). Le tree `/data/oto/backend` est installé en editable : son
+  finder est ajouté à `sys.meta_path`, donc un import resté sur l'ancien chemin
+  (`from .. import datastore_schema as dsv2`) continue de résoudre — sur le fichier
+  d'AVANT, dans un autre checkout. La suite passe au vert sur du code qui n'existe plus
+  dans la branche, et c'est la CI qui l'apprend. Deux parades, à faire les deux : un
+  **balayage AST** des imports qui visent encore la famille déplacée (le grep rate les
+  listes `from .. import a, x as y, b`), et une exécution de la suite avec le finder
+  editable RETIRÉ de `sys.meta_path`.
 
 ## Les règles, chacune née d'un incident daté
 

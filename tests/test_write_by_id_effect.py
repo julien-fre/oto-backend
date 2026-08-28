@@ -74,7 +74,7 @@ CONTACTS = [{"nom": "Jo Mercier", "fonction": "Gérante", "email": "jo@x.fr"}]
 
 
 def _store():
-    from oto_mcp.datastore import make_store
+    from oto_mcp.datastore.core import make_store
     return make_store("sub-test")
 
 
@@ -176,7 +176,7 @@ def test_le_patch_par_id_horodate_la_ligne(table):
 
 def test_le_patch_dun_id_inconnu_refuse_en_nommant(table):
     """L'autre issue honorable : un refus qui dit ce qui manque."""
-    from oto_mcp.datastore import RowNotFound
+    from oto_mcp.datastore.core import RowNotFound
     st, ns, ns_id, _rid = table
 
     with pytest.raises(RowNotFound):
@@ -250,7 +250,7 @@ def test_le_remplacement_par_id_a_un_effet(table):
 
 
 def test_la_suppression_a_un_effet_et_refuse_ce_quelle_ne_trouve_pas(table):
-    from oto_mcp.datastore import RowNotFound
+    from oto_mcp.datastore.core import RowNotFound
     st, ns, ns_id, rid = table
 
     st.delete_row(ns, rid)
@@ -282,7 +282,7 @@ def test_le_bail_se_pose_et_se_leve_pour_de_vrai(table):
 def test_ecrire_sur_une_ligne_reservee_par_un_autre_refuse_en_nommant(table):
     """La protection du bail doit REFUSER, jamais avaler l'écriture : c'est le même
     principe, vu du côté du garde-fou."""
-    from oto_mcp.datastore import RowLocked
+    from oto_mcp.datastore.core import RowLocked
     st, ns, ns_id, rid = table
     st.claim_row(ns, rid, worker="w-1")
 

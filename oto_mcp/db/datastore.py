@@ -18,7 +18,7 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
-from ..datastore_schema import LAYER_KEYS, VALUE_LAYER
+from ..datastore.schema import LAYER_KEYS, VALUE_LAYER
 # Chemins et feuilles : extraits dans `paths` (#325), ré-exportés ici pour que la
 # surface plate `db.<fn>` et tous les appelants restent inchangés.
 from .paths import (  # noqa: F401

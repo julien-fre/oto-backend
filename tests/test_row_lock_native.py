@@ -65,7 +65,7 @@ def table(live):
 
 
 def _store():
-    from oto_mcp.datastore import make_store
+    from oto_mcp.datastore.core import make_store
     return make_store("sub-test")
 
 
@@ -147,7 +147,7 @@ def test_releasing_an_unknown_run_is_a_cheap_no_op():
 def test_writing_on_a_row_held_by_another_is_refused(table):
     """Le bail protège désormais la DONNÉE, pas seulement l'attribution."""
     from oto_mcp import session_org
-    from oto_mcp.datastore import RowLocked
+    from oto_mcp.datastore.core import RowLocked
     ns, ns_id = table
 
     t = session_org.set_call_run("run-titulaire")
@@ -184,7 +184,7 @@ def test_the_holder_writes_freely_through_its_worker(table):
     """La seconde : la sortie explicite hors run — un agent qui reprend son travail
     dans une autre session doit pouvoir écrire SA ligne."""
     from oto_mcp import db, session_org
-    from oto_mcp.datastore import writing_as
+    from oto_mcp.datastore.core import writing_as
     ns, ns_id = table
 
     t = session_org.set_call_run("run-y")
@@ -230,7 +230,7 @@ def test_releasing_then_writing_is_the_documented_way_out(table):
     Deux gestes délibérés — il n'y a pas de « forcer » en un clic, un bouton force
     devenant un réflexe qui rendrait le verrou décoratif."""
     from oto_mcp import db, session_org
-    from oto_mcp.datastore import RowLocked
+    from oto_mcp.datastore.core import RowLocked
     ns, ns_id = table
 
     t = session_org.set_call_run("run-z")
@@ -252,7 +252,7 @@ def test_every_write_path_is_covered_not_just_the_merge(table):
     pas. Une protection posée sur le seul merge aurait été un verrou troué — et le
     trou aurait été invisible, puisque le cas le plus courant, lui, était protégé."""
     from oto_mcp import session_org
-    from oto_mcp.datastore import RowLocked
+    from oto_mcp.datastore.core import RowLocked
     ns, ns_id = table
 
     t = session_org.set_call_run("run-couverture")
@@ -301,7 +301,7 @@ def test_writing_a_final_state_no_longer_frees_the_row(table):
     _schema_lifecycle(ns_id)
     row = _store().claim_next(ns, worker="w1")
 
-    from oto_mcp.datastore import writing_as
+    from oto_mcp.datastore.core import writing_as
     with writing_as("w1"):                       # le titulaire écrit son verdict
         _store().upsert_row(ns, row["_id"], {"statut": "fait"})
 
@@ -316,7 +316,7 @@ def test_the_change_is_announced_where_it_happens(table):
     _schema_lifecycle(ns_id)
     row = _store().claim_next(ns, worker="w1")
 
-    from oto_mcp.datastore import writing_as
+    from oto_mcp.datastore.core import writing_as
     st = _store()
     with writing_as("w1"):
         st.upsert_row(ns, row["_id"], {"statut": "fait"})

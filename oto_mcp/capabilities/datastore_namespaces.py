@@ -30,7 +30,7 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import db, roles, token_scopes
-from ..datastore import NamespaceExists, NamespaceForbidden, NamespaceNotFound, make_store
+from ..datastore.core import NamespaceExists, NamespaceForbidden, NamespaceNotFound, make_store
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .datastore_common import HORODATAGE, govern_ns, ns_not_found

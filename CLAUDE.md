@@ -38,6 +38,8 @@ fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
 ```
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
+├── datastore/        # le spine de records typés : core (le store qui COMPOSE), schema,
+│                     #   schema_ops, columns, errors, journal. `__init__` sans code.
 ├── middleware/       # la chaîne MCP, 1 module par middleware (alias, empty_result,
 │                     #   call_context, field_redaction, error_envelope, disabled_tools,
 │                     #   dynamic_instructions). L'ORDRE d'enregistrement est un contrat
@@ -237,8 +239,9 @@ Spine plateforme de stockage structuré (PG/JSONB natif, plus Google Sheets). Su
 `data_*` (MCP) + REST `/api/datastore/*` (**100 % dérivée** depuis le 12/08, donc soumise au
 refus de champ inconnu) ; OAuth Google per-user câblé ici. Où poser un lot : le datastore est
 **découpé par coutures** — `db/paths` · `db/query` (**PUR**) · `db/rowlock` · `db/datastore_ns`
-(le TABLEAU) · `db/datastore` (les LIGNES) · `datastore_errors` (**aucune dépendance**) ·
-`datastore_columns` · `datastore_schema_ops` · `datastore.py` (le store qui COMPOSE).
+(le TABLEAU) · `db/datastore` (les LIGNES) · `datastore/errors` (**aucune dépendance**) ·
+`datastore/columns` · `datastore/schema` · `datastore/schema_ops` · `datastore/core.py`
+(le store qui COMPOSE).
 ⚠️ La surface plate `db.<fn>` est un **cliquet** (`tests/test_db_surface_frozen.py` : on peut
 ajouter, jamais retirer). ⚠️ Oto gère les **types standards**, **jamais l'interprétation métier
 d'une VALEUR** — entre les deux, l'ordre des `options` déclarées au schéma est honoré, parce

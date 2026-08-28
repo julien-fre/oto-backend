@@ -18,8 +18,9 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access, datastore_schema as dsv2, db, ownership
-from ..datastore import (
+from .. import access, db, ownership
+from ..datastore import schema as dsv2
+from ..datastore.core import (
     InvalidCursor,
     NamespaceExists,
     NamespaceForbidden,
