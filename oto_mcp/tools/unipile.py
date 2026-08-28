@@ -405,6 +405,86 @@ def status_for(sub: str, *, org=access._UNSET, group=access._UNSET) -> dict:
     }
 
 
+def account_status(provider: str = "LINKEDIN") -> dict:
+    """« Mon compte {provider} est-il connecté, et sa session est-elle vivante ? »
+
+    Né du signal **#452** (org 2, 14/08/2026). Le NOM `linkedin_unipile_account`
+    promet l'état du compte ; l'outil ne servait que l'ardoise premium (contrats
+    Recruiter / Sales Navigator). Un agent venu vérifier « mon LinkedIn est-il
+    connecté ? » a inventé `op='status'`, s'est pris un `invalid_arguments` (appel
+    248959, args `{op:'status'}`) et en a conclu « pas connecté » — alors que le canal
+    l'était, et un utilisateur a signalé « ça ne marche pas ».
+
+    Deux contraintes, toutes deux tirées de ce mode de panne :
+
+    - **Ça RÉPOND, ça ne lève pas.** Sans compte lié, `unipile_client()` lève une
+      McpError : bâtir le statut dessus aurait remplacé un faux négatif par une
+      erreur, c'est-à-dire rien changé. Ici, « pas connecté » est une RÉPONSE.
+    - **Ça résout comme un vrai appel.** `resolve_operated_account_id` est
+      exactement ce que `unipile_client()` emprunte (pin `_account=`, compte
+      accordé #55, compte propre de l'org) — donc « status dit connecté » implique
+      « un appel trouvera un compte ». Une autre lecture recréerait la carte qui
+      rassure pendant que les appels échouent.
+
+    `connected` ≠ `alive` : un compte reste LIÉ en base alors que sa session est
+    morte (checkpoint, cookie tourné — #236), et c'est précisément l'état où une
+    carte verte trompe le plus. `alive=None` = sonde indisponible, pas « morte ».
+    """
+    from ..connectors import identities as connector_identities
+    from ..connectors import readiness as connector_readiness
+
+    sub = access.current_user_sub_or_raise()
+    org = access.current_org(sub)
+    front = {p: f for f, p in UNIPILE_CHANNELS.items()}.get(provider, provider.lower())
+
+    try:
+        account_id = connector_identities.resolve_operated_account_id(sub, provider)
+        pointer_error = None
+    except ValueError as e:
+        # Pointeur « identité opérée » orphelin (grant révoqué, compte déconnecté par
+        # son propriétaire) : un vrai appel LÈVE ici. Le statut, lui, le RAPPORTE —
+        # c'est le genre d'état qu'on vient justement lui demander.
+        account_id, pointer_error = None, str(e)
+
+    label = None
+    if account_id:
+        label = next((a.get("account_name") for a in db.list_unipile_accounts(sub)
+                      if a.get("account_id") == account_id), None)
+        if label is None:
+            granted = db.granted_accounts_for(sub, provider) or {}
+            g = granted.get(account_id)
+            label = (g or {}).get("account_name") if isinstance(g, dict) else None
+
+    alive = None
+    if account_id:
+        try:
+            alive = bool(unipile_client(provider).account_alive(account_id))
+        except Exception:
+            # Sonde indisponible ≠ session morte : on rend `alive=None` et on le dit,
+            # plutôt que d'annoncer une panne qu'on n'a pas constatée.
+            logger.warning("sonde de liveness unipile indisponible (%s)", provider,
+                           exc_info=True)
+
+    out = {"connected": account_id is not None, "account_id": account_id,
+           "account_name": label, "channel": provider, "alive": alive}
+
+    if account_id is None:
+        # Le geste manquant vient du seam PARTAGÉ (option fermée ? aucune clé ? juste
+        # un canal à lier ?) — la même réponse que la carte connecteur, pas une
+        # seconde version qui divergerait.
+        diag = connector_readiness.diagnose(
+            sub, "unipile", org=org, group=access.current_group(sub))
+        out["next_step"] = pointer_error or (
+            diag.next_step if diag is not None
+            else connector_readiness.no_identity_step(sub, "unipile", "compte"))
+    elif alive is False:
+        out["next_step"] = (
+            f"Le compte {front} est bien lié, mais sa session est MORTE côté "
+            f"fournisseur (checkpoint, mot de passe changé, cookie révoqué) : tout "
+            f"appel échouera. Reconnecte-le via `unipile_connect_start`.")
+    return out
+
+
 def _status_pending_action(sub: str, org, group, entry: dict):
     """Hook `status_hints` (seam générique, lot 2) : la clé résout et l'option est
     ouverte, mais AUCUN canal n'est lié → l'étape manquante est « Connecte un
@@ -1263,25 +1343,38 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def linkedin_unipile_account(
-        op: Literal["contracts", "select", "inmail_balance"] = "contracts",
+        op: Literal["status", "contracts", "select", "inmail_balance"] = "contracts",
         contract_id: Optional[str] = None,
     ) -> dict:
-        """Ardoise premium du compte LinkedIn connecté (Recruiter / Sales Navigator).
+        """Le compte LinkedIn connecté : son ÉTAT (op="status"), et son ardoise
+        premium Recruiter / Sales Navigator (les trois autres op).
 
-        Nécessite l'abonnement correspondant SUR le compte connecté, et le siège
-        premium activé au connect (`unipile_connect_start(premium=…)`) — sinon les
-        APIs premium répondent 403 « out of your scope ».
-
-        `op` :
+        - **"status"** — « mon LinkedIn est-il connecté ? » : `connected`,
+          `account_id`, `account_name`, et `alive` (la session peut être MORTE alors
+          que le compte reste lié — checkpoint, cookie tourné). Répond toujours ;
+          `connected:false` porte `next_step`, le geste qui manque. **C'est l'op à
+          prendre pour vérifier un onboarding messagerie** (#452 : un agent l'avait
+          inventée, s'était pris un `invalid_arguments` et en avait conclu, à tort,
+          que le canal n'était pas connecté).
         - **"contracts"** (défaut) : les contrats premium disponibles — l'`id` à
           passer à op="select".
         - **"select"** : active un contrat pour les appels premium qui suivent.
         - **"inmail_balance"** : solde de crédits InMail (messages premium).
 
+        Les trois ops premium exigent l'abonnement correspondant SUR le compte
+        connecté et le siège premium activé au connect
+        (`unipile_connect_start(premium=…)`) — sinon les APIs premium répondent
+        403 « out of your scope ». `op="status"`, lui, n'exige rien.
+
         Args:
-            op: contracts (défaut) | select | inmail_balance.
+            op: status | contracts (défaut) | select | inmail_balance.
             contract_id: op="select" — id renvoyé par op="contracts".
         """
+        # AVANT `unipile_client()` : celui-ci LÈVE quand aucun compte n'est lié, ce
+        # qui est exactement l'état que `status` doit pouvoir rapporter (#452).
+        if op == "status":
+            return account_status("LINKEDIN")
+
         client = unipile_client()
 
         if op == "contracts":
@@ -1291,7 +1384,7 @@ def register(mcp: FastMCP) -> None:
         if op == "inmail_balance":
             return client.inmail_balance()
 
-        raise _bad("op doit être 'contracts', 'select' ou 'inmail_balance'")
+        raise _bad("op doit être 'status', 'contracts', 'select' ou 'inmail_balance'")
 
     # ---- Recruiter : offres d'emploi & candidats (lectures) ---------------
 

@@ -119,6 +119,37 @@ de paiement).
 > du grantee doit joindre le compte (clé partagée org/plateforme OK ; owner sur une clé
 > BYO perso ≠ celle du grantee → 404 Unipile surfacé).
 
+## « Mon LinkedIn est-il connecté ? » → `linkedin_unipile_account(op="status")`
+
+Ajouté le 28/08/2026 (signal **#452**, org 2, 14/08). Le NOM du tool promettait l'état
+du compte, l'outil ne servait que **l'ardoise premium** (contrats Recruiter / Sales
+Navigator). Un agent venu vérifier la connexion a inventé `op='status'`, s'est pris un
+`invalid_arguments` (appel 248959) et en a conclu « pas connecté » — alors que le canal
+l'était, et un utilisateur a signalé « ça ne marche pas ». Relevé du 28/08 : ce tool
+n'a que **trois** appels dans tout `tool_calls`, et les trois ont échoué.
+
+On a fait exister l'op plutôt que de renommer : le renommage aurait cassé les appels qui
+marchent **et les procédures qui citent le nom** (refs `<tool:slug>` en DB, cf.
+`docs/doctrines.md`). Deux propriétés non négociables, toutes deux tirées du mode de
+panne :
+
+- **Ça RÉPOND, ça ne lève pas.** Sans compte lié, `unipile_client()` lève (refus de
+  fallback anti-usurpation) : bâtir le statut dessus aurait remplacé un faux négatif par
+  une erreur. `op="status"` court-circuite donc AVANT `unipile_client()`.
+- **Ça résout comme un vrai appel** — `connector_identities.resolve_operated_account_id`,
+  exactement ce que `unipile_client()` emprunte (pin `_account=`, compte accordé #55,
+  compte propre de l'org). « status dit connecté » implique donc « un appel trouvera un
+  compte ». Un pointeur orphelin est **rapporté** au lieu d'être levé : c'est justement
+  l'état qu'on vient lui demander.
+
+⚠️ **`connected` ≠ `alive`.** Un compte reste LIÉ en base alors que sa session est morte
+côté fournisseur (checkpoint, cookie tourné — #236), et c'est précisément l'état où une
+carte verte trompe le plus. Trois valeurs, trois faits distincts : `alive=True` (sonde
+`users/me` OK), `alive=False` (session morte, tout appel échouera), `alive=None`
+(**sonde indisponible** — pas « morte » : annoncer une panne jamais constatée serait le
+même défaut à l'envers). Quand rien n'est lié, `next_step` vient du seam PARTAGÉ
+`connectors/readiness.py`, pas d'une prose locale — même réponse que la carte connecteur.
+
 ## API v1 / v2 (client sélectionnable, v1 par défaut)
 
 Le client Unipile existe en **deux versions** dans oto-core
