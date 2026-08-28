@@ -716,15 +716,21 @@ Deux règles, sorties d'un incident de mission (14/08 → 28/08) où une purge d
 d'une pièce contractuelle — et où l'écran qui la restituait était resté vide sans que
 personne le voie.
 
-1. **Une couche `origine` se corrige, elle ne se purge pas.** Une origine qui porte la
-   VALEUR (l'URL du site) au lieu d'un NOM DE SOURCE (`client`, `apollo`…) est hors
-   vocabulaire : on la **réécrit** vers le bon nom de source (ici `client`), on ne la vide
-   pas. Le cas « valeur du client retrouvée identique » se restitue par comparaison avec
-   la colonne `initial_of` déclarée au schéma — jamais par une origine qui recopie la
-   valeur. **Une purge, si elle est inévitable, commence par un EXTRAIT des valeurs
-   supprimées** (namespace, row_id, chemin, valeur) déposé hors du tableau, et se fait par
-   l'outil (`data_write`, journalisé) — jamais par un SQL direct que le journal des
-   appels ne voit pas.
+1. **Une couche `origine` se corrige, elle ne se purge pas — et jamais sur un critère
+   générique.** Ce que `origine` doit porter est un contrat **par champ**, déclaré par le
+   schéma ou la procédure : sur la plupart des champs, un NOM DE SOURCE (`client`,
+   `registre`, `apollo`…) — une origine qui y recopie la valeur est hors vocabulaire et se
+   **réécrit** vers le bon nom ; mais sur d'autres champs (mesuré le 28/08 sur un vivier :
+   `raison_sociale`, `nom_commercial`), `origine` **conserve la valeur d'entrée du
+   client**, et « origine identique à la valeur » y est précisément le cas « retrouvée
+   identique » que la restitution attend (743 + 383 lignes). ⚠️ **« Purger là où l'origine
+   égale la valeur » détruit donc exactement la mesure attendue** sur ces champs : une
+   purge NOMME les champs où l'origine doit être une source, ne touche jamais ceux où elle
+   conserve l'entrée, **commence par un EXTRAIT des valeurs supprimées** (namespace,
+   row_id, chemin, valeur) déposé hors du tableau, et passe par l'outil (`data_write`,
+   journalisé) — jamais par un SQL direct que le journal des appels ne voit pas. Le cas
+   « retrouvée identique » se restitue aussi par comparaison avec la colonne `initial_of`
+   déclarée au schéma.
 2. **Une bascule de calcul se vérifie contre la donnée RÉELLE avant de servir.** Un
    consommateur qui passe « d'une colonne dédiée à la couche native » parce que c'est plus
    élégant vérifie d'abord que la couche est REMPLIE sur les lignes qu'il sert
@@ -734,6 +740,8 @@ personne le voie.
 
 Corollaire de conversion : quand une colonne devient une colonne-liste
 (`datastore-colonne-tableau.md`), la provenance des feuilles DOIT suivre (« la provenance
-vit au grain feuille ») — une conversion qui recopie les valeurs sans leurs couches
-`origine` fabrique une perte silencieuse ; vérifier après conversion que le compte des
-origines par feuille égale celui d'avant.
+vit au grain feuille »). Sur le cas du 28/08 elle a suivi — mais parce que la procédure
+portait déjà la source dans chaque élément (511 contacts sur 515), pas parce que la
+conversion la garantit : vérifier après conversion que le compte des origines par feuille
+égale celui d'avant, et ne pas lire l'absence d'une colonne SUPPRIMÉE par la conversion
+comme une perte de provenance.
