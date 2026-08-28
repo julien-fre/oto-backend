@@ -165,6 +165,8 @@ def register(mcp: FastMCP) -> None:
         return fiche
 
     def _ascendant(racine: str, fiche: dict, max_depth: int) -> dict:
+        from concurrent.futures import ThreadPoolExecutor
+
         liens: list[dict] = []
         tetes: list[dict] = []
         fiches = {racine: fiche}
@@ -212,8 +214,13 @@ def register(mcp: FastMCP) -> None:
                 # La racine n'en est jamais une : sans parent, elle est indéterminée.
                 if traversables == 0 and src != racine:
                     tetes.append(src)
-            for cible in suivants:
-                f = _fiche(cible)
+            # Un étage se lit EN PARALLÈLE : chaque nœud est un aller-retour amont, et
+            # une holding en compte volontiers trois par niveau. En série, le budget de
+            # 60 nœuds vaudrait une minute d'attente — le tool serait juste, et
+            # inutilisable. Même parade que `_fr_profile` dans `tools/fr.py`.
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                lues = list(zip(suivants, pool.map(_fiche, suivants)))
+            for cible, f in lues:
                 if f is None:
                     non_resolus.append(cible)   # ex. société étrangère, hors RNE
                 else:
