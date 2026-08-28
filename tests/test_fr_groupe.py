@@ -447,4 +447,34 @@ def test_un_op_inconnu_est_refuse(fr_groupe):
 def test_la_description_du_tool_tient_dans_son_budget(fr_groupe):
     """Recopiée dans chaque session, multipliée par ~470 outils : une phrase de plus
     ici est payée à chaque tour par chaque agent (docs/conventions.md, §budget)."""
-    assert len(fr_groupe.__doc__) < 1800
+    import inspect
+    assert len(inspect.cleandoc(fr_groupe.__doc__)) < 1800
+
+
+def test_le_budget_se_mesure_SANS_dependre_de_l_interpreteur():
+    """⚠️ **Python 3.13 dédente `__doc__` à la compilation, pas 3.10** — et le venv
+    local est en 3.13 quand la box et la CI sont en 3.10. Mesuré sur `__doc__` brut,
+    ce budget passait en local et tombait en CI sur la MÊME docstring (run
+    33167819440 : 1 917 caractères contre 1 719). Un test qui mesure l'interpréteur
+    autant que le texte n'est pas un budget.
+
+    Ici on relit le LITTÉRAL du source — c'est exactement ce que 3.10 stocke dans
+    `__doc__` — et on vérifie qu'après `cleandoc` les deux chemins donnent la même
+    valeur. Le garde-fou vaut pour tout budget mesuré sur une docstring."""
+    import ast
+    import inspect
+    import pathlib
+
+    src = pathlib.Path(__file__).resolve().parents[1] / "oto_mcp/tools/fr_groupe.py"
+    arbre = ast.parse(src.read_text(encoding="utf-8"))
+    fn = next(n for n in ast.walk(arbre)
+              if isinstance(n, ast.FunctionDef) and n.name == "fr_groupe")
+    litteral = ast.get_docstring(fn, clean=False)      # == __doc__ en Python 3.10
+
+    from oto_mcp.tools.fr_groupe import register
+    reg = _Reg()
+    register(reg)
+    charge = reg.tools["fr_groupe"].__doc__            # dépend de l'interpréteur
+
+    assert inspect.cleandoc(litteral) == inspect.cleandoc(charge)
+    assert len(inspect.cleandoc(litteral)) < 1800
