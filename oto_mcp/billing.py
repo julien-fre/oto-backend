@@ -29,6 +29,14 @@ de facturation d'abord, paiement ensuite : `subscribe` refuse tant que l'org n'a
 pas dit qui paie et depuis quel pays, parce que sans cela le montant à prendre
 n'est pas connu. Le calcul est fait par UN seul seam (`tax_for_org`), partagé
 avec l'échéance du `billing_runner`.
+
+⚠️ **Souscrire demande un CONSENTEMENT, pas seulement un moyen de paiement**
+(#487) : `subscribe` refuse aussi tant que l'appelant n'a pas accepté les
+documents du contexte `purchase` (CGU + CGV + DPA) à leur version courante. Sans
+acceptation horodatée, les CGV et le DPA ne sont opposables à personne. Les deux
+préalables sont évalués ENSEMBLE et rendus d'un coup (`_purchase_preconditions`) :
+un tunnel qui les découvre l'un après l'autre fait remplir un formulaire pour
+opposer une case à cocher au clic suivant.
 """
 from __future__ import annotations
 
@@ -38,7 +46,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from . import billing_vat, mollie_client
+from . import billing_consent, billing_vat, mollie_client
 from . import db
 from .db import billing as db_billing
 # Le format de date servi par l'API est défini UNE fois, dans la couche DB (le row
@@ -173,6 +181,39 @@ def tax_for_org(org_id: int, amount_ht: int) -> dict:
         amount_ht, db_billing.get_billing_identity(org_id))
 
 
+# ── les préalables de la souscription ────────────────────────────────────────
+
+def _purchase_preconditions(org_id: int, sub: Optional[str],
+                            amount_ht: int) -> tuple[Optional[dict], list[dict]]:
+    """Les DEUX préalables d'un achat, évalués ensemble. Rend `(décomposition
+    fiscale, manques)` — la décomposition est `None` dès que l'identité manque.
+
+    **L'ordre est celui du tunnel : identité, puis légal.** Il n'est pas cosmétique.
+    Le payeur accepte des CGV *pour un montant*, et le montant n'existe qu'une fois
+    le pays connu (c'est lui qui décide de la TVA, #486). Faire consentir d'abord et
+    chiffrer ensuite ferait accepter un prix qui n'a pas encore été annoncé — le
+    consentement est le DERNIER geste avant la page de paiement.
+
+    Mais ordonner n'est pas refuser un à la fois : les deux manques partent
+    ENSEMBLE, et c'est ce qui permet au tunnel de peindre l'écran entier — le
+    formulaire d'identité ET les trois cases — en un seul aller-retour.
+
+    Aucun effet de bord : rien n'est créé chez le PSP tant que cette liste n'est pas
+    vide. Un refus après création laisserait derrière lui un customer et une page
+    payable."""
+    manques: list[dict] = []
+    tax: Optional[dict] = None
+    try:
+        tax = tax_for_org(org_id, amount_ht)
+    except ValueError as e:
+        message = str(e)
+        manques.append({"code": message.split(":", 1)[0].strip(), "message": message})
+    legal = billing_consent.legal_blocker(sub)
+    if legal:
+        manques.append(legal)
+    return tax, manques
+
+
 # ── souscription ─────────────────────────────────────────────────────────────
 
 def _elapsed_since(value, now: datetime) -> Optional[timedelta]:
@@ -256,7 +297,7 @@ def _org_customer_id(org_id: int, existing: Optional[dict]) -> Optional[str]:
     return db_billing.last_customer_id_for_org(org_id)
 
 
-def subscribe(org_id: int, plan: str, return_url: str, *,
+def subscribe(org_id: int, plan: str, return_url: str, *, sub: Optional[str],
               method: str = "card") -> dict:
     """Ouvre la souscription. UN seul flux (Mollie unifie carte et SEPA) : premier
     paiement `sequenceType=first` → l'URL renvoyée = la page de checkout hébergée
@@ -270,7 +311,14 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
     est refusé (`payment_pending`). C'est le geste le plus banal du monde — payer,
     voir un échec, recliquer — et c'est lui qui a débité 38 € un abonnement à 19 €.
     Corollaire assumé : résilier puis re-souscrire dans la demi-heure est refusé le
-    temps que la fenêtre s'écoule, le refus disant quel paiement l'occupe."""
+    temps que la fenêtre s'écoule, le refus disant quel paiement l'occupe.
+
+    `sub` = l'appelant, et il est OBLIGATOIRE : c'est une personne qui accepte des
+    documents, pas une organisation. Sans lui rien n'est accepté et la souscription
+    est refusée — le paramètre n'a pas de défaut pour que l'oubli soit une erreur de
+    programmation, jamais un gate ouvert. (Un abonnement OFFERT par un admin
+    `admin_set_plan` ne passe pas par ici : rien n'y est vendu ni débité, il n'y a
+    donc pas de consentement d'achat à recueillir.)"""
     meta = PLANS.get(plan)
     if meta is None:
         raise ValueError(f"unknown_plan: {plan!r} (plans : {', '.join(PLANS)})")
@@ -288,11 +336,14 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
     if in_flight:
         raise ValueError(_payment_pending_message(in_flight, now))
 
-    # LE MONTANT AVANT LE CHECKOUT (#486). Le prix du palier est un HT ; ce qui part
-    # au PSP est le TTC, et le taux dépend du pays du payeur. On le calcule donc
-    # AVANT de créer quoi que ce soit chez Mollie : un refus après création laisserait
-    # un customer et une page payable derrière lui.
-    tax = tax_for_org(org_id, meta["amount"])
+    # LES PRÉALABLES AVANT LE CHECKOUT (#486 pour l'identité, #487 pour le légal).
+    # Le prix du palier est un HT ; ce qui part au PSP est le TTC, et le taux dépend
+    # du pays du payeur. Et on ne vend pas sans consentement écrit. Les deux se
+    # tranchent donc AVANT de créer quoi que ce soit chez Mollie : un refus après
+    # création laisserait un customer et une page payable derrière lui.
+    tax, manques = _purchase_preconditions(org_id, sub, meta["amount"])
+    if manques:
+        raise billing_consent.PurchaseBlocked(manques)
 
     customer_id = _org_customer_id(org_id, existing)
     if not customer_id:

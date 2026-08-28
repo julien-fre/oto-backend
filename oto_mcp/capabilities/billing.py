@@ -9,6 +9,12 @@ du montant réellement débité, et `billing.subscribe` refuse tant qu'elle n'es
 là (409 `billing_identity_required`). Elle vit à côté, dans
 `capabilities/billing_identity.py` : l'abonnement est un cycle, l'identité une
 fiche qu'on remplit une fois. Même régime REST-only, même gate de dark launch.
+
+Le **consentement** est le second préalable (#487, `billing_consent`) : 409
+`legal_required` tant que l'appelant n'a pas accepté CGU + CGV + DPA à leur version
+courante, via `me.legal.accept {context: "purchase"}`. Les deux préalables sont
+rendus ENSEMBLE dans `details.blockers` — le tunnel les affiche d'un coup au lieu
+de les découvrir un par un.
 """
 from __future__ import annotations
 
@@ -17,7 +23,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from .. import billing
+from .. import billing, billing_consent
 from ..mollie_client import MollieError
 from ._authz import ORG_ADMIN, ORG_MEMBER, SUB_ONLY, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -359,6 +365,17 @@ def _domain(fn, *args):
     RuntimeError = config/invariant (MOLLIE_API_KEY absente, mandat manquant)."""
     try:
         return fn(*args)
+    except billing_consent.PurchaseBlocked as e:
+        # #487 : les préalables d'un achat (identité de facturation, consentement)
+        # sont rendus ENSEMBLE. Le code de tête est le PREMIER manque dans l'ordre du
+        # tunnel — donc inchangé quand un seul manque, ce que les clients existants
+        # attendaient déjà — et `details.blockers` porte la liste complète, chaque
+        # entrée avec son propre code, son message, et pour le légal les documents à
+        # présenter (slug, libellé, version, URL).
+        #
+        # ⚠️ C'est `blockers` qu'un client doit lire, jamais le code de tête seul :
+        # avec deux manques, il n'en nomme qu'un.
+        raise AuthzDenied(409, e.code, str(e), details={"blockers": e.blockers})
     except ValueError as e:
         msg = str(e)
         code = msg.split(":", 1)[0].strip() if ":" in msg else "billing_error"
@@ -401,8 +418,10 @@ def _status(ctx: ResolvedCtx, inp: NoInput) -> dict:
 
 def _subscribe(ctx: ResolvedCtx, inp: SubscribeInput) -> dict:
     def call():
+        # `sub` = l'appelant : accepter des documents est un acte de PERSONNE, pas
+        # d'organisation (ADR 0043 fait payer l'org ; c'est un humain qui signe).
         return billing.subscribe(ctx.org_id, inp.plan, inp.return_url,
-                                 method=inp.method)
+                                 sub=ctx.sub, method=inp.method)
 
     return _domain(call)
 
@@ -448,6 +467,14 @@ _BILLING_CAPS = [
     Capability(
         key="billing.subscribe", handler=_subscribe, Input=SubscribeInput,
         authz=ORG_ADMIN, Output=SubscribeStarted,
+        description="Open a subscription: returns a hosted Mollie checkout URL. "
+                    "Refuses with 409 while a precondition is unmet — "
+                    "`billing_identity_required` (no billing identity on the org), "
+                    "`vat_consumer_unsupported` (EU consumer outside France), "
+                    "`legal_required` (caller has not accepted CGU/CGV/DPA at their "
+                    "current version), `already_subscribed`, `payment_pending`. ALL "
+                    "unmet preconditions are listed in `details.blockers`; the "
+                    "top-level code names only the first.",
         rest=RestBinding("POST", "/api/me/billing/subscribe"),
     ),
     Capability(
