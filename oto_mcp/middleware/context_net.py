@@ -22,10 +22,30 @@ _CONTEXT_TOOL = "oto_context"
 # 30 min : plus court qu'une session de travail, plus long qu'une rafale d'appels.
 _TTL_S = int(os.environ.get("OTO_CONTEXT_NET_TTL", "1800"))
 
-# Cran d'arrêt. Ce middleware retouche le RENDU d'un résultat d'outil et compose du
-# DB à chaud : il doit pouvoir être coupé sans rollback ni redéploiement de code.
+# Cran d'arrêt GLOBAL. Ce middleware retouche le RENDU d'un résultat d'outil et compose
+# du DB à chaud : il doit pouvoir être coupé sans rollback ni redéploiement de code.
 def _armed() -> bool:
     return os.environ.get("OTO_CONTEXT_NET", "1") != "0"
+
+
+def _orgs_exclues() -> set:
+    """Les orgs qui ne reçoivent PAS le filet (ids séparés par des virgules).
+
+    Un cran tout-ou-rien oblige à choisir entre la mesure d'une org et le garde-fou de
+    toutes les autres. Demandé le 2026-08-28 par une campagne dont **chaque fiche est
+    une session neuve** : le filet s'y serait ajouté au premier résultat de chaque
+    fiche, pas une fois par campagne, et ces agents-là recopient le canal texte au lieu
+    de le lire (le défaut qui leur a coûté une vague le 27/08).
+
+    ⚠️ Exclure une org, c'est lui retirer ses garde-fous : à réserver à une fenêtre de
+    mesure, décidée par qui exploite l'org, et à retirer après. Ce n'est pas un réglage
+    de confort."""
+    brut = os.environ.get("OTO_CONTEXT_NET_EXCLUDE_ORGS", "")
+    out = set()
+    for part in brut.replace(" ", "").split(","):
+        if part.isdigit():
+            out.add(int(part))
+    return out
 
 
 _servi: dict[tuple, float] = {}
@@ -57,6 +77,9 @@ def _compose(sub: str):
     """
     from .. import access, instructions
     org_id = access.current_org(sub)
+    if org_id in _orgs_exclues():
+        # Sortie AVANT la composition : l'org exclue ne paie même pas la lecture.
+        return org_id, ""
     return org_id, instructions._block_c(sub, org_id)
 
 

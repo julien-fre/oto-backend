@@ -14,6 +14,8 @@ from mcp.types import TextContent
 
 from oto_mcp.middleware import context_net as cn
 
+_COMPOSE_REEL = cn._compose
+
 
 class _Msg:
     def __init__(self, name): self.name = name
@@ -122,3 +124,44 @@ def test_le_cran_darret_coupe_tout(monkeypatch):
     pouvoir être coupé par l'environnement, sans rollback ni redéploiement."""
     monkeypatch.setenv("OTO_CONTEXT_NET", "0")
     assert _texte(_appel()) == "donnée"
+
+
+# --- couper pour UNE org, pas pour tout le monde ------------------------------
+
+def _sans_stub_de_compose(monkeypatch, org):
+    """Rend le VRAI `_compose` (la fixture le remplace par défaut) et pilote ses deux
+    dépendances — c'est lui qu'on veut exercer ici."""
+    monkeypatch.setattr(cn, "_compose", _COMPOSE_REEL)
+    from oto_mcp import access
+    monkeypatch.setattr(access, "current_org", lambda sub: org)
+
+
+def test_une_org_peut_etre_exclue_sans_couper_les_autres(monkeypatch):
+    """Un cran tout-ou-rien obligerait à choisir entre la mesure d'une org et le
+    garde-fou de toutes les autres. Demandé par une campagne dont chaque fiche est une
+    session neuve : le bloc s'y ajouterait au premier résultat de CHAQUE fiche.
+
+    Et l'org exclue ne paie même pas la lecture — la sortie est AVANT la composition,
+    qui traverse la cascade de statut de tous les connecteurs."""
+    monkeypatch.setenv("OTO_CONTEXT_NET_EXCLUDE_ORGS", "226")
+    _sans_stub_de_compose(monkeypatch, 226)
+    from oto_mcp import instructions
+    monkeypatch.setattr(instructions, "_block_c",
+                        lambda s, o: pytest.fail("une org exclue ne compose même pas"))
+    assert _texte(_appel()) == "donnée"
+
+
+def test_une_org_non_exclue_recoit_toujours(monkeypatch):
+    monkeypatch.setenv("OTO_CONTEXT_NET_EXCLUDE_ORGS", "226")
+    _sans_stub_de_compose(monkeypatch, 35)
+    from oto_mcp import instructions
+    monkeypatch.setattr(instructions, "_block_c", lambda s, o: "RÈGLES DE L'ORG")
+    assert "RÈGLES DE L'ORG" in _texte(_appel())
+
+
+def test_une_liste_vide_ou_bruitee_nexclut_personne(monkeypatch):
+    for valeur in ("", "  ", "abc", ","):
+        monkeypatch.setenv("OTO_CONTEXT_NET_EXCLUDE_ORGS", valeur)
+        assert cn._orgs_exclues() == set(), valeur
+    monkeypatch.setenv("OTO_CONTEXT_NET_EXCLUDE_ORGS", "226, 35")
+    assert cn._orgs_exclues() == {226, 35}
