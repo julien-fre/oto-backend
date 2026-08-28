@@ -238,7 +238,7 @@ async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
     # des noms si le connecteur est multi-compte, refus nommé s'il est mono.
     try:
         credentials_store.guard_account_write(
-            credentials_store.MEMBER, eid, inp.provider, account)
+            credentials_store.MEMBER, eid, inp.provider, account, org=org_id)
     except credentials_store.NamedAccountRequired as e:
         raise AuthzDenied(409, "account_required", str(e))
     except credentials_store.SingleAccountConnector as e:

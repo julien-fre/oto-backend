@@ -226,7 +226,15 @@ coffre) et l'annonce statique de l'axe `_account=` (le schéma des tools, curé)
 devenue `account_axis_static`. Le défaut vient du descripteur d'auth (74/96 multi sans
 rien déclarer) ; `cardinality="mono"|"multi"` prime, et n'a que **deux** porteurs
 (`google`, `browser` — ceux dont le descripteur dit faux). Sonde AST : la liste ne peut
-pas revenir sous un autre nom. Détail : `docs/connector-vault.md`.
+pas revenir sous un autre nom.
+⚠️ **La BASE peut primer sur le défaut du code** (`connector_settings`, 29/08) : org >
+plateforme > registre, tranché par la **seule** fonction `connectors.cardinality.
+is_multi_account(connector, org)` — que la garde d'écriture ET la résolution appellent,
+sous peine de rouvrir #409 (une ligne acceptée que personne ne lit). Sonde AST : lire
+`auth_multi_account` hors du seam est interdit. ⚠️ Les surcharges vivent EN MÉMOIRE
+(4 consultations par appel d'outil sur un mono-loop) : chargées au boot, rechargées par
+`oto_admin_connector_setting op=reload`, **par process** — recharger la preprod ne
+recharge pas la prod. Détail : `docs/connector-vault.md`.
 ⚠️ **`access` est un PACKAGE depuis le 27/08** (7 modules par sujet, arbre ci-dessus) : on
 édite le module du sujet, jamais un fourre-tout. La surface reste **plate** — `access.<nom>`
 rend ce qu'il rendait, privés compris, et une écriture sur la façade

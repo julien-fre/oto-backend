@@ -20,6 +20,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import (providers, credentials_store, db, grants_chain, group_store, org_store)
+from ..connectors import cardinality
 from . import scope
 
 # DÉRIVÉ du registre source unique (package `providers/`) : providers dont le
@@ -29,15 +30,20 @@ from . import scope
 ORG_SHAREABLE_PROVIDERS = providers.ORG_SHAREABLE_PROVIDERS
 
 
-def _is_multi_account(provider: str) -> bool:
-    """Le connecteur porte-t-il plusieurs comptes dans le coffre (segment `account`,
-    propriété `Connector.auth_multi_account`) ? Gate le chemin de sélection de compte ;
-    un connecteur mono-compte garde la résolution historique (account=''). ⚠️ Depuis
-    #409 la propriété couvre aussi les credentials MULTI-CHAMPS (slack, silae…) —
-    la cardinalité se DÉCLARE par connecteur (`cardinality`) et se dérive sinon —
-    plus aucune liste transverse depuis le 29/08."""
-    con = providers.connector_for_provider(provider)
-    return con is not None and con.auth_multi_account
+def _is_multi_account(provider: str, org: "int | None" = None) -> bool:
+    """Le connecteur porte-t-il plusieurs comptes dans le coffre (segment `account`) ?
+    Gate le chemin de sélection de compte ; un connecteur mono-compte garde la
+    résolution historique (account='').
+
+    ⚠️ **Passe par `connectors.cardinality`, jamais par la propriété du registre**, et
+    ce n'est pas une indirection de style : une org peut avoir SURCHARGÉ la cardinalité
+    en base (L6 pièce 2 c2), et la surcharge doit être lue ici comme elle l'est par la
+    garde d'écriture. Lue d'un seul côté, elle accepterait un deuxième compte que
+    personne n'irait jamais lire — le défaut exact d'oto-backend#409. Zéro requête :
+    les surcharges vivent en mémoire, chargées au boot et rechargées à la main.
+
+    `org` = l'org de CONTEXTE du requérant. None ⟹ seule la surcharge plateforme joue."""
+    return cardinality.is_multi_account(provider, org)
 
 
 def account_noun(provider: str) -> str:
@@ -391,7 +397,7 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
     # (unipile) → ma clé posée dans une AUTRE org me suit (même sub, zéro usurpation).
     # Mono-compte seulement. Prime sur les paliers partagés, comme la clé locale.
     if (sub is not None and providers.is_personal_cross_org(provider)
-            and not _is_multi_account(provider)):
+            and not _is_multi_account(provider, org)):
         pio = personal_instance_org(sub, provider, exclude_org=org)
         if pio is not None:
             payload = probe.member_cross(sub, pio, provider)

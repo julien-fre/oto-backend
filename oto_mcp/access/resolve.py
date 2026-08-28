@@ -208,7 +208,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # compte nommé introuvable partout LÈVE, jamais un repli — review #399 F2).
     # None = rien de nommé (sélection automatique par palier).
     named_account = None
-    if cascade._is_multi_account(provider):
+    if cascade._is_multi_account(provider, active_org):
         named_account = (account if account is not None
                          else session_org.current_call_account()
                          or scope.project_pinned_identity(provider))
@@ -249,7 +249,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         le contrat, pas une usurpation. (Compte NOMMÉ suspendu : le relais ne va
         jamais jusqu'à la clé plateforme — la garde post-marche du compte nommé
         lève, review #399 F2.)"""
-        if not cascade._is_multi_account(mprov):
+        if not cascade._is_multi_account(mprov, morg):
             key = db.get_member_api_key(msub, morg, mprov)
             if key and db.member_instance_suspended(msub, morg, mprov):
                 return None
@@ -272,7 +272,9 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     def _group_fetch(gid: int, mprov: str):
         """Sonde ÉQUIPE du fetch : même sélection de compte que le membre (Phase 2).
         Mono-compte → la lecture historique (account='')."""
-        if not cascade._is_multi_account(mprov):
+        # L'org de CONTEXTE, pas celle du groupe : une surcharge se lit sur le
+        # requérant (même seam que partout ailleurs).
+        if not cascade._is_multi_account(mprov, active_org):
             return group_store.get_group_secret(gid, mprov)
         eff, explicit = _pick_account("group", str(gid), mprov, "pour ton équipe",
                                       scope="group")
@@ -286,7 +288,7 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
         Un compte NOMMÉ absent ici passe la main comme les autres paliers — c'est
         la garde post-marche qui lève (le walker peut ne jamais atteindre ce
         barreau : org de contexte None, connecteur non org-partageable)."""
-        if not cascade._is_multi_account(mprov):
+        if not cascade._is_multi_account(mprov, oid):
             return org_store.get_org_secret(oid, mprov)
         eff, explicit = _pick_account("org", str(oid), mprov, "pour ton org",
                                       scope="org")
@@ -434,7 +436,7 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) ->
         # nommée n'est tentée QUE si la ligne mono manque — le cas F3, où
         # `ensure_named_coexistence` l'a migrée vers « principal ».
         key = org_store.get_org_secret(oid, mprov)
-        if key or not cascade._is_multi_account(mprov):
+        if key or not cascade._is_multi_account(mprov, oid):
             return key
         eff = cascade._shared_auto_account("org", str(oid), mprov,
                                    "pour l'org de ce projet", scope="org")

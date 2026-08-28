@@ -387,3 +387,98 @@ CAPABILITIES += [
         rest=RestBinding("POST", _ACCESS),
     ),
 ]
+
+
+# ── Propriétés de connecteur SURCHARGEABLES (L6 pièce 2 c2) ──────────────────
+#
+# « La base peut primer sur le défaut du code » (Alexis, 27/08), pour qu'élargir un
+# connecteur ne demande pas un déploiement. Une seule propriété aujourd'hui — la
+# CARDINALITÉ d'auth (`mono`|`multi`).
+#
+# ⚠️ **`reload` n'est pas un détail d'implémentation, c'est la moitié du geste.** Les
+# surcharges vivent en MÉMOIRE (la cardinalité est consultée jusqu'à 4× par appel
+# d'outil, sur un serveur mono-loop : une requête par consultation serait un gel de
+# boucle). Poser une ligne ne change donc rien tant qu'on n'a pas rechargé — et le
+# rechargement est **PAR PROCESS**, exactement comme le registre d'émetteurs :
+# recharger la preprod ne recharge pas la prod.
+
+_SETTINGS = "/api/admin/connectors/settings"
+
+
+class ConnectorSettingInput(BaseModel):
+    op: str = "list"                         # list | set | clear | reload
+    connector: Optional[str] = None          # set / clear
+    key: str = "cardinality"                 # la seule propriété surchargeable à ce jour
+    value: Optional[str] = None              # set : 'mono' | 'multi'
+    org_id: Optional[int] = None             # None = surcharge PLATEFORME
+
+
+class ConnectorSettingView(BaseModel):
+    """Ce que la console rend. `active` est le relevé de ce que le PROCESS applique en
+    ce moment — pas ce que la base contient : c'est précisément l'écart qu'un admin
+    doit pouvoir voir avant de se demander pourquoi son réglage « ne marche pas »."""
+    op: str
+    rows: list[dict] = []                    # les lignes de la base
+    active: dict = {}                        # les surcharges VIVANTES de ce process
+    loaded: Optional[int] = None             # reload : combien ont été installées
+    changed: Optional[bool] = None           # set / clear
+
+
+def _connector_setting(ctx: ResolvedCtx, inp: ConnectorSettingInput) -> dict:
+    from ..connectors import cardinality
+    from ..db import connector_settings as store
+
+    def _actives() -> dict:
+        return {f"{s}:{i}:{c}": v
+                for (s, i, c), v in cardinality.overrides_snapshot().items()}
+
+    if inp.op == "list":
+        return {"op": "list", "rows": store.list_connector_settings(inp.key),
+                "active": _actives()}
+    if inp.op == "reload":
+        # Pas de repli : si la lecture échoue, l'appelant doit le SAVOIR — un reload
+        # qui rendrait « ok » sur une base injoignable est le pire des deux mondes.
+        n = cardinality.reload()
+        return {"op": "reload", "loaded": n, "active": _actives()}
+
+    if not inp.connector:
+        raise AuthzDenied(400, "missing_connector", "`connector` requis pour set/clear.")
+    if providers.REGISTRY.get(inp.connector) is None:
+        raise AuthzDenied(404, "unknown_connector",
+                          f"Connecteur inconnu : {inp.connector!r}.")
+    scope_type, scope_id = (("org", str(inp.org_id)) if inp.org_id is not None
+                            else ("platform", "platform"))
+    if inp.op == "clear":
+        ok = store.clear_connector_setting(scope_type, scope_id, inp.connector, inp.key)
+        return {"op": "clear", "changed": ok, "active": _actives()}
+    if inp.op != "set":
+        raise AuthzDenied(400, "unsupported_op", f"op inconnue : {inp.op!r}.")
+    if inp.key == cardinality.KEY and inp.value not in (cardinality.MONO,
+                                                        cardinality.MULTI):
+        # Refus NOMMÉ plutôt qu'une ligne que le chargement ignorera en silence : une
+        # surcharge qu'on croit posée et que personne ne lit est le défaut que ce lot
+        # existe pour fermer.
+        raise AuthzDenied(400, "invalid_cardinality",
+                          f"`value` doit valoir {cardinality.MONO!r} ou "
+                          f"{cardinality.MULTI!r} (reçu {inp.value!r}).")
+    store.set_connector_setting(scope_type, scope_id, inp.connector, inp.key,
+                                str(inp.value), set_by=ctx.sub)
+    return {"op": "set", "changed": True, "active": _actives()}
+
+
+CAPABILITIES += [
+    Capability(
+        key="platform.connector.setting", handler=_connector_setting,
+        Input=ConnectorSettingInput, authz=SUPER_ADMIN, Output=ConnectorSettingView,
+        description=(
+            "Connector properties that the DATABASE may override, per platform or per "
+            "org — the registry constant is only the default. op=list / set "
+            "(`connector`, `key`, `value`; `org_id` omitted = platform-wide) / clear / "
+            "reload. Today the only key is `cardinality` (`mono`|`multi`): how many "
+            "accounts one entity may hold for that connector. ⚠️ Overrides are held in "
+            "MEMORY, so a row takes effect only after `reload` — and reload is "
+            "PER-PROCESS: reloading preprod does not reload prod."),
+        mcp="oto_admin_connector_setting",
+        rest=RestBinding("POST", _SETTINGS),
+    ),
+]

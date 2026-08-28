@@ -47,9 +47,45 @@ crans, dans cet ordre :
    mono, mais N consentements = N comptes) et `browser` (cookie ⟹ dérivé mono, mais un
    compte est un **site**). Aucun connecteur ne se déclare `mono` aujourd'hui : ceux
    qui le sont le sont par une condition structurelle.
-3. *(à venir)* **Surchargée en base**, par org — le patron du bloc d'instructions
-   (constante = défaut, ligne DB = surcharge), pour qu'un élargissement ne demande pas
-   un déploiement.
+3. **Surchargée en base** (`connector_settings`), par **org** puis par **plateforme** —
+   le patron du bloc d'instructions : constante = défaut, ligne DB = surcharge. Un
+   élargissement ne demande plus un déploiement.
+
+**L'ordre est l'arbitrage** : org de contexte > plateforme > registre. Et **une seule
+fonction le tranche** : `connectors.cardinality.is_multi_account(connector, org)`.
+
+⚠️ **Le vrai risque du lot n'est pas de mal lire la surcharge, c'est de ne la lire que
+d'un côté.** Deux chemins très éloignés consultent la cardinalité : la **garde
+d'écriture** (« ce deuxième compte a-t-il le droit d'exister ? ») et la **résolution**
+(« va-t-on le chercher ? »). Lue par la première seulement, une surcharge accepterait
+une ligne que personne n'irait jamais lire — mot pour mot le défaut d'oto-backend#409,
+corrigé le 27/08. D'où deux gardes : une sonde AST qui interdit de lire
+`Connector.auth_multi_account` hors du seam et des surfaces d'inventaire, et un test
+qui pose une surcharge, recharge, et vérifie que les **deux verdicts basculent
+ensemble**.
+
+⚠️ **Les surcharges vivent en MÉMOIRE, et poser une ligne ne suffit pas.** La
+cardinalité est consultée jusqu'à **4× par appel d'outil** (`access/resolve.py`), sur un
+serveur mono-loop, contre une base managée distante : une requête par consultation
+serait un gel de boucle (`docs/event-loop-perf.md`). Elles sont donc chargées **au
+boot** et rechargées par un geste explicite — même patron que le registre d'émetteurs,
+et **même conséquence : le rechargement est PAR PROCESS**. Recharger la preprod ne
+recharge pas la prod.
+
+```
+oto_admin_connector_setting op=set   connector=… value=mono|multi [org_id=…]
+oto_admin_connector_setting op=reload          # ← sans lui, la ligne ne fait rien
+oto_admin_connector_setting op=list            # `rows` = la base, `active` = CE process
+```
+(`POST /api/admin/connectors/settings`, SUPER_ADMIN.) `op=list` rend **les deux** —
+les lignes de la base et les surcharges vivantes du process : c'est précisément l'écart
+qu'un admin doit voir avant de se demander pourquoi son réglage « ne marche pas ».
+
+L'axe d'appel `_account=` fait exception, volontairement : il est **org-agnostique et
+permissif** (`accepted_anywhere`). Il est lu par le middleware, où résoudre l'org
+coûterait une requête par appel — et il n'autorise rien, il NOMME un compte, la
+résolution refusant (actionnable) si ce compte n'existe pas. Le refuser rendrait en
+revanche une org élargie incapable de viser son second compte.
 
 ⚠️ **`MULTI_ACCOUNT_PROVIDERS` a été retirée le 2026-08-29**, et sa disparition EST le
 lot. Elle confondait deux choses sans rapport, et c'est ce qui la rendait

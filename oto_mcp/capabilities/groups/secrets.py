@@ -114,7 +114,8 @@ def _set_secret(ctx: ResolvedCtx, inp: SetGroupSecretInput) -> dict:
     # Même garde de pose qu'au palier membre (source unique, #409) : coexistence des
     # comptes si le connecteur est multi, refus nommé du compte nommé s'il est mono.
     try:
-        credentials_store.guard_account_write("group", str(inp.group_id), inp.provider, account)
+        credentials_store.guard_account_write("group", str(inp.group_id), inp.provider,
+                                              account, org=ctx.org_id)
     except credentials_store.NamedAccountRequired as e:
         raise AuthzDenied(409, "account_required", str(e))
     except credentials_store.SingleAccountConnector as e:

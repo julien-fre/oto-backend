@@ -257,6 +257,9 @@ _SUB_COLUMNS = [
     ("scheduled_emails", "created_by"), ("connector_credentials", "set_by"),
     ("connector_account_grants", "granted_by"), ("connector_acl", "granted_by"),
     ("option_comps", "granted_by"), ("grants", "created_by"),
+    # Qui a posé une surcharge de propriété de connecteur (L6 pièce 2 c2). Colonne
+    # d'AUTEUR, pas d'identité : un UPDATE nu suffit, comme pour les voisines.
+    ("connector_settings", "set_by"),
 ]
 
 
