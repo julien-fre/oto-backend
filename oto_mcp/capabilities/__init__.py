@@ -36,6 +36,7 @@ from . import me_legal  # noqa: F401 — me.legal.{get,accept} (gate d'acceptati
 from . import tenant_legal_docs_admin  # noqa: F401 — admin.legal_docs.{list,set,delete} (override par tenant)
 # Abonnement par org (ADR 0043) — REST-only : subscribe/confirm/cancel (org_admin) + status.
 from . import billing  # noqa: F401 — billing.{plans,status,subscribe,confirm,cancel,payments}
+from . import billing_identity  # noqa: F401 — me.billing.identity.{get,set} (#486)
 # Doctrine & instructions d'org (ADR 0009) — CRUD doctrine + usage, membre + admin.
 import oto_mcp.capabilities.orgs.instructions  # noqa: F401 — org.{doctrine.*, instruction.*}
 # Bibliothèque publique de doctrines (marketplace) — list/get/publish/fork/unpublish.

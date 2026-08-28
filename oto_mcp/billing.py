@@ -21,7 +21,14 @@ SEPA séparé (IBAN tokenisé + signature OTP + ICS créancier). Le rejeu MIT ti
 
 Le plan (prix, options débloquées) vit dans `PLANS` — mapping en CODE (pas de
 table) : la vérité produit est versionnée et relue par l'entitlement (has_option,
-2e source). ⚠️ Valeurs actuelles = prix actés Alexis 2026-07-06.
+2e source). ⚠️ Valeurs actuelles = prix actés Alexis 2026-07-06, **HORS TAXES**.
+
+⚠️ **Le montant DÉBITÉ est le TTC** depuis #486 : le prix du palier est un HT, et
+le taux dépend du pays du payeur (`billing_vat`). D'où l'ordre imposé — identité
+de facturation d'abord, paiement ensuite : `subscribe` refuse tant que l'org n'a
+pas dit qui paie et depuis quel pays, parce que sans cela le montant à prendre
+n'est pas connu. Le calcul est fait par UN seul seam (`tax_for_org`), partagé
+avec l'échéance du `billing_runner`.
 """
 from __future__ import annotations
 
@@ -31,7 +38,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-from . import mollie_client
+from . import billing_vat, mollie_client
 from . import db
 from .db import billing as db_billing
 # Le format de date servi par l'API est défini UNE fois, dans la couche DB (le row
@@ -146,6 +153,24 @@ def webhook_url() -> str:
     paiement créé → réconciliation événementielle en complément du polling."""
     base = os.environ.get("OTO_MCP_PUBLIC_URL", "https://mcp.oto.ninja").rstrip("/")
     return f"{base}/api/billing/webhook"
+
+
+# ── TVA : le seam unique entre l'identité de l'org et un montant ─────────────
+
+def tax_for_org(org_id: int, amount_ht: int) -> dict:
+    """La décomposition fiscale d'un montant HT pour CETTE org, au moment du débit.
+
+    Un seul seam pour les deux chemins qui débitent — `subscribe` (premier paiement)
+    et `billing_runner._charge_one` (échéance). Deux calculs auraient divergé au
+    premier changement de règle, et la divergence se verrait sur une facture, pas
+    dans un test.
+
+    Lève `billing_identity_required` (identité absente/incomplète) ou
+    `vat_consumer_unsupported` (particulier de l'Union hors France) : dans les deux
+    cas, il n'y a pas de montant correct à prendre, et prendre le HT « en attendant »
+    est exactement ce que #486 répare."""
+    return billing_vat.tax_for_identity(
+        amount_ht, db_billing.get_billing_identity(org_id))
 
 
 # ── souscription ─────────────────────────────────────────────────────────────
@@ -263,6 +288,12 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
     if in_flight:
         raise ValueError(_payment_pending_message(in_flight, now))
 
+    # LE MONTANT AVANT LE CHECKOUT (#486). Le prix du palier est un HT ; ce qui part
+    # au PSP est le TTC, et le taux dépend du pays du payeur. On le calcule donc
+    # AVANT de créer quoi que ce soit chez Mollie : un refus après création laisserait
+    # un customer et une page payable derrière lui.
+    tax = tax_for_org(org_id, meta["amount"])
+
     customer_id = _org_customer_id(org_id, existing)
     if not customer_id:
         cust = mollie_client.create_customer(
@@ -270,16 +301,16 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
         customer_id = cust["id"]
 
     payment = mollie_client.create_first_payment(
-        meta["amount"], customer_id=customer_id, currency=meta["currency"],
+        tax["amount_ttc"], customer_id=customer_id, currency=meta["currency"],
         redirect_url=return_url, description=f"Abonnement {meta['label']}",
         method=mollie_client.mollie_method(method), webhook_url=webhook_url(),
         # le plan voyage dans la metadata du paiement (pas d'état serveur pendant
         # le checkout : confirm le relit → survit à un restart).
         metadata={"org_id": str(org_id), "plan": plan})
     db_billing.insert_billing_payment(
-        org_id, "initial", meta["amount"], currency=meta["currency"],
+        org_id, "initial", tax["amount_ttc"], currency=meta["currency"],
         payment_intent_id=payment["id"], status=payment.get("status", "open"),
-        customer_id=customer_id)
+        customer_id=customer_id, tax=tax)
     # Le retour navigateur doit DIRE quel paiement il vient de conclure. Mollie
     # n'ajoute rien à `redirectUrl`, et cette URL se fixe à la création — où l'id du
     # paiement n'existe pas encore : on la ré-écrit donc juste après, le paiement
@@ -295,7 +326,13 @@ def subscribe(org_id: int, plan: str, return_url: str, *,
                        "le retour navigateur devra deviner : %s",
                        payment["id"], org_id, e)
     return {"checkout_url": mollie_client.checkout_url(payment),
-            "payment_intent_id": payment["id"], "plan": plan, "method": method}
+            "payment_intent_id": payment["id"], "plan": plan, "method": method,
+            # La décomposition part AVEC la réponse : le tunnel doit pouvoir annoncer
+            # « 19,00 € HT + 3,80 € de TVA = 22,80 € » avant d'envoyer sur la page de
+            # checkout, sinon le payeur découvre le TTC chez Mollie.
+            "amount_ht": tax["amount_ht"], "vat_rate_bps": tax["vat_rate_bps"],
+            "vat_amount": tax["vat_amount"], "amount_ttc": tax["amount_ttc"],
+            "vat_scheme": tax["vat_scheme"], "vat_mention": tax["vat_mention"]}
 
 
 def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
@@ -365,10 +402,10 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
 
     if pstatus in ("failed", "canceled", "expired"):
         db_billing.update_billing_payment(row["id"], status=pstatus)
-        return {"status": "failed", "payment_status": pstatus}
+        return {"status": "failed", "payment_status": pstatus, **billing_vat.tax_view(row)}
     if pstatus != "paid":
         # pas encaissé : le payeur est peut-être encore sur la page de checkout.
-        return {"status": "pending", "payment_status": pstatus}
+        return {"status": "pending", "payment_status": pstatus, **billing_vat.tax_view(row)}
 
     # ENCAISSÉ. On le grave AVANT tout le reste (#493) : le journal doit dire ce que
     # le PSP a fait, pas ce que nous avons su en faire. Le statut n'était écrit
@@ -394,7 +431,7 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
                         "visible (%s) — en attente", org_id, row["payment_intent_id"],
                         _age_label(age))
             return {"status": "pending_mandate", "payment_status": "paid",
-                    "retry_after": MANDATE_RETRY_AFTER_S}
+                    "retry_after": MANDATE_RETRY_AFTER_S, **billing_vat.tax_view(row)}
         # Passé la fenêtre, ce n'est plus une course : encaissé sans mandat
         # réutilisable = récurrence impossible. On ne pose PAS un abonnement qu'on ne
         # saura pas renouveler (ADR : jamais de fallback silencieux) — c'est le SEUL
@@ -422,7 +459,7 @@ def confirm(org_id: int, payment_ref: Optional[str] = None) -> dict:
     apply_plan_entitlements(org_id, plan)
     logger.info("billing: org %s abonnée (plan %s, méthode %s, échéance %s)",
                 org_id, plan, method, period_end.date())
-    return {"status": "active", "plan": plan, "method": method,
+    return {"status": "active", "plan": plan, "method": method, **billing_vat.tax_view(row),
             # MÊME format que `status`/`cancel`, qui rendent la valeur relue en base
             # (normalisée « YYYY-MM-DD HH:MM:SS » par le row factory). Cette réponse
             # sortait en ISO 8601 avec offset : le même champ, deux formes selon le
@@ -439,13 +476,26 @@ def status(org_id: int) -> dict:
     if not row:
         return {"subscribed": False, "plans": plans()}
     meta = PLANS.get(row["plan"], {})
+    comp = row["provider"] == "comp"   # abonnement forcé par un admin (non payé)
     return {
         "subscribed": row["status"] in ("active", "past_due"),
         "plan": row["plan"], "label": meta.get("label"),
         "amount": meta.get("amount"), "currency": meta.get("currency"),
         "interval": meta.get("interval"),
+        # Ce que coûtera la PROCHAINE échéance, TVA comprise (#486) : `amount` reste
+        # le prix HT du catalogue, et le TTC en est dérivé par l'identité COURANTE de
+        # l'org — donc il bouge si l'org déménage, ce qui est le comportement voulu
+        # (c'est bien ce qui sera prélevé). Ce qui a DÉJÀ été pris se lit sur
+        # billing.payments, qui a figé sa propre décomposition.
+        #
+        # ⚠️ SAUF sur un abonnement OFFERT : rien n'y sera jamais prélevé, donc il n'y
+        # a pas de TTC à annoncer — et poser `vat_blocked` sur une org offerte sans
+        # identité de facturation serait une FAUSSE alerte, sur un écran dont c'est
+        # tout le rôle de signaler les échéances en danger.
+        **(billing_vat.BLANK_PREVIEW if comp else billing_vat.tax_preview(
+            meta.get("amount"), db_billing.get_billing_identity(org_id))),
         "status": row["status"], "method": row["method"],
-        "comp": row["provider"] == "comp",   # abonnement forcé par un admin (non payé)
+        "comp": comp,
         "current_period_end": row.get("current_period_end"),
         "next_billing_at": row.get("next_billing_at"),
         "grace_until": row.get("grace_until"),

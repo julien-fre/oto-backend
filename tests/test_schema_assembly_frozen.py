@@ -42,8 +42,15 @@ from oto_mcp.db import _schema, schema
 # personne n'a servi. Cf. l'avertissement du docstring avant de la toucher.
 # 2026-08-28 (#493) : `billing_payments.customer_id` — le journal porte le customer
 # Mollie de la tentative, seule mémoire du customer d'une org avant le 1ᵉʳ `confirm`.
-EMPREINTE = "a04b373236840a9d9d1b554a1391123663dbc9d115e361102dab5cff78719ab1"
-LONGUEUR = 102582
+# 2026-08-28 (#486) : la TVA. Deux changements dans le même lot — la table NEUVE
+# `billing_identities` (qui paie, depuis quel pays, sous quel n° de TVA : le pays
+# décide du montant débité) et cinq colonnes NULLABLES sur `billing_payments`
+# (amount_ht, vat_rate_bps, vat_amount, country_code, vat_scheme), qui figent la
+# décomposition fiscale de chaque tentative. Les colonnes existent aussi en ALTER
+# dans `_init.py` : la base est PARTAGÉE prod/preprod, le CREATE TABLE ne sert
+# qu'aux installs vierges.
+EMPREINTE = "d4ef7dc92da00471cc30181236a6b7acee6b078443db1c4b573e079c7ab7fde2"
+LONGUEUR = 104814
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
 

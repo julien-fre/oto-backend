@@ -3,6 +3,12 @@
 Pas de face MCP par choix d'ADR : payer est un acte humain (dashboard), on ne
 fait pas transiter d'URL de paiement dans un contexte LLM. Souscrire/confirmer/
 résilier = org_admin ; consulter = tout membre de l'org active.
+
+L'**identité de facturation** (#486) est le PRÉALABLE de ce cycle — le pays décide
+du montant réellement débité, et `billing.subscribe` refuse tant qu'elle n'est pas
+là (409 `billing_identity_required`). Elle vit à côté, dans
+`capabilities/billing_identity.py` : l'abonnement est un cycle, l'identité une
+fiche qu'on remplit une fois. Même régime REST-only, même gate de dark launch.
 """
 from __future__ import annotations
 
@@ -119,10 +125,36 @@ class BillingStatus(BaseModel):
                     "amount/currency/interval).")
     amount: Optional[int] = Field(
         default=None,
-        description="Prix courant du palier au catalogue, en CENTIMES. Ce n'est PAS un "
-                    "montant facturé : un abonnement offert (comp) affiche le prix du "
-                    "palier alors que rien n'a jamais été encaissé. Les montants "
-                    "réellement passés au PSP se lisent sur billing.payments.")
+        description="Prix courant du palier au catalogue, en CENTIMES **HORS TAXES**. "
+                    "Ce n'est PAS un montant facturé : un abonnement offert (comp) "
+                    "affiche le prix du palier alors que rien n'a jamais été encaissé, "
+                    "et depuis #486 ce qui est débité est le TTC (`amount_ttc`). Les "
+                    "montants réellement passés au PSP se lisent sur billing.payments.")
+    vat_rate_bps: Optional[int] = Field(
+        default=None,
+        description="Taux appliqué à la PROCHAINE échéance, en points de base "
+                    "(2000 = 20,00 %). `null` si aucun régime n'est calculable — "
+                    "`vat_blocked` dit pourquoi.")
+    vat_amount: Optional[int] = Field(
+        default=None, description="TVA de la prochaine échéance, en centimes.")
+    amount_ttc: Optional[int] = Field(
+        default=None,
+        description="Ce qui sera RÉELLEMENT prélevé à la prochaine échéance, en "
+                    "centimes. Dérivé de l'identité de facturation COURANTE : il bouge "
+                    "si l'org change de pays, ce qui est voulu — ce qui a déjà été pris "
+                    "ne bouge pas, lui, et se lit sur billing.payments.")
+    vat_scheme: Optional[str] = Field(
+        default=None,
+        description="'fr_ttc' | 'reverse_charge' | 'export'. `null` si non calculable.")
+    vat_blocked: Optional[str] = Field(
+        default=None,
+        description="Pourquoi le TTC est inconnu : 'billing_identity_required' ou "
+                    "'vat_consumer_unsupported'. `null` = rien ne bloque. Un "
+                    "abonnement ACTIF avec un `vat_blocked` posé signale une échéance "
+                    "que le runner ne pourra pas prélever — à réparer. ⚠️ Sur un "
+                    "abonnement OFFERT (comp=true), les quatre champs de TVA valent "
+                    "TOUJOURS `null`, `vat_blocked` compris : rien n'y sera jamais "
+                    "prélevé, donc il n'y a ni TTC à annoncer ni alerte à lever.")
     currency: Optional[str] = Field(default=None, description="Devise du palier ('eur').")
     interval: Optional[str] = Field(default=None, description="'month' | 'year'.")
     status: Optional[str] = Field(
@@ -183,6 +215,24 @@ class SubscribeStarted(BaseModel):
                                     "page de checkout. Ne présume pas du moyen "
                                     "finalement enregistré : le `method` réel se lit sur "
                                     "confirm/status.")
+    amount_ht: int = Field(description="Prix du palier en centimes, HORS TAXES.")
+    vat_rate_bps: int = Field(description="Taux retenu, en points de base "
+                                          "(2000 = 20,00 %, 0 = exonéré).")
+    vat_amount: int = Field(description="TVA en centimes.")
+    amount_ttc: int = Field(
+        description="Ce que la page de checkout va RÉELLEMENT débiter, en centimes. "
+                    "C'est ce montant-là qu'il faut annoncer au payeur avant de "
+                    "l'envoyer sur la page hébergée — sinon il découvre le TTC chez "
+                    "le PSP.")
+    vat_scheme: str = Field(
+        description="'fr_ttc' (TVA française 20 %) | 'reverse_charge' "
+                    "(autoliquidation intracommunautaire) | 'export' (hors UE).")
+    vat_mention: Optional[str] = Field(
+        default=None,
+        description="Mention légale à porter sur la facture (art. 196 de la directive "
+                    "2006/112/CE en autoliquidation, art. 259-1 du CGI en export). "
+                    "`null` en régime français : une facture avec TVA n'a rien à "
+                    "justifier.")
 
 
 class ConfirmResult(BaseModel):
@@ -232,6 +282,26 @@ class ConfirmResult(BaseModel):
         description="État BRUT du paiement chez Mollie (open, pending, authorized, "
                     "paid, failed, canceled, expired). Porté par les branches 'pending', "
                     "'pending_mandate' (où il vaut toujours 'paid') et 'failed'.")
+    amount: Optional[int] = Field(
+        default=None,
+        description="Montant RÉELLEMENT passé au PSP pour ce paiement, en centimes — "
+                    "TTC depuis #486. Relu du journal, pas du catalogue : c'est ce que "
+                    "le client a été débité, même si le prix du palier a changé depuis. "
+                    "Absent sur le no-op idempotent (aucun paiement n'y est lu).")
+    amount_ht: Optional[int] = Field(
+        default=None,
+        description="Part hors taxes du montant, en centimes. ⚠️ `null` sur les "
+                    "encaissements ANTÉRIEURS au 28/08/2026 : ils ont réellement été "
+                    "débités du HT sans TVA et ne sont pas réécrits — un `null` ici "
+                    "veut dire « ligne d'avant la règle », jamais « zéro ».")
+    vat_rate_bps: Optional[int] = Field(
+        default=None, description="Taux appliqué, en points de base (2000 = 20,00 %).")
+    vat_amount: Optional[int] = Field(
+        default=None, description="TVA effectivement facturée, en centimes.")
+    vat_scheme: Optional[str] = Field(
+        default=None,
+        description="'fr_ttc' | 'reverse_charge' | 'export' — le régime figé au moment "
+                    "du débit, qui ne suit PAS un changement d'identité ultérieur.")
 
 
 class Payment(BaseModel):
@@ -244,7 +314,24 @@ class Payment(BaseModel):
                                   "le mandat existant).")
     amount: int = Field(description="Montant de la tentative en CENTIMES, figé au moment "
                                     "de la tentative : il peut différer du prix courant "
-                                    "du palier rendu par billing.status.")
+                                    "du palier rendu par billing.status. C'est ce qui a "
+                                    "été passé au PSP, donc le **TTC** depuis #486.")
+    amount_ht: Optional[int] = Field(
+        default=None,
+        description="Part hors taxes, en centimes. ⚠️ `null` sur les DEUX "
+                    "encaissements antérieurs au 28/08/2026, débités du HT sans TVA et "
+                    "délibérément NON réécrits : `null` = « ligne d'avant la règle », "
+                    "surtout pas « zéro ». C'est ce champ qui les distingue.")
+    vat_rate_bps: Optional[int] = Field(
+        default=None, description="Taux appliqué, en points de base (2000 = 20,00 %).")
+    vat_amount: Optional[int] = Field(
+        default=None, description="TVA facturée, en centimes (amount − amount_ht).")
+    country_code: Optional[str] = Field(
+        default=None,
+        description="Pays de facturation retenu au moment du débit (ISO-3166-1 "
+                    "alpha-2) — il ne suit pas un déménagement ultérieur de l'org.")
+    vat_scheme: Optional[str] = Field(
+        default=None, description="'fr_ttc' | 'reverse_charge' | 'export'.")
     currency: str = Field(description="Code devise ISO en minuscules ('eur').")
     status: str = Field(
         description="État repris du PSP : 'processing'/'open'/'pending'/'authorized' = "
@@ -279,8 +366,15 @@ def _domain(fn, *args):
         # (#493). C'est un CONFLIT d'état, pas une entrée invalide : le client n'a
         # rien à corriger, il a à attendre — et surtout pas à ouvrir un second
         # paiement, ce qui débiterait deux fois.
+        # `billing_identity_required` et `vat_consumer_unsupported` (#486) sont eux
+        # aussi des CONFLITS d'état, pas des entrées invalides : le corps de l'appel
+        # est correct, c'est l'org qui n'est pas en état d'être débitée (identité
+        # manquante, ou pays que le guichet OSS ne couvre pas encore). Un 400
+        # enverrait chercher le défaut dans la requête, où il n'est pas.
         raise AuthzDenied(
-            409 if code in ("already_subscribed", "payment_pending") else 400,
+            409 if code in ("already_subscribed", "payment_pending",
+                            "billing_identity_required",
+                            "vat_consumer_unsupported") else 400,
             code, msg)
     except MollieError as e:
         raise AuthzDenied(502, "psp_error", e.detail)
@@ -333,8 +427,9 @@ def _payments(ctx: ResolvedCtx, inp: PaymentsInput) -> dict:
 
     rows = db_billing.list_billing_payments(ctx.org_id, inp.limit)
     return {"payments": [
-        {k: r.get(k) for k in ("id", "kind", "amount", "currency", "status",
-                               "attempt", "created_at")}
+        {k: r.get(k) for k in ("id", "kind", "amount", "amount_ht", "vat_rate_bps",
+                               "vat_amount", "country_code", "vat_scheme",
+                               "currency", "status", "attempt", "created_at")}
         for r in rows
     ]}
 

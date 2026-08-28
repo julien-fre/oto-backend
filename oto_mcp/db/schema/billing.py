@@ -65,8 +65,19 @@ CREATE TABLE IF NOT EXISTS billing_payments (
     id BIGSERIAL PRIMARY KEY,
     org_id BIGINT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
     kind TEXT NOT NULL,                     -- initial | renewal | method_change
-    amount INTEGER NOT NULL,                -- centimes (converti en montant Mollie à la frontière)
+    amount INTEGER NOT NULL,                -- centimes RÉELLEMENT passés au PSP (TTC depuis #486)
     currency TEXT NOT NULL DEFAULT 'eur',
+    -- Décomposition fiscale de la tentative (#486), figée à l'instant du débit.
+    -- NULLABLES, et c'est le point : les deux encaissements antérieurs au 28/08/2026
+    -- ont été débités du HT sans TVA, ils ne sont pas réécrits, et `amount_ht IS NULL`
+    -- est ce qui les distingue d'une ligne calculée. `vat_rate_bps` est en POINTS DE
+    -- BASE (2000 = 20 %) : un taux entier ne peut pas dériver en flottant, et une
+    -- colonne NUMERIC ressortirait en `Decimal`, que le sérialiseur JSON refuse.
+    amount_ht INTEGER,                      -- centimes hors taxes
+    vat_rate_bps INTEGER,                   -- taux en points de base (2000 = 20,00 %)
+    vat_amount INTEGER,                     -- centimes de TVA (amount - amount_ht)
+    country_code TEXT,                      -- pays de facturation retenu (ISO-3166-1 alpha-2)
+    vat_scheme TEXT,                        -- fr_ttc | reverse_charge | export
     payment_intent_id TEXT,                 -- tr_xxx (premier paiement, page hébergée)
     payment_id TEXT,                        -- tr_xxx (MIT rejoué / id résolu)
     customer_id TEXT,                       -- cst_xxx (le customer Mollie de CETTE tentative)
@@ -78,4 +89,28 @@ CREATE TABLE IF NOT EXISTS billing_payments (
 CREATE INDEX IF NOT EXISTS idx_billing_payments_org ON billing_payments(org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_billing_payments_open
     ON billing_payments(created_at) WHERE status NOT IN ('paid', 'failed', 'canceled', 'expired');
+"""
+
+# identité de facturation par org (#486, socle de la facture #488)
+IDENTITIES = """
+-- Identité de facturation d'une org (#486) — QUI paie, et sous quel régime de TVA.
+-- Collectée AVANT le premier paiement : `billing.subscribe` refuse tant que le
+-- minimum n'est pas là (raison sociale, pays, adresse), parce que le pays décide du
+-- montant réellement débité et que la facture (#488) ne peut pas s'émettre sans lui.
+-- Une ligne par org, remplacée en bloc (c'est un formulaire, pas un journal) ;
+-- l'historique de ce qui a été facturé vit sur `billing_payments`, qui fige sa
+-- décomposition fiscale au moment du débit et ne bouge plus si l'identité change.
+CREATE TABLE IF NOT EXISTS billing_identities (
+    org_id BIGINT PRIMARY KEY REFERENCES orgs(id) ON DELETE CASCADE,
+    legal_name TEXT NOT NULL,               -- raison sociale, telle qu'elle ira sur la facture
+    country_code TEXT NOT NULL,             -- ISO-3166-1 alpha-2, MAJUSCULES (⚠️ la Grèce est GR ici, EL en TVA)
+    vat_number TEXT,                        -- n° TVA intracom NORMALISÉ, préfixe compris ; NULL = non assujetti déclaré
+    address_line TEXT,
+    address_line2 TEXT,
+    postal_code TEXT,
+    city TEXT,
+    billing_email TEXT,                     -- destinataire de la facture, si différent de l'admin
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 """

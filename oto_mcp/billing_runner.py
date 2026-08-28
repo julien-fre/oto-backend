@@ -7,6 +7,11 @@ scheduler.py) fait tout le cycle à intervalle horaire :
    (`sequenceType=recurring`) sur `customerId`+`mandateId`. `Idempotency-Key`
    DÉTERMINISTE `org<id>-<période>-a<tentative>` → un tick concurrent/rejoué
    renvoie le MÊME paiement Mollie (HTTP 200), jamais un double débit.
+   Le montant prélevé est le **TTC** (#486), calculé par le MÊME seam que la
+   souscription (`billing.tax_for_org`) sur l'identité de facturation de l'org à
+   l'instant du prélèvement. Une identité qui ne permet plus de calculer la TVA
+   rend `tax_blocked` : rien n'est prélevé, rien n'est décalé, et le log dit
+   pourquoi — un montant approximatif serait pire qu'un mois non prélevé.
 2. **Politique d'impayé** (dunning borné) : échec → retry à J+3 (tentatives
    trackées par le JOURNAL, pas un compteur mutable) ; 3 échecs → `past_due`
    + grace 14 j. La notification org_admin = barreau ultérieur.
@@ -55,7 +60,7 @@ _PAYMENT_FAILED = frozenset({"failed", "canceled", "expired"})
 
 def _charge_one(sub_row: dict, now: datetime) -> str:
     """Tire l'échéance d'UN abonnement. Retourne l'issue (log/test) :
-    'renewed' | 'retry' | 'past_due' | 'skipped'."""
+    'renewed' | 'retry' | 'past_due' | 'skipped' | 'tax_blocked'."""
     org_id = sub_row["org_id"]
     if sub_row.get("provider") == "comp":
         # abonnement FORCÉ par un admin (non payé) — jamais de débit. Ceinture
@@ -71,17 +76,31 @@ def _charge_one(sub_row: dict, now: datetime) -> str:
                   "(method=%s) — sautée", org_id, sub_row.get("method"))
         return "skipped"
 
+    # MÊME calcul qu'à la souscription, MÊME seam (#486) : l'échéance est prélevée
+    # TTC, au taux de l'identité de facturation AU MOMENT DU PRÉLÈVEMENT — une org
+    # qui change de pays entre deux mois change de régime pour l'échéance suivante,
+    # sans que rien de déjà facturé ne bouge.
+    try:
+        tax = billing.tax_for_org(org_id, plan["amount"])
+    except ValueError as e:
+        # Ni fallback ni débit approximatif : sans identité exploitable, il n'y a pas
+        # de montant correct à prendre. On ne touche PAS au cycle (next_billing_at
+        # reste dû) — le prélèvement repartira dès que l'identité sera réparée.
+        log.error("billing_runner: org %s non prélevable — TVA incalculable : %s",
+                  org_id, e)
+        return "tax_blocked"
+
     period_ref = str(sub_row.get("current_period_end") or "epoch")[:10]
     attempt = db_billing.count_renewal_attempts(
         org_id, sub_row.get("current_period_end") or now) + 1
     idempotency_key = f"org{org_id}-{period_ref}-a{attempt}"
 
     row_id = db_billing.insert_billing_payment(
-        org_id, "renewal", plan["amount"], currency=plan["currency"],
-        status="processing", attempt=attempt)
+        org_id, "renewal", tax["amount_ttc"], currency=plan["currency"],
+        status="processing", attempt=attempt, tax=tax)
     try:
         payment = mollie_client.create_recurring_payment(
-            plan["amount"], customer_id=sub_row["customer_id"],
+            tax["amount_ttc"], customer_id=sub_row["customer_id"],
             mandate_id=sub_row["mandate_id"], currency=plan["currency"],
             idempotency_key=idempotency_key, webhook_url=billing.webhook_url(),
             description=f"Abonnement {plan['label']} — échéance {period_ref}")
