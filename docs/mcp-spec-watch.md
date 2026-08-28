@@ -38,7 +38,11 @@ pendant que les SEP concernés étaient publics. Bon pari, mauvaise méthode.
 **À traiter d'ici la migration** (bloquée tant que FastMCP ne porte pas `2026-07-28`,
 plancher actuel 3.4.2) : ① `ttlMs` + `cacheScope: **private**` obligatoires sur
 `tools/list` (notre liste varie par identité, ADR 0015/0031 — un intermédiaire ne doit
-jamais la partager) ; ② suppression de la résumabilité SSE ⟹ un stream cassé se rejoue
+jamais la partager) — ⚠️ **et la même exigence vaut pour `server/discover`, repérée le
+2026-08-28** : son résultat porte `instructions`, que nous composons **par (sub, org)**
+(readme d'org, d'équipe, d'utilisateur). Servi en `cacheScope: "public"` — la valeur de
+l'exemple de la spec — un intermédiaire servirait le readme d'une org à une autre. Le
+point ① ne visait que `tools/list` ; il vise les deux ; ② suppression de la résumabilité SSE ⟹ un stream cassé se rejoue
 en requête neuve : les outils longs (browser, INPI, fullenrich) doivent être
 **idempotents** ; ③ DCR déprécié au profit des Client ID Metadata Documents — notre
 façade DCR (`oauth_facade.py`, palliatif du Logto self-hosted sans DCR) a une date de
@@ -71,9 +75,23 @@ sous Claude Code, alors qu'ADR 0042 en fait le primitif d'instruction livré à 
 session. Et l'écran de transparence `/api/me/agent-context` montrait ce que le serveur
 COMPOSE, pas ce que le client REÇOIT.
 
-⚠️ **Et le canal disparaît de toute façon** : SEP-2575 retire `initialize` de la spec
-`2026-07-28`. Bâtir sur `instructions` n'était pas seulement fragile, c'était bâtir sur
-ce que la spec supprime.
+⚠️ **Correction du 2026-08-28** — cette section a affirmé quelques heures que « le canal
+disparaît de toute façon, la spec supprime `instructions` ». **C'est faux, et l'erreur
+venait d'un raccourci** : SEP-2575 retire `initialize`, pas `instructions`. Vérifié à la
+source : le champ **déménage** dans le `DiscoverResult` de **`server/discover`**, que les
+serveurs **DOIVENT** implémenter.
+
+Mais le canal en sort **plus faible, pas plus fort**, et c'est ce qui compte pour nous :
+
+| | `initialize` (≤ 2025-11-25) | `server/discover` (2026-07-28) |
+|---|---|---|
+| le client l'appelle | **obligatoirement** (poignée de main) | **facultativement** — « a client may invoke any RPC inline » |
+| donc `instructions` est | toujours transmis, diversement rendu | **peut n'être jamais demandé** |
+
+On passe d'un canal toujours émis que le client rend mal, à un canal que le client peut
+ne pas solliciter du tout. La conclusion pratique ne change pas — ne pas en dépendre —
+mais le motif, si : ce n'est pas une suppression, c'est un passage d'obligatoire à
+optionnel.
 
 **Ce qu'on en a fait** (oto-backend#478) : le filet
 (`middleware/context_net.py`) livre le bloc dans la première réponse d'outil d'une
