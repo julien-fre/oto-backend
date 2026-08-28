@@ -47,22 +47,42 @@ _INIT_SRC = (_OTO / "db" / "_init.py").read_text(encoding="utf-8")
 
 # ─── 1. L'intention : personne ne lit encore l'instance ──────────────────────
 
-# Les SEULS fichiers admis à connaître la table ou son module. Trois familles, et
-# aucune n'est un chemin de résolution : le DDL, la migration de boot, et la
-# PROJECTION de lecture (`GET /api/me/connector-instances`), qui n'en tire qu'un
-# identifiant d'affichage servi à côté du `ref` existant.
+# Les SEULS fichiers admis à connaître la table ou son module. Quatre familles, et
+# aucune n'est un chemin de RÉSOLUTION : le DDL, le filet de boot, la PROJECTION de
+# lecture (`GET /api/me/connector-instances`), et — depuis la pièce 2 — le COFFRE,
+# qui nomme ses propres lignes à la pose.
 #
-# ⚠️ Ce qui n'est PAS ici, et qui est tout l'objet du garde-fou : `access/cascade.py`,
-# `access/resolve.py`, `access/rbac.py`, `grants_chain.py`, `credentials_store.py`.
-# Le jour où l'un d'eux lit une instance, la résolution cesse de passer par la clé du
+# ⚠️ `credentials_store.py` a rejoint la liste le 2026-08-28, **délibérément**, et
+# c'est le seul ajout de la pièce 2. Ce n'est pas un assouplissement du garde-fou :
+# ce qu'il protège n'a jamais été « personne ne touche la table » mais « aucune
+# RÉSOLUTION n'en dépend », et écrire l'instance au moment où naît la ligne du coffre
+# n'est pas résoudre. La contrepartie est mécanique et vit juste en dessous
+# (`test_dans_le_coffre_seules_les_primitives_d_ECRITURE_nomment_l_instance`) : dans ce
+# fichier, seules les primitives d'ÉCRITURE connaissent les instances — aucun lecteur
+# de credential ne les touche, sans quoi le coffre commencerait à désigner ses clés
+# autrement que par son quadruplet.
+#
+# ⚠️ Ce qui n'est toujours PAS ici, et qui reste tout l'objet du garde-fou :
+# `access/cascade.py`, `access/resolve.py`, `access/rbac.py`, `grants_chain.py`. Le
+# jour où l'un d'eux lit une instance, la résolution cesse de passer par la clé du
 # coffre — c'est le lot L7, il a sa revue, et il retire cette ligne dans son propre
 # commit.
 _LECTEURS_ADMIS = {
     "db/connector_instances.py",        # le module lui-même
     "db/__init__.py",                   # la façade plate `db.<fn>`
-    "db/_init.py",                      # le backfill de boot
+    "db/_init.py",                      # le filet de boot
     "db/schema/connectors.py",          # le DDL
-    "capabilities/connectors/instances.py",  # la projection de lecture (la surface du lot)
+    "capabilities/connectors/instances.py",  # la projection de lecture
+    "credentials_store.py",             # le coffre : la naissance à la pose (pièce 2)
+}
+
+# Dans le coffre, les SEULES fonctions admises à nommer une instance. Ce sont les
+# primitives d'ÉCRITURE, et elles seules : l'entonnoir (`_upsert`/`_delete`), les deux
+# purges en masse qui l'empruntent désormais, et le renommage — le seul geste qui
+# DÉPLACE une ligne de coffre, donc le seul qui doive faire suivre l'instance.
+_ECRIVAINS_DU_COFFRE = {
+    "_upsert", "_delete", "clear_entity_credentials", "clear_connector_credentials",
+    "rename_account",
 }
 
 # La table, et les symboles du module — chercher le CONCEPT, pas seulement le nom de
@@ -137,6 +157,35 @@ def test_la_cascade_et_la_resolution_sont_litteralement_intactes():
         assert src.exists(), f"{rel} a été déplacé : le garde-fou ci-dessus est à recalibrer"
         assert not _MARQUEURS.search(src.read_text(encoding="utf-8")), (
             f"{rel} lit les instances — c'est le lot L7, pas celui-ci")
+
+
+def test_dans_le_coffre_seules_les_primitives_d_ECRITURE_nomment_l_instance():
+    """La contrepartie de l'entrée de `credentials_store.py` dans l'allowlist.
+
+    L'allowlist raisonne par FICHIER ; ce que le lot promet est plus fin — le coffre
+    ÉCRIT l'instance, il ne la LIT jamais pour décider. Le jour où `get_credential`,
+    `resolve_*` ou `list_credentials` iraient chercher une instance, la désignation
+    d'une clé cesserait de passer par le quadruplet, et personne ne le verrait : le
+    fichier est déjà admis. Ce test rend la promesse mécanique en descendant d'un
+    étage — le grain n'est plus le fichier mais la FONCTION.
+    """
+    src = (_OTO / "credentials_store.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    # Fonctions de PREMIER niveau seulement : `ast.unparse` d'une fonction embarque ses
+    # définitions internes, donc un helper imbriqué est compté chez son parent — sinon
+    # deux `_do` homonymes s'écraseraient dans le relevé.
+    coupables = {}
+    for node in tree.body:
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        hits = _references(ast.unparse(node))
+        if hits:
+            coupables[node.name] = sorted(set(hits))
+    assert set(coupables) == _ECRIVAINS_DU_COFFRE, (
+        f"les fonctions du coffre qui nomment une instance ont changé : "
+        f"{sorted(coupables)} (attendu {sorted(_ECRIVAINS_DU_COFFRE)}). Un LECTEUR de "
+        "credential qui se met à lire les instances fait dépendre la désignation d'une "
+        "clé d'autre chose que du quadruplet du coffre — c'est le lot L7, avec sa revue.")
 
 
 def test_le_backfill_tourne_apres_le_schema_et_dans_la_transaction():

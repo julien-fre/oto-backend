@@ -8,16 +8,30 @@ Chiffrement par enveloppe AES-256-GCM **obligatoire** : le secret vit dans
 déchiffrement JIT vit dans `get_credential` / `resolve_api_key`. Réutilise
 `db._connect` (comme `org_store`) ; ne PAS importer depuis `db` les helpers
 haut-niveau (cycle).
+
+⚠️ **Le coffre NOMME ses lignes** (lot L6 pièce 2). `_upsert` et `_delete` sont
+l'entonnoir unique d'écriture de `connector_credentials` — un seul `INSERT`, un seul
+`DELETE` dans tout le dépôt — et c'est là, et nulle part ailleurs, que l'instance
+(`connector_instances`) naît et s'archive, dans la MÊME transaction que le secret.
+Accrocher la naissance aux surfaces (clé membre, org, groupe, plateforme, session
+navigateur, OAuth) aurait demandé une dizaine de crochets pour le même effet, avec
+une chance sur dix d'en oublier un. ⚠️ Écrire ici sans passer par ces deux
+primitives laisse une ligne de coffre SANS instance — c'est ce que la requête
+d'invariant de `tests/test_connector_instances_birth_live.py` détecte, et ce que le
+garde-fou AST de `tests/test_connector_instances_l6.py` circonscrit à ce module.
+Le lien reste le QUADRUPLET (`entity_type/entity_id/connector/account`) : aucune
+colonne n'est ajoutée au coffre, l'AAD ne bouge pas.
 """
 from __future__ import annotations
 
 import json
 import logging
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 from . import providers, crypto
-from .db import _connect
+from .db import _connect, connector_instances
 
 _WHITESPACE = re.compile(r"\s+")
 
@@ -311,12 +325,12 @@ def clear_editor_app(connector: str, data_center: str) -> bool:
     """Retire l'app d'éditeur d'une région. Les credentials DÉJÀ obtenus par
     consentement en gardent une copie (`persist` les range avec) : ils continuent de
     fonctionner, mais plus aucune nouvelle connexion ne pourra démarrer."""
+    # Par `_delete` et pas par un DELETE brut (L6 pièce 2) : une app d'éditeur EST une
+    # ligne de coffre au palier plateforme, donc elle a une instance — le filet de boot
+    # lui en donnait déjà une. La retirer sans archiver l'instance ferait deux
+    # populations différentes selon le chemin d'écriture.
     with _connect() as conn:
-        cur = conn.execute(
-            "DELETE FROM connector_credentials WHERE entity_type=%s AND entity_id=%s "
-            "AND connector=%s AND account=''",
-            (PLATFORM, editor_label(data_center), connector))
-    return (cur.rowcount or 0) > 0
+        return _delete(conn, PLATFORM, editor_label(data_center), connector, "")
 
 
 # `meta` JSONB porte aussi des satellites SECRETS (audit 2026-06-13, otomata#29) :
@@ -737,6 +751,12 @@ def _upsert(conn, entity_type, entity_id, connector, account, secret, set_by, me
         raise ConcurrencyConflict(
             f"{connector} ({entity_type}:{entity_id}) modifié depuis la lecture "
             f"(version ≠ {expected_version}) — relis puis rejoue.")
+    # L6 pièce 2 : la ligne existe, elle a droit à son nom. **Après** le verdict du
+    # verrou optimiste (une écriture devancée ne doit rien laisser derrière elle) et
+    # DANS la transaction de `conn` — une pose qui échoue plus loin n'emporte pas une
+    # instance orpheline. Idempotent : une rotation de secret retombe sur la même
+    # instance, elle ne renaît pas.
+    connector_instances.name_vault_row(conn, entity_type, entity_id, connector, account)
 
 
 def _delete(conn, entity_type, entity_id, connector, account) -> bool:
@@ -745,7 +765,55 @@ def _delete(conn, entity_type, entity_id, connector, account) -> bool:
         "WHERE entity_type = %s AND entity_id = %s AND connector = %s AND account = %s",
         (entity_type, entity_id, connector, account),
     )
+    # L6 pièce 2 : l'instance s'ARCHIVE, elle ne se supprime pas (0053-D7 — un binding,
+    # une arête ou une consommation qui la désignent doivent pouvoir la relire après
+    # le retrait). Inconditionnel : appelé sans ligne à supprimer, il ne fait rien —
+    # et s'il reste une instance vivante sans sa ligne, il RÉPARE l'écart.
+    connector_instances.revoke_instances_for_vault_rows(
+        conn, entity_type, entity_id, connector, account)
     return (cur.rowcount or 0) > 0
+
+
+def clear_entity_credentials(entity_type: str, entity_id: str, conn=None) -> int:
+    """Purge TOUS les credentials d'une entité — et archive leurs instances.
+
+    Existe pour que la suppression d'un groupe cesse de faire un `DELETE` en masse
+    depuis `group_store` : un retrait qui contourne l'entonnoir laisse les instances
+    vivantes derrière lui, c'est-à-dire des objets qui désignent des clés disparues.
+    Rend le nombre de lignes de coffre supprimées."""
+
+    def _do(c) -> int:
+        n = c.execute(
+            "DELETE FROM connector_credentials WHERE entity_type = %s AND entity_id = %s",
+            (entity_type, str(entity_id))).rowcount or 0
+        connector_instances.revoke_instances_for_vault_rows(c, entity_type, entity_id)
+        return n
+
+    if conn is not None:
+        return _do(conn)
+    with _connect() as c:
+        return _do(c)
+
+
+def clear_connector_credentials(entity_type: str, entity_id: str, connector: str,
+                                conn=None) -> int:
+    """Purge TOUS les comptes d'UN connecteur pour une entité — et archive leurs
+    instances. Même raison que `clear_entity_credentials` : la déconnexion de tous les
+    comptes Google d'un membre passait par un `DELETE` en masse."""
+
+    def _do(c) -> int:
+        n = c.execute(
+            "DELETE FROM connector_credentials "
+            "WHERE entity_type = %s AND entity_id = %s AND connector = %s",
+            (entity_type, str(entity_id), connector)).rowcount or 0
+        connector_instances.revoke_instances_for_vault_rows(
+            c, entity_type, entity_id, connector)
+        return n
+
+    if conn is not None:
+        return _do(conn)
+    with _connect() as c:
+        return _do(c)
 
 
 def set_credential(
@@ -858,21 +926,50 @@ def ensure_named_coexistence(entity_type: str, entity_id: str, connector: str,
             "Ce connecteur a déjà des comptes nommés — précise `account`.")
 
 
+@dataclass(frozen=True)
+class RenameOutcome:
+    """Ce qu'un renommage de compte a fait — au credential ET à son instance.
+
+    Booléen par `__bool__` (`renamed`) pour rester lisible là où seul le succès
+    compte. Les deux autres champs existent parce qu'un archivage ne doit jamais être
+    SILENCIEUX : quand une instance vivante occupait déjà l'arrivée (un écart : une
+    instance sans sa ligne de coffre), l'arrivée gagne et le départ s'archive — le
+    geste le dit ici, en plus de le journaliser."""
+    renamed: bool                       # la ligne de coffre a bien été déplacée
+    moved: bool = False                 # l'instance a SUIVI (id conservé)
+    archived_instance_id: "int | None" = None
+    kept_instance_id: "int | None" = None
+
+    def __bool__(self) -> bool:
+        return self.renamed
+
+
 def rename_account(entity_type: str, entity_id: str, connector: str,
-                   old_account: str, new_account: str) -> bool:
+                   old_account: str, new_account: str) -> RenameOutcome:
     """Renomme le segment `account` d'un credential. Re-chiffre (l'AAD lie le
     ciphertext à son compte → un simple UPDATE du champ casserait le déchiffrement).
     Sert au backfill de la ligne mono-compte '' vers un label nommé au passage au
     multi-compte (« principal »). Atomique (upsert new + delete old, même transaction).
-    False si la ligne source est absente."""
+    Faux si la ligne source est absente.
+
+    ⚠️ **L'instance SUIT, elle ne renaît pas** (L6 pièce 2), et c'est le geste pour
+    lequel l'identifiant stable existe : laissé aux seuls crochets de `_upsert` et
+    `_delete`, un renommage tuerait l'instance et en ferait naître une autre — soit
+    exactement ce qu'un ref composé fait déjà, et qu'on remplace. Le déplacement se
+    fait donc EN PREMIER, dans la même transaction : après lui, le crochet de pose
+    trouve l'instance déjà vivante à l'arrivée et le crochet de retrait n'en trouve
+    plus au départ. Aucun des deux n'a de cas particulier à connaître."""
     row = get_credential_with_meta(entity_type, entity_id, connector, old_account)
     if row is None:
-        return False
+        return RenameOutcome(renamed=False)
     with _connect() as c:
+        moved, archivee, conservee = connector_instances.move_instance_to_account(
+            c, entity_type, entity_id, connector, old_account, new_account)
         _upsert(c, entity_type, entity_id, connector, new_account, row["secret"],
                 None, row.get("meta"))
         _delete(c, entity_type, entity_id, connector, old_account)
-    return True
+    return RenameOutcome(renamed=True, moved=moved, archived_instance_id=archivee,
+                         kept_instance_id=conservee)
 
 
 def list_credentials(entity_type: str, entity_id: str) -> list[dict]:

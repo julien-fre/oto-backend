@@ -86,14 +86,16 @@ def update_group(group_id: int, name: Optional[str] = None,
 
 def delete_group(group_id: int) -> bool:
     """Supprime un groupe (cascade : membres, guide, revisions). Les secrets
-    de groupe (coffre) sont purgés explicitement (hors FK)."""
+    de groupe (coffre) sont purgés explicitement (hors FK).
+
+    ⚠️ Par la primitive du coffre et non par un `DELETE` brut (L6 pièce 2) : un
+    retrait qui contourne l'entonnoir laisse les instances de l'équipe VIVANTES —
+    des objets qui désignent des clés disparues, et qu'un binding ou une arête
+    peuvent nommer."""
     with _connect() as conn:
         with conn.transaction():
-            conn.execute(
-                "DELETE FROM connector_credentials "
-                "WHERE entity_type = 'group' AND entity_id = %s",
-                (str(group_id),),
-            )
+            credentials_store.clear_entity_credentials("group", str(group_id),
+                                                       conn=conn)
             cur = conn.execute("DELETE FROM org_groups WHERE id = %s", (group_id,))
             return (cur.rowcount or 0) > 0
 
