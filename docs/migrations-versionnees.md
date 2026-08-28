@@ -163,7 +163,15 @@ gras du démarrage, et ce n'est pas un problème de migrations.
    activé par `deploy/oto-backend.sh`, **prod seulement** — la base est partagée, deux
    exécutants se disputeraient les mêmes lignes).
 3. **Chaque étape du boot se chronomètre dans le journal** (`boot: <étape> <n> ms`) —
-   « on décide sur mesure, pas sur intuition ».
+   « on décide sur mesure, pas sur intuition ». ⚠️ **Ces lignes n'ont RIEN produit à leur
+   premier déploiement** (2026-08-28, corrigé le même soir) : `logging.basicConfig`
+   vivait dans `server.main`, or le premier tiers du démarrage se passe **à l'import**
+   d'`oto_mcp.server` — un `logger.info` émis avant tout handler est jeté, le
+   `lastResort` de la stdlib n'émettant qu'à partir de WARNING. Zéro ligne `boot:` dans
+   le journal de la box alors que le code en émettait une par étape. Le journal est
+   désormais configuré par `oto_mcp/cli.py` avant l'import, et
+   `tests/test_boot_logs_visibles.py` garde l'ORDRE. **Une instrumentation qui ne
+   journalise pas est pire que pas d'instrumentation** : on la croit posée.
 4. **L'ordre du boot est rejouable hors du démarrage** : `apply_boot_schema(conn)` +
    `replay_boot_schema_dry(conn)` (transaction annulée), gardés par
    `tests/test_boot_order_replay.py`, et jouables contre une base servie par

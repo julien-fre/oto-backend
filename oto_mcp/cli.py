@@ -13,7 +13,31 @@ le chemin du serveur.
 """
 from __future__ import annotations
 
+import logging
+import os
 import sys
+
+_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+
+
+def _configurer_le_journal() -> None:
+    """Pose les handlers AVANT tout import qui journalise — et c'est le point.
+
+    ⚠️ Le premier tiers du démarrage se passe **à l'import** d'`oto_mcp.server`, qui
+    construit l'instance anonyme au niveau module et prépare donc la base. Tant que
+    `logging.basicConfig` vivait dans `server.main`, tout ce que ce tiers journalisait
+    en INFO tombait dans le vide : sans handler, le `lastResort` de la stdlib n'émet
+    qu'à partir de WARNING. Constaté en production le 2026-08-28 — les lignes
+    `boot: <étape> <n> ms` que l'ADR 0065 demande n'apparaissaient **nulle part** dans
+    le journal de la box, alors que le code les émettait.
+
+    Une instrumentation qui ne journalise pas est pire que pas d'instrumentation : on
+    la croit posée, et on mesure en croyant avoir mesuré.
+
+    Idempotent : `basicConfig` ne fait rien si le root logger a déjà des handlers, donc
+    l'appel qui subsiste dans `server.main` reste un no-op inoffensif.
+    """
+    logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format=_FORMAT)
 
 
 def main() -> None:
@@ -27,6 +51,8 @@ def main() -> None:
             "  oto-mcp                        démarre le serveur\n"
             "  oto-mcp maintenance <travail>  joue un travail de maintenance "
             "(--help pour la liste)")
+    # AVANT l'import : cet import EST déjà du démarrage, et il journalise.
+    _configurer_le_journal()
     from .server import main as serve
     serve()
 

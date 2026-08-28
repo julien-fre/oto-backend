@@ -528,7 +528,10 @@ annotés : c'est de la dette DÉCLARÉE, pas un permis. **Détail et inventaire 
 → `_prepare_database()` **une seule fois par process** (drapeau `_PREPARED`) : `init_db()`
 puis les six backfills/seeds one-shot. `_build_mcp` est appelé **deux** fois (instance
 anonyme au niveau module, authentifiée dans `main`) — la garde est là pour ça. Chaque
-étape se chronomètre dans le journal (`boot: <étape> <n> ms`).
+étape se chronomètre dans le journal (`boot: <étape> <n> ms`). ⚠️ **Le journal se
+configure dans `oto_mcp/cli.py`, AVANT d'importer `server`** : cet import EST déjà du
+démarrage et il journalise, or un INFO émis sans handler est jeté (vécu le 28/08 :
+zéro ligne `boot:` en prod alors que le code en émettait une par étape).
 
 ⚠️ **La fenêtre du healthcheck est FINIE : 120 s**, sonde directe `127.0.0.1:9103`
 (`deploy/oto-backend.sh`). Boot prod/préprod mesuré 36-39 s, dont **≈ 1,5 s de base**
