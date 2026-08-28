@@ -270,4 +270,30 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
         # noqa: SILENT — fail-open par palier sur la fiche de statut
         except Exception:  # noqa: BLE001 — la santé est un bonus, jamais bloquant
             pass
+
+    # RBAC connecteur (ADR 0025 org + 0012 B2 équipe) : « aucune clé ne résout »
+    # (`mode='forbidden'`) et « l'accès t'est refusé » sont DEUX choses, et le snapshot
+    # ne disait que la première. L'écran en tirait un « Réservé à certaines équipes —
+    # demande à un admin » sur le simple fait qu'aucune clé n'était posée : un mur
+    # affiché à quelqu'un que rien ne bloque, jusqu'à un org_admin devant SON propre
+    # connecteur. Faux diagnostic repéré le 2026-07-16, resté sans signal pour le
+    # corriger jusqu'ici (oto-dashboard#126).
+    #
+    # Même seam que l'enforcement call-time (`require_connector_access`), donc mêmes
+    # escalades : super_admin, org_admin, chef d'équipe ne sont jamais refusés.
+    # Fail-open INDÉPENDANT par palier, et fail-open GLOBAL : un hoquet de DB ne doit
+    # pas inventer une restriction — mieux vaut ne rien annoncer que refuser à tort.
+    denied: set = set()
+    try:
+        denied |= rbac.rbac_denied_connectors(sub, active_org) if sub else set()
+    except Exception:
+        logger.warning("status_for: RBAC d'org indisponible pour %s — aucune "
+                       "restriction annoncée", sub, exc_info=True)
+    try:
+        denied |= rbac.group_rbac_denied_connectors(sub, active_group) if sub else set()
+    except Exception:
+        logger.warning("status_for: RBAC d'équipe indisponible pour %s — aucune "
+                       "restriction annoncée", sub, exc_info=True)
+    for name, entry in out["providers"].items():
+        entry["rbac_restricted"] = name in denied
     return out
