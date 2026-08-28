@@ -80,9 +80,30 @@ Une ligne par surface. « Forme » dit comment les deux noms coexistent.
 | Clé de capacité | `org.doctrine.admin_get` | `org.guide.admin_get` | idem | B2 |
 | Clé de capacité | `org.doctrine.admin_list` | `org.guide.admin_list` | idem | B2 |
 | Clé de capacité | `admin.doctrine` | `admin.guide` | idem | B2 |
+| Clé de réponse | `doctrine_id` | `guide_id` | les deux servies, même valeur | B3 |
+| Clé de réponse | `doctrine_version` | `guide_version` | idem | B3 |
+| Clé de réponse | `doctrine_ref_count` | `guide_ref_count` | idem | B3 |
+| Clé de réponse | `doctrines` | `guides` | idem | B3 |
+| Clé de réponse | `group_doctrine` | `group_guide` | idem | B3 |
+| Clé de réponse | `doctrine` | `guide` | idem | B3 |
+| Paramètre d'entrée | `doctrine_id` | `guide_id` | les deux acceptés | B3 |
+| Paramètre d'entrée | `run_start(doctrine=)` | `run_start(guide=)` | les deux acceptés | B3 |
+| Code d'erreur | `unknown_doctrine` | `unknown_guide` | l'ancien dans `details.legacy_code` | B3 |
+| Schéma OpenAPI | `DoctrineMeta` | `GuideMeta` | `$ref` déprécié vers le neuf | B3 |
 
-*(Cette table se remplit au fil du lot B : clés de réponse et schémas en B3, objets en
-base en B4.)*
+*(Cette table se remplit au fil du lot B : objets en base en B4.)*
+
+Ce qui reste EN BASE, et ne peut donc pas se doubler — table `doctrine_library`,
+colonne `runs.doctrine`, valeur d'énumération `missing_doctrine`, kind d'ownership
+`doctrine` (`resource_grants.resource_type`), clé `doctrine_version` écrite dans les
+`props` d'un nœud : **lot B4**, en additif (vue d'abord), parce que la base est
+partagée prod/preprod (ADR 0065).
+
+⚠️ **`DoctrineView` n'est pas dans cette table**, et ce n'est pas un oubli : un
+modèle `Output` de premier niveau n'est pas un composant OpenAPI. Son schéma est
+INLINE dans la réponse 200, et son nom n'y apparaît que comme `title` — ce
+qu'aucun `$ref` ne peut viser. Le renommer n'engage personne ; publier un alias
+pour lui inventerait un contrat qui n'a jamais existé.
 
 ⚠️ **`/api/guide-library` n'est PAS `/api/guides/library`.** Le premier est le
 **marché** des guides publiés par les orgs (forkables, table `doctrine_library`) ; le
@@ -103,6 +124,26 @@ n'y a donc rien à aliaser.
 renomme aucune méthode, seule l'URL bouge. L'entrée dépréciée reçoit alors un id
 dérivé de son chemin — deux entrées ne peuvent pas partager un `operationId` sans
 faire disparaître une méthode d'un client généré, en silence.
+
+### Pourquoi une clé de réponse se double, et ne se renomme jamais
+
+C'est la panne la plus chère de tout ce chantier, et la plus **silencieuse** : un
+client qui lit `doctrine` sur une réponse qui ne sert plus que `guide` reçoit `null`.
+Pas d'erreur, pas de log, rien qui s'allume. Il affiche un readme vide, ou range une
+liste vide dans son cache. On l'apprend par un utilisateur, des jours plus tard.
+
+Le doublage est fait par `deprecations.avec_les_deux_noms`, appelé **site par site**,
+jamais posé globalement : un passage automatique sur toute réponse traverserait aussi
+les données de l'utilisateur — la ligne d'un tableau dont il a nommé une colonne
+« doctrine » gagnerait une colonne fantôme. Une compatibilité ne doit jamais inventer
+un champ dans la donnée de quelqu'un.
+
+⚠️ **Un nom doublé en SORTIE doit rester accepté en ENTRÉE**, et réciproquement.
+Servir `guide_id` sans l'accepter en paramètre serait un piège : l'agent recopie ce
+qu'il lit, et échoue.
+
+⚠️ **Un code d'erreur, lui, ne se double pas** — il n'y a qu'un champ `error`. Le
+nouveau prend la place, l'ancien est conservé dans `details.legacy_code`.
 
 ## Ce qu'un consommateur doit faire
 

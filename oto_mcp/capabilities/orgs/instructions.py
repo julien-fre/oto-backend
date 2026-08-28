@@ -24,7 +24,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from ... import (access, db, group_store, guide_store, org_store,
+from ... import (access, db, deprecations, group_store, guide_store, org_store,
                 procedure_diagram, procedure_digest, roles,
                 slots as slots_mod, tool_registry)
 from .._authz import ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER, ORG_MEMBER_OF, SUB_ONLY
@@ -56,13 +56,13 @@ class ReferencedTool(BaseModel):
     status: str
 
 
-class DoctrineView(BaseModel):
+class GuideView(BaseModel):
     """⚠️ **Trois formes derrière une capacité**, choisies par l'ENTRÉE :
 
-    1. `doctrine_id` fourni → une procédure par son id STABLE (le seul chemin qui
+    1. `guide_id` fourni → une procédure par son id STABLE (le seul chemin qui
        traverse les orgs : l'accès passe par le seam ownership, donc une procédure
        PARTAGÉE à toi par une autre org est lisible ici). **C'est la seule forme que
-       la face REST peut produire** — `doctrine_id` y est un segment de chemin.
+       la face REST peut produire** — `guide_id` y est un segment de chemin.
     2. `slug` omis (MCP) → le *bundle de session* : readme d'org + readme d'équipe +
        index des procédures.
     3. `slug` fourni (MCP) → une procédure nommée.
@@ -71,11 +71,17 @@ class DoctrineView(BaseModel):
     `group_id` en scope équipe — pas un champ nul, un champ absent.
 
     ⚠️ Sans org active, la forme 2 répond **200 avec un bundle vide** (`org_id: null`,
-    `doctrine: ""`, `doctrines: []`), pas une erreur : `doctrine: ""` confond « pas
-    d'org » et « org sans readme »."""
+    `guide: ""`, `guides: []`), pas une erreur : `guide: ""` confond « pas d'org » et
+    « org sans readme ».
+
+    ⚠️ **Chaque clé est servie DEUX FOIS** le temps du préavis (#519) : sous son nom
+    d'aujourd'hui (`guide_id`, `guide`, `group_guide`, `guides`) et sous celui
+    d'hier, qui s'en va le 27/09/2026 — cf. `docs/alias-deprecies.md`. Écris le
+    nouveau ; l'ancien est là pour ne casser personne, pas pour être choisi."""
     org_id: Optional[int] = None
     group_id: Optional[int] = None
-    doctrine_id: Optional[int] = None
+    guide_id: Optional[int] = None
+    doctrine_id: Optional[int] = None   # ALIAS déprécié (retrait 27/09/2026)
     scope: Optional[str] = None
     slug: Optional[str] = None
     title: Optional[str] = None
@@ -87,11 +93,14 @@ class DoctrineView(BaseModel):
     referenced_tools: Optional[list[ReferencedTool]] = None
     # Forme 2 seulement : le readme d'org (prose plate), son org, son équipe active.
     org: Optional[str] = None
-    doctrine: Optional[str] = None
+    guide: Optional[str] = None
+    doctrine: Optional[str] = None        # ALIAS déprécié (retrait 27/09/2026)
     group: Optional[str] = None
-    group_doctrine: Optional[str] = None
+    group_guide: Optional[str] = None
+    group_doctrine: Optional[str] = None  # ALIAS déprécié (retrait 27/09/2026)
     # Index (slug/title/description/scope) — SANS les corps.
-    doctrines: Optional[list[dict]] = None
+    guides: Optional[list[dict]] = None
+    doctrines: Optional[list[dict]] = None  # ALIAS déprécié (retrait 27/09/2026)
     # Présent seulement s'il y a un projet actif : les entités du projet contre
     # lesquelles résoudre les `<slot:>`. Dérivé best-effort — son ABSENCE peut donc
     # aussi vouloir dire « la dérivation a échoué », pas seulement « hors projet ».
@@ -100,7 +109,7 @@ class DoctrineView(BaseModel):
     versions: Optional[list[dict]] = None
 
 
-class DoctrineMeta(BaseModel):
+class GuideMeta(BaseModel):
     """État du readme d'org. ⚠️ **`version` est un faux compteur** : il vaut 1 s'il
     existe un readme, 0 sinon, et n'atteint JAMAIS 2 — le readme est de la prose plate
     sans historique (ADR 0042). L'afficher comme un numéro de révision promet un
@@ -125,17 +134,19 @@ class InstructionsBundle(BaseModel):
     """Readme + index des procédures de l'ORG ACTIVE.
 
     ⚠️ **Sans org active, c'est un 200 avec tout à vide** (`org_id: null`,
-    `can_edit: false`, `doctrine.exists: false`, `instructions: []`) — pas un 400.
+    `can_edit: false`, `guide.exists: false`, `instructions: []`) — pas un 400.
     Indiscernable, à la lecture, d'une org réelle qui n'aurait rien écrit.
 
     ⚠️ **`instructions` exclut le readme** (slug réservé `claude_md`), qui n'est décrit
-    que par `doctrine`. Et l'asymétrie va plus loin : `doctrine.exists: true` annonce
+    que par `guide` (servi aussi sous son nom d'hier, `doctrine`, jusqu'au
+    27/09/2026). Et l'asymétrie va plus loin : `guide.exists: true` annonce
     un readme que `GET /api/me/instructions/claude_md` **ne sait pas servir** (404) —
     le readme se lit sur la surface guide, pas ici."""
     org_id: Optional[int] = None
     org_name: Optional[str] = None
     can_edit: bool
-    doctrine: DoctrineMeta
+    guide: GuideMeta
+    doctrine: GuideMeta   # ALIAS déprécié, retrait le 27/09/2026 (#519)
     instructions: list[InstructionIndexEntry]
 
 
@@ -284,6 +295,18 @@ class InstructionReverted(BaseModel):
     digest_warning: Optional[str] = None
 
 
+def _inconnu(message: str) -> AuthzDenied:
+    """« Guide inconnu » — code d'aujourd'hui, code d'hier dans `details.legacy_code`.
+
+    Un code d'erreur ne se DOUBLE pas : il n'y a qu'un champ `error`. Le nouveau
+    prend donc la place, et l'ancien est conservé à côté — un client qui teste
+    `error == "unknown_doctrine"` a jusqu'au 27/09/2026 pour lire `legacy_code`, ou
+    mieux, le nouveau code (#519, retrait #526).
+    """
+    return AuthzDenied(404, "unknown_guide", message,
+                       deprecations.details_avec_code_dhier("unknown_guide"))
+
+
 # ── Inputs — palier membre (org active, pas d'org_id) ───────────────────────
 class EmptyInput(BaseModel):
     pass
@@ -291,7 +314,8 @@ class EmptyInput(BaseModel):
 
 class GuideGetInput(BaseModel):
     slug: Optional[str] = None
-    doctrine_id: Optional[int] = None   # lecture par ID STABLE (ADR 0032) — y compris un guide PARTAGÉ à ton org (grant read, livraison #52)
+    guide_id: Optional[int] = None      # lecture par ID STABLE (ADR 0032) — y compris un guide PARTAGÉ à ton org (grant read, livraison #52)
+    doctrine_id: Optional[int] = None   # ALIAS déprécié du précédent (retrait 27/09/2026, #519)
     scope: str = "org"
     version: Optional[int] = None
     with_history: bool = False
@@ -412,34 +436,37 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
     # projet ET des guides PARTAGÉS cross-org (grant read via oto_resource, #52) :
     # l'accès passe par le seam ownership (membre de l'org propriétaire ∪ grants),
     # pas par l'org active.
-    # ⚠️ `doctrine_id`, le code d'erreur `unknown_doctrine`, le kind `doctrine` et les
-    # messages ci-dessous sont SERVIS : ce sont des alias de compatibilité (#519, lot B).
-    guide_id = getattr(inp, "doctrine_id", None)
+    # ⚠️ Le kind d'ownership `doctrine` ci-dessous est une VALEUR EN BASE
+    # (`resource_grants.resource_type`) : elle ne se double pas, elle se migre — lot B4.
+    # Les deux noms du paramètre sont acceptés (#519, l'ancien part le 27/09/2026).
+    guide_id = getattr(inp, "guide_id", None)
+    if guide_id is None:
+        guide_id = getattr(inp, "doctrine_id", None)
     if guide_id is not None:
         from ... import ownership   # import paresseux (miroir _authz, zéro cycle au boot)
         instr = org_store.get_instruction_by_id(int(guide_id))
         if not instr:
-            raise AuthzDenied(404, "unknown_doctrine",
-                              f"Aucune doctrine #{guide_id}.")
+            raise _inconnu(f"Aucun guide #{guide_id}.")
         if not ownership.can_access(ctx.sub, "doctrine", str(guide_id), "read"):
-            raise AuthzDenied(403, "forbidden", "Accès refusé à cette doctrine.")
+            raise AuthzDenied(403, "forbidden", "Accès refusé à ce guide.")
         if version is not None:
             versioned = org_store.get_instruction(instr["org_id"], instr["slug"], version)
             if not versioned:
-                raise AuthzDenied(404, "unknown_doctrine",
-                                  f"Doctrine #{guide_id} : pas de version {version}.")
+                raise _inconnu(f"Guide #{guide_id} : pas de version {version}.")
             instr = {**versioned, "id": instr["id"]}
-        return {"org_id": instr["org_id"], "doctrine_id": int(guide_id),
-                "scope": "org", "slug": instr["slug"], "title": instr["title"],
-                "description": instr["description"], "version": instr["version"],
-                "body_md": instr["body_md"], "slots": instr.get("slots") or [],
-                "referenced_tools": await tool_registry.manifest_for(instr["body_md"])}
+        return deprecations.avec_les_deux_noms({
+            "org_id": instr["org_id"], "guide_id": int(guide_id),
+            "scope": "org", "slug": instr["slug"], "title": instr["title"],
+            "description": instr["description"], "version": instr["version"],
+            "body_md": instr["body_md"], "slots": instr.get("slots") or [],
+            "referenced_tools": await tool_registry.manifest_for(instr["body_md"])})
 
     if slug is None:
         # Début de session : guide de base + index (vide gracieux si pas d'org).
         if org_id is None:
-            return {"org_id": None, "org": None, "doctrine": "", "group_id": None,
-                    "group": None, "group_doctrine": "", "doctrines": [], "referenced_tools": []}
+            return deprecations.avec_les_deux_noms({
+                "org_id": None, "org": None, "guide": "", "group_id": None,
+                "group": None, "group_guide": "", "guides": [], "referenced_tools": []})
         o = org_store.get_org(org_id)
         # Le readme d'org/équipe est un GUIDE `delivery='init'` (ADR 0042), plus une
         # instruction déguisée : on le lit sur sa surface, pas via le store de procédures.
@@ -458,13 +485,13 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
                       for i in group_store.list_group_instructions(group_id)]
         guide_body = base_body
         pi = _project_instance(member_mode)
-        return {
-            "org_id": org_id, "org": o["name"] if o else None, "doctrine": guide_body,
-            "group_id": group_id, "group": group_name, "group_doctrine": group_guide,
-            "doctrines": index,
+        return deprecations.avec_les_deux_noms({
+            "org_id": org_id, "org": o["name"] if o else None, "guide": guide_body,
+            "group_id": group_id, "group": group_name, "group_guide": group_guide,
+            "guides": index,
             "referenced_tools": await tool_registry.manifest_for(guide_body, group_guide),
             **({"project_instance": pi} if pi else {}),
-        }
+        })
 
     # Un guide nommé précis.
     if scope == "group" and member_mode:
@@ -479,10 +506,9 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
         instr = org_store.get_instruction(org_id, slug, version)
         scope_ref = {"org_id": org_id}
     if not instr:
-        raise AuthzDenied(404, "unknown_doctrine",
-                          f"Aucune doctrine `{org_store.normalize_slug(slug)}` (scope {scope})"
-                          + (f" en version {version}" if version is not None else "")
-                          + ". Vois `oto_procedure(op='list')`.")
+        raise _inconnu(f"Aucun guide `{org_store.normalize_slug(slug)}` (scope {scope})"
+                       + (f" en version {version}" if version is not None else "")
+                       + ". Vois `oto_procedure(op='list')`.")
     out = {**scope_ref, "scope": scope, "slug": instr["slug"], "title": instr["title"],
            "description": instr["description"], "version": instr["version"],
            "body_md": instr["body_md"], "slots": instr.get("slots") or [],
@@ -502,7 +528,7 @@ def _list_guides(ctx: ResolvedCtx, inp) -> dict:
     query = inp.query
     scope = inp.scope
     if org_id is None:
-        return {"org_id": None, "doctrines": []}
+        return deprecations.avec_les_deux_noms({"org_id": None, "guides": []})
     out: list = []
     if scope in (None, "org"):
         include_base = not member_mode  # la surface admin inclut le guide de base
@@ -514,7 +540,8 @@ def _list_guides(ctx: ResolvedCtx, inp) -> dict:
         rows = (group_store.search_group_instructions(group_id, query) if query
                 else group_store.list_group_instructions(group_id))
         out += [{**r, "scope": "group"} for r in rows]
-    return {"org_id": org_id, "group_id": group_id, "doctrines": out}
+    return deprecations.avec_les_deux_noms(
+        {"org_id": org_id, "group_id": group_id, "guides": out})
 
 
 async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
@@ -592,23 +619,24 @@ def _instructions_list(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
     Bundle vide en 200 si pas d'org active (consommé par l'overview)."""
     org_id = ctx.org_id
     if org_id is None:
-        return {"org_id": None, "org_name": None, "can_edit": False,
-                "doctrine": {"exists": False, "version": 0, "updated_at": None},
-                "instructions": []}
+        return deprecations.avec_les_deux_noms({
+            "org_id": None, "org_name": None, "can_edit": False,
+            "guide": {"exists": False, "version": 0, "updated_at": None},
+            "instructions": []})
     o = org_store.get_org(org_id)
     base = guide_store.get_init_guide("org", org_id)      # readme = guide init (ADR 0042)
     has_readme = bool((base["body_md"] or "").strip())
-    return {
+    return deprecations.avec_les_deux_noms({
         "org_id": org_id,
         "org_name": o["name"] if o else None,
         "can_edit": roles.is_org_admin(ctx.sub, org_id),
-        "doctrine": {
+        "guide": {
             "exists": has_readme,
             "version": 1 if has_readme else 0,        # prose plate : pas d'historique
             "updated_at": base["updated_at"] if has_readme else None,
         },
         "instructions": org_store.list_instructions(org_id),
-    }
+    })
 
 
 def _instruction_get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:
@@ -659,7 +687,7 @@ CAPABILITIES += [
     # ── Lectures membre (org active) ────────────────────────────────────────
     Capability(
         key="org.guide.get", handler=_get_guide, Input=GuideGetInput,
-        authz=SUB_ONLY, Output=DoctrineView,
+        authz=SUB_ONLY, Output=GuideView,
         description=("Operational doctrine of your active org. The base doctrine is now "
                      "INJECTED into your session instructions at connect — call this with "
                      "`slug` to load ONE named skill's full markdown (list skills with "
@@ -670,10 +698,7 @@ CAPABILITIES += [
                      "by another org (delivered project)."),
         # Face REST par ID stable : résolution des liens `procedure` d'un projet côté
         # dashboard — y compris un projet LIVRÉ (guide d'une autre org, grant read).
-        # ⚠️ Le placeholder dit `guide_id`, le champ d'`Input` dit encore
-        # `doctrine_id` : `path_map` porte l'écart, et le champ suivra au lot B3.
-        rest=RestBinding("GET", "/api/me/guides/{guide_id}",
-                         {"guide_id": "doctrine_id"}),
+        rest=RestBinding("GET", "/api/me/guides/{guide_id}"),
     ),
     Capability(
         key="org.instruction.list", handler=_instructions_list, Input=EmptyInput,

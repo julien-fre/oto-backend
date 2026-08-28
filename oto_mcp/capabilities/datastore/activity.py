@@ -127,6 +127,10 @@ class ActivityEntry(BaseModel):
     error: Optional[str] = None
     run_id: Optional[int] = None
     run_label: Optional[str] = None
+    # ⚠️ Ce champ n'est PAS servi : le payload de `_ds_activity_entry` porte
+    # `doctrine`/`guide`, pas `run_doctrine`/`run_outcome`. Divergence ANTÉRIEURE à
+    # #519 (un `Output` DÉCRIT, il ne valide pas) — laissée telle quelle ici pour ne
+    # pas mêler une correction de contrat à un lot de vocabulaire.
     run_doctrine: Optional[str] = None
     run_outcome: Optional[str] = None
     row_title: Optional[str] = None              # posé sur le parcours d'UNE ligne

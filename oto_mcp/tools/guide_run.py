@@ -17,7 +17,7 @@ from fastmcp import Context, FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import guide_run as dr, run_status
+from .. import deprecations, guide_run as dr, run_status
 
 logger = logging.getLogger(__name__)
 
@@ -113,33 +113,40 @@ async def _persist_close(run_id: str, outcome: str, note: str | None) -> None:
 def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
-    async def run_start(ctx: Context, label: str, doctrine: str | None = None) -> dict:
+    async def run_start(ctx: Context, label: str, guide: str | None = None,
+                        doctrine: str | None = None) -> dict:
         """Open a run (a tracked 'déroulé') so a procedure can be reviewed later.
         Returns a `run_id` — keep it and pass it to `run_finish` when you're done.
         Every tool call until then is automatically attributed to this run.
 
-        Use it for a repeatable doctrine/skill (pass `doctrine`) AND for any one-shot
-        procedure worth logging (omit `doctrine`).
+        Use it for a repeatable guide/skill (pass `guide`) AND for any one-shot
+        procedure worth logging (omit `guide`).
 
         Args:
             label: short human description of what this run does (always logged).
-            doctrine: optional — the doctrine/skill slug being executed (as passed to
+            guide: optional — the guide/skill slug being executed (as passed to
                 oto_procedure op=get). Omit for a one-shot/ad-hoc run.
+            doctrine: DEPRECATED alias of `guide`, removed on 27/09/2026 — pass
+                `guide` instead.
 
-        Returns `doctrine_version` — the version of that procedure frozen for this run
+        Returns `guide_version` — the version of that procedure frozen for this run
         (null for an ad-hoc run, or if the slug matches no procedure you can read).
+        The response also carries the deprecated `doctrine`/`doctrine_version` keys
+        until 27/09/2026.
         """
+        guide = guide if guide is not None else doctrine
         run_id = dr.new_run_id()
-        await dr.push_run(ctx, run_id, label, doctrine)
+        await dr.push_run(ctx, run_id, label, guide)
         # Axe d'appel run_id (#108) : pose SANS reset — la ContextVar meurt avec la
         # requête, mais stampe le tool_call de run_start lui-même sous son run, et
         # amorce l'axe pour l'agent (qui le repasse ensuite via `_run_id=`).
         from .. import session_org
         session_org.set_call_run(run_id)
-        version = await _note_procedure_version(doctrine)
-        await _persist_open(run_id, label, doctrine)
-        return {"run_id": run_id, "label": label, "doctrine": doctrine,
-                "doctrine_version": version}
+        version = await _note_procedure_version(guide)
+        await _persist_open(run_id, label, guide)
+        return deprecations.avec_les_deux_noms(
+            {"run_id": run_id, "label": label, "guide": guide,
+             "guide_version": version})
 
     @mcp.tool()
     async def run_finish(

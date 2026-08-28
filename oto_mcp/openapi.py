@@ -280,6 +280,18 @@ def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None
             schemas.update(defs)
             item = paths.setdefault(_openapi_path(binding.path), {})
             item[binding.verb.lower()] = op          # la capacité prime sur le legacy
+    # Noms de schéma d'HIER (#519) : un `$ref` vers celui d'aujourd'hui, marqué
+    # déprécié. Un client généré qui vise l'ancien nom continue de résoudre jusqu'au
+    # retrait — un `$ref` cassé, lui, fait échouer la génération ENTIÈRE du client,
+    # pas seulement le modèle visé.
+    for ancien, actuel in deprecations.SCHEMAS.items():
+        if actuel in schemas and ancien not in schemas:
+            schemas[ancien] = {
+                "$ref": f"#/components/schemas/{actuel}",
+                "deprecated": True,
+                "description": f"Déprécié : utilisez `{actuel}` (retrait le "
+                               f"{deprecations.date_de_retrait()}).",
+            }
     doc = {
         "openapi": "3.1.0",
         "info": {"title": _TITLE, "version": "1", "description": _DESCRIPTION},

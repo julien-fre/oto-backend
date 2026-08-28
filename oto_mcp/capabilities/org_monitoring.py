@@ -28,7 +28,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
 
-from .. import db
+from .. import db, deprecations
 from . import audit_log, monitoring
 from ._authz import ORG_ADMIN_OF
 from ._types import cap_limit, AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -204,13 +204,12 @@ class OrgAdoption(BaseModel):
     members: list[AdoptionMember]
 
 
-# ⚠️ ALIAS DE COMPATIBILITÉ (#519, lot B) — le mot « doctrine » ci-dessous est SERVI :
-# le champ `doctrine` est une clé de réponse, et le docstring de `RunRow` sort tel
-# quel dans `/openapi.json` comme `description` de son schéma. Ni l'un ni l'autre ne
-# bouge au lot A ; ils deviennent `guide` au lot B, avec les autres clés servies.
 class RunRow(BaseModel):
-    """Un déroulé. `slug` est un alias de compat = `doctrine` s'il y en a une, sinon
+    """Un déroulé. `slug` est un alias de compat = `guide` s'il y en a un, sinon
     `label` — pas un troisième identifiant.
+
+    ⚠️ `guide` est servi aussi sous son nom d'hier, `doctrine`, jusqu'au 27/09/2026
+    (#519) — cf. `docs/alias-deprecies.md`.
 
     ⚠️ `finished_at`/`outcome` à `null` = le déroulé n'a **pas été fermé** (`run_finish`
     jamais appelé, ou sa ligne purgée par la rétention). Ce n'est pas « en cours » au
@@ -221,7 +220,8 @@ class RunRow(BaseModel):
     run_id: str
     slug: Optional[str] = None
     label: Optional[str] = None
-    doctrine: Optional[str] = None
+    guide: Optional[str] = None
+    doctrine: Optional[str] = None        # ALIAS déprécié (retrait 27/09/2026)
     sub: Optional[str] = None
     email: Optional[str] = None
     name: Optional[str] = None
@@ -381,7 +381,8 @@ def _adoption(ctx: ResolvedCtx, inp: OrgDaysInput) -> dict:
 
 
 def _runs(ctx: ResolvedCtx, inp: OrgRunsInput) -> dict:
-    return {"runs": db.list_runs(inp.limit, org_id=inp.org_id)}
+    return {"runs": deprecations.lignes_avec_les_deux_noms(
+        db.list_runs(inp.limit, org_id=inp.org_id))}
 
 
 def _run(ctx: ResolvedCtx, inp: OrgRunInput) -> dict:

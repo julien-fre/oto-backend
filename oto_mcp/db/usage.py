@@ -18,6 +18,7 @@ import psycopg
 
 logger = logging.getLogger(__name__)
 
+from .. import deprecations
 from ._conn import _connect
 
 
@@ -1286,7 +1287,7 @@ def _ds_activity_entry(r: dict) -> dict:
     """
     args = r.get("args") if isinstance(r.get("args"), dict) else {}
     fields = args.get("fields")
-    return {
+    return deprecations.avec_les_deux_noms({
         "created_at": r.get("created_at"),
         "kind": r.get("kind") or "mcp",
         "tool": r.get("tool"),
@@ -1303,7 +1304,7 @@ def _ds_activity_entry(r: dict) -> dict:
         "fields": [str(f) for f in fields] if isinstance(fields, list) else [],
         "from_status": args.get("from_status"),
         "to_status": args.get("to_status"),
-    }
+    })
 
 
 def datastore_row_activity(row_id: str, key_value: Optional[str] = None,

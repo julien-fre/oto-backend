@@ -36,7 +36,8 @@ class ProcedureInput(BaseModel):
     op: Literal["get", "list", "set", "delete",
                 "library_list", "library_get", "publish", "fork", "unpublish"]
     slug: Optional[str] = None
-    doctrine_id: Optional[int] = None      # get : lecture par ID STABLE (ADR 0032)
+    guide_id: Optional[int] = None         # get : lecture par ID STABLE (ADR 0032)
+    doctrine_id: Optional[int] = None      # ALIAS déprécié du précédent (retrait 27/09/2026, #519)
     scope: Optional[str] = None            # get/list : org (défaut) | group
     version: Optional[int] = None          # get
     with_history: bool = False             # get
@@ -61,7 +62,8 @@ async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
     oi, lib = orgs_instructions, guide_library
     if inp.op == "get":
         return await oi._get_guide(ctx, oi.GuideGetInput(
-            slug=inp.slug, doctrine_id=inp.doctrine_id, scope=inp.scope or "org",
+            slug=inp.slug, guide_id=inp.guide_id, doctrine_id=inp.doctrine_id,
+            scope=inp.scope or "org",
             version=inp.version, with_history=inp.with_history))
     if inp.op == "list":
         return oi._list_guides(ctx, oi.GuideListInput(query=inp.query, scope=inp.scope))

@@ -262,5 +262,8 @@ def test_get_guide_by_id_unknown_404(monkeypatch):
     _wire_guide_read(monkeypatch, can_access=True)
     with pytest.raises(AuthzDenied) as e:
         asyncio.run(oi._get_guide(ResolvedCtx(sub="client", org_id=35),
-                                     oi.GuideGetInput(doctrine_id=999)))
-    assert e.value.code == "unknown_doctrine"
+                                     oi.GuideGetInput(guide_id=999)))
+    # Code d'aujourd'hui, code d'hier conservé dans `details` : un code d'erreur ne
+    # se double pas (il n'y a qu'un champ `error`), donc l'ancien se lit là (#519).
+    assert e.value.code == "unknown_guide"
+    assert (e.value.details or {}).get("legacy_code") == "unknown_doctrine"

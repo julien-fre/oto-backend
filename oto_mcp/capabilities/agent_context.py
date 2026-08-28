@@ -76,8 +76,10 @@ class AgentContextView(BaseModel):
     # Le MÊME artefact, décomposé. Invariant tenu par `instructions.session_layers` :
     # `"\n\n".join(couches non vides) == instructions`.
     layers: list[ContextLayer]
-    # Le guide d'org résolu, tel que le sert `oto_get_doctrine` — forme non
-    # redéclarée ici pour ne pas en tenir deux copies.
+    # Le guide d'org résolu, tel que le sert `oto_procedure op=get` — forme non
+    # redéclarée ici pour ne pas en tenir deux copies. Servi sous ses DEUX noms le
+    # temps du préavis (#519) ; `doctrine` s'en va le 27/09/2026.
+    guide: dict
     doctrine: dict
     tools: ToolsView
 
@@ -129,7 +131,8 @@ async def _agent_context(ctx: ResolvedCtx, inp: AgentContextInput) -> dict:
         "org_id": ctx.org_id,
         "instructions": "\n\n".join(l["body"] for l in layers if l["body"]),
         "layers": [{**l, "chars": len(l["body"])} for l in layers if l["body"]],
-        "doctrine": guide,   # clé SERVIE (alias, lot B)
+        "guide": guide,
+        "doctrine": guide,   # ALIAS déprécié (retrait 27/09/2026, #519)
         "tools": await _tools_view(ctx),
     }
 
