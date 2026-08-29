@@ -19,6 +19,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
+from ..datastore import jetons
 from ..datastore import schema as dsv2
 from ..datastore.core import (
     ClaimedRefUnresolved,
@@ -294,32 +295,10 @@ def _adresse_reservee(store, namespace: str, id=None, *, worker=None, ligne: boo
     (« pose `_run_id` », « ta réservation est dans tel tableau »), et une erreur interne
     l'effacerait au moment précis où elle sert."""
     try:
-        if est_ref_reservation(namespace):
-            table, reservee = store.resolve_claimed_target(worker=worker)
-            if ligne and (id is None or est_ref_reservation(id)):
-                return table, reservee
-            return table, (id if ligne else None)
-        namespace = _ns(namespace)
-        if ligne and est_ref_reservation(id):
-            id = store.resolve_claimed_ref(namespace, worker=worker)
-    except ClaimedRefUnresolved as e:
+        return jetons.resoudre(store, namespace, id, worker=worker, ligne=ligne,
+                               resoudre_slot=_ns)
+    except (ClaimedRefUnresolved, jetons.JetonMalPlace) as e:
         raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
-    return namespace, id
-
-
-def _claimed_egare(contenu) -> bool:
-    """`@claimed` posé dans une VALEUR de ligne — un champ qui ne l'accepte pas (#517).
-
-    L'alias est une adresse, jamais une donnée. Écrit dans `row`, il finirait en clair
-    dans un fichier client — et le refus par défaut dirait « valeur inconnue », ce qui
-    envoie chercher une faute de frappe sur un jeton que l'outil reconnaît."""
-    if isinstance(contenu, str):
-        return est_ref_reservation(contenu)
-    if isinstance(contenu, dict):
-        return any(_claimed_egare(v) for v in contenu.values())
-    if isinstance(contenu, list):
-        return any(_claimed_egare(v) for v in contenu)
-    return False
 
 
 def _ns(namespace: str) -> str:
@@ -594,11 +573,8 @@ def register(mcp: FastMCP) -> None:
             # agents l'ont mis là — la réservation porte les deux, refuser ici serait
             # refuser une demande qu'on sait satisfaire.
             namespace, id = _adresse_reservee(store, namespace, id)
-            if _claimed_egare(row) or _claimed_egare(rows):
-                raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                    '`@claimed` est une ADRESSE, pas une donnée : il s\'écrit dans `id` '
-                    '(ou dans `namespace`), jamais dans le contenu de la ligne — écrit '
-                    'ici, il finirait en clair dans le fichier.')))
+            jetons.verifier_contenu(row)
+            jetons.verifier_contenu(rows)
             if rows is not None:
                 if row is not None or id is not None:
                     raise McpError(ErrorData(code=INVALID_PARAMS,
@@ -817,6 +793,7 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         namespace, id = _adresse_reservee(store, namespace, id)
         try:
+            jetons.verifier_champs(fields=fields, filter=filter, filters=filters)
             if count_only:
                 return {"total": store.count_rows(namespace, filter=filter, q=q,
                                                   filters=filters)}
@@ -945,6 +922,7 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         namespace, _ = _adresse_reservee(store, namespace, ligne=False)
         try:
+            jetons.verifier_champs(filter=filter, filters=filters)
             results = store.aggregate(
                 namespace, group_by=group_by, metrics=metrics, filter=filter,
                 filters=filters, q=q)
