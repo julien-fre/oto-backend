@@ -134,7 +134,7 @@ def test_la_chaine_designe_le_meme_palier_dans_les_deux_etats_ouverts(registre, 
     win = access.cascade_winner(SUB_T, "serper", org=ORG, group=None, probe=probe())
     assert pick.mode == "tenant" and pick.via == attendu
     assert chain_shadow.classify(win, pick, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 def test_la_chaine_saute_aussi_le_barreau_revoque(registre, aretes, vide):
@@ -145,7 +145,7 @@ def test_la_chaine_saute_aussi_le_barreau_revoque(registre, aretes, vide):
     win = access.cascade_winner(SUB_T, "serper", org=ORG, group=None, probe=probe())
     assert pick is None and win is None
     assert chain_shadow.classify(win, pick, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 # ── 3. l'anonyme, par l'arête seule ───────────────────────────────────────────
