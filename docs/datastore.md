@@ -332,6 +332,48 @@ lisible le jour où il parlera.
 sur le tableau — est écartée** : elle imposerait une lecture des baux à CHAQUE insertion,
 sur le chemin chaud, pour couvrir un cas que les deux gardes d'adresse ferment déjà.
 
+**`key_required` : un tableau où l'on ne crée pas, on VISE (#516, 29/08/2026).** Le
+`notices` ci-dessus signale ; il ne refuse pas. **Un signal dans une réponse qu'un agent
+ne consomme pas n'existe pas** — un refus nommé, lui, est lu par construction. D'où un
+cran de schéma OPT-IN, `key_required: true`, à côté de la `key` qu'il durcit : sur un
+tableau qui le porte, une écriture qui ne désigne **aucune ligne existante** — ni par son
+identifiant (`data_write(id=…)`, ou l'`_id` promu depuis `row`), ni par une valeur de clé
+que le tableau porte déjà — est **REFUSÉE** (`BusinessKeyRequired` → MCP INVALID_PARAMS,
+REST `400 business_key_required`) au lieu de créer une ligne.
+
+⚠️ **« Sans clé » couvre DEUX gestes, et le refus les distingue** — dire « clé requise »
+à qui vient d'en fournir une le ferait chercher longtemps :
+- **la clé n'est pas renseignée** — le cas du 28/08 : 8 911 lignes pour 8 910 sur un
+  tableau de production, la ligne `01a04956-…` née sans `siren`, contenu bon, doublon
+  parfait que rien ne rapprochera ;
+- **la clé ne désigne aucune ligne** — le cas du 29/08, plus grave : deux agents refusés
+  sur un identifiant INVENTÉ (deux conventions étrangères, aucune n'a la forme d'un `_id`
+  d'ici) réécrivent sans identifiant avec un SIREN ; les deux SIREN sont inconnus **du
+  registre**, deux lignes naissent, et les fiches affirment « registre — lu via fr_get »
+  sur des entreprises qui n'existent pas. **Une clé n'empêche rien tant qu'elle peut être
+  inconnue** : c'est cette porte-là que le cran ferme, et rien d'autre ne le pouvait
+  (une garde de comptage côté runner ne voit qu'APRÈS).
+
+**Le défaut ne bouge pas** : sans `key_required`, la création reste possible et reste
+signalée par le `notices` de #390. Le cran est une déclaration du propriétaire du
+tableau, jamais une politique de plateforme — un tableau se remplit souvent avant
+d'avoir sa clé. Corollaire assumé : **un tableau fermé ne se peuple plus par écriture**,
+`oto_upload_url` compris (il passe par le même `_write_rows_to_ns`) ; pour l'ouvrir, on
+retire `key_required` du schéma. Il n'y a pas de paramètre d'échappement sur
+`data_write` : un bouton « forcer » devient un réflexe et le cran redevient une
+étiquette (même parti que l'absence de « forcer » sur le bail, #317).
+
+Deux endroits, un seul par chemin d'écriture : `append_row` (ligne seule, face MCP ET
+face REST) et `_write_rows_to_ns` (lot + upload signé) — le refus du lot NOMME la ligne
+fautive et ce qui est déjà écrit, comme un refus de schéma (#412). ⚠️ Dans le lot, la
+garde se juge sur la clé **déclarée** (celle qui porte l'index UNIQUE), même quand le lot
+dédouble sur une autre via `key=` explicite : sinon un tableau fermé refuserait une ligne
+qu'il porte déjà. `key_required` sans `key` se refuse **à la pose** (`validate_schema_def`),
+et reste inerte s'il traîne dans un schéma déjà en base — un vieux schéma ne doit pas
+rendre un tableau inécrivable. Il est annoncé par `enforced` (#389) via une sonde qui
+interroge la fonction qui décide : il ne se prouve pas sur une ROW, puisqu'il se juge
+contre le CONTENU du tableau.
+
 **Contraindre la FORME d'une valeur (#387).** `field.pattern` — jumeau de
 `field.max_length`, et il dit ce que la borne ne sait pas dire. Cas mesuré : un champ qui
 doit porter une ÉNUMÉRATION de catégories séparées par des points-virgules, pas une
@@ -476,9 +518,15 @@ rétroactivement casserait des tableaux qui n'ont rien demandé.
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
 du LLM. Un namespace peut déclarer une **clé métier** au schéma (`schema.key`, ex.
-`"email"`/`"siren"` ; cf. `data_set_schema`) : le batch fait alors un **UPSERT (merge)** sur
-cette clé au lieu de dupliquer (param `key` explicite prioritaire) — les rows sans clé sont
-appendées. Renvoie `{inserted, updated, count, key, ids}`. Cœur : `store.write_rows` →
+`"email"`/`"siren"` ; cf. `data_set_schema`) : toute écriture qui porte cette clé fait alors
+un **UPSERT (merge)** sur elle au lieu de dupliquer (param `key` explicite prioritaire) — les
+rows sans clé sont appendées. Renvoie `{inserted, updated, count, key, ids}`.
+⚠️ **La fusion par clé n'est PAS réservée au lot** (vérifié le 28/08 sur table jetable, et
+la doc servie disait le contraire jusqu'au 29/08) : `data_write(row={siren: X})` **sans
+`id`**, sur un tableau qui déclare `key: "siren"` et où X existe, met à jour la ligne
+existante et rend son identifiant — `append_row` applique la même dédup que le batch
+depuis #109 ch.3. Croire l'inverse fait écrire en lots de un pour obtenir une fusion, ou
+pire, fait chercher un `id` qu'on n'a pas. Cœur : `store.write_rows` →
 `_write_rows_to_ns(ns_id, rows, key)` (keyé par ns_id → réutilisable **hors contexte d'org**)
 + `db.datastore_find_row_id_by_key` (lookup dédup JSONB paramétré). Pour du **volumineux**,
 préférer `oto_upload_url(target='datastore')` (push NDJSON/CSV out-of-bande → même batch-upsert ;

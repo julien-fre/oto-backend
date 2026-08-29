@@ -381,10 +381,14 @@ def register(mcp: FastMCP) -> None:
         destroy what it does not name.
 
         The optional top-level `"key"` names the field that is the row's BUSINESS KEY
-        (e.g. "email", "siren"): batch writes (`data_write` rows=…, `oto_upload_url`)
-        then UPSERT on it — same key value updates the existing row instead of
+        (e.g. "email", "siren"): EVERY write carrying that key value then UPSERTs on it
+        — a single `data_write(row=…)` as much as a batch (`rows=…`) or
+        `oto_upload_url` — the same key value updates the existing row instead of
         duplicating. Default is SOFT (rendering/dedup only, no write validation).
-        Pass schema=null to switch back to free-table mode.
+        Add `"key_required": true` to CLOSE the table: a write that designates NO
+        existing row (no `id`, and no key value the table already carries) is then
+        REFUSED instead of creating one. Off by default — a table often fills up
+        before it has its key. Pass schema=null to switch back to free-table mode.
 
         PRESENTATION — the schema also DRIVES THE UI (there is no visual editor:
         this tool IS the way to configure how a table looks):
@@ -484,8 +488,10 @@ def register(mcp: FastMCP) -> None:
         """Write one row, or a BATCH of rows in a single call.
 
         SINGLE (`row`): WITHOUT `id` = append a NEW row (new JSON keys auto-create
-        columns). WITH `id` = PARTIAL update of that row (only provided fields
-        change). Returns the row (with `_id`/`_created_at`/`_updated_at`).
+        columns) — UNLESS the table declares a business `key` and your row carries a
+        value that already exists: it then MERGES onto that row, exactly like a batch,
+        and returns its `_id`. WITH `id` = PARTIAL update of that row (only provided
+        fields change). Returns the row (with `_id`/`_created_at`/`_updated_at`).
 
         BATCH (`rows` = list of dicts): write them all at once — for importing a
         dataset without round-tripping each row through your context. If a business
