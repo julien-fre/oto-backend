@@ -24,7 +24,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp import credentials_store, grants_chain, group_store, org_store
-from oto_mcp.access import cascade, chain_shadow
+from oto_mcp.access import cascade, chain_resolution, chain_shadow
 from oto_mcp.db import grants as db_grants
 
 # Les deux clés, telles qu'elles sont en prod : FERMÉES, une allowlist d'orgs qui
@@ -73,7 +73,7 @@ def test_les_deux_cas_de_prod_sont_NOMMES_et_plus_inconnus(sans_arete, monkeypat
     """Le rejeu exact. Avant : `inconnu`, donc porte fermée. Après : une classe qui
     dit ce qui manque — les arêtes nominatives de l'allowlist."""
     _instances(monkeypatch, {connecteur: instances})
-    pick, hors_modele = chain_shadow._platform_pick("d57fbbb3", connecteur, 196)
+    pick, hors_modele = chain_resolution._platform_pick("d57fbbb3", connecteur, 196)
     assert pick is None, "aucune arête ⟹ la chaîne se tait"
     assert hors_modele == chain_shadow.PARTAGE_HORS_MODELE
 
@@ -88,7 +88,7 @@ def test_la_cle_OUVERTE_garde_sa_propre_classe(sans_arete, monkeypatch):
     """Les deux nuances ne se confondent pas : elles n'ont pas le même remède —
     l'arête « tout le monde » d'un côté, les nominatives de l'autre."""
     _instances(monkeypatch, {"serper": SERPER})
-    _, hors_modele = chain_shadow._platform_pick("u", "serper", 196)
+    _, hors_modele = chain_resolution._platform_pick("u", "serper", 196)
     assert hors_modele == chain_shadow.FREE_TIER_HORS_MODELE
 
 
@@ -101,7 +101,7 @@ def test_une_cle_FERMEE_avec_son_arete_ne_diverge_plus(sans_arete, monkeypatch):
          "constraints": {}, "parent_id": None, "source": "manual",
          "created_by": None, "created_at": None, "revoked_at": None}]
         if ("org", "196") in set(grantees) else [])
-    pick, hors_modele = chain_shadow._platform_pick("d57fbbb3", "aiark", 196)
+    pick, hors_modele = chain_resolution._platform_pick("d57fbbb3", "aiark", 196)
     assert pick is not None and pick.entity_id == "tulina"
     assert hors_modele is None
     assert chain_shadow.classify(_legacy("tulina"), pick, acl_refus=False,
@@ -111,7 +111,7 @@ def test_une_cle_FERMEE_avec_son_arete_ne_diverge_plus(sans_arete, monkeypatch):
 def test_inconnu_reste_ATTEIGNABLE(sans_arete):
     """La porte doit toujours pouvoir se fermer : élargir la reconnaissance ne doit
     pas rendre `inconnu` inatteignable, sinon le garde-fou ne garde plus rien."""
-    autre = chain_shadow.ChainPick("user", credentials_store.MEMBER, "196:u")
+    autre = chain_resolution.ChainPick("user", credentials_store.MEMBER, "196:u")
     assert chain_shadow.classify(cascade.CascadeRung("org", "org", "196", "K"), autre,
                                  acl_refus=False,
                                  hors_modele=None) == chain_shadow.INCONNU
@@ -124,5 +124,33 @@ def test_la_nuance_ne_se_lit_QUE_si_la_chaine_se_tait(sans_arete, monkeypatch):
     monkeypatch.setattr(org_store, "has_org_secret", lambda o, p: True)
     monkeypatch.setattr(credentials_store, "list_platform_instances",
                         lambda p: [dict(i) for i in AIARK])
-    pick, hors_modele = chain_shadow.chain_verdict("u", "aiark", org=196)
+    pick, hors_modele = chain_resolution.chain_verdict("u", "aiark", org=196)
     assert pick is not None and pick.mode == "org" and hors_modele is None
+
+
+def test_la_porte_de_BASCULE_exige_les_deux_classes_hors_modele_a_zero():
+    """La lentille doit dire la porte qu'elle garde.
+
+    `porte_ouverte` ne dit que « la mesure est exploitable » (dénominateur non nul,
+    zéro inconnu). Elle valait `true` dès le 30/08 alors qu'il restait 444 puis 132
+    appels hors-modèle : lue seule, elle INVITAIT à basculer. La bascule exige en
+    plus que le coffre n'accorde plus rien que la chaîne ne sache dire — sans quoi
+    donner l'autorité à la chaîne couperait cet accès."""
+    from oto_mcp.capabilities import access_shadow_admin as lentille
+
+    exploitable_mais_pas_prete = lentille._verdict([
+        {"classe": chain_shadow.ACCORD, "n": 19_857},
+        {"classe": chain_shadow.FREE_TIER_HORS_MODELE, "n": 16},
+        {"classe": chain_shadow.PARTAGE_HORS_MODELE, "n": 17},
+    ])
+    assert exploitable_mais_pas_prete["porte_ouverte"] is True
+    assert exploitable_mais_pas_prete["hors_modele"] == 33
+    assert exploitable_mais_pas_prete["porte_bascule"] is False
+
+    apres_le_semis = lentille._verdict([{"classe": chain_shadow.ACCORD, "n": 19_857}])
+    assert apres_le_semis["porte_bascule"] is True
+
+    # Une fenêtre MUETTE n'ouvre ni l'une ni l'autre : zéro hors-modèle parce que zéro
+    # observation n'est pas une preuve.
+    muette = lentille._verdict([])
+    assert muette["porte_ouverte"] is False and muette["porte_bascule"] is False

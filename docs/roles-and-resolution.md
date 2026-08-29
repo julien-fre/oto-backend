@@ -177,6 +177,24 @@ Lecture sans SQL : `oto_admin_access_shadow(op='read')` / `GET /api/admin/access
 (plancher opérateur) — le bloc `verdict` dit `porte_ouverte` seulement si le
 dénominateur est non nul ET qu'aucun `inconnu` n'est tombé.
 
+**Qui décide se lit dans un drapeau** (PR 2) : `OTO_L7_DECIDE=chain` retourne l'autorité
+— la chaîne décide, le walker calcule et se compare, avec les MÊMES classes qu'à
+l'aller. Toute autre valeur, l'absence comprise, vaut `legacy` : le comportement
+d'aujourd'hui à l'octet près. Le retour arrière est le drapeau et un redémarrage, jamais
+un revert ; c'est par-process, donc basculer la préprod ne bascule pas la prod.
+L'inversion ne réécrit **pas** le fetch — elle réutilise la sonde que `resolve` a déjà
+composée, avec sa sélection de compte et sa suspension : seule la traversée change. Sous
+`chain`, la restriction `connector_acl` ne refuse plus (D1 la dissout) mais reste comptée.
+
+**L'arête « tout le monde »** (`grants_chain.EVERYONE`, le scope `platform`) dit ce
+qu'une clé plateforme ouverte disait et qu'aucune arête ne savait exprimer. Elle est
+posée par une commande explicite — `scripts/seed_everyone_edges.py`, dry-run par défaut,
+`--apply` — **jamais au boot** (ADR 0065). ⚠️ Elle n'est lue que sous l'autorité de la
+chaîne : `grants_chain.platform_rung`, qui décide encore aujourd'hui pour les
+connecteurs basculés de L5, reste aveugle à elle — sans quoi un accès individuel révoqué
+sur une clé ouverte serait ressuscité. Et sous la chaîne, **une arête qui NOMME
+l'appelant prime, révoquée comprise** : c'est ce qui garde « la révocation est vraie ».
+
 Quota daily per-grant : colonne `user_grants.daily_quota` (posé par l'admin
 au moment du grant). Si NULL, fallback sur env `OTO_MCP_QUOTA_<PROVIDER>_DAILY`
 ou `_QUOTA_DEFAULTS` dans `access/quotas.py`. User key bypass quota.

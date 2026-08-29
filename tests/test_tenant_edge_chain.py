@@ -21,7 +21,7 @@ import pytest
 from mcp.shared.exceptions import McpError
 
 from oto_mcp import access, credentials_store, grants_chain, tenancy, tenant_vault
-from oto_mcp.access import cascade, chain_shadow, tenant_budget
+from oto_mcp.access import cascade, chain_resolution, chain_shadow, tenant_budget
 from oto_mcp.db import grants as db_grants
 
 PILOTE = "pilote"
@@ -130,7 +130,7 @@ def vide(monkeypatch):
 def test_la_chaine_designe_le_meme_palier_dans_les_deux_etats_ouverts(registre, aretes, vide,
                                                                        edges, attendu):
     aretes["edges"] = edges
-    pick = chain_shadow.chain_winner(SUB_T, "serper", org=ORG)
+    pick = chain_resolution.chain_winner(SUB_T, "serper", org=ORG)
     win = access.cascade_winner(SUB_T, "serper", org=ORG, group=None, probe=probe())
     assert pick.mode == "tenant" and pick.via == attendu
     assert chain_shadow.classify(win, pick, acl_refus=False,
@@ -141,7 +141,7 @@ def test_la_chaine_saute_aussi_le_barreau_revoque(registre, aretes, vide):
     """REFUSE des deux côtés : la chaîne passe au palier suivant comme le walker,
     et les deux rendent « rien » — un accord, pas un `inconnu`."""
     aretes["edges"] = [_edge(revoked="2026-08-29")]
-    pick = chain_shadow.chain_winner(SUB_T, "serper", org=ORG)
+    pick = chain_resolution.chain_winner(SUB_T, "serper", org=ORG)
     win = access.cascade_winner(SUB_T, "serper", org=ORG, group=None, probe=probe())
     assert pick is None and win is None
     assert chain_shadow.classify(win, pick, acl_refus=False,

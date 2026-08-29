@@ -59,11 +59,12 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from .. import (credentials_store, grants_chain, group_store, org_store, providers,
-                tenant_vault)
+from mcp.shared.exceptions import McpError
+
+from .. import credentials_store, grants_chain, providers
 from ..db import access_shadow as db_shadow
 from ..db import grants as db_grants
-from . import scope
+from . import chain_resolution, scope
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +74,9 @@ logger = logging.getLogger(__name__)
 ACCORD = "accord"
 ELARGISSEMENT_EQUIPE = "elargissement_equipe"
 RESTRICTION_ACL = "restriction_acl"
-FREE_TIER_HORS_MODELE = "free_tier_hors_modele"
-PARTAGE_HORS_MODELE = "partage_hors_modele"
+# Reprises de `chain_resolution`, qui les constate — jamais redéclarées.
+FREE_TIER_HORS_MODELE = chain_resolution.FREE_TIER_HORS_MODELE
+PARTAGE_HORS_MODELE = chain_resolution.PARTAGE_HORS_MODELE
 PERSO_CROSS_ORG = "perso_cross_org"
 INCONNU = "inconnu"
 CLASSES = (ACCORD, ELARGISSEMENT_EQUIPE, RESTRICTION_ACL, FREE_TIER_HORS_MODELE,
@@ -92,166 +94,6 @@ def _enabled() -> bool:
     return (os.environ.get("OTO_L7_SHADOW", "1") or "").lower() not in ("0", "false", "no")
 
 
-# ── L'ensemble atteignable, et sa désignation ─────────────────────────────────
-
-@dataclass(frozen=True)
-class ChainPick:
-    """Ce que la chaîne DÉSIGNERAIT. `mode` parle le même vocabulaire que
-    `CascadeRung.mode`, pour que la comparaison soit une égalité et pas une
-    traduction. `via` dit POURQUOI l'instance est atteignable — appartenance au
-    scope propriétaire (D1, premier membre de phrase) ou arête de grant (second)."""
-    mode: str                       # user | group | org | tenant | platform
-    entity_type: Optional[str]
-    entity_id: Optional[str]
-    via: str = "appartenance"       # appartenance | grant
-    group_id: Optional[int] = None
-
-
-def _group_ids(sub: str, org: Optional[int]) -> list[int]:
-    """Toutes les équipes du sujet dans l'org de contexte — **toutes**, pas l'active.
-    C'est là que 0053-D2 élargit, et l'élargissement est le sujet de la mesure."""
-    if org is None:
-        return []
-    try:
-        return sorted(int(g["group_id"]) for g in group_store.list_groups_for_user(sub, org))
-    except Exception:  # noqa: BLE001
-        logger.debug("shadow L7 : équipes illisibles", exc_info=True)
-        return []
-
-
-def _platform_pick(sub: str, provider: str, org: Optional[int]) -> "tuple[Optional[ChainPick], Optional[str]]":
-    """Le palier plateforme vu par la CHAÎNE SEULE, et rien d'autre.
-
-    Rend `(pick, hors_modele)`. À la différence de `grants_chain.platform_rung`,
-    aucun gate `CHAIN_CONNECTORS` : L7 fait de la chaîne l'unique autorité, donc la
-    question « et pour un connecteur non basculé ? » est précisément celle qu'on
-    mesure. Les arêtes sont lues par la MÊME fonction que le chemin servi
-    (`db_grants.edges_for`) — pas une requête recopiée.
-
-    **`hors_modele` nomme la NUANCE du trou**, et ce n'est plus un booléen. Une ligne
-    du coffre peut accorder de deux façons que la chaîne ne sait pas encore dire, et
-    elles n'ont ni le même remède ni la même lecture :
-
-    - **ouverte à tous** (`share_mode='open'`, aucune allowlist) ⟹ il manque l'arête
-      « tout le monde » ;
-    - **fermée sur une allowlist** (`share_down`) ⟹ il manque les arêtes NOMINATIVES
-      de cette allowlist. Le semis de L5 ne couvrait que `CHAIN_CONNECTORS`, donc
-      toute clé fermée hors de cette liste est dans ce cas.
-
-    Les distinguer n'est pas un raffinement : sans la seconde, une divergence
-    parfaitement explicable tombait en `inconnu` — la classe qui doit rester à zéro
-    pour autoriser le retrait — et fermait la porte pour une raison fausse. Vécu le
-    2026-08-29 : 17 observations sur `aiark` et `apify`, deux clés FERMÉES accordées
-    à une org, sans une seule arête.
-
-    La forme est lue au coffre, à sa source, sans rejouer la règle d'accès de
-    l'ancien chemin : on regarde ce que l'instance EST, pas qui elle autorise."""
-    scopes = grants_chain.grantee_scopes(sub, org)
-    hors_modele = None
-    for inst in credentials_store.list_platform_instances(provider):
-        edges = db_grants.edges_for(grants_chain.instance_ref(inst["label"], provider),
-                                    scopes)
-        if not edges:
-            # Rien à dire sur CETTE instance : on note de quelle nuance de trou il
-            # s'agirait si l'ancien chemin, lui, accordait. La première rencontrée
-            # gagne — même ordre que l'ancien chemin (récente d'abord).
-            if hors_modele is None:
-                ouverte = (inst.get("share_mode") != "closed"
-                           and not (inst.get("share_down") or []))
-                hors_modele = (FREE_TIER_HORS_MODELE if ouverte
-                               else PARTAGE_HORS_MODELE)
-            continue
-        if any(e.get("revoked_at") is None for e in edges):
-            return (ChainPick("platform", credentials_store.PLATFORM, inst["label"],
-                              via="grant"), hors_modele)
-        # Toutes révoquées : la chaîne REFUSE cette instance, sans repli (0053-D6).
-        return (None, hors_modele)
-    return (None, hors_modele)
-
-
-def chain_verdict(sub: str, provider: str, *, org: Optional[int],
-                  want: str = "auto") -> "tuple[Optional[ChainPick], Optional[str]]":
-    """L'instance que 0053-D2 désignerait pour cet appel, **et** le drapeau
-    **la nuance du trou** quand la chaîne se tait. Les deux ensemble, en UNE passe :
-    les rendre séparément
-    ferait relire les instances plateforme deux fois par appel, précisément sur le
-    connecteur le plus trafiqué (une clé ouverte est le cas où la chaîne se tait).
-
-    Les crans du connecteur (byo_user, org-partageable, palier plateforme déclaré,
-    instance suspendue) sont lus à leur source — ce sont des propriétés de
-    l'instance, pas des autorisations, et ils valent des deux côtés de la fenêtre.
-    La restriction `connector_acl`, elle, n'est PAS lue : c'est le fond du lot."""
-    porteur = providers.credential_provider(provider)
-    if org is not None and providers.is_byo_user(porteur):
-        try:
-            if (credentials_store.has_credential(
-                    credentials_store.MEMBER, credentials_store.member_id(org, sub),
-                    porteur, account=None)
-                    and not credentials_store.instance_suspended(
-                        credentials_store.MEMBER, credentials_store.member_id(org, sub),
-                        porteur)):
-                # Le drapeau free-tier ne sert QUE si la chaîne se tait : un
-                # palier gagnant le rend sans avoir lu les instances plateforme.
-                return (ChainPick("user", credentials_store.MEMBER,
-                                  credentials_store.member_id(org, sub)), None)
-        except Exception:  # noqa: BLE001
-            logger.debug("shadow L7 : palier membre illisible", exc_info=True)
-    if porteur in providers.ORG_SHAREABLE_PROVIDERS:
-        # À proximité égale, l'équipe ACTIVE d'abord — c'est la voie la plus
-        # favorable au sens de D5, et ça rend la désignation déterministe quand le
-        # sujet appartient à plusieurs équipes qui détiennent toutes une clé.
-        active = None
-        try:
-            active = scope.current_group(sub)
-        except Exception:  # noqa: BLE001
-            logger.debug("shadow L7 : équipe active illisible", exc_info=True)
-        gids = _group_ids(sub, org)
-        if active is not None and int(active) in gids:
-            gids = [int(active)] + [g for g in gids if g != int(active)]
-        for gid in gids:
-            try:
-                if group_store.has_group_secret(gid, porteur):
-                    return (ChainPick("group", "group", str(gid), group_id=gid), None)
-            except Exception:  # noqa: BLE001
-                logger.debug("shadow L7 : équipe %s illisible", gid, exc_info=True)
-        if org is not None:
-            try:
-                if org_store.has_org_secret(org, porteur):
-                    return (ChainPick("org", "org", str(org)), None)
-            except Exception:  # noqa: BLE001
-                logger.debug("shadow L7 : palier org illisible", exc_info=True)
-        # Étage TENANT (L-clés PR 1) : le même que dans le walker, lu à la même source
-        # (`rung_tenant` — le sub qualifié, jamais l'org). Sans lui, chaque clé tenant
-        # servie compterait une divergence `inconnu` que ce lot aurait créée.
-        slug = tenant_vault.rung_tenant(sub)
-        if slug is not None:
-            try:
-                if (credentials_store.has_credential(credentials_store.TENANT, slug, porteur)
-                        and not credentials_store.instance_suspended(
-                            credentials_store.TENANT, slug, porteur)):
-                    # L'arête tenant→org (PR 2), lue par la MÊME fonction que le
-                    # walker : MUETTE ⟹ appartenance ; ACCORDE ⟹ grant ; REFUSE ⟹ on
-                    # passe au palier suivant, comme lui (pas un « rien » précoce).
-                    verdict = grants_chain.tenant_rung(slug, porteur, org)
-                    if verdict is None or verdict.granted:
-                        return (ChainPick("tenant", credentials_store.TENANT, slug,
-                                          via="grant" if verdict else "appartenance"), None)
-            except Exception:  # noqa: BLE001
-                logger.debug("shadow L7 : palier tenant illisible", exc_info=True)
-    if want != "byo":
-        con = providers.connector_for_provider(porteur)
-        if con is not None and "platform" in con.auth_modes:
-            return _platform_pick(sub, porteur, org)
-    return (None, None)
-
-
-def chain_winner(sub: str, provider: str, *, org: Optional[int],
-                 want: str = "auto") -> Optional[ChainPick]:
-    """`chain_verdict` sans son drapeau — la vue qui se lit, et celle que la PR 2
-    promouvra en résolution servie."""
-    return chain_verdict(sub, provider, org=org, want=want)[0]
-
-
 # ── La comparaison, et sa classe ──────────────────────────────────────────────
 
 def _key(x) -> Optional[tuple]:
@@ -263,7 +105,7 @@ def _key(x) -> Optional[tuple]:
             str(getattr(x, "entity_id", None)))
 
 
-def classify(legacy, chain: Optional[ChainPick], *, acl_refus: bool,
+def classify(legacy, chain: Optional[chain_resolution.ChainPick], *, acl_refus: bool,
              hors_modele: Optional[str] = None) -> str:
     """La classe d'un couple de verdicts. Fonction PURE — c'est elle que le test
     exerce sur les formes relevées en prod, sans base."""
@@ -283,7 +125,7 @@ def classify(legacy, chain: Optional[ChainPick], *, acl_refus: bool,
     return INCONNU
 
 
-def _sample(sub: str, legacy, chain: Optional[ChainPick]) -> dict:
+def _sample(sub: str, legacy, chain: Optional[chain_resolution.ChainPick]) -> dict:
     """L'échantillon d'une divergence, SANS donnée nominative : le sub est haché
     (assez pour recroiser deux occurrences, pas pour désigner quelqu'un), et seuls
     les paliers et l'équipe en cause restent en clair — une équipe est ce sur quoi
@@ -333,7 +175,7 @@ def observe(provider: str, sub: Optional[str], org: Optional[int], legacy, *,
         return
     try:
         porteur = providers.credential_provider(provider)
-        chain, hors_modele = chain_verdict(sub, porteur, org=org, want=want)
+        chain, hors_modele = chain_resolution.chain_verdict(sub, porteur, org=org, want=want)
         classe = classify(legacy, chain, acl_refus=acl_refus, hors_modele=hors_modele)
         if classe == ACCORD:
             _compte_accord(porteur, int(org or 0))
@@ -366,3 +208,137 @@ def observe_acl_refus(provider: str, sub: Optional[str], *, want: str = "auto") 
         logger.debug("shadow L7 : org de contexte illisible au refus d'ACL", exc_info=True)
         return
     observe(provider, sub, org, None, want=want, acl_refus=True)
+
+
+# ── L'INVERSION : qui décide, et comment on revient en arrière ────────────────
+# `OTO_L7_DECIDE=chain` retourne l'autorité — la chaîne décide, l'ancien chemin
+# calcule et se compare. Le retour arrière est le drapeau, pas un revert : `legacy`
+# (le défaut) rend le comportement d'aujourd'hui à l'octet près, et un redémarrage
+# suffit. Par-process, comme le registre des tenants : basculer la préprod ne bascule
+# pas la prod.
+#
+# ⚠️ Ce drapeau ne se met à `chain` **qu'après** deux conditions MESURÉES, pas
+# décidées : une fenêtre de shadow sans divergence `inconnu` en PROD (le trafic de
+# préprod ne compte pas), et la classe `free_tier_hors_modele` retombée à zéro — ce
+# qui n'arrive qu'une fois la commande `scripts/seed_everyone_edges.py` passée.
+DECIDE_LEGACY, DECIDE_CHAIN = "legacy", "chain"
+
+
+def decide_mode() -> str:
+    """Qui décide dans CE process. Toute valeur autre que `chain` vaut `legacy` : un
+    drapeau mal orthographié doit laisser le comportement d'aujourd'hui, jamais
+    basculer une autorité par accident."""
+    return (DECIDE_CHAIN
+            if (os.environ.get("OTO_L7_DECIDE", "") or "").strip().lower() == DECIDE_CHAIN
+            else DECIDE_LEGACY)
+
+
+def chain_decides() -> bool:
+    return decide_mode() == DECIDE_CHAIN
+
+
+def decide(provider: str, sub: str, org: Optional[int], *, probe, want: str = "auto",
+           deja_observe: bool = False):
+    """La chaîne DÉCIDE, l'ancien chemin calcule et se compare — le miroir exact de la
+    PR 1, l'autorité retournée.
+
+    Rend le barreau servi, de la même forme que `cascade.cascade_winner`, pour que la
+    suite de `resolve` (garde du compte nommé, quota, `ResolvedCredential`) ne change
+    pas d'une ligne. Ne lève jamais **pour observer** ; les McpError de la SONDE (un
+    compte nommé introuvable, une ambiguïté multi-comptes), elles, remontent comme
+    avant — ce sont des erreurs servies, pas de l'observation.
+
+    `deja_observe` : le refus d'ACL a déjà été compté à son site (il se produit avant
+    la marche), on ne le compte pas deux fois."""
+    porteur = providers.credential_provider(provider)
+    pick, hors_modele = chain_resolution.chain_verdict(sub, porteur, org=org, want=want)
+    # Le FETCH garde le nom que le walker lui passait — la traversée change, la
+    # lecture non.
+    rung = chain_resolution.rung_for_pick(pick, probe, sub, provider, org)
+    if not deja_observe:
+        _observe_inverse(porteur, sub, org, pick, hors_modele, want=want)
+    return rung
+
+
+def _observe_inverse(porteur: str, sub: str, org: Optional[int],
+                     chain: Optional[chain_resolution.ChainPick],
+                     hors_modele: Optional[str], *, want: str) -> None:
+    """Sous l'autorité de la chaîne, c'est l'ANCIEN chemin qu'on relève — et à la
+    sonde de PRÉSENCE, pas de fetch : la question posée est « quel barreau
+    gagnerait », et y répondre ne doit pas déchiffrer une seconde clé par appel.
+
+    Les classes sont les MÊMES qu'à l'aller : c'est ce qui permet de lire une seule
+    série avant et après la bascule, au lieu de deux mesures qu'on ne pourrait pas
+    comparer."""
+    if not _enabled():
+        return
+    try:
+        from . import cascade, scope as _scope
+        legacy = cascade.cascade_winner(
+            sub, porteur, org=org, group=lambda: _scope.current_group(sub),
+            probe=cascade.PRESENCE_PROBE, want=want)
+        classe = classify(legacy, chain, acl_refus=False, hors_modele=hors_modele)
+        if classe == ACCORD:
+            _compte_accord(porteur, int(org or 0))
+            return
+        db_shadow.bump_shadow(porteur, int(org or 0), classe, 1,
+                              _sample(sub, legacy, chain))
+        if classe == INCONNU:
+            logger.warning(
+                "L7 (chaîne aux commandes) : divergence INCONNUE sur %s (org=%s) — "
+                "ancien=%s chaîne=%s", porteur, org, _key(legacy), _key(chain))
+    except Exception:  # noqa: BLE001
+        logger.warning("L7 : relevé inverse échoué (%s) — la résolution SERVIE par la "
+                       "chaîne n'est PAS affectée", porteur, exc_info=True)
+
+
+# ── Les deux seams que `resolve` appelle, et qui portent tout le lot ──────────
+# Ils vivent ICI et pas dans `resolve` pour une raison de sujet : le chemin de
+# résolution n'a pas à savoir qu'un drapeau existe, ni comment il s'écrit. Il demande
+# « quel barreau gagne ? » et « ce refus tient-il ? » ; ce module répond, et c'est lui
+# qu'on lit le jour où l'on retire l'ancien chemin.
+
+def garde_acl(provider: str, sub: str, *, want: str = "auto") -> bool:
+    """Joue le backstop RBAC connecteur (ADR 0025) et dit s'il a REFUSÉ.
+
+    Sous `legacy` — le défaut — le refus relève, à l'identique : rien ne change.
+    Sous l'autorité de la chaîne, il n'existe plus : 0053-D1 dissout les lignes de
+    restriction — restreindre, c'est PLACER l'ownership au bon niveau, jamais poser
+    une interdiction par-dessus. Le refus est alors **compté puis laissé tomber**, et
+    le booléen rendu dit à la marche qu'elle n'a plus à le compter une seconde fois.
+
+    L'observation a lieu AVANT de relever, des deux côtés du drapeau : sans ça, la
+    classe qui compte le plus (`restriction_acl`) serait la seule qu'on ne verrait
+    jamais — celle qui ne se produit que là où l'ancien chemin refuse."""
+    from . import rbac
+    try:
+        rbac.require_connector_access(provider, sub)
+        return False
+    except McpError:
+        observe_acl_refus(provider, sub, want=want)
+        if not chain_decides():
+            raise
+        return True
+
+
+def barreau_gagnant(provider: str, sub: str, org: Optional[int], *, probe,
+                    group, want: str = "auto", acl_refus: bool = False):
+    """Le barreau qui gagne — **et c'est un drapeau qui dit laquelle des deux voies
+    l'a désigné.**
+
+    `legacy` (le défaut) : le walker décide, la chaîne calcule à côté et se compare.
+    `chain` : l'inverse, à l'identique — même sonde, mêmes gardes en aval, seule la
+    TRAVERSÉE change. Dans les deux sens la voie non retenue est relevée, avec les
+    mêmes classes, pour qu'une seule série de mesures se lise avant ET après la
+    bascule. Le retour arrière est le drapeau et un redémarrage, jamais un revert.
+
+    L'observation ne lève jamais et ne rend rien : quoi qu'il arrive, ce qui est
+    servi est le barreau, pas la mesure."""
+    from . import cascade
+    if chain_decides():
+        return decide(provider, sub, org, probe=probe, want=want,
+                      deja_observe=acl_refus)
+    win = cascade.cascade_winner(sub, provider, org=org, group=group, probe=probe,
+                                 want=want)
+    observe(provider, sub, org, win, want=want)
+    return win

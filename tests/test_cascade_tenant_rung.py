@@ -20,7 +20,7 @@ from __future__ import annotations
 import pytest
 
 from oto_mcp import access, credentials_store, instance_refs, tenancy, tenant_vault
-from oto_mcp.access import cascade, chain_shadow
+from oto_mcp.access import cascade, chain_resolution, chain_shadow
 
 PILOTE = "pilote"
 SUB_TENANT = f"{PILOTE}:u1"      # un compte du tenant pilote (sub qualifié, lot L2)
@@ -185,7 +185,7 @@ def vide(monkeypatch):
 def test_la_chaine_designe_le_meme_palier_sur_une_cle_tenant(vide, monkeypatch, registre):
     monkeypatch.setattr(credentials_store, "has_credential",
                         lambda et, eid, p, account=None: (et, eid) == ("tenant", PILOTE))
-    pick = chain_shadow.chain_winner(SUB_TENANT, "serper", org=7)
+    pick = chain_resolution.chain_winner(SUB_TENANT, "serper", org=7)
     legacy = cascade.CascadeRung("tenant", credentials_store.TENANT, PILOTE, "TK")
     assert pick is not None and pick.mode == "tenant" and pick.entity_id == PILOTE
     assert chain_shadow.classify(legacy, pick, acl_refus=False,
@@ -196,7 +196,7 @@ def test_la_chaine_ignore_la_cle_tenant_pour_un_sub_du_tenant_primaire(vide, mon
                                                                        registre):
     monkeypatch.setattr(credentials_store, "has_credential",
                         lambda et, eid, p, account=None: et == "tenant")
-    assert chain_shadow.chain_winner(SUB_NU, "serper", org=7) is None
+    assert chain_resolution.chain_winner(SUB_NU, "serper", org=7) is None
 
 
 # ── 4. la grammaire de ref ────────────────────────────────────────────────────
