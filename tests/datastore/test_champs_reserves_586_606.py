@@ -364,11 +364,43 @@ def test_une_valeur_nue_identique_PRESERVE_les_couches(banc):
     assert etat["lignes"]["r1"]["libre"] == {"valeur": "y", "origine": "o"}
 
 
+# ── la colonne-clé : de l'adressage, pas une écriture de valeur ──────────────
+
+def test_la_pose_refuse_readonly_sur_la_cle_metier():
+    """La clé figure dans CHAQUE écriture pour désigner la ligne : `readonly` dessus,
+    identique refusé, fermerait toutes les écritures du tableau. Elle se protège par
+    `key_required` (une autre valeur est une autre ligne), pas par `readonly`."""
+    errs = dsv2.validate_schema_def(
+        {"key": "siren", "fields": [{"key": "siren", "readonly": True}]})
+    assert errs and any("clé métier" in e and "key_required" in e for e in errs), errs
+
+
+def test_sur_un_schema_legacy_la_cle_identique_est_de_l_ADRESSAGE(banc):
+    """Un schéma déjà en base qui porterait `readonly` sur la clé (posé avant ce
+    garde, ou « complété » dans six mois) ne doit pas fermer le tableau sans le
+    savoir : la valeur de clé IDENTIQUE passe — c'est l'adresse de la ligne —, une
+    valeur DIFFÉRENTE reste refusée (sur la ligne visée, c'est une réécriture)."""
+    st, etat = banc
+    etat["schema"] = {"key": "siren",
+                      "fields": [{"key": "siren", "readonly": True},
+                                 {"key": "adresse", "readonly": True},
+                                 {"key": "libre"}]}
+    st.append_row("viviers", {"siren": "552081317", "libre": "x",
+                              "adresse": {"comment": "registre — 2 rue B"}})
+    st.update_row("viviers", "r1", {"siren": "552081317", "libre": "y"})
+    assert etat["lignes"]["r1"]["libre"] == "y" and etat["creees"] == []
+    assert etat["lignes"]["r1"]["adresse"]["comment"] == "registre — 2 rue B"
+    with pytest.raises(RowValidationError, match="`siren`"):
+        st.update_row("viviers", "r1", {"siren": "999999999"})
+    with pytest.raises(RowValidationError, match="`adresse`"):
+        st.update_row("viviers", "r1", {"siren": "552081317", "adresse": "1 rue A"})
+
+
 def test_identique_se_juge_au_TYPE_pres():
     """`0` et `False` sont égaux pour Python, pas pour une colonne : écrire `False`
     sur `0` est une réécriture, pas un no-op."""
     from oto_mcp.datastore.columns import _merge_column
-    assert _merge_column({"valeur": 0, "comment": "c"}, False) == {"valeur": False}
+    assert _merge_column({"valeur": 0, "comment": "c"}, False) is False   # couches tombées, scalaire nu
     assert _merge_column({"valeur": 0, "comment": "c"}, 0) == {"valeur": 0, "comment": "c"}
     assert _merge_column("x", "x") == "x"
     assert _merge_column(None, None) is None

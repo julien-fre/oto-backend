@@ -125,6 +125,13 @@ def test_une_valeur_identique_ne_detruit_pas_le_comment_en_base(table):
     assert d["adresse"] == {"valeur": "1 rue A", "comment": "registre — 2 rue B"}
 
 
+def test_patch_schema_refuse_readonly_sur_la_cle(table):
+    st, ns, ns_id, rid = table
+    with pytest.raises(ValueError, match="key_required"):
+        st.patch_schema(ns, fields=[{"key": "siren", "readonly": True}])
+    assert "readonly" not in str(st.get_schema(ns)["fields"][0])
+
+
 def test_patch_schema_pose_et_leve_sans_toucher_les_lignes(table):
     """Lever le cran par `null` : le schéma ne le porte plus, la couche déjà posée
     reste — et l'appelant retrouve la main sur l'origine."""
