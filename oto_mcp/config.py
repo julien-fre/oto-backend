@@ -35,6 +35,38 @@ def project_domain_is_production() -> bool:
     return project_domain() == _PROD_PROJECT_DOMAIN
 
 
+# Les deux origines possibles d'une écriture sur la base PARTAGÉE prod/preprod.
+PROD, PREPROD = "prod", "preprod"
+
+
+def origine_du_process() -> Optional[str]:
+    """**Quel environnement ce process sert-il ?** `prod`, `preprod`, ou None s'il ne
+    peut pas le savoir (dev, tests) — auquel cas on n'invente rien.
+
+    Prod et preprod partagent la MÊME base : sans cette réponse, ce que les deux
+    écrivent se mélange et l'on ne peut plus lire une fenêtre « en prod ». Le besoin
+    est né le 2026-08-29, en lisant le premier compteur de la fenêtre L7.
+
+    **Dérivé de `OTO_MCP_PUBLIC_URL`, et c'est le choix qui compte.** C'est l'URL que
+    ce process annonce de lui-même, elle est `require_env` (donc jamais absente là où
+    ça compte) et elle diffère par environnement — `mcp.oto.cx` en prod,
+    `mcp.oto.ninja` en preprod. **Surtout, elle ne peut pas se DÉFAUTER** : c'est ce
+    qui la sépare de `project_domain()`, dont le défaut est le domaine de PRODUCTION
+    et qui n'est posé qu'en preprod. Un environnement qui oublierait la variable y
+    serait classé « prod » en silence ; ici il est classé « inconnu », et un inconnu
+    se voit.
+
+    Aucun nouveau réglage à poser à la main : on lit ce que le process sait déjà."""
+    url = os.environ.get("OTO_MCP_PUBLIC_URL")
+    if not url:
+        return None
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").strip().lower()
+    if not host:
+        return None
+    return PROD if host == f"mcp.{_PROD_PROJECT_DOMAIN}" else PREPROD
+
+
 def mcp_audience_alts() -> frozenset[str]:
     """Audiences MCP canoniques SECONDAIRES (coexistence multi-domaine, ex.
     `https://mcp.oto.cx/mcp` en plus de `MCP_AUDIENCE`=`https://mcp.oto.ninja/mcp`).

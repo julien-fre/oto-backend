@@ -83,7 +83,11 @@ def test_la_lentille_rend_la_fenetre_sans_500(live):
     db_shadow.bump_shadow("hunter", 0, "restriction_acl", 1,
                           {"sub_h": "abcd1234", "ancien": "aucun",
                            "chaine": "org/org"})
-    out = lentille._read(None, lentille.AccessShadowInput(op="read", days=1))
+    # `origine="toutes"` : ce test porte sur la FORME de la réponse, pas sur le
+    # périmètre du verdict — la ligne qu'il vient d'écrire doit lui revenir quelle que
+    # soit l'origine que le process se donne dans le banc complet.
+    out = lentille._read(None, lentille.AccessShadowInput(op="read", days=1,
+                                                          origine="toutes"))
     servi = lentille.ShadowOut(**out)          # la validation de la face servie
 
     ligne = [l for l in servi.lignes if l.connector == "hunter"][0]

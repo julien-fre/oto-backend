@@ -156,6 +156,19 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
                  "GREATEST((SELECT MAX(id) FROM tenants), 1))")
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS tenant_id BIGINT "
                  "NOT NULL DEFAULT 1 REFERENCES tenants(id)")
+    # L7 (blueprint ADR 0053) — QUI a écrit cette observation. Prod et preprod
+    # partagent la MÊME base : sans cette colonne, leurs compteurs se mélangent et
+    # « une fenêtre en prod » n'est pas lisible. Dérivée de ce que le process sait de
+    # lui-même (`config.origine_du_process`), jamais d'un réglage à poser.
+    # **NULLABLE, et c'est le point** : les lignes écrites avant cette colonne
+    # restent NULL — elles sont réellement ambiguës, et on ne réécrit pas l'histoire
+    # en leur prêtant une origine qu'on ne connaît pas.
+    # ⚠️ La clé primaire, elle, ne bouge PAS ici : l'y étendre est un ordre NON
+    # additif (DROP CONSTRAINT), donc une commande explicite — `scripts/
+    # migrate_shadow_origine.py`, ADR 0065. Tant qu'elle n'a pas tourné, deux
+    # origines partagent une ligne ; l'écriture le sait et se dégrade au
+    # comportement d'avant (cf. `db/access_shadow.bump_shadow`).
+    conn.execute("ALTER TABLE access_shadow_l7 ADD COLUMN IF NOT EXISTS origine TEXT")
     # ADR 0052 (lot L2) — le tenant PORTE son émetteur, et les domaines qui le
     # désigneront en L3. Contrairement à L1, aucun ordre à tenir vis-à-vis des
     # données : colonnes nullables ou defaultées, aucune FK à satisfaire, donc

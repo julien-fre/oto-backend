@@ -22,6 +22,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
 
+from .. import config
 from ..access import chain_shadow
 from ..db import access_shadow as db_shadow
 from ._authz import PLATFORM_ADMIN
@@ -40,6 +41,12 @@ class AccessShadowInput(BaseModel):
     days: int = _DEFAULT_DAYS
     connector: Optional[str] = None
     classe: Optional[str] = None
+    # **`prod` par défaut, et c'est le fond du réglage** : prod et preprod partagent
+    # la base, donc « la fenêtre est concluante » ne veut rien dire tant qu'on n'a pas
+    # dit QUI a écrit. Une fenêtre de prod ne compte que ce que la prod a écrit.
+    # `toutes` rend aussi la preprod ET les lignes d'origine inconnue (celles d'avant
+    # la colonne) — utile pour lire l'historique, jamais pour prononcer un verdict.
+    origine: Literal["prod", "preprod", "toutes"] = "prod"
 
     @field_validator("days")
     @classmethod
@@ -50,6 +57,8 @@ class AccessShadowInput(BaseModel):
 # ── forme SERVIE (ADR 0059 : ce qui n'est pas déclaré n'est pas opposable) ────
 
 class ShadowLigne(BaseModel):
+    # `None` = ligne écrite avant que l'origine ne soit notée : ambiguë, et elle le dit.
+    origine: Optional[str] = None
     day: str
     connector: str
     org_id: int
@@ -61,6 +70,12 @@ class ShadowLigne(BaseModel):
 
 
 class ShadowVerdict(BaseModel):
+    # L'origine que ce verdict COUVRE — dit dans la réponse, jamais sous-entendu.
+    origine: str
+    # Observations écartées faute d'origine connue (lignes d'avant la colonne). Une
+    # fenêtre qui paraît vide alors que 134 observations dorment en « inconnu » doit
+    # pouvoir se lire comme telle.
+    origine_inconnue: int
     observations: int
     par_classe: dict
     inconnus: int
@@ -72,12 +87,14 @@ class ShadowVerdict(BaseModel):
 
 class ShadowOut(BaseModel):
     days: int
+    origine: str
     classes: list[str]
     verdict: ShadowVerdict
     lignes: list[ShadowLigne]
 
 
-def _verdict(lignes: list[dict]) -> dict:
+def _verdict(lignes: list[dict], origine: str = config.PROD,
+             origine_inconnue: int = 0) -> dict:
     """La phrase que la fenêtre doit rendre, calculée et non racontée.
 
     `porte_ouverte` n'est vrai que si les DEUX moitiés le sont : aucune divergence
@@ -90,6 +107,8 @@ def _verdict(lignes: list[dict]) -> dict:
     observations = sum(par_classe.values())
     inconnus = par_classe.get(chain_shadow.INCONNU, 0)
     return {
+        "origine": origine,
+        "origine_inconnue": origine_inconnue,
         "observations": observations,
         "par_classe": {c: par_classe.get(c, 0) for c in chain_shadow.CLASSES},
         "inconnus": inconnus,
@@ -99,12 +118,20 @@ def _verdict(lignes: list[dict]) -> dict:
 
 
 def _read(ctx: ResolvedCtx, inp: AccessShadowInput) -> dict:
+    filtre = None if inp.origine == "toutes" else inp.origine
     lignes = db_shadow.read_shadow(days=inp.days, connector=inp.connector,
-                                   classe=inp.classe)
+                                   classe=inp.classe, origine=filtre)
+    # Compté sur la MÊME fenêtre, sans le filtre d'origine : c'est ce qui permet de
+    # distinguer « rien ne s'est passé » de « tout est tombé dans l'inconnu ».
+    inconnues = sum(int(r["n"]) for r in db_shadow.read_shadow(
+        days=inp.days, connector=inp.connector, classe=inp.classe)
+        if not r.get("origine"))
     return {
         "days": inp.days,
+        "origine": inp.origine,
         "classes": list(chain_shadow.CLASSES),
-        "verdict": _verdict(lignes),
+        "verdict": _verdict(lignes, origine=inp.origine,
+                            origine_inconnue=inconnues),
         # ⚠️ **Les dates arrivent DÉJÀ en chaînes ISO** : le row factory du pool
         # (`db._conn._str_dict_row`) normalise tout `datetime`/`date` avant qu'une
         # ligne n'atteigne un appelant — c'est l'invariant de tout le package `db`,
@@ -118,7 +145,7 @@ def _read(ctx: ResolvedCtx, inp: AccessShadowInput) -> dict:
             {"day": r["day"], "connector": r["connector"],
              "org_id": int(r["org_id"]), "classe": r["classe"], "n": int(r["n"]),
              "first_at": r.get("first_at"), "last_at": r.get("last_at"),
-             "sample": r.get("sample") or {}}
+             "origine": r.get("origine"), "sample": r.get("sample") or {}}
             for r in lignes
         ],
     }
@@ -144,7 +171,9 @@ CAPABILITIES += [
             "before the removal), "
             "`perso_cross_org` (the cascade follows a personal key across orgs). Only "
             "`inconnu` must stay at zero: `verdict.porte_ouverte` is true when there "
-            "is no unknown divergence AND the denominator is non-zero. Read-only — "
+            "is no unknown divergence AND the denominator is non-zero, for the origin "
+            "it names; `verdict.origine_inconnue` counts observations left out because "
+            "they predate the origin column. Read-only — "
             "the counter is fed by the resolution path and switched off by the "
             "OTO_L7_SHADOW env, never from here."),
         mcp="oto_admin_access_shadow",
