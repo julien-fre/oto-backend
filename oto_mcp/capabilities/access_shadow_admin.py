@@ -105,11 +105,19 @@ def _read(ctx: ResolvedCtx, inp: AccessShadowInput) -> dict:
         "days": inp.days,
         "classes": list(chain_shadow.CLASSES),
         "verdict": _verdict(lignes),
+        # ⚠️ **Les dates arrivent DÉJÀ en chaînes ISO** : le row factory du pool
+        # (`db._conn._str_dict_row`) normalise tout `datetime`/`date` avant qu'une
+        # ligne n'atteigne un appelant — c'est l'invariant de tout le package `db`,
+        # et c'est pourquoi aucun autre consommateur ne convertit. Rappeler
+        # `.isoformat()` par-dessus ne peut donner qu'`AttributeError: 'str' object
+        # has no attribute 'isoformat'`, soit « Erreur interne du serveur » pour
+        # l'admin qui lit sa fenêtre : vécu en prod le 2026-08-29 (v1.161.0), avec
+        # une table présente et un compteur qui écrivait — seule la LECTURE cassait.
+        # Rejeu contre un vrai PostgreSQL : `tests/test_l7_shadow_lens_live.py`.
         "lignes": [
-            {"day": str(r["day"]), "connector": r["connector"],
+            {"day": r["day"], "connector": r["connector"],
              "org_id": int(r["org_id"]), "classe": r["classe"], "n": int(r["n"]),
-             "first_at": r["first_at"].isoformat() if r.get("first_at") else None,
-             "last_at": r["last_at"].isoformat() if r.get("last_at") else None,
+             "first_at": r.get("first_at"), "last_at": r.get("last_at"),
              "sample": r.get("sample") or {}}
             for r in lignes
         ],
