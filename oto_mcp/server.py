@@ -757,7 +757,11 @@ def build_root_app(app, anon_app):
     1. **dispatch par Host** (ADR 0032) : `<slug>.mcp.oto.cx` publié anonyme → instance
        anonyme ; publié `org` → authentifiée + org épinglée ; sinon (host canonique ou
        slug inconnu) → authentifiée. Compose les lifespans des deux instances FastMCP.
-    2. **garde de déconnexion client** (#352), la couche la plus EXTERNE — entre uvicorn
+    2. **étiquetage du charset** (#472) : `text/event-stream` et `application/json`
+       partent complétés d'un `charset=utf-8`. Posée SOUS la garde mais AU-DESSUS du
+       dispatch, donc elle couvre les deux instances (canonique et anonyme) et toute
+       la face REST d'un seul geste. Cf. `response_charset` pour le pourquoi.
+    3. **garde de déconnexion client** (#352), la couche la plus EXTERNE — entre uvicorn
        et tout le reste. Un POST `/mcp` dont le client est parti en cours de route
        laissait une réponse ASGI incomplète ; uvicorn fermait alors le transport, et
        Caddy rendait des 502 sur cette connexion **et sur les requêtes voisines** qui
@@ -773,7 +777,9 @@ def build_root_app(app, anon_app):
     (`tests/test_client_disconnect_guard.py`)."""
     from . import subdomain_project
     from .client_disconnect_guard import ClientDisconnectGuard
-    return ClientDisconnectGuard(subdomain_project.HostDispatch(app, anon_app))
+    from .response_charset import ResponseCharset
+    return ClientDisconnectGuard(
+        ResponseCharset(subdomain_project.HostDispatch(app, anon_app)))
 
 
 def main():
