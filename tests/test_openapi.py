@@ -95,3 +95,38 @@ def test_capability_wins_over_handwritten_on_the_same_path():
 def test_starlette_converters_are_stripped():
     doc = openapi.build([_FakeRoute("/api/me/projects/{project_id:int}/files", ["GET"])])
     assert "/api/me/projects/{project_id}/files" in doc["paths"]
+
+
+# ── Ce qu'un front tiers a dérivé du contrat (29/08) — le document le DIT ───────
+def test_the_guide_body_limit_is_in_the_schema():
+    """Le front dérive sa garde de saisie du contrat : la borne doit y être, et dire
+    qu'elle est en octets — `maxLength` seul laisserait passer un texte accentué."""
+    op = openapi.build()["paths"]["/api/me/guides/{scope}/{slug}"]["put"]
+    body = op["requestBody"]["content"]["application/json"]["schema"]["properties"]["body_md"]
+    assert body["maxLength"] == 65536
+    assert "octets" in body["description"].lower()
+    assert "body_too_large" in op["responses"]["400"]["description"]
+
+
+def test_a_node_carries_its_handles_to_the_other_surfaces():
+    """Le modèle `Output` de premier niveau est INLINE dans la 200 (pas un composant,
+    cf. docs/alias-deprecies.md) ; ses sous-modèles sont hissés en composants."""
+    doc = openapi.build()
+    op = doc["paths"]["/api/me/nodes/{node_id}"]["get"]
+    schema = op["responses"]["200"]["content"]["application/json"]["schema"]
+    assert {"doc_id", "project_id"} <= set(schema["properties"])
+    assert "ordered" in doc["components"]["schemas"]["ContentBlock"]["properties"]
+
+
+def test_the_error_envelope_is_a_component_every_refusal_references():
+    doc = openapi.build()
+    assert set(doc["components"]["schemas"]["Erreur"]["properties"]) == \
+        {"error", "detail", "details"}
+    op = doc["paths"]["/api/me/orgs/{id}/membership"]["delete"]
+    assert op["responses"]["401"]["content"]["application/json"]["schema"] == \
+        {"$ref": "#/components/schemas/Erreur"}
+    # Les refus déclarés : l'énuméré `error` porte les codes, par statut.
+    codes = {s: r["content"]["application/json"]["schema"]["allOf"][1]["properties"]["error"]["enum"]
+             for s, r in op["responses"].items() if s in ("404", "409")}
+    assert codes == {"404": ["unknown_org", "not_a_member"],
+                     "409": ["personal_org", "last_org_admin"]}

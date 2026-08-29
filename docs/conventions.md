@@ -102,8 +102,9 @@ rien ne rendait navigable et que rien ne tenait.
   PROSE sort du serveur : les `description=` de capacité, les descriptions de champ,
   **les docstrings des modèles `Output`** (elles deviennent la `description` du schéma
   200 dans `/openapi.json`, et le NOM de la classe devient
-  `#/components/schemas/<Nom>`), les blocs d'instructions injectés au `initialize`, les
-  messages d'erreur. Idem pour les identifiants : le **nom d'un handler REST** est figé
+  `#/components/schemas/<Nom>`), le `when` d'un `DeclaredError` (description de la
+  réponse 4xx), les blocs d'instructions injectés au `initialize`, les messages
+  d'erreur. Idem pour les identifiants : le **nom d'un handler REST** est figé
   dans `tests/api/api_routes_table.txt`, donc le renommer change la table servie. La
   preuve n'est pas une relecture, c'est un DIFF À VIDE : dumper avant/après le document
   OpenAPI, la table de routes, l'inventaire `tools/list` (noms + schémas +

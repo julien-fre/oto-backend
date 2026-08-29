@@ -58,7 +58,62 @@ Les valeurs possibles sont dans l'énuméré `op` du schéma de la requête.
 
 **Contexte d'organisation** — en-tête optionnel `X-Oto-Org` (et `X-Oto-Group`) pour
 travailler dans une organisation précise ; par défaut, l'organisation maison.
+
+**Erreurs** — une seule enveloppe, le composant `Erreur` : `error` (jeton machine
+stable, la clé sur laquelle un client décide), `detail` (la phrase, actionnable) et
+parfois `details` (forme structurée). Les 4xx listés sur une opération sont ceux
+qu'elle DÉCLARE, chacun rejoué par un test ; la liste n'est pas exhaustive : tout
+appel peut rendre `400 invalid_input` / `unknown_fields` / `invalid_json` /
+`invalid_body` (validation de la requête par l'adaptateur), `401` et `403`.
 """
+
+# L'enveloppe d'erreur REST (`api/base._json_error`), publiée UNE fois en composant :
+# un client généré la type une seule fois, et un `$ref` cassé ferait échouer la
+# génération entière — d'où un composant toujours présent, jamais conditionnel.
+_ERREUR = {
+    "type": "object",
+    "required": ["error"],
+    "properties": {
+        "error": {"type": "string",
+                  "description": "jeton machine stable — la clé sur laquelle décider"},
+        "detail": {"type": "string",
+                   "description": "la phrase, actionnable ; jamais à parser"},
+        "details": {"type": "object",
+                    "description": "forme structurée du refus, quand une phrase ne "
+                                   "suffit pas au client pour agir (rare)"},
+    },
+}
+_ERREUR_REF = {"$ref": "#/components/schemas/Erreur"}
+
+
+def _reponse_erreur(description: str, codes: Optional[list[str]] = None) -> dict:
+    """Une réponse d'erreur : l'enveloppe, et l'énuméré des `error` possibles quand
+    on les connaît — c'est ce qu'un client généré sait lire et sur quoi il branche."""
+    schema: dict = _ERREUR_REF if not codes else {
+        "allOf": [_ERREUR_REF, {"properties": {"error": {"enum": codes}}}]}
+    return {"description": description,
+            "content": {"application/json": {"schema": schema}}}
+
+
+def _reponses(cap: Capability, heureuse: tuple[str, dict]) -> dict:
+    """Les réponses d'une opération : l'heureuse, les deux refus génériques, puis les
+    refus DÉCLARÉS (`Capability.errors`) regroupés par statut — deux codes sur un même
+    409 font UNE réponse dont l'énuméré porte les deux. Un refus déclaré sur un statut
+    générique (403) s'AJOUTE à la description, il ne remplace pas le générique : le
+    `forbidden` de l'autz reste possible."""
+    out = {heureuse[0]: heureuse[1],
+           "401": _reponse_erreur("jeton absent ou invalide"),
+           "403": _reponse_erreur("refus d'autorisation (ou hors portée du jeton)")}
+    par_statut: dict[int, list] = {}
+    for e in cap.errors:
+        par_statut.setdefault(e.status, []).append(e)
+    for statut, errs in sorted(par_statut.items()):
+        phrase = " ; ".join(f"`{e.code}` — {e.when}" for e in errs)
+        if str(statut) in out:
+            out[str(statut)] = _reponse_erreur(out[str(statut)]["description"] + " ; " + phrase)
+        else:
+            out[str(statut)] = _reponse_erreur(phrase, [e.code for e in errs])
+    return out
 
 
 def _param(name: str, location: str, schema: dict, required: bool,
@@ -132,15 +187,11 @@ def _operation(cap: Capability, binding: RestBinding) -> tuple[dict, dict]:
         "description": cap.description or "",
         "tags": [cap.key.split(".")[0]],
         "security": [{"bearerAuth": []}],
-        "responses": {
-            # Le code de la réponse heureuse vient du binding (201 sur les créations
-            # historiques) : le document décrit ce que le serveur REND, pas 200 par
-            # convention — un client généré qui n'attend que 200 traiterait un 201
-            # comme une erreur.
-            str(binding.status): ok,
-            "401": {"description": "jeton absent ou invalide"},
-            "403": {"description": "refus d'autorisation (ou hors portée du jeton)"},
-        },
+        # Le code de la réponse heureuse vient du binding (201 sur les créations
+        # historiques) : le document décrit ce que le serveur REND, pas 200 par
+        # convention — un client généré qui n'attend que 200 traiterait un 201
+        # comme une erreur.
+        "responses": _reponses(cap, (str(binding.status), ok)),
     }
     if binding.provisoire:
         # Forme ATTENDUE, pas contrat figé (convention proposée par le front, prise
@@ -269,7 +320,7 @@ def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None
     paths = _handwritten(routes)
     for chemin, item in _alias_deprecies().items():
         paths.setdefault(chemin, {}).update(item)
-    schemas: dict = {}
+    schemas: dict = {"Erreur": _ERREUR}
     for cap in registry.CAPABILITIES:
         if not cap.is_exposed():
             continue

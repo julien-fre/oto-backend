@@ -24,11 +24,11 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import guide_store
 from ._authz import SUB_ONLY
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
 _MAX_BODY_BYTES = 64 * 1024
@@ -53,7 +53,16 @@ class GuideSetInput(BaseModel):
     slug: str = ""
     delivery: Delivery = "on-demand"
     owner_id: Optional[str] = None
-    body_md: str = ""
+    # La borne est en OCTETS (`_set` compte `body.encode()`), et elle est PUBLIÉE :
+    # `maxLength` dans le schéma servi, sans validation pydantic — la valider en
+    # caractères changerait le code du refus (`invalid_input` au lieu de
+    # `body_too_large`) pour le même dépassement. Un front tiers dérive sa garde de
+    # saisie du contrat ; jusqu'au 29/08/2026 le contrat ne disait rien.
+    body_md: str = Field(
+        "", json_schema_extra={"maxLength": _MAX_BODY_BYTES},
+        description=("Corps markdown, au plus 65 536 OCTETS UTF-8 — au-delà : 400 "
+                     "`body_too_large`. `maxLength` compte des caractères : nécessaire, "
+                     "pas suffisant (un caractère accentué pèse deux octets)."))
     title: str = ""
     description: str = ""
 
@@ -366,6 +375,8 @@ CAPABILITIES += [
     Capability(
         key="me.guides.set", handler=_set, Input=GuideSetInput, authz=SUB_ONLY, mcp=None,
         Output=GuideView,
+        errors=(DeclaredError(400, "body_too_large",
+                              "`body_md` dépasse 65 536 octets UTF-8"),),
         description=("Create/update a guide (scope=platform|org|group|user). "
                      "`delivery='init'` writes that scope's injected readme (empty body clears it)."),
         rest=(RestBinding("PUT", "/api/me/guides/{scope}/{slug}"),

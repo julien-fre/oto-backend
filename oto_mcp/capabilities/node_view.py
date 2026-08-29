@@ -48,6 +48,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from .. import ownership
+from ..db import blocks as db_blocks
 from ..db import node_view as db_node
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
@@ -108,6 +109,10 @@ class ContentBlock(BaseModel):
     # rendre et de laisser passer le reste, plutôt que de recevoir une forme appauvrie.
     md: Optional[str] = None
     lang: Optional[str] = None
+    # La liste de CE bloc est-elle numérotée (`1.` / `1)`) ? Présent sur un `role: list`
+    # seulement — `items[]` porte les puces mais pas leur marqueur, et le front ne
+    # reparse pas `md`. Dérivé de la source à la lecture (`db/blocks.ordered_of`).
+    ordered: Optional[bool] = None
 
 
 class NodeModified(BaseModel):
@@ -117,6 +122,19 @@ class NodeModified(BaseModel):
 
 
 class NodeOut(BaseModel):
+    """Un nœud ouvert : sa fiche, son fil, son corps en blocs (page) ou le schéma de
+    ses colonnes (tableau).
+
+    `doc_id` / `project_id` sont les POIGNÉES vers les autres surfaces — les entiers
+    que `POST /api/me/docs` (op=backlinks, op=update) et `POST /api/resources` (op=get,
+    `resource_type: "project"`, `resource_id: str(project_id)`) attendent. Une page
+    porte les deux, un projet son `project_id` seul, un tableau ou une procédure le
+    projet qui les range (s'il y en a un) ; un nœud sans source legacy rend `null`.
+    Ajoutés le 29/08/2026 à la demande d'un front tiers : sans eux la fiche se lisait
+    mais ne s'éditait ni ne se partageait.
+
+    `rev` est l'empreinte du corps servi : elle a changé une fois pour tous les nœuds
+    à l'ajout de ces champs (un cache client se rafraîchit, puis retrouve ses 304)."""
     id: str
     name: str
     type: Literal["page", "table", "agent", "execution"]
@@ -124,6 +142,8 @@ class NodeOut(BaseModel):
     # fiche (#417). `null` sur toute autre nature et sur un agent sans référence
     # lisible : un `null` dit « n'en exécute aucune », un id deviné dirait faux.
     procedure: Optional[ProcedureRef] = None
+    doc_id: Optional[int] = None
+    project_id: Optional[int] = None
     trail: list[TrailCrumb] = []
     modified: NodeModified
     # Page : le corps en blocs. Absent sur un tableau.
@@ -166,9 +186,42 @@ def _lisible(fiche: dict, principals: set, partages: set) -> bool:
     return fiche["public_id"] in partages
 
 
-def _fil(fiche: dict) -> list[TrailCrumb]:
+def _source(props: dict, chaine: list[dict]) -> tuple[Optional[int], Optional[int]]:
+    """`(doc_id, project_id)` — la clé legacy du nœud, rendue aux surfaces qui la
+    prennent en entrée (cf. `NodeOut`).
+
+    Un nœud converti garde sa source dans `props.legacy` / `legacy_id` : une page est
+    un `doc`, un projet un `prj` (`db/nodes.py`). Le projet d'une page est dans ses
+    props ; celui d'un tableau ou d'une procédure rangés sous un projet se lit sur le
+    FIL — le maillon `prj` le plus proche, du nœud vers la racine. Le fil est borné
+    (`_PROFONDEUR_FIL`) : au-delà, le projet n'est pas trouvé et on rend `null` plutôt
+    qu'un entier deviné.
+    """
+    legacy, lid = props.get("legacy"), props.get("legacy_id")
+    doc_id = int(lid) if legacy == "doc" and lid is not None else None
+    if legacy == "prj" and lid is not None:
+        return doc_id, int(lid)
+    if props.get("project_id") is not None:
+        return doc_id, int(props["project_id"])
+    for maillon in reversed(chaine):
+        p = maillon.get("props") or {}
+        if p.get("legacy") == "prj" and p.get("legacy_id") is not None:
+            return doc_id, int(p["legacy_id"])
+    return doc_id, None
+
+
+def _bloc(b: dict) -> dict:
+    props = b.get("props") or {}
+    role = props.get("role")
+    return ContentBlock(
+        id=b["public_id"], type=b["type"], role=role, items=props.get("items"),
+        md=props.get("md"), lang=props.get("lang"),
+        ordered=db_blocks.ordered_of(props.get("md")) if role == "list" else None,
+    ).model_dump(exclude_none=True)
+
+
+def _fil(fiche: dict, chaine: list[dict]) -> list[TrailCrumb]:
     """Le chemin racine→nœud, avec la fratrie de chaque maillon."""
-    chaine = db_node.ancestors_of(fiche["id"], max_depth=_PROFONDEUR_FIL)
     if not chaine:
         return []
     freres = db_node.siblings_of([c["parent_id"] for c in chaine],
@@ -213,12 +266,16 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
     props = fiche.get("props") or {}
     nature = _type_of(fiche["kind"], props)
     ref = procedure_ref_of(nature, fiche.get("owner_type"), props)
+    chaine = db_node.ancestors_of(fiche["id"], max_depth=_PROFONDEUR_FIL)
+    doc_id, project_id = _source(props, chaine)
     corps: dict = {
         "id": fiche["public_id"],
         "name": props.get("title") or "",
         "type": nature,
         "procedure": ref.model_dump() if ref else None,
-        "trail": [c.model_dump() for c in _fil(fiche)],
+        "doc_id": doc_id,
+        "project_id": project_id,
+        "trail": [c.model_dump() for c in _fil(fiche, chaine)],
         "modified": NodeModified(
             at=str(fiche["updated_at"]) if fiche.get("updated_at") else None,
             by=_nom_de(props.get("created_by"))).model_dump(),
@@ -234,14 +291,7 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
         # dirait « aucune colonne », ce qui est faux.
         corps["columns"] = props.get("child_schema")
     else:
-        corps["body"] = [
-            ContentBlock(id=b["public_id"], type=b["type"],
-                         role=(b.get("props") or {}).get("role"),
-                         items=(b.get("props") or {}).get("items"),
-                         md=(b.get("props") or {}).get("md"),
-                         lang=(b.get("props") or {}).get("lang")).model_dump(
-                             exclude_none=True)
-            for b in db_node.blocks_of(fiche["id"])]
+        corps["body"] = [_bloc(b) for b in db_node.blocks_of(fiche["id"])]
     corps["rev"] = _rev({k: v for k, v in corps.items() if k != "rev"})
     return corps
 

@@ -336,6 +336,47 @@ Déclaration unique : `oto_mcp/deprecations.REST` (montage `api/alias_routes.py`
 document `openapi._alias_deprecies`, garde `tests/api/test_alias_deprecies_rest.py`).
 **Table des alias en cours et de leur date : `docs/alias-deprecies.md`.**
 
+## Le contrat dit ce que le serveur rend — retours d'un front tiers (29/08/2026)
+
+Un front tiers, consommateur pur de cette API, a dérivé son comportement du contrat
+servi (`/openapi.json` + docstrings) et s'est heurté à quatre endroits où **le contrat
+ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comportement.
+
+- **`GET /api/me/nodes/{id}` rend `doc_id` et `project_id`** (`NodeOut`, face MCP
+  `oto_node` idem — même vue). Ce sont les poignées que `POST /api/me/docs`
+  (`op=backlinks`, `op=update`) et `POST /api/resources` (`op=get`, `resource_type:
+  "project"`, `resource_id: str(project_id)`) prennent en entrée : sans elles, un nœud
+  ouvert ne s'éditait ni ne se partageait. Page = les deux ; projet = `project_id` ;
+  tableau / procédure = le projet qui les range, lu sur le fil ; nœud natif = `null`.
+  Conséquence : `rev` a tourné une fois pour tous les nœuds.
+- **Un bloc `role: list` porte `ordered: true|false`** — la liste de CE bloc est-elle
+  numérotée (décidé par son premier item). Dérivé de `md` à la lecture
+  (`db/blocks.ordered_of`), jamais stocké : aucune rotation de marqueur. ⚠️ Le
+  docstring de `_role_de` refusait ce champ jusque-là pour une collision de sens avec
+  le front (« un pas d'une suite ») ; le front l'a demandé avec NOTRE sens, le refus
+  est daté et levé.
+- **Les refus se déclarent** : `Capability.errors=(DeclaredError(status, code,
+  quand), …)` sort dans `/openapi.json` comme une réponse par statut, enveloppe
+  `Erreur` (`{error, detail, details?}`, composant unique) et énuméré des `error`.
+  DÉCRIT, ne fait rien : `tests/test_capability_declared_errors.py` exige que chaque
+  code déclaré soit levé dans le module du handler, et chaque déclaration a son test
+  qui rejoue le refus **sur la route servie** (`tests/api/test_rest_contract_front_tiers.py`,
+  vrai PostgreSQL). Déclarés ce jour : `PATCH /api/groups/{id}` → **409 `group_exists`**
+  (le docstring `GroupUpdated` disait le contraire — corrigé et daté) ; `PUT
+  /api/me/guides/{scope}/{slug}` → **400 `body_too_large`**, borne **65 536 octets UTF-8**
+  publiée en `maxLength` sur `body_md` (nécessaire, pas suffisant : un caractère
+  accentué pèse deux octets) ; `DELETE /api/me/orgs/{id}/membership` → **404
+  `unknown_org`, 409 `personal_org`, 404 `not_a_member`, 409 `last_org_admin`**, dans
+  l'ordre des gardes. La liste d'une opération n'est pas exhaustive : les 400 de
+  l'adaptateur (`invalid_input`, `unknown_fields`, `invalid_json`, `invalid_body`) valent
+  partout — le préambule du document le dit.
+- **`POST /api/orgs/{id}/invitations` sur une adresse déjà invitée ou déjà membre : 200,
+  une invitation DE PLUS, code neuf.** Aucun contrôle de doublon ni d'appartenance à
+  l'émission — relevé sur le code servi et rejoué par test. La file peut porter
+  plusieurs lignes pour la même adresse ; accepter en étant déjà membre n'abaisse jamais
+  le rôle (#297). Déclaré tel quel (`InvitationEmitted`) ; changer ce comportement est
+  une décision à part, pas un correctif de contrat.
+
 ## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
 
 L'adaptateur verse la query string telle quelle — `dict(request.query_params)`, donc **des
