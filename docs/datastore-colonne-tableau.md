@@ -102,6 +102,27 @@ dérive tous ses écrans du schéma, il n'a donc rien de spécial à apprendre.
   inconnues). À faire traverser jusqu'aux consommateurs, sinon scout n'a rien à
   afficher sous un intitulé.
 
+**Sur un tableau `strict`, `of.fields` FERME la fiche (#544, 29/08/2026).** C'est le
+principe de la FEUILLE appliqué au référentiel : ce qui vaut au premier niveau vaut un
+cran plus bas — à ceci près que le sens s'y **inverse**, et il faut le dire. En tête de
+ligne, une clé inconnue crée une **colonne** libre, que l'interface affiche : elle est
+signalée (`hors_schema`), jamais refusée, parce que c'est ce qui permet d'explorer un
+tableau avant de le typer. Dans un item, il n'existe pas de sous-colonne libre :
+`of.fields` est le seul référentiel, l'export à plat (§5.3) dérive ses colonnes de lui,
+et un attribut non déclaré serait stocké là où **rien** ne le lit. Il est donc
+**refusé**, en nommant l'élément : `contacts[1].email_pattern`.
+
+Trois conséquences pour qui déclare une colonne-tableau :
+
+- **déclarer `of.fields`, c'est fermer la fiche** sur un tableau `strict` — un attribut
+  de plus se déclare (`data_patch_schema` descend dans `of`) avant d'être écrit ;
+- **ne pas déclarer de champs sous `of` laisse la liste LIBRE**, à tout étage : sans
+  référentiel, rien n'est hors référentiel. C'est le choix à faire tant que la forme
+  d'un item bouge encore ;
+- **les couches d'un attribut ne sont pas des attributs** : `email.origine` et
+  `email.comment` traversent la fermeture — c'est la forme SERVIE d'un item (§2), donc
+  ce qu'un aller-retour lecture → écriture repose tel quel.
+
 ## 4. Les deux NON-définitions, assumées
 
 - **Ni égalité ni tri sur la colonne ENTIÈRE.** Trois emails n'ont pas « une » valeur ;

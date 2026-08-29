@@ -478,6 +478,47 @@ chemin (`contacts[].tel`), et il est **vide hors strict** — là, le champ libr
 droit explicite du contrat, pas une anomalie. Refuser franchement aurait été plus net,
 mais aurait cassé cette liberté : ce qui manquait était un signal, pas une barrière.
 
+**…mais DANS un composite déclaré, `strict` REFUSE (#544, 29/08/2026).** La liberté
+qu'on protège au premier niveau n'existe pas un cran plus bas, et c'est toute la
+différence : une clé inconnue en tête de ligne crée une vraie **colonne**, que
+l'interface affiche et qu'on peut déclarer après coup — c'est ce qui permet d'explorer
+un tableau avant de le typer. Dans un `object.fields` ou un `list.of.fields`, il n'y a
+pas de « sous-colonne libre » : la déclaration EST le seul référentiel, l'attribut
+serait stocké là où ni le schéma, ni l'interface, ni l'export à plat (§5.3 de
+`datastore-colonne-tableau.md`, dont les colonnes se dérivent de `of.fields`) ne le
+lisent. Sur un tableau `strict`, un attribut non déclaré est donc **refusé**, en
+nommant l'élément — `contacts[1].email_pattern`.
+
+*Le fait qui l'a montré* : un tableau `strict: true` a accepté deux fois, sur un rejeu
+de nuit, une clé `email_pattern` **à l'intérieur** d'un contact — sans refus, sans
+`hors_schema`, sans un mot ; la veille, le même geste au premier niveau avait été
+interdit **par consigne**. « Une interdiction protège la forme qu'elle décrit ; le même
+geste reparaît là où le texte ne regardait pas. » Le `strict` est précisément ce qui
+doit rendre la prose inutile.
+
+Quatre bornes, toutes voulues :
+
+- **`strict` seul ferme** — un tableau non strict ne change pas de comportement, même
+  quand la validation est armée par ailleurs (un `required` suffit à l'armer) ;
+- **ce que le geste RÉÉCRIT seulement** — la fermeture ne descend que dans les
+  composites nommés par l'écriture. Sans cette restriction, une ligne portant déjà un
+  attribut hors format deviendrait inécritable pour n'importe quel patch, y compris sur
+  un champ sans rapport : le gel de 23 lignes d'oto-backend#284, à ne pas rejouer ;
+- **une liste dont le `of` ne déclare aucun champ reste LIBRE** — sans référentiel,
+  rien n'est hors référentiel, et c'est la même règle qu'au premier niveau (un schéma
+  strict sans aucun field ne relève rien) ;
+- **une COUCHE n'est pas un attribut** — la forme servie d'un item aplatit ses couches
+  (`email.origine`), donc un aller-retour lecture → écriture les repose telles quelles.
+
+Le refus et le signal partagent **un seul prédicat** (`dsv2._unknown_subkeys`) : deux
+définitions du « hors référentiel » finiraient par diverger, et c'est l'appelant qui
+paierait la différence. Conséquence à connaître : sur un tableau `strict`, les chemins
+**imbriqués** ne sortent plus dans `hors_schema` — le refus arrive avant le relevé.
+`hors_schema` garde le premier niveau, qui est le seul endroit où la colonne libre est
+un droit. ⚠️ Le refus est **borné comme le relevé** : un attribut inconnu est nommé une
+fois par colonne-liste, sur le premier élément qui le porte — 300 contacts fautifs ne
+rendent pas 300 lignes de refus.
+
 **Ce que l'écriture VIDE se dit aussi (13/08, #407/#408/#409).** Ne pas nommer un champ
 le laisse intact ; le nommer avec `null` l'EFFACE. Deux gestes différents, et le second
 est indiscernable d'un `None` de sérialisation dans un payload — variable non peuplée,
