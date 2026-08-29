@@ -58,15 +58,32 @@ WhatsApp depuis la carte Telegram.
 `connector_account_grants`, `unipile_operated_accounts`, `unipile_pending`) étaient
 déjà keyées par CANAL (`provider` = `LINKEDIN`/`WHATSAPP`/…), jamais par connecteur.
 
-**Ce qui a dû migrer** (boot, idempotent, `db/_init.py` — trois fail-* qui penchent
-dans deux directions opposées et n'auraient rien levé) : `connector_availability`
-(pas de ligne ⟹ **OFF** : la messagerie s'éteindrait pour tous), `connector_acl` (pas
-de ligne ⟹ **OUVERT** : une restriction d'org s'évaporerait), `user_selected_connectors`
+**Ce qui a dû migrer** (boot, `db/_init.py` — trois fail-* qui penchent dans deux
+directions opposées et n'auraient rien levé) : `connector_availability` (pas de
+ligne ⟹ **OFF** : la messagerie s'éteindrait pour tous), `connector_acl` (pas de
+ligne ⟹ **OUVERT** : une restriction d'org s'évaporerait), `user_selected_connectors`
 (non-sélectionné ⟹ **MASQUÉ** : les membres perdraient la surface), plus
-`orgs.default_connectors`. Fan-out 1→6 en `ON CONFLICT DO NOTHING` ; `unipile`
-SURVIT (c'est un split, pas un renommage). Aucun des six noms n'a jamais été un
-connecteur, donc aucune ligne fossile à purger. Tests contre un vrai PostgreSQL :
+`orgs.default_connectors`. Fan-out 1→6 ; `unipile` SURVIT (c'est un split, pas un
+renommage). Aucun des six noms n'a jamais été un connecteur, donc aucune ligne
+fossile à purger. Tests contre un vrai PostgreSQL :
 `tests/connectors/test_unipile_split_fanout.py`.
+
+⚠️ **Ce paragraphe a dit « idempotent, donc rejouable à chaque boot » du 2026-08-28
+au 2026-08-29, et c'était FAUX** (corrigé par #543). Le `ON CONFLICT DO NOTHING` ne
+protège que les lignes **présentes**, or désélectionner un connecteur **supprime** la
+sienne (`unselect` est un `DELETE`) : la garde ne couvrait donc pas le seul cas où
+elle comptait. Pendant ces vingt-quatre heures, un canal retiré revenait actif au
+redémarrage suivant — avec ses cinq voisins — et de même pour une disponibilité
+plateforme éteinte à la main ou une ACL d'org effacée. **Un fan-out de split est un
+déménagement, vrai UNE fois** : ce qui doit rester rejouable, c'est le boot, pas
+l'écriture. Les quatre gestes sont désormais sous sentinelle
+(`connectors.selection.split_fanout_pending`, marqueur `#unipile-split-fanout` dans
+`connector_selection_seeded`, même forme que le backfill ADR 0050). La sonde traite
+le cas des bases qui ont DÉJÀ reçu le déménagement : une base portant une sélection
+sur l'un des six canaux est marquée **sans réécriture**, une base neuve le reçoit
+normalement. Angle mort assumé : une base migrée dont plus aucune sélection ne porte
+l'un des six canaux se relit « pas encore migrée » et rejouerait une dernière fois
+(vérifié le 2026-08-29 : ne concerne pas la prod, les six y sont sélectionnés).
 
 ---
 
