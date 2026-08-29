@@ -38,6 +38,7 @@ from . import schema as dsv2
 from .schema_ops import SchemaOpsMixin
 from .errors import (  # noqa: F401
     BusinessKeyRequired,
+    ClaimedRefUnresolved,
     InvalidCursor,
     NamespaceExists,
     NamespaceForbidden,
@@ -190,6 +191,26 @@ def writing_as(worker: Optional[str]):
         yield
     finally:
         _WRITING_AS.reset(token)
+
+
+CLAIMED_REF = "@claimed"
+
+
+def est_ref_reservation(id_: object) -> bool:
+    """`@claimed` — « la ligne que je tiens », au lieu de ses trente-deux caractères.
+
+    ⚠️ Égalité EXACTE, jamais un préfixe ni une tolérance. Un identifiant qui commence
+    par « @ » sans être celui-là part tel quel et échoue comme avant : **deviner ce que
+    l'agent voulait dire sur un nom d'adresse est exactement la classe de faute que cet
+    alias supprime.** Un alias qui pardonne les approximations les encouragerait —
+    `@claim`, `@claimed-2`, `@ma_ligne` — et on aurait remplacé une chaîne à recopier
+    par une grammaire à deviner."""
+    return id_ == CLAIMED_REF
+
+
+def _backquote(noms) -> str:
+    """`a`, `b` — une liste de noms rendue lisible au milieu d'un refus."""
+    return ", ".join(f"`{n}`" for n in noms)
 
 
 def _current_run() -> Optional[str]:
@@ -1414,6 +1435,91 @@ class DatastorePg(SchemaOpsMixin):
         if trace is not None:
             self._trace(trace, ns_id, self._ns_of(ns_id))
         return db.datastore_release_claim(ns_id, row_id, str(worker))
+
+    def resolve_claimed_ref(self, namespace: str, *,
+                            worker: Optional[str] = None) -> str:
+        """`@claimed` → l'identifiant de la ligne que cet appel tient (#517).
+
+        La réservation porte déjà les deux choses que l'agent recopiait : la LIGNE et
+        le TABLEAU. Les lui faire repasser lui demandait trente-deux caractères
+        aléatoires, et il en altère un — ou en fabrique un dans une convention
+        étrangère. Ici le serveur les relit ; il ne reste rien à transcrire.
+
+        ⚠️ **L'appartenance se prouve par le jeton de run**, jamais par le seul
+        identifiant (#546, refusée : ça viderait la notion de run). Sans jeton on
+        refuse — mais le refus NOMME le paramètre absent, parce que c'est justement
+        celui que les agents omettent quand la description leur dit qu'il est hérité
+        (#547). `worker` ne prouve rien (c'est une étiquette choisie par l'appelant) :
+        il ne fait que restreindre, comme au relâchement.
+
+        Chaque refus dit quoi faire ensuite. Le silence coûte plus que le refus :
+        l'agent qui ne comprend pas réessaie **sans identifiant**, et une écriture
+        sans identifiant crée une ligne au lieu d'en corriger une."""
+        ici, ailleurs = self._baux_du_run(namespace, worker=worker)
+        if ici is None:
+            raise ClaimedRefUnresolved(
+                f"`{CLAIMED_REF}` désigne la ligne que TON travail tient, et cet appel "
+                "n'est rattaché à aucun travail : passe `_run_id` (celui de ton "
+                "`run_start`) sur cet appel — il n'est pas hérité —, ou écris avec "
+                "l'identifiant que `data_claim_next` t'a rendu.")
+        if not ici and not ailleurs:
+            raise ClaimedRefUnresolved(
+                f"`{CLAIMED_REF}` : ton travail ne tient aucune ligne en ce moment "
+                "(aucune réservation active). Réserve-en une avec `data_claim_next`, "
+                "ou écris avec un identifiant explicite.")
+        if len(ici) == 1:
+            return ici[0]
+        if not ici:
+            # LE cas qui a mis des fiches d'essai dans le fichier d'une cliente : la
+            # réservation savait quel tableau, l'agent visait l'autre. On le nomme.
+            raise ClaimedRefUnresolved(
+                f"`{CLAIMED_REF}` : ton travail ne tient rien dans `{namespace}` — sa "
+                f"réservation porte sur {', '.join('`' + n + '`' for n in ailleurs)}. "
+                "Écris dans le tableau que tu as réservé, ou réserve une ligne ici "
+                "d'abord. ⚠️ Ne réessaie pas sans identifiant : sur un tableau que tu "
+                "n'as pas réservé, une écriture sans identifiant CRÉE une ligne.")
+        raise ClaimedRefUnresolved(
+            f"`{CLAIMED_REF}` est ambigu : ton travail tient {len(ici)} lignes de "
+            f"`{namespace}` ({', '.join(ici)}). Nomme celle que tu écris — en deviner "
+            "une écrirait peut-être sur la mauvaise, ce qui ne se voit sur aucun écran.")
+
+    def claimed_hint(self, namespace: str) -> Optional[str]:
+        """Ce que le travail courant tient — dit au moment où une ADRESSE échoue (#517).
+
+        Le refus « introuvable » tombe précisément quand l'agent s'est trompé
+        d'identifiant ou de tableau, c'est-à-dire au seul instant où il peut encore
+        corriger. À cet instant, le serveur sait ce que ce travail a réservé et
+        l'agent, lui, l'a manifestement perdu. Le lui rendre coûte une requête.
+
+        None quand il n'y a rien d'utile à dire — hors run, ou aucune réservation :
+        une piste vide vaut mieux qu'une phrase qui meuble."""
+        ici, ailleurs = self._baux_du_run(namespace)
+        if not ici and not ailleurs:
+            return None
+        if ici:
+            return (f"ton travail tient {_backquote(ici)} dans `{namespace}` — "
+                    f'écris avec `id="{CLAIMED_REF}"` plutôt que de recopier')
+        return (f"ton travail ne tient rien dans `{namespace}`, mais tient une ligne "
+                f"dans {_backquote(ailleurs)} — c'est peut-être le tableau que tu visais")
+
+    def _baux_du_run(self, namespace: str, *, worker: Optional[str] = None):
+        """Ce que le travail courant tient : ici, et ailleurs — source unique des deux
+        lectures du bail-comme-adresse (#517).
+
+        `(None, [])` distingue « pas de travail sur cet appel » de « un travail qui ne
+        tient rien » : le premier se répare en passant `_run_id`, le second en réservant
+        une ligne. Les confondre dirait à l'agent de faire ce qu'il a déjà fait."""
+        run = _current_run()
+        if not run:
+            return None, []
+        baux = db.datastore_active_leases_of(run_id=run, worker=worker)
+        if not baux:
+            return [], []
+        ns_id = self._resolve(namespace)
+        ici = [str(b["row_id"]) for b in baux if b["ns_id"] == ns_id]
+        ailleurs = sorted({str(self._ns_of(b["ns_id"]).get("namespace") or b["ns_id"])
+                           for b in baux if b["ns_id"] != ns_id})
+        return ici, ailleurs
 
     def queue(self, namespace: str) -> list[dict]:
         """Vue de SUPERVISION de la file (dashboard) : les rows sous bail —

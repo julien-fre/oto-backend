@@ -28,6 +28,7 @@ from ..datastore.core import (
     NamespaceReadOnly,
     RowLocked,
     RowNotFound,
+    est_ref_reservation,
     make_org_store,
     make_store,
 )
@@ -493,6 +494,8 @@ def register(mcp: FastMCP) -> None:
         and returns its `_id`. WITH `id` = PARTIAL update of that row (only provided
         fields change). Returns the row (with `_id`/`_created_at`/`_updated_at`).
 
+        On a row you CLAIMED, pass `id="@claimed"` instead of retyping its `_id`.
+
         BATCH (`rows` = list of dicts): write them all at once — for importing a
         dataset without round-tripping each row through your context. If a business
         KEY is in effect (the `key` arg, else the namespace's declared `schema.key`),
@@ -522,13 +525,19 @@ def register(mcp: FastMCP) -> None:
         Args:
             namespace: target namespace (must already exist), or `slot:<name>`.
             row: single-row content as a dict (JSON-encoded automatically).
-            id: omit = append a new row ; provided = partial update of that `_id`.
+            id: omit = append a new row ; provided = partial update of that `_id` ;
+                `"@claimed"` = the row your run currently holds (no copying).
             rows: BATCH mode — a list of row dicts written in one call.
             key: business key field for batch upsert/dedup (else `schema.key`).
         """
         store = _acting_store()
         namespace = _ns(namespace)
         try:
+            # #517 : « la ligne que je tiens » plutôt que ses trente-deux caractères.
+            # Résolu ICI, avant tout le reste, pour que le refus éventuel sorte par le
+            # même chemin actionnable que les autres (ValueError → INVALID_PARAMS).
+            if est_ref_reservation(id):
+                id = store.resolve_claimed_ref(namespace)
             if rows is not None:
                 if row is not None or id is not None:
                     raise McpError(ErrorData(code=INVALID_PARAMS,
@@ -556,7 +565,22 @@ def register(mcp: FastMCP) -> None:
         except NamespaceReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` partagé en lecture seule"))
         except RowNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"row `{id}` introuvable"))
+            # #517 : ce refus arrive au SEUL moment où l'agent peut encore corriger.
+            # « Introuvable » tout court le laisse réessayer SANS identifiant — et une
+            # écriture sans identifiant CRÉE une ligne au lieu d'en corriger une. On lui
+            # rend donc les deux choses qui manquent : à quoi ressemble un identifiant,
+            # et ce que son propre travail tient déjà.
+            try:
+                piste = store.claimed_hint(namespace)
+            # noqa: SILENT — une piste est un bonus : échouer à la calculer ne doit jamais remplacer un refus actionnable par une erreur interne
+            except Exception:  # noqa: BLE001
+                piste = None
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                f"row `{id}` introuvable — un identifiant de ligne a la forme "
+                "`01a04aef-26c0-7c16-9c58-42f8af87e80c` (cinq groupes hexadécimaux) et "
+                "se REPREND tel quel de `data_claim_next`, jamais de mémoire. Pour "
+                'écrire sur la ligne que tu tiens, passe `id="@claimed"`'
+                + (f" ; {piste}" if piste else ""))))
         except RowLocked as e:
             # #317 : un refus, pas un 500. Sans cette traduction l'agent voit « Erreur
             # interne du serveur » là où il lui faut QUI tient la ligne, JUSQU'À QUAND,
@@ -575,6 +599,9 @@ def register(mcp: FastMCP) -> None:
         (`FOR UPDATE SKIP LOCKED`), stamps `_claimed_by`/`_claimed_until` and
         returns it — two concurrent workers never get the same row. Returns
         `{row: null}` when nothing is left to claim.
+
+        To write or release it, pass `id="@claimed"` rather than retyping the
+        returned `_id`.
 
         `worker` is a label YOU choose (e.g. "gros-conso-13") and REUSE verbatim
         on data_release — the guard so one agent cannot release another's claim.
@@ -620,7 +647,7 @@ def register(mcp: FastMCP) -> None:
     def data_release(namespace: str, id: str, worker: str) -> dict:
         """Release a claimed row — the NORMAL end of processing one row, and the
         counterpart of data_claim_next. Guarded by `worker` (same label as at claim
-        time).
+        time). `id="@claimed"` releases the row your run holds, without copying it.
 
         ⚠️ Call it after EVERY row you finish, not only when abandoning: writing a
         "final" status no longer frees the row (#317). If you wrap your work in
@@ -629,7 +656,11 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         namespace = _ns(namespace)
         try:
+            if est_ref_reservation(id):
+                id = store.resolve_claimed_ref(namespace, worker=worker)
             released = store.release_claim(namespace, id, worker=worker)
+        except ValueError as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except NamespaceNotFound:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
         except NamespaceReadOnly:
