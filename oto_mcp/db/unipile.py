@@ -295,8 +295,8 @@ def list_option_comps_for_option(option: str) -> list[dict]:
 def create_unipile_pending(nonce: str, sub: str, org_id: Optional[int] = None,
                            provider: str = "LINKEDIN", platform_seat: bool = False) -> None:
     """Mappe un `nonce` (posé comme `name` sur le lien hosted-auth) au
-    `(sub, org de contexte, provider)` + `platform_seat`, pour corréler au retour
-    du webhook. Prune les nonces expirés (> 1h)."""
+    `(sub, org de contexte, provider)` + `platform_seat` : la moitié oto de la
+    connexion, que la réconciliation consomme. Prune les nonces expirés (> 1h)."""
     upsert_user(sub)
     with _connect() as conn:
         conn.execute("DELETE FROM unipile_pending WHERE created_at < NOW() - INTERVAL '1 hour'")
@@ -323,7 +323,8 @@ def resolve_unipile_pending(nonce: str) -> Optional[dict]:
 def list_unipile_pending_for_sub(sub: str) -> list[dict]:
     """Pendings VIVANTS (<1h) d'un `sub` → `[{nonce, org_id, provider,
     platform_seat, created_at}]`, du plus ancien au plus récent. Base de la
-    réconciliation poll-and-bind (le webhook hosted-auth v2 n'étant pas livré)."""
+    réconciliation poll-and-bind — LE chemin de liaison depuis le retrait du webhook
+    (#581, 2026-08-29)."""
     with _connect() as conn:
         rows = conn.execute(
             "SELECT nonce, org_id, provider, platform_seat, created_at "

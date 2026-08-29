@@ -46,7 +46,8 @@ _KNOWN: dict[str, str] = {
     "/api/atlassian/oauth/callback": NATURE,
     "/api/salesforce/oauth/callback": NATURE,
     # --- Webhooks : un tiers appelle, non authentifié côté Logto.
-    "/api/unipile/webhook": NATURE,
+    # (`/api/unipile/webhook` a quitté cette liste le 2026-08-29, #581 : dormant depuis
+    #  la v2 du fournisseur — plus aucun appelant légitime, donc plus de route.)
     "/api/billing/webhook": NATURE,
     # --- Formulaire public du site vitrine (POST anonyme).
     "/api/contact": NATURE,
@@ -67,9 +68,8 @@ _KNOWN: dict[str, str] = {
     # --- DETTE : verbes de dashboard écrits à la main, à migrer en capacités.
     # ⚠️ La MESSAGERIE HÉBERGÉE côté membre a quitté cette liste le 2026-08-27 :
     # `/api/me/unipile{,/connect,/reconcile}` sont des capacités
-    # (`capabilities/unipile_me.py`). `api/connectors.py` ne porte plus QUE le
-    # webhook ci-dessus — le premier module de ce chantier dont il ne reste qu'une
-    # route, et une route de NATURE.
+    # (`capabilities/unipile_me.py`). `api/connectors.py` n'a plus porté que le
+    # webhook de liaison, puis a DISPARU avec lui le 2026-08-29 (#581).
     # (`/api/admin/unipile/seats` a quitté cette liste le 15/08 : inventaire ET
     #  libération sont des capacités — `capabilities/unipile_seats.py`.)
     # ⚠️ Le palier PLATEFORME des connecteurs a quitté cette liste le 2026-08-27 :

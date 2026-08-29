@@ -19,8 +19,10 @@ Les handlers vivent par DOMAINE, chacun une fonction de module appelable seule :
 | `api/uploads.py`    | réception d'un upload signé (`/api/upload/{token}`)   |
 
 Les modules ANTÉRIEURS à la découpe gardent leur forme : datastore, sirene,
-accords, atlassian, folk, zoho, salesforce, connectors, contact, billing —
-ils exposent un `make_routes(...)` qui reçoit les primitives en paramètres.
+accords, atlassian, folk, zoho, salesforce, contact, billing — ils exposent un
+`make_routes(...)` qui reçoit les primitives en paramètres. (`api/connectors.py` a
+disparu le 2026-08-29 avec sa dernière route, le webhook de liaison messagerie :
+dormant depuis la v2 du fournisseur, #581.)
 
 Ce fichier garde aussi les deux MIDDLEWARES ASGI de la face REST, dont l'ordre de
 pose (dans `server.py`) est un contrat dont dépendent des colonnes de monitoring :
@@ -53,7 +55,6 @@ from .. import db, journal_secrets, tenancy
 from . import (accords as api_routes_accords,
                atlassian as api_routes_atlassian,
                billing as api_routes_billing,
-               connectors as api_routes_connectors,
                contact as api_routes_contact,
                datastore as api_routes_datastore,
                folk as api_routes_folk,
@@ -409,11 +410,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         _cap_registry.CAPABILITIES,
     )
 
-    # Cran d'activation des connecteurs (ADR 0010, B4) — admin only.
-    connectors_routes = api_routes_connectors.make_routes(
-        verifier, _authenticate, _json, _json_error, options_handler,
-    )
-
     # Formulaire de contact public d'otomata.tech (non authentifié).
     contact_routes = api_routes_contact.make_routes(
         _json, _json_error, options_handler,
@@ -483,7 +479,6 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         *zoho_routes,
         *salesforce_oauth_routes,
         *capability_routes,
-        *connectors_routes,
         *contact_routes,
         *billing_webhook_routes,
         # EN DERNIER, et c'est la garde : un alias déprécié ne peut capturer que ce

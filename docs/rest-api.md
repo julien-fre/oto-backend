@@ -47,7 +47,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 | `POST /api/me/avatar`, `POST /api/orgs/{id}/logo` | `api/media.py` | **multipart** → hors du moule par CONSTRUCTION (classé `NATURE`) |
 | `POST` d'un fichier de projet, `/api/me/projects/{id}/export` | `api/projects.py` | **multipart / ZIP** → hors du moule (classé `NATURE`) |
 | `/api/upload/{token}` (PUT/POST/GET) | `api/uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
-| SIRENE, accords, datastore, contact, **webhook Unipile**, webhook Mollie, **callbacks OAuth** zoho/google/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
+| SIRENE, accords, datastore, contact, webhook Mollie, **callbacks OAuth** zoho/google/atlassian/folk/salesforce | `api_routes_<nom>.py` (antérieurs à la découpe) | gardent leur patron : `make_routes(...)` reçoit les primitives en paramètres |
 
 - `GET /api/me` + `GET /api/me/calls` + `GET /api/me/activity-summary` — **le compte**,
   capacités `me.{get,calls,activity_summary}` depuis le 2026-08-27
@@ -164,10 +164,10 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - `POST /api/me/unipile/connect` + `POST …/reconcile` + `GET|DELETE /api/me/unipile` —
   **la messagerie hébergée côté membre**, capacités
   `me.unipile.{connect,reconcile,status,disconnect}` depuis le 2026-08-27
-  (`capabilities/unipile_me.py`). Le **webhook** `POST /api/unipile/webhook` reste écrit
-  à la main dans `api/connectors.py` : Unipile l'appelle server-to-server sans
-  en-tête d'auth, il est gardé par un **nonce**, et il répond toujours 200 (un échec ne
-  doit pas le faire rejouer en boucle).
+  (`capabilities/unipile_me.py`). **Il n'y a plus de webhook de liaison** :
+  `POST /api/unipile/webhook` a été retiré le 2026-08-29 (#581, dormant depuis la v2
+  du fournisseur — zéro appel sur les 31 jours de journal retenus) ; la liaison passe
+  par la réconciliation, sous le JWT de la personne.
   ⚠️ **`connect` a DEUX formes de succès** : `{url}` d'ordinaire, et
   `{adopted, channel, account_name}` **sans `url`** quand le compte était déjà connecté
   sous la même identité dans une autre org — il vient d'être rattaché ici, il n'y a rien
@@ -175,9 +175,8 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   MESSAGE dans `error`**, pas leur code machine (forme historique conservée : le front
   affiche `error` tel quel, et pour ces deux-là le message est ce qui est actionnable) ;
   les autres statuts exposent bien leur jeton.
-  `GET /api/me/unipile` **réconcilie avant de répondre** (self-heal : le webhook
-  hosted-auth v2 n'est pas livré) — best-effort, jamais fatal pour le statut, no-op sans
-  pending. ⚠️ Son champ `channels` ne montre QUE les comptes liés à l'org **courante** :
+  `GET /api/me/unipile` **réconcilie avant de répondre** (self-heal : c'est LE chemin
+  de liaison) — best-effort, jamais fatal pour le statut, no-op sans pending. ⚠️ Son champ `channels` ne montre QUE les comptes liés à l'org **courante** :
   un canal vu déconnecté peut l'être ailleurs, et `elsewhere` dit alors ce qui est
   adoptable ici en un clic. `DELETE` est une **soft**-déconnexion, par org et par canal
   (`?channel=`, défaut `linkedin`) : le compte survit chez le fournisseur et la ligne

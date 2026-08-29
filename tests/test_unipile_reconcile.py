@@ -22,6 +22,9 @@ def _acc(aid, name, provider="linkedin", created="2026-07-16 12:45:00+00"):
 def _setup(monkeypatch, pendings, accounts, bound=None, dead=None, alive_ids=None):
     monkeypatch.setattr(uc.db, "list_unipile_pending_for_sub", lambda s: pendings)
     monkeypatch.setattr(uc.db, "bound_unipile_account_ids", lambda: set(bound or []))
+    # La garde partagée (#559) lit les lignes d'autrui en base ; ici tout est stubé —
+    # sans ce stub le fichier ne passe que si un test voisin a laissé DATABASE_URL.
+    monkeypatch.setattr(uc.db, "foreign_unipile_account_ids", lambda s: set())
     monkeypatch.setattr(uc.db, "dead_unipile_account_ids_for",
                         lambda s, p="LINKEDIN": set(dead or []))
     monkeypatch.setattr(uc.access, "resolve_credential",

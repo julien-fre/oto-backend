@@ -62,10 +62,13 @@ def test_happy_path_returns_url_and_poses_nonce(monkeypatch):
     out = _run(hosted_auth_url("u1", "linkedin"))
     assert out["url"].startswith("https://account.unipile.com/")
     assert out["channel"] == "linkedin"
-    # nonce posé pour la corrélation webhook, siège plateforme (mode revente)
+    # pending posé (la clé de la réconciliation), siège plateforme (mode revente)
     assert pending["provider"] == "LINKEDIN" and pending["platform_seat"] is True
     assert pending["nonce"] == _FakeClient.last_kwargs["name"]
-    assert "webhook" in _FakeClient.last_kwargs["notify_url"]
+    # Plus de `notify_url` (#581) : le fournisseur ne rappelle plus ce callback en v2,
+    # et la route qui le recevait est retirée. En envoyer un ferait pointer le
+    # fournisseur sur un 404 — et laisserait croire qu'un webhook existe.
+    assert "notify_url" not in _FakeClient.last_kwargs
 
 
 def test_invalid_channel_refused(monkeypatch):
