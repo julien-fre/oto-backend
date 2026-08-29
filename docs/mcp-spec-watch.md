@@ -128,6 +128,35 @@ livrables (0 trace sur 14 fiches produites pendant la fenêtre) ; et une livrais
 fois par identité » rend deux exécutions du même travail **non comparables** — rédhibitoire
 pour toute mesure agentique.
 
+### Relevé 4 — le flux SSE n'annonçait pas son charset (29/08/2026, #472)
+
+`POST /mcp` répondait `content-type: text/event-stream` **nu**. Or HTTP/1.1 a laissé un
+défaut historique pour `text/*` : **ISO-8859-1**. Un client qui l'applique lit
+« dÃ©jÃ  » là où le serveur a écrit « déjà ». Mesuré sur `requests` :
+`text/event-stream` → devine `ISO-8859-1` ; avec `; charset=utf-8` → `utf-8`.
+`application/json` n'a jamais eu ce piège (RFC 8259 impose UTF-8, les clients le
+savent) — il est complété par cohérence, pas par nécessité.
+
+**Ce que le relevé N'EST PAS** : les octets servis sont, et ont toujours été, de
+l'UTF-8 valide — vérifié sur le fil (`d\xc3\xa9j\xc3\xa0`). ⚠️ Le rapport d'origine de
+#472 affirmait que 203 descriptions d'outil et 1 186 descriptions de paramètre
+« arrivaient au modèle en double mojibake » : **c'est faux**, et la correction est
+datée ici. Le mojibake était produit par les scripts d'analyse du runner, qui
+laissaient leur bibliothèque HTTP deviner l'encodage. Aucun modèle n'a lu de charabia,
+et aucune description n'a changé au correctif — seul l'en-tête bouge.
+
+La cause est dans le SDK : `CONTENT_TYPE_SSE` / `CONTENT_TYPE_JSON`
+(`mcp/server/streamable_http.py`) sont posés à la main dans le dict `headers`, ce qui
+désactive le `populate_content_type` de Starlette — la seule mécanique qui aurait
+ajouté le charset. FastMCP 3.4.2 n'expose aucun réglage dessus, d'où une couche ASGI
+maison (`oto_mcp/response_charset.py`), posée dans `build_root_app` sous la garde de
+déconnexion et au-dessus du dispatch par Host : elle couvre donc `/mcp` canonique,
+`/mcp` anonyme des sous-domaines de projet **et** `/api/*` d'un seul geste.
+
+**Reconstater** : `tests/test_response_charset.py` sert la même app avec et sans la
+couche sur un vrai socket et la lit avec `requests` **sans toucher à
+`response.encoding`** — mêmes octets des deux côtés, deux lectures opposées.
+
 ### Ce que ces relevés bornent
 
 - Le contexte injecté d'office doit être **bref** — deux raisons indépendantes convergent :

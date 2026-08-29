@@ -412,3 +412,19 @@ environnements neufs. Diagnostic en 1 appel, sans lire le `.env` : `curl -X OPTI
 https://mcp.oto.cx/api/mcp/catalog -H 'Origin: <x>'` → l'en-tête `Access-Control-Allow-Origin`
 revient si l'origine passe. ⚠️ Ne pas déduire « c'est la liste du code » du seul fait qu'une
 origine du défaut est acceptée : l'override en contient une copie.
+
+## Le `content-type` d'une réponse JSON porte son charset (#472, 29/08)
+
+`api.base._json` construit une `JSONResponse` : son `media_type` ne commence pas par
+`text/`, donc **Starlette n'y ajoute aucun charset de lui-même**. Depuis #472, une couche
+ASGI unique (`oto_mcp/response_charset.py`, posée dans `server.build_root_app`) complète
+l'en-tête de toute réponse `application/json` ou `text/event-stream` en
+`; charset=utf-8` — `/api/*` et `/mcp` par le même geste.
+
+Elle **complète, elle ne réécrit pas** : un `content-type` qui porte déjà un `charset=`
+(ex. `text/markdown; charset=utf-8` d'`api/public.py`) est laissé intact à l'octet près,
+et les réponses binaires (`application/pdf` d'une facture, `application/zip` d'un export,
+`image/svg+xml`) ne sont pas touchées. Un handler n'a donc **rien à faire** pour en
+bénéficier — et rien à défaire s'il pose son propre charset. Le pourquoi (défaut
+ISO-8859-1 de HTTP/1.1 pour `text/*`, constantes en dur du SDK MCP) est dans
+`docs/mcp-spec-watch.md` §Relevé 4.
