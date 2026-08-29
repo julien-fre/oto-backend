@@ -1158,6 +1158,39 @@ et un bail échu ne désigne plus rien — la ligne est peut-être repartie à q
 d'autre. Sans `run_id`, la fonction rend une liste vide : `worker` est une étiquette
 choisie par l'appelant, elle restreint, elle ne prouve pas.
 
+### Le run sait où il travaille (#631, 29/08 21:11)
+
+Dans un même travail, `data_claim_next(<nom>)` ok à 21:10:05, puis
+`data_write(<nom>, id=<ligne>)` refusé **« namespace inconnu »** à 21:11:23, puis
+`data_write("@claimed")` ok à 21:11:35 — 103 refus de cette famille sur la soirée. La
+cause n'était pas dans le datastore : l'écriture refusée était le seul des trois appels
+**sans axe `_org=`**, donc résolue dans l'org MAISON de l'appelant, où le tableau n'existe
+pas. Le journal ne montre pas l'axe (le middleware le retire des arguments avant le sink) ;
+la preuve est la colonne `org_id` stampée — celle du tableau sur les deux appels ok, la
+maison sur le refus. Et `namespace="@claimed"` échouait pareil : l'alias relisait le NOM
+dans la réservation, puis le résolvait dans la mauvaise org.
+
+Deux gestes, sur le seul chemin qui échouait (`datastore/hors_org.py`) :
+
+- **résolution par la réservation** : quand le nom demandé est celui d'un tableau que la
+  réservation active du run porte, `_resolve` le trouve par elle — sans axe. Le bail
+  LOCALISE, il ne donne aucun droit : `ownership.can_access` reste exigé, org-agnostique
+  (un tiers qui connaît le jeton d'un run n'y gagne rien — testé).
+- **sinon le refus le dit** : « il existe dans une autre de tes organisations : org X
+  « … ». Cet appel a été résolu dans l'org Y « … » — passe `_org=X` ; et si ton travail
+  tient une ligne, `_run_id` + `id="@claimed"` suffisent ». La face REST le disait déjà
+  (`X-Oto-Org`, signal #316) : la face MCP répondait « inconnu » nu — **une divergence
+  entre deux faces, pas un manque d'information**. La recherche est désormais commune
+  (`hors_org.ou_existe`), chaque face phrase son remède.
+
+Ce que ce lot NE fait PAS, et pourquoi : « l'org du run devient l'org de l'appel par
+défaut » aurait aussi corrigé le stamp du journal (#630) — mais mesuré sur 7 jours,
+2 010 appels sur 30 828 dans un run ont une org d'appel ≠ org du run, et presque tous
+sont LÉGITIMES (un agent multi-org ouvre son run en 196 et travaille en 255/259 avec
+`_org=` explicite). Seuls 82 étaient le défaut, tous des `data_write` refusés. Changer le
+seam d'org pour ces 82 engage les credentials de tous les connecteurs : c'est un lot à
+part, pas un correctif de datastore.
+
 ### `@claimed` s'écrit aussi en TABLEAU (29/08, premier contact avec des agents réels)
 
 **Deux écritures refusées sur cinq, en « namespace `@claimed` inconnu ».** À sa première

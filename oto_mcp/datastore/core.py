@@ -33,7 +33,7 @@ from typing import Any, Optional
 from psycopg.errors import UniqueViolation
 
 from . import schema as dsv2
-from . import claimable
+from . import claimable, hors_org
 # Les refus : extraits dans `errors` (#325), ré-importés ici pour que tout appelant
 # (`from .datastore.core import RowNotFound`) reste inchangé.
 from .claimable import RowOutsideClaimable  # noqa: F401
@@ -346,7 +346,11 @@ class DatastorePg(SchemaOpsMixin):
         ns = db.resolve_datastore_ns(
             namespace, sub=self.sub, org_ids=org_ids, group_ids=group_ids)
         if not ns:
-            raise NamespaceNotFound(namespace)
+            # #631 : le run sait où il travaille — sa réservation porte le tableau.
+            ns = hors_org.tenu_par_le_run(self.sub, namespace)
+        if not ns:
+            raise NamespaceNotFound(namespace, indice=hors_org.indice_autre_org(
+                self.sub, namespace, org_ids[0] if org_ids else None))
         ns_id = int(ns["id"])
         # Scope dur d'endpoint partagé : hors des tableaux liés au projet ⇒ invisible
         # (anti-fuite #193 ; NamespaceNotFound plutôt que Forbidden — on ne divulgue pas

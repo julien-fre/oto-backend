@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ... import db, org_store, ownership
+from ... import ownership
+from ...datastore import hors_org
 from ...datastore.core import NamespaceNotFound, make_store
 from .._types import AuthzDenied
 
@@ -43,15 +44,11 @@ def ns_not_found(sub: Optional[str], namespace: str) -> AuthzDenied:
     qui garde le `raise` visible sur la ligne du chemin d'erreur.
     """
     try:
-        orgs = {int(o["org_id"]): o.get("name") for o in org_store.list_orgs_for_user(sub)}
-        owners = [("org", str(i)) for i in orgs]
-        elsewhere = [n for n in db.list_datastore_namespaces_for_owners(owners)
-                     if n["namespace"] == namespace]
+        # La recherche est celle de la face MCP (#631) ; seul le remède diffère.
+        elsewhere = hors_org.ou_existe(sub, namespace)
         if elsewhere:
-            where = ", ".join(
-                f"{orgs.get(int(n['owner_id'])) or 'org'} (org {n['owner_id']})"
-                for n in elsewhere)
-            first = elsewhere[0]["owner_id"]
+            where = ", ".join(f"{nom or 'org'} (org {oid})" for oid, nom in elsewhere)
+            first = elsewhere[0][0]
             return AuthzDenied(
                 404, "namespace_not_found",
                 f"« {namespace} » existe, mais dans une autre de tes organisations : "

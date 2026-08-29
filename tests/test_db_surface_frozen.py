@@ -94,6 +94,7 @@ _SURFACE = """
     list_project_links list_projects_for_owners list_projects_granted_to
     list_published_mcp_projects list_resource_grants list_runs
     list_scheduled_emails list_tenant_issuers list_tool_calls
+    call_filter_clauses count_calls_of_org_runs_elsewhere journal_calls
     list_tool_calls_for_org list_unipile_accounts list_unipile_accounts_by_org
     list_unipile_pending_for_sub list_usage_signals list_user_disabled_tools
     list_user_enabled_tools list_users list_users_with_grants

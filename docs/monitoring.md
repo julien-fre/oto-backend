@@ -191,6 +191,19 @@ plateforme avec `org_id` posé, **plus une** qui n'existe qu'à cet étage, et *
 filtre en SQL puis 404 sur timeline vide. Testé par `tests/test_org_monitoring.py` — un
 handler ajouté sans sa garde y casse.
 
+**Le scope se DIT, et il compte ce qu'il laisse dehors (#630, 29/08).** Un `data_write`
+refusé à 21:11:23 était dans `op=run` (les 17 appels du run) et absent de `op=calls
+org_id=226` interrogé trois fois avec des motifs que son texte contenait — parce qu'il
+avait été RÉSOLU sous l'org maison de l'appelant (axe `_org` absent, #631), donc stampé
+`org_id=2`. La vue était exacte dans son périmètre ; le lecteur ne le connaissait pas, et
+un « zéro » lu là était un plancher muet. `op=calls` scopé à une org (org ou plateforme
+avec `org_id`) rend désormais, à côté des lignes : `scope` (la règle), `hors_scope` (les
+appels des runs de l'org stampés sous une autre org, sous LES MÊMES filtres — même à 0)
+et `hors_scope_hint` (où les voir : `op=run`). Fenêtre du plancher = `days`, sinon la
+page quand elle est pleine, sinon 30 j — dite dans l'indice ; jamais sans borne
+(28 ms/jour mesurés en prod). La construction des filtres est partagée
+(`db/journal_calls.py`) : la page et son plancher ne peuvent pas diverger.
+
 ## Rétention : 90 jours en ligne, le reste en froid (posé le 2026-08-27)
 
 Le journal n'avait **aucune** rétention : 47 % de la base, et une croissance passée de
