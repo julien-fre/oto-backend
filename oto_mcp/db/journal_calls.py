@@ -28,6 +28,25 @@ from typing import Any, Optional
 
 from ._conn import _connect
 
+# Les CLÉS des arguments d'un appel, triées — jamais leur contenu (#634, 30/08/2026).
+#
+# La liste du journal ne sélectionne pas `args` : c'est voulu, une page de 200 lignes
+# n'a pas à porter 200 payloads, et le contenu est la fiche (`get_tool_call`). Mais sans
+# rien, « cet appel portait-il un numéro d'entreprise ? » obligeait à ouvrir chaque
+# fiche — 443 lectures de détail en douze minutes le 29/08 pour lire une clé. Les clés
+# répondent à cette question sans exposer une valeur (un secret masqué à l'écriture
+# reste masqué : son NOM n'a jamais été le secret).
+#
+# `[]` quand la ligne n'a pas d'argument (`args` NULL — `truncated_args` rend None sur un
+# ensemble vide — ou `{}`) : c'est un FAIT sur l'appel, pas une vue qui manque. Le
+# `CASE` évite l'erreur de `jsonb_object_keys` sur autre chose qu'un objet ; la colonne
+# n'en porte jamais, mais une lecture ne doit pas dépendre de ce que l'écriture promet.
+ARG_KEYS_SQL = (
+    "COALESCE((SELECT array_agg(k ORDER BY k) FROM jsonb_object_keys("
+    "CASE WHEN jsonb_typeof(l.args) = 'object' THEN l.args ELSE '{}'::jsonb END) k), "
+    "ARRAY[]::text[])"
+)
+
 
 def call_filter_clauses(
     *, sub: Optional[str] = None, tool_name: Optional[str] = None,

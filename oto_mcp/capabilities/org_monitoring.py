@@ -106,7 +106,12 @@ class OrgMonitoringSummary(BaseModel):
 class CallRow(BaseModel):
     """Une ligne du journal. Les noms `tool_name`/`called_at` sont des ALIAS de compat
     (`tool`/`created_at` en base) — la fiche `op=call`, elle, rend les noms bruts :
-    les deux surfaces du même objet ne nomment pas ses champs pareil."""
+    les deux surfaces du même objet ne nomment pas ses champs pareil.
+
+    La ligne ne porte pas les arguments : `arg_keys` en donne les CLÉS, triées (`[]` =
+    l'appel n'en portait aucun), jamais une valeur — « cet appel portait-il un numéro
+    d'entreprise ? » se répond ici ; le contenu, tronqué et masqué, est `call.args`
+    sur la fiche (#634)."""
     id: int
     sub: Optional[str] = None
     email: Optional[str] = None
@@ -122,6 +127,7 @@ class CallRow(BaseModel):
     # Id de l'event Sentry correspondant, quand l'erreur en a produit un — le pont
     # vers le traceback. None sur un appel réussi (et sur une erreur gérée).
     sentry_event_id: Optional[str] = None
+    arg_keys: list[str] = []
 
 
 class OrgCalls(BaseModel):
@@ -143,6 +149,34 @@ class OrgCalls(BaseModel):
     hors_scope_hint: Optional[str] = None
 
 
+class CallDetail(BaseModel):
+    """La ligne complète du journal, noms BRUTS (`tool`, `created_at` — pas les alias
+    de la liste). `args` = les arguments **tels que journalisés** : tronqués à
+    l'écriture (`truncated_args`, 300 caractères par valeur, les valeurs composées
+    stringifiées) et masqués (#582 : un jeton part en empreinte `#…`, jamais en clair).
+    `null` = l'appel n'en portait aucun. C'est la seule clé qui porte les arguments —
+    il n'y a pas d'`arguments` : un lecteur qui la cherche avec un défaut `{}` fabrique
+    lui-même l'objet vide (vécu le 29/08/2026, #634)."""
+    id: int
+    kind: Optional[str] = None
+    server: Optional[str] = None
+    sub: Optional[str] = None
+    email: Optional[str] = None
+    name: Optional[str] = None
+    tool: Optional[str] = None
+    args: Optional[dict] = None
+    ok: Optional[bool] = None
+    error: Optional[str] = None
+    duration_ms: Optional[int] = None
+    created_at: Optional[str] = None
+    session_id: Optional[str] = None
+    run_id: Optional[str] = None
+    org_id: Optional[int] = None
+    org_name: Optional[str] = None
+    client_id: Optional[str] = None
+    sentry_event_id: Optional[str] = None
+
+
 class OrgCall(BaseModel):
     """Fiche d'UN appel. ⚠️ `call.args` est **tronqué à l'écriture** (`truncated_args`) :
     ce n'est pas le payload intégral, et ça ne doit pas servir à rejouer un appel.
@@ -150,7 +184,7 @@ class OrgCall(BaseModel):
     L'id est un entier séquentiel donc devinable : un appel d'une AUTRE org rend le
     **même 404** qu'un id inexistant — l'absence de résultat ne prouve pas l'absence
     d'appel."""
-    call: dict
+    call: CallDetail
 
 
 class ConnectorFailure(BaseModel):
