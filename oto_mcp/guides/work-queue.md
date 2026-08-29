@@ -87,7 +87,9 @@ sous-agent : c'est ce qui permet de voir lequel est mort.
 **`filter`** — égalité exacte `{colonne: valeur}`, ce qui définit ce qui **compte comme
 claimable**. Typiquement `{"status": "nouveau"}`. Sans filtre, toute ligne dont le bail
 est libre est candidate — y compris celles déjà traitées. **Mets toujours un filtre**
-dès que la table porte un statut.
+dès que la table porte un statut. Si le tableau déclare un périmètre de réservation
+(`lifecycle.claimable` dans son schéma), ton `filter` s'y ajoute en ET : il le resserre,
+il ne l'élargit jamais — et une réponse `row: null` te nomme ce périmètre.
 
 **`lease_s`** — durée du bail, 900 s (15 min) par défaut. C'est le mécanisme de
 récupération : un worker qui meurt en cours de route ne bloque pas sa ligne

@@ -21,7 +21,9 @@ s'étend au-delà du rendu (0016) avec quatre couches OPT-IN :
 - **états terminaux** : `terminal` explicite, sinon dérivés (état sans transition
   sortante) — le store libère le claim de file de travail en y entrant ;
 - **plafond de reprises** : `lifecycle.max_claims` + `lifecycle.abandon_state` —
-  une ligne réservée N fois sans qu'une écriture n'aboutisse quitte la file.
+  une ligne réservée N fois sans qu'une écriture n'aboutisse quitte la file ;
+- **périmètre de réservation** : `lifecycle.claimable: {col: val}` — ce que la file
+  SERT, quel que soit le `filter` de l'appelant (décision dans `claimable.py`).
 
 Défaut (aucune de ces clés) = comportement 0016 inchangé : schéma de rendu SOFT.
 Les erreurs sont des *listes de messages actionnables* — le store les joint dans
@@ -34,6 +36,8 @@ from collections.abc import Iterator
 from functools import lru_cache
 from datetime import datetime
 from typing import Any, Optional
+
+from . import claimable
 
 # `url`/`email`/`datetime`/`enum` sont des types de PRÉSENTATION : même donnée (une
 # string) qu'un `text`, mais ils disent au client QUEL widget rendre (lien cliquable,
@@ -630,6 +634,33 @@ def abandon_state_of(schema: Optional[dict]) -> Optional[str]:
     return str(v) if v is not None else None
 
 
+def claimable_of(schema: Optional[dict]) -> Optional[dict]:
+    """Le périmètre de réservation déclaré (`lifecycle.claimable`, #517), ou None.
+    La décision et sa grammaire vivent dans `claimable.py` ; ici, l'accès depuis un
+    schéma — à côté de `max_claims_of`, avec le même parti sur une valeur illisible
+    (elle LÈVE, elle n'ouvre pas le tableau en silence)."""
+    return claimable.perimetre_of(lifecycle_of(schema))
+
+
+def merge_lifecycle(current: dict, patch: dict) -> dict:
+    """Fusion PAR CLÉ du cycle de vie — `null` LÈVE une clé (#517).
+
+    Jusqu'au 29/08/2026, un patch qui nommait `lifecycle` le REMPLAÇAIT en bloc :
+    poser un périmètre de réservation exigeait de recopier `states`, `transitions`,
+    `terminal`, `max_claims` et `abandon_state` — et en oublier un les faisait
+    disparaître sans un mot, la promesse inverse de `data_patch_schema`. La fusion
+    descend d'un cran ; `null` est le geste de retrait (même parti que
+    `key_required=false` : un patch qui ne peut qu'ajouter rend le retrait
+    impossible)."""
+    out = dict(current)
+    for k, v in patch.items():
+        if v is None:
+            out.pop(k, None)
+        else:
+            out[k] = v
+    return out
+
+
 def merge_fields(current: list, patch: list) -> tuple[list, list[str], list[str]]:
     """Fusionne `patch` dans `current` PAR CLÉ → `(fields, ajoutés, modifiés)`.
 
@@ -663,6 +694,10 @@ def merge_fields(current: list, patch: list) -> tuple[list, list[str], list[str]
         of_patch = p.get("of")
         for k, v in p.items():
             if k in ("fields", "of"):
+                continue
+            if (k == "lifecycle" and isinstance(v, dict)
+                    and isinstance(target.get("lifecycle"), dict)):
+                target[k] = merge_lifecycle(target["lifecycle"], v)
                 continue
             target[k] = v
         if isinstance(sub_patch, list) and isinstance(target.get("fields"), list):
@@ -1119,6 +1154,15 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
                 f"lifecycle.abandon_state: {abandon!r} n'est pas un état terminal déclaré "
                 "(ajoute-le à lifecycle.terminal) — une ligne abandonnée reviendrait "
                 "sinon dans la file qu'elle vient de quitter")
+        # Le périmètre de réservation (#517) se valide par le moteur de filtre qui le
+        # servira — refusé à la pose, comme le plafond : une déclaration illisible
+        # au premier claim d'une campagne lancée est le pire moment pour l'apprendre.
+        sf = status_field(schema) or {}
+        errors.extend(claimable.erreurs(
+            lc, declared={f.get("key") for f in _fields(schema)},
+            strict=bool(schema.get("strict")), status_key=sf.get("key"),
+            states={str(s) for s in (lc.get("states") or [])}
+            if isinstance(lc.get("states"), list) else set()))
     else:
         # lifecycle posé sur un field non-status = erreur de placement (silencieux sinon)
         for f in _fields(schema):
@@ -1927,6 +1971,10 @@ def enforced_keys() -> list[str]:
         if reserved_refusals({"fields": [{"key": "x", "origine": SYSTEM_ORIGIN}]},
                              {"x": {ORIGIN_LAYER: "y"}})[0]:
             vues.append("origine")
+        # #517 : le périmètre de réservation se juge au PICK, pas sur une row — la
+        # sonde interroge la fonction qui produit les clauses que le pick ajoute.
+        if claimable.clauses(claimable.perimetre_of({"claimable": {"x": "1"}})):
+            vues.append("claimable")
         _ENFORCED = tuple(sorted(vues))
     return list(_ENFORCED)
 

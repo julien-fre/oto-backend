@@ -67,6 +67,7 @@ from .rowlock import (  # noqa: F401
     datastore_claimed_rows,
     datastore_release_by_run,
     datastore_release_claim,
+    datastore_row_within,
 )
 from .query import (  # noqa: F401
     _build_aggregate,

@@ -85,7 +85,8 @@ def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
 
 def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
                         lease_seconds: int = 900,
-                        run_id: Optional[str] = None) -> Optional[dict]:
+                        run_id: Optional[str] = None,
+                        filters: Optional[list] = None) -> Optional[dict]:
     """Claim d'une row **nommée** (≠ pick de la suivante) — la file pilotée par un
     humain, qui choisit la ligne qu'il traite et à qui le serveur la réserve.
 
@@ -94,13 +95,19 @@ def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
     coûter sa propre ligne. L'UPDATE conditionnel EST l'atomicité — deux appels
     concurrents sur la même row, un seul repart avec le bail.
 
-    None = row absente OU sous bail actif d'un AUTRE worker ; les distinguer coûte
-    une relecture, laissée à l'appelant (chemin d'échec seulement).
+    `filters` = le périmètre déclaré au tableau (#517), dans la clause de l'UPDATE :
+    une ligne hors périmètre n'est pas réservable, même nommée, même par son
+    titulaire — sinon la réservation ciblée serait la porte de côté du périmètre.
+
+    None = row absente, hors périmètre, OU sous bail actif d'un AUTRE worker ; les
+    distinguer coûte une relecture, laissée à l'appelant (chemin d'échec seulement).
 
     ⚠️ Le compteur de reprises monte ici aussi (#433) — mais sur une PRISE, pas sur
     un renouvellement : reprendre une ligne dont le bail a lâché compte, la garder
     non. `claim_next`, lui, n'a pas la nuance à porter : sa clause d'éligibilité
     exclut déjà le bail actif, donc il ne renouvelle jamais rien."""
+    fclauses, fparams = _ds_filter_clauses(filters)
+    perimetre = "".join(f" AND {c}" for c in fclauses)
     with _connect() as conn:
         row = conn.execute(
             "UPDATE datastore_rows SET claimed_by = %s, "
@@ -115,11 +122,27 @@ def datastore_claim_row(ns_id: int, row_id: str, *, worker: str,
             "claims = claims + CASE WHEN claimed_until IS NULL "
             "                       OR claimed_until < NOW() THEN 1 ELSE 0 END "
             "WHERE ns_id = %s AND row_id = %s AND (claimed_until IS NULL "
-            "OR claimed_until < NOW() OR claimed_by = %s) "
-            + _RENDU,
-            (str(worker), int(lease_seconds), run_id, ns_id, row_id, str(worker)),
+            "OR claimed_until < NOW() OR claimed_by = %s)"
+            + perimetre + " " + _RENDU,
+            (str(worker), int(lease_seconds), run_id, ns_id, row_id, str(worker),
+             *fparams),
         ).fetchone()
         return dict(row) if row else None
+
+
+def datastore_row_within(ns_id: int, row_id: str, filters: list) -> bool:
+    """Cette ligne est-elle DANS le périmètre (#517) ? Le chemin d'échec de
+    `datastore_claim_row` : un None y couvre trois situations, et « hors périmètre »
+    se dit autrement que « prise par un autre » — l'une s'attend, l'autre s'instruit.
+    Jugé par le MÊME moteur que le pick, jamais par une évaluation Python du filtre
+    qui divergerait de lui."""
+    fclauses, fparams = _ds_filter_clauses(filters)
+    where = "WHERE ns_id = %s AND row_id = %s" + "".join(f" AND {c}" for c in fclauses)
+    with _connect() as conn:
+        hit = conn.execute(
+            f"SELECT 1 AS ok FROM datastore_rows {where}",
+            (ns_id, row_id, *fparams)).fetchone()
+        return hit is not None
 
 
 def datastore_release_by_run(run_id: str) -> int:

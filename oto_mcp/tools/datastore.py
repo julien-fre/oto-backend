@@ -20,7 +20,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
-from ..datastore import jetons
+from ..datastore import claimable, jetons
 from ..datastore import schema as dsv2
 from ..datastore.core import (
     ClaimedRefUnresolved,
@@ -269,9 +269,19 @@ def _introuvable(row_id: object, piste: Optional[str]) -> str:
 # Le rendu d'un claim À VIDE dit aussi ce qu'on ne fait PAS ensuite. Le 29/08 à 15:24,
 # un travail a reçu `row: null` puis a écrit quand même — `@claimed`, puis un identifiant
 # fabriqué. Rien n'est passé, mais le rendu du claim ne l'avait pas averti.
-_HINT_FILE_VIDE = ("plus rien à claim (file vide pour ce filtre, ou tout est sous bail "
-                   "actif) — tu ne tiens AUCUNE ligne : n'écris rien (ni `@claimed`, ni "
+_HINT_RIEN_TENU = (" — tu ne tiens AUCUNE ligne : n'écris rien (ni `@claimed`, ni "
                    "un identifiant), termine ton travail (`run_finish`)")
+_HINT_FILE_VIDE = ("plus rien à claim (file vide pour ce filtre, ou tout est sous bail "
+                   "actif)" + _HINT_RIEN_TENU)
+
+
+def _hint_file_vide(perimetre: dict, filter: Optional[dict]) -> str:
+    """Rien servi : la file est vide POUR CE PÉRIMÈTRE, et il se nomme (#517) — un
+    filtre qui contredit la déclaration du tableau ne doit pas se lire « file
+    vide ». La suite ne change pas : l'agent ne tient rien, il n'écrit rien."""
+    if not perimetre:
+        return _HINT_FILE_VIDE
+    return claimable.phrase_vide(perimetre, filter) + _HINT_RIEN_TENU
 
 
 def _row_not_found_hint(store, namespace: str, row_id: object) -> str:
@@ -516,6 +526,9 @@ def register(mcp: FastMCP) -> None:
           platform reason in `_abandon`. Both go together: a ceiling without an
           abandon state, or an abandon state that is not terminal, is REFUSED here.
           Counter (`_claims`) resets on the first successful write to the row.
+          `lifecycle.claimable: {col: val | {op: val}}` (`filter` grammar) = the
+          rows the queue SERVES: no claim hands out a row outside it, whatever
+          `filter` says.
 
         SEMANTIC SEARCH (#67 V2.2 — opt-in per namespace): pass `semantic_search=true`
         to make this namespace's ROWS findable by MEANING via oto_search (not just exact
@@ -677,7 +690,8 @@ def register(mcp: FastMCP) -> None:
         `worker` is a label YOU choose and REUSE verbatim on data_release — the
         guard so one agent cannot release another's claim.
         `filter` (exact {col: val}, e.g. {"status": "nouveau"}) selects what counts
-        as claimable. The claim does NOT change the row: write your progress via
+        as claimable; it narrows the table's declared `lifecycle.claimable`, never
+        widens it. The claim does NOT change the row: write your progress via
         data_write (id=…), then release it — writing a "final" status does not
         free it (#317). Release the row with `data_release` if you have it;
         otherwise finishing your run (`run_finish`) releases it. Never write your
@@ -699,10 +713,11 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         namespace = _ns(namespace)
         warnings: list = []
+        perimetre: dict = {}
         try:
             row = store.claim_next(namespace, worker=worker, filter=filter,
                                    lease_s=lease_s, max_claims=max_claims,
-                                   warnings=warnings)
+                                   warnings=warnings, perimetre=perimetre)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except NamespaceNotFound:
@@ -712,7 +727,7 @@ def register(mcp: FastMCP) -> None:
                                      message=f"namespace `{namespace}` partagé en lecture seule"))
         return {"namespace": namespace, "row": row,
                 **({"warning": warnings[0]} if warnings else {}),
-                **({} if row else {"hint": _HINT_FILE_VIDE})}
+                **({} if row else {"hint": _hint_file_vide(perimetre, filter)})}
 
     @mcp.tool()
     def data_release(namespace: str, id: str, worker: str) -> dict:
