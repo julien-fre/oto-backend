@@ -1174,3 +1174,40 @@ qu'ils n'ont **aucun** sens comme donnée. `slot:` et `*` sont des chaînes qu'u
 peut légitimement porter — « slot: machine à café » est une note, pas une adresse.
 Les refuser là serait se protéger d'une faute qu'on ne sait pas distinguer d'un texte
 ordinaire ; un test existe pour l'empêcher de jamais devenir vrai.
+
+## Une description ne prescrit pas un geste dont l'outil n'est pas servi (#613, 29/08)
+
+**Mesuré sur cent fiches d'une campagne** où `data_release` était filtré à l'inclusion :
+la description de `data_claim_next` disait « then RELEASE the row … Release with
+`data_release` », relue à chaque appel par des agents qui ne pouvaient pas l'exécuter.
+Un agent qui a une intention et pas de destination s'en fabrique une : ils ont écrit
+leur intention **dans la fiche de l'entreprise** — colonnes `_liberation: "run_finish"`,
+`_action: "release"` (et `_run_id`, refusé depuis #602) — des paramètres d'appel dans
+des données clientes, exportées. Même mécanique que les 37,5 % de `_run_id` (#547) : le
+texte le plus près du geste gagne.
+
+**Ce qui est vrai, et prouvé AVANT d'être écrit dans une description servie** : la
+fermeture du run libère ce que le run tenait. `run_finish` appelle
+`datastore_release_by_run(run_id)` (`claimed_run = run` ⇒ bail effacé, puis évaluation
+du plafond de réservations), **quelle que soit l'issue** (`done`/`failed`/`blocked`), et
+le dit dans sa réponse (`rows_released`). Best-effort : si la base tousse, le run se
+ferme quand même et la ligne reste au bail. Le niveau base était couvert
+(`test_row_lock_native.py`) ; le lien entre le **verbe servi** et la libération est figé
+par `tests/test_run_finish_releases_613.py`, sur le chemin réel (middleware + outils
+montés par `register_all`, PostgreSQL) — y compris « un autre run qui se ferme ne rend
+rien » et « la ligne rendue est reprise par le claim suivant ».
+
+**La description dit désormais ce qui se passe sans l'outil**, en une phrase : « Release
+the row with `data_release` if you have it; otherwise finishing your run (`run_finish`)
+releases it. Never write your intent into the row (no `_action`/`_liberation`
+columns). » Delta servi **−5 caractères** (1737 → 1732), la phrase étant payée en
+resserrant ce qui existait : la clause SQL (`FOR UPDATE SKIP LOCKED`), l'exemple de
+libellé de `worker`, « historic behaviour », « last resort … without closing anything ».
+Aucun paramètre de `data_claim_next` n'est en cause : les colonnes fabriquées partent
+par `data_write`, pas par un champ de cet outil — rien à répéter dans un schéma.
+
+⚠️ Ce que la phrase ne couvre PAS : l'agent qui meurt (il n'appelle pas `run_finish`) —
+son filet reste l'expiration du bail (`lease_s`). Et le point 2 de #613 (une description
+rendue selon les outils réellement servis à la session) est une décision de conception
+à part : une description conditionnelle n'atteint pas un client qui fige `tools/list`
+au handshake (cf. #547).

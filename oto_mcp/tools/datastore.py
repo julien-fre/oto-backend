@@ -666,23 +666,24 @@ def register(mcp: FastMCP) -> None:
         """Atomically claim the NEXT unprocessed row of a namespace (work queue).
 
         The primitive for draining a table with N parallel (sub-)agents without
-        collisions: picks the oldest row whose claim lease is free or expired
-        (`FOR UPDATE SKIP LOCKED`), stamps `_claimed_by`/`_claimed_until` and
-        returns it — two concurrent workers never get the same row. Returns
-        `{row: null}` when nothing is left to claim.
+        collisions: picks the oldest row whose claim lease is free or expired,
+        stamps `_claimed_by`/`_claimed_until` and returns it — two concurrent
+        workers never get the same row. Returns `{row: null}` when nothing is
+        left to claim.
 
         To write or release it, pass `id="@claimed"` rather than retyping the
         returned `_id`.
 
-        `worker` is a label YOU choose (e.g. "gros-conso-13") and REUSE verbatim
-        on data_release — the guard so one agent cannot release another's claim.
+        `worker` is a label YOU choose and REUSE verbatim on data_release — the
+        guard so one agent cannot release another's claim.
         `filter` (exact {col: val}, e.g. {"status": "nouveau"}) selects what counts
         as claimable. The claim does NOT change the row: write your progress via
-        data_write (id=…), then RELEASE the row — writing a "final" status does not
-        free it (#317). Release with data_release, or let `run_finish` free every row
-        your run held. The lease (`lease_s`, default 900s) is the last resort for a
-        worker that died without closing anything. While you hold a row, nobody else
-        can write it.
+        data_write (id=…), then release it — writing a "final" status does not
+        free it (#317). Release the row with `data_release` if you have it;
+        otherwise finishing your run (`run_finish`) releases it. Never write your
+        intent into the row (no `_action`/`_liberation` columns). The lease
+        (`lease_s`, default 900s) only covers a worker that died. While you hold a
+        row, nobody else can write it.
 
         The row carries `_claims` = how many times it has been claimed since the
         last successful write. A row claimed over and over WITHOUT a write is a
@@ -691,7 +692,7 @@ def register(mcp: FastMCP) -> None:
         `lifecycle.abandon_state`, stamps `_abandon` with the reason, and STOPS
         serving it — whatever your filter says. It stays readable and repairable:
         an explicit data_write puts it back in the queue and resets the counter.
-        Neither declared nor passed = no ceiling (historic behaviour).
+        Neither declared nor passed = no ceiling.
 
         `namespace` also accepts `slot:<name>` (table bound by the active project).
         """
