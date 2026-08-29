@@ -103,11 +103,15 @@ clé MEMBRE (BYO, scopée (sub, org))  >  secret groupe  >  secret org  >  clé 
 >   construction, comme pour une clé d'org.
 >
 > La chaîne 0053 de la fenêtre L7 calcule le même étage (`chain_shadow`) — sinon chaque clé
-> tenant servie compterait une divergence `inconnu`. Ce que la PR 1 ne fait **pas** : le rôle
-> « admin de tenant » (le partenaire pose SA clé depuis SON tableau de bord), l'arête
-> tenant→org de 0053 (budget par org, R10), la liste `oto_instance` (les instances de tenant
-> existent — elles naissent à la pose — mais ne sont pas encore listées ni épinglables par
-> `_instance=` depuis cette liste). Surface : `docs/tenants.md`.
+> tenant servie compterait une divergence `inconnu`.
+>
+> **Depuis la PR 2 (2026-08-29)**, l'étage porte l'**arête tenant→org** de 0053 : trois états
+> (MUETTE = la clé sert, comme en PR 1 ; ACCORDE = budget par org, partagé — R10 ; REFUSE =
+> le barreau est sauté, l'org retombe sur la plateforme), lus par le walker ET la chaîne à la
+> même source (`grants_chain.tenant_rung`). L'anonyme n'obtient l'étage que par une arête
+> vivante. Le rôle « admin de tenant » (`TENANT_ADMIN_OF`, sur le sub qualifié) pose la clé
+> et les arêtes par la face REST. `oto_instance op=list` rend la clé au niveau `tenant`.
+> Surface et pièges : `docs/tenants.md`.
 
 > **Scope membre (ADR 0033).** Il n'y a **plus de clé « perso » org-agnostique** : la clé
 > BYO d'un membre est keyée **(sub, org de contexte)** — coffre `entity_type='member'`,
@@ -247,10 +251,10 @@ un : un champ toujours présent devient du bruit qu'on cesse de lire.
 
 ## Trous connus (à combler)
 
-- **Clé de tenant (L-clés PR 1, 29/08)** : pas de rôle « admin de tenant », pas d'arête
-  tenant→org (le budget par org de R10), pas d'étage tenant sur l'endpoint anonyme, pas de
-  ligne `tenant` dans `oto_instance op=list` — la PR 2. Le dashboard (`keyStack.ts`) ne
-  connaît pas encore le mode `tenant` de `/api/me`. (couche 2)
+- **Clé de tenant (L-clés PR 2, 29/08)** : le dashboard (`keyStack.ts`, oto-front) ne
+  connaît pas encore le mode `tenant` de `/api/me`, ni les surfaces REST de l'admin de tenant
+  (clés, arêtes, admins). Le budget d'arête est débité à la résolution, pas au succès
+  (bascule avec L8). (couche 2)
 
 - **Partage de clé plateforme org-level** : aujourd'hui le grant de clé plateforme est per-user
   seulement ; pas de « partager la clé plateforme à toute une org ». (couche 2)

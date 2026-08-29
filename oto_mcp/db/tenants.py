@@ -58,6 +58,38 @@ def tenant_exists(slug: str) -> bool:
         return conn.execute("SELECT 1 FROM tenants WHERE slug = %s", (slug,)).fetchone() is not None
 
 
+# ── Le rôle « admin de tenant » (L-clés PR 2) ────────────────────────────────
+
+def is_tenant_admin(slug: str, sub: str) -> bool:
+    """Lu à l'appel par `_authz.TENANT_ADMIN_OF` — UNE lecture par PK."""
+    with _connect() as conn:
+        return conn.execute("SELECT 1 FROM tenant_admins WHERE slug = %s AND sub = %s",
+                            (slug, sub)).fetchone() is not None
+
+
+def list_tenant_admins(slug: str) -> list[dict]:
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT sub, granted_by, granted_at FROM tenant_admins WHERE slug = %s "
+            "ORDER BY granted_at, sub", (slug,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def add_tenant_admin(slug: str, sub: str, granted_by: "str | None" = None) -> None:
+    """Idempotent : re-déclarer un admin ne change rien (ni l'auteur, ni la date)."""
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO tenant_admins (slug, sub, granted_by) VALUES (%s, %s, %s) "
+            "ON CONFLICT (slug, sub) DO NOTHING", (slug, sub, granted_by))
+
+
+def remove_tenant_admin(slug: str, sub: str) -> bool:
+    with _connect() as conn:
+        cur = conn.execute("DELETE FROM tenant_admins WHERE slug = %s AND sub = %s",
+                           (slug, sub))
+        return (cur.rowcount or 0) > 0
+
+
 # ── Suivi (console plateforme) ───────────────────────────────────────────────
 
 # Le tenant d'un sub, EN SQL — miroir de `tenancy.IssuerRegistry.tenant_of` : le

@@ -51,8 +51,10 @@ découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
 - `rbac`    — qui a le droit : RBAC connecteur org/équipe, tools masqués, garde
               d'instance et prêts, instances à portée, filtre de redaction.
 - `resolved_credential` — le TYPE rendu par toute résolution (extrait le 29/08, #584).
+- `tenant_budget` — le budget par org de l'arête tenant→org (L-clés PR 2), appliqué
+              à la résolution d'un gagnant tenant.
 - `resolve_anon` — la résolution de l'endpoint MCP anonyme (ADR 0032), extraite de
-              `resolve` le 29/08 (#584). Pas d'étage tenant (L1).
+              `resolve` le 29/08 (#584). L'étage tenant n'y vient que d'une arête.
 - `resolve` — la résolution réelle d'un credential (chemin chaud).
 - `views`   — les vues minces : clé, champs, mount, mode, option levée,
               résolvabilité d'une org.
@@ -95,11 +97,11 @@ import logging
 import sys
 import types
 
-from . import (scope, quotas, cascade, rbac, resolved_credential, resolve_anon, resolve,
-               views, status)
+from . import (scope, quotas, cascade, rbac, resolved_credential, tenant_budget,
+               resolve_anon, resolve, views, status)
 
-_MODULES = (scope, quotas, cascade, rbac, resolved_credential, resolve_anon, resolve,
-            views, status)
+_MODULES = (scope, quotas, cascade, rbac, resolved_credential, tenant_budget,
+            resolve_anon, resolve, views, status)
 
 # Ré-export plat (publics + privés à un underscore ; les dunder restent au
 # package) + carte `nom -> modules qui le définissent`, qui sert la propagation

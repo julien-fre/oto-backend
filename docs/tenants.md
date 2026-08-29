@@ -170,8 +170,69 @@ cascade d'avant, à l'appel suivant — rien à invalider. Aucune colonne n'a é
 valeur `tenant` d'`entity_type` reste inerte tant qu'aucune ligne ne la porte, et le
 `CHECK` d'`owner_type` sur `connector_instances` l'acceptait déjà.
 
-**Ce qui reste (PR 2)** : le rôle « admin de tenant » (le partenaire pose SA clé depuis SON
-tableau de bord), l'arête tenant→org de la chaîne 0053 (budget par org — R10, la sémantique
-de partage), l'étage tenant sur l'endpoint anonyme, la ligne `tenant` dans `oto_instance
-op=list` (les instances existent, elles ne sont pas encore listées ni épinglables depuis la
-liste), et le mode `tenant` de `/api/me` côté dashboard (`keyStack.ts`).
+**Ce qui restait à la PR 2** (livré le 2026-08-29, section suivante) : le rôle « admin de
+tenant », l'arête tenant→org de 0053, l'étage tenant de l'endpoint anonyme, la ligne
+`tenant` dans `oto_instance op=list`. Reste côté dashboard : le mode `tenant` de `/api/me`
+(`keyStack.ts`, oto-front).
+
+## Le rôle « admin de tenant » et l'arête tenant→org (L-clés PR 2 — 2026-08-29)
+
+**Le rôle.** La sortie nommée du régime transitoire (0052 §Amendement 27/08 : l'opérateur du
+premier tenant tiers est `super_admin` faute de ce rôle). Table `tenant_admins (slug, sub)`,
+additive et réversible ; règle `_authz.TENANT_ADMIN_OF(slug, platform=…)` = la règle
+plateforme essayée d'abord (`PLATFORM_ADMIN` pour lire, `SUPER_ADMIN` pour écrire), et sur
+son 403 seulement, l'admin du tenant — **lu sur le sub qualifié** (`tenancy.tenant_of`), jamais
+sur le rattachement d'une org (L1). Un admin déclaré sur `pilote` est un compte `pilote:…` ;
+le tenant `oto` n'en a pas (ses admins sont ceux de la plateforme). Ce qu'il fait : poser et
+retirer la clé de son tenant, en accorder l'usage à ses orgs, voir la fiche de son tenant.
+Déclarer le rôle reste un acte de la plateforme (`POST/DELETE /api/admin/tenants/{slug}/
+admins[/{sub}]`, `oto_admin_tenant op=admin_add|admin_remove`, super admin).
+
+⚠️ **L'admin de tenant agit par la face REST (son tableau de bord), pas par `oto_admin_tenant`.**
+Le plancher d'un outil consolidé est le plus BAS de ses ops (`_authz._lowest_floor`) : une seule
+op au rôle de tenant ferait descendre `oto_admin_tenant` à `None`, c'est-à-dire l'entrée de
+l'outil dans le handshake de chaque compte de la plateforme. La console garde donc son plancher
+`operator` (gardé par `test_tenant_admin_role.py`), et ce sont les capacités REST par geste qui
+portent `TENANT_ADMIN_OF`.
+
+**L'arête tenant→org** (0053-D3 : « le tenant s'insère dans la même chaîne »). Ressource = la
+clé du tenant (`tenant:{slug}:{connecteur}`, le ref du coffre), grantor `tenant:{slug}`,
+grantee `org:{id}`, contrainte `quota` = appels/jour pour **toute l'org** (R10 : budget partagé,
+la lettre de D7). Trois états, ceux de la clé plateforme au lot L5 :
+
+| état | condition | ce que sert la cascade | la chaîne 0053 |
+|---|---|---|---|
+| MUETTE | aucune arête n'a jamais visé cette org | la clé, comme en PR 1 | `appartenance` |
+| ACCORDE | ≥1 arête vivante | la clé, budget débité (`access.tenant_budget`) | `grant` |
+| REFUSE | des arêtes, toutes révoquées | le barreau est **sauté** — l'org retombe sur la plateforme | idem |
+
+`chain_shadow` lit l'arête par la **même fonction** que le walker (`grants_chain.tenant_rung`)
+et passe au palier suivant sur REFUSE comme lui : aucun `inconnu` créé (gardé par
+`test_tenant_edge_chain.py`). L'arête n'est lue qu'APRÈS que la sonde a trouvé une clé —
+sans clé de tenant, zéro lecture.
+
+⚠️ **Le budget est débité à la RÉSOLUTION, pas au succès de l'appel** — à la différence du
+compteur plateforme, que chaque outil débite lui-même après un appel réussi
+(`record_platform_usage`, ~10 sites). Une clé de tenant n'a pas ces sites ; en ajouter un par
+outil serait la copie que le walker unique existe pour éviter, et une borne posée que personne
+ne débite est le défaut de #409. Un appel qui échoue chez le fournisseur compte donc. Le
+déplacement vers « au succès » passe par le relevé d'appel du middleware, avec L8.
+
+**L'anonyme** (`<slug>.mcp.oto.cx`, ADR 0032) n'a pas d'identité : il n'obtient l'étage tenant
+que par une **arête vivante** tenant→org (`grants_chain.tenant_for_org`), jamais par le
+rattachement de l'org. Sans arête, sa cascade reste `org > plateforme`. Le budget vaut pour lui
+aussi : l'org entière y puise, anonyme compris. ⚠️ L'arête ne re-tenante personne : un compte nu
+dans une org accordée garde sa cascade d'avant.
+
+**Surfaces** (`GET/PUT/DELETE /api/admin/tenants/{slug}/keys/{provider}/grants[/{org_id}]` ;
+`oto_admin_tenant op=org_grants|org_grant|org_revoke`, plancher plateforme). Une arête sur une
+clé absente est refusée (`no_tenant_key`) : elle ne servirait rien.
+
+**`oto_instance op=list`** rend la clé du tenant de l'appelant au niveau `tenant` (entre `org`
+et `platform`, `via=tenant_key`, `owner.type=tenant`), épinglable par `_instance=`. Un compte nu
+ne la voit pas : il ne pourrait pas la résoudre (R9).
+
+**Retour arrière.** Retirer le rôle (`admin_remove`) et révoquer les arêtes ramène à #603 —
+avec une nuance à connaître : une org RÉVOQUÉE n'est pas une org « sans arête » (les archivées
+restent, D7) ; pour la ramener à l'état MUET il faut supprimer ses lignes de `grants` (et
+`grant_counters` d'abord, la FK refuse sinon). Aucune colonne retirée, une table neuve.

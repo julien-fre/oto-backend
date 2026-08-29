@@ -8,8 +8,8 @@ Trois choses à tenir, et une décision qui se relit mal dans le code seul :
    RETIRE ; elle ne pose pas.
 2. **Le plancher.** Lire = `PLATFORM_ADMIN` (comme les autres lentilles) ; poser et
    retirer = `SUPER_ADMIN` (ça change ce que la résolution sert à tout un tenant, comme
-   `reload` change ce que le process authentifie). Le rôle « admin de tenant » est la
-   PR 2, pas celle-ci.
+   `reload` change ce que le process authentifie) — OU, depuis la PR 2, l'admin du
+   tenant lui-même (`TENANT_ADMIN_OF`, testé dans `test_tenant_admin_role.py`).
 3. **Le tenant primaire est refusé** : ses clés partagées sont les instances plateforme.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from oto_mcp import access, credentials_store, tenant_vault
 from oto_mcp.capabilities import tenant_keys as tk
 from oto_mcp.capabilities import tenants_admin as ta
-from oto_mcp.capabilities._authz import PLATFORM_ADMIN, SUPER_ADMIN
+from oto_mcp.capabilities import _authz
 from oto_mcp.capabilities._types import AuthzDenied, RawCtx, ResolvedCtx
 from oto_mcp.capabilities.registry import CAPABILITIES
 
@@ -41,21 +41,35 @@ def tenant_connu(monkeypatch):
 
 # ── 1. les surfaces et leurs planchers ────────────────────────────────────────
 
-def test_la_pose_est_rest_seule_et_super_admin():
+@pytest.fixture
+def operateur(monkeypatch):
+    """Un admin plateforme (non super), sans rôle de tenant."""
+    monkeypatch.setattr(access, "is_platform_operator", lambda sub: True)
+    monkeypatch.setattr(access, "is_super_admin", lambda sub: False)
+    monkeypatch.setattr(access, "current_org", lambda sub: None)
+    monkeypatch.setattr(access, "get_user_role", lambda sub: "admin")
+    monkeypatch.setattr(_authz.db, "is_tenant_admin", lambda slug, sub: False)
+
+
+def test_la_pose_est_rest_seule_et_super_admin(operateur):
     pose = _cap("admin.tenant_key_set")
     assert pose.mcp is None, "un secret brut ne traverse pas un appel d'outil (25/06)"
     assert (pose.rest.verb, pose.rest.path) == ("PUT", "/api/admin/tenants/{slug}/keys/{provider}")
-    assert pose.authz is SUPER_ADMIN
+    with pytest.raises(AuthzDenied) as e:
+        pose.authz(RawCtx(sub="op"), SimpleNamespace(slug=PILOTE))
+    assert e.value.status == 403
     assert pose.Output is not None
 
 
-def test_la_lecture_est_platform_admin_le_retrait_super_admin():
+def test_la_lecture_est_platform_admin_le_retrait_super_admin(operateur):
     liste, retrait = _cap("admin.tenant_keys"), _cap("admin.tenant_key_clear")
     assert (liste.rest.verb, liste.rest.path) == ("GET", "/api/admin/tenants/{slug}/keys")
-    assert liste.authz is PLATFORM_ADMIN
+    assert liste.authz(RawCtx(sub="op"), SimpleNamespace(slug=PILOTE)).sub == "op"
     assert (retrait.rest.verb, retrait.rest.path) == (
         "DELETE", "/api/admin/tenants/{slug}/keys/{provider}")
-    assert retrait.authz is SUPER_ADMIN
+    with pytest.raises(AuthzDenied) as e:
+        retrait.authz(RawCtx(sub="op"), SimpleNamespace(slug=PILOTE))
+    assert e.value.status == 403
 
 
 def test_la_console_liste_et_retire_pour_les_bons_planchers(monkeypatch):

@@ -451,11 +451,23 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
         # trouver. Sous le gate ORG_SHAREABLE comme l'équipe et l'org : c'est une clé
         # partagée. Servi AVANT la plateforme : plus proche de l'appelant.
         slug = tenant_vault.rung_tenant(sub)
+        if slug is None and sub is None and org is not None:
+            # ANONYME (ADR 0032, L-clés PR 2) : pas d'identité ⟹ le tenant ne se lit
+            # que sur une arête VIVANTE tenant→org — jamais sur le rattachement de
+            # l'org (lot L1). Sans arête, l'anonyme garde sa cascade `org > plateforme`.
+            slug = grants_chain.tenant_for_org(org, provider)
         if slug is not None:
             hit = probe.tenant(slug, provider)
             if hit is not None:
-                payload, account = hit if isinstance(hit, tuple) else (hit, "")
-                yield CascadeRung("tenant", credentials_store.TENANT, slug, payload, account)
+                # L'arête tenant→org (0053, PR 2) — lue APRÈS la sonde, donc jamais
+                # sans clé : MUETTE ⟹ la clé sert (PR 1) ; ACCORDE ⟹ elle sert, le
+                # budget se règle à la résolution (`tenant_budget`) ; REFUSE ⟹ le
+                # barreau se SAUTE et l'org retombe sur la plateforme.
+                verdict = grants_chain.tenant_rung(slug, provider, org)
+                if verdict is None or verdict.granted:
+                    payload, account = hit if isinstance(hit, tuple) else (hit, "")
+                    yield CascadeRung("tenant", credentials_store.TENANT, slug, payload,
+                                      account, via="grant" if verdict else "local")
     if want != "byo":
         con = providers.connector_for_provider(provider)
         if con is not None and "platform" in con.auth_modes:

@@ -55,6 +55,7 @@ from pydantic import BaseModel, ConfigDict
 # list_platform_keys (qui déchiffre), jamais les formes appauvries
 # list_org_secrets/list_group_secrets (elles écrasent account/meta/secret_kind).
 from ... import access, credentials_store, db, group_store, instance_refs, providers
+from . import instances_tenant
 from ...connectors import instance_visibility
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -63,19 +64,19 @@ from ..registry import CAPABILITIES
 logger = logging.getLogger(__name__)
 
 # Rang de proximité (§C) : la cascade relue comme niveaux, portée par le tri.
-_LEVEL_RANK = {"member": 0, "group": 1, "org": 2, "platform": 3}
+_LEVEL_RANK = {"member": 0, "group": 1, "org": 2, "tenant": 3, "platform": 4}
 
 
 class ListInstancesInput(BaseModel):
     connector: Optional[str] = None      # filtre par type de connecteur
-    level: Optional[Literal["member", "group", "org", "platform"]] = None
+    level: Optional[Literal["member", "group", "org", "tenant", "platform"]] = None
 
 
 class InstanceOwner(BaseModel):
     """Propriétaire d'une instance. `type='user'` porte un sub, `group`/`org` un
     entier, `platform` **aucun id** (une clé plateforme est identifiée par son
     label, ADR 0044 §F) — d'où trois champs optionnels plutôt qu'un couple figé."""
-    type: Literal["user", "group", "org", "platform"]
+    type: Literal["user", "group", "org", "tenant", "platform"]
     # sub (user) ou id de groupe/org — ENTIER quand il vient du contexte, CHAÎNE
     # quand il est reconstruit depuis une ligne partagée (`entity_id`). Absent en
     # platform.
@@ -115,7 +116,7 @@ class ConnectorInstance(BaseModel):
     # Rang de PROXIMITÉ dans la cascade, qui porte le tri (membre < groupe < org <
     # plateforme). Ce n'est PAS le gagnant : la liste ne dit jamais qui résout —
     # une seule vérité pour ça, `status_for`.
-    level: Literal["member", "group", "org", "platform"]
+    level: Literal["member", "group", "org", "tenant", "platform"]
     owner: InstanceOwner
     # DÉRIVÉ, jamais stocké : `meta.label` > « Connecteur · compte » > « Connecteur ·
     # label de clé » > label du connecteur. Deux instances peuvent donc porter le
@@ -407,6 +408,15 @@ def _list_instances(ctx: ResolvedCtx, inp: ListInstancesInput) -> dict:
                 _vault_key("org", org, row["connector"],
                            row.get("account") or "")))
 
+    # 3 bis. TENANT (L-clés PR 2) — la clé du tenant de l'APPELANT (sub qualifié),
+    # entre l'org et la plateforme comme dans le walker. Vide pour un compte nu.
+    for slug, ref, row in instances_tenant.tenant_rows(sub):
+        inst = _cred_instance("tenant", {"type": "tenant", "id": slug}, ref, row,
+                              _vault_key(credentials_store.TENANT, slug, row["connector"],
+                                         row.get("account") or ""))
+        inst["via"] = "tenant_key"
+        out.append(inst)
+
     # 4. PLATEFORME — grants user + org + free-tier. La cascade ne résout qu'UNE
     # clé plateforme par provider (user_grant > org_grant > free_tier) → dédup
     # par PROVIDER (ordre d'insertion = priorité ; dédup par clé listait un
@@ -546,7 +556,8 @@ CAPABILITIES += [
         authz=SUB_ONLY,   # org_id injecté du seam acteur, jamais d'un param client
         description=(
             "List the connector INSTANCES (connector x auth/config) visible to you in the active "
-            "org, by proximity: yours (member), your groups', the org's, then platform grants. "
+            "org, by proximity: yours (member), your groups', the org's, your tenant's "
+            "(accounts of a third-party tenant only), then platform grants. "
             "Metadata only — the secret is never returned. `id` (`inst:<n>`) is the stable "
             "identifier of the instance and will replace `ref`; it is set as soon as the key is "
             "stored, but may still be missing if it could not be read, so keep using `ref` as "

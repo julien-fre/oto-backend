@@ -72,13 +72,14 @@ oto_mcp/
 │                     #   Séparé de tools/ : le registre doit rester PUR (tools/ importe
 │                     #   access → le registre, et se charge en try/except — une dép
 │                     #   optionnelle manquante retirerait le connecteur du catalogue).
-├── access/           # rôles, contexte, cascade de credentials, quotas (package depuis le 27/08 — 2 000 lignes en 9 modules). Surface plate `access.<fn>` via __init__, cf. ci-dessous
+├── access/           # rôles, contexte, cascade de credentials, quotas (package depuis le 27/08 — 2 000 lignes en 10 modules). Surface plate `access.<fn>` via __init__, cf. ci-dessous
 │   ├── scope.py      #   qui agit : rôle plateforme, current_org/group/project, ce que le projet ÉPINGLE
 │   ├── quotas.py     #   ce qui est métré (quota jour, usage) et ce qui est payé (option, comp, abonnement)
 │   ├── cascade.py    #   le WALKER unique perso > cross-org > équipe > org > TENANT (L-clés, 29/08) > plateforme + ses 3 sondes
 │   ├── rbac.py       #   qui a le droit : RBAC connecteur org/équipe, tools masqués, garde d'instance, redaction
 │   ├── resolved_credential.py  # le TYPE rendu par toute résolution (extrait de resolve le 29/08, cliquet #584)
-│   ├── resolve_anon.py  # l'endpoint MCP anonyme (ADR 0032), extrait de resolve le 29/08 — pas d'étage tenant (L1)
+│   ├── tenant_budget.py  # le budget par org de l'arête tenant→org (L-clés PR 2), appliqué à la résolution
+│   ├── resolve_anon.py  # l'endpoint MCP anonyme (ADR 0032), extrait de resolve le 29/08 — l'étage tenant n'y vient que d'une arête
 │   ├── resolve.py    #   la résolution réelle d'un credential (chemin chaud)
 │   ├── views.py      #   vues minces : resolve_api_key/_fields, mount, credential_mode_for, option_open
 │   └── status.py     #   le snapshot par connecteur de /api/me
@@ -165,8 +166,13 @@ seulement — le nom canonique est rétabli avant que quoi que ce soit d'autre n
 - **La clé de connecteur du tenant (29/08, L-clés PR 1)** : coffre `entity_type='tenant'`
   (`entity_id` = slug), étage `org > tenant > plateforme` de la cascade, pose REST seule
   (`PUT /api/admin/tenants/{slug}/keys/{provider}`, super_admin), `oto_admin_tenant op=keys|key_clear`.
-  Le tenant `oto` n'en porte pas (ses clés partagées sont les instances plateforme). Reste (PR 2) :
-  le rôle « admin de tenant » et l'arête tenant→org de 0053.
+  Le tenant `oto` n'en porte pas (ses clés partagées sont les instances plateforme).
+- **Le rôle « admin de tenant » et l'arête tenant→org (29/08, L-clés PR 2)** : table
+  `tenant_admins`, règle `TENANT_ADMIN_OF` (plateforme d'abord, puis l'admin lu sur le sub
+  qualifié) — **par la face REST** (la console MCP garde son plancher opérateur, sinon elle
+  entrerait dans le handshake de chaque compte). Arête `tenant:{slug}:{connecteur} → org` à trois
+  états (muette = PR 1, accorde = budget par org débité à la résolution, refuse = l'org retombe sur
+  la plateforme), lue par le walker ET `chain_shadow` ; l'anonyme n'a l'étage que par l'arête.
 
 **Détail : `docs/tenants.md`.**
 

@@ -192,6 +192,10 @@ _PK_SUB_TABLES = (
     #   symptôme nommé par la carte CLAUDE.md. `entity_id` mélange org_id numérique
     #   et sub : même argument de non-collision.
     ("option_comps", "entity_id", ("entity_type", "option")),
+    # - le rôle d'admin de tenant (L-clés PR 2) : PK (slug, sub) ⟹ jeter la ligne de
+    #   l'ancien si le canonique l'a déjà, repointer sinon. Une bascule reste bornée à
+    #   UN MÊME tenant (R3), donc le rôle garde son slug.
+    ("tenant_admins", "sub", ("slug",)),
 )
 
 # Inventaire des colonnes keyed-by-sub à repointer (issue oto-backend#56). Plain
@@ -260,6 +264,8 @@ _SUB_COLUMNS = [
     # Qui a posé une surcharge de propriété de connecteur (L6 pièce 2 c2). Colonne
     # d'AUTEUR, pas d'identité : un UPDATE nu suffit, comme pour les voisines.
     ("connector_settings", "set_by"),
+    # Qui a déclaré un admin de tenant (L-clés PR 2) — colonne d'auteur.
+    ("tenant_admins", "granted_by"),
 ]
 
 

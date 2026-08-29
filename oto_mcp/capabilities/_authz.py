@@ -19,7 +19,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from .. import access, group_store, roles
+from .. import access, db, group_store, roles, tenancy
 from ._types import AuthzDenied, RawCtx, ResolvedCtx
 
 
@@ -348,6 +348,39 @@ def ORG_MEMBER_OPT(field: str):
             return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
         return ResolvedCtx(sub=sub, org_id=access.current_org(sub),
                            role=access.get_user_role(sub))
+    return rule
+
+
+def TENANT_ADMIN_OF(field: str, *, platform):
+    """Admin du TENANT désigné par `input.<field>` (un slug), OU la règle plateforme
+    `platform` (`PLATFORM_ADMIN` pour lire, `SUPER_ADMIN` pour écrire) — L-clés PR 2.
+
+    La règle plateforme est essayée d'abord ; seul son **403** laisse la main au rôle
+    de tenant (un 400/401 est rendu tel quel). Le rôle se lit sur le **sub qualifié**
+    (`tenancy.tenant_of`), jamais sur le rattachement d'une org (lot L1) : un admin
+    déclaré sur `pilote` ne passe que pour `slug='pilote'`, et un compte nu ne passe
+    jamais par ce chemin — il n'a pas de tenant tiers.
+
+    Plancher plateforme `None` : l'accès dépend d'une CIBLE (le tenant) que le
+    handshake ne connaît pas. ⚠️ Ne pas la mettre dans un combinateur d'outil MCP
+    servi à tous : le plancher du combinateur descendrait à `None` et l'outil
+    entrerait dans le handshake de chaque compte. L'admin de tenant agit par la face
+    REST (son tableau de bord)."""
+    def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+        sub = _require_sub(raw)
+        slug = (getattr(inp, field, None) or "").strip() if inp is not None else ""
+        if not slug:
+            raise AuthzDenied(400, "missing_slug", f"Champ `{field}` requis.")
+        try:
+            return platform(raw, inp)
+        except AuthzDenied as refus:
+            if refus.status != 403:
+                raise
+        if tenancy.current().tenant_of(sub) != slug or not db.is_tenant_admin(slug, sub):
+            raise AuthzDenied(403, "forbidden", f"Réservé à un admin du tenant `{slug}`.")
+        return ResolvedCtx(sub=sub, org_id=access.current_org(sub),
+                           role=access.get_user_role(sub))
+    rule.platform_floor = None
     return rule
 
 

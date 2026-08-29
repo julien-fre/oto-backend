@@ -7,11 +7,10 @@ Trois capacités, une par geste — lister, poser, retirer — sur `/api/admin/t
 - **La pose est REST seule.** Un secret brut ne traverse pas un appel d'outil — la
   règle vaut pour les clés d'org et les clés plateforme depuis le 2026-06-25
   (`admin_console`, `orgs/secrets`), elle vaut ici. La console liste et retire.
-- **Le plancher est celui de l'opérateur de la plateforme.** Lire = `PLATFORM_ADMIN`
-  (une lentille) ; poser et retirer = `SUPER_ADMIN`, comme `reload` : ça change ce que
-  la résolution sert à tout un tenant. Le rôle « admin de tenant » (le partenaire pose
-  SA clé depuis SON tableau de bord) et l'arête tenant→org de la chaîne 0053 sont la
-  PR 2 — cette surface-ci est la première marche, pas le produit.
+- **Deux planchers, dans cet ordre** (`TENANT_ADMIN_OF`, PR 2) : l'opérateur de la
+  plateforme — lire = `PLATFORM_ADMIN`, poser et retirer = `SUPER_ADMIN` — OU l'admin
+  du tenant lui-même (`tenant_admins`, lu sur le sub qualifié), qui pose SA clé depuis
+  SON tableau de bord. L'arête tenant→org (budget par org) vit dans `tenant_grants`.
 - **Le tenant primaire est refusé** : ses clés partagées sont les instances plateforme.
 - **Même validation qu'une clé d'org** (`providers.org_secret_meta`, écriture partielle
   par merge #448, garde de compte #409) — source unique, rien de recopié.
@@ -23,7 +22,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from .. import credentials_store, db, providers, tenancy, tenant_vault
-from ._authz import PLATFORM_ADMIN, SUPER_ADMIN
+from ._authz import PLATFORM_ADMIN, SUPER_ADMIN, TENANT_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
@@ -142,14 +141,14 @@ def _clear_key(ctx: ResolvedCtx, inp: TenantKeyClearInput) -> dict:
 CAPABILITIES += [
     Capability(
         key="admin.tenant_keys", handler=_list_keys, Input=TenantKeysInput,
-        Output=TenantKeys, authz=PLATFORM_ADMIN,
+        Output=TenantKeys, authz=TENANT_ADMIN_OF("slug", platform=PLATFORM_ADMIN),
         description="Connector keys posed on a tenant (never the secret).",
         rest=RestBinding("GET", "/api/admin/tenants/{slug}/keys"),
     ),
     Capability(
         # REST seule : un secret brut ne traverse pas un appel d'outil (25/06).
         key="admin.tenant_key_set", handler=_set_key, Input=TenantKeySetInput,
-        Output=TenantKeySet, authz=SUPER_ADMIN,
+        Output=TenantKeySet, authz=TENANT_ADMIN_OF("slug", platform=SUPER_ADMIN),
         description=("Set/rotate a tenant's shared connector key (org-shareable "
                      "connectors only; serves every org of the tenant that has no "
                      "closer key). Single-key connectors: `api_key`; multi-field: "
@@ -158,7 +157,7 @@ CAPABILITIES += [
     ),
     Capability(
         key="admin.tenant_key_clear", handler=_clear_key, Input=TenantKeyClearInput,
-        Output=TenantKeyCleared, authz=SUPER_ADMIN,
+        Output=TenantKeyCleared, authz=TENANT_ADMIN_OF("slug", platform=SUPER_ADMIN),
         description="Remove a tenant's shared connector key.",
         rest=RestBinding("DELETE", "/api/admin/tenants/{slug}/keys/{provider}"),
     ),

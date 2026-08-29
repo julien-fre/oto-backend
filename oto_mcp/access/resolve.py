@@ -25,7 +25,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import (providers, credentials_store, db, group_store, instance_refs, org_store,
                 session_org, tenant_vault)
-from . import cascade, chain_shadow, quotas, rbac, resolve_anon, scope
+from . import cascade, chain_shadow, quotas, rbac, resolve_anon, scope, tenant_budget
 from .resolved_credential import ResolvedCredential
 
 logger = logging.getLogger(__name__)
@@ -331,6 +331,9 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
             ),
         ))
 
+    if win.mode == "tenant":
+        # Budget par org de l'arête tenant→org (L-clés PR 2) — no-op sans arête.
+        tenant_budget.enforce(win.entity_id, porteur, active_org)
     if win.mode != "platform":
         return ResolvedCredential(provider, win.payload, False, win.mode,
                                   win.entity_type, win.entity_id, account=win.account)

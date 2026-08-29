@@ -172,6 +172,18 @@ def live_grantees_for_resource(resource_id: str) -> list[str]:
     return [f"{r['grantee_kind']}:{r['grantee_id']}" for r in rows]
 
 
+def live_edges_for_resource(resource_id: str) -> list[dict]:
+    """Les arêtes VIVANTES visant cette ressource, contraintes comprises (surface
+    d'affichage : « à qui, avec quel budget » — L-clés PR 2). Servi par
+    `idx_grants_resource_grantee` ; hors chemin chaud."""
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT {_GRANT_COLS} FROM grants WHERE resource_id = %s "
+            "AND revoked_at IS NULL ORDER BY created_at DESC, id DESC",
+            (resource_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def resource_ids_with_edges(resource_ids: Iterable[str]) -> set[str]:
     """Parmi `resource_ids`, ceux qui portent au moins une arête (révoquée comprise).
     Sert les surfaces d'inventaire ; hors chemin chaud."""

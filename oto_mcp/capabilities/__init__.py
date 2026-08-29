@@ -21,6 +21,8 @@ from . import users_admin  # noqa: F401 — platform.user.{list,get,set_role}, p
 from . import vault_health  # noqa: F401 — admin.vault_health (scan credentials indéchiffrables, #72)
 from . import tenants_admin  # noqa: F401 — admin.tenant{s,_console} (suivi de l'étage tenant, ADR 0052)
 from . import tenant_keys  # noqa: F401 — admin.tenant_key{s,_set,_clear} (la clé de connecteur d'un tenant, L-clés PR 1)
+from . import tenant_admins  # noqa: F401 — admin.tenant_admin{s,_add,_remove} (le rôle « admin de tenant », L-clés PR 2)
+from . import tenant_grants  # noqa: F401 — admin.tenant_org_{grants,grant,revoke} (l'arête tenant→org de 0053, L-clés PR 2)
 from . import access_shadow_admin  # noqa: F401 — admin.access_shadow (fenêtre de double lecture L7, ADR 0053)
 from . import unipile_seats  # noqa: F401 — admin.unipile_seats + admin.unipile_seat_release
 from . import editor_apps  # noqa: F401 — platform.editor_app.{list,set,delete} (app OAuth d'oto)
