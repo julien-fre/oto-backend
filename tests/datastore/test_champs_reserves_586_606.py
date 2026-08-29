@@ -299,44 +299,81 @@ def test_la_fusion_par_cle_et_le_lot_refusent_aussi(banc):
 
 # ── ce que le cran ne ferme PAS, et c'est voulu ──────────────────────────────
 
-def test_reecrire_la_valeur_IDENTIQUE_d_une_readonly_est_refusee_et_garde_le_comment(banc):
-    """Trou éprouvé sur copie jetable, v1.165.0 (29/08/2026) : l'identique passait
-    (« rien n'a changé ») et `adresse.comment` tombait avec — la règle « une valeur nue
-    réécrite emporte ses couches » jouait là où tout le dispositif tient à la couche.
-    Un agent qui réémet sa fiche avec l'adresse inchangée effaçait la divergence qu'il
-    venait d'écrire. Désormais : refus, identique compris, même message — et le
-    comment reste."""
+def test_la_valeur_IDENTIQUE_d_une_readonly_est_un_no_op_qui_garde_le_comment(banc):
+    """29/08/2026, l'erreur d'une heure : #623 refusait l'identique sur `readonly`.
+    Huit charges d'écriture échantillonnées sur le terrain, toutes : le geste dominant
+    RÉÉMET la fiche entière, valeurs verrouillées comprises. « Identique compris »
+    aurait arrêté la campagne — une flotte à l'arrêt, pas un garde-fou. L'identique
+    n'est pas une écriture : no-op silencieux, couches préservées. Le refus ne porte
+    que sur un CHANGEMENT."""
     st, etat = banc
     st.update_row("viviers", "r1", {"adresse": {"comment": "registre — 2 rue B"}})
-    with pytest.raises(RowValidationError) as exc:
-        st.update_row("viviers", "r1", {"adresse": "1 rue A"})
-    assert "`adresse.comment`" in str(exc.value)
-    assert exc.value.details == {"expected_column": "adresse.comment"}
+    st.update_row("viviers", "r1", {"adresse": "1 rue A"})
+    st.update_row("viviers", "r1", {"adresse": {"valeur": "1 rue A"}})
     assert etat["lignes"]["r1"]["adresse"] == {"valeur": "1 rue A",
+                                              "comment": "registre — 2 rue B"}
+    assert st.off_schema_report() == {}                     # silencieux
+
+
+def test_le_round_trip_ENTIER_sur_une_readonly_PASSE(banc):
+    """Relire → repousser la ligne entière porte la valeur nue de la colonne source,
+    identique : la fiche passe, rien n'est perdu."""
+    st, etat = banc
+    st.update_row("viviers", "r1", {"adresse": {"comment": "registre — 2 rue B"}})
+    st.update_row("viviers", "r1", dict(_LIGNE, libre="note"))
+    assert etat["lignes"]["r1"]["libre"] == "note"
+    assert etat["lignes"]["r1"]["adresse"]["comment"] == "registre — 2 rue B"
+
+
+def test_le_lot_accepte_l_identique_sur_une_readonly_et_garde_le_comment(banc):
+    st, etat = banc
+    st.update_row("viviers", "r1", {"adresse": {"comment": "registre — 2 rue B"}})
+    out = st._write_rows_to_ns(7, [{"siren": "552081317", "adresse": "1 rue A",
+                                    "libre": "x"}], key="siren")
+    assert out["updated"] == 1
+    assert etat["lignes"]["r1"]["adresse"]["comment"] == "registre — 2 rue B"
+
+
+def test_comment_et_link_accompagnant_une_valeur_identique_sont_ECRITS(banc):
+    """Le geste utile : `{"valeur": <identique>, "comment": "…"}` annote sans toucher
+    la valeur — le comment est écrit, le link existant reste (la valeur n'a pas
+    changé, rien ne tombe)."""
+    st, etat = banc
+    st.update_row("viviers", "r1", {"adresse": {"link": "https://l"}})
+    st.update_row("viviers", "r1", {"adresse": {"valeur": "1 rue A",
+                                                "comment": "registre — 2 rue B"}})
+    assert etat["lignes"]["r1"]["adresse"] == {"valeur": "1 rue A", "link": "https://l",
                                               "comment": "registre — 2 rue B"}
 
 
-def test_le_round_trip_ENTIER_sur_une_readonly_est_refuse(banc):
-    """Relire → repousser la ligne entière porte la valeur nue de la colonne source :
-    refusé, parce que l'agent n'a aucun cas où réécrire cette valeur est utile. Le
-    round-trip se fait sans elle."""
+# ── #586 : une `.origine` égale à ce que le système poserait est un no-op ─────
+
+def test_ecrire_l_origine_EGALE_a_la_valeur_en_place_est_acceptee(banc):
+    """Le geste dominant du terrain sur une colonne système :
+    `{"valeur": <identique>, "origine": <la même>}` — c'est exactement ce que le
+    système poserait. Accepté ; rien de perdu, rien de refusé."""
     st, etat = banc
-    with pytest.raises(RowValidationError, match="`adresse`"):
-        st.update_row("viviers", "r1", dict(_LIGNE, libre="note"))
-    assert etat["maj"] == []
-    st.update_row("viviers", "r1", {"siren": "552081317", "raison_sociale": "ACME",
-                                    "libre": "note"})
-    assert etat["lignes"]["r1"]["libre"] == "note"
+    st.update_row("viviers", "r1", {"raison_sociale": {"comment": "c"}})
+    st.update_row("viviers", "r1", {"raison_sociale": {"valeur": "ACME", "origine": "ACME"}})
+    assert etat["lignes"]["r1"]["raison_sociale"] == {"valeur": "ACME", "origine": "ACME",
+                                                     "comment": "c"}
+    # Puis l'agent modifie en réémettant l'origine STOCKÉE : accepté, jamais réécrite.
+    st.update_row("viviers", "r1", {"raison_sociale": {"valeur": "ACME HOLDING",
+                                                       "origine": "ACME"}})
+    assert etat["lignes"]["r1"]["raison_sociale"] == {"valeur": "ACME HOLDING",
+                                                     "origine": "ACME"}
+    # Une origine DIFFÉRENTE reste refusée, avec le message existant.
+    with pytest.raises(RowValidationError, match="raison_sociale.origine"):
+        st.update_row("viviers", "r1", {"raison_sociale": {"valeur": "ACME GROUP",
+                                                           "origine": "ACME GROUP"}})
+    assert etat["lignes"]["r1"]["raison_sociale"]["valeur"] == "ACME HOLDING"
 
 
-def test_le_lot_refuse_l_identique_sur_une_readonly_et_garde_le_comment(banc):
+def test_a_la_creation_une_origine_egale_a_la_valeur_est_acceptee(banc):
     st, etat = banc
-    st.update_row("viviers", "r1", {"adresse": {"comment": "registre — 2 rue B"}})
-    with pytest.raises(RowValidationError) as exc:
-        st._write_rows_to_ns(7, [{"siren": "552081317", "adresse": "1 rue A"}],
-                             key="siren")
-    assert "ligne 1/1" in str(exc.value) and "`adresse.comment`" in str(exc.value)
-    assert etat["lignes"]["r1"]["adresse"]["comment"] == "registre — 2 rue B"
+    st.append_row("viviers", {"siren": "389256712",
+                              "raison_sociale": {"valeur": "X", "origine": "X"}})
+    assert etat["creees"][0]["raison_sociale"] == {"valeur": "X", "origine": "X"}
 
 
 # ── le substrat : une valeur nue IDENTIQUE est un no-op qui garde les couches ──
@@ -377,8 +414,8 @@ def test_la_pose_refuse_readonly_sur_la_cle_metier():
 
 def test_sur_un_schema_legacy_la_cle_identique_est_de_l_ADRESSAGE(banc):
     """Un schéma déjà en base qui porterait `readonly` sur la clé (posé avant ce
-    garde, ou « complété » dans six mois) ne doit pas fermer le tableau sans le
-    savoir : la valeur de clé IDENTIQUE passe — c'est l'adresse de la ligne —, une
+    garde, ou « complété » dans six mois) ne ferme pas le tableau : la valeur de clé
+    IDENTIQUE passe comme toute valeur identique — c'est l'adresse de la ligne —, une
     valeur DIFFÉRENTE reste refusée (sur la ligne visée, c'est une réécriture)."""
     st, etat = banc
     etat["schema"] = {"key": "siren",

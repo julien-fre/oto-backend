@@ -118,11 +118,70 @@ def test_une_valeur_identique_ne_detruit_pas_le_comment_en_base(table):
     st.update_row(ns, rid, {"raison_sociale": {"comment": "vérifiée"},
                             "adresse": {"comment": "registre — 2 rue B"}})
     st.update_row(ns, rid, {"raison_sociale": "TEMOIN"})
-    with pytest.raises(RowValidationError, match="`adresse.comment`"):
-        st.update_row(ns, rid, {"adresse": "1 rue A"})
+    st.update_row(ns, rid, {"adresse": "1 rue A"})           # identique : no-op
     d = _donnees(ns_id, rid)
     assert d["raison_sociale"] == {"valeur": "TEMOIN", "comment": "vérifiée"}
     assert d["adresse"] == {"valeur": "1 rue A", "comment": "registre — 2 rue B"}
+
+
+ENRICHISSEMENT = {f"enrich_{i:02d}": f"valeur {i}" for i in range(1, 21)}
+
+
+@pytest.fixture
+def terrain(live):
+    """Le tableau du terrain : `raison_sociale` verrouillée ET à origine système."""
+    from oto_mcp import db
+    ns = "t-" + uuid.uuid4().hex[:6]
+    ns_id = db.create_datastore_namespace("user", "sub-test", ns)
+    st = _store()
+    st.set_schema(ns, {"key": "siren", "fields": [
+        {"key": "siren", "type": "text"},
+        {"key": "raison_sociale", "type": "text", "readonly": True, "origine": "system"},
+    ]})
+    row = st.append_row(ns, {"siren": "552032534", "raison_sociale": "TEMOIN"})
+    return st, ns, ns_id, row["_id"]
+
+
+def test_terrain_1_valeur_et_origine_identiques_acceptees_rien_de_perdu(terrain):
+    """① `{"raison_sociale": {"valeur": <identique>, "origine": <identique>}}`."""
+    st, ns, ns_id, rid = terrain
+    st.update_row(ns, rid, {"raison_sociale": {"comment": "vérifiée"}})
+    st.update_row(ns, rid, {"raison_sociale": {"valeur": "TEMOIN", "origine": "TEMOIN"}})
+    assert _donnees(ns_id, rid)["raison_sociale"] == {"valeur": "TEMOIN", "origine": "TEMOIN",
+                                                     "comment": "vérifiée"}
+
+
+def test_terrain_2_la_fiche_entiere_passe(terrain):
+    """② le même, plus vingt colonnes d'enrichissement — la fiche passe en entier,
+    par le chemin de `data_write(row=…)` (fusion sur la clé) ET par `id`."""
+    st, ns, ns_id, rid = terrain
+    fiche = {"siren": "552032534",
+             "raison_sociale": {"valeur": "TEMOIN", "origine": "TEMOIN"}, **ENRICHISSEMENT}
+    out = st.append_row(ns, fiche)
+    assert out["_id"] == rid
+    st.update_row(ns, rid, dict(fiche, enrich_01="valeur 1 bis"))
+    d = _donnees(ns_id, rid)
+    assert d["raison_sociale"] == {"valeur": "TEMOIN", "origine": "TEMOIN"}
+    assert d["enrich_01"] == "valeur 1 bis" and d["enrich_20"] == "valeur 20"
+
+
+def test_terrain_3_une_valeur_differente_est_refusee_rien_d_ecrit(terrain):
+    """③ `{"raison_sociale": <valeur différente>}` → refusé, rien d'écrit."""
+    st, ns, ns_id, rid = terrain
+    avant = _donnees(ns_id, rid)
+    with pytest.raises(RowValidationError, match="`raison_sociale`"):
+        st.update_row(ns, rid, {"raison_sociale": "AUTRE", **ENRICHISSEMENT})
+    with pytest.raises(RowValidationError, match="`raison_sociale`"):
+        st.append_row(ns, {"siren": "552032534", "raison_sociale": "AUTRE"})
+    assert _donnees(ns_id, rid) == avant
+
+
+def test_terrain_4_le_comment_survit_a_la_valeur_identique(terrain):
+    """④ `{"raison_sociale": {"comment": "x"}}` puis `{"raison_sociale": <identique>}`."""
+    st, ns, ns_id, rid = terrain
+    st.update_row(ns, rid, {"raison_sociale": {"comment": "x"}})
+    st.update_row(ns, rid, {"raison_sociale": "TEMOIN"})
+    assert _donnees(ns_id, rid)["raison_sociale"] == {"valeur": "TEMOIN", "comment": "x"}
 
 
 def test_patch_schema_refuse_readonly_sur_la_cle(table):
