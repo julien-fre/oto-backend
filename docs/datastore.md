@@ -1010,3 +1010,53 @@ autre surface de la même plateforme accepte n'est pas une faute de frappe.
 descriptions. C'est délibéré, et c'est la mesure du 27/08 qui le dicte (§ longueur des
 descriptions ↔ appels malformés). Ce lot ne rend possible que ce que les agents
 **tentaient déjà** ; il n'a donc rien à leur enseigner.
+
+## Les jetons réservés — où chacun s'écrit, et les trois issues (#517, 29/08)
+
+Trois jetons voyagent dans les appels du datastore. **Un seul endroit dit où chacun a
+un sens** — `oto_mcp/datastore/jetons.py` —, et les deux faces s'en servent.
+
+| jeton | ce qu'il désigne | champs qui l'acceptent |
+|---|---|---|
+| `@claimed` | la ligne que le run réserve, et son tableau | `namespace`, `id` |
+| `slot:<nom>` | le tableau bindé sous ce nom par le projet actif | `namespace` |
+| `*` | toutes les colonnes | `fields` |
+
+**Trois issues, jamais une quatrième :**
+
+| ce qu'on lit | ce qui se passe |
+|---|---|
+| jeton **accepté** par ce champ | résolu |
+| jeton **reconnu mais mal placé** | refus qui NOMME le champ où il s'écrit |
+| jeton **inconnu** ici | rien — la valeur part telle quelle |
+
+### Pourquoi une couture, et pas une garde de plus
+
+L'inventaire du 29/08 est parti chercher des jetons mal **nommés** ; il a trouvé que
+les cas coûteux sont les jetons mal **placés**, et parmi eux **ceux que rien ne
+refusait** :
+
+- `@claimed` écrit dans le **contenu** d'une ligne — accepté, gravé en clair dans un
+  fichier client ;
+- `_run_id` posé comme **colonne** — même famille : un contexte d'exécution (ADR 0038)
+  inscrit dans une fiche livrable ;
+- `slot:<nom>` sur une opération de **ligne** côté capacité — passé brut au stockage,
+  qui répondait « namespace inconnu », **alors que les opérations de schéma de la même
+  couche le résolvaient depuis toujours**.
+
+> **Une divergence qui refuse est visible ; une divergence qui répond une cause fausse
+> s'instruit pendant des jours.** Les deux premières ne refusaient rien du tout.
+
+### ⚠️ Ce que la couture ne fait PAS, et c'est délibéré
+
+**Elle ne devine pas.** La reconnaissance est exacte : `@claim`, `@claimed-2`,
+`slots:x` ne sont pas des jetons, partent tels quels et échouent comme avant. *Un alias
+qui pardonne remplace une chaîne à recopier par une grammaire à deviner — la même
+faute, un cran plus haut.*
+
+**Elle ne regarde pas les mêmes jetons dans le contenu que dans l'adresse.** Seuls
+`@claimed` et les paramètres d'appel sont refusés dans une valeur de ligne, parce
+qu'ils n'ont **aucun** sens comme donnée. `slot:` et `*` sont des chaînes qu'une ligne
+peut légitimement porter — « slot: machine à café » est une note, pas une adresse.
+Les refuser là serait se protéger d'une faute qu'on ne sait pas distinguer d'un texte
+ordinaire ; un test existe pour l'empêcher de jamais devenir vrai.

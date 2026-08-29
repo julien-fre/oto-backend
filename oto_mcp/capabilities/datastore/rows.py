@@ -28,8 +28,11 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ... import access
 from ...auth import token_scopes
 from ...datastore import journal as datastore_journal
+from ...datastore import jetons
+from ...datastore.errors import ClaimedRefUnresolved
 from ...datastore.core import (
     BusinessKeyRequired,
     NamespaceNotFound,
@@ -201,6 +204,29 @@ class ReleasedRow(BaseModel):
     hint: Optional[str] = None
 
 
+def _adresse(ctx: ResolvedCtx, namespace: str, row_id=None, *, ligne: bool = True):
+    """La MÊME couture que la face agent (`oto_mcp/datastore/jetons.py`).
+
+    ⚠️ Elle est ici parce que les deux faces avaient divergé, et en silence : les
+    opérations de SCHÉMA de cette couche résolvaient `slot:<nom>` depuis toujours,
+    celles de LIGNES le passaient brut au stockage, qui répondait « namespace inconnu »
+    sur un jeton parfaitement valide. *Une divergence qui refuse est visible ; une
+    divergence qui répond une cause fausse s'instruit pendant des jours.*"""
+    try:
+        return jetons.resoudre(make_store(ctx.sub), namespace, row_id, ligne=ligne,
+                               resoudre_slot=access.resolve_namespace_ref)
+    except (jetons.JetonMalPlace, ClaimedRefUnresolved) as e:
+        raise AuthzDenied(400, "jeton_mal_place", str(e))
+
+
+def _verifier_contenu(contenu) -> None:
+    """Ce qui n'a aucun sens comme donnée est refusé AVANT d'atteindre le stockage."""
+    try:
+        jetons.verifier_contenu(contenu)
+    except jetons.JetonMalPlace as e:
+        raise AuthzDenied(400, "jeton_mal_place", str(e))
+
+
 def _json_param(raw: Optional[str], code: str, *, expect=None):
     """Décode un paramètre JSON de query string, avec le refus NOMMÉ de la route."""
     if not raw:
@@ -215,17 +241,18 @@ def _json_param(raw: Optional[str], code: str, *, expect=None):
 
 
 def _list_rows(ctx: ResolvedCtx, inp: ListRowsInput) -> dict:
+    ns, _ = _adresse(ctx, inp.namespace, ligne=False)
     offset = max(0, inp.offset if inp.offset is not None else 0)
     limit = min(500, max(1, inp.limit if inp.limit is not None else 50))
     filter_eq = _json_param(inp.filter, "invalid_filter", expect=dict)
     filters = _json_param(inp.filters, "invalid_filters", expect=list)
     try:
         return make_store(ctx.sub).page_rows(
-            inp.namespace, offset=offset, limit=limit,
+            ns, offset=offset, limit=limit,
             order_by=inp.order_by or None, order_dir=inp.order_dir,
             q=inp.q or None, filter=filter_eq, filters=filters)
     except NamespaceNotFound:
-        raise ns_not_found(ctx.sub, inp.namespace)
+        raise ns_not_found(ctx.sub, ns)
     except ValueError as e:
         # Le message du store arrive JUSQU'À l'appelant. Sans lui, un refus
         # SÉMANTIQUE (opérateur inconnu, `null` sur `eq`, date invalide) rend le
@@ -239,15 +266,16 @@ def _list_rows(ctx: ResolvedCtx, inp: ListRowsInput) -> dict:
 def _aggregate(ctx: ResolvedCtx, inp: AggregateInput) -> dict:
     """Agrégat serveur (ADR 0046 b1 — compteurs du cockpit) : COUNT/SUM/AVG/…
     groupés par un champ JSONB, sans rapatrier les lignes."""
+    ns, _ = _adresse(ctx, inp.namespace, ligne=False)
     metrics = _json_param(inp.metrics, "invalid_metrics")
     filter_eq = _json_param(inp.filter, "invalid_filter", expect=dict)
     filters = _json_param(inp.filters, "invalid_filters", expect=list)
     try:
         groups = make_store(ctx.sub).aggregate(
-            inp.namespace, group_by=inp.group_by or None, metrics=metrics,
+            ns, group_by=inp.group_by or None, metrics=metrics,
             filter=filter_eq, q=inp.q or None, filters=filters)
     except NamespaceNotFound:
-        raise ns_not_found(ctx.sub, inp.namespace)
+        raise ns_not_found(ctx.sub, ns)
     except ValueError as e:
         raise AuthzDenied(400, "invalid_aggregate", str(e))
     return {"groups": groups}
@@ -256,17 +284,19 @@ def _aggregate(ctx: ResolvedCtx, inp: AggregateInput) -> dict:
 def _queue(ctx: ResolvedCtx, inp: NamespaceRefInput) -> dict:
     """File de travail (ADR 0046 D) — vue de supervision : les lignes sous bail
     (`_claimed_by`/`_claimed_until`), actif ou expiré. Lecture seule."""
+    ns, _ = _adresse(ctx, inp.namespace, ligne=False)
     try:
-        return {"rows": make_store(ctx.sub).queue(inp.namespace)}
+        return {"rows": make_store(ctx.sub).queue(ns)}
     except NamespaceNotFound:
-        raise ns_not_found(ctx.sub, inp.namespace)
+        raise ns_not_found(ctx.sub, ns)
 
 
 def _get_row(ctx: ResolvedCtx, inp: RowRefInput) -> dict:
+    ns, rid = _adresse(ctx, inp.namespace, inp.row_id)
     try:
-        return make_store(ctx.sub).get_row(inp.namespace, inp.row_id)
+        return make_store(ctx.sub).get_row(ns, rid)
     except NamespaceNotFound:
-        raise ns_not_found(ctx.sub, inp.namespace)
+        raise ns_not_found(ctx.sub, ns)
     except RowNotFound:
         raise AuthzDenied(404, "row_not_found")
 
@@ -301,17 +331,19 @@ def _write_refusal(e: Exception) -> AuthzDenied:
 
 
 def _append_row(ctx: ResolvedCtx, inp: AppendRowInput) -> dict:
+    ns, _ = _adresse(ctx, inp.namespace, ligne=False)
+    _verifier_contenu(inp.row)
     trace: dict = {}
     store = make_store(ctx.sub)
     try:
-        created = store.append_row(inp.namespace, inp.row, trace=trace)
+        created = store.append_row(ns, inp.row, trace=trace)
     except NamespaceNotFound:
-        raise ns_not_found(ctx.sub, inp.namespace)
+        raise ns_not_found(ctx.sub, ns)
     except NamespaceReadOnly:
         raise AuthzDenied(403, "namespace_read_only")
     except ValueError as e:
         raise _write_refusal(e)
-    nsctx = datastore_journal.from_trace(trace, inp.namespace)
+    nsctx = datastore_journal.from_trace(trace, ns)
     datastore_journal.record(
         datastore_journal.TOOL_WRITE, sub=ctx.sub, ctx=nsctx, row_id=created.get("_id"),
         fields=list(inp.row.keys()),
@@ -325,40 +357,43 @@ def _update_row(ctx: ResolvedCtx, inp: UpdateRowInput) -> dict:
     # L'état AVANT vient du RELEVÉ de la mutation (`trace`) : c'est celui sur lequel la
     # transition a été validée. Le relire ici courrait avec un write concurrent → le
     # cockpit proposerait d'annuler vers un état que la ligne n'a jamais eu.
+    ns, rid = _adresse(ctx, inp.namespace, inp.row_id)
+    _verifier_contenu(inp.patch)
     trace: dict = {}
     store = make_store(ctx.sub)
     try:
-        updated = store.update_row(inp.namespace, inp.row_id, inp.patch, trace=trace)
+        updated = store.update_row(ns, rid, inp.patch, trace=trace)
     except NamespaceNotFound:
-        raise ns_not_found(ctx.sub, inp.namespace)
+        raise ns_not_found(ctx.sub, ns)
     except NamespaceReadOnly:
         raise AuthzDenied(403, "namespace_read_only")
     except RowNotFound:
         raise AuthzDenied(404, "row_not_found")
     except ValueError as e:
         raise _write_refusal(e)
-    nsctx = datastore_journal.from_trace(trace, inp.namespace)
+    nsctx = datastore_journal.from_trace(trace, ns)
     datastore_journal.record(
-        datastore_journal.TOOL_WRITE, sub=ctx.sub, ctx=nsctx, row_id=inp.row_id,
+        datastore_journal.TOOL_WRITE, sub=ctx.sub, ctx=nsctx, row_id=rid,
         fields=list(inp.patch.keys()), from_status=trace.get("prev_status"),
         to_status=datastore_journal.status_of(updated, nsctx))
     return {**updated, **store.off_schema_report()}
 
 
 def _delete_row(ctx: ResolvedCtx, inp: RowRefInput) -> dict:
+    ns, rid = _adresse(ctx, inp.namespace, inp.row_id)
     trace: dict = {}
     try:
-        make_store(ctx.sub).delete_row(inp.namespace, inp.row_id, trace=trace)
+        make_store(ctx.sub).delete_row(ns, rid, trace=trace)
     except NamespaceNotFound:
-        raise ns_not_found(ctx.sub, inp.namespace)
+        raise ns_not_found(ctx.sub, ns)
     except NamespaceReadOnly:
         raise AuthzDenied(403, "namespace_read_only")
     except RowNotFound:
         raise AuthzDenied(404, "row_not_found")
-    nsctx = datastore_journal.from_trace(trace, inp.namespace)
+    nsctx = datastore_journal.from_trace(trace, ns)
     datastore_journal.record(datastore_journal.TOOL_DELETE, sub=ctx.sub, ctx=nsctx,
-                             row_id=inp.row_id, from_status=trace.get("prev_status"))
-    return {"ok": True, "id": inp.row_id}
+                             row_id=rid, from_status=trace.get("prev_status"))
+    return {"ok": True, "id": rid}
 
 
 def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
@@ -372,6 +407,7 @@ def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
     de n'importe qui » est le défaut, pas la supervision. Une session interactive
     garde le geste, elle en a la légitimité. Exige l'écriture dans les deux cas.
     """
+    ns, rid = _adresse(ctx, inp.namespace, inp.row_id)
     worker = (inp.worker or "").strip()
     if not worker and token_scopes.current() is not None:
         raise AuthzDenied(400, "worker_required",
@@ -381,20 +417,20 @@ def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
     trace: dict = {}
     store = make_store(ctx.sub)
     try:
-        released = (store.release_claim(inp.namespace, inp.row_id, worker=worker,
+        released = (store.release_claim(ns, rid, worker=worker,
                                         trace=trace)
                     if worker else
-                    store.force_release(inp.namespace, inp.row_id, trace=trace))
+                    store.force_release(ns, rid, trace=trace))
     except NamespaceNotFound:
-        raise ns_not_found(ctx.sub, inp.namespace)
+        raise ns_not_found(ctx.sub, ns)
     except NamespaceReadOnly:
         raise AuthzDenied(403, "namespace_read_only")
     if released:  # rien libéré = rien changé, donc rien à journaliser
         datastore_journal.record(
             datastore_journal.TOOL_RELEASE, sub=ctx.sub,
-            ctx=datastore_journal.from_trace(trace, inp.namespace), row_id=inp.row_id)
+            ctx=datastore_journal.from_trace(trace, ns), row_id=rid)
     return {
-        "ok": True, "released": released, "id": inp.row_id,
+        "ok": True, "released": released, "id": rid,
         **({} if released else
            {"hint": "rien à libérer : pas de bail sur cette ligne"
                     + (", ou bail posé par un autre worker" if worker else "")}),
