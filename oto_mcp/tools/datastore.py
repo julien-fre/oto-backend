@@ -24,6 +24,7 @@ from ..datastore import jetons
 from ..datastore import schema as dsv2
 from ..datastore.core import (
     ClaimedRefUnresolved,
+    indice_de_liberation,
     InvalidCursor,
     NamespaceExists,
     NamespaceForbidden,
@@ -726,7 +727,7 @@ def register(mcp: FastMCP) -> None:
         store = _acting_store()
         try:
             namespace, id = _adresse_reservee(store, namespace, id, worker=worker)
-            released = store.release_claim(namespace, id, worker=worker)
+            issue = store.release_claim(namespace, id, worker=worker)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except NamespaceNotFound:
@@ -734,10 +735,14 @@ def register(mcp: FastMCP) -> None:
         except NamespaceReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=f"namespace `{namespace}` partagé en lecture seule"))
-        return {"namespace": namespace, "id": id, "released": released,
-                **({} if released else
-                   {"hint": "rien à libérer : pas de bail sur cette row, ou bail posé "
-                            "par un autre worker"})}
+        # ⚠️ DEUX situations opposées partageaient ce `false` et cet indice (#517) :
+        # « il n'y avait rien à rendre » (bénin) et « la ligne est à un autre travail »
+        # (échec). Une flotte a branché sa borne d'arrêt dessus et s'est coupée à cinq
+        # fiches sur cent, le 29/08. La réponse porte donc la RAISON — vocabulaire
+        # fermé, lisible par une machine — et l'indice dit LAQUELLE des deux.
+        return {"namespace": namespace, "id": id, "released": issue["released"],
+                "reason": issue["reason"],
+                **({} if issue["released"] else {"hint": indice_de_liberation(issue)})}
 
     @mcp.tool()
     def data_rows(

@@ -197,10 +197,12 @@ class DeletedRow(BaseModel):
 
 class ReleasedRow(BaseModel):
     ok: bool
-    # `False` = il n'y avait rien à libérer (ou le bail est à un autre worker) :
-    # ce n'est pas une erreur, d'où le `hint` qui le dit en toutes lettres.
+    # ⚠️ `False` couvrait DEUX situations opposées, et rien ne les distinguait (#517,
+    # 29/08) : « aucun bail » (bénin) et « bail d'un autre travail » (échec réel).
+    # `reason` les sépare en vocabulaire fermé, `hint` dit laquelle en toutes lettres.
     released: bool
     id: str
+    reason: Optional[str] = None
     hint: Optional[str] = None
 
 
@@ -217,6 +219,15 @@ def _adresse(ctx: ResolvedCtx, namespace: str, row_id=None, *, ligne: bool = Tru
                                resoudre_slot=access.resolve_namespace_ref)
     except (jetons.JetonMalPlace, ClaimedRefUnresolved) as e:
         raise AuthzDenied(400, "jeton_mal_place", str(e))
+
+
+def _indice_de_liberation(issue: dict) -> str:
+    """La MÊME phrase que la face agent — écrite une fois, servie deux.
+
+    Les deux faces avaient chacune sa formule, et toutes deux mêlaient les deux
+    situations dans un seul texte (#517, 29/08)."""
+    from ...datastore.core import indice_de_liberation
+    return indice_de_liberation(issue)
 
 
 def _verifier_contenu(contenu) -> None:
@@ -417,10 +428,12 @@ def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
     trace: dict = {}
     store = make_store(ctx.sub)
     try:
-        released = (store.release_claim(ns, rid, worker=worker,
-                                        trace=trace)
-                    if worker else
-                    store.force_release(ns, rid, trace=trace))
+        # La libération FORCÉE reste un booléen : la supervision humaine agit sans
+        # garde, il n'y a pas de « bail d'un autre » qui la concerne.
+        issue = (store.release_claim(ns, rid, worker=worker, trace=trace) if worker
+                 else {"released": store.force_release(ns, rid, trace=trace),
+                       "reason": None, "lease": None})
+        released = issue["released"]
     except NamespaceNotFound:
         raise ns_not_found(ctx.sub, ns)
     except NamespaceReadOnly:
@@ -430,10 +443,8 @@ def _release_claim(ctx: ResolvedCtx, inp: ReleaseInput) -> dict:
             datastore_journal.TOOL_RELEASE, sub=ctx.sub,
             ctx=datastore_journal.from_trace(trace, ns), row_id=rid)
     return {
-        "ok": True, "released": released, "id": rid,
-        **({} if released else
-           {"hint": "rien à libérer : pas de bail sur cette ligne"
-                    + (", ou bail posé par un autre worker" if worker else "")}),
+        "ok": True, "released": released, "id": rid, "reason": issue["reason"],
+        **({} if released else {"hint": _indice_de_liberation(issue)}),
     }
 
 

@@ -170,7 +170,9 @@ class _StoreEspion:
 
     def release_claim(self, namespace, row_id, *, worker):
         self.vu["release"] = (namespace, row_id, worker)
-        return True
+        # Le contrat rend `{released, reason, lease}` depuis le 29/08 (#517) : le
+        # booléen seul mêlait « rien à rendre » et « la ligne est à un autre ».
+        return {"released": True, "reason": None, "lease": None}
 
     ligne = {"_id": "01a04aef-26c0-7c16-9c58-42f8", "siren": "1"}
 

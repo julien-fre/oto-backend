@@ -194,6 +194,20 @@ def writing_as(worker: Optional[str]):
         _WRITING_AS.reset(token)
 
 
+def indice_de_liberation(issue: dict) -> str:
+    """Une phrase par situation — jamais une phrase pour les deux (#517, 29/08).
+
+    Écrite ICI plutôt que sur chaque face : les deux avaient chacune sa formule, et
+    toutes deux mêlaient « rien à rendre » et « la ligne est à un autre »."""
+    if issue["reason"] == "no_lease":
+        return ("aucun bail sur cette ligne — rien à rendre. Ce n'est pas un échec : "
+                "la ligne est libre, ton travail peut continuer.")
+    bail = issue.get("lease") or {}
+    jusqu = str(bail.get("claimed_until") or "?")[:16]
+    return (f"bail tenu par `{bail.get('claimed_by')}` jusqu'à {jusqu} — la ligne ne "
+            "t'appartient pas. Réserve-en une autre avec `data_claim_next`.")
+
+
 CLAIMED_REF = "@claimed"
 
 
@@ -1482,14 +1496,40 @@ class DatastorePg(SchemaOpsMixin):
         self._trace(trace, ns_id, ns)
 
     def release_claim(self, namespace: str, row_id: str, *, worker: str,
-                      trace: Optional[dict] = None) -> bool:
-        """Libère le bail (abandon sans verdict). Gardé par `worker` — on ne
-        libère pas le claim d'un autre. L'entrée dans un état terminal libère
-        déjà automatiquement (pas besoin d'appeler release après)."""
+                      trace: Optional[dict] = None) -> dict:
+        """Libère le bail (abandon sans verdict), et NOMME ce qu'elle a constaté.
+
+        Gardé par `worker` — on ne libère pas le claim d'un autre.
+
+        ⚠️ **Écrire un état terminal ne libère plus la ligne** : la libération
+        automatique a été retirée (#317). Il faut appeler ceci après avoir écrit, ou
+        encadrer le travail par `run_start` / `run_finish`, qui relâche ce qui reste.
+        *Cette docstring affirmait le contraire jusqu'au 29/08/2026 — une promesse
+        périmée écrite au plus près du geste, corrigée et datée ici.*
+
+        Rend `{released, reason, lease}` et non un booléen, parce que le « non »
+        couvrait DEUX situations opposées et qu'une flotte a branché sa borne d'arrêt
+        dessus (#517, 29/08) :
+
+        - `no_lease` — aucun bail sur la ligne : **bénin**, il n'y avait rien à rendre ;
+        - `held_by_other` — bail tenu par un autre travail : **échec réel**, et `lease`
+          dit qui le tient et jusqu'à quand.
+
+        *Le serveur sait lequel des deux c'est : c'est dans la ligne qu'il vient de ne
+        pas modifier. Un succès partiel qu'on ne peut pas distinguer d'un échec est
+        pire qu'un refus — un refus, au moins, s'instruit.*"""
         ns_id = self._resolve(namespace, write=True)
         if trace is not None:
             self._trace(trace, ns_id, self._ns_of(ns_id))
-        return db.datastore_release_claim(ns_id, row_id, str(worker))
+        if db.datastore_release_claim(ns_id, row_id, str(worker)):
+            return {"released": True, "reason": None, "lease": None}
+        # Relu APRÈS coup : l'ordre est celui du geste, pas d'un diagnostic préalable.
+        # Une course changerait le motif rendu, jamais le fait — la ligne n'a pas été
+        # libérée dans les deux cas.
+        bail = db.datastore_active_lease(ns_id, row_id)
+        return {"released": False,
+                "reason": "held_by_other" if bail else "no_lease",
+                "lease": bail}
 
     def resolve_claimed_ref(self, namespace: str, *,
                             worker: Optional[str] = None) -> str:
