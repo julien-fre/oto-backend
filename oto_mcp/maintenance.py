@@ -16,6 +16,9 @@ Ils sont ici, chacun nommé, chacun jouable seul :
     oto-mcp maintenance all           les trois premiers, dans l'ordre
 
     oto-mcp maintenance key-index-rebuild   (#421 — voir plus bas, PAS dans `all`)
+    oto-mcp maintenance journal-tokens      purge rétroactive des jetons écrits en
+                                            clair dans le journal (#558) — À BLANC
+                                            par défaut, `--apply` pour écrire
 
 Trois propriétés qu'aucun de ces travaux ne perd en changeant de porte :
 **idempotents** (les rejouer ne change rien), **fail-open par travail** (un échec
@@ -159,6 +162,44 @@ def key_index_rebuild(*, dry_run: bool = False) -> dict:
     return {"rebuilt": _init.migrate_business_key_indexes()}
 
 
+def journal_tokens(*, dry_run: bool = True) -> dict:
+    """Purge RÉTROACTIVE des jetons écrits en clair dans le journal (#558).
+
+    Le masquage à l'écriture ne vaut que pour les lignes à venir : celles déjà
+    posées portent, sur toute la fenêtre de rétention, des jetons d'upload, de
+    partage et d'invitation en clair. Cette commande les ramène à la route réduite
+    — une RÉPARATION, pas une suppression : la télémétrie de surface (qui, quand,
+    quel code, quelle durée) reste, elle cesse seulement de nommer le secret.
+
+    ⚠️ **À BLANC PAR DÉFAUT, et hors de `all`.** Elle réécrit des lignes servies
+    aux lentilles de supervision sur une base PARTAGÉE prod/preprod : la lancer est
+    une décision, pas un effet de bord de sortie de maintenance. Même règle que
+    `key-index-rebuild` (#421). `--apply` pour écrire.
+
+    Ce qu'elle purge est DÉRIVÉ de la table de routes servie et du registre de
+    capacités, jamais d'une liste tenue à la main — c'est la même déclaration que
+    le masquage à l'écriture, et deux listes divergeraient.
+    """
+    from . import journal_secrets
+    from .api import routes as api_routes
+    from .db import journal_purge
+    # `make_routes` ne fait que capturer le verifier au montage (cf.
+    # `tests/api/test_api_routes_table_frozen.py`) : un objet nu suffit à obtenir
+    # la table, et c'est elle qui déclare `{token}` / `{code}`.
+    api_routes.make_routes(object(), mcp_instance=None)
+    plans = journal_secrets.journal_purge_plans()
+    if not plans:
+        raise RuntimeError(
+            "aucune route à paramètre secret déclarée — la table de routes n'a pas "
+            "été montée, la purge ne saurait pas quoi chercher")
+    out: dict = {"applied": not dry_run,
+                 "routes": journal_purge.purge_route_tokens(plans, dry_run=dry_run)}
+    out["args"] = journal_purge.purge_arg_tokens(
+        journal_secrets.secret_arg_names_by_tool(), journal_secrets.mask,
+        dry_run=dry_run)
+    return out
+
+
 def check_boot(*, dry_run: bool = True) -> dict:
     """Rejoue l'ORDRE DU BOOT (DDL assemblé PUIS les ALTER) en transaction ANNULÉE.
 
@@ -187,8 +228,12 @@ _TRAVAUX: dict[str, Callable[..., dict]] = {
     "blocks": blocks,
     "key-indexes": key_indexes,
     "key-index-rebuild": key_index_rebuild,
+    "journal-tokens": journal_tokens,
     "check-boot": check_boot,
 }
+# Travaux dont l'écriture est un ACTE, pas une routine : à blanc par défaut, et
+# c'est `--apply` qui écrit. Ils ne sont dans aucun timer et jamais dans `all`.
+_ACTES = ("journal-tokens",)
 _ALL = ("retention", "blocks", "key-indexes")
 
 
@@ -223,6 +268,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="le travail à jouer, ou `all` pour " + ", ".join(_ALL))
     p.add_argument("--dry-run", action="store_true",
                    help="compte ce qu'il y aurait à faire, n'écrit rien")
+    p.add_argument("--apply", action="store_true",
+                   help=("écrit, pour les travaux qui sont à blanc par défaut ("
+                         + ", ".join(_ACTES) + ")"))
     p.add_argument("--strict", action="store_true",
                    help="code de sortie 1 si un travail échoue (CI)")
     args = p.parse_args(argv)
@@ -230,7 +278,12 @@ def main(argv: list[str] | None = None) -> int:
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     noms = list(_ALL) if args.travail == "all" else [args.travail]
-    return run(noms, dry_run=args.dry_run, strict=args.strict)
+    # Le sens du défaut s'INVERSE pour un acte : ailleurs `--dry-run` est l'opt-in
+    # d'un travail qui écrit, ici `--apply` est l'opt-in d'un travail qui compte.
+    a_blanc = (not args.apply) if args.travail in _ACTES else args.dry_run
+    if args.apply and args.travail not in _ACTES:
+        p.error("--apply ne vaut que pour : " + ", ".join(_ACTES))
+    return run(noms, dry_run=a_blanc, strict=args.strict)
 
 
 if __name__ == "__main__":

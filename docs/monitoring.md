@@ -30,6 +30,45 @@ l'écriture**), `ok`, `error`, `duration_ms`, `created_at`.
 `kind` discrimine l'événement (ADR 0017, « un seul flux ») : `mcp` = invocation d'outil
 (défaut), `rest` = appel `/api/*`, `connector` = échec de résolution de credential.
 
+### Ce que le journal ne porte JAMAIS : un jeton en clair
+
+⚠️ **Corrigé le 2026-08-29 (#558) — le journal en portait.** La réduction de route
+(`api/routes._normalize_route`) était une **allowlist de FORMES** : numérique ou UUID →
+`:id`, tout le reste passe. Or quatre routes servies portent leur secret DANS le chemin
+(`/api/upload/{token}`, `/api/public/docs/{token}`, `/api/invitations/{token}`,
+`/api/invitations/code/{code}`) et aucun de ces secrets n'a la forme d'un identifiant.
+Ils partaient donc en clair dans `tool_calls.tool`, sur toute la fenêtre de rétention,
+relus par les trois étages de lentilles — **y compris le jeton d'invitation, que le
+modèle de données refuse explicitement de persister ainsi** (`org_store/invitations.py`
+n'enregistre que son empreinte). Un middleware transverse défaisait cette précaution.
+
+La règle qui remplace la forme, source unique `oto_mcp/journal_secrets.py` :
+
+- **par PROPRIÉTÉ, jamais par une liste de chemins** — un segment lié à un paramètre de
+  route dont le NOM est déclaré secret (`token`, `code`) est réduit, quelle que soit son
+  allure. La liste des routes concernées est **dérivée de la table servie**
+  (`make_routes` appelle `declare_routes`) : une route future qui déclare `{token}` est
+  couverte le jour où elle est montée, sans qu'on y pense ;
+- **la route réduite ne porte pas le masque** — `tool` sert le `GROUP BY` du monitoring,
+  une empreinte par jeton ferait exploser sa cardinalité. L'empreinte va dans `args`, où
+  elle répond à « le même jeton a-t-il été rejoué ? » sans dire lequel ;
+- **le masque est un HMAC clé (`#` + 12 hex), pas « les N derniers » ni un sha256 nu** —
+  un code d'invitation fait 7 caractères sur un alphabet de 30 (~34 bits) : ses 8
+  derniers caractères SONT le code entier, et un sha256 nu se casse par force brute en
+  quelques secondes pour qui lit le journal. La clé est celle des jetons signés
+  (`OTO_MCP_OAUTH_STATE_SECRET`), donc le masque reste stable d'un boot à l'autre ;
+- **la même propriété sur l'autre face** — le jeton d'invitation arrive aussi par
+  `oto_org op=accept_invite`. Un argument de **capacité** portant un de ces noms est
+  masqué (`truncated_args(..., tool=)`), y compris via `oto_call` ; un argument de
+  **connecteur** qui s'appelle pareil ne l'est pas (`droit_article(code='CT')` n'est pas
+  un secret, et le cacher coûterait une lecture pour rien).
+
+**Les lignes déjà écrites** se réparent à la main :
+`oto-mcp maintenance journal-tokens` (§Rétention).
+
+Cliquets : `tests/test_journal_secrets.py`, `tests/test_rest_call_logger.py`,
+`tests/test_journal_no_plaintext_secret.py`, `tests/test_journal_token_purge_558.py`.
+
 **Extensions OTO-LOCALES** (hors contrat canonique, enrichies par le sink de
 `server.py`) — ce sont les axes d'**investigation** :
 
@@ -50,8 +89,10 @@ l'**ordre d'ajout** (premier ajouté = plus externe). Contrat gardé par
 
 ## Ce qui n'est PAS tracé
 
-Uniquement les **invocations d'outils** : pas la connexion d'un connecteur, pas le
-`tools/list`, pas le handshake. Donc **compte actif ≠ usage** — un user avec un compte
+Pas la connexion d'un connecteur, pas le `tools/list`. (Ce paragraphe disait « uniquement
+les invocations d'outils » jusqu'au 2026-08-29 : les appels `/api/*` y sont écrits depuis
+`RestCallLogger`, et le handshake depuis `on_initialize` — c'est cet angle mort de lecture
+qui a laissé passer #558.) Donc **compte actif ≠ usage** — un user avec un compte
 (table `users`) mais 0 ligne `tool_calls` n'a jamais déclenché d'outil (connecté-mais-idle
 OU handshake OAuth jamais réussi → diagnostiquer via `journalctl` 401). Vécu 2026-06-22.
 
@@ -193,6 +234,25 @@ c'est ce qui permet d'éprouver le chemin réel sans engager la moitié irréver
 place, le journal ne remontait qu'au 28/07. Un premier passage qui ne supprime rien est
 le comportement attendu, pas une panne.
 
+### Réparer les jetons déjà écrits (#558)
+
+```bash
+oto-mcp maintenance journal-tokens            # À BLANC : compte, n'écrit rien
+oto-mcp maintenance journal-tokens --apply    # réécrit
+```
+
+**Une réparation, pas une suppression** : la ligne reste (qui, quand, quel code, quelle
+durée), sa route est ramenée à la forme réduite et l'argument secret à son empreinte.
+Ce qu'elle cherche est **dérivé de la même déclaration** que le masquage à l'écriture —
+pas d'une seconde liste qui divergerait.
+
+⚠️ **À blanc par défaut, hors timer et hors `all`** (comme `key-index-rebuild`, #421) :
+elle réécrit des lignes servies aux lentilles de supervision, sur une base **partagée
+prod/preprod**. La lancer est une décision, pas un effet de bord de sortie de maintenance.
+Le piège qu'elle évite, et qui justifie son test contre un vrai PostgreSQL : la passe
+générique `/api/invitations/` écraserait la route réduite par la passe spécifique
+`/api/invitations/code/` si les préfixes plus spécifiques n'étaient pas exclus.
+
 ## Error tracking (Sentry)
 
 Exceptions backend → **Sentry SaaS** (gaté `OTO_SENTRY_DSN`, no-op si absent →
@@ -201,11 +261,24 @@ l'intégration Starlette (auto) ; **exceptions des tools MCP** via
 `SentryToolErrorMiddleware` (`sentry_setup.py`) — une erreur de tool est une erreur
 JSON-RPC en **HTTP 200**, invisible à l'intégration Starlette, donc capturée là où
 l'exception est vivante (vrai traceback, tag `mcp.tool` + `user.id=sub`). RGPD :
-`send_default_pii=False`, **jamais** les args d'appel dans l'event. `before_send`
+`send_default_pii=False` **et** `include_local_variables=False`. `before_send`
 **droppe les 4xx amont** (`HTTP 4xx` d'une API tierce = input rejeté, pas un bug
 backend). Env box : `OTO_SENTRY_{DSN,ENV,RELEASE,TRACES_SAMPLE_RATE}` ; région **EU**
 `de.sentry.io` (org slug `otomata-vz`). Surveillance/triage = guide oto
 `surveillance-erreurs` (token API en SOPS `sentry_api_token`).
+
+⚠️ **`include_local_variables=False` n'est pas un doublon de `send_default_pii=False`, et
+sans lui cette section était FAUSSE** (#564, corrigé le 2026-08-29). Elle affirmait
+« jamais les args d'appel dans l'event » : `send_default_pii` ne couvre que ce que le SDK
+collecte AUTOMATIQUEMENT (IP, cookies, en-têtes), pas le contenu des frames — et le défaut
+du SDK pour les locales est `True`. Chaque exception repartait donc avec les variables
+locales de toute la pile, dont celles du chemin de résolution de credential, qui tiennent
+le secret **déchiffré**. Un réglage, pas un `before_send` qui scrube : une liste de noms à
+scruber redevient fausse au premier renommage. Défense en profondeur dans le même geste :
+le `repr` de `ResolvedCredential` et de `CascadeRung` est **expurgé** — c'est l'objet qui
+voyage (frame, `logger.debug('%r')`, sérialisation d'un collecteur), pas la variable.
+⚠️ **À vérifier hors dépôt** : les events déjà remontés chez le tiers sur la fenêtre de
+rétention — le correctif ne les efface pas.
 Un appel sur un tool HORS toolbox de session (la visibilité filtre `tools/list`,
 pas `tools/call`) = erreur **GÉRÉE actionnable** `tool_not_mounted`
 (`error_taxonomy` : oto_call immédiat / `oto_connector op=select`), droppée de

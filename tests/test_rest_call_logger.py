@@ -90,3 +90,40 @@ def test_passthrough_non_api_does_not_log(monkeypatch):
 def test_options_preflight_skipped(monkeypatch):
     row, _ = _run_mw(monkeypatch, path="/api/me", method="OPTIONS", status=204)
     assert row == {}
+
+
+# ── Les jetons du chemin d'URL (#558) ────────────────────────────────────────
+
+def _routes_declarees():
+    """La VRAIE table servie : c'est elle qui déclare `{token}` / `{code}`."""
+    ar.make_routes(object(), mcp_instance=None)
+
+
+def test_un_appel_sur_une_route_a_jeton_laisse_un_journal_masque(monkeypatch):
+    """Le fait de #558 : `PUT /api/upload/<jeton>` partait EN CLAIR dans
+    `tool_calls.tool`, sur une fenêtre de rétention, relu par les surfaces de
+    supervision — alors que le modèle de données refuse de persister ce genre de
+    secret ailleurs."""
+    _routes_declarees()
+    jeton = "eyJ0eXAiOiJ1cGxvYWQiLCJqdGkiOiJ4In0.c2lnbmF0dXJl"
+    row, _ = _run_mw(monkeypatch, path=f"/api/upload/{jeton}", method="PUT", status=204)
+    assert jeton not in str(row)
+    assert row["tool"] == "PUT /api/upload/:token"
+    # L'empreinte, elle, va dans `args` : « le même jeton a-t-il été rejoué ? » se
+    # répond, « lequel était-ce » non. Et `tool` garde une cardinalité agrégeable.
+    assert row["args"]["token"].startswith("#")
+
+
+def test_le_code_court_dinvitation_aussi(monkeypatch):
+    _routes_declarees()
+    row, _ = _run_mw(monkeypatch, path="/api/invitations/code/ABC1234", status=200)
+    assert "ABC1234" not in str(row)
+    assert row["tool"] == "GET /api/invitations/code/:code"
+
+
+def test_une_route_sans_jeton_n_ecrit_aucun_args(monkeypatch):
+    """Pas de colonne `args` remplie pour rien : la ligne de route reste de la
+    télémétrie de surface (cf. `calllog.log_rest_call`)."""
+    _routes_declarees()
+    row, _ = _run_mw(monkeypatch, path="/api/orgs/7/members", method="POST", status=201)
+    assert row["args"] is None

@@ -23,7 +23,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import (providers, credentials_store, db, group_store, instance_refs, org_store, session_org)
-from . import cascade, chain_shadow, quotas, rbac, scope
+from . import cascade, chain_shadow, quotas, rbac, scope, secret_repr
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +52,10 @@ class ResolvedCredential:
     entity_type: Optional[str] = None
     entity_id: Optional[str] = None
     account: str = ""
+
+    def __repr__(self) -> str:
+        # La clé ne sort JAMAIS par le repr (#564) — cf. `secret_repr`.
+        return secret_repr.expurge(self, "secret")
 
     @property
     def key(self) -> str:
@@ -370,9 +374,12 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # ADR 0044 §F R3 : le palier plateforme lit les instances scope PLATFORM du
     # coffre unifié (share_mode/share_down = accès ; meta.rate_limit* = quota).
     # Le secret n'est déchiffré que pour l'instance gagnante.
-    grant = win.payload
+    # ⚠️ Le grant PLATEFORME porte le secret DÉCHIFFRÉ. On ne le déballe pas dans
+    # une variable de cette frame : les gardes de quota qui suivent peuvent lever,
+    # et une frame qui lève garde ses locales dans le traceback. `win` est un
+    # `CascadeRung`, dont le `repr` est expurgé (#564) ; un dict nu ne l'est pas.
     used = quotas.usage_today(sub, provider)
-    limit = grant.get("daily_quota") or quotas.quota_for(provider)
+    limit = win.payload.get("daily_quota") or quotas.quota_for(provider)
     # ADR 0043 : une org abonnée à un plan `unmetered` n'a PLUS de quota sur les
     # clés plateforme — fin du micro-management des « credits d'appel ». Le plan
     # est le seul cran ; hors abonnement, les quotas d'essai tiennent.
@@ -383,13 +390,13 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
             code=INVALID_PARAMS,
             message=(
                 f"Quota plateforme {provider} dépassé aujourd'hui ({used}/{limit}) "
-                f"pour la clé `{grant['label']}`. Pose ta propre clé sur {_ACCOUNT_URL} "
-                f"pour continuer sans limite."
+                f"pour la clé `{win.payload['label']}`. Pose ta propre clé sur "
+                f"{_ACCOUNT_URL} pour continuer sans limite."
             ),
         ))
 
-    return ResolvedCredential(provider, grant["secret"], True, "platform",
-                              credentials_store.PLATFORM, grant["label"])
+    return ResolvedCredential(provider, win.payload["secret"], True, "platform",
+                              credentials_store.PLATFORM, win.payload["label"])
 
 
 def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential:
@@ -419,8 +426,13 @@ def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential
             message=(f"L'instance `{instance_refs.format_ref(ref)}` ne résout plus "
                      "(credential retiré ou compte renommé ?). Reliste avec "
                      "oto_instance(op='list') — pas de repli vers une autre identité.")))
-    return ResolvedCredential(provider, secret, False, mode, etype, eid,
-                              account=ref.account)
+    try:
+        return ResolvedCredential(provider, secret, False, mode, etype, eid,
+                                  account=ref.account)
+    finally:
+        # Le secret déchiffré ne reste pas lié dans cette frame (#564) : une
+        # exception qui la traverserait après coup n'aurait rien à ramasser.
+        del secret
 
 
 def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) -> ResolvedCredential:
@@ -480,6 +492,7 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) ->
     if win.mode == "org":
         return ResolvedCredential(provider, win.payload, False, "org", "org",
                                   str(org_id), account=win.account)
-    grant = win.payload
-    return ResolvedCredential(provider, grant["secret"], True, "platform",
-                              credentials_store.PLATFORM, grant["label"])
+    # Même règle qu'au palier plateforme du chemin identifié : le secret reste
+    # dans le `CascadeRung` (repr expurgé), jamais dans un dict nu de cette frame.
+    return ResolvedCredential(provider, win.payload["secret"], True, "platform",
+                              credentials_store.PLATFORM, win.payload["label"])

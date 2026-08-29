@@ -43,14 +43,13 @@ import asyncio
 import base64
 import json
 import logging
-import re
 import time
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from starlette.requests import Request
 from starlette.concurrency import run_in_threadpool
 
-from .. import db, tenancy
+from .. import db, journal_secrets, tenancy
 from . import (accords as api_routes_accords,
                atlassian as api_routes_atlassian,
                billing as api_routes_billing,
@@ -247,7 +246,6 @@ class ViewAsMiddleware:
 # la plateforme invisibles au monitoring). Ce middleware comble le trou : une ligne
 # tool_calls(kind='rest') par requête /api/*, dérivée du même substrat.
 
-_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _REST_LOG_TASKS: set = set()  # garde les refs des tâches fire-and-forget (anti-GC)
 
 
@@ -275,12 +273,12 @@ def _claimed_sub(request: Request) -> str | None:
 
 
 def _normalize_route(path: str) -> str:
-    """Réduit la cardinalité pour l'agrégation : segments d'id (numériques / UUID)
-    → `:id`. `/api/orgs/7/audit-log` → `/api/orgs/:id/audit-log`."""
-    return "/".join(
-        ":id" if (seg.isdigit() or _UUID_RE.match(seg)) else seg
-        for seg in path.split("/")
-    )
+    """Réduit la cardinalité pour l'agrégation : segments d'id → `:id`, paramètres
+    déclarés secrets → `:token` / `:code`. `/api/orgs/7/audit-log` →
+    `/api/orgs/:id/audit-log`. Le fond vit dans `oto_mcp.journal_secrets` : la
+    réduction PAR FORME (ce que faisait cette fonction) ne voyait pas les quatre
+    routes dont le secret est dans le chemin (#558)."""
+    return journal_secrets.route_and_secrets(path)[0]
 
 
 async def _emit_rest_event(row: dict) -> None:
@@ -323,9 +321,14 @@ class RestCallLogger:
             await self.app(scope, receive, _send)
         finally:
             code = status["code"]
+            route, masques = journal_secrets.route_and_secrets(scope.get("path", ""))
             row = {
                 "kind": "rest",
-                "tool": f"{method} {_normalize_route(scope.get('path', ''))}",
+                "tool": f"{method} {route}",
+                # Le masque ne va JAMAIS dans `tool` (une empreinte par jeton ferait
+                # exploser la cardinalité du `GROUP BY tool` du monitoring) : il va
+                # dans `args`, où il répond à « le même jeton a-t-il été rejoué ? ».
+                "args": masques,
                 "sub": sub,
                 "org_id": org,
                 "ok": 200 <= code < 400,
@@ -423,7 +426,7 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         options_handler, verifier=verifier, authenticate=_authenticate,
         json_error=_json_error)
 
-    return [
+    table = [
         Route("/favicon.svg", public.favicon, methods=["GET"]),
         Route("/favicon.ico", public.favicon, methods=["GET"]),
         Route("/api/mcp/catalog", bind(public.mcp_catalog, mcp_instance=mcp_instance), methods=["GET"]),
@@ -488,3 +491,8 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
         # éclipser une vraie route sans que rien ne le dise (#519, retrait #526).
         *alias_routes.make_routes(options_handler),
     ]
+    # Le journal apprend ICI quels paramètres de route portent un secret — dérivé
+    # de la table qu'on vient d'assembler, jamais d'une liste tenue à la main (#558).
+    # Une route future qui déclare `{token}` est couverte le jour où elle est montée.
+    journal_secrets.declare_routes(table)
+    return table
