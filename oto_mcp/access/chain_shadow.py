@@ -205,7 +205,13 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
                 if (credentials_store.has_credential(credentials_store.TENANT, slug, porteur)
                         and not credentials_store.instance_suspended(
                             credentials_store.TENANT, slug, porteur)):
-                    return (ChainPick("tenant", credentials_store.TENANT, slug), False)
+                    # L'arête tenant→org (PR 2), lue par la MÊME fonction que le
+                    # walker : MUETTE ⟹ appartenance ; ACCORDE ⟹ grant ; REFUSE ⟹ on
+                    # passe au palier suivant, comme lui (pas un « rien » précoce).
+                    verdict = grants_chain.tenant_rung(slug, porteur, org)
+                    if verdict is None or verdict.granted:
+                        return (ChainPick("tenant", credentials_store.TENANT, slug,
+                                          via="grant" if verdict else "appartenance"), False)
             except Exception:  # noqa: BLE001
                 logger.debug("shadow L7 : palier tenant illisible", exc_info=True)
     if want != "byo":

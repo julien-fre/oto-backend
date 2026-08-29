@@ -120,7 +120,16 @@ def test_anon_resolve_dispatch(monkeypatch):
         sp._CTX.reset(tok)
 
 
+def _sans_arete_tenant(monkeypatch):
+    """L-clés PR 2 : sans clé d'org, l'anonyme cherche une arête tenant→org VIVANTE
+    (jamais le rattachement de l'org). Ici, aucune — la cascade d'avant."""
+    from oto_mcp.db import grants as db_grants
+    monkeypatch.setattr(db_grants, "live_edges_for_grantee",
+                        lambda kind, ident, prefix=None: [])
+
+
 def test_anon_resolver_platform_open_key(monkeypatch):
+    _sans_arete_tenant(monkeypatch)
     monkeypatch.setattr(org_store, "get_org_secret", lambda o, p: None)
     # serper est multi-compte : sans ligne mono, le barreau org tente la sélection
     # nommée — aucun compte posé dans ce scénario.
@@ -138,6 +147,7 @@ def test_anon_resolver_platform_open_key(monkeypatch):
 
 def test_anon_resolver_fail_closed(monkeypatch):
     from mcp.shared.exceptions import McpError
+    _sans_arete_tenant(monkeypatch)
     monkeypatch.setattr(org_store, "get_org_secret", lambda o, p: None)
     monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a: [])
     monkeypatch.setattr(access.credentials_store, "list_platform_instances", lambda p: [])

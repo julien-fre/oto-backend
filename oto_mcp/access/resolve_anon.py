@@ -5,10 +5,11 @@ Extrait de `resolve.py` le 2026-08-29 (cliquet des 500 lignes, #584) : c'est une
 une branche du chemin identifié. Elle partage le walker et le type de retour, rien
 d'autre.
 
-⚠️ **Pas d'étage tenant ici** (L-clés PR 1). Le tenant d'un appelant se lit sur son
-sub qualifié, et l'anonyme n'en a pas ; lire le rattachement de l'org du projet est
-précisément ce qu'un chemin de résolution ne fait pas (lot L1). Donner l'étage à
-l'anonyme demande l'arête tenant→org de la chaîne 0053 — PR 2.
+⚠️ **L'étage tenant, ici, ne vient QUE d'une arête** (L-clés PR 2). Le tenant d'un
+appelant se lit sur son sub qualifié, et l'anonyme n'en a pas ; lire le rattachement
+de l'org du projet est précisément ce qu'un chemin de résolution ne fait pas (lot
+L1). C'est le walker qui cherche l'arête vivante tenant→org (`grants_chain.
+tenant_for_org`) ; sans elle, la cascade reste `org > plateforme`.
 """
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import credentials_store, org_store, providers
-from . import cascade
+from . import cascade, tenant_budget
 from .resolved_credential import ResolvedCredential
 
 
@@ -80,6 +81,13 @@ def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) ->
     if win.mode == "org":
         return ResolvedCredential(provider, win.payload, False, "org", "org",
                                   str(org_id), account=win.account)
+    if win.mode == "tenant":
+        # Servi par une arête vivante (jamais autrement pour l'anonyme) : son budget
+        # par org s'applique — l'org entière y puise, anonyme compris.
+        tenant_budget.enforce(win.entity_id, providers.credential_provider(provider), org_id)
+        return ResolvedCredential(provider, win.payload, False, "tenant",
+                                  credentials_store.TENANT, win.entity_id,
+                                  account=win.account)
     # Même règle qu'au palier plateforme du chemin identifié : le secret reste
     # dans le `CascadeRung` (repr expurgé), jamais dans un dict nu de cette frame.
     return ResolvedCredential(provider, win.payload["secret"], True, "platform",

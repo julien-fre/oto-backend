@@ -52,4 +52,19 @@ CREATE TABLE IF NOT EXISTS tenants (
     tool_prefix TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Le rôle « ADMIN DE TENANT » (L-clés PR 2, 2026-08-29 — la sortie nommée du régime
+-- transitoire de 0052 §Amendement 27/08). Un compte du tenant (sub QUALIFIÉ sous son
+-- slug — jamais le rattachement d'une org, lot L1) qui pose et retire la clé du
+-- tenant, en accorde l'usage à ses orgs et voit ses orgs, sans rôle plateforme.
+-- Déclaré par la plateforme (`admin.tenant_admin_add`, super admin), lu à l'appel
+-- par `_authz.TENANT_ADMIN_OF`. Le tenant `oto` n'en a pas (ses admins sont ceux de
+-- la plateforme). Additif et réversible : retirer les lignes ramène à #603.
+-- ⚠️ `sub` en PK ⟹ triée dans `_PK_SUB_TABLES` (migrate_sub), pas un UPDATE nu.
+CREATE TABLE IF NOT EXISTS tenant_admins (
+    slug TEXT NOT NULL REFERENCES tenants(slug) ON DELETE CASCADE,
+    sub TEXT NOT NULL,
+    granted_by TEXT,
+    granted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (slug, sub)
+);
 """

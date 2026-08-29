@@ -27,6 +27,16 @@ SUB_TENANT = f"{PILOTE}:u1"      # un compte du tenant pilote (sub qualifié, lo
 SUB_NU = "u1"                     # un compte du tenant primaire (sub nu)
 
 
+@pytest.fixture(autouse=True)
+def sans_arete(monkeypatch):
+    """PR 2 : une clé tenant trouvée fait lire l'arête tenant→org. Ici, aucune —
+    l'état MUET, celui de la PR 1."""
+    from oto_mcp.db import grants as db_grants
+    monkeypatch.setattr(db_grants, "edges_for", lambda ref, grantees: [])
+    monkeypatch.setattr(db_grants, "live_edges_for_grantee",
+                        lambda kind, ident, prefix=None: [])
+
+
 @pytest.fixture
 def registre(monkeypatch):
     """Un tenant tiers chargé dans le registre du process — sans lui, tout sub est

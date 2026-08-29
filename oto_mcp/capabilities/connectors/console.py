@@ -165,9 +165,9 @@ class InstanceInput(BaseModel):
 
 async def _instance(ctx: ResolvedCtx, inp: InstanceInput) -> dict:
     if inp.op == "list":
-        if inp.level not in (None, "member", "group", "org", "platform"):
+        if inp.level not in (None, "member", "group", "org", "tenant", "platform"):
             raise AuthzDenied(400, "invalid_level",
-                              "op=list : `level` ∈ member|group|org|platform.")
+                              "op=list : `level` ∈ member|group|org|tenant|platform.")
         return connectors_instances._list_instances(
             ctx, connectors_instances.ListInstancesInput(connector=inp.connector, level=inp.level))
     connector = _need(inp.connector, "missing_connector", f"`connector` requis pour {inp.op}.")
@@ -283,7 +283,7 @@ CAPABILITIES += [
         authz=BY_OP({"list": SUB_ONLY, "lend": SUB_ONLY, "verify": ORG_MEMBER}),
         description=(
             "Connector INSTANCES (connector x auth/config; the secret is never returned). "
-            "op=list (instances visible to you by proximity — member/group/org/platform, "
+            "op=list (instances visible to you by proximity — member/group/org/tenant/platform, "
             "optional filters `connector`, `level`; `id` = `inst:<n>`, the instance's stable "
             "identifier — may be missing, and `ref` stays the pin handle for instance=; "
             "`visible_to` = the scopes that can DISCOVER it, derived from the access chain — "

@@ -77,9 +77,15 @@ def test_tenant_surfaces_read_platform_admin_reload_super_admin(monkeypatch):
     caps = {c.key: c for c in _caps()}
     assert set(caps) == {"admin.tenants", "admin.tenant", "admin.tenant_console",
                          "admin.tenants_reload", "admin.tenant_keys",
-                         "admin.tenant_key_set", "admin.tenant_key_clear"}
+                         "admin.tenant_key_set", "admin.tenant_key_clear",
+                         "admin.tenant_admins", "admin.tenant_admin_add",
+                         "admin.tenant_admin_remove", "admin.tenant_org_grants",
+                         "admin.tenant_org_grant", "admin.tenant_org_revoke"}
     assert caps["admin.tenants"].authz is PLATFORM_ADMIN
-    assert caps["admin.tenant"].authz is PLATFORM_ADMIN
+    # PR 2 : la fiche s'ouvre à l'admin du tenant (plancher plateforme `None`, la
+    # règle plateforme PLATFORM_ADMIN essayée d'abord — `test_tenant_admin_role.py`).
+    from oto_mcp.capabilities import _authz
+    assert _authz.platform_floor(caps["admin.tenant"].authz) is None
     from oto_mcp.capabilities._authz import SUPER_ADMIN
     assert caps["admin.tenants_reload"].authz is SUPER_ADMIN
     # La console : un opérateur plateforme (non super) lit, mais ne recharge pas.
@@ -109,13 +115,23 @@ def test_the_tracking_surface_cannot_write():
     # appel d'outil) et retirer (DELETE). Les deux sont SUPER_ADMIN, comme `reload` :
     # ça change ce que la résolution sert à tout un tenant. Déclarer le tenant
     # lui-même reste un runbook.
-    ecritures_admises = {"admin.tenant_key_set": "PUT", "admin.tenant_key_clear": "DELETE"}
+    # PR 2 (2026-08-29) : le rôle d'admin de tenant (déclaré par la plateforme,
+    # SUPER_ADMIN) et l'arête tenant→org (posée par l'admin du tenant OU le super
+    # admin — `TENANT_ADMIN_OF`, plancher `None`). Les clés suivent la même règle.
+    from oto_mcp.capabilities import _authz
+    ecritures_admises = {
+        "admin.tenant_key_set": ("PUT", None), "admin.tenant_key_clear": ("DELETE", None),
+        "admin.tenant_admin_add": ("POST", "super"),
+        "admin.tenant_admin_remove": ("DELETE", "super"),
+        "admin.tenant_org_grant": ("PUT", None), "admin.tenant_org_revoke": ("DELETE", None),
+    }
     for c in _caps():
         if c.key == "admin.tenants_reload":
             assert c.rest.verb == "POST"
             continue
         if c.key in ecritures_admises:
-            assert c.rest.verb == ecritures_admises[c.key] and c.authz is SUPER_ADMIN
+            verbe, plancher = ecritures_admises[c.key]
+            assert c.rest.verb == verbe and _authz.platform_floor(c.authz) == plancher, c.key
             continue
         verbe = c.rest.verb if c.rest else "GET"
         assert verbe == "GET", (

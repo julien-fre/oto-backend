@@ -39,7 +39,7 @@ class VerifyResult(BaseModel):
     # cran : `ok:true` seul ne distingue pas « ma clé perso marche » de « ma clé
     # perso a échoué, c'est celle de l'org qui répond ». `platform` = grant
     # plateforme, qui n'a aucune ligne de coffre.
-    level: Literal["member", "group", "org", "platform"]
+    level: Literal["member", "group", "org", "tenant", "platform"]
     # `<level>:<entity_id>:<provider>` — ex. `org:2:salesforce`. Au palier
     # plateforme l'`entity_id` est le LABEL de la clé (ADR 0044 §F : plus de
     # surrogate id), pas un entier : `platform:serper-shared:serper`.

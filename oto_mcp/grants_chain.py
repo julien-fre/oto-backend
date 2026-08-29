@@ -215,6 +215,81 @@ def platform_rung(sub: Optional[str], provider: str,
     return revoked_seen
 
 
+# ── L'arête tenant→org (L-clés PR 2, 0053-D3 : « le tenant s'insère dans la même chaîne ») ──
+# La clé d'un tenant est une instance comme une autre ; son ref est celui du coffre
+# (`tenant:{slug}:{connecteur}`, `instance_refs`). Pas de gate `CHAIN_CONNECTORS` : la
+# clé de tenant est née AVEC la chaîne, il n'y a pas d'ancien chemin à doubler —
+# l'état MUET (aucune arête) EST le comportement de la PR 1, à l'identique.
+
+def tenant_ref(slug: str, provider: str) -> str:
+    return instance_refs.make_tenant_ref(slug, provider)
+
+
+def tenant_rung(slug: str, provider: str, org: Optional[int]) -> Optional[ChainVerdict]:
+    """Le barreau TENANT vu par la chaîne, pour l'org de contexte. `None` = MUETTE
+    (aucune arête n'a jamais visé cette org ⟹ la clé sert comme en PR 1) ;
+    `granted=False` = REFUSE (toutes révoquées ⟹ le barreau se saute, l'org retombe
+    sur la plateforme) ; sinon ACCORDE, avec le budget de l'arête (R10 : partagé par
+    l'org). Une lecture indexée, et seulement quand une clé de tenant existe."""
+    if org is None:
+        return None
+    ref = tenant_ref(slug, provider)
+    edges = db_grants.edges_for(ref, [("org", str(org))])
+    if not edges:
+        return None
+    live = [e for e in edges if e.get("revoked_at") is None]
+    if not live:
+        return ChainVerdict(False, slug, resource_id=ref)
+    best = live[0]                       # `edges_for` : vivantes d'abord, récentes d'abord
+    return ChainVerdict(True, slug, quota_of(best), int(best["id"]), ref, ("org", str(org)))
+
+
+def tenant_for_org(org: int, provider: str) -> Optional[str]:
+    """L'ANONYME (ADR 0032) n'a pas d'identité : son tenant ne se lit que sur une
+    arête VIVANTE `tenant:*:{provider} → org:{org}` — jamais sur le rattachement de
+    l'org (lot L1). Rend le slug, ou None (aucune arête, ou toutes révoquées)."""
+    for e in db_grants.live_edges_for_grantee("org", str(org), "tenant:"):
+        try:
+            parsed = instance_refs.parse_ref(e["resource_id"])
+        except ValueError:
+            continue
+        if parsed.level == "tenant" and parsed.connector == provider and parsed.tenant:
+            return parsed.tenant
+    return None
+
+
+def tenant_grant(slug: str, provider: str, org_id: int, daily_quota: Optional[int] = None,
+                 created_by: Optional[str] = None) -> int:
+    """Accorde la clé du tenant à une org, avec son budget (D6 : le précédent est
+    ARCHIVÉ, jamais deux arêtes vivantes). Rend l'id de l'arête."""
+    ref = tenant_ref(slug, provider)
+    db_grants.revoke_edges(ref, "org", str(org_id))
+    return db_grants.insert_grant(
+        resource_id=ref, grantor_kind="tenant", grantor_id=slug,
+        grantee_kind="org", grantee_id=str(org_id),
+        constraints={"quota": int(daily_quota)} if daily_quota else {},
+        source="manual", created_by=created_by)
+
+
+def tenant_revoke(slug: str, provider: str, org_id: int) -> int:
+    """Archive les arêtes vivantes : l'org est REFUSÉE sur cette clé à la lecture
+    suivante (elle retombe sur la plateforme) — ce n'est pas « revenir à sans arête »."""
+    return db_grants.revoke_edges(tenant_ref(slug, provider), "org", str(org_id))
+
+
+def tenant_org_grants(slug: str, provider: str) -> list[dict]:
+    """Les orgs accordées, budget et consommation du jour (surface d'affichage)."""
+    ref = tenant_ref(slug, provider)
+    out = []
+    for e in db_grants.live_edges_for_resource(ref):
+        if e.get("grantee_kind") != "org":
+            continue
+        out.append({"org_id": int(e["grantee_id"]), "daily_quota": quota_of(e),
+                    "used_today": db_grants.counter_sum_today(ref, "org", e["grantee_id"]),
+                    "grant_id": int(e["id"]), "created_at": e.get("created_at")})
+    return out
+
+
 # ── La double lecture : journal d'écart ────────────────────────────────────────
 
 def journal_resolution(provider: str, sub: str, active_org: Optional[int],

@@ -28,8 +28,8 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from .. import db, tenancy, tool_alias
-from . import tenant_keys
-from ._authz import ADMIN_BY_OP, PLATFORM_ADMIN, SUPER_ADMIN
+from . import tenant_admins, tenant_grants, tenant_keys
+from ._authz import ADMIN_BY_OP, PLATFORM_ADMIN, SUPER_ADMIN, TENANT_ADMIN_OF
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding, cap_limit
 from .registry import CAPABILITIES
 
@@ -141,6 +141,12 @@ class TenantConsoleOut(BaseModel):
     reload: Optional[Any] = None
     keys: Optional[Any] = None
     key_clear: Optional[Any] = None
+    admins: Optional[Any] = None
+    admin_add: Optional[Any] = None
+    admin_remove: Optional[Any] = None
+    org_grants: Optional[Any] = None
+    org_grant: Optional[Any] = None
+    org_revoke: Optional[Any] = None
 
 
 def _live_registry() -> dict:
@@ -229,10 +235,15 @@ def _reload(ctx: ResolvedCtx, inp: ReloadInput) -> dict:
 
 
 class TenantConsoleInput(BaseModel):
-    op: Literal["list", "get", "reload", "keys", "key_clear"] = "list"
+    op: Literal["list", "get", "reload", "keys", "key_clear",
+                "admins", "admin_add", "admin_remove",
+                "org_grants", "org_grant", "org_revoke"] = "list"
     slug: Optional[str] = None
-    provider: Optional[str] = None      # key_clear
+    provider: Optional[str] = None      # key_clear, org_grants, org_grant, org_revoke
     account: str = ""                   # key_clear, multi-compte ('' = mono)
+    sub: Optional[str] = None           # admin_add, admin_remove
+    org_id: Optional[int] = None        # org_grant, org_revoke
+    daily_quota: Optional[int] = None   # org_grant (0 = illimité)
     days: int = _DEFAULT_DAYS
 
     @field_validator("days")
@@ -258,7 +269,42 @@ def _console(ctx: ResolvedCtx, inp: TenantConsoleInput) -> dict:
         return {"days": inp.days,
                 "key_clear": tenant_keys._clear_key(ctx, tenant_keys.TenantKeyClearInput(
                     slug=slug, provider=inp.provider.strip(), account=inp.account))}
+    if inp.op in ("admins", "admin_add", "admin_remove"):
+        return {"days": inp.days, **_console_admins(ctx, inp, slug)}
+    if inp.op in ("org_grants", "org_grant", "org_revoke"):
+        return {"days": inp.days, **_console_grants(ctx, inp, slug)}
     return _tenant(ctx, TenantInput(slug=slug, days=inp.days))
+
+
+def _console_admins(ctx: ResolvedCtx, inp: TenantConsoleInput, slug: str) -> dict:
+    """Le rôle « admin de tenant » (PR 2) : lister, déclarer, retirer."""
+    if inp.op == "admins":
+        return {"admins": tenant_admins._list(ctx, tenant_admins.TenantAdminsInput(slug=slug))}
+    sub = (inp.sub or "").strip()
+    if not sub:
+        raise AuthzDenied(400, "missing_sub", f"`sub` requis pour op={inp.op}.")
+    if inp.op == "admin_add":
+        return {"admin_add": tenant_admins._add(
+            ctx, tenant_admins.TenantAdminAddInput(slug=slug, sub=sub))}
+    return {"admin_remove": tenant_admins._remove(
+        ctx, tenant_admins.TenantAdminRemoveInput(slug=slug, sub=sub))}
+
+
+def _console_grants(ctx: ResolvedCtx, inp: TenantConsoleInput, slug: str) -> dict:
+    """L'arête tenant→org de 0053 (PR 2) : lister, accorder, révoquer."""
+    provider = (inp.provider or "").strip()
+    if not provider:
+        raise AuthzDenied(400, "missing_provider", f"`provider` requis pour op={inp.op}.")
+    if inp.op == "org_grants":
+        return {"org_grants": tenant_grants._list(
+            ctx, tenant_grants.TenantOrgGrantsInput(slug=slug, provider=provider))}
+    if inp.org_id is None:
+        raise AuthzDenied(400, "missing_org_id", f"`org_id` requis pour op={inp.op}.")
+    if inp.op == "org_grant":
+        return {"org_grant": tenant_grants._grant(ctx, tenant_grants.TenantOrgGrantInput(
+            slug=slug, provider=provider, org_id=inp.org_id, daily_quota=inp.daily_quota))}
+    return {"org_revoke": tenant_grants._revoke(ctx, tenant_grants.TenantOrgRevokeInput(
+        slug=slug, provider=provider, org_id=inp.org_id))}
 
 
 CAPABILITIES += [
@@ -267,7 +313,9 @@ CAPABILITIES += [
                description="Suivi des tenants : une ligne par tenant déclaré.",
                rest=RestBinding("GET", "/api/admin/tenants")),
     Capability(key="admin.tenant", handler=_tenant, Input=TenantInput,
-               Output=TenantDetail, authz=PLATFORM_ADMIN,
+               Output=TenantDetail,
+               # PR 2 : l'admin de tenant voit SES orgs (la fiche de son tenant).
+               authz=TENANT_ADMIN_OF("slug", platform=PLATFORM_ADMIN),
                description="Fiche d'un tenant : ses compteurs et les listes derrière.",
                rest=RestBinding("GET", "/api/admin/tenants/{slug}")),
     Capability(key="admin.tenants_reload", handler=_reload, Input=ReloadInput,
@@ -285,7 +333,14 @@ CAPABILITIES += [
                            "reload": SUPER_ADMIN,
                            # L-clés PR 1 : lire les clés = lentille ; en retirer une
                            # change ce que la résolution sert à tout un tenant.
-                           "keys": PLATFORM_ADMIN, "key_clear": SUPER_ADMIN}),
+                           "keys": PLATFORM_ADMIN, "key_clear": SUPER_ADMIN,
+                           # PR 2 — le rôle et l'arête, depuis la console PLATEFORME
+                           # seulement : le plancher de l'outil reste `operator` (une
+                           # op au rôle de tenant le ferait entrer dans le handshake
+                           # de chaque compte) ; l'admin de tenant agit par REST.
+                           "admins": PLATFORM_ADMIN, "admin_add": SUPER_ADMIN,
+                           "admin_remove": SUPER_ADMIN, "org_grants": PLATFORM_ADMIN,
+                           "org_grant": SUPER_ADMIN, "org_revoke": SUPER_ADMIN}),
         description=(
             "[platform admin] Tenant tracking (identity tier, ADR 0052). op=list → one "
             "row per declared tenant: issuer + jwks + hosts + oauth client + dashboard "
@@ -306,7 +361,16 @@ CAPABILITIES += [
             "serves every org of the tenant that has no closer key (member/team/org), "
             "resolved before the platform key. op=key_clear (`slug`, `provider`, "
             "optional `account`; super_admin) removes one. Posing a key is REST "
-            "only: PUT /api/admin/tenants/{slug}/keys/{provider}."),
+            "only: PUT /api/admin/tenants/{slug}/keys/{provider}. op=admins (`slug`) → "
+            "the tenant's admins (accounts qualified under it: they manage the "
+            "tenant's keys and org grants from the REST face); admin_add / "
+            "admin_remove (`slug`, `sub`; super_admin). op=org_grants (`slug`, "
+            "`provider`) → orgs granted the tenant's key with their shared daily "
+            "budget and usage; org_grant (`org_id`, optional `daily_quota`, 0 = "
+            "unlimited; replaces) / org_revoke (`org_id`; the org falls back to the "
+            "platform key) — super_admin. Without any grant the key serves every org "
+            "of the tenant; the anonymous endpoint of an org gets it only through a "
+            "live grant."),
         mcp="oto_admin_tenant",
     ),
 ]
