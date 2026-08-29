@@ -193,6 +193,38 @@ def datastore_claimed_rows(ns_id: int) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def datastore_active_leases_of(*, run_id: Optional[str] = None,
+                               worker: Optional[str] = None) -> list[dict]:
+    """Les lignes qu'un run (et, si donné, un worker) tient EN CE MOMENT — la
+    réservation lue comme une adresse (#517).
+
+    ⚠️ Baux ACTIFS seulement, contrairement à `datastore_claimed_rows` qui rend aussi
+    les baux échus pour la vue du dashboard : ici la réponse sert à DÉSIGNER une ligne
+    où écrire. Un bail échu ne désigne plus rien — la ligne est peut-être déjà repartie
+    à quelqu'un d'autre, et écrire dessus au nom d'un bail mort est exactement ce que
+    le verrou natif interdit.
+
+    Sans `run_id`, aucune ligne : l'appartenance se prouve par le jeton de run, jamais
+    par le seul nom de worker — celui-ci est une étiquette que l'appelant choisit, donc
+    qu'un autre peut porter. Il ne sert qu'à RESTREINDRE.
+
+    Rendu volontairement étroit (`ns_id`, `row_id`) : l'appelant nomme les tableaux
+    lui-même, et rapatrier ici la jointure obligerait ce module — qui ne connaît que
+    le bail — à connaître le catalogue."""
+    if not run_id:
+        return []
+    garde = "" if worker is None else " AND claimed_by = %s"
+    params: tuple = (run_id,) if worker is None else (run_id, str(worker))
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT ns_id, row_id, claimed_by, claimed_until FROM datastore_rows "
+            "WHERE claimed_run = %s AND claimed_until IS NOT NULL "
+            f"AND claimed_until > NOW(){garde} ORDER BY claimed_until ASC",
+            params,
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def datastore_release_claim(ns_id: int, row_id: str, worker: Optional[str]) -> bool:
     """Libère le bail d'une row. `worker` non-None = gardé (on ne libère pas le
     claim d'un autre) ; None = libération inconditionnelle (chemin interne : entrée

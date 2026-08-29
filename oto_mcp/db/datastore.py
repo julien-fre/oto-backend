@@ -61,6 +61,7 @@ from .datastore_ns import (  # noqa: F401
 # plate `db.<fn>` et tous les appelants restent inchangés.
 from .rowlock import (  # noqa: F401
     datastore_active_lease,
+    datastore_active_leases_of,
     datastore_claim_next,
     datastore_claim_row,
     datastore_claimed_rows,

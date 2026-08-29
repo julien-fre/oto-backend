@@ -122,6 +122,26 @@ class RowLocked(Exception):
             f"l'agent abandonné, libère la ligne (data_release), puis écris.")
 
 
+class ClaimedRefUnresolved(ValueError):
+    """`@claimed` n'a pas pu désigner une ligne — et le refus dit laquelle manque (#517).
+
+    L'alias existe parce que recopier trente-deux caractères aléatoires est une tâche
+    à laquelle un agent échoue : mesuré sur trois passages d'une campagne, il altère
+    l'identifiant ou en fabrique un dans une convention étrangère. Ce qui suit le refus
+    coûte plus cher que le refus — l'agent réessaie sans identifiant, et une écriture
+    sans identifiant CRÉE au lieu de corriger.
+
+    D'où la règle de ces messages : **jamais « non » tout court**. Ne rien tenir se dit
+    en nommant le geste qui réserve ; tenir ailleurs se dit en nommant le tableau qui
+    tient — c'est le cas qui a écrit des fiches d'essai dans le fichier d'une cliente,
+    et l'agent avait l'information sans la voir. Tenir plusieurs lignes se dit en les
+    nommant plutôt qu'en en choisissant une : écrire sur la mauvaise ligne d'un fichier
+    client ne se voit sur aucun écran.
+
+    ⚠️ Ce n'est pas une propriété par identifiant (#546, refusée) : sans jeton de run,
+    l'alias REFUSE. Il ne consolide rien, il rend lisible ce que le serveur sait déjà."""
+
+
 class RowClaimed(Exception):
     """Row nommée déjà sous bail ACTIF d'un autre worker (ADR 0046 D).
 

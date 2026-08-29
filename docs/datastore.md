@@ -810,3 +810,62 @@ portait déjà la source dans chaque élément (511 contacts sur 515), pas parce
 conversion la garantit : vérifier après conversion que le compte des origines par feuille
 égale celui d'avant, et ne pas lire l'absence d'une colonne SUPPRIMÉE par la conversion
 comme une perte de provenance.
+
+
+## Écrire « sur ma réservation » — l'alias `@claimed` (#517, 29/08)
+
+**Le geste** : `data_write(namespace=…, id="@claimed", row={…})`, et le même sur
+`data_release`. Le serveur relit le bail du run courant et écrit sur la ligne qu'il
+tient. Rien à recopier, rien à deviner.
+
+**Pourquoi la plateforme change plutôt que la consigne.** Pour écrire sa fiche, un
+agent devait repasser les trente-deux caractères que sa réservation venait de lui
+rendre. Mesuré sur trois passages d'une campagne réelle, il en altère un
+(`…-7c06-…` pour `…-7c16-…`) ou en fabrique un dans une convention étrangère
+(`670d56b3-…` en uuid v4, `6723d393f9b0…` en 24 hexadécimaux, `temp_blocage_20260826`).
+**Recopier une chaîne aléatoire n'est pas une question de rigueur** : aucune consigne ne
+l'obtient, et l'agent a par ailleurs tout ce qu'il faut dans son bail.
+
+⚠️ **Ce qui coûte n'est pas le refus, c'est ce qui le suit.** L'agent refusé réessaie
+**sans identifiant** — c'est la conduite qu'on lui écrit —, et une écriture sans
+identifiant **crée** au lieu de corriger. Le 29/08, deux entreprises inexistantes sont
+nées ainsi dans un tableau d'évaluation (`AA EDITIONS`, `EDITIONS DE L'AUBE` : absentes
+du lot, du fichier client **et** du registre national, avec une provenance attribuée à
+ce registre) ; la veille, cinq fiches d'essai étaient nées dans le fichier d'une
+cliente et dans un livrable déjà remis. **Fréquence faible — 4 refus sur 105 mesurés —
+mais c'est la seule famille qui fabrique de la donnée fausse.**
+
+### Trois refus, et chacun dit quoi faire
+
+| situation | ce que dit le refus |
+|---|---|
+| aucun run sur l'appel | passe `_run_id` — il n'est **pas** hérité (cf. #547) |
+| le run ne tient rien ici, mais tient ailleurs | **nomme le tableau réservé** — c'est le cas qui a écrit chez la cliente |
+| le run tient plusieurs lignes ici | les nomme, et refuse de choisir |
+
+Le deuxième est le plus utile : l'agent visait le mauvais tableau, **et sa réservation
+savait lequel était le bon**. L'information existait, elle ne sortait pas.
+
+Le refus `row … introuvable` du chemin d'écriture porte désormais la même charge : la
+**forme** attendue d'un identifiant, le rappel que `data_claim_next` la rend telle
+quelle, et ce que le run tient déjà.
+
+### Ce que l'alias n'est PAS
+
+**Il ne crée aucune propriété par identifiant.** La preuve d'appartenance reste le
+jeton de run (ADR 0038) — c'est le sens du refus de #546 : consoler l'appartenance par
+l'identifiant viderait la notion de run. Sans jeton, `@claimed` refuse ; il rend
+seulement lisible ce que le serveur sait déjà.
+
+**Et il ne pardonne rien.** Égalité exacte : `@claim`, `@claimed-2`, `@ma_ligne` partent
+tels quels et échouent comme avant. Un alias tolérant remplacerait une chaîne à recopier
+par une grammaire à deviner — la faute qu'on ferme, un cran plus haut.
+
+### Le bail lu comme une adresse
+
+`db.datastore_active_leases_of(run_id=…, worker=…)` ne rend que les baux **actifs**,
+contrairement à `datastore_claimed_rows` (qui sert la vue de supervision et inclut les
+baux échus). La différence est le sujet : ici la réponse **désigne une ligne où écrire**,
+et un bail échu ne désigne plus rien — la ligne est peut-être repartie à quelqu'un
+d'autre. Sans `run_id`, la fonction rend une liste vide : `worker` est une étiquette
+choisie par l'appelant, elle restreint, elle ne prouve pas.
