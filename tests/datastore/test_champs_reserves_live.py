@@ -53,9 +53,7 @@ SCHEMA = {
     "fields": [
         {"key": "siren", "type": "text"},
         {"key": "raison_sociale", "type": "text", "origine": "system"},
-        {"key": "adresse", "type": "text", "readonly": True,
-         "report_to": "notes_verification"},
-        {"key": "notes_verification", "type": "text"},
+        {"key": "adresse", "type": "text", "readonly": True},
     ],
 }
 
@@ -105,7 +103,7 @@ def test_un_refus_ne_laisse_AUCUNE_trace(table):
     st, ns, ns_id, rid = table
     avant = _donnees(ns_id, rid)
     with pytest.raises(RowValidationError, match="`adresse`"):
-        st.update_row(ns, rid, {"adresse": "2 rue B", "notes_verification": "x"})
+        st.update_row(ns, rid, {"adresse": "2 rue B"})
     with pytest.raises(RowValidationError, match="raison_sociale.origine"):
         st.write_rows(ns, [{"siren": "552032534",
                             "raison_sociale": {"origine": "moi"}}])

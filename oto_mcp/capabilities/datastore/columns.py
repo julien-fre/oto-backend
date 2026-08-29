@@ -75,6 +75,10 @@ class PatchSchemaInput(BaseModel):
     namespace: str
     # Fusion PAR CLÉ : chaque entrée complète le field de même `key` (les propriétés
     # fournies écrasent, les autres sont préservées) ou l'ajoute s'il est inconnu.
+    # ⚠️ Pas de `Field(description=…)` ici : `apply_flat_signature` (capabilities/
+    # _types.py) ne recopie que l'annotation et le défaut, la description serait
+    # acceptée-inerte. Ce que le préambule autorise (#586/#606) ne peut donc pas se
+    # répéter sur ce paramètre tant que le seam ne la sert pas.
     fields: Optional[list] = None
     # Le pendant obligé de la fusion : sans retrait explicite, plus de nettoyage.
     remove: Optional[list] = None
@@ -170,7 +174,11 @@ CAPABILITIES += [
             "the SCHEMA; to erase the column from the rows' DATA, that is "
             "`data_drop_column`. `strict`/`key`/`key_required` change the head keys, "
             "untouched when omitted — `key_required: true` CLOSES the table (a write "
-            "designating no existing row is refused), `false` reopens it. Field ORDER "
+            "designating no existing row is refused), `false` reopens it. Per field, "
+            "`readonly: true` locks the value in place (layers such as `.comment` stay "
+            "open) and `origine: \"system\"` makes the platform keep the previous "
+            "value in `<field>.origine` — `null` lifts either without touching the "
+            "rows. Field ORDER "
             "is never reshuffled. Returns the resulting schema "
             "plus `{added, updated, removed}` and any `warning` the schema raises."),
     ),

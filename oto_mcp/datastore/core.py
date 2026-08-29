@@ -36,6 +36,7 @@ from . import schema as dsv2
 # Les refus : extraits dans `errors` (#325), ré-importés ici pour que tout appelant
 # (`from .datastore.core import RowNotFound`) reste inchangé.
 from .schema_ops import SchemaOpsMixin
+from .reserves import poser_origine_systeme, refuser_champs_reserves
 from .errors import (  # noqa: F401
     BusinessKeyRequired,
     ClaimedRefUnresolved,
@@ -781,6 +782,10 @@ class DatastorePg(SchemaOpsMixin):
         schema = ns.get("schema")
         _refuse_dotted_names(user_data)
         _refuse_mixed_layers(schema, user_data)
+        # #586 : la couche d'origine d'un champ système ne s'écrit pas, création
+        # comprise — jugée sur le payload seul (le readonly, lui, se juge contre la
+        # ligne en place, donc dans la fusion). Refusé AVANT le lookup de clé.
+        refuser_champs_reserves(schema, user_data)
         self._trace(trace, ns_id, ns)
         # La clé métier sort du MÊME schéma que ci-dessus (`declared_key` re-résolvait
         # le namespace et relisait la ligne pour le même résultat).
@@ -946,6 +951,11 @@ class DatastorePg(SchemaOpsMixin):
             # silencieusement, puisque remplacer une valeur est le geste normal.
             for _k, _v in pose.items():
                 merged[_k] = _merge_column(merged.get(_k), _v)
+            # #586/#606 : ce que l'appelant n'écrit pas — jugé sur le geste ENTIER
+            # (payload, ligne en place, résultat), sous le verrou, avant que quoi
+            # que ce soit ne parte. Puis la plateforme pose l'origine qu'elle doit.
+            refuser_champs_reserves(schema, pose, avant=current or {}, apres=merged)
+            poser_origine_systeme(schema, current, merged, set(pose))
             # ⚠️ `written` reste l'ensemble des clés que l'appelant a NOMMÉES, pas
             # celles qu'on a retenues : une borne de longueur ou un motif ne doit pas
             # se réarmer sur une colonne préservée, dont la valeur n'a pas bougé.
@@ -980,10 +990,22 @@ class DatastorePg(SchemaOpsMixin):
         schema = self._schema_of(ns_id)
         _refuse_dotted_names(user_data)
         _refuse_mixed_layers(schema, user_data)
-        if dsv2.validation_active(schema) or dsv2.lifecycle_of(schema):
-            prev = db.datastore_get_row(ns_id, row_id)  # remplacement intégral → prev pour la transition
+        valide = dsv2.validation_active(schema) or dsv2.lifecycle_of(schema)
+        reserves = bool(dsv2.readonly_fields(schema) or dsv2.system_origin_fields(schema))
+        prev = db.datastore_get_row(ns_id, row_id) if (valide or reserves) else None
+        prev_data = dict((prev or {}).get("data") or {}) if prev else None
+        if reserves:
+            # #586/#606 sur un REMPLACEMENT : une colonne readonly absente du corps
+            # serait perdue par le remplacement — c'est une modification, jugée
+            # comme telle (le payload est complété des colonnes qui tomberaient).
+            complet = {**{k: None for k in (prev_data or {}) if k not in user_data},
+                       **user_data}
+            refuser_champs_reserves(schema, complet, avant=prev_data, apres=user_data)
+            if prev_data is not None:
+                poser_origine_systeme(schema, prev_data, user_data, set(complet))
+        if valide:
             sk = (dsv2.status_field(schema) or {}).get("key")
-            prev_status = ((prev or {}).get("data") or {}).get(sk) if sk else None
+            prev_status = (prev_data or {}).get(sk) if sk else None
             self._check_row(schema, user_data, prev_status=prev_status)
         self._assert_writable(ns_id, row_id)
         row, inserted = db.datastore_upsert_row(ns_id, row_id, user_data)
@@ -1066,6 +1088,9 @@ class DatastorePg(SchemaOpsMixin):
                     updated += 1
                     ids.append(existing_id)
                     continue
+                # #586 : la création dans le LOT (même chemin que l'upload signé) —
+                # la couche d'origine d'un champ système ne s'écrit pas.
+                refuser_champs_reserves(schema, user_data)
                 self._check_row(schema, user_data)
                 try:
                     row = db.datastore_insert_row(ns_id, _new_id(), user_data)
@@ -1329,6 +1354,7 @@ class DatastorePg(SchemaOpsMixin):
         # d'écriture ont déjà divergé une fois sur cette famille de règles (#322) :
         # ils partagent donc la fonction, pas seulement l'intention.
         pose, vidages, ecartes = arbitrer_les_vides(data, patch, row_id)
+        avant = dict(data)
         written = set()
         for k, v in pose.items():
             if k in _META_COLS:
@@ -1338,6 +1364,10 @@ class DatastorePg(SchemaOpsMixin):
             # geste le plus courant d'un agent, l'effaçait quand même.
             data[k] = _merge_column(data.get(k), v)
             written.add(k)
+        # #586/#606 : MÊME garde que la fusion — le patch par `id` est le geste le
+        # plus courant d'un agent, et celui qui a écrasé les quatorze valeurs.
+        refuser_champs_reserves(schema, pose, avant=avant, apres=data)
+        poser_origine_systeme(schema, avant, data, written)
         # Validation sur le RÉSULTAT mergé (un patch partiel ne doit pas échouer
         # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).
         # Seule la borne de longueur se limite aux clés du patch (#383).

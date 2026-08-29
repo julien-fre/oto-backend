@@ -37,8 +37,7 @@ def _writes_layers(new: Any) -> bool:
     Strict, comme tout écrivain : un dict fait UNIQUEMENT de couches connues. Un
     `{"a": 1, "origine": "x"}` reste une donnée `json` métier qui se trouve avoir un
     champ nommé « origine » — on ne le réinterprète pas."""
-    return (isinstance(new, dict) and bool(new)
-            and all(k in dsv2.ALL_LAYER_KEYS for k in new))
+    return dsv2.names_layers(new)
 
 
 def _existing_layers(existing: Any) -> dict:

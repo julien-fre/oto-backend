@@ -30,10 +30,8 @@ from oto_mcp.datastore.errors import RowValidationError
 
 _FIELDS = [{"key": "siren", "type": "text"},
            {"key": "raison_sociale", "type": "text", "origine": "system"},
-           {"key": "adresse", "type": "text", "readonly": True,
-            "report_to": "notes_verification"},
-           {"key": "naf", "type": "text", "readonly": True},
-           {"key": "notes_verification", "type": "text"},
+           {"key": "adresse", "type": "text", "readonly": True},
+           {"key": "naf", "type": "text", "readonly": True, "origine": "system"},
            {"key": "libre", "type": "text"}]
 _SCHEMA = {"key": "siren", "fields": _FIELDS}
 _LIGNE = {"siren": "552081317", "raison_sociale": "ACME",
@@ -232,23 +230,42 @@ def test_hors_declaration_l_origine_s_ecrit_comme_avant(banc):
 # ══ #606 — la colonne du fichier source ══════════════════════════════════════
 
 def test_changer_une_colonne_readonly_est_REFUSE_en_nommant_ou_va_la_chose(banc):
-    """Le geste de l'incident : l'agent « complète » l'adresse avec le registre."""
+    """Le geste de l'incident : l'agent « complète » l'adresse avec le registre. La
+    destination est la couche `comment` de la colonne ELLE-MÊME — la seule forme qui
+    reste attachée au champ, se compte et se livre."""
     st, etat = banc
     with pytest.raises(RowValidationError) as exc:
         st.update_row("viviers", "r1", {"adresse": "2 rue B"})
     msg = str(exc.value)
     assert "`adresse`" in msg and "non modifiable" in msg
-    assert "`notes_verification`" in msg                    # où va la divergence
-    assert exc.value.details == {"expected_column": "notes_verification"}
+    assert "`adresse.comment`" in msg                       # où va la divergence
+    assert exc.value.details == {"expected_column": "adresse.comment"}
     assert etat["maj"] == [] and etat["lignes"]["r1"]["adresse"] == "1 rue A"
 
 
-def test_sans_report_to_le_refus_le_DIT(banc):
+def test_les_couches_d_une_colonne_readonly_restent_OUVERTES(banc):
+    """Le cran verrouille la VALEUR ; `comment`, `link` — et `origine` quand elle
+    n'est pas posée par le système — restent à l'appelant."""
     st, etat = banc
-    with pytest.raises(RowValidationError) as exc:
+    st.update_row("viviers", "r1", {"adresse": {"comment": "registre — 2 rue B",
+                                                "link": "https://x", "origine": "fichier"}})
+    assert etat["lignes"]["r1"]["adresse"] == {"valeur": "1 rue A", "origine": "fichier",
+                                              "comment": "registre — 2 rue B",
+                                              "link": "https://x"}
+
+
+def test_readonly_ET_origine_systeme_se_combinent(banc):
+    """`naf` : valeur verrouillée, ET sa couche d'origine fermée à l'appelant. La
+    pose par le système n'a jamais lieu tant que la valeur ne bouge pas — et elle ne
+    bouge pas ; le jour où le propriétaire lève `readonly`, le cran d'origine joue."""
+    st, etat = banc
+    with pytest.raises(RowValidationError, match="`naf`"):
         st.update_row("viviers", "r1", {"naf": "70.10Z"})
-    assert "`naf`" in str(exc.value) and exc.value.details is None
-    assert etat["lignes"]["r1"]["naf"] == "62.01Z"
+    with pytest.raises(RowValidationError, match="naf.origine"):
+        st.update_row("viviers", "r1", {"naf": {"origine": "moi"}})
+    st.update_row("viviers", "r1", {"naf": {"comment": "registre — 70.10Z"}})
+    assert etat["lignes"]["r1"]["naf"] == {"valeur": "62.01Z",
+                                          "comment": "registre — 70.10Z"}
 
 
 def test_remplir_une_colonne_readonly_VIDE_est_refuse(banc):
@@ -276,7 +293,7 @@ def test_la_fusion_par_cle_et_le_lot_refusent_aussi(banc):
                                  {"siren": "552081317", "adresse": "2 rue B"}],
                              key="siren")
     assert "ligne 2/2" in str(exc.value) and "`adresse`" in str(exc.value)
-    assert exc.value.details == {"expected_column": "notes_verification"}
+    assert exc.value.details == {"expected_column": "adresse.comment"}
     assert etat["lignes"]["r1"]["adresse"] == "1 rue A"
 
 
@@ -291,10 +308,12 @@ def test_le_round_trip_a_l_identique_PASSE(banc):
 
 
 def test_annoter_sans_toucher_la_valeur_PASSE(banc):
+    """`adresse.comment` seul : la forme que quatre fiches sur quatorze avaient déjà
+    trouvée — en écrasant la valeur en plus. Ici la valeur reste."""
     st, etat = banc
-    st.update_row("viviers", "r1", {"adresse": {"comment": "vérifiée au registre"}})
+    st.update_row("viviers", "r1", {"adresse": {"comment": "registre — 20 B AV. HUGO"}})
     assert etat["lignes"]["r1"]["adresse"] == {"valeur": "1 rue A",
-                                              "comment": "vérifiée au registre"}
+                                              "comment": "registre — 20 B AV. HUGO"}
 
 
 def test_un_vide_non_null_est_ecarte_AVANT_le_cran(banc):
@@ -321,32 +340,20 @@ def _errs(fields):
 
 def test_la_pose_accepte_les_deux_crans():
     assert dsv2.validate_schema_def(_SCHEMA) == []
-    assert dsv2.system_origin_fields(_SCHEMA) == {"raison_sociale"}
-    assert dsv2.readonly_fields(_SCHEMA) == {"adresse": "notes_verification",
-                                             "naf": None}
+    assert dsv2.system_origin_fields(_SCHEMA) == {"raison_sociale", "naf"}
+    assert dsv2.readonly_fields(_SCHEMA) == {"adresse", "naf"}
 
 
 @pytest.mark.parametrize("field, attendu", [
     ({"key": "x", "origine": "agent"}, "system"),          # vocabulaire fermé
     ({"key": "x", "type": "json", "origine": "system"}, "json"),
     ({"key": "x", "type": "list", "of": {"type": "text"}, "origine": "system"}, "list"),
-    ({"key": "x", "readonly": True, "origine": "system"}, "readonly"),
     ({"key": "x", "readonly": "oui"}, "readonly"),
-    ({"key": "x", "report_to": "y"}, "readonly"),          # report_to sans le cran
-    ({"key": "x", "readonly": True, "report_to": "absente"}, "absente"),
-    ({"key": "x", "readonly": True, "report_to": "x"}, "elle-même"),
 ])
 def test_une_declaration_qui_ne_peut_pas_s_appliquer_se_refuse_a_la_POSE(field, attendu):
     """Jamais acceptée-inerte (#347) : le refus nomme l'attendu."""
     errs = _errs([field, {"key": "y"}])
     assert errs and any(attendu in e for e in errs), errs
-
-
-def test_report_to_vers_une_colonne_readonly_est_refuse():
-    """Une colonne de report qu'on ne peut pas écrire serait un piège insatisfiable."""
-    errs = _errs([{"key": "x", "readonly": True, "report_to": "y"},
-                  {"key": "y", "readonly": True}])
-    assert errs and any("`y`" in e and "readonly" in e for e in errs)
 
 
 def test_les_crans_ne_se_posent_qu_au_PREMIER_niveau():
@@ -364,10 +371,9 @@ def test_les_crans_ne_se_posent_pas_sur_une_cible_de_couche():
 def test_le_retrait_est_une_valeur_nulle():
     """`data_patch_schema(fields=[{key, readonly: null}])` lève le cran sans
     réécrire : `null` est une absence, pour le lecteur comme pour la pose."""
-    schema = {"fields": [{"key": "a", "readonly": None, "report_to": None},
-                         {"key": "b", "origine": None}]}
+    schema = {"fields": [{"key": "a", "readonly": None}, {"key": "b", "origine": None}]}
     assert dsv2.validate_schema_def(schema) == []
-    assert dsv2.readonly_fields(schema) == {} and dsv2.system_origin_fields(schema) == set()
+    assert dsv2.readonly_fields(schema) == set() == dsv2.system_origin_fields(schema)
 
 
 def test_cette_version_ANNONCE_les_deux_crans():
