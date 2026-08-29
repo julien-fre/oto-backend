@@ -100,7 +100,9 @@ Ce que le gabarit impose (`email.render_composed_email`, `_image_html`) :
 - **largeur utile 480 px** : `width="480"` (lu par les clients qui ignorent le CSS) +
   `max-width:100%; height:auto; display:block` (affichage réduit) ;
 - **URL et alt échappés en attribut, guillemets compris** (`html.escape(quote=True)` —
-  `_esc` ne traite pas `"`, et un `"` dans l'alt refermerait l'attribut) ;
+  `_esc` ne traite pas `"`, et un `"` dans l'alt refermerait l'attribut) ; le `href`
+  du bouton (`cta_url`, fourni par l'agent lui aussi) est échappé de la même façon
+  depuis ce lot — c'était le même trou ;
 - **sans image, le rendu est celui d'avant à l'octet** (golden dans
   `tests/test_email_image.py`).
 

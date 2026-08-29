@@ -425,7 +425,7 @@ def render_composed_email(
     cta_html = ""
     if cta_text and cta_url:
         cta_html = (
-            f'<p style="padding:8px 0"><a href="{_esc(cta_url)}" style="{_BTN}">'
+            f'<p style="padding:8px 0"><a href="{_esc_attr(cta_url)}" style="{_BTN}">'
             f'{_esc(cta_text)}</a></p>'
         )
     footer_html = ""

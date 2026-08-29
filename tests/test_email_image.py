@@ -94,6 +94,16 @@ def test_l_alt_et_l_url_sont_echappes_en_attribut():
     assert html.count("<img") == 1 and "<b>" not in html and 'onerror="' not in html
 
 
+def test_le_bouton_echappe_son_url_en_attribut_comme_l_image():
+    """Même trou, même correctif : `cta_url` vient de l'agent, et un `"` y refermait
+    `href` — l'attribut suivant aurait été celui de l'auteur de l'URL. Une seule balise
+    `<a`, aucun attribut injecté ; sans guillemet dans l'URL, rien ne change (golden)."""
+    url = 'https://exemple.test/x?a="b" onmouseover="y'
+    html = E.render_composed_email(_BODY, cta_text="ouvrir", cta_url=url)
+    assert 'href="https://exemple.test/x?a=&quot;b&quot; onmouseover=&quot;y"' in html
+    assert html.count("<a ") == 1 and 'onmouseover="' not in html
+
+
 def test_send_composed_email_porte_l_image_jusqu_au_mailer(monkeypatch):
     envoye = {}
     monkeypatch.setattr(E, "_send", lambda to, subject, html, **k: envoye.update(html=html) or True)

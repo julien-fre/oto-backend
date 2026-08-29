@@ -132,9 +132,8 @@ def register(mcp: FastMCP) -> None:
         précise, passe `send_at`. Pour forcer un envoi immédiat malgré les quiet
         hours, `force_now=True`. Gère/annule la file : `oto_scheduled_emails(op='list'|'cancel')`.
 
-        Image de tête : `image_url` (https, publique) + `image_alt` (REQUIS). Pour
-        publier un visuel une fois et le réutiliser à chaque envoi :
-        `oto_upload_url(target="image")` → PUT le fichier → l'accusé rend `url`.
+        Image de tête : `image_url` (https) + `image_alt` REQUIS ; l'URL publique
+        vient de `oto_upload_url(target="image")` (un upload, réutilisable).
 
         Args:
             to: adresse email du destinataire.
@@ -148,11 +147,9 @@ def register(mcp: FastMCP) -> None:
                 oto@otomata.tech si l'org n'en a aucune — super_admin uniquement).
             cta_text: libellé d'un bouton d'action optionnel (ex. « ouvrir oto »).
             cta_url: URL du bouton (requis si `cta_text` est fourni).
-            image_url: URL `https://` publique d'UNE image affichée en tête du mail,
-                avant le corps (largeur 480 px, réduite sur mobile). Pour publier un
-                visuel : `oto_upload_url(target="image")` → PUT le fichier (png, jpeg,
-                gif ou webp, 2 Mo max) → l'accusé rend `url`, publique et permanente.
-                Un upload, une URL, réutilisée à chaque envoi.
+            image_url: URL `https://` publique d'UNE image en tête du mail (480 px,
+                réduite sur mobile). Pour la publier : `oto_upload_url(target="image")`
+                → PUT le fichier → l'accusé rend `url` (permanente, réutilisable).
             image_alt: texte de remplacement, REQUIS avec `image_url` — beaucoup de
                 clients bloquent les images, le mail doit garder son sens sans elle.
             reply_to: adresse de réponse (défaut = celle du sender, sinon la boîte
