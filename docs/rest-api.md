@@ -296,6 +296,26 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - CORS : `oto.ninja`, `app.oto.ninja`, `dashboard.oto.ninja` (+ localhosts dev) — défaut dans `_allowed_origins`, override `OTO_MCP_CORS_ORIGINS`. `account.oto.zone` retiré (surface compte décommissionnée → dashboard.oto.ninja)
 - Même `JWTVerifier` que `/mcp` — partage l'audience `https://mcp.oto.ninja/mcp`
 
+## Surface nœuds (PROVISOIRE) — `/api/me/shell`, `/api/me/nodes/{id}`, `/api/me/nodes/{id}/rows`
+
+Trois lectures précoces du modèle de nœuds (`capabilities/shell.py`, `node_view.py`,
+`node_rows.py` ; faces MCP `oto_shell`, `oto_node`, `oto_node_rows`), marquées
+`x-oto-provisoire` dans l'OpenAPI : les FORMES se contractent, le stockage reste variable.
+`type` est une NATURE dérivée d'un rôle (`page` | `table` | `agent` | `execution`), jamais un
+`kind` de plus. 404 indistinct entre inexistant et interdit.
+
+**Un nœud `agent` porte la référence de sa procédure — depuis le 29/08 (#417).** Sur le
+`RailNode` du rail comme sur la fiche : `procedure: {id, slug, scope}` — `id` est
+l'identifiant STABLE que `GET /api/me/guides/{guide_id}` (et `oto_procedure`) accepte,
+`slug` la référence lisible (0059-D3 : les deux, toujours), `scope` le propriétaire du nœud
+(`org` | `group`), parce que le rail sert aussi les procédures d'ÉQUIPE et qu'un front sans
+le scope frappe la mauvaise route de fiche. Lu dans les propriétés du nœud, jamais
+reconstruit ni joint. **Absent (rail) / `null` (fiche) sur toute autre nature et sur un
+agent sans référence lisible** — jamais un id deviné. Jusque-là, aucun chemin serveur ne
+menait d'un nœud agent à sa fiche : son `nod_*` est dérivé (`md5('prc:' || id)`) et la fiche
+de guide refuse un `nod_*` — un front devait recalculer un md5 ou apparier par titre. La
+fiche de guide ne résout toujours PAS un `nod_*` (laissé de côté, cf. #417).
+
 ## Renommer un chemin servi : on double, on date, on retire
 
 Un chemin `/api/*` est un contrat avec des appelants qui vivent **hors de ce dépôt**.
