@@ -80,6 +80,10 @@ class PatchSchemaInput(BaseModel):
     remove: Optional[list] = None
     strict: Optional[bool] = None
     key: Optional[str] = None
+    # #516 : le cran « écrire, jamais créer » se pose et se retire ICI — le poser
+    # par `set` obligerait à réécrire un schéma de 80 champs pour une clé de tête,
+    # exactement le geste que ce patch existe pour éviter.
+    key_required: Optional[bool] = None
 
 
 class PatchSchemaResult(BaseModel):
@@ -113,7 +117,7 @@ def _patch_schema(ctx: ResolvedCtx, inp: PatchSchemaInput) -> dict:
     try:
         return make_store(ctx.sub).patch_schema(
             namespace, fields=inp.fields, remove=inp.remove,
-            strict=inp.strict, key=inp.key)
+            strict=inp.strict, key=inp.key, key_required=inp.key_required)
     except NamespaceNotFound:
         raise AuthzDenied(404, "namespace_not_found")
     except NamespaceReadOnly:
@@ -164,8 +168,10 @@ CAPABILITIES += [
             "keys are appended. `remove: [\"key\", …]` is the explicit deletion (a "
             "wrong key is refused, never silently ignored) — it takes the field out of "
             "the SCHEMA; to erase the column from the rows' DATA, that is "
-            "`data_drop_column`. `strict`/`key` change the head keys, untouched when "
-            "omitted. Field ORDER is never reshuffled. Returns the resulting schema "
+            "`data_drop_column`. `strict`/`key`/`key_required` change the head keys, "
+            "untouched when omitted — `key_required: true` CLOSES the table (a write "
+            "designating no existing row is refused), `false` reopens it. Field ORDER "
+            "is never reshuffled. Returns the resulting schema "
             "plus `{added, updated, removed}` and any `warning` the schema raises."),
     ),
 ]
