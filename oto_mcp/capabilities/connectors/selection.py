@@ -101,6 +101,11 @@ class MyConnectorRow(BaseModel):
     # None = absence DÉCLARÉE de logo de marque (générique/maison) → monogramme
     # côté UI, pas un chargement raté.
     logo_url: Optional[str] = None
+    # NATURE du credential attendu — api_key|basic_auth|fields|oauth|cookie|none
+    # — pas son état : `none` dit « ce connecteur marche sans qu'on apporte quoi
+    # que ce soit », et ne dit rien de la clé posée (ça, c'est `providers[name]`
+    # de `/api/me`). Le seul champ d'auth du mode compact ; cf. `_COMPACT_KEYS`.
+    secret_kind: Optional[str] = None
     state: Literal["not_selected", "active", "paused"]
     # Baseline proposée par l'ORG (ADR 0019), jamais l'état du membre : un
     # connecteur `recommended` peut très bien être `not_selected`.
