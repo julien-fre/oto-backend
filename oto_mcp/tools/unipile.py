@@ -1548,6 +1548,15 @@ connector_flow.declare(
 # `unipile` lui-même n'a PLUS de flux : c'est le compte fournisseur, sa carte pose
 # une clé. Le tool `unipile_connect_start(channel=…)` reste, lui, multi-canal (il
 # n'appartient à aucune capacité — cf. le namespace `unipile`).
+#
+# ⚠️ Cette phrase est FAUSSE de la déclaration ci-dessus, et le rester est délibéré
+# (2026-08-29). Le flux multi-canal de `unipile` est du code de PRODUCTION que le
+# split devait laisser intact — `test_le_compte_garde_son_code_de_production` le
+# tient. Ce qui devait changer était côté ÉCRAN : le front rendait cette liste des
+# six sur les SEPT cartes, donc la carte WhatsApp proposait de connecter LinkedIn.
+# Corrigé là-bas (tulina-app-front v1.17.0, `hostedChannelOf`), en lisant
+# `auth.hosted_channel` — la carte du compte garde ses six, chaque carte de canal
+# n'a plus que le sien.
 for _con in providers.REGISTRY.values():
     if not _con.hosted_channel:
         continue

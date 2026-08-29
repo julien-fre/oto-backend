@@ -1040,22 +1040,39 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # `unipile_operated_accounts`, `unipile_pending`) ne bougent PAS : leur
     # colonne `provider` a toujours porté le CANAL (LINKEDIN/WHATSAPP/…), jamais
     # le connecteur. Le split les rejoint, il ne les migre pas.
+    #
+    # ⚠️ SOUS SENTINELLE, et c'est le correctif du 2026-08-29. Les gestes se
+    # croyaient rejouables parce qu'ils sont en `ON CONFLICT DO NOTHING` —
+    # protection des lignes PRÉSENTES, alors que retirer un connecteur SUPPRIME la
+    # sienne (`unselect` est un DELETE). Rejoués à chaque boot, ils réinstallaient
+    # donc ce qu'on venait de retirer : un canal désélectionné revenait actif au
+    # redémarrage, avec ses cinq voisins. Idem pour une disponibilité éteinte à la
+    # main et une ACL d'org effacée. Un déménagement est vrai UNE fois ; ce qui
+    # doit rester rejouable, c'est le boot, pas l'écriture (cf.
+    # `split_fanout_pending`, qui explique aussi pourquoi la prod est marquée
+    # sans réécriture).
     from ..connectors import activation as _conn_act_split
     _CANAUX_UNIPILE = ("linkedin_unipile", "whatsapp", "telegram",
                        "instagram", "messenger", "twitter")
-    _conn_act_split.fanout_availability(conn, "unipile", _CANAUX_UNIPILE)
-    _conn_act_split.fanout_acl(conn, "unipile", _CANAUX_UNIPILE)
-    _conn_sel.fanout_selection(conn, "unipile", _CANAUX_UNIPILE)
-    # Proposition d'org (`orgs.default_connectors`, consultatif) : une org qui
-    # RECOMMANDAIT unipile recommande ses canaux. `array_cat` + déduplication,
-    # gardé sur la présence de `unipile` → rejeu sans effet.
-    conn.execute(
-        "UPDATE orgs SET default_connectors = ("
-        "  SELECT ARRAY(SELECT DISTINCT unnest(default_connectors || %s::text[]))"
-        ") WHERE default_connectors @> ARRAY['unipile']::text[] "
-        "   AND NOT default_connectors @> %s::text[]",
-        (list(_CANAUX_UNIPILE), list(_CANAUX_UNIPILE)),
-    )
+    if _conn_sel.split_fanout_pending(conn, _CANAUX_UNIPILE):
+        _conn_act_split.fanout_availability(conn, "unipile", _CANAUX_UNIPILE)
+        _conn_act_split.fanout_acl(conn, "unipile", _CANAUX_UNIPILE)
+        _conn_sel.fanout_selection(conn, "unipile", _CANAUX_UNIPILE)
+        # Proposition d'org (`orgs.default_connectors`, consultatif) : une org qui
+        # RECOMMANDAIT unipile recommande ses canaux. Sous la MÊME sentinelle et
+        # pour la même raison : une org qui retire un canal de sa proposition le
+        # voyait revenir au boot suivant.
+        conn.execute(
+            "UPDATE orgs SET default_connectors = ("
+            "  SELECT ARRAY(SELECT DISTINCT unnest(default_connectors || %s::text[]))"
+            ") WHERE default_connectors @> ARRAY['unipile']::text[] "
+            "   AND NOT default_connectors @> %s::text[]",
+            (list(_CANAUX_UNIPILE), list(_CANAUX_UNIPILE)),
+        )
+        # Posée EN DERNIER, dans la même transaction que les quatre gestes : une
+        # passe interrompue ne laisse pas une sentinelle qui prétend qu'ils ont eu
+        # lieu.
+        _conn_sel.mark_split_fanout(conn)
     # === Lot M2 (blueprint ADR 0054/0063, #287) : projets et pages → NŒUDS ===
     # PLACÉ EN FIN DE TRANSACTION, et c'est la même règle qu'au lot M1 : la
     # conversion doit suivre TOUTE écriture de sa table source dans CE boot.

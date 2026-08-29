@@ -206,6 +206,61 @@ def rename_selection(conn, old: str, new: str) -> int:
     return cur.rowcount or 0
 
 
+# --- one-shot du SPLIT unipile (2026-08-28) ----------------------------------
+
+# Sentinelle du fan-out de split, même ledger et même forme que `_BACKFILL_MARK`
+# (jamais un sub réel — les subs Logto sont alphanumériques).
+_SPLIT_MARK = "#unipile-split-fanout"
+
+
+def split_fanout_pending(conn, targets: tuple[str, ...]) -> bool:
+    """Le fan-out du split doit-il encore tourner sur CETTE base ? (one-shot)
+
+    **Pourquoi ce garde-fou existe.** Le fan-out a été écrit « idempotent, donc
+    rejouable à chaque boot » sur la foi d'un `ON CONFLICT DO NOTHING` — qui ne
+    protège que les lignes PRÉSENTES. Or désélectionner un connecteur SUPPRIME sa
+    ligne (`unselect`, un DELETE) : la protection ne couvrait donc pas le seul cas
+    où elle comptait. Résultat vécu : qui retirait WhatsApp le retrouvait installé
+    au redémarrage suivant, avec les cinq autres canaux — « ce n'est pas parce
+    qu'un connecteur est actif que les autres doivent l'être ». Même mécanique sur
+    les deux autres barreaux : une disponibilité plateforme éteinte à la main
+    revenait allumée, une ACL d'org effacée revenait posée.
+
+    Un fan-out de split n'est pas une convergence à maintenir — c'est un
+    DÉMÉNAGEMENT, vrai une fois. Ce qui doit être rejouable, c'est le BOOT, pas
+    l'écriture : d'où une sentinelle, exactement comme le backfill ADR 0050.
+
+    **La base de prod l'a déjà reçu** (elle boote avec ce code depuis le
+    2026-08-28), et poser la sentinelle sans plus rien regarder la ferait donc
+    tourner une dernière fois — en réinstallant une dernière fois ce que les gens
+    ont retiré. D'où la sonde : une base qui porte DÉJÀ une sélection sur l'un des
+    canaux a reçu le déménagement, on marque sans réécrire. Une base neuve, ou
+    restaurée d'avant le split, n'en porte aucune et le reçoit normalement."""
+    done = conn.execute(
+        "SELECT 1 FROM connector_selection_seeded WHERE sub = %s AND org_id = 0",
+        (_SPLIT_MARK,),
+    ).fetchone()
+    if done:
+        return False
+    deja = conn.execute(
+        "SELECT 1 FROM user_selected_connectors WHERE connector = ANY(%s) LIMIT 1",
+        (list(targets),),
+    ).fetchone()
+    if deja:
+        mark_split_fanout(conn)
+        return False
+    return True
+
+
+def mark_split_fanout(conn) -> None:
+    """Pose la sentinelle du fan-out de split — à appeler APRÈS la passe."""
+    conn.execute(
+        "INSERT INTO connector_selection_seeded (sub, org_id) VALUES (%s, 0) "
+        "ON CONFLICT DO NOTHING",
+        (_SPLIT_MARK,),
+    )
+
+
 def fanout_selection(conn, source: str, targets: tuple[str, ...]) -> int:
     """Étend à `targets` la sélection de `source` — un connecteur qui se SCINDE.
 
