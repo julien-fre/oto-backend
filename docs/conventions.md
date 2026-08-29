@@ -248,6 +248,31 @@ rien ne rendait navigable et que rien ne tenait.
   différentes** : un côté avec la base et l'autre sans rendrait des outils « RETIRÉS »
   que personne n'a retirés. *Un rapport qui délimite sa portée vaut plus qu'un rapport
   « complet » — le second n'existe pas, il se contente de ne pas dire où il s'arrête.*
+- **Un CRAN s'éprouve sur une table jetable, dans le sens du GESTE RÉEL, avant de
+  partir sur une campagne qui tourne (29/08, #586).** Deux appels suffisent : **la
+  fiche entière réémise** — avec ses couches, avec ses colonnes légitimes, avec sa
+  colonne d'état — puis la même sur le cas de bord que le cran vise. *Trois gardes
+  posées le même jour ont cassé le geste réel, et les deux appels les auraient
+  attrapées toutes les trois en trente secondes* : un refus branché sur un booléen qui
+  couvrait deux situations opposées (campagne coupée à 5 fiches sur 100), un refus de
+  l'écriture identique qui aurait rejeté chaque fiche réémise (arrêté avant le
+  déploiement), et un cran d'origine posé sur une colonne d'état, qui a fait refuser à
+  la plateforme les lignes qu'elle venait elle-même de compléter (0 fiche sur 100).
+  ⚠️ **Les trois ont été raisonnées sur l'INTENTION du cran, jamais jouées sur le
+  geste** — et les trois étaient justes en intention. *Un cran ne se relit pas, il
+  s'exécute : ce qu'il refuse ne se déduit pas de ce qu'on voulait qu'il refuse.*
+- **Deux gestes voisins qui lisent la même colonne doivent la LIRE PAREIL (29/08,
+  #586).** Une colonne du datastore est soit un scalaire nu, soit une enveloppe à
+  couches, et **la plateforme elle-même peut l'envelopper** en cours d'écriture (cran
+  `origine: "system"`). Tout ce qui JUGE une valeur la déballe donc — c'est déjà le
+  cas des contrôles de champ, chacun corrigé après un défaut du même genre (#329 les
+  couches, #347 `required_when`), et le contrôle de cycle de vie ne le faisait pas.
+  ⚠️ Le mode de panne se décline en deux : **bruyant** quand le contrôle refuse
+  (« état inconnu » sur un objet), **silencieux** quand il se contente de se tromper —
+  l'état terminal non reconnu n'émet plus son avertissement, le journal enregistre
+  l'enveloppe au lieu de l'état. *Le second est le plus coûteux : le geste réussit et
+  le relevé ment.* Un déballage se pose **à la source** (dans la fonction qui juge),
+  jamais chez ses appelants, sinon il diverge à la première main suivante.
 - **Ce qu'un préambule d'outil AUTORISE se répète dans la description du PARAMÈTRE
   concerné (29/08, #517).** Les deux ne sont pas lus par le même agent au même moment,
   et **le texte le plus proche du geste gagne**. Vécu dans les deux sens sur la même
