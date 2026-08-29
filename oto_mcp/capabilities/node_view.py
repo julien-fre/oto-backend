@@ -52,6 +52,7 @@ from ..db import node_view as db_node
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, NotModified, ResolvedCtx, RestBinding
+from .node_procedure_ref import ProcedureRef, procedure_ref_of
 from .registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
@@ -119,6 +120,10 @@ class NodeOut(BaseModel):
     id: str
     name: str
     type: Literal["page", "table", "agent", "execution"]
+    # Agent : la procédure qu'il exécute (id stable, slug, scope) — le chemin vers sa
+    # fiche (#417). `null` sur toute autre nature et sur un agent sans référence
+    # lisible : un `null` dit « n'en exécute aucune », un id deviné dirait faux.
+    procedure: Optional[ProcedureRef] = None
     trail: list[TrailCrumb] = []
     modified: NodeModified
     # Page : le corps en blocs. Absent sur un tableau.
@@ -206,10 +211,13 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
         raise _introuvable()
 
     props = fiche.get("props") or {}
+    nature = _type_of(fiche["kind"], props)
+    ref = procedure_ref_of(nature, fiche.get("owner_type"), props)
     corps: dict = {
         "id": fiche["public_id"],
         "name": props.get("title") or "",
-        "type": _type_of(fiche["kind"], props),
+        "type": nature,
+        "procedure": ref.model_dump() if ref else None,
         "trail": [c.model_dump() for c in _fil(fiche)],
         "modified": NodeModified(
             at=str(fiche["updated_at"]) if fiche.get("updated_at") else None,

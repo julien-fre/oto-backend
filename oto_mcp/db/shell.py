@@ -35,8 +35,14 @@ from ._conn import _connect
 # (une procédure se rend en `agent`), et le lire ici évite une seconde requête par nœud.
 # On extrait la clé plutôt que de rendre `props` entier — le rail n'a que faire d'un
 # corps, et c'est tout le principe d'une vue de tri.
+#
+# `legacy`, `legacy_id` et `slug` : la RÉFÉRENCE de procédure d'un nœud agent (#417,
+# `capabilities/node_procedure_ref`). Trois clés de plus dans le même SELECT, pas une
+# jointure ni une requête par nœud — elles sont dans `props` depuis la conversion.
 _COLS = ("n.public_id, n.parent_id, n.id, n.kind, n.owner_type, n.owner_id, "
-         "n.position, n.props->>'title' AS title, n.props->>'role' AS role")
+         "n.position, n.props->>'title' AS title, n.props->>'role' AS role, "
+         "n.props->>'legacy' AS legacy, n.props->>'legacy_id' AS legacy_id, "
+         "n.props->>'slug' AS slug")
 
 # Le prédicat, écrit UNE fois et interpolé partout : deux endroits qui l'écrivent
 # finissent par diverger, et celui qui l'oublie ne le montre pas.

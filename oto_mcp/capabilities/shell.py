@@ -49,6 +49,7 @@ from ..connectors import selection as connector_selection
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
 from ._types import Capability, NotModified, ResolvedCtx, RestBinding
+from .node_procedure_ref import ProcedureRef, procedure_ref_of
 from .registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,9 @@ class RailNode(BaseModel):
     # Nombre d'enfants NON rendus (profondeur ou budget). Compté, jamais tu : une
     # branche coupée sans compteur se lit comme une branche vide.
     more: Optional[int] = None
+    # La procédure qu'un nœud `agent` exécute — id stable, slug, scope (#417). Absente
+    # sur toute autre nature, et sur un agent sans référence lisible : jamais devinée.
+    procedure: Optional[ProcedureRef] = None
 
 
 class RailContext(BaseModel):
@@ -171,8 +175,9 @@ def _arbre(lignes: list[dict], *, shared_par: Optional[dict] = None) -> list[Rai
 
     def _noeud(l: dict, prof: int) -> RailNode:
         budget["n"] += 1
-        out = RailNode(id=l["public_id"], name=l.get("title") or "",
-                       type=_type_of(l.get("kind"), l))
+        nature = _type_of(l.get("kind"), l)
+        out = RailNode(id=l["public_id"], name=l.get("title") or "", type=nature,
+                       procedure=procedure_ref_of(nature, l.get("owner_type"), l))
         if shared_par is not None:
             out.sharedBy = shared_par.get(l["public_id"])
         enfants = par_parent.get(l["id"], [])
