@@ -26,6 +26,8 @@ from typing import Any, Awaitable, Callable
 
 from fastmcp.server.middleware import Middleware
 
+from . import journal_secrets
+
 logger = logging.getLogger("oto_mcp.calllog")
 
 MAX_ARG_CHARS = 300
@@ -37,13 +39,35 @@ Sink = Callable[[dict], Awaitable[None]]
 _PENDING: set = set()
 
 
-def truncated_args(arguments: dict | None, max_chars: int = MAX_ARG_CHARS) -> dict | None:
+def truncated_args(arguments: dict | None, max_chars: int = MAX_ARG_CHARS,
+                   *, tool: str | None = None) -> dict | None:
     """Arguments journalisables : scalaires gardés tels quels, le reste
-    stringifié et coupé — le journal montre l'intention, pas le payload."""
+    stringifié et coupé — le journal montre l'intention, pas le payload.
+
+    `tool` sert le MASQUAGE (#558) : un argument dont le nom est déclaré secret
+    pour CET outil (`journal_secrets.secret_arg_names`) part en empreinte, jamais
+    en clair. C'est la même propriété que pour les routes, sur l'autre face : le
+    jeton d'invitation arrive aussi par `oto_org op=accept_invite`. Sans `tool`,
+    rien n'est masqué — un appelant qui ne sait pas de quel outil il parle ne peut
+    pas décider, et masquer par le NOM seul cacherait des `code` métier qui n'ont
+    rien de secret.
+    """
     if not arguments:
         return None
+    caches = journal_secrets.secret_arg_names(tool)
+    if tool == "oto_call":
+        # Dispatch universel (ADR 0036) : les arguments de l'outil VISÉ voyagent
+        # dans un sous-dictionnaire. Sans reprendre SA déclaration, `oto_call`
+        # rouvrirait le canal qu'on vient de fermer.
+        caches = caches | journal_secrets.secret_arg_names(arguments.get("name"))
     out: dict[str, Any] = {}
     for k, v in arguments.items():
+        if k in caches and v is not None:
+            out[k] = journal_secrets.mask(v)
+            continue
+        if caches and isinstance(v, dict):
+            v = {kk: (journal_secrets.mask(vv) if kk in caches and vv is not None else vv)
+                 for kk, vv in v.items()}
         if not (v is None or isinstance(v, (int, float, bool))):
             v = str(v)
             if len(v) > max_chars:
@@ -82,15 +106,16 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
     `data_delete_row`, `data_release`) : les lectures du journal (parcours d'une
     ligne, activité d'un tableau) filtrent là-dessus, pas sur la route HTTP.
     ⚠️ Distinct de la ligne de route posée par `api.routes.RestCallLogger`
-    (`tool='PATCH /api/…'`, sans args) : celle-là est de la télémétrie de surface,
-    celle-ci porte le SENS du geste (quelle ligne, quels champs, quel état avant/après).
+    (`tool='PATCH /api/…'`, dont les `args` ne portent QUE l'empreinte des jetons
+    du chemin, #558) : celle-là est de la télémétrie de surface, celle-ci porte le
+    SENS du geste (quelle ligne, quels champs, quel état avant/après).
     """
     row: dict[str, Any] = {
         "server": "oto",
         "kind": "rest",
         "sub": sub,
         "tool": tool,
-        "args": {**(truncated_args(args) or {}), "fields": _fields_list(fields)},
+        "args": {**(truncated_args(args, tool=tool) or {}), "fields": _fields_list(fields)},
         "ok": bool(ok),
         "error": (str(error)[:MAX_ERROR_CHARS] if error else None),
         "org_id": org_id,
@@ -199,7 +224,8 @@ class ToolCallLogger(Middleware):
             "sub": None,
             "email": None,
             "tool": context.message.name,
-            "args": truncated_args(context.message.arguments),
+            "args": truncated_args(context.message.arguments,
+                                   tool=context.message.name),
             # #117 — frappé ICI, au point le plus EXTERNE du chemin d'appel (ce
             # middleware est le premier ajouté après ceux du contexte), et avant
             # `call_next`. C'est ce qui en fait un discriminant : il naît dans la pile

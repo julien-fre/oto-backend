@@ -143,6 +143,15 @@ sudo -E env $(cat /opt/oto-mcp/.env | xargs) \
 #   key-index-rebuild                           ⚠️ #421, n'a JAMAIS tourné en prod :
 #                                               l'appeler est une décision, pas une
 #                                               routine (hors `all`, hors timer)
+
+# Purge rétroactive des jetons écrits en clair dans le journal (#558). Le SEUL travail
+# qui est à blanc PAR DÉFAUT : ici c'est `--apply` qui écrit, pas `--dry-run` qui
+# retient. Hors `all` et hors timer — il réécrit des lignes servies aux lentilles de
+# supervision, sur une base partagée prod/preprod.
+sudo -E env $(cat /opt/oto-mcp/.env | xargs) \
+  /opt/oto-mcp/.venv/bin/oto-mcp maintenance journal-tokens            # compte
+sudo -E env $(cat /opt/oto-mcp/.env | xargs) \
+  /opt/oto-mcp/.venv/bin/oto-mcp maintenance journal-tokens --apply    # écrit
 ```
 
 ⚠️ **Le timer n'est posé qu'en PROD**, par `deploy/oto-backend.sh` au tag (jamais à la

@@ -372,8 +372,14 @@ sans quoi `linkedin_unipile_*` (session opérée) et `linkedin_aiark_*` (donnée
 `ToolCallLogger` (middleware inliné `oto_mcp/calllog.py`) journalise chaque appel dans
 `tool_calls` (best-effort, identité = `sub` du JWT). Trois étages de lentilles — membre / org
 (`oto_org_monitoring`) / plateforme (`oto_admin_monitoring`).
-⚠️ **Ne trace QUE les invocations d'outils MCP** — pas la connexion du connecteur, pas le
-`tools/list`, pas les appels REST. Donc **compte actif ≠ usage**.
+⚠️ **Ne trace pas la connexion d'un connecteur ni le `tools/list`** — donc **compte actif
+≠ usage**. (Cette ligne disait « pas les appels REST » jusqu'au 2026-08-29 : faux depuis
+que `RestCallLogger` écrit `kind='rest'`, et c'est ce qui a laissé passer #558.)
+⚠️ **Le journal ne porte jamais un jeton en clair** (#558) : un segment d'URL lié à un
+paramètre de route DÉCLARÉ secret (`{token}`, `{code}`) est réduit — par propriété, pour
+toute route présente ou future, jamais par une liste de chemins — et son empreinte HMAC
+part dans `args`. Même règle sur l'autre face pour les arguments de capacité qui portent
+ces noms. Source unique : `oto_mcp/journal_secrets.py`.
 ⚠️ Les colonnes de corrélation dépendent de **l'ordre des middlewares** (§Conventions).
 ⚠️ **Ce n'est PAS une purge de logs** : la table est aussi la **source de vérité des
 exécutions** — `run_start`/`run_finish` sont **exemptés de toute suppression** par la rétention
@@ -386,8 +392,12 @@ tirer une population. **Détail : `docs/monitoring.md`.**
 Exceptions backend → **Sentry SaaS** (gaté `OTO_SENTRY_DSN`, no-op si absent). Deux captures :
 500 des routes REST (intégration Starlette) et exceptions des tools MCP
 (`SentryToolErrorMiddleware` — une erreur de tool est un JSON-RPC en HTTP 200, invisible à
-Starlette). ⚠️ RGPD : `send_default_pii=False`, **jamais** les args d'appel dans l'event ;
-`before_send` droppe les 4xx amont. Région **EU** `de.sentry.io` ; triage = guide oto
+Starlette). ⚠️ RGPD : `send_default_pii=False` **et** `include_local_variables=False` ;
+`before_send` droppe les 4xx amont. ⚠️ Cette ligne affirmait « jamais les args d'appel dans
+l'event » : **c'était faux jusqu'au 2026-08-29** (#564) — `send_default_pii` ne couvre pas
+le contenu des frames, et le défaut du SDK est de les envoyer. Le second réglage n'est donc
+pas un doublon : c'est lui qui rend la phrase vraie, et le retirer rouvre la fuite en
+silence. Région **EU** `de.sentry.io` ; triage = guide oto
 `surveillance-erreurs`. **Détail : `docs/monitoring.md` §Error tracking.**
 
 ## Onboarding = un projet « Découverte » (ADR 0032 §7)
@@ -556,7 +566,10 @@ depuis le lot 0 — le reste est l'import Python et les deux `_build_mcp`. Un lo
 ajoute un travail one-shot au boot doit le mesurer **avant** de poser son tag.
 
 **Ce qui n'a rien à faire au boot va en maintenance** — `oto_mcp/maintenance.py`,
-commandes `oto-mcp maintenance retention | blocks | key-indexes | check-boot | all`,
+commandes `oto-mcp maintenance retention | blocks | key-indexes | check-boot | all`
+(+ `journal-tokens`, purge rétroactive des jetons de #558 — **à blanc par défaut**,
+`--apply` pour écrire, hors timer et hors `all` : réécrire des lignes servies aux
+lentilles de supervision est une décision, comme `key-index-rebuild`),
 tirées par `deploy/oto-mcp-maintenance.timer` (quotidien, posé et activé par le script
 de déploiement, **prod seulement** : la base est partagée, deux exécutants se
 disputeraient les mêmes lignes). Le critère : **un travail dont le coût suit la taille
@@ -626,7 +639,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `mcp-spec-watch.md` | veille protocole MCP : on suit les SEP, pas les specs ; les 4 points à traiter d'ici la spec `2026-07-28`. |
 | `runner-et-automatisations.md` | runner hébergé (l'état ici, la boucle dans `oto-runner`) + connecteur `routine`. |
 | `usage-loop.md` | boucle d'usage ADR 0017 (calllog + feedback + déroulés), runs persistés, run silencieux. |
-| `monitoring.md` | monitoring & investigation des appels (trois étages, recette d'enquête, rétention 90 j + archivage froid, Sentry). |
+| `monitoring.md` | monitoring & investigation des appels (trois étages, recette d'enquête, rétention 90 j + archivage froid, Sentry, **masquage des jetons du journal** #558/#564). |
 | `event-loop-perf.md` | les **3** modes de gel mono-loop + protections + recettes py-spy/aiodebug. ⚠️ Le 3ᵉ (27/08) n'est pas un I/O mal placé mais une **requête lente** : même signature py-spy que le 2ᵉ, remède opposé — indexer, pas déplacer. |
 | `redaction.md` | rédaction de champs **et rendu du résultat servi** : middleware unique, rien par défaut + templates 1-clic, **schéma OBSERVÉ**, dry-run preview, moteur `FieldFilter` (oto-core) — et la règle **« un résultat VIDE se sert en PHRASE, jamais en structure nue »** (oto#32, 27/08/2026). |
 | `live-migrations.md` | migrations vivantes sur la DB partagée canari/prod : la danse en N lots promus, les techniques, les pièges — et le fait que **prod et preprod partagent la base**. |

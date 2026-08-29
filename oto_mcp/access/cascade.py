@@ -21,7 +21,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import (providers, credentials_store, db, grants_chain, group_store, org_store)
 from ..connectors import cardinality
-from . import scope
+from . import scope, secret_repr
 
 # DÉRIVÉ du registre source unique (package `providers/`) : providers dont le
 # secret peut être POSSÉDÉ par une org et partagé (auth_mode byo_org) — exclut
@@ -228,6 +228,12 @@ class CascadeRung:
     payload: object
     account: str = ""
     via: str = "local"              # local | cross_org
+
+    def __repr__(self) -> str:
+        """Expurgé SANS CONDITION (#564) : `payload` porte le secret déchiffré en
+        mode fetch, et rien à l'exécution ne distingue ce mode de la sonde de
+        PRÉSENCE, dont le payload est anodin. Cf. `secret_repr`."""
+        return secret_repr.expurge(self, "payload")
 
 
 @dataclass(frozen=True)

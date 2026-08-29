@@ -94,6 +94,14 @@ def init_sentry() -> bool:
         release=os.environ.get("OTO_SENTRY_RELEASE") or None,
         # RGPD : pas d'IP / cookies / headers auto-collectés.
         send_default_pii=False,
+        # ⚠️ NE PAS RETIRER — le défaut du SDK est `True` (vérifié sentry-sdk 2.63.0),
+        # et `send_default_pii=False` ne couvre PAS le contenu des frames : chaque
+        # exception repartait avec les variables locales de toute la pile, dont
+        # celles du chemin de résolution de credential, qui tiennent le secret
+        # DÉCHIFFRÉ (#564). Le réglage, pas une liste à scruber : une liste redevient
+        # fausse au premier renommage. Ce qu'on perd au diagnostic est mince — type,
+        # message et pile restent. Cliquet : `tests/test_journal_no_plaintext_secret.py`.
+        include_local_variables=False,
         # Tracing de perf désactivé par défaut (on cible l'error tracking).
         traces_sample_rate=float(os.environ.get("OTO_SENTRY_TRACES_SAMPLE_RATE", "0") or "0"),
         # Ne pas reporter les erreurs gérées (4xx amont + refus d'entrée/config
