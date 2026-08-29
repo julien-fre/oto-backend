@@ -76,6 +76,53 @@ def _monter() -> list:
     return asyncio.run(mcp.list_tools())
 
 
+def portee() -> dict:
+    """Ce que le relevé A REGARDÉ, et ce qu'il n'a PAS regardé.
+
+    Tous les outils ne viennent pas du code : les connecteurs fédérés sont montés
+    d'après la base (`connector_activation`, ADR 0010/0011). Sans base joignable, ils
+    ne sont pas montés — et le relevé les ignore **en silence**. Un rapport qui se tait
+    là-dessus se lit comme s'il couvrait tout.
+
+    > **Un rapport d'empreinte nomme ce qu'il ne regarde pas.** Un rapport qui délimite
+    > sa portée vaut plus qu'un rapport « complet » — le second n'existe pas, il se
+    > contente de ne pas dire où il s'arrête.
+
+    ⚠️ Et c'est ce qui rend deux relevés COMPARABLES ou non : un `--diff` dont les deux
+    côtés n'ont pas vu les mêmes connecteurs rend un delta qui mélange un changement de
+    code avec un changement de périmètre."""
+    from oto_mcp import providers
+    from oto_mcp.tools import mount
+
+    montables = {c.name for c in providers.MOUNT_CONNECTORS}
+    montes = {k for k, v in mount._REGISTERED.items() if v}
+    try:
+        from oto_mcp.connectors import activation
+        activation.list_activations()
+        base, raison = "lue", None
+    except Exception as e:  # noqa: BLE001 — l'indisponibilité EST le fait à rapporter
+        base, raison = "indisponible", str(e).split("\n")[0][:120]
+    return {
+        "base": base,
+        "raison": raison,
+        "connecteurs_montables": sorted(montables),
+        "connecteurs_montes": sorted(montes),
+        "non_regardes": sorted(montables - montes),
+    }
+
+
+def _phrase_portee(p: dict) -> str:
+    """La portée en une ligne, celle qui coiffe le rapport."""
+    manque = p["non_regardes"]
+    if not manque:
+        return (f"portée : outils du code + {len(p['connecteurs_montes'])} connecteur(s) "
+                f"monté(s) par la base — rien n'est laissé de côté")
+    detail = f" ({p['raison']})" if p["raison"] else ""
+    return (f"portée : outils montés par le CODE. NON comparés : "
+            f"{len(manque)} connecteur(s) monté(s) par la base — base {p['base']}{detail} : "
+            f"{', '.join(manque)}")
+
+
 def relever(noms: list[str] | None = None) -> dict:
     """`{outil: {description, schema, sha256}}` — les longueurs de ce qui est servi.
 
@@ -130,13 +177,34 @@ def _relever_ailleurs(ref: str, noms: list[str] | None) -> dict:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _tableau(rel: dict) -> None:
+def _tableau(rel: dict, p: dict) -> None:
+    print(_phrase_portee(p) + "\n")
     largeur = max((len(n) for n in rel), default=10)
     print(f"{'outil':{largeur}}  {'description':>11}  {'schéma':>7}  empreinte")
     for nom, v in rel.items():
         print(f"{nom:{largeur}}  {v['description']:>11}  {v['schema']:>7}  {v['sha256']}")
     print(f"\n{len(rel)} outils · {sum(v['description'] for v in rel.values())} caractères "
           f"de description servis au total")
+
+
+def _portees_comparables(av: dict, ap: dict) -> bool:
+    """Deux relevés de portées différentes ne se soustraient pas.
+
+    Si un côté a vu des connecteurs que l'autre n'a pas vus, le delta mélange un
+    changement de code avec un changement de périmètre — et il le fait en rendant des
+    outils « NOUVEAUX » ou « RETIRÉS » qui n'ont ni été ajoutés ni retirés. On le DIT,
+    au lieu de laisser lire un chiffre qui n'existe pas."""
+    a, b = set(av.get("connecteurs_montes", [])), set(ap.get("connecteurs_montes", []))
+    if a == b:
+        return True
+    print("⚠️ PORTÉES DIFFÉRENTES — ce delta n'est pas interprétable tel quel.")
+    print(f"   avant : base {av.get('base')}, {len(a)} connecteur(s) monté(s)")
+    print(f"   après : base {ap.get('base')}, {len(b)} connecteur(s) monté(s)")
+    for sens, ecart in (("vus seulement AVANT", a - b), ("vus seulement APRÈS", b - a)):
+        if ecart:
+            print(f"   {sens} : {', '.join(sorted(ecart))}")
+    print("   → relance les deux côtés avec la même disponibilité de base.\n")
+    return False
 
 
 def _diff(avant: dict, apres: dict) -> int:
@@ -177,12 +245,17 @@ def main() -> None:
     a = p.parse_args()
     noms = a.outils or None
     apres = relever(noms)
+    p_apres = portee()
     if a.diff:
-        _diff(_relever_ailleurs(a.diff, noms), apres)
+        loin = _relever_ailleurs(a.diff, noms)
+        p_avant, outils_avant = loin.get("portee", {}), loin.get("outils", loin)
+        _portees_comparables(p_avant, p_apres)
+        print(_phrase_portee(p_apres) + "\n")
+        _diff(outils_avant, apres)
     elif a.json:
-        print(json.dumps(apres, ensure_ascii=False))
+        print(json.dumps({"portee": p_apres, "outils": apres}, ensure_ascii=False))
     else:
-        _tableau(apres)
+        _tableau(apres, p_apres)
 
 
 if __name__ == "__main__":

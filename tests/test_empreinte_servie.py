@@ -62,8 +62,9 @@ def test_le_script_tourne_a_la_main_et_rend_du_json():
                         "data_release"], cwd=RACINE, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]
     import json
-    rel = json.loads(r.stdout)
-    assert list(rel) == ["data_release"]
+    sortie = json.loads(r.stdout)
+    assert set(sortie) == {"portee", "outils"}, "le JSON porte le relevé ET sa portée"
+    assert list(sortie["outils"]) == ["data_release"]
 
 
 def test_il_mesure_LE_depot_ou_il_tourne_et_pas_un_autre_checkout():
@@ -102,3 +103,50 @@ def test_comparer_un_etat_a_LUI_MEME_ne_montre_aucun_changement():
     assert r.returncode == 0, r.stderr[-1500:]
     assert "aucun outil servi n'a changé" in r.stdout, (
         "comparer un état à lui-même doit être vide — sortie :\n" + r.stdout[-800:])
+
+
+# ── Un rapport nomme ce qu'il ne regarde pas ─────────────────────────────────
+
+def test_le_rapport_DELIMITE_sa_portee_en_tete():
+    """Tous les outils ne viennent pas du code : les connecteurs fédérés sont montés
+    d'après la base. Sans base, ils manquent — **et un rapport muet là-dessus se lit
+    comme s'il couvrait tout.** La ligne de portée est donc la première du rapport."""
+    r = subprocess.run([sys.executable, "scripts/empreinte_servie.py", "data_write"],
+                       cwd=RACINE, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    tete = r.stdout.splitlines()[0]
+    assert tete.startswith("portée :"), f"première ligne inattendue : {tete!r}"
+    assert "base" in tete
+
+
+def test_la_portee_est_aussi_dans_le_json():
+    sys.path.insert(0, str(RACINE))
+    from scripts.empreinte_servie import portee
+    p = portee()
+    assert set(p) >= {"base", "connecteurs_montables", "connecteurs_montes", "non_regardes"}
+    assert p["base"] in ("lue", "indisponible")
+    # Ce qui n'est pas monté est exactement ce qui n'est pas regardé.
+    assert set(p["non_regardes"]) == set(p["connecteurs_montables"]) - set(p["connecteurs_montes"])
+
+
+def test_le_temoin_du_diff_vide_vaut_AUSSI_sur_la_ligne_de_portee():
+    """Comparer un état à lui-même ne montre aucun changement — et le rapport dit
+    quand même ce qu'il n'a pas regardé. Un rapport vide sans portée laisserait croire
+    que « rien n'a changé » couvre tout ; il ne couvre que ce qui a été monté."""
+    r = subprocess.run([sys.executable, "scripts/empreinte_servie.py", "--diff", "HEAD",
+                        "data_write"], cwd=RACINE, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert "aucun outil servi n'a changé" in r.stdout
+    assert "portée :" in r.stdout, "un delta vide doit quand même délimiter sa portée"
+
+
+def test_deux_portees_differentes_refusent_de_se_soustraire():
+    """⚠️ Le cas qui rendrait un chiffre faux sans que rien ne le signale : un côté
+    mesuré avec la base, l'autre sans. Les connecteurs manquants sortiraient en
+    « RETIRÉS » alors que personne ne les a retirés."""
+    sys.path.insert(0, str(RACINE))
+    from scripts.empreinte_servie import _portees_comparables
+    meme = {"base": "lue", "connecteurs_montes": ["a", "b"]}
+    assert _portees_comparables(meme, dict(meme)) is True
+    autre = {"base": "indisponible", "connecteurs_montes": ["a"]}
+    assert _portees_comparables(meme, autre) is False
