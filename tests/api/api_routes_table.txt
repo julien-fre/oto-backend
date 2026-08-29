@@ -161,6 +161,8 @@ GET,HEAD /api/admin/tenants/{slug} -> _handler
 OPTIONS /api/admin/tenants/{slug} -> options_handler
 POST /api/admin/tenants/reload -> _handler
 OPTIONS /api/admin/tenants/reload -> options_handler
+GET,HEAD /api/admin/access-shadow -> _handler
+OPTIONS /api/admin/access-shadow -> options_handler
 GET,HEAD /api/admin/unipile/seats -> _handler
 OPTIONS /api/admin/unipile/seats -> options_handler
 DELETE /api/admin/unipile/seats/{account_id} -> _handler

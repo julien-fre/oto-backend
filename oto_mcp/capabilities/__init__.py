@@ -20,6 +20,7 @@ from . import platform_invites  # noqa: F401 — platform.invite.{create,list,re
 from . import users_admin  # noqa: F401 — platform.user.{list,get,set_role}, platform.{key,org}.{grant,revoke}_key, platform.option.set
 from . import vault_health  # noqa: F401 — admin.vault_health (scan credentials indéchiffrables, #72)
 from . import tenants_admin  # noqa: F401 — admin.tenant{s,_console} (suivi de l'étage tenant, ADR 0052)
+from . import access_shadow_admin  # noqa: F401 — admin.access_shadow (fenêtre de double lecture L7, ADR 0053)
 from . import unipile_seats  # noqa: F401 — admin.unipile_seats + admin.unipile_seat_release
 from . import editor_apps  # noqa: F401 — platform.editor_app.{list,set,delete} (app OAuth d'oto)
 # Sous-palier groupe (ADR 0012) — départements/équipes + chef d'équipe.

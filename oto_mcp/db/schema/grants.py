@@ -170,4 +170,38 @@ CREATE TABLE IF NOT EXISTS grant_counters (
     spend NUMERIC NOT NULL DEFAULT 0,
     CONSTRAINT grant_counters_pkey PRIMARY KEY (grant_id, window_start)
 );
+
+-- ── Le journal de la DOUBLE LECTURE de L7 (blueprint ADR 0053, lot L7) ────────
+-- Pendant la fenêtre, la chaîne de grants CALCULE à côté et l'ancien chemin DÉCIDE.
+-- Cette table est la matière du verdict qui autorise l'inversion : elle compte, par
+-- jour et par (connecteur, org), les fois où les deux voies se sont accordées et les
+-- fois où elles ont divergé — chaque divergence rangée dans une CLASSE.
+--
+-- ⚠️ **Un compteur en base, et pas un journal en WARN**, contrairement à la fenêtre
+-- de L5. Deux faits de terrain l'imposent : le journal de la box ne remonte que
+-- ~8 h, et une fenêtre d'observation se compte en JOURS ; et la préprod partage
+-- cette base sans partager le trafic, donc le dénominateur ne peut venir que d'un
+-- compteur écrit par le process qui sert.
+--
+-- ⚠️ **Jamais une écriture par appel.** L'accord — le cas nominal, donc le volume —
+-- est accumulé en mémoire et versé au plus une fois par minute et par
+-- (connecteur, org) ; seules les DIVERGENCES, rares par construction, s'écrivent à
+-- l'occurrence. C'est ce qui garde la table hors du chemin chaud d'un serveur
+-- mono-loop, et hors de la contention de ligne mesurée pour R8.
+--
+-- `sample` porte la PREMIÈRE occurrence du jour pour cette classe, et rien de
+-- nominatif : le sub y est HACHÉ, seuls les paliers et l'équipe en cause sont en
+-- clair (une équipe est ce sur quoi on agit, un sub ne l'est pas).
+CREATE TABLE IF NOT EXISTS access_shadow_l7 (
+    day       DATE   NOT NULL,
+    connector TEXT   NOT NULL,
+    -- 0 = aucune org de contexte (la sentinelle du reste du schéma).
+    org_id    BIGINT NOT NULL DEFAULT 0,
+    classe    TEXT   NOT NULL,
+    n         BIGINT NOT NULL DEFAULT 0,
+    first_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sample    JSONB  NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT access_shadow_l7_pkey PRIMARY KEY (day, connector, org_id, classe)
+);
 """
