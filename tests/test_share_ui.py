@@ -2,9 +2,12 @@
 (gating fail-closed par appartenance au projet), rendus, dérivation de colonnes."""
 from oto_mcp import db, org_store, share_ui
 
-# `secret` = partage navigable → les tableaux liés sont montrés (lecture seule).
+# `secret` = partage navigable, ET les deux opt-ins posés : c'est le projet dont le
+# propriétaire a consenti à publier ses tableaux ET ses pages. Les flags sont dans la
+# fixture parce qu'ils sont la CONDITION de ce que la page montre — la face web les lit
+# dans `project_exposure`, exactement comme la face MCP (#557).
 _PROJECT = {"id": 5, "name": "Projet démo", "brief_md": "Un projet de démonstration.",
-            "mcp_access": "secret"}
+            "mcp_access": "secret", "mcp_expose_datastore": True, "mcp_expose_docs": True}
 
 _LINKS = [
     {"target_type": "procedure", "target_ref": "11", "label": "Enrichir", "title": "Enrichissement"},
@@ -69,13 +72,46 @@ def test_add_to_oto_cta_when_slug_present(monkeypatch):
     assert f"{_su._DASHBOARD}/import?slug=demo-x" in html
 
 
-def test_index_hides_tables_when_anonymous(monkeypatch):
-    # `anonymous` (endpoint-outil listé) ne montre PAS les tableaux du datastore.
+def test_index_hides_tables_and_pages_when_anonymous(monkeypatch):
+    """`anonymous` = endpoint-outil LISTÉ dans l'annuaire public : ni tableaux, ni pages.
+
+    Ce test disait l'inverse pour les pages (« procédures et docs restent ») et gravait
+    ainsi la divergence de #557 : la face MCP refusait les pages hors `secret` + opt-in,
+    la face web les rendait à quiconque ouvrait l'URL trouvée dans l'annuaire. Les
+    procédures, elles, restent : elles sont LIÉES au projet par un acte explicite du
+    propriétaire, alors qu'une page appartient à l'arbre du projet sans qu'il ait rien
+    fait pour la publier.
+    """
     _wire(monkeypatch)
     proj = {**_PROJECT, "mcp_access": "anonymous"}
     html, _ = share_ui.build_page(proj, "/", connect_url="u")
     assert "/data/22" not in html and "Prospects" not in html
-    assert "/procedures/11" in html   # procédures et docs restent
+    assert "/docs/44" not in html and "Notes internes" not in html
+    assert "/procedures/11" in html   # les procédures liées restent
+
+
+def test_index_hides_pages_without_the_optin(monkeypatch):
+    """Partage `secret` SANS `mcp_expose_docs` : les pages ne sont ni listées, ni LUES.
+
+    Le titre et le chapô d'une page en disent déjà trop (« Notes — négo Dupont »), donc
+    la garde tombe avant l'I/O, pas au moment du rendu."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(db, "list_docs_for_project",
+                        lambda pid: (_ for _ in ()).throw(AssertionError("ne doit pas lire")))
+    proj = {**_PROJECT, "mcp_expose_docs": False}
+    html, _ = share_ui.build_page(proj, "/", connect_url="u")
+    assert "/docs/44" not in html and "Notes internes" not in html
+    assert "/procedures/11" in html and "/data/22" in html   # le reste est intact
+
+
+def test_index_hides_tables_without_the_datastore_optin(monkeypatch):
+    """`secret` seul ne suffit plus non plus pour les tableaux : `mcp_expose_datastore`
+    est l'opt-in que la face MCP exige déjà pour les tools `data_*` (constat annexe #557)."""
+    _wire(monkeypatch)
+    proj = {**_PROJECT, "mcp_expose_datastore": False}
+    html, _ = share_ui.build_page(proj, "/", connect_url="u")
+    assert "/data/22" not in html and "Prospects" not in html
+    assert "/procedures/11" in html and "/docs/44" in html
 
 
 def test_index_escapes_name(monkeypatch):
@@ -143,6 +179,16 @@ def test_data_denied_when_anonymous(monkeypatch):
     assert status == 404
 
 
+def test_data_denied_without_the_datastore_optin(monkeypatch):
+    """Même refus quand l'opt-in `mcp_expose_datastore` n'est pas posé : 404, sans lecture."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(db, "get_datastore_namespace_by_id",
+                        lambda rid: (_ for _ in ()).throw(AssertionError("ne doit pas lire")))
+    proj = {**_PROJECT, "mcp_expose_datastore": False}
+    _, status = share_ui.build_page(proj, "/data/22", connect_url="u")
+    assert status == 404
+
+
 def test_data_not_linked_is_404(monkeypatch):
     _wire(monkeypatch)
     monkeypatch.setattr(db, "get_datastore_namespace_by_id",
@@ -195,6 +241,29 @@ def test_doc_foreign_unlinked_is_404(monkeypatch):
                         lambda rid: {"title": "Secret", "body_md": "s", "project_id": 999})
     html, status = share_ui.build_page(_PROJECT, "/docs/77", connect_url="u")
     assert status == 404 and "Secret" not in html
+
+
+def test_doc_denied_without_the_optin(monkeypatch):
+    """Une page d'un projet `secret` SANS `mcp_expose_docs` : 404, et son corps n'est
+    même pas lu. C'est le cœur de #557 — l'URL était devinable (`/docs/<id>` séquentiel)
+    et rendait `body_md` en entier."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(db, "get_doc_by_id",
+                        lambda rid: (_ for _ in ()).throw(AssertionError("ne doit pas lire")))
+    proj = {**_PROJECT, "mcp_expose_docs": False}
+    html, status = share_ui.build_page(proj, "/docs/44", connect_url="u")
+    assert status == 404 and "Notes internes" not in html
+
+
+def test_doc_denied_when_anonymous(monkeypatch):
+    """Un endpoint `anonymous` est ANNONCÉ par l'annuaire public : ses pages ne sont
+    jamais servies, opt-in ou pas (l'opt-in lui-même est réservé à `secret`)."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(db, "get_doc_by_id",
+                        lambda rid: (_ for _ in ()).throw(AssertionError("ne doit pas lire")))
+    proj = {**_PROJECT, "mcp_access": "anonymous"}
+    _, status = share_ui.build_page(proj, "/docs/44", connect_url="u")
+    assert status == 404
 
 
 # ── Routes non-UI (retombe sur le MCP) ───────────────────────────────────────

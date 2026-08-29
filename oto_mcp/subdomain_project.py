@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from . import client_trace, config, session_org
+from . import client_trace, config, project_exposure, session_org
 
 logger = logging.getLogger(__name__)
 
@@ -370,12 +370,13 @@ class HostDispatch:
             # `secret` = même chemin sans login que `anonymous` (aucun sub, credential de
             # l'org propriétaire) ; il n'en diffère QUE par l'annuaire (non listé) et un slug
             # non devinable — deux propriétés portées côté publication, transparentes ici.
-            ds_exposed = (access_mode == "secret" and bool(proj.get("mcp_expose_datastore")))
-            ds_writable = ds_exposed and bool(proj.get("mcp_expose_datastore_write"))
-            # Pages : opt-in EXPLICITE, `secret` seulement. Les pages d'un projet portent
-            # typiquement des notes internes (arbitrages, contacts, gotchas) — les exposer
-            # par défaut serait une fuite par surprise.
-            docs_exposed = (access_mode == "secret" and bool(proj.get("mcp_expose_docs")))
+            # Opt-ins d'exposition : UNE seule lecture du consentement du propriétaire,
+            # dans `project_exposure` — le MÊME module que consulte la face web
+            # (`share_ui.build_page`) plus bas. Les deux faces sont servies par cette
+            # méthode, elles ne peuvent pas diverger sans que le seam le montre (#557).
+            ds_exposed = project_exposure.datastore_exposed(proj)
+            ds_writable = project_exposure.datastore_writable(proj)
+            docs_exposed = project_exposure.docs_exposed(proj)
             # Navigateur (GET, Accept: text/html) → UI NAVIGABLE server-side (lecture seule) :
             # la MÊME URL sert l'UI (racine + /procedures//data//docs) ET le serveur MCP.
             # `build_page` fait des lectures DB SYNC → threadpool (serveur mono-loop). Il rend

@@ -77,9 +77,29 @@ docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/t
 > `secret` est servi sur son sous-domaine `<slug>.share.oto.cx` comme un petit site rendu
 > **server-side** (lisible humain ET agent WebFetch), en **lecture seule** : la racine = index
 > (brief + procédures/tableaux/docs + carte « brancher »), `/procedures/<id>` (prose), `/data/<ns>`
-> (table, gaté par `mcp_expose_datastore`), `/docs/<id>`. Le MCP reste au path `/mcp`. Rendu par
+> (table), `/docs/<id>` (page). Le MCP reste au path `/mcp`. Rendu par
 > `share_ui.py` (routeur `build_page`, lectures DB en threadpool, contenu échappé, markdown sûr),
 > **gating fail-closed** par appartenance au projet (seules les entités liées sont navigables).
+>
+> ⚠️ **Ce que la face web montre est décidé par le MÊME seam que la face MCP** — `project_exposure`
+> (`docs_exposed` / `datastore_exposed` / `datastore_writable`), fonctions pures sur la ligne
+> `projects`. Les **procédures** sont navigables du seul fait d'être **liées** (un acte explicite
+> du propriétaire) ; les **tableaux** demandent en plus `mcp_expose_datastore`, et les **pages**
+> l'opt-in explicite `mcp_expose_docs`. Sans l'opt-in, le refus est **identique des deux côtés** :
+> la face MCP retire le tool de sa liste et refuse l'appel, la face web omet l'entrée de l'index
+> et rend **404** sur l'URL directe — sans même lire la ligne.
+>
+> ⚠️ **Erreur corrigée le 2026-08-29 (oto-backend#557, sévérité haute).** Jusqu'à cette date, la
+> face web ne consultait **aucun** des deux opt-ins : elle listait les pages du projet et rendait
+> leur `body_md` entier dès que le projet était publié, y compris en `anonymous` — c'est-à-dire
+> **annoncé** par l'annuaire public `GET /api/public/mcp-projects`. Le propriétaire, lui, avait lu
+> la garde côté MCP et croyait avoir publié des outils, pas ses notes. Le paragraphe ci-dessus
+> **affirmait déjà** que `/data/<ns>` était « gaté par `mcp_expose_datastore` » alors que le code
+> ne gatait que sur `mcp_access == 'secret'` : une doc qui décrit une garde absente fait passer la
+> relecture suivante sans s'arrêter. Mesuré en production au moment du correctif : **3 projets
+> publiés, 9 pages** servies sans opt-in (0 pour les tableaux — l'écart y était théorique). Le
+> correctif fait converger les deux faces sur `project_exposure` ; un cliquet AST
+> (`tests/test_project_exposure_seam.py`) interdit désormais de relire ces colonnes ailleurs.
 > Même dispatch que `.mcp.oto.cx` (`subdomain_project.HostDispatch`, suffixes `.mcp`/`.share`,
 > URL de branchement path-aware). `oto_project(op=get)` expose `mcp_url` (per-mode : `secret` →
 > `share.oto.cx/mcp`, sinon `mcp.oto.cx/mcp`) + `share_url` (base navigable, `secret` uniquement).
