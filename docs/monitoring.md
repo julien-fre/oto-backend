@@ -76,7 +76,7 @@ Cliquets : `tests/test_journal_secrets.py`, `tests/test_rest_call_logger.py`,
 |---|---|---|
 | `session_id` | quelle conversation MCP | `ctx.session_id` |
 | `run_id` | quel déroulé (`run_start`…`run_finish`) | jeton `_run_id=` puis pile `guide_run` |
-| `org_id` | sous quelle org l'appel a été émis | seam `access.current_org` |
+| `org_id` | sous quelle org l'appel a été émis | seam `access.current_org` — depuis le 30/08/2026 (#639), l'org du RUN quand l'appel porte `_run_id` sans `_org` |
 | `client_id` | depuis quelle surface (claude.ai, Claude Code…) | claim `azp` du JWT |
 | `sentry_event_id` | où est le traceback | `SentryToolErrorMiddleware` |
 
@@ -203,6 +203,9 @@ et `hors_scope_hint` (où les voir : `op=run`). Fenêtre du plancher = `days`, s
 page quand elle est pleine, sinon 30 j — dite dans l'indice ; jamais sans borne
 (28 ms/jour mesurés en prod). La construction des filtres est partagée
 (`db/journal_calls.py`) : la page et son plancher ne peuvent pas diverger.
+**Depuis le 30/08 (#639)**, la cause du cas mesuré n'existe plus : un appel sans `_org`
+dans un run est résolu — donc stampé — dans l'org du run. `hors_scope` reste, pour ce
+qu'un axe explicite continue légitimement de mettre dehors (agent multi-org).
 
 ## Rétention : 90 jours en ligne, le reste en froid (posé le 2026-08-27)
 

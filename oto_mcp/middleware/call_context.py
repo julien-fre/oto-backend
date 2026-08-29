@@ -6,7 +6,7 @@ import logging
 from fastmcp.server.middleware import Middleware
 from starlette.concurrency import run_in_threadpool
 
-from .. import call_axes, guide_run, redaction, session_org
+from .. import call_axes, guide_run, redaction, run_org, session_org
 from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import namespace_of
 
@@ -150,6 +150,11 @@ class CallContextMiddleware(Middleware):
             for axis in call_axes.axes_for_call(name):
                 if axis.param in args:
                     undo.extend(await axis.pin_for(args.pop(axis.param), name))
+            # L'org du RUN (#639) : APRÈS les axes — un `_org=`/`_project=` explicite a
+            # déjà posé l'org et garde la priorité ; sinon un appel qui porte un run se
+            # résout dans l'org du run, appartenance gardée (refus nommé, jamais un
+            # repli sur la maison). Une lecture par run, hors boucle.
+            undo.extend(await run_org.pin_for_call())
             return _echo_account(await call_next(context), _cible(name, args))
         finally:
             for reset, tok in reversed(undo):

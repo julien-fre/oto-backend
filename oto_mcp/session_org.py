@@ -126,6 +126,29 @@ def current_call_run() -> Optional[str]:
     return _CALL_RUN.get()
 
 
+# ── Org du RUN de l'appel (#639, 30/08/2026) ──────────────────────────────────
+# Sans `_org=`, un appel fait DANS un run se résout dans l'org du run (`runs.org_id`),
+# pas dans l'org maison du sub. Posée par `run_org.pin_for_call` (middleware) UNE fois
+# par appel, APRÈS les axes — donc jamais quand `_org=`/`_project=` a déjà posé l'org —
+# et après garde d'appartenance ; lue par `access.current_org` entre le jeton et la
+# consultation/maison. None = l'appel ne porte pas de run connu en org.
+_CALL_RUN_ORG: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar(
+    "oto_call_run_org", default=None)
+
+
+def set_call_run_org(org_id: int) -> contextvars.Token:
+    return _CALL_RUN_ORG.set(org_id)
+
+
+def reset_call_run_org(token: contextvars.Token) -> None:
+    _CALL_RUN_ORG.reset(token)
+
+
+def current_call_run_org() -> Optional[int]:
+    """Org du run de l'appel courant, déjà gardée (appartenance) à la pose, ou None."""
+    return _CALL_RUN_ORG.get()
+
+
 _CALL_INSTANCE: contextvars.ContextVar[Optional[object]] = contextvars.ContextVar(
     "oto_call_instance", default=None)
 

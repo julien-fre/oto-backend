@@ -24,7 +24,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
 from .. import (access, call_axes, db, deprecations, guide_run, providers,
-                redaction, tool_alias, tool_registry)
+                redaction, run_org, tool_alias, tool_registry)
 from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import (
     PROTECTED_TOOLS,
@@ -413,6 +413,9 @@ def register(mcp: FastMCP) -> None:
             for axis in call_axes.axes_for_call(name):
                 if axis.param in args:
                     undo.extend(await axis.pin_for(args.pop(axis.param), name))
+            # L'org du RUN (#639), après les axes — même règle que le middleware :
+            # sans `_org=`, la cible se résout dans l'org du run, appartenance gardée.
+            undo.extend(await run_org.pin_for_call())
         except BaseException:
             for _reset, _tok in reversed(undo):
                 _reset(_tok)
