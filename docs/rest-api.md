@@ -328,10 +328,30 @@ ainsi quinze jours — déclaré, testé, documenté, inatteignable (livré le 1
 
 **Le patron de la maison** : déclarer `Optional[list[str] | str]` — c'est la forme RÉELLE
 de l'entrée, pas une facilité — et normaliser une fois, au bord ; ou poser un
-`field_validator(mode="before")` qui découpe. **Séparateur = la virgule** : la forme
-répétée `?k=a&k=b` est inutilisable, `dict(query_params)` l'aplatit et ne garde que la
-DERNIÈRE valeur, donc `a` disparaîtrait sans un mot. Entre une syntaxe à apprendre et une
-perte muette, on prend la syntaxe.
+`field_validator(mode="before")` qui découpe. **Deux formes disent une liste dans une
+URL, et les deux sont servies** :
+
+- **la virgule** dans une valeur unique — `?include=spine,procedures` — découpée par le
+  champ lui-même ;
+- **la clé répétée** — `?filter=statut:actif&filter=ville:Paris` — assemblée en liste par
+  l'adaptateur, dans l'ordre de l'URL, **dès que le champ déclare une liste** (`list[...]`
+  quelque part dans l'annotation, `Optional`/`Union` traversés). C'est la sérialisation
+  par défaut d'un paramètre `array` en OpenAPI (`style: form`, `explode: true`), donc ce
+  qu'un client généré depuis `/openapi.json` envoie.
+
+⚠️ **Corrigé le 29/08 (#418)** : jusque-là, cette section disait « la forme répétée est
+inutilisable » — et c'était vrai : l'adaptateur faisait `dict(request.query_params)`, qui
+ne garde que la DERNIÈRE valeur. `?filter=a:1&filter=b:2` perdait `a` **sans erreur**,
+quand la face MCP recevait la liste entière : deux faces, deux résultats pour la même
+demande, et l'OpenAPI promettait la forme perdue. Les deux formes se combinent
+(`?k=a,b&k=c` → `["a,b", "c"]`, puis le champ découpe s'il le fait).
+
+**Une clé répétée sur un champ SCALAIRE est REFUSÉE — `400 repeated_scalar`, qui nomme
+la clé** — jamais réduite à sa dernière valeur. C'est la même règle que `unknown_fields`
+et que le corps illisible : refuser plutôt qu'ignorer. `filters` de
+`GET /api/datastore/namespaces/{ns}/rows` est un JSON dans UNE chaîne : le répéter est une
+erreur de forme, pas deux filtres. Une clé inconnue répétée reste `unknown_fields`.
+Garde : `tests/test_rest_query_repeated_param.py`.
 
 **Garde au seam** : `tests/test_rest_query_list_fields.py` balaye le registre, exige une
 **valeur d'exemple valide** par champ liste (`EXEMPLES`) et exerce le vrai handler avec

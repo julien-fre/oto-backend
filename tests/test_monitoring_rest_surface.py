@@ -10,6 +10,7 @@ routes via `_rest_adapter.make_routes` et on tape dessus.
 import asyncio
 
 import pytest
+from starlette.datastructures import QueryParams
 
 from oto_mcp import db
 from oto_mcp.capabilities import _authz, _rest_adapter
@@ -22,7 +23,8 @@ class FakeReq:
     la poser autour du handler (#487)."""
 
     def __init__(self, query=None, path_params=None, method="GET"):
-        self.query_params = query or {}
+        # `QueryParams`, pas un dict : l'adaptateur lit `getlist` (clés répétées, #418).
+        self.query_params = QueryParams(query or {})
         self.path_params = path_params or {}
         self.method = method
         self.headers = {}
