@@ -467,3 +467,19 @@ et les réponses binaires (`application/pdf` d'une facture, `application/zip` d'
 bénéficier — et rien à défaire s'il pose son propre charset. Le pourquoi (défaut
 ISO-8859-1 de HTTP/1.1 pour `text/*`, constantes en dur du SDK MCP) est dans
 `docs/mcp-spec-watch.md` §Relevé 4.
+
+## Un nom est une donnée, servie telle quelle (relevé du 29/08/2026)
+
+Un front tiers a signalé « `&` arrive `&amp;` dans `/api/me/shell` et `/api/me/nodes/{id}`
+— double échappement à l'écriture côté backend ». **Faux, et prouvé sur le chemin servi**
+(`tests/api/test_nom_est_une_donnee_servie_telle_quelle.py`, vrai PostgreSQL) : un groupe,
+un projet et une page nommés `Finance & Administratif <R&D> "Q1"` ressortent au caractère
+près sur chaque route de lecture, corps JSON brut sans entité. Le relevé en base : **0**
+groupe et **0** org avec une entité HTML dans le nom, **1** projet et **5** pages — et le
+journal des appels montre `&amp;` **dans les arguments reçus** (`oto_doc` / `oto_project
+op=create`), le `brief_md` du même appel portant un `&` nu : c'est le client qui échappe son
+champ `name` à l'écriture. Le serveur stocke ce qu'il reçoit, ce qui est son rôle ; il ne
+déséchappe rien à la lecture, et **aucune réparation en base n'a été faite** — six titres
+envoyés ainsi par leurs auteurs (trois d'une session de test, trois d'un agent), à corriger
+par eux s'ils le veulent. L'échappement appartient au RENDU HTML (`share_ui`,
+`public_doc_page`, l'email), jamais au stockage ni à une réponse JSON.
