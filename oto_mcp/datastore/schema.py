@@ -461,6 +461,28 @@ def validation_active(schema: Optional[dict]) -> bool:
     return any(max_length_of(f) for f in _walk_fields(_fields(schema)))
 
 
+def key_required_of(schema: Optional[dict]) -> bool:
+    """Ce tableau n'accepte-t-il QUE des écritures visant une ligne existante ?
+
+    `schema.key_required` (#516) — opt-in, à côté de la clé métier qu'il durcit. Sur
+    un tableau qui le porte, une écriture qui ne désigne aucune ligne (ni par son
+    identifiant, ni par une valeur de `key` que le tableau porte déjà) est REFUSÉE au
+    lieu d'en créer une. Le défaut reste la création, signalée par un `notices`
+    (#390) : un tableau se remplit souvent avant d'avoir sa clé, et le cran est une
+    déclaration de son propriétaire, jamais une politique de plateforme.
+
+    ⚠️ **Sans `key` déclarée, il ne s'arme pas.** La combinaison se refuse à la POSE
+    (`validate_schema_def`) — mais un schéma déjà en base qui la porterait rendrait
+    le tableau inécrivable, et un vieux schéma ne doit pas faire exploser une
+    écriture (même parti pris que `max_length_of`/`pattern_of`)."""
+    if not isinstance(schema, dict):
+        return False
+    cle = schema.get("key")
+    if not (isinstance(cle, str) and cle):
+        return False
+    return bool(schema.get("key_required"))
+
+
 def lifecycle_of(schema: Optional[dict]) -> Optional[dict]:
     sf = status_field(schema)
     lc = (sf or {}).get("lifecycle")
@@ -880,6 +902,16 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
                 f"key=\"{cle}\" désigne un champ de type \"{porteur.get('type')}\" — "
                 "une clé métier identifie la ligne, elle doit être une valeur simple "
                 "(une liste ne se réduit pas à une valeur, l'unicité serait fausse)")
+    # `key_required` DURCIT la clé métier : sans elle, il n'y a plus aucun moyen de
+    # désigner une ligne autrement que par son identifiant, et le tableau deviendrait
+    # inécrivable pour tout agent qui ne relit pas d'abord. Refusé à la POSE, là où le
+    # tableau se déclare — pas à la première écriture d'une campagne déjà lancée (même
+    # parti que `max_claims` sans `abandon_state`).
+    if schema.get("key_required") and not cle:
+        errors.append(
+            "key_required exige une clé métier : déclare `key` (la colonne qui "
+            "identifie une ligne), sinon aucune écriture ne pourrait viser une ligne "
+            "existante et le tableau serait inécrivable")
     for f in _fields(schema):
         gabarit = f.get(FLAT_ALIAS)
         if not gabarit:
@@ -1509,6 +1541,13 @@ def enforced_keys() -> list[str]:
             if temoin and validate_row(temoin[0], temoin[1]):
                 continue                      # elle refuse même sans la clé : pas elle
             vues.append(cle)
+        # `key_required` (#516) ne se prouve pas sur une ROW : il se juge contre le
+        # CONTENU du tableau (cette clé désigne-t-elle une ligne ?), que `validate_row`
+        # ne voit pas. Sa sonde interroge donc la fonction qui DÉCIDE — dérivée du
+        # code comme les autres, jamais une ligne de liste : le jour où le cran
+        # disparaît, l'annonce tombe avec lui.
+        if key_required_of({"key": "x", "key_required": True}):
+            vues.append("key_required")
         _ENFORCED = tuple(sorted(vues))
     return list(_ENFORCED)
 

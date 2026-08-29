@@ -37,6 +37,7 @@ from . import schema as dsv2
 # (`from .datastore.core import RowNotFound`) reste inchangé.
 from .schema_ops import SchemaOpsMixin
 from .errors import (  # noqa: F401
+    BusinessKeyRequired,
     InvalidCursor,
     NamespaceExists,
     NamespaceForbidden,
@@ -204,6 +205,37 @@ def _current_run() -> Optional[str]:
     # noqa: SILENT — hors run : pas de corrélation d'exécution à poser
     except Exception:      # noqa: BLE001 — hors contexte de requête (script, test)
         return None
+
+
+def _refus_de_creation(namespace: str, key: str,
+                       value: Any = None) -> BusinessKeyRequired:
+    """Le refus d'une CRÉATION sur un tableau fermé (`key_required`, #516).
+
+    Deux formes, parce que les deux gestes qui l'atteignent sont différents — et que
+    dire « clé requise » à qui vient d'en fournir une le ferait chercher longtemps :
+
+    - **la clé n'est pas renseignée** : le geste du 28/08, une ligne née sans `siren`
+      sur un tableau qui en déclare un ;
+    - **la clé ne désigne aucune ligne** : le geste du 29/08, un SIREN inconnu qui a
+      fabriqué une entreprise fictive. La valeur refusée est DITE — sans elle, il
+      reste à deviner si c'est la valeur ou le tableau qui est en cause.
+
+    Les deux nomment la clé ET le geste de sortie : viser la ligne par son
+    identifiant. Un refus qui ne dit que « non » fait deviner (cf. `errors.py`)."""
+    ferme = ("ce tableau n'accepte que les écritures qui visent une ligne EXISTANTE "
+             "(`key_required`) — rien n'a été créé.")
+    sortie = ("Vise-la par son identifiant : data_write(id=…, row={…}) — son `_id` "
+              "est rendu par data_rows et data_claim_next.")
+    if value is None or str(value) == "":
+        return BusinessKeyRequired(
+            f"`{key}`, la clé métier de `{namespace}`, n'est pas renseigné : {ferme} "
+            f"{sortie} Sinon renseigne `{key}` avec la valeur que porte la ligne visée.",
+            key=key, namespace=namespace)
+    return BusinessKeyRequired(
+        f"aucune ligne de `{namespace}` ne porte `{key}` = {str(value)!r} : {ferme} "
+        f"Vérifie la valeur (une clé inventée créerait une ligne que rien ne "
+        f"rapproche). {sortie}",
+        key=key, namespace=namespace, value=value)
 
 
 class DatastorePg(SchemaOpsMixin):
@@ -695,6 +727,10 @@ class DatastorePg(SchemaOpsMixin):
         valeur de clé est MERGÉE (pas de doublon, l'index `ds_bkey_<ns>` la refuse) ;
         sinon append. Renvoie la row (nouvelle ou mise à jour).
 
+        ⚠️ Sur un tableau qui déclare `key_required` (#516), l'append n'existe plus :
+        une écriture qui ne désigne aucune ligne existante est REFUSÉE
+        (`BusinessKeyRequired`) au lieu d'en créer une.
+
         `trace` (dict mutable, optionnel) = relevé pour le journal, cf. `_trace`."""
         if isinstance(data, dict) and "_id" in data:
             # PROMOTION (#354, amende le refus #390) : `_id` dans `row` EST
@@ -730,6 +766,13 @@ class DatastorePg(SchemaOpsMixin):
                 return self._row_to_dict(
                     self._merge_into_row(ns_id, existing_id, user_data, schema=schema),
                     schema)
+        # #516 : sur un tableau FERMÉ, on ne crée pas — on vise. Le geste est arrivé
+        # jusqu'ici sans désigner de ligne : ni par son `_id` (promu plus haut, et
+        # refusé s'il ne matche rien), ni par une valeur de clé que le tableau porte.
+        # Refuser AVANT `_check_row` : la validation de schéma parlerait des champs
+        # d'une ligne qui ne doit pas naître.
+        if dsv2.key_required_of(schema):
+            raise _refus_de_creation(ns.get("namespace") or namespace, key, kv)
         # #390 (3ᵉ demande) : une ligne CRÉÉE sans la clé métier déclarée est non
         # rapprochable — aucune écriture ultérieure ne la retrouvera par sa clé, et
         # le batch qui dédouble passera à côté. C'est la forme résiduelle de
@@ -964,7 +1007,9 @@ class DatastorePg(SchemaOpsMixin):
         Le schéma v2 (validation/lifecycle, ADR 0046) s'applique à CHAQUE row du
         lot, sur son résultat mergé — une row fautive fait échouer le lot en NOMMANT
         la ligne autant que le champ (#412), et en disant ce qui est déjà écrit."""
-        schema = self._schema_of(ns_id)
+        ns = self._ns_of(ns_id)
+        schema = ns.get("schema")
+        nom_ns = ns.get("namespace") or f"#{ns_id}"
         inserted, updated, ids = 0, 0, []
         total = len(rows)
         for rang, data in enumerate(rows, 1):
@@ -974,13 +1019,26 @@ class DatastorePg(SchemaOpsMixin):
                 self._reject_misplaced_id(data, None, batch=True)
                 user_data = {k: v for k, v in data.items() if k not in _META_COLS}
                 kv = user_data.get(key) if key else None
+                existing_id = None
                 if key and kv is not None and str(kv) != "":
                     existing_id = db.datastore_find_row_id_by_key(ns_id, key, kv)
-                    if existing_id is not None:
-                        self._merge_into_row(ns_id, existing_id, user_data, schema=schema)
-                        updated += 1
-                        ids.append(existing_id)
-                        continue
+                # #516 : le LOT est le second chemin de création, et le plus
+                # volumineux — c'est par lui que passent les imports. La garde s'y
+                # juge sur la clé DÉCLARÉE, celle qui porte l'index UNIQUE, même
+                # quand le lot dédouble sur une AUTRE (`key=` explicite) : sinon un
+                # tableau fermé refuserait une ligne qu'il porte déjà.
+                if existing_id is None and dsv2.key_required_of(schema):
+                    dk = self._declared_key_of(schema)
+                    dkv = user_data.get(dk)
+                    if dk != key and dkv is not None and str(dkv) != "":
+                        existing_id = db.datastore_find_row_id_by_key(ns_id, dk, dkv)
+                    if existing_id is None:
+                        raise _refus_de_creation(nom_ns, dk, dkv)
+                if existing_id is not None:
+                    self._merge_into_row(ns_id, existing_id, user_data, schema=schema)
+                    updated += 1
+                    ids.append(existing_id)
+                    continue
                 self._check_row(schema, user_data)
                 try:
                     row = db.datastore_insert_row(ns_id, _new_id(), user_data)
@@ -1002,6 +1060,15 @@ class DatastorePg(SchemaOpsMixin):
                     updated += 1
                     ids.append(existing_id)
                     continue
+            except BusinessKeyRequired as e:
+                # MÊME parti que ci-dessous : le refus garde sa classe (la face REST
+                # en dérive son code `business_key_required`), seule sa désignation
+                # change. Cette clause DOIT précéder `except ValueError` — dont
+                # `BusinessKeyRequired` dérive, pour être actionnable côté MCP.
+                raise BusinessKeyRequired(
+                    e.motif, key=e.key, namespace=e.namespace, value=e.value,
+                    row=self._designation_de_lot(rang, total, key, data,
+                                                 inserted + updated)) from None
             except RowValidationError as e:
                 # Le refus GARDE sa classe : les surfaces s'en servent pour choisir
                 # leur code (`capabilities/datastore/rows`), et un refus de schéma

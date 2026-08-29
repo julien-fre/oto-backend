@@ -31,6 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from ...auth import token_scopes
 from ...datastore import journal as datastore_journal
 from ...datastore.core import (
+    BusinessKeyRequired,
     NamespaceNotFound,
     NamespaceReadOnly,
     RowNotFound,
@@ -280,7 +281,14 @@ def _write_refusal(e: Exception) -> AuthzDenied:
     Server Error », et Sentry comptait une faute d'appel comme un bug backend.
     ⚠️ `RowValidationError` DÉRIVE de `ValueError` : l'ordre des branches est le
     contrat, pas un détail de style.
+
+    ⚠️ `BusinessKeyRequired` (#516) est un troisième cas, et il mérite son propre code :
+    un front qui reçoit `invalid_row_input` ne peut que réafficher une phrase, alors
+    que `business_key_required` lui dit QUOI proposer — viser une ligne existante.
+    Elle dérive de `ValueError` elle aussi : l'ordre des branches reste le contrat.
     """
+    if isinstance(e, BusinessKeyRequired):
+        return AuthzDenied(400, "business_key_required", str(e))
     if isinstance(e, RowValidationError):
         return AuthzDenied(400, "row_invalid", str(e))
     return AuthzDenied(400, "invalid_row_input", str(e))

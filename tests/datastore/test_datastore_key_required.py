@@ -79,7 +79,13 @@ def banc(monkeypatch):
         etat["lignes"][rid] = dict(data)
         return {"row_id": rid, "created_at": "t", "updated_at": "t", "data": data}
 
+    def get_row(ns_id, rid):
+        data = etat["lignes"].get(rid)
+        return ({"row_id": rid, "created_at": "t", "updated_at": "t",
+                 "data": dict(data)} if data is not None else None)
+
     monkeypatch.setattr(dsm.db, "datastore_find_row_id_by_key", find)
+    monkeypatch.setattr(dsm.db, "datastore_get_row", get_row)
     monkeypatch.setattr(dsm.db, "datastore_insert_row", insert)
     monkeypatch.setattr(dsm.db, "datastore_merge_row_locked",
                         _fake_merge_locked(etat["lignes"]))

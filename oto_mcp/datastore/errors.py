@@ -36,6 +36,38 @@ class RowValidationError(ValueError):
         super().__init__(tete + " : " + " ; ".join(errors))
 
 
+class BusinessKeyRequired(ValueError):
+    """Écriture refusée sur un tableau qui n'accepte que des écritures VISANT une
+    ligne existante (`schema.key_required`, #516).
+
+    Le cran est OPT-IN, posé par le propriétaire du tableau. Ce qu'il ferme : une
+    écriture qui ne désigne aucune ligne — ni par son identifiant, ni par une valeur
+    de clé métier que le tableau porte — CRÉAIT une ligne, et le seul signal était un
+    `notices` dans la réponse. Deux incidents datés : une 8 911ᵉ ligne sans `siren`
+    (28/08), puis deux entreprises FICTIVES nées d'un SIREN inconnu au registre après
+    qu'un identifiant inventé eut été refusé (29/08). Une clé n'empêche rien tant
+    qu'elle peut être inconnue.
+
+    ⚠️ Dérive de `ValueError` : la face MCP traduit toute `ValueError` d'écriture en
+    INVALID_PARAMS actionnable. Sans cet héritage, le refus ressortirait en « Erreur
+    interne du serveur » — le défaut déjà payé sur `RowLocked`.
+
+    Le refus porte de quoi AGIR : la clé, la valeur refusée quand il y en a une, et
+    le geste (viser la ligne par son identifiant). `row` = la désignation de la ligne
+    fautive quand le geste en visait plusieurs, comme `RowValidationError` (#412)."""
+
+    def __init__(self, message: str, *, key: str, namespace: Optional[str] = None,
+                 value: Any = None, row: Optional[str] = None):
+        # Le motif NU est conservé : le batch reconstruit le même refus en lui
+        # ajoutant sa désignation de ligne, sans reformuler le message.
+        self.motif = message
+        self.key = key
+        self.namespace = namespace
+        self.value = value
+        self.row = row
+        super().__init__(f"{row} : {message}" if row else message)
+
+
 class InvalidCursor(ValueError):
     """Curseur de pagination illisible (mal formé / tronqué)."""
 
