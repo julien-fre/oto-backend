@@ -21,6 +21,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access, db, ownership
 from ..datastore import schema as dsv2
 from ..datastore.core import (
+    ClaimedRefUnresolved,
     InvalidCursor,
     NamespaceExists,
     NamespaceForbidden,
@@ -265,9 +266,45 @@ def _project_row(row: dict, fields: list[str]) -> dict:
     """Projette une row sur `fields` (sous-ensemble de colonnes, feedback #191) en
     gardant TOUJOURS `_id` — sans lui l'agent ne pourrait plus adresser/mettre à jour
     la ligne. Les champs demandés absents de la row sont simplement omis."""
+    if TOUT in fields:
+        # `["*"]` demande TOUT — pas une colonne nommée `*`. Le jeton est légitime sur
+        # `oto_doc` et sur le feed depuis toujours ; le refuser ici rendait `_id` seul à
+        # un agent qui croyait demander la ligne entière (inventaire du 29/08).
+        return row
     keep = set(fields)
     keep.add("_id")
     return {k: v for k, v in row.items() if k in keep}
+
+
+TOUT = "*"  # `fields=["*"]` — « toutes les colonnes », le même jeton que sur oto_doc
+
+
+def _adresse_reservee(store, namespace: str, id=None, *, worker=None, ligne: bool = True):
+    """`@claimed` posé en tableau et/ou en ligne — le MÊME geste sur tous les verbes (#517).
+
+    Écrit une fois plutôt que six : l'alias a été enseigné comme « la réservation est
+    l'adresse », et un agent qui l'a compris l'emploie partout où il donne une adresse —
+    y compris pour LIRE. Le déclarer inconnu sur le verbe voisin de celui qui l'accepte
+    n'est pas une garde, c'est une incohérence.
+
+    `ligne=False` pour les verbes qui n'adressent qu'un TABLEAU (`data_url`,
+    `data_aggregate`) : y résoudre une ligne n'aurait aucun sens.
+
+    Le refus traverse la surface en `INVALID_PARAMS` — il PORTE la conduite à tenir
+    (« pose `_run_id` », « ta réservation est dans tel tableau »), et une erreur interne
+    l'effacerait au moment précis où elle sert."""
+    try:
+        if est_ref_reservation(namespace):
+            table, reservee = store.resolve_claimed_target(worker=worker)
+            if ligne and (id is None or est_ref_reservation(id)):
+                return table, reservee
+            return table, (id if ligne else None)
+        namespace = _ns(namespace)
+        if ligne and est_ref_reservation(id):
+            id = store.resolve_claimed_ref(namespace, worker=worker)
+    except ClaimedRefUnresolved as e:
+        raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
+    return namespace, id
 
 
 def _claimed_egare(contenu) -> bool:
@@ -539,7 +576,8 @@ def register(mcp: FastMCP) -> None:
         the binding — otherwise an actionable error, never a fallback.
 
         Args:
-            namespace: target namespace (must already exist), or `slot:<name>`.
+            namespace: target namespace (must already exist), `slot:<name>`, or
+                `@claimed` = the table your reservation is in.
             row: single-row content as a dict (JSON-encoded automatically).
             id: omit = append a new row ; provided = partial update of that `_id` ;
                 `"@claimed"` = the row your run currently holds (no copying).
@@ -555,14 +593,7 @@ def register(mcp: FastMCP) -> None:
             # `@claimed` en TABLEAU (29/08) : à leur première rencontre avec l'alias, les
             # agents l'ont mis là — la réservation porte les deux, refuser ici serait
             # refuser une demande qu'on sait satisfaire.
-            if est_ref_reservation(namespace):
-                namespace, ligne = store.resolve_claimed_target()
-                if id is None or est_ref_reservation(id):
-                    id = ligne
-            else:
-                namespace = _ns(namespace)
-                if est_ref_reservation(id):
-                    id = store.resolve_claimed_ref(namespace)
+            namespace, id = _adresse_reservee(store, namespace, id)
             if _claimed_egare(row) or _claimed_egare(rows):
                 raise McpError(ErrorData(code=INVALID_PARAMS, message=(
                     '`@claimed` est une ADRESSE, pas une donnée : il s\'écrit dans `id` '
@@ -686,14 +717,7 @@ def register(mcp: FastMCP) -> None:
         the safety net when you forget. `namespace` also accepts `slot:<name>`."""
         store = _acting_store()
         try:
-            if est_ref_reservation(namespace):
-                namespace, ligne = store.resolve_claimed_target(worker=worker)
-                if id is None or est_ref_reservation(id):
-                    id = ligne
-            else:
-                namespace = _ns(namespace)
-                if est_ref_reservation(id):
-                    id = store.resolve_claimed_ref(namespace, worker=worker)
+            namespace, id = _adresse_reservee(store, namespace, id, worker=worker)
             released = store.release_claim(namespace, id, worker=worker)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
@@ -740,9 +764,11 @@ def register(mcp: FastMCP) -> None:
         rows let you pull far more per page.
 
         Args:
-            namespace: target namespace, or `slot:<name>` = the table bound under
-                that slot name by the ACTIVE project (actionable error if unbound).
-            id: `_id` of one row ; omit = list rows.
+            namespace: target namespace, `slot:<name>` = the table bound under
+                that slot name by the ACTIVE project (actionable error if unbound),
+                or `@claimed` = the table your reservation is in.
+            id: `_id` of one row, or `@claimed` = the row your run holds ; omit =
+                list rows.
             filter: dict `{column: value}` — exact match. A column may instead take
                 ONE operator: `{"posted_at": {"gte": "2026-06-01"}}`,
                 `{"author": {"contains": "sylvie"}}`, `{"status": {"ne": "traité"}}`,
@@ -789,7 +815,7 @@ def register(mcp: FastMCP) -> None:
             order_dir: `desc` (default) or `asc`. Only meaningful with `order_by`.
         """
         store = _acting_store()
-        namespace = _ns(namespace)
+        namespace, id = _adresse_reservee(store, namespace, id)
         try:
             if count_only:
                 return {"total": store.count_rows(namespace, filter=filter, q=q,
@@ -819,7 +845,7 @@ def register(mcp: FastMCP) -> None:
                 present = {k for r in page["rows"] for k in r}
                 declared = dsv2.top_level_keys(store.get_schema(namespace))
                 unknown = [f for f in fields
-                           if f not in present and f not in declared]
+                           if f != TOUT and f not in present and f not in declared]
                 # Dernier recours AVANT d'accuser : une colonne peut n'être ni
                 # déclarée ni sur cette page, et exister quand même ailleurs dans le
                 # tableau (colonne orpheline d'un renommage). L'appeler « faute
@@ -904,7 +930,8 @@ def register(mcp: FastMCP) -> None:
               group_by=["contact1_fonction","contact2_fonction","contact3_fonction"]
 
         Args:
-            namespace: target namespace, or `slot:<name>` (active project).
+            namespace: target namespace, `slot:<name>` (active project), or
+                `@claimed` = the table your reservation is in.
             metrics: list of `{op, field?, where?, label?}` aggregations
                 (default = count of rows).
             group_by: column to group by, or a LIST of columns whose values are
@@ -916,7 +943,7 @@ def register(mcp: FastMCP) -> None:
                 search shows.
         """
         store = _acting_store()
-        namespace = _ns(namespace)
+        namespace, _ = _adresse_reservee(store, namespace, ligne=False)
         try:
             results = store.aggregate(
                 namespace, group_by=group_by, metrics=metrics, filter=filter,
@@ -929,10 +956,11 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def data_delete_row(namespace: str, id: str) -> dict:
-        """Delete a row by `_id`. `namespace` accepts `slot:<name>` (active project)."""
+        """Delete a row by `_id`. `namespace` accepts `slot:<name>` (active project)
+        or `@claimed`; `id="@claimed"` deletes the row your run holds."""
         sub = access.current_user_sub_or_raise()
-        namespace = _ns(namespace)
         store = _store_for(sub)
+        namespace, id = _adresse_reservee(store, namespace, id)
         try:
             store.delete_row(namespace, id)
         except NamespaceNotFound:
@@ -953,10 +981,11 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def data_url(namespace: str) -> dict:
         """Return the dashboard URL of a namespace (for the user to open/edit in
-        browser). `namespace` accepts `slot:<name>` (active project)."""
+        browser). `namespace` accepts `slot:<name>` (active project) or `@claimed`
+        = the table your reservation is in."""
         sub = access.current_user_sub_or_raise()
-        namespace = _ns(namespace)
         store = _store_for(sub)
+        namespace, _ = _adresse_reservee(store, namespace, ligne=False)
         try:
             return {"url": store.get_url(namespace)}
         except NamespaceNotFound:

@@ -172,6 +172,25 @@ class _StoreEspion:
         self.vu["release"] = (namespace, row_id, worker)
         return True
 
+    ligne = {"_id": "01a04aef-26c0-7c16-9c58-42f8", "siren": "1"}
+
+    def get_row(self, namespace, row_id):
+        self.vu["get"] = (namespace, row_id)
+        return self.ligne
+
+    def cursor_rows(self, namespace, **kw):
+        self.vu["cursor"] = (namespace, kw)
+        return {"rows": [self.ligne], "next_cursor": None}
+
+    def delete_row(self, namespace, row_id, **kw):
+        self.vu["delete"] = (namespace, row_id)
+
+    def declared_key(self, namespace):
+        return None
+
+    def get_schema(self, namespace):
+        return {"columns": {"siren": {"type": "text"}}}
+
     def off_schema_report(self):
         return {}
 
@@ -187,6 +206,11 @@ def _monte(monkeypatch, nom, store):
 def _appel(outil, **kw):
     import asyncio
     return asyncio.run(outil.run(kw))
+
+
+def _rendu(resultat) -> dict:
+    """Le dict que l'appelant reçoit — la face MCP l'emballe dans un `ToolResult`."""
+    return resultat.structured_content
 
 
 def test_write_accepts_the_alias_and_writes_on_the_reserved_row(monkeypatch):
@@ -335,3 +359,58 @@ def test_claimed_glisse_dans_row_est_REFUSE_en_nommant_la_faute(monkeypatch):
     msg = str(e.value)
     assert "@claimed" in msg and "`id`" in msg
     assert "inconnu" not in msg.lower()
+
+
+# ── L'alias vaut aussi pour LIRE — le trou que l'inventaire a rendu certain ──
+#
+# Un agent à qui on enseigne « la réservation est l'adresse » essaiera de **lire** sa
+# ligne avec. `data_rows` et `data_delete_row` l'ignoraient : « namespace `@claimed`
+# inconnu ». **Un jeton que la plateforme reconnaît sur un verbe et déclare inconnu
+# sur le verbe voisin est une incohérence, pas une garde.**
+
+def test_la_LECTURE_accepte_l_alias_en_tableau_et_en_ligne(monkeypatch):
+    st = _StoreEspion()
+    st.cible = ("copie-eval-palier100", "r1")
+    outil = _monte(monkeypatch, "data_rows", st)
+    out = _appel(outil, namespace=CLAIMED)
+    assert st.vu["get"] == ("copie-eval-palier100", "r1"), \
+        "namespace=@claimed doit résoudre le tableau ET la ligne"
+
+
+def test_la_lecture_accepte_l_alias_dans_id_seul(monkeypatch):
+    st = _StoreEspion()
+    outil = _monte(monkeypatch, "data_rows", st)
+    _appel(outil, namespace="copie-eval-palier100", id=CLAIMED)
+    assert st.vu["get"] == ("copie-eval-palier100", "01a04aef-26c0-7c16-9c58-42f8")
+
+
+def test_la_suppression_accepte_l_alias(monkeypatch):
+    st = _StoreEspion()
+    st.cible = ("copie-eval-palier100", "r9")
+    outil = _monte(monkeypatch, "data_delete_row", st)
+    _, T = _tool("data_delete_row")
+    monkeypatch.setattr(T.access, "current_user_sub_or_raise", lambda: "u-1")
+    monkeypatch.setattr(T, "_store_for", lambda sub: st)
+    _appel(outil, namespace=CLAIMED, id=CLAIMED)
+    assert st.vu["delete"] == ("copie-eval-palier100", "r9")
+
+
+# ── `*` demande TOUTES les colonnes, comme sur les autres surfaces ───────────
+
+def test_etoile_dans_fields_rend_la_ligne_ENTIERE(monkeypatch):
+    """`fields=["*"]` est le chemin vers le brut sur `oto_doc` et sur le feed. Sur
+    `data_rows` il tombait dans « colonne inconnue » : l'agent croyait demander tout
+    et recevait une projection sur une colonne qui n'existe pas — donc `_id` seul."""
+    st = _StoreEspion()
+    st.ligne = {"_id": "r1", "siren": "1", "raison_sociale": "ACME"}
+    outil = _monte(monkeypatch, "data_rows", st)
+    out = _rendu(_appel(outil, namespace="ns", id="r1", fields=["*"]))
+    assert out == st.ligne, "aucune projection : la ligne entière"
+
+
+def test_etoile_ne_declenche_PAS_l_avertissement_de_colonne_inconnue(monkeypatch):
+    st = _StoreEspion()
+    outil = _monte(monkeypatch, "data_rows", st)
+    out = _rendu(_appel(outil, namespace="ns", fields=["*"]))
+    assert "inconnue" not in str(out.get("warning", "")).lower()
+    assert out["rows"] == [st.ligne], "et la ligne rendue reste ENTIÈRE"

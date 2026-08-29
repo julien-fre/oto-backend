@@ -247,6 +247,17 @@ rien ne rendait navigable et que rien ne tenait.
   différentes** : un côté avec la base et l'autre sans rendrait des outils « RETIRÉS »
   que personne n'a retirés. *Un rapport qui délimite sa portée vaut plus qu'un rapport
   « complet » — le second n'existe pas, il se contente de ne pas dire où il s'arrête.*
+- **Ce qu'un préambule d'outil AUTORISE se répète dans la description du PARAMÈTRE
+  concerné (29/08, #517).** Les deux ne sont pas lus par le même agent au même moment,
+  et **le texte le plus proche du geste gagne**. Vécu dans les deux sens sur la même
+  campagne : `_run_id` disait « le run ACTIF s'applique déjà » à côté du paramètre, et
+  **37,5 %** des écritures partaient sans jeton ; `data_write` annonçait
+  `namespace="@claimed"` dans son préambule pendant que la description de `namespace`
+  n'offrait que le nom de tableau — un agent qui lit le paramètre ne pouvait pas le
+  savoir. *Une permission écrite loin du champ où elle s'exerce n'est pas une
+  permission, c'est une note de bas de page.* Une phrase par paramètre, et le delta
+  passe par le script comme le reste — **le schéma d'entrée porte ces descriptions**,
+  donc l'ajout se voit dans la colonne « schéma », pas dans « description ».
 - **Ce qu'un outil RENVOIE a un budget, et il se mesure — pas une consigne (14/08).** Sept
   signaux d'usage en six jours, tous le même défaut : un payload qu'un agent ne peut pas
   lire (`linkedin_aiark_search` 3 M caractères, `oto_doc op=list` 201 K, `linkedin_unipile_post
