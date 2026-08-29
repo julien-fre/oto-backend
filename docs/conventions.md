@@ -219,6 +219,18 @@ rien ne rendait navigable et que rien ne tenait.
   vider l'override = « rétablir le défaut » depuis v1.117.0). Si un jour on diverge
   pour de vrai : mettre les deux à jour, la DB **après** le déploiement prod — et
   savoir que cette règle repose sur la mémoire, pas sur un garde-fou.
+- **Ce qu'un outil DÉCRIT a un budget aussi : toute PR qui allonge une description
+  servie donne son delta en caractères (29/08, #517).** Au même titre qu'un diff
+  d'empreinte, et pour la même raison : la description part au modèle à chaque
+  connexion, donc la rallonger est un changement de comportement, pas un ajout de
+  documentation. La mesure qui l'impose est datée du 27/08 — la longueur des
+  descriptions d'outils est le **seul** changement sur le chemin d'une campagne dont
+  les appels malformés sont passés de **21 % à 62 %** (`docs/datastore.md`). Le format
+  suffit : `data_write +162 car`, une ligne par outil touché. ⚠️ Le delta ne s'annonce
+  pas pour être approuvé, il s'annonce pour être **pesé** : trois outils à +100 chacun
+  sur le chemin d'une flotte se discutent, un +20 isolé non. Et quand il gonfle, le
+  remède est connu — le contrat minimal dans la description, le détail dans les refus
+  et dans `docs/`, puisque c'est le refus que l'agent lit au moment où il se trompe.
 - **Ce qu'un outil RENVOIE a un budget, et il se mesure — pas une consigne (14/08).** Sept
   signaux d'usage en six jours, tous le même défaut : un payload qu'un agent ne peut pas
   lire (`linkedin_aiark_search` 3 M caractères, `oto_doc op=list` 201 K, `linkedin_unipile_post
