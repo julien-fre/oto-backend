@@ -117,6 +117,53 @@ def _project_hint(namespace: str) -> Optional[str]:
         return None
 
 
+def _omitted_run_hint(e: RowLocked) -> Optional[str]:
+    """Le refus ENSEIGNE la faute la plus fréquente : `_run_id` omis (#547).
+
+    Même seam que #515 — reformuler le refus du point de vue de l'APPELANT. Mesuré le
+    29/08/2026 sur une campagne : 31 écritures refusées sur 100, **toutes** sur une
+    ligne que l'appelant tenait lui-même, le jeton passé à la réservation (140/140)
+    puis omis à l'écriture. Un refus qui décrit l'état du monde (« réservée par w8 »)
+    laisse déduire la faute ; celui-ci la NOMME, mais seulement quand il peut la
+    prouver.
+
+    Trois conditions, toutes nécessaires :
+    - l'appel ne porte AUCUN run — c'est précisément la faute ;
+    - le bail est tenu par un run identifié ;
+    - ce run appartient au MÊME sub que l'appelant. ⚠️ Sans ce dernier test on
+      révélerait à un tiers le jeton qui lève le verrou : `_run_id` n'autorise rien,
+      il NOMME (cf. `call_axes._pin_run`) — l'imprimer dans un refus adressé à
+      quelqu'un d'autre ferait du verrou une étiquette.
+
+    Best-effort : toute erreur ⇒ None. Un refus ne tombe pas parce qu'un indice manque.
+    """
+    try:
+        from .. import session_org
+        if session_org.current_call_run():
+            return None                      # l'appel porte un run : autre cause
+        run = getattr(e, "claimed_run", None)
+        if not run:
+            return None                      # bail sans run (worker seul) : rien à dire
+        sub = access.current_user_sub_from_token()
+        head = db.get_run_head(str(run))
+        if not sub or not head or head.get("sub") != sub:
+            return None                      # pas le tien : on ne nomme pas le run
+        return (f"Tu n'as passé aucun `_run_id` sur cet appel, et cette ligne est tenue "
+                f"par TON run `{run}` — tu l'as probablement omis : repasse "
+                f"`_run_id={run}` sur CHAQUE appel jusqu'à `run_finish`, il n'est pas "
+                f"hérité d'un appel au suivant.")
+    # noqa: SILENT — un indice absent ne doit jamais masquer le refus lui-même
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _row_locked_message(e: RowLocked) -> str:
+    """Le texte servi pour un refus de ligne réservée : le message du refus, plus
+    l'indice d'omission de `_run_id` quand il est prouvé (#547)."""
+    hint = _omitted_run_hint(e)
+    return f"{e} {hint}" if hint else str(e)
+
+
 def _namespace_keys(store, namespace: str) -> set[str]:
     """Clés réellement présentes dans les DONNÉES du namespace (relevé borné).
 
@@ -508,8 +555,9 @@ def register(mcp: FastMCP) -> None:
             # #317 : un refus, pas un 500. Sans cette traduction l'agent voit « Erreur
             # interne du serveur » là où il lui faut QUI tient la ligne, JUSQU'À QUAND,
             # et COMMENT lever — vécu en production le 15/08, sur une campagne bloquée.
-            # Le message de l'exception porte déjà les trois : on le rend tel quel.
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
+            # Le message de l'exception porte déjà les trois ; `_row_locked_message` y
+            # ajoute la CAUSE quand elle est prouvée (`_run_id` omis, #547).
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_row_locked_message(e)))
 
     @mcp.tool()
     def data_claim_next(namespace: str, worker: str, filter: Optional[dict] = None,
@@ -824,8 +872,9 @@ def register(mcp: FastMCP) -> None:
             # #317 : un refus, pas un 500. Sans cette traduction l'agent voit « Erreur
             # interne du serveur » là où il lui faut QUI tient la ligne, JUSQU'À QUAND,
             # et COMMENT lever — vécu en production le 15/08, sur une campagne bloquée.
-            # Le message de l'exception porte déjà les trois : on le rend tel quel.
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
+            # Le message de l'exception porte déjà les trois ; `_row_locked_message` y
+            # ajoute la CAUSE quand elle est prouvée (`_run_id` omis, #547).
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_row_locked_message(e)))
         return {"ok": True, "id": id}
 
     @mcp.tool()

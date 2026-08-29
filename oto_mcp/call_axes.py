@@ -423,13 +423,32 @@ async def _pin_run(value: object) -> list[UndoEntry]:
     return [(session_org.reset_call_run, session_org.set_call_run(str(value)))]
 
 
+# ⚠️ **Cette description est la SEULE de call_axes qui dépasse le plafond ordinaire**
+# (110 c., `test_call_axes_budget`) — et c'est un choix mesuré, pas une dérive.
+# L'ancienne (« run_id d'un `run_start` — le run ACTIF s'applique déjà. ») disait au
+# modèle qu'il pouvait OMETTRE le jeton : vrai sur un serveur qui tient une session avec
+# un run actif, faux sur le chemin de production où chaque appel a sa propre session
+# (claude.ai renouvelle le `Mcp-Session-Id`). Mesuré le 29/08/2026 (#547) : `_run_id`
+# passé sur 140/140 réservations puis omis à l'écriture, et **31 écritures refusées sur
+# 100**, toutes sur la ligne que l'appelant tenait lui-même. Le texte de l'outil, relu à
+# chaque appel, pèse plus que la consigne lue une fois au handshake.
+# Trois faits qu'un lecteur de schéma ne peut pas déduire, et qu'on paie donc ici :
+# **obligatoire**, **ce que coûte l'omission**, **l'exception nommée** (l'héritage).
+# Coût mesuré : +135 c. sur 548 des 558 outils, soit ~74 k c. de handshake
+# (633 → 766 c. d'axes par outil) — le prix de 31 lignes perdues sur 100.
+# ⚠️ **Phrase UNIQUE, jamais choisie à l'appel** : beaucoup de clients récupèrent
+# `tools/list` une fois à la poignée de main et le figent pour la session. Une variante
+# « tu tiens déjà un run » n'atteindrait jamais un modèle en session longue et ne
+# marcherait que là où chaque appel est sa propre session — un correctif en trompe-l'œil.
 RUN = CallAxis(
     param="_run_id",
     schema={
         "type": "string",
         "title": "Run Id",
         "description": (
-            "run_id d'un `run_start` — le run ACTIF s'applique déjà."
+            "OBLIGATOIRE à chaque appel dès `run_start` ou `data_claim_next` : sans lui, "
+            "l'écriture sur une ligne réservée est refusée. Hérité seulement si le "
+            "serveur tient un run actif — n'y compte pas."
         ),
     },
     applies=_is_run_correlatable_tool,
