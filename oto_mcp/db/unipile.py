@@ -344,6 +344,39 @@ def bound_unipile_account_ids() -> set:
     return {r["account_id"] for r in rows}
 
 
+def foreign_unipile_account_ids(sub: str) -> set:
+    """Les `account_id` attribués à QUELQU'UN D'AUTRE que `sub` — bindings VIVANTS
+    et MORTS.
+
+    `bound_unipile_account_ids` vu depuis un réclamant. Une ligne MORTE d'un tiers
+    interdit autant qu'une vivante : à la reconnexion Unipile RÉUTILISE le même
+    identifiant, elle prouve donc une propriété qui dure. Symétriquement, les lignes
+    du réclamant lui-même n'y sont pas — reprendre son propre compte n'a jamais été
+    le problème.
+
+    Forme d'ENSEMBLE, pour l'appelant qui teste N candidats en une passe (la
+    réconciliation en voit tout l'abonnement partagé) ; le grain unitaire est
+    `is_foreign_unipile_account`."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT account_id FROM unipile_accounts WHERE sub <> %s",
+            (sub,),
+        ).fetchall()
+    return {r["account_id"] for r in rows}
+
+
+def is_foreign_unipile_account(sub: str, account_id: str) -> bool:
+    """Ce compte est-il attribué à quelqu'un d'autre que `sub` (ligne vivante ou
+    morte) ? Forme SCALAIRE : le webhook n'a qu'un identifiant à confronter, et
+    charger tout l'inventaire pour chaque notification serait un scan par appel
+    d'une route ANONYME."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT 1 FROM unipile_accounts WHERE account_id = %s AND sub <> %s LIMIT 1",
+            (account_id, sub),
+        ).fetchone() is not None
+
+
 def backfill_unipile_member_scope() -> dict:
     """One-shot idempotent (boot, ADR 0033 B4) : `unipile_accounts` passe au grain
     (sub, org, provider). Historique : `org_id` = « org porteuse du SIÈGE plateforme »
