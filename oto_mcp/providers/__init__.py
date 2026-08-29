@@ -354,7 +354,10 @@ def require_credential(entity_type: str, name: str) -> None:
         raise ValueError(
             f"{name!r} ne porte pas de credential : sa clé se pose sur {porteur!r} "
             f"(un seul compte fournisseur pour toutes ses connexions).")
-    if entity_type == "org":
+    if entity_type in ("org", "tenant"):
+        # Un TENANT (L-clés PR 1) pose la même question que l'org : sa clé est
+        # partagée par ses orgs, donc lue aux barreaux partagés du walker (gate
+        # `ORG_SHAREABLE_PROVIDERS`) — et à eux seuls.
         if not is_org_shareable(name):
             raise ValueError(f"{name!r} n'est pas un credential org-partageable")
     elif entity_type == "platform":

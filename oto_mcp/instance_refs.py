@@ -15,6 +15,7 @@ Grammaire (segments joints par `:`) :
     member:{org_id}:{sub}:{connector}[:{account}]
     group:{group_id}:{connector}[:{account}]
     org:{org_id}:{connector}[:{account}]
+    tenant:{slug}:{connector}[:{account}]       ← L-clés PR 1 (la clé partagée d'un tenant)
     platform:{connector}:{label}
 
 - Les segments LIBRES (`sub`, `account`, `connector`) sont percent-encodés
@@ -49,7 +50,7 @@ from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import quote, unquote
 
-_LEVELS = ("inst", "member", "group", "org", "platform")
+_LEVELS = ("inst", "member", "group", "org", "tenant", "platform")
 
 
 @dataclass(frozen=True)
@@ -62,12 +63,13 @@ class InstanceRef:
     composé), et c'est pourquoi le résoudre demande la base
     (`db.connector_instances.instance_by_id`), pas ce module, qui reste pur.
     """
-    level: str                          # inst | member | group | org | platform
+    level: str                          # inst | member | group | org | tenant | platform
     connector: Optional[str]            # renseigné pour tous SAUF `inst` (ADR 0044 §F : plateforme aussi)
     org_id: Optional[int] = None
     sub: Optional[str] = None
     group_id: Optional[int] = None
     label: Optional[str] = None         # platform : label de la clé plateforme
+    tenant: Optional[str] = None        # tenant : le slug (L-clés PR 1)
     instance_id: Optional[int] = None   # inst : l'identifiant stable (lot L6)
     account: str = ""
 
@@ -90,6 +92,12 @@ def make_group_ref(group_id: int, connector: str, account: str = "") -> str:
 
 def make_org_ref(org_id: int, connector: str, account: str = "") -> str:
     return f"org:{org_id}:{_tail(connector, account)}"
+
+
+def make_tenant_ref(slug: str, connector: str, account: str = "") -> str:
+    # L-clés PR 1 : le slug est un jeton sûr (`tenancy._SLUG_RE`, jamais de `:`) —
+    # encodé quand même, comme tout segment libre, pour que la grammaire reste uniforme.
+    return f"tenant:{quote(slug, safe='')}:{_tail(connector, account)}"
 
 
 def make_platform_ref(connector: str, label: str) -> str:
@@ -126,6 +134,8 @@ def ref_for_credential(entity_type: str, entity_id: str, connector: str,
         return make_group_ref(int(entity_id), connector, account)
     if entity_type == "org" and (entity_id or "").isdigit():
         return make_org_ref(int(entity_id), connector, account)
+    if entity_type == "tenant" and entity_id:
+        return make_tenant_ref(entity_id, connector, account)
     if entity_type == "platform" and entity_id is not None:
         # `entity_id` EST le label de la clé plateforme (ADR 0044 §F).
         return make_platform_ref(connector, entity_id)
@@ -143,6 +153,8 @@ def format_ref(r: InstanceRef) -> str:
         return make_group_ref(r.group_id, r.connector, r.account)
     if r.level == "org":
         return make_org_ref(r.org_id, r.connector, r.account)
+    if r.level == "tenant":
+        return make_tenant_ref(r.tenant, r.connector, r.account)
     return make_platform_ref(r.connector, r.label)
 
 
@@ -179,9 +191,13 @@ def parse_ref(ref: str) -> InstanceRef:
             level="member", connector=unquote(parts[3]), org_id=_int(parts[1]),
             sub=unquote(parts[2]),
             account=unquote(parts[4]) if len(parts) == 5 else "")
-    # group | org : 3 ou 4 segments.
+    # group | org | tenant : 3 ou 4 segments.
     if len(parts) not in (3, 4):
         raise ValueError("invalid_instance_ref")
+    if level == "tenant":
+        return InstanceRef(level="tenant", connector=unquote(parts[2]),
+                           tenant=unquote(parts[1]),
+                           account=unquote(parts[3]) if len(parts) == 4 else "")
     entity_id = _int(parts[1])
     account = unquote(parts[3]) if len(parts) == 4 else ""
     if level == "group":

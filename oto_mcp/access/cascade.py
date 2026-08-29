@@ -19,7 +19,8 @@ from typing import Callable, Optional
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import (providers, credentials_store, db, grants_chain, group_store, org_store)
+from .. import (providers, credentials_store, db, grants_chain, group_store, org_store,
+                tenant_vault)
 from ..connectors import cardinality
 from . import scope, secret_repr
 
@@ -222,8 +223,8 @@ class CascadeRung:
     """Un barreau GAGNANT de la marche : niveau + entité + charge de la sonde
     (`payload` = secret/grant en fetch, True/meta en présence). `via` distingue la
     clé membre LOCALE (éditable ici) de l'instance personnelle cross-org (#172)."""
-    mode: str                       # user | group | org | platform
-    entity_type: Optional[str]      # credentials_store.MEMBER | 'group' | 'org' | PLATFORM
+    mode: str                       # user | group | org | tenant | platform
+    entity_type: Optional[str]      # credentials_store.MEMBER | 'group' | 'org' | TENANT | PLATFORM
     entity_id: Optional[str]
     payload: object
     account: str = ""
@@ -241,11 +242,14 @@ class CascadeProbe:
     """Sonde d'un barreau — même interface pour présence et fetch. `member` renvoie
     `(payload, account)` ou None (le fetch de résolution y encapsule sa sélection
     multi-compte, McpErrors comprises) ; `member_cross` est toujours mono-compte ;
-    `platform` renvoie le grant (meta ou résolu) ou None."""
+    `tenant` reçoit le SLUG (L-clés PR 1) et répond comme `org` ; `platform` renvoie
+    le grant (meta ou résolu) ou None. Champ REQUIS pour chacun : une sonde qui
+    oublierait un barreau le sauterait en silence — le défaut de #409."""
     member: Callable[[str, int, str], Optional[tuple]]
     member_cross: Callable[[str, int, str], Optional[object]]
     group: Callable[[int, str], Optional[object]]
     org: Callable[[int, str], Optional[object]]
+    tenant: Callable[[str, str], Optional[object]]
     platform: Callable[[Optional[str], str, Optional[int]], Optional[dict]]
 
 
@@ -263,6 +267,7 @@ PRESENCE_PROBE = CascadeProbe(
     member_cross=lambda s, o, p: (True if db.has_member_api_key(s, o, p) else None),
     group=lambda g, p: (True if group_store.has_group_secret(g, p) else None),
     org=lambda o, p: (True if org_store.has_org_secret(o, p) else None),
+    tenant=lambda t, p: (True if tenant_vault.has_tenant_secret(t, p) else None),
     platform=lambda s, p, o: _platform_grant_meta(s, p, o),
 )
 
@@ -278,6 +283,7 @@ FETCH_PROBE = CascadeProbe(
     member_cross=lambda s, o, p: db.get_member_api_key(s, o, p),
     group=lambda g, p: group_store.get_group_secret(g, p),
     org=lambda o, p: org_store.get_org_secret(o, p),
+    tenant=lambda t, p: tenant_vault.get_tenant_secret(t, p),
     platform=lambda s, p, o: _resolve_platform_grant(s, p, o),
 )
 
@@ -360,6 +366,13 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
     if org is not None:
         org_secrets = {r["connector"] for r in cs.list_credentials("org", str(org))}
 
+    # Barreau TENANT (L-clés PR 1) : une lecture, seulement pour un sub d'un tenant
+    # tiers — `rung_tenant` rend None pour un sub nu, et l'inventaire n'est pas lu.
+    tenant_secrets: set = set()
+    slug = tenant_vault.rung_tenant(sub)
+    if slug is not None:
+        tenant_secrets = {r["connector"] for r in cs.list_credentials(cs.TENANT, slug)}
+
     return CascadeProbe(
         member=lambda s, o, p: ((True, "") if p in membre and p not in suspendues
                                 else None),
@@ -369,6 +382,7 @@ def preloaded_presence_probe(sub: str, *, org: Optional[int],
         member_cross=PRESENCE_PROBE.member_cross,
         group=lambda g, p: (True if p in par_groupe.get(int(g), ()) else None),
         org=lambda o, p: (True if p in org_secrets else None),
+        tenant=lambda t, p: (True if p in tenant_secrets else None),
         platform=PRESENCE_PROBE.platform,
     )
 
@@ -429,6 +443,19 @@ def walk_cascade(sub: Optional[str], provider: str, *, org: Optional[int],
             if hit is not None:
                 payload, account = hit if isinstance(hit, tuple) else (hit, "")
                 yield CascadeRung("org", "org", str(org), payload, account)
+        # Étage TENANT (L-clés PR 1, ADR 0052) : la clé partagée du tenant de
+        # l'APPELANT — lu sur son sub qualifié, jamais sur le rattachement de l'org
+        # (lot L1). `rung_tenant` rend None pour un sub nu (tenant primaire : ses clés
+        # partagées sont les instances plateforme) et pour l'anonyme — le barreau
+        # n'est alors pas sondé du tout, donc il ne coûte rien là où il ne peut rien
+        # trouver. Sous le gate ORG_SHAREABLE comme l'équipe et l'org : c'est une clé
+        # partagée. Servi AVANT la plateforme : plus proche de l'appelant.
+        slug = tenant_vault.rung_tenant(sub)
+        if slug is not None:
+            hit = probe.tenant(slug, provider)
+            if hit is not None:
+                payload, account = hit if isinstance(hit, tuple) else (hit, "")
+                yield CascadeRung("tenant", credentials_store.TENANT, slug, payload, account)
     if want != "byo":
         con = providers.connector_for_provider(provider)
         if con is not None and "platform" in con.auth_modes:

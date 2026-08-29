@@ -76,7 +76,8 @@ def test_tenant_surfaces_read_platform_admin_reload_super_admin(monkeypatch):
 
     caps = {c.key: c for c in _caps()}
     assert set(caps) == {"admin.tenants", "admin.tenant", "admin.tenant_console",
-                         "admin.tenants_reload"}
+                         "admin.tenants_reload", "admin.tenant_keys",
+                         "admin.tenant_key_set", "admin.tenant_key_clear"}
     assert caps["admin.tenants"].authz is PLATFORM_ADMIN
     assert caps["admin.tenant"].authz is PLATFORM_ADMIN
     from oto_mcp.capabilities._authz import SUPER_ADMIN
@@ -102,9 +103,19 @@ def test_the_tracking_surface_cannot_write():
     Se prouve sur le REGISTRE (ce qui est monté), pas sur les noms de ce module :
     une capacité tenant ajoutée ailleurs, avec un POST, tombe ici aussi.
     """
+    from oto_mcp.capabilities._authz import SUPER_ADMIN
+    # L-clés PR 1 (2026-08-29) : la CLÉ DE CONNECTEUR du tenant est la seule chose que
+    # cette surface écrit — poser (PUT, REST seule : un secret brut ne traverse pas un
+    # appel d'outil) et retirer (DELETE). Les deux sont SUPER_ADMIN, comme `reload` :
+    # ça change ce que la résolution sert à tout un tenant. Déclarer le tenant
+    # lui-même reste un runbook.
+    ecritures_admises = {"admin.tenant_key_set": "PUT", "admin.tenant_key_clear": "DELETE"}
     for c in _caps():
         if c.key == "admin.tenants_reload":
             assert c.rest.verb == "POST"
+            continue
+        if c.key in ecritures_admises:
+            assert c.rest.verb == ecritures_admises[c.key] and c.authz is SUPER_ADMIN
             continue
         verbe = c.rest.verb if c.rest else "GET"
         assert verbe == "GET", (

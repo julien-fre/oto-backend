@@ -18,7 +18,7 @@ def _sonde_muette() -> access.CascadeProbe:
     """
     return access.CascadeProbe(
         member=lambda s, o, p: None, member_cross=lambda s, o, p: None,
-        group=lambda g, p: None, org=lambda o, p: None,
+        group=lambda g, p: None, org=lambda o, p: None, tenant=lambda t, p: None,
         platform=lambda s, p, o: {"label": "plat", "daily_quota": 100})
 
 

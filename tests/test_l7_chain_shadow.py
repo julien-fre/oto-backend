@@ -120,6 +120,23 @@ def test_la_chaine_designe_le_meme_palier_sur_une_arete_plateforme(vide, monkeyp
                                  free_tier_ouvert=False) == chain_shadow.ACCORD
 
 
+def test_la_chaine_designe_le_meme_palier_sur_une_cle_tenant(vide, monkeypatch):
+    """L-clés PR 1 : l'étage tenant existe des DEUX côtés de la fenêtre — sinon le
+    shadow compterait une divergence `inconnu` que le lot aurait créée."""
+    from oto_mcp import tenancy
+    monkeypatch.setattr(tenancy, "_INSTALLED", tenancy.IssuerRegistry(tenancy.build(
+        "https://auth.oto.ninja/oidc",
+        tenants=[{"slug": "pilote", "issuer": "https://auth.pilote.test/oidc"}])),
+        raising=False)
+    monkeypatch.setattr(credentials_store, "has_credential",
+                        lambda et, eid, p, account=None: et == credentials_store.TENANT)
+    pick = chain_shadow.chain_winner("pilote:u", "serper", org=7)
+    legacy = cascade.CascadeRung("tenant", credentials_store.TENANT, "pilote", "K")
+    assert pick is not None and pick.mode == "tenant"
+    assert chain_shadow.classify(legacy, pick, acl_refus=False,
+                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+
+
 def test_les_deux_refusent_ensemble_est_un_accord(vide):
     """Rien ne résout d'un côté, rien de l'autre : c'est un accord, pas un trou. Sans
     cette ligne, tout appel d'un connecteur non configuré compterait comme divergence

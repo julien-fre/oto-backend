@@ -7,10 +7,14 @@ faces habituelles (dashboard `/platform/tenants` + `oto_admin_tenant` en session
 
 Trois partis pris, tous conséquences de ce que le tenant EST :
 
-- **Lecture seule.** Déclarer un tenant reste un runbook (une instance Logto dédiée,
-  un client OAuth, des hosts sur le proxy — barreau B4) et le registre est construit
-  AU BOOT : un formulaire qui poserait un émetteur laisserait croire qu'une ligne en
-  base suffit, alors qu'elle ne prend effet qu'au redémarrage et ne provisionne rien.
+- **Lecture seule — à une exception près, datée.** Déclarer un tenant reste un runbook
+  (une instance Logto dédiée, un client OAuth, des hosts sur le proxy — barreau B4) et
+  le registre est construit AU BOOT : un formulaire qui poserait un émetteur laisserait
+  croire qu'une ligne en base suffit, alors qu'elle ne prend effet qu'au redémarrage et
+  ne provisionne rien. **Depuis le 2026-08-29 (L-clés PR 1)**, la seule chose que cette
+  surface écrit est la CLÉ DE CONNECTEUR du tenant : `op=keys` la liste, `op=key_clear`
+  la retire (SUPER_ADMIN) ; la pose est REST seule (`tenant_keys`, un secret brut ne
+  traverse pas un appel d'outil).
 - **Les deux sources restent séparées** (`orgs.tenant_id` d'un côté, la qualification
   du sub de l'autre) et l'écart est NOMMÉ (`orgs_desalignees`) — cf. `db/tenants.py`.
 - **`PLATFORM_ADMIN`**, comme les autres lentilles de supervision : on lit des
@@ -24,6 +28,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from .. import db, tenancy, tool_alias
+from . import tenant_keys
 from ._authz import ADMIN_BY_OP, PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding, cap_limit
 from .registry import CAPABILITIES
@@ -127,13 +132,15 @@ class TenantDetail(BaseModel):
 
 class TenantConsoleOut(BaseModel):
     """Enveloppe op-aware : `list` rend `tenants`+`totals`, `get` rend `tenant`,
-    `reload` rend `reload`. Déclarée en union plutôt qu'en intersection (vide) —
-    cf. dette de sortie."""
+    `reload` rend `reload`, `keys` rend `keys`, `key_clear` rend `key_clear`.
+    Déclarée en union plutôt qu'en intersection (vide) — cf. dette de sortie."""
     days: int
     tenants: Optional[list[TenantRow]] = None
     totals: Optional[TenantTotals] = None
     tenant: Optional[Any] = None
     reload: Optional[Any] = None
+    keys: Optional[Any] = None
+    key_clear: Optional[Any] = None
 
 
 def _live_registry() -> dict:
@@ -222,8 +229,10 @@ def _reload(ctx: ResolvedCtx, inp: ReloadInput) -> dict:
 
 
 class TenantConsoleInput(BaseModel):
-    op: Literal["list", "get", "reload"] = "list"
+    op: Literal["list", "get", "reload", "keys", "key_clear"] = "list"
     slug: Optional[str] = None
+    provider: Optional[str] = None      # key_clear
+    account: str = ""                   # key_clear, multi-compte ('' = mono)
     days: int = _DEFAULT_DAYS
 
     @field_validator("days")
@@ -235,11 +244,21 @@ class TenantConsoleInput(BaseModel):
 def _console(ctx: ResolvedCtx, inp: TenantConsoleInput) -> dict:
     if inp.op == "reload":
         return {"days": inp.days, "reload": _reload(ctx, ReloadInput())}
-    if inp.op == "get":
-        if not (inp.slug or "").strip():
-            raise AuthzDenied(400, "missing_slug", "`slug` requis pour op=get.")
-        return _tenant(ctx, TenantInput(slug=inp.slug, days=inp.days))
-    return _tenants(ctx, TenantsInput(days=inp.days))
+    if inp.op == "list":
+        return _tenants(ctx, TenantsInput(days=inp.days))
+    slug = (inp.slug or "").strip()
+    if not slug:
+        raise AuthzDenied(400, "missing_slug", f"`slug` requis pour op={inp.op}.")
+    if inp.op == "keys":
+        return {"days": inp.days,
+                "keys": tenant_keys._list_keys(ctx, tenant_keys.TenantKeysInput(slug=slug))}
+    if inp.op == "key_clear":
+        if not (inp.provider or "").strip():
+            raise AuthzDenied(400, "missing_provider", "`provider` requis pour op=key_clear.")
+        return {"days": inp.days,
+                "key_clear": tenant_keys._clear_key(ctx, tenant_keys.TenantKeyClearInput(
+                    slug=slug, provider=inp.provider.strip(), account=inp.account))}
+    return _tenant(ctx, TenantInput(slug=slug, days=inp.days))
 
 
 CAPABILITIES += [
@@ -263,7 +282,10 @@ CAPABILITIES += [
         # que le process AUTHENTIFIE (les émetteurs acceptés) = SUPER_ADMIN, déclaré
         # au niveau capacité via le combinateur op-aware — jamais dans le handler.
         authz=ADMIN_BY_OP({"list": PLATFORM_ADMIN, "get": PLATFORM_ADMIN,
-                           "reload": SUPER_ADMIN}),
+                           "reload": SUPER_ADMIN,
+                           # L-clés PR 1 : lire les clés = lentille ; en retirer une
+                           # change ce que la résolution sert à tout un tenant.
+                           "keys": PLATFORM_ADMIN, "key_clear": SUPER_ADMIN}),
         description=(
             "[platform admin] Tenant tracking (identity tier, ADR 0052). op=list → one "
             "row per declared tenant: issuer + jwks + hosts + oauth client + dashboard "
@@ -279,7 +301,12 @@ CAPABILITIES += [
             "op=reload (super_admin) makes THIS process re-read the declarations "
             "without a restart: the issuer registry and the accepted issuers are "
             "swapped live, which clears `pending_restart`. Per-process: prod and "
-            "preprod share the DB but not their registry."),
+            "preprod share the DB but not their registry. op=keys (`slug`) → the "
+            "connector keys posed on the tenant (never the secret): one shared key "
+            "serves every org of the tenant that has no closer key (member/team/org), "
+            "resolved before the platform key. op=key_clear (`slug`, `provider`, "
+            "optional `account`; super_admin) removes one. Posing a key is REST "
+            "only: PUT /api/admin/tenants/{slug}/keys/{provider}."),
         mcp="oto_admin_tenant",
     ),
 ]

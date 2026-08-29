@@ -5,7 +5,7 @@ description: >-
   Carte conceptuelle canonique des trois couches orthogonales qui gouvernent tout
   connecteur oto (unipile, google, pennylane, sirene…) : disponibilité (connector_activation
   master ± override org + availability self_serve/platform_granted), authentification
-  (cascade resolve_api_key BYO-user > groupe > org > clé plateforme), et option de
+  (cascade resolve_api_key BYO-user > groupe > org > tenant > clé plateforme), et option de
   connecteur (has_option = comp admin via option_comps OU abonnement d'org, ADR 0043 ;
   option_open = has_option ∪ BYO). Explique aussi le RBAC interne org-connector-access
   (ADR 0025). À lire AVANT de toucher activation, clés ou options ; les autres docs
@@ -28,7 +28,7 @@ Pour qu'un connecteur **marche** pour un utilisateur, les **trois** doivent êtr
 | # | Couche | Question | Substrat |
 |---|--------|----------|----------|
 | 1 | **Disponibilité** | le connecteur est-il exposé ? | `connector_activation` (master ± override org) + `availability` |
-| 2 | **Authentification** | avec quelle clé appelle-t-il l'API ? | cascade `resolve_api_key` (user→groupe→org→clé plateforme) |
+| 2 | **Authentification** | avec quelle clé appelle-t-il l'API ? | cascade `resolve_api_key` (user→groupe→org→tenant→clé plateforme) |
 | 3 | **Option** *(options gatées only)* | l'option est-elle débloquée ? | `option_open(sub, connector)` = **BYO** ∪ `has_option` (comp admin user\|org **OU abonnement d'org**) |
 
 La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à option gatée**
@@ -84,8 +84,30 @@ La plupart des connecteurs n'ont que **1 + 2**. Seuls les **connecteurs à optio
 `access.resolve_api_key(provider)` — cascade, **la plus spécifique gagne** :
 
 ```
-clé MEMBRE (BYO, scopée (sub, org))  >  secret groupe  >  secret org  >  clé PLATEFORME (partagée)
+clé MEMBRE (BYO, scopée (sub, org))  >  secret groupe  >  secret org  >  clé de TENANT  >  clé PLATEFORME (partagée)
 ```
+
+> **L'étage TENANT existe depuis le 2026-08-29 (L-clés PR 1, blueprint ADR 0052).** Une clé
+> posée sur un tenant (coffre `entity_type='tenant'`, `entity_id` = son slug) sert à
+> **toutes les orgs de ce tenant qui n'en ont pas de plus proche** — membre, équipe, org —
+> et prime sur la clé plateforme. Trois règles, toutes tenues par le walker et rien d'autre :
+> - **le tenant se lit sur le sub qualifié de l'APPELANT** (`tenant_vault.rung_tenant`),
+>   jamais sur le rattachement de l'org (lot L1 : aucun chemin de résolution n'en dépend).
+>   Conséquence : l'endpoint MCP anonyme (pas de sub) n'a pas cet étage ;
+> - **un sub nu relève du tenant `oto`, qui n'a PAS de clé de tenant** : ses clés partagées
+>   SONT les instances plateforme (avec leurs grants). Refusé à la pose ET jamais sondé à la
+>   lecture — les deux d'un même geste, sinon une ligne acceptée que personne ne lit (#409).
+>   Mesurable : pour 99 % du trafic, le barreau ne coûte aucune lecture ;
+> - **même gate que l'équipe et l'org** (`ORG_SHAREABLE_PROVIDERS`) : c'est une clé partagée.
+>   Et c'est le **BYO du tenant** (`BYO_MODES`) : l'option couche 3 est levée par
+>   construction, comme pour une clé d'org.
+>
+> La chaîne 0053 de la fenêtre L7 calcule le même étage (`chain_shadow`) — sinon chaque clé
+> tenant servie compterait une divergence `inconnu`. Ce que la PR 1 ne fait **pas** : le rôle
+> « admin de tenant » (le partenaire pose SA clé depuis SON tableau de bord), l'arête
+> tenant→org de 0053 (budget par org, R10), la liste `oto_instance` (les instances de tenant
+> existent — elles naissent à la pose — mais ne sont pas encore listées ni épinglables par
+> `_instance=` depuis cette liste). Surface : `docs/tenants.md`.
 
 > **Scope membre (ADR 0033).** Il n'y a **plus de clé « perso » org-agnostique** : la clé
 > BYO d'un membre est keyée **(sub, org de contexte)** — coffre `entity_type='member'`,
@@ -224,6 +246,11 @@ un : un champ toujours présent devient du bruit qu'on cesse de lire.
 4. Puis **lui** connecte son LinkedIn/WhatsApp (hosted-auth, `/console/connectors`).
 
 ## Trous connus (à combler)
+
+- **Clé de tenant (L-clés PR 1, 29/08)** : pas de rôle « admin de tenant », pas d'arête
+  tenant→org (le budget par org de R10), pas d'étage tenant sur l'endpoint anonyme, pas de
+  ligne `tenant` dans `oto_instance op=list` — la PR 2. Le dashboard (`keyStack.ts`) ne
+  connaît pas encore le mode `tenant` de `/api/me`. (couche 2)
 
 - **Partage de clé plateforme org-level** : aujourd'hui le grant de clé plateforme est per-user
   seulement ; pas de « partager la clé plateforme à toute une org ». (couche 2)

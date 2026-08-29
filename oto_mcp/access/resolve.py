@@ -5,8 +5,10 @@ cascade UNE fois avec la sonde de fetch (seul le gagnant est déchiffré) et ren
 un `ResolvedCredential` (clé + origine + config non-secrète). Trois chemins
 court-circuitent la marche, dans cet ordre de spécificité : l'instance épinglée
 par l'appel (`_instance=`), celle bindée par le projet, puis la cascade.
-`_resolve_credential_anon` en est le miroir org-only, pour l'endpoint MCP publié
-(ADR 0032) où il n'y a personne dont on puisse prendre le compte par défaut.
+`resolve_anon._resolve_credential_anon` en est le miroir org-only, pour l'endpoint
+MCP publié (ADR 0032) où il n'y a personne dont on puisse prendre le compte par
+défaut ; le type rendu vit dans `resolved_credential` (tous deux extraits d'ici le
+2026-08-29, cliquet des 500 lignes, #584).
 
 Dépend de tout ce qui est en dessous : `scope` (contexte, épinglages du projet),
 `rbac` (backstop RBAC, garde d'instance, hint d'erreur), `cascade` (le walker),
@@ -16,70 +18,20 @@ dessus (`resolve_api_key`, `resolve_credential_fields`…) vivent dans `views`.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Optional
 
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import (providers, credentials_store, db, group_store, instance_refs, org_store, session_org)
-from . import cascade, chain_shadow, quotas, rbac, scope, secret_repr
+from .. import (providers, credentials_store, db, group_store, instance_refs, org_store,
+                session_org, tenant_vault)
+from . import cascade, chain_shadow, quotas, rbac, resolve_anon, scope
+from .resolved_credential import ResolvedCredential
 
 logger = logging.getLogger(__name__)
 
 
 _ACCOUNT_URL = "https://manage.oto.cx/account"
-
-
-@dataclass(frozen=True)
-class ResolvedCredential:
-    """Credential GAGNANT de la cascade (ADR 0024) — la clé, son origine, ET sa
-    config non-secrète (endpoint/host) en un seul objet. Source unique : toute
-    résolution (clé seule, multi-champs, ou endpoint) en dérive.
-
-    - `secret` : la valeur stockée brute (la clé pour un keyed ; le pack JSON pour
-      un multi-champs). `key` = alias (un keyed s'instancie avec).
-    - `is_platform` / `mode` : origine (user|group|org|platform) — miroir de `status_for`.
-    - `fields` (lazy) : champs unpackés (un client multi-secrets s'instancie avec).
-    - `config` (lazy) : champs NON-secrets déclarés (data_center, base_url…) ∪ `meta`
-      public du credential (ex. `dsn` unipile). La config voyage avec la clé.
-    - `entity_type`/`entity_id` : niveau gagnant (None pour un grant plateforme — sa
-      config est l'environnement, pas un credential du coffre)."""
-    provider: str
-    secret: str
-    is_platform: bool
-    mode: str
-    entity_type: Optional[str] = None
-    entity_id: Optional[str] = None
-    account: str = ""
-
-    def __repr__(self) -> str:
-        # La clé ne sort JAMAIS par le repr (#564) — cf. `secret_repr`.
-        return secret_repr.expurge(self, "secret")
-
-    @property
-    def key(self) -> str:
-        return self.secret
-
-    @property
-    def fields(self) -> dict:
-        return credentials_store.unpack_secret(self.provider, self.secret)
-
-    @property
-    def config(self) -> dict:
-        """Config non-secrète appariée à la clé gagnante. Lazy : aucun coût pour
-        les appelants qui ne lisent que `key` (chemin chaud resolve_api_key)."""
-        _, cfg = credentials_store.split_secret_config(self.provider, self.fields)
-        if self.entity_type is not None:
-            try:
-                row = credentials_store.get_credential_with_meta(
-                    self.entity_type, self.entity_id, self.provider, self.account)
-            # noqa: SILENT — config non-secrète absente ⇒ la clé gagnante reste utilisable
-            except Exception:
-                row = None
-            if row:
-                cfg = {**cfg, **credentials_store.public_meta(row.get("meta"))}
-        return cfg
 
 
 def resolve_credential(provider: str, want: str = "auto",
@@ -101,7 +53,7 @@ def resolve_credential(provider: str, want: str = "auto",
         anon = subdomain_project.current_anon_context()
         if anon is not None:
             return _note_resolved_instance(
-                _resolve_credential_anon(provider, want, anon.org_id))
+                resolve_anon._resolve_credential_anon(provider, want, anon.org_id))
     sub = sub or scope.current_user_sub_or_raise()
     try:
         resolved = _resolve_credential_impl(provider, want, sub, account=account)
@@ -157,7 +109,7 @@ def _emit_connector_failure(provider: str, sub: str) -> None:
 def _resolve_credential_impl(provider: str, want: str, sub: str,
                              account: Optional[str] = None) -> ResolvedCredential:
     """Résolveur substrat unique (ADR 0024) : marche la cascade EXACTE
-    user > groupe actif > org active [> grant plateforme] **une fois** et renvoie
+    user > groupe actif > org active > tenant [> grant plateforme] **une fois** et renvoie
     le credential gagnant (clé + origine + config). `want="byo"` court-circuite le
     palier plateforme (sémantique byo-only de `resolve_credential_fields`) ;
     `want="auto"` inclut le grant plateforme + quota (sémantique `resolve_api_key`).
@@ -311,12 +263,24 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
             raise _not_found(eff, mprov)
         return (key, eff) if key else None
 
+    def _tenant_fetch(slug: str, mprov: str):
+        """Sonde TENANT du fetch (L-clés PR 1) : même sélection de compte que l'org.
+        Le walker ne l'appelle que pour un sub d'un tenant tiers (`rung_tenant`)."""
+        if not cascade._is_multi_account(mprov, active_org):
+            return tenant_vault.get_tenant_secret(slug, mprov)
+        eff, explicit = _pick_account(credentials_store.TENANT, slug, mprov,
+                                      "pour ton tenant")
+        key = tenant_vault.get_tenant_secret(slug, mprov, eff)
+        if eff and not key and not explicit:
+            raise _not_found(eff, mprov)
+        return (key, eff) if key else None
+
     # Marche unique de la cascade (walker) — la sonde fetch ne déchiffre que le
     # gagnant ; le palier membre porte la sélection multi-compte ci-dessus.
     # `group` passé en LAZY : l'équipe active (lookup DB) n'est résolue que si
     # aucun barreau plus proche n'a gagné.
     probe = cascade.CascadeProbe(member=_member_fetch, member_cross=cascade.FETCH_PROBE.member_cross,
-                         group=_group_fetch, org=_org_fetch,
+                         group=_group_fetch, org=_org_fetch, tenant=_tenant_fetch,
                          platform=cascade.FETCH_PROBE.platform)
     win = cascade.cascade_winner(sub, provider, org=active_org,
                          group=lambda: scope.current_group(sub),
@@ -415,6 +379,8 @@ def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential
         etype, eid, mode = "group", str(ref.group_id), "group"
     elif ref.level == "org":
         etype, eid, mode = "org", str(ref.org_id), "org"
+    elif ref.level == "tenant":   # L-clés PR 1 — gardé par `guard_instance_access`
+        etype, eid, mode = credentials_store.TENANT, ref.tenant, "tenant"
     else:  # platform — refusé dès la pose par l'axe ; défense en profondeur ici.
         raise McpError(ErrorData(
             code=INVALID_PARAMS,
@@ -433,66 +399,3 @@ def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential
         # Le secret déchiffré ne reste pas lié dans cette frame (#564) : une
         # exception qui la traverserait après coup n'aurait rien à ramasser.
         del secret
-
-
-def _resolve_credential_anon(provider: str, want: str, org_id: Optional[int]) -> ResolvedCredential:
-    """Résolution pour un endpoint MCP ANONYME (ADR 0032) : aucun `sub`, aucune session
-    per-user → cascade réduite `org_secret > grant plateforme d'org > clé plateforme
-    ouverte`, scopée sur l'org PROPRIÉTAIRE du projet. Pas de user_key/group (inexistants
-    sans identité), pas de quota per-sub (le rate-limit du sous-domaine borne l'abus).
-    Miroir org-only des paliers de `_resolve_credential_impl` — ce qui n'est pas résoluble
-    au niveau org (oauth/cookie per-user) lève une McpError actionnable, fail-closed."""
-    con = providers.connector_for_provider(provider)
-    if con is None:
-        raise McpError(ErrorData(code=INVALID_PARAMS, message=f"Provider inconnu: {provider}"))
-    if org_id is None:
-        raise McpError(ErrorData(
-            code=INVALID_PARAMS,
-            message=(f"L'endpoint anonyme n'a pas d'org propriétaire pour résoudre "
-                     f"`{provider}` (projet sans org).")))
-    # Walker avec sub=None : les barreaux membre/groupe se sautent d'eux-mêmes →
-    # cascade réduite org > plateforme (ADR 0044 §F R3 : anon → instance 'open'
-    # free-tier, ou 'closed' dont le share_down vise `org:<org_id>`).
-    # ⚠️ Le barreau org sélectionne son COMPTE comme le chemin réel (`_org_fetch` :
-    # unique/`is_default`), jamais `''` en dur — `ensure_named_coexistence` migre la
-    # ligne mono vers « principal » au premier compte nommé, et l'endpoint anonyme
-    # cessait alors de résoudre pendant que `has_org_secret` disait « configuré »
-    # (review #399 F3). Pas de compte nommable ici : aucun sub, aucun axe d'appel.
-    def _anon_org_fetch(oid: int, mprov: str):
-        # Mono D'ABORD : la ligne `''` historique répond sans lire la table des
-        # comptes (zéro coût ajouté pour les orgs pré-migration, et le contrat des
-        # tests qui stubbent `get_org_secret` seul reste entier). La sélection
-        # nommée n'est tentée QUE si la ligne mono manque — le cas F3, où
-        # `ensure_named_coexistence` l'a migrée vers « principal ».
-        key = org_store.get_org_secret(oid, mprov)
-        if key or not cascade._is_multi_account(mprov, oid):
-            return key
-        eff = cascade._shared_auto_account("org", str(oid), mprov,
-                                   "pour l'org de ce projet", scope="org")
-        if not eff:
-            return None
-        key = org_store.get_org_secret(oid, mprov, eff)
-        return (key, eff) if key else None
-
-    probe = cascade.CascadeProbe(member=cascade.FETCH_PROBE.member,
-                         member_cross=cascade.FETCH_PROBE.member_cross,
-                         group=cascade.FETCH_PROBE.group, org=_anon_org_fetch,
-                         platform=cascade.FETCH_PROBE.platform)
-    win = cascade.cascade_winner(None, provider, org=org_id, group=None,
-                         probe=probe, want=want)
-    if win is None:
-        if want == "byo":
-            raise McpError(ErrorData(
-                code=INVALID_PARAMS,
-                message=f"Aucun credential `{provider}` configuré pour l'org de ce projet."))
-        raise McpError(ErrorData(
-            code=INVALID_PARAMS,
-            message=(f"L'endpoint anonyme ne peut pas résoudre `{provider}` : configure "
-                     f"une clé d'org, ou grant une clé plateforme à l'org du projet.")))
-    if win.mode == "org":
-        return ResolvedCredential(provider, win.payload, False, "org", "org",
-                                  str(org_id), account=win.account)
-    # Même règle qu'au palier plateforme du chemin identifié : le secret reste
-    # dans le `CascadeRung` (repr expurgé), jamais dans un dict nu de cette frame.
-    return ResolvedCredential(provider, win.payload["secret"], True, "platform",
-                              credentials_store.PLATFORM, win.payload["label"])

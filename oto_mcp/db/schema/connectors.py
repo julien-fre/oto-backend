@@ -40,16 +40,18 @@ CREATE TABLE IF NOT EXISTS connector_acl (
 
 # coffre des credentials (ADR 0002/0033)
 CREDENTIALS = """
--- Coffre unique des credentials per-entité (user OU org OU group) : clés API,
--- sessions linkedin/crunchbase, OAuth Google multi-compte, platform keys.
--- entity_id = sub (user) | orgs.id::text (org) | org_groups.id::text (group) ;
+-- Coffre unique des credentials per-entité (membre, user, org, group, tenant,
+-- plateforme) : clés API, sessions linkedin/crunchbase, OAuth Google multi-compte,
+-- platform keys, et depuis le 2026-08-29 la clé partagée d'un TENANT (L-clés PR 1).
+-- entity_id = sub (user) | orgs.id::text (org) | org_groups.id::text (group) |
+-- tenants.slug (tenant) ;
 -- toujours requêter (entity_type, entity_id) ENSEMBLE. Secret chiffré par
 -- enveloppe AES-256-GCM dans `secret_enc` (obligatoire — pas de colonne
 -- plaintext) ; déchiffrement JIT dans resolve_api_key. meta JSONB pour les
 -- satellites (user_agent, scopes…).
 CREATE TABLE IF NOT EXISTS connector_credentials (
-    entity_type TEXT NOT NULL,            -- 'member' | 'user' | 'org' | 'group' | 'platform' (ADR 0044 §F)
-    entity_id   TEXT NOT NULL,            -- member:'org:sub' | user:sub | org/group:id::text | platform:label
+    entity_type TEXT NOT NULL,            -- 'member' | 'user' | 'org' | 'group' | 'tenant' (L-clés) | 'platform' (ADR 0044 §F)
+    entity_id   TEXT NOT NULL,            -- member:'org:sub' | user:sub | org/group:id::text | tenant:slug | platform:label
     connector   TEXT NOT NULL,            -- nom de connecteur (registre)
     account     TEXT NOT NULL DEFAULT '', -- discriminant multi-compte ('' = mono ; ex. email Google)
     secret_enc  TEXT,                     -- enveloppe AES-256-GCM (obligatoire)

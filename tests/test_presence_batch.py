@@ -26,6 +26,7 @@ def coffre(monkeypatch):
         "membre": {"folk": {"suspended": False}, "pennylane": {"suspended": True}},
         "groupe": {9: {"serper"}},
         "org": {"hunter", "folk"},
+        "tenant": {"serper", "folk"},
     }
 
     from oto_mcp import credentials_store as cs
@@ -40,6 +41,8 @@ def coffre(monkeypatch):
                     for c in etat["groupe"].get(int(entity_id), ())]
         if entity_type == "org":
             return [{"connector": c, "account": "", "meta": {}} for c in etat["org"]]
+        if entity_type == cs.TENANT:
+            return [{"connector": c, "account": "", "meta": {}} for c in etat["tenant"]]
         return []
 
     monkeypatch.setattr(cs, "list_credentials", _list_credentials)
@@ -52,6 +55,15 @@ def coffre(monkeypatch):
                         lambda g, p: p in etat["groupe"].get(int(g), ()))
     monkeypatch.setattr(access.org_store, "has_org_secret",
                         lambda o, p: p in etat["org"])
+    from oto_mcp import tenancy, tenant_vault
+    monkeypatch.setattr(tenant_vault, "has_tenant_secret",
+                        lambda t, p: p in etat["tenant"])
+    # Un tenant tiers dans le registre : sans lui, le sujet est `oto` et le barreau
+    # tenant n'existe pas — le différentiel ne le comparerait jamais.
+    monkeypatch.setattr(tenancy, "_INSTALLED", tenancy.IssuerRegistry(tenancy.build(
+        "https://auth.oto.ninja/oidc",
+        tenants=[{"slug": "pilote", "issuer": "https://auth.pilote.test/oidc"}])),
+        raising=False)
     # Le walker appelle `personal_instance_org` LUI-MÊME (pas via la sonde) pour les
     # connecteurs personal_cross_org : il touche la base, on le neutralise ici. C'est
     # aussi ce qui documente la limite de la sonde préchargée — ce barreau-là n'est pas
@@ -67,13 +79,14 @@ def _providers() -> list[str]:
 
 
 def test_les_deux_sondes_rendent_le_MEME_verdict_sur_TOUT_le_registre(coffre):
-    sonde = access.preloaded_presence_probe("u1", org=2, groups=[{"group_id": 9}])
+    sonde = access.preloaded_presence_probe("pilote:u1", org=2, groups=[{"group_id": 9}])
     ecarts = []
     for p in _providers():
         for nom, a, b in (
             ("member", access.PRESENCE_PROBE.member("u1", 2, p), sonde.member("u1", 2, p)),
             ("group", access.PRESENCE_PROBE.group(9, p), sonde.group(9, p)),
             ("org", access.PRESENCE_PROBE.org(2, p), sonde.org(2, p)),
+            ("tenant", access.PRESENCE_PROBE.tenant("pilote", p), sonde.tenant("pilote", p)),
         ):
             if bool(a) != bool(b):
                 ecarts.append(f"{p}/{nom}: unitaire={a!r} préchargée={b!r}")

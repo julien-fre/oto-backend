@@ -121,3 +121,57 @@ description: >-
 > pré-traitée ou allowlistée AVEC sa raison — une colonne neuve arrive rouge. Restent
 > hors repointage, par construction : `connector_credentials.entity_id` (AAD) et la
 > mécanique du merge lui-même (`sub_aliases`, `users.sub`, `orgs.personal_of`).
+
+## La clé de connecteur du tenant (L-clés PR 1 — 2026-08-29)
+
+**Ce que c'est.** Un opérateur de N orgs était condamné à la clé plateforme mutualisée ou à
+une clé par org. Depuis cette PR, **le tenant possède sa clé de connecteur** : une ligne du
+coffre `connector_credentials` avec `entity_type='tenant'`, `entity_id` = le slug — même
+sceau que les autres entités (l'AAD porte `tenant:<slug>`, un ciphertext de tenant ne se
+transplante sur rien d'autre), même naissance d'instance à la pose (`connector_instances`,
+`owner_type='tenant'`, prévu « inerte » par le lot L6 et activé ici), même archivage au
+retrait. Aucun credential existant n'a bougé : l'AAD d'une ligne d'org est identique à
+l'octet avant et après (`tests/test_tenant_key_vault_live.py`).
+
+**Où elle sert.** Entre l'org et la plateforme dans le walker unique
+(`access.cascade.walk_cascade`) : `membre > équipe > org > tenant > plateforme`. Elle sert à
+toutes les orgs du tenant qui n'en ont pas de plus proche. Trois choix qui ne se relisent
+pas dans le code seul :
+
+- **Le tenant se lit sur le sub qualifié de l'appelant** (`tenant_vault.rung_tenant`),
+  jamais sur le rattachement de l'org — c'est le garde-fou du lot L1 (aucun chemin de
+  résolution ne dépend de ce rattachement), et il tient toujours. Un compte du tenant
+  actif dans une org « désalignée » (`orgs_desalignees` du suivi) voit donc SA clé de
+  tenant, pas celle du tenant de l'org. L'endpoint MCP anonyme (`<slug>.mcp.oto.cx`, pas
+  de sub) n'a pas l'étage : lui le donner demande l'arête tenant→org de 0053 (PR 2).
+- **Le tenant `oto` n'a pas de clé de tenant.** Ses clés partagées SONT les instances
+  plateforme, avec leurs grants ; une clé « tenant oto » serait un second mécanisme pour
+  la même fonction. Refusée à la pose (`PrimaryTenantKeyRefused`) et **jamais sondée** à
+  la lecture — les deux d'un même geste. Conséquence : un sub nu ne coûte aucune lecture
+  de plus par appel (serveur mono-loop : c'est ce qui a été mesuré, pas un confort).
+- **La fenêtre L7 est symétrique** : la chaîne 0053 (`chain_shadow`) calcule le même
+  étage à la même source. Sans ça, chaque appel servi par une clé tenant aurait compté
+  une divergence `inconnu` — la seule classe que la porte de la PR 2 de L7 exige à zéro.
+
+**Surfaces admin (plancher opérateur — le rôle « admin de tenant » est la PR 2).**
+
+| geste | surface | plancher |
+|---|---|---|
+| lister (jamais le secret) | `GET /api/admin/tenants/{slug}/keys` · `oto_admin_tenant op=keys` | platform admin |
+| poser / roter | `PUT /api/admin/tenants/{slug}/keys/{provider}` — **REST seule** (`api_key` \| `fields` \| `base_url`, `account`) | super admin |
+| retirer | `DELETE /api/admin/tenants/{slug}/keys/{provider}` · `oto_admin_tenant op=key_clear` | super admin |
+
+La pose est REST seule pour la même raison que les clés d'org et les clés plateforme depuis
+le 2026-06-25 : **un secret brut ne traverse pas un appel d'outil.** Même validation qu'une
+clé d'org (`providers.org_secret_meta`, écriture partielle #448, garde de compte #409).
+
+**Retour arrière.** Retirer la clé (`key_clear`) ramène toutes les orgs du tenant à la
+cascade d'avant, à l'appel suivant — rien à invalider. Aucune colonne n'a été ajoutée : la
+valeur `tenant` d'`entity_type` reste inerte tant qu'aucune ligne ne la porte, et le
+`CHECK` d'`owner_type` sur `connector_instances` l'acceptait déjà.
+
+**Ce qui reste (PR 2)** : le rôle « admin de tenant » (le partenaire pose SA clé depuis SON
+tableau de bord), l'arête tenant→org de la chaîne 0053 (budget par org — R10, la sémantique
+de partage), l'étage tenant sur l'endpoint anonyme, la ligne `tenant` dans `oto_instance
+op=list` (les instances existent, elles ne sont pas encore listées ni épinglables depuis la
+liste), et le mode `tenant` de `/api/me` côté dashboard (`keyStack.ts`).

@@ -23,6 +23,7 @@ def probe(*, member=False, cross=False, group=False, org=False, platform=False):
         member_cross=lambda s, o, p: ("XK" if cross else None),
         group=lambda g, p: ("GK" if group else None),
         org=lambda o, p: ("OK" if org else None),
+        tenant=lambda t, p: None,
         platform=lambda s, p, o: ({"label": "env", "secret": "PK",
                                    "daily_quota": None} if platform else None),
     )

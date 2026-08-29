@@ -57,6 +57,13 @@ def test_un_palier_partage_sur_un_connecteur_PAR_PERSONNE_n_est_vu_de_personne()
     assert vis.derive("org", str(ORG), PERSO) == []
 
 
+def test_une_cle_de_tenant_est_vue_du_tenant():
+    """L-clés PR 1 : même règle que l'org — le palier est partagé, donc gaté sur
+    `org_shareable` ; le scope est celui des arêtes de `grants` (`tenant:<slug>`)."""
+    assert vis.derive("tenant", "pilote", PARTAGEABLE) == ["tenant:pilote"]
+    assert vis.derive("tenant", "pilote", PERSO) == []
+
+
 def test_le_residu_oauth_user_reste_vu_de_son_sujet():
     """`entity_type='user'` est le résidu des mounts OAuth (ADR 0033) : hors cascade
     de travail, mais c'est bien un credential, et il a un propriétaire."""

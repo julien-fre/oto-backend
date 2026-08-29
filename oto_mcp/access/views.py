@@ -23,7 +23,10 @@ from .. import providers, credentials_store, db, org_store
 from . import cascade, quotas, resolve, scope
 
 
-BYO_MODES = ("user", "group", "org")
+# La clé de TENANT est le BYO du tenant (L-clés PR 1) : il gère sa propre instance
+# chez le fournisseur, aucun siège plateforme à protéger — l'option couche 3 est levée
+# par construction, comme pour une clé d'org.
+BYO_MODES = ("user", "group", "org", "tenant")
 
 
 # (resolve_remote_credential retiré — ADR 0034 B4 : le connecteur `bridge`
@@ -147,7 +150,7 @@ def credential_mode_for(sub: str, provider: str, *,
                         group: "int | None | object" = scope._UNSET,
                         probe: "Optional[CascadeProbe]" = None) -> str:
     """Origine de la clé `provider` pour `sub` (EXPLICITE, hors contexte MCP) :
-    `user|group|org|platform|over_quota|forbidden`. PRÉSENCE seulement (pas de
+    `user|group|org|tenant|platform|over_quota|forbidden`. PRÉSENCE seulement (pas de
     déchiffrement → sûr/léger pour un statut). **Miroir** de la cascade
     `resolve_credential` (incl. fallback grant org) — une divergence ferait mentir
     l'UI. « BYO » (clé propre, pas la plateforme) = mode ∈ {user, group, org}.

@@ -50,7 +50,10 @@ découpe est un **DÉPLACEMENT PUR** : aucun appelant ne change (cf.
               ses trois sondes, le palier plateforme.
 - `rbac`    — qui a le droit : RBAC connecteur org/équipe, tools masqués, garde
               d'instance et prêts, instances à portée, filtre de redaction.
-- `resolve` — la résolution réelle d'un credential (chemin chaud) + l'anonyme.
+- `resolved_credential` — le TYPE rendu par toute résolution (extrait le 29/08, #584).
+- `resolve_anon` — la résolution de l'endpoint MCP anonyme (ADR 0032), extraite de
+              `resolve` le 29/08 (#584). Pas d'étage tenant (L1).
+- `resolve` — la résolution réelle d'un credential (chemin chaud).
 - `views`   — les vues minces : clé, champs, mount, mode, option levée,
               résolvabilité d'une org.
 - `status`  — le snapshot par connecteur de `/api/me`.
@@ -92,9 +95,11 @@ import logging
 import sys
 import types
 
-from . import scope, quotas, cascade, rbac, resolve, views, status
+from . import (scope, quotas, cascade, rbac, resolved_credential, resolve_anon, resolve,
+               views, status)
 
-_MODULES = (scope, quotas, cascade, rbac, resolve, views, status)
+_MODULES = (scope, quotas, cascade, rbac, resolved_credential, resolve_anon, resolve,
+            views, status)
 
 # Ré-export plat (publics + privés à un underscore ; les dunder restent au
 # package) + carte `nom -> modules qui le définissent`, qui sert la propagation

@@ -49,6 +49,15 @@ def list_tenant_issuers() -> list:
     return [dict(r) for r in rows]
 
 
+def tenant_exists(slug: str) -> bool:
+    """Le slug désigne-t-il une ligne `tenants` ? Garde de pose d'une clé de tenant
+    (L-clés PR 1) : un slug inconnu ne doit pas fabriquer une ligne de coffre que
+    personne ne lira. Lecture par PK, sans compteur — la fiche de suivi coûte trop
+    pour une garde."""
+    with _connect() as conn:
+        return conn.execute("SELECT 1 FROM tenants WHERE slug = %s", (slug,)).fetchone() is not None
+
+
 # ── Suivi (console plateforme) ───────────────────────────────────────────────
 
 # Le tenant d'un sub, EN SQL — miroir de `tenancy.IssuerRegistry.tenant_of` : le
