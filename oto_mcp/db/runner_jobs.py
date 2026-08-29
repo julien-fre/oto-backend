@@ -123,9 +123,12 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
     stopped, steps…) : c'est ce qu'un ordonnanceur de flotte lit pour sa garde
     budget — jamais un secret, jamais du contenu de fil.
 
-    Rend `{status}` conclu, ou None si le job n'est pas au claimant (déjà
-    re-claimé après bail mort, ou jamais à lui) — l'appelant ne conclut pas
-    ce qui ne lui appartient plus."""
+    Rend `{status, run_id}` conclu — `run_id` = le run que le job connaît après
+    la conclusion (celui de l'appel, sinon celui posé par `bind_run`/`enqueue`,
+    sinon None) : c'est la clé de la libération des baux du datastore (#633),
+    lue par la capacité sans second aller-retour — ou None si le job n'est pas
+    au claimant (déjà re-claimé après bail mort, ou jamais à lui) : l'appelant
+    ne conclut pas ce qui ne lui appartient plus."""
     with _connect() as conn:
         if ok:
             row = conn.execute(
@@ -135,7 +138,7 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                        run_id = COALESCE(%s, run_id), last_error = NULL,
                        result = COALESCE(%s::jsonb, result)
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
-                RETURNING status
+                RETURNING status, run_id
                 """,
                 (run_id, json.dumps(result) if result is not None else None,
                  job_id, worker_sub),
@@ -154,7 +157,7 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
                        lease_until = NULL, claimed_by = NULL,
                        last_error = %s
                  WHERE id = %s AND claimed_by = %s AND status = 'claimed'
-                RETURNING status
+                RETURNING status, run_id
                 """,
                 (_BACKOFF_S, (error or 'échec non détaillé')[:500], job_id, worker_sub),
             ).fetchone()

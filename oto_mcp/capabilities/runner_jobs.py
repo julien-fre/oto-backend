@@ -18,14 +18,17 @@ serait un coffre parallèle.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from .. import db
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+
+logger = logging.getLogger(__name__)
 
 
 class JobsInput(BaseModel):
@@ -86,13 +89,47 @@ class Job(BaseModel):
 
 class JobsOut(BaseModel):
     # enqueue → id/status/due_at ; claim → job (ou null, file vide) ; list → jobs ;
-    # les autres → ok/status.
+    # complete → ok/status + run_id/rows_released/release ; les autres → ok.
     id: Optional[int] = None
     status: Optional[str] = None
     due_at: Optional[str] = None
     job: Optional[Job] = None
     jobs: Optional[list[Job]] = None
     ok: Optional[bool] = None
+    # complete (#633) — le témoin que la clôture du travail rend à un poste de flotte.
+    run_id: Optional[str] = Field(
+        None, description=(
+            "complete: the run whose datastore leases were released — the call's "
+            "`run_id`, else the one bound to the job (bind_run/enqueue). null: no run "
+            "known, nothing to release by run."))
+    rows_released: Optional[int] = Field(
+        None, description=(
+            "complete: datastore rows the run still held, now back in the queue — "
+            "0 is written explicitly (the run held nothing). null: no release was "
+            "done, `release` says why."))
+    release: Optional[Literal["ok", "no_run", "failed"]] = Field(
+        None, description=(
+            "complete: outcome of the release step — ok (count in rows_released), "
+            "no_run (no run known to this job), failed (the release itself errored; "
+            "the job is concluded anyway, the leases expire on their own)."))
+
+
+def _release_run_rows(run_id: Optional[str]) -> dict:
+    """Le job conclu ne travaille plus : ce que son run tenait encore dans le
+    datastore revient dans la file (#633) — la même troisième voie que `run_finish`,
+    pour l'agent qui est MORT sans l'appeler (le worker, lui, survit à l'agent et
+    conclut le job). Best-effort et HORS de la clôture : le job est déjà conclu
+    quand on arrive ici, et un poste de flotte lit le compte — `0` écrit, ou `null`
+    avec sa raison, jamais un 0 fabriqué."""
+    if not run_id:
+        return {"run_id": None, "rows_released": None, "release": "no_run"}
+    try:
+        n = db.datastore_release_by_run(run_id)
+    except Exception:  # noqa: BLE001
+        logger.warning("libération des lignes du run %s à la conclusion du job "
+                       "échouée (best-effort)", run_id, exc_info=True)
+        return {"run_id": run_id, "rows_released": None, "release": "failed"}
+    return {"run_id": run_id, "rows_released": int(n), "release": "ok"}
 
 
 def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
@@ -162,7 +199,10 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             # Déjà re-claimé après bail mort, ou jamais à lui : on ne conclut pas
             # ce qui ne nous appartient plus.
             raise AuthzDenied(404, "job_not_found", "job inconnu")
-        return {"ok": True, "status": res["status"]}
+        # Le run de l'appel d'abord (c'est celui que le worker vient d'exécuter),
+        # sinon celui que le job connaît (`bind_run`, ou un `continue`).
+        return {"ok": True, "status": res["status"],
+                **_release_run_rows(inp.run_id or res.get("run_id"))}
 
     # get — lecture org-scopée (diagnostic, dashboard R4)
     job = db.get_job(inp.job_id, ctx.org_id)

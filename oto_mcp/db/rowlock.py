@@ -162,6 +162,10 @@ def datastore_release_by_run(run_id: str) -> int:
     Ce qu'elle couvre réellement : l'agent qui TERMINE son run en oubliant de relâcher
     ses lignes. Plus petit que promis, et probablement le cas fréquent.
 
+    Depuis #633 (29/08/2026), un second appelant : la conclusion d'un job du runner
+    (`runner.jobs` op=complete) — le WORKER survit à l'agent mort et libère le run
+    que le job connaît. L'agent conversationnel (hors runner) qui meurt reste au bail.
+
     ⚠️ Aucune garde de worker ici, et c'est voulu : la garde du release protège d'un
     agent qui libérerait la ligne d'un AUTRE. Ici c'est le run lui-même qui se ferme —
     il ne peut libérer que ce qu'il tenait, la clause `claimed_run = %s` s'en charge.

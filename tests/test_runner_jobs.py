@@ -120,7 +120,10 @@ def test_conclure_le_job_dun_autre_rend_job_inconnu(espion):
 
 def test_le_claimant_conclut(espion):
     out = _appel(_ctx(), op="complete", job_id=7, ok=True)
-    assert out == {"ok": True, "status": "done"}
+    # Sans run connu, la libération des baux n'est pas tentée et la réponse le DIT
+    # (#633) : null + raison, jamais un 0 fabriqué.
+    assert out == {"ok": True, "status": "done",
+                   "run_id": None, "rows_released": None, "release": "no_run"}
 
 
 def test_prolonger_un_bail_perdu_rend_job_inconnu(espion):
@@ -209,7 +212,8 @@ def test_le_resultat_fait_l_aller_retour_en_base(live):
     assert job and job["id"] == j["id"]
     out = d.complete_job(job["id"], "worker-live", True,
                          result={"usage_tokens": 12345, "stopped": "end_turn"})
-    assert out == {"status": "done"}
+    assert out == {"status": "done", "run_id": None}, \
+        "complete rend le run connu du job (#633) — aucun ici"
     relu = d.get_job(job["id"], 226)
     assert relu["result"] == {"usage_tokens": 12345, "stopped": "end_turn"}
     assert relu["status"] == "done"
