@@ -162,6 +162,27 @@ rien ne rendait navigable et que rien ne tenait.
   vérifier le contrat de l'appelant qui en dépend), et après toute scission de module un
   balayage des noms lus sans être importés ni définis (test grossier niveau module,
   suffisant pour le nom hérité d'un fichier scindé).
+- **Une ressource de test qui vit HORS du processus se pose avec son étiquette, sa date
+  et son balai — le finalizer n'est qu'un des chemins de sortie (2026-08-30, #640).**
+  La fixture `pg_dsn` lançait `docker run --rm` et comptait sur son finalizer : quand
+  pytest meurt sans lui (limite de session, timeout, agent coupé — SIGTERM, SIGKILL),
+  `--rm` ne joue jamais (postgres ne sort pas de lui-même) et le volume anonyme de
+  `PGDATA` reste. Constat sur le poste : dix `oto-test-pg-*` de 7 h à 2 jours,
+  ~519 volumes orphelins (~260/jour), 3 G libres. Quatre parades cumulées
+  (`tests/_pg_hygiene.py`) : le conteneur porte `oto-test=1` et
+  `oto-test-started=<epoch>` (on le retrouve et on le date sans dépendre du nom) ;
+  `PGDATA` est un **tmpfs** (rien à laisser, `Mounts` vide, init plus rapide) ; la
+  sortie est couverte par `atexit` + SIGTERM/SIGINT **relayés** (le conteneur part,
+  puis le signal fait ce qu'il aurait fait — jamais une sortie propre qui masquerait la
+  coupure) ; et SIGKILL ne se rattrapant pas, **chaque session pytest balaie** les
+  conteneurs étiquetés de plus de deux heures, une ligne par conteneur. Règle : **un
+  `oto-test-pg-*` de plus d'une heure est un orphelin** — aucune suite ne dure une
+  heure ; on le retire sans se demander à qui il est (`docker rm -f -v`). Le balai
+  automatique garde une marge (deux heures) pour ne jamais toucher la session d'à côté.
+  Et le chemin NORMAL fuyait aussi : `docker rm -f` sans `-v` laisse le volume anonyme
+  d'un conteneur `--rm` (prouvé le 30/08 : il survit au `rm -f` nu, pas au `rm -f -v`)
+  — un volume par run propre, c'est ça les ~260/jour, pas les dix orphelins. **Toute
+  suppression de conteneur de test passe par `docker rm -f -v`.**
 - **Un compte tiré d'une vue filtrée est un PLANCHER tant que la vue ne déclare pas sa
   portée — il se vérifie par un second chemin** (2026-08-29, #630). Trois lectures de
   `op=calls org_id=…` à zéro sur un refus que `op=run` montrait : la vue était exacte

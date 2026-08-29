@@ -64,7 +64,11 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 #   grep -o 'oto-core.git@v[0-9.]*' pyproject.toml   # les deux doivent coïncider
 
 # Tests À BASE (fixture `pg_dsn`) : elle prend `OTO_TEST_PG_DSN` s'il existe, sinon monte
-# un PostgreSQL JETABLE via docker (`docker run --rm`, supprimé en fin de session). Sans
+# un PostgreSQL JETABLE via docker — étiqueté `oto-test=1`, `PGDATA` en tmpfs (aucun
+# volume), retiré au finalizer ET sur atexit/SIGTERM/SIGINT ; chaque session balaie
+# d'abord les conteneurs étiquetés de plus de 2 h (#640, `tests/_pg_hygiene.py`). Un
+# `oto-test-pg-*` de plus d'une heure est un orphelin : `docker rm -f -v` (sans `-v`
+# le volume anonyme reste — c'était la fuite du chemin normal). Sans
 # l'un ni l'autre, ces tests sont **SKIPPÉS** — et un vert local sans base ne vaut RIEN
 # contre la CI qui en a une (tronc cassé une heure ainsi le 23/08). Vérifier le compte de
 # skips : `pytest -q -rs` ne doit montrer AUCUN skip motivé par l'absence de PostgreSQL.
