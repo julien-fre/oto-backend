@@ -133,6 +133,17 @@ def _run_closure(start: str = "s") -> str:
             ) f ON TRUE"""
 
 
+# La clé d'`args` sous laquelle un fait `run_start` nomme la procédure déroulée.
+# Nommée plutôt qu'écrite deux fois : elle est SERVIE (elle voyage dans le journal,
+# des lignes vieilles de trente jours la portent), donc elle ne se renomme pas d'un
+# côté sans l'autre — et le vocabulaire du produit, lui, dit « guide » ou
+# « procédure » (ADR 0042, cf. tests/test_vocabulaire_guide.py).
+_ARG_PROCEDURE = "doctrine"
+# Ce qu'`instruction_usage` accepte comme clé de filtre. Fermée, et lue nulle part
+# ailleurs : la valeur atterrit dans du SQL interpolé.
+_ARGS_PROCEDURE_OK = ("slug", _ARG_PROCEDURE)
+
+
 def _runs_from_journal(extra: str = "") -> str:
     """Le run RECONSTRUIT depuis ses faits : l'ouverture (`run_start`) porte label,
     guide, acteur, org et date de début ; la clôture porte l'issue et la date de fin.
@@ -150,7 +161,7 @@ def _runs_from_journal(extra: str = "") -> str:
     return f"""
             SELECT s.run_id, s.sub, s.org_id,
                    s.args->>'label'             AS label,
-                   s.args->>'doctrine'          AS doctrine,
+                   s.args->>'{_ARG_PROCEDURE}'          AS doctrine,
                    s.args->>'doctrine_version'  AS doctrine_version,
                    s.created_at                 AS started_at,
                    f.created_at                 AS finished_at,
@@ -789,7 +800,8 @@ def list_tool_calls_for_org(
 
 
 def instruction_usage(
-    subs: list[str], tool: str, slug: Optional[str], days: int = 30
+    subs: list[str], tool: str, slug: Optional[str], days: int = 30,
+    *, slug_key: str = "slug",
 ) -> dict:
     """Usage d'un guide dérivé de `tool_calls` (ADR 0014, « guide = process
     = log d'usage ») : combien de fois elle a été chargée par l'agent, par qui,
@@ -798,11 +810,22 @@ def instruction_usage(
     `tool` = le tool de lecture de guide (oto_procedure ; slug=None pour la base, sinon filtré par
     `args->>'slug'` pour une skill). Scopé aux `subs` (membres de
     l'org). Lecture pure ; renvoie {count, callers, daily{date:str -> n}}.
-    """
+
+    `slug_key` = la CLÉ de `args` qui porte la procédure. C'est ce qui rend cette
+    fonction réutilisable pour compter autre chose que des chargements : un
+    **déroulé** est le fait `run_start`, et il nomme sa procédure sous une AUTRE clé
+    que `slug` — `_ARG_PROCEDURE`, celle-là même que `_runs_from_journal` lit pour
+    reconstruire les runs depuis la MÊME table. Une seule requête, deux lectures,
+    plutôt qu'un second chemin qui dériverait du premier.
+
+    Liste FERMÉE de littéraux de ce module : la clé est interpolée dans le SQL,
+    jamais fournie par un appelant."""
     if not subs:
         return {"count": 0, "callers": [], "daily": {}}
+    if slug_key not in _ARGS_PROCEDURE_OK:
+        raise ValueError(f"slug_key non supporté: {slug_key!r}")
     days = max(1, min(int(days), 365))
-    slug_clause = " AND l.args->>'slug' = %s" if slug is not None else ""
+    slug_clause = f" AND l.args->>'{slug_key}' = %s" if slug is not None else ""
     base_params: list[Any] = [subs, tool]
     if slug is not None:
         base_params.append(slug)
