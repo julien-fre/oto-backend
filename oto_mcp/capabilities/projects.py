@@ -19,7 +19,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, field_validator
 
 from .. import (config, db, group_store, org_store, output_projection, ownership,
-                roles, session_org)
+                roles, session_org, url_perimeter)
 from ._authz import ORG_MEMBER, SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -50,6 +50,8 @@ class ProjectInput(BaseModel):
     mcp_expose_datastore_write: Optional[bool] = None  # opt-in ADDITIONNEL (#193) : autoriser l'ÉCRITURE (data_write/data_set_schema) ; sans objet si la lecture n'est pas exposée — défaut False (lecture seule)
     mcp_expose_docs: Optional[bool] = None  # `secret` uniquement : exposer les PAGES du projet (oto_doc en LECTURE) au destinataire. Défaut False — les pages portent des notes internes, les exposer par défaut serait une fuite par surprise.
     mcp_instructions_md: Optional[str] = None  # prose SERVIE AU DESTINATAIRE de l'endpoint (ce que son agent lit au branchement) — ≠ brief_md, qui reste interne. "" efface.
+    # update : périmètre d'URL du projet (#605) — motifs `hôte/chemin/` (ex. `linkedin.com/in/`) que les outils de recherche ÉCARTENT (en le disant) et que les outils d'extraction REFUSENT ; un domaine entier s'écrit explicitement `hôte/*`, un hôte nu est refusé. `[]` retire. Porté aussi par l'endpoint publié du projet, sans republication.
+    excluded_url_prefixes: Optional[list[str]] = None
     # create : SCOPE owner du projet (ADR 0049 — échelle platform/org/group/user).
     # 'user' (défaut) résout sur l'org ACTIVE ; 'org' = une org dont je suis membre ;
     # 'group' = un pôle/équipe (cloisonne le projet à ses membres + admins d'org) ;
@@ -142,6 +144,9 @@ def _view(row: dict, sub: Optional[str] = None) -> dict:
         "mcp_expose_docs": bool(row.get("mcp_expose_docs")),
         # Prose servie au DESTINATAIRE de l'endpoint — ≠ `brief_md`, qui reste interne.
         "mcp_instructions_md": row.get("mcp_instructions_md") or "",
+        # Périmètre d'URL (#605) — ce que les outils de recherche/extraction n'atteignent
+        # pas dans ce projet. Liste canonique, vide = aucune exclusion.
+        "excluded_url_prefixes": list(row.get("excluded_url_prefixes") or []),
         "mcp_url": _mcp_url(row.get("mcp_slug"), row.get("mcp_access") or "off"),
         # Base de PARTAGE navigable (lecture seule, humain) — mode `secret` uniquement.
         "share_url": (f"https://{row['mcp_slug']}.share.{config.project_domain()}"
@@ -678,6 +683,15 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
         if inp.is_template is not None:
             _require(ownership.can_govern(sub, RTYPE, rid), "forbidden",
                      "Publier un modèle est réservé au propriétaire / admin.", 403)
+        if inp.excluded_url_prefixes is not None:
+            # Périmètre d'URL (#605) : normalisé À LA POSE, refus nommé sur un motif
+            # trop large (un hôte nu) ou malformé — rien n'est stocké d'un lot faux.
+            try:
+                prefixes = url_perimeter.normalize_prefixes(inp.excluded_url_prefixes)
+            except url_perimeter.PerimeterError as e:
+                raise AuthzDenied(400, "invalid_url_prefix",
+                                  f"`excluded_url_prefixes` : {e.message}")
+            db.set_project_excluded_url_prefixes(int(inp.project_id), prefixes)
         db.update_project(int(inp.project_id),
                           name=(inp.name.strip() if inp.name else None),
                           brief_md=inp.brief_md, is_template=inp.is_template,
@@ -1017,6 +1031,9 @@ class ProjectRead(BaseModel):
     mcp_expose_docs: bool = False
     # Prose servie au DESTINATAIRE de l'endpoint — ≠ `brief_md`, qui reste interne.
     mcp_instructions_md: str = ""
+    # Périmètre d'URL (#605) : motifs canoniques `hôte/chemin/` (ou `hôte/*`) que les
+    # outils de recherche écartent et que les outils d'extraction refusent sous ce projet.
+    excluded_url_prefixes: list[str] = []
     mcp_url: Optional[str] = None                # dérivé du slug + du mode, jamais stocké
     share_url: Optional[str] = None              # mode `secret` uniquement
     created_at: Optional[str] = None
@@ -1112,7 +1129,9 @@ CAPABILITIES += [
             "get (project + its links + an `audit` of those links: dead_links / unbound_slots / "
             "inert_procedures — a linked entity that no longer resolves surfaces HERE, act on it) / "
             "update (name, icon = an emoji shown in the lists and headers (\"\" clears it), brief_md, is_template = publish/unpublish "
-            "as a copyable model) / copy (deep-copy a project you can read — its own or a model "
+            "as a copyable model, excluded_url_prefixes = URL prefixes such as `linkedin.com/in/` "
+            "that search tools drop and extraction tools refuse under this project — a whole "
+            "host must be written `host/*`, `[]` clears) / copy (deep-copy a project you can read — its own or a model "
             "— into a NEW project in your active org: brief + doc tree + links + raw files; "
             "a tableau link stays a POINTER to the same namespace by default (config.provision "
             "absent/`shared`), but with config.provision=`empty`|`seeded` it is PROVISIONED — a "

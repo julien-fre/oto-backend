@@ -169,6 +169,93 @@ docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/t
 > par projet — **zéro DNS** à chaque publication. **Surface web** : annuaire public **oto.ninja/apps**
 > (`web/AppsView.vue`) via `GET /api/public/mcp-projects` (CORS `*`, liste les projets `anonymous` publiés).
 
+## Périmètre d'URL d'un projet — `excluded_url_prefixes` (#605, 2026-08-29)
+
+**Le besoin.** Un contrat client peut exclure la CONSULTATION de certaines pages — le cas
+fondateur : les profils personnels d'un réseau social professionnel. La consigne le disait
+en toutes lettres ; sur cent fiches d'une campagne, **deux** ont consulté un profil quand
+même (et trois autres ont refusé explicitement un profil qu'elles avaient sous les yeux).
+Hiérarchie : *le chemin n'existe pas > la machine refuse > un contrôle détecte > la consigne
+interdit*. On était au quatrième cran sur un engagement contractuel ; ceci est le premier.
+
+**L'option.** `oto_project(op="update", project_id=…, excluded_url_prefixes=[…])` — une liste
+de motifs d'URL, posée **sans republication**, affichée par `op=get`/`op=list`, et **portée
+par l'endpoint publié** du projet (le projet de l'endpoint est celui de l'appel). `[]` retire.
+Nommée en anglais comme les autres options de projet (`is_template`, `mcp_expose_docs`) ; pas
+`excluded_domains`, parce que le nom dirait le contraire de la règle ci-dessous.
+
+**Grammaire d'un motif — hôte + préfixe de chemin, jamais une regex.**
+- `linkedin.com/in/` (≡ `https://www.LinkedIn.com/in`) : l'hôte ou l'un de ses
+  sous-domaines (`fr.linkedin.com`), `www.` ignoré, casse ignorée ; le chemin se compare
+  **segment par segment** (`/in/` couvre `/in/jane`, pas `/inbox`). Stocké sous forme
+  canonique `linkedin.com/in/`.
+- **Un domaine entier n'est jamais implicite.** `linkedin.com/company/` reste rendu sous
+  `linkedin.com/in/`. Pour exclure tout un site, la forme est **explicite** : `exemple.com/*`.
+  Un hôte nu (`exemple.com`, `exemple.com/`) est **refusé à la pose** (`invalid_url_prefix`,
+  message qui donne les deux formes à écrire) — l'oubli d'un chemin ne doit pas devenir
+  l'exclusion d'un site.
+- Refusés aussi : `*` ailleurs que seul après l'hôte, requête/fragment, schéma non http(s),
+  hôte sans point ; 50 motifs max, 200 caractères chacun ; un lot dont UN motif est faux
+  n'est **pas** stocké (une pose partielle serait une exclusion partielle silencieuse).
+
+**Un seul seam : `oto_mcp/url_perimeter.py`** (pur, sauf `perimeter_of_call()` = une lecture
+`db.get_project_by_id`). Résolution du projet de l'appel : le jeton `_project=`
+(`access.current_project`), sinon le projet de l'endpoint publié
+(`subdomain_project.current_anon_project_id`). **Sans projet ou sans option, aucun changement**
+— prouvé par différentiel deux clones sur 27 appels des outils couverts (diff vide), et par
+identité d'objet dans `tests/test_url_perimeter.py`. Deux effets :
+- **(a) sortie d'un outil de RECHERCHE** — `filter_results` : les résultats dont l'URL
+  correspond ne sont pas rendus (à toute profondeur : liste de résultats, sitelinks, PAA,
+  `data.web`, `metadata.sourceURL`, listes d'URLs nues), et la réponse porte
+  `excluded_by_perimeter = {count, project_id, project, prefixes: {motif → n}}` — **jamais en
+  silence, même à zéro** : l'agent sait qu'un périmètre est en force. Le filtre agit **avant**
+  la projection `fields=` (sinon un profil sans son `link` passerait). Il ne filtre pas la
+  prose (une `answer` synthétique qui cite une URL en texte).
+- **(b) entrée d'un outil d'EXTRACTION** — `refuse_if_excluded` / `refuse_if_any_excluded` :
+  l'URL est refusée **avant tout appel amont**, en nommant le motif et le projet (« relève du
+  motif `linkedin.com/in/`, exclu par le périmètre du projet « X » — ne la contourne par
+  aucun autre outil ») ; pour un lot, tout le lot est refusé en nommant chaque URL. Là où
+  l'outil observe une URL finale après redirection (`web_read` cran ①/③, `browser_fetch`),
+  elle repasse le seam : un `acme.fr/equipe/x` qui atterrit sur un profil est un profil.
+
+**Couverture — relevée sur l'inventaire AST des tools à paramètre URL ou de recherche web.**
+Critère : *couvert* = l'outil rend des pages du web ouvert ou lit une URL fournie par
+l'appelant. *Non couvert* = l'URL y est un identifiant passé à un fournisseur, une
+configuration, ou une page d'une plateforme propre — le cran pour ces connecteurs-là est
+l'activation par org / l'allowlist `mcp_tools` de l'endpoint (ADR 0010/0011), pas un motif
+d'URL. Le cliquet `test_every_covered_module_calls_the_seam` fige la liste des couverts.
+
+| outil | point d'application | statut |
+|---|---|---|
+| `serper_search` (web, news, images, videos, places, shopping, scholar, patents) | sortie, avant projection | couvert (`autocomplete` : suggestions, pas d'URL) |
+| `serper_lens` | entrée (URL d'image) + sortie | couvert |
+| `serper_scrape` | entrée | couvert |
+| `serpapi_search` (tout moteur) | sortie | couvert |
+| `searchapi_search` (tout moteur) | sortie | couvert |
+| `tavily_search` | sortie | couvert (`answer` = prose, non filtrée) |
+| `tavily_extract` | entrée (lot) | couvert |
+| `tavily_map`, `tavily_crawl` | entrée (racine) + sortie (URLs/pages) | couvert |
+| `firecrawl_search`, `firecrawl_crawl_status` | sortie | couvert |
+| `firecrawl_scrape`, `firecrawl_map`, `firecrawl_crawl` | entrée (+ sortie pour `map`) | couvert |
+| `firecrawl_extract` | entrée (lot) | couvert |
+| `cloro_google` (serp, news), `cloro_ask` (sources) | sortie | couvert (la réponse IA = prose) |
+| `web_read` | entrée + URL finale observée | couvert |
+| `browser_fetch`, `browser_eval` | entrée (+ URL finale pour `fetch`) | couvert |
+| `lighton_parse`, `pennylane_upload_file`, `gmail_compose` (`{kind:"url"}`) | entrée, via `file_source.resolve` | couvert |
+| `serper_maps_sample/census`, `serper_reviews`, `serpapi_jobs/trends/finance/flights/hotels` | — | non couvert : lieux, offres, séries — pas des pages ; `website` d'un lieu n'est pas un résultat |
+| `firecrawl_extract_status` | — | non couvert : données au schéma de l'appelant, pas des pages (l'entrée l'est) |
+| `reddit_search`, `reddit_post`, `linkedin_unipile_*`, `linkedin_aiark_*` | — | non couvert : objets d'une plateforme propre ; exclure = ne pas activer le connecteur |
+| `kaspr_enrich_linkedin`, `fullenrich_enrich_linkedin`, `apollo_match_person`, `cognism_enrich_*`, `lemlist_enrich`, `checkcrm_*`, `forager_organization` | — | non couvert : l'URL est un IDENTIFIANT passé à un fournisseur de données, pas une page lue |
+| `apify_run*` | — | non couvert : `run_input` opaque d'un acteur tiers ; cran = activation |
+| `http_get/post` | — | non couvert : chemin relatif à une `base_url` configurée par l'org (client d'API) |
+| `browser_connect_start` | — | non couvert : page de login ouverte à l'humain, pas une lecture |
+| `email_send(cta_url, image_url)`, `brevo_import_contacts(file_url)`, `fireflies_transcript(url)`, webhooks (`folk`/`linear`/`grain`/`granola`/`webflow`), `ahrefs_*`, `promptwatch_*`, `snitcher_*` | — | non couvert : URL écrite, importée par le fournisseur, ou de configuration — rien n'est lu par nous |
+
+**Ce qui n'est pas fait.** L'option n'est pas rappelée dans le préambule servi au destinataire
+d'un endpoint publié (`compose_published_project`) : le refus et le compte sont le texte le
+plus proche du geste, et c'est celui-là que l'agent lit. Le dashboard n'affiche pas encore
+l'option (elle est dans le payload de `GET /api/me/projects/{id}`).
+
 ## Le projet — ce que la carte en disait (migré le 2026-08-27)
 
 Conteneur de travail **possédé** : brief + liens typés (`project_links` : tableau/

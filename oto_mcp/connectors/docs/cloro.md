@@ -10,3 +10,7 @@ interroge les moteurs IA (ChatGPT, Gemini, Perplexity, Copilot, Grok, Google AI 
 - « compare ce que disent Gemini et Perplexity sur ce produit »
 - « SERP Google de `meilleur CRM` avec l'AI Overview »
 - « Google News sur cette entreprise »
+
+## note — périmètre de projet (#605, 2026-08-29)
+
+sous un projet à `excluded_url_prefixes`, `cloro_google` (serp, news) et `cloro_ask` (sources/citations) écartent les résultats correspondants et le disent (`excluded_by_perimeter`). la réponse d'un moteur ia est de la prose : non filtrée. détail : `docs/projects.md`.

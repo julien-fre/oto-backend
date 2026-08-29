@@ -30,7 +30,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, url_perimeter
 
 # Moteurs IA → (slug API Cloro, libellé humain). Le slug est la valeur du paramètre
 # `engine` de `cloro_ask` (⚠️ `aimode`, pas `ai_mode` : c'est le slug de l'API Cloro).
@@ -89,6 +89,8 @@ def register(mcp: FastMCP) -> None:
           AI Overview block, People Also Ask) use `cloro_google`.
 
         ⚠️ AI-engine calls are SLOW: ~30-45 s each (the engine is really queried).
+        Under a project with `excluded_url_prefixes`, matching sources are dropped
+        and counted.
 
         Args:
             engine: chatgpt | perplexity | gemini | copilot | grok | aimode.
@@ -104,8 +106,10 @@ def register(mcp: FastMCP) -> None:
         include: dict = {"markdown": markdown}
         if search_queries:
             include["searchQueries"] = True
-        return _run("monitor", provider=engine, prompt=prompt,
-                    country=country, include=include)
+        return url_perimeter.filter_results(
+            _run("monitor", provider=engine, prompt=prompt, country=country,
+                 include=include),
+            url_perimeter.perimeter_of_call())
 
     # --- Google SERP / News : un tool, le verbe en `op` ---------------------
 
@@ -127,6 +131,9 @@ def register(mcp: FastMCP) -> None:
         - **"news"** : Google News as JSON via Cloro. Takes `query` + `country`
           only — the three include flags are SERP-only and do not apply here.
 
+        Under a project with `excluded_url_prefixes`, matching results are dropped
+        and counted.
+
         Args:
             query: search query.
             op: serp (défaut) | news.
@@ -141,7 +148,9 @@ def register(mcp: FastMCP) -> None:
                 "organicResults": organic,
                 "peopleAlsoAsk": people_also_ask,
             }
-            return _run("google", query=query, country=country, include=include)
-        if op == "news":
-            return _run("google_news", query=query, country=country)
-        raise _bad(f"op doit être 'serp' ou 'news' (reçu {op!r})")
+            result = _run("google", query=query, country=country, include=include)
+        elif op == "news":
+            result = _run("google_news", query=query, country=country)
+        else:
+            raise _bad(f"op doit être 'serp' ou 'news' (reçu {op!r})")
+        return url_perimeter.filter_results(result, url_perimeter.perimeter_of_call())

@@ -642,7 +642,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `rest-api.md` | inventaire des endpoints REST `/api/*`, OpenAPI dérivé, jetons portés, CORS. |
 | `datastore.md` | datastore spine PG (`data_*`), OAuth Google per-user (setup GCP, scopes), coutures des modules, face REST dérivée. |
 | `datastore-colonne-tableau.md` | spec de la colonne-tableau (oto#22 barreau 2) : forme servie, couches d'un item, fonctions natives, non-définitions, chemin de migration en double-service. |
-| `projects.md` | projet (liens typés, docs), livraison client cascade, endpoint MCP + partage navigable par projet (`<slug>.{mcp,share}.oto.cx`). |
+| `projects.md` | projet (liens typés, docs), livraison client cascade, endpoint MCP + partage navigable par projet (`<slug>.{mcp,share}.oto.cx`), **périmètre d'URL** (`excluded_url_prefixes`, #605 : ce que recherche/extraction n'atteignent pas, seam `url_perimeter`). |
 | `search-and-kb.md` | `oto_search` : RRF lexical+sémantique, grains matchés, invariant « cherchable ⇔ lisible », épine, backlinks, propositions. |
 | `guides.md` | guide & skills d'org (`oto_procedure`, versionnée), forme d'une procédure (digest + schéma), agent readme, **renommer un outil = migrer les procédures** (refs `<tool:slug>` en DB, angle mort du CI). |
 | `onboarding-et-profil.md` | onboarding = un projet « Découverte », fiche « situation avec oto » (`me.profile`), `oto_whoami`. |

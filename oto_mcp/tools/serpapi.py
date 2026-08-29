@@ -43,7 +43,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, url_perimeter
 
 # --- traduction des params partagés vers le nom natif de chaque moteur --------
 # Seuls les moteurs qui DIVERGENT de la convention Google/SerpApi sont listés ;
@@ -138,7 +138,8 @@ def register(mcp: FastMCP) -> None:
         The shared arguments (`query`, `country`, `language`, `location`, `page`,
         `count`, `domain`) are translated into each engine's own parameter names;
         `params` stays the raw escape hatch for anything else (and for engines
-        with no shortcut). Returns the raw SerpApi JSON payload.
+        with no shortcut). Returns the raw SerpApi JSON payload. Under a project
+        with `excluded_url_prefixes`, matching results are dropped and counted.
 
         Engines with a mapped shortcut (native `query` name in parentheses):
 
@@ -207,8 +208,10 @@ def register(mcp: FastMCP) -> None:
             engine, query=query, country=country, language=language,
             location=location, page=page, count=count, domain=domain)
         payload.update(params or {})
-        return _run("search", engine=engine, params=payload,
-                    max_results=max_results, results_key=results_key)
+        return url_perimeter.filter_results(
+            _run("search", engine=engine, params=payload,
+                 max_results=max_results, results_key=results_key),
+            url_perimeter.perimeter_of_call())
 
     # --- offres d'emploi (Google Jobs) --------------------------------------
     @mcp.tool()

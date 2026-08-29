@@ -18,3 +18,7 @@ chaque réponse porte `usage.credits` : search 1 crédit (`advanced` 2), extract
 - UNE page avec JavaScript exécuté, ou une page qui bloque → `firecrawl_scrape`
 - crawl d'un domaine entier → `firecrawl_crawl` (asynchrone, sans plafond) ; `tavily_crawl` est borné à 100 pages / 40 s
 - `include_raw_content` sur une recherche alourdit beaucoup la réponse : préférer `tavily_extract` sur les URLs retenues
+
+## note — périmètre de projet (#605, 2026-08-29)
+
+sous un projet à `excluded_url_prefixes`, `tavily_search`, `tavily_map` et `tavily_crawl` écartent les résultats/pages correspondants et le disent (`excluded_by_perimeter`) ; `tavily_extract`, `tavily_map` et `tavily_crawl` **refusent** une URL correspondante (pour `extract`, tout le lot est refusé en nommant les URLs). la réponse synthétique `answer` est de la prose : elle n'est pas filtrée. détail : `docs/projects.md`.

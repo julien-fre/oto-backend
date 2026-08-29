@@ -11,3 +11,7 @@ atteint des moteurs que serper n'a pas : verticaux google (trends, finance, vols
 - `serpapi_jobs(op="search"|"details")` — sourcing d'offres via google jobs (le `job_id` du détail sort de la recherche)
 - `serpapi_google_trends` — intérêt dans le temps / par région pour un terme
 - `serpapi_google_finance` / `serpapi_google_flights` / `serpapi_google_hotels` — cotations, vols, hôtels
+
+## note — périmètre de projet (#605, 2026-08-29)
+
+sous un projet à `excluded_url_prefixes`, `serpapi_search` écarte les résultats correspondants — quel que soit le moteur — et le dit (`excluded_by_perimeter`). les verticaux à contrat propre (jobs, trends, finance, flights, hotels) ne rendent pas de pages web et ne sont pas filtrés. détail : `docs/projects.md`.

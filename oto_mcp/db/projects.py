@@ -42,7 +42,7 @@ from .users import upsert_user
 _PROJECT_COLS = ("id, owner_type, owner_id, context_org_id, name, icon, brief_md, created_by, "
                  "is_template, mcp_slug, mcp_access, mcp_tools, mcp_expose_datastore, "
                  "mcp_expose_datastore_write, mcp_expose_docs, mcp_instructions_md, "
-                 "archived_at, created_at, updated_at")
+                 "excluded_url_prefixes, archived_at, created_at, updated_at")
 
 # Publication MCP (ADR 0032, amende #44) : label de sous-domaine `<slug>.mcp.oto.cx`.
 _MCP_SLUG_RE = re.compile(r"^[a-z0-9]([a-z0-9-]{1,}[a-z0-9])$")  # >=3 chars, pas de - en bord
@@ -276,6 +276,18 @@ def set_project_mcp_instructions(project_id: int, instructions_md: Optional[str]
         conn.execute(
             "UPDATE projects SET mcp_instructions_md = %s, updated_at = NOW() "
             "WHERE id = %s", (body, project_id))
+
+
+def set_project_excluded_url_prefixes(project_id: int, prefixes: list[str]) -> None:
+    """Périmètre d'URL du projet (#605) : la liste STOCKÉE est la forme canonique
+    rendue par `url_perimeter.normalize_prefixes` — jamais la saisie brute, sinon deux
+    graphies d'un même motif feraient deux entrées et la vue mentirait sur ce qui est
+    en force. `[]` retire l'option. Indépendant de la publication : aucun `mcp_*`
+    ne bouge."""
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE projects SET excluded_url_prefixes = %s, updated_at = NOW() "
+            "WHERE id = %s", (list(prefixes), project_id))
 
 
 def set_project_mcp_publication(project_id: int, *, slug: Optional[str],

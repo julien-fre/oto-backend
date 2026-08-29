@@ -14,7 +14,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_REQUEST
 
-from .. import access, output_projection
+from .. import access, output_projection, url_perimeter
 
 # Ce que le défaut retire d'une page de résultats Google (rendu par `full=True`). Aucune
 # de ces clés n'est du bruit dans l'absolu — knowledge graph et sitelinks servent parfois
@@ -140,6 +140,9 @@ def register(mcp: FastMCP) -> None:
         - **"autocomplete"** : les suggestions Google pour `query` — pour élargir un
           champ lexical ou trouver des idées de mots-clés. Ignore la pagination.
 
+        Sous un projet à `excluded_url_prefixes`, les résultats correspondants sont
+        écartés et comptés.
+
         Args:
             query: la requête.
             kind: la verticale (défaut "web") : web | news | images | videos |
@@ -182,7 +185,10 @@ def register(mcp: FastMCP) -> None:
             args["site_filter"] = site_filter
             args["autocorrect"] = autocorrect
 
-        result = _run(method, **args)
+        # Périmètre du projet (#605) AVANT la projection : `fields=` peut retirer `link`,
+        # et un profil sans son lien passerait à travers.
+        result = url_perimeter.filter_results(_run(method, **args),
+                                              url_perimeter.perimeter_of_call())
         return _project(result, items, full, fields) if kind in ("web", "news") else result
 
 
@@ -337,11 +343,15 @@ def register(mcp: FastMCP) -> None:
         """Google Lens via Serper — recherche inversée à partir d'une image.
 
         Args:
-            url: URL publique de l'image à analyser.
+            url: URL publique de l'image à analyser — refusée sous les
+                `excluded_url_prefixes` du projet, qui écartent aussi les résultats.
             country: code pays (défaut "fr").
             language: code langue (défaut "fr").
         """
-        return _run("search_lens", url=url, country=country, language=language)
+        per = url_perimeter.perimeter_of_call()
+        url_perimeter.refuse_if_excluded(url, per)
+        return url_perimeter.filter_results(
+            _run("search_lens", url=url, country=country, language=language), per)
 
     @mcp.tool()
     def serper_scrape(
@@ -355,12 +365,14 @@ def register(mcp: FastMCP) -> None:
         anti-bot rudimentaires.
 
         Args:
-            url: URL de la page à récupérer.
+            url: URL de la page à récupérer — refusée si elle relève des
+                `excluded_url_prefixes` du projet.
             format: "markdown" (défaut, la représentation lisible par un LLM) |
                 "text" (brut) | "both" (seulement si tu as vraiment besoin de comparer).
         """
         if format not in ("markdown", "text", "both"):
             raise _bad(f"`format` invalide : {format!r} (markdown | text | both).")
+        url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
         try:
             res = _run("scrape_page", url=url, include_markdown=format != "text")
             # Serper renvoyait `text` ET `markdown` : deux représentations du MÊME

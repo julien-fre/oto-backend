@@ -395,6 +395,10 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS mcp_expose_docs BOOLEAN NOT NULL DEFAULT FALSE")
     # Prose servie au destinataire d'un endpoint publié — ≠ brief_md (interne).
     conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS mcp_instructions_md TEXT")
+    # #605 (2026-08-29) : périmètre d'URL du projet — motifs canoniques (`hôte/chemin/`
+    # ou `hôte/*`) que les outils de recherche écartent et que les outils d'extraction
+    # refusent. Une seule lecture : `url_perimeter.perimeter_of_call`.
+    conn.execute("ALTER TABLE projects ADD COLUMN IF NOT EXISTS excluded_url_prefixes TEXT[] NOT NULL DEFAULT '{}'")
     # ADR 0043 : id du mandat (mdt_xxx Mollie) sur l'abonnement — la table
     # existait déjà (B1) quand la colonne est arrivée.
     conn.execute("ALTER TABLE org_subscriptions ADD COLUMN IF NOT EXISTS mandate_id TEXT")
