@@ -20,3 +20,7 @@ chaque page rendue consomme des crédits : poser `limit` sur un crawl est la seu
 - site qui bloque → `proxy="stealth"` (plus cher, à ne pas mettre par défaut)
 - cookie wall / bouton « voir plus » → `actions` (click, wait, scroll) avant capture
 - juste le HTML brut d'une URL, sans rendu JS ? `serper_scrape` suffit. page derrière un login ? c'est le connecteur `browser`.
+
+## note — périmètre de projet (#605, 2026-08-29)
+
+sous un projet à `excluded_url_prefixes`, `firecrawl_search`, `firecrawl_map` et `firecrawl_crawl_status` écartent les résultats/pages correspondants et le disent (`excluded_by_perimeter`) ; `firecrawl_scrape`, `firecrawl_map`, `firecrawl_crawl` et `firecrawl_extract` **refusent** une URL correspondante (lot refusé entier pour `extract`). `firecrawl_extract_status` rend des données au schéma de l'appelant, pas des pages : non filtré. détail : `docs/projects.md`.

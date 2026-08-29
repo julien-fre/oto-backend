@@ -80,6 +80,10 @@ qui expose le substrat tel quel.
 - **Tools** : `browser_connect_start(url)` (Live View sur l'URL demandée) →
   `browser_connect_status(context_id, session_id, site, force?)` → `browser_sites()` ;
   lecture `browser_fetch(url, as_html?, max_chars?)` ; échappatoire `browser_eval(url, js)`.
+- **Périmètre de projet (#605, 2026-08-29)** : sous un projet à `excluded_url_prefixes`,
+  `browser_fetch`, `browser_eval` et `web_read` **refusent** une URL correspondante — demandée,
+  ou atteinte par redirection (`final_url` observée) — en nommant le motif et le projet. Sans
+  projet ou sans option, rien ne change. Détail : `docs/projects.md`.
 - **`browser_fetch` ≠ `run_fetch`.** `run_fetch` vise une API JSON et **tronque son repli
   texte à 400 caractères** — inutilisable pour lire une page. `browserbase.fetch_page()`
   charge l'URL et renvoie le contenu **complet** (`innerText` rendu, ou DOM si `as_html`),

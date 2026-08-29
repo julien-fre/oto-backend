@@ -12,3 +12,7 @@ interroge factures, transactions et balance, et solde les paiements non rapproch
 - `pennylane_invoice(op="list")` / `pennylane_supplier_invoice(op="list")` les factures, `pennylane_transactions` les mouvements bancaires
 - `pennylane_match` lettre une transaction avec sa facture (réversible) pour ne pas laisser une facture payée en `late`
 - flux avoir supervisé : `pennylane_ref(kind="products")` (résoudre le `product_id`, jamais le deviner) → `pennylane_invoice(op="find")` (anti-doublon) → `pennylane_invoice(op="credit_note")` (brouillon **standalone**, lignes en positif — la négativation « avoir » est appliquée côté serveur) → `pennylane_invoice(op="finalize")` puis `op="send"` **après validation humaine**
+
+## note — périmètre de projet (#605, 2026-08-29)
+
+`pennylane_upload_file` avec une source `{kind: "url"}` lit cette url côté serveur : sous un projet à `excluded_url_prefixes`, une url correspondante est refusée en nommant le motif (seam `file_source`). détail : `docs/projects.md`.

@@ -31,13 +31,14 @@ pour N appels d'un même run reste à faire si le volume le justifie.
 """
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import urlparse
 
 from fastmcp import Context, FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 
-from .. import access, browser_session, browserbase
+from .. import access, browser_session, browserbase, url_perimeter
 from ..connectors import identities as connector_identities
 from ..auth.hooks import current_user_sub_from_token
 
@@ -178,13 +179,16 @@ def register(mcp: FastMCP) -> None:
         une session expirée → reconnecte le site).
 
         Args:
-            url: URL absolue de la page à lire.
+            url: URL absolue de la page à lire — refusée sous les
+                `excluded_url_prefixes` du projet (demandée, ou atteinte par redirection).
             as_html: True = HTML rendu (pour extraire des attributs/liens précis) ;
                 False (défaut) = texte lisible, bien plus compact.
             max_chars: plafond de caractères renvoyés (troncature signalée par
                 `truncated=true`).
         """
         site = _site_of(url)
+        per = await asyncio.to_thread(url_perimeter.perimeter_of_call)
+        url_perimeter.refuse_if_excluded(url, per)
         if not browserbase.is_configured():
             raise _err("Browserbase non configuré côté plateforme "
                        "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)
@@ -193,6 +197,7 @@ def register(mcp: FastMCP) -> None:
             res = await browserbase.fetch_page(ctx_id, url, as_html=as_html)
         except browserbase.BrowserbaseError as e:
             raise _err(f"Exécution Browserbase échouée : {e}", code=INTERNAL_ERROR)
+        url_perimeter.refuse_if_excluded(res.get("final_url"), per)
         content = res.get("content") or ""
         cap = max(1, int(max_chars))
         return {"site": site, "status": res.get("status"),
@@ -212,10 +217,13 @@ def register(mcp: FastMCP) -> None:
         `url`, donc il porte les cookies de session.
 
         Args:
-            url: page à charger avant d'exécuter (donne l'origine et les cookies).
+            url: page à charger avant d'exécuter (donne l'origine et les cookies) —
+                refusée sous les `excluded_url_prefixes` du projet.
             js: source de la fonction async à exécuter dans la page.
         """
         site = _site_of(url)
+        url_perimeter.refuse_if_excluded(
+            url, await asyncio.to_thread(url_perimeter.perimeter_of_call))
         if not browserbase.is_configured():
             raise _err("Browserbase non configuré côté plateforme "
                        "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)

@@ -27,7 +27,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, url_perimeter
 from ..connectors import verify as connector_verify
 
 
@@ -95,7 +95,8 @@ def register(mcp: FastMCP) -> None:
         only the pages that matter instead of paying for a full crawl.
 
         Args:
-            url: site root (e.g. `https://acme.com`).
+            url: site root (e.g. `https://acme.com`) — refused if under the
+                project's `excluded_url_prefixes`, which also drop matching links.
             search: keep only URLs matching this term (e.g. "pricing", "careers").
             limit: max URLs (API default 5000).
             include_subdomains: also list `blog.acme.com` (API default true).
@@ -103,10 +104,13 @@ def register(mcp: FastMCP) -> None:
 
         Returns: `{success, links: [{url, title?, description?}]}`.
         """
+        per = url_perimeter.perimeter_of_call()
+        url_perimeter.refuse_if_excluded(url, per)
         with _upstream():
-            return _client().map_site(url, search=search, limit=limit,
-                                      include_subdomains=include_subdomains,
-                                      sitemap=sitemap)
+            result = _client().map_site(url, search=search, limit=limit,
+                                        include_subdomains=include_subdomains,
+                                        sitemap=sitemap)
+        return url_perimeter.filter_results(result, per)
 
     # --- une page -----------------------------------------------------------
 
@@ -126,6 +130,7 @@ def register(mcp: FastMCP) -> None:
         """Fetch ONE page as clean markdown (JavaScript rendered, nav/ads stripped).
 
         Args:
+            url: the page — refused if under the project's `excluded_url_prefixes`.
             formats: outputs wanted, default `["markdown"]`. Also accepts the API's
                 object form — `[{"type": "json", "schema": {...}}]` extracts
                 structured data in the same call, `[{"type": "screenshot",
@@ -145,6 +150,7 @@ def register(mcp: FastMCP) -> None:
         Returns: `{success, data: {markdown?, html?, links?, screenshot?, json?,
             metadata: {title, description, sourceURL, statusCode, …}}}`.
         """
+        url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
         with _upstream():
             return _client().scrape(
                 url, formats=formats, only_main_content=only_main_content,
@@ -168,6 +174,8 @@ def register(mcp: FastMCP) -> None:
         scrape_options: Optional[dict] = None,
     ) -> dict:
         """Search the web and, if asked, return each result's full content.
+        Under a project with `excluded_url_prefixes`, matching results are dropped
+        and counted.
 
         Args:
             query: max 500 chars; supports `"exact phrase"`, `-excluded`, `site:`,
@@ -184,11 +192,12 @@ def register(mcp: FastMCP) -> None:
         Returns: `{success, data: {web?, news?, images?}, creditsUsed}`.
         """
         with _upstream():
-            return _client().search(
+            result = _client().search(
                 query, limit=limit, sources=sources, categories=categories,
                 tbs=tbs, location=location, country=country,
                 include_domains=include_domains, exclude_domains=exclude_domains,
                 scrape_options=scrape_options)
+        return url_perimeter.filter_results(result, url_perimeter.perimeter_of_call())
 
     # --- crawl (asynchrone) -------------------------------------------------
 
@@ -212,6 +221,8 @@ def register(mcp: FastMCP) -> None:
         set `limit`: the API default is 10000 pages, and each page burns credits.
 
         Args:
+            url: start URL — refused if under the project's `excluded_url_prefixes`
+                (matching pages are also dropped from `firecrawl_crawl_status`).
             limit: max pages to crawl — the one guard that caps the bill.
             include_paths / exclude_paths: regexes on the path (e.g. `["/blog/.*"]`).
             max_discovery_depth: how deep to follow links from the start URL.
@@ -225,6 +236,7 @@ def register(mcp: FastMCP) -> None:
 
         Returns: `{success, id, url}`.
         """
+        url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
         with _upstream():
             return _client().crawl(
                 url, limit=limit, include_paths=include_paths,
@@ -250,7 +262,8 @@ def register(mcp: FastMCP) -> None:
             next?, data: [pages]}`.
         """
         with _upstream():
-            return _client().crawl_status(crawl_id=job_id, next_url=next_url)
+            result = _client().crawl_status(crawl_id=job_id, next_url=next_url)
+        return url_perimeter.filter_results(result, url_perimeter.perimeter_of_call())
 
     @mcp.tool()
     def firecrawl_cancel_crawl(job_id: str) -> dict:
@@ -276,7 +289,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             urls: pages to read; a trailing `/*` widens to the whole site
-                (e.g. `["https://acme.com/*"]`).
+                (e.g. `["https://acme.com/*"]`). The batch is refused if one is
+                under the project's `excluded_url_prefixes`.
             prompt: what you're looking for, in plain language.
             schema: JSON Schema of the wanted output — far more reliable than a
                 prompt alone, and it makes the result directly usable.
@@ -284,6 +298,7 @@ def register(mcp: FastMCP) -> None:
 
         Returns: `{success, id}`.
         """
+        url_perimeter.refuse_if_any_excluded(urls, url_perimeter.perimeter_of_call())
         with _upstream():
             return _client().extract(
                 urls, prompt=prompt, schema=schema,

@@ -11,3 +11,7 @@ agis sur ton Google Workspace : mails, calendrier, tâches, feuilles de calcul, 
 - « qu'est-ce que j'ai à l'agenda demain ? crée un créneau de relance vendredi 10h »
 - « ajoute une tâche `relancer X` pour lundi », « lis l'onglet `leads` de cette sheet »
 - « partage ce dossier Drive en lecture à julien@… »
+
+## note — périmètre de projet (#605, 2026-08-29)
+
+une pièce jointe `{kind: "url"}` de `gmail_compose` est lue côté serveur : sous un projet à `excluded_url_prefixes`, une url correspondante est refusée en nommant le motif (seam `file_source`). détail : `docs/projects.md`.

@@ -92,6 +92,9 @@ def _from_url(src: dict, max_bytes: int) -> ResolvedFile:
     import httpx
     host = urlsplit(str(url)).hostname
     _assert_public_host(host or "")
+    # Périmètre du projet (#605) : un fichier lu à une URL est une page lue.
+    from . import url_perimeter
+    url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
     # Redirections DÉSACTIVÉES : un 3xx pourrait pointer une IP interne (le garde-fou
     # ci-dessus ne valide que l'hôte initial). Nos sources légitimes (URLs signées S3,
     # gmail_message(op="attachment")) sont directes → pas de redirect attendu.

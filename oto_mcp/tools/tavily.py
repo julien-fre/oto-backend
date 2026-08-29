@@ -29,7 +29,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, url_perimeter
 from ..connectors import verify as connector_verify
 
 # Le chemin REST d'invocation d'outil coupe à 45 s (`api/routes.py`) : un crawl
@@ -116,6 +116,8 @@ def register(mcp: FastMCP) -> None:
         Best default for "find out X about Y": one call returns an `answer` grounded
         in the `results` (title, url, content excerpt, relevance score). Use
         `serper_search` instead when you need the raw Google SERP (rankings, PAA).
+        Under a project with `excluded_url_prefixes`, matching results are dropped
+        and counted.
 
         Args:
             query: max 400 chars, plain language works best.
@@ -136,7 +138,7 @@ def register(mcp: FastMCP) -> None:
             response_time, usage: {credits}}`.
         """
         with _upstream():
-            return _client().search(
+            result = _client().search(
                 query, search_depth=search_depth, topic=topic,
                 max_results=max_results, time_range=time_range,
                 start_date=start_date, end_date=end_date,
@@ -144,6 +146,7 @@ def register(mcp: FastMCP) -> None:
                 include_raw_content=include_raw_content,
                 include_domains=include_domains, exclude_domains=exclude_domains,
                 country=country, language=language)
+        return url_perimeter.filter_results(result, url_perimeter.perimeter_of_call())
 
     # --- lecture d'URLs -----------------------------------------------------
 
@@ -163,7 +166,8 @@ def register(mcp: FastMCP) -> None:
         ones come back in `failed_results`, the rest still succeed.
 
         Args:
-            urls: 1-20 URLs.
+            urls: 1-20 URLs — the batch is refused if one is under the project's
+                `excluded_url_prefixes`.
             query: intent used to rerank the excerpts (e.g. "pricing tiers").
             extract_depth: `basic` (default, 1 credit / 5 URLs) | `advanced`
                 (2 credits / 5 URLs — tables, dynamic content).
@@ -177,6 +181,7 @@ def register(mcp: FastMCP) -> None:
             raise _bad("urls : au moins une URL")
         if len(urls) > 20:
             raise _bad("urls : 20 URLs maximum par appel")
+        url_perimeter.refuse_if_any_excluded(urls, url_perimeter.perimeter_of_call())
         with _upstream():
             return _client().extract(
                 urls, query=query, extract_depth=extract_depth,
@@ -199,7 +204,8 @@ def register(mcp: FastMCP) -> None:
         """List a site's URLs WITHOUT fetching content — do this before a crawl.
 
         Args:
-            url: site root (e.g. `https://acme.com`).
+            url: site root (e.g. `https://acme.com`) — refused if under the
+                project's `excluded_url_prefixes`, which also drop matching URLs.
             instructions: natural-language focus ("product and pricing pages") —
                 doubles the cost.
             max_depth: 1-5 levels from the root (default 1).
@@ -211,14 +217,17 @@ def register(mcp: FastMCP) -> None:
         Returns: `{base_url, results: [url, …], usage: {credits}}`.
         """
         limit = _cap_limit(limit)
+        per = url_perimeter.perimeter_of_call()
+        url_perimeter.refuse_if_excluded(url, per)
         with _upstream():
-            return _client().map_site(
+            result = _client().map_site(
                 url, instructions=instructions, max_depth=max_depth,
                 max_breadth=max_breadth, limit=limit, select_paths=select_paths,
                 exclude_paths=exclude_paths, allow_external=allow_external,
                 # budget Tavily 40 s ⟹ le HTTP local n'attend jamais les 160 s
                 # du défaut client (contrainte mono-loop, cf. conventions)
                 timeout_s=_CRAWL_TIMEOUT_S, timeout=45)
+        return url_perimeter.filter_results(result, per)
 
     # --- crawl (synchrone, borné) -------------------------------------------
 
@@ -242,7 +251,8 @@ def register(mcp: FastMCP) -> None:
         `firecrawl_crawl` (asynchronous, no page cap).
 
         Args:
-            url: root URL.
+            url: root URL — refused if under the project's `excluded_url_prefixes`,
+                which also drop matching pages.
             instructions: what to look for ("pricing and plan comparison pages") —
                 Tavily follows only relevant links; doubles the cost.
             max_depth: 1-5 (default 1). max_breadth: 1-500 links per level (default 20).
@@ -258,13 +268,16 @@ def register(mcp: FastMCP) -> None:
             (seen live: reference pages rendered client-side); skip those.
         """
         limit = _cap_limit(limit)
+        per = url_perimeter.perimeter_of_call()
+        url_perimeter.refuse_if_excluded(url, per)
         with _upstream():
-            return _client().crawl(
+            result = _client().crawl(
                 url, instructions=instructions, max_depth=max_depth,
                 max_breadth=max_breadth, limit=limit, select_paths=select_paths,
                 exclude_paths=exclude_paths, allow_external=allow_external,
                 extract_depth=extract_depth, format=format,
                 timeout_s=_CRAWL_TIMEOUT_S, timeout=45)
+        return url_perimeter.filter_results(result, per)
 
 
 def _cap_limit(limit: Optional[int]) -> int:

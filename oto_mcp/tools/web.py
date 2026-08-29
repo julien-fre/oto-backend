@@ -43,7 +43,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import INVALID_REQUEST, ErrorData
 
-from .. import access, browserbase
+from .. import access, browserbase, url_perimeter
 
 _TIMEOUT = (10, 30)              # borne CHAQUE socket — pas la lecture entière
 _DEADLINE_S = 45                 # budget GLOBAL du cran ① (cf. `_fetch_http`)
@@ -276,7 +276,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             url: absolute public URL (http/https). Internal/private addresses
-                are refused by design.
+                are refused by design, and so is a page under the project's
+                `excluded_url_prefixes` (requested or landed on by redirect).
             browser: opt-in for the costly last resort (real Chrome session).
             as_html: True = raw HTML/DOM instead of readable text (①/③ only —
                 ② returns markdown).
@@ -285,6 +286,12 @@ def register(mcp: FastMCP) -> None:
         cap = max(1, int(max_chars))
         tentatives: list = []
         cout = {"serper_credits": 0, "browser_session": False}
+
+        # Périmètre du projet (#605) : résolu UNE fois (lecture DB → hors boucle),
+        # appliqué à l'URL demandée ici et à l'URL OBSERVÉE après redirection plus
+        # bas — un `acme.fr/equipe/x` qui atterrit sur un profil est un profil.
+        per = await asyncio.to_thread(url_perimeter.perimeter_of_call)
+        url_perimeter.refuse_if_excluded(url, per)
 
         demande = urlsplit(url).hostname or ""
 
@@ -303,6 +310,7 @@ def register(mcp: FastMCP) -> None:
             verdict (`conforme` vaut `None` quand on ne sait pas), et tout ce
             qui n'est pas un `True` franc se dit dans `avertissement`. C'est le
             tool qui annonce l'écart, pas l'appelant qui doit y penser."""
+            url_perimeter.refuse_if_excluded(final_url, per)
             servi = urlsplit(final_url).hostname if final_url else None
             conforme = _meme_site(demande, servi) if servi else None
             out = {"chemin": chemin, "content": content[:cap],

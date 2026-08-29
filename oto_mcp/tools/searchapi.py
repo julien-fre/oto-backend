@@ -28,7 +28,7 @@ from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
-from .. import access
+from .. import access, url_perimeter
 
 _BASE_URL = "https://www.searchapi.io/api/v1/search"
 _TIMEOUT = 30.0
@@ -73,7 +73,9 @@ def register(mcp: FastMCP) -> None:
 
         Reaches ANY SearchApi engine: pass the engine id plus either the typed
         fields below (the params common to most engines) or `params` for
-        anything engine-specific. Returns the raw SearchApi JSON payload.
+        anything engine-specific. Returns the raw SearchApi JSON payload. Under
+        a project with `excluded_url_prefixes`, matching results are dropped and
+        counted.
 
         Engines — common ids (any SearchApi engine id is accepted, this list is
         not a closed set):
@@ -145,4 +147,5 @@ def register(mcp: FastMCP) -> None:
                          "location": location, "num": num, "page": page}
         if params:
             payload.update(params)
-        return _run(engine, payload)
+        return url_perimeter.filter_results(_run(engine, payload),
+                                            url_perimeter.perimeter_of_call())
