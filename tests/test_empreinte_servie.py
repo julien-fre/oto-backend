@@ -23,6 +23,15 @@ from pathlib import Path
 RACINE = Path(__file__).resolve().parent.parent
 
 
+def _outils_modifies_dans_l_arbre() -> str:
+    """`--diff <ref>` compare l'ARBRE DE TRAVAIL à la référence — pas la référence à
+    elle-même. Le témoin du diff vide ne vaut donc que si rien n'est modifié sous
+    `oto_mcp/` : en CI toujours, chez un développeur au milieu d'un lot, non."""
+    r = subprocess.run(["git", "status", "--porcelain", "--", "oto_mcp"],
+                       cwd=RACINE, capture_output=True, text=True)
+    return r.stdout.strip()
+
+
 def test_le_releve_mesure_le_texte_SERVI_et_pas_la_docstring():
     """La description servie est plus courte que la docstring : c'est ça qu'on compte."""
     sys.path.insert(0, str(RACINE))
@@ -97,6 +106,11 @@ def test_comparer_un_etat_a_LUI_MEME_ne_montre_aucun_changement():
 
     Les deux rendaient des deltas plausibles et faux, ce qui est le pire des deux : un
     chiffre absent se remarque, un chiffre faux se cite."""
+    modifs = _outils_modifies_dans_l_arbre()
+    if modifs:
+        import pytest
+        pytest.skip("arbre modifié sous oto_mcp/ — le témoin ne vaut "
+                    "que sur un arbre propre :\n" + modifs)
     r = subprocess.run([sys.executable, "scripts/empreinte_servie.py", "--diff", "HEAD",
                         "data_write", "data_claim_next"],
                        cwd=RACINE, capture_output=True, text=True)
@@ -133,6 +147,11 @@ def test_le_temoin_du_diff_vide_vaut_AUSSI_sur_la_ligne_de_portee():
     """Comparer un état à lui-même ne montre aucun changement — et le rapport dit
     quand même ce qu'il n'a pas regardé. Un rapport vide sans portée laisserait croire
     que « rien n'a changé » couvre tout ; il ne couvre que ce qui a été monté."""
+    modifs = _outils_modifies_dans_l_arbre()
+    if modifs:
+        import pytest
+        pytest.skip("arbre modifié sous oto_mcp/ — le témoin ne vaut "
+                    "que sur un arbre propre :\n" + modifs)
     r = subprocess.run([sys.executable, "scripts/empreinte_servie.py", "--diff", "HEAD",
                         "data_write"], cwd=RACINE, capture_output=True, text=True)
     assert r.returncode == 0, r.stderr[-1500:]

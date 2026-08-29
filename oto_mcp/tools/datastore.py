@@ -576,7 +576,8 @@ def register(mcp: FastMCP) -> None:
         the binding — otherwise an actionable error, never a fallback.
 
         Args:
-            namespace: target namespace (must already exist), or `slot:<name>`.
+            namespace: target namespace (must already exist), `slot:<name>`, or
+                `@claimed` = the table your reservation is in.
             row: single-row content as a dict (JSON-encoded automatically).
             id: omit = append a new row ; provided = partial update of that `_id` ;
                 `"@claimed"` = the row your run currently holds (no copying).
@@ -763,9 +764,11 @@ def register(mcp: FastMCP) -> None:
         rows let you pull far more per page.
 
         Args:
-            namespace: target namespace, or `slot:<name>` = the table bound under
-                that slot name by the ACTIVE project (actionable error if unbound).
-            id: `_id` of one row ; omit = list rows.
+            namespace: target namespace, `slot:<name>` = the table bound under
+                that slot name by the ACTIVE project (actionable error if unbound),
+                or `@claimed` = the table your reservation is in.
+            id: `_id` of one row, or `@claimed` = the row your run holds ; omit =
+                list rows.
             filter: dict `{column: value}` — exact match. A column may instead take
                 ONE operator: `{"posted_at": {"gte": "2026-06-01"}}`,
                 `{"author": {"contains": "sylvie"}}`, `{"status": {"ne": "traité"}}`,
@@ -927,7 +930,8 @@ def register(mcp: FastMCP) -> None:
               group_by=["contact1_fonction","contact2_fonction","contact3_fonction"]
 
         Args:
-            namespace: target namespace, or `slot:<name>` (active project).
+            namespace: target namespace, `slot:<name>` (active project), or
+                `@claimed` = the table your reservation is in.
             metrics: list of `{op, field?, where?, label?}` aggregations
                 (default = count of rows).
             group_by: column to group by, or a LIST of columns whose values are
@@ -952,7 +956,8 @@ def register(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def data_delete_row(namespace: str, id: str) -> dict:
-        """Delete a row by `_id`. `namespace` accepts `slot:<name>` (active project)."""
+        """Delete a row by `_id`. `namespace` accepts `slot:<name>` (active project)
+        or `@claimed`; `id="@claimed"` deletes the row your run holds."""
         sub = access.current_user_sub_or_raise()
         store = _store_for(sub)
         namespace, id = _adresse_reservee(store, namespace, id)
@@ -976,7 +981,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def data_url(namespace: str) -> dict:
         """Return the dashboard URL of a namespace (for the user to open/edit in
-        browser). `namespace` accepts `slot:<name>` (active project)."""
+        browser). `namespace` accepts `slot:<name>` (active project) or `@claimed`
+        = the table your reservation is in."""
         sub = access.current_user_sub_or_raise()
         store = _store_for(sub)
         namespace, _ = _adresse_reservee(store, namespace, ligne=False)
