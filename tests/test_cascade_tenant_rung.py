@@ -189,7 +189,7 @@ def test_la_chaine_designe_le_meme_palier_sur_une_cle_tenant(vide, monkeypatch, 
     legacy = cascade.CascadeRung("tenant", credentials_store.TENANT, PILOTE, "TK")
     assert pick is not None and pick.mode == "tenant" and pick.entity_id == PILOTE
     assert chain_shadow.classify(legacy, pick, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 def test_la_chaine_ignore_la_cle_tenant_pour_un_sub_du_tenant_primaire(vide, monkeypatch,

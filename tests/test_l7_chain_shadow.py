@@ -87,7 +87,7 @@ def test_la_chaine_designe_le_meme_palier_que_la_cascade_sur_une_cle_membre(vide
     legacy = cascade.CascadeRung("user", credentials_store.MEMBER, "7:u", "K")
     assert pick is not None and pick.mode == "user"
     assert chain_shadow.classify(legacy, pick, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 def test_la_chaine_designe_le_meme_palier_sur_une_cle_d_equipe(vide, monkeypatch):
@@ -98,7 +98,7 @@ def test_la_chaine_designe_le_meme_palier_sur_une_cle_d_equipe(vide, monkeypatch
     pick = chain_shadow.chain_winner("u", "serper", org=35)
     legacy = cascade.CascadeRung("group", "group", "3", "K")
     assert chain_shadow.classify(legacy, pick, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 def test_la_chaine_designe_le_meme_palier_sur_une_cle_d_org(vide, monkeypatch):
@@ -106,7 +106,7 @@ def test_la_chaine_designe_le_meme_palier_sur_une_cle_d_org(vide, monkeypatch):
     pick = chain_shadow.chain_winner("u", "serper", org=178)
     legacy = cascade.CascadeRung("org", "org", "178", "K")
     assert chain_shadow.classify(legacy, pick, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 def test_la_chaine_designe_le_meme_palier_sur_une_arete_plateforme(vide, monkeypatch):
@@ -117,7 +117,7 @@ def test_la_chaine_designe_le_meme_palier_sur_une_arete_plateforme(vide, monkeyp
     legacy = cascade.CascadeRung("platform", credentials_store.PLATFORM, "env", {})
     assert pick is not None and pick.via == "grant"
     assert chain_shadow.classify(legacy, pick, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 def test_la_chaine_designe_le_meme_palier_sur_une_cle_tenant(vide, monkeypatch):
@@ -134,7 +134,7 @@ def test_la_chaine_designe_le_meme_palier_sur_une_cle_tenant(vide, monkeypatch):
     legacy = cascade.CascadeRung("tenant", credentials_store.TENANT, "pilote", "K")
     assert pick is not None and pick.mode == "tenant"
     assert chain_shadow.classify(legacy, pick, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 def test_les_deux_refusent_ensemble_est_un_accord(vide):
@@ -143,7 +143,7 @@ def test_les_deux_refusent_ensemble_est_un_accord(vide):
     et noierait la mesure."""
     assert chain_shadow.chain_winner("u", "serper", org=7) is None
     assert chain_shadow.classify(None, None, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.ACCORD
+                                 hors_modele=None) == chain_shadow.ACCORD
 
 
 # ── 3. Les quatre divergences attendues, et l'inconnu qui doit rester joignable ──
@@ -160,7 +160,7 @@ def test_l_elargissement_d_equipe_est_classe_a_part(vide, monkeypatch):
     monkeypatch.setattr(access, "current_group", lambda sub: 2)
     pick = chain_shadow.chain_winner("u", "serper", org=35)
     assert pick is not None and pick.group_id == 3
-    assert chain_shadow.classify(None, pick, acl_refus=False, free_tier_ouvert=False) \
+    assert chain_shadow.classify(None, pick, acl_refus=False, hors_modele=None) \
         == chain_shadow.ELARGISSEMENT_EQUIPE
 
 
@@ -170,13 +170,13 @@ def test_la_restriction_d_acl_est_classee_a_part(vide, monkeypatch):
     la divergence qui porte la décision produit du lot."""
     monkeypatch.setattr(org_store, "has_org_secret", lambda o, p: True)
     pick = chain_shadow.chain_winner("u", "serper", org=178)
-    assert chain_shadow.classify(None, pick, acl_refus=True, free_tier_ouvert=False) \
+    assert chain_shadow.classify(None, pick, acl_refus=True, hors_modele=None) \
         == chain_shadow.RESTRICTION_ACL
 
 
 def test_un_refus_d_acl_sans_rien_a_resoudre_reste_un_accord(vide):
     """Refusé d'un côté, rien à désigner de l'autre : les deux disent non."""
-    assert chain_shadow.classify(None, None, acl_refus=True, free_tier_ouvert=False) \
+    assert chain_shadow.classify(None, None, acl_refus=True, hors_modele=None) \
         == chain_shadow.ACCORD
 
 
@@ -187,10 +187,10 @@ def test_le_free_tier_ouvert_est_nomme_comme_un_trou_du_modele(vide, monkeypatch
     monde » posée (arbitrage rendu le 29/08)."""
     monkeypatch.setattr(credentials_store, "list_platform_instances",
                         lambda p: FREE_SERPER)
-    pick, ouvert = chain_shadow._platform_pick("u", "serper", None)
-    assert pick is None and ouvert is True
+    pick, hors_modele = chain_shadow._platform_pick("u", "serper", None)
+    assert pick is None and hors_modele == chain_shadow.FREE_TIER_HORS_MODELE
     legacy = cascade.CascadeRung("platform", credentials_store.PLATFORM, "env", {})
-    assert chain_shadow.classify(legacy, None, acl_refus=False, free_tier_ouvert=True) \
+    assert chain_shadow.classify(legacy, None, acl_refus=False, hors_modele=chain_shadow.FREE_TIER_HORS_MODELE) \
         == chain_shadow.FREE_TIER_HORS_MODELE
 
 
@@ -199,7 +199,7 @@ def test_l_instance_personnelle_cross_org_est_classee_a_part(vide):
     atteignable de 0053 est scopé à l'org de contexte."""
     legacy = cascade.CascadeRung("user", credentials_store.MEMBER, "9:u", "K",
                                  via="cross_org")
-    assert chain_shadow.classify(legacy, None, acl_refus=False, free_tier_ouvert=False) \
+    assert chain_shadow.classify(legacy, None, acl_refus=False, hors_modele=None) \
         == chain_shadow.PERSO_CROSS_ORG
 
 
@@ -210,7 +210,7 @@ def test_la_classe_inconnue_est_ATTEIGNABLE(vide):
     legacy = cascade.CascadeRung("org", "org", "178", "K")
     autre = chain_shadow.ChainPick("user", credentials_store.MEMBER, "178:u")
     assert chain_shadow.classify(legacy, autre, acl_refus=False,
-                                 free_tier_ouvert=False) == chain_shadow.INCONNU
+                                 hors_modele=None) == chain_shadow.INCONNU
 
 
 def test_le_vocabulaire_des_classes_est_ferme():

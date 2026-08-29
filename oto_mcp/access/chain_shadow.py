@@ -30,6 +30,7 @@ et c'est la seule que la fenêtre doit voir à zéro.
 | `elargissement_equipe` | la cascade ne lit que l'équipe **ACTIVE** ; l'ensemble atteignable lit **toutes** les équipes du sujet dans l'org. Un membre de « finance » actif dans « sales » ne résout rien aujourd'hui et résoudrait la clé de finance demain. **Comptée par org**, parce que c'est un comportement servi qui change chez un client nommé |
 | `restriction_acl` | l'ancien chemin a refusé sur `connector_acl` (D1 dissout la table). 4 couples (org, connecteur) mordent en prod, pour 7 refus de personne |
 | `free_tier_hors_modele` | l'ancien chemin gagne le palier plateforme par le free-tier OUVERT (`share_mode='open'`, `share_down` vide) — et 0053 n'a **pas** de bénéficiaire « tout le monde ». C'était le seul vrai trou du modèle ; **tranché le 29/08 : une arête « tout le monde » explicite d'abord, l'extinction mesurée connecteur par connecteur ensuite.** Cette classe doit donc tomber à **zéro** avant le retrait (PR 3), et c'est l'arête posée en PR 2 qui l'y amène |
+| `partage_hors_modele` | la clé plateforme est FERMÉE sur une allowlist (`share_down`) **et aucune arête ne l'exprime**. Sœur de la précédente, autre remède : ce sont les arêtes NOMINATIVES qui manquent. Le semis de L5 ne couvrait que les connecteurs basculés, donc toute clé fermée hors de cette liste est dans ce cas. Vécu le 29/08 : 17 observations sur `aiark` et `apify` tombaient en `inconnu` faute de ce nom — une divergence parfaitement explicable qui fermait la porte pour une raison fausse |
 | `perso_cross_org` | l'instance personnelle cross-org (#172) : la cascade suit la clé du sujet dans une AUTRE org, l'ensemble atteignable de 0053 est scopé à l'org de contexte |
 
 ## Deux règles de méthode, tenues mécaniquement
@@ -73,10 +74,11 @@ ACCORD = "accord"
 ELARGISSEMENT_EQUIPE = "elargissement_equipe"
 RESTRICTION_ACL = "restriction_acl"
 FREE_TIER_HORS_MODELE = "free_tier_hors_modele"
+PARTAGE_HORS_MODELE = "partage_hors_modele"
 PERSO_CROSS_ORG = "perso_cross_org"
 INCONNU = "inconnu"
 CLASSES = (ACCORD, ELARGISSEMENT_EQUIPE, RESTRICTION_ACL, FREE_TIER_HORS_MODELE,
-           PERSO_CROSS_ORG, INCONNU)
+           PARTAGE_HORS_MODELE, PERSO_CROSS_ORG, INCONNU)
 
 # Période de versement de l'ACCORD, en secondes. L'accord est le cas nominal : le
 # compter en base à chaque appel mettrait une écriture sur le chemin chaud d'un
@@ -117,39 +119,61 @@ def _group_ids(sub: str, org: Optional[int]) -> list[int]:
         return []
 
 
-def _platform_pick(sub: str, provider: str, org: Optional[int]) -> "tuple[Optional[ChainPick], bool]":
+def _platform_pick(sub: str, provider: str, org: Optional[int]) -> "tuple[Optional[ChainPick], Optional[str]]":
     """Le palier plateforme vu par la CHAÎNE SEULE, et rien d'autre.
 
-    Rend `(pick, free_tier_ouvert)`. À la différence de `grants_chain.platform_rung`,
+    Rend `(pick, hors_modele)`. À la différence de `grants_chain.platform_rung`,
     aucun gate `CHAIN_CONNECTORS` : L7 fait de la chaîne l'unique autorité, donc la
     question « et pour un connecteur non basculé ? » est précisément celle qu'on
     mesure. Les arêtes sont lues par la MÊME fonction que le chemin servi
     (`db_grants.edges_for`) — pas une requête recopiée.
 
-    `free_tier_ouvert` = il existe une instance plateforme ouverte à tous
-    (`share_mode='open'` et aucune allowlist). C'est ce que 0053 ne sait pas dire,
-    et le drapeau est ce qui permet de le CLASSER au lieu de le subir."""
+    **`hors_modele` nomme la NUANCE du trou**, et ce n'est plus un booléen. Une ligne
+    du coffre peut accorder de deux façons que la chaîne ne sait pas encore dire, et
+    elles n'ont ni le même remède ni la même lecture :
+
+    - **ouverte à tous** (`share_mode='open'`, aucune allowlist) ⟹ il manque l'arête
+      « tout le monde » ;
+    - **fermée sur une allowlist** (`share_down`) ⟹ il manque les arêtes NOMINATIVES
+      de cette allowlist. Le semis de L5 ne couvrait que `CHAIN_CONNECTORS`, donc
+      toute clé fermée hors de cette liste est dans ce cas.
+
+    Les distinguer n'est pas un raffinement : sans la seconde, une divergence
+    parfaitement explicable tombait en `inconnu` — la classe qui doit rester à zéro
+    pour autoriser le retrait — et fermait la porte pour une raison fausse. Vécu le
+    2026-08-29 : 17 observations sur `aiark` et `apify`, deux clés FERMÉES accordées
+    à une org, sans une seule arête.
+
+    La forme est lue au coffre, à sa source, sans rejouer la règle d'accès de
+    l'ancien chemin : on regarde ce que l'instance EST, pas qui elle autorise."""
     scopes = grants_chain.grantee_scopes(sub, org)
-    ouvert = False
+    hors_modele = None
     for inst in credentials_store.list_platform_instances(provider):
-        if inst.get("share_mode") != "closed" and not (inst.get("share_down") or []):
-            ouvert = True
         edges = db_grants.edges_for(grants_chain.instance_ref(inst["label"], provider),
                                     scopes)
         if not edges:
+            # Rien à dire sur CETTE instance : on note de quelle nuance de trou il
+            # s'agirait si l'ancien chemin, lui, accordait. La première rencontrée
+            # gagne — même ordre que l'ancien chemin (récente d'abord).
+            if hors_modele is None:
+                ouverte = (inst.get("share_mode") != "closed"
+                           and not (inst.get("share_down") or []))
+                hors_modele = (FREE_TIER_HORS_MODELE if ouverte
+                               else PARTAGE_HORS_MODELE)
             continue
         if any(e.get("revoked_at") is None for e in edges):
             return (ChainPick("platform", credentials_store.PLATFORM, inst["label"],
-                              via="grant"), ouvert)
+                              via="grant"), hors_modele)
         # Toutes révoquées : la chaîne REFUSE cette instance, sans repli (0053-D6).
-        return (None, ouvert)
-    return (None, ouvert)
+        return (None, hors_modele)
+    return (None, hors_modele)
 
 
 def chain_verdict(sub: str, provider: str, *, org: Optional[int],
-                  want: str = "auto") -> "tuple[Optional[ChainPick], bool]":
+                  want: str = "auto") -> "tuple[Optional[ChainPick], Optional[str]]":
     """L'instance que 0053-D2 désignerait pour cet appel, **et** le drapeau
-    « free-tier ouvert ». Les deux ensemble, en UNE passe : les rendre séparément
+    **la nuance du trou** quand la chaîne se tait. Les deux ensemble, en UNE passe :
+    les rendre séparément
     ferait relire les instances plateforme deux fois par appel, précisément sur le
     connecteur le plus trafiqué (une clé ouverte est le cas où la chaîne se tait).
 
@@ -169,7 +193,7 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
                 # Le drapeau free-tier ne sert QUE si la chaîne se tait : un
                 # palier gagnant le rend sans avoir lu les instances plateforme.
                 return (ChainPick("user", credentials_store.MEMBER,
-                                  credentials_store.member_id(org, sub)), False)
+                                  credentials_store.member_id(org, sub)), None)
         except Exception:  # noqa: BLE001
             logger.debug("shadow L7 : palier membre illisible", exc_info=True)
     if porteur in providers.ORG_SHAREABLE_PROVIDERS:
@@ -187,13 +211,13 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
         for gid in gids:
             try:
                 if group_store.has_group_secret(gid, porteur):
-                    return (ChainPick("group", "group", str(gid), group_id=gid), False)
+                    return (ChainPick("group", "group", str(gid), group_id=gid), None)
             except Exception:  # noqa: BLE001
                 logger.debug("shadow L7 : équipe %s illisible", gid, exc_info=True)
         if org is not None:
             try:
                 if org_store.has_org_secret(org, porteur):
-                    return (ChainPick("org", "org", str(org)), False)
+                    return (ChainPick("org", "org", str(org)), None)
             except Exception:  # noqa: BLE001
                 logger.debug("shadow L7 : palier org illisible", exc_info=True)
         # Étage TENANT (L-clés PR 1) : le même que dans le walker, lu à la même source
@@ -211,14 +235,14 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
                     verdict = grants_chain.tenant_rung(slug, porteur, org)
                     if verdict is None or verdict.granted:
                         return (ChainPick("tenant", credentials_store.TENANT, slug,
-                                          via="grant" if verdict else "appartenance"), False)
+                                          via="grant" if verdict else "appartenance"), None)
             except Exception:  # noqa: BLE001
                 logger.debug("shadow L7 : palier tenant illisible", exc_info=True)
     if want != "byo":
         con = providers.connector_for_provider(porteur)
         if con is not None and "platform" in con.auth_modes:
             return _platform_pick(sub, porteur, org)
-    return (None, False)
+    return (None, None)
 
 
 def chain_winner(sub: str, provider: str, *, org: Optional[int],
@@ -240,7 +264,7 @@ def _key(x) -> Optional[tuple]:
 
 
 def classify(legacy, chain: Optional[ChainPick], *, acl_refus: bool,
-             free_tier_ouvert: bool) -> str:
+             hors_modele: Optional[str] = None) -> str:
     """La classe d'un couple de verdicts. Fonction PURE — c'est elle que le test
     exerce sur les formes relevées en prod, sans base."""
     if acl_refus:
@@ -253,8 +277,9 @@ def classify(legacy, chain: Optional[ChainPick], *, acl_refus: bool,
     if chain is not None and chain.mode == "group":
         return ELARGISSEMENT_EQUIPE
     if (chain is None and legacy is not None
-            and getattr(legacy, "mode", None) == "platform" and free_tier_ouvert):
-        return FREE_TIER_HORS_MODELE
+            and getattr(legacy, "mode", None) == "platform" and hors_modele):
+        # La NUANCE vient de la forme de l'instance, pas d'un `if` de plus ici.
+        return hors_modele
     return INCONNU
 
 
@@ -308,8 +333,8 @@ def observe(provider: str, sub: Optional[str], org: Optional[int], legacy, *,
         return
     try:
         porteur = providers.credential_provider(provider)
-        chain, ouvert = chain_verdict(sub, porteur, org=org, want=want)
-        classe = classify(legacy, chain, acl_refus=acl_refus, free_tier_ouvert=ouvert)
+        chain, hors_modele = chain_verdict(sub, porteur, org=org, want=want)
+        classe = classify(legacy, chain, acl_refus=acl_refus, hors_modele=hors_modele)
         if classe == ACCORD:
             _compte_accord(porteur, int(org or 0))
             return
