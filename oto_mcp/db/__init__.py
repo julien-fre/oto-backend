@@ -33,6 +33,7 @@ from . import (
     connector_grants,
     connector_instances,
     grants,
+    access_shadow,
     keys,
     usage,
     platform_instructions,

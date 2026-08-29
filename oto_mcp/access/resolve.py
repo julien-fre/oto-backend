@@ -23,7 +23,7 @@ from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import (providers, credentials_store, db, group_store, instance_refs, org_store, session_org)
-from . import cascade, quotas, rbac, scope
+from . import cascade, chain_shadow, quotas, rbac, scope
 
 logger = logging.getLogger(__name__)
 
@@ -165,7 +165,17 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # RBAC connecteur interne à l'org (ADR 0025) — backstop DUR : un connecteur
     # restreint dans l'org du sub n'est résolu que pour les principals autorisés
     # (département/user). Avant toute résolution → couvre keyed/fields/BYO.
-    rbac.require_connector_access(provider, sub)
+    #
+    # Fenêtre de double lecture L7 (blueprint ADR 0053) : ce refus-ci est le seul
+    # que la chaîne ne sait PAS reproduire — 0053-D1 dissout les lignes de
+    # restriction. On l'observe donc AVANT de relever, sinon la classe qui compte le
+    # plus (`restriction_acl`) serait la seule qu'on ne verrait jamais. L'observation
+    # ne peut ni lever ni changer le refus servi.
+    try:
+        rbac.require_connector_access(provider, sub)
+    except McpError:
+        chain_shadow.observe_acl_refus(provider, sub, want=want)
+        raise
 
     # Instance EXPLICITE de l'appel (`_instance=`, ADR 0038 §C/B6) : si le ref épinglé
     # vise CE provider, on résout EXACTEMENT cette ligne du coffre — jamais de
@@ -307,6 +317,13 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     win = cascade.cascade_winner(sub, provider, org=active_org,
                          group=lambda: scope.current_group(sub),
                          probe=probe, want=want)
+
+    # Fenêtre de double lecture L7 (blueprint ADR 0053) : la chaîne calcule à côté,
+    # `win` décide. Posée ICI, après la marche et avant les gardes qui lèvent, pour
+    # observer le verdict de la CASCADE — les gardes qui suivent (compte nommé,
+    # quota) sont des crans de l'instance, pas des questions d'accès, et les
+    # rejouer produirait du faux écart. Ne lève jamais, ne rend rien.
+    chain_shadow.observe(provider, sub, active_org, win, want=want)
 
     # Garde post-marche (review #399 F2) : un compte NOMMÉ (param/axe/épinglage)
     # qui n'a gagné à AUCUN palier à clé lève « introuvable » — jamais une clé

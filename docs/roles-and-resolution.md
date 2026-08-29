@@ -155,6 +155,28 @@ lazy (callable) côté fetch. Échec « rien ne résout » : l'erreur remonte le
 membre, autres orgs) avec le geste per-call en tête (`_group=`/`_org=`/`_instance=`) ;
 le drawer reçoit le même signal via `status_for.team_key_group`.
 
+### Fenêtre de double lecture L7 (2026-08-29, `access/chain_shadow.py`)
+
+Le walker **décide encore**, mais il n'est plus seul à calculer : depuis PR 1 du lot
+L7 (blueprint ADR 0053), la **chaîne de grants** résout en parallèle et les deux
+verdicts sont comparés, classés et comptés dans `access_shadow_l7`. Rien de ce qui
+est servi ne change — l'observation ne peut ni lever, ni modifier un verdict, et
+`OTO_L7_SHADOW=0` l'éteint sans déploiement.
+
+Le point à retenir pour qui lit la cascade : **quatre divergences sont ATTENDUES**,
+et ce sont des décisions de l'ADR, pas des bugs — la chaîne lit **toutes** les
+équipes du sujet quand la cascade ne lit que l'**active** (`elargissement_equipe`) ;
+elle ignore `connector_acl`, que 0053-D1 dissout (`restriction_acl`) ; elle n'a pas
+de bénéficiaire « tout le monde » pour une clé plateforme ouverte
+(`free_tier_hors_modele`, comblé par une arête explicite en PR 2) ; et son ensemble
+atteignable est scopé à l'org, là où la cascade suit une clé personnelle cross-org
+(`perso_cross_org`). Seule la classe `inconnu` doit rester à zéro : c'est elle qui
+ouvre la porte de l'inversion.
+
+Lecture sans SQL : `oto_admin_access_shadow(op='read')` / `GET /api/admin/access-shadow`
+(plancher opérateur) — le bloc `verdict` dit `porte_ouverte` seulement si le
+dénominateur est non nul ET qu'aucun `inconnu` n'est tombé.
+
 Quota daily per-grant : colonne `user_grants.daily_quota` (posé par l'admin
 au moment du grant). Si NULL, fallback sur env `OTO_MCP_QUOTA_<PROVIDER>_DAILY`
 ou `_QUOTA_DEFAULTS` dans `access/quotas.py`. User key bypass quota.

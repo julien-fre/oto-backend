@@ -91,8 +91,14 @@ from oto_mcp.db import _schema, schema
 # élargissement ne demande pas un déploiement. ADDITIVE : rien n'est retiré ni
 # contraint sur les tables existantes, et la prod qui tourne l'ancien code ne la lit
 # pas. Sans ligne posée, comportement et empreinte identiques.
-EMPREINTE = "6d6208467f8762a9b8131d7ac08b91be564bc0d5a85bcb581adb416f303ecf9e"
-LONGUEUR = 114111
+# 2026-08-29 (L7, PR 1 — fenêtre de double lecture, blueprint ADR 0053) : la table
+# NEUVE `access_shadow_l7`, compteur de la comparaison entre la chaîne de grants et
+# la cascade. ADDITIVE et sans lecteur sur le chemin servi : rien n'est retiré, rien
+# n'est contraint sur les tables existantes, et la prod qui tourne l'ancien code ne
+# la voit pas. Elle se retire par un `DROP TABLE` — c'est ce qui rend cette PR
+# réversible, l'irréversible étant le RETRAIT de `walk_cascade`, deux PR plus loin.
+EMPREINTE = "deeed3364c561566547c434dabc25218a4f6eb28871bbd557c6cdeb2338ad3a5"
+LONGUEUR = 116045
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
