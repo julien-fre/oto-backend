@@ -18,7 +18,7 @@ Public ingress to the instance is **ports 80 and 443 only**; SSH is not exposed 
 
 ## 2. Reporting a vulnerability
 
-Email **alexis@otomata.tech**. Please do **not** open a public GitHub issue for a suspected vulnerability. This is the same address published in `CONTRIBUTING.md` of `otomata-tech/oto` and on <https://trust.oto.zone>.
+Email **security@otomata.tech**. Please do **not** open a public GitHub issue for a suspected vulnerability.
 
 - Expected first response: within 5 business days. Otomata is a very small team. There is **no bug bounty** and no paid reward programme.
 - Include enough detail to reproduce, and allow a reasonable period to ship a fix before public disclosure.
