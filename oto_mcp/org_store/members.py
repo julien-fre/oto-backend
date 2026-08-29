@@ -247,6 +247,23 @@ def list_org_members(org_id: int) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def get_org_member_by_email(org_id: int, email: str) -> Optional[dict]:
+    """Le membre de l'org dont le COMPTE porte cet email (`users.email`, comparé en
+    minuscules après strip), ou None. Sert au refus « déjà membre » d'une invitation
+    (#622) : l'invitation vise une adresse, l'appartenance un `sub` — c'est ici que
+    les deux se rejoignent."""
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT m.sub, m.org_role FROM org_members m JOIN users u ON u.sub = m.sub "
+            "WHERE m.org_id = %s AND lower(u.email) = %s LIMIT 1",
+            (org_id, email),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def get_org_role(org_id: int, sub: str) -> Optional[str]:
     with _connect() as conn:
         row = conn.execute(
