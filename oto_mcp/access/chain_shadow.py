@@ -58,7 +58,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from .. import credentials_store, grants_chain, group_store, org_store, providers
+from .. import (credentials_store, grants_chain, group_store, org_store, providers,
+                tenant_vault)
 from ..db import access_shadow as db_shadow
 from ..db import grants as db_grants
 from . import scope
@@ -97,7 +98,7 @@ class ChainPick:
     `CascadeRung.mode`, pour que la comparaison soit une égalité et pas une
     traduction. `via` dit POURQUOI l'instance est atteignable — appartenance au
     scope propriétaire (D1, premier membre de phrase) ou arête de grant (second)."""
-    mode: str                       # user | group | org | platform
+    mode: str                       # user | group | org | tenant | platform
     entity_type: Optional[str]
     entity_id: Optional[str]
     via: str = "appartenance"       # appartenance | grant
@@ -195,6 +196,18 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
                     return (ChainPick("org", "org", str(org)), False)
             except Exception:  # noqa: BLE001
                 logger.debug("shadow L7 : palier org illisible", exc_info=True)
+        # Étage TENANT (L-clés PR 1) : le même que dans le walker, lu à la même source
+        # (`rung_tenant` — le sub qualifié, jamais l'org). Sans lui, chaque clé tenant
+        # servie compterait une divergence `inconnu` que ce lot aurait créée.
+        slug = tenant_vault.rung_tenant(sub)
+        if slug is not None:
+            try:
+                if (credentials_store.has_credential(credentials_store.TENANT, slug, porteur)
+                        and not credentials_store.instance_suspended(
+                            credentials_store.TENANT, slug, porteur)):
+                    return (ChainPick("tenant", credentials_store.TENANT, slug), False)
+            except Exception:  # noqa: BLE001
+                logger.debug("shadow L7 : palier tenant illisible", exc_info=True)
     if want != "byo":
         con = providers.connector_for_provider(porteur)
         if con is not None and "platform" in con.auth_modes:

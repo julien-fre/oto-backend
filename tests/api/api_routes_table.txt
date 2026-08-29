@@ -155,6 +155,12 @@ POST /api/admin/option-comps -> _handler
 OPTIONS /api/admin/option-comps -> options_handler
 GET,HEAD /api/admin/vault/health -> _handler
 OPTIONS /api/admin/vault/health -> options_handler
+GET,HEAD /api/admin/tenants/{slug}/keys -> _handler
+OPTIONS /api/admin/tenants/{slug}/keys -> options_handler
+PUT /api/admin/tenants/{slug}/keys/{provider} -> _handler
+OPTIONS /api/admin/tenants/{slug}/keys/{provider} -> options_handler
+DELETE /api/admin/tenants/{slug}/keys/{provider} -> _handler
+OPTIONS /api/admin/tenants/{slug}/keys/{provider} -> options_handler
 GET,HEAD /api/admin/tenants -> _handler
 OPTIONS /api/admin/tenants -> options_handler
 GET,HEAD /api/admin/tenants/{slug} -> _handler

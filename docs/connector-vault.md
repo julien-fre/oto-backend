@@ -155,7 +155,7 @@ connector_credentials(entity_type, entity_id, connector, account, secret_enc,
                       secret_kind, meta JSONB, set_by, set_at,
                       PK(entity_type, entity_id, connector, account))
 ```
-- `entity_type` ∈ {`user`,`org`} ; `entity_id` = `sub` | `org_id::text`. Toujours requêter `(entity_type, entity_id)` ENSEMBLE.
+- `entity_type` ∈ {`member`, `user`, `org`, `group`, `tenant`, `platform`} ; `entity_id` = `org:sub` (member, ADR 0033) | `sub` (user, résidu OAuth) | `org_id::text` | `group_id::text` | **slug du tenant** (L-clés PR 1, 2026-08-29 — façade `tenant_vault`) | label de la clé (platform, ADR 0044 §F). Toujours requêter `(entity_type, entity_id)` ENSEMBLE. ⚠️ Cette ligne a dit `{user, org}` du 2026-06 au 2026-08-29 alors que quatre valeurs de plus étaient servies.
 - `account` = discriminant **multi-compte** ('' = mono ; ex. email Google). 1 ligne par compte connecté.
 - `secret_enc` = enveloppe chiffrée (pas de colonne plaintext). `meta` = satellites NON-secrets (user_agent linkedin/crunchbase, access_token/expires_at/scopes/is_default google).
 

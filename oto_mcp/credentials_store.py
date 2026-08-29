@@ -62,6 +62,11 @@ MEMBER = "member"
 # (fin de la table legacy `platform_keys`). `entity_id` = le label de la clé (N par
 # connecteur, cf. l'ex-`UNIQUE(provider,label)`). `meta` porte sa config non-secrète (dsn…).
 PLATFORM = "platform"
+# Scope TENANT (L-clés PR 1, blueprint ADR 0052) : la clé partagée d'un tenant TIERS —
+# `entity_id` = le slug. Étage entre l'org et la plateforme dans la cascade ; façade
+# `tenant_vault`. Le tenant primaire n'en porte jamais : ses clés partagées sont les
+# instances PLATFORM (refus à la pose, barreau jamais sondé — les deux d'un même geste).
+TENANT = "tenant"
 
 
 def member_id(org_id: int, sub: str) -> str:

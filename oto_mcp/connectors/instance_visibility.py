@@ -71,7 +71,8 @@ def _owner_scope(owner_type: str, owner_id: str) -> Optional[str]:
         return f"user:{sub}" if sub else None
     if owner_type == "user":
         return f"user:{owner_id}" if owner_id else None
-    if owner_type in ("org", "group"):
+    if owner_type in ("org", "group", credentials_store.TENANT):
+        # Le scope du tenant est celui des arêtes de `grants` (`tenant:<slug>`, L-clés).
         return f"{owner_type}:{owner_id}" if owner_id else None
     return None
 
@@ -171,10 +172,11 @@ def derive(owner_type: str, owner_id: str, connector: str, *, account: str = "",
     if owner_type == credentials_store.PLATFORM:
         audience = _platform_audience(connector, share_mode, share_down,
                                       label=str(owner_id))
-    elif owner_type in ("org", "group"):
-        # Les paliers PARTAGÉS ne sont traversés par le walker que pour un connecteur
-        # org-partageable : une clé d'équipe sur un connecteur par-personne existe au
-        # coffre et n'est lue par personne. L'annoncer visible serait faux.
+    elif owner_type in ("org", "group", credentials_store.TENANT):
+        # Les paliers PARTAGÉS (équipe, org, tenant — L-clés PR 1) ne sont traversés
+        # par le walker que pour un connecteur org-partageable : une clé d'équipe sur
+        # un connecteur par-personne existe au coffre et n'est lue par personne.
+        # L'annoncer visible serait faux.
         audience = [proprietaire] if (proprietaire and
                                       providers.is_org_shareable(connector)) else []
     else:

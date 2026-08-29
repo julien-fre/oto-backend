@@ -72,12 +72,14 @@ oto_mcp/
 │                     #   Séparé de tools/ : le registre doit rester PUR (tools/ importe
 │                     #   access → le registre, et se charge en try/except — une dép
 │                     #   optionnelle manquante retirerait le connecteur du catalogue).
-├── access/           # rôles, contexte, cascade de credentials, quotas (package depuis le 27/08 — 2 000 lignes en 7 modules). Surface plate `access.<fn>` via __init__, cf. ci-dessous
+├── access/           # rôles, contexte, cascade de credentials, quotas (package depuis le 27/08 — 2 000 lignes en 9 modules). Surface plate `access.<fn>` via __init__, cf. ci-dessous
 │   ├── scope.py      #   qui agit : rôle plateforme, current_org/group/project, ce que le projet ÉPINGLE
 │   ├── quotas.py     #   ce qui est métré (quota jour, usage) et ce qui est payé (option, comp, abonnement)
-│   ├── cascade.py    #   le WALKER unique perso > cross-org > équipe > org > plateforme + ses 3 sondes
+│   ├── cascade.py    #   le WALKER unique perso > cross-org > équipe > org > TENANT (L-clés, 29/08) > plateforme + ses 3 sondes
 │   ├── rbac.py       #   qui a le droit : RBAC connecteur org/équipe, tools masqués, garde d'instance, redaction
-│   ├── resolve.py    #   la résolution réelle d'un credential (chemin chaud) + l'endpoint anonyme
+│   ├── resolved_credential.py  # le TYPE rendu par toute résolution (extrait de resolve le 29/08, cliquet #584)
+│   ├── resolve_anon.py  # l'endpoint MCP anonyme (ADR 0032), extrait de resolve le 29/08 — pas d'étage tenant (L1)
+│   ├── resolve.py    #   la résolution réelle d'un credential (chemin chaud)
 │   ├── views.py      #   vues minces : resolve_api_key/_fields, mount, credential_mode_for, option_open
 │   └── status.py     #   le snapshot par connecteur de /api/me
 ├── db/               # store PG (package) : _conn (pool/connexion), _schema (DDL), _init (migrations) + 1 module/domaine (users, keys, usage, datastore, projects, opendata…). Surface plate `db.<fn>` via __init__
@@ -160,14 +162,21 @@ seulement — le nom canonique est rétabli avant que quoi que ce soit d'autre n
   l'entité) : toute fenêtre s'accompagne de la LISTE « qui repose quelles clés », prévenue avant.
 - Suivi = écran `/platform/tenants`, **lecture seule par construction** ; prise d'effet par
   `oto_admin_tenant op=reload`, ⚠️ **par-process** (recharger la preprod ne recharge pas la prod).
+- **La clé de connecteur du tenant (29/08, L-clés PR 1)** : coffre `entity_type='tenant'`
+  (`entity_id` = slug), étage `org > tenant > plateforme` de la cascade, pose REST seule
+  (`PUT /api/admin/tenants/{slug}/keys/{provider}`, super_admin), `oto_admin_tenant op=keys|key_clear`.
+  Le tenant `oto` n'en porte pas (ses clés partagées sont les instances plateforme). Reste (PR 2) :
+  le rôle « admin de tenant » et l'arête tenant→org de 0053.
 
 **Détail : `docs/tenants.md`.**
 
 ## Rôles + résolution de clé API
 
 3 paliers `member < admin < super_admin` (accès admin UI). Résolution de clé par appel :
-`clé membre (sub, org) > group_secret > org_secret > platform_grant` (chemin platform gaté
-sur `auth_modes`). Tout connecteur dont le credential se **POSE** est **multi-compte**
+`clé membre (sub, org) > group_secret > org_secret > clé de TENANT > platform_grant` (chemin
+platform gaté sur `auth_modes` ; **l'étage tenant depuis le 29/08, L-clés PR 1** : la clé partagée
+du tenant de l'APPELANT, lu sur son sub qualifié, jamais sur le rattachement de l'org — un sub nu
+n'a pas ce barreau, `docs/tenants.md`). Tout connecteur dont le credential se **POSE** est **multi-compte**
 (comptes nommés membre/équipe/org, sélection `_account=` / `account` / `is_default`).
 ⚠️ Un compte nommé introuvable partout ⇒ « introuvable » après la marche, **jamais un repli
 plateforme silencieux**. ⚠️ **Le nombre de champs du credential ne dit RIEN de la cardinalité** —

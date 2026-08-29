@@ -204,6 +204,17 @@ def guard_instance_access(sub: str, ref) -> Optional[int]:
                 code=INVALID_PARAMS,
                 message=f"Instance refusée : tu n'es pas membre de l'org #{ref.org_id}."))
         return ref.org_id
+    if ref.level == "tenant":
+        # L-clés PR 1 : la clé d'un tenant s'épingle par ses comptes et eux seuls — le
+        # tenant se lit sur le sub qualifié (`rung_tenant`), jamais sur l'org. Le
+        # contexte reste celui de l'APPELANT (la clé ne porte pas d'org).
+        from .. import tenant_vault
+        if tenant_vault.rung_tenant(sub) != ref.tenant:
+            raise McpError(ErrorData(
+                code=INVALID_PARAMS,
+                message=(f"Instance refusée : cette clé appartient au tenant "
+                         f"`{ref.tenant}`, et ton compte n'en relève pas.")))
+        return scope.current_org(sub)
     raise McpError(ErrorData(
         code=INVALID_PARAMS,
         message="Les refs `platform:` ne s'épinglent pas (le grant plateforme se "

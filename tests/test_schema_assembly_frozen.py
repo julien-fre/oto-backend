@@ -97,8 +97,8 @@ from oto_mcp.db import _schema, schema
 # n'est contraint sur les tables existantes, et la prod qui tourne l'ancien code ne
 # la voit pas. Elle se retire par un `DROP TABLE` — c'est ce qui rend cette PR
 # réversible, l'irréversible étant le RETRAIT de `walk_cascade`, deux PR plus loin.
-EMPREINTE = "deeed3364c561566547c434dabc25218a4f6eb28871bbd557c6cdeb2338ad3a5"
-LONGUEUR = 116045
+EMPREINTE = "8fc71c631fe4d998833179ddc56e84df205f16a9218fd43800e4593d6edb1f71"
+LONGUEUR = 116200
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

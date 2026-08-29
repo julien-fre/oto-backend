@@ -20,7 +20,7 @@ def snapshot(monkeypatch):
     # résolution — faire marcher la vraie cascade le ferait dépendre d'une base.
     muette = access.CascadeProbe(
         member=lambda s, o, p: None, member_cross=lambda s, o, p: None,
-        group=lambda g, p: None, org=lambda o, p: None,
+        group=lambda g, p: None, org=lambda o, p: None, tenant=lambda t, p: None,
         platform=lambda s, p, o: None)
     monkeypatch.setattr(access, "preloaded_presence_probe",
                         lambda sub, *, org, groups=None: muette)

@@ -28,7 +28,8 @@ def status_for(sub: str, *, org: "int | None | object" = scope._UNSET,
                group: "int | None | object" = scope._UNSET) -> dict:
     """Snapshot pour `/api/me` — rôle + statut par provider :
 
-    - `mode` : `user` (clé perso) | `platform` (grant + quota OK)
+    - `mode` : `user` (clé perso) | `group` | `org` | `tenant` (clé partagée du
+              tenant de l'appelant, L-clés PR 1) | `platform` (grant + quota OK)
               | `over_quota` (grant mais quota épuisé)
               | `forbidden` (ni user key ni grant)
 

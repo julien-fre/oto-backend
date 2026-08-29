@@ -141,7 +141,7 @@ def _resolve_context(sub: str | None, org_id: int) -> dict:
             providers_status = (access.status_for(sub).get("providers") or {})
             connectors = sorted(
                 name for name, st in providers_status.items()
-                if st.get("mode") in ("user", "group", "org", "platform")
+                if st.get("mode") in ("user", "group", "org", "tenant", "platform")
             )
         # noqa: SILENT — dette déclarée : l'agent croit n'avoir aucune clé (#424, verdict C — le pire)
         except Exception:
