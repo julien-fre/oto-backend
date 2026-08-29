@@ -299,12 +299,79 @@ def test_la_fusion_par_cle_et_le_lot_refusent_aussi(banc):
 
 # ── ce que le cran ne ferme PAS, et c'est voulu ──────────────────────────────
 
-def test_le_round_trip_a_l_identique_PASSE(banc):
-    """Relire une ligne entière et la repousser est le geste normal (#390) : une
-    valeur inchangée n'est pas une modification."""
+def test_reecrire_la_valeur_IDENTIQUE_d_une_readonly_est_refusee_et_garde_le_comment(banc):
+    """Trou éprouvé sur copie jetable, v1.165.0 (29/08/2026) : l'identique passait
+    (« rien n'a changé ») et `adresse.comment` tombait avec — la règle « une valeur nue
+    réécrite emporte ses couches » jouait là où tout le dispositif tient à la couche.
+    Un agent qui réémet sa fiche avec l'adresse inchangée effaçait la divergence qu'il
+    venait d'écrire. Désormais : refus, identique compris, même message — et le
+    comment reste."""
     st, etat = banc
-    st.update_row("viviers", "r1", dict(_LIGNE, libre="note"))
-    assert etat["maj"] == ["r1"] and etat["lignes"]["r1"]["libre"] == "note"
+    st.update_row("viviers", "r1", {"adresse": {"comment": "registre — 2 rue B"}})
+    with pytest.raises(RowValidationError) as exc:
+        st.update_row("viviers", "r1", {"adresse": "1 rue A"})
+    assert "`adresse.comment`" in str(exc.value)
+    assert exc.value.details == {"expected_column": "adresse.comment"}
+    assert etat["lignes"]["r1"]["adresse"] == {"valeur": "1 rue A",
+                                              "comment": "registre — 2 rue B"}
+
+
+def test_le_round_trip_ENTIER_sur_une_readonly_est_refuse(banc):
+    """Relire → repousser la ligne entière porte la valeur nue de la colonne source :
+    refusé, parce que l'agent n'a aucun cas où réécrire cette valeur est utile. Le
+    round-trip se fait sans elle."""
+    st, etat = banc
+    with pytest.raises(RowValidationError, match="`adresse`"):
+        st.update_row("viviers", "r1", dict(_LIGNE, libre="note"))
+    assert etat["maj"] == []
+    st.update_row("viviers", "r1", {"siren": "552081317", "raison_sociale": "ACME",
+                                    "libre": "note"})
+    assert etat["lignes"]["r1"]["libre"] == "note"
+
+
+def test_le_lot_refuse_l_identique_sur_une_readonly_et_garde_le_comment(banc):
+    st, etat = banc
+    st.update_row("viviers", "r1", {"adresse": {"comment": "registre — 2 rue B"}})
+    with pytest.raises(RowValidationError) as exc:
+        st._write_rows_to_ns(7, [{"siren": "552081317", "adresse": "1 rue A"}],
+                             key="siren")
+    assert "ligne 1/1" in str(exc.value) and "`adresse.comment`" in str(exc.value)
+    assert etat["lignes"]["r1"]["adresse"]["comment"] == "registre — 2 rue B"
+
+
+# ── le substrat : une valeur nue IDENTIQUE est un no-op qui garde les couches ──
+
+def test_une_valeur_nue_identique_PRESERVE_les_couches(banc):
+    """Le round-trip relire → repousser (#390) ne doit jamais détruire un `comment`,
+    un `link` ou une `origine` : la lecture sert la valeur nue (`flat_layers` met les
+    couches à côté, sous `champ.couche`), donc un round-trip fidèle repousse la valeur
+    nue — et la règle « réécrire la valeur emporte ses couches » la détruisait. Une
+    valeur IDENTIQUE n'est pas une réécriture : rien ne bouge, rien ne tombe. Sur
+    toute colonne, readonly ou non — ici `libre`, sur les trois chemins."""
+    st, etat = banc
+    st.update_row("viviers", "r1", {"libre": {"valeur": "x", "comment": "c",
+                                              "link": "https://l", "origine": "o"}})
+    couches = {"valeur": "x", "comment": "c", "link": "https://l", "origine": "o"}
+    st.update_row("viviers", "r1", {"libre": "x"})
+    assert etat["lignes"]["r1"]["libre"] == couches
+    st.append_row("viviers", {"siren": "552081317", "libre": "x"})
+    assert etat["lignes"]["r1"]["libre"] == couches
+    st._write_rows_to_ns(7, [{"siren": "552081317", "libre": "x"}], key="siren")
+    assert etat["lignes"]["r1"]["libre"] == couches
+    # Une valeur DIFFÉRENTE, elle, reste une réécriture : comment/link tombent,
+    # origine survit — la règle de #322/#326, inchangée.
+    st.update_row("viviers", "r1", {"libre": "y"})
+    assert etat["lignes"]["r1"]["libre"] == {"valeur": "y", "origine": "o"}
+
+
+def test_identique_se_juge_au_TYPE_pres():
+    """`0` et `False` sont égaux pour Python, pas pour une colonne : écrire `False`
+    sur `0` est une réécriture, pas un no-op."""
+    from oto_mcp.datastore.columns import _merge_column
+    assert _merge_column({"valeur": 0, "comment": "c"}, False) == {"valeur": False}
+    assert _merge_column({"valeur": 0, "comment": "c"}, 0) == {"valeur": 0, "comment": "c"}
+    assert _merge_column("x", "x") == "x"
+    assert _merge_column(None, None) is None
 
 
 def test_annoter_sans_toucher_la_valeur_PASSE(banc):

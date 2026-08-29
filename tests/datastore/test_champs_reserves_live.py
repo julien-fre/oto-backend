@@ -110,6 +110,21 @@ def test_un_refus_ne_laisse_AUCUNE_trace(table):
     assert _donnees(ns_id, rid) == avant
 
 
+def test_une_valeur_identique_ne_detruit_pas_le_comment_en_base(table):
+    """v1.165.0, trou du terrain : le comment posé sur une colonne source tombait au
+    round-trip suivant. Sur `raison_sociale` (libre) l'identique est un no-op qui
+    garde les couches ; sur `adresse` (readonly) il est refusé — et garde les couches."""
+    st, ns, ns_id, rid = table
+    st.update_row(ns, rid, {"raison_sociale": {"comment": "vérifiée"},
+                            "adresse": {"comment": "registre — 2 rue B"}})
+    st.update_row(ns, rid, {"raison_sociale": "TEMOIN"})
+    with pytest.raises(RowValidationError, match="`adresse.comment`"):
+        st.update_row(ns, rid, {"adresse": "1 rue A"})
+    d = _donnees(ns_id, rid)
+    assert d["raison_sociale"] == {"valeur": "TEMOIN", "comment": "vérifiée"}
+    assert d["adresse"] == {"valeur": "1 rue A", "comment": "registre — 2 rue B"}
+
+
 def test_patch_schema_pose_et_leve_sans_toucher_les_lignes(table):
     """Lever le cran par `null` : le schéma ne le porte plus, la couche déjà posée
     reste — et l'appelant retrouve la main sur l'origine."""
