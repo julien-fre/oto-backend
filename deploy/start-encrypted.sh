@@ -1,9 +1,19 @@
 #!/bin/bash
-# MIROIR VERSIONNÉ de /opt/oto-mcp/start-encrypted.sh (oto-platform, PRODUCTION).
-# Le fichier réel n'est PAS suivi par git sur la box : il est lancé par le drop-in
-# systemd oto-mcp.service.d/encryption.conf (ExecStart). Modifier ici, puis recopier
-# sur la box — un `git reset --hard` de déploiement ne le touche pas.
-# Le canari a SON PROPRE fichier, volontairement différent (pas de clé Pennylane).
+# MIROIR VERSIONNÉ du start-encrypted.sh de PRODUCTION sur oto-platform.
+# Le fichier réel vit DANS L'ARBRE DE CHAQUE COULEUR (/opt/oto-mcp-blue/ et
+# /opt/oto-mcp-green/), lancé par le gabarit systemd oto-mcp@.service. Il n'est pas
+# suivi par git sur la box : un `git reset --hard` de déploiement ne le touche pas.
+#
+# ⚠️ BLEU/VERT — il DOIT rester indépendant du chemin (dernière ligne) : le même
+# contenu sert les deux couleurs, et un chemin en dur ferait exécuter à la couleur
+# verte le venv de la bleue. Le déploiement REFUSE de continuer s'il ne l'est plus.
+# Il n'est pas non plus réinstallé depuis ce dépôt : il est PROPAGÉ de la couleur en
+# service vers la nouvelle, parce qu'il s'édite à la main sur la box quand un secret
+# s'ajoute — l'écraser depuis ici ferait disparaître ces ajouts en silence. Ce fichier
+# est donc un MIROIR à tenir à jour, pas une source qu'on déploie.
+#
+# Le canari a SON PROPRE fichier (start-encrypted-canari.sh), volontairement
+# différent : pas de clé Pennylane, et le secret Mollie est celui de test.
 set -e
 set -a; . /etc/oto-mcp/scw.env; set +a
 
@@ -48,4 +58,5 @@ else
 fi
 set -e
 
-exec /opt/oto-mcp/.venv/bin/oto-mcp
+# bleu/vert : on exécute le venv de NOTRE répertoire (même script pour les deux couleurs)
+exec "$(cd "$(dirname "$0")" && pwd)/.venv/bin/oto-mcp"
