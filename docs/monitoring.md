@@ -87,6 +87,34 @@ n'est pas encore capturé quand la ligne s'écrit. fastmcp exécute les middlewa
 l'**ordre d'ajout** (premier ajouté = plus externe). Contrat gardé par
 `tests/middleware/test_middleware_order.py`.
 
+### Lire les arguments d'un appel : `args` sur la fiche, `arg_keys` sur la liste (#634, 2026-08-30)
+
+Le journal **porte** les arguments (colonne `args`, tronqués et masqués comme ci-dessus).
+Ce qui les rend, et sous quel nom, ne se devine pas — et s'est mal deviné le 29/08/2026 :
+443 lectures de `GET /api/orgs/{id}/monitoring/calls/{call_id}` en douze minutes, conclues
+« `arguments: {}` » sur des lignes dont `args` faisait 135 à 397 caractères. Rejoué sur la
+route servie (adaptateur + PostgreSQL, `tests/test_journal_args_634.py`) : la fiche rendait
+`call.args` plein. **Aucune vue n'a jamais émis de clé `arguments`** ; un lecteur qui la
+cherche avec un défaut `{}` fabrique lui-même l'objet vide, et « je ne sais pas le lire »
+s'est écrit « on ne peut pas savoir ». Depuis ce jour, le contrat le dit :
+
+- **la fiche** (`op=call` sur les deux consoles, `GET …/calls/{call_id}` aux deux étages) :
+  `call.args`, **tels que journalisés** — tronqués à l'écriture (300 caractères par
+  valeur, valeurs composées stringifiées), jetons masqués (#582), `null` quand l'appel
+  n'en portait aucun. Un seul chemin de lecture (`get_tool_call`) pour les trois faces ;
+  le schéma de la 200 (`CallDetail`) le déclare ;
+- **la liste** (`op=calls`, `GET …/calls`) ne porte pas le contenu — une page de 200
+  lignes n'a pas à charrier 200 payloads — mais `arg_keys` : les **clés** des
+  arguments, triées, `[]` sans argument. « Cet appel portait-il un numéro d'entreprise ? »
+  se répond là, sans ouvrir une fiche, et sans qu'une valeur sorte (un secret masqué à
+  l'écriture n'a jamais eu son NOM pour secret) ;
+- **jamais un objet vide à la place d'une absence** : la liste n'a pas de champ `args`
+  (la vue ne le porte pas), la fiche rend `null` (l'appel n'en avait pas) — les deux se
+  lisent différemment, et c'est le but.
+
+Ce que la fiche ne porte toujours pas : la **forme de la réponse** (vide / non vide /
+refusée) — lot à part, même issue.
+
 ## Ce qui n'est PAS tracé
 
 Pas la connexion d'un connecteur, pas le `tools/list`. (Ce paragraphe disait « uniquement
@@ -135,8 +163,8 @@ un outil, verbe en `op` :
 | op | pour | paramètres utiles |
 |---|---|---|
 | `summary` | agrégats (totaux, par outil avec avg+p95, par user, par jour) | `days`, `org_id`, `sub` |
-| `calls` | le journal brut filtré | `tool`, `sub`, `errors`, `days`, `org_id`, `run_id`, `session_id`, `min_duration_ms`, `error_contains` |
-| `call` | la fiche d'UN appel (args + corrélation) | `call_id` |
+| `calls` | le journal brut filtré — chaque ligne porte `arg_keys`, jamais `args` | `tool`, `sub`, `errors`, `days`, `org_id`, `run_id`, `session_id`, `min_duration_ms`, `error_contains` |
+| `call` | la fiche d'UN appel (`call.args` tels que journalisés + corrélation) | `call_id` |
 | `run` / `runs` | timeline d'un déroulé / déroulés récents | `run_id`, `limit` |
 | `rest` / `connectors` / `funnel` | lentilles REST / santé connecteurs / activation | `days` |
 | `gaps` / `tool_quality` | signaux d'usage agrégés | `days` |

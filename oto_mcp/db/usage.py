@@ -685,7 +685,12 @@ def list_tool_calls(
 
     Axes d'investigation : `run_id`/`session_id` = tous les appels d'un déroulé /
     d'une conversation ; `min_duration_ms` = appels lents (chasse aux gels mono-loop) ;
-    `error_contains` = recherche substring insensible à la casse dans le message."""
+    `error_contains` = recherche substring insensible à la casse dans le message.
+
+    La ligne ne porte PAS `args` (le contenu est la fiche, `get_tool_call`) mais
+    `arg_keys` : les clés des arguments journalisés, triées, `[]` sans argument
+    (`journal_calls.ARG_KEYS_SQL`, #634) — de quoi savoir QUELS arguments un appel
+    portait sans ouvrir sa fiche, et sans jamais rendre une valeur."""
     limit = max(1, min(int(limit), 1000))
     # Les filtres de la PAGE et ceux de son plancher (#630) sortent de la même
     # construction — c'est ce qui rend les deux comptes comparables.
@@ -705,7 +710,7 @@ def list_tool_calls(
             f"""
             SELECT l.id, l.sub, u.email, u.name, l.tool AS tool_name, l.created_at AS called_at,
                    l.duration_ms, l.ok, l.error, l.session_id, l.run_id, l.org_id,
-                   l.sentry_event_id
+                   l.sentry_event_id, {journal_calls.ARG_KEYS_SQL} AS arg_keys
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
             {where}
