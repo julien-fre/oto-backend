@@ -177,11 +177,13 @@ def register(mcp: FastMCP) -> None:
         Returns: `{results: [{url, raw_content}], failed_results: [{url, error}],
             usage: {credits}}`.
         """
+        # Le refus du périmètre parle en PREMIER (#632) : « 20 maximum » serait une
+        # porte (scinder le lot) là où le périmètre dit la vraie raison.
+        url_perimeter.refuse_if_any_excluded(urls, url_perimeter.perimeter_of_call())
         if not urls:
             raise _bad("urls : au moins une URL")
         if len(urls) > 20:
             raise _bad("urls : 20 URLs maximum par appel")
-        url_perimeter.refuse_if_any_excluded(urls, url_perimeter.perimeter_of_call())
         with _upstream():
             return _client().extract(
                 urls, query=query, extract_depth=extract_depth,
@@ -216,9 +218,9 @@ def register(mcp: FastMCP) -> None:
 
         Returns: `{base_url, results: [url, …], usage: {credits}}`.
         """
-        limit = _cap_limit(limit)
         per = url_perimeter.perimeter_of_call()
         url_perimeter.refuse_if_excluded(url, per)
+        limit = _cap_limit(limit)
         with _upstream():
             result = _client().map_site(
                 url, instructions=instructions, max_depth=max_depth,
@@ -267,9 +269,9 @@ def register(mcp: FastMCP) -> None:
             `raw_content` is `null` for pages Tavily reached but could not extract
             (seen live: reference pages rendered client-side); skip those.
         """
-        limit = _cap_limit(limit)
         per = url_perimeter.perimeter_of_call()
         url_perimeter.refuse_if_excluded(url, per)
+        limit = _cap_limit(limit)
         with _upstream():
             result = _client().crawl(
                 url, instructions=instructions, max_depth=max_depth,

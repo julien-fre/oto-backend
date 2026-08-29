@@ -186,9 +186,10 @@ def register(mcp: FastMCP) -> None:
             max_chars: plafond de caractères renvoyés (troncature signalée par
                 `truncated=true`).
         """
-        site = _site_of(url)
+        # Le refus du périmètre parle en PREMIER (#632), avant la validation d'hôte.
         per = await asyncio.to_thread(url_perimeter.perimeter_of_call)
         url_perimeter.refuse_if_excluded(url, per)
+        site = _site_of(url)
         if not browserbase.is_configured():
             raise _err("Browserbase non configuré côté plateforme "
                        "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)
@@ -221,9 +222,9 @@ def register(mcp: FastMCP) -> None:
                 refusée sous les `excluded_url_prefixes` du projet.
             js: source de la fonction async à exécuter dans la page.
         """
-        site = _site_of(url)
         url_perimeter.refuse_if_excluded(
             url, await asyncio.to_thread(url_perimeter.perimeter_of_call))
+        site = _site_of(url)
         if not browserbase.is_configured():
             raise _err("Browserbase non configuré côté plateforme "
                        "(BROWSERBASE_API_KEY / BROWSERBASE_PROJECT_ID).", code=INTERNAL_ERROR)
