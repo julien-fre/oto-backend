@@ -130,6 +130,28 @@ Les lignes recopiées de la projection ont leurs quatre satellites à `NULL` :
 « access ». Leur inventer un contexte ferait mentir la trace là où elle sert de
 preuve.
 
+## Les paliers, et d'où ils viennent
+
+**La grille vit dans `billing.PLANS`, et nulle part ailleurs.** Le dashboard peint
+`plans[].amount` tel que servi par l'API, la page d'accueil d'oto.cx n'annonce que
+le point d'entrée (« à partir de 19 € ») et renvoie à cette grille, et les CGV n'en
+portent pas de copie non plus (décision du 2026-08-29 : elles renvoient à
+`https://oto.cx/#pricing`). Une deuxième liste, où qu'elle soit, est un mensonge
+en attente.
+
+| plan | HT / mois |
+| --- | --- |
+| `standard` | 19 € |
+| `premium` | **99 €** — 49 € du 2026-07-06 au 2026-08-28, 99 € depuis le 2026-08-29 (#490) |
+| `business` | 249 € |
+| `enterprise` | 499 € |
+
+Le passage de 49 à 99 € n'a touché personne : au 2026-08-29, un seul abonnement
+actif, sur `standard` — aucun sur `premium`, donc aucun effet rétroactif ni
+notification. Et rien à changer chez Mollie : il n'y a pas d'objet « plan » ni
+« prix » chez le PSP (voir la première section), chaque paiement porte son montant
+explicite, calculé à l'échéance par `tax_for_org` sur le HT du palier.
+
 ## Le montant débité est un TTC, et le pays le décide (#486)
 
 **Le prix d'un palier est un HORS TAXES.** Jusqu'au 28/08/2026 c'était ce HT qui

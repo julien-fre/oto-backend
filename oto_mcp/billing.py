@@ -77,7 +77,8 @@ def is_enabled() -> bool:
     return os.environ.get("OTO_BILLING_ENABLED", "0") == "1"
 
 # plan → prix (centimes), intervalle, options de connecteur débloquées (couche 3,
-# lues par access.has_option). Prix HT mensuels (Alexis 2026-08-03 : 19/49/249/499).
+# lues par access.has_option). Prix HT mensuels : 19/99/249/499 (Alexis 2026-08-03,
+# 2ᵉ palier 49 → 99 le 2026-08-29, #490 — personne n'y était abonné, pas de rétroactif).
 # Chaque plan CONFIGURE l'org à l'activation → une seule action admin.
 # **Modèle simplifié (2026-08-03)** : gratuit = pas d'Unipile (option bloquée, sauf
 # `comp` admin = « offert ») ; payant = Unipile + clés plateforme SANS quota
@@ -92,7 +93,7 @@ PLANS: dict[str, dict] = {
         "options": ("unipile",), "unipile_accounts": None, "unmetered": True,
     },
     "premium": {
-        "label": "Premium", "amount": 4900, "currency": "eur", "interval": "month",
+        "label": "Premium", "amount": 9900, "currency": "eur", "interval": "month",
         "options": ("unipile",), "unipile_accounts": None, "unmetered": True,
     },
     "business": {

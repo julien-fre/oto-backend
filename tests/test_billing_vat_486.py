@@ -115,7 +115,7 @@ def test_un_pays_inconnu_est_refuse_pas_traite_en_export():
 
 @pytest.mark.parametrize("ht, ttc", [
     (1900, 2280),      # 19,00 € → 22,80 €   (les quatre paliers du catalogue)
-    (4900, 5880),      # 49,00 € → 58,80 €
+    (9900, 11880),     # 99,00 € → 118,80 €
     (24900, 29880),    # 249,00 € → 298,80 €
     (49900, 59880),    # 499,00 € → 598,80 €
 ])
