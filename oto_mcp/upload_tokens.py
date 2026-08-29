@@ -27,6 +27,12 @@ Cibles supportées (`target["kind"]`) :
 - `datastore`    : lot de lignes dans un tableau (NDJSON ou CSV) → batch upsert/dedup sur
                    la clé (`target.key`, sinon `schema.key`). ns_id scellé au mint (org
                    active présente) ; autz réappliquée org-agnostiquement au receive.
+- `image`        : UNE image publiée à une URL **publique et permanente**
+                   (`media_store.upload_image`, préfixe `images/<sub>/`) — la tête d'un
+                   `email_send`, réutilisée d'envoi en envoi. Aucune ressource cible :
+                   le porteur authentifié est la garde (comme l'avatar). Bornes de
+                   `upload_image` : png/jpeg/gif/webp par magic bytes, 2 Mo, clé par
+                   hash de contenu (non devinable, ré-upload idempotent).
 """
 from __future__ import annotations
 
@@ -126,6 +132,8 @@ def target_label(target: dict) -> str:
         return f"fichier « {target.get('filename')} » (projet #{target.get('project_id')})"
     if k == "datastore":
         return f"tableau « {target.get('namespace')} » (lot {target.get('format', 'ndjson')})"
+    if k == "image":
+        return "image publique (png, jpeg, gif ou webp, 2 Mo max)"
     return k or "?"
 
 
@@ -166,6 +174,10 @@ def check_target_access(sub: str, target: dict) -> None:
     est réappliquée à l'écriture (verrou IDOR : ADR 0009/0030)."""
     from . import db, ownership  # lazy : évite tout cycle d'import au boot
     kind = target.get("kind")
+    if kind == "image":
+        # Pas de ressource cible : l'image n'appartient à rien d'autre qu'à son
+        # déposant. La garde est le sub scellé dans le jeton (même régime que l'avatar).
+        return
     if kind == "datastore":
         ns_id = target.get("ns_id")
         if ns_id is None:
@@ -253,5 +265,14 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
                 "inserted": out["inserted"], "updated": out["updated"],
                 "count": out["count"], "bytes": len(data),
                 **store.off_schema_report()}
+
+    if kind == "image":
+        # Le type déclaré (curl, formulaire) n'est jamais cru : `upload_image` le
+        # dérive des magic bytes et refuse tout ce qui n'est pas une image.
+        try:
+            url = media_store.upload_image("images", sub, data, "")
+        except media_store.MediaError as e:
+            raise UploadError(e.status, e.code, str(e))
+        return {"ok": True, "kind": "image", "url": url, "bytes": len(data)}
 
     raise UploadError(400, "unknown_target", f"Cible inconnue : {kind!r}.")

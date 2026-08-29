@@ -1,5 +1,5 @@
-"""Stockage d'images publiques (avatars user, logos d'org) sur Scaleway Object
-Storage (S3-compatible).
+"""Stockage d'images publiques (avatars user, logos d'org, images de tête d'email)
+sur Scaleway Object Storage (S3-compatible).
 
 Couche backend-core (ADR 0004) : possède le client S3, la validation et la
 construction d'URL publique. N'importe jamais l'adaptateur REST. Les URLs
@@ -26,7 +26,8 @@ from urllib.parse import quote, urlsplit
 
 # Type sniffé → extension stockée. On ne fait JAMAIS confiance au Content-Type
 # déclaré par le client : l'extension dérive des magic bytes.
-_ALLOWED = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+_ALLOWED = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+            "image/webp": "webp"}
 _DEFAULT_MAX_BYTES = 2 * 1024 * 1024  # 2 Mo
 
 _client = None  # singleton boto3, gardé comme db._pool
@@ -41,7 +42,7 @@ class MediaError(Exception):
         self.code = code
 
 
-def _max_bytes() -> int:
+def max_image_bytes() -> int:
     raw = os.environ.get("OTO_MCP_S3_MAX_IMAGE_BYTES")
     return int(raw) if raw else _DEFAULT_MAX_BYTES
 
@@ -70,11 +71,13 @@ def _bucket() -> str:
 
 
 def _sniff_content_type(data: bytes) -> str | None:
-    """Détecte le type réel par magic bytes (PNG / JPEG / WEBP). None sinon."""
+    """Détecte le type réel par magic bytes (PNG / JPEG / GIF / WEBP). None sinon."""
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         return "image/png"
     if data[:3] == b"\xff\xd8\xff":
         return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
     if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
         return "image/webp"
     return None
@@ -97,17 +100,19 @@ def public_url(key: str) -> str:
 def upload_image(prefix: str, owner_id: str, data: bytes, content_type: str) -> str:
     """Valide une image et l'uploade en public-read. Retourne son URL publique.
 
-    `prefix` = "avatars" | "org-logos" ; `owner_id` = sub | org_id (str).
+    `prefix` = "avatars" | "org-logos" | "images" (image publique déposée par un agent,
+    ex. la tête d'un `email_send`) ; `owner_id` = sub | org_id (str).
     Clé par hash de contenu → ré-upload identique idempotent + cache-busting
-    naturel (un nouveau contenu = une nouvelle URL).
+    naturel (un nouveau contenu = une nouvelle URL) — et **non devinable** : 128 bits
+    de SHA-256, qu'on ne retrouve qu'en possédant l'image.
     """
     if not data:
         raise MediaError(400, "missing_file", "Fichier vide.")
-    if len(data) > _max_bytes():
-        raise MediaError(413, "image_too_large", f"Image > {_max_bytes()} octets.")
+    if len(data) > max_image_bytes():
+        raise MediaError(413, "image_too_large", f"Image > {max_image_bytes()} octets.")
     sniffed = _sniff_content_type(data)
     if sniffed is None or sniffed not in _ALLOWED:
-        raise MediaError(400, "unsupported_type", "Formats acceptés : png, jpeg, webp.")
+        raise MediaError(400, "unsupported_type", "Formats acceptés : png, jpeg, gif, webp.")
     ext = _ALLOWED[sniffed]
     digest = hashlib.sha256(data).hexdigest()[:32]
     key = f"{prefix}/{quote(owner_id, safe='')}/{digest}.{ext}"
@@ -208,7 +213,7 @@ def upload_object(prefix: str, owner_id: str, data: bytes, content_type: str,
     gros (upload out-of-bande d'un agent, issue #105)."""
     if not data:
         raise MediaError(400, "missing_file", "Contenu vide.")
-    limit = max_bytes if max_bytes is not None else _max_bytes()
+    limit = max_bytes if max_bytes is not None else max_image_bytes()
     if len(data) > limit:
         raise MediaError(413, "file_too_large", f"Fichier > {limit} octets.")
     digest = hashlib.sha256(data).hexdigest()[:32]
@@ -269,7 +274,7 @@ def fetch_object(key: str, *, max_bytes: int | None = None) -> bytes:
     lit, et repasser par une URL signée serait un aller-retour HTTP vers notre propre
     stockage.
     """
-    limite = max_bytes or _max_bytes()
+    limite = max_bytes or max_image_bytes()
     try:
         client = _get_client()
         meta = client.head_object(Bucket=_bucket(), Key=key)
