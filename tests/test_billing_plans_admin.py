@@ -13,10 +13,10 @@ from oto_mcp.db import billing as db_billing
 def test_four_plans_with_prices():
     p = {x["plan"]: x for x in billing.plans()}
     assert set(p) == {"standard", "premium", "business", "enterprise"}
-    # 19 / 49 / 249 / 499 € (Alexis 2026-08-03)
+    # 19 / 99 / 249 / 499 € (Alexis 2026-08-03 ; 2ᵉ palier 49 → 99 le 2026-08-29, #490)
     assert (p["standard"]["amount"], p["premium"]["amount"],
             p["business"]["amount"], p["enterprise"]["amount"]) \
-        == (1900, 4900, 24900, 49900)
+        == (1900, 9900, 24900, 49900)
 
 
 def test_self_serve_refuses_custom_plan(monkeypatch):

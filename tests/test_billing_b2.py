@@ -94,12 +94,12 @@ def test_subscribe_happy_path(monkeypatch):
     assert out["checkout_url"].startswith("https://www.mollie.com/checkout/")
     assert calls["customer"]["metadata"] == {"org_id": "42"}
     amount, kw = calls["payment"]
-    # #486 : ce qui part au PSP est le TTC, pas le prix HT du palier. 49,00 € HT
-    # + 20 % = 58,80 € — c'est ce montant-là que le client voit débité.
+    # #486 : ce qui part au PSP est le TTC, pas le prix HT du palier. 99,00 € HT
+    # + 20 % = 118,80 € — c'est ce montant-là que le client voit débité.
     ht = billing.PLANS["premium"]["amount"]
-    assert amount == ht + ht // 5 == 5880
-    assert out["amount_ht"] == ht and out["amount_ttc"] == 5880
-    assert out["vat_rate_bps"] == 2000 and out["vat_amount"] == 980
+    assert amount == ht + ht // 5 == 11880
+    assert out["amount_ht"] == ht and out["amount_ttc"] == 11880
+    assert out["vat_rate_bps"] == 2000 and out["vat_amount"] == 1980
     assert out["vat_scheme"] == "fr_ttc" and out["vat_mention"] is None
     assert kw["method"] == "creditcard"                  # 'card' → page carte
     assert kw["metadata"] == {"org_id": "42", "plan": "premium"}   # le plan voyage

@@ -64,12 +64,12 @@ def test_renewal_success_anchors_on_period_end(monkeypatch):
     assert billing_runner._charge_one(_sub(), NOW) == "renewed"
     amount, kw = state["charge"]
     # #486 : le renouvellement prélève le TTC, exactement comme la souscription —
-    # 49,00 € HT + 20 % = 58,80 €. Un renouvellement resté au HT aurait signifié que
+    # 99,00 € HT + 20 % = 118,80 €. Un renouvellement resté au HT aurait signifié que
     # le client paie deux montants différents selon le mois.
-    assert amount == 5880 == billing.PLANS["premium"]["amount"] * 6 // 5
+    assert amount == 11880 == billing.PLANS["premium"]["amount"] * 6 // 5
     # …et la décomposition est journalisée sur la tentative, pas seulement débitée.
     assert state["journal"][-1][1]["tax"]["vat_scheme"] == "fr_ttc"
-    assert state["journal"][-1][0][2] == 5880
+    assert state["journal"][-1][0][2] == 11880
     assert kw["customer_id"] == "cst_1" and kw["mandate_id"] == "mdt_1"
     # idempotency_key déterministe période+tentative (anti double-débit)
     assert kw["idempotency_key"] == "org42-2026-07-06-a1"
