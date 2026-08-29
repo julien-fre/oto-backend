@@ -19,7 +19,7 @@ from ... import db, org_store
 from ...auth import facade as oauth_facade
 from ... import email as email_mod  # alias : le param `email` d'emit_invitation masquerait le module
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _ID = {"id": "org_id"}
@@ -82,12 +82,10 @@ class InvitationEmitted(BaseModel):
     a pas de vérification que l'accepteur est bien `email`). À traiter comme un jeton,
     pas comme un identifiant.
 
-    ⚠️ **Une adresse déjà invitée, ou déjà membre, reçoit une invitation DE PLUS — en
-    200, avec un code neuf.** Aucun contrôle de doublon ni d'appartenance à l'émission
-    (relevé le 29/08/2026 sur le code servi, rejoué par test) : la file
-    `GET …/invitations` peut porter plusieurs lignes pour la même adresse, et chacun
-    de leurs codes ouvre l'org. Accepter en étant déjà membre n'abaisse jamais le rôle
-    détenu (#297). Un front qui veut éviter le doublon relit la file avant d'émettre."""
+    Une adresse déjà membre, ou déjà invitée (invitation encore valide), est refusée
+    en 409 — `already_member` / `already_invited`, l'invitation existante dans
+    `details` (depuis le 29/08/2026, #622 ; avant, un 200 et un code de plus). Une
+    invitation expirée, consommée ou révoquée ne bloque pas."""
     ok: bool
     # Email NORMALISÉ (strip + minuscules), ou None quand l'invitation est un simple
     # code à partager.
@@ -214,12 +212,37 @@ def emit_invitation(ctx: ResolvedCtx, *, org_id: int | None, email: str | None,
 
 # --- Handlers ---------------------------------------------------------------
 
+def _refuse_member_or_invited(org_id: int, email_addr: str | None) -> None:
+    """Le refus #622 (29/08/2026), sur l'adresse NORMALISÉE : inviter un membre actuel
+    n'a pas de sens, et une deuxième invitation vivante pour la même adresse est un
+    deuxième secret porteur. Sans adresse (code à partager), rien à comparer.
+    Membre d'abord : il n'y a rien à renvoyer, la personne est déjà là. Invitée
+    ensuite, avec de quoi RENVOYER l'existante — jamais son code, qui suffit à
+    rejoindre l'org. Expirée, consommée ou révoquée = plus dans la file = pas un
+    doublon."""
+    if not email_addr:
+        return
+    if org_store.get_org_member_by_email(org_id, email_addr):
+        raise AuthzDenied(409, "already_member",
+                          f"{email_addr} est déjà membre de cette org : rien à inviter.")
+    inv = org_store.find_pending_invitation(org_id, email_addr)
+    if inv:
+        raise AuthzDenied(
+            409, "already_invited",
+            f"{email_addr} a déjà une invitation en attente (#{inv['id']}, expire le "
+            f"{inv['expires_at']}) : la renvoyer ou la révoquer plutôt qu'en émettre "
+            "une deuxième.",
+            details={"invitation": {"id": inv["id"], "created_at": inv["created_at"],
+                                    "expires_at": inv["expires_at"]}})
+
+
 def _invite_create(ctx: ResolvedCtx, inp: InviteCreateInput) -> dict:
     if inp.role not in org_store.ORG_ROLES:
         raise AuthzDenied(400, "invalid_role", f"Rôle invalide : {inp.role!r}.")
     org = org_store.get_org(inp.org_id)
     if not org:
         raise AuthzDenied(404, "unknown_org", f"Org #{inp.org_id} inconnue.")
+    _refuse_member_or_invited(inp.org_id, _norm_email(inp.email, required=inp.send_email))
     return emit_invitation(ctx, org_id=inp.org_id, email=inp.email,
                            send_email=inp.send_email, source="org_admin",
                            role=inp.role, target_name=org["name"])
@@ -260,6 +283,12 @@ CAPABILITIES += [
                     "send_email=true mails a link; false returns a short code to share yourself.",
         rest=(RestBinding("POST", "/api/orgs/{id}/invitations", _ID),
               RestBinding("POST", "/api/admin/orgs/{id}/invitations", _ID)),
+        errors=(DeclaredError(409, "already_member",
+                              "l'adresse est déjà celle d'un membre de l'org"),
+                DeclaredError(409, "already_invited",
+                              "l'adresse a déjà une invitation valide (non expirée, non "
+                              "consommée, non révoquée) — `details.invitation` = "
+                              "{id, created_at, expires_at}, jamais le code")),
     ),
     Capability(
         key="org.invite.list", handler=_invite_list, Input=InviteListInput,

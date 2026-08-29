@@ -38,13 +38,15 @@ def _ids(paire) -> str:
 
 
 def test_il_y_a_des_refus_declares():
-    """Le garde-fou ne vaut que s'il garde quelque chose (les quatre du front tiers)."""
+    """Le garde-fou ne vaut que s'il garde quelque chose (ceux du front tiers, #618/#622)."""
     cles = {(cap.key, e.status, e.code) for cap, e in _declarations()}
     assert {("group.update", 409, "group_exists"),
             ("me.guides.set", 400, "body_too_large"),
             ("me.leave_org", 409, "personal_org"),
             ("me.leave_org", 409, "last_org_admin"),
-            ("me.leave_org", 404, "not_a_member")} <= cles
+            ("me.leave_org", 404, "not_a_member"),
+            ("org.invite.create", 409, "already_member"),
+            ("org.invite.create", 409, "already_invited")} <= cles
 
 
 @pytest.mark.parametrize("paire", _declarations(), ids=_ids)

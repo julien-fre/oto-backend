@@ -2,7 +2,8 @@
 
 Un consommateur pur de l'API REST a dérivé son comportement du contrat — et le contrat
 disait faux (`GroupUpdated` : « pas de 409 au renommage »), ne disait rien (la borne
-du corps d'un guide), ou taisait un succès ambigu (inviter deux fois). Les
+du corps d'un guide), ou taisait un succès ambigu (inviter deux fois — devenu un refus
+le 29/08/2026, #622). Les
 déclarations ajoutées (`Capability.errors`, `NodeOut.doc_id/project_id`,
 `ContentBlock.ordered`) ne valent que si le serveur rend ce qu'elles disent : ici
 chaque cas part d'une requête HTTP sur la table de routes réelle (`make_routes`), avec
@@ -107,32 +108,106 @@ def test_renommer_un_groupe_vers_un_nom_pris_rend_409_sur_la_route_servie(client
     assert (r.status_code, r.json()["error"]) == (409, "group_exists")
 
 
-# ── POST /api/orgs/{id}/invitations : le doublon est un 200 ───────────────────
+# ── POST /api/orgs/{id}/invitations : déjà membre / déjà invitée = 409 (#622) ──
 
-def test_inviter_deux_fois_la_meme_adresse_rend_deux_invitations_en_200(client, org):
-    """Ce que le serveur FAIT, déclaré tel quel dans `InvitationEmitted` : aucun
-    contrôle de doublon. Si ce comportement change un jour, ce test doit changer AVEC
-    la déclaration — jamais l'un sans l'autre."""
+def _file(client, oid, admin) -> list[dict]:
+    return client.get(f"/api/orgs/{oid}/invitations", headers=_h(admin)).json()["invitations"]
+
+
+def test_inviter_une_adresse_deja_invitee_rend_409_et_l_invitation_existante(client, org):
+    """Décision du 29/08/2026 (#622) : une invitation encore valide pour la même adresse
+    est un refus, pas un deuxième secret porteur. `details.invitation` porte de quoi la
+    renvoyer (id, dates) — jamais son code. La comparaison est faite sur l'adresse
+    normalisée (casse, espaces)."""
     oid, admin = org["id"], org["admin"]
-    corps = {"email": "Deux.Fois@front-tiers.invalid", "send_email": False}
-    r1 = client.post(f"/api/orgs/{oid}/invitations", json=corps, headers=_h(admin))
-    r2 = client.post(f"/api/orgs/{oid}/invitations", json=corps, headers=_h(admin))
-    assert (r1.status_code, r2.status_code) == (200, 200), (r1.text, r2.text)
-    assert r1.json()["ok"] and r2.json()["ok"]
-    assert r1.json()["code"] != r2.json()["code"]           # deux secrets porteurs
-    assert r1.json()["email"] == "deux.fois@front-tiers.invalid"   # normalisé
+    r1 = client.post(f"/api/orgs/{oid}/invitations",
+                     json={"email": "Deux.Fois@front-tiers.invalid", "send_email": False},
+                     headers=_h(admin))
+    assert r1.status_code == 200, r1.text
+    assert r1.json()["email"] == "deux.fois@front-tiers.invalid"      # normalisé
+    existante = [i for i in _file(client, oid, admin)
+                 if i["email"] == "deux.fois@front-tiers.invalid"]
+    assert len(existante) == 1
 
-    file = client.get(f"/api/orgs/{oid}/invitations", headers=_h(admin)).json()["invitations"]
-    assert [i["email"] for i in file].count("deux.fois@front-tiers.invalid") == 2
+    r2 = client.post(f"/api/orgs/{oid}/invitations",
+                     json={"email": "  DEUX.fois@Front-Tiers.INVALID ", "send_email": False},
+                     headers=_h(admin))
+    assert (r2.status_code, r2.json()["error"]) == (409, "already_invited"), r2.text
+    assert "deux.fois@front-tiers.invalid" in r2.json()["detail"]
+    inv = r2.json()["details"]["invitation"]
+    assert inv["id"] == existante[0]["id"]
+    assert inv["created_at"] == existante[0]["created_at"]
+    assert inv["expires_at"] == existante[0]["expires_at"]
+    assert set(inv) == {"id", "created_at", "expires_at"}     # jamais le code
+    assert r1.json()["code"] not in r2.text
+    # Rien n'a été écrit : toujours UNE ligne pour cette adresse.
+    assert [i["email"] for i in _file(client, oid, admin)].count(
+        "deux.fois@front-tiers.invalid") == 1
 
 
-def test_inviter_un_membre_actuel_rend_aussi_200(client, org):
+def test_inviter_un_membre_actuel_rend_409(client, org):
     oid, admin, membre = org["id"], org["admin"], org["membre"]
+    adresse = f"{membre}@front-tiers.invalid"
     r = client.post(f"/api/orgs/{oid}/invitations",
-                    json={"email": f"{membre}@front-tiers.invalid", "send_email": False},
-                    headers=_h(admin))
+                    json={"email": adresse.upper(), "send_email": False}, headers=_h(admin))
+    assert (r.status_code, r.json()["error"]) == (409, "already_member"), r.text
+    assert adresse in r.json()["detail"] and "membre" in r.json()["detail"]
+    assert "details" not in r.json()                      # rien à renvoyer : il est là
+    assert adresse not in [i["email"] for i in _file(client, oid, admin)]
+
+
+def test_la_meme_capacite_refuse_sur_la_face_mcp(org):
+    """`oto_org op=invite` aboutit au même handler que la route (pas une copie) : le
+    refus y est le même `AuthzDenied`, que l'adaptateur MCP rend en message."""
+    from oto_mcp.capabilities import org_console as oc
+    from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+    oid, admin, membre = org["id"], org["admin"], org["membre"]
+    with pytest.raises(AuthzDenied) as e:
+        oc._org(ResolvedCtx(sub=admin, org_id=oid),
+                oc.OrgInput(op="invite", org_id=oid, email=f"{membre}@front-tiers.invalid",
+                            send_email=False))
+    assert (e.value.status, e.value.code) == (409, "already_member")
+    with pytest.raises(AuthzDenied) as e:
+        oc._org(ResolvedCtx(sub=admin, org_id=oid),
+                oc.OrgInput(op="invite", org_id=oid, email="deux.fois@front-tiers.invalid",
+                            send_email=False))
+    assert (e.value.status, e.value.code) == (409, "already_invited")
+    assert set(e.value.details["invitation"]) == {"id", "created_at", "expires_at"}
+
+
+@pytest.mark.parametrize("sort", ["expiree", "consommee", "revoquee"])
+def test_une_invitation_qui_ne_vaut_plus_ne_bloque_pas(client, org, sort):
+    """Expirée, consommée ou révoquée : la file ne la porte plus, une nouvelle
+    invitation est un 200 normal."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    adresse = f"{sort}@front-tiers.invalid"
+    corps = {"email": adresse, "send_email": False}
+    r = client.post(f"/api/orgs/{oid}/invitations", json=corps, headers=_h(admin))
     assert r.status_code == 200, r.text
-    assert r.json()["ok"] is True                # silencieux : rien ne dit « déjà membre »
+    inv_id = next(i["id"] for i in _file(client, oid, admin) if i["email"] == adresse)
+    if sort == "expiree":
+        with org_store._connect() as conn:
+            conn.execute("UPDATE org_invitations SET expires_at = NOW() - interval '1 day' "
+                         "WHERE id = %s", (inv_id,))
+    elif sort == "consommee":
+        org_store._mark_invitation_accepted(inv_id, "usr_ft_quelqu_un")
+    else:
+        r = client.delete(f"/api/orgs/{oid}/invitations/{inv_id}", headers=_h(admin))
+        assert r.status_code == 200, r.text
+    # La même adresse est à nouveau invitable.
+    r = client.post(f"/api/orgs/{oid}/invitations", json=corps, headers=_h(admin))
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+
+def test_inviter_sans_adresse_reste_un_code_a_partager(client, org):
+    """Le refus ne vaut que pour une adresse : sans email, aucun doublon possible."""
+    oid, admin = org["id"], org["admin"]
+    r1 = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False}, headers=_h(admin))
+    r2 = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False}, headers=_h(admin))
+    assert (r1.status_code, r2.status_code) == (200, 200), (r1.text, r2.text)
+    assert r1.json()["email"] is None and r1.json()["code"] != r2.json()["code"]
 
 
 # ── PUT /api/me/guides/{scope}/{slug} : 400 body_too_large, borne en OCTETS ───

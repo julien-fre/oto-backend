@@ -123,6 +123,25 @@ def list_platform_invitations() -> list[dict]:
     return _list_invitations("i.source = 'platform_admin'")
 
 
+def find_pending_invitation(org_id: int, email: str) -> Optional[dict]:
+    """L'invitation d'ORG encore valide (non acceptée, non expirée — une révoquée est
+    SUPPRIMÉE) adressée à cet email, hors invitations d'équipe : `{id, created_at,
+    expires_at}`, sans le code. None s'il n'y en a pas. La plus récente si la file en
+    porte plusieurs (possible pour les lignes d'avant le refus #622)."""
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, created_at, expires_at FROM org_invitations "
+            "WHERE org_id = %s AND group_id IS NULL AND lower(email) = %s "
+            "AND accepted_at IS NULL AND expires_at > NOW() "
+            "ORDER BY created_at DESC LIMIT 1",
+            (org_id, email),
+        ).fetchone()
+        return dict(row) if row else None
+
+
 def revoke_invitation(org_id: int, inv_id: int) -> bool:
     with _connect() as conn:
         cur = conn.execute(

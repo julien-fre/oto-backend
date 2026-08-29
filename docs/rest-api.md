@@ -267,7 +267,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - **Palier org** (100 % en CAPACITÉS — `capabilities/orgs*.py` ; ⚠️ cette ligne renvoyait à `api_routes_orgs.py` jusqu'au 2026-08-27, fichier **supprimé** lors de la migration : projection 1:1 des meta-tools `oto_admin_*org*` / `oto_list_orgs`) :
   - self-service : `GET|POST /api/me/orgs` (**`POST` = `org.create` self-serve**, créateur→org_admin, cap `OTO_MCP_MAX_ORGS_PER_USER`) ; `GET /api/orgs/{id}` ; `POST|DELETE /api/orgs/{id}/members[/{sub}]` + `PUT|DELETE /api/orgs/{id}/secrets/{provider}` (org_admin)
   - **invitations — feature cascade plateforme/org/équipe** (le scope est DÉRIVÉ des cibles : org_id NULL = plateforme, org_id seul = org, org_id+group_id = équipe). Trois faces émettrices, une seule acceptation :
-    - **org** : `POST|GET /api/orgs/{id}/invitations` + `DELETE …/{inv}` (org_admin ; `oto_org` op=invite).
+    - **org** : `POST|GET /api/orgs/{id}/invitations` + `DELETE …/{inv}` (org_admin ; `oto_org` op=invite). Le POST refuse en 409 une adresse déjà membre (`already_member`) ou déjà invitée avec une invitation valide (`already_invited`, l'existante dans `details`) — #622, 29/08/2026.
     - **équipe** : `POST|GET /api/groups/{id}/invitations` + `DELETE …/{inv}` (group_admin ; `oto_group` op=invite). L'invité rejoint l'org parente PUIS l'équipe à l'acceptation.
     - **plateforme** : `POST|GET /api/admin/invitations` + `DELETE …/{inv}` (platform_admin ; `oto_admin_invite` op=create/list/revoke). `org_id` optionnel (vide = onboarding pur, sinon rattachement direct).
     - **acceptation commune** : `POST /api/me/invitations/accept` (`SUB_ONLY`, token/code, match email vérifié + expiry). Email via `oto_mcp/email.py` (otomata-mailer `mailer.oto.zone/api/send`, env `OTO_MAILER_SEND_BEARER`, best-effort → `invite_url` en repli ; **plus de Resend**).
@@ -370,12 +370,17 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   l'ordre des gardes. La liste d'une opération n'est pas exhaustive : les 400 de
   l'adaptateur (`invalid_input`, `unknown_fields`, `invalid_json`, `invalid_body`) valent
   partout — le préambule du document le dit.
-- **`POST /api/orgs/{id}/invitations` sur une adresse déjà invitée ou déjà membre : 200,
-  une invitation DE PLUS, code neuf.** Aucun contrôle de doublon ni d'appartenance à
-  l'émission — relevé sur le code servi et rejoué par test. La file peut porter
-  plusieurs lignes pour la même adresse ; accepter en étant déjà membre n'abaisse jamais
-  le rôle (#297). Déclaré tel quel (`InvitationEmitted`) ; changer ce comportement est
-  une décision à part, pas un correctif de contrat.
+- **`POST /api/orgs/{id}/invitations` sur une adresse déjà membre → 409
+  `already_member` ; déjà invitée (invitation encore valide) → 409 `already_invited`,
+  avec `details.invitation = {id, created_at, expires_at}` pour la renvoyer — jamais son
+  code** (#622, tranché et livré le 29/08/2026 ; même seam pour `oto_org op=invite`).
+  L'adresse est comparée normalisée (strip + minuscules) ; « déjà membre » = un compte
+  membre de l'org porte cet email ; une invitation expirée, consommée ou révoquée ne
+  bloque pas (nouvelle invitation, 200). Sans adresse (code à partager), rien à comparer.
+  ⚠️ **Jusqu'au 29/08/2026 la même requête rendait 200 et une invitation DE PLUS, code
+  neuf** — la ligne du #618 (matin du même jour) qui déclarait ce 200 tel quel est
+  remplacée par celle-ci. Accepter en étant déjà membre n'abaisse toujours pas le rôle
+  (#297).
 
 ## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
 
