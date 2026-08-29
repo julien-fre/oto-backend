@@ -36,8 +36,6 @@ ALLOWED = {
     # call-site, même raison, troisième fichier : c'est un AFFICHAGE, pas une résolution.
     "capabilities/me_account.py": "exposition `home_org` de /api/me (« ton défaut », "
                                   "distinct d'active_org — affichage, pas résolution).",
-    "api/connectors.py": "filet webhook unipile : pending émis pré-B4 sans "
-                                "org_id → maison du sub (binding legacy, documenté).",
     "credentials_store.py": "backfill_member_scope (migration ADR 0033) : la "
                             "destination du re-chiffrement est la maison, by design.",
     "db/unipile.py": "backfill_unipile_member_scope (migration ADR 0033 B4), idem.",

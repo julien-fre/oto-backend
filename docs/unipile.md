@@ -336,37 +336,51 @@ clé member/org/plateforme, carte `status_for`) ni de sélecteur dashboard. Le `
 `{data,next_cursor}` normalisée `items`/`cursor`, inbox model, posts keyés URN, `inmail-credits`)
 = **docstrings de `client.py`** oto-core.
 
-**Hosted-auth v2 : webhook non livré → réconciliation poll-and-bind.** Le hosted-auth v2 ne
-rappelle **pas** notre `notify_url` (webhook au niveau APP Unipile, pas par-lien) et le compte
-connecté **ne porte pas notre nonce** → le compte se crée chez Unipile mais n'est jamais
-enregistré côté oto (pending qui traîne). Fix **webhook-indépendant** : `unipile_connect.reconcile_pending(sub)`
-liste les comptes Unipile et lie au sub le plus **récent, non déjà lié, du bon provider, créé
-APRÈS son pending** (floor = anti-rebind d'un siège tiers). **Self-heal** dans `GET /api/me/unipile`
-(no-op sans pending, donc sans appel Unipile) + endpoint explicite `POST /api/me/unipile/reconcile`.
-Le webhook `POST /api/unipile/webhook` (handler v1 `CREATION_SUCCESS`) reste mais **dormant** (le v2
-ne l'alimente pas) — utile seulement si on branche `account.disconnected` (détection de déco, non fait).
+**Hosted-auth v2 : pas de callback par lien → réconciliation poll-and-bind, LE chemin de
+liaison.** Le hosted-auth v2 ne rappelle **aucun** `notify_url` (le webhook v2 est au niveau
+APP Unipile, pas par-lien) et le compte connecté **ne porte pas notre nonce** → rien à corréler
+au retour. Le chemin : `unipile_connect.reconcile_pending(sub)` liste les comptes Unipile et
+lie au sub le plus **récent, non déjà lié, du bon provider, créé APRÈS son pending** (floor =
+anti-rebind d'un siège tiers). **Self-heal** dans `GET /api/me/unipile` (no-op sans pending,
+donc sans appel Unipile) + endpoint explicite `POST /api/me/unipile/reconcile`.
 
-⚠️ **Une liaison de compte se garde à DEUX endroits, pas un (#559, corrigé le 2026-08-29).**
-Le webhook confrontait le **nonce** et rien d'autre : `account_id` était repris du corps tel
-quel. Le nonce prouve « c'est bien la session de connexion de cette personne » ; il ne dit rien
-de « c'est bien le compte qui vient d'être créé ». Or la clé Unipile de la plateforme **adresse
-tout l'abonnement, toutes orgs confondues** — n'importe quel siège y était donc nommable. Le
-chemin jumeau, lui, contrôlait (`bound_unipile_account_ids`, « jamais le siège d'un tiers ») :
-ce n'était pas une garde jugée inutile, c'était une garde **qui n'a pas suivi quand le second
-chemin est apparu**. Depuis, la règle vit dans **une seule fonction que les deux appellent** —
-`unipile_connect.account_claimable` (un identifiant attribué à quelqu'un d'AUTRE, ligne vivante
-ou morte, n'est pas réclamable) — et l'écriture passe par `unipile_connect.bind_account`. Le
-cliquet est `tests/test_unipile_bind_guard.py` : il rejoue l'attaque contre un vrai PostgreSQL
-**et** tient par AST la liste fermée des écrivains de liaison.
+⚠️ **Le webhook de liaison `POST /api/unipile/webhook` a été RETIRÉ le 2026-08-29 (#581) :
+dormant depuis la v2 du fournisseur.** Le champ `notify_url` du hosted-auth v1 n'existe plus
+en v2, le callback n'est plus rappelé — **zéro appel** sur le mois de journal REST retenu
+(2026-07-29 → 2026-08-29, 503 960 requêtes `/api/*`, toutes formes de route confondues). Une
+route non authentifiée sans appelant légitime n'a qu'un appelant possible — quelqu'un qui la
+vise — et une surface sans appelant se retire, elle ne se garde pas. Le lien hosted-auth ne
+porte plus de `notify_url` (en envoyer un ferait pointer le fournisseur sur un 404 et
+laisserait croire qu'un webhook existe). Le pending (`unipile_pending`, nonce = `name` du
+lien) reste : c'est la moitié oto de la connexion, que la réconciliation consomme. **Si le
+webhook d'application v2 (signé HMAC-SHA256, `unipile-signature: t=…,v0=…` — `account.add`,
+`account.disconnected`) est branché un jour, ce sera une route DIFFÉRENTE, vérifiée par
+signature**, et elle écrira par `bind_account` comme la réconciliation.
 
-**Ce webhook ne peut PAS être authentifié par signature** — vérifié dans la doc fournisseur le
-2026-08-29. Le callback `notify_url` du hosted-auth **v1 n'est pas signé** et n'accepte aucun
-en-tête ; en **v2** le champ `notify_url` n'existe même plus (corrélation par `state` au
-`redirect_uri`, ou par l'événement applicatif `account.add`). La signature HMAC-SHA256
-(`unipile-signature: t=…,v0=…`) n'existe que sur les **webhooks d'application v2**, que nous
-n'utilisons pas. Donc : la garde de ce chemin est la propriété du compte, pas une signature.
-Si on branche un jour `account.add`/`account.disconnected`, c'est une route **différente**, et
-celle-là se vérifie par signature.
+⚠️ **Une liaison de compte se garde au point d'ÉCRITURE (#559, corrigé le 2026-08-29).**
+Le webhook — alors encore monté — confrontait le **nonce** et rien d'autre : `account_id`
+était repris du corps tel quel. Le nonce prouve « c'est bien la session de connexion de cette
+personne » ; il ne dit rien de « c'est bien le compte qui vient d'être créé ». Or la clé
+Unipile de la plateforme **adresse tout l'abonnement, toutes orgs confondues** — n'importe
+quel siège y était donc nommable. Le chemin jumeau, lui, contrôlait
+(`bound_unipile_account_ids`, « jamais le siège d'un tiers ») : ce n'était pas une garde
+jugée inutile, c'était une garde **qui n'a pas suivi quand le second chemin est apparu**.
+Depuis, la règle vit dans **une seule fonction** — `unipile_connect.account_claimable` (un
+identifiant attribué à quelqu'un d'AUTRE, ligne vivante ou morte, n'est pas réclamable) — et
+l'écriture passe par `unipile_connect.bind_account`. Le webhook est parti (#581), **la garde
+reste** : un prochain chemin d'écriture naît gardé au lieu de devoir s'en souvenir. Le
+cliquet est `tests/test_unipile_bind_guard.py` : il rejoue l'attaque contre un vrai
+PostgreSQL, tient par AST les listes fermées des écrivains de liaison (écritures directes ET
+appelants de la garde — cette seconde liste a perdu l'écrivain webhook), et vérifie que la
+route rend 404.
+
+**Pourquoi le webhook v1 ne pouvait PAS être authentifié par signature** — vérifié dans la
+doc fournisseur le 2026-08-29. Le callback `notify_url` du hosted-auth **v1 n'est pas signé**
+et n'accepte aucun en-tête ; en **v2** le champ `notify_url` n'existe même plus (corrélation
+par `state` au `redirect_uri`, ou par l'événement applicatif `account.add`). La signature
+HMAC-SHA256 (`unipile-signature: t=…,v0=…`) n'existe que sur les **webhooks d'application
+v2**, que nous n'utilisons pas. C'est ce qui a tranché le retrait plutôt que le durcissement :
+il n'y avait rien de plus à vérifier sur ce chemin, et plus personne pour l'appeler.
 
 **Ce qui reste ouvert** : un siège présent sur l'abonnement partagé et lié à **personne** côté
 oto n'est pas couvert (la garde raisonne sur nos lignes). Le fermer demande de confronter

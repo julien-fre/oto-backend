@@ -14,18 +14,19 @@ successeur est la capacité générique `me.connector_connect`
 vit déjà dans `unipile_connect.hosted_auth_url`, appelé par les deux. On le porte quand
 même en capacité : la dette se rembourse, et sa suppression future devient une ligne.
 
-⚠️ **Le webhook (`POST /api/unipile/webhook`) NE migre pas et ne migrera pas** : Unipile
-l'appelle server-to-server, sans en-tête d'auth — or l'adaptateur REST authentifie
-toujours. Il est gardé par un **nonce** non devinable, et reste classé par NATURE.
+⚠️ **Il n'y a plus de webhook de liaison** : `POST /api/unipile/webhook` a été retiré le
+2026-08-29 (#581) — le fournisseur ne rappelait plus ce callback depuis sa v2, et une
+route non authentifiée sans appelant légitime se retire. La liaison passe par la
+réconciliation ci-dessous, sous le JWT de la personne.
 
 **Pas de face MCP** (`mcp=None`). La face agent de ce geste existe déjà et c'est
 `me.connector_connect` ; en ajouter une seconde ici recréerait, du côté MCP, exactement
 le doublon que ce chantier supprime du côté REST.
 
 ⚠️ **Deux replis qui ressemblent à des bugs et n'en sont pas :**
-- `GET /api/me/unipile` **réconcilie** avant de répondre (le webhook hosted-auth v2 n'est
-  pas livré) — best-effort, jamais fatal pour le statut, et no-op sans pending, donc sans
-  appel réseau ;
+- `GET /api/me/unipile` **réconcilie** avant de répondre (c'est LE chemin de liaison) —
+  best-effort, jamais fatal pour le statut, et no-op sans pending, donc sans appel
+  réseau ;
 - `DELETE` est une **soft**-déconnexion : le compte survit chez Unipile et la ligne
   survit comme PREUVE DE PROPRIÉTÉ, ce qui rend le rebind déterministe à la reconnexion.
   Elle est par-ORG, comme l'affichage : ce qu'on voit est ce qu'on déconnecte.

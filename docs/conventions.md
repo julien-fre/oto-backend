@@ -369,7 +369,7 @@ rien ne rendait navigable et que rien ne tenait.
   pas de seed. L'absence est DÉCLARÉE dans `_SANS_LOGO_DE_MARQUE` (générique/maison :
   monogramme côté UI) + tripwire — sinon un oubli se confond avec un choix).
   Surface admin `/api/admin/connectors/activation`
-  (`api/connectors.py`) + écran dashboard « connector activation ».
+  (`capabilities/platform_connectors.py`) + écran dashboard « connector activation ».
 - **Connecteur client-sensible = JAMAIS de code ici** : pont via le connecteur
   **`http` générique** (ADR 0037, amende 0034/0003/0011). Le connecteur historique
   **`bridge`** (`kind="remote"`, tools `bridge_describe`/`bridge_call`,
