@@ -77,6 +77,13 @@ VALUE_BOUND_LAYERS = tuple(k for k in LAYER_KEYS if k != ORIGIN_LAYER)
 SYSTEM_ORIGIN = "system"
 
 
+def same_value(a: Any, b: Any) -> bool:
+    """Deux valeurs IDENTIQUES — au type près : `0` n'est pas `False`, `1` n'est pas
+    `1.0`. Un seul juge pour « rien n'a changé », partout où ça décide (la fusion des
+    couches, les champs réservés)."""
+    return type(a) is type(b) and a == b
+
+
 def names_layers(value: Any) -> bool:
     """L'écriture NOMME-t-elle des couches ? — un dict fait UNIQUEMENT de couches
     connues. Strict, comme tout écrivain : `{"a": 1, "origine": "x"}` reste une donnée
@@ -543,24 +550,24 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
 
     `payload` = ce que le geste POSE (après arbitrage des vides, #608) ; `avant` = la
     ligne en place (`None` sur une création). Une seule question : ce geste écrit-il
-    ce qui ne lui appartient pas ? — jugée sur le PAYLOAD, jamais sur un « ça a
-    changé ? » : le 29/08/2026 (v1.165.0, copie jetable) l'identique passait sur une
-    colonne `readonly` et emportait `adresse.comment` avec lui.
+    ce qui ne lui appartient pas ? — et **une valeur identique n'est pas une
+    écriture** (29/08/2026, huit charges d'écriture échantillonnées : le geste
+    dominant réémet la fiche entière, valeurs verrouillées comprises ; #623 refusait
+    l'identique et aurait arrêté la campagne — une flotte à l'arrêt, pas un garde-fou).
 
-    - `origine: "system"` — la couche est NOMMÉE dans le payload (`{"origine": …}`,
-      `{"valeur": …, "origine": …}`, `{"origine": null}`) → refus, création comprise :
-      une origine posée à la création marquerait « déjà posée » avec la valeur de
-      l'agent, la porte de côté du défaut ;
+    - `origine: "system"` — la couche est NOMMÉE dans le payload avec une valeur
+      DIFFÉRENTE de ce que le système poserait → refus, création comprise. Ce que le
+      système poserait : l'origine déjà stockée ; sinon la valeur de base en place ;
+      à la création, la valeur écrite. Égale → acceptée, c'est un no-op (le geste
+      dominant du terrain : `{"valeur": <identique>, "origine": <la même>}`) ;
     - `readonly: true` — le payload NOMME la valeur (nue, `null`, ou `{"valeur": …}`)
-      d'une ligne en place → refus, **identique compris** : l'agent n'a aucun cas où
-      réécrire cette valeur est utile, et le round-trip se fait sans elle. Une
-      création n'écrase rien (un tableau qui ne doit pas grossir se ferme par
-      `key_required`) et une annotation (`{"comment": …}`) ne touche pas la valeur :
-      les deux passent. ⚠️ **La colonne-clé est de l'ADRESSAGE, pas une écriture de
-      valeur** (29/08/2026, mesuré par le terrain) : elle figure dans chaque écriture
-      pour désigner la ligne, et `readonly` dessus refuserait tout le tableau. Sa pose
-      est refusée à la déclaration ; pour un schéma déjà en base qui la porterait, la
-      valeur IDENTIQUE passe et une valeur différente reste refusée.
+      d'une ligne en place ET elle CHANGE → refus. Identique → no-op silencieux, les
+      couches restent (substrat, `_merge_column`) ; `{"valeur": <identique>,
+      "comment": …}` écrit le comment, c'est le geste utile. Une création n'écrase
+      rien (un tableau qui ne doit pas grossir se ferme par `key_required`). La
+      colonne-clé ne se pose pas en `readonly` (refusé à la déclaration : elle se
+      protège par `key_required`) ; un schéma legacy qui la porterait n'est pas
+      fermé, puisque l'identique passe.
 
     `details.expected_column` = `<colonne>.comment`, pour la face REST (#545) — un
     front pointe la destination sans reparser une phrase. Le refus n'enseigne PAS
@@ -573,9 +580,10 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
     details: dict = {}
     if not ro and not so:
         return errors, details
-    cle_metier = schema.get("key") if isinstance(schema, dict) else None
     for cle, neuf in (payload or {}).items():
-        if cle in so and names_layers(neuf) and ORIGIN_LAYER in neuf:
+        if cle in so and names_layers(neuf) and ORIGIN_LAYER in neuf \
+                and not same_value(neuf[ORIGIN_LAYER],
+                                   _origine_attendue(avant, cle, neuf)):
             errors.append(
                 f"`{cle}.origine` est posée par le système à partir de la valeur "
                 f"remise ; elle ne s'écrit pas — rien n'a été écrit. Écris la valeur "
@@ -583,7 +591,7 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
                 f"elle manque.")
         if cle in ro and avant is not None \
                 and (not names_layers(neuf) or VALUE_LAYER in neuf) \
-                and (cle != cle_metier or unwrap(neuf) != unwrap(avant.get(cle))):
+                and not same_value(unwrap(neuf), unwrap(avant.get(cle))):
             errors.append(
                 f"`{cle}` est une colonne du fichier source, non modifiable "
                 f"(`readonly`) — rien n'a été écrit. Ce que dit une autre source va "
@@ -591,6 +599,16 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
                 f"valeur reste celle du fichier.")
             details["expected_column"] = f"{cle}.comment"
     return errors, details
+
+
+def _origine_attendue(avant: Optional[dict], cle: str, neuf: dict) -> Any:
+    """Ce que le système POSERAIT en `<cle>.origine` : l'origine déjà stockée, sinon
+    la valeur de base en place, sinon (création) la valeur écrite. Une origine
+    égale à ça n'est pas une écriture — c'est la réémission de ce qui est."""
+    if avant is None:
+        return neuf.get(VALUE_LAYER)
+    stockee = layer_value(avant.get(cle), ORIGIN_LAYER)
+    return stockee if stockee is not None else unwrap(avant.get(cle))
 
 
 def lifecycle_of(schema: Optional[dict]) -> Optional[dict]:
@@ -1982,7 +2000,7 @@ def enforced_keys() -> list[str]:
         # (payload + ligne en place), pas sur une row seule — même sonde que
         # `key_required` : on interroge la fonction qui décide.
         if reserved_refusals({"fields": [{"key": "x", "readonly": True}]},
-                             {"x": "a"}, {"x": "a"})[0]:
+                             {"x": "b"}, {"x": "a"})[0]:
             vues.append("readonly")
         if reserved_refusals({"fields": [{"key": "x", "origine": SYSTEM_ORIGIN}]},
                              {"x": {ORIGIN_LAYER: "y"}})[0]:

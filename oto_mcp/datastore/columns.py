@@ -428,10 +428,10 @@ def _merge_column(existing: Any, new: Any) -> Any:
     « réécrire la valeur emporte `comment`/`link` » détruisait au passage la
     divergence qu'un agent venait d'écrire dans `adresse.comment`. Une valeur
     identique n'est pas une réécriture ; le jugement est au TYPE près (`0` n'est pas
-    `False`)."""
+    `False`). Vaut aussi en couches : `{"valeur": <identique>, "comment": …}` écrit le
+    comment sans faire tomber le link — la valeur n'a pas changé, rien ne tombe."""
     if not _writes_layers(new):
-        en_place = _existing_layers(existing).get(dsv2.VALUE_LAYER)
-        if type(en_place) is type(new) and en_place == new:
+        if dsv2.same_value(_existing_layers(existing).get(dsv2.VALUE_LAYER), new):
             return existing
         # Toute colonne A une origine ; quand elle est VIDE il n'y a rien à préserver,
         # et la colonne reste plate — le plat est un état, pas une nature.
@@ -441,7 +441,8 @@ def _merge_column(existing: Any, new: Any) -> Any:
         return ({dsv2.ORIGIN_LAYER: origine} if new is None
                 else {dsv2.VALUE_LAYER: new, dsv2.ORIGIN_LAYER: origine})
     out = _existing_layers(existing)
-    if dsv2.VALUE_LAYER in new:
+    if dsv2.VALUE_LAYER in new and not dsv2.same_value(out.get(dsv2.VALUE_LAYER),
+                                                       new[dsv2.VALUE_LAYER]):
         for couche in dsv2.VALUE_BOUND_LAYERS:
             out.pop(couche, None)
     out.update(new)
