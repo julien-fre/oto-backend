@@ -10,8 +10,13 @@ description au survol + lien, tableaux confortables à explorer).
 Quatre pages, toutes gatées par l'appartenance au projet (fail-closed) :
 - `/`               index : brief + hero MCP + connecteurs + liens procédures / tableaux / docs
 - `/procedures/<id>`  prose d'une procédure liée (markdown sûr)
-- `/data/<id>`        lignes d'un tableau lié (table riche : recherche + tri + filtres), gaté `secret`
-- `/docs/<id>`        page Documents (liée au projet ou de son arbre)
+- `/data/<id>`        lignes d'un tableau lié (table riche : recherche + tri + filtres)
+- `/docs/<id>`        page Documents de l'arbre du projet
+
+Les tableaux et les pages sont en OUTRE gatés par les opt-ins du propriétaire, lus dans
+`project_exposure` — LE seam, partagé avec la face MCP (#557). Pas d'opt-in ⇒ l'entrée est
+absente de l'index ET la page directe rend 404, exactement comme la face MCP retire le tool
+de sa liste et refuse l'appel.
 
 Auto-portée (tokens Otomata inline + Google Fonts), aucune dépendance front. Tout contenu
 utilisateur est ÉCHAPPÉ ; la prose markdown est rendue en mode sûr (`html=False` → HTML brut
@@ -33,6 +38,7 @@ from markdown_it import MarkdownIt
 
 from . import brand
 from . import config
+from . import project_exposure
 
 # Rendu CommonMark SÛR (html=False = HTML brut échappé, pas exécuté), réutilisé (stateless).
 _MD = MarkdownIt("commonmark", {"html": False})
@@ -607,17 +613,19 @@ def build_page(project: dict, path: str, *, offset: int = 0,
                connect_url: str = "") -> tuple[Optional[str], int]:
     """Rend la page UI pour ce (projet, path), ou `(None, 0)` si le path n'est PAS une
     route UI (le dispatch retombe alors sur le MCP). Fail-closed : une entité non liée au
-    projet → 404, jamais une lecture hors périmètre. Les TABLEAUX (datastore, lecture seule)
-    ne sont navigables que sur un partage `secret` (mode « partage de projet ») ; le flag
-    `mcp_expose_datastore`, lui, gate les OUTILS `data_*` MCP, pas cette vue humaine."""
+    projet → 404, jamais une lecture hors périmètre.
+
+    Les TABLEAUX et les PAGES sont en outre gatés par les opt-ins du propriétaire, lus
+    dans `project_exposure` — le MÊME seam que la face MCP (#557). Cette vue humaine ne
+    tient PAS sa propre version de la règle : elle est atteinte sans rien installer, donc
+    c'est ici que le consentement compte le plus."""
     from . import db, org_store
 
     pid = int(project["id"])
     p = (path or "/").rstrip("/") or "/"
-    # Tableaux navigables (lecture seule) uniquement sur un partage `secret` : l'owner a
-    # lié le tableau ET publié le projet en partage → consentement explicite. `anonymous`
-    # (endpoint-outil listé publiquement) ne montre pas les lignes du datastore.
-    show_data = (project.get("mcp_access") == "secret")
+    # Le consentement du propriétaire, lu UNE fois, au même endroit que la face MCP.
+    show_data = project_exposure.datastore_exposed(project)
+    show_docs = project_exposure.docs_exposed(project)
 
     if p == "/":
         links = db.list_project_links(pid)
@@ -628,11 +636,12 @@ def build_page(project: dict, path: str, *, offset: int = 0,
             for l in links
             if l.get("target_type") == "procedure" and str(l.get("target_ref", "")).isdigit()]
         tables = (_tableau_entries(project, links) if show_data else [])
-        # Docs : les pages de l'arbre du projet. (Le lien `doc` — pointeur manuel vers
-        # une page d'un autre projet — a été retiré, lot 3 chantier 0.4.)
-        docs = [{"id": int(d["id"]), "label": d.get("title") or f"#{d['id']}",
-                 "description": d.get("description")}
-                for d in db.list_docs_for_project(pid)]
+        # Docs : les pages de l'arbre du projet, sur opt-in seulement — sans lui on ne
+        # les LIT même pas (titre et chapô en disent déjà trop). (Le lien `doc` — pointeur
+        # manuel vers une page d'un autre projet — a été retiré, lot 3 chantier 0.4.)
+        docs = ([{"id": int(d["id"]), "label": d.get("title") or f"#{d['id']}",
+                  "description": d.get("description")}
+                 for d in db.list_docs_for_project(pid)] if show_docs else [])
         connectors, loose = _connectors_from_tools(list(project.get("mcp_tools") or []))
         # « Ajouter à mon Oto » : deep-link dashboard (login + fork/récupération gérés là-bas).
         slug = project.get("mcp_slug")
@@ -677,7 +686,9 @@ def build_page(project: dict, path: str, *, offset: int = 0,
                                columns=columns, rows=rows, total=total, offset=max(0, offset)), 200
 
         if section == "docs":
-            doc = db.get_doc_by_id(rid)
+            # Sans l'opt-in : 404 AVANT toute lecture (fail-closed, aucune I/O sur une
+            # page que le propriétaire n'a pas consenti à publier).
+            doc = db.get_doc_by_id(rid) if show_docs else None
             # Autorisé si le doc appartient à CE projet (héritage d'accès). Le lien
             # `doc` cross-projet a été retiré (lot 3 chantier 0.4).
             if not doc or int(doc.get("project_id") or 0) != pid:
