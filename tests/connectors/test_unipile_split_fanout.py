@@ -180,3 +180,76 @@ def test_une_org_sans_acl_reste_ouverte(conn):
     restreinte."""
     assert act.fanout_acl(conn, "unipile", CANAUX) == 0
     assert not list(conn.execute("SELECT 1 FROM connector_acl"))
+
+
+# --- la sentinelle : un déménagement est vrai UNE fois -------------------------
+
+def _post_split(conn):
+    """L'état que le fan-out du 2026-08-28 a produit : le compte + ses six canaux."""
+    for name in ("unipile", *CANAUX):
+        conn.execute("INSERT INTO user_selected_connectors (sub, org_id, connector, state) "
+                     "VALUES ('u1', 1, %s, 'active')", (name,))
+
+
+def _noms(conn) -> set:
+    return {r["connector"] for r in conn.execute(
+        "SELECT connector FROM user_selected_connectors WHERE sub = 'u1'")}
+
+
+def test_sans_sentinelle_un_canal_retire_reviendrait_au_boot(conn):
+    """Le défaut que la sentinelle corrige (#543) — reproduit, pas raconté.
+
+    `ON CONFLICT DO NOTHING` ne protège que les lignes PRÉSENTES. Retirer un canal
+    SUPPRIME la sienne, donc le rejeu du fan-out la réinstalle : la garde ne couvrait
+    pas le seul cas où elle comptait. Ce test appelle `fanout_selection` NU, comme le
+    boot le faisait entre le 28 et le 29/08 — il documente pourquoi l'appel est
+    désormais sous `split_fanout_pending`, et rougirait si on l'en ressortait."""
+    _post_split(conn)
+    conn.execute("DELETE FROM user_selected_connectors "
+                 "WHERE sub = 'u1' AND connector = 'whatsapp'")
+    sel.fanout_selection(conn, "unipile", CANAUX)
+    assert "whatsapp" in _noms(conn)
+
+
+def test_une_base_deja_migree_est_marquee_sans_reecrire(conn):
+    """Le cas de la PROD : elle a reçu le déménagement AVANT que la sentinelle existe.
+
+    Poser le marqueur sans regarder l'aurait fait tourner une dernière fois — donc
+    réinstaller une dernière fois ce que les gens venaient de retirer. Le témoin est
+    une sélection portant l'un des six canaux : présente ⟹ on marque, on n'écrit pas."""
+    _post_split(conn)
+    conn.execute("DELETE FROM user_selected_connectors "
+                 "WHERE sub = 'u1' AND connector = 'whatsapp'")
+    assert sel.split_fanout_pending(conn, CANAUX) is False
+    assert "whatsapp" not in _noms(conn), "la sonde a réécrit ce qu'elle devait constater"
+    assert conn.execute("SELECT 1 FROM connector_selection_seeded WHERE sub = %s",
+                        (sel._SPLIT_MARK,)).fetchone(), "sentinelle non posée"
+
+
+def test_une_base_neuve_recoit_le_fanout_puis_plus_jamais(conn):
+    """L'autre moitié : sans le fan-out, une base neuve perdrait la messagerie. Il
+    doit donc tourner UNE fois — et le boot suivant ne doit plus rien réinstaller."""
+    conn.execute("INSERT INTO user_selected_connectors (sub, org_id, connector, state) "
+                 "VALUES ('u1', 1, 'unipile', 'active')")
+    assert sel.split_fanout_pending(conn, CANAUX) is True
+    sel.fanout_selection(conn, "unipile", CANAUX)
+    sel.mark_split_fanout(conn)
+    assert _noms(conn) == {"unipile", *CANAUX}
+
+    conn.execute("DELETE FROM user_selected_connectors "
+                 "WHERE sub = 'u1' AND connector = 'whatsapp'")
+    assert sel.split_fanout_pending(conn, CANAUX) is False
+    assert "whatsapp" not in _noms(conn)
+
+
+def test_langle_mort_de_la_sonde_est_connu_et_borne(conn):
+    """Le témoin est la SÉLECTION seule : une base migrée dont plus aucune ligne ne
+    porte l'un des six canaux se relit « pas encore migrée » et rejouerait une
+    dernière fois. Vérifié le 2026-08-29 : ne concerne pas la prod (les six y sont
+    sélectionnés). Ce test FIGE la limite — si on la referme un jour, il rougit et
+    dit où."""
+    _post_split(conn)
+    for canal in CANAUX:
+        conn.execute("DELETE FROM user_selected_connectors "
+                     "WHERE sub = 'u1' AND connector = %s", (canal,))
+    assert sel.split_fanout_pending(conn, CANAUX) is True
