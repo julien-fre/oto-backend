@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import inspect
 import logging
+import types
+import typing
 from typing import Awaitable, Callable
 
 from fastmcp.server.auth.providers.jwt import JWTVerifier
@@ -29,7 +31,27 @@ from ._types import AuthzDenied, Capability, NotModified, RawCtx
 AuthFn = Callable[..., Awaitable[tuple[str | None, JSONResponse | None]]]
 
 
+def _porte_une_liste(annotation) -> bool:
+    """`list[...]` quelque part dans l'annotation — `Optional`/`Union` traversés, rien
+    d'autre. ⚠️ Pas `Literal` : ses arguments sont des VALEURS (`Literal["a", "b"]`),
+    et les traverser comme une union ferait d'un scalaire une liste."""
+    origine = typing.get_origin(annotation)
+    if annotation is list or origine is list:
+        return True
+    if origine in (typing.Union, types.UnionType):
+        return any(_porte_une_liste(a) for a in typing.get_args(annotation))
+    return False
+
+
+def _champs_liste(model) -> frozenset:
+    """Les champs de l'`Input` qui DÉCLARENT une liste — calculé une fois au montage."""
+    return frozenset(nom for nom, f in model.model_fields.items()
+                     if _porte_une_liste(f.annotation))
+
+
 def _make_handler(cap: Capability, binding, verifier, authenticate, json_response, json_error):
+    champs_liste = _champs_liste(cap.Input)
+
     async def _handler(request: Request) -> JSONResponse:
         # `allow_api_token` n'est passé QUE lorsqu'il vaut False : le défaut reste un
         # appel à deux arguments, donc les appelants (et les stubs de test) écrits avant
@@ -44,8 +66,25 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
         # Query string (filtres des GET/DELETE sans body : `?query=…&limit=…`).
         # Valeurs str → pydantic coerce vers le type du champ Input. Priorité la
         # plus basse (body puis path params écrasent).
-        if request.query_params:
-            data.update(dict(request.query_params))
+        #
+        # Une clé RÉPÉTÉE (`?filter=a:1&filter=b:2`) arrive en LISTE quand le champ
+        # en déclare une, et jamais autrement. Jusqu'au 29/08 (#418), ce bloc faisait
+        # `dict(request.query_params)` — qui ne garde que la DERNIÈRE valeur : `a`
+        # disparaissait sans un mot, alors que la face MCP recevait la liste entière
+        # et que l'OpenAPI servi (`anyOf [array, string]`, sérialisation `form` +
+        # `explode`) promettait exactement cette forme. Une clé unique reste une
+        # chaîne : c'est au champ de la normaliser (virgule, cf. #367), pour que les
+        # deux faces passent par la même validation. Une clé répétée sur un champ
+        # SCALAIRE est REFUSÉE plus bas, jamais tronquée.
+        repetees_scalaires: list[str] = []
+        for cle in request.query_params.keys():
+            valeurs = request.query_params.getlist(cle)
+            if len(valeurs) == 1:
+                data[cle] = valeurs[0]
+                continue
+            data[cle] = valeurs
+            if cle not in champs_liste:
+                repetees_scalaires.append(cle)
         if request.method in ("POST", "PUT", "PATCH") or binding.reads_body:
             # Un corps illisible est REFUSÉ, jamais ignoré — c'est le même principe
             # que la garde des champs inconnus vingt lignes plus bas, et il lui
@@ -104,6 +143,18 @@ def _make_handler(cap: Capability, binding, verifier, authenticate, json_respons
                 request, 400, "unknown_fields",
                 f"Champ(s) non reconnu(s) : {', '.join(inconnus)}. "
                 f"Attendus : {', '.join(sorted(cap.Input.model_fields))}.")
+        # Après la garde des inconnus (une clé inconnue répétée est d'abord inconnue),
+        # avant la validation : pydantic accepterait `["1", "2"]` pour certains
+        # scalaires ou rendrait un `invalid_input` qui ne nomme pas la clé.
+        if repetees_scalaires:
+            noms = sorted(repetees_scalaires)
+            logger.warning("capacité %s : paramètre(s) scalaire(s) répété(s) refusé(s) : %s",
+                           cap.key, ", ".join(noms))
+            return json_error(
+                request, 400, "repeated_scalar",
+                f"Paramètre(s) répété(s) alors qu'une seule valeur est attendue : "
+                f"{', '.join(noms)}. Une liste se déclare dans le schéma du champ ; "
+                f"ici, n'envoie qu'une valeur.")
         try:
             inp = cap.Input(**data)
         except ValidationError:

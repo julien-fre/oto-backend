@@ -947,10 +947,10 @@ class ProjectReadInput(BaseModel):
         """La query string normalisée UNE fois, ici, pour que le handler ne voie
         jamais qu'une liste.
 
-        La virgule sépare : la forme répétée (`?include=a&include=b`) est
-        inutilisable en amont — l'adaptateur aplatit la query string et ne garde que
-        la DERNIÈRE valeur, donc `a` disparaîtrait sans un mot. Entre une syntaxe à
-        apprendre et une perte muette, on prend la syntaxe."""
+        La virgule sépare une valeur unique ; la forme répétée (`?include=a&include=b`)
+        arrive déjà en liste depuis l'adaptateur (#418, 29/08 — avant, il ne gardait
+        que la DERNIÈRE valeur, et ce docstring disait la forme inutilisable). Les
+        deux se combinent : chaque entrée est découpée à son tour."""
         if v is None:
             return None
         brut = v if isinstance(v, list) else str(v).split(",")

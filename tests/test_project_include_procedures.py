@@ -273,11 +273,18 @@ async def test_la_requete_exacte_du_partenaire_aboutit(projet_lisible):
 
 @pytest.mark.asyncio
 async def test_plusieurs_inclusions_se_nomment_par_une_virgule(projet_lisible):
-    """La forme répétée (`?include=a&include=b`) est INUTILISABLE ici : l'adaptateur
-    aplatit la query string et ne garde que la DERNIÈRE valeur — un `include` écrasé
-    en silence, exactement le genre de perte muette que ce dépôt refuse. La virgule
-    est donc la seule forme qui dise vraiment deux choses."""
+    """`?include=spine,procedures` — la virgule dans une valeur unique."""
     code, corps = await _get_par_la_route(b"include=spine,procedures")
+    assert code == 200, corps
+    assert "procedures" in corps and "spine" in corps
+
+
+@pytest.mark.asyncio
+async def test_la_forme_repetee_dit_la_MEME_chose_que_la_virgule(projet_lisible):
+    """`?include=spine&include=procedures` — la sérialisation par défaut d'un `array`
+    OpenAPI. Jusqu'au 29/08 (#418) l'adaptateur ne gardait que la DERNIÈRE valeur et
+    ce fichier disait la forme « inutilisable » : `spine` disparaissait sans un mot."""
+    code, corps = await _get_par_la_route(b"include=spine&include=procedures")
     assert code == 200, corps
     assert "procedures" in corps and "spine" in corps
 

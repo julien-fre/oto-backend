@@ -1,8 +1,8 @@
 """Un champ LISTE servi en `GET`/`DELETE` doit se dire dans une URL (#367).
 
-Une adresse web ne sait pas transporter une liste : l'adaptateur REST verse la query
-string telle quelle (`dict(request.query_params)`, **des chaînes**), et pydantic coerce
-`str`→`int`/`bool` mais **jamais** `str`→`list`. Un `Input` déclarant `list[...]` sur une
+Une adresse web ne sait pas transporter une liste : l'adaptateur REST verse une valeur
+UNIQUE telle quelle (**une chaîne**), et pydantic coerce `str`→`int`/`bool` mais
+**jamais** `str`→`list`. Un `Input` déclarant `list[...]` sur une
 capacité liée en `GET` répond donc `400 invalid_input` — un refus qui ne nomme même pas
 le champ.
 
@@ -23,9 +23,10 @@ jours. Un champ sans exemple fait rouge : le banc ne s'abstient jamais en silenc
 
 Le patron de la maison quand la garde mord : déclarer `Optional[list[str] | str]` (la
 forme RÉELLE de l'entrée, pas une facilité) et normaliser une fois, au bord — ou poser un
-`field_validator(mode="before")` qui découpe la chaîne. Séparateur = **la virgule** : la
-forme répétée `?k=a&k=b` est inutilisable, `dict(query_params)` l'aplatit et ne garde que
-la DERNIÈRE valeur, donc `a` disparaîtrait sans un mot.
+`field_validator(mode="before")` qui découpe la chaîne. Séparateur = **la virgule** pour
+une valeur unique ; la forme répétée `?k=a&k=b` arrive en liste depuis #418 (29/08 —
+avant, l'adaptateur ne gardait que la DERNIÈRE valeur ; garde :
+`test_rest_query_repeated_param.py`). Ce banc-ci couvre la valeur UNIQUE.
 """
 from __future__ import annotations
 
