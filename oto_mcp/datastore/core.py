@@ -214,6 +214,24 @@ def _backquote(noms) -> str:
     return ", ".join(f"`{n}`" for n in noms)
 
 
+def _refus_rien_tenu(ou: str = "") -> ClaimedRefUnresolved:
+    """Le refus « ton travail ne tient rien » — et ce qu'il ne dit PLUS.
+
+    Le 29/08 à 15:24, il finissait par « ou écris avec un identifiant explicite ». Le
+    travail venait de recevoir `row: null` (fin de file : la dernière ligne était sous
+    le bail d'un pair, écrite 71 ms plus tard) ; l'agent a pris la phrase au mot et a
+    fabriqué un identifiant sur le gabarit du refus suivant. Le cas NORMAL derrière ce
+    refus est la fin de file, pas une réservation oubliée : on le nomme, et la conduite
+    est de ne rien écrire — une invitation à fournir un identifiant, ici, est une
+    invitation à l'inventer."""
+    return ClaimedRefUnresolved(
+        f"`{CLAIMED_REF}`{ou} : ton travail ne tient aucune ligne en ce moment (aucune "
+        "réservation active). Si `data_claim_next` t'a rendu `row: null`, la file est "
+        "vide pour ton filtre : il n'y a rien à écrire — n'invente pas d'identifiant, "
+        "termine ton travail (`run_finish`). Sinon, réserve une ligne avec "
+        "`data_claim_next` avant d'écrire.")
+
+
 def _current_run() -> Optional[str]:
     """Le run de l'appel courant, ou None hors de tout run.
 
@@ -1500,10 +1518,7 @@ class DatastorePg(SchemaOpsMixin):
                 "`run_start`) sur cet appel — il n'est pas hérité —, ou écris avec "
                 "l'identifiant que `data_claim_next` t'a rendu.")
         if not ici and not ailleurs:
-            raise ClaimedRefUnresolved(
-                f"`{CLAIMED_REF}` : ton travail ne tient aucune ligne en ce moment "
-                "(aucune réservation active). Réserve-en une avec `data_claim_next`, "
-                "ou écris avec un identifiant explicite.")
+            raise _refus_rien_tenu()
         if len(ici) == 1:
             return ici[0]
         if not ici:
@@ -1542,12 +1557,9 @@ class DatastorePg(SchemaOpsMixin):
                 f"`{CLAIMED_REF}` en tableau désigne la réservation de TON travail, et cet "
                 "appel n'est rattaché à aucun travail : passe `_run_id` (celui de ton "
                 "`run_start`) — il n'est pas hérité —, ou nomme le tableau.")
-        baux = db.datastore_active_leases_of(run_id=run, worker=worker)
+        baux = self._baux_actifs(run, worker)
         if not baux:
-            raise ClaimedRefUnresolved(
-                f"`{CLAIMED_REF}` en tableau : ton travail ne tient aucune ligne en ce "
-                "moment (aucune réservation active). Réserve-en une avec "
-                "`data_claim_next`, ou nomme le tableau et la ligne.")
+            raise _refus_rien_tenu(" en tableau")
         if len(baux) == 1:
             b = baux[0]
             return str(self._ns_of(b["ns_id"]).get("namespace") or b["ns_id"]), str(b["row_id"])
@@ -1577,6 +1589,27 @@ class DatastorePg(SchemaOpsMixin):
         return (f"ton travail ne tient rien dans `{namespace}`, mais tient une ligne "
                 f"dans {_backquote(ailleurs)} — c'est peut-être le tableau que tu visais")
 
+    @staticmethod
+    def _baux_actifs(run: str, worker: Optional[str]) -> list[dict]:
+        """Les baux actifs du run, restreints au libellé s'il est donné — et si le
+        libellé ne retrouve rien alors que le run tient bien des lignes, on le DIT.
+
+        Sans ça, un `data_release` rejoué avec un autre `worker` que celui du claim
+        recevait « aucune réservation active » : faux — la ligne était tenue, sous un
+        autre libellé — et un agent cru sans ligne en réserve une seconde pour
+        retrouver la première. Une requête de plus, sur le seul chemin d'échec."""
+        baux = db.datastore_active_leases_of(run_id=run, worker=worker)
+        if baux or worker is None:
+            return baux
+        sans_libelle = db.datastore_active_leases_of(run_id=run)
+        if not sans_libelle:
+            return []
+        tenus = sorted({str(b.get("claimed_by")) for b in sans_libelle})
+        raise ClaimedRefUnresolved(
+            f"`{CLAIMED_REF}` : ton travail tient bien une ligne, mais sous le libellé "
+            f"{_backquote(tenus)} — pas `{worker}`. Rejoue le `worker` donné à "
+            "`data_claim_next`, tel quel : c'est lui qui garde le relâchement.")
+
     def _baux_du_run(self, namespace: str, *, worker: Optional[str] = None):
         """Ce que le travail courant tient : ici, et ailleurs — source unique des deux
         lectures du bail-comme-adresse (#517).
@@ -1587,7 +1620,7 @@ class DatastorePg(SchemaOpsMixin):
         run = _current_run()
         if not run:
             return None, []
-        baux = db.datastore_active_leases_of(run_id=run, worker=worker)
+        baux = self._baux_actifs(run, worker)
         if not baux:
             return [], []
         ns_id = self._resolve(namespace)

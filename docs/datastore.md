@@ -1016,6 +1016,42 @@ Le refus `row … introuvable` du chemin d'écriture porte désormais la même c
 **forme** attendue d'un identifiant, le rappel que `data_claim_next` la rend telle
 quelle, et ce que le run tient déjà.
 
+### Le claim à vide, puis l'alias (29/08, 15:24) — ce que les refus ne disent PLUS
+
+Trois appels d'un même travail, même `_run_id` à l'octet : `data_claim_next` ok, puis
+`data_write(namespace="@claimed")` refusé « ton travail ne tient aucune ligne », puis
+`data_write(id="6738f4c2-57c0-43b9-9d78-XXXXXXXXXXXX")` refusé « introuvable ». Lu
+d'abord comme « le claim pose une identité que l'alias ne retrouve pas » — **faux**, et
+c'est figé par un test contre PostgreSQL sur le chemin réel (middleware + outil) : la
+réservation s'écrit sur le run (`claimed_run` = le `_run_id` de l'appel, posé par le
+middleware AVANT le dispatch) et l'alias se lit sur le run ; `worker` n'est qu'un libellé,
+et `data_write` n'en passe aucun. Le fait, relu dans le journal et dans les lignes : **le
+claim avait rendu `row: null`** — la dernière ligne « à enrichir » était sous le bail
+actif d'un pair, qui l'a écrite 71 ms plus tard. Le refus était juste. Sa **fin** ne
+l'était pas : « … ou écris avec un identifiant explicite », puis « un identifiant a la
+forme `01a04aef-…` (cinq groupes hexadécimaux) ». L'agent a fait exactement ce qu'on lui
+disait — un identifiant fabriqué sur le gabarit, douze X pour le groupe qu'il ne
+connaissait pas. Rien n'est passé (le second refus a tenu), mais c'est la plateforme qui
+avait soufflé le geste.
+
+Quatre textes changent, **aucune description d'outil** (empreinte servie nulle) :
+
+- le rendu d'un claim à vide dit qu'on ne tient rien et qu'on **n'écrit rien** ;
+- « ne tient aucune ligne » nomme la fin de file comme cas normal et la conduite (rien
+  à écrire, `run_finish`) — plus aucune invitation à fournir un identifiant ;
+- « introuvable » **décrit** la forme (UUID de 36 caractères, rendu par `data_write`/
+  `data_claim_next`, on ne l'invente pas) sans en montrer une — et dit quand ce qui est
+  reçu n'a pas cette forme ;
+- un `worker` rejoué différent de celui du claim n'est plus « aucune réservation
+  active » : le refus nomme le libellé tenu.
+
+⚠️ Pour savoir si un claim a rendu une ligne, lire les **lignes** (`claims`,
+`claimed_run`, `updated_at`), pas le relevé du runner : sur son chemin « conversations »
+il ne voit pas la sortie du claim et déclare `claims: 1` dès qu'un appel de travail a
+suivi. Le journal `tool_calls` ne porte pas non plus `_run_id` dans `args` (le middleware
+l'a retiré avant) : sa colonne `run_id` est la seule trace, et elle est la même source
+que le datastore.
+
 ### Ce que l'alias n'est PAS
 
 **Il ne crée aucune propriété par identifiant.** La preuve d'appartenance reste le
