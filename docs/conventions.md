@@ -162,6 +162,15 @@ rien ne rendait navigable et que rien ne tenait.
   vérifier le contrat de l'appelant qui en dépend), et après toute scission de module un
   balayage des noms lus sans être importés ni définis (test grossier niveau module,
   suffisant pour le nom hérité d'un fichier scindé).
+- **Un compte tiré d'une vue filtrée est un PLANCHER tant que la vue ne déclare pas sa
+  portée — il se vérifie par un second chemin** (2026-08-29, #630). Trois lectures de
+  `op=calls org_id=…` à zéro sur un refus que `op=run` montrait : la vue était exacte
+  dans son scope (`tool_calls.org_id` = l'org sous laquelle l'appel a été RÉSOLU), mais
+  l'appel d'un run de l'org, résolu sous l'org maison de l'appelant faute d'axe `_org`,
+  n'y était pas — et rien ne le disait. Règle : une vue filtrée **dit son périmètre et
+  compte ce qu'il exclut** sous les mêmes filtres (jamais un zéro silencieux), et tant
+  qu'une vue ne le fait pas, un chiffre qu'on en tire se recoupe par un second chemin
+  (`op=run`, le journal brut, la base) avant d'en conclure quoi que ce soit.
 - **Le refus est bruyant, la divergence est muette — un `except` large doit DIRE
   quelque chose (27/08).** Un `except Exception` qui ne re-lève pas, ne journalise pas
   et ne rend pas de refus nommé ne rattrape pas la panne : il la traduit en SUCCÈS.

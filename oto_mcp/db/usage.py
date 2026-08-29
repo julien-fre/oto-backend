@@ -19,6 +19,7 @@ import psycopg
 logger = logging.getLogger(__name__)
 
 from .. import deprecations
+from . import journal_calls
 from ._conn import _connect
 
 
@@ -686,35 +687,17 @@ def list_tool_calls(
     d'une conversation ; `min_duration_ms` = appels lents (chasse aux gels mono-loop) ;
     `error_contains` = recherche substring insensible à la casse dans le message."""
     limit = max(1, min(int(limit), 1000))
-    clauses: list[str] = ["l.kind = 'mcp'"]
-    params: list[Any] = []
-    if sub:
-        clauses.append("l.sub = %s")
-        params.append(sub)
+    # Les filtres de la PAGE et ceux de son plancher (#630) sortent de la même
+    # construction — c'est ce qui rend les deux comptes comparables.
+    clauses, params = journal_calls.call_filter_clauses(
+        sub=sub, tool_name=tool_name, errors_only=errors_only, since_days=since_days,
+        run_id=run_id, session_id=session_id, min_duration_ms=min_duration_ms,
+        error_contains=error_contains)
+    clauses = ["l.kind = 'mcp'", *clauses]
     if org_id is not None:
         clauses.append("l.org_id = %s")
         params.append(int(org_id))
-    if tool_name:
-        clauses.append("l.tool = %s")
-        params.append(tool_name)
-    if errors_only:
-        clauses.append("l.ok = FALSE")
-    if since_days is not None:
-        clauses.append("l.created_at >= NOW() - make_interval(days => %s)")
-        params.append(int(since_days))
-    if run_id:
-        clauses.append("l.run_id = %s")
-        params.append(run_id)
-    if session_id:
-        clauses.append("l.session_id = %s")
-        params.append(session_id)
-    if min_duration_ms is not None:
-        clauses.append("l.duration_ms >= %s")
-        params.append(int(min_duration_ms))
-    if error_contains:
-        clauses.append("l.error ILIKE %s")
-        params.append(f"%{error_contains}%")
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    where = " WHERE " + " AND ".join(clauses)
     params.append(limit)
     with _connect() as conn:
         # Alias tool_name/called_at : compat avec l'UI admin existante.

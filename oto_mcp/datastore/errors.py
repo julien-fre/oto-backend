@@ -82,7 +82,18 @@ class InvalidCursor(ValueError):
 
 
 class NamespaceNotFound(Exception):
-    pass
+    """Le nom ne désigne aucun tableau VISIBLE dans l'org de l'appel.
+
+    `indice` (#631) : ce que le refus a de plus à dire quand le tableau existe bel et
+    bien — dans une autre org du même appelant — et que c'est l'org de l'appel qui ne
+    convient pas. Calculé par `hors_org.indice_autre_org` au moment du refus, rendu tel
+    quel par la face MCP ; None quand il n'y a rien d'utile (le nom n'existe nulle
+    part) — une piste vide vaut mieux qu'une phrase qui meuble."""
+
+    def __init__(self, namespace: Optional[str] = None, *, indice: Optional[str] = None):
+        self.namespace = namespace
+        self.indice = indice
+        super().__init__(*([namespace] if namespace is not None else []))
 
 
 class RowNotFound(Exception):

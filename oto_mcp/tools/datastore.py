@@ -244,6 +244,14 @@ def _unknown_filter_keys(store, namespace: str, filter, filters=None) -> set[str
         return set()
 
 
+def _inconnu(namespace: str, e: NamespaceNotFound) -> str:
+    """« inconnu » — et, quand le tableau existe dans une autre org de l'appelant, OÙ et
+    QUOI passer (#631). L'indice vient du store (`datastore/hors_org`), la même recherche
+    que la face REST ; sans indice, le refus nu d'avant."""
+    indice = getattr(e, "indice", None)
+    return f"namespace `{namespace}` inconnu" + (f" — {indice}" if indice else "")
+
+
 def _introuvable(row_id: object, piste: Optional[str]) -> str:
     """Le refus « introuvable » du chemin d'écriture (#517) — la forme se DÉCRIT, elle
     ne se montre pas.
@@ -397,8 +405,8 @@ def register(mcp: FastMCP) -> None:
         store = _store_for(sub)
         try:
             store.delete_namespace(namespace)
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         except NamespaceForbidden:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=f"tu n'as pas le droit de supprimer `{namespace}`"))
@@ -428,8 +436,8 @@ def register(mcp: FastMCP) -> None:
         store = _store_for(sub)
         try:
             return store.rename_namespace(namespace, new_name)
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         except NamespaceForbidden:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=f"tu n'as pas le droit de renommer `{namespace}`"))
@@ -554,8 +562,8 @@ def register(mcp: FastMCP) -> None:
             if semantic_search is not None:
                 out.update(store.set_semantic(namespace, semantic_search))
             return out or {"namespace": namespace}
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         except NamespaceReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=f"namespace `{namespace}` partagé en lecture seule"))
@@ -649,8 +657,8 @@ def register(mcp: FastMCP) -> None:
             return {**out, "project_hint": hint} if hint else out
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         except NamespaceReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` partagé en lecture seule"))
         except RowNotFound:
@@ -720,8 +728,8 @@ def register(mcp: FastMCP) -> None:
                                    warnings=warnings, perimetre=perimetre)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         except NamespaceReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=f"namespace `{namespace}` partagé en lecture seule"))
@@ -746,8 +754,8 @@ def register(mcp: FastMCP) -> None:
             issue = store.release_claim(namespace, id, worker=worker)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         except NamespaceReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=f"namespace `{namespace}` partagé en lecture seule"))
@@ -902,8 +910,8 @@ def register(mcp: FastMCP) -> None:
             return out
         except InvalidCursor:
             raise McpError(ErrorData(code=INVALID_PARAMS, message="`cursor` invalide (repartir sans cursor)"))
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         except RowNotFound:
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=_row_not_found_hint(store, namespace, id)))
@@ -982,8 +990,8 @@ def register(mcp: FastMCP) -> None:
             return {"results": results}
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
 
     @mcp.tool()
     def data_delete_row(namespace: str, id: str) -> dict:
@@ -994,8 +1002,8 @@ def register(mcp: FastMCP) -> None:
         namespace, id = _adresse_reservee(store, namespace, id)
         try:
             store.delete_row(namespace, id)
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         except NamespaceReadOnly:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` partagé en lecture seule"))
         except RowNotFound:
@@ -1019,8 +1027,8 @@ def register(mcp: FastMCP) -> None:
         namespace, _ = _adresse_reservee(store, namespace, ligne=False)
         try:
             return {"url": store.get_url(namespace)}
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
 
     @mcp.tool()
     def data_share(
@@ -1044,8 +1052,8 @@ def register(mcp: FastMCP) -> None:
         # Le partage est une action de GOUVERNANCE (owner ∪ escalade roles.py).
         try:
             ns_id = _store_for(sub).resolve_ns_id(namespace)
-        except NamespaceNotFound:
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=f"namespace `{namespace}` inconnu"))
+        except NamespaceNotFound as e:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_inconnu(namespace, e)))
         if not ownership.can_govern(sub, "datastore_namespace", str(ns_id)):
             raise McpError(ErrorData(code=INVALID_PARAMS,
                                      message=f"tu n'as pas le droit de gérer le partage de `{namespace}`"))

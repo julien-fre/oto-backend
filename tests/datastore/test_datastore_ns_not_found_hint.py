@@ -13,6 +13,7 @@ import pytest
 from _datastore_rest import Boom, call, stub_authz
 
 from oto_mcp.capabilities.datastore import common as dc
+from oto_mcp.datastore import hors_org
 from oto_mcp.capabilities.datastore import rows as dsr
 from oto_mcp.datastore.core import NamespaceNotFound
 
@@ -24,8 +25,8 @@ def _sans_db(monkeypatch):
 
 
 def _get_rows(monkeypatch, *, orgs, namespaces, ns="leads-accords-dormants"):
-    monkeypatch.setattr(dc.org_store, "list_orgs_for_user", lambda sub: orgs)
-    monkeypatch.setattr(dc.db, "list_datastore_namespaces_for_owners",
+    monkeypatch.setattr(hors_org.org_store, "list_orgs_for_user", lambda sub: orgs)
+    monkeypatch.setattr(hors_org.db, "list_datastore_namespaces_for_owners",
                         lambda owners: namespaces)
     return call("me.datastore.list_rows", path_params={"namespace": ns})
 
@@ -62,7 +63,7 @@ def test_lookup_failure_degrades_to_the_bare_404(monkeypatch):
     def boom(sub):
         raise RuntimeError("DB down")
 
-    monkeypatch.setattr(dc.org_store, "list_orgs_for_user", boom)
+    monkeypatch.setattr(hors_org.org_store, "list_orgs_for_user", boom)
     assert call("me.datastore.list_rows",
                 path_params={"namespace": "peu-importe"}) == (
                     404, {"error": "namespace_not_found", "detail": None})
@@ -77,9 +78,9 @@ def test_only_orgs_the_caller_belongs_to_are_probed(monkeypatch):
         seen["owners"] = owners
         return []
 
-    monkeypatch.setattr(dc.org_store, "list_orgs_for_user",
+    monkeypatch.setattr(hors_org.org_store, "list_orgs_for_user",
                         lambda sub: [{"org_id": 2, "name": "A"},
                                      {"org_id": 81, "name": "B"}])
-    monkeypatch.setattr(dc.db, "list_datastore_namespaces_for_owners", capture)
+    monkeypatch.setattr(hors_org.db, "list_datastore_namespaces_for_owners", capture)
     call("me.datastore.list_rows", path_params={"namespace": "x"})
     assert seen["owners"] == [("org", "2"), ("org", "81")]

@@ -125,12 +125,22 @@ class CallRow(BaseModel):
 
 
 class OrgCalls(BaseModel):
-    """Journal d'appels de l'org, plus récent d'abord.
+    """Journal d'appels de l'org, plus récent d'abord — et ce que son scope laisse dehors.
+
+    Scope = les appels RÉSOLUS sous cette org (`org_id` stampé à l'appel). Un appel d'un
+    run de l'org résolu sous une autre org — l'axe `_org` absent le fait retomber sur
+    l'org maison de l'appelant — n'y figure pas : `hors_scope` les compte sous les mêmes
+    filtres (fenêtre = `days`, sinon la page, sinon 30 j), `hors_scope_hint` dit où les
+    voir (`runs/{run_id}`). Un compte lu ici est « lignes + hors_scope », jamais les
+    lignes seules (#630).
 
     ⚠️ `limit` est **silencieusement plafonné à 1000** côté store : demander 5000 rend
     1000 lignes sans le dire. Comme il n'y a ni total ni curseur, une liste de la
     taille du `limit` doit toujours être lue comme « probablement tronquée »."""
     calls: list[CallRow]
+    scope: Optional[str] = None
+    hors_scope: Optional[int] = None
+    hors_scope_hint: Optional[str] = None
 
 
 class OrgCall(BaseModel):
@@ -354,11 +364,12 @@ def _summary(ctx: ResolvedCtx, inp: OrgSummaryInput) -> dict:
 
 
 def _calls(ctx: ResolvedCtx, inp: OrgCallsInput) -> dict:
-    return {"calls": db.list_tool_calls(
-        limit=inp.limit, sub=monitoring._resolve_sub(inp.sub), tool_name=inp.tool,
-        errors_only=inp.errors, since_days=inp.days, org_id=inp.org_id,
+    # La page ET son plancher (#630) — le même geste que la console plateforme.
+    return monitoring.calls_with_scope(monitoring.CallsInput(
+        limit=inp.limit, sub=inp.sub, tool=inp.tool,
+        errors=inp.errors, days=inp.days, org_id=inp.org_id,
         run_id=inp.run_id, session_id=inp.session_id,
-        min_duration_ms=inp.min_duration_ms, error_contains=inp.error_contains)}
+        min_duration_ms=inp.min_duration_ms, error_contains=inp.error_contains))
 
 
 def _call(ctx: ResolvedCtx, inp: OrgCallInput) -> dict:

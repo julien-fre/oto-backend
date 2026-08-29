@@ -13,6 +13,7 @@ déjà leur console (`oto_admin_signal`) — pas dupliqués ici.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
 from pydantic import BaseModel, field_validator
@@ -88,12 +89,68 @@ def _funnel(ctx: ResolvedCtx, inp: FunnelInput) -> dict:
     return db.activation_funnel(active_window_days=inp.days)
 
 
+# Fenêtre du plancher quand rien ne la borne (ni `days`, ni une page pleine) : le
+# compte parcourt le journal en temps linéaire (28 ms/jour mesurés en prod, #630).
+FLOOR_WINDOW_DAYS = 30
+
+
+def _instant(v) -> datetime:
+    """`called_at` tel que le row factory le rend (chaîne naïve, UTC) ou un datetime."""
+    if isinstance(v, str):
+        v = datetime.fromisoformat(v)
+    return v if v.tzinfo else v.replace(tzinfo=timezone.utc)
+
+
+def _horizon(calls: list, inp: CallsInput) -> tuple[datetime, str]:
+    """Depuis quand compter ce que la page ne montre pas — la fenêtre de la page
+    elle-même, pour que les deux nombres se comparent : `days` s'il est donné ; sinon,
+    page PLEINE ⇒ son appel le plus ancien ; sinon une fenêtre bornée, et DITE."""
+    now = datetime.now(timezone.utc)
+    if inp.days is not None:
+        return now - timedelta(days=inp.days), f"sur {inp.days} j"
+    if calls and len(calls) >= inp.limit:
+        oldest = min(_instant(c["called_at"]) for c in calls)
+        return oldest, f"dans la fenêtre de cette page (depuis {oldest.isoformat()})"
+    return now - timedelta(days=FLOOR_WINDOW_DAYS), f"sur {FLOOR_WINDOW_DAYS} j"
+
+
+def calls_with_scope(inp: CallsInput) -> dict:
+    """La page du journal et — quand elle est scopée à une org — ce que ce scope
+    laisse dehors (#630).
+
+    Scope d'une vue d'org = les appels RÉSOLUS sous cette org (`tool_calls.org_id`,
+    stampé à l'appel). Un appel d'un run de l'org résolu sous une AUTRE org — l'axe
+    `_org` absent fait retomber l'appel sur l'org maison de l'appelant (#631) — n'y
+    figure pas, alors que `op=run` le montre. Vécu le 29/08 : trois lectures filtrées
+    à zéro sur un refus que le déroulé montrait. La vue reste exacte dans son
+    périmètre ; elle DIT désormais le périmètre, et compte ce qu'il exclut sous les
+    mêmes filtres — même quand c'est 0, pour que le zéro se lise comme « regardé ».
+    Sans scope d'org, rien n'est dehors : pas de champ."""
+    filtres = dict(sub=_resolve_sub(inp.sub), tool_name=inp.tool, errors_only=inp.errors,
+                   since_days=inp.days, run_id=inp.run_id, session_id=inp.session_id,
+                   min_duration_ms=inp.min_duration_ms, error_contains=inp.error_contains)
+    calls = db.list_tool_calls(limit=inp.limit, org_id=inp.org_id, **filtres)
+    if inp.org_id is None:
+        return {"calls": calls}
+    since, fenetre = _horizon(calls, inp)
+    hors = db.count_calls_of_org_runs_elsewhere(inp.org_id, since=since, **filtres)
+    out = {
+        "calls": calls,
+        "scope": (f"appels RÉSOLUS sous l'org {inp.org_id} (colonne org_id) — un appel "
+                  "d'un run de cette org résolu sous une autre org (axe `_org` absent ⇒ "
+                  "org maison de l'appelant) n'y figure pas ; `op=run` le montre"),
+        "hors_scope": hors,
+    }
+    if hors:
+        out["hors_scope_hint"] = (
+            f"{hors} appel(s) de runs de l'org {inp.org_id}, résolus sous une autre org, "
+            f"correspondent aux mêmes filtres {fenetre} et ne sont PAS listés — "
+            "`op=run run_id=…` les montre.")
+    return out
+
+
 def _calls(ctx: ResolvedCtx, inp: CallsInput) -> dict:
-    return {"calls": db.list_tool_calls(
-        limit=inp.limit, sub=_resolve_sub(inp.sub), tool_name=inp.tool,
-        errors_only=inp.errors, since_days=inp.days, org_id=inp.org_id,
-        run_id=inp.run_id, session_id=inp.session_id,
-        min_duration_ms=inp.min_duration_ms, error_contains=inp.error_contains)}
+    return calls_with_scope(inp)
 
 
 def _call(ctx: ResolvedCtx, inp: CallInput) -> dict:
