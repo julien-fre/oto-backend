@@ -34,9 +34,24 @@ from oto_mcp import call_axes
 # La propriété qu'on garde n'a jamais été « le catalogue ne grossit pas » — c'est
 # « une phrase écrite dans call_axes n'est pas payée par tous ». Elle se mesure par
 # outil, et par la PART du handshake. Les deux sont invariants à l'échelle.
-_BUDGET_PAR_OUTIL = 700     # mesuré 632 c./outil le 21/08 (466 outils)
+_BUDGET_PAR_OUTIL = 800     # mesuré 766 c./outil le 29/08 (558 outils, après #547)
 _BUDGET_PART = 0.40         # part des axes dans le total servi
 _BUDGET_DESCRIPTION = 110   # caractères, par description d'axe
+
+# ⚠️ **Exceptions NOMMÉES au plafond par description.** Un plafond qu'on relève pour
+# tout le monde n'est plus un plafond : la dérive qu'on veut voir est celle qui arrive
+# axe par axe, sans qu'on la décide. Une exception se demande ici, pour UN axe, avec sa
+# raison et son coût — et les cinq autres restent tenus à 110 c.
+#
+# `_run_id` (#547, 29/08/2026) : sa description tenait en 55 c. (« run_id d'un
+# `run_start` — le run ACTIF s'applique déjà. ») et cette concision était le bug. Elle
+# disait au modèle qu'il pouvait omettre le jeton ; mesuré sur une campagne, `_run_id`
+# était passé sur 140/140 réservations puis omis à l'écriture, et **31 écritures sur
+# 100 étaient refusées**, toutes sur la ligne que l'appelant tenait lui-même. Trois
+# faits qu'un lecteur de schéma ne peut pas déduire se paient donc ici : obligatoire,
+# ce que coûte l'omission, l'exception nommée. Coût assumé : +135 c. sur 548 des 558
+# outils, ~74 k c. de handshake — contre 31 lignes perdues sur 100.
+_EXCEPTIONS_DESCRIPTION = {"_run_id": 200}
 
 
 def _served() -> list[tuple[str, int, int]]:
@@ -65,15 +80,30 @@ def _served() -> list[tuple[str, int, int]]:
 
 
 def test_chaque_description_d_axe_reste_une_ligne():
-    trop_longues = {a.param: len(a.schema.get("description", ""))
-                    for a in call_axes.AXES
-                    if len(a.schema.get("description", "")) > _BUDGET_DESCRIPTION}
+    trop_longues = {
+        a.param: len(a.schema.get("description", ""))
+        for a in call_axes.AXES
+        if len(a.schema.get("description", ""))
+        > _EXCEPTIONS_DESCRIPTION.get(a.param, _BUDGET_DESCRIPTION)}
     assert not trop_longues, (
         f"description d'axe au-delà de {_BUDGET_DESCRIPTION} c. : {trop_longues}. "
         "Elle est recopiée dans ~400 schémas — le *pourquoi*, la marche à suivre et les "
         "clauses « omets pour… » vivent UNE fois, dans le bloc A (instructions.py). "
-        "Ici : ce que l'axe fait, et l'outil qui liste ses valeurs."
+        "Ici : ce que l'axe fait, et l'outil qui liste ses valeurs. Si un axe DOIT être "
+        "plus long, ajoute-le à `_EXCEPTIONS_DESCRIPTION` avec sa raison et son coût — "
+        "l'exception se discute, le plafond général ne se relève pas."
     )
+
+
+def test_les_exceptions_de_description_restent_l_exception():
+    """Un dictionnaire d'exceptions qui grossit est un plafond qu'on a supprimé sans le
+    dire. Deux garde-fous : il ne vise que des axes RÉELS, et il reste minoritaire."""
+    params = {a.param for a in call_axes.AXES}
+    inconnus = set(_EXCEPTIONS_DESCRIPTION) - params
+    assert not inconnus, f"exception sur un axe qui n'existe pas : {inconnus}"
+    assert len(_EXCEPTIONS_DESCRIPTION) <= len(params) // 3, (
+        f"{len(_EXCEPTIONS_DESCRIPTION)} axes sur {len(params)} échappent au plafond — "
+        "ce n'est plus une exception, c'est le régime.")
 
 
 def test_les_jetons_de_contexte_tiennent_dans_leur_budget():

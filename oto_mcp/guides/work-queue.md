@@ -32,15 +32,25 @@ Réponse : `{namespace, row}` avec `row = null` quand il n'y a plus rien à pren
 ## Le cycle complet
 
 ```
+0. run = run_start(label="<ma campagne>")      → run["run_id"]
 1. row = data_claim_next(namespace="<table>", worker="<mon-libellé>",
-                         filter={"status": "nouveau"})
+                         filter={"status": "nouveau"}, _run_id=run["run_id"])
 2. si row == null  → terminé, le worker s'arrête
 3. traiter row (enrichissement, appels connecteurs, raisonnement…)
 4. data_write(namespace="<table>", id=row["_id"],
-              row={"status": "traité", ...livrables})
-5. data_release(namespace="<table>", id=row["_id"], worker="<mon-libellé>")
-6. reboucler en 1
+              row={"status": "traité", ...livrables}, _run_id=run["run_id"])
+5. data_release(namespace="<table>", id=row["_id"], worker="<mon-libellé>",
+                _run_id=run["run_id"])
+6. reboucler en 1                              → puis run_finish(run["run_id"], "done")
 ```
+
+⚠️ **`_run_id` se repasse à CHAQUE appel, y compris celui qui écrit.** C'est le
+manquement le plus fréquent, et il coûte la ligne : le jeton est presque toujours
+passé au claim (la consigne est fraîche) puis oublié à l'écriture — et l'écriture est
+alors refusée sur la ligne qu'on tient soi-même. Le serveur ne le retient pas d'un
+appel au suivant : chaque appel arrive dans sa propre session. Si tu préfères ne pas
+porter de run, porte alors `worker=` — mais choisis, et tiens ton choix jusqu'au bout
+de la boucle.
 
 **Rendre la ligne est un geste, pas une conséquence.** Écrire un verdict ne la libère
 pas : le verrou ne connaît pas tes états métier, et il n'a pas à les connaître — « à
@@ -58,8 +68,14 @@ Le `worker` est rejoué au release comme garde — on ne libère pas le claim d'
 
 **Tant que tu tiens une ligne, personne d'autre ne peut l'écrire.** Le bail protège
 désormais la donnée, pas seulement l'attribution : une écriture venue d'ailleurs est
-refusée avec un message qui dit qui tient la ligne et jusqu'à quand. Toi, tu écris
-librement — tu es reconnu par ton run, ou par ton `worker` si tu écris hors run.
+refusée avec un message qui dit qui tient la ligne et jusqu'à quand.
+
+**Et « quelqu'un d'autre », c'est toi aussi dès que tu cesses de te nommer.** Tu es
+reconnu par ton run — à condition de passer `_run_id=` sur l'appel qui écrit, pas
+seulement sur celui qui a réservé — ou par ton `worker` si tu écris hors run. Un
+`data_write` qui ne porte ni l'un ni l'autre est un inconnu pour le verrou, même s'il
+vient du compte qui tient le bail : il est refusé, et la ligne reste bloquée jusqu'à
+l'expiration du bail.
 
 ## Les trois paramètres qui comptent
 

@@ -784,7 +784,8 @@ class DatastorePg(SchemaOpsMixin):
             return
         if _WRITING_AS.get() and _WRITING_AS.get() == lease.get("claimed_by"):
             return
-        raise RowLocked(row_id, lease.get("claimed_by"), lease.get("claimed_until"))
+        raise RowLocked(row_id, lease.get("claimed_by"), lease.get("claimed_until"),
+                        lease.get("claimed_run"))
 
     @staticmethod
     def _lease_guard(row_id: str):
@@ -831,7 +832,7 @@ class DatastorePg(SchemaOpsMixin):
                 # Illisible pour de bon : on REFUSE plutôt que d'ouvrir. Un bail dont
                 # on ne sait pas s'il court protège encore quelqu'un ; l'ignorance ne
                 # doit pas se résoudre en faveur de l'écrivain.
-                raise RowLocked(row_id, by, until)
+                raise RowLocked(row_id, by, until, locked.get("claimed_run"))
             if echeance <= datetime.now(timezone.utc):
                 return                       # bail EXPIRÉ : ne protège rien
             run = _current_run()
@@ -839,7 +840,7 @@ class DatastorePg(SchemaOpsMixin):
                 return                       # le titulaire, par son run
             if _WRITING_AS.get() and _WRITING_AS.get() == by:
                 return                       # le titulaire, par son worker
-            raise RowLocked(row_id, by, until)
+            raise RowLocked(row_id, by, until, locked.get("claimed_run"))
         return _guard
 
     def _merge_into_row(self, ns_id: int, row_id: str, user_data: dict,

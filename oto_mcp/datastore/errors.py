@@ -73,10 +73,17 @@ class RowLocked(Exception):
     quand, et le geste — libérer explicitement, puis écrire. Sans la sortie, on
     remplace un silence par un mur."""
 
-    def __init__(self, row_id: str, claimed_by: Any = None, claimed_until: Any = None):
+    def __init__(self, row_id: str, claimed_by: Any = None, claimed_until: Any = None,
+                 claimed_run: Any = None):
         self.row_id = row_id
         self.claimed_by = claimed_by
         self.claimed_until = claimed_until
+        # Le RUN qui tient le bail (#547). Porté sur l'exception — jamais dans le
+        # message : le publier ferait du verrou une étiquette, puisqu'un `_run_id=`
+        # n'autorise rien, il NOMME. La surface s'en sert pour un seul test, qui
+        # n'apprend rien à un tiers : « ce run est-il le tien ? » (cf.
+        # `tools/datastore._omitted_run_hint`).
+        self.claimed_run = claimed_run
         super().__init__(
             f"ligne « {row_id} » réservée par « {claimed_by} » jusqu'à "
             f"{claimed_until} — écriture refusée. Si le travail est terminé ou "

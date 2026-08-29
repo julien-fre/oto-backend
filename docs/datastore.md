@@ -172,6 +172,19 @@ monde y compris le titulaire, l'autre ne refusant jamais personne. Une date illi
 REFUSE désormais au lieu d'ouvrir : un bail dont on ne sait pas s'il court protège
 peut-être encore quelqu'un.
 
+⚠️ **Correction datée (29/08/2026, #547) : la seconde source ne rend rien.** Le
+paragraphe ci-dessus dit « les deux sources sont désormais lues une seule fois, au
+middleware de contexte » — le jeton `_run_id=` explicite, puis la pile de session. Le
+repli sur la pile est en fait **inerte** : `CallContextMiddleware.on_call_tool` appelle
+`guide_run.active_run_id(context)` avec le `MiddlewareContext` de FastMCP, qui n'a pas
+de `get_state` ; la lecture lève, est avalée, et rend une pile vide. Le test qui couvre
+ce chemin passe un contexte de laboratoire qui, LUI, a `get_state` — le même piège que
+celui dont son propre en-tête met en garde. Conséquence : **le datastore ne connaît un
+run que si `_run_id=` est passé explicitement**, y compris dans une session serveur qui
+tient un run actif. C'est ce qui rend le jeton obligatoire dans les faits, et ce que la
+description de l'axe dit désormais (`call_axes.RUN`). Mesuré, non corrigé ici : le
+correctif de la lecture est un lot à part, avec sa propre mesure.
+
 ⚠️ **Écrire un état terminal ne libère plus la ligne** — le store émet une notice à la
 place. Un tableau dont le statut n'a aucun état terminal est une file qui ne libère
 rien : `set_schema` le signale à la pose.
