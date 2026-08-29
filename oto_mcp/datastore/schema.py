@@ -6,6 +6,11 @@ s'étend au-delà du rendu (0016) avec quatre couches OPT-IN :
 - **types imbriqués** : `type: "object"` (+ `fields: [...]`) et `type: "list"`
   (+ `of: <field-def>` — scalaire ou sous-record) décrivent une *fiche* (occupant,
   `contacts[]`, `signaux[]`) que le blob JSONB porte déjà ;
+- **référentiel fermé sous `strict`** : dans un composite DÉCLARÉ (`object.fields`,
+  `list.of.fields`), un attribut que la déclaration ne nomme pas est REFUSÉ, en
+  nommant l'élément (`contacts[1].email_pattern`). Le premier niveau, lui, reste
+  ouvert : une clé inconnue y crée une colonne libre (contrat 0016) et n'est que
+  SIGNALÉE (`hors_schema`, #294) ;
 - **validation à l'écriture** : `field.required`, conformité de type,
   `field.required_when: {<champ>: <valeur>}` (le guard-rail : livrables requis
   quand `status = "qualified"`) et `field.max_length` (borne de longueur — un
@@ -605,18 +610,75 @@ def off_schema_keys(schema: Optional[dict], data: dict) -> list[str]:
     return sorted(_off_schema(fields, data, ""))
 
 
+def _unknown_subkeys(fields: list, data: dict) -> list[str]:
+    """Les clés de `data` qu'aucun field de `fields` ne couvre — le prédicat UNIQUE
+    du « hors du référentiel », partagé par le SIGNAL (`_off_schema`, #294) et par le
+    REFUS d'un composite déclaré (`_row_errors`, #544). Deux implémentations
+    donneraient deux définitions de la même chose, et c'est l'appelant qui paierait
+    la différence — le défaut déjà payé sur `split_layer` (juste sur un verbe, faux
+    sur trois).
+
+    Deux règles, et elles valent à tous les étages :
+
+    - **sans référentiel, rien n'est hors référentiel** : un composite qui ne déclare
+      AUCUN field ne ferme rien (tout y serait « inconnu », ce qui n'informe
+      personne) — c'est exactement le contrat d'une liste libre, et la même règle
+      qu'au premier niveau (`off_schema_keys` sur un strict sans field) ;
+    - **une COUCHE n'est pas un attribut** : la forme servie d'un item aplatit ses
+      couches (`email.origine`, oto#22 §2), donc un aller-retour lecture → écriture
+      les repose telles quelles. Les refuser casserait le geste le plus ordinaire.
+    """
+    declared = {f["key"] for f in fields
+                if isinstance(f, dict) and isinstance(f.get("key"), str) and f["key"]}
+    if not declared or not isinstance(data, dict):
+        return []
+    out = []
+    for key in data:
+        if key in declared:
+            continue
+        base, layer = split_layer(key)
+        if layer and base in declared:
+            continue
+        out.append(key)
+    return sorted(out)
+
+
+def _unknown_subkey_refusal(path: str, fields: list) -> str:
+    """Le refus d'un attribut non déclaré DANS un composite (#544).
+
+    Il dit les trois choses qu'un agent doit savoir pour ne pas réessayer à
+    l'identique : où (le chemin, RANG compris), ce qui était attendu (les attributs
+    déclarés, dans leur ordre), et pourquoi ce n'est pas la même chose qu'au premier
+    niveau — là, une clé inconnue crée une colonne libre que l'interface affiche ;
+    ici, elle n'a nulle part où exister."""
+    dispo = ", ".join(f"`{f['key']}`" for f in fields
+                      if isinstance(f, dict) and isinstance(f.get("key"), str)
+                      and f["key"])
+    return (f"{path}: attribut non déclaré — le tableau est en format `strict` et ce "
+            f"sous-record ferme ses attributs : {dispo}. Rien n'a été écrit. "
+            "Contrairement à une colonne de premier niveau, un attribut inconnu ne "
+            "crée PAS de colonne libre : il serait stocké là où ni le schéma, ni "
+            "l'interface, ni l'export à plat ne le lisent. Écris-le sous un nom "
+            "déclaré, ou déclare l'attribut (`data_patch_schema`) puis réécris.")
+
+
 def _off_schema(fields: list, data: dict, prefix: str) -> set:
     """Clés de `data` absentes de `fields`, en descendant dans les composites
     DÉCLARÉS (un champ déjà hors schéma n'est pas exploré : on ne sait pas ce
     qu'il devrait contenir). Les items d'une liste sont agrégés sur un chemin
-    unique `clé[].sous_clé` — un lot de 300 contacts ne rend pas 300 lignes."""
+    unique `clé[].sous_clé` — un lot de 300 contacts ne rend pas 300 lignes.
+
+    ⚠️ Depuis #544, les chemins IMBRIQUÉS ne sortent plus d'ici sur un tableau
+    `strict` : le refus arrive avant le relevé (`_check_row` lève, puis relève).
+    La descente reste le contrat de cette fonction — elle décrit ce qui est hors du
+    format, indépendamment de qui refuse — et elle couvre encore le cas où la
+    déclaration n'a pas de référentiel."""
     declared = {f["key"]: f for f in fields
                 if isinstance(f.get("key"), str) and f["key"]}
-    out: set = set()
+    out: set = {f"{prefix}{k}" for k in _unknown_subkeys(fields, data)}
     for key, value in data.items():
         f = declared.get(key)
         if f is None:
-            out.add(f"{prefix}{key}")
             continue
         ftype, sub = f.get("type"), None
         if ftype == "object" and isinstance(value, dict):
@@ -1078,8 +1140,13 @@ def _is_empty(v: Any) -> bool:
 
 def _type_error(value: Any, ftype: str, path: str,
                 fields: Optional[list] = None, of: Optional[dict] = None,
-                options: Optional[list] = None) -> list[str]:
-    """Erreurs de conformité d'UNE valeur à un type déclaré (récursif)."""
+                options: Optional[list] = None, *,
+                closed: bool = False) -> list[str]:
+    """Erreurs de conformité d'UNE valeur à un type déclaré (récursif).
+
+    `closed` = le référentiel de CE composite est fermé (#544) : un attribut que sa
+    déclaration ne nomme pas est refusé, au lieu d'être traversé en silence. Il se
+    propage vers le bas — une liste d'objets dans un objet reste fermée."""
     if ftype == "text":
         return [] if isinstance(value, str) else [f"{path}: attendu text, reçu {type(value).__name__}"]
     if ftype == "number":
@@ -1119,13 +1186,19 @@ def _type_error(value: Any, ftype: str, path: str,
     if ftype == "object":
         if not isinstance(value, dict):
             return [f"{path}: attendu object, reçu {type(value).__name__}"]
-        return _row_errors(fields or [], value, path)
+        return _row_errors(fields or [], value, path, closed=closed)
     if ftype == "list":
         if not isinstance(value, list):
             return [f"{path}: attendu list, reçu {type(value).__name__}"]
         errors: list[str] = []
         of = of or {}
         sub_fields = of.get("fields")
+        # Un attribut inconnu se nomme UNE fois pour toute la colonne, sur le premier
+        # élément qui le porte : les items d'une liste partagent leur déclaration,
+        # donc 300 contacts fautifs diraient 300 fois la même chose. Même borne que
+        # l'agrégation du relevé `hors_schema` (`clé[].sous_clé`), et même raison :
+        # un refus qu'on ne peut pas lire ne vaut pas mieux qu'un silence.
+        vus: set = set()
         for i, item in enumerate(value):
             ipath = f"{path}[{i}]"
             if isinstance(sub_fields, list):
@@ -1133,22 +1206,49 @@ def _type_error(value: Any, ftype: str, path: str,
                     errors.append(f"{ipath}: attendu object, reçu {type(item).__name__}")
                 else:
                     errors.extend(_row_errors(
-                        [x for x in sub_fields if isinstance(x, dict)], item, ipath))
+                        [x for x in sub_fields if isinstance(x, dict)], item, ipath,
+                        closed=closed, vus=vus))
             elif of.get("type"):
                 errors.extend(_type_error(item, of["type"], ipath,
                                           of.get("fields"), of.get("of"),
-                                          of.get("options")))
+                                          of.get("options"), closed=closed))
         return errors
     return []  # json / type absent : tout passe
 
 
 def _row_errors(fields: list, data: dict, path: str,
-                written: Optional[set] = None) -> list[str]:
+                written: Optional[set] = None, *,
+                strict: bool = False, closed: bool = False,
+                vus: Optional[set] = None) -> list[str]:
     """Erreurs d'un (sous-)record. `written` = clés effectivement RÉÉCRITES par ce
-    geste (None = toutes) : seule la borne de longueur s'y restreint, cf.
-    `validate_row`. La récursion dans un sous-record repart à None — remplacer une
-    clé de premier niveau réécrit tout ce qu'elle contient."""
+    geste (None = toutes) : la borne de longueur, le motif et la fermeture d'un
+    composite s'y restreignent — eux seuls, cf. `validate_row`. La récursion dans un
+    sous-record repart à None — remplacer une clé de premier niveau réécrit tout ce
+    qu'elle contient.
+
+    `strict` = le tableau déclare `strict: true`. Il n'interdit rien ICI (une clé
+    inconnue au premier niveau crée une colonne libre, droit du contrat 0016 : elle
+    est SIGNALÉE par `hors_schema`, jamais refusée — arbitrage #294) ; il FERME les
+    composites déclarés d'un cran plus bas (#544). `closed` porte cette fermeture.
+
+    Pourquoi l'asymétrie, alors que « strict s'applique récursivement » : au premier
+    niveau, un nom inconnu crée une vraie colonne, que l'interface affiche et qu'on
+    peut déclarer après coup — c'est ce qui permet d'explorer un tableau avant de le
+    typer. Dans un composite déclaré, il n'existe pas de « sous-colonne libre » :
+    `of.fields` EST le seul référentiel, et l'attribut serait stocké là où rien ne le
+    lit. Le geste qu'on protège en haut n'existe pas en bas.
+
+    `vus` = les attributs déjà nommés pour la colonne-liste courante (borne du
+    refus, cf. `_type_error`)."""
     errors: list[str] = []
+    if closed:
+        for cle in _unknown_subkeys(fields, data):
+            if vus is not None:
+                if cle in vus:
+                    continue
+                vus.add(cle)
+            errors.append(_unknown_subkey_refusal(
+                f"{path}.{cle}" if path else cle, fields))
     for f in fields:
         key = f.get("key")
         if not key:
@@ -1176,6 +1276,12 @@ def _row_errors(fields: list, data: dict, path: str,
         base, layer = split_layer(key)
         value = (layer_value(data.get(base), layer) if layer
                  else unwrap(data.get(key)))
+        # Ce que le geste POSE — hissé ici parce que la fermeture d'un composite s'y
+        # restreint, exactement comme la borne et le motif : la validation porte sur
+        # le MERGÉ, donc juger un composite que le geste ne réécrit pas rendrait
+        # inécritable toute ligne portant déjà un attribut hors format, y compris
+        # pour un patch sans rapport (les 23 lignes gelées d'oto-backend#284).
+        pose = written is None or key in written
         required = bool(f.get("required"))
         rw = f.get("required_when")
         if not required and isinstance(rw, dict) and rw:
@@ -1201,7 +1307,8 @@ def _row_errors(fields: list, data: dict, path: str,
         if f.get("type"):
             errors.extend(_type_error(value, f["type"], fpath,
                                       f.get("fields"), f.get("of"),
-                                      f.get("options")))
+                                      f.get("options"),
+                                      closed=closed or (strict and pose)))
         mi = f.get("max_items")
         if (isinstance(mi, int) and not isinstance(mi, bool) and mi > 0
                 and isinstance(value, list) and len(value) > mi):
@@ -1209,7 +1316,6 @@ def _row_errors(fields: list, data: dict, path: str,
             # sinon le refus fait deviner de combien on dépasse.
             errors.append(f"{fpath}: {len(value)} éléments, maximum {mi}")
         ml = max_length_of(f)
-        pose = written is None or key in written
         trop_long = False
         if ml and pose:
             n = len(value) if isinstance(value, str) else len(str(value))
@@ -1246,17 +1352,25 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     validation est active — plus le cycle de vie (états + transitions) dès qu'un
     `lifecycle` est déclaré, même hors mode strict. Liste vide = OK.
 
+    Sur un tableau `strict`, un composite DÉCLARÉ est en plus un référentiel FERMÉ
+    (#544) : un attribut absent de `of.fields` / `fields` est refusé. La fermeture
+    ne descend que dans les composites que le geste RÉÉCRIT — même restriction que
+    `max_length`, et même raison.
+
     `written` = les clés que ce geste réécrit (None = la row entière, cas d'un
-    insert ou d'un remplacement). La borne `max_length` — et elle seule — s'y
-    restreint : c'est une propriété de la valeur qu'on POSE, pas de l'état final.
-    Sans ça, une valeur trop longue déjà en base ferait échouer tout patch
-    ultérieur de la ligne, même portant sur un champ sans rapport (signal #383).
-    Le reste continue de se juger sur le mergé : un requis manquant est un défaut
-    de la row, quel que soit le geste qui l'y laisse."""
+    insert ou d'un remplacement). Trois contrôles s'y restreignent, et eux seuls :
+    la borne `max_length`, le motif `pattern` et la fermeture d'un composite — ce
+    sont des propriétés de la valeur qu'on POSE, pas de l'état final. Sans ça, une
+    valeur trop longue (ou un attribut hors format) déjà en base ferait échouer tout
+    patch ultérieur de la ligne, même portant sur un champ sans rapport (signal
+    #383, et les 23 lignes gelées d'oto-backend#284). Le reste continue de se juger
+    sur le mergé : un requis manquant est un défaut de la row, quel que soit le
+    geste qui l'y laisse."""
     errors: list[str] = []
     if validation_active(schema):
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
-        errors.extend(_row_errors(_fields(schema), merged, "", written))
+        errors.extend(_row_errors(_fields(schema), merged, "", written,
+                                  strict=bool(schema.get("strict"))))
     lc = lifecycle_of(schema)
     if lc:
         sf = status_field(schema)
