@@ -982,3 +982,31 @@ chercher une faute de frappe là où il n'y en a pas — c'est ce qui a coûté 
 **La leçon dépasse l'alias** : quand un agent met la bonne valeur dans le mauvais champ,
 c'est d'abord une information sur la façon dont il a compris ce qu'on lui a dit. Refuser
 sur le champ voisin, c'est refuser une demande qu'on sait satisfaire.
+
+### L'alias vaut sur TOUS les verbes qui adressent, pas seulement l'écriture (29/08)
+
+L'inventaire des jetons réservés a montré le trou : `@claimed` était accepté sur
+`data_write` et `data_release`, refusé sur `data_rows`, `data_delete_row`, `data_url`
+et `data_aggregate` — les verbes voisins, sur le même objet, dans la même session.
+
+**Un agent n'apprend pas un alias par verbe, il l'apprend par notion.** À qui a compris
+« ma réservation est mon adresse », il est naturel de relire la ligne qu'il tient avant
+de l'écrire. Le refus tombait sur ce geste-là, et il disait « namespace inconnu » —
+donc envoyait chercher une faute d'orthographe dans une chaîne correcte.
+
+Les quatre verbes passent désormais par le **même** geste que l'écriture
+(`_adresse_reservee`) : `@claimed` en tableau, en ligne, ou les deux ; les mêmes trois
+refus, chacun portant sa conduite à tenir. `data_url` et `data_aggregate` n'adressent
+qu'un tableau — on n'y résout pas de ligne.
+
+### `fields=["*"]` demande TOUTES les colonnes
+
+`*` est le chemin vers le brut sur `oto_doc` et sur le feed depuis toujours. Sur
+`data_rows` il tombait dans « colonne inconnue » et rendait `_id` seul : l'agent croyait
+demander la ligne entière et recevait une ligne vide, **sans erreur**. Un jeton qu'une
+autre surface de la même plateforme accepte n'est pas une faute de frappe.
+
+⚠️ Le delta d'empreinte servie de ce lot est **nul** : rien n'a été ajouté aux
+descriptions. C'est délibéré, et c'est la mesure du 27/08 qui le dicte (§ longueur des
+descriptions ↔ appels malformés). Ce lot ne rend possible que ce que les agents
+**tentaient déjà** ; il n'a donc rien à leur enseigner.
