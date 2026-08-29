@@ -1490,6 +1490,44 @@ class DatastorePg(SchemaOpsMixin):
             f"`{namespace}` ({', '.join(ici)}). Nomme celle que tu écris — en deviner "
             "une écrirait peut-être sur la mauvaise, ce qui ne se voit sur aucun écran.")
 
+    def resolve_claimed_target(self, *, worker: Optional[str] = None) -> tuple[str, str]:
+        """`@claimed` posé en TABLEAU → (tableau, ligne), tous deux lus dans la réservation.
+
+        **Pourquoi cette forme existe** : à sa première rencontre avec des agents réels
+        (29/08), `@claimed` est arrivé dans `namespace` et non dans `id` — deux écritures
+        refusées sur cinq, en « namespace inconnu ». On leur retire un champ à recopier ;
+        ils y mettent l'alias qu'on vient de leur apprendre. Et ils n'ont pas tort : on
+        leur a dit « la réservation est l'adresse », et une adresse commence par le
+        tableau.
+
+        > **La réservation porte les deux. Refuser sur le champ voisin, c'est refuser une
+        > demande qu'on sait satisfaire** — et envoyer chercher une faute de frappe là où
+        > il n'y en a pas.
+
+        L'ambiguïté se nomme ici sur DEUX dimensions : sans tableau donné, dire quelles
+        lignes sont tenues sans dire où elles sont laisserait l'agent aussi démuni."""
+        run = _current_run()
+        if not run:
+            raise ClaimedRefUnresolved(
+                f"`{CLAIMED_REF}` en tableau désigne la réservation de TON travail, et cet "
+                "appel n'est rattaché à aucun travail : passe `_run_id` (celui de ton "
+                "`run_start`) — il n'est pas hérité —, ou nomme le tableau.")
+        baux = db.datastore_active_leases_of(run_id=run, worker=worker)
+        if not baux:
+            raise ClaimedRefUnresolved(
+                f"`{CLAIMED_REF}` en tableau : ton travail ne tient aucune ligne en ce "
+                "moment (aucune réservation active). Réserve-en une avec "
+                "`data_claim_next`, ou nomme le tableau et la ligne.")
+        if len(baux) == 1:
+            b = baux[0]
+            return str(self._ns_of(b["ns_id"]).get("namespace") or b["ns_id"]), str(b["row_id"])
+        ou = ", ".join(f"`{b['row_id']}` dans "
+                       f"`{self._ns_of(b['ns_id']).get('namespace') or b['ns_id']}`"
+                       for b in baux)
+        raise ClaimedRefUnresolved(
+            f"`{CLAIMED_REF}` en tableau est ambigu : ton travail tient {len(baux)} "
+            f"lignes — {ou}. Nomme le tableau, ou la ligne, ou les deux.")
+
     def claimed_hint(self, namespace: str) -> Optional[str]:
         """Ce que le travail courant tient — dit au moment où une ADRESSE échoue (#517).
 

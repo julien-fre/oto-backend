@@ -270,6 +270,21 @@ def _project_row(row: dict, fields: list[str]) -> dict:
     return {k: v for k, v in row.items() if k in keep}
 
 
+def _claimed_egare(contenu) -> bool:
+    """`@claimed` posé dans une VALEUR de ligne — un champ qui ne l'accepte pas (#517).
+
+    L'alias est une adresse, jamais une donnée. Écrit dans `row`, il finirait en clair
+    dans un fichier client — et le refus par défaut dirait « valeur inconnue », ce qui
+    envoie chercher une faute de frappe sur un jeton que l'outil reconnaît."""
+    if isinstance(contenu, str):
+        return est_ref_reservation(contenu)
+    if isinstance(contenu, dict):
+        return any(_claimed_egare(v) for v in contenu.values())
+    if isinstance(contenu, list):
+        return any(_claimed_egare(v) for v in contenu)
+    return False
+
+
 def _ns(namespace: str) -> str:
     """Adressage par SLOT (ADR 0035 B3) : `slot:<name>` = le tableau bindé sous ce
     nom par le PROJET ACTIF (`access.resolve_slot_tableau` — erreur actionnable si
@@ -494,7 +509,8 @@ def register(mcp: FastMCP) -> None:
         and returns its `_id`. WITH `id` = PARTIAL update of that row (only provided
         fields change). Returns the row (with `_id`/`_created_at`/`_updated_at`).
 
-        On a row you CLAIMED, pass `id="@claimed"` instead of retyping its `_id`.
+        On a row you CLAIMED, pass `id="@claimed"` instead of retyping its `_id` —
+        `namespace="@claimed"` works too (the reservation carries the table).
 
         BATCH (`rows` = list of dicts): write them all at once — for importing a
         dataset without round-tripping each row through your context. If a business
@@ -531,13 +547,27 @@ def register(mcp: FastMCP) -> None:
             key: business key field for batch upsert/dedup (else `schema.key`).
         """
         store = _acting_store()
-        namespace = _ns(namespace)
         try:
             # #517 : « la ligne que je tiens » plutôt que ses trente-deux caractères.
             # Résolu ICI, avant tout le reste, pour que le refus éventuel sorte par le
             # même chemin actionnable que les autres (ValueError → INVALID_PARAMS).
-            if est_ref_reservation(id):
-                id = store.resolve_claimed_ref(namespace)
+            #
+            # `@claimed` en TABLEAU (29/08) : à leur première rencontre avec l'alias, les
+            # agents l'ont mis là — la réservation porte les deux, refuser ici serait
+            # refuser une demande qu'on sait satisfaire.
+            if est_ref_reservation(namespace):
+                namespace, ligne = store.resolve_claimed_target()
+                if id is None or est_ref_reservation(id):
+                    id = ligne
+            else:
+                namespace = _ns(namespace)
+                if est_ref_reservation(id):
+                    id = store.resolve_claimed_ref(namespace)
+            if _claimed_egare(row) or _claimed_egare(rows):
+                raise McpError(ErrorData(code=INVALID_PARAMS, message=(
+                    '`@claimed` est une ADRESSE, pas une donnée : il s\'écrit dans `id` '
+                    '(ou dans `namespace`), jamais dans le contenu de la ligne — écrit '
+                    'ici, il finirait en clair dans le fichier.')))
             if rows is not None:
                 if row is not None or id is not None:
                     raise McpError(ErrorData(code=INVALID_PARAMS,
@@ -647,17 +677,23 @@ def register(mcp: FastMCP) -> None:
     def data_release(namespace: str, id: str, worker: str) -> dict:
         """Release a claimed row — the NORMAL end of processing one row, and the
         counterpart of data_claim_next. Guarded by `worker` (same label as at claim
-        time). `id="@claimed"` releases the row your run holds, without copying it.
+        time). `id="@claimed"` (or `namespace="@claimed"`) releases the row your run
+        holds, without copying it.
 
         ⚠️ Call it after EVERY row you finish, not only when abandoning: writing a
         "final" status no longer frees the row (#317). If you wrap your work in
         run_start / run_finish, closing the run frees everything it held — that is
         the safety net when you forget. `namespace` also accepts `slot:<name>`."""
         store = _acting_store()
-        namespace = _ns(namespace)
         try:
-            if est_ref_reservation(id):
-                id = store.resolve_claimed_ref(namespace, worker=worker)
+            if est_ref_reservation(namespace):
+                namespace, ligne = store.resolve_claimed_target(worker=worker)
+                if id is None or est_ref_reservation(id):
+                    id = ligne
+            else:
+                namespace = _ns(namespace)
+                if est_ref_reservation(id):
+                    id = store.resolve_claimed_ref(namespace, worker=worker)
             released = store.release_claim(namespace, id, worker=worker)
         except ValueError as e:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))

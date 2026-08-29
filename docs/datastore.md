@@ -959,3 +959,26 @@ baux échus). La différence est le sujet : ici la réponse **désigne une ligne
 et un bail échu ne désigne plus rien — la ligne est peut-être repartie à quelqu'un
 d'autre. Sans `run_id`, la fonction rend une liste vide : `worker` est une étiquette
 choisie par l'appelant, elle restreint, elle ne prouve pas.
+
+### `@claimed` s'écrit aussi en TABLEAU (29/08, premier contact avec des agents réels)
+
+**Deux écritures refusées sur cinq, en « namespace `@claimed` inconnu ».** À sa première
+rencontre avec l'alias, la flotte l'a posé dans `namespace`, pas dans `id`.
+
+> **On leur retire un champ à recopier ; ils y mettent l'alias qu'on vient de leur
+> apprendre.** Et ils n'ont pas tort : on leur a enseigné « la réservation est
+> l'adresse », et une adresse commence par le tableau.
+
+**La réservation porte les deux.** `namespace="@claimed"` résout donc le tableau **et** la
+ligne ; `namespace=<table>` + `id="@claimed"` reste la forme canonique ; les deux à
+`@claimed` désignent la même ligne. Sans réservation, refus nommé — jamais « inconnu ».
+
+⚠️ **Et `@claimed` posé dans le CONTENU d'une ligne est refusé en nommant la faute** :
+c'est une adresse, pas une donnée, et écrit dans `row` il finirait en clair dans un
+fichier client. *Un refus qui dit « inconnu » sur un jeton que l'outil reconnaît envoie
+chercher une faute de frappe là où il n'y en a pas — c'est ce qui a coûté les deux
+écritures.*
+
+**La leçon dépasse l'alias** : quand un agent met la bonne valeur dans le mauvais champ,
+c'est d'abord une information sur la façon dont il a compris ce qu'on lui a dit. Refuser
+sur le champ voisin, c'est refuser une demande qu'on sait satisfaire.
