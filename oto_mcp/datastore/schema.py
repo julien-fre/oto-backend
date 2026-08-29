@@ -538,22 +538,29 @@ def system_origin_fields(schema: Optional[dict]) -> set:
 
 
 def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
-                      avant: Optional[dict] = None,
-                      apres: Optional[dict] = None) -> tuple[list[str], dict]:
+                      avant: Optional[dict] = None) -> tuple[list[str], dict]:
     """Les refus « champ que l'appelant n'écrit pas » → `(messages, details)`.
 
     `payload` = ce que le geste POSE (après arbitrage des vides, #608) ; `avant` = la
-    ligne en place (`None` sur une création) ; `apres` = la ligne telle qu'elle serait
-    écrite. Une seule question : ce geste écrit-il ce qui ne lui appartient pas ?
+    ligne en place (`None` sur une création). Une seule question : ce geste écrit-il
+    ce qui ne lui appartient pas ? — jugée sur le PAYLOAD, jamais sur un « ça a
+    changé ? » : le 29/08/2026 (v1.165.0, copie jetable) l'identique passait sur une
+    colonne `readonly` et emportait `adresse.comment` avec lui.
 
     - `origine: "system"` — la couche est NOMMÉE dans le payload (`{"origine": …}`,
       `{"valeur": …, "origine": …}`, `{"origine": null}`) → refus, création comprise :
       une origine posée à la création marquerait « déjà posée » avec la valeur de
       l'agent, la porte de côté du défaut ;
-    - `readonly: true` — la VALEUR déballée change entre `avant` et `apres` → refus.
-      Une création n'écrase rien (un tableau qui ne doit pas grossir se ferme par
-      `key_required`), un round-trip à l'identique ne change rien, une annotation
-      (`{"comment": …}`) ne touche pas la valeur : les trois passent.
+    - `readonly: true` — le payload NOMME la valeur (nue, `null`, ou `{"valeur": …}`)
+      d'une ligne en place → refus, **identique compris** : l'agent n'a aucun cas où
+      réécrire cette valeur est utile, et le round-trip se fait sans elle. Une
+      création n'écrase rien (un tableau qui ne doit pas grossir se ferme par
+      `key_required`) et une annotation (`{"comment": …}`) ne touche pas la valeur :
+      les deux passent. ⚠️ **La colonne-clé est de l'ADRESSAGE, pas une écriture de
+      valeur** (29/08/2026, mesuré par le terrain) : elle figure dans chaque écriture
+      pour désigner la ligne, et `readonly` dessus refuserait tout le tableau. Sa pose
+      est refusée à la déclaration ; pour un schéma déjà en base qui la porterait, la
+      valeur IDENTIQUE passe et une valeur différente reste refusée.
 
     `details.expected_column` = `<colonne>.comment`, pour la face REST (#545) — un
     front pointe la destination sans reparser une phrase. Le refus n'enseigne PAS
@@ -566,7 +573,7 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
     details: dict = {}
     if not ro and not so:
         return errors, details
-    apres = apres if apres is not None else (payload or {})
+    cle_metier = schema.get("key") if isinstance(schema, dict) else None
     for cle, neuf in (payload or {}).items():
         if cle in so and names_layers(neuf) and ORIGIN_LAYER in neuf:
             errors.append(
@@ -575,7 +582,8 @@ def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
                 f"seule ({{\"{cle}\": …}}) : l'origine est conservée, et posée si "
                 f"elle manque.")
         if cle in ro and avant is not None \
-                and unwrap(avant.get(cle)) != unwrap(apres.get(cle)):
+                and (not names_layers(neuf) or VALUE_LAYER in neuf) \
+                and (cle != cle_metier or unwrap(neuf) != unwrap(avant.get(cle))):
             errors.append(
                 f"`{cle}` est une colonne du fichier source, non modifiable "
                 f"(`readonly`) — rien n'a été écrit. Ce que dit une autre source va "
@@ -1102,6 +1110,14 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
             "key_required exige une clé métier : déclare `key` (la colonne qui "
             "identifie une ligne), sinon aucune écriture ne pourrait viser une ligne "
             "existante et le tableau serait inécrivable")
+    # #606 (29/08/2026) : la clé figure dans CHAQUE écriture pour désigner la ligne.
+    # `readonly` dessus — identique refusé — fermerait toutes les écritures du tableau,
+    # et celui qui « complète » la pose dans six mois ne le saurait pas.
+    if cle and cle in readonly_fields(schema):
+        errors.append(
+            f"`{cle}` est la clé métier : elle se protège par `key_required`, pas par "
+            f"`readonly` — une autre valeur est une autre ligne, et la clé figure dans "
+            f"chaque écriture pour désigner la sienne")
     for f in _fields(schema):
         gabarit = f.get(FLAT_ALIAS)
         if not gabarit:
@@ -1966,7 +1982,7 @@ def enforced_keys() -> list[str]:
         # (payload + ligne en place), pas sur une row seule — même sonde que
         # `key_required` : on interroge la fonction qui décide.
         if reserved_refusals({"fields": [{"key": "x", "readonly": True}]},
-                             {"x": "b"}, {"x": "a"}, {"x": "b"})[0]:
+                             {"x": "a"}, {"x": "a"})[0]:
             vues.append("readonly")
         if reserved_refusals({"fields": [{"key": "x", "origine": SYSTEM_ORIGIN}]},
                              {"x": {ORIGIN_LAYER: "y"}})[0]:

@@ -530,11 +530,30 @@ un contrôle de fin de passage détectait après coup.
   compte et se livre ; quatre fiches sur quatorze la pratiquaient déjà, en écrasant la
   valeur en plus. **Les couches restent donc ouvertes** (`comment`, `link`, et `origine`
   sauf si le système la pose) — la garde sait les séparer de la valeur parce que la
-  fusion les a toujours distinguées (`_merge_column`). Ce que le cran ne ferme PAS, et
-  c'est dit : la **création** d'une ligne (rien n'est écrasé ; un tableau qui ne doit pas
-  grossir se ferme par `key_required`), le **round-trip à l'identique** (relire → repousser
-  est le geste normal, #390), et un **vide non-`null`** sur une valeur en place (#608
-  l'écarte avant la garde). Un `null` nommé, lui, est un changement : refusé.
+  fusion les a toujours distinguées (`_merge_column`). **Le refus se juge sur le
+  PAYLOAD, jamais sur « ça a changé ? »** : nommer la valeur (nue, `null`, ou
+  `{"valeur": …}`) d'une ligne en place est refusé, **identique compris** — l'agent n'a
+  aucun cas où réécrire cette valeur est utile, et le round-trip se fait sans elle.
+  Ce que le cran ne ferme PAS, et c'est dit : la **création** d'une ligne (rien n'est
+  écrasé ; un tableau qui ne doit pas grossir se ferme par `key_required`), et un **vide
+  non-`null`** sur une valeur en place (#608 l'écarte avant la garde).
+  ⚠️ **La colonne-clé est de l'adressage, pas une écriture de valeur (29/08/2026, mesuré
+  par le terrain).** `siren` figure dans CHAQUE écriture pour désigner la ligne : un
+  `readonly` dessus, l'identique refusé, fermerait toutes les écritures du tableau. Deux
+  gestes : la pose de `readonly` sur la clé est **refusée** à `set_schema`/`patch_schema`
+  (« `siren` est la clé métier : elle se protège par `key_required`, pas par `readonly` —
+  une autre valeur est une autre ligne ») ; et à l'écriture, pour un schéma déjà en base
+  qui la porterait, la valeur de clé **identique passe** (c'est l'adresse) pendant qu'une
+  valeur différente reste refusée sur la ligne visée — un propriétaire qui « complète » la
+  pose dans six mois ne ferme pas son tableau sans le savoir.
+  ⚠️ **Erreur datée (29/08/2026, v1.165.0, trou éprouvé sur copie jetable)** : la première
+  version laissait passer l'identique (« rien n'a changé ») et ce paragraphe disait que
+  le round-trip à l'identique était le geste normal. Il l'est — et il **détruisait
+  `adresse.comment`** : la règle « une valeur nue réécrite emporte ses couches » jouait là
+  où tout le dispositif tient à la couche. Un agent qui réémettait sa fiche avec l'adresse
+  inchangée effaçait la divergence qu'il venait d'écrire. Deux réparations : le refus,
+  identique compris (ci-dessus) ; et **le substrat** — partout, une valeur nue IDENTIQUE
+  à celle en place est un no-op qui préserve `comment`/`link`/`origine` (§ Sous-champs).
   `details.expected_column = "<colonne>.comment"` pour la face REST (#545) ; le code ne
   bouge pas (`row_invalid` / INVALID_PARAMS), c'est le texte qui enseigne.
 - **`origine: "system"` — la copie de secours posée par la plateforme.** Sur 41 fiches
@@ -827,12 +846,19 @@ dont découlent les deux défauts payés :
 | `{"champ": {"origine": X}}` | **valeur intacte**, origine posée |
 | `{"champ": {"origine": null}}` | origine effacée ; ne reste que la valeur ⇒ colonne à nouveau plate |
 | `{"champ": {"origine": X}}` sur un champ `origine: "system"` | **refusé** — la plateforme la pose (#586) |
-| `{"champ": Y}` sur un champ `readonly: true` | **refusé** si Y change la valeur ; `{"champ": {"comment": …}}` passe (#606) |
+| `{"champ": X}` avec X **identique** à la valeur en place | **no-op : toutes les couches restent** (29/08/2026 — le round-trip relire → repousser porte la valeur nue, il ne doit rien détruire) |
+| `{"champ": Y}` sur un champ `readonly: true` | **refusé**, identique compris ; `{"champ": {"comment": …}}` passe (#606) |
 
-`comment` et `link` décrivent la valeur : quand elle change sans qu'ils soient
+`comment` et `link` décrivent la valeur : quand elle CHANGE sans qu'ils soient
 renommés, ils tombent avec elle — les garder ferait affirmer une provenance fausse.
 `origine` décrit le point de départ, elle survit. C'est une protection contre
 l'ACCIDENT, pas contre l'intention : un geste explicite remplace ce qu'il vise.
+⚠️ **Une valeur identique n'est pas un changement** (29/08/2026, trou de v1.165.0) :
+la lecture sert la valeur nue et met les couches à côté (`flat_layers`, `champ.couche`),
+donc un round-trip fidèle repousse forcément la valeur nue — et « réécrire emporte
+`comment`/`link` » la détruisait au passage. Le jugement est au TYPE près (`0` n'est pas
+`False`). Jusque-là, un client qui annotait une colonne source perdait l'annotation à
+la fiche suivante, sans un mot.
 
 **Asymétrie lecteur/écrivain** : une couche inconnue est IGNORÉE à la lecture (un
 déploiement progressif ne doit pas perdre ce qu'un nœud plus récent a écrit) et

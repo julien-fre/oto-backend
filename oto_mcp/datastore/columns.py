@@ -419,8 +419,20 @@ def _merge_column(existing: Any, new: Any) -> Any:
     la valeur : elle laisse l'origine intacte. Effacer l'origine se demande —
     `{"origine": null}`. Et une colonne dont il ne reste que la valeur redevient un
     scalaire nu : les lignes sans couches ne doivent pas se mettre à porter une
-    enveloppe."""
+    enveloppe.
+
+    ⚠️ **Une valeur nue IDENTIQUE à celle en place est un NO-OP : toutes les couches
+    restent** (29/08/2026, trou éprouvé en v1.165.0 sur une colonne `readonly`). La
+    lecture sert la valeur nue et met les couches à côté (`flat_layers`), donc le
+    round-trip relire → repousser (#390) repousse forcément la valeur nue — et
+    « réécrire la valeur emporte `comment`/`link` » détruisait au passage la
+    divergence qu'un agent venait d'écrire dans `adresse.comment`. Une valeur
+    identique n'est pas une réécriture ; le jugement est au TYPE près (`0` n'est pas
+    `False`)."""
     if not _writes_layers(new):
+        en_place = _existing_layers(existing).get(dsv2.VALUE_LAYER)
+        if type(en_place) is type(new) and en_place == new:
+            return existing
         # Toute colonne A une origine ; quand elle est VIDE il n'y a rien à préserver,
         # et la colonne reste plate — le plat est un état, pas une nature.
         origine = _existing_layers(existing).get(dsv2.ORIGIN_LAYER)
