@@ -15,6 +15,7 @@ def _catalog(monkeypatch, entries):
 
 _FAT = {"name": "serper", "label": "Serper", "help": "recherche web", "family": "api",
         "category": "Prospection", "availability": "self_serve", "logo_url": None,
+        "secret_kind": "api_key",
         "namespaces": ["serper"], "doc_sections": [{"body_md": "x" * 5000}],
         "credential_fields": [{"name": "api_key"}], "auth": {"method": "secret"}}
 
@@ -28,6 +29,23 @@ def test_me_compact_by_default_drops_heavy_fields(monkeypatch):
     # Les gros champs ne sont PAS dans la vue compacte.
     for heavy in ("doc_sections", "credential_fields", "auth"):
         assert heavy not in c
+
+
+def test_me_compact_keeps_secret_kind(monkeypatch):
+    """`secret_kind` reste en compact alors que le reste de l'auth part.
+
+    C'est la seule chose du mode compact qui distingue « il faut apporter une
+    clé » de « ça marche sans rien » (les onze connecteurs en `none`). Sans lui
+    la carte du front ne pouvait rien dire d'un connecteur avant qu'on l'ouvre,
+    et `auth`, qui porte la même réponse, coûte la projection verbeuse entière.
+    """
+    _catalog(monkeypatch, [_FAT, {**_FAT, "name": "osm", "secret_kind": "none"}])
+    out = CS._me(ResolvedCtx(sub="u1", org_id=42), CS.MyConnectorsInput())
+    kinds = {c["name"]: c["secret_kind"] for c in out["connectors"]}
+    assert kinds == {"serper": "api_key", "osm": "none"}
+    # …et il ne traîne PAS `auth` avec lui : c'est un scalaire, pas une porte
+    # ouverte sur la carte verbeuse.
+    assert "auth" not in out["connectors"][0]
 
 
 def test_me_verbose_keeps_full_card(monkeypatch):
