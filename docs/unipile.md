@@ -346,6 +346,34 @@ APRÈS son pending** (floor = anti-rebind d'un siège tiers). **Self-heal** dans
 Le webhook `POST /api/unipile/webhook` (handler v1 `CREATION_SUCCESS`) reste mais **dormant** (le v2
 ne l'alimente pas) — utile seulement si on branche `account.disconnected` (détection de déco, non fait).
 
+⚠️ **Une liaison de compte se garde à DEUX endroits, pas un (#559, corrigé le 2026-08-29).**
+Le webhook confrontait le **nonce** et rien d'autre : `account_id` était repris du corps tel
+quel. Le nonce prouve « c'est bien la session de connexion de cette personne » ; il ne dit rien
+de « c'est bien le compte qui vient d'être créé ». Or la clé Unipile de la plateforme **adresse
+tout l'abonnement, toutes orgs confondues** — n'importe quel siège y était donc nommable. Le
+chemin jumeau, lui, contrôlait (`bound_unipile_account_ids`, « jamais le siège d'un tiers ») :
+ce n'était pas une garde jugée inutile, c'était une garde **qui n'a pas suivi quand le second
+chemin est apparu**. Depuis, la règle vit dans **une seule fonction que les deux appellent** —
+`unipile_connect.account_claimable` (un identifiant attribué à quelqu'un d'AUTRE, ligne vivante
+ou morte, n'est pas réclamable) — et l'écriture passe par `unipile_connect.bind_account`. Le
+cliquet est `tests/test_unipile_bind_guard.py` : il rejoue l'attaque contre un vrai PostgreSQL
+**et** tient par AST la liste fermée des écrivains de liaison.
+
+**Ce webhook ne peut PAS être authentifié par signature** — vérifié dans la doc fournisseur le
+2026-08-29. Le callback `notify_url` du hosted-auth **v1 n'est pas signé** et n'accepte aucun
+en-tête ; en **v2** le champ `notify_url` n'existe même plus (corrélation par `state` au
+`redirect_uri`, ou par l'événement applicatif `account.add`). La signature HMAC-SHA256
+(`unipile-signature: t=…,v0=…`) n'existe que sur les **webhooks d'application v2**, que nous
+n'utilisons pas. Donc : la garde de ce chemin est la propriété du compte, pas une signature.
+Si on branche un jour `account.add`/`account.disconnected`, c'est une route **différente**, et
+celle-là se vérifie par signature.
+
+**Ce qui reste ouvert** : un siège présent sur l'abonnement partagé et lié à **personne** côté
+oto n'est pas couvert (la garde raisonne sur nos lignes). Le fermer demande de confronter
+l'identifiant au fournisseur — `GET /accounts/{id}` existe côté Unipile mais **pas dans le
+client oto-core**, qui n'a que `list_accounts` / `account_alive`. La réconciliation s'en
+approche déjà avec son plancher de date.
+
 **Consolidation « tout en clé plateforme » (2026-07-16).** Clé plateforme rotée en v2 (scope
 PLATFORM, label `env`) ; tous les BYO unipile supprimés ; **option comp** posée pour les orgs
 concernées (`db.set_option_comp("org",id,"unipile")`). ⚠️ **GOTCHA share (ADR 0044 §F)** :

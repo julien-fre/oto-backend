@@ -13,6 +13,7 @@ import functools
 import logging
 import os
 import secrets
+from dataclasses import dataclass
 
 from mcp.shared.exceptions import McpError
 
@@ -26,6 +27,68 @@ CHANNELS = ("LINKEDIN", "WHATSAPP", "TELEGRAM", "INSTAGRAM", "MESSENGER", "TWITT
 # Produits LinkedIn premium activables à la connexion (`config.linkedin.products`,
 # oto-core ≥1.30). EXCLUSIFS : un compte n'en active qu'UN (Unipile renvoie 400 sinon).
 LINKEDIN_PREMIUM = ("recruiter", "sales_navigator")
+
+
+@dataclass(frozen=True)
+class BindOutcome:
+    """Ce qu'une tentative de liaison a RÉELLEMENT fait.
+
+    Pas un booléen : le refus a une CAUSE, et un appelant qui ne peut pas la lire ne
+    peut pas la journaliser — or c'est tout ce que le webhook a le droit de faire
+    d'un refus (il ne dit rien à son appelant, cf. `api/connectors.py`)."""
+
+    bound: bool
+    reason: "str | None" = None
+
+
+def account_claimable(sub: str, account_id: str, *,
+                      foreign: "set | None" = None) -> bool:
+    """Ce `account_id` est-il réclamable par `sub` ?
+
+    **LA garde des deux chemins qui lient un compte de messagerie hébergée** — le
+    webhook de notification et la réconciliation poll-and-bind. Elle ne vivait que
+    sur le second (#559) : le webhook reprenait `body["account_id"]` tel quel. Le
+    nonce prouve « c'est bien la session de connexion de cette personne » ; il ne dit
+    rien de « c'est bien le compte qui vient d'être créé ». Et la clé fournisseur
+    étant **partagée entre les organisations**, un identifiant quelconque de
+    l'abonnement — le siège d'une autre org — était joignable sous cette liaison.
+
+    Règle : un identifiant déjà attribué à QUELQU'UN D'AUTRE, binding vivant ou mort,
+    n'est pas réclamable. Une ligne morte d'un tiers vaut interdiction (Unipile
+    réutilise le même identifiant à la reconnexion : elle prouve une propriété qui
+    dure) ; les lignes du réclamant, elles, ne l'empêchent jamais de reprendre son
+    propre compte.
+
+    ⚠️ Ce qu'elle NE couvre pas : un siège présent sur l'abonnement partagé et lié à
+    PERSONNE côté oto. Le fermer demande de confronter l'identifiant au fournisseur
+    (date de création vs pending) — ce que la réconciliation fait déjà avec son
+    plancher de date, et que le webhook ne peut pas faire sans une lecture de compte
+    par identifiant, absente du client oto-core.
+
+    `foreign` : l'inventaire déjà chargé par un appelant qui teste N candidats (la
+    réconciliation en voit tout l'abonnement). Absent, il est lu ici, au grain."""
+    if not account_id:
+        return False
+    if foreign is not None:
+        return account_id not in foreign
+    return not db.is_foreign_unipile_account(sub, account_id)
+
+
+def bind_account(sub: str, account_id: str, *, org_id: "int | None",
+                 provider: str = "LINKEDIN", platform_seat: bool = False,
+                 account_name: "str | None" = None,
+                 foreign: "set | None" = None) -> BindOutcome:
+    """Écrire la liaison `(sub, org, canal) → account_id`, **gardée**.
+
+    Le seul chemin d'écriture, et c'est le point : #559 n'était pas une garde oubliée
+    mais une garde posée UNE fois sur DEUX écritures parallèles. Les mettre sous la
+    même fonction est ce qui empêche une troisième de naître sans elle."""
+    if not account_claimable(sub, account_id, foreign=foreign):
+        return BindOutcome(False, "account_not_claimable")
+    db.set_unipile_account(sub, account_id, account_name=account_name,
+                           org_id=org_id, provider=provider,
+                           platform_seat=platform_seat)
+    return BindOutcome(True)
 
 
 class ConnectRefused(Exception):
@@ -180,6 +243,14 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
             except Exception:  # noqa: BLE001 — sonde best-effort, jamais bloquante
                 alive = True
             if alive:
+                # Écriture DIRECTE, et c'est délibéré : `bind_account` garde un
+                # identifiant venu d'un TIERS (le corps d'un webhook, un inventaire
+                # fournisseur). Ici l'identifiant sort d'une ligne que la base
+                # attribue DÉJÀ à ce `sub` (`seat_binding_elsewhere` filtre sur lui) —
+                # le confronter à la propriété d'autrui ne prouverait rien de plus, et
+                # refuserait une adoption légitime si un binding croisé traînait en
+                # base. Le cliquet AST de `tests/test_unipile_bind_guard.py` tient la
+                # liste FERMÉE des écrivains : un troisième doit se justifier ici.
                 db.set_unipile_account(sub, mine["account_id"],
                                        account_name=mine.get("account_name"),
                                        org_id=org_id, provider=provider, platform_seat=True)
@@ -317,6 +388,12 @@ def reconcile_pending(sub: str) -> dict:
         logger.warning("reconcile unipile: list_accounts échoué", exc_info=True)
         return {"bound": False, "accounts": []}
     taken = db.bound_unipile_account_ids()  # vivants + morts (jamais le siège d'un tiers)
+    # La garde de sécurité, désormais PARTAGÉE avec le webhook (#559) : `foreign` est
+    # le sous-ensemble de `taken` qui appartient à quelqu'un d'AUTRE. `taken` reste,
+    # mais pour ce qu'il est vraiment ici — une heuristique de SÉLECTION (ne pas
+    # repiocher un identifiant déjà attribué en balayant une liste), pas une frontière.
+    # Distinguer les deux est ce qui rend la frontière transposable au chemin jumeau.
+    foreign = db.foreign_unipile_account_ids(sub)
     bound = []
     for pend in pendings:
         provider = (pend.get("provider") or "LINKEDIN").upper()
@@ -333,6 +410,8 @@ def reconcile_pending(sub: str) -> dict:
                 continue
             if (a.get("provider") or a.get("type") or "").upper() != provider:
                 continue
+            if not account_claimable(sub, aid, foreign=foreign):
+                continue  # à un TIERS (vivant ou mort) → jamais, la garde partagée
             if aid in mine_dead:
                 cand.append((_parse_dt(a.get("created_at")), a))
                 continue  # à moi (ligne morte) → candidat sans condition de date
@@ -355,9 +434,17 @@ def reconcile_pending(sub: str) -> dict:
         if chosen is None:
             logger.info("reconcile unipile: candidats tous morts (session 401) sub=%s", sub)
             continue
-        db.set_unipile_account(sub, chosen["id"], account_name=chosen.get("name"),
-                               org_id=pend["org_id"], provider=provider,
-                               platform_seat=bool(pend.get("platform_seat")))
+        issue = bind_account(sub, chosen["id"], account_name=chosen.get("name"),
+                             org_id=pend["org_id"], provider=provider,
+                             platform_seat=bool(pend.get("platform_seat")),
+                             foreign=foreign)
+        if not issue.bound:
+            # Injoignable en pratique (le candidat a déjà passé la garde ci-dessus) —
+            # mais l'écriture est gardée à SON point, pas au point d'appel : c'est
+            # cette discipline-là qui manquait au chemin jumeau.
+            logger.warning("reconcile unipile: liaison refusée (%s) sub=%s account_id=%s",
+                           issue.reason, sub, chosen["id"])
+            continue
         db.resolve_unipile_pending(pend["nonce"])
         taken.add(chosen["id"])
         bound.append({"account_id": chosen["id"], "name": chosen.get("name"),
