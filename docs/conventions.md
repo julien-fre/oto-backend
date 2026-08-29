@@ -284,6 +284,24 @@ rien ne rendait navigable et que rien ne tenait.
   permission, c'est une note de bas de page.* Une phrase par paramètre, et le delta
   passe par le script comme le reste — **le schéma d'entrée porte ces descriptions**,
   donc l'ajout se voit dans la colonne « schéma », pas dans « description ».
+- **Une description ou un refus ne prescrit pas un outil que le jeu servi peut ne pas
+  contenir (29/08, #613 → #632).** Un endpoint publié sert un jeu d'outils à l'inclusion
+  (`mcp_tools`) ; une flotte a lu « release with `data_release` » sans `data_release`
+  (#613), puis « se lit avec les outils `unipile_*` » sans qu'aucune règle ne sache ce
+  que son jeu contenait (#632). *Un agent qui a une intention et pas de destination s'en
+  fabrique une* — dans la fiche du client, la fois d'avant. Critère, appliqué au relevé
+  complet des descriptions servies et des chaînes sous un `raise` (backend + oto-core,
+  relevé dans la PR de #632) : **se corrige** le texte qui redirige le geste EN COURS vers
+  un outil d'un autre connecteur ou d'une autre famille sans dire quoi faire s'il manque ;
+  **reste** ce qui nomme un outil du même connecteur (activés ensemble), ce qui n'est qu'un
+  pointeur pour obtenir une valeur que l'appel lui-même accepte (`_account=`, `_run_id`,
+  `org=`), ce qui compare ou signale un voisin pour un AUTRE besoin, et ce qui est déjà
+  conditionnel (« if you have it », « ou passe `org` »). La forme qui marche : le FAIT
+  (« cette page ne se lit pas par extraction »), puis au plus une condition (« si ton jeu
+  d'outils porte un compte connecté, c'est par lui »). Et quand deux refus se disputent une
+  entrée, **celui qui n'ouvre aucune porte parle en premier** — le périmètre de projet
+  (#605) avant toute règle interne du connecteur, en tête du handler, cliquet
+  `tests/test_url_perimeter_order_632.py`.
 - **Ce qu'un outil RENVOIE a un budget, et il se mesure — pas une consigne (14/08).** Sept
   signaux d'usage en six jours, tous le même défaut : un payload qu'un agent ne peut pas
   lire (`linkedin_aiark_search` 3 M caractères, `oto_doc op=list` 201 K, `linkedin_unipile_post

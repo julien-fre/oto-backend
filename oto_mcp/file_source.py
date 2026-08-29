@@ -15,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from . import access
+from . import access, url_perimeter
 from .auth import google as google_oauth
 
 # Plafond par défaut : Pennylane accepte 100 Mo, mais on borne pour ne pas charger
@@ -83,6 +83,10 @@ def _assert_public_host(host: str) -> None:
 
 
 def _from_url(src: dict, max_bytes: int) -> ResolvedFile:
+    # Périmètre du projet (#605) : un fichier lu à une URL est une page lue. Et le
+    # refus du périmètre parle en PREMIER (#632) — avant la forme http(s), avant
+    # l'anti-SSRF (qui résout l'hôte : sans réseau, il parlait à sa place).
+    url_perimeter.refuse_if_excluded(src.get("url"), url_perimeter.perimeter_of_call())
     url = src.get("url")
     if not url or not str(url).lower().startswith(("http://", "https://")):
         raise FileSourceError("source url : `url` http(s) requise.")
@@ -92,9 +96,6 @@ def _from_url(src: dict, max_bytes: int) -> ResolvedFile:
     import httpx
     host = urlsplit(str(url)).hostname
     _assert_public_host(host or "")
-    # Périmètre du projet (#605) : un fichier lu à une URL est une page lue.
-    from . import url_perimeter
-    url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
     # Redirections DÉSACTIVÉES : un 3xx pourrait pointer une IP interne (le garde-fou
     # ci-dessus ne valide que l'hôte initial). Nos sources légitimes (URLs signées S3,
     # gmail_message(op="attachment")) sont directes → pas de redirect attendu.

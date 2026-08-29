@@ -283,15 +283,16 @@ def register(mcp: FastMCP) -> None:
                 ② returns markdown).
             max_chars: cap on returned content (truncation is flagged).
         """
-        cap = max(1, int(max_chars))
-        tentatives: list = []
-        cout = {"serper_credits": 0, "browser_session": False}
-
         # Périmètre du projet (#605) : résolu UNE fois (lecture DB → hors boucle),
         # appliqué à l'URL demandée ici et à l'URL OBSERVÉE après redirection plus
         # bas — un `acme.fr/equipe/x` qui atterrit sur un profil est un profil.
+        # Et EN PREMIER (#632) : avant toute autre règle de ce tool.
         per = await asyncio.to_thread(url_perimeter.perimeter_of_call)
         url_perimeter.refuse_if_excluded(url, per)
+
+        cap = max(1, int(max_chars))
+        tentatives: list = []
+        cout = {"serper_credits": 0, "browser_session": False}
 
         demande = urlsplit(url).hostname or ""
 

@@ -251,6 +251,25 @@ d'URL. Le cliquet `test_every_covered_module_calls_the_seam` fige la liste des c
 | `browser_connect_start` | — | non couvert : page de login ouverte à l'humain, pas une lecture |
 | `email_send(cta_url, image_url)`, `brevo_import_contacts(file_url)`, `fireflies_transcript(url)`, webhooks (`folk`/`linear`/`grain`/`granola`/`webflow`), `ahrefs_*`, `promptwatch_*`, `snitcher_*` | — | non couvert : URL écrite, importée par le fournisseur, ou de configuration — rien n'est lu par nous |
 
+**Le refus du périmètre parle en premier (#632, 2026-08-29).** Sur une campagne,
+`serper_scrape` d'un profil personnel a été refusé par une règle interne du client amont
+(« se lit avec les outils `unipile_*` ») : un refus qui ouvre une porte — vers des outils que
+l'appelant n'a pas forcément (famille de #613). Quand le périmètre exclut l'URL, c'est LUI qui
+répond : il dit la vraie raison et n'indique aucun outil. Règle mécanique : dans chaque handler
+couvert (`serper_scrape`, `serper_lens`, `web_read`, `browser_fetch`/`browser_eval`,
+`firecrawl_scrape`/`map`/`crawl`/`extract`, `tavily_extract`/`map`/`crawl`,
+`file_source._from_url`), **le seam est le premier geste** — rien avant `url_perimeter.refuse_*`
+sinon la docstring et la résolution du périmètre. Cliquet AST
+`tests/test_url_perimeter_order_632.py`, doublé d'un test par outil qui déclenche AUSSI une
+règle interne (validation de `format`, d'hôte, taille du lot, `limit`, clé absente, substrat non
+configuré, règle LinkedIn du client) et exige le message du périmètre. Cinq handlers passaient
+une règle interne devant : `serper_scrape` (`format`), `browser_*` (l'hôte — une URL sans
+schéma sortait « URL invalide »), `tavily_extract` (« 20 maximum », une porte : scinder le lot),
+`tavily_map`/`crawl` (`limit`), `_from_url` (forme http(s) puis anti-SSRF — dont l'ordre
+dépendait du RÉSEAU : hors ligne, la résolution DNS parlait à sa place). La règle LinkedIn
+elle-même vit dans oto-core (`SerperClient._NEVER_SCRAPABLE`, épinglé par tag) : reformulée là
+sans nommer d'outil, servie ici au prochain bump du pin.
+
 **Ce qui n'est pas fait.** L'option n'est pas rappelée dans le préambule servi au destinataire
 d'un endpoint publié (`compose_published_project`) : le refus et le compte sont le texte le
 plus proche du geste, et c'est celui-là que l'agent lit. Le dashboard n'affiche pas encore

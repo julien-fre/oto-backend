@@ -370,9 +370,11 @@ def register(mcp: FastMCP) -> None:
             format: "markdown" (défaut, la représentation lisible par un LLM) |
                 "text" (brut) | "both" (seulement si tu as vraiment besoin de comparer).
         """
+        # Le refus du périmètre parle en PREMIER (#632) : avant la validation de
+        # `format`, avant la règle du client amont sur les hôtes clos.
+        url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
         if format not in ("markdown", "text", "both"):
             raise _bad(f"`format` invalide : {format!r} (markdown | text | both).")
-        url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
         try:
             res = _run("scrape_page", url=url, include_markdown=format != "text")
             # Serper renvoyait `text` ET `markdown` : deux représentations du MÊME
