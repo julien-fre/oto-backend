@@ -135,6 +135,7 @@ def test_patch_leaves_head_keys_alone_unless_asked(store):
     st, posed = store
     st.patch_schema("v", fields=[{"key": "siren", "label": "Siren"}])
     assert posed["schema"]["strict"] is True and posed["schema"]["key"] == "siren"
+    assert "key_required" not in posed["schema"]      # absent avant, absent après
     st.patch_schema("v", strict=False)
     assert posed["schema"]["strict"] is False
 
@@ -152,7 +153,7 @@ def test_remove_is_explicit_and_a_typo_touches_nothing(store):
 
 def test_an_empty_patch_is_refused(store):
     st, posed = store
-    with pytest.raises(ValueError, match="rien à patcher"):
+    with pytest.raises(ValueError, match="rien à patcher.*key_required"):
         st.patch_schema("v")
     assert posed == {}
 
@@ -177,8 +178,9 @@ class _RestStore:
         self.current = current
         self.calls: list = []
 
-    def patch_schema(self, namespace, *, fields=None, remove=None, strict=None, key=None):
-        self.calls.append((namespace, fields, remove, strict, key))
+    def patch_schema(self, namespace, *, fields=None, remove=None, strict=None, key=None,
+                     key_required=None):
+        self.calls.append((namespace, fields, remove, strict, key, key_required))
         merged, added, updated = dsv2.merge_fields(
             [f for f in self.current.get("fields") or [] if isinstance(f, dict)],
             fields or [])

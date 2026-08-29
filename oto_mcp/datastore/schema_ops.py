@@ -125,7 +125,8 @@ class SchemaOpsMixin:
     def patch_schema(self, namespace: str, *, fields: Optional[list] = None,
                      remove: Optional[list] = None,
                      strict: Optional[bool] = None,
-                     key: Optional[str] = None) -> dict:
+                     key: Optional[str] = None,
+                     key_required: Optional[bool] = None) -> dict:
         """Modifie le schéma PAR CLÉ, sans réécrire la liste entière (#388).
 
         `data_set_schema` REMPLACE : c'est le bon geste pour poser un format, et un
@@ -139,19 +140,27 @@ class SchemaOpsMixin:
 
         `fields` = fusion par clé (complète l'existant, ajoute l'inconnu) ; `remove`
         = le retrait EXPLICITE, sans quoi on rendrait le nettoyage impossible ;
-        `strict`/`key` = les clés de tête, inchangées si omises. Le schéma résultant
-        repasse par `set_schema`, donc par ses gardes (doublons de clé métier, index
-        UNIQUE) et ses avertissements (file de travail, bornes, colonnes orphelines)
-        — on ne double pas cette logique."""
+        `strict`/`key`/`key_required` = les clés de tête, inchangées si omises. Le
+        schéma résultant repasse par `set_schema`, donc par ses gardes (doublons de
+        clé métier, index UNIQUE, `key_required` sans `key`) et ses avertissements
+        (file de travail, bornes, colonnes orphelines) — on ne double pas cette
+        logique.
+
+        `key_required=False` ÉCRIT `false` plutôt que de retirer la clé (#516) :
+        `key_required_of` lit la valeur, donc `false` désarme autant qu'une absence —
+        et le relevé d'effacement compte les DISPARITIONS de tête sans exception :
+        retirer la clé ferait crier un geste explicite sur lui-même, l'avertissement
+        qu'on apprend à ignorer. Même parti que `strict`."""
         ns_id = self._resolve(namespace, write=True)
         current = self._schema_of(ns_id) or {}
         if not isinstance(current, dict):
             raise ValueError("le schéma courant n'est pas un objet — repose-le avec "
                              "data_set_schema avant de le patcher")
-        if fields is None and remove is None and strict is None and key is None:
+        if (fields is None and remove is None and strict is None and key is None
+                and key_required is None):
             raise ValueError(
                 "rien à patcher : passe `fields` (fusion par clé), `remove` (retrait "
-                "explicite), `strict` ou `key`")
+                "explicite), `strict`, `key` ou `key_required`")
         merged = [f for f in (current.get("fields") or []) if isinstance(f, dict)]
         merged, added, updated = dsv2.merge_fields(merged, fields or [])
         merged, unknown = dsv2.remove_fields(merged, remove or [])
@@ -166,6 +175,8 @@ class SchemaOpsMixin:
             out_schema["strict"] = bool(strict)
         if key is not None:
             out_schema["key"] = key
+        if key_required is not None:
+            out_schema["key_required"] = bool(key_required)
         # Le patch NOMME ce qu'il retire (`removed`) : le relevé d'effacement n'a
         # donc rien à en redire. Il reste tendu pour tout le reste — c'est le seul
         # moyen de voir une fusion qui laisserait échapper quelque chose.

@@ -358,8 +358,11 @@ REST `400 business_key_required`) au lieu de créer une ligne.
 signalée par le `notices` de #390. Le cran est une déclaration du propriétaire du
 tableau, jamais une politique de plateforme — un tableau se remplit souvent avant
 d'avoir sa clé. Corollaire assumé : **un tableau fermé ne se peuple plus par écriture**,
-`oto_upload_url` compris (il passe par le même `_write_rows_to_ns`) ; pour l'ouvrir, on
-retire `key_required` du schéma. Il n'y a pas de paramètre d'échappement sur
+`oto_upload_url` compris (il passe par le même `_write_rows_to_ns`) ; pour l'ouvrir,
+`data_patch_schema(key_required=false)` — et pour le fermer, `data_patch_schema(
+key_required=true)`, sans réécrire le schéma (29/08/2026 : jusque-là seul `set` posait
+ou retirait le cran, ce qui obligeait à réécrire un schéma de 80 champs pour une clé de
+tête). Il n'y a pas de paramètre d'échappement sur
 `data_write` : un bouton « forcer » devient un réflexe et le cran redevient une
 étiquette (même parti que l'absence de « forcer » sur le bail, #317).
 
@@ -431,9 +434,14 @@ jamais rebrassé, il pilote le rendu) ; `remove` = le **retrait explicite**
 (`dsv2.remove_fields`), pendant OBLIGÉ de la fusion — sans lui on troquerait la
 destruction accidentelle contre l'impossibilité de nettoyer, et une clé inconnue y est
 REFUSÉE (un `remove` avalé sur une faute de frappe ferait croire au nettoyage) ;
-`strict`/`key` = les clés de tête, inchangées si omises. Le résultat repasse par
-`store.set_schema`, donc par ses gardes (doublons de clé métier, index UNIQUE) et ses
-trois avertissements — la logique n'est pas doublée. ⚠️ `remove` sort le champ du
+`strict`/`key`/`key_required` = les clés de tête, inchangées si omises (`key_required`
+y entre le 29/08/2026, #516 : il ne se posait que par `set`). Le résultat repasse par
+`store.set_schema`, donc par ses gardes (doublons de clé métier, index UNIQUE,
+`key_required` sans `key` — poser `key` et `key_required` dans le même patch passe) et
+ses avertissements — la logique n'est pas doublée. ⚠️ `key_required=false` ÉCRIT `false`
+au lieu de retirer la clé : `key_required_of` lit la valeur, et le relevé d'effacement
+ci-dessous compte les disparitions de tête sans exception — retirer la clé ferait crier
+un geste explicite sur lui-même. ⚠️ `remove` sort le champ du
 **SCHÉMA** ; effacer la **COLONNE** des données reste `data_drop_column`.
 
 ⚠️ **Et la POSE dit désormais ce qu'elle efface (28/08, remède A du même signal).** Le
