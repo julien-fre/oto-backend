@@ -462,6 +462,11 @@ def register(mcp: FastMCP) -> None:
           required_when/max_length. A non-conforming write FAILS naming the culprit
           (max_length reports the actual length AND the bound; pattern reports the
           value it saw AND the motif).
+          Source columns: `field.readonly: true` refuses any write that CHANGES the
+          value in place (its layers stay open — what another source says goes in
+          `<field>.comment`), and `field.origine: "system"` makes the platform keep
+          the previous value in `<field>.origine` on the first write that changes it,
+          a layer no caller can write.
           Bound the fields meant to hold ONE short value (a job title, a city): a
           column that collects reasoning stops being groupable/filterable. The
           bound applies to the keys a write actually SETS, so rows already over it
@@ -488,7 +493,9 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             namespace: target namespace (must exist; you must have write access).
-            schema: the schema object, or null to clear it.
+            schema: the schema object, or null to clear it; a field may carry
+                `readonly: true` (value locked, layers open) or `origine: "system"`
+                (platform-kept `<field>.origine`).
             semantic_search: true/false to toggle semantic row search; null = leave as is.
         """
         store = _acting_store()

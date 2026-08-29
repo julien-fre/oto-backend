@@ -461,6 +461,77 @@ donc geler aucune ligne existante. Un motif hérité qui ne passerait pas le gar
 INERTE à l'écriture (`pattern_of` est muette, comme `max_length_of` sur une borne mal
 formée) mais fait REFUSER la prochaine pose du schéma : c'est là qu'on peut encore corriger.
 
+**Les champs que l'appelant n'écrit pas (#586, #606, 29/08/2026).** Deux crans de
+colonne sous UNE garde (`dsv2.reserved_refusals`, le geste dans `datastore/reserves.py`),
+pour deux gestes mesurés sur la même campagne contre la donnée remise par le client —
+l'écraser, et détruire sa copie de secours. Même hiérarchie que #516 : le chemin
+n'existe pas > la machine refuse > un contrôle détecte > la consigne interdit ; jusqu'ici
+un contrôle de fin de passage détectait après coup.
+
+- **`readonly: true` — la colonne du fichier source.** Mesuré au 5ᵉ passage : **quatorze
+  valeurs sur douze fiches par cent** (`adresse` ×9, `naf` ×3, `date_creation` ×2)
+  écrasées à l'exact — l'agent « complète » la colonne avec ce que dit le registre —,
+  **onze sans aucune couche de récupération**. Le cran verrouille la VALEUR (déballée,
+  `unwrap`) : une écriture qui la CHANGE est refusée en nommant la colonne, la raison et
+  **où va la chose** — pas une colonne de report séparée, mais **la couche `comment` de la
+  colonne elle-même** : `adresse` garde la valeur de la cliente, `adresse.comment` reçoit
+  « registre — 20 B AVENUE … ». C'est la seule forme qui reste attachée au champ, se
+  compte et se livre ; quatre fiches sur quatorze la pratiquaient déjà, en écrasant la
+  valeur en plus. **Les couches restent donc ouvertes** (`comment`, `link`, et `origine`
+  sauf si le système la pose) — la garde sait les séparer de la valeur parce que la
+  fusion les a toujours distinguées (`_merge_column`). Ce que le cran ne ferme PAS, et
+  c'est dit : la **création** d'une ligne (rien n'est écrasé ; un tableau qui ne doit pas
+  grossir se ferme par `key_required`), le **round-trip à l'identique** (relire → repousser
+  est le geste normal, #390), et un **vide non-`null`** sur une valeur en place (#608
+  l'écarte avant la garde). Un `null` nommé, lui, est un changement : refusé.
+  `details.expected_column = "<colonne>.comment"` pour la face REST (#545) ; le code ne
+  bouge pas (`row_invalid` / INVALID_PARAMS), c'est le texte qui enseigne.
+- **`origine: "system"` — la copie de secours posée par la plateforme.** Sur 41 fiches
+  portant une couche `<champ>.origine` censée conserver la valeur remise, **une** l'a
+  réécrite avec la valeur nouvelle (un homonyme adopté comme raison sociale, recopié
+  dans l'origine) : la couche était écrite par l'agent, donc destructible par lui, et
+  c'était l'unique copie. Désormais, à la **première écriture qui change la valeur**, la
+  plateforme écrit `<champ>.origine` = la valeur d'avant, **une seule fois, jamais
+  réécrite** ; et **toute écriture de `<champ>.origine` par un appelant est refusée** —
+  `{"origine": …}`, `{"valeur": …, "origine": …}`, `{"origine": null}` —, **création
+  comprise** (une origine posée à la création marquerait « déjà posée » avec la valeur de
+  l'agent : la porte de côté du défaut). Une valeur inchangée ne pose rien (la colonne
+  reste plate) ; un champ VIDE au départ reçoit `""`, le marqueur « rien n'avait été
+  remis » — sans lui la deuxième écriture capturerait la première valeur de l'agent
+  comme si elle venait du client (`flat_layers` ne sert pas une couche vide : à la
+  lecture, « vide à l'origine » et « jamais modifié » se confondent, et c'est juste —
+  dans les deux cas il n'y a rien à rétablir). **Compatible avec l'existant** : une
+  couche déjà écrite par un agent avant la pose reste lue telle quelle, jamais réécrite.
+  ⚠️ **La capture est PARESSEUSE, pas à la pose du schéma** : un format ne vaut que pour
+  l'avenir et ne réécrit aucune ligne (doctrine de `_overlong_warning` et consorts) — et
+  elle rend la MÊME valeur, puisque rien n'a bougé entre la pose et la première
+  modification. Refusé à la pose sur un composite ou un `json` (exempt de la grammaire
+  des couches, #329), sous un sous-record, sur une cible de couche ; se combine avec
+  `readonly` (valeur verrouillée ET couche d'origine fermée — la pose n'a jamais lieu
+  tant que la valeur ne bouge pas, et joue le jour où le propriétaire lève `readonly`).
+
+⚠️ **Le cran borne TOUT LE MONDE, faces humaine et REST comprises — et c'est dit.** Le
+store ne sait pas distinguer un agent d'un humain : il connaît un sub et une org, et le
+run n'est pas obligatoire sur toute écriture ; une exemption par défaut serait un trou
+(un agent hors run passerait). La sortie du propriétaire est le schéma —
+`data_patch_schema(fields=[{"key": "adresse", "readonly": false}])`, puis écrire, puis
+refermer — deux gestes délibérés, même parti que le bail (#317) et `key_required` (#516).
+Il n'y a pas de « forcer » sur `data_write`, **et le refus n'enseigne pas comment lever
+le cran** : un bouton nommé dans le refus devient un réflexe. `null` lève un cran comme
+une clé de champ ordinaire, et **la levée ne touche aucune ligne** : une origine posée
+reste. `enforced` annonce `readonly` et `origine` par une sonde qui interroge la fonction
+qui décide (comme `key_required`, elles ne se prouvent pas sur une ROW seule). **Cinq
+chemins d'écriture, une garde** : création (ligne seule, lot, upload signé — le même
+`_write_rows_to_ns`), fusion sous verrou, patch par `id`, remplacement (où une colonne
+readonly absente du corps compte comme changée). ⚠️ **Pas dans le registre des jetons
+(#602)** : celui-ci juge AVANT la résolution, sans schéma ; un champ réservé est une
+propriété du TABLEAU et se juge là où le schéma est connu. Les deux se complètent —
+jeton mal placé : « il s'écrit dans tel champ » ; champ réservé : « il ne s'écrit pas,
+voici où va la chose ». ⚠️ **#607 (un champ posé depuis une source déclarée : modèle du
+run, identifiant, horodatage) reste à son issue** : la pose y lit le RUN à chaque
+écriture — une I/O sur le chemin chaud et un registre de sources —, ce que cette garde
+n'accueille pas sans grossir ; le seam de refus, lui, est prêt à l'accueillir.
+
 **Retoucher un schéma sans le détruire (#388).** `data_set_schema` REMPLACE — bon geste
 pour POSER un format, piège pour l'ÉDITER : deux appels indiscernables (même méthode,
 même succès, même réponse) n'ont pas le même effet selon que l'appelant a patché en
@@ -476,7 +547,9 @@ jamais rebrassé, il pilote le rendu) ; `remove` = le **retrait explicite**
 destruction accidentelle contre l'impossibilité de nettoyer, et une clé inconnue y est
 REFUSÉE (un `remove` avalé sur une faute de frappe ferait croire au nettoyage) ;
 `strict`/`key`/`key_required` = les clés de tête, inchangées si omises (`key_required`
-y entre le 29/08/2026, #516 : il ne se posait que par `set`). Le résultat repasse par
+y entre le 29/08/2026, #516 : il ne se posait que par `set`) ; les crans de CHAMP
+`readonly` / `origine: "system"` (#586/#606) se posent et se lèvent par `fields`, `null`
+levant sans réécrire ni toucher les lignes. Le résultat repasse par
 `store.set_schema`, donc par ses gardes (doublons de clé métier, index UNIQUE,
 `key_required` sans `key` — poser `key` et `key_required` dans le même patch passe) et
 ses avertissements — la logique n'est pas doublée. ⚠️ `key_required=false` ÉCRIT `false`
@@ -702,6 +775,8 @@ dont découlent les deux défauts payés :
 | `{"champ": {"valeur": Y}}` | idem |
 | `{"champ": {"origine": X}}` | **valeur intacte**, origine posée |
 | `{"champ": {"origine": null}}` | origine effacée ; ne reste que la valeur ⇒ colonne à nouveau plate |
+| `{"champ": {"origine": X}}` sur un champ `origine: "system"` | **refusé** — la plateforme la pose (#586) |
+| `{"champ": Y}` sur un champ `readonly: true` | **refusé** si Y change la valeur ; `{"champ": {"comment": …}}` passe (#606) |
 
 `comment` et `link` décrivent la valeur : quand elle change sans qu'ils soient
 renommés, ils tombent avec elle — les garder ferait affirmer une provenance fausse.
@@ -814,6 +889,7 @@ mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser 
 | `db/datastore.py` | les LIGNES : CRUD + clé métier/index |
 | `datastore/errors.py` | les refus — **aucune dépendance**, importable de partout |
 | `datastore/columns.py` | la colonne côté Python : fusion des couches, résolution des anciens noms |
+| `datastore/reserves.py` | les champs que l'appelant n'écrit pas : refuser, et poser l'origine à sa place (#586/#606) |
 | `datastore/schema.py` | le FORMAT : le vocabulaire déclaré et sa validation |
 | `datastore/schema_ops.py` | poser/retoucher/nettoyer le FORMAT (mixin du store) |
 | `datastore/core.py` | le store qui COMPOSE — gros par nature |
@@ -1022,7 +1098,9 @@ un sens** — `oto_mcp/datastore/jetons.py` —, et les deux faces s'en servent.
 | `slot:<nom>` | le tableau bindé sous ce nom par le projet actif | `namespace` |
 | `*` | toutes les colonnes | `fields` |
 
-**Trois issues, jamais une quatrième :**
+**Trois issues, jamais une quatrième :** (et les champs réservés PAR LE SCHÉMA —
+`readonly`, `origine: "system"`, #586/#606 — ne sont pas des jetons : ils se jugent
+dans le store, là où le schéma est connu, cf. § `key_required` et suivants.)
 
 | ce qu'on lit | ce qui se passe |
 |---|---|

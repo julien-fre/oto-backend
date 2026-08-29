@@ -66,6 +66,22 @@ ALL_LAYER_KEYS = (VALUE_LAYER, *LAYER_KEYS)
 # c'est pourquoi elle est la seule à survivre à une réécriture.
 VALUE_BOUND_LAYERS = tuple(k for k in LAYER_KEYS if k != ORIGIN_LAYER)
 
+# La couche d'origine POSÉE PAR LE SYSTÈME (#586) : `{"key": "x", "origine": "system"}`
+# au schéma. Vocabulaire fermé à UNE valeur — une origine « posée par l'agent » n'est
+# pas une déclaration, c'est le défaut de départ (l'agent l'a réécrite une fois sur
+# quarante et une, et c'était l'unique copie de la valeur remise).
+SYSTEM_ORIGIN = "system"
+
+
+def names_layers(value: Any) -> bool:
+    """L'écriture NOMME-t-elle des couches ? — un dict fait UNIQUEMENT de couches
+    connues. Strict, comme tout écrivain : `{"a": 1, "origine": "x"}` reste une donnée
+    `json` métier qui se trouve avoir un champ nommé « origine ». UN seul juge, pour
+    la fusion (`columns._writes_layers`) comme pour les champs réservés
+    (`reserved_refusals`) — deux copies divergeraient un jour sur un cas limite."""
+    return (isinstance(value, dict) and bool(value)
+            and all(k in ALL_LAYER_KEYS for k in value))
+
 
 def unknown_layers(value: Any) -> list:
     """Couches d'une colonne que CETTE version du serveur ne connaît pas.
@@ -486,6 +502,83 @@ def key_required_of(schema: Optional[dict]) -> bool:
     if not (isinstance(cle, str) and cle):
         return False
     return bool(schema.get("key_required"))
+
+
+# ── les champs que l'appelant n'écrit pas (#586, #606) ───────────────────────
+#
+# Deux crans de COLONNE (premier niveau), une garde, un refus qui nomme le champ, la
+# raison et où va la chose. Ce qu'ils protègent : la donnée remise par le client,
+# contre deux gestes mesurés sur la même campagne le 29/08/2026 — l'écraser (quatorze
+# valeurs sur douze fiches par cent, onze sans copie) et détruire sa copie de secours
+# (la couche `origine` écrite par l'agent, réécrite par lui une fois sur quarante et
+# une). Le geste (lever, poser) est dans `reserves.py` ; la DÉCISION est ici, à côté
+# des autres déclarations, et `enforced_keys` la sonde.
+
+def readonly_fields(schema: Optional[dict]) -> set:
+    """Les colonnes `readonly: true` (#606) : leur VALEUR ne change pas par une
+    écriture. Leurs couches restent ouvertes — `comment` est la destination de ce
+    que dit une autre source (« registre — 20 B AVENUE … »), attachée au champ,
+    comptable, livrable. `None` = absence (c'est ainsi qu'un patch lève le cran)."""
+    return {f["key"] for f in _fields(schema)
+            if f.get("readonly") is True
+            and isinstance(f.get("key"), str) and f["key"]}
+
+
+def system_origin_fields(schema: Optional[dict]) -> set:
+    """Les colonnes dont la couche `origine` est posée par le SYSTÈME (#586) :
+    à la première écriture qui change la valeur, la plateforme y écrit la valeur
+    d'avant, une seule fois ; l'appelant ne l'écrit jamais."""
+    return {f["key"] for f in _fields(schema)
+            if f.get("origine") == SYSTEM_ORIGIN
+            and isinstance(f.get("key"), str) and f["key"]}
+
+
+def reserved_refusals(schema: Optional[dict], payload: Optional[dict],
+                      avant: Optional[dict] = None,
+                      apres: Optional[dict] = None) -> tuple[list[str], dict]:
+    """Les refus « champ que l'appelant n'écrit pas » → `(messages, details)`.
+
+    `payload` = ce que le geste POSE (après arbitrage des vides, #608) ; `avant` = la
+    ligne en place (`None` sur une création) ; `apres` = la ligne telle qu'elle serait
+    écrite. Une seule question : ce geste écrit-il ce qui ne lui appartient pas ?
+
+    - `origine: "system"` — la couche est NOMMÉE dans le payload (`{"origine": …}`,
+      `{"valeur": …, "origine": …}`, `{"origine": null}`) → refus, création comprise :
+      une origine posée à la création marquerait « déjà posée » avec la valeur de
+      l'agent, la porte de côté du défaut ;
+    - `readonly: true` — la VALEUR déballée change entre `avant` et `apres` → refus.
+      Une création n'écrase rien (un tableau qui ne doit pas grossir se ferme par
+      `key_required`), un round-trip à l'identique ne change rien, une annotation
+      (`{"comment": …}`) ne touche pas la valeur : les trois passent.
+
+    `details.expected_column` = `<colonne>.comment`, pour la face REST (#545) — un
+    front pointe la destination sans reparser une phrase. Le refus n'enseigne PAS
+    comment lever le cran : la sortie du propriétaire est le schéma, pas un réflexe.
+
+    ⚠️ Ici et pas dans le registre des jetons (#602) : celui-ci juge AVANT la
+    résolution, sans schéma ; un champ réservé est une propriété du TABLEAU."""
+    ro, so = readonly_fields(schema), system_origin_fields(schema)
+    errors: list[str] = []
+    details: dict = {}
+    if not ro and not so:
+        return errors, details
+    apres = apres if apres is not None else (payload or {})
+    for cle, neuf in (payload or {}).items():
+        if cle in so and names_layers(neuf) and ORIGIN_LAYER in neuf:
+            errors.append(
+                f"`{cle}.origine` est posée par le système à partir de la valeur "
+                f"remise ; elle ne s'écrit pas — rien n'a été écrit. Écris la valeur "
+                f"seule ({{\"{cle}\": …}}) : l'origine est conservée, et posée si "
+                f"elle manque.")
+        if cle in ro and avant is not None \
+                and unwrap(avant.get(cle)) != unwrap(apres.get(cle)):
+            errors.append(
+                f"`{cle}` est une colonne du fichier source, non modifiable "
+                f"(`readonly`) — rien n'a été écrit. Ce que dit une autre source va "
+                f"dans `{cle}.comment` ({{\"{cle}\": {{\"comment\": …}}}}) ; la "
+                f"valeur reste celle du fichier.")
+            details["expected_column"] = f"{cle}.comment"
+    return errors, details
 
 
 def lifecycle_of(schema: Optional[dict]) -> Optional[dict]:
@@ -1040,7 +1133,38 @@ def validate_schema_def(schema: Optional[dict]) -> list[str]:
 # son statut (`role`), se subdiviser (`fields`/`of`), répondre à un ancien nom plat
 # (`flat_alias`). Posées sur une couche, elles ne seraient lues nulle part — la forme
 # acceptée-inerte que #347 a fermée.
-_COLUMN_ONLY_KEYS = ("display", "fields", "of", FLAT_ALIAS, "role")
+_COLUMN_ONLY_KEYS = ("display", "fields", "of", FLAT_ALIAS, "role",
+                     "readonly", "origine")
+
+
+def _validate_reserved_def(f: dict, fpath: str, errors: list[str], *,
+                           top: bool) -> None:
+    """#586/#606 : un cran qui ne peut pas s'appliquer se refuse à la POSE, devant
+    celui qui peut corriger — jamais accepté-inerte (#347). `None` passe : c'est
+    la forme par laquelle un patch LÈVE le cran sans réécrire le schéma."""
+    ro, so, ftype = f.get("readonly"), f.get("origine"), f.get("type")
+    if ro is not None and not isinstance(ro, bool):
+        errors.append(
+            f"{fpath}: readonly doit être true ou false (reçu {ro!r}) — `true` = "
+            f"colonne du fichier source, dont la valeur ne change pas par une "
+            f"écriture (ses couches `comment`/`link` restent ouvertes)")
+    if so is not None and so != SYSTEM_ORIGIN:
+        errors.append(
+            f"{fpath}: origine — la seule valeur est \"{SYSTEM_ORIGIN}\" (la couche "
+            f"`{f.get('key')}.origine` est alors posée par la plateforme, à partir de "
+            f"la valeur en place) ; reçu {so!r}. Une origine écrite par l'agent ne se "
+            f"déclare pas : c'est le défaut de départ")
+    elif so == SYSTEM_ORIGIN and (ftype in COMPOSITE_TYPES or ftype == "json"):
+        errors.append(
+            f"{fpath}: origine: \"{SYSTEM_ORIGIN}\" ne se pose que sur une colonne "
+            f"scalaire (type={ftype}) — une colonne `json` est exempte de la "
+            f"grammaire des couches (#329), et un composite se pose par item, ce que "
+            f"la garde ne lit pas")
+    if not top and (ro is True or so == SYSTEM_ORIGIN):
+        errors.append(
+            f"{fpath}: readonly / origine: \"{SYSTEM_ORIGIN}\" ne se posent qu'au "
+            f"premier niveau — sous un sous-record la garde ne les lit pas, et une "
+            f"déclaration que rien ne lit n'est pas inerte, elle ment")
 
 
 def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
@@ -1162,6 +1286,10 @@ def _validate_fields_def(fields: list, path: str, errors: list[str]) -> None:
                 raison = pattern_refusal(motif, bornes)
                 if raison:
                     errors.append(f"{fpath}: pattern {motif!r} refusé — {raison}")
+        # #586/#606 : les champs que l'appelant n'écrit pas. Sur une cible de couche,
+        # `_COLUMN_ONLY_KEYS` a déjà parlé.
+        if not layer:
+            _validate_reserved_def(f, fpath, errors, top=(path == "fields"))
 
 
 # ── validation d'une ROW à l'écriture ────────────────────────────────────────
@@ -1790,6 +1918,15 @@ def enforced_keys() -> list[str]:
         # disparaît, l'annonce tombe avec lui.
         if key_required_of({"key": "x", "key_required": True}):
             vues.append("key_required")
+        # #586/#606 : les champs que l'appelant n'écrit pas se jugent sur le GESTE
+        # (payload + ligne en place), pas sur une row seule — même sonde que
+        # `key_required` : on interroge la fonction qui décide.
+        if reserved_refusals({"fields": [{"key": "x", "readonly": True}]},
+                             {"x": "b"}, {"x": "a"}, {"x": "b"})[0]:
+            vues.append("readonly")
+        if reserved_refusals({"fields": [{"key": "x", "origine": SYSTEM_ORIGIN}]},
+                             {"x": {ORIGIN_LAYER: "y"}})[0]:
+            vues.append("origine")
         _ENFORCED = tuple(sorted(vues))
     return list(_ENFORCED)
 
@@ -1868,6 +2005,8 @@ _NEAR_MISS = {
     "mandatory": "required", "obligatoire": "required",
     "champs": "fields", "columns": "fields",
     "cle": "key", "name": "key", "nom": "key",
+    "read_only": "readonly", "readOnly": "readonly", "writable_by": "readonly",
+    "origin": "origine", "system": "origine",
 }
 
 
