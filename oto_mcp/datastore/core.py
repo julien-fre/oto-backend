@@ -965,7 +965,7 @@ class DatastorePg(SchemaOpsMixin):
             # #586/#606 : ce que l'appelant n'écrit pas — jugé sur le geste ENTIER
             # (payload, ligne en place, résultat), sous le verrou, avant que quoi
             # que ce soit ne parte. Puis la plateforme pose l'origine qu'elle doit.
-            refuser_champs_reserves(schema, pose, avant=current or {}, apres=merged)
+            refuser_champs_reserves(schema, pose, avant=current or {})
             poser_origine_systeme(schema, current, merged, set(pose))
             # ⚠️ `written` reste l'ensemble des clés que l'appelant a NOMMÉES, pas
             # celles qu'on a retenues : une borne de longueur ou un motif ne doit pas
@@ -1011,7 +1011,7 @@ class DatastorePg(SchemaOpsMixin):
             # comme telle (le payload est complété des colonnes qui tomberaient).
             complet = {**{k: None for k in (prev_data or {}) if k not in user_data},
                        **user_data}
-            refuser_champs_reserves(schema, complet, avant=prev_data, apres=user_data)
+            refuser_champs_reserves(schema, complet, avant=prev_data)
             if prev_data is not None:
                 poser_origine_systeme(schema, prev_data, user_data, set(complet))
         if valide:
@@ -1377,7 +1377,7 @@ class DatastorePg(SchemaOpsMixin):
             written.add(k)
         # #586/#606 : MÊME garde que la fusion — le patch par `id` est le geste le
         # plus courant d'un agent, et celui qui a écrasé les quatorze valeurs.
-        refuser_champs_reserves(schema, pose, avant=avant, apres=data)
+        refuser_champs_reserves(schema, pose, avant=avant)
         poser_origine_systeme(schema, avant, data, written)
         # Validation sur le RÉSULTAT mergé (un patch partiel ne doit pas échouer
         # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).

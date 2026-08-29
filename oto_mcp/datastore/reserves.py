@@ -41,13 +41,12 @@ from .errors import RowValidationError
 
 
 def refuser_champs_reserves(schema: Optional[dict], payload: Optional[dict], *,
-                            avant: Optional[dict] = None,
-                            apres: Optional[dict] = None) -> None:
+                            avant: Optional[dict] = None) -> None:
     """Refuse ce que l'appelant n'écrit pas — en nommant le champ, la raison et où
     va la chose. `RowValidationError`, donc `row_invalid` côté REST (avec
     `details.expected_column`, #545) et INVALID_PARAMS côté MCP : le code ne
     change pas, c'est le texte qui enseigne."""
-    errors, details = dsv2.reserved_refusals(schema, payload, avant, apres)
+    errors, details = dsv2.reserved_refusals(schema, payload, avant)
     if errors:
         raise RowValidationError(errors, details=details)
 
