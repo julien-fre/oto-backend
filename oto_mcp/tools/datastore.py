@@ -12,6 +12,7 @@ destructifs (delete_namespace, delete_row) et la création restent séparés.
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Optional
 
 from fastmcp import FastMCP
@@ -240,6 +241,36 @@ def _unknown_filter_keys(store, namespace: str, filter, filters=None) -> set[str
     # noqa: SILENT — dernier recours : colonne orpheline non déclarée, pas d'avertissement
     except Exception:  # noqa: BLE001
         return set()
+
+
+def _introuvable(row_id: object, piste: Optional[str]) -> str:
+    """Le refus « introuvable » du chemin d'écriture (#517) — la forme se DÉCRIT, elle
+    ne se montre pas.
+
+    La première version montrait un identifiant en exemple, « cinq groupes
+    hexadécimaux ». Le 29/08 à 15:24, un agent y a lu un modèle à remplir et a rendu
+    `6738f4c2-57c0-43b9-9d78-XXXXXXXXXXXX` — douze X à la place du groupe qu'il ne
+    connaissait pas. Un exemple dans un refus est un gabarit : on n'en met plus. Et
+    quand ce qui est reçu n'a même pas la forme d'un identifiant, on le dit — c'est la
+    preuve qu'il a été inventé, pas altéré."""
+    try:
+        uuid.UUID(str(row_id))
+        forme = ""
+    except (ValueError, AttributeError, TypeError):
+        forme = " (et ce n'est pas la forme d'un identifiant de ligne)"
+    return (f"row `{row_id}` introuvable{forme} — un identifiant de ligne est un UUID de "
+            "36 caractères rendu par `data_write`/`data_claim_next` : on ne l'invente "
+            "pas, on le relit dans la réponse qui l'a rendu. Pour écrire sur la ligne "
+            'que tu tiens, passe `id="@claimed"`'
+            + (f" ; {piste}" if piste else ""))
+
+
+# Le rendu d'un claim À VIDE dit aussi ce qu'on ne fait PAS ensuite. Le 29/08 à 15:24,
+# un travail a reçu `row: null` puis a écrit quand même — `@claimed`, puis un identifiant
+# fabriqué. Rien n'est passé, mais le rendu du claim ne l'avait pas averti.
+_HINT_FILE_VIDE = ("plus rien à claim (file vide pour ce filtre, ou tout est sous bail "
+                   "actif) — tu ne tiens AUCUNE ligne : n'écris rien (ni `@claimed`, ni "
+                   "un identifiant), termine ton travail (`run_finish`)")
 
 
 def _row_not_found_hint(store, namespace: str, row_id: object) -> str:
@@ -612,12 +643,7 @@ def register(mcp: FastMCP) -> None:
             # noqa: SILENT — une piste est un bonus : échouer à la calculer ne doit jamais remplacer un refus actionnable par une erreur interne
             except Exception:  # noqa: BLE001
                 piste = None
-            raise McpError(ErrorData(code=INVALID_PARAMS, message=(
-                f"row `{id}` introuvable — un identifiant de ligne a la forme "
-                "`01a04aef-26c0-7c16-9c58-42f8af87e80c` (cinq groupes hexadécimaux) et "
-                "se REPREND tel quel de `data_claim_next`, jamais de mémoire. Pour "
-                'écrire sur la ligne que tu tiens, passe `id="@claimed"`'
-                + (f" ; {piste}" if piste else ""))))
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=_introuvable(id, piste)))
         except RowLocked as e:
             # #317 : un refus, pas un 500. Sans cette traduction l'agent voit « Erreur
             # interne du serveur » là où il lui faut QUI tient la ligne, JUSQU'À QUAND,
@@ -677,8 +703,7 @@ def register(mcp: FastMCP) -> None:
                                      message=f"namespace `{namespace}` partagé en lecture seule"))
         return {"namespace": namespace, "row": row,
                 **({"warning": warnings[0]} if warnings else {}),
-                **({} if row else {"hint": "plus rien à claim (file vide pour ce filtre, "
-                                           "ou tout est sous bail actif)"})}
+                **({} if row else {"hint": _HINT_FILE_VIDE})}
 
     @mcp.tool()
     def data_release(namespace: str, id: str, worker: str) -> dict:
