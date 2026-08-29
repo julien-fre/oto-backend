@@ -475,10 +475,15 @@ class DatastorePg(SchemaOpsMixin):
         clé métier, upsert, patch) y passent — donc l'endroit unique où relever les
         champs HORS SCHÉMA du geste (#294), sur les seules clés posées. Un schéma
         `strict` active la validation, donc l'appel a bien lieu."""
+        # #545 : le refus STRUCTURÉ se remplit PENDANT la validation — c'est le seul
+        # endroit qui voit à la fois la colonne fautive et la colonne attendue. Le
+        # récupérer après coup imposerait de reparser le message, ce que la face REST
+        # ne doit jamais avoir à faire.
+        details: dict = {}
         errors = dsv2.validate_row(schema, merged, prev_status=prev_status,
-                                   written=written)
+                                   written=written, details=details)
         if errors:
-            raise RowValidationError(errors)   # refusée ⇒ rien à relever
+            raise RowValidationError(errors, details=details)   # refusée ⇒ rien à relever
         posed = merged if written is None else {k: merged[k] for k in written
                                                 if k in merged}
         # #354 : un `id` NU posé par le geste, qu'aucun field ne déclare, est un
@@ -1094,9 +1099,11 @@ class DatastorePg(SchemaOpsMixin):
             except RowValidationError as e:
                 # Le refus GARDE sa classe : les surfaces s'en servent pour choisir
                 # leur code (`capabilities/datastore/rows`), et un refus de schéma
-                # dans un lot reste un refus de schéma. Seule sa désignation change.
+                # dans un lot reste un refus de schéma. Seule sa désignation change —
+                # `details` suit, sinon le refus structuré (#545) se perdrait
+                # exactement là où le lot rend la reprise la plus coûteuse.
                 raise RowValidationError(
-                    e.errors,
+                    e.errors, details=e.details,
                     row=self._designation_de_lot(rang, total, key, data,
                                                  inserted + updated)) from None
             except ValueError as e:

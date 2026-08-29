@@ -25,11 +25,20 @@ class RowValidationError(ValueError):
     pas la ligne, fait chercher à la main dans un fichier client de 8 910 lignes :
     le coût n'est pas les lignes non écrites, c'est le temps de trouver la fautive.
     Le store la connaît — il valide ligne par ligne — l'information existait et ne
-    sortait pas."""
+    sortait pas.
 
-    def __init__(self, errors: list[str], *, row: Optional[str] = None):
+    `details` = ce que le refus a de STRUCTURÉ, quand une phrase ne suffit pas au
+    client pour agir (#545) : aujourd'hui `expected_column`, la colonne où la valeur
+    aurait dû atterrir. La face REST le rend dans son enveloppe d'erreur (via
+    `AuthzDenied.details`) — un front peut alors POINTER le bon champ au lieu de
+    reparser une phrase française, ce qui serait un contrat déguisé. La face MCP,
+    elle, n'a pas d'enveloppe structurée : le message doit rester suffisant seul."""
+
+    def __init__(self, errors: list[str], *, row: Optional[str] = None,
+                 details: Optional[dict] = None):
         self.errors = errors
         self.row = row
+        self.details = details or None
         tete = "écriture refusée par le schéma"
         if row:
             tete += f" · {row}"

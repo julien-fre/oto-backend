@@ -1248,10 +1248,95 @@ def _type_error(value: Any, ftype: str, path: str,
     return []  # json / type absent : tout passe
 
 
+def _forme_attendue(field: dict) -> str:
+    """Ce qu'une colonne ACCEPTE, dit en une clause (#545).
+
+    Un refus qui nomme la colonne sans dire sa forme fait relire le schéma — et un
+    agent qui exécute une procédure écrite par un autre ne l'a jamais lu. Dérivé des
+    fonctions qui APPLIQUENT (`max_length_of`, `pattern_of`), jamais d'une copie de
+    leurs conditions : une borne mal déclarée est muette ici comme elle l'est là."""
+    bouts: list[str] = []
+    options = [str(o) for o in (field.get("options") or [])]
+    ftype = field.get("type")
+    if options:
+        bouts.append("une valeur parmi " + " | ".join(options))
+    elif ftype in (None, "text"):
+        bouts.append("du texte libre")
+    else:
+        bouts.append(f"une valeur de type `{ftype}`")
+    ml = max_length_of(field)
+    if ml:
+        bouts.append(f"≤ {ml} caractères")
+    motif = pattern_of(field)
+    if motif:
+        bouts.append(f"de motif `{motif}`")
+    return ", ".join(bouts)
+
+
+def _gated_by(fields: list) -> dict:
+    """`{colonne qui sert de CONDITION: [colonnes qu'elle rend requises]}` (#545).
+
+    C'est ce qui rend le pointeur DÉRIVÉ et non deviné : `retraitement_motif` est
+    désignée comme destination du texte libre parce qu'elle déclare `required_when`
+    SUR `retraitement`, pas parce qu'un nom ressemble à un autre. Sans relation
+    déclarée, aucun pointeur — un pointeur inventé enverrait écrire dans une colonne
+    qui n'attend rien, ce qui est pire que se taire."""
+    out: dict = {}
+    for f in fields:
+        if not isinstance(f, dict) or not f.get("key"):
+            continue
+        rw = f.get("required_when")
+        if not (isinstance(rw, dict) and rw):
+            continue
+        for condition in rw:
+            out.setdefault(str(condition), []).append(f)
+    return out
+
+
+def _cause_required_when(rw: Any) -> str:
+    """POURQUOI ce champ est requis, en français plutôt qu'en `repr` Python (#545).
+
+    Le refus rendait la condition telle quelle — `(requis quand {'retraitement':
+    ['injoignable', 'hors_cible']})`. C'est lisible pour qui connaît déjà le schéma,
+    donc pour personne dans le cas qui compte : un agent qui exécute une procédure
+    écrite par un autre. La condition est la moitié actionnable du refus — elle dit
+    quelles valeurs de l'aiguillage arment la contrainte."""
+    if not isinstance(rw, dict) or not rw:
+        return ""
+    bouts = []
+    for champ, attendu in rw.items():
+        valeurs = (" | ".join(str(x) for x in attendu)
+                   if isinstance(attendu, (list, tuple)) else str(attendu))
+        bouts.append(f"`{champ}` vaut {valeurs}")
+    return " (requis quand " + " et ".join(bouts) + ")"
+
+
+def _clause_aiguillage(fields: list, rw: Any) -> str:
+    """La PRÉVENTION du geste suivant : ne pas écrire le texte dans l'aiguillage.
+
+    Le refus arrive au seul moment où il est actionnable, et il vaut mieux qu'il dise
+    tout de suite les deux moitiés : où va le texte, et où il n'ira pas. Sans elle,
+    l'agent corrige en écrivant le motif DANS l'énuméré, se fait refuser une seconde
+    fois, et paie deux allers-retours pour une ligne. Muet quand l'aiguillage n'est
+    pas une énumération déclarée — il n'y a alors rien à opposer."""
+    if not isinstance(rw, dict):
+        return ""
+    par_cle = {str(x.get("key")): x for x in fields
+               if isinstance(x, dict) and x.get("key")}
+    fermes = [str(c) for c in rw
+              if (par_cle.get(str(c)) or {}).get("options")]
+    if not fermes:
+        return ""
+    noms = ", ".join(f"`{c}`" for c in fermes)
+    return (f" ; ne l'écris pas dans {noms}, qui n'accepte que "
+            + ("ces valeurs" if len(fermes) > 1 else "les valeurs ci-dessus"))
+
+
 def _row_errors(fields: list, data: dict, path: str,
                 written: Optional[set] = None, *,
                 strict: bool = False, closed: bool = False,
-                vus: Optional[set] = None) -> list[str]:
+                vus: Optional[set] = None,
+                details: Optional[dict] = None) -> list[str]:
     """Erreurs d'un (sous-)record. `written` = clés effectivement RÉÉCRITES par ce
     geste (None = toutes) : la borne de longueur, le motif et la fermeture d'un
     composite s'y restreignent — eux seuls, cf. `validate_row`. La récursion dans un
@@ -1271,7 +1356,13 @@ def _row_errors(fields: list, data: dict, path: str,
     lit. Le geste qu'on protège en haut n'existe pas en bas.
 
     `vus` = les attributs déjà nommés pour la colonne-liste courante (borne du
-    refus, cf. `_type_error`)."""
+    refus, cf. `_type_error`).
+
+    `details` (dict mutable, optionnel) = le refus STRUCTURÉ que l'appelant récupère,
+    aujourd'hui `expected_column` (#545). Renseigné au PREMIER cas rencontré et jamais
+    écrasé : un refus en porte une, pas une liste — le message, lui, les dit toutes.
+    Non propagé aux sous-records : « la colonne attendue » d'un sous-champ imbriqué
+    serait ambiguë côté client, et un pointeur ambigu ne vaut pas mieux qu'aucun."""
     errors: list[str] = []
     if closed:
         for cle in _unknown_subkeys(fields, data):
@@ -1281,6 +1372,8 @@ def _row_errors(fields: list, data: dict, path: str,
                 vus.add(cle)
             errors.append(_unknown_subkey_refusal(
                 f"{path}.{cle}" if path else cle, fields))
+    # Les colonnes-AIGUILLAGE de ce niveau, et ce qu'elles rendent requis.
+    portes = _gated_by(fields)
     for f in fields:
         key = f.get("key")
         if not key:
@@ -1333,14 +1426,42 @@ def _row_errors(fields: list, data: dict, path: str,
                 for k, v in rw.items())
         if _is_empty(value):
             if required:
-                cause = f" (requis quand {rw})" if not f.get("required") and rw else ""
-                errors.append(f"{fpath}: champ requis manquant{cause}")
+                cause = (_cause_required_when(rw)
+                         if not f.get("required") and rw else "")
+                # #545 : la colonne était déjà nommée ; ce qui manquait, c'est sa
+                # FORME — et la prévention du geste suivant. Sans elle, l'agent
+                # corrige en écrivant le motif DANS l'aiguillage, se fait refuser une
+                # seconde fois, et paie deux allers-retours pour une seule ligne :
+                # exactement la séquence mesurée (35 refus sur 105, 27 rattrapés au
+                # coup d'après).
+                errors.append(f"{fpath}: champ requis manquant{cause} — "
+                              f"elle attend {_forme_attendue(f)}"
+                              + _clause_aiguillage(fields, rw))
+                if details is not None:
+                    details.setdefault("expected_column", str(key))
             continue
         if f.get("type"):
-            errors.extend(_type_error(value, f["type"], fpath,
-                                      f.get("fields"), f.get("of"),
-                                      f.get("options"),
-                                      closed=closed or (strict and pose)))
+            errs_type = _type_error(value, f["type"], fpath,
+                                    f.get("fields"), f.get("of"), f.get("options"),
+                                    closed=closed or (strict and pose))
+            # #545 : la colonne qui vient de refuser est-elle un AIGUILLAGE dont une
+            # autre colonne dépend ? Alors la chaîne libre qu'on y a écrite a une
+            # destination déclarée, et le refus doit la donner — c'est le cas
+            # majoritaire des 35 : « le motif va dans `retraitement_motif`, pas dans
+            # `retraitement` ». La condition est stricte (énuméré + options déclarées
+            # + valeur texte hors liste) : hors de là, le pointeur serait une
+            # devinette.
+            gardees = portes.get(str(key)) or []
+            if (errs_type and gardees and f.get("type") == "enum"
+                    and isinstance(value, str)
+                    and value not in [str(o) for o in (f.get("options") or [])]):
+                cible = gardees[0]
+                errs_type[-1] += (
+                    f" — cette valeur va dans `{cible.get('key')}` "
+                    f"({_forme_attendue(cible)}), pas dans `{key}`")
+                if details is not None:
+                    details.setdefault("expected_column", str(cible.get("key")))
+            errors.extend(errs_type)
         mi = f.get("max_items")
         if (isinstance(mi, int) and not isinstance(mi, bool) and mi > 0
                 and isinstance(value, list) and len(value) > mi):
@@ -1378,7 +1499,8 @@ def _row_errors(fields: list, data: dict, path: str,
 
 def validate_row(schema: Optional[dict], merged: dict, *,
                  prev_status: Any = None,
-                 written: Optional[set] = None) -> list[str]:
+                 written: Optional[set] = None,
+                 details: Optional[dict] = None) -> list[str]:
     """Erreurs d'une row TELLE QU'ELLE SERA ÉCRITE (le résultat mergé, pas le
     patch) : required / required_when / types / structure imbriquée — si la
     validation est active — plus le cycle de vie (états + transitions) dès qu'un
@@ -1397,12 +1519,18 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     patch ultérieur de la ligne, même portant sur un champ sans rapport (signal
     #383, et les 23 lignes gelées d'oto-backend#284). Le reste continue de se juger
     sur le mergé : un requis manquant est un défaut de la row, quel que soit le
-    geste qui l'y laisse."""
+    geste qui l'y laisse.
+
+    `details` (dict mutable, optionnel) = le refus STRUCTURÉ, rempli en chemin —
+    aujourd'hui `expected_column`, la colonne où la valeur aurait dû atterrir (#545).
+    Optionnel par construction : un validateur PUR ne doit pas exiger un accumulateur
+    de ses appelants pour rendre ses erreurs."""
     errors: list[str] = []
     if validation_active(schema):
         # required_when se juge sur la row finale (le statut mergé, pas l'ancien)
         errors.extend(_row_errors(_fields(schema), merged, "", written,
-                                  strict=bool(schema.get("strict"))))
+                                  strict=bool(schema.get("strict")),
+                                  details=details))
     lc = lifecycle_of(schema)
     if lc:
         sf = status_field(schema)

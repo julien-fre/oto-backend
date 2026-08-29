@@ -286,11 +286,17 @@ def _write_refusal(e: Exception) -> AuthzDenied:
     un front qui reçoit `invalid_row_input` ne peut que réafficher une phrase, alors
     que `business_key_required` lui dit QUOI proposer — viser une ligne existante.
     Elle dérive de `ValueError` elle aussi : l'ordre des branches reste le contrat.
+
+    `details` (#545) passe avec, quand le refus en porte : `expected_column` dit au
+    front QUEL champ pointer, sans reparser la phrase française du message — la
+    reconstituer serait un contrat déguisé. Le CODE, lui, ne bouge pas : un refus de
+    schéma reste `row_invalid`, et un code neuf ferait traiter comme nouveau ce que
+    les clients gèrent déjà.
     """
     if isinstance(e, BusinessKeyRequired):
         return AuthzDenied(400, "business_key_required", str(e))
     if isinstance(e, RowValidationError):
-        return AuthzDenied(400, "row_invalid", str(e))
+        return AuthzDenied(400, "row_invalid", str(e), e.details)
     return AuthzDenied(400, "invalid_row_input", str(e))
 
 
