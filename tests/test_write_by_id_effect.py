@@ -275,8 +275,14 @@ def test_le_bail_se_pose_et_se_leve_pour_de_vrai(table):
     pris = st.claim_next(ns, worker="w-1")
     assert pris and pris["_id"] == rid and _titulaire() == "w-1"
 
-    assert st.release_claim(ns, rid, worker="w-1") is True
+    assert st.release_claim(ns, rid, worker="w-1")["released"] is True
     assert _titulaire() is None
+
+    # ⚠️ Et la SECONDE libération, sur une base réelle : c'est le cas que le booléen
+    # seul rendait indiscernable d'un échec (#517, 29/08). Il n'y a plus de bail —
+    # bénin — et la réponse doit le dire, pas laisser l'appelant le deviner.
+    encore = st.release_claim(ns, rid, worker="w-1")
+    assert (encore["released"], encore["reason"]) == (False, "no_lease")
 
 
 def test_ecrire_sur_une_ligne_reservee_par_un_autre_refuse_en_nommant(table):
