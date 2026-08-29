@@ -374,6 +374,47 @@ rendre un tableau inécrivable. Il est annoncé par `enforced` (#389) via une so
 interroge la fonction qui décide : il ne se prouve pas sur une ROW, puisqu'il se juge
 contre le CONTENU du tableau.
 
+**Un refus `required_when` dit OÙ écrire (#545, 29/08/2026).** Mesuré sur le troisième
+passage d'une campagne — 105 écritures refusées, lues dans les arguments du journal des
+appels : **35 sur 105**, un tiers, ne viennent pas d'une erreur de fond mais de la FORME
+d'un champ. Le motif manque, ou il est écrit DANS la colonne énumérée qui le déclenche au
+lieu de la colonne de texte libre. L'agent se corrige (27 sur 27 rattrapés au coup
+d'après) : **rien ne casse, mais un tiers des écritures sont doublées** — sur 1 778
+lignes, quelques centaines d'appels et leurs jetons.
+
+Le refus disait qu'une contrainte n'était pas satisfaite ; il ne disait pas OÙ écrire.
+Trois ajouts, tous DÉRIVÉS du schéma :
+- **la FORME de la colonne attendue** (`_forme_attendue`) : ce qu'elle accepte — options,
+  type, borne, motif — parce qu'un agent qui exécute une procédure écrite par un autre
+  n'a jamais lu le schéma ;
+- **la condition, en français** : « requis quand `retraitement` vaut a | b | c » au lieu
+  du `repr` Python du dict, lisible seulement pour qui connaît déjà le tableau ;
+- **le POINTEUR quand la valeur a atterri dans un autre champ de la même ligne** : quand
+  la colonne énumérée qui déclenche la contrainte reçoit une chaîne hors de ses options,
+  le refus dit « cette valeur va dans `retraitement_motif` (du texte libre, ≤ 300
+  caractères), pas dans `retraitement` ». Plus la prévention symétrique sur le refus du
+  champ manquant (« ne l'écris pas dans `retraitement` ») — sans elle, la correction
+  naturelle est le second refus.
+
+⚠️ **Le pointeur est DÉRIVÉ, jamais deviné** (`_gated_by`) : une colonne est désignée
+comme destination parce qu'elle déclare `required_when` **sur** la colonne qui vient de
+refuser, pas parce qu'un nom ressemble à un autre. Sans relation déclarée, aucun pointeur
+— envoyer écrire dans une colonne qui n'attend rien serait pire que se taire.
+
+Le **code de refus ne change pas** (`row_invalid` côté REST, INVALID_PARAMS côté MCP) :
+c'est le texte. Le refus porte en plus `details.expected_column`, rendu par la face REST
+dans son enveloppe d'erreur (`AuthzDenied.details`, ADR 0009) — un front pointe alors le
+bon champ sans reparser une phrase française, ce qui serait un contrat déguisé. La face
+MCP n'a pas d'enveloppe structurée : **le message reste suffisant seul**, et c'est lui
+que lit l'agent. Les détails suivent la ligne fautive à travers le lot (`#412`), là où la
+reprise coûte le plus cher.
+
+⚠️ **Contre-lecture gardée en tête** (issue) : « le champ est conçu contre le geste
+naturel de l'agent, qui écrit le motif à l'intérieur du champ ; c'est le champ qu'il faut
+changer, pas l'agent ». Un `retraitement` objet `{valeur, motif}` serait la voie longue.
+Le message est la voie courte, prise parce qu'elle tient **sans consigne, sur toutes les
+missions** — même famille que le refus d'identifiant qui nomme la forme attendue (#517).
+
 **Contraindre la FORME d'une valeur (#387).** `field.pattern` — jumeau de
 `field.max_length`, et il dit ce que la borne ne sait pas dire. Cas mesuré : un champ qui
 doit porter une ÉNUMÉRATION de catégories séparées par des points-virgules, pas une
