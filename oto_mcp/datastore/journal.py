@@ -99,7 +99,11 @@ def status_of(row: Any, ctx: NsContext) -> Optional[Any]:
     """État porté par une ligne rendue par le store (None hors cycle de vie)."""
     if not ctx.status_key or not isinstance(row, dict):
         return None
-    return row.get(ctx.status_key)
+    # ⚠️ Déballé (#586) : une colonne d'état à couches ferait journaliser
+    # `{'valeur': 'enrichi', …}` comme état de la fiche — le cockpit afficherait
+    # l'enveloppe, et les transitions du journal deviendraient illisibles. Aucun
+    # refus, aucune alerte : le geste réussit et le relevé ment.
+    return dsv2.unwrap(row.get(ctx.status_key))
 
 
 def record(tool: str, *, sub: Optional[str], ctx: NsContext, row_id: Optional[str] = None,

@@ -615,6 +615,13 @@ def terminal_states(schema: Optional[dict]) -> set:
 
 
 def is_terminal_status(schema: Optional[dict], value: Any) -> bool:
+    """⚠️ Déballe, comme tout ce qui juge une valeur (#586). Une colonne d'état
+    déclarée `origine: "system"` arrive enveloppée — et l'état terminal cessait
+    alors d'être reconnu **en silence** : plus d'avertissement « la libération
+    automatique est retirée », donc un agent qui écrit son verdict garde sa ligne
+    sans que rien ne le lui dise. Corrigé ICI et pas chez les appelants : la source
+    unique vaut mieux que trois déballages qui peuvent diverger."""
+    value = unwrap(value)
     return value is not None and str(value) in terminal_states(schema)
 
 
@@ -1723,19 +1730,33 @@ def validate_row(schema: Optional[dict], merged: dict, *,
     if lc:
         sf = status_field(schema)
         key = sf.get("key") if sf else None
-        new = merged.get(key) if key else None
+        # ⚠️ La valeur se DÉBALLE, comme partout ailleurs dans cette validation
+        # (#586, 29/08). Trois lignes plus haut dans le chemin d'écriture, la
+        # plateforme pose elle-même `<champ>.origine` sur une colonne déclarée
+        # `origine: "system"` — la colonne d'état devient
+        # `{'valeur': 'enrichi', 'origine': 'a_enrichir'}` — et ce contrôle la lisait
+        # BRUTE : il refusait « état inconnu » sur la ligne que la plateforme venait
+        # elle-même de compléter. Zéro fiche écrite sur cent, campagne arrêtée.
+        # *Deux gestes voisins qui lisent la même colonne doivent la lire pareil* —
+        # les contrôles de champ déballaient déjà, chacun après un défaut du même
+        # genre (#329 les couches, #347 `required_when`).
+        new = unwrap(merged.get(key)) if key else None
         if new is not None:
             states = {str(s) for s in lc.get("states") or []}
             if states and str(new) not in states:
                 errors.append(
                     f"{key}: état inconnu {new!r} (états: {sorted(states)})")
-            elif prev_status is not None and str(prev_status) != str(new):
+            # L'état PRÉCÉDENT se déballe aussi : dès la deuxième écriture la ligne
+            # porte des couches, donc le cas normal est un objet, pas un mot.
+            elif prev_status is not None and str(unwrap(prev_status)) != str(new):
                 transitions = lc.get("transitions")
                 if isinstance(transitions, dict):
-                    allowed = {str(t) for t in transitions.get(str(prev_status)) or []}
+                    allowed = {str(t)
+                               for t in transitions.get(str(unwrap(prev_status))) or []}
                     if str(new) not in allowed:
                         errors.append(
-                            f"{key}: transition {prev_status!r} → {new!r} interdite"
+                            f"{key}: transition {unwrap(prev_status)!r} → {new!r} "
+                            "interdite"
                             + (f" (autorisées: {sorted(allowed)})" if allowed
                                else " (état terminal)"))
     return errors
