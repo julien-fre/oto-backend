@@ -247,8 +247,15 @@ def _call(monkeypatch, store, body, *, no_body=False):
                 body=body, no_body=no_body)
 
 
+# ⚠️ `release_claim` rend `{released, reason, lease}` depuis le 29/08 (#517) : le
+# booléen seul mêlait « rien à rendre » et « la ligne est tenue par un autre ».
+_LIBERE = {"released": True, "reason": None, "lease": None}
+_AUTRE = {"released": False, "reason": "held_by_other",
+          "lease": {"claimed_by": "w-9", "claimed_until": "2026-08-29 18:00:00"}}
+
+
 def test_release_with_a_worker_is_guarded(monkeypatch):
-    store = _Store(release_claim=True)
+    store = _Store(release_claim=_LIBERE)
     status, _ = _call(monkeypatch, store, {"worker": "sarah"})
     assert status == 200
     name, kw = store.calls[0]
@@ -256,11 +263,14 @@ def test_release_with_a_worker_is_guarded(monkeypatch):
 
 
 def test_guarded_release_of_someone_elses_lease_changes_nothing(monkeypatch):
-    store = _Store(release_claim=False)
+    store = _Store(release_claim=_AUTRE)
     status, payload = _call(monkeypatch, store, {"worker": "sarah"})
     assert status == 200
     assert payload["released"] is False
-    assert "autre worker" in payload["hint"]
+    # La réponse NOMME le cas et dit qui tient la ligne — elle ne mêle plus « rien à
+    # rendre » et « bail d'un autre » dans une seule phrase (#517).
+    assert payload["reason"] == "held_by_other"
+    assert "w-9" in payload["hint"]
 
 
 def test_release_without_body_is_the_supervision_gesture(monkeypatch):
@@ -287,7 +297,7 @@ def test_a_scoped_token_cannot_force_release(monkeypatch):
 
 
 def test_a_scoped_token_releases_its_own_lease(monkeypatch):
-    store = _Store(release_claim=True)
+    store = _Store(release_claim=_LIBERE)
     token_scopes.set_current({"namespaces": {"vivier": "write"}})
     try:
         status, _ = _call(monkeypatch, store, {"worker": "sarah"})

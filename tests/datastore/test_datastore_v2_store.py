@@ -175,7 +175,9 @@ def test_release_guarded_by_worker(store, monkeypatch):
     monkeypatch.setattr(dsm.db, "datastore_release_claim",
                         lambda ns_id, rid, worker: (
                             seen.update(rid=rid, worker=worker) or False))
-    assert st.release_claim("leads", "r1", worker="w-13") is False
+    monkeypatch.setattr(dsm.db, "datastore_active_lease", lambda ns_id, rid: None)
+    issue = st.release_claim("leads", "r1", worker="w-13")
+    assert (issue["released"], issue["reason"]) == (False, "no_lease")
     assert seen == {"rid": "r1", "worker": "w-13"}
 
 
