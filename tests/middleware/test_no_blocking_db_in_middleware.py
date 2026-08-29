@@ -119,3 +119,29 @@ def test_le_mouchard_mord(mouchard):
     assert any(t is boucle for t in mouchard.threads), (
         "le mouchard n'a rien vu sur un accès DB pourtant fait DANS la boucle : "
         "la détection est cassée, les autres tests de ce module ne prouvent rien")
+
+
+def test_on_call_tool_avec_un_run_ne_touche_pas_la_base_dans_la_boucle(mouchard, monkeypatch):
+    """#639 : un appel qui porte `_run_id` (sans `_org`) fait résoudre l'org du run —
+    une lecture de `runs` et une garde d'appartenance — par le middleware, donc sur le
+    chemin inbound de CHAQUE appel du runner. Hors boucle, comme la garde de `_org=`."""
+    import uuid
+
+    from oto_mcp import call_axes
+    from oto_mcp.middleware.call_context import CallContextMiddleware
+
+    monkeypatch.setattr(call_axes, "current_user_sub_from_token", lambda: "u-perf")
+    ctx = types.SimpleNamespace(message=types.SimpleNamespace(
+        name="data_rows", arguments={"_run_id": "run-perf-" + uuid.uuid4().hex[:8]}))
+
+    async def call_next(c):
+        return None
+
+    async def go():
+        # Le mouchard refuse la connexion : la résolution échoue en refus propre
+        # (McpError), ce qui est le comportement voulu — ici on ne mesure que le thread.
+        with contextlib.suppress(Exception):
+            await CallContextMiddleware(frozenset()).on_call_tool(ctx, call_next)
+
+    boucle = _joue(go)
+    _assert_hors_boucle(mouchard, boucle, "CallContextMiddleware.on_call_tool (_run_id)")

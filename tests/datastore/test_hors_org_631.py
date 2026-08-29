@@ -223,7 +223,9 @@ def test_le_bail_localise_mais_ne_donne_aucun_droit(orgs, monkeypatch):
 
 def test_sans_reservation_le_refus_nomme_les_deux_orgs_et_l_axe(surface):
     """Pas de bail sur ce tableau : le nom ne se résout pas dans l'org maison. Le refus
-    dit dans quelle org il existe, dans laquelle l'appel a été résolu, et quoi passer."""
+    dit dans quelle org il existe, dans laquelle l'appel a été résolu, et quoi passer.
+    Le run est INCONNU de `runs` (jamais ouvert) : l'org du run (#639) n'a rien à poser
+    — c'est le cas du run mal posé que l'indice continue de couvrir."""
     ns, _ = _table(surface["travail"])
     run = uuid.uuid4().hex
 

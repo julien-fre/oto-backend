@@ -72,9 +72,13 @@ def current_org(sub: str | None) -> Optional[int]:
     visibilité, entitlements, redaction). Aujourd'hui (barreau R0) =
     l'org persistée (`org_store.get_active_org`, qui devient l'« org maison »).
 
-    Résout `jeton d'appel ?? consultation ?? maison` (ADR 0038, amende 0023) :
+    Résout `jeton d'appel ?? org du run ?? consultation ?? maison` (ADR 0038, amende
+    0023 ; étage « org du run » ajouté le 30/08/2026, #639) :
     - **jeton d'appel** (MCP) — `_org=`/`_project=`/`_group=` posés déjà gardés par
       les axes/adaptateurs (contextvar per-requête) ; AUCUN état de session ;
+    - **org du run** (MCP) — sans jeton, un appel qui porte `_run_id=` se résout dans
+      `runs.org_id`, posée déjà gardée (appartenance) par le middleware
+      (`run_org.pin_for_call`) ; un run inconnu ne pose rien ;
     - **org de consultation** (REST) — view-as du dashboard, contextvar per-requête
       posé APRÈS validation d'appartenance par l'adaptateur REST ;
     - sinon → repli sur la **maison** persistante (`org_store.get_active_org`).
@@ -101,6 +105,15 @@ def current_org(sub: str | None) -> Optional[int]:
     call = session_org.current_call_org()
     if call is not None:
         return call
+    # L'org du RUN (#639, 30/08/2026) : sans `_org=`, un appel fait DANS un run se
+    # résout dans l'org du run (`runs.org_id`), pas dans la maison du sub — c'est ce
+    # qui refusait « namespace inconnu » à 82 `data_write` sur sept jours et stampait
+    # le journal hors de l'org du travail (#630/#631). Posée par le middleware (une
+    # lecture par run, appartenance gardée, refus nommé sinon) — jamais relue ici :
+    # le seam reste sans requête.
+    run_org = session_org.current_call_run_org()
+    if run_org is not None:
+        return run_org
     # Le BRACELET de session (`oto_use_org`, dict keyé Mcp-Session-Id) n'est PLUS lu
     # (ADR 0038 B3) : claude.ai renouvelle le session_id à chaque appel (jamais relu)
     # et un session_id recyclé cross-compte faisait fuiter le scope (#108). Le scope
@@ -151,10 +164,12 @@ def current_group(sub: str | None) -> Optional[int]:
     ag = group_store.get_active_group(sub)  # maison
     if ag is None:
         return None
-    # Jeton d'org (`_org=`/`_project=`) SANS groupe : le home_group n'est rendu que
-    # s'il appartient à l'org épinglée (invariant groupe ⊂ org — jamais le
-    # home_group d'une AUTRE org sous une org de jeton).
+    # Jeton d'org (`_org=`/`_project=`) — ou org du RUN (#639) — SANS groupe : le
+    # home_group n'est rendu que s'il appartient à l'org épinglée (invariant groupe ⊂
+    # org — jamais le home_group d'une AUTRE org sous une org de jeton ou de run).
     call_org = session_org.current_call_org()
+    if call_org is None:
+        call_org = session_org.current_call_run_org()
     if call_org is not None:
         g = group_store.get_group(ag)
         if not g or g.get("org_id") != call_org:

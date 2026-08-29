@@ -480,8 +480,9 @@ d'organisation — et le masquage bloque l'APPEL, pas seulement la liste.
 
 Le pointeur unique « org active » est scindé en **3 notions** — session (éphémère, MCP) /
 consultation (REST, header `X-Oto-Org`) / maison (défaut persistant) — résolues par le **seam
-unique `access.current_org(sub)`** = `session ?? consultation ?? maison` (miroir
-`current_group`). **TOUTE résolution d'action passe par ce seam** — ne plus lire
+unique `access.current_org(sub)`** = `jeton d'appel ?? org du run ?? consultation ?? maison`
+(miroir `current_group`). **Depuis le 30/08/2026 (#639)** : sans `_org=`, un appel fait DANS
+un run se résout dans l'org du run (`runs.org_id`), appartenance gardée — plus dans la maison. **TOUTE résolution d'action passe par ce seam** — ne plus lire
 `org_store.get_active_org` en direct dans un chemin de résolution (**tripwire**
 `tests/test_org_seam_tripwire.py`).
 ⚠️ **Ce seam est scopé sur l'ACTEUR courant** : `current_org(autre_sub)` renvoie le contexte du

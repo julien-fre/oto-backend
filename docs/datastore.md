@@ -1191,6 +1191,14 @@ sont LÉGITIMES (un agent multi-org ouvre son run en 196 et travaille en 255/259
 seam d'org pour ces 82 engage les credentials de tous les connecteurs : c'est un lot à
 part, pas un correctif de datastore.
 
+⚠️ **Décidé et fait le 30/08/2026 (#639)** : le lot à part a eu lieu. Sans `_org=`, un
+appel qui porte `_run_id` se résout désormais dans l'org du run (`runs.org_id`),
+appartenance gardée ; `_org=`/`_project=` explicites priment, un run inconnu ne change
+rien. Le geste du 29/08 21:11:23 (`data_write` sans axe, sans réservation) s'écrit donc
+dans le bon tableau, et le journal le stampe dans l'org du travail. La résolution par
+la réservation ci-dessus reste — elle couvre un run mal posé. Détail et mesure :
+`docs/org-context.md` §« L'org du run ».
+
 ### `@claimed` s'écrit aussi en TABLEAU (29/08, premier contact avec des agents réels)
 
 **Deux écritures refusées sur cinq, en « namespace `@claimed` inconnu ».** À sa première
