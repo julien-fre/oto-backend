@@ -51,7 +51,7 @@ def _upload_page_html(label: str | None) -> str:
             'm.textContent="Envoi…";m.className="msg";'
             'try{const r=await fetch(location.href,{method:"POST",body:fd});'
             'const j=await r.json().catch(()=>({}));'
-            'if(r.ok){f.style.display="none";m.textContent="✓ Reçu. Tu peux fermer cette page.";m.className="msg ok"}'
+            'if(r.ok){f.style.display="none";m.textContent="✓ Reçu. Tu peux fermer cette page."+(j.url?" URL publique : "+j.url:"");m.className="msg ok"}'
             'else{m.textContent="Échec : "+(j.error||r.status)+(j.detail?" — "+j.detail:"");m.className="msg err"}'
             '}catch(err){m.textContent="Erreur réseau.";m.className="msg err"}});'
             '</script>')

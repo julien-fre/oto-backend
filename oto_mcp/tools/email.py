@@ -107,13 +107,16 @@ def register(mcp: FastMCP) -> None:
         from_email: Optional[str] = None,
         cta_text: Optional[str] = None,
         cta_url: Optional[str] = None,
+        image_url: Optional[str] = None,
+        image_alt: Optional[str] = None,
         reply_to: Optional[str] = None,
         send_at: Optional[str] = None,
         force_now: bool = False,
         dry_run: bool = False,
     ) -> dict:
         """Envoie un email à contenu libre depuis une adresse de TON org active,
-        rendu à la charte. Peut être DIFFÉRÉ.
+        rendu à la charte, avec au choix un bouton et UNE image de tête. Peut être
+        DIFFÉRÉ.
 
         L'org déclare ses adresses expéditrices (`oto_org_settings domain=email`) ;
         chacune envoie soit via le mailer Otomata (domaine vérifié côté TEM), soit
@@ -129,6 +132,9 @@ def register(mcp: FastMCP) -> None:
         précise, passe `send_at`. Pour forcer un envoi immédiat malgré les quiet
         hours, `force_now=True`. Gère/annule la file : `oto_scheduled_emails(op='list'|'cancel')`.
 
+        Image de tête : `image_url` (https) + `image_alt` REQUIS ; l'URL publique
+        vient de `oto_upload_url(target="image")` (un upload, réutilisable).
+
         Args:
             to: adresse email du destinataire.
             subject: objet (voix funnel oto : minuscules, vouvoiement).
@@ -141,6 +147,11 @@ def register(mcp: FastMCP) -> None:
                 oto@otomata.tech si l'org n'en a aucune — super_admin uniquement).
             cta_text: libellé d'un bouton d'action optionnel (ex. « ouvrir oto »).
             cta_url: URL du bouton (requis si `cta_text` est fourni).
+            image_url: URL `https://` publique d'UNE image en tête du mail (480 px,
+                réduite sur mobile). Pour la publier : `oto_upload_url(target="image")`
+                → PUT le fichier → l'accusé rend `url` (permanente, réutilisable).
+            image_alt: texte de remplacement, REQUIS avec `image_url` — beaucoup de
+                clients bloquent les images, le mail doit garder son sens sans elle.
             reply_to: adresse de réponse (défaut = celle du sender, sinon la boîte
                 du studio).
             send_at: heure d'envoi souhaitée (ISO 8601, ex. "2026-06-24T08:00").
@@ -161,13 +172,20 @@ def register(mcp: FastMCP) -> None:
             raise _err("`body` est requis.")
         if cta_text and not cta_url:
             raise _err("`cta_url` est requis avec `cta_text`.")
+        # Le gabarit porte les refus de l'image (alt manquant, `http://`) : on le rend
+        # AVANT de résoudre la route, pour que le refus d'un paramètre précède celui
+        # d'une autorisation — comme les vérifications juste au-dessus.
+        try:
+            html = mailer.render_composed_email(body, cta_text=cta_text, cta_url=cta_url,
+                                                image_url=image_url, image_alt=image_alt)
+        except ValueError as e:
+            raise _err(str(e))
 
         sub, route = _resolve_route((from_email or "").strip() or None)
         org_id = route["org_id"]
         from_hdr = mailer.format_from(route["from_email"], route["from_name"]) or mailer._MAIL_FROM
         transport = route["transport"]
         rt = reply_to or route["reply_to"]
-        html = mailer.render_composed_email(body, cta_text=cta_text, cta_url=cta_url)
 
         if dry_run:
             return {"sent": False, "dry_run": True, "to": to, "subject": subject,
@@ -218,7 +236,8 @@ def register(mcp: FastMCP) -> None:
         else:
             ok = mailer.send_composed_email(
                 to, subject, body, cta_text=cta_text, cta_url=cta_url, reply_to=rt,
-                from_email=route["from_email"], from_name=route["from_name"])
+                from_email=route["from_email"], from_name=route["from_name"],
+                image_url=image_url, image_alt=image_alt)
 
         if not ok:
             hint = ("clé Resend invalide/absente" if transport == "resend"

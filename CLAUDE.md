@@ -424,7 +424,9 @@ laisse ouvert, jamais ce qu'elle a fermé.** Le silence d'un run (48 h sans appe
 Deux connecteurs **BYO-org** : `scaleway` (API TEM directe, fields — domaine garanti
 par Scaleway) + `resend` (BYOK). `email_send` =
 spine qui route `sender→connecteur→transport` ; config `orgs.email_settings` par connecteur
-(senders + quiet hours) ; envoi différé (`scheduler.py`, quiet hours 20h–8h défaut).
+(senders + quiet hours) ; envoi différé (`scheduler.py`, quiet hours 20h–8h défaut) ;
+**une image de tête** (`image_url` https + `image_alt` REQUIS, 29/08) dont l'URL publique
+vient de `oto_upload_url(target="image")` — un upload, une URL réutilisée.
 ⚠️ Le front qui héberge une org (`orgs.front_base_url`/`front_brand`) est **dérivé de l'org
 CIBLE, jamais déclaré par l'appelant** — sinon c'est un champ d'API publique qu'il faudra
 retirer à l'arrivée de l'étage tenant. ⚠️ Aucune surface n'édite ces colonnes (UPDATE à la

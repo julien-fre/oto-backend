@@ -61,3 +61,73 @@ champ transport sur l'expéditeur).
 > l'expéditeur reste `_MAIL_FROM`, un domaine d'envoi tiers supposerait sa vérification TEM.
 > ⚠️ Aucune surface n'édite ces colonnes (UPDATE à la main) : une nouvelle org sous front
 > tiers naît donc sous marque oto tant que personne ne la renseigne.
+
+## Une image en tête d'un `email_send` (2026-08-29)
+
+**Par où une image arrive-t-elle à une URL publique stable ? Par `oto_upload_url(target="image")`.**
+Avant ce lot, aucun chemin MCP n'y menait : `target='project_file'` dépose un blob
+**privé** durable (l'agent n'en reçoit qu'une `download_url` signée qui expire) ; la
+bascule publique d'un fichier de projet (`POST /api/me/projects/{p}/files/{f}/public`)
+est **REST-only**, sans face MCP, et concerne un « Autre document » ; et
+`media_store.upload_image` (public-read, clé par hash de contenu, 2 Mo, type par magic
+bytes) n'était branchée que sur l'avatar et le logo d'org, en multipart REST. La cible
+`image` est la **plus petite exposition** de cette fonction, choisie contre une entrée
+`image={kind: drive|url}` sur `email_send` : celle-ci aurait ré-uploadé le visuel **à
+chaque envoi** — or le même visuel ressert (trois mails d'onboarding, des annonces).
+**Un upload, une URL, réutilisée d'envoi en envoi.**
+
+Ce que la cible `image` garantit (`upload_tokens.py`, `media_store.upload_image`) :
+- **porteur authentifié** : le sub est scellé dans le jeton signé (même régime que
+  l'avatar) ; aucune ressource cible, donc aucune autre autz à réappliquer ;
+- **2 Mo max** (`OTO_MCP_S3_MAX_IMAGE_BYTES`), et c'est cette borne que le mint annonce
+  dans `max_bytes` — pas le plafond générique de 25 Mo ;
+- **png / jpeg / gif / webp seulement, reconnus aux octets** : le `Content-Type` déclaré
+  (curl, formulaire) n'est jamais cru ;
+- **clé non devinable** : `images/<sub>/<sha256[:32]>.<ext>` — 128 bits qu'on ne retrouve
+  qu'en possédant l'image ; ré-uploader le même fichier rend la même URL (idempotent) ;
+- **l'accusé rend `url`** (publique, permanente, `Cache-Control: immutable`) — et la page
+  d'upload humaine (claude.ai sans shell) l'affiche aussi, sinon le dépôt serait un
+  succès dont personne ne peut rien faire.
+
+Ce que le gabarit impose (`email.render_composed_email`, `_image_html`) :
+- **une seule image, avant le corps** — pas de galerie, pas d'image par section, pas de
+  pièce jointe ;
+- **`image_alt` REQUIS** avec `image_url`, et refusé sans elle : beaucoup de clients
+  bloquent les images, le mail doit garder son sens ; aucun texte par défaut (il ne
+  dirait rien) ;
+- **`https://` seul** (un `http://` est bloqué ou marqué « non sécurisé », un `data:`
+  n'est pas une URL publique) ;
+- **largeur utile 480 px** : `width="480"` (lu par les clients qui ignorent le CSS) +
+  `max-width:100%; height:auto; display:block` (affichage réduit) ;
+- **URL et alt échappés en attribut, guillemets compris** (`html.escape(quote=True)` —
+  `_esc` ne traite pas `"`, et un `"` dans l'alt refermerait l'attribut) ; le `href`
+  du bouton (`cta_url`, fourni par l'agent lui aussi) est échappé de la même façon
+  depuis ce lot — c'était le même trou ;
+- **sans image, le rendu est celui d'avant à l'octet** (golden dans
+  `tests/test_email_image.py`).
+
+L'appel complet, tel que le couvrent `tests/test_upload_image_public.py` et
+`tests/test_email_image.py` :
+
+```
+# 1. publier le visuel UNE fois (agent avec shell)
+oto_upload_url(target="image")
+  → {url: "https://mcp.oto.cx/api/upload/<jeton>", method: "PUT", max_bytes: 2097152, …}
+curl -X PUT --data-binary @hero.png 'https://mcp.oto.cx/api/upload/<jeton>'
+  → {"ok": true, "kind": "image", "url": "https://<bucket>/images/<sub>/<hash>.png", "bytes": 48213}
+#    (sans shell : transmettre l'URL d'upload à l'humain, la page affiche l'URL publique)
+
+# 2. relire, puis envoyer — la même `url` sert à chaque mail
+email_send(to="…", subject="bienvenue sur oto", body="…",
+           image_url="https://<bucket>/images/<sub>/<hash>.png",
+           image_alt="l'écran d'accueil d'oto : vos connecteurs, prêts à l'emploi",
+           cta_text="ouvrir oto", cta_url="https://manage.oto.cx", dry_run=True)
+email_send(…, dry_run=False)          # ou send_at=… : la file porte le HTML avec l'image
+```
+
+Refus explicites, jamais de repli : `image_url` sans `image_alt`, `image_alt` sans
+`image_url`, une URL qui ne commence pas par `https://`, un fichier de plus de 2 Mo, un
+fichier qui n'est pas une image. Laissé de côté, volontairement : plusieurs images,
+l'image par section, la pièce jointe, et une entrée `image={kind: drive|url}` résolue
+côté serveur par `file_source` (un upload par envoi — la mauvaise forme pour un visuel
+qui ressert).

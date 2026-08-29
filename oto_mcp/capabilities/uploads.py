@@ -21,7 +21,7 @@ from .registry import CAPABILITIES
 
 
 class UploadUrlInput(BaseModel):
-    target: Literal["doc", "project_file", "datastore"]
+    target: Literal["doc", "project_file", "datastore", "image"]
     op: Literal["create", "update"] = "create"        # doc : create sous projet, ou update d'un doc
     project_id: Optional[int] = None                  # doc create / project_file
     parent_id: Optional[int] = None                   # doc create (None = 1er niveau)
@@ -63,6 +63,10 @@ def _upload_url(ctx: ResolvedCtx, inp: UploadUrlInput) -> dict:
                   "title": (inp.title.strip() if inp.title else None),
                   "description": (inp.description.strip() if inp.description else None),
                   "content_type": inp.content_type}
+    elif inp.target == "image":
+        # Aucun paramètre : ni projet ni nom — la clé dérive du contenu (hash), le type
+        # des magic bytes. L'URL publique arrive dans l'accusé de réception.
+        target = {"kind": "image"}
     else:  # datastore
         if not (inp.namespace and inp.namespace.strip()):
             raise AuthzDenied(400, "missing_namespace", "`namespace` requis.")
@@ -95,11 +99,18 @@ def _upload_url(ctx: ResolvedCtx, inp: UploadUrlInput) -> dict:
                    "datastore": ("text/csv" if target.get("format") == "csv"
                                  else "application/x-ndjson")}
     ct = target.get("content_type") or _CT_BY_KIND.get(target["kind"], "application/octet-stream")
+    # La borne annoncée est celle qui MORD : une image est refusée à 2 Mo par
+    # `upload_image`, bien avant le plafond générique de 25 Mo.
+    if target["kind"] == "image":
+        from .. import media_store  # lazy : boto3 n'est chargé qu'à l'upload
+        limite = media_store.max_image_bytes()
+    else:
+        limite = upload_tokens.max_bytes()
     return {
         "url": url,
         "method": "PUT",
         "expires_at": exp,
-        "max_bytes": upload_tokens.max_bytes(),
+        "max_bytes": limite,
         "headers": {"Content-Type": ct},
         # Deux voies pour le MÊME lien : agent avec shell (curl PUT) OU, sans shell
         # (claude.ai), transmettre l'URL à l'humain qui l'ouvre → page d'upload.
@@ -128,8 +139,10 @@ CAPABILITIES += [
             "raw file (project_id + filename [+ title, description, content_type]) — fills the "
             "agent gap of depositing a PDF/CSV ; target='datastore' bulk-loads rows into a "
             "table (namespace + format ndjson|csv [+ key]) — NDJSON/CSV body is batch-upserted "
-            "(dedup on `key`, else the namespace's schema.key). Requires write access to the "
-            "target."
+            "(dedup on `key`, else the namespace's schema.key) ; target='image' publishes ONE "
+            "image (png/jpeg/gif/webp by magic bytes, 2 MB max) at a PUBLIC, permanent, "
+            "content-addressed URL — the receipt carries `url`; upload once, reuse it in "
+            "every `email_send(image_url=…)`. Requires write access to the target."
         ),
         mcp="oto_upload_url",
     ),

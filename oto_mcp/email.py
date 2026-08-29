@@ -9,6 +9,7 @@ pour un partage manuel.
 """
 from __future__ import annotations
 
+import html as _html
 import logging
 import os
 
@@ -20,6 +21,13 @@ _MAIL_FROM = os.environ.get("OTO_MAIL_FROM", "Oto <oto@otomata.tech>")
 
 def _esc(s: str) -> str:
     return (s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _esc_attr(s: str) -> str:
+    """Échappement pour une VALEUR D'ATTRIBUT : `_esc` laisse passer les guillemets,
+    et un `"` dans un `alt=` refermerait l'attribut — la balise suivante serait celle
+    de l'auteur du texte, pas la nôtre."""
+    return _html.escape(s or "", quote=True)
 
 
 def _no_crlf(s: str | None) -> str | None:
@@ -360,19 +368,54 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto") -> boo
     return _send(to, subject, html)
 
 
+# Largeur utile du gabarit (`_WRAP` : max-width 480px). L'image s'y contraint par
+# l'attribut `width` (lu par les clients qui ignorent le CSS) ET par `max-width:100%`
+# (affichage réduit : l'image suit la colonne au lieu de la déborder).
+_IMG_WIDTH = 480
+_IMG_STYLE = "max-width:100%;height:auto;display:block;border:0"
+
+
+def _image_html(image_url: str | None, image_alt: str | None) -> str:
+    """L'image de tête, ou RIEN. Lève `ValueError` — jamais de repli :
+
+    - **`alt` obligatoire** : beaucoup de clients bloquent les images, le mail doit
+      garder son sens sans elle. Pas de valeur par défaut, qui ne dirait rien.
+    - **`https://` seul** : un `http://` est bloqué ou marqué « non sécurisé » par les
+      clients, et un `data:`/`cid:` n'est pas une URL publique stable.
+    - URL et alt échappés en ATTRIBUT (guillemets compris)."""
+    url = (image_url or "").strip()
+    alt = (image_alt or "").strip()
+    if not url and not alt:
+        return ""
+    if url and not alt:
+        raise ValueError("`image_alt` est requis avec `image_url` : le texte de "
+                         "remplacement porte le sens du visuel quand l'image est bloquée.")
+    if alt and not url:
+        raise ValueError("`image_alt` sans `image_url` : rien à décrire.")
+    if not url.startswith("https://"):
+        raise ValueError(f"`image_url` doit commencer par https:// (reçu : {url[:24]!r}).")
+    return (f'<p style="margin:0 0 16px"><img src="{_esc_attr(url)}" alt="{_esc_attr(alt)}" '
+            f'width="{_IMG_WIDTH}" style="{_IMG_STYLE}"></p>')
+
+
 def render_composed_email(
     body: str,
     *,
     cta_text: str | None = None,
     cta_url: str | None = None,
     footer: bool = True,
+    image_url: str | None = None,
+    image_alt: str | None = None,
 ) -> str:
     """Rend le HTML à la charte « manuscrit chaud » d'un email dont le **contenu
-    est fourni par l'agent** (prose brute + CTA optionnel).
+    est fourni par l'agent** (prose brute + CTA optionnel + UNE image de tête).
 
     `body` = texte brut : les lignes vides séparent des paragraphes, les sauts de
     ligne simples deviennent des `<br>`. Échappé (jamais de HTML injecté par
-    l'agent). `footer` ajoute la signature de marque + l'opt-out par réponse."""
+    l'agent). `footer` ajoute la signature de marque + l'opt-out par réponse.
+    `image_url` + `image_alt` (les deux, ou aucun) placent une image AVANT le corps ;
+    voir `_image_html` pour ce qui est refusé (`ValueError`)."""
+    image_html = _image_html(image_url, image_alt)
     paras = [p.strip() for p in (body or "").split("\n\n") if p.strip()]
     body_html = "".join(
         f'<p style="font-size:16px;line-height:1.6;margin:0 0 16px">'
@@ -382,7 +425,7 @@ def render_composed_email(
     cta_html = ""
     if cta_text and cta_url:
         cta_html = (
-            f'<p style="padding:8px 0"><a href="{_esc(cta_url)}" style="{_BTN}">'
+            f'<p style="padding:8px 0"><a href="{_esc_attr(cta_url)}" style="{_BTN}">'
             f'{_esc(cta_text)}</a></p>'
         )
     footer_html = ""
@@ -393,7 +436,7 @@ def render_composed_email(
             'vous recevez ce message car vous avez un compte oto — '
             'répondez à cet email pour nous parler, ou pour ne plus en recevoir.</p>'
         )
-    return f'<div style="{_WRAP}">{body_html}{cta_html}{footer_html}</div>'
+    return f'<div style="{_WRAP}">{image_html}{body_html}{cta_html}{footer_html}</div>'
 
 
 def format_from(from_email: str | None, from_name: str | None = None) -> str | None:
@@ -415,14 +458,18 @@ def send_composed_email(
     footer: bool = True,
     from_email: str | None = None,
     from_name: str | None = None,
+    image_url: str | None = None,
+    image_alt: str | None = None,
 ) -> bool:
     """Envoie un email à contenu libre (fourni par l'agent), rendu à la charte, via
     le mailer Otomata (Scaleway TEM).
 
     `from_email`/`from_name` = adresse expéditrice (défaut = marque `_MAIL_FROM`) ;
     le domaine doit être dans l'allowlist du service. `reply_to` défaut = la boîte
-    du studio (`OTO_CONTACT_TO`). True si envoyé, False sinon (best-effort)."""
-    html = render_composed_email(body, cta_text=cta_text, cta_url=cta_url, footer=footer)
+    du studio (`OTO_CONTACT_TO`). `image_url`/`image_alt` = l'image de tête (cf.
+    `render_composed_email`). True si envoyé, False sinon (best-effort)."""
+    html = render_composed_email(body, cta_text=cta_text, cta_url=cta_url, footer=footer,
+                                 image_url=image_url, image_alt=image_alt)
     rt = reply_to or os.environ.get("OTO_CONTACT_TO", "alexis@otomata.tech")
     return _send(to, subject, html, reply_to=rt, from_email=format_from(from_email, from_name))
 
