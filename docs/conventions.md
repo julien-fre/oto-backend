@@ -240,6 +240,13 @@ rien ne rendait navigable et que rien ne tenait.
   autrement » de « la moitié du correctif manque ». *Une convention qui demande un
   chiffre sans dire d'où il sort produit des chiffres différents chez chacun.* Le
   script mesure aussi le **schéma d'entrée**, qui pèse autant qu'une phrase.
+  ⚠️ **Et un rapport d'empreinte NOMME CE QU'IL NE REGARDE PAS.** Tous les outils ne
+  viennent pas du code : les connecteurs fédérés sont montés d'après la base, donc
+  absents d'un relevé pris sans elle — **en silence**. Le script coiffe sa sortie d'une
+  ligne de portée qui les nomme, et **refuse de soustraire deux relevés de portées
+  différentes** : un côté avec la base et l'autre sans rendrait des outils « RETIRÉS »
+  que personne n'a retirés. *Un rapport qui délimite sa portée vaut plus qu'un rapport
+  « complet » — le second n'existe pas, il se contente de ne pas dire où il s'arrête.*
 - **Ce qu'un outil RENVOIE a un budget, et il se mesure — pas une consigne (14/08).** Sept
   signaux d'usage en six jours, tous le même défaut : un payload qu'un agent ne peut pas
   lire (`linkedin_aiark_search` 3 M caractères, `oto_doc op=list` 201 K, `linkedin_unipile_post
