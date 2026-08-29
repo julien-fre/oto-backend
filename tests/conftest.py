@@ -8,6 +8,11 @@ la logique pure et les gardes par stub, le chemin SQL étant vérifié au déplo
 
 Source, dans l'ordre : `OTO_TEST_PG_DSN`, sinon un conteneur jetable si `docker`
 répond, sinon `skip`. Session-scopé : un seul conteneur pour toute la suite.
+
+Le conteneur ne doit rien laisser derrière lui (#640, `_pg_hygiene.py`) : il est
+étiqueté et daté, son `PGDATA` est un tmpfs (aucun volume), sa sortie est couverte
+par `atexit` + SIGTERM/SIGINT en plus du finalizer, et chaque session commence par
+balayer ce qu'une session tuée a laissé (`pytest_sessionstart`).
 """
 from __future__ import annotations
 
@@ -15,39 +20,44 @@ import os
 import subprocess
 import time
 import uuid
+from typing import Iterator, NamedTuple, Optional
 
 import pytest
 
-# ⚠️ **pgvector, et pas `postgres:17-alpine`** : `init_db()` fait
-# `CREATE EXTENSION vector` avant `_SCHEMA` (des tables de `_SCHEMA` déclarent des
-# `halfvec`), donc une image sans l'extension rend le VRAI boot intestable — et un
-# test de migration qui ne peut pas jouer `init_db` ne prouve rien de la migration.
-# Image officielle pgvector = PostgreSQL 17 standard + l'extension, `pg_trgm` inclus.
-_IMAGE = "pgvector/pgvector:pg17"
+from _pg_hygiene import Guard, docker_available, run_args, sweep_orphans
+
+
+class PgBox(NamedTuple):
+    dsn: str
+    container: Optional[str]   # None quand la base vient d'`OTO_TEST_PG_DSN`
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Le balai (#640) : un conteneur `oto-test=1` de plus de deux heures est un orphelin
+    d'une session morte sans finalizer. On le dit, une ligne par conteneur."""
+    lines = sweep_orphans(time.time())
+    if not lines:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    for line in lines:
+        if reporter is not None:
+            reporter.write_line(line)
+        else:
+            print(line)
 
 
 @pytest.fixture(scope="session")
-def pg_dsn():
+def pg_box() -> Iterator[PgBox]:
     dsn = os.environ.get("OTO_TEST_PG_DSN")
     if dsn:
-        yield dsn
+        yield PgBox(dsn, None)
         return
-    try:
-        joignable = subprocess.run(["docker", "info"],
-                                   capture_output=True).returncode == 0
-    except (FileNotFoundError, OSError):
-        # `docker` PAS INSTALLÉ : `subprocess.run` lève au lieu de rendre un code.
-        # Sans ce cas, la fixture explose et les tests PG remontent en ERROR au lieu
-        # de SKIP — indiscernables d'une vraie casse dans un diff de suite, ce qui
-        # est précisément ce qu'un test « qui se saute proprement » promettait.
-        joignable = False
-    if not joignable:
+    if not docker_available():
         pytest.skip("aucun PostgreSQL joignable (ni OTO_TEST_PG_DSN, ni docker)")
     name = f"oto-test-pg-{uuid.uuid4().hex[:8]}"
-    subprocess.run(
-        ["docker", "run", "-d", "--rm", "--name", name,
-         "-e", "POSTGRES_PASSWORD=test", "-P", _IMAGE],
-        capture_output=True, check=True)
+    subprocess.run(run_args(name), capture_output=True, check=True)
+    guard = Guard(name)
+    guard.install()
     try:
         port = subprocess.run(
             ["docker", "port", name, "5432/tcp"],
@@ -70,6 +80,12 @@ def pg_dsn():
                 if time.time() > deadline:
                     pytest.skip("le PostgreSQL jetable n'est pas devenu prêt")
                 time.sleep(1)
-        yield dsn
+        yield PgBox(dsn, name)
     finally:
-        subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        guard.remove()
+        guard.uninstall()
+
+
+@pytest.fixture(scope="session")
+def pg_dsn(pg_box: PgBox) -> str:
+    return pg_box.dsn
