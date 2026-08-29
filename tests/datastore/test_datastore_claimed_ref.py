@@ -150,6 +150,14 @@ class _StoreEspion:
     def __init__(self, resolu="01a04aef-26c0-7c16-9c58-42f8", boum=None):
         self.resolu, self.boum, self.vu = resolu, boum, {}
 
+    cible = ("copie-eval-palier100", "01a04aef-26c0-7c16-9c58-42f8")
+
+    def resolve_claimed_target(self, *, worker=None):
+        self.vu["target"] = worker
+        if self.boum:
+            raise self.boum
+        return self.cible
+
     def resolve_claimed_ref(self, namespace, *, worker=None):
         self.vu["resolve"] = (namespace, worker)
         if self.boum:
@@ -258,3 +266,72 @@ def test_the_hint_never_masks_the_refusal_when_it_cannot_be_built(monkeypatch):
     with pytest.raises(McpError) as e:
         _appel(outil, namespace="ns", id="zzz", row={"a": 1})
     assert "zzz" in str(e.value) and "introuvable" in str(e.value)
+
+
+# ── `@claimed` mis dans le champ VOISIN — vécu à la première rencontre ───────
+#
+# 29/08, cinquième passage du palier Audiens, coupé à deux lignes : **les agents
+# passent `@claimed` dans `namespace`, pas dans `id`.** Deux écritures refusées sur
+# cinq, en « namespace `@claimed` inconnu ».
+#
+# > **On leur retire un champ à recopier ; ils y mettent l'alias qu'on venait de leur
+# > apprendre.** L'alias a été enseigné comme « la réservation est l'adresse » — et
+# > l'adresse, pour eux, c'est d'abord le tableau.
+#
+# La réservation porte les DEUX. Refuser sur le champ voisin, c'est refuser une
+# demande qu'on sait satisfaire.
+
+def test_claimed_en_NAMESPACE_resout_le_tableau_ET_la_ligne(monkeypatch):
+    s = _store(monkeypatch)
+    _baux(monkeypatch, [{"ns_id": 7, "row_id": "r1"}])
+    assert s.resolve_claimed_target() == ("copie-eval-palier100", "r1")
+
+
+def test_claimed_en_namespace_sans_reservation_refuse_en_le_nommant(monkeypatch):
+    s = _store(monkeypatch)
+    _baux(monkeypatch, [])
+    with pytest.raises(ClaimedRefUnresolved) as e:
+        s.resolve_claimed_target()
+    assert "data_claim_next" in str(e.value)
+
+
+def test_claimed_en_namespace_avec_plusieurs_lignes_les_nomme_AVEC_leur_tableau(monkeypatch):
+    """Sans tableau donné, l'ambiguïté porte sur deux dimensions : nommer les lignes
+    sans dire où elles sont laisserait l'agent aussi démuni."""
+    s = _store(monkeypatch)
+    _baux(monkeypatch, [{"ns_id": 7, "row_id": "r1"}, {"ns_id": 9, "row_id": "r2"}])
+    with pytest.raises(ClaimedRefUnresolved) as e:
+        s.resolve_claimed_target()
+    msg = str(e.value)
+    assert "r1" in msg and "r2" in msg
+    assert "copie-eval-palier100" in msg and "edition-vivier" in msg
+
+
+def test_la_surface_accepte_claimed_en_namespace(monkeypatch):
+    st = _StoreEspion()
+    st.cible = ("copie-eval-palier100", "01a04aef-26c0-7c16-9c58-42f8")
+    outil = _monte(monkeypatch, "data_write", st)
+    _appel(outil, namespace=CLAIMED, row={"statut": "enrichi"})
+    assert st.vu["update"] == ("copie-eval-palier100",
+                              "01a04aef-26c0-7c16-9c58-42f8", {"statut": "enrichi"})
+
+
+def test_les_deux_a_claimed_designent_la_meme_ligne(monkeypatch):
+    st = _StoreEspion()
+    st.cible = ("copie-eval-palier100", "r1")
+    outil = _monte(monkeypatch, "data_write", st)
+    _appel(outil, namespace=CLAIMED, id=CLAIMED, row={"a": 1})
+    assert st.vu["update"][:2] == ("copie-eval-palier100", "r1")
+
+
+def test_claimed_glisse_dans_row_est_REFUSE_en_nommant_la_faute(monkeypatch):
+    """⚠️ Jamais « inconnu » sur un jeton que l'outil reconnaît : c'est ce qui a coûté
+    deux écritures. Un refus qui dit « inconnu » envoie chercher une faute de frappe
+    là où il n'y en a pas."""
+    from mcp.shared.exceptions import McpError
+    outil = _monte(monkeypatch, "data_write", _StoreEspion())
+    with pytest.raises(McpError) as e:
+        _appel(outil, namespace="ns", row={"siren": CLAIMED})
+    msg = str(e.value)
+    assert "@claimed" in msg and "`id`" in msg
+    assert "inconnu" not in msg.lower()
