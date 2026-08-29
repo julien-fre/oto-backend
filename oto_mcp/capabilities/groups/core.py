@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from ... import access, group_store, org_store, session_org
 from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, ORG_ADMIN_OF, ORG_MEMBER_OF, SUB_ONLY
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _GID = {"id": "group_id"}
@@ -73,8 +73,7 @@ class GroupCreated(BaseModel):
     enregistré sans relire `GET /api/groups/{id}`.
 
     Un nom déjà pris dans l'org (comparaison INSENSIBLE à la casse) est refusé en 409
-    `group_exists` — mais voir `GroupUpdated` : le renommage, lui, ne fait pas ce
-    contrôle."""
+    `group_exists` — et le renommage (`GroupUpdated`) fait le MÊME contrôle (#281)."""
     # `id` et `group_id` portent LA MÊME valeur (doublon de compat front, hérité des
     # deux conventions de nommage du dashboard) — pas deux identifiants distincts.
     id: int
@@ -247,10 +246,11 @@ class GroupUpdated(BaseModel):
     à changer) répond exactement pareil, et le booléen que le store renvoie
     (« la ligne existait ») est jeté avant la réponse.
 
-    ⚠️ **Le contrôle de collision de nom de `group.create` n'existe PAS ici** : renommer
-    une équipe vers un nom déjà pris dans l'org ne rend pas un 409 actionnable mais
-    heurte la contrainte `UNIQUE (org_id, name)` — soit une erreur serveur, pas un
-    refus métier. Vérifier la disponibilité du nom côté appelant avant de renommer.
+    Renommer vers un nom déjà pris dans l'org (comparaison insensible à la casse, le
+    groupe s'excluant lui-même) rend **409 `group_exists`**, comme la création (#281).
+    ⚠️ Ce texte a dit le CONTRAIRE jusqu'au 29/08/2026 (« heurte la contrainte UNIQUE,
+    erreur serveur ») ; un front tiers l'avait lu et prévenait le conflit de son côté.
+    Le refus est déclaré dans l'OpenAPI, avec son test de rejeu sur la route servie.
 
     Rien n'est réécho (ni le nouveau nom, ni la description) : relire `GET /api/groups/{id}`
     pour confirmer l'état."""
@@ -425,6 +425,8 @@ CAPABILITIES += [
     Capability(
         key="group.create", handler=_create_group, Input=CreateGroupInput,
         authz=ORG_ADMIN_OF("org_id"), Output=GroupCreated,
+        errors=(DeclaredError(409, "group_exists",
+                              "un groupe de ce nom existe déjà dans l'org (casse ignorée)"),),
         description=("Create a group (department/team) inside an org you administer. "
                      "You become its team lead (group_admin)."),
         rest=RestBinding("POST", "/api/orgs/{id}/groups", _OID),
@@ -474,6 +476,8 @@ CAPABILITIES += [
     Capability(
         key="group.update", handler=_update_group, Input=UpdateGroupInput,
         authz=GROUP_ADMIN_OF("group_id"), Output=GroupUpdated,
+        errors=(DeclaredError(409, "group_exists",
+                              "le nouveau nom est déjà pris dans l'org (casse ignorée)"),),
         description="Rename / re-describe a group you lead.",
         rest=RestBinding("PATCH", "/api/groups/{id}", _GID),
     ),

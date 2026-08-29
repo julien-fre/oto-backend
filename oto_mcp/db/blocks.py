@@ -133,12 +133,14 @@ def _role_de(md: str) -> tuple[str | None, list[str] | None]:
     classe pas », et le front rend la source comme il l'entend — son `type` est une
     chaîne libre et son objet est ouvert, précisément pour ce cas.
 
-    ⚠️ **`ordered` n'est PAS servi ici, et ce n'est pas un oubli.** Chez le front, il
-    signifie « ce bloc est UN PAS d'une suite numérotée », les blocs consécutifs qui le
-    portent étant rendus dans un même `<ol>` — une suite de N blocs, donc N identifiants
-    ancrables. Notre parse garde une liste markdown numérotée dans UN SEUL bloc : lui
-    coller `ordered` serait un faux ami, deux notions sous un même nom. La forme en pas
-    séparés viendra d'une surface d'écriture, pas d'une conversion.
+    **`ordered` n'est pas STOCKÉ ici : il se dérive à la lecture** (`ordered_of`, comme
+    `code_of`), donc sans rotation de marqueur. Jusqu'au 29/08/2026 ce paragraphe
+    refusait de le servir : chez le front, « ordered » désignait UN PAS d'une suite
+    numérotée (N blocs rendus dans un même `<ol>`), là où notre parse garde toute la
+    liste dans UN bloc — deux notions sous un même nom. Le front tiers l'a depuis
+    demandé sur le bloc `role: list` lui-même (« `md` dit 1. 2. 3., `items[]` perd
+    l'ordre »), c'est-à-dire avec NOTRE sens : la liste de ce bloc est numérotée. Le
+    faux ami est levé par celui qui l'avait posé.
     """
     lignes = [l for l in md.splitlines() if l.strip()]
     if not lignes:
@@ -153,6 +155,20 @@ def _role_de(md: str) -> tuple[str | None, list[str] | None]:
     if any(p for p in puces):
         return None, None          # prose ET puces mêlées : idem
     return "paragraph", None
+
+
+def ordered_of(md: Optional[str]) -> bool:
+    """La liste de CE bloc est-elle NUMÉROTÉE ? Dérivé de la source à la lecture,
+    comme `code_of` — jamais stocké, donc aucune rotation de marqueur, et les blocs
+    déjà projetés le servent dès le déploiement.
+
+    Décidé par le PREMIER item (CommonMark : un changement de marqueur ouvre une autre
+    liste ; ici on ne coupe pas, on qualifie). N'a de sens que sur un bloc `role: list`
+    — sur autre chose, rend False sans prétendre classer."""
+    for ligne in (md or "").splitlines():
+        if ligne.strip():
+            return bool(_PUCE_ORDONNEE.match(ligne))
+    return False
 
 
 def _flush_text(buf: list[str], blocks: list[dict]) -> None:

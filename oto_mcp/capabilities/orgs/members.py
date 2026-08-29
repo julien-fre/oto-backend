@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from ... import db, org_store
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _ID = {"id": "org_id"}  # placeholder de route {id} → champ Input org_id
@@ -211,6 +211,14 @@ CAPABILITIES += [
     Capability(
         key="me.leave_org", handler=_leave_org, Input=LeaveOrgInput,
         authz=SUB_ONLY, Output=LeftOrg,
+        # Dans l'ORDRE des gardes du handler : c'est un contrat (le premier refus qui
+        # s'applique est rendu, les suivants ne sont pas évalués).
+        errors=(DeclaredError(404, "unknown_org", "l'org n'existe pas"),
+                DeclaredError(409, "personal_org",
+                              "on ne quitte pas son espace personnel"),
+                DeclaredError(404, "not_a_member", "tu n'es pas membre de cette org"),
+                DeclaredError(409, "last_org_admin",
+                              "tu es le dernier admin — nomme un successeur avant")),
         description="Leave an org you belong to (self-removal). Refused for your personal org or if you are its last admin.",
         # Self-service dashboard (REST-only) : quitter depuis « paramètres » de l'org.
         rest=RestBinding("DELETE", "/api/me/orgs/{id}/membership", {"id": "org_id"}),

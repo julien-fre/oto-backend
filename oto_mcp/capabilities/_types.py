@@ -90,6 +90,33 @@ class NotModified:
 
 
 @dataclass(frozen=True)
+class DeclaredError:
+    """Un refus que la capacité DÉCLARE, pour que `/openapi.json` le porte.
+
+    `Output` a mis un schéma sur la réponse heureuse (ADR 0059 §D7 : on ne fige que
+    ce qui est généré). Les refus, eux, n'existaient que dans les `raise AuthzDenied`
+    du handler : un intégrateur savait recevoir un 200 sans savoir quels 4xx attendre,
+    et un front tiers a dérivé sa garde de saisie d'un contrat qui ne la disait pas
+    (29/08/2026 — « 65 536 » n'était écrit nulle part de servi). Trois champs, tous
+    publiés : le statut HTTP, le jeton `error` de l'enveloppe, et QUAND il survient.
+
+    ⚠️ **DÉCRIT, ne fait rien.** Le handler continue de lever `AuthzDenied(status,
+    code)` ; la déclaration n'ajoute ni garde ni traduction. Elle n'est donc vraie
+    que si le code est bien levé — `tests/test_capability_declared_errors.py` l'exige
+    dans le module du handler, et chaque déclaration a son test qui REJOUE le refus
+    sur la route servie. Une déclaration sans rejeu est décorative, ce qui est pire
+    qu'une absence : un document qui promet un 409 que le serveur ne rend pas.
+
+    La liste d'une capacité n'est pas exhaustive par construction (les 400 de
+    l'adaptateur — `invalid_input`, `unknown_fields`, `invalid_json`, `invalid_body` —
+    valent pour toutes) ; le document le dit dans son préambule.
+    """
+    status: int
+    code: str
+    when: str                                   # quand il survient — phrase publiée
+
+
+@dataclass(frozen=True)
 class RestBinding:
     verb: str                                   # GET | POST | PUT | PATCH | DELETE
     path: str                                   # ex "/api/me/active-org"
@@ -154,6 +181,9 @@ class Capability:
     # ne valide pas : valider la sortie ferait échouer un appel à l'exécution pour
     # une divergence de contrat, ce qui punit l'utilisateur d'un bug de serveur.
     Output: Optional[type[BaseModel]] = None
+    # Les REFUS que la capacité publie (statut, jeton `error`, quand) — cf.
+    # `DeclaredError` : décrit, ne fait rien, et chaque entrée a son test de rejeu.
+    errors: tuple = ()
     description: str = ""                       # contrat LLM du tool MCP
     mcp: Optional[str] = None                   # nom du tool MCP, ou None (opt-out explicite)
     # un OU plusieurs bindings REST (ex. routes self-service + admin sur le même

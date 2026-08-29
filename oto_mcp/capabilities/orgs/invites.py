@@ -80,7 +80,14 @@ class InvitationEmitted(BaseModel):
 
     ⚠️ `code` est un **secret porteur** : le détenir suffit à rejoindre l'org (il n'y
     a pas de vérification que l'accepteur est bien `email`). À traiter comme un jeton,
-    pas comme un identifiant."""
+    pas comme un identifiant.
+
+    ⚠️ **Une adresse déjà invitée, ou déjà membre, reçoit une invitation DE PLUS — en
+    200, avec un code neuf.** Aucun contrôle de doublon ni d'appartenance à l'émission
+    (relevé le 29/08/2026 sur le code servi, rejoué par test) : la file
+    `GET …/invitations` peut porter plusieurs lignes pour la même adresse, et chacun
+    de leurs codes ouvre l'org. Accepter en étant déjà membre n'abaisse jamais le rôle
+    détenu (#297). Un front qui veut éviter le doublon relit la file avant d'émettre."""
     ok: bool
     # Email NORMALISÉ (strip + minuscules), ou None quand l'invitation est un simple
     # code à partager.

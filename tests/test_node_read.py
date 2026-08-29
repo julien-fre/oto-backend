@@ -186,3 +186,54 @@ def test_la_remontee_du_fil_est_BORNEE():
     from oto_mcp.db import node_view as db_node
     src = inspect.getsource(db_node.ancestors_of)
     assert "max_depth" in src and "niveau <" in src
+
+
+# ── Les poignées vers les autres surfaces (front tiers, 29/08) ─────────────────
+def test_une_page_rend_son_doc_id_et_le_project_id_de_ses_props(seams):
+    seams["fiche"] = {**PAGE, "props": {"title": "Brief", "legacy": "doc",
+                                        "legacy_id": 12, "project_id": 7}}
+    out = N._compose(CTX, "nod_page")
+    assert (out["doc_id"], out["project_id"]) == (12, 7)
+
+
+def test_un_projet_rend_son_project_id_et_aucun_doc_id(seams):
+    seams["fiche"] = {**PAGE, "props": {"title": "Refonte", "legacy": "prj",
+                                        "legacy_id": 7, "pinned": True}}
+    out = N._compose(CTX, "nod_page")
+    assert (out["doc_id"], out["project_id"]) == (None, 7)
+
+
+def test_un_tableau_range_sous_un_projet_lit_le_projet_sur_le_fil(seams):
+    """Les props d'un tableau ne portent pas de `project_id` : c'est sa PLACE dans
+    l'arbre qui le dit — le maillon `prj` le plus proche."""
+    seams["fiche"] = {**TABLE, "props": {"title": "Vivier", "legacy": "tbl", "legacy_id": 3}}
+    seams["chaine"] = [
+        {"id": 10, "public_id": "nod_r", "parent_id": None, "kind": "page",
+         "props": {"title": "Refonte", "legacy": "prj", "legacy_id": 7}},
+        {"id": 2, "public_id": "nod_tbl", "parent_id": 10, "kind": "tableau",
+         "props": {"title": "Vivier", "legacy": "tbl", "legacy_id": 3}},
+    ]
+    out = N._compose(CTX, "nod_tbl")
+    assert (out["doc_id"], out["project_id"]) == (None, 7)
+
+
+def test_un_noeud_sans_source_legacy_rend_null_pas_un_entier_devine(seams):
+    out = N._compose(CTX, "nod_page")           # PAGE n'a ni legacy ni project_id
+    assert (out["doc_id"], out["project_id"]) == (None, None)
+    assert "doc_id" in out and "project_id" in out      # présents, pas absents
+
+
+def test_un_bloc_liste_dit_si_elle_est_numerotee(seams):
+    seams["blocs"] = [
+        {"public_id": "blk_o", "type": "text",
+         "props": {"md": "1. un\n2. deux\n", "role": "list", "items": ["un", "deux"]}},
+        {"public_id": "blk_u", "type": "text",
+         "props": {"md": "- un\n- deux\n", "role": "list", "items": ["un", "deux"]}},
+        {"public_id": "blk_p", "type": "text",
+         "props": {"md": "prose\n", "role": "paragraph"}},
+    ]
+    body = N._compose(CTX, "nod_page")["body"]
+    assert [b.get("ordered") for b in body] == [True, False, None]
+    # Sur un paragraphe la clé est ABSENTE, pas `false` : « pas une liste » n'est pas
+    # « une liste non numérotée ».
+    assert "ordered" not in body[2]

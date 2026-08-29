@@ -239,3 +239,27 @@ def test_la_reprojection_d_un_corps_inchange_est_idempotente():
 def test_code_of_only_answers_for_code():
     (text,) = parse_blocks("juste du texte\n")
     assert code_of(text) is None
+
+
+# ── `ordered`, dérivé à la lecture (front tiers, 29/08) ─────────────────────────
+@pytest.mark.parametrize("md, attendu", [
+    ("1. un\n2. deux\n", True),
+    ("1) un\n2) deux\n", True),
+    ("- un\n- deux\n", False),
+    ("* un\n+ deux\n", False),
+    ("\n\n  3. indenté\n", True),          # le blanc de tête ne compte pas
+    ("1. un\n- puis une puce\n", True),     # le PREMIER item décide (CommonMark)
+    ("prose\n", False),
+    ("", False),
+    (None, False),
+])
+def test_ordered_is_derived_from_the_first_item(md, attendu):
+    from oto_mcp.db.blocks import ordered_of
+    assert ordered_of(md) is attendu
+
+
+def test_ordered_is_not_stored_in_the_parsed_props():
+    """Dérivé, jamais stocké : sinon les blocs déjà projetés ne le porteraient pas
+    avant une rotation de marqueur, et la surface servirait deux populations."""
+    blocs = parse_blocks("1. un\n2. deux\n")
+    assert blocs[0]["role"] == "list" and "ordered" not in blocs[0]
