@@ -184,7 +184,9 @@ def test_fermer_un_autre_run_ne_libere_rien(surface):
     assert ligne
 
     out = _finish(run_q, "done")
-    assert out["ok"] and "rows_released" not in out, out
+    # #633 : le zéro est ÉCRIT — un poste de flotte distingue « zéro ligne rendue »
+    # de « champ absent ».
+    assert out["ok"] and "rows_released" in out and out["rows_released"] == 0, out
     assert _bail(ns_id, ligne["_id"])["claimed_run"] == run_r, "le bail de R est intact"
 
 

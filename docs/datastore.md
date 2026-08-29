@@ -1297,3 +1297,13 @@ son filet reste l'expiration du bail (`lease_s`). Et le point 2 de #613 (une des
 rendue selon les outils réellement servis à la session) est une décision de conception
 à part : une description conditionnelle n'atteint pas un client qui fige `tools/list`
 au handshake (cf. #547).
+
+**Addendum #633 (29/08/2026) — l'agent mort SOUS UN JOB DU RUNNER est couvert, et le
+zéro est écrit.** Le worker survit à l'agent et conclut le job : `POST /api/me/runner/jobs`
+`op=complete` libère désormais les baux du run que le job connaît (`run_id` de l'appel,
+sinon `bind_run`), best-effort, et rend `rows_released` avec **`0` explicite** — `null` +
+`release: no_run|failed` quand rien n'a été libéré. `run_finish` écrit lui aussi
+`rows_released` toujours (`0`, ou `null` si la libération a échoué) : un poste de flotte
+distingue « zéro ligne rendue » de « champ absent ». Détail et table des formes :
+`docs/runner-et-automatisations.md` § `complete`. Reste non couvert : l'agent
+conversationnel (hors runner) qui meurt — le bail seul.

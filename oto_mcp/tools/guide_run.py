@@ -181,17 +181,15 @@ def register(mcp: FastMCP) -> None:
         # Best-effort et HORS de la boucle : libérer est un service rendu, jamais une
         # condition de la fermeture du run — un run doit pouvoir se clore même si la
         # base tousse.
-        liberees = 0
+        # Le compte est TOUJOURS écrit (#633) : un poste de flotte distingue « zéro
+        # ligne rendue » (0) de « rien n'a été tenté » (null — la base a toussé, le
+        # journal le dit) ; un champ absent ne disait ni l'un ni l'autre.
+        liberees: int | None = None
         try:
             from starlette.concurrency import run_in_threadpool
             from .. import db
             liberees = await run_in_threadpool(db.datastore_release_by_run, run_id)
         except Exception:  # noqa: BLE001
             logger.warning("libération des lignes du run %s échouée (best-effort)", run_id)
-        out = {"ok": True, "run_id": run_id, "outcome": outcome,
-               "was_open": removed is not None}
-        if liberees:
-            # Dit, parce qu'une ligne rendue sans qu'on l'ait demandé doit se voir :
-            # l'agent saura que son travail en cours a été relâché.
-            out["rows_released"] = liberees
-        return out
+        return {"ok": True, "run_id": run_id, "outcome": outcome,
+                "was_open": removed is not None, "rows_released": liberees}
