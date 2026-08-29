@@ -33,8 +33,10 @@ from typing import Any, Optional
 from psycopg.errors import UniqueViolation
 
 from . import schema as dsv2
+from . import claimable
 # Les refus : extraits dans `errors` (#325), ré-importés ici pour que tout appelant
 # (`from .datastore.core import RowNotFound`) reste inchangé.
+from .claimable import RowOutsideClaimable  # noqa: F401
 from .schema_ops import SchemaOpsMixin
 from .reserves import poser_origine_systeme, refuser_champs_reserves
 from .errors import (  # noqa: F401
@@ -52,6 +54,7 @@ from .errors import (  # noqa: F401
 )
 from .. import db, ownership, session_org
 from .. import config
+from ..db.query import ds_filter_specs as _filter_specs
 
 
 
@@ -105,30 +108,6 @@ def _decode_offset_cursor(cursor: str) -> int:
         return max(0, int(raw[len(_OFFSET_CURSOR_PREFIX):]))
     except ValueError as e:
         raise InvalidCursor(cursor) from e
-
-
-def _filter_specs(filter: Optional[dict]) -> list[dict]:
-    """`{col: valeur}` ou `{col: {op: valeur}}` → la liste `{field, op, value}` du
-    moteur SQL (ops whitelistés par `db._ds_filter_clauses`, qui lève sur inconnu).
-
-    Une valeur scalaire reste une égalité (contrat historique) ; un dict ouvre les
-    opérateurs déjà servis au dashboard — `contains`, `ne`, `in`, `gt/gte/lt/lte`,
-    `empty`/`not_empty`. Sans ça, une question triviale (« quel post a une autrice
-    prénommée Sylvie ? ») obligeait à dumper tout le namespace et à filtrer en
-    local, alors que le SQL savait le faire.
-    """
-    out: list[dict] = []
-    for k, v in (filter or {}).items():
-        if isinstance(v, dict):
-            if len(v) != 1:
-                raise ValueError(
-                    f"filtre `{k}` : un seul opérateur par colonne "
-                    f"(reçu {sorted(v)!r})")
-            op, value = next(iter(v.items()))
-            out.append({"field": k, "op": str(op), "value": value})
-        else:
-            out.append({"field": k, "op": "eq", "value": v})
-    return out
 
 
 def _filter_clauses(filter: Optional[dict], filters: Optional[list]) -> list[dict]:
@@ -1431,12 +1410,19 @@ class DatastorePg(SchemaOpsMixin):
                    filter: Optional[dict] = None, lease_s: int = 900,
                    max_claims: Optional[int] = None,
                    warnings: Optional[list] = None,
-                   trace: Optional[dict] = None) -> Optional[dict]:
+                   trace: Optional[dict] = None,
+                   perimetre: Optional[dict] = None) -> Optional[dict]:
         """Pick + claim atomique de la prochaine row claimable (bail NULL ou
         expiré), `FOR UPDATE SKIP LOCKED` — N workers drainent sans collision.
         `filter` = `{col: val}`, ou `{col: {op: val}}` pour un opérateur (même
         grammaire que `data_rows`). Renvoie la row (avec `_claimed_by`/
         `_claimed_until`) ou None (file vide).
+
+        Le périmètre déclaré au tableau (`lifecycle.claimable`, #517) passe DEVANT
+        le filtre de l'appelant, en ET : celui-ci resserre, il n'élargit jamais.
+        `perimetre` = dict OUT (patron `trace`) qui reçoit cette déclaration quand il
+        y en a une — c'est ce qu'une réponse `row: null` doit NOMMER, sans quoi un
+        filtre qui contredit le périmètre se lit comme une file vide.
 
         `warnings` = liste OUT (patron `trace`) où est déposé, le cas échéant, le
         défaut de configuration qui rend l'auto-release inopérante — le worker qui
@@ -1449,13 +1435,18 @@ class DatastorePg(SchemaOpsMixin):
         if not worker:
             raise ValueError("worker requis (libellé stable rejoué sur release)")
         ns_id = self._resolve(namespace, write=True)
-        filters = _filter_clauses(filter, None)
+        ns = self._ns_of(ns_id)
+        schema = ns.get("schema")
+        declare = dsv2.claimable_of(schema)
+        if perimetre is not None and declare:
+            perimetre.update(declare)
+        filters = claimable.clauses(declare) + _filter_clauses(filter, None)
         row = db.datastore_claim_next(ns_id, worker=worker,
                                       lease_seconds=int(lease_s), filters=filters,
                                       run_id=_current_run(), max_claims=max_claims)
         if row is not None:
-            self._after_claim(ns_id, warnings=warnings, trace=trace)
-        return self._row_to_dict(row, self._schema_of(ns_id)) if row else None
+            self._after_claim(ns_id, warnings=warnings, trace=trace, ns=ns)
+        return self._row_to_dict(row, schema) if row else None
 
     def claim_row(self, namespace: str, row_id: str, *, worker: str,
                   lease_s: int = 900, warnings: Optional[list] = None,
@@ -1465,30 +1456,41 @@ class DatastorePg(SchemaOpsMixin):
 
         Même bail, même garde au release. Renouvelable par le même `worker` (un
         rafraîchissement d'écran ne perd pas la ligne). Lève `RowNotFound` (row
-        absente) ou `RowClaimed` (bail actif d'un autre) — la distinction est ce
-        que la surface doit dire à l'utilisateur, un `None` commun ne le peut pas."""
+        absente), `RowOutsideClaimable` (hors du périmètre déclaré au tableau, #517
+        — jugé AVANT le bail : une ligne que le tableau ne sert pas n'est à personne)
+        ou `RowClaimed` (bail actif d'un autre) — la distinction est ce que la
+        surface doit dire à l'utilisateur, un `None` commun ne le peut pas."""
         worker = (worker or "").strip()
         if not worker:
             raise ValueError("worker requis (libellé stable rejoué sur release)")
         ns_id = self._resolve(namespace, write=True)
+        ns = self._ns_of(ns_id)
+        schema = ns.get("schema")
+        declare = dsv2.claimable_of(schema)
+        clauses = claimable.clauses(declare)
         row = db.datastore_claim_row(ns_id, row_id, worker=worker,
-                                     lease_seconds=int(lease_s), run_id=_current_run())
+                                     lease_seconds=int(lease_s), run_id=_current_run(),
+                                     filters=clauses)
         if row is None:
             existing = db.datastore_get_row(ns_id, row_id)
             if not existing:
                 raise RowNotFound(row_id)
+            if clauses and not db.datastore_row_within(ns_id, row_id, clauses):
+                raise RowOutsideClaimable(row_id, declare)
             raise RowClaimed(row_id, existing.get("claimed_by"), existing.get("claimed_until"))
-        self._after_claim(ns_id, warnings=warnings, trace=trace)
-        return self._row_to_dict(row, self._schema_of(ns_id))
+        self._after_claim(ns_id, warnings=warnings, trace=trace, ns=ns)
+        return self._row_to_dict(row, schema)
 
     def _after_claim(self, ns_id: int, *, warnings: Optional[list],
-                     trace: Optional[dict]) -> None:
+                     trace: Optional[dict], ns: Optional[dict] = None) -> None:
         """Relevés communs aux deux claims, sur un ns_id DÉJÀ résolu : le défaut de
         configuration qui rend l'auto-release inopérante, et le contexte de journal.
-        Une seule lecture de la ligne namespace pour les deux."""
+        Une seule lecture de la ligne namespace pour les deux — et aucune quand
+        l'appelant l'a déjà (`ns`), le périmètre l'ayant lue avant le pick."""
         if warnings is None and trace is None:
             return
-        ns = self._ns_of(ns_id)
+        if ns is None:
+            ns = self._ns_of(ns_id)
         if warnings is not None:
             w = dsv2.queue_release_warning(ns.get("schema"))
             if w:

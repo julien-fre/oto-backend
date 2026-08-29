@@ -94,6 +94,35 @@ _DS_TS_RE = re.compile(
 _DS_MAX_FILTERS = 30
 
 
+def ds_filter_specs(filter: Optional[dict]) -> list[dict]:
+    """`{col: valeur}` ou `{col: {op: valeur}}` → la liste `{field, op, value}` du
+    moteur SQL (ops whitelistés par `_ds_filter_clauses`, qui lève sur inconnu).
+
+    Une valeur scalaire reste une égalité (contrat historique) ; un dict ouvre les
+    opérateurs déjà servis au dashboard — `contains`, `ne`, `in`, `gt/gte/lt/lte`,
+    `empty`/`not_empty`. Sans ça, une question triviale (« quel post a une autrice
+    prénommée Sylvie ? ») obligeait à dumper tout le namespace et à filtrer en
+    local, alors que le SQL savait le faire.
+
+    Vivait dans `datastore/core.py` (`_filter_specs`) jusqu'au 29/08/2026 (#517) :
+    le périmètre de réservation déclaré au schéma se valide par la MÊME grammaire, et
+    `schema.py` ne peut pas remonter vers le store. Déplacement pur, `core` garde le
+    nom.
+    """
+    out: list[dict] = []
+    for k, v in (filter or {}).items():
+        if isinstance(v, dict):
+            if len(v) != 1:
+                raise ValueError(
+                    f"filtre `{k}` : un seul opérateur par colonne "
+                    f"(reçu {sorted(v)!r})")
+            op, value = next(iter(v.items()))
+            out.append({"field": k, "op": str(op), "value": value})
+        else:
+            out.append({"field": k, "op": "eq", "value": v})
+    return out
+
+
 def _ds_meta_ts_clause(col: str, op: str, val: str) -> tuple[str, list]:
     """Fragment WHERE d'un filtre sur une colonne timestamptz méta.
 

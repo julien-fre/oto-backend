@@ -141,11 +141,14 @@ mécanique déjà en base. Deux **capacités** REST-only comblent le trou
 agent) :
 
 - `POST …/claim_next` `{worker, filter?, lease_s?}` → la prochaine ligne libre, réservée
-  (`FOR UPDATE SKIP LOCKED`), ou `{row: null, hint}` quand il n'y a plus rien ;
+  (`FOR UPDATE SKIP LOCKED`), ou `{row: null, hint}` quand il n'y a plus rien — le `hint`
+  nomme le périmètre déclaré du tableau s'il y en a un (`lifecycle.claimable`, #517) ;
 - `POST …/rows/{row_id}/claim` `{worker, lease_s?}` → **cette** ligne. **409
   `row_claimed`** si un autre la tient (avec qui et jusqu'à quand) — un conflit se dit,
   il ne se devine pas. Renouvelable sans erreur par le **même** `worker` : rafraîchir son
   écran ne doit pas coûter sa ligne (`db.datastore_claim_row`, UPDATE conditionnel).
+  **409 `row_outside_claimable`** si le tableau déclare un périmètre que la ligne ne
+  satisfait pas (#517), jugé AVANT le bail — `details.claimable` porte le périmètre.
 
 `worker` (libellé stable de celui qui réserve) est **exigé aux deux claims** : c'est la
 garde rejouée au release. D'où le second cran, sur `POST …/rows/{row_id}/release` :
@@ -247,6 +250,54 @@ que l'appelant filtre. Elle reste lisible, et réparable : toute écriture réus
 le compteur à zéro ET efface le motif, donc la rouvre. ⚠️ Rouvrir son **statut** suppose
 que le cycle de vie déclare la transition de retour (`"echec": ["a_traiter"]`) — la
 plateforme verse la ligne dans l'état d'abandon, elle ne s'autorise pas à l'en sortir.
+
+**Un filtre de réservation DÉCLARÉ sur le tableau : `lifecycle.claimable` (#517,
+29/08/2026).** Sans lui, `data_claim_next` sert « la plus ancienne ligne dont le bail est
+libre ou expiré » — toute ligne du tableau. Mesuré sur un fichier de 8 910 lignes : un
+jalon en cible 100 (`lot_test = jalon-100`), le harnais dicte le filtre dans la prose de
+l'ordre et l'agent le recopie — à 5 % d'oubli, cinq fiches hors lot par jalon, servies,
+écrites, payées. **Une contrainte demandée par la prose n'est pas une contrainte.** D'où
+une déclaration à côté du plafond, dans la grammaire de `filter` :
+
+```
+lifecycle: {
+  …,
+  claimable: {"lot_test": "jalon-100", "statut": "a_enrichir"}   # {col: val} ou {col: {op: val}}
+}
+```
+
+Trois effets, sur les DEUX faces (`data_claim_next`, REST `claim_next` et `claim_row`) :
+
+- **le serveur ne sert jamais une ligne hors de ce filtre, quel que soit le `filter`
+  passé** : le périmètre passe DEVANT le filtre de l'appelant, en ET — il resserre, jamais
+  n'élargit. Un filtre qui le contredit (`{lot_test: jalon-200}`) ne sert rien ;
+- **la réservation ciblée refuse une ligne hors périmètre** (`RowOutsideClaimable` →
+  REST **409 `row_outside_claimable`**, `details.claimable` = le périmètre), jugée AVANT
+  le bail : sinon `claim_row` serait la porte de côté du périmètre. Le titulaire qui
+  renouvelle une ligne sortie du périmètre est refusé lui aussi — la ligne n'est plus
+  servie ; elle reste lisible ;
+- **une réservation qui ne trouve rien nomme le périmètre** — « aucune ligne libre dans
+  le périmètre déclaré `{lot_test: jalon-100, statut: a_enrichir}` — ton filtre `{…}` s'y
+  ajoute en ET » — une phrase (`claimable.phrase_vide`) pour les deux faces. Un
+  `row: null` nu se lisait « file vide » là où c'était le filtre de l'ordre qui
+  contredisait la déclaration.
+
+Validé **à la pose par le moteur qui le servira** (`db.query`, jamais une grammaire
+parallèle — `ds_filter_specs`, ex-`core._filter_specs`, y a été déplacé pour ça) :
+opérateurs whitelistés, colonnes déclarées sous `strict` (les méta-colonnes `_id`/
+`_updated_at`/`_created_at` restent admises), clause inerte (`in: []`) refusée — elle ne
+restreindrait rien —, et une valeur du statut hors des `states` refusée : la file serait
+vide pour toujours, sans un mot. Annoncé par `enforced` (sonde sur la fonction qui produit
+les clauses du pick). La décision, les clauses, le refus et la phrase vivent dans
+`datastore/claimable.py` ; `schema.claimable_of` y donne accès depuis un schéma.
+
+`lifecycle` se patche désormais **par fusion** (`merge_lifecycle`) :
+`data_patch_schema(fields=[{key: statut, lifecycle: {claimable: {…}}}])` pose le périmètre
+sans toucher `max_claims`/`abandon_state`, et `lifecycle: {claimable: null}` le lève.
+⚠️ Jusqu'au 29/08/2026, un patch qui nommait `lifecycle` le REMPLAÇAIT en bloc — en
+oublier une clé la faisait disparaître sans un mot, la promesse inverse du patch. Ce qui
+ne change pas : sans déclaration, `filter` reste le seul périmètre (comportement
+historique) ; `abandon_reason IS NULL` reste le filet de plateforme, indépendant des deux.
 
 Refus de schéma : `ds_append`/`ds_update_row` traduisent `RowValidationError` en
 **400 `row_invalid`** (détail = les champs/transitions fautifs), pas en 500 — c'est le
@@ -890,6 +941,7 @@ mêmes fichiers en une semaine (gels en série, un incident de tree). Où poser 
 | `datastore/errors.py` | les refus — **aucune dépendance**, importable de partout |
 | `datastore/columns.py` | la colonne côté Python : fusion des couches, résolution des anciens noms |
 | `datastore/reserves.py` | les champs que l'appelant n'écrit pas : refuser, et poser l'origine à sa place (#586/#606) |
+| `datastore/claimable.py` | le périmètre de réservation déclaré (`lifecycle.claimable`, #517) : décision, clauses du pick, refus, phrase — **n'importe le moteur qu'à l'appel** |
 | `datastore/schema.py` | le FORMAT : le vocabulaire déclaré et sa validation |
 | `datastore/schema_ops.py` | poser/retoucher/nettoyer le FORMAT (mixin du store) |
 | `datastore/core.py` | le store qui COMPOSE — gros par nature |

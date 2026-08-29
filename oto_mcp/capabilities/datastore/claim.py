@@ -31,12 +31,14 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+from ...datastore import claimable
 from ...datastore import journal as datastore_journal
 from ...datastore.core import (
     NamespaceNotFound,
     NamespaceReadOnly,
     RowClaimed,
     RowNotFound,
+    RowOutsideClaimable,
     make_store,
 )
 from .._authz import SUB_ONLY
@@ -96,10 +98,12 @@ def _claim_next(ctx: ResolvedCtx, inp: ClaimNextInput) -> dict:
     worker = _worker(inp.worker)
     trace: dict = {}
     warnings: list = []
+    perimetre: dict = {}
     try:
         row = make_store(ctx.sub).claim_next(
             inp.namespace, worker=worker, filter=inp.filter,
-            max_claims=inp.max_claims, warnings=warnings, trace=trace, **_lease(inp))
+            max_claims=inp.max_claims, warnings=warnings, trace=trace,
+            perimetre=perimetre, **_lease(inp))
     except NamespaceNotFound:
         raise AuthzDenied(404, "namespace_not_found")
     except NamespaceReadOnly:
@@ -114,9 +118,15 @@ def _claim_next(ctx: ResolvedCtx, inp: ClaimNextInput) -> dict:
         "namespace": inp.namespace, "row": row,
         **({"warning": warnings[0]} if warnings else {}),
         # File vide ≠ erreur — mais ça se dit, sinon un `row: null` se lit comme un bug.
-        **({} if row else {"hint": "plus rien à réserver (file vide pour ce filtre, "
-                                   "ou tout est sous bail actif)"}),
+        # Et quand le tableau déclare un périmètre, c'est LUI qui se nomme (#517).
+        **({} if row else {"hint": _hint_vide(perimetre, inp.filter)}),
     }
+
+
+def _hint_vide(perimetre: dict, filtre: Optional[dict]) -> str:
+    if perimetre:
+        return claimable.phrase_vide(perimetre, filtre)
+    return "plus rien à réserver (file vide pour ce filtre, ou tout est sous bail actif)"
 
 
 def _claim_row(ctx: ResolvedCtx, inp: ClaimRowInput) -> dict:
@@ -133,6 +143,12 @@ def _claim_row(ctx: ResolvedCtx, inp: ClaimRowInput) -> dict:
         raise AuthzDenied(403, "namespace_read_only")
     except RowNotFound:
         raise AuthzDenied(404, "row_not_found")
+    except RowOutsideClaimable as e:
+        # 409 comme `row_claimed` : ce n'est pas un droit qui manque ni un corps mal
+        # formé, c'est l'ÉTAT de la ligne contre ce que le tableau sert. Le périmètre
+        # part en `details` — un front l'affiche sans reparser une phrase française.
+        raise AuthzDenied(409, "row_outside_claimable", str(e),
+                          details={"claimable": e.perimetre})
     except RowClaimed as e:
         # 409 et non 403 : le refus n'est pas un droit qui manque, c'est un collègue
         # plus rapide — et l'utilisateur a besoin de savoir QUI et jusqu'à QUAND.

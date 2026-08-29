@@ -40,7 +40,7 @@ def _cache_propre():
 
 @pytest.mark.parametrize("cle", [
     "strict", "required", "required_when", "type", "options",
-    "max_length", "max_items", "pattern", "lifecycle",
+    "max_length", "max_items", "pattern", "lifecycle", "claimable",
 ])
 def test_les_regles_de_cette_version_sont_annoncees(cle):
     assert cle in S.enforced_keys()
