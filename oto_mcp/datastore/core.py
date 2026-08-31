@@ -1082,6 +1082,21 @@ class DatastorePg(SchemaOpsMixin):
                     raise ValueError("chaque row doit être un objet")
                 self._reject_misplaced_id(data, None, batch=True)
                 user_data = {k: v for k, v in data.items() if k not in _META_COLS}
+                # ⚠️ #329 volet 2, appliqué au QUATRIÈME chemin — il y manquait.
+                # `append_row`, `upsert_row` et la fusion refusent une clé littérale
+                # pointée ; le LOT, non. Or c'est LUI qui porte les imports : la garde
+                # était posée sur les trois chemins où l'on écrit une ligne, et absente
+                # de celui où l'on en écrit huit mille.
+                #
+                # Ce que ça a produit, mesuré le 31/08 sur un fichier de production :
+                # une fiche porte `contact2_nom.comment` et `contact2_email.comment`
+                # comme COLONNES littérales de premier niveau, à côté d'une base
+                # `contact2_nom` qui, elle, a été retirée depuis. Elles ont donc survécu
+                # au retrait — *une couche imbriquée part avec sa colonne, une colonne
+                # littérale du même nom ne part pas* — et se relisent ensuite comme des
+                # « couches orphelines », un objet qui n'existe pas dans le modèle.
+                # Deux sessions ont cherché le geste pendant une demi-journée.
+                _refuse_dotted_names(user_data)
                 kv = user_data.get(key) if key else None
                 existing_id = None
                 if key and kv is not None and str(kv) != "":
