@@ -302,3 +302,32 @@ def test_le_RELEVE_et_la_LECTURE_ne_comptent_pas_les_memes_cles(table):
     assert "raison_sociale.comment" in servi, "servie : la couche est une clé"
     assert "raison_sociale.comment" not in ecrit, "écrite : elle n'en est pas une"
     assert _releve(st) == [], "et le relevé suit l'ÉCRITE, donc il se tait"
+
+
+# ── Retirer une COUCHE : accepté, sans effet, et sans le dire ────────────────
+
+def test_drop_column_sur_une_COUCHE_ne_retire_rien_et_ne_le_dit_pas(table):
+    """⚠️ Mesuré le 31/08, alors qu'une purge de ~190 noms hors schéma s'apprêtait à
+    partir sur un fichier de production. **La bonne nouvelle d'abord** : viser une
+    couche ne détruit AUCUNE provenance — `drop_column` travaille sur les clés
+    stockées, et une couche n'en est pas une, elle vit sous sa colonne.
+
+    Le défaut est ailleurs, et c'est le motif de la journée : *la réponse ne nomme
+    pas ce qu'elle constate.* Elle rend `rows: 0`, exactement comme pour une colonne
+    réelle mais vide. Sur un lot de 190 retraits, l'opérateur lit « c'était déjà
+    vide » là où la phrase juste est « ce nom n'est pas une colonne, c'est la couche
+    de `site_web` ». Le geste est inoffensif, sa restitution est trompeuse — et c'est
+    précisément ce qui fait qu'on ne le corrige pas.
+
+    Ce banc FIGE le comportement observé plutôt que l'intention : si quelqu'un ajoute
+    le message qui manque, ce test doit être mis à jour SCIEMMENT."""
+    st, ns, ns_id, rid = table
+    st.update_row(ns, rid, {"raison_sociale": {"valeur": "ACME", "comment": "c"}})
+    assert "raison_sociale.comment" in set(st.get_row(ns, rid) or {})
+
+    out = st.drop_column(ns, "raison_sociale.comment", confirm=True)
+
+    assert out.get("rows") == 0, "aucune ligne touchée — le nom n'est pas une colonne"
+    servi = st.get_row(ns, rid) or {}
+    assert servi.get("raison_sociale.comment") == "c", "la provenance est INTACTE"
+    assert servi.get("raison_sociale") == "ACME", "et la valeur aussi"
