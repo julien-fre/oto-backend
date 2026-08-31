@@ -197,27 +197,6 @@ def test_le_dict_de_reglages_de_campagne_ne_peut_pas_armer_lenvoi():
 
 # --- L'audio d'une note vocale : la seule entrée de FICHIER du connecteur -------
 
-def test_laudio_dune_note_vocale_est_borne_pendant_la_lecture():
-    """On télécharge à la place de l'agent, donc c'est nous qui bornons — et on
-    s'arrête PENDANT la lecture plutôt que d'accumuler puis tronquer."""
-    from oto_mcp.tools import lemlist
-
-    with pytest.raises(Exception, match="https"):
-        lemlist._fetch_audio("http://x.fr/a.mp3")
-
-    class _R:
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def raise_for_status(self): pass
-        def iter_content(self, n):
-            while True:
-                yield b"\x00" * n
-
-    with patch("requests.get", return_value=_R()):
-        with pytest.raises(Exception, match="au-delà de 20 Mo"):
-            lemlist._fetch_audio("https://x.fr/enorme.mp3")
-
-
 def test_les_activites_savent_marcher_les_pages():
     key, cls = _with_fake_client()
     with key, cls as client_cls:
@@ -230,3 +209,55 @@ def test_les_activites_savent_marcher_les_pages():
             campaign_id="cam_1", since="2026-08-01", max_pages=50)
         inst.get_activities.assert_not_called()
         assert out["count"] == 1
+
+
+def test_les_credentials_de_boite_mail_ne_partent_pas_en_clair_au_journal():
+    """`tool_calls` est lue par les surfaces de supervision : un mot de passe
+    SMTP qui y arrive en clair y reste. Le masquage traverse le sous-dict."""
+    from oto_mcp.calllog import truncated_args
+
+    out = truncated_args(
+        {"op": "connect", "smtp_imap": {
+            "sender_email": "me@x.fr", "smtp_password": "hunter2",
+            "imap_password": "hunter2", "smtp_host": "smtp.x.fr"}},
+        tool="lemlist_mailbox")
+
+    ligne = str(out)
+    assert "hunter2" not in ligne
+    assert "smtp.x.fr" in ligne          # le non-secret reste lisible
+    assert "me@x.fr" in ligne
+
+    secret = truncated_args({"secret": "sig-key"}, tool="lemlist_webhook")
+    assert "sig-key" not in str(secret)
+
+    # Et le masquage reste NOMINATIF : un `secret` sur un autre outil passe.
+    assert truncated_args({"secret": "sig-key"}, tool="lemlist_campaign") == {
+        "secret": "sig-key"}
+
+
+def test_laudio_passe_par_le_seam_partage_et_sa_garde_ssrf():
+    """Écrit à la main, ce chemin refaisait la borne de taille mais PAS
+    l'anti-SSRF — une URL d'agent pouvait viser localhost ou l'IMDS."""
+    from oto_mcp.tools import lemlist
+
+    with patch("oto_mcp.file_source.resolve") as resolve:
+        resolve.return_value.data = b"\x00\x01"
+        resolve.return_value.filename = "voix.mp3"
+        # Le nom de fichier vient de la SOURCE et part en multipart : le perdre
+        # ferait arriver toutes les notes vocales sous le même nom générique.
+        assert lemlist._fetch_audio("https://x.fr/a.mp3") == (b"\x00\x01", "voix.mp3")
+        assert resolve.call_args.args[0] == {"kind": "url", "url": "https://x.fr/a.mp3"}
+        assert resolve.call_args.kwargs["max_bytes"] == 20 * 1024 * 1024
+
+    # Une source Drive/Gmail passe telle quelle — le seam les gère aussi.
+    with patch("oto_mcp.file_source.resolve") as resolve:
+        resolve.return_value.data = b""
+        resolve.return_value.filename = None
+        assert lemlist._fetch_audio({"kind": "drive", "file_id": "f1"})[1] == "audio.mp3"
+        assert resolve.call_args.args[0] == {"kind": "drive", "file_id": "f1"}
+
+    from oto_mcp import file_source
+    with patch("oto_mcp.file_source.resolve",
+               side_effect=file_source.FileSourceError("cible non autorisée")):
+        with pytest.raises(Exception, match="audio illisible"):
+            lemlist._fetch_audio("https://169.254.169.254/latest")

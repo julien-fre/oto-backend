@@ -129,35 +129,37 @@ def _project_stats(result: dict, *, full: bool) -> dict:
     return out
 
 
-#: Plafond de l'audio d'une note vocale — la route lemlist est multipart et
-#: l'agent ne peut fournir qu'une URL : c'est NOUS qui téléchargeons, donc c'est
-#: nous qui bornons. 20 Mo, la limite que lemlist annonce sur ses médias.
+#: Plafond de l'audio d'une note vocale — 20 Mo, la limite que lemlist annonce
+#: sur ses médias. La borne est ici parce que c'est NOUS qui téléchargeons : un
+#: agent MCP n'a pas de disque partagé avec le serveur.
 AUDIO_MAX_BYTES = 20 * 1024 * 1024
 
 
-def _fetch_audio(url: str) -> bytes:
-    """Ramène un fichier audio depuis une URL publique, borné.
+def _fetch_audio(source) -> tuple[bytes, str]:
+    """Ramène l'audio d'une note vocale, par le seam PARTAGÉ `file_source`.
 
-    Un agent MCP n'a pas de système de fichiers partagé avec le serveur : la
-    seule façon de lui laisser poser une note vocale est qu'il donne une URL. On
-    refuse ce qui n'est pas https, et on s'arrête PENDANT la lecture plutôt que
-    d'accumuler puis tronquer (même règle que l'extraction de fichiers).
+    Écrit à la main au premier jet, cette fonction refaisait une garde de taille
+    et un contrôle de schéma — mais PAS l'anti-SSRF : une URL fournie par un
+    agent aurait pu faire lire au serveur `localhost` ou l'IMDS cloud. Le seam
+    (`file_source.resolve`, déjà utilisé par lighton et pennylane) porte cette
+    garde, refuse les redirections, et accepte en prime `{"kind": "drive"}` et
+    `{"kind": "gmail"}` — l'audio peut donc venir d'un Drive ou d'une pièce
+    jointe, pas seulement d'une URL publique.
+
+    Rend `(octets, nom de fichier)` : le nom vient de la SOURCE (pièce jointe,
+    fichier Drive, dernier segment d'URL) et part en multipart. Le laisser
+    tomber ferait arriver toutes les notes vocales sous le même nom générique
+    côté lemlist.
     """
-    import requests
+    from .. import file_source
 
-    if not url.startswith("https://"):
-        raise _bad(f"`audio_url` doit être une URL https, reçu {url!r}")
-    chunks, total = [], 0
-    with requests.get(url, stream=True, timeout=(10, 60)) as r:
-        r.raise_for_status()
-        for chunk in r.iter_content(64 * 1024):
-            total += len(chunk)
-            if total > AUDIO_MAX_BYTES:
-                raise _bad(
-                    f"audio au-delà de {AUDIO_MAX_BYTES // (1024 * 1024)} Mo — "
-                    "refusé pendant la lecture")
-            chunks.append(chunk)
-    return b"".join(chunks)
+    if isinstance(source, str):
+        source = {"kind": "url", "url": source}
+    try:
+        resolved = file_source.resolve(source, max_bytes=AUDIO_MAX_BYTES)
+    except file_source.FileSourceError as e:
+        raise _bad(f"audio illisible : {e}")
+    return resolved.data, resolved.filename or "audio.mp3"
 
 
 def _refuse_auto_review(settings: dict) -> None:
@@ -314,6 +316,8 @@ def register(mcp: FastMCP) -> None:
         is_first: Optional[bool] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
+        min_date: Optional[str] = None,
+        max_date: Optional[str] = None,
         all_pages: bool = False,
         since: Optional[str] = None,
         max_pages: int = 50,
@@ -329,6 +333,9 @@ def register(mcp: FastMCP) -> None:
             lead_id: Restrict to one lead.
             is_first: Keep only the first event of its kind per lead.
             start_date / end_date: ISO 8601 bounds.
+            min_date / max_date: the OTHER documented pair of bounds — lemlist
+                exposes both on this route; kept distinct rather than guessed
+                into one.
             all_pages: Walk the pages instead of returning one. Use `since`
                 (ISO date) to stop early, and `max_pages` to cap the cost
                 (default 50 = 5 000 events). Ignores the other filters — the
@@ -345,6 +352,7 @@ def register(mcp: FastMCP) -> None:
                 campaign_id=campaign_id, limit=limit, offset=offset,
                 type=activity_type, lead_id=lead_id, is_first=is_first,
                 start_date=start_date, end_date=end_date,
+                min_date=min_date, max_date=max_date,
             )
         _record_if_platform(is_platform)
         return {"activities": events, "count": len(events)}
@@ -442,6 +450,7 @@ def register(mcp: FastMCP) -> None:
         verify_email: bool = False,
         linkedin_enrichment: bool = False,
         find_phone: bool = False,
+        webhook_url: Optional[str] = None,
     ) -> dict:
         """Submit an ASYNC enrichment on a person — no campaign, no lead needed.
 
@@ -472,6 +481,7 @@ def register(mcp: FastMCP) -> None:
             company_name=company_name, company_domain=company_domain,
             find_email=find_email, verify_email=verify_email,
             linkedin_enrichment=linkedin_enrichment, find_phone=find_phone,
+            webhook_url=webhook_url,
         )
         _record_if_platform(is_platform)
         return {
@@ -487,6 +497,7 @@ def register(mcp: FastMCP) -> None:
         verify_email: bool = False,
         linkedin_enrichment: bool = False,
         find_phone: bool = False,
+        webhook_url: Optional[str] = None,
     ) -> dict:
         """Enrich a lead that is ALREADY in a campaign, in place.
 
@@ -518,6 +529,7 @@ def register(mcp: FastMCP) -> None:
             lead_id,
             find_email=find_email, verify_email=verify_email,
             linkedin_enrichment=linkedin_enrichment, find_phone=find_phone,
+            webhook_url=webhook_url,
         )
         _record_if_platform(is_platform)
         return {
@@ -603,7 +615,9 @@ def register(mcp: FastMCP) -> None:
         return out
 
     @mcp.tool()
-    def lemlist_enrich_bulk(people: list[dict]) -> dict:
+    def lemlist_enrich_bulk(
+        people: list[dict], webhook_url: Optional[str] = None,
+    ) -> dict:
         """Submit several enrichments in one call.
 
         Args:
@@ -662,7 +676,7 @@ def register(mcp: FastMCP) -> None:
             }
             items.append(item)
 
-        raw = client.bulk_enrich(items)
+        raw = client.bulk_enrich(items, webhook_url=webhook_url)
         if is_platform:
             # Un bulk est facturé À LA PERSONNE : la consommation est le nombre
             # d'entrées soumises, pas 1 pour l'appel (même règle que FullEnrich).
@@ -738,6 +752,8 @@ def register(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         channels: Optional[list[str]] = None,
+        send_user: Optional[str] = None,
+        ab_selected: Optional[str] = None,
         export_id: Optional[str] = None,
         email: Optional[str] = None,
         state: Optional[str] = None,
@@ -774,7 +790,8 @@ def register(mcp: FastMCP) -> None:
           (`emailsSent`, `emailsOpened`, `emailsReplied`, `senderNames`, `state`)
           — the shape for comparing campaigns.
         - `batch_stats`: `campaign_ids` (≤ 100) + optional `start_date`/`end_date`
-          (defaults to the whole life), `channels` (`email`/`linkedin`/`others`).
+          (defaults to the whole life), `channels` (`email`/`linkedin`/`others`),
+          `send_user` (`usr_…|sender@email`), `ab_selected` (`A`/`B`).
           Same counters as `lemlist_get_campaign_stats`, in one call.
 
         - `export_start`: `campaign_id`. Opens an ASYNCHRONOUS stats export and
@@ -848,7 +865,8 @@ def register(mcp: FastMCP) -> None:
                 raise _bad("`campaign_ids` requis (liste d'ids de campagne)")
             start, end = _default_window(start_date, end_date)
             result = client.get_batch_campaign_stats(
-                campaign_ids, start_date=start, end_date=end, channels=channels)
+                campaign_ids, start_date=start, end_date=end, channels=channels,
+                send_user=send_user, ab_selected=ab_selected)
             if not full:
                 result = {**result, "results": [
                     _project_stats(r, full=False) for r in result.get("results", [])
@@ -1003,6 +1021,10 @@ def register(mcp: FastMCP) -> None:
         weekdays: Optional[list[int]] = None,
         seconds_to_wait: Optional[int] = None,
         public: Optional[bool] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        page: Optional[int] = None,
+        newest_first: bool = False,
     ) -> dict:
         """Manage sending windows (schedules) — days, hours, timezone, pacing.
 
@@ -1011,7 +1033,8 @@ def register(mcp: FastMCP) -> None:
         auto-creates one and returns its id in `scheduleIds`.
 
         Args by op:
-        - `list`: no argument. Every schedule of the team.
+        - `list`: optional `limit`, `offset`/`page`, `newest_first` — the
+          route is paginated, so a team with many windows needs them.
         - `get` / `delete`: `schedule_id`.
         - `create`: `name` (required) + `timezone` (IANA, default
           `Europe/Paris`), `start`/`end` (`HH:mm`, default 09:00-18:00),
@@ -1027,7 +1050,9 @@ def register(mcp: FastMCP) -> None:
         client, is_platform = _client()
 
         if op == "list":
-            result = client.list_schedules()
+            result = client.list_schedules(
+                limit=limit, offset=offset, page=page,
+                sort_order="desc" if newest_first else None)
         elif op == "get":
             if not schedule_id:
                 raise _bad("`schedule_id` requis")
@@ -1121,7 +1146,7 @@ def register(mcp: FastMCP) -> None:
         filter_type: Optional[str] = None,
         deduplicate: Optional[bool] = None,
         step_id: Optional[str] = None,
-        audio_url: Optional[str] = None,
+        audio: Optional[dict] = None,
     ) -> dict:
         """Lead lifecycle inside a campaign — read, edit, pause, qualify, remove.
 
@@ -1150,8 +1175,11 @@ def register(mcp: FastMCP) -> None:
         - `import_crm`: `campaign_id` + `crm` + `user_id` + `filter_id`
           (from `lemlist_team(op="crm_filters")`), optional `filter_type`,
           `deduplicate`.
-        - `upload_audio`: `lead_id` + `step_id` + `audio_url` — the audio of a
-          `linkedinVoiceNote` step, fetched from a public URL and forwarded.
+        - `upload_audio`: `lead_id` + `step_id` + `audio` — the audio of a
+          `linkedinVoiceNote` step. `audio` is a source dict:
+          `{"kind": "url", "url": …}`, `{"kind": "drive", "file_id": …}` or
+          `{"kind": "gmail", "message_id": …, "filename": …}`. The server
+          fetches it (≤ 20 MB) and forwards the bytes.
         """
         client, is_platform = _client()
         target = lead_id or email
@@ -1216,10 +1244,13 @@ def register(mcp: FastMCP) -> None:
                 filter_type=filter_type, deduplicate=deduplicate)
 
         elif op == "upload_audio":
-            if not (lead_id and step_id and audio_url):
-                raise _bad("`lead_id`, `step_id` ET `audio_url` requis")
-            audio = _fetch_audio(audio_url)
-            result = client.upload_lead_audio(lead_id, step_id, audio)
+            if not (lead_id and step_id and audio):
+                raise _bad(
+                    "`lead_id`, `step_id` ET `audio` requis — `audio` est une "
+                    'source : {"kind": "url"|"drive"|"gmail", …}')
+            data, filename = _fetch_audio(audio)
+            result = client.upload_lead_audio(
+                lead_id, step_id, data, filename=filename)
 
         else:
             raise _bad(

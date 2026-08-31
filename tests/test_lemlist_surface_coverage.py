@@ -9,6 +9,16 @@ Ce test ferme la seconde moitié de la chaîne : toute méthode du client qui
 construit un chemin HTTP doit être appelée par au moins un tool. Les rares
 exceptions sont NOMMÉES ci-dessous avec leur raison — jamais tolérées en
 silence, ce qui est tout l'intérêt d'une liste écrite plutôt que d'un seuil.
+
+Le second inventaire couvre l'étage en dessous, et il a été ajouté APRÈS coup :
+la couverture au grain de la MÉTHODE est structurellement aveugle au trou le
+plus courant — un tool qui appelle la bonne méthode en laissant tomber la moitié
+de ses paramètres. Deux cas étaient déjà passés (un `settings` avalé à la
+création d'une campagne, quatre filtres muets sur les signaux) : la docstring
+promettait un filtre, la branche ne le transmettait pas, et l'agent recevait une
+liste non filtrée qui avait l'air filtrée. `test_aucun_parametre_client_ne_reste_muet`
+compare donc, pour chaque méthode appelée, sa signature à ce que les tools lui
+passent réellement.
 """
 from __future__ import annotations
 
@@ -126,3 +136,92 @@ def test_tout_ce_qui_arme_ou_declenche_un_envoi_est_masque_par_defaut(tool):
     """Le contrat de sûreté du connecteur, énuméré plutôt que raconté."""
     from oto_mcp.tool_visibility import DEFAULT_HIDDEN_TOOLS
     assert tool in DEFAULT_HIDDEN_TOOLS
+
+
+# --------------------------------------------------------------------------- #
+# Étage du PARAMÈTRE : une méthode atteinte ne suffit pas
+# --------------------------------------------------------------------------- #
+
+#: Paramètres client qu'aucun tool ne transmet, DÉLIBÉRÉMENT.
+PARAMETRES_NON_TRANSMIS = {
+    ("create_campaign", "auto_review"): "armé par lemlist_campaign_auto_review",
+    ("create_campaign", "auto_review_conditions"):
+        "armé par lemlist_campaign_auto_review",
+    # `version` bascule entre deux formes de charge de l'API. C'est un détail de
+    # transport, pas une question d'agent : le client envoie déjà la bonne.
+    ("get_lead", "version"): "commutateur de version d'API, choisi par le client",
+    ("get_lead_by_email", "version"): "idem",
+    ("get_team", "version"): "idem",
+    # `GET /leads` accepte id OU email ; le tool sert l'email par la route dédiée
+    # `GET /leads/{email}`, qui est celle que lemlist documente pour ce cas.
+    ("get_lead", "email"): "servi par get_lead_by_email (route dédiée)",
+}
+
+
+def _client_calls() -> dict[str, list[tuple[int, set[str], bool]]]:
+    """Par méthode client appelée : `(nb d'args positionnels, kwargs nommés,
+    présence d'un `**dict`)` pour chaque site d'appel."""
+    import ast
+
+    from oto_mcp.tools import lemlist, lemlist_crm
+
+    calls: dict[str, list] = {}
+    for module in (lemlist, lemlist_crm):
+        tree = ast.parse(inspect.getsource(module))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)):
+                continue
+            base = node.func.value
+            if not (isinstance(base, ast.Name) and base.id == "client"):
+                continue
+            named = {kw.arg for kw in node.keywords if kw.arg}
+            # `client.f(name, **kwargs)` transmet tout ce que le dict porte :
+            # le compter comme un manque ferait crier le garde-fou à tort.
+            splat = any(kw.arg is None for kw in node.keywords)
+            calls.setdefault(node.func.attr, []).append(
+                (len(node.args), named, splat))
+    return calls
+
+
+def test_aucun_parametre_client_ne_reste_muet():
+    """Une docstring qui promet un filtre que la branche ne passe pas rend une
+    liste non filtrée qui a l'air filtrée — le pire des deux mondes."""
+    from oto.tools.lemlist import LemlistClient
+
+    muets = []
+    for name, sites in sorted(_client_calls().items()):
+        method = getattr(LemlistClient, name, None)
+        if method is None:
+            continue
+        try:
+            params = [p for p in inspect.signature(method).parameters.values()
+                      if p.name != "self"]
+        except (TypeError, ValueError):
+            continue
+        if any(splat for _, _, splat in sites):
+            continue
+        couverts: set[str] = set()
+        for npos, named, _ in sites:
+            couverts |= {p.name for p in params[:npos]} | named
+        for p in params:
+            if p.kind is p.VAR_KEYWORD or p.name in couverts:
+                continue
+            if (name, p.name) in PARAMETRES_NON_TRANSMIS:
+                continue
+            muets.append(f"{name}.{p.name}")
+    assert not muets, (
+        f"{len(muets)} paramètre(s) qu'aucun tool ne transmet : {muets}. "
+        "Transmets-les, ou déclare-les dans PARAMETRES_NON_TRANSMIS avec la "
+        "raison — une charge silencieusement amputée est indétectable à l'usage.")
+
+
+def test_les_exceptions_de_parametres_visent_des_parametres_reels():
+    from oto.tools.lemlist import LemlistClient
+
+    perimes = []
+    for (meth, param) in PARAMETRES_NON_TRANSMIS:
+        fn = getattr(LemlistClient, meth, None)
+        if fn is None or param not in inspect.signature(fn).parameters:
+            perimes.append(f"{meth}.{param}")
+    assert not perimes, f"exception(s) sur un paramètre inexistant : {perimes}"

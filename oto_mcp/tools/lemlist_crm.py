@@ -76,6 +76,9 @@ def register(mcp: FastMCP) -> None:
         not_in_any_campaign: Optional[bool] = None,
         company_id: Optional[str] = None,
         company_domain: Optional[str] = None,
+        company_linkedin_url: Optional[str] = None,
+        company_salesnav_url: Optional[str] = None,
+        field_rejection_reason: Optional[str] = None,
         entity: Optional[str] = None,
         action: Optional[str] = None,
         limit: Optional[int] = None,
@@ -89,7 +92,9 @@ def register(mcp: FastMCP) -> None:
         Args by op:
         - `list`: `ids_or_emails` (≤ 100, exact lookup) or the filters
           `search`, `email`, `list_id`, `not_in_any_campaign`, `company_id`,
-          `company_domain`, `limit`, `offset`.
+          `company_domain`, `company_linkedin_url`, `company_salesnav_url`,
+          `field_rejection_reason` (why a CRM sync rejected a field),
+          `limit`, `offset`.
         - `get` / `delete`: `id_or_email`.
         - `upsert`: `contact` — one dict, create AND update. Identity keys
           `contactId` / `email` / `linkedinUrl`; then `firstName`, `lastName`,
@@ -106,6 +111,9 @@ def register(mcp: FastMCP) -> None:
                 ids_or_emails=ids_or_emails, search=search, email=email,
                 list_id=list_id, not_in_any_campaign=not_in_any_campaign,
                 company_id=company_id, company_domain=company_domain,
+                company_linkedin_url=company_linkedin_url,
+                company_salesnav_url=company_salesnav_url,
+                field_rejection_reason=field_rejection_reason,
                 limit=limit, offset=offset)}
         elif op == "get":
             _need(id_or_email=id_or_email)
@@ -142,6 +150,11 @@ def register(mcp: FastMCP) -> None:
         ids_or_domains: Optional[list[str]] = None,
         search: Optional[str] = None,
         force: Optional[bool] = None,
+        fields: Optional[list[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        crm_sync_status: Optional[str] = None,
+        field_rejection_reason: Optional[str] = None,
         limit: Optional[int] = None,
         offset: Optional[int] = None,
         page: Optional[int] = None,
@@ -149,18 +162,23 @@ def register(mcp: FastMCP) -> None:
         """Companies of the lemlist CRM, and their notes.
 
         Args by op:
-        - `list`: `ids_or_domains` (exact lookup) or `search`, `limit`, `offset`.
+        - `list`: `ids_or_domains` (exact lookup) or `search`, `fields` (keep
+          only these), `sort_by`/`sort_order`, `crm_sync_status`,
+          `field_rejection_reason`, `limit`, `offset`.
         - `upsert`: `company` — identity keys `companyId` / `domain` /
           `linkedinUrl`, then `name`, `industry`, `size`, `location`…
         - `delete`: `company_id`; `force=True` deletes it even with contacts
           attached (lemlist refuses otherwise).
-        - `notes`: `company_id` (+ `limit`, `page`). `note_create`:
-          `company_id` + `note`.
+        - `notes`: `company_id` (+ `limit`, `page`, `sort_by`, `sort_order`).
+          `note_create`: `company_id` + `note`.
         """
         client, is_platform = _client()
         if op == "list":
             result = {"companies": client.list_companies(
-                ids_or_domains=ids_or_domains, search=search,
+                ids_or_domains=ids_or_domains, search=search, fields=fields,
+                sort_by=sort_by, sort_order=sort_order,
+                crm_sync_status=crm_sync_status,
+                field_rejection_reason=field_rejection_reason,
                 limit=limit, offset=offset)}
         elif op == "upsert":
             _need(company=company)
@@ -171,7 +189,8 @@ def register(mcp: FastMCP) -> None:
         elif op == "notes":
             _need(company_id=company_id)
             result = {"notes": client.get_company_notes(
-                company_id, limit=limit, page=page)}
+                company_id, limit=limit, page=page,
+                sort_by=sort_by, sort_order=sort_order)}
         elif op == "note_create":
             _need(company_id=company_id, note=note)
             result = client.create_company_note(company_id, note)
@@ -200,6 +219,9 @@ def register(mcp: FastMCP) -> None:
         content: Optional[str] = None,
         subject: Optional[str] = None,
         cc: Optional[list[str]] = None,
+        attachments: Optional[list[dict]] = None,
+        reply_to_activity_id: Optional[str] = None,
+        source_metadata: Optional[dict] = None,
         draft: Optional[dict] = None,
         mark_as_read: Optional[bool] = None,
         limit: Optional[int] = None,
@@ -222,7 +244,9 @@ def register(mcp: FastMCP) -> None:
         - `drafts` / `draft_get` / `draft_delete`: `contact_id` + `draft_owner`
           (a user id — a draft belongs to a person) + `draft_id` where relevant.
         - `draft_create`: `contact_id`, `draft_owner`, `channel` (`email`,
-          `linkedin`, `whatsapp`, `sms`), `content`, optional `subject`, `cc`.
+          `linkedin`, `whatsapp`, `sms`), `content`, optional `subject`, `cc`,
+          `attachments`, `reply_to_activity_id` (answer a specific message),
+          `source_metadata`.
         - `draft_update`: same ids + `draft` (the fields to change).
         """
         client, is_platform = _client()
@@ -258,7 +282,9 @@ def register(mcp: FastMCP) -> None:
                 _need(channel=channel, content=content)
                 result = client.create_draft(
                     contact_id, draft_owner, channel=channel, content=content,
-                    subject=subject, cc=cc)
+                    subject=subject, cc=cc, attachments=attachments,
+                    reply_to_activity_id=reply_to_activity_id,
+                    source_metadata=source_metadata)
             else:
                 _need(draft_id=draft_id)
                 if op == "draft_get":
@@ -414,6 +440,8 @@ def register(mcp: FastMCP) -> None:
         priority: Optional[str] = None,
         done: Optional[bool] = None,
         ids: Optional[list[str]] = None,
+        images: Optional[list[str]] = None,
+        videos: Optional[list[str]] = None,
         filters: Optional[list[dict]] = None,
         page: Optional[int] = None,
     ) -> dict:
@@ -426,9 +454,9 @@ def register(mcp: FastMCP) -> None:
         - `create`: `task_type` (`email`, `manual`, `phone`, `linkedin`),
           `assigned_to` (user id), `due_date` — all required; then `record_id`
           (the lead/contact it hangs off), `title`, `message`, `priority`
-          (`0` high … `2` low).
+          (`0` high … `2` low), `images`/`videos` (public HTTPS URLs).
         - `update`: `task_id` + any of `title`, `message`, `priority`,
-          `due_date`, `assigned_to`, `done`.
+          `due_date`, `assigned_to`, `done`, `images`, `videos`.
         - `ignore`: `ids` — dismiss without completing.
         """
         client, is_platform = _client()
@@ -439,12 +467,13 @@ def register(mcp: FastMCP) -> None:
             result = client.create_task(
                 task_type=task_type, assigned_to=assigned_to, due_date=due_date,
                 record_id=record_id, title=title, message=message,
-                priority=priority)
+                priority=priority, images=images, videos=videos)
         elif op == "update":
             _need(task_id=task_id)
             data = {k: v for k, v in {
                 "title": title, "message": message, "priority": priority,
                 "dueDate": due_date, "assignedTo": assigned_to, "done": done,
+                "images": images, "videos": videos,
             }.items() if v is not None}
             if not data:
                 raise _bad("rien à mettre à jour — passe au moins un champ")
@@ -469,6 +498,12 @@ def register(mcp: FastMCP) -> None:
         emoji: Optional[str] = None,
         signal_processing_type: Optional[str] = None,
         activate: Optional[bool] = None,
+        segment_type: Optional[str] = None,
+        opportunity_template: Optional[dict] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        received_from: Optional[str] = None,
+        received_to: Optional[str] = None,
         settings: Optional[dict] = None,
         filter_id: Optional[str] = None,
         query: Optional[str] = None,
@@ -492,13 +527,16 @@ def register(mcp: FastMCP) -> None:
           `companyRaisedFunds`, `jobChange`, `newHire`, `technologyChange`,
           `buyingIntent`… — `filters` tells you the vocabulary), optional
           `filters`, `emoji`, `signal_processing_type` (`manual`,
-          `create_opportunity`, `push_to_campaign`), `activate`.
+          `create_opportunity`, `push_to_campaign`), `activate`,
+          `segment_type`, `opportunity_template` (what
+          `create_opportunity` builds: owner, channel, priority).
         - `update`: `watch_list_id` + `settings` (raw PATCH body).
           `delete`: `watch_list_id`.
         - `filters` (optional `watch_type`) / `filter_values` (`filter_id`,
           optional `query`) / `library`: what a list can be built from.
         - `history`: `watch_list_id`. `signals`: the catches, filterable by
-          `watch_list_id`, `watch_type`, `status`, dates via `settings`.
+          `watch_list_id`, `watch_type`, `status`, `received_from`/`received_to`
+          (ISO bounds), and sorted by `sort_by`/`sort_order`.
         - `push_signals`: `watch_list_id` + `contact` (needs `linkedinUrl`) +
           `company` (needs `domain` and `name`), optional `custom_fields` —
           feed a signal detected OUTSIDE lemlist.
@@ -511,7 +549,9 @@ def register(mcp: FastMCP) -> None:
             _need(name=name, watch_type=watch_type)
             result = client.create_watch_list(
                 name, type=watch_type, filters=filters, emoji=emoji,
-                signal_processing_type=signal_processing_type, activate=activate)
+                signal_processing_type=signal_processing_type, activate=activate,
+                segment_type=segment_type,
+                signal_opportunity_template=opportunity_template)
         elif op == "update":
             _need(watch_list_id=watch_list_id, settings=settings)
             result = client.update_watch_list(watch_list_id, settings)
@@ -533,7 +573,9 @@ def register(mcp: FastMCP) -> None:
         elif op == "signals":
             result = {"signals": client.get_signals(
                 page=page, limit=limit, type=watch_type, status=status,
-                watch_list_id=watch_list_id)}
+                watch_list_id=watch_list_id, sort_by=sort_by,
+                sort_order=sort_order, received_at_from=received_from,
+                received_at_to=received_to)}
         elif op == "push_signals":
             _need(watch_list_id=watch_list_id, contact=contact, company=company)
             result = client.push_external_signals(
@@ -777,6 +819,7 @@ def register(mcp: FastMCP) -> None:
         secret: Optional[str] = None,
         campaign_id: Optional[str] = None,
         is_first: Optional[bool] = None,
+        zap_id: Optional[str] = None,
     ) -> dict:
         """Webhooks — push lemlist events to a URL of yours (`/hooks`).
 
@@ -786,7 +829,8 @@ def register(mcp: FastMCP) -> None:
           `emailsReplied`, `linkedinInviteAccepted`, `enrichmentDone`,
           `signalRegistered`… ~70 of them; omit to subscribe to all),
           `secret`, `campaign_id` (narrow to one campaign), `is_first` (first
-          occurrence per lead only).
+          occurrence per lead only), `zap_id` (tag the hook as coming from a
+          given Zap).
         - `delete`: `hook_id`.
         """
         client, is_platform = _client()
@@ -796,7 +840,7 @@ def register(mcp: FastMCP) -> None:
             _need(target_url=target_url)
             result = client.add_webhook(
                 target_url, type=event_type, secret=secret,
-                campaign_id=campaign_id, is_first=is_first)
+                campaign_id=campaign_id, is_first=is_first, zap_id=zap_id)
         elif op == "delete":
             _need(hook_id=hook_id)
             result = client.delete_webhook(hook_id)

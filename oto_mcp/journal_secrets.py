@@ -49,6 +49,22 @@ logger = logging.getLogger(__name__)
 # routes, quels outils) en est dérivé.
 SECRET_PARAM_NAMES = frozenset({"token", "code"})
 
+# Les CONNECTEURS échappent à la dérivation ci-dessus (elle ne lit que le registre
+# de capacités), et masquer leurs arguments par le NOM seul serait faux : un
+# `code` métier n'est pas un secret. Un connecteur qui reçoit une VRAIE
+# credential la déclare donc ici, outil par outil. Volontairement nominatif : ce
+# n'est pas une heuristique sur « password », c'est une liste qu'on relit.
+#
+# `lemlist_mailbox` : `op="connect"` porte les mots de passe SMTP et IMAP d'une
+# boîte mail — dans un sous-dictionnaire `smtp_imap`, que `truncated_args` sait
+# traverser dès lors que le nom de la clé est déclaré. Sans cette ligne ils
+# partaient EN CLAIR dans `tool_calls`, table lue par les surfaces de supervision.
+# `lemlist_webhook` : `secret` signe les callbacks — qui l'a peut les forger.
+SECRET_TOOL_ARGS: dict[str, frozenset] = {
+    "lemlist_mailbox": frozenset({"smtp_password", "imap_password"}),
+    "lemlist_webhook": frozenset({"secret"}),
+}
+
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
@@ -196,6 +212,10 @@ def _arg_names() -> dict[str, frozenset]:
                 secrets_ = champs & SECRET_PARAM_NAMES
                 if secrets_:
                     table[cap.mcp] = frozenset(secrets_)
+            # Les déclarations de connecteur s'ajoutent : elles ne dérivent de
+            # rien (un connecteur n'a pas d'`Input` au registre), d'où la liste.
+            for tool, noms in SECRET_TOOL_ARGS.items():
+                table[tool] = table.get(tool, frozenset()) | noms
         except Exception:  # noqa: BLE001 — le journal ne casse jamais le service
             # Bruyant, et une seule fois : sans registre, le masquage des arguments
             # est INERTE. Un journal qui cesse de masquer sans le dire est
