@@ -116,6 +116,15 @@ dependencies = [
     "aiodebug>=2.3.0",
     "starlette>=0.37",
     "uvicorn>=0.30",
+    # Les DEUX clients HTTP du dépôt, importés au top-level par du code SERVI —
+    # `requests` par les flux OAuth et la Management API, `httpx` par le client de
+    # paiement, l'extraction de fichiers et l'email. Ils arrivaient jusqu'ici en
+    # transitives, derrière des paquets qui ne les promettent pas : le 31/08/2026,
+    # l'un d'eux a cessé de fournir `httpx` et TOUTE la CI est tombée, sur toutes les
+    # branches à la fois, pendant que les environnements locaux restaient verts.
+    # Ce qu'on IMPORTE, on le DÉCLARE — garde-fou `tests/test_dependances_declarees.py`.
+    "requests>=2.31",
+    "httpx>=0.27",
     "pydantic>=2.0",
     "google-api-python-client>=2.0",
     "google-auth>=2.0",
