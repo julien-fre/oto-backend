@@ -463,7 +463,10 @@ vient de `oto_upload_url(target="image")` — un upload, une URL réutilisée.
 ⚠️ Le front qui héberge une org (`orgs.front_base_url`/`front_brand`) est **dérivé de l'org
 CIBLE, jamais déclaré par l'appelant** — sinon c'est un champ d'API publique qu'il faudra
 retirer à l'arrivée de l'étage tenant. ⚠️ Aucune surface n'édite ces colonnes (UPDATE à la
-main). **Détail : `docs/email.md`.**
+main). **Les 6 gabarits transactionnels servent `users.locale` du DESTINATAIRE** (`'en'` ou
+FR par défaut, 01/09/2026) — texte extrait dans `email_templates.py` pour tenir sous 500
+lignes, `email.py` réexposant les six fonctions pour que le monkeypatch des tests continue
+de fonctionner. **Détail : `docs/email.md`.**
 
 ## Visibilité des outils (per-user, org/équipe, socle)
 

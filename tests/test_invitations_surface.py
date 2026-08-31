@@ -90,6 +90,9 @@ def test_emit_invitation_sends_email(monkeypatch):
                         lambda *a, **k: (1, "tok", "CODE1234"))
     monkeypatch.setattr(org_store, "org_front", lambda org_id: (None, None))
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
+    # Adresse jamais vue : pas de ligne `users` ⟹ locale=None, comportement FR
+    # d'avant ce lot (oto-backend#700).
+    monkeypatch.setattr(db, "get_user_by_email", lambda e: None)
     sent = {}
     monkeypatch.setattr(email, "send_invite_email",
                         lambda to, name, url, inviter, **kw: sent.update(to=to, name=name) or True)
@@ -142,6 +145,7 @@ def test_emit_invitation_derives_front_from_org(monkeypatch):
     monkeypatch.setattr(org_store, "org_front",
                         lambda org_id: ("https://app.tulina.ai", "tulina"))
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
+    monkeypatch.setattr(db, "get_user_by_email", lambda e: None)
     sent = {}
     monkeypatch.setattr(email, "send_invite_email",
                         lambda to, name, url, inviter, **kw: sent.update(url=url, **kw) or True)
@@ -151,6 +155,49 @@ def test_emit_invitation_derives_front_from_org(monkeypatch):
     assert out["invite_url"] == "https://app.tulina.ai/invitation/CODE1234"
     assert sent["url"] == "https://app.tulina.ai/invitation/CODE1234"  # pas d'OTT
     assert sent["brand"] == "tulina"
+
+
+def test_emit_invitation_passes_recipient_locale(monkeypatch):
+    """oto-backend#700 : un invité qui a DÉJÀ un compte oto (ré-invitation, autre
+    org) a peut-être posé sa préférence de langue via `me.locale.set` — elle doit
+    suivre jusqu'au gabarit."""
+    from oto_mcp import db, email
+    from oto_mcp.capabilities._types import ResolvedCtx
+
+    monkeypatch.setattr(org_store, "create_invitation",
+                        lambda *a, **k: (1, "tok", "CODE1234"))
+    monkeypatch.setattr(org_store, "org_front", lambda org_id: (None, None))
+    monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
+    monkeypatch.setattr(db, "get_user_by_email",
+                        lambda e: {"sub": "u9", "email": e, "locale": "en"})
+    sent = {}
+    monkeypatch.setattr(email, "send_invite_email",
+                        lambda to, name, url, inviter, **kw: sent.update(**kw) or True)
+    oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=35, email="invitee@org.test",
+                       send_email=True, source="org_admin", role="org_member",
+                       target_name="movinmotion")
+    assert sent["locale"] == "en"
+
+
+def test_emit_invitation_locale_none_for_unknown_email(monkeypatch):
+    """Une adresse jamais vue n'a pas de ligne `users` : locale=None, et le
+    gabarit sert FR — la détection de langue pour un contact jamais loggé reste
+    hors scope (oto-backend#700)."""
+    from oto_mcp import db, email
+    from oto_mcp.capabilities._types import ResolvedCtx
+
+    monkeypatch.setattr(org_store, "create_invitation",
+                        lambda *a, **k: (1, "tok", "CODE1234"))
+    monkeypatch.setattr(org_store, "org_front", lambda org_id: (None, None))
+    monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
+    monkeypatch.setattr(db, "get_user_by_email", lambda e: None)
+    sent = {}
+    monkeypatch.setattr(email, "send_invite_email",
+                        lambda to, name, url, inviter, **kw: sent.update(**kw) or True)
+    oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=35, email="jamais-vue@org.test",
+                       send_email=True, source="org_admin", role="org_member",
+                       target_name="movinmotion")
+    assert sent["locale"] is None
 
 
 def test_invite_create_input_carries_no_front_field():

@@ -535,12 +535,14 @@ def pending_signal_notices() -> list[dict]:
     l'appelant, qui est aussi celui qui décide d'envoyer. ⚠️ On joint l'email ICI
     plutôt que de le résoudre plus tard : un compte supprimé depuis le signalement
     n'a plus d'adresse, et il vaut mieux le voir dans la file que découvrir un envoi
-    silencieusement perdu."""
+    silencieusement perdu. `u.locale` suit le même join (oto-backend#700) : c'est
+    une propriété du DESTINATAIRE, pas du signal — inutile de la relire par un
+    aller-retour séparé côté appelant."""
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             """
-            SELECT s.id, s.sub, u.email, u.name, s.signal, s.kind, s.target, s.body,
-                   s.created_at, s.status, s.resolution, s.resolved_at
+            SELECT s.id, s.sub, u.email, u.name, u.locale, s.signal, s.kind, s.target,
+                   s.body, s.created_at, s.status, s.resolution, s.resolved_at
             FROM usage_signals s LEFT JOIN users u ON u.sub = s.sub
             WHERE s.status = ANY(%s) AND s.notified_at IS NULL AND s.sub IS NOT NULL
             ORDER BY s.sub, s.created_at

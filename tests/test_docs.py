@@ -148,6 +148,27 @@ def test_cr_created_notifies_admins_not_proposer(seams, monkeypatch):
     assert sent == ["a1@x.fr"]   # admin1 seul ; ni le proposeur ni le membre
 
 
+def test_cr_created_passes_admin_locale(seams, monkeypatch):
+    """oto-backend#700 : la préférence `users.locale` du VALIDATEUR suit jusqu'au
+    gabarit — chacun peut vivre sous une langue différente."""
+    monkeypatch.setattr(D.ownership, "can_access",
+                        lambda sub, t, rid, want="read": want == "read")
+    monkeypatch.setattr(D.db, "get_project_by_id",
+                        lambda pid: {"id": pid, "name": "P", "context_org_id": 7,
+                                     "owner_type": "org", "owner_id": "7"})
+    monkeypatch.setattr(D.org_store, "list_org_members", lambda org: [
+        {"sub": "admin1", "org_role": "org_admin"},
+    ])
+    users = {"u1": {"email": "prop@x.fr", "name": "u1"},
+             "admin1": {"email": "a1@x.fr", "name": "admin1", "locale": "en"}}
+    monkeypatch.setattr(D.db, "get_user", lambda sub: users.get(sub, {}))
+    sent = {}
+    monkeypatch.setattr(D.email, "send_change_request_email",
+                        lambda to, **k: sent.update(to=to, **k) or True)
+    D._doc(CTX, D.DocInput(op="request_change", doc_id=3, body_md="new"))
+    assert sent["to"] == "a1@x.fr" and sent["locale"] == "en"
+
+
 def test_cr_resolved_notifies_proposer(seams, monkeypatch):
     monkeypatch.setattr(D.db, "get_doc_change_request",
                         lambda rid: {"id": rid, "doc_id": 3, "project_id": 7, "status": "pending",
@@ -159,6 +180,22 @@ def test_cr_resolved_notifies_proposer(seams, monkeypatch):
                         lambda to, **k: got.update(to=to, accepted=k.get("accepted")) or True)
     D._doc(CTX, D.DocInput(op="resolve_change", doc_id=3, request_id=5, accept=True))
     assert got == {"to": "bob@x.fr", "accepted": True}   # le proposeur, verdict accepté
+
+
+def test_cr_resolved_passes_proposer_locale(seams, monkeypatch):
+    """oto-backend#700 : la préférence de langue du PROPOSEUR (pas celle de qui
+    tranche) suit jusqu'au gabarit de résolution."""
+    monkeypatch.setattr(D.db, "get_doc_change_request",
+                        lambda rid: {"id": rid, "doc_id": 3, "project_id": 7, "status": "pending",
+                                     "proposed_title": "T", "proposed_body_md": "new",
+                                     "requested_by": "bob", "project_name": "P", "doc_title": "Page"})
+    monkeypatch.setattr(D.db, "get_user",
+                        lambda sub: {"email": "bob@x.fr", "locale": "en"} if sub == "bob" else {})
+    got = {}
+    monkeypatch.setattr(D.email, "send_change_request_resolved_email",
+                        lambda to, **k: got.update(to=to, **k) or True)
+    D._doc(CTX, D.DocInput(op="resolve_change", doc_id=3, request_id=5, accept=True))
+    assert got["to"] == "bob@x.fr" and got["locale"] == "en"
 
 
 def test_update_conflict_is_409(seams, monkeypatch):
