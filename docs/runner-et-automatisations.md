@@ -69,6 +69,52 @@ libération a échoué) — sa description ne change pas, c'est la réponse. Pre
 et `tests/test_run_finish_releases_613.py`. ⚠️ `runner_jobs.run_id` référence `runs`
 (FK) : un job ne se lie qu'à un run qu'un `run_start` a ouvert.
 
+### Ce qu'un écran de surveillance lit d'un travail (01/09/2026)
+
+Deux manques de la même famille — une donnée que la plateforme détenait déjà et qui ne
+sortait pas.
+
+**Le bail, sur `list` et `get`.** `lease_until` n'était rendu que par `op=claim`,
+c'est-à-dire au seul worker qui vient de prendre le job ; les deux verbes de
+surveillance ne le sélectionnaient pas. Un écran ne pouvait donc pas dire « ce bail a
+expiré », seulement « ce travail traîne depuis longtemps » — un **seuil dérivé** de
+l'ancienneté, qui range dans la même case un travail lent et un travail mort. La
+colonne porte la DATE ; c'est au lecteur de la comparer à l'heure qu'il est, **contre
+le statut** :
+
+| statut | `lease_until` |
+|---|---|
+| `pending` jamais pris | `null` |
+| `claimed` | la fin du bail en cours — passée = le worker est parti, le job est re-claimable (`attempts` compte chaque prise) |
+| `done` | le bail qui ÉTAIT tenu, laissé tel quel |
+| échec re-filé | `null` — la prise est rendue en même temps que le job |
+
+**Les postes de garde du harnais, au contrat.** `result` est ouvert (`extra=allow`) :
+le worker y déclare bien plus que les quatre champs du socle, et tout est **servi**.
+Mais servi n'est pas **déclaré** — un client typé (les types générés du dashboard,
+dérivés de l'OpenAPI) ne voit que ce que le schéma nomme, et rien ne garantit la forme
+de ce qu'il ne nomme pas. Trois champs sont désormais nommés sur `JobResult`, parce que
+leur forme porte un sens qu'un client peut se tromper en lisant :
+
+| champ | forme | ce que `null` veut dire |
+|---|---|---|
+| `valeurs_cliente_reparees` | liste de colonnes remises en place depuis `<colonne>.origine` | — (`[]` = rien à réparer) |
+| `contacts_fabriques_retires` | liste de contacts fabriqués RETIRÉS de la ligne | — (`[]` = aucun) |
+| `valeurs_cliente_detruites` | liste de colonnes détruites, **ou `null`** | ⚠️ **NON MESURÉ** : le harnais n'a pas pu identifier la ligne travaillée, la garde n'a pas tourné |
+
+⚠️ `valeurs_cliente_detruites: null` **n'est pas** `[]`. Le lire comme « aucune
+destruction » afficherait un travail propre là où personne n'a regardé — et c'est le cas
+FRÉQUENT, pas le cas limite : sur le chemin « conversations » le harnais retrouve sa
+ligne par alias, et ce recours échoue dès qu'elle est relâchée. Preuves :
+`tests/test_runner_jobs_travail_servi.py`.
+
+**Les autres champs de `result` restent indéclarés**, et c'est un manque connu, pas un
+choix : `writes`, `claims`, `model`, le détail de coût (`usage_input`/`usage_output`/
+`usage_cache_read`/`usage_cache_write`), `hors_schema`, `hors_perimetre`, `claims_mesures`, `claim_vide`,
+`faux_depart`, `estampille`, `renvois`, `abandon_enregistre`, `rappel_contact_mesure`,
+`rappels_contact`, `effectif_non_atteste`, `contact_rattrape`, `contact_arbitre`,
+`ligne_abandonnee`. Ils traversent par `extra=allow` et un client typé ne les voit pas.
+
 ## Automatisations — déclencher une routine Claude Code (v1.73.0)
 
 Connecteur `routine` (`routine_fire.py` + capacité `me.automation.fire`, MCP

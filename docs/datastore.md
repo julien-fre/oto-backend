@@ -192,6 +192,40 @@ correctif de la lecture est un lot à part, avec sa propre mesure.
 place. Un tableau dont le statut n'a aucun état terminal est une file qui ne libère
 rien : `set_schema` le signale à la pose.
 
+**Le bail servi dit POUR QUEL RUN : `_claimed_run` (01/09/2026).** Les lignes servies
+portaient deux tiers du bail — à QUI (`_claimed_by`) et JUSQU'À QUAND
+(`_claimed_until`) — jamais POUR QUEL RUN, alors que `datastore_rows.claimed_run` le
+porte depuis #317. Une vue de surveillance voyait donc qu'un agent tenait une ligne et
+jamais **laquelle** : elle pouvait relier un travail à son TABLEAU, pas à sa LIGNE. Le
+serveur savait pourtant déjà répondre — l'alias `@claimed` résout run → ligne par cette
+même colonne — mais seulement au run **lui-même**, qui doit porter son jeton ; jamais à
+un tiers qui regarde la file.
+
+`_claimed_run` est désormais rendu partout où `_claimed_by` l'est (liste, fiche par id,
+les deux curseurs, `queue`, et le claim lui-même). **Trois états, pas deux :**
+
+| forme | sens |
+|---|---|
+| `_claimed_run: "<run>"` | ce run tient la ligne — l'adresse du travail en cours |
+| `_claimed_run: null` | le bail a été pris **sans run** (une personne sur la file du dashboard, un agent qui n'a pas passé `_run_id`) — un fait, pas un trou |
+| clé **absente** (comme `_claimed_by`) | pas de bail du tout ; sur des millions de lignes jamais réservées, trois `null` par ligne seraient du bruit dans toutes les lectures |
+
+⚠️ **Ce que `_claimed_run` ne dit PAS.** Il répond « sur quelle ligne ce run est-il
+MAINTENANT », jamais « quelle ligne ce run a-t-il travaillée » : rendre les lignes d'un
+run (`run_finish`, ou le runner concluant son job, #633) efface la colonne. Le lien
+avec un travail **conclu** ne peut donc pas venir d'ici — il doit venir du harnais, qui
+connaît sa ligne (et qui, sur le chemin « conversations », ne la connaît pas toujours :
+il la retrouve par alias, et ce recours échoue dès que la ligne est relâchée).
+
+⚠️ `datastore_release` n'efface pas `claimed_run` (#664), donc la colonne peut rester
+garnie sur une ligne libre. **Rien n'en sort** : la projection ne parle du run que sous
+`claimed_by IS NOT NULL`. Et `_row_to_dict` lit la colonne **par clé**, pas par `.get` :
+un chemin de lecture qui l'oublierait LÈVE au lieu de servir un faux « ce bail n'a pas
+de run ». La garde mécanique est
+`tests/datastore/test_claimed_run_projection.py::test_toute_projection_de_ligne_porte_claimed_run`
+— elle relit par AST les requêtes de `db/` et refuse celle qui projette une ligne avec
+`claimed_by` sans `claimed_run`.
+
 **Le plafond de reprises : distinguer « ça tourne » de « ça tourne à vide » (#433).**
 Depuis que la ligne réservée est liée au run, la conclusion d'un traitement la libère —
 c'est le design. Effet de bord mesuré au rodage d'une campagne : un agent qui réserve,

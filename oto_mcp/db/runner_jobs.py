@@ -169,9 +169,15 @@ def list_jobs(org_id: int, status: Optional[str] = None,
     """La file vue d'en haut (surveillance dashboard) : les jobs de l'org, du
     plus récent au plus ancien, filtrables par statut. Le payload est rendu
     (références seulement, par contrat d'enqueue) mais jamais tronqué en
-    silence — c'est une LISTE : elle rend de quoi écarter, le détail par get."""
+    silence — c'est une LISTE : elle rend de quoi écarter, le détail par get.
+
+    ⚠️ `lease_until` en fait partie, et ce n'est pas un champ de plus : sans lui,
+    « ce bail a expiré » ne se lit pas — il se DEVINE à un seuil sur l'ancienneté,
+    et un seuil dérivé range dans la même case un travail lent et un travail mort.
+    La colonne porte la DATE ; c'est au lecteur de la comparer à l'heure qu'il est."""
     q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
-         "       claimed_by, last_error, result, due_at, created_at, finished_at "
+         "       claimed_by, lease_until, last_error, result, due_at, created_at, "
+         "       finished_at "
          "FROM runner_jobs WHERE org_id = %s")
     params: list = [org_id]
     if status:
@@ -185,11 +191,14 @@ def list_jobs(org_id: int, status: Optional[str] = None,
 
 
 def get_job(job_id: int, org_id: int) -> Optional[dict]:
-    """Lecture d'un job, org-scopée — même 404 qu'un job inexistant côté capacité."""
+    """Lecture d'un job, org-scopée — même 404 qu'un job inexistant côté capacité.
+
+    `lease_until` est rendu comme `list_jobs` le rend, pour la même raison : la
+    fiche d'un travail doit pouvoir dire si son bail court encore."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT id, kind, run_id, payload, status, attempts, max_attempts, result, "
-            "       claimed_by, last_error, due_at, created_at, finished_at "
+            "       claimed_by, lease_until, last_error, due_at, created_at, finished_at "
             "FROM runner_jobs WHERE id = %s AND org_id = %s",
             (job_id, org_id),
         ).fetchone()

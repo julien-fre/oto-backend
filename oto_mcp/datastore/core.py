@@ -378,7 +378,8 @@ class DatastorePg(SchemaOpsMixin):
     def _row_to_dict(row: dict, schema: Optional[dict] = None) -> dict:
         """Ligne `datastore_rows` → row API (`_id`/`_created_at`/`_updated_at` à
         plat + champs user). Le bail de claim (ADR 0046 D) n'apparaît que s'il est
-        posé (les lectures ordinaires ne le SELECTent pas → absent, pas None)."""
+        posé (une ligne libre n'a aucune des trois clés `_claimed_*` → absentes,
+        pas None)."""
         data = row.get("data") or {}
         out = {
             "_id": row["row_id"],
@@ -421,6 +422,17 @@ class DatastorePg(SchemaOpsMixin):
         if row.get("claimed_by") is not None:
             out["_claimed_by"] = row["claimed_by"]
             out["_claimed_until"] = row.get("claimed_until")
+            # LE RUN qui tient ce bail — ce qui lie un travail à la LIGNE qu'il
+            # travaille. Sans lui, une vue de surveillance voit qu'un agent tient
+            # une ligne et jamais LAQUELLE : le serveur savait déjà répondre
+            # (l'alias `@claimed` résout run → ligne par cette même colonne), mais
+            # seulement au run LUI-MÊME, jamais à un tiers qui regarde.
+            #
+            # `null` = le bail a été pris SANS run (une personne sur la file du
+            # dashboard, un agent qui n'a pas passé `_run_id`) — un fait, pas un
+            # trou. Lu par CLÉ et non par `.get` : un chemin de lecture qui
+            # oublierait la colonne doit LEVER, pas servir un faux « sans run ».
+            out["_claimed_run"] = row["claimed_run"]
         # Ce que la file sait de la ligne (#433). Rendus SEULEMENT s'ils portent
         # quelque chose : un `_claims: 0` sur chaque ligne de chaque tableau serait
         # du bruit dans toutes les lectures, pour une file que la plupart n'ouvrent
