@@ -1,4 +1,21 @@
-"""Ce que le journal d'appels n'écrit jamais en clair — et pourquoi par PROPRIÉTÉ.
+"""Les deux empreintes courtes d'un secret — celle du journal, celle du coffre.
+
+Un secret n'apparaît hors du serveur que sous une forme courte et non inversible.
+Ce module en porte les DEUX, et la clé unique qui les signe :
+
+- `mask()` — ce que le **journal** écrit à la place d'un jeton (`tool`, `args`).
+  Volontairement **corrélable** : deux lignes portant le même masque disent « le même
+  jeton, rejoué », sans jamais dire lequel.
+- `fingerprint()` — ce que la **lecture d'un credential** rend à la place de la valeur
+  (oto-backend#671, 2026-08-31). Volontairement **NON corrélable** : elle est liée à
+  la ligne du coffre, donc la même clé posée à deux endroits n'y donne pas la même
+  empreinte. C'est ce qui empêche un lecteur d'empreintes de confirmer une clé devinée
+  par ailleurs en la posant sur une ligne qu'il contrôle.
+
+Une seule clé pour les deux : un second secret à gérer n'apporterait rien, et les deux
+propriétés se lisent mieux côte à côte que dans deux modules.
+
+## Ce que le journal d'appels n'écrit jamais en clair — et pourquoi par PROPRIÉTÉ
 
 Le journal (`tool_calls`, ADR 0017) porte deux colonnes alimentées par des données
 d'appelant : `tool` (pour un geste REST : `MÉTHODE /route`) et `args`. Jusqu'au
@@ -81,6 +98,34 @@ def mask(value) -> str:
     digest = hmac.new(_key(), str(value).encode("utf-8", "replace"),
                       hashlib.sha256).hexdigest()
     return "#" + digest[:12]
+
+
+def fingerprint(*parts: object) -> str:
+    """Empreinte de RECONNAISSANCE d'un secret posé : quatre caractères hexadécimaux,
+    non inversibles, et **liés à l'endroit** où le secret est rangé.
+
+    Elle répond à « est-ce toujours la même clé qu'hier ? » et « celle-ci ou l'autre ? »
+    sans rendre un seul caractère du secret. Le front l'affiche `•••• 3f7a`.
+
+    ⚠️ **Ce ne sont pas les derniers caractères de la clé.** Un suffixe DE LA CLÉ est un
+    morceau de secret : il identifie un compte chez le fournisseur, et il confirme une
+    clé devinée par ailleurs. Ici, quatre caractères d'un HMAC dont la clé ne sort pas
+    du serveur — indevinable hors ligne.
+
+    ⚠️ **Passer la LIGNE du coffre en premier, la valeur en dernier.** Sans les
+    coordonnées de la ligne, la même clé donnerait la même empreinte partout : qui lit
+    l'empreinte d'un palier pourrait poser un candidat sur une ligne à lui et comparer —
+    un oracle de confirmation à 1/65536. Liée à sa ligne, la seule façon de comparer est
+    d'écraser la clé qu'on cherchait à confirmer.
+
+    Résiduel assumé et borné : sur une MÊME ligne, quatre caractères laissent une chance
+    sur 65536 de collision — un lecteur peut donc croire inchangée une clé qui a été
+    rotée. C'est un défaut d'affichage, pas de confidentialité ; la source de vérité de
+    « quand a-t-elle changé » reste la date de pose servie à côté.
+    """
+    charge = "\x1f".join(str(p) for p in parts)
+    return hmac.new(_key(), charge.encode("utf-8", "replace"),
+                    hashlib.sha256).hexdigest()[-4:]
 
 
 # --------------------------------------------------------------------------- #

@@ -31,7 +31,7 @@ CONNECTOR = _c(
                         required=False,
                         help="1000.xxxxx.yyyyy — laisse vide si tu te connectes via Zoho"),
         CredentialField("data_center", "Data center (com, eu, in, au, jp, ca)",
-                        secret=False, reveal=True, help="eu"),
+                        secret=False, help="eu"),
     ),
 )
 

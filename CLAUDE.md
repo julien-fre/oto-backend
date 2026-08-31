@@ -194,9 +194,15 @@ call-site** ; `access.resolve_credential` rend aussi la **config non-secrète ap
 gagnante**, donc **ne JAMAIS recâbler un résolveur d'endpoint par-connecteur** (ADR 0024).
 ⚠️ Le dashboard en porte un **MIROIR d'affichage** (`lib/keyStack.ts`) qu'aucun test ne relie :
 en changer l'ordre ne casse rien, **ça fait mentir l'UI**.
+⚠️ **La valeur d'un champ SECRET ne se relit JAMAIS — depuis le 31/08** (oto-backend#671).
+Elle sortait en clair pour tout champ `reveal=True`, défaut de 55 connecteurs ; le cran est
+retiré du registre (`CredentialField` ne l'accepte plus), `secret=False` décide seul. La clé
+d'un champ secret est **absente** du corps (jamais `null`/`""`), remplacée par `configured` +
+`read_set_at` + `read_set_by` + `read_fingerprints` (4 car. de HMAC **liés à la ligne**, pas
+des caractères de la clé) ; `?reveal=1` rend `403 secret_never_revealed`.
 ⚠️ **Un credential se LIT à son palier et s'ÉCRIT par MERGE depuis le 27/08**
 (oto-backend#448) : `me.credential.get` prend un `scope` (`member` défaut / `group` /
-`org`, admin du palier exigé) et rend les champs `reveal` — jamais un secret ; et un
+`org`, admin du palier exigé) et rend les champs NON secrets ; et un
 `fields` partiel est **complété côté serveur** (clé absente = conservée, clé présente
 et vide = effacée, donc le formulaire qui poste tout reste un remplacement). Les deux
 n'ont de sens qu'ensemble : lecture impossible + remplacement total = piège à perte de

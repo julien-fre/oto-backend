@@ -31,12 +31,23 @@ class CredentialField:
     """Un champ de saisie d'un credential (modèle générique multi-champs, ADR 0011).
 
     SOURCE UNIQUE du formulaire de saisie (dashboard), de l'endpoint REST et du
-    packing au coffre. `secret` = masqué dans l'UI ; `reveal` = renvoyé tel quel
-    en GET (l'`api_key` se relit pour copier, un mot de passe/secret jamais)."""
+    packing au coffre.
+
+    `secret` porte à lui seul la règle de sortie, et il n'y a **plus d'exception** :
+    `secret=False` (une URL de base, une région, un email) est rendu tel quel en
+    lecture ; `secret=True` n'est **JAMAIS** rendu — ni en clair, ni tronqué, ni vidé :
+    sa clé est absente du corps, et une empreinte non inversible le nomme à côté.
+
+    ⚠️ **Un cran `reveal` a existé jusqu'au 2026-08-31** (oto-backend#671) et il était
+    le DÉFAUT : tout connecteur `secret_kind="api_key"` sans `credential_fields`
+    explicites héritait d'un `key` révélable, soit 55 connecteurs dont 49 ne l'avaient
+    jamais décidé. Il est **retiré**, pas neutralisé : le passer à un `CredentialField`
+    lève désormais un `TypeError` à l'import, plutôt que d'ouvrir en silence une sortie
+    de secret. Une déclaration qui aurait besoin de le rendre ne l'a pas — c'est ce que
+    la décision a tranché."""
     name: str
     label: str
     secret: bool = True
-    reveal: bool = False
     help: str = ""
     # False = champ facultatif (connecteur « ET/OU » type slack : au moins un
     # champ non vide exigé à la pose, mais aucun champ individuellement requis).
@@ -430,7 +441,7 @@ class Connector:
         if self.credential_fields:
             return self.credential_fields
         if self.secret_kind == "api_key":
-            return (CredentialField("key", "API key", secret=True, reveal=True),)
+            return (CredentialField("key", "API key", secret=True),)
         if self.secret_kind == "basic_auth":
             return (CredentialField("email", "Email", secret=False),
                     CredentialField("password", "Mot de passe", secret=True,

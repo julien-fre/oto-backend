@@ -484,12 +484,14 @@ rien ne rendait navigable et que rien ne tenait.
   `oto_admin_set_platform_key` (plus de bootstrap SOPS — le provider sans clé
   DB n'a simplement pas de mode plateforme).
 - **Credential = champs déclarés (modèle générique multi-champs, ADR 0011)** : un
-  provider porte `credential_fields` (`CredentialField` name/label/secret/reveal) ou
+  provider porte `credential_fields` (`CredentialField` name/label/secret) ou
   les dérive de `secret_kind` (`api_key`=1 champ, `basic_auth`=2). Le coffre encode
   les champs dans l'unique `secret_enc` via `credentials_store.pack_secret`/
   `unpack_secret` (3 formats : valeur brute 1 champ / base64 `email:password` /
   json ≥2). L'endpoint `/api/settings/api-keys/{provider}`, le formulaire dashboard
   et `status_for` bouclent sur `secret_fields` — **zéro branche par connecteur** ;
+  `secret=True` ⟹ la valeur ne sort par AUCUNE surface (#671, 2026-08-31 : le cran
+  `reveal`, qui l'ouvrait par défaut sur 55 connecteurs, est retiré du dataclass) ;
   un nouveau connecteur multi-secrets = une déclaration. Résolution : `resolve_api_key`
   (1 clé keyed + platform/quota) **ou** `resolve_credential_fields` (byo multi-champs
   sans quota, ex. `silae` : client_id/client_secret/subscription_key). `cookie`/`oauth`

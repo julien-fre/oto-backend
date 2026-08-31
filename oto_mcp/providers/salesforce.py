@@ -36,7 +36,7 @@ CONNECTOR = _c(
         # bloque l'authentification via login.salesforce.com — de plus en plus le
         # défaut — fait échouer le consentement. Vécu le 31/07.
         CredentialField("login_url", "Login URL (ton My Domain)",
-                        secret=False, reveal=True,
+                        secret=False,
                         help="https://<ton-domaine>.my.salesforce.com — SANS le "
                              "« -setup » du domaine de la console. Sandbox : "
                              "https://<domaine>.sandbox.my.salesforce.com"),

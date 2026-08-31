@@ -146,8 +146,7 @@ def test_sans_org_de_contexte(monkeypatch, vault):
 # --- Lecture et retrait -----------------------------------------------------
 
 def test_lecture_sans_credential(monkeypatch, vault):
-    stub_authz(monkeypatch)
-    monkeypatch.setattr(mc.credentials_store, "get_credential", lambda *a, **k: None)
+    stub_authz(monkeypatch)   # la fixture `vault` rend déjà un coffre vide
     code, out = call("me.credential.get", path_params={"provider": "serper"})
     assert code == 404 and out["error"] == "not_configured"
 

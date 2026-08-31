@@ -32,7 +32,7 @@ CONNECTOR = _c(
                         required=False,
                         help="ex. 800123456 — inutile pour lire les articles"),
         CredentialField("data_center", "Data center (com, eu, in, au, jp, ca)",
-                        secret=False, reveal=True, help="eu"),
+                        secret=False, help="eu"),
     ),
 )
 
