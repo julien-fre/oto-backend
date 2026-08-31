@@ -180,13 +180,22 @@ def _shape_submission(sub: Dict[str, Any], by_id: Dict[str, Dict[str, Any]],
 def _shape_submissions_page(payload: Any) -> Any:
     """Ajoute la vue jointe SANS retirer la charge d'origine.
 
-    On ne remplace jamais ce que l'API a rendu : `questions` et `submissions`
+    On ne remplace jamais ce que l'API a rendu : `questions` et les réponses
     restent tels quels sous `raw_*`, pour qu'un cas non prévu ici reste
     traitable par l'appelant.
+
+    ⚠️ DEUX enveloppes, pas une. `GET /forms/{f}/submissions` rend
+    `{questions, submissions: [...]}` ; `GET /forms/{f}/submissions/{s}` rend
+    `{questions, submission: {...}}` — au SINGULIER. Ne lire que le pluriel
+    rendait la lecture d'UNE réponse silencieusement vide : la charge arrivait
+    bien, et le tool annonçait zéro réponse.
     """
     if not isinstance(payload, dict):
         return payload
     questions = payload.get("questions")
+    single = payload.get("submission")
+    if single is not None and payload.get("submissions") is None:
+        payload = {**payload, "submissions": [single] if isinstance(single, dict) else []}
     by_id = _index_questions(questions)
     titles = [q.get("title") for q in by_id.values() if q.get("title")]
     collisions = sorted({t for t in titles if titles.count(t) > 1})
@@ -211,6 +220,8 @@ def _shape_submissions_page(payload: Any) -> Any:
     if payload.get("submissions") and not subs:
         out["submissions"] = payload.get("submissions")
     out["raw_questions"] = questions
+    if single is not None:
+        out["raw_submission"] = single
     return out
 
 

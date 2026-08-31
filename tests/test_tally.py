@@ -341,3 +341,16 @@ def test_webhook_create_does_not_echo_the_signing_secret():
     assert out["signed"] is True
     assert "s3cr3t" not in str(out)
     assert out["header_names"] == ["X-Key"]   # les noms, jamais les valeurs
+
+
+def test_single_submission_envelope_is_singular_not_plural():
+    """`GET /forms/{f}/submissions/{s}` rend `{questions, submission}` au
+    SINGULIER, là où la liste rend `submissions`. Ne lire que le pluriel
+    rendait la lecture d'UNE réponse silencieusement vide."""
+    single = {"questions": _PAGE["questions"], "submission": _PAGE["submissions"][0]}
+    with _mock_client() as (m, inst):
+        inst.get_submission.return_value = single
+        out = _fn(m, "tally_submission")(
+            op="get", form_id="F", submission_id="S1")
+    assert len(out["submissions"]) == 1
+    assert out["submissions"][0]["answers_by_title"]["SIREN"] == "552100554"
