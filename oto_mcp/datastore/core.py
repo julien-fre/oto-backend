@@ -64,7 +64,6 @@ from .columns import (  # noqa: E402,F401
     _META_COLS,
     _existing_layers,
     _merge_column,
-    _refuse_dotted_names,
     _refuse_flat_writes,
     _refuse_mixed_layers,
     _resolve_filters,
@@ -75,6 +74,13 @@ from .columns import (  # noqa: E402,F401
     arbitrer_les_vides,
     effacements_report,
     ignores_report,
+)
+# Les noms POINTÉS (#684/#687) : `ranger_les_couches` referme l'aller-retour —
+# ce qu'on sert doit pouvoir être réécrit tel quel — et `_refuse_dotted_names`,
+# rétréci, ne tranche plus que ce qui reste sans adresse.
+from .points import (  # noqa: E402,F401
+    _refuse_dotted_names,
+    ranger_les_couches,
 )
 
 

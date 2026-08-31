@@ -183,24 +183,6 @@ def _refuse_mixed_layers(schema: Optional[dict], user_data: Optional[dict]) -> N
         raise RowValidationError(errors)
 
 
-def _refuse_dotted_names(user_data: Optional[dict]) -> None:
-    """#329 volet 2 : un nom de COLONNE ne porte ni point ni adresse.
-
-    `data_write` avec `"champ.comment"` en clé fabriquait une colonne littérale
-    fantôme : acceptée, persistée, et invisible à l'adresse qui la nomme (le
-    filtre et le tri lisent la COUCHE `data->'champ'->>'comment'`, jamais la
-    colonne littérale) — avec collision silencieuse en lecture. Le refus nomme
-    la forme attendue au lieu de dire seulement non."""
-    for cle in user_data or {}:
-        if "." in cle:
-            base = cle.split("[")[0].split(".")[0]
-            raise RowValidationError([
-                f"`{cle}` n'est pas un nom de colonne — les points désignent des "
-                f"couches ou des attributs, qui s'écrivent en forme imbriquée : "
-                f'{{"{base}": {{…}}}}. Une colonne littérale nommée `{cle}` serait '
-                "invisible au filtre et au tri du même nom. Rien n'a été écrit."])
-
-
 # ── ce qu'une écriture VIDE (#407/#408/#409), et ce qui n'est PAS un vide (#608) ─
 #
 # Le pendant de la règle du merge. « Une écriture ne touche que ce qu'elle nomme »
