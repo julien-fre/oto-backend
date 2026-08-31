@@ -557,6 +557,22 @@ def test_auto_review_is_refused_before_any_call(op, extra, key_name):
         inst.update_campaign.assert_not_called()
 
 
+def test_create_refuses_settings_rather_than_dropping_them():
+    """`POST /campaigns` ne prend que name+timezone : un `settings` avalé rendrait
+    une campagne d'apparence réglée dont rien n'aurait pris."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+
+        with pytest.raises(Exception, match="ne s'applique pas à la création"):
+            tool.fn(op="create", name="Q4", settings={"stopOnEmailReplied": True})
+        inst.create_campaign.assert_not_called()
+
+        tool.fn(op="create", name="Q4", timezone="Europe/Paris")
+        inst.create_campaign.assert_called_once_with("Q4", timezone="Europe/Paris")
+
+
 def test_update_without_autoreview_goes_through():
     key, cls = _with_fake_client()
     with key, cls as client_cls:

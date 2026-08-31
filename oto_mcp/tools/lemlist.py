@@ -674,7 +674,9 @@ def register(mcp: FastMCP) -> None:
         - `create`: `name` (required), optional `timezone` (IANA, drives the
           auto-created schedule; server default `Europe/Paris`). Returns the
           campaign with `sequenceId` and `scheduleIds` — the two ids
-          `lemlist_sequence` and `lemlist_schedule` need.
+          `lemlist_sequence` and `lemlist_schedule` need. `settings` is REFUSED
+          here (the endpoint takes name + timezone only) — chain `update` on
+          the returned id rather than believe a setting landed.
         - `update`: `campaign_id` + `name`, `sender_user_ids` (`usr_…`, the
           senders) and/or `settings` (raw PATCH body: `stopOnEmailReplied`,
           `stopOnMeetingBooked`, `stopOnLinkClicked`, `disableTrackOpen`,
@@ -705,6 +707,16 @@ def register(mcp: FastMCP) -> None:
             if not name:
                 raise _bad("`name` requis pour créer une campagne")
             _refuse_auto_review(settings)
+            if settings:
+                # `POST /campaigns` ne prend que name + timezone : accepter un
+                # `settings` ici rendrait une campagne d'apparence réglée dont
+                # aucun réglage n'aurait pris. Refuser plutôt que jeter en
+                # silence — et plutôt que create-puis-update, qui laisse une
+                # campagne à moitié réglée quand le second appel échoue.
+                raise _bad(
+                    "`settings` ne s'applique pas à la création — la campagne "
+                    "naît avec `name` (+ `timezone`). Enchaîne "
+                    'op="update" sur l\'id rendu.')
             result = client.create_campaign(name, timezone=timezone)
 
         elif op == "update":
