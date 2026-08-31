@@ -95,6 +95,12 @@ des déploiements.
 """
 from __future__ import annotations
 
+import json
+import secrets
+from typing import Optional
+
+from ._conn import _connect
+
 # --- Identité publique (0059-D3) ---------------------------------------------
 
 # ⚠️ La FAMILLE est ce qui empêche deux identifiants de se recouvrir. `docs.id` et
@@ -888,3 +894,135 @@ def convert_rows(conn) -> None:
     conn.execute(RECONCILE_ROW_NODES_SQL)
     conn.execute(PURGE_ROW_NODES_SQL)
     conn.execute(PLACE_ROW_NODES_SQL)
+
+
+# --- Écriture NATIVE d'une page (surface `oto_node`, chantier modèle de contenu) ---
+#
+# Le nouvel univers ne PROJETTE pas ici : ces fonctions écrivent des nœuds qui
+# n'ont aucune source dans l'ancien monde — comme les couches de contexte le font
+# depuis M1. C'est ce qui distingue un nœud NATIF d'un nœud converti : `props` ne
+# porte pas de `legacy`, donc rien ne le rafraîchit et rien ne le purge avec les
+# copies.
+#
+# ⚠️ **Un nœud natif ne porte JAMAIS `delivery`.** La recherche discrimine une
+# couche de contexte par cette propriété, pas par le genre : la poser sur une page
+# ordinaire la ferait remonter dans le périmètre des couches, servi au handshake.
+
+def _new_node_id() -> str:
+    """L'identifiant public d'un nœud natif est un TIRAGE (0059-D3).
+
+    Jamais dérivé du contenu ni du rang — même raison qu'un bloc (#362) : une
+    identité calculée se recalcule, donc se casse au premier renommage ou
+    réordonnancement, et toute référence externe part avec. Les nœuds CONVERTIS,
+    eux, dérivent leur id de leur clé d'origine : c'est ce qui rend leur conversion
+    idempotente. Deux régimes, deux besoins — celui-ci n'a pas de clé naturelle.
+    """
+    return "nod_" + secrets.token_hex(12)
+
+
+def create_page(*, owner_type: str, owner_id: str, title: str,
+                body_md: str = "", description: str = "",
+                parent_id: Optional[int] = None) -> dict:
+    """Crée une page NATIVE et rend sa fiche. Le corps est parsé en blocs.
+
+    Positionnée EN FIN de fratrie : une création n'a pas d'opinion sur son rang, et
+    `place_after` reste le geste de qui en a une. Les deux passent par `midpoint`,
+    donc aucune renumérotation.
+    """
+    if not (title or "").strip():
+        raise ValueError("title requis")
+    from .blocks import write_node_blocks
+    public_id = _new_node_id()
+    with _connect() as conn:
+        with conn.transaction():
+            row = conn.execute(
+                "INSERT INTO nodes (public_id, kind, owner_type, owner_id, parent_id, props) "
+                "VALUES (%s, %s, %s, %s, %s, jsonb_build_object("
+                "    'title', %s::text, 'description', %s::text, "
+                "    'body_md', %s::text, 'embed_dirty', TRUE)) "
+                "RETURNING id, public_id, kind, owner_type, owner_id, parent_id, props",
+                (public_id, _KIND, owner_type, str(owner_id), parent_id,
+                 title.strip(), description or "", body_md or ""),
+            ).fetchone()
+            place_at_end(conn, row["id"], parent_id=parent_id,
+                         owner_type=owner_type, owner_id=str(owner_id))
+            write_node_blocks(conn, row["id"], body_md or "")
+    return dict(row)
+
+
+def update_page(node_id: int, *, title: Optional[str] = None,
+                description: Optional[str] = None,
+                body_md: Optional[str] = None) -> bool:
+    """Met à jour une page native. `None` = champ conservé.
+
+    ⚠️ Le corps ne se réécrit QUE s'il est fourni : les blocs portent des identifiants
+    stables qu'une prose peut citer, et les réécrire à chaque édition de titre les
+    ferait tous changer. `write_node_blocks` rapproche les blocs existants et
+    CONSERVE leur identité quand le texte n'a pas bougé.
+    """
+    from .blocks import write_node_blocks
+    champs = {"title": title, "description": description, "body_md": body_md}
+    poses = {k: v for k, v in champs.items() if v is not None}
+    if not poses:
+        return False
+    with _connect() as conn:
+        with conn.transaction():
+            row = conn.execute(
+                "UPDATE nodes SET props = props || %s::jsonb || "
+                "                 jsonb_build_object('embed_dirty', TRUE), "
+                "       updated_at = NOW() "
+                " WHERE id = %s AND props->>'legacy' IS NULL RETURNING id",
+                (json.dumps(poses), node_id),
+            ).fetchone()
+            if row is None:
+                return False
+            if body_md is not None:
+                write_node_blocks(conn, node_id, body_md)
+    return True
+
+
+def move_page(node_id: int, *, parent_id: Optional[int],
+              after_id: Optional[int] = None) -> bool:
+    """Déplace une page dans l'arbre — nouveau parent, et rang optionnel.
+
+    Change le PARENT et la POSITION, jamais l'identité : c'est l'opération
+    élémentaire du modèle, et c'est elle qui garantit mécaniquement que ce qui pend
+    au nœud (ses blocs, ses enfants, ce qui le cite) survit au déplacement.
+    """
+    with _connect() as conn:
+        with conn.transaction():
+            row = conn.execute(
+                "SELECT owner_type, owner_id FROM nodes "
+                " WHERE id = %s AND props->>'legacy' IS NULL", (node_id,)).fetchone()
+            if row is None:
+                return False
+            conn.execute("UPDATE nodes SET parent_id = %s, updated_at = NOW() "
+                         " WHERE id = %s", (parent_id, node_id))
+            place_after(conn, node_id, after_id=after_id, parent_id=parent_id,
+                        owner_type=row["owner_type"], owner_id=row["owner_id"])
+    return True
+
+
+def delete_page(node_id: int) -> bool:
+    """Supprime une page native ET sa descendance.
+
+    L'arbre n'a **pas** de clé étrangère (arbitrage M-e, ouvert) : la descendance se
+    ramasse ici, par le code. Sans ça, supprimer un parent laisserait des enfants
+    rattachés à un identifiant disparu — des orphelins qu'aucun lecteur ne trouve et
+    qu'aucune purge ne voit.
+    """
+    with _connect() as conn:
+        with conn.transaction():
+            row = conn.execute(
+                "SELECT id FROM nodes WHERE id = %s AND props->>'legacy' IS NULL",
+                (node_id,)).fetchone()
+            if row is None:
+                return False
+            conn.execute(
+                "WITH RECURSIVE descendance AS ("
+                "    SELECT id FROM nodes WHERE id = %s "
+                "  UNION ALL "
+                "    SELECT n.id FROM nodes n JOIN descendance d ON n.parent_id = d.id) "
+                "DELETE FROM nodes WHERE id IN (SELECT id FROM descendance)",
+                (node_id,))
+    return True
