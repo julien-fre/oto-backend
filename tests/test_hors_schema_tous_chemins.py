@@ -199,16 +199,27 @@ def test_colonne_hors_schema_ecrite_en_OBJET_A_COUCHES(table):
     assert HORS in _releve(st), "…et le relevé doit la nommer"
 
 
-def test_une_cle_PLATE_POINTEE_est_REFUSEE_declaree_ou_non(table):
-    """`entreprise_instagram.comment` en clé littérale : refusé des deux côtés, que
-    la colonne de base soit déclarée ou non. Une colonne dont le nom porte un point
-    serait invisible au filtre et au tri du même nom."""
+def test_une_cle_PLATE_POINTEE_ne_fabrique_JAMAIS_de_colonne(table):
+    """La clé littérale pointée, des deux côtés du schéma — et **le lot du 01/09
+    (#684/#687) a changé le sort de chacun des deux, sans changer la garantie.**
+
+    `raison_sociale` est DÉCLARÉE : `raison_sociale.comment` est donc l'adresse de son
+    annotation, et elle est désormais rangée — c'est ce qui permet à une fiche relue
+    d'être repoussée telle quelle. `entreprise_instagram` n'est déclarée nulle part et
+    n'est pas sur la ligne : son adresse ne désigne rien, elle reste refusée.
+
+    Ce qui ne bouge pas, et c'est le seul invariant qui compte ici : **aucune colonne
+    dont le nom porte un point ne naît en base**, ni par l'un ni par l'autre chemin —
+    elle serait invisible au filtre et au tri du même nom."""
     from oto_mcp.datastore.core import RowValidationError
     st, ns, ns_id, rid = table
-    for cle in (f"{HORS}.comment", "raison_sociale.comment"):
-        with pytest.raises(RowValidationError) as e:
-            st.update_row(ns, rid, {cle: "site — pied de page"})
-        assert "n'est pas un nom de colonne" in str(e.value)
+
+    with pytest.raises(RowValidationError) as e:
+        st.update_row(ns, rid, {f"{HORS}.comment": "site — pied de page"})
+    assert "n'est aucune colonne" in str(e.value)
+
+    st.update_row(ns, rid, {"raison_sociale.comment": "site — pied de page"})
+
     assert not any("." in k for k in _colonnes_en_base(ns_id, rid))
 
 
