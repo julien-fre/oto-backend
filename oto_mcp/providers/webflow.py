@@ -24,7 +24,7 @@ CONNECTOR = _c(
     help="CMS — collections & items (site API token)",
     publisher="Webflow", href="https://webflow.com",
     credential_fields=(
-        CredentialField("token", "Site API token", secret=True, reveal=True,
+        CredentialField("token", "Site API token", secret=True,
                         help="Site Settings → Apps & Integrations → API access — "
                              "génère un token avec les scopes cms:read, "
                              "cms:write et sites:read (ce dernier permet à oto "

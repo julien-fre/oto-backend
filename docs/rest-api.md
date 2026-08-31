@@ -123,6 +123,17 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - `GET|POST|DELETE /api/settings/api-keys/{provider}` — **ton credential** pour un
   connecteur, dans l'org de contexte (capacités `me.credential.{get,set,clear}` depuis
   le 2026-08-27 ; **pas de face MCP** — un secret brut ne passe pas en argument d'outil).
+  ⚠️ **RUPTURE DE CONTRAT le 2026-08-31 (#671) : le `GET` ne rend plus la valeur d'un
+  champ secret.** Il la rendait en clair pour tout champ déclaré `reveal=True` — le
+  défaut de 55 connecteurs. Sa clé est désormais **ABSENTE du corps** (pas `null`, pas
+  `""` : un champ vidé se lirait « rien de posé » et un appelant continuerait sur du
+  vide). À la place, de quoi reconnaître la clé sans la lire : `configured`,
+  `read_set_at`, `read_set_by`, et `read_fingerprints` — `{champ: 4 caractères}`, HMAC
+  lié à la ligne du coffre, jamais des caractères du secret. Les champs **non secrets**
+  (`base_url`, `auth_mode`, `region`, email) continuent de sortir tels quels, donc la
+  modification partielle de #448 est intacte. Demander la valeur (`?reveal=1`) rend
+  `403 secret_never_revealed`. **Pour changer une clé, on la repose** — le POST
+  conserve les champs qu'il ne reçoit pas.
   Le **corps du POST est plat et dynamique** : ses clés sont les `credential_fields` du
   connecteur (publiés par `GET /api/connectors`), plus `account` — le nom du compte visé
   quand le connecteur en porte plusieurs (le mot d'usage est dans `auth.account_noun` :

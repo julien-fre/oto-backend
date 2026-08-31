@@ -648,9 +648,15 @@ def get_credential(entity_type: str, entity_id: str, connector: str, account: st
 
 def get_credential_with_meta(entity_type: str, entity_id: str, connector: str,
                              account: str = "") -> Optional[dict]:
-    """`{secret (déchiffré), meta, set_at}` ou None. Pour les connecteurs dont des
-    satellites vivent dans `meta` : user_agent (linkedin/crunchbase),
+    """`{secret (déchiffré), meta, set_at, set_by}` ou None. Pour les connecteurs dont
+    des satellites vivent dans `meta` : user_agent (linkedin/crunchbase),
     scopes/is_default (google). Même déchiffrement JIT que get_credential.
+
+    `set_by` (2026-08-31, #671) : QUI a posé la ligne. Depuis que la valeur d'un champ
+    secret ne se relit plus, « qui l'a posée et quand » est ce qui reste pour la
+    reconnaître — servi par `me.credential.get`, dans le MÊME aller-retour SQL que le
+    reste ; une seconde lecture pour deux colonnes serait un aller-retour de plus par
+    ouverture d'écran.
 
     Un connecteur **remote** (ADR 0003/0011) est défini par la DONNÉE (`meta.base_url`,
     endpoint du bridge) → pas d'entrée registre attendue ; on lit donc la ligne
@@ -658,7 +664,7 @@ def get_credential_with_meta(entity_type: str, entity_id: str, connector: str,
     NON-remote (et sur un miss)."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT secret_enc, meta, set_at FROM connector_credentials "
+            "SELECT secret_enc, meta, set_at, set_by FROM connector_credentials "
             "WHERE entity_type = %s AND entity_id = %s AND connector = %s AND account = %s",
             (entity_type, entity_id, connector, account),
         ).fetchone()
@@ -668,7 +674,7 @@ def get_credential_with_meta(entity_type: str, entity_id: str, connector: str,
     if not row:
         return None
     return {"secret": _reveal(row, entity_type, entity_id, connector, account),
-            "meta": meta, "set_at": row["set_at"]}
+            "meta": meta, "set_at": row["set_at"], "set_by": row["set_by"]}
 
 
 def instance_suspended(entity_type: str, entity_id: str, connector: str, account: str = "") -> bool:
