@@ -21,6 +21,24 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+# La recopie des tables historiques vers `nodes` est ARRÊTÉE depuis le 2026-09-01 :
+# les deux univers vivent côte à côte, plus rien ne traduit l'un vers l'autre. Un
+# test qui ouvre par la nouvelle surface un contenu créé dans l'ancienne ne décrit
+# donc plus le système — il décrit le pont qu'on vient de retirer.
+#
+# **STRICT à dessein.** Le jour où l'un d'eux repasse au vert, c'est qu'une recopie
+# est revenue : ce fichier doit le CRIER, pas l'absorber en silence.
+#
+# ⚠️ Marqué, pas supprimé, et la nuance compte : l'identifiant dérivé et les
+# poignées `doc_id`/`project_id` sont SERVIS au front partenaire. Les retirer est un
+# changement de contrat qui appartient à un arbitrage en cours, pas à un déblaiement
+# de fin de chantier. Ces tests partent — ou sont réécrits sur du contenu natif —
+# quand cet arbitrage est rendu.
+_SANS_PROJECTION = pytest.mark.xfail(
+    strict=True,
+    reason="la recopie tables historiques → nodes est arrêtée (2026-09-01)",
+)
+
 
 class _Claims:
     def __init__(self, sub: str):
@@ -289,6 +307,7 @@ def noeuds(live, org):
             "nod_doc": db_shell._public_id_derive("doc", str(did))}
 
 
+@_SANS_PROJECTION
 def test_une_page_ouverte_rend_ses_poignees_et_l_ordre_de_ses_listes(client, org, noeuds):
     r = client.get(f"/api/me/nodes/{noeuds['nod_doc']}", headers=_h(org["admin"]))
     assert r.status_code == 200, r.text
@@ -300,6 +319,7 @@ def test_une_page_ouverte_rend_ses_poignees_et_l_ordre_de_ses_listes(client, org
     assert all("ordered" not in b for b in out["body"] if b.get("role") != "list")
 
 
+@_SANS_PROJECTION
 def test_un_projet_ouvert_rend_son_project_id_sans_doc_id(client, org, noeuds):
     r = client.get(f"/api/me/nodes/{noeuds['nod_prj']}", headers=_h(org["admin"]))
     assert r.status_code == 200, r.text
