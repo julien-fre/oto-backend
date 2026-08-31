@@ -1010,6 +1010,10 @@ def delete_page(node_id: int) -> bool:
     ramasse ici, par le code. Sans ça, supprimer un parent laisserait des enfants
     rattachés à un identifiant disparu — des orphelins qu'aucun lecteur ne trouve et
     qu'aucune purge ne voit.
+
+    Même raisonnement, même absence de clé étrangère, une table plus loin : le CORPS
+    de chaque page supprimée part avec elle (`blocks`), et il part EN PREMIER — le
+    nœud disparu, plus rien ne relierait ses blocs à quoi que ce soit.
     """
     with _connect() as conn:
         with conn.transaction():
@@ -1023,6 +1027,95 @@ def delete_page(node_id: int) -> bool:
                 "    SELECT id FROM nodes WHERE id = %s "
                 "  UNION ALL "
                 "    SELECT n.id FROM nodes n JOIN descendance d ON n.parent_id = d.id) "
+                "DELETE FROM blocks WHERE node_id IN (SELECT id FROM descendance)",
+                (node_id,))
+            conn.execute(
+                "WITH RECURSIVE descendance AS ("
+                "    SELECT id FROM nodes WHERE id = %s "
+                "  UNION ALL "
+                "    SELECT n.id FROM nodes n JOIN descendance d ON n.parent_id = d.id) "
                 "DELETE FROM nodes WHERE id IN (SELECT id FROM descendance)",
                 (node_id,))
     return True
+
+
+# --- Le RÉSIDU de la recopie (2026-09-01) --------------------------------------
+#
+# Cinq conversions déposaient à chaque boot dans `nodes` une image des tables
+# historiques, marquée `props.legacy`. Elles sont arrêtées (`db/_init.py`) : ce que
+# la dernière passe a laissé — 70 876 nœuds sur 70 927, mesuré en production le
+# 2026-09-01 — n'a plus ni écrivain ni lecteur.
+#
+# ⚠️ **Arrêter et retirer sont deux gestes.** L'arrêt ne détruit rien et se déploie
+# seul ; le retrait détruit, et se déroule HORS du boot, par lots, sous `--apply`.
+# D'où ce partage : ce module ne porte que la mécanique, la décision de tirer vit
+# dans `maintenance.residu_projete`.
+#
+# Ce qui pend à un nœud — mesuré en production avant d'écrire ces lignes, pas
+# supposé : **aucune clé étrangère** ne pointe `nodes` (rien ne casse, mais rien ne
+# cascade non plus — d'où la suppression explicite des blocs) ; **0** embedding sur
+# un nœud recopié (les 22 embeddings de nœuds sont tous natifs) ; **aucun** partage
+# ne désigne un nœud ; et **0** nœud natif n'a pour parent un nœud recopié — le
+# retrait ne détache donc aucun enfant vivant.
+
+
+def count_projected_nodes() -> int:
+    """Combien de nœuds portent encore la marque de la recopie."""
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT count(*) AS n FROM nodes WHERE props ? 'legacy'"
+        ).fetchone()["n"]
+
+
+def delete_projected_nodes(*, batch_size: int = 2000, max_batches: int = 100) -> None:
+    """Retire le résidu par lots, les blocs d'abord.
+
+    **Par lots, chacun dans sa transaction** : un `DELETE` unique de 70 000 lignes
+    tiendrait un verrou de plusieurs secondes sur une table que le serveur lit à
+    chaque affichage de contenu — et cette base est partagée avec la production
+    (`docs/live-migrations.md`). Un lot interrompu laisse simplement du résidu, que
+    la passe suivante reprend : le geste se REPREND, il ne se répare pas.
+
+    **Les blocs d'abord, par jointure sur le nœud** : `blocks.node_id` ne porte
+    aucune clé étrangère, donc supprimer le nœud en premier rendrait ses blocs
+    introuvables — des orphelins que plus aucune requête ne relie à rien.
+
+    ⚠️ **Cette fonction ne rend RIEN de comptable, et c'est délibéré.** Le nombre de
+    lignes qu'un `DELETE` déclare avoir touchées ne distingue pas un retrait qui a
+    réussi d'un retrait qui n'a rien trouvé : les deux finissent à zéro. Le compte
+    se prend par DIFFÉRENTIEL d'inventaire, de part et d'autre de l'appel.
+    """
+    with _connect() as conn:
+        for _ in range(max_batches):
+            with conn.transaction():
+                lot = [
+                    r["id"] for r in conn.execute(
+                        "SELECT id FROM nodes WHERE props ? 'legacy' LIMIT %s",
+                        (batch_size,)).fetchall()
+                ]
+                if not lot:
+                    return
+                conn.execute("DELETE FROM blocks WHERE node_id = ANY(%s)", (lot,))
+                conn.execute("DELETE FROM nodes WHERE id = ANY(%s)", (lot,))
+
+
+def count_orphan_blocks() -> int:
+    """Blocs dont le nœud n'existe plus.
+
+    C'est le mode d'échec que l'ordre ci-dessus évite ; on veut pouvoir le
+    CONSTATER si un autre chemin l'a produit, plutôt que le supposer absent.
+    """
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT count(*) AS n FROM blocks b "
+            " WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = b.node_id)"
+        ).fetchone()["n"]
+
+
+def delete_orphan_blocks() -> None:
+    """Même règle qu'au-dessus : on retire ici, on compte ailleurs."""
+    with _connect() as conn:
+        with conn.transaction():
+            conn.execute(
+                "DELETE FROM blocks b WHERE NOT EXISTS "
+                "(SELECT 1 FROM nodes n WHERE n.id = b.node_id)")
