@@ -6,8 +6,7 @@ anti-usurpation). Gate sur les connecteurs multi-compte : un mono-compte garde l
 résolution historique (account='', tenté tel quel). On stubbe les seams DB.
 """
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access
 
 

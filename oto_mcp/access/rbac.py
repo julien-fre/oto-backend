@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import credentials_store, db, group_store, org_store, providers

@@ -146,7 +146,7 @@ def test_anon_resolver_platform_open_key(monkeypatch):
 
 
 def test_anon_resolver_fail_closed(monkeypatch):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     _sans_arete_tenant(monkeypatch)
     monkeypatch.setattr(org_store, "get_org_secret", lambda o, p: None)
     monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a: [])

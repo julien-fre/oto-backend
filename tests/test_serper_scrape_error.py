@@ -7,8 +7,7 @@ Les 401/402/403/429 (clé/crédits/rate) restent propagés (vrais problèmes de 
 from __future__ import annotations
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.error_taxonomy import _is_expected_error
 
 

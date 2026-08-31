@@ -16,8 +16,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.connectors import verify as connector_verify
 
 EXPECTED_TOOLS = {"pipedrive_record", "pipedrive_search", "pipedrive_note",

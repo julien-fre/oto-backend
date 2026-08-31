@@ -59,7 +59,7 @@ import logging
 from dataclasses import dataclass
 from typing import Awaitable, Callable, Optional
 
-from mcp.shared.exceptions import McpError
+from .mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from starlette.concurrency import run_in_threadpool
 

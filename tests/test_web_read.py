@@ -12,8 +12,7 @@ import asyncio
 import ipaddress
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.tools import web as W
 
 

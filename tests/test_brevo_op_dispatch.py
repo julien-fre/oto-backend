@@ -23,8 +23,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Tout ce qui écrit, envoie un email réel, ou lance un job côté Brevo. Sert de
 # « mutisme » à contrôler : aucune de ces méthodes ne doit partir sur une lecture.
 DANGEROUS = (

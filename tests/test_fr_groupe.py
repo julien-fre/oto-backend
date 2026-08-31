@@ -413,7 +413,7 @@ def test_aucune_filiale_est_une_REPONSE_pas_une_erreur(monkeypatch):
 # --- Refus nommés -------------------------------------------------------------
 
 def test_un_siren_malforme_est_refuse_en_nommant_le_defaut(fr_groupe):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError) as e:
         fr_groupe(siren="12345", op="ascendant")
     assert "9 chiffres" in str(e.value)
@@ -424,20 +424,20 @@ def test_un_siren_sans_denomination_est_refuse_pas_devine(fr_groupe):
     connaît pas — et son client `get_by_siren` a un repli qui rend le PREMIER
     résultat quand le SIREN exact manque. Chercher les filiales d'une coquille
     ramènerait celles d'une entreprise homonyme."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError) as e:
         fr_groupe(siren="999999999", op="descendant")
     assert "999999999" in str(e.value)
 
 
 def test_un_siren_absent_du_repertoire_est_refuse(fr_groupe):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError):
         fr_groupe(siren="123456780", op="ascendant")
 
 
 def test_un_op_inconnu_est_refuse(fr_groupe):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError):
         fr_groupe(siren="602060147", op="lateral")
 

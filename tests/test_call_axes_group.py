@@ -7,8 +7,7 @@ Miroir de test_call_context_org_axis pour l'axe équipe : la pose passe la garde
 import asyncio
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import call_axes, group_store, roles, session_org
 
 

@@ -136,8 +136,7 @@ def test_le_tool_reellement_monte_refuse_une_issue_inconnue():
     import asyncio
 
     from fastmcp import FastMCP
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     from oto_mcp.tools import register_all
     mcp = FastMCP("run-status-probe")
     register_all(mcp)

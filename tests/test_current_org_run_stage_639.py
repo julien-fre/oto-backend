@@ -11,8 +11,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, call_axes, db, group_store, org_store, roles, session_org
 
 

@@ -206,7 +206,7 @@ def test_un_claim_a_vide_puis_l_alias_refuse_en_nommant_la_file_vide(surface):
     c'est la phrase que l'agent a exécutée en fabriquant un identifiant. Il doit dire
     ce qui s'est passé (la file est vide pour ce filtre) et ce qu'il reste à faire
     (rien à écrire, terminer) — et le rendu du claim à vide doit déjà le dire."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     ns, ns_id = _table(1)
     run_q, run_r = _run(RUN_Q), _run(RUN_R)
 
@@ -237,7 +237,7 @@ def test_introuvable_decrit_la_forme_sans_montrer_de_gabarit(surface):
     hexadécimaux) ». L'agent y a lu un modèle à remplir et a rendu
     `6738f4c2-57c0-43b9-9d78-XXXXXXXXXXXX`. La forme se DÉCRIT (36 caractères, rendu
     par `data_write`/`data_claim_next`, on ne l'invente pas) ; elle ne se montre pas."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     ns, _ = _table(1)
     faux = "6738f4c2-57c0-43b9-9d78-XXXXXXXXXXXX"
 
@@ -259,7 +259,7 @@ def test_un_autre_libelle_sur_le_relachement_nomme_le_libelle_tenu(surface):
     refus disait « aucune réservation active » — faux : le run tient bien une ligne,
     sous un autre libellé. Le refus doit dire lequel, sinon l'agent va réserver une
     seconde ligne pour retrouver la première."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     ns, ns_id = _table(1)
     run_r = _run(RUN_R)
 

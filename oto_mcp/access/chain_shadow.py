@@ -59,8 +59,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from mcp.shared.exceptions import McpError
-
+from ..mcp_errors import McpError
 from .. import credentials_store, grants_chain, providers
 from ..db import access_shadow as db_shadow
 from ..db import grants as db_grants

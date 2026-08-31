@@ -3,8 +3,7 @@ call instead of N) — validation + receipt shaping, same style as
 test_salesforce_describe_projection.py (pure helpers, no client/network).
 """
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.tools.salesforce import (
     _bulk_receipt,
     _validate_bulk_items,

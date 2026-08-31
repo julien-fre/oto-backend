@@ -143,7 +143,7 @@ def _monte(monkeypatch, nom):
 def _refus(outil, **kw):
     import asyncio
 
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError) as e:
         asyncio.run(outil.run(kw))
     return str(e.value)
