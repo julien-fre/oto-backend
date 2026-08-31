@@ -774,13 +774,18 @@ def register(mcp: FastMCP) -> None:
           `lemlist_sequence` and `lemlist_schedule` need. `settings` is REFUSED
           here (the endpoint takes name + timezone only) — chain `update` on
           the returned id rather than believe a setting landed.
+          ⚠️ The campaign is created in state RUNNING, not draft (its `status`
+          reads "draft" only because it has no step and no lead yet). It sends
+          nothing while the review gate holds, but chain `op="pause"` if you
+          want to build it with the switch off.
         - `update`: `campaign_id` + `name`, `sender_user_ids` (`usr_…`, the
           senders) and/or `settings` (raw PATCH body: `stopOnEmailReplied`,
           `stopOnMeetingBooked`, `stopOnLinkClicked`, `disableTrackOpen`,
           `disableTrackClick`, `disableTrackReply`, `tracking`, `onReplied`,
           `aiFeatures`…). Only the keys sent change.
-        - `pause`: `campaign_id`. Stops the campaign advancing; already-scheduled
-          leads are NOT recalled.
+        - `pause`: `campaign_id`. THE off switch — a campaign created here is
+          already running. Stops it advancing; already-scheduled leads are NOT
+          recalled. Errors if the campaign is not running.
         - `duplicate`: `campaign_id` + optional `name`. Copies sequence, steps,
           schedules and AI templates into a fresh DRAFT (CRM settings excluded).
         - `statutes`: `campaign_id`. The validation the lemlist UI runs — read it
@@ -797,9 +802,11 @@ def register(mcp: FastMCP) -> None:
         - `export_start`: `campaign_id`. Opens an ASYNCHRONOUS stats export and
           returns its id; poll `export_status` (`campaign_id` + `export_id`),
           or ask to be notified with `export_email` (+ `email`).
-        - `export_leads`: `campaign_id` + optional `state`, `format` (`csv`,
-          the API default, or `json`). Returns the leads directly — the
-          synchronous cousin of the export above.
+        - `export_leads`: `campaign_id` + optional `state` (defaults to `all`;
+          lemlist's own default filters EVERYTHING out and returns an empty
+          list that reads as "no leads"), `format` (`csv`, the API default, or
+          `json`). Returns the leads directly — the synchronous cousin of the
+          export above.
 
         `autoReview`/`autoReviewConditions` are not settable here: they make
         every added lead send immediately, which would turn `lemlist_create_lead`
@@ -825,6 +832,15 @@ def register(mcp: FastMCP) -> None:
                     "naît avec `name` (+ `timezone`). Enchaîne "
                     'op="update" sur l\'id rendu.')
             result = client.create_campaign(name, timezone=timezone)
+            # Le retour de lemlist porte `state: running` et un `status` qui dit
+            # « draft » : l'agent qui lit le second croit la campagne à l'arrêt.
+            # On le dit plutôt que de le laisser déduire.
+            if isinstance(result, dict):
+                result = {**result, "warning": (
+                    "Campagne créée en state=running (son `status` affiche "
+                    "\"draft\" tant qu'elle n'a ni étape ni lead). Rien ne part "
+                    "tant qu'un lead n'est pas lancé, mais appelle "
+                    "op=\"pause\" si tu veux la construire interrupteur coupé.")}
 
         elif op == "update":
             if not campaign_id:
@@ -913,6 +929,10 @@ def register(mcp: FastMCP) -> None:
         Read `lemlist_campaign(op="statutes", …)` first — it names what would
         block or degrade the launch (missing sender, broken DNS, daily limit)
         with the same validation the UI runs.
+
+        ⚠️ In practice this RESUMES a paused campaign: one created through
+        `lemlist_campaign(op="create")` is already running, and lemlist answers
+        `400 "You can't start campaigns that are already running"`.
         """
         client, is_platform = _client()
         result = client.start_campaign(campaign_id)

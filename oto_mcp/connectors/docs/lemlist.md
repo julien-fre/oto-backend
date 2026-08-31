@@ -35,7 +35,11 @@ quatre tools envoient ou **arment** l'envoi. tous les quatre sont **masqués par
 - `lemlist_inbox_send` — email / LinkedIn / WhatsApp **directs** : ni campagne, ni séquence, ni revue devant eux, le message part
 - `lemlist_campaign_auto_review` — n'envoie rien lui-même, mais fait partir tout lead **ajouté** ensuite : avec lui, `lemlist_create_lead` devient un envoi
 
-tout le reste travaille sur un brouillon ou sur de la donnée. une campagne créée ou dupliquée naît en **draft**. pause ≠ rappel : mettre en pause arrête la progression, pas ce qui est déjà programmé.
+tout le reste travaille sur de la donnée ou sur une campagne qui n'a encore rien à envoyer.
+
+⚠️ **une campagne créée par l'API naît `state=running`**, contrairement à ce que son `status` (« draft ») laisse croire — vérifié en live le 31/08. elle n'envoie rien tant qu'aucun lead n'est lancé, mais `lemlist_campaign(op="start")` répond « already running » et c'est `op="pause"` qui est le vrai interrupteur. pour construire tranquillement : créer puis mettre en pause. (une campagne **dupliquée**, elle, naît bien en pause.)
+
+pause ≠ rappel : mettre en pause arrête la progression, pas ce qui est déjà programmé.
 
 deux surfaces envoient **indirectement**, et restent visibles en le disant : une watch list réglée sur `push_to_campaign` alimente une campagne toute seule, et `lemlist_mailbox(op="lemwarm_start")` envoie — mais dans le réseau de chauffe, jamais vers un prospect.
 
@@ -44,5 +48,14 @@ deux surfaces envoient **indirectement**, et restent visibles en le disant : une
 - **supprimer un lead ≠ le désinscrire**, et lemlist sert les deux par la même route, le défaut étant le doux. ici les deux ops sont nommées à part (`op="delete"` vs `op="unsubscribe"`).
 - **`lemlist_lead(op="pause")` sans `campaign_id` met le lead en pause sur TOUTES les campagnes**, pas sur une.
 - **`lemlist_contact(op="list_manage")` AJOUTE par défaut** ; `action="remove"` retire.
-- supprimer une étape est refusé tant que la campagne tourne — mets-la en pause d'abord. les A/B tests demandent un plan Email Pro.
+- supprimer une étape est refusé tant que la campagne tourne — mets-la en pause d'abord.
 - les enrichissements dépensent des crédits (`lemlist_team(op="credits")` les compte).
+
+## note — écarts doc↔API relevés en live (31/08/2026)
+
+le connecteur les absorbe déjà ; c'est ici pour comprendre un message d'erreur, pas pour agir.
+
+- `lemlist_task(op="create")` exige `record_id` (le contact ou le lead), que la doc lemlist dit optionnel.
+- `lemlist_watchlist(op="create")` : lis `op="filters"` avant — chaque type a ses filtres obligatoires, les valeurs doivent venir de `op="filter_values"`, et les nombres voyagent en chaînes.
+- `lemlist_campaign(op="export_leads")` filtre sur `state="all"` par défaut : le défaut de lemlist rend une liste vide qui se lit « pas de leads ».
+- ce que ce compte ne permet pas (limite de plan, pas un bug) : les étapes LinkedIn (`Upgrade your plan`), les endpoints CRM (`crm_filters`, `crm_users`, `import_crm` → « Endpoint not available » sans intégration CRM), et l'historique d'une watch list (bêta non activée).

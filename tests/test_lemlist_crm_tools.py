@@ -278,3 +278,36 @@ def test_le_masquage_des_credentials_survit_a_un_registre_illisible():
         assert "smtp_password" in table and "imap_password" in table
     finally:
         journal_secrets._ARG_NAMES = None
+
+
+# --- Écarts doc↔API relevés en LIVE le 2026-08-31 ------------------------------
+
+def test_creer_une_campagne_annonce_quelle_tourne_deja():
+    """Le retour de lemlist porte `state: running` ET un `status: draft` :
+    l'agent qui lit le second croit la campagne à l'arrêt. Le tool le dit."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        inst.create_campaign.return_value = {
+            "_id": "cam_1", "state": "running", "status": "draft"}
+        out = _tool("lemlist_campaign", "lemlist").fn(op="create", name="Q4")
+
+        assert "pause" in out["warning"]
+        assert out["_id"] == "cam_1"          # la charge d'origine est gardée
+
+
+def test_creer_une_tache_exige_le_record_id():
+    """`recordId` est documenté optionnel et l'API le refuse (400)."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_task")
+
+        with pytest.raises(Exception, match="record_id"):
+            tool.fn(op="create", task_type="manual", assigned_to="usr_1",
+                    due_date="2026-09-05")
+        inst.create_task.assert_not_called()
+
+        tool.fn(op="create", task_type="manual", assigned_to="usr_1",
+                due_date="2026-09-05", record_id="ctc_1")
+        assert inst.create_task.call_args.kwargs["record_id"] == "ctc_1"

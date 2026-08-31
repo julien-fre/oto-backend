@@ -452,9 +452,11 @@ def register(mcp: FastMCP) -> None:
         Args by op:
         - `list`: `page`, `filters` (list of `{filterId, …}`).
         - `create`: `task_type` (`email`, `manual`, `phone`, `linkedin`),
-          `assigned_to` (user id), `due_date` — all required; then `record_id`
-          (the lead/contact it hangs off), `title`, `message`, `priority`
-          (`0` high … `2` low), `images`/`videos` (public HTTPS URLs).
+          `assigned_to` (user id), `due_date` AND `record_id` (the contact
+          `ctc_…` or lead `lea_…` the task hangs off) — all four required, the
+          last one despite lemlist documenting it optional; then `title`,
+          `message`, `priority` (`0` high … `2` low), `images`/`videos`
+          (public HTTPS URLs).
         - `update`: `task_id` + any of `title`, `message`, `priority`,
           `due_date`, `assigned_to`, `done`, `images`, `videos`.
         - `ignore`: `ids` — dismiss without completing.
@@ -463,7 +465,8 @@ def register(mcp: FastMCP) -> None:
         if op == "list":
             result = {"tasks": client.list_tasks(page=page, filters=filters)}
         elif op == "create":
-            _need(task_type=task_type, assigned_to=assigned_to, due_date=due_date)
+            _need(task_type=task_type, assigned_to=assigned_to,
+                  due_date=due_date, record_id=record_id)
             result = client.create_task(
                 task_type=task_type, assigned_to=assigned_to, due_date=due_date,
                 record_id=record_id, title=title, message=message,
@@ -525,11 +528,17 @@ def register(mcp: FastMCP) -> None:
         - `list`: `watch_type`, `status`, `page`, `limit`.
         - `create`: `name` + `watch_type` (`companyIsHiring`,
           `companyRaisedFunds`, `jobChange`, `newHire`, `technologyChange`,
-          `buyingIntent`… — `filters` tells you the vocabulary), optional
-          `filters`, `emoji`, `signal_processing_type` (`manual`,
-          `create_opportunity`, `push_to_campaign`), `activate`,
-          `segment_type`, `opportunity_template` (what
-          `create_opportunity` builds: owner, channel, priority).
+          `buyingIntent`…), then `filters`. Read `op="filters"` for that type
+          FIRST: each type has its own REQUIRED filters (`companyIsHiring`
+          needs `title`, `location` and `maxIdentificationsPerDay`), the values
+          must be the canonical ones `op="filter_values"` returns — a free
+          string is rejected — and numbers travel as STRINGS
+          (`{"filterId": "maxIdentificationsPerDay", "in": ["5"]}`).
+          Optional `emoji`, `signal_processing_type` (`manual`,
+          `create_opportunity`, `push_to_campaign`), `activate` (default False
+          — the list is created as a draft), `segment_type`,
+          `opportunity_template` (what `create_opportunity` builds: owner,
+          channel, priority).
         - `update`: `watch_list_id` + `settings` (raw PATCH body).
           `delete`: `watch_list_id`.
         - `filters` (optional `watch_type`) / `filter_values` (`filter_id`,
