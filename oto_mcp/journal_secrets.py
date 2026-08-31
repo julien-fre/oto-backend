@@ -203,7 +203,12 @@ def _arg_names() -> dict[str, frozenset]:
     pas concerné — masquer par le nom seul y coûterait une lecture pour rien."""
     global _ARG_NAMES
     if _ARG_NAMES is None:
-        table: dict[str, frozenset] = {}
+        # Les déclarations de CONNECTEUR d'abord, et hors du try : elles ne
+        # dépendent d'aucun registre. Les poser après aurait rendu le masquage
+        # des credentials tributaire d'un import de capacités — un registre
+        # illisible aurait renvoyé les mots de passe SMTP en clair au journal,
+        # avec pour seul signal un warning parlant d'autre chose.
+        table: dict[str, frozenset] = dict(SECRET_TOOL_ARGS)
         try:
             import oto_mcp.capabilities  # noqa: F401 — peuple le registre
             from oto_mcp.capabilities.registry import caps_with_mcp
@@ -211,18 +216,17 @@ def _arg_names() -> dict[str, frozenset]:
                 champs = set(getattr(cap.Input, "model_fields", {}) or {})
                 secrets_ = champs & SECRET_PARAM_NAMES
                 if secrets_:
-                    table[cap.mcp] = frozenset(secrets_)
-            # Les déclarations de connecteur s'ajoutent : elles ne dérivent de
-            # rien (un connecteur n'a pas d'`Input` au registre), d'où la liste.
-            for tool, noms in SECRET_TOOL_ARGS.items():
-                table[tool] = table.get(tool, frozenset()) | noms
+                    table[cap.mcp] = table.get(cap.mcp, frozenset()) | secrets_
+
         except Exception:  # noqa: BLE001 — le journal ne casse jamais le service
             # Bruyant, et une seule fois : sans registre, le masquage des arguments
             # est INERTE. Un journal qui cesse de masquer sans le dire est
             # exactement le mode d'échec que ce module ferme.
             logger.warning("registre de capacités illisible : le masquage des "
-                           "arguments du journal est inactif", exc_info=True)
-            _ARG_NAMES = {}
+                           "arguments de CAPACITÉ est inactif (les credentials "
+                           "déclarées par connecteur restent masquées)",
+                           exc_info=True)
+            _ARG_NAMES = table
             return _ARG_NAMES
         _ARG_NAMES = table
     return _ARG_NAMES

@@ -261,3 +261,20 @@ def test_laudio_passe_par_le_seam_partage_et_sa_garde_ssrf():
                side_effect=file_source.FileSourceError("cible non autorisée")):
         with pytest.raises(Exception, match="audio illisible"):
             lemlist._fetch_audio("https://169.254.169.254/latest")
+
+
+def test_le_masquage_des_credentials_survit_a_un_registre_illisible():
+    """Le masquage dérivé (capacités) et le masquage déclaré (connecteurs) ne
+    doivent pas partager un sort : si le registre ne charge pas, les mots de
+    passe SMTP ne peuvent pas repartir en clair pour autant — le seul signal
+    serait un warning qui parle d'autre chose."""
+    from oto_mcp import journal_secrets
+
+    journal_secrets._ARG_NAMES = None
+    try:
+        with patch("oto_mcp.capabilities.registry.caps_with_mcp",
+                   side_effect=RuntimeError("registre cassé")):
+            table = journal_secrets.secret_arg_names("lemlist_mailbox")
+        assert "smtp_password" in table and "imap_password" in table
+    finally:
+        journal_secrets._ARG_NAMES = None
