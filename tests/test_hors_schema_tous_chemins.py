@@ -210,3 +210,95 @@ def test_une_cle_PLATE_POINTEE_est_REFUSEE_declaree_ou_non(table):
             st.update_row(ns, rid, {cle: "site — pied de page"})
         assert "n'est pas un nom de colonne" in str(e.value)
     assert not any("." in k for k in _colonnes_en_base(ns_id, rid))
+
+
+# ── La quatrième FORME, et c'est celle du terrain ────────────────────────────
+# ⚠️ Écrit le 31/08 après avoir enfin LU la colonne née en production : ses huit
+# occurrences portent toutes `null`. Le banc ci-dessus n'éprouvait que des valeurs
+# posées — trois formes, cinq chemins, et **pas une seule valeur vide**. Or c'est
+# exactement la forme du terrain. *Un banc qui couvre toute la matrice sauf la case
+# où l'incident a eu lieu certifie le silence qu'il devait expliquer.*
+
+def test_colonne_hors_schema_ecrite_a_NULL(table):
+    """La forme observée en production : la clé est posée, sa valeur est vide.
+
+    La colonne naît quand même en base — donc elle existe, donc elle est invisible
+    aux contrôles qui lisent le schéma. Le relevé doit la nommer comme les autres :
+    *ce qui compte est que la colonne EXISTE, pas qu'elle porte quelque chose.*"""
+    st, ns, ns_id, rid = table
+    st.update_row(ns, rid, {HORS: None})
+
+    en_base = HORS in _colonnes_en_base(ns_id, rid)
+    releve = HORS in _releve(st)
+    assert en_base, "la colonne naît-elle à null ?"
+    assert releve == en_base, (
+        f"la colonne existe en base ({en_base}) mais le relevé dit {releve} — "
+        "un rapporteur qui se tait sur la forme du terrain rend un zéro faux")
+
+
+def test_colonne_hors_schema_a_null_DANS_un_objet_a_couches(table):
+    """L'autre vide plausible : la couche est là, la valeur est vide."""
+    st, ns, ns_id, rid = table
+    st.update_row(ns, rid, {HORS: {"valeur": None, "comment": "site — rien trouvé"}})
+    assert (HORS in _colonnes_en_base(ns_id, rid)) == (HORS in _releve(st))
+
+
+# ── Ce que la PRODUCTION porte, et que le banc affirmait impossible ──────────
+# ⚠️ Le 31/08, la lecture REST d'un lot de production rend 321 clés pointées
+# (`site_web.comment`, `qualification.comment`…) alors que le cas ci-dessus prouve
+# qu'ÉCRIRE une clé pointée est refusé. Les deux sont vrais, et la raison n'est ni
+# l'une ni l'autre de celles qu'on suppose : **la base stocke la couche IMBRIQUÉE,
+# la face REST la SERT à plat.** Écriture, stockage et lecture ont trois formes.
+#
+# *Un relevé bâti sur ce que la lecture rend compte des colonnes qui n'existent pas.*
+# C'est ce qui a produit un faux positif de comptage le 31/08 : un contrôle de
+# campagne lisait la face REST et prenait 304 couches servies à plat pour autant de
+# colonnes inventées. Le rapporteur du serveur, lui, n'en a jamais vu une seule —
+# il lit ce que le geste POSE, et le geste pose un objet.
+
+def test_la_couche_est_STOCKEE_IMBRIQUEE_sous_sa_colonne(table):
+    """Le geste servi écrit un objet ; la base porte UNE colonne, pas deux."""
+    st, ns, ns_id, rid = table
+    st.update_row(ns, rid, {"raison_sociale": {"valeur": "ACME",
+                                               "comment": "site — pied de page"}})
+
+    en_base = _colonnes_en_base(ns_id, rid)
+    assert "raison_sociale" in en_base
+    assert not [k for k in en_base if "." in k], (
+        f"aucune clé pointée en base — la couche vit SOUS sa colonne : {sorted(en_base)}")
+
+
+def test_une_couche_ne_sort_JAMAIS_en_hors_schema(table):
+    """Le corollaire côté relevé : les quatre couches d'une colonne déclarée sont le
+    format normal, jamais une colonne inventée."""
+    st, ns, ns_id, rid = table
+    st.update_row(ns, rid, {"raison_sociale": {"valeur": "A", "comment": "c",
+                                               "origine": "o", "link": "https://x.fr"}})
+    assert _releve(st) == []
+
+
+def test_la_LECTURE_aplatit_ce_que_la_base_garde_imbrique():
+    """L'autre moitié du fait, et c'est elle qui piège les instruments.
+
+    La même colonne a deux formes selon le côté où on se place. Sans ce témoin, la
+    mise en garde de `off_schema_keys` n'est qu'une affirmation dans une docstring —
+    et c'est exactement le genre d'affirmation qui devient fausse en silence."""
+    from oto_mcp.datastore import schema as dsv2
+    stocke = {"valeur": "https://x.fr", "comment": "site — pied de page"}
+
+    assert dsv2.served_value(stocke) == "https://x.fr", "le nom nu rend la VALEUR"
+    assert dsv2.flat_layers("site_web", stocke) == {
+        "site_web.comment": "site — pied de page"}, "la couche est servie À CÔTÉ"
+
+
+def test_le_RELEVE_et_la_LECTURE_ne_comptent_pas_les_memes_cles(table):
+    """⚠️ Le contre-témoin du piège du 31/08, sur une seule ligne : la row servie
+    porte une clé de plus que la row écrite, et cette clé n'est PAS une colonne."""
+    st, ns, ns_id, rid = table
+    st.update_row(ns, rid, {"raison_sociale": {"valeur": "ACME", "comment": "c"}})
+
+    ecrit = _colonnes_en_base(ns_id, rid)
+    servi = set(st.get_row(ns, rid) or {})
+    assert "raison_sociale.comment" in servi, "servie : la couche est une clé"
+    assert "raison_sociale.comment" not in ecrit, "écrite : elle n'en est pas une"
+    assert _releve(st) == [], "et le relevé suit l'ÉCRITE, donc il se tait"

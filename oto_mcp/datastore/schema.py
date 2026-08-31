@@ -784,7 +784,18 @@ def off_schema_keys(schema: Optional[dict], data: dict) -> list[str]:
     Vide hors mode `strict` : un champ libre y est un droit explicite du contrat
     (c'est ce qui permet d'explorer un tableau avant de le typer), pas une anomalie.
     Vide aussi si le schéma strict ne déclare AUCUN field — sans référentiel, tout
-    serait « hors schéma », ce qui n'informe personne."""
+    serait « hors schéma », ce qui n'informe personne.
+
+    ⚠️ **Ce relevé lit la row ÉCRITE, jamais la row SERVIE — et un contrôle bâti sur
+    la seconde surcompte.** Une couche se pose imbriquée (`{valeur, comment}`), se
+    stocke imbriquée, et n'est aplatie qu'à la LECTURE par `flat_layers` : le
+    consommateur voit `site_web.comment` comme une clé de premier niveau, alors
+    qu'aucune colonne de ce nom n'existe. Un instrument qui compare les clés servies
+    aux `fields` déclarés compte donc chaque couche comme une colonne inventée. *Le
+    31/08/2026, ce piège a valu à une campagne un relevé de 304 colonnes « inventées »
+    qui n'existaient pas, et une enquête pour « silence » du rapporteur qui, lui,
+    n'avait rien manqué.* Comparer aux `fields` ne vaut que sur la forme posée ; sur
+    la forme servie, il faut d'abord écarter `<colonne déclarée>.<couche>`."""
     if not isinstance(schema, dict) or not schema.get("strict"):
         return []
     fields = _fields(schema)
