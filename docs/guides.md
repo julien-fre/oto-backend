@@ -43,20 +43,45 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
   SESSION** ; avec `slug` = le markdown d'un guide nommé. `oto_procedure(op='list'[, query,
   scope])` = catalogue/recherche. Scopés à l'**org active** (+ groupe actif) — servis aux seuls
   membres. **Vide sans erreur** si pas d'org active (`_SERVER_INSTRUCTIONS` invite à `oto_procedure(op='get')`).
-- **Écriture** : `oto_procedure(op='set'[, body_md, slug, org, title, desc, from_version])` (base = slug
-  omis ; nommée sinon ; `from_version` = revert) + `oto_procedure(op='delete', slug[, org])`. Autz :
-  `org_id` absent → org active, **org_admin** requis (self-service MCP, NOUVEAU) ; présent → autre
-  org, **platform_admin** requis (l'opérateur provisionne n'importe quelle org). La SPA dashboard
-  édite aussi via REST `/api/me/instructions*` (org_admin de l'org active).
+- **Écriture** : `oto_procedure(op='set'[, body_md, slug, scope, org, group, title, desc,
+  from_version])` (base = slug omis ; nommée sinon ; `from_version` = revert) +
+  `oto_procedure(op='delete', slug[, scope, org, group])`. Autz **par PALIER** (`scope`,
+  #681 — 31/08/2026) :
+  - `scope='org'` (défaut) : `org` absent → org active, **org_admin** ; présent → autre org,
+    **platform_admin** (l'opérateur provisionne n'importe quelle org) ;
+  - `scope='group'` : `group` absent → équipe active, présent → l'équipe nommée ; **chef
+    d'équipe** requis (escalade `roles.can_admin_group` : org_admin parent, platform_admin).
+
+  ⚠️ **Pourquoi ce second palier existe** : celui qui DÉROULE une procédure est un opérateur
+  métier, et le seul qui pouvait l'écrire était un administrateur d'org. Améliorer son propre
+  mode d'emploi supposait donc les clés de toute l'organisation — membres, connecteurs,
+  secrets — que personne n'accorde pour ça ; la boucle d'auto-amélioration que la procédure
+  promet ne se fermait jamais.
+
+  Les faces REST restent **une route par palier** : `/api/me/instructions*` (org_admin de
+  l'org active) et `/api/groups/{id}/instructions*` (chef d'équipe). `scope`/`group` sont des
+  axes de la CONSOLE MCP seulement — les publier dans le corps d'une route qui les refuserait
+  décrirait une porte qui n'existe pas.
 - **Versioning** : chaque écriture incrémente `version` (sur le courant) et archive un snapshot
   append-only. Revert = re-poser le corps d'une version → nouvelle version (jamais d'effacement
   d'historique sauf `delete`).
-- **Store** : `org_instructions(org_id, slug PK partiel, title, description, body_md, version,
-  set_by, created_at, updated_at)` + `org_instruction_revisions(org_id, slug, version PK, …)`
-  (`db._SCHEMA`, palier org) ; accès dans `org_store/instructions.py` (`get/list/search/set/delete_instruction`,
-  `list_instruction_versions`, `normalize_slug`, `BASE_SLUG`). **En clair** (prose, pas un
-  credential → hors coffre chiffré). **Pas de cache** : lecture DB à l'appel. Écriture sérialisée
-  par `(org, slug)` via verrou advisory (mirroir `add_org_member`).
+- **Store** : `org_instructions(owner_type, owner_id, slug, org_id, title, description,
+  body_md, slots, version, set_by, archived_at, created_at, updated_at)` +
+  `org_instruction_revisions(owner_type, owner_id, slug, version PK, …)` (`db/schema/procedures.py`).
+  ⚠️ **UN seul jeu de fonctions**, keyé sur `(owner_type, owner_id)` — la clé d'unicité que la
+  table porte, sur la table ET sur ses révisions : `org_store.<fn>('org'|'group', id, …)`
+  (`org_store/instructions.py`). `org_id` reste la colonne dénormalisée de l'org PARENTE (FK,
+  NOT NULL, cascade de suppression) : org et équipe en ont toutes deux une.
+
+  ⚠️ **Il en a existé DEUX jusqu'au 31/08/2026** (#681) : celui-ci filtrait `owner_type='org'`
+  en dur, `group_store` filtrait `owner_type='group'` en dur, sur la MÊME table — et ils avaient
+  déjà divergé (le palier équipe écrivait `slots='[]'` en dur, ne relisait pas les slots,
+  ignorait l'archivage). Ajouter un palier par la même méthode en aurait fait un troisième :
+  **le propriétaire est une DIMENSION, pas trois cas particuliers.** Le palier `user` reste
+  fermé (`OWNER_TYPES`) tant que `org_id` est NOT NULL — phase 2 du même lot.
+
+  **En clair** (prose, pas un credential → hors coffre chiffré). **Pas de cache** : lecture DB
+  à l'appel. Écriture sérialisée par `(owner_type, owner_id, slug)` via verrou advisory.
 - **Pas d'instruction par namespace d'outil** : un gotcha d'outil est vrai pour tout le monde et
   évolue avec le code du connecteur → sa place reste le repo (docstring, `_SERVER_INSTRUCTIONS`),
   versionné avec l'outil.

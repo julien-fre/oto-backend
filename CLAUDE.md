@@ -512,7 +512,10 @@ Une org se subdivise en **groupes** (départements/équipes) avec un **chef d'é
 (`group_role='group_admin'`). Droits **centralisés dans `roles.py`** (escalade descendante,
 source unique) : `platform_admin ⊇ org_admin ⊇ group_admin ⊇ member`. Un groupe **gouverne 3
 ressources** par délégation de l'org : secrets partagés (cascade `user_key > groupe actif > org
-active > plateforme`), guide & skills, gouvernance de connecteur.
+active > plateforme`), procédures, gouvernance de connecteur. ⚠️ Les procédures d'équipe vivent
+dans `org_instructions` (`owner_type='group'`) et passent par le store UNIFIÉ
+`org_store.<fn>('group', id, …)` — plus de jeu de fonctions à part (#681, 31/08/2026) ; leur
+écriture est `oto_procedure(op='set', scope='group')`, gardée « chef d'équipe ».
 ⚠️ **Invariant monotone** : l'équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse
 (platform ⊇ org ⊇ group). ⚠️ **Groupe actif** : ≤1 par sub, il appartient à l'org active.
 ⚠️ **Aucun module du package `org_store/` n'importe `group_store`** (SQL direct dans
