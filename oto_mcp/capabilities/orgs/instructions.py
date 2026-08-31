@@ -39,6 +39,13 @@ _BASE = org_store.BASE_SLUG
 # ET de filtre dans `_instruction_usage` → plus de chaîne magique à dériver (le bug
 # d'origine : un filtre sur un nom d'outil mort renvoyait toujours 0).
 _GUIDE_GET_TOOL = "oto_procedure"
+# Fait d'OUVERTURE d'un déroulé. Même journal que ci-dessus, autre verbe :
+# `_runs_from_journal` reconstruit les runs depuis ces mêmes lignes, ce qui est
+# précisément pourquoi l'usage peut les compter sans nouvelle table ni nouveau
+# chemin d'écriture. La CLÉ d'`args` qui y nomme la procédure vit chez le lecteur
+# du journal (`db.usage._ARG_PROCEDURE`) et n'est pas recopiée ici — une clé servie
+# ne se renomme pas d'un côté sans l'autre.
+_RUN_START_TOOL = "run_start"
 
 
 # ── Sorties ─────────────────────────────────────────────────────────────────
@@ -211,6 +218,16 @@ class InstructionUsage(BaseModel):
     # Exactement 30 entiers, du plus ancien au plus récent (jour UTC). Les jours sans
     # appel valent 0 — ici, contrairement au monitoring, la série est densifiée.
     series: list[int]
+    # ── Déroulés (`run_start`), à ne PAS confondre avec les chargements ci-dessus ──
+    # Un CHARGEMENT est « l'agent a ouvert la procédure » ; un DÉROULÉ est « l'agent
+    # a déclaré l'exécuter ». Les deux vivent dans `tool_calls`, sous deux verbes, et
+    # ils ne se déduisent pas l'un de l'autre : on peut lire sans dérouler, et un run
+    # peut couvrir plusieurs lectures. Deux séries distinctes, jamais additionnées ni
+    # tracées ensemble — les confondre est l'erreur que le front a déjà commise une
+    # fois (compteur de chargements lu comme un compteur de runs).
+    runs_count: int = 0
+    # Même fenêtre et même densification que `series` : 30 jours, zéros compris.
+    runs_series: list[int] = []
 
 
 class InstructionWritten(BaseModel):
@@ -672,15 +689,32 @@ def _instruction_revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:
 
 
 def _instruction_usage(ctx: ResolvedCtx, inp: SlugInput) -> dict:
-    """Usage d'un guide (ADR 0014) : nb de chargements par l'agent, appelants,
-    série journalière 30j — dérivé de `tool_calls` (`_GUIDE_GET_TOOL`), scopé org."""
+    """Usage d'un guide (ADR 0014) : chargements par l'agent (nb, appelants, série 30j)
+    ET déroulés (`run_start`, nb + série 30j) — deux verbes du MÊME journal
+    `tool_calls`, scopés aux membres de l'org. Voir `InstructionUsage` sur pourquoi
+    les deux séries ne se confondent ni ne s'additionnent."""
     slug = org_store.normalize_slug(inp.slug)
     subs = [m["sub"] for m in org_store.list_org_members(ctx.org_id)]
     slug_filter = None if slug == _BASE else slug
     u = db.instruction_usage(subs, _GUIDE_GET_TOOL, slug_filter, days=30)
+    # Les DÉROULÉS, du même journal, sous la clé que le lecteur de runs y lit.
+    #
+    # C'est le seul chemin par lequel un MEMBRE voit les runs de sa procédure. Les
+    # surfaces existantes passent par `/api/orgs/{id}/monitoring/*`, qui est
+    # ORG_ADMIN_OF de bout en bout et sans filtre par procédure (le front en récupère
+    # 100 max et trie côté client) : un membre n'y a droit à rien. Cette capacité-ci
+    # est ORG_MEMBER et déjà scopée aux subs de l'org — la série arrive donc sans
+    # plafond, sans tri client, et pour tout le monde.
+    r = db.instruction_usage(subs, _RUN_START_TOOL, slug_filter, days=30,
+                             slug_key=db.usage._ARG_PROCEDURE)
     today = date.today()
-    series = [u["daily"].get(str(today - timedelta(days=29 - i)), 0) for i in range(30)]
-    return {"slug": slug, "count": u["count"], "callers": u["callers"], "series": series}
+
+    def _dense(daily: dict) -> list[int]:
+        return [daily.get(str(today - timedelta(days=29 - i)), 0) for i in range(30)]
+
+    return {"slug": slug, "count": u["count"], "callers": u["callers"],
+            "series": _dense(u["daily"]),
+            "runs_count": r["count"], "runs_series": _dense(r["daily"])}
 
 
 CAPABILITIES += [
