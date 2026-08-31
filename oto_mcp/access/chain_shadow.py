@@ -253,7 +253,16 @@ def decide(provider: str, sub: str, org: Optional[int], *, probe, want: str = "a
     pick, hors_modele = chain_resolution.chain_verdict(sub, porteur, org=org, want=want)
     # Le FETCH garde le nom que le walker lui passait — la traversée change, la
     # lecture non.
-    rung = chain_resolution.rung_for_pick(pick, probe, sub, provider, org)
+    #
+    # ⚠️ La lecture PARCOURT les paliers, elle ne lit pas celui que `pick` désigne
+    # (#673) : la désignation se fait sur la PRÉSENCE d'un credential, la lecture au
+    # FETCH, et les deux divergent sur un compte nommé. S'arrêter au premier désigné
+    # rendait un refus sec là où le chemin historique passait au palier suivant.
+    # `pick` reste la DÉSIGNATION servie au relevé de fenêtre — lui donner autre chose
+    # ferait bouger ce qu'il mesure au moment où on corrige la lecture.
+    rung = chain_resolution.rung_for_picks(
+        chain_resolution.chain_paliers(sub, porteur, org=org, want=want),
+        probe, sub, provider, org)
     if not deja_observe:
         _observe_inverse(porteur, sub, org, pick, hors_modele, want=want)
     return rung
