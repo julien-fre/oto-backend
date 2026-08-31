@@ -332,6 +332,33 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # une variable de cette frame : les gardes de quota qui suivent peuvent lever,
     # et une frame qui lève garde ses locales dans le traceback. `win` est un
     # `CascadeRung`, dont le `repr` est expurgé (#564) ; un dict nu ne l'est pas.
+    used, limit = _win_quota(win, sub, provider, active_org)
+    if limit and used >= limit:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(
+                f"Quota plateforme {provider} dépassé aujourd'hui ({used}/{limit}) "
+                f"pour la clé `{win.payload['label']}` — 0 restant, le compteur "
+                f"repart à minuit. Pose ta propre clé sur {_ACCOUNT_URL} pour "
+                "lever la limite immédiatement."
+            ),
+        ))
+
+    return ResolvedCredential(provider, win.payload["secret"], True, "platform",
+                              credentials_store.PLATFORM, win.payload["label"])
+
+
+def _win_quota(win, sub: str, provider: str,
+              active_org: Optional[int]) -> tuple[int, int]:
+    """(used, limit) du jour pour l'arête PLATEFORME gagnante `win`. `limit=0` =
+    illimité (registre sans plafond par défaut, OU org sur un plan `unmetered`,
+    ADR 0043) — jamais un plafond réel de 0, `quota_for` ne le rend pas.
+
+    Fonction UNIQUE : le refus ci-dessus ET la sonde en lecture seule
+    `platform_quota_hint` (plus bas) y passent tous les deux. Un même chiffre
+    calculé à deux endroits finit par diverger — c'est la raison d'être du
+    walker `cascade` pour la cascade elle-même (vécu 2026-07-07, règle d'option
+    recopiée 3×), la même discipline s'applique ici."""
     used = quotas.usage_today(sub, provider)
     limit = win.payload.get("daily_quota") or quotas.quota_for(provider)
     # ADR 0043 : une org abonnée à un plan `unmetered` n'a PLUS de quota sur les
@@ -339,18 +366,38 @@ def _resolve_credential_impl(provider: str, want: str, sub: str,
     # est le seul cran ; hors abonnement, les quotas d'essai tiennent.
     if limit and active_org is not None and quotas._org_unmetered(active_org):
         limit = 0
-    if limit and used >= limit:
-        raise McpError(ErrorData(
-            code=INVALID_PARAMS,
-            message=(
-                f"Quota plateforme {provider} dépassé aujourd'hui ({used}/{limit}) "
-                f"pour la clé `{win.payload['label']}`. Pose ta propre clé sur "
-                f"{_ACCOUNT_URL} pour continuer sans limite."
-            ),
-        ))
+    return used, limit
 
-    return ResolvedCredential(provider, win.payload["secret"], True, "platform",
-                              credentials_store.PLATFORM, win.payload["label"])
+
+def platform_quota_hint(provider: str, sub: Optional[str] = None) -> Optional[dict]:
+    """Instantané en LECTURE SEULE du quota plateforme du jour pour `provider` —
+    ne déchiffre rien (sonde de PRÉSENCE, comme `status_for`/`GET /api/me`) et ne
+    consomme rien. Pour un connecteur qui débite ce quota À LA DÉPENSE
+    (`record_platform_usage`, ex. `apollo_match_person`), c'est ce qui permet à
+    un appelant de savoir ce qu'il reste SANS attendre le refus sec — un worker
+    batch peut arbitrer ses appels au lieu de découvrir la limite au milieu d'un
+    lead (oto-backend#710, signaux #311/#312/#313).
+
+    Marche la cascade en sonde de présence pour UN SEUL provider — `status_for`
+    fait la même chose pour TOUT le registre (coût acceptable une fois par
+    chargement de dashboard) ; un tool qui peut tourner des centaines de fois
+    dans un lot n'a besoin que d'UNE marche, sur CE provider.
+
+    `None` : soit ce provider ne résoudrait pas en mode plateforme pour ce sub
+    (une clé BYO gagne avant, ou aucun grant — la question ne se pose pas),
+    soit aucun plafond (illimité, ou org sur un plan `unmetered`, ADR 0043)."""
+    sub = sub or scope.current_user_sub_or_raise()
+    active_org = scope.current_org(sub)
+    active_group = scope.current_group(sub)
+    hits = list(cascade.walk_cascade(sub, provider, org=active_org, group=active_group,
+                                     probe=cascade.PRESENCE_PROBE, want="auto"))
+    winner = hits[0] if hits else None
+    if winner is None or winner.mode != "platform":
+        return None
+    used, limit = _win_quota(winner, sub, provider, active_org)
+    if not limit:
+        return None
+    return {"used": used, "limit": limit, "remaining": max(0, limit - used)}
 
 
 def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential:
