@@ -358,3 +358,34 @@ def test_aller_retour_sur_un_champ_a_ORIGINE_SYSTEME(table):
     with pytest.raises(RowValidationError) as e:
         st.update_row(ns, lu["_id"], {"score.origine": "moi"})
     assert "score" in str(e.value), "changer l'origine système reste refusé"
+
+
+# ── Ce que « paresseusement » veut dire, mesuré ──────────────────────────────
+
+def test_la_ligne_n_est_LUE_QUE_si_un_nom_pointe_reste_irresolu():
+    """⚠️ La lecture de la ligne est le seul coût que ce lot pourrait ajouter, et il
+    tomberait sur le chemin le plus volumineux du serveur — le lot de huit mille lignes.
+    On le mesure au lieu de l'affirmer : le compteur reste à zéro tant qu'aucune adresse
+    n'a besoin de la ligne pour être tranchée."""
+    from oto_mcp.datastore.points import ranger_les_couches
+    schema = {"fields": [{"key": "site_web", "type": "url"}]}
+    lectures = []
+
+    def _lire():
+        lectures.append(1)
+        return {"libre"}
+
+    ranger_les_couches(schema, {"siren": "1", "raison": "ACME"},
+                       colonnes_en_place=_lire)
+    assert lectures == [], "aucun nom pointé : la ligne n'est pas lue"
+
+    ranger_les_couches(schema, {"site_web": "a.fr", "site_web.comment": "c"},
+                       colonnes_en_place=_lire)
+    assert lectures == [], "la colonne est dans le geste : la ligne n'est pas lue"
+
+    ranger_les_couches(schema, {"site_web.comment": "c"}, colonnes_en_place=_lire)
+    assert lectures == [], "la colonne est au schéma : la ligne n'est pas lue"
+
+    out = ranger_les_couches(schema, {"libre.comment": "c"}, colonnes_en_place=_lire)
+    assert lectures == [1], "là, et seulement là, il fallait consulter la ligne"
+    assert out == {"libre": {"comment": "c"}}
