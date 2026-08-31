@@ -97,3 +97,35 @@ def test_les_deux_clients_http_sont_declares():
     declares = _declares()
     for paquet in ("requests", "httpx"):
         assert paquet in declares, f"`{paquet}` n'est plus déclaré"
+
+
+def test_les_dependances_STRUCTURANTES_ont_un_plafond():
+    """Un plancher sans plafond n'est pas une déclaration, c'est un pari quotidien.
+
+    Le 31/08/2026, trois pannes de CI en une soirée, toutes sur la même mécanique :
+    `>=X` sans borne haute fait installer la DERNIÈRE version au moment où la
+    vérification tourne. Le SDK a renommé sa classe d'erreur, un tiers a cessé de
+    fournir `httpx`, `fastmcp` a réorganisé ses modules. À chaque fois : rouge sur
+    toutes les branches à la fois, vert sur les postes — installés plus tôt, donc
+    plus anciens. **La vérification dépendait du jour où elle tournait.**
+
+    Le plafond ne gèle rien : il rend la montée de version DÉLIBÉRÉE — on l'essaie,
+    on lance la suite, on borne plus haut. C'est la différence entre choisir et subir.
+
+    ⚠️ La liste est courte À DESSEIN : seulement ce dont la STRUCTURE nous traverse,
+    pas tout l'arbre. Une bibliothèque dont on n'utilise que quelques fonctions
+    stables n'a pas besoin d'être bornée, et tout borner ferait un projet qu'on ne
+    met plus jamais à jour.
+    """
+    STRUCTURANTES = {"fastmcp"}          # son organisation interne est notre API
+    proj = tomllib.loads((RACINE / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    sans_plafond = []
+    for d in proj.get("dependencies", []):
+        nom = d.split("[")[0].split(">")[0].split("<")[0].split("=")[0].split("@")[0]
+        if nom.strip().lower() in STRUCTURANTES and "<" not in d:
+            sans_plafond.append(d)
+    assert not sans_plafond, (
+        "dépendance structurante sans borne haute :\n  " + "\n  ".join(sans_plafond)
+        + "\n→ poser un plafond. Sans lui, la CI installe la dernière version publiée "
+        "au moment où elle tourne, et une réorganisation amont casse toutes les "
+        "branches en même temps.")
