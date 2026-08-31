@@ -248,6 +248,32 @@ def test_les_deux_surfaces_servent_les_memes_noms():
                                            "can_delete_instructions"}
 
 
+_VERBES_ATTENDUS = {"can_write_instructions": {"PUT", "POST", "PATCH"},
+                    "can_delete_instructions": {"DELETE"}}
+
+
+@pytest.mark.parametrize("module", ["groups.guide", "orgs.instructions"])
+def test_chaque_drapeau_nomme_la_capacite_de_SON_verbe(module):
+    """Le cliquet ne peut pas vérifier seul qu'un drapeau nomme la BONNE capacité :
+    il compare le drapeau à la règle que le drapeau désigne, donc une table qui se
+    trompe de capacité reste cohérente avec elle-même.
+
+    Ce qui l'ancre, c'est le VERBE SERVI : le droit d'écrire doit nommer une capacité
+    montée en écriture, celui de supprimer une capacité montée en `DELETE`. Faire
+    pointer les deux vers `.set` — la correction tentante, celle qui « débloque »
+    l'écran d'un seul geste — afficherait un bouton de suppression que le serveur
+    refuse, et c'est ici que ça se voit."""
+    import importlib
+    mod = importlib.import_module(f"oto_mcp.capabilities.{module}")
+    for nom, cle in _drapeaux_declares(mod).items():
+        verbes = {b.verb for b in _cap(cle).rest_bindings()}
+        assert verbes, f"`{cle}` n'a aucune face REST : `{nom}` n'annonce rien de servi"
+        assert verbes <= _VERBES_ATTENDUS[nom], (
+            f"`{nom}` nomme `{cle}`, monté en {sorted(verbes)} — un droit annoncé doit "
+            f"nommer la capacité de SON verbe, sinon l'écran ouvre un geste que le "
+            f"serveur refuse")
+
+
 def test_le_bundle_dorg_sans_org_active_porte_TOUS_les_droits_a_faux(monde):
     """Sans org active, le bundle est un 200 tout vide — et ses droits doivent y être
     PRÉSENTS et faux, pas absents. Un champ manquant se lit `undefined` : un front le
