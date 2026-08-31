@@ -555,6 +555,8 @@ GET,HEAD /api/me/inbox -> _handler
 OPTIONS /api/me/inbox -> options_handler
 GET,HEAD /api/me/shell -> _handler
 OPTIONS /api/me/shell -> options_handler
+POST /api/me/nodes/edit -> _handler
+OPTIONS /api/me/nodes/edit -> options_handler
 GET,HEAD /api/me/nodes/{node_id} -> _handler
 OPTIONS /api/me/nodes/{node_id} -> options_handler
 GET,HEAD /api/me/nodes/{node_id}/rows -> _handler
