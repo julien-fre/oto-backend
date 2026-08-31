@@ -33,6 +33,22 @@ quatre opérations détruisent quelque chose ; toutes acceptent `dry_run=True`, 
 - `tally_workspace(op="delete")` et `op="delete_folder"` — emportent les formulaires contenus (corbeille, restaurables)
 - `tally_form(op="delete")` — corbeille, restaurable
 
+## note — un 401 de Tally ne veut PAS dire « clé invalide »
+
+c'est le piège le plus coûteux de cette API, relevé en live :
+- `GET /webhooks` rend **401 tant qu'aucun webhook n'a jamais été créé** sur le compte. Après une première création il rend 200 — et continue même après les avoir tous supprimés. Le 401 dit « l'intégration webhooks n'existe pas encore », pas « ta clé est mauvaise ».
+- `tally_form(op="blocks")` et `tally_workspace(op="create")` rendent 401 sur un plan **FREE** : c'est un gate de PLAN, pas d'authentification.
+
+le connecteur ne traduit donc plus ces 401-là en « clé rejetée » : il nomme les deux causes et renvoie vers `tally_account(op="me")`, qui tranche — s'il répond, la clé est bonne.
+
 ## note — état de vérification
 
-dérivé du spec OpenAPI 3.0.1 réel (`developers.tally.so/api-reference/openapi.json`, lu le 2026-08-31) : `required`, formes de corps, enums, bornes de `limit` (réponses et formulaires 1-500 défaut 50, webhooks 1-100 défaut 25), périodes d'analytics. **Pas encore testé en live** — aucune clé `tly-` n'était disponible à l'écriture. Restent à confirmer contre une vraie clé : la valeur par défaut de `tally-version`, la forme exacte des enveloppes de liste (`/webhooks`, `/workspaces/{id}/folders`, `/organizations/{id}/users` — tableau nu ou objet paginé, le spec ne trancheant pas partout), et le code de retour des `DELETE`.
+dérivé du spec OpenAPI 3.0.1 réel (`developers.tally.so/api-reference/openapi.json`, lu le 2026-08-31), **et testé en live le 2026-08-31** avec une vraie clé `tly-` sur un compte FREE.
+
+**exercé en vrai, conforme au code** : `op="me"` ; le cycle complet d'un formulaire (création → lecture → renommage → publication → corbeille) ; questions ; réponses (liste + `filter=partial`) ; les cinq vues d'analytics ; le cycle complet d'un webhook (création → liste → journal d'événements → PATCH fusionné → suppression) — y compris la vérification que `op="update"` avec le seul `is_enabled=False` **n'efface pas l'URL** ; le refus d'un argument non pertinent ; et le fait que `dry_run` n'écrit rien et n'échoe jamais le `signing_secret`. Le compte a été rendu à son état initial (0 formulaire, 0 webhook).
+
+**enveloppes relevées** (le spec ne les tranchait pas) : `/forms` et `/workspaces` rendent `{items, page, limit, total, hasMore}` ; `/webhooks` rend `{webhooks, …}` et **non** `items` ; `/forms/{id}/questions` rend `{questions, hasResponses}` ; `/organizations/{id}/users` et `.../invites` rendent un **tableau nu** ; les `PATCH`/`DELETE` de webhook rendent un **corps vide**.
+
+**NON exercé**, faute de plan ou de matière, et donc dérivé du spec seul : lecture/écriture des blocs (401 de plan), écriture d'espaces et tout ce qui touche aux dossiers (Pro), `update_question` (un formulaire fraîchement créé ne rend aucune question, même publié), lecture et suppression d'UNE réponse (aucune réponse sur le compte), invitations (enverrait de vrais emails), retrait d'un membre (retirerait le titulaire de sa propre org et révoquerait la clé de l'appel), rejeu d'un événement (aucun événement livré).
+
+**pièges de blocs** rencontrés à la création : un bloc `TITLE` ou `LABEL` ne doit pas partager son `groupUuid` avec un bloc d'input, et `TitlePayload` porte `html`, **pas** `title` (seul `FormTitlePayload` a les deux).

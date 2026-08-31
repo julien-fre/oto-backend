@@ -102,8 +102,28 @@ def _need(op: str, **required: Any) -> None:
         raise _bad(f"op={op!r} exige {', '.join('`' + m + '`' for m in missing)}.")
 
 
-def _upstream_message(e: Any) -> str:
+#: Endpoints qui répondent 401 quand la RESSOURCE n'existe pas encore ou que le
+#: plan ne l'ouvre pas — vérifié en live le 2026-08-31 sur un compte FREE :
+#: `GET /webhooks` rend 401 tant qu'aucun webhook n'a jamais été créé (puis 200,
+#: même après suppression de tous), `GET /forms/{id}/blocks` et `POST /workspaces`
+#: rendent 401 sur un plan FREE. Un 401 de Tally ne veut donc PAS dire « clé
+#: invalide » : le dire quand même envoie l'utilisateur retourner une clé saine.
+_AMBIGUOUS_401 = {
+    "webhook_list": "aucun webhook n'a encore jamais été créé sur ce compte "
+                    "(l'intégration webhooks naît au premier `op=\"create\"`), "
+                    "ou ton plan Tally ne l'ouvre pas",
+    "blocks": "la lecture des blocs n'est pas ouverte à ton plan Tally",
+    "workspace_write": "la gestion des espaces de travail exige un plan Tally Pro",
+}
+
+
+def _upstream_message(e: Any, context: Optional[str] = None) -> str:
     status = e.status_code
+    if status == 401 and context in _AMBIGUOUS_401:
+        return (f"Tally a répondu 401 sur cet appel. Deux causes possibles, et une seule "
+                f"est un problème de clé : soit {_AMBIGUOUS_401[context]} ; soit la clé "
+                "est réellement invalide (Tally : Settings → API keys). Vérifie d'abord "
+                "avec `tally_account(op=\"me\")` — s'il répond, la clé est bonne.")
     if status in (401, 403):
         return (f"Tally a rejeté la clé API (HTTP {status}) — vérifie la clé posée sur ce "
                 "connecteur (Tally : Settings → API keys). Rappel : une clé Tally est liée "
@@ -252,13 +272,13 @@ def register(mcp: FastMCP) -> None:
         key, _ = access.resolve_api_key("tally")
         return TallyClient(api_key=key)
 
-    def _run(fn):
+    def _run(fn, context: Optional[str] = None):
         try:
             return fn()
         except ValueError as e:
             raise _bad(str(e))
         except UpstreamHTTPError as e:
-            raise _bad(_upstream_message(e))
+            raise _bad(_upstream_message(e, context))
 
     # ================================================================
     # Formulaires, questions, blocs
@@ -352,7 +372,7 @@ def register(mcp: FastMCP) -> None:
             _need(op, form_id=form_id)
             _refuse_ignored(op, "il lit les blocs du formulaire",
                             page=page, limit=limit, blocks=blocks, settings=settings)
-            return _run(lambda: c.get_blocks(form_id))
+            return _run(lambda: c.get_blocks(form_id), "blocks")
 
         if op == "create":
             _need(op, blocks=blocks, status=status)
@@ -413,7 +433,7 @@ def register(mcp: FastMCP) -> None:
             _refuse_ignored(op, "il remplace les blocs", question_id=question_id,
                             title=title, name=name, status=status, page=page, limit=limit)
             if dry_run:
-                current = _run(lambda: c.get_blocks(form_id))
+                current = _run(lambda: c.get_blocks(form_id), "blocks")
                 n_before = len(current) if isinstance(current, list) else None
                 return {"dry_run": True, "current_available": n_before is not None,
                         "blocks_before": n_before, "blocks_after": len(blocks),
@@ -621,7 +641,7 @@ def register(mcp: FastMCP) -> None:
                             folder_id=folder_id, parent_id=parent_id, page=page)
             if dry_run:
                 return {"dry_run": True, "would_create": "workspace", "name": name}
-            return _run(lambda: c.create_workspace(name))
+            return _run(lambda: c.create_workspace(name), "workspace_write")
 
         if op == "update":
             _need(op, workspace_id=workspace_id, name=name)
@@ -848,7 +868,8 @@ def register(mcp: FastMCP) -> None:
             """Il n'existe pas de GET /webhooks/{id} : on pagine la liste."""
             seen_page = 1
             while seen_page <= 20:  # borne dure : 20 × 100 = 2000 webhooks
-                got = _run(lambda p=seen_page: c.list_webhooks(page=p, limit=100))
+                got = _run(lambda p=seen_page: c.list_webhooks(page=p, limit=100),
+                           "webhook_list")
                 items = got if isinstance(got, list) else (got or {}).get("webhooks") or []
                 for w in items:
                     if isinstance(w, dict) and w.get("id") == wid:
@@ -863,14 +884,15 @@ def register(mcp: FastMCP) -> None:
                             event_id=event_id, url=url, event_types=event_types,
                             signing_secret=signing_secret, http_headers=http_headers,
                             external_subscriber=external_subscriber, is_enabled=is_enabled)
-            return _run(lambda: c.list_webhooks(page=page, limit=limit))
+            return _run(lambda: c.list_webhooks(page=page, limit=limit), "webhook_list")
 
         if op == "events":
             _need(op, webhook_id=webhook_id)
             _refuse_ignored(op, "il lit le journal de livraison", event_id=event_id,
                             url=url, event_types=event_types, signing_secret=signing_secret,
                             http_headers=http_headers, is_enabled=is_enabled, limit=limit)
-            return _run(lambda: c.list_webhook_events(webhook_id, page=page))
+            return _run(lambda: c.list_webhook_events(webhook_id, page=page),
+                        "webhook_list")
 
         if op == "create":
             _need(op, form_id=form_id, url=url, event_types=event_types)

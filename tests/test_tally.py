@@ -354,3 +354,22 @@ def test_single_submission_envelope_is_singular_not_plural():
             op="get", form_id="F", submission_id="S1")
     assert len(out["submissions"]) == 1
     assert out["submissions"][0]["answers_by_title"]["SIREN"] == "552100554"
+
+
+# --- un 401 de Tally ne veut PAS dire « clé invalide » (vécu en live) -------------
+
+def test_ambiguous_401_does_not_blame_the_key():
+    """Live 2026-08-31, compte FREE : `GET /webhooks` rend 401 tant qu'aucun
+    webhook n'a jamais été créé (puis 200, même après en avoir supprimé tous),
+    et `GET /forms/{id}/blocks` rend 401 sur ce plan. Dire « clé rejetée »
+    envoie l'utilisateur retourner une clé parfaitement saine."""
+    from oto.tools.common.errors import UpstreamHTTPError
+    from oto_mcp.tools.tally import _upstream_message
+
+    e = UpstreamHTTPError(401, {"message": "..."}, service="tally")
+    for ctx in ("webhook_list", "blocks", "workspace_write"):
+        msg = _upstream_message(e, ctx)
+        assert "Deux causes possibles" in msg
+        assert 'tally_account(op="me")' in msg
+    # sans contexte, un 401 reste un 401 de clé
+    assert "rejeté la clé API" in _upstream_message(e, None)
