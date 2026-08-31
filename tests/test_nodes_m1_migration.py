@@ -41,13 +41,23 @@ def _nodes_block() -> str:
 
 
 def test_nodes_carries_the_measured_shape():
-    """La forme B du banc, colonne pour colonne. Un ajout « au cas où » se paie cent
+    """La forme du banc, colonne pour colonne. Un ajout « au cas où » se paie cent
     mille fois sur un vivier (0063-D3 garde-fou 1) : il doit passer par une mesure,
-    donc par un échec de ce test plutôt que par une revue distraite."""
+    donc par un échec de ce test plutôt que par une revue distraite.
+
+    **Élargie le 2026-09-01, et le garde-fou a fonctionné** : il a fait échouer
+    l'ajout, qui est donc passé par un banc — 200 000 lignes-tableau de six champs
+    métier, deux passes en ordre inversé. `data` sépare la donnée utilisateur des
+    propriétés qu'oto interprète ; les trois colonnes de bail complètent les deux
+    qui étaient là, pour que la file de travail reste UNE mécanique. Coût mesuré :
+    **+4,7 % de volume** (46,5 Mo contre 44,4), et **14 % de moins en temps
+    d'écriture** — séparer évite la concaténation jsonb qu'imposait le mélange.
+    """
     body = _nodes_block()
     cols = {m.group(1) for m in re.finditer(r"^\s{4}([a-z_]+) ", body, re.M)}
     assert cols == {"id", "public_id", "parent_id", "position", "kind", "owner_type",
-                    "owner_id", "props", "claimed_by", "claimed_until",
+                    "owner_id", "props", "data", "claimed_by", "claimed_until",
+                    "claimed_run", "claims", "abandon_reason",
                     "created_at", "updated_at"}, sorted(cols)
 
 

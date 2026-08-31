@@ -1103,6 +1103,42 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
         # passe interrompue ne laisse pas une sentinelle qui prétend qu'ils ont eu
         # lieu.
         _conn_sel.mark_split_fanout(conn)
+    # === Le nœud gagne sa DONNÉE et son BAIL (2026-09-01, ADR 0054/0063) ========
+    #
+    # **Pourquoi une colonne et pas une clé de `props`.** Jusqu'ici, un nœud-ligne
+    # rangeait ses valeurs métier dans `props`, à côté du titre, de la position et
+    # des marques de la recopie. Deux natures très différentes s'y mélangeaient :
+    # ce que le nœud EST pour la plateforme (titre, épingle, schéma d'enfants —
+    # des clés qu'oto connaît et interprète) et ce que l'utilisateur y a MIS (les
+    # colonnes de son tableau — des clés dont oto ne sait rien et qu'il ne doit
+    # pas interpréter). Les tenir dans le même sac, c'est laisser une donnée
+    # utilisateur nommée `title` ou `position` écraser le sens d'un nœud, et
+    # obliger toute lecture à connaître la liste des clés réservées pour trier.
+    # La frontière est celle du datastore (« oto gère les types standards, jamais
+    # l'interprétation métier d'une valeur ») : elle mérite une colonne, pas une
+    # convention de nommage.
+    #
+    # `ADD COLUMN` avec un `DEFAULT` constant ne réécrit pas la table (PG >= 11) :
+    # instantané, aucun verrou long, aucun backfill — la base est partagée avec la
+    # production.
+    conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS data JSONB NOT NULL "
+                 "DEFAULT '{}'::jsonb")
+    # Le bail de la file de travail : `nodes` en portait DEUX colonnes sur cinq
+    # (posées à la création de la table, sans lecteur), `datastore_rows` les cinq.
+    # Un verrou qui ne sait pas sous quel run une ligne est réservée, ni combien de
+    # fois elle a été reprise, ni pourquoi elle a été abandonnée, n'est pas le même
+    # verrou — c'est celui d'avant les deux corrections qui l'ont rendu sûr
+    # (le run qui libère ses baux, le plafond de reprises). Les trois manquantes se
+    # posent ici pour que la file soit UNE mécanique servant deux tables, et non
+    # deux mécaniques qui divergeront au premier correctif appliqué d'un seul côté.
+    conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claimed_run TEXT")
+    conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claims INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS abandon_reason TEXT")
+    # ⚠️ **Pas d'index de bail ici**, et c'est délibéré : le chemin de réservation
+    # lit encore `datastore_rows`. Un index sur un prédicat que personne
+    # n'interroge est un coût d'écriture pur, et sa forme utile dépend d'un
+    # arbitrage de contrat (toute forme indexable en partiel change l'ordre
+    # observable de la file). Il se posera avec la requête qui le justifie.
     # === La RECOPIE au boot est ARRÊTÉE (2026-09-01, ADR 0054/0063) ===
     # Cinq conversions tournaient ici à chaque démarrage — projets, pages,
     # procédures, tableaux, lignes — et déposaient dans `nodes` une IMAGE des
