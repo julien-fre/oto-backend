@@ -9,8 +9,8 @@ Ce que ces tests figent :
 
 - le silence est **dérivé**, jamais stocké (pas de démon, pas de colonne d'état qui
   pourrait mentir à son tour) ;
-- le seuil vient de la mesure : aucun run silencieux entre 1 jour et 1 mois, donc 48 h
-  ne marque aucune population à tort ;
+- le seuil est **24 h**, et il vient du recensement du 31/08 (#666) — pas d'un avis, et
+  surtout pas de la phrase fausse qui l'accompagnait ;
 - le vocabulaire de clôture a **une seule source**, et cette source est celle de l'ADR.
 """
 from __future__ import annotations
@@ -31,14 +31,28 @@ def _il_y_a(**kw) -> datetime:
 # --- le seuil, exercé de part et d'autre ---------------------------------------
 
 @pytest.mark.parametrize("heures, muet", [
-    (0, False), (1, False), (24, False),
-    (47, False),        # la veille de la bascule : encore « en cours »
-    (48, False),        # pile au seuil : pas encore (strictement supérieur)
-    (49, True),         # au-delà : muet
-    (24 * 30, True),    # le cas réel le plus ancien du recensement
+    (0, False), (1, False), (6, False),
+    (23, False),        # la veille de la bascule : encore « en cours »
+    (24, False),        # pile au seuil : pas encore (strictement supérieur)
+    (25, True),         # au-delà : muet
+    (48, True),         # l'ancien seuil est désormais franchement dedans
+    (24 * 26, True),    # le silence le plus long mesuré le 31/08 : 26 j 21 h
 ])
-def test_le_silence_bascule_a_48h(heures, muet):
+def test_le_silence_bascule_a_24h(heures, muet):
     assert run_status.is_stale(None, _il_y_a(hours=heures), now=MAINTENANT) is muet
+
+
+def test_le_seuil_est_de_24h_et_la_mesure_le_DOMINE():
+    """TRIPWIRE sur le nombre lui-même — c'est la seule chose de ce module qu'un avis
+    pourrait déplacer sans qu'on s'en aperçoive.
+
+    Recensement du 31/08/2026 (10 755 runs) : la bande **6-24 h est vide**, donc tout
+    seuil qui s'y pose rend le même verdict — 5 runs vivants, 143 silencieux. Et le
+    risque de couper du vivant est **identique** à 24 h et à 48 h : sur les 10 722 runs
+    à deux appels ou plus, les 2 seuls dont le plus grand silence INTERNE dépasse 24 h
+    sont les 2 mêmes qui dépassent 48 h. À risque égal, on prend le seuil qui nomme le
+    plus de runs muets."""
+    assert run_status.STALE_AFTER == timedelta(hours=24)
 
 
 def test_un_run_CLOS_nest_jamais_muet():

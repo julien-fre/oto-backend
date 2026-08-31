@@ -253,8 +253,8 @@ def my_runs(sub: str, limit: int = 20, *, open_only: bool = False) -> list[dict]
     n'ouvre aucun accès qui n'existait pas.
 
     `open_only` = les runs sans fait de clôture (`outcome IS NULL`), c'est-à-dire ceux
-    qui restent à refermer. Le silence de 48 h n'est PAS filtré ici : il se dérive à
-    la lecture (`run_status`), et un run muet est justement un run à clore.
+    qui restent à refermer. Le silence (24 h depuis #666) n'est PAS filtré ici : il se
+    dérive à la lecture (`run_status`), et un run muet est justement un run à clore.
     """
     limit = max(1, min(int(limit), 200))
     # Le filtre porte sur la COLONNE DÉRIVÉE de la CTE (`j.outcome`), jamais sur les
