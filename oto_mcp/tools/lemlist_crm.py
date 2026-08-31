@@ -556,11 +556,17 @@ def register(mcp: FastMCP) -> None:
                 page=page, limit=limit, type=watch_type, status=status)}
         elif op == "create":
             _need(name=name, watch_type=watch_type)
-            result = client.create_watch_list(
-                name, type=watch_type, filters=filters, emoji=emoji,
-                signal_processing_type=signal_processing_type, activate=activate,
-                segment_type=segment_type,
-                signal_opportunity_template=opportunity_template)
+            # Mêmes précautions : `segment_type`, `signal_processing_type` et
+            # `activate` ont des défauts côté client parce que l'API les EXIGE
+            # (cf. les écarts relevés en live). Les passer à None ferait
+            # exactement l'erreur qu'ils servent à éviter — on les omet.
+            result = client.create_watch_list(name, type=watch_type, **{
+                k: v for k, v in (
+                    ("filters", filters), ("emoji", emoji),
+                    ("signal_processing_type", signal_processing_type),
+                    ("activate", activate), ("segment_type", segment_type),
+                    ("signal_opportunity_template", opportunity_template),
+                ) if v is not None})
         elif op == "update":
             _need(watch_list_id=watch_list_id, settings=settings)
             result = client.update_watch_list(watch_list_id, settings)

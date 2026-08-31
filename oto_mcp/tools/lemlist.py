@@ -906,8 +906,13 @@ def register(mcp: FastMCP) -> None:
         elif op == "export_leads":
             if not campaign_id:
                 raise _bad("`campaign_id` requis")
-            exported = client.export_campaign_leads(
-                campaign_id, state=state, format=format)
+            # `state`/`format` OMIS quand ils ne sont pas demandés : le client
+            # a des défauts qui comptent (`state="all"`, sans quoi lemlist rend
+            # une liste vide qui se lit « pas de leads »), et passer None les
+            # écraserait. Un défaut client ne survit pas à un None explicite.
+            exported = client.export_campaign_leads(campaign_id, **{
+                k: v for k, v in (("state", state), ("format", format))
+                if v is not None})
             result = exported if isinstance(exported, dict) else {"leads": exported}
 
         else:

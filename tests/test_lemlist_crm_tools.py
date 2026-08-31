@@ -311,3 +311,37 @@ def test_creer_une_tache_exige_le_record_id():
         tool.fn(op="create", task_type="manual", assigned_to="usr_1",
                 due_date="2026-09-05", record_id="ctc_1")
         assert inst.create_task.call_args.kwargs["record_id"] == "ctc_1"
+
+
+def test_creer_une_watchlist_minimale_nenvoie_pas_de_None():
+    """Le client a des défauts parce que l'API EXIGE ces champs ; les passer à
+    None depuis le tool rétablirait le 400 qu'ils évitent. Vérifié sur l'appel
+    SORTANT, seul endroit où ça se voit — le live est passé par le client."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        _tool("lemlist_watchlist").fn(op="create", name="Levées",
+                                      watch_type="companyRaisedFunds")
+
+        kwargs = inst.create_watch_list.call_args.kwargs
+        for absent in ("segment_type", "signal_processing_type", "activate",
+                       "filters", "emoji", "signal_opportunity_template"):
+            assert absent not in kwargs, f"{absent} passé à None"
+        assert kwargs == {"type": "companyRaisedFunds"}
+
+
+def test_exporter_les_leads_nenvoie_pas_state_None():
+    """Même piège : `state=None` écraserait le défaut `all` du client, et
+    l'export rendrait la liste vide qui se lit « pas de leads »."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        inst.export_campaign_leads.return_value = []
+        _tool("lemlist_campaign", "lemlist").fn(op="export_leads",
+                                                campaign_id="cam_1")
+
+        assert inst.export_campaign_leads.call_args.kwargs == {}
+
+        _tool("lemlist_campaign", "lemlist").fn(
+            op="export_leads", campaign_id="cam_1", state="scanned")
+        assert inst.export_campaign_leads.call_args.kwargs == {"state": "scanned"}

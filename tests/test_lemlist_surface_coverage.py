@@ -225,3 +225,81 @@ def test_les_exceptions_de_parametres_visent_des_parametres_reels():
         if fn is None or param not in inspect.signature(fn).parameters:
             perimes.append(f"{meth}.{param}")
     assert not perimes, f"exception(s) sur un paramètre inexistant : {perimes}"
+
+
+# --------------------------------------------------------------------------- #
+# Étage du DÉFAUT : transmettre un paramètre ne suffit pas non plus
+# --------------------------------------------------------------------------- #
+#
+# Troisième variante de la même famille, et la plus discrète : le paramètre est
+# bien transmis — mais à `None`, ce qui ÉCRASE le défaut du client. Or plusieurs
+# de ces défauts ne sont pas du confort : ils compensent des exigences de l'API
+# relevées en live (`segmentType`/`signalProcessingType`/`activate` obligatoires
+# sur une watch list, `state="all"` sans quoi un export rend une liste vide qui
+# se lit « pas de leads »). Un `None` explicite rétablit donc exactement le bug
+# que le défaut évite.
+#
+# L'inventaire de PARAMÈTRES ci-dessus est structurellement aveugle à ça : il
+# prouve qu'un paramètre est transmis, pas que le transmettre à None est sûr.
+# Convention qui en découle, et que ce test tient : **un tool construit ses
+# kwargs et retire les None** plutôt que de passer None à un client qui a un
+# vrai défaut.
+
+
+def test_aucun_tool_n_ecrase_un_defaut_client_par_None():
+    import ast
+
+    from oto.tools.lemlist import LemlistClient
+    from oto_mcp.tools import lemlist, lemlist_crm
+
+    # Paramètres client dont le défaut porte une VALEUR (ni None ni sentinelle).
+    porteurs: dict[str, set[str]] = {}
+    for name in dir(LemlistClient):
+        if name.startswith("_"):
+            continue
+        fn = getattr(LemlistClient, name)
+        if not callable(fn):
+            continue
+        try:
+            sig = inspect.signature(fn)
+        except (TypeError, ValueError):
+            continue
+        vals = {p.name for p in sig.parameters.values()
+                if p.default is not p.empty and p.default is not None}
+        if vals:
+            porteurs[name] = vals
+
+    fautes = []
+    for module in (lemlist, lemlist_crm):
+        tree = ast.parse(inspect.getsource(module))
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            # Les arguments de CE tool qui valent None par défaut.
+            nullables = set()
+            args, defaults = fn.args.args, fn.args.defaults
+            for arg, default in zip(args[len(args) - len(defaults):], defaults):
+                if isinstance(default, ast.Constant) and default.value is None:
+                    nullables.add(arg.arg)
+            for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
+                if isinstance(default, ast.Constant) and default.value is None:
+                    nullables.add(arg.arg)
+            for node in ast.walk(fn):
+                if not (isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)):
+                    continue
+                base = node.func.value
+                if not (isinstance(base, ast.Name) and base.id == "client"):
+                    continue
+                for kw in node.keywords:
+                    if (kw.arg in porteurs.get(node.func.attr, set())
+                            and isinstance(kw.value, ast.Name)
+                            and kw.value.id in nullables):
+                        fautes.append(
+                            f"{fn.name} → client.{node.func.attr}"
+                            f"({kw.arg}={kw.value.id})")
+
+    assert not fautes, (
+        f"{len(fautes)} passage(s) d'un None explicite sur un paramètre à défaut "
+        f"signifiant : {sorted(set(fautes))}. Construis les kwargs et retire les "
+        "None — sinon le défaut du client ne sert à rien.")
