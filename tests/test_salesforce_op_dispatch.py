@@ -24,8 +24,7 @@ import inspect
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.tools import salesforce as S
 
 # Toutes les méthodes du client qui MODIFIENT le CRM. Sert de témoin de mutisme :

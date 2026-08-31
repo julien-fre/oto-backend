@@ -9,8 +9,7 @@ existe), ligne absente = McpError SANS fallback, ref d'un autre provider = ignor
 import asyncio
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, call_axes, credentials_store, group_store, instance_refs, roles, session_org
 
 

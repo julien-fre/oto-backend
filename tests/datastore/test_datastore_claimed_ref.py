@@ -235,7 +235,7 @@ def test_release_accepts_the_alias_with_its_worker_guard(monkeypatch):
 def test_an_unresolvable_alias_comes_back_ACTIONABLE_not_as_an_internal_error(monkeypatch):
     """Le refus est la moitié utile du mécanisme : il doit traverser la surface
     avec son texte. Un « erreur interne » à la place a déjà coûté une campagne."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     st = _StoreEspion(boum=ClaimedRefUnresolved(
         "`@claimed` : ton travail ne tient rien dans `edition-vivier` — sa "
         "réservation porte sur `copie-eval-palier100`."))
@@ -252,8 +252,7 @@ def test_row_not_found_names_the_expected_shape_and_what_the_run_holds(monkeypat
     peut encore corriger. Lui dire « introuvable » et rien d'autre le laisse
     réessayer sans identifiant — et créer une ligne. On lui donne donc les deux
     choses qui manquent : à quoi ressemble un identifiant, et ce qu'il tient déjà."""
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     class _StoreIntrouvable(_StoreEspion):
         def update_row(self, namespace, row_id, row):
             raise RowNotFound()
@@ -277,8 +276,7 @@ def test_row_not_found_names_the_expected_shape_and_what_the_run_holds(monkeypat
 def test_the_hint_never_masks_the_refusal_when_it_cannot_be_built(monkeypatch):
     """Une piste est un bonus. Si la calculer échoue, le refus doit sortir quand
     même — sinon on remplacerait « introuvable » par une erreur interne."""
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     from oto_mcp.datastore.core import RowNotFound
 
     class _StoreCassé(_StoreEspion):
@@ -354,7 +352,7 @@ def test_claimed_glisse_dans_row_est_REFUSE_en_nommant_la_faute(monkeypatch):
     """⚠️ Jamais « inconnu » sur un jeton que l'outil reconnaît : c'est ce qui a coûté
     deux écritures. Un refus qui dit « inconnu » envoie chercher une faute de frappe
     là où il n'y en a pas."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     outil = _monte(monkeypatch, "data_write", _StoreEspion())
     with pytest.raises(McpError) as e:
         _appel(outil, namespace="ns", row={"siren": CLAIMED})

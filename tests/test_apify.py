@@ -107,7 +107,7 @@ def test_run_sync_forwards_cost_guards():
 
 def test_sync_timeout_points_to_the_async_path():
     """408 = le run dépasse 300 s : le message doit nommer la sortie de secours."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto.tools.common.errors import UpstreamHTTPError
 
     key, cls = _with_fake_client()

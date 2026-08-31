@@ -21,9 +21,7 @@ import inspect
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
-
+from oto_mcp.mcp_errors import McpError
 # Surface amont réellement consommée par le connecteur, par proxy FOD. Aucune de
 # ces méthodes n'écrit (elles tapent des API open data en GET/POST de requête) —
 # c'est l'allowlist que `test_no_op_reaches_a_non_read_method` oppose au dispatch.

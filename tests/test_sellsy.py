@@ -137,7 +137,7 @@ def test_documents_share_one_tool_and_map_to_their_resource():
 
 
 def test_unknown_document_kind_is_rejected():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     creds, cls = _with_fake_client()
     with creds, cls:
         with pytest.raises(McpError, match="kind"):
@@ -147,7 +147,7 @@ def test_unknown_document_kind_is_rejected():
 def test_validate_and_status_are_not_offered_on_every_document():
     """`validate` (facture/avoir) et `status` (devis) ne sont pas interchangeables :
     laisser passer l'un pour l'autre produirait un 404 opaque côté Sellsy."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     creds, cls = _with_fake_client()
     with creds, cls as client_cls:
         inst = client_cls.return_value
@@ -204,7 +204,7 @@ def test_ref_resolves_pipeline_steps_under_their_pipeline():
 
 
 def test_ref_rejects_an_unknown_kind():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     creds, cls = _with_fake_client()
     with creds, cls:
         with pytest.raises(McpError, match="kind"):
@@ -212,7 +212,7 @@ def test_ref_rejects_an_unknown_kind():
 
 
 def test_missing_required_argument_says_which_one():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     creds, cls = _with_fake_client()
     with creds, cls:
         with pytest.raises(McpError, match="record_id"):
@@ -222,7 +222,7 @@ def test_missing_required_argument_says_which_one():
 
 
 def test_unknown_op_lists_the_accepted_ones():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     creds, cls = _with_fake_client()
     with creds, cls:
         with pytest.raises(McpError, match="op inconnu"):
@@ -246,7 +246,7 @@ def test_dry_run_maps_to_the_api_validation_flag():
 def test_upstream_403_becomes_an_actionable_tool_error():
     """Un scope manquant se voit à l'APPEL, pas à la connexion : le message doit
     envoyer vers les droits de l'accès API, pas vers un 403 nu."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto.tools.common.errors import UpstreamHTTPError
 
     creds, cls = _with_fake_client()
@@ -258,7 +258,7 @@ def test_upstream_403_becomes_an_actionable_tool_error():
 
 
 def test_upstream_429_mentions_the_quota_windows():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto.tools.common.errors import UpstreamHTTPError
 
     creds, cls = _with_fake_client()

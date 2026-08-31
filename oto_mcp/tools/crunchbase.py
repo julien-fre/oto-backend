@@ -27,7 +27,7 @@ from typing import Optional
 from urllib.parse import quote, urlencode
 
 from fastmcp import Context, FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 
 from .. import access, browser_session, browserbase

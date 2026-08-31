@@ -18,8 +18,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Méthodes d'écriture/suppression du TasksClient : sur CHAQUE op, celles qui ne sont
 # pas la cible attendue doivent rester muettes.
 _DANGEROUS = ("create_task", "update_task", "complete_task", "delete_task",

@@ -40,7 +40,7 @@ from urllib.parse import urljoin, urlsplit
 
 import requests
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import INVALID_REQUEST, ErrorData
 
 from .. import access, browserbase, url_perimeter

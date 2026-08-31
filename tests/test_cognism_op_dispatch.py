@@ -15,8 +15,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Les méthodes du client qui FACTURENT (reveal). Toute op doit les laisser muettes,
 # sauf celle qui les demande explicitement.
 _BILLED = ("redeem_contacts", "redeem_accounts")

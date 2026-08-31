@@ -6,8 +6,7 @@ data_center zoho…). `credentials_store.split_secret_config` sépare un dict un
 """
 import pytest
 
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, credentials_store, providers
 
 

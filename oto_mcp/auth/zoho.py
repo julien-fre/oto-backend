@@ -41,8 +41,7 @@ import logging
 import urllib.parse
 from typing import Optional
 
-from mcp.shared.exceptions import McpError
-
+from ..mcp_errors import McpError
 from .. import access, credentials_store, providers
 from . import flow as oauth_flow
 

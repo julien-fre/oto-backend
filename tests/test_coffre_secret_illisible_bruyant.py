@@ -17,7 +17,7 @@ import base64
 import json
 
 import pytest
-from mcp.shared.exceptions import McpError
+from oto_mcp.mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from oto_mcp import credentials_store

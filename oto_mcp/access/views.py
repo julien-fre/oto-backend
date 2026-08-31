@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import providers, credentials_store, db, org_store

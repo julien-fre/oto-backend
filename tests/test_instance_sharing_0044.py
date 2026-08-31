@@ -7,8 +7,7 @@ VRAIE logique (get_instance_sharing mocké avec des données), pas le fail-safe 
 import types
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, credentials_store, group_store, roles, instance_refs, db, providers
 from oto_mcp.capabilities.connectors import sharing as connectors_sharing
 from oto_mcp.capabilities._types import AuthzDenied

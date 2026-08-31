@@ -183,8 +183,7 @@ def test_enrich_forwards_identity_and_actions():
 
 
 def test_enrich_without_any_action_fails_locally():
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value
@@ -198,8 +197,7 @@ def test_enrich_without_any_action_fails_locally():
 
 
 def test_enrich_lead_without_any_action_fails_locally():
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value
@@ -289,8 +287,7 @@ def test_enrich_bulk_maps_actions_to_the_v2_vocabulary():
 
 
 def test_enrich_bulk_rejects_unknown_or_missing_actions():
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         inst = client_cls.return_value

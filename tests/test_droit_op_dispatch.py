@@ -22,8 +22,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Importés pour que `monkeypatch.setattr("oto_mcp.fod.<corpus>", …)` ait une cible :
 # les tools font `from ..fod import ccn` À L'APPEL, donc c'est l'attribut du PAQUET
 # qui est lu (et donc celui qu'on remplace).
