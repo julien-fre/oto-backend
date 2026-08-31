@@ -331,3 +331,30 @@ def test_un_CSV_a_en_tetes_ordinaires_est_traduit_ET_ANNONCE(table):
     assert res["entetes_traduits"] == {"N.SIREN": "N_SIREN"}
     assert "`N.SIREN` → `N_SIREN`" in res["entetes_traduits_hint"]
     assert "N_SIREN" in _colonnes(ns_id) and "N.SIREN" not in _colonnes(ns_id)
+
+
+def test_aller_retour_sur_un_champ_a_ORIGINE_SYSTEME(table):
+    """⚠️ L'interaction qui casserait le lot en production sans qu'un test du lot le
+    dise. Un champ `origine: system` (#586) refuse qu'on lui écrive son origine — et la
+    lecture sert justement `champ.origine`. Le rangement DOIT donc passer avant le refus
+    des champs réservés : sinon celui-ci jugerait une adresse (`champ.origine`, qu'il ne
+    reconnaît pas) au lieu d'une couche, et laisserait passer ce qu'il doit voir.
+
+    Réémise à l'identique, l'origine système est un no-op (#623/#625) ; CHANGÉE, elle
+    est refusée. Les deux dans le même test, parce que c'est la paire qui prouve que le
+    refus regarde bien la bonne chose."""
+    from oto_mcp.datastore.core import RowValidationError
+    st, ns, ns_id = table
+    st.set_schema(ns, {**SCHEMA, "fields": SCHEMA["fields"]
+                       + [{"key": "score", "type": "number", "origine": "system"}]})
+    row = st.append_row(ns, {"siren": "1", "score": 12})
+    st.update_row(ns, row["_id"], {"score": 13})   # c'est la MODIF qui capture
+    lu = st.list_rows(ns)[0]
+    assert lu["score.origine"] == 12, "la plateforme a posé l'origine, elle est SERVIE"
+
+    st.append_row(ns, _tel_quel(lu))                       # réémission à l'identique
+    assert _sans_horodatage(st.list_rows(ns)[0]) == _sans_horodatage(lu)
+
+    with pytest.raises(RowValidationError) as e:
+        st.update_row(ns, lu["_id"], {"score.origine": "moi"})
+    assert "score" in str(e.value), "changer l'origine système reste refusé"
