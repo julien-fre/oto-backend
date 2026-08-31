@@ -23,6 +23,22 @@ from .. import access, db, group_store, roles, tenancy
 from ._types import AuthzDenied, RawCtx, ResolvedCtx
 
 
+def _refus_org_admin(org_id) -> AuthzDenied:
+    """LE refus « il faut être administrateur de cette org » — une seule phrase.
+
+    Il s'écrivait à quatre endroits sous **deux** formulations : « de ton org active »
+    et « de l'org #N ». Même mur, deux phrases — et un appelant en déduit deux causes.
+    Relevé au journal (#681) : entre deux refus, un appelant a changé deux fois de
+    stratégie en dix minutes, croyant que le second refus disait autre chose que le
+    premier. Il cherchait, lui, un palier d'écriture autre que l'org.
+
+    La phrase NOMME l'org : « ton org active » oblige à deviner laquelle, et c'est
+    précisément l'ambiguïté qui fait retenter au lieu de comprendre.
+    """
+    return AuthzDenied(403, "forbidden",
+                       f"Réservé à un administrateur de l'org #{org_id}.")
+
+
 def _require_sub(raw: RawCtx) -> str:
     if not raw.sub:
         raise AuthzDenied(401, "auth_required", "Authentification requise.")
@@ -125,7 +141,7 @@ def ORG_ADMIN(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
         raise AuthzDenied(400, "no_active_org",
                           "Aucune org active — choisis-en une avec oto_use_org.")
     if not roles.is_org_admin(sub, org_id):
-        raise AuthzDenied(403, "forbidden", "Réservé à un org_admin de ton org active.")
+        raise _refus_org_admin(org_id)
     return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
 
 
@@ -250,7 +266,7 @@ def ORG_ADMIN_OF(field: str):
         sub = _require_sub(raw)
         org_id = _field_int(inp, field, "missing_org", field)
         if not roles.is_org_admin(sub, org_id):
-            raise AuthzDenied(403, "forbidden", f"Réservé à un org_admin de l'org #{org_id}.")
+            raise _refus_org_admin(org_id)
         return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
     return rule
 
@@ -314,7 +330,7 @@ def ORG_ADMIN_OPT(field: str):
         if explicit is not None:
             org_id = int(explicit)
             if not roles.is_org_admin(sub, org_id):
-                raise AuthzDenied(403, "forbidden", f"Réservé à un org_admin de l'org #{org_id}.")
+                raise _refus_org_admin(org_id)
             return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
         org_id = access.current_org(sub)
         if org_id is None:
@@ -322,7 +338,7 @@ def ORG_ADMIN_OPT(field: str):
                               "Aucune org active — choisis-en une avec oto_use_org, "
                               "ou passe `org` explicitement.")
         if not roles.is_org_admin(sub, org_id):
-            raise AuthzDenied(403, "forbidden", "Réservé à un org_admin de ton org active.")
+            raise _refus_org_admin(org_id)
         return ResolvedCtx(sub=sub, org_id=org_id, role=access.get_user_role(sub))
     return rule
 
