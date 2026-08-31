@@ -141,9 +141,16 @@ groupe (hors FK) sont purgés explicitement par `delete_group`.
   métier annote la procédure qu'il déroule, sans être ni administrateur de toute l'org
   ni chef de son équipe. Les deux transports écrivent la même ligne : leurs gardes se
   déplacent ensemble.
-  ⚠️ `can_edit` (bundle `list`) reste `can_admin_group` : il dit le droit
-  d'ADMINISTRER (readme d'équipe, suppression), et **sous-estime** désormais le droit
-  d'écrire une procédure.
+  ⚠️ Le bundle `list` sert **trois** droits, et il faut lire le bon : `can_edit` =
+  `can_admin_group`, le droit d'ADMINISTRER l'équipe (readme, membres, secrets,
+  suppression) — inchangé ; `can_write_instructions` et `can_delete_instructions` = les
+  droits sur les PROCÉDURES, un par verbe. Les boutons d'une procédure se conditionnent
+  aux deux derniers : `can_edit` sous-estimait l'écriture (`false` à une membre qui
+  pouvait écrire) et l'élargir aurait affiché un bouton de suppression que le serveur
+  refuse. Les mêmes deux noms sont servis par `GET /api/me/instructions` au palier org
+  (où ils valent tous deux `org_admin` aujourd'hui), pour qu'un écran factorisé lise le
+  même champ sur les deux pages. Chaque drapeau est calculé par la règle d'autz
+  **déclarée** par la capacité qu'il nomme, jamais par une copie du critère.
 
 ### `/api/me`
 

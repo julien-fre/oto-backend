@@ -73,9 +73,27 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
   pour supprimer — **même partage que la console**, sinon « qui peut annoter » deviendrait
   une propriété du transport). `scope`/`group` sont des axes de la CONSOLE MCP seulement —
   les publier dans le corps d'une route qui les refuserait décrirait une porte qui n'existe
-  pas. ⚠️ `GroupInstructionsBundle.can_edit` est resté le droit d'ADMINISTRER : il rend
-  `false` à un membre qui a pourtant le droit d'écrire — le champ doit se dédoubler côté
-  front, sa valeur ne doit pas s'élargir (elle garde aussi le readme d'équipe).
+  pas.
+
+  **Deux gardes ⟹ deux droits SERVIS** (01/09/2026, suite de #695). `can_edit` est resté
+  le droit d'ADMINISTRER (readme d'équipe, membres, secrets, suppression) et rendait
+  `false` à une membre qui avait pourtant le droit d'écrire : une porte fermée à tort.
+  L'élargir en aurait ouvert une autre — le bouton de suppression, que le serveur refuse.
+  Le sens s'est donc **dédoublé** : `can_write_instructions` (écrire/restaurer) et
+  `can_delete_instructions` (supprimer) sont servis **à côté** de `can_edit`, dont ni la
+  valeur ni le sens ne bougent. Mêmes deux noms sur les **deux** bundles de la famille
+  (`GET /api/groups/{id}/instructions` et `GET /api/me/instructions`) : les servir d'un
+  seul côté remettrait « qui peut annoter » dans les mains de la page.
+
+  ⚠️ **Le drapeau et le refus sont la MÊME fonction.** Chaque droit annoncé NOMME la
+  capacité dont il rend la règle (`_DROITS_SERVIS`), et le bundle exécute cette règle
+  d'autz déclarée — `_authz.capacite_autorise`, qui ne lance jamais le handler. Aucun
+  critère n'est recopié dans le handler du bundle : déplacer une garde déplace son
+  drapeau avec elle. C'est le défaut d'origine, et il ne se reconstruit pas un cran plus
+  loin. Cliquets : `tests/test_droits_procedure_servis_695.py` (le drapeau vaut ce que
+  fait la règle, pour chaque acteur ; et chaque nom de drapeau doit nommer la capacité
+  de SON verbe — sans quoi une table qui se trompe de capacité resterait cohérente avec
+  elle-même).
 - **Versioning** : chaque écriture incrémente `version` (sur le courant) et archive un snapshot
   append-only. Revert = re-poser le corps d'une version → nouvelle version (jamais d'effacement
   d'historique sauf `delete`).
