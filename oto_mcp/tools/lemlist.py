@@ -1,11 +1,29 @@
-"""Lemlist — campagnes, séquences, leads, stats, lead lifecycle et enrichissement.
+"""Lemlist — campagnes, séquences, plannings, leads, stats et enrichissement.
 
-Volontairement borné : `lemlist_create_lead`/`lemlist_launch_lead`/
-`lemlist_add_lead_variables` exposent la création + le lancement d'un lead et
-la pose de ses variables — mais pas créer/pauser une campagne ni supprimer un
-lead. Un mauvais call LLM peut là aussi déclencher un envoi involontairement,
-donc ce périmètre reste la porte d'entrée écrite minimale ; le reste passe par
-l'UI Lemlist.
+Le connecteur savait LIRE une campagne et y poser des leads ; il ne savait pas
+en conduire une. `lemlist_campaign`, `lemlist_campaign_start`,
+`lemlist_sequence` et `lemlist_schedule` ferment ce trou : créer et régler une
+campagne, écrire sa séquence pas à pas, tenir ses fenêtres d'envoi, la valider,
+la démarrer, la mettre en pause, la dupliquer, la mesurer.
+
+La borne n'a pas disparu, elle s'est DÉPLACÉE là où elle mord vraiment : sur ce
+qui met des messages sur le fil, pas sur l'écriture en général. Deux gestes le
+font — `lemlist_campaign_start` (lemlist déroule la séquence pour tous les leads
+lancés) et `lemlist_launch_lead` (un lead sort de la revue). Les deux sont
+masqués par défaut (`DEFAULT_HIDDEN_TOOLS`, self-activables). Tout le reste —
+créer, régler, dupliquer, pauser, planifier — travaille sur un BROUILLON et
+n'envoie rien.
+
+C'est ce grain-là qui a dicté le découpage : `DEFAULT_HIDDEN_TOOLS` a le grain du
+TOOL, pas de l'`op`. `start` en `lemlist_campaign(op="start")` serait rentré dans
+un tool visible et aurait dégondé la borne en silence — d'où un tool nu pour lui
+seul.
+
+Corollaire, et c'est le point le moins évident du module : `autoReview` /
+`autoReviewConditions` sont REFUSÉS sur `create` et `update`. Ce réglage lance
+tout lead dès son ajout, donc il transformerait `lemlist_create_lead` — visible,
+et visible PARCE QU'il n'envoie rien — en chemin d'envoi, sans qu'aucun tool
+masqué soit appelé. Il se règle dans l'UI lemlist.
 
 L'enrichissement (`lemlist_enrich`, `lemlist_enrich_lead`) n'envoie rien — mais
 il DÉPENSE des crédits lemlist à chaque action. D'où la même borne, prise
@@ -25,13 +43,15 @@ donc user key obligatoire.
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Optional
+import datetime as _dt
+from typing import Literal, Optional
 
 from fastmcp import FastMCP
 from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
+from ..output_projection import project
 
 #: Vocabulaire d'actions du bulk v2 de lemlist. Volontairement écrit à la main :
 #: ce n'est PAS un snake_case des flags v1 — la vérification d'email s'appelle
@@ -43,6 +63,65 @@ BULK_ACTIONS = {
     "linkedin_enrichment": "linkedin_enrichment",
     "find_phone": "find_phone",
 }
+
+
+#: Les DEUX réglages de campagne qui dissolvent la revue manuelle : avec eux, un
+#: lead créé part TOUT DE SUITE. Le modèle de sûreté du connecteur repose sur
+#: l'inverse — `lemlist_create_lead` est visible parce qu'il n'envoie rien, et
+#: seul `lemlist_launch_lead` (masqué par défaut) déclenche l'envoi. Les laisser
+#: passer ici transformerait un tool visible en chemin d'envoi, sans que rien ne
+#: le signale. Refusés au bord, pas filtrés en silence.
+AUTO_REVIEW_KEYS = ("autoReview", "autoReviewConditions")
+
+#: Plancher de la fenêtre de stats. Les deux dates sont OBLIGATOIRES côté lemlist
+#: et un agent qui veut « les stats de la campagne » n'en a aucune en tête : ce
+#: plancher précède lemlist lui-même, donc il vaut « depuis toujours ».
+STATS_EPOCH = "2015-01-01T00:00:00.000Z"
+
+#: Détail rendu sur `full=True` seulement — un `steps` par étape de séquence et
+#: un `perChannel` par canal, là où la question courante tient dans les compteurs
+#: de tête.
+STATS_DETAIL = ("steps", "perChannel")
+
+
+def _bad(msg: str) -> McpError:
+    return McpError(ErrorData(code=INVALID_PARAMS, message=msg))
+
+
+def _default_window(start_date: Optional[str], end_date: Optional[str]) -> tuple[str, str]:
+    """Complète la fenêtre de stats — bornes ISO 8601, les deux exigées upstream."""
+    # Aliasé `_dt` : `timezone` est un ARGUMENT de `lemlist_campaign`/
+    # `lemlist_schedule` (la zone IANA de lemlist), l'importer nu le masquerait.
+    now = _dt.datetime.now(_dt.timezone.utc)
+    return start_date or STATS_EPOCH, end_date or (
+        now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z")
+
+
+def _project_stats(result: dict, *, full: bool) -> dict:
+    """Coupe le détail par étape/par canal, et NOMME ce qui a été écarté."""
+    if full or not isinstance(result, dict):
+        return result
+    dropped = {k: len(result[k]) for k in STATS_DETAIL
+               if isinstance(result.get(k), (list, dict))}
+    out = project(result, drop=STATS_DETAIL)
+    if dropped:
+        out["projection"] = {
+            "dropped": dropped,
+            "hint": "Détail par étape / par canal écarté — `full=True` le rend.",
+        }
+    return out
+
+
+def _refuse_auto_review(settings: dict) -> None:
+    """Refuse `autoReview*` — cf. AUTO_REVIEW_KEYS."""
+    present = [k for k in AUTO_REVIEW_KEYS if k in settings]
+    if present:
+        raise _bad(
+            f"{', '.join(present)} n'est pas réglable ici. Ce réglage fait partir "
+            "tout lead ajouté SANS revue : il transformerait `lemlist_create_lead` "
+            "en envoi. Il se règle dans l'UI lemlist (paramètres de la campagne), "
+            "délibérément hors de portée d'un appel d'agent."
+        )
 
 
 def _found_digest(data: dict) -> dict:
@@ -94,16 +173,43 @@ def register(mcp: FastMCP) -> None:
         return result
 
     @mcp.tool()
-    def lemlist_list_campaigns() -> dict:
-        """List all campaigns in the workspace.
+    def lemlist_list_campaigns(
+        status: Optional[str] = None,
+        created_by: Optional[str] = None,
+        newest_first: bool = False,
+        max_campaigns: int = 500,
+    ) -> dict:
+        """List the campaigns of the workspace.
 
-        Returns a list of `{id, name, status, senders, emoji}`. Use `id` for
-        the other lemlist tools.
+        Args:
+            status: Keep only `running`, `draft`, `archived`, `ended`, `paused`
+                or `errors`. A campaign can hold several at once (paused WITH
+                errors), so this filters, it does not partition.
+            created_by: Keep only campaigns created by a user id (`usr_…`).
+            newest_first: Sort on creation date, most recent first.
+            max_campaigns: Ceiling on the walk (lemlist pages 100 at a time).
+
+        Returns `{campaigns: [{id, name, status, senders, emoji, labels,
+        timezone, created_at, created_by, has_error, errors}], count,
+        truncated}`. `truncated: true` means the ceiling was hit and the list is
+        INCOMPLETE — do not conclude a campaign is absent from it.
         """
         client, is_platform = _client()
-        campaigns = client.list_campaigns()
+        filters = {}
+        if status is not None:
+            filters["status"] = status
+        if created_by is not None:
+            filters["created_by"] = created_by
+        if newest_first:
+            filters["sort_order"] = "desc"
+        pages = max(1, -(-max_campaigns // 100))  # ceil
+        campaigns, truncated = client.list_all_campaigns(max_pages=pages, **filters)
         _record_if_platform(is_platform)
-        return {"campaigns": [asdict(c) for c in campaigns]}
+        return {
+            "campaigns": [asdict(c) for c in campaigns],
+            "count": len(campaigns),
+            "truncated": truncated,
+        }
 
     @mcp.tool()
     def lemlist_get_campaign(campaign_id: str) -> dict:
@@ -114,12 +220,39 @@ def register(mcp: FastMCP) -> None:
         return result
 
     @mcp.tool()
-    def lemlist_get_campaign_stats(campaign_id: str) -> dict:
-        """Get campaign performance stats (sent, opened, replied, bounced…)."""
+    def lemlist_get_campaign_stats(
+        campaign_id: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        channels: Optional[list[str]] = None,
+        ab_selected: Optional[str] = None,
+        send_user: Optional[str] = None,
+        full: bool = False,
+    ) -> dict:
+        """Campaign performance (leads reached, opened, replied, bounced…).
+
+        Reads lemlist's own counters. Previously derived from one page of
+        activities, which under-counted every campaign past 1000 events — the
+        field names changed with the fix (`nbLeads`, `messagesSent`, `opened`,
+        `replied`… instead of `emails_sent` & co).
+
+        Args:
+            start_date / end_date: ISO 8601 window. Defaults to "since 2015" →
+                now, i.e. the campaign's whole life.
+            channels: Any of `email`, `linkedin`, `others`.
+            ab_selected: `A` or `B`, to read one side of a running A/B test.
+            send_user: `usr_…|sender@email` — both halves required.
+            full: Also return the per-step (`steps`) and per-channel
+                (`perChannel`) breakdowns, dropped by default for size.
+        """
         client, is_platform = _client()
-        result = client.get_campaign_stats(campaign_id)
+        start, end = _default_window(start_date, end_date)
+        result = client.get_campaign_stats_v2(
+            campaign_id, start_date=start, end_date=end,
+            channels=channels, ab_selected=ab_selected, send_user=send_user,
+        )
         _record_if_platform(is_platform)
-        return result
+        return _project_stats(result, full=full)
 
     @mcp.tool()
     def lemlist_get_activities(
@@ -505,5 +638,311 @@ def register(mcp: FastMCP) -> None:
         data, e.g. for `{{variableName}}` placeholders in campaign templates."""
         client, is_platform = _client()
         result = client.add_lead_variables(lead_id, variables)
+        _record_if_platform(is_platform)
+        return result
+
+    # --- Gestion de campagne ---------------------------------------------------
+    #
+    # Trois tools à `op`, un tool nu. Le découpage n'est pas cosmétique : le
+    # masquage par défaut (`DEFAULT_HIDDEN_TOOLS`) a le grain du TOOL, pas de
+    # l'op. `start` — le seul geste ici qui mette des messages sur le fil — vit
+    # donc à part, masqué ; le reste (créer, régler, dupliquer, mettre en pause,
+    # valider) n'envoie rien et tient dans un tool visible par famille.
+
+    @mcp.tool()
+    def lemlist_campaign(
+        op: Literal["create", "update", "pause", "duplicate", "statutes",
+                    "reports", "batch_stats"],
+        campaign_id: Optional[str] = None,
+        campaign_ids: Optional[list[str]] = None,
+        name: Optional[str] = None,
+        timezone: Optional[str] = None,
+        settings: Optional[dict] = None,
+        sender_user_ids: Optional[list[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        channels: Optional[list[str]] = None,
+        full: bool = False,
+    ) -> dict:
+        """Manage campaigns: create, configure, pause, duplicate, validate, report.
+
+        Nothing here sends: a created or duplicated campaign lands in DRAFT.
+        Putting messages on the wire is `lemlist_campaign_start` (hidden by
+        default — enable it with `oto_enable_tool lemlist_campaign_start`).
+
+        Args by op:
+        - `create`: `name` (required), optional `timezone` (IANA, drives the
+          auto-created schedule; server default `Europe/Paris`). Returns the
+          campaign with `sequenceId` and `scheduleIds` — the two ids
+          `lemlist_sequence` and `lemlist_schedule` need.
+        - `update`: `campaign_id` + `name`, `sender_user_ids` (`usr_…`, the
+          senders) and/or `settings` (raw PATCH body: `stopOnEmailReplied`,
+          `stopOnMeetingBooked`, `stopOnLinkClicked`, `disableTrackOpen`,
+          `disableTrackClick`, `disableTrackReply`, `tracking`, `onReplied`,
+          `aiFeatures`…). Only the keys sent change.
+        - `pause`: `campaign_id`. Stops the campaign advancing; already-scheduled
+          leads are NOT recalled.
+        - `duplicate`: `campaign_id` + optional `name`. Copies sequence, steps,
+          schedules and AI templates into a fresh DRAFT (CRM settings excluded).
+        - `statutes`: `campaign_id`. The validation the lemlist UI runs — read it
+          BEFORE starting: `level` 3 blocks the launch (no sender, broken DNS),
+          2 warns (daily limit, missing schedule), 1 informs.
+        - `reports`: `campaign_ids`. One row per campaign in operator vocabulary
+          (`emailsSent`, `emailsOpened`, `emailsReplied`, `senderNames`, `state`)
+          — the shape for comparing campaigns.
+        - `batch_stats`: `campaign_ids` (≤ 100) + optional `start_date`/`end_date`
+          (defaults to the whole life), `channels` (`email`/`linkedin`/`others`).
+          Same counters as `lemlist_get_campaign_stats`, in one call.
+
+        `autoReview`/`autoReviewConditions` are refused on `create` and `update`:
+        they make every added lead send immediately, which would turn
+        `lemlist_create_lead` into a send path. Set them in the lemlist UI.
+        """
+        client, is_platform = _client()
+        settings = dict(settings or {})
+
+        if op == "create":
+            if not name:
+                raise _bad("`name` requis pour créer une campagne")
+            _refuse_auto_review(settings)
+            result = client.create_campaign(name, timezone=timezone)
+
+        elif op == "update":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            _refuse_auto_review(settings)
+            if name is not None:
+                settings["name"] = name
+            if sender_user_ids is not None:
+                settings["sendUserIds"] = sender_user_ids
+            if not settings:
+                raise _bad(
+                    "rien à mettre à jour — passe `name`, `sender_user_ids` "
+                    "et/ou `settings`")
+            result = client.update_campaign(campaign_id, settings)
+
+        elif op == "pause":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            result = client.pause_campaign(campaign_id)
+
+        elif op == "duplicate":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            result = client.duplicate_campaign(campaign_id, name=name)
+
+        elif op == "statutes":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            result = client.get_campaign_statutes(campaign_id)
+
+        elif op == "reports":
+            if not campaign_ids:
+                raise _bad("`campaign_ids` requis (liste d'ids de campagne)")
+            result = {"reports": client.get_campaign_reports(campaign_ids)}
+
+        elif op == "batch_stats":
+            if not campaign_ids:
+                raise _bad("`campaign_ids` requis (liste d'ids de campagne)")
+            start, end = _default_window(start_date, end_date)
+            result = client.get_batch_campaign_stats(
+                campaign_ids, start_date=start, end_date=end, channels=channels)
+            if not full:
+                result = {**result, "results": [
+                    _project_stats(r, full=False) for r in result.get("results", [])
+                ]}
+
+        else:
+            raise _bad(
+                f'op inconnu "{op}" — attendu: create, update, pause, duplicate, '
+                "statutes, reports, batch_stats")
+
+        _record_if_platform(is_platform)
+        return result
+
+    @mcp.tool()
+    def lemlist_campaign_start(campaign_id: str) -> dict:
+        """Start (or resume) a campaign — lemlist begins sending.
+
+        THE send gesture at campaign level: from here lemlist walks the sequence
+        for every launched lead, to real people. A no-op if already running.
+
+        Read `lemlist_campaign(op="statutes", …)` first — it names what would
+        block or degrade the launch (missing sender, broken DNS, daily limit)
+        with the same validation the UI runs.
+        """
+        client, is_platform = _client()
+        result = client.start_campaign(campaign_id)
+        _record_if_platform(is_platform)
+        return result
+
+    @mcp.tool()
+    def lemlist_sequence(
+        op: Literal["get", "add_step", "update_step", "delete_step",
+                    "ab_create", "ab_get", "ab_update", "ab_delete", "ab_winner"],
+        campaign_id: Optional[str] = None,
+        sequence_id: Optional[str] = None,
+        step_id: Optional[str] = None,
+        step: Optional[dict] = None,
+        variant: Optional[str] = None,
+    ) -> dict:
+        """Read and edit the steps of a campaign sequence, and its A/B tests.
+
+        A campaign owns a sequence (`seq_…`, returned by `create`) whose steps
+        (`stp_…`) are the emails, LinkedIn actions and conditions it runs.
+
+        Args by op:
+        - `get`: `campaign_id`. Every sequence of the campaign with its steps —
+          conditional steps branch into further sequences, so a campaign can
+          hold several.
+        - `add_step`: `sequence_id` + `step`. `step.type` is required, one of
+          email, manual, phone, api, linkedinVisit, linkedinInvite,
+          linkedinSend, linkedinVoiceNote, linkedinFollow, linkedinLikeLastPost,
+          linkedinCommentLastPost, linkedinEndorse, linkedinWithdrawInvitation,
+          sendToAnotherCampaign, conditional, whatsappMessage, sms. Common
+          fields: `index` (insert position, appended when omitted), `delay`
+          (days), `subject` + `message` (email), `title` (manual),
+          `method` + `url` (api), `conditionKey` + `delayType` (conditional),
+          `campaignId` (sendToAnotherCampaign).
+        - `update_step`: `sequence_id` + `step_id` + `step`. `step.type` is
+          required and must MATCH the existing step — it identifies the shape,
+          it does not convert it. `images`/`videos` REPLACE what is there.
+        - `delete_step`: `sequence_id` + `step_id`. Refused by lemlist while the
+          campaign is running — pause it first.
+        - `ab_create`: `sequence_id` + `step_id` (an EMAIL step). Creates
+          variant B prefilled from A and STARTS the split. Email Pro plan.
+        - `ab_get` / `ab_update` (`step` = the B fields: `subject`, `message`,
+          `altMessage`, `cc`, `plainText`).
+        - `ab_delete`: optional `variant` (default `B`). `A` promotes B to A.
+        - `ab_winner`: `variant` (`A` or `B`) — the winner's template is then
+          sent to every remaining lead.
+        """
+        client, is_platform = _client()
+
+        if op == "get":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            result = {"sequences": client.get_sequences(campaign_id)}
+        else:
+            if not sequence_id:
+                raise _bad("`sequence_id` requis (il vient de `lemlist_campaign` "
+                           "op=create, ou de op=\"get\" ici)")
+            if op == "add_step":
+                if not step:
+                    raise _bad("`step` requis (au minimum `{\"type\": …}`)")
+                result = client.add_step(sequence_id, step)
+            elif op in ("update_step", "delete_step", "ab_create", "ab_get",
+                        "ab_update", "ab_delete", "ab_winner"):
+                if not step_id:
+                    raise _bad("`step_id` requis")
+                if op == "update_step":
+                    if not step:
+                        raise _bad("`step` requis (et `step.type` doit correspondre "
+                                   "au type existant)")
+                    result = client.update_step(sequence_id, step_id, step)
+                elif op == "delete_step":
+                    result = client.delete_step(sequence_id, step_id)
+                elif op == "ab_create":
+                    result = client.create_ab_variant(sequence_id, step_id)
+                elif op == "ab_get":
+                    result = client.get_ab_variant(sequence_id, step_id)
+                elif op == "ab_update":
+                    if not step:
+                        raise _bad("`step` requis (les champs de la variante B)")
+                    result = client.update_ab_variant(sequence_id, step_id, step)
+                elif op == "ab_delete":
+                    result = client.delete_ab_variant(
+                        sequence_id, step_id, variant=variant or "B")
+                else:  # ab_winner
+                    if not variant:
+                        raise _bad("`variant` requis — 'A' ou 'B'")
+                    result = client.select_ab_winner(sequence_id, step_id, variant)
+            else:
+                raise _bad(
+                    f'op inconnu "{op}" — attendu: get, add_step, update_step, '
+                    "delete_step, ab_create, ab_get, ab_update, ab_delete, ab_winner")
+
+        _record_if_platform(is_platform)
+        return result
+
+    @mcp.tool()
+    def lemlist_schedule(
+        op: Literal["list", "get", "create", "update", "delete",
+                    "for_campaign", "associate"],
+        schedule_id: Optional[str] = None,
+        campaign_id: Optional[str] = None,
+        name: Optional[str] = None,
+        timezone: Optional[str] = None,
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+        weekdays: Optional[list[int]] = None,
+        seconds_to_wait: Optional[int] = None,
+        public: Optional[bool] = None,
+    ) -> dict:
+        """Manage sending windows (schedules) — days, hours, timezone, pacing.
+
+        A schedule belongs to the TEAM, not to a campaign: several campaigns can
+        share one, and a campaign can carry several. Creating a campaign
+        auto-creates one and returns its id in `scheduleIds`.
+
+        Args by op:
+        - `list`: no argument. Every schedule of the team.
+        - `get` / `delete`: `schedule_id`.
+        - `create`: `name` (required) + `timezone` (IANA, default
+          `Europe/Paris`), `start`/`end` (`HH:mm`, default 09:00-18:00),
+          `weekdays` (1 = Monday … 7 = Sunday, default Mon-Fri),
+          `seconds_to_wait` (pacing between two sends), `public` (offer it as a
+          team template).
+        - `update`: `schedule_id` + any of the same fields; only what is sent
+          changes.
+        - `for_campaign`: `campaign_id`. The schedules attached to a campaign.
+        - `associate`: `campaign_id` + `schedule_id`. Attaches an existing
+          window to a campaign.
+        """
+        client, is_platform = _client()
+
+        if op == "list":
+            result = client.list_schedules()
+        elif op == "get":
+            if not schedule_id:
+                raise _bad("`schedule_id` requis")
+            result = client.get_schedule(schedule_id)
+        elif op == "create":
+            if not name:
+                raise _bad("`name` requis pour créer un planning")
+            kwargs = {k: v for k, v in {
+                "timezone": timezone, "start": start, "end": end,
+                "weekdays": weekdays, "seconds_to_wait": seconds_to_wait,
+                "public": public,
+            }.items() if v is not None}
+            result = client.create_schedule(name, **kwargs)
+        elif op == "update":
+            if not schedule_id:
+                raise _bad("`schedule_id` requis")
+            data = {k: v for k, v in {
+                "name": name, "timezone": timezone, "start": start, "end": end,
+                "weekdays": weekdays, "secondsToWait": seconds_to_wait,
+                "public": public,
+            }.items() if v is not None}
+            if not data:
+                raise _bad("rien à mettre à jour — passe au moins un champ")
+            result = client.update_schedule(schedule_id, data)
+        elif op == "delete":
+            if not schedule_id:
+                raise _bad("`schedule_id` requis")
+            result = client.delete_schedule(schedule_id)
+        elif op == "for_campaign":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            result = {"schedules": client.get_campaign_schedules(campaign_id)}
+        elif op == "associate":
+            if not (campaign_id and schedule_id):
+                raise _bad("`campaign_id` ET `schedule_id` requis")
+            result = client.associate_schedule(campaign_id, schedule_id)
+        else:
+            raise _bad(
+                f'op inconnu "{op}" — attendu: list, get, create, update, delete, '
+                "for_campaign, associate")
+
         _record_if_platform(is_platform)
         return result

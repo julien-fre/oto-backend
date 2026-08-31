@@ -474,3 +474,235 @@ def test_enrich_result_digests_a_linkedin_profile():
         li = out["results"][0]["found"]["linkedin"]
         assert li["firstName"] == "Bill"
         assert "linkedinMemberId" not in li  # digest, pas recopie du profil entier
+
+
+# --- gestion de campagne ------------------------------------------------------
+#
+# Ce que ce bloc verrouille tient en une phrase : la borne du connecteur porte
+# désormais sur CE QUI ENVOIE, pas sur l'écriture. Trois invariants, chacun
+# cassable par une réécriture innocente — le tool nu pour `start` (le masquage a
+# le grain du tool, pas de l'op), le refus d'`autoReview` (il ferait de
+# `lemlist_create_lead`, visible, un chemin d'envoi), et le drapeau de troncature
+# d'une liste plafonnée.
+
+CAMPAIGN_TOOLS = {
+    "lemlist_campaign", "lemlist_campaign_start", "lemlist_sequence",
+    "lemlist_schedule",
+}
+
+
+def test_campaign_tools_registered_under_namespace(all_tools):
+    assert CAMPAIGN_TOOLS <= all_tools
+    assert all(namespace_of(t) == "lemlist" for t in CAMPAIGN_TOOLS)
+
+
+def test_client_exposes_methods_called_by_campaign_tools():
+    """Garde version-skew : ces méthodes arrivent avec l'oto-core de la même
+    fenêtre — tant que le pin n'est pas bumpé, c'est CE test qui le dit."""
+    from oto.tools.lemlist import LemlistClient
+    for meth in (
+        "list_all_campaigns", "create_campaign", "update_campaign",
+        "start_campaign", "pause_campaign", "duplicate_campaign",
+        "get_campaign_statutes", "get_campaign_reports",
+        "get_campaign_stats_v2", "get_batch_campaign_stats",
+        "delete_step", "create_ab_variant", "get_ab_variant",
+        "update_ab_variant", "delete_ab_variant", "select_ab_winner",
+        "list_schedules", "get_schedule", "create_schedule", "update_schedule",
+        "delete_schedule", "get_campaign_schedules", "associate_schedule",
+    ):
+        assert callable(getattr(LemlistClient, meth, None)), \
+            f"LemlistClient.{meth} manquant"
+
+
+# --- visibilité : le geste d'envoi est SEUL dans son tool, et masqué ----------
+
+def test_campaign_start_is_hidden_and_the_rest_stays_visible():
+    assert "lemlist_campaign_start" in DEFAULT_HIDDEN_TOOLS
+    for visible in ("lemlist_campaign", "lemlist_sequence", "lemlist_schedule"):
+        assert visible not in DEFAULT_HIDDEN_TOOLS
+
+
+def test_start_is_not_reachable_as_an_op_of_the_visible_tool():
+    """La raison d'être du tool nu. `DEFAULT_HIDDEN_TOOLS` a le grain du TOOL :
+    une op `start` logée dans `lemlist_campaign` serait exposée sans que le
+    masquage puisse l'atteindre. Si quelqu'un l'y replie un jour, ce test tombe."""
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+
+        with pytest.raises(Exception, match="op inconnu"):
+            tool.fn(op="start", campaign_id="cam_1")
+        inst.start_campaign.assert_not_called()
+
+
+# --- le verrou autoReview -----------------------------------------------------
+
+@pytest.mark.parametrize("op,extra", [
+    ("create", {"name": "Q4"}),
+    ("update", {"campaign_id": "cam_1"}),
+])
+@pytest.mark.parametrize("key_name", ["autoReview", "autoReviewConditions"])
+def test_auto_review_is_refused_before_any_call(op, extra, key_name):
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+
+        with pytest.raises(Exception, match="lead ajouté SANS revue"):
+            tool.fn(op=op, settings={key_name: True}, **extra)
+
+        # Refusé AU BORD : aucun aller-retour, donc rien qui puisse partir.
+        inst.create_campaign.assert_not_called()
+        inst.update_campaign.assert_not_called()
+
+
+def test_update_without_autoreview_goes_through():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+
+        tool.fn(op="update", campaign_id="cam_1", name="Q4",
+                sender_user_ids=["usr_1"], settings={"stopOnEmailReplied": True})
+
+        inst.update_campaign.assert_called_once_with("cam_1", {
+            "stopOnEmailReplied": True, "name": "Q4", "sendUserIds": ["usr_1"],
+        })
+
+
+def test_update_refuses_an_empty_patch():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_campaign")
+
+        with pytest.raises(Exception, match="rien à mettre à jour"):
+            tool.fn(op="update", campaign_id="cam_1")
+        inst.update_campaign.assert_not_called()
+
+
+# --- liste : la troncature se dit ---------------------------------------------
+
+def test_list_campaigns_surfaces_truncation():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        from oto.tools.lemlist import Campaign
+        inst = client_cls.return_value
+        inst.list_all_campaigns.return_value = (
+            [Campaign(id="cam_1", name="Q3", status="running", senders=[])], True)
+        tool = _tool("lemlist_list_campaigns")
+
+        out = tool.fn(status="running", newest_first=True, max_campaigns=250)
+
+        assert out["truncated"] is True
+        assert out["count"] == 1
+        assert out["campaigns"][0]["id"] == "cam_1"
+        # 250 demandés ⇒ 3 pages de 100, et les filtres passent en snake_case.
+        assert inst.list_all_campaigns.call_args.kwargs == {
+            "max_pages": 3, "status": "running", "sort_order": "desc",
+        }
+
+
+# --- stats : le vrai endpoint, et son détail projeté --------------------------
+
+def test_campaign_stats_reads_the_real_counters_over_the_whole_life():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        inst.get_campaign_stats_v2.return_value = {"nbLeads": 12, "opened": 3}
+        tool = _tool("lemlist_get_campaign_stats")
+
+        out = tool.fn(campaign_id="cam_1")
+
+        kwargs = inst.get_campaign_stats_v2.call_args.kwargs
+        assert kwargs["start_date"].startswith("2015-")
+        assert kwargs["end_date"].endswith("Z")
+        # Surtout PAS l'ancien dérivé d'activités, plafonné à 1000 événements.
+        inst.get_campaign_stats.assert_not_called()
+        assert out["nbLeads"] == 12
+
+
+def test_campaign_stats_drops_the_per_step_detail_and_names_it():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        inst.get_campaign_stats_v2.return_value = {
+            "nbLeads": 12, "steps": [{"a": 1}, {"b": 2}], "perChannel": {"email": {}},
+        }
+        tool = _tool("lemlist_get_campaign_stats")
+
+        out = tool.fn(campaign_id="cam_1")
+        assert "steps" not in out and "perChannel" not in out
+        assert out["projection"]["dropped"] == {"steps": 2, "perChannel": 1}
+
+        full = tool.fn(campaign_id="cam_1", full=True)
+        assert full["steps"] == [{"a": 1}, {"b": 2}]
+        assert "projection" not in full
+
+
+# --- séquences & plannings : dispatch et arguments requis ---------------------
+
+def test_sequence_ops_reach_the_right_client_method():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_sequence")
+
+        tool.fn(op="add_step", sequence_id="seq_1",
+                step={"type": "email", "subject": "hi"})
+        inst.add_step.assert_called_once_with("seq_1", {"type": "email", "subject": "hi"})
+
+        tool.fn(op="delete_step", sequence_id="seq_1", step_id="stp_1")
+        inst.delete_step.assert_called_once_with("seq_1", "stp_1")
+
+        tool.fn(op="ab_delete", sequence_id="seq_1", step_id="stp_1")
+        inst.delete_ab_variant.assert_called_once_with("seq_1", "stp_1", variant="B")
+
+        tool.fn(op="ab_winner", sequence_id="seq_1", step_id="stp_1", variant="A")
+        inst.select_ab_winner.assert_called_once_with("seq_1", "stp_1", "A")
+
+
+def test_sequence_refuses_incomplete_calls_locally():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_sequence")
+
+        with pytest.raises(Exception, match="sequence_id"):
+            tool.fn(op="add_step", step={"type": "email"})
+        with pytest.raises(Exception, match="step_id"):
+            tool.fn(op="delete_step", sequence_id="seq_1")
+        with pytest.raises(Exception, match="variant"):
+            tool.fn(op="ab_winner", sequence_id="seq_1", step_id="stp_1")
+        with pytest.raises(Exception, match="op inconnu"):
+            tool.fn(op="rename_step", sequence_id="seq_1")
+        assert not inst.method_calls
+
+
+def test_schedule_create_forwards_only_the_fields_given():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_schedule")
+
+        tool.fn(op="create", name="Matinées", start="08:00", weekdays=[1, 2, 3, 4])
+        inst.create_schedule.assert_called_once_with(
+            "Matinées", start="08:00", weekdays=[1, 2, 3, 4])
+
+        tool.fn(op="associate", campaign_id="cam_1", schedule_id="skd_1")
+        inst.associate_schedule.assert_called_once_with("cam_1", "skd_1")
+
+
+def test_schedule_update_uses_the_api_key_names():
+    key, cls = _with_fake_client()
+    with key, cls as client_cls:
+        inst = client_cls.return_value
+        tool = _tool("lemlist_schedule")
+
+        tool.fn(op="update", schedule_id="skd_1", seconds_to_wait=600, end="17:00")
+        inst.update_schedule.assert_called_once_with(
+            "skd_1", {"end": "17:00", "secondsToWait": 600})
+
+        with pytest.raises(Exception, match="rien à mettre à jour"):
+            tool.fn(op="update", schedule_id="skd_1")
