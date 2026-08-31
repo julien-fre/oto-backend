@@ -649,7 +649,8 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .middleware.dynamic_instructions import DynamicInstructionsMiddleware
     instance.add_middleware(UserDisabledToolsMiddleware())
     # Injection du guide de base de l'org dans les instructions du `initialize`
-    # (canal fiable, par-(sub,org) — otomata-private#49, amende ADR 0014).
+    # (par-(sub,org) — otomata-private#49, amende ADR 0014 ; ⚠️ livraison NON garantie
+    # côté client, #478 : le bloc A est un socle-résumé qui pointe le guide `notice`).
     instance.add_middleware(DynamicInstructionsMiddleware())
     # Journalisation des appels MCP (middleware inliné `calllog.py`, table tool_calls,
     # lue par /api/admin/monitoring/*). Identité via auth_hooks (auth Logto custom —

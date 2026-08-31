@@ -495,7 +495,11 @@ Passer son org/groupe **explicitement** via le kwarg `org`/`group`.
 
 **Agent readme** = prose libre **injectée à chaque session**, cumulée du général au spécifique
 (plateforme → org → équipe active → user) ; les 4 étages vivent dans `guides` delivery='init'
-et **s'éditent par UNE surface**, la capacité `me.guide{,s}` (ADR 0042). **Procédure** =
+et **s'éditent par UNE surface**, la capacité `me.guide{,s}` (ADR 0042).
+⚠️ **L'injection au handshake n'est PAS garantie** (#478 : Claude Code coupe l'artefact à
+2 048 c., claude.ai n'injecte rien) — le bloc A est depuis le 2026-09-01 un **socle-résumé
+≤ 2 000 c.** (budget CI `tests/test_instructions_budget.py`) qui pointe le guide plateforme
+`notice` (la version intégrale) et `oto_context`. **Procédure** =
 guide nommé, chargé à la demande. ⚠️ **Le produit a changé de mot le 28/08/2026**
 (#519) : il dit « guide », plus jamais l'ancien. L'interne est propre (lot A) ; les noms
 SERVIS se DOUBLENT au lot B — le nouveau naît, l'ancien reste servi avec **une date de

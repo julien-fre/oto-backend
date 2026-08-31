@@ -240,7 +240,9 @@ rien ne rendait navigable et que rien ne tenait.
   `aiark_company_search(account=)` (le filtre société, 28/07 : AI Ark renvoyait sa base
   entière, 72M lignes, sans la moindre erreur). Ne JAMAIS nommer un argument de tool
   `_<quelque chose>` (tripwire `test_call_axes_business_param_collision.py`). ⚠️ La prose
-  du bloc A prescrit ces jetons : la source est `instructions.py` (le seed versionné).
+  du bloc A prescrit ces jetons (en résumé — la forme longue vit dans le guide
+  `notice`) : les sources sont `instructions.py` et `oto_mcp/guides/notice.md`
+  (seeds versionnés).
   **PAS d'override DB (`platform_instructions['secret_sauce']`) sauf divergence
   DÉLIBÉRÉE** — un override qui recopie le seed est une MINE : il fige la prose au jour
   de sa pose et toute évolution du code cesse de se propager sans que rien ne le

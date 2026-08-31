@@ -34,8 +34,8 @@ def test_axis_description_stays_short(axis):
     assert desc, f"{axis.param} doit dire ce qu'il fait"
     assert len(desc) <= MAX_CHARS, (
         f"`{axis.param}` : {len(desc)} caractères (max {MAX_CHARS}). Cette prose est "
-        f"recopiée dans ~350 schémas. Le contexte long va dans le bloc A "
-        f"(`instructions._SECRET_SAUCE`), pas ici."
+        f"recopiée dans ~350 schémas. Le contexte long va dans le guide `notice` "
+        f"(`oto_mcp/guides/notice.md`), pas ici."
     )
 
 
