@@ -19,8 +19,7 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import email as E
 
 _URL = "https://media.exemple.test/images/u1/0123456789abcdef0123456789abcdef.png"

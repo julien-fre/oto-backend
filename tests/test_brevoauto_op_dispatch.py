@@ -20,8 +20,7 @@ import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Verbes HTTP qui MUTENT le compte Brevo : aucun ne doit partir sur une lecture, ni
 # sur une op inconnue, ni sur un appel sans `op`.
 _MUTATING = ("POST", "PUT", "DELETE")

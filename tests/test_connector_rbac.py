@@ -6,8 +6,7 @@ et on vérifie la règle : ouvert par défaut, restreint = deny sauf principal a
 l'admin de l'org gouverne l'ACL, il n'en est jamais prisonnier), fail-open sur erreur infra.
 """
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, roles
 
 

@@ -2,7 +2,7 @@
 credential émet un événement de monitoring AVANT de relever — sans masquer l'erreur,
 sans fausser le signal sur les sondes (emit_on_failure=False)."""
 import pytest
-from mcp.shared.exceptions import McpError
+from oto_mcp.mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from oto_mcp import access

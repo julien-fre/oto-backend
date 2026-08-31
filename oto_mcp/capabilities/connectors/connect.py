@@ -57,8 +57,7 @@ class ConnectorConnectStarted(BaseModel):
 
 
 async def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
-    from mcp.shared.exceptions import McpError
-
+    from ...mcp_errors import McpError
     from ... import access
     if not connector_flow.supports(inp.name):
         raise AuthzDenied(

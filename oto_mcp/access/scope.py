@@ -20,7 +20,7 @@ import logging
 import os
 from typing import Optional
 
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import db, group_store, org_store, session_org

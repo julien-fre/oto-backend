@@ -24,8 +24,7 @@ import inspect
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 EXPECTED_TOOLS = {"calendar_calendars", "calendar_event"}
 
 

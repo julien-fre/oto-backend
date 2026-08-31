@@ -20,8 +20,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Les 7 tools, avec les arguments que leur SCHÉMA rend obligatoires.
 _TOOLS = {
     "airtable_record": {"base_id": "app1", "table": "tbl1"},

@@ -16,8 +16,7 @@ import os
 import uuid
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, grants_chain, tenancy, tenant_vault
 from oto_mcp.capabilities import _authz
 from oto_mcp.capabilities._authz import SUPER_ADMIN

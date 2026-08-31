@@ -242,7 +242,7 @@ def test_sous_chain_une_restriction_d_acl_ne_refuse_plus_mais_reste_comptee(monk
     """0053-D1 dissout les lignes de restriction. Le refus tombe — et il est compté des
     deux côtés du drapeau, sinon la classe disparaîtrait au moment où elle devient
     intéressante."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from mcp.types import ErrorData, INVALID_PARAMS
     _harnais(monkeypatch)
     _aretes(monkeypatch, [_edge(grants_chain.EVERYONE, quota=200)])

@@ -21,7 +21,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from mcp.shared.exceptions import McpError
+from oto_mcp.mcp_errors import McpError
 from oto.tools.common.errors import UpstreamHTTPError
 
 # Méthodes mutantes du client Folk : aucune ne doit être touchée par une lecture,

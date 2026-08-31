@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastmcp import Context, FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
 
 from .. import access, db, email as mailer, org_store, providers, roles, scheduler

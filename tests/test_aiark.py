@@ -153,7 +153,7 @@ def test_mobile_phone_requires_linkedin_or_domain_name():
 def test_dead_filter_website_is_refused():
     """`account.website` rendait la base entière (72 M) en la faisant passer pour un
     résultat filtré — vérifié par différentiel le 15/08/2026. Refus, pas avertissement."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto_mcp.tools import aiark
 
     with pytest.raises(McpError) as e:
@@ -163,7 +163,7 @@ def test_dead_filter_website_is_refused():
 
 
 def test_dead_filter_title_is_refused():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto_mcp.tools import aiark
 
     with pytest.raises(McpError):

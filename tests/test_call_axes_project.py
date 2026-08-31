@@ -141,7 +141,7 @@ async def test_pin_project_team_owner_skips_group_for_non_member(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pin_project_rejects_inaccessible(monkeypatch):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     monkeypatch.setattr(call_axes, "require_axis_sub", lambda axis: "u")
     monkeypatch.setattr(session_org, "current_subdomain_candidate", lambda: None)
     monkeypatch.setattr(ownership, "can_access", lambda *a, **k: False)
@@ -155,7 +155,7 @@ async def test_pin_project_rejects_inaccessible(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pin_project_rejects_anon(monkeypatch):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     # sub anonyme → require_axis_sub (le vrai) lève AVANT toute pose/DB
     monkeypatch.setattr(call_axes, "current_user_sub_from_token", lambda: None)
     called = {"owner_of": False}
@@ -169,7 +169,7 @@ async def test_pin_project_rejects_anon(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pin_project_subdomain_lock_rejects_foreign_org(monkeypatch):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     monkeypatch.setattr(call_axes, "require_axis_sub", lambda axis: "u")
     monkeypatch.setattr(session_org, "current_subdomain_candidate", lambda: 42)
     monkeypatch.setattr(ownership, "can_access", lambda *a, **k: True)

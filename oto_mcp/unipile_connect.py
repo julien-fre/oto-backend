@@ -16,8 +16,7 @@ import os
 import secrets
 from dataclasses import dataclass
 
-from mcp.shared.exceptions import McpError
-
+from .mcp_errors import McpError
 from . import access, db
 from .connectors import flow as connector_flow
 from . import config

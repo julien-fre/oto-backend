@@ -15,8 +15,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.tools.cloro import _AI_ENGINES
 
 

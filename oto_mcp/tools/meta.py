@@ -19,7 +19,7 @@ from fastmcp.server.transforms.visibility import (
     enable_components,
     reset_visibility,
 )
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
