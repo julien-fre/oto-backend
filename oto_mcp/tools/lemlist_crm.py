@@ -318,6 +318,7 @@ def register(mcp: FastMCP) -> None:
         reply_to_activity_id: Optional[str] = None,
     ) -> dict:
         """Send a message from the inbox — DIRECTLY, to a real person.
+        `oto_guide op=read slug="lemlist-playbook"` : ordre de construction, d'où vient chaque id, et les écarts doc↔API.
 
         The most immediate send of the whole connector: no campaign, no
         sequence, no review in front of it. Hidden by default for that reason.
@@ -519,6 +520,7 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Watch lists: standing alerts on buying signals (hiring, funding, job
         change, tech move, website visit…), and the signals they catch.
+        `oto_guide op=read slug="lemlist-playbook"` : ordre de construction, d'où vient chaque id, et les écarts doc↔API.
 
         ⚠️ A list created with `signal_processing_type="push_to_campaign"` and
         `activate=True` feeds a campaign ON ITS OWN — the one configuration

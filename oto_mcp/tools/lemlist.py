@@ -761,7 +761,7 @@ def register(mcp: FastMCP) -> None:
         full: bool = False,
     ) -> dict:
         """Manage campaigns: create, configure, pause, duplicate, validate,
-        report, export.
+        report, export. `oto_guide op=read slug="lemlist-playbook"` : ordre de construction, d'où vient chaque id, et les écarts doc↔API.
 
         Nothing here sends: a created or duplicated campaign lands in DRAFT.
         Putting messages on the wire is `lemlist_campaign_start` (hidden by
@@ -1174,6 +1174,7 @@ def register(mcp: FastMCP) -> None:
         audio: Optional[dict] = None,
     ) -> dict:
         """Lead lifecycle inside a campaign — read, edit, pause, qualify, remove.
+        `oto_guide op=read slug="lemlist-playbook"` : ordre de construction, d'où vient chaque id, et les écarts doc↔API.
 
         A LEAD is a person's copy inside ONE campaign (its sending state, its
         variables); the person themself is a contact (`lemlist_contact`).
