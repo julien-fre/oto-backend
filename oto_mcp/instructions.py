@@ -481,7 +481,7 @@ def skills_index_md(org_id: int | None) -> str:
         return ""
     try:
         from . import org_store
-        rows = org_store.list_instructions(org_id)   # exclut la base (claude_md)
+        rows = org_store.list_instructions("org", org_id)  # exclut la base (claude_md)
     except Exception:
         logger.warning("skills_index_md: lecture org=%s échouée (fail-open)",
                        org_id, exc_info=True)

@@ -351,6 +351,50 @@ def ORG_MEMBER_OPT(field: str):
     return rule
 
 
+def _group_opt(field: str, allowed, refus: str):
+    """Fabrique commune de `GROUP_MEMBER_OPT` / `GROUP_ADMIN_OPT` : équipe explicite
+    `input.<field>`, sinon l'équipe ACTIVE de la session, puis la garde `allowed`."""
+    def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+        sub = _require_sub(raw)
+        explicit = getattr(inp, field, None) if inp is not None else None
+        group_id = int(explicit) if explicit is not None else access.current_group(sub)
+        if group_id is None:
+            raise AuthzDenied(400, "no_active_group",
+                              "Aucune équipe active — choisis-en une avec oto_use_group, "
+                              f"ou passe `{field}` explicitement.")
+        if not allowed(sub, group_id):
+            raise AuthzDenied(403, "forbidden", refus.format(id=group_id))
+        # `org_id` reste l'org ACTIVE (ce que servait la règle d'org sur cette même
+        # surface) : l'équipe visée est portée par `group_id`, et c'est elle que le
+        # handler lit. Y mettre l'org PARENTE de l'équipe changerait en silence la clé
+        # `org_id` de réponses qui ne parlent pas d'équipe.
+        return ResolvedCtx(sub=sub, org_id=access.current_org(sub), group_id=group_id,
+                           role=access.get_user_role(sub))
+    return rule
+
+
+def GROUP_MEMBER_OPT(field: str):
+    """Lecture au palier ÉQUIPE, **self-service par défaut, épinglable explicitement** —
+    miroir équipe d'`ORG_MEMBER_OPT`. Escalade `roles.can_read_group` (membre de
+    l'équipe, org_admin du parent, platform_admin)."""
+    return _group_opt(field, roles.can_read_group,
+                      "Réservé aux membres de l'équipe #{id}.")
+
+
+def GROUP_ADMIN_OPT(field: str):
+    """Écriture au palier ÉQUIPE, **self-service par défaut, épinglable explicitement** —
+    miroir équipe d'`ORG_ADMIN_OPT` (oto-backend#681).
+
+    C'est la règle qui ouvre l'annotation d'une procédure à qui la déroule : `chef
+    d'équipe` (escalade `roles.can_admin_group` : org_admin du parent, platform_admin),
+    au lieu d'exiger l'administration de TOUTE l'organisation — membres, connecteurs et
+    clés compris — pour corriger une ligne d'un mode d'emploi. Le palier existait déjà
+    sous `guides._owner_for_write` ; il est ici pour se DÉCLARER au niveau de la
+    capacité (ADR 0009 §7) plutôt que de redescendre dans un handler."""
+    return _group_opt(field, roles.can_admin_group,
+                      "Réservé au chef de l'équipe #{id} (ou à un org_admin du parent).")
+
+
 def TENANT_ADMIN_OF(field: str, *, platform):
     """Admin du TENANT désigné par `input.<field>` (un slug), OU la règle plateforme
     `platform` (`PLATFORM_ADMIN` pour lire, `SUPER_ADMIN` pour écrire) — L-clés PR 2.

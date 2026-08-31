@@ -12,7 +12,6 @@ de session porte toujours le readme) est vérifié au niveau de la capacité, pl
 """
 import pytest
 
-import oto_mcp.group_store as group_store
 import oto_mcp.org_store as org_store
 
 
@@ -25,28 +24,31 @@ def test_org_set_base_is_refused(monkeypatch):
                         lambda *a, **k: pytest.fail("le store de procédures ne doit plus "
                                                     "écrire de readme"))
     with pytest.raises(ValueError) as e:
-        org_store.set_instruction(42, "claude_md", "README")
+        org_store.set_instruction("org", 42, "claude_md", "README")
     assert "readme" in str(e.value) and "guide" in str(e.value)
 
 
 def test_group_set_base_is_refused(monkeypatch):
+    """Même frontière au palier équipe — et depuis #681 c'est le MÊME code qui la
+    tient : un seul jeu de fonctions, le palier en premier argument."""
     import oto_mcp.guide_store as G
     monkeypatch.setattr(G, "set_init_guide",
                         lambda *a, **k: pytest.fail("idem côté équipe"))
     with pytest.raises(ValueError) as e:
-        group_store.set_group_instruction(7, "claude_md", "README")
+        org_store.set_instruction("group", 7, "claude_md", "README")
     assert "readme" in str(e.value) and "guide" in str(e.value)
 
 
 def test_base_slug_has_no_procedure_history():
     """Inchangé : la prose plate n'a pas d'historique de versions."""
-    assert org_store.list_instruction_versions(42, "claude_md") == []
-    assert group_store.list_group_instruction_versions(7, "claude_md") == []
+    assert org_store.list_instruction_versions("org", 42, "claude_md") == []
+    assert org_store.list_instruction_versions("group", 7, "claude_md") == []
 
 
 def test_stores_no_longer_carry_a_readme_shim():
-    """Le helper de compat a disparu des deux stores (la liste doit décroître)."""
+    """Le helper de compat a disparu du store (la liste doit décroître)."""
     assert not hasattr(org_store, "_base_readme")
+    import oto_mcp.group_store as group_store
     assert not hasattr(group_store, "_base_readme")
 
 
@@ -59,10 +61,9 @@ def test_session_bundle_reads_readmes_from_the_guide_surface(monkeypatch):
     from oto_mcp.capabilities._types import ResolvedCtx
 
     monkeypatch.setattr(OI.org_store, "get_org", lambda oid: {"name": "Acme"})
-    monkeypatch.setattr(OI.org_store, "list_instructions", lambda oid: [])
+    monkeypatch.setattr(OI.org_store, "list_instructions", lambda otype, oid: [])
     monkeypatch.setattr(OI.access, "current_group", lambda sub: 7)
     monkeypatch.setattr(OI.group_store, "get_group", lambda gid: {"name": "Sales"})
-    monkeypatch.setattr(OI.group_store, "list_group_instructions", lambda gid: [])
     monkeypatch.setattr(OI.tool_registry, "manifest_for", _async_return([]))
     monkeypatch.setattr(OI, "_project_instance", lambda member_mode: None)
     # La SEULE source des readmes : la surface guide.

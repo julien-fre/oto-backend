@@ -238,7 +238,7 @@ def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
         return {}
     try:
         refs: dict[str, set[str]] = {}
-        for d in org_store.list_instruction_bodies(org_id):
+        for d in org_store.list_instruction_bodies("org", org_id):
             slug = d.get("slug") or ""
             for ns in tool_registry.namespaces_in(d.get("body_md") or ""):
                 refs.setdefault(ns, set()).add(slug)

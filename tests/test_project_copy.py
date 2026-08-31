@@ -246,11 +246,12 @@ def _wire_procedures(monkeypatch, *, instr):
     """Câble org_store pour les liens `procedure` : lookup + copie cross-org."""
     copied = {"copies": []}
 
-    def _copy(iid, dest_org, set_by=None):
-        copied["copies"].append((iid, dest_org, set_by))
-        return {"id": 900 + iid, "slug": "proc-copy", "org_id": dest_org}
+    def _copy(iid, owner_type, owner_id, set_by=None):
+        copied["copies"].append((iid, int(owner_id), set_by))
+        return {"id": 900 + iid, "slug": "proc-copy", "owner_type": owner_type,
+                "owner_id": str(owner_id), "org_id": int(owner_id)}
     monkeypatch.setattr(OS, "get_instruction_by_id", lambda iid: instr.get(iid))
-    monkeypatch.setattr(OS, "copy_instruction_to_org", _copy)
+    monkeypatch.setattr(OS, "copy_instruction_to_owner", _copy)
     return copied
 
 
@@ -261,7 +262,8 @@ def test_duplicate_copies_procedure_from_other_org(monkeypatch):
               "role": "étapes", "config": None, "slot": None}]
     src = {"project": {"id": 7, "brief_md": ""}, "docs": [], "links": links, "files": []}
     created = _wire(monkeypatch, src=src)
-    proc = _wire_procedures(monkeypatch, instr={11: {"id": 11, "org_id": 77, "title": "Enrichir"}})
+    proc = _wire_procedures(monkeypatch, instr={11: {"id": 11, "org_id": 77, "owner_type": "org",
+                                                     "owner_id": "77", "title": "Enrichir"}})
     PJ.duplicate_project(7, "Copie", "org", "42", copied_by="u1")
     assert proc["copies"] == [(11, 42, "u1")]                 # copiée dans l'org cible
     assert created["links"] == [(101, "procedure", "911", "Enrichir", "étapes", None)]
@@ -274,10 +276,29 @@ def test_duplicate_keeps_procedure_pointer_same_org(monkeypatch):
               "role": None, "config": None, "slot": None}]
     src = {"project": {"id": 7, "brief_md": ""}, "docs": [], "links": links, "files": []}
     created = _wire(monkeypatch, src=src)
-    proc = _wire_procedures(monkeypatch, instr={11: {"id": 11, "org_id": 42, "title": "Enrichir"}})
+    proc = _wire_procedures(monkeypatch, instr={11: {"id": 11, "org_id": 42, "owner_type": "org",
+                                                     "owner_id": "42", "title": "Enrichir"}})
     PJ.duplicate_project(7, "Copie", "org", "42")
     assert proc["copies"] == []                               # aucune copie
     assert created["links"] == [(101, "procedure", "11", "Enrichir", None, None)]
+
+
+def test_duplicate_copies_a_team_procedure_of_the_same_org(monkeypatch):
+    """Une procédure d'ÉQUIPE de l'org cible n'appartient PAS à l'org : elle se copie.
+
+    Le test qui manquait (#681). La comparaison portait sur `org_id`, l'org PARENTE —
+    identique pour l'org 42 et pour une équipe de 42 — donc ce lien était « déjà chez
+    la cible » et le projet copié pointait une procédure que son propriétaire ne
+    possède pas. Rien ne le signalait : ni erreur, ni warning."""
+    links = [{"target_type": "procedure", "target_ref": "11", "label": "Enrichir",
+              "role": None, "config": None, "slot": None}]
+    src = {"project": {"id": 7, "brief_md": ""}, "docs": [], "links": links, "files": []}
+    created = _wire(monkeypatch, src=src)
+    proc = _wire_procedures(monkeypatch, instr={11: {"id": 11, "org_id": 42, "owner_type": "group",
+                                                     "owner_id": "9", "title": "Enrichir"}})
+    PJ.duplicate_project(7, "Copie", "org", "42", copied_by="u1")
+    assert proc["copies"] == [(11, 42, "u1")]
+    assert created["links"] == [(101, "procedure", "911", "Enrichir", None, None)]
 
 
 def test_duplicate_skips_dead_procedure(monkeypatch):

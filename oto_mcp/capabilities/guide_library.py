@@ -299,7 +299,7 @@ def _get(ctx: ResolvedCtx, inp: LibraryGetInput) -> dict:
 
 def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
     org_id = _require_org_admin(ctx, "Publier")
-    src = org_store.get_instruction(org_id, inp.slug)
+    src = org_store.get_instruction("org", org_id, inp.slug)
     if not src:
         # Code d'aujourd'hui + code d'hier dans `details.legacy_code` : un code
         # d'erreur ne se double pas, il n'y a qu'un champ `error` (#519).

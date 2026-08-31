@@ -1,17 +1,22 @@
 """Accès DB du sous-palier GROUPE (départements / équipes d'une org, ADR 0012).
 
 Miroir d'`org_store` au grain groupe. Les tables (`org_groups`,
-`org_group_members`, `org_group_instructions` + revisions) sont déclarées dans
-`db._SCHEMA` ; leurs requêtes vivent ici. Les secrets de groupe vivent dans le
-coffre chiffré `connector_credentials` (entity_type='group'), comme ceux d'org.
+`org_group_members`) sont déclarées dans `db._SCHEMA` ; leurs requêtes vivent ici.
+Les secrets de groupe vivent dans le coffre chiffré `connector_credentials`
+(entity_type='group'), comme ceux d'org.
 
 Un groupe gouverne DEUX ressources par délégation de l'org (décision produit) :
-- **guide** (org_group_instructions) — servi en complément de celle de l'org ;
+- **procédures** — même table et même jeu de fonctions que l'org, keyé sur
+  `(owner_type, owner_id)` : `org_store.<fn>('group', group_id, …)`. ⚠️ Il a existé
+  ici, jusqu'au 31/08/2026, un SECOND jeu (`*_group_instruction*`) qui filtrait en
+  dur `owner_type='group'` sur la même table — deux implémentations concurrentes qui
+  avaient déjà divergé (slots, archivage). Elles ont fusionné, cf. oto-backend#681 ;
 - **secrets partagés** (coffre, entity_type='group') — résolus avant ceux de l'org.
 
 Sens unique (ADR 0004) : dépend de `db`/`org_store`/`credentials_store`/
 `connectors`, jamais l'inverse. `org_store` n'importe PAS ce module (il manipule
-`org_group_members` en SQL direct pour l'invariant org↔groupe → pas de cycle).
+`org_group_members` en SQL direct pour l'invariant org↔groupe, et lit l'org parente
+d'une équipe de la même façon → pas de cycle).
 """
 from __future__ import annotations
 
@@ -19,7 +24,6 @@ from typing import Optional
 
 from . import providers, credentials_store
 from .db import _connect
-from .org_store import BASE_SLUG, _snippet, normalize_slug
 
 GROUP_ROLES = ("group_admin", "group_member")
 
@@ -268,165 +272,3 @@ def list_group_secrets(group_id: int) -> list[dict]:
             entry["base_url"] = base_url
         out.append(entry)
     return out
-
-
-# --- guide & skills du groupe (miroir org_store, table org_group_*) ------
-#
-# Même modèle versionné que le guide d'org : slug réservé BASE_SLUG = base,
-# autres = skills. En clair (prose). normalize_slug/_snippet réutilisés d'org_store.
-
-# Chantier procédures (cadrage 10/07, B2) : les procédures d'équipe vivent dans la
-# table UNIFIÉE `org_instructions` (owner_type='group', owner_id=group_id::text,
-# org_id=org parente) — la jumelle org_group_instructions est fusionnée (copie au
-# boot, DROP en Lot C). Signatures et formes de sortie INCHANGÉES.
-
-def get_group_instruction(group_id: int, slug: str,
-                          version: Optional[int] = None) -> Optional[dict]:
-    """Une PROCÉDURE d'équipe. ⚠️ Ne sert plus le readme (`claude_md`) : il vit dans
-    `guides` et se lit sur la surface guide (`scope='group', delivery='init'`) — ce
-    slug renvoie donc None ici (ADR 0042 §Convergence des surfaces)."""
-    slug = normalize_slug(slug)
-    with _connect() as conn:
-        if version is None:
-            row = conn.execute(
-                "SELECT %s AS group_id, id, slug, title, description, body_md, version, "
-                "set_by, created_at, updated_at FROM org_instructions "
-                "WHERE owner_type = 'group' AND owner_id = %s AND slug = %s",
-                (group_id, str(group_id), slug),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT %s AS group_id, slug, title, description, body_md, version, "
-                "set_by, created_at FROM org_instruction_revisions "
-                "WHERE owner_type = 'group' AND owner_id = %s AND slug = %s AND version = %s",
-                (group_id, str(group_id), slug, version),
-            ).fetchone()
-        return dict(row) if row else None
-
-
-def list_group_instructions(group_id: int, include_base: bool = False) -> list[dict]:
-    where = ("owner_type = 'group' AND owner_id = %s" if include_base
-             else "owner_type = 'group' AND owner_id = %s AND slug <> %s")
-    params: tuple = (str(group_id),) if include_base else (str(group_id), BASE_SLUG)
-    with _connect() as conn:
-        rows = conn.execute(
-            f"SELECT id, slug, title, description, version, updated_at "
-            f"FROM org_instructions WHERE {where} ORDER BY slug",
-            params,
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def search_group_instructions(group_id: int, query: str,
-                              include_base: bool = False) -> list[dict]:
-    q = (query or "").strip()
-    if not q:
-        return []
-    like = f"%{q}%"
-    base_filter = "" if include_base else "AND slug <> %s "
-    head: tuple = (str(group_id),) if include_base else (str(group_id), BASE_SLUG)
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, slug, title, description, body_md, version, updated_at "
-            "FROM org_instructions WHERE owner_type = 'group' AND owner_id = %s " + base_filter +
-            "AND (title ILIKE %s OR description ILIKE %s OR body_md ILIKE %s) "
-            "ORDER BY (title ILIKE %s) DESC, (description ILIKE %s) DESC, updated_at DESC",
-            head + (like, like, like, like, like),
-        ).fetchall()
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["snippet"] = _snippet(d.pop("body_md", "") or "", q)
-        out.append(d)
-    return out
-
-
-def set_group_instruction(group_id: int, slug: str, body_md: str,
-                          title: Optional[str] = None, description: Optional[str] = None,
-                          set_by: Optional[str] = None) -> int:
-    """Crée/MAJ une instruction de groupe ; renvoie la nouvelle version + archive
-    un snapshot. Sérialisé par (group, slug) via verrou advisory."""
-    slug = normalize_slug(slug)
-    if not slug:
-        raise ValueError("slug requis")
-    if not (body_md or "").strip():
-        raise ValueError("body_md requis")
-    # Le readme d'équipe s'écrit sur la surface guide : ici, ce sont les PROCÉDURES.
-    if slug == BASE_SLUG:
-        raise ValueError(
-            f"`{BASE_SLUG}` est le readme d'équipe, pas une procédure — écris-le via la "
-            "surface guide (scope='group', delivery='init').")
-    grp = get_group(group_id)
-    if grp is None:
-        raise ValueError(f"groupe #{group_id} inconnu")
-    org_id = int(grp["org_id"])   # org PARENTE (dénormalisée sur la table unifiée)
-    with _connect() as conn:
-        with conn.transaction():
-            # Même famille de clé de verrou que l'org ('oi:org:{id}:{slug}') —
-            # sérialisation par (scope, slug) sur la table unifiée.
-            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
-                         (f"oi:group:{group_id}:{slug}",))
-            cur = conn.execute(
-                "SELECT version, title, description FROM org_instructions "
-                "WHERE owner_type = 'group' AND owner_id = %s AND slug = %s",
-                (str(group_id), slug),
-            ).fetchone()
-            new_version = (cur["version"] + 1) if cur else 1
-            new_title = title if title is not None else (cur["title"] if cur else "")
-            new_desc = description if description is not None else (cur["description"] if cur else "")
-            conn.execute(
-                """
-                INSERT INTO org_instructions
-                    (org_id, owner_type, owner_id, slug, title, description, body_md,
-                     slots, version, set_by, updated_at)
-                VALUES (%s, 'group', %s, %s, %s, %s, %s, '[]'::jsonb, %s, %s, NOW())
-                ON CONFLICT (owner_type, owner_id, slug) DO UPDATE SET
-                    title = EXCLUDED.title, description = EXCLUDED.description,
-                    body_md = EXCLUDED.body_md, version = EXCLUDED.version,
-                    set_by = EXCLUDED.set_by, updated_at = NOW()
-                """,
-                (org_id, str(group_id), slug, new_title, new_desc, body_md,
-                 new_version, set_by),
-            )
-            conn.execute(
-                """
-                INSERT INTO org_instruction_revisions
-                    (org_id, owner_type, owner_id, slug, version, title, description,
-                     body_md, set_by)
-                VALUES (%s, 'group', %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (org_id, str(group_id), slug, new_version, new_title, new_desc,
-                 body_md, set_by),
-            )
-            return new_version
-
-
-def list_group_instruction_versions(group_id: int, slug: str) -> list[dict]:
-    slug = normalize_slug(slug)
-    if slug == BASE_SLUG:
-        return []                                  # readme sans historique (ADR 0042)
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT version, title, set_by, created_at FROM org_instruction_revisions "
-            "WHERE owner_type = 'group' AND owner_id = %s AND slug = %s ORDER BY version DESC",
-            (str(group_id), slug),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def delete_group_instruction(group_id: int, slug: str) -> bool:
-    slug = normalize_slug(slug)
-    with _connect() as conn:
-        with conn.transaction():
-            cur = conn.execute(
-                "DELETE FROM org_instructions "
-                "WHERE owner_type = 'group' AND owner_id = %s AND slug = %s",
-                (str(group_id), slug),
-            )
-            removed = (cur.rowcount or 0) > 0
-            conn.execute(
-                "DELETE FROM org_instruction_revisions "
-                "WHERE owner_type = 'group' AND owner_id = %s AND slug = %s",
-                (str(group_id), slug),
-            )
-    return removed

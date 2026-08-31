@@ -1,27 +1,39 @@
-"""Les PROCÉDURES d'org (table `org_instructions`) : guide versionné.
+"""Les PROCÉDURES (table `org_instructions`) : guide versionné, possédé par un SCOPE.
 
 Le modèle unifié servi par `oto_procedure` : lecture/écriture/recherche d'une
-procédure d'org, son historique de versions, et sa vie de **ressource possédée**
-(ADR 0030 : id surrogate, copie et transfert d'org).
+procédure, son historique de versions, et sa vie de **ressource possédée**
+(ADR 0030 : id surrogate, copie et déplacement de propriétaire).
+
+⚠️ **Un seul jeu de fonctions, keyé sur `(owner_type, owner_id)`** — la forme que
+la table porte déjà (unicité vivante `(owner_type, owner_id, slug)`, sur la table
+ET sur ses révisions). Jusqu'au 31/08/2026 il en existait DEUX : celui-ci filtrait
+en dur `owner_type='org'`, `group_store` filtrait en dur `owner_type='group'`, et
+les deux avaient déjà divergé (l'équipe écrivait `slots='[]'` en dur, ne servait
+pas les slots et ignorait l'archivage). Un palier de plus par la même méthode
+aurait fait un TROISIÈME jeu — cf. oto-backend#681.
+
+`owner_type` accepté : `org` et `group` (les deux ont une org PARENTE, donc
+`org_id` — dénormalisé, FK, NOT NULL — reste toujours renseigné). Le palier
+personnel (`user`) est la phase 2 de #681 : il exige de relâcher cette colonne, ce
+que ce module refuse explicitement plutôt que d'écrire une ligne bancale.
 
 ⚠️ À ne pas confondre avec `oto_mcp/instructions.py`, qui RÉSOUT les instructions
 à l'appel ; ici c'est le store.
 
-Feuille du package : n'importe aucun de ses frères.
+Feuille du package : n'importe aucun de ses frères — ni `group_store`, qui dépend
+de lui (l'org parente d'une équipe se lit en SQL direct sur `org_groups`, même
+parti pris que l'invariant org↔groupe dans `members.py`).
 """
 from __future__ import annotations
 
 import json
-import logging
 import re
 from typing import Optional
 
 from ..db import _connect
 
-_log = logging.getLogger(__name__)
 
-
-# --- instructions d'org : guide de base + skills versionnés ----------------
+# --- instructions : guide de base + skills versionnés ----------------------
 #
 # Modèle unifié servi par oto_procedure(op='get') / oto_*_instruction(s). Le slug réservé
 # BASE_SLUG ("claude_md") = le guide de base (servi d'office) ; les autres =
@@ -31,10 +43,46 @@ _log = logging.getLogger(__name__)
 BASE_SLUG = "claude_md"
 _SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 
+# Les paliers de propriété qu'une procédure connaît AUJOURD'HUI. `user` est la
+# phase 2 de #681 (la colonne `org_id` doit d'abord devenir nullable) : l'ajouter
+# ici sans ce préalable écrirait `org_id = NULL` sur une colonne NOT NULL.
+OWNER_TYPES: tuple[str, ...] = ("org", "group")
+
+_OWNER_WHERE = "owner_type = %s AND owner_id = %s"
+
 
 def normalize_slug(slug: str) -> str:
     """Slug canonique : minuscules, [a-z0-9_-], séparateurs compactés. '' si vide."""
     return _SLUG_RE.sub("-", (slug or "").strip().lower()).strip("-_")
+
+
+def _owner(owner_type: str, owner_id: int | str) -> tuple[str, str]:
+    """Valide la paire propriétaire et la rend sous la forme EXACTE des colonnes
+    (`owner_id` est du TEXTE). Lève `ValueError` sur un palier inconnu — pas de repli
+    silencieux vers l'org, qui écrirait la procédure chez quelqu'un d'autre."""
+    otype = (owner_type or "").strip()
+    if otype not in OWNER_TYPES:
+        raise ValueError(
+            f"owner_type `{owner_type}` inconnu — attendu : {' | '.join(OWNER_TYPES)}")
+    oid = str(owner_id).strip()
+    if not oid:
+        raise ValueError("owner_id requis")
+    return otype, oid
+
+
+def _parent_org_id(conn, owner_type: str, owner_id: str) -> int:
+    """L'org PARENTE du propriétaire = la valeur d'`org_instructions.org_id`, colonne
+    dénormalisée NOT NULL (FK vers `orgs`, porteuse de la cascade de suppression).
+
+    Une org EST son org ; une équipe tient la sienne dans `org_groups` (`org_id` NOT
+    NULL). Lu en SQL direct : `org_store` n'importe jamais `group_store` (cycle)."""
+    if owner_type == "org":
+        return int(owner_id)
+    row = conn.execute(
+        "SELECT org_id FROM org_groups WHERE id = %s", (int(owner_id),)).fetchone()
+    if row is None:
+        raise ValueError(f"équipe #{owner_id} inconnue")
+    return int(row["org_id"])
 
 
 def _snippet(body: str, query: str, width: int = 200) -> str:
@@ -47,33 +95,40 @@ def _snippet(body: str, query: str, width: int = 200) -> str:
     return ("…" if start else "") + body[start:end].strip() + ("…" if end < len(body) else "")
 
 
-def get_instruction(org_id: int, slug: str, version: Optional[int] = None) -> Optional[dict]:
+def get_instruction(owner_type: str, owner_id: int | str, slug: str,
+                    version: Optional[int] = None) -> Optional[dict]:
     """Une PROCÉDURE (courante, ou une `version` archivée précise). None si absente.
 
     ⚠️ Ne sert plus le readme : `claude_md` était intercepté ici et servi depuis `guides`
     sous la FORME d'une instruction (compat de migration 0042). Le readme n'est pas une
-    procédure — il se lit sur la surface guide (`guide_store.get_init_guide('org', id)`,
-    capacité `me.guides.*`). Un appel avec ce slug renvoie donc None."""
+    procédure — il se lit sur la surface guide (`guide_store.get_init_guide(scope, id)`,
+    capacité `me.guides.*`). Un appel avec ce slug renvoie donc None.
+
+    ⚠️ Une version archivée vient de la table des RÉVISIONS, qui ne porte ni `id` ni
+    `updated_at` : la forme rendue est plus petite."""
+    otype, oid = _owner(owner_type, owner_id)
     slug = normalize_slug(slug)
     with _connect() as conn:
         if version is None:
             row = conn.execute(
-                "SELECT id, org_id, slug, title, description, body_md, slots, version, set_by, "
-                "created_at, updated_at FROM org_instructions "
-                "WHERE owner_type = 'org' AND org_id = %s AND slug = %s",
-                (org_id, slug),
+                "SELECT id, org_id, owner_type, owner_id, slug, title, description, "
+                "body_md, slots, version, set_by, created_at, updated_at "
+                f"FROM org_instructions WHERE {_OWNER_WHERE} AND slug = %s",
+                (otype, oid, slug),
             ).fetchone()
         else:
             row = conn.execute(
-                "SELECT org_id, slug, title, description, body_md, slots, version, set_by, "
-                "created_at FROM org_instruction_revisions "
-                "WHERE owner_type = 'org' AND org_id = %s AND slug = %s AND version = %s",
-                (org_id, slug, version),
+                "SELECT org_id, owner_type, owner_id, slug, title, description, "
+                "body_md, slots, version, set_by, created_at "
+                f"FROM org_instruction_revisions WHERE {_OWNER_WHERE} "
+                "AND slug = %s AND version = %s",
+                (otype, oid, slug, version),
             ).fetchone()
         return dict(row) if row else None
 
 
-def list_instructions(org_id: int, include_base: bool = False) -> list[dict]:
+def list_instructions(owner_type: str, owner_id: int | str,
+                      include_base: bool = False) -> list[dict]:
     """Métadonnées des instructions (SANS body) = l'index des skills. Exclut la
     guide de base sauf `include_base` (surface admin), et TOUJOURS les
     procédures archivées.
@@ -85,13 +140,10 @@ def list_instructions(org_id: int, include_base: bool = False) -> list[dict]:
     description d'`oto_procedure` au tools/list) que `oto_procedure op=list`.
     Une procédure retirée du service doit cesser d'être proposée à l'agent — un
     archivage qui la laisserait dans cet index ne serait qu'un habillage."""
-    # `owner_type='org'` : post-fusion (chantier procédures, cadrage 10/07) la table
-    # porte aussi les lignes GROUP (org_id = org parente) — une liste d'org ne doit
-    # jamais les ratisser.
-    where = ("owner_type = 'org' AND org_id = %s" if include_base
-             else "owner_type = 'org' AND org_id = %s AND slug <> %s")
+    otype, oid = _owner(owner_type, owner_id)
+    where = _OWNER_WHERE if include_base else _OWNER_WHERE + " AND slug <> %s"
     where += " AND archived_at IS NULL"
-    params: tuple = (org_id,) if include_base else (org_id, BASE_SLUG)
+    params: tuple = (otype, oid) if include_base else (otype, oid, BASE_SLUG)
     with _connect() as conn:
         rows = conn.execute(
             f"SELECT id, slug, title, description, version, updated_at "
@@ -101,21 +153,24 @@ def list_instructions(org_id: int, include_base: bool = False) -> list[dict]:
         return [dict(r) for r in rows]
 
 
-def list_instruction_bodies(org_id: int) -> list[dict]:
-    """Slug + body_md des instructions d'une org (hors guide de base) — pour
+def list_instruction_bodies(owner_type: str, owner_id: int | str) -> list[dict]:
+    """Slug + body_md des instructions d'un propriétaire (hors guide de base) — pour
     dériver les références d'outils `<tool:slug>` (compteur « guide-only », ADR 0024)."""
+    otype, oid = _owner(owner_type, owner_id)
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT slug, body_md FROM org_instructions "
-            "WHERE owner_type = 'org' AND org_id = %s AND slug <> %s",
-            (org_id, BASE_SLUG),
+            f"SELECT slug, body_md FROM org_instructions WHERE {_OWNER_WHERE} "
+            "AND slug <> %s",
+            (otype, oid, BASE_SLUG),
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def search_instructions(org_id: int, query: str, include_base: bool = False) -> list[dict]:
-    """Recherche substring (title/description/body) dans les instructions de l'org.
+def search_instructions(owner_type: str, owner_id: int | str, query: str,
+                        include_base: bool = False) -> list[dict]:
+    """Recherche substring (title/description/body) dans les instructions du scope.
     Renvoie les métadonnées + un `snippet` ; le body complet passe par get_instruction."""
+    otype, oid = _owner(owner_type, owner_id)
     q = (query or "").strip()
     if not q:
         return []
@@ -123,11 +178,11 @@ def search_instructions(org_id: int, query: str, include_base: bool = False) -> 
     # Archivées exclues sans option d'inclusion : chercher, c'est chercher ce qui
     # est en service (même raison que `list_instructions`).
     base_filter = "AND archived_at IS NULL " + ("" if include_base else "AND slug <> %s ")
-    head: tuple = (org_id,) if include_base else (org_id, BASE_SLUG)
+    head: tuple = (otype, oid) if include_base else (otype, oid, BASE_SLUG)
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, slug, title, description, body_md, version, updated_at "
-            "FROM org_instructions WHERE owner_type = 'org' AND org_id = %s " + base_filter +
+            f"FROM org_instructions WHERE {_OWNER_WHERE} " + base_filter +
             "AND (title ILIKE %s OR description ILIKE %s OR body_md ILIKE %s) "
             "ORDER BY (title ILIKE %s) DESC, (description ILIKE %s) DESC, updated_at DESC",
             head + (like, like, like, like, like),
@@ -140,13 +195,14 @@ def search_instructions(org_id: int, query: str, include_base: bool = False) -> 
     return out
 
 
-def set_instruction(org_id: int, slug: str, body_md: str, title: Optional[str] = None,
-                    description: Optional[str] = None, set_by: Optional[str] = None,
-                    slots: Optional[list] = None) -> int:
+def set_instruction(owner_type: str, owner_id: int | str, slug: str, body_md: str,
+                    title: Optional[str] = None, description: Optional[str] = None,
+                    set_by: Optional[str] = None, slots: Optional[list] = None) -> int:
     """Crée/met à jour une instruction ; renvoie la NOUVELLE version et archive un
     snapshot. `title`/`description`/`slots` None = conserver l'existant ('' / [] à
     la création). `slots` = entités requises déclarées (ADR 0035, validées en amont
-    par `slots.validate_slots`). Sérialisé par (org, slug) via verrou advisory."""
+    par `slots.validate_slots`). Sérialisé par (owner, slug) via verrou advisory."""
+    otype, oid = _owner(owner_type, owner_id)
     slug = normalize_slug(slug)
     if not slug:
         raise ValueError("slug requis")
@@ -156,17 +212,19 @@ def set_instruction(org_id: int, slug: str, body_md: str, title: Optional[str] =
     # API-ci est celle des PROCÉDURES (slots, versions). Plus de redirection silencieuse.
     if slug == BASE_SLUG:
         raise ValueError(
-            f"`{BASE_SLUG}` est le readme d'org, pas une procédure — écris-le via la "
-            "surface guide (scope='org', delivery='init').")
+            f"`{BASE_SLUG}` est le readme, pas une procédure — écris-le via la "
+            f"surface guide (scope='{otype}', delivery='init').")
     with _connect() as conn:
         with conn.transaction():
-            # Verrou + arbitre sur la clé OWNER (chantier procédures B1) : la PK legacy
-            # (org_id, slug) tombe en B2 — l'unicité vivante est (owner_type, owner_id, slug).
-            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"oi:org:{org_id}:{slug}",))
+            org_id = _parent_org_id(conn, otype, oid)
+            # Verrou + arbitre sur la clé OWNER : l'unicité vivante est
+            # (owner_type, owner_id, slug) — la PK legacy (org_id, slug) est tombée.
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                         (f"oi:{otype}:{oid}:{slug}",))
             cur = conn.execute(
                 "SELECT version, title, description, slots FROM org_instructions "
-                "WHERE owner_type = 'org' AND org_id = %s AND slug = %s",
-                (org_id, slug),
+                f"WHERE {_OWNER_WHERE} AND slug = %s",
+                (otype, oid, slug),
             ).fetchone()
             new_version = (cur["version"] + 1) if cur else 1
             new_title = title if title is not None else (cur["title"] if cur else "")
@@ -178,14 +236,14 @@ def set_instruction(org_id: int, slug: str, body_md: str, title: Optional[str] =
                 INSERT INTO org_instructions
                     (org_id, owner_type, owner_id, slug, title, description, body_md, slots,
                      version, set_by, updated_at)
-                VALUES (%s, 'org', %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (owner_type, owner_id, slug) DO UPDATE SET
                     title = EXCLUDED.title, description = EXCLUDED.description,
                     body_md = EXCLUDED.body_md, slots = EXCLUDED.slots,
                     version = EXCLUDED.version,
                     set_by = EXCLUDED.set_by, updated_at = NOW()
                 """,
-                (org_id, str(org_id), slug, new_title, new_desc, body_md, new_slots,
+                (org_id, otype, oid, slug, new_title, new_desc, body_md, new_slots,
                  new_version, set_by),
             )
             conn.execute(
@@ -193,30 +251,31 @@ def set_instruction(org_id: int, slug: str, body_md: str, title: Optional[str] =
                 INSERT INTO org_instruction_revisions
                     (org_id, owner_type, owner_id, slug, version, title, description,
                      body_md, slots, set_by)
-                VALUES (%s, 'org', %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (org_id, str(org_id), slug, new_version, new_title, new_desc, body_md,
+                (org_id, otype, oid, slug, new_version, new_title, new_desc, body_md,
                  new_slots, set_by),
             )
             return new_version
 
 
-def list_instruction_versions(org_id: int, slug: str) -> list[dict]:
+def list_instruction_versions(owner_type: str, owner_id: int | str, slug: str) -> list[dict]:
     """Historique d'une procédure (métadonnées par version, plus récent d'abord).
     Le readme n'est pas une procédure et n'a pas d'historique (ADR 0042) → []."""
+    otype, oid = _owner(owner_type, owner_id)
     slug = normalize_slug(slug)
     if slug == BASE_SLUG:
         return []
     with _connect() as conn:
         rows = conn.execute(
             "SELECT version, title, set_by, created_at FROM org_instruction_revisions "
-            "WHERE owner_type = 'org' AND org_id = %s AND slug = %s ORDER BY version DESC",
-            (org_id, slug),
+            f"WHERE {_OWNER_WHERE} AND slug = %s ORDER BY version DESC",
+            (otype, oid, slug),
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def archive_instruction(org_id: int, slug: str) -> bool:
+def archive_instruction(owner_type: str, owner_id: int | str, slug: str) -> bool:
     """Archive une procédure (soft-delete) : elle sort de tous les listings, la
     ligne et ses révisions restent. False si elle n'existait pas.
 
@@ -226,39 +285,39 @@ def archive_instruction(org_id: int, slug: str) -> bool:
     `db/projects.archive_project`, dont l'inverse n'existe pas non plus côté
     app. Ce qu'archiver garantit ici, c'est que RIEN n'est détruit — contrairement
     à `delete_instruction` juste en dessous, qui emporte l'historique."""
+    otype, oid = _owner(owner_type, owner_id)
     slug = normalize_slug(slug)
     with _connect() as conn:
         cur = conn.execute(
             "UPDATE org_instructions SET archived_at = NOW(), updated_at = NOW() "
-            "WHERE owner_type = 'org' AND org_id = %s AND slug = %s", (org_id, slug)
+            f"WHERE {_OWNER_WHERE} AND slug = %s", (otype, oid, slug)
         )
         return (cur.rowcount or 0) > 0
 
 
-def delete_instruction(org_id: int, slug: str) -> bool:
+def delete_instruction(owner_type: str, owner_id: int | str, slug: str) -> bool:
     """Supprime une instruction ET son historique. False si elle n'existait pas."""
+    otype, oid = _owner(owner_type, owner_id)
     slug = normalize_slug(slug)
     with _connect() as conn:
         with conn.transaction():
             cur = conn.execute(
-                "DELETE FROM org_instructions "
-                "WHERE owner_type = 'org' AND org_id = %s AND slug = %s", (org_id, slug)
+                f"DELETE FROM org_instructions WHERE {_OWNER_WHERE} AND slug = %s",
+                (otype, oid, slug),
             )
             removed = (cur.rowcount or 0) > 0
             conn.execute(
-                "DELETE FROM org_instruction_revisions "
-                "WHERE owner_type = 'org' AND org_id = %s AND slug = %s",
-                (org_id, slug),
+                f"DELETE FROM org_instruction_revisions WHERE {_OWNER_WHERE} AND slug = %s",
+                (otype, oid, slug),
             )
     return removed
 
 
 # --- guide = ressource possédée (ADR 0030, épic « couverture des autres types »,
 # livraison de projet #52) : l'identité PUBLIQUE d'un guide est son `id` surrogate
-# (ADR 0032 « stop using slug ») ; son propriétaire est porté par `owner_type/owner_id`
-# (chantier procédures, cadrage 10/07 — 'org' aujourd'hui, 'group' à la fusion B2 ; il
-# dérivait d'`org_id` avant). Ces fonctions alimentent le kind `doctrine`
-# d'`ownership.py` + la cascade de livraison d'un projet (`oto_resource`).
+# (ADR 0032 « stop using slug ») ; son propriétaire est porté par `owner_type/owner_id`.
+# Ces fonctions alimentent le kind `doctrine` d'`ownership.py` + la cascade de
+# livraison d'un projet (`oto_resource`).
 
 def get_instruction_by_id(instruction_id: int) -> Optional[dict]:
     """Une instruction par son id surrogate (identité publique). None si absente."""
@@ -272,99 +331,123 @@ def get_instruction_by_id(instruction_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-def _free_instruction_slug(conn, org_id: int, slug: str) -> str:
-    """Slug libre dans `org_id` : le slug tel quel, sinon suffixé (-2, -3…). On ne
-    remplace JAMAIS un guide existant de l'org cible (livraison non destructive)."""
+def _free_instruction_slug(conn, owner_type: str, owner_id: int | str, slug: str) -> str:
+    """Slug libre chez `(owner_type, owner_id)` : le slug tel quel, sinon suffixé
+    (-2, -3…). On ne remplace JAMAIS une procédure existante de la cible.
+
+    ⚠️ La sonde porte sur la clé d'unicité RÉELLE `(owner_type, owner_id, slug)`.
+    Jusqu'au 31/08/2026 elle sondait `owner_type='org' AND org_id=%s` : tant que
+    `owner_id = org_id::text` les deux coïncident, mais une seule ligne d'un autre
+    palier (ou d'une autre org parente) suffisait à faire répondre « libre » — et
+    l'`ON CONFLICT DO UPDATE` qui suit ÉCRASAIT la procédure en place, sans un mot.
+
+    Les RÉVISIONS sont sondées aussi : elles portent la même clé (+ version), donc un
+    slug libre côté table vivante mais pris côté historique ferait échouer l'insertion
+    du snapshot — et un déplacement ne peut pas emmener son historique sur une
+    collision."""
+    otype, oid = _owner(owner_type, owner_id)
     candidate = slug
     for i in range(2, 100):
-        row = conn.execute(
-            "SELECT 1 FROM org_instructions "
-            "WHERE owner_type = 'org' AND org_id = %s AND slug = %s",
-            (org_id, candidate),
+        taken = conn.execute(
+            f"SELECT 1 FROM org_instructions WHERE {_OWNER_WHERE} AND slug = %s "
+            "UNION ALL "
+            f"SELECT 1 FROM org_instruction_revisions WHERE {_OWNER_WHERE} AND slug = %s "
+            "LIMIT 1",
+            (otype, oid, candidate) * 2,
         ).fetchone()
-        if row is None:
+        if taken is None:
             return candidate
         candidate = f"{slug}-{i}"
-    raise ValueError(f"aucun slug libre dérivé de `{slug}` dans l'org {org_id}")
+    raise ValueError(f"aucun slug libre dérivé de `{slug}` chez {owner_type} {owner_id}")
 
 
-def copy_instruction_to_org(instruction_id: int, dest_org_id: int,
-                            set_by: Optional[str] = None) -> dict:
-    """Copie un guide dans une AUTRE org (livraison par transfert de projet, #52) :
-    nouveau guide v1 chez la cible (slug suffixé si pris — jamais d'écrasement),
-    l'originale reste intacte chez la source. Renvoie {id, slug, org_id} de la copie."""
+def copy_instruction_to_owner(instruction_id: int, owner_type: str, owner_id: int | str,
+                              set_by: Optional[str] = None) -> dict:
+    """Copie une procédure chez un AUTRE propriétaire (livraison par transfert de
+    projet, #52) : nouvelle procédure v1 chez la cible (slug suffixé si pris — jamais
+    d'écrasement), l'originale reste intacte chez la source. Renvoie
+    {id, slug, owner_type, owner_id, org_id} de la copie."""
+    otype, oid = _owner(owner_type, owner_id)
     src = get_instruction_by_id(instruction_id)
     if src is None:
-        raise ValueError(f"guide #{instruction_id} introuvable")
+        raise ValueError(f"procédure #{instruction_id} introuvable")
     with _connect() as conn:
-        dest_slug = _free_instruction_slug(conn, dest_org_id, src["slug"])
-    set_instruction(dest_org_id, dest_slug, src["body_md"],
+        dest_slug = _free_instruction_slug(conn, otype, oid, src["slug"])
+    set_instruction(otype, oid, dest_slug, src["body_md"],
                     title=src.get("title"), description=src.get("description"),
                     set_by=set_by, slots=src.get("slots") or [])
-    created = get_instruction(dest_org_id, dest_slug)
-    return {"id": created["id"], "slug": dest_slug, "org_id": dest_org_id}
+    created = get_instruction(otype, oid, dest_slug)
+    return {"id": created["id"], "slug": dest_slug, "owner_type": otype,
+            "owner_id": oid, "org_id": created["org_id"]}
 
 
-def reparent_instruction(instruction_id: int, new_org_id: int) -> str:
-    """Déplace un guide vers une autre org (transfert d'ownership ADR 0030, id
-    surrogate stable). Slug suffixé si pris chez la cible ; l'historique suit quand
-    il ne collisionne pas (sinon il reste chez la source — append-only, pas de perte).
-    Renvoie le slug final chez la cible."""
+def move_instruction(instruction_id: int, new_owner_type: str,
+                     new_owner_id: int | str) -> str:
+    """DÉPLACE une procédure d'un palier à l'autre — org ↔ équipe (#681).
+
+    L'`id` surrogate NE BOUGE PAS : c'est lui que `project_links.target_ref` et
+    `resource_grants.resource_id` désignent, donc c'est lui qui fait survivre le lien
+    de projet et les partages au déplacement. Les RÉVISIONS suivent dans la MÊME
+    transaction : une procédure et son historique ne se séparent pas (le chemin
+    précédent les déplaçait dans une seconde connexion et, sur collision, laissait
+    l'historique chez la source en n'écrivant qu'un warning — 26 versions perdues de
+    vue pour un slug déjà pris). Slug suffixé si pris chez la cible (sur la table
+    vivante ET l'historique). Renvoie le slug final."""
+    otype, oid = _owner(new_owner_type, new_owner_id)
     src = get_instruction_by_id(instruction_id)
     if src is None:
-        raise ValueError(f"guide #{instruction_id} introuvable")
-    if int(src["org_id"]) == int(new_org_id):
+        raise ValueError(f"procédure #{instruction_id} introuvable")
+    prev = (str(src["owner_type"]), str(src["owner_id"]))
+    if prev == (otype, oid):
         return src["slug"]
     with _connect() as conn:
-        dest_slug = _free_instruction_slug(conn, new_org_id, src["slug"])
-        conn.execute(
-            "UPDATE org_instructions SET org_id = %s, owner_type = 'org', owner_id = %s, "
-            "slug = %s, updated_at = NOW() WHERE id = %s",
-            (new_org_id, str(new_org_id), dest_slug, instruction_id),
-        )
-    # L'historique suit dans un second temps (hors transaction principale) : une
-    # collision de revisions chez la cible ne doit pas annuler le transfert — il
-    # reste alors chez la source (append-only, rien n'est perdu).
-    try:
-        with _connect() as conn:
+        with conn.transaction():
+            org_id = _parent_org_id(conn, otype, oid)
+            dest_slug = _free_instruction_slug(conn, otype, oid, src["slug"])
             conn.execute(
-                "UPDATE org_instruction_revisions SET org_id = %s, owner_type = 'org', "
-                "owner_id = %s, slug = %s "
-                "WHERE owner_type = %s AND owner_id = %s AND slug = %s",
-                (new_org_id, str(new_org_id), dest_slug,
-                 src.get("owner_type") or "org", src.get("owner_id") or str(src["org_id"]),
-                 src["slug"]),
+                "UPDATE org_instruction_revisions SET owner_type = %s, owner_id = %s, "
+                f"org_id = %s, slug = %s WHERE {_OWNER_WHERE} AND slug = %s",
+                (otype, oid, org_id, dest_slug, prev[0], prev[1], src["slug"]),
             )
-    except Exception:
-        _log.warning("reparent_instruction: historique laissé chez la source "
-                     "(collision revisions, guide #%s)", instruction_id)
+            cur = conn.execute(
+                "UPDATE org_instructions SET owner_type = %s, owner_id = %s, org_id = %s, "
+                "slug = %s, updated_at = NOW() WHERE id = %s",
+                (otype, oid, org_id, dest_slug, instruction_id),
+            )
+            if (cur.rowcount or 0) != 1:
+                raise ValueError(f"procédure #{instruction_id} introuvable")
     return dest_slug
 
 
-def list_instructions_for_orgs(org_ids: list[int]) -> list[dict]:
-    """Guides (hors base) des orgs données — plan GOUVERNANCE (métadonnées + org_id,
-    sans body). Alimente `oto_resource(op=list, resource_type='doctrine')`."""
-    if not org_ids:
+def list_instructions_for_owners(owners: list[tuple[str, str]]) -> list[dict]:
+    """Procédures (hors base) des propriétaires donnés — plan GOUVERNANCE
+    (métadonnées + propriétaire, sans body). Alimente
+    `oto_resource(op=list, resource_type='doctrine')`."""
+    if not owners:
         return []
+    clause = " OR ".join([f"({_OWNER_WHERE})"] * len(owners))
+    params: tuple = tuple(str(x) for pair in owners for x in pair) + (BASE_SLUG,)
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, org_id, slug, title, description, version, updated_at "
-            "FROM org_instructions "
-            "WHERE owner_type = 'org' AND org_id = ANY(%s) AND slug <> %s "
+            "SELECT id, org_id, owner_type, owner_id, slug, title, description, "
+            f"version, updated_at FROM org_instructions WHERE ({clause}) AND slug <> %s "
             # Archivée = hors service : elle ne se propose plus comme ressource
             # à lier à un projet.
-            "AND archived_at IS NULL ORDER BY org_id, slug",
-            (org_ids, BASE_SLUG),
+            "AND archived_at IS NULL ORDER BY owner_type, owner_id, slug",
+            params,
         ).fetchall()
         return [dict(r) for r in rows]
 
 
 def list_all_instructions() -> list[dict]:
-    """Tous les guides nommés (vue opérateur plateforme — gouvernance)."""
+    """Toutes les procédures nommées, TOUS paliers (vue opérateur plateforme —
+    gouvernance). Le filtre `owner_type='org'` d'avant #681 cachait à l'opérateur
+    exactement les lignes qu'il est là pour voir."""
     with _connect() as conn:
         rows = conn.execute(
-            "SELECT id, org_id, slug, title, description, version, updated_at "
-            "FROM org_instructions WHERE owner_type = 'org' AND slug <> %s ORDER BY org_id, slug",
+            "SELECT id, org_id, owner_type, owner_id, slug, title, description, "
+            "version, updated_at FROM org_instructions WHERE slug <> %s "
+            "ORDER BY org_id, owner_type, owner_id, slug",
             (BASE_SLUG,),
         ).fetchall()
         return [dict(r) for r in rows]

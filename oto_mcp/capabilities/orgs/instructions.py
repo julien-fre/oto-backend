@@ -12,10 +12,15 @@ Deux paliers, par combinateur d'autz (pas de branche `org_id` à la main) :
   `roles`). Lecture = `ORG_MEMBER_OF` ; écriture = `ORG_ADMIN_OF`. Chemins
   `/api/admin/orgs/{id}/*`, outil `oto_admin_guide`.
 
-Les handlers lisent `ctx.org_id` (injecté par l'autz) → **partagés** entre les
-deux paliers. Le guide de **groupe** est lisible en mode membre
-(`scope="group"`, complément du département actif) ; son écriture reste dans
-`groups_guide`. Modèle versionné (slug réservé `claude_md` = guide de base).
+Les handlers lisent `ctx.org_id` / `ctx.group_id` (injectés par l'autz) →
+**partagés** entre les deux paliers. Modèle versionné (slug réservé `claude_md` =
+guide de base).
+
+Le palier **équipe** n'est plus seulement lisible : depuis #681, `scope='group'`
+écrit et supprime aussi (chef d'équipe), sur le MÊME store et la MÊME forme de
+réponse — la clé de scope changeant de nom (`group_id` au lieu d'`org_id`), comme
+partout ailleurs dans ce module. La face REST `/api/groups/{id}/instructions*`
+(`groups/guide.py`) reste, avec ses propres modèles de sortie.
 """
 from __future__ import annotations
 
@@ -112,7 +117,7 @@ class GuideView(BaseModel):
     # lesquelles résoudre les `<slot:>`. Dérivé best-effort — son ABSENCE peut donc
     # aussi vouloir dire « la dérivation a échoué », pas seulement « hors projet ».
     project_instance: Optional[dict] = None
-    # Forme 3 avec `with_history=true`, en scope org uniquement.
+    # Forme 3 avec `with_history=true` (org comme équipe depuis #681).
     versions: Optional[list[dict]] = None
 
 
@@ -244,7 +249,12 @@ class InstructionWritten(BaseModel):
     `slots` renvoyé est l'état EFFECTIF après écriture (envoyer `slots: null` conserve
     l'existant, donc l'écho peut différer de ce qui a été posté)."""
     ok: bool
+    # ⚠️ La clé de scope CHANGE de nom selon le palier écrit : `org_id` en scope org,
+    # `group_id` en scope équipe (#681) — pas un champ nul, un champ absent. Même
+    # convention que `GuideView` en lecture. `scope` dit lequel, sans avoir à deviner.
     org_id: Optional[int] = None
+    group_id: Optional[int] = None
+    scope: Optional[str] = None
     slug: str
     # Le NOUVEAU numéro de version (jamais celui qu'on a envoyé).
     version: int
@@ -275,9 +285,14 @@ class InstructionWritten(BaseModel):
 class InstructionDeleted(BaseModel):
     """Suppression d'une procédure **et de tout son historique** — irréversible, aucune
     corbeille. `deleted` ne vaut jamais `false` (un slug absent lève un 404) : c'est
-    une constante d'écho. `slug` est le slug normalisé."""
+    une constante d'écho. `slug` est le slug normalisé.
+
+    ⚠️ Comme à l'écriture, la clé de scope change de nom : `org_id` en scope org,
+    `group_id` en scope équipe (#681)."""
     ok: bool
     org_id: Optional[int] = None
+    group_id: Optional[int] = None
+    scope: Optional[str] = None
     slug: str
     deleted: bool
 
@@ -291,9 +306,14 @@ class InstructionArchived(BaseModel):
     `false` (un slug absent lève un 404) : c'est une constante d'écho.
 
     Pas de désarchivage sur cette surface, même choix que pour les projets : la
-    procédure est récupérable en base, pas d'un clic dans l'app."""
+    procédure est récupérable en base, pas d'un clic dans l'app.
+
+    ⚠️ Comme à l'écriture, la clé de scope change de nom (#681) — ici toujours
+    `org_id` : l'archivage n'est pas servi au palier équipe."""
     ok: bool
     org_id: Optional[int] = None
+    group_id: Optional[int] = None
+    scope: Optional[str] = None
     slug: str
     archived: bool
 
@@ -375,6 +395,28 @@ class GuideDeleteInput(BaseModel):
     org: Optional[int] = None
 
 
+# … et les porter sur les entrées de la CONSOLE seule (#681). Les faces REST
+# `/api/me/instructions/*` gardent leur palier org : le palier équipe y a déjà ses
+# propres routes (`/api/groups/{id}/instructions/*`, `groups/guide.py`). Publier
+# `scope`/`group` dans le corps d'une route qui les refuserait décrirait une porte
+# qui n'existe pas.
+class ConsoleInstrSetInput(InstrSetInput):
+    """`InstrSetInput` + l'axe de PALIER de la console `oto_procedure`.
+
+    `scope` : `org` (défaut) | `group`. `group` : l'équipe visée quand
+    `scope='group'` — None = l'équipe ACTIVE, miroir exact d'`org` au palier
+    au-dessus. La garde est « chef de l'équipe » (`GROUP_ADMIN_OPT`), pas
+    « admin de toute l'organisation »."""
+    scope: Optional[str] = None
+    group: Optional[int] = None
+
+
+class ConsoleGuideDeleteInput(GuideDeleteInput):
+    """`GuideDeleteInput` + le même axe de palier (cf. `ConsoleInstrSetInput`)."""
+    scope: Optional[str] = None
+    group: Optional[int] = None
+
+
 class RevertInput(BaseModel):
     slug: str
     version: int
@@ -439,7 +481,45 @@ def _project_instance(member_mode: bool) -> Optional[dict]:
         return None
 
 
-# ── Handlers (core ; org_id depuis ctx → partagés membre/admin) ─────────────
+def _active_group(ctx: ResolvedCtx) -> Optional[int]:
+    """L'équipe visée : celle que l'autz a résolue (épingle `group=`), sinon l'active."""
+    return ctx.group_id if ctx.group_id is not None else access.current_group(ctx.sub)
+
+
+def _owner_of(ctx: ResolvedCtx, inp) -> tuple[str, str]:
+    """Le propriétaire visé par un geste sur une procédure — `(owner_type, owner_id)`,
+    la clé unique du store (#681).
+
+    Le palier vient de `inp.scope` ; l'IDENTITÉ vient toujours du `ResolvedCtx`, donc
+    d'une cible que la règle d'autz a déjà **vérifiée et injectée**. Un `scope='group'`
+    arrivé sur une surface dont la règle est org (les faces admin, les routes REST
+    `/api/me/instructions/*`) trouve `ctx.group_id` vide et se fait refuser : le palier
+    équipe n'est atteignable que par une règle qui a passé `can_admin_group`. C'est le
+    verrou — relire l'équipe ici (via l'équipe ACTIVE, par exemple) rendrait le champ
+    client suffisant pour écrire chez elle. Une entrée sans `scope` reste au palier org,
+    à l'octet près."""
+    if getattr(inp, "scope", None) == "group":
+        if ctx.group_id is None:
+            raise AuthzDenied(403, "forbidden",
+                              "Le palier équipe s'écrit par `oto_procedure` "
+                              "(`scope='group'`, `group` pour viser une équipe "
+                              "précise) : la garde y est « chef de l'équipe ». Cette "
+                              "surface-ci écrit l'org.")
+        return ("group", str(ctx.group_id))
+    if ctx.org_id is None:
+        raise AuthzDenied(400, "no_active_org",
+                          "Aucune org active — vois `oto_use_org`, ou passe `org` "
+                          "explicitement.")
+    return ("org", str(ctx.org_id))
+
+
+def _scope_ref(owner: tuple[str, str]) -> dict:
+    """La clé de scope d'une réponse — `org_id` ou `group_id`, jamais les deux, jamais
+    une clé nulle (convention de tout ce module, cf. `GuideView`)."""
+    return {f"{owner[0]}_id": int(owner[1]), "scope": owner[0]}
+
+
+# ── Handlers (core ; owner depuis ctx → partagés membre/admin) ──────────────
 async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
     """Bundle session-start (slug omis) OU un guide nommé. En mode membre
     (`inp.org_id` absent) complète avec le guide du département actif."""
@@ -466,14 +546,21 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
             raise _inconnu(f"Aucun guide #{guide_id}.")
         if not ownership.can_access(ctx.sub, "doctrine", str(guide_id), "read"):
             raise AuthzDenied(403, "forbidden", "Accès refusé à ce guide.")
+        # Le scope se lit sur les colonnes qui le portent, pas sur `org_id` (l'org
+        # PARENTE, identique pour une procédure d'équipe et pour celles de son org).
+        # `scope` était écrit « org » en dur : vrai tant qu'aucune procédure d'équipe
+        # n'existait, faux le jour où l'une est partagée par id (#681).
+        owner_type, owner_id = str(instr["owner_type"]), str(instr["owner_id"])
+        parent_org = instr["org_id"]
         if version is not None:
-            versioned = org_store.get_instruction(instr["org_id"], instr["slug"], version)
+            versioned = org_store.get_instruction(owner_type, owner_id, instr["slug"],
+                                                  version)
             if not versioned:
                 raise _inconnu(f"Guide #{guide_id} : pas de version {version}.")
             instr = {**versioned, "id": instr["id"]}
         return deprecations.avec_les_deux_noms({
-            "org_id": instr["org_id"], "guide_id": int(guide_id),
-            "scope": "org", "slug": instr["slug"], "title": instr["title"],
+            "org_id": parent_org, "guide_id": int(guide_id),
+            "scope": owner_type, "slug": instr["slug"], "title": instr["title"],
             "description": instr["description"], "version": instr["version"],
             "body_md": instr["body_md"], "slots": instr.get("slots") or [],
             "referenced_tools": await tool_registry.manifest_for(instr["body_md"])})
@@ -490,8 +577,8 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
         base_body = guide_store.init_guide_body("org", org_id) or ""
         index = [{"slug": i["slug"], "title": i["title"],
                   "description": i["description"], "scope": "org"}
-                 for i in org_store.list_instructions(org_id)]
-        group_id = access.current_group(ctx.sub) if member_mode else None
+                 for i in org_store.list_instructions("org", org_id)]
+        group_id = _active_group(ctx) if member_mode else None
         group_name, group_guide = None, ""
         if group_id is not None:
             g = group_store.get_group(group_id)
@@ -499,7 +586,7 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
             group_guide = guide_store.init_guide_body("group", group_id) or ""
             index += [{"slug": i["slug"], "title": i["title"],
                        "description": i["description"], "scope": "group"}
-                      for i in group_store.list_group_instructions(group_id)]
+                      for i in org_store.list_instructions("group", group_id)]
         guide_body = base_body
         pi = _project_instance(member_mode)
         return deprecations.avec_les_deux_noms({
@@ -512,16 +599,17 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
 
     # Un guide nommé précis.
     if scope == "group" and member_mode:
-        group_id = access.current_group(ctx.sub)
+        group_id = _active_group(ctx)
         if group_id is None:
             raise AuthzDenied(400, "no_active_group", "Pas de département actif — vois `oto_use_group`.")
-        instr = group_store.get_group_instruction(group_id, slug, version)
+        owner: tuple[str, str] = ("group", str(group_id))
         scope_ref: dict = {"group_id": group_id}
     else:
         if org_id is None:
             raise AuthzDenied(400, "no_active_org", "Pas d'org active — vois `oto_use_org`.")
-        instr = org_store.get_instruction(org_id, slug, version)
+        owner = ("org", str(org_id))
         scope_ref = {"org_id": org_id}
+    instr = org_store.get_instruction(*owner, slug, version)
     if not instr:
         raise _inconnu(f"Aucun guide `{org_store.normalize_slug(slug)}` (scope {scope})"
                        + (f" en version {version}" if version is not None else "")
@@ -533,8 +621,11 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
     pi = _project_instance(member_mode)
     if pi:
         out["project_instance"] = pi
-    if inp.with_history and "org_id" in scope_ref:
-        out["versions"] = org_store.list_instruction_versions(org_id, slug)
+    # L'historique suit le palier lu. Il était réservé au scope org, alors que le
+    # modèle versionné est le MÊME aux deux étages depuis la fusion des stores (#681) :
+    # une procédure d'équipe avait des versions que cette réponse taisait.
+    if inp.with_history:
+        out["versions"] = org_store.list_instruction_versions(*owner, slug)
     return out
 
 
@@ -549,13 +640,14 @@ def _list_guides(ctx: ResolvedCtx, inp) -> dict:
     out: list = []
     if scope in (None, "org"):
         include_base = not member_mode  # la surface admin inclut le guide de base
-        rows = (org_store.search_instructions(org_id, query, include_base=include_base) if query
-                else org_store.list_instructions(org_id, include_base=include_base))
+        rows = (org_store.search_instructions("org", org_id, query, include_base=include_base)
+                if query
+                else org_store.list_instructions("org", org_id, include_base=include_base))
         out += [{**r, "scope": "org"} for r in rows]
-    group_id = access.current_group(ctx.sub) if (member_mode and scope in (None, "group")) else None
+    group_id = _active_group(ctx) if (member_mode and scope in (None, "group")) else None
     if group_id is not None:
-        rows = (group_store.search_group_instructions(group_id, query) if query
-                else group_store.list_group_instructions(group_id))
+        rows = (org_store.search_instructions("group", group_id, query) if query
+                else org_store.list_instructions("group", group_id))
         out += [{**r, "scope": "group"} for r in rows]
     return deprecations.avec_les_deux_noms(
         {"org_id": org_id, "group_id": group_id, "guides": out})
@@ -564,15 +656,18 @@ def _list_guides(ctx: ResolvedCtx, inp) -> dict:
 async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
     """Crée/met à jour une instruction (incrémente la version + archive un snapshot).
     `from_version` = restaure une version passée comme nouvelle (revert MCP) — corps,
-    métadonnées ET slots. `slots` (ADR 0035) : None = conserver l'existant."""
-    org_id = ctx.org_id
+    métadonnées ET slots. `slots` (ADR 0035) : None = conserver l'existant.
+
+    Le PALIER écrit vient de `inp.scope` (#681) : org par défaut, équipe si demandé —
+    même corps de handler, même store, seule la clé de propriété change."""
+    owner = _owner_of(ctx, inp)
     norm = org_store.normalize_slug(inp.slug) if inp.slug else _BASE
     if not norm:
         raise AuthzDenied(400, "invalid_slug", "slug invalide (attendu [a-z0-9_-]).")
     body_md, title, description = inp.body_md, inp.title, inp.description
     slots_in = getattr(inp, "slots", None)
     if inp.from_version is not None:
-        old = org_store.get_instruction(org_id, norm, inp.from_version)
+        old = org_store.get_instruction(*owner, norm, inp.from_version)
         if not old:
             raise AuthzDenied(404, "unknown_version", f"Pas de version {inp.from_version} pour `{norm}`.")
         body_md, title, description = old["body_md"], old["title"], old["description"]
@@ -590,19 +685,19 @@ async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
         raise AuthzDenied(400, "body_too_large", "body_md > 64 KB.")
     if norm == _BASE:
         raise AuthzDenied(400, "reserved_slug",
-                          f"`{_BASE}` est le readme d'org (prose injectée), pas une "
+                          f"`{_BASE}` est le readme (prose injectée), pas une "
                           "procédure — édite-le sur la surface guide "
-                          "(scope='org', delivery='init').")
-    version = org_store.set_instruction(org_id, norm, body_md, title=title,
+                          f"(scope='{owner[0]}', delivery='init').")
+    version = org_store.set_instruction(*owner, norm, body_md, title=title,
                                         description=description, set_by=ctx.sub,
                                         slots=slots_in)
     # Slots EFFECTIFS après écriture (None = conservés → relire la row) pour le
     # check croisé <slot:name> ↔ déclaration (ADR 0035, non bloquant comme 0014).
     effective_slots = slots_in
     if effective_slots is None:
-        cur = org_store.get_instruction(org_id, norm)
+        cur = org_store.get_instruction(*owner, norm)
         effective_slots = (cur or {}).get("slots") or []
-    return {"ok": True, "org_id": org_id, "slug": norm, "version": version, "set": True,
+    return {"ok": True, **_scope_ref(owner), "slug": norm, "version": version, "set": True,
             **({"reverted_from": inp.from_version} if inp.from_version is not None else {}),
             **await tool_registry.write_check(body_md),
             **slots_mod.slots_check(body_md, effective_slots),
@@ -611,23 +706,25 @@ async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
 
 
 def _delete_instruction(ctx: ResolvedCtx, inp) -> dict:
+    owner = _owner_of(ctx, inp)
     norm = org_store.normalize_slug(inp.slug)
     if not norm:
         raise AuthzDenied(400, "invalid_slug", "slug requis.")
-    deleted = org_store.delete_instruction(ctx.org_id, norm)
+    deleted = org_store.delete_instruction(*owner, norm)
     if not deleted:
         raise AuthzDenied(404, "not_found", f"Instruction `{norm}` absente.")
-    return {"ok": True, "org_id": ctx.org_id, "slug": norm, "deleted": True}
+    return {"ok": True, **_scope_ref(owner), "slug": norm, "deleted": True}
 
 
 def _archive_instruction(ctx: ResolvedCtx, inp) -> dict:
+    owner = _owner_of(ctx, inp)
     norm = org_store.normalize_slug(inp.slug)
     if not norm:
         raise AuthzDenied(400, "invalid_slug", "slug requis.")
-    archived = org_store.archive_instruction(ctx.org_id, norm)
+    archived = org_store.archive_instruction(*owner, norm)
     if not archived:
         raise AuthzDenied(404, "not_found", f"Instruction `{norm}` absente.")
-    return {"ok": True, "org_id": ctx.org_id, "slug": norm, "archived": True}
+    return {"ok": True, **_scope_ref(owner), "slug": norm, "archived": True}
 
 
 # ── Handlers REST-only (org active) ─────────────────────────────────────────
@@ -652,12 +749,12 @@ def _instructions_list(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
             "version": 1 if has_readme else 0,        # prose plate : pas d'historique
             "updated_at": base["updated_at"] if has_readme else None,
         },
-        "instructions": org_store.list_instructions(org_id),
+        "instructions": org_store.list_instructions("org", org_id),
     })
 
 
 def _instruction_get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:
-    instr = org_store.get_instruction(ctx.org_id, inp.slug, version=inp.version)
+    instr = org_store.get_instruction("org", ctx.org_id, inp.slug, version=inp.version)
     if not instr:
         raise AuthzDenied(404, "not_found", f"Instruction `{org_store.normalize_slug(inp.slug)}` absente.")
     return {
@@ -670,15 +767,17 @@ def _instruction_get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:
 
 def _instruction_versions(ctx: ResolvedCtx, inp: SlugInput) -> dict:
     slug = org_store.normalize_slug(inp.slug)
-    return {"slug": slug, "versions": org_store.list_instruction_versions(ctx.org_id, slug)}
+    return {"slug": slug,
+            "versions": org_store.list_instruction_versions("org", ctx.org_id, slug)}
 
 
 def _instruction_revert(ctx: ResolvedCtx, inp: RevertInput) -> dict:
     slug = org_store.normalize_slug(inp.slug)
-    old = org_store.get_instruction(ctx.org_id, slug, version=inp.version)
+    old = org_store.get_instruction("org", ctx.org_id, slug, version=inp.version)
     if not old:
         raise AuthzDenied(404, "not_found", f"Pas de version {inp.version} pour `{slug}`.")
-    version = org_store.set_instruction(ctx.org_id, slug, old["body_md"], title=old["title"],
+    version = org_store.set_instruction("org", ctx.org_id, slug, old["body_md"],
+                                        title=old["title"],
                                         description=old["description"], set_by=ctx.sub,
                                         slots=old.get("slots") or [])
     # Revenir en arrière peut RAMENER une procédure d'avant le schéma requis : le signal

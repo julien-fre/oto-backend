@@ -12,7 +12,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from ... import (deprecations, group_store, guide_store, org_store, procedure_diagram,
+from ... import (deprecations, guide_store, org_store, procedure_diagram,
                 procedure_digest, roles)
 from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -135,6 +135,11 @@ class GroupInstructionView(BaseModel):
     description: Optional[str] = None
     version: int
     body_md: str
+    # ADR 0035 : entités requises déclarées. Servi depuis #681 — jusque-là le store
+    # d'équipe écrivait `[]` en dur et ne les relisait pas ; une procédure d'équipe peut
+    # désormais en porter (écriture par `oto_procedure op=set scope=group`), et une vue
+    # qui les tairait laisserait croire qu'elle n'en a pas.
+    slots: list = []
     set_by: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -232,17 +237,24 @@ def _list(ctx: ResolvedCtx, inp: GroupIdInput) -> dict:
         "group_id": inp.group_id,
         "guide": base_body,
         "guide_version": 1 if base_body else None,
-        "instructions": group_store.list_group_instructions(inp.group_id),
+        "instructions": org_store.list_instructions("group", inp.group_id),
         "can_edit": roles.can_admin_group(ctx.sub, inp.group_id),
     })
 
 
 def _get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:
-    instr = group_store.get_group_instruction(inp.group_id, inp.slug, inp.version)
+    instr = org_store.get_instruction("group", inp.group_id, inp.slug, inp.version)
     if not instr:
         raise AuthzDenied(404, "unknown_instruction",
                           f"Instruction `{org_store.normalize_slug(inp.slug)}` absente.")
-    return {"group_id": inp.group_id, **instr}
+    # Projection EXPLICITE : le store unifié rend aussi le propriétaire et l'org parente
+    # (`owner_type`/`owner_id`/`org_id`), qui sont de la plomberie — cette face-ci ne
+    # publie que ce que `GroupInstructionView` déclare.
+    return {"group_id": inp.group_id, "id": instr.get("id"), "slug": instr["slug"],
+            "title": instr.get("title"), "description": instr.get("description"),
+            "version": instr["version"], "body_md": instr["body_md"],
+            "slots": instr.get("slots") or [], "set_by": instr.get("set_by"),
+            "created_at": instr.get("created_at"), "updated_at": instr.get("updated_at")}
 
 
 def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
@@ -260,8 +272,8 @@ def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
             400, "reserved_slug",
             f"`{org_store.BASE_SLUG}` est le readme d'équipe, pas une procédure — "
             "écris-le via la surface guide (`oto_guide` scope='group', delivery='init').")
-    version = group_store.set_group_instruction(
-        inp.group_id, slug, inp.body_md, title=inp.title,
+    version = org_store.set_instruction(
+        "group", inp.group_id, slug, inp.body_md, title=inp.title,
         description=inp.description, set_by=ctx.sub)
     # Une procédure d'équipe est une procédure : même exigence de schéma qu'au grain org
     # (tulina-app-front#108), même régime — un warning, jamais un refus.
@@ -271,24 +283,24 @@ def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
 
 
 def _delete(ctx: ResolvedCtx, inp: InstrSlugInput) -> dict:
-    deleted = group_store.delete_group_instruction(inp.group_id, inp.slug)
+    deleted = org_store.delete_instruction("group", inp.group_id, inp.slug)
     return {"group_id": inp.group_id, "slug": org_store.normalize_slug(inp.slug),
             "deleted": deleted}
 
 
 def _versions(ctx: ResolvedCtx, inp: InstrSlugInput) -> dict:
     return {"group_id": inp.group_id, "slug": org_store.normalize_slug(inp.slug),
-            "versions": group_store.list_group_instruction_versions(inp.group_id, inp.slug)}
+            "versions": org_store.list_instruction_versions("group", inp.group_id, inp.slug)}
 
 
 def _revert(ctx: ResolvedCtx, inp: InstrRevertInput) -> dict:
-    old = group_store.get_group_instruction(inp.group_id, inp.slug, inp.version)
+    old = org_store.get_instruction("group", inp.group_id, inp.slug, inp.version)
     if not old:
         raise AuthzDenied(404, "unknown_version",
                           f"Pas de version {inp.version} pour `{org_store.normalize_slug(inp.slug)}`.")
-    new_version = group_store.set_group_instruction(
-        inp.group_id, inp.slug, old["body_md"], title=old["title"],
-        description=old["description"], set_by=ctx.sub)
+    new_version = org_store.set_instruction(
+        "group", inp.group_id, inp.slug, old["body_md"], title=old["title"],
+        description=old["description"], set_by=ctx.sub, slots=old.get("slots") or [])
     return {"group_id": inp.group_id, "slug": org_store.normalize_slug(inp.slug),
             "version": new_version, "reverted_from": inp.version}
 
