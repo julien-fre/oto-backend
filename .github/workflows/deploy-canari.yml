@@ -61,3 +61,77 @@ jobs:
     steps:
       - name: Deploy preprod (build serveur via script root-restreint)
         run: sudo /opt/deploy/oto-backend-canari.sh
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Le front de JB (`otomata-tech/oto-frontend`, servi sur dashboard.oto.ninja) épingle
+  # un extrait verbatim de notre OpenAPI et le confronte au vivant à chaque passage.
+  # Conséquence mesurée le 31/08/2026 : quand nous touchons l'une des 59 opérations
+  # qu'il consomme, c'est SA branche principale qui rougit et SA livraison qui se
+  # bloque — deux fois dans la journée — alors que le changement vient de nous.
+  # Ce job retourne la charge : celui qui casse l'apprend le premier, ici, juste après
+  # la préproduction, et non le lendemain dans le travail de quelqu'un d'autre.
+  #
+  # Il ne rougit QUE si ses appels cassent (opération disparue, entrée modifiée). Les
+  # écarts sans effet sur ses appels sortent en avertissement : un contrôle qui crie
+  # pour tout cesse d'être lu.
+  contrat-front:
+    needs: [deploy-preprod]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, oto-platform]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Lire le contrat épinglé par le front
+        id: contrat
+        env:
+          CLE_LECTURE: ${{ secrets.OTO_FRONTEND_CONTRACT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLE_LECTURE:-}" ]; then
+            echo "::warning title=Contrat du front non confronté::Le secret OTO_FRONTEND_CONTRACT_KEY est absent — le contrat épinglé par oto-frontend N'A PAS été confronté. Aucun jugement n'a été rendu."
+            echo "lu=non" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TRAVAIL="$(mktemp -d)"
+          echo "travail=$TRAVAIL" >> "$GITHUB_OUTPUT"
+          umask 077
+          printf '%s\n' "$CLE_LECTURE" > "$TRAVAIL/cle"
+          # Empreinte ed25519 de github.com, épinglée : relevée et vérifiée le 31/08/2026
+          # (SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU). Épinglée et non découverte
+          # au vol : un known_hosts rempli à l'exécution accepte le premier venu.
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$TRAVAIL/hotes"
+          export GIT_SSH_COMMAND="ssh -i $TRAVAIL/cle -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$TRAVAIL/hotes"
+          # Clé de déploiement en LECTURE SEULE sur oto-frontend ; un seul fichier ramené.
+          git clone --depth 1 --filter=blob:none --sparse --quiet \
+            git@github.com:otomata-tech/oto-frontend.git "$TRAVAIL/front"
+          git -C "$TRAVAIL/front" sparse-checkout set --no-cone /api/openapi-served.json
+          test -s "$TRAVAIL/front/api/openapi-served.json"
+          echo "lu=oui" >> "$GITHUB_OUTPUT"
+
+      - name: Confronter au contrat servi par la préproduction
+        if: steps.contrat.outputs.lu == 'oui'
+        run: |
+          set -uo pipefail
+          COULEUR="$(cat /etc/oto-mcp/active-canari)"
+          case "$COULEUR" in
+            blue)  PORT=9105 ;;
+            green) PORT=9108 ;;
+            *) echo "::error title=Couleur de préproduction inconnue::/etc/oto-mcp/active-canari dit « $COULEUR » — rien n'a été confronté."; exit 1 ;;
+          esac
+          echo "préproduction : couleur $COULEUR, port $PORT"
+          code=0
+          python3 scripts/contrat-front.py \
+            "${{ steps.contrat.outputs.travail }}/front/api/openapi-served.json" \
+            "http://127.0.0.1:$PORT/api/openapi.json" || code=$?
+          if [ "$code" = "2" ]; then
+            echo "::error title=Confrontation impossible::L'un des deux documents est illisible — le contrat N'A PAS été jugé."
+            exit 1
+          fi
+          if [ "$code" != "0" ]; then
+            echo "::error title=Le front consommateur va casser::Une opération qu'il épingle a disparu ou changé d'entrée. Garder la compatibilité, ou le prévenir AVANT la mise en production."
+            exit 1
+          fi
+
+      - name: Effacer la clé de lecture
+        if: always()
+        run: rm -rf "${{ steps.contrat.outputs.travail }}"
