@@ -97,8 +97,16 @@ from oto_mcp.db import _schema, schema
 # n'est contraint sur les tables existantes, et la prod qui tourne l'ancien code ne
 # la voit pas. Elle se retire par un `DROP TABLE` — c'est ce qui rend cette PR
 # réversible, l'irréversible étant le RETRAIT de `walk_cascade`, deux PR plus loin.
-EMPREINTE = "d2aa3ab59df2b52b0cdc044975eadba1a537577ba28ae832cfb0926f41e48341"
-LONGUEUR = 117095
+# 2026-09-01 (arrêt de la recopie, ADR 0054/0063) : `nodes` gagne QUATRE colonnes —
+# `data`, qui sort la donnée métier de `props` (mêlées, une cellule nommée `title`
+# écrase le titre du nœud), et `claimed_run`/`claims`/`abandon_reason`, qui complètent
+# le bail pour que la file de travail reste UNE mécanique servant deux tables. ADDITIVE
+# et sans réécriture : `ADD COLUMN` avec un `DEFAULT` constant est instantané (PG >= 11),
+# et la prod qui tourne l'ancien code ne lit pas ces colonnes. Coût mesuré au banc avant
+# de les poser : +4,7 % de volume, -14 % de temps d'écriture.
+# ⚠️ Empreinte RECALCULÉE depuis le module assemblé, jamais éditée à la main.
+EMPREINTE = "51c351304e76234b4c45f78bad4592381cfeb25cb1e177bbeb1a99d1cc71168a"
+LONGUEUR = 119186
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

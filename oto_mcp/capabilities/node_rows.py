@@ -1,10 +1,20 @@
 """Les LIGNES d'un nœud-tableau — paginées par CURSEUR opaque.
 
-Troisième surface de lecture précoce du modèle de nœuds. Elle n'invente aucun stockage :
-c'est un habillage nœud du store existant (`DatastorePg.cursor_rows`), qui sait déjà
-pousser filtre, recherche et tri en SQL, et qui porte les deux régimes de curseur.
-Réécrire ce chemin aurait produit une seconde vérité sur le tri typé et les couches
-pointées — celle qui diverge au premier correctif appliqué d'un seul côté.
+Troisième surface de lecture précoce du modèle de nœuds. **Deux provenances, deux
+chemins**, et c'est la marque de la recopie qui les sépare :
+
+- un tableau **né ici** n'a aucun namespace à résoudre : ses lignes sont ses enfants,
+  lues dans `nodes`. Le faire passer par le store chercherait un nom qui n'y existe
+  pas et refuserait la lecture d'un tableau parfaitement lisible ;
+- un tableau **recopié** de l'ancien monde reste servi par le store existant
+  (`DatastorePg.cursor_rows`), qui sait déjà pousser filtre, recherche et tri en SQL.
+  Réécrire ce chemin aurait produit une seconde vérité sur le tri typé et les couches
+  pointées — celle qui diverge au premier correctif appliqué d'un seul côté. Il meurt
+  avec le résidu de la recopie.
+
+⚠️ Sur un tableau natif, filtre, recherche et tri sont **REFUSÉS, pas ignorés** : les
+servir demanderait de fouiller la donnée métier, donc de l'interpréter — la frontière
+qu'oto ne franchit pas. Les accepter en silence ferait croire à un filtre appliqué.
 
 **Curseur opaque, jamais d'offset dans le contrat** (0059-D5). L'offset/limit de l'API
 actuelle est l'héritage, pas le modèle : toute surface NEUVE naît curseur. Le front s'y
@@ -33,6 +43,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..datastore import core as ds
 from ..db import datastore as db_ds
+from ..db import node_tables as db_node_tables
 from ..db import node_view as db_node
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding, cap_limit
@@ -140,6 +151,45 @@ def _cellules(ligne: dict, colonnes: list[TableColumn]) -> dict[str, str]:
     return {k: _cell(ligne.get(k)) for k in cles}
 
 
+def _natif(inp: NodeRowsInput, fiche: dict, props: dict) -> dict:
+    """Un tableau NÉ ICI : ses lignes sont ses enfants, aucun store n'est consulté.
+
+    ⚠️ **Le filtre, la recherche et le tri sont REFUSÉS, pas ignorés.** Le store de
+    l'ancien monde les pousse en SQL ; ici ils demanderaient de fouiller la donnée
+    métier, donc de l'interpréter — la frontière qu'oto ne franchit pas. Les accepter
+    en silence serait pire que les refuser : l'appelant croirait avoir filtré et
+    lirait une page complète en pensant qu'elle est le résultat.
+
+    Le curseur est une POSITION, pas un décalage : intercaler une ligne pendant
+    qu'on pagine ne fait ni sauter ni répéter de ligne.
+    """
+    refuses = [n for n, v in (("q", inp.q), ("sort", inp.sort),
+                              ("filter", inp.filter)) if v]
+    if refuses:
+        raise AuthzDenied(
+            400, "non_supporte_sur_tableau_natif",
+            "Sur un tableau né dans le nouvel univers, " + ", ".join(refuses) +
+            " n'est pas encore servi — les lignes sortent dans l'ordre du tableau.")
+    limite = cap_limit(inp.limit, _LIMITE_MAX, default=_LIMITE_DEFAUT)
+    depuis = None
+    if inp.cursor:
+        try:
+            depuis = int(inp.cursor)
+        except ValueError:
+            raise AuthzDenied(400, "curseur_invalide", "`cursor` illisible.")
+    lignes, suivant = db_node_tables.list_rows(fiche["id"], limit=limite,
+                                               after_position=depuis)
+    colonnes = _colonnes(props.get("child_schema"))
+    return {
+        "columns": [c.model_dump(exclude_none=True) for c in colonnes],
+        "total": db_node_tables.count_rows(fiche["id"]),
+        "items": [TableRow(id=str(l["public_id"]),
+                           cells=_cellules(l.get("data") or {}, colonnes)).model_dump()
+                  for l in lignes],
+        "nextCursor": str(suivant) if suivant is not None else None,
+    }
+
+
 def _compose(ctx: ResolvedCtx, inp: NodeRowsInput) -> dict:
     fiche = db_node.node_by_public_id(inp.node_id)
     # Les trois causes, un seul refus (cf. l'entête).
@@ -147,6 +197,13 @@ def _compose(ctx: ResolvedCtx, inp: NodeRowsInput) -> dict:
         raise _introuvable()
 
     props = fiche.get("props") or {}
+    # Deux provenances, deux chemins, et la marque de la recopie est ce qui les
+    # sépare. Un tableau né ici n'a AUCUN namespace à résoudre : le faire passer par
+    # le store chercherait un nom qui n'y existe pas, et refuserait la lecture d'un
+    # tableau parfaitement lisible. Le second chemin meurt avec le résidu de la
+    # recopie ; celui-ci reste.
+    if props.get("legacy_id") is None:
+        return _natif(inp, fiche, props)
     namespace = props.get("title") or ""
     store = ds.make_store(ctx.sub)
     try:

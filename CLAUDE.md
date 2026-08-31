@@ -654,6 +654,7 @@ Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-
 | `ownership.md` | primitive de ressource possédée (`can_access`/`can_govern`, tripwire `owner_pairs`, partage audience × rôle, abolition du perso). |
 | `tool-visibility.md` | visibilité des outils : denylist de session, paliers org/équipe, sélection par membre, `PROTECTED_TOOLS`. |
 | `rest-api.md` | inventaire des endpoints REST `/api/*`, OpenAPI dérivé, jetons portés, CORS. |
+| `noeuds.md` | le NOUVEL univers de contenu : trois genres (page/tableau/ligne), `props` (ce qu'oto interprète) vs `data` (ce que l'utilisateur y met), les deux univers côte à côte, l'arrêt de la recopie et le retrait de son résidu. |
 | `datastore.md` | datastore spine PG (`data_*`), OAuth Google per-user (setup GCP, scopes), coutures des modules, face REST dérivée. |
 | `datastore-colonne-tableau.md` | spec de la colonne-tableau (oto#22 barreau 2) : forme servie, couches d'un item, fonctions natives, non-définitions, chemin de migration en double-service. |
 | `projects.md` | projet (liens typés, docs), livraison client cascade, endpoint MCP + partage navigable par projet (`<slug>.{mcp,share}.oto.cx`), **périmètre d'URL** (`excluded_url_prefixes`, #605 : ce que recherche/extraction n'atteignent pas, seam `url_perimeter` ; son refus parle EN PREMIER, avant toute règle interne, #632). |

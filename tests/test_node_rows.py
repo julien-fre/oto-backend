@@ -74,11 +74,29 @@ def test_un_nom_qui_resout_AILLEURS_est_refuse(seams):
     # sans erreur, et personne ne le voit.
 
 
-def test_un_noeud_sans_cle_legacy_ne_declenche_pas_la_garde(seams):
-    # Un nœud NATIF (créé par une surface, pas converti) n'a pas de `legacy_id` :
-    # la garde ne doit pas le refuser au motif qu'elle ne peut pas le vérifier.
+def test_un_noeud_sans_cle_legacy_prend_le_chemin_NATIF(seams, monkeypatch):
+    """L'absence de `legacy_id` n'est pas un cas limite de la garde : c'est un AUTRE
+    chemin de lecture (2026-09-01).
+
+    Ce test disait l'inverse jusqu'ici — « la garde ne doit pas le refuser au motif
+    qu'elle ne peut pas le vérifier » — et il avait raison tant qu'un seul chemin
+    existait. Depuis que la nouvelle surface écrit ses propres tableaux, un tableau
+    né ici n'a AUCUN namespace à résoudre : ses lignes sont ses enfants. Le faire
+    passer par le store chercherait un nom qui n'y existe pas et refuserait la
+    lecture d'un tableau parfaitement lisible.
+    """
     seams["fiche"] = {**TABLE, "props": {**TABLE["props"], "legacy_id": None}}
-    assert R._compose(CTX, R.NodeRowsInput(node_id="nod_tbl"))["total"] == 7
+    vu = {}
+    monkeypatch.setattr(R.db_node_tables, "list_rows",
+                        lambda tid, **kw: (vu.setdefault("tid", tid), ([], None))[1])
+    monkeypatch.setattr(R.db_node_tables, "count_rows", lambda tid: 3)
+    monkeypatch.setattr(R.ds, "make_store",
+                        lambda sub: pytest.fail("le store a été consulté pour un "
+                                                "tableau natif"))
+
+    out = R._compose(CTX, R.NodeRowsInput(node_id="nod_tbl"))
+    assert out["total"] == 3
+    assert vu["tid"] == TABLE["id"]
 
 
 # ── Le curseur, opaque et transporté tel quel ──────────────────────────────────
