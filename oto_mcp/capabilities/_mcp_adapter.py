@@ -73,9 +73,18 @@ def _make_tool(cap: Capability):
         if org_reserved:
             kwargs.pop("_org", None)
         raw = RawCtx(sub=current_user_sub_from_token())
+        before_org = None
         try:
             inp = cap.Input(**kwargs)                 # validation (seule source : Input)
             ctx = cap.authz(raw, inp)                 # autz (peut lire inp pour ORG_ADMIN_OF)
+            if ctx.org_id is not None and raw.sub:
+                # Org résolue AVANT le handler (même garde que l'écho plus bas — une cap
+                # non org-scopée, ou sans sub, n'a pas à toucher le seam) : sert de
+                # référence pour détecter, après coup, une mutation PERSISTANTE faite
+                # PAR le handler (#110, cf. plus bas). Ce n'est QU'une référence : jamais
+                # ce qu'on échoue directement.
+                from .. import access
+                before_org = access.current_org(raw.sub)
             result = cap.handler(ctx, inp)            # handler core
             if inspect.isawaitable(result):           # handler async (ex. guide + manifeste)
                 result = await result
@@ -87,14 +96,27 @@ def _make_tool(cap: Capability):
             # avec, pour que l'appelant sache sur quelle version il est resté.
             result = {"not_modified": True, "rev": result.rev}
         if isinstance(result, dict) and ctx.org_id is not None:
-            # Org EFFECTIVE APRÈS le handler : un `oto_use_org` vient peut-être de
-            # basculer l'override de session → `ctx.org_id`, résolu à l'autz AVANT le
-            # handler, est périmé et échoerait l'org d'AVANT le switch (#110 : réponse
-            # `{active_org: 83, _org: {id: 2}}`). On relit `current_org` post-handler
-            # (la ContextVar `_CALL_ORG` vit encore — le middleware reset APRÈS) ;
-            # repli sur `ctx.org_id` si non résoluble (perso/clear).
+            # Org à ÉCHOER dans `_org` : par défaut `ctx.org_id`, résolu à l'autz — il
+            # porte déjà tout PIN MÉTIER explicite qu'accepte l'`Input` d'une capacité
+            # (ex. `oto_procedure(org=<id>)`, lecture cross-org d'une procédure par un
+            # champ propre à CETTE capacité). `access.current_org` ne connaît RIEN de ce
+            # pin — il ne lit que l'axe-contexte (`_org=`), l'org du run, la consultation
+            # ou la maison persistée — et y retombait donc TOUJOURS, figé sur le premier
+            # org du contexte quel que soit le `org=` métier passé ensuite (signal 528,
+            # oto-backend#712 : `_org` d'`oto_procedure` restait cloué sur l'org maison en
+            # passant `org=<autre>` à `get`/`list`/`set`).
+            #
+            # On ne s'écarte de `ctx.org_id` QUE si le handler a lui-même MUTÉ le
+            # contexte persistant PENDANT son exécution — cas `oto_use_org` (#110) : la
+            # bascule se fait DANS le handler, donc `ctx.org_id` (figé à l'autz, avant le
+            # switch) montrerait l'org D'AVANT (`{active_org: 83, _org: {id: 2}}`). Cette
+            # mutation se détecte en comparant l'org résolue avant et après le handler :
+            # un écart ne peut venir QUE d'un changement d'état fait par le handler lui-
+            # même (la ContextVar `_CALL_ORG` posée par le middleware, elle, est stable
+            # sur toute la durée de l'appel) — jamais d'un pin métier, qui ne mute rien.
             from .. import access
-            eff = access.current_org(raw.sub) if raw.sub else None
+            after_org = access.current_org(raw.sub) if raw.sub else None
+            eff = after_org if (after_org is not None and after_org != before_org) else ctx.org_id
             result.setdefault("_org", _org_echo(eff if eff is not None else ctx.org_id))
         if cap.refresh_visibility and raw.sub:
             # Bascule de profil (org/groupe actif déjà commitée par le handler) →
