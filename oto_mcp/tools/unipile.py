@@ -1554,7 +1554,7 @@ connector_flow.declare(
 # split devait laisser intact — `test_le_compte_garde_son_code_de_production` le
 # tient. Ce qui devait changer était côté ÉCRAN : le front rendait cette liste des
 # six sur les SEPT cartes, donc la carte WhatsApp proposait de connecter LinkedIn.
-# Corrigé là-bas (tulina-app-front v1.17.0, `hostedChannelOf`), en lisant
+# Corrigé là-bas (front tiers v1.17.0, `hostedChannelOf`), en lisant
 # `auth.hosted_channel` — la carte du compte garde ses six, chaque carte de canal
 # n'a plus que le sien.
 for _con in providers.REGISTRY.values():

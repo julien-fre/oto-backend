@@ -28,7 +28,7 @@ _INVITE_TTL_DAYS = int(os.environ.get("OTO_MCP_INVITE_TTL_DAYS", "7"))
 
 def _invite_base(front_base: str | None = None) -> str:
     """Base PUBLIQUE des liens d'invitation partagés (court, marketing).
-    `front_base` = le front qui héberge l'org (`orgs.front_base_url`, ex. Tulina) ;
+    `front_base` = le front qui héberge l'org (`orgs.front_base_url`, ex. un tenant tiers) ;
     absent = oto, où `oto.cx/invitation/...` redirige vers le dashboard (règle Caddy)."""
     return (front_base or os.environ.get("OTO_INVITE_BASE_URL", "https://oto.cx")).rstrip("/")
 
@@ -41,7 +41,7 @@ def _nominal_url(code: str, email_addr: str | None = None, *,
 
     ⚠️ L'OTT est minté sur NOTRE Logto (`LOGTO_ENDPOINT`, un seul global) et
     n'authentifie que contre lui. Une org sous front tiers a son propre émetteur
-    (Tulina : `auth.tulina.ai` depuis le 2026-08-03) — un OTT oto y serait inerte,
+    (ex. `auth.<tenant>.ai` depuis le 2026-08-03) — un OTT oto y serait inerte,
     soit un échec de connexion silencieux pour l'invité. Donc pas de magic-link dès
     que l'org porte un `front_base_url` : le code nu suffit (modèle bearer).
     Le jour de l'étage tenant (ADR 0052), la condition devient « l'émetteur du tenant

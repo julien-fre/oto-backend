@@ -472,7 +472,7 @@ rien ne rendait navigable et que rien ne tenait.
   et l'agent appelle `http_get`/`http_post`. Le service distant détient le credential
   métier (contrat ADR 0003 §4 : bearer M2M, politique bornée côté bridge, audit
   `X-Oto-Sub`). Visibilité = régime commun (activation × sélection 0019/0050 — hors
-  socle, installable). Pilote : le **bridge back-office Movinmotion** (repo privé),
+  socle, installable). Pilote : le **bridge back-office d'un client pilote** (repo privé),
   migré `bridge`→`http` le 2026-07-16 (credential au groupe finance, réseau VPC
   privé). Le concept « remote data-driven » (base_url sur un provider hors registre)
   subsiste dans `org_secret_meta`, mais **sans entrée de catalogue** `kind="remote"`.

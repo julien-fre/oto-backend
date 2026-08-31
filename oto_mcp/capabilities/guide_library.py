@@ -325,7 +325,7 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
                           f"Le nom `{org_store.normalize_slug(inp.public_slug or inp.slug)}` "
                           "n'est pas disponible — publie sous un autre `public_slug`.")
     # Publier une procédure sans schéma propage le manque à tous ses forks : le
-    # signal part ici aussi, au même régime non bloquant (tulina-app-front#108).
+    # signal part ici aussi, au même régime non bloquant (front tiers, issue #108).
     return {"published": True, "id": row["id"], "slug": row["slug"],
             "version": row["version"], "visibility": row["visibility"],
             **procedure_diagram.diagram_check(src.get("body_md") or ""),

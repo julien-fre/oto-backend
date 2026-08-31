@@ -14,7 +14,7 @@ qu'un serveur PEUT voir : **le bloc est-il là, et à sa place**.
 
 ⚠️ **La place, c'est « avant tout le reste, sauf un H1 de titre »**, et ça vient du
 rendu, pas du goût : la page d'un process retire un titre de tête qui répète le nom de
-la procédure (`stripLeadingTitleHeading`, tulina-app-front) et affiche le sien. Un digest
+la procédure (`stripLeadingTitleHeading`, côté front) et affiche le sien. Un digest
 posé AU-DESSUS de ce H1 laisserait donc le titre orphelin au milieu de la page ; posé
 en dessous, il est la première chose que le lecteur voit. Les corps qui n'ont pas ce H1
 (ils ouvrent sur `## Goal`) le portent en tout premier.

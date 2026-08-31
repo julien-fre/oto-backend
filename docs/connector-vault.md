@@ -253,7 +253,7 @@ table posée à côté, la ligne du secret gardant ses quatre colonnes, donne l'
 stable **sans un octet de rechiffrement**. Une fois le rechiffrement hors de l'équation,
 ce qui décide est le fond : le modèle prévoit des instances **sans secret** — une
 instance `http` qui ne fige qu'une `base_url` (0057), une sous-instance qui ne pose
-qu'une *détermination* (« le compte d'Alexandra », 0053-D9-3). Un objet qui n'est plus un
+qu'une *détermination* (« le compte de Jane », 0053-D9-3). Un objet qui n'est plus un
 credential n'a rien à faire dans une table qui l'est.
 
 **Le lien avec le coffre est le quadruplet, et c'est une FK LOGIQUE** —

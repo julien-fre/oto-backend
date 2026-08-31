@@ -1370,7 +1370,7 @@ def datastore_namespace_activity(ns_id: int, namespace: Optional[str] = None,
     L'axe de corrélation est le `ns_id` **résolu serveur**, sur les DEUX surfaces : la
     face REST le tient de sa route, la face MCP du relevé d'appel que
     `DatastorePg._resolve` remplit (`session_org.note_call_trace`). Le journal cite donc
-    l'entité, quelle que soit la chaîne tapée — `data_write("mucho-leads")`,
+    l'entité, quelle que soit la chaîne tapée — `data_write("leads-clients")`,
     `data_write("160")` et `data_write("slot:vivier")` retombent sur la même ligne, et
     un renommage de tableau n'orpheline plus son historique.
 

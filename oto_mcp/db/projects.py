@@ -77,8 +77,8 @@ def list_member_projects(sub: str, org_id: int, *,
     """Projets PERSO de l'acteur (owner=('user', sub)) DANS le contexte de l'org `org_id`
     (scope membre `(sub, org)`, ADR 0030 amendé). Privés à leur propriétaire, listés dans
     LEUR org de contexte (pas un fourre-tout cross-org). Le contexte `(moi, org)` est la
-    demi-identité qui manquait : un projet perso créé « chez movinmotion » remonte chez
-    movinmotion, pas chez otomata. Filtre `context_org_id = org_id` (les perso legacy à
+    demi-identité qui manquait : un projet perso créé « chez un client » remonte chez
+    ce client, pas chez otomata. Filtre `context_org_id = org_id` (les perso legacy à
     contexte NULL n'y apparaissent pas — ils vivent dans l'org perso)."""
     sql = (f"SELECT {_PROJECT_COLS} FROM projects "
            "WHERE owner_type = 'user' AND owner_id = %s AND context_org_id = %s ")

@@ -21,7 +21,7 @@ endpoints of the official OpenAPI spec (fetched 2026-08-23):
 **No param is silently ignored**: an op that doesn't use a provided argument
 REFUSES instead of ignoring it (silae `_refuse_ignored`).
 
-**Live-tested 2026-08-24** with a real trial token (workspace tulina.ai):
+**Live-tested 2026-08-24** with a real trial token (test workspace):
 24 of 27 endpoints exercised — every read, the full tag cycle, the full
 custom-field cycle (definitions + values, then cleaned up). NOT exercised:
 reveal_email (spends a credit), workspace create/delete/invite. Two findings

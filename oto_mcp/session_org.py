@@ -187,7 +187,7 @@ def current_call_account() -> Optional[str]:
 # Sens inverse des axes ci-dessus : ceux-là portent ce que l'APPELANT a fourni,
 # celui-ci ce que le serveur a résolu PENDANT l'appel — aujourd'hui le `ns_id` d'un
 # tableau du datastore, pour que le journal cite l'ENTITÉ et non la chaîne tapée.
-# `data_write("mucho-leads", …)` et `data_write("160", …)` désignent le même tableau ;
+# `data_write("leads-clients", …)` et `data_write("160", …)` désignent le même tableau ;
 # sans l'id résolu, la lecture du journal doit corréler par NOM — or un nom n'est
 # unique que par propriétaire (donc à borner par tenant), il change au renommage, et
 # un `slot:<name>` n'est pas rétro-résolvable. L'id supprime les trois d'un coup.

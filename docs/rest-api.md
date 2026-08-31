@@ -501,7 +501,7 @@ chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/
 ⚠️ **CORS : la liste du code est MORTE en prod comme en preprod.** `_allowed_origins()`
 (`api/routes.py`) n'est qu'un **fallback** — les DEUX box posent `OTO_MCP_CORS_ORIGINS`
 dans leur `.env`, qui **écrase** la liste. Ajouter une origine au code, la déployer et
-constater que rien ne change est un piège vécu (30/07, front Tulina) : le tag prod avait
+constater que rien ne change est un piège vécu (30/07, front d'un tenant tiers) : le tag prod avait
 été posé pour une raison inexacte. **Ajouter une origine = éditer l'env des deux box +
 restart** (`/opt/oto-mcp/.env`, `/opt/oto-mcp-canari/.env`) ; le code ne sert qu'aux
 environnements neufs. Diagnostic en 1 appel, sans lire le `.env` : `curl -X OPTIONS
