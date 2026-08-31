@@ -93,6 +93,25 @@ CHAIN_CONNECTORS = frozenset({
 # comme `guides.owner_id`.
 PLATFORM_SCOPE = ("platform", "platform")
 
+# ── L'arête « TOUT LE MONDE » (lot L7, arbitrage du 29/08) ────────────────────
+# 0053 n'avait pas de bénéficiaire « tout le monde », et c'était le seul vrai trou du
+# modèle : une clé plateforme OUVERTE (`share_mode='open'`, `share_down` vide) accorde
+# à quiconque, ce qu'aucune arête ne savait dire.
+#
+# Le mot existait déjà, il n'a pas fallu l'inventer : `connectors.instance_visibility`
+# appelle EVERYONE le scope `platform` depuis R9. On le reprend tel quel — le CHECK de
+# `grants.grantee_kind` accepte déjà `platform`, donc **aucune migration de schéma**.
+# L'arête est `platform:platform → platform:platform` sur l'instance : le propriétaire
+# accorde à tout le monde, ce qui est exactement ce que la ligne du coffre disait.
+#
+# ⚠️ **Elle ne se lit PAS sur le chemin servi d'aujourd'hui.** `platform_rung` (la
+# fenêtre L5) ne la voit pas : lui faire voir une arête « tout le monde » ferait
+# ressusciter un accès individuel RÉVOQUÉ sur une clé ouverte, et « la révocation
+# coupe » — l'acquis de L5 — deviendrait faux en silence. Elle n'est lue que par la
+# résolution de chaîne du lot L7, et là avec sa règle propre : une arête qui NOMME
+# l'appelant prime, révoquée comprise, et c'est elle qui refuse.
+EVERYONE = ("platform", "platform")
+
 
 def is_chained(provider: str) -> bool:
     """Ce connecteur est-il passé au modèle d'accès par chaîne ? Gate unique."""

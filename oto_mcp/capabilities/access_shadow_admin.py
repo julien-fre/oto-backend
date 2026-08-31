@@ -79,9 +79,15 @@ class ShadowVerdict(BaseModel):
     observations: int
     par_classe: dict
     inconnus: int
+    # Somme des deux classes hors-modèle — ce que le coffre accorde et que la chaîne
+    # ne sait pas encore dire. La commande de semis les ramène à zéro.
+    hors_modele: int
     # La porte vers la PR 2, calculée : pas de divergence inexpliquée ET un
     # dénominateur non nul. Les deux moitiés, jamais une seule.
     porte_ouverte: bool
+    # La porte du DRAPEAU : exploitable ET plus rien hors-modèle. C'est celle-ci qui
+    # autorise `OTO_L7_DECIDE=chain`, jamais la précédente.
+    porte_bascule: bool
     shadow_actif: bool
 
 
@@ -97,22 +103,39 @@ def _verdict(lignes: list[dict], origine: str = config.PROD,
              origine_inconnue: int = 0) -> dict:
     """La phrase que la fenêtre doit rendre, calculée et non racontée.
 
-    `porte_ouverte` n'est vrai que si les DEUX moitiés le sont : aucune divergence
-    inexpliquée, et un dénominateur non nul. Une fenêtre muette (le shadow éteint,
-    un connecteur jamais résolu) rendrait « zéro inconnu » sans rien prouver — c'est
-    précisément le faux vert qu'on veut rendre impossible à lire."""
+    **Deux portes, et elles ne s'ouvrent pas au même moment.**
+
+    `porte_ouverte` = la mesure est EXPLOITABLE : aucune divergence inexpliquée, et un
+    dénominateur non nul. Une fenêtre muette (shadow éteint, connecteur jamais résolu)
+    rendrait « zéro inconnu » sans rien prouver — c'est le faux vert qu'on rend
+    impossible à lire.
+
+    `porte_bascule` = la chaîne peut RECEVOIR l'autorité. Elle exige en plus que les
+    deux classes hors-modèle soient à zéro : tant que l'une compte, le coffre accorde
+    quelque chose que la chaîne ne sait pas dire, et lui donner l'autorité couperait
+    cet accès. Les deux se comblent par la même commande de semis.
+
+    ⚠️ Sans cette seconde porte, la lentille invitait à basculer : elle a rendu
+    `porte_ouverte: true` dès le 30/08 alors qu'il restait 444 puis 132 appels
+    hors-modèle. Une porte qui ne dit pas la condition qu'elle garde n'en garde
+    aucune."""
     par_classe: dict = {}
     for r in lignes:
         par_classe[r["classe"]] = par_classe.get(r["classe"], 0) + int(r["n"])
     observations = sum(par_classe.values())
     inconnus = par_classe.get(chain_shadow.INCONNU, 0)
+    hors_modele = (par_classe.get(chain_shadow.FREE_TIER_HORS_MODELE, 0)
+                   + par_classe.get(chain_shadow.PARTAGE_HORS_MODELE, 0))
+    exploitable = bool(observations) and inconnus == 0
     return {
         "origine": origine,
         "origine_inconnue": origine_inconnue,
         "observations": observations,
         "par_classe": {c: par_classe.get(c, 0) for c in chain_shadow.CLASSES},
         "inconnus": inconnus,
-        "porte_ouverte": bool(observations) and inconnus == 0,
+        "hors_modele": hors_modele,
+        "porte_ouverte": exploitable,
+        "porte_bascule": exploitable and hors_modele == 0,
         "shadow_actif": chain_shadow._enabled(),
     }
 
@@ -167,8 +190,7 @@ CAPABILITIES += [
             "cascade only the ACTIVE one; counted per org because it changes served "
             "behaviour), `restriction_acl` (D1 dissolves connector_acl), "
             "`free_tier_hors_modele` (an open platform key has no grantee in 0053 — "
-            "an explicit everyone-edge lands next, so this class must reach zero "
-            "before the removal), "
+            "the everyone-edge exists now (grants_chain.EVERYONE, the platform scope), so this counts what is LEFT to migrate and reaches zero once the seeding command has run), "
             "`partage_hors_modele` (its sibling: a platform key CLOSED on an allowlist "
             "that no edge accounts for — the NOMINAL edges are missing, L5 only seeded "
             "the switched connectors), "
