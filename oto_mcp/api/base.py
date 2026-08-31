@@ -79,6 +79,22 @@ def _cors_headers(origin: str | None) -> dict[str, str]:
     return {}
 
 
+def _locale_from_accept_language(header: str | None) -> str | None:
+    """Déduit `en`/`fr` du 1er tag de langue de l'en-tête `Accept-Language`.
+
+    Même repli que le dashboard (`i18n.ts:detectBrowserLocale`, `navigator.language`) :
+    `fr` si la langue commence par `fr`, sinon `en`. `None` si l'en-tête est absent ou
+    vide — l'appelant ne pose alors rien (oto-backend#701 : c'est le seul signal
+    disponible côté REST interactif, jamais une déduction depuis le domaine email ou
+    une autre heuristique)."""
+    if not header:
+        return None
+    primary = header.split(",", 1)[0].split(";", 1)[0].strip().lower()
+    if not primary:
+        return None
+    return "fr" if primary.startswith("fr") else "en"
+
+
 def _maybe_view_as(real_sub: str, apply_view_as: bool) -> str:
     """Applique le « voir en tant que » (axe user, REST lecture seule) : si un sub
     de consultation est posé pour la requête (par ViewAsMiddleware, qui a DÉJÀ validé
@@ -163,10 +179,14 @@ async def _authenticate(
     if os.environ.get("OTO_MCP_TENANT_MIGRATION_ISS"):
         sub = await run_in_threadpool(db.resolve_sub, sub)
     # upsert_user = DB à CHAQUE requête REST → threadpool (jamais dans la loop).
+    # locale (#701) : signal déduit de l'en-tête, jamais un choix — `upsert_user`
+    # ne le pose que si la ligne n'en porte encore aucun (COALESCE côté SQL).
     await run_in_threadpool(
-        lambda: db.upsert_user(sub, email=access_token.claims.get("email"),
-                               name=access_token.claims.get("name"),
-                               iss=access_token.claims.get("iss")))
+        lambda: db.upsert_user(
+            sub, email=access_token.claims.get("email"),
+            name=access_token.claims.get("name"),
+            iss=access_token.claims.get("iss"),
+            locale=_locale_from_accept_language(request.headers.get("accept-language"))))
     return _maybe_view_as(sub, apply_view_as), None
 
 
