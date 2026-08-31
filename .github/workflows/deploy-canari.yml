@@ -73,7 +73,9 @@ jobs:
   #
   # Il ne rougit QUE si ses appels cassent (opération disparue, entrée modifiée). Les
   # écarts sans effet sur ses appels sortent en avertissement : un contrôle qui crie
-  # pour tout cesse d'être lu.
+  # pour tout cesse d'être lu. Et il ne rougit JAMAIS pour un geste qui vient de lui —
+  # contrat déplacé, dépôt inaccessible : avertissement, avec le chemin cherché nommé.
+  # Rougir chez nous pour son fichier renommé, ce serait ce lot à l'envers.
   contrat-front:
     needs: [deploy-preprod]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -101,11 +103,25 @@ jobs:
           # au vol : un known_hosts rempli à l'exécution accepte le premier venu.
           echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$TRAVAIL/hotes"
           export GIT_SSH_COMMAND="ssh -i $TRAVAIL/cle -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$TRAVAIL/hotes"
+          # TROIS états, pas deux — et la distinction EST le sujet de ce job. Ne pas la
+          # perdre : ce lot existe parce qu'un geste de l'un rougissait la branche de
+          # l'autre. Rougir ICI parce que le fichier a bougé CHEZ LUI, ce serait le même
+          # défaut retourné. Donc : seul le CONTENU de son contrat peut nous faire rougir.
+          # Tout ce qui nous empêche de l'OBTENIR avertit — bruyamment, jamais un vert muet.
+          CONTRAT="$TRAVAIL/front/api/openapi-served.json"
           # Clé de déploiement en LECTURE SEULE sur oto-frontend ; un seul fichier ramené.
-          git clone --depth 1 --filter=blob:none --sparse --quiet \
-            git@github.com:otomata-tech/oto-frontend.git "$TRAVAIL/front"
-          git -C "$TRAVAIL/front" sparse-checkout set --no-cone /api/openapi-served.json
-          test -s "$TRAVAIL/front/api/openapi-served.json"
+          if ! git clone --depth 1 --filter=blob:none --sparse --quiet \
+                 git@github.com:otomata-tech/oto-frontend.git "$TRAVAIL/front" 2>"$TRAVAIL/err"; then
+            echo "::warning title=Contrat du front inaccessible::Le dépôt otomata-tech/oto-frontend n'a pas pu être lu (clé révoquée, dépôt renommé ou déplacé) — le contrat N'A PAS été confronté, AUCUN jugement n'a été rendu. Détail : $(tr '\n' ' ' < "$TRAVAIL/err" | head -c 300)"
+            echo "lu=non" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git -C "$TRAVAIL/front" sparse-checkout set --no-cone /api/openapi-served.json || true
+          if [ ! -s "$CONTRAT" ]; then
+            echo "::warning title=Contrat du front introuvable::api/openapi-served.json est absent ou vide dans otomata-tech/oto-frontend — le fichier a probablement été renommé ou déplacé CHEZ LUI. Ce n'est pas un défaut de notre contrat : rien n'a été jugé. Corriger le chemin cherché dans ce job."
+            echo "lu=non" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           echo "lu=oui" >> "$GITHUB_OUTPUT"
 
       - name: Confronter au contrat servi par la préproduction
