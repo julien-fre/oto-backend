@@ -172,18 +172,70 @@ def test_un_scope_inconnu_est_refuse_net(monde):
 
 
 def test_le_palier_equipe_nest_pas_atteignable_par_une_surface_dorg(monde):
-    """Le verrou structurel : `scope='group'` posé sur une entrée dont la règle d'autz
-    est org trouve `ctx.group_id` vide et se fait refuser.
+    """Le verrou : `_owner_of` lit `ctx.group_id`, que seule une règle ayant vérifié
+    l'équipe injecte — il ne RELIT jamais l'équipe active.
 
-    Sans lui, un champ CLIENT (`scope`) suffirait à faire écrire chez une équipe sur
-    une capacité gardée par `ORG_ADMIN_OPT` — celle-ci ne vérifie que l'org."""
+    ⚠️ L'acteur choisi EN A une (Compta), et le test l'affirme d'abord. La première
+    version prenait `u-admin`, qui n'en a pas : elle disait « pas d'équipe → refus »
+    au lieu de « une équipe existe et on refuse quand même », et **restait verte
+    défaut posé**. Un handler qui relirait l'équipe active écrirait chez elle depuis un
+    simple champ d'entrée, sur une capacité dont la règle n'a regardé que l'org — le
+    geste ABOUTIRAIT, ce qui est pire qu'un refus : il viserait une cible que personne
+    n'a validée."""
+    from oto_mcp import access, org_store
     from oto_mcp.capabilities._types import ResolvedCtx
     from oto_mcp.capabilities.orgs import instructions as oi
-    ctx = ResolvedCtx(sub="u-admin", org_id=monde["org"])   # group_id absent
+    assert access.current_group("u-chef") == monde["equipe"], (
+        "sans équipe ACTIVE, ce test passerait pour la mauvaise raison")
+    ctx = ResolvedCtx(sub="u-chef", org_id=monde["org"])   # group_id NON injecté
     with pytest.raises(AuthzDenied) as refus:
         oi._delete_instruction(ctx, oi.ConsoleGuideDeleteInput(
             slug="cloture-mensuelle", scope="group"))
     assert refus.value.status == 403
+    # …et la procédure est toujours là : le refus tombe AVANT l'écriture.
+    assert org_store.get_instruction("group", monde["equipe"], "cloture-mensuelle")
+
+
+def test_aucune_entree_dequipe_nest_gardee_par_une_regle_qui_ignore_scope():
+    """L'appariement, figé : une entrée qui porte `scope` et qui atteint les handlers
+    d'écriture de procédure DOIT avoir une autz qui se branche sur `scope`.
+
+    C'est le garde-fou qui compte ; le 403 de `_owner_of` n'en est que la ceinture.
+    Aujourd'hui `scope` n'est porté que par les entrées de CONSOLE, dont la règle EST
+    scope-aware — donc ce 403 est structurellement inatteignable et aucun test runtime
+    ne peut le voir rouge. Ce qui peut réellement casser, c'est d'ajouter `scope` à
+    `InstrSetInput` pour ouvrir la face REST (gardée par `ORG_ADMIN_OPT`) : le trou
+    s'ouvrirait sans qu'une ligne d'autz ait bougé. Ce test est le seul moment où on
+    peut encore l'apprendre."""
+    from oto_mcp.capabilities.orgs import instructions as oi
+    from oto_mcp.capabilities.registry import CAPABILITIES
+
+    ecritures = {oi._set_instruction, oi._delete_instruction, oi._archive_instruction}
+
+    def _lit_scope(regle) -> bool:
+        if "scope" in (getattr(regle, "autz_fields", ()) or ()):
+            return True
+        return any(_lit_scope(b) for b in getattr(regle, "autz_branches", ()) or ())
+
+    vues, fautives = 0, []
+    for cap in CAPABILITIES:
+        if cap.handler not in ecritures and cap.key != "org.procedure.console":
+            continue
+        if "scope" not in (cap.Input.model_fields or {}):
+            continue
+        vues += 1
+        if not _lit_scope(cap.authz):
+            fautives.append(cap.key)
+    # Le cliquet porte SA PROPRE garde : sans ça, renommer l'axe le rendrait inerte en
+    # silence — le mode de panne classique d'un cliquet, et le seul qu'il ne peut pas
+    # signaler tout seul.
+    assert vues >= 1, ("aucune entrée d'écriture ne porte `scope` — le cliquet ne "
+                       "surveille plus rien (l'axe a-t-il été renommé ?)")
+    assert not fautives, (
+        f"{fautives} accepte(nt) `scope` mais leur autz ne le lit pas : le palier visé "
+        f"viendrait d'un champ CLIENT, sur une garde qui n'a vu que l'org. "
+        f"Se brancher dessus — `BY_OP(..., fields=(\"scope\",))`, cf. _ECRIRE dans "
+        f"procedure_console.")
 
 
 # ── 2. Le déplacement : le critère de « fini » ─────────────────────────────

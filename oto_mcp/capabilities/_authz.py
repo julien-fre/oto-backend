@@ -191,6 +191,14 @@ def BY_OP(rules: dict, *, fields: tuple[str, ...] = ("op",)):
                               f"{sorted(str(k) for k in rules)}).")
         return chosen(raw, inp)
     rule.platform_floor = _lowest_floor(rules.values())
+    # Sur quels CHAMPS cette règle se branche, et vers quoi — pour qu'un cliquet
+    # puisse vérifier qu'une entrée qui porte un axe (`scope`) a bien une autz qui le
+    # LIT. Sans ça l'appariement n'existe que dans la tête de celui qui l'a écrit, et
+    # poser l'axe sur une entrée gardée par une règle d'org rouvrirait le trou sans
+    # qu'une ligne d'autz ait bougé (#681). Introspection SEULE : rien ici ne change
+    # une décision d'autz.
+    rule.autz_fields = fields
+    rule.autz_branches = tuple(rules.values())
     return rule
 
 
