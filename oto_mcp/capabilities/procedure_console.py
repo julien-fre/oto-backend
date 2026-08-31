@@ -2,11 +2,12 @@
 
 Réunit les 9 tools MCP du domaine guide/procédure membre en UN : lecture
 (`get`/`list`), écriture
-(`set`/`delete` — org_admin au palier org, **chef d'équipe** au palier `scope='group'`
-depuis #681 ; épinglable par `org` / `group`) et bibliothèque publique
+(`set` — org_admin au palier org, **membre de l'équipe** au palier `scope='group'` ;
+`delete`, destructeur, reste au **chef d'équipe** — #681 ; épinglable par `org` /
+`group`) et bibliothèque publique
 (`library_list`/`library_get`/`publish`/`fork`/`unpublish`). Les handlers de
 domaine (`orgs_instructions`, `guide_library`) sont réutilisés tels quels ;
-leurs faces REST ne bougent pas.
+leurs faces REST `/api/me/instructions*` ne bougent pas (palier org, org_admin).
 
 ⚠️ L'index des guides nommés (skills) est APPENDU à la description de CE
 tool par `DynamicInstructionsMiddleware.on_list_tools` (via `_GUIDE_GET_TOOL`,
@@ -38,12 +39,27 @@ from .registry import CAPABILITIES
 # absence ne veut pas dire « palier inconnu ».
 _LIRE = BY_OP({None: ORG_MEMBER_OPT("org"), "org": ORG_MEMBER_OPT("org"),
                "group": GROUP_MEMBER_OPT("group")}, fields=("scope",))
-# L'écriture au palier équipe = chef de l'équipe. C'est tout le lot #681 : un opérateur
-# métier qui déroule une procédure d'équipe peut l'annoter sans détenir les clés de
-# toute l'organisation (membres, connecteurs, secrets), donc la boucle d'amélioration
-# que la procédure promet peut enfin se fermer.
+# ⚠️ `set` et `delete` ne partagent PAS une règle : ce n'est pas la surface qui décide du
+# palier, c'est le VERBE.
+#
+# `set` au palier équipe = **membre** de l'équipe. C'est tout le lot #681 : celui qui
+# DÉROULE la procédure est un membre, pas un chef — réserver l'écriture au chef réservait
+# l'apprentissage à qui n'exécute pas, et la boucle que la procédure promet ne se fermait
+# jamais. Le coût mesuré de la garde d'avant n'était pas théorique : pour laisser une
+# opératrice annoter son mode d'emploi, il fallait la faire chef d'équipe — un rôle qui
+# emporte les CLÉS PARTAGÉES de l'équipe. Une garde d'écriture trop grossière forçait donc
+# une élévation de droits dans un domaine sans rapport.
+#
+# Ce qui rend l'ouverture tenable, c'est que le geste est RÉVERSIBLE : chaque écriture
+# ajoute une version et `from_version` restaure la précédente. Le risque d'une procédure
+# qui pilote un agent se traite là — par les versions et par le digest qui dit ce qui a
+# changé — et non en fermant la porte à ceux qui s'en servent.
 _ECRIRE = BY_OP({None: ORG_ADMIN_OPT("org"), "org": ORG_ADMIN_OPT("org"),
-                 "group": GROUP_ADMIN_OPT("group")}, fields=("scope",))
+                 "group": GROUP_MEMBER_OPT("group")}, fields=("scope",))
+# `delete` reste au **chef d'équipe** : il emporte la procédure ET tout son historique,
+# sans corbeille — rien ne le défait. Un geste destructeur n'est pas un geste de travail.
+_SUPPRIMER = BY_OP({None: ORG_ADMIN_OPT("org"), "org": ORG_ADMIN_OPT("org"),
+                    "group": GROUP_ADMIN_OPT("group")}, fields=("scope",))
 
 
 def _need(val, code: str, msg: str):
@@ -126,7 +142,7 @@ CAPABILITIES += [
             # l'agent croyait sa procédure perdue). Le fix cross-org du 27/07 n'avait
             # posé ORG_MEMBER_OPT que sur `get`, laissant la moitié du signal ouverte.
             "get": _LIRE, "list": _LIRE,
-            "set": _ECRIRE, "delete": _ECRIRE,
+            "set": _ECRIRE, "delete": _SUPPRIMER,
             "library_list": SUB_ONLY, "library_get": SUB_ONLY,
             "publish": ORG_MEMBER, "fork": ORG_MEMBER, "unpublish": SUB_ONLY,
         }),
@@ -138,8 +154,10 @@ CAPABILITIES += [
             "id you are a member of — cross-org load of a named skill by slug) / list (catalog: "
             "slug/title/description, "
             "no body) / set (write: `slug` is REQUIRED — one named skill. `scope='group'` "
-            "writes your TEAM's procedure and only needs you to be its lead (`group` pins "
-            "an explicit team id); the default `scope='org'` needs org_admin. ⚠️ The "
+            "writes your TEAM's procedure and only needs you to be a MEMBER of it "
+            "(`group` pins an explicit team id): whoever RUNS a procedure may improve it, "
+            "and a bad edit is undone with `from_version`. The default `scope='org'` needs "
+            "org_admin. ⚠️ The "
             "org README (the prose injected into every session, « socle de l'org ») is NOT a "
             "procedure: write it with `oto_guide(op='write', scope='org', delivery='init')`. "
             "⚠️ EVERY procedure OPENS with `> **Self-improvement digest** — …` as its first block (what the last run taught and what was fixed, dated; one sentence if it has never been run — never invent a run). "
@@ -151,7 +169,8 @@ CAPABILITIES += [
             "`from_version` "
             "restores; `slots` = required entities referenced <slot:name> in the prose; `org` "
             "pins an explicit org id) / delete (exact `slug`; same `scope`/`group`/`org` "
-            "axes as set) — and the PUBLIC library: "
+            "axes as set, but DESTRUCTIVE — it takes the whole version history, so "
+            "`scope='group'` needs the team LEAD) — and the PUBLIC library: "
             "op=library_list (browse/search, filter category/author_kind) / library_get (full "
             "body by public slug) / publish (share one of your org's skills; visibility="
             "public|unlisted) / fork (copy a public entry into your org, optional `new_slug`) "

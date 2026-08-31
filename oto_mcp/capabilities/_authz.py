@@ -382,23 +382,36 @@ def _group_opt(field: str, allowed, refus: str):
 
 
 def GROUP_MEMBER_OPT(field: str):
-    """Lecture au palier ÉQUIPE, **self-service par défaut, épinglable explicitement** —
+    """**Appartenance** à l'équipe, **self-service par défaut, épinglable explicitement** —
     miroir équipe d'`ORG_MEMBER_OPT`. Escalade `roles.can_read_group` (membre de
-    l'équipe, org_admin du parent, platform_admin)."""
+    l'équipe, org_admin du parent, platform_admin).
+
+    ⚠️ Ce n'est pas une règle de LECTURE, c'est une règle d'ACTEUR : elle garde aussi
+    l'ÉCRITURE d'une procédure d'équipe (#681). Éditer une procédure, c'est faire son
+    travail — celui qui la déroule est un membre, pas un chef, et lui refuser d'écrire
+    revient à réserver l'apprentissage à qui n'exécute pas. Le geste est réversible
+    (chaque écriture ajoute une version, `from_version` restaure la précédente), donc
+    l'ouvrir ne coûte rien d'irrattrapable. Ce qui sépare les deux gestes n'est pas la
+    surface, c'est le VERBE : la suppression, elle, reste sur `GROUP_ADMIN_OPT`."""
     return _group_opt(field, roles.can_read_group,
                       "Réservé aux membres de l'équipe #{id}.")
 
 
 def GROUP_ADMIN_OPT(field: str):
-    """Écriture au palier ÉQUIPE, **self-service par défaut, épinglable explicitement** —
-    miroir équipe d'`ORG_ADMIN_OPT` (oto-backend#681).
+    """**Administration** de l'équipe, **self-service par défaut, épinglable
+    explicitement** — miroir équipe d'`ORG_ADMIN_OPT` (oto-backend#681). Escalade
+    `roles.can_admin_group` (chef d'équipe, org_admin du parent, platform_admin).
 
-    C'est la règle qui ouvre l'annotation d'une procédure à qui la déroule : `chef
-    d'équipe` (escalade `roles.can_admin_group` : org_admin du parent, platform_admin),
-    au lieu d'exiger l'administration de TOUTE l'organisation — membres, connecteurs et
-    clés compris — pour corriger une ligne d'un mode d'emploi. Le palier existait déjà
-    sous `guides._owner_for_write` ; il est ici pour se DÉCLARER au niveau de la
-    capacité (ADR 0009 §7) plutôt que de redescendre dans un handler."""
+    Réservée aux gestes qu'aucune version ne défait — sur les procédures, la
+    SUPPRESSION, qui emporte l'historique. ⚠️ Ne pas la remettre sur l'écriture : le
+    rôle de chef emporte par ailleurs les CLÉS PARTAGÉES de l'équipe, donc une garde
+    d'écriture trop grossière force une élévation de droits dans un domaine sans
+    rapport pour le seul motif d'annoter un mode d'emploi. C'est arrivé, en vrai, chez
+    un client — deux fois, la première réponse ayant été « deviens administrateur de
+    toute l'organisation ».
+
+    Le palier existait déjà sous `guides._owner_for_write` ; il est ici pour se DÉCLARER
+    au niveau de la capacité (ADR 0009 §7) plutôt que de redescendre dans un handler."""
     return _group_opt(field, roles.can_admin_group,
                       "Réservé au chef de l'équipe #{id} (ou à un org_admin du parent).")
 

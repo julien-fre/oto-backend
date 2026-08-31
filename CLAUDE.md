@@ -515,7 +515,9 @@ ressources** par délégation de l'org : secrets partagés (cascade `user_key > 
 active > plateforme`), procédures, gouvernance de connecteur. ⚠️ Les procédures d'équipe vivent
 dans `org_instructions` (`owner_type='group'`) et passent par le store UNIFIÉ
 `org_store.<fn>('group', id, …)` — plus de jeu de fonctions à part (#681, 31/08/2026) ; leur
-écriture est `oto_procedure(op='set', scope='group')`, gardée « chef d'équipe ».
+écriture est `oto_procedure(op='set', scope='group')`, gardée « **membre** de l'équipe »
+— la suppression, elle, reste au chef (la garde suit le VERBE : écrire est réversible,
+supprimer emporte l'historique).
 ⚠️ **Invariant monotone** : l'équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse
 (platform ⊇ org ⊇ group). ⚠️ **Groupe actif** : ≤1 par sub, il appartient à l'org active.
 ⚠️ **Aucun module du package `org_store/` n'importe `group_store`** (SQL direct dans

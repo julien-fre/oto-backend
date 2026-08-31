@@ -1,10 +1,19 @@
-"""Guide & skills d'un GROUPE (ADR 0012) — éditeur self-service du chef d'équipe.
+"""Guide & skills d'un GROUPE (ADR 0012) — éditeur self-service de l'équipe.
 
-Miroir du guide d'org au grain groupe : lecture = membre du groupe
-(`GROUP_MEMBER_OF`), écriture = chef d'équipe (`GROUP_ADMIN_OF`, escalade
-org_admin/platform). Modèle versionné (slug réservé `claude_md` = guide de
-base servi en complément de celle de l'org par `oto_procedure(op='get')`). Édité par le
-dashboard via REST `/api/groups/{id}/instructions*`.
+Miroir du guide d'org au grain groupe. La garde suit le VERBE, pas la surface (#681) :
+lecture, écriture et restauration = **membre** du groupe (`GROUP_MEMBER_OF`) ;
+suppression = **chef d'équipe** (`GROUP_ADMIN_OF`, escalade org_admin/platform).
+Éditer une procédure, c'est faire son travail, et le geste est réversible — chaque
+écriture ajoute une version, `revert` en restaure une. Supprimer emporte l'historique
+sans corbeille : c'est le seul geste que rien ne défait, et le seul réservé au chef.
+
+⚠️ Ces routes et `oto_procedure(op='set', scope='group')` écrivent la MÊME procédure
+(même store, même clé `(owner_type, owner_id, slug)`) : leurs gardes se déplacent
+ENSEMBLE, sinon « qui peut annoter » devient une propriété du transport.
+
+Modèle versionné (slug réservé `claude_md` = guide de base servi en complément de celle
+de l'org par `oto_procedure(op='get')`). Édité par le dashboard via REST
+`/api/groups/{id}/instructions*`.
 """
 from __future__ import annotations
 
@@ -101,7 +110,15 @@ class GroupInstructionsBundle(BaseModel):
     ⚠️ **`can_edit` est le seul champ de tout le domaine `group.*` qui dit la vérité sur
     les droits** : il intègre l'escalade (chef d'équipe, org_admin parent,
     platform_admin), là où `GroupBrief.my_role` ne rend que l'appartenance explicite.
-    `can_edit: true` avec `my_role: null` n'est pas une incohérence — c'est un org_admin."""
+    `can_edit: true` avec `my_role: null` n'est pas une incohérence — c'est un org_admin.
+
+    ⚠️ **`can_edit` est le droit d'ADMINISTRER, et depuis #681 il SOUS-ESTIME le droit
+    d'écrire une procédure** : `PUT …/instructions/{slug}` (et son revert) ne demandent
+    plus que l'appartenance à l'équipe, alors que `can_edit: false` reste rendu à un
+    simple membre. Il continue de dire vrai pour le readme (`guide`, écrit sur la
+    surface guide) et pour la suppression, tous deux réservés au chef. Un écran qui
+    masque l'édition d'une procédure sur ce seul champ masque donc un geste permis —
+    c'est le sens du champ qui doit se dédoubler, pas sa valeur qui doit s'élargir."""
     group_id: int
     guide: str
     guide_version: Optional[int] = None
@@ -318,17 +335,24 @@ CAPABILITIES += [
         description="Full markdown of one group instruction (slug `claude_md` = base doctrine).",
         rest=RestBinding("GET", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
+    # ⚠️ Écrire et supprimer ne partagent PAS une garde (#681) : voir l'en-tête du
+    # module. Le tableau de bord et `oto_procedure op=set scope='group'` écrivent la
+    # MÊME procédure — les laisser sur deux gardes ferait de « qui peut annoter » une
+    # propriété du TRANSPORT.
     Capability(
         key="group.instruction.set", handler=_set, Input=InstrSetInput,
-        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionWritten,
-        description=("Create/update a group instruction (team lead). slug `claude_md` "
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionWritten,
+        description=("Create/update a group instruction (any team MEMBER — whoever runs "
+                     "a procedure may improve it; a bad edit is undone by restoring a "
+                     "past version). slug `claude_md` "
                      "= the group base doctrine; any other slug = a named skill."),
         rest=RestBinding("PUT", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     Capability(
         key="group.instruction.delete", handler=_delete, Input=InstrSlugInput,
         authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionDeleted,
-        description="Delete a group instruction and its history.",
+        description=("Delete a group instruction and its history (team LEAD) — "
+                     "destructive and irreversible, unlike writing."),
         rest=RestBinding("DELETE", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     Capability(
@@ -339,8 +363,10 @@ CAPABILITIES += [
     ),
     Capability(
         key="group.instruction.revert", handler=_revert, Input=InstrRevertInput,
-        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionReverted,
-        description="Restore an older version of a group instruction as a new version.",
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionReverted,
+        description=("Restore an older version of a group instruction as a new version "
+                     "(any team MEMBER — it is the undo of `set`, and it destroys "
+                     "nothing)."),
         rest=RestBinding("POST", "/api/groups/{id}/instructions/{slug}/revert", _GID_SLUG),
     ),
 ]

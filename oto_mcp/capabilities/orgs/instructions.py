@@ -405,14 +405,20 @@ class ConsoleInstrSetInput(InstrSetInput):
 
     `scope` : `org` (défaut) | `group`. `group` : l'équipe visée quand
     `scope='group'` — None = l'équipe ACTIVE, miroir exact d'`org` au palier
-    au-dessus. La garde est « chef de l'équipe » (`GROUP_ADMIN_OPT`), pas
-    « admin de toute l'organisation »."""
+    au-dessus. La garde de l'ÉCRITURE au palier équipe est « membre de l'équipe »
+    (`GROUP_MEMBER_OPT`) : celui qui déroule la procédure est celui qui l'améliore, et
+    le geste se défait par `from_version`. La SUPPRESSION, elle, reste au chef
+    (`ConsoleGuideDeleteInput`)."""
     scope: Optional[str] = None
     group: Optional[int] = None
 
 
 class ConsoleGuideDeleteInput(GuideDeleteInput):
-    """`GuideDeleteInput` + le même axe de palier (cf. `ConsoleInstrSetInput`)."""
+    """`GuideDeleteInput` + le même axe de palier (cf. `ConsoleInstrSetInput`).
+
+    Même axe, **autre garde** : `GROUP_ADMIN_OPT` (« chef de l'équipe »). Supprimer
+    emporte la procédure et tout son historique, sans corbeille — c'est le seul geste du
+    domaine que rien ne défait, et le partage `set`/`delete` tient à ça."""
     scope: Optional[str] = None
     group: Optional[int] = None
 
@@ -494,17 +500,22 @@ def _owner_of(ctx: ResolvedCtx, inp) -> tuple[str, str]:
     d'une cible que la règle d'autz a déjà **vérifiée et injectée**. Un `scope='group'`
     arrivé sur une surface dont la règle est org (les faces admin, les routes REST
     `/api/me/instructions/*`) trouve `ctx.group_id` vide et se fait refuser : le palier
-    équipe n'est atteignable que par une règle qui a passé `can_admin_group`. C'est le
+    équipe n'est atteignable que par une règle qui a vérifié l'équipe. C'est le
     verrou — relire l'équipe ici (via l'équipe ACTIVE, par exemple) rendrait le champ
     client suffisant pour écrire chez elle. Une entrée sans `scope` reste au palier org,
-    à l'octet près."""
+    à l'octet près.
+
+    ⚠️ Ce verrou ne dit RIEN du palier de droits : le rôle exigé dépend du VERBE et se
+    déclare à la capacité (`set` = membre de l'équipe, `delete` = chef — #681). Deux
+    handlers passent ici, ils ne demandent pas la même chose."""
     if getattr(inp, "scope", None) == "group":
         if ctx.group_id is None:
             raise AuthzDenied(403, "forbidden",
                               "Le palier équipe s'écrit par `oto_procedure` "
                               "(`scope='group'`, `group` pour viser une équipe "
-                              "précise) : la garde y est « chef de l'équipe ». Cette "
-                              "surface-ci écrit l'org.")
+                              "précise) : y écrire demande d'être membre de l'équipe, "
+                              "y supprimer d'en être le chef. Cette surface-ci écrit "
+                              "l'org.")
         return ("group", str(ctx.group_id))
     if ctx.org_id is None:
         raise AuthzDenied(400, "no_active_org",

@@ -96,6 +96,16 @@ def _appel(sub: str, **args):
     return asyncio.run(out) if asyncio.iscoroutine(out) else out
 
 
+def _appel_cap(key: str, sub: str, **args):
+    """Le même chemin servi, pour une capacité NOMMÉE — les faces REST du palier
+    équipe (`group.instruction.*`) sont des capacités comme les autres."""
+    from oto_mcp.capabilities.registry import CAPABILITIES
+    cap = next(c for c in CAPABILITIES if c.key == key)
+    inp = cap.Input(**args)
+    out = cap.handler(cap.authz(RawCtx(sub=sub), inp), inp)
+    return asyncio.run(out) if asyncio.iscoroutine(out) else out
+
+
 _CORPS = ("> **Self-improvement digest** — jamais déroulée.\n\n"
           "# Clôture mensuelle\n\n```\n[Début] --> [Fin]\n```\n\nÉtapes.\n")
 
@@ -139,14 +149,103 @@ def test_ce_quil_ecrit_il_le_relit_et_le_supprime(monde):
         g for g in cat["guides"] if g["slug"] != "relance-clients"]
 
 
-def test_un_simple_membre_lit_mais_nécrit_pas(monde):
-    """`can_read_group` ≠ `can_admin_group` : le palier équipe n'est pas « tout ouvert »."""
-    assert _appel("u-membre", op="get", scope="group",
-                  slug="cloture-mensuelle")["version"] >= 1
+def test_un_membre_de_lequipe_annote_la_procedure_quil_deroule(monde):
+    """Le geste que le lot rend possible, et le seul qui ferme la boucle promise.
+
+    `u-membre` n'est **ni** org_admin **ni** chef d'équipe : il DÉROULE la procédure.
+    Réserver l'écriture au chef réservait l'apprentissage à qui n'exécute pas — et
+    coûtait, en vrai, une élévation de droits sans rapport (le rôle de chef emporte les
+    clés partagées de l'équipe) pour le seul motif d'annoter un mode d'emploi.
+
+    Écrire est un geste de TRAVAIL, et il est **réversible** : chaque écriture crée une
+    version de plus, et `from_version` restaure la précédente. C'est ce qui permet de
+    l'ouvrir au membre sans ouvrir la suppression, qui, elle, emporte l'historique
+    (`test_supprimer_une_procedure_dequipe_reste_au_chef`)."""
+    from oto_mcp import roles
+    assert not roles.is_org_admin("u-membre", monde["org"])
+    assert not roles.can_admin_group("u-membre", monde["equipe"]), (
+        "sans cette assertion, le test passerait pour la mauvaise raison — "
+        "un chef qui écrit ne prouve rien de neuf")
+    assert roles.can_read_group("u-membre", monde["equipe"])
+
+    _appel("u-chef", op="set", scope="group", slug="annotable", body_md=_CORPS)
+    out = _appel("u-membre", op="set", scope="group", slug="annotable",
+                 body_md=_CORPS + "\nAppris au déroulé du jour : relancer avant 10 h.\n")
+    assert out["ok"] and out["group_id"] == monde["equipe"] and out["scope"] == "group"
+    # v2, pas v1 : il a annoté CELLE QUI EXISTE, il n'en a pas créé une à côté.
+    assert out["version"] == 2
+    assert "Appris au déroulé" in _appel(
+        "u-membre", op="get", scope="group", slug="annotable")["body_md"]
+
+    # …et sa mauvaise écriture se défait sans droit de plus : la réversibilité n'est pas
+    # une promesse, c'est le chemin servi.
+    assert _appel("u-membre", op="set", scope="group", slug="annotable",
+                  from_version=1)["version"] == 3
+
+    # Le palier ORG lui reste fermé — sans cette moitié, le test dirait seulement
+    # qu'on a tout ouvert.
     with pytest.raises(AuthzDenied) as refus:
-        _appel("u-membre", op="set", scope="group", slug="cloture-mensuelle",
-               body_md=_CORPS)
+        _appel("u-membre", op="set", slug="au-niveau-org", body_md=_CORPS)
     assert refus.value.status == 403
+
+
+def test_ecrire_dans_une_equipe_dont_on_nest_pas_membre_reste_refuse(monde):
+    """« Membre » veut dire membre de l'ÉQUIPE PROPRIÉTAIRE, pas membre de l'org.
+
+    `can_read_group` ne subsume pas l'appartenance à l'org : un salarié d'Acme qui n'est
+    pas dans Compta n'annote pas les procédures de Compta. Abaisser la garde de `set`
+    d'un cran ne devait pas la faire tomber d'un étage."""
+    from oto_mcp import group_store, roles
+    autre_equipe = group_store.create_group(monde["org"], "Paie")
+    assert not roles.can_read_group("u-membre", autre_equipe)
+    with pytest.raises(AuthzDenied) as refus:
+        _appel("u-membre", op="set", scope="group", group=autre_equipe,
+               slug="pas-chez-moi", body_md=_CORPS)
+    assert refus.value.status == 403
+
+
+def test_supprimer_une_procedure_dequipe_reste_au_chef(monde):
+    """Le pendant, figé : `delete` n'est PAS un geste de travail.
+
+    Il emporte la procédure **et tout son historique**, sans corbeille — rien ne le
+    défait. C'est la raison pour laquelle `set` et `delete` cessent de partager une
+    règle : ce n'est pas la surface qui décide du palier, c'est le VERBE. Remettre les
+    deux sur la même règle rend ce test rouge, dans un sens ou dans l'autre."""
+    from oto_mcp import org_store
+    _appel("u-chef", op="set", scope="group", slug="destructible", body_md=_CORPS)
+
+    with pytest.raises(AuthzDenied) as refus:
+        _appel("u-membre", op="delete", scope="group", slug="destructible")
+    assert refus.value.status == 403
+    # Le refus tombe AVANT la suppression — l'historique est intact.
+    assert org_store.get_instruction("group", monde["equipe"], "destructible")
+    assert org_store.list_instruction_versions("group", monde["equipe"], "destructible")
+
+    # …et le chef, lui, supprime.
+    assert _appel("u-chef", op="delete", scope="group", slug="destructible")["deleted"]
+
+
+def test_la_face_rest_dequipe_partage_le_meme_decoupage(monde):
+    """Un geste, deux transports, une seule règle.
+
+    `PUT /api/groups/{id}/instructions/{slug}` (le tableau de bord) et `oto_procedure
+    op=set scope='group'` (l'agent) écrivent la MÊME procédure. Les laisser sur deux
+    gardes ferait de « qui peut annoter » une propriété du transport — la forme de
+    divergence qui se paie toujours en incident, jamais en refus visible."""
+    from oto_mcp import org_store
+    assert _appel_cap("group.instruction.set", "u-membre", group_id=monde["equipe"],
+                      slug="par-le-tableau-de-bord", body_md=_CORPS)["set"]
+    # Restaurer une version passée est une écriture de plus, pas une administration.
+    _appel_cap("group.instruction.set", "u-membre", group_id=monde["equipe"],
+               slug="par-le-tableau-de-bord", body_md=_CORPS + "\nv2\n")
+    assert _appel_cap("group.instruction.revert", "u-membre", group_id=monde["equipe"],
+                      slug="par-le-tableau-de-bord", version=1)["version"] == 3
+
+    with pytest.raises(AuthzDenied) as refus:
+        _appel_cap("group.instruction.delete", "u-membre", group_id=monde["equipe"],
+                   slug="par-le-tableau-de-bord")
+    assert refus.value.status == 403
+    assert org_store.get_instruction("group", monde["equipe"], "par-le-tableau-de-bord")
 
 
 def test_une_equipe_explicite_est_gardee_comme_lactive(monde):

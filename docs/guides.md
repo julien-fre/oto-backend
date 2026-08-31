@@ -58,10 +58,24 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
   secrets — que personne n'accorde pour ça ; la boucle d'auto-amélioration que la procédure
   promet ne se fermait jamais.
 
+  ⚠️ **La garde suit le VERBE, pas la surface** (corrigé le 01/09/2026, avant fusion de
+  #695) : au palier équipe, `set` demande d'être **membre** de l'équipe, `delete` d'en être
+  le **chef**. La première rédaction du lot gardait l'écriture sur « chef d'équipe » et ça
+  s'est payé tout de suite : pour laisser une opératrice annoter le mode d'emploi qu'elle
+  déroulait, il a fallu la faire cheffe de son équipe — un rôle qui emporte les **clés
+  partagées** de l'équipe. Une garde d'écriture trop grossière force une élévation de droits
+  dans un domaine sans rapport. Ce qui rend l'ouverture tenable est que l'écriture est
+  **réversible** (une version de plus, `from_version` restaure) alors que la suppression
+  emporte l'historique sans corbeille.
+
   Les faces REST restent **une route par palier** : `/api/me/instructions*` (org_admin de
-  l'org active) et `/api/groups/{id}/instructions*` (chef d'équipe). `scope`/`group` sont des
-  axes de la CONSOLE MCP seulement — les publier dans le corps d'une route qui les refuserait
-  décrirait une porte qui n'existe pas.
+  l'org active) et `/api/groups/{id}/instructions*` (membre pour écrire et restaurer, chef
+  pour supprimer — **même partage que la console**, sinon « qui peut annoter » deviendrait
+  une propriété du transport). `scope`/`group` sont des axes de la CONSOLE MCP seulement —
+  les publier dans le corps d'une route qui les refuserait décrirait une porte qui n'existe
+  pas. ⚠️ `GroupInstructionsBundle.can_edit` est resté le droit d'ADMINISTRER : il rend
+  `false` à un membre qui a pourtant le droit d'écrire — le champ doit se dédoubler côté
+  front, sa valeur ne doit pas s'élargir (elle garde aussi le readme d'équipe).
 - **Versioning** : chaque écriture incrémente `version` (sur le courant) et archive un snapshot
   append-only. Revert = re-poser le corps d'une version → nouvelle version (jamais d'effacement
   d'historique sauf `delete`).

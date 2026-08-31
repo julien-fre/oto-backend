@@ -132,11 +132,18 @@ groupe (hors FK) sont purgés explicitement par `delete_group`.
   `set_role` (avant #280 il rétrogradait ce que l'autre refusait).
 - **secrets** (`groups/secrets.py`) : `group.secret.{set,delete}`.
 - **procédures** (`groups/guide.py`) : `group.instruction.{list,get,set,delete,
-  versions,revert}` — lecture = membre, écriture = chef. Édité par le dashboard
-  via `REST /api/groups/{id}/instructions*`. ⚠️ Depuis #681, la console MCP
-  `oto_procedure(op='set'|'delete', scope='group'[, group=N])` sert le MÊME palier
-  avec la MÊME garde — c'est par là qu'un opérateur métier annote la procédure qu'il
-  déroule, sans être administrateur de toute l'org.
+  versions,revert}` — **la garde suit le VERBE** : `list`/`get`/`set`/`revert` =
+  **membre** de l'équipe, `delete` = **chef**. Écrire et restaurer sont des gestes de
+  travail et se défont (une version de plus) ; supprimer emporte l'historique sans
+  corbeille. Édité par le dashboard via `REST /api/groups/{id}/instructions*`.
+  ⚠️ Depuis #681, la console MCP `oto_procedure(op='set'|'delete', scope='group'[,
+  group=N])` sert le MÊME palier avec les MÊMES gardes — c'est par là qu'un opérateur
+  métier annote la procédure qu'il déroule, sans être ni administrateur de toute l'org
+  ni chef de son équipe. Les deux transports écrivent la même ligne : leurs gardes se
+  déplacent ensemble.
+  ⚠️ `can_edit` (bundle `list`) reste `can_admin_group` : il dit le droit
+  d'ADMINISTRER (readme d'équipe, suppression), et **sous-estime** désormais le droit
+  d'écrire une procédure.
 
 ### `/api/me`
 
@@ -197,8 +204,11 @@ grain, le scope est une COLONNE ; migrations vivantes sur la DB partagée = play
   DROPpée) et, depuis le 31/08/2026 (#681), **store unifié** aussi :
   `org_store.<fn>('group', id, …)`, plus de `group_store.*_group_instruction*`.
   `oto_procedure(op='get'|'list')` sert org **puis** groupe actif (complément, chaque
-  skill taggée `scope`) ; `op='set'|'delete'` avec `scope='group'` ÉCRIT ce palier
-  (garde : chef d'équipe). Les procédures d'équipe ont un `id` (ownership 0030), donc
+  skill taggée `scope`) ; `op='set'|'delete'` avec `scope='group'` ÉCRIT ce palier.
+  ⚠️ **La garde y suit le VERBE** : `set` = **membre** de l'équipe (celui qui déroule est
+  celui qui améliore, et l'écriture se défait par `from_version`), `delete` = **chef**
+  (il emporte l'historique, rien ne le défait). Mêmes paliers sur les routes
+  `/api/groups/{id}/instructions*`. Les procédures d'équipe ont un `id` (ownership 0030), donc
   se déplacent d'un palier à l'autre en gardant leurs versions, leurs slots et leurs
   liens de projet (`oto_resource op=transfer`).
 - **gouvernance de connecteur** — le chef d'équipe peut COUPER un connecteur et le
