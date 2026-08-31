@@ -139,12 +139,20 @@ volontaire d'agent + les runs / déroulés. Détail : ADR 0017 (repo public
 
 ## Un run silencieux ne s'annonce plus « en cours » (13/08, #311)
 
-> **Un run silencieux ne s'annonce plus « en cours » (13/08, #311).** 15 des 16 runs
-> « ouverts » de prod n'avaient plus donné signe de vie depuis 1 jour à 1 mois : des
-> conversations terminées sans clôture déclarée. Le silence est **dérivé à la lecture**
-> (`run_status`, 48 h sans appel rattaché) — jamais stocké : une colonne d'état écrite par
-> un démon pourrait mentir à son tour, ce qui est le défaut qu'on ferme. `last_seen_at`
-> remonte de `_runs_from_journal`, donc les 4 lectures en héritent d'un coup.
+> **Un run silencieux ne s'annonce plus « en cours » (13/08, #311 ; seuil re-daté le
+> 31/08, #666).** 15 des 16 runs « ouverts » de prod n'avaient plus donné signe de vie
+> depuis 1 jour à 1 mois : des conversations terminées sans clôture déclarée. Le silence
+> est **dérivé à la lecture** (`run_status`, **24 h** sans appel rattaché) — jamais
+> stocké : une colonne d'état écrite par un démon pourrait mentir à son tour, ce qui est
+> le défaut qu'on ferme. `last_seen_at` remonte de `_runs_from_journal`, donc les 4
+> lectures en héritent d'un coup.
+> ⚠️ **La justification écrite à côté du seuil a été fausse pendant 18 jours** : elle
+> affirmait qu'« aucun run silencieux » ne se trouvait entre 1 jour et 1 mois alors que
+> le recensement qu'elle citait en comptait 15 sur 16. Recensé le 31/08 sur 10 755 runs :
+> **143 des 148 ouverts** sont dans cette bande, le creux réel est **6-24 h** (vide), et
+> le risque de couper du vivant est identique à 24 h et à 48 h (2 runs dans les deux cas).
+> **Le seuil nomme la pathologie, il ne la soigne pas** : 18,3 % des runs conversationnels
+> restent ouverts, contre 0,41 % côté runner hébergé.
 > ⚠️ **Le vocabulaire d'issue vient de l'ADR, pas de la mesure** : `abandoned` est retiré
 > (absent d'ADR 0058-D5) ; `failed` RESTE bien qu'il n'ait jamais servi non plus, parce que
 > D5 le porte. **La mesure tranche ce que l'ADR laisse ouvert, jamais ce qu'elle a fermé.**

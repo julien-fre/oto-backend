@@ -242,11 +242,12 @@ def _executions(sub: str, org_id: Optional[int]) -> list[RailNode]:
     un journal. Le rail montre ce qui ATTEND la personne, jamais des volumes : c'est la
     règle que le contrat pose déjà pour ses compteurs, et elle vaut ici.
 
-    Donc : **ouverts ET non périmés**, au sens que `run_status` porte déjà (48 h sans
-    signe de vie ⟹ un run cesse d'être annoncé « en cours », #311). Mesuré : 26 runs sur
-    toute la plateforme, médiane 1 par personne, maximum 24. Réutiliser ce seam plutôt
-    que d'inventer une fenêtre évite d'avoir deux définitions de « en cours » — et un
-    run périmé affiché ici serait le miroir exact du défaut que #311 a fermé.
+    Donc : **ouverts ET non périmés**, au sens que `run_status` porte déjà (24 h sans
+    signe de vie ⟹ un run cesse d'être annoncé « en cours » — #311, seuil re-daté par
+    #666). Mesuré : 26 runs sur toute la plateforme, médiane 1 par personne, maximum 24.
+    Réutiliser ce seam plutôt que d'inventer une fenêtre évite d'avoir deux définitions
+    de « en cours » — et un run périmé affiché ici serait le miroir exact du défaut que
+    #311 a fermé.
     """
     if org_id is None:
         return []

@@ -441,8 +441,10 @@ publique de création de routine ni de génération de jeton**.
 Flux d'événements de session unifié : calllog (involontaire) + feedback volontaire d'agent
 (`feedback`, signal=tool_feedback|gap) + runs / déroulés (`run_start`/`run_finish`).
 ⚠️ **Le vocabulaire d'issue vient de l'ADR, pas de la mesure : la mesure tranche ce que l'ADR
-laisse ouvert, jamais ce qu'elle a fermé.** Le silence d'un run (48 h sans appel rattaché) est
-**dérivé à la lecture**, jamais stocké. **Détail : `docs/usage-loop.md`.**
+laisse ouvert, jamais ce qu'elle a fermé.** Le silence d'un run (**24 h** sans appel
+rattaché — seuil re-daté le 31/08 par #666, l'ancienne justification inversait le
+recensement qu'elle citait) est **dérivé à la lecture**, jamais stocké.
+**Détail : `docs/usage-loop.md`.**
 
 ## Email (envoi per-org, par connecteur)
 

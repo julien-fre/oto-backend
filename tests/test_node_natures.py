@@ -111,7 +111,7 @@ def test_seuls_les_runs_OUVERTS_et_VIVANTS_entrent_au_rail(runs):
 def test_un_run_PERIME_n_est_pas_annonce_en_cours(runs):
     """Le miroir exact du défaut que #311 a fermé.
 
-    Un run silencieux depuis 48 h cesse d'être annoncé « en cours ». L'afficher au rail
+    Un run silencieux depuis 24 h (#666) cesse d'être annoncé « en cours ». L'afficher au rail
     le ré-annoncerait — et on retrouverait, dans une autre surface, la vérité qu'on
     vient de corriger dans une première.
     """
