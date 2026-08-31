@@ -173,15 +173,24 @@ def _introuvable() -> AuthzDenied:
     return AuthzDenied(404, "not_found", "Aucun nœud de ce nom, ou aucun droit de le voir.")
 
 
-def _lisible(fiche: dict, principals: set, partages: set) -> bool:
+def _lisible(ctx: ResolvedCtx, fiche: dict, partages: set) -> bool:
     """Le nœud est-il à portée de cette personne ?
 
-    Deux voies, les mêmes que le rail : son propriétaire est un de mes principals
-    (l'org active, une de mes équipes, moi), ou il m'est partagé en direct. On réutilise
-    `ownership.active_org_principals` plutôt que de réécrire le scoping — une seconde
-    définition de « à portée » divergerait de la première au premier changement.
+    Deux voies : son propriétaire est à portée dans le contexte, ou le nœud m'est
+    partagé en direct. La première est `ownership.owner_in_scope` — **la règle de
+    portée de la plateforme, pas une seconde définition**.
+
+    Elle l'était, et elle avait divergé (#682) : ce test comparait le propriétaire à
+    `active_org_principals`, qui ne connaît ni le cran PLATEFORME ni l'escalade
+    d'équipe. Un guide de la bibliothèque était donc **invisible par `oto_node` et
+    lisible par `oto_resource`** — deux portes, deux réponses, pour la même page et la
+    même personne ; et un administrateur d'org voyait les tableaux de toutes ses
+    équipes mais pas leurs pages. Le commentaire d'origine annonçait le risque
+    (« une seconde définition divergerait de la première ») en le prenant quand même :
+    réutiliser le calcul des principals n'est pas réutiliser la règle.
     """
-    if (fiche["owner_type"], str(fiche["owner_id"])) in principals:
+    if ownership.owner_in_scope(ctx.sub, ctx.org_id,
+                                (fiche["owner_type"], str(fiche["owner_id"]))):
         return True
     return fiche["public_id"] in partages
 
@@ -251,16 +260,15 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
     if not fiche:
         raise _introuvable()
 
-    principals = {(t, str(i)) for t, i in
-                  ownership.active_org_principals(ctx.sub, ctx.org_id)}
     partages: set = set()
-    if (fiche["owner_type"], str(fiche["owner_id"])) not in principals:
+    if not ownership.owner_in_scope(ctx.sub, ctx.org_id,
+                                    (fiche["owner_type"], str(fiche["owner_id"]))):
         # Le second chemin ne se paie QUE s'il sert : la voie du propriétaire couvre la
         # quasi-totalité des ouvertures, et lire tous les grants d'une personne pour
         # confirmer ce qu'on sait déjà serait une requête par ouverture de page.
         par_id, _ = db_shell.resolve_grant_nodes(db_shell.direct_grants(ctx.sub))
         partages = set(par_id)
-    if not _lisible(fiche, principals, partages):
+    if not _lisible(ctx, fiche, partages):
         raise _introuvable()
 
     props = fiche.get("props") or {}

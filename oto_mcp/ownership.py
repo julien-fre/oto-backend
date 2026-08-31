@@ -132,30 +132,53 @@ def visible_in_org(sub: str, org_id: Optional[int],
     atteindre une ressource d'une AUTRE de mes orgs, hors contexte (fuite cross-org,
     cf. l'incident projet). À utiliser pour toute lecture/action par-id scopée à l'org
     active ; `can_access` reste le plan CONTENU (découverte/partage cross-org)."""
-    owner = active_owner(org_id)
-    if owner is None:
-        return False
     o = owner_of(resource_type, resource_id)
-    if o is not None and (str(o[0]), str(o[1])) == owner:
-        return True
-    # Scope MEMBRE (ADR 0030 amendé) : ma ressource perso (owner=('user', sub)) m'est
-    # visible dans tout contexte où je suis — c'est la MIENNE, jamais une fuite cross-org
-    # (le plan de LISTE, lui, la range dans son org de contexte via `list_member_projects`).
-    if o is not None and str(o[0]) == "user" and str(o[1]) == sub:
-        return True
-    # ADR 0049 : une ressource GROUP-owned appartient au contexte de son org PARENTE —
-    # visible ici ssi le groupe est dans cette org ET l'acteur peut le lire (membre du
-    # groupe, ou escalade org_admin/platform via `roles.can_read_group`).
-    if o is not None and str(o[0]) == "group":
-        g = group_store.get_group(int(o[1]))
-        if (g is not None and org_id is not None and int(g["org_id"]) == int(org_id)
-                and roles.can_read_group(sub, int(o[1]))):
-            return True
-    # ADR 0049 : le cran PLATFORM (bibliothèque) est lisible dans tout contexte.
-    if o is not None and str(o[0]) == "platform":
+    if o is not None and owner_in_scope(sub, org_id, o):
         return True
     return any(db.get_resource_grant(resource_type, resource_id, pt, pid) is not None
                for pt, pid in active_org_principals(sub, org_id))
+
+
+def owner_in_scope(sub: str, org_id: Optional[int],
+                   owner: Optional[tuple]) -> bool:
+    """Ce PROPRIÉTAIRE est-il à portée de cette personne, dans ce contexte d'org ?
+
+    La règle de portée, **une seule fois pour toute la plateforme**. Elle ne connaît
+    ni les grants ni le type de ressource : c'est ce qui la rend partageable entre des
+    mondes dont les partages ne se rangent pas au même endroit (le datastore les lit
+    dans `resource_grants` par `(type, id)` ; les nœuds les traduisent depuis leurs
+    types d'origine, `db/shell.resolve_grant_nodes`). Chaque monde garde SA résolution
+    de grants et appelle celle-ci pour la portée.
+
+    Elle existe parce que la règle était écrite deux fois et **avait déjà divergé**
+    (#682) : le monde des nœuds ne traitait ni le cran plateforme ni l'escalade
+    d'équipe, si bien qu'un même nœud était invisible par une porte et lisible par
+    l'autre. Recopier les branches manquantes aurait rouvert l'écart au premier
+    changement — c'est exactement ce que le commentaire de `_lisible` prédisait.
+
+    Quatre voies, aucune n'est une fuite cross-org :
+    """
+    if owner is None:
+        return False
+    otype, oid = str(owner[0]), str(owner[1])
+    # 1. L'org active elle-même.
+    if (otype, oid) == active_owner(org_id):
+        return True
+    # 2. Scope MEMBRE (ADR 0030 amendé) : ma ressource perso m'est visible dans tout
+    #    contexte où je suis — c'est la MIENNE. Le plan de LISTE, lui, la range dans
+    #    son org de contexte (`list_member_projects`).
+    if otype == "user" and oid == sub:
+        return True
+    # 3. ADR 0049 : une ressource d'ÉQUIPE appartient au contexte de son org PARENTE —
+    #    à portée ssi l'équipe est dans cette org ET que l'acteur peut la lire (membre,
+    #    ou escalade org_admin/platform via `roles.can_read_group`).
+    if otype == "group":
+        g = group_store.get_group(int(oid))
+        return bool(g is not None and org_id is not None
+                    and int(g["org_id"]) == int(org_id)
+                    and roles.can_read_group(sub, int(oid)))
+    # 4. ADR 0049 : le cran PLATEFORME (bibliothèque) est lisible dans tout contexte.
+    return otype == "platform"
 
 
 # --- Registre des types de ressource ----------------------------------------
