@@ -27,14 +27,28 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ... import (access, db, deprecations, group_store, guide_store, org_store,
                 procedure_diagram, procedure_digest, roles,
                 slots as slots_mod, tool_registry)
-from .._authz import ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER, ORG_MEMBER_OF, SUB_ONLY
+from .._authz import (ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER,
+                      ORG_MEMBER_OF, SUB_ONLY, capacite_autorise)
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
+
+# ── Les droits ANNONCÉS par le bundle d'org ─────────────────────────────────
+#
+# Même forme qu'au palier équipe (`groups/guide.py`) : chaque drapeau nomme la
+# capacité dont il rend la règle, et c'est cette règle-là qu'on exécute. Ici les deux
+# valent `org_admin` aujourd'hui — le palier org n'a pas été redécoupé par #695 — mais
+# ils sont servis SÉPARÉMENT quand même : sans ça, « qui peut annoter » redeviendrait
+# une propriété du palier, et un écran factorisé sur les deux surfaces devrait deviner
+# lequel des deux sens `can_edit` porte selon la page où il est.
+_DROITS_SERVIS = {
+    "can_write_instructions": "org.instruction.set",
+    "can_delete_instructions": "org.instruction.delete",
+}
 
 _OID = {"id": "org_id"}
 _OID_SLUG = {"id": "org_id", "slug": "slug"}
@@ -153,10 +167,25 @@ class InstructionsBundle(BaseModel):
     que par `guide` (servi aussi sous son nom d'hier, `doctrine`, jusqu'au
     27/09/2026). Et l'asymétrie va plus loin : `guide.exists: true` annonce
     un readme que `GET /api/me/instructions/claude_md` **ne sait pas servir** (404) —
-    le readme se lit sur la surface guide, pas ici."""
+    le readme se lit sur la surface guide, pas ici.
+
+    ⚠️ **`can_edit` est le droit d'administrer l'org**, pas celui d'écrire une
+    procédure : ce sont `can_write_instructions` et `can_delete_instructions` qui
+    répondent à cette question-là, ici comme au palier équipe. À l'org les deux valent
+    la même chose aujourd'hui (org_admin des deux côtés) ; à l'équipe, non — un membre
+    écrit, seul le chef supprime. **Un écran qui sert les deux paliers doit lire les
+    mêmes deux champs**, sinon le droit d'annoter redevient une propriété de la page."""
     org_id: Optional[int] = None
     org_name: Optional[str] = None
     can_edit: bool
+    # Cf. `_DROITS_SERVIS` : rendus par les règles d'autz déclarées, pas recopiés.
+    can_write_instructions: bool = Field(description=(
+        "Peut créer, modifier et restaurer une procédure de cette org : org_admin. "
+        "⚠️ Au palier ÉQUIPE le même champ est vrai pour tout membre — c'est la "
+        "garde qui diffère, pas le champ."))
+    can_delete_instructions: bool = Field(description=(
+        "Peut supprimer une procédure de cette org ET tout son historique "
+        "(irréversible) : org_admin."))
     guide: GuideMeta
     doctrine: GuideMeta   # ALIAS déprécié, retrait le 27/09/2026 (#519)
     instructions: list[InstructionIndexEntry]
@@ -744,8 +773,13 @@ def _instructions_list(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
     Bundle vide en 200 si pas d'org active (consommé par l'overview)."""
     org_id = ctx.org_id
     if org_id is None:
+        # Sans org active, aucun geste n'aboutit : tous les droits à faux — et TOUS
+        # ceux que le modèle déclare, pas seulement `can_edit` (un drapeau absent d'une
+        # branche se lit `undefined`, ce qu'un front prend pour « pas le droit » sur
+        # l'une et pour « peut-être » sur l'autre).
         return deprecations.avec_les_deux_noms({
             "org_id": None, "org_name": None, "can_edit": False,
+            **{nom: False for nom in _DROITS_SERVIS},
             "guide": {"exists": False, "version": 0, "updated_at": None},
             "instructions": []})
     o = org_store.get_org(org_id)
@@ -754,7 +788,13 @@ def _instructions_list(ctx: ResolvedCtx, inp: EmptyInput) -> dict:
     return deprecations.avec_les_deux_noms({
         "org_id": org_id,
         "org_name": o["name"] if o else None,
+        # Droit d'ADMINISTRER l'org — inchangé.
         "can_edit": roles.is_org_admin(ctx.sub, org_id),
+        # Droits sur les PROCÉDURES, rendus par les règles d'autz déclarées.
+        # `org=` épingle CETTE org : la règle a une branche self-service qui relirait
+        # l'org active, et le bundle doit parler de l'org qu'il affiche.
+        **{nom: capacite_autorise(cle, ctx.sub, org=org_id)
+           for nom, cle in _DROITS_SERVIS.items()},
         "guide": {
             "exists": has_readme,
             "version": 1 if has_readme else 0,        # prose plate : pas d'historique

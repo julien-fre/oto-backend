@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from .. import access, db, group_store, roles, tenancy
 from ._types import AuthzDenied, RawCtx, ResolvedCtx
@@ -507,3 +507,48 @@ def GROUP_ADMIN_OF(field: str):
         return ResolvedCtx(sub=sub, org_id=g["org_id"], group_id=group_id,
                            role=access.get_user_role(sub))
     return rule
+
+
+# ── Annoncer un droit sans le recopier ───────────────────────────────────────
+
+class _SondeAutz(BaseModel):
+    """Entrée minimale d'une sonde d'autz : les seuls champs que la règle LIT.
+
+    Pas l'`Input` de la capacité — celui-ci exige de la donnée de GESTE (un corps, un
+    slug, une version) que personne n'a à fabriquer pour poser une question de droit.
+    Les règles de ce module ne lisent leur entrée que par `getattr(inp, champ, None)`.
+    """
+    model_config = ConfigDict(extra="allow")
+
+
+def capacite_autorise(cle: str, sub: Optional[str], **champs) -> bool:
+    """La capacité `cle` laisserait-elle passer `sub` avec ces champs d'entrée ?
+
+    Sert à **annoncer** un droit (un `can_*` servi à un écran) sans le recopier. Un
+    drapeau de droit pose exactement la question d'un refus — « ce geste-là
+    aboutirait-il ? » — et tant qu'il y répond par SA PROPRE condition, les deux
+    dérivent en silence. C'est arrivé sur les procédures (#695) : la garde d'écriture
+    est descendue au membre de l'équipe, le drapeau servi est resté sur le critère de
+    l'administration, et l'écran a caché à une opératrice un geste que le serveur lui
+    accordait — sans qu'une ligne du fichier qui sert le drapeau ait bougé. On exécute
+    donc la règle d'autz **déclarée par la capacité** ; il n'y a plus de copie à tenir
+    à jour, et déplacer une garde déplace le drapeau avec elle.
+
+    ⚠️ **N'appelle jamais le handler** : seule la règle tourne, et une règle ne fait
+    que lire (rôles, org active). Tout `AuthzDenied` vaut `False`, quel que soit son
+    statut — un 400 « aucune org active » ferme le geste aussi sûrement qu'un 403.
+
+    ⚠️ Une `cle` inconnue **lève** (`KeyError`) au lieu de rendre `False` : un drapeau
+    qui nomme une capacité disparue doit casser bruyamment. Le rendre faux
+    ressusciterait exactement le défaut d'origine — une porte fermée à tort, que rien
+    ne signale.
+    """
+    from .registry import CAPABILITIES
+    cap = next((c for c in CAPABILITIES if c.key == cle), None)
+    if cap is None:
+        raise KeyError(f"capacité inconnue : {cle!r} — un droit servi la nomme.")
+    try:
+        cap.authz(RawCtx(sub=sub), _SondeAutz(**champs))
+    except AuthzDenied:
+        return False
+    return True
