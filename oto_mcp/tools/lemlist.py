@@ -1,29 +1,44 @@
 """Lemlist — campagnes, séquences, plannings, leads, stats et enrichissement.
 
+Premier des DEUX modules du connecteur : celui-ci tient la CAMPAGNE et ses
+leads, `lemlist_crm.py` tient tout le reste (CRM, inbox, désinscriptions, watch
+lists, tâches, base partagée, équipe, boîtes mail, lemwarm, délivrabilité,
+webhooks). Ensemble ils couvrent les 141 routes documentées de lemlist, sans
+exception — et deux inventaires le prouvent plutôt que de l'affirmer :
+`test_lemlist_coverage.py` côté oto-core (chaque route a un chemin dans le
+client), `test_lemlist_surface_coverage.py` ici (chaque capacité du client est
+appelée par un tool, les rares exceptions étant nommées avec leur raison).
+
 Le connecteur savait LIRE une campagne et y poser des leads ; il ne savait pas
 en conduire une. `lemlist_campaign`, `lemlist_campaign_start`,
-`lemlist_sequence` et `lemlist_schedule` ferment ce trou : créer et régler une
-campagne, écrire sa séquence pas à pas, tenir ses fenêtres d'envoi, la valider,
-la démarrer, la mettre en pause, la dupliquer, la mesurer.
+`lemlist_sequence`, `lemlist_schedule` et `lemlist_lead` ferment ce trou : créer
+et régler une campagne, écrire sa séquence pas à pas, tenir ses fenêtres
+d'envoi, la valider, la démarrer, la mettre en pause, la dupliquer, la mesurer,
+l'exporter, et mener ses leads de bout en bout.
 
 La borne n'a pas disparu, elle s'est DÉPLACÉE là où elle mord vraiment : sur ce
-qui met des messages sur le fil, pas sur l'écriture en général. Deux gestes le
-font — `lemlist_campaign_start` (lemlist déroule la séquence pour tous les leads
-lancés) et `lemlist_launch_lead` (un lead sort de la revue). Les deux sont
-masqués par défaut (`DEFAULT_HIDDEN_TOOLS`, self-activables). Tout le reste —
-créer, régler, dupliquer, pauser, planifier — travaille sur un BROUILLON et
-n'envoie rien.
+qui met des messages sur le fil, pas sur l'écriture en général. QUATRE tools le
+font ou l'arment, et tous les quatre sont masqués par défaut
+(`DEFAULT_HIDDEN_TOOLS`, self-activables) : `lemlist_campaign_start` (lemlist
+déroule la séquence pour tous les leads lancés), `lemlist_launch_lead` (un lead
+sort de la revue), `lemlist_inbox_send` (les trois envois directs, sans campagne
+ni revue devant eux) et `lemlist_campaign_auto_review`. Tout le reste — créer,
+régler, dupliquer, pauser, planifier, ranger le CRM — travaille sur un BROUILLON
+ou sur de la donnée, et n'envoie rien.
 
 C'est ce grain-là qui a dicté le découpage : `DEFAULT_HIDDEN_TOOLS` a le grain du
 TOOL, pas de l'`op`. `start` en `lemlist_campaign(op="start")` serait rentré dans
 un tool visible et aurait dégondé la borne en silence — d'où un tool nu pour lui
-seul.
+seul, et de même pour les envois d'inbox.
 
 Corollaire, et c'est le point le moins évident du module : `autoReview` /
-`autoReviewConditions` sont REFUSÉS sur `create` et `update`. Ce réglage lance
-tout lead dès son ajout, donc il transformerait `lemlist_create_lead` — visible,
-et visible PARCE QU'il n'envoie rien — en chemin d'envoi, sans qu'aucun tool
-masqué soit appelé. Il se règle dans l'UI lemlist.
+`autoReviewConditions` ne passent PAS par le dict de réglages de
+`lemlist_campaign`. Le champ n'est pas retiré du connecteur pour autant — il a
+son propre tool masqué, `lemlist_campaign_auto_review`. La raison : ce réglage
+lance tout lead dès son ajout, donc il ferait de `lemlist_create_lead` — visible,
+et visible PARCE QU'il n'envoie rien — un chemin d'envoi, sans qu'aucun tool
+masqué soit appelé. Le champ reste atteignable ; c'est le GESTE qui devient
+explicite.
 
 L'enrichissement (`lemlist_enrich`, `lemlist_enrich_lead`) n'envoie rien — mais
 il DÉPENSE des crédits lemlist à chaque action. D'où la même borne, prise
@@ -69,8 +84,10 @@ BULK_ACTIONS = {
 #: lead créé part TOUT DE SUITE. Le modèle de sûreté du connecteur repose sur
 #: l'inverse — `lemlist_create_lead` est visible parce qu'il n'envoie rien, et
 #: seul `lemlist_launch_lead` (masqué par défaut) déclenche l'envoi. Les laisser
-#: passer ici transformerait un tool visible en chemin d'envoi, sans que rien ne
-#: le signale. Refusés au bord, pas filtrés en silence.
+#: passer dans un dict de réglages transformerait un tool visible en chemin
+#: d'envoi, sans que rien ne le signale. Ils ne sont pas retirés du connecteur
+#: pour autant — ils ont leur propre tool masqué, `lemlist_campaign_auto_review` :
+#: le champ reste atteignable, c'est le GESTE qui devient explicite.
 AUTO_REVIEW_KEYS = ("autoReview", "autoReviewConditions")
 
 #: Plancher de la fenêtre de stats. Les deux dates sont OBLIGATOIRES côté lemlist
@@ -112,15 +129,48 @@ def _project_stats(result: dict, *, full: bool) -> dict:
     return out
 
 
+#: Plafond de l'audio d'une note vocale — la route lemlist est multipart et
+#: l'agent ne peut fournir qu'une URL : c'est NOUS qui téléchargeons, donc c'est
+#: nous qui bornons. 20 Mo, la limite que lemlist annonce sur ses médias.
+AUDIO_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _fetch_audio(url: str) -> bytes:
+    """Ramène un fichier audio depuis une URL publique, borné.
+
+    Un agent MCP n'a pas de système de fichiers partagé avec le serveur : la
+    seule façon de lui laisser poser une note vocale est qu'il donne une URL. On
+    refuse ce qui n'est pas https, et on s'arrête PENDANT la lecture plutôt que
+    d'accumuler puis tronquer (même règle que l'extraction de fichiers).
+    """
+    import requests
+
+    if not url.startswith("https://"):
+        raise _bad(f"`audio_url` doit être une URL https, reçu {url!r}")
+    chunks, total = [], 0
+    with requests.get(url, stream=True, timeout=(10, 60)) as r:
+        r.raise_for_status()
+        for chunk in r.iter_content(64 * 1024):
+            total += len(chunk)
+            if total > AUDIO_MAX_BYTES:
+                raise _bad(
+                    f"audio au-delà de {AUDIO_MAX_BYTES // (1024 * 1024)} Mo — "
+                    "refusé pendant la lecture")
+            chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def _refuse_auto_review(settings: dict) -> None:
     """Refuse `autoReview*` — cf. AUTO_REVIEW_KEYS."""
     present = [k for k in AUTO_REVIEW_KEYS if k in settings]
     if present:
         raise _bad(
-            f"{', '.join(present)} n'est pas réglable ici. Ce réglage fait partir "
+            f"{', '.join(present)} ne se règle pas ici. Ce réglage fait partir "
             "tout lead ajouté SANS revue : il transformerait `lemlist_create_lead` "
-            "en envoi. Il se règle dans l'UI lemlist (paramètres de la campagne), "
-            "délibérément hors de portée d'un appel d'agent."
+            "en envoi. Il a son propre tool, `lemlist_campaign_auto_review`, masqué "
+            "par défaut (`oto_enable_tool lemlist_campaign_auto_review`) — armer "
+            "l'envoi demande un geste délibéré, pas une clé qui passe dans un dict "
+            "de réglages."
         )
 
 
@@ -259,20 +309,45 @@ def register(mcp: FastMCP) -> None:
         campaign_id: Optional[str] = None,
         limit: int = 100,
         offset: int = 0,
+        activity_type: Optional[str] = None,
+        lead_id: Optional[str] = None,
+        is_first: Optional[bool] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        all_pages: bool = False,
+        since: Optional[str] = None,
+        max_pages: int = 50,
     ) -> dict:
-        """Get recent activity events (opens, clicks, replies…).
+        """Get activity events (opens, clicks, replies, LinkedIn actions…).
 
         Args:
-            campaign_id: Restrict to a campaign (optional).
+            campaign_id: Restrict to a campaign.
             limit: Max events (default 100).
             offset: Pagination offset.
+            activity_type: One event name (`emailsSent`, `emailsOpened`,
+                `emailsReplied`, `linkedinInviteAccepted`, `paused`…).
+            lead_id: Restrict to one lead.
+            is_first: Keep only the first event of its kind per lead.
+            start_date / end_date: ISO 8601 bounds.
+            all_pages: Walk the pages instead of returning one. Use `since`
+                (ISO date) to stop early, and `max_pages` to cap the cost
+                (default 50 = 5 000 events). Ignores the other filters — the
+                paging route only takes the campaign and the date floor.
+            since: With `all_pages`, keep only what is newer than this date.
+            max_pages: Ceiling on the walk.
         """
         client, is_platform = _client()
-        events = client.get_activities(
-            campaign_id=campaign_id, limit=limit, offset=offset,
-        )
+        if all_pages:
+            events = client.sync_activities(
+                campaign_id=campaign_id, since=since, max_pages=max_pages)
+        else:
+            events = client.get_activities(
+                campaign_id=campaign_id, limit=limit, offset=offset,
+                type=activity_type, lead_id=lead_id, is_first=is_first,
+                start_date=start_date, end_date=end_date,
+            )
         _record_if_platform(is_platform)
-        return {"activities": events}
+        return {"activities": events, "count": len(events)}
 
     @mcp.tool()
     def lemlist_get_leads(campaign_id: str) -> dict:
@@ -652,7 +727,8 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def lemlist_campaign(
         op: Literal["create", "update", "pause", "duplicate", "statutes",
-                    "reports", "batch_stats"],
+                    "reports", "batch_stats", "export_start", "export_status",
+                    "export_email", "export_leads"],
         campaign_id: Optional[str] = None,
         campaign_ids: Optional[list[str]] = None,
         name: Optional[str] = None,
@@ -662,9 +738,14 @@ def register(mcp: FastMCP) -> None:
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
         channels: Optional[list[str]] = None,
+        export_id: Optional[str] = None,
+        email: Optional[str] = None,
+        state: Optional[str] = None,
+        format: Optional[str] = None,
         full: bool = False,
     ) -> dict:
-        """Manage campaigns: create, configure, pause, duplicate, validate, report.
+        """Manage campaigns: create, configure, pause, duplicate, validate,
+        report, export.
 
         Nothing here sends: a created or duplicated campaign lands in DRAFT.
         Putting messages on the wire is `lemlist_campaign_start` (hidden by
@@ -696,9 +777,18 @@ def register(mcp: FastMCP) -> None:
           (defaults to the whole life), `channels` (`email`/`linkedin`/`others`).
           Same counters as `lemlist_get_campaign_stats`, in one call.
 
-        `autoReview`/`autoReviewConditions` are refused on `create` and `update`:
-        they make every added lead send immediately, which would turn
-        `lemlist_create_lead` into a send path. Set them in the lemlist UI.
+        - `export_start`: `campaign_id`. Opens an ASYNCHRONOUS stats export and
+          returns its id; poll `export_status` (`campaign_id` + `export_id`),
+          or ask to be notified with `export_email` (+ `email`).
+        - `export_leads`: `campaign_id` + optional `state`, `format` (`csv`,
+          the API default, or `json`). Returns the leads directly — the
+          synchronous cousin of the export above.
+
+        `autoReview`/`autoReviewConditions` are not settable here: they make
+        every added lead send immediately, which would turn `lemlist_create_lead`
+        into a send path. They live in `lemlist_campaign_auto_review`, hidden by
+        default — a switch that arms sending should take a deliberate gesture,
+        not ride along in a settings dict.
         """
         client, is_platform = _client()
         settings = dict(settings or {})
@@ -764,10 +854,33 @@ def register(mcp: FastMCP) -> None:
                     _project_stats(r, full=False) for r in result.get("results", [])
                 ]}
 
+        elif op == "export_start":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            result = client.start_campaign_export(campaign_id)
+
+        elif op == "export_status":
+            if not (campaign_id and export_id):
+                raise _bad("`campaign_id` ET `export_id` requis")
+            result = client.get_campaign_export_status(campaign_id, export_id)
+
+        elif op == "export_email":
+            if not (campaign_id and export_id and email):
+                raise _bad("`campaign_id`, `export_id` ET `email` requis")
+            result = client.set_campaign_export_email(campaign_id, export_id, email)
+
+        elif op == "export_leads":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            exported = client.export_campaign_leads(
+                campaign_id, state=state, format=format)
+            result = exported if isinstance(exported, dict) else {"leads": exported}
+
         else:
             raise _bad(
                 f'op inconnu "{op}" — attendu: create, update, pause, duplicate, '
-                "statutes, reports, batch_stats")
+                "statutes, reports, batch_stats, export_start, export_status, "
+                "export_email, export_leads")
 
         _record_if_platform(is_platform)
         return result
@@ -955,6 +1068,164 @@ def register(mcp: FastMCP) -> None:
             raise _bad(
                 f'op inconnu "{op}" — attendu: list, get, create, update, delete, '
                 "for_campaign, associate")
+
+        _record_if_platform(is_platform)
+        return result
+
+    @mcp.tool()
+    def lemlist_campaign_auto_review(
+        campaign_id: str,
+        enabled: bool,
+        conditions: Optional[list[str]] = None,
+    ) -> dict:
+        """Arm (or disarm) auto-review on a campaign — leads then send on ADD.
+
+        With auto-review on, a lead added to this campaign is launched
+        immediately instead of waiting for manual review: `lemlist_create_lead`
+        stops being a staging gesture and becomes a send. That is the whole
+        reason this is its own tool, hidden by default, rather than a field in
+        `lemlist_campaign(op="update")` — arming sending should be a deliberate
+        act, not a key that rides along in a settings dict.
+
+        Args:
+            campaign_id: Campaign to arm or disarm.
+            enabled: True arms it, False takes it back off.
+            conditions: Restrict auto-launch to leads whose email verification
+                is `deliverable`, `risky`, `undeliverable` or `unverified`.
+                Narrowing to `["deliverable"]` is the cautious setting.
+        """
+        settings: dict = {"autoReview": enabled}
+        if conditions is not None:
+            settings["autoReviewConditions"] = conditions
+        client, is_platform = _client()
+        result = client.update_campaign(campaign_id, settings)
+        _record_if_platform(is_platform)
+        return result
+
+    @mcp.tool()
+    def lemlist_lead(
+        op: Literal["get", "list", "update", "delete", "unsubscribe",
+                    "pause", "resume", "interested", "not_interested",
+                    "vars_update", "vars_delete", "import_crm", "upload_audio"],
+        campaign_id: Optional[str] = None,
+        lead_id: Optional[str] = None,
+        email: Optional[str] = None,
+        fields: Optional[dict] = None,
+        variables: Optional[dict] = None,
+        variable_names: Optional[list[str]] = None,
+        state: Optional[str] = None,
+        limit: Optional[int] = None,
+        crm: Optional[str] = None,
+        user_id: Optional[str] = None,
+        filter_id: Optional[str] = None,
+        filter_type: Optional[str] = None,
+        deduplicate: Optional[bool] = None,
+        step_id: Optional[str] = None,
+        audio_url: Optional[str] = None,
+    ) -> dict:
+        """Lead lifecycle inside a campaign — read, edit, pause, qualify, remove.
+
+        A LEAD is a person's copy inside ONE campaign (its sending state, its
+        variables); the person themself is a contact (`lemlist_contact`).
+        Creating a lead is `lemlist_create_lead`; releasing one held for review
+        is `lemlist_launch_lead`.
+
+        Args by op:
+        - `get`: `lead_id` or `email`. `list`: `campaign_id` + optional `state`
+          (`sent`, `replied`, `paused`…) and `limit`.
+        - `update`: `campaign_id` + `lead_id` + `fields` (`firstName`,
+          `lastName`, `companyName`, `jobTitle`, `preferredContactMethod`).
+        - `delete`: `campaign_id` + `lead_id`/`email` — really removes it.
+          `unsubscribe`: same arguments, but the lead STAYS on the campaign,
+          marked unsubscribed. One lemlist route serves both, and its default is
+          the soft one; here the two are named apart so neither is a surprise.
+        - `pause`: `lead_id`; WITHOUT `campaign_id` it pauses the lead in EVERY
+          campaign, not one. `resume`: `lead_id` — undoes a pause, so lemlist
+          starts sending to that lead again (it does not skip a review; that is
+          `lemlist_launch_lead`).
+        - `interested` / `not_interested`: `lead_id` or `email`; with
+          `campaign_id` it applies to that campaign, without it to all.
+        - `vars_update`: `lead_id` + `variables`. `vars_delete`: `lead_id` +
+          `variable_names` (the values are erased).
+        - `import_crm`: `campaign_id` + `crm` + `user_id` + `filter_id`
+          (from `lemlist_team(op="crm_filters")`), optional `filter_type`,
+          `deduplicate`.
+        - `upload_audio`: `lead_id` + `step_id` + `audio_url` — the audio of a
+          `linkedinVoiceNote` step, fetched from a public URL and forwarded.
+        """
+        client, is_platform = _client()
+        target = lead_id or email
+
+        if op == "get":
+            if not target:
+                raise _bad("`lead_id` ou `email` requis")
+            result = (client.get_lead(lead_id=lead_id) if lead_id
+                      else client.get_lead_by_email(email))
+
+        elif op == "list":
+            if not campaign_id:
+                raise _bad("`campaign_id` requis")
+            result = {"leads": client.get_campaign_leads(
+                campaign_id, state=state, limit=limit)}
+
+        elif op == "update":
+            if not (campaign_id and lead_id and fields):
+                raise _bad("`campaign_id`, `lead_id` ET `fields` requis")
+            result = client.update_lead(campaign_id, lead_id, fields)
+
+        elif op in ("delete", "unsubscribe"):
+            if not (campaign_id and target):
+                raise _bad("`campaign_id` ET `lead_id`/`email` requis")
+            result = client.delete_lead(
+                campaign_id, target, action="remove" if op == "delete" else None)
+
+        elif op == "pause":
+            if not lead_id:
+                raise _bad("`lead_id` requis")
+            result = client.pause_lead(lead_id, campaign_id=campaign_id)
+
+        elif op == "resume":
+            if not lead_id:
+                raise _bad("`lead_id` requis")
+            result = client.resume_lead(lead_id)
+
+        elif op in ("interested", "not_interested"):
+            if not target:
+                raise _bad("`lead_id` ou `email` requis")
+            mark = (client.mark_lead_interested if op == "interested"
+                    else client.mark_lead_not_interested)
+            result = mark(target, campaign_id=campaign_id)
+
+        elif op == "vars_update":
+            if not (lead_id and variables):
+                raise _bad("`lead_id` ET `variables` requis")
+            result = client.update_lead_variables(lead_id, variables)
+
+        elif op == "vars_delete":
+            if not (lead_id and variable_names):
+                raise _bad("`lead_id` ET `variable_names` requis")
+            result = client.delete_lead_variables(lead_id, variable_names)
+
+        elif op == "import_crm":
+            if not (campaign_id and crm and user_id and filter_id):
+                raise _bad(
+                    "`campaign_id`, `crm`, `user_id` ET `filter_id` requis — "
+                    'le filtre vient de `lemlist_team(op="crm_filters")`')
+            result = client.import_leads_from_crm(
+                campaign_id, crm=crm, user_id=user_id, filter_id=filter_id,
+                filter_type=filter_type, deduplicate=deduplicate)
+
+        elif op == "upload_audio":
+            if not (lead_id and step_id and audio_url):
+                raise _bad("`lead_id`, `step_id` ET `audio_url` requis")
+            audio = _fetch_audio(audio_url)
+            result = client.upload_lead_audio(lead_id, step_id, audio)
+
+        else:
+            raise _bad(
+                f'op inconnu "{op}" — attendu: get, list, update, delete, '
+                "unsubscribe, pause, resume, interested, not_interested, "
+                "vars_update, vars_delete, import_crm, upload_audio")
 
         _record_if_platform(is_platform)
         return result
