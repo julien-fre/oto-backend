@@ -167,14 +167,19 @@ def _enrich_project(row: dict) -> dict:
 
 
 def _enrich_guide(row: dict) -> dict:
+    # Le propriétaire se lit sur les colonnes qui le portent (`owner_type`/`owner_id`),
+    # jamais dérivé d'`org_id` : depuis #681 une procédure peut appartenir à une ÉQUIPE,
+    # et `org_id` n'en est alors que l'org PARENTE — l'annoncer comme propriétaire
+    # désignait la mauvaise cible dans l'écran de partage.
+    otype, oid = str(row["owner_type"]), str(row["owner_id"])
     return {
         "resource_type": "doctrine",
         "resource_id": str(row["id"]),
         "slug": row["slug"],
         "title": row.get("title"),
-        "owner_type": "org",
-        "owner_id": str(row["org_id"]),
-        "owner_label": _owner_label("org", str(row["org_id"])),
+        "owner_type": otype,
+        "owner_id": oid,
+        "owner_label": _owner_label(otype, oid),
         "version": row.get("version"),
         "updated_at": row.get("updated_at"),
     }
@@ -197,12 +202,14 @@ _OPS: dict[str, dict] = {
         "get_by_id": lambda i: db.get_project_by_id(i),
         "enrich": _enrich_project,
     },
-    # Guide = objet d'ORG (owner dérivé d'org_id, jamais user/group) → list_for_owners
-    # ne retient que les paires ('org', id).
+    # Une procédure appartient à une org OU à une équipe (#681) — les deux paires
+    # passent. Le filtre `t == "org"` d'avant retirait de la liste toute procédure
+    # d'équipe que l'acteur gouverne pourtant : invisible au partage, invisible au
+    # transfert, sans un mot.
     "doctrine": {
         "list_all": lambda: org_store.list_all_instructions(),
-        "list_for_owners": lambda owners: org_store.list_instructions_for_orgs(
-            [int(i) for (t, i) in owners if t == "org"]),
+        "list_for_owners": lambda owners: org_store.list_instructions_for_owners(
+            [(t, i) for (t, i) in owners if t in org_store.OWNER_TYPES]),
         "get_by_id": lambda i: org_store.get_instruction_by_id(i),
         "enrich": _enrich_guide,
     },
@@ -310,14 +317,17 @@ def _cascade_project(sub: str, project_id: int, op: str, *,
                     entry["status"] = "shared"
                     entry["role"] = "viewer"
                     entry["permission"] = "read"
-                elif new_owner[0] == "org":
-                    copy = org_store.copy_instruction_to_org(int(ref), int(new_owner[1]),
-                                                             set_by=sub)
+                elif new_owner[0] in org_store.OWNER_TYPES:
+                    copy = org_store.copy_instruction_to_owner(
+                        int(ref), new_owner[0], new_owner[1], set_by=sub)
                     db.update_project_link_ref(project_id, "procedure", ref, str(copy["id"]))
                     entry["status"] = "copied"
                     entry["new_ref"] = str(copy["id"])
                     entry["slug"] = copy["slug"]
                 else:
+                    # Reste le destinataire PERSONNEL : une procédure n'a pas encore de
+                    # palier `user` (phase 2 de #681). Le code servi ne change pas — c'est
+                    # le même cas qu'avant, moins les équipes qui y tombaient à tort.
                     entry["status"] = "skipped"
                     entry["reason"] = "doctrine_needs_org_owner"
             elif t == "connecteur":

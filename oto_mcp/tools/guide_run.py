@@ -35,15 +35,15 @@ def _procedure_version(sub: str | None, slug: str) -> int | None:
     guide d'un autre foyer, ou un slug inventé.
 
     Lecture DB ⇒ appelée HORS boucle (`asyncio.to_thread`)."""
-    from .. import access, group_store, org_store
+    from .. import access, org_store
     org_id = access.current_org(sub) if sub else None
     if org_id is not None:
-        row = org_store.get_instruction(int(org_id), slug)
+        row = org_store.get_instruction("org", org_id, slug)
         if row and row.get("version") is not None:
             return int(row["version"])
     gid = access.current_group(sub) if sub else None
     if gid is not None:
-        row = group_store.get_group_instruction(int(gid), slug)
+        row = org_store.get_instruction("group", gid, slug)
         if row and row.get("version") is not None:
             return int(row["version"])
     return None

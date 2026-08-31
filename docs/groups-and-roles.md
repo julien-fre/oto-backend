@@ -5,11 +5,11 @@ description: >-
   Explique l'architecture des groupes (départements) dans oto-backend : hiérarchie
   de droits centralisée dans roles.py (platform_admin ⊇ org_admin ⊇ group_admin ⊇
   member, escalade descendante), les deux ressources gouvernées par délégation
-  (secrets partagés dans connector_credentials entity_type='group', guide/skills
-  org_group_instructions), et la cascade
+  (secrets partagés dans connector_credentials entity_type='group', procédures dans
+  org_instructions owner_type='group'), et la cascade
   de résolution user_key > secret groupe actif > secret org > grant plateforme (ADR 0012).
-  Détaille le schéma DB (org_groups, org_group_members avec index partiel one_active,
-  org_group_instructions), l'invariant groupe⊂org actif, et les surfaces MCP/REST
+  Détaille le schéma DB (org_groups, org_group_members avec index partiel one_active),
+  l'invariant groupe⊂org actif, et les surfaces MCP/REST
   via capacités groups*.py. À lire pour comprendre la délégation d'accès par équipe.
 adr:
   - "0012"
@@ -62,7 +62,7 @@ l'org** (le reste — entitlements de namespace gouverné — reste au niveau or
 
 | Ressource | Stockage | Résolution |
 |-----------|----------|------------|
-| **Guide & skills** | `org_group_instructions` (+ revisions), en clair | `get_claude_md()` sert org **puis** groupe actif (complément) |
+| **Procédures** | `org_instructions` (`owner_type='group'`) + revisions, en clair | `oto_procedure(op='get')` sert org **puis** groupe actif (complément) |
 | **Secrets partagés** | coffre `connector_credentials` (entity_type='group') | cascade `resolve_api_key` |
 
 ### Cascade de résolution des secrets (ADR 0012)
@@ -103,7 +103,10 @@ active.
 - `org_groups(id, org_id→orgs, name, description, created_by, created_at, UNIQUE(org_id,name))`
 - `org_group_members(group_id→org_groups, sub, group_role, is_active, joined_at, PK(group_id,sub))`
   + index `idx_org_group_members_sub` + partiel unique `org_group_members_one_active`
-- `org_group_instructions(group_id, slug, …, version, PK(group_id,slug))` + `…_revisions`
+  ⚠️ Les procédures d'équipe **n'ont plus de table à elles** : `org_instructions`
+  (`owner_type='group'`, `owner_id=group_id::text`), jumelle `org_group_instructions`
+  DROPpée. Elles n'ont plus non plus de STORE à elles depuis le 31/08/2026 (#681) : un
+  seul jeu de fonctions, `org_store.<fn>('group', group_id, …)`.
 - secrets de groupe : `connector_credentials(entity_type='group', entity_id=group_id::text, …)`
 
 Toutes les FK `ON DELETE CASCADE` vers `org_groups` / `orgs` ; les secrets de
@@ -128,9 +131,19 @@ groupe (hors FK) sont purgés explicitement par `delete_group`.
   (409 `group_unadministrable`). `add` étant un upsert, il porte la garde comme
   `set_role` (avant #280 il rétrogradait ce que l'autre refusait).
 - **secrets** (`groups/secrets.py`) : `group.secret.{set,delete}`.
-- **guide** (`groups/guide.py`) : `group.instruction.{list,get,set,delete,
-  versions,revert}` — lecture = membre, écriture = chef. Édité par le dashboard
-  via `REST /api/groups/{id}/instructions*`.
+- **procédures** (`groups/guide.py`) : `group.instruction.{list,get,set,delete,
+  versions,revert}` — **la garde suit le VERBE** : `list`/`get`/`set`/`revert` =
+  **membre** de l'équipe, `delete` = **chef**. Écrire et restaurer sont des gestes de
+  travail et se défont (une version de plus) ; supprimer emporte l'historique sans
+  corbeille. Édité par le dashboard via `REST /api/groups/{id}/instructions*`.
+  ⚠️ Depuis #681, la console MCP `oto_procedure(op='set'|'delete', scope='group'[,
+  group=N])` sert le MÊME palier avec les MÊMES gardes — c'est par là qu'un opérateur
+  métier annote la procédure qu'il déroule, sans être ni administrateur de toute l'org
+  ni chef de son équipe. Les deux transports écrivent la même ligne : leurs gardes se
+  déplacent ensemble.
+  ⚠️ `can_edit` (bundle `list`) reste `can_admin_group` : il dit le droit
+  d'ADMINISTRER (readme d'équipe, suppression), et **sous-estime** désormais le droit
+  d'écrire une procédure.
 
 ### `/api/me`
 
@@ -186,10 +199,18 @@ grain, le scope est une COLONNE ; migrations vivantes sur la DB partagée = play
 **`docs/live-migrations.md`**) :
 - **secrets partagés** — coffre `connector_credentials` (entity_type='group') ;
   cascade `resolve_api_key` = **user_key > secret groupe actif > secret org active > grant plateforme**.
-- **guide & skills** — table UNIFIÉE `org_instructions` (`owner_type='group'`,
+- **procédures** — table UNIFIÉE `org_instructions` (`owner_type='group'`,
   `owner_id=group_id`, `org_id`=org parente ; ex-jumelle `org_group_instructions`
-  DROPpée) ; `oto_procedure(op='get')` sert org **puis** groupe actif (complément,
-  chaque skill taggée `scope`). Les procédures d'équipe ont un `id` (ownership 0030).
+  DROPpée) et, depuis le 31/08/2026 (#681), **store unifié** aussi :
+  `org_store.<fn>('group', id, …)`, plus de `group_store.*_group_instruction*`.
+  `oto_procedure(op='get'|'list')` sert org **puis** groupe actif (complément, chaque
+  skill taggée `scope`) ; `op='set'|'delete'` avec `scope='group'` ÉCRIT ce palier.
+  ⚠️ **La garde y suit le VERBE** : `set` = **membre** de l'équipe (celui qui déroule est
+  celui qui améliore, et l'écriture se défait par `from_version`), `delete` = **chef**
+  (il emporte l'historique, rien ne le défait). Mêmes paliers sur les routes
+  `/api/groups/{id}/instructions*`. Les procédures d'équipe ont un `id` (ownership 0030), donc
+  se déplacent d'un palier à l'autre en gardant leurs versions, leurs slots et leurs
+  liens de projet (`oto_resource op=transfer`).
 - **gouvernance de connecteur** — le chef d'équipe peut COUPER un connecteur et le
   RÉSERVER à des membres, pour son équipe seulement. **Invariant monotone** :
   l'équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse (platform ⊇ org ⊇ group).
@@ -200,7 +221,8 @@ grain, le scope est une COLONNE ; migrations vivantes sur la DB partagée = play
 active ; `set_active_org` efface le groupe actif. `oto_use_group` /
 `PUT /api/me/active-group` (+ `oto_clear_group` / `DELETE`).
 
-Stores : `group_store.py` (miroir d'`org_store` au grain groupe). **Aucun module
+Stores : `group_store.py` (miroir d'`org_store` au grain groupe — **hors procédures**,
+  qui ont fusionné dans `org_store/instructions.py`). **Aucun module
 du package `org_store/` n'importe `group_store`** : l'invariant org↔groupe est
 tenu en SQL direct dans `org_store/members.py` (`remove_org_member` sort le membre
 de tous les groupes de l'org, `set_active_org` invalide le groupe actif) → pas de

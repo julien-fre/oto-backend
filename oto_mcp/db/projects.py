@@ -1320,10 +1320,14 @@ def duplicate_project(src_id: int, new_name: str, owner_type: str, owner_id: str
             if src_instr is None:
                 warnings.append(f"procédure « {label} » : lien ignoré (la source ne résout plus).")
                 continue
-            if int(src_instr.get("org_id") or 0) != int(owner_id):
+            # Comparaison sur le PROPRIÉTAIRE, pas sur l'org parente : une procédure
+            # d'ÉQUIPE de l'org cible a le même `org_id` que celle-ci et passait donc
+            # pour « déjà chez la cible » — le lien copié pointait alors une procédure
+            # que l'org ne possède pas (#681).
+            if (str(src_instr["owner_type"]), str(src_instr["owner_id"])) != ("org", str(owner_id)):
                 try:
-                    copied = org_store.copy_instruction_to_org(int(target_ref), int(owner_id),
-                                                               set_by=copied_by)
+                    copied = org_store.copy_instruction_to_owner(
+                        int(target_ref), "org", owner_id, set_by=copied_by)
                     target_ref = str(copied["id"])
                 except Exception:
                     logger.warning("duplicate_project: copie procédure #%s échouée", target_ref)

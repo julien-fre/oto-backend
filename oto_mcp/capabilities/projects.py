@@ -202,7 +202,7 @@ def _procedure_ref_to_id(org_id: Optional[int], ref: str) -> str:
     (guide introuvable / hors org → pas de casse, résolu à la lecture côté front)."""
     if not ref or ref.isdigit() or org_id is None:
         return ref
-    inst = org_store.get_instruction(int(org_id), ref)
+    inst = org_store.get_instruction("org", org_id, ref)
     return str(inst["id"]) if inst and inst.get("id") is not None else ref
 
 

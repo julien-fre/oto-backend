@@ -198,7 +198,7 @@ def test_middleware_fail_open(monkeypatch):
 
 # ── index des skills (description dynamique de oto_get_doctrine) ──────────────
 def test_skills_index_md(monkeypatch):
-    monkeypatch.setattr(org_store, "list_instructions", lambda oid: [
+    monkeypatch.setattr(org_store, "list_instructions", lambda otype, oid: [
         {"slug": "a", "title": "Skill A", "description": "fait A"},
         {"slug": "b", "title": "Skill B", "description": ""},
     ])
@@ -209,7 +209,7 @@ def test_skills_index_md(monkeypatch):
 
 
 def test_skills_index_md_empty(monkeypatch):
-    monkeypatch.setattr(org_store, "list_instructions", lambda oid: [])
+    monkeypatch.setattr(org_store, "list_instructions", lambda otype, oid: [])
     assert instr.skills_index_md(7) == ""
     assert instr.skills_index_md(None) == ""
 

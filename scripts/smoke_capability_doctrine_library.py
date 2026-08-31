@@ -45,7 +45,7 @@ def main() -> None:
     org_store.add_org_member(ob, "bob", "org_admin")
     org_store.set_active_org("bob", ob)
     # alice possède un skill nommé dans son org
-    org_store.set_instruction(oa, "outreach", "# Outreach\nLe playbook.",
+    org_store.set_instruction("org", oa, "outreach", "# Outreach\nLe playbook.",
                               title="Outreach", description="Comment prospecter", set_by="alice")
 
     print("→ bob (pas org_admin d'Org A, sans le skill) publie 'outreach' → 404 unknown_doctrine")
@@ -70,7 +70,7 @@ def main() -> None:
     print("  ✓")
 
     print("→ bob publie SON skill sous le nom déjà pris par Org A → 409 slug_taken (#292)")
-    org_store.set_instruction(ob, "outreach", "# Outreach (Org B)\nAutre chose.",
+    org_store.set_instruction("org", ob, "outreach", "# Outreach (Org B)\nAutre chose.",
                               title="Le mien", set_by="bob")
     denied(lambda: run("library.publish", "bob", slug="outreach"), 409)
     held = org_store.get_library_entry(slug="outreach", include_unlisted=True)
@@ -85,7 +85,7 @@ def main() -> None:
     print("→ bob forke dans Org B → skill versionné v1")
     fk = run("library.fork", "bob", slug="outreach")
     assert fk["forked"] and fk["org_id"] == ob and fk["version"] == 1
-    forked = org_store.get_instruction(ob, fk["slug"])
+    forked = org_store.get_instruction("org", ob, fk["slug"])
     assert forked and forked["body_md"].startswith("# Outreach")
     print(f"  ✓ Org B a maintenant le skill '{fk['slug']}'")
 

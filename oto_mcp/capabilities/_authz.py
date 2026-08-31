@@ -207,6 +207,14 @@ def BY_OP(rules: dict, *, fields: tuple[str, ...] = ("op",)):
                               f"{sorted(str(k) for k in rules)}).")
         return chosen(raw, inp)
     rule.platform_floor = _lowest_floor(rules.values())
+    # Sur quels CHAMPS cette règle se branche, et vers quoi — pour qu'un cliquet
+    # puisse vérifier qu'une entrée qui porte un axe (`scope`) a bien une autz qui le
+    # LIT. Sans ça l'appariement n'existe que dans la tête de celui qui l'a écrit, et
+    # poser l'axe sur une entrée gardée par une règle d'org rouvrirait le trou sans
+    # qu'une ligne d'autz ait bougé (#681). Introspection SEULE : rien ici ne change
+    # une décision d'autz.
+    rule.autz_fields = fields
+    rule.autz_branches = tuple(rules.values())
     return rule
 
 
@@ -365,6 +373,63 @@ def ORG_MEMBER_OPT(field: str):
         return ResolvedCtx(sub=sub, org_id=access.current_org(sub),
                            role=access.get_user_role(sub))
     return rule
+
+
+def _group_opt(field: str, allowed, refus: str):
+    """Fabrique commune de `GROUP_MEMBER_OPT` / `GROUP_ADMIN_OPT` : équipe explicite
+    `input.<field>`, sinon l'équipe ACTIVE de la session, puis la garde `allowed`."""
+    def rule(raw: RawCtx, inp: Optional[BaseModel] = None) -> ResolvedCtx:
+        sub = _require_sub(raw)
+        explicit = getattr(inp, field, None) if inp is not None else None
+        group_id = int(explicit) if explicit is not None else access.current_group(sub)
+        if group_id is None:
+            raise AuthzDenied(400, "no_active_group",
+                              "Aucune équipe active — choisis-en une avec oto_use_group, "
+                              f"ou passe `{field}` explicitement.")
+        if not allowed(sub, group_id):
+            raise AuthzDenied(403, "forbidden", refus.format(id=group_id))
+        # `org_id` reste l'org ACTIVE (ce que servait la règle d'org sur cette même
+        # surface) : l'équipe visée est portée par `group_id`, et c'est elle que le
+        # handler lit. Y mettre l'org PARENTE de l'équipe changerait en silence la clé
+        # `org_id` de réponses qui ne parlent pas d'équipe.
+        return ResolvedCtx(sub=sub, org_id=access.current_org(sub), group_id=group_id,
+                           role=access.get_user_role(sub))
+    return rule
+
+
+def GROUP_MEMBER_OPT(field: str):
+    """**Appartenance** à l'équipe, **self-service par défaut, épinglable explicitement** —
+    miroir équipe d'`ORG_MEMBER_OPT`. Escalade `roles.can_read_group` (membre de
+    l'équipe, org_admin du parent, platform_admin).
+
+    ⚠️ Ce n'est pas une règle de LECTURE, c'est une règle d'ACTEUR : elle garde aussi
+    l'ÉCRITURE d'une procédure d'équipe (#681). Éditer une procédure, c'est faire son
+    travail — celui qui la déroule est un membre, pas un chef, et lui refuser d'écrire
+    revient à réserver l'apprentissage à qui n'exécute pas. Le geste est réversible
+    (chaque écriture ajoute une version, `from_version` restaure la précédente), donc
+    l'ouvrir ne coûte rien d'irrattrapable. Ce qui sépare les deux gestes n'est pas la
+    surface, c'est le VERBE : la suppression, elle, reste sur `GROUP_ADMIN_OPT`."""
+    return _group_opt(field, roles.can_read_group,
+                      "Réservé aux membres de l'équipe #{id}.")
+
+
+def GROUP_ADMIN_OPT(field: str):
+    """**Administration** de l'équipe, **self-service par défaut, épinglable
+    explicitement** — miroir équipe d'`ORG_ADMIN_OPT` (oto-backend#681). Escalade
+    `roles.can_admin_group` (chef d'équipe, org_admin du parent, platform_admin).
+
+    Réservée aux gestes qu'aucune version ne défait — sur les procédures, la
+    SUPPRESSION, qui emporte l'historique. ⚠️ Ne pas la remettre sur l'écriture : le
+    rôle de chef emporte par ailleurs les CLÉS PARTAGÉES de l'équipe, donc une garde
+    d'écriture trop grossière force une élévation de droits dans un domaine sans
+    rapport pour le seul motif d'annoter un mode d'emploi. C'est arrivé, en vrai, chez
+    un client — deux fois, la première réponse ayant été « deviens administrateur de
+    toute l'organisation ».
+
+    Le palier existait déjà sous `guides._owner_for_write` ; il est ici pour se DÉCLARER
+    au niveau de la capacité (ADR 0009 §7) plutôt que de redescendre dans un handler."""
+    return _group_opt(field, roles.can_admin_group,
+                      "Réservé au chef de l'équipe #{id} (ou à un org_admin du parent).")
 
 
 def TENANT_ADMIN_OF(field: str, *, platform):

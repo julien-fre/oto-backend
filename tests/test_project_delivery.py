@@ -52,9 +52,11 @@ def _wire(monkeypatch, *, governed=("11", "77")):
                         lambda rt, rid, ot, oid: calls["transfers"].append((rt, rid, ot, oid)))
     monkeypatch.setattr(R.ownership, "revoke",
                         lambda rt, rid, pt, pid: calls["revokes"].append((rt, rid, pt, pid)) or True)
-    monkeypatch.setattr(R.org_store, "copy_instruction_to_org",
-                        lambda iid, org, set_by=None:
-                        calls["copies"].append((iid, org)) or {"id": 501, "slug": "process-mutuelle", "org_id": org})
+    monkeypatch.setattr(R.org_store, "copy_instruction_to_owner",
+                        lambda iid, otype, oid, set_by=None:
+                        calls["copies"].append((iid, int(oid)))
+                        or {"id": 501, "slug": "process-mutuelle", "owner_type": otype,
+                            "owner_id": str(oid), "org_id": int(oid)})
     monkeypatch.setattr(R.db, "update_project_link_ref",
                         lambda pid, t, old, new: calls["repoints"].append((pid, t, old, new)) or 1)
     return calls
@@ -205,12 +207,19 @@ def test_unshare_cascade_revokes_linked(monkeypatch):
         {("tableau", "11"), ("procedure", "77")}
 
 
-# ── kind `guide` (ownership, owner dérivé d'org_id) ───────────────────────
+# ── kind `guide` (ownership : le propriétaire est LU, plus dérivé d'org_id) ──
 
-def test_guide_owner_derives_from_org(monkeypatch):
+def test_guide_owner_lit_les_colonnes_de_propriete(monkeypatch):
+    """#681 : `owner_type`/`owner_id` font foi. Dériver d'`org_id` rendait ('org', 42)
+    pour une procédure d'ÉQUIPE — 42 n'en est que l'org parente."""
     monkeypatch.setattr(ownership.org_store, "get_instruction_by_id",
-                        lambda i: {"id": 77, "org_id": 42, "slug": "process"})
+                        lambda i: {"id": 77, "org_id": 42, "owner_type": "org",
+                                   "owner_id": "42", "slug": "process"})
     assert ownership.owner_of("doctrine", "77") == ("org", "42")
+    monkeypatch.setattr(ownership.org_store, "get_instruction_by_id",
+                        lambda i: {"id": 77, "org_id": 42, "owner_type": "group",
+                                   "owner_id": "9", "slug": "process"})
+    assert ownership.owner_of("doctrine", "77") == ("group", "9")
 
 
 def test_guide_owner_none_for_slug_ref():
@@ -218,8 +227,12 @@ def test_guide_owner_none_for_slug_ref():
 
 
 def test_guide_reparent_rejects_user_owner():
-    with pytest.raises(ValueError):
+    """Le palier PERSONNEL reste fermé (phase 2 de #681 : `org_instructions.org_id` est
+    NOT NULL et une personne n'a pas d'org parente). Le refus doit nommer les paliers
+    ouverts — « un guide est un objet d'org » était devenu faux."""
+    with pytest.raises(ValueError) as e:
         ownership._guide_reparent("77", "user", "u1")
+    assert "org" in str(e.value) and "group" in str(e.value)
 
 
 def test_guide_listed_in_resource_ops():
@@ -230,7 +243,8 @@ def test_guide_listed_in_resource_ops():
 
 def _wire_guide_read(monkeypatch, *, can_access):
     monkeypatch.setattr(oi.org_store, "get_instruction_by_id",
-                        lambda i: {"id": 77, "org_id": 42, "slug": "process",
+                        lambda i: {"id": 77, "org_id": 42, "owner_type": "org",
+                                   "owner_id": "42", "slug": "process",
                                    "title": "T", "description": "d", "version": 3,
                                    "body_md": "corps"} if i == 77 else None)
     monkeypatch.setattr(ownership, "can_access",

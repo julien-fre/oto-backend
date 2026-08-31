@@ -437,11 +437,10 @@ register_kind(
 
 
 # --- Kind `guide` (épic « couverture des autres types », prérequis #52) ----
-# L'owner d'un guide est porté par `org_instructions.owner_type/owner_id`
-# (chantier procédures, cadrage 10/07 — 'org', et 'group' à la fusion B2 des
-# procédures d'équipe ; il dérivait d'`org_id` avant). resource_id = l'id
-# surrogate stable (ADR 0032 « stop using slug »). Le partage (grant read à
-# une org cliente) rend le guide lisible cross-org par id via oto_procedure(op='get').
+# L'owner d'une procédure est porté par `org_instructions.owner_type/owner_id` —
+# 'org' ou 'group' (#681 ; 'user' = phase 2). resource_id = l'id surrogate stable
+# (ADR 0032 « stop using slug »). Le partage (grant read à une org cliente) rend la
+# procédure lisible cross-org par id via oto_procedure(op='get').
 
 def _guide_owner(rid: str) -> Optional[tuple[str, str]]:
     if not str(rid).isdigit():   # relique : des liens legacy portent encore un slug
@@ -449,15 +448,24 @@ def _guide_owner(rid: str) -> Optional[tuple[str, str]]:
     row = org_store.get_instruction_by_id(int(rid))
     if row is None:
         return None
-    if row.get("owner_type"):
-        return (str(row["owner_type"]), str(row["owner_id"]))
-    return ("org", str(row["org_id"]))   # filet pré-backfill
+    # `owner_type`/`owner_id` sont NOT NULL depuis le backfill de boot : plus de filet
+    # `("org", org_id)`. Ce filet-là RELISAIT le scope sur la ligne au lieu de le tenir
+    # de la colonne prévue, et fabriquait un propriétaire (« org #None ») qui traversait
+    # le seam d'autorisation sans lever. Une ligne sans propriétaire est une incohérence
+    # de données : elle se signale, elle ne se devine pas (#681).
+    if not row.get("owner_type") or not row.get("owner_id"):
+        raise ValueError(f"procédure #{rid} sans propriétaire (owner_type/owner_id vides)")
+    return (str(row["owner_type"]), str(row["owner_id"]))
 
 
 def _guide_reparent(rid: str, new_owner_type: str, new_owner_id: str) -> None:
-    if new_owner_type != "org":
-        raise ValueError("un guide est un objet d'org — transfert vers une org uniquement")
-    org_store.reparent_instruction(int(rid), int(new_owner_id))
+    """Déplace une procédure entre paliers — org ↔ équipe (#681).
+
+    Le palier PERSONNEL (`user`) reste fermé : `org_instructions.org_id` est NOT NULL
+    et une personne n'a pas d'org parente ; l'ouvrir est la phase 2 du lot. Le refus
+    dit lequel des deux manque plutôt que « un guide est un objet d'org », qui était
+    faux depuis la fusion des procédures d'équipe."""
+    org_store.move_instruction(int(rid), new_owner_type, new_owner_id)
 
 
 register_kind(

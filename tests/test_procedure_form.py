@@ -121,7 +121,7 @@ def test_org_set_is_silent_when_the_drawing_is_there(monkeypatch):
 
 def test_group_set_surfaces_the_warning(monkeypatch):
     """Une procédure d'équipe est une procédure : même exigence, même régime."""
-    monkeypatch.setattr(gd.group_store, "set_group_instruction", lambda *a, **k: 2)
+    monkeypatch.setattr(gd.org_store, "set_instruction", lambda *a, **k: 2)
 
     class _GInp(_Inp):
         group_id = 4
@@ -184,8 +184,8 @@ def test_publish_and_fork_carry_the_warning(monkeypatch):
     monkeypatch.setattr(dl, "_require_org_admin", lambda ctx, verb: 7)
     monkeypatch.setattr(dl, "_author_for", lambda ctx: ("org", 7, "Acme"))
     monkeypatch.setattr(dl.org_store, "get_instruction",
-                        lambda org, slug: {"body_md": "Sans dessin.", "title": "t",
-                                           "description": "d", "slots": []})
+                        lambda otype, oid, slug: {"body_md": "Sans dessin.", "title": "t",
+                                                  "description": "d", "slots": []})
     monkeypatch.setattr(dl.org_store, "publish_guide",
                         lambda **k: {"id": 1, "slug": "s", "version": 1, "visibility": "public"})
 
@@ -247,7 +247,7 @@ def test_every_write_face_surfaces_the_digest_warning(monkeypatch):
     out = _set_org(monkeypatch, f"# T\n\n{_DIGEST}\n\n{_fenced(_DRAWING)}")
     assert out["digest_warning"] is None and out["diagram_warning"] is None
 
-    monkeypatch.setattr(gd.group_store, "set_group_instruction", lambda *a, **k: 2)
+    monkeypatch.setattr(gd.org_store, "set_instruction", lambda *a, **k: 2)
 
     class _GInp(_Inp):
         group_id = 4

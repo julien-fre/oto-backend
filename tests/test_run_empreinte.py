@@ -23,7 +23,7 @@ import asyncio
 import pytest
 from fastmcp import FastMCP
 
-from oto_mcp import access, call_axes, db, group_store, org_store, server, session_org
+from oto_mcp import access, call_axes, db, org_store, server, session_org
 from oto_mcp.auth import hooks as auth_hooks
 from oto_mcp.middleware.call_context import CallContextMiddleware
 from oto_mcp.tools import guide_run as drt
@@ -64,10 +64,12 @@ def _wire(monkeypatch, *, sub="u1", org=35, group=None,
     monkeypatch.setattr(auth_hooks, "current_user_sub_from_token", lambda: sub)
     monkeypatch.setattr(org_store, "get_active_org", lambda s: org)
     monkeypatch.setattr(access, "current_group", lambda s=None, **kw: group)
+    # UN seul store depuis #681 : le palier est le PREMIER argument, plus un module
+    # par palier. Un stub qui ignorerait `otype` rendrait la procédure d'org pour une
+    # lecture d'équipe — et le test « l'org prime sur l'équipe » passerait à vide.
     monkeypatch.setattr(org_store, "get_instruction",
-                        lambda oid, slug: (org_procedures or {}).get(slug))
-    monkeypatch.setattr(group_store, "get_group_instruction",
-                        lambda gid, slug: (group_procedures or {}).get(slug))
+                        lambda otype, oid, slug: ((org_procedures if otype == "org"
+                                                   else group_procedures) or {}).get(slug))
     monkeypatch.setattr(db, "insert_run", lambda run_id, **kw: None)
 
 
