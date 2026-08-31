@@ -102,43 +102,39 @@ def _need(op: str, **required: Any) -> None:
         raise _bad(f"op={op!r} exige {', '.join('`' + m + '`' for m in missing)}.")
 
 
-#: Endpoints qui répondent 401 quand la RESSOURCE n'existe pas encore ou que le
-#: plan ne l'ouvre pas — vérifié en live le 2026-08-31 sur un compte FREE :
-#: `GET /webhooks` rend 401 tant qu'aucun webhook n'a jamais été créé (puis 200,
-#: même après suppression de tous), `GET /forms/{id}/blocks` et `POST /workspaces`
-#: rendent 401 sur un plan FREE. Un 401 de Tally ne veut donc PAS dire « clé
-#: invalide » : le dire quand même envoie l'utilisateur retourner une clé saine.
-_AMBIGUOUS_401 = {
+#: Précisions ajoutées au message d'un 401 selon l'appel — le message de base,
+#: lui, ne suppose JAMAIS que la clé est en cause (voir `_upstream_message`).
+_401_HINTS = {
     "webhook_list": "aucun webhook n'a encore jamais été créé sur ce compte "
-                    "(l'intégration webhooks naît au premier `op=\"create\"`), "
-                    "ou ton plan Tally ne l'ouvre pas",
-    "blocks": "la lecture des blocs n'est pas ouverte à ton plan Tally",
-    "workspace_write": "la gestion des espaces de travail exige un plan Tally Pro",
+                    "(l'intégration webhooks naît au premier `op=\"create\"`)",
+    "blocks": "la lecture ou l'écriture des blocs n'est pas ouverte à ton plan",
+    "workspace_write": "la gestion des espaces de travail exige un plan Pro",
+    "question_write": "le renommage d'une question n'est pas ouvert à ton plan",
 }
 
 
 def _upstream_message(e: Any, context: Optional[str] = None) -> str:
     status = e.status_code
-    if status == 401 and context in _AMBIGUOUS_401:
-        return (f"Tally a répondu 401 sur cet appel. Deux causes possibles, et une seule "
-                f"est un problème de clé : soit {_AMBIGUOUS_401[context]} ; soit la clé "
-                "est réellement invalide (Tally : Settings → API keys). Vérifie d'abord "
-                "avec `tally_account(op=\"me\")` — s'il répond, la clé est bonne.")
-    if status in (401, 403):
-        return (f"Tally a rejeté la clé API (HTTP {status}) — vérifie la clé posée sur ce "
+    if status == 401:
+        # ⚠️ Tally rend 401 pour un GATE DE PLAN ou de fonctionnalité autant que
+        # pour une clé invalide — vérifié en live le 2026-08-31 sur un compte
+        # FREE : `GET /webhooks` (tant qu'aucun webhook n'existe), les blocs,
+        # `POST /workspaces` et `PATCH .../questions/{id}` rendent tous 401 avec
+        # une clé parfaitement valide. Affirmer « clé rejetée » envoie donc
+        # l'utilisateur régénérer une clé saine, et le laisse chercher là où il
+        # n'y a rien. On nomme les deux causes, et on donne la sonde qui tranche.
+        hint = _401_HINTS.get(context)
+        return ("Tally a répondu 401. Chez Tally, un 401 ne veut PAS dire « clé "
+                "invalide » : c'est aussi sa façon de refuser une fonctionnalité que "
+                "ton plan n'ouvre pas"
+                + (f" — ici, {hint}" if hint else "")
+                + ". Tranche avec `tally_account(op=\"me\")` : s'il répond, la clé est "
+                  "bonne et c'est le plan (ou l'état du compte) qui bloque ; s'il échoue "
+                  "aussi, repose la clé (Tally : Settings → API keys).")
+    if status == 403:
+        return (f"Tally a rejeté l'appel (HTTP {status}) — vérifie la clé posée sur ce "
                 "connecteur (Tally : Settings → API keys). Rappel : une clé Tally est liée "
                 "à UN utilisateur et cesse de fonctionner s'il quitte l'organisation.")
-    if status == 404:
-        return f"Tally : ressource introuvable (HTTP 404) — {e.body}"
-    if status == 429:
-        return ("Tally : trop de requêtes (429) — la limite est de 100 requêtes/minute. "
-                "Pour suivre les réponses en continu, un webhook ne consomme pas ce quota, "
-                "contrairement au polling.")
-    if status in (500, 502, 503, 504):
-        return f"Tally est momentanément indisponible (HTTP {status}) — réessaie plus tard."
-    return f"Tally a refusé la requête (HTTP {status}) : {e.body}"
-
-
 def _verify(fields: dict, config: dict | None = None) -> None:  # noqa: ARG001
     """Sonde « tester la connexion » : l'utilisateur courant. Sans paramètre,
     gratuite, et elle échoue exactement là où la clé est en cause."""
@@ -426,7 +422,8 @@ def register(mcp: FastMCP) -> None:
                 cur = next((q for q in items if isinstance(q, dict)
                             and q.get("id") == question_id), None)
                 return _diff(cur, {"title": title}, {})
-            return _run(lambda: c.update_question(form_id, question_id, title=title))
+            return _run(lambda: c.update_question(form_id, question_id, title=title),
+                        "question_write")
 
         if op == "update_blocks":
             _need(op, form_id=form_id, blocks=blocks)
@@ -440,7 +437,7 @@ def register(mcp: FastMCP) -> None:
                         "warning": "PATCH blocks REMPLACE la liste entière — "
                                    "tout bloc absent de `blocks` est supprimé."}
             return _run(lambda: c.update_blocks(
-                form_id, blocks, **({"settings": settings} if settings else {})))
+                form_id, blocks, **({"settings": settings} if settings else {})), "blocks")
 
         raise _bad(f"op inconnu : {op!r}")
 

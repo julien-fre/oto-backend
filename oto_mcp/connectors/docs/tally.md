@@ -19,7 +19,9 @@ six tools, verbe en `op` :
 ## note — la jointure des réponses, et cinq pièges
 
 - **les réponses ne sont pas auto-descriptives** : l'API rend `questions` une fois par page et chaque réponse pointe dedans par `questionId`. `tally_submission` fait la jointure — chaque réponse porte `answers: [{question_id, title, type, answer, formatted}]`, plus `answers_by_title` **seulement si les titres sont uniques** sur ce formulaire (sinon la clé est absente et `title_collisions` dit lesquels se marchent dessus). `raw=True` rend la charge Tally intacte.
-- **une question `FILE_UPLOAD` répond par l'URL du fichier déposé** : c'est par `answers` qu'on atteint les pièces jointes, il n'y a pas d'endpoint de fichiers séparé. Chaque réponse porte aussi `pdf_url` et `preview_url` — Tally rend la réponse complète en PDF, inutile de la reconstituer.
+- **une question `FILE_UPLOAD` répond par une LISTE de fichiers** — `[{id, name, url, mimeType, size}]`, vérifié en live. Les trois métadonnées `name`/`mimeType`/`size` arrivent DANS la réponse : de quoi vérifier qu'une pièce est présente et au bon format **sans rien télécharger** (ce qui rend un contrôle de complétude possible avant même qu'un DPA n'autorise à lire le contenu). Chaque réponse porte aussi `pdf_url` et `preview_url` — Tally rend la réponse complète en PDF, inutile de la reconstituer.
+- ⚠️ **ces trois URL portent un jeton signé** (`accessToken` = un JWT, plus `signature`, dans la query string) : `preview_url`, `pdf_url` et l'`url` de chaque fichier. Le jeton EST le droit d'accès — ce ne sont pas des liens publics. Elles traversent le contexte de l'agent et tout ce qui journalise un résultat d'outil : les traiter comme un porteur de droit, pas comme une référence inerte.
+- ⚠️ **`formattedAnswer` n'est pas revenu en live** (INPUT_TEXT, INPUT_EMAIL, FILE_UPLOAD), bien que le spec le documente. La lecture plausible est qu'il n'apparaît que là où `answer` n'est pas déjà lisible (une question à choix, dont l'`answer` est un id d'option) — **non vérifié**. `answers_by_title` retombe donc sur `answer`, et `formatted` peut valoir `null`.
 - **`tally-version` est épinglé côté client.** Tally versionne par DATE (à la Stripe) et une clé est figée à la version du jour de sa création, sans possibilité de la changer. Sans en-tête explicite, deux clients de la même org obtiendraient des formes de réponse différentes selon l'ancienneté de leur clé — c'est exactement ce qui fait qu'une clé de 2025 ne rend pas `formattedAnswer`. Le client envoie donc toujours `tally-version` (défaut `2026-08-04`).
 - **`PATCH /webhooks/{id}` est un REMPLACEMENT complet** malgré le verbe (`formId`, `url`, `eventTypes`, `isEnabled` tous requis). `tally_webhook(op="update")` relit le webhook et fusionne — ne le contourne pas en tapant l'API à la main.
 - **`blocks` remplace la liste entière** sur `op="update"` et `op="update_blocks"` : un bloc absent du tableau est supprimé. Lis l'état avec `op="blocks"` d'abord.
@@ -37,9 +39,9 @@ quatre opérations détruisent quelque chose ; toutes acceptent `dry_run=True`, 
 
 c'est le piège le plus coûteux de cette API, relevé en live :
 - `GET /webhooks` rend **401 tant qu'aucun webhook n'a jamais été créé** sur le compte. Après une première création il rend 200 — et continue même après les avoir tous supprimés. Le 401 dit « l'intégration webhooks n'existe pas encore », pas « ta clé est mauvaise ».
-- `tally_form(op="blocks")` et `tally_workspace(op="create")` rendent 401 sur un plan **FREE** : c'est un gate de PLAN, pas d'authentification.
+- `tally_form(op="blocks")`, `tally_form(op="update_question")` et `tally_workspace(op="create")` rendent 401 sur un plan **FREE** : c'est un gate de PLAN, pas d'authentification.
 
-le connecteur ne traduit donc plus ces 401-là en « clé rejetée » : il nomme les deux causes et renvoie vers `tally_account(op="me")`, qui tranche — s'il répond, la clé est bonne.
+le connecteur ne traduit donc **aucun** 401 en « clé rejetée » — même sans contexte connu, le message nomme les deux causes et renvoie vers `tally_account(op="me")`, qui tranche : s'il répond, la clé est bonne et c'est le plan qui bloque.
 
 ## note — état de vérification
 
@@ -50,5 +52,9 @@ dérivé du spec OpenAPI 3.0.1 réel (`developers.tally.so/api-reference/openapi
 **enveloppes relevées** (le spec ne les tranchait pas) : `/forms` et `/workspaces` rendent `{items, page, limit, total, hasMore}` ; `/webhooks` rend `{webhooks, …}` et **non** `items` ; `/forms/{id}/questions` rend `{questions, hasResponses}` ; `/organizations/{id}/users` et `.../invites` rendent un **tableau nu** ; les `PATCH`/`DELETE` de webhook rendent un **corps vide**.
 
 **NON exercé**, faute de plan ou de matière, et donc dérivé du spec seul : lecture/écriture des blocs (401 de plan), écriture d'espaces et tout ce qui touche aux dossiers (Pro), `update_question` (un formulaire fraîchement créé ne rend aucune question, même publié), lecture et suppression d'UNE réponse (aucune réponse sur le compte), invitations (enverrait de vrais emails), retrait d'un membre (retirerait le titulaire de sa propre org et révoquerait la clé de l'appel), rejeu d'un événement (aucun événement livré).
+
+**une question tire son intitulé du bloc `LABEL` qui la précède** : un formulaire dont les inputs n'ont pas de `LABEL` rend `{"questions": [], "hasResponses": false}` même publié — ce n'est pas un bug, c'est qu'il n'y a rien à nommer. Trouvé en live après avoir cru à un endpoint cassé.
+
+⚠️ **`metrics` et `drop_off` ne donnent pas le même `completionRate`** sur la même période (100 vs 50 sur une visite et une soumission, mesuré) : ils ne comptent pas la même chose. Ne pas les mélanger dans un même tableau de bord sans dire lequel on cite.
 
 **pièges de blocs** rencontrés à la création : un bloc `TITLE` ou `LABEL` ne doit pas partager son `groupUuid` avec un bloc d'input, et `TitlePayload` porte `html`, **pas** `title` (seul `FormTitlePayload` a les deux).

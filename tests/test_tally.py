@@ -367,9 +367,10 @@ def test_ambiguous_401_does_not_blame_the_key():
     from oto_mcp.tools.tally import _upstream_message
 
     e = UpstreamHTTPError(401, {"message": "..."}, service="tally")
-    for ctx in ("webhook_list", "blocks", "workspace_write"):
+    for ctx in ("webhook_list", "blocks", "workspace_write", "question_write", None):
         msg = _upstream_message(e, ctx)
-        assert "Deux causes possibles" in msg
+        # même SANS contexte : on ne suppose jamais que la clé est en cause,
+        # parce que Tally rend 401 pour un gate de plan aussi souvent.
+        assert "ne veut PAS dire" in msg
         assert 'tally_account(op="me")' in msg
-    # sans contexte, un 401 reste un 401 de clé
-    assert "rejeté la clé API" in _upstream_message(e, None)
+    assert "n'ouvre pas" in _upstream_message(e, "workspace_write")
