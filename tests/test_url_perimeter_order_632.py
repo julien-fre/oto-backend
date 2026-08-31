@@ -27,8 +27,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import url_perimeter as up
 
 PER = up.Perimeter(project_id=12, project_name="Campagne",

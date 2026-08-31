@@ -3,7 +3,7 @@
 Garde-fou de la classification PAR TYPE de `sentry_setup` (ADR : Sentry = défauts du
 code ; les 4xx d'API tierces vivent dans le backlog `tool_calls`, pas dans Sentry).
 """
-from mcp.shared.exceptions import McpError
+from oto_mcp.mcp_errors import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST
 
 from oto_mcp.sentry_setup import (

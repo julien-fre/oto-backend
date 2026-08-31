@@ -106,7 +106,7 @@ def test_crawl_caps_pages_and_timeout_under_rest_invoke_limit():
 
 
 def test_extract_rejects_empty_or_oversized_batch():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     key, cls = _with_fake_client()
     with key, cls:
         with pytest.raises(McpError, match="au moins une"):
@@ -125,7 +125,7 @@ def test_search_asks_for_a_basic_answer_by_default():
 @pytest.mark.parametrize("status,needle", [(432, "plan"), (433, "pay-as-you-go"),
                                            (401, "clé API")])
 def test_upstream_refusals_become_actionable_tool_errors(status, needle):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto.tools.common.errors import UpstreamHTTPError
 
     key, cls = _with_fake_client()

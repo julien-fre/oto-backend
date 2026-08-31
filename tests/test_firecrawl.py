@@ -107,7 +107,7 @@ def test_crawl_status_accepts_job_id_or_next_url():
 
 def test_upstream_402_becomes_an_actionable_tool_error():
     """Crédits épuisés : l'agent doit lire un message qui dit quoi faire, pas un 402 nu."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto.tools.common.errors import UpstreamHTTPError
 
     key, cls = _with_fake_client()

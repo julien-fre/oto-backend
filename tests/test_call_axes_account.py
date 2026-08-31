@@ -4,8 +4,7 @@ Trois contrats : exposition SÉLECTIVE du schéma (dérivée du registre), strip
 la ContextVar par le middleware, lecture par le seam de résolution (`resolve_credential`
 sélectionne le compte de l'axe en multi-compte — « 2 Zoho »)."""
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, call_axes, credentials_store, db, session_org
 from oto_mcp.middleware.call_context import CallContextMiddleware
 

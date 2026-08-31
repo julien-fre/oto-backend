@@ -19,8 +19,7 @@ membre — la servir sans la recouper ferait agir un endpoint public sous le com
 LinkedIn d'un autre tenant. D'où la garde d'appartenance, que ces tests verrouillent.
 """
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access
 from oto_mcp.subdomain_project import AnonContext
 from oto_mcp.tools import unipile as U

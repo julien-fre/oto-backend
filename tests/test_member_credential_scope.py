@@ -10,8 +10,7 @@ Trois invariants :
    re-chiffre les familles non-oauth, saute oauth / indéchiffrable / sans-maison.
 """
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, credentials_store
 from oto_mcp.db import keys as db_keys
 

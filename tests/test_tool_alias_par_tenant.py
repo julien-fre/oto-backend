@@ -272,7 +272,7 @@ def test_tout_token_oto_de_la_prose_servie_est_bien_un_outil():
 # catalogue et se voyait répondre « Unknown tool » en le recopiant.
 
 import fastmcp.server.context as _fc  # noqa: E402
-from mcp.shared.exceptions import McpError  # noqa: E402
+from oto_mcp.mcp_errors import McpError  # noqa: E402
 
 from oto_mcp import access, db  # noqa: E402
 from oto_mcp.tools import meta as _meta  # noqa: E402

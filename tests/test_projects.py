@@ -520,7 +520,7 @@ def test_link_connector_instance_ref_exclusive_of_identity(seams):
 
 def test_link_connector_instance_ref_forbidden(seams, monkeypatch):
     # Le lieur n'a pas accès à l'instance → 403, rien stocké.
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from mcp.types import ErrorData, INVALID_PARAMS
     import oto_mcp.access as access_mod
     def _deny(sub, ref):

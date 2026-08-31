@@ -5,8 +5,7 @@ Même sélection qu'au palier membre (`_pick_account`) : `_account=` explicite >
 `''` d'une org reste résolue telle quelle. Seams DB stubbés.
 """
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, credentials_store
 from oto_mcp.connectors import identities as connector_identities
 

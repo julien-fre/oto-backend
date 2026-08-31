@@ -12,7 +12,7 @@ import inspect
 import time
 from typing import Literal, Optional
 
-from mcp.shared.exceptions import McpError
+from ...mcp_errors import McpError
 from pydantic import BaseModel, ConfigDict
 
 from ... import access, credentials_store, status_hints

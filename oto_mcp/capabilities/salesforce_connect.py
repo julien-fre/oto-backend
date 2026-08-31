@@ -45,8 +45,7 @@ def start_for(ctx: ResolvedCtx, scope: str,
     `return_app` : uniquement porté par le chemin REST générique (le navigateur
     d'un front sait qui il est) ; le chemin MCP ci-dessous (`_start`) ne le passe
     jamais — un agent Claude n'a pas de navigateur à rerediriger."""
-    from mcp.shared.exceptions import McpError
-
+    from ..mcp_errors import McpError
     from .. import access
     try:
         access.require_connector_access("salesforce", ctx.sub)

@@ -6,8 +6,7 @@ cascade user→groupe→org de `access.resolve_credential_fields`, gatée sur
 """
 import pytest
 
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, credentials_store
 
 

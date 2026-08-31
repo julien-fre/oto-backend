@@ -25,8 +25,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 EXPECTED_TOOLS = {"drive_file", "drive_access"}
 
 # Les méthodes qu'on ne veut JAMAIS voir appelées par erreur : elles écrivent,

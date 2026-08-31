@@ -14,7 +14,7 @@ import asyncio
 import logging
 
 from fastmcp import Context, FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import deprecations, guide_run as dr, run_status

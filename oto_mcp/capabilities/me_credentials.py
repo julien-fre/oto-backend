@@ -196,7 +196,7 @@ def _get(ctx: ResolvedCtx, inp: CredentialGetInput) -> dict:
 
 
 async def _set(ctx: ResolvedCtx, inp: CredentialSetInput) -> dict:
-    from mcp.shared.exceptions import McpError
+    from ..mcp_errors import McpError
     from .. import status_hints
     from ..connectors import verify as connector_verify
 

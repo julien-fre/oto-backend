@@ -77,8 +77,7 @@ def test_no_noauth_mount_in_registry():
 
 def test_byo_mount_factory_still_gates():
     """Contraste : un mount byo_user (atlassian) lève bien hors requête (aucun sub)."""
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     factory = mount._make_factory(_mount("atlassian"))
     with pytest.raises(McpError):
         asyncio.run(factory())

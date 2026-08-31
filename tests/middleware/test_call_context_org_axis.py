@@ -7,8 +7,7 @@ resolve_org_for_user) et l'exception du middleware outermost était invisible. L
 McpError PROPRE.
 """
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import call_axes, org_store, session_org
 from oto_mcp.middleware.call_context import CallContextMiddleware
 

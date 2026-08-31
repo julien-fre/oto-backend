@@ -61,7 +61,7 @@ def test_app_fields_is_empty_before_any_credential(monkeypatch):
     lisait comme « pas de credential » et faisait basculer sur l'app d'éditeur oto).
     Même leçon que `test_we_call_an_api_that_actually_accepts_sub` ci-dessous : un
     stub qui ment sur la forme du réel masque le bug qu'on croit tester."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from mcp.types import ErrorData, INVALID_PARAMS
 
     def _aucun_credential(*a, **k):

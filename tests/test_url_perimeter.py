@@ -19,8 +19,7 @@ import json
 import pathlib
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, session_org, subdomain_project, url_perimeter as up
 
 _PKG = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp"

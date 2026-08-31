@@ -12,7 +12,7 @@ from typing import Optional
 
 import requests
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, status_hints

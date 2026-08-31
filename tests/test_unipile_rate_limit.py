@@ -2,8 +2,7 @@
 import time
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.tools import unipile as U
 
 

@@ -25,8 +25,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Les 4 méthodes du client qui ÉCRIVENT dans la paie. Rien ici ne doit les atteindre.
 _WRITE_METHODS = ("ajouter_element_variable", "ajouter_prime", "ajouter_heures",
                   "confirmer_saisies")

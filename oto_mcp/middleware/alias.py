@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from fastmcp.server.middleware import Middleware
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData
 
 from .. import deprecations, tool_alias
