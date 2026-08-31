@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access

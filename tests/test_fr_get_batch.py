@@ -5,9 +5,7 @@ réseau) — les données entreprise passent par le service FOD depuis B2a (ADR 
 from __future__ import annotations
 
 import pytest
-from mcp.shared.exceptions import McpError
-
-
+from oto_mcp.mcp_errors import McpError
 class _Reg:
     """FastMCP minimal : capture les fonctions décorées par @mcp.tool()."""
 

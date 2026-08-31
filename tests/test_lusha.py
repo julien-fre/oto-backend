@@ -7,9 +7,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from mcp.shared.exceptions import McpError
-
-
+from oto_mcp.mcp_errors import McpError
 def _register_and_call(tool_name: str, **kwargs):
     from fastmcp import FastMCP
     from oto_mcp.tools import lusha as lusha_tool

@@ -5,8 +5,7 @@ reconnue) retombait sur `accounts.zoho.com` → `invalid_client` opaque. Désorm
 lève une erreur actionnable ; `com` reste une région valide, aucune n'est forcée.
 """
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.tools.zoho import _resolve_dc_domains, _DC_DOMAINS
 
 

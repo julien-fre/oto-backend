@@ -748,7 +748,7 @@ def _project(ctx: ResolvedCtx, inp: ProjectInput) -> dict:
                 _require(identity_ref is None, "conflicting_binding",
                          "Donne `instance_ref` OU `identity_ref`, pas les deux "
                          "(le ref d'instance porte déjà le compte).")
-                from mcp.shared.exceptions import McpError
+                from ..mcp_errors import McpError
                 from .. import access as access_mod, instance_refs
                 try:
                     iref = instance_refs.parse_ref(inp.instance_ref)

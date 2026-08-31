@@ -204,8 +204,7 @@ def test_une_colonne_inconnue_est_signalee_sans_bloquer(feed):
 def test_fields_vide_est_refuse(feed):
     """Demande ambiguë : la traiter comme « pas de projection » rendrait silencieusement
     PLUS que le défaut — l'inverse de ce que l'appelant demandait."""
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError, match="liste vide"):
         feed(op="feed", limit=40, fields=[])
 
@@ -213,8 +212,7 @@ def test_fields_vide_est_refuse(feed):
 def test_text_max_chars_zero_est_refuse(feed):
     """`0` est faux en Python donc « aucune limite » : exactement l'inverse de ce que
     demande qui l'écrit."""
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError, match="text_max_chars"):
         feed(op="feed", limit=40, text_max_chars=0)
 

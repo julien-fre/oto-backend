@@ -234,7 +234,7 @@ def test_link_slot_taken_409(monkeypatch):
 
 
 # ── B3 : résolveur runtime `slot:<name>` (enforcement serveur, jamais de fallback) ──
-from mcp.shared.exceptions import McpError  # noqa: E402
+from oto_mcp.mcp_errors import McpError  # noqa: E402
 
 from oto_mcp import access  # noqa: E402
 from oto_mcp.tools import datastore as ds  # noqa: E402

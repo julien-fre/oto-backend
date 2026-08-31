@@ -17,8 +17,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Méthodes du GmailClient qui MUTENT la boîte : aucune ne doit être atteinte par
 # une lecture, ni par une op inconnue, ni par un appel sans `op`.
 _DESTRUCTIVE = ("archive_messages", "trash_message")

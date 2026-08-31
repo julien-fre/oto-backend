@@ -119,8 +119,7 @@ def test_quota_divergence_is_journalled(vault, monkeypatch, caplog):
 def test_edge_quota_produces_the_same_refusal_as_before(vault, monkeypatch):
     """Quota épuisé ⟹ le MÊME refus qu'avant, mot pour mot : c'est le plafond porté
     par l'arête qui alimente le message historique, pas un nouveau chemin d'erreur."""
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access.session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda p, *a: None)

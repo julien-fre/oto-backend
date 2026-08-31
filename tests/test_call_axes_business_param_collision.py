@@ -20,8 +20,7 @@ import ast
 import pathlib
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import call_axes
 
 AXIS_NAMES = {a.param for a in call_axes.AXES}

@@ -19,8 +19,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Les 10 tools, avec les arguments que leur SCHÉMA rend obligatoires (et, pour
 # `attio_comment`, le filtre de parent qu'exige l'API sur la liste de threads).
 _TOOLS = {

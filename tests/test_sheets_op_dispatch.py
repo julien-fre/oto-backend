@@ -18,8 +18,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Les méthodes du client qui MUTENT le tableau. Toute op non-mutante doit les laisser
 # intactes : c'est l'assertion qui distingue « la bonne méthode a été appelée » de
 # « aucune autre ne l'a été ».

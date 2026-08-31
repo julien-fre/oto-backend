@@ -16,8 +16,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 # Les 5 écritures du connecteur — aucune ne doit être atteignable sans `op` explicite.
 _WRITE_METHODS = ("create_candidate", "update_candidate", "create_application",
                   "move_application", "create_note")

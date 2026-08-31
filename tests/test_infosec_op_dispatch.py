@@ -14,8 +14,7 @@ transport (`_doh`, `httpx.AsyncClient`) l'est pour les tests de comportement.
 import asyncio
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.tools import infosec as I
 
 _FACETS = ("_whois", "_dns", "_email_security", "_subdomains", "_tls", "_headers")
