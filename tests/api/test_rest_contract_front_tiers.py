@@ -582,3 +582,77 @@ def test_editer_avec_une_version_perimee_rend_409_version_conflict(client, org):
     # Le travail de l'autre a survécu.
     relue = client.get("/api/me/instructions/relance-clients", headers=_h(admin)).json()
     assert relue["body_md"].endswith("v2 posée par un autre.")
+
+
+# ── GET /api/orgs/{id}/audit-log/export : la pièce dit sa complétude (#770) ────
+
+def test_l_export_d_audit_dit_son_total_sa_troncature_et_sa_borne(client, org):
+    """La chaîne ENTIÈRE, sur la route servie : table de routes, adaptateur, autz,
+    handler, store, enveloppe JSON. Un handler appelé à la main ne prouverait pas
+    que ces champs traversent l'adaptateur et le modèle de sortie.
+
+    Le journal d'audit est une pièce qu'un client produit pour se justifier. Ce qui
+    se rejoue ici est donc ce qui la rend opposable : le total de la fenêtre, le fait
+    que la réponse ne la porte pas toute, et la borne haute réellement appliquée.
+    """
+    from oto_mcp import db
+    oid, admin = org["id"], org["admin"]
+    for _ in range(5):
+        db.insert_tool_call({"sub": admin, "kind": "mcp", "tool": "fr_get",
+                             "ok": True, "org_id": oid, "duration_ms": 2})
+
+    r = client.get(f"/api/orgs/{oid}/audit-log/export?limit=2", headers=_h(admin))
+    assert r.status_code == 200, r.text
+    p1 = r.json()
+    assert p1["count"] == 2 and p1["total"] == 5
+    assert p1["truncated"] is True and p1["next_cursor"]
+    # `until` reste le réécho de ce qui a été reçu ; la borne appliquée est à côté.
+    assert p1["until"] is None and p1["until_effectif"].endswith("Z")
+    assert [c["namespace"] for c in p1["calls"]] == ["fr", "fr"]
+
+    # Le curseur se renvoie TEL QUEL, et la concaténation vaut exactement le total.
+    vus, cur, total = [c["id"] for c in p1["calls"]], p1["next_cursor"], p1["total"]
+    while cur:
+        page = client.get(f"/api/orgs/{oid}/audit-log/export?limit=2&cursor={cur}",
+                          headers=_h(admin)).json()
+        assert page["total"] == total, "la fenêtre gelée ne s'élargit pas en route"
+        vus += [c["id"] for c in page["calls"]]
+        cur = page["next_cursor"]
+    assert len(vus) == len(set(vus)) == total
+
+    # Une fenêtre qui tient dans une page ne se dit PAS tronquée.
+    entier = client.get(f"/api/orgs/{oid}/audit-log/export", headers=_h(admin)).json()
+    assert entier["count"] == entier["total"] == 5
+    assert entier["truncated"] is False and entier["next_cursor"] is None
+
+
+def test_les_deux_refus_declares_de_l_export_sont_rejoues(client, org):
+    """`DeclaredError` DÉCRIT, ne fait rien : une déclaration sans rejeu promettrait
+    un refus que le serveur ne rend pas."""
+    from oto_mcp import db
+    oid, admin = org["id"], org["admin"]
+    # Ses propres lignes : un test qui hérite des écritures de son voisin passe ou
+    # tombe selon l'ordre de collecte, pas selon ce qu'il prétend prouver.
+    for _ in range(2):
+        db.insert_tool_call({"sub": admin, "kind": "mcp", "tool": "oto_doc",
+                             "ok": True, "org_id": oid, "duration_ms": 1})
+
+    r = client.get(f"/api/orgs/{oid}/audit-log/export?cursor=pas-un-curseur",
+                   headers=_h(admin))
+    assert r.status_code == 400, r.text
+    assert r.json()["error"] == "invalid_cursor"
+    assert r.json()["detail"]                       # actionnable, pas un code nu
+
+    bon = client.get(f"/api/orgs/{oid}/audit-log/export?limit=1",
+                     headers=_h(admin)).json()["next_cursor"]
+    r = client.get(f"/api/orgs/{oid}/audit-log/export"
+                   f"?cursor={bon}&since=2026-08-01", headers=_h(admin))
+    assert r.status_code == 400, r.text
+    assert r.json()["error"] == "window_with_cursor"
+
+
+def test_un_simple_membre_ne_lit_pas_le_journal_de_l_org(client, org):
+    """Le gate n'a pas bougé : `ORG_ADMIN_OF`. On le rejoue parce que ce lot a
+    touché l'entrée de la capacité."""
+    r = client.get(f"/api/orgs/{org['id']}/audit-log/export", headers=_h(org["membre"]))
+    assert r.status_code in (403, 404), r.text
