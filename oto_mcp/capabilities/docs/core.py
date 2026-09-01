@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ... import db
 from .._authz import PROJECT_SHARED_READ
@@ -59,7 +59,10 @@ class DocInput(BaseModel):
     # Projection de SORTIE, honorée par list/get/create/update/patch/move (`view.FIELDS_OPS`)
     # et REFUSÉE ailleurs. Omis : la liste rend son index, `get` la page entière, une
     # écriture son accusé. `["*"]` = la page entière partout.
-    fields: Optional[list[str]] = None
+    fields: Optional[list[str]] = Field(default=None, description=(
+        "Output projection on list/get/create/update/patch/move (refused elsewhere). "
+        "Omitted, a list returns its index and a write its receipt; `[\"*\"]` returns "
+        "the whole page everywhere; a list of names picks columns."))
 
 
 def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:

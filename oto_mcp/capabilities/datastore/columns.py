@@ -40,10 +40,15 @@ from ..registry import CAPABILITIES
 
 class DropColumnInput(BaseModel):
     namespace: str
-    key: str
+    key: str = Field(description=(
+        "The column to erase. A key still DECLARED in the schema is refused — take it "
+        "out with `data_set_schema` first. An ANNOTATION (`site_web.comment`) is not a "
+        "column: erase it by writing `{\"site_web\": {\"comment\": null}}`."))
     # Défaut False, jamais True : la confirmation est le garde-fou du geste, elle
     # doit être posée par l'appelant à chaque appel.
-    confirm: bool = False
+    confirm: bool = Field(default=False, description=(
+        "REQUIRED `true` — the purge is refused without it. It erases the key from "
+        "EVERY row, not just from the schema view."))
 
 
 class DropColumnResult(BaseModel):
@@ -77,19 +82,25 @@ class PatchSchemaInput(BaseModel):
     namespace: str
     # Fusion PAR CLÉ : chaque entrée complète le field de même `key` (les propriétés
     # fournies écrasent, les autres sont préservées) ou l'ajoute s'il est inconnu.
-    # ⚠️ Pas de `Field(description=…)` ici : `apply_flat_signature` (capabilities/
-    # _types.py) ne recopie que l'annotation et le défaut, la description serait
-    # acceptée-inerte. Ce que le préambule autorise (#586/#606) ne peut donc pas se
-    # répéter sur ce paramètre tant que le seam ne la sert pas.
-    fields: Optional[list] = None
+    # Ce que le préambule autorise se répète ICI depuis le 2026-09-01 (#627) : jusque
+    # là `apply_flat_signature` ne recopiait qu'annotation et défaut, et une
+    # `description` posée sur un champ d'`Input` était acceptée-INERTE.
+    fields: Optional[list] = Field(default=None, description=(
+        "Merges BY `key`: the properties you list overwrite, the ones you omit are "
+        "PRESERVED, an unknown key is appended. Send only what changes."))
     # Le pendant obligé de la fusion : sans retrait explicite, plus de nettoyage.
-    remove: Optional[list] = None
+    remove: Optional[list] = Field(default=None, description=(
+        "Keys to take out of the SCHEMA (a key that is not there is refused, never "
+        "silently ignored). It does not touch the rows' DATA — that is "
+        "`data_drop_column`."))
     strict: Optional[bool] = None
     key: Optional[str] = None
     # #516 : le cran « écrire, jamais créer » se pose et se retire ICI — le poser
     # par `set` obligerait à réécrire un schéma de 80 champs pour une clé de tête,
     # exactement le geste que ce patch existe pour éviter.
-    key_required: Optional[bool] = None
+    key_required: Optional[bool] = Field(default=None, description=(
+        "`true` CLOSES the table — a write designating no existing row is refused; "
+        "`false` reopens it. Omitted leaves it untouched."))
     # #614/#678 : `"report"` (défaut) / `"reject"`. Ici pour la même raison que
     # `key_required` — un tableau se ferme quand son schéma est déjà long.
     unknown_fields: Optional[str] = None
