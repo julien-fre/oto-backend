@@ -53,6 +53,7 @@ from ..db import node_view as db_node
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, NotModified, ResolvedCtx, RestBinding
+from .node_keys import doc_id_de
 from .node_procedure_ref import ProcedureRef, procedure_ref_of
 from .registry import CAPABILITIES
 
@@ -226,7 +227,7 @@ def _source(props: dict, chaine: list[dict]) -> tuple[Optional[int], Optional[in
     qu'un entier deviné.
     """
     legacy, lid = props.get("legacy"), props.get("legacy_id")
-    doc_id = int(lid) if legacy == "doc" and lid is not None else None
+    doc_id = doc_id_de(legacy, lid)
     if legacy == "prj" and lid is not None:
         return doc_id, int(lid)
     if props.get("project_id") is not None:
