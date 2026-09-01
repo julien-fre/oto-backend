@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .. import db, deprecations
 from . import audit_log, monitoring
@@ -283,9 +283,23 @@ class OrgRuns(BaseModel):
 
 
 class RunCall(BaseModel):
+    """Un appel de la timeline d'un déroulé.
+
+    ⚠️ **Même ligne de journal que `CallDetail`, donc mêmes arguments** : la timeline
+    et la fiche d'un appel lisent la même colonne, écrite par la même fonction. Ce qui
+    vaut là-bas vaut ici, et le contrat le disait d'un seul côté jusqu'au 01/09/2026 —
+    un client prudent affichait « arguments journalisés » sans savoir de quoi il
+    parlait.
+    """
     created_at: Optional[str] = None
     tool: Optional[str] = None
-    args: Optional[dict] = None       # tronqué à l'écriture
+    args: Optional[dict] = Field(default=None, description=(
+        "Les arguments **tels que journalisés**, jamais l'appel d'origine : tronqués "
+        "à l'écriture (300 caractères par valeur, les valeurs composées stringifiées) "
+        "et masqués (un argument déclaré secret pour cet outil part en empreinte "
+        "`#…`, jamais en clair — y compris à travers le dispatch universel). `null` = "
+        "l'appel n'en portait aucun. Identique à `CallDetail.args` : même colonne, "
+        "même voie d'écriture."))
     ok: Optional[bool] = None
     error: Optional[str] = None
     duration_ms: Optional[int] = None
