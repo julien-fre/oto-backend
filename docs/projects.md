@@ -56,6 +56,14 @@ Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dis
 > Le compte n'est pas une estimation prise à part : c'est le `RETURNING` de la suppression
 > récursive elle-même. Un `archive` non destructif (le vocabulaire déjà en place pour les
 > procédures et les projets) reste **à faire** : c'est un changement de modèle, hors de ce lot.
+> ⚠️ **La FK auto-référente n'interdit AUCUN cycle** (2026-09-01) : elle exige que la page
+> visée existe, pas que l'arbre soit acyclique — `UPDATE docs SET parent_id = <un
+> descendant>` passait, et les trois descentes récursives (compter, supprimer, déplacer)
+> tournaient alors sans fin en remplissant `pgsql_tmp`. `move_doc` et `move_doc_to_project`
+> **refusent** désormais de ranger une page sous sa propre descendance (`DocParentCycle`), et
+> les trois descentes partagent une définition unique **bornée** par la clause SQL `CYCLE`.
+> Le raisonnement complet, la mesure et le relevé de production (0 cycle) sont dans
+> `docs/noeuds.md` — même défaut, même correction, une table plus loin.
 
 > **Push out-of-bande de gros contenu par un agent (issue #105).** Écrire un GROS contenu
 > via `oto_doc(body_md=…)`/multipart le fait transiter INLINE par le contexte du LLM (coût

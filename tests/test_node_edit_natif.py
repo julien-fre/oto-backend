@@ -91,9 +91,21 @@ def test_le_corps_nest_reecrit_que_sil_change():
 def test_la_suppression_ramasse_la_descendance():
     """L'arbre n'a PAS de clé étrangère (arbitrage M-e, ouvert) : sans ramassage, un
     parent supprimé laisse des enfants rattachés à un identifiant disparu — des
-    orphelins qu'aucun lecteur ne trouve et qu'aucune purge ne voit."""
-    src = inspect.getsource(db_nodes.delete_page)
-    assert "RECURSIVE" in src, "la descendance n'est pas ramassée"
+    orphelins qu'aucun lecteur ne trouve et qu'aucune purge ne voit.
+
+    ⚠️ Le SQL a quitté le corps de `delete_page` pour la constante `_DESCENDANCE`
+    (2026-09-01) : chercher « RECURSIVE » dans la source de la fonction ne voyait plus
+    rien. Le relevé suit donc l'objet, et il exige les DEUX propriétés — récursive
+    (elle ramasse) et bornée (elle termine sur un cycle déjà en base).
+
+    La preuve de comportement, elle, est dans `test_node_parent_cycle.py`, sur une
+    vraie base : quarante niveaux ramassés, et une boucle qui ne fait plus tourner
+    la requête à vide."""
+    assert "_DESCENDANCE" in inspect.getsource(db_nodes.delete_page), (
+        "la descendance n'est pas ramassée")
+    assert "WITH RECURSIVE" in db_nodes._DESCENDANCE
+    assert "CYCLE " in db_nodes._DESCENDANCE, (
+        "descente non bornée : un cycle déjà en base remplit `pgsql_tmp`")
 
 
 # --- l'écriture ne franchit pas la frontière des deux univers ------------------

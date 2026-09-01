@@ -75,6 +75,57 @@ ignore la destination. Détail du grain, du fail-closed et de ses limites :
 ⚠️ **La face REST n'est pas gatée** — le dashboard qui construit ce nouvel univers la
 consomme aujourd'hui. Écart assumé, refermé quand la surface cessera d'être provisoire.
 
+## L'arbre ne boucle pas — et ce qui le garantit
+
+`nodes.parent_id` n'a **aucune clé étrangère** (arbitrage M-e, toujours ouvert) : la
+base n'a rien pour refuser qu'un nœud soit rangé sous sa propre descendance. Jusqu'au
+**2026-09-01**, rien dans le code ne le refusait non plus.
+
+**Ce que ça coûtait, mesuré de bout en bout.** `move A sous B`, alors que B était déjà
+enfant de A, rendait **200**. Le `delete A` qui suivait jouait un
+`WITH RECURSIVE … UNION ALL` sans borne sur la boucle ainsi créée et ne terminait
+pas : il empilait dans `base/pgsql_tmp` jusqu'au `DiskFull`. Avec une borne
+artificielle posée à 20 000 niveaux, la requête produisait 20 001 lignes. **Cette base
+est partagée entre la préproduction et la production** (`docs/live-migrations.md`) :
+n'importe quel appel authentifié pouvait donc saturer le disque de la prod, et la box a
+déjà connu un disque plein — SSL et préproduction cassés à la clé.
+
+**Deux gestes, et il faut les deux.**
+
+| geste | où | ce qu'il protège |
+|---|---|---|
+| le **refus** — `move_page` lève `ParentCycle` si le parent demandé descend du nœud | `db/nodes.py` | les déplacements **à venir** |
+| la **borne** — chaque récursion sur l'arbre porte la clause SQL `CYCLE` | `db/nodes.py`, `db/node_view.py`, `db/projects.py` | ce qui serait **déjà en base** |
+
+Le second ne se déduit pas du premier : une garde amont ne défait pas rétroactivement
+une boucle écrite hier, et personne ne peut prouver qu'il n'y en a jamais eu. (Relevé
+en production le 2026-09-01, en lecture seule : **0** — 75 721 nœuds tous atteignables
+depuis une racine, 1 063 pages `docs` de même.)
+
+⚠️ **La borne est la clause `CYCLE`, jamais un plafond de profondeur.** Un plafond
+tronquerait un `DELETE` sur un arbre légitimement profond et laisserait des enfants
+accrochés à un identifiant disparu — on guérirait d'un mal en en posant un autre.
+`CYCLE id SET …` s'arrête à la **répétition** : chaque nœud est visité une fois, aucun
+arbre acyclique n'est tronqué. Un cliquet AST (`test_node_parent_cycle.py`) relève
+chaque `WITH RECURSIVE` de `db/` **au grain de la fonction** et exige sa clause.
+
+**La lecture DIT le cycle.** `ancestors_of` était bornée en profondeur (12) et servait,
+sur une boucle, douze maillons `A, B, A, B…` avec un succès : un cycle déjà en base
+était **invisible à la lecture**. Elle lève désormais `ParentCycle` — l'arbre ne peut
+pas répondre à « où est ce nœud », et un fil qui s'arrête sans le dire est un zéro qui
+ressemble à un résultat. La boucle se **défait** en supprimant le nœud (`delete_page`,
+borné, emporte les nœuds de la boucle).
+
+**Même défaut, une table plus loin.** `docs.parent_id` porte, lui, une FK auto-référente
+`ON DELETE CASCADE` — et elle n'empêche rien : une FK exige que la ligne visée existe,
+pas que l'arbre soit acyclique. `move_doc` et `move_doc_to_project` refusent donc le
+cycle (`DocParentCycle`), et les trois descentes de `db/projects.py` (compter,
+supprimer, déplacer) partagent une seule définition bornée.
+
+⚠️ **Ce que ce lot ne fait pas** : `capabilities/node_edit.py` ne rattrape pas encore
+`ParentCycle`, donc le refus sort en erreur interne plutôt qu'en 400 nommé. La garde
+est correcte — rien n'est écrit — mais la réponse servie ne dit pas encore pourquoi.
+
 ## La recopie, et pourquoi elle s'est arrêtée
 
 Jusqu'au 2026-09-01, **cinq conversions** tournaient à chaque démarrage — projets,
