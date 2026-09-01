@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ... import db
 from ...datastore import journal as datastore_journal
@@ -28,6 +28,7 @@ from ...datastore.core import NamespaceNotFound, RowNotFound, make_store
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
+from .common import HORODATAGE
 
 # Rétention du calllog (prune 30 j) : un journal de TRAVAIL, pas un audit permanent.
 # La surface l'annonce pour que l'UI puisse le dire à l'utilisateur.
@@ -117,23 +118,60 @@ def _activity(ctx: ResolvedCtx, inp: NamespaceActivityInput) -> dict:
 class ActivityEntry(BaseModel):
     """Un geste d'agent lu depuis la boucle d'usage (0017) — le journal EST la source,
     il n'y a pas de table d'activité. D'où la fenêtre bornée par `retention_days` :
-    au-delà, l'appel n'existe plus, ce n'est pas un trou de données."""
-    call_id: Optional[int] = None
+    au-delà, l'appel n'existe plus, ce n'est pas un trou de données.
+
+    ⚠️ **Ce modèle DÉCRIT le payload, il ne le fabrique pas** (`Capability.Output` ne
+    valide rien : le handler rend un `dict`, servi tel quel). Déclarer un champ ne le
+    fait donc pas apparaître, et en retirer un ne l'enlève pas du fil — la seule chose
+    qui change est ce qu'un client peut LIRE dans le contrat. C'est ce qui a permis à
+    cette liste de dériver dans les deux sens jusqu'au 2026-09-01 : neuf clés servies
+    et tues (dont `row_id`, sans lequel le cockpit ne sait pas quelle ligne annuler),
+    quatre clés promises et jamais rendues (`call_id`, `at`, `run_doctrine`,
+    `run_outcome` — le producteur nomme l'instant `created_at`, et les deux dernières
+    sans leur préfixe `run_`). Un champ
+    promis et absent est le pire des deux : le client lit `undefined`, sans erreur,
+    sans log. Le cliquet `tests/datastore/test_journal_declare.py` compare désormais
+    les deux listes à chaque exécution.
+    """
+    # ── L'appel : quand, par quelle surface, par qui ──────────────────────────
+    created_at: Optional[str] = Field(default=None, description=HORODATAGE)
+    # `mcp` = geste d'agent, `rest` = geste fait au cockpit. Les DEUX sont journalisés
+    # (avant, filtrer `mcp` laissait le parcours vide pour qui travaille au dashboard).
+    kind: Optional[str] = None
     tool: Optional[str] = None
-    at: Optional[str] = None
     sub: Optional[str] = None
-    email: Optional[str] = None                  # joint pour l'affichage
+    # Résolu à la LECTURE (`tool_calls.email` est NULL en base) — la colonne « qui »
+    # afficherait un uuid sinon.
+    email: Optional[str] = None
     ok: Optional[bool] = None
     error: Optional[str] = None
+
+    # ── Le run qui portait le geste (ADR 0017), quand il y en avait un ────────
     run_id: Optional[int] = None
     run_label: Optional[str] = None
-    # ⚠️ Ce champ n'est PAS servi : le payload de `_ds_activity_entry` porte
-    # `doctrine`/`guide`, pas `run_doctrine`/`run_outcome`. Divergence ANTÉRIEURE à
-    # #519 (un `Output` DÉCRIT, il ne valide pas) — laissée telle quelle ici pour ne
-    # pas mêler une correction de contrat à un lot de vocabulaire.
-    run_doctrine: Optional[str] = None
-    run_outcome: Optional[str] = None
+    # Le guide sous lequel le run s'est déclaré. ⚠️ **Servi sous ses DEUX noms** :
+    # `guide` (aujourd'hui) et `doctrine` (l'ancien, doublé par `avec_les_deux_noms`
+    # et voué au retrait). Un client neuf lit `guide`.
+    guide: Optional[str] = None
+    doctrine: Optional[str] = None
+    outcome: Optional[str] = None
+
+    # ── La ligne visée — de quoi VISER, pas de quoi refaire l'état ────────────
+    # L'`_id` de la ligne, lu des args journalisés. C'est la POIGNÉE : le cockpit
+    # annule en ré-appliquant un patch (aucune op d'annulation n'existe côté serveur
+    # pour une ligne), et il lui faut de quoi désigner sa cible.
+    # ⚠️ `null` sur les gestes qui ne citent pas d'id : un `append` n'en a pas encore
+    # (la ligne se corrèle alors par sa clé métier), une lecture de tableau non plus.
+    row_id: Optional[str] = None
     row_title: Optional[str] = None              # posé sur le parcours d'UNE ligne
+    # Les champs touchés par l'écriture — les NOMS, jamais les valeurs.
+    fields: list[str] = []
+    # La transition de statut, relevée PENDANT la mutation et non relue après : une
+    # relecture courrait avec une écriture concurrente, et le cockpit proposerait
+    # d'annuler vers un état que la ligne n'a jamais eu (cf. `rows.py::_update_row`).
+    # `null` des deux côtés sur un geste qui ne touche pas au statut.
+    from_status: Optional[str] = None
+    to_status: Optional[str] = None
 
 
 class NamespaceActivity(BaseModel):
