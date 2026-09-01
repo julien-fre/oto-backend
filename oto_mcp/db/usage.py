@@ -793,37 +793,121 @@ def get_tool_call(call_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-def list_tool_calls_for_org(
-    org_id: int, since: Optional[str] = None, until: Optional[str] = None,
-    limit: int = 1000,
-) -> list[dict]:
-    """Journal d'audit org-scopé (export #67) : appels émis **sous** `org_id`
-    (colonne `tool_calls.org_id`, stampée par le seam `current_org` au moment de
-    l'appel — scope EXACT, pas l'appartenance), récent d'abord, fenêtre
-    `[since, until]` (ISO timestamptz, bornes incluses). JAMAIS d'args ni de secret
-    (garantie calllog). ⚠ Les appels antérieurs à la colonne (`org_id` NULL)
-    n'apparaissent dans aucun export org — non reconstructibles a posteriori."""
-    limit = max(1, min(int(limit), 5000))
-    clauses = ["l.kind = 'mcp'", "l.org_id = %s"]
-    params: list[Any] = [int(org_id)]
+# ── Journal d'audit d'une org : la page ET son total, d'une seule lecture ────
+#
+# ⚠️ **Ces deux nombres ne doivent jamais pouvoir décrire deux jeux différents.**
+# Un total bâti sur d'autres clauses que la page est PIRE que pas de total : il a
+# l'air d'attester, et le lecteur n'a aucun moyen de s'en apercevoir. C'est la
+# faute corrigée le 2026-09-01 sur `node_rows` (#621), où le compte portait sur
+# des noms de colonnes NON résolus alors que la page les résolvait.
+#
+# Trois mécanismes le garantissent ici, et aucun n'est une intention :
+#
+#   1. **une seule construction de clauses** (`_audit_window_clauses`), appelée
+#      par les deux requêtes — deux constructions divergent en silence, c'est le
+#      motif déjà retenu pour `journal_calls.call_filter_clauses` (#630) ;
+#   2. **une seule transaction, en REPEATABLE READ** : les deux lectures partagent
+#      le même snapshot, donc aucun appel ne peut se glisser entre le compte et la
+#      page ;
+#   3. **une borne haute TOUJOURS posée** — celle du demandeur, ou l'instant gelé
+#      au premier appel et reporté par le curseur. La fenêtre est donc CLOSE : le
+#      total ne bouge pas d'une page à l'autre, et la concaténation des pages vaut
+#      exactement son total. Sans ce gel, un export paginé servirait deux vérités
+#      successives, le journal étant alimenté en continu et trié récent d'abord.
+
+# Horodatage ISO en UTC, à la MICROSECONDE. ⚠️ Le curseur ne peut pas se bâtir sur
+# le `created_at` servi : le row factory le tronque à la seconde
+# (`_conn._normalize_value`, `microsecond=0`). Un keyset bâti dessus sauterait, en
+# silence, toutes les lignes de la même seconde que la dernière de la page.
+_ISO_US = "'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'"
+_AUDIT_KEYSET_AT = f"to_char(l.created_at AT TIME ZONE 'UTC', {_ISO_US})"
+
+
+def _audit_window_clauses(
+    org_id: int, since: Optional[str], until: str,
+) -> tuple[list[str], list[Any]]:
+    """Les clauses de la FENÊTRE d'un export d'audit, alias `l` — sans le curseur.
+
+    La page y ajoute sa position, le total non : c'est exactement ce qui les sépare,
+    et tout le reste leur est commun par construction."""
+    clauses = ["l.kind = 'mcp'", "l.org_id = %s", "l.created_at <= %s::timestamptz"]
+    params: list[Any] = [int(org_id), until]
     if since:
-        clauses.append("l.created_at >= %s::timestamptz"); params.append(since)
-    if until:
-        clauses.append("l.created_at <= %s::timestamptz"); params.append(until)
-    params.append(limit)
+        clauses.append("l.created_at >= %s::timestamptz")
+        params.append(since)
+    return clauses, params
+
+
+def export_tool_calls_for_org(
+    org_id: int, *, since: Optional[str] = None, until: Optional[str] = None,
+    limit: int = 1000, before: Optional[tuple[str, int]] = None,
+) -> dict:
+    """Journal d'audit org-scopé (export #67, complétude #770). Rend
+    `{until_effectif, total, calls, next}`.
+
+    Appels émis **sous** `org_id` (colonne `tool_calls.org_id`, stampée par le seam
+    `current_org` au moment de l'appel — scope EXACT, pas l'appartenance des
+    membres), récent d'abord, fenêtre `[since, until_effectif]` (ISO timestamptz,
+    bornes incluses). JAMAIS d'args ni de secret (garantie calllog).
+
+    - `total` — la population de la FENÊTRE, indépendante de `limit` et de `before`.
+    - `calls` — au plus `limit` lignes.
+    - `next` — `(horodatage ISO µs, id)` de la dernière ligne rendue quand il en
+      reste après elle, sinon `None`. Position pure : l'appelant l'emballe dans son
+      curseur opaque avec la fenêtre.
+    - `until_effectif` — la borne haute réellement appliquée. Quand l'appelant n'en
+      donne pas, l'instant est GELÉ ici et rendu : c'est ce qui fait de l'export une
+      période FERMÉE, donc une pièce qui peut attester de sa complétude.
+
+    ⚠ Les appels antérieurs à la colonne `org_id` (NULL) n'apparaissent dans aucun
+    export d'org — non reconstructibles a posteriori. ⚠ La rétention du journal
+    (`OTO_JOURNAL_RETENTION_DAYS`, 90 j) peut effacer des lignes ENTRE deux pages
+    d'un même export : le total reste celui du premier appel, la concaténation peut
+    alors en compter moins. C'est le seul écart possible, et il retire des lignes,
+    il n'en invente pas."""
+    limit = max(1, min(int(limit), 5000))
     with _connect() as conn:
+        # PREMIÈRE commande de la transaction — `SET TRANSACTION` est refusé après
+        # une requête. Sa portée est cette transaction seule : la connexion revient
+        # au pool en `read committed` (vérifié sur un PostgreSQL réel, 2026-09-01).
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        if not until:
+            # `now()` = l'instant d'ouverture de la transaction, donc cohérent avec
+            # le snapshot que les deux lectures partagent.
+            until = conn.execute(
+                f"SELECT to_char(now() AT TIME ZONE 'UTC', {_ISO_US}) AS t"
+            ).fetchone()["t"]
+        clauses, params = _audit_window_clauses(org_id, since, until)
+        total = int(conn.execute(
+            f"SELECT count(*) AS n FROM tool_calls l WHERE {' AND '.join(clauses)}",
+            tuple(params),
+        ).fetchone()["n"])
+
+        page_clauses, page_params = list(clauses), list(params)
+        if before is not None:
+            # Keyset sur le couple ordonné : intercaler une ligne pendant qu'on
+            # pagine ne fait ni sauter ni répéter de ligne, là où un OFFSET le ferait.
+            page_clauses.append("(l.created_at, l.id) < (%s::timestamptz, %s)")
+            page_params += [before[0], int(before[1])]
+        # `limit + 1` : la ligne en trop n'est pas servie, elle DIT qu'il en reste.
         rows = conn.execute(
             f"""
-            SELECT l.id, l.created_at, l.sub, u.email, l.tool, l.ok, l.error, l.duration_ms
+            SELECT l.id, l.created_at, l.sub, u.email, l.tool, l.ok, l.error,
+                   l.duration_ms, {_AUDIT_KEYSET_AT} AS _keyset_at
             FROM tool_calls l
             LEFT JOIN users u ON u.sub = l.sub
-            WHERE {" AND ".join(clauses)}
+            WHERE {' AND '.join(page_clauses)}
             ORDER BY l.created_at DESC, l.id DESC
             LIMIT %s
             """,
-            tuple(params),
+            tuple(page_params + [limit + 1]),
         ).fetchall()
-        return list(rows)
+
+    encore = len(rows) > limit
+    rows = [dict(r) for r in rows[:limit]]
+    cles = [r.pop("_keyset_at") for r in rows]
+    return {"until_effectif": until, "total": total, "calls": rows,
+            "next": (cles[-1], rows[-1]["id"]) if encore and rows else None}
 
 
 def instruction_usage(
