@@ -367,6 +367,28 @@ def test_la_couche_est_bien_servie_par_lapp_racine():
         "posée sous le dispatch, elle raterait l'app anonyme des sous-domaines")
 
 
+def test_la_couture_complete_une_seule_requete_rend_le_corps_ET_len_tete(
+        monkeypatch, tmp_path):
+    """La couture que touche VRAIMENT un consommateur : la table de routes réelle
+    montée sous les couches réelles, et UNE requête qui doit rendre les deux
+    coordonnées d'accord. Les tests au-dessus exercent chaque morceau séparément —
+    celui-ci exercerait un désaccord entre l'étiquette figée à la construction de la
+    couche et celle que le handler recalcule."""
+    (tmp_path / version.FICHIER_DEPLOIEMENT).write_text(json.dumps({
+        "ref": "v4.5.6", "commit": "cafebabe1234"}), encoding="utf-8")
+    monkeypatch.setattr(version, "racine_de_l_arbre", lambda: tmp_path)
+    version.instantane.cache_clear()
+
+    app = Starlette(routes=api_routes.make_routes(types.SimpleNamespace()))
+    client = TestClient(VersionHeader(app))          # étiquette résolue au montage
+
+    reponse = client.get("/api/version")
+    assert reponse.status_code == 200
+    assert reponse.json()["version"] == "v4.5.6+cafebabe"
+    assert reponse.headers["x-oto-version"] == "v4.5.6+cafebabe", (
+        "l'en-tête et le corps annoncent deux versions différentes")
+
+
 def test_len_tete_est_lisible_par_un_navigateur():
     """Sans `Access-Control-Expose-Headers`, l'en-tête part sur le fil mais reste
     illisible à `fetch` — donc au dashboard. Un en-tête qu'aucun consommateur ne
