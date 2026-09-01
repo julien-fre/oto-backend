@@ -213,6 +213,43 @@ def finish_run(run_id: str, outcome: str, note: Optional[str] = None,
         )
 
 
+def run_closed_at(run_id: str) -> Optional[datetime]:
+    """Quand ce run a été CLOS, ou `None` — encore ouvert, ou inconnu du journal.
+
+    Une seule question, un seul appelant : le refus de `@claimed`, qui décrivait un
+    ÉTAT (« aucune réservation active ») là où le problème est un MOMENT — l'appel
+    arrive APRÈS `run_finish`, qui a libéré les baux (#645). Pour le dire, il faut
+    savoir que le run est clos ; c'est tout ce que cette fonction rend.
+
+    ⚠️ Lu du FAIT (`run_finish`), jamais de `runs.finished_at` : cette colonne est une
+    écriture de confort que `finish_run` rate **en silence** quand l'index n'a pas été
+    posé (cf. le bloc ci-dessus, et `_run_closure`). Un refus qui annoncerait une
+    clôture d'après une colonne manquée mentirait exactement dans le cas qu'il est
+    censé expliquer — la faute qu'on est en train de corriger, d'un cran plus bas.
+    D'où la réutilisation de `_run_closure` : ses trois prédicats (corrélation par
+    `args`, clôture postérieure à l'ouverture, propriété du `sub`) valent ici tels
+    quels, et une seconde formulation en serait une seconde vérité.
+
+    `None` couvre « ouvert » ET « jamais vu » : les deux se disent « pas clos », et
+    affirmer une clôture qu'on n'a pas lue serait pire que se taire. Chemin d'ÉCHEC
+    seulement (le nominal résout un bail sans passer ici), deux prédicats indexés —
+    `idx_tool_calls_run` sur l'ouverture, `idx_tool_calls_run_finish_ref` sur le
+    LATERAL de clôture.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT f.created_at AS finished_at
+              FROM tool_calls s{_run_closure("s")}
+             WHERE s.tool = 'run_start' AND s.run_id = %s
+             ORDER BY s.created_at DESC
+             LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+    return row["finished_at"] if row else None
+
+
 def recent_runs(sub: str, org_id: Optional[int], limit: int = 5) -> list[dict]:
     """Les `limit` derniers runs d'un (sub, org), plus récent d'abord — l'anticipation
     du contexte injecté (#50 bloc C) + la boucle d'usage.
