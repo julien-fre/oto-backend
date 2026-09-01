@@ -131,6 +131,12 @@ déblaiement de fin de chantier : cela ne se décide pas ici.
 - **Filtre, recherche et tri sur un tableau natif.** Ils sont **refusés, pas ignorés** :
   les servir demanderait de fouiller la donnée métier, donc de l'interpréter. Les
   accepter en silence ferait croire à un filtre appliqué sur une page complète.
+  ⚠️ **Et depuis le 01/09 (#621), le chemin RECOPIÉ refuse pour la même raison** une
+  entrée de `filter` sans `:` (`400 invalid_filter`) : elle était ignorée, et la page
+  repartait non filtrée sans le dire — le geste que l'alinéa ci-dessus interdit,
+  commis sur l'autre provenance. Un curseur illisible y rend `400 invalid_cursor` (il
+  sortait en 500), et sous le MÊME code que le chemin natif : la provenance d'un
+  tableau n'est pas servie, un front ne peut donc pas prévoir lequel des deux il aura.
 
 ## Où vit quoi
 

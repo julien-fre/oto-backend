@@ -328,6 +328,22 @@ menait d'un nœud agent à sa fiche : son `nod_*` est dérivé (`md5('prc:' || i
 de guide refuse un `nod_*` — un front devait recalculer un md5 ou apparier par titre. La
 fiche de guide ne résout toujours PAS un `nod_*` (laissé de côté, cf. #417).
 
+**`…/rows` refuse ce qu'il ne peut pas appliquer, et son `total` compte la page servie —
+depuis le 01/09 (#621, relevé au passage de #418).** Trois défauts de la même famille que
+`?filter=` tronqué : *un chemin qui répond juste sur ce qu'il n'a pas regardé*.
+
+| avant | maintenant |
+|---|---|
+| une entrée de `filter` sans `:` était **ignorée** — la page partait non filtrée, en 200 | `400 invalid_filter`, qui nomme la forme `colonne:valeur` **et** l'entrée fautive |
+| `InvalidCursor` n'était rattrapé nulle part → **500** sur un curseur tronqué ou repassé d'un régime de tri dans l'autre | `400 invalid_cursor` (« reprends la liste sans `cursor` »), le MÊME code sur les deux provenances de tableau — le natif rendait `curseur_invalide`, personne ne pouvait prévoir lequel |
+| `total` était compté sur les filtres **non résolus**, la page sur les résolus | le compte passe par `store.count_rows`, qui résout comme la page |
+
+Le troisième ne se voit que sur un schéma à **double service** (`contact1_nom` servi en
+lecture pour `contacts[0].nom`, oto#22 §6) : le pied du tableau comptait un autre jeu que
+celui qu'il coiffait, et rien n'échouait. Les trois refus sont **déclarés**
+(`Capability.errors`), donc publiés dans `/openapi.json` : trois gestes différents derrière
+un même 400, et un client ne devrait pas avoir à les distinguer en lisant une phrase.
+
 ## Renommer un chemin servi : on double, on date, on retire
 
 Un chemin `/api/*` est un contrat avec des appelants qui vivent **hors de ce dépôt**.
