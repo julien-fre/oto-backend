@@ -25,6 +25,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ... import access, org_store, providers, session_org, tool_registry
 from ...connectors import activation as connector_activation
+from ...connectors import cardinality as connector_cardinality
 from ...connectors import readiness as connector_readiness
 from ...connectors import selection as connector_selection
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
@@ -264,7 +265,15 @@ class UnsetDefaultResult(BaseModel):
 def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
     """Catalogue exposé pour l'org active du caller — miroir du filtrage de
     `api_routes_public.connectors_catalog` : activation (plafond) + RBAC org (ADR 0025).
-    L'admin plateforme voit tout l'exposé."""
+    L'admin plateforme voit tout l'exposé.
+
+    ⚠️ **La ligne servie sort d'ici avec sa cardinalité EFFECTIVE**, pas celle du code
+    (oto-backend#732). `providers.public_catalog()` pose `auth.cardinality` depuis le
+    registre, qui est pur et ne peut donc pas lire une surcharge d'org — or c'est cette
+    clé que le panneau de connexion du dashboard lit pour décider s'il propose un second
+    compte. Le seam est ICI et pas au call-site : c'est le point de passage unique de la
+    carte vers `connectors.me` ET `oto_search`, donc le seul endroit où l'on ne peut pas
+    en oublier un."""
     exposed = connector_activation.exposed_connectors(ctx.org_id)
     is_admin = access.is_platform_operator(ctx.sub)
     # RBAC connecteur interne à l'org (ADR 0025) : un connecteur restreint dans l'org
@@ -280,7 +289,7 @@ def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
         if c["name"] in denied and not is_admin:
             continue
         out.append(c)
-    return out
+    return connector_cardinality.overlay_for_org(out, ctx.org_id)
 
 
 def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
