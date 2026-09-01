@@ -49,7 +49,7 @@ from __future__ import annotations
 import logging
 from typing import Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 # Lecteurs NON-déchiffrants uniquement — jamais get_credential*, jamais
 # list_platform_keys (qui déchiffre), jamais les formes appauvries
@@ -132,11 +132,40 @@ class ConnectorInstance(BaseModel):
     config: Optional[dict] = None
     set_by: Optional[str] = None
     set_at: Optional[str] = None
-    # D'OÙ vient l'instance : `credential` (le coffre, à ma portée), `user_grant` /
-    # `org_grant` / `free_tier` (paliers plateforme), `shared_with_me` (prêt
-    # nominatif d'un pair, ADR 0044 share_side — cross-org possible),
-    # `personal_cross_org` (ma propre clé posée dans une AUTRE org, #172).
-    via: str
+    # D'OÙ vient l'instance. Jeu FERMÉ, et les sept valeurs sont posées en dur dans ce
+    # module — aucune n'est dérivée d'une donnée, donc le contrat peut les nommer :
+    #
+    # | `credential`         | une ligne du coffre à ma portée (membre, équipe, org) |
+    # | `tenant_key`         | la clé du TENANT de l'appelant, entre l'org et la plateforme |
+    # | `user_grant`         | palier plateforme accordé à MOI |
+    # | `org_grant`          | palier plateforme accordé à mon ORG |
+    # | `free_tier`          | clé plateforme ouverte, sans grant (ADR 0031) |
+    # | `shared_with_me`     | prêt NOMINATIF d'un pair (ADR 0044 `share_side`) — cross-org possible, le prêt vaut consentement |
+    # | `personal_cross_org` | MA propre clé, posée dans une AUTRE org (#172) |
+    #
+    # ⚠️ **Prêt et cross-org se distinguent ici, et nulle part ailleurs** : les deux
+    # sont des instances vues depuis une org qui ne les porte pas. `shared_with_me`
+    # appartient à quelqu'un d'autre, `personal_cross_org` est la mienne — `owner` le
+    # confirme, mais c'est `via` qui le DIT.
+    #
+    # ⚠️ Écart assumé avec `AuthDescriptor.method`, qui reste un `str` par crainte
+    # qu'un énuméré fasse échouer un client généré le jour d'une valeur de plus. Deux
+    # raisons de trancher autrement ici : `method` est DÉRIVÉ (une fonction le calcule
+    # par connecteur), `via` est un littéral posé à sept endroits d'un seul module ; et
+    # `level`, son voisin immédiat dans ce même modèle, est déjà un `Literal`. Le
+    # cliquet `tests/test_instance_via_declare.py` lit l'AST du module et rougit à la
+    # huitième valeur — c'est LUI qui rend l'énuméré tenable, pas la discipline.
+    via: Literal["credential", "tenant_key", "user_grant", "org_grant", "free_tier",
+                 "shared_with_me", "personal_cross_org"] = Field(
+        description=(
+            "D'où vient l'instance. `credential` : une ligne du coffre à ma portée "
+            "(membre, équipe, org). `tenant_key` : la clé du tenant de l'appelant. "
+            "`user_grant` / `org_grant` / `free_tier` : paliers plateforme (accordé à "
+            "moi, à mon org, ou ouvert sans grant). `shared_with_me` : prêt nominatif "
+            "d'un pair, cross-org possible — l'instance appartient à QUELQU'UN "
+            "D'AUTRE. `personal_cross_org` : MA propre clé, posée dans une autre org. "
+            "Ces deux dernières sont les seules à se ressembler, et c'est ce champ "
+            "qui les distingue."))
     is_default: Optional[bool] = None       # présent (true) seulement si marqué défaut
     # Présent (true) seulement si l'instance est mise de côté : la cascade la SAUTE,
     # mais elle reste listée et réactivable — un `suspended` n'est pas une absence.
