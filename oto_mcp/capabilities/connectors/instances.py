@@ -274,12 +274,17 @@ def _platform_instance(provider: str, label: str, via: str, extra: dict) -> dict
         "level": "platform",
         "owner": {"type": "platform", "label": label},
         "name": _instance_name(provider, None, key_label=label),
-        "via": via,
         # ADR 0044 §F : une clé plateforme EST une ligne du coffre — `entity_type`
         # 'platform', `entity_id` = son label. Elle a donc une instance comme les
         # autres, y compris quand elle est atteinte par un grant ou le free-tier.
         "_vault_key": _vault_key(credentials_store.PLATFORM, label, provider, ""),
         **extra,
+        # ⚠️ APRÈS `extra`, et c'est le sujet : `via` est déclaré au contrat comme un
+        # jeu FERMÉ, donc aucun dict d'appoint ne doit pouvoir y glisser une huitième
+        # valeur. Avant `extra`, un appelant qui aurait passé `{"via": …}` produisait
+        # une valeur hors énuméré — un client généré échoue là-dessus, sur une donnée
+        # que rien n'aurait signalée.
+        "via": via,
     }
 
 

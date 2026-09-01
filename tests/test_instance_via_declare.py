@@ -111,3 +111,17 @@ def test_les_deux_provenances_qui_se_ressemblent_restent_distinctes(valeur):
     une org qui ne les porte pas. Les confondre ferait proposer « retirer » sur la clé
     d'un pair, ou « demander l'accès » sur la sienne."""
     assert valeur in _declarees()
+
+
+def test_un_dict_d_appoint_ne_peut_pas_glisser_un_huitieme_via():
+    """La faille que l'AST ne voit pas : `_platform_instance` fusionne un dict
+    d'appoint (`daily_quota`, `set_at`). Tant qu'il était fusionné APRÈS `via`, un
+    appelant pouvait y poser une valeur hors énuméré — et un `Literal` faux est pire
+    qu'un `str` honnête : il fait échouer la génération de client sur une valeur que
+    le serveur a réellement produite, sans que rien n'ait rougi ici."""
+    from oto_mcp.capabilities.connectors import instances
+
+    inst = instances._platform_instance(
+        "acme", "clé", "free_tier", {"set_at": "2026-09-01", "via": "inventé"})
+
+    assert inst["via"] == "free_tier"
