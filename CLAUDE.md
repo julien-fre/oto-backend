@@ -153,7 +153,8 @@ Denylist calculée `(sub, org active)` dans `session_visibility.py`, appliquée 
 **NOMINAL « non-sélectionné = masqué »**. ⚠️ **`PROTECTED_TOOLS` = quatre familles jamais masquables ni
 désactivables** (méta-toolset + identité, échappatoires de contexte, boucle d'usage, dispatch
 universel). ⚠️ **Gouvernance, PAS une barrière de sécurité** (ADR 0031), additive : une équipe ne
-RÉVÈLE jamais ce que l'org a masqué. ⚠️ **Stdio local = accès complet.** **`docs/tool-visibility.md`.**
+RÉVÈLE jamais ce que l'org a masqué. ⚠️ **Stdio local = accès complet.**
+⚠️ **TROISIÈME grain (01/09)** : `BETA_TOOLS` (les 3 verbes `oto_node*`) exige l'option `beta` posée par un admin sur l'user ou l'org — population **CHOISIE**, non self-activable, et **fail-CLOSED** (à contre-courant des autres blocs). La face REST n'est PAS gatée : écart assumé. **`docs/tool-visibility.md`.**
 
 ## Org/équipe : session, maison, consultation (ADR 0023)
 

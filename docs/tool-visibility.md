@@ -50,6 +50,40 @@ Source de vérité = tables PG `user_disabled_tools(sub, tool_name)` (négatif) 
 
 **Sélection par membre = régime NOMINAL « non-sélectionné = masqué » (ADR 0019/0050).** La toolbox d'un membre = les connecteurs qu'il a **installés** (`user_selected_connectors`, per (sub, org)). Au premier profil d'un (sub, org), `session_visibility` seed le socle `providers.DEFAULT_ACTIVE_CONNECTORS` ∩ exposé — **VIDE depuis le 16/07** (décision produit : un nouveau compte démarre SANS connecteurs installés ; l'agent guide depuis les tools spine — `oto_connector` op=list/select, `oto_call` — et le catalogue injecté au bloc A) ; tout l'exposé = library installable (capacité `connectors.select`, dashboard). Les pairs pré-0050 ont été backfillés une fois avec leur visible d'alors (`connector_selection.backfill_preexisting`, sentinelle `#adr0050-backfill`). Un connecteur activé pour l'org APRÈS le seed arrive dans la library, pas dans la toolbox. Le grain CONNECTEUR `default_hidden` et les flags `OTO_CONNECTOR_SELECTION_*` ont été **retirés** (0050). **Masqués par défaut, grain OUTIL** (`is_default_hidden` = `DEFAULT_HIDDEN_TOOLS` seul : `email_send`, `fr_egapro_declaration`) : self-activables. Règle effective (`is_tool_visible`) : override positif prime > désactivé > masqué par un admin (denylist org/équipe ci-dessus) > masqué-par-défaut plateforme > visible. `oto_enable_tool` pose l'override, `oto_disable_tool` le lève (même logique côté REST `/api/me/tools/{name}`). **Stdio local (sub=None) = accès complet**, le masquage ne vise que le multi-user. Sortir un connecteur du départ = ne PAS le mettre dans le socle `default_active` ; un tool isolé = `DEFAULT_HIDDEN_TOOLS`.
 
+## Surfaces BÊTA : une population CHOISIE, pas une découvrabilité (2026-09-01)
+
+**Troisième grain de masquage, et il ne se confond avec aucun des deux autres.** Un
+`DEFAULT_HIDDEN_TOOLS` est self-activable — n'importe qui le révèle d'un geste ; une
+denylist org/équipe est levée par l'override perso positif. Un outil **bêta**, lui, ne
+se voit que si un admin a posé l'option `beta` sur l'UTILISATEUR ou sur son ORG
+(`oto_admin_set_option`, lue par le seam unique `access.has_option`) : l'utilisateur ne
+peut pas se l'accorder, et aucun override perso ne le lève.
+
+`BETA_TOOLS` (source unique, `tool_visibility.py`) porte aujourd'hui les trois verbes du
+nouvel univers de contenu — `oto_node`, `oto_node_rows`, `oto_node_edit`. Motif : cette
+surface part de VIDE (la recopie depuis l'ancien monde est arrêtée, cf. `docs/noeuds.md`)
+et son contrat est provisoire. La servir à tous, c'est proposer à chaque agent une
+lecture qui ne trouve rien et une écriture dont l'utilisateur ignore la destination.
+
+⚠️ **Ils étaient exposés à TOUT LE MONDE depuis leur création** — mesuré le 2026-09-01,
+aucun gate, et c'est l'inverse de ce qu'on croyait (on les pensait invisibles). Zéro
+appel MCP en 30 jours, ce qui explique que personne ne l'ait vu.
+
+⚠️ **FAIL-CLOSED, à contre-courant de tous les autres blocs du calcul.** Eux sont
+fail-open parce qu'un hoquet de base ne doit pas priver quelqu'un de ses outils : le
+pire y est une toolbox trop pauvre pendant une seconde. Ici le pire est l'inverse — une
+surface non finie qui réapparaît pour tout le monde, en silence. Ne pas proposer une
+bêta n'a jamais bloqué personne.
+
+⚠️ **Et ce n'est pas une barrière de sécurité** (ADR 0031), comme aucune règle de ce
+module : un compte qui connaît le nom peut appeler le verbe, ou le matérialiser par
+`oto_call`. Ce qui protège est l'autorisation de la capacité — membre de l'org pour
+lire, palier du propriétaire pour écrire. Ce gate décide qui se les voit PROPOSER.
+
+⚠️ **La face REST n'est pas gatée**, écart assumé : le dashboard qui construit ce nouvel
+univers la consomme aujourd'hui, et la couper arrêterait le travail qui justifie la
+surface. Il se referme quand la surface cesse d'être provisoire.
+
 ## Méta-tools et `PROTECTED_TOOLS`
 
 Méta-tools exposés (`tools/meta.py`) : `oto_list_my_tools`, `oto_disable_tool`, `oto_enable_tool`, `oto_call`, `oto_tool_schema`. **`PROTECTED_TOOLS`** (`tool_visibility.py`, source unique) = quatre familles jamais masquables (default-hidden inclus) **ni désactivables** : méta-toolset + identité (`oto_list_my_tools`/`oto_enable_tool`/`oto_whoami`/`oto_profile`), échappatoires de contexte (`oto_use_org`/`oto_clear_org`/`oto_list_orgs`/`oto_use_group`/`oto_clear_group` — anti-lockout, vécu Sentry 2026-06-30), boucle d'usage (`feedback`/`run_start`/`run_finish` — mandatés par les instructions plateforme ADR 0017 : un toggle qui les masque rend le gap invisible), **dispatch universel** (`oto_call`/`oto_tool_schema` — ADR 0036 : appeler par son nom un outil NON listé (FOD, connecteur non activé) le temps d'un appel, sans muter la visibilité ; exécution par `Tool.run` HORS middleware → gates call-time intactes + rédaction ré-appliquée via `redaction.py`). Garde des deux faces (2026-07-02) : `oto_disable_tool` refuse, `POST /api/me/tools/{name}` → 400 `protected_tool` ; `GET /api/me/tools` expose `protected:bool` (toggle inerte dashboard).

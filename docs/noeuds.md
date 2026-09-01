@@ -59,6 +59,22 @@ vit à côté de docs et part de vide »*.
 Rien ne traduit l'un vers l'autre. Un contenu créé dans l'ancien monde **n'apparaît
 pas** dans le nouveau, et c'est le comportement voulu, pas une régression.
 
+## Qui voit ces verbes
+
+Les trois verbes MCP — `oto_node`, `oto_node_rows`, `oto_node_edit` — sont réservés aux
+comptes **bêta** depuis le 2026-09-01 : un admin pose l'option `beta` sur l'utilisateur
+ou sur son org, sinon ils sont masqués. Ils étaient jusque-là exposés à tout le monde
+sans aucun gate — l'inverse de ce qu'on croyait, et zéro appel MCP en 30 jours explique
+que personne ne l'ait remarqué.
+
+Motif : la surface part de vide et son contrat est provisoire. La proposer à tous, c'est
+offrir à chaque agent une lecture qui ne trouve rien et une écriture dont l'utilisateur
+ignore la destination. Détail du grain, du fail-closed et de ses limites :
+`docs/tool-visibility.md`.
+
+⚠️ **La face REST n'est pas gatée** — le dashboard qui construit ce nouvel univers la
+consomme aujourd'hui. Écart assumé, refermé quand la surface cessera d'être provisoire.
+
 ## La recopie, et pourquoi elle s'est arrêtée
 
 Jusqu'au 2026-09-01, **cinq conversions** tournaient à chaque démarrage — projets,
@@ -108,7 +124,7 @@ propre**, et ne lit `nodes` que pour les couches de contexte.
 
 Trois surfaces lisent aujourd'hui le résidu et deviendront vides sans lui :
 
-1. **le contrat front partenaire** — ouvrir par la surface nœud un contenu créé dans
+1. **le contrat du dashboard** — ouvrir par la surface nœud un contenu créé dans
    l'ancienne. Trois tests sont marqués en échec **attendu strict** : s'ils repassent
    au vert, c'est qu'une recopie est revenue ;
 2. **`oto_node_rows` sur un tableau recopié** — il résout son namespace par
@@ -116,9 +132,15 @@ Trois surfaces lisent aujourd'hui le résidu et deviendront vides sans lui :
 3. **la référence de procédure** (`node_procedure_ref`), qui vise la famille produite
    par la conversion.
 
-⚠️ **L'identifiant dérivé et les poignées `doc_id`/`project_id` sont SERVIS** au front
-partenaire (`db/shell.py`). Les retirer est un **changement de contrat**, pas un
-déblaiement de fin de chantier : cela ne se décide pas ici.
+⚠️ **L'identifiant dérivé et les poignées `doc_id`/`project_id` sont SERVIS** au
+dashboard (`db/shell.py`), qui est le premier consommateur de ce nouvel univers. Les
+retirer est un **changement de contrat**, pas un déblaiement de fin de chantier : cela
+ne se décide pas ici.
+
+⚠️ **Vocabulaire.** Les tests parlent de « front tiers » : c'est un héritage, pas une
+description. Le consommateur de cette surface est **le nouveau dashboard produit**, et
+c'est pour lui qu'elle est construite — pas pour un intégrateur extérieur. Lire « tiers »
+comme « partenaire externe » fait surestimer le coût d'un changement de contrat.
 
 ## Ce qui n'est pas encore porté
 
