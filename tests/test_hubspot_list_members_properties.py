@@ -16,13 +16,18 @@ C'est très exactement le test qui décrit l'intention de son auteur au lieu du
 système (`docs/conventions.md`). Deux garde-fous sont posés ici contre le
 retour de cette panne :
 
-- `_enveloppe()` ci-dessous est le SEUL endroit de ce dépôt où cette forme est
-  écrite : tous les mocks passent par lui, donc ils ne peuvent plus diverger
-  entre eux ;
+- `_enveloppe()` ci-dessous est le SEUL endroit de ce fichier où cette forme est
+  écrite à la main : tous les mocks passent par lui, donc ils ne peuvent plus
+  diverger entre eux ;
 - `test_a_bare_list_from_the_client_is_refused_by_name` fait passer au tool la
-  forme de l'ANCIEN client et exige un refus NOMMÉ. C'est le seul test qui
-  survivrait à un pin en arrière : sans lui, un client qui régresse redonne un
-  `AttributeError` opaque en prod.
+  forme de l'ANCIEN client et exige un refus NOMMÉ. Sans lui, un client qui
+  régresse redonne un `AttributeError` opaque en prod ;
+- **les deux tests de la section finale n'utilisent AUCUN mock du client** : ils
+  importent le vrai `HubSpotClient`, ne remplacent que le transport HTTP, et
+  confrontent la valeur qu'il construit réellement au contrat. C'est ce qui
+  rattache `_enveloppe()` à oto-core : sans eux, un RENOMMAGE de `missing_ids`
+  côté client laisserait tout ce fichier vert pendant que la prod perdrait son
+  relevé d'écart — la panne de ce lot, rejouée un cran plus loin.
 
 Le mock est conformé (`spec=`) à la vraie classe : un `MagicMock()` nu accepte
 n'importe quel nom de méthode, donc une faute de frappe sur `get_lst` passerait.
@@ -46,15 +51,26 @@ Le reste de ce qui est testé ici est ce qui peut casser SILENCIEUSEMENT :
 5. **La description SERVIE.** FastMCP tronque la `description` au bloc `Args:` :
    la phrase qui fait choisir 2 appels plutôt que 101 doit vivre AVANT.
 
-Le client oto-core est mocké : ces tests ne dépendent pas du pin
-(`batch_read_objects` n'existe pas encore sur le tag épinglé — c'est
-`tests/test_tools_client_methods_exist.py` qui porte cette dépendance, et il
-doit rester rouge jusqu'au bump).
+⚠️ **Ce fichier a DEUX régimes vis-à-vis du pin, et c'est délibéré.** Tout ce qui
+précède la dernière section mocke le client : indépendant du pin, donc vert dès
+maintenant. Les deux derniers tests, eux, exercent le client INSTALLÉ — ils sont
+marqués `exige_pin_oto_core`, donc non concluants en local quand l'écart
+venv↔pin est mesurable, et mordants en CI, qui installe AU tag. Sur un venv dont
+les métadonnées portent le numéro gelé (`1.100.0`, qui ne dit rien du tag),
+l'écart n'est pas mesurable : ils s'exécutent, et contre un client d'avant
+l'enveloppe ils sont ROUGES en nommant la bonne pièce. C'est voulu — on ne
+neutralise pas un garde-fou sur une mesure qu'on a réellement faite.
+
+`batch_read_objects` n'existe pas sur le tag épinglé aujourd'hui :
+`tests/test_tools_client_methods_exist.py` porte cette dépendance et doit rester
+rouge jusqu'au bump.
 """
 import asyncio
+import json
 from unittest.mock import MagicMock
 
 import pytest
+from oto.tools.hubspot.client import HubSpotClient
 from oto_mcp.mcp_errors import McpError
 
 
@@ -244,6 +260,49 @@ def test_the_two_verdicts_disagreeing_is_named_not_silently_reconciled(client):
     assert out["missing_count"] == 1
     assert out["missing_mismatch"]["reported_by_client"] == ["3"]
     assert out["missing_mismatch"]["absent_from_join"] == ["1"]
+
+
+def test_a_disagreement_the_client_cannot_see_is_named_too():
+    """L'AUTRE sens : la jointure voit une absence dont le client n'a rien dit.
+
+    Une appartenance sans `recordId` n'est jamais demandée au batch read — son
+    id ne peut donc PAS figurer dans `missing_ids`. Ne comparer les deux
+    ensembles que lorsque le client a parlé (`if missing_ids and …`) servait
+    alors `missing_count: 1` tout seul : un chiffre sans nom, assez visible pour
+    inquiéter et trop muet pour agir. Le désaccord se lit dans les deux sens.
+    """
+    from oto_mcp.tools.hubspot import _missing_report
+
+    rows = [{"recordId": None, "missing": "record not returned by the batch read"}]
+
+    out = _missing_report(rows, [])
+
+    assert out["missing_count"] == 1
+    assert "missing_ids" not in out          # le client n'a rien à dire
+    assert out["missing_mismatch"]["reported_by_client"] == []
+    assert out["missing_mismatch"]["absent_from_join"] == ["None"]
+
+
+def test_the_two_verdicts_agreeing_stays_silent():
+    """La symétrie ne doit pas se payer d'un bruit permanent : quand les deux
+    ensembles coïncident, aucun désaccord n'est servi."""
+    from oto_mcp.tools.hubspot import _missing_report
+
+    rows = [{"recordId": "1", "missing": "…"}, {"recordId": "2", "properties": {}}]
+
+    out = _missing_report(rows, ["1"])
+
+    assert out == {"missing_ids": ["1"], "missing_count": 1}
+
+
+def test_the_verdicts_are_compared_as_strings_not_as_types():
+    """HubSpot rend l'id en chaîne, une appartenance peut porter un entier :
+    comparer sans normaliser inventerait un désaccord à chaque page."""
+    from oto_mcp.tools.hubspot import _missing_report
+
+    rows = [{"recordId": 7, "missing": "…"}]
+
+    assert _missing_report(rows, [7]) == {"missing_ids": [7], "missing_count": 1}
 
 
 # --- le chemin historique reste OCTET pour OCTET --------------------------------
@@ -494,12 +553,37 @@ def test_the_envelope_reader_refuses_a_list_by_name():
         _batch_read_envelope([{"id": "1"}])
 
 
-def test_the_envelope_reader_tolerates_an_absent_missing_ids():
-    """Une enveloppe sans `missing_ids` reste lisible : c'est `results` qui porte
-    la donnée, `missing_ids` n'est qu'un relevé."""
+@pytest.mark.parametrize("lecture, absente", [
+    ({"results": [{"id": "1"}]}, "missing_ids"),
+    ({"results": [{"id": "1"}], "missing": ["2"]}, "missing_ids"),   # renommage
+    ({"missing_ids": []}, "results"),
+    ({"results": [{"id": "1"}], "missing_ids": None}, "missing_ids"),
+])
+def test_the_envelope_reader_refuses_a_mapping_missing_a_contract_key(lecture, absente):
+    """Un mapping qui n'a PAS les deux clés est refusé, nommément.
+
+    C'est le cas dangereux, et il ne ressemble pas à une panne : lire la clé
+    avec un défaut (`.get("missing_ids") or []`) laisserait un renommage côté
+    oto-core passer en SILENCE — la page servie perdrait son relevé d'écart,
+    donc une page de 250 membres revenue à 247 s'annoncerait complète. Le refus
+    est bruyant, la divergence est muette (`docs/conventions.md`) : une dérive
+    inter-dépôts doit tomber ici, avec le nom de la clé qui manque.
+
+    `missing_ids: None` est logé au même endroit : le contrat dit « toujours
+    présente, jamais None », et un None rétrécirait la page tout autant.
+    """
     from oto_mcp.tools.hubspot import _batch_read_envelope
 
-    assert _batch_read_envelope({"results": [{"id": "1"}]}) == ([{"id": "1"}], [])
+    with pytest.raises(TypeError, match=absente):
+        _batch_read_envelope(lecture)
+
+
+def test_the_envelope_reader_accepts_the_empty_envelope():
+    """Vide n'est pas absent : `{"results": [], "missing_ids": []}` est ce que le
+    client rend quand il n'y a rien à lire, et il doit passer."""
+    from oto_mcp.tools.hubspot import _batch_read_envelope
+
+    assert _batch_read_envelope({"results": [], "missing_ids": []}) == ([], [])
 
 
 def test_rows_from_memberships_refuses_the_envelope_itself():
@@ -548,3 +632,144 @@ def test_the_missing_report_is_empty_when_nothing_is_missing():
     from oto_mcp.tools.hubspot import _missing_report
 
     assert _missing_report([{"recordId": "1", "properties": {}}], []) == {}
+
+
+# --- LE CONTRAT INTER-DÉPÔTS, exercé sur le VRAI client -------------------------
+#
+# Tout ce qui précède mocke `batch_read_objects`. Un mock ne peut pas réfuter la
+# forme qu'il écrit lui-même : `_enveloppe()` centralise cette forme, donc les
+# mocks ne peuvent plus diverger ENTRE EUX — mais rien ne les rattache à oto-core.
+# Le jour où le client renomme `missing_ids`, tous les tests ci-dessus restent
+# verts et la prod perd son relevé d'écart. C'est la panne exacte de ce lot,
+# reprise un cran plus loin.
+#
+# Ces deux tests-ci ne mockent donc PAS le client : ils l'importent, ne
+# remplacent que le TRANSPORT (`requests.Session.request`), laissent le vrai
+# `batch_read_objects` fabriquer sa valeur et la font entrer telle quelle dans
+# les fonctions du tool. Un changement de forme côté oto-core tombe ici.
+#
+# ⚠️ **Ce que ces tests font dans un venv en retard sur le pin.** Ils portent
+# `exige_pin_oto_core` : quand l'écart venv↔pin est MESURABLE (installation git,
+# `direct_url.json`), `tests/_oto_core_pin.py` les rend non concluants en local
+# et mordants en CI, qui installe AU tag. Quand il ne l'est pas — un venv dont
+# les métadonnées portent le numéro gelé `1.100.0`, qui ne dit rien du tag —
+# l'instrument ne peut pas se prononcer et ces tests s'exécutent : contre un
+# client d'avant l'enveloppe, ils sont ROUGES, et ce rouge nomme la bonne pièce
+# (« le client rend une liste »). C'est le prix assumé d'un garde-fou qui refuse
+# de se taire sur une mesure qu'il a réellement faite.
+
+
+class _Reponse:
+    """Le strict nécessaire pour qu'oto-core lise une réponse HubSpot.
+
+    Écrite ici plutôt que `MagicMock` : ce qu'on veut prouver est que le vrai
+    client SAIT LIRE un corps HubSpot réel, et un mock qui répond à tout ne
+    prouverait rien de plus que le mock du haut de ce fichier.
+    """
+
+    def __init__(self, status_code: int, body: dict):
+        self.status_code = status_code
+        self._body = body
+        self.text = json.dumps(body)
+        self.content = self.text.encode()
+        self.headers: dict = {}
+
+    def json(self) -> dict:
+        return self._body
+
+
+@pytest.fixture
+def transport_hubspot(monkeypatch):
+    """Le VRAI client, dont seul le transport HTTP est remplacé.
+
+    HubSpot répond **207** à un batch read partiel : les enregistrements trouvés
+    dans `results`, et RIEN qui nomme les absents — c'est ce silence qui rend
+    `missing_ids` nécessaire, et le client est le seul endroit d'où il peut
+    sortir. On retient donc l'id `"3"`, sans le mentionner nulle part dans le
+    corps, et on exige de le retrouver nommé dans l'enveloppe.
+    """
+    import oto.tools.hubspot.client as hs
+
+    appels: list = []
+
+    def _faux(self, method, url, **kw):
+        demandes = [e["id"] for e in (kw.get("json") or {}).get("inputs") or []]
+        appels.append((method, url, demandes))
+        return _Reponse(207, {
+            "results": [{"id": i, "properties": {"email": f"{i}@x.test"}}
+                        for i in demandes if i != RETENU],
+            "numErrors": 1,
+        })
+
+    monkeypatch.setattr(hs.requests.Session, "request", _faux)
+    return appels
+
+
+#: L'id que l'amont simulé ne rend PAS, et qu'aucun corps de réponse ne nomme.
+RETENU = "3"
+
+
+@pytest.mark.exige_pin_oto_core
+@pytest.mark.skipif(not hasattr(HubSpotClient, "batch_read_objects"),
+                    reason="`batch_read_objects` absent du core installé : la "
+                           "forme n'est pas mesurable ici (cf. le pin)")
+def test_the_real_client_returns_the_envelope_this_tool_reads(transport_hubspot):
+    """La forme d'oto-core, lue sur oto-core — pas sur `_enveloppe()`.
+
+    `_enveloppe()` est une COPIE du contrat écrite à la main. Ce test la rend
+    vérifiée au lieu de déclarée : il exige les DEUX clés, et rien d'autre, sur
+    la valeur que le vrai `batch_read_objects` construit.
+
+    L'égalité d'ensembles est délibérément stricte dans les deux sens. Un
+    `in` laisserait passer un renommage accompagné d'un alias (les deux clés
+    coexisteraient, le test resterait vert, et l'ancienne finirait par
+    disparaître un tag plus tard, silencieusement).
+    """
+    from oto_mcp.tools.hubspot import _CLES_ENVELOPPE
+
+    lu = HubSpotClient(api_key="pat-test").batch_read_objects(
+        "contacts", ["1", "2", RETENU], properties=["email"])
+
+    assert isinstance(lu, dict), (
+        f"batch_read_objects rend {type(lu).__name__} : c'est la forme d'AVANT "
+        "l'enveloppe. `_batch_read_envelope` la refuse — bumper le pin oto-core "
+        "(pyproject.toml) et réinstaller le venv.")
+    assert set(lu) == set(_CLES_ENVELOPPE)
+    assert RETENU in [str(i) for i in lu["missing_ids"]], (
+        "HubSpot répond 207 sans nommer les absents : si le client ne les "
+        "calcule plus, personne d'autre ne le peut.")
+    assert [str(r["id"]) for r in lu["results"]] == ["1", "2"]
+    assert len(transport_hubspot) == 1, "une tranche = un appel HTTP"
+
+
+@pytest.mark.exige_pin_oto_core
+@pytest.mark.skipif(not hasattr(HubSpotClient, "batch_read_objects"),
+                    reason="`batch_read_objects` absent du core installé : la "
+                           "forme n'est pas mesurable ici (cf. le pin)")
+def test_the_real_clients_value_feeds_the_tool_helpers_unmodified(transport_hubspot):
+    """Le raccord, bout à bout : la valeur du VRAI client entre telle quelle.
+
+    C'est la séquence exacte du site d'appel `op='members'`, sans une ligne de
+    massage entre les deux repos — parce qu'un massage dans le test serait très
+    précisément l'endroit où la divergence se cacherait.
+
+    La ligne retenue survit NOMMÉE (`properties: None` + `missing`) et le relevé
+    servi porte l'id, pas seulement un compte : dans une population de
+    prospection, une ligne muette est pire qu'un refus.
+    """
+    from oto_mcp.tools.hubspot import (_batch_read_envelope, _missing_report,
+                                       _rows_from_memberships)
+
+    membres = [{"recordId": "1"}, {"recordId": "2"}, {"recordId": RETENU}]
+    lu = HubSpotClient(api_key="pat-test").batch_read_objects(
+        "contacts", [m["recordId"] for m in membres], properties=["email"])
+
+    records, absents = _batch_read_envelope(lu)
+    rows = _rows_from_memberships(membres, records, ["email"])
+    releve = _missing_report(rows, absents)
+
+    assert [r["recordId"] for r in rows] == ["1", "2", RETENU]
+    assert rows[0]["properties"] == {"email": "1@x.test"}
+    assert rows[2]["properties"] is None
+    assert "missing" in rows[2]
+    assert releve == {"missing_ids": [RETENU], "missing_count": 1}

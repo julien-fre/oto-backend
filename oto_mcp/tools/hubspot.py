@@ -71,6 +71,12 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from .. import access
 
 
+#: Les clés que `batch_read_objects` rend TOUJOURS, toutes les deux, jamais à
+#: None (contrat oto-core). Écrites une fois, ici : c'est la seule description
+#: de la forme du client dans ce dépôt, et le refus ci-dessous s'y adosse.
+_CLES_ENVELOPPE = ("results", "missing_ids")
+
+
 def _batch_read_envelope(lecture) -> tuple:
     """Ouvre l'ENVELOPPE de `batch_read_objects` — un mapping, pas une liste.
 
@@ -80,13 +86,24 @@ def _batch_read_envelope(lecture) -> tuple:
     écart est calculé. On le rend au site d'appel plutôt que de le laisser
     tomber — une page de 250 membres qui revient à 247 lignes doit s'annoncer.
 
-    ⚠️ Le refus est la raison d'être de cette fonction. Une version antérieure du
-    client rendait une LISTE nue ; la prendre pour l'enveloppe itérerait ses
-    CLÉS (`"results"`, une chaîne) et lèverait un `AttributeError` opaque au
-    fond du recollage, plusieurs frames plus loin. Un pin oto-core en retard
-    doit se lire comme un refus NOMMÉ, pas comme une panne : `tests/
-    test_tools_client_methods_exist.py` prouve que la MÉTHODE existe sur le tag,
-    rien ne prouve mécaniquement sa FORME — c'est ici que la forme est écrite.
+    ⚠️ Le refus est la raison d'être de cette fonction, et il porte sur les DEUX
+    clés NOMMÉMENT, pas seulement sur le type du contenant :
+
+    - un client qui rend une LISTE nue (la forme d'avant le tag) : la prendre
+      pour l'enveloppe itérerait ses CLÉS (`"results"`, une chaîne) et lèverait
+      un `AttributeError` opaque au fond du recollage, plusieurs frames plus
+      loin ;
+    - un client qui RENOMME `missing_ids` : c'est l'accident silencieux, et le
+      plus grave des deux. Lire la clé avec un défaut (`.get(…) or []`) rendrait
+      une enveloppe amputée SANS un mot — la page de 250 membres revenue à 247
+      s'annoncerait vide de tout écart, ce qui est très exactement le succès
+      déguisé que ce relevé existe pour interdire. On exige donc les deux clés
+      par leur nom : une dérive inter-dépôts devient un refus, jamais une page
+      rétrécie en silence.
+
+    C'est ici, et nulle part ailleurs, que la FORME du client est écrite :
+    `tests/test_tools_client_methods_exist.py` prouve que la MÉTHODE existe sur
+    le tag épinglé, rien ne prouve mécaniquement ce qu'elle rend.
 
     Rend `(results, missing_ids)`. La forme de `results` n'est pas jugée ici :
     c'est `_rows_from_memberships` qui la refuse, à son tour et par son nom.
@@ -97,7 +114,16 @@ def _batch_read_envelope(lecture) -> tuple:
             "{'results': [...], 'missing_ids': [...]} et non "
             f"{type(lecture).__name__} — pin oto-core en retard sur le tag qui "
             "porte cette forme (cf. pyproject.toml)")
-    return lecture.get("results") or [], list(lecture.get("missing_ids") or [])
+    defaillantes = [k for k in _CLES_ENVELOPPE if lecture.get(k) is None]
+    if defaillantes:
+        raise TypeError(
+            "batch_read_objects doit rendre l'enveloppe "
+            "{'results': [...], 'missing_ids': [...]} : "
+            f"clé(s) absente(s) ou nulle(s) {defaillantes}, reçu les clés "
+            f"{sorted(lecture)} — pin oto-core en retard, ou clé renommée côté "
+            "client (cf. pyproject.toml). Servir la page sans `missing_ids` la "
+            "rétrécirait sans le dire.")
+    return lecture["results"], list(lecture["missing_ids"])
 
 
 def _missing_report(rows, missing_ids) -> dict:
@@ -110,17 +136,29 @@ def _missing_report(rows, missing_ids) -> dict:
     silence : le jour où ils divergent, c'est que l'un des deux a tort, et c'est
     précisément le genre d'écart qu'on refuse de laisser passer sans un mot.
 
+    ⚠️ **Le désaccord est SYMÉTRIQUE, et il le devient parce que l'autre sens
+    s'est produit.** Une première version ne comparait les deux ensembles que si
+    le client avait, lui, quelque chose à dire (`if missing_ids and …`) : une
+    absence vue par la seule JOINTURE — une appartenance sans `recordId`, donc
+    un id jamais demandé au batch read, qui ne peut par construction pas figurer
+    dans `missing_ids` — servait alors `missing_count: 1` tout seul, sans un id
+    ni une phrase pour dire de qui on parle. Un chiffre sans nom est le pire des
+    deux mondes : assez visible pour inquiéter, trop muet pour agir. La
+    comparaison porte donc sur les deux ensembles, dans les deux sens, dès que
+    l'un des deux n'est pas vide.
+
     Pure, et donc exerçable directement.
     """
     absents_du_join = [str(r.get("recordId")) for r in rows if "missing" in r]
+    reportes = [str(i) for i in (missing_ids or [])]
     out: dict = {}
-    if missing_ids:
+    if reportes:
         out["missing_ids"] = list(missing_ids)
     if absents_du_join:
         out["missing_count"] = len(absents_du_join)
-    if missing_ids and set(map(str, missing_ids)) != set(absents_du_join):
+    if set(reportes) != set(absents_du_join):
         out["missing_mismatch"] = {
-            "reported_by_client": list(missing_ids),
+            "reported_by_client": list(missing_ids or []),
             "absent_from_join": absents_du_join,
             "note": ("the batch read's own verdict and the membership join "
                      "disagree on which records are missing"),
