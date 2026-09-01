@@ -73,30 +73,40 @@ _CURSEUR_ILLISIBLE = (
     "l'export sans `cursor` : la fenêtre sera regelée à cet instant.")
 
 
-def _encode_cursor(since: Optional[str], until: str, position: tuple[str, int]) -> str:
-    """Base64url (sans remplissage) d'un objet compact `{s, u, t, i}`."""
-    brut = json.dumps({"s": since, "u": until,
+def _encode_cursor(org_id: int, since: Optional[str], until: str,
+                   position: tuple[str, int]) -> str:
+    """Base64url (sans remplissage) d'un objet compact `{o, s, u, t, i}`."""
+    brut = json.dumps({"o": int(org_id), "s": since, "u": until,
                        "t": position[0], "i": int(position[1])},
                       separators=(",", ":")).encode()
     return base64.urlsafe_b64encode(brut).decode().rstrip("=")
 
 
-def _decode_cursor(cursor: str) -> tuple[Optional[str], str, tuple[str, int]]:
+def _decode_cursor(cursor: str, org_id: int) -> tuple[Optional[str], str,
+                                                      tuple[str, int]]:
     """→ `(since, until_gelé, (horodatage, id))`. Lève un 400, jamais une panne.
 
     Un curseur abîmé par un copier-coller n'est pas une panne de serveur : c'est une
     demande malformée, et l'appelant n'a qu'une chose à faire — que le 500 ne dirait
     pas. Même arbitrage et même code que `node_rows` (#621), pour qu'un intégrateur
     n'ait pas deux façons de traiter le même accident.
+
+    ⚠️ **Le curseur nomme SON org, et on le vérifie.** Rejoué sur une autre org dont
+    l'appelant est aussi administrateur, il rendrait une page prise à la position
+    d'un AUTRE export : des lignes sautées, aucune erreur, un `total` qui décrit
+    pourtant bien la nouvelle fenêtre — donc une pièce qui a l'air entière et ne
+    l'est pas. C'est la garde d'identité de `node_rows` (le namespace résolu doit
+    être celui que le nœud désigne), appliquée ici. Sans elle, le refus « pris d'un
+    autre export » que ce module promet serait décoratif.
     """
     try:
         clair = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
         charge = json.loads(clair)
-        since, until, quand, ident = (charge["s"], charge["u"], charge["t"],
-                                      int(charge["i"]))
+        org, since, until, quand, ident = (int(charge["o"]), charge["s"], charge["u"],
+                                           charge["t"], int(charge["i"]))
     except (binascii.Error, ValueError, TypeError, KeyError, UnicodeDecodeError):
         raise AuthzDenied(400, "invalid_cursor", _CURSEUR_ILLISIBLE)
-    if not until or not quand:
+    if not until or not quand or org != int(org_id):
         raise AuthzDenied(400, "invalid_cursor", _CURSEUR_ILLISIBLE)
     return since, until, (quand, ident)
 
@@ -201,7 +211,7 @@ def _export(ctx: ResolvedCtx, inp: AuditExportInput) -> dict:
                 "`since` ni `until` avec lui. Les honorer rendrait un `total` qui "
                 "ne décrit pas la page servie. Pour changer de fenêtre, repars sans "
                 "`cursor`.")
-        since, until, before = _decode_cursor(inp.cursor)
+        since, until, before = _decode_cursor(inp.cursor, inp.org_id)
 
     page = db.export_tool_calls_for_org(inp.org_id, since=since, until=until,
                                         limit=inp.limit, before=before)
@@ -220,8 +230,8 @@ def _export(ctx: ResolvedCtx, inp: AuditExportInput) -> dict:
         # celui qui tient la pièce. Sur une page de continuation, elle reste vraie :
         # la pièce complète est la concaténation, pas la page.
         "truncated": len(calls) < page["total"],
-        "next_cursor": (_encode_cursor(since, page["until_effectif"], suivant)
-                        if suivant else None),
+        "next_cursor": (_encode_cursor(inp.org_id, since, page["until_effectif"],
+                                       suivant) if suivant else None),
         "calls": calls,
     }
 

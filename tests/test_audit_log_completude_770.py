@@ -22,7 +22,10 @@ Ce qui est gardé vert ici :
    lignes de la même SECONDE (le `created_at` servi est tronqué à la seconde par le
    row factory : un curseur bâti dessus sauterait des lignes) ;
 5. repasser `since`/`until` avec un `cursor` est REFUSÉ, pas ignoré — les honorer
-   rendrait un total qui ne décrit pas la fenêtre de la page.
+   rendrait un total qui ne décrit pas la fenêtre de la page ;
+6. un curseur rejoué sur une AUTRE org est refusé : il rendrait une page prise à la
+   position d'un autre export, sans erreur et sous un total exact — donc une pièce
+   qui a l'air entière sans l'être.
 """
 from __future__ import annotations
 
@@ -128,10 +131,26 @@ def test_le_curseur_ne_porte_aucune_donnee_du_journal():
     import base64
     import json
 
-    c = al._encode_cursor("2026-08-01", "2026-08-31T00:00:00.000000Z",
+    c = al._encode_cursor(7, "2026-08-01", "2026-08-31T00:00:00.000000Z",
                           ("2026-08-30T09:00:00.000000Z", 91))
     clair = base64.urlsafe_b64decode(c + "=" * (-len(c) % 4)).decode()
-    assert set(json.loads(clair)) == {"s", "u", "t", "i"}
+    assert set(json.loads(clair)) == {"o", "s", "u", "t", "i"}
+
+
+def test_un_curseur_d_une_AUTRE_org_est_refuse(monkeypatch):
+    """Rejoué sur une org dont l'appelant est aussi administrateur, il rendrait une
+    page prise à la position d'un autre export : des lignes sautées, aucune erreur,
+    et un `total` qui décrit pourtant bien la nouvelle fenêtre — une pièce qui a
+    l'air entière sans l'être. Même garde d'identité que `node_rows`."""
+    _fake(monkeypatch, calls=[], total=9, suivant=("2026-08-30T09:00:00.000000Z", 91))
+    ailleurs = al._export(CTX, al.AuditExportInput(org_id=7))["next_cursor"]
+
+    with pytest.raises(AuthzDenied) as e:
+        al._export(ResolvedCtx(sub="admin", org_id=8),
+                   al.AuditExportInput(org_id=8, cursor=ailleurs))
+    assert e.value.status == 400 and e.value.code == "invalid_cursor"
+    # …et il reste bon sur la sienne : la garde vise l'org, pas le curseur.
+    assert al._export(CTX, al.AuditExportInput(org_id=7, cursor=ailleurs))["total"] == 9
 
 
 # ── Le store : total et page décrivent le MÊME jeu, contre un vrai PostgreSQL ──

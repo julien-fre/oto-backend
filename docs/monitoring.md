@@ -271,6 +271,12 @@ abîmé rend `400 invalid_cursor` (même code et même geste que `node_rows`), p
 Le gel de la borne haute répond du même coup à la vraie demande de conformité : un
 export sur une **période fermée**.
 
+**Le curseur nomme SON org, et on le vérifie** — même garde d'identité que `node_rows`
+(le namespace résolu doit être celui que le nœud désigne). Rejoué sur une autre org dont
+l'appelant est aussi administrateur, il rendrait une page prise à la position d'un AUTRE
+export : des lignes sautées, aucune erreur, et un `total` qui décrit pourtant bien la
+nouvelle fenêtre — une pièce qui a l'air entière sans l'être.
+
 ⚠️ **Le keyset se bâtit sur un horodatage à la microseconde**, jamais sur le
 `created_at` servi : le row factory tronque ce dernier à la seconde
 (`_conn._normalize_value`). Un curseur bâti sur la valeur servie sauterait, en silence,
