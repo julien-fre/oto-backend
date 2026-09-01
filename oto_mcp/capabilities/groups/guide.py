@@ -1,26 +1,57 @@
-"""Guide & skills d'un GROUPE (ADR 0012) — éditeur self-service du chef d'équipe.
+"""Guide & skills d'un GROUPE (ADR 0012) — éditeur self-service de l'équipe.
 
-Miroir du guide d'org au grain groupe : lecture = membre du groupe
-(`GROUP_MEMBER_OF`), écriture = chef d'équipe (`GROUP_ADMIN_OF`, escalade
-org_admin/platform). Modèle versionné (slug réservé `claude_md` = guide de
-base servi en complément de celle de l'org par `oto_procedure(op='get')`). Édité par le
-dashboard via REST `/api/groups/{id}/instructions*`.
+Miroir du guide d'org au grain groupe. La garde suit le VERBE, pas la surface (#681) :
+lecture, écriture et restauration = **membre** du groupe (`GROUP_MEMBER_OF`) ;
+suppression = **chef d'équipe** (`GROUP_ADMIN_OF`, escalade org_admin/platform).
+Éditer une procédure, c'est faire son travail, et le geste est réversible — chaque
+écriture ajoute une version, `revert` en restaure une. Supprimer emporte l'historique
+sans corbeille : c'est le seul geste que rien ne défait, et le seul réservé au chef.
+
+Deux gardes ⟹ deux droits SERVIS : `GET /api/groups/{id}/instructions` rend
+`can_write_instructions` et `can_delete_instructions`, chacun calculé par la règle
+d'autz de sa capacité. Un drapeau unique remettrait « qui peut annoter » dans les mains
+d'un écran, et c'est exactement ce que #695 vient de retirer.
+
+⚠️ Ces routes et `oto_procedure(op='set', scope='group')` écrivent la MÊME procédure
+(même store, même clé `(owner_type, owner_id, slug)`) : leurs gardes se déplacent
+ENSEMBLE, sinon « qui peut annoter » devient une propriété du transport.
+
+Modèle versionné (slug réservé `claude_md` = guide de base servi en complément de celle
+de l'org par `oto_procedure(op='get')`). Édité par le dashboard via REST
+`/api/groups/{id}/instructions*`.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from ... import (deprecations, group_store, guide_store, org_store, procedure_diagram,
+from ... import (deprecations, guide_store, org_store, procedure_diagram,
                 procedure_digest, roles)
-from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF
+from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, capacite_autorise
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _GID = {"id": "group_id"}
 _GID_SLUG = {"id": "group_id", "slug": "slug"}
 _BASE = org_store.BASE_SLUG
+
+# ── Les droits ANNONCÉS par le bundle ────────────────────────────────────────
+#
+# Chaque drapeau NOMME la capacité dont il rend la règle, et c'est cette règle-là
+# qu'on exécute (`capacite_autorise`) — jamais une seconde condition écrite ici. Le
+# défaut réparé : `can_edit` recopiait le critère de l'administration, la garde
+# d'écriture est descendue au membre (#695), et l'écran s'est mis à cacher un geste
+# permis sans qu'une ligne de ce fichier ait bougé. Déplacer une garde déplace
+# désormais son drapeau avec elle.
+#
+# ⚠️ Deux entrées et non une : `set` et `delete` n'ont pas la même garde. Un drapeau
+# unique redeviendrait soit une porte fermée à tort (l'écriture), soit une porte
+# ouverte à tort (le bouton de suppression, que le serveur refuse).
+_DROITS_SERVIS = {
+    "can_write_instructions": "group.instruction.set",
+    "can_delete_instructions": "group.instruction.delete",
+}
 
 
 class GroupIdInput(BaseModel):
@@ -101,7 +132,16 @@ class GroupInstructionsBundle(BaseModel):
     ⚠️ **`can_edit` est le seul champ de tout le domaine `group.*` qui dit la vérité sur
     les droits** : il intègre l'escalade (chef d'équipe, org_admin parent,
     platform_admin), là où `GroupBrief.my_role` ne rend que l'appartenance explicite.
-    `can_edit: true` avec `my_role: null` n'est pas une incohérence — c'est un org_admin."""
+    `can_edit: true` avec `my_role: null` n'est pas une incohérence — c'est un org_admin.
+
+    ⚠️ **`can_edit` ne dit RIEN du droit d'écrire une procédure** — c'est le droit
+    d'ADMINISTRER l'équipe : le readme (`guide`, écrit sur la surface guide), les
+    membres, les secrets partagés, et la suppression d'une procédure. Depuis #695
+    l'écriture n'en fait plus partie. **Les boutons d'une procédure se conditionnent à
+    `can_write_instructions` et `can_delete_instructions`, jamais à `can_edit`** : un
+    écran qui masque l'édition sur ce champ masque un geste permis à tout membre.
+    `can_edit` n'est pas déprécié pour autant — il reste la réponse juste aux gestes
+    d'administration de l'équipe."""
     group_id: int
     guide: str
     guide_version: Optional[int] = None
@@ -109,6 +149,16 @@ class GroupInstructionsBundle(BaseModel):
     doctrine_version: Optional[int] = None  # ALIAS déprécié (retrait 27/09/2026)
     instructions: list[GroupInstructionIndexEntry]
     can_edit: bool
+    # Les deux droits sur les procédures ci-dessus, chacun rendu par la règle d'autz
+    # de SA capacité (cf. `_DROITS_SERVIS`) — pas par une condition recopiée ici.
+    can_write_instructions: bool = Field(description=(
+        "Peut créer, modifier et restaurer une procédure de cette équipe "
+        "(`PUT`/`revert`) : vrai pour tout MEMBRE. Le geste est réversible — chaque "
+        "écriture ajoute une version."))
+    can_delete_instructions: bool = Field(description=(
+        "Peut supprimer une procédure de cette équipe ET tout son historique "
+        "(irréversible) : vrai pour le CHEF d'équipe seulement. Toujours servi à côté "
+        "de `can_write_instructions`, dont il diffère."))
 
 
 class GroupInstructionView(BaseModel):
@@ -135,6 +185,11 @@ class GroupInstructionView(BaseModel):
     description: Optional[str] = None
     version: int
     body_md: str
+    # ADR 0035 : entités requises déclarées. Servi depuis #681 — jusque-là le store
+    # d'équipe écrivait `[]` en dur et ne les relisait pas ; une procédure d'équipe peut
+    # désormais en porter (écriture par `oto_procedure op=set scope=group`), et une vue
+    # qui les tairait laisserait croire qu'elle n'en a pas.
+    slots: list = []
     set_by: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -232,17 +287,29 @@ def _list(ctx: ResolvedCtx, inp: GroupIdInput) -> dict:
         "group_id": inp.group_id,
         "guide": base_body,
         "guide_version": 1 if base_body else None,
-        "instructions": group_store.list_group_instructions(inp.group_id),
+        "instructions": org_store.list_instructions("group", inp.group_id),
+        # Droit d'ADMINISTRER l'équipe (readme, membres, secrets) — inchangé.
         "can_edit": roles.can_admin_group(ctx.sub, inp.group_id),
+        # Droits sur les PROCÉDURES : rendus par les règles d'autz déclarées, pas
+        # recalculés — ce qu'on annonce ici est ce qui refuse là-bas.
+        **{nom: capacite_autorise(cle, ctx.sub, group_id=inp.group_id)
+           for nom, cle in _DROITS_SERVIS.items()},
     })
 
 
 def _get(ctx: ResolvedCtx, inp: InstrGetInput) -> dict:
-    instr = group_store.get_group_instruction(inp.group_id, inp.slug, inp.version)
+    instr = org_store.get_instruction("group", inp.group_id, inp.slug, inp.version)
     if not instr:
         raise AuthzDenied(404, "unknown_instruction",
                           f"Instruction `{org_store.normalize_slug(inp.slug)}` absente.")
-    return {"group_id": inp.group_id, **instr}
+    # Projection EXPLICITE : le store unifié rend aussi le propriétaire et l'org parente
+    # (`owner_type`/`owner_id`/`org_id`), qui sont de la plomberie — cette face-ci ne
+    # publie que ce que `GroupInstructionView` déclare.
+    return {"group_id": inp.group_id, "id": instr.get("id"), "slug": instr["slug"],
+            "title": instr.get("title"), "description": instr.get("description"),
+            "version": instr["version"], "body_md": instr["body_md"],
+            "slots": instr.get("slots") or [], "set_by": instr.get("set_by"),
+            "created_at": instr.get("created_at"), "updated_at": instr.get("updated_at")}
 
 
 def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
@@ -260,35 +327,35 @@ def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
             400, "reserved_slug",
             f"`{org_store.BASE_SLUG}` est le readme d'équipe, pas une procédure — "
             "écris-le via la surface guide (`oto_guide` scope='group', delivery='init').")
-    version = group_store.set_group_instruction(
-        inp.group_id, slug, inp.body_md, title=inp.title,
+    version = org_store.set_instruction(
+        "group", inp.group_id, slug, inp.body_md, title=inp.title,
         description=inp.description, set_by=ctx.sub)
     # Une procédure d'équipe est une procédure : même exigence de schéma qu'au grain org
-    # (tulina-app-front#108), même régime — un warning, jamais un refus.
+    # (front tiers, issue #108), même régime — un warning, jamais un refus.
     return {"group_id": inp.group_id, "slug": slug, "version": version, "set": True,
             **procedure_diagram.diagram_check(inp.body_md),
             **procedure_digest.digest_check(inp.body_md)}
 
 
 def _delete(ctx: ResolvedCtx, inp: InstrSlugInput) -> dict:
-    deleted = group_store.delete_group_instruction(inp.group_id, inp.slug)
+    deleted = org_store.delete_instruction("group", inp.group_id, inp.slug)
     return {"group_id": inp.group_id, "slug": org_store.normalize_slug(inp.slug),
             "deleted": deleted}
 
 
 def _versions(ctx: ResolvedCtx, inp: InstrSlugInput) -> dict:
     return {"group_id": inp.group_id, "slug": org_store.normalize_slug(inp.slug),
-            "versions": group_store.list_group_instruction_versions(inp.group_id, inp.slug)}
+            "versions": org_store.list_instruction_versions("group", inp.group_id, inp.slug)}
 
 
 def _revert(ctx: ResolvedCtx, inp: InstrRevertInput) -> dict:
-    old = group_store.get_group_instruction(inp.group_id, inp.slug, inp.version)
+    old = org_store.get_instruction("group", inp.group_id, inp.slug, inp.version)
     if not old:
         raise AuthzDenied(404, "unknown_version",
                           f"Pas de version {inp.version} pour `{org_store.normalize_slug(inp.slug)}`.")
-    new_version = group_store.set_group_instruction(
-        inp.group_id, inp.slug, old["body_md"], title=old["title"],
-        description=old["description"], set_by=ctx.sub)
+    new_version = org_store.set_instruction(
+        "group", inp.group_id, inp.slug, old["body_md"], title=old["title"],
+        description=old["description"], set_by=ctx.sub, slots=old.get("slots") or [])
     return {"group_id": inp.group_id, "slug": org_store.normalize_slug(inp.slug),
             "version": new_version, "reverted_from": inp.version}
 
@@ -297,7 +364,10 @@ CAPABILITIES += [
     Capability(
         key="group.instruction.list", handler=_list, Input=GroupIdInput,
         authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionsBundle,
-        description="Group base doctrine + skills index (+ can_edit flag).",
+        description=("Group base doctrine + skills index, plus the caller's rights: "
+                     "can_write_instructions (any member) and "
+                     "can_delete_instructions (team lead) — can_edit is the "
+                     "right to ADMINISTER the team, not to edit a procedure."),
         rest=RestBinding("GET", "/api/groups/{id}/instructions", _GID),
     ),
     Capability(
@@ -306,17 +376,24 @@ CAPABILITIES += [
         description="Full markdown of one group instruction (slug `claude_md` = base doctrine).",
         rest=RestBinding("GET", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
+    # ⚠️ Écrire et supprimer ne partagent PAS une garde (#681) : voir l'en-tête du
+    # module. Le tableau de bord et `oto_procedure op=set scope='group'` écrivent la
+    # MÊME procédure — les laisser sur deux gardes ferait de « qui peut annoter » une
+    # propriété du TRANSPORT.
     Capability(
         key="group.instruction.set", handler=_set, Input=InstrSetInput,
-        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionWritten,
-        description=("Create/update a group instruction (team lead). slug `claude_md` "
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionWritten,
+        description=("Create/update a group instruction (any team MEMBER — whoever runs "
+                     "a procedure may improve it; a bad edit is undone by restoring a "
+                     "past version). slug `claude_md` "
                      "= the group base doctrine; any other slug = a named skill."),
         rest=RestBinding("PUT", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     Capability(
         key="group.instruction.delete", handler=_delete, Input=InstrSlugInput,
         authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionDeleted,
-        description="Delete a group instruction and its history.",
+        description=("Delete a group instruction and its history (team LEAD) — "
+                     "destructive and irreversible, unlike writing."),
         rest=RestBinding("DELETE", "/api/groups/{id}/instructions/{slug}", _GID_SLUG),
     ),
     Capability(
@@ -327,8 +404,10 @@ CAPABILITIES += [
     ),
     Capability(
         key="group.instruction.revert", handler=_revert, Input=InstrRevertInput,
-        authz=GROUP_ADMIN_OF("group_id"), Output=GroupInstructionReverted,
-        description="Restore an older version of a group instruction as a new version.",
+        authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionReverted,
+        description=("Restore an older version of a group instruction as a new version "
+                     "(any team MEMBER — it is the undo of `set`, and it destroys "
+                     "nothing)."),
         rest=RestBinding("POST", "/api/groups/{id}/instructions/{slug}/revert", _GID_SLUG),
     ),
 ]

@@ -97,8 +97,32 @@ from oto_mcp.db import _schema, schema
 # n'est contraint sur les tables existantes, et la prod qui tourne l'ancien code ne
 # la voit pas. Elle se retire par un `DROP TABLE` — c'est ce qui rend cette PR
 # réversible, l'irréversible étant le RETRAIT de `walk_cascade`, deux PR plus loin.
-EMPREINTE = "d2aa3ab59df2b52b0cdc044975eadba1a537577ba28ae832cfb0926f41e48341"
-LONGUEUR = 117095
+# 2026-09-01 (arrêt de la recopie, ADR 0054/0063) : `nodes` gagne QUATRE colonnes —
+# `data`, qui sort la donnée métier de `props` (mêlées, une cellule nommée `title`
+# écrase le titre du nœud), et `claimed_run`/`claims`/`abandon_reason`, qui complètent
+# le bail pour que la file de travail reste UNE mécanique servant deux tables. ADDITIVE
+# et sans réécriture : `ADD COLUMN` avec un `DEFAULT` constant est instantané (PG >= 11),
+# et la prod qui tourne l'ancien code ne lit pas ces colonnes. Coût mesuré au banc avant
+# de les poser : +4,7 % de volume, -14 % de temps d'écriture.
+# 2026-09-01 (oto-private#85, scrub) : AUCUN changement de SQL exécuté. Trois
+# COMMENTAIRES bougent — `legal.py`, `connectors.py` (×2), `tenants.py` — qui
+# nommaient un tenant tiers ou une personne réelle en clair (règle du meta-repo :
+# jamais de nom de client ni de personne dans un dépôt public). Remplacés par des
+# exemples génériques (« un tenant tiers », « le compte de Jane »).
+# 2026-09-01 (refus d'invitation, #654) : `org_invitations` gagne DEUX colonnes —
+# `declined_at`/`declined_sub`, le « non » de l'invité, jusqu'ici impossible à dire
+# (seul l'émetteur pouvait retirer une invitation). État PROPRE et non `accepted_at`
+# réutilisé : les deux gestes doivent rester discernables partout, et l'acceptation
+# idempotente (`_idempotent_accept`) aurait resservi un succès « tu as rejoint l'org »
+# à qui vient de refuser. ADDITIVE, sans index et sans réécriture (`ADD COLUMN` NULL
+# est instantané) ; la prod qui tourne l'ancien code ne les lit pas — elle continue
+# simplement de ne jamais en voir de renseignées.
+# ⚠️ Empreinte RECALCULÉE depuis le module assemblé sur le résultat du REBASE des
+# TROIS lots ci-dessus (les quatre colonnes de `nodes`, puis le scrub, puis ces deux
+# colonnes), jamais recopiée d'un côté du conflit : trois lots ont touché la chaîne
+# le même jour, et un hash pris d'un seul côté valide un DDL que personne ne sert.
+EMPREINTE = "ad7a68a01c35fb926a58c355de2dfe2e4e160f203de75024eae781138e63bbc6"
+LONGUEUR = 119699
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

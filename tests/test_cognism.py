@@ -180,10 +180,10 @@ def test_enrich_contact_requires_at_least_one_identity_field():
 def test_enrich_contact_body_shape():
     with patch("oto.tools.cognism.client.requests.request") as req:
         req.return_value = _resp(200, {"matchScore": 60, "results": []})
-        _call("cognism_enrich_contact", email="stjepan.buljat@cognism.com")
+        _call("cognism_enrich_contact", email="jane.doe@acme.test")
     args, kwargs = req.call_args
     assert args[1] == "https://app.cognism.com/api/search/contact/enrich"
-    assert kwargs["json"] == {"email": "stjepan.buljat@cognism.com"}
+    assert kwargs["json"] == {"email": "jane.doe@acme.test"}
 
 
 def test_401_maps_to_actionable_message():

@@ -21,7 +21,7 @@ def _consent_fields():
 def test_single_org_is_filled_in(monkeypatch):
     """Une seule réponse possible ⟹ l'utilisateur ne voit jamais la question."""
     monkeypatch.setattr(zoho_oauth, "analytics_orgs",
-                        lambda f: [{"org_id": "20068608403", "name": "movinmotion",
+                        lambda f: [{"org_id": "20068608403", "name": "acme",
                                     "role": "Organization Admin"}])
     assert zoho_oauth._derived_fields("zohoanalytics", _consent_fields()) == {
         "org_id": "20068608403"}
@@ -29,11 +29,11 @@ def test_single_org_is_filled_in(monkeypatch):
 
 def test_several_orgs_are_never_guessed(monkeypatch):
     """Le cœur du sujet : prendre « la première » aurait désigné « Marvin » là où le
-    compte travaille dans « movinmotion ». On laisse vide — l'état du credential
+    compte travaille dans « acme ». On laisse vide — l'état du credential
     signalera le champ manquant, et le choix se fera sur des noms."""
     monkeypatch.setattr(zoho_oauth, "analytics_orgs",
                         lambda f: [{"org_id": "20072252845", "name": "Marvin", "role": "Account Admin"},
-                                   {"org_id": "20068608403", "name": "movinmotion", "role": "Organization Admin"}])
+                                   {"org_id": "20068608403", "name": "acme", "role": "Organization Admin"}])
     assert zoho_oauth._derived_fields("zohoanalytics", _consent_fields()) == {}
 
 

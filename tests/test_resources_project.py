@@ -2,6 +2,7 @@
 (transfer/share/unshare étaient déjà génériques via le seam ownership).
 """
 import pytest
+from pydantic import ValidationError
 
 from oto_mcp import ownership
 from oto_mcp.capabilities import resources as R
@@ -61,14 +62,14 @@ def test_transfer_to_own_org(monkeypatch):
     # Transfert vers une org que j'ADMINISTRE → je garde le contrôle, aucune confirmation.
     monkeypatch.setattr(R.roles, "is_org_member", lambda sub, oid: oid == 35)
     monkeypatch.setattr(R.roles, "is_org_admin", lambda sub, oid: oid == 35)
-    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "movinmotion"})
+    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "acme"})
     seen = {}
     monkeypatch.setattr(R.ownership, "transfer",
                         lambda rt, rid, ot, oid: seen.update(rt=rt, rid=rid, ot=ot, oid=oid))
     out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
                                             resource_id="7", new_owner_org=35))
     assert seen == {"rt": "project", "rid": "7", "ot": "org", "oid": "35"}
-    assert out["ok"] and out["new_owner"] == "movinmotion"
+    assert out["ok"] and out["new_owner"] == "acme"
 
 
 def test_transfer_loss_of_control_requires_confirmation(monkeypatch):
@@ -90,7 +91,7 @@ def test_transfer_to_unadmined_org_requires_confirmation(monkeypatch):
     (on ne pourra plus re-transférer) → confirmation exigée."""
     _wire(monkeypatch)
     monkeypatch.setattr(R.roles, "is_org_member", lambda sub, oid: oid == 35)  # membre, pas admin
-    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "movinmotion"})
+    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "acme"})
     monkeypatch.setattr(R.ownership, "transfer", lambda *a: None)
     with pytest.raises(AuthzDenied) as e:
         R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
@@ -107,10 +108,14 @@ def test_transfer_to_org_requires_membership(monkeypatch):
     assert e.value.code == "not_org_member"
 
 
-def test_unknown_type(monkeypatch):
-    with pytest.raises(AuthzDenied) as e:
-        R._resources(CTX, R.ResourceInput(op="list", resource_type="nope"))
-    assert e.value.code == "unsupported_resource_type"
+def test_unknown_type():
+    """Le refus a CHANGÉ DE COUCHE (#659) : `resource_type` est un `Literal`, donc une
+    famille inconnue est refusée par la VALIDATION d'entrée — comme `op` l'est déjà —
+    et n'atteint plus le handler. Ce que le client perd (`unsupported_resource_type`,
+    qui listait les types) lui est rendu par le contrat : l'énuméré est désormais dans
+    le schéma de la requête, donc lisible avant d'appeler."""
+    with pytest.raises(ValidationError):
+        R.ResourceInput(op="list", resource_type="nope")
 
 
 # ── ADR 0048 : « Partager » unifié (audience × rôle) ──────────────────────────

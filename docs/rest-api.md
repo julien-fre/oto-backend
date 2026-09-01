@@ -43,7 +43,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 | --- | --- | --- |
 | ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, **les jetons API**, **les fichiers de projet**, projets, pages, procédures, ressources, orgs, guide, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
 | primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api/base.py` | partagées par tous les modules ; **ré-exportées** par `api.routes` |
-| favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques de procédures & de guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api/public.py` | **sans auth** — l'adaptateur capacité authentifie toujours |
+| favicon, `/api/version`, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques de procédures & de guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api/public.py` | **sans auth** — l'adaptateur capacité authentifie toujours. ⚠️ `/api/connectors` est la seule **MIXTE** : anonyme pour la vitrine, authentifiée pour le dashboard, et depuis le 2026-09-01 (#732) l'en-tête **change ce qu'elle rend** — org de contexte ⟹ `auth.cardinality` effective |
 | `POST /api/me/avatar`, `POST /api/orgs/{id}/logo` | `api/media.py` | **multipart** → hors du moule par CONSTRUCTION (classé `NATURE`) |
 | `POST` d'un fichier de projet, `/api/me/projects/{id}/export` | `api/projects.py` | **multipart / ZIP** → hors du moule (classé `NATURE`) |
 | `/api/upload/{token}` (PUT/POST/GET) | `api/uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
@@ -123,6 +123,17 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 - `GET|POST|DELETE /api/settings/api-keys/{provider}` — **ton credential** pour un
   connecteur, dans l'org de contexte (capacités `me.credential.{get,set,clear}` depuis
   le 2026-08-27 ; **pas de face MCP** — un secret brut ne passe pas en argument d'outil).
+  ⚠️ **RUPTURE DE CONTRAT le 2026-08-31 (#671) : le `GET` ne rend plus la valeur d'un
+  champ secret.** Il la rendait en clair pour tout champ déclaré `reveal=True` — le
+  défaut de 55 connecteurs. Sa clé est désormais **ABSENTE du corps** (pas `null`, pas
+  `""` : un champ vidé se lirait « rien de posé » et un appelant continuerait sur du
+  vide). À la place, de quoi reconnaître la clé sans la lire : `configured`,
+  `read_set_at`, `read_set_by`, et `read_fingerprints` — `{champ: 4 caractères}`, HMAC
+  lié à la ligne du coffre, jamais des caractères du secret. Les champs **non secrets**
+  (`base_url`, `auth_mode`, `region`, email) continuent de sortir tels quels, donc la
+  modification partielle de #448 est intacte. Demander la valeur (`?reveal=1`) rend
+  `403 secret_never_revealed`. **Pour changer une clé, on la repose** — le POST
+  conserve les champs qu'il ne reçoit pas.
   Le **corps du POST est plat et dynamique** : ses clés sont les `credential_fields` du
   connecteur (publiés par `GET /api/connectors`), plus `account` — le nom du compte visé
   quand le connecteur en porte plusieurs (le mot d'usage est dans `auth.account_noun` :
@@ -156,7 +167,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
   **Pas de face MCP** : `oto_list_my_tools`/`oto_enable_tool`/`oto_disable_tool` restent
   écrits à la main, leurs formes diffèrent de celles-ci — réconciliation suivie en
   oto-backend#429.
-- `GET /api/me/instructions` (index des procédures ; le readme d'org est un guide `delivery=init`, plus servi ici) + `GET|PUT|DELETE /api/me/instructions/{slug}` + `GET /api/me/instructions/{slug}/versions` + `POST /api/me/instructions/{slug}/revert` — procédures de l'**org active** (le slug `claude_md` est RÉSERVÉ au readme et refusé ici) (cf. §Guides). Lecture = membre ; écriture = `org_admin` (ou platform admin). Édité par le dashboard (`/procedures`). ⚠️ Le `PUT` renvoie un **`diagram_warning`** (toujours présent ; `null` = rien à signaler) quand le corps n'embarque pas le SCHÉMA requis de la procédure — non bloquant, comme `unresolved_tools`/`slot_warnings` (cf. §Guides).
+- `GET /api/me/instructions` (index des procédures ; le readme d'org est un guide `delivery=init`, plus servi ici) + `GET|PUT|DELETE /api/me/instructions/{slug}` + `GET /api/me/instructions/{slug}/versions` + `POST /api/me/instructions/{slug}/revert` — procédures de l'**org active** (le slug `claude_md` est RÉSERVÉ au readme et refusé ici) (cf. §Guides). Lecture = membre ; écriture = `org_admin` (ou platform admin). Édité par le dashboard (`/procedures`). ⚠️ Le bundle sert **trois** droits de l'appelant : `can_edit` (administrer l'org) et — depuis la suite de #695 — `can_write_instructions` / `can_delete_instructions`, un par verbe. Ce sont ces deux-là que les boutons d'une procédure lisent, ici comme sur `GET /api/groups/{id}/instructions` où ils ne valent PAS la même chose (membre pour écrire, chef pour supprimer). ⚠️ Le `PUT` renvoie un **`diagram_warning`** (toujours présent ; `null` = rien à signaler) quand le corps n'embarque pas le SCHÉMA requis de la procédure — non bloquant, comme `unresolved_tools`/`slot_warnings` (cf. §Guides).
 - `GET|PUT|DELETE /api/me/guides/{scope}/{slug}` (+ `GET /api/me/guides`) — **la prose d'instruction**, un seul primitif sur deux axes (ADR 0042 §Convergence des surfaces) : `scope` ∈ platform|org|group|user × `delivery` ∈ `on-demand` (défaut, un how-to chargé au besoin) | `init` (**readme injecté à chaque session**, slug canonique `readme` — corps vide = couche effacée). Miroir REST d'`oto_guide`, mêmes handlers. Écriture gatée par scope (platform_admin / org_admin / chef d'équipe / self). Variantes par-id pour viser une org/équipe précise plutôt que l'active : `GET|PUT /api/orgs/{id}/guides/{scope}/{slug}` et `/api/groups/{id}/guides/{scope}/{slug}`. *(Remplace `GET|PUT /api/me/agent-readme`, retiré le 2026-07-28.)*
 - `POST|DELETE /api/me/projects/{id}/public-share` — **partage public CHIFFRÉ** d'un projet (ADR 0032 §3, zero-knowledge). Le dashboard chiffre le snapshot (brief + pages) côté navigateur et POSTe uniquement `{ciphertext}` ; renvoie `{token, public_base_url}`. Écriture = `ownership.can_access(project, write)`. La clé de déchiffrement n'atteint JAMAIS le serveur (fragment d'URL).
 - `GET /api/public/projects/{token}` — **sans auth** : renvoie `{ciphertext, updated_at}` du snapshot chiffré. Déchiffrement côté navigateur (route `/p/p/{token}#<clé>`). Pendant public de `GET /api/public/docs/{token}` (#4a).
@@ -270,7 +281,8 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
     - **org** : `POST|GET /api/orgs/{id}/invitations` + `DELETE …/{inv}` (org_admin ; `oto_org` op=invite). Le POST refuse en 409 une adresse déjà membre (`already_member`) ou déjà invitée avec une invitation valide (`already_invited`, l'existante dans `details`) — #622, 29/08/2026.
     - **équipe** : `POST|GET /api/groups/{id}/invitations` + `DELETE …/{inv}` (group_admin ; `oto_group` op=invite). L'invité rejoint l'org parente PUIS l'équipe à l'acceptation.
     - **plateforme** : `POST|GET /api/admin/invitations` + `DELETE …/{inv}` (platform_admin ; `oto_admin_invite` op=create/list/revoke). `org_id` optionnel (vide = onboarding pur, sinon rattachement direct).
-    - **acceptation commune** : `POST /api/me/invitations/accept` (`SUB_ONLY`, token/code, match email vérifié + expiry). Email via `oto_mcp/email.py` (otomata-mailer `mailer.oto.zone/api/send`, env `OTO_MAILER_SEND_BEARER`, best-effort → `invite_url` en repli ; **plus de Resend**).
+    - **acceptation commune** : `POST /api/me/invitations/accept` (`SUB_ONLY`, token/code + expiry). ⚠️ **Modèle BEARER** : le secret suffit, l'identité de l'accepteur n'est PAS confrontée à l'email invité — cette ligne a longtemps dit « match email vérifié », ce qui était faux du code servi (corrigé le 2026-09-01, cf. le commentaire de `_invite_accept`). Email via `oto_mcp/email.py` (otomata-mailer `mailer.oto.zone/api/send`, env `OTO_MAILER_SEND_BEARER`, best-effort → `invite_url` en repli ; **plus de Resend**).
+    - **refus commun** : `POST /api/me/invitations/reject` (`SUB_ONLY`, token/code — mêmes entrées que l'acceptation ; `oto_org` op=reject_invite), depuis le 2026-09-01 (#654). Ferme l'invitation (`org_invitations.declined_at`/`.declined_sub`) **sans créer ni retirer aucune appartenance** : elle quitte l'inbox de l'invité, la file de l'émetteur, et plus rien ne peut la consommer — ni `accept`, ni la reprise automatique au signup par l'email (`reconcile_signup_with_invitation`). ⚠️ **Le refus n'est PAS bearer, contrairement à l'acceptation** : l'invitation doit être adressée à l'email du compte appelant (403 `not_the_invitee` sinon, invitation anonyme comprise) — accepter avec un secret qu'on détient est un geste sur soi, refuser détruirait l'invitation d'un tiers. Le refus **ne notifie pas** l'émetteur (aucune préférence de notification n'existe encore) et **ne bloque pas** une réinvitation : le 409 `already_invited` de #622 ne voit plus une invitation refusée.
   - **fiche admin user** : `GET /api/admin/users/{sub}` = identité + accès effectif par provider (`status_for`) + grants + namespaces + orgs (membership).
   - platform admin : `GET|POST /api/admin/orgs`, `GET /api/admin/orgs/{id}` (+ entitlements), `…/members*`, `…/secrets/{provider}`, `POST|DELETE /api/admin/orgs/{id}/entitlements/{namespace}`, `GET /api/admin/namespace-grants`, `POST|DELETE /api/admin/users/{sub}/namespace-grants/{namespace}`
   - secrets : jamais la clé en réponse (provider/base_url/set_at/set_by) ; providers per-user (slack/linkedin/google/whatsapp) refusés en `400` ; listing lu du coffre canonique `credentials_store` (legacy `org_secrets` plus dual-written sous chiffrement). Gating org_admin/membre via `org_store.get_org_role` (platform admin toujours autorisé). Révocation lazy sur sessions MCP ouvertes. Contrat front : `oto-app/docs/ORG_API_CONTRACT.md`.
@@ -315,6 +327,22 @@ agent sans référence lisible** — jamais un id deviné. Jusque-là, aucun che
 menait d'un nœud agent à sa fiche : son `nod_*` est dérivé (`md5('prc:' || id)`) et la fiche
 de guide refuse un `nod_*` — un front devait recalculer un md5 ou apparier par titre. La
 fiche de guide ne résout toujours PAS un `nod_*` (laissé de côté, cf. #417).
+
+**`…/rows` refuse ce qu'il ne peut pas appliquer, et son `total` compte la page servie —
+depuis le 01/09 (#621, relevé au passage de #418).** Trois défauts de la même famille que
+`?filter=` tronqué : *un chemin qui répond juste sur ce qu'il n'a pas regardé*.
+
+| avant | maintenant |
+|---|---|
+| une entrée de `filter` sans `:` était **ignorée** — la page partait non filtrée, en 200 | `400 invalid_filter`, qui nomme la forme `colonne:valeur` **et** l'entrée fautive |
+| `InvalidCursor` n'était rattrapé nulle part → **500** sur un curseur tronqué ou repassé d'un régime de tri dans l'autre | `400 invalid_cursor` (« reprends la liste sans `cursor` »), le MÊME code sur les deux provenances de tableau — le natif rendait `curseur_invalide`, personne ne pouvait prévoir lequel |
+| `total` était compté sur les filtres **non résolus**, la page sur les résolus | le compte passe par `store.count_rows`, qui résout comme la page |
+
+Le troisième ne se voit que sur un schéma à **double service** (`contact1_nom` servi en
+lecture pour `contacts[0].nom`, oto#22 §6) : le pied du tableau comptait un autre jeu que
+celui qu'il coiffait, et rien n'échouait. Les trois refus sont **déclarés**
+(`Capability.errors`), donc publiés dans `/openapi.json` : trois gestes différents derrière
+un même 400, et un client ne devrait pas avoir à les distinguer en lisant une phrase.
 
 ## Renommer un chemin servi : on double, on date, on retire
 
@@ -381,6 +409,41 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   neuf** — la ligne du #618 (matin du même jour) qui déclarait ce 200 tel quel est
   remplacée par celle-ci. Accepter en étant déjà membre n'abaisse toujours pas le rôle
   (#297).
+- **`POST /api/me/invitations/reject` → 400 `missing_token`, 410 `invalid_or_expired`,
+  403 `not_the_invitee`**, dans l'ordre des gardes (#654, 2026-09-01). `410` couvre
+  d'un seul jeton l'inconnue, l'expirée, la déjà acceptée et la refusée par quelqu'un
+  d'autre — comme sur l'acceptation, et pour la même raison : ne pas dire à qui sonde
+  lequel des quatre. `403` couvre aussi l'invitation **anonyme** (émise sans adresse) :
+  elle n'est adressée à personne, donc à personne en particulier. Refuser deux fois la
+  même invitation est **idempotent** (200, même réponse).
+- **`POST /api/resources` déclare sa 200 en UNION DISCRIMINÉE** (#659, 2026-09-01), plus
+  onze refus. La forme dépend de `resource_type` — `row_count` pour un tableau,
+  `archived_at` pour un projet, `version` pour un guide — donc le document rend un
+  `oneOf` + `discriminator: resource_type` pour `op=get`, à l'intérieur d'un `anyOf` qui
+  couvre les cinq verbes (six branches : `op=share` en a deux, grant vs publication).
+  Modèles dans `capabilities/resources_contract.py`. ⚠️ **Une union PLATE aurait déclaré
+  `row_count` sur un projet** : une carte qui ment est pire qu'une carte absente, un
+  client généré s'y branche. ⚠️ **`capability_output_debt.txt` avait classé cette
+  surface « indéclarable » le 11/08** sur une mesure JUSTE (l'intersection des sept
+  `return` est vide) mais qui répondait à une autre question : une intersection vide
+  disqualifie l'**enveloppe**, pas l'**union**. La leçon vaut pour `me.project` et
+  `me.doc`, qui restent en dette pour la même raison mal lue.
+  **Deux défauts corrigés dans le même lot**, tous deux trouvés en écrivant le schéma :
+  `resource_type` est désormais **OBLIGATOIRE** — il valait `datastore_namespace` par
+  défaut (relique du pilote ADR 0030), si bien qu'un appelant visant un projet et
+  oubliant le champ interrogeait silencieusement une autre famille, et sur
+  `transfer`/`share` **agissait sur une autre ressource** ; et `resource_id` porte un
+  motif `^\d+$` **publié dans le schéma**. ⚠️ Ce second point ne se corrigeait PAS dans
+  le handler, contrairement à ce que l'issue supposait : la levée se produit dans la
+  règle d'autz (`RESOURCE_GOVERN` → `ownership.can_govern` → `int(rid)`), qui tourne
+  AVANT lui — mesuré, `owner_getter('abc')` lève `ValueError` pour un tableau et pour un
+  projet (**500**, l'adaptateur REST ne rattrape qu'`AuthzDenied`) et rend `None` pour un
+  guide (**403**, son owner_getter a son propre `isdigit()`). Trois comportements pour
+  une même saisie fautive, dont deux faux ; c'est un **400** pour les trois, et la garde
+  est sur l'ENTRÉE parce que c'est la seule couche qui s'exécute avant l'autz.
+  ⚠️ **Rendre `resource_type` obligatoire CASSE les appels qui l'omettaient**
+  (`scripts/contrat-front.py` sort en rouge) : c'est la seule casse du lot — le même
+  document construit avec le défaut conservé ne rend qu'un avertissement.
 
 ## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
 
@@ -441,6 +504,20 @@ qui sonde `/api/projects` obtient 404 et conclut « les projets ne sont pas sur 
 arrivé (brief scout, 08/2026). Le descriptif rend l'énuméré `op` lisible, ce que le sondage de
 chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/resources`.
 
+## Version servie — `GET /api/version` (+ `X-Oto-Version`)
+
+**Sans auth**, comme le descriptif ci-dessus : un ref git, un SHA, deux horodatages —
+aucune valeur. Il rend l'étiquette de ce que **le processus exécute** (`v1.2.3+6d5bf16b`),
+le tag **oto-core réellement installé**, et l'instant du déploiement comme celui du
+démarrage. La même étiquette part dans `info.version` de l'OpenAPI et en **en-tête
+`X-Oto-Version` de chaque réponse** — l'endpoint sert à qui pense à demander, l'en-tête
+à qui relit son journal après coup.
+
+⚠️ Elle ne désigne PAS ce que le dernier workflow a déployé, et ⚠️ **`pip show oto-core`
+ment** (numéro gelé à 1.100.0). Le pourquoi de chaque refus, l'ordre de résolution
+(env > `.oto-deploy.json` > `"unknown"`) et le piège des deux copies du script de
+déploiement : **`docs/version-servie.md`**.
+
 ## Jetons API `oto_` — gestion et portée
 
 - **La gestion des jetons demande une session interactive.** `GET|POST /api/me/tokens`,
@@ -490,7 +567,7 @@ chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/
 ⚠️ **CORS : la liste du code est MORTE en prod comme en preprod.** `_allowed_origins()`
 (`api/routes.py`) n'est qu'un **fallback** — les DEUX box posent `OTO_MCP_CORS_ORIGINS`
 dans leur `.env`, qui **écrase** la liste. Ajouter une origine au code, la déployer et
-constater que rien ne change est un piège vécu (30/07, front Tulina) : le tag prod avait
+constater que rien ne change est un piège vécu (30/07, front d'un tenant tiers) : le tag prod avait
 été posé pour une raison inexacte. **Ajouter une origine = éditer l'env des deux box +
 restart** (`/opt/oto-mcp/.env`, `/opt/oto-mcp-canari/.env`) ; le code ne sert qu'aux
 environnements neufs. Diagnostic en 1 appel, sans lire le `.env` : `curl -X OPTIONS

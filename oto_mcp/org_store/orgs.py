@@ -40,8 +40,8 @@ def create_org(name: str, created_by: Optional[str] = None,
     avait confié la dérivation à l'appelant, et un seul des trois créateurs d'org la
     faisait (`capabilities/orgs.py`) : la console admin et l'org PERSO semée à
     l'inscription repartaient à NULL — donc toute invitation émise depuis un espace
-    perso d'un tenant tiers pointait `oto.cx` (vécu le 26/08 : Growth Room, org 269,
-    30 orgs perso Tulina dans le même état). Un écrivain unique ne peut pas oublier.
+    perso d'un tenant tiers pointait `oto.cx` (vécu le 26/08 sur une org cliente, et
+    30 orgs perso du même tenant dans le même état). Un écrivain unique ne peut pas oublier.
     Passer explicitement `None, None` n'est pas « pas de front », c'est « dérive »."""
     name = (name or "").strip()
     if not name:

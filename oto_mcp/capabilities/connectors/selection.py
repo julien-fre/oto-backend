@@ -25,11 +25,14 @@ from pydantic import BaseModel, ConfigDict
 
 from ... import access, org_store, providers, session_org, tool_registry
 from ...connectors import activation as connector_activation
+from ...connectors import cardinality as connector_cardinality
 from ...connectors import readiness as connector_readiness
 from ...connectors import selection as connector_selection
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
+from .catalog_card import (AuthDescriptor, ConnectFlow, CredentialField,
+                           DocSection, FreeTier)
 
 logger = logging.getLogger(__name__)
 
@@ -84,12 +87,31 @@ class ReachableInstance(BaseModel):
 class MyConnectorRow(BaseModel):
     """Un connecteur du catalogue vu par le membre : la carte + SON état à lui.
 
-    Les champs ci-dessous sont ceux du mode COMPACT (défaut, cf. `_COMPACT_KEYS`).
-    En `verbose=true` la même ligne porte EN PLUS toute la carte publique du
-    catalogue (`description`, `doc_sections`, `auth`, `credential_fields`,
-    `namespaces`, `free_tier`, `identities`, `verifiable`, `connect` enrichi de
-    `callback_url`/`app_ready`) — d'où l'ouverture aux champs additionnels : la
-    forme large est celle du dashboard, elle n'est pas figée ici."""
+    **Deux projections sortent du même champ**, selon `verbose` (l'enveloppe l'écho) :
+
+    - `verbose=false` (défaut) — identité + axes de tri + état : les huit clés de
+      `_COMPACT_KEYS`, plus l'état per-membre. C'est ce que lit une LISTE.
+    - `verbose=true` — la même ligne PLUS toute la carte publique du catalogue,
+      section « carte » ci-dessous. C'est ce que lit une CARTE, et ce dont dépend le
+      formulaire de credential.
+
+    Un champ de la carte est donc `Optional` parce qu'il est absent en compact, pas
+    parce qu'il serait parfois nul en verbeux : en `verbose=true` les treize sont
+    toujours présents (`base = c`, la ligne entière — cf. `_me`). `null` y garde son
+    sens propre, énoncé champ par champ.
+
+    ⚠️ Le docstring disait jusqu'au 2026-09-01 que « la forme large est celle du
+    dashboard, elle n'est pas figée ici » — et l'ouverture aux champs additionnels en
+    découlait. Levé (#667) : dès qu'un intégrateur hors du dépôt en dépend, « pas
+    figée » veut dire « cassable sans préavis, et sans qu'on sache qui casse ». Les
+    treize clés de premier niveau que servait le mode verbeux sans les déclarer sont
+    désormais nommées (cf. `catalog_card.py` pour les objets).
+
+    `extra="allow"` RESTE, et c'est provisoire : le retirer est le seul garde-fou
+    mécanique contre le prochain champ non déclaré, mais il faut d'abord que le
+    cliquet `tests/test_carte_connecteur_declaree.py` ait vécu — un champ oublié
+    disparaîtrait sinon du payload, ce qui casserait pour de bon ce que ce lot ne
+    fait que documenter."""
     model_config = ConfigDict(extra="allow")
 
     name: str
@@ -132,6 +154,38 @@ class MyConnectorRow(BaseModel):
     # pending_step. Absent quand `ready` est vrai.
     not_ready: Optional[str] = None
     next_step: Optional[str] = None         # le geste, rendu tel quel (jamais reformulé)
+
+    # ── La CARTE (`verbose=true` seulement) ──────────────────────────────────────
+    # Les treize clés que `providers.public_catalog()` pose sur la ligne entière.
+    # Servies depuis toujours, déclarées depuis le 2026-09-01 (#667) : sans elles au
+    # contrat, un front tiers ne pouvait pas rendre un formulaire de credential, alors
+    # que la donnée arrivait. L'ordre suit celui du producteur, pour que les deux
+    # listes se relisent côte à côte.
+    #
+    # Description curée 2-3 phrases (carte catalogue). `""` si non rédigée — le front
+    # retombe alors sur `help`, ce que `null` ne dirait pas.
+    description: Optional[str] = None
+    doc_sections: Optional[list[DocSection]] = None
+    href: Optional[str] = None              # site du connecteur ; `null` = aucun
+    publisher: Optional[str] = None         # éditeur (curé)
+    auth_modes: Optional[list[str]] = None  # ⊆ {byo_user, byo_org, platform}
+    # Catégorie « session navigateur » (le credential est une session, pas une clé).
+    personal_session: Optional[bool] = None
+    # Le descripteur d'auth unifié (ADR 0024) — c'est LUI qui pilote le widget de
+    # credential, `secret_kind` n'en étant que le scalaire de tri gardé en compact.
+    auth: Optional[AuthDescriptor] = None
+    namespaces: Optional[list[str]] = None  # préfixes des outils possédés
+    # DÉRIVÉ de `auth.fields`, pas recopié — donc toujours identique. Les deux clés
+    # sont servies, les deux sont déclarées : dépréciera qui voudra, mais pas en
+    # silence (la forme d'une dépréciation de nom servi est #519, et elle se date).
+    credential_fields: Optional[list[CredentialField]] = None
+    free_tier: Optional[FreeTier] = None
+    # Le connecteur propose-t-il de choisir une identité/cible par défaut (ADR 0024) ?
+    identities: Optional[bool] = None
+    # Le connecteur a-t-il enregistré une sonde de credential sans effet de bord ? Si
+    # oui, la carte affiche « tester la connexion » à côté de l'état « clé posée ».
+    verifiable: Optional[bool] = None
+    connect: Optional[ConnectFlow] = None
 
 
 class ToolboxScope(BaseModel):
@@ -211,7 +265,15 @@ class UnsetDefaultResult(BaseModel):
 def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
     """Catalogue exposé pour l'org active du caller — miroir du filtrage de
     `api_routes_public.connectors_catalog` : activation (plafond) + RBAC org (ADR 0025).
-    L'admin plateforme voit tout l'exposé."""
+    L'admin plateforme voit tout l'exposé.
+
+    ⚠️ **La ligne servie sort d'ici avec sa cardinalité EFFECTIVE**, pas celle du code
+    (oto-backend#732). `providers.public_catalog()` pose `auth.cardinality` depuis le
+    registre, qui est pur et ne peut donc pas lire une surcharge d'org — or c'est cette
+    clé que le panneau de connexion du dashboard lit pour décider s'il propose un second
+    compte. Le seam est ICI et pas au call-site : c'est le point de passage unique de la
+    carte vers `connectors.me` ET `oto_search`, donc le seul endroit où l'on ne peut pas
+    en oublier un."""
     exposed = connector_activation.exposed_connectors(ctx.org_id)
     is_admin = access.is_platform_operator(ctx.sub)
     # RBAC connecteur interne à l'org (ADR 0025) : un connecteur restreint dans l'org
@@ -227,7 +289,7 @@ def _visible_catalog(ctx: ResolvedCtx) -> list[dict]:
         if c["name"] in denied and not is_admin:
             continue
         out.append(c)
-    return out
+    return connector_cardinality.overlay_for_org(out, ctx.org_id)
 
 
 def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
@@ -238,7 +300,7 @@ def _guide_refs_by_ns(org_id: int | None) -> dict[str, set]:
         return {}
     try:
         refs: dict[str, set[str]] = {}
-        for d in org_store.list_instruction_bodies(org_id):
+        for d in org_store.list_instruction_bodies("org", org_id):
             slug = d.get("slug") or ""
             for ns in tool_registry.namespaces_in(d.get("body_md") or ""):
                 refs.setdefault(ns, set()).add(slug)

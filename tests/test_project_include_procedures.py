@@ -249,7 +249,7 @@ def projet_lisible(store, monkeypatch):
     monkeypatch.setattr(_authz.access, "current_org", lambda sub: 1)
     monkeypatch.setattr(_authz.access, "get_user_role", lambda sub: "member")
     monkeypatch.setattr(cap.db, "get_project_by_id", lambda pid: {
-        "id": 12, "name": "Mission Audiens", "icon": None, "brief_md": "",
+        "id": 12, "name": "Mission cliente", "icon": None, "brief_md": "",
         "owner_type": "org", "owner_id": "1"})
     monkeypatch.setattr(cap.db, "list_project_links", lambda pid: list(LIENS))
     monkeypatch.setattr(cap.db, "project_spine",

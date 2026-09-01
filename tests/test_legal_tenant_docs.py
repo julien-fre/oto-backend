@@ -29,17 +29,17 @@ def test_primary_tenant_short_circuits_without_a_db_call(monkeypatch):
 
 def test_tenant_without_override_falls_back_to_platform_default(monkeypatch):
     monkeypatch.setattr(db, "get_tenant_legal_docs", lambda slug: {})
-    assert legal_docs.docs_for("tulina") is legal_docs.CURRENT_DOCS
+    assert legal_docs.docs_for("acme") is legal_docs.CURRENT_DOCS
 
 
 def test_tenant_override_replaces_only_its_own_slug(monkeypatch):
     monkeypatch.setattr(db, "get_tenant_legal_docs", lambda slug: (
-        {"terms": {"version": "1.0", "label": "Tulina Terms", "url": "https://tulina.ai/terms"}}
-        if slug == "tulina" else {}
+        {"terms": {"version": "1.0", "label": "Acme Terms", "url": "https://acme.test/terms"}}
+        if slug == "acme" else {}
     ))
-    docs = legal_docs.docs_for("tulina")
-    assert docs["terms"] == {"version": "1.0", "label": "Tulina Terms", "url": "https://tulina.ai/terms"}
-    # cgv/dpa untouched — Tulina hasn't declared its own.
+    docs = legal_docs.docs_for("acme")
+    assert docs["terms"] == {"version": "1.0", "label": "Acme Terms", "url": "https://acme.test/terms"}
+    # cgv/dpa untouched — Acme hasn't declared its own.
     assert docs["cgv"] == legal_docs.CURRENT_DOCS["cgv"]
     assert docs["dpa"] == legal_docs.CURRENT_DOCS["dpa"]
 
@@ -60,20 +60,20 @@ def acceptances(monkeypatch):
     return state
 
 
-def test_tulina_sub_sees_tulina_terms_and_still_owes_them(monkeypatch, acceptances):
+def test_acme_sub_sees_acme_terms_and_still_owes_them(monkeypatch, acceptances):
     monkeypatch.setattr(db, "get_tenant_legal_docs", lambda slug: (
-        {"terms": {"version": "1.0", "label": "Tulina Terms", "url": "https://tulina.ai/terms"}}
-        if slug == "tulina" else {}
+        {"terms": {"version": "1.0", "label": "Acme Terms", "url": "https://acme.test/terms"}}
+        if slug == "acme" else {}
     ))
     monkeypatch.setattr(tenancy, "_INSTALLED", tenancy.IssuerRegistry(
         tenancy.build("https://auth.oto.ninja/oidc",
-                      tenants=[{"slug": "tulina", "issuer": "https://auth.tulina.ai/oidc"}])))
+                      tenants=[{"slug": "acme", "issuer": "https://auth.acme.test/oidc"}])))
 
-    st = me_legal._get(ResolvedCtx(sub="tulina:u1", org_id=None, role="member"), me_legal._NoInput())
+    st = me_legal._get(ResolvedCtx(sub="acme:u1", org_id=None, role="member"), me_legal._NoInput())
     terms = next(d for d in st["documents"] if d["slug"] == "terms")
     assert terms == {
-        "slug": "terms", "version": "1.0", "url": "https://tulina.ai/terms",
-        "label": "Tulina Terms", "accepted": False, "accepted_version": None, "accepted_at": None,
+        "slug": "terms", "version": "1.0", "url": "https://acme.test/terms",
+        "label": "Acme Terms", "accepted": False, "accepted_version": None, "accepted_at": None,
     }
     # An oto sub in the SAME process still owes oto's own terms, unaffected.
     oto_st = me_legal._get(ResolvedCtx(sub="u2", org_id=None, role="member"), me_legal._NoInput())
@@ -83,19 +83,19 @@ def test_tulina_sub_sees_tulina_terms_and_still_owes_them(monkeypatch, acceptanc
 
 def test_accept_records_the_tenants_own_version_not_otos(monkeypatch, acceptances):
     monkeypatch.setattr(db, "get_tenant_legal_docs", lambda slug: (
-        {"terms": {"version": "1.0", "label": "Tulina Terms", "url": "https://tulina.ai/terms"}}
-        if slug == "tulina" else {}
+        {"terms": {"version": "1.0", "label": "Acme Terms", "url": "https://acme.test/terms"}}
+        if slug == "acme" else {}
     ))
     monkeypatch.setattr(tenancy, "_INSTALLED", tenancy.IssuerRegistry(
         tenancy.build("https://auth.oto.ninja/oidc",
-                      tenants=[{"slug": "tulina", "issuer": "https://auth.tulina.ai/oidc"}])))
+                      tenants=[{"slug": "acme", "issuer": "https://auth.acme.test/oidc"}])))
 
-    ctx = ResolvedCtx(sub="tulina:u1", org_id=None, role="member")
+    ctx = ResolvedCtx(sub="acme:u1", org_id=None, role="member")
     st = me_legal._accept(ctx, me_legal.AcceptInput(context="access"))
     terms = next(d for d in st["documents"] if d["slug"] == "terms")
     assert terms["accepted"] is True and terms["accepted_version"] == "1.0"
 
-    # Oto bumping ITS OWN terms afterwards must not reopen Tulina's gate.
+    # Oto bumping ITS OWN terms afterwards must not reopen Acme's gate.
     monkeypatch.setitem(legal_docs.CURRENT_DOCS["terms"], "version", "999.0")
     st2 = me_legal._get(ctx, me_legal._NoInput())
     assert st2["contexts"]["access"]["outstanding"] == []
@@ -132,9 +132,9 @@ def tenant_docs(monkeypatch):
 
 def test_set_then_list_reports_the_override_and_the_defaults(tenant_docs):
     tld._set(CTX, tld.TenantDocSetInput(
-        tenant="tulina", slug="terms", version="1.0",
-        label="Tulina Terms", url="https://tulina.ai/terms"))
-    out = tld._list(CTX, tld.TenantSlugInput(tenant="tulina"))
+        tenant="acme", slug="terms", version="1.0",
+        label="Acme Terms", url="https://acme.test/terms"))
+    out = tld._list(CTX, tld.TenantSlugInput(tenant="acme"))
     by_slug = {d["slug"]: d for d in out["docs"]}
     assert by_slug["terms"]["overridden"] is True
     assert by_slug["terms"]["version"] == "1.0"
@@ -144,15 +144,15 @@ def test_set_then_list_reports_the_override_and_the_defaults(tenant_docs):
 
 def test_delete_falls_back_to_the_platform_default(tenant_docs):
     tld._set(CTX, tld.TenantDocSetInput(
-        tenant="tulina", slug="terms", version="1.0", label="Tulina Terms", url="https://tulina.ai/terms"))
-    out = tld._delete(CTX, tld.TenantDocInput(tenant="tulina", slug="terms"))
-    assert out == {"tenant": "tulina", "slug": "terms", "deleted": True}
-    by_slug = {d["slug"]: d for d in tld._list(CTX, tld.TenantSlugInput(tenant="tulina"))["docs"]}
+        tenant="acme", slug="terms", version="1.0", label="Acme Terms", url="https://acme.test/terms"))
+    out = tld._delete(CTX, tld.TenantDocInput(tenant="acme", slug="terms"))
+    assert out == {"tenant": "acme", "slug": "terms", "deleted": True}
+    by_slug = {d["slug"]: d for d in tld._list(CTX, tld.TenantSlugInput(tenant="acme"))["docs"]}
     assert by_slug["terms"]["overridden"] is False
 
 
 def test_unknown_slug_is_rejected(tenant_docs):
     with pytest.raises(AuthzDenied) as exc:
         tld._set(CTX, tld.TenantDocSetInput(
-            tenant="tulina", slug="cookies", version="1.0", label="x", url="https://x"))
+            tenant="acme", slug="cookies", version="1.0", label="x", url="https://x"))
     assert exc.value.code == "unknown_doc_slug"

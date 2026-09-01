@@ -58,12 +58,12 @@ def _run(name, result, *, ff=None, raises=False):
 
 
 _PROFILE = {
-    "first_name": "Jean-Baptiste",
-    "last_name": "Fleury",
-    "email": "jb.fleury@example.com",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "email": "jane.doe@example.com",
     "phone": "+33 6 12 34 56 78",
-    "photo_url": "https://media.licdn.com/jb.jpg",
-    "public_profile_url": "https://linkedin.com/in/jbfleury",
+    "photo_url": "https://media.licdn.com/jane.jpg",
+    "public_profile_url": "https://linkedin.com/in/janedoe",
     "headline": "Head of Talent",
     "location": "Paris, Île-de-France",
 }
@@ -77,8 +77,8 @@ def test_candidate_default_redacts_both_channels():
     text = json.loads(out.content[0].text)
     for view in (sc, text):
         # identité pseudonymisée (≠ original, non vide)
-        assert view["first_name"] != "Jean-Baptiste" and view["first_name"]
-        assert view["last_name"] != "Fleury" and view["last_name"]
+        assert view["first_name"] != "Jane" and view["first_name"]
+        assert view["last_name"] != "Doe" and view["last_name"]
         # email masqué mais format préservé
         assert view["email"] != _PROFILE["email"] and "@" in view["email"]
         # téléphone masqué
@@ -91,7 +91,7 @@ def test_candidate_default_redacts_both_channels():
         assert view["location"] == "Paris, Île-de-France"
     # cohérence inter-canaux : aucun brut résiduel
     assert sc["first_name"] == text["first_name"]
-    assert "Fleury" not in out.content[0].text
+    assert "Doe" not in out.content[0].text
 
 
 def test_pseudonym_is_stable():
@@ -123,7 +123,7 @@ def test_fail_closed_when_apply_raises():
 
     out = _run("unipile_profile", _result(dict(_PROFILE)), ff=_Boom())
     assert out.is_error
-    assert "Fleury" not in out.content[0].text  # aucun brut ne fuit
+    assert "Doe" not in out.content[0].text  # aucun brut ne fuit
 
 
 def test_resolve_failure_passthrough():

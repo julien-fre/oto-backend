@@ -12,7 +12,7 @@ l'API Waalaxy est **import-only** : elle sert à alimenter Waalaxy, pas à le li
 - « ajoute ce profil LinkedIn à la liste X » → `waalaxy_prospect(op="add", prospect_list_id="...", prospect={"url": "https://www.linkedin.com/in/jane-doe"})`
 - « importe ces 40 leads dans la liste X et lance-les dans la campagne Y » → `waalaxy_prospect(op="add", prospect_list_id="...", campaign_id="...", prospects=[{"url": "...", "customProfile": {"firstName": "Jane", "lastName": "Doe", "email": "jane@acme.com", "company": {"name": "Acme"}}, "customVariables": [{"label": "pain", "value": "…"}]}, ...])` — max 100 par appel, un seul appel HTTP
 - « montre-moi ce qui partirait sans l'envoyer » → même appel avec `dry_run=true` : rend le payload exact, zéro appel Waalaxy
-- pattern typique : sourcing ailleurs (Apollo, Pharow, un datastore Tulina…) → `waalaxy_prospect(op="add")` → Waalaxy déroule invitations/messages tout seul
+- pattern typique : sourcing ailleurs (Apollo, Pharow, un datastore oto…) → `waalaxy_prospect(op="add")` → Waalaxy déroule invitations/messages tout seul
 
 ## note — pièges & limites
 

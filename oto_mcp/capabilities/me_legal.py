@@ -5,7 +5,7 @@
 contexte à leur version COURANTE. SUB_ONLY (self-service, `/api/me/*`). Source des
 docs = `legal_docs.docs_for(tenant)` (défaut plateforme, ou l'override du tenant de
 CE sub — `tenancy.current().tenant_of`) ; trace = table `legal_acceptances` (`db.*`),
-elle-même jamais tenant-scopée (un sub qualifié `tulina:...` en est déjà le scope).
+elle-même jamais tenant-scopée (un sub qualifié `<tenant>:...` en est déjà le scope).
 
 Les DEUX contextes passent par ici, `purchase` compris : c'est cette capacité que le
 tunnel de paiement appelle avant de relancer `billing.subscribe` (#487). Chaque
@@ -104,8 +104,8 @@ def _accept(ctx: ResolvedCtx, inp: AcceptInput) -> dict:
     tenant_slug = tenancy.current().tenant_of(ctx.sub)
     docs = legal_docs.docs_for(tenant_slug)
     # La version enregistrée est celle du doc que CE sub a vu (son tenant), pas
-    # forcément celle d'oto — sinon un Tulina qui accepte les CGU de Tulina se
-    # verrait rouvrir le gate au prochain bump d'oto, sans rapport avec lui.
+    # forcément celle d'oto — sinon un sub d'un tenant tiers qui accepte SES
+    # CGU se verrait rouvrir le gate au prochain bump d'oto, sans rapport avec lui.
     # Où et avec quoi l'acte a eu lieu. `client_trace` rend deux `None` hors requête
     # REST — une trace absente reste absente, on n'invente pas l'IP du serveur.
     # `ctx.org_id` = l'org de SESSION (SUB_ONLY l'injecte depuis l'état serveur) :

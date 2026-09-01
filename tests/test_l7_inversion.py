@@ -316,13 +316,13 @@ def test_sous_chain_une_cle_de_TENANT_est_vraiment_SERVIE(socle, monkeypatch):
         platform = staticmethod(
             lambda *a: pytest.fail("le palier plateforme a été servi à la place du tenant"))
 
-    pick = chain_resolution.ChainPick("tenant", credentials_store.TENANT, "tulina")
-    rung = chain_resolution.rung_for_pick(pick, _Sonde, "tulina:u", "serper", 7)
+    pick = chain_resolution.ChainPick("tenant", credentials_store.TENANT, "acme")
+    rung = chain_resolution.rung_for_pick(pick, _Sonde, "acme:u", "serper", 7)
 
     assert rung is not None
     assert rung.mode == "tenant", "le barreau servi doit être celui que la chaîne désigne"
     assert rung.payload == "CLE-DU-TENANT", "c'est la clé du TENANT qui doit être servie"
-    assert rung.entity_id == "tulina"
+    assert rung.entity_id == "acme"
     # `via` est TRADUIT dans le vocabulaire du walker : `status.py` lit `via == 'local'`.
     assert rung.via == "local"
 
@@ -335,9 +335,9 @@ def test_le_via_d_une_arete_de_tenant_reste_un_grant(socle):
         tenant = staticmethod(lambda slug, p: ("K", ""))
         platform = staticmethod(lambda *a: None)
 
-    pick = chain_resolution.ChainPick("tenant", credentials_store.TENANT, "tulina",
+    pick = chain_resolution.ChainPick("tenant", credentials_store.TENANT, "acme",
                                       via="grant")
-    assert chain_resolution.rung_for_pick(pick, _Sonde, "tulina:u", "serper", 7).via == "grant"
+    assert chain_resolution.rung_for_pick(pick, _Sonde, "acme:u", "serper", 7).via == "grant"
 
 
 def test_une_cle_de_tenant_absente_ne_retombe_pas_sur_la_plateforme(socle):
@@ -350,8 +350,8 @@ def test_une_cle_de_tenant_absente_ne_retombe_pas_sur_la_plateforme(socle):
         tenant = staticmethod(lambda slug, p: None)
         platform = staticmethod(lambda *a: pytest.fail("repli muet sur la plateforme"))
 
-    pick = chain_resolution.ChainPick("tenant", credentials_store.TENANT, "tulina")
-    assert chain_resolution.rung_for_pick(pick, _Sonde, "tulina:u", "serper", 7) is None
+    pick = chain_resolution.ChainPick("tenant", credentials_store.TENANT, "acme")
+    assert chain_resolution.rung_for_pick(pick, _Sonde, "acme:u", "serper", 7) is None
 
 
 # ── La commande borne vraiment quand on la borne ─────────────────────────────

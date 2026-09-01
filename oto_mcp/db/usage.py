@@ -213,6 +213,43 @@ def finish_run(run_id: str, outcome: str, note: Optional[str] = None,
         )
 
 
+def run_closed_at(run_id: str) -> Optional[datetime]:
+    """Quand ce run a été CLOS, ou `None` — encore ouvert, ou inconnu du journal.
+
+    Une seule question, un seul appelant : le refus de `@claimed`, qui décrivait un
+    ÉTAT (« aucune réservation active ») là où le problème est un MOMENT — l'appel
+    arrive APRÈS `run_finish`, qui a libéré les baux (#645). Pour le dire, il faut
+    savoir que le run est clos ; c'est tout ce que cette fonction rend.
+
+    ⚠️ Lu du FAIT (`run_finish`), jamais de `runs.finished_at` : cette colonne est une
+    écriture de confort que `finish_run` rate **en silence** quand l'index n'a pas été
+    posé (cf. le bloc ci-dessus, et `_run_closure`). Un refus qui annoncerait une
+    clôture d'après une colonne manquée mentirait exactement dans le cas qu'il est
+    censé expliquer — la faute qu'on est en train de corriger, d'un cran plus bas.
+    D'où la réutilisation de `_run_closure` : ses trois prédicats (corrélation par
+    `args`, clôture postérieure à l'ouverture, propriété du `sub`) valent ici tels
+    quels, et une seconde formulation en serait une seconde vérité.
+
+    `None` couvre « ouvert » ET « jamais vu » : les deux se disent « pas clos », et
+    affirmer une clôture qu'on n'a pas lue serait pire que se taire. Chemin d'ÉCHEC
+    seulement (le nominal résout un bail sans passer ici), deux prédicats indexés —
+    `idx_tool_calls_run` sur l'ouverture, `idx_tool_calls_run_finish_ref` sur le
+    LATERAL de clôture.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            f"""
+            SELECT f.created_at AS finished_at
+              FROM tool_calls s{_run_closure("s")}
+             WHERE s.tool = 'run_start' AND s.run_id = %s
+             ORDER BY s.created_at DESC
+             LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+    return row["finished_at"] if row else None
+
+
 def recent_runs(sub: str, org_id: Optional[int], limit: int = 5) -> list[dict]:
     """Les `limit` derniers runs d'un (sub, org), plus récent d'abord — l'anticipation
     du contexte injecté (#50 bloc C) + la boucle d'usage.
@@ -253,8 +290,8 @@ def my_runs(sub: str, limit: int = 20, *, open_only: bool = False) -> list[dict]
     n'ouvre aucun accès qui n'existait pas.
 
     `open_only` = les runs sans fait de clôture (`outcome IS NULL`), c'est-à-dire ceux
-    qui restent à refermer. Le silence de 48 h n'est PAS filtré ici : il se dérive à
-    la lecture (`run_status`), et un run muet est justement un run à clore.
+    qui restent à refermer. Le silence (24 h depuis #666) n'est PAS filtré ici : il se
+    dérive à la lecture (`run_status`), et un run muet est justement un run à clore.
     """
     limit = max(1, min(int(limit), 200))
     # Le filtre porte sur la COLONNE DÉRIVÉE de la CTE (`j.outcome`), jamais sur les
@@ -535,12 +572,14 @@ def pending_signal_notices() -> list[dict]:
     l'appelant, qui est aussi celui qui décide d'envoyer. ⚠️ On joint l'email ICI
     plutôt que de le résoudre plus tard : un compte supprimé depuis le signalement
     n'a plus d'adresse, et il vaut mieux le voir dans la file que découvrir un envoi
-    silencieusement perdu."""
+    silencieusement perdu. `u.locale` suit le même join (oto-backend#700) : c'est
+    une propriété du DESTINATAIRE, pas du signal — inutile de la relire par un
+    aller-retour séparé côté appelant."""
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             """
-            SELECT s.id, s.sub, u.email, u.name, s.signal, s.kind, s.target, s.body,
-                   s.created_at, s.status, s.resolution, s.resolved_at
+            SELECT s.id, s.sub, u.email, u.name, u.locale, s.signal, s.kind, s.target,
+                   s.body, s.created_at, s.status, s.resolution, s.resolved_at
             FROM usage_signals s LEFT JOIN users u ON u.sub = s.sub
             WHERE s.status = ANY(%s) AND s.notified_at IS NULL AND s.sub IS NOT NULL
             ORDER BY s.sub, s.created_at
@@ -1368,7 +1407,7 @@ def datastore_namespace_activity(ns_id: int, namespace: Optional[str] = None,
     L'axe de corrélation est le `ns_id` **résolu serveur**, sur les DEUX surfaces : la
     face REST le tient de sa route, la face MCP du relevé d'appel que
     `DatastorePg._resolve` remplit (`session_org.note_call_trace`). Le journal cite donc
-    l'entité, quelle que soit la chaîne tapée — `data_write("mucho-leads")`,
+    l'entité, quelle que soit la chaîne tapée — `data_write("leads-clients")`,
     `data_write("160")` et `data_write("slot:vivier")` retombent sur la même ligne, et
     un renommage de tableau n'orpheline plus son historique.
 

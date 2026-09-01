@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS tenants (
     -- **rien ne le lit en L2**.
     hosts JSONB NOT NULL DEFAULT '[]'::jsonb,
     -- Préfixe des outils de la plateforme MONTRÉS aux comptes de ce tenant
-    -- (`oto_doc` → `tulina_doc`, cf. `tool_alias`). NULL = les noms canoniques.
+    -- (`oto_doc` → `acme_doc`, cf. `tool_alias`). NULL = les noms canoniques.
     -- DÉCLARÉ, jamais dérivé du slug : un renommage rompt les procédures et la prose
     -- déjà écrites du tenant, donc il se décide plutôt qu'il ne s'attrape.
     tool_prefix TEXT,

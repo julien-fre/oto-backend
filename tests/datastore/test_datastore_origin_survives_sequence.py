@@ -9,7 +9,7 @@ D'où la forme de ces tests : ils passent par `DatastorePg.update_row` et
 `append_row`, ils écrivent DEUX FOIS, et ils vérifient l'état APRÈS la seconde.
 Une écriture seule ne prouve rien de la survie.
 
-Les quatre cas sont ceux de la session audiens, rejoués ici après l'avoir été sur la
+Les quatre cas sont ceux de la session de campagne, rejoués ici après l'avoir été sur la
 vraie surface (`data_write`, préprod) — le store est ce que la surface appelle.
 """
 from __future__ import annotations
@@ -67,7 +67,7 @@ def _origine(db, key="contact1_nom"):
     return DatastorePg._row_to_dict(db.rows["r1"]).get(f"{key}.origine")
 
 
-# --- les quatre cas d'audiens, en SÉQUENCE ------------------------------------
+# --- les quatre cas de la campagne, en SÉQUENCE ------------------------------------
 
 def test_a_flat_rewrite_keeps_the_origin(store):
     """LE cas qui échouait. `update_row` est le patch par `id` — le geste le plus
@@ -99,7 +99,7 @@ def test_an_explicit_origin_replaces_it(store):
 
 
 def test_the_socle_import_then_the_agent(store):
-    """Le flux d'audiens de bout en bout : le socle client pose l'origine sur un
+    """Le flux de la campagne de bout en bout : le socle client pose l'origine sur un
     champ qu'aucun agent n'a renseigné, puis l'agent le renseigne. C'est le cas
     NOMINAL, et c'est celui où la lecture rendait l'enveloppe."""
     s, db = store

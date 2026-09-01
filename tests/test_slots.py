@@ -112,13 +112,19 @@ def test_check_never_raises(monkeypatch):
 def _wire_set(monkeypatch, existing=None):
     calls = {}
 
-    def _set(org_id, slug, body_md, title=None, description=None, set_by=None, slots=None):
+    # Signature COMPLÈTE plutôt que `**kwargs` : le stub doit rougir le jour où le
+    # handler cesse de passer un paramètre du store (les gardes anti-écrasement de
+    # #662, `must_create`/`expected_version`, sont arrivées par là).
+    def _set(owner_type, owner_id, slug, body_md, title=None, description=None,
+             set_by=None, slots=None, must_create=False, expected_version=None):
+        calls["owner"] = (owner_type, owner_id)
         calls["slots"] = slots
+        calls["garde"] = (must_create, expected_version)
         return 2
 
     monkeypatch.setattr(oi.org_store, "set_instruction", _set)
     monkeypatch.setattr(oi.org_store, "get_instruction",
-                        lambda org, slug, version=None: existing)
+                        lambda otype, oid, slug, version=None: existing)
 
     async def _wc(body_md, mcp_instance=None):
         return {"referenced_tools": [], "unresolved_tools": []}
@@ -133,6 +139,7 @@ def test_set_passes_validated_slots(monkeypatch):
         oi.InstrSetInput(slug="proc", body_md="Écrire dans <slot:sortie>.",
                          slots=[{"name": "Sortie", "type": "tableau"}])))
     assert calls["slots"] == [{"name": "sortie", "type": "tableau"}]
+    assert calls["owner"] == ("org", "3")   # palier par défaut (#681)
     assert out["unresolved_slots"] == [] and out["unreferenced_slots"] == []
 
 

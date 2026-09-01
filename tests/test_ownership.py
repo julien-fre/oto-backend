@@ -226,8 +226,8 @@ def _wire_project(monkeypatch, row, *, member_of=()):
 def test_project_transfer_to_user_garde_l_org_de_travail(monkeypatch):
     """Org-owned → personne MEMBRE de cette org : le projet reste rangé chez elle."""
     seen = _wire_project(monkeypatch, {"owner_type": "org", "owner_id": "35"}, member_of=(35,))
-    ownership._project_reparent("116", "user", "alexandra")
-    assert seen == {"pid": 116, "nt": "user", "ni": "alexandra", "ctx": 35}
+    ownership._project_reparent("116", "user", "jane")
+    assert seen == {"pid": 116, "nt": "user", "ni": "jane", "ctx": 35}
 
 
 def test_project_transfer_to_outsider_retombe_sur_son_espace_perso(monkeypatch):

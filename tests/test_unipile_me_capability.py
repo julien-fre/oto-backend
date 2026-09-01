@@ -77,8 +77,8 @@ def test_les_options_du_wizard_arrivent_au_seam(monkeypatch, socle):
     chez SON front, pas chez oto-dashboard."""
     stub_authz(monkeypatch)
     call("me.unipile.connect", body={"channel": "whatsapp", "premium": " Recruiter ",
-                                     "force": True, "app": "tulina"})
-    assert socle[0] == ("hosted", "u-1", "whatsapp", True, "recruiter", "tulina")
+                                     "force": True, "app": "acme"})
+    assert socle[0] == ("hosted", "u-1", "whatsapp", True, "recruiter", "acme")
 
 
 def test_sans_corps_le_canal_par_defaut_est_linkedin(monkeypatch, socle):

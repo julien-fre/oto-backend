@@ -137,9 +137,15 @@ def target_label(target: dict) -> str:
     return k or "?"
 
 
-def _parse_rows(data: bytes, fmt: str) -> list:
-    """Décode le corps d'un upload datastore en lignes (list[dict]). NDJSON (défaut,
-    une ligne = un objet JSON) ou CSV (1re ligne = en-tête). Lève `UploadError`."""
+def _parse_rows(data: bytes, fmt: str,
+                schema: Optional[dict] = None) -> tuple[list, dict]:
+    """Décode le corps d'un upload datastore en lignes. NDJSON (défaut, une ligne = un
+    objet JSON) ou CSV (1re ligne = en-tête). Lève `UploadError`.
+
+    Rend `(lignes, en-têtes traduits)`. Le second est **toujours vide hors CSV**, et
+    c'est un choix : le NDJSON porte des CLÉS, pas des étiquettes. Une clé pointée y
+    est une adresse — le store la range si elle en désigne une, la refuse sinon.
+    Traduire ici masquerait un bug d'appelant au lieu de le lui dire."""
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
@@ -147,10 +153,20 @@ def _parse_rows(data: bytes, fmt: str) -> list:
     if fmt == "csv":
         import csv
         import io
-        rows = [dict(r) for r in csv.DictReader(io.StringIO(text))]
+
+        from .datastore.errors import RowValidationError
+        from .datastore.points import traduire_les_entetes
+        lecteur = csv.DictReader(io.StringIO(text))
+        try:
+            traduits = traduire_les_entetes(schema, list(lecteur.fieldnames or []))
+        except RowValidationError as e:
+            # Une collision d'en-têtes est un refus d'INGESTION, pas de schéma : elle
+            # sort en 400 nommé, au même titre que « pas de l'UTF-8 ».
+            raise UploadError(400, "entete_en_collision", str(e))
+        rows = [{traduits.get(k, k): v for k, v in r.items()} for r in lecteur]
         if not rows:
             raise UploadError(400, "empty_dataset", "Aucune ligne CSV (en-tête requis).")
-        return rows
+        return rows, traduits
     rows = []
     for i, line in enumerate(text.splitlines(), 1):
         line = line.strip()
@@ -165,7 +181,7 @@ def _parse_rows(data: bytes, fmt: str) -> list:
         rows.append(obj)
     if not rows:
         raise UploadError(400, "empty_dataset", "Aucune ligne NDJSON.")
-    return rows
+    return rows, {}
 
 
 def check_target_access(sub: str, target: dict) -> None:
@@ -252,8 +268,15 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
 
     if kind == "datastore":
         from .datastore import core as ds  # lazy : évite tout cycle d'import au boot
-        rows = _parse_rows(data, target.get("format") or "ndjson")
         store = ds.make_store(sub)
+        # Le schéma n'entre en jeu que pour un CSV, seul format qui porte des
+        # EN-TÊTES : une colonne déclarée rend `site_web.comment` lisible comme une
+        # annotation (le store la rangera), et une cible de traduction déjà déclarée
+        # est une collision. Le NDJSON porte des clés — il n'a rien à traduire.
+        fmt = target.get("format") or "ndjson"
+        rows, entetes_traduits = _parse_rows(
+            data, fmt,
+            store._schema_of(int(target["ns_id"])) if fmt == "csv" else None)
         try:
             out = store._write_rows_to_ns(
                 int(target["ns_id"]), rows, key=target.get("key"))
@@ -261,10 +284,24 @@ def materialize(sub: str, target: dict, data: bytes, request_ct: Optional[str]) 
             raise UploadError(400, "bad_row", str(e))
         # Le chemin de bulk load est celui où le silence coûte le plus cher (#294) :
         # un format renommé + un lot de 500 lignes, et tout atterrit hors schéma.
-        return {"ok": True, "kind": "datastore", "namespace": target.get("namespace"),
-                "inserted": out["inserted"], "updated": out["updated"],
-                "count": out["count"], "bytes": len(data),
-                **store.off_schema_report()}
+        rendu = {"ok": True, "kind": "datastore", "namespace": target.get("namespace"),
+                 "inserted": out["inserted"], "updated": out["updated"],
+                 "count": out["count"], "bytes": len(data),
+                 **store.off_schema_report()}
+        if entetes_traduits:
+            # DITE, jamais silencieuse : sans cette ligne, le client reçoit une colonne
+            # qu'il ne peut plus retrouver par le nom qu'il lui a donné — exactement le
+            # défaut qu'on ferme côté écriture, rouvert côté import.
+            rendu["entetes_traduits"] = entetes_traduits
+            rendu["entetes_traduits_hint"] = (
+                "Un point ne peut pas figurer dans un nom de colonne (il y désigne une "
+                "annotation de la colonne qui le précède). Ces en-têtes ont été "
+                "traduits : "
+                + ", ".join(f"`{a}` → `{b}`"
+                            for a, b in sorted(entetes_traduits.items()))
+                + ". Pour choisir toi-même le nom, renomme la colonne dans le fichier "
+                  "source et recharge.")
+        return rendu
 
     if kind == "image":
         # Le type déclaré (curl, formulaire) n'est jamais cru : `upload_image` le

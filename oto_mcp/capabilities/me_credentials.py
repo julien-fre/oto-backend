@@ -9,6 +9,12 @@ donc un intégrateur ne pouvait pas savoir qu'on pose un second compte avec `acc
 **Pas de face MCP** (`mcp=None`) : un secret brut ne passe jamais en argument d'outil,
 il transiterait dans le contexte du modèle. C'est la règle du repo, pas un oubli.
 
+⚠️ **La lecture ne rend plus AUCUNE valeur de champ secret** (décision du 2026-08-31,
+oto-backend#671). Elle en rendait jusque-là la valeur ENTIÈRE, en clair, pour tout champ
+déclaré `reveal=True` — et c'était le défaut de 55 connecteurs, dont 49 ne l'avaient
+jamais décidé. Le cran `reveal` est retiré du registre ; `secret=False` décide seul, et
+ce que le front voyait déjà (`auth.fields[].secret`) devient la règle entière.
+
 ⚠️ **Le corps du POST est LIBRE par nature** : ses clés sont les `credential_fields`
 du connecteur visé (`GET /api/connectors` les publie), plus `account`. Aucun `Input`
 statique ne peut les énumérer — d'où `body_field="fields"` : le corps ENTIER devient
@@ -21,7 +27,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from .. import access, providers, credentials_store, db, roles
+from .. import access, providers, credentials_store, db, journal_secrets, roles
 from ._authz import SUB_ONLY
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -38,6 +44,12 @@ class CredentialGetInput(BaseModel):
     scope: str = "member"
     # Compte NOMMÉ précis ; vide = le compte mono historique.
     account: str = ""
+    # ⚠️ **Toujours refusé** (403 `secret_never_revealed`) — et c'est sa seule raison
+    # d'être. Ce champ existe pour que « rends-moi la valeur » ait une réponse NOMMÉE,
+    # au lieu du `400 unknown_fields` générique de l'adaptateur ou, pire, d'un 200 au
+    # corps amputé qu'un appelant lirait « aucune clé posée ». Il ne s'ouvrira pas :
+    # la décision du 2026-08-31 (#671) est que la valeur ne sort plus, pour personne.
+    reveal: bool = False
 
 
 class CredentialSetInput(BaseModel):
@@ -58,24 +70,43 @@ class CredentialClearInput(BaseModel):
 # --- Sorties ----------------------------------------------------------------
 
 class CredentialState(BaseModel):
-    """État d'un credential, au palier demandé. **Aucun secret n'en sort** : seuls les
-    champs déclarés `reveal` (une clé d'API, pour la recopier) ou non secrets (une
-    URL de base, un email) sont rendus — jamais un mot de passe, jamais un jeton.
+    """État d'un credential, au palier demandé. **Aucune valeur de champ SECRET n'en
+    sort** : seuls les champs non secrets (une URL de base, un email, une région) sont
+    rendus. Ce qui reconnaît une clé sans la lire est servi à côté — présence, date de
+    pose, auteur, et une empreinte courte non inversible par champ secret renseigné.
 
-    ⚠️ C'est ce qui rend une modification PARTIELLE praticable : on relit la config
-    non-secrète pour la corriger, et le secret qu'on ne peut pas relire est complété
-    côté serveur à l'écriture (#448). L'un sans l'autre était un piège."""
-    model_config = ConfigDict(extra="allow")   # les champs révélables varient par connecteur
+    ⚠️ **La clé d'un champ secret est ABSENTE du corps**, jamais `null` ni `""`. Un
+    champ vidé se lirait « aucune clé posée » et un appelant continuerait sur du vide ;
+    absent, il casse là où il est lu. C'est le mode d'échec qui a décidé de la forme.
+
+    ⚠️ Une clé d'API se relisait jusqu'au 2026-08-31 (#671), et c'était le DÉFAUT de
+    55 connecteurs. Elle ne se relit plus **nulle part** : pour en changer, on repose.
+
+    ⚠️ Ce qui rend une modification PARTIELLE praticable n'a jamais été la révélation,
+    mais le MERGE côté serveur (#448) : les champs absents du corps du POST sont
+    complétés depuis le coffre. Relire la config non secrète continue de marcher ;
+    le secret, lui, n'a jamais eu besoin de repasser par le client."""
+    model_config = ConfigDict(extra="allow")   # les champs non secrets varient par connecteur
     provider: str
     configured: bool
     # Palier effectivement lu, et compte visé ('' = compte mono).
     # ⚠️ **Préfixés `read_` À DESSEIN.** Ce corps est PLAT et ses autres clés sont
     # celles du connecteur : `http` déclare un champ nommé `scope` (les scopes
-    # oauth2). Un `scope:` d'enveloppe l'aurait écrasé — la valeur révélable serait
+    # oauth2). Un `scope:` d'enveloppe l'aurait écrasé — la valeur non secrète serait
     # partie en silence, ou l'enveloppe aurait menti. Toute clé ajoutée ici doit
-    # rester impossible à confondre avec un `credential_field`.
+    # rester impossible à confondre avec un `credential_field` — d'où le préfixe sur
+    # les trois clés ajoutées avec #671, y compris celles qui sonnent comme des méta.
     read_scope: str = "member"
     read_account: str = ""
+    # Quand la ligne a été posée, et par qui (le `sub` de l'auteur). Ce que « c'est
+    # bien la bonne clé » veut dire quand on ne peut plus la lire.
+    read_set_at: Optional[str] = None
+    read_set_by: Optional[str] = None
+    # `{nom du champ secret: 4 caractères}` — un HMAC lié à la ligne du coffre, jamais
+    # des caractères du secret (cf. `journal_secrets.fingerprint`). Le front l'affiche
+    # `•••• 3f7a`. Un champ secret VIDE n'y figure pas : une empreinte du vide dirait
+    # « il y a quelque chose » et serait la même pour tous les champs vides.
+    read_fingerprints: dict[str, str] = {}
 
 
 class CredentialSaved(BaseModel):
@@ -161,18 +192,31 @@ _NOT_CONFIGURED = {
 
 
 def _get(ctx: ResolvedCtx, inp: CredentialGetInput) -> dict:
-    """Les champs RÉVÉLABLES d'un credential, à n'importe quel palier.
+    """L'état d'un credential à n'importe quel palier — **jamais la valeur d'un secret**.
 
-    Mêmes règles qu'au palier membre (`reveal` ou non-secret), même coffre : ce qui
-    change est l'entité lue et le droit exigé. Jusqu'au 2026-08-27, l'entité était
-    `MEMBER` EN DUR — un credential d'équipe ou d'org n'avait donc aucune surface
-    capable d'en rendre la `base_url`, alors que le registre la déclare `reveal=True`
-    (oto-backend#448). Le formulaire vide n'était pas un choix d'UI : le backend
-    n'avait rien à servir."""
+    Ce qui sort : les champs NON secrets tels quels, plus de quoi reconnaître la clé
+    sans la lire (posée ou non, quand, par qui, et une empreinte par champ secret
+    renseigné). Ce qui ne sort plus, depuis le 2026-08-31 (#671) : la valeur des champs
+    `secret=True`, que le cran `reveal` rendait en clair — par DÉFAUT, sur 55
+    connecteurs dont 49 ne l'avaient jamais déclaré.
+
+    Le palier ne change que l'entité lue et le droit exigé. Jusqu'au 2026-08-27,
+    l'entité était `MEMBER` EN DUR — un credential d'équipe ou d'org n'avait donc
+    aucune surface capable d'en rendre la `base_url` (oto-backend#448). Le formulaire
+    vide n'était pas un choix d'UI : le backend n'avait rien à servir."""
     scope = (inp.scope or "member").strip() or "member"
     c = _credentialable(inp.provider, scope)
     if c is None:
         raise AuthzDenied(404, "unknown_provider", f"Connecteur inconnu : `{inp.provider}`.")
+    # Le refus AVANT toute lecture du coffre : demander la valeur n'est pas une requête
+    # qu'on sert à moitié. Un 200 amputé se lirait « aucune clé posée ».
+    if inp.reveal:
+        raise AuthzDenied(
+            403, "secret_never_revealed",
+            "La valeur d'un credential ne se relit pas, à aucun palier et pour "
+            "personne. Cette réponse porte de quoi la reconnaître — `configured`, "
+            "`read_set_at`, `read_set_by`, `read_fingerprints` — et pour la changer, "
+            "on la repose (POST : les champs absents sont conservés).")
     org_id = access.current_org(ctx.sub)
     if org_id is None and scope == "member":
         # Historique : sans org de contexte, la lecture de SA clé dit « rien de posé »
@@ -180,18 +224,34 @@ def _get(ctx: ResolvedCtx, inp: CredentialGetInput) -> dict:
         raise AuthzDenied(404, "not_configured", _NOT_CONFIGURED["member"])
     entity_type, entity_id = _scoped_entity(ctx, scope, org_id)
     account = (inp.account or "").strip()
-    secret = credentials_store.get_credential(
+    # UN aller-retour : le secret (à déchiffrer pour empreindre et pour servir les
+    # champs non secrets) et la traçabilité de la pose viennent de la même ligne.
+    row = credentials_store.get_credential_with_meta(
         entity_type, entity_id, inp.provider, account=account)
-    if not secret:
+    if not row or not row.get("secret"):
         raise AuthzDenied(404, "not_configured", _NOT_CONFIGURED.get(scope, _NOT_CONFIGURED["member"]))
-    fields = credentials_store.unpack_secret(inp.provider, secret)
+    fields = credentials_store.unpack_secret(inp.provider, row["secret"])
     out: dict = {"provider": inp.provider, "configured": True}
+    empreintes: dict = {}
     for f in c.secret_fields:
-        if f.reveal or not f.secret:
+        if not f.secret:
             out[f.name] = fields.get(f.name)
+            continue
+        # Champ SECRET : sa clé reste absente du corps, et son empreinte le nomme.
+        # La ligne du coffre entre dans le HMAC — sans elle, la même clé posée à deux
+        # endroits rendrait la même empreinte, et un lecteur d'empreintes disposerait
+        # d'un oracle de confirmation (cf. `journal_secrets.fingerprint`).
+        valeur = fields.get(f.name)
+        if valeur:
+            empreintes[f.name] = journal_secrets.fingerprint(
+                entity_type, entity_id, inp.provider, account, f.name, valeur)
     # Après les champs du connecteur, et sous des noms qui ne peuvent pas en être
     # un — cf. la note de `CredentialState`.
     out["read_scope"], out["read_account"] = scope, account
+    set_at = row.get("set_at")
+    out["read_set_at"] = set_at if isinstance(set_at, (str, type(None))) else set_at.isoformat()
+    out["read_set_by"] = row.get("set_by")
+    out["read_fingerprints"] = empreintes
     return out
 
 
@@ -324,11 +384,18 @@ _DOC_SET = (
     "testé AVANT d'être écrit quand le connecteur expose une sonde."
 )
 _DOC_GET = (
-    "L'état d'un credential pour un connecteur : posé ou non, et les seuls champs "
-    "révélables (une URL de base à corriger, une clé d'API à recopier, un email). Un "
-    "secret ne se relit jamais. `scope` : `member` (le tien, défaut), `group` ou "
-    "`org` — ces deux-là exigent d'être admin du palier, comme pour le retrait. "
-    "`account` cible un compte nommé précis ; vide = le compte unique."
+    "L'état d'un credential pour un connecteur. **La valeur d'un champ secret n'est "
+    "jamais rendue** — sa clé est ABSENTE du corps, pas vide : depuis le 2026-08-31, "
+    "une clé d'API ne se relit plus, à aucun palier et pour personne (demander sa "
+    "valeur rend `403 secret_never_revealed`). Ce qui sort : les champs NON secrets "
+    "tels quels (une URL de base à corriger, une région, un email), et de quoi "
+    "reconnaître la clé sans la lire — `configured`, `read_set_at`, `read_set_by`, "
+    "et `read_fingerprints` : quatre caractères non réversibles par champ secret "
+    "renseigné (une empreinte, jamais un morceau du secret). Pour changer une clé, on "
+    "la repose : le POST conserve les champs qu'il ne reçoit pas. `scope` : `member` "
+    "(le tien, défaut), `group` ou `org` — ces deux-là exigent d'être admin du palier, "
+    "comme pour le retrait. `account` cible un compte nommé précis ; vide = le compte "
+    "unique."
 )
 _DOC_CLEAR = (
     "Retire un credential. `scope` : `member` (le tien, défaut), `org` ou `group` — "

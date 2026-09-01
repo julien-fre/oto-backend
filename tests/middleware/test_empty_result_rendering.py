@@ -135,7 +135,11 @@ def test_une_erreur_n_est_pas_reecrite():
 # texte. Un tour sans contenu est le pire cas : le modèle ne reçoit littéralement rien.
 
 def test_une_liste_vide_produit_exactement_un_bloc_texte():
-    """Forme de `fr_directors` sur un SIREN sans dirigeant."""
+    """Le cas fondateur : forme de `fr_directors` sur un SIREN sans dirigeant.
+
+    Cet outil rend un dict depuis le 2026-09-01 (#612) — la forme testée ici
+    reste celle de tout outil qui rend une liste.
+    """
     def recherche() -> list[dict]:
         return []
 

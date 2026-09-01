@@ -15,7 +15,7 @@ from oto_mcp.capabilities import runner_jobs as RJ
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 
-def _ctx(sub="worker-audiens", org_id=226):
+def _ctx(sub="worker-campagne", org_id=226):
     return ResolvedCtx(sub=sub, org_id=org_id)
 
 
@@ -36,8 +36,8 @@ def espion(monkeypatch):
     monkeypatch.setattr(RJ.db, "complete_job",
                         lambda job_id, sub, ok, error=None, run_id=None, result=None:
                         vu.update(result=result) or
-                        ({"status": "done"} if sub == "worker-audiens" else None))
-    monkeypatch.setattr(RJ.db, "bind_job_run", lambda j, s, r: s == "worker-audiens")
+                        ({"status": "done"} if sub == "worker-campagne" else None))
+    monkeypatch.setattr(RJ.db, "bind_job_run", lambda j, s, r: s == "worker-campagne")
     monkeypatch.setattr(RJ.db, "extend_job_lease", lambda j, s, lease_seconds=600: False)
     monkeypatch.setattr(RJ.db, "get_job", lambda j, org: None)
     return vu
@@ -48,7 +48,7 @@ def espion(monkeypatch):
 def test_le_claim_porte_lorg_et_le_sub_de_lappelant(espion):
     _appel(_ctx(), op="claim")
     org, sub, _ = espion["claim"]
-    assert (org, sub) == (226, "worker-audiens"), \
+    assert (org, sub) == (226, "worker-campagne"), \
         "le claim ne peut servir QUE la file de l'org du jeton, au nom du worker"
 
 
@@ -99,7 +99,7 @@ def test_enfiler_un_continue_sur_le_run_dautrui_rend_run_inconnu(espion, monkeyp
 
 def test_le_proprietaire_enfile_son_continue(espion, monkeypatch):
     monkeypatch.setattr(RJ.db, "get_run_head",
-                        lambda run_id: {"sub": "worker-audiens", "org_id": 226})
+                        lambda run_id: {"sub": "worker-campagne", "org_id": 226})
     out = _appel(_ctx(), op="enqueue", kind="continue", run_id="run-X")
     assert out["id"] == 7
 

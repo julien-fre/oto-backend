@@ -43,20 +43,77 @@ par id (réservé platform_admin). Autz conditionnelle dans `tools/orgs.py`
   SESSION** ; avec `slug` = le markdown d'un guide nommé. `oto_procedure(op='list'[, query,
   scope])` = catalogue/recherche. Scopés à l'**org active** (+ groupe actif) — servis aux seuls
   membres. **Vide sans erreur** si pas d'org active (`_SERVER_INSTRUCTIONS` invite à `oto_procedure(op='get')`).
-- **Écriture** : `oto_procedure(op='set'[, body_md, slug, org, title, desc, from_version])` (base = slug
-  omis ; nommée sinon ; `from_version` = revert) + `oto_procedure(op='delete', slug[, org])`. Autz :
-  `org_id` absent → org active, **org_admin** requis (self-service MCP, NOUVEAU) ; présent → autre
-  org, **platform_admin** requis (l'opérateur provisionne n'importe quelle org). La SPA dashboard
-  édite aussi via REST `/api/me/instructions*` (org_admin de l'org active).
+- **Écriture** : `oto_procedure(op='set'[, body_md, slug, scope, org, group, title, desc,
+  from_version])` (base = slug omis ; nommée sinon ; `from_version` = revert) +
+  `oto_procedure(op='delete', slug[, scope, org, group])`. Autz **par PALIER** (`scope`,
+  #681 — 31/08/2026) :
+  - `scope='org'` (défaut) : `org` absent → org active, **org_admin** ; présent → autre org,
+    **platform_admin** (l'opérateur provisionne n'importe quelle org) ;
+  - `scope='group'` : `group` absent → équipe active, présent → l'équipe nommée ; **chef
+    d'équipe** requis (escalade `roles.can_admin_group` : org_admin parent, platform_admin).
+
+  ⚠️ **Pourquoi ce second palier existe** : celui qui DÉROULE une procédure est un opérateur
+  métier, et le seul qui pouvait l'écrire était un administrateur d'org. Améliorer son propre
+  mode d'emploi supposait donc les clés de toute l'organisation — membres, connecteurs,
+  secrets — que personne n'accorde pour ça ; la boucle d'auto-amélioration que la procédure
+  promet ne se fermait jamais.
+
+  ⚠️ **La garde suit le VERBE, pas la surface** (corrigé le 01/09/2026, avant fusion de
+  #695) : au palier équipe, `set` demande d'être **membre** de l'équipe, `delete` d'en être
+  le **chef**. La première rédaction du lot gardait l'écriture sur « chef d'équipe » et ça
+  s'est payé tout de suite : pour laisser une opératrice annoter le mode d'emploi qu'elle
+  déroulait, il a fallu la faire cheffe de son équipe — un rôle qui emporte les **clés
+  partagées** de l'équipe. Une garde d'écriture trop grossière force une élévation de droits
+  dans un domaine sans rapport. Ce qui rend l'ouverture tenable est que l'écriture est
+  **réversible** (une version de plus, `from_version` restaure) alors que la suppression
+  emporte l'historique sans corbeille.
+
+  Les faces REST restent **une route par palier** : `/api/me/instructions*` (org_admin de
+  l'org active) et `/api/groups/{id}/instructions*` (membre pour écrire et restaurer, chef
+  pour supprimer — **même partage que la console**, sinon « qui peut annoter » deviendrait
+  une propriété du transport). `scope`/`group` sont des axes de la CONSOLE MCP seulement —
+  les publier dans le corps d'une route qui les refuserait décrirait une porte qui n'existe
+  pas.
+
+  **Deux gardes ⟹ deux droits SERVIS** (01/09/2026, suite de #695). `can_edit` est resté
+  le droit d'ADMINISTRER (readme d'équipe, membres, secrets, suppression) et rendait
+  `false` à une membre qui avait pourtant le droit d'écrire : une porte fermée à tort.
+  L'élargir en aurait ouvert une autre — le bouton de suppression, que le serveur refuse.
+  Le sens s'est donc **dédoublé** : `can_write_instructions` (écrire/restaurer) et
+  `can_delete_instructions` (supprimer) sont servis **à côté** de `can_edit`, dont ni la
+  valeur ni le sens ne bougent. Mêmes deux noms sur les **deux** bundles de la famille
+  (`GET /api/groups/{id}/instructions` et `GET /api/me/instructions`) : les servir d'un
+  seul côté remettrait « qui peut annoter » dans les mains de la page.
+
+  ⚠️ **Le drapeau et le refus sont la MÊME fonction.** Chaque droit annoncé NOMME la
+  capacité dont il rend la règle (`_DROITS_SERVIS`), et le bundle exécute cette règle
+  d'autz déclarée — `_authz.capacite_autorise`, qui ne lance jamais le handler. Aucun
+  critère n'est recopié dans le handler du bundle : déplacer une garde déplace son
+  drapeau avec elle. C'est le défaut d'origine, et il ne se reconstruit pas un cran plus
+  loin. Cliquets : `tests/test_droits_procedure_servis_695.py` (le drapeau vaut ce que
+  fait la règle, pour chaque acteur ; et chaque nom de drapeau doit nommer la capacité
+  de SON verbe — sans quoi une table qui se trompe de capacité resterait cohérente avec
+  elle-même).
 - **Versioning** : chaque écriture incrémente `version` (sur le courant) et archive un snapshot
   append-only. Revert = re-poser le corps d'une version → nouvelle version (jamais d'effacement
   d'historique sauf `delete`).
-- **Store** : `org_instructions(org_id, slug PK partiel, title, description, body_md, version,
-  set_by, created_at, updated_at)` + `org_instruction_revisions(org_id, slug, version PK, …)`
-  (`db._SCHEMA`, palier org) ; accès dans `org_store/instructions.py` (`get/list/search/set/delete_instruction`,
-  `list_instruction_versions`, `normalize_slug`, `BASE_SLUG`). **En clair** (prose, pas un
-  credential → hors coffre chiffré). **Pas de cache** : lecture DB à l'appel. Écriture sérialisée
-  par `(org, slug)` via verrou advisory (mirroir `add_org_member`).
+- **Store** : `org_instructions(owner_type, owner_id, slug, org_id, title, description,
+  body_md, slots, version, set_by, archived_at, created_at, updated_at)` +
+  `org_instruction_revisions(owner_type, owner_id, slug, version PK, …)` (`db/schema/procedures.py`).
+  ⚠️ **UN seul jeu de fonctions**, keyé sur `(owner_type, owner_id)` — la clé d'unicité que la
+  table porte, sur la table ET sur ses révisions : `org_store.<fn>('org'|'group', id, …)`
+  (`org_store/instructions.py`). `org_id` reste la colonne dénormalisée de l'org PARENTE (FK,
+  NOT NULL, cascade de suppression) : org et équipe en ont toutes deux une.
+
+  ⚠️ **Il en a existé DEUX jusqu'au 31/08/2026** (#681) : celui-ci filtrait `owner_type='org'`
+  en dur, `group_store` filtrait `owner_type='group'` en dur, sur la MÊME table — et ils avaient
+  déjà divergé (le palier équipe écrivait `slots='[]'` en dur, ne relisait pas les slots,
+  ignorait l'archivage). Ajouter un palier par la même méthode en aurait fait un troisième :
+  **le propriétaire est une DIMENSION, pas trois cas particuliers.** Le palier `user` reste
+  fermé (`OWNER_TYPES`) tant que `org_id` est NOT NULL — phase 2 du même lot.
+
+  **En clair** (prose, pas un credential → hors coffre chiffré). **Pas de cache** : lecture DB
+  à l'appel. Écriture sérialisée par `(owner_type, owner_id, slug)` via verrou advisory.
 - **Pas d'instruction par namespace d'outil** : un gotcha d'outil est vrai pour tout le monde et
   évolue avec le code du connecteur → sa place reste le repo (docstring, `_SERVER_INSTRUCTIONS`),
   versionné avec l'outil.
@@ -77,7 +134,7 @@ répète le nom de la procédure (`stripLeadingTitleHeading`) et affiche le sien
 se pose donc SOUS ce H1 quand il existe (au-dessus, le titre resterait orphelin en
 milieu de page), et en tout premier quand le corps n'en a pas (`## Goal`…).
 
-## Le schéma est une section requise (tulina-app-front#108)
+## Le schéma est une section requise (front tiers, issue #108)
 
 Une procédure embarque un **dessin** de son process, et ce n'est pas une illustration :
 le front en fait la **vue par défaut** de la page de la procédure — une procédure sans
@@ -141,7 +198,7 @@ de qui renomme.
 
 ⚠️ **À ne pas confondre avec le préfixe d'outils d'un tenant** (`tenants.tool_prefix`,
 `oto_mcp/tool_alias.py`) : celui-là n'est PAS un renommage. C'est une traduction posée au bord du
-protocole — `oto_doc` devient `tulina_doc` dans le `tools/list` servi, et redevient `oto_doc`
+protocole — `oto_doc` devient `acme_doc` dans le `tools/list` servi, et redevient `oto_doc`
 avant que quoi que ce soit d'autre ne le lise. Les refs `<tool:slug>` restent donc écrites en
 canonique, continuent de résoudre, et **il n'y a rien à migrer**. Les deux formes sont d'ailleurs
 acceptées à l'appel, précisément pour que la prose déjà écrite aboutisse.

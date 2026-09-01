@@ -1,5 +1,7 @@
 GET,HEAD /favicon.svg -> favicon
 GET,HEAD /favicon.ico -> favicon
+GET,HEAD /api/version -> version
+OPTIONS /api/version -> options_handler
 GET,HEAD /api/mcp/catalog -> mcp_catalog
 OPTIONS /api/mcp/catalog -> options_handler
 GET,HEAD /openapi.json -> openapi_doc
@@ -131,6 +133,8 @@ DELETE /api/orgs/{id}/invitations/{inv} -> _handler
 OPTIONS /api/orgs/{id}/invitations/{inv} -> options_handler
 POST /api/me/invitations/accept -> _handler
 OPTIONS /api/me/invitations/accept -> options_handler
+POST /api/me/invitations/reject -> _handler
+OPTIONS /api/me/invitations/reject -> options_handler
 POST /api/admin/invitations -> _handler
 OPTIONS /api/admin/invitations -> options_handler
 GET,HEAD /api/admin/invitations -> _handler
@@ -287,6 +291,8 @@ GET,HEAD /api/me/instructions/{slug}/usage -> _handler
 OPTIONS /api/me/instructions/{slug}/usage -> options_handler
 PUT /api/me/instructions/{slug} -> _handler
 OPTIONS /api/me/instructions/{slug} -> options_handler
+POST /api/me/instructions -> _handler
+OPTIONS /api/me/instructions -> options_handler
 DELETE /api/me/instructions/{slug} -> _handler
 OPTIONS /api/me/instructions/{slug} -> options_handler
 POST /api/me/instructions/{slug}/archive -> _handler
@@ -555,6 +561,8 @@ GET,HEAD /api/me/inbox -> _handler
 OPTIONS /api/me/inbox -> options_handler
 GET,HEAD /api/me/shell -> _handler
 OPTIONS /api/me/shell -> options_handler
+POST /api/me/nodes/edit -> _handler
+OPTIONS /api/me/nodes/edit -> options_handler
 GET,HEAD /api/me/nodes/{node_id} -> _handler
 OPTIONS /api/me/nodes/{node_id} -> options_handler
 GET,HEAD /api/me/nodes/{node_id}/rows -> _handler

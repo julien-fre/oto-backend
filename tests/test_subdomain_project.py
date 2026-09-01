@@ -35,9 +35,9 @@ def test_project_domain_env_driven(monkeypatch):
     assert sp._is_share_host("x.share.oto.ninja") is True
     assert sp._is_share_host("x.share.oto.cx") is False
     monkeypatch.setattr(db, "get_project_by_mcp_slug",
-                        lambda s: {"id": 8, "mcp_access": "org"} if s == "mm" else None)
-    assert sp.valid_org_audience("https://mm.mcp.oto.ninja/mcp") is True   # audience sur le domaine courant
-    assert sp.valid_org_audience("https://mm.mcp.oto.cx/mcp") is False     # domaine prod rejeté en preprod
+                        lambda s: {"id": 8, "mcp_access": "org"} if s == "acme" else None)
+    assert sp.valid_org_audience("https://acme.mcp.oto.ninja/mcp") is True   # audience sur le domaine courant
+    assert sp.valid_org_audience("https://acme.mcp.oto.cx/mcp") is False     # domaine prod rejeté en preprod
 
 
 def test_connect_url_is_path_aware():
@@ -349,7 +349,7 @@ async def test_host_dispatch_org_pins_and_uses_authed(monkeypatch):
         "id": 8, "owner_type": "org", "owner_id": "35",
         "mcp_access": "org", "mcp_tools": []})
     disp = sp.HostDispatch(_authed, _anon)
-    scope = {"type": "http", "headers": [(b"host", b"movinmotion.mcp.oto.cx")]}
+    scope = {"type": "http", "headers": [(b"host", b"acme.mcp.oto.cx")]}
     await disp(scope, None, None)
     assert seen["app"] == "authed"
     assert seen["pinned"] == 35
@@ -358,13 +358,13 @@ async def test_host_dispatch_org_pins_and_uses_authed(monkeypatch):
 # ── Audience JWT : canonique OU sous-domaine org publié (#44) ────────────────
 def test_valid_org_audience(monkeypatch):
     monkeypatch.setattr(db, "get_project_by_mcp_slug",
-                        lambda s: {"id": 8, "mcp_access": "org"} if s == "movinmotion"
+                        lambda s: {"id": 8, "mcp_access": "org"} if s == "acme"
                         else ({"id": 9, "mcp_access": "anonymous"} if s == "ft" else None))
-    assert sp.valid_org_audience("https://movinmotion.mcp.oto.cx/mcp") is True
+    assert sp.valid_org_audience("https://acme.mcp.oto.cx/mcp") is True
     assert sp.valid_org_audience("https://ft.mcp.oto.cx/mcp") is False   # anonyme ≠ org
     assert sp.valid_org_audience("https://nope.mcp.oto.cx/mcp") is False # inconnu
     assert sp.valid_org_audience("https://evil.com/mcp") is False        # hors domaine
-    assert sp.valid_org_audience("https://movinmotion.mcp.oto.cx") is False  # pas /mcp
+    assert sp.valid_org_audience("https://acme.mcp.oto.cx") is False  # pas /mcp
     assert sp.valid_org_audience(None) is False
 
 
@@ -380,7 +380,7 @@ def test_valid_org_audience_share_domain(monkeypatch):
 def test_valid_org_audience_fail_closed(monkeypatch):
     def _boom(s): raise RuntimeError("DB down")
     monkeypatch.setattr(db, "get_project_by_mcp_slug", _boom)
-    assert sp.valid_org_audience("https://movinmotion.mcp.oto.cx/mcp") is False
+    assert sp.valid_org_audience("https://acme.mcp.oto.cx/mcp") is False
 
 
 def test_verifier_audience_decision(monkeypatch):
@@ -392,8 +392,8 @@ def test_verifier_audience_decision(monkeypatch):
     assert v._audience_ok({"aud": "https://mcp.oto.ninja/mcp"}) is True
     assert v._audience_ok({"aud": ["https://mcp.oto.ninja/mcp", "x"]}) is True
     # sous-domaine org → délègue à valid_org_audience
-    monkeypatch.setattr(sp, "valid_org_audience", lambda a: a == "https://mm.mcp.oto.cx/mcp")
-    assert v._audience_ok({"aud": "https://mm.mcp.oto.cx/mcp"}) is True
+    monkeypatch.setattr(sp, "valid_org_audience", lambda a: a == "https://acme.mcp.oto.cx/mcp")
+    assert v._audience_ok({"aud": "https://acme.mcp.oto.cx/mcp"}) is True
     assert v._audience_ok({"aud": "https://other.mcp.oto.cx/mcp"}) is False
 
 
@@ -438,8 +438,8 @@ def test_prm_canonical(monkeypatch):
 
 
 def test_prm_subdomain_org(monkeypatch):
-    md = _call_prm("movinmotion.mcp.oto.cx", True, monkeypatch)
-    assert md["resource"] == "https://movinmotion.mcp.oto.cx/mcp"
+    md = _call_prm("acme.mcp.oto.cx", True, monkeypatch)
+    assert md["resource"] == "https://acme.mcp.oto.cx/mcp"
     assert md["authorization_servers"] == ["https://mcp.oto.ninja/"]   # AS reste canonique
 
 
@@ -461,7 +461,7 @@ def test_ensure_api_resource_idempotent(monkeypatch):
     monkeypatch.setattr(oauth_facade, "_logto_base", lambda: "https://auth.x")
     import requests
 
-    def _get(url, **kw): return _Resp([{"indicator": "https://mm.mcp.oto.cx/mcp"}])
+    def _get(url, **kw): return _Resp([{"indicator": "https://acme.mcp.oto.cx/mcp"}])
 
     def _post(url, **kw):
         calls["post"] += 1
@@ -470,7 +470,7 @@ def test_ensure_api_resource_idempotent(monkeypatch):
     monkeypatch.setattr(requests, "get", _get)
     monkeypatch.setattr(requests, "post", _post)
     # déjà présent → pas de POST
-    oauth_facade.ensure_api_resource("https://mm.mcp.oto.cx/mcp")
+    oauth_facade.ensure_api_resource("https://acme.mcp.oto.cx/mcp")
     assert calls["post"] == 0
     # absent → POST
     oauth_facade.ensure_api_resource("https://new.mcp.oto.cx/mcp")

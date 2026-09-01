@@ -50,8 +50,8 @@ def make_routes(
         `return_app` = le front qui a DEMANDÉ la connexion, relu du state signé (`""`
         quand le state n'a pas pu être lu : on n'a alors aucun moyen de savoir qui
         rappeler, cas dégradé assumé). Tant que cette URL était codée sur
-        oto-dashboard, un utilisateur de Tulina finissait son consentement chez un
-        autre produit.
+        oto-dashboard, un utilisateur d'un front partenaire finissait son consentement
+        chez un autre produit.
 
         Le défaut reste `/console/connectors` À L'OCTET PRÈS : c'est un chemin propre
         au dashboard, que le patron générique `return_url` ne connaît pas — y

@@ -28,9 +28,13 @@ def coffre(monkeypatch):
     monkeypatch.setattr(mc.roles, "can_admin_group", lambda sub, gid: True)
     monkeypatch.setattr(mc.roles, "is_org_admin", lambda sub, oid: True)
     stored = {("group", str(GROUP)): credentials_store.pack_secret("http", PONT)}
-    monkeypatch.setattr(
-        mc.credentials_store, "get_credential",
-        lambda et, eid, con, account="": stored.get((et, eid)))
+
+    def _ligne(et, eid, con, account=""):
+        secret = stored.get((et, eid))
+        return ({"secret": secret, "meta": {}, "set_at": "2026-08-27T10:00:00+00:00",
+                 "set_by": "u-admin"} if secret else None)
+
+    monkeypatch.setattr(mc.credentials_store, "get_credential_with_meta", _ligne)
     return stored
 
 
@@ -40,8 +44,12 @@ def _get(provider="http", query=b""):
 
 # --- La lecture révélante existe hors du palier membre ----------------------
 
-def test_le_palier_equipe_rend_les_champs_revelables(monkeypatch, coffre):
-    """Ce que le registre déclare `reveal=True` sort — c'est ce qui manquait."""
+def test_le_palier_equipe_rend_les_champs_non_secrets(monkeypatch, coffre):
+    """Ce que le registre déclare NON secret sort — c'est ce qui manquait.
+
+    ⚠️ Ce test a dit « ce que le registre déclare `reveal=True` » jusqu'au 2026-08-31 :
+    le cran existait alors, et il ouvrait aussi la valeur des champs SECRETS. Il est
+    retiré (#671) — seul `secret=False` décide, et c'est ce qui a toujours suffi ici."""
     stub_authz(monkeypatch)
     code, out = _get(query=b"scope=group")
     assert code == 200, out
@@ -52,7 +60,7 @@ def test_le_palier_equipe_rend_les_champs_revelables(monkeypatch, coffre):
 
 def test_lenveloppe_necrase_pas_un_champ_du_connecteur(monkeypatch, coffre):
     """`http` déclare un champ nommé `scope` (les scopes oauth2) et le corps rendu est
-    PLAT : une clé d'enveloppe nommée `scope` aurait mangé la valeur révélable. Les
+    PLAT : une clé d'enveloppe nommée `scope` aurait mangé la valeur servie. Les
     clés d'enveloppe sont donc préfixées, et le champ du connecteur reste servi."""
     stub_authz(monkeypatch)
     _, out = _get(query=b"scope=group")
@@ -61,11 +69,14 @@ def test_lenveloppe_necrase_pas_un_champ_du_connecteur(monkeypatch, coffre):
 
 
 def test_le_secret_ne_sort_toujours_pas(monkeypatch, coffre):
-    """La lecture s'ouvre au palier, pas au secret : le bearer reste au coffre."""
+    """La lecture s'ouvre au palier, pas au secret : le bearer reste au coffre.
+
+    Ce qui le remplace depuis #671 : une empreinte qui le NOMME sans rien en dire."""
     stub_authz(monkeypatch)
     _, out = _get(query=b"scope=group")
     assert "token" not in out
     assert "TOK-SECRET" not in str(out)
+    assert set(out["read_fingerprints"]) == {"token"}
 
 
 def test_un_connecteur_byo_org_nest_plus_inconnu(monkeypatch, coffre):

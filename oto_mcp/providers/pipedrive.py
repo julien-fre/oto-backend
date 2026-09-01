@@ -16,10 +16,10 @@ CONNECTOR = _c(
     secret_kind="fields", label="Pipedrive",
     help="CRM (deals, personnes, organisations, activités, notes, leads)",
     href="https://app.pipedrive.com", credential_fields=(
-        CredentialField("api_token", "Token API", secret=True, reveal=True,
+        CredentialField("api_token", "Token API", secret=True,
                         help="Pipedrive → Paramètres personnels → API"),
         CredentialField("company_domain", "Sous-domaine du compte",
-                        secret=False, reveal=True, required=False,
+                        secret=False, required=False,
                         help="acme pour acme.pipedrive.com — facultatif"),
     ),
 )

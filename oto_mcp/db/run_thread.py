@@ -70,11 +70,16 @@ def get_run_messages(run_id: str, after_seq: int = 0, limit: int = 200,
 
 
 def get_run_head(run_id: str) -> Optional[dict]:
-    """`{sub, org_id}` du run — la base de l'autz du fil (le fil hérite des droits
-    de SON run, aucun modèle de droits nouveau)."""
+    """`{sub, org_id, started_at}` du run — la base de l'autz du fil (le fil hérite
+    des droits de SON run, aucun modèle de droits nouveau).
+
+    `started_at` est servi depuis #607 (une colonne `system: "run.started_at"` le
+    pose sur la ligne). Ajouté ICI plutôt que par une seconde lecture : les deux
+    appelants lisent la même ligne immuable, et deux requêtes sur la même clé
+    finissent par diverger sur ce qu'elles considèrent comme « le run »."""
     with _connect() as conn:
         row = conn.execute(
-            "SELECT sub, org_id FROM runs WHERE run_id = %s", (run_id,)
+            "SELECT sub, org_id, started_at FROM runs WHERE run_id = %s", (run_id,)
         ).fetchone()
     return dict(row) if row else None
 

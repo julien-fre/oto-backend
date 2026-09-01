@@ -137,14 +137,14 @@ def test_entity_id_ne_se_decoupe_quau_premier_deux_points():
         "`entity_id` découpé ailleurs qu'à son PREMIER `:` :\n  "
         + "\n  ".join(coupables)
         + "\n`rsplit`/`rpartition` prennent le DERNIER `:` et `split(':')[1]` prend "
-          "le deuxième segment : sur `12:tulina:abc123`, les deux coupent DANS le "
+          "le deuxième segment : sur `12:acme:abc123`, les deux coupent DANS le "
           "sub. `partition(':')` tient parce que le reste est recomparé en entier.")
 
 
 def test_un_decoupage_dentity_id_est_garde_par_le_scope_membre():
     """Règle 3 — le piège nommé par l'issue. Pour `entity_type='user'`, `entity_id`
     EST le sub : un sub qualifié y met un `:` là où il n'y en avait AUCUN, et le
-    code lirait `tulina` comme un id d'org et `abc123` comme le sub."""
+    code lirait `acme` comme un id d'org et `abc123` comme le sub."""
     nus = [str(s) for s in _SITES
            if ({"entity", "eid"} & s.words)
            and not re.search(r"\bMEMBER\b|[\"']member[\"']", s.body)]
@@ -159,7 +159,7 @@ def test_un_decoupage_dentity_id_est_garde_par_le_scope_membre():
 
 # --- Ce que le statique ne peut pas dire : on l'exerce ----------------------
 
-_QUALIFIE = "tulina:abc123"
+_QUALIFIE = "acme:abc123"
 
 
 def test_un_entity_id_membre_se_relit_juste_avec_un_sub_qualifie():
@@ -206,7 +206,7 @@ def test_un_sub_qualifie_ne_ressemble_a_aucun_autre_entity_id():
     membre. Le premier segment d'un sub qualifié est un slug, jamais un entier."""
     from oto_mcp import tenancy
 
-    org_like, _, _reste = tenancy.qualify("tulina", "abc123").partition(":")
+    org_like, _, _reste = tenancy.qualify("acme", "abc123").partition(":")
     assert not org_like.isdigit(), (
         "un slug de tenant numérique ferait passer un `entity_id` de scope user "
         "pour un `entity_id` de scope membre")

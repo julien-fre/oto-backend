@@ -17,11 +17,11 @@ def test_summary_defaults_and_sub_resolution(monkeypatch):
     monkeypatch.setattr(monitoring.db, "tool_call_stats",
                         lambda since_days, org_id, sub: seen.update(
                             days=since_days, org_id=org_id, sub=sub) or {"ok": 1})
-    monkeypatch.setattr(monitoring, "_resolve_sub", lambda t: "sub-jb" if t else None)
+    monkeypatch.setattr(monitoring, "_resolve_sub", lambda t: "sub-jane" if t else None)
     out = monitoring._monitoring(CTX, monitoring.MonitoringInput(
-        op="summary", sub="jb@example.com"))
+        op="summary", sub="jane@example.com"))
     assert out == {"ok": 1}
-    assert seen == {"days": 7, "org_id": None, "sub": "sub-jb"}
+    assert seen == {"days": 7, "org_id": None, "sub": "sub-jane"}
 
 
 def test_calls_passes_investigation_filters(monkeypatch):

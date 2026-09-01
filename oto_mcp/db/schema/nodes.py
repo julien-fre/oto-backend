@@ -77,11 +77,38 @@ CREATE TABLE IF NOT EXISTS nodes (
     -- `user_datastores.owner_id`, `org_instructions.owner_id` et `guides.owner_id` :
     -- le couple (owner_type, owner_id) se lit de la même façon partout.
     owner_id TEXT NOT NULL,
+    -- Ce que le nœud EST pour la plateforme : titre, épingle, livraison, schéma
+    -- d'enfants. Des clés qu'oto CONNAÎT et interprète.
     props JSONB NOT NULL DEFAULT '{}'::jsonb,
-    -- Le bail de la file de travail migre TEL QUEL (0063-D3) — colonnes posées
-    -- ici, sans lecteur avant la conversion des lignes (M4).
+    -- Ce que l'utilisateur y a MIS : les valeurs des colonnes d'une ligne de
+    -- tableau. Des clés dont oto ne sait rien et qu'il ne doit pas interpréter.
+    --
+    -- ⚠️ **Deux natures, deux colonnes, et ce n'est pas du rangement.** Mêlées dans
+    -- `props`, une donnée utilisateur nommée `title` ou `position` écrase le sens du
+    -- nœud, et toute lecture doit connaître la liste des clés réservées pour faire
+    -- le tri. La frontière est celle du datastore — oto gère les types standards,
+    -- jamais l'interprétation métier d'une valeur : elle mérite une colonne, pas
+    -- une convention de nommage.
+    --
+    -- **MESURÉ, comme le garde-fou 1 l'exige** (banc du 2026-09-01, 200 000
+    -- lignes-tableau de six champs métier, deux passes en ordre inversé) : la forme
+    -- élargie — `data` plus les trois colonnes de bail — pèse **46,5 Mo contre
+    -- 44,4**, soit **+4,7 %**, environ onze octets par ligne. Et elle s'écrit **14 %
+    -- plus VITE** (886–956 ms contre 1 033–1 119), parce que séparer évite la
+    -- concaténation jsonb que fondre le métier dans `props` imposait à chaque
+    -- insertion. L'élargissement ne se paie donc pas en écriture ; il se paie en
+    -- volume, à un taux mesuré et connu.
+    data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Le bail de la file de travail : les CINQ colonnes, comme sur
+    -- `datastore_rows`. Elles étaient deux ici — un verrou qui ignore sous quel run
+    -- une ligne est réservée, combien de fois elle a été reprise et pourquoi elle a
+    -- été abandonnée n'est pas le même verrou, c'est celui d'avant les deux
+    -- corrections qui l'ont rendu sûr.
     claimed_by TEXT,
     claimed_until TIMESTAMPTZ,
+    claimed_run TEXT,
+    claims INTEGER NOT NULL DEFAULT 0,
+    abandon_reason TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     -- Contrainte NOMMÉE (docs/live-migrations.md) : un futur
@@ -90,8 +117,14 @@ CREATE TABLE IF NOT EXISTS nodes (
 );
 -- DEUX index de requête, pas plus (0063-D3 garde-fou 2, confirmé par le banc : le
 -- coût du volume se joue là, bien plus que dans la largeur de la ligne) — l'arbre
--- et le propriétaire. Les deux index partiels de M-f (ownership d'une ligne,
--- prédicat du bail) attendent M4.
+-- et le propriétaire.
+--
+-- ⚠️ **Les CINQ colonnes de bail sont là, l'index du bail ne l'est PAS**, et ce
+-- n'est pas un oubli : le chemin de réservation lit encore `datastore_rows`. Un
+-- index sur un prédicat que personne n'interroge est un coût d'écriture pur. Sa
+-- forme utile dépend en outre d'un arbitrage de contrat — toute forme indexable en
+-- partiel change l'ordre observable de la file. Il se pose le jour où la file
+-- change de table, avec la requête qui le justifie.
 -- Table et index naissent ensemble ⟹ leur place est ici et pas dans `_init`
 -- (cf. le piège « CREATE INDEX d'une NOUVELLE colonne », docs/live-migrations.md).
 --

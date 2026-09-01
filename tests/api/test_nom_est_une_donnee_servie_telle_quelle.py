@@ -28,6 +28,21 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+# La recopie des tables historiques vers `nodes` est ARRÊTÉE depuis le 2026-09-01.
+# Le test marqué plus bas crée son contenu par l'ANCIENNE surface puis le relit par la
+# NOUVELLE, en le désignant par un identifiant dérivé : deux gestes que seule la
+# projection reliait.
+#
+# ⚠️ **L'invariant de ce fichier ne s'affaiblit pas pour autant** : que `&`, `<`, `>`
+# et `"` traversent l'écriture et la lecture sans être touchés reste vérifié sur
+# toutes les autres routes servies, ici même. Ce qui tombe est le CHEMIN, pas la règle.
+#
+# STRICT : si ce test repasse au vert, c'est qu'une recopie est revenue.
+_SANS_PROJECTION = pytest.mark.xfail(
+    strict=True,
+    reason="la recopie tables historiques → nodes est arrêtée (2026-09-01)",
+)
+
 NOM = 'Finance & Administratif <R&D> "Q1"'
 ENTITES = ("&amp;", "&lt;", "&gt;", "&quot;", "&#")
 
@@ -137,6 +152,7 @@ def test_la_face_mcp_ecrit_le_meme_nom_par_le_meme_handler(monde):
 
 # ── Projet et page : la surface consolidée, puis le nœud et le rail ───────────
 
+@_SANS_PROJECTION
 def test_un_nom_de_projet_et_un_titre_de_page_ressortent_tels_quels(monde, live):
     c, admin, oid = monde["client"], monde["admin"], monde["oid"]
     r = c.post("/api/me/projects", headers=_h(admin),

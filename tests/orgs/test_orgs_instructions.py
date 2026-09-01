@@ -129,8 +129,9 @@ def test_project_instance_lists_entities(monkeypatch):
 def test_get_guide_includes_project_instance(monkeypatch):
     _wire_project(monkeypatch, 7)
     monkeypatch.setattr(oi.org_store, "get_instruction",
-                        lambda org, slug, version=None: {"slug": "prospection", "title": "T",
-                                                         "description": "d", "version": 1, "body_md": "…"})
+                        lambda otype, oid, slug, version=None: {
+                            "slug": "prospection", "title": "T",
+                            "description": "d", "version": 1, "body_md": "…"})
 
     async def _manifest(*a, **k):
         return []
@@ -144,8 +145,9 @@ def test_get_guide_includes_project_instance(monkeypatch):
 def test_get_guide_no_project_no_instance(monkeypatch):
     _wire_project(monkeypatch, None)
     monkeypatch.setattr(oi.org_store, "get_instruction",
-                        lambda org, slug, version=None: {"slug": "prospection", "title": "T",
-                                                         "description": "d", "version": 1, "body_md": "…"})
+                        lambda otype, oid, slug, version=None: {
+                            "slug": "prospection", "title": "T",
+                            "description": "d", "version": 1, "body_md": "…"})
 
     async def _manifest(*a, **k):
         return []
@@ -176,14 +178,17 @@ def test_archive_handler_marks_and_404s(monkeypatch):
     monkeypatch.setattr(oi.org_store, "normalize_slug", lambda s: (s or "").strip().lower())
 
     monkeypatch.setattr(oi.org_store, "archive_instruction",
-                        lambda org_id, slug: seen.append((org_id, slug)) or True)
+                        lambda otype, oid, slug: seen.append((otype, oid, slug)) or True)
     out = oi._archive_instruction(ResolvedCtx(sub="u1", org_id=7), _Slug(slug="Daily-Digest"))
-    assert seen == [(7, "daily-digest")], "le slug doit être normalisé avant l'écriture"
-    assert out == {"ok": True, "org_id": 7, "slug": "daily-digest", "archived": True}
+    assert seen == [("org", "7", "daily-digest")], "le slug doit être normalisé avant l'écriture"
+    # `scope` dit quel palier a été écrit — la clé d'identité change de nom avec lui
+    # (#681). L'archivage, lui, n'est servi qu'au palier org.
+    assert out == {"ok": True, "org_id": 7, "scope": "org", "slug": "daily-digest",
+                   "archived": True}
 
     # Un slug absent est un 404, pas un `archived: false` silencieux — même
     # contrat d'écho que la suppression.
-    monkeypatch.setattr(oi.org_store, "archive_instruction", lambda org_id, slug: False)
+    monkeypatch.setattr(oi.org_store, "archive_instruction", lambda otype, oid, slug: False)
     with pytest.raises(AuthzDenied) as e:
         oi._archive_instruction(ResolvedCtx(sub="u1", org_id=7), _Slug(slug="nope"))
     assert e.value.status == 404 and e.value.code == "not_found"

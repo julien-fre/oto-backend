@@ -49,6 +49,8 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Enrich a LinkedIn profile with emails and (optionally) phone numbers.
 
+        Cost: 1 credit per email, +1 per phone if `with_phone=True`.
+
         Args:
             linkedin_id: the person's LinkedIn handle. Either the bare slug
                 ("alexis-laporte") OR the full profile URL
@@ -58,8 +60,6 @@ def register(mcp: FastMCP) -> None:
             with_phone: Request mobile/work phones (extra credits cost).
             data_to_get: Subset of fields to retrieve (Kaspr-specific, e.g.
                 ["emails", "phones", "company"]). Defaults to all.
-
-        Cost: 1 credit per email, +1 per phone if `with_phone=True`.
         """
         client, is_platform = _client()
         # with_phone=True → include "phone" in data_to_get (costs extra credits)

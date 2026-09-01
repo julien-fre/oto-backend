@@ -15,6 +15,14 @@ quatrième.** `append_row`, `upsert_row` et la fusion le posaient ; `write_rows`
 *La garde était sur les trois chemins où l'on écrit UNE ligne, et absente de celui où
 l'on en écrit huit mille.* Une garde partiellement posée ne protège pas moins : elle
 protège pendant qu'on écrit à côté d'elle, ce qui est pire, parce qu'on la croit tenue.
+
+⚠️ **Amendé le 01/09/2026 (#684/#687).** Ce refus, posé sur TOUTE clé pointée, refusait
+aussi ce que notre propre lecture PRODUIT : `flat_layers` sert `site_web` et
+`site_web.comment` côte à côte, donc une fiche relue et réémise entière — le geste
+dominant — se faisait refuser, et l'export CSV du tableau de bord n'était plus
+réimportable. Le refus s'est donc **rétréci** : une adresse d'annotation valide est
+d'abord RANGÉE (`ranger_les_couches`), et seul ce qui reste sans colonne réelle est
+refusé. La sonde ci-dessous exige désormais LE COUPLE aux portes, pas le refus seul.
 """
 from __future__ import annotations
 
@@ -77,16 +85,26 @@ def _colonnes(ns_id: int) -> set:
 
 
 def test_le_LOT_refuse_la_cle_pointee(table):
-    """⚠️ LE témoin. Sans lui, l'import fabrique une colonne fantôme en silence."""
+    """⚠️ LE témoin. Sans lui, l'import fabrique une colonne fantôme en silence.
+
+    ⚠️ Depuis #684 le refus s'est RÉTRÉCI : `contact2_nom` étant déclarée au schéma,
+    `contact2_nom.comment` est désormais une ADRESSE d'annotation valide, et elle est
+    rangée. Ce qui reste refusé — et qui est le vrai défaut de production — c'est
+    l'adresse dont la colonne n'existe nulle part : rien n'atteste `contact9_nom`, donc
+    la clé ne désigne rien et fabriquerait la colonne littérale."""
     from oto_mcp.datastore.core import RowValidationError
     st, ns, ns_id = table
 
     with pytest.raises(RowValidationError) as e:
         st.write_rows(ns, [{"siren": "552032534",
-                            "contact2_nom.comment": "site — probable"}])
+                            "contact9_nom.comment": "site — probable"}])
 
-    assert "n'est pas un nom de colonne" in str(e.value)
-    assert "contact2_nom.comment" not in _colonnes(ns_id), "rien n'est écrit"
+    assert "n'est aucune colonne" in str(e.value)
+    assert "contact9_nom.comment" not in _colonnes(ns_id), "rien n'est écrit"
+
+    # Et le pendant : la colonne DÉCLARÉE, elle, se range — c'est l'aller-retour.
+    st.write_rows(ns, [{"siren": "552032534", "contact2_nom.comment": "au registre"}])
+    assert "contact2_nom.comment" not in _colonnes(ns_id), "rangée, pas littérale"
 
 
 def test_les_QUATRE_chemins_repondent_pareil(table):
@@ -150,17 +168,32 @@ def test_tout_chemin_qui_ECRIT_en_base_refuse_les_cles_pointees():
     classe = next(n for n in ast.walk(arbre)
                   if isinstance(n, ast.ClassDef) and n.name == "DatastorePg")
 
-    fautives = []
+    fautives, vues = [], []
     for methode in [n for n in classe.body
                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
         appels = {n.func.attr for n in ast.walk(methode)
                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
         appels |= {n.func.id for n in ast.walk(methode)
                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-        if appels & PORTES and "_refuse_dotted_names" not in appels:
-            fautives.append(methode.name)
+        if not appels & PORTES:
+            continue
+        vues.append(methode.name)
+        # DEUX gestes, pas un : ranger l'adresse d'annotation (#684), PUIS refuser ce
+        # qui reste. Une porte qui ne poserait que le refus rejetterait la lecture
+        # réémise ; une porte qui ne poserait que le rangement laisserait passer la
+        # colonne fantôme. Le trou de #685 était l'absence du second ; l'absence du
+        # premier serait le trou symétrique, et il casse le geste dominant d'un agent.
+        manquants = {"ranger_les_couches", "_refuse_dotted_names"} - appels
+        if manquants:
+            fautives.append(f"{methode.name} (manque {', '.join(sorted(manquants))})")
 
+    # ⚠️ Le cliquet porte SA PROPRE garde. Sans elle, renommer une porte ou le seam
+    # rendrait cette sonde inerte EN SILENCE — son seul mode de panne qu'elle ne peut
+    # pas signaler toute seule.
+    assert len(vues) >= 4, (
+        f"la sonde ne voit plus que {vues} : les portes d'écriture ont été renommées "
+        f"ou déplacées, et elle ne surveille plus rien. Corrige {sorted(PORTES)}.")
     assert not fautives, (
-        f"{fautives} atteint une porte d'écriture sans refuser les clés pointées. "
-        "C'est exactement le trou par lequel `write_rows` a fabriqué deux colonnes "
+        f"{fautives} atteint une porte d'écriture sans le couple complet. C'est "
+        "exactement le trou par lequel `write_rows` a fabriqué deux colonnes "
         "littérales sur un fichier de production le 27/08/2026.")

@@ -44,7 +44,7 @@ def make_routes(
         """Où renvoyer le navigateur après le consentement Folk.
 
         Le retour était codé sur le dashboard oto : un utilisateur d'un front
-        partenaire (Tulina) finissait son consentement chez un produit qu'il n'a
+        partenaire finissait son consentement chez un produit qu'il n'a
         pas. `links.link_for` résout le patron du TENANT depuis le `sub` — que le
         callback tient déjà, relu du state signé — donc aucune modification du
         front n'est nécessaire ici.

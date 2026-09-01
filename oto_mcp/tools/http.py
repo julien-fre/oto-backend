@@ -8,8 +8,11 @@ l'API **directement**. L'org configure sur la carte HTTP : `base_url`, `auth_mod
 
 Adaptateur mince (ADR 0037) : le moteur (auth + forward) vit dans oto-core
 (`oto.tools.http`) ; ici on résout le credential d'org et on traduit les erreurs
-en McpError. Deux tools : `http_get` (lecture) et `http_post` (POST avec corps
-JSON — recherche paginée, écritures). C'est un « nœud HTTP » (comme n8n/Zapier) :
+en McpError. Trois tools : `http_get` (lecture), `http_post` (POST avec corps
+JSON — recherche paginée, écritures), `http_doc` (le contrat de l'API, si
+l'opérateur a renseigné `doc_path` sur la carte — ex. `/openapi.json` pour un
+bridge qui l'expose derrière le même auth que le reste).
+C'est un « nœud HTTP » (comme n8n/Zapier) :
 la protection SSRF est un contrôle d'egress réseau au niveau plateforme, pas du
 code par-connecteur ; ce qu'un POST est autorisé à faire relève de l'API cible
 (et, derrière un bridge, de SA propre allowlist). Étant des tools MCP ordinaires,
@@ -94,6 +97,49 @@ def register(mcp: FastMCP) -> None:
         except requests.HTTPError as e:
             raise _upstream_error(e)
 
+    @mcp.tool(
+        name="http_doc",
+        description=(
+            "Récupère la documentation de l'API configurée pour ton org "
+            "(connecteur `http`), si son opérateur a renseigné une route `doc_path` "
+            "sur la carte HTTP (ex. un contrat OpenAPI en JSON). Pas de paramètre : "
+            "la route vient de la config, jamais de l'appelant. Erreur actionnable "
+            "si `doc_path` n'est pas renseigné."
+        ),
+    )
+    def http_doc() -> dict:
+        client = _client()
+        doc_path = _require_doc_path(_resolve_fields())
+        try:
+            return client.get(doc_path)
+        except requests.HTTPError as e:
+            raise _upstream_error(e)
+
+
+def _resolve_fields() -> dict:
+    """Champs bruts du credential `http` de l'org — même résolution que `_client()`,
+    séparée pour que `http_doc` puisse lire `doc_path` sans reconstruire le client."""
+    try:
+        return access.resolve_credential_fields("http")
+    # noqa: SILENT — même dette déclarée que _client() (#424, verdict C)
+    except Exception:
+        return {}
+
+
+def _require_doc_path(fields: dict) -> str:
+    """Le `doc_path` configuré, ou une McpError actionnable — séparée de `http_doc`
+    pour rester testable sans contexte MCP (même patron que `_excerpt`)."""
+    doc_path = (fields.get("doc_path") or "").strip()
+    if not doc_path:
+        raise McpError(ErrorData(
+            code=INVALID_PARAMS,
+            message=(
+                "Connecteur http : pas de route doc configurée pour ton org — "
+                "pose `doc_path` sur la carte HTTP du dashboard (ex. /openapi.json)."
+            ),
+        ))
+    return doc_path
+
 
 def _client() -> HttpConnectorClient:
     """Résout le credential `http` de l'org et instancie le client oto-core.
@@ -112,11 +158,7 @@ def _client() -> HttpConnectorClient:
             code=INVALID_PARAMS,
             message="Connecteur http indisponible en stdio local (credential d'org requis).",
         ))
-    try:
-        f = access.resolve_credential_fields("http")
-    # noqa: SILENT — dette déclarée : erreur de coffre lue comme « pas de credential » (#424, verdict C)
-    except Exception:
-        f = {}
+    f = _resolve_fields()
     base_url = (f.get("base_url") or "").strip()
     mode = (f.get("auth_mode") or "").strip()
     if not base_url or not mode:

@@ -83,7 +83,7 @@ celui-là que le front cherche. Un second dessin, ou un dessin dans un bloc tagu
 
 ## The grammar
 
-*(Verbatim — le parseur est `src/lib/ascii-diagram.ts` dans tulina-app-front ; chaque
+*(Verbatim — le parseur est `src/lib/ascii-diagram.ts` côté front ; chaque
 règle ci-dessous est appliquée.)*
 
 - Monospace, spaces only (a tab anywhere rejects the drawing). One main spine column; every `▼`, `├`, `┬` on the spine sits at the same column.

@@ -55,14 +55,32 @@ crans, dans cet ordre :
 fonction le tranche** : `connectors.cardinality.is_multi_account(connector, org)`.
 
 ⚠️ **Le vrai risque du lot n'est pas de mal lire la surcharge, c'est de ne la lire que
-d'un côté.** Deux chemins très éloignés consultent la cardinalité : la **garde
-d'écriture** (« ce deuxième compte a-t-il le droit d'exister ? ») et la **résolution**
-(« va-t-on le chercher ? »). Lue par la première seulement, une surcharge accepterait
-une ligne que personne n'irait jamais lire — mot pour mot le défaut d'oto-backend#409,
-corrigé le 27/08. D'où deux gardes : une sonde AST qui interdit de lire
-`Connector.auth_multi_account` hors du seam et des surfaces d'inventaire, et un test
-qui pose une surcharge, recharge, et vérifie que les **deux verdicts basculent
-ensemble**.
+d'un côté.** **Trois** chemins très éloignés consultent la cardinalité : la **garde
+d'écriture** (« ce deuxième compte a-t-il le droit d'exister ? »), la **résolution**
+(« va-t-on le chercher ? ») et la **carte servie** (« l'écran le propose-t-il ? »). Lue
+par la première seulement, une surcharge accepterait une ligne que personne n'irait
+jamais lire — mot pour mot le défaut d'oto-backend#409, corrigé le 27/08. D'où deux
+gardes : une sonde AST qui interdit de lire `Connector.auth_multi_account` hors du seam
+et des surfaces d'inventaire, et un test qui pose une surcharge, recharge, et vérifie
+que les **verdicts basculent ensemble**.
+
+⚠️ **La carte servie l'a appris à ses dépens (oto-backend#732, 2026-09-01).**
+`providers.public_catalog()` posait `auth.cardinality` **depuis le registre**, donc
+depuis le défaut du CODE — et c'est cette clé que le dashboard lit pour décider s'il
+propose un second compte. Une org élargie par surcharge voyait donc le serveur
+**accepter** un geste que l'écran ne **proposait** jamais : le même demi-élargissement
+que #409, pris par l'autre bout. Le registre ne pouvait pas faire mieux, il est PUR ;
+c'est aux surfaces qui connaissent un requérant — donc une org de contexte — de
+repasser par le seam : `cardinality.overlay_for_org(rows, org)`, appliqué dans
+`api.public.connectors_catalog` (`GET /api/connectors`) et
+`capabilities.connectors.selection._visible_catalog` (`connectors.me` + `oto_search`).
+La règle est forcée mécaniquement plutôt qu'écrite : **une fonction qui appelle
+`public_catalog()` doit appeler `overlay_for_org()`** — sonde AST dans
+`tests/test_connector_cardinality_override.py`, et les deux surfaces sont exercées pour
+de vrai dans `tests/connectors/test_carte_cardinalite_servie.py`. Écart **latent** quand
+il a été trouvé (aucune ligne de surcharge en base à cette date, donc zéro octet de
+différence sur le fil) — un écart qui n'a pas encore coûté, pas une panne. **Le code dit
+le possible, la base dit l'exposé.**
 
 ⚠️ **Les surcharges vivent en MÉMOIRE, et poser une ligne ne suffit pas.** La
 cardinalité est consultée jusqu'à **4× par appel d'outil** (`access/resolve.py`), sur un
@@ -104,25 +122,57 @@ Invariants verrouillés par `tests/test_providers_registry_snapshot.py` : le reg
 - **A. Disponibilité** : `availability` ∈ {`self_serve`, `platform_granted`}. platform_granted = grant-only (deny-by-default, ex. `mm`, `gocardless`).
 - **B. Visibilité** : `default_active` (ADR 0050 — socle installé d'office au seed d'un nouveau (sub, org) ; **vide depuis le 16/07** : tout le catalogue est en library installable, l'agent guide).
 - **C. Credential** : `auth_modes` ⊆ {`byo_user`, `byo_org`, `platform`} ; `keyed` (résolu via `resolve_api_key`) ; `secret_kind` (api_key/basic_auth/fields/refresh_token/oauth/cookie/none) ; `personal_session` ; `env_secret_name` ; `default_quota`.
-- **Modèle de saisie multi-champs** (ADR 0011) : `secret_fields` (propriété) = schéma de saisie du credential — `credential_fields` explicites (`CredentialField` name/label/secret/reveal/**when**/**choices**) ou dérivés du `secret_kind` (`api_key`=1 champ `key` ; `basic_auth`=`email`+`password`). Vide pour `cookie`/`oauth`/`none` (flux dédiés). SOURCE UNIQUE du formulaire dashboard, de l'endpoint `/api/settings/api-keys`, de `status_for` et du packing — zéro branche par connecteur (ex. Silae = 3 champs déclarés, aucun code spécifique).
+- **Modèle de saisie multi-champs** (ADR 0011) : `secret_fields` (propriété) = schéma de saisie du credential — `credential_fields` explicites (`CredentialField` name/label/secret/**when**/**choices**) ou dérivés du `secret_kind` (`api_key`=1 champ `key` ; `basic_auth`=`email`+`password`). Vide pour `cookie`/`oauth`/`none` (flux dédiés). SOURCE UNIQUE du formulaire dashboard, de l'endpoint `/api/settings/api-keys`, de `status_for` et du packing — zéro branche par connecteur (ex. Silae = 3 champs déclarés, aucun code spécifique).
 - **Un champ peut en SÉLECTIONNER d'autres** (`Connector.field_discriminator`, 2026-08-27) : `http` déclare `auth_mode`, et chaque champ dit par `when=` les modes qui le rendent pertinent. `Connector.fields_for(valeurs)` en dérive les champs à afficher ET ceux dont le `required` s'applique ; `choices=` ferme le jeu de valeurs d'un champ. Le descripteur `auth` publie les trois (`field_discriminator`, `when`, `choices`) pour que le front filtre **sans connaître le connecteur**. Discriminant absent (les ~90 autres) = comportement inchangé.
 - **Chargement** : `Connector.modules` = modules `tools/<m>.py` à importer (kind="tools" ; défaut = nom du provider). Voir §Chargement dérivé.
 
 **Tout dérive du registre** (mêmes symboles, ré-export) : `KEY_PROVIDERS`, `ORG_SHAREABLE_PROVIDERS`, `ADMIN_GRANT_ONLY_NAMESPACES`, `QUOTA_DEFAULTS`, `ENV_SECRET_NAMES`, `DEFAULT_BUNDLE/PRESET`. Plus de listes en dur parallèles. `GET /api/connectors` = vue publique.
 Helpers : `require_keyed`, `is_byo_user`, `is_org_shareable`, `require_credential(entity_type, name)` (user→byo_user, org→org-partageable).
 
-## Lire et modifier un credential — révélation et écriture partielle
+## Lire et modifier un credential — ce qui sort, ce qui ne sort plus
 
-Deux règles qui n'ont de sens qu'**ensemble** (oto-backend#448, 2026-08-27) :
+⚠️ **Une clé posée ne se relit JAMAIS — décision du 2026-08-31 (oto-backend#671).**
+Jusqu'à cette date, `GET /api/settings/api-keys/{provider}` rendait la valeur ENTIÈRE,
+en clair, de tout champ déclaré `reveal=True` — et c'était le **défaut** : les 49
+connecteurs `secret_kind="api_key"` sans `credential_fields` explicites héritaient d'un
+`key` révélable, plus 6 déclarés à la main, soit **55 connecteurs**. Le cran `reveal`
+est **retiré du registre** (pas neutralisé : le passer lève un `TypeError`) ; `secret`
+décide seul, et c'est exactement ce que le front lisait déjà (`auth.fields[].secret`).
 
-- **La lecture révélante existe à TOUS les paliers.** `me.credential.get` prend un
-  `scope` (`member` défaut / `group` / `org`, les deux derniers gardés admin du
-  palier, l'org_admin subsumant l'admin d'équipe) et rend les champs déclarés
-  `reveal` ou non secrets. **Aucun secret n'en sort, à aucun palier.**
+Ce que la lecture rend aujourd'hui, à tous les paliers :
+
+- **les champs NON secrets, tels quels** (`base_url`, `auth_mode`, `region`, un email) ;
+- **de quoi reconnaître la clé sans la lire** : `configured`, `read_set_at`,
+  `read_set_by` (qui l'a posée), et `read_fingerprints` — `{champ: 4 caractères}`, un
+  HMAC **lié à la ligne du coffre**, jamais des caractères du secret. Le front affiche
+  `•••• 3f7a`. Un champ secret vide n'y figure pas.
+- **rien d'autre** : la clé d'un champ secret est **ABSENTE** du corps, pas `null` ni
+  `""`. Un champ vidé se lirait « aucune clé posée » et un appelant continuerait sur du
+  vide — c'est le mode d'échec de `oto ninja secrets get`, dont l'usage documenté est
+  `export FOO=$(…)`, où `export` masque le code de sortie.
+- **demander la valeur reçoit un refus nommé** : `?reveal=1` → `403
+  secret_never_revealed`, jamais un 200 amputé.
+
+⚠️ **L'empreinte est liée à sa ligne, à dessein.** Une empreinte globale de la valeur
+serait la même pour la même clé partout : qui lit l'empreinte d'un palier pourrait poser
+un candidat sur une ligne qu'il contrôle et comparer — un oracle de confirmation à
+1/65536 sur quatre caractères. Liée à `(entity_type, entity_id, connector, account,
+champ)`, la seule façon de comparer est d'écraser la clé qu'on cherchait à confirmer.
+Primitive : `journal_secrets.fingerprint()`, même clé HMAC que le masque du journal
+(`OTO_MCP_OAUTH_STATE_SECRET`, présent en prod → stable d'un boot à l'autre).
+
+**Ce que la révélation ne servait pas** : la modification PARTIELLE. Elle tient au MERGE
+côté serveur (#448), pas à la relecture — le dashboard jetait déjà toute valeur secrète
+reçue (`CredentialFieldsDialog.vue`, garde `!f.secret`).
+
 - **L'écriture est un MERGE côté serveur.** Une clé absente du corps est complétée
   depuis le coffre (`credentials_store.merge_with_existing`) ; une clé présente mais
   **vide est un effacement explicite**. Le formulaire du dashboard, qui poste tous
-  ses champs, garde donc son comportement de remplacement.
+  ses champs, garde donc son comportement de remplacement. **C'est le seul chemin de
+  changement d'une clé** : on repose, on ne relit pas.
+- **La lecture existe à TOUS les paliers** (oto-backend#448, 2026-08-27).
+  `me.credential.get` prend un `scope` (`member` défaut / `group` / `org`, les deux
+  derniers gardés admin du palier, l'org_admin subsumant l'admin d'équipe).
 
 ⚠️ **Le merge se fait dans la même ligne, jamais par le client.** L'AAD dérive de
 `entity_type/entity_id/connector/account` : relire, fusionner et rechiffrer sur place
@@ -135,8 +185,8 @@ rester impossible à confondre avec un `credential_field`.
 
 **Ce que ça a coûté avant** : jusqu'au 2026-08-27, `_get` lisait `MEMBER` **en dur** et
 `groups_secrets` n'exposait que set/delete. Un credential d'équipe n'avait donc aucune
-surface capable d'en rendre la `base_url`, alors que le registre la déclare
-`reveal=True` — et l'écriture étant un remplacement total, changer cette URL exigeait
+surface capable d'en rendre la `base_url`, alors que le registre la déclare non
+secrète — et l'écriture étant un remplacement total, changer cette URL exigeait
 de réécrire un bearer que rien ne restituait. Piège à perte de données par
 construction, sur le chemin de TOUS les ponts clients (ADR 0003/0037). Un repointage
 de pont en production a été abandonné devant ce formulaire.
@@ -221,7 +271,7 @@ table posée à côté, la ligne du secret gardant ses quatre colonnes, donne l'
 stable **sans un octet de rechiffrement**. Une fois le rechiffrement hors de l'équation,
 ce qui décide est le fond : le modèle prévoit des instances **sans secret** — une
 instance `http` qui ne fige qu'une `base_url` (0057), une sous-instance qui ne pose
-qu'une *détermination* (« le compte d'Alexandra », 0053-D9-3). Un objet qui n'est plus un
+qu'une *détermination* (« le compte de Jane », 0053-D9-3). Un objet qui n'est plus un
 credential n'a rien à faire dans une table qui l'est.
 
 **Le lien avec le coffre est le quadruplet, et c'est une FK LOGIQUE** —

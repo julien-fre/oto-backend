@@ -92,8 +92,11 @@ class GroupBrief(BaseModel):
     il lit donc `my_role: null` sur des équipes qu'il peut renommer, supprimer, dont
     il peut poser les secrets. Un front qui conditionne ses boutons de gestion à
     `my_role == "group_admin"` cache l'administration à ceux qui l'ont. La source du
-    droit, c'est `can_edit` (servi par `GET /api/groups/{id}/instructions`), jamais
-    ce champ.
+    droit, ce sont les drapeaux de `GET /api/groups/{id}/instructions`, jamais ce
+    champ : `can_edit` pour l'administration de l'équipe, et — depuis #695 —
+    `can_write_instructions` / `can_delete_instructions` pour les procédures, qui ne
+    se déduisent NI de `my_role` ni de `can_edit` (un simple membre écrit une
+    procédure sans rien administrer).
 
     ⚠️ `member_count` compte les mêmes lignes explicites : une équipe « à 0 membre »
     peut être pleinement gouvernée (et son secret partagé pleinement actif)."""

@@ -188,6 +188,7 @@ _DECLARATIONS: tuple[str, ...] = (
     "snitcher",
     "waalaxy",
     "airtable",
+    "tally",
 )
 
 _MODULES: dict = {}

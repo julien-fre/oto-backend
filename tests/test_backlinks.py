@@ -5,15 +5,16 @@ Extraction = pure. Résolution/hook = _connect factice (rows en mémoire).
 """
 import pytest
 
+from oto_mcp import db, ownership
 from oto_mcp.db import backlinks as B
 
 
 # ── extraction ───────────────────────────────────────────────────────────────
 
 def test_extract_titles_dedup_and_normalize():
-    body = "Voir [[Mūcho]] et [[ mūcho ]] puis [[Deal X]].\nEncore [[Deal X]]."
-    # casse/espaces normalisés pour la clé → « Mūcho » une fois ; ordre d'apparition
-    assert B.extract_titles(body) == ["Mūcho", "Deal X"]
+    body = "Voir [[Marché]] et [[ marché ]] puis [[Deal X]].\nEncore [[Deal X]]."
+    # casse/espaces normalisés pour la clé → « Marché » une fois ; ordre d'apparition
+    assert B.extract_titles(body) == ["Marché", "Deal X"]
 
 
 def test_extract_ignores_empty_and_multiline():
@@ -64,24 +65,24 @@ def _proj(owner_type="org", owner_id="7", ctx=None):
 
 
 def test_resolve_precedence_project_over_kb():
-    # « Mūcho » existe dans le projet courant (1) ET la KB (9) → le projet gagne.
+    # « Marché » existe dans le projet courant (1) ET la KB (9) → le projet gagne.
     c = _Conn(project=_proj(), kb=9, docs=[
-        {"id": 100, "project_id": 1, "title": "Mūcho"},
-        {"id": 200, "project_id": 9, "title": "Mūcho"},
+        {"id": 100, "project_id": 1, "title": "Marché"},
+        {"id": 200, "project_id": 9, "title": "Marché"},
     ])
-    B.refresh_links(c, from_doc=5, project_id=1, body_md="cf [[Mūcho]]")
+    B.refresh_links(c, from_doc=5, project_id=1, body_md="cf [[Marché]]")
     assert c.deleted and c.inserted == [(5, 100)]
 
 
 def test_resolve_falls_back_to_kb():
     c = _Conn(project=_proj(), kb=9, docs=[
-        {"id": 200, "project_id": 9, "title": "Mūcho"},
+        {"id": 200, "project_id": 9, "title": "Marché"},
     ])
-    B.refresh_links(c, from_doc=5, project_id=1, body_md="[[mucho]]" )  # casse/accent ? -> non
-    # 'mucho' (sans accent) ne matche pas 'Mūcho' → lien-souche, rien
+    B.refresh_links(c, from_doc=5, project_id=1, body_md="[[marche]]" )  # casse/accent ? -> non
+    # 'marche' (sans accent) ne matche pas 'Marché' → lien-souche, rien
     assert c.inserted == []
-    c2 = _Conn(project=_proj(), kb=9, docs=[{"id": 200, "project_id": 9, "title": "Mūcho"}])
-    B.refresh_links(c2, from_doc=5, project_id=1, body_md="[[Mūcho]]")
+    c2 = _Conn(project=_proj(), kb=9, docs=[{"id": 200, "project_id": 9, "title": "Marché"}])
+    B.refresh_links(c2, from_doc=5, project_id=1, body_md="[[Marché]]")
     assert c2.inserted == [(5, 200)]
 
 
@@ -118,16 +119,16 @@ def test_member_project_uses_context_org_kb():
 # ── op=backlinks : filtrage d'accès ──────────────────────────────────────────
 
 def test_op_backlinks_filters_unreadable_projects(monkeypatch):
-    from oto_mcp.capabilities import docs as D
+    from oto_mcp.capabilities.docs import core as D
     from oto_mcp.capabilities._types import ResolvedCtx
-    monkeypatch.setattr(D.db, "get_doc_by_id",
+    monkeypatch.setattr(db, "get_doc_by_id",
                         lambda did: {"id": did, "project_id": 1, "title": "Cible"})
-    monkeypatch.setattr(D.db, "doc_backlinks", lambda did: [
+    monkeypatch.setattr(db, "doc_backlinks", lambda did: [
         {"id": 10, "project_id": 1, "title": "Page lisible"},
         {"id": 11, "project_id": 99, "title": "Page d'un projet interdit"},
     ])
     # lisible : projet 1 ; interdit : projet 99
-    monkeypatch.setattr(D.ownership, "can_access",
+    monkeypatch.setattr(ownership, "can_access",
                         lambda sub, t, rid, want="read": str(rid) == "1")
     out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
     assert out["count"] == 1 and out["backlinks"][0]["id"] == 10
@@ -136,12 +137,12 @@ def test_op_backlinks_filters_unreadable_projects(monkeypatch):
 def test_op_backlinks_empty_says_how_a_backlink_is_made(monkeypatch):
     """Un zéro muet se lit comme « la fonction est cassée » : trois formats de lien
     ont été essayés en vrai, tous inertes, sans le moindre indice (signal #244)."""
-    from oto_mcp.capabilities import docs as D
+    from oto_mcp.capabilities.docs import core as D
     from oto_mcp.capabilities._types import ResolvedCtx
-    monkeypatch.setattr(D.db, "get_doc_by_id",
+    monkeypatch.setattr(db, "get_doc_by_id",
                         lambda did: {"id": did, "project_id": 1, "title": "Charte"})
-    monkeypatch.setattr(D.db, "doc_backlinks", lambda did: [])
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(db, "doc_backlinks", lambda did: [])
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
     out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
     assert out["count"] == 0
     assert "[[Charte]]" in out["hint"]          # le titre exact, prêt à copier
@@ -149,12 +150,12 @@ def test_op_backlinks_empty_says_how_a_backlink_is_made(monkeypatch):
 
 
 def test_op_backlinks_non_empty_has_no_hint(monkeypatch):
-    from oto_mcp.capabilities import docs as D
+    from oto_mcp.capabilities.docs import core as D
     from oto_mcp.capabilities._types import ResolvedCtx
-    monkeypatch.setattr(D.db, "get_doc_by_id",
+    monkeypatch.setattr(db, "get_doc_by_id",
                         lambda did: {"id": did, "project_id": 1, "title": "Charte"})
-    monkeypatch.setattr(D.db, "doc_backlinks",
+    monkeypatch.setattr(db, "doc_backlinks",
                         lambda did: [{"id": 10, "project_id": 1, "title": "P"}])
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
     out = D._doc(ResolvedCtx(sub="u1", org_id=1), D.DocInput(op="backlinks", doc_id=5))
     assert "hint" not in out

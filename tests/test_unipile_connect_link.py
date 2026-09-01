@@ -185,21 +185,33 @@ def test_plain_force_still_creates_new_account(monkeypatch):
 # par réconciliation, sous le JWT du front d'arrivée : atterrir sur le mauvais
 # front, c'est réconcilier sous un AUTRE sub, donc ne rien lier (vécu 2026-08-22).
 
-def test_return_lands_on_the_front_that_asked(monkeypatch):
+@pytest.fixture
+def front_tiers(monkeypatch):
+    """Deux entrées FICTIVES dans `RETURN_APPS`, le temps du test : la liste fermée
+    se comporte pareil quelle que soit l'entrée, et les négatifs ci-dessous (casse,
+    origine, clé voisine) n'ont de sens que si une clé voisine EXISTE vraiment."""
+    from oto_mcp.auth import flow as oauth_flow
+    monkeypatch.setitem(oauth_flow.RETURN_APPS, "acme",
+                        ("https://app.acme.test", "/org/{org}/connectors"))
+    monkeypatch.setitem(oauth_flow.RETURN_APPS, "acme-preprod",
+                        ("https://acme.oto.zone", "/org/{org}/connectors"))
+
+
+def test_return_lands_on_the_front_that_asked(monkeypatch, front_tiers):
     _wire(monkeypatch)
-    _run(hosted_auth_url("u1", "linkedin", app="tulina"))
+    _run(hosted_auth_url("u1", "linkedin", app="acme"))
     kw = _FakeClient.last_kwargs
     assert kw["success_redirect_url"] == (
-        "https://app.tulina.ai/org/39/connectors?unipile=connected&channel=linkedin")
+        "https://app.acme.test/org/39/connectors?unipile=connected&channel=linkedin")
     assert kw["failure_redirect_url"] == (
-        "https://app.tulina.ai/org/39/connectors?unipile=failed&channel=linkedin")
+        "https://app.acme.test/org/39/connectors?unipile=failed&channel=linkedin")
 
 
-def test_return_preprod_app(monkeypatch):
+def test_return_preprod_app(monkeypatch, front_tiers):
     _wire(monkeypatch, org=3)
-    _run(hosted_auth_url("u1", "whatsapp", app="tulina-preprod"))
+    _run(hosted_auth_url("u1", "whatsapp", app="acme-preprod"))
     assert _FakeClient.last_kwargs["success_redirect_url"] == (
-        "https://tulina.oto.zone/org/3/connectors?unipile=connected&channel=whatsapp")
+        "https://acme.oto.zone/org/3/connectors?unipile=connected&channel=whatsapp")
 
 
 def test_no_app_keeps_the_historic_dashboard_destination(monkeypatch):
@@ -214,9 +226,9 @@ def test_no_app_keeps_the_historic_dashboard_destination(monkeypatch):
     assert "/org/" not in url
 
 
-@pytest.mark.parametrize("hostile", ["https://evil.test", "oto", "", "TULINA",
-                                     "app.tulina.ai", "tulina-preprod-x"])
-def test_unknown_app_never_becomes_a_redirect(monkeypatch, hostile):
+@pytest.mark.parametrize("hostile", ["https://evil.test", "oto", "", "ACME",
+                                     "app.acme.test", "acme-preprod-x"])
+def test_unknown_app_never_becomes_a_redirect(monkeypatch, hostile, front_tiers):
     """Jamais une origine prise telle quelle : une valeur hors liste fermée retombe
     sur le défaut, elle ne voyage PAS dans l'URL (ce serait un open redirect)."""
     _wire(monkeypatch)

@@ -364,7 +364,7 @@ def _socle_for(sub: str | None) -> tuple[str, str]:
 
     Un compte d'un tenant tiers reçoit LE SOCLE DE SON TENANT s'il en existe un. Sans
     ce cran, l'assistant d'un partenaire se présente sous notre marque et renvoie vers
-    nos adresses : constaté chez un client le 13/08 (« Sur Tulina (Oto), tu es… » +
+    nos adresses : constaté chez un client le 13/08 (« Sur <tenant> (Oto), tu es… » +
     un lien vers notre tableau de bord). Ce n'est pas un défaut de formulation — le
     texte est au niveau plateforme alors qu'il décrit un produit.
 
@@ -479,7 +479,7 @@ def skills_index_md(org_id: int | None) -> str:
         return ""
     try:
         from . import org_store
-        rows = org_store.list_instructions(org_id)   # exclut la base (claude_md)
+        rows = org_store.list_instructions("org", org_id)  # exclut la base (claude_md)
     except Exception:
         logger.warning("skills_index_md: lecture org=%s échouée (fail-open)",
                        org_id, exc_info=True)

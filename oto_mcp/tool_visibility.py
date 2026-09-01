@@ -32,8 +32,23 @@ from __future__ import annotations
 # état "en attente de review"). `lemlist_create_lead`/`lemlist_add_lead_variables`
 # restent visibles (créer/annoter un lead n'envoie rien tant qu'il n'est pas lancé) —
 # seul le geste qui déclenche l'envoi est masqué, même logique graduée que ci-dessus.
+# `lemlist_campaign_start` : le MÊME geste un cran au-dessus — démarrer la campagne
+# fait dérouler la séquence pour tous ses leads lancés. Il vit dans un tool NU, et non
+# en `lemlist_campaign(op="start")`, précisément pour être masquable : ce masquage a le
+# grain du tool, pas de l'op, donc une op d'envoi logée dans un tool visible serait
+# exposée sans que rien ne le dise. Le reste de la gestion de campagne (créer, régler,
+# dupliquer, pauser, planifier) travaille sur un brouillon et reste visible.
+# `lemlist_inbox_send` : les trois envois DIRECTS de l'inbox lemlist (email,
+# LinkedIn, WhatsApp) — ni campagne, ni séquence, ni revue devant eux, le message
+# part. Les plus immédiats du connecteur, donc masqués comme les deux ci-dessus.
+# `lemlist_campaign_auto_review` : n'envoie rien lui-même, mais ARME l'envoi —
+# une campagne en auto-review fait partir tout lead ajouté, ce qui ferait de
+# `lemlist_create_lead` (visible) un chemin d'envoi. Le champ reste atteignable :
+# c'est le geste qui demande une activation explicite. Même logique graduée.
 DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
-    {"email_send", "fr_egapro_declaration", "browser_eval", "lemlist_launch_lead"})
+    {"email_send", "fr_egapro_declaration", "browser_eval", "lemlist_launch_lead",
+     "lemlist_campaign_start", "lemlist_inbox_send",
+     "lemlist_campaign_auto_review"})
 
 # Méta-tools TOUJOURS visibles (anti-lockout) : sans eux l'utilisateur ne peut
 # plus se déverrouiller (lister/activer un tool) — plus l'identité `oto_whoami`

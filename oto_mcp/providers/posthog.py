@@ -21,7 +21,7 @@ CONNECTOR = _c(
     help="analytics produit — requêtes HogQL, events, personnes, insights, "
          "feature flags, session recordings",
     href="https://posthog.com", credential_fields=(
-        CredentialField("api_key", "Personal API key (phx_…)", secret=True, reveal=True,
+        CredentialField("api_key", "Personal API key (phx_…)", secret=True,
                         help="PostHog → Settings → Personal API keys. PAS la clé de "
                              "projet `phc_…` du snippet JS, qui est refusée ici."),
         CredentialField("host", "Région / instance", secret=False, required=False,

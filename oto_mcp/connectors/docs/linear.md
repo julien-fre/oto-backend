@@ -10,7 +10,7 @@ linear gère le suivi de tickets/projets de l'équipe, en 8 tools :
 - « liste mes issues en cours sur l'équipe Produit » → `linear_issue(op="list", team_id="...", state_id="...")`
 - « cherche les issues qui parlent de facturation » → `linear_issue(op="search", query="facturation")`
 - « crée un ticket bug pour X » → `linear_issue(op="create", title="...", team_id="...", description="...")`
-- « assigne cette issue à Julien et passe-la en cours » → `linear_issue(op="update", issue_id="...", assignee_id="...", state_id="...")`
+- « assigne cette issue à Jane et passe-la en cours » → `linear_issue(op="update", issue_id="...", assignee_id="...", state_id="...")`
 - « quels sont les statuts possibles sur l'équipe Produit ? » → `linear_team(op="states", team_id="...")` (à faire avant un `update` qui change le statut — il faut le `state_id`)
 - « commente cette issue » → `linear_comment(op="create", issue_id="...", body="...")`
 - « les projets de l'équipe Produit » → `linear_project(op="list", team_id="...")`
