@@ -138,7 +138,7 @@ def redirect_uri(path: str) -> str:
 # scoper le credential (cf. `salesforce_oauth.make_state`).
 RETURN_APPS: dict[str, tuple[str, str]] = {
     # ⚠️ Le CHEMIN suit les routes du front, pas nos souvenirs : `/network/[orgId]`
-    # a été renommé `/org/[orgId]` (tulina-app-front, commit 6921521) et le
+    # a été renommé `/org/[orgId]` (front tiers, commit 6921521) et le
     # segment `/network` n'existe plus du tout. Tant que ce patron est resté
     # périmé, un retour d'OAuth « réussi » déposait la personne sur un 404 —
     # panne silencieuse, puisque le consentement, lui, avait bien eu lieu.

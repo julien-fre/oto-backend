@@ -108,7 +108,7 @@ def add_org_member(org_id: int, sub: str, org_role: str = "org_member") -> None:
                     # org multi-membre qui garde pourtant `personal_of` à vie — front
                     # et `is_personal_org` continuent de la traiter comme "personal"
                     # (masque Teams/Invite) alors qu'elle a de vrais coéquipiers. Vécu
-                    # 2026-08-04 (Tulina/Partoo, org réelle restée bloquée "personal").
+                    # 2026-08-04 (un tenant tiers, org réelle restée bloquée "personal").
                     conn.execute(
                         "UPDATE orgs SET personal_of = NULL WHERE id = %s", (org_id,)
                     )

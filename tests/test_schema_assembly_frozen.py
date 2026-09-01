@@ -104,9 +104,16 @@ from oto_mcp.db import _schema, schema
 # et sans réécriture : `ADD COLUMN` avec un `DEFAULT` constant est instantané (PG >= 11),
 # et la prod qui tourne l'ancien code ne lit pas ces colonnes. Coût mesuré au banc avant
 # de les poser : +4,7 % de volume, -14 % de temps d'écriture.
-# ⚠️ Empreinte RECALCULÉE depuis le module assemblé, jamais éditée à la main.
-EMPREINTE = "51c351304e76234b4c45f78bad4592381cfeb25cb1e177bbeb1a99d1cc71168a"
-LONGUEUR = 119186
+# 2026-09-01 (oto-private#85, scrub) : AUCUN changement de SQL exécuté. Trois
+# COMMENTAIRES bougent — `legal.py`, `connectors.py` (×2), `tenants.py` — qui
+# nommaient un tenant tiers ou une personne réelle en clair (règle du meta-repo :
+# jamais de nom de client ni de personne dans un dépôt public). Remplacés par des
+# exemples génériques (« un tenant tiers », « le compte de Jane »).
+# ⚠️ Empreinte RECALCULÉE depuis le module assemblé sur le résultat du REBASE des
+# deux lots ci-dessus (scrub rebasé sur les quatre colonnes de `nodes`), jamais
+# recopiée d'un côté du conflit : les deux ont touché la chaîne le même jour.
+EMPREINTE = "70da617e920da5cc8f83cce1c2458407f3c2edad46f965c2e3d187000a3a8b25"
+LONGUEUR = 119166
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

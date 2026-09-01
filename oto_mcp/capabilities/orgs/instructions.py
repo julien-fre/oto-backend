@@ -272,7 +272,7 @@ class InstructionWritten(BaseModel):
     signalent le drift, ils ne refusent pas l'écriture. Donc `ok: true` avec des
     `unresolved_tools` ou des `unresolved_slots` non vides = **la procédure est
     enregistrée ET cassée**. C'est le seul endroit où ça se voit. `diagram_warning`
-    (tulina-app-front#108) est du même régime : la procédure est enregistrée, mais sa
+    (front tiers, issue #108) est du même régime : la procédure est enregistrée, mais sa
     page se rendra en état vide faute de schéma.
 
     `slots` renvoyé est l'état EFFECTIF après écriture (envoyer `slots: null` conserve
@@ -301,7 +301,7 @@ class InstructionWritten(BaseModel):
     unreferenced_slots: Optional[list[str]] = None
     slot_warnings: Optional[list[str]] = None
     suggested_slots: Optional[list] = None
-    # Le SCHÉMA de la procédure (tulina-app-front#108) : le front en fait la vue par
+    # Le SCHÉMA de la procédure (front tiers, issue #108) : le front en fait la vue par
     # défaut de la page du process, donc une procédure sans dessin s'y affiche vide.
     # `None` = le check a tourné et n'a rien à dire ; la clé est toujours présente,
     # pour qu'un client sache distinguer « rien à signaler » d'un serveur trop vieux.

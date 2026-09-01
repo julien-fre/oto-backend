@@ -134,7 +134,7 @@ répète le nom de la procédure (`stripLeadingTitleHeading`) et affiche le sien
 se pose donc SOUS ce H1 quand il existe (au-dessus, le titre resterait orphelin en
 milieu de page), et en tout premier quand le corps n'en a pas (`## Goal`…).
 
-## Le schéma est une section requise (tulina-app-front#108)
+## Le schéma est une section requise (front tiers, issue #108)
 
 Une procédure embarque un **dessin** de son process, et ce n'est pas une illustration :
 le front en fait la **vue par défaut** de la page de la procédure — une procédure sans
@@ -198,7 +198,7 @@ de qui renomme.
 
 ⚠️ **À ne pas confondre avec le préfixe d'outils d'un tenant** (`tenants.tool_prefix`,
 `oto_mcp/tool_alias.py`) : celui-là n'est PAS un renommage. C'est une traduction posée au bord du
-protocole — `oto_doc` devient `tulina_doc` dans le `tools/list` servi, et redevient `oto_doc`
+protocole — `oto_doc` devient `acme_doc` dans le `tools/list` servi, et redevient `oto_doc`
 avant que quoi que ce soit d'autre ne le lise. Les refs `<tool:slug>` restent donc écrites en
 canonique, continuent de résoudre, et **il n'y a rien à migrer**. Les deux formes sont d'ailleurs
 acceptées à l'appel, précisément pour que la prose déjà écrite aboutisse.

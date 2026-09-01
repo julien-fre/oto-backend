@@ -75,7 +75,7 @@ dependencies = [
     # v1.88.0 = clients forager (offres d'emploi, fiches d'organisation) et linear
     # (issues, projets) — un seul tag pour les deux (oto-core#50/#51) ;
     # ⚠️ ces deux clients (v1.89.0) :
-    # attendus par Tulina — UN seul tag pour les deux, pour qu'aucun ordre de merge
+    # attendus par un tenant tiers — UN seul tag pour les deux, pour qu'aucun ordre de merge
     # ne fasse régresser ce pin. ⚠️ Ces deux clients n'ont, DÉLIBÉRÉMENT, aucune
     # méthode qui déplace de l'argent (remboursement, virement, clôture de litige,
     # résiliation) ni qui change le produit (bascule de feature flag, suppression de

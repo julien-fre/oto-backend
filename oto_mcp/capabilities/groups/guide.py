@@ -331,7 +331,7 @@ def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
         "group", inp.group_id, slug, inp.body_md, title=inp.title,
         description=inp.description, set_by=ctx.sub)
     # Une procédure d'équipe est une procédure : même exigence de schéma qu'au grain org
-    # (tulina-app-front#108), même régime — un warning, jamais un refus.
+    # (front tiers, issue #108), même régime — un warning, jamais un refus.
     return {"group_id": inp.group_id, "slug": slug, "version": version, "set": True,
             **procedure_diagram.diagram_check(inp.body_md),
             **procedure_digest.digest_check(inp.body_md)}

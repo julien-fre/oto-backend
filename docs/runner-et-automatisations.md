@@ -35,7 +35,7 @@ file reste uniforme ; déployé `/opt/oto-runner` sur otomata-0, gaté par le cr
 ⚠️ Les jetons de contexte (`_project`…) sont advertisés PAR TOOL : un client
 les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclaré
 fait refuser l'appel entier à la validation). Conception + état des preuves :
-blueprint `chantier-runner.md` ; pilote = campagne Audiens (fusion R5, 14/08).
+blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
 
 ### `complete` libère les baux du run et rend le compte — `0` écrit (#633, 29/08/2026)
 

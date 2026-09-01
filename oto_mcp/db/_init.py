@@ -925,11 +925,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS require_mfa BOOLEAN NOT NULL DEFAULT FALSE")
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logto_org_id TEXT")
     # Front qui héberge l'org — oto-backend sert PLUSIEURS produits depuis une
-    # instance (oto, Tulina). NULL = oto (le défaut, l'écrasante majorité) ; posé
+    # instance (oto, un tenant tiers). NULL = oto (le défaut, l'écrasante majorité) ; posé
     # = l'org vit sous un front tiers, dont les liens sortants et la marque des
     # mails doivent porter SES couleurs, pas les nôtres :
-    #   front_base_url = base des liens publics (https://app.tulina.ai)
-    #   front_brand    = marque écrite dans les mails ("tulina")
+    #   front_base_url = base des liens publics (ex. https://app.<tenant>.ai)
+    #   front_brand    = marque écrite dans les mails (ex. "<tenant>")
     # Dérivé de l'org, JAMAIS déclaré par l'appelant : une invitation ne peut pas
     # prétendre venir d'un front auquel l'org n'appartient pas.
     # ⚠️ Provisoire assumé : cette information appartient au TENANT (ADR 0052),

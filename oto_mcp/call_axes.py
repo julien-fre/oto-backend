@@ -335,8 +335,8 @@ def _resolve_project_context_guarded(
             group = gid
     elif owner_type == "user":
         # Projet perso (ADR 0030 amendé) : l'org co-posée = son org de CONTEXTE
-        # (`context_org_id` — « moi, org » : un projet perso créé chez movinmotion
-        # résout les credentials movinmotion, pas l'org perso). Repli sur l'org PERSO
+        # (`context_org_id` — « moi, org » : un projet perso créé chez un client
+        # résout les credentials du client, pas l'org perso). Repli sur l'org PERSO
         # du propriétaire pour les perso LEGACY sans contexte (jamais int(sub) — le sub
         # n'est pas un id d'org).
         prow = db.get_project_by_id(int(pid))
