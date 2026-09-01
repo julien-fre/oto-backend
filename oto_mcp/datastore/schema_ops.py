@@ -340,7 +340,14 @@ class SchemaOpsMixin:
         REFUSE une clé encore DÉCLARÉE au schéma : un `confirm` ne protège pas d'une
         faute de nom, et l'échappatoire est le geste naturel du renommage — retirer
         d'abord le champ du schéma. Ainsi la purge ne peut viser qu'une colonne dont
-        le format a déjà acté la sortie."""
+        le format a déjà acté la sortie.
+
+        REFUSE aussi une purge qui n'a touché AUCUNE ligne (#680). `rows: 0` valait
+        pour deux vérités opposées — « la colonne existait, aucune ligne ne la
+        portait » et « ce nom n'est pas une colonne, rien n'a été fait » — et un
+        opérateur qui enchaîne 190 retraits coche les seconds comme des retraits.
+        Un geste destructif confirmé qui ne fait rien doit le DIRE : le succès porte
+        donc toujours `rows >= 1`, et l'ambiguïté disparaît au lieu de se signaler."""
         key = (key or "").strip()
         if not key:
             raise ValueError("key requise (le nom de la colonne à purger)")
@@ -359,8 +366,44 @@ class SchemaOpsMixin:
                 "colonne vivante est presque toujours une faute de nom. Si la sortie "
                 "est voulue, retire d'abord le champ du schéma (data_set_schema), puis "
                 "purge.")
+        # Le diagnostic se fait APRÈS la purge, jamais avant : une clé pointée
+        # LITTÉRALE au premier niveau du blob (`"site_web.comment"` posé par un
+        # chemin qui a contourné la garde d'écriture, #647) EST une colonne, elle se
+        # retire, et le geste a un effet. Refuser sur la seule forme du nom la
+        # rendrait inatteignable — la seule chose qui distingue les trois cas est ce
+        # que la purge a touché.
         rows = db.datastore_drop_column(ns_id, key)
+        if not rows:
+            raise ValueError(self._rien_purge(ns_id, schema, namespace, key))
         return {"namespace": namespace, "key": key, "rows": rows}
+
+    def _rien_purge(self, ns_id: int, schema, namespace: str, key: str) -> str:
+        """POURQUOI la purge n'a touché aucune ligne — la phrase qui remplace le zéro.
+
+        Deux branches, et la seconde est le garde-fou de la première : un nom qui a
+        la FORME d'une adresse de couche n'en est une que si sa colonne porteuse
+        existe pour de bon (en base ou au schéma). Sinon c'est une faute de frappe,
+        et la nommer « couche de `site_web` » fabriquerait une colonne `site_web` que
+        personne n'a jamais écrite. **Une destination inventée est pire qu'une
+        destination absente** : on dit alors ce qu'on constate, et rien de plus."""
+        adresse = dsv2.layer_address(key)
+        if adresse is not None:
+            base, couche = adresse
+            declarees = {f.get("key") for f in dsv2._fields(schema)}
+            if base in declarees or db.datastore_has_column(ns_id, base):
+                return (
+                    f"`{key}` n'est pas une colonne : c'est l'annotation `{couche}` "
+                    f"de la colonne `{base}`. La lecture la sert à plat, à côté de sa "
+                    f"colonne, mais elle est STOCKÉE sous `{base}` — une purge de "
+                    f"colonne ne descend pas dedans, et rien n'a été touché. Pour la "
+                    f"retirer, écris-la nulle en forme imbriquée (data_write "
+                    f'`{{"{base}": {{"{couche}": null}}}}`) ; pour purger la colonne '
+                    f"entière et ses annotations avec elle, vise `{base}`.")
+        return (
+            f"aucune colonne `{key}` dans les données de `{namespace}` : aucune ligne "
+            f"ne la portait, rien n'a été touché — ce n'est donc pas un retrait, et "
+            f"ça ne se compte pas comme tel. Vérifie le nom avant de le rayer de ta "
+            f"liste.")
 
     def set_semantic(self, namespace: str, enabled: bool) -> dict:
         """Active/désactive la recherche SÉMANTIQUE des lignes du namespace (#67 V2.2,

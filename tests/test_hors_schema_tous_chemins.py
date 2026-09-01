@@ -315,30 +315,53 @@ def test_le_RELEVE_et_la_LECTURE_ne_comptent_pas_les_memes_cles(table):
     assert _releve(st) == [], "et le relevé suit l'ÉCRITE, donc il se tait"
 
 
-# ── Retirer une COUCHE : accepté, sans effet, et sans le dire ────────────────
+# ── Retirer une COUCHE : refusé, et le refus nomme sa destination ────────────
 
-def test_drop_column_sur_une_COUCHE_ne_retire_rien_et_ne_le_dit_pas(table):
+def test_drop_column_sur_une_COUCHE_refuse_en_nommant_sa_colonne(table):
     """⚠️ Mesuré le 31/08, alors qu'une purge de ~190 noms hors schéma s'apprêtait à
     partir sur un fichier de production. **La bonne nouvelle d'abord** : viser une
     couche ne détruit AUCUNE provenance — `drop_column` travaille sur les clés
     stockées, et une couche n'en est pas une, elle vit sous sa colonne.
 
-    Le défaut est ailleurs, et c'est le motif de la journée : *la réponse ne nomme
-    pas ce qu'elle constate.* Elle rend `rows: 0`, exactement comme pour une colonne
-    réelle mais vide. Sur un lot de 190 retraits, l'opérateur lit « c'était déjà
-    vide » là où la phrase juste est « ce nom n'est pas une colonne, c'est la couche
-    de `site_web` ». Le geste est inoffensif, sa restitution est trompeuse — et c'est
-    précisément ce qui fait qu'on ne le corrige pas.
+    Le défaut était ailleurs, et c'était le motif de la journée : *la réponse ne
+    nommait pas ce qu'elle constatait.* Elle rendait `rows: 0`, exactement comme pour
+    une colonne réelle que personne ne portait. Sur un lot de 190 retraits,
+    l'opérateur lisait « c'était déjà vide » là où la phrase juste est « ce nom n'est
+    pas une colonne, c'est l'annotation de `raison_sociale` ».
 
-    Ce banc FIGE le comportement observé plutôt que l'intention : si quelqu'un ajoute
-    le message qui manque, ce test doit être mis à jour SCIEMMENT."""
+    Corrigé le 01/09 (#680) : la version précédente de ce banc FIGEAIT le zéro et
+    disait qu'il faudrait la mettre à jour sciemment le jour du correctif — c'est ce
+    jour. Ce qu'il mesure maintenant : le refus, l'intégrité de la couche, et **que
+    la destination nommée par le refus fonctionne**. Nommer un geste sans l'éprouver
+    fabriquerait une case où ranger la chose, pas une porte de sortie."""
     st, ns, ns_id, rid = table
     st.update_row(ns, rid, {"raison_sociale": {"valeur": "ACME", "comment": "c"}})
     assert "raison_sociale.comment" in set(st.get_row(ns, rid) or {})
 
-    out = st.drop_column(ns, "raison_sociale.comment", confirm=True)
+    with pytest.raises(ValueError) as e:
+        st.drop_column(ns, "raison_sociale.comment", confirm=True)
+    assert "`raison_sociale`" in str(e.value), "le refus NOMME la colonne porteuse"
 
-    assert out.get("rows") == 0, "aucune ligne touchée — le nom n'est pas une colonne"
     servi = st.get_row(ns, rid) or {}
     assert servi.get("raison_sociale.comment") == "c", "la provenance est INTACTE"
     assert servi.get("raison_sociale") == "ACME", "et la valeur aussi"
+
+    # La destination que le refus indique, éprouvée ICI : écrire la couche nulle en
+    # forme imbriquée la retire pour de bon, et ne touche pas la valeur.
+    st.update_row(ns, rid, {"raison_sociale": {"comment": None}})
+    servi = st.get_row(ns, rid) or {}
+    assert "raison_sociale.comment" not in servi, "la couche est retirée"
+    assert servi.get("raison_sociale") == "ACME", "sans emporter la valeur"
+
+
+def test_drop_column_sur_un_nom_INCONNU_refuse_sans_inventer_de_colonne(table):
+    """L'autre moitié du même zéro : une faute de frappe. Le refus doit dire « aucune
+    colonne de ce nom » — et surtout PAS « c'est la couche de `zzz` », qui nommerait
+    une colonne que personne n'a jamais écrite."""
+    st, ns, ns_id, rid = table
+
+    with pytest.raises(ValueError) as e:
+        st.drop_column(ns, "zzz.comment", confirm=True)
+    msg = str(e.value)
+    assert "aucune colonne" in msg
+    assert "annotation" not in msg, "aucune destination inventée"

@@ -298,6 +298,27 @@ def datastore_drop_column(ns_id: int, key: str) -> int:
         return conn.execute(q, (ns_id,)).rowcount or 0
 
 
+def datastore_has_column(ns_id: int, key: str) -> bool:
+    """UNE ligne au moins porte-t-elle cette clé ? (#680)
+
+    Le pendant EXACT de `datastore_row_keys`, qui répond sur un échantillon des 1000
+    lignes les plus récentes. L'échantillon suffit à SIGNALER des colonnes orphelines
+    (elles sont sur toutes les lignes ou presque) ; il ne suffit pas à fonder une
+    phrase qu'un opérateur va lire comme un fait — « `x.comment` est une couche de la
+    colonne `x` » exige que `x` existe pour de bon, sans quoi on nomme une
+    destination inventée, ce qui est pire que ne rien nommer.
+
+    Même prédicat `data ? key` que la purge, donc même parcours au pire ; il n'est
+    payé que sur le chemin où la purge n'a RIEN touché — c'est-à-dire jamais en
+    régime normal, et une fois par nom fautif quand quelqu'un se trompe."""
+    from psycopg import sql as _sql
+    q = _sql.SQL(
+        "SELECT 1 FROM datastore_rows WHERE ns_id = %s AND data ? {k} LIMIT 1"
+    ).format(k=_sql.Literal(str(key)))
+    with _connect() as conn:
+        return conn.execute(q, (ns_id,)).fetchone() is not None
+
+
 def datastore_row_keys(ns_id: int, sample: int = 1000) -> list[str]:
     """Clés présentes dans les DONNÉES d'un namespace, triées.
 

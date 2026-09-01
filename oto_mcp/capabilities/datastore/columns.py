@@ -49,7 +49,9 @@ class DropColumnInput(BaseModel):
 class DropColumnResult(BaseModel):
     namespace: str
     key: str
-    # Lignes qui PORTAIENT la colonne (0 = elle n'existait dans aucune).
+    # Lignes qui PORTAIENT la colonne — TOUJOURS >= 1 (#680). Le zéro n'est plus une
+    # réponse : une purge qui ne touche rien est un refus, parce que le même `0`
+    # valait « la colonne était vide » et « ce nom n'est pas une colonne ».
     rows: int
 
 
@@ -148,7 +150,12 @@ CAPABILITIES += [
             "so an agent re-reading a row writes into them believing it aims right; purge "
             "them once instead of warning every agent forever. A key still DECLARED in "
             "the schema is refused: take it out of the schema first (`data_set_schema`). "
-            "Returns `{rows}` = how many rows carried it."),
+            "Returns `{rows}` = how many rows carried it, ALWAYS >= 1: a name that no "
+            "row carries is REFUSED, never reported as a zero — so a success is always "
+            "a removal you can tick off. The refusal says which of the two it is: a "
+            "typo (no column of that name), or an ANNOTATION such as `site_web.comment` "
+            "— served flat next to its column but stored under it, so a column purge "
+            "does not reach it (write `{\"site_web\": {\"comment\": null}}` instead)."),
     ),
     Capability(
         key="me.datastore.patch_schema",
