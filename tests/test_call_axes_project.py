@@ -75,7 +75,7 @@ async def test_pin_project_personal_owner_legacy_uses_owner_personal_org(monkeyp
 @pytest.mark.asyncio
 async def test_pin_project_personal_uses_context_org(monkeypatch):
     # ADR 0030 amendé : un projet PERSO porte un `context_org_id` (« moi, org ») → l'org
-    # co-posée = SON org de contexte (movinmotion), pas l'org perso. C'est ce qui fait
+    # co-posée = SON org de contexte (un client), pas l'org perso. C'est ce qui fait
     # résoudre les credentials de l'org de travail sur un projet privé au créateur.
     from oto_mcp import db
     monkeypatch.setattr(call_axes, "require_axis_sub", lambda axis: "owner-sub")

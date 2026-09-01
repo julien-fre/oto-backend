@@ -27,11 +27,11 @@ ORG = 8
 # ─── 1. Grammaire de ref ─────────────────────────────────────────────────────
 
 def test_ref_roundtrip_member():
-    ref = instance_refs.make_member_ref(8, "usr_x", "zoho", "alexandra")
-    assert ref == "member:8:usr_x:zoho:alexandra"
+    ref = instance_refs.make_member_ref(8, "usr_x", "zoho", "jane")
+    assert ref == "member:8:usr_x:zoho:jane"
     p = instance_refs.parse_ref(ref)
     assert (p.level, p.org_id, p.sub, p.connector, p.account) == \
-        ("member", 8, "usr_x", "zoho", "alexandra")
+        ("member", 8, "usr_x", "zoho", "jane")
 
 
 def test_ref_roundtrip_group_org_platform():
@@ -174,15 +174,15 @@ def _member_key():
 
 def test_member_multi_account(seams):
     seams.vault[_member_key()] = [
-        _row("zoho", "alexandra", meta={"data_center": "eu", "is_default": True}),
+        _row("zoho", "jane", meta={"data_center": "eu", "is_default": True}),
         _row("zoho", "2 Zoho", set_by="usr_y"),
     ]
     out = _run()
     assert out["count"] == 2
-    a, b = out["instances"]                       # tri par account : "2 Zoho" < "alexandra"
-    assert a["account"] == "2 Zoho" and b["account"] == "alexandra"
+    a, b = out["instances"]                       # tri par account : "2 Zoho" < "jane"
+    assert a["account"] == "2 Zoho" and b["account"] == "jane"
     assert a["ref"] != b["ref"]
-    assert b["ref"] == "member:8:usr_x:zoho:alexandra"
+    assert b["ref"] == "member:8:usr_x:zoho:jane"
     assert a["level"] == b["level"] == "member"
     assert a["owner"] == {"type": "user", "id": SUB}
     assert a["secret_kind"] == "api_key" and a["set_by"] == "usr_y"
@@ -213,13 +213,13 @@ def test_groups_all_mine_no_active_flag(seams):
 
 def test_org_row_and_bridge_base_url(seams):
     seams.vault[("org", str(ORG))] = [
-        _row("bridge", meta={"base_url": "https://mm-bridge.example"}),
+        _row("bridge", meta={"base_url": "https://acme-bridge.example"}),
     ]
     out = _run()
     (inst,) = out["instances"]
     assert inst["level"] == "org"
     assert inst["owner"] == {"type": "org", "id": ORG}
-    assert inst["config"]["base_url"] == "https://mm-bridge.example"
+    assert inst["config"]["base_url"] == "https://acme-bridge.example"
     assert inst["ref"] == "org:8:bridge"
 
 
@@ -410,7 +410,7 @@ def test_projection_never_decrypts(seams, monkeypatch):
     monkeypatch.setattr(credentials_store, "get_credential_with_meta", _boom)
     monkeypatch.setattr(crypto, "decrypt", _boom)
     # Fixtures des 4 familles — le handler complet déroule sans lever.
-    seams.vault[_member_key()] = [_row("zoho", "alexandra")]
+    seams.vault[_member_key()] = [_row("zoho", "jane")]
     seams.monkeypatch.setattr(ci.group_store, "list_groups_for_user",
                               lambda sub, org_id=None: [{"group_id": 3, "name": "S"}])
     seams.vault[("group", "3")] = [_row("hunter")]
@@ -493,12 +493,12 @@ def test_shared_with_me_scopes_include_my_groups(seams):
 # repasser tant que rien ne résout un `inst:`.
 
 def test_l6_l_identifiant_stable_est_servi_a_cote_du_ref(seams):
-    seams.vault[_member_key()] = [_row("zoho", "alexandra")]
+    seams.vault[_member_key()] = [_row("zoho", "jane")]
     seams.instances[(credentials_store.MEMBER, credentials_store.member_id(ORG, SUB),
-                     "zoho", "alexandra")] = 412
+                     "zoho", "jane")] = 412
     inst = _run()["instances"][0]
     assert inst["id"] == "inst:412"
-    assert inst["ref"] == "member:8:usr_x:zoho:alexandra", (
+    assert inst["ref"] == "member:8:usr_x:zoho:jane", (
         "`ref` reste servi : il est déjà distribué (bindings, arêtes de `grants`) et "
         "ce lot ne le réécrit nulle part")
 

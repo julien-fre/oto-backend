@@ -155,7 +155,7 @@ def test_linertie_dune_procedure_se_juge_sur_le_journal(divergent):
 
 def test_lactivite_dun_tableau_sert_le_journal(divergent):
     _fact(divergent, "r1", "data_write", {"ns_id": 160, "id": "row-1"}, ago=6.0)
-    (entry,) = usage.datastore_namespace_activity(160, "mucho-leads")
+    (entry,) = usage.datastore_namespace_activity(160, "leads-clients")
     assert entry["outcome"] == "failed" and entry["run_label"] == "prospection été"
     assert entry["doctrine"] == "prospection-ete"
 

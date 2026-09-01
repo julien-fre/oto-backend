@@ -34,13 +34,13 @@ def _get_rows(monkeypatch, *, orgs, namespaces, ns="leads-accords-dormants"):
 def test_hint_names_the_org_and_the_header(monkeypatch):
     status, corps = _get_rows(
         monkeypatch,
-        orgs=[{"org_id": 2, "name": "Otomata Admin"}, {"org_id": 81, "name": "Mūcho"}],
+        orgs=[{"org_id": 2, "name": "Otomata Admin"}, {"org_id": 81, "name": "Marché"}],
         namespaces=[{"namespace": "leads-accords-dormants", "owner_type": "org",
                      "owner_id": "81"}],
     )
     assert (status, corps["error"]) == (404, "namespace_not_found")
     assert "X-Oto-Org: 81" in corps["detail"]
-    assert "Mūcho" in corps["detail"]          # nommer l'org, pas seulement son id
+    assert "Marché" in corps["detail"]          # nommer l'org, pas seulement son id
 
 
 def test_no_hint_when_the_namespace_exists_nowhere(monkeypatch):

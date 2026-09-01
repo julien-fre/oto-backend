@@ -1,8 +1,8 @@
 """Une org créée depuis un front tiers porte la marque de ce front, dès l'INSERT.
 
-Vécu le 15/08, sur une org Tulina : un client invité par mail a reçu un lien vers
+Vécu le 15/08, sur une org Acme : un client invité par mail a reçu un lien vers
 `oto.cx`, augmenté d'un magic-link minté sur NOTRE Logto — inerte contre l'émetteur
-du tenant (`auth.tulina.ai` depuis le 03/08). Il s'est donc créé un second compte
+du tenant (`auth.acme.test` depuis le 03/08). Il s'est donc créé un second compte
 CHEZ NOUS, a accepté l'invitation avec celui-là, puis, revenu sur le front de son
 fournisseur, s'est retrouvé membre de rien : deux identités pour une personne, et
 l'org inatteignable depuis le seul front qu'il connaisse.

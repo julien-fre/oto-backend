@@ -157,7 +157,7 @@ def test_org_scope_is_the_ACTIVE_org_never_membership():
 # se prend connecteur par connecteur, mesure de rayon en main — fullenrich seul l'a eue).
 FREE_TIER_OTHERS = ("serper", "hunter", "reddit", "sirene", "kaspr",
                     "unipile", "apollo", "serpapi", "searchapi",
-                    "tavily")  # 26/08 : socle recherche web, ouvert sans quota (GO Julien)
+                    "tavily")  # 26/08 : socle recherche web, ouvert sans quota (GO du partenaire)
 
 # Vague 2 (23/08) : chaînés SANS toucher leur flag — arêtes semées au boot, révocation
 # vraie, metering d'arête ; un appelant sans arête retombe sur le chemin ouvert.

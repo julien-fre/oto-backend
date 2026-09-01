@@ -4,7 +4,7 @@ Une clé peut exister dans une équipe dont on est membre sans que la cascade la
 lise (équipe non active) : le connecteur paraît alors « vide ». L'info existait
 déjà, mais SEULEMENT dans l'erreur « aucun credential » — donc jamais atteinte
 quand le connecteur n'est pas installé, puisque l'appel meurt avant, au dispatch
-(`tool_not_mounted`). Vécu org movinmotion : clé `zoho` sur l'équipe sales.
+(`tool_not_mounted`). Vécu sur une org cliente : clé `zoho` sur l'équipe sales.
 
 Deux surfaces couvertes ici :
 1. la carte batchée `access.reachable_instances_map` (annote le catalogue sans
@@ -29,7 +29,7 @@ def wired(monkeypatch):
     monkeypatch.setattr(access.group_store, "list_group_secrets",
                         lambda gid: [{"provider": "zoho"}] if gid == 2 else [])
     monkeypatch.setattr(access.org_store, "list_orgs_for_user",
-                        lambda sub: [{"org_id": 35, "name": "movinmotion"},
+                        lambda sub: [{"org_id": 35, "name": "acme"},
                                      {"org_id": 167, "name": "MM Test"}])
     monkeypatch.setattr(access.org_store, "list_org_secrets",
                         lambda oid: [{"provider": "zoho"}] if oid == 167 else [])
@@ -45,7 +45,7 @@ def wired(monkeypatch):
 
 
 def test_map_finds_team_key_not_active(wired):
-    """Le cas Movinmotion : clé sur l'équipe sales, équipe non active."""
+    """Le cas Acme : clé sur l'équipe sales, équipe non active."""
     m = access.reachable_instances_map("u1", 35)
     assert {"kind": "group", "id": 2, "name": "sales"} in m["zoho"]
 

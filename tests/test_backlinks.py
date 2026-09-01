@@ -11,9 +11,9 @@ from oto_mcp.db import backlinks as B
 # ── extraction ───────────────────────────────────────────────────────────────
 
 def test_extract_titles_dedup_and_normalize():
-    body = "Voir [[Mūcho]] et [[ mūcho ]] puis [[Deal X]].\nEncore [[Deal X]]."
-    # casse/espaces normalisés pour la clé → « Mūcho » une fois ; ordre d'apparition
-    assert B.extract_titles(body) == ["Mūcho", "Deal X"]
+    body = "Voir [[Marché]] et [[ marché ]] puis [[Deal X]].\nEncore [[Deal X]]."
+    # casse/espaces normalisés pour la clé → « Marché » une fois ; ordre d'apparition
+    assert B.extract_titles(body) == ["Marché", "Deal X"]
 
 
 def test_extract_ignores_empty_and_multiline():
@@ -64,24 +64,24 @@ def _proj(owner_type="org", owner_id="7", ctx=None):
 
 
 def test_resolve_precedence_project_over_kb():
-    # « Mūcho » existe dans le projet courant (1) ET la KB (9) → le projet gagne.
+    # « Marché » existe dans le projet courant (1) ET la KB (9) → le projet gagne.
     c = _Conn(project=_proj(), kb=9, docs=[
-        {"id": 100, "project_id": 1, "title": "Mūcho"},
-        {"id": 200, "project_id": 9, "title": "Mūcho"},
+        {"id": 100, "project_id": 1, "title": "Marché"},
+        {"id": 200, "project_id": 9, "title": "Marché"},
     ])
-    B.refresh_links(c, from_doc=5, project_id=1, body_md="cf [[Mūcho]]")
+    B.refresh_links(c, from_doc=5, project_id=1, body_md="cf [[Marché]]")
     assert c.deleted and c.inserted == [(5, 100)]
 
 
 def test_resolve_falls_back_to_kb():
     c = _Conn(project=_proj(), kb=9, docs=[
-        {"id": 200, "project_id": 9, "title": "Mūcho"},
+        {"id": 200, "project_id": 9, "title": "Marché"},
     ])
-    B.refresh_links(c, from_doc=5, project_id=1, body_md="[[mucho]]" )  # casse/accent ? -> non
-    # 'mucho' (sans accent) ne matche pas 'Mūcho' → lien-souche, rien
+    B.refresh_links(c, from_doc=5, project_id=1, body_md="[[marche]]" )  # casse/accent ? -> non
+    # 'marche' (sans accent) ne matche pas 'Marché' → lien-souche, rien
     assert c.inserted == []
-    c2 = _Conn(project=_proj(), kb=9, docs=[{"id": 200, "project_id": 9, "title": "Mūcho"}])
-    B.refresh_links(c2, from_doc=5, project_id=1, body_md="[[Mūcho]]")
+    c2 = _Conn(project=_proj(), kb=9, docs=[{"id": 200, "project_id": 9, "title": "Marché"}])
+    B.refresh_links(c2, from_doc=5, project_id=1, body_md="[[Marché]]")
     assert c2.inserted == [(5, 200)]
 
 

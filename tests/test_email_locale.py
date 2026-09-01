@@ -26,17 +26,17 @@ def _captured(monkeypatch):
 
 def test_invite_email_default_locale_is_french(monkeypatch):
     sent = _captured(monkeypatch)
-    email.send_invite_email("a@b.c", "movinmotion", "https://x/invitation/CODE",
+    email.send_invite_email("a@b.c", "acme", "https://x/invitation/CODE",
                             "Alice", brand="oto")
-    assert sent["subject"] == "invitation à rejoindre movinmotion sur oto"
+    assert sent["subject"] == "invitation à rejoindre acme sur oto"
     assert "invites you" not in sent["html"]
 
 
 def test_invite_email_en(monkeypatch):
     sent = _captured(monkeypatch)
-    email.send_invite_email("a@b.c", "movinmotion", "https://x/invitation/CODE",
+    email.send_invite_email("a@b.c", "acme", "https://x/invitation/CODE",
                             "Alice", brand="oto", locale="en")
-    assert sent["subject"] == "invitation to join movinmotion on oto"
+    assert sent["subject"] == "invitation to join acme on oto"
     assert "Alice invites you to join" in sent["html"]
     assert ">join<" in sent["html"]
     assert "rejoindre" not in sent["html"]

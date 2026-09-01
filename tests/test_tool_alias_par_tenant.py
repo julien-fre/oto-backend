@@ -2,7 +2,7 @@
 
 Constaté chez un client sur le connecteur d'un partenaire : la conversation affichait
 `Oto doc`, `Oto doc`, `Oto doc`… à chaque appel, sous SA marque, dans SON produit.
-Même famille que le socle d'instructions (« Sur Tulina (Oto), tu es… », 13/08) et que
+Même famille que le socle d'instructions (« Sur <tenant> (Oto), tu es… », 13/08) et que
 les liens qui portaient notre domaine — sauf qu'ici ce n'est pas de la prose : c'est
 l'identifiant d'un outil, et il est réaffiché à chaque tour.
 

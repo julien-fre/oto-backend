@@ -122,7 +122,7 @@ class _SessionStable:
 
 def _claim_sans_run_id(ctx, ns: str, worker: str) -> dict:
     """`data_claim_next(worker=...)` — AUCUN `_run_id=`, exactement l'appel du calllog
-    (`{"ns_id":204,"filter":..., "worker":"test-audiens-3lignes","namespace":"edition-vivier"}`).
+    (`{"ns_id":204,"filter":..., "worker":"test-campagne-3lignes","namespace":"edition-vivier"}`).
     Passe par le VRAI middleware pour que le filet #317 (pile de session) ait sa chance."""
     from oto_mcp.middleware.call_context import CallContextMiddleware
 
@@ -162,11 +162,11 @@ def test_le_scenario_du_signal_414_libere_les_3_lignes(surface):
 
     run_start = _outil("run_start").fn
     out_start = asyncio.run(run_start(
-        ctx, label="Test contrôle — enrichissement 3 fiches édition-vivier (Audiens)",
-        guide="enrichissement-editeur-audiens"))
+        ctx, label="Test contrôle — enrichissement 3 fiches édition-vivier (campagne cliente)",
+        guide="enrichissement-editeur-campagne"))
     run_id = out_start["run_id"]
 
-    pris = [_claim_sans_run_id(ctx, ns, "test-audiens-3lignes")["row"] for _ in range(3)]
+    pris = [_claim_sans_run_id(ctx, ns, "test-campagne-3lignes")["row"] for _ in range(3)]
     assert all(pris), "les 3 lignes étaient libres : chaque claim en rend une"
     ids = {p["_id"] for p in pris}
     assert len(ids) == 3, "trois lignes DISTINCTES, comme dans l'incident"

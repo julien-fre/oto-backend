@@ -20,16 +20,16 @@ import pytest
 from oto_mcp import tenancy
 from oto_mcp.db import users
 
-_TIERS = "https://auth.tulina.ai/oidc"
+_TIERS = "https://auth.acme.test/oidc"
 
 
 @pytest.fixture
 def registre_avec_un_tiers(monkeypatch):
-    """Un tenant tiers `tulina` déclaré — sinon tout sub est du tenant `oto` et la
+    """Un tenant tiers `acme` déclaré — sinon tout sub est du tenant `oto` et la
     garde n'a rien à distinguer (l'état d'avant ce lot)."""
     registre = tenancy.IssuerRegistry(
         tenancy.build("https://auth.oto.ninja/oidc",
-                      tenants=[{"slug": "tulina", "issuer": _TIERS}]))
+                      tenants=[{"slug": "acme", "issuer": _TIERS}]))
     monkeypatch.setattr(tenancy, "_INSTALLED", registre)
     return registre
 
@@ -43,9 +43,9 @@ def _db_interdite(monkeypatch):
 
 
 @pytest.mark.parametrize("old_sub, new_sub", [
-    ("abc123", "tulina:abc123"),        # le compte oto absorbé par le tiers
-    ("tulina:abc123", "abc123"),        # et l'inverse
-    ("tulina:abc123", "acme:abc123"),   # entre deux tiers (acme = tenant inconnu)
+    ("abc123", "acme:abc123"),        # le compte oto absorbé par le tiers
+    ("acme:abc123", "abc123"),        # et l'inverse
+    ("acme:abc123", "globex:abc123"),   # entre deux tiers (globex = tenant inconnu)
 ])
 def test_un_alias_cross_tenant_est_refuse(old_sub, new_sub, registre_avec_un_tiers,
                                           monkeypatch, caplog):
@@ -67,7 +67,7 @@ def test_un_merge_dans_le_meme_tenant_reste_possible(registre_avec_un_tiers,
 
     monkeypatch.setattr(users, "_connect", _passe)
     for old_sub, new_sub in (("abc123", "def456"),
-                             ("tulina:abc123", "tulina:def456")):
+                             ("acme:abc123", "acme:def456")):
         with pytest.raises(_Sentinelle):
             users.migrate_sub(old_sub, new_sub)
 
@@ -84,7 +84,7 @@ def test_sans_tenant_tiers_declare_rien_ne_change(monkeypatch):
     monkeypatch.setattr(users, "_connect", lambda *a, **k: (_ for _ in ()).throw(
         _Sentinelle()))
     with pytest.raises(_Sentinelle):
-        users.migrate_sub("abc123", "tulina:abc123")
+        users.migrate_sub("abc123", "acme:abc123")
 
 
 def test_le_classement_dun_sub_ne_le_decoupe_pas(registre_avec_un_tiers):
@@ -92,11 +92,11 @@ def test_le_classement_dun_sub_ne_le_decoupe_pas(registre_avec_un_tiers):
     l'une ressemble à un sub sans en être un — ce que le tripwire d'opacité
     interdit par ailleurs."""
     r = registre_avec_un_tiers
-    assert r.tenant_of("tulina:abc123") == "tulina"
+    assert r.tenant_of("acme:abc123") == "acme"
     assert r.tenant_of("abc123") == tenancy.PRIMARY_SLUG
     # Ni un sub qui COMMENCE par le slug sans le séparateur…
-    assert r.tenant_of("tulinaabc123") == tenancy.PRIMARY_SLUG
+    assert r.tenant_of("acmeabc123") == tenancy.PRIMARY_SLUG
     # …ni un tenant non déclaré ne prennent le préfixe pour eux.
-    assert r.tenant_of("acme:abc123") == tenancy.PRIMARY_SLUG
-    assert not r.same_tenant("tulina:abc123", "abc123")
-    assert r.same_tenant("tulina:abc123", "tulina:def456")
+    assert r.tenant_of("globex:abc123") == tenancy.PRIMARY_SLUG
+    assert not r.same_tenant("acme:abc123", "abc123")
+    assert r.same_tenant("acme:abc123", "acme:def456")
