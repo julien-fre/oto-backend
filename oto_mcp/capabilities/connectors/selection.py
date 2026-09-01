@@ -29,7 +29,7 @@ from ...connectors import cardinality as connector_cardinality
 from ...connectors import readiness as connector_readiness
 from ...connectors import selection as connector_selection
 from .._authz import ORG_ADMIN_OF, SUB_ONLY
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 from ..registry import CAPABILITIES
 from .catalog_card import (AuthDescriptor, ConnectFlow, CredentialField,
                            DocSection, FreeTier)
@@ -622,6 +622,11 @@ CAPABILITIES += [
                     "option open, no step left) plus `not_ready`/`next_step` when it doesn't; the "
                     "whole catalog returns readiness:not_computed (too costly) rather than a "
                     "silent blank, so ask by name before concluding a connector is connected.",
+        errors=(DeclaredError(404, "unknown_connector",
+                              "nom inconnu du registre, connecteur non exposé "
+                              "pour l'org active, ou restreint par une règle — "
+                              "les trois sont indistinguables côté membre, et "
+                              "tous se règlent par la même demande à un admin"),),
         rest=RestBinding("GET", "/api/me/connectors"),
     ),
     Capability(
@@ -631,6 +636,11 @@ CAPABILITIES += [
                     "connector name from the catalog. Its tools do NOT mount in the current "
                     "conversation (the tool registry is frozen at open) — the response `hint` "
                     "tells you to reach them right away via oto_call, or open a new conversation.",
+        errors=(DeclaredError(404, "unknown_connector",
+                              "nom inconnu du registre, connecteur non exposé "
+                              "pour l'org active, ou restreint par une règle — "
+                              "les trois sont indistinguables côté membre, et "
+                              "tous se règlent par la même demande à un admin"),),
         rest=RestBinding("POST", "/api/me/connectors/{name}/select"),
     ),
     Capability(
@@ -638,6 +648,11 @@ CAPABILITIES += [
         Output=ConnectorSelectionState,
         description="Pause an installed connector (state=paused): kept installed but its tools "
                     "are hidden. Resume by selecting it again.",
+        errors=(DeclaredError(404, "unknown_connector",
+                              "nom inconnu du registre, connecteur non exposé "
+                              "pour l'org active, ou restreint par une règle — "
+                              "les trois sont indistinguables côté membre, et "
+                              "tous se règlent par la même demande à un admin"),),
         rest=RestBinding("POST", "/api/me/connectors/{name}/pause"),
     ),
     Capability(
@@ -656,6 +671,7 @@ CAPABILITIES += [
                     "first session) — not just a library badge. Never retroactively touches an "
                     "existing member; they keep whatever they've already chosen. connectors = "
                     "list of connector names ([] clears back to the platform-only baseline).",
+        errors=(DeclaredError(404, "unknown_org", "org inconnue"),),
         rest=RestBinding("PUT", "/api/orgs/{id}/default-connectors", _ID),
     ),
     Capability(
@@ -667,6 +683,11 @@ CAPABILITIES += [
                     "an explicit choice yet (never overrides a member's own pause/uninstall), AND "
                     "adds it to the org's default set so every member who joins LATER starts with "
                     "it pre-activated too. Requires the org to already expose the connector.",
+        errors=(DeclaredError(404, "unknown_connector",
+                              "nom inconnu du registre"),
+                DeclaredError(409, "org_disabled",
+                              "l'org a désactivé ce connecteur : l'activer pour "
+                              "tous contredirait sa propre gouvernance"),),
         rest=RestBinding("POST", "/api/orgs/{id}/connectors/{name}/bulk-select", _ID),
     ),
     Capability(

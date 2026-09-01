@@ -656,3 +656,37 @@ def test_un_simple_membre_ne_lit_pas_le_journal_de_l_org(client, org):
     touché l'entrée de la capacité."""
     r = client.get(f"/api/orgs/{org['id']}/audit-log/export", headers=_h(org["membre"]))
     assert r.status_code in (403, 404), r.text
+
+
+# ── Les refus des capacités de connecteur, rejoués sur la route servie (#668) ──
+#
+# Quinze capacités déclarent désormais 37 refus nommés, là où le document n'en
+# portait que trois génériques (401/403 et les 400 de l'adaptateur). Le garde-fou
+# `test_capability_declared_errors.py` vérifie que chaque code est LEVÉ dans le
+# module et PUBLIÉ ; il ne peut pas vérifier qu'une route y mène vraiment.
+#
+# ⚠️ Deux rejeux ici, pas trente-sept, et c'est un choix assumé : ils couvrent les
+# deux FORMES de refus de ce périmètre — celui qui tombe avant toute lecture (une
+# demande qu'on ne sert jamais) et celui qui tombe sur un nom qu'on ne reconnaît
+# pas. Les autres suivent le même chemin de code ; les rejouer un par un
+# coûterait quinze montages pour la même démonstration.
+
+def test_demander_la_valeur_dune_cle_rend_403_secret_never_revealed(client, org):
+    """Le refus le plus important du lot : il dit qu'une valeur ne se relit JAMAIS,
+    au lieu de laisser croire à un droit manquant. Levé avant toute lecture du
+    coffre — un 200 au corps amputé se lirait « aucune clé posée »."""
+    oid, admin, _ = org
+    r = client.get("/api/settings/api-keys/serper", params={"reveal": "true"},
+                   headers=_h(admin))
+    assert (r.status_code, r.json()["error"]) == (403, "secret_never_revealed"), r.text
+
+
+def test_installer_un_connecteur_inconnu_rend_404_unknown_connector(client, org):
+    """Trois situations tombent ici — nom inconnu, connecteur non exposé pour l'org,
+    ou restreint par une règle. Le document les déclare sous ce seul code parce
+    qu'elles sont indistinguables côté membre, et qu'elles se règlent toutes par la
+    même demande à un admin."""
+    oid, admin, _ = org
+    r = client.post("/api/me/connectors/connecteur-qui-nexiste-pas/select",
+                    headers=_h(admin))
+    assert (r.status_code, r.json()["error"]) == (404, "unknown_connector"), r.text

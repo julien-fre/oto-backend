@@ -58,7 +58,7 @@ from ... import access, credentials_store, db, group_store, instance_refs, provi
 from . import instances_tenant
 from ...connectors import instance_visibility
 from .._authz import SUB_ONLY
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 from ..registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
@@ -645,6 +645,12 @@ CAPABILITIES += [
             "level down — group/org/platform — takes over) but stays listed and "
             "reactivable (`suspended=false`). Only meta.suspended is written; the "
             "secret is never touched."),
+        errors=(DeclaredError(400, "no_active_org",
+                              "aucune org de contexte : une instance se met de "
+                              "côté DANS un espace de travail"),
+                DeclaredError(404, "no_instance",
+                              "aucune clé à toi pour ce connecteur et ce compte "
+                              "— il n'y a rien à suspendre"),),
         rest=RestBinding("POST", "/api/me/connector-instances/suspend"),
     ),
 ]
