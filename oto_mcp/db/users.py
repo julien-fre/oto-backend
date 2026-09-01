@@ -48,26 +48,35 @@ class OnboardingIncomplet(RuntimeError):
 
 
 def upsert_user(sub: str, email: Optional[str] = None, name: Optional[str] = None,
-                iss: Optional[str] = None) -> None:
+                iss: Optional[str] = None, locale: Optional[str] = None) -> None:
     """Create the user row if missing, refresh email/name if known.
 
     Le `(xmax = 0)` distingue insert/update sans SELECT préalable : 0 sur une ligne
     fraîchement insérée, ≠ 0 sur un UPDATE — ce qui permet de ne déclencher les
     effets de première inscription (réconciliation d'invitation, org maison) qu'au
     vrai INSERT.
+
+    `locale` (oto-backend#701) : signal DÉDUIT (`Accept-Language`, chemin REST
+    interactif — cf. `api/base._authenticate`), jamais un choix. `COALESCE(users.locale,
+    EXCLUDED.locale)` — dans ce sens précis, pas celui d'email/name — pose la valeur
+    déduite UNIQUEMENT si la ligne n'en porte aucune : un `PUT /api/me/locale`
+    (`me.locale.set`) reste prioritaire à vie, y compris face aux logins suivants.
+    Les 14 autres sites d'appel ne passent rien (`None`) → `COALESCE(x, NULL) = x`,
+    sans effet, comportement inchangé.
     """
     with _connect() as conn:
         row = conn.execute(
             """
-            INSERT INTO users (sub, email, name)
-            VALUES (%s, %s, %s)
+            INSERT INTO users (sub, email, name, locale)
+            VALUES (%s, %s, %s, %s)
             ON CONFLICT(sub) DO UPDATE SET
                 email = COALESCE(EXCLUDED.email, users.email),
                 name  = COALESCE(EXCLUDED.name,  users.name),
+                locale = COALESCE(users.locale, EXCLUDED.locale),
                 updated_at = NOW()
             RETURNING (xmax = 0) AS inserted
             """,
-            (sub, email, name),
+            (sub, email, name, locale),
         ).fetchone()
     # Les DEUX effets de première inscription sont tentés, PUIS l'échec est rendu :
     # que l'un tombe ne dispense pas de l'autre, et l'erreur finale dit lesquels ont

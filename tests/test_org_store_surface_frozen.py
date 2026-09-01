@@ -202,7 +202,7 @@ FROZEN_SIGNATURES = {
     'set_org_secret': "(org_id: 'int', provider: 'str', api_key: 'str', set_by: 'Optional[str]' = None, meta: 'Optional[dict]' = None, account: 'str' = '') -> 'None'",
     'unpublish_guide': "(entry_id: 'int') -> 'bool'",
     'update_org': "(org_id: 'int', name: 'Optional[str]' = None, description: 'Optional[str]' = None, domain: 'Optional[str]' = None, industry: 'Optional[str]' = None, location: 'Optional[str]' = None) -> 'bool'",
-    'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, iss: 'Optional[str]' = None) -> 'None'",
+    'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, iss: 'Optional[str]' = None, locale: 'Optional[str]' = None) -> 'None'",
 }
 
 
