@@ -43,7 +43,7 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
 | --- | --- | --- |
 | ~200 chemins générés (**le compte** `/api/me`, **la toolbox** `/api/me/tools*`, **la session navigateur**, **la messagerie hébergée**, **les verbes OAuth fédérés**, **les jetons API**, **les fichiers de projet**, projets, pages, procédures, ressources, orgs, guide, monitoring, datastore, billing…) | `capabilities/` + `_rest_adapter` | **capacité** : un descripteur, deux faces (ADR 0009/0042) |
 | primitives (`_authenticate`, CORS, `_json`/`_json_error`, `OPTIONS`, `bind`) | `api/base.py` | partagées par tous les modules ; **ré-exportées** par `api.routes` |
-| favicon, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques de procédures & de guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api/public.py` | **sans auth** — l'adaptateur capacité authentifie toujours. ⚠️ `/api/connectors` est la seule **MIXTE** : anonyme pour la vitrine, authentifiée pour le dashboard, et depuis le 2026-09-01 (#732) l'en-tête **change ce qu'elle rend** — org de contexte ⟹ `auth.cardinality` effective |
+| favicon, `/api/version`, `/api/mcp/catalog`, `openapi.json`, `/api/connectors`, bibliothèques de procédures & de guides, aperçu d'invitation, docs partagés (`/api/public/docs/{token}`, `/p/d/{token}`) | `api/public.py` | **sans auth** — l'adaptateur capacité authentifie toujours. ⚠️ `/api/connectors` est la seule **MIXTE** : anonyme pour la vitrine, authentifiée pour le dashboard, et depuis le 2026-09-01 (#732) l'en-tête **change ce qu'elle rend** — org de contexte ⟹ `auth.cardinality` effective |
 | `POST /api/me/avatar`, `POST /api/orgs/{id}/logo` | `api/media.py` | **multipart** → hors du moule par CONSTRUCTION (classé `NATURE`) |
 | `POST` d'un fichier de projet, `/api/me/projects/{id}/export` | `api/projects.py` | **multipart / ZIP** → hors du moule (classé `NATURE`) |
 | `/api/upload/{token}` (PUT/POST/GET) | `api/uploads.py` | **pas de JWT** : le jeton de l'URL fait foi |
@@ -503,6 +503,20 @@ c'est **toute** la surface projet (list/get/runs/inventory/link/publish_mcp…).
 qui sonde `/api/projects` obtient 404 et conclut « les projets ne sont pas sur REST » — c'est
 arrivé (brief scout, 08/2026). Le descriptif rend l'énuméré `op` lisible, ce que le sondage de
 chemins ne donnera jamais. Même forme pour `/api/me/docs`, `/api/me/kb`, `/api/resources`.
+
+## Version servie — `GET /api/version` (+ `X-Oto-Version`)
+
+**Sans auth**, comme le descriptif ci-dessus : un ref git, un SHA, deux horodatages —
+aucune valeur. Il rend l'étiquette de ce que **le processus exécute** (`v1.2.3+6d5bf16b`),
+le tag **oto-core réellement installé**, et l'instant du déploiement comme celui du
+démarrage. La même étiquette part dans `info.version` de l'OpenAPI et en **en-tête
+`X-Oto-Version` de chaque réponse** — l'endpoint sert à qui pense à demander, l'en-tête
+à qui relit son journal après coup.
+
+⚠️ Elle ne désigne PAS ce que le dernier workflow a déployé, et ⚠️ **`pip show oto-core`
+ment** (numéro gelé à 1.100.0). Le pourquoi de chaque refus, l'ordre de résolution
+(env > `.oto-deploy.json` > `"unknown"`) et le piège des deux copies du script de
+déploiement : **`docs/version-servie.md`**.
 
 ## Jetons API `oto_` — gestion et portée
 
