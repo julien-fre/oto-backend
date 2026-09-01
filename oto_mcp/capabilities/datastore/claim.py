@@ -68,9 +68,9 @@ class ClaimRowInput(BaseModel):
 class ClaimResult(BaseModel):
     namespace: str
     # La ligne réservée, colonnes libres du tableau + son bail (`_claimed_by`,
-    # `_claimed_until`) + ce que la file sait d'elle (`_claims`, et `_abandon` si le
-    # plafond de reprises l'en a sortie). `null` sur `claim_next` quand il n'y a plus
-    # rien à réserver.
+    # `_claimed_until`, `_claimed_run`) + ce que la file sait d'elle (`_claims`, et
+    # `_abandon` si le plafond de reprises l'en a sortie). `null` sur `claim_next`
+    # quand il n'y a plus rien à réserver.
     row: Optional[dict] = None
     # Défaut de configuration relevé au claim (statut sans état
     # terminal) : le worker qui réserve est celui que ça concerne.

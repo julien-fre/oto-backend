@@ -457,7 +457,7 @@ def datastore_get_row(ns_id: int, row_id: str) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
             "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until, "
-            "       claims, abandon_reason "
+            "       claimed_run, claims, abandon_reason "
             "FROM datastore_rows WHERE ns_id = %s AND row_id = %s",
             (ns_id, row_id),
         ).fetchone()
@@ -515,7 +515,7 @@ def datastore_list_rows(ns_id: int, *, offset: int = 0, limit: Optional[int] = N
     with _connect() as conn:
         rows = conn.execute(
             "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until, "
-            "       claims, abandon_reason "
+            "       claimed_run, claims, abandon_reason "
             f"FROM datastore_rows {where} ORDER BY {order_sql}{tail}",
             tuple(params),
         ).fetchall()
@@ -540,7 +540,7 @@ def datastore_list_rows_after(ns_id: int, *, after_row_id: Optional[str] = None,
     with _connect() as conn:
         rows = conn.execute(
             "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until, "
-            "       claims, abandon_reason "
+            "       claimed_run, claims, abandon_reason "
             f"FROM datastore_rows {where} ORDER BY row_id ASC LIMIT %s",
             tuple(params),
         ).fetchall()

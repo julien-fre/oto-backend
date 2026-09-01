@@ -30,11 +30,17 @@ from ._conn import _connect
 from .query import _ds_filter_clauses
 from .rowabandon import abandonner_les_lignes_a_bout
 
-# Les colonnes rendues avec une ligne réservée : son bail, et ce que la file sait
-# d'elle — combien de fois elle a été prise sans être écrite, et le motif si elle
-# en est sortie (#433).
+# Les colonnes rendues avec une ligne réservée : son bail — À QUI, JUSQU'À QUAND et
+# POUR QUEL RUN —, et ce que la file sait d'elle : combien de fois elle a été prise
+# sans être écrite, et le motif si elle en est sortie (#433).
+#
+# ⚠️ `claimed_run` est dans TOUTE projection qui porte `claimed_by`, et pas seulement
+# ici : `_row_to_dict` le lit par CLÉ (pas par `.get`) précisément pour qu'un chemin
+# qui l'oublierait lève au lieu de servir un `null` — « ce bail n'a pas de run » est
+# un fait, pas un défaut de SELECT. La garde mécanique est
+# `tests/datastore/test_claimed_run_projection.py::test_toute_projection_de_ligne_porte_claimed_run`.
 _RENDU = ("RETURNING row_id, created_at, updated_at, data, claimed_by, "
-          "claimed_until, claims, abandon_reason")
+          "claimed_until, claimed_run, claims, abandon_reason")
 
 
 def datastore_claim_next(ns_id: int, *, worker: str, lease_seconds: int = 900,
@@ -212,7 +218,7 @@ def datastore_claimed_rows(ns_id: int) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT row_id, created_at, updated_at, data, claimed_by, claimed_until, "
-            "       claims, abandon_reason "
+            "       claimed_run, claims, abandon_reason "
             "FROM datastore_rows WHERE ns_id = %s AND claimed_by IS NOT NULL "
             "ORDER BY claimed_until ASC",
             (ns_id,),

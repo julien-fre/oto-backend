@@ -57,20 +57,51 @@ class JobResult(BaseModel):
     d'exécution, jamais du contenu de fil. `stopped` = le motif d'arrêt de la
     boucle (end_turn, max_steps…) ; `tool_counts` = les appels RÉUSSIS par
     outil — c'est là qu'un « tour perdu » (analyser sans écrire) se lit au
-    grain job, sans ouvrir le fil. `extra=allow` : le worker peut déclarer
-    plus, le schéma nomme le socle sans le fermer."""
+    grain job, sans ouvrir le fil.
+
+    Les trois derniers champs sont les POSTES DE GARDE du harnais : ce qu'il a dû
+    réparer sur la ligne travaillée. Ils étaient déjà servis — `extra=allow` les
+    laissait passer — mais *servi* n'est pas *déclaré* : leur forme n'était garantie
+    nulle part et un client typé ne les voyait pas. Ils sont nommés ici pour que
+    `valeurs_cliente_detruites` en particulier soit lu comme il doit l'être :
+    **`null` n'y est pas une liste vide**.
+
+    `extra=allow` reste : le worker déclare davantage (coût d'entrée/sortie, cache,
+    hors-schéma, faux départ, ligne abandonnée…), et le schéma nomme le socle sans
+    le fermer."""
     model_config = ConfigDict(extra="allow")
 
     usage_tokens: Optional[int] = None
     stopped: Optional[str] = None
     steps: Optional[int] = None
     tool_counts: Optional[dict[str, int]] = None
+    valeurs_cliente_reparees: Optional[list[str]] = Field(
+        None, description=(
+            "Guard post: the client's own values the harness had to PUT BACK on the "
+            "row (column names), restored from the value the platform kept in "
+            "`<column>.origine`. `[]` = the guard ran and had nothing to repair. A "
+            "repaired row still counts as a fault — repairing must not make the "
+            "defect vanish from the tally."))
+    contacts_fabriques_retires: Optional[list[str]] = Field(
+        None, description=(
+            "Guard post: fabricated contacts REMOVED from the row (their names), not "
+            "merely flagged — a flagged row still gets called. `[]` = the guard ran "
+            "and found none."))
+    valeurs_cliente_detruites: Optional[list[str]] = Field(
+        None, description=(
+            "Guard post: the client's own values found destroyed on the row (column "
+            "names). ⚠️ THREE states, not two: a list = those columns; `[]` = "
+            "measured, none destroyed; **null = NOT MEASURED** — the harness could "
+            "not identify the row it worked (the `conversations` path resolves it by "
+            "alias and does not always succeed), so the check never ran. Reading null "
+            "as \"no destruction\" would report a clean run where nothing was looked "
+            "at."))
 
 
 class Job(BaseModel):
     """Un job tel que servi — Optional là où les PROJECTIONS divergent : le
     claim rend (id, kind, run_id, payload, attempts, max_attempts, lease_until)
-    sans status ni result ; list/get rendent le reste sans lease_until."""
+    sans status ni result ; list/get rendent le reste, `lease_until` compris."""
     id: int
     kind: Optional[str] = None
     run_id: Optional[str] = None
@@ -79,7 +110,14 @@ class Job(BaseModel):
     attempts: Optional[int] = None
     max_attempts: Optional[int] = None
     claimed_by: Optional[str] = None
-    lease_until: Optional[str] = None
+    lease_until: Optional[str] = Field(
+        None, description=(
+            "When the current take's lease expires. Read it AGAINST `status`: on a "
+            "`claimed` job, past = the worker is gone and the job is reclaimable — "
+            "the fact itself, not a staleness threshold guessed from `created_at`. "
+            "On a concluded job it is the lease that WAS held (`done` keeps it; a "
+            "re-queued failure clears it), and null on a `pending` job that no one "
+            "has taken."))
     last_error: Optional[str] = None
     result: Optional[JobResult] = None
     due_at: Optional[str] = None

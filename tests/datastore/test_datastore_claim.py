@@ -38,13 +38,20 @@ def test_claim_row_returns_the_row_with_its_lease(monkeypatch):
 
     def _claim(ns_id, row_id, *, worker, lease_seconds, **k):
         seen.update(ns_id=ns_id, row_id=row_id, worker=worker, lease=lease_seconds)
+        # ⚠️ Le faux rend EXACTEMENT ce que `db.datastore_claim_row` rend, `claimed_run`
+        # compris : un faux qui projette moins que le vrai fait passer au vert du code
+        # qui lève en production.
         return {"row_id": "r1", "created_at": "c", "updated_at": "u",
-                "data": {"nom": "ACME"}, "claimed_by": "sarah", "claimed_until": "t+15"}
+                "data": {"nom": "ACME"}, "claimed_by": "sarah",
+                "claimed_until": "t+15", "claimed_run": None}
 
     monkeypatch.setattr(D.db, "datastore_claim_row", _claim)
     out = _store(monkeypatch).claim_row("vivier", "r1", worker="sarah", lease_s=300)
     assert out == {"_id": "r1", "_created_at": "c", "_updated_at": "u", "nom": "ACME",
-                   "_claimed_by": "sarah", "_claimed_until": "t+15"}
+                   "_claimed_by": "sarah", "_claimed_until": "t+15",
+                   # Réservation à la main (pas de `_run_id`) : `null` DIT « ce bail
+                   # n'appartient à aucun run », il ne l'omet pas.
+                   "_claimed_run": None}
     assert (seen["ns_id"], seen["row_id"], seen["worker"], seen["lease"]) == (7, "r1", "sarah", 300)
 
 
@@ -79,7 +86,7 @@ def test_claim_row_needs_write_access(monkeypatch):
 
     monkeypatch.setattr(D.db, "datastore_claim_row", lambda *a, **k: {
         "row_id": "r1", "created_at": "c", "updated_at": "u", "data": {},
-        "claimed_by": "sarah", "claimed_until": "t"})
+        "claimed_by": "sarah", "claimed_until": "t", "claimed_run": None})
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", _resolve)
     monkeypatch.setattr(s, "_ns_of", lambda _id: {"namespace": "vivier", "schema": None})
@@ -92,7 +99,7 @@ def test_claims_report_the_configuration_that_breaks_auto_release(monkeypatch):
     tableau sans état terminal ne se libère jamais toute seule."""
     monkeypatch.setattr(D.db, "datastore_claim_row", lambda *a, **k: {
         "row_id": "r1", "created_at": "c", "updated_at": "u", "data": {},
-        "claimed_by": "sarah", "claimed_until": "t"})
+        "claimed_by": "sarah", "claimed_until": "t", "claimed_run": None})
     monkeypatch.setattr(D.dsv2, "queue_release_warning", lambda schema: "pas d'état terminal")
     warnings: list = []
     _store(monkeypatch).claim_row("vivier", "r1", worker="sarah", warnings=warnings)
