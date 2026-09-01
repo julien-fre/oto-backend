@@ -27,6 +27,9 @@ def test_rest_routes_preserved():
     pairs = {(b.verb, b.path) for c in registry.caps_with_rest() for b in c.rest_bindings()}
     for vp in [
         ("POST", "/api/me/invitations/accept"),
+        # Le pendant NÉGATIF de l'invité (#654) — la révocation, elle, est le geste
+        # de l'émetteur et vit sur `/api/orgs/{id}/invitations/{inv}`.
+        ("POST", "/api/me/invitations/reject"),
         ("POST", "/api/orgs/{id}/invitations"),
         ("GET", "/api/orgs/{id}/invitations"),
         # Cascade équipe + plateforme.
@@ -73,6 +76,48 @@ def test_accept_input_multiform():
     f = oi.InviteAcceptInput.model_fields
     assert {"token", "code"} <= set(f)
     assert all(f[k].default is None for k in ("token", "code"))
+
+
+# --- Refus par l'invité (#654) ----------------------------------------------
+
+def test_reject_input_est_symetrique_de_accept():
+    """La demande du front tiers était la SYMÉTRIE : mêmes façons de désigner
+    l'invitation, un chemin de plus, et surtout aucune retouche à `accept` — dont la
+    forme est épinglée par le contrat du front."""
+    f = oi.InviteRejectInput.model_fields
+    assert set(f) == {"token", "code"}
+    assert all(f[k].default is None for k in ("token", "code"))
+    assert set(oi.InviteAcceptInput.model_fields) == {"token", "code"}
+
+
+def test_reject_est_une_capacite_sub_only_avec_ses_refus_declares():
+    from oto_mcp.capabilities._authz import SUB_ONLY
+    cap = next(c for c in registry.CAPABILITIES if c.key == "org.invite.reject")
+    # Le geste appartient à l'invité, pas à un administrateur d'org.
+    assert cap.authz is SUB_ONLY
+    assert cap.Output is oi.InvitationDeclined
+    assert {(e.status, e.code) for e in cap.errors} == {
+        (400, "missing_token"), (410, "invalid_or_expired"), (403, "not_the_invitee")}
+
+
+def test_org_console_has_reject_invite_op():
+    from oto_mcp.capabilities import org_console
+    ops = org_console.OrgInput.model_fields["op"].annotation
+    assert "reject_invite" in getattr(ops, "__args__", ())
+    # Additif : les ops déjà consommées restent toutes admissibles.
+    assert {"create", "update", "archive", "invite", "accept_invite"} <= set(
+        getattr(ops, "__args__", ()))
+
+
+def test_une_invitation_anonyme_n_est_adressee_a_personne():
+    """La comparaison d'adresses qui décide du droit de refuser. Une invitation sans
+    email (code à partager) n'égale AUCUN compte — pas même un compte sans adresse,
+    sinon deux absences se reconnaîtraient l'une l'autre."""
+    assert oi._same_address("Invitee@Org.Test ", " invitee@org.test") is True
+    assert oi._same_address(None, "invitee@org.test") is False
+    assert oi._same_address("invitee@org.test", None) is False
+    assert oi._same_address(None, None) is False
+    assert oi._same_address("", "") is False
 
 
 def test_org_invite_create_requires_org_id():

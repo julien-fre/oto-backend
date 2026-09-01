@@ -131,6 +131,8 @@ DELETE /api/orgs/{id}/invitations/{inv} -> _handler
 OPTIONS /api/orgs/{id}/invitations/{inv} -> options_handler
 POST /api/me/invitations/accept -> _handler
 OPTIONS /api/me/invitations/accept -> options_handler
+POST /api/me/invitations/reject -> _handler
+OPTIONS /api/me/invitations/reject -> options_handler
 POST /api/admin/invitations -> _handler
 OPTIONS /api/admin/invitations -> options_handler
 GET,HEAD /api/admin/invitations -> _handler

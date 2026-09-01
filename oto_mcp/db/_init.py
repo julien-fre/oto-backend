@@ -828,6 +828,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS group_role TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_org_invitations_group "
                  "ON org_invitations(group_id) WHERE group_id IS NOT NULL")
+    # REFUS de l'invité (oto-backend#654) : jusqu'ici seul l'ÉMETTEUR pouvait retirer
+    # une invitation (révocation), l'invité ne pouvait que ne pas l'accepter — donc
+    # garder un badge qu'il ne pouvait pas éteindre. État PROPRE, jamais `accepted_at`
+    # (cf. le commentaire du DDL). Deux ADD COLUMN idempotents, sans réécriture de
+    # table : pas de travail au boot, la fenêtre du healthcheck n'en voit rien.
+    conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS declined_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS declined_sub TEXT")
     # Primitive de ressource possédée (ADR 0030) : scope d'ownership porté par la
     # ressource (`owner_type` défaut 'user', `owner_id` = sub | org.id | group.id).
     # Phase H (cadrage 10/07) — B1 (promu prod 10/07) a purgé toute référence aux
