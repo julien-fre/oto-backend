@@ -330,6 +330,29 @@ cacherait des données réelles, alors que le contrat 0016 promet qu'un champ li
 *s'affiche* et que #294 vient de trancher « signaler, jamais refuser ni masquer ». On
 supprime la colonne ou on la déclare ; on ne la rend pas invisible.
 
+⚠️ **Une purge qui ne touche rien est un REFUS, plus un `rows: 0` (#680, 01/09/2026).**
+Le même zéro valait pour deux vérités opposées — « la colonne existait, aucune ligne ne
+la portait » et « ce nom n'est pas une colonne, rien n'a été fait ». Mesuré alors qu'une
+purge d'environ 190 noms hors schéma s'apprêtait à partir sur un fichier de production :
+elle était inoffensive, mais **personne ne pouvait le savoir avant de l'essayer**, et
+l'opérateur aurait coché comme retirés des noms jamais touchés — le contournement étant
+de recompter l'inventaire APRÈS coup au lieu de lire les réponses. Le succès porte donc
+toujours `rows >= 1` ; l'ambiguïté disparaît au lieu de se signaler. Le refus dit
+laquelle des deux choses il constate, et **le diagnostic se fait APRÈS la purge, jamais
+avant** : une clé pointée LITTÉRALE au premier niveau du blob (posée par un chemin qui a
+contourné la garde d'écriture, cf. #647) *est* une colonne, elle se retire, et refuser
+sur la seule forme du nom la rendrait inatteignable. Deux branches, donc :
+`site_web.comment` quand `site_web` existe pour de bon (en base — `datastore_has_column`,
+prédicat EXACT là où `datastore_row_keys` échantillonne — ou au schéma) est nommé pour ce
+qu'il est, une **annotation** servie à plat mais stockée sous sa colonne, avec le geste
+qui la retire (`data_write {"site_web": {"comment": null}}`, éprouvé au banc) ; sinon
+c'est « aucune colonne de ce nom », sans jamais nommer une colonne porteuse qui
+n'existe pas — **une destination inventée est pire qu'une destination absente**.
+⚠️ Corollaire au-delà de la purge : une colonne à couches a **trois formes** (écrite,
+stockée imbriquée, servie aplatie par `flat_layers`), donc tout contrôle qui compare les
+clés SERVIES aux `fields` déclarés compte chaque couche comme une colonne inventée — 304
+couches prises pour 304 colonnes fabriquées le 31/08.
+
 **Dire ce que cette version fait respecter (#389).** Quatrième signal du même jour sur
 `data_set_schema`, et celui qui rendait les trois autres dangereux : il ne demandait pas
 une contrainte de plus, mais de savoir lesquelles MORDENT. Le vrai sujet n'est pas le
