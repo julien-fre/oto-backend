@@ -226,6 +226,52 @@ de run ». La garde mécanique est
 — elle relit par AST les requêtes de `db/` et refuse celle qui projette une ligne avec
 `claimed_by` sans `claimed_run`.
 
+**Un bail EXPIRÉ n'est pas une réservation, et c'est POSTGRESQL qui tranche
+(01/09/2026, #726).** Mesuré sur un fichier de production : **495 lignes sur 8 910
+portaient `_claimed_by`, et les 495 étaient expirées** — la plus ancienne depuis
+dix-huit jours, au nom de travailleurs d'une campagne close. La garde le savait déjà
+(`datastore_active_lease` filtre `claimed_until > NOW()`, « expiré compte pour
+libre ») ; la lecture, non. *Deux lectures voisines de la même donnée, une seule
+connaissait la règle — et le champ servi affirmait ce que le système tenait pour faux.*
+
+La fraîcheur voyage désormais **en colonne calculée** dans les cinq requêtes qui
+projettent une ligne avec son bail :
+`(claimed_until IS NOT NULL AND claimed_until > NOW()) AS claim_active`. Le sérialiseur
+la **lit**, il ne la recalcule pas.
+
+> ⚠️ **Pourquoi pas une comparaison en Python, qui aurait coûté trois lignes.** Elle
+> aurait été une SECONDE implémentation de la règle, et elle était fausse en germe :
+> comparer les horodatages en TEXTE n'est juste que tant que `_normalize_value` émet un
+> séparateur espace sans fuseau. Le jour où un chemin de lecture rendrait un `T`
+> (`0x54 > 0x20`), **tout bail se serait lu ACTIF** — sans exception, sans rien rougir,
+> et déclenché par un changement anodin ailleurs. La lecture et la garde ne se
+> *ressemblent* pas : elles partagent le prédicat, sur la même horloge.
+
+**Deux contrats, et le défaut est le sûr.** `_row_to_dict(..., bail_echu=...)` vaut
+`"taire"` partout — un chemin de lecture neuf tait le bail mort sans avoir à y penser —
+et `"servir"` dans la seule `DatastorePg.queue`, dont le contrat (écrit dans
+`db.rowlock.datastore_claimed_rows`, `DatastorePg.queue` et la capacité
+`me.datastore.queue`, et **antérieur** à ce lot) est de rendre le bail *actif OU expiré,
+le consommateur tranche sur `_claimed_until`*.
+
+⚠️ **Neutraliser le bail dans le sérialiseur partagé pour tout le monde produirait
+l'INVERSE du but visé** : la requête de la file continue de rendre les lignes échues,
+mais dépouillées — l'écran les compte alors « sous bail » pendant que son compteur
+d'échus tombe à zéro, et le bouton « Libérer le bail » (gaté sur `_claimed_by`)
+disparaît précisément sur les lignes qu'il faut libérer. Le témoin qui fige les deux
+contrats sur **la même ligne au même instant** est
+`tests/test_bail_expire_nest_pas_une_reservation.py::test_la_SUPERVISION_voit_le_bail_echu_que_la_LECTURE_tait`.
+
+Gardes mécaniques : `test_toute_projection_de_ligne_dit_la_FRAICHEUR_du_bail` (les cinq
+copies du prédicat restent identiques — un cliquet qui les tient égales vaut une
+définition unique) et `test_aucune_comparaison_de_bail_ne_se_refait_en_Python`.
+
+⚠️ **Aucune date d'échéance en dur dans ces bancs**, même lointaine : les baux s'y
+posent en **intervalle relatif** (`NOW() + '-18 days'`). Un test qui fige un instant
+futur passe jusqu'à la veille du jour où il devient faux, et un relevé statique de ces
+dates sur-déclare trop pour servir (77 candidats, 0 vraie) — seule une horloge décalée
+tranche.
+
 **Le plafond de reprises : distinguer « ça tourne » de « ça tourne à vide » (#433).**
 Depuis que la ligne réservée est liée au run, la conclusion d'un traitement la libère —
 c'est le design. Effet de bord mesuré au rodage d'une campagne : un agent qui réserve,

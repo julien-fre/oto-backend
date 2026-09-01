@@ -10,7 +10,10 @@ def test_queue_lists_claimed_rows_read_only(monkeypatch):
     seen = {}
     rows = [{"row_id": "r1", "created_at": "c", "updated_at": "u",
              "data": {"nom": "ACME"}, "claimed_by": "w-1", "claimed_until": "t",
-             "claimed_run": "run-abc"}]
+             # ÉCHU exprès : la file de supervision est le seul chemin qui doit
+             # rendre un bail mort tel quel — c'est son contrat, et le banc le dit
+             # maintenant au lieu de reposer sur un `claimed_until` de fantaisie.
+             "claimed_run": "run-abc", "claim_active": False}]
 
     def _resolve(ns, write=False):
         seen["write"] = write

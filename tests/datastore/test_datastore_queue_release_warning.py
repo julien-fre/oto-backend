@@ -66,7 +66,7 @@ def test_claim_next_warns_the_worker(monkeypatch):
     d'appeler data_release. Rien n'est signalé quand la file est vide (pas de row)."""
     row = {"row_id": "r1", "created_at": "c", "updated_at": "u",
            "data": {"statut": "a_enrichir"}, "claimed_by": "w-1", "claimed_until": "t",
-           "claimed_run": None}
+           "claimed_run": None, "claim_active": True}
     schema = {"fields": [_STATUS]}
     monkeypatch.setattr(D.db, "datastore_claim_next",
                         lambda ns_id, **kw: row if kw.get("filters") is not None else None)

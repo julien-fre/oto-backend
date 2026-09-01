@@ -90,20 +90,79 @@ def test_toute_projection_de_ligne_porte_claimed_run():
         + "\n".join(f"  {f}: {sql[:120]}…" for f, sql in manquantes))
 
 
+# Le PRÉDICAT de fraîcheur, mot pour mot. Il vit dans les requêtes et nulle part
+# ailleurs : c'est PostgreSQL qui dit si un bail court encore, sur la même horloge que
+# la garde `datastore_active_lease`. Refaire la comparaison en Python serait une
+# SECONDE implémentation de la règle — et celle qu'on a retirée était fausse en germe :
+# comparer les horodatages en TEXTE n'est juste que tant que le formateur de lignes émet
+# un séparateur espace sans fuseau. Un chemin qui rendrait un `T` (0x54 > 0x20) aurait
+# lu TOUT bail comme actif, en silence.
+_FRAICHEUR = "(claimed_until IS NOT NULL AND claimed_until > NOW()) AS claim_active"
+
+
+def _sans_espaces(sql: str) -> str:
+    return " ".join(sql.split())
+
+
+def test_toute_projection_de_ligne_dit_la_FRAICHEUR_du_bail():
+    """Une requête qui rend une ligne AVEC son bail dit aussi s'il court ENCORE.
+
+    Cinq copies du même prédicat valent une définition unique tant que ce cliquet les
+    tient identiques : il les énumère déjà toutes (c'est le même relevé que pour
+    `claimed_run`), donc l'exigence neuve ne coûte aucun dispositif de plus. Sans lui,
+    un SELECT ajouté demain ferait lever `_row_to_dict` en production — ou pire, une
+    copie du prédicat dériverait et deux lectures voisines se remettraient à répondre
+    différemment sur la même ligne, ce qui est exactement le défaut fermé ici."""
+    requetes = _requetes_de_ligne()
+    assert requetes, "la signature a changé, la garde ne garde plus rien"
+    manquantes = [(f, sql) for f, sql in requetes
+                  if _FRAICHEUR not in _sans_espaces(sql)]
+    assert not manquantes, (
+        "ces requêtes projettent une ligne avec `claimed_by` sans dire si le bail "
+        f"court encore ({_FRAICHEUR}) :\n"
+        + "\n".join(f"  {f}: {sql[:120]}…" for f, sql in manquantes))
+
+
+def test_aucune_comparaison_de_bail_ne_se_refait_en_Python():
+    """La contrepartie, et c'est elle qui empêche le retour en arrière : le
+    sérialiseur LIT un verdict, il n'en calcule pas un second."""
+    import inspect
+
+    from oto_mcp.datastore import core
+    src = inspect.getsource(core.DatastorePg._row_to_dict)
+    assert 'row["claim_active"]' in src, "le verdict doit venir de la requête"
+    for interdit in ("_maintenant_iso", "datetime.now", "utcnow"):
+        assert interdit not in src, (
+            f"`{interdit}` de retour dans la projection : la fraîcheur d'un bail se "
+            "tranche dans la requête, pas au fil d'une lecture d'horloge en Python")
+
+
 def test_claimed_run_est_une_colonne_de_plateforme():
     """`_claimed_run` ne doit pas pouvoir être écrasé par une colonne utilisateur."""
     from oto_mcp.datastore.columns import _META_COLS
     assert "_claimed_run" in _META_COLS
 
 
-def test_la_projection_leve_si_la_colonne_na_pas_ete_lue():
-    """Le refus est le comportement VOULU, il se prouve : une ligne réservée dont le
-    SELECT a oublié `claimed_run` ne se sert pas à moitié, elle lève."""
+@pytest.mark.parametrize("oubliee", ["claimed_run", "claim_active"])
+def test_la_projection_leve_si_la_colonne_na_pas_ete_lue(oubliee):
+    """Le refus est le comportement VOULU, il se prouve — et pour CHAQUE colonne du
+    bail séparément.
+
+    ⚠️ Écrit en un seul cas, ce test passait pour la mauvaise raison : il nommait
+    `claimed_run` mais levait sur la première colonne manquante, quelle qu'elle soit.
+    Une garde qui ne peut pas dire ce qu'elle a vraiment attrapé n'en est pas une.
+
+    ⚠️ Et aucune date en dur ici : les horodatages ne sont plus comparés en Python,
+    donc décaler l'horloge de la suite ne change pas cette couleur. Un test qui figeait
+    un instant futur passait jusqu'à la veille du jour où il devenait faux."""
     from oto_mcp.datastore.core import DatastorePg
-    with pytest.raises(KeyError):
-        DatastorePg._row_to_dict({"row_id": "r1", "created_at": "2026-09-01",
-                                  "updated_at": "2026-09-01", "data": {},
-                                  "claimed_by": "w", "claimed_until": "2026-09-02"})
+    complete = {"row_id": "r1", "created_at": "c", "updated_at": "u", "data": {},
+                "claimed_by": "w", "claimed_until": "peu importe",
+                "claimed_run": None, "claim_active": True}
+    DatastorePg._row_to_dict(dict(complete))          # témoin : complète, ça passe
+    amputee = {k: v for k, v in complete.items() if k != oubliee}
+    with pytest.raises(KeyError, match=oubliee):
+        DatastorePg._row_to_dict(amputee)
 
 
 def test_le_champ_est_declare_au_contrat_servi():

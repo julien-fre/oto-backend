@@ -144,16 +144,6 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def _maintenant_iso() -> str:
-    """L'instant présent au format des horodatages servis, pour juger un bail.
-
-    Comparé en TEXTE parce que les horodatages arrivent tantôt en `datetime`, tantôt
-    en chaîne selon le chemin de lecture : `str(x) > str(y)` est exact sur ce format
-    (ISO, même longueur, même fuseau) et ne dépend pas du type reçu."""
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
-
 def _new_id() -> str:
     # uuid7-ish : timestamp ms + random. Construit à la main pour compat 3.10+.
     ms = int(time.time() * 1000) & ((1 << 48) - 1)
@@ -447,7 +437,8 @@ class DatastorePg(SchemaOpsMixin):
         return ns_id
 
     @staticmethod
-    def _row_to_dict(row: dict, schema: Optional[dict] = None) -> dict:
+    def _row_to_dict(row: dict, schema: Optional[dict] = None, *,
+                     bail_echu: str = "taire") -> dict:
         """Ligne `datastore_rows` → row API (`_id`/`_created_at`/`_updated_at` à
         plat + champs user). Le bail de claim (ADR 0046 D) n'apparaît que s'il est
         posé (une ligne libre n'a aucune des trois clés `_claimed_*` → absentes,
@@ -493,35 +484,43 @@ class DatastorePg(SchemaOpsMixin):
                         out[dsv2.flat_name(gabarit, rang, attr)] = val
         # ⚠️ Un bail EXPIRÉ n'est pas une réservation — mesuré le 01/09/2026 sur un
         # fichier de production : **495 lignes sur 8 910 portaient `_claimed_by`, et
-        # les 495 étaient expirées**, la plus ancienne depuis dix-huit jours.
+        # les 495 étaient expirées**, la plus ancienne depuis dix-huit jours, au nom
+        # de travailleurs d'une campagne close.
         #
-        # La garde, elle, le sait : `datastore_active_lease` filtre sur
-        # `claimed_until > NOW()` et sa docstring dit « expiré compte pour libre ».
-        # *La lecture, non — elle servait le nom d'un travailleur mort comme une
-        # réservation en cours.* **Deux lectures voisines de la même donnée, une seule
-        # connaissait la règle.**
+        # La garde le savait déjà (`datastore_active_lease` : « expiré compte pour
+        # libre ») ; la lecture, non — elle servait le nom d'un travailleur mort
+        # comme une réservation en cours. **Deux lectures voisines de la même donnée,
+        # une seule connaissait la règle.**
         #
-        # Ce que ça coûtait : un relevé qui compte les lignes réservées en trouvait
-        # 495 sans qu'aucun travail ne tourne, et l'export destiné au client montrait
-        # le nom d'un worker à côté de chaque ligne d'une campagne close. *Le compteur
-        # de reprises (`claims`, plus bas) porte déjà la trace des tentatives : rien
-        # ne se perd à taire un bail que plus personne ne détient.*
-        _jusqua = row.get("claimed_until")
-        if row.get("claimed_by") is not None and _jusqua is not None \
-                and str(_jusqua) > _maintenant_iso():
-            out["_claimed_by"] = row["claimed_by"]
-            out["_claimed_until"] = _jusqua
-            # LE RUN qui tient ce bail — ce qui lie un travail à la LIGNE qu'il
-            # travaille. Sans lui, une vue de surveillance voit qu'un agent tient
-            # une ligne et jamais LAQUELLE : le serveur savait déjà répondre
-            # (l'alias `@claimed` résout run → ligne par cette même colonne), mais
-            # seulement au run LUI-MÊME, jamais à un tiers qui regarde.
-            #
-            # `null` = le bail a été pris SANS run (une personne sur la file du
-            # dashboard, un agent qui n'a pas passé `_run_id`) — un fait, pas un
-            # trou. Lu par CLÉ et non par `.get` : un chemin de lecture qui
-            # oublierait la colonne doit LEVER, pas servir un faux « sans run ».
-            out["_claimed_run"] = row["claimed_run"]
+        # **C'est POSTGRESQL qui tranche, et c'est le fond du correctif.** La
+        # fraîcheur arrive en colonne calculée (`claim_active`), du même prédicat et
+        # sur la même horloge que la garde : la lecture et la garde ne se ressemblent
+        # pas, elles PARTAGENT la règle. Une comparaison refaite en Python serait une
+        # SECONDE implémentation — et elle était fausse en germe : comparer les
+        # horodatages en TEXTE n'est juste que tant que `_normalize_value` émet un
+        # séparateur espace sans fuseau. Le jour où un chemin rendrait un `T`
+        # (0x54 > 0x20), tout bail se serait lu ACTIF, en silence et sans rien rougir.
+        #
+        # Lu par CLÉ, comme `claimed_run` : un SELECT qui oublierait la fraîcheur doit
+        # LEVER, jamais servir un bail mort comme s'il courait encore.
+        if row.get("claimed_by") is not None:
+            actif = row["claim_active"]
+            # `bail_echu="servir"` — l'EXCEPTION, et elle est unique : la file de
+            # supervision (`DatastorePg.queue`). Son contrat, écrit à trois endroits
+            # et ANTÉRIEUR à ce lot, est de rendre le bail « actif OU expiré, le
+            # consommateur tranche sur `_claimed_until` ». Neutraliser le bail ici
+            # pour tout le monde lui retirerait ce sur quoi trancher : l'écran
+            # compterait les lignes mortes « sous bail » avec un compteur d'échus à
+            # zéro, et le bouton « Libérer » — gaté sur `_claimed_by` — disparaîtrait
+            # sur les lignes qu'il faut justement libérer. Le défaut vaut mieux SÛR :
+            # un chemin de lecture neuf tait le bail mort sans avoir à y penser.
+            if bail_echu == "servir" or actif:
+                out["_claimed_by"] = row["claimed_by"]
+                out["_claimed_until"] = row.get("claimed_until")
+                # LE RUN qui tient ce bail — ce qui lie un travail à la LIGNE qu'il
+                # travaille. `null` = bail pris SANS run (une personne sur la file du
+                # dashboard) : un fait, pas un trou.
+                out["_claimed_run"] = row["claimed_run"]
         # Ce que la file sait de la ligne (#433). Rendus SEULEMENT s'ils portent
         # quelque chose : un `_claims: 0` sur chaque ligne de chaque tableau serait
         # du bruit dans toutes les lectures, pour une file que la plupart n'ouvrent
@@ -1932,7 +1931,7 @@ class DatastorePg(SchemaOpsMixin):
         seule (aucun droit d'écriture requis)."""
         ns_id = self._resolve(namespace)
         sch = self._schema_of(ns_id)
-        return [self._row_to_dict(r, sch)
+        return [self._row_to_dict(r, sch, bail_echu="servir")
                 for r in db.datastore_claimed_rows(ns_id)]
 
     def force_release(self, namespace: str, row_id: str, *,
