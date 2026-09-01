@@ -46,14 +46,19 @@ def _tool(name: str):
 
 # --- surface : ce qui reste monté ----------------------------------------------
 
-def test_the_connector_exposes_exactly_two_tools(client):
+def test_the_object_surface_stays_one_tool(client):
+    """Les huit verbes portant `object_type` restent fusionnés dans
+    `hubspot_object` ; `hubspot_list`/`hubspot_property` sont d'autres domaines
+    (ils ne partagent aucun paramètre d'enregistrement CRM) et sont couverts par
+    `test_hubspot_list_property.py`."""
     from fastmcp import FastMCP
     from oto_mcp.tools import hubspot as H
 
     m = FastMCP("t")
     H.register(m)
     names = {t.name for t in asyncio.run(m._list_tools())}
-    assert names == {"hubspot_object", "hubspot_owners"}
+    assert "hubspot_object" in names
+    assert not [n for n in names if n.startswith("hubspot_object_")]
 
 
 def test_owners_stays_its_own_tool(client):
