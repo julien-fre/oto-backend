@@ -21,6 +21,16 @@ description: >-
 # crée un env éphémère SANS les deps projet (piège, ModuleNotFoundError). Recette :
 uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 .venv/bin/python -m pytest -q
+# ⚠️ **`/data/oto/backend/.venv` est PARTAGÉ entre N sessions parallèles** — ce qu'on y
+# installe, on l'installe chez les voisines, au milieu de leurs runs. Poser pytest est le
+# SEUL geste tolérable : additif, et il ne touche pas oto-core.
+# **Y réinstaller oto-core (`pip install --force-reinstall …`) est INTERDIT ici** : la
+# commande est juste sur un venv qu'on possède SEUL (venv jeté d'un scratchpad, runner CI,
+# poste mono-session) et fausse sur celui-ci, où elle règle son propre faux rouge en le
+# déplaçant chez les voisines. Ce qu'il faut faire à la place : §Pin oto-core → « Faux
+# rouge ». ⚠️ **Toute recette qui écrit dans un environnement doit dire LEQUEL elle
+# suppose** — sans cette phrase, elle est fausse pour la moitié de ceux qui la lisent, et
+# ils la suivront justement PARCE QU'elle est documentée (vécu le 01/09).
 
 # Tester un CLONE (clone scratchpad, ou `git archive <commit>` pour isoler un commit du WIP
 # voisin du tree partagé) SANS réinstaller les deps : réutiliser le venv local (deps+pytest
@@ -219,7 +229,12 @@ un instrument qui ne peut pas voir l'écart qu'on lui demande de mesurer. Seul
 **La recette qui marche — deux clones jetés, zéro écriture sur du partagé.**
 ⚠️ **Ne PAS force-réinstaller oto-core dans `/data/oto/backend/.venv`, ne PAS `git pull`
 `/data/oto/oto-core`** : les deux sont utilisés **en même temps par N sessions parallèles**, les
-muter casse le WIP des voisines — et un checkout en AVANCE sur le pin fabrique le faux VERT
+muter casse le WIP des voisines. Ces deux commandes ne sont pas fausses en soi — elles
+supposent un environnement qu'on possède **seul** (venv jeté d'un scratchpad, runner CI, poste
+mono-session), et c'est cette hypothèse jamais écrite qui les rend dangereuses ici : elles
+règlent le faux rouge de celui qui les lance en le déplaçant chez ses voisines. Le 01/09, une
+session les a reprises de bonne foi **parce qu'elles étaient documentées** — d'où leur retrait de
+ce fichier, et cette phrase à leur place. Et un checkout en AVANCE sur le pin fabrique le faux VERT
 symétrique (vert local sur des méthodes que le tronc n'épingle pas, rattrapé en CI par la garde
 version-skew).
 
