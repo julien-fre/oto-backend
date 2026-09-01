@@ -294,7 +294,7 @@ def test_the_hint_never_masks_the_refusal_when_it_cannot_be_built(monkeypatch):
 
 # ── `@claimed` mis dans le champ VOISIN — vécu à la première rencontre ───────
 #
-# 29/08, cinquième passage du palier Audiens, coupé à deux lignes : **les agents
+# 29/08, cinquième passage du palier de la campagne, coupé à deux lignes : **les agents
 # passent `@claimed` dans `namespace`, pas dans `id`.** Deux écritures refusées sur
 # cinq, en « namespace `@claimed` inconnu ».
 #

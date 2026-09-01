@@ -565,10 +565,10 @@ def test_activity_carries_actor_identity(seams, monkeypatch):
     monkeypatch.setattr(P.db, "list_project_activity",
                         lambda pid, limit=50: [{"sub": "u1", "action": "project.update",
                                                 "detail": None, "created_at": "2026-06-30",
-                                                "actor_name": "Jean-Baptiste",
-                                                "actor_email": "jb@oto.ninja"}])
+                                                "actor_name": "Jane",
+                                                "actor_email": "jane@oto.ninja"}])
     out = P._project(CTX, P.ProjectInput(op="activity", project_id=7))
-    assert out["activity"][0]["actor"] == {"name": "Jean-Baptiste", "email": "jb@oto.ninja"}
+    assert out["activity"][0]["actor"] == {"name": "Jane", "email": "jane@oto.ninja"}
 
 
 def test_runs_resolves_procedure_to_slug(seams, monkeypatch):

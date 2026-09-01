@@ -35,7 +35,7 @@ GROUP = 3
 # EST un credential et doit donc être nommé lui aussi.
 _COFFRE = [
     ("member", f"{ORG}:{SUB}", "hunter", ""),
-    ("member", f"{ORG}:{SUB}", "zoho", "alexandra"),   # multi-compte : 2 instances
+    ("member", f"{ORG}:{SUB}", "zoho", "jane"),   # multi-compte : 2 instances
     ("member", f"{ORG}:{SUB}", "zoho", "bureau"),
     ("group", str(GROUP), "hunter", ""),
     ("org", str(ORG), "zoho", ""),
@@ -176,7 +176,7 @@ def test_chaque_ligne_de_coffre_recoit_exactement_une_instance(live):
         "tout le lien, il n'y en a pas d'autre.")
     # Le multi-compte donne bien DEUX instances distinctes du même connecteur.
     zoho = [i for i in insts if i["connector"] == "zoho" and i["owner_type"] == "member"]
-    assert sorted(i["account"] for i in zoho) == ["alexandra", "bureau"]
+    assert sorted(i["account"] for i in zoho) == ["bureau", "jane"]
     assert len({i["id"] for i in zoho}) == 2
 
 
@@ -310,8 +310,8 @@ def test_la_projection_sert_l_identifiant_a_cote_du_ref(live):
         ci._list_instances(ResolvedCtx(sub=SUB, org_id=ORG), ci.ListInstancesInput()))
     par_ref = {i.ref: i for i in out.instances}
     attendu = ci_db.instance_id_for_vault_row(
-        "member", f"{ORG}:{SUB}", "zoho", "alexandra")
-    inst = par_ref[f"member:{ORG}:{SUB}:zoho:alexandra"]
+        "member", f"{ORG}:{SUB}", "zoho", "jane")
+    inst = par_ref[f"member:{ORG}:{SUB}:zoho:jane"]
     assert inst.id == f"inst:{attendu}"
     assert all(not k.startswith("_") for i in out.instances for k in i.model_dump()), (
         "le quadruplet de coffre est un détail d'implémentation : il ne part pas sur "

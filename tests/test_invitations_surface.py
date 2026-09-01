@@ -143,9 +143,9 @@ def test_emit_invitation_sends_email(monkeypatch):
                         lambda to, name, url, inviter, **kw: sent.update(to=to, name=name) or True)
     out = oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=35, email="Invitee@Org.Test",
                              send_email=True, source="org_admin", role="org_member",
-                             target_name="movinmotion")
+                             target_name="acme")
     assert out["emailed"] is True
-    assert sent["to"] == "invitee@org.test" and sent["name"] == "movinmotion"
+    assert sent["to"] == "invitee@org.test" and sent["name"] == "acme"
     assert out["code"] == "CODE1234" and "/invitation/CODE1234" in out["invite_url"]
 
 
@@ -158,19 +158,19 @@ def test_invite_base_defaults_to_oto(monkeypatch):
 
 
 def test_invite_base_uses_org_front():
-    assert oi._invite_base("https://app.tulina.ai/") == "https://app.tulina.ai"
+    assert oi._invite_base("https://app.acme.test/") == "https://app.acme.test"
 
 
 def test_nominal_url_skips_magic_link_for_third_party_front(monkeypatch):
     """Régression : l'OTT est minté sur NOTRE Logto (`LOGTO_ENDPOINT`, un seul global)
-    et n'authentifie pas contre l'émetteur dédié d'un front tiers (Tulina :
-    `auth.tulina.ai`). Une org sous front tiers ne doit JAMAIS produire de magic-link,
+    et n'authentifie pas contre l'émetteur dédié d'un front tiers (Acme :
+    `auth.acme.test`). Une org sous front tiers ne doit JAMAIS produire de magic-link,
     seulement le lien nu — sinon échec de connexion silencieux pour l'invité."""
     def _boom(*a, **k):
         raise AssertionError("magic_url ne doit pas être appelé sous un front tiers")
     monkeypatch.setattr(oi.oauth_facade, "magic_url", _boom)
-    url = oi._nominal_url("CODE1234", "invitee@org.test", front_base="https://app.tulina.ai")
-    assert url == "https://app.tulina.ai/invitation/CODE1234"
+    url = oi._nominal_url("CODE1234", "invitee@org.test", front_base="https://app.acme.test")
+    assert url == "https://app.acme.test/invitation/CODE1234"
 
 
 def test_nominal_url_keeps_magic_link_for_oto(monkeypatch):
@@ -188,7 +188,7 @@ def test_emit_invitation_derives_front_from_org(monkeypatch):
     monkeypatch.setattr(org_store, "create_invitation",
                         lambda *a, **k: (1, "tok", "CODE1234"))
     monkeypatch.setattr(org_store, "org_front",
-                        lambda org_id: ("https://app.tulina.ai", "tulina"))
+                        lambda org_id: ("https://app.acme.test", "acme"))
     monkeypatch.setattr(db, "get_user", lambda sub: {"email": "admin@org.test"})
     monkeypatch.setattr(db, "get_user_by_email", lambda e: None)
     sent = {}
@@ -196,10 +196,10 @@ def test_emit_invitation_derives_front_from_org(monkeypatch):
                         lambda to, name, url, inviter, **kw: sent.update(url=url, **kw) or True)
     out = oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=178, email="invitee@org.test",
                              send_email=True, source="org_admin", role="org_member",
-                             target_name="partoo")
-    assert out["invite_url"] == "https://app.tulina.ai/invitation/CODE1234"
-    assert sent["url"] == "https://app.tulina.ai/invitation/CODE1234"  # pas d'OTT
-    assert sent["brand"] == "tulina"
+                             target_name="globex")
+    assert out["invite_url"] == "https://app.acme.test/invitation/CODE1234"
+    assert sent["url"] == "https://app.acme.test/invitation/CODE1234"  # pas d'OTT
+    assert sent["brand"] == "acme"
 
 
 def test_emit_invitation_passes_recipient_locale(monkeypatch):
@@ -220,7 +220,7 @@ def test_emit_invitation_passes_recipient_locale(monkeypatch):
                         lambda to, name, url, inviter, **kw: sent.update(**kw) or True)
     oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=35, email="invitee@org.test",
                        send_email=True, source="org_admin", role="org_member",
-                       target_name="movinmotion")
+                       target_name="acme")
     assert sent["locale"] == "en"
 
 
@@ -241,7 +241,7 @@ def test_emit_invitation_locale_none_for_unknown_email(monkeypatch):
                         lambda to, name, url, inviter, **kw: sent.update(**kw) or True)
     oi.emit_invitation(ResolvedCtx(sub="s1"), org_id=35, email="jamais-vue@org.test",
                        send_email=True, source="org_admin", role="org_member",
-                       target_name="movinmotion")
+                       target_name="acme")
     assert sent["locale"] is None
 
 

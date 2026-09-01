@@ -154,13 +154,13 @@ def test_un_tableau_absent_garde_son_404_qui_dit_ou_il_vit(monkeypatch):
     from oto_mcp.capabilities.datastore import common as dc
     from oto_mcp.datastore import hors_org          # la recherche cross-org vit là (#631)
     monkeypatch.setattr(hors_org.org_store, "list_orgs_for_user",
-                        lambda sub: [{"org_id": 81, "name": "Mūcho"}])
+                        lambda sub: [{"org_id": 81, "name": "Marché"}])
     monkeypatch.setattr(hors_org.db, "list_datastore_namespaces_for_owners",
                         lambda owners: [{"namespace": "v", "owner_type": "org",
                                          "owner_id": "81"}])
     code, corps = _call("me.datastore.delete_namespace", path_params={"namespace": "v"})
     assert (code, corps["error"]) == (404, "namespace_not_found")
-    assert "X-Oto-Org: 81" in corps["detail"] and "Mūcho" in corps["detail"]
+    assert "X-Oto-Org: 81" in corps["detail"] and "Marché" in corps["detail"]
 
 
 # --- renommer -------------------------------------------------------------------

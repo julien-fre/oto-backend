@@ -55,7 +55,7 @@ def _corps(vise: int) -> str:
 
 
 # Les tailles RÉELLES des deux pages citées par #530 (doc 662 et doc 692 de la base de
-# connaissance Tulina) : c'est à cette échelle que le retour cesse de passer.
+# connaissance d'un tenant tiers) : c'est à cette échelle que le retour cesse de passer.
 GROS = _corps(128_000)
 PETIT = _corps(85_000)
 

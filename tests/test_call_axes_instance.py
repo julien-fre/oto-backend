@@ -29,13 +29,13 @@ def _unpin(undo):
 
 def test_pin_instance_member_ok_copins_org(monkeypatch):
     monkeypatch.setattr(roles, "is_org_member", lambda sub, org: True)
-    ref = instance_refs.make_member_ref(8, "u", "zoho", "alexandra")
+    ref = instance_refs.make_member_ref(8, "u", "zoho", "jane")
 
     async def _scenario():
         undo = await call_axes._pin_instance(ref, "zoho_record")
         try:
             pinned = session_org.current_call_instance()
-            assert pinned.level == "member" and pinned.account == "alexandra"
+            assert pinned.level == "member" and pinned.account == "jane"
             assert session_org.current_call_org() == 8       # org co-posée
         finally:
             _unpin(undo)
@@ -131,14 +131,14 @@ def test_resolution_org_instance_beats_member_key(resolution, monkeypatch):
 
 def test_resolution_member_instance_with_account(resolution):
     eid = credentials_store.member_id(8, "u")
-    resolution[(credentials_store.MEMBER, eid, "zoho", "alexandra")] = "SECRET-ALX"
-    tok = _pin("member:8:u:zoho:alexandra")
+    resolution[(credentials_store.MEMBER, eid, "zoho", "jane")] = "SECRET-ALX"
+    tok = _pin("member:8:u:zoho:jane")
     try:
         rc = access._resolve_credential_impl("zoho", "auto", "u")
     finally:
         session_org.reset_call_instance(tok)
     assert rc.secret == "SECRET-ALX" and rc.mode == "user"
-    assert rc.account == "alexandra"
+    assert rc.account == "jane"
 
 
 def test_resolution_missing_instance_hard_error_no_fallback(resolution, monkeypatch):

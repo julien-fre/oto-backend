@@ -97,8 +97,8 @@ def test_state_roundtrip():
 def test_state_carries_the_front_that_asked():
     """Le callback est appelé par Zoho, sans session : le state est la SEULE mémoire
     du demandeur qui survit à l'aller-retour."""
-    st = z.make_state("u1", 35, "zoho", DC, "tulina")
-    assert z.verify_state(st)["return_app"] == "tulina"
+    st = z.make_state("u1", 35, "zoho", DC, "acme")
+    assert z.verify_state(st)["return_app"] == "acme"
 
 
 def test_state_signed_before_the_field_still_verifies():

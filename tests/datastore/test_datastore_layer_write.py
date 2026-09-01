@@ -232,7 +232,7 @@ def test_an_origin_alone_still_reads_flat():
 
 
 def test_an_ordinary_write_over_an_origin_only_column_keeps_it():
-    """Le cas d'audiens bout en bout : socle importé, puis l'agent renseigne."""
+    """Le cas de la campagne bout en bout : socle importé, puis l'agent renseigne."""
     out = _merge_column({"origine": "DUPONT Jean"}, "MARTIN Claire")
     assert out == {"valeur": "MARTIN Claire", "origine": "DUPONT Jean"}
 

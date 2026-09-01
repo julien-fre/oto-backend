@@ -34,10 +34,10 @@ def dept(monkeypatch):
                         lambda org, prov, account="": None)  # pas de secret ORG
     vault = {
         (FINANCE, "http"): pack_secret("http", {
-            "base_url": "https://mm-bridge.oto.zone/finance", "auth_mode": "bearer",
+            "base_url": "https://acme-bridge.oto.zone/finance", "auth_mode": "bearer",
             "token": "TOK-FIN"}),
         (SALES, "http"): pack_secret("http", {
-            "base_url": "https://mm-bridge.oto.zone/sales", "auth_mode": "bearer",
+            "base_url": "https://acme-bridge.oto.zone/sales", "auth_mode": "bearer",
             "token": "TOK-SALES"}),
     }
     monkeypatch.setattr(group_store, "get_group_secret",
