@@ -93,10 +93,72 @@ seed du readme plateforme — et cette projection est le seul chemin par lequel 
 atteint `nodes` sur une base **neuve**. Elle partira quand le seed sèmera nativement ;
 la retirer avant, c'est retirer sans remplaçant. Un contre-test l'exige.
 
+### ⚠️ La PURGE s'est arrêtée avec la recopie, et personne ne l'avait vu
+
+Constaté le **2026-09-01 au soir**, après coup — le lot d'arrêt ne l'avait ni prévu ni
+écrit. Chaque conversion ne faisait pas que copier : elle **finissait par sa purge**,
+dans la même fonction (`PURGE_*_NODES_SQL`, exécutés à la fin de chaque `convert_*`).
+Cette purge retirait la copie d'un objet dont l'original avait disparu de l'ancien
+stockage. Retirer l'appel à la conversion a donc emporté la purge avec elle, en
+silence.
+
+Ce que la purge faisait, et qu'on a perdu **des deux côtés** :
+
+- **sa raison d'être** — une page supprimée voyait sa copie disparaître ;
+- **son défaut** — elle supprimait le nœud **sans ses blocs**, laissant un corps
+  derrière elle. C'est l'origine des blocs orphelins (§ ci-dessous). Le défaut est
+  toujours dans le code ; il n'a simplement plus l'occasion de se produire.
+
+**Depuis, plus rien ne propage une suppression ni une édition vers `nodes`** — vérifié :
+`db/projects.py::delete_doc` ne touche pas au nouveau stockage, et aucun autre chemin ne
+le fait. Donc, tant que le résidu est là :
+
+- une page **supprimée** garde une copie **entière et lisible** — elle apparaît dans le
+  rail comme n'importe quelle page ;
+- une page **modifiée** garde une copie **périmée**, qui ne se resynchronise plus.
+
+⚠️ **C'est ce qui rend « garder le résidu jusqu'à la migration » coûteux** : ce n'est
+pas un miroir dormant, c'est un miroir qui diverge à chaque édition et survit à chaque
+suppression. Au 2026-09-01 il n'existe **aucune** copie fantôme (la dernière purge, à
+07:33 UTC, a fait son travail avant de s'éteindre) — la première page supprimée en
+créera une.
+
 ## Le résidu, et comment il se retire
 
-Ce que la dernière passe a laissé : **70 876 nœuds sur 70 927** et **29 174 blocs**
-(mesuré le 2026-09-01) ; les ~51 nœuds restants sont les couches de contexte, natives.
+Ce que la dernière passe a laissé, **mesuré le 2026-09-01 à 19:30 sur la base servie**
+: **75 668 nœuds sur 75 721** et **34 314 blocs**, dont 31 447 pendent à une copie.
+Les **53** nœuds restants sont natifs — tous des pages, dont 47 portent un corps.
+
+⚠️ **Un chiffre de résidu se DATE.** Ceux d'avant (70 876 / 29 174) étaient justes à
+leur heure et faux quatre heures plus tard : la recopie a continué de tourner jusqu'au
+déploiement de son arrêt, à **07:33 UTC** — dernière copie créée, rien depuis. Le stock
+est figé désormais, mais la leçon vaut pour le prochain : **recompter juste avant de
+jouer**, jamais réutiliser une mesure de la veille.
+
+Répartition des copies : 73 851 lignes de tableau, 1 057 pages, 334 projets, 289
+tableaux, 137 procédures. **Les 1 057 pages ont TOUTES leur original vivant dans
+`docs`** — joint un à un, pas échantillonné : retirer la copie ne perd rien.
+
+### Les 1 939 blocs orphelins ne sont PAS des copies
+
+Mesuré le 2026-09-01 : **1 939 blocs** ne pendent à aucun nœud, répartis sur **57**
+nœuds disparus, créés entre le 11 et le 28/08. Ils viennent du défaut de la purge —
+nœud retiré, corps laissé.
+
+⚠️ **Et leur original n'existe plus non plus.** La purge ne retirait une copie que si
+son original avait disparu de l'ancien stockage : ces corps sont donc les restes de
+pages **supprimées**. Mesuré, pas déduit — **2 seulement sur 57** retrouvent leur texte
+dans un `docs.body_md` actuel, quand le même contrôle sur 200 copies vivantes le
+retrouve **200 fois sur 200** (le contrôle voit donc bien ce qu'il cherche).
+
+**Ce n'est donc pas un contenu à sauver, c'est une suppression qui n'est pas allée
+jusqu'au bout** — et l'exporter avant de tirer reconstituerait, hors du système, ce que
+quelqu'un a demandé de supprimer. Ce qui ne peut pas être prouvé : que les 55 aient été
+supprimées volontairement plutôt que perdues autrement.
+
+⚠️ **Le stock est CLOS** (dernier orphelin le 28/08) : la purge ne tourne plus, donc
+plus aucun ne se crée. Ce que produit désormais une suppression est pire et différent —
+une copie **entière et lisible**, cf. le § précédent.
 
 Le retrait est le travail de maintenance **`residu-projete`** (`oto-mcp maintenance`).
 Trois choses le gouvernent :
