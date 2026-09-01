@@ -1,27 +1,31 @@
-"""Le boot de la flotte contre une base qui EXISTE DÉJÀ — le cas que rien ne jouait.
+"""Ce que le cliquet GÉNÉRIQUE du boot ne voit pas — les CONTRAINTES de la flotte.
 
-`test_boot_order_replay` fait `CREATE DATABASE` + `init_db()` : il boote une base
-**vierge**, où le `CREATE TABLE` pose les colonnes inline. La panne du 20/07 ne se
-produit que sur une base construite AVANT : le `CREATE TABLE IF NOT EXISTS` est
-alors **sauté**, une colonne née d'un `ALTER` n'arrive donc jamais par ce chemin,
-et tout index posé sur elle **dans le DDL** meurt au démarrage.
+`test_boot_order_replay` joue désormais le cas « base qui existe déjà » (#785,
+01/09/2026) et il le fait mieux que ce fichier ne le faisait : il DÉRIVE du SQL
+exécuté la liste des colonnes posées par un `ALTER`, puis les retire une à une.
+`runner_jobs.fleet_id` y est donc couverte sans être citée, et le boot lui-même
+n'a plus besoin d'être vérifié ici.
 
-⚠️ **C'est la forme d'angle mort la plus coûteuse : le cliquet écrit exactement
-pour ce piège ne joue pas le cas qui casse.** Ce lot l'a payé — sept fichiers de
-garde au vert pendant que le boot réel mourait sur `column "fleet_id" does not
-exist`, reproduit sur un vrai PostgreSQL.
+⚠️ **Ce qui reste, et que ce cliquet ne peut pas voir : il compare une empreinte à
+elle-même entre deux rejeux, sans affirmer aucune contrainte.** Une FK absente des
+DEUX côtés reste donc invisible — l'empreinte est identique, et seul le hash gelé
+bouge, celui qu'on met à jour sans y penser.
 
-Ce fichier joue la base « d'avant » sans dépendre de git : on boote, on RETIRE la
-colonne et son index, puis on rejoue le boot. Une base sans `fleet_id` dont la
-table `runner_jobs` existe déjà, c'est précisément l'état de la production le jour
-où ce lot arrive.
+Or cette FK a **deux chemins de naissance**, et il faut les deux :
 
-Trois choses vérifiées, et la troisième est celle qu'on a failli manquer :
-1. le boot **passe** sur cette base ;
-2. la colonne et son index **reviennent** — par l'`ALTER`, pas par le `CREATE TABLE` ;
-3. la **clé étrangère voyage avec l'`ALTER`**. Sans elle, une base fraîche aurait la
-   contrainte et la production un entier nu — une divergence permanente que rien
-   ne rattraperait, et qu'aucun test de base vierge ne peut voir.
+```
+base VIERGE      la colonne naît du CREATE TABLE, donc l'ALTER … IF NOT EXISTS
+                 ne s'applique pas et n'a AUCUNE occasion de poser sa contrainte
+                 ⟹ la FK doit être INLINE dans le CREATE TABLE
+base EXISTANTE   le CREATE TABLE est sauté ⟹ la FK doit voyager AVEC l'ALTER
+```
+
+**Retirer l'une des deux ne rougit nulle part ailleurs**, et la divergence serait
+permanente et silencieuse : les deux bases « marchent », seule l'une refuse un
+`fleet_id` qui ne désigne rien. C'est le miroir exact du défaut qui a motivé #781.
+
+Trois assertions, donc — la contrainte des deux côtés, et **qu'elle MORD** : sa
+présence dans `pg_constraint` ne prouve pas qu'elle refuse quoi que ce soit.
 """
 from __future__ import annotations
 
@@ -99,9 +103,11 @@ def test_la_base_de_depart_est_bien_celle_davant(base_dun_passage_anterieur):
     assert "fleet_id" not in cols
 
 
-def test_le_boot_passe_et_la_colonne_revient_par_l_alter(base_dun_passage_anterieur):
-    """Le geste qui mourait. Un index posé dans le DDL sur `fleet_id` fait échouer
-    `init_db()` ici avec `UndefinedColumn` — vérifié en réintroduisant la faute."""
+def test_l_index_suit_l_alter_et_non_le_ddl(base_dun_passage_anterieur):
+    """Le boot lui-même est gardé par le cliquet générique ; ce qui reste ici, c'est
+    la PLACE de l'index. Posé dans le DDL, il s'exécuterait avant que la colonne
+    existe sur une base déjà construite — `UndefinedColumn`, vérifié en
+    réintroduisant la faute."""
     from oto_mcp.db import init_db
     init_db()
     c, _ = base_dun_passage_anterieur

@@ -146,8 +146,8 @@ from oto_mcp.db import _schema, schema
 # (le retrait de l'index unipile, puis le fragment des flottes), jamais
 # reprise d'un côté du conflit : un hash pris d'un seul côté valide un DDL
 # que personne ne sert.
-EMPREINTE = "0" * 64 and "A_RECALCULER"
-LONGUEUR = -1
+EMPREINTE = "c05cd85fa8529bace0645d9ae58624d56bef531513614efe9073b99f0c845c28"
+LONGUEUR = 125769
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
