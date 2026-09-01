@@ -245,20 +245,41 @@ def test_le_curseur_parcourt_toute_la_fenetre_sans_trou_ni_doublon(journal):
 
 
 def test_la_fenetre_est_gelee_quand_la_borne_haute_est_omise(journal):
-    """Sans borne haute, l'export gèle l'instant et le REPORTE par le curseur : un
-    appel qui arrive pendant la pagination ne change ni le total ni les pages."""
+    """Sans borne haute, l'export GÈLE l'instant et le reporte par le curseur : les
+    appels qui arrivent pendant qu'on pagine ne changent ni le total ni les pages.
+
+    La prémisse que ce gel neutralise est affirmée ici : les deux appels ajoutés
+    existent, et un export REGELÉ les compte bien. C'est ce qui distingue « la
+    fenêtre tient » de « rien n'a été ajouté ».
+    """
     from oto_mcp import db
 
     p1 = db.export_tool_calls_for_org(journal["org"], since=journal["since"], limit=2)
     total_annonce, gel = p1["total"], p1["until_effectif"]
-    assert gel and gel.endswith("Z")
+    assert gel.endswith("Z") and total_annonce == 10
 
-    _poser(journal["sub"], journal["org"], quand="2026-09-01T12:00:00+00:00")
-    _poser(journal["sub"], journal["org"], quand="2026-08-20T10:00:30+00:00")
+    # Deux appels comme la production en produit : `insert_tool_call` les date à
+    # `now()`, donc APRÈS le gel. C'est cette datation-là — jamais réécrite — qui
+    # fait de la fenêtre gelée un ensemble clos.
+    for _ in range(2):
+        db.insert_tool_call({"sub": journal["sub"], "kind": "mcp", "tool": "fr_get",
+                             "ok": True, "org_id": journal["org"]})
 
-    p2 = db.export_tool_calls_for_org(journal["org"], since=journal["since"],
-                                      until=gel, limit=2, before=p1["next"])
-    assert p2["total"] == total_annonce, "la fenêtre gelée ne s'élargit pas en route"
+    vus, before, page = [], p1["next"], p1
+    while before is not None and len(vus) < 40:
+        vus += [c["id"] for c in page["calls"]]
+        page = db.export_tool_calls_for_org(journal["org"], since=journal["since"],
+                                            until=gel, limit=2, before=before)
+        assert page["total"] == total_annonce, "la fenêtre gelée ne s'élargit pas"
+        before = page["next"]
+    vus += [c["id"] for c in page["calls"]]
+    assert len(vus) == len(set(vus)) == total_annonce, (
+        "la concaténation des pages vaut EXACTEMENT le total annoncé")
+
+    regel = db.export_tool_calls_for_org(journal["org"], since=journal["since"],
+                                         limit=1)
+    assert regel["total"] == total_annonce + 2, (
+        "les deux appels existent : c'est bien le gel qui les tenait dehors")
 
 
 def test_la_page_et_le_total_se_lisent_dans_UNE_transaction_au_snapshot_fige(journal):
