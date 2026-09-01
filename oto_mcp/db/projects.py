@@ -702,6 +702,39 @@ def list_doc_revisions(doc_id: int, limit: int = 50) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def get_doc_revision(doc_id: int, revision_id: int) -> Optional[dict]:
+    """UNE version antérieure, adressée par le `id` que `list_doc_revisions` sert.
+
+    ⚠️ Le `doc_id` est dans le WHERE, pas seulement dans la signature : sans lui, un
+    id de révision appartenant à une AUTRE page restaurerait son contenu ici — une
+    fuite entre projets, dont l'autz du call-site (qui ne connaît que `doc_id`) ne
+    verrait rien passer. Une révision d'un autre doc rend donc None, comme une
+    inexistante."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, doc_id, title, body_md, edited_by, created_at FROM doc_revisions "
+            "WHERE id = %s AND doc_id = %s", (revision_id, doc_id)).fetchone()
+        return dict(row) if row else None
+
+
+_SUBTREE_SQL = (
+    "WITH RECURSIVE sub AS ("
+    "  SELECT id FROM docs WHERE parent_id = %s "
+    "  UNION ALL SELECT d.id FROM docs d JOIN sub ON d.parent_id = sub.id) "
+    "SELECT count(*) AS n FROM sub"
+)
+
+
+def count_doc_descendants(doc_id: int) -> int:
+    """Combien de pages une suppression de `doc_id` emporterait EN PLUS d'elle-même.
+
+    La cascade vient de la FK auto-référente (`parent_id … ON DELETE CASCADE`) : elle
+    est correcte mais MUETTE, et un front ne peut pas annoncer « ceci supprimera N
+    pages » sans ce compte (#657). Le sous-arbre ENTIER, pas les seuls enfants directs."""
+    with _connect() as conn:
+        return int(conn.execute(_SUBTREE_SQL, (doc_id,)).fetchone()["n"])
+
+
 # --- Demandes de modification (gap #4b, lecture seule → propose, owner tranche) --
 _DCR_COLS = ("id, doc_id, project_id, proposed_parent_id, proposed_kind, requested_by, "
              "proposed_title, proposed_body_md, message, "
@@ -797,11 +830,32 @@ def resolve_doc_change_request(request_id: int, status: str, resolved_by: Option
         )
 
 
-def delete_doc(doc_id: int) -> None:
-    # doc_links (Ship 4) : purgée en CASCADE (from_doc ET to_doc → docs ON DELETE
-    # CASCADE) — supprimer une page retire ses liens sortants ET les mentions vers elle.
+def delete_doc(doc_id: int) -> int:
+    """Supprime une page ET son sous-arbre. Retourne le nombre de DESCENDANTS partis
+    avec elle (#657) — 0 pour une feuille.
+
+    Le sous-arbre est ÉNUMÉRÉ par le DELETE lui-même (`RETURNING`) au lieu d'être
+    compté par une requête d'avant : un compte pris à part serait une ESTIMATION, et
+    un front qui l'affiche (« 4 pages supprimées ») afficherait un chiffre faux dès
+    qu'un pair ajoute une sous-page entre les deux requêtes. Ici, le nombre rendu est
+    celui des lignes que CE statement a retirées.
+
+    La FK auto-référente (`parent_id … ON DELETE CASCADE`) reste en place et reste le
+    filet : elle emporterait un descendant que l'énumération n'aurait pas vu. Elle
+    n'est simplement plus le seul chemin, parce qu'elle est MUETTE — c'était tout le
+    problème.
+
+    doc_links (Ship 4) est purgée en CASCADE des deux côtés (`from_doc` ET `to_doc`) :
+    supprimer une page retire ses liens sortants ET les mentions vers elle.
+    """
     with _connect() as conn:
-        conn.execute("DELETE FROM docs WHERE id = %s", (doc_id,))
+        rows = conn.execute(
+            "WITH RECURSIVE sub AS ("
+            "  SELECT id FROM docs WHERE id = %s "
+            "  UNION ALL SELECT d.id FROM docs d JOIN sub ON d.parent_id = sub.id) "
+            "DELETE FROM docs WHERE id IN (SELECT id FROM sub) RETURNING id",
+            (doc_id,)).fetchall()
+        return max(0, len(rows) - 1)   # la page elle-même n'est pas un descendant
 
 
 def doc_backlinks(doc_id: int) -> list[dict]:

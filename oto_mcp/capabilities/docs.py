@@ -131,7 +131,7 @@ def _public_doc_url(token: str, sub: Optional[str] = None) -> Optional[str]:
 
 class DocInput(BaseModel):
     op: Literal["create", "bulk_create", "list", "search", "get", "update", "patch",
-                "delete", "move", "revisions", "request_change", "list_changes",
+                "delete", "move", "revisions", "revert", "request_change", "list_changes",
                 "resolve_change", "set_public", "backlinks"]
     project_id: Optional[int] = None   # create / list / search
     doc_id: Optional[int] = None       # get / update / delete / move / request_change / list_changes
@@ -153,6 +153,13 @@ class DocInput(BaseModel):
     mode: Optional[Literal["replace", "append", "prepend", "delete"]] = None  # patch : défaut replace
     to_project: Optional[int] = None    # move : projet cible (déplacer la page + son sous-arbre)
     pages: Optional[list[dict]] = None  # bulk_create : [{title, body_md?, kind?, description?, parent_index?}]
+    # revert (#657) : la version à restaurer, adressée par le `id` que rend op=revisions.
+    # PAS un numéro d'ordre : `doc_revisions` n'en porte aucun, et un rang calculé sur
+    # une liste plafonnée (`limit`) désignerait une autre version au prochain appel.
+    revision_id: Optional[int] = None
+    # delete (#657) : True = ne supprime RIEN, rend seulement ce que la suppression
+    # emporterait (de quoi annoncer « ceci supprimera N pages » avant de la faire).
+    dry_run: Optional[bool] = None
     # Projection de SORTIE, honorée par list/get/create/update/patch/move (`_FIELDS_OPS`)
     # et REFUSÉE ailleurs. Omis : la liste rend son index, `get` la page entière, une
     # écriture son accusé. `["*"]` = la page entière partout.
@@ -237,7 +244,7 @@ _ALWAYS = ("id", "project_id", "parent_id", "title", "url")
 # c'est la leçon générale du signal #461, où `op=get` acceptait `fields` et rendait quand
 # même les ~30 K caractères de la page. Un argument accepté-et-ignoré coûte exactement ce
 # qu'il prétendait économiser, et rien ne le signale à l'appelant.
-_FIELDS_OPS = frozenset({"list", "get", "create", "update", "patch", "move"})
+_FIELDS_OPS = frozenset({"list", "get", "create", "update", "patch", "move", "revert"})
 
 # La phrase servie dans la notice d'un ACCUSÉ d'écriture. Distincte de « vue de tri » :
 # l'agent ne trie pas, il vient d'écrire — lui dire le contraire l'enverrait relire.
@@ -319,6 +326,20 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         _require(bool(inp.fields), "empty_fields",
                  "`fields` est une liste vide : omets-le pour la vue par défaut, passe "
                  '`["*"]` pour la page entière, ou nomme les colonnes voulues.')
+
+    # `revision_id` et `dry_run` n'ont de sens que sur UNE op chacun. Un argument
+    # accepté-et-ignoré coûte exactement ce qu'il prétendait économiser, et rien ne le
+    # signale à l'appelant (leçon générale du signal #461) — ici le prix serait pire
+    # qu'un surcoût : `dry_run=true` avalé par une op qui supprime pour de bon détruit
+    # précisément ce que l'appelant croyait seulement simuler.
+    if inp.revision_id is not None:
+        _require(inp.op == "revert", "unsupported_revision_id",
+                 "`revision_id` ne s'applique qu'à op=revert (la version à restaurer). "
+                 "Pour LIRE l'historique, c'est op=revisions, qui ne prend que `doc_id`.")
+    if inp.dry_run is not None:
+        _require(inp.op == "delete", "unsupported_dry_run",
+                 "`dry_run` ne s'applique qu'à op=delete — les autres ops n'ont pas de "
+                 "mode simulation et exécuteraient pour de bon. Retire-le.")
 
     if inp.op == "create":
         _require(inp.project_id is not None, "missing_project", "`project_id` requis.")
@@ -471,6 +492,48 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         _require(_can(sub, pid, "read"), "forbidden", "Accès refusé.", 403)
         return {"doc_id": inp.doc_id,
                 "revisions": db.list_doc_revisions(int(inp.doc_id))}
+
+    if inp.op == "revert":
+        # Restaurer une version antérieure (#657). Le snapshot était pris depuis
+        # toujours (`update_doc`), rien ne le REPOSAIT : le retour arrière se faisait à
+        # la main — lire op=revisions, republier le corps par op=update — ce qu'un front
+        # tiers ne peut pas offrir comme un geste.
+        #
+        # Régime : on restaure EN AVANT, jamais en rembobinant — même choix que
+        # `org.instruction.revert`. L'état courant est snapshotté à son tour (c'est
+        # `update_doc` qui le fait), donc un revert se re-revert et rien n'est perdu.
+        # ⚠️ Ce n'est PAS « annuler une suppression » : une page effacée a emporté ses
+        # révisions en cascade, il n'y a plus de ligne à restaurer. Deux gestes
+        # différents, et seul le premier existe ici.
+        _require(_can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
+        _require(inp.revision_id is not None, "missing_revision",
+                 "`revision_id` requis : le champ `id` de la ligne voulue dans "
+                 "op=revisions (l'historique de CETTE page). Ce n'est pas un numéro de "
+                 "version — les pages n'en portent pas.")
+        rev = db.get_doc_revision(int(inp.doc_id), int(inp.revision_id))
+        _require(rev is not None, "unknown_revision",
+                 f"Aucune version #{inp.revision_id} dans l'historique du doc "
+                 f"#{inp.doc_id} (une révision d'une AUTRE page ne compte pas). "
+                 f"Liste-les par op=revisions.", 404)
+        try:
+            # Passe par `update_doc` comme tout chemin d'écriture : snapshot de l'état
+            # courant, backlinks re-résolus, renommage propagé, conflit optimiste — un
+            # UPDATE de son cru perdrait les quatre.
+            db.update_doc(int(inp.doc_id), title=rev["title"], body_md=rev["body_md"],
+                          edited_by=sub, expected_rev=inp.expected_rev)
+        except db.DocConflict as e:
+            _require(False, "conflict",
+                     f"Le doc a été modifié entre-temps (rev actuelle {e.current_rev}). "
+                     f"Relis-le (op=get) et refais ta restauration sur la version à "
+                     f"jour — sinon tu écrases l'édition d'un pair sans la voir.", 409)
+        db.log_project_activity(pid, sub, "doc.revert",
+                                f"{row.get('title')} ← révision {inp.revision_id}")
+        out = _projected(db.get_doc_by_id(int(inp.doc_id)), sub, inp.fields,
+                         brut_par_defaut=False, hint=_HINT_ACCUSE)
+        # `version` est un état NEUF, pas celui qu'on restaure : `reverted_from` est la
+        # seule trace de l'intention (même écho que `InstructionReverted`).
+        out["reverted_from"] = int(inp.revision_id)
+        return out
 
     if inp.op == "backlinks":
         # « Cité par » (Ship 4) : les pages qui mentionnent celle-ci via [[…]],
@@ -640,10 +703,35 @@ def _doc(ctx: ResolvedCtx, inp: DocInput) -> dict:
         return out
 
     if inp.op == "delete":
+        # La cascade sur le sous-arbre était correcte et MUETTE (#657) : la réponse ne
+        # disait pas ce qu'elle emportait, donc aucun front ne pouvait annoncer « ceci
+        # supprimera N pages » ni prévenir que c'était sans retour. On ne change pas ce
+        # que le geste FAIT — on le DÉCLARE, et `dry_run` permet de le demander avant.
         _require(_can(sub, pid, "write"), "forbidden", "Écriture refusée.", 403)
-        db.delete_doc(int(inp.doc_id))   # CASCADE sur le sous-arbre
-        db.log_project_activity(pid, sub, "doc.delete", row.get("title"))
-        return {"ok": True, "id": inp.doc_id, "deleted": True}
+        if inp.dry_run:
+            n = db.count_doc_descendants(int(inp.doc_id))
+            return {"ok": True, "id": inp.doc_id, "deleted": False, "dry_run": True,
+                    "descendants": n,
+                    "hint": (
+                        f"Rien n'a été supprimé. Un op=delete sur « {row.get('title')} » "
+                        f"emporterait cette page et {n} descendante(s), avec leur "
+                        f"historique de versions. C'est SANS RETOUR : op=revert restaure "
+                        f"une version d'une page qui existe encore, il ne ressuscite pas "
+                        f"une page supprimée.")}
+        n = db.delete_doc(int(inp.doc_id))
+        db.log_project_activity(
+            pid, sub, "doc.delete",
+            f"{row.get('title')} (+{n} sous-page(s))" if n else row.get("title"))
+        out = {"ok": True, "id": inp.doc_id, "deleted": True, "descendants": n}
+        if n:
+            # Même posture que `removed_subsections` sur op=patch : ce qui est parti EN
+            # PLUS de la cible se dit, sinon la perte ne se découvre qu'à l'usage.
+            out["warning"] = (
+                f"Cette suppression a aussi emporté {n} sous-page(s) et leur historique "
+                f"de versions — la cascade suit tout le sous-arbre. Sans retour : "
+                f"op=revert ne restaure qu'une version d'une page existante. Passe "
+                f"`dry_run: true` pour connaître le compte AVANT de supprimer.")
+        return out
 
     # move — nouveau parent dans le MÊME projet (cycle profond non gardé en v1) ET/OU
     # réordonnancement (Ship 2 : `position` = index cible, la fratrie est réindexée).
@@ -746,7 +834,14 @@ CAPABILITIES += [
             "product. That is the answer to \"where is it?\": hand it over as-is, never "
             "rebuild an address from a pattern. `null` means that reader's product has no "
             "such view — then say where it lives (project + title) rather than invent a link. / "
-            "revisions (doc_id → version history, newest first) / backlinks (doc_id → the "
+            "revisions (doc_id → version history, newest first; each row's `id` is what "
+            "op=revert takes) / revert (doc_id + `revision_id` from op=revisions → puts "
+            "that past title+body back). A revert moves FORWARD: the current state is "
+            "snapshotted first, so nothing is lost and a revert can itself be reverted; "
+            "the response echoes `reverted_from`. It honours `expected_rev` too — pass it "
+            "or you may silently overwrite a peer's edit. It restores a VERSION of a page "
+            "that still exists; it does NOT undo a delete (a deleted page took its "
+            "revisions with it) / backlinks (doc_id → the "
             "pages that CITE this one). LINK PAGES with `[[Exact page title]]` in body_md — "
             "that wiki-link is the ONLY thing that creates a backlink (prose mentions, "
             "[text](doc:88) and [text](/docs/88) create none). Resolved AT WRITE TIME against "
@@ -756,7 +851,11 @@ CAPABILITIES += [
             "users propose a new body_md/title + message) / list_changes (owner: pending "
             "requests) / resolve_change (request_id + accept: true applies it, false rejects) "
             "/ set_public (public: true → shareable public read-only link, false → private ; "
-            "returns public_url) / delete (cascades its subtree) / move (reparent/reorder "
+            "returns public_url) / delete (removes the page AND its whole subtree, "
+            "revisions included — irreversible, there is no trash and no undelete. The "
+            "response says how many pages went with it (`descendants`); ask FIRST with "
+            "`dry_run: true`, which deletes nothing and returns the same count, whenever "
+            "a human has to confirm) / move (reparent/reorder "
             "in-project via parent_id [null=top-level] + position; OR cross-project via "
             "`to_project`=target project id → moves the page AND its subtree there, "
             "write required on both). kind ∈ doc|note|source. EMBED A LIVE DATASTORE in a "

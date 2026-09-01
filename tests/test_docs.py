@@ -26,7 +26,10 @@ def seams(monkeypatch):
                         lambda did, title=None, body_md=None, kind=None, edited_by=None, description=None, expected_rev=None: rec["update"].append((did, title, body_md, kind, edited_by, expected_rev)))
     monkeypatch.setattr(D.db, "list_doc_revisions",
                         lambda did, limit=50: [{"id": 1, "title": "v0", "body_md": "old", "edited_by": "u1", "created_at": "2026-06-30"}])
-    monkeypatch.setattr(D.db, "delete_doc", lambda did: rec["delete"].append(did))
+    # `delete_doc` rend le nombre de DESCENDANTS emportés (#657) : le double le rend
+    # aussi, sinon il ment sur la signature qu'il remplace et l'accusé porterait `None`.
+    monkeypatch.setattr(D.db, "delete_doc",
+                        lambda did: rec["delete"].append(did) or 0)
     monkeypatch.setattr(D.db, "move_doc", lambda did, p, position=None: rec["move"].append((did, p)))
     monkeypatch.setattr(D.db, "log_project_activity", lambda *a, **k: None)
     # gap #4b — demandes de modif
@@ -259,6 +262,9 @@ def test_move_to_unknown_project_404(seams, monkeypatch):
 def test_delete(seams):
     out = D._doc(CTX, D.DocInput(op="delete", doc_id=3))
     assert seams["delete"] == [3] and out["deleted"] is True
+    # #657 : l'accusé DIT ce que la cascade a emporté. Une feuille rend 0, pas rien —
+    # un champ absent se lit « la question n'a pas de réponse ».
+    assert out["descendants"] == 0 and "warning" not in out
 
 
 def test_move_self_parent_rejected(seams):
