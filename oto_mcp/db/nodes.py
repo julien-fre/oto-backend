@@ -1092,14 +1092,17 @@ def move_page(node_id: int, *, parent_id: Optional[int],
 def delete_page(node_id: int) -> bool:
     """Supprime une page native ET sa descendance.
 
-    L'arbre n'a **pas** de clé étrangère (arbitrage M-e, ouvert) : la descendance se
-    ramasse ici, par le code. Sans ça, supprimer un parent laisserait des enfants
-    rattachés à un identifiant disparu — des orphelins qu'aucun lecteur ne trouve et
-    qu'aucune purge ne voit.
+    L'arbre n'a **pas** de clé étrangère (arbitrage M-e, encore ouvert pour
+    `parent_id`) : la descendance se ramasse ici, par le code. Sans ça,
+    supprimer un parent laisserait des enfants rattachés à un identifiant disparu —
+    des orphelins qu'aucun lecteur ne trouve et qu'aucune purge ne voit.
 
-    Même raisonnement, même absence de clé étrangère, une table plus loin : le CORPS
-    de chaque page supprimée part avec elle (`blocks`), et il part EN PREMIER — le
-    nœud disparu, plus rien ne relierait ses blocs à quoi que ce soit.
+    ⚠️ **Une table plus loin, la réponse a changé** (2026-09-01, #800) : le corps ne
+    dépend plus de ce que fait l'appelant. `blocks.node_id` porte désormais une clé
+    étrangère `ON DELETE CASCADE` — supprimer le nœud emporte ses blocs, ici comme
+    partout ailleurs. Le `DELETE FROM blocks` explicite ci-dessous reste, et pour une
+    raison de COÛT et non d'intégrité : il retire le corps de toute la descendance en
+    UNE instruction ensembliste, là où la cascade referait le geste nœud par nœud.
 
     La descente est BORNÉE (`_DESCENDANCE`, clause `CYCLE`) : une boucle déjà en base
     la faisait tourner jusqu'à remplir `pgsql_tmp`. Bornée, elle emporte au contraire
@@ -1136,11 +1139,15 @@ def delete_page(node_id: int) -> bool:
 # dans `maintenance.residu_projete`.
 #
 # Ce qui pend à un nœud — mesuré en production avant d'écrire ces lignes, pas
-# supposé : **aucune clé étrangère** ne pointe `nodes` (rien ne casse, mais rien ne
-# cascade non plus — d'où la suppression explicite des blocs) ; **0** embedding sur
-# un nœud recopié (les 22 embeddings de nœuds sont tous natifs) ; **aucun** partage
-# ne désigne un nœud ; et **0** nœud natif n'a pour parent un nœud recopié — le
-# retrait ne détache donc aucun enfant vivant.
+# supposé : **0** embedding sur un nœud recopié (les 22 embeddings de nœuds sont tous
+# natifs) ; **aucun** partage ne désigne un nœud ; et **0** nœud natif n'a pour parent
+# un nœud recopié — le retrait ne détache donc aucun enfant vivant.
+#
+# ⚠️ Une phrase de ce paragraphe est PÉRIMÉE depuis le 2026-09-01 (#800) et vaut
+# d'être datée plutôt qu'effacée : « aucune clé étrangère ne pointe `nodes` ». Il y
+# en a une maintenant — `blocks_node_fk`, `ON DELETE CASCADE`. C'est ce qui rend
+# `delete_orphan_blocks()` sans objet : le mode d'échec qu'il ramassait ne peut plus
+# se produire, et il balayait TOUT bloc sans nœud, marqué ou non.
 
 
 def count_projected_nodes() -> int:
@@ -1148,6 +1155,21 @@ def count_projected_nodes() -> int:
     with _connect() as conn:
         return conn.execute(
             "SELECT count(*) AS n FROM nodes WHERE props ? 'legacy'"
+        ).fetchone()["n"]
+
+
+def count_projected_blocks() -> int:
+    """Combien de blocs pendent à un nœud recopié — donc partiraient AVEC lui.
+
+    C'est la moitié de l'inventaire qui manquait au mode à blanc (#800) : il
+    annonçait les nœuds et les orphelins, et taisait les 34 314 blocs attachés que
+    `--apply` emportait. Un inventaire dont le rôle est de dire ce qu'on s'apprête à
+    détruire et qui en tait la plus grosse part donne confiance à tort.
+    """
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT count(*) AS n FROM blocks b "
+            " JOIN nodes n ON n.id = b.node_id WHERE n.props ? 'legacy'"
         ).fetchone()["n"]
 
 
@@ -1160,9 +1182,10 @@ def delete_projected_nodes(*, batch_size: int = 2000, max_batches: int = 100) ->
     (`docs/live-migrations.md`). Un lot interrompu laisse simplement du résidu, que
     la passe suivante reprend : le geste se REPREND, il ne se répare pas.
 
-    **Les blocs d'abord, par jointure sur le nœud** : `blocks.node_id` ne porte
-    aucune clé étrangère, donc supprimer le nœud en premier rendrait ses blocs
-    introuvables — des orphelins que plus aucune requête ne relie à rien.
+    **Les blocs d'abord**, mais plus pour la raison d'origine : depuis #800,
+    `blocks.node_id` porte une clé étrangère `ON DELETE CASCADE`, donc l'ordre ne
+    décide plus de l'intégrité. Il décide du COÛT — un `DELETE` ensembliste sur le
+    lot entier, plutôt qu'une cascade rejouée nœud par nœud.
 
     ⚠️ **Cette fonction ne rend RIEN de comptable, et c'est délibéré.** Le nombre de
     lignes qu'un `DELETE` déclare avoir touchées ne distingue pas un retrait qui a
@@ -1184,22 +1207,23 @@ def delete_projected_nodes(*, batch_size: int = 2000, max_batches: int = 100) ->
 
 
 def count_orphan_blocks() -> int:
-    """Blocs dont le nœud n'existe plus.
+    """Blocs dont le nœud n'existe plus — un TÉMOIN, plus une liste de travail.
 
-    C'est le mode d'échec que l'ordre ci-dessus évite ; on veut pouvoir le
-    CONSTATER si un autre chemin l'a produit, plutôt que le supposer absent.
+    Depuis #800 la contrainte `blocks_node_fk` rend ce mode d'échec impossible : ce
+    compte doit valoir 0, et un non-zéro ne dit plus « il y a du ménage à faire »
+    mais **« la contrainte n'est pas posée sur cette base »**. C'est la seule
+    lecture qui reste juste, et elle vaut d'être servie dans l'inventaire.
+
+    ⚠️ **Il n'y a plus de `delete_orphan_blocks()`, et son retrait est le point ③ de
+    #800.** Le balai n'avait aucun prédicat `legacy` : il emportait tout bloc sans
+    nœud, quelle qu'en fût l'origine — y compris le corps d'une page NATIVE dont le
+    nœud venait d'être supprimé par le défaut que cette même issue corrige. Le
+    borner « au résidu marqué » est impossible : un orphelin n'a plus de nœud, donc
+    plus de marque. La contrainte, elle, supprime la question — ce qu'un balai
+    bornerait, elle l'empêche de naître.
     """
     with _connect() as conn:
         return conn.execute(
             "SELECT count(*) AS n FROM blocks b "
             " WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = b.node_id)"
         ).fetchone()["n"]
-
-
-def delete_orphan_blocks() -> None:
-    """Même règle qu'au-dessus : on retire ici, on compte ailleurs."""
-    with _connect() as conn:
-        with conn.transaction():
-            conn.execute(
-                "DELETE FROM blocks b WHERE NOT EXISTS "
-                "(SELECT 1 FROM nodes n WHERE n.id = b.node_id)")
