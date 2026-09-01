@@ -34,7 +34,8 @@ from ... import (access, db, deprecations, group_store, guide_store, org_store,
                 slots as slots_mod, tool_registry)
 from .._authz import (ORG_ADMIN, ORG_ADMIN_OF, ORG_ADMIN_OPT, ORG_MEMBER,
                       ORG_MEMBER_OF, SUB_ONLY, capacite_autorise)
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
+                      RestBinding)
 from ..registry import CAPABILITIES
 
 # ── Les droits ANNONCÉS par le bundle d'org ─────────────────────────────────
@@ -416,6 +417,35 @@ class InstrSetInput(BaseModel):
     # #69 : épingle l'écriture à une org EXPLICITE (robuste au reset de session).
     # None = org active (self-service). Gardé org_admin sur l'org nommée.
     org: Optional[int] = None
+    # #662 : verrou OPTIMISTE — la version que le client a lue. Différente de la
+    # version courante (ou procédure absente) ⟹ 409 `version_conflict`, l'écriture
+    # n'a pas lieu. Omis = l'upsert historique, qui écrase le travail d'un autre
+    # éditeur sans le dire. Miroir d'`expected_rev` sur les pages (`docs.py`).
+    expected_version: Optional[int] = None
+
+
+class InstrCreateInput(BaseModel):
+    """CRÉER une procédure — le geste qui refuse d'écraser (#662).
+
+    Séparé de `InstrSetInput` pour une raison de fond : `PUT …/instructions/{slug}`
+    est le chemin de l'ÉDITION, et y refuser un slug pris casserait toute écriture
+    sur une procédure existante. C'est donc un VERBE de plus, pas une garde de plus
+    sur celui-là — un client qui crée le dit, et un slug déjà pris lui vaut un 409
+    `slug_taken` au lieu d'un remplacement muet.
+
+    `slug` reste FOURNI par le client, comme aujourd'hui : le dériver du titre est
+    une question ouverte de l'issue (le slug est une référence lisible, citée dans la
+    prose des guides et dans les descriptions d'outils), et la trancher au détour
+    d'un correctif de perte de données serait la trancher sans la poser.
+
+    Pas de `from_version` : restaurer une version suppose une procédure existante,
+    donc l'inverse exact d'une création."""
+    slug: str
+    body_md: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    slots: Optional[list] = None
+    org: Optional[int] = None
 
 
 class GuideDeleteInput(BaseModel):
@@ -438,6 +468,15 @@ class ConsoleInstrSetInput(InstrSetInput):
     (`GROUP_MEMBER_OPT`) : celui qui déroule la procédure est celui qui l'améliore, et
     le geste se défait par `from_version`. La SUPPRESSION, elle, reste au chef
     (`ConsoleGuideDeleteInput`)."""
+    scope: Optional[str] = None
+    group: Optional[int] = None
+
+
+class ConsoleInstrCreateInput(InstrCreateInput):
+    """`InstrCreateInput` + le même axe de palier que `ConsoleInstrSetInput`.
+
+    Même garde que `set` (`_ECRIRE` côté console) : créer n'est pas plus dangereux
+    qu'écrire — c'est le geste qui l'était trop peu, faute de pouvoir refuser."""
     scope: Optional[str] = None
     group: Optional[int] = None
 
@@ -693,23 +732,29 @@ def _list_guides(ctx: ResolvedCtx, inp) -> dict:
         {"org_id": org_id, "group_id": group_id, "guides": out})
 
 
-async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
+async def _set_instruction(ctx: ResolvedCtx, inp, must_create: bool = False) -> dict:
     """Crée/met à jour une instruction (incrémente la version + archive un snapshot).
     `from_version` = restaure une version passée comme nouvelle (revert MCP) — corps,
     métadonnées ET slots. `slots` (ADR 0035) : None = conserver l'existant.
 
     Le PALIER écrit vient de `inp.scope` (#681) : org par défaut, équipe si demandé —
-    même corps de handler, même store, seule la clé de propriété change."""
+    même corps de handler, même store, seule la clé de propriété change.
+
+    `must_create` (posé par `_create_instruction`, jamais par le client) et
+    `expected_version` (lu sur l'entrée) sont les deux refus anti-écrasement #662."""
     owner = _owner_of(ctx, inp)
     norm = org_store.normalize_slug(inp.slug) if inp.slug else _BASE
     if not norm:
         raise AuthzDenied(400, "invalid_slug", "slug invalide (attendu [a-z0-9_-]).")
     body_md, title, description = inp.body_md, inp.title, inp.description
     slots_in = getattr(inp, "slots", None)
-    if inp.from_version is not None:
-        old = org_store.get_instruction(*owner, norm, inp.from_version)
+    # `from_version` (restauration) n'existe pas sur l'entrée de CRÉATION : restaurer
+    # suppose une procédure existante — cf. `InstrCreateInput`.
+    from_version = getattr(inp, "from_version", None)
+    if from_version is not None:
+        old = org_store.get_instruction(*owner, norm, from_version)
         if not old:
-            raise AuthzDenied(404, "unknown_version", f"Pas de version {inp.from_version} pour `{norm}`.")
+            raise AuthzDenied(404, "unknown_version", f"Pas de version {from_version} pour `{norm}`.")
         body_md, title, description = old["body_md"], old["title"], old["description"]
         slots_in = old.get("slots") or []
     if slots_in is not None:
@@ -728,9 +773,32 @@ async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
                           f"`{_BASE}` est le readme (prose injectée), pas une "
                           "procédure — édite-le sur la surface guide "
                           f"(scope='{owner[0]}', delivery='init').")
-    version = org_store.set_instruction(*owner, norm, body_md, title=title,
-                                        description=description, set_by=ctx.sub,
-                                        slots=slots_in)
+    # Idem : l'entrée de CRÉATION n'a pas de verrou optimiste (rien à verrouiller).
+    expected_version = getattr(inp, "expected_version", None)
+    try:
+        version = org_store.set_instruction(
+            *owner, norm, body_md, title=title, description=description,
+            set_by=ctx.sub, slots=slots_in, must_create=must_create,
+            expected_version=expected_version)
+    except org_store.InstructionExists as e:
+        # Le cœur de #662 : ce qui était un remplacement muet devient un refus qui
+        # NOMME le slug, sa version et son état — de quoi choisir un autre slug ou
+        # assumer l'édition (`PUT`), sans avoir à relire pour découvrir le dégât.
+        raise AuthzDenied(
+            409, "slug_taken",
+            f"`{norm}` porte déjà une procédure (v{e.version}"
+            + (", archivée" if e.archived else "") + ") dans ce scope. Crée-la sous "
+            "un autre slug, ou édite l'existante (`PUT /api/me/instructions/"
+            f"{norm}`) — la création, elle, n'écrase pas.",
+            {"slug": norm, "version": e.version, "archived": e.archived})
+    except org_store.InstructionVersionConflict as e:
+        raise AuthzDenied(
+            409, "version_conflict",
+            (f"`{norm}` est en v{e.current_version}, tu as lu v{expected_version}"
+             if e.current_version is not None
+             else f"`{norm}` n'existe pas (ou plus) dans ce scope")
+            + " : relis-la (`op=get`) et rejoue ton édition sur la version à jour.",
+            {"slug": norm, "current_version": e.current_version})
     # Slots EFFECTIFS après écriture (None = conservés → relire la row) pour le
     # check croisé <slot:name> ↔ déclaration (ADR 0035, non bloquant comme 0014).
     effective_slots = slots_in
@@ -738,11 +806,21 @@ async def _set_instruction(ctx: ResolvedCtx, inp) -> dict:
         cur = org_store.get_instruction(*owner, norm)
         effective_slots = (cur or {}).get("slots") or []
     return {"ok": True, **_scope_ref(owner), "slug": norm, "version": version, "set": True,
-            **({"reverted_from": inp.from_version} if inp.from_version is not None else {}),
+            **({"reverted_from": from_version} if from_version is not None else {}),
             **await tool_registry.write_check(body_md),
             **slots_mod.slots_check(body_md, effective_slots),
             **procedure_diagram.diagram_check(body_md),
             **procedure_digest.digest_check(body_md)}
+
+
+async def _create_instruction(ctx: ResolvedCtx, inp) -> dict:
+    """CRÉE une procédure — même corps que l'écriture, mais le slug doit être LIBRE.
+
+    Le geste que le domaine n'avait pas (#662) : jusqu'ici toute création passait par
+    l'upsert de `_set_instruction`, et un slug déjà pris y remplaçait la procédure en
+    place sans un mot. Le refus est levé DANS la transaction verrouillée du store, pas
+    par un pré-check ici : deux créations simultanées sur le même slug s'y glisseraient."""
+    return await _set_instruction(ctx, inp, must_create=True)
 
 
 def _delete_instruction(ctx: ResolvedCtx, inp) -> dict:
@@ -925,8 +1003,34 @@ CAPABILITIES += [
                      "`diagram_warning`). "
                      "`org` pins the write to "
                      "an EXPLICIT org id (default = your active org) — pass it to stay robust "
-                     "if a reconnect dropped your session org; you must be org_admin of it."),
+                     "if a reconnect dropped your session org; you must be org_admin of it. "
+                     "⚠️ This is an UPSERT: a slug that already exists is EDITED (new "
+                     "version, prior one snapshotted), never rejected. To CREATE without "
+                     "risking someone else's procedure, use POST /api/me/instructions, "
+                     "which refuses a taken slug. Pass `expected_version` (the version you "
+                     "read) to turn a concurrent edit into a 409 instead of an overwrite."),
+        errors=(DeclaredError(409, "version_conflict",
+                              "`expected_version` fourni et ≠ version courante (ou "
+                              "procédure absente) — l'écriture n'a pas eu lieu"),),
         rest=RestBinding("PUT", "/api/me/instructions/{slug}"),
+    ),
+    # La CRÉATION, seul geste du domaine qui refuse un slug pris (#662). Verbe à part
+    # et non garde de plus sur `set` : `PUT …/{slug}` est AUSSI le chemin de l'édition,
+    # et y refuser l'existant casserait toute écriture sur une procédure en place.
+    Capability(
+        key="org.instruction.create", handler=_create_instruction, Input=InstrCreateInput,
+        authz=ORG_ADMIN_OPT("org"), Output=InstructionWritten,
+        description=("CREATE a named procedure (org_admin) — refuses a slug that is "
+                     "already taken (409 `slug_taken`) instead of overwriting it. `slug` "
+                     "is REQUIRED and yours to choose (it is the readable reference cited "
+                     "in prose and tool descriptions); it is normalized to [a-z0-9_-]. Use "
+                     "PUT /api/me/instructions/{slug} to EDIT an existing one. Same body "
+                     "as the write otherwise (body_md, title, description, slots), and the "
+                     "same cross-check warnings in the response."),
+        errors=(DeclaredError(409, "slug_taken",
+                              "le slug porte déjà une procédure dans ce scope (y compris "
+                              "archivée) — rien n'a été écrit"),),
+        rest=RestBinding("POST", "/api/me/instructions"),
     ),
     Capability(
         key="org.instruction.delete", handler=_delete_instruction, Input=GuideDeleteInput,

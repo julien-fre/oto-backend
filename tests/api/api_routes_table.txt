@@ -287,6 +287,8 @@ GET,HEAD /api/me/instructions/{slug}/usage -> _handler
 OPTIONS /api/me/instructions/{slug}/usage -> options_handler
 PUT /api/me/instructions/{slug} -> _handler
 OPTIONS /api/me/instructions/{slug} -> options_handler
+POST /api/me/instructions -> _handler
+OPTIONS /api/me/instructions -> options_handler
 DELETE /api/me/instructions/{slug} -> _handler
 OPTIONS /api/me/instructions/{slug} -> options_handler
 POST /api/me/instructions/{slug}/archive -> _handler

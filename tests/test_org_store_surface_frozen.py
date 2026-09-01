@@ -46,6 +46,14 @@ huit signatures et retire trois noms devenus faux :
 Ce cliquet a donc fait exactement son travail : il a rendu le changement VISIBLE et
 obligé à l'expliquer ici. Ce qui ne serait PAS acceptable, c'est de le mettre à jour
 sans cette explication — la ligne retirée deviendrait indistinguable d'un oubli.
+
+⚠️ **Mise à jour du 01/09/2026 (oto-backend#662)** — `set_instruction` gagne deux
+paramètres nommés, `must_create` et `expected_version`, tous deux à valeur par défaut :
+la surface s'ÉLARGIT, aucun appelant existant ne bouge. Ils portent les deux refus
+anti-écrasement (`InstructionExists`, `InstructionVersionConflict`) qu'un front tiers
+a payés en découvrant qu'une création sur un slug pris remplaçait la procédure en
+place sans un mot. Ils vivent dans le store, sous le verrou advisory, parce que
+n'importe quel pré-check posé dehors laisserait passer deux créations simultanées.
 """
 from __future__ import annotations
 
@@ -192,7 +200,7 @@ FROZEN_SIGNATURES = {
     'revoke_platform_invitation': "(inv_id: 'int') -> 'bool'",
     'search_instructions': "(owner_type: 'str', owner_id: 'int | str', query: 'str', include_base: 'bool' = False) -> 'list[dict]'",
     'set_active_org': "(sub: 'str', org_id: 'int') -> 'bool'",
-    'set_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str', body_md: 'str', title: 'Optional[str]' = None, description: 'Optional[str]' = None, set_by: 'Optional[str]' = None, slots: 'Optional[list]' = None) -> 'int'",
+    'set_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str', body_md: 'str', title: 'Optional[str]' = None, description: 'Optional[str]' = None, set_by: 'Optional[str]' = None, slots: 'Optional[list]' = None, must_create: 'bool' = False, expected_version: 'Optional[int]' = None) -> 'int'",
     'set_org_default_connectors': "(org_id: 'int', connectors: 'Optional[list[str]]') -> 'bool'",
     'set_org_email_settings': "(org_id: 'int', connector: 'str', *, senders: 'Optional[list[dict]]' = None, quiet_hours: 'Optional[dict]' = None, clear_quiet_hours: 'bool' = False) -> 'bool'",
     'set_org_field_filters': "(org_id: 'int', service: 'str', block: 'Optional[dict]') -> 'bool'",
