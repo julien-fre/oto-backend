@@ -416,34 +416,6 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   lequel des quatre. `403` couvre aussi l'invitation **anonyme** (émise sans adresse) :
   elle n'est adressée à personne, donc à personne en particulier. Refuser deux fois la
   même invitation est **idempotent** (200, même réponse).
-- **`POST /api/resources` déclare sa 200 en UNION DISCRIMINÉE** (#659, 2026-09-01), plus
-  onze refus. La forme dépend de `resource_type` — `row_count` pour un tableau,
-  `archived_at` pour un projet, `version` pour un guide — donc le document rend un
-  `oneOf` + `discriminator: resource_type` pour `op=get`, à l'intérieur d'un `anyOf` qui
-  couvre les cinq verbes (six branches : `op=share` en a deux, grant vs publication).
-  Modèles dans `capabilities/resources_contract.py`. ⚠️ **Une union PLATE aurait déclaré
-  `row_count` sur un projet** : une carte qui ment est pire qu'une carte absente, un
-  client généré s'y branche. ⚠️ **`capability_output_debt.txt` avait classé cette
-  surface « indéclarable » le 11/08** sur une mesure JUSTE (l'intersection des sept
-  `return` est vide) mais qui répondait à une autre question : une intersection vide
-  disqualifie l'**enveloppe**, pas l'**union**. La leçon vaut pour `me.project` et
-  `me.doc`, qui restent en dette pour la même raison mal lue.
-  **Deux défauts corrigés dans le même lot**, tous deux trouvés en écrivant le schéma :
-  `resource_type` est désormais **OBLIGATOIRE** — il valait `datastore_namespace` par
-  défaut (relique du pilote ADR 0030), si bien qu'un appelant visant un projet et
-  oubliant le champ interrogeait silencieusement une autre famille, et sur
-  `transfer`/`share` **agissait sur une autre ressource** ; et `resource_id` porte un
-  motif `^\d+$` **publié dans le schéma**. ⚠️ Ce second point ne se corrigeait PAS dans
-  le handler, contrairement à ce que l'issue supposait : la levée se produit dans la
-  règle d'autz (`RESOURCE_GOVERN` → `ownership.can_govern` → `int(rid)`), qui tourne
-  AVANT lui — mesuré, `owner_getter('abc')` lève `ValueError` pour un tableau et pour un
-  projet (**500**, l'adaptateur REST ne rattrape qu'`AuthzDenied`) et rend `None` pour un
-  guide (**403**, son owner_getter a son propre `isdigit()`). Trois comportements pour
-  une même saisie fautive, dont deux faux ; c'est un **400** pour les trois, et la garde
-  est sur l'ENTRÉE parce que c'est la seule couche qui s'exécute avant l'autz.
-  ⚠️ **Rendre `resource_type` obligatoire CASSE les appels qui l'omettaient**
-  (`scripts/contrat-front.py` sort en rouge) : c'est la seule casse du lot — le même
-  document construit avec le défaut conservé ne rend qu'un avertissement.
 
 ## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
 

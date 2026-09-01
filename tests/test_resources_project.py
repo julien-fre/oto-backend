@@ -2,7 +2,6 @@
 (transfer/share/unshare étaient déjà génériques via le seam ownership).
 """
 import pytest
-from pydantic import ValidationError
 
 from oto_mcp import ownership
 from oto_mcp.capabilities import resources as R
@@ -108,14 +107,10 @@ def test_transfer_to_org_requires_membership(monkeypatch):
     assert e.value.code == "not_org_member"
 
 
-def test_unknown_type():
-    """Le refus a CHANGÉ DE COUCHE (#659) : `resource_type` est un `Literal`, donc une
-    famille inconnue est refusée par la VALIDATION d'entrée — comme `op` l'est déjà —
-    et n'atteint plus le handler. Ce que le client perd (`unsupported_resource_type`,
-    qui listait les types) lui est rendu par le contrat : l'énuméré est désormais dans
-    le schéma de la requête, donc lisible avant d'appeler."""
-    with pytest.raises(ValidationError):
-        R.ResourceInput(op="list", resource_type="nope")
+def test_unknown_type(monkeypatch):
+    with pytest.raises(AuthzDenied) as e:
+        R._resources(CTX, R.ResourceInput(op="list", resource_type="nope"))
+    assert e.value.code == "unsupported_resource_type"
 
 
 # ── ADR 0048 : « Partager » unifié (audience × rôle) ──────────────────────────

@@ -9,8 +9,7 @@ transférer un datastore » et qui alimente l'object-browser admin.
 
 Plan GOUVERNANCE uniquement (transférer/lister/partager **sans lire** le contenu) —
 la lecture du contenu d'une ressource perso reste l'exception auditée view-as
-(ADR 0023). Ce que cette surface DÉCLARE — l'énuméré des trois familles, la forme de
-chaque réponse, les refus publiés — vit dans `resources_contract`.
+(ADR 0023). Pilote : `resource_type='datastore_namespace'`.
 """
 from __future__ import annotations
 
@@ -18,13 +17,12 @@ import logging
 import os
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .. import access, db, email, group_store, org_store, ownership, roles
 from ._authz import RESOURCE_GOVERN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
-from .resources_contract import REFUS, ResourceOut, ResourceType
 from .. import config
 
 log = logging.getLogger(__name__)
@@ -37,21 +35,8 @@ _PUBLICATION_AUDIENCE = {"public": "anonymous", "secret": "secret"}  # projets u
 
 class ResourceInput(BaseModel):
     op: Literal["list", "get", "transfer", "share", "unshare"]
-    # OBLIGATOIRE, et sans défaut : il portait `"datastore_namespace"`, relique du
-    # temps où c'était le seul type géré (pilote ADR 0030). Depuis, un appelant qui
-    # visait un projet et oubliait le champ interrogeait SILENCIEUSEMENT une autre
-    # famille — et sur `transfer`/`share`, agissait donc sur une autre ressource.
-    # Un défaut implicite sur un discriminant est un piège, pas une commodité.
-    resource_type: ResourceType
-    # Identifiant NUMÉRIQUE pour les trois familles (clé primaire PG). La garde est
-    # sur l'ENTRÉE et pas dans le handler parce que c'est la seule couche qui
-    # s'exécute avant l'autz, et que c'est l'AUTZ qui levait : `RESOURCE_GOVERN` →
-    # `ownership.can_govern` → `int(rid)`, d'où un 500 sur un tableau ou un projet
-    # (`ValueError`, que l'adaptateur REST ne rattrape pas) et un 403 sur un guide.
-    # Le motif est dans le schéma, donc publié — cf. `docs/rest-api.md` (#659).
-    resource_id: Optional[str] = Field(
-        None, pattern=r"^\d+$",
-        description="Identifiant numérique de la ressource (clé primaire).")
+    resource_type: str = "datastore_namespace"
+    resource_id: Optional[str] = None
     new_owner_email: Optional[str] = None   # transfer → un utilisateur
     new_owner_org: Optional[int] = None     # transfer → une de SES orgs (ADR 0030, owner_type='org')
     new_owner_group: Optional[int] = None   # transfer → un pôle/équipe (ADR 0049, owner_type='group') — cloisonne la ressource à ses membres
@@ -72,6 +57,12 @@ class ResourceInput(BaseModel):
     mcp_tools: Optional[list[str]] = None   # allowlist figée (vide = réutilise la liste publiée)
     cascade: bool = False                   # share/transfer d'un PROJET : embarquer ses entités liées (#52)
     confirm_transfer: bool = False          # transfer : lever la confirmation anti-lockout (perte de contrôle assumée)
+
+
+def _check_type(resource_type: str) -> None:
+    if resource_type not in _OPS:
+        raise AuthzDenied(400, "unsupported_resource_type",
+                          f"type `{resource_type}` non supporté ({list(_OPS)}).")
 
 
 def _owner_label(owner_type: str, owner_id: str) -> Optional[str]:
@@ -396,10 +387,7 @@ def _unpublish_audience(ctx: ResolvedCtx, inp: ResourceInput, rid: str) -> dict:
 
 
 def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
-    # `resource_type` est un `Literal` : l'entrée est refusée avant d'arriver ici si
-    # la famille est inconnue (mêmes égards que `op`), et `_OPS` a donc forcément la
-    # clé. `tests/test_resources_output.py` épingle l'égalité des deux ensembles —
-    # ajouter une famille au dispatch sans l'ajouter au contrat fait rougir.
+    _check_type(inp.resource_type)
     ops = _OPS[inp.resource_type]
 
     if inp.op == "list":
@@ -417,10 +405,6 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         return {"resource_type": inp.resource_type,
                 "resources": [ops["enrich"](r) for r in rows]}
 
-    # Filet pour les appels DIRECTS au handler (tests, réemploi interne) : par les
-    # faces servies, `RESOURCE_GOVERN` a déjà refusé un `resource_id` absent avec son
-    # propre `missing_resource`. D'où l'absence de ce code des refus DÉCLARÉS — le
-    # document ne promet que ce qu'un client peut réellement recevoir.
     if inp.resource_id is None:
         raise AuthzDenied(400, "missing_resource_id", "`resource_id` requis.")
     rid = str(inp.resource_id)
@@ -539,12 +523,6 @@ CAPABILITIES += [
         handler=_resources,
         Input=ResourceInput,
         authz=RESOURCE_GOVERN(),
-        # Ce que cette surface DÉCLARE vit dans `resources_contract` : l'union
-        # complète des cinq verbes, et les refus atteignables. L'enveloppe commune
-        # avait été mesurée VIDE le 2026-08-11, d'où l'inscription à la dette de
-        # sortie ; c'est l'union, pas l'enveloppe, qui décrit cette surface.
-        Output=ResourceOut,
-        errors=REFUS,
         description=(
             "Govern an OWNED resource (ADR 0030) without reading its content. "
             "op=list: resources you govern (platform admins see all); op=get: owner + "
@@ -565,10 +543,8 @@ CAPABILITIES += [
             "`private` → unpublish. ROLE (`role`) = what they can do: `viewer` (read), `editor` "
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
             "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
-            "still accepted (mapped to viewer/editor). resource_type is REQUIRED (no "
-            "default) ∈ {datastore_namespace, project, doctrine} — it is the discriminant, "
-            "and it also decides which shape comes back. DELIVER A FULL PROJECT (#52): "
-            "share/transfer a project "
+            "still accepted (mapped to viewer/editor). resource_type ∈ {datastore_namespace, "
+            "project, doctrine}. DELIVER A FULL PROJECT (#52): share/transfer a project "
             "with cascade=true to carry its linked entities in one gesture — linked "
             "tableaux get the same share/transfer, linked procedures are share-granted "
             "read (readable cross-org via oto_procedure op=get guide_id) or COPIED into "
