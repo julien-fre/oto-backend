@@ -107,8 +107,10 @@ def register(mcp: FastMCP) -> None:
             resp = getattr(e, "response", None)
             status = getattr(resp, "status_code", None)
             if status and status >= 500:
-                msg = ("Cognism est momentanément indisponible (erreur serveur "
-                       f"{status}). Réessaie dans un moment — ce n'est pas ton entrée.")
+                msg = (f"Cognism a rendu une erreur serveur ({status}). Un 5xx amont "
+                       "ne prouve pas une panne : vérifie d'abord les paramètres de "
+                       "l'appel. Si l'entrée est correcte : une seule nouvelle "
+                       "tentative, différée.")
             elif status == 401:
                 msg = "Clé Cognism invalide ou révoquée (401). Vérifie la clé posée."
             else:
