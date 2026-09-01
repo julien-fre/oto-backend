@@ -135,7 +135,7 @@ class MyConnectorRow(BaseModel):
     # Nombre de procédures d'org qui citent un namespace du connecteur — dérivé
     # des bodies de guide, best-effort (0 sur incident de lecture, pas d'erreur).
     guide_ref_count: int
-    doctrine_ref_count: int                # ALIAS déprécié (retrait 27/09/2026, #519)
+    doctrine_ref_count: int                # ALIAS déprécié (retrait 29/10/2026, #519)
     paid_option: Optional[str] = None       # option payante requise (couche 3), None = aucune
     # `true` = l'option est levée OU aucune n'est requise. Ne dit RIEN du credential :
     # un connecteur `option_ok` reste inutilisable sans clé posée.
@@ -457,7 +457,7 @@ def _me(ctx: ResolvedCtx, inp: MyConnectorsInput) -> dict:
             "state": state,
             "recommended": c["name"] in recommended,
             "guide_ref_count": len(refset),
-            "doctrine_ref_count": len(refset),   # ALIAS déprécié (retrait 27/09/2026)
+            "doctrine_ref_count": len(refset),   # ALIAS déprécié (retrait 29/10/2026)
             "paid_option": opt,
             "option_ok": access.option_open(ctx.sub, c["name"], org=ctx.org_id),
         }

@@ -73,7 +73,7 @@ class ProcedureInput(BaseModel):
                 "library_list", "library_get", "publish", "fork", "unpublish"]
     slug: Optional[str] = None
     guide_id: Optional[int] = None         # get : lecture par ID STABLE (ADR 0032)
-    doctrine_id: Optional[int] = None      # ALIAS déprécié du précédent (retrait 27/09/2026, #519)
+    doctrine_id: Optional[int] = None      # ALIAS déprécié du précédent (retrait 29/10/2026, #519)
     scope: Optional[str] = None            # org (défaut) | group — LECTURE ET ÉCRITURE
     version: Optional[int] = None          # get
     with_history: bool = False             # get

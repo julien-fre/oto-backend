@@ -125,13 +125,13 @@ def register(mcp: FastMCP) -> None:
         Returns `guide_version` — the version of that procedure frozen for this run
         (null for an ad-hoc run, or if the slug matches no procedure you can read).
         The response also carries the deprecated `doctrine`/`doctrine_version` keys
-        until 27/09/2026.
+        until 29/10/2026.
 
         Args:
             label: short human description of what this run does (always logged).
             guide: optional — the guide/skill slug being executed (as passed to
                 oto_procedure op=get). Omit for a one-shot/ad-hoc run.
-            doctrine: DEPRECATED alias of `guide`, removed on 27/09/2026 — pass
+            doctrine: DEPRECATED alias of `guide`, removed on 29/10/2026 — pass
                 `guide` instead.
         """
         guide = guide if guide is not None else doctrine
