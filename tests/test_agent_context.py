@@ -15,7 +15,7 @@ def test_assembles_layers(monkeypatch):
     monkeypatch.setattr(ac.tool_registry, "bound_instance", lambda: None)
     ctx = ResolvedCtx(sub="u1", org_id=None)
     out = asyncio.run(ac._agent_context(ctx, ac.AgentContextInput()))
-    # `doctrine` est l'ALIAS déprécié de `guide` (#519, retrait le 27/09/2026) : les
+    # `doctrine` est l'ALIAS déprécié de `guide` (#519, retrait le 29/10/2026) : les
     # deux sont servis, et c'est bien la MÊME valeur — sinon un client migré et un
     # client resté en arrière ne liraient pas la même chose.
     assert set(out) == {"org_id", "instructions", "layers", "guide", "doctrine", "tools"}

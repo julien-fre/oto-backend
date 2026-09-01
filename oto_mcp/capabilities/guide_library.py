@@ -126,9 +126,9 @@ class LibraryList(BaseModel):
     vide ne prouve donc pas qu'un guide n'existe pas.
 
     ⚠️ La liste est servie sous SES DEUX noms — `guides` (aujourd'hui) et `doctrines`,
-    qui s'en va le 27/09/2026 (#519), cf. `docs/alias-deprecies.md`."""
+    qui s'en va le 29/10/2026 (#519), cf. `docs/alias-deprecies.md`."""
     guides: list[LibraryEntrySummary]
-    doctrines: list[LibraryEntrySummary]     # ALIAS déprécié (retrait 27/09/2026)
+    doctrines: list[LibraryEntrySummary]     # ALIAS déprécié (retrait 29/10/2026)
 
 
 class LibraryEntry(BaseModel):

@@ -103,12 +103,12 @@ class GuideView(BaseModel):
 
     ⚠️ **Chaque clé est servie DEUX FOIS** le temps du préavis (#519) : sous son nom
     d'aujourd'hui (`guide_id`, `guide`, `group_guide`, `guides`) et sous celui
-    d'hier, qui s'en va le 27/09/2026 — cf. `docs/alias-deprecies.md`. Écris le
+    d'hier, qui s'en va le 29/10/2026 — cf. `docs/alias-deprecies.md`. Écris le
     nouveau ; l'ancien est là pour ne casser personne, pas pour être choisi."""
     org_id: Optional[int] = None
     group_id: Optional[int] = None
     guide_id: Optional[int] = None
-    doctrine_id: Optional[int] = None   # ALIAS déprécié (retrait 27/09/2026)
+    doctrine_id: Optional[int] = None   # ALIAS déprécié (retrait 29/10/2026)
     scope: Optional[str] = None
     slug: Optional[str] = None
     title: Optional[str] = None
@@ -128,13 +128,13 @@ class GuideView(BaseModel):
     # Forme 2 seulement : le readme d'org (prose plate), son org, son équipe active.
     org: Optional[str] = None
     guide: Optional[str] = None
-    doctrine: Optional[str] = None        # ALIAS déprécié (retrait 27/09/2026)
+    doctrine: Optional[str] = None        # ALIAS déprécié (retrait 29/10/2026)
     group: Optional[str] = None
     group_guide: Optional[str] = None
-    group_doctrine: Optional[str] = None  # ALIAS déprécié (retrait 27/09/2026)
+    group_doctrine: Optional[str] = None  # ALIAS déprécié (retrait 29/10/2026)
     # Index (slug/title/description/scope) — SANS les corps.
     guides: Optional[list[dict]] = None
-    doctrines: Optional[list[dict]] = None  # ALIAS déprécié (retrait 27/09/2026)
+    doctrines: Optional[list[dict]] = None  # ALIAS déprécié (retrait 29/10/2026)
     # Présent seulement s'il y a un projet actif : les entités du projet contre
     # lesquelles résoudre les `<slot:>`. Dérivé best-effort — son ABSENCE peut donc
     # aussi vouloir dire « la dérivation a échoué », pas seulement « hors projet ».
@@ -173,7 +173,7 @@ class InstructionsBundle(BaseModel):
 
     ⚠️ **`instructions` exclut le readme** (slug réservé `claude_md`), qui n'est décrit
     que par `guide` (servi aussi sous son nom d'hier, `doctrine`, jusqu'au
-    27/09/2026). Et l'asymétrie va plus loin : `guide.exists: true` annonce
+    29/10/2026). Et l'asymétrie va plus loin : `guide.exists: true` annonce
     un readme que `GET /api/me/instructions/claude_md` **ne sait pas servir** (404) —
     le readme se lit sur la surface guide, pas ici.
 
@@ -195,7 +195,7 @@ class InstructionsBundle(BaseModel):
         "Peut supprimer une procédure de cette org ET tout son historique "
         "(irréversible) : org_admin."))
     guide: GuideMeta
-    doctrine: GuideMeta   # ALIAS déprécié, retrait le 27/09/2026 (#519)
+    doctrine: GuideMeta   # ALIAS déprécié, retrait le 29/10/2026 (#519)
     instructions: list[InstructionIndexEntry]
 
 
@@ -403,7 +403,7 @@ def _inconnu(message: str) -> AuthzDenied:
 
     Un code d'erreur ne se DOUBLE pas : il n'y a qu'un champ `error`. Le nouveau
     prend donc la place, et l'ancien est conservé à côté — un client qui teste
-    `error == "unknown_doctrine"` a jusqu'au 27/09/2026 pour lire `legacy_code`, ou
+    `error == "unknown_doctrine"` a jusqu'au 29/10/2026 pour lire `legacy_code`, ou
     mieux, le nouveau code (#519, retrait #526).
     """
     return AuthzDenied(404, "unknown_guide", message,
@@ -418,7 +418,7 @@ class EmptyInput(BaseModel):
 class GuideGetInput(BaseModel):
     slug: Optional[str] = None
     guide_id: Optional[int] = None      # lecture par ID STABLE (ADR 0032) — y compris un guide PARTAGÉ à ton org (grant read, livraison #52)
-    doctrine_id: Optional[int] = None   # ALIAS déprécié du précédent (retrait 27/09/2026, #519)
+    doctrine_id: Optional[int] = None   # ALIAS déprécié du précédent (retrait 29/10/2026, #519)
     scope: str = "org"
     version: Optional[int] = None
     with_history: bool = False
@@ -696,7 +696,7 @@ async def _get_guide(ctx: ResolvedCtx, inp) -> dict:
     # pas par l'org active.
     # ⚠️ Le kind d'ownership `doctrine` ci-dessous est une VALEUR EN BASE
     # (`resource_grants.resource_type`) : elle ne se double pas, elle se migre — lot B4.
-    # Les deux noms du paramètre sont acceptés (#519, l'ancien part le 27/09/2026).
+    # Les deux noms du paramètre sont acceptés (#519, l'ancien part le 29/10/2026).
     guide_id = getattr(inp, "guide_id", None)
     if guide_id is None:
         guide_id = getattr(inp, "doctrine_id", None)

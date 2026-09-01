@@ -74,7 +74,7 @@ MOT = re.compile("doctrine", re.I)
 # familles, et une seule d'entre elles se lit encore comme un « mot à changer » :
 #
 #   1. **Des alias SERVIS, datés** — clés de réponse, paramètres d'entrée, codes
-#      d'erreur. Ils s'en vont le 27/09/2026 avec le reste, en retirant les appels à
+#      d'erreur. Ils s'en vont le 29/10/2026 avec le reste, en retirant les appels à
 #      `deprecations.avec_les_deux_noms` (lot D, #526).
 #   2. **Des DONNÉES déjà écrites en base** — colonne `runs.doctrine`, valeur
 #      `missing_doctrine` d'un CHECK, kind d'ownership `doctrine` dans

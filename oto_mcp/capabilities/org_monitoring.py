@@ -252,7 +252,7 @@ class RunRow(BaseModel):
     """Un déroulé. `slug` est un alias de compat = `guide` s'il y en a un, sinon
     `label` — pas un troisième identifiant.
 
-    ⚠️ `guide` est servi aussi sous son nom d'hier, `doctrine`, jusqu'au 27/09/2026
+    ⚠️ `guide` est servi aussi sous son nom d'hier, `doctrine`, jusqu'au 29/10/2026
     (#519) — cf. `docs/alias-deprecies.md`.
 
     ⚠️ `finished_at`/`outcome` à `null` = le déroulé n'a **pas été fermé** (`run_finish`
@@ -265,7 +265,7 @@ class RunRow(BaseModel):
     slug: Optional[str] = None
     label: Optional[str] = None
     guide: Optional[str] = None
-    doctrine: Optional[str] = None        # ALIAS déprécié (retrait 27/09/2026)
+    doctrine: Optional[str] = None        # ALIAS déprécié (retrait 29/10/2026)
     sub: Optional[str] = None
     email: Optional[str] = None
     name: Optional[str] = None

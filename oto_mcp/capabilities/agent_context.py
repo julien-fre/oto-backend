@@ -78,7 +78,7 @@ class AgentContextView(BaseModel):
     layers: list[ContextLayer]
     # Le guide d'org résolu, tel que le sert `oto_procedure op=get` — forme non
     # redéclarée ici pour ne pas en tenir deux copies. Servi sous ses DEUX noms le
-    # temps du préavis (#519) ; `doctrine` s'en va le 27/09/2026.
+    # temps du préavis (#519) ; `doctrine` s'en va le 29/10/2026.
     guide: dict
     doctrine: dict
     tools: ToolsView
@@ -132,7 +132,7 @@ async def _agent_context(ctx: ResolvedCtx, inp: AgentContextInput) -> dict:
         "instructions": "\n\n".join(l["body"] for l in layers if l["body"]),
         "layers": [{**l, "chars": len(l["body"])} for l in layers if l["body"]],
         "guide": guide,
-        "doctrine": guide,   # ALIAS déprécié (retrait 27/09/2026, #519)
+        "doctrine": guide,   # ALIAS déprécié (retrait 29/10/2026, #519)
         "tools": await _tools_view(ctx),
     }
 
