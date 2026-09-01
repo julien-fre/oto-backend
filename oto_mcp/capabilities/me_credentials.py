@@ -438,10 +438,13 @@ CAPABILITIES += [
         key="me.credential.set", handler=_set, Input=CredentialSetInput,
         authz=SUB_ONLY, Output=CredentialSaved, description=_DOC_SET,
         mcp=None,
-        # ⚠️ PAS les refus de palier : cette capacité n'a pas de `scope`, elle
-        # écrit TOUJOURS au palier membre (ADR 0033). Les déclarer serait
-        # promettre trois réponses que ce chemin ne rend jamais.
-        errors=(_CONNECTEUR_INCONNU,
+        # ⚠️ Pas les trois refus de palier : cette capacité n'a pas de `scope`, elle
+        # écrit TOUJOURS au palier membre (ADR 0033) — donc ni admin d'équipe, ni
+        # admin d'org à exiger. **Mais `no_org_context` reste**, et c'est le piège :
+        # la clé membre est posée DANS l'org de contexte, que le handler résout. Je
+        # l'avais retiré le 01/09 sur la déduction « pas de scope ⟹ pas de contexte
+        # d'org » ; le graphe d'appel dit l'inverse, et il a raison.
+        errors=(_CONNECTEUR_INCONNU, _REFUS_DE_PALIER[0],
                 DeclaredError(400, "single_account_connector",
                               "un `account` nommé sur un connecteur qui n'en gère "
                               "qu'un — la clé écraserait l'unique"),
@@ -453,7 +456,16 @@ CAPABILITIES += [
                               "cet acteur"),
                 DeclaredError(409, "account_required",
                               "connecteur multi-compte sans `account` : il faut "
-                              "nommer le compte, sans quoi la pose est ambiguë")),
+                              "nommer le compte, sans quoi la pose est ambiguë"),
+                # Les deux refus de SAISIE, levés par le coffre et relayés tels quels.
+                # Ils étaient servis sans être déclarables : le garde-fou exigeait un
+                # code levé dans CE module, et l'a assoupli le 01/09 (#792) — il juge
+                # désormais l'atteignabilité par le chemin, ce qui les couvre.
+                DeclaredError(400, "invalid_field_value",
+                              "un champ à jeu fermé reçoit une valeur hors liste — "
+                              "refusé à la pose plutôt qu'au premier appel réel"),
+                DeclaredError(400, "missing_credentials",
+                              "aucun champ renseigné : il n'y a rien à poser")),
         rest=RestBinding("POST", _PATH, body_field="fields"),
     ),
     Capability(

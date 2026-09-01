@@ -5,9 +5,12 @@
 ne rend pas — pire qu'un document muet, parce qu'un client généré s'y branche. Deux
 gardes, dans l'ordre de ce qui coûterait le plus cher :
 
-1. **chaque code déclaré est levé dans le module du handler**, avec ce statut — lu à
-   la source (`AuthzDenied(<status>, "<code>"`), la forme sous laquelle tous les refus
-   de capacité s'écrivent ;
+1. **chaque code déclaré est ATTEIGNABLE par la capacité qui le déclare** — le graphe
+   d'appel depuis son handler, pas la présence du code quelque part dans le fichier.
+   ⚠️ La question était « existe-t-il dans le module ? » jusqu'au 2026-09-01 (#792), et
+   deux capacités voisines partagent leurs homonymes : l'une pouvait promettre ce que
+   seule l'autre rend. Le même axe manqué interdisait l'inverse — déclarer un refus
+   réellement servi mais levé dans un autre module ;
 2. **chaque déclaration atteint `/openapi.json`** : une réponse par statut, l'énuméré
    `error` qui porte le code, l'enveloppe `Erreur` en composant.
 
@@ -16,10 +19,9 @@ Le rejeu sur la route SERVIE (un vrai 409 sur un vrai PATCH) vit dans
 """
 from __future__ import annotations
 
-import inspect
-import re
-
 import pytest
+
+from _refus_atteignables import atteignables
 
 from oto_mcp import openapi
 from oto_mcp.capabilities import registry
@@ -50,15 +52,28 @@ def test_il_y_a_des_refus_declares():
 
 
 @pytest.mark.parametrize("paire", _declarations(), ids=_ids)
-def test_un_refus_declare_est_leve_dans_le_module_du_handler(paire):
+def test_un_refus_declare_est_ATTEIGNABLE_par_cette_capacite(paire):
+    """L'axe corrigé le 2026-09-01 (#792) : ce test demandait qu'un code EXISTE dans
+    le module du handler. Deux capacités du même fichier partagent leurs homonymes —
+    donc l'une pouvait déclarer un refus que seule l'autre rend, et rester verte.
+    C'est arrivé le jour même, sur la pose d'une clé : trois refus de palier déclarés
+    sur une capacité qui n'a pas de palier, rattrapés par lecture et non par le banc.
+
+    ⚠️ **Et l'axe manqué avait DEUX faces.** L'ancienne question refusait aussi
+    l'inverse : un refus réellement servi mais levé dans un AUTRE module — les refus
+    de saisie qu'un coffre remonte — restait indéclarable. Corriger un seul sens
+    aurait laissé l'autre en donnant l'illusion d'avoir traité le sujet.
+
+    La question est maintenant : *ce chemin-ci peut-il lever ce code ?* — cf.
+    `tests/_refus_atteignables.py` pour ce que le parcours voit et ce qu'il ne voit
+    pas.
+    """
     cap, e = paire
     assert isinstance(e, DeclaredError)
-    src = inspect.getsource(inspect.getmodule(cap.handler))
-    motif = rf'AuthzDenied\(\s*{e.status},\s*"{re.escape(e.code)}"'
-    assert re.search(motif, src), (
-        f"{cap.key} déclare {e.status} `{e.code}` mais son module ne lève pas "
-        f"`AuthzDenied({e.status}, \"{e.code}\"…)` : déclaration décorative — le "
-        "document promettrait un refus que le serveur ne rend pas.")
+    assert atteignables(cap.handler).accepte(e.status, e.code), (
+        f"{cap.key} déclare {e.status} `{e.code}` mais son chemin ne peut pas le "
+        "lever : déclaration décorative — le document promettrait un refus que le "
+        "serveur ne rend jamais, et un client généré s'y brancherait.")
 
 
 @pytest.mark.parametrize("paire", _declarations(), ids=_ids)
@@ -93,3 +108,37 @@ def test_l_enveloppe_est_un_composant_toujours_present():
             for statut in ("401", "403"):
                 assert op["responses"][statut]["content"]["application/json"]["schema"] \
                     == {"$ref": "#/components/schemas/Erreur"}, (verbe, op["operationId"])
+
+
+# ── Le cliquet du cliquet (#792) ──────────────────────────────────────────────
+#
+# ⚠️ Ce fichier a changé d'AXE le 2026-09-01, et le piège d'un tel lot est de se
+# servir du garde-fou pour valider sa propre correction. Les deux tests ci-dessous
+# exercent le parcours sur un banc FACTICE (`tests/_faux_refus.py`), dont on connaît
+# les réponses d'avance : ils
+# rougiraient si l'assouplissement devenait une passoire, ou si le durcissement
+# redevenait une porte fermée. Éprouvés en cassant chacun de son côté avant d'être
+# posés.
+
+def test_le_parcours_refuse_un_refus_qui_vit_a_COTE_du_chemin():
+    """Le sens qui protège le contrat : une capacité voisine lève ce code, pas
+    celle-ci. L'ancienne question — « existe-t-il dans le module ? » — répondait oui."""
+    import _faux_refus
+
+    vu = atteignables(_faux_refus.handler)
+    assert vu.accepte(404, "introuvable"), "le refus direct du chemin doit passer"
+    assert not vu.accepte(403, "jamais_par_ce_chemin"), (
+        "un code levé par une fonction que le handler n'appelle PAS doit être refusé")
+
+
+def test_le_parcours_accepte_un_refus_RELAYE_depuis_ailleurs():
+    """L'autre sens : le code voyage dans une exception métier et ressort par un
+    relais. Le refuser rendait indéclarable un refus réellement servi."""
+    import _faux_refus
+
+    vu = atteignables(_faux_refus.handler)
+    assert vu.accepte(400, "valeur_refusee"), (
+        "un code porté par une exception du chemin et relayé doit être déclarable")
+    assert not vu.accepte(400, "code_qui_nexiste_nulle_part"), (
+        "le relais n'ouvre pas la porte à n'importe quel code : seulement à ceux que "
+        "les exceptions du chemin savent porter")
