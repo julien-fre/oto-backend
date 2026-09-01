@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DocSection(BaseModel):
@@ -62,13 +62,17 @@ class CredentialField(BaseModel):
     secret: bool
     required: bool
     help: str
-    # Valeurs du champ discriminant (`AuthDescriptor.field_discriminator`) pour
-    # lesquelles ce champ-ci est pertinent. Liste VIDE = pertinent quel que soit le
-    # discriminant (le cas des ~90 connecteurs qui n'en déclarent pas) — donc « vide »
-    # veut dire « toujours », jamais « jamais ».
-    when: list[str] = []
-    # Jeu FERMÉ de valeurs acceptées (le front rend un select). Vide = champ libre.
-    choices: list[str] = []
+    when: list[str] = Field(default=[], description=(
+        "Valeurs du champ discriminant (`AuthDescriptor.field_discriminator`) pour "
+        "lesquelles ce champ-ci est pertinent. ⚠️ Liste VIDE = pertinent QUEL QUE "
+        "SOIT le discriminant — « vide » veut dire « toujours », jamais « jamais » "
+        "(c'est le cas des ~90 connecteurs qui n'en déclarent pas). Renseignée, elle "
+        "dit deux choses d'un coup : le champ ne s'affiche que pour ces valeurs, et "
+        "son `required` ne s'applique que là."))
+    choices: list[str] = Field(default=[], description=(
+        "Jeu FERMÉ de valeurs acceptées — un select, pas un champ libre. Vide = "
+        "libre. Une valeur hors liste est refusée à l'ÉCRITURE, avec le jeu attendu "
+        "dans le message."))
 
 
 class AuthDescriptor(BaseModel):
@@ -91,10 +95,13 @@ class AuthDescriptor(BaseModel):
     # « compte » est faux chez lui (un compte Slack du coffre EST un workspace). Le
     # front l'affiche tel quel. Toujours renseigné — défaut « compte ».
     account_noun: str
-    # Le champ dont la valeur sélectionne les autres, quand il y en a un
-    # (`auth_mode` chez `http`). **Chaîne VIDE**, jamais `null`, quand il n'y en a
-    # pas : c'est ce que le producteur rend, et le contrat le dit tel quel.
-    field_discriminator: str = ""
+    field_discriminator: str = Field(default="", description=(
+        "Le champ dont la valeur sélectionne les autres, quand il y en a un "
+        "(`auth_mode` chez `http`). **Chaîne VIDE**, jamais `null`, quand il n'y en "
+        "a pas. ⚠️ Tant qu'aucune valeur n'est choisie, TOUS les champs sont "
+        "pertinents : le serveur ne masque rien avant que la saisie ait tranché, "
+        "parce que masquer serait deviner. Un formulaire qui filtrerait dès "
+        "l'ouverture cacherait des champs que la pose exige."))
     # Le canal hébergé de ce connecteur, quand il en porte un (les six canaux
     # unipile). `null` = ce connecteur n'est pas un canal hébergé — sans lui, une
     # carte « connecter un compte » ne peut pas savoir lequel des six elle représente.
