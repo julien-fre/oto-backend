@@ -18,10 +18,10 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from mcp.shared.exceptions import McpError
 
 from oto_mcp import providers
 from oto_mcp.connectors import verify as connector_verify
+from oto_mcp.mcp_errors import McpError
 from oto_mcp.tool_visibility import namespace_of
 from oto_mcp.tools import minari
 

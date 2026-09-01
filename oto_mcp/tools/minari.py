@@ -50,10 +50,10 @@ from typing import Any, Dict, List, Literal, Optional
 from urllib.parse import parse_qs, urlparse
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
+from ..mcp_errors import McpError
 from ..connectors import verify as connector_verify
 
 # Bornes de rendu — Minari fixe ses pages côté serveur (50, et 10 pour
