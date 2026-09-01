@@ -194,6 +194,23 @@ def lignes_de_banniere(e: Ecart, *, skips: int = 0) -> list[str]:
     return [tete, *detail, *corps]
 
 
+def categorie_non_concluante(e: Ecart) -> str:
+    """Le libellé qui remplace « skipped » dans le RÉSUMÉ FINAL de pytest pour
+    les seuls tests non concluants du pin (#790).
+
+    La bannière et le décompte brut (« 103 skipped ») sont écrits sur des lignes
+    à côté du résumé — donc filtrables, comme `| grep passed` l'a démontré. La
+    ligne finale de pytest (`8924 passed, 103 skipped, … in 190.36s`), elle,
+    survit à ce filtre : c'est la SEULE qui le fasse, parce qu'elle contient
+    « passed ». Ce module ne lui ajoute rien à côté — il change ce qu'elle
+    affiche déjà : `pytest_report_teststatus` (conftest.py) range ces skips
+    sous CE libellé plutôt que sous « skipped », donc le nombre qui passe le
+    filtre porte directement la phrase, sans nouveau canal à maintenir et sans
+    se confondre avec les skips ORDINAIRES (docker absent, etc.) qui restent
+    comptés sous « skipped »."""
+    return f"non concluant(s) — venv ≠ pin oto-core {e.epingle}"
+
+
 def skips_autorises() -> bool:
     """Local : un rouge qui ne prouve rien vaut moins qu'un test explicitement non
     concluant. CI : surtout pas — la garde version-skew doit y rester mordante."""

@@ -190,6 +190,15 @@ disputeraient les mêmes lignes.
 > qui ne prouve rien vaut moins qu'un test explicitement non concluant. **En CI, jamais** : la
 > garde version-skew doit y rester mordante, c'est là qu'elle protège la prod.
 >
+> ⚠️ **La bannière ne survit pas à `| grep passed`** (#790, mesuré le 01/09/2026 : elle
+> s'imprime sur des lignes à côté de celle qui contient ce mot, donc un filtre — le geste le
+> plus courant sur neuf mille tests — l'avale). Depuis, `pytest_report_teststatus`
+> (`conftest.py`) range ces skips à part **dans le résumé final de pytest lui-même** — la SEULE
+> ligne garantie de contenir « passed ». `8924 passed, 103 skipped, …` devient
+> `8924 passed, 5 skipped, 98 non concluant(s) — venv ≠ pin oto-core vX.Y.Z, …` : le nombre ne
+> change pas, mais il **distingue** désormais les skips ordinaires des skips du pin, et **nomme**
+> la version attendue — même lu au travers d'un `grep`.
+>
 > Ce qui suit reste vrai, et sert à comprendre ce que la bannière annonce.
 
 **Reconnaître AVANT d'enquêter.** Lancée depuis `/data/oto/backend` (ou avec son `.venv`), la

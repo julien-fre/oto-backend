@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-from _oto_core_pin import (MARQUEUR, Ecart, ecart,
+from _oto_core_pin import (MARQUEUR, Ecart, categorie_non_concluante, ecart,
                            installe_est_bien_ce_qui_sexecute,
                            lignes_de_banniere, skips_autorises, tag_epingle)
 
@@ -49,12 +49,17 @@ def _tag_installe() -> str:
     return etat["tag"]
 
 
-def _faux_depot(tmp_path: Path, *tags: str) -> Path:
+def _faux_depot(tmp_path: Path, *tags: str, avec_skip_ordinaire: bool = False) -> Path:
     depot = tmp_path / "depot"
     (depot / "tests").mkdir(parents=True)
     (depot / "pyproject.toml").write_text(_manifeste(*tags), encoding="utf-8")
     for nom in ("conftest.py", "_oto_core_pin.py", "_pg_hygiene.py"):
         shutil.copy(TESTS / nom, depot / "tests" / nom)
+    skip_ordinaire = ("""
+        @pytest.mark.skip(reason="skip ORDINAIRE, sans rapport avec le pin")
+        def test_skip_ordinaire():
+            pass
+        """ if avec_skip_ordinaire else "")
     (depot / "tests" / "test_jouet.py").write_text(textwrap.dedent(f"""
         import pytest
 
@@ -64,17 +69,30 @@ def _faux_depot(tmp_path: Path, *tags: str) -> Path:
 
         def test_ordinaire():
             assert True
-        """), encoding="utf-8")
+        {skip_ordinaire}"""), encoding="utf-8")
     return depot
 
 
-def _run(depot: Path, *devant: Path) -> str:
+def _run(depot: Path, *devant: Path, args: tuple[str, ...] = ()) -> str:
     chemin = os.pathsep.join([*(str(d) for d in devant), str(RACINE)])
     env = {**os.environ, "PYTHONPATH": chemin}
     env.pop("CI", None)          # on éprouve le comportement LOCAL
     r = subprocess.run(
-        [sys.executable, "-m", "pytest", "tests", "-q", "-p", "no:randomly"],
+        [sys.executable, "-m", "pytest", "tests", "-q", "-p", "no:randomly", *args],
         cwd=depot, capture_output=True, text=True, env=env)
+    return r.stdout + r.stderr
+
+
+def _run_filtre(depot: Path, filtre: str) -> str:
+    """Le montage RÉEL du bug #790 : une commande, un `|`, un shell — pas une
+    reconstitution en mémoire de ce qu'un filtre est censé faire. `sh -c` avec
+    la commande citée pour de vrai, comme un opérateur la tape."""
+    chemin = os.pathsep.join([str(RACINE)])
+    env = {**os.environ, "PYTHONPATH": chemin}
+    env.pop("CI", None)
+    cmd = f"{sys.executable} -m pytest tests -q -p no:randomly | {filtre}"
+    r = subprocess.run(cmd, shell=True, cwd=depot, capture_output=True, text=True,
+                        env=env)
     return r.stdout + r.stderr
 
 
@@ -88,8 +106,12 @@ def test_la_banniere_parle_quand_le_venv_ne_suit_pas_le_pin(tmp_path):
     # Le COUPLE, pas le mot « divergence » : c'est lui qui se comprend d'un coup.
     assert "v0.0.0-forge" in sortie, sortie
     assert _tag_installe() in sortie, sortie
-    # Le test qui n'a de sens qu'au pin est NON CONCLUANT, pas rouge.
-    assert "1 passed" in sortie and "1 skipped" in sortie, sortie
+    # Le test qui n'a de sens qu'au pin est NON CONCLUANT, pas rouge — et compté
+    # À PART de « skipped » (#790) : c'est cette catégorie, pas le mot générique,
+    # qui doit apparaître dans le résumé final.
+    assert "1 passed" in sortie, sortie
+    assert "1 skipped" not in sortie, sortie
+    assert "non concluant(s) — venv ≠ pin oto-core v0.0.0-forge" in sortie, sortie
 
 
 def test_la_banniere_se_tait_quand_les_versions_concordent(tmp_path):
@@ -141,6 +163,65 @@ def test_un_checkout_masquant_neutralise_meme_un_ecart_de_tags(tmp_path):
     perime = {"tag": "v1.101.0", "commit": "abc", "source": "direct_url"}
     assert ecart(pyproject=m, etat=perime, execute_l_installe=True) is not None
     assert ecart(pyproject=m, etat=perime, execute_l_installe=False) is None
+
+
+# --------------------------------------------------------------------------- #
+# #790 — le résumé final, seule ligne garantie de survivre à `| grep passed`
+# --------------------------------------------------------------------------- #
+
+def test_le_compte_survit_a_un_vrai_grep_passed(tmp_path):
+    """LE cas qui compte (#790) : pas `pytest -q` seul, le FILTRE lui-même, dans
+    un vrai shell (`sh -c … | grep`), comme un opérateur le tape vraiment.
+
+    Avant ce lot, cette même commande ne rendait que « 1 passed, 1 skipped …» —
+    vrai, mais muet sur le pourquoi (indiscernable d'un skip ordinaire)."""
+    depot = _faux_depot(tmp_path, "v0.0.0-forge")
+    sortie = _run_filtre(depot, 'grep "passed"')
+    assert "PIN oto-core" not in sortie, sortie   # la bannière, elle, reste avalée
+    assert "non concluant(s) — venv ≠ pin oto-core v0.0.0-forge" in sortie, sortie
+    assert "1 skipped" not in sortie, sortie
+
+
+def test_le_troisieme_chemin_reste_muet_sans_regresser(tmp_path):
+    """`-p no:terminal` coupe le REPORTER lui-même — donc `-q`, une option QUE
+    ce plugin déclare, avec : sur cette version de pytest, la combinaison sort
+    en erreur d'usage AVANT toute collecte, jamais en run silencieux. Mesuré,
+    pas supposé — ni le résumé ni notre catégorie n'ont la moindre chance de
+    s'imprimer. Ce lot ne change rien à ce chemin : il était déjà hors-jeu
+    avant #790 (piste écartée par le commentaire de l'issue), donc le rester
+    n'est pas une régression."""
+    depot = _faux_depot(tmp_path, "v0.0.0-forge")
+    sortie = _run(depot, args=("-p", "no:terminal"))
+    assert "unrecognized arguments" in sortie, sortie
+    assert "PIN oto-core" not in sortie, sortie
+    assert "non concluant" not in sortie, sortie
+
+
+def test_le_skip_ordinaire_reste_distinct_du_non_concluant(tmp_path):
+    """Le but n'est pas de maquiller TOUS les skips en « non concluant » — un
+    skip sans rapport avec le pin (docker absent, etc.) doit rester lisible
+    comme tel, à part : c'est la distinction que la seule note « 103 skipped »
+    effaçait (le commentaire de l'issue : 5 skips ordinaires ne se
+    distinguaient pas de 103 causés par le pin)."""
+    depot = _faux_depot(tmp_path, "v0.0.0-forge", avec_skip_ordinaire=True)
+    sortie = _run(depot)
+    assert "1 skipped" in sortie, sortie
+    assert "non concluant(s) — venv ≠ pin oto-core v0.0.0-forge" in sortie, sortie
+
+
+def test_la_concordance_ne_laisse_aucune_trace_dans_le_resume(tmp_path):
+    """Le cas nominal, ré-éprouvé sur LE RÉSUMÉ précisément : pas de catégorie
+    fantôme quand les versions concordent — l'asymétrie qui tient tout le lot,
+    bruyant quand c'est faux, silencieux quand c'est juste."""
+    depot = _faux_depot(tmp_path, _tag_installe())
+    sortie = _run(depot)
+    assert "non concluant" not in sortie, sortie
+    assert "2 passed" in sortie, sortie
+
+
+def test_categorie_non_concluante_nomme_lepingle():
+    texte = categorie_non_concluante(Ecart("v1.101.0", "v1.103.0", "direct_url"))
+    assert "v1.103.0" in texte
 
 
 # --------------------------------------------------------------------------- #
