@@ -43,6 +43,8 @@ from __future__ import annotations
 
 import os
 import re
+from importlib import metadata
+from importlib.util import find_spec
 from pathlib import Path
 from typing import NamedTuple
 
@@ -92,18 +94,63 @@ def etat_installe() -> dict:
     return oto_core()
 
 
-def ecart(pyproject: Path | None = None, etat: dict | None = None) -> Ecart | None:
+def installe_est_bien_ce_qui_sexecute() -> bool | None:
+    """Le paquet `oto` réellement importé est-il celui de la distribution installée ?
+
+    ⚠️ Sans cette question, ce garde-fou saborde la recette qu'il est censé
+    servir. `oto` est un package **namespace** : préfixer `PYTHONPATH` avec un
+    checkout au bon tag le fait gagner **sans toucher au venv partagé** — c'est
+    exactement ce que `docs/commands.md` recommande pour rejouer proprement. Or
+    `PYTHONPATH` ne change PAS les métadonnées installées : `direct_url.json`
+    continue d'annoncer l'ancien tag alors que le code exécuté est le bon.
+
+    Mesuré le 01/09/2026 en écrivant ce module : la première version comparait le
+    pin aux seules métadonnées et passait donc **101 tests sous silence** pendant
+    que l'opérateur était précisément en train de les vérifier au bon tag — elle
+    aurait rendu la recette officielle inopérante, en silence.
+
+    Rend None quand on ne peut pas trancher : la politique du module est de se
+    taire plutôt que de crier sur une mesure qu'on n'a pas.
+    """
+    try:
+        dist = metadata.distribution("oto-core")
+        racine_installee = Path(str(dist.locate_file("oto"))).resolve()
+    except (metadata.PackageNotFoundError, OSError, ValueError):
+        return None
+    try:
+        spec = find_spec("oto")
+    except (ImportError, ValueError):
+        return None
+    portions = list(getattr(spec, "submodule_search_locations", None) or [])
+    if not portions:
+        return None
+    # L'ordre des portions suit `sys.path` : la première l'emporte pour les
+    # sous-modules, donc c'est elle qui dit d'où vient le code exécuté.
+    return Path(portions[0]).resolve() == racine_installee
+
+
+def ecart(pyproject: Path | None = None, etat: dict | None = None,
+          execute_l_installe: bool | None = None) -> Ecart | None:
     """L'écart s'il est MESURABLE et RÉEL, sinon None.
 
-    None couvre trois cas bien distincts, tous des non-alarmes :
-    pas de pin lisible, coordonnée installée non comparable (PyPI), concordance.
+    None couvre QUATRE cas bien distincts, tous des non-alarmes : pas de pin
+    lisible, coordonnée installée non comparable (PyPI), **un checkout qui masque
+    la distribution installée** (la recette `PYTHONPATH`), et la concordance.
     """
     epingle = tag_epingle(pyproject)
     if not epingle:
         return None
     etat = etat_installe() if etat is None else etat
     source = etat.get("source") or "unknown"
+    if execute_l_installe is None:
+        execute_l_installe = installe_est_bien_ce_qui_sexecute()
+    if execute_l_installe is False:
+        # Un checkout gagne sur le venv : les métadonnées décrivent une
+        # distribution qui n'exécute rien. On ne mesure plus, donc on se tait.
+        return None
     if source == "absent":
+        # Absente ET rien pour la remplacer sur le chemin d'import : là, c'est un
+        # vrai problème. Si un checkout la remplace, on est déjà sorti au-dessus.
         return Ecart(None, epingle, source)
     if source != "direct_url":
         # Numéro gelé, pas un tag : l'instrument ne peut pas voir l'écart.

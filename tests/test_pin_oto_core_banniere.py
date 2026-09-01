@@ -23,8 +23,9 @@ from pathlib import Path
 
 import pytest
 
-from _oto_core_pin import (MARQUEUR, Ecart, ecart, lignes_de_banniere,
-                           skips_autorises, tag_epingle)
+from _oto_core_pin import (MARQUEUR, Ecart, ecart,
+                           installe_est_bien_ce_qui_sexecute,
+                           lignes_de_banniere, skips_autorises, tag_epingle)
 
 RACINE = Path(__file__).resolve().parent.parent
 TESTS = RACINE / "tests"
@@ -67,8 +68,9 @@ def _faux_depot(tmp_path: Path, *tags: str) -> Path:
     return depot
 
 
-def _run(depot: Path) -> str:
-    env = {**os.environ, "PYTHONPATH": str(RACINE)}
+def _run(depot: Path, *devant: Path) -> str:
+    chemin = os.pathsep.join([*(str(d) for d in devant), str(RACINE)])
+    env = {**os.environ, "PYTHONPATH": chemin}
     env.pop("CI", None)          # on éprouve le comportement LOCAL
     r = subprocess.run(
         [sys.executable, "-m", "pytest", "tests", "-q", "-p", "no:randomly"],
@@ -96,6 +98,41 @@ def test_la_banniere_se_tait_quand_les_versions_concordent(tmp_path):
     sortie = _run(_faux_depot(tmp_path, _tag_installe()))
     assert "PIN oto-core" not in sortie, sortie
     assert "2 passed" in sortie, sortie
+
+
+def test_un_checkout_qui_masque_le_venv_fait_TAIRE_la_banniere(tmp_path):
+    """La recette de `docs/commands.md` — préfixer `PYTHONPATH` d'un checkout au
+    bon tag — ne touche PAS aux métadonnées installées : `direct_url.json`
+    continue d'annoncer l'ancien tag pendant que le bon code s'exécute.
+
+    Sans cette sortie, le garde-fou saborde la recette qu'il sert : il passerait
+    sous silence les tests que l'opérateur est en train de vérifier au bon tag.
+    Mesuré : c'est ce que faisait la première version (101 tests escamotés).
+
+    Le leurre est un simple répertoire `oto/` vide placé devant : `oto` étant un
+    package NAMESPACE, il devient la première portion sans rien casser (les
+    sous-modules restent trouvés dans le venv, plus loin sur le chemin).
+    """
+    leurre = tmp_path / "devant"
+    (leurre / "oto").mkdir(parents=True)
+    sortie = _run(_faux_depot(tmp_path, "v0.0.0-forge"), leurre)
+    assert "PIN oto-core" not in sortie, sortie
+    # Et surtout : le test marqué a bien TOURNÉ, il n'a pas été escamoté.
+    assert "2 passed" in sortie, sortie
+
+
+def test_le_masquage_se_detecte_dans_lenvironnement_reel():
+    """Sans leurre, le `oto` importé EST celui du venv — sinon le test ci-dessus
+    prouverait le silence pour la mauvaise raison."""
+    assert installe_est_bien_ce_qui_sexecute() is True
+
+
+def test_un_checkout_masquant_neutralise_meme_un_ecart_de_tags(tmp_path):
+    m = tmp_path / "pyproject.toml"
+    m.write_text(_manifeste("v1.103.0"), encoding="utf-8")
+    perime = {"tag": "v1.101.0", "commit": "abc", "source": "direct_url"}
+    assert ecart(pyproject=m, etat=perime, execute_l_installe=True) is not None
+    assert ecart(pyproject=m, etat=perime, execute_l_installe=False) is None
 
 
 # --------------------------------------------------------------------------- #
