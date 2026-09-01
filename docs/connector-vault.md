@@ -55,14 +55,32 @@ crans, dans cet ordre :
 fonction le tranche** : `connectors.cardinality.is_multi_account(connector, org)`.
 
 ⚠️ **Le vrai risque du lot n'est pas de mal lire la surcharge, c'est de ne la lire que
-d'un côté.** Deux chemins très éloignés consultent la cardinalité : la **garde
-d'écriture** (« ce deuxième compte a-t-il le droit d'exister ? ») et la **résolution**
-(« va-t-on le chercher ? »). Lue par la première seulement, une surcharge accepterait
-une ligne que personne n'irait jamais lire — mot pour mot le défaut d'oto-backend#409,
-corrigé le 27/08. D'où deux gardes : une sonde AST qui interdit de lire
-`Connector.auth_multi_account` hors du seam et des surfaces d'inventaire, et un test
-qui pose une surcharge, recharge, et vérifie que les **deux verdicts basculent
-ensemble**.
+d'un côté.** **Trois** chemins très éloignés consultent la cardinalité : la **garde
+d'écriture** (« ce deuxième compte a-t-il le droit d'exister ? »), la **résolution**
+(« va-t-on le chercher ? ») et la **carte servie** (« l'écran le propose-t-il ? »). Lue
+par la première seulement, une surcharge accepterait une ligne que personne n'irait
+jamais lire — mot pour mot le défaut d'oto-backend#409, corrigé le 27/08. D'où deux
+gardes : une sonde AST qui interdit de lire `Connector.auth_multi_account` hors du seam
+et des surfaces d'inventaire, et un test qui pose une surcharge, recharge, et vérifie
+que les **verdicts basculent ensemble**.
+
+⚠️ **La carte servie l'a appris à ses dépens (oto-backend#732, 2026-09-01).**
+`providers.public_catalog()` posait `auth.cardinality` **depuis le registre**, donc
+depuis le défaut du CODE — et c'est cette clé que le dashboard lit pour décider s'il
+propose un second compte. Une org élargie par surcharge voyait donc le serveur
+**accepter** un geste que l'écran ne **proposait** jamais : le même demi-élargissement
+que #409, pris par l'autre bout. Le registre ne pouvait pas faire mieux, il est PUR ;
+c'est aux surfaces qui connaissent un requérant — donc une org de contexte — de
+repasser par le seam : `cardinality.overlay_for_org(rows, org)`, appliqué dans
+`api.public.connectors_catalog` (`GET /api/connectors`) et
+`capabilities.connectors.selection._visible_catalog` (`connectors.me` + `oto_search`).
+La règle est forcée mécaniquement plutôt qu'écrite : **une fonction qui appelle
+`public_catalog()` doit appeler `overlay_for_org()`** — sonde AST dans
+`tests/test_connector_cardinality_override.py`, et les deux surfaces sont exercées pour
+de vrai dans `tests/connectors/test_carte_cardinalite_servie.py`. Écart **latent** quand
+il a été trouvé (aucune ligne de surcharge en base à cette date, donc zéro octet de
+différence sur le fil) — un écart qui n'a pas encore coûté, pas une panne. **Le code dit
+le possible, la base dit l'exposé.**
 
 ⚠️ **Les surcharges vivent en MÉMOIRE, et poser une ligne ne suffit pas.** La
 cardinalité est consultée jusqu'à **4× par appel d'outil** (`access/resolve.py`), sur un
@@ -253,7 +271,7 @@ table posée à côté, la ligne du secret gardant ses quatre colonnes, donne l'
 stable **sans un octet de rechiffrement**. Une fois le rechiffrement hors de l'équation,
 ce qui décide est le fond : le modèle prévoit des instances **sans secret** — une
 instance `http` qui ne fige qu'une `base_url` (0057), une sous-instance qui ne pose
-qu'une *détermination* (« le compte d'Alexandra », 0053-D9-3). Un objet qui n'est plus un
+qu'une *détermination* (« le compte de Jane », 0053-D9-3). Un objet qui n'est plus un
 credential n'a rien à faire dans une table qui l'est.
 
 **Le lien avec le coffre est le quadruplet, et c'est une FK LOGIQUE** —

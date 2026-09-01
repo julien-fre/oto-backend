@@ -28,10 +28,10 @@ from __future__ import annotations
 
 import pytest
 
-from oto_mcp import config, links, tenancy
-from oto_mcp.capabilities import docs as D
+from oto_mcp import config, db, links, ownership, tenancy
 from oto_mcp.capabilities import projects as P
 from oto_mcp.capabilities._types import ResolvedCtx
+from oto_mcp.capabilities.docs import core as D
 
 CTX = ResolvedCtx(sub="u1", org_id=1)
 
@@ -47,14 +47,14 @@ PROJET = {"id": 153, "name": "Développement commercial", "icon": None, "brief_m
 
 @pytest.fixture
 def seams_page(monkeypatch):
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda i: dict(PAGE, id=i))
-    monkeypatch.setattr(D.db, "doc_rev", lambda t, b: "9f2c41a")
-    monkeypatch.setattr(D.db, "log_project_activity", lambda *a, **k: None)
-    monkeypatch.setattr(D.db, "create_doc",
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(db, "get_doc_by_id", lambda i: dict(PAGE, id=i))
+    monkeypatch.setattr(db, "doc_rev", lambda t, b: "9f2c41a")
+    monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
+    monkeypatch.setattr(db, "create_doc",
                         lambda pid, title, parent_id=None, body_md="", kind="doc",
                         created_by=None, description=None: 662)
-    monkeypatch.setattr(D.db, "update_doc", lambda *a, **k: None)
+    monkeypatch.setattr(db, "update_doc", lambda *a, **k: None)
 
 
 @pytest.fixture

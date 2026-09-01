@@ -483,6 +483,17 @@ def register(mcp: FastMCP) -> None:
           sObject type in ONE Salesforce call (sObject Collections) — instead of N
           separate op="update" calls.
 
+        Returns —
+            The Salesforce payload for the single-record ops. For
+            op="bulk_create"/"bulk_update": {"total", "succeeded", "results":
+            [{"index", "id", "success", "errors"}, ...]} — ALWAYS inspect
+            `results`: unlike op="create", a record can fail here with NO
+            exception raised (the call itself succeeded, that one record didn't).
+
+        Field metadata — what fields exist on an sObject, their type, whether they
+        are createable/updateable, their picklist values — is a different tool:
+        salesforce_describe.
+
         Args:
             sobject: e.g. "Contact", "Account" (companies), "Lead", "Opportunity",
                 or a custom "Foo__c". For the bulk ops, EVERY record in `items`
@@ -507,17 +518,6 @@ def register(mcp: FastMCP) -> None:
                 rolls back when any record fails. Default false (Salesforce's own
                 default): successes are kept, failures are reported per-record
                 below.
-
-        Returns:
-            The Salesforce payload for the single-record ops. For
-            op="bulk_create"/"bulk_update": {"total", "succeeded", "results":
-            [{"index", "id", "success", "errors"}, ...]} — ALWAYS inspect
-            `results`: unlike op="create", a record can fail here with NO
-            exception raised (the call itself succeeded, that one record didn't).
-
-        Field metadata — what fields exist on an sObject, their type, whether they
-        are createable/updateable, their picklist values — is a different tool:
-        salesforce_describe.
         """
         # Refus AVANT toute résolution de credential : une op inconnue n'atteint
         # jamais le client — donc jamais, par un chemin dérivé, une écriture.
@@ -573,15 +573,15 @@ def register(mcp: FastMCP) -> None:
         - **"sosl"**: a SOSL search, e.g.
           "FIND {Acme} IN ALL FIELDS RETURNING Account(Id, Name)".
 
+        Both are reads. For a plain listing of one sObject you do not need to write
+        SOQL at all: salesforce_record(op="list", sobject=…, where=…) builds it.
+
         Args:
             query: the statement itself — SOQL under op="soql", SOSL (a FIND …
                 statement) under op="sosl". The two languages are NOT
                 interchangeable: a FIND statement sent with the default op is
                 rejected by Salesforce as a malformed query.
             op: soql (default) | sosl.
-
-        Both are reads. For a plain listing of one sObject you do not need to write
-        SOQL at all: salesforce_record(op="list", sobject=…, where=…) builds it.
         """
         if op not in _QUERY_OPS:
             raise _bad(_QUERY_OPS_ERROR)

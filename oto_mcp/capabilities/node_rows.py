@@ -16,6 +16,13 @@ chemins**, et c'est la marque de la recopie qui les sépare :
 servir demanderait de fouiller la donnée métier, donc de l'interpréter — la frontière
 qu'oto ne franchit pas. Les accepter en silence ferait croire à un filtre appliqué.
 
+⚠️ **Et la même règle vaut sur le chemin recopié depuis le 2026-09-01 (#621)** : une
+entrée de `filter` sans `:` y était ignorée, un curseur illisible y sortait en 500, et
+le `total` s'y comptait sur les noms NON résolus alors que la page les résout. Trois
+formes d'une seule faute — *répondre juste sur ce qu'on n'a pas regardé*. Les deux
+provenances rendent désormais les MÊMES codes (`invalid_filter`, `invalid_cursor`),
+parce que la provenance d'un tableau n'est servie à personne.
+
 **Curseur opaque, jamais d'offset dans le contrat** (0059-D5). L'offset/limit de l'API
 actuelle est l'héritage, pas le modèle : toute surface NEUVE naît curseur. Le front s'y
 attendait — c'est même la seule de ses divergences déclarées qui se résout sans que
@@ -42,11 +49,12 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ..datastore import core as ds
-from ..db import datastore as db_ds
+from ..datastore.errors import InvalidCursor
 from ..db import node_tables as db_node_tables
 from ..db import node_view as db_node
 from ._authz import ORG_MEMBER
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding, cap_limit
+from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding,
+                     cap_limit)
 from .registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
@@ -98,13 +106,27 @@ def _introuvable() -> AuthzDenied:
                        "Aucun tableau de ce nom, ou aucun droit de le voir.")
 
 
-def _filtres(valeur) -> list[dict]:
-    """`["statut:clos", …]` → la forme du store. Une entrée sans `:` est IGNORÉE.
+# UNE phrase et UN code pour les deux provenances (#621). Le chemin natif rendait
+# `curseur_invalide` et le chemin recopié ne rattrapait rien : un front qui apprend à
+# traiter l'un tombait sur l'autre au premier tableau de l'autre provenance — et la
+# provenance ne lui est pas servie, il n'a donc aucun moyen de prévoir lequel il aura.
+_CURSEUR_ILLISIBLE = (
+    "`cursor` illisible — tronqué, périmé, ou repassé d'un régime de tri dans "
+    "l'autre. Reprends la liste sans `cursor`.")
 
-    Ignorer plutôt que refuser : le filtre vient d'une query string tapée par un
-    humain autant que par le front, et faire échouer toute la page pour une entrée
-    malformée coûte plus que de ne pas l'appliquer. Ce qui est appliqué reste visible
-    dans la requête du client — il n'y a rien à deviner.
+
+def _filtres(valeur) -> list[dict]:
+    """`["statut:clos", …]` → la forme du store. Une entrée sans `:` est REFUSÉE.
+
+    ⚠️ **Elle était IGNORÉE, et c'est corrigé le 2026-09-01 (#621).** Le motif écrit
+    ici disait : « faire échouer toute la page pour une entrée malformée coûte plus que
+    de ne pas l'appliquer ». Il compare le mauvais couple. Ce qui partait n'était pas
+    une page en moins, c'était une page **non filtrée servie en 200** à un appelant qui
+    avait demandé un filtre — il lisait un tableau entier en croyant lire un extrait, et
+    rien dans la réponse ne le détrompait. Le refus, lui, se voit et se corrige.
+
+    C'est le même geste que sur un tableau natif (`_natif`), où filtre, recherche et
+    tri sont refusés plutôt qu'avalés : une seule règle sur toute la route.
     """
     if not valeur:
         return []
@@ -112,8 +134,15 @@ def _filtres(valeur) -> list[dict]:
     out = []
     for entree in brut:
         cle, sep, val = str(entree).partition(":")
-        if sep and cle.strip():
-            out.append({"field": cle.strip(), "op": "eq", "value": val})
+        if not sep or not cle.strip():
+            # Le refus NOMME la forme attendue ET l'entrée fautive : sans les deux,
+            # l'appelant doit deviner laquelle de ses entrées corriger, et vers quoi.
+            raise AuthzDenied(
+                400, "invalid_filter",
+                f"`filter` attend des entrées `colonne:valeur` — reçu {str(entree)!r}, "
+                "qui ne désigne aucune colonne. Refusé plutôt qu'ignoré : la page "
+                "servie ne serait pas filtrée, et rien ne le dirait.")
+        out.append({"field": cle.strip(), "op": "eq", "value": val})
     return out
 
 
@@ -176,7 +205,7 @@ def _natif(inp: NodeRowsInput, fiche: dict, props: dict) -> dict:
         try:
             depuis = int(inp.cursor)
         except ValueError:
-            raise AuthzDenied(400, "curseur_invalide", "`cursor` illisible.")
+            raise AuthzDenied(400, "invalid_cursor", _CURSEUR_ILLISIBLE)
     lignes, suivant = db_node_tables.list_rows(fiche["id"], limit=limite,
                                                after_position=depuis)
     colonnes = _colonnes(props.get("child_schema"))
@@ -225,13 +254,30 @@ def _compose(ctx: ResolvedCtx, inp: NodeRowsInput) -> dict:
 
     filtres = _filtres(inp.filter)
     limite = cap_limit(inp.limit, _LIMITE_MAX, default=_LIMITE_DEFAUT)
-    page = store.cursor_rows(namespace, q=inp.q, order_by=inp.sort,
-                             order_dir=(inp.direction or "desc"),
-                             filters=filtres or None, cursor=inp.cursor, limit=limite)
+    try:
+        page = store.cursor_rows(namespace, q=inp.q, order_by=inp.sort,
+                                 order_dir=(inp.direction or "desc"),
+                                 filters=filtres or None, cursor=inp.cursor,
+                                 limit=limite)
+    except InvalidCursor:
+        # ⚠️ Rattrapé ICI, sinon 500 (#621). L'adaptateur REST ne traduit que
+        # `AuthzDenied` : tout le reste ressort en panne de serveur. Un curseur
+        # tronqué par un copier-coller n'est pas une panne — c'est une demande
+        # malformée, et le client n'a qu'une chose à faire, que le 500 ne dit pas.
+        raise AuthzDenied(400, "invalid_cursor", _CURSEUR_ILLISIBLE)
     colonnes = _colonnes(props.get("child_schema"))
     return {
         "columns": [c.model_dump(exclude_none=True) for c in colonnes],
-        "total": db_ds.datastore_count_rows(ns_id, inp.q, filtres or None),
+        # ⚠️ Le compte passe par le STORE, pas par la table (#621). `count_rows`
+        # résout les noms plats comme la page le fait — `datastore_count_rows` bâtit
+        # son `WHERE` sur les noms qu'on lui donne, et on lui donnait les noms NON
+        # résolus. Sur un schéma à double service (`contact1_nom` servi en lecture
+        # pour `contacts[0].nom`), le pied du tableau comptait donc un autre jeu que
+        # celui qu'il coiffe, sans que rien n'échoue. Le store porte déjà la règle
+        # (« le compte doit décrire le MÊME jeu que la page ») : la redire ici en
+        # ferait une seconde vérité, qui divergerait au premier correctif appliqué
+        # d'un seul côté.
+        "total": store.count_rows(namespace, q=inp.q, filters=filtres or None),
         "items": [TableRow(id=str(r.get("_id")),
                            cells=_cellules(r, colonnes)).model_dump()
                   for r in page.get("rows") or []],
@@ -248,6 +294,20 @@ CAPABILITIES += [
     Capability(
         key="me.node.rows", handler=_node_rows, Input=NodeRowsInput, Output=RowsPage,
         authz=ORG_MEMBER,
+        # Les trois refus que cette route rend en propre. Déclarés parce qu'un
+        # consommateur qui reçoit un 400 doit savoir LEQUEL avant de l'écrire :
+        # `invalid_filter` se corrige dans la requête, `invalid_cursor` se corrige en
+        # repartant du début, et le troisième ne se corrige pas du tout sur ce
+        # tableau-là. Trois gestes différents derrière un même statut.
+        errors=(
+            DeclaredError(400, "invalid_filter",
+                          "une entrée de `filter` n'a pas la forme `colonne:valeur`"),
+            DeclaredError(400, "invalid_cursor",
+                          "`cursor` illisible, périmé, ou d'un autre régime de tri"),
+            DeclaredError(400, "non_supporte_sur_tableau_natif",
+                          "`q`, `sort` ou `filter` sur un tableau né dans la nouvelle "
+                          "surface — refusés, jamais ignorés"),
+        ),
         description=(
             "One PAGE of rows of a table node, by OPAQUE cursor — never an offset. "
             "Send `cursor` back exactly as received; `nextCursor: null` means there is "

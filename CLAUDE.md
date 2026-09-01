@@ -1,679 +1,297 @@
 # oto-mcp
 
-MCP server (Streamable HTTP) qui expose les connecteurs **oto-core** (`oto.tools`,
-importés directement — **plus aucune dép à la CLI**) comme tools, branchable dans
-claude.ai et Claude Code. Public **prod** = `https://mcp.oto.cx/mcp` (box Scaleway
-dédiée ; `mcp.oto.ninja` = **preprod** depuis le cutover ADR 0040 — cf. `docs/auth-logto.md`).
+MCP server (Streamable HTTP) exposant les connecteurs **oto-core** (`oto.tools`, importés directement
+— **plus aucune dép à la CLI**) comme tools. **Prod** = `https://mcp.oto.cx/mcp` (box Scaleway dédiée),
+`mcp.oto.ninja` = **preprod** (ADR 0040). **oto-mcp = le produit central, déployable** : SaaS OU
+on-premise (`Dockerfile`, config 100 % par env) ; oto-cli = façade locale basse priorité, tout open
+source. Gestion utilisateur = oto.ninja `/account`, via REST.
 
-**Positionnement : oto-mcp = le produit central, déployable** (SaaS hébergé OU
-on-premise pour un client — image `Dockerfile`, config 100% par env). oto-cli =
-façade locale basse priorité (fallback LinkedIn browser). Tout open source.
-
-La page de gestion utilisateur (cookie LinkedIn, etc.) vit dans le site Vue
-oto.ninja sous `/account` et parle au MCP via REST.
-
-> **Ce fichier est une CARTE, pas un journal.** Il porte les conventions, les garde-fous
-> et les pointeurs — ce qu'un agent doit avoir en tête à chaque session. Le détail dense
-> (schémas, inventaires, incidents datés et leurs leçons) vit dans `docs/` — index en bas.
-> **Un lot qui change un concept met à jour le doc du concept dans le même commit**, pas
-> cette carte. Journal daté et récits d'incident migrés dans `docs/` le 2026-08-27.
+> **Ce fichier est une CARTE, pas un journal** : conventions, garde-fous, pointeurs ; le détail vit
+> dans `docs/`, index en bas. **Un lot qui change un concept met à jour le doc du concept dans le même
+> commit**, pas la carte.
 
 ## Stack
 
-- Python 3.10 (target `>=3.10` — c'est ce que tuls.me a)
-- `fastmcp>=3.4.2` (plancher = dernier ; prod aligné au deploy via `pip install -e .`) + `mcp` SDK
-- **`oto-core[browser]` PINNÉ sur un tag git** (`@ git+…@vX.Y.Z` dans `pyproject.toml`) : une version déployée = coordonnée reproductible. ⚠️ **`pip` ne réinstalle PAS une dép VCS déjà présente** → le deploy force-réinstalle depuis le tag lu du `pyproject`. ⚠️ **Le pin est un champ que TOUTES les sessions // éditent** : toujours bumper en **superset** (tag haut ⊇ tags bas), et à la moindre divergence de pin en merge/rebase, **garder la version haute**. Symptômes trompeurs en local (venv en retard ou en avance sur le pin) : `docs/commands.md` §Pin oto-core.
-- `psycopg[binary]` + `psycopg-pool` (PostgreSQL managed Scaleway `otomata-main`, DB `oto_mcp`) pour le state par utilisateur. ⚠️ **Les rows sont des DICTS (accès par nom de colonne `r["col"]`), JAMAIS positionnel `r[0]`** (→ `KeyError: 0`). Row factory `_str_dict_row` + leçon du fail-open masqué par des tests stubbés : `docs/conventions.md`.
-- Auth = JWT Logto (`RemoteAuthProvider + JWTVerifier(jwks_uri=…, algorithm="ES384")`)
+Python 3.10 (`>=3.10`, ce qu'a tuls.me) · `fastmcp>=3.4.2` (plancher = dernier) + SDK `mcp` ·
+`psycopg[binary]` + `psycopg-pool` (PG managé Scaleway `otomata-main`, DB `oto_mcp`) · JWT Logto ES384.
+⚠️ **`oto-core[anonymize]` est PINNÉ sur un tag git** ; `pip` **ne réinstalle pas** une dép VCS déjà là,
+et **le pin est édité par TOUTES les sessions //** → bumper en **superset**, garder la haute.
+⚠️ **Une grappe de rouges en local sur les connecteurs les plus RÉCENTS n'est PAS ton lot** : c'est
+le venv partagé en retard sur le pin — la CI, qui installe au tag, passe. **La suite te le DIT
+depuis le 01/09/2026** : bannière `=== PIN oto-core ===` en tête ET en fin de run, qui nomme
+l'installé et l'épinglé, et les tests marqués `exige_pin_oto_core` deviennent NON CONCLUANTS en
+local (jamais en CI, où la garde version-skew doit mordre) — `tests/_oto_core_pin.py`.
+⚠️ **La bannière n'atteint pas un `| grep passed`** (#790) : le résumé final de pytest, lui, le
+fait — ces skips y sont comptés à part (`8924 passed, 98 non concluant(s) — venv ≠ pin oto-core
+vX.Y.Z, …`), distincts des skips ordinaires, même filtré.
+⚠️ **Ne pas trier au message** : `No module named 'oto.tools.<x>'` n'attrape qu'un connecteur
+**AJOUTÉ** depuis la version installée, pas un connecteur **RABOUGRI** — dont les rouges (« méthodes
+absentes du client », « paramètre inexistant ») imitent trait pour trait une vraie régression de
+version-skew, et accusent le dépôt. Sept sessions s'y sont laissé prendre le 01/09.
+Rejouer sur pristine sans muter le venv partagé : **`commands.md` §Pin oto-core → « Faux rouge »**.
+⚠️ **Les rows PG sont des DICTS** — `r["col"]`, jamais `r[0]`.
 
 ## Architecture
 
-⚠️ **Le dossier d'un fichier EST son domaine** (tranché le 27/08) : une famille de
-≥ 4 fichiers au même marqueur devient un package et les fichiers y perdent ce marqueur
-(`datastore/schema.py` → `datastore/schema.py`), `tests/` en est le miroir, et un
-déplacement ne laisse **jamais** de ré-export à l'ancien chemin. La règle complète (le
-critère, le module « nu » en `core.py`, les trois façades d'exception, où naît un
-fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
+⚠️ **Le dossier d'un fichier EST son domaine** : ≥ 4 fichiers au même marqueur → package, `tests/` en
+miroir, **jamais** de ré-export à l'ancien chemin (`conventions.md` §Où vit un fichier).
 
 ```
 oto_mcp/
-├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
-├── capabilities/     # les CAPACITÉS (ADR 0009), sous-rangées par domaine : `orgs/`,
-│                     #   `connectors/`, `datastore/`, `groups/`. Le socle commun
-│                     #   (`registry`, `_authz`, `_types`, `_mcp_adapter`,
-│                     #   `_rest_adapter`) reste à la racine du package.
-├── api/              # la face REST `/api/*` : `routes` (la TABLE — son ordre est un
-│                     #   contrat), `base` (auth, CORS, `_json`, préflight, `bind`),
-│                     #   puis un module de handlers par domaine. ⚠️ Une route neuve
-│                     #   naît CAPACITÉ, pas ici : la dette REST vaut ZÉRO.
-├── auth/             # QUI parle au serveur, et comment un credential s'ACQUIERT.
-│                     #   Entrant : hooks (le sub du jeton), facade (façade DCR devant
-│                     #   Logto), token_scopes (portée d'un jeton `oto_…`), anon (shim
-│                     #   OAuth des endpoints publics). Sortant : flow (la danse
-│                     #   `authorization_code`, écrite UNE fois), pkce, puis un module
-│                     #   par fournisseur — atlassian, folk, google, salesforce, zoho.
-├── connectors/       # le connecteur côté PLATEFORME : activation, selection, identities,
-│                     #   link, flow, verify, field_schema, schema_store + `docs/` (la
-│                     #   fiche how-to en markdown) et `docs_reader`. ⚠️ trois voisins à
-│                     #   ne pas confondre : `providers/` = le REGISTRE, `tools/` = les
-│                     #   outils servis à l'agent, `connectors/` = la gouvernance.
-├── fod/              # les clients du service FOD (ADR 0028) : `http` = le transport
-│                     #   partagé, un module par domaine de données publiques FR.
-├── datastore/        # le spine de records typés : core (le store qui COMPOSE), schema,
-│                     #   schema_ops, columns, errors, journal. `__init__` sans code.
-├── middleware/       # la chaîne MCP, 1 module par middleware (alias, empty_result,
-│                     #   call_context, field_redaction, error_envelope, disabled_tools,
-│                     #   dynamic_instructions). L'ORDRE d'enregistrement est un contrat
-│                     #   et vit dans `server.py` — figé par
-│                     #   `tests/middleware/test_middleware_order.py`.
-├── tools/            # 1 module par connecteur, chacun expose register(mcp)
-├── providers/        # le REGISTRE : 1 module de déclaration par connecteur
-│                     #   (`CONNECTOR = _c(…)`), `__init__` AGRÈGE, `_model` = la forme.
-│                     #   Séparé de tools/ : le registre doit rester PUR (tools/ importe
-│                     #   access → le registre, et se charge en try/except — une dép
-│                     #   optionnelle manquante retirerait le connecteur du catalogue).
-├── access/           # rôles, contexte, cascade de credentials, quotas (package depuis le 27/08 — 2 000 lignes en 10 modules). Surface plate `access.<fn>` via __init__, cf. ci-dessous
-│   ├── scope.py      #   qui agit : rôle plateforme, current_org/group/project, ce que le projet ÉPINGLE
-│   ├── quotas.py     #   ce qui est métré (quota jour, usage) et ce qui est payé (option, comp, abonnement)
-│   ├── cascade.py    #   le WALKER unique perso > cross-org > équipe > org > TENANT (L-clés, 29/08) > plateforme + ses 3 sondes
-│   ├── rbac.py       #   qui a le droit : RBAC connecteur org/équipe, tools masqués, garde d'instance, redaction
-│   ├── resolved_credential.py  # le TYPE rendu par toute résolution (extrait de resolve le 29/08, cliquet #584)
-│   ├── tenant_budget.py  # le budget par org de l'arête tenant→org (L-clés PR 2), appliqué à la résolution
-│   ├── resolve_anon.py  # l'endpoint MCP anonyme (ADR 0032), extrait de resolve le 29/08 — l'étage tenant n'y vient que d'une arête
-│   ├── resolve.py    #   la résolution réelle d'un credential (chemin chaud)
-│   ├── views.py      #   vues minces : resolve_api_key/_fields, mount, credential_mode_for, option_open
-│   └── status.py     #   le snapshot par connecteur de /api/me
-├── db/               # store PG (package) : _conn (pool/connexion), _schema (DDL), _init (migrations) + 1 module/domaine (users, keys, usage, datastore, projects, opendata…). Surface plate `db.<fn>` via __init__
-├── org_store/        # palier ORG (package, découpé le 2026-08-27) : orgs (la fiche), members (appartenance + MAISON),
-│                     #   vault (secrets), settings (redaction/email/MFA), personal (org perso + boot),
-│                     #   invitations (plateforme/org/équipe), instructions (procédures), library (guides publiés).
-│                     #   DAG à 2 étages : {personal, invitations} → {orgs, members} ; library → instructions.
-│                     #   Surface plate `org_store.<fn>` via __init__, qui REDESCEND les écritures sur le module
-│                     #   propriétaire (sinon un monkeypatch de test serait mort en silence). Cliquet :
-│                     #   `tests/test_org_store_surface_frozen.py` (surface, signatures, DAG, 500 lignes).
-
-└── config.py         # require_env
-
-deploy/
-├── oto-mcp.service       # systemd, User=root, /opt/oto-mcp, port 9103
-├── Caddyfile.snippet     # mcp.oto.ninja → 9103 (pas de bearer-gate, masquerait WWW-Authenticate)
-└── DEPLOY.md             # procédure DNS + Caddy + systemd + Claude.ai
-
+├── server.py       # FastMCP + uvicorn, montage des routes /api et des tools
+├── capabilities/   # les CAPACITÉS (ADR 0009), rangées par domaine
+├── api/            # face REST : la TABLE de routes (ordre = contrat) + 1 handler/domaine
+├── auth/           # qui parle, et comment un credential s'acquiert
+├── connectors/     # la GOUVERNANCE : activation, sélection, identités, link, verify
+├── providers/      # le REGISTRE, 1 déclaration/connecteur — doit rester PUR
+├── tools/          # les outils servis à l'agent, 1 module/connecteur
+├── fod/            # clients FOD (ADR 0028), données publiques FR
+├── datastore/      # le spine de records typés
+├── middleware/     # la chaîne MCP — l'ORDRE d'enregistrement est un contrat
+├── access/         # rôles, contexte, cascade, quotas — plate access.<fn>
+├── org_store/      # le palier ORG (orgs, members, vault, settings, library)
+├── db/             # le store PG — surface plate db.<fn>
+└── config.py       # require_env
+deploy/             # systemd (/opt/oto-mcp, 9103), Caddyfile, DEPLOY.md
 ```
 
-L'extension Chrome (Oto Companion) vit dans `oto-app/extension/` (repo
-`otomata-tech/oto-app`, monorepo des fronts). Elle parle au backend via REST :
-`POST /api/settings/linkedin` + endpoints `/api/whatsapp/pair/*` (SSE).
+**4 couches à frontière à sens unique** (ADR 0004) : **backend-core** (`db`, `credentials_store`,
+`org_store`, `access`, `crypto`, `providers`, `auth.hooks`) — **adaptateur MCP** — **adaptateur REST**
+— **runtime connecteurs** ; les trois derniers dépendent du core, **jamais l'inverse**, et l'appellent
+**par interface**. Une opération sur **deux faces** s'écrit UNE fois : une **capacité** (ADR 0009) =
+handler + `Input` pydantic + `authz` + bindings. ⚠️ **Une route neuve naît CAPACITÉ**, pas dans
+`api/` ; **secret brut jamais en argument MCP** ; la table de routes est **FIGÉE**.
+**`docs/architecture.md`, `docs/couches-et-capacites.md`.**
 
-**4 couches à frontière à sens unique** (ADR 0004) : **backend-core** (`db`,
-`credentials_store`, `org_store`, `access`, `crypto`, `providers`, `auth.hooks`) —
-**adaptateur MCP** — **adaptateur REST** — **runtime connecteurs**. Adaptateurs et runtime
-dépendent du backend-core, **jamais l'inverse**, et l'appellent **par interface**
-(`access.resolve_*`), pas par accès table croisé.
+## Auth Logto & tenants
 
-Une opération exposée sur **deux faces** s'écrit UNE fois : une **capacité**
-(`oto_mcp/capabilities/`, ADR 0009) co-déclare handler core + `Input` pydantic (seule
-validation) + règle `authz` **obligatoire** + bindings `mcp`/`rest`. Jamais un
-`@mcp.tool()` main-écrit doublé d'une route REST (ADR 0042 §Convergence des surfaces,
-garde-fou CI). La validation **REFUSE un champ inconnu** côté REST (400 `unknown_fields`) :
-garde posée au SEAM, **sans allowlist**, tripwire `test_rest_rejects_unknown_fields.py`.
-⚠️ L'autz reste **déclarée au niveau capacité**, jamais redescendue dans le handler.
-⚠️ **Secret brut jamais en argument MCP** — la pose de secret est dashboard-only (binding
-`mcp` retiré) ; le MCP ne porte que les droits/grants.
-⚠️ **`capabilities/` est SOUS-RANGÉ par domaine depuis le 28/08** : `orgs/`,
-`connectors/`, `datastore/`, `groups/` (les quatre familles de ≥ 4 modules), le socle
-commun (`registry`, `_authz`, `_types`, les deux adaptateurs) restant à la racine. Le
-hub `capabilities/__init__.py` déclare chaque module en **import absolu** — il ne lie
-aucun nom court, donc `orgs/core` et `groups/core` ne se disputent rien et l'ordre des
-déclarations reste celui qu'on lit.
-**Détail : `docs/couches-et-capacites.md`.**
+JWT Logto **ES384** (le défaut RS256 rejette tout), discovery RFC 9728, façade DCR pour les clients
+sans DCR ; au-dessus des orgs, l'étage **tenant** (ADR 0052) — un partenaire sert oto sous sa marque.
+⚠️ **Logto = 2 instances** : la prod/preprod est **`auth.oto.ninja`**, PAS `.zone`. ⚠️ **Un env-liste
+s'ÉTEND, ne se remplace jamais** (`MCP_AUDIENCE_ALT`, `OTO_MCP_CORS_ORIGINS`, `MAILER_FROM_DOMAINS`,
+SPF, redirect URIs) et chaque env a SA liste. **`docs/auth-logto.md`, `docs/tenants.md`.**
 
-La face REST **assemble** et n'implémente plus : depuis le 2026-08-27, `api/routes.py`
-ne contient aucun handler (`make_routes` : 1 370 lignes et 52 handlers imbriqués → ~180
-lignes de montage), les handlers vivent par domaine dans `api_routes_<domaine>.py`.
-⚠️ La table est FIGÉE par `tests/api/test_api_routes_table_frozen.py` — retirer, ajouter ou
-RÉORDONNER un chemin fait rouge (Starlette prend le premier match), et régénérer
-`tests/api/api_routes_table.txt` EST la déclaration de l'ajout. **Détail : `docs/rest-api.md`.**
+## Rôles, coffre & résolution de clé
 
-## Auth — Logto
+3 paliers `member < admin < super_admin` ; résolution par appel : `clé membre (sub, org) >
+group_secret > org_secret > clé de TENANT > platform_grant` ; tout connecteur dont le credential se
+**POSE** est **multi-compte**. Chemin chaud de tout appel. ⚠️ La cascade = **walker unique
+`access.walk_cascade`**, jamais recopiée dans un call-site ; compte nommé introuvable partout ⇒
+« introuvable », **jamais un repli plateforme silencieux**. **`docs/roles-and-resolution.md`,
+`docs/connector-vault.md`.**
 
-JWT Logto **ES384** (défaut RS256 = tout rejeté), discovery RFC 9728 sur 401,
-façade DCR self-service (`auth/facade.py`) pour les clients sans DCR (Claude/ChatGPT/
-Mistral). **Détail : `docs/auth-logto.md`** (jetons API, registre d'émetteurs, env, onboarding).
+## REST API
 
-⚠️ **Logto = 2 instances** : la vraie prod/preprod = **`auth.oto.ninja`** (creds SOPS
-`LOGTO_NINJA_MGMT_*`), PAS `auth.oto.zone`.
+Endpoints `/api/*`, même `JWTVerifier` que `/mcp` ; `GET /openapi.json` **dérivé** du registre de
+capacités ; un jeton `oto_` peut naître **porté**, sa gestion exigeant une session interactive.
+⚠️ **CORS : la liste du code est MORTE** — les deux box posent `OTO_MCP_CORS_ORIGINS` dans leur `.env`
+(une origine de plus = éditer l'env des **deux** + restart). **`docs/rest-api.md`.**
 
-⚠️ **`MCP_AUDIENCE_ALT` est une LISTE (virgules) : ÉTENDRE, jamais remplacer.** Chaque
-environnement a SA liste (`/opt/oto-mcp/.env` ≠ `/opt/oto-mcp-canari/.env`) : poser une
-audience sur l'un ne la pose PAS sur l'autre. Même règle pour tout env-liste partagé
-(`OTO_MCP_CORS_ORIGINS`, `MAILER_FROM_DOMAINS`, SPF, redirect URIs OAuth) : lire la
-valeur, y ajouter, réécrire. Cutover `.ninja`↔`.cx` + incident vécu : `docs/auth-logto.md`
-§CUTOVER.
+## La version servie (oto#33)
 
-### Tenants (ADR 0052)
+Une seule étiquette (`v1.2.3+6d5bf16b`) sur **trois** surfaces : `GET /api/version` (sans auth),
+`info.version` de l'OpenAPI, et l'en-tête **`X-Oto-Version` de CHAQUE réponse** — c'est l'en-tête qui
+date une mesure *rétrospectivement*, sans instrumentation préalable. ⚠️ Elle désigne **ce que le
+processus EXÉCUTE**, jamais ce qu'un run vert a déployé : la coordonnée est écrite par le déploiement
+dans l'arbre (`.oto-deploy.json`) puis lue **une fois au boot** — une couleur en vidange continue donc
+d'annoncer SA version. ⚠️ **`pip show oto-core` ment** (champ gelé à 1.100.0) : le tag installé se lit
+dans `direct_url.json`. Inconnue ⇒ `"unknown"`, jamais une valeur plausible.
+**`docs/version-servie.md`.**
 
-Un tenant tiers est **servi** depuis le 13/08 : émetteur dédié, host, client OAuth, socle
-d'instructions et **préfixe d'outils** (`tenants.tool_prefix`, traduit au bord du protocole
-seulement — le nom canonique est rétabli avant que quoi que ce soit d'autre ne le lise).
-- ⚠️ **La découverte annonce la FAÇADE sur le host du tenant, JAMAIS son émetteur en direct.**
-- ⚠️ **Pas de patron, pas de lien** (`links.py`, `tenants.link_paths`) : ne jamais coller
-  nos chemins sous le domaine d'un partenaire.
-- ⚠️ **OPS — une bascule de tenant ABANDONNE les clés personnelles** (l'AAD dérive de
-  l'entité) : toute fenêtre s'accompagne de la LISTE « qui repose quelles clés », prévenue avant.
-- Suivi = écran `/platform/tenants`, **lecture seule par construction** ; prise d'effet par
-  `oto_admin_tenant op=reload`, ⚠️ **par-process** (recharger la preprod ne recharge pas la prod).
-- **La clé de connecteur du tenant (29/08, L-clés PR 1)** : coffre `entity_type='tenant'`
-  (`entity_id` = slug), étage `org > tenant > plateforme` de la cascade, pose REST seule
-  (`PUT /api/admin/tenants/{slug}/keys/{provider}`, super_admin), `oto_admin_tenant op=keys|key_clear`.
-  Le tenant `oto` n'en porte pas (ses clés partagées sont les instances plateforme).
-- **Le rôle « admin de tenant » et l'arête tenant→org (29/08, L-clés PR 2)** : table
-  `tenant_admins`, règle `TENANT_ADMIN_OF` (plateforme d'abord, puis l'admin lu sur le sub
-  qualifié) — **par la face REST** (la console MCP garde son plancher opérateur, sinon elle
-  entrerait dans le handshake de chaque compte). Arête `tenant:{slug}:{connecteur} → org` à trois
-  états (muette = PR 1, accorde = budget par org débité à la résolution, refuse = l'org retombe sur
-  la plateforme), lue par le walker ET `chain_shadow` ; l'anonyme n'a l'étage que par l'arête.
+## Autres sous-systèmes
 
-**Détail : `docs/tenants.md`.**
+**Browser & cookie-bound** (ADR 0026) : plus AUCUN browser sur la box — l'API privée cookie-bound
+passe par **Browserbase**, LinkedIn par Unipile, le générique `browser` traitant un site comme un
+compte du coffre (`docs/browser-automation.md`).
+**Messagerie** : `unipile` = le **compte**, plus six **connexions** au nom du réseau ; les noms de
+tools ne bougent pas. ⚠️ **`namespace_of` résout au plus long préfixe DÉCLARÉ**, plus au 1er token —
+sinon `linkedin_unipile_*` et `linkedin_aiark_*` tomberaient sous un même gate (`docs/unipile.md`).
+**Email per-org** : `scaleway` (TEM) et `resend` en BYO-org, `email_send` routant
+`sender→connecteur→transport`. ⚠️ Le front qui héberge une org est **dérivé de l'org CIBLE**.
+⚠️ **Les 6 gabarits transactionnels servent `users.locale` du DESTINATAIRE** (`'en'`, FR par défaut,
+01/09/2026) — texte extrait dans `email_templates.py` pour tenir sous 500 lignes (`docs/email.md`).
+**Recherche & KB** : `oto_search` = LE verbe « retrouver », fusion RRF lexicale + sémantique.
+⚠️ **Invariant « cherchable ⇔ lisible »**, tripwire par source = critère de merge
+(`docs/search-and-kb.md`).
+**Onboarding & profil** (ADR 0032 §7) : plus de mode d'accueil, c'est **un projet « Découverte »**
+semé à la création de l'org perso ; `oto_whoami` avant une action sensible
+(`docs/onboarding-et-profil.md`).
+**Runner** : l'**ÉTAT** ici (`run_messages`, `runner_jobs`, `runner_triggers`), la **BOUCLE** dans
+`otomata-tech/oto-runner`. ⚠️ La reprise inter-agents lit le **JOURNAL**, jamais le fil
+(`docs/runner-et-automatisations.md`).
+**Fédération, MCP Apps, veille** : **mount** (OAuth per-user) vs **remote** (bridge M2M d'org), aucun
+mount monté d'office ; `prefab_ui` sert une UI rendue en `*_app` (⚠️ **pas d'annotation
+`-> Card`**, NameError au boot) ; ⚠️ **guides = tout-DB**, `oto_mcp/guides/*.md` ne sont que des seeds.
+**`docs/federation.md`, `docs/mcp-apps.md`, `docs/mcp-spec-watch.md`.**
 
-## Rôles + résolution de clé API
+## SIRENE stock (DuckDB/parquet INSEE)
 
-3 paliers `member < admin < super_admin` (accès admin UI). Résolution de clé par appel :
-`clé membre (sub, org) > group_secret > org_secret > clé de TENANT > platform_grant` (chemin
-platform gaté sur `auth_modes` ; **l'étage tenant depuis le 29/08, L-clés PR 1** : la clé partagée
-du tenant de l'APPELANT, lu sur son sub qualifié, jamais sur le rattachement de l'org — un sub nu
-n'a pas ce barreau, `docs/tenants.md`). Tout connecteur dont le credential se **POSE** est **multi-compte**
-(comptes nommés membre/équipe/org, sélection `_account=` / `account` / `is_default`).
-⚠️ Un compte nommé introuvable partout ⇒ « introuvable » après la marche, **jamais un repli
-plateforme silencieux**. ⚠️ **Le nombre de champs du credential ne dit RIEN de la cardinalité** —
-un connecteur vraiment mono s'exclut par `single_account` dans son entrée de registre, jamais
-par une liste transverse. ⚠️ **Scope MEMBRE (ADR 0033)** : la clé BYO est keyée `(sub, org)`,
-jamais org-agnostique ; l'org de scope = seam `current_org`, à la pose comme à la résolution.
-⚠️ La cascade = walker unique `access.walk_cascade` — **ne jamais la recopier dans un
-call-site** ; `access.resolve_credential` rend aussi la **config non-secrète appariée à la clé
-gagnante**, donc **ne JAMAIS recâbler un résolveur d'endpoint par-connecteur** (ADR 0024).
-⚠️ Le dashboard en porte un **MIROIR d'affichage** (`lib/keyStack.ts`) qu'aucun test ne relie :
-en changer l'ordre ne casse rien, **ça fait mentir l'UI**.
-⚠️ **La valeur d'un champ SECRET ne se relit JAMAIS — depuis le 31/08** (oto-backend#671).
-Elle sortait en clair pour tout champ `reveal=True`, défaut de 55 connecteurs ; le cran est
-retiré du registre (`CredentialField` ne l'accepte plus), `secret=False` décide seul. La clé
-d'un champ secret est **absente** du corps (jamais `null`/`""`), remplacée par `configured` +
-`read_set_at` + `read_set_by` + `read_fingerprints` (4 car. de HMAC **liés à la ligne**, pas
-des caractères de la clé) ; `?reveal=1` rend `403 secret_never_revealed`.
-⚠️ **Un credential se LIT à son palier et s'ÉCRIT par MERGE depuis le 27/08**
-(oto-backend#448) : `me.credential.get` prend un `scope` (`member` défaut / `group` /
-`org`, admin du palier exigé) et rend les champs NON secrets ; et un
-`fields` partiel est **complété côté serveur** (clé absente = conservée, clé présente
-et vide = effacée, donc le formulaire qui poste tout reste un remplacement). Les deux
-n'ont de sens qu'ensemble : lecture impossible + remplacement total = piège à perte de
-données, vécu sur un pont client. ⚠️ L'éligibilité de ces routes suit le PALIER
-(`is_byo_user` au membre, `is_org_shareable` au-dessus) — elle testait `is_byo_user`
-partout, ce qui rendait « inconnu » tout connecteur `byo_org` pur, donc **tous les
-ponts clients**. Détail : `docs/connector-vault.md`.
-⚠️ **L'instance de connecteur est un OBJET depuis le 27/08** (`connector_instances`, lot L6 du
-chantier tenant & instances — R1 tranché « la table à côté ») : elle a un **id stable**,
-`inst:{id}`, servi à côté du `ref` composé par `GET /api/me/connector-instances`. La table est
-posée **à côté** du coffre (l'AAD lie le ciphertext aux 4 colonnes de SA ligne, pas à sa table
-⟹ zéro rechiffrement), et le lien est le **quadruplet** `owner_type/owner_id/connector/account`
-= la PK du coffre, en FK **logique**. **Rien ne la lit encore côté résolution** — ni
-`walk_cascade`, ni `resolve_credential`, ni le coffre : c'est le lot L7, et un garde-fou AST
-(`tests/test_connector_instances_l6.py`) fait tomber le premier lecteur hors allowlist.
-⚠️ **L'instance naît à la POSE depuis le 28/08** (pièce 2) : elle est écrite par le coffre
-lui-même, dans la MÊME transaction que le secret, et le point d'accroche est l'**entonnoir
-unique d'écriture** (`credentials_store._upsert`/`._delete` — un seul `INSERT` et un seul
-`DELETE` sur `connector_credentials` dans tout le dépôt), jamais les surfaces. Retirer
-**archive** (`revoked_at`, jamais un `DELETE`) ; **renommer un compte fait SUIVRE l'instance,
-qui garde son id** ; une bascule de compte (`migrate_sub`) ne touche ni la ligne ni son
-instance (l'AAD — les deux restent appariées). Le backfill d'`_init` devient un **filet**
-(0 ligne attendue). ⚠️ Le coffre ÉCRIT l'instance, il ne la LIT jamais : deux garde-fous, une
-allowlist de fichiers **et** un relevé AST par fonction à l'intérieur du coffre. `ref` reste
-la référence à repasser (`inst:` se parse mais se fait refuser nommément par les deux gardes
-de pose) ; `label`, `config`, `visibility` (R9) et `parent_id` (sous-instances) restent
-**posés et inertes** (leur domicile reste `meta`). Invariant, sa requête et les cas limites :
-`docs/connector-vault.md`.
-⚠️ **Qui VOIT une instance est DÉRIVÉ, pas stocké** (R9, tranché le 27/08) : `visible_to`
-(scopes `user:` / `group:` / `org:` / `platform`) se calcule à l'appel depuis la chaîne
-d'accès — domicile `connectors/instance_visibility.py`, servi par `oto_instance op=list`.
-`connector_instances.visibility` ne porte que la SURCHARGE du propriétaire (`inherited`
-par défaut, et **rien ne l'écrit encore**). ⚠️ **Descriptif, pas filtrant** : la liste
-n'est ni élargie ni restreinte, un non-membre voit toujours « aucune clé configurée » —
-la divulgation est un lot produit. Le risque du lot est d'écrire un SECOND walker (le
-défaut de `keyStack.ts`, qui ne casse pas : il ment) ; garde-fou = aucune règle recopiée
-(gates lus au registre) **+** un test qui confronte l'audience dérivée à `walk_cascade`
-sur un vrai PostgreSQL.
-⚠️ **La cardinalité d'auth se DÉRIVE puis se DÉCLARE — plus aucune liste transverse**
-(29/08) : `MULTI_ACCOUNT_PROVIDERS` est RETIRÉE, elle confondait la cardinalité (le
-coffre) et l'annonce statique de l'axe `_account=` (le schéma des tools, curé) —
-devenue `account_axis_static`. Le défaut vient du descripteur d'auth (74/96 multi sans
-rien déclarer) ; `cardinality="mono"|"multi"` prime, et n'a que **deux** porteurs
-(`google`, `browser` — ceux dont le descripteur dit faux). Sonde AST : la liste ne peut
-pas revenir sous un autre nom.
-⚠️ **La BASE peut primer sur le défaut du code** (`connector_settings`, 29/08) : org >
-plateforme > registre, tranché par la **seule** fonction `connectors.cardinality.
-is_multi_account(connector, org)` — que la garde d'écriture ET la résolution appellent,
-sous peine de rouvrir #409 (une ligne acceptée que personne ne lit). Sonde AST : lire
-`auth_multi_account` hors du seam est interdit. ⚠️ Les surcharges vivent EN MÉMOIRE
-(4 consultations par appel d'outil sur un mono-loop) : chargées au boot, rechargées par
-`oto_admin_connector_setting op=reload`, **par process** — recharger la preprod ne
-recharge pas la prod. Détail : `docs/connector-vault.md`.
-⚠️ **`access` est un PACKAGE depuis le 27/08** (7 modules par sujet, arbre ci-dessus) : on
-édite le module du sujet, jamais un fourre-tout. La surface reste **plate** — `access.<nom>`
-rend ce qu'il rendait, privés compris, et une écriture sur la façade
-(`monkeypatch.setattr(access, …)`) traverse jusqu'au sous-module qui définit le nom.
-Deux règles à l'intérieur : un frère s'appelle **par son module** (`scope.current_org(...)`,
-jamais un nom importé — c'est ce qui garde le point de patch unique), et les dépendances
-descendent (`scope < quotas/cascade < rbac < resolve/status < views`) — un besoin qui
-referme la boucle **descend** le symbole partagé d'un étage. Cliquet :
-`tests/test_access_surface_frozen.py`.
-**Détail : `docs/roles-and-resolution.md`.**
+Stock complet interrogé par DuckDB depuis l'Object Storage (ADR 0002) ; tools `fr_stock_*` + REST
+`/api/sirene/*` (**noms de routes inchangés**, `oto-cli`/`oto-core` en dépendent). ⚠️ Pour **chercher**
+des boîtes, préférer **`fr_search`** (indexé, <1 s) ; le parquet = lookups, bulk, énumération.
+⚠️ **`categorie_entreprise` est calculée sur le GROUPE, pas sur l'entité** — `fr_groupe` sépare les
+deux. **`docs/sirene-stock.md`.**
 
-## REST API (consommée par le dashboard / oto.ninja)
+## Datastore (ADR 0016)
 
-Endpoints `/api/*` (compte, settings, orgs, admin, datastore…), même `JWTVerifier` que
-`/mcp`. `GET /openapi.json` sert un OpenAPI **dérivé** du registre de capacités (sans auth,
-`/api/admin/*` exclu) ; un jeton `oto_` peut naître **porté** (deny-by-default borné), et sa
-**gestion** exige une session interactive — un jeton ne fabrique plus de jeton.
-⚠️ Avant d'ouvrir une nouvelle surface aux intégrations : **ce qu'un jeton porté atteint doit
-se lire dans le chemin.**
-⚠️ **CORS : la liste du code est MORTE en prod comme en preprod** — les deux box posent
-`OTO_MCP_CORS_ORIGINS` dans leur `.env`, qui **écrase** la liste. **Ajouter une origine =
-éditer l'env des deux box + restart.** Diagnostic en 1 appel :
-`curl -X OPTIONS https://mcp.oto.cx/api/mcp/catalog -H 'Origin: <x>'`.
-**Inventaire + incidents : `docs/rest-api.md`.**
+Stockage structuré PG/JSONB natif : tools `data_*` + REST `/api/datastore/*` (**100 % dérivée**), le
+code découpé par **coutures** (`db/datastore_ns` = le TABLEAU, `db/datastore` = les LIGNES,
+`datastore/core` = le store qui COMPOSE). ⚠️ Oto gère les **types standards**, jamais l'interprétation
+métier d'une VALEUR. ⚠️ **Une pose de schéma REMPLACE** — pour ÉDITER, `data_patch_schema` fusionne
+par clé. **`docs/datastore.md`.**
 
-## Browser automation & LinkedIn — substrat hébergé Browserbase (ADR 0026)
+## Ressource possédée & projets (ADR 0030/0032)
 
-Plus AUCUN browser sur la box : les connecteurs d'**API privée cookie-bound** (`brevo`,
-`crunchbase`, `pennylaneged`) passent par **Browserbase** (Chrome hébergé, Context per-user =
-la session loguée au coffre, Live View pour le login interactif). LinkedIn = **Unipile** ;
-l'injection de cookie `li_at` côté serveur déconnecte l'user (#5). S'y ajoute le connecteur
-**générique `browser`** : lire N sites derrière login sans un connecteur par site —
-**un site = un compte du coffre** ; `browser_eval` masqué par défaut.
-**Détail : `docs/browser-automation.md`.**
+`ownership.py` = seam unique : `(owner_type∈{user,group,org}, owner_id)` + `resource_grants`
+deny-by-default ; **deux plans jamais confondus**, `can_access` (contenu) vs `can_govern`
+(gouvernance). Le **projet** est le conteneur de travail possédé (`oto_project`/`oto_doc`, partagé par
+`oto_resource`). ⚠️ **Une LISTE de contenu scope sur `active_owner(current_org)`, JAMAIS
+`owner_pairs()`** (fuite fail-open). **`docs/ownership.md`, `docs/projects.md`.**
 
-## SIRENE stock (DuckDB sur parquet INSEE)
+## Journal des appels, Sentry & usage (ADR 0017)
 
-Stock complet (~43M établissements, parquet ~2 Go) interrogé via DuckDB depuis l'Object
-Storage (httpfs, ADR 0002) ; tools MCP `fr_stock_*` (namespace `fr`, connecteur `sirene`) +
-REST `/api/sirene/*` (noms de routes **inchangés** — `oto-cli`/`oto-core` en dépendent).
-⚠️ Pour **chercher** des boîtes (secteur/zone/taille), préférer **`fr_search`** (API indexée,
-<1 s) ; le parquet = lookups ponctuels, **bulk** (`fr_stock_enrich` = 1 scan) et énumération
-exhaustive >10k. **Détail : `docs/sirene-stock.md`.**
+`ToolCallLogger` journalise chaque appel dans `tool_calls` (identité = `sub` du JWT), lu par trois
+étages de lentilles (membre / org / plateforme), avec le feedback d'agent et les déroulés ; les
+exceptions partent vers **Sentry** (EU). ⚠️ **Ne trace pas la connexion d'un connecteur ni le
+`tools/list`** → **compte actif ≠ usage**. ⚠️ **Jamais un jeton en clair**, et **ce n'est PAS une purge
+de logs** : la table est la **source de vérité des exécutions**. **`docs/monitoring.md`.**
 
-⚠️ **`categorie_entreprise` (PME/ETI/GE) est calculée par l'INSEE sur le périmètre GROUPE,
-jamais sur l'entité** — une filiale minuscule sort en « GE ». C'est un faux négatif de
-ciblage vécu (4 leads sur 5 écartés à tort). **`fr_groupe`** (`tools/fr_groupe.py`, #337)
-sépare les deux : il remonte/descend la chaîne par les **mandataires personnes morales du
-RNE**, commissaires aux comptes exclus, chaque lien qualifié (`forte` = détention impliquée /
-`moyenne` = mandat social / `faible` = ni l'un ni l'autre). ⚠️ **Le RBE est fermé au public
-depuis le 31/07/2024** : une SAS sans mandataire personne morale sort `indeterminee`, ce qui
-ne veut PAS dire « indépendante » — et le descendant s'appuie sur l'index plein texte amont
-(qui indexe les dirigeants), donc il rend un ÉCHANTILLON dès `candidats_tronques=true`. Le
-contrat amont vérifié (ce que `q` sait faire, les bornes 25/page et 10 000) vit dans la
-docstring du module.
+## Visibilité des outils (ADR 0019/0050)
 
-## Recherche transverse & KB projets (suivi oto-private#67)
+Denylist calculée `(sub, org active)` dans `session_visibility.py`, appliquée au handshake ; régime
+**NOMINAL « non-sélectionné = masqué »**. ⚠️ **`PROTECTED_TOOLS` = quatre familles jamais masquables ni
+désactivables** (méta-toolset + identité, échappatoires de contexte, boucle d'usage, dispatch
+universel). ⚠️ **Gouvernance, PAS une barrière de sécurité** (ADR 0031), additive : une équipe ne
+RÉVÈLE jamais ce que l'org a masqué. ⚠️ **Stdio local = accès complet.**
+⚠️ **TROISIÈME grain (01/09)** : `BETA_TOOLS` exige l'option `beta` posée par un admin sur l'user ou l'org — population **CHOISIE**, non self-activable, et **fail-CLOSED** (à contre-courant des autres blocs). La face REST n'est PAS gatée : écart assumé. Deux motifs d'entrée : les 3 verbes `oto_node*` (surface provisoire), et **`oto_resource_v2`, une surface DOUBLÉE**. ⚠️ **Un contrat servi ne se durcit pas en place, il se double** : rendre `resource_type` obligatoire sur `oto_resource` a cassé de vrais appelants (#756, reverté #774) — l'héritée garde son défaut, **écrit comme défaut connu dans sa description servie**, la stricte l'exige, et la bêta lui donne une population choisie **sans date-couperet**. ⚠️ **N'entrent dans `BETA_TOOLS` que des noms NEUFS** : fail-closed, y poser une surface vivante la retirerait à tous en silence. **`docs/tool-visibility.md`, `docs/ownership.md`.**
 
-**`oto_search`** (capacité `me.search`, MCP + `GET /api/me/search`) = LE verbe « retrouver »,
-un seul chemin de code : fusion RRF **lexical + sémantique** (embeddings Mistral, dégradation
-gracieuse — jamais un prérequis). **Invariant « cherchable ⇔ lisible »**, avec **tripwire par
-source = critère de merge** (`test_search_scope_tripwire.py`).
-⚠️ **Deux grains distincts pour un tableau** : `tableau` = le CONTENEUR (nom + labels de
-colonnes), `ligne` = le CONTENU. Un **fichier** est matché sur `filename+title+description`,
-**jamais son contenu**. **Détail : `docs/search-and-kb.md`.**
+## Org/équipe : session, maison, consultation (ADR 0023)
 
-## Datastore (spine natif PG, ADR 0016)
+Le pointeur « org active » est scindé en **3 notions** — session (MCP) / consultation (REST,
+`X-Oto-Org`) / maison — résolues par le **seam unique** `access.current_org(sub)` = `jeton d'appel ??
+org du run ?? consultation ?? maison` ; **TOUTE résolution d'action passe par ce seam**, qui est
+**scopé sur l'ACTEUR courant** — jamais pour l'état d'un **tiers** (org/groupe par kwarg).
+**`docs/org-context.md`.**
 
-Spine plateforme de stockage structuré (PG/JSONB natif, plus Google Sheets). Surfaces : tools
-`data_*` (MCP) + REST `/api/datastore/*` (**100 % dérivée** depuis le 12/08, donc soumise au
-refus de champ inconnu) ; OAuth Google per-user câblé ici. Où poser un lot : le datastore est
-**découpé par coutures** — `db/paths` · `db/query` (**PUR**) · `db/rowlock` · `db/datastore_ns`
-(le TABLEAU) · `db/datastore` (les LIGNES) · `datastore/errors` (**aucune dépendance**) ·
-`datastore/columns` · `datastore/schema` · `datastore/schema_ops` · `datastore/core.py`
-(le store qui COMPOSE).
-⚠️ La surface plate `db.<fn>` est un **cliquet** (`tests/test_db_surface_frozen.py` : on peut
-ajouter, jamais retirer). ⚠️ Oto gère les **types standards**, **jamais l'interprétation métier
-d'une VALEUR** — entre les deux, l'ordre des `options` déclarées au schéma est honoré, parce
-que c'est une DEMANDE adressée à oto, pas une compréhension du métier. Même frontière pour
-`field.pattern` (28/08) : la forme d'un code se contraint, une grammaire structurée se refuse.
-⚠️ **Une expression régulière posée par un appelant s'exécute dans la boucle UNIQUE** : un
-motif à explosion combinatoire coûte le serveur entier, et un garde syntaxique ne suffit pas
-(mesuré : `.*.*.*.*.*.*.*z` sur 60 caractères = 14,8 s, sans un seul groupe quantifié). D'où
-un BUDGET calculé sur l'arbre du motif contre la borne du champ — ce qui rend `max_length`
-obligatoire avec `pattern`, et refuse **à la pose**, en nommant, ce qu'on ne sait pas majorer.
-⚠️ **Une pose de schéma REMPLACE** : sa réponse porte `declarations_effacees` (ce qu'elle
-vient de retirer, valeurs comprises — elle en est la seule copie) et `enforced` (les clés de
-validation que CETTE version applique, établies en faisant tourner le validateur, jamais
-listées). Pour ÉDITER, `data_patch_schema` fusionne par clé et ne peut pas détruire.
-**Détail : `docs/datastore.md`.**
-
-## Propriété de ressource — primitive `ownership` (ADR 0030)
-
-`ownership.py` = seam unique : ressource possédée par `(owner_type∈{user,group,org},
-owner_id)` + partages `resource_grants` (deny-by-default), audience × rôle (ADR 0048).
-**Deux plans jamais confondus** : `can_access` (contenu, privacy by default) vs `can_govern`
-(gouvernance, escalade roles.py) ; le **transfert** reste `owner ∪ escalade`, jamais un gérant.
-⚠️ **Une LISTE de contenu scope sur `active_owner(current_org)`, JAMAIS `owner_pairs()`**
-(union de toutes les orgs = fuite fail-open ; tripwire `test_owner_scope_tripwire.py`).
-Plus de « perso » : tout user a une org perso dédiée (`orgs.personal_of`).
-**Détail : `docs/ownership.md`.**
-
-## Projet — couche d'organisation (ADR 0030/0032)
-
-Conteneur de travail **possédé** : brief + liens typés (tableau/procédure/connecteur/doc) +
-docs en arbre. Capacités `oto_project`/`oto_doc` ; partage/transfert via `oto_resource`. Un
-projet publié est servi sur son sous-domaine dédié — **anonymous** (`<slug>.mcp.oto.cx`) /
-**secret** (`<slug>.share.oto.cx`, UI navigable lecture seule rendue server-side) / **org**.
-La page navigable est un **canal d'acquisition** : « Ajouter à mon Oto » → `me.import_project`,
-qui forke un projet publié dans l'org active — **structure only, jamais de credentials**.
-**Détail : `docs/projects.md`.**
-
-## Messagerie & LinkedIn (Unipile)
-
-**Sept connecteurs depuis le 2026-08-28** : `unipile` = le **compte** (code de production,
-à une ligne près : il perd ses six namespaces de canal), et six **connexions** — `linkedin_unipile`,
-`whatsapp`, `telegram`, `instagram`, `messenger`, `twitter` — une carte au nom du réseau, un gate
-et un flux hébergé chacune. **Les noms de tools ne bougent pas** (contrat hors dépôt). ⚠️ **Deux
-questions, deux noms** : ce qui GATE (activation, ACL, sélection, visibilité) prend le nom NU ; ce
-qui touche à la CLÉ prend `providers.credential_provider(nom)` → `unipile` (`Connector.credential_of`,
-normalisé **dans `walk_cascade` seulement**). Les confondre rejoue la divergence du 2026-07-07.
-
-Tools `{whatsapp,telegram,instagram,messenger,twitter}_chat` + **`linkedin_*`** =
-**Unipile hébergé** (factory channel-agnostic, `account_id` per-membre `(sub, org_id,
-provider)` ADR 0033, **no-fallback anti-usurpation**). Mode plateforme (clé partagée + grant +
-option comp), DSN par credential, sélecteur d'identité, comptes partagés autorisés (#55 —
-grants revalidés à chaque appel, **jamais de repli silencieux**).
-⚠️ **`namespace_of` résout au plus long préfixe DÉCLARÉ au registre**, plus au 1er token —
-sans quoi `linkedin_unipile_*` (session opérée) et `linkedin_aiark_*` (donnée achetée, connecteur
-`aiark`, intouché) tomberaient sous un même gate. Tripwire `tests/test_linkedin.py`.
-**Détail : `docs/unipile.md`.**
-
-## Monitoring des appels MCP
-
-`ToolCallLogger` (middleware inliné `oto_mcp/calllog.py`) journalise chaque appel dans
-`tool_calls` (best-effort, identité = `sub` du JWT). Trois étages de lentilles — membre / org
-(`oto_org_monitoring`) / plateforme (`oto_admin_monitoring`).
-⚠️ **Ne trace pas la connexion d'un connecteur ni le `tools/list`** — donc **compte actif
-≠ usage**. (Cette ligne disait « pas les appels REST » jusqu'au 2026-08-29 : faux depuis
-que `RestCallLogger` écrit `kind='rest'`, et c'est ce qui a laissé passer #558.)
-⚠️ **Le journal ne porte jamais un jeton en clair** (#558) : un segment d'URL lié à un
-paramètre de route DÉCLARÉ secret (`{token}`, `{code}`) est réduit — par propriété, pour
-toute route présente ou future, jamais par une liste de chemins — et son empreinte HMAC
-part dans `args`. Même règle sur l'autre face pour les arguments de capacité qui portent
-ces noms. Source unique : `oto_mcp/journal_secrets.py`.
-⚠️ Les colonnes de corrélation dépendent de **l'ordre des middlewares** (§Conventions).
-⚠️ **Ce n'est PAS une purge de logs** : la table est aussi la **source de vérité des
-exécutions** — `run_start`/`run_finish` sont **exemptés de toute suppression** par la rétention
-90 jours + archivage froid mensuel (hors du processus MCP, mono-boucle).
-⚠️ **`client_id` n'identifie PAS le front d'où vient l'utilisateur** : énumérer avant d'en
-tirer une population. **Détail : `docs/monitoring.md`.**
-
-## Error tracking (Sentry)
-
-Exceptions backend → **Sentry SaaS** (gaté `OTO_SENTRY_DSN`, no-op si absent). Deux captures :
-500 des routes REST (intégration Starlette) et exceptions des tools MCP
-(`SentryToolErrorMiddleware` — une erreur de tool est un JSON-RPC en HTTP 200, invisible à
-Starlette). ⚠️ RGPD : `send_default_pii=False` **et** `include_local_variables=False` ;
-`before_send` droppe les 4xx amont. ⚠️ Cette ligne affirmait « jamais les args d'appel dans
-l'event » : **c'était faux jusqu'au 2026-08-29** (#564) — `send_default_pii` ne couvre pas
-le contenu des frames, et le défaut du SDK est de les envoyer. Le second réglage n'est donc
-pas un doublon : c'est lui qui rend la phrase vraie, et le retirer rouvre la fuite en
-silence. Région **EU** `de.sentry.io` ; triage = guide oto
-`surveillance-erreurs`. **Détail : `docs/monitoring.md` §Error tracking.**
-
-## Onboarding = un projet « Découverte » (ADR 0032 §7)
-
-**Plus de mode d'accueil spécial** (retiré le 2026-07-01) : pas de booléen `onboarded`, pas de
-checklist, pas de tool scripté — l'onboarding est **un projet** semé à la création de l'org
-perso. La fiche « situation avec oto » reste, découplée : capacité `me.profile`, deux faces
-(⚠️ divergence **VOULUE** — `op=update` (agent) filtre les valeurs vides pour qu'un agent
-n'efface pas la fiche par mégarde ; le `PUT` (humain) écrit tel quel). `oto_whoami` expose
-l'**identité MCP courante** — à appeler avant une action sensible.
-**Détail : `docs/onboarding-et-profil.md`.**
-
-## Runner hébergé & automatisations
-
-Le backend porte l'**ÉTAT** du runner d'agents (fil `run_messages`, file `runner_jobs`,
-déclencheurs `runner_triggers` + leurs capacités) ; la **BOUCLE** vit dans le repo public
-**`otomata-tech/oto-runner`**. ⚠️ Les jetons de contexte (`_project`…) sont advertisés **PAR
-TOOL** : un client les pose d'après le schéma du tool, jamais à l'aveugle. ⚠️ La reprise
-inter-agents lit le **JOURNAL**, jamais le fil. Le connecteur `routine` déclenche une routine
-Claude Code hébergée — ⚠️ **il relaie, il n'apporte rien d'autre**, et il n'y a **aucune API
-publique de création de routine ni de génération de jeton**.
-**Détail : `docs/runner-et-automatisations.md`.**
-
-## Boucle d'usage (ADR 0017)
-
-Flux d'événements de session unifié : calllog (involontaire) + feedback volontaire d'agent
-(`feedback`, signal=tool_feedback|gap) + runs / déroulés (`run_start`/`run_finish`).
-⚠️ **Le vocabulaire d'issue vient de l'ADR, pas de la mesure : la mesure tranche ce que l'ADR
-laisse ouvert, jamais ce qu'elle a fermé.** Le silence d'un run (**24 h** sans appel
-rattaché — seuil re-daté le 31/08 par #666, l'ancienne justification inversait le
-recensement qu'elle citait) est **dérivé à la lecture**, jamais stocké.
-**Détail : `docs/usage-loop.md`.**
-
-## Email (envoi per-org, par connecteur)
-
-Deux connecteurs **BYO-org** : `scaleway` (API TEM directe, fields — domaine garanti
-par Scaleway) + `resend` (BYOK). `email_send` =
-spine qui route `sender→connecteur→transport` ; config `orgs.email_settings` par connecteur
-(senders + quiet hours) ; envoi différé (`scheduler.py`, quiet hours 20h–8h défaut) ;
-**une image de tête** (`image_url` https + `image_alt` REQUIS, 29/08) dont l'URL publique
-vient de `oto_upload_url(target="image")` — un upload, une URL réutilisée.
-⚠️ Le front qui héberge une org (`orgs.front_base_url`/`front_brand`) est **dérivé de l'org
-CIBLE, jamais déclaré par l'appelant** — sinon c'est un champ d'API publique qu'il faudra
-retirer à l'arrivée de l'étage tenant. ⚠️ Aucune surface n'édite ces colonnes (UPDATE à la
-main). **Détail : `docs/email.md`.**
-
-## Visibilité des outils (per-user, org/équipe, socle)
-
-La toolbox d'une session = denylist calculée `(sub, org active)` dans `session_visibility.py`,
-appliquée au handshake par `UserDisabledToolsMiddleware` (visibility rules natives fastmcp).
-Régime **NOMINAL « non-sélectionné = masqué »** (ADR 0019/0050 ; socle de départ **VIDE**).
-Règle effective : override positif prime > désactivé > masqué par un admin > masqué-par-défaut
-plateforme > visible.
-⚠️ **`PROTECTED_TOOLS` (`tool_visibility.py`, source unique) = quatre familles jamais
-masquables ni désactivables** : méta-toolset + identité, échappatoires de contexte
-(anti-lockout), boucle d'usage, dispatch universel.
-⚠️ **Gouvernance de visibilité, PAS une barrière de sécurité** (ADR 0031) — additif entre
-paliers : une équipe ne peut jamais RÉVÉLER un tool que l'org a masqué.
-⚠️ **Un outil admin est masqué par son AUTORISATION, jamais par son nom** (28/08) : le
-plancher de rôle plateforme est déclaré au niveau capacité (`_authz.platform_floor`), et
-celui d'un `ADMIN_BY_OP` est **le plus BAS de ses branches**. Le test de préfixe
-`oto_admin_*` rendait `op=remove` (autz `ORG_ADMIN_OF`) injoignable au responsable
-d'organisation — et le masquage bloque l'APPEL, pas seulement la liste.
-⚠️ **Stdio local (sub=None) = accès complet.** **Détail : `docs/tool-visibility.md`.**
-
-## Org/équipe : session vs maison vs consultation (ADR 0023, amende 0015)
-
-Le pointeur unique « org active » est scindé en **3 notions** — session (éphémère, MCP) /
-consultation (REST, header `X-Oto-Org`) / maison (défaut persistant) — résolues par le **seam
-unique `access.current_org(sub)`** = `jeton d'appel ?? org du run ?? consultation ?? maison`
-(miroir `current_group`). **Depuis le 30/08/2026 (#639)** : sans `_org=`, un appel fait DANS
-un run se résout dans l'org du run (`runs.org_id`), appartenance gardée — plus dans la maison. **TOUTE résolution d'action passe par ce seam** — ne plus lire
-`org_store.get_active_org` en direct dans un chemin de résolution (**tripwire**
-`tests/test_org_seam_tripwire.py`).
-⚠️ **Ce seam est scopé sur l'ACTEUR courant** : `current_org(autre_sub)` renvoie le contexte du
-**requérant**, pas du tiers — **NE JAMAIS** l'utiliser (ni `status_for`/`has_option`/
-`credential_mode_for` qui en dérivent) pour calculer l'état d'un **tiers** (écran admin).
-Passer son org/groupe **explicitement** via le kwarg `org`/`group`.
-**Détail : `docs/org-context.md`.**
-
-## Agent readme (cumulable) & procédures
+## Guides, agent readme & procédures
 
 **Agent readme** = prose libre **injectée à chaque session**, cumulée du général au spécifique
-(plateforme → org → équipe active → user) ; les 4 étages vivent dans `guides` delivery='init'
-et **s'éditent par UNE surface**, la capacité `me.guide{,s}` (ADR 0042). **Procédure** =
-guide nommé, chargé à la demande. ⚠️ **Le produit a changé de mot le 28/08/2026**
-(#519) : il dit « guide », plus jamais l'ancien. L'interne est propre (lot A) ; les noms
-SERVIS se DOUBLENT au lot B — le nouveau naît, l'ancien reste servi avec **une date de
-retrait écrite** (premier tag à partir du 27/09/2026 ; retrait = lot D, #526).
-**La liste unique de ces alias, leur forme et leur date : `docs/alias-deprecies.md`.**
-⚠️ **Une procédure s'OUVRE sur son digest et embarque son SCHÉMA — deux sections requises.**
-Le digest n'est **jamais fabriqué** (sourcé sur le journal des runs, ou rien). La grammaire du
-dessin est un **CONTRAT** (reparsé en graphe) : **UN** seul bloc fencé **non tagué** — guide
-plateforme `procedure-flowchart`. **Détail : `docs/guides.md`.**
+(plateforme → org → équipe active → user) ; les 4 étages vivent dans `guides` delivery='init' et
+s'éditent par **UNE** surface : `me.guide{,s}` (ADR 0042) ; **procédure** = guide nommé, chargé à la
+demande. ⚠️ **L'injection au handshake n'est PAS garantie** (#478 : Claude Code coupe l'artefact à
+2 048 c., claude.ai n'injecte rien) — le bloc A est depuis le 2026-09-01 un **socle-résumé
+≤ 2 000 c.** (budget CI `tests/test_instructions_budget.py`) qui pointe le guide plateforme `notice`
+(la version intégrale) et `oto_context`. ⚠️ **Le produit dit « guide » depuis le 28/08/2026** (#519),
+l'ancien nom restant servi avec **une date de retrait écrite** (`docs/alias-deprecies.md`). ⚠️ Une
+procédure s'**OUVRE sur son digest** (jamais fabriqué — sourcé sur le journal des runs, ou rien) et
+**embarque son SCHÉMA** : deux sections requises. ⚠️ **La grammaire du dessin est un CONTRAT**
+(reparsé en graphe) : **UN** seul bloc fencé **non tagué** — guide plateforme `procedure-flowchart`.
+**`docs/guides.md`.**
 
-## Groupes (départements) & hiérarchie de droits (ADR 0012)
+## Groupes & hiérarchie de droits (ADR 0012)
 
-Une org se subdivise en **groupes** (départements/équipes) avec un **chef d'équipe**
-(`group_role='group_admin'`). Droits **centralisés dans `roles.py`** (escalade descendante,
-source unique) : `platform_admin ⊇ org_admin ⊇ group_admin ⊇ member`. Un groupe **gouverne 3
-ressources** par délégation de l'org : secrets partagés (cascade `user_key > groupe actif > org
-active > plateforme`), procédures, gouvernance de connecteur. ⚠️ Les procédures d'équipe vivent
-dans `org_instructions` (`owner_type='group'`) et passent par le store UNIFIÉ
-`org_store.<fn>('group', id, …)` — plus de jeu de fonctions à part (#681, 31/08/2026) ; leur
-écriture est `oto_procedure(op='set', scope='group')`, gardée « **membre** de l'équipe »
-— la suppression, elle, reste au chef (la garde suit le VERBE : écrire est réversible,
-supprimer emporte l'historique).
-⚠️ **Invariant monotone** : l'équipe RÉTRÉCIT ce que l'org expose, jamais l'inverse
-(platform ⊇ org ⊇ group). ⚠️ **Groupe actif** : ≤1 par sub, il appartient à l'org active.
-⚠️ **Aucun module du package `org_store/` n'importe `group_store`** (SQL direct dans
-`org_store/members.py` pour l'invariant org↔groupe, pas de cycle) — la règle a survécu à la
-découpe du 2026-08-27 et est désormais **vérifiée** (`test_org_store_surface_frozen.py`). ⚠️ Migrations vivantes sur la DB partagée = playbook `docs/live-migrations.md`.
-**Détail : `docs/groups-and-roles.md`.**
-
-## Fédération MCP & comptes (otomata#16)
-
-Deux mécanismes : **mount** (MCP distant fédéré, token OAuth per-user, pilote atlassian) vs
-**remote** (bridge data-driven ADR 0003, token M2M d'org). **Plus aucun mount monté d'office**
-(fédération en sommeil, masters atlassian/justicelibre OFF en prod ; le connecteur `memento` a
-été RETIRÉ le 2026-07-30 — la mémoire est native `oto_kb`) : un mount suit le régime commun
-d'activation (DB `connector_activation` ∪ env `OTO_MCP_MOUNTS_ENABLED`).
-**Détail : `docs/federation.md`.**
-
-## MCP Apps — UI rendue (SEP-1865)
-
-Certains tools renvoient une **interface rendue** (iframe sandbox côté host) au lieu de JSON
-brut, via `prefab_ui` (extra `fastmcp[apps]`). **Convention** : variantes **flagship `*_app`**
-(≠ remplacer les tools JSON), import **optionnel et guardé**.
-⚠️ **Pas d'annotation de retour `-> Card`** sur un tool `app=True` (NameError fatal au boot).
-⚠️ **Guides = tout-DB** : la table `guides` est la source de vérité ; les fichiers
-`oto_mcp/guides/*.md` ne sont que des **seeds de boot** — une édition durable doit AUSSI
-retoucher le fichier seed. **Détail : `docs/mcp-apps.md`.**
-
-## Veille protocole MCP — suivre les SEP en amont (acté 2026-07-30)
-
-**Règle : on suit les SEP, pas les specs.** Une spec publiée est un fait accompli ; un SEP en
-discussion est une décision qu'on peut anticiper (voire influencer). Revue périodique des SEP
-`proposed`/`accepted` qui touchent **ce qu'on utilise** ; on ignore ce qu'on n'a jamais adopté.
-**Détail : `docs/mcp-spec-watch.md`** — d'où vient la règle, et les 4 points à traiter d'ici la
-migration vers la spec `2026-07-28`.
+Une org se subdivise en **groupes** avec un **chef d'équipe** (`group_role='group_admin'`) ; droits
+**centralisés dans `roles.py`** : `platform_admin ⊇ org_admin ⊇ group_admin ⊇ member` ; un groupe
+gouverne par délégation les secrets partagés, les **procédures** et la gouvernance de connecteur.
+⚠️ Les procédures d'équipe vivent dans `org_instructions` (`owner_type='group'`) et passent par le
+store UNIFIÉ `org_store.<fn>('group', id, …)` (#681, 31/08/2026) ; **leur écriture est gardée
+« membre » de l'équipe — la suppression reste au chef** : *la garde suit le VERBE*, écrire est
+réversible, supprimer emporte l'historique. ⚠️ **Invariant monotone** : l'équipe RÉTRÉCIT ce que l'org
+expose, jamais l'inverse. ⚠️ **Groupe actif** : ≤ 1 par sub, il appartient à l'org active.
+⚠️ **Aucun module d'`org_store/` n'importe `group_store`** — vérifié
+(`test_org_store_surface_frozen.py`). **`docs/groups-and-roles.md`, `docs/live-migrations.md`.**
 
 ## Conventions
 
-**`docs/conventions.md`** — les règles de travail, chacune née d'un incident daté :
-test qui décrit le système et non l'intention, garde-fou exercé sur le montage RÉEL,
-aucune adresse en dur, jetons de contexte réservés, budget de ce qu'un outil renvoie,
-**où vit un fichier** (le dossier = le domaine, familles de ≥ 4 en package, `tests/` en
-miroir), ordre des middlewares, contrainte MONO-LOOP, et le cycle complet d'un connecteur.
-**À lire avant d'écrire du code ici.**
+**`docs/conventions.md` — à lire avant d'écrire du code ici** : test qui décrit le système et non
+l'intention, garde-fou exercé sur le montage RÉEL, aucune adresse en dur, jetons de contexte réservés,
+budget d'un retour d'outil, **où vit un fichier**, ordre des middlewares, MONO-LOOP, cycle d'un
+connecteur. ⚠️ **Le refus est bruyant, la divergence est muette — et le CI le vérifie** :
+`lint_silences.py` refuse un `except Exception` qui ne re-lève, ne journalise ni ne rend un refus
+nommé ; échappatoire unique `# noqa: SILENT — <raison>`. **`docs/silences-2026-08-27.md`.**
+⚠️ **Ce dépôt est PUBLIC : aucun nom de client, de personne ni de domaine client** — appliqué à la
+main le 01/09 (#709 sources, #747 tests), **recassé le jour même à 10:26**, donc désormais tenu par
+`lint_noms_clients.py` (job CI `noms-clients`, PR + push `main`, **tout le dépôt** via `git
+ls-files`), exercé par `tests/test_lint_noms_clients.py`. Conventions : `acme`, `Jane Doe`, prose
+générique, TLD `.test` ; échappatoire `# noqa: CLIENT — <raison>`. ⚠️ **La liste des termes n'est
+pas dans le dépôt, pas même hachée** (des empreintes publiques = un oracle d'appartenance) : secret
+`OTO_NOMS_CLIENTS`, ou `~/.otomata/noms-clients.txt` en local ; sans elle le contrôle sort **2**
+= « pas jugé », et le job **ÉCHOUE** (corrigé le 01/09, jour de sa pose : il sortait vert avec une
+annotation, donc *tous* ses runs — dont celui de sa propre fusion — ont dit « success » sans rien
+juger). ⚠️ **Un garde-fou qui ne peut pas s'exécuter doit être ROUGE, jamais vert avec une note** :
+seule la conclusion est lue, et un vert « pas jugé » fabrique une preuve POSITIVE. Il reste **hors
+des contrôles requis** — rouge et visible, jamais bloquant.
 
-⚠️ **Le refus est bruyant, la divergence est muette — et le CI le vérifie.** Un
-`except Exception` qui ne re-lève pas, ne journalise pas et ne rend pas de refus nommé
-transforme une panne en succès : l'appelant reçoit une valeur de repli et croit avoir
-été servi. `scripts/lint_silences.py` (tripwire `tests/test_no_silent_except.py`) le
-refuse ; l'unique échappatoire est `# noqa: SILENT — <raison>`, sur la ligne du
-`except` ou juste au-dessus, **raison obligatoire**. Les 168 sites existants sont
-annotés : c'est de la dette DÉCLARÉE, pas un permis. **Détail et inventaire :
-`docs/silences-2026-08-27.md`.**
+## Le démarrage (ADR 0065)
 
-## Le démarrage — ce qui a le droit d'y tourner (ADR 0065)
-
-**Au boot, le DDL additif et rien d'autre.** `oto-mcp` → `oto_mcp/cli.py` → `server.main`
-→ `_prepare_database()` **une seule fois par process** (drapeau `_PREPARED`) : `init_db()`
-puis les six backfills/seeds one-shot. `_build_mcp` est appelé **deux** fois (instance
-anonyme au niveau module, authentifiée dans `main`) — la garde est là pour ça. Chaque
-étape se chronomètre dans le journal (`boot: <étape> <n> ms`). ⚠️ **Le journal se
-configure dans `oto_mcp/cli.py`, AVANT d'importer `server`** : cet import EST déjà du
-démarrage et il journalise, or un INFO émis sans handler est jeté (vécu le 28/08 :
-zéro ligne `boot:` en prod alors que le code en émettait une par étape).
-
-⚠️ **La fenêtre du healthcheck est FINIE : 120 s**, sonde directe `127.0.0.1:9103`
-(`deploy/oto-backend.sh`). Boot prod/préprod mesuré 36-39 s, dont **≈ 1,5 s de base**
-depuis le lot 0 — le reste est l'import Python et les deux `_build_mcp`. Un lot qui
-ajoute un travail one-shot au boot doit le mesurer **avant** de poser son tag.
-
-**Ce qui n'a rien à faire au boot va en maintenance** — `oto_mcp/maintenance.py`,
-commandes `oto-mcp maintenance retention | blocks | key-indexes | check-boot | all`
-(+ `journal-tokens`, purge rétroactive des jetons de #558 — **à blanc par défaut**,
-`--apply` pour écrire, hors timer et hors `all` : réécrire des lignes servies aux
-lentilles de supervision est une décision, comme `key-index-rebuild`),
-tirées par `deploy/oto-mcp-maintenance.timer` (quotidien, posé et activé par le script
-de déploiement, **prod seulement** : la base est partagée, deux exécutants se
-disputeraient les mêmes lignes). Le critère : **un travail dont le coût suit la taille
-de la base n'est pas une migration, c'est un cron.**
-
-**La rétention du journal a UN propriétaire** : `oto-journal-archive` (export S3 du mois
-puis suppression, `OTO_JOURNAL_RETENTION_DAYS`). Le boot n'en a plus. ⚠️ Jusqu'au
-2026-08-28 il purgeait à 30 j **sans archiver** et vidait donc d'avance ce que l'archive
-devait prendre — un chiffre de monitoring lu avant cette date ne porte qu'un mois.
-
-**Le garde-fou** : `tests/test_boot_order_replay.py` rejoue l'ORDRE du boot (DDL assemblé
-PUIS les ALTER) contre un vrai PostgreSQL, en **transaction annulée**, et compare
-l'empreinte de schéma avant/après. C'est ce qui manquait le 27/08 (#450) : un index posé
-sur une colonne née d'un ALTER — le DDL seul passait, la migration seule passait, seul
-leur **ordre** échouait. Jouable contre une base servie : `oto-mcp maintenance check-boot`.
-
-**Détail et chiffres : `docs/migrations-versionnees.md` §1.**
-
-## Commands
-
-Tests, déploiement, logs, inspection DB : **`docs/commands.md`** — avec les pièges qui coûtent une heure (le venv sans pytest, le clone qui teste en réalité le tree partagé, le registre d'outils vide hors serveur).
+**Au boot, le DDL additif et rien d'autre** : `_prepare_database()` **une seule fois par process**.
+⚠️ **La fenêtre du healthcheck est FINIE : 120 s** — un travail one-shot ajouté au boot se mesure
+**avant** de poser son tag. **Ce qui n'a rien à faire au boot va en maintenance** (`oto-mcp
+maintenance …`, timer quotidien **prod seulement**) : *un coût qui suit la taille de la base n'est pas
+une migration, c'est un cron.*
+⚠️ **Le boot se juge sur une base QUI EXISTE DÉJÀ, jamais sur une base vierge** : c'est là qu'il
+meurt (`CREATE TABLE IF NOT EXISTS` sauté ⟹ la colonne d'un `ALTER` manque, et le DDL assemblé
+s'exécute AVANT les ALTER). `test_boot_order_replay.py` a été aveugle à ce piège — celui pour lequel
+il avait été écrit — jusqu'au **01/09/2026** (#781) ; il retire désormais du schéma neuf **chacune**
+des 132 colonnes posées par un `ALTER` (relevées sur le SQL exécuté, pas lues dans le source) et
+rejoue la séquence : le boot doit **passer** et le schéma **converger**. **`docs/live-migrations.md`,
+`docs/migrations-versionnees.md` §1.**
 
 ## Infra
 
-Déployé sur une **box Scaleway dédiée** (ADR 0002, depuis 2026-06-11) : oto-backend isolé + Caddy + chiffrement du coffre actif, sert `mcp.oto.ninja`. **DB** = PostgreSQL managé partagé (`otomata-main`, DB `oto_mcp`). Le coffre `connector_credentials` est chiffré au repos (AES-256-GCM, master key en Secret Manager fetchée au boot, 0 plaintext). Object Storage S3 pour avatars/logos (`media_store.py`).
+**Box Scaleway dédiée** (ADR 0002) : oto-backend isolé + Caddy ; **DB** = PG managé partagé
+(`otomata-main`, DB `oto_mcp`) ; coffre `connector_credentials` chiffré au repos (AES-256-GCM, master
+key en Secret Manager au boot, 0 plaintext) ; S3 pour avatars/logos.
 
-> **Détails machine = repo privé `otomata-tech/infra`** (IPs, IDs de secrets/zone/instance, systemd, runbook deploy, env de process) — pas ici (ce repo est public). Voir `infra/docs/oto-platform-state.md` + docs ciblés (`scaleway-managed-db.md`, `caddy.md`, `cloudflare.md`, `deploy-keys.md`). Toute intervention prod = skill `prod-init`.
-
-> ⚠️ **PROD et PREPROD partagent la MÊME base.** Une donnée écrite depuis la preprod est
-> **la donnée de prod** (pas un bac à sable) ; et toute config portée par une COLONNE ne
-> peut avoir qu'**une** valeur pour les deux environnements — ce qui exclut de distinguer
-> prod/preprod par la base. Vérifier avant de raisonner dessus : comparer les DSN par hash,
-> jamais en les lisant en clair. Détail : `docs/live-migrations.md`.
+> **Détails machine = repo privé `otomata-tech/infra`** (IPs, IDs de secrets/zone/instance, systemd,
+> runbook, env) — pas ici, ce repo est public : `infra/docs/oto-platform-state.md` + les docs ciblés
+> (`scaleway-managed-db.md`, `caddy.md`, `cloudflare.md`, `deploy-keys.md`) ; intervention prod =
+> skill `prod-init`. ⚠️ **PROD et
+> PREPROD partagent la MÊME base** : ce qu'on écrit depuis la preprod est **la donnée de prod**, et une
+> config portée par une COLONNE n'a qu'**une** valeur pour les deux. `docs/live-migrations.md`.
 
 ## Docs
 
-**À lire en premier** : `docs/conventions.md` (les règles de travail) puis
-`docs/connector-model.md` (la carte d'ensemble d'un connecteur).
-
-| doc | ce qu'il porte |
-|---|---|
-| `conventions.md` | les **règles de travail** du backend, chacune née d'un incident daté, et **où vit un fichier** (le dossier = le domaine). À lire avant d'écrire du code ici. |
-| `commands.md` | recettes tests / deploy / logs / inspection DB + leurs pièges, et le **pin oto-core**. |
-| `silences-2026-08-27.md` | inventaire AST des `except` muets, les 10 « succès déguisés » corrigés, et le garde-fou `lint_silences` + sa convention `# noqa: SILENT`. |
-| `couches-et-capacites.md` | les 4 couches ADR 0004 et la **couche capacité** ADR 0009 (deux faces, une déclaration ; refus de champ inconnu ; console admin `*_op`). |
-| `connector-model.md` | **carte d'ensemble** : les 3 couches d'un connecteur (disponibilité / authentification / option), la matrice des niveaux, le vocabulaire canonique, le seam `access.has_option`. **À lire en premier** avant de toucher activation/clés/options. |
-| `connector-vault.md` | registre source unique (package `providers/`, 1 module de déclaration par connecteur), coffre chiffré unique `connector_credentials`, enveloppe AES-256-GCM **obligatoire**, résolution + palier org, **l'instance objet `connector_instances` + `inst:{id}` (lot L6)**, credentials qui se consomment à l'usage (rotation), application d'org ≠ jeton d'identité. |
-| `roles-and-resolution.md` | rôles (3 paliers), cascade de résolution de clé, grants/platform keys, multi-compte, scope MEMBRE, walker de cascade. |
-| `auth-logto.md` | auth Logto ES384, discovery RFC 9728, façade DCR, jetons `oto_`, MFA par org, cutover `.ninja`↔`.cx`. |
-| `tenants.md` | l'étage d'identité au-dessus des orgs (ADR 0052) : émetteur dédié, préfixe d'outils, écran de suivi, pièges d'une bascule de compte. |
-| `org-context.md` | org/équipe : session vs maison vs consultation, seam `current_org` scopé sur l'acteur, view-as USER en lecture seule. |
-| `groups-and-roles.md` | groupes/départements & hiérarchie de droits (ADR 0012). |
-| `ownership.md` | primitive de ressource possédée (`can_access`/`can_govern`, tripwire `owner_pairs`, partage audience × rôle, abolition du perso). |
-| `tool-visibility.md` | visibilité des outils : denylist de session, paliers org/équipe, sélection par membre, `PROTECTED_TOOLS`. |
-| `rest-api.md` | inventaire des endpoints REST `/api/*`, OpenAPI dérivé, jetons portés, CORS. |
-| `noeuds.md` | le NOUVEL univers de contenu : trois genres (page/tableau/ligne), `props` (ce qu'oto interprète) vs `data` (ce que l'utilisateur y met), les deux univers côte à côte, l'arrêt de la recopie et le retrait de son résidu. |
-| `datastore.md` | datastore spine PG (`data_*`), OAuth Google per-user (setup GCP, scopes), coutures des modules, face REST dérivée. |
-| `datastore-colonne-tableau.md` | spec de la colonne-tableau (oto#22 barreau 2) : forme servie, couches d'un item, fonctions natives, non-définitions, chemin de migration en double-service. |
-| `projects.md` | projet (liens typés, docs), livraison client cascade, endpoint MCP + partage navigable par projet (`<slug>.{mcp,share}.oto.cx`), **périmètre d'URL** (`excluded_url_prefixes`, #605 : ce que recherche/extraction n'atteignent pas, seam `url_perimeter` ; son refus parle EN PREMIER, avant toute règle interne, #632). |
-| `search-and-kb.md` | `oto_search` : RRF lexical+sémantique, grains matchés, invariant « cherchable ⇔ lisible », épine, backlinks, propositions. |
-| `guides.md` | guide & skills d'org (`oto_procedure`, versionnée), forme d'une procédure (digest + schéma), agent readme, **renommer un outil = migrer les procédures** (refs `<tool:slug>` en DB, angle mort du CI). |
-| `onboarding-et-profil.md` | onboarding = un projet « Découverte », fiche « situation avec oto » (`me.profile`), `oto_whoami`. |
-| `unipile.md` | **le split compte/canaux (28/08)**, mode plateforme, DSN, sélecteur d'identité, comptes partagés (#55), historique des renommages LinkedIn. |
-| `browser-automation.md` | substrat Browserbase (Context/Live View/run_fetch), connecteurs brevo/crunchbase/pennylaneged, connecteur générique `browser`, LinkedIn isolation de session. |
-| `email.md` | envoi per-org par connecteur (scaleway BYO TEM + resend), différé/quiet hours, front qui héberge l'org. |
-| `federation.md` | fédération MCP : mount (per-user) vs remote/bridge (org). |
-| `mcp-apps.md` | MCP Apps (SEP-1865) : `prefab_ui`, convention `*_app`, gotchas, guides tout-DB. |
-| `mcp-spec-watch.md` | veille protocole MCP : on suit les SEP, pas les specs ; les 4 points à traiter d'ici la spec `2026-07-28`. |
-| `runner-et-automatisations.md` | runner hébergé (l'état ici, la boucle dans `oto-runner`) + connecteur `routine`. |
-| `usage-loop.md` | boucle d'usage ADR 0017 (calllog + feedback + déroulés), runs persistés, run silencieux. |
-| `monitoring.md` | monitoring & investigation des appels (trois étages, recette d'enquête, rétention 90 j + archivage froid, Sentry, **masquage des jetons du journal** #558/#564). |
-| `event-loop-perf.md` | les **3** modes de gel mono-loop + protections + recettes py-spy/aiodebug. ⚠️ Le 3ᵉ (27/08) n'est pas un I/O mal placé mais une **requête lente** : même signature py-spy que le 2ᵉ, remède opposé — indexer, pas déplacer. |
-| `redaction.md` | rédaction de champs **et rendu du résultat servi** : middleware unique, rien par défaut + templates 1-clic, **schéma OBSERVÉ**, dry-run preview, moteur `FieldFilter` (oto-core) — et la règle **« un résultat VIDE se sert en PHRASE, jamais en structure nue »** (oto#32, 27/08/2026). |
-| `live-migrations.md` | migrations vivantes sur la DB partagée canari/prod : la danse en N lots promus, les techniques, les pièges — et le fait que **prod et preprod partagent la base**. |
-| `migrations-versionnees.md` | ce que le boot exécute, mesuré : l'inventaire des 297 ordres, les 79 ALTER inertes, les 30 non additifs — et §1.3/§1.4, **l'état depuis le lot 0 de l'ADR 0065** (un `init_db` par process, la maintenance en timer, la rétention du journal rendue à l'archivage qu'elle annulait, la répartition chiffrée des 36-39 s de boot). |
-| `sirene-stock.md` | stock SIRENE en DuckDB sur parquet INSEE : source S3, perfs, refresh, `fr_stock_*`, routes REST. |
-| `connector-test-gate-theirstack-origami.md` | la porte de test LOCALE des deux connecteurs de prospection (unitaire, lecture live, écriture sur un espace jetable) : ce qu'un contributeur externe doit avoir fait passer avant de pousser, sans serveur qui tourne. |
-| `billing.md` | abonnement par org (ADR 0043) : le modèle sans objet subscription Mollie, **le mandat qui naît quelques minutes APRÈS l'encaissement** (une course, pas un échec), les 3 invariants anti-double-débit, les deux files de reprise du runner, **la règle de TVA par pays et le montant débité en TTC** (#486), **le gate de consentement d'achat et la trace d'acceptation historisée** (#487), **la facture Pennylane émise à chaque encaissement** — clé de la compta d'Otomata dans l'env, numérotation chez le fournisseur, PDF stocké, avoir sur remboursement (#488) — et l'incident du 25/08/2026. |
+- `conventions.md` — règles de travail, où vit un fichier · **à lire en premier**
+- `connector-model.md` — un connecteur : disponibilité / auth / option · **puis**
+- `commands.md` — tests, deploy, logs, inspection DB, pin oto-core, et les pièges qui coûtent une
+  heure (venv sans pytest, clone qui teste en réalité le tree partagé, **faux rouges d'un venv en
+  retard sur le pin**, registre d'outils vide)
+- `architecture.md` — l'arbre des modules, les 4 couches
+- `couches-et-capacites.md` — ADR 0004 + capacités
+- `connector-vault.md` — registre, coffre, instances
+- `roles-and-resolution.md` — paliers, cascade de clé
+- `groups-and-roles.md` — hiérarchie de droits
+- `org-context.md` — session / maison / consultation
+- `ownership.md` — `can_access`/`can_govern`, partages
+- `tool-visibility.md` — denylist, `PROTECTED_TOOLS`
+- `auth-logto.md` — Logto, DCR, jetons `oto_`
+- `tenants.md` — l'identité au-dessus des orgs
+- `rest-api.md` — endpoints, OpenAPI, jetons, CORS
+- `version-servie.md` — dater un changement : les 3 surfaces, les 3 coordonnées qui mentent
+- `noeuds.md` — le NOUVEL univers de contenu : page/tableau/ligne, `props` vs `data`, les deux
+  univers côte à côte, l'arrêt de la recopie
+- `datastore.md` — spine PG `data_*`, OAuth Google
+- `datastore-colonne-tableau.md` — sa spec
+- `projects.md` — liens, partage, périmètre d'URL
+- `search-and-kb.md` — `oto_search`, RRF, grains
+- `guides.md` — guides & skills d'org, procédure
+- `alias-deprecies.md` — noms doublés, date de retrait
+- `onboarding-et-profil.md` — Découverte, `me.profile`
+- `unipile.md` — split compte/canaux, DSN, identités
+- `browser-automation.md` — Browserbase, cookie-bound
+- `email.md` — envoi per-org, quiet hours
+- `federation.md` — mount vs remote/bridge
+- `mcp-apps.md` — `prefab_ui`, convention `*_app`
+- `mcp-spec-watch.md` — les SEP, pas les specs
+- `runner-et-automatisations.md` — l'état ici, la boucle ailleurs
+- `usage-loop.md` — calllog, feedback, déroulés
+- `monitoring.md` — enquête, rétention, Sentry
+- `event-loop-perf.md` — les 3 gels mono-loop
+- `silences-2026-08-27.md` — `except` muets, `# noqa: SILENT`
+- `redaction.md` — rédaction de champs, résultat servi
+- `live-migrations.md` — migrations vivantes, base partagée
+- `migrations-versionnees.md` — ce que le boot exécute
+- `sirene-stock.md` — DuckDB sur parquet INSEE
+- `connector-test-gate-theirstack-origami.md` — porte de test locale
+- `billing.md` — abonnement par org, Mollie, TVA

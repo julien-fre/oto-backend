@@ -46,6 +46,34 @@ huit signatures et retire trois noms devenus faux :
 Ce cliquet a donc fait exactement son travail : il a rendu le changement VISIBLE et
 obligé à l'expliquer ici. Ce qui ne serait PAS acceptable, c'est de le mettre à jour
 sans cette explication — la ligne retirée deviendrait indistinguable d'un oubli.
+
+⚠️ **Mise à jour du 01/09/2026 (oto-backend#662)** — `set_instruction` gagne deux
+paramètres nommés, `must_create` et `expected_version`, tous deux à valeur par défaut :
+la surface s'ÉLARGIT, aucun appelant existant ne bouge. Ils portent les deux refus
+anti-écrasement (`InstructionExists`, `InstructionVersionConflict`) qu'un front tiers
+a payés en découvrant qu'une création sur un slug pris remplaçait la procédure en
+place sans un mot. Ils vivent dans le store, sous le verrou advisory, parce que
+n'importe quel pré-check posé dehors laisserait passer deux créations simultanées.
+
+⚠️ **Mise à jour du 01/09/2026 (issue `oto`#27)** — une couture de PLUS dans le
+package : `instructions.py` touchait 499 lignes pour un plafond de 500 (le lot
+précédent avait raboté sa prose pour y tenir), donc plus rien ne pouvait s'y
+ajouter. Le fichier est coupé en deux sur la frontière qu'il portait déjà en
+bannière de section, et qui est celle d'ADR 0030 : `instructions` sert le plan
+CONTENU (lire / écrire / versionner / archiver, à la clé
+`(owner_type, owner_id, slug)`), `instruction_ownership` sert le plan GOUVERNANCE
+(identité par `id` surrogate, copie, déplacement, inventaires). Ce sont deux
+DROITS distincts depuis ADR 0030 (`can_access` vs `can_govern`) ; ce sont
+maintenant deux fichiers.
+
+**Déplacement pur, et c'est vérifiable** : `FROZEN` ne perd pas une ligne, aucune
+signature ne bouge, et les six noms déplacés (`get_instruction_by_id`,
+`_free_instruction_slug`, `copy_instruction_to_owner`, `move_instruction`,
+`list_instructions_for_owners`, `list_all_instructions`) restent servis en
+`org_store.<fn>` par le ré-export — c'est exactement ce que
+`test_aucun_nom_perdu` prouve ici. Le seul changement de forme est interne : les
+références croisées passent désormais par `instructions.<nom>`, la seule forme
+que `test_aucun_frere_importe_a_plat` admet.
 """
 from __future__ import annotations
 
@@ -57,14 +85,15 @@ import oto_mcp.org_store as org_store
 
 PKG = pathlib.Path(org_store.__file__).parent
 
-# Les 8 coutures, dans l'ordre du graphe (feuilles d'abord).
+# Les 9 coutures, dans l'ordre du graphe (feuilles d'abord).
 MODULES = ("orgs", "members", "vault", "settings", "instructions",
-           "personal", "invitations", "library")
+           "instruction_ownership", "personal", "invitations", "library")
 
 # Arêtes ATTENDUES du graphe interne : module -> modules frères importés.
 EXPECTED_EDGES = {
     "orgs": set(), "members": set(), "vault": set(), "settings": set(),
     "instructions": set(),
+    "instruction_ownership": {"instructions"},
     "personal": {"orgs", "members"},
     "invitations": {"orgs", "members"},
     "library": {"instructions"},
@@ -192,7 +221,7 @@ FROZEN_SIGNATURES = {
     'revoke_platform_invitation': "(inv_id: 'int') -> 'bool'",
     'search_instructions': "(owner_type: 'str', owner_id: 'int | str', query: 'str', include_base: 'bool' = False) -> 'list[dict]'",
     'set_active_org': "(sub: 'str', org_id: 'int') -> 'bool'",
-    'set_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str', body_md: 'str', title: 'Optional[str]' = None, description: 'Optional[str]' = None, set_by: 'Optional[str]' = None, slots: 'Optional[list]' = None) -> 'int'",
+    'set_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str', body_md: 'str', title: 'Optional[str]' = None, description: 'Optional[str]' = None, set_by: 'Optional[str]' = None, slots: 'Optional[list]' = None, must_create: 'bool' = False, expected_version: 'Optional[int]' = None) -> 'int'",
     'set_org_default_connectors': "(org_id: 'int', connectors: 'Optional[list[str]]') -> 'bool'",
     'set_org_email_settings': "(org_id: 'int', connector: 'str', *, senders: 'Optional[list[dict]]' = None, quiet_hours: 'Optional[dict]' = None, clear_quiet_hours: 'bool' = False) -> 'bool'",
     'set_org_field_filters': "(org_id: 'int', service: 'str', block: 'Optional[dict]') -> 'bool'",
@@ -202,7 +231,7 @@ FROZEN_SIGNATURES = {
     'set_org_secret': "(org_id: 'int', provider: 'str', api_key: 'str', set_by: 'Optional[str]' = None, meta: 'Optional[dict]' = None, account: 'str' = '') -> 'None'",
     'unpublish_guide': "(entry_id: 'int') -> 'bool'",
     'update_org': "(org_id: 'int', name: 'Optional[str]' = None, description: 'Optional[str]' = None, domain: 'Optional[str]' = None, industry: 'Optional[str]' = None, location: 'Optional[str]' = None) -> 'bool'",
-    'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, iss: 'Optional[str]' = None) -> 'None'",
+    'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, iss: 'Optional[str]' = None, locale: 'Optional[str]' = None) -> 'None'",
 }
 
 

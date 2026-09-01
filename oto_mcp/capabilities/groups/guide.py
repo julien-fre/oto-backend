@@ -7,6 +7,11 @@ suppression = **chef d'équipe** (`GROUP_ADMIN_OF`, escalade org_admin/platform)
 écriture ajoute une version, `revert` en restaure une. Supprimer emporte l'historique
 sans corbeille : c'est le seul geste que rien ne défait, et le seul réservé au chef.
 
+Deux gardes ⟹ deux droits SERVIS : `GET /api/groups/{id}/instructions` rend
+`can_write_instructions` et `can_delete_instructions`, chacun calculé par la règle
+d'autz de sa capacité. Un drapeau unique remettrait « qui peut annoter » dans les mains
+d'un écran, et c'est exactement ce que #695 vient de retirer.
+
 ⚠️ Ces routes et `oto_procedure(op='set', scope='group')` écrivent la MÊME procédure
 (même store, même clé `(owner_type, owner_id, slug)`) : leurs gardes se déplacent
 ENSEMBLE, sinon « qui peut annoter » devient une propriété du transport.
@@ -19,17 +24,34 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ... import (deprecations, guide_store, org_store, procedure_diagram,
                 procedure_digest, roles)
-from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF
+from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, capacite_autorise
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
 
 _GID = {"id": "group_id"}
 _GID_SLUG = {"id": "group_id", "slug": "slug"}
 _BASE = org_store.BASE_SLUG
+
+# ── Les droits ANNONCÉS par le bundle ────────────────────────────────────────
+#
+# Chaque drapeau NOMME la capacité dont il rend la règle, et c'est cette règle-là
+# qu'on exécute (`capacite_autorise`) — jamais une seconde condition écrite ici. Le
+# défaut réparé : `can_edit` recopiait le critère de l'administration, la garde
+# d'écriture est descendue au membre (#695), et l'écran s'est mis à cacher un geste
+# permis sans qu'une ligne de ce fichier ait bougé. Déplacer une garde déplace
+# désormais son drapeau avec elle.
+#
+# ⚠️ Deux entrées et non une : `set` et `delete` n'ont pas la même garde. Un drapeau
+# unique redeviendrait soit une porte fermée à tort (l'écriture), soit une porte
+# ouverte à tort (le bouton de suppression, que le serveur refuse).
+_DROITS_SERVIS = {
+    "can_write_instructions": "group.instruction.set",
+    "can_delete_instructions": "group.instruction.delete",
+}
 
 
 class GroupIdInput(BaseModel):
@@ -87,7 +109,7 @@ class GroupInstructionsBundle(BaseModel):
 
     ⚠️ **Chaque clé est servie sous DEUX noms** le temps du préavis (#519) :
     `guide`/`guide_version` (aujourd'hui) et `doctrine`/`doctrine_version`, qui s'en
-    vont le 27/09/2026 — cf. `docs/alias-deprecies.md`.
+    vont le 29/10/2026 — cf. `docs/alias-deprecies.md`.
 
     ⚠️ **`guide` est le corps MARKDOWN BRUT, pas un objet de métadonnées** — c'est
     l'écart de forme avec le bundle d'org, qui rend là un `{exists, version,
@@ -112,20 +134,31 @@ class GroupInstructionsBundle(BaseModel):
     platform_admin), là où `GroupBrief.my_role` ne rend que l'appartenance explicite.
     `can_edit: true` avec `my_role: null` n'est pas une incohérence — c'est un org_admin.
 
-    ⚠️ **`can_edit` est le droit d'ADMINISTRER, et depuis #681 il SOUS-ESTIME le droit
-    d'écrire une procédure** : `PUT …/instructions/{slug}` (et son revert) ne demandent
-    plus que l'appartenance à l'équipe, alors que `can_edit: false` reste rendu à un
-    simple membre. Il continue de dire vrai pour le readme (`guide`, écrit sur la
-    surface guide) et pour la suppression, tous deux réservés au chef. Un écran qui
-    masque l'édition d'une procédure sur ce seul champ masque donc un geste permis —
-    c'est le sens du champ qui doit se dédoubler, pas sa valeur qui doit s'élargir."""
+    ⚠️ **`can_edit` ne dit RIEN du droit d'écrire une procédure** — c'est le droit
+    d'ADMINISTRER l'équipe : le readme (`guide`, écrit sur la surface guide), les
+    membres, les secrets partagés, et la suppression d'une procédure. Depuis #695
+    l'écriture n'en fait plus partie. **Les boutons d'une procédure se conditionnent à
+    `can_write_instructions` et `can_delete_instructions`, jamais à `can_edit`** : un
+    écran qui masque l'édition sur ce champ masque un geste permis à tout membre.
+    `can_edit` n'est pas déprécié pour autant — il reste la réponse juste aux gestes
+    d'administration de l'équipe."""
     group_id: int
     guide: str
     guide_version: Optional[int] = None
-    doctrine: str                          # ALIAS déprécié (retrait 27/09/2026)
-    doctrine_version: Optional[int] = None  # ALIAS déprécié (retrait 27/09/2026)
+    doctrine: str                          # ALIAS déprécié (retrait 29/10/2026)
+    doctrine_version: Optional[int] = None  # ALIAS déprécié (retrait 29/10/2026)
     instructions: list[GroupInstructionIndexEntry]
     can_edit: bool
+    # Les deux droits sur les procédures ci-dessus, chacun rendu par la règle d'autz
+    # de SA capacité (cf. `_DROITS_SERVIS`) — pas par une condition recopiée ici.
+    can_write_instructions: bool = Field(description=(
+        "Peut créer, modifier et restaurer une procédure de cette équipe "
+        "(`PUT`/`revert`) : vrai pour tout MEMBRE. Le geste est réversible — chaque "
+        "écriture ajoute une version."))
+    can_delete_instructions: bool = Field(description=(
+        "Peut supprimer une procédure de cette équipe ET tout son historique "
+        "(irréversible) : vrai pour le CHEF d'équipe seulement. Toujours servi à côté "
+        "de `can_write_instructions`, dont il diffère."))
 
 
 class GroupInstructionView(BaseModel):
@@ -255,7 +288,12 @@ def _list(ctx: ResolvedCtx, inp: GroupIdInput) -> dict:
         "guide": base_body,
         "guide_version": 1 if base_body else None,
         "instructions": org_store.list_instructions("group", inp.group_id),
+        # Droit d'ADMINISTRER l'équipe (readme, membres, secrets) — inchangé.
         "can_edit": roles.can_admin_group(ctx.sub, inp.group_id),
+        # Droits sur les PROCÉDURES : rendus par les règles d'autz déclarées, pas
+        # recalculés — ce qu'on annonce ici est ce qui refuse là-bas.
+        **{nom: capacite_autorise(cle, ctx.sub, group_id=inp.group_id)
+           for nom, cle in _DROITS_SERVIS.items()},
     })
 
 
@@ -293,7 +331,7 @@ def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
         "group", inp.group_id, slug, inp.body_md, title=inp.title,
         description=inp.description, set_by=ctx.sub)
     # Une procédure d'équipe est une procédure : même exigence de schéma qu'au grain org
-    # (tulina-app-front#108), même régime — un warning, jamais un refus.
+    # (front tiers, issue #108), même régime — un warning, jamais un refus.
     return {"group_id": inp.group_id, "slug": slug, "version": version, "set": True,
             **procedure_diagram.diagram_check(inp.body_md),
             **procedure_digest.digest_check(inp.body_md)}
@@ -326,7 +364,10 @@ CAPABILITIES += [
     Capability(
         key="group.instruction.list", handler=_list, Input=GroupIdInput,
         authz=GROUP_MEMBER_OF("group_id"), Output=GroupInstructionsBundle,
-        description="Group base doctrine + skills index (+ can_edit flag).",
+        description=("Group base doctrine + skills index, plus the caller's rights: "
+                     "can_write_instructions (any member) and "
+                     "can_delete_instructions (team lead) — can_edit is the "
+                     "right to ADMINISTER the team, not to edit a procedure."),
         rest=RestBinding("GET", "/api/groups/{id}/instructions", _GID),
     ),
     Capability(

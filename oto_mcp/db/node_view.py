@@ -79,6 +79,12 @@ def siblings_of(parent_ids: list[Optional[int]], *, owner: tuple[str, str],
     question, l'ouverture d'un popover ne demande rien »). Une requête par niveau
     ferait N+1 sur un chemin ouvert à chaque navigation ; un seul `IN` les rend toutes.
 
+    Les trois clés d'origine (`legacy`, `legacy_id`, `slug`) partent avec : elles
+    donnent la RÉFÉRENCE de procédure d'un voisin agent (#650 point 4), et ce sont
+    trois `props->>` de plus dans le même SELECT — ni jointure, ni requête par frère.
+    Sans elles, le fil sait dire qu'un voisin est un agent mais pas vers quoi il mène,
+    et l'écran le rend non cliquable alors que le rail l'ouvre.
+
     ⚠️ `owner` borne la fratrie au propriétaire du nœud : sans lui, deux organisations
     dont les arbres ont des racines `parent_id IS NULL` se verraient l'une l'autre dans
     le popover. C'est le genre de fuite qu'un `ORDER BY position` ne montre jamais.
@@ -97,7 +103,8 @@ def siblings_of(parent_ids: list[Optional[int]], *, owner: tuple[str, str],
     with _connect() as conn:
         rows = conn.execute(
             "SELECT n.parent_id, n.public_id, n.kind, n.props->>'title' AS title, "
-            "n.props->>'role' AS role "
+            "n.props->>'role' AS role, n.props->>'legacy' AS legacy, "
+            "n.props->>'legacy_id' AS legacy_id, n.props->>'slug' AS slug "
             f"FROM nodes n WHERE {_HORS_LIGNES} AND ({' OR '.join(clauses)}) "
             "AND n.owner_type = %s AND n.owner_id = %s "
             "ORDER BY n.position NULLS LAST, n.props->>'title'", params).fetchall()

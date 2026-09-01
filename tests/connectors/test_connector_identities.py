@@ -13,7 +13,7 @@ from oto_mcp.access import ResolvedCredential
 
 class _FakeUnipile:
     ACCOUNTS = [
-        {"id": "A1", "name": "Alexandra El Hachem", "type": "LINKEDIN",
+        {"id": "A1", "name": "Jane Doe", "type": "LINKEDIN",
          "sources": [{"status": "OK"}]},
         {"id": "A2", "name": "Laurent Guy", "type": "LINKEDIN", "sources": [{"status": "OK"}]},
     ]
@@ -91,7 +91,7 @@ def test_unipile_select_valid(monkeypatch):
     assert res["id"] == "A1" and res["channel"] == "LINKEDIN"
     # Scope membre (ADR 0033 B4) : le binding est rattaché à l'org de contexte,
     # BYO = pas un siège plateforme.
-    assert saved == {"aid": "A1", "name": "Alexandra El Hachem",
+    assert saved == {"aid": "A1", "name": "Jane Doe",
                      "provider": "LINKEDIN", "org_id": 39, "platform_seat": False}
 
 
@@ -123,12 +123,12 @@ def test_unipile_hosted_lists_own_accounts(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.get_operated_account", lambda sub, prov: None)
     monkeypatch.setattr("oto_mcp.db.granted_accounts_for", lambda sub, prov: {})
     monkeypatch.setattr("oto_mcp.db.list_unipile_accounts",
-                        lambda sub: [{"account_id": "H1", "account_name": "JB Fleury",
+                        lambda sub: [{"account_id": "H1", "account_name": "Jane Doe",
                                       "provider": "LINKEDIN", "org_id": 39}])
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id", lambda sub, org, ch: "H1")
     ids = connector_identities.list_identities("u1", "unipile")
     assert [i["id"] for i in ids] == ["H1"]
-    assert ids[0]["label"] == "JB Fleury" and ids[0]["channel"] == "LINKEDIN"
+    assert ids[0]["label"] == "Jane Doe" and ids[0]["channel"] == "LINKEDIN"
     assert ids[0]["is_default"]
 
 
@@ -142,7 +142,7 @@ def test_unipile_hosted_reflects_live_status(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.get_operated_account", lambda sub, prov: None)
     monkeypatch.setattr("oto_mcp.db.granted_accounts_for", lambda sub, prov: {})
     monkeypatch.setattr("oto_mcp.db.list_unipile_accounts",
-                        lambda sub: [{"account_id": "H1", "account_name": "JB",
+                        lambda sub: [{"account_id": "H1", "account_name": "Jane",
                                       "provider": "LINKEDIN", "org_id": 39}])
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id", lambda sub, org, ch: "H1")
     monkeypatch.setattr(connector_identities, "_unipile_live_status_map",
@@ -198,7 +198,7 @@ def test_unipile_hosted_status_failsoft_ok(monkeypatch):
     monkeypatch.setattr("oto_mcp.db.get_operated_account", lambda sub, prov: None)
     monkeypatch.setattr("oto_mcp.db.granted_accounts_for", lambda sub, prov: {})
     monkeypatch.setattr("oto_mcp.db.list_unipile_accounts",
-                        lambda sub: [{"account_id": "H1", "account_name": "JB",
+                        lambda sub: [{"account_id": "H1", "account_name": "Jane",
                                       "provider": "LINKEDIN", "org_id": 39}])
     monkeypatch.setattr("oto_mcp.db.get_unipile_account_id", lambda sub, org, ch: "H1")
     monkeypatch.setattr(connector_identities, "_unipile_live_status_map", lambda sub: {})

@@ -111,6 +111,25 @@ def test_third_failure_goes_past_due_with_grace(monkeypatch):
     # l'échec est journalisé (audit du dunning)
     assert state["updates"][-1][1]["status"] == "failed"
 
+def test_le_delai_de_grace_tient_les_quinze_jours_ecrits_au_contrat():
+    """Art 9.4 du contrat de service : suspension après quinze jours d'impayé
+    (référence et constat d'écart : #768). La grâce a valu 14 jours jusqu'au
+    01/09/2026 (#768) — un jour de moins que promis, donc une suspension un jour
+    trop tôt, et personne ne l'avait décidé contre l'article.
+
+    PLANCHER, pas égalité : allonger la grâce est toujours favorable au client ;
+    descendre sous 15 jours est un manquement, pas un réglage.
+
+    Cette garde ne vaut qu'attelée à `test_third_failure_goes_past_due_with_grace`,
+    juste au-dessus : celle-là prouve que le runner POSE bien `now + _GRACE` sur
+    l'org (sans quoi la constante serait morte), celle-ci que la constante tient
+    l'engagement. L'une sans l'autre ne dit rien."""
+    assert billing_runner._GRACE >= timedelta(days=15), (
+        f"Grâce de {billing_runner._GRACE.days} jours avant suspension, contre les "
+        "15 jours écrits à l'Art 9.4. Ce chiffre n'est pas un paramètre "
+        "d'exploitation : pour le raccourcir, il faut d'abord amender l'engagement.")
+
+
 
 def test_unknown_plan_or_missing_mandate_skips(monkeypatch):
     state = _wire(monkeypatch)

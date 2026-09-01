@@ -229,7 +229,7 @@ def reachable_instances(sub: str, org: Optional[int], provider: str) -> list[dic
     les atteint légitimement (mêmes gardes d'appartenance). Nourrit l'erreur
     « rien ne résout » : on REMONTE les choix pour que l'agent pinne explicitement,
     jamais de choix silencieux entre identités. Best-effort : ne lève jamais,
-    renvoie ce qui a pu être énuméré (vécu Zoho/movinmotion 2026-07-16 : clé sur
+    renvoie ce qui a pu être énuméré (vécu Zoho/un client 2026-07-16 : clé sur
     l'équipe sales, 3 membres, 0 actif → « pas de clé » sec et session perdue).
 
     `provider` est normalisé vers le PORTEUR du credential (délégation) : les

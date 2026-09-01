@@ -96,7 +96,7 @@ INSTANCES = """
 -- rechiffrement**. C'est ce qui a retiré R2 (le rechiffrement) de l'équation et
 -- laissé R1 se décider sur ses vrais mérites : le modèle prévoit des instances SANS
 -- secret — une instance `http` qui ne fige qu'une `base_url` et des champs (0057),
--- une sous-instance qui ne pose qu'une **détermination** (« le compte d'Alexandra »,
+-- une sous-instance qui ne pose qu'une **détermination** (« le compte de Jane »,
 -- 0053-D9-3). Un objet qui n'est plus un credential n'a rien à faire dans une table
 -- qui l'est.
 --
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS connector_instances (
     -- dérivation décider ». **La dérivation n'est pas écrite** — c'est un lot.
     visibility TEXT NOT NULL DEFAULT 'inherited',
     -- Sous-instances (0053-D9-3) : une instance enfant AJOUTE des crans à son parent
-    -- — « le LinkedIn d'Alexandra » sous la clé Unipile plateforme. Rien n'en crée
+    -- — « le LinkedIn de Jane » sous la clé Unipile plateforme. Rien n'en crée
     -- encore. ⚠️ Le jour où une sous-instance REDÉFINIT ce que `account` contient au
     -- lieu de s'y superposer, les lignes multi-comptes du coffre sont à rechiffrer
     -- (`account` EST une entrée d'AAD) : c'est le seul vrai candidat au

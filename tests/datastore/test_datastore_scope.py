@@ -183,7 +183,7 @@ def test_org_store_resolve_outside_scope_not_found(monkeypatch):
 
 def test_anon_project_scope_resolves_name_and_id_links(monkeypatch):
     # Le scope d'un endpoint partagé résout les liens tableau par ID **et** par NOM
-    # (liens legacy d'avant la normalisation nom→id — vécu sur le projet Mūcho preprod
+    # (liens legacy d'avant la normalisation nom→id — vécu sur le projet Marché preprod
     # où data_list_namespaces revenait vide car les refs étaient des noms).
     from oto_mcp.tools import datastore as TD
     from oto_mcp import subdomain_project as sp

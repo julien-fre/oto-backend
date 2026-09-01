@@ -155,7 +155,7 @@ def test_linertie_dune_procedure_se_juge_sur_le_journal(divergent):
 
 def test_lactivite_dun_tableau_sert_le_journal(divergent):
     _fact(divergent, "r1", "data_write", {"ns_id": 160, "id": "row-1"}, ago=6.0)
-    (entry,) = usage.datastore_namespace_activity(160, "mucho-leads")
+    (entry,) = usage.datastore_namespace_activity(160, "leads-clients")
     assert entry["outcome"] == "failed" and entry["run_label"] == "prospection été"
     assert entry["doctrine"] == "prospection-ete"
 
@@ -228,6 +228,54 @@ def test_les_faits_dun_run_ne_closent_pas_son_voisin(conn):
     _journal_close(conn, "b", outcome="failed")
     got = {r["run_id"]: r["outcome"] for r in usage.list_runs(100)}
     assert got == {"a": None, "b": "failed"}
+
+
+# ── « ce run est-il clos ? » se lit à la MÊME source (#645) ──────────────────
+#
+# Le refus de `@claimed` a besoin d'une seule chose du run : sa clôture, et quand.
+# `run_closed_at` la lit par `_run_closure`, comme les lentilles — un second chemin
+# (par exemple `runs.finished_at`, l'index) rouvrirait la deuxième vérité, et le
+# ferait précisément dans un message qui explique à un agent ce qui vient de se
+# passer. Ces cas rejouent, sur ce lecteur-là, ce que les précédents figent sur les
+# autres.
+
+def test_run_closed_at_rend_l_instant_de_la_cloture(conn):
+    _journal_open(conn, "c1", label="palier", ago=10.0)
+    _journal_close(conn, "c1", outcome="done", ago=5.0)
+    quand = usage.run_closed_at("c1")
+    assert quand is not None
+    # La MÊME date que la lentille : deux lectures d'un même fait, jamais deux faits.
+    assert quand == usage.list_runs(100)[0]["finished_at"]
+
+
+def test_run_closed_at_rend_none_sur_un_run_ouvert_meme_si_lindex_le_dit_clos(divergent):
+    """L'index de `divergent` annonce `outcome='done'` ; on lui ajoute un run dont
+    SEUL l'index prétend qu'il est fini. Croire la colonne ferait dire au refus « ton
+    travail est clos » à un agent qui tient encore ses lignes — l'inverse exact du
+    service rendu."""
+    _index(divergent, "c2", label="en cours", outcome="done")
+    _journal_open(divergent, "c2", label="en cours")
+    assert usage.run_closed_at("c2") is None
+
+
+def test_run_closed_at_ignore_une_cloture_dautrui(conn):
+    _journal_open(conn, "c3", label="palier")
+    _journal_close(conn, "c3", outcome="done", sub="intrus")
+    assert usage.run_closed_at("c3") is None
+
+
+def test_run_closed_at_prend_la_derniere_cloture(conn):
+    _journal_open(conn, "c4", label="palier", ago=10.0)
+    _journal_close(conn, "c4", outcome="blocked", ago=8.0)
+    _journal_close(conn, "c4", outcome="done", ago=2.0)
+    tard = usage.run_closed_at("c4")
+    assert tard is not None and tard == usage.list_runs(100)[0]["finished_at"]
+
+
+def test_run_closed_at_se_tait_sur_un_run_inconnu(conn):
+    """« Jamais vu » et « ouvert » se disent pareil : `None`. Affirmer une clôture
+    qu'on n'a pas lue serait la faute qu'on corrige, d'un cran plus bas."""
+    assert usage.run_closed_at("jamais-ouvert") is None
 
 
 # ── La clôture appartient au déroulé qu'elle clôt ───────────────────────────

@@ -168,15 +168,15 @@ def register(mcp: FastMCP) -> None:
     async def crunchbase_get_company(slug: str) -> dict:
         """Fiche société Crunchbase par permalink (slug).
 
-        Args:
-            slug: permalink de l'organisation (ex. "anthropic" depuis
-                `crunchbase.com/organization/anthropic`) — une URL complète est aussi
-                acceptée (le slug en est extrait).
-
         Renvoie la réponse brute `/v4/data` : `properties` (firmographie : nom,
         description, fondation, localisation, effectif, financement…) + `cards`
         (`founders`, `raised_funding_rounds`). Données structurées, à exploiter telles
         quelles.
+
+        Args:
+            slug: permalink de l'organisation (ex. "anthropic" depuis
+                `crunchbase.com/organization/anthropic`) — une URL complète est aussi
+                acceptée (le slug en est extrait).
         """
         permalink = _permalink(slug, "organization")
         qs = urlencode({"card_ids": "founders,raised_funding_rounds"})
@@ -186,12 +186,12 @@ def register(mcp: FastMCP) -> None:
     async def crunchbase_get_person(slug: str) -> dict:
         """Fiche personne Crunchbase par permalink (slug).
 
+        Renvoie la réponse brute `/v4/data` : `properties` de la personne (nom, bio,
+        liens sociaux…).
+
         Args:
             slug: permalink depuis `crunchbase.com/person/<slug>` (URL complète
                 acceptée).
-
-        Renvoie la réponse brute `/v4/data` : `properties` de la personne (nom, bio,
-        liens sociaux…).
         """
         permalink = _permalink(slug, "person")
         return await _api("GET", f"/entities/people/{quote(permalink)}")
@@ -224,11 +224,11 @@ def register(mcp: FastMCP) -> None:
     async def crunchbase_get_funding_rounds(slug: str) -> dict:
         """Tours de financement d'une organisation.
 
-        Args:
-            slug: permalink de l'organisation (URL complète acceptée).
-
         Renvoie la carte `raised_funding_rounds` brute (date, type, montant,
         investisseurs) depuis `/v4/data`.
+
+        Args:
+            slug: permalink de l'organisation (URL complète acceptée).
         """
         permalink = _permalink(slug, "organization")
         qs = urlencode({"card_ids": "raised_funding_rounds"})

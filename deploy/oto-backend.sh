@@ -6,7 +6,7 @@
 # Modèle de release : push sur `main` -> PRÉPROD (oto-backend-canari.sh) ; TAG
 # vX.Y.Z -> PROD (CE script). Le tag est passé en argument par le workflow
 # (github.ref_name) ; pas de défaut (prod = acte explicite, aucun fallback branche).
-# Cf. ADR 0020. Endpoints : mcp.oto.cx, mcp.tulina.ai, *.mcp.oto.cx, *.share.oto.cx.
+# Cf. ADR 0020. Endpoints : mcp.oto.cx, les hôtes des tenants tiers, *.mcp.oto.cx, *.share.oto.cx.
 #
 # 28/08/2026 — BLEU/VERT. Avant : `systemctl restart` sec, 36-39 s port fermé, donc
 # TOUTE session MCP ouverte coupée à chaque release. Maintenant : la nouvelle

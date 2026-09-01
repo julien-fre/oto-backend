@@ -25,7 +25,7 @@ transcripts…), c'est de la plomberie d'intégration, faible rayon d'effet.
 **Vérifié contre le spec OpenAPI 3.1.0 réel** (`docs.granola.ai/api-reference/
 openapi.json`, 2026-08-20), pas contre un résumé de page doc — required,
 formes de corps, bornes `page_size`. **Testé en live le 2026-08-20** avec une
-clé workspace réelle (Julien) : notes, transcript, dossiers, et le cycle
+clé workspace réelle : notes, transcript, dossiers, et le cycle
 complet création→modification→suppression d'un webhook endpoint répondent
 exactement comme codé, y compris les erreurs 400 de validation (`page_size`
 hors bornes, `note_id` invalide, `scopes` incompatible avec une clé workspace

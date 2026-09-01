@@ -130,25 +130,38 @@ def test_unreadable_response_is_explicit(monkeypatch):
 
 # --- retour vers le front qui a demandé la connexion ---------------------------
 
-def test_resolve_return_app_keeps_known_key():
-    assert of.resolve_return_app("tulina") == "tulina"
+@pytest.fixture
+def front_tiers(monkeypatch):
+    """Deux entrées FICTIVES dans la liste fermée, le temps du test. Le mécanisme
+    (lookup, gabarit de chemin, substitution de `{org}`) est le même quelle que
+    soit l'entrée — l'exercer sur un front de test plutôt que sur l'identité d'un
+    tenant réel évite de recopier ici les coordonnées d'un client."""
+    monkeypatch.setitem(of.RETURN_APPS, "acme",
+                        ("https://app.acme.test", "/org/{org}/connectors"))
+    monkeypatch.setitem(of.RETURN_APPS, "acme-preprod",
+                        ("https://acme.oto.zone", "/org/{org}/connectors"))
 
 
-@pytest.mark.parametrize("bad", [None, "", "oto", "app.tulina.ai", "https://app.tulina.ai"])
-def test_resolve_return_app_rejects_unknown_or_missing(bad):
+def test_resolve_return_app_keeps_known_key(front_tiers):
+    assert of.resolve_return_app("acme") == "acme"
+
+
+@pytest.mark.parametrize("bad", [None, "", "oto", "app.acme.test", "https://app.acme.test"])
+def test_resolve_return_app_rejects_unknown_or_missing(bad, front_tiers):
     """Jamais une valeur de client prise telle quelle : hors de `RETURN_APPS`, chaîne
-    vide — pas d'origine arbitraire, pas d'open redirect."""
+    vide — pas d'origine arbitraire, pas d'open redirect. Y compris quand la valeur
+    est l'ORIGINE d'une app pourtant connue : c'est la clé qui est listée, pas l'URL."""
     assert of.resolve_return_app(bad) == ""
 
 
-def test_return_url_known_app_substitutes_org():
-    url = of.return_url("tulina", "?connector=salesforce&salesforce=connected", org=178)
-    assert url == "https://app.tulina.ai/org/178/connectors?connector=salesforce&salesforce=connected"
+def test_return_url_known_app_substitutes_org(front_tiers):
+    url = of.return_url("acme", "?connector=salesforce&salesforce=connected", org=178)
+    assert url == "https://app.acme.test/org/178/connectors?connector=salesforce&salesforce=connected"
 
 
-def test_return_url_preprod_app():
-    url = of.return_url("tulina-preprod", "?connector=zoho&zoho=connected", org=3)
-    assert url == "https://tulina.oto.zone/org/3/connectors?connector=zoho&zoho=connected"
+def test_return_url_preprod_app(front_tiers):
+    url = of.return_url("acme-preprod", "?connector=zoho&zoho=connected", org=3)
+    assert url == "https://acme.oto.zone/org/3/connectors?connector=zoho&zoho=connected"
 
 
 def test_return_url_unknown_app_falls_back_to_oto_dashboard():

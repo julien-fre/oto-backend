@@ -7,6 +7,8 @@
 - `oto_doc(op=move)` : `position` = index de fratrie (réordonner sans reparenter).
 """
 from oto_mcp.db import projects as P
+from oto_mcp import db
+from oto_mcp.capabilities.docs import common as docs_common
 
 
 # ── derive_description ───────────────────────────────────────────────────────
@@ -119,14 +121,14 @@ def test_spine_max_nodes_truncates(monkeypatch):
 # ── op=move : position = index de fratrie ────────────────────────────────────
 
 def test_move_reorder_without_reparent(monkeypatch):
-    from oto_mcp.capabilities import docs as D
+    from oto_mcp.capabilities.docs import core as D
     from oto_mcp.capabilities._types import ResolvedCtx
     calls = {}
-    monkeypatch.setattr(D, "_can", lambda sub, pid, want: True)
-    monkeypatch.setattr(D.db, "get_doc_by_id",
+    monkeypatch.setattr(docs_common, "can", lambda sub, pid, want: True)
+    monkeypatch.setattr(db, "get_doc_by_id",
                         lambda did: {"id": did, "project_id": 7, "parent_id": 5,
                                      "title": "T", "kind": "doc"})
-    monkeypatch.setattr(D.db, "move_doc",
+    monkeypatch.setattr(db, "move_doc",
                         lambda did, parent, position=None: calls.update(
                             did=did, parent=parent, position=position))
     D._doc(ResolvedCtx(sub="u1", org_id=1),
@@ -138,14 +140,14 @@ def test_move_reorder_without_reparent(monkeypatch):
 def test_move_child_to_root_at_index(monkeypatch):
     # parent_id=null EXPLICITE + position ⇒ racine à l'index (≠ fratrie courante) —
     # distingué par model_fields_set (JSON null ≠ champ absent).
-    from oto_mcp.capabilities import docs as D
+    from oto_mcp.capabilities.docs import core as D
     from oto_mcp.capabilities._types import ResolvedCtx
     calls = {}
-    monkeypatch.setattr(D, "_can", lambda sub, pid, want: True)
-    monkeypatch.setattr(D.db, "get_doc_by_id",
+    monkeypatch.setattr(docs_common, "can", lambda sub, pid, want: True)
+    monkeypatch.setattr(db, "get_doc_by_id",
                         lambda did: {"id": did, "project_id": 7, "parent_id": 5,
                                      "title": "T", "kind": "doc"})
-    monkeypatch.setattr(D.db, "move_doc",
+    monkeypatch.setattr(db, "move_doc",
                         lambda did, parent, position=None: calls.update(
                             did=did, parent=parent, position=position))
     D._doc(ResolvedCtx(sub="u1", org_id=1),

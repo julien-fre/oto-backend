@@ -98,13 +98,13 @@ def register(mcp: FastMCP) -> None:
         "amazon products") is how you find the actor to run, along with its pricing
         and its identifier.
 
+        Returns — `{data: {items: [{id, username, name, title, description, stats,
+            pricingInfos, …}], total}}`. Run it with `username/name`.
+
         Args:
             search: free text describing the site or data you want.
             category: Store category (e.g. `"SOCIAL_MEDIA"`, `"ECOMMERCE"`).
             sort_by: `"relevance"` | `"popularity"` | `"newest"` | `"lastUpdate"`.
-
-        Returns: `{data: {items: [{id, username, name, title, description, stats,
-            pricingInfos, …}], total}}`. Run it with `username/name`.
         """
         with _upstream():
             return _client().store_search(search=search, limit=limit,
@@ -148,6 +148,8 @@ def register(mcp: FastMCP) -> None:
         The normal path for a bounded scrape. Beyond 300 s Apify answers 408 — use
         `apify_run` then `apify_run_status`/`apify_dataset_items` instead.
 
+        Returns: the LIST of dataset items.
+
         Args:
             actor_id: `username/actor-name` or id.
             run_input: the actor's own input JSON — its fields are specific to each
@@ -159,8 +161,6 @@ def register(mcp: FastMCP) -> None:
                 return very wide objects).
             timeout_secs / memory_mbytes: run budget on Apify's side.
             max_total_charge_usd: hard cost ceiling for this run.
-
-        Returns: the LIST of dataset items.
         """
         with _upstream():
             return _client().run_sync_dataset_items(
@@ -181,12 +181,12 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Start an actor WITHOUT waiting for it — for scrapes longer than 300 s.
 
+        Returns — `{data: {id, status, defaultDatasetId, …}}` — keep `id` for
+            `apify_run_status` and `defaultDatasetId` for `apify_dataset_items`.
+
         Args:
             wait_for_finish: seconds to wait before returning (max 60) — enough to
                 catch a short run without polling.
-
-        Returns: `{data: {id, status, defaultDatasetId, …}}` — keep `id` for
-            `apify_run_status` and `defaultDatasetId` for `apify_dataset_items`.
         """
         with _upstream():
             return _client().run(
@@ -227,13 +227,13 @@ def register(mcp: FastMCP) -> None:
     ) -> Any:
         """Read the results a run produced.
 
+        Returns: the LIST of items.
+
         Args:
             dataset_id: the run's `defaultDatasetId`.
             fields / omit: keep or drop keys — worth using, several actors return
                 objects with dozens of fields per item.
             clean: skip empty/hidden items.
-
-        Returns: the LIST of items.
         """
         with _upstream():
             return _client().dataset_items(

@@ -9,7 +9,8 @@ transférer un datastore » et qui alimente l'object-browser admin.
 
 Plan GOUVERNANCE uniquement (transférer/lister/partager **sans lire** le contenu) —
 la lecture du contenu d'une ressource perso reste l'exception auditée view-as
-(ADR 0023). Pilote : `resource_type='datastore_namespace'`.
+(ADR 0023). Ce que cette surface DÉCLARE — l'énuméré des trois familles, la forme de
+chaque réponse, les refus publiés — vit dans `resources_contract`.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ from .. import access, db, email, group_store, org_store, ownership, roles
 from ._authz import RESOURCE_GOVERN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
+from .resources_contract import REFUS, REFUS_TYPE_INCONNU, ResourceOut
 from .. import config
 
 log = logging.getLogger(__name__)
@@ -34,6 +36,15 @@ _PUBLICATION_AUDIENCE = {"public": "anonymous", "secret": "secret"}  # projets u
 
 
 class ResourceInput(BaseModel):
+    """L'entrée de la surface HÉRITÉE. ⚠️ **Son schéma servi est FIGÉ** —
+    `tests/resources_input_legacy.json`. Tout durcissement (champ rendu obligatoire,
+    motif ajouté, énuméré resserré) va sur `ResourceInputV2` (`resources_v2.py`), qui
+    porte aussi le POURQUOI : le durcir ici a cassé de vrais appelants (#756/#774).
+
+    ⚠️ Le défaut de `resource_type` est **connu pour faux et conservé** : omettre le
+    champ vise `datastore_namespace`, donc `transfer`/`share` agissent sur une AUTRE
+    ressource. Il est documenté dans la description servie plutôt que retiré.
+    """
     op: Literal["list", "get", "transfer", "share", "unshare"]
     resource_type: str = "datastore_namespace"
     resource_id: Optional[str] = None
@@ -60,6 +71,9 @@ class ResourceInput(BaseModel):
 
 
 def _check_type(resource_type: str) -> None:
+    """Refus de famille inconnue, dans le handler — le champ hérité est un `str` libre,
+    et c'est ce qui rend son défaut compatible. La surface stricte porte un `Literal` et
+    refuse à la validation : les deux ne déclarent donc PAS les mêmes refus."""
     if resource_type not in _OPS:
         raise AuthzDenied(400, "unsupported_resource_type",
                           f"type `{resource_type}` non supporté ({list(_OPS)}).")
@@ -88,6 +102,13 @@ def _owner_label(owner_type: str, owner_id: str) -> Optional[str]:
 
 _TYPE_LABELS = {"project": "projet", "datastore_namespace": "datastore",
                 "doctrine": "doctrine"}
+# Recouvrement EN (oto-backend#700) — seules les clés dont le mot CHANGE : les deux
+# autres s'écrivent à l'identique dans les deux langues, pas la peine de les répéter
+# ici (et `tests/test_vocabulaire_guide.py` compte chaque occurrence littérale du
+# mot ci-dessus, cliquet #519 — ne pas la réécrire). Le gabarit d'email ne traduit
+# pas un mot qu'on lui donne (`email_templates.send_resource_*`), donc c'est ICI, à
+# la source du texte, que la langue du DESTINATAIRE choisit le label.
+_TYPE_LABELS_EN_OVERRIDES = {"project": "project"}
 
 
 def _resource_name(resource_type: str, rid: str) -> Optional[str]:
@@ -119,20 +140,27 @@ def _notify_grant(sharer_sub: str, resource_type: str, rid: str, to_email: str,
         # donc le comportement d'avant pour tout compte de la plateforme.
         # Ici l'adresse suffit — on pointe la racine du produit, pas une vue : aucun
         # patron de chemin n'est nécessaire (contrairement aux liens de projet).
-        dest_sub = (db.get_user_by_email(to_email) or {}).get("sub")
+        dest_user = db.get_user_by_email(to_email) or {}
+        dest_sub = dest_user.get("sub")
+        # Préférence du DESTINATAIRE (oto-backend#700) : None (pas de compte, ou
+        # compte sans préférence posée) ⟹ les deux gabarits servent FR, comme
+        # avant ce lot.
+        locale = dest_user.get("locale")
         base, marque = config.front_for(dest_sub)
         app_url = base or config.dashboard_url()
         brand = marque or "oto"
         sharer = _owner_label("user", sharer_sub)
         name = _resource_name(resource_type, rid)
-        type_label = _TYPE_LABELS.get(resource_type, "ressource")
+        labels = ({**_TYPE_LABELS, **_TYPE_LABELS_EN_OVERRIDES} if locale == "en"
+                  else _TYPE_LABELS)
+        type_label = labels.get(resource_type, "resource" if locale == "en" else "ressource")
         if event == "transfer":
             return email.send_resource_transferred_email(
                 to_email, type_label=type_label, name=name, app_url=app_url,
-                sharer=sharer, brand=brand)
+                sharer=sharer, brand=brand, locale=locale)
         return email.send_resource_shared_email(
             to_email, type_label=type_label, name=name, permission=permission,
-            app_url=app_url, sharer=sharer, brand=brand)
+            app_url=app_url, sharer=sharer, brand=brand, locale=locale)
     except Exception as e:  # best-effort
         log.warning("notify(%s %s %s → %s) failed: %s",
                     event, resource_type, rid, to_email, e)
@@ -373,6 +401,11 @@ def _unpublish_audience(ctx: ResolvedCtx, inp: ResourceInput, rid: str) -> dict:
 
 
 def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
+    # Handler PARTAGÉ par les deux surfaces (héritée et stricte). Le contrôle vaut
+    # donc pour les deux : par `resources_v2`, `resource_type` est déjà un `Literal`
+    # et ce refus est inatteignable ; par la surface héritée, c'est lui qui refuse.
+    # `tests/test_resources_output.py` épingle `_OPS` == l'énuméré publié — ajouter
+    # une famille au dispatch sans l'ajouter au contrat fait rougir.
     _check_type(inp.resource_type)
     ops = _OPS[inp.resource_type]
 
@@ -391,6 +424,10 @@ def _resources(ctx: ResolvedCtx, inp: ResourceInput) -> dict:
         return {"resource_type": inp.resource_type,
                 "resources": [ops["enrich"](r) for r in rows]}
 
+    # Filet pour les appels DIRECTS au handler (tests, réemploi interne) : par les
+    # faces servies, `RESOURCE_GOVERN` a déjà refusé un `resource_id` absent avec son
+    # propre `missing_resource`. D'où l'absence de ce code des refus DÉCLARÉS — le
+    # document ne promet que ce qu'un client peut réellement recevoir.
     if inp.resource_id is None:
         raise AuthzDenied(400, "missing_resource_id", "`resource_id` requis.")
     rid = str(inp.resource_id)
@@ -509,6 +546,16 @@ CAPABILITIES += [
         handler=_resources,
         Input=ResourceInput,
         authz=RESOURCE_GOVERN(),
+        # Ce que cette surface DÉCLARE vit dans `resources_contract` : l'union
+        # complète des cinq verbes, et les refus atteignables. L'enveloppe commune
+        # avait été mesurée VIDE le 2026-08-11, d'où l'inscription à la dette de
+        # sortie ; c'est l'union, pas l'enveloppe, qui décrit cette surface.
+        Output=ResourceOut,
+        # Les refus de l'union, PLUS celui que seule cette surface peut rendre : son
+        # `resource_type` est un `str` libre, donc la famille inconnue arrive jusqu'au
+        # handler et en ressort en 400 nommé. Sur la stricte, le `Literal` refuse
+        # avant — déclarer ce code là-bas promettrait un refus jamais rendu.
+        errors=REFUS + (REFUS_TYPE_INCONNU,),
         description=(
             "Govern an OWNED resource (ADR 0030) without reading its content. "
             "op=list: resources you govern (platform admins see all); op=get: owner + "
@@ -530,7 +577,15 @@ CAPABILITIES += [
             "(write), `manager` (GOVERNANCE — re-share / delete / publish, grantable, but NOT "
             "ownership transfer); public/secret force viewer. Legacy `permission` read|write is "
             "still accepted (mapped to viewer/editor). resource_type ∈ {datastore_namespace, "
-            "project, doctrine}. DELIVER A FULL PROJECT (#52): share/transfer a project "
+            "project, doctrine} — it is the discriminant, and it also decides which shape "
+            "comes back. ⚠️ KNOWN DEFECT, kept for backward compatibility: resource_type "
+            "DEFAULTS to `datastore_namespace`. Omitting it does NOT mean « any type » — the "
+            "call silently targets a datastore namespace, so op=get/list answer about the "
+            "wrong family, and op=transfer/share ACT ON A DIFFERENT RESOURCE than the one you "
+            "meant (same numeric id, other family). ALWAYS pass resource_type explicitly. The "
+            "fix is a separate surface, oto_resource_v2 / POST /api/resources/v2, which "
+            "REQUIRES the field — migrate to it. DELIVER A FULL PROJECT (#52): "
+            "share/transfer a project "
             "with cascade=true to carry its linked entities in one gesture — linked "
             "tableaux get the same share/transfer, linked procedures are share-granted "
             "read (readable cross-org via oto_procedure op=get guide_id) or COPIED into "

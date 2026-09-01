@@ -218,6 +218,54 @@ rien ne rendait navigable et que rien ne tenait.
   callback qui ne distingue jamais les causes d'un refus, ACK de webhook), les autres
   portent « dette déclarée … (#424, verdict C) » et attendent leur lot.
   **Détail : `docs/silences-2026-08-27.md`.**
+- **Ce dépôt est PUBLIC : aucun nom de client, de personne réelle ou de domaine client
+  (01/09).** La règle existait ; elle a été appliquée **à la main** deux fois le matin du
+  2026-09-01 — #709 pour les sources (42 fichiers), #747 pour les tests (~300 occurrences
+  dans 70 fichiers) — et le tronc était à **zéro**. Un lot mergé **le même jour à 10:26**
+  en a réintroduit : un en-tête de module (`tools/http.py`) et un en-tête de test
+  (`test_http_doc.py`). **Une règle qui ne tient que par la discipline ne tient pas** —
+  c'est la même leçon que les silences ci-dessus, à trois jours d'intervalle.
+  Garde-fou : `scripts/lint_noms_clients.py`, exercé par
+  `tests/test_lint_noms_clients.py` (qui prouve aussi qu'il MORD, sur onze formes que
+  prend un nom en vrai — casse, suffixe, concaténation, sous-domaine), et lancé par le
+  job CI `noms-clients` de `deploy-canari.yml` sur **PR et push `main`**.
+  Portée : **tout le dépôt** (`git ls-files` — sources, tests, docs, workflows,
+  manifestes), parce que les deux passes à la main n'avaient vu chacune qu'une moitié.
+  Conventions de remplacement, celles de #709/#747 : `acme` (et `globex` quand un
+  fichier distingue deux tenants), `Jane Doe` pour une personne, prose générique
+  (« un client », « un tenant tiers »), domaines sur le TLD réservé `.test`. Une valeur
+  **fonctionnelle** se renomme **des deux côtés** ou se déclare.
+  L'échappatoire est `# noqa: CLIENT — <raison>`, **la raison obligatoire**, même
+  grammaire que `# noqa: SILENT`. Elle couvre aujourd'hui deux sites : la liste CORS de
+  repli (`api/base.py`) et la table `RETURN_APPS` (`auth/flow.py`) — dette DÉCLARÉE, dont
+  la relocalisation vers la config privée est le **second volet de oto-private#85**.
+  ⚠️ **La liste des termes n'est PAS dans le dépôt, pas même hachée** : un fichier
+  d'empreintes commité dans un dépôt public est un **oracle d'appartenance** (hacher
+  coûte au curieux ce qu'il nous coûte par candidat, donc l'étirement de clé n'achète
+  aucune asymétrie), ce qui rendrait la liste non-greppable, pas confidentielle — or
+  c'est l'appartenance qu'on protège. Elle vit dans le secret de dépôt
+  `OTO_NOMS_CLIENTS` ; en local, `~/.otomata/noms-clients.txt`. Sans liste, le contrôle
+  sort **2** = « pas jugé » : trois états, jamais un vert muet (même idiome que
+  `contrat-front`).
+  ⚠️ **Et l'état « pas jugé » ROUGIT — corrigé le 01/09, le jour même de sa pose.** Le
+  job traduisait `2` en `exit 0` + annotation. Conséquence mesurée : `noms-clients` a
+  rendu **`success` sur tous ses runs**, y compris celui de sa propre fusion, alors que
+  le secret n'a **jamais** été posé (ni `~/.otomata/noms-clients.txt` sur le poste) —
+  le garde-fou n'avait donc rendu **aucun** jugement, nulle part, tout en affichant une
+  coche verte. L'annotation disait vrai ; personne ne la lisait, parce que `gh pr
+  checks`, la liste des checks et la coche de la PR ne lisent **que la conclusion**.
+  **Règle : un garde-fou qui ne peut pas s'exécuter doit être ROUGE, jamais vert avec
+  une note.** C'est la forme la plus dangereuse d'un contrôle défaillant, parce qu'elle
+  produit une **preuve positive** — les autres se voient au moins quand on regarde. Une
+  conclusion `neutral` a été écartée : un job de workflow ne peut pas en émettre, et
+  GitHub la compte comme non bloquante en l'affichant comme un passage.
+  ⚠️ **Rouge, mais NON REQUIS** : `noms-clients` n'est dans les contrôles requis de
+  `main` (aujourd'hui : `test` seul) ni dans le `needs` d'aucun job, et ne doit pas y
+  entrer — bloquer ne dépublierait rien (le nom est public dès le push) et déplacerait
+  le coût du garde-fou sur toutes les livraisons. *Impossible à confondre avec un
+  succès* ≠ *gèle le dépôt*. Les deux moitiés sont tenues par
+  `tests/test_lint_noms_clients.py`, qui rejoue le script du job extrait du workflow
+  sur les trois codes et refuse qu'un `needs` apparaisse.
 - **Tree partagé entre sessions : deux sessions ne partagent JAMAIS un fichier — le
   séquencement prime, le staging n'est qu'un filet.** Vécu 13/08 (main rouge) : un
   `git add <chemin>` EXPLICITE a absorbé ~148 lignes du WIP d'une session voisine dans
@@ -240,7 +288,9 @@ rien ne rendait navigable et que rien ne tenait.
   `aiark_company_search(account=)` (le filtre société, 28/07 : AI Ark renvoyait sa base
   entière, 72M lignes, sans la moindre erreur). Ne JAMAIS nommer un argument de tool
   `_<quelque chose>` (tripwire `test_call_axes_business_param_collision.py`). ⚠️ La prose
-  du bloc A prescrit ces jetons : la source est `instructions.py` (le seed versionné).
+  du bloc A prescrit ces jetons (en résumé — la forme longue vit dans le guide
+  `notice`) : les sources sont `instructions.py` et `oto_mcp/guides/notice.md`
+  (seeds versionnés).
   **PAS d'override DB (`platform_instructions['secret_sauce']`) sauf divergence
   DÉLIBÉRÉE** — un override qui recopie le seed est une MINE : il fige la prose au jour
   de sa pose et toute évolution du code cesse de se propager sans que rien ne le
@@ -314,6 +364,17 @@ rien ne rendait navigable et que rien ne tenait.
   permission, c'est une note de bas de page.* Une phrase par paramètre, et le delta
   passe par le script comme le reste — **le schéma d'entrée porte ces descriptions**,
   donc l'ajout se voit dans la colonne « schéma », pas dans « description ».
+  ⚠️ **Et la règle a été inapplicable à la moitié des outils pendant deux jours (#627).**
+  Un outil porté par une **capacité** perdait la description de ses paramètres : l'
+  adaptateur MCP ne recopiait qu'annotation et défaut, un `Field(description=…)` était
+  **accepté-inerte** — mesuré sur `data_patch_schema`, schéma servi 621 caractères avant,
+  621 après. La face REST, elle, la publiait : *la même consigne était un contrat d'un
+  côté et un commentaire de code de l'autre.* Corrigé le 2026-09-01 (`apply_flat_signature`
+  recopie la `description`, **et elle seule** — `tools/list` n'est pas le document REST) ;
+  cliquet `tests/test_param_description_servie.py`. **Un vide qui ne fait pas rougir un
+  test rend une convention décorative sans que personne ne le voie**, parce que la façon
+  normale de la vérifier — relire le code où la description est écrite — montre
+  exactement ce qu'on voulait écrire.
 - **Une description ou un refus ne prescrit pas un outil que le jeu servi peut ne pas
   contenir (29/08, #613 → #632).** Un endpoint publié sert un jeu d'outils à l'inclusion
   (`mcp_tools`) ; une flotte a lu « release with `data_release` » sans `data_release`
@@ -472,7 +533,7 @@ rien ne rendait navigable et que rien ne tenait.
   et l'agent appelle `http_get`/`http_post`. Le service distant détient le credential
   métier (contrat ADR 0003 §4 : bearer M2M, politique bornée côté bridge, audit
   `X-Oto-Sub`). Visibilité = régime commun (activation × sélection 0019/0050 — hors
-  socle, installable). Pilote : le **bridge back-office Movinmotion** (repo privé),
+  socle, installable). Pilote : le **bridge back-office d'un client pilote** (repo privé),
   migré `bridge`→`http` le 2026-07-16 (credential au groupe finance, réseau VPC
   privé). Le concept « remote data-driven » (base_url sur un provider hors registre)
   subsiste dans `org_secret_meta`, mais **sans entrée de catalogue** `kind="remote"`.
@@ -517,6 +578,14 @@ rien ne rendait navigable et que rien ne tenait.
   param `fields`** (une lecture nue → 400, pas un scope-mismatch) → sonder via `list_records`
   (qui fournit les `DEFAULT_FIELDS`), pas un `GET /crm/v7/{module}` brut.
 - Docstrings = contrat LLM (le modèle choisit les tools là-dessus). Précis, pas verbeux.
+  ⚠️ **TOUTE la prose vit AVANT le bloc `Args:`, qui se place en DERNIER — et aucun
+  titre de section Google (`Returns:` multi-lignes, `Examples:`, `Note:`)** (2026-09-01,
+  #761). Le parsing fastmcp ne sert que la PREMIÈRE section de prose + les params :
+  un paragraphe après `Args:` ou une section `Returns:` est JETÉ en silence — 61
+  outils amputés (~9 600 c.), dont le paragraphe des jetons `_*` d'`oto_call`, jamais
+  parvenu à un agent. Un « Returns — `{…}` » en prose sert la même information sans
+  être découpé (`Returns: …` sur UNE ligne passe, avec continuation indentée non).
+  Tripwire sur le montage réel : `tests/test_docstring_prose_served.py`.
 - **Doc how-to d'un connecteur = un markdown**, `oto_mcp/connector_docs/<nom>.md`
   (nommé comme son module), sections `## <kind> — <titre>`, servie au catalogue et à
   toutes les fiches. Une URL de rappel ne s'y écrit JAMAIS en dur — marqueur

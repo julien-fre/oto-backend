@@ -138,12 +138,15 @@ def redirect_uri(path: str) -> str:
 # scoper le credential (cf. `salesforce_oauth.make_state`).
 RETURN_APPS: dict[str, tuple[str, str]] = {
     # ⚠️ Le CHEMIN suit les routes du front, pas nos souvenirs : `/network/[orgId]`
-    # a été renommé `/org/[orgId]` (tulina-app-front, commit 6921521) et le
+    # a été renommé `/org/[orgId]` (front tiers, commit 6921521) et le
     # segment `/network` n'existe plus du tout. Tant que ce patron est resté
     # périmé, un retour d'OAuth « réussi » déposait la personne sur un 404 —
     # panne silencieuse, puisque le consentement, lui, avait bien eu lieu.
-    "tulina": ("https://app.tulina.ai", "/org/{org}/connectors"),
-    "tulina-preprod": ("https://tulina.oto.zone", "/org/{org}/connectors"),
+    # noqa: CLIENT — coordonnées FONCTIONNELLES d'un front tiers : les déplacer
+    # casse une redirection OAuth réelle. Leur relocalisation vers la config privée
+    # est le second volet de oto-private#85, pas le lot du garde-fou.
+    "tulina": ("https://app.tulina.ai", "/org/{org}/connectors"),  # noqa: CLIENT — cf. ci-dessus
+    "tulina-preprod": ("https://tulina.oto.zone", "/org/{org}/connectors"),  # noqa: CLIENT — cf. ci-dessus
 }
 
 # Défaut historique (oto-dashboard) — byte-à-byte ce que chaque `_app_url()` de

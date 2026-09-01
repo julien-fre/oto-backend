@@ -99,11 +99,11 @@ def register(mcp: FastMCP) -> None:
     def brevo_crm_meta(entity: Optional[str] = None) -> dict:
         """Métadonnées du CRM Brevo : pipelines + étapes, types de tâche, attributs.
 
-        Args:
-            entity: `deals` | `companies` → joint leurs attributs personnalisés.
-
         À lire avant `brevo_crm_create` : un `deal_stage` se désigne par l'`id`
         d'étape du pipeline, un `taskTypeId` par l'id de son type.
+
+        Args:
+            entity: `deals` | `companies` → joint leurs attributs personnalisés.
         """
         client = _client()
         out: dict[str, Any] = {

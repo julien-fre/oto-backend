@@ -112,10 +112,14 @@ def test_check_never_raises(monkeypatch):
 def _wire_set(monkeypatch, existing=None):
     calls = {}
 
+    # Signature COMPLÈTE plutôt que `**kwargs` : le stub doit rougir le jour où le
+    # handler cesse de passer un paramètre du store (les gardes anti-écrasement de
+    # #662, `must_create`/`expected_version`, sont arrivées par là).
     def _set(owner_type, owner_id, slug, body_md, title=None, description=None,
-             set_by=None, slots=None):
+             set_by=None, slots=None, must_create=False, expected_version=None):
         calls["owner"] = (owner_type, owner_id)
         calls["slots"] = slots
+        calls["garde"] = (must_create, expected_version)
         return 2
 
     monkeypatch.setattr(oi.org_store, "set_instruction", _set)

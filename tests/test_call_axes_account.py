@@ -252,11 +252,11 @@ def _wire_multi_account_with_meta(monkeypatch, provider, org, sub, accounts_meta
 def test_no_pin_resolves_to_the_marked_default(monkeypatch):
     _wire_multi_account_with_meta(
         monkeypatch, "folk", 42, "u",
-        [("Julien's access - Tangible", {"is_default": True}), ("Second key", {})],
-        {"Julien's access - Tangible": "K_DEFAULT", "Second key": "K_OTHER"})
+        [("Jane's access - Acme", {"is_default": True}), ("Second key", {})],
+        {"Jane's access - Acme": "K_DEFAULT", "Second key": "K_OTHER"})
     rc = access.resolve_credential("folk", want="auto", sub="u")
     assert rc.key == "K_DEFAULT"
-    assert rc.account == "Julien's access - Tangible"
+    assert rc.account == "Jane's access - Acme"
 
 
 def test_no_pin_and_no_default_raises_ambiguity_error(monkeypatch):

@@ -169,6 +169,7 @@ def test_la_face_REST_passe_key_required_au_store(monkeypatch):
                          body={"key_required": True})
     assert status == 200, corps
     assert store.calls == [("vivier", {"fields": None, "remove": None, "strict": None,
-                                       "key": None, "key_required": True})]
+                                       "key": None, "key_required": True,
+                                       "unknown_fields": None})]
     assert corps["schema"]["key_required"] is True
     assert "key_required" in corps["enforced"]

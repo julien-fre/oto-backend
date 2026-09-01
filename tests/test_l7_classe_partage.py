@@ -29,11 +29,11 @@ from oto_mcp.db import grants as db_grants
 
 # Les deux clés, telles qu'elles sont en prod : FERMÉES, une allowlist d'orgs qui
 # contient l'org 196, et zéro arête.
-AIARK = [{"label": "tulina", "share_mode": "closed",
+AIARK = [{"label": "acme", "share_mode": "closed",
           "share_down": ["org:262", "org:269", "org:196", "org:178", "org:192",
                          "org:264", "org:270", "org:273", "org:255"],
           "share_side": [], "meta": {}}]
-APIFY = [{"label": "tulina", "share_mode": "closed",
+APIFY = [{"label": "acme", "share_mode": "closed",
           "share_down": ["org:196", "org:264", "org:270", "org:269", "org:255"],
           "share_side": [], "meta": {}}]
 # La clé serper : OUVERTE à tous. Même symptôme vu du classeur, autre remède.
@@ -77,7 +77,7 @@ def test_les_deux_cas_de_prod_sont_NOMMES_et_plus_inconnus(sans_arete, monkeypat
     assert pick is None, "aucune arête ⟹ la chaîne se tait"
     assert hors_modele == chain_shadow.PARTAGE_HORS_MODELE
 
-    classe = chain_shadow.classify(_legacy("tulina"), None, acl_refus=False,
+    classe = chain_shadow.classify(_legacy("acme"), None, acl_refus=False,
                                    hors_modele=hors_modele)
     assert classe == chain_shadow.PARTAGE_HORS_MODELE
     assert classe != chain_shadow.INCONNU, (
@@ -102,9 +102,9 @@ def test_une_cle_FERMEE_avec_son_arete_ne_diverge_plus(sans_arete, monkeypatch):
          "created_by": None, "created_at": None, "revoked_at": None}]
         if ("org", "196") in set(grantees) else [])
     pick, hors_modele = chain_resolution._platform_pick("d57fbbb3", "aiark", 196)
-    assert pick is not None and pick.entity_id == "tulina"
+    assert pick is not None and pick.entity_id == "acme"
     assert hors_modele is None
-    assert chain_shadow.classify(_legacy("tulina"), pick, acl_refus=False,
+    assert chain_shadow.classify(_legacy("acme"), pick, acl_refus=False,
                                  hors_modele=hors_modele) == chain_shadow.ACCORD
 
 

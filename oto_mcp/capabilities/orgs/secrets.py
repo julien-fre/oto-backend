@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from ... import providers, credentials_store, org_store
 from .._authz import ORG_ADMIN_OF
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 
 from ..registry import CAPABILITIES
 
@@ -117,6 +117,13 @@ CAPABILITIES += [
                      "(org-shareable only). Single-key connectors: pass `api_key`. "
                      "Multi-field connectors (zoho/silae…): pass `fields` "
                      "(all declared credential fields). base_url for remote bridges."),
+        errors=(DeclaredError(400, "single_account_connector",
+                              "un `account` nommé sur un connecteur qui n'en gère "
+                              "qu'un — la clé écraserait l'unique"),
+                DeclaredError(409, "account_required",
+                              "connecteur multi-compte sans `account` : il faut "
+                              "nommer le compte, sans quoi la pose est ambiguë"),
+                DeclaredError(404, "unknown_org", "org inconnue")),
         rest=(RestBinding("PUT", "/api/orgs/{id}/secrets/{provider}", _ID),
               RestBinding("PUT", "/api/admin/orgs/{id}/secrets/{provider}", _ID)),
     ),

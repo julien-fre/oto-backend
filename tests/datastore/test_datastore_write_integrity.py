@@ -323,15 +323,41 @@ def test_la_chaine_vide_sur_un_champ_deja_vide_ne_dit_rien(table):
     assert "valeurs_ignorees" not in st.off_schema_report()
 
 
-def test_la_chaine_vide_nefface_pas_non_plus_par_id(table):
+def test_la_chaine_vide_SEULE_par_id_est_REFUSEE_en_nommant_la_porte(table):
     """L'autre chemin d'écriture. Les deux ont déjà divergé une fois sur cette
     famille de règles (#322), et c'est le patch par `id` qui est le geste le plus
-    courant d'un agent : une règle câblée d'un seul côté ne protège personne."""
+    courant d'un agent : une règle câblée d'un seul côté ne protège personne.
+
+    ⚠️ Le vide est ici TOUT le geste : l'appel ne changerait rien et répondrait comme
+    un succès. Depuis #724 il est REFUSÉ, et le refus ÉCRIT la porte en toutes lettres
+    — la nommer dans un relevé n'a pas suffi (dix retraits perdus le 01/09 malgré un
+    relevé qui disait déjà `null`). Ce que le test verrouille n'a pas changé : la
+    valeur en place survit."""
     st, ns, ns_id, rid = table
 
-    st.update_row(ns, rid, {"origine_ligne": ""})
+    with pytest.raises(ValueError) as exc:
+        st.update_row(ns, rid, {"origine_ligne": ""})
+
+    assert "origine_ligne" in str(exc.value), exc.value
+    assert '"origine_ligne": null' in str(exc.value), \
+        f"le refus doit écrire le geste qui marche, pas seulement le nommer : {exc.value}"
+    assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client", \
+        "un refus n'écrit rien — surtout pas l'effacement qu'il refuse"
+
+
+def test_la_chaine_vide_ACCOMPAGNEE_est_preservee_et_relevee_par_id_aussi(table):
+    """LE test qui porte #608 sur ce chemin, et il vaut 104 appels par mois.
+
+    Dès que l'écriture pose autre chose, c'est un gabarit à demi peuplé — le geste
+    dominant des flottes, 98 % des écritures à liste vide mesurées sur 30 jours au
+    2026-09-01 — et la valeur en place survit. Élargir l'effacement du vide SEUL
+    (#724) à cette forme détruirait 104 valeurs clientes par mois."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"origine_ligne": "", "raison_sociale": "ACME"})
 
     assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client"
+    assert _donnees(ns_id, rid).get("raison_sociale") == "ACME"
     assert st.off_schema_report().get("valeurs_ignorees"), "et il le dit ici aussi"
 
 

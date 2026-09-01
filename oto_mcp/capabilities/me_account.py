@@ -38,6 +38,7 @@ from pydantic import BaseModel, field_validator
 from .. import access, billing, db, group_store, org_store
 from ._authz import SUB_ONLY
 from ._types import Capability, ResolvedCtx, RestBinding
+from .connectors.provider_status import ProviderStatus
 from .registry import CAPABILITIES
 
 
@@ -137,10 +138,12 @@ class MeView(BaseModel):
     home_group: Optional[int] = None
     home_group_name: Optional[str] = None
     features: MeFeatures
-    # Accès effectif par connecteur (mode de clé, quota, état) — la forme varie avec
-    # le registre de connecteurs, donc un objet ouvert plutôt qu'une énumération qui
-    # mentirait au premier connecteur ajouté.
-    providers: dict[str, Any]
+    # Accès effectif par connecteur. ⚠️ Les CLÉS restent ouvertes — c'était l'objet
+    # de la réserve d'origine (« une énumération mentirait au premier connecteur
+    # ajouté ») et elle tient. La VALEUR, elle, est stable et se déclare depuis le
+    # 01/09/2026 (#669) : sans ça, un écran « état des connecteurs » ne pouvait rien
+    # dériver de ce bloc sans l'observer.
+    providers: dict[str, ProviderStatus]
 
 
 class ToolCall(BaseModel):

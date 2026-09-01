@@ -1,8 +1,14 @@
-"""Les INVITATIONS — plateforme, org, équipe : émission, listing, acceptation.
+"""Les INVITATIONS — plateforme, org, équipe : émission, listing, acceptation, REFUS.
 
 Une seule table `org_invitations` porte les trois scopes de la cascade, dérivés
 des cibles posées (`org_id`/`group_id` ⇒ `_scope_of`). Un lien mail (token haché)
 et un code court partageable adressent la même invitation.
+
+Quatre façons d'en sortir, et elles ne se ressemblent pas : **acceptée**
+(`accepted_at`, l'invité rejoint), **refusée** (`declined_at`, #654 — l'invité dit
+non, aucune appartenance créée), **expirée** (`expires_at`), **révoquée** (la ligne
+est SUPPRIMÉE, geste de l'émetteur). Le prédicat `_PENDING` est la définition
+unique de « encore en attente » ; toute requête qui filtre l'état passe par lui.
 
 Étage 1 du package : consomme `members` (adhésion + maison) et `orgs` (nom d'org
 dans l'inbox). Les paliers voisins (`roles`, `group_store`) restent en import
@@ -73,16 +79,24 @@ def create_invitation(org_id: Optional[int], email: Optional[str], org_role: str
         raise RuntimeError("impossible de générer un code d'invitation unique")
 
 
+# « EN ATTENTE » — la définition, écrite UNE fois (#654). ⚠️ Elle était recopiée dans
+# six requêtes : y ajouter le refus en en oubliant une, c'était une invitation refusée
+# encore acceptable (`_get_invitation`), ou ré-acceptée toute seule au signup
+# (`reconcile_signup_with_invitation`), ou encore allumée dans l'inbox.
+_PENDING = "accepted_at IS NULL AND declined_at IS NULL AND expires_at > NOW()"
+_PENDING_I = ("i.accepted_at IS NULL AND i.declined_at IS NULL "
+              "AND i.expires_at > NOW()")
+
 # Listing enrichi : chaque ligne porte de quoi afficher le scope (nom d'org/équipe)
 # + un `scope` dérivé ('platform'|'org'|'team'), commun aux 3 niveaux de la cascade.
-_INV_LIST_SELECT = """
+_INV_LIST_SELECT = f"""
     SELECT i.id, i.email, i.code, i.org_role, i.group_role, i.org_id, i.group_id,
            i.invited_by, i.source, i.created_at, i.expires_at,
            o.name AS org_name, g.name AS group_name
       FROM org_invitations i
       LEFT JOIN orgs       o ON o.id = i.org_id
       LEFT JOIN org_groups g ON g.id = i.group_id
-     WHERE {pred} AND i.accepted_at IS NULL AND i.expires_at > NOW()
+     WHERE {{pred}} AND {_PENDING_I}
      ORDER BY i.created_at DESC
 """
 
@@ -124,10 +138,15 @@ def list_platform_invitations() -> list[dict]:
 
 
 def find_pending_invitation(org_id: int, email: str) -> Optional[dict]:
-    """L'invitation d'ORG encore valide (non acceptée, non expirée — une révoquée est
-    SUPPRIMÉE) adressée à cet email, hors invitations d'équipe : `{id, created_at,
-    expires_at}`, sans le code. None s'il n'y en a pas. La plus récente si la file en
-    porte plusieurs (possible pour les lignes d'avant le refus #622)."""
+    """L'invitation d'ORG encore valide (non acceptée, non REFUSÉE, non expirée — une
+    révoquée est SUPPRIMÉE) adressée à cet email, hors invitations d'équipe :
+    `{id, created_at, expires_at}`, sans le code. None s'il n'y en a pas. La plus
+    récente si la file en porte plusieurs (possible pour les lignes d'avant le refus
+    #622).
+
+    Conséquence directe du refus (#654) : une invitation déclinée ne bloque plus la
+    suivante. L'émetteur peut donc réinviter sans avoir à révoquer d'abord — c'est la
+    seule reprise possible après un refus, et elle ne demande aucun geste de plus."""
     email = (email or "").strip().lower()
     if "@" not in email:
         return None
@@ -135,7 +154,7 @@ def find_pending_invitation(org_id: int, email: str) -> Optional[dict]:
         row = conn.execute(
             "SELECT id, created_at, expires_at FROM org_invitations "
             "WHERE org_id = %s AND group_id IS NULL AND lower(email) = %s "
-            "AND accepted_at IS NULL AND expires_at > NOW() "
+            f"AND {_PENDING} "
             "ORDER BY created_at DESC LIMIT 1",
             (org_id, email),
         ).fetchone()
@@ -178,7 +197,7 @@ def _preview_from_row(r: dict) -> dict:
             "scope": _scope_of(r)}
 
 
-_PREVIEW_SELECT = """
+_PREVIEW_SELECT = f"""
     SELECT i.email, i.org_id, i.group_id,
            COALESCE(u.name, u.email) AS inviter,
            o.name AS org_name,
@@ -187,7 +206,7 @@ _PREVIEW_SELECT = """
       LEFT JOIN users      u ON u.sub = i.invited_by
       LEFT JOIN orgs       o ON o.id  = i.org_id
       LEFT JOIN org_groups g ON g.id  = i.group_id
-     WHERE {pred} AND i.accepted_at IS NULL AND i.expires_at > NOW()
+     WHERE {{pred}} AND {_PENDING_I}
 """
 
 
@@ -216,14 +235,14 @@ def preview_invitation_by_code(code: str) -> Optional[dict]:
 
 
 def get_invitation_by_token(token: str) -> Optional[dict]:
-    """Invitation valide (non acceptée, non expirée) pour ce token, sinon None."""
+    """Invitation EN ATTENTE (cf. `_PENDING`) pour ce token, sinon None."""
     if not token:
         return None
     return _get_invitation("token_hash = %s", _hash_token(token))
 
 
 def get_invitation_by_code(code: str) -> Optional[dict]:
-    """Invitation valide (non acceptée, non expirée) pour ce code court, sinon None."""
+    """Invitation EN ATTENTE (cf. `_PENDING`) pour ce code court, sinon None."""
     code = (code or "").strip().upper()
     if not code:
         return None
@@ -237,11 +256,73 @@ def _get_invitation(pred: str, val) -> Optional[dict]:
             SELECT id, org_id, email, org_role, group_id, group_role,
                    invited_by, source, expires_at
               FROM org_invitations
-             WHERE {pred} AND accepted_at IS NULL AND expires_at > NOW()
+             WHERE {pred} AND {_PENDING}
             """,
             (val,),
         ).fetchone()
         return dict(row) if row else None
+
+
+# --- Refus par l'invité (#654) ----------------------------------------------
+
+_PEEK_SELECT = """
+    SELECT i.id, i.org_id, i.email, i.org_role, i.group_id, i.group_role,
+           i.invited_by, i.source, i.expires_at,
+           i.accepted_at, i.accepted_sub, i.declined_at, i.declined_sub,
+           (i.expires_at > NOW()) AS live,
+           o.name AS org_name, g.name AS group_name
+      FROM org_invitations i
+      LEFT JOIN orgs       o ON o.id = i.org_id
+      LEFT JOIN org_groups g ON g.id = i.group_id
+     WHERE {pred}
+"""
+
+
+def peek_invitation(*, token: Optional[str] = None,
+                    code: Optional[str] = None) -> Optional[dict]:
+    """La ligne visée par un secret d'invitation, **SANS filtre d'état**.
+
+    `get_invitation_by_*` ne rend que les invitations en attente : un None y confond
+    « ce code n'existe pas », « expirée », « déjà acceptée » et « tu l'as déjà
+    refusée ». Le refus doit les distinguer (succès idempotent au dernier cas, 410
+    aux autres) et lire l'adresse invitée avant d'autoriser quoi que ce soit. Cette
+    lecture sert donc à DÉCIDER ; ce n'est jamais elle qui autorise.
+
+    Rend en plus `live` (non expirée), `scope` et `org_name`. None si le secret ne
+    désigne aucune ligne — une révoquée en fait partie : elle est SUPPRIMÉE."""
+    if token:
+        pred, val = "i.token_hash = %s", _hash_token(token)
+    elif code:
+        code = code.strip().upper()
+        if not code:
+            return None
+        pred, val = "i.code = %s", code
+    else:
+        return None
+    with _connect() as conn:
+        row = conn.execute(_PEEK_SELECT.format(pred=pred), (val,)).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["scope"] = _scope_of(d)
+    return d
+
+
+def mark_invitation_declined(inv_id: int, sub: str) -> bool:
+    """Marque l'invitation REFUSÉE par `sub`. True si cet appel l'a écrit.
+
+    False quand la ligne a déjà été acceptée ou déjà refusée — la garde est dans le
+    WHERE, pas dans une lecture préalable : deux clics simultanés ne doivent pas
+    pouvoir écraser une acceptation par un refus. **N'ajoute aucune appartenance et
+    n'en retire aucune** : refuser, c'est fermer l'invitation, pas quitter une org
+    (pour ça, `remove_org_member` / `me.leave_org`)."""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE org_invitations SET declined_at = NOW(), declined_sub = %s "
+            "WHERE id = %s AND accepted_at IS NULL AND declined_at IS NULL",
+            (sub, inv_id),
+        )
+        return (cur.rowcount or 0) > 0
 
 
 def _mark_invitation_accepted(inv_id: int, sub: str) -> None:
@@ -258,7 +339,8 @@ def _idempotent_accept(pred: str, val, sub: str) -> Optional[dict]:
     sub (cas vécu : `reconcile_signup_with_invitation` la consomme au 1er getMe, puis
     l'accept explicite la retrouve déjà utilisée → faux 410 alors que l'user est bien
     membre). Renvoie le même dict de succès qu'une acceptation fraîche, ou None si
-    l'invitation est vraiment invalide / expirée / acceptée par un AUTRE sub."""
+    l'invitation est vraiment invalide / expirée / REFUSÉE / acceptée par un AUTRE
+    sub — une refusée a `accepted_sub` NULL, donc elle tombe ici sans rien rendre."""
     with _connect() as conn:
         row = conn.execute(
             f"SELECT org_id, org_role, group_id, group_role, accepted_sub "
@@ -348,7 +430,7 @@ def list_pending_invitations_for_email(email: str) -> list[dict]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, org_id, group_id, invited_by, created_at, code "
-            "FROM org_invitations WHERE accepted_at IS NULL AND expires_at > NOW() "
+            f"FROM org_invitations WHERE {_PENDING} "
             "AND lower(email) = %s ORDER BY created_at DESC", (email,)).fetchall()
         out = []
         for r in rows:
@@ -364,16 +446,21 @@ def reconcile_signup_with_invitation(sub: str, email: str) -> Optional[dict]:
     invitation d'org en attente pour son email vérifié, on l'accepte automatiquement
     — il rejoint directement l'org au lieu de rester avec une invitation orpheline
     (cas vécu : invité qui s'inscrit sans passer par le lien /invite). Sûr car l'email
-    est vérifié par Logto (signup email+code). None si aucune invitation."""
+    est vérifié par Logto (signup email+code). None si aucune invitation.
+
+    ⚠️ Une invitation REFUSÉE (#654) en est exclue par `_PENDING`, et c'est le point
+    le plus facile à manquer : sans ça, refuser puis créer son compte avec la même
+    adresse aurait fait rejoindre l'org automatiquement — le refus annulé par le
+    signup, sans que personne ne l'ait demandé."""
     email = (email or "").strip().lower()
     if "@" not in email:
         return None
     with _connect() as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT id, org_id, org_role, group_id, group_role, invited_by
               FROM org_invitations
-             WHERE accepted_at IS NULL AND expires_at > NOW() AND lower(email) = %s
+             WHERE {_PENDING} AND lower(email) = %s
              ORDER BY created_at DESC
              LIMIT 1
             """,

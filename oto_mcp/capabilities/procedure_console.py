@@ -69,20 +69,23 @@ def _need(val, code: str, msg: str):
 
 
 class ProcedureInput(BaseModel):
-    op: Literal["get", "list", "set", "delete",
+    op: Literal["get", "list", "create", "set", "describe", "delete",
                 "library_list", "library_get", "publish", "fork", "unpublish"]
     slug: Optional[str] = None
     guide_id: Optional[int] = None         # get : lecture par ID STABLE (ADR 0032)
-    doctrine_id: Optional[int] = None      # ALIAS déprécié du précédent (retrait 27/09/2026, #519)
+    doctrine_id: Optional[int] = None      # ALIAS déprécié du précédent (retrait 29/10/2026, #519)
     scope: Optional[str] = None            # org (défaut) | group — LECTURE ET ÉCRITURE
     version: Optional[int] = None          # get
     with_history: bool = False             # get
     query: Optional[str] = None            # list / library_list
     body_md: Optional[str] = None          # set
-    title: Optional[str] = None            # set / publish
-    description: Optional[str] = None      # set / publish
+    title: Optional[str] = None            # set / describe / publish
+    description: Optional[str] = None      # set / describe / publish
     from_version: Optional[int] = None     # set (revert)
-    slots: Optional[list] = None           # set (ADR 0035)
+    # set : verrou OPTIMISTE (#662) — la version lue par l'appelant. Différente de la
+    # courante ⟹ 409 `version_conflict`, l'écriture n'a pas lieu.
+    expected_version: Optional[int] = None
+    slots: Optional[list] = None           # set / create (ADR 0035)
     org: Optional[int] = None              # set/delete : org explicite (#69)
     group: Optional[int] = None            # scope=group : équipe explicite (#681)
     public_slug: Optional[str] = None      # publish
@@ -104,11 +107,23 @@ async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
             version=inp.version, with_history=inp.with_history))
     if inp.op == "list":
         return oi._list_guides(ctx, oi.GuideListInput(query=inp.query, scope=inp.scope))
+    if inp.op == "create":
+        return await oi._create_instruction(ctx, oi.ConsoleInstrCreateInput(
+            slug=_need(inp.slug, "missing_slug", "`slug` requis pour create."),
+            body_md=inp.body_md, title=inp.title, description=inp.description,
+            slots=inp.slots, org=inp.org, scope=inp.scope, group=inp.group))
     if inp.op == "set":
         return await oi._set_instruction(ctx, oi.ConsoleInstrSetInput(
             slug=inp.slug, body_md=inp.body_md, title=inp.title,
             description=inp.description, from_version=inp.from_version,
+            expected_version=inp.expected_version,
             slots=inp.slots, org=inp.org, scope=inp.scope, group=inp.group))
+    if inp.op == "describe":
+        return oi._describe_instruction(ctx, oi.ConsoleInstrDescribeInput(
+            slug=_need(inp.slug, "missing_slug", "`slug` requis pour describe."),
+            title=inp.title, description=inp.description,
+            expected_version=inp.expected_version,
+            org=inp.org, scope=inp.scope, group=inp.group))
     if inp.op == "delete":
         return oi._delete_instruction(ctx, oi.ConsoleGuideDeleteInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour delete."),
@@ -142,7 +157,13 @@ CAPABILITIES += [
             # l'agent croyait sa procédure perdue). Le fix cross-org du 27/07 n'avait
             # posé ORG_MEMBER_OPT que sur `get`, laissant la moitié du signal ouverte.
             "get": _LIRE, "list": _LIRE,
-            "set": _ECRIRE, "delete": _SUPPRIMER,
+            # `create` partage la garde de `set` : créer n'est pas plus dangereux
+            # qu'écrire — c'est le geste qui l'était trop peu, faute de savoir refuser.
+            # `describe` partage la garde de `set` : corriger la vitrine est une
+            # écriture, réversible de la même façon (la version monte, `from_version`
+            # défait). Rien n'y justifierait un palier de droits différent.
+            "create": _ECRIRE, "set": _ECRIRE, "describe": _ECRIRE,
+            "delete": _SUPPRIMER,
             "library_list": SUB_ONLY, "library_get": SUB_ONLY,
             "publish": ORG_MEMBER, "fork": ORG_MEMBER, "unpublish": SUB_ONLY,
         }),
@@ -153,7 +174,14 @@ CAPABILITIES += [
             "STABLE id, incl. one SHARED to your org; `org` pins the read to an EXPLICIT org "
             "id you are a member of — cross-org load of a named skill by slug) / list (catalog: "
             "slug/title/description, "
-            "no body) / set (write: `slug` is REQUIRED — one named skill. `scope='group'` "
+            "no body) / create (NEW procedure: `slug` REQUIRED and free — a slug already "
+            "taken is REFUSED, `slug_taken`, nothing overwritten. Use this whenever you mean "
+            "to add a procedure; `set` on a taken slug silently replaces it) "
+            "/ set (write: `slug` is REQUIRED — one named skill. It is an UPSERT: an "
+            "existing slug is EDITED (new version, prior one kept in history). Pass "
+            "`expected_version` (the version you read) so a procedure someone else changed "
+            "meanwhile gives you `version_conflict` instead of losing their edit. "
+            "`scope='group'` "
             "writes your TEAM's procedure and only needs you to be a MEMBER of it "
             "(`group` pins an explicit team id): whoever RUNS a procedure may improve it, "
             "and a bad edit is undone with `from_version`. The default `scope='org'` needs "
@@ -168,7 +196,13 @@ CAPABILITIES += [
             "one. The response carries `diagram_warning` when the body has none. "
             "`from_version` "
             "restores; `slots` = required entities referenced <slot:name> in the prose; `org` "
-            "pins an explicit org id) / delete (exact `slug`; same `scope`/`group`/`org` "
+            "pins an explicit org id) "
+            "/ describe (fix `title` and/or `description` ALONE — the body is carried "
+            "over untouched. Use this for a stale catalog line instead of re-sending the "
+            "whole body through `set`, which risks degrading prose you did not mean to "
+            "edit. Same `scope`/`group`/`org` axes and same permission as `set`; still "
+            "versioned, so `from_version` undoes it) "
+            "/ delete (exact `slug`; same `scope`/`group`/`org` "
             "axes as set, but DESTRUCTIVE — it takes the whole version history, so "
             "`scope='group'` needs the team LEAD) — and the PUBLIC library: "
             "op=library_list (browse/search, filter category/author_kind) / library_get (full "

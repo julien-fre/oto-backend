@@ -14,6 +14,16 @@ pas par la RÉSOLUTION accepterait un deuxième compte que personne n'irait jama
 c'est très exactement le défaut qu'oto-backend#409 a corrigé le 27/08. D'où une source
 unique, ici, que les deux appellent.
 
+**Et une TROISIÈME face, depuis le 2026-09-01 (oto-backend#732) : la CARTE SERVIE.**
+`providers.public_catalog()` pose `auth.cardinality` depuis le registre, donc depuis le
+défaut du CODE — c'est cette clé que le dashboard lit pour décider s'il propose un
+second compte. Une org élargie par surcharge voyait donc le serveur ACCEPTER un geste
+que l'écran ne proposait jamais : le même demi-élargissement que #409, pris par l'autre
+bout (la ligne n'est pas posée-puis-ignorée, elle est posable et jamais offerte). D'où
+`overlay_for_org()` : les surfaces qui connaissent un requérant — donc une org de
+contexte — réécrivent la clé servie par cette même source unique. **Le code dit le
+possible, la base dit l'exposé.**
+
 ⚠️ **Zéro lecture de base sur le chemin chaud.** La cardinalité est consultée jusqu'à
 quatre fois par appel d'outil (`access/resolve.py`), sur un serveur MONO-LOOP, contre
 une base managée distante : une requête par consultation est le mode de panne que
@@ -36,6 +46,14 @@ logger = logging.getLogger(__name__)
 # La `key` de cette propriété dans `connector_settings`.
 KEY = "cardinality"
 MONO, MULTI = "mono", "multi"
+
+# Les deux valeurs de la clé SERVIE `auth.cardinality` — qui ne sont PAS celles de la
+# base. `mono`/`multi` est ce qu'on POSE dans `connector_settings` ; `single`/
+# `multi_account` est ce que le registre REND sur la carte (`_model.Connector.auth`) et
+# ce qu'un front consomme (contrat `AuthDescriptor`, jeu fermé lu par un `switch` dans
+# oto-dashboard). La traduction entre les deux vit ICI, une fois : dispersée, elle
+# redeviendrait la divergence que ce module existe pour empêcher.
+SERVI_SINGLE, SERVI_MULTI = "single", "multi_account"
 
 # Les surcharges VIVANTES du process : {(scope_type, scope_id, connector): valeur}.
 # Remplacé par SWAP de référence (atomique sous CPython) — aucun lecteur ne voit un
@@ -155,6 +173,46 @@ def accepted_anywhere(connector: str) -> bool:
         return True
     _ensure_loaded()
     return any(v == MULTI for (_, _, nom), v in _OVERRIDES.items() if nom == con.name)
+
+
+def overlay_for_org(rows: list, org: "int | str | None") -> list:
+    """Réécrit `auth.cardinality` de lignes de catalogue avec la réponse EFFECTIVE pour
+    cette org. La seule façon de servir la carte à un requérant connu.
+
+    `rows` = des lignes de `providers.public_catalog()`, dont `auth.cardinality` porte
+    le défaut du CODE (le registre est pur, il ne peut pas lire une surcharge). Cette
+    fonction est le pont : elle repasse chaque nom par `is_multi_account`, donc par les
+    trois crans org > plateforme > code.
+
+    **Copie à l'écriture, jamais de mutation.** Une ligne dont le verdict ne change pas
+    est rendue TELLE QUELLE (même objet) ; seule celle qui bouge est recopiée, avec son
+    `auth` recopié aussi. Le producteur reconstruit certes ses dicts à chaque appel,
+    mais un appelant qui passerait un cache ne doit pas voir sa donnée réécrite sous
+    lui — et `public_catalog` rend `credential_fields` depuis un SECOND appel à
+    `c.auth`, donc muter en place ferait diverger deux clés de la même ligne.
+
+    ⚠️ **Zéro requête**, malgré l'avertissement en tête de module : les surcharges sont
+    déjà en mémoire (`_ensure_loaded`) et `_porteur` n'est qu'un lookup de dict. Le coût
+    est quelques lookups par LIGNE de catalogue, sur une surface de CONSULTATION — pas
+    sur le chemin chaud d'un appel d'outil, qui est ce que cet avertissement protège.
+
+    `org=None` (vitrine anonyme, build du site) reste licite et signifie « pas de
+    contexte » : la surcharge PLATEFORME s'applique quand même — c'est la réponse de la
+    plateforme pour tout le monde — et seule celle d'une org est hors de portée."""
+    out = []
+    for row in rows:
+        auth = row.get("auth")
+        if not isinstance(auth, dict):
+            # Ligne compacte (le catalogue sans `verbose`) : rien à réécrire. Rendue
+            # telle quelle plutôt qu'ignorée — cette fonction filtre zéro ligne.
+            out.append(row)
+            continue
+        servie = SERVI_MULTI if is_multi_account(row["name"], org) else SERVI_SINGLE
+        if auth.get("cardinality") == servie:
+            out.append(row)
+            continue
+        out.append({**row, "auth": {**auth, "cardinality": servie}})
+    return out
 
 
 def _reset_for_tests() -> None:

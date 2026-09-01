@@ -3,7 +3,7 @@
 Un client d'un partenaire voit, dans sa conversation, la liste des outils qu'il vient
 d'appeler. Elle disait `Oto doc`, `Oto project`, `Oto search` — sous le connecteur du
 partenaire, dans son produit à lui. C'est la MÊME famille de défaut que le socle
-d'instructions (« Sur Tulina (Oto), tu es… », 13/08) et que les liens qui portaient
+d'instructions (« Sur <tenant> (Oto), tu es… », 13/08) et que les liens qui portaient
 notre domaine : un texte au niveau plateforme alors qu'il décrit un produit. Sauf
 qu'ici le texte n'est pas de la prose — c'est l'identifiant d'un outil, et il est
 affiché à chaque appel.
@@ -13,8 +13,8 @@ compare (registre, coffre de visibilité `user_disabled_tools`, journal `tool_ca
 références `<tool:slug>` des procédures, gates par namespace). Ce module ne fait que
 le TRADUIRE aux deux bords du protocole :
 
-    tools/list   →  `oto_doc`     devient  `tulina_doc`   (ce que l'utilisateur voit)
-    tools/call   ←  `tulina_doc`  redevient `oto_doc`     (ce que le serveur sait)
+    tools/list   →  `oto_doc`     devient  `acme_doc`   (ce que l'utilisateur voit)
+    tools/call   ←  `acme_doc`  redevient `oto_doc`     (ce que le serveur sait)
 
 **Les deux noms sont acceptés à l'appel**, et ce n'est pas de la complaisance : la
 prose déjà écrite (procédures d'org, guides, corps de guide, messages d'erreur)
@@ -28,8 +28,8 @@ Trois choses qui coûteraient cher si on les oubliait :
   d'un tenant est une rupture pour ses procédures et sa prose : ça se décide, ça ne
   s'attrape pas en existant. Même règle que `link_paths` — pas de patron, pas de lien.
 - **Un préfixe ne peut pas être un namespace de connecteur** (`normalize_prefix`).
-  Sinon `tulina_search` désignerait à la fois l'alias d'`oto_search` et un vrai outil
-  du connecteur `tulina` : la traduction retour deviendrait ambiguë, et l'ambiguïté
+  Sinon `acme_search` désignerait à la fois l'alias d'`oto_search` et un vrai outil
+  du connecteur `acme` : la traduction retour deviendrait ambiguë, et l'ambiguïté
   ici décide QUEL outil s'exécute. Le refus est loggé, jamais silencieux — un tenant
   dont le préfixe est refusé garde les noms canoniques, ce qui est visible.
 - **La traduction est un PRÉFIXE, pas une table.** `oto_<reste>` ⇄ `<prefix>_<reste>`,
@@ -157,14 +157,14 @@ def server_identity_for(sub: Optional[str]) -> tuple[str, str]:
 
 
 def public(name: str, prefix: str) -> str:
-    """Le nom MONTRÉ : `oto_doc` → `tulina_doc`. Tout autre nom passe inchangé."""
+    """Le nom MONTRÉ : `oto_doc` → `acme_doc`. Tout autre nom passe inchangé."""
     if not prefix or not name or not name.startswith(PRIMARY_PREFIX + "_"):
         return name
     return prefix + name[len(PRIMARY_PREFIX):]
 
 
 def canonical(name: str, prefix: str) -> str:
-    """Le nom CONNU DU SERVEUR : `tulina_doc` → `oto_doc`.
+    """Le nom CONNU DU SERVEUR : `acme_doc` → `oto_doc`.
 
     Le nom canonique passe inchangé — les deux formes sont acceptées à l'appel (cf.
     l'en-tête du module : la prose déjà écrite cite les canoniques).
@@ -175,12 +175,12 @@ def canonical(name: str, prefix: str) -> str:
 
 
 def public_namespace(namespace: str, prefix: str) -> str:
-    """Le namespace MONTRÉ : `oto` → `tulina`. Tout autre namespace passe inchangé.
+    """Le namespace MONTRÉ : `oto` → `acme`. Tout autre namespace passe inchangé.
 
     Un nom d'outil ne voyage jamais seul — `oto_tool_schema` en rend aussi le
     namespace, que l'agent relit pour se repérer. Le laisser en canonique ferait
     répondre « namespace: oto » à un compte dont tous les outils s'appellent
-    `tulina_…`, soit le nom interne réintroduit par la porte de derrière.
+    `acme_…`, soit le nom interne réintroduit par la porte de derrière.
     """
     return prefix if (prefix and namespace == PRIMARY_PREFIX) else namespace
 

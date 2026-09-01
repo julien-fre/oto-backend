@@ -192,6 +192,19 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # à sa conclusion (usage_tokens, stopped, steps…) — c'est ce qui rend le coût
     # lisible par un ordonnanceur de flotte (garde budget) sans parser une note.
     conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS result JSONB")
+    # Chantier runner R4 (fleet comme produit) : un job dit à quelle FLOTTE il
+    # appartient. La table `runner_fleets` est créée par le DDL ; sur une base qui
+    # existe déjà, seule la colonne manque — et sans elle un passage n'est lisible
+    # qu'en corrélant des horodatages à la main.
+    # ⚠️ La FK voyage AVEC l'ALTER, sinon une base fraîche (qui la reçoit par le
+    # CREATE TABLE) et la prod (qui ne reçoit que l'ALTER) divergent pour toujours,
+    # et rien ne le rattraperait. Même forme que `org_invitations.group_id`.
+    conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS fleet_id BIGINT "
+                 "REFERENCES runner_fleets(id) ON DELETE SET NULL")
+    # L'index SUIT l'ALTER : dans `_schema` il s'exécuterait avant que la colonne
+    # existe sur une base déjà construite, et le boot mourrait (piège du 20/07).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runner_jobs_fleet "
+                 "ON runner_jobs(fleet_id) WHERE fleet_id IS NOT NULL")
     # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
     # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
     # portaient notre domaine : un client d'un partenaire recevait des liens vers
@@ -338,6 +351,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
               FROM docs WHERE position IS NULL) s
         WHERE d.id = s.id AND d.position IS NULL
     """)
+    # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas, avec son
+    # backfill (ADR 0042, barreau 1). Les index de recherche construits juste
+    # après portent `WHERE delivery = 'on-demand'` : sur une base qui existe
+    # déjà, la colonne n'arrive que par cet ALTER, donc l'ordre est une
+    # contrainte d'exécution, pas une mise en page. Le backfill des readmes
+    # `init`, lui, reste à sa place.
+    conn.execute("ALTER TABLE guides ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'on-demand'")
     # Lot 3 Ship 1 : index FTS de la recherche transverse (GIN d'expression —
     # PAS de colonne STORED, qui réécrirait la table sous ACCESS EXCLUSIVE).
     # Source unique des expressions : db/search.py (index ↔ requête identiques).
@@ -425,6 +445,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # backfill n'est requis (0 est bien l'état d'une ligne jamais réservée).
     conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claims INTEGER NOT NULL DEFAULT 0")
     conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS abandon_reason TEXT")
+    # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas (ADR 0032 §6 /
+    # 0029, B6 : mode typé optionnel d'un namespace). La conversion #317 juste
+    # après LIT `d.schema` : sur une base qui existe déjà, la colonne n'arrive
+    # que par cet ALTER, et l'`UPDATE` mourait avant lui.
+    conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS schema JSONB")
     # #317 : le rôle `title` devient une PRÉSENTATION (`display`). Conversion
     # ADDITIVE — le `role` reste en place, seuls les lecteurs changent de source ;
     # son retrait est l'étape suivante du dossier, une fois la bascule vérifiée.
@@ -480,7 +505,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # guides B5 restent des how-to) + backfill des readmes init platform + user
     # depuis les ex-tables (org/group suivent au barreau 2). ON CONFLICT DO NOTHING
     # = idempotent, ne réécrit jamais une ligne guides déjà posée.
-    conn.execute("ALTER TABLE guides ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'on-demand'")
+    # (La colonne `delivery` elle-même est posée BEAUCOUP plus haut : les index
+    # de recherche la lisent dans leur prédicat — cf. le renvoi là-bas, #781.)
     conn.execute(
         "INSERT INTO guides (scope, owner_id, slug, delivery, body_md, created_at, updated_at) "
         "SELECT 'platform', 'platform', key, 'init', body_md, "
@@ -541,8 +567,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # chantier procédures B1) : ils ont tourné en prod à chaque boot depuis le
     # 06/07, et celui d'équipe lisait `org_group_instructions` (jumelle vouée au
     # DROP — un boot post-drop aurait cassé).
-    # ADR 0032 §6 / 0029 (B6) : mode typé optionnel d'un namespace de datastore.
-    conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS schema JSONB")
+    # (ADR 0032 §6 / 0029, B6 : `user_datastores.schema` est posée BEAUCOUP plus
+    # haut — la conversion #317 la lit avant ce point. Cf. le renvoi là-bas, #781.)
     # gap #4a : partage public d'un doc (token de lien public, lookup indexé).
     conn.execute("ALTER TABLE docs ADD COLUMN IF NOT EXISTS public_token TEXT")
     # ADR 0032 (« stop using slug ») : id surrogate stable + globalement unique pour
@@ -828,6 +854,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS group_role TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_org_invitations_group "
                  "ON org_invitations(group_id) WHERE group_id IS NOT NULL")
+    # REFUS de l'invité (oto-backend#654) : jusqu'ici seul l'ÉMETTEUR pouvait retirer
+    # une invitation (révocation), l'invité ne pouvait que ne pas l'accepter — donc
+    # garder un badge qu'il ne pouvait pas éteindre. État PROPRE, jamais `accepted_at`
+    # (cf. le commentaire du DDL). Deux ADD COLUMN idempotents, sans réécriture de
+    # table : pas de travail au boot, la fenêtre du healthcheck n'en voit rien.
+    conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS declined_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS declined_sub TEXT")
     # Primitive de ressource possédée (ADR 0030) : scope d'ownership porté par la
     # ressource (`owner_type` défaut 'user', `owner_id` = sub | org.id | group.id).
     # Phase H (cadrage 10/07) — B1 (promu prod 10/07) a purgé toute référence aux
@@ -925,11 +958,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS require_mfa BOOLEAN NOT NULL DEFAULT FALSE")
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logto_org_id TEXT")
     # Front qui héberge l'org — oto-backend sert PLUSIEURS produits depuis une
-    # instance (oto, Tulina). NULL = oto (le défaut, l'écrasante majorité) ; posé
+    # instance (oto, un tenant tiers). NULL = oto (le défaut, l'écrasante majorité) ; posé
     # = l'org vit sous un front tiers, dont les liens sortants et la marque des
     # mails doivent porter SES couleurs, pas les nôtres :
-    #   front_base_url = base des liens publics (https://app.tulina.ai)
-    #   front_brand    = marque écrite dans les mails ("tulina")
+    #   front_base_url = base des liens publics (ex. https://app.<tenant>.ai)
+    #   front_brand    = marque écrite dans les mails (ex. "<tenant>")
     # Dérivé de l'org, JAMAIS déclaré par l'appelant : une invitation ne peut pas
     # prétendre venir d'un front auquel l'org n'appartient pas.
     # ⚠️ Provisoire assumé : cette information appartient au TENANT (ADR 0052),
