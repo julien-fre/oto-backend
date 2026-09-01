@@ -604,15 +604,6 @@ def register(mcp: FastMCP) -> None:
         write — it is how you catch a renamed field you kept writing under its old
         name. Absent = everything you wrote is in the declared format.
 
-        Clearing a field that already has a value: naming it with `null` ERASES it
-        — this is the only way to blank a scalar, and it happens only when
-        the field truly held a value (a blank/absent source never displaces one,
-        it is silently preserved and reported in `valeurs_ignorees`). On a LIST
-        column, `[]` erases it too — the natural JSON way to say "no items left"
-        — while a blank string/object on that same field would still be preserved,
-        not written. Check `valeurs_effacees`/`valeurs_ignorees` after a write that
-        might have emptied something: they name the field and the value involved.
-
         ⚠️ The namespace must EXIST first (create it with `data_create_namespace`);
         writing to an unknown namespace raises "namespace inconnu" — it is NOT
         auto-created. New JSON KEYS within an existing namespace, however, do
