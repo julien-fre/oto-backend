@@ -227,3 +227,42 @@ def test_une_flotte_d_une_autre_org_est_invisible(client, org, flotte):
     r = client.post(ROUTE, headers=_h(autre),
                     json={"op": "get", "fleet_id": flotte["id"]})
     assert (r.status_code, r.json().get("error")) == (404, "fleet_not_found")
+
+
+# ── les résidus de la 3ᵉ passe : le seam vaut pour TOUTE opération ────────────
+
+def test_create_refuse_ce_qu_il_n_applique_pas(client, org):
+    """`create status="running"` rendait 200 avec une flotte `draft` et le champ
+    avalé — mot pour mot le geste que le refus d'`update` prédit.
+
+    ⚠️ La garde était écrite dans la branche `update` SEULE. **Une garde écrite
+    dans une branche ne garde que cette branche** : c'est le même défaut que celui
+    qu'elle corrigeait, déplacé d'un verbe."""
+    base = {"op": "create", "label": "x", "procedure": "p", "tools": ["oto_kb"]}
+    assert _refus(client, org, {**base, "status": "running"}
+                  ) == (400, "status_not_settable")
+    assert _refus(client, org, {**base, "fleet_id": 1}
+                  ) == (400, "field_not_settable")
+
+
+def test_une_borne_absurde_est_refusee_des_DEUX_cotes(client, org, flotte):
+    """Une borne se compte, donc elle vaut au moins 1. `max_rows=-5`, `workers=0`
+    passaient à la création ET à la retouche — une borne absurde acceptée est une
+    panne différée, découverte au lancement plutôt qu'à la déclaration."""
+    base = {"op": "create", "label": "x", "procedure": "p", "tools": ["oto_kb"]}
+    for champ, valeur in (("max_rows", -5), ("workers", 0), ("max_tokens", -1),
+                          ("max_tokens_per_row", 0), ("max_steps", -2),
+                          ("max_consecutive_failures", 0)):
+        assert _refus(client, org, {**base, champ: valeur}) == (400, "invalid_bound"), champ
+        assert _refus(client, org, {"op": "update", "fleet_id": flotte["id"],
+                                    champ: valeur}) == (400, "invalid_bound"), champ
+
+
+def test_update_ne_peut_pas_annuler_ce_que_create_exige(client, org, flotte):
+    """`create tools=[]` était refusé et `update tools=[]` vidait l'allowlist.
+    Une garde qui ne tient qu'à l'entrée laisse la sortie ouverte."""
+    assert _refus(client, org, {"op": "update", "fleet_id": flotte["id"], "tools": []}
+                  ) == (400, "missing_fields")
+    f = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "get", "fleet_id": flotte["id"]}).json()["fleet"]
+    assert f["tools"] == ["oto_kb"]

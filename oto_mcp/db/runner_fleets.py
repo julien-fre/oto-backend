@@ -186,9 +186,13 @@ def fleet_state(fleet_id: int, org_id: int) -> Optional[dict]:
                    -- ⚠️ `SUM` sur un bigint rend un NUMERIC en PostgreSQL, donc un
                    -- Decimal côté client — que rien ne normalise et que JSON refuse.
                    -- Sans ce cast, `state` rendait 500 sur TOUTE flotte, y compris
-                   -- vierge (COALESCE rend `Decimal('0')`). `MAX` conserve le type,
-                   -- mais on le caste aussi : la symétrie évite qu'un futur passage
-                   -- de MAX à SUM réintroduise la panne sans qu'on y pense.
+                   -- vierge (COALESCE rend `Decimal('0')`).
+                   -- Celui sur `MAX` est une SYMÉTRIE DÉFENSIVE, pas une garde :
+                   -- le cast interne type déjà la valeur, donc aucun test ne peut
+                   -- le faire tomber. Il est là pour qu'un futur passage de MAX à
+                   -- SUM ne réintroduise pas la panne — et il est nommé pour ce
+                   -- qu'il est, parce qu'une protection qu'on n'a jamais vue mordre
+                   -- ne doit pas se faire passer pour une garde éprouvée.
                    COALESCE(SUM((result->>'usage_tokens')::bigint), 0)::bigint
                        AS usage_tokens,
                    MAX((result->>'usage_tokens')::bigint)::bigint

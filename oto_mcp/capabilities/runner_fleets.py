@@ -47,9 +47,26 @@ from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
 from .registry import CAPABILITIES
 
-# Ce qui pilote l'appel plutôt que la configuration : jamais « posé » par `update`,
-# donc jamais compté comme un champ inerte par la garde du seam.
+# Ce qui pilote l'appel plutôt que la configuration : jamais « posé », donc jamais
+# compté comme un champ inerte par les gardes de seam.
 _STRUCTURELS = frozenset({"op", "fleet_id"})
+
+# Les BORNES d'exploitation, et le plancher qu'elles partagent : une borne se
+# compte, donc elle vaut au moins 1. ⚠️ `max_rows=-5`, `max_tokens=-1` ou
+# `workers=0` passaient des DEUX côtés — une borne absurde acceptée est une panne
+# différée, et elle se découvre au lancement plutôt qu'à la déclaration.
+_BORNES = ("workers", "max_rows", "max_tokens", "max_consecutive_failures",
+           "max_tokens_per_row", "max_steps")
+
+
+def _bornes_valides(inp: "FleetInput") -> None:
+    fautives = {c: v for c in _BORNES
+                if (v := getattr(inp, c)) is not None and v < 1}
+    if fautives:
+        raise AuthzDenied(
+            400, "invalid_bound",
+            "une borne se compte, donc elle vaut au moins 1 : "
+            + ", ".join(f"`{c}`={v}" for c, v in sorted(fautives.items())))
 
 class FleetInput(BaseModel):
     op: Literal["create", "list", "get", "state", "update"]
@@ -131,6 +148,21 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         raise AuthzDenied(400, "org_required", "les flottes sont org-scopées")
 
     if inp.op == "create":
+        # ⚠️ Le seam vaut pour TOUTE opération, pas pour le seul verbe qu'on avait
+        # regardé. `create status="running"` rendait 200 avec une flotte `draft` et
+        # le champ avalé — mot pour mot le geste que le refus d'`update` prédit.
+        # Une garde écrite dans une branche ne garde que cette branche.
+        if inp.status is not None:
+            raise AuthzDenied(
+                400, "status_not_settable",
+                "l'état d'un passage ne se pose pas à la création — une flotte naît "
+                "`draft`. `status` ne sert qu'à FILTRER `list`.")
+        if inp.fleet_id is not None:
+            raise AuthzDenied(
+                400, "field_not_settable",
+                "`create` ne prend pas `fleet_id` : l'identifiant est attribué par "
+                "la plateforme.")
+        _bornes_valides(inp)
         manquants = [c for c in ("label", "procedure", "tools") if not getattr(inp, c)]
         if manquants:
             raise AuthzDenied(
@@ -200,6 +232,15 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
     # flotte EXÉCUTE — et `project_id` rendaient 200 sans le moindre effet. Tout
     # champ d'entrée qui n'est ni STRUCTUREL ni modifiable aboutit, ou se refuse ;
     # et le refus vaut aussi pour ceux qu'on ajoutera à l'entrée demain.
+    _bornes_valides(inp)
+    # ⚠️ Ce que `create` EXIGE, `update` ne doit pas pouvoir l'annuler : `tools=[]`
+    # était refusé à la création et vidait l'allowlist par retouche. Une garde qui
+    # ne tient qu'à l'entrée laisse la sortie ouverte.
+    if inp.tools is not None and not inp.tools:
+        raise AuthzDenied(
+            400, "missing_fields",
+            "`tools` ne peut pas être vidé — c'est l'allowlist du run, et `create` "
+            "l'exige. Une flotte sans outils n'exécute rien.")
     fournis = {c for c, v in inp.model_dump(exclude_none=True).items()
                if c not in _STRUCTURELS}
     inertes = sorted(fournis - set(db.CHAMPS_MODIFIABLES))
@@ -249,6 +290,9 @@ CAPABILITIES += [
             DeclaredError(400, "field_not_settable",
                           "`update` sur un champ déclaré à la création "
                           "(`procedure`, `project_id`…)"),
+            DeclaredError(400, "invalid_bound",
+                          "une borne (`workers`, `max_rows`, `max_tokens`…) "
+                          "inférieure à 1"),
             DeclaredError(404, "fleet_not_found",
                           "flotte inconnue dans l'org du porteur"),
         ),
