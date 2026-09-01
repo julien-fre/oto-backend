@@ -97,17 +97,33 @@ La coordonnée fiable est ce que **pip écrit à l'installation** — `direct_ur
 | `metadata` | Installation depuis PyPI : plus de `direct_url.json`, il ne reste que le champ `Version`. ⚠️ C'est le numéro **gelé** — servi faute de mieux, nommé pour ce qu'il est. |
 | `absent` | oto-core n'est pas installé (aucun connecteur ne peut tourner). |
 
-## ⚠️ Le script de déploiement vit à deux endroits
+## Le script de déploiement : ce dépôt en est la source unique
 
-`/opt/deploy/oto-mcp-bluegreen.sh` sur la box a **deux copies de référence** :
-`deploy/oto-mcp-bluegreen.sh` ici, et `scripts/oto-backend-bluegreen/` dans
-`otomata-tech/infra`. Elles ont **divergé le 01/09/2026** (correction infra sur la
-lecture de la dépendance oto-core dans le manifeste), et la divergence tombe dans
-`bg_install` — la fonction même qui écrit la coordonnée.
+`deploy/oto-mcp-bluegreen.sh` **est** la source de ce que la box exécute en
+`/opt/deploy/oto-mcp-bluegreen.sh`. Ce script déploie ce produit ; c'est l'équipe de
+ce produit qui le modifie, et une PR ici est le geste naturel de qui y touche.
 
-**Conséquence pratique** : ne jamais recopier une de ces deux copies sur la box sans
-avoir regardé l'autre. Tant que la copie vivante ne pose pas le `.oto-deploy.json`,
-la plateforme répond honnêtement `unknown` — elle ne ment pas, elle ne sait pas.
+**Ça n'a pas toujours été vrai, et l'épisode mérite d'être daté.** Le 01/09/2026, le
+script existait **en double** : une copie ici, une dans `otomata-tech/infra`
+(`scripts/oto-backend-bluegreen/`), chacune se présentant en tête comme la source.
+Elles ont divergé le jour même, dans `bg_install` — la fonction que ce lot modifie :
+infra corrigeait la lecture de la dépendance oto-core (relire la **ligne entière** du
+manifeste, extras compris, au lieu d'extraire le seul tag et de recoder
+`oto-core[browser]` en dur, ce qui défaisait en silence le retrait délibéré de cet
+extra à chaque déploiement) pendant que ce lot y ajoutait l'écriture de la
+coordonnée. Les deux corrections ont été réunies ici, et infra ne garde qu'un
+pointeur.
+
+**La leçon, qui survit à l'épisode** : deux copies d'un même fichier qui se déclarent
+chacune « la » source ne divergent pas *si* quelqu'un se trompe — elles divergent dès
+que deux personnes ont raison en même temps, chacune dans sa copie. Le garde-fou n'est
+pas la vigilance, c'est de n'en avoir qu'une.
+
+⚠️ **La coordonnée n'est écrite que si l'installation a réussi.** Le refus du
+manifeste illisible sort de `bg_install` **avant** le `printf` : une couleur dont
+l'installation a échoué ne porte pas un `.oto-deploy.json` qui annoncerait une version
+qu'elle n'a jamais installée. Et tant qu'une box n'a pas ce script, la plateforme
+répond `unknown` — elle ne ment pas, elle ne sait pas.
 
 ## Ce que ce lot ne fait pas
 
