@@ -44,12 +44,30 @@ Trois raisons, dans l'ordre de ce qu'elles coûtent :
 
 ## La date
 
-**Retrait au premier tag `vX.Y.Z` posé à partir du 27/09/2026** — 30 jours après la
-décision.
+**Retrait au premier tag `vX.Y.Z` posé à partir du 29/10/2026** — **deux mois**
+après la mise en production du préavis.
 
-⚠️ **Un tag, pas un merge.** `main` est la PREPROD : un alias retiré au merge serait
-retiré du serveur que les intégrateurs sondent, avec 30 jours de préavis annoncés et
-zéro jour servi.
+D'où viennent ces deux mois : **l'Art 8.2 du contrat de service**, qui promet un
+préavis de deux mois avant toute rupture d'interface. Le mécanisme en a servi 30 jours
+du 29/08 au 01/09/2026 — constat, référence de l'article et correction dans
+oto-backend#767 ; la formulation qui fait foi est celle de la pièce, pas celle de
+cette page. La durée vit dans
+`deprecations.PREAVIS_MOIS`, la date en est DÉRIVÉE, et un test en fait un plancher :
+allonger est libre, descendre sous deux mois rougit.
+
+⚠️ **Un tag, pas un merge — aux deux bouts.** `main` est la PREPROD : un alias retiré
+au merge serait retiré du serveur que les intégrateurs sondent, avec deux mois de
+préavis annoncés et zéro jour servi. Par symétrie, la fenêtre ne s'OUVRE pas au merge
+non plus : les trois lots d'alias ont été mergés le 28/08/2026 et servis en production
+par le tag `v1.159.0` du 29/08/2026, et c'est cette dernière date qui compte
+(`deprecations.ANNONCE`).
+
+⚠️ **Ce que ce préavis ne couvre toujours pas** (#767, ouverte sur ces deux volets) :
+il ne porte que des **renommages de vocabulaire** — un paramètre qui devient
+obligatoire, un champ retiré, un type changé n'ont ni alias ni date ; et il est
+**passif** — les en-têtes se voient en inspectant ses réponses, personne n'est
+prévenu. Un préavis actif demande le canal de notification qui manque à la plateforme
+(#766).
 
 La date vit à **un seul endroit** dans le code — `oto_mcp/deprecations.RETRAIT` — et
 chaque avis servi la recopie depuis là. Décaler le retrait est alors un geste (changer
@@ -65,7 +83,7 @@ basculé) et la migration en base.
 
 Une ligne par surface. « Forme » dit comment les deux noms coexistent.
 
-| Surface | Ancien nom (part le 27/09/2026) | Nouveau nom | Forme | Lot |
+| Surface | Ancien nom (part le 29/10/2026) | Nouveau nom | Forme | Lot |
 | --- | --- | --- | --- | --- |
 | Outil MCP | `oto_admin_doctrine` | `oto_admin_guide` | les deux listés et appelables ; l'ancien porte l'avis en tête de sa description | B1 |
 | Chemin REST | `GET /api/doctrines/library` | `GET /api/guide-library` | 308 | B2 |

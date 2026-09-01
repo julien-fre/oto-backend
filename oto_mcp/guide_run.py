@@ -2,7 +2,7 @@
 
 Un **run** = un déroulé borné (`run_start` → `run_finish`) : soit l'exécution d'une
 guide nommé (champ `guide`, servi aussi sous son nom d'hier `doctrine` jusqu'au
-27/09/2026), soit un run one-shot/ad-hoc (sans lui).
+29/10/2026), soit un run one-shot/ad-hoc (sans lui).
 Le `run_id` actif vit dans l'**état de session FastMCP** (session-scopé, TTL natif),
 sous forme de **pile** (runs imbriqués : un run peut en démarrer un autre).
 

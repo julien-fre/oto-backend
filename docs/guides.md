@@ -16,7 +16,7 @@ adr:
 
 # Guides & instructions d'org
 
-> ⚠️ **« doctrine » = « guide » depuis le 28/08/2026** (#519) : le mot a disparu de l'interne du backend (modules, symboles, prose). Les noms SERVIS qui le portent encore se **doublent** au lot B — le nouveau nom naît, l'ancien reste servi avec une date de retrait écrite (premier tag à partir du 27/09/2026 ; retrait = lot D, #526). **Table unique de ces alias : [`alias-deprecies.md`](alias-deprecies.md).** Déjà fait : l'outil s'appelle `oto_admin_guide` (son ancien nom répond encore).
+> ⚠️ **« doctrine » = « guide » depuis le 28/08/2026** (#519) : le mot a disparu de l'interne du backend (modules, symboles, prose). Les noms SERVIS qui le portent encore se **doublent** au lot B — le nouveau nom naît, l'ancien reste servi avec une date de retrait écrite (premier tag à partir du 29/10/2026 ; retrait = lot D, #526). **Table unique de ces alias : [`alias-deprecies.md`](alias-deprecies.md).** Déjà fait : l'outil s'appelle `oto_admin_guide` (son ancien nom répond encore).
 
 Prose opératoire métier (workflows validés, règles, vocabulaire) pour les users qui pilotent
 oto **sans produit applicatif dédié** (ex. un process avoir compta client
@@ -134,7 +134,7 @@ répète le nom de la procédure (`stripLeadingTitleHeading`) et affiche le sien
 se pose donc SOUS ce H1 quand il existe (au-dessus, le titre resterait orphelin en
 milieu de page), et en tout premier quand le corps n'en a pas (`## Goal`…).
 
-## Le schéma est une section requise (tulina-app-front#108)
+## Le schéma est une section requise (front tiers, issue #108)
 
 Une procédure embarque un **dessin** de son process, et ce n'est pas une illustration :
 le front en fait la **vue par défaut** de la page de la procédure — une procédure sans
@@ -198,7 +198,7 @@ de qui renomme.
 
 ⚠️ **À ne pas confondre avec le préfixe d'outils d'un tenant** (`tenants.tool_prefix`,
 `oto_mcp/tool_alias.py`) : celui-là n'est PAS un renommage. C'est une traduction posée au bord du
-protocole — `oto_doc` devient `tulina_doc` dans le `tools/list` servi, et redevient `oto_doc`
+protocole — `oto_doc` devient `acme_doc` dans le `tools/list` servi, et redevient `oto_doc`
 avant que quoi que ce soit d'autre ne le lise. Les refs `<tool:slug>` restent donc écrites en
 canonique, continuent de résoudre, et **il n'y a rien à migrer**. Les deux formes sont d'ailleurs
 acceptées à l'appel, précisément pour que la prose déjà écrite aboutisse.
@@ -206,8 +206,15 @@ acceptées à l'appel, précisément pour que la prose déjà écrite aboutisse.
 ## Détail accumulé (migré de la carte)
 
 **Livraison au LLM = injection, plus un appel d'outil (otomata-private#49 puis #50, amende ADR 0014).**
-Le canal FIABLE de bootstrap = les `instructions` du `initialize` (FastMCP les relit par
-session ; Claude rehandshake par conversation). `DynamicInstructionsMiddleware.on_initialize`
+Le canal de bootstrap = les `instructions` du `initialize` (FastMCP les relit par
+session ; Claude rehandshake par conversation). ⚠️ **Cru « fiable » jusqu'au 2026-09-01,
+ce canal ne l'est PAS** (#478, mesuré) : Claude Code coupe l'artefact composé à
+**2 048 caractères** et claude.ai ne le transmet pas au modèle. Le bloc A est depuis un
+**socle-résumé ≤ 2 000 c.** (budget cassant en CI, `tests/test_instructions_budget.py`)
+qui pointe la version intégrale — le **guide plateforme `notice`**
+(`oto_mcp/guides/notice.md`) — et `oto_context` ; les couches suivantes (catalogue,
+bloc C) restent composées, mais seuls les clients qui ne tronquent pas les reçoivent.
+`DynamicInstructionsMiddleware.on_initialize`
 (`middleware/dynamic_instructions.py`) **remplace** `result.instructions` par `instructions.compose_session(sub, org_id)`
 — un **artefact composé de 2 blocs** (`instructions.py`, #50 ; l'ex-bloc B onboarding a été
 retiré le 2026-07-01 — l'onboarding est un projet, ADR 0032 §7) :
@@ -220,7 +227,11 @@ retiré le 2026-07-01 — l'onboarding est un projet, ADR 0032 §7) :
   (`_format_org_readme`/`_format_group_readme`/`_format_user_readme`), chacun avec substitution
   `{{org}}`/`{{user}}`/`{{équipe}}`/`{{connecteurs_actifs}}`.
 
-Donc **ne plus prescrire « appelle la lecture de guide au démarrage »** — le guide est injecté.
+⚠️ Corrigé 2026-09-01 : « le guide est injecté, ne plus prescrire sa lecture au
+démarrage » ne tient que pour les clients qui livrent l'artefact entier. Pour les
+autres (Claude Code, claude.ai — #478), la lecture au démarrage EST le canal : le socle
+prescrit `oto_guide op=read slug=notice` puis `oto_context`, et la description
+d'`oto_context` (toujours livrée, elle) porte la même consigne.
 Les **guides nommés (skills)** ne sont pas des outils → absents de `tools/list` → `on_list_tools`
 **enrichit la description de `oto_procedure`** avec leur index per-org (`instructions.skills_index_md`,
 Tool non-frozen → `model_copy`). `render()` reste la surface STATIQUE (boot / fallback, sans DB).

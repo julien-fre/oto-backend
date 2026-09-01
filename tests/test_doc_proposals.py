@@ -7,8 +7,10 @@ voies. Logique de capacité, db stubée.
 """
 import pytest
 
-from oto_mcp.capabilities import docs as D, inbox as I
+from oto_mcp import db
+from oto_mcp.capabilities import inbox as I
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+from oto_mcp.capabilities.docs import common as docs_common, core as D
 
 CTX = ResolvedCtx(sub="u1", org_id=7)
 
@@ -16,22 +18,22 @@ CTX = ResolvedCtx(sub="u1", org_id=7)
 @pytest.fixture
 def seams(monkeypatch):
     rec = {"created": [], "updated": [], "resolved": [], "cr": []}
-    monkeypatch.setattr(D.db, "add_doc_change_request",
+    monkeypatch.setattr(db, "add_doc_change_request",
                         lambda by, **k: rec["cr"].append((by, k)) or {"id": 9, "status": "pending", **k})
-    monkeypatch.setattr(D.db, "create_doc",
+    monkeypatch.setattr(db, "create_doc",
                         lambda pid, title, **k: rec["created"].append((pid, title, k)) or 55)
-    monkeypatch.setattr(D.db, "update_doc",
+    monkeypatch.setattr(db, "update_doc",
                         lambda did, **k: rec["updated"].append((did, k)))
-    monkeypatch.setattr(D.db, "resolve_doc_change_request",
+    monkeypatch.setattr(db, "resolve_doc_change_request",
                         lambda rid, st, by: rec["resolved"].append((rid, st, by)))
-    monkeypatch.setattr(D.db, "log_project_activity", lambda *a, **k: None)
-    monkeypatch.setattr(D.db, "get_doc_by_id",
+    monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
+    monkeypatch.setattr(db, "get_doc_by_id",
                         lambda did: {"id": did, "project_id": 7, "title": "T", "body_md": "b", "kind": "doc"})
     return rec
 
 
 def _can(monkeypatch, *, write):
-    monkeypatch.setattr(D, "_can", lambda sub, pid, want: (want == "read") or write)
+    monkeypatch.setattr(docs_common, "can", lambda sub, pid, want: (want == "read") or write)
 
 
 # ── viewer propose ───────────────────────────────────────────────────────────
@@ -63,7 +65,7 @@ def test_create_proposal_via_request_change_no_doc(seams, monkeypatch):
 
 def test_resolve_accept_create_proposal(seams, monkeypatch):
     _can(monkeypatch, write=True)
-    monkeypatch.setattr(D.db, "get_doc_change_request",
+    monkeypatch.setattr(db, "get_doc_change_request",
                         lambda rid: {"id": rid, "doc_id": None, "project_id": 7,
                                      "proposed_parent_id": 4, "proposed_kind": "doc",
                                      "proposed_title": "Créée", "proposed_body_md": "x",
@@ -76,7 +78,7 @@ def test_resolve_accept_create_proposal(seams, monkeypatch):
 
 def test_resolve_accept_modif_proposal(seams, monkeypatch):
     _can(monkeypatch, write=True)
-    monkeypatch.setattr(D.db, "get_doc_change_request",
+    monkeypatch.setattr(db, "get_doc_change_request",
                         lambda rid: {"id": rid, "doc_id": 20, "project_id": None,
                                      "proposed_title": "Titre v2", "proposed_body_md": "b2",
                                      "status": "pending"})
@@ -86,19 +88,19 @@ def test_resolve_accept_modif_proposal(seams, monkeypatch):
 
 def test_resolve_create_parent_deleted_falls_to_root(seams, monkeypatch):
     _can(monkeypatch, write=True)
-    monkeypatch.setattr(D.db, "get_doc_change_request",
+    monkeypatch.setattr(db, "get_doc_change_request",
                         lambda rid: {"id": rid, "doc_id": None, "project_id": 7,
                                      "proposed_parent_id": 4, "proposed_kind": "doc",
                                      "proposed_title": "X", "proposed_body_md": "",
                                      "status": "pending"})
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda did: None)   # parent disparu
+    monkeypatch.setattr(db, "get_doc_by_id", lambda did: None)   # parent disparu
     D._doc(CTX, D.DocInput(op="resolve_change", request_id=9, accept=True))
     assert seams["created"][0][2]["parent_id"] is None            # rattaché racine
 
 
 def test_resolve_requires_write(seams, monkeypatch):
     _can(monkeypatch, write=False)
-    monkeypatch.setattr(D.db, "get_doc_change_request",
+    monkeypatch.setattr(db, "get_doc_change_request",
                         lambda rid: {"id": rid, "doc_id": None, "project_id": 7,
                                      "status": "pending"})
     with pytest.raises(AuthzDenied) as e:

@@ -14,7 +14,7 @@ précisément ce que le suivi doit rendre visible :
 - le **préfixe du sub** — la qualification par tenant (`tenancy.qualify`), qui suit
   l'émetteur du jeton et rien d'autre.
 
-Rien ne les tient ensemble : un compte peut être qualifié `tulina:…` pendant que
+Rien ne les tient ensemble : un compte peut être qualifié `<tenant>:…` pendant que
 son organisation reste sur le tenant `oto` (c'est l'état laissé par une bascule
 L3bis partielle). Les compteurs les gardent donc SÉPARÉS et nomment l'écart
 (`orgs_desalignees`) plutôt que d'en dériver un chiffre unique qui mentirait.

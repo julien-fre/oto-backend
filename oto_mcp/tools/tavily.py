@@ -119,6 +119,9 @@ def register(mcp: FastMCP) -> None:
         Under a project with `excluded_url_prefixes`, matching results are dropped
         and counted.
 
+        Returns — `{query, answer, results: [{title, url, content, score}],
+            response_time, usage: {credits}}`.
+
         Args:
             query: max 400 chars, plain language works best.
             topic: `general` (default) | `news` (recent, dated sources) | `finance`.
@@ -133,9 +136,6 @@ def register(mcp: FastMCP) -> None:
             include_domains / exclude_domains: restrict / drop domains.
             country: English country name (e.g. `france`) to boost local results.
             language: ISO 639-1 code (e.g. `fr`).
-
-        Returns: `{query, answer, results: [{title, url, content, score}],
-            response_time, usage: {credits}}`.
         """
         with _upstream():
             result = _client().search(
@@ -165,6 +165,9 @@ def register(mcp: FastMCP) -> None:
         returned by `tavily_search`). Natively batch: pass all URLs at once — failed
         ones come back in `failed_results`, the rest still succeed.
 
+        Returns — `{results: [{url, raw_content}], failed_results: [{url, error}],
+            usage: {credits}}`.
+
         Args:
             urls: 1-20 URLs — the batch is refused if one is under the project's
                 `excluded_url_prefixes`.
@@ -173,9 +176,6 @@ def register(mcp: FastMCP) -> None:
                 (2 credits / 5 URLs — tables, dynamic content).
             chunks_per_source: 1-5 excerpts per page (only with `query`).
             format: `markdown` (default) | `text`.
-
-        Returns: `{results: [{url, raw_content}], failed_results: [{url, error}],
-            usage: {credits}}`.
         """
         # Le refus du périmètre parle en PREMIER (#632) : « 20 maximum » serait une
         # porte (scinder le lot) là où le périmètre dit la vraie raison.
@@ -205,6 +205,8 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """List a site's URLs WITHOUT fetching content — do this before a crawl.
 
+        Returns: `{base_url, results: [url, …], usage: {credits}}`.
+
         Args:
             url: site root (e.g. `https://acme.com`) — refused if under the
                 project's `excluded_url_prefixes`, which also drop matching URLs.
@@ -215,8 +217,6 @@ def register(mcp: FastMCP) -> None:
             limit: max pages processed (default 50, capped at 100 here).
             select_paths / exclude_paths: regex on URL paths (`["/blog/.*"]`).
             allow_external: follow links to other domains (default false here).
-
-        Returns: `{base_url, results: [url, …], usage: {credits}}`.
         """
         per = url_perimeter.perimeter_of_call()
         url_perimeter.refuse_if_excluded(url, per)
@@ -252,6 +252,10 @@ def register(mcp: FastMCP) -> None:
         section of this site" or "get every case study". For whole-domain crawls use
         `firecrawl_crawl` (asynchronous, no page cap).
 
+        Returns — `{base_url, results: [{url, raw_content}], usage: {credits}}` —
+            `raw_content` is `null` for pages Tavily reached but could not extract
+            (seen live: reference pages rendered client-side); skip those.
+
         Args:
             url: root URL — refused if under the project's `excluded_url_prefixes`,
                 which also drop matching pages.
@@ -264,10 +268,6 @@ def register(mcp: FastMCP) -> None:
             extract_depth: `basic` (default, 1 credit / 10 pages) | `advanced`
                 (2 credits / 10 pages).
             format: `markdown` (default) | `text`.
-
-        Returns: `{base_url, results: [{url, raw_content}], usage: {credits}}` —
-            `raw_content` is `null` for pages Tavily reached but could not extract
-            (seen live: reference pages rendered client-side); skip those.
         """
         per = url_perimeter.perimeter_of_call()
         url_perimeter.refuse_if_excluded(url, per)

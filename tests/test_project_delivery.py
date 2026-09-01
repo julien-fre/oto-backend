@@ -31,7 +31,7 @@ def _wire(monkeypatch, *, governed=("11", "77")):
     """Câble un projet #7 lié aux entités LINKS ; l'acteur gouverne `governed`."""
     calls = {"grants": [], "transfers": [], "revokes": [], "copies": [], "repoints": []}
     monkeypatch.setattr(R.access, "is_platform_operator", lambda sub: False)
-    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "movinmotion"})
+    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "acme"})
     monkeypatch.setattr(R.roles, "is_org_member", lambda sub, oid: True)
     monkeypatch.setattr(R.db, "list_project_links", lambda pid: list(LINKS))
     monkeypatch.setattr(R.db, "log_project_activity", lambda *a, **k: None)
@@ -69,7 +69,7 @@ def test_share_to_org_principal(monkeypatch):
     out = R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
                                             resource_id="7", org_id=35))
     assert ("project", "7", "org", "35", "write") in calls["grants"]
-    assert out["shared_with"] == "movinmotion" and out["principal_type"] == "org"
+    assert out["shared_with"] == "acme" and out["principal_type"] == "org"
 
 
 def test_share_to_unknown_org_404(monkeypatch):
@@ -90,12 +90,12 @@ def test_share_to_user_still_works(monkeypatch):
     monkeypatch.setattr(R.email, "send_resource_shared_email",
                         lambda to, **kw: sent.update({"to": to, **kw}) or True)
     out = R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
-                                            resource_id="7", email="jb@x.co"))
+                                            resource_id="7", email="jane@x.co"))
     assert ("project", "7", "user", "u2", "write") in calls["grants"]
     assert out["principal_type"] == "user"
     # Le bénéficiaire user est notifié par email (best-effort, une seule fois).
     assert out["notified"] is True
-    assert sent["to"] == "jb@x.co" and sent["type_label"] == "projet"
+    assert sent["to"] == "jane@x.co" and sent["type_label"] == "projet"
     assert sent["name"] == "Campagne mutuelle" and sent["permission"] == "write"
 
 
@@ -112,7 +112,7 @@ def test_share_to_user_passes_recipient_locale_and_english_label(monkeypatch):
     monkeypatch.setattr(R.email, "send_resource_shared_email",
                         lambda to, **kw: sent.update({"to": to, **kw}) or True)
     R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
-                                      resource_id="7", email="jb@x.co"))
+                                      resource_id="7", email="jane@x.co"))
     assert sent["locale"] == "en"
     assert sent["type_label"] == "project"   # pas "projet" : la langue du destinataire
 
@@ -126,9 +126,9 @@ def test_transfer_to_user_emails_new_owner(monkeypatch):
     monkeypatch.setattr(R.email, "send_resource_transferred_email",
                         lambda to, **kw: sent.update({"to": to, **kw}) or True)
     out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
-                                            resource_id="7", new_owner_email="jb@x.co"))
-    assert out["new_owner"] == "jb@x.co" and out["notified"] is True
-    assert sent["to"] == "jb@x.co" and sent["name"] == "Campagne mutuelle"
+                                            resource_id="7", new_owner_email="jane@x.co"))
+    assert out["new_owner"] == "jane@x.co" and out["notified"] is True
+    assert sent["to"] == "jane@x.co" and sent["name"] == "Campagne mutuelle"
 
 
 def test_share_to_org_does_not_email(monkeypatch):
@@ -189,7 +189,7 @@ def test_transfer_cascade_to_user_skips_guide(monkeypatch):
     calls = _wire(monkeypatch)
     monkeypatch.setattr(R.db, "get_user_by_email", lambda e: {"sub": "u2", "email": e})
     out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
-                                            resource_id="7", new_owner_email="jb@x.co",
+                                            resource_id="7", new_owner_email="jane@x.co",
                                             cascade=True))
     assert calls["copies"] == []
     by_ref = {(e["target_type"], e["target_ref"]): e for e in out["cascade"]}

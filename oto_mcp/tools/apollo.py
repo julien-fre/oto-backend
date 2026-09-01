@@ -11,7 +11,13 @@ endpoint interroge, PAS selon lecture/écriture :
   entreprises) → une clé plateforme mutualisée y est sans risque. Le quota
   plateforme métré = les **crédits Apollo** (`people/match`, qui révèle un
   contact) ; recherche org/people et job postings ne consomment pas de crédit →
-  non métrés.
+  non métrés. ⚠️ **Quota épuisé = refus NOMMÉ, jamais un fallback silencieux**
+  (oto-backend#710, signaux #311/#312/#313) : `resolve_api_key` lève une McpError
+  qui dit le compteur (`used/limit`) et qu'il repart à minuit — et
+  `apollo_match_person`, seul débiteur de ce quota, échote `platform_quota`
+  (`access.platform_quota_hint`, `oto_mcp/access/resolve.py`) dans sa réponse
+  QUAND la clé est plateforme, pour qu'un worker batch arbitre AVANT le refus au
+  lieu de le découvrir au milieu d'un lead.
 - **Espace de travail DU PROPRIÉTAIRE de la clé** (contacts, séquences, emails,
   boîtes connectées, conversations — TOUT ce qui a été ajouté dans ce module) :
   `access.resolve_credential("apollo", want="byo")`, JAMAIS `resolve_api_key`.
@@ -38,7 +44,7 @@ endpoint interroge, PAS selon lecture/écriture :
 
 ⚠️ Doc Apollo (pas vérifié depuis cet environnement, pas de clé disponible ici) :
 `add_contact_ids` et `/emailer_messages/{id}/activities` (stats email) exigent
-une clé « Master » et 403 sinon — à confirmer côté Julien avec une clé réelle.
+une clé « Master » et 403 sinon — à confirmer avec une clé réelle.
 La même exigence est documentée sur les TROIS endpoints contacts
 (`typed_custom_fields`, `contacts/{id}` en lecture et en PATCH) : là, plutôt que
 d'attendre, `apollo_contact` traduit le 403 en message qui NOMME le prérequis, et
@@ -231,6 +237,16 @@ def register(mcp: FastMCP) -> None:
         return nothing. Such an answer carries `person._stub: true` — treat it as a
         failure, not as data. Calls with no usable identifier are refused before the
         credit is spent.
+
+        ⚠️ ON THE SHARED PLATFORM KEY, the response carries `platform_quota`
+        (`used`/`limit`/`remaining` TODAY, on THIS key) — check it while working
+        through a batch to stop BEFORE the next call hits the wall, instead of
+        finding out mid-lead. Absent on a BYO key (no ceiling applies) or when the
+        platform quota is unlimited for your org. Once `remaining` reaches 0, the
+        NEXT call fails outright (no partial/degraded match) — either pose your own
+        key, or fall back for THIS lead to hunter_email_finder (email) and
+        kaspr_enrich_linkedin / fullenrich_enrich_linkedin (phone, LinkedIn history):
+        different source, no credit burned on a call that would just fail.
         """
         client, is_platform = _client()
         try:
@@ -242,6 +258,9 @@ def register(mcp: FastMCP) -> None:
             raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         if is_platform:
             access.record_platform_usage("apollo")
+            quota = access.platform_quota_hint("apollo")
+            if quota is not None:
+                result = {**result, "platform_quota": quota}
         return result
 
     @mcp.tool()

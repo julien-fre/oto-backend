@@ -118,10 +118,10 @@ def test_only_restreint_l_envoi(monkeypatch, bouchon):
 def test_la_marque_est_celle_du_destinataire(monkeypatch, bouchon):
     """Écrire « oto » à l'utilisateur d'un partenaire est un faux, même quand tout le
     reste est juste — le destinataire ne nous connaît pas sous ce nom."""
-    monkeypatch.setattr(cap.config, "front_for", lambda sub: ("https://x", "Tulina"))
+    monkeypatch.setattr(cap.config, "front_for", lambda sub: ("https://x", "Acme"))
     monkeypatch.setattr(cap.db, "pending_signal_notices", lambda: [_signal(1, "sub-a")])
     cap._notify_reporters(CTX, cap.NotifyReportersInput(op="send"))
-    assert bouchon["envois"][0][2] == "Tulina"
+    assert bouchon["envois"][0][2] == "Acme"
 
 
 def test_la_locale_du_destinataire_suit_jusquau_mailer(monkeypatch, bouchon):

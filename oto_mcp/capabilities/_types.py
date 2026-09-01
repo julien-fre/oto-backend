@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from typing import Callable, Optional
+from typing import Annotated, Callable, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -249,14 +249,35 @@ def apply_flat_signature(fn: Callable, model: type[BaseModel]) -> Callable:
     le contrat plat des tools existants. On injecte donc `__signature__` +
     `__annotations__` reconstruits depuis les champs du modèle → schéma plat.
     Validé empiriquement (ADR 0009 §6 ; test `test_with_signature_flat`).
+
+    **La `description` d'un champ voyage, et elle seule** (#627). Recopier annotation
+    et défaut ne suffisait pas : un `Field(description=…)` posé sur un `Input` était
+    ACCEPTÉ-INERTE — la face REST le publiait (`Input.model_json_schema()`), la face
+    MCP le perdait, schéma servi 621 caractères avant, 621 après. Les outils portés
+    par une capacité ne pouvaient donc pas suivre `docs/conventions.md` « ce qu'un
+    préambule d'outil AUTORISE se répète dans la description du PARAMÈTRE concerné »
+    (#517), quand les outils écrits à la main le pouvaient. *Le texte le plus proche
+    du geste est celui que l'agent relit à chaque appel : une permission qui n'atteint
+    pas le schéma servi est une consigne écrite dans le vide.*
+
+    ⚠️ **Rien d'autre ne voyage** — ni `examples`, ni `json_schema_extra`, ni les
+    contraintes de `f.metadata`. `tools/list` part à tout client MCP connecté, alors
+    que le document REST est un contrat d'intégration : ce qu'un champ porte pour le
+    second n'a pas à sortir par le premier (#582). On construit donc un `Field` NEUF
+    avec la seule description, au lieu de faire suivre le `FieldInfo` du modèle —
+    faire suivre l'objet emporterait tout ce qu'on vient d'exclure, et l'emporterait
+    encore quand un champ gagnera un attribut qu'on n'a pas prévu.
     """
     params = []
     annotations: dict = {}
     for name, f in model.model_fields.items():
         default = inspect.Parameter.empty if f.is_required() else f.default
+        annotation = f.annotation
+        if f.description:
+            annotation = Annotated[annotation, Field(description=f.description)]
         params.append(inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY,
-                                        annotation=f.annotation, default=default))
-        annotations[name] = f.annotation
+                                        annotation=annotation, default=default))
+        annotations[name] = annotation
     fn.__signature__ = inspect.Signature(params)
     fn.__annotations__ = annotations
     return fn

@@ -11,7 +11,7 @@ seams que ça demande, et rien d'autre :
    cas particulier. Plus de mécanisme à côté du registre.
 
 2. **La qualification du sub.** Un sub du tenant `oto` reste **NU** (`abc123`) ;
-   un sub d'un tenant tiers devient `"<slug>:<sub>"` (`tulina:abc123`). C'est ce
+   un sub d'un tenant tiers devient `"<slug>:<sub>"` (ex. `acme:abc123`). C'est ce
    qui rend le chantier additif : aucune ligne existante n'est retouchée et **rien
    n'est rechiffré** — l'AAD du coffre dérive du sub (`credentials_store._aad`), donc
    qualifier le sub du tenant `oto` rendrait TOUS les credentials indéchiffrables.
@@ -81,7 +81,7 @@ class TenantIssuer:
     # Type absent = ce tenant n'a pas cette vue ⟹ on ne rend AUCUN lien.
     link_paths: Any = None
     # Préfixe des outils de la plateforme MONTRÉS à ses comptes (`oto_doc` →
-    # `tulina_doc`, cf. `tool_alias`). Vide = les noms canoniques, l'état d'avant.
+    # `acme_doc`, cf. `tool_alias`). Vide = les noms canoniques, l'état d'avant.
     # DÉCLARÉ, jamais dérivé du slug : renommer les outils rompt les procédures et la
     # prose déjà écrites du tenant, donc ça se décide.
     tool_prefix: str = ""
@@ -217,7 +217,7 @@ def normalize_hosts(hosts) -> tuple:
 
     Un `Host:` d'entrée arrive tel que le client l'a écrit — casse libre, port
     éventuel. On compare donc les deux côtés sous la même forme, sinon un tenant
-    déclaré `MCP.Tulina.ai` ne serait jamais reconnu et le défaut (notre émetteur)
+    déclaré `MCP.Acme.ai` ne serait jamais reconnu et le défaut (notre émetteur)
     s'appliquerait en silence : exactement le symptôme qu'on corrige.
     """
     if isinstance(hosts, str):

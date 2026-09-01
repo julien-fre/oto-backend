@@ -1043,7 +1043,7 @@ def delete_page(node_id: int) -> bool:
 #
 # Cinq conversions déposaient à chaque boot dans `nodes` une image des tables
 # historiques, marquée `props.legacy`. Elles sont arrêtées (`db/_init.py`) : ce que
-# la dernière passe a laissé — 70 876 nœuds sur 70 927, mesuré en production le
+# la dernière passe a laissé — 75 668 nœuds sur 75 721, mesuré en production le
 # 2026-09-01 — n'a plus ni écrivain ni lecteur.
 #
 # ⚠️ **Arrêter et retirer sont deux gestes.** L'arrêt ne détruit rien et se déploie

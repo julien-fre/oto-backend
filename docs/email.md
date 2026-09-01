@@ -49,7 +49,7 @@ champ transport sur l'expéditeur).
 ## Front qui héberge l'org (invitations, 07/08)
 
 > **Front qui héberge l'org (invitations, 07/08).** oto-backend sert plusieurs produits
-> depuis une instance (oto, Tulina) : deux colonnes `orgs.front_base_url` / `front_brand`
+> depuis une instance (oto, un tenant tiers) : deux colonnes `orgs.front_base_url` / `front_brand`
 > (NULL = oto) portent le front d'une org, lues par `emit_invitation` — base du lien
 > `/invitation/<code>`, marque du texte du mail, **et pas de magic-link** dès qu'un front
 > tiers est posé (l'OTT est minté sur NOTRE Logto : il serait inerte sur l'émetteur dédié
@@ -168,7 +168,7 @@ en partie non francophones).
     dériver `dest_sub`/le front. `type_label` (« projet »/« project ») est choisi
     ICI, à la source (`_TYPE_LABELS` / `_TYPE_LABELS_EN`) : le gabarit ne traduit
     JAMAIS un mot qu'on lui donne.
-  - `docs.py::_notify_cr_created` / `_notify_cr_resolved` — `db.get_user(sub)` par
+  - `capabilities/docs/notify.py::cr_created` / `cr_resolved` — `db.get_user(sub)` par
     destinataire (`_locale_of`, même patron que `_email_of`/`_brand_of`) : chaque
     validateur ou proposeur peut vivre sous une langue différente.
   - `usage.py::_notify_reporters` — jointe UNE fois dans

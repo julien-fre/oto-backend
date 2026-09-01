@@ -29,7 +29,7 @@ from oto_mcp import credentials_store, crypto, server, tenancy
 
 _PRIMARY = "https://auth.oto.ninja/oidc"
 _DRAIN = "https://auth.oto.zone/oidc"
-_TIERS = "https://auth.tulina.ai/oidc"
+_TIERS = "https://auth.acme.test/oidc"
 
 
 def _registry(*tenant_rows, drains=()):
@@ -58,7 +58,7 @@ def test_un_credential_existant_reste_dechiffrable(master_key):
 
     # Le même utilisateur revient, après le lot : son jeton vient de l'émetteur
     # primaire, donc du tenant `oto`.
-    registre = _registry({"slug": "tulina", "issuer": _TIERS})
+    registre = _registry({"slug": "acme", "issuer": _TIERS})
     sub_apres = registre.qualify_claims({"sub": sub_pose, "iss": _PRIMARY})
 
     assert sub_apres == sub_pose, "le sub du tenant `oto` doit rester NU"
@@ -89,29 +89,29 @@ def test_un_sub_qualifie_ne_peut_pas_designer_une_ligne_du_tenant_oto():
     """Les subs Logto ne contiennent pas de `:` : un sub qualifié est donc en dehors
     de l'espace des subs nus, quelle que soit la valeur du sub d'origine."""
     for sub in ("abc123", "1", "u-42", "0123456789abcdef0123"):
-        qualifie = tenancy.qualify("tulina", sub)
+        qualifie = tenancy.qualify("acme", sub)
         assert qualifie != sub
         assert ":" in qualifie and ":" not in sub
         # …et pas davantage la ligne d'un AUTRE tenant.
-        assert qualifie != tenancy.qualify("acme", sub)
+        assert qualifie != tenancy.qualify("globex", sub)
 
 
 def test_deux_emetteurs_ne_produisent_pas_le_meme_sub():
     """Le même sub Logto chez deux tenants = deux identités distinctes. C'est
     exactement ce qui rendrait un coffre lisible par le mauvais compte."""
-    registre = _registry({"slug": "tulina", "issuer": _TIERS})
+    registre = _registry({"slug": "acme", "issuer": _TIERS})
     chez_oto = registre.qualify_claims({"sub": "abc123", "iss": _PRIMARY})
     chez_tiers = registre.qualify_claims({"sub": "abc123", "iss": _TIERS})
     assert chez_oto == "abc123"
-    assert chez_tiers == "tulina:abc123"
+    assert chez_tiers == "acme:abc123"
     assert chez_oto != chez_tiers
 
 
 def test_un_slug_qui_rendrait_la_qualification_ambigue_est_refuse():
     """Le slug entre DANS le sub : un `:` dedans rendrait indécidable où finit le
-    tenant et où commence le sub. Rien n'est rattrapé au passage (` tulina` est
+    tenant et où commence le sub. Rien n'est rattrapé au passage (` acme` est
     refusé, pas trimé) — sinon l'identité en base et l'identité en vol diffèrent."""
-    for slug in ("tu:lina", "", "Tulina", "tulina/x", " tulina"):
+    for slug in ("ac:me", "", "Acme", "acme/x", " acme"):
         registre = _registry({"slug": slug, "issuer": _TIERS})
         assert registre.get(_TIERS) is None, f"slug {slug!r} accepté à tort"
         assert registre.qualify_claims({"sub": "abc", "iss": _TIERS}) == "abc"
@@ -130,18 +130,18 @@ def test_le_drain_est_une_entree_du_registre_sur_le_tenant_oto():
 
 
 def test_le_jwks_est_derive_faute_de_declaration():
-    registre = _registry({"slug": "tulina", "issuer": _TIERS},
-                         {"slug": "acme", "issuer": "https://id.acme.test/oidc",
-                          "jwks_uri": "https://keys.acme.test/jwks.json"})
+    registre = _registry({"slug": "acme", "issuer": _TIERS},
+                         {"slug": "globex", "issuer": "https://id.globex.test/oidc",
+                          "jwks_uri": "https://keys.globex.test/jwks.json"})
     assert registre.get(_TIERS).jwks_uri == f"{_TIERS}/jwks"
-    assert registre.get("https://id.acme.test/oidc").jwks_uri == \
-        "https://keys.acme.test/jwks.json"
+    assert registre.get("https://id.globex.test/oidc").jwks_uri == \
+        "https://keys.globex.test/jwks.json"
 
 
 def test_le_slash_final_ne_fait_pas_deux_emetteurs():
-    registre = _registry({"slug": "tulina", "issuer": _TIERS + "/"})
-    assert registre.slug_for(_TIERS) == "tulina"
-    assert registre.slug_for(_TIERS + "/") == "tulina"
+    registre = _registry({"slug": "acme", "issuer": _TIERS + "/"})
+    assert registre.slug_for(_TIERS) == "acme"
+    assert registre.slug_for(_TIERS + "/") == "acme"
 
 
 # --- 4. L'env gagne sur la base ---------------------------------------------
@@ -162,15 +162,15 @@ def test_une_ligne_qui_reclame_un_drain_est_ignoree():
 def test_un_emetteur_deja_tenu_ne_se_reprend_pas():
     """Premier arrivé (ordre `tenants.id`) : la sélection par `iss` ne doit jamais
     dépendre de l'ordre de lecture pour décider QUI est l'appelant."""
-    registre = _registry({"slug": "tulina", "issuer": _TIERS},
-                         {"slug": "acme", "issuer": _TIERS})
-    assert registre.slug_for(_TIERS) == "tulina"
+    registre = _registry({"slug": "acme", "issuer": _TIERS},
+                         {"slug": "globex", "issuer": _TIERS})
+    assert registre.slug_for(_TIERS) == "acme"
 
 
 def test_un_emetteur_inconnu_retombe_sur_le_primaire():
     """Il sera rejeté par le verifier primaire (`iss` différent du sien) : fermé,
     jamais accepté sous une identité qualifiée par défaut."""
-    registre = _registry({"slug": "tulina", "issuer": _TIERS})
+    registre = _registry({"slug": "acme", "issuer": _TIERS})
     assert registre.slug_for("https://ailleurs.example/oidc") == tenancy.PRIMARY_SLUG
     assert registre.slug_for(None) == tenancy.PRIMARY_SLUG
 
@@ -231,11 +231,11 @@ def _access_token():
 def test_le_verifier_qualifie_le_sub_dun_tenant_tiers(monkeypatch):
     monkeypatch.setattr(server.db, "verify_api_token", lambda t: None)
     stub = _StubVerifier(_access_token())
-    v = _Verifier({_TIERS: ("tulina", stub)})
+    v = _Verifier({_TIERS: ("acme", stub)})
     out = asyncio.run(v.verify_token(_jwt(_TIERS)))
     assert stub.calls == 1, "le jeton doit être routé vers le verifier du tenant"
-    assert out.claims["sub"] == "tulina:abc123"
-    assert out.subject == "tulina:abc123"
+    assert out.claims["sub"] == "acme:abc123"
+    assert out.subject == "acme:abc123"
 
 
 def test_le_verifier_rend_le_sub_du_tenant_oto_tel_quel(monkeypatch):
@@ -257,17 +257,17 @@ def test_un_jeton_recale_ne_produit_aucun_sub(monkeypatch):
     """La qualification est le DERNIER geste : un jeton refusé par l'audience ou par
     l'iat-gate ne doit jamais avoir fabriqué d'identité."""
     monkeypatch.setattr(server.db, "verify_api_token", lambda t: None)
-    v = _Verifier({_TIERS: ("tulina", _StubVerifier(_access_token()))})
+    v = _Verifier({_TIERS: ("acme", _StubVerifier(_access_token()))})
     v._min_iat = 99_999_999_999
     assert asyncio.run(v.verify_token(_jwt(_TIERS))) is None
 
 
 def test_un_jeton_dapi_nest_pas_requalifie(monkeypatch):
     """Son sub sort de `users`, où il a été écrit DÉJÀ qualifié : le repréfixer
-    fabriquerait `tulina:tulina:abc123`, c'est-à-dire un compte fantôme."""
+    fabriquerait `acme:acme:abc123`, c'est-à-dire un compte fantôme."""
     monkeypatch.setattr(server.db, "verify_api_token",
-                        lambda t: {"sub": "tulina:abc123", "scopes": None})
-    v = _Verifier({_TIERS: ("tulina", _StubVerifier(_access_token()))})
+                        lambda t: {"sub": "acme:abc123", "scopes": None})
+    v = _Verifier({_TIERS: ("acme", _StubVerifier(_access_token()))})
     out = asyncio.run(v.verify_token("oto_zzz"))
-    assert out.claims["sub"] == "tulina:abc123"
-    assert out.subject == "tulina:abc123"
+    assert out.claims["sub"] == "acme:abc123"
+    assert out.subject == "acme:abc123"

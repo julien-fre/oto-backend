@@ -79,9 +79,9 @@ def test_unshare_deleted_group_still_revokes(monkeypatch):
 def test_grants_view_labels(monkeypatch):
     # Le front affiche `label` : email pour un user, nom résolu pour org/groupe.
     _wire(monkeypatch)
-    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "movinmotion"})
+    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "acme"})
     monkeypatch.setattr(R.ownership, "list_grants", lambda rt, rid: [
-        {"principal_type": "user", "principal_id": "u2", "email": "jb@x.co",
+        {"principal_type": "user", "principal_id": "u2", "email": "jane@x.co",
          "permission": "write", "granted_at": "2026-07-01"},
         {"principal_type": "group", "principal_id": "5", "email": None,
          "permission": "read", "granted_at": "2026-07-01"},
@@ -89,7 +89,7 @@ def test_grants_view_labels(monkeypatch):
          "permission": "read", "granted_at": "2026-07-01"},
     ])
     view = R._grants_view("project", "7")
-    assert [g["label"] for g in view] == ["jb@x.co", "sales", "movinmotion"]
+    assert [g["label"] for g in view] == ["jane@x.co", "sales", "acme"]
 
 
 def test_share_cascade_to_group_carries_linked_entities(monkeypatch):

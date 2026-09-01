@@ -40,16 +40,23 @@ from ..registry import CAPABILITIES
 
 class DropColumnInput(BaseModel):
     namespace: str
-    key: str
+    key: str = Field(description=(
+        "The column to erase. A key still DECLARED in the schema is refused — take it "
+        "out with `data_set_schema` first. An ANNOTATION (`site_web.comment`) is not a "
+        "column: erase it by writing `{\"site_web\": {\"comment\": null}}`."))
     # Défaut False, jamais True : la confirmation est le garde-fou du geste, elle
     # doit être posée par l'appelant à chaque appel.
-    confirm: bool = False
+    confirm: bool = Field(default=False, description=(
+        "REQUIRED `true` — the purge is refused without it. It erases the key from "
+        "EVERY row, not just from the schema view."))
 
 
 class DropColumnResult(BaseModel):
     namespace: str
     key: str
-    # Lignes qui PORTAIENT la colonne (0 = elle n'existait dans aucune).
+    # Lignes qui PORTAIENT la colonne — TOUJOURS >= 1 (#680). Le zéro n'est plus une
+    # réponse : une purge qui ne touche rien est un refus, parce que le même `0`
+    # valait « la colonne était vide » et « ce nom n'est pas une colonne ».
     rows: int
 
 
@@ -75,19 +82,28 @@ class PatchSchemaInput(BaseModel):
     namespace: str
     # Fusion PAR CLÉ : chaque entrée complète le field de même `key` (les propriétés
     # fournies écrasent, les autres sont préservées) ou l'ajoute s'il est inconnu.
-    # ⚠️ Pas de `Field(description=…)` ici : `apply_flat_signature` (capabilities/
-    # _types.py) ne recopie que l'annotation et le défaut, la description serait
-    # acceptée-inerte. Ce que le préambule autorise (#586/#606) ne peut donc pas se
-    # répéter sur ce paramètre tant que le seam ne la sert pas.
-    fields: Optional[list] = None
+    # Ce que le préambule autorise se répète ICI depuis le 2026-09-01 (#627) : jusque
+    # là `apply_flat_signature` ne recopiait qu'annotation et défaut, et une
+    # `description` posée sur un champ d'`Input` était acceptée-INERTE.
+    fields: Optional[list] = Field(default=None, description=(
+        "Merges BY `key`: the properties you list overwrite, the ones you omit are "
+        "PRESERVED, an unknown key is appended. Send only what changes."))
     # Le pendant obligé de la fusion : sans retrait explicite, plus de nettoyage.
-    remove: Optional[list] = None
+    remove: Optional[list] = Field(default=None, description=(
+        "Keys to take out of the SCHEMA (a key that is not there is refused, never "
+        "silently ignored). It does not touch the rows' DATA — that is "
+        "`data_drop_column`."))
     strict: Optional[bool] = None
     key: Optional[str] = None
     # #516 : le cran « écrire, jamais créer » se pose et se retire ICI — le poser
     # par `set` obligerait à réécrire un schéma de 80 champs pour une clé de tête,
     # exactement le geste que ce patch existe pour éviter.
-    key_required: Optional[bool] = None
+    key_required: Optional[bool] = Field(default=None, description=(
+        "`true` CLOSES the table — a write designating no existing row is refused; "
+        "`false` reopens it. Omitted leaves it untouched."))
+    # #614/#678 : `"report"` (défaut) / `"reject"`. Ici pour la même raison que
+    # `key_required` — un tableau se ferme quand son schéma est déjà long.
+    unknown_fields: Optional[str] = None
 
 
 class PatchSchemaResult(BaseModel):
@@ -121,7 +137,8 @@ def _patch_schema(ctx: ResolvedCtx, inp: PatchSchemaInput) -> dict:
     try:
         return make_store(ctx.sub).patch_schema(
             namespace, fields=inp.fields, remove=inp.remove,
-            strict=inp.strict, key=inp.key, key_required=inp.key_required)
+            strict=inp.strict, key=inp.key, key_required=inp.key_required,
+            unknown_fields=inp.unknown_fields)
     except NamespaceNotFound:
         raise AuthzDenied(404, "namespace_not_found")
     except NamespaceReadOnly:
@@ -148,7 +165,12 @@ CAPABILITIES += [
             "so an agent re-reading a row writes into them believing it aims right; purge "
             "them once instead of warning every agent forever. A key still DECLARED in "
             "the schema is refused: take it out of the schema first (`data_set_schema`). "
-            "Returns `{rows}` = how many rows carried it."),
+            "Returns `{rows}` = how many rows carried it, ALWAYS >= 1: a name that no "
+            "row carries is REFUSED, never reported as a zero — so a success is always "
+            "a removal you can tick off. The refusal says which of the two it is: a "
+            "typo (no column of that name), or an ANNOTATION such as `site_web.comment` "
+            "— served flat next to its column but stored under it, so a column purge "
+            "does not reach it (write `{\"site_web\": {\"comment\": null}}` instead)."),
     ),
     Capability(
         key="me.datastore.patch_schema",
@@ -172,13 +194,19 @@ CAPABILITIES += [
             "keys are appended. `remove: [\"key\", …]` is the explicit deletion (a "
             "wrong key is refused, never silently ignored) — it takes the field out of "
             "the SCHEMA; to erase the column from the rows' DATA, that is "
-            "`data_drop_column`. `strict`/`key`/`key_required` change the head keys, "
-            "untouched when omitted — `key_required: true` CLOSES the table (a write "
-            "designating no existing row is refused), `false` reopens it. Per field, "
-            "`readonly: true` locks the value in place (layers such as `.comment` stay "
-            "open) and `origine: \"system\"` makes the platform keep the previous "
-            "value in `<field>.origine` — `null` lifts either without touching the "
-            "rows. Field ORDER "
+            "`data_drop_column`. `strict`/`key`/`key_required`/`unknown_fields` "
+            "change the head keys, untouched when omitted — `key_required: true` "
+            "CLOSES the table (a write designating no existing row is refused), "
+            "`false` reopens it. `unknown_fields` decides what happens to a column "
+            "the schema does NOT declare: `\"report\"` (the default) CREATES it and "
+            "names it back in `hors_schema` — `strict` alone never refused it — while "
+            "`\"reject\"` refuses the write and stores nothing; set it on a table that "
+            "has FINISHED being explored. Per field, `readonly: true` locks the value "
+            "in place (layers such as `.comment` stay open), `origine: \"system\"` "
+            "makes the platform keep the previous value in `<field>.origine`, and "
+            "`system: \"run.id\"|\"run.started_at\"|\"write.at\"` makes the PLATFORM "
+            "write the value on every write (the caller is refused, by name) — `null` "
+            "lifts any of them without touching the rows. Field ORDER "
             "is never reshuffled. Returns the resulting schema "
             "plus `{added, updated, removed}` and any `warning` the schema raises."),
     ),

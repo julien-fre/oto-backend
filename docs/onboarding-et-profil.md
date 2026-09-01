@@ -50,3 +50,11 @@ email + rôle plateforme) × **org active** (id/name/rôle) × **groupe actif**,
 résumé des connecteurs configurés et l'ancre de la KB d'org. C'est le pendant agent du badge
 « identité MCP » du dashboard ; à appeler pour confirmer le contexte avant une action
 sensible. Pour basculer : `oto_use_org`.
+
+⚠️ **`connectors.platform_quotas` (oto-backend#710)** : pour un connecteur en mode
+plateforme au quota jour PLAFONNÉ (ex. apollo), `{used, limit, remaining}` — dérivé
+du même calcul que `status_for`/`/api/me`, aucune marche de cascade en plus. Sert
+exactement le « avant une action sensible » ci-dessus quand l'action dépense un
+quota partagé : un worker batch le regarde avant de lancer un lot d'appels plutôt
+que de découvrir la limite au milieu d'un lead. Un connecteur `over_quota` reste
+listé dans `platform_available` (il ne disparaît plus une fois épuisé).

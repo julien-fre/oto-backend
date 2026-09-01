@@ -240,6 +240,10 @@ _SUB_COLUMNS = [
     # rattachées à un identifiant mort, donc invisibles au compte fusionné : déroulés
     # et activité perdus de vue, déclencheurs orphelins) :
     ("runs", "sub"), ("project_activity", "sub"), ("runner_triggers", "sub"),
+    # `runner_fleets.sub` = qui a DÉCLARÉ le passage (R4). Même raison que les
+    # déclencheurs : une flotte rattachée à un identifiant mort devient invisible au
+    # compte fusionné, et son auteur n'est plus lisible dans l'audit d'un passage.
+    ("runner_fleets", "sub"),
     ("tool_calls", "effective_sub"),
     # Le JOURNAL des acceptations légales (#487) — la source de vérité du gate, donc
     # ce qui décide si le compte fusionné se voit redemander ses CGU. Aucune unicité :
@@ -252,6 +256,10 @@ _SUB_COLUMNS = [
     ("projects", "created_by"),
     ("orgs", "created_by"),
     ("org_invitations", "invited_by"), ("org_invitations", "accepted_sub"),
+    # Qui a REFUSÉ l'invitation (#654) : même nature qu'`accepted_sub`, donc même
+    # repointage — la trace du refus pointerait sinon un compte mort, et l'idempotence
+    # du refus (« déjà refusée par toi ») cesserait de reconnaître la personne.
+    ("org_invitations", "declined_sub"),
     ("org_groups", "created_by"), ("org_instructions", "set_by"),
     # ⚠️ La bibliothèque est le SEUL endroit du code qui nomme encore sa table plutôt
     # que sa vue `guide_library` (#519 lot B4), et c'est délibéré : cet inventaire est
@@ -363,7 +371,7 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
         conn.execute("UPDATE user_account_profile SET sub=%s WHERE sub=%s", (new_sub, old_sub))
         # 2 bis. APPARTENANCES (org_members / org_group_members) : elles ne se repointent
         #    pas en bloc, à cause de DEUX invariants que l'`UPDATE … SET sub=` de l'étape 3
-        #    violerait. Vécu prod 2026-07-28 (julien@folk.app, 2 comptes) : merge en échec
+        #    violerait. Vécu prod 2026-07-28 (un user à 2 comptes) : merge en échec
         #    à CHAQUE requête de l'user, donc jamais fusionné + un round-trip Logto et un
         #    traceback par appel.
         #    (a) PK (org_id, sub) : si les deux comptes sont dans la MÊME org, repointer

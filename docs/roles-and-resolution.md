@@ -94,7 +94,7 @@ près (cliquet `tests/test_access_surface_frozen.py`).
 | `access/quotas.py`  | `quota_for`, `_org_unmetered`, `record_platform_usage`, `paid_option_for`, `has_option` |
 | `access/cascade.py` | `walk_cascade`/`cascade_winner`, `CascadeRung`/`CascadeProbe`, `PRESENCE_PROBE`/`FETCH_PROBE`/`preloaded_presence_probe`, `group_secret_map`, le palier plateforme, `ORG_SHAREABLE_PROVIDERS` |
 | `access/rbac.py`    | `rbac_denied_connectors` (+ équipe), `org_admin_hidden_tools` (+ équipe), `require_connector_access`, `guard_instance_access`, `reachable_instances`(+`_map`, `_team_key`), `resolve_field_filter` |
-| `access/resolve.py` | `ResolvedCredential`, `resolve_credential` et son `_impl`, la résolution d'une instance épinglée, `_resolve_credential_anon` |
+| `access/resolve.py` | `ResolvedCredential`, `resolve_credential` et son `_impl`, la résolution d'une instance épinglée, `_resolve_credential_anon`, `platform_quota_hint` (sonde en lecture seule du quota jour, sans consommer — oto-backend#710) |
 | `access/views.py`   | `resolve_api_key`, `resolve_credential_fields`, `resolve_mount_token`, `unipile_api_key_for`, `credential_mode_for`, `option_open`, `connector_resolvable_for_org`, `BYO_MODES` |
 | `access/status.py`  | `status_for` (le snapshot `/api/me`) et ses trois préchargements |
 

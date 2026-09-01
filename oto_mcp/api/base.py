@@ -49,14 +49,17 @@ def _allowed_origins() -> list[str]:
         "https://app.oto.ninja",
         "https://otomata.tech",             # formulaire de contact vitrine
         "https://www.otomata.tech",
-        "https://app.tulina.ai",            # front Tulina PROD (box tulina-0)
-        "https://tulina.oto.zone",          # front Tulina PREPROD (même box, :3001)
+        # noqa: CLIENT — origines FONCTIONNELLES d'un front tiers (repli seulement :
+        # les deux box posent OTO_MCP_CORS_ORIGINS, cf. CLAUDE.md). Les retirer casse
+        # le CORS d'un dev sans env. Relocalisation = 2e volet de oto-private#85.
+        "https://app.tulina.ai",            # noqa: CLIENT — front tiers PROD
+        "https://tulina.oto.zone",          # noqa: CLIENT — front tiers PREPROD
         "http://localhost:5173",
         "http://localhost:4173",
         "http://localhost:5182",
         "http://localhost:5184",
         "http://localhost:5192",            # oto-dashboard dev (ADR 0007)
-        "http://localhost:5193",            # front Tulina dev, ports alternatifs (tulina-app-front#90)
+        "http://localhost:5193",            # front tiers en dev, ports alternatifs
         "http://localhost:5194",
         "http://localhost:5195",
         "http://localhost:5196",
@@ -73,6 +76,11 @@ def _cors_headers(origin: str | None) -> dict[str, str]:
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Oto-Org, X-Oto-Group, X-Oto-View-As",
+            # Sans cette ligne, `X-Oto-Version` (oto#33) part sur le fil mais reste
+            # ILLISIBLE au dashboard : un navigateur ne donne à `fetch` que les
+            # en-têtes de réponse explicitement exposés. Un en-tête qu'aucun de nos
+            # consommateurs ne peut lire ne date rien.
+            "Access-Control-Expose-Headers": "X-Oto-Version",
             "Access-Control-Max-Age": "600",
             "Vary": "Origin",
         }

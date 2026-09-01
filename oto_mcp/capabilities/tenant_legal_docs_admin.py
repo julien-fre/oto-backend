@@ -1,6 +1,6 @@
 """Override par tenant des documents légaux (`legal_docs.docs_for`), ADR 0052 lot L2.
 
-Sans cette surface, poser les CGU de Tulina demanderait un `psql` sur la base
+Sans cette surface, poser les CGU d'un tenant tiers demanderait un `psql` sur la base
 partagée — même défaut que le suivi des tenants avant `tenants_admin.py`. Contraste
 volontaire avec ce dernier cependant : LÀ, déclarer un tenant reste un runbook
 (instance Logto dédiée, hosts…) parce que ça engage de l'infra hors de cette base.

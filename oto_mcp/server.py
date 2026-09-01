@@ -649,7 +649,8 @@ def _build_mcp(transport: str, verifier: JWTVerifier | None = None) -> FastMCP:
     from .middleware.dynamic_instructions import DynamicInstructionsMiddleware
     instance.add_middleware(UserDisabledToolsMiddleware())
     # Injection du guide de base de l'org dans les instructions du `initialize`
-    # (canal fiable, par-(sub,org) — otomata-private#49, amende ADR 0014).
+    # (par-(sub,org) — otomata-private#49, amende ADR 0014 ; ⚠️ livraison NON garantie
+    # côté client, #478 : le bloc A est un socle-résumé qui pointe le guide `notice`).
     instance.add_middleware(DynamicInstructionsMiddleware())
     # Journalisation des appels MCP (middleware inliné `calllog.py`, table tool_calls,
     # lue par /api/admin/monitoring/*). Identité via auth_hooks (auth Logto custom —
@@ -761,7 +762,12 @@ def build_root_app(app, anon_app):
        partent complétés d'un `charset=utf-8`. Posée SOUS la garde mais AU-DESSUS du
        dispatch, donc elle couvre les deux instances (canonique et anonyme) et toute
        la face REST d'un seul geste. Cf. `response_charset` pour le pourquoi.
-    3. **garde de déconnexion client** (#352), la couche la plus EXTERNE — entre uvicorn
+    3. **étiquette de version** (oto#33) : chaque réponse part avec `X-Oto-Version`,
+       de sorte qu'un journal d'appels DÉJÀ écrit permette de dater rétrospectivement
+       un changement de comportement. Posée au-dessus du charset et du dispatch pour
+       la même raison que lui — elle couvre les deux instances FastMCP et toute la
+       face REST d'un seul geste. Cf. `version_header`.
+    4. **garde de déconnexion client** (#352), la couche la plus EXTERNE — entre uvicorn
        et tout le reste. Un POST `/mcp` dont le client est parti en cours de route
        laissait une réponse ASGI incomplète ; uvicorn fermait alors le transport, et
        Caddy rendait des 502 sur cette connexion **et sur les requêtes voisines** qui
@@ -778,8 +784,10 @@ def build_root_app(app, anon_app):
     from . import subdomain_project
     from .client_disconnect_guard import ClientDisconnectGuard
     from .response_charset import ResponseCharset
+    from .version_header import VersionHeader
     return ClientDisconnectGuard(
-        ResponseCharset(subdomain_project.HostDispatch(app, anon_app)))
+        VersionHeader(
+            ResponseCharset(subdomain_project.HostDispatch(app, anon_app))))
 
 
 def main():

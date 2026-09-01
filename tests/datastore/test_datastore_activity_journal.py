@@ -74,14 +74,14 @@ SCHEMA = {"fields": [{"key": "societe", "display": "title"},
 
 
 class _FakeStore:
-    """Store minimal : un tableau `mucho-leads` (id 160) avec un lifecycle.
+    """Store minimal : un tableau `leads-clients` (id 160) avec un lifecycle.
 
     ⚠️ Les mutations remplissent le RELEVÉ `trace` comme le vrai store — c'est le
     seul canal du journal : l'état d'avant vient de la mutation, jamais d'une
     relecture faite par la route (qui courrait avec un write concurrent)."""
 
     NS_ID = 160
-    NAME = "mucho-leads"
+    NAME = "leads-clients"
 
     def __init__(self):
         self.row = {"_id": "row-1", "societe": "DEXXON GROUPE", "statut": "enrichi"}
@@ -164,7 +164,7 @@ def test_rest_transition_journals_from_and_to_status(monkeypatch):
     assert args["to_status"] == "ecarte"
     assert args["id"] == "row-1"
     assert args["fields"] == ["statut"]        # vrai tableau JSON, pas une chaîne
-    assert args["namespace"] == "mucho-leads"  # nom canonique, même appelé par id
+    assert args["namespace"] == "leads-clients"  # nom canonique, même appelé par id
     assert args["ns_id"] == 160
 
 
@@ -174,7 +174,7 @@ def test_rest_delete_journals_previous_status(monkeypatch):
     _mount(monkeypatch, store)
 
     call("me.datastore.delete_row",
-         path_params={"namespace": "mucho-leads", "row_id": "row-1"})
+         path_params={"namespace": "leads-clients", "row_id": "row-1"})
 
     assert written[0]["tool"] == "data_delete_row"
     assert written[0]["args"]["from_status"] == "enrichi"
@@ -256,7 +256,7 @@ def test_row_activity_covers_rest_and_mcp(monkeypatch):
     sink: dict = {}
     rows = [
         {"created_at": "2026-07-28 16:05:09", "kind": "rest", "tool": "data_write",
-         "args": {"namespace": "mucho-leads", "ns_id": 160, "id": "row-1",
+         "args": {"namespace": "leads-clients", "ns_id": 160, "id": "row-1",
                   "fields": ["statut"], "from_status": "enrichi", "to_status": "ecarte"},
          "ok": True, "error": None, "sub": "u-1", "email": "alexis@otomata.tech",
          "run_id": None, "run_label": None, "doctrine": None, "outcome": None},
@@ -306,12 +306,12 @@ def test_namespace_activity_matches_id_and_name(monkeypatch):
     sink: dict = {}
     rows = [
         {"created_at": "c1", "kind": "rest", "tool": "data_write",
-         "args": {"ns_id": 160, "namespace": "mucho-leads", "id": "row-1",
+         "args": {"ns_id": 160, "namespace": "leads-clients", "id": "row-1",
                   "fields": ["statut"], "from_status": "enrichi", "to_status": "ecarte"},
          "ok": True, "error": None, "sub": "u-1", "email": None, "run_id": None,
          "run_label": None, "doctrine": None, "outcome": None},
         {"created_at": "c2", "kind": "mcp", "tool": "data_write",
-         "args": {"namespace": "mucho-leads"}, "ok": True, "error": None,
+         "args": {"namespace": "leads-clients"}, "ok": True, "error": None,
          "sub": "u-2", "email": None, "run_id": None, "run_label": None,
          "doctrine": None, "outcome": None},
         {"created_at": "c3", "kind": "mcp", "tool": "data_rows",
@@ -321,13 +321,13 @@ def test_namespace_activity_matches_id_and_name(monkeypatch):
     ]
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, rows))
 
-    out = usage.datastore_namespace_activity(160, "mucho-leads",
+    out = usage.datastore_namespace_activity(160, "leads-clients",
                                              owner_type="org", owner_id="35", limit=50)
 
     assert "l.args->>'ns_id' = %s" in sink["sql"]
     assert "l.args->>'namespace' = ANY(%s)" in sink["sql"]
     # ns_id (rest) puis l'axe NOM : les deux formes tapables par l'agent, BORNÉES à l'org
-    assert sink["params"][:3] == ("160", ["160", "mucho-leads"], 35)
+    assert sink["params"][:3] == ("160", ["160", "leads-clients"], 35)
     assert [e["kind"] for e in out] == ["rest", "mcp", "mcp"]
     assert out[0]["from_status"] == "enrichi" and out[0]["to_status"] == "ecarte"
 
@@ -373,9 +373,9 @@ def test_namespace_activity_name_axis_is_bounded_to_the_owner(monkeypatch):
 def test_namespace_activity_limit_is_server_bounded(monkeypatch):
     sink: dict = {}
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
-    usage.datastore_namespace_activity(160, "mucho-leads", limit=9999)
+    usage.datastore_namespace_activity(160, "leads-clients", limit=9999)
     assert sink["params"][-1] == 200
-    usage.datastore_namespace_activity(160, "mucho-leads", limit=0)
+    usage.datastore_namespace_activity(160, "leads-clients", limit=0)
     assert sink["params"][-1] == 1
 
 
@@ -445,19 +445,19 @@ def test_namespace_activity_is_a_capability_not_a_handwritten_route():
 # au tenant pour ne pas fuiter, il change au renommage, et `slot:<name>` échappait.
 
 def test_resolve_notes_the_entity_whatever_the_agent_typed(monkeypatch):
-    """`data_write("mucho-leads")` et `data_write("160")` visent le même tableau :
+    """`data_write("leads-clients")` et `data_write("160")` visent le même tableau :
     le relevé porte l'id résolu dans les deux cas."""
     from oto_mcp import ownership, session_org
     from oto_mcp.datastore.core import DatastorePg
     from oto_mcp.datastore import core as ds
 
     monkeypatch.setattr(ds.db, "resolve_datastore_ns",
-                        lambda ns, **kw: {"id": 160, "namespace": "mucho-leads"})
+                        lambda ns, **kw: {"id": 160, "namespace": "leads-clients"})
     monkeypatch.setattr(ownership, "org_can_access", lambda *a, **kw: True)
     st = DatastorePg("u-1", acting_org=35)
     monkeypatch.setattr(st, "_active_scope", lambda: ([35], []))
 
-    for typed in ("mucho-leads", "160", "slot:vivier"):
+    for typed in ("leads-clients", "160", "slot:vivier"):
         holder: dict = {}
         tok = session_org.set_call_trace(holder)
         try:
@@ -465,7 +465,7 @@ def test_resolve_notes_the_entity_whatever_the_agent_typed(monkeypatch):
         finally:
             session_org.reset_call_trace(tok)
         assert holder["ns_id"] == 160, f"tapé {typed!r}"
-        assert holder["ns_name"] == "mucho-leads"
+        assert holder["ns_name"] == "leads-clients"
 
 
 def test_resolve_leaves_no_trace_when_access_is_refused(monkeypatch):
@@ -495,12 +495,12 @@ def test_resolve_is_inert_outside_an_mcp_call(monkeypatch):
     from oto_mcp.datastore import core as ds
 
     monkeypatch.setattr(ds.db, "resolve_datastore_ns",
-                        lambda ns, **kw: {"id": 160, "namespace": "mucho-leads"})
+                        lambda ns, **kw: {"id": 160, "namespace": "leads-clients"})
     monkeypatch.setattr(ownership, "org_can_access", lambda *a, **kw: True)
     st = DatastorePg("u-1", acting_org=35)
     monkeypatch.setattr(st, "_active_scope", lambda: ([35], []))
     assert session_org.current_call_trace() is None
-    assert st._resolve("mucho-leads") == 160     # ne lève pas
+    assert st._resolve("leads-clients") == 160     # ne lève pas
 
 
 def test_the_trace_survives_the_threadpool():
@@ -545,7 +545,7 @@ def test_namespace_lens_correlates_on_the_id_without_a_tenant_bound(monkeypatch)
     sink: dict = {}
     monkeypatch.setattr(usage, "_connect", lambda: _FakeConn(sink, []))
 
-    usage.datastore_namespace_activity(160, "mucho-leads",
+    usage.datastore_namespace_activity(160, "leads-clients",
                                        owner_type="org", owner_id="2", limit=50)
 
     sql = sink["sql"]

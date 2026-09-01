@@ -17,7 +17,9 @@ la taxonomie `target_type` de `project_links` (sous-ensemble à instance).
 from __future__ import annotations
 
 import re
-from typing import Optional
+from typing import Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import providers, tool_registry
 from .tool_visibility import namespace_of
@@ -35,6 +37,75 @@ MARKER = re.compile(r"<slot:([a-z0-9_-]+)>")
 
 _MAX_SLOTS = 32
 _MAX_DESC = 500
+
+
+# ── La forme d'un slot, DÉCLARÉE (#658) ──────────────────────────────────────────
+# Elle était parfaitement définie — dans `validate_slots` ci-dessous, c'est-à-dire
+# nulle part que le contrat sache lire. Les cinq endroits qui servaient `slots` le
+# faisaient en `Optional[list]` nu, ce qui donne en OpenAPI un tableau SANS `items` :
+# « une liste de n'importe quoi ». Un front qui dérive son formulaire du contrat ne
+# pouvait rien en faire, alors que la donnée arrivait — d'où l'écran resté fermé.
+#
+# Les modèles vivent ICI, au contact du validateur qui les produit : deux domiciles
+# pour une même forme, c'est la garantie qu'un champ ajouté à l'un manquera à l'autre.
+# `tests/test_slots_declares.py` tient le cliquet dans l'autre sens.
+#
+# ⚠️ Ils DÉCRIVENT une réponse, ils ne valident aucune entrée. Les deux `Input` qui
+# portent `slots` (`InstrSetInput`, `AdminInstrSetInput`) restent délibérément en
+# `Optional[list]` : `validate_slots` NORMALISE (minuscules, troncature de la
+# description, `connector` déduit du nom) là où un modèle REFUSERAIT, et ses messages
+# d'erreur sont actionnables champ par champ. Resserrer l'entrée changerait ce que le
+# serveur accepte — ce lot ne touche qu'à ce qu'il DIT.
+
+SlotType = Literal[SLOT_TYPES]
+
+
+class SlotDecl(BaseModel):
+    """Une entité requise déclarée par une procédure (ADR 0035), citée `<slot:name>`
+    dans la prose. C'est la sortie de `validate_slots` — donc la forme SERVIE.
+
+    Les clés facultatives sont réellement ABSENTES quand elles ne s'appliquent pas
+    (`validate_slots` ne pose jamais une clé vide) : `description` seulement si elle
+    a été écrite, `connector` seulement sur un slot `connecteur`, `schema` seulement
+    sur un slot `tableau`."""
+    model_config = ConfigDict(populate_by_name=True)
+
+    # Normalisé `[a-z0-9][a-z0-9_-]{0,63}`. C'est la CLÉ du binding côté projet
+    # (`project_links.slot`) : c'est par ce nom, et pas par un id, que le projet dit
+    # quelle instance concrète répond au slot.
+    name: str
+    # ⚠️ Le jeu est fermé et dérivé de `SLOT_TYPES` — jamais réécrit à la main, sinon
+    # les deux listes divergent au premier type ajouté.
+    #
+    # ⚠️ `base` a été un type valide pendant DEUX HEURES, le 2026-07-02 (22h48 → 00h46,
+    # commits 03f111eb → 2a0bb977, « B1 canari no-op ») avant d'être renommé `doc`, et
+    # AUCUNE migration n'a réécrit la colonne. Une déclaration écrite dans cette
+    # fenêtre serait donc servie telle quelle, hors de cet énuméré. Fenêtre mesurée,
+    # risque assumé : l'énuméré vaut mieux qu'un `str` pour qui rend un formulaire.
+    type: SlotType
+    # Tronquée à 500 caractères à l'écriture.
+    description: Optional[str] = None
+    # Slots `connecteur` seulement. Le connecteur visé : `connector` explicite à
+    # l'écriture, sinon le NOM du slot. Toujours présent sur un slot `connecteur`.
+    connector: Optional[str] = None
+    # Slots `tableau` seulement (ADR 0035 × 0046) : le schéma CIBLE du tableau attendu
+    # (`fields`/`strict`/`lifecycle`/`key`). Au binding, un namespace vierge est
+    # PROVISIONNÉ avec ; un namespace déjà schématisé autrement lève un warning non
+    # bloquant. Le champ s'appelle `schema` sur le fil ; le nom python est décalé parce
+    # que `schema` masque une méthode héritée de `BaseModel` (même parade que
+    # `capabilities/datastore/schema.py`, le schéma OpenAPI étant généré `by_alias`).
+    declared_schema: Optional[dict] = Field(default=None, alias="schema",
+                                            serialization_alias="schema")
+
+
+class SuggestedSlot(SlotDecl):
+    """Un slot que la prose RÉCLAME sans qu'il soit déclaré — jamais un warning, une
+    suggestion (`slots_check`). Même forme qu'une déclaration, PLUS le motif : c'est
+    ce qui la distingue, et c'est pourquoi `suggested_slots` ne peut pas être typé
+    `list[SlotDecl]` malgré la ressemblance."""
+    # Toujours présent sur une suggestion. Rendu tel quel — c'est le texte que l'auteur
+    # de la procédure lit pour comprendre ce qu'il lui manque.
+    reason: str
 
 
 def normalize_name(name: object) -> str:

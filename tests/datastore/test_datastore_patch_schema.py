@@ -179,8 +179,9 @@ class _RestStore:
         self.calls: list = []
 
     def patch_schema(self, namespace, *, fields=None, remove=None, strict=None, key=None,
-                     key_required=None):
-        self.calls.append((namespace, fields, remove, strict, key, key_required))
+                     key_required=None, unknown_fields=None):
+        self.calls.append((namespace, fields, remove, strict, key, key_required,
+                           unknown_fields))
         merged, added, updated = dsv2.merge_fields(
             [f for f in self.current.get("fields") or [] if isinstance(f, dict)],
             fields or [])

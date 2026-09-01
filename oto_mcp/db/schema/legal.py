@@ -75,7 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_legal_events_dernier
     ON legal_acceptance_events (sub, doc_slug, accepted_at DESC, id DESC);
 
 -- Override PAR TENANT des métadonnées d'un doc légal (`legal_docs.CURRENT_DOCS`).
--- Un tenant tiers (Tulina…) a ses PROPRES CGU, pas les nôtres — absence de ligne
+-- Un tenant tiers a ses PROPRES CGU, pas les nôtres — absence de ligne
 -- pour (tenant, slug) ⟹ le défaut plateforme s'applique tel quel (`legal_docs.
 -- docs_for`). Lue en LIVE à chaque `/api/me/legal` (pas de cache, pas de boot) :
 -- contrairement au registre d'émetteurs (`tenancy.py`, construit au boot), une

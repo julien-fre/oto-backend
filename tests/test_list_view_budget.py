@@ -14,10 +14,10 @@ import json
 
 import pytest
 
-from oto_mcp.capabilities import docs as D
+from oto_mcp import db, output_projection, ownership
 from oto_mcp.capabilities import projects as P
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
-from oto_mcp import output_projection
+from oto_mcp.capabilities.docs import core as D, view as docs_view
 
 CTX = ResolvedCtx(sub="u1", org_id=None)
 
@@ -33,13 +33,13 @@ def _pages(n: int) -> list[dict]:
 
 @pytest.fixture
 def docs_seam(monkeypatch):
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
-    monkeypatch.setattr(D, "_public_doc_url", lambda tok, sub: None)
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(docs_view, "public_doc_url", lambda tok, sub: None)
 
     def _list(pid, rows=_pages(37)):
         return rows
-    monkeypatch.setattr(D.db, "list_docs_for_project", _list)
-    monkeypatch.setattr(D.db, "doc_rev", lambda t, b: "rev")
+    monkeypatch.setattr(db, "list_docs_for_project", _list)
+    monkeypatch.setattr(db, "doc_rev", lambda t, b: "rev")
 
 
 def _size(payload: dict) -> int:

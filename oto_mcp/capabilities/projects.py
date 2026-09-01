@@ -16,7 +16,7 @@ import re
 import secrets
 from typing import Literal, Optional
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from .. import (config, db, group_store, org_store, output_projection, ownership,
                 roles, session_org, url_perimeter)
@@ -36,10 +36,13 @@ class ProjectInput(BaseModel):
     op: Literal["create", "list", "list_templates", "get", "update", "archive",
                 "copy", "handoff", "link", "unlink", "activity", "runs", "inventory",
                 "lint", "publish_mcp", "unpublish_mcp"]
-    project_id: Optional[int] = None
+    project_id: Optional[int] = Field(default=None, description=(
+        "OMIT it on op=runs and you get YOUR OWN still-open runs instead, across every "
+        "org, each with its `run_id` — that is how you find a run whose id you lost."))
     stale_days: Optional[int] = None   # lint : seuil « pas retouché depuis » (défaut 90)
     name: Optional[str] = None
-    icon: Optional[str] = None           # update : emoji du projet ("" = retirer)
+    icon: Optional[str] = Field(default=None, description=(
+        "update: emoji shown in lists and headers. `\"\"` clears it."))
     brief_md: Optional[str] = None
     is_template: Optional[bool] = None   # update : publier/retirer le projet comme MODÈLE (ADR 0032 §7 B5a)
     # publish_mcp : publier le projet en endpoint MCP dédié `<mcp_slug>.mcp.oto.cx` (ADR 0032, amende #44).
@@ -51,7 +54,10 @@ class ProjectInput(BaseModel):
     mcp_expose_docs: Optional[bool] = None  # `secret` uniquement : exposer les PAGES du projet (oto_doc en LECTURE) au destinataire. Défaut False — les pages portent des notes internes, les exposer par défaut serait une fuite par surprise.
     mcp_instructions_md: Optional[str] = None  # prose SERVIE AU DESTINATAIRE de l'endpoint (ce que son agent lit au branchement) — ≠ brief_md, qui reste interne. "" efface.
     # update : périmètre d'URL du projet (#605) — motifs `hôte/chemin/` (ex. `linkedin.com/in/`) que les outils de recherche ÉCARTENT (en le disant) et que les outils d'extraction REFUSENT ; un domaine entier s'écrit explicitement `hôte/*`, un hôte nu est refusé. `[]` retire. Porté aussi par l'endpoint publié du projet, sans republication.
-    excluded_url_prefixes: Optional[list[str]] = None
+    excluded_url_prefixes: Optional[list[str]] = Field(default=None, description=(
+        "update: `host/path/` patterns search tools drop and extraction tools refuse "
+        "under this project. A whole host must be written `host/*` — a bare host is "
+        "refused. `[]` clears the list."))
     # create : SCOPE owner du projet (ADR 0049 — échelle platform/org/group/user).
     # 'user' (défaut) résout sur l'org ACTIVE ; 'org' = une org dont je suis membre ;
     # 'group' = un pôle/équipe (cloisonne le projet à ses membres + admins d'org) ;
@@ -73,7 +79,10 @@ class ProjectInput(BaseModel):
     config: Optional[dict] = None      # surcharge contextuelle PRÉFAITE du lien (ADR 0032 §4) — connecteur : {identity_id?, instructions_md?} (legacy : identité dans config ; multi-binding : voir identity_ref) ; tableau : {provision?: "shared"|"empty"|"seeded"} = comment la COPIE de projet traite ce tableau (ADR 0032 §6)
     identity_ref: Optional[str] = None  # connecteur : identité (compte) du BINDING — clé de multiplicité (#57) ; N liens par connecteur, une identité par binding. link sans identity_ref = binding par défaut ; unlink sans identity_ref = TOUS les bindings du connecteur
     instance_ref: Optional[str] = None  # connecteur : ref d'INSTANCE (ADR 0038 B5, grammaire B4 via oto_instance op=list) — le binding désigne exactement CE credential ; la résolution le sert en dur (re-gardé pour l'appelant). Exclusif d'identity_ref (le ref porte déjà le compte). Stocké config.instance_ref.
-    fields: Optional[list[str]] = None  # list / list_templates : projection — omis = vue de tri, ["*"] = la fiche entière
+    # list / list_templates : projection — omis = vue de tri, ["*"] = la fiche entière
+    fields: Optional[list[str]] = Field(default=None, description=(
+        "list/list_templates: output projection. Omitted returns the INDEX (no "
+        "briefs); `[\"*\"]` returns whole records; a list of names picks columns."))
     slot: Optional[str] = None         # ADR 0035 (B2) : nom de SLOT que ce lien binde — vocabulaire DU PROJET (unicité (projet, slot) → 409 slot_taken). Fait correspondre le lien aux slots déclarés par les procédures (<slot:name>). Binder un slot TABLEAU dont la procédure déclare un `schema` cible provisionne le namespace vierge avec ce schéma (ADR 0046)
 
 

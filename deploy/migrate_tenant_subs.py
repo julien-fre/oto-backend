@@ -21,8 +21,8 @@ franchirait les tenants, ce que le §6 interdit). Le script vérifie, il ne devi
 
 Format du mapping :
 
-    {"slug": "tulina",
-     "comptes": [{"old": "vnv1hpyutcpn", "new": "tulina:vnv1hpyutcpn",
+    {"slug": "acme",
+     "comptes": [{"old": "vnv1hpyutcpn", "new": "acme:vnv1hpyutcpn",
                   "email": "…", "note": "identifiants identiques des deux côtés"}]}
 
 `email` n'est PAS utilisé pour décider — il sert à ce qu'un humain relise le fichier

@@ -126,7 +126,8 @@ class SchemaOpsMixin:
                      remove: Optional[list] = None,
                      strict: Optional[bool] = None,
                      key: Optional[str] = None,
-                     key_required: Optional[bool] = None) -> dict:
+                     key_required: Optional[bool] = None,
+                     unknown_fields: Optional[str] = None) -> dict:
         """Modifie le schéma PAR CLÉ, sans réécrire la liste entière (#388).
 
         `data_set_schema` REMPLACE : c'est le bon geste pour poser un format, et un
@@ -140,7 +141,11 @@ class SchemaOpsMixin:
 
         `fields` = fusion par clé (complète l'existant, ajoute l'inconnu) ; `remove`
         = le retrait EXPLICITE, sans quoi on rendrait le nettoyage impossible ;
-        `strict`/`key`/`key_required` = les clés de tête, inchangées si omises. Le
+        `strict`/`key`/`key_required`/`unknown_fields` = les clés de tête, inchangées
+        si omises. `unknown_fields` (#614/#678) se pose ICI en priorité : un tableau
+        se ferme quand il a FINI d'être exploré, donc quand son schéma est long — et
+        le poser par `set` obligerait à réécrire quatre-vingts champs pour une clé de
+        tête, exactement le geste que ce patch existe pour éviter. Le
         schéma résultant repasse par `set_schema`, donc par ses gardes (doublons de
         clé métier, index UNIQUE, `key_required` sans `key`) et ses avertissements
         (file de travail, bornes, colonnes orphelines) — on ne double pas cette
@@ -157,10 +162,10 @@ class SchemaOpsMixin:
             raise ValueError("le schéma courant n'est pas un objet — repose-le avec "
                              "data_set_schema avant de le patcher")
         if (fields is None and remove is None and strict is None and key is None
-                and key_required is None):
+                and key_required is None and unknown_fields is None):
             raise ValueError(
                 "rien à patcher : passe `fields` (fusion par clé), `remove` (retrait "
-                "explicite), `strict`, `key` ou `key_required`")
+                "explicite), `strict`, `key`, `key_required` ou `unknown_fields`")
         merged = [f for f in (current.get("fields") or []) if isinstance(f, dict)]
         merged, added, updated = dsv2.merge_fields(merged, fields or [])
         merged, unknown = dsv2.remove_fields(merged, remove or [])
@@ -177,6 +182,12 @@ class SchemaOpsMixin:
             out_schema["key"] = key
         if key_required is not None:
             out_schema["key_required"] = bool(key_required)
+        if unknown_fields is not None:
+            # Écrit TEL QUEL, jamais normalisé : une valeur hors du couple fermé doit
+            # se faire refuser par `validate_schema_def` en nommant les deux modes.
+            # La replier sur le défaut ici rendrait un succès à qui croit avoir fermé
+            # son tableau — le défaut exact que ce cran corrige.
+            out_schema["unknown_fields"] = unknown_fields
         # Le patch NOMME ce qu'il retire (`removed`) : le relevé d'effacement n'a
         # donc rien à en redire. Il reste tendu pour tout le reste — c'est le seul
         # moyen de voir une fusion qui laisserait échapper quelque chose.
@@ -340,7 +351,14 @@ class SchemaOpsMixin:
         REFUSE une clé encore DÉCLARÉE au schéma : un `confirm` ne protège pas d'une
         faute de nom, et l'échappatoire est le geste naturel du renommage — retirer
         d'abord le champ du schéma. Ainsi la purge ne peut viser qu'une colonne dont
-        le format a déjà acté la sortie."""
+        le format a déjà acté la sortie.
+
+        REFUSE aussi une purge qui n'a touché AUCUNE ligne (#680). `rows: 0` valait
+        pour deux vérités opposées — « la colonne existait, aucune ligne ne la
+        portait » et « ce nom n'est pas une colonne, rien n'a été fait » — et un
+        opérateur qui enchaîne 190 retraits coche les seconds comme des retraits.
+        Un geste destructif confirmé qui ne fait rien doit le DIRE : le succès porte
+        donc toujours `rows >= 1`, et l'ambiguïté disparaît au lieu de se signaler."""
         key = (key or "").strip()
         if not key:
             raise ValueError("key requise (le nom de la colonne à purger)")
@@ -359,8 +377,44 @@ class SchemaOpsMixin:
                 "colonne vivante est presque toujours une faute de nom. Si la sortie "
                 "est voulue, retire d'abord le champ du schéma (data_set_schema), puis "
                 "purge.")
+        # Le diagnostic se fait APRÈS la purge, jamais avant : une clé pointée
+        # LITTÉRALE au premier niveau du blob (`"site_web.comment"` posé par un
+        # chemin qui a contourné la garde d'écriture, #647) EST une colonne, elle se
+        # retire, et le geste a un effet. Refuser sur la seule forme du nom la
+        # rendrait inatteignable — la seule chose qui distingue les trois cas est ce
+        # que la purge a touché.
         rows = db.datastore_drop_column(ns_id, key)
+        if not rows:
+            raise ValueError(self._rien_purge(ns_id, schema, namespace, key))
         return {"namespace": namespace, "key": key, "rows": rows}
+
+    def _rien_purge(self, ns_id: int, schema, namespace: str, key: str) -> str:
+        """POURQUOI la purge n'a touché aucune ligne — la phrase qui remplace le zéro.
+
+        Deux branches, et la seconde est le garde-fou de la première : un nom qui a
+        la FORME d'une adresse de couche n'en est une que si sa colonne porteuse
+        existe pour de bon (en base ou au schéma). Sinon c'est une faute de frappe,
+        et la nommer « couche de `site_web` » fabriquerait une colonne `site_web` que
+        personne n'a jamais écrite. **Une destination inventée est pire qu'une
+        destination absente** : on dit alors ce qu'on constate, et rien de plus."""
+        adresse = dsv2.layer_address(key)
+        if adresse is not None:
+            base, couche = adresse
+            declarees = {f.get("key") for f in dsv2._fields(schema)}
+            if base in declarees or db.datastore_has_column(ns_id, base):
+                return (
+                    f"`{key}` n'est pas une colonne : c'est l'annotation `{couche}` "
+                    f"de la colonne `{base}`. La lecture la sert à plat, à côté de sa "
+                    f"colonne, mais elle est STOCKÉE sous `{base}` — une purge de "
+                    f"colonne ne descend pas dedans, et rien n'a été touché. Pour la "
+                    f"retirer, écris-la nulle en forme imbriquée (data_write "
+                    f'`{{"{base}": {{"{couche}": null}}}}`) ; pour purger la colonne '
+                    f"entière et ses annotations avec elle, vise `{base}`.")
+        return (
+            f"aucune colonne `{key}` dans les données de `{namespace}` : aucune ligne "
+            f"ne la portait, rien n'a été touché — ce n'est donc pas un retrait, et "
+            f"ça ne se compte pas comme tel. Vérifie le nom avant de le rayer de ta "
+            f"liste.")
 
     def set_semantic(self, namespace: str, enabled: bool) -> dict:
         """Active/désactive la recherche SÉMANTIQUE des lignes du namespace (#67 V2.2,

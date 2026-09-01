@@ -28,7 +28,7 @@ from .errors import RowValidationError
 # Les colonnes de la PLATEFORME : elles vivent dans la ligne sans être des
 # données de l'utilisateur — ni purgeables, ni écrasables par une écriture.
 _META_COLS = ("_id", "_created_at", "_updated_at", "_claimed_by", "_claimed_until",
-              "_claims", "_abandon")
+              "_claimed_run", "_claims", "_abandon")
 
 
 def _writes_layers(new: Any) -> bool:
@@ -287,7 +287,10 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     Le vide se juge DÉBALLÉ (`unwrap`) des deux côtés, comme tout ce qui juge une
     valeur : une colonne à couches dont la `valeur` tombe est vidée au même titre
     qu'un scalaire, et une colonne qui ne portait que son `origine` n'avait déjà
-    pas de valeur à perdre."""
+    pas de valeur à perdre.
+
+    ⚠️ Ce parcours ne décide QUE de la valeur : le sort du GESTE — quand il n'a plus
+    rien à poser — se juge après, sur ses trois sorties (`refuser_geste_sans_effet`)."""
     pose: dict = {}
     effaces: list[dict] = []
     ignores: list[dict] = []
@@ -314,6 +317,50 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     return pose, effaces, ignores
 
 
+def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
+    """REFUSE une écriture qui, après arbitrage, ne pose plus RIEN (#724).
+
+    #608 préserve une valeur en place contre un vide non-`null` et le DIT
+    (`valeurs_ignorees`). Il reste un cas où le dire ne suffit pas : quand l'écarté
+    était **tout** ce que l'écriture portait. L'appel n'a alors aucun effet et répond
+    `200` — un succès qui n'a rien fait, dont le seul témoin est une clé de la réponse.
+
+    **Ce n'est pas une conjecture, c'est ce qui s'est passé** (2026-09-01, 04:16-04:20) :
+    dix `row={'contacts': []}` sur des fiches clientes, dix `200`, zéro retrait. La
+    porte `null` existait, et le relevé la nommait déjà mot pour mot — elle n'a pas été
+    empruntée : une seule écriture `null` ce jour-là, sur une table d'ESSAI, jamais sur
+    les fiches ratées, dont l'une porte encore le contact qu'on voulait retirer.
+
+    **Pourquoi refuser plutôt que faire effacer.** Faire effacer le vide SEUL ferait
+    dépendre un geste DESTRUCTEUR de ses voisines : « selon le contexte ta donnée
+    disparaît » est une perte silencieuse, quand « selon le contexte ton appel échoue »
+    est un désagrément qui enseigne. Le refus arrive au moment où l'appelant peut
+    encore corriger, et il **nomme exactement quoi écrire** — c'est ce qui le distingue
+    d'un relevé qu'on peut ne pas lire.
+
+    La ligne de partage est l'EFFET du geste, pas le type de la valeur : une écriture
+    qui pose autre chose (la fiche entière réémise, 98 % de la population mesurée) est
+    inchangée. Conséquence structurelle : une row de LOT porte toujours sa clé métier,
+    donc elle pose — un import de 500 lignes ne peut pas casser ici. Chiffres, fenêtre
+    et réserves : `docs/datastore.md`.
+    """
+    if not ecartes:
+        return                       # rien n'a été écarté : rien à refuser
+    if any(cle not in _META_COLS for cle in (pose or {})):
+        return                       # le geste pose autre chose : il agit
+    champs = sorted({str(r.get("champ")) for r in ecartes})
+    cite = ", ".join(f"`{c}`" for c in champs)
+    porte = ", ".join(f'"{c}": null' for c in champs)
+    raise ValueError(
+        f"écriture sans effet : {cite} porte une valeur VIDE non-`null` (liste vide, "
+        "chaîne vide, objet vide) sur une valeur déjà en place, et ton écriture ne "
+        "pose rien d'autre — elle ne changerait donc RIEN, et te répondrait comme un "
+        "succès. Un vide non-`null` ne déplace jamais une valeur : c'est ce que rend "
+        "une source muette ou un gabarit à demi peuplé, pas une demande d'effacement. "
+        f"POUR VIDER POUR DE BON, écris exactement : {{{porte}}}. Pour laisser la "
+        "valeur intacte, retire ce champ de ton corps.")
+
+
 def _valeur_rendue(valeur: Any) -> Any:
     """La valeur perdue, ou sa TAILLE quand la rendre coûterait la réponse."""
     n = len(valeur) if isinstance(valeur, str) else len(str(valeur))
@@ -336,8 +383,8 @@ def effacements_report(records: list) -> dict:
     `{}` quand rien n'a été vidé — le cas normal ne porte pas de clé parasite.
 
     ⚠️ Depuis #608, `null` est le SEUL vide qui arrive ici : la phrase ne cite donc
-    plus la chaîne vide parmi les valeurs qui effacent, sous peine de prescrire le
-    geste qu'on vient de désarmer."""
+    pas les autres vides parmi les valeurs qui effacent, sous peine de prescrire un
+    geste qui, lui, est REFUSÉ quand il est seul et ignoré quand il accompagne (#724)."""
     if not records:
         return {}
     nommes, reste = _nommes(records)

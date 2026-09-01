@@ -63,7 +63,7 @@ KB (`db/backlinks.py`), table dérivée `doc_links` (CASCADE 2 côtés), `oto_do
 = « Cité par » filtré accès. **Propositions modif+création + inbox** (Ship 3, LIVE) : « les
 lecteurs proposent » — un viewer (lecture sans écriture) qui crée/modifie obtient une
 PROPOSITION (`doc_change_requests`, `doc_id` nullable + `project_id` + emplacement + CHECK) ;
-le dispatch `docs.py` route resolve/list/create-proposal sur request_id/project_id **AVANT
+le dispatch `docs/core.py` route resolve/list/create-proposal sur request_id/project_id **AVANT
 le gate doc_id** (une création doc_id NULL était sinon inatteignable) ; `me.inbox`
 (`GET /api/me/inbox`, 2 voies À traiter/Récent, 200-vide sans org).
 

@@ -27,6 +27,12 @@ import re
 
 import pytest
 
+# Tout ici se mesure contre `LemlistClient` : NON CONCLUANT quand le venv
+# n'exécute pas le tag épinglé. Marqué au MODULE délibérément — contre un client
+# rabougri, les inventaires qui PASSENT sont les plus trompeurs des deux (moins de
+# méthodes à couvrir ⟹ couverture triviale). Cf. `tests/_oto_core_pin.py`.
+pytestmark = pytest.mark.exige_pin_oto_core
+
 
 #: Méthodes qui atteignent l'API mais qu'aucun tool n'appelle, et pourquoi.
 NON_EXPOSEES = {

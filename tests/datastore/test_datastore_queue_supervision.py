@@ -9,7 +9,8 @@ from oto_mcp.datastore import core as D
 def test_queue_lists_claimed_rows_read_only(monkeypatch):
     seen = {}
     rows = [{"row_id": "r1", "created_at": "c", "updated_at": "u",
-             "data": {"nom": "ACME"}, "claimed_by": "w-1", "claimed_until": "t"}]
+             "data": {"nom": "ACME"}, "claimed_by": "w-1", "claimed_until": "t",
+             "claimed_run": "run-abc"}]
 
     def _resolve(ns, write=False):
         seen["write"] = write
@@ -22,7 +23,10 @@ def test_queue_lists_claimed_rows_read_only(monkeypatch):
 
     out = s.queue("vivier")
     assert out == [{"_id": "r1", "_created_at": "c", "_updated_at": "u",
-                    "nom": "ACME", "_claimed_by": "w-1", "_claimed_until": "t"}]
+                    "nom": "ACME", "_claimed_by": "w-1", "_claimed_until": "t",
+                    # C'est CE champ qui rend la vue de supervision actionnable :
+                    # sans lui elle dit qu'un travail tient une ligne, jamais lequel.
+                    "_claimed_run": "run-abc"}]
     assert seen["write"] is False  # supervision = lecture, pas d'écriture exigée
 
 

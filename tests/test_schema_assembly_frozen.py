@@ -104,9 +104,50 @@ from oto_mcp.db import _schema, schema
 # et sans réécriture : `ADD COLUMN` avec un `DEFAULT` constant est instantané (PG >= 11),
 # et la prod qui tourne l'ancien code ne lit pas ces colonnes. Coût mesuré au banc avant
 # de les poser : +4,7 % de volume, -14 % de temps d'écriture.
-# ⚠️ Empreinte RECALCULÉE depuis le module assemblé, jamais éditée à la main.
-EMPREINTE = "51c351304e76234b4c45f78bad4592381cfeb25cb1e177bbeb1a99d1cc71168a"
-LONGUEUR = 119186
+# 2026-09-01 (oto-private#85, scrub) : AUCUN changement de SQL exécuté. Trois
+# COMMENTAIRES bougent — `legal.py`, `connectors.py` (×2), `tenants.py` — qui
+# nommaient un tenant tiers ou une personne réelle en clair (règle du meta-repo :
+# jamais de nom de client ni de personne dans un dépôt public). Remplacés par des
+# exemples génériques (« un tenant tiers », « le compte de Jane »).
+# 2026-09-01 (refus d'invitation, #654) : `org_invitations` gagne DEUX colonnes —
+# `declined_at`/`declined_sub`, le « non » de l'invité, jusqu'ici impossible à dire
+# (seul l'émetteur pouvait retirer une invitation). État PROPRE et non `accepted_at`
+# réutilisé : les deux gestes doivent rester discernables partout, et l'acceptation
+# idempotente (`_idempotent_accept`) aurait resservi un succès « tu as rejoint l'org »
+# à qui vient de refuser. ADDITIVE, sans index et sans réécriture (`ADD COLUMN` NULL
+# est instantané) ; la prod qui tourne l'ancien code ne les lit pas — elle continue
+# simplement de ne jamais en voir de renseignées.
+# ⚠️ Empreinte RECALCULÉE depuis le module assemblé sur le résultat du REBASE des
+# TROIS lots ci-dessus (les quatre colonnes de `nodes`, puis le scrub, puis ces deux
+# colonnes), jamais recopiée d'un côté du conflit : trois lots ont touché la chaîne
+# le même jour, et un hash pris d'un seul côté valide un DDL que personne ne sert.
+# 2026-09-01 (#781, cliquet du boot sur base existante) : UN ordre RETIRÉ du DDL
+# assemblé — `CREATE INDEX IF NOT EXISTS idx_unipile_accounts_org` dans
+# `schema/unipile.py`. Il était posé aux DEUX endroits : ici, et dans `_init.py`
+# juste après l'`ALTER … ADD COLUMN org_id`. Or `org_id` peut MANQUER à une base qui
+# existe déjà (le `CREATE TABLE IF NOT EXISTS` y est sauté) et le DDL assemblé
+# s'exécute AVANT les ALTER : ce doublon aurait tué le premier boot d'une base
+# antérieure à la colonne. L'index continue d'être créé — à sa vraie place. Le reste
+# du delta est du COMMENTAIRE (l'explication laissée sur place, pour qu'il ne
+# revienne pas).
+# 2026-09-01 (fleet comme produit, R4) : `runner_fleets` — la CONFIGURATION
+# DÉCLARÉE d'un passage d'agents (procédure, cible, périmètre, bornes, état), plus
+# `runner_jobs.fleet_id` qui rattache un travail à son passage. Une flotte vivait
+# jusqu'ici dans un fichier YAML sur une machine : rien n'en était visible du
+# dashboard ni atteignable par un agent, et le suivi d'un passage n'existait que
+# parce qu'une session poussait des messages à une autre.
+# ⚠️ ORDRE : `runner_fleets` est créée AVANT `runner_jobs`, qui la référence — les
+# deux vivent dans le même fragment, et l'inverse casserait tout premier boot sur
+# une base vierge (c'est la panne que ce fichier garde depuis #151).
+# ⚠️ Empreinte recalculée depuis le module assemblé, APRÈS avoir vérifié que le
+# tronc sans ce fragment rendait bien l'empreinte précédente : un écart venu
+# d'ailleurs se serait sinon fait passer pour le mien.
+# ⚠️ Empreinte RECALCULÉE sur le résultat du rebase des DEUX lots ci-dessus
+# (le retrait de l'index unipile, puis le fragment des flottes), jamais
+# reprise d'un côté du conflit : un hash pris d'un seul côté valide un DDL
+# que personne ne sert.
+EMPREINTE = "c05cd85fa8529bace0645d9ae58624d56bef531513614efe9073b99f0c845c28"
+LONGUEUR = 125769
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
@@ -182,6 +223,7 @@ def test_l_ordre_impose_par_les_fk_est_tenu():
         ("orgs", "org_members", "org_members.org_id → orgs(id)"),
         ("grants", "grant_counters", "grant_counters → grants(id)"),
         ("docs", "doc_embeddings", "doc_embeddings.doc_id → docs(id)"),
+        ("runner_fleets", "runner_jobs", "runner_jobs.fleet_id → runner_fleets(id)"),
         ("datastore_rows", "datastore_row_embeddings", "FK composite sur la PK"),
     ):
         i = ddl.index(f"CREATE TABLE IF NOT EXISTS {avant}")

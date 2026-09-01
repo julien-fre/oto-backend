@@ -10,7 +10,7 @@ agis sur ton Google Workspace : mails, calendrier, tâches, feuilles de calcul, 
 - « rédige un brouillon de réponse à ce mail » ou « envoie-le »
 - « qu'est-ce que j'ai à l'agenda demain ? crée un créneau de relance vendredi 10h »
 - « ajoute une tâche `relancer X` pour lundi », « lis l'onglet `leads` de cette sheet »
-- « partage ce dossier Drive en lecture à julien@… »
+- « partage ce dossier Drive en lecture à jane@… »
 
 ## note — périmètre de projet (#605, 2026-08-29)
 

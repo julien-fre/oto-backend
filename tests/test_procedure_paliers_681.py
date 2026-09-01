@@ -457,7 +457,7 @@ def test_la_sonde_de_slug_libre_voit_les_autres_paliers(monde):
     l'`ON CONFLICT DO UPDATE` qui suit écrase la procédure en place **sans un mot**.
     On le montre ici en réintroduisant l'ancienne sonde, puis en remettant la vraie."""
     from oto_mcp.db import _connect
-    from oto_mcp.org_store import instructions as store
+    from oto_mcp import org_store as store
 
     store.set_instruction("group", monde["equipe"], "ecrasable", _CORPS,
                           title="À NE PAS PERDRE", set_by="u-chef")
@@ -491,7 +491,7 @@ def test_la_sonde_regarde_aussi_lhistorique(monde):
     l'insertion du snapshot — donc une copie en 500 et un déplacement bloqué. Le cas
     naît d'un `archive` (qui garde les révisions) suivi d'un `delete` de la ligne."""
     from oto_mcp.db import _connect
-    from oto_mcp.org_store import instructions as store
+    from oto_mcp import org_store as store
     store.set_instruction("group", monde["equipe"], "fantome", _CORPS, set_by="u-chef")
     with _connect() as conn:
         conn.execute("DELETE FROM org_instructions WHERE owner_type = 'group' "

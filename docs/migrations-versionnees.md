@@ -178,6 +178,16 @@ gras du démarrage, et ce n'est pas un problème de migrations.
    `oto-mcp maintenance check-boot`. C'est le garde-fou qui manquait le 27/08 (#450) :
    un index posé dans le DDL sur une colonne née d'un `ALTER` — ni le DDL seul ni la
    migration seule ne pouvaient l'attraper, **seul leur ordre échouait**.
+   ⚠️ **Ce garde-fou a été AVEUGLE à ce piège jusqu'au 2026-09-01 (#781)** : il ne
+   bootait qu'une base **vierge**, où le `CREATE TABLE IF NOT EXISTS` pose la colonne
+   inline et où l'index la trouve donc toujours. `check-boot`, lui, faisait la bonne
+   chose — il rejoue contre la base **servie** — mais il n'est dans aucun contrôle
+   automatique : il faut y penser, c'est de la discipline, pas un cliquet. Depuis
+   #781 la CI joue le cas : elle retire du schéma neuf chacune des colonnes que le
+   boot pose par `ALTER` (relevées sur le SQL exécuté, pas lues dans le source) et
+   rejoue la séquence sur la base amputée, en exigeant qu'elle passe **et** qu'elle
+   converge vers le schéma neuf. `check-boot` reste utile pour ce que la CI ne peut
+   pas avoir : la vraie base, avec ses vraies données et son vrai historique.
 
 ### 1.4 Le défaut que le lot 0 a mis au jour : la purge annulait l'archive
 
@@ -512,3 +522,13 @@ l'option :
 - `oto_mcp/db/_init.py` — l'objet de cette note.
 - ADR 0020 (stratégie de release) et CLAUDE.md racine §Déploiement — le modèle
   tronc unique et la fenêtre de healthcheck.
+
+## Le chiffre de boot depuis le lot 0
+
+> Reprise mot pour mot du `CLAUDE.md` (2026-08-31).
+
+Boot prod/préprod mesuré 36-39 s, dont **≈ 1,5 s de base** depuis le lot 0 — le reste est
+l'import Python et les deux `_build_mcp`. Un lot qui ajoute un travail one-shot au boot doit
+le mesurer **avant** de poser son tag.
+
+Le drapeau de module qui garde cet appel unique s'appelle `_PREPARED` (`server._prepare_database`).

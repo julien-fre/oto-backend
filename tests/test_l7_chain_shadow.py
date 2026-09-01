@@ -149,7 +149,7 @@ def test_les_deux_refusent_ensemble_est_un_accord(vide):
 # ── 3. Les quatre divergences attendues, et l'inconnu qui doit rester joignable ──
 
 def test_l_elargissement_d_equipe_est_classe_a_part(vide, monkeypatch):
-    """La forme movinmotion : la clé est sur « finance », le sujet y appartient mais
+    """La forme d'un client : la clé est sur « finance », le sujet y appartient mais
     son équipe ACTIVE est « sales ». La cascade ne lit que l'active et ne résout rien ;
     l'ensemble atteignable de D2 lit toutes les équipes et résout. Le comportement
     servi change chez un client nommé — d'où une classe à part, comptée par org."""
@@ -165,7 +165,7 @@ def test_l_elargissement_d_equipe_est_classe_a_part(vide, monkeypatch):
 
 
 def test_la_restriction_d_acl_est_classee_a_part(vide, monkeypatch):
-    """La forme Partoo : l'ancien chemin refuse sur `connector_acl` avant même de
+    """La forme d'un autre client : l'ancien chemin refuse sur `connector_acl` avant même de
     marcher, la clé existe pourtant au niveau org. 0053-D1 dissout la table — c'est
     la divergence qui porte la décision produit du lot."""
     monkeypatch.setattr(org_store, "has_org_secret", lambda o, p: True)

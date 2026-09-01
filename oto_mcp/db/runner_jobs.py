@@ -38,17 +38,32 @@ JOBS_PAGE_MAX = 200
 
 
 def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
-                run_id: Optional[str] = None, max_attempts: int = 3) -> dict:
+                run_id: Optional[str] = None, max_attempts: int = 3,
+                fleet_id: Optional[int] = None) -> dict:
+    """Enfile un travail, éventuellement rattaché à une FLOTTE.
+
+    ⚠️ `fleet_id` est ce qui rend un passage lisible d'un bout à l'autre : sans
+    lui, `runner.fleets op=state` agrège sur un ensemble vide et répond
+    `no_jobs_attached` pour toute flotte, toujours. La colonne existait depuis R4
+    sans le moindre écrivain servi — une lecture complète à qui il manquait de
+    quoi lire (#791).
+
+    ⚠️ **L'APPARTENANCE de la flotte se vérifie AVANT**, chez l'appelant : la FK
+    garantit que la flotte EXISTE, pas qu'elle soit celle de cette org. Rattacher
+    un travail à la flotte d'autrui ferait entrer son coût et son avancement dans
+    l'état d'un passage étranger.
+    """
     with _connect() as conn:
         row = conn.execute(
             """
-            INSERT INTO runner_jobs (org_id, kind, payload, run_id, max_attempts)
-            VALUES (%s, %s, %s::jsonb, %s, %s)
-            RETURNING id, status, due_at
+            INSERT INTO runner_jobs (org_id, kind, payload, run_id, max_attempts,
+                                     fleet_id)
+            VALUES (%s, %s, %s::jsonb, %s, %s, %s)
+            RETURNING id, status, due_at, fleet_id
             """,
             (org_id, kind,
              json.dumps(payload, ensure_ascii=False) if payload is not None else None,
-             run_id, max(1, int(max_attempts))),
+             run_id, max(1, int(max_attempts)), fleet_id),
         ).fetchone()
     return dict(row)
 
@@ -190,6 +205,12 @@ def list_jobs(org_id: int, status: Optional[str] = None,
     (références seulement, par contrat d'enqueue) mais jamais tronqué en
     silence — c'est une LISTE : elle rend de quoi écarter, le détail par get.
 
+    ⚠️ `lease_until` en fait partie, et ce n'est pas un champ de plus : sans lui,
+    « ce bail a expiré » ne se lit pas — il se DEVINE à un seuil sur l'ancienneté,
+    et un seuil dérivé range dans la même case un travail lent et un travail mort.
+    La colonne porte la DATE ; c'est au lecteur de la comparer à l'heure qu'il est.
+    `fleet_id` dit à quel PASSAGE le travail appartient (R4).
+
     `before_id` = pagination keyset sur l'ordre servi (`id DESC`) : la page suivante
     est « les jobs plus anciens que celui-ci ». Un keyset plutôt qu'un OFFSET parce
     qu'une file bouge sous la marche — un job enfilé entre deux pages décalerait
@@ -201,7 +222,8 @@ def list_jobs(org_id: int, status: Optional[str] = None,
     seul SQL est exactement ce que #469 reprochait."""
     ou, params = _filtre_de_file(org_id, status)
     q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
-         "       claimed_by, last_error, result, due_at, created_at, finished_at "
+         "       claimed_by, lease_until, last_error, result, due_at, created_at, "
+         "       finished_at, fleet_id "
          "FROM runner_jobs") + ou
     if before_id is not None:
         q += " AND id < %s"
@@ -233,11 +255,15 @@ def count_jobs(org_id: int, status: Optional[str] = None) -> int:
 
 
 def get_job(job_id: int, org_id: int) -> Optional[dict]:
-    """Lecture d'un job, org-scopée — même 404 qu'un job inexistant côté capacité."""
+    """Lecture d'un job, org-scopée — même 404 qu'un job inexistant côté capacité.
+
+    `lease_until` est rendu comme `list_jobs` le rend, pour la même raison : la
+    fiche d'un travail doit pouvoir dire si son bail court encore."""
     with _connect() as conn:
         row = conn.execute(
             "SELECT id, kind, run_id, payload, status, attempts, max_attempts, result, "
-            "       claimed_by, last_error, due_at, created_at, finished_at "
+            "       claimed_by, lease_until, last_error, due_at, created_at, "
+            "       finished_at, fleet_id "
             "FROM runner_jobs WHERE id = %s AND org_id = %s",
             (job_id, org_id),
         ).fetchone()

@@ -426,7 +426,7 @@ def test_enrich_result_digests_only_what_carries_a_value():
         client_cls.return_value.get_enrichment.return_value = {
             "enrichmentId": "enr_1", "enrichmentStatus": "done", "input": {},
             "data": {
-                "email": {"email": "aaron.levie@box.com", "notFound": False,
+                "email": {"email": "jane.doe@acme.test", "notFound": False,
                           "status": "deliverable"},
                 "phone": {"notFound": False},        # pas de numéro malgré notFound=false
                 "linkedin": {},                       # profil non résolu
@@ -435,7 +435,7 @@ def test_enrich_result_digests_only_what_carries_a_value():
         out = _tool("lemlist_enrich_result").fn(enrichment_id="enr_1")
 
         found = out["results"][0]["found"]
-        assert found["email"] == "aaron.levie@box.com"
+        assert found["email"] == "jane.doe@acme.test"
         assert found["email_status"] == "deliverable"
         assert "phone" not in found
         assert "linkedin" not in found
@@ -493,6 +493,7 @@ def test_campaign_tools_registered_under_namespace(all_tools):
     assert all(namespace_of(t) == "lemlist" for t in CAMPAIGN_TOOLS)
 
 
+@pytest.mark.exige_pin_oto_core   # lit la vraie classe : faux si le venv retarde
 def test_client_exposes_methods_called_by_campaign_tools():
     """Garde version-skew : ces méthodes arrivent avec l'oto-core de la même
     fenêtre — tant que le pin n'est pas bumpé, c'est CE test qui le dit."""

@@ -127,7 +127,7 @@ def test_personal_does_not_steal_real_home(monkeypatch):
 
 def test_second_member_joining_a_personal_org_clears_personal_of(monkeypatch):
     # Une org perso est mono-membre par définition (slot unique `personal_of`) :
-    # dès qu'un 2e membre distinct la rejoint, ce n'en est plus une (Tulina/Partoo,
+    # dès qu'un 2e membre distinct la rejoint, ce n'en est plus une (deux tenants tiers,
     # 2026-08-04 — une org réelle multi-membre restait "personal" à vie faute de ce clear).
     calls = _run_add(
         monkeypatch, existing=None,

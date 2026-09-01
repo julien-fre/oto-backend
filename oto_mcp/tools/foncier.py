@@ -327,6 +327,10 @@ def register(mcp: FastMCP) -> None:
         empty by GDPR for natural persons, this is the diffusion rule not a data gap),
         terrain address + cadastral parcels, surfaces.
 
+        To find the permits on a given cadastral PARCEL there is no server-side filter
+        (DiDo stores up to three section/number pairs per permit and ANDs them): scope by
+        commune, then match the `parcelles` key of the returned permits.
+
         Args:
             code_commune: INSEE commune code (e.g. "75056"). Exact match.
             dept: INSEE department code (e.g. "59", "2A"). Use for a whole department.
@@ -340,10 +344,6 @@ def register(mcp: FastMCP) -> None:
             page: 1-based page.
             limit: max permits per page (snapped to 10/20/50/100, cap 100). `total` in
                 the result is the full server-side count — page through for more.
-
-        To find the permits on a given cadastral PARCEL there is no server-side filter
-        (DiDo stores up to three section/number pairs per permit and ANDs them): scope by
-        commune, then match the `parcelles` key of the returned permits.
         """
         if not code_commune and not dept and not siren and not siret:
             raise ValueError(

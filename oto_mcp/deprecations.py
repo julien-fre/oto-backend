@@ -14,23 +14,80 @@ quarante descriptions, dont on oublierait trois.
 
 Pourquoi un TAG et pas une date de merge (`RETRAIT` se lit « premier tag `vX.Y.Z`
 posé à partir de cette date ») : `main` est la PREPROD. Un alias retiré au merge
-serait retiré du serveur que les intégrateurs sondent, 30 jours de préavis annoncés
-et zéro jour servi. Le retrait est le lot D — issue #526, qui porte la liste
-complète de ce que la date emporte.
+serait retiré du serveur que les intégrateurs sondent, deux mois de préavis
+annoncés et zéro jour servi. Le retrait est le lot D — issue #526, qui porte la
+liste complète de ce que la date emporte.
 
 ⚠️ **Ce module n'est pas un fourre-tout de compatibilité.** Il ne porte que des
 renommages de vocabulaire à durée de vie FINIE, chacun avec sa contrepartie dans
 #526. Un alias sans date de retrait est un second nom permanent : ça se décide, ça
 ne s'ajoute pas ici.
+
+⚠️ **Et ce qu'il ne tient PAS — à ne pas croire tenu.** Depuis #767 la DURÉE du
+préavis vaut l'engagement contractuel (Art 8.2, deux mois). Deux écarts restent
+ouverts, et ils ne se corrigent pas avec une constante :
+
+1. **Le module ne couvre que les renommages ; l'engagement, lui, est plus large.**
+   Il porte sur toute rupture d'interface (#767) — donc aussi sur un paramètre qui
+   devient obligatoire, un champ retiré, un type changé. Rien de tout cela n'a ici
+   d'alias, de date de retrait ni d'en-tête `Sunset`. Le cas vécu (rendre
+   `resource_type` obligatoire, #756)
+   a d'ailleurs été réglé par une autre voie : la surface s'est **DOUBLÉE**
+   (l'héritée intacte, la stricte en bêta, #774/#780) au lieu de se durcir. C'est
+   aujourd'hui la seule réponse outillée à une rupture qui n'est pas un
+   renommage — et elle ne passe par aucun préavis daté.
+2. **Le préavis est PASSIF.** `Deprecation` / `Sunset` et l'avis en tête de
+   description se voient quand le consommateur inspecte ses réponses ; rien n'est
+   poussé vers lui. Rendre le préavis actif demande le canal de notification qui
+   manque à toute la plateforme (#766), pas un réglage de ce module.
 """
 from __future__ import annotations
 
+import calendar
 import datetime
 from typing import NamedTuple
 from urllib.parse import quote
 
-# Premier tag `vX.Y.Z` posé à partir de cette date (décision du 28/08/2026 + 30 j).
-RETRAIT = datetime.date(2026, 9, 27)
+# ── Le préavis : sa durée, et d'où elle vient ───────────────────────────────
+# **Cette durée est un ENGAGEMENT CONTRACTUEL, pas un réglage.** L'Art 8.2 du contrat
+# de service promet un préavis de DEUX MOIS avant toute rupture d'interface. C'est la
+# durée qu'on a écrite au client : la raccourcir est un manquement, pas une
+# optimisation. Elle a valu 30 jours du 29/08 au 01/09/2026 — l'écart, et la référence
+# de l'article, sont dans oto-backend#767. Un test en fait un plancher
+# (`tests/test_alias_deprecies_outils.py`), pour que personne ne la « rationalise » un
+# jour sans savoir ce qu'il touche : allonger reste libre, descendre sous deux mois
+# rougit.
+#
+# ⚠️ La formulation exacte de l'article ne se recopie pas ici, et ce commentaire n'en
+# tient pas lieu : pour arbitrer un cas limite — une rupture imposée par la sécurité,
+# le point de départ du préavis — aller lire la pièce.
+PREAVIS_MOIS = 2
+
+# Le jour où le préavis a commencé à être SERVI EN PRODUCTION — pas celui du merge.
+# Même raison que le retrait au tag (ci-dessus) : `main` est la préproduction, et un
+# préavis que le consommateur ne peut pas encore lire n'a averti personne. Les trois
+# lots d'alias ont été mergés le 28/08/2026 et sont partis en production avec le tag
+# `v1.159.0`, le 29/08/2026 — c'est ce jour-là que la fenêtre s'ouvre.
+ANNONCE = datetime.date(2026, 8, 29)
+
+
+def _plus_de_mois(depart: datetime.date, mois: int) -> datetime.date:
+    """`depart` + `mois` mois CALENDAIRES — jamais une approximation en jours.
+
+    Deux mois comptés en 60 jours tombent un jour trop tôt neuf fois sur douze :
+    c'est exactement la famille d'écart que #767 et #768 corrigent, et elle penche
+    toujours du même côté — contre celui à qui le préavis est dû.
+    """
+    rang = depart.month - 1 + mois
+    annee, mois_cible = depart.year + rang // 12, rang % 12 + 1
+    jour = min(depart.day, calendar.monthrange(annee, mois_cible)[1])
+    return datetime.date(annee, mois_cible, jour)
+
+
+# Premier tag `vX.Y.Z` posé à partir de cette date. DÉRIVÉE, pas écrite à la main :
+# décaler le retrait, c'est décider une date d'annonce ou une durée de préavis —
+# jamais poser un jour de calendrier au hasard.
+RETRAIT = _plus_de_mois(ANNONCE, PREAVIS_MOIS)
 
 # ── Outils MCP (lot B1) ─────────────────────────────────────────────────────
 # ancien nom SERVI → nom canonique. L'ancien reste listé et appelable jusqu'au

@@ -50,6 +50,66 @@ DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
      "lemlist_campaign_start", "lemlist_inbox_send",
      "lemlist_campaign_auto_review"})
 
+# --- Réservé aux comptes BÊTA (2026-09-01) -----------------------------------
+#
+# Les trois verbes du nouvel univers de contenu. Ils étaient exposés à TOUT LE
+# MONDE depuis leur création, sans le moindre gate — mesuré le 2026-09-01, et
+# c'est l'inverse de ce qu'on croyait : on pensait qu'ils n'apparaissaient pas.
+#
+# Pourquoi les réserver : cette surface part de VIDE (la recopie depuis l'ancien
+# monde est arrêtée) et son contrat est provisoire. La servir à tous, c'est
+# proposer à chaque agent un `oto_node` qui ne trouve rien et un `oto_node_edit`
+# qui écrit dans un univers dont l'utilisateur ignore l'existence — le genre de
+# surface qui se remplit d'essais avant d'avoir un lecteur.
+#
+# ⚠️ **Ce n'est PAS le même grain que `DEFAULT_HIDDEN_TOOLS`.** Un masqué-par-
+# défaut est self-activable : n'importe qui le rend visible d'un geste, c'est de
+# la découvrabilité. Ici la population est CHOISIE — un admin pose l'option, et
+# l'utilisateur ne peut pas se l'accorder.
+#
+# ⚠️ **Et ce n'est pas une barrière de sécurité** (ADR 0031), comme aucune règle
+# de visibilité de ce module : un compte qui connaît le nom peut toujours appeler
+# le verbe, ou le matérialiser par le dispatch universel. Ce qui protège
+# vraiment, ce sont les autorisations de la capacité elle-même — membre de l'org
+# pour lire, palier du propriétaire pour écrire. Ce gate-ci décide QUI SE LES
+# VOIT PROPOSER, rien de plus, et le prétendre autrement serait le défaut que
+# l'ADR 0031 nomme.
+#
+# La face REST n'est PAS gatée : le dashboard qui construit ce nouvel univers la
+# consomme aujourd'hui, et la couper arrêterait le travail qui justifie la
+# surface. C'est un écart assumé entre les deux faces, pas un oubli — et il se
+# referme le jour où cette surface cesse d'être provisoire.
+#
+# ⚠️ **N'y faire entrer que des noms NEUFS.** Ce bloc masque fail-CLOSED : y poser
+# le nom d'une surface vivante la retirerait d'un coup à tous les comptes sans
+# l'option, sans qu'un seul appelant soit prévenu. `oto_resource_v2` y est parce
+# qu'il naît ici ; `oto_resource`, la surface héritée qu'il double, n'y est pas et
+# n'y sera jamais (cliquet : `tests/test_resources_deux_surfaces.py`).
+BETA_TOOLS: frozenset[str] = frozenset({
+    "oto_node", "oto_node_rows", "oto_node_edit",
+    # Gouvernance de ressource au contrat d'entrée STRICT (`resources_v2`) : elle
+    # double `oto_resource` au lieu de le durcir, parce que le durcir a cassé de
+    # vrais appelants le 2026-09-01 (#756, reverté par #774). Le régime bêta lui
+    # donne une population choisie pendant que les appelants migrent, sans
+    # date-couperet — cf. `oto_mcp/capabilities/resources_v2.py`.
+    "oto_resource_v2",
+    # La FLOTTE (R4, 01/09/2026) : sa surface part de VIDE — aucune flotte n'est
+    # déclarée nulle part — et son contrat est PROVISOIRE : elle déclare et lit,
+    # elle ne sait ni lancer ni arrêter. La proposer à tous, ce serait offrir à
+    # chaque agent un verbe qui ne trouve rien. ⚠️ Nom NEUF, conformément à la
+    # règle ci-dessus : `oto_fleet` naît avec ce lot, il ne retire donc rien à
+    # personne — cf. `oto_mcp/capabilities/runner_fleets.py`.
+    "oto_fleet",
+})
+
+# L'option qui ouvre `BETA_TOOLS`. Posée par un admin sur un UTILISATEUR ou sur
+# une ORG (`oto_admin_set_option`), lue par le seam unique `access.has_option`.
+# Le nom qualifie le COMPTE, pas la fonctionnalité : « ce compte est bêta ». Une
+# seconde surface bêta le rejoindra ici plutôt que d'inventer sa propre option —
+# et le jour où deux populations bêta doivent différer, c'est ce jour-là qu'on
+# scinde, avec le besoin sous les yeux.
+BETA_OPTION = "beta"
+
 # Méta-tools TOUJOURS visibles (anti-lockout) : sans eux l'utilisateur ne peut
 # plus se déverrouiller (lister/activer un tool) — plus l'identité `oto_whoami`
 # et la fiche `oto_profile`, qui doivent rester atteignables au démarrage d'un
