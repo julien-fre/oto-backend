@@ -569,12 +569,13 @@ donc geler aucune ligne existante. Un motif hérité qui ne passerait pas le gar
 INERTE à l'écriture (`pattern_of` est muette, comme `max_length_of` sur une borne mal
 formée) mais fait REFUSER la prochaine pose du schéma : c'est là qu'on peut encore corriger.
 
-**Les champs que l'appelant n'écrit pas (#586, #606, 29/08/2026).** Deux crans de
-colonne sous UNE garde (`dsv2.reserved_refusals`, le geste dans `datastore/reserves.py`),
-pour deux gestes mesurés sur la même campagne contre la donnée remise par le client —
-l'écraser, et détruire sa copie de secours. Même hiérarchie que #516 : le chemin
-n'existe pas > la machine refuse > un contrôle détecte > la consigne interdit ; jusqu'ici
-un contrôle de fin de passage détectait après coup.
+**Les champs que l'appelant n'écrit pas (#586, #606, #607 ; 29/08 → 01/09/2026).** Trois
+crans de colonne sous UNE garde (`dsv2.reserved_refusals`, le geste dans
+`datastore/reserves.py`), pour trois gestes mesurés sur la même campagne contre la
+donnée remise par le client — l'écraser, détruire sa copie de secours, et graver une
+déclaration à la place d'une trace. Même hiérarchie que #516 : le chemin n'existe pas >
+la machine refuse > un contrôle détecte > la consigne interdit ; jusqu'ici un contrôle
+de fin de passage détectait après coup.
 
 - **`readonly: true` — la colonne du fichier source.** Mesuré au 5ᵉ passage : **quatorze
   valeurs sur douze fiches par cent** (`adresse` ×9, `naf` ×3, `date_creation` ×2)
@@ -644,6 +645,40 @@ un contrôle de fin de passage détectait après coup.
   s'y écrit à la main), sous un sous-record, sur une cible de couche ; se combine avec
   `readonly` (valeur verrouillée ET couche d'origine fermée — la pose n'a jamais lieu
   tant que la valeur ne bouge pas, et joue le jour où le propriétaire lève `readonly`).
+- **`system: "<source>"` — la VALEUR posée par la plateforme (#607, 01/09/2026).** Une
+  colonne `modele` que l'agent remplissait de mémoire dérivait : `…2407` sur une fiche,
+  `…2511` sur une autre le lendemain, quand les 102 travaux enregistrés du run disaient
+  tous `…2512`. *Une valeur recopiée de mémoire est une déclaration, pas une trace.* Le
+  cran est le frère d'`origine: "system"` d'un cran plus haut : là la plateforme pose une
+  COUCHE une seule fois, ici elle pose la valeur de base **à chaque écriture**, sans que
+  l'appelant nomme la colonne — et toute écriture de l'appelant dessus est refusée en
+  nommant la source. Sources FERMÉES : `run.id`, `run.started_at`, `write.at`.
+  **Hors run, rien n'est posé et le refus reste** : une estampille devinée serait la
+  déclaration de mémoire qu'on remplace, avec le sceau de la plateforme en plus.
+  ⚠️ **`run.model` est REFUSÉ à la déclaration, et le refus dit pourquoi.** La source que
+  la demande visait n'existe nulle part côté serveur — `runs` n'a pas de colonne `model`,
+  `run_start` n'en reçoit pas, `runner_jobs.result` n'en porte pas, et le handshake ne
+  connaît qu'un nom de CLIENT (`claude.ai`, `Claude Code`), qui n'est pas un modèle. La
+  seule valeur disponible serait celle que l'appelant en dit : le cran aurait blanchi la
+  déclaration de mémoire au lieu de la remplacer. Ce qui est servi à la place est le
+  **pointeur** — `run.id` sur la ligne, et ce que le run sait se lit au run : *une valeur
+  qu'on rejoint ne dérive pas, une valeur qu'on recopie dérive.* Rouvrir `run.model`
+  demande d'abord une colonne `runs.model` et un point qui l'écrit ; c'est un lot, et il
+  traverse le contrat du runner.
+  **Une valeur identique reste un no-op**, comme pour ses deux sœurs — et il en faut
+  DEUX ici : celle qu'on s'apprête à poser (l'agent réémet l'estampille courante) et
+  celle DÉJÀ en base (une fiche lue sous le run A, réémise sous le run B — c'est notre
+  propre lecture qui revient). Refusée : celle qui ne vient d'aucune des deux.
+  Refusé à la pose sur un composite/`json`, sous un sous-record, sur la **clé métier**
+  (la plateforme déciderait de l'identité des lignes, et chaque écriture viserait une
+  ligne neuve) et **avec `readonly` sur la même colonne** : l'un dit « ne change
+  jamais », l'autre « reposée à chaque écriture » — ensemble l'un des deux ment, et le
+  schéma ne dit pas lequel. `run.started_at` lit `runs` une fois par run (cache borné,
+  même parti que `run_org`, la colonne étant immuable) ; `run.id` et `write.at` ne
+  coûtent aucune I/O.
+  ⚠️ **La pose n'entre pas dans les clés « écrites » que voit la validation** : la borne
+  de longueur et le motif se jugent sur ce que l'APPELANT pose, et un refus portant sur
+  une valeur qu'il ne contrôle pas serait inactionnable.
 
 ⚠️ **Le cran borne TOUT LE MONDE, faces humaine et REST comprises — et c'est dit.** Le
 store ne sait pas distinguer un agent d'un humain : il connaît un sub et une org, et le
@@ -662,10 +697,16 @@ readonly absente du corps compte comme changée). ⚠️ **Pas dans le registre 
 (#602)** : celui-ci juge AVANT la résolution, sans schéma ; un champ réservé est une
 propriété du TABLEAU et se juge là où le schéma est connu. Les deux se complètent —
 jeton mal placé : « il s'écrit dans tel champ » ; champ réservé : « il ne s'écrit pas,
-voici où va la chose ». ⚠️ **#607 (un champ posé depuis une source déclarée : modèle du
-run, identifiant, horodatage) reste à son issue** : la pose y lit le RUN à chaque
-écriture — une I/O sur le chemin chaud et un registre de sources —, ce que cette garde
-n'accueille pas sans grossir ; le seam de refus, lui, est prêt à l'accueillir.
+voici où va la chose ».
+
+⚠️ **Ce paragraphe a dit le contraire jusqu'au 2026-09-01.** Il annonçait « #607 reste à
+son issue : la pose y lit le RUN à chaque écriture — une I/O sur le chemin chaud —, ce
+que cette garde n'accueille pas sans grossir ». **Les deux moitiés étaient fausses** :
+le run de l'appel est une ContextVar (`_current_run`, aucune I/O), et la seule source
+qui touche la base (`run.started_at`) se cache derrière un cache par run, la colonne
+étant immuable. La conclusion « c'est un autre lot » reposait donc sur un coût supposé,
+jamais mesuré. *Une réserve de perf qu'on n'a pas mesurée est une opinion qui prend
+l'autorité d'un fait en étant écrite ici.*
 
 **Retoucher un schéma sans le détruire (#388).** `data_set_schema` REMPLACE — bon geste
 pour POSER un format, piège pour l'ÉDITER : deux appels indiscernables (même méthode,
@@ -734,6 +775,42 @@ en base ne doit pas ré-alerter à chaque patch), il agrège un lot en une entr�
 chemin (`contacts[].tel`), et il est **vide hors strict** — là, le champ libre est un
 droit explicite du contrat, pas une anomalie. Refuser franchement aurait été plus net,
 mais aurait cassé cette liberté : ce qui manquait était un signal, pas une barrière.
+
+**…et depuis le 01/09/2026, un tableau peut demander la barrière (#614/#678).** Le
+signal a tenu un an et il a une limite mesurée : `strict` **promettait** un refus et
+livrait un signalement, si bien qu'on a cessé de surveiller ce qu'on croyait gardé —
+douze clés inventées en vingt-deux occurrences au dernier relevé, dont trois dans des
+fiches clientes, et 162 colonnes hors schéma accumulées dans un fichier de production.
+*Une option qui promet plus qu'elle ne fait est pire qu'une option absente.* La réponse
+n'est pas de fermer le premier niveau — ce serait retirer un droit du contrat 0016 et
+casser l'exploration d'un tableau non encore typé — mais de le **paramétrer** :
+`unknown_fields` en clé de tête, `"report"` (le défaut, tout ce qui précède) ou
+`"reject"`. En `reject`, la colonne non déclarée est **refusée**, rien n'est stocké, et
+le refus nomme la colonne, le référentiel (borné à 15 noms) et le fait qu'**aucune
+colonne déclarée ne porte ce nom** — jamais une destination approchante : *une
+destination inventée est pire qu'une destination absente*, et une colonne inconnue n'en
+a aucune par construction.
+
+- **Clé distincte plutôt que `strict: "refuse"`** : `strict` est lu comme un BOOLÉEN à
+  cinq endroits (`validation_active`, `off_schema_keys`, `validate_row`,
+  `claimable.erreurs`, `_orphan_columns_warning`) — en changer le type ferait mentir
+  chaque lecture existante, en silence, et sur le chemin chaud.
+- **Le refus vit au même seam que le relevé** (`_check_row`) et partage son prédicat
+  (`_unknown_subkeys`) : le rapporteur et le refuseur ne peuvent pas diverger sur ce
+  qu'est « hors du référentiel ». Il couvre donc les six portes d'un coup, upload signé
+  compris.
+- **Il juge ce que le geste POSE, jamais le mergé** — c'est ce qui le rend tenable : un
+  tableau qui porte déjà 162 colonnes hors schéma reste écrivable, et un patch sur une
+  colonne sans rapport ne se fait pas refuser pour un défaut hérité (la faute de #284,
+  sur une autre règle).
+- **Un cran qui ne pourrait pas s'appliquer est refusé à la POSE** : `reject` sans
+  `strict` (rien n'est relevé hors strict — il ne parlerait jamais) ou sans aucun champ
+  déclaré (tout serait hors schéma — le tableau serait inécrivable d'un coup). Les deux
+  extrêmes du même trou, et refuser d'être inerte est la moitié du lot : reproduire en
+  le corrigeant le défaut qu'on corrige serait le comble.
+- Il se pose par `data_patch_schema(unknown_fields="reject")` — un tableau se ferme
+  quand il a FINI d'être exploré, donc quand son schéma est long, et le poser par `set`
+  obligerait à réécrire quatre-vingts champs pour une clé de tête. `enforced` l'annonce.
 
 **…mais DANS un composite déclaré, `strict` REFUSE (#544, 29/08/2026).** La liberté
 qu'on protège au premier niveau n'existe pas un cran plus bas, et c'est toute la

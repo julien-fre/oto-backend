@@ -512,11 +512,23 @@ def register(mcp: FastMCP) -> None:
           required_when/max_length. A non-conforming write FAILS naming the culprit
           (max_length reports the actual length AND the bound; pattern reports the
           value it saw AND the motif).
-          Source columns: `field.readonly: true` refuses any write that CHANGES the
-          value in place (its layers stay open — what another source says goes in
-          `<field>.comment`), and `field.origine: "system"` makes the platform keep
-          the previous value in `<field>.origine` on the first write that changes it,
-          a layer no caller can write.
+          ⚠️ `strict` does NOT close the top level: a key no field declares still
+          CREATES a free column and the value persists — it is only REPORTED, in
+          `hors_schema`. That is how you explore a table before typing it, and it is
+          why `strict` refuses an undeclared attribute INSIDE a declared sub-record
+          but not a column beside it. Head key `"unknown_fields": "reject"` closes
+          the top level too (default `"report"` = the above): the write is REFUSED
+          and nothing is stored.
+          Fields the caller does NOT write — one question ("whose column is this?"),
+          and each refusal names the field, the reason and where the thing goes:
+          `field.readonly: true` refuses a write that CHANGES the value in place
+          (layers stay open — what another source says goes in `<field>.comment`);
+          `field.origine: "system"` has the platform keep the previous value in
+          `<field>.origine`; `field.system: "run.id"|"run.started_at"|"write.at"` has
+          the PLATFORM write the VALUE on every write — do not send that column, it
+          is stamped for you (a value you retype is what you believe, not what
+          happened). Re-sending the SAME value is never a write, so re-emitting a
+          record you just read always passes.
           Bound the fields meant to hold ONE short value (a job title, a city): a
           column that collects reasoning stops being groupable/filterable. The
           bound applies to the keys a write actually SETS, so rows already over it
@@ -546,9 +558,11 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             namespace: target namespace (must exist; you must have write access).
-            schema: the schema object, or null to clear it; a field may carry
-                `readonly: true` (value locked, layers open) or `origine: "system"`
-                (platform-kept `<field>.origine`).
+            schema: the schema object, or null to clear it. Head key
+                `unknown_fields: "report"|"reject"` decides an undeclared column's
+                fate; a field may carry `readonly: true` (value locked, layers open),
+                `origine: "system"` (platform-kept `<field>.origine`) or
+                `system: "<source>"` (platform-written value).
             semantic_search: true/false to toggle semantic row search; null = leave as is.
         """
         store = _acting_store()
