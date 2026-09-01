@@ -15,6 +15,8 @@ chantier, pas d'une précaution abstraite :
 """
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 from oto_mcp.capabilities import runner_fleets as RF
@@ -143,26 +145,66 @@ def test_la_capacite_est_servie_sur_les_deux_faces():
     assert cap.rest.path == "/api/me/runner/fleets"
 
 
-def test_les_operations_de_lecture_existent_avant_tout_lancement():
-    """L'ordre de construction est une décision : lire d'abord. `state` rend un
-    opérateur autonome sans rien pouvoir casser ; lancer écrit dans un fichier
-    client et attend que le reste ait tourné."""
+def test_lancer_et_arreter_sont_servis_avec_des_PLANCHERS_DIFFÉRENTS():
+    """La décision du 01/09/2026, et elle remplace celle que ce fichier gravait.
+
+    Ces tests disaient « ni lancer ni arrêter ne sont servis ici — ils entreront
+    ensemble, quand la question de qui a le droit sera tranchée ». Elle l'est, et
+    la réponse **casse la symétrie** que je supposais :
+
+        lancer   effets externes IRRÉVERSIBLES (argent dépensé, lignes écrites
+                 chez un tiers)          ⟹ plancher ADMIN
+        arrêter  une interruption et un travail à reprendre
+                 ⟹ tout MEMBRE — un passage qui part en vrille doit pouvoir
+                   être stoppé par la première personne qui le voit
+
+    ⚠️ Ils entrent bien par la même porte, mais **ils n'engagent pas la même
+    chose** : la garde suit le VERBE, pas l'objet. Attendre un admin pendant
+    qu'une flotte dépense est le mauvais échange.
+    """
     ops = set(RF.FleetInput.model_fields["op"].annotation.__args__)
-    assert {"list", "get", "state"} <= ops
-    assert "launch" not in ops and "start" not in ops
+    assert {"list", "get", "state", "launch", "stop"} <= ops
+    # le plancher d'`ORG_MEMBER` reste celui de la capacité : c'est `launch` qui
+    # exige davantage, DANS le handler — le vérifier ici garde la trace que la
+    # différence est voulue et non un oubli d'autz.
+    src = inspect.getsource(RF._fleets)
+    assert "is_org_admin" in src, "`launch` doit exiger l'admin"
+    assert src.index("op == \"launch\"") < src.index("is_org_admin"), (
+        "la vérification admin appartient à la branche `launch`, pas à toute la "
+        "capacité — sinon `stop` deviendrait admin par effet de bord")
 
 
-def test_ni_lancer_ni_arreter_ne_sont_servis_ici():
-    """Arrêter est le geste SYMÉTRIQUE de lancer, et il doit sortir par la même
-    porte. Les deux faces d'une capacité aboutissent au même handler et doivent se
-    comporter pareil : servir `stop` ici le rendrait appelable par un AGENT, qui
-    pourrait arrêter le passage qui le fait tourner — ou celui d'un autre."""
-    ops = set(RF.FleetInput.model_fields["op"].annotation.__args__)
-    assert "stop" not in ops
-    # la mécanique existe au niveau de la donnée, pour l'ordonnanceur — c'est la
-    # SURFACE agent qui ne la sert pas.
+def test_un_deroule_ne_lance_pas_et_n_arrete_pas_LE_SIEN():
+    """Les deux gardes anti-agent, et elles DIFFÈRENT parce que le coût diffère.
+
+    ⚠️ Un agent qui se RELANCE lui-même dépense en boucle ; un agent qui arrête
+    de trop coûte une reprise. D'où : aucun déroulé ne lance, mais un déroulé peut
+    arrêter une AUTRE flotte de son org — c'est même le cas utile, un opérateur
+    qui pilote par la conversation. **Fermer le verbe à tout le monde pour le
+    seul cas dangereux ferait payer le prix sur tous les usages légitimes.**
+    """
+    src = inspect.getsource(RF._fleets)
+    assert "not_from_a_run" in src, "un déroulé ne lance pas"
+    assert "not_your_own_fleet" in src, "un déroulé n'arrête pas celle qui l'exécute"
     from oto_mcp import db
-    assert callable(db.set_status)
+    assert callable(db.run_appartient_a_flotte), (
+        "la garde repose sur un PRÉDICAT — « ce déroulé tourne-t-il pour CETTE "
+        "flotte ? » — et non sur la seule présence d'un run")
+
+
+def test_lancer_et_arreter_posent_une_INTENTION_jamais_un_fait():
+    """⚠️ Le défaut que ce lot a failli commettre, après une journée passée sur
+    « trois états, jamais deux » — la leçon ne s'est pas reconnue sur cet objet.
+
+    `launch` pose `armed` (on a DEMANDÉ), pas `running` (un ordonnanceur l'a
+    PRISE). `stop` pose `stopping` (l'ordre est posé), pas `stopped` (la boucle a
+    accusé réception). Entre l'appel et la lecture, **le passage continue de
+    dépenser** : annoncer un arrêt qui n'a pas eu lieu est pire qu'annoncer un
+    lancement qui ne part pas.
+    """
+    src = inspect.getsource(RF._fleets)
+    assert "db.armer(" in src and "'running'" not in src.split("op == \"launch\"")[1][:900]
+    assert "db.demander_arret(" in src
 
 
 def test_une_flotte_est_org_scopee():

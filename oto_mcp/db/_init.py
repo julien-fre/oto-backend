@@ -205,6 +205,18 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # existe sur une base déjà construite, et le boot mourrait (piège du 20/07).
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runner_jobs_fleet "
                  "ON runner_jobs(fleet_id) WHERE fleet_id IS NOT NULL")
+    # Chantier runner R4b : l'INTENTION se sépare du FAIT. `armed` (on a demandé
+    # que ça tourne) ≠ `running` (un ordonnanceur l'a prise) ; `stopping` (l'arrêt
+    # est demandé) ≠ `stopped` (il a été accusé). ⚠️ Un `CREATE TABLE IF NOT
+    # EXISTS` NE MET PAS À JOUR la contrainte d'une table qui existe déjà : sans
+    # ce remplacement, le boot passerait en vert et la base refuserait les deux
+    # nouveaux états — un lot « déployé » dont la moitié est rejetée à l'écriture.
+    conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS armed_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE runner_fleets ADD COLUMN IF NOT EXISTS stopping_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE runner_fleets DROP CONSTRAINT IF EXISTS runner_fleets_status_check")
+    conn.execute("ALTER TABLE runner_fleets ADD CONSTRAINT runner_fleets_status_check "
+                 "CHECK (status IN ('draft', 'armed', 'running', 'stopping', "
+                 "'stopped', 'done', 'failed'))")
     # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
     # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
     # portaient notre domaine : un client d'un partenaire recevait des liens vers

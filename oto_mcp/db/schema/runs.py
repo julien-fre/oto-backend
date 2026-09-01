@@ -129,13 +129,40 @@ CREATE TABLE IF NOT EXISTS runner_fleets (
     max_tokens BIGINT,
     max_consecutive_failures INT,
     max_tokens_per_row INT,
-    -- L'ÉTAT : `stop_reason` est ÉCRIT, jamais déduit d'un statut — « arrêtée »
-    -- sans raison oblige l'opérateur à rouvrir les journaux pour savoir si le
-    -- budget a coupé, si la file s'est vidée, ou si un outil est tombé.
+    -- L'ÉTAT, et il compte SEPT valeurs parce que deux d'entre elles séparent une
+    -- INTENTION d'un FAIT. ⚠️ Une intention déclarée et un fait constaté ne
+    -- partagent jamais une colonne — c'est la même règle que « trois états,
+    -- jamais deux », appliquée au pilotage d'un passage :
+    --
+    --   draft     déclarée, personne n'a demandé qu'elle tourne
+    --   armed     quelqu'un a DEMANDÉ qu'elle tourne (op=launch)   ← intention
+    --   running   un ordonnanceur l'a PRISE et donne signe          ← fait observé
+    --   stopping  l'arrêt est DEMANDÉ (op=stop)                     ← intention
+    --   stopped   l'ordonnanceur a ACCUSÉ réception                 ← fait observé
+    --   done      la file s'est vidée · failed  arrêt anormal
+    --
+    -- Sans `armed`, `running` voudrait dire « on a cliqué » ET « ça tourne » : une
+    -- flotte armée que personne n'a prise se lirait comme un passage en cours.
+    -- Sans `stopping`, un arrêt demandé se lirait comme un arrêt EFFECTIF — et
+    -- croire qu'on a coupé une dépense qui continue est pire que croire qu'on a
+    -- lancé un passage qui ne tourne pas : dans un cas on attend, dans l'autre on
+    -- part tranquille pendant que ça brûle.
+    -- ⚠️ Et l'écart entre les deux est le DIAGNOSTIC : un `stopping` qui ne
+    -- devient jamais `stopped`, ou un `armed` que personne ne réclame, désignent
+    -- un ordonnanceur mort. Fondus dans un seul état, ces cas ressemblent à un
+    -- succès.
+    -- `stop_reason` reste ÉCRIT, jamais déduit du statut.
     status TEXT NOT NULL DEFAULT 'draft'
-        CHECK (status IN ('draft', 'running', 'stopped', 'done', 'failed')),
+        CHECK (status IN ('draft', 'armed', 'running', 'stopping', 'stopped',
+                          'done', 'failed')),
     stop_reason TEXT,
+    -- Quand l'INTENTION a été posée, distinct de quand le fait s'est produit :
+    -- `armed_at` → `started_at` mesure l'attente d'un ordonnanceur ;
+    -- `stopping_at` → `stopped_at` mesure le délai d'obéissance. Les deux
+    -- écarts sont le seul moyen de voir un ordonnanceur qui ne répond plus.
+    armed_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
+    stopping_at TIMESTAMPTZ,
     heartbeat_at TIMESTAMPTZ,
     stopped_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

@@ -146,8 +146,19 @@ from oto_mcp.db import _schema, schema
 # (le retrait de l'index unipile, puis le fragment des flottes), jamais
 # reprise d'un côté du conflit : un hash pris d'un seul côté valide un DDL
 # que personne ne sert.
-EMPREINTE = "c05cd85fa8529bace0645d9ae58624d56bef531513614efe9073b99f0c845c28"
-LONGUEUR = 125769
+# 2026-09-01 (R4b — l'intention se sépare du fait) : `runner_fleets.status` passe
+# à SEPT valeurs, plus `armed_at`/`stopping_at`. `armed` (on a DEMANDÉ que ça
+# tourne) ≠ `running` (un ordonnanceur l'a PRISE) ; `stopping` (arrêt demandé) ≠
+# `stopped` (arrêt accusé). Sans cette séparation, une flotte armée que personne
+# n'a réclamée se lirait « en cours », et un arrêt demandé se lirait « arrêté » —
+# or croire qu'on a coupé une dépense qui continue est le plus coûteux des deux.
+# ⚠️ La contrainte CHECK est REMPLACÉE dans `_init` : un `CREATE TABLE IF NOT
+# EXISTS` ne la met pas à jour sur une base existante, et le boot passerait vert
+# pendant que la base refuse les deux nouveaux états.
+# ⚠️ Empreinte recalculée APRÈS avoir vérifié que le tronc sans ce fragment rend
+# bien c05cd85f… / 125769.
+EMPREINTE = "d5504c4b9c0df4e6c8e8648011554e36c2aa15a03df4b4b197e0af51181fae10"
+LONGUEUR = 127473
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
