@@ -74,6 +74,7 @@ from .columns import (  # noqa: E402,F401
     _to_path,
     _writes_layers,
     arbitrer_les_vides,
+    refuser_geste_sans_effet,
     effacements_report,
     ignores_report,
 )
@@ -1070,6 +1071,14 @@ class DatastorePg(SchemaOpsMixin):
             # validation passée — un refus n'a rien effacé, l'annoncer ferait
             # chercher un dégât imaginaire.
             pose, vidages, ecartes = arbitrer_les_vides(current, user_data, row_id)
+            # #724 : préserver et le DIRE ne suffit pas quand l'écarté était TOUT ce
+            # que l'écriture portait — l'appel n'a alors aucun effet et répond 200.
+            # ⚠️ Par CE chemin le refus ne peut pas parler : on n'arrive ici (append
+            # promu, lot) qu'avec une valeur de clé métier non vide, donc posée — ce
+            # qui garantit qu'un LOT ne casse jamais dessus. Il y est quand même :
+            # les deux chemins d'écriture ont déjà divergé une fois sur cette famille
+            # de règles (#322), ils partagent la fonction, pas seulement l'intention.
+            refuser_geste_sans_effet(pose, ecartes)
             # Colonne par colonne, pour que l'origine survive à une écriture
             # ordinaire. Un `update` en bloc l'emporterait avec le reste — et
             # silencieusement, puisque remplacer une valeur est le geste normal.
@@ -1509,6 +1518,12 @@ class DatastorePg(SchemaOpsMixin):
         # d'écriture ont déjà divergé une fois sur cette famille de règles (#322) :
         # ils partagent donc la fonction, pas seulement l'intention.
         pose, vidages, ecartes = arbitrer_les_vides(data, patch, row_id)
+        # #724 : le patch par `id` est le chemin des dix retraits perdus du 01/09 —
+        # un vide SEUL y était accepté sans effet, et le relevé qui nommait déjà la
+        # porte n'a pas été lu. Refusé AVANT tout relevé : rien n'a été touché, il
+        # n'y a donc rien à annoncer — le message, lui, écrit la porte en toutes
+        # lettres, au moment où l'appelant peut encore corriger.
+        refuser_geste_sans_effet(pose, ecartes)
         avant = dict(data)
         written = set()
         for k, v in pose.items():

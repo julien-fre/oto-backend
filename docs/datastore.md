@@ -813,6 +813,67 @@ pas ce qui l'accompagne (#326). Un refus dur a été écarté : 8 897 cellules �
 sur 59 tableaux en production le 28/08, plus 5 643 listes vides sur 11 — les refuser
 rétroactivement casserait des tableaux qui n'ont rien demandé.
 
+⚠️ **Un vide qui ne pose RIEN d'autre est REFUSÉ, et le refus écrit la porte (#724,
+01/09/2026).** Entre 04:16 et 04:20 ce jour-là, dix `data_write(id=…,
+row={'contacts': []})` sur des fiches clientes : dix `200`, zéro retrait, découverts en
+relisant les fiches.
+
+**La porte existait, et la réponse la nommait déjà** : `contacts: null` efface, et
+`valeurs_ignorees_hint` disait mot pour mot « Pour vider un champ pour de bon, nomme-le
+avec `null` ». Elle n'a pas été empruntée — il n'y a eu **qu'une seule** écriture `null`
+explicite ce jour-là, sur une table d'**essai** jetable, jamais sur les fiches ratées,
+dont l'une porte encore le contact qu'on voulait retirer. C'est la réfutation de « il
+suffit de le dire » : **un témoin logé dans le corps d'une réponse réussie n'oblige
+personne à le lire.** Le refus, lui, ne se rate pas, et il arrive au moment où
+l'appelant peut encore corriger.
+
+**Deux options ont été écartées, et savoir pourquoi évite de les rejouer.**
+
+*Faire effacer la liste vide, comme `null`* : détruit la charge dominante, où `[]` veut
+dire « rien trouvé ». *Faire effacer la liste vide SEULE* : ferait dépendre un geste
+**destructeur** de ses voisines — « selon le contexte ta donnée disparaît » est une
+perte silencieuse, quand « selon le contexte ton appel échoue » est un désagrément qui
+enseigne. La contextualité d'un refus ne coûte pas ce que coûte celle d'un effacement.
+
+**La mesure qui fonde tout ça** — journal de production, 30 j glissants au 2026-09-01
+(`tool_calls` croisé avec `datastore_rows`) :
+
+| mesure | valeur |
+|---|---|
+| écritures unitaires `data_write` | 43 444 |
+| … portant une **liste vide** | **574** (chaînes vides : 296, population distincte) |
+| … qui **réémettent la fiche entière** | **562 — 98 %** |
+| … qui portent le **vide seul** | **12 — 2 %** |
+| couples (appel, colonne) résolubles en base | 324 |
+| … visant une colonne **encore peuplée** | **105 — 32 %**, dont **104 réémissions** |
+
+⚠️ **Trois réserves, et la troisième est une déduction, pas une mesure.** Les arguments
+journalisés sont tronqués à 300 caractères par valeur : les listes vides des longues
+fiches réémises sont coupées, donc **sous-comptées**. 250 couples n'ont pas pu être
+résolus (`id=@claimed`, ou identifiant de table absent des arguments). Enfin, la valeur
+« en place » est relue **aujourd'hui** : une colonne vidée depuis se présente comme
+« rien à perdre », ce qui a d'abord fait conclure que le vide seul ne visait qu'**une**
+colonne peuplée. C'est faux. Neuf des dix lignes du 01/09 portent aujourd'hui une valeur
+nulle alors qu'aucune liste vide n'y a jamais été écrite — si elles avaient été vides à
+l'instant de l'appel, elles porteraient `[]`. **Par quel geste elles sont passées à nul,
+le journal tronqué ne le dit pas ; ce qui est établi par élimination, c'est qu'elles
+étaient peuplées quand les appels ont échoué.** Le cas réel n'est donc pas « un appel
+par mois » mais neuf en quatre minutes.
+
+**La règle, portée par `datastore_columns.refuser_geste_sans_effet`** (appelée par
+`update_row` et `_merge_into_row`, donc les deux chemins, #322) : la ligne de partage
+est l'**effet du geste**, pas le type de la valeur.
+
+- l'écriture **pose autre chose** (fiche réémise, gabarit à demi peuplé) : inchangée —
+  la valeur en place survit et c'est dit (#608). **Cette branche protège les 104** ;
+- l'écriture **ne pose plus rien** : refus, et le message **écrit** `{"champ": null}`
+  en toutes lettres plutôt que de s'en remettre à un relevé.
+
+Conséquence structurelle : une row de **lot** porte toujours sa clé métier (c'est par
+elle que la fusion l'a trouvée), donc elle pose — un import de 500 lignes est par
+construction une réémission et ne peut pas casser sur ce refus. C'était l'objection qui
+avait fait écarter un refus dur en #608 ; elle ne s'applique pas ici.
+
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
 du LLM. Un namespace peut déclarer une **clé métier** au schéma (`schema.key`, ex.
