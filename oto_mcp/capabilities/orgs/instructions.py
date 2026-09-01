@@ -177,8 +177,9 @@ class InstructionsBundle(BaseModel):
     un readme que `GET /api/me/instructions/claude_md` **ne sait pas servir** (404) —
     le readme se lit sur la surface guide, pas ici.
 
-    ⚠️ **`can_edit` est le droit d'administrer l'org**, pas celui d'écrire une
-    procédure : ce sont `can_write_instructions` et `can_delete_instructions` qui
+    ⚠️ **`can_edit` est le droit d'administrer l'org** — et c'est LUI qui gouverne
+    l'écriture du readme sur la surface guide (`PUT …/guides/{scope}/{slug}`, garde
+    org_admin), pas celui d'écrire une procédure : ce sont `can_write_instructions` et `can_delete_instructions` qui
     répondent à cette question-là, ici comme au palier équipe. À l'org les deux valent
     la même chose aujourd'hui (org_admin des deux côtés) ; à l'équipe, non — un membre
     écrit, seul le chef supprime. **Un écran qui sert les deux paliers doit lire les
