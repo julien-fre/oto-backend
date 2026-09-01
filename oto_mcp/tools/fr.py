@@ -12,6 +12,10 @@ from ..mcp_errors import McpError
 from mcp.types import INVALID_PARAMS, ErrorData
 
 from .. import access
+# Hors de `tools/` : ce module ne sert AUCUN outil, il porte la lecture du
+# registre des personnes. `tools/<m>.py` est réservé aux modules montés depuis
+# le registre de connecteurs (garde-fou `test_capabilities_drift`).
+from .. import fr_registre
 
 # Les annotations du bloc `finances` (0 = non déclaré, valeur illisible, montant
 # invraisemblable) sont posées par **FOD**, pas ici : elles sont vraies quel que soit
@@ -415,14 +419,67 @@ def register(mcp: FastMCP) -> None:
             profiles = list(pool.map(_one, cleaned))
         return {"profiles": profiles, "count": len(profiles)}
 
+    # Borne du lot `fr_directors` : 5× celle de `fr_get`, parce qu'une fiche y
+    # coûte UN appel amont (l'identité, dont on tire dirigeants ET forme
+    # juridique) là où un profil `fr_get` en ouvre trois à quatre. Le terrain
+    # qualifie par tranches de cent (#612).
+    _FR_DIRECTORS_BATCH_MAX = 100
+
     @mcp.tool()
-    def fr_directors(siren: str) -> list[dict]:
-        """List directors (dirigeants) of a French company.
+    def fr_directors(siren: str | None = None, sirens: list | None = None) -> dict:
+        """Directors declared at the French registry (RNE), for one company or a
+        LIST — `sirens=[…]` (max 100) returns `{entreprises, count, not_found,
+        synthese}`, one entry per SIREN in input order.
+
+        ⚠️ An empty `dirigeants` has THREE meanings, told apart by `registre`:
+        the SIREN is unknown (`error: "not_found"`), the legal form is not
+        registered so it declares nobody (`hors_registre` — association,
+        commune: the emptiness says nothing about the company), or the company
+        is registered with nobody on file (`attendu`). Never read an empty list
+        as "no director" without reading `registre`. `personnes_physiques`
+        counts the NAMED natural persons — a company whose only director is
+        another company scores 0.
 
         Args:
-            siren: SIREN number (9 digits).
+            siren: SIREN number (9 digits) — single-company mode.
+            sirens: list of SIREN numbers (max 100) — batch mode. Give one OR
+                the other, not both.
         """
-        return entreprises.get_directors(siren)
+        from concurrent.futures import ThreadPoolExecutor
+
+        if (siren is None) == (sirens is None):
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="donner `siren` (unitaire) OU `sirens` (batch), pas les deux"))
+        if sirens is None:
+            un = str(siren).strip()
+            return fr_registre.fiche(un, entreprises.get_by_siren(un))
+        cleaned = [str(s).strip() for s in sirens if str(s).strip()]
+        if not cleaned:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="`sirens` est vide"))
+        if len(cleaned) > _FR_DIRECTORS_BATCH_MAX:
+            raise McpError(ErrorData(
+                code=INVALID_PARAMS,
+                message=f"`sirens` est limité à {_FR_DIRECTORS_BATCH_MAX} par appel "
+                        f"(reçu {len(cleaned)}) — découpe en lots"))
+
+        def _one(s: str) -> dict:
+            try:
+                return fr_registre.fiche(s, entreprises.get_by_siren(s))
+            # noqa: SILENT — l'échec par siren est rendu dans la ligne de résultat
+            except Exception as exc:  # un SIREN en échec ne fait pas tomber le lot
+                return {"error": f"{type(exc).__name__}: {exc}", "siren": s}
+
+        # 4 en vol, comme le lot de `fr_get` : c'est la même API amont
+        # (Recherche Entreprises) et la même pression, mesurée en production.
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            fiches = list(pool.map(_one, cleaned))
+        return {
+            "entreprises": fiches,
+            "count": len(fiches),
+            # Les introuvables sont NOMMÉS deux fois : dans leur ligne, et ici —
+            # une liste de cent fiches ne se relit pas pour les retrouver.
+            "not_found": [f["siren"] for f in fiches if f.get("error") == "not_found"],
+            "synthese": fr_registre.synthese(fiches),
+        }
 
     # --- INSEE SIRENE (clé payante — passthrough via FOD) ---
     # Le backend résout la clé (vault : BYO membre/org → clé plateforme) + track le
