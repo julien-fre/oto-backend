@@ -46,6 +46,15 @@ INTERNE (`dealstage`, pas « Deal stage ») et les listes déroulantes n'accepte
 leurs `options[].value` — sans ce référentiel, tout critère (et tout create/update)
 est une devinette.
 
+3. Une appartenance ne porte QUE `recordId`. Lire sept colonnes par membre
+   coûtait donc un `hubspot_object op='get'` PAR membre — un N+1 qui, à quatre
+   appels par lead, tape le plafond d'une private app (190 requêtes / 10 s) vers
+   la quarantième fiche, et un 429 non rattrapé arrête le run au milieu d'un
+   enregistrement à moitié écrit. `op='members'` accepte donc `properties` : il
+   compose la page d'appartenances avec UN batch read (`batch_read_objects`,
+   tranché à 100 par le client) et rend des lignes complètes. Sans `properties`,
+   l'op répond exactement ce qu'elle a toujours répondu, en un seul appel.
+
 ⚠️ **Scopes** : les listes exigent `crm.lists.read` / `crm.lists.write` dans la
 private app. Les tokens créés avant ces tools n'ont que les scopes `crm.objects.*`
 → un 403 ici veut dire « ajoute le scope », PAS « clé invalide ».
@@ -60,6 +69,122 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
+
+
+def _batch_read_envelope(lecture) -> tuple:
+    """Ouvre l'ENVELOPPE de `batch_read_objects` — un mapping, pas une liste.
+
+    oto-core rend `{"results": [...], "missing_ids": [...]}`. `missing_ids` est
+    le relevé des ids demandés que HubSpot n'a pas rendus : son batch read
+    répond 207 sans nommer les absents, et le client est le SEUL endroit où cet
+    écart est calculé. On le rend au site d'appel plutôt que de le laisser
+    tomber — une page de 250 membres qui revient à 247 lignes doit s'annoncer.
+
+    ⚠️ Le refus est la raison d'être de cette fonction. Une version antérieure du
+    client rendait une LISTE nue ; la prendre pour l'enveloppe itérerait ses
+    CLÉS (`"results"`, une chaîne) et lèverait un `AttributeError` opaque au
+    fond du recollage, plusieurs frames plus loin. Un pin oto-core en retard
+    doit se lire comme un refus NOMMÉ, pas comme une panne : `tests/
+    test_tools_client_methods_exist.py` prouve que la MÉTHODE existe sur le tag,
+    rien ne prouve mécaniquement sa FORME — c'est ici que la forme est écrite.
+
+    Rend `(results, missing_ids)`. La forme de `results` n'est pas jugée ici :
+    c'est `_rows_from_memberships` qui la refuse, à son tour et par son nom.
+    """
+    if not isinstance(lecture, dict):
+        raise TypeError(
+            "batch_read_objects doit rendre l'enveloppe "
+            "{'results': [...], 'missing_ids': [...]} et non "
+            f"{type(lecture).__name__} — pin oto-core en retard sur le tag qui "
+            "porte cette forme (cf. pyproject.toml)")
+    return lecture.get("results") or [], list(lecture.get("missing_ids") or [])
+
+
+def _missing_report(rows, missing_ids) -> dict:
+    """Les clés d'écart à servir — DEUX verdicts sur le même fait, jamais fondus.
+
+    `missing_ids` est le verdict du CLIENT (les ids qu'il a demandés et que
+    HubSpot n'a pas rendus) ; `missing_count` est celui de la JOINTURE (les
+    lignes servies sans `properties`). Ils doivent coïncider. On sert les deux
+    plutôt qu'un seul, et on NOMME leur désaccord au lieu d'en choisir un en
+    silence : le jour où ils divergent, c'est que l'un des deux a tort, et c'est
+    précisément le genre d'écart qu'on refuse de laisser passer sans un mot.
+
+    Pure, et donc exerçable directement.
+    """
+    absents_du_join = [str(r.get("recordId")) for r in rows if "missing" in r]
+    out: dict = {}
+    if missing_ids:
+        out["missing_ids"] = list(missing_ids)
+    if absents_du_join:
+        out["missing_count"] = len(absents_du_join)
+    if missing_ids and set(map(str, missing_ids)) != set(absents_du_join):
+        out["missing_mismatch"] = {
+            "reported_by_client": list(missing_ids),
+            "absent_from_join": absents_du_join,
+            "note": ("the batch read's own verdict and the membership join "
+                     "disagree on which records are missing"),
+        }
+    return out
+
+
+def _rows_from_memberships(memberships, records, properties=None) -> list[dict]:
+    """Recolle une page d'appartenances à ses enregistrements, dans l'ORDRE de la page.
+
+    Une appartenance ne porte que `recordId` ; les colonnes viennent d'un batch
+    read séparé, qui peut en rendre MOINS (enregistrement supprimé entre les deux
+    appels, ou hors des droits de cette clé). L'écart est NOMMÉ (`properties:
+    None` + `missing`) plutôt que comblé ou tu : une ligne muette au milieu d'une
+    population de prospection est exactement ce qu'on ne veut pas fabriquer.
+
+    On itère les APPARTENANCES, jamais les enregistrements — c'est ce qui garde
+    l'ordre de la page et interdit de perdre un membre en chemin. Chaque ligne
+    part de l'appartenance TELLE QUELLE (`recordId` n'est pas renommé) : une
+    procédure qui lit déjà `results[].recordId` continue de marcher le jour où
+    elle se met à passer `properties`.
+
+    Pure (ni client, ni contexte, ni fermeture) et donc au niveau module, à la
+    différence des helpers de `register()` : la forme des lignes est ce qu'on
+    veut pouvoir exercer directement.
+
+    `records` est la LISTE `results` du batch read, pas la valeur rendue par
+    `batch_read_objects` (qui est une enveloppe) : l'ouvrir est le travail de
+    `_batch_read_envelope`, au site d'appel qui connaît le contrat du client.
+    Une autre forme se REFUSE ici plutôt que de s'itérer — un dict s'itère sur
+    ses clés et rendrait `AttributeError: 'str' object has no attribute 'get'`,
+    une panne opaque là où il faut un nom.
+
+    Les clés AJOUTÉES sont en anglais, comme le reste de la surface servie de ce
+    tool ; les refus levés, eux, restent en français comme leurs voisins `_bad`.
+    """
+    if records is None:
+        records = []
+    if not isinstance(records, list):
+        raise TypeError(
+            "_rows_from_memberships attend la LISTE `results` du batch read, "
+            f"pas {type(records).__name__} : `batch_read_objects` rend "
+            "l'enveloppe {'results': [...], 'missing_ids': [...]}, ouverte au "
+            "site d'appel par _batch_read_envelope")
+    by_id = {str(r.get("id")): r for r in records}
+    rows: list[dict] = []
+    for m in memberships or []:
+        row = dict(m)  # l'appartenance HubSpot VERBATIM (recordId, timestamp, …)
+        rec = by_id.get(str(m.get("recordId")))
+        row["properties"] = rec.get("properties") if rec else None
+        if rec is None:
+            row["missing"] = ("record not returned by the batch read "
+                              "(deleted, or outside this key's scope)")
+        elif properties:
+            absent = [p for p in properties
+                      if p not in (rec.get("properties") or {})]
+            if absent:
+                # Sépare « HubSpot n'a pas de valeur » de « ce nom interne
+                # n'existe pas » : sans ça, un nom mal orthographié se lit comme
+                # une colonne vide — et les noms internes sont très exactement
+                # ce que `hubspot_property` existe pour donner.
+                row["missing_properties"] = absent
+        rows.append(row)
+    return rows
 
 
 def register(mcp: FastMCP) -> None:
@@ -240,6 +365,10 @@ def register(mcp: FastMCP) -> None:
         "contacts": "0-1", "companies": "0-2", "deals": "0-3", "tickets": "0-5",
     }
 
+    # L'INVERSE de la table ci-dessus : une liste porte son `objectTypeId`, mais
+    # l'endpoint de batch read se keye, lui, sur le nom d'objet.
+    _LIST_OBJECT_NAMES = {v: k for k, v in _OBJECT_TYPE_IDS.items()}
+
     def _object_type_id(value, op: str) -> str:
         """Traduit `object_type` en `objectTypeId` HubSpot pour les listes."""
         _need(value, "object_type", op)
@@ -259,6 +388,35 @@ def register(mcp: FastMCP) -> None:
         if not isinstance(value, list) or not value:
             raise _bad(f"op='{op}' attend {name} = liste non vide d'ids")
         return [str(v) for v in value]
+
+    def _batch_object_type(c, list_id: str, object_type, op: str) -> str:
+        """De quel type d'objet sont les membres — DÉRIVÉ, jamais deviné.
+
+        Une appartenance ne porte que `recordId` ; le batch read, lui, est keyé
+        par type d'objet. `op='members'` ayant toujours pris `list_id` SEUL, on
+        va lire le type sur la fiche de la liste (un GET, celui-là même que
+        `_writable_list` fait déjà avant d'écrire) au lieu d'exiger un argument
+        neuf sur une op qui a déjà des appelants. Passer `object_type`
+        explicitement économise ce GET.
+
+        Un type indevinable se REFUSE, en nommant l'argument qui le donnerait :
+        retomber sur « contacts » lirait le mauvais objet et rendrait une
+        population plausible et fausse.
+        """
+        if object_type is not None:
+            key = str(object_type).strip().lower()
+            _object_type_id(key, op)  # valide la forme, refuse un type inconnu
+            return key
+        fiche = c.get_list(list_id)
+        info = fiche.get("list") or fiche
+        type_id = info.get("objectTypeId")
+        if not type_id:
+            raise _bad(
+                f"op='{op}' avec properties : impossible de déterminer le type "
+                f"d'objet des membres de la liste {list_id} (sa fiche ne porte "
+                "pas d'objectTypeId) — passe object_type (contacts | companies "
+                "| deals | tickets, ou l'objectTypeId brut d'un objet custom).")
+        return _LIST_OBJECT_NAMES.get(str(type_id), str(type_id))
 
     def _writable_list(c, list_id: str, op: str) -> dict:
         """Charge la liste et REFUSE d'écrire ses membres si elle est DYNAMIC.
@@ -296,6 +454,7 @@ def register(mcp: FastMCP) -> None:
         include_filters: bool = False,
         limit: int = 100,
         after: Optional[str] = None,
+        properties: Optional[list[str]] = None,
         dry_run: bool = False,
     ) -> dict:
         """HubSpot lists — the segments of a HubSpot portal. One tool, verb in `op`.
@@ -323,7 +482,13 @@ def register(mcp: FastMCP) -> None:
         - **"delete"** : delete a list — restorable for 90 days. Requires
           `list_id`. Supports `dry_run`.
         - **"restore"** : restore a deleted list (within those 90 days).
-        - **"members"** : the record ids in a list (paginated, `after`).
+        - **"members"** : the record ids in a list (paginated, `after`). Pass
+          `properties` to get FULL ROWS instead of bare ids — one memberships
+          page plus ONE batch read, so a 100-record page costs 2 calls instead
+          of the 101 it costs to follow up with `hubspot_object op="get"` per
+          member. Do that: a HubSpot private app is capped at 190 requests per
+          10 seconds, and the per-member loop hits the ceiling around the
+          fortieth lead, mid-record.
         - **"add_members"** / **"remove_members"** : add/remove `record_ids`.
           On op="add_members", also passing `remove_record_ids` does both in a
           SINGLE list revision (one recompute instead of two).
@@ -345,7 +510,9 @@ def register(mcp: FastMCP) -> None:
             list_id: the list — required for every op except search, create and
                 record_lists.
             object_type: contacts | companies | deals | tickets, or a raw
-                objectTypeId ("2-7") for a custom object.
+                objectTypeId ("2-7") for a custom object. On op="members" with
+                `properties`, it is the type the members are read as — omitted,
+                it is derived from the list itself (one extra GET).
             name: op="create" the list name ; op="update" the new name ;
                 op="get" look the list up by name (with `object_type`).
             processing_type: op="create" — MANUAL (default) | DYNAMIC | SNAPSHOT.
@@ -366,11 +533,48 @@ def register(mcp: FastMCP) -> None:
             include_filters: op="get" — also return the list's criteria tree.
             limit: op="members" — page size.
             after: op="members" — pagination cursor from a previous response.
+            properties: op="members" ONLY — the INTERNAL property names to
+                return for each member (get them from `hubspot_property`;
+                "Deal stage" is not one). Each row then carries the membership
+                keys it already had plus `properties`. A member the batch read
+                did not return keeps its row, with `properties: null` and a
+                `missing` reason — rows are never dropped. A name absent from a
+                returned record is listed in that row's `missing_properties`,
+                which is how a typo tells itself apart from an empty column.
+                The answer also carries `missing_ids` (the batch read's own
+                verdict on what it could not fetch) and `missing_count`, when
+                either is non-empty. Omitted, the op answers exactly what it
+                always did: ids only. An EMPTY list is refused, not treated as
+                "omitted" — it would cost two extra calls to return HubSpot's
+                default columns, which is nobody's request.
             dry_run: op="delete"/"clear_members"/"remove_members" — validate and
                 report what WOULD change (with the list's current state), without
                 writing.
         """
         c = _client()
+
+        # `properties` ne veut rien dire ailleurs que sur op='members' : le
+        # taire serait une divergence MUETTE — l'appelant croirait avoir demandé
+        # des colonnes et lirait un résultat qui n'en porte pas.
+        if properties is not None and op != "members":
+            raise _bad(
+                f"op='{op}' n'accepte pas properties : la projection des "
+                "colonnes n'existe que sur op='members' (pour les objets, "
+                "c'est hubspot_object qui la porte)")
+        wanted = _names(properties, "properties", op)
+
+        # `properties=[]` demande ZÉRO colonne. Le laisser passer prendrait le
+        # chemin enrichi : un `get_list` de plus, puis un batch read dont le
+        # corps omet `properties` — auquel HubSpot répond sa projection PAR
+        # DÉFAUT. L'appelant paierait trois appels pour des colonnes que
+        # personne n'a demandées. Les deux intentions possibles ont déjà chacune
+        # leur écriture (omettre l'argument = les ids seuls ; le remplir = des
+        # colonnes) ; la troisième se refuse, elle ne se devine pas.
+        if wanted is not None and not wanted:
+            raise _bad(
+                f"op='{op}' attend properties = liste NON VIDE de noms internes "
+                "de propriétés ; properties=[] ne demande aucune colonne — omets "
+                "l'argument pour n'avoir que les ids d'enregistrements")
 
         if op == "search":
             return c.search_lists(
@@ -421,8 +625,34 @@ def register(mcp: FastMCP) -> None:
             return c.restore_list(_need(list_id, "list_id", op))
 
         if op == "members":
-            return c.get_list_memberships(
-                _need(list_id, "list_id", op), limit=limit, after=after)
+            lid = _need(list_id, "list_id", op)
+            page = c.get_list_memberships(lid, limit=limit, after=after)
+            if wanted is None:
+                # Chemin historique INTACT : un appel, sa réponse rendue telle
+                # quelle — pas ré-emballée, pas augmentée d'une clé.
+                return page
+            membres = (page or {}).get("results") or []
+            otype = _batch_object_type(c, lid, object_type, op)
+            ids = [str(m.get("recordId")) for m in membres
+                   if m.get("recordId") is not None]
+            # Le découpage à 100 est celui de HubSpot, donc celui du CLIENT :
+            # un second découpeur ici serait un miroir que rien ne relie, et
+            # qui dériverait en silence. Un batch read vide est un 400 chez
+            # HubSpot — une page sans membre n'a rien à lire.
+            #
+            # `batch_read_objects` rend une ENVELOPPE, pas une liste :
+            # `{"results": [...], "missing_ids": [...]}`. On l'ouvre, et on SERT
+            # `missing_ids` — c'est le verdict du client sur les ids que HubSpot
+            # n'a pas rendus, et le re-dériver ici en jetant le sien ferait de
+            # deux calculs un seul chiffre, sans jamais pouvoir les confronter.
+            lecture = (c.batch_read_objects(otype, ids, properties=wanted)
+                       if ids else {"results": [], "missing_ids": []})
+            records, absents = _batch_read_envelope(lecture)
+            out = dict(page or {})  # `paging` et `total` survivent verbatim
+            out["results"] = _rows_from_memberships(membres, records, wanted)
+            out["object_type"] = otype  # provenance : le type réellement lu
+            out.update(_missing_report(out["results"], absents))
+            return out
 
         if op == "add_members":
             lid = _need(list_id, "list_id", op)
