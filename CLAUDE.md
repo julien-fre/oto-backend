@@ -154,7 +154,7 @@ Denylist calculée `(sub, org active)` dans `session_visibility.py`, appliquée 
 désactivables** (méta-toolset + identité, échappatoires de contexte, boucle d'usage, dispatch
 universel). ⚠️ **Gouvernance, PAS une barrière de sécurité** (ADR 0031), additive : une équipe ne
 RÉVÈLE jamais ce que l'org a masqué. ⚠️ **Stdio local = accès complet.**
-⚠️ **TROISIÈME grain (01/09)** : `BETA_TOOLS` (les 3 verbes `oto_node*`) exige l'option `beta` posée par un admin sur l'user ou l'org — population **CHOISIE**, non self-activable, et **fail-CLOSED** (à contre-courant des autres blocs). La face REST n'est PAS gatée : écart assumé. **`docs/tool-visibility.md`.**
+⚠️ **TROISIÈME grain (01/09)** : `BETA_TOOLS` exige l'option `beta` posée par un admin sur l'user ou l'org — population **CHOISIE**, non self-activable, et **fail-CLOSED** (à contre-courant des autres blocs). La face REST n'est PAS gatée : écart assumé. Deux motifs d'entrée : les 3 verbes `oto_node*` (surface provisoire), et **`oto_resource_v2`, une surface DOUBLÉE**. ⚠️ **Un contrat servi ne se durcit pas en place, il se double** : rendre `resource_type` obligatoire sur `oto_resource` a cassé de vrais appelants (#756, reverté #774) — l'héritée garde son défaut, **écrit comme défaut connu dans sa description servie**, la stricte l'exige, et la bêta lui donne une population choisie **sans date-couperet**. ⚠️ **N'entrent dans `BETA_TOOLS` que des noms NEUFS** : fail-closed, y poser une surface vivante la retirerait à tous en silence. **`docs/tool-visibility.md`, `docs/ownership.md`.**
 
 ## Org/équipe : session, maison, consultation (ADR 0023)
 

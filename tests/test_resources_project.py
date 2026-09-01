@@ -2,9 +2,11 @@
 (transfer/share/unshare étaient déjà génériques via le seam ownership).
 """
 import pytest
+from pydantic import ValidationError
 
 from oto_mcp import ownership
 from oto_mcp.capabilities import resources as R
+from oto_mcp.capabilities import resources_v2 as V2
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
 
 CTX = ResolvedCtx(sub="u1", org_id=None)
@@ -107,10 +109,26 @@ def test_transfer_to_org_requires_membership(monkeypatch):
     assert e.value.code == "not_org_member"
 
 
-def test_unknown_type(monkeypatch):
+def test_unknown_type():
+    """Surface HÉRITÉE : le refus reste dans le handler, et garde son code nommé.
+
+    #659 l'avait déplacé sur l'entrée (`Literal`), ce qui suppose de retirer le défaut
+    du champ — donc de casser les appelants qui l'omettent. Le lot a été reverté
+    (#774) : ici, `resource_type` est un `str` libre, la famille inconnue atteint
+    `_check_type`, et le client reçoit toujours la liste des types acceptés.
+    """
     with pytest.raises(AuthzDenied) as e:
         R._resources(CTX, R.ResourceInput(op="list", resource_type="nope"))
     assert e.value.code == "unsupported_resource_type"
+
+
+def test_unknown_type_sur_la_surface_stricte_est_refuse_a_la_validation():
+    """Surface STRICTE : le même refus, une couche plus tôt. `resource_type` y est un
+    `Literal`, donc l'entrée est rejetée avant le handler — mêmes égards que `op`. Ce
+    que le client perd en message nommé, le contrat le lui rend : l'énuméré est publié
+    dans le schéma, donc lisible AVANT d'appeler."""
+    with pytest.raises(ValidationError):
+        V2.ResourceInputV2(op="list", resource_type="nope")
 
 
 # ── ADR 0048 : « Partager » unifié (audience × rôle) ──────────────────────────
