@@ -151,3 +151,92 @@ jobs:
       - name: Effacer la clé de lecture
         if: always()
         run: rm -rf "${{ steps.contrat.outputs.travail }}"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LE MÊME CONTRÔLE, MAIS AVANT LA FUSION.
+  #
+  # `contrat-front` (ci-dessus) juge ce qui est SERVI par la préproduction : il ne peut
+  # donc parler qu'APRÈS le déploiement, donc après la fusion. Un garde-fou qui refuse
+  # après coup laisse la rupture atteindre la préproduction — et l'état que le partenaire
+  # peut interroger — avant de le dire. Ce job-ci juge le contrat que le CODE DE LA PR
+  # produirait, sans rien déployer : `openapi.build()` dérive le document par simple
+  # import, sans serveur ni base (c'est déjà ce que fait tests/test_openapi.py).
+  #
+  # Les deux se complètent et ne font pas doublon : celui-ci dit « ce que tu t'apprêtes à
+  # fusionner casserait le partenaire », celui d'après dit « ce qui est réellement servi
+  # a divergé ». Le second reste nécessaire — un déploiement peut servir autre chose que
+  # ce que le code de la branche annonce.
+  #
+  # Mêmes règles de verdict, délibérément : seule une rupture d'appel bloque. Un ajout
+  # compatible sort en avertissement et n'empêche PAS de fusionner — sinon on ne pourrait
+  # plus livrer un champ de réponse supplémentaire.
+  contrat-front-pr:
+    name: Contrat du front consommateur (avant fusion)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install (deps + dev)
+        run: pip install -e ".[dev]"
+
+      - name: Dériver le contrat que CE code servirait
+        run: |
+          set -euo pipefail
+          python - <<'PY' > /tmp/openapi-de-la-pr.json
+          import json
+          from oto_mcp import openapi
+          print(json.dumps(openapi.build()))
+          PY
+          echo "contrat dérivé : $(wc -c < /tmp/openapi-de-la-pr.json) octets"
+
+      - name: Lire le contrat épinglé par le front
+        id: contrat
+        env:
+          CLE_LECTURE: ${{ secrets.OTO_FRONTEND_CONTRACT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLE_LECTURE:-}" ]; then
+            echo "::warning title=Contrat du front non confronté::Le secret OTO_FRONTEND_CONTRACT_KEY est absent — aucun jugement n'a été rendu."
+            echo "lu=non" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          TRAVAIL="$(mktemp -d)"
+          echo "travail=$TRAVAIL" >> "$GITHUB_OUTPUT"
+          umask 077
+          printf '%s\n' "$CLE_LECTURE" > "$TRAVAIL/cle"
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$TRAVAIL/hotes"
+          export GIT_SSH_COMMAND="ssh -i $TRAVAIL/cle -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$TRAVAIL/hotes"
+          if ! git clone --depth 1 --filter=blob:none --sparse --quiet \
+                 git@github.com:otomata-tech/oto-frontend.git "$TRAVAIL/front" 2>"$TRAVAIL/err"; then
+            echo "::warning title=Contrat du front inaccessible::Dépôt illisible — aucun jugement rendu. $(tr '\n' ' ' < "$TRAVAIL/err" | head -c 200)"
+            echo "lu=non" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git -C "$TRAVAIL/front" sparse-checkout set --no-cone /api/openapi-served.json || true
+          if [ ! -s "$TRAVAIL/front/api/openapi-served.json" ]; then
+            echo "::warning title=Contrat du front introuvable::api/openapi-served.json absent ou vide — renommé chez lui ? Aucun jugement rendu."
+            echo "lu=non" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "lu=oui" >> "$GITHUB_OUTPUT"
+
+      - name: Confronter
+        if: steps.contrat.outputs.lu == 'oui'
+        run: |
+          set -uo pipefail
+          code=0
+          python3 scripts/contrat-front.py \
+            "${{ steps.contrat.outputs.travail }}/front/api/openapi-served.json" \
+            /tmp/openapi-de-la-pr.json || code=$?
+          if [ "$code" = "2" ]; then
+            echo "::error title=Confrontation impossible::Document illisible — le contrat N'A PAS été jugé."; exit 1
+          fi
+          if [ "$code" != "0" ]; then
+            echo "::error title=Cette PR casserait le front consommateur::Une opération qu'il épingle disparaît ou change d'entrée. Garder la compatibilité, ou le prévenir AVANT de fusionner."; exit 1
+          fi
+
+      - name: Effacer la clé de lecture
+        if: always()
+        run: rm -rf "${{ steps.contrat.outputs.travail }}"
