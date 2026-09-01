@@ -14,8 +14,12 @@ source. Gestion utilisateur = oto.ninja `/account`, via REST.
 
 Python 3.10 (`>=3.10`, ce qu'a tuls.me) · `fastmcp>=3.4.2` (plancher = dernier) + SDK `mcp` ·
 `psycopg[binary]` + `psycopg-pool` (PG managé Scaleway `otomata-main`, DB `oto_mcp`) · JWT Logto ES384.
-⚠️ **`oto-core[browser]` est PINNÉ sur un tag git** ; `pip` **ne réinstalle pas** une dép VCS déjà là,
+⚠️ **`oto-core[anonymize]` est PINNÉ sur un tag git** ; `pip` **ne réinstalle pas** une dép VCS déjà là,
 et **le pin est édité par TOUTES les sessions //** → bumper en **superset**, garder la haute.
+⚠️ **Une grappe de rouges en local sur les connecteurs les plus RÉCENTS, avec
+`No module named 'oto.tools.<connecteur>'` au fond, n'est PAS ton lot** : c'est le venv partagé en
+retard sur le pin — la CI, qui installe au tag, passe. Reconnaître et rejouer sur pristine sans
+muter le venv partagé : **`commands.md` §Pin oto-core → « Faux rouge »**.
 ⚠️ **Les rows PG sont des DICTS** — `r["col"]`, jamais `r[0]`.
 
 ## Architecture
@@ -207,7 +211,8 @@ key en Secret Manager au boot, 0 plaintext) ; S3 pour avatars/logos.
 - `conventions.md` — règles de travail, où vit un fichier · **à lire en premier**
 - `connector-model.md` — un connecteur : disponibilité / auth / option · **puis**
 - `commands.md` — tests, deploy, logs, inspection DB, pin oto-core, et les pièges qui coûtent une
-  heure (venv sans pytest, clone qui teste en réalité le tree partagé, registre d'outils vide)
+  heure (venv sans pytest, clone qui teste en réalité le tree partagé, **faux rouges d'un venv en
+  retard sur le pin**, registre d'outils vide)
 - `architecture.md` — l'arbre des modules, les 4 couches
 - `couches-et-capacites.md` — ADR 0004 + capacités
 - `connector-vault.md` — registre, coffre, instances
