@@ -38,4 +38,6 @@ vider une liste (`clear_members`) et la supprimer (`delete`) acceptent `dry_run=
 
 ### propriétés — à lire avant d'écrire
 
-les noms internes hubspot ne sont pas les libellés de l'interface (`dealstage`, pas « Deal stage »), et une liste déroulante n'accepte que ses valeurs déclarées. `hubspot_property` (op `list`) donne le schéma réel d'un type d'objet — c'est ce qui rend fiables les `create`/`update` de `hubspot_object` **et** les critères `filter_branch` d'une liste dynamique, qui référencent les propriétés par nom interne.
+les noms internes hubspot ne sont pas les libellés de l'interface (`dealstage`, pas « Deal Stage »), et une liste déroulante n'accepte que ses valeurs déclarées. `hubspot_property` (op `list`) donne le schéma réel d'un type d'objet — sur un portail neuf, ça fait déjà 404 propriétés sur les contacts dont 45 énumérations. c'est ce qui rend fiables les `create`/`update` de `hubspot_object` **et** les critères `filter_branch` d'une liste dynamique, qui référencent les propriétés par nom interne.
+
+⚠️ une exception, vérifiée en live : `dealstage` revient avec une liste d'options **vide**. les étapes d'un deal appartiennent à un *pipeline*, pas à la propriété — les lire demande l'api pipelines, que le connecteur ne monte pas encore.

@@ -480,11 +480,17 @@ def register(mcp: FastMCP) -> None:
         """HubSpot properties — the field schema of a CRM object type.
 
         Read this BEFORE writing anything. HubSpot's internal property names are
-        not the labels shown in the UI (`dealstage`, not "Deal stage"), and an
+        not the labels shown in the UI (`dealstage`, not "Deal Stage"), and an
         enumeration property only accepts its declared `options[].value` — so a
         create/update written from the label is a guess that fails or, worse,
         silently writes nothing. List criteria (`hubspot_list`'s `filter_branch`)
         reference the same internal names.
+
+        ⚠️ One enumeration is NOT self-describing here: `dealstage` comes back
+        with an EMPTY `options` list, because deal stages belong to a pipeline,
+        not to the property. Reading this tool is not enough to write a deal
+        stage — that needs the Pipelines API, which this connector does not
+        expose yet.
 
         Ops:
         - **"list"** (default) : every property of `object_type`, with its type,
