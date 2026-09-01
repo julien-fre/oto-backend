@@ -31,8 +31,9 @@ import uuid
 
 import pytest
 
-from oto_mcp.capabilities import docs as D
+from oto_mcp import db, ownership
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+from oto_mcp.capabilities.docs import core as D
 
 CTX = ResolvedCtx(sub="u1", org_id=None)
 DOC = {"id": 3, "project_id": 7, "parent_id": None, "title": "Page", "body_md": "neuf",
@@ -44,20 +45,20 @@ REV = {"id": 42, "doc_id": 3, "title": "Titre d'avant", "body_md": "corps d'avan
 @pytest.fixture
 def seams(monkeypatch):
     rec = {"update": [], "delete": [], "revision": [], "count": []}
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda i: dict(DOC, id=i) if i == 3 else None)
-    monkeypatch.setattr(D.db, "update_doc",
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(db, "get_doc_by_id", lambda i: dict(DOC, id=i) if i == 3 else None)
+    monkeypatch.setattr(db, "update_doc",
                         lambda did, title=None, body_md=None, kind=None, edited_by=None,
                         description=None, expected_rev=None:
                         rec["update"].append((did, title, body_md, edited_by, expected_rev)))
-    monkeypatch.setattr(D.db, "get_doc_revision",
+    monkeypatch.setattr(db, "get_doc_revision",
                         lambda did, rid: rec["revision"].append((did, rid)) or (
                             dict(REV) if (did, rid) == (3, 42) else None))
-    monkeypatch.setattr(D.db, "delete_doc",
+    monkeypatch.setattr(db, "delete_doc",
                         lambda did: rec["delete"].append(did) or 4)
-    monkeypatch.setattr(D.db, "count_doc_descendants",
+    monkeypatch.setattr(db, "count_doc_descendants",
                         lambda did: rec["count"].append(did) or 4)
-    monkeypatch.setattr(D.db, "log_project_activity", lambda *a, **k: None)
+    monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
     return rec
 
 
@@ -90,8 +91,8 @@ def test_revert_honore_expected_rev(seams):
 
 def test_revert_sur_une_page_modifiee_entre_temps_rend_409(seams, monkeypatch):
     def _conflit(*a, **k):
-        raise D.db.DocConflict("cafe1234")
-    monkeypatch.setattr(D.db, "update_doc", _conflit)
+        raise db.DocConflict("cafe1234")
+    monkeypatch.setattr(db, "update_doc", _conflit)
     with pytest.raises(AuthzDenied) as e:
         D._doc(CTX, D.DocInput(op="revert", doc_id=3, revision_id=42, expected_rev="vieux"))
     assert (e.value.status, e.value.code) == (409, "conflict")
@@ -114,7 +115,7 @@ def test_revert_vers_une_revision_inconnue_rend_404_et_n_ecrit_rien(seams):
 
 
 def test_revert_exige_l_ecriture(seams, monkeypatch):
-    monkeypatch.setattr(D.ownership, "can_access",
+    monkeypatch.setattr(ownership, "can_access",
                         lambda sub, t, rid, want="read": want == "read")
     with pytest.raises(AuthzDenied) as e:
         D._doc(CTX, D.DocInput(op="revert", doc_id=3, revision_id=42))
@@ -167,7 +168,7 @@ def test_dry_run_dit_que_revert_ne_defait_pas_une_suppression(seams):
 def test_dry_run_exige_l_ecriture_comme_la_suppression(seams, monkeypatch):
     """Le compte des pages d'un sous-arbre est une information sur le contenu : il ne
     se donne pas plus largement que le geste qu'il prépare."""
-    monkeypatch.setattr(D.ownership, "can_access",
+    monkeypatch.setattr(ownership, "can_access",
                         lambda sub, t, rid, want="read": want == "read")
     with pytest.raises(AuthzDenied) as e:
         D._doc(CTX, D.DocInput(op="delete", doc_id=3, dry_run=True))
@@ -300,7 +301,7 @@ def test_live_revert_de_bout_en_bout_par_la_capacite(live, monkeypatch):
     vraie base. C'est la couture — la capacité, `get_doc_revision` et `update_doc`
     ensemble — que les doubles ne peuvent pas prouver."""
     from oto_mcp import db
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
     pid = _projet("Bout en bout")
     did = db.create_doc(pid, "Avant", body_md="texte d'avant", created_by="u_657")
     D._doc(CTX, D.DocInput(op="update", doc_id=did, title="Après", body_md="texte d'après"))
@@ -316,7 +317,7 @@ def test_live_revert_de_bout_en_bout_par_la_capacite(live, monkeypatch):
 def test_live_delete_de_bout_en_bout_annonce_puis_supprime(live, monkeypatch):
     """`dry_run` puis le vrai geste : le compte annoncé est celui qui part."""
     from oto_mcp import db
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
     pid = _projet("Annonce")
     racine = db.create_doc(pid, "Racine", created_by="u_657")
     for i in range(3):

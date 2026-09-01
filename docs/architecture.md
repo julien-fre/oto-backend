@@ -16,7 +16,7 @@ fichier neuf) : **`docs/conventions.md` §Où vit un fichier**.
 oto_mcp/
 ├── server.py         # FastMCP + uvicorn, _SERVER_INSTRUCTIONS, routes /api, tools
 ├── capabilities/     # les CAPACITÉS (ADR 0009), sous-rangées par domaine : `orgs/`,
-│                     #   `connectors/`, `datastore/`, `groups/`. Le socle commun
+│                     #   `connectors/`, `datastore/`, `groups/`, `docs/`. Le socle commun
 │                     #   (`registry`, `_authz`, `_types`, `_mcp_adapter`,
 │                     #   `_rest_adapter`) reste à la racine du package.
 ├── api/              # la face REST `/api/*` : `routes` (la TABLE — son ordre est un
@@ -98,7 +98,9 @@ garde posée au SEAM, **sans allowlist**, tripwire `test_rest_rejects_unknown_fi
 ⚠️ **Secret brut jamais en argument MCP** — la pose de secret est dashboard-only (binding
 `mcp` retiré) ; le MCP ne porte que les droits/grants.
 ⚠️ **`capabilities/` est SOUS-RANGÉ par domaine depuis le 28/08** : `orgs/`,
-`connectors/`, `datastore/`, `groups/` (les quatre familles de ≥ 4 modules), le socle
+`connectors/`, `datastore/`, `groups/`, et `docs/` depuis le 01/09 (oto-backend#734 — un
+module de 870 lignes, découpé en `common`/`view`/`notify`/`reads`/`writes`/`patch`/
+`history`/`changes`, le dispatcher et le descripteur restant dans `core`), le socle
 commun (`registry`, `_authz`, `_types`, les deux adaptateurs) restant à la racine. Le
 hub `capabilities/__init__.py` déclare chaque module en **import absolu** — il ne lie
 aucun nom court, donc `orgs/core` et `groups/core` ne se disputent rien et l'ordre des

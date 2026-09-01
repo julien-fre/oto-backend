@@ -7,7 +7,7 @@ destinataire ne peut que LIRE, uniquement CE projet.
 import pytest
 
 from oto_mcp import subdomain_project as sp
-from oto_mcp.capabilities import docs as docs_cap
+from oto_mcp.capabilities.docs import common as docs_common
 from oto_mcp.capabilities._authz import PROJECT_SHARED_READ
 from oto_mcp.capabilities._types import AuthzDenied, RawCtx
 
@@ -61,6 +61,6 @@ def test_authz_resolves_anonymous_reader_when_exposed(monkeypatch):
 
 def test_reader_is_scoped_to_the_published_project(monkeypatch):
     _with_ctx(monkeypatch, _ctx(docs_exposed=True))
-    assert docs_cap._can(None, 169, "read") is True
-    assert docs_cap._can(None, 170, "read") is False    # autre projet de l'org
-    assert docs_cap._can(None, 169, "write") is False   # lecture seule
+    assert docs_common.can(None, 169, "read") is True
+    assert docs_common.can(None, 170, "read") is False    # autre projet de l'org
+    assert docs_common.can(None, 169, "write") is False   # lecture seule

@@ -436,7 +436,7 @@ class InstrSetInput(BaseModel):
     # #662 : verrou OPTIMISTE — la version que le client a lue. Différente de la
     # version courante (ou procédure absente) ⟹ 409 `version_conflict`, l'écriture
     # n'a pas lieu. Omis = l'upsert historique, qui écrase le travail d'un autre
-    # éditeur sans le dire. Miroir d'`expected_rev` sur les pages (`docs.py`).
+    # éditeur sans le dire. Miroir d'`expected_rev` sur les pages (`capabilities/docs/`).
     expected_version: Optional[int] = None
 
 

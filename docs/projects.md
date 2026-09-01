@@ -10,7 +10,8 @@ Conteneur de travail **possédé** (owned resource ADR 0030) : un but + ses enti
 l'accès du projet — pas d'ownership propre), `project_activity` (journal best-effort).
 Capacités co-déclarées : **`oto_project`** (`capabilities/projects.py`, op create/list/get/
 update/archive/link/unlink/activity, `POST /api/me/projects`), **`oto_doc`** (`capabilities/
-docs.py`, op create/list/get/update/patch/delete/move/revisions/revert…, `POST /api/me/docs`).
+docs/`, op create/list/get/update/patch/delete/move/revisions/revert…, `POST /api/me/docs` —
+un package depuis le 01/09, dispatcher et descripteur dans `docs/core.py`).
 Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dispatch `_OPS`).
 
 > **Une liste rend son INDEX, jamais les corps (14/08).** ⚠️ **Ce doc a laissé croire le

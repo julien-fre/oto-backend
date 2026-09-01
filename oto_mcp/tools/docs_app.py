@@ -120,8 +120,8 @@ def register(mcp: FastMCP) -> None:
                     Text(meta)
                     Markdown(row.get("body_md") or "*(page vide)*")
                     if tok:
-                        from ..capabilities.docs import _public_doc_url
-                        Text(f"lien public : {_public_doc_url(tok)}")
+                        from ..capabilities.docs.view import public_doc_url
+                        Text(f"lien public : {public_doc_url(tok)}")
             return card
 
         pid = int(project_id) if project_id is not None else _kb_project_id(sub)
