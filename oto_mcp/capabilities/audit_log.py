@@ -6,9 +6,12 @@ opérateur plateforme (`/api/admin/monitoring/*`). Ici on l'ouvre à un **org_ad
 pour SON org — preuve de conformité (RGPD art. 28, ISO 42001), revue, dossier client.
 
 Surface : capacité **REST-only** `GET /api/orgs/{id}/audit-log/export`, gatée
-`ORG_ADMIN_OF`. Retourne du JSON structuré — le bouton « exporter CSV » du dashboard
-sérialise ce JSON côté client (l'adaptateur REST des capacités ne produit que du JSON ;
-pas de stream text/csv ici).
+`ORG_ADMIN_OF`. Retourne du JSON structuré : l'adaptateur REST des capacités ne produit
+que du JSON, il n'y a pas de stream `text/csv` ici, et une mise en CSV se fait donc côté
+client. ⚠️ Relevé le 2026-09-01 : **aucun consommateur ne l'appelle encore** — le
+dashboard n'en porte que les types générés depuis l'OpenAPI, et le contrat épinglé par
+le front tiers ne l'inclut pas. Le commentaire d'origine annonçait ici un « bouton
+exporter CSV du dashboard » qui n'existe pas ; il est donc corrigé plutôt que recopié.
 
 **Ce que cet export doit pouvoir faire, et qu'il ne faisait pas (#770).** Ce n'est pas
 une lentille de confort : c'est une pièce qu'un client produit pour se justifier devant

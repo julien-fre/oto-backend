@@ -211,7 +211,7 @@ plateforme avec `org_id` posé, **plus une** qui n'existe qu'à cet étage, et *
 |---|---|
 | `summary` · `calls` · `call` · `runs` · `run` · `connectors` · `gaps` · `tool_quality` | mêmes projections, `org_id` passé |
 | `adoption` | **propre à l'org** — membre par membre : qui s'en sert, qui n'a jamais essayé, qui est bloqué par un connecteur. Part d'`org_members` (sinon un membre à 0 appel serait invisible — c'est justement lui qu'on cherche) |
-| `export` | rebranche `org.audit_log.export` (#67), même autz, même scope |
+| `export` | rebranche `org.audit_log.export` (#67), même autz, même scope. **Dit sa complétude** (`total`/`truncated`/`next_cursor`, #770) — voir plus bas |
 | ~~`rest`~~ · ~~`funnel`~~ | ne descendent pas : télémétrie de surface `/api/*` et comptes de toute la base = santé d'infra, pas usage d'org. `adoption` répond à la question du funnel à l'échelle d'une équipe |
 
 **Gardes cross-org à ne pas perdre** : `call_id` est un BIGSERIAL donc devinable →
@@ -234,6 +234,53 @@ page quand elle est pleine, sinon 30 j — dite dans l'indice ; jamais sans born
 **Depuis le 30/08 (#639)**, la cause du cas mesuré n'existe plus : un appel sans `_org`
 dans un run est résolu — donc stampé — dans l'org du run. `hors_scope` reste, pour ce
 qu'un axe explicite continue légitimement de mettre dehors (agent multi-org).
+
+## L'export d'audit dit s'il est complet — ou dit qu'il ne peut pas (#770, 01/09)
+
+`GET /api/orgs/{id}/audit-log/export` n'est pas une lentille de confort : c'est la
+pièce qu'un client produit **pour se justifier** devant un auditeur ou un délégué à la
+protection des données. Il ne rendait que `count = len(calls)` APRÈS troncature — un
+fichier de 1000 lignes ne disait donc pas si 1000 ou 50 000 appels avaient eu lieu.
+**Une pièce qui ne dit pas si elle est complète n'atteste de rien**, et une absence
+dans une vue plafonnée se lit comme un zéro.
+
+| champ | ce qu'il dit |
+|---|---|
+| `total` | la population de la **fenêtre**, indépendante de `limit` et du curseur |
+| `count` | les lignes de **cette réponse** (`len(calls)`) |
+| `truncated` | cette réponse ne porte pas toute la fenêtre |
+| `next_cursor` | opaque, à renvoyer tel quel ; `null` = plus rien après cette page |
+| `until_effectif` | la borne haute **réellement appliquée** ; `until` reste le réécho de ce qui a été reçu |
+
+⚠️ **Un total calculé sur un autre jeu que la page qu'il coiffe est PIRE que pas de
+total** : il a l'air d'attester. C'est la faute corrigée le même jour sur `node_rows`
+(#621), où le pied du tableau comptait des noms de colonnes non résolus pendant que la
+page les résolvait — sans que rien n'échoue. Trois mécanismes l'interdisent ici, et
+aucun n'est une intention : **une seule construction de clauses**
+(`usage._audit_window_clauses`, comme `journal_calls.call_filter_clauses` pour la page
+et son plancher) ; **une seule transaction en REPEATABLE READ**, donc un snapshot
+partagé ; **une borne haute toujours posée**, gelée au premier appel et reportée par le
+curseur.
+
+**Le curseur porte la FENÊTRE, pas seulement la position** — sans quoi elle se
+rouvrirait à chaque page (journal alimenté en continu, trié récent d'abord) et le
+`total` de la page 2 dépasserait celui de la page 1 : deux vérités successives, et une
+concaténation qui ne vaut plus son total. Corollaire servi : repasser `since`/`until`
+avec un `cursor` est **refusé** (`400 window_with_cursor`), jamais ignoré ; un curseur
+abîmé rend `400 invalid_cursor` (même code et même geste que `node_rows`), pas un 500.
+Le gel de la borne haute répond du même coup à la vraie demande de conformité : un
+export sur une **période fermée**.
+
+⚠️ **Le keyset se bâtit sur un horodatage à la microseconde**, jamais sur le
+`created_at` servi : le row factory tronque ce dernier à la seconde
+(`_conn._normalize_value`). Un curseur bâti sur la valeur servie sauterait, en silence,
+les lignes qui partagent la seconde de la dernière ligne de la page.
+
+**Ce que `total` ne peut pas dire, et qui est écrit dans le schéma servi** (pas
+seulement ici, parce que le lecteur d'un export ne lit pas cette page) : il compte ce
+qui **existe**, pas ce qui a eu lieu. En deçà de la rétention (ci-dessous) et pour les
+appels antérieurs à la colonne `org_id`, un `total: 0` ne veut pas dire « rien n'a eu
+lieu ». C'est la borne basse historique de l'instrument.
 
 ## Rétention : 90 jours en ligne, le reste en froid (posé le 2026-08-27)
 
