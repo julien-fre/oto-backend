@@ -87,6 +87,40 @@ au même endroit (ex. `doc_links`, `doc_embeddings` : table + index créés ense
 table fraîche = sûr). Corollaire extension : `CREATE EXTENSION vector` doit précéder
 `_SCHEMA` si une table de `_SCHEMA` utilise `halfvec`/`vector`.
 
+**La règle est tenue mécaniquement depuis le 2026-09-01 (#781).** Elle ne l'était pas :
+`tests/test_boot_order_replay.py` avait été écrit pour ce piège précis et **ne le jouait
+jamais**, parce qu'il bootait une base **vierge** — où le `CREATE TABLE IF NOT EXISTS`
+pose la colonne inline, donc où l'index la trouve toujours. Le défaut n'existe que là où
+le `CREATE TABLE` est SAUTÉ. Mesuré le 01/09 sur un lot qui portait le motif : CI verte,
+87 tests verts sur les 7 fichiers de garde du domaine boot, **boot réel rouge** contre une
+base construite par le tronc précédent — et la base étant partagée prod/preprod, un push
+sur `main` l'appliquait à la production.
+
+Ce que le cliquet joue maintenant : il part de la base neuve, **retire une colonne que le
+boot pose par `ALTER`** — ce qui est exactement l'état d'une base d'avant le lot qui l'a
+introduite — et rejoue la séquence. Pas pour une colonne choisie à la main : pour **les
+132**, relevées sur le SQL que le boot exécute vraiment (donc une colonne ajoutée demain y
+entre toute seule). Coût : ≈ 4 s. Aucun commit à extraire, aucun jeu de DDL figé à tenir à
+jour.
+
+Il vérifie deux choses, et la seconde ferme un défaut plus silencieux que le premier :
+le boot **passe**, et le schéma **converge** — tout ce que porte une base neuve doit se
+retrouver sur la base remise à niveau. Un `ALTER` qui pose la colonne sans la contrainte
+que le `CREATE TABLE` déclare inline (PK, UNIQUE, CHECK, FK) donne une base neuve avec la
+contrainte et une production sans : la FK ne mord pas, l'unicité n'unifie pas, et **rien
+ne rougit jamais** puisque les deux « marchent ». Huit divergences de cette famille
+existaient au 01/09 ; elles sont nommées dans `_DIVERGENCES_CONNUES` (les réparer demande
+un `DROP CONSTRAINT`, donc un ACTE sur base partagée, pas une ligne de boot) et **le
+cliquet refuse la neuvième**.
+
+Trois violations de la règle dormaient sur le tronc, inertes seulement parce que la
+production a ces colonnes depuis longtemps — corrigées dans le même lot : l'index
+`idx_unipile_accounts_org`, posé dans `_schema.py` **et** dans `_init.py` ; les index de
+recherche de `guides`, dont le prédicat lit `delivery` ; la conversion #317, qui lit
+`user_datastores.schema`. Les deux dernières se corrigent en **remontant l'`ALTER`** avant
+son premier lecteur : dans `_init.py`, l'ordre des lignes est une contrainte d'exécution,
+pas une mise en page.
+
 ## PROD et PREPROD partagent la MÊME base (constaté 07/08)
 
 > ⚠️ **PROD et PREPROD partagent la MÊME base** (constaté 07/08 : DSN **identiques** — même
