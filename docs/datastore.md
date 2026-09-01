@@ -603,8 +603,11 @@ un contrôle de fin de passage détectait après coup.
   ⚠️ **La capture est PARESSEUSE, pas à la pose du schéma** : un format ne vaut que pour
   l'avenir et ne réécrit aucune ligne (doctrine de `_overlong_warning` et consorts) — et
   elle rend la MÊME valeur, puisque rien n'a bougé entre la pose et la première
-  modification. Refusé à la pose sur un composite ou un `json` (exempt de la grammaire
-  des couches, #329), sous un sous-record, sur une cible de couche ; se combine avec
+  modification. Refusé à la pose sur un composite ou un `json` (la capture rangerait
+  l'objet entier dans la couche — ⚠️ **motif reformulé le 2026-09-01, #728** : il
+  invoquait l'exemption `json` de la grammaire des couches, qui ne vaut plus pour
+  l'adresse ; c'est la pose AUTOMATIQUE qui ne s'y déclare pas, l'annotation elle-même
+  s'y écrit à la main), sous un sous-record, sur une cible de couche ; se combine avec
   `readonly` (valeur verrouillée ET couche d'origine fermée — la pose n'a jamais lieu
   tant que la valeur ne bouge pas, et joue le jour où le propriétaire lève `readonly`).
 
@@ -896,6 +899,22 @@ déploiement progressif ne doit pas perdre ce qu'un nœud plus récent a écrit)
 REFUSÉE par son nom à l'écriture (une couche mal orthographiée s'apprend tout de
 suite, pas six semaines plus tard). ⚠️ Un dict qui mêle une couche connue et une clé
 inconnue reste une donnée `json` métier — arbitré en #329.
+
+⚠️ **Une colonne déclarée `json` S'ANNOTE** (2026-09-01, #728). Elle ne s'annotait pas,
+et le refus **mentait sur ce qu'il avait regardé** : « `X` n'est aucune colonne de ce
+tableau : ni dans cette écriture, ni sur la ligne visée, ni au schéma » — alors que le
+geste écrivait `X` deux clés plus haut et que le schéma la déclare. L'exemption `json`
+(l'objet métier ne se réinterprète pas) portait aussi sur l'ADRESSE : l'annotation
+n'était jamais rangée, restait pointée, et tombait dans le refus réservé aux colonnes
+introuvables. Asymétrie qui a mis la puce à l'oreille : `effectif.comment`, colonne
+scalaire, passait dans la MÊME écriture. **L'exemption protège le CONTENU de l'objet,
+pas le droit d'annoter la colonne** — le lecteur ne l'a jamais exemptée (`flat_layers`
+sert `X.comment` pour toute colonne), donc l'écriture doit reprendre ce qu'il sert.
+Restent exempts : le contenu de l'objet, et la garde des couches mixtes ci-dessus.
+Une seule ambiguïté en découle, et elle se tranche sur la VALEUR : un objet métier qui
+porte un champ nommé `comment` est servi comme s'il portait l'annotation, donc une
+réémission renvoie les deux formes — même valeur ⟹ c'est la lecture qui revient, on ne
+touche à rien ; valeur différente ⟹ refus qui nomme les deux.
 
 **Le blob lu en TEXTE** (recherche plein-texte, extrait, embedding) est reconstruit
 avec les valeurs à la place des enveloppes (`ROW_VALUES_TEXT_SQL`), sinon `q=hunter`
