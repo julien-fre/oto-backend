@@ -59,8 +59,16 @@ MOT = re.compile("doctrine", re.I)
 # Chaque entrée porte la RAISON pour laquelle le mot y survit. Une entrée sans
 # raison servie n'a rien à faire ici : elle se renomme.
 #
-# Total : 267 (fin du lot A) → 266 (B1) → 262 (B2) → 226 (B3) → 217 (B4) → 162 (B5).
+# Total : 267 (fin du lot A) → 266 (B1) → 262 (B2) → 226 (B3) → 217 (B4) → 162 (B5)
+# → 164 (#659, 2026-09-01).
 # Le compte descend à chaque PR, jamais l'inverse. Zéro au lot D (#526).
+#
+# ⚠️ **La seule remontée, et pourquoi elle n'est pas une dérive** : #659 a DÉCLARÉ le
+# contrat de `POST /api/resources`, ce qui écrit une seconde fois — dans un modèle
+# pydantic — l'énuméré `resource_type` que `resources.py` servait déjà. Ce sont deux
+# occurrences de la VALEUR (famille 2 ci-dessus), pas deux usages du mot : le lot D
+# les emporte avec le kind d'ownership, d'un seul geste. Si une PR fait remonter ce
+# total pour une autre raison, c'est la dérive que ce cliquet existe pour attraper.
 #
 # ⚠️ **Le lot B est fini : ce qui reste ne relève plus du vocabulaire.** Trois
 # familles, et une seule d'entre elles se lit encore comme un « mot à changer » :
@@ -107,6 +115,11 @@ PLAFONDS: dict[str, int] = {
     # — Kind de ressource `doctrine` (valeur en base, `resource_grants`), le motif
     #   `doctrine_needs_org_owner`, et l'énuméré `resource_type` servi qui les nomme.
     "oto_mcp/capabilities/resources.py": 10,
+    #   Le MÊME énuméré, une fois déclaré (#659, 2026-09-01) : `ResourceType` et le
+    #   `Literal["doctrine"]` qui discrimine la forme de réponse d'un guide. Aucun
+    #   usage neuf du mot — c'est la valeur servie par `resources.py`, désormais
+    #   écrite aussi dans le contrat. Elle sort avec elle au lot D (#526).
+    "oto_mcp/capabilities/resources_contract.py": 2,
     # — Valeur d'énumération servie `missing_doctrine` (contrainte CHECK en base).
     "oto_mcp/capabilities/usage.py": 2,
     # — DDL et migration de colonne : le SEUL endroit qui nomme encore la table. La
