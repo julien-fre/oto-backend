@@ -121,8 +121,17 @@ from oto_mcp.db import _schema, schema
 # TROIS lots ci-dessus (les quatre colonnes de `nodes`, puis le scrub, puis ces deux
 # colonnes), jamais recopiée d'un côté du conflit : trois lots ont touché la chaîne
 # le même jour, et un hash pris d'un seul côté valide un DDL que personne ne sert.
-EMPREINTE = "ad7a68a01c35fb926a58c355de2dfe2e4e160f203de75024eae781138e63bbc6"
-LONGUEUR = 119699
+# 2026-09-01 (#781, cliquet du boot sur base existante) : UN ordre RETIRÉ du DDL
+# assemblé — `CREATE INDEX IF NOT EXISTS idx_unipile_accounts_org` dans
+# `schema/unipile.py`. Il était posé aux DEUX endroits : ici, et dans `_init.py`
+# juste après l'`ALTER … ADD COLUMN org_id`. Or `org_id` peut MANQUER à une base qui
+# existe déjà (le `CREATE TABLE IF NOT EXISTS` y est sauté) et le DDL assemblé
+# s'exécute AVANT les ALTER : ce doublon aurait tué le premier boot d'une base
+# antérieure à la colonne. L'index continue d'être créé — à sa vraie place. Le reste
+# du delta est du COMMENTAIRE (l'explication laissée sur place, pour qu'il ne
+# revienne pas).
+EMPREINTE = "95eadf92649494d45006c62f4f739bb1f58b6f75f9cb18506505ae5d885d0083"
+LONGUEUR = 120191
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

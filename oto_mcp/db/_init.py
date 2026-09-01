@@ -338,6 +338,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
               FROM docs WHERE position IS NULL) s
         WHERE d.id = s.id AND d.position IS NULL
     """)
+    # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas, avec son
+    # backfill (ADR 0042, barreau 1). Les index de recherche construits juste
+    # après portent `WHERE delivery = 'on-demand'` : sur une base qui existe
+    # déjà, la colonne n'arrive que par cet ALTER, donc l'ordre est une
+    # contrainte d'exécution, pas une mise en page. Le backfill des readmes
+    # `init`, lui, reste à sa place.
+    conn.execute("ALTER TABLE guides ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'on-demand'")
     # Lot 3 Ship 1 : index FTS de la recherche transverse (GIN d'expression —
     # PAS de colonne STORED, qui réécrirait la table sous ACCESS EXCLUSIVE).
     # Source unique des expressions : db/search.py (index ↔ requête identiques).
@@ -425,6 +432,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # backfill n'est requis (0 est bien l'état d'une ligne jamais réservée).
     conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claims INTEGER NOT NULL DEFAULT 0")
     conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS abandon_reason TEXT")
+    # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas (ADR 0032 §6 /
+    # 0029, B6 : mode typé optionnel d'un namespace). La conversion #317 juste
+    # après LIT `d.schema` : sur une base qui existe déjà, la colonne n'arrive
+    # que par cet ALTER, et l'`UPDATE` mourait avant lui.
+    conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS schema JSONB")
     # #317 : le rôle `title` devient une PRÉSENTATION (`display`). Conversion
     # ADDITIVE — le `role` reste en place, seuls les lecteurs changent de source ;
     # son retrait est l'étape suivante du dossier, une fois la bascule vérifiée.
@@ -480,7 +492,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # guides B5 restent des how-to) + backfill des readmes init platform + user
     # depuis les ex-tables (org/group suivent au barreau 2). ON CONFLICT DO NOTHING
     # = idempotent, ne réécrit jamais une ligne guides déjà posée.
-    conn.execute("ALTER TABLE guides ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'on-demand'")
+    # (La colonne `delivery` elle-même est posée BEAUCOUP plus haut : les index
+    # de recherche la lisent dans leur prédicat — cf. le renvoi là-bas, #781.)
     conn.execute(
         "INSERT INTO guides (scope, owner_id, slug, delivery, body_md, created_at, updated_at) "
         "SELECT 'platform', 'platform', key, 'init', body_md, "
@@ -541,8 +554,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # chantier procédures B1) : ils ont tourné en prod à chaque boot depuis le
     # 06/07, et celui d'équipe lisait `org_group_instructions` (jumelle vouée au
     # DROP — un boot post-drop aurait cassé).
-    # ADR 0032 §6 / 0029 (B6) : mode typé optionnel d'un namespace de datastore.
-    conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS schema JSONB")
+    # (ADR 0032 §6 / 0029, B6 : `user_datastores.schema` est posée BEAUCOUP plus
+    # haut — la conversion #317 la lit avant ce point. Cf. le renvoi là-bas, #781.)
     # gap #4a : partage public d'un doc (token de lien public, lookup indexé).
     conn.execute("ALTER TABLE docs ADD COLUMN IF NOT EXISTS public_token TEXT")
     # ADR 0032 (« stop using slug ») : id surrogate stable + globalement unique pour

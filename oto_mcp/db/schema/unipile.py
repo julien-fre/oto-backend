@@ -41,7 +41,14 @@ CREATE TABLE IF NOT EXISTS unipile_accounts (
     disconnected_at TIMESTAMPTZ,
     PRIMARY KEY (sub, org_id, provider)
 );
-CREATE INDEX IF NOT EXISTS idx_unipile_accounts_org ON unipile_accounts(org_id);
+-- ⚠️ PAS d'index sur `org_id` ICI : la colonne est aussi posée par un
+-- `ALTER … ADD COLUMN` de `_init.py`, donc elle peut MANQUER sur une base qui
+-- existe déjà (le `CREATE TABLE IF NOT EXISTS` ci-dessus y est sauté) — et le
+-- DDL assemblé s'exécute AVANT les ALTER. L'index vit là où il doit vivre :
+-- dans `_init.py`, juste après l'ALTER (`docs/live-migrations.md`, § « Piège :
+-- CREATE INDEX d'une NOUVELLE colonne »). Retiré le 2026-09-01 (#781) : il
+-- était posé aux DEUX endroits, et celui-ci aurait tué le premier boot d'une
+-- base antérieure à la colonne.
 
 -- Corrélation hosted-auth (B3, voie webhook) : le `name` posé sur le lien Unipile
 -- ne revient PAS dans /accounts → on pose un **nonce** aléatoire comme `name` et on
