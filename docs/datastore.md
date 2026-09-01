@@ -1299,7 +1299,7 @@ un sens** — `oto_mcp/datastore/jetons.py` —, et les deux faces s'en servent.
 
 | jeton | ce qu'il désigne | champs qui l'acceptent |
 |---|---|---|
-| `@claimed` | la ligne que le run réserve, et son tableau | `namespace`, `id` |
+| `@claimed` | la ligne que le run réserve, et son tableau — **tant que le run est ouvert** (#645) | `namespace`, `id` |
 | `slot:<nom>` | le tableau bindé sous ce nom par le projet actif | `namespace` |
 | `*` | toutes les colonnes | `fields` |
 
@@ -1390,3 +1390,51 @@ sinon `bind_run`), best-effort, et rend `rows_released` avec **`0` explicite** �
 distingue « zéro ligne rendue » de « champ absent ». Détail et table des formes :
 `docs/runner-et-automatisations.md` § `complete`. Reste non couvert : l'agent
 conversationnel (hors runner) qui meurt — le bail seul.
+
+## `@claimed` après la clôture : un refus qui dit un MOMENT (#645, 30/08)
+
+**Suite directe du précédent, et son coût.** La clôture libère (#613) ; ce que personne
+n'avait dit, c'est que l'ADRESSE cesse de résoudre au même instant. Huitième passage du
+palier, 30/08/2026 : **99 refus sur 200 écritures**, tous « `@claimed` en tableau : ton
+travail ne tient aucune ligne en ce moment (aucune réservation active) » — émis sur des
+appels d'un harnais qui écrivait **après** `run_finish`. Le refus était exact et décrivait
+un **état** ; le problème était un **moment**.
+
+> **Un refus juste qui n'est pas le bon refus coûte autant qu'un refus faux** : il envoie
+> chercher une réservation oubliée là où c'est l'ordre des gestes qui est en cause. Deux
+> heures perdues, sur un mécanisme découvert deux fois à douze heures d'écart.
+
+**Ce qui change.** Quand le run de l'appel est clos, le refus le dit — « ton travail est
+CLOS depuis `<horodatage>` (`run_finish`), et sa clôture a libéré toutes ses lignes —
+l'alias ne désigne une ligne que TANT QUE le travail est ouvert, jamais après » — au lieu
+du texte de fin de file, qui reste servi quand le run est **ouvert** (c'est le cas normal,
+#517). L'heure y est parce que c'est elle qui fait le lien avec le geste précédent :
+« depuis 21:08:53 » se reconnaît dans un journal, « clos » ne se reconnaît pas.
+
+⚠️ **La clôture se lit du FAIT, jamais de l'index** — `db.run_closed_at` réutilise
+`_run_closure`, comme les lentilles. `runs.finished_at` est une écriture de confort que
+`finish_run` rate en silence quand l'index n'a pas été posé : un refus qui annoncerait
+une clôture d'après une colonne manquée mentirait exactement dans le cas qu'il est censé
+expliquer. Cas figés dans `tests/test_run_single_source.py`.
+
+⚠️ **Chemin d'ÉCHEC seulement**, et **le refus prime sur sa propre précision** : la
+requête n'est payée que lorsque le run ne tient rien (le nominal résout un bail sans y
+passer, test dédié), et si le journal est illisible on journalise puis on retombe sur le
+texte de fin de file — une erreur interne effacerait la conduite au moment précis où elle
+sert (`_adresse_reservee`).
+
+**Et la borne est dans la description servie**, là où le geste se construit : `data_write`
+la porte sur ses deux champs qui acceptent l'alias (`id` : « it resolves only while that
+run is OPEN, `run_finish` releases what it held » ; `namespace` : « open run only ») —
+l'asymétrie entre les deux est précisément ce qui avait coûté deux écritures le 29/08
+(#599) — et `data_release` sur sa phrase d'alias. Empreinte servie mesurée par
+`scripts/empreinte_servie.py --diff` : `data_release` description **+30**, `data_write`
+schéma **+72** ; aucune autre. Le refus ne prescrit **aucun outil de plus** : l'identifiant
+de la ligne est une valeur déjà reçue, pas un geste à exécuter (règle #613/#632,
+`docs/conventions.md`).
+
+Preuve de bout en bout dans `tests/datastore/test_claimed_run_clos_645.py` : réserver sous
+`_run_id=R`, clore R, écrire sous `@claimed` — contre PostgreSQL, par les outils montés
+par `register_all`, chaque appel dans sa propre session (le chemin de la flotte), avec un
+lecteur indépendant (`db.my_runs(open_only=True)`) qui atteste au passage que les faits
+écrits ont bien la forme d'une clôture.

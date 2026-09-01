@@ -24,6 +24,7 @@ import contextvars
 
 import base64
 import binascii
+import logging
 import os
 import time
 import uuid
@@ -56,6 +57,7 @@ from .. import db, ownership, session_org
 from .. import config
 from ..db.query import ds_filter_specs as _filter_specs
 
+logger = logging.getLogger(__name__)
 
 
 # La colonne et ses couches : extraites dans `columns` (#325), ré-importées
@@ -213,7 +215,34 @@ def _backquote(noms) -> str:
     return ", ".join(f"`{n}`" for n in noms)
 
 
-def _refus_rien_tenu(ou: str = "") -> ClaimedRefUnresolved:
+def _refus_run_clos(ou: str, quand: object) -> ClaimedRefUnresolved:
+    """Le refus quand le travail est CLOS — un MOMENT, pas un état (#645).
+
+    Huitième passage, 30/08 : 99 refus sur 200 écritures, tous « ton travail ne tient
+    aucune ligne en ce moment ». Exact, et à côté de la question — les appels venaient
+    d'un harnais qui écrivait APRÈS `run_finish`, dont la clôture avait justement
+    libéré les baux. Le refus décrivait l'état constaté ; ce qu'il fallait dire est
+    **quand** la porte s'est fermée, parce que rien dans le nom de l'alias ni dans sa
+    description ne disait qu'il en avait une. Deux heures perdues, sur un mécanisme
+    découvert deux fois à douze heures d'écart.
+
+    > **Un refus juste qui n'est pas le bon refus coûte autant qu'un refus faux** : il
+    > envoie chercher une réservation oubliée là où c'est l'ordre des gestes qui est en
+    > cause.
+
+    L'heure y est parce que c'est elle qui fait le lien avec le geste précédent :
+    « depuis 21:08:53 » se reconnaît dans un journal, « clos » ne se reconnaît pas.
+    Et la sortie ne prescrit **aucun outil de plus** : l'identifiant de la ligne est
+    une valeur que l'appelant a déjà reçue (`docs/conventions.md`, la règle #613/#632)."""
+    return ClaimedRefUnresolved(
+        f"`{CLAIMED_REF}`{ou} : ton travail est CLOS depuis {str(quand)[:19]} "
+        "(`run_finish`), et sa clôture a libéré toutes ses lignes — l'alias ne désigne "
+        "une ligne que TANT QUE le travail est ouvert, jamais après. Il n'y a plus rien "
+        "à écrire sous cette adresse : si une écriture restait due, vise la ligne par "
+        "l'identifiant que `data_claim_next` t'avait rendu.")
+
+
+def _refus_rien_tenu(ou: str = "", *, run: Optional[str] = None) -> ClaimedRefUnresolved:
     """Le refus « ton travail ne tient rien » — et ce qu'il ne dit PLUS.
 
     Le 29/08 à 15:24, il finissait par « ou écris avec un identifiant explicite ». Le
@@ -222,7 +251,28 @@ def _refus_rien_tenu(ou: str = "") -> ClaimedRefUnresolved:
     fabriqué un identifiant sur le gabarit du refus suivant. Le cas NORMAL derrière ce
     refus est la fin de file, pas une réservation oubliée : on le nomme, et la conduite
     est de ne rien écrire — une invitation à fournir un identifiant, ici, est une
-    invitation à l'inventer."""
+    invitation à l'inventer.
+
+    ⚠️ **Sauf si le travail est CLOS** : la phrase ci-dessous serait alors vraie et
+    inutile (#645). On paie une requête pour le savoir, ici et nulle part ailleurs —
+    c'est un chemin d'échec, le nominal résout un bail sans y passer. `run=None` (hors
+    run) garde le texte de fin de file : sans run, il n'y a pas de clôture à raconter,
+    et c'est un autre refus, plus haut, qui parle.
+
+    ⚠️ **Et cette requête ne peut pas emporter le refus.** On est ici pour RENDRE une
+    conduite à l'agent (`_adresse_reservee` : « une erreur interne l'effacerait au
+    moment précis où elle sert ») ; une lecture de journal qui casse doit coûter la
+    précision du message, jamais le message. L'échec est journalisé — la dégradation
+    se voit — et on retombe sur le texte de fin de file, qui reste un refus juste."""
+    if run:
+        try:
+            clos = db.run_closed_at(run)
+        except Exception:  # noqa: BLE001 — le refus prime sur sa propre précision
+            logger.warning("clôture du run %s illisible : le refus `%s` retombe sur "
+                           "le texte de fin de file", run, CLAIMED_REF, exc_info=True)
+            clos = None
+        if clos is not None:
+            return _refus_run_clos(ou, clos)
     return ClaimedRefUnresolved(
         f"`{CLAIMED_REF}`{ou} : ton travail ne tient aucune ligne en ce moment (aucune "
         "réservation active). Si `data_claim_next` t'a rendu `row: null`, la file est "
@@ -1642,7 +1692,9 @@ class DatastorePg(SchemaOpsMixin):
                 "`run_start`) sur cet appel — il n'est pas hérité —, ou écris avec "
                 "l'identifiant que `data_claim_next` t'a rendu.")
         if not ici and not ailleurs:
-            raise _refus_rien_tenu()
+            # `ici is None` a déjà écarté le hors-run : il y a donc bien un travail, et
+            # la question qui reste est s'il est encore ouvert (#645).
+            raise _refus_rien_tenu(run=_current_run())
         if len(ici) == 1:
             return ici[0]
         if not ici:
@@ -1683,7 +1735,7 @@ class DatastorePg(SchemaOpsMixin):
                 "`run_start`) — il n'est pas hérité —, ou nomme le tableau.")
         baux = self._baux_actifs(run, worker)
         if not baux:
-            raise _refus_rien_tenu(" en tableau")
+            raise _refus_rien_tenu(" en tableau", run=run)
         if len(baux) == 1:
             b = baux[0]
             return str(self._ns_of(b["ns_id"]).get("namespace") or b["ns_id"]), str(b["row_id"])

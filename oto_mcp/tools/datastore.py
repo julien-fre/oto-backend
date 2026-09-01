@@ -616,10 +616,11 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             namespace: target namespace (must already exist), `slot:<name>`, or
-                `@claimed` = the table your reservation is in.
+                `@claimed` = the table your reservation is in (open run only).
             row: single-row content as a dict (JSON-encoded automatically).
             id: omit = append a new row ; provided = partial update of that `_id` ;
-                `"@claimed"` = the row your run currently holds (no copying).
+                `"@claimed"` = the row your run holds — it resolves only while that
+                run is OPEN, `run_finish` releases what it held.
             rows: BATCH mode — a list of row dicts written in one call.
             key: business key field for batch upsert/dedup (else `schema.key`).
         """
@@ -742,7 +743,7 @@ def register(mcp: FastMCP) -> None:
         """Release a claimed row — the NORMAL end of processing one row, and the
         counterpart of data_claim_next. Guarded by `worker` (same label as at claim
         time). `id="@claimed"` (or `namespace="@claimed"`) releases the row your run
-        holds, without copying it.
+        holds, without copying it — only while that run is OPEN.
 
         ⚠️ Call it after EVERY row you finish, not only when abandoning: writing a
         "final" status no longer frees the row (#317). If you wrap your work in
