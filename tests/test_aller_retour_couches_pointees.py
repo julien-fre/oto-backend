@@ -389,3 +389,24 @@ def test_la_ligne_n_est_LUE_QUE_si_un_nom_pointe_reste_irresolu():
     out = ranger_les_couches(schema, {"libre.comment": "c"}, colonnes_en_place=_lire)
     assert lectures == [1], "là, et seulement là, il fallait consulter la ligne"
     assert out == {"libre": {"comment": "c"}}
+
+
+def test_annoter_un_OBJET_METIER_est_refuse_pour_LA_BONNE_RAISON(table):
+    """⚠️ Un refus qui nomme la mauvaise cause coûte une demi-journée à qui le lit.
+
+    Ici la colonne EXISTE — le refus du cas 3 (« `brut` n'est aucune colonne ») serait
+    faux. Ce qui bloque est ailleurs : le geste écrit un objet métier, et poser une
+    annotation à côté l'envelopperait dans `valeur`. Le refus le dit, et donne la forme
+    qui marche vraiment."""
+    from oto_mcp.datastore.core import RowValidationError
+    st, ns, ns_id = table
+    with pytest.raises(RowValidationError) as e:
+        st.append_row(ns, {"siren": "1", "brut": {"a": 1, "b": 2},
+                           "brut.comment": "x"})
+    msg = str(e.value)
+    assert "n'est aucune colonne" not in msg, "la colonne existe : ne pas mentir"
+    assert "n'est pas fait de couches" in msg
+    assert '"brut": {"valeur"' in msg, "la forme qui marche est nommée"
+
+    st.append_row(ns, {"siren": "1", "brut": {"valeur": {"a": 1}, "comment": "x"}})
+    assert st.list_rows(ns)[0]["brut.comment"] == "x"

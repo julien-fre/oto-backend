@@ -59,10 +59,11 @@ def _socle_accueille_une_couche(socle: Any) -> bool:
     couches, ce qui est exactement l'aller-retour (la lecture sert la valeur nue à côté
     de ses couches). Un dict fait de couches connues : oui — on lui ajoute la sienne.
 
-    ⚠️ Un dict qui n'est PAS fait de couches est un objet métier (`json`) : l'envelopper
-    dans `{"valeur": …}` changerait sa forme stockée sans que personne l'ait demandé. On
-    ne range pas — le nom reste pointé, et le refus du cas 3 parle."""
-    return not (isinstance(socle, dict) and not dsv2.names_layers(socle))
+    ⚠️ Un dict NON VIDE qui n'est PAS fait de couches est un objet métier (`json`) :
+    l'envelopper dans `{"valeur": …}` changerait sa forme stockée sans que personne
+    l'ait demandé. On ne range pas — et on le dit avec sa vraie raison, parce que le
+    refus du cas 3 dirait « cette colonne n'existe pas », ce qui serait faux ici."""
+    return not (isinstance(socle, dict) and socle and not dsv2.names_layers(socle))
 
 
 def _refus_de_collision(base: str, couche: str, cle: str) -> RowValidationError:
@@ -170,7 +171,15 @@ def ranger_les_couches(schema: Optional[dict], user_data: Optional[dict], *,
             continue                        # cas 3 : `_refuse_dotted_names` tranche
         socle = out.get(base)
         if base in out and not _socle_accueille_une_couche(socle):
-            continue
+            # La colonne EXISTE — le refus du cas 3 mentirait en disant le contraire.
+            # Ce qui bloque est ailleurs : ce geste y écrit un objet métier, et poser
+            # une annotation à côté l'envelopperait dans `valeur`.
+            raise RowValidationError([
+                f"`{cle}` veut annoter `{base}`, mais ce geste écrit dans `{base}` un "
+                f"objet ({', '.join(sorted(map(str, socle))[:3])}…) qui n'est pas fait "
+                f"de couches : lui ajouter `{couche}` changerait sa forme stockée. "
+                f"Rien n'a été écrit. Écris la colonne en couches, explicitement — "
+                f'{{"{base}": {{"valeur": {{…}}, "{couche}": …}}}}.'])
         if dsv2.names_layers(socle) and couche in socle:
             raise _refus_de_collision(base, couche, cle)
         val = out.pop(cle)
