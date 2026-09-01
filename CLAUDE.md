@@ -78,6 +78,17 @@ capacités ; un jeton `oto_` peut naître **porté**, sa gestion exigeant une se
 ⚠️ **CORS : la liste du code est MORTE** — les deux box posent `OTO_MCP_CORS_ORIGINS` dans leur `.env`
 (une origine de plus = éditer l'env des **deux** + restart). **`docs/rest-api.md`.**
 
+## La version servie (oto#33)
+
+Une seule étiquette (`v1.2.3+6d5bf16b`) sur **trois** surfaces : `GET /api/version` (sans auth),
+`info.version` de l'OpenAPI, et l'en-tête **`X-Oto-Version` de CHAQUE réponse** — c'est l'en-tête qui
+date une mesure *rétrospectivement*, sans instrumentation préalable. ⚠️ Elle désigne **ce que le
+processus EXÉCUTE**, jamais ce qu'un run vert a déployé : la coordonnée est écrite par le déploiement
+dans l'arbre (`.oto-deploy.json`) puis lue **une fois au boot** — une couleur en vidange continue donc
+d'annoncer SA version. ⚠️ **`pip show oto-core` ment** (champ gelé à 1.100.0) : le tag installé se lit
+dans `direct_url.json`. Inconnue ⇒ `"unknown"`, jamais une valeur plausible.
+**`docs/version-servie.md`.**
+
 ## Autres sous-systèmes
 
 **Browser & cookie-bound** (ADR 0026) : plus AUCUN browser sur la box — l'API privée cookie-bound
@@ -232,6 +243,7 @@ key en Secret Manager au boot, 0 plaintext) ; S3 pour avatars/logos.
 - `auth-logto.md` — Logto, DCR, jetons `oto_`
 - `tenants.md` — l'identité au-dessus des orgs
 - `rest-api.md` — endpoints, OpenAPI, jetons, CORS
+- `version-servie.md` — dater un changement : les 3 surfaces, les 3 coordonnées qui mentent
 - `noeuds.md` — le NOUVEL univers de contenu : page/tableau/ligne, `props` vs `data`, les deux
   univers côte à côte, l'arrêt de la recopie
 - `datastore.md` — spine PG `data_*`, OAuth Google

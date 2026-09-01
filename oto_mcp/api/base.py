@@ -76,6 +76,11 @@ def _cors_headers(origin: str | None) -> dict[str, str]:
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Oto-Org, X-Oto-Group, X-Oto-View-As",
+            # Sans cette ligne, `X-Oto-Version` (oto#33) part sur le fil mais reste
+            # ILLISIBLE au dashboard : un navigateur ne donne à `fetch` que les
+            # en-têtes de réponse explicitement exposés. Un en-tête qu'aucun de nos
+            # consommateurs ne peut lire ne date rien.
+            "Access-Control-Expose-Headers": "X-Oto-Version",
             "Access-Control-Max-Age": "600",
             "Vary": "Origin",
         }

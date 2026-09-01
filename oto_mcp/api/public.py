@@ -8,6 +8,7 @@ site vitrine (`refresh-catalog.mjs` → catalog/connectors/bibliothèque/guides)
 de docs.oto.cx (`refresh-openapi.mjs` → openapi.json).
 
 - `GET /favicon.svg` + `/favicon.ico`      → mark de marque (l'endpoint MCP n'a pas de page racine)
+- `GET /api/version`                       → la version SERVIE (`version.py`)
 - `GET /api/mcp/catalog`                   → catalogue des tools MCP (autodoc)
 - `GET /openapi.json` + `/api/openapi.json` → descriptif REST dérivé (`openapi.py`)
 - `GET /api/connectors`                    → catalogue des connecteurs (auth OPTIONNELLE)
@@ -31,7 +32,8 @@ from starlette.requests import Request
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                  Response)
 
-from .. import access, deprecations, providers, db, guide_store, openapi, org_store
+from .. import (access, deprecations, providers, db, guide_store, openapi,
+                org_store, version as oto_version)
 from ..connectors import activation as connector_activation
 from ..connectors import cardinality as connector_cardinality
 from .base import _authenticate, _json, _json_error
@@ -51,6 +53,26 @@ async def favicon(request: Request) -> Response:
         media_type="image/svg+xml",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+async def version(request: Request) -> JSONResponse:
+    """La version SERVIE par ce processus — publique, sans auth (oto#33).
+
+    Sans auth, et c'est le point : un consommateur qui constate un changement de
+    comportement doit pouvoir le dater **avant** d'avoir résolu quoi que ce soit
+    d'identité, et un contrôle externe (Uptime Kuma, un script de déploiement, un
+    agent) n'a pas de jeton. Le document ne porte AUCUNE valeur — un ref git, un
+    SHA, deux horodatages —, exactement comme `/api/openapi.json` et
+    `/api/mcp/catalog`.
+
+    Écrite à la main plutôt qu'en capacité (ADR 0009) pour la raison donnée en tête
+    de module : l'adaptateur REST des capacités authentifie TOUJOURS, une surface
+    anonyme ne peut pas y passer.
+
+    ⚠️ Ce que ce processus EXÉCUTE, pas ce que le dernier workflow a déployé — la
+    différence, et pourquoi elle mord, sont dans `oto_mcp/version.py`.
+    """
+    return _json(request, oto_version.instantane())
 
 
 async def mcp_catalog(request: Request, *, mcp_instance) -> JSONResponse:

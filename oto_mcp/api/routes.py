@@ -425,6 +425,11 @@ def make_routes(verifier: JWTVerifier, mcp_instance=None) -> Iterable:
     table = [
         Route("/favicon.svg", public.favicon, methods=["GET"]),
         Route("/favicon.ico", public.favicon, methods=["GET"]),
+        # La version SERVIE (oto#33), sans auth : ce que CE processus exécute. La
+        # même étiquette part sur chaque réponse en `X-Oto-Version` — l'endpoint
+        # sert à qui demande, l'en-tête à qui relit son journal après coup.
+        Route("/api/version", public.version, methods=["GET"]),
+        Route("/api/version", options_handler, methods=["OPTIONS"]),
         Route("/api/mcp/catalog", bind(public.mcp_catalog, mcp_instance=mcp_instance), methods=["GET"]),
         Route("/api/mcp/catalog", options_handler, methods=["OPTIONS"]),
         # Descriptif de l'API REST, dérivé (cf. openapi.py). Servi aux deux chemins

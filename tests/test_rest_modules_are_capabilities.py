@@ -132,6 +132,14 @@ _KNOWN: dict[str, str] = {
     # deux chemins usuels parce qu'un intégrateur sonde l'un ou l'autre.
     "/openapi.json": NATURE,
     "/api/openapi.json": NATURE,
+    # La version SERVIE (oto#33) : un ref git, un SHA, deux horodatages — aucune
+    # valeur, comme le descriptif juste au-dessus. NATURE et non DEBT : ses deux
+    # appelants n'ont pas de jeton par construction — un contrôle externe (Uptime
+    # Kuma, un script de déploiement) et un consommateur qui cherche à DATER une
+    # dérive de comportement, donc avant d'avoir résolu quoi que ce soit
+    # d'identité. L'adaptateur REST des capacités authentifiant TOUJOURS, une
+    # surface anonyme ne peut pas y passer.
+    "/api/version": NATURE,
     # ⚠️ Seule route MIXTE du lot : anonyme (vitrine) ET authentifiée (le dashboard
     # y scope son catalogue sur l'org active). Classée NATURE parce que sa moitié
     # anonyme est un contrat du build vitrine — la migrer supposerait de SCINDER la

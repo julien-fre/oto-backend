@@ -1,5 +1,7 @@
 GET,HEAD /favicon.svg -> favicon
 GET,HEAD /favicon.ico -> favicon
+GET,HEAD /api/version -> version
+OPTIONS /api/version -> options_handler
 GET,HEAD /api/mcp/catalog -> mcp_catalog
 OPTIONS /api/mcp/catalog -> options_handler
 GET,HEAD /openapi.json -> openapi_doc
