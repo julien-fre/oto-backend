@@ -131,3 +131,50 @@ fichier qui n'est pas une image. Laissé de côté, volontairement : plusieurs i
 l'image par section, la pièce jointe, et une entrée `image={kind: drive|url}` résolue
 côté serveur par `file_source` (un upload par envoi — la mauvaise forme pour un visuel
 qui ressert).
+
+## Locale des 6 gabarits transactionnels (oto-backend#700, 2026-09-01)
+
+`users.locale` existait déjà (dashboard : capacité `me.locale.set`, `GET /api/me`,
+`lib/i18n.ts` côté front) mais n'était consultée par AUCUN envoi transactionnel :
+`email.py` servait tout en français, en dur. Un compte qui avait explicitement mis
+son dashboard en anglais recevait quand même ses invitations et notifications en
+français — trouvé en préparant une campagne d'onboarding (14 mails FR à des adresses
+en partie non francophones).
+
+- **Les 6 gabarits** (`send_invite_email`, `send_resource_shared_email`,
+  `send_resource_transferred_email`, `send_change_request_email`,
+  `send_change_request_resolved_email`, `send_signal_digest_email`) prennent
+  `locale: str | None = None`. `'en'` sert la version anglaise ; toute autre valeur
+  (dont `None`, `users.locale IS NULL`) sert le FR **à l'octet près** — comportement
+  inchangé pour un compte sans préférence. Comparaison directe (`locale == "en"`),
+  sans normalisation de casse : l'énum `'en'|'fr'` est déjà validée en amont par
+  `me.locale.set`.
+- **Extraites dans `oto_mcp/email_templates.py`** : `email.py` frôlait déjà 500
+  lignes, et une deuxième langue par gabarit l'aurait fait déborder. Le TRANSPORT
+  (`_send`, l'anti-injection d'en-tête, les envois BYO) reste dans `email.py` ; le
+  TEXTE des 6 gabarits vit dans `email_templates.py`, qui y accède par
+  `import email as _email` (jamais `from .email import _send` — un import de nom
+  capturerait une copie figée qu'un `monkeypatch.setattr(email, "_send", ...)` ne
+  toucherait pas). `email.py` réexpose les six fonctions
+  (`from .email_templates import ...`) pour que `email.send_invite_email` etc.
+  restent des attributs valides du module `email`, ce que les tests monkeypatchent.
+- **Les appelants lisent `users.locale` du DESTINATAIRE, pas de l'émetteur** :
+  - `orgs/invites.py::emit_invitation` — `db.get_user_by_email(email_addr)`. Une
+    adresse jamais vue (pas encore de compte) n'a pas de ligne `users` ⟹
+    `locale=None` ⟹ FR. La détection de langue pour un contact jamais loggé reste
+    **hors scope** (pas de signal exploitable aujourd'hui — capture à
+    l'inscription ? `Accept-Language` ? — question ouverte, pas ce lot).
+  - `resources.py::_notify_grant` — même `db.get_user_by_email`, déjà appelé pour
+    dériver `dest_sub`/le front. `type_label` (« projet »/« project ») est choisi
+    ICI, à la source (`_TYPE_LABELS` / `_TYPE_LABELS_EN`) : le gabarit ne traduit
+    JAMAIS un mot qu'on lui donne.
+  - `docs.py::_notify_cr_created` / `_notify_cr_resolved` — `db.get_user(sub)` par
+    destinataire (`_locale_of`, même patron que `_email_of`/`_brand_of`) : chaque
+    validateur ou proposeur peut vivre sous une langue différente.
+  - `usage.py::_notify_reporters` — jointe UNE fois dans
+    `db.pending_signal_notices()` (`LEFT JOIN users`, colonne `u.locale` à côté de
+    `u.email`/`u.name`) : pas d'aller-retour supplémentaire, une propriété du
+    destinataire portée par la même ligne pendant tout le regroupement.
+- **Ce qui n'est PAS traduit** : le contenu écrit par un humain ou un agent (noms de
+  projet, titres de doc, corps libre d'un signal `usage_signals.body`) — ce ne sont
+  pas des mots du gabarit, les traduire changerait ce que quelqu'un a écrit.

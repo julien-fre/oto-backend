@@ -88,6 +88,13 @@ def _owner_label(owner_type: str, owner_id: str) -> Optional[str]:
 
 _TYPE_LABELS = {"project": "projet", "datastore_namespace": "datastore",
                 "doctrine": "doctrine"}
+# Recouvrement EN (oto-backend#700) — seules les clés dont le mot CHANGE : les deux
+# autres s'écrivent à l'identique dans les deux langues, pas la peine de les répéter
+# ici (et `tests/test_vocabulaire_guide.py` compte chaque occurrence littérale du
+# mot ci-dessus, cliquet #519 — ne pas la réécrire). Le gabarit d'email ne traduit
+# pas un mot qu'on lui donne (`email_templates.send_resource_*`), donc c'est ICI, à
+# la source du texte, que la langue du DESTINATAIRE choisit le label.
+_TYPE_LABELS_EN_OVERRIDES = {"project": "project"}
 
 
 def _resource_name(resource_type: str, rid: str) -> Optional[str]:
@@ -119,20 +126,27 @@ def _notify_grant(sharer_sub: str, resource_type: str, rid: str, to_email: str,
         # donc le comportement d'avant pour tout compte de la plateforme.
         # Ici l'adresse suffit — on pointe la racine du produit, pas une vue : aucun
         # patron de chemin n'est nécessaire (contrairement aux liens de projet).
-        dest_sub = (db.get_user_by_email(to_email) or {}).get("sub")
+        dest_user = db.get_user_by_email(to_email) or {}
+        dest_sub = dest_user.get("sub")
+        # Préférence du DESTINATAIRE (oto-backend#700) : None (pas de compte, ou
+        # compte sans préférence posée) ⟹ les deux gabarits servent FR, comme
+        # avant ce lot.
+        locale = dest_user.get("locale")
         base, marque = config.front_for(dest_sub)
         app_url = base or config.dashboard_url()
         brand = marque or "oto"
         sharer = _owner_label("user", sharer_sub)
         name = _resource_name(resource_type, rid)
-        type_label = _TYPE_LABELS.get(resource_type, "ressource")
+        labels = ({**_TYPE_LABELS, **_TYPE_LABELS_EN_OVERRIDES} if locale == "en"
+                  else _TYPE_LABELS)
+        type_label = labels.get(resource_type, "resource" if locale == "en" else "ressource")
         if event == "transfer":
             return email.send_resource_transferred_email(
                 to_email, type_label=type_label, name=name, app_url=app_url,
-                sharer=sharer, brand=brand)
+                sharer=sharer, brand=brand, locale=locale)
         return email.send_resource_shared_email(
             to_email, type_label=type_label, name=name, permission=permission,
-            app_url=app_url, sharer=sharer, brand=brand)
+            app_url=app_url, sharer=sharer, brand=brand, locale=locale)
     except Exception as e:  # best-effort
         log.warning("notify(%s %s %s → %s) failed: %s",
                     event, resource_type, rid, to_email, e)

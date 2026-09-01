@@ -36,6 +36,15 @@ def _email_of(sub: Optional[str]) -> Optional[str]:
     return (db.get_user(sub) or {}).get("email")
 
 
+def _locale_of(sub: Optional[str]) -> Optional[str]:
+    """Préférence de langue du DESTINATAIRE (`users.locale`, oto-backend#700).
+    None (pas de sub, ou compte sans préférence posée) ⟹ le gabarit sert FR,
+    comportement inchangé."""
+    if not sub:
+        return None
+    return (db.get_user(sub) or {}).get("locale")
+
+
 def _project_url(sub: Optional[str], pid: Optional[int], org: Optional[int]) -> Optional[str]:
     """Le lien du projet TEL QU'IL EXISTE chez ce destinataire, ou None.
 
@@ -88,7 +97,7 @@ def _notify_cr_created(pid: int, proposer_sub: str, *, is_create: bool,
             email.send_change_request_email(
                 to, project_name=pname, doc_title=doc_title, proposer=proposer,
                 is_create=is_create, app_url=_project_url(sub_dest, pid, org),
-                brand=_brand_of(sub_dest))
+                brand=_brand_of(sub_dest), locale=_locale_of(sub_dest))
     except Exception as e:  # best-effort
         logger.warning("notify CR created (project %s) failed: %s", pid, e)
 
@@ -104,7 +113,8 @@ def _notify_cr_resolved(cr: dict, accepted: bool) -> None:
         dest = cr.get("requested_by")
         email.send_change_request_resolved_email(
             to, project_name=pname, doc_title=cr.get("doc_title"), accepted=accepted,
-            app_url=_project_url(dest, pid, None), brand=_brand_of(dest))
+            app_url=_project_url(dest, pid, None), brand=_brand_of(dest),
+            locale=_locale_of(dest))
     except Exception as e:  # best-effort
         logger.warning("notify CR resolved (#%s) failed: %s", cr.get("id"), e)
 

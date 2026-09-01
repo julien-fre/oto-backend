@@ -99,6 +99,24 @@ def test_share_to_user_still_works(monkeypatch):
     assert sent["name"] == "Campagne mutuelle" and sent["permission"] == "write"
 
 
+def test_share_to_user_passes_recipient_locale_and_english_label(monkeypatch):
+    """oto-backend#700 : la préférence `users.locale` du bénéficiaire suit
+    jusqu'au gabarit, ET le `type_label` passé est déjà dans SA langue — le
+    gabarit ne traduit pas un mot qu'on lui donne."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(R.db, "get_user_by_email",
+                        lambda e: {"sub": "u2", "email": e, "locale": "en"})
+    monkeypatch.setattr(R.db, "get_user", lambda sub: {"email": "sharer@x.co"})
+    monkeypatch.setattr(R.db, "get_project_by_id", lambda pid: {"name": "Campagne mutuelle"})
+    sent = {}
+    monkeypatch.setattr(R.email, "send_resource_shared_email",
+                        lambda to, **kw: sent.update({"to": to, **kw}) or True)
+    R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
+                                      resource_id="7", email="jb@x.co"))
+    assert sent["locale"] == "en"
+    assert sent["type_label"] == "project"   # pas "projet" : la langue du destinataire
+
+
 def test_transfer_to_user_emails_new_owner(monkeypatch):
     _wire(monkeypatch)
     monkeypatch.setattr(R.db, "get_user_by_email", lambda e: {"sub": "u2", "email": e})
