@@ -240,6 +240,10 @@ _SUB_COLUMNS = [
     # rattachées à un identifiant mort, donc invisibles au compte fusionné : déroulés
     # et activité perdus de vue, déclencheurs orphelins) :
     ("runs", "sub"), ("project_activity", "sub"), ("runner_triggers", "sub"),
+    # `runner_fleets.sub` = qui a DÉCLARÉ le passage (R4). Même raison que les
+    # déclencheurs : une flotte rattachée à un identifiant mort devient invisible au
+    # compte fusionné, et son auteur n'est plus lisible dans l'audit d'un passage.
+    ("runner_fleets", "sub"),
     ("tool_calls", "effective_sub"),
     # Le JOURNAL des acceptations légales (#487) — la source de vérité du gate, donc
     # ce qui décide si le compte fusionné se voit redemander ses CGU. Aucune unicité :

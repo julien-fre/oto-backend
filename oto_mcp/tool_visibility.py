@@ -93,6 +93,13 @@ BETA_TOOLS: frozenset[str] = frozenset({
     # donne une population choisie pendant que les appelants migrent, sans
     # date-couperet — cf. `oto_mcp/capabilities/resources_v2.py`.
     "oto_resource_v2",
+    # La FLOTTE (R4, 01/09/2026) : sa surface part de VIDE — aucune flotte n'est
+    # déclarée nulle part — et son contrat est PROVISOIRE : elle déclare et lit,
+    # elle ne sait ni lancer ni arrêter. La proposer à tous, ce serait offrir à
+    # chaque agent un verbe qui ne trouve rien. ⚠️ Nom NEUF, conformément à la
+    # règle ci-dessus : `oto_fleet` naît avec ce lot, il ne retire donc rien à
+    # personne — cf. `oto_mcp/capabilities/runner_fleets.py`.
+    "oto_fleet",
 })
 
 # L'option qui ouvre `BETA_TOOLS`. Posée par un admin sur un UTILISATEUR ou sur
