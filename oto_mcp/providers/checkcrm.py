@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from ._model import _c
 
-# checkcrm : wrappe l'API v1 de l'app "enrichment" de Julien (job-change check
+# checkcrm : wrappe l'API v1 de l'app "enrichment" d'un partenaire (job-change check
 # LinkedIn + gestion des subsidiaries) — byo par défaut, chaque org configure sa
 # propre clé enrichment (voir enrichment/docs/sf-api.md) ; clé plateforme
 # GRANT-ONLY depuis le 26/08 (#405). Nommé "checkcrm" (un

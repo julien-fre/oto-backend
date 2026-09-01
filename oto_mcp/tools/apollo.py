@@ -44,7 +44,7 @@ endpoint interroge, PAS selon lecture/écriture :
 
 ⚠️ Doc Apollo (pas vérifié depuis cet environnement, pas de clé disponible ici) :
 `add_contact_ids` et `/emailer_messages/{id}/activities` (stats email) exigent
-une clé « Master » et 403 sinon — à confirmer côté Julien avec une clé réelle.
+une clé « Master » et 403 sinon — à confirmer avec une clé réelle.
 La même exigence est documentée sur les TROIS endpoints contacts
 (`typed_custom_fields`, `contacts/{id}` en lecture et en PATCH) : là, plutôt que
 d'attendre, `apollo_contact` traduit le 403 en message qui NOMME le prérequis, et

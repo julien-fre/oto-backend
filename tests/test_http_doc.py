@@ -1,6 +1,6 @@
 """`http_doc` : route de documentation configurable sur la carte du connecteur
 `http`, pas un endpoint fixe côté oto — chaque org/bridge choisit la sienne
-(ex. `/openapi.json` pour movinmotion-bridge, derrière le même auth que le reste,
+(ex. `/openapi.json` pour un bridge, derrière le même auth que le reste,
 aucune route publique à part). Cf. `_require_doc_path`, testable sans contexte
 MCP comme `_excerpt`/`_upstream_error` (test_http_upstream_error.py).
 """
