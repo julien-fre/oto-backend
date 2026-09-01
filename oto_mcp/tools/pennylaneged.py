@@ -33,7 +33,7 @@ avec SA GED. Chaque tool prend un `company_id` **obligatoire** : aucun défaut
 mémorisé, pour ne jamais risquer d'écrire dans la GED du mauvais client.
 `pennylaneged_companies` liste les sociétés pour résoudre le `company_id` cible.
 
-Statut : flux RE **validé manuellement** (18/06, compte test Fidens) ; **reste à
+Statut : flux RE **validé manuellement** (18/06, compte test client) ; **reste à
 smoker en live** sur le substrat Browserbase (CSRF in-page + longévité de session).
 """
 from __future__ import annotations
@@ -42,7 +42,7 @@ from typing import Optional
 from urllib.parse import urlencode
 
 from fastmcp import Context, FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS, INTERNAL_ERROR
 
 from .. import access, browser_session, browserbase
@@ -346,13 +346,13 @@ def register(mcp: FastMCP) -> None:
                                 item_type: str = "DmsFolder") -> dict:
         """Lit l'arborescence GED d'une société.
 
-        Args:
-            company_id: id de la société (cf. `pennylaneged_companies`).
-            item_type: type d'items listés — `DmsFolder` (dossiers, défaut) ou `DmsFile`.
-
         Renvoie `{items: [{id, name, itemable_type, parent_id, folders_count, …}]}`
         (l'API renvoie un tableau, enveloppé sous `items`) — utilise les `id`/`parent_id`
         pour cibler un `parent_id` de création ou un item à supprimer.
+
+        Args:
+            company_id: id de la société (cf. `pennylaneged_companies`).
+            item_type: type d'items listés — `DmsFolder` (dossiers, défaut) ou `DmsFile`.
         """
         cid = int(company_id)
         qs = urlencode({"item_type": item_type})
@@ -363,12 +363,12 @@ def register(mcp: FastMCP) -> None:
                                          parent_id: Optional[int] = None) -> dict:
         """Crée un dossier dans la GED d'une société.
 
+        Renvoie le `DmsFolder` créé (dont son `id`, à réutiliser comme `parent_id`).
+
         Args:
             name: nom du dossier (sous sa forme finale — pas de rename séparé ensuite).
             company_id: id de la société (cf. `pennylaneged_companies`).
             parent_id: id du dossier parent (None = racine de la GED).
-
-        Renvoie le `DmsFolder` créé (dont son `id`, à réutiliser comme `parent_id`).
         """
         cid = int(company_id)
         item: dict = {"name": name}
@@ -425,14 +425,14 @@ def register(mcp: FastMCP) -> None:
         `pennylaneged_request_upload`). Le `name` est le nom **final** dans la GED
         (renommage standardisé = ce champ, pas d'appel rename séparé).
 
+        Renvoie le `DmsFile` créé.
+
         Args:
             name: nom final du fichier dans la GED.
             signed_id: `signed_id` renvoyé par `pennylaneged_request_upload`.
             company_id: id de la société — DOIT être la même que celle du
                 `pennylaneged_request_upload`.
             parent_id: id du dossier cible (None = racine).
-
-        Renvoie le `DmsFile` créé.
         """
         cid = int(company_id)
         item: dict = {"name": name, "file": signed_id}

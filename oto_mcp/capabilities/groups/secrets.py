@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from ... import providers, credentials_store, group_store
 from .._authz import GROUP_ADMIN_OF
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 from ..registry import CAPABILITIES
 
 _GID = {"id": "group_id"}
@@ -137,6 +137,12 @@ CAPABILITIES += [
                      "(org-shareable only). Single-key connectors: pass `api_key`. "
                      "Multi-field connectors (zoho/silae…): pass `fields` (all declared "
                      "credential fields). Resolves BEFORE the org secret for members."),
+        errors=(DeclaredError(400, "single_account_connector",
+                              "un `account` nommé sur un connecteur qui n'en gère "
+                              "qu'un — la clé écraserait l'unique"),
+                DeclaredError(409, "account_required",
+                              "connecteur multi-compte sans `account` : il faut "
+                              "nommer le compte, sans quoi la pose est ambiguë"),),
         rest=RestBinding("PUT", "/api/groups/{id}/secrets/{provider}", _GID),
     ),
     Capability(

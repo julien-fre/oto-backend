@@ -168,6 +168,11 @@ class _Store:
         self.vu = dict(kw, namespace=namespace)
         return {"rows": [{"_id": "r1", "nom": "x"}], "next_cursor": None}
 
+    def count_rows(self, namespace, *, filter=None, q=None, filters=None):
+        # Le compte passe par le STORE depuis #621 (il y résout les noms plats comme
+        # la page, ce que `db.datastore_count_rows` ne fait pas).
+        return len(filters or [])
+
 
 _TABLE = {"id": 5, "public_id": "nod_tbl", "parent_id": None, "kind": "tableau",
           "owner_type": "org", "owner_id": "2", "position": 0,
@@ -185,8 +190,6 @@ async def test_node_rows_MEME_resultat_sur_les_deux_faces(monkeypatch, autz_sans
     cap = next(c for c in CAPABILITIES if c.key == "me.node.rows")
     binding = cap.rest_bindings()[0]
     monkeypatch.setattr(R.db_node, "node_by_public_id", lambda pid: _TABLE)
-    monkeypatch.setattr(R.db_ds, "datastore_count_rows",
-                        lambda ns, q=None, filters=None: len(filters or []))
 
     # Face MCP : la liste, telle que le protocole la transporte.
     store_mcp = _Store()

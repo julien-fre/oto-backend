@@ -24,7 +24,7 @@ CONNECTOR = _c(
     help="paiements & facturation — clients, abonnements, factures, encaissements, solde",
     href="https://stripe.com", credential_fields=(
         CredentialField("api_key", "Clé restreinte (rk_…) ou secrète (sk_…)",
-                        secret=True, reveal=True,
+                        secret=True,
                         help="Stripe Dashboard → Developers → API keys → « Create "
                              "restricted key » ; des permissions en LECTURE suffisent. "
                              "Une clé publiable `pk_…` est refusée : elle ne lit rien."),

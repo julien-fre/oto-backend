@@ -23,9 +23,9 @@ CONNECTOR = _c(
     "forager", ["forager"], auth_modes={"byo_user", "byo_org"}, secret_kind="fields",
     label="Forager", help="job posts, firmographics et enrichissement contacts (payant au crédit)",
     publisher="Forager.ai", href="https://forager.ai", credential_fields=(
-        CredentialField("api_key", "Clé API (X-API-KEY)", secret=True, reveal=True),
+        CredentialField("api_key", "Clé API (X-API-KEY)", secret=True),
         CredentialField(
-            "account_id", "Account ID", secret=False, reveal=True, required=False,
+            "account_id", "Account ID", secret=False, required=False,
             help="laisse vide sauf si ta clé a accès à plusieurs comptes Forager — "
                  "sinon résolu automatiquement"),
     ),

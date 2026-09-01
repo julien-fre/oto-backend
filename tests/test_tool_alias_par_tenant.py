@@ -2,7 +2,7 @@
 
 Constaté chez un client sur le connecteur d'un partenaire : la conversation affichait
 `Oto doc`, `Oto doc`, `Oto doc`… à chaque appel, sous SA marque, dans SON produit.
-Même famille que le socle d'instructions (« Sur Tulina (Oto), tu es… », 13/08) et que
+Même famille que le socle d'instructions (« Sur <tenant> (Oto), tu es… », 13/08) et que
 les liens qui portaient notre domaine — sauf qu'ici ce n'est pas de la prose : c'est
 l'identifiant d'un outil, et il est réaffiché à chaque tour.
 
@@ -272,7 +272,7 @@ def test_tout_token_oto_de_la_prose_servie_est_bien_un_outil():
 # catalogue et se voyait répondre « Unknown tool » en le recopiant.
 
 import fastmcp.server.context as _fc  # noqa: E402
-from mcp.shared.exceptions import McpError  # noqa: E402
+from oto_mcp.mcp_errors import McpError  # noqa: E402
 
 from oto_mcp import access, db  # noqa: E402
 from oto_mcp.tools import meta as _meta  # noqa: E402

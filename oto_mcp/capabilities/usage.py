@@ -305,6 +305,10 @@ def _group_notices() -> list[dict]:
         sub = str(row.get("sub"))
         g = par_sub.setdefault(sub, {
             "sub": sub, "email": row.get("email"), "name": row.get("name"),
+            # Propriété du DESTINATAIRE (users.locale), pas du signal — la même
+            # pour toutes les lignes d'un sub, prise à la première rencontrée
+            # (oto-backend#700). None = pas de préférence ⟹ le gabarit sert FR.
+            "locale": row.get("locale"),
             "items": [], "resolved": 0, "declined": 0})
         g["items"].append(row)
         if row.get("status") == "declined":
@@ -353,7 +357,8 @@ def _notify_reporters(ctx: ResolvedCtx, inp: NotifyReportersInput) -> dict:
             fiche["reason"] = "aucune adresse connue pour ce compte"
         elif inp.op == "send":
             ok = mailer.send_signal_digest_email(
-                g["email"], items=g["items"], brand=fiche["brand"])
+                g["email"], items=g["items"], brand=fiche["brand"],
+                locale=g.get("locale"))
             fiche["sent"] = bool(ok)
             if ok:
                 db.mark_signals_notified(fiche["signal_ids"])

@@ -47,8 +47,14 @@ class CreateNamespaceInput(BaseModel):
     # (`missing_namespace`) que cette route rend depuis toujours, pas l'`invalid_input`
     # générique de pydantic — le dashboard l'affiche tel quel.
     namespace: str = ""
-    # Classeur d'org/groupe (ADR 0030) : `{type: 'org'|'group'|'user', id}`. Absent =
-    # org active. L'appartenance est vérifiée ici, jamais présumée du corps.
+    # Classeur (ADR 0030) : `{type: 'org'|'group'|'user', id}`. Absent = PERSONNEL
+    # (`type='user'`, l'appelant) — c'est ce que `_create_namespace` fait et ce que
+    # `tests/datastore/test_datastore_namespaces_capability.py` fige (`("create_namespace",
+    # "vivier", "user", "u-1")`). Corrigé le 01/09/2026 (oto-backend#662) :
+    # cette ligne annonçait « org active » depuis toujours, l'inverse du code servi,
+    # et un tiers qui dérive son intégration du contrat crée alors chez lui un
+    # tableau qu'il croit poser dans l'org. L'appartenance est vérifiée ici, jamais
+    # présumée du corps.
     owner: Optional[dict] = None
 
 

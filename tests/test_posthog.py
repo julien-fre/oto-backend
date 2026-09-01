@@ -11,8 +11,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import providers
 from oto_mcp.connectors import verify as connector_verify
 from oto_mcp.tool_visibility import namespace_of
@@ -180,7 +179,7 @@ def _raw_query_response():
         "error": None, "explain": None,
         "clickhouse": "SELECT 1 AS a, %(hogql_val_0)s AS b LIMIT 101 " + "x" * 450,
         "modifiers": {"bounceRateDurationSeconds": None, "junk": "y" * 1100},
-        "cache_key": "cache_571144_" + "z" * 60, "is_cached": False,
+        "cache_key": "cache_424242_" + "z" * 60, "is_cached": False,
         "timezone": "UTC", "limit": 100, "offset": 0, "query_status": None,
     }
 
@@ -402,12 +401,12 @@ def test_current_reports_which_project_and_account_answered():
     m, cls, patcher = _fn_with_mock_client()
     try:
         cls.return_value.current_user.return_value = {
-            "email": "a@tulina.ai", "organization": {"name": "Tulina"}}
-        cls.return_value.resolve_project_id.return_value = "571144"
+            "email": "a@acme.test", "organization": {"name": "Acme"}}
+        cls.return_value.resolve_project_id.return_value = "424242"
         cls.return_value.host = "https://eu.posthog.com"
         out = _tool(m, "posthog_project")(op="current")
-        assert out == {"project_id": "571144", "organization": "Tulina",
-                       "account": "a@tulina.ai", "host": "https://eu.posthog.com"}
+        assert out == {"project_id": "424242", "organization": "Acme",
+                       "account": "a@acme.test", "host": "https://eu.posthog.com"}
     finally:
         patcher.stop()
 

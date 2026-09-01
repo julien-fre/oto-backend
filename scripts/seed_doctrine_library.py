@@ -25,7 +25,7 @@ def main() -> None:
     only = set(sys.argv[2:])
     db.init_db()
 
-    skills = org_store.list_instructions(org_id, include_base=False)
+    skills = org_store.list_instructions("org", org_id, include_base=False)
     if only:
         skills = [s for s in skills if s["slug"] in only]
     if not skills:
@@ -34,7 +34,7 @@ def main() -> None:
 
     for meta in skills:
         slug = meta["slug"]
-        full = org_store.get_instruction(org_id, slug)
+        full = org_store.get_instruction("org", org_id, slug)
         if not full:
             continue
         row = org_store.publish_guide(

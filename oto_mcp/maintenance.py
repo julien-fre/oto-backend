@@ -223,6 +223,53 @@ def check_boot(*, dry_run: bool = True) -> dict:
 # (seuls à poser du DDL). `key-index-rebuild` et `check-boot` n'y sont PAS : le
 # premier change l'état de la prod pour la première fois (#421), le second est un
 # diagnostic.
+def residu_projete(*, dry_run: bool = True) -> dict:
+    """Retire de `nodes` l'image que la recopie y déposait à chaque boot.
+
+    Cinq conversions ont tourné au démarrage jusqu'au 2026-09-01 : elles copiaient
+    projets, pages, procédures, tableaux et lignes dans `nodes`, chaque copie marquée
+    `props.legacy`. Elles préparaient une bascule de lecture qui n'aura pas lieu — les
+    deux univers vivent désormais côte à côte, chacun avec ses verbes. La copie n'a
+    donc plus ni écrivain (l'arrêt est dans `db/_init.py`) ni lecteur, et ce travail
+    la retire : 75 668 nœuds sur 75 721 et 34 314 blocs, mesurés le 2026-09-01 à
+    19:30 sur la base servie.
+
+    ⚠️ **Ce chiffre se DATE et se REFAIT avant de jouer.** Il valait 70 876 quatre
+    heures plus tôt : la recopie a tourné jusqu'au déploiement de son arrêt. Et
+    depuis cet arrêt, la PURGE ne tourne plus non plus (elle vivait dans la même
+    fonction) — donc une page supprimée laisse désormais une copie entière que
+    rien ne retire. Le décompte à blanc est là pour ça : on le relit, on ne le
+    récite pas.
+
+    **Ici et pas au boot** : le coût suit la taille de la base, la fenêtre du
+    healthcheck est finie (ADR 0065). Et **à blanc par défaut** : c'est un ACTE, pas
+    une routine — il n'est dans aucun timer, `--apply` l'exécute.
+
+    ⚠️ **Le compte est un DIFFÉRENTIEL d'inventaire, jamais la réponse du geste.** Un
+    `DELETE` qui ne trouve rien annonce « zéro ligne » exactement comme un `DELETE`
+    qui vient de finir son travail : lire son retour, c'est confondre « fait » et
+    « rien à faire ». On compte donc avant, on retire, on recompte — et `retires` est
+    la soustraction.
+
+    ⚠️ **Une passe peut ne pas tout prendre** et c'est voulu : `delete_projected_nodes`
+    a un plafond de lots. Le retour porte `restants` — non nul, il dit de rappeler,
+    pas que quelque chose a échoué.
+    """
+    from .db import nodes as db_nodes
+    avant = db_nodes.count_projected_nodes()
+    orphelins_avant = db_nodes.count_orphan_blocks()
+    if dry_run:
+        return {"projetes": avant, "blocs_orphelins": orphelins_avant}
+    db_nodes.delete_projected_nodes()
+    db_nodes.delete_orphan_blocks()
+    apres = db_nodes.count_projected_nodes()
+    return {
+        "retires": avant - apres,
+        "restants": apres,
+        "blocs_orphelins_retires": orphelins_avant - db_nodes.count_orphan_blocks(),
+    }
+
+
 _TRAVAUX: dict[str, Callable[..., dict]] = {
     "retention": retention,
     "blocks": blocks,
@@ -230,10 +277,11 @@ _TRAVAUX: dict[str, Callable[..., dict]] = {
     "key-index-rebuild": key_index_rebuild,
     "journal-tokens": journal_tokens,
     "check-boot": check_boot,
+    "residu-projete": residu_projete,
 }
 # Travaux dont l'écriture est un ACTE, pas une routine : à blanc par défaut, et
 # c'est `--apply` qui écrit. Ils ne sont dans aucun timer et jamais dans `all`.
-_ACTES = ("journal-tokens",)
+_ACTES = ("journal-tokens", "residu-projete")
 _ALL = ("retention", "blocks", "key-indexes")
 
 

@@ -98,8 +98,8 @@ def surface(monkeypatch):
     store = _Library()
     monkeypatch.setattr(org_store, "_connect", lambda: store)
     monkeypatch.setattr(org_store, "get_instruction",
-                        lambda org_id, slug: {"body_md": f"# corps org {org_id}",
-                                              "title": f"T{org_id}", "slots": []})
+                        lambda otype, org_id, slug: {"body_md": f"# corps org {org_id}",
+                                                     "title": f"T{org_id}", "slots": []})
     monkeypatch.setattr(org_store, "get_org",
                         lambda org_id: {"id": org_id, "name": f"Org {org_id}"})
     monkeypatch.setattr(lib.access, "is_platform_operator", lambda sub: False)

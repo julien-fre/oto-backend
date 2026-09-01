@@ -29,7 +29,7 @@ CONNECTOR = _c(
     publisher="Anthropic", href="https://claude.ai/code/routines",
     credential_fields=(
         CredentialField(
-            "routine_id", "ID de la routine", secret=False, reveal=True,
+            "routine_id", "ID de la routine", secret=False,
             help="visible dans l'URL de la routine sur claude.ai/code/routines "
                  "(commence par `trig_`)"),
         CredentialField(

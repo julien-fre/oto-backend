@@ -14,7 +14,7 @@ import asyncio
 import logging
 
 from fastmcp import Context, FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import deprecations, guide_run as dr, run_status
@@ -35,15 +35,15 @@ def _procedure_version(sub: str | None, slug: str) -> int | None:
     guide d'un autre foyer, ou un slug inventé.
 
     Lecture DB ⇒ appelée HORS boucle (`asyncio.to_thread`)."""
-    from .. import access, group_store, org_store
+    from .. import access, org_store
     org_id = access.current_org(sub) if sub else None
     if org_id is not None:
-        row = org_store.get_instruction(int(org_id), slug)
+        row = org_store.get_instruction("org", org_id, slug)
         if row and row.get("version") is not None:
             return int(row["version"])
     gid = access.current_group(sub) if sub else None
     if gid is not None:
-        row = group_store.get_group_instruction(int(gid), slug)
+        row = org_store.get_instruction("group", gid, slug)
         if row and row.get("version") is not None:
             return int(row["version"])
     return None
@@ -122,17 +122,17 @@ def register(mcp: FastMCP) -> None:
         Use it for a repeatable guide/skill (pass `guide`) AND for any one-shot
         procedure worth logging (omit `guide`).
 
+        Returns `guide_version` — the version of that procedure frozen for this run
+        (null for an ad-hoc run, or if the slug matches no procedure you can read).
+        The response also carries the deprecated `doctrine`/`doctrine_version` keys
+        until 29/10/2026.
+
         Args:
             label: short human description of what this run does (always logged).
             guide: optional — the guide/skill slug being executed (as passed to
                 oto_procedure op=get). Omit for a one-shot/ad-hoc run.
-            doctrine: DEPRECATED alias of `guide`, removed on 27/09/2026 — pass
+            doctrine: DEPRECATED alias of `guide`, removed on 29/10/2026 — pass
                 `guide` instead.
-
-        Returns `guide_version` — the version of that procedure frozen for this run
-        (null for an ad-hoc run, or if the slug matches no procedure you can read).
-        The response also carries the deprecated `doctrine`/`doctrine_version` keys
-        until 27/09/2026.
         """
         guide = guide if guide is not None else doctrine
         run_id = dr.new_run_id()

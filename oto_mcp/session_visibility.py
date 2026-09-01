@@ -23,6 +23,8 @@ from .connectors import activation as connector_activation
 from .connectors import selection as connector_selection
 from .error_taxonomy import _is_client_disconnect
 from .tool_visibility import (
+    BETA_OPTION,
+    BETA_TOOLS,
     DEFAULT_HIDDEN_TOOLS,
     effective_disabled,
     is_protected,
@@ -170,6 +172,24 @@ async def compute_hidden_tools(ctx, sub: str, *, org=_DERIVE_ORG) -> set[str]:
         }
     except Exception as e:
         logger.warning("selection visibility skipped for %s (fail-open): %s", sub, e)
+    # Surfaces BÊTA (2026-09-01) : réservées aux comptes à qui un admin a posé
+    # l'option. Le nouvel univers de contenu part de vide et son contrat est
+    # provisoire — le proposer à tous, c'est offrir à chaque agent une surface
+    # qui ne trouve rien et une écriture dont l'utilisateur ignore la
+    # destination.
+    #
+    # ⚠️ **Fail-CLOSED, à contre-courant des blocs ci-dessus.** Ils sont
+    # fail-open parce qu'un hoquet de base ne doit pas priver quelqu'un de ses
+    # outils : le pire y est une toolbox trop pauvre pendant une seconde. Ici le
+    # pire est l'inverse — une surface non finie qui réapparaît à tout le monde
+    # sur un glitch, sans que personne ne le voie. On masque donc en cas de
+    # doute : ne pas proposer une bêta n'a jamais bloqué personne.
+    try:
+        if not access.has_option(sub, BETA_OPTION, org=active_org):
+            to_hide |= (all_names & BETA_TOOLS)
+    except Exception as e:
+        logger.warning("beta visibility fail-CLOSED for %s: %s", sub, e)
+        to_hide |= (all_names & BETA_TOOLS)
     # Outils hors de portée : masqués d'après l'AUTORISATION DÉCLARÉE, pas d'après
     # le nom. Visibilité seulement — l'autz reste appliquée à l'appel, ici comme avant.
     to_hide |= _hors_de_portee_plateforme(all_names, role_plateforme)

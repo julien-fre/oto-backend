@@ -1,7 +1,7 @@
 """Le socle injecté suit le TENANT du compte, pas la plateforme.
 
 Constaté chez un client le 13/08, dès la première conversation sur le connecteur d'un
-partenaire : l'assistant se présentait « Sur Tulina (Oto), tu es… », listait « les
+partenaire : l'assistant se présentait « Sur <tenant> (Oto), tu es… », listait « les
 connecteurs disponibles sur la plateforme » et renvoyait vers NOTRE tableau de bord.
 
 Ce n'est pas un défaut de formulation : le texte d'accueil vivait au niveau plateforme

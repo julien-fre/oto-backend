@@ -66,7 +66,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from oto.tools.common.errors import UpstreamHTTPError
@@ -216,6 +216,20 @@ def register(mcp: FastMCP) -> None:
         endpoint (all items in one HTTP call) — bulk here is one request, not
         a client-side loop.
 
+        Returns —
+            site: the site.
+            collections: `{"collections": [...]}`.
+            collection: the collection schema.
+            items: `{"items": [...], "pagination": {"total", "offset", "limit"}}`.
+            item: the item.
+            create solo: the created item, or `{"dry_run": true, "would_create"}`.
+            create bulk: `{"total", "succeeded", "created": [{"index","id"}],
+                "failed": []}`, or dry_run preview.
+            update solo: the updated item, or `{"dry_run": true, "id", "changes"}`.
+            update bulk: `{"total", "succeeded", "failed": []}`, or dry_run preview.
+            delete solo: `{}`, or `{"dry_run": true, "id", "would_delete"}`.
+            delete bulk: `{"total", "succeeded", "failed": []}`, or dry_run preview.
+
         Args:
             op: site | collections | collection | items | item | create |
                 update | delete.
@@ -238,20 +252,6 @@ def register(mcp: FastMCP) -> None:
                 update/delete — fetches the item(s) first and returns a real
                 diff (`changes: {field: {"from", "to"}}`) or `would_delete`
                 (the current record) — never an echo of the input.
-
-        Returns:
-            site: the site.
-            collections: `{"collections": [...]}`.
-            collection: the collection schema.
-            items: `{"items": [...], "pagination": {"total", "offset", "limit"}}`.
-            item: the item.
-            create solo: the created item, or `{"dry_run": true, "would_create"}`.
-            create bulk: `{"total", "succeeded", "created": [{"index","id"}],
-                "failed": []}`, or dry_run preview.
-            update solo: the updated item, or `{"dry_run": true, "id", "changes"}`.
-            update bulk: `{"total", "succeeded", "failed": []}`, or dry_run preview.
-            delete solo: `{}`, or `{"dry_run": true, "id", "would_delete"}`.
-            delete bulk: `{"total", "succeeded", "failed": []}`, or dry_run preview.
         """
         c = _client()
 
@@ -456,6 +456,13 @@ def register(mcp: FastMCP) -> None:
         - **"delete"**: unregister `webhook_id`. Irreversible — the webhook
           stops firing immediately.
 
+        Returns —
+            list: `{"webhooks": [...]}`.
+            get: the webhook.
+            create: the webhook INCLUDING `secretKey`, or
+                `{"dry_run": true, "would_create"}`.
+            delete: `{}`, or `{"dry_run": true, "webhook_id", "would_delete"}`.
+
         Args:
             op: list (default) | get | create | delete.
             webhook_id: op="get"/"delete".
@@ -470,13 +477,6 @@ def register(mcp: FastMCP) -> None:
                 mints it). delete — fetches the webhook first and returns
                 `would_delete` (its current record), never a bare echo of
                 `webhook_id`.
-
-        Returns:
-            list: `{"webhooks": [...]}`.
-            get: the webhook.
-            create: the webhook INCLUDING `secretKey`, or
-                `{"dry_run": true, "would_create"}`.
-            delete: `{}`, or `{"dry_run": true, "webhook_id", "would_delete"}`.
         """
         c = _client()
 
@@ -525,19 +525,19 @@ def register(mcp: FastMCP) -> None:
         `webflow_submissions` for that). No write op: a form is built in
         Webflow's visual editor, not created/edited via API.
 
+        Returns —
+            list: `{"forms": [...], "pagination": {"total", "offset", "limit"}}`
+                — each form has `id`, `displayName`, `pageId`/`pageName`,
+                `fields` (per-field type/placeholder/visibility),
+                `responseSettings` (redirect URL, email confirmation).
+            get: the same shape for one form.
+
         Args:
             op: "list" (default) — every form on the site, paginated.
                 "get" — one form's full schema by `form_id`.
             form_id: required for op="get".
             offset, max_results: op="list" pagination — max_results capped at
                 100 server-side.
-
-        Returns:
-            list: `{"forms": [...], "pagination": {"total", "offset", "limit"}}`
-                — each form has `id`, `displayName`, `pageId`/`pageName`,
-                `fields` (per-field type/placeholder/visibility),
-                `responseSettings` (redirect URL, email confirmation).
-            get: the same shape for one form.
         """
         c = _client()
         if op == "list":
@@ -579,6 +579,17 @@ def register(mcp: FastMCP) -> None:
         - **"delete"**: permanently remove a submission (e.g. a GDPR removal
           request). Irreversible.
 
+        Returns —
+            list: `{"formSubmissions": [...], "pagination": {"total", "offset",
+                "limit"}}` — each submission has `id`, `formId`,
+                `dateSubmitted`, `formResponse` (the visitor's answers,
+                field name → value), `localeId`.
+            get: the submission.
+            update: the updated submission, or `{"dry_run": true,
+                "submission_id", "changes"}`.
+            delete: `{}`, or `{"dry_run": true, "submission_id",
+                "would_delete"}`.
+
         Args:
             op: list (default) | get | update | delete.
             form_id: required for op="list" only.
@@ -591,17 +602,6 @@ def register(mcp: FastMCP) -> None:
                 a real diff (`changes: {field: {"from", "to"}}`, update) or
                 `would_delete` (the full current record, delete) — never a
                 bare echo of the input.
-
-        Returns:
-            list: `{"formSubmissions": [...], "pagination": {"total", "offset",
-                "limit"}}` — each submission has `id`, `formId`,
-                `dateSubmitted`, `formResponse` (the visitor's answers,
-                field name → value), `localeId`.
-            get: the submission.
-            update: the updated submission, or `{"dry_run": true,
-                "submission_id", "changes"}`.
-            delete: `{}`, or `{"dry_run": true, "submission_id",
-                "would_delete"}`.
         """
         c = _client()
 
@@ -676,6 +676,13 @@ def register(mcp: FastMCP) -> None:
           headings/paragraphs) — `{"nodes": [{"id", "type", "text": {"html",
           "text"}, "attributes"}], "pagination"}`.
 
+        Returns —
+            list: `{"pages": [...], "pagination": {"total", "offset", "limit"}}`.
+            get: the page metadata.
+            update: the updated page metadata, or `{"dry_run": true,
+                "page_id", "changes"}`.
+            content: `{"pageId", "nodes": [...], "pagination", "lastUpdated"}`.
+
         Args:
             op: list (default) | get | update | content.
             page_id: required for get/update/content.
@@ -690,13 +697,6 @@ def register(mcp: FastMCP) -> None:
             dry_run: op="update" only — fetches the page first and returns a
                 real diff (`changes: {field: {"from", "to"}}`), makes NO
                 write call. Never a bare echo of the input.
-
-        Returns:
-            list: `{"pages": [...], "pagination": {"total", "offset", "limit"}}`.
-            get: the page metadata.
-            update: the updated page metadata, or `{"dry_run": true,
-                "page_id", "changes"}`.
-            content: `{"pageId", "nodes": [...], "pagination", "lastUpdated"}`.
         """
         c = _client()
 

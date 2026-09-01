@@ -105,12 +105,12 @@ def test_une_adresse_seule_ne_suffit_pas_a_faire_un_lien(registre, env_propre):
     Une adresse ne suffit donc plus : il faut un patron par type (`links`). Sans
     patron, aucun lien — c'est le sujet de `test_links_par_tenant.py`."""
     from oto_mcp.datastore.core import _ns_url
-    from oto_mcp.capabilities.docs import _public_doc_url
+    from oto_mcp.capabilities.docs.view import public_doc_url
     assert _ns_url(203, "acme:u-1") is None
-    assert _public_doc_url("tok", "acme:u-1") is None
+    assert public_doc_url("tok", "acme:u-1") is None
     # Nous, inchangés.
     assert _ns_url(203, "bn01jfy76a5n") == f"{config.dashboard_url()}/data/203"
-    assert _public_doc_url("tok", "bn01jfy76a5n") == f"{config.dashboard_url()}/p/d/tok"
+    assert public_doc_url("tok", "bn01jfy76a5n") == f"{config.dashboard_url()}/p/d/tok"
 
 
 def test_aucune_adresse_de_tableau_de_bord_nest_ecrite_en_dur():

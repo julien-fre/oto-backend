@@ -5,15 +5,44 @@ description = "MCP server exposing selected oto-cli connectors as tools (Streama
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = [
-    "fastmcp[apps]>=3.4.2",  # plancher = dernier (3.4.2) — schéma plat des tools validé dessus (ADR 0009). Extra `apps` = prefab_ui (MCP Apps SEP-1865, UI rendue en iframe) consommé par les tools *_app (cf. tools/foncier.py)
+    # ⚠️ **Plancher ET PLAFOND.** « Plancher = dernier », sans borne haute, s'est
+    # retourné trois fois dans la même soirée (31/08/2026) : le SDK a renommé sa
+    # classe d'erreur, un tiers a cessé de fournir `httpx`, puis `fastmcp` a
+    # réorganisé ses modules internes (`fastmcp.tools.tool` a disparu). À chaque
+    # fois la CI est tombée sur TOUTES les branches à la fois, pendant que les
+    # environnements locaux — installés plus tôt, donc plus anciens — restaient
+    # verts. Un projet qui déclare `>=X` sans plafond n'est pas reproductible : sa
+    # vérification dépend du jour où elle tourne.
+    # Le plafond ne gèle rien : il rend la montée de version DÉLIBÉRÉE — on l'essaie,
+    # on lance la suite, on borne plus haut. Extra `apps` = prefab_ui (MCP Apps
+    # SEP-1865) consommé par les tools *_app. Schéma plat des tools validé sur 3.4
+    # (ADR 0009).
+    "fastmcp[apps]>=3.4.2,<3.5",
     # lib connecteurs (oto.tools) — PLUS de dép à la CLI (otomata#13). PINNÉ sur un
     # tag git (≠ @main flottant) : une version déployée = une coordonnée reproductible
     # (SHA backend + ce pin). PyPI ne reçoit pas chaque merge (publish manuel, lag) →
     # on tague oto-core et on bump CE pin par PR. Bump = éditer le tag ici ; rollback
     # = revert ce commit (ramène aussi le bon oto-core). Cf. ADR 0020 (deploy/canari).
-    # v1.102.0 = MinariClient (oto.tools.minari) : prospection téléphonique — journal
-    #   d'appels transcrits, listes CSV, analytics d'équipe. Écrit sur le contrat
-    #   OpenAPI publié, sans sonde live (cf. le docstring du client).
+    # v1.104.0 = MinariClient (oto.tools.minari) : prospection téléphonique — journal
+    # d'appels transcrits, listes CSV, analytics d'équipe ; écrit sur le contrat OpenAPI
+    # publié, sans sonde live (oto-core#67). Emporte aussi hubspot (les listes = les
+    # segments, et le référentiel des propriétés — oto-core#72) et kaspr (un `dataToGet`
+    # inconnu est refusé ICI en nommant les valeurs acceptées, oto-core#73) ;
+    # v1.103.0 = slack : un jeton PUREMENT numérique entre deux `:` n'est plus lu comme
+    # un emoji (une heure « 20:02 to 20:51 » se faisait avaler ses chiffres, signaux
+    # #711/#575) et un texte au-delà des 4 000 caractères recommandés est SPLIT en
+    # plusieurs messages threadés rendant tous leurs `ts` (`ts_all`) plutôt que tronqué
+    # en silence par Slack à 40 000 (#711/#613) ; notion : `search_edited_on` — /search
+    # ne FILTRE pas sur last_edited_time (axe de TRI seulement), on pagine trié
+    # décroissant et on s'arrête à la première page plus vieille, donc « rien n'a changé »
+    # redevient calculé et non inféré (#468/#469 — câblage MCP côté ici encore à faire) ;
+    # secrets : un `secret_provider` CONFIGURÉ dont le magasin est absent avertit une fois
+    # par process au lieu de résoudre tous les secrets à leur défaut (constaté en prod le
+    # 28/08), et un nom de fournisseur inconnu LÈVE au lieu de retomber sur `file` ;
+    # v1.102.0 = DEUX clients d'un coup, un seul tag : lemlist couvre l'API entière
+    # (141 routes — le client savait lire une campagne, pas en conduire une,
+    # oto-core#65) et tally arrive complet (38 opérations sur les formulaires,
+    # version d'API datée épinglée côté client, oto-core#66) ;
     # v1.101.0 = serper : le refus LinkedIn de scrape_page ne prescrit plus un outil MCP (#632, 30/08/2026).
     # v1.100.0 = slack : lecture des RÉPONSES d'un fil (conversations.replies —
     # signaux #567/#576/#584/#592, quatre en huit jours : history ne rend que le
@@ -62,7 +91,7 @@ dependencies = [
     # v1.88.0 = clients forager (offres d'emploi, fiches d'organisation) et linear
     # (issues, projets) — un seul tag pour les deux (oto-core#50/#51) ;
     # ⚠️ ces deux clients (v1.89.0) :
-    # attendus par Tulina — UN seul tag pour les deux, pour qu'aucun ordre de merge
+    # attendus par un tenant tiers — UN seul tag pour les deux, pour qu'aucun ordre de merge
     # ne fasse régresser ce pin. ⚠️ Ces deux clients n'ont, DÉLIBÉRÉMENT, aucune
     # méthode qui déplace de l'argent (remboursement, virement, clôture de litige,
     # résiliation) ni qui change le produit (bascule de feature flag, suppression de
@@ -105,7 +134,7 @@ dependencies = [
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.102.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.104.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome
@@ -119,6 +148,15 @@ dependencies = [
     "aiodebug>=2.3.0",
     "starlette>=0.37",
     "uvicorn>=0.30",
+    # Les DEUX clients HTTP du dépôt, importés au top-level par du code SERVI —
+    # `requests` par les flux OAuth et la Management API, `httpx` par le client de
+    # paiement, l'extraction de fichiers et l'email. Ils arrivaient jusqu'ici en
+    # transitives, derrière des paquets qui ne les promettent pas : le 31/08/2026,
+    # l'un d'eux a cessé de fournir `httpx` et TOUTE la CI est tombée, sur toutes les
+    # branches à la fois, pendant que les environnements locaux restaient verts.
+    # Ce qu'on IMPORTE, on le DÉCLARE — garde-fou `tests/test_dependances_declarees.py`.
+    "requests>=2.31",
+    "httpx>=0.27",
     "pydantic>=2.0",
     "google-api-python-client>=2.0",
     "google-auth>=2.0",

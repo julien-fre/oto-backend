@@ -197,11 +197,11 @@ def fork_into_org(*, entry_id: int, org_id: int, new_slug: Optional[str] = None,
     base_slug = instructions.normalize_slug(new_slug or entry["slug"])
     slug = base_slug
     n = 2
-    while instructions.get_instruction(org_id, slug) is not None:
+    while instructions.get_instruction("org", org_id, slug) is not None:
         slug = f"{base_slug}-{n}"
         n += 1
     version = instructions.set_instruction(
-        org_id, slug, entry["body_md"], title=entry.get("title") or "",
+        "org", org_id, slug, entry["body_md"], title=entry.get("title") or "",
         description=entry.get("description") or "", set_by=set_by,
         slots=entry.get("slots") or [],
     )

@@ -31,8 +31,7 @@ import asyncio
 import pathlib
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, call_axes, session_org
 
 META_PY = pathlib.Path(__file__).resolve().parent.parent / "oto_mcp" / "tools" / "meta.py"

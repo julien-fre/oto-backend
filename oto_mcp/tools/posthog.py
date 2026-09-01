@@ -32,7 +32,7 @@ le même appel) — sans quoi chaque requête mangerait le budget de réponse
 (cf. `docs/conventions.md`).
 
 **Testé en live le 2026-08-22** contre un vrai projet PostHog Cloud US
-(organisation Tulina, projet 571144) : identité, découverte de projet, HogQL,
+(organisation cliente réelle) : identité, découverte de projet, HogQL,
 requêtes typées, ré-exécution d'un insight sauvegardé, schéma (156 tables,
 `events` à 52 colonnes), les 14 familles de ressources et l'écriture
 d'annotation répondent comme codé. `groups_types` rend une liste NUE (pas
@@ -44,7 +44,7 @@ from __future__ import annotations
 from typing import Any, Dict, Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access

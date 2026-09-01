@@ -132,6 +132,14 @@ _KNOWN: dict[str, str] = {
     # deux chemins usuels parce qu'un intégrateur sonde l'un ou l'autre.
     "/openapi.json": NATURE,
     "/api/openapi.json": NATURE,
+    # La version SERVIE (oto#33) : un ref git, un SHA, deux horodatages — aucune
+    # valeur, comme le descriptif juste au-dessus. NATURE et non DEBT : ses deux
+    # appelants n'ont pas de jeton par construction — un contrôle externe (Uptime
+    # Kuma, un script de déploiement) et un consommateur qui cherche à DATER une
+    # dérive de comportement, donc avant d'avoir résolu quoi que ce soit
+    # d'identité. L'adaptateur REST des capacités authentifiant TOUJOURS, une
+    # surface anonyme ne peut pas y passer.
+    "/api/version": NATURE,
     # ⚠️ Seule route MIXTE du lot : anonyme (vitrine) ET authentifiée (le dashboard
     # y scope son catalogue sur l'org active). Classée NATURE parce que sa moitié
     # anonyme est un contrat du build vitrine — la migrer supposerait de SCINDER la
@@ -213,7 +221,7 @@ _KNOWN: dict[str, str] = {
     # LLM) — mais une capacité peut être REST-only (`mcp=None`), c'était donc bien de la
     # dette et pas une nature. Le pendant AGENT du même geste existe et c'est
     # `me.connector_connect` (`POST /api/me/connectors/{name}/connect`).
-    # --- NATURE — ALIAS DÉPRÉCIÉS, retrait le 27/09/2026 (#519, retrait suivi en
+    # --- NATURE — ALIAS DÉPRÉCIÉS, retrait le 29/10/2026 (#519, retrait suivi en
     # #526). Ces chemins ne portent AUCUN métier : ils répondent 308 vers le chemin
     # d'aujourd'hui, et s'en vont à une date écrite (`oto_mcp/deprecations.REST`).
     # Ce n'est donc pas de la dette — il n'y a rien à migrer, il y a une date à

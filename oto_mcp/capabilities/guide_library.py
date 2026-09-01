@@ -126,9 +126,9 @@ class LibraryList(BaseModel):
     vide ne prouve donc pas qu'un guide n'existe pas.
 
     ⚠️ La liste est servie sous SES DEUX noms — `guides` (aujourd'hui) et `doctrines`,
-    qui s'en va le 27/09/2026 (#519), cf. `docs/alias-deprecies.md`."""
+    qui s'en va le 29/10/2026 (#519), cf. `docs/alias-deprecies.md`."""
     guides: list[LibraryEntrySummary]
-    doctrines: list[LibraryEntrySummary]     # ALIAS déprécié (retrait 27/09/2026)
+    doctrines: list[LibraryEntrySummary]     # ALIAS déprécié (retrait 29/10/2026)
 
 
 class LibraryEntry(BaseModel):
@@ -299,7 +299,7 @@ def _get(ctx: ResolvedCtx, inp: LibraryGetInput) -> dict:
 
 def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
     org_id = _require_org_admin(ctx, "Publier")
-    src = org_store.get_instruction(org_id, inp.slug)
+    src = org_store.get_instruction("org", org_id, inp.slug)
     if not src:
         # Code d'aujourd'hui + code d'hier dans `details.legacy_code` : un code
         # d'erreur ne se double pas, il n'y a qu'un champ `error` (#519).
@@ -325,7 +325,7 @@ def _publish(ctx: ResolvedCtx, inp: PublishInput) -> dict:
                           f"Le nom `{org_store.normalize_slug(inp.public_slug or inp.slug)}` "
                           "n'est pas disponible — publie sous un autre `public_slug`.")
     # Publier une procédure sans schéma propage le manque à tous ses forks : le
-    # signal part ici aussi, au même régime non bloquant (tulina-app-front#108).
+    # signal part ici aussi, au même régime non bloquant (front tiers, issue #108).
     return {"published": True, "id": row["id"], "slug": row["slug"],
             "version": row["version"], "visibility": row["visibility"],
             **procedure_diagram.diagram_check(src.get("body_md") or ""),

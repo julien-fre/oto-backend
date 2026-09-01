@@ -19,9 +19,9 @@ CONNECTOR = _c(
     help="envoi d'email transactionnel via ton compte Scaleway TEM (domaine vérifié chez Scaleway)",
     publisher="Scaleway", href="https://www.scaleway.com/en/transactional-email-tem/",
     credential_fields=(
-        CredentialField("secret_key", "Clé secrète Scaleway (X-Auth-Token)", secret=True, reveal=True),
-        CredentialField("project_id", "Project ID Scaleway", secret=False, reveal=True),
-        CredentialField("region", "Région TEM (déf. fr-par)", secret=False, reveal=True),
+        CredentialField("secret_key", "Clé secrète Scaleway (X-Auth-Token)", secret=True),
+        CredentialField("project_id", "Project ID Scaleway", secret=False),
+        CredentialField("region", "Région TEM (déf. fr-par)", secret=False),
     ),
 )
 

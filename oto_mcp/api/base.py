@@ -49,14 +49,17 @@ def _allowed_origins() -> list[str]:
         "https://app.oto.ninja",
         "https://otomata.tech",             # formulaire de contact vitrine
         "https://www.otomata.tech",
-        "https://app.tulina.ai",            # front Tulina PROD (box tulina-0)
-        "https://tulina.oto.zone",          # front Tulina PREPROD (même box, :3001)
+        # noqa: CLIENT — origines FONCTIONNELLES d'un front tiers (repli seulement :
+        # les deux box posent OTO_MCP_CORS_ORIGINS, cf. CLAUDE.md). Les retirer casse
+        # le CORS d'un dev sans env. Relocalisation = 2e volet de oto-private#85.
+        "https://app.tulina.ai",            # noqa: CLIENT — front tiers PROD
+        "https://tulina.oto.zone",          # noqa: CLIENT — front tiers PREPROD
         "http://localhost:5173",
         "http://localhost:4173",
         "http://localhost:5182",
         "http://localhost:5184",
         "http://localhost:5192",            # oto-dashboard dev (ADR 0007)
-        "http://localhost:5193",            # front Tulina dev, ports alternatifs (tulina-app-front#90)
+        "http://localhost:5193",            # front tiers en dev, ports alternatifs
         "http://localhost:5194",
         "http://localhost:5195",
         "http://localhost:5196",
@@ -73,10 +76,31 @@ def _cors_headers(origin: str | None) -> dict[str, str]:
             "Access-Control-Allow-Credentials": "true",
             "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
             "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Oto-Org, X-Oto-Group, X-Oto-View-As",
+            # Sans cette ligne, `X-Oto-Version` (oto#33) part sur le fil mais reste
+            # ILLISIBLE au dashboard : un navigateur ne donne à `fetch` que les
+            # en-têtes de réponse explicitement exposés. Un en-tête qu'aucun de nos
+            # consommateurs ne peut lire ne date rien.
+            "Access-Control-Expose-Headers": "X-Oto-Version",
             "Access-Control-Max-Age": "600",
             "Vary": "Origin",
         }
     return {}
+
+
+def _locale_from_accept_language(header: str | None) -> str | None:
+    """Déduit `en`/`fr` du 1er tag de langue de l'en-tête `Accept-Language`.
+
+    Même repli que le dashboard (`i18n.ts:detectBrowserLocale`, `navigator.language`) :
+    `fr` si la langue commence par `fr`, sinon `en`. `None` si l'en-tête est absent ou
+    vide — l'appelant ne pose alors rien (oto-backend#701 : c'est le seul signal
+    disponible côté REST interactif, jamais une déduction depuis le domaine email ou
+    une autre heuristique)."""
+    if not header:
+        return None
+    primary = header.split(",", 1)[0].split(";", 1)[0].strip().lower()
+    if not primary:
+        return None
+    return "fr" if primary.startswith("fr") else "en"
 
 
 def _maybe_view_as(real_sub: str, apply_view_as: bool) -> str:
@@ -163,10 +187,14 @@ async def _authenticate(
     if os.environ.get("OTO_MCP_TENANT_MIGRATION_ISS"):
         sub = await run_in_threadpool(db.resolve_sub, sub)
     # upsert_user = DB à CHAQUE requête REST → threadpool (jamais dans la loop).
+    # locale (#701) : signal déduit de l'en-tête, jamais un choix — `upsert_user`
+    # ne le pose que si la ligne n'en porte encore aucun (COALESCE côté SQL).
     await run_in_threadpool(
-        lambda: db.upsert_user(sub, email=access_token.claims.get("email"),
-                               name=access_token.claims.get("name"),
-                               iss=access_token.claims.get("iss")))
+        lambda: db.upsert_user(
+            sub, email=access_token.claims.get("email"),
+            name=access_token.claims.get("name"),
+            iss=access_token.claims.get("iss"),
+            locale=_locale_from_accept_language(request.headers.get("accept-language"))))
     return _maybe_view_as(sub, apply_view_as), None
 
 

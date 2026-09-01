@@ -4,8 +4,7 @@ Trois contrats : exposition SÉLECTIVE du schéma (dérivée du registre), strip
 la ContextVar par le middleware, lecture par le seam de résolution (`resolve_credential`
 sélectionne le compte de l'axe en multi-compte — « 2 Zoho »)."""
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, call_axes, credentials_store, db, session_org
 from oto_mcp.middleware.call_context import CallContextMiddleware
 
@@ -253,11 +252,11 @@ def _wire_multi_account_with_meta(monkeypatch, provider, org, sub, accounts_meta
 def test_no_pin_resolves_to_the_marked_default(monkeypatch):
     _wire_multi_account_with_meta(
         monkeypatch, "folk", 42, "u",
-        [("Julien's access - Tangible", {"is_default": True}), ("Second key", {})],
-        {"Julien's access - Tangible": "K_DEFAULT", "Second key": "K_OTHER"})
+        [("Jane's access - Acme", {"is_default": True}), ("Second key", {})],
+        {"Jane's access - Acme": "K_DEFAULT", "Second key": "K_OTHER"})
     rc = access.resolve_credential("folk", want="auto", sub="u")
     assert rc.key == "K_DEFAULT"
-    assert rc.account == "Julien's access - Tangible"
+    assert rc.account == "Jane's access - Acme"
 
 
 def test_no_pin_and_no_default_raises_ambiguity_error(monkeypatch):

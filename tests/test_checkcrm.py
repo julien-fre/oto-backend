@@ -1,4 +1,4 @@
-"""Check CRM connector — wraps Julien's "enrichment" job-change-check API
+"""Check CRM connector — wraps a partner's "enrichment" job-change-check API
 (https://enrichment-two.vercel.app/v1). Locks in: the registry entry (keyed
 byo-only api_key, no platform mode), the curated MCP surface under the
 `checkcrm` namespace (not `check_crm` — see providers/checkcrm.py comment on
@@ -140,7 +140,7 @@ def test_client_4xx_raises_upstream_error_with_body_preserved():
 # --- checkcrm_add_subsidiary : merge solo/bulk --------------------------------
 
 def test_add_subsidiary_rejects_both_or_neither_of_solo_and_batch():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto_mcp.tools import checkcrm
     from fastmcp import FastMCP
 

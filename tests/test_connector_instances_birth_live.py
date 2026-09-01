@@ -343,11 +343,11 @@ def test_le_passage_au_multi_compte_fait_suivre_la_ligne_mono(live):
 
     cs.set_credential("member", MEMBER, "zoho", "k", set_by=SUB)
     mono = _instances(vivantes=True)[0]["id"]
-    cs.ensure_named_coexistence("member", MEMBER, "zoho", "alexandra")
-    cs.set_credential("member", MEMBER, "zoho", "k2", set_by=SUB, account="alexandra")
+    cs.ensure_named_coexistence("member", MEMBER, "zoho", "jane")
+    cs.set_credential("member", MEMBER, "zoho", "k2", set_by=SUB, account="jane")
 
     vivantes = _instances(vivantes=True)
-    assert _quad(vivantes) == [("member", MEMBER, "zoho", "alexandra"),
+    assert _quad(vivantes) == [("member", MEMBER, "zoho", "jane"),
                                ("member", MEMBER, "zoho", "principal")]
     assert [v["id"] for v in vivantes if v["account"] == "principal"] == [mono]
     assert not _ecarts()

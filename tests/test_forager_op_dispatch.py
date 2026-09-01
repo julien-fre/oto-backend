@@ -13,9 +13,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
-
+from oto_mcp.mcp_errors import McpError
 @pytest.fixture
 def client(monkeypatch):
     inst = MagicMock()

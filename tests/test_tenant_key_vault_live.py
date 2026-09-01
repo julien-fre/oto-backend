@@ -172,7 +172,7 @@ def contexte(monkeypatch):
 
 def test_la_resolution_sert_la_cle_tenant_aux_comptes_du_tenant_et_a_eux_seuls(
         coffre_vide, contexte):
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     tenant_vault.set_tenant_secret(PILOTE, CONN, "k-tenant", set_by="operateur")
 
     rc = access.resolve_credential(CONN, sub=SUB_T)

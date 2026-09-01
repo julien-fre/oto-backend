@@ -147,6 +147,16 @@ class Row(BaseModel):
     claimed_until: Optional[str] = Field(default=None, alias="_claimed_until",
                                          serialization_alias="_claimed_until",
                                          description=HORODATAGE)
+    claimed_run: Optional[str] = Field(
+        default=None, alias="_claimed_run", serialization_alias="_claimed_run",
+        description=(
+            "The run holding this lease — what links a piece of work to the ROW it "
+            "is working on. Present whenever `_claimed_by` is (the three travel "
+            "together); null when the lease was taken WITHOUT a run (a person on "
+            "the dashboard queue, an agent that passed no `_run_id`). Cleared when "
+            "the run gives its rows back (`run_finish`, or the runner concluding "
+            "its job), so it answers \"which row is this run on NOW\", not \"which "
+            "row did that run work\"."))
 
 
 class WrittenRow(Row):
@@ -294,7 +304,9 @@ def _aggregate(ctx: ResolvedCtx, inp: AggregateInput) -> dict:
 
 def _queue(ctx: ResolvedCtx, inp: NamespaceRefInput) -> dict:
     """File de travail (ADR 0046 D) — vue de supervision : les lignes sous bail
-    (`_claimed_by`/`_claimed_until`), actif ou expiré. Lecture seule."""
+    (`_claimed_by`/`_claimed_until`/`_claimed_run`), actif ou expiré. Lecture
+    seule. `_claimed_run` est ce qui rend la vue ACTIONNABLE : sans lui elle dit
+    qu'un travail tient une ligne, jamais lequel tient laquelle."""
     ns, _ = _adresse(ctx, inp.namespace, ligne=False)
     try:
         return {"rows": make_store(ctx.sub).queue(ns)}

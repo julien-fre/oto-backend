@@ -7,6 +7,7 @@ import pytest
 from oto_mcp import search as S
 from oto_mcp.capabilities import search as CAP
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+from oto_mcp.capabilities.docs import common as docs_common
 
 
 def _stub_empty(monkeypatch, **over):
@@ -148,8 +149,8 @@ def test_cap_kinds_csv_and_validation():
 def test_doc_op_search_reroutes_to_single_path(monkeypatch):
     # DÉPRÉCIATION (Ship 1) : oto_doc(op=search) délègue au chemin unique.
     import oto_mcp.search as S2
-    from oto_mcp.capabilities import docs as D
-    monkeypatch.setattr(D, "_can", lambda sub, pid, want: True)
+    from oto_mcp.capabilities.docs import core as D
+    monkeypatch.setattr(docs_common, "can", lambda sub, pid, want: True)
     monkeypatch.setattr(S2, "search", lambda sub, org, q, **k: {
         "hits": [{"kind": "page", "ref": 5, "project_id": 3, "title": "T",
                   "passage": "<b>x</b>", "updated_at": "2026-01-01"}]})

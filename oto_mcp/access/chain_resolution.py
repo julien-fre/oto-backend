@@ -139,18 +139,30 @@ def _platform_pick(sub: str, provider: str, org: Optional[int]) -> "tuple[Option
     return (None, hors_modele)
 
 
-def chain_verdict(sub: str, provider: str, *, org: Optional[int],
-                  want: str = "auto") -> "tuple[Optional[ChainPick], Optional[str]]":
-    """L'instance que 0053-D2 désignerait pour cet appel, **et** le drapeau
-    **la nuance du trou** quand la chaîne se tait. Les deux ensemble, en UNE passe :
-    les rendre séparément
-    ferait relire les instances plateforme deux fois par appel, précisément sur le
-    connecteur le plus trafiqué (une clé ouverte est le cas où la chaîne se tait).
+def _paliers(sub: str, provider: str, org: Optional[int], want: str):
+    """Les paliers ATTEIGNABLES, dans l'ordre, en **générateur** — et la nuance du
+    trou en valeur de retour (PEP 380, lue par `StopIteration.value`).
+
+    ⚠️ **Générateur et non liste, et ce n'est pas un détail de style.** Une liste
+    sonderait TOUS les paliers à chaque appel — le membre, chaque équipe, l'org, le
+    tenant, plus les instances plateforme — sur le chemin le plus chaud du produit,
+    pour un résultat dont on ne consomme presque toujours que le premier élément. Le
+    générateur rend le coût nominal identique à celui d'aujourd'hui : on ne sonde le
+    palier suivant que si le précédent n'a rien rendu.
+
+    ⚠️ **Et ce n'est pas une forme AJOUTÉE : c'est celle que la traversée avait
+    perdue.** Le chemin historique (`walk_cascade`) est un générateur — un compte
+    nommé absent au palier membre passait la main au palier org, contrat écrit dans
+    son code. La chaîne l'a remplacé par un `return` au premier palier qui DÉTIENT une
+    clé, et la lecture, elle, résout au fetch : un miss devenait un refus sec au lieu
+    d'un repli (#673). Céder au lieu de retourner rend le repli, sans rien réécrire de
+    la lecture.
 
     Les crans du connecteur (byo_user, org-partageable, palier plateforme déclaré,
     instance suspendue) sont lus à leur source — ce sont des propriétés de
     l'instance, pas des autorisations, et ils valent des deux côtés de la fenêtre.
-    La restriction `connector_acl`, elle, n'est PAS lue : c'est le fond du lot."""
+    La restriction `connector_acl`, elle, n'est PAS lue : c'est le fond du lot.
+    """
     porteur = providers.credential_provider(provider)
     if org is not None and providers.is_byo_user(porteur):
         try:
@@ -162,8 +174,8 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
                         porteur)):
                 # Le drapeau free-tier ne sert QUE si la chaîne se tait : un
                 # palier gagnant le rend sans avoir lu les instances plateforme.
-                return (ChainPick("user", credentials_store.MEMBER,
-                                  credentials_store.member_id(org, sub)), None)
+                yield ChainPick("user", credentials_store.MEMBER,
+                                credentials_store.member_id(org, sub))
         except Exception:  # noqa: BLE001
             logger.debug("shadow L7 : palier membre illisible", exc_info=True)
     if porteur in providers.ORG_SHAREABLE_PROVIDERS:
@@ -181,13 +193,13 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
         for gid in gids:
             try:
                 if group_store.has_group_secret(gid, porteur):
-                    return (ChainPick("group", "group", str(gid), group_id=gid), None)
+                    yield ChainPick("group", "group", str(gid), group_id=gid)
             except Exception:  # noqa: BLE001
                 logger.debug("shadow L7 : équipe %s illisible", gid, exc_info=True)
         if org is not None:
             try:
                 if org_store.has_org_secret(org, porteur):
-                    return (ChainPick("org", "org", str(org)), None)
+                    yield ChainPick("org", "org", str(org))
             except Exception:  # noqa: BLE001
                 logger.debug("shadow L7 : palier org illisible", exc_info=True)
         # Étage TENANT (L-clés PR 1) : le même que dans le walker, lu à la même source
@@ -204,15 +216,55 @@ def chain_verdict(sub: str, provider: str, *, org: Optional[int],
                     # passe au palier suivant, comme lui (pas un « rien » précoce).
                     verdict = grants_chain.tenant_rung(slug, porteur, org)
                     if verdict is None or verdict.granted:
-                        return (ChainPick("tenant", credentials_store.TENANT, slug,
-                                          via="grant" if verdict else "appartenance"), None)
+                        yield ChainPick("tenant", credentials_store.TENANT, slug,
+                                        via="grant" if verdict else "appartenance")
             except Exception:  # noqa: BLE001
                 logger.debug("shadow L7 : palier tenant illisible", exc_info=True)
     if want != "byo":
         con = providers.connector_for_provider(porteur)
         if con is not None and "platform" in con.auth_modes:
-            return _platform_pick(sub, porteur, org)
-    return (None, None)
+            pick, hors_modele = _platform_pick(sub, porteur, org)
+            if pick is not None:
+                yield pick
+            # La nuance ne se calcule QUE si la chaîne se tait — le `_platform_pick`
+            # ci-dessus est le seul passage qui lit les instances plateforme, et elle
+            # en sort. La rendre ici la garde attachée à sa passe : la sortir du
+            # générateur demanderait une seconde lecture sur le connecteur le plus
+            # trafiqué (une clé ouverte EST le cas où la chaîne se tait).
+            return hors_modele
+    return None
+
+
+def chain_verdict(sub: str, provider: str, *, org: Optional[int],
+                  want: str = "auto") -> "tuple[Optional[ChainPick], Optional[str]]":
+    """L'instance que 0053-D2 DÉSIGNERAIT, **et** la nuance du trou si elle se tait.
+
+    La désignation reste ce qu'elle était : le PREMIER palier atteignable. Ce que la
+    traversée a regagné (#673) sert à la LECTURE, pas à la comparaison — le relevé de
+    fenêtre compare des désignations, et lui donner une liste ferait bouger ce qu'il
+    mesure au moment où on corrige autre chose.
+
+    On ne consomme donc qu'un élément : les paliers suivants ne sont jamais sondés si
+    le premier répond. La nuance, elle, est la valeur de RETOUR du générateur — elle
+    n'existe que lorsqu'il s'épuise sans rien céder, c'est-à-dire exactement quand la
+    chaîne se tait.
+    """
+    paliers = _paliers(sub, provider, org, want)
+    try:
+        return (next(paliers), None)
+    except StopIteration as fin:
+        return (None, fin.value)
+
+
+def chain_paliers(sub: str, provider: str, *, org: Optional[int],
+                  want: str = "auto"):
+    """Les paliers atteignables DANS L'ORDRE — ce que la lecture parcourt.
+
+    C'est la surface que `rung_for_picks` consomme : elle s'arrête au premier palier
+    qui RÉPOND, là où `chain_verdict` s'arrête au premier qui EXISTE. La différence
+    entre les deux est tout le sujet de #673.
+    """
+    return _paliers(sub, provider, org, want)
 
 
 def chain_winner(sub: str, provider: str, *, org: Optional[int],
@@ -221,6 +273,29 @@ def chain_winner(sub: str, provider: str, *, org: Optional[int],
     promouvra en résolution servie."""
     return chain_verdict(sub, provider, org=org, want=want)[0]
 
+
+
+def rung_for_picks(paliers, probe, sub: str, provider: str, org: Optional[int]):
+    """Le premier palier qui RÉPOND, en parcourant les paliers atteignables.
+
+    ⚠️ **C'est le repli, et il était mort.** La chaîne désigne un palier sur la
+    PRÉSENCE d'un credential (`has_credential(account=None)` — n'importe quel compte) ;
+    la lecture, elle, résout au FETCH, avec la sélection de compte nommé. Les deux ne
+    répondent donc pas toujours la même chose : un compte nommé absent au palier
+    membre existe « en présence » et manque « au fetch ». Le chemin historique passait
+    alors la main au palier suivant — « l'org a eu, le membre non », contrat écrit
+    dans son code. Désigner UN palier puis rendre `None` sur un miss transformait ce
+    repli en **refus sec** (#673).
+
+    On parcourt donc, et le coût reste celui d'avant : le générateur ne sonde le
+    palier suivant que si le précédent n'a rien rendu, et le cas nominal s'arrête au
+    premier.
+    """
+    for pick in paliers:
+        rung = rung_for_pick(pick, probe, sub, provider, org)
+        if rung is not None:
+            return rung
+    return None
 
 
 def rung_for_pick(pick: Optional[ChainPick], probe, sub: str, provider: str,

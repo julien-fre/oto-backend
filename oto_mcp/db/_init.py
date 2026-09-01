@@ -192,6 +192,19 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # à sa conclusion (usage_tokens, stopped, steps…) — c'est ce qui rend le coût
     # lisible par un ordonnanceur de flotte (garde budget) sans parser une note.
     conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS result JSONB")
+    # Chantier runner R4 (fleet comme produit) : un job dit à quelle FLOTTE il
+    # appartient. La table `runner_fleets` est créée par le DDL ; sur une base qui
+    # existe déjà, seule la colonne manque — et sans elle un passage n'est lisible
+    # qu'en corrélant des horodatages à la main.
+    # ⚠️ La FK voyage AVEC l'ALTER, sinon une base fraîche (qui la reçoit par le
+    # CREATE TABLE) et la prod (qui ne reçoit que l'ALTER) divergent pour toujours,
+    # et rien ne le rattraperait. Même forme que `org_invitations.group_id`.
+    conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS fleet_id BIGINT "
+                 "REFERENCES runner_fleets(id) ON DELETE SET NULL")
+    # L'index SUIT l'ALTER : dans `_schema` il s'exécuterait avant que la colonne
+    # existe sur une base déjà construite, et le boot mourrait (piège du 20/07).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runner_jobs_fleet "
+                 "ON runner_jobs(fleet_id) WHERE fleet_id IS NOT NULL")
     # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
     # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
     # portaient notre domaine : un client d'un partenaire recevait des liens vers
@@ -338,6 +351,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
               FROM docs WHERE position IS NULL) s
         WHERE d.id = s.id AND d.position IS NULL
     """)
+    # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas, avec son
+    # backfill (ADR 0042, barreau 1). Les index de recherche construits juste
+    # après portent `WHERE delivery = 'on-demand'` : sur une base qui existe
+    # déjà, la colonne n'arrive que par cet ALTER, donc l'ordre est une
+    # contrainte d'exécution, pas une mise en page. Le backfill des readmes
+    # `init`, lui, reste à sa place.
+    conn.execute("ALTER TABLE guides ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'on-demand'")
     # Lot 3 Ship 1 : index FTS de la recherche transverse (GIN d'expression —
     # PAS de colonne STORED, qui réécrirait la table sous ACCESS EXCLUSIVE).
     # Source unique des expressions : db/search.py (index ↔ requête identiques).
@@ -425,6 +445,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # backfill n'est requis (0 est bien l'état d'une ligne jamais réservée).
     conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS claims INTEGER NOT NULL DEFAULT 0")
     conn.execute("ALTER TABLE datastore_rows ADD COLUMN IF NOT EXISTS abandon_reason TEXT")
+    # ⚠️ REMONTÉE ICI le 2026-09-01 (#781) — elle vivait plus bas (ADR 0032 §6 /
+    # 0029, B6 : mode typé optionnel d'un namespace). La conversion #317 juste
+    # après LIT `d.schema` : sur une base qui existe déjà, la colonne n'arrive
+    # que par cet ALTER, et l'`UPDATE` mourait avant lui.
+    conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS schema JSONB")
     # #317 : le rôle `title` devient une PRÉSENTATION (`display`). Conversion
     # ADDITIVE — le `role` reste en place, seuls les lecteurs changent de source ;
     # son retrait est l'étape suivante du dossier, une fois la bascule vérifiée.
@@ -480,7 +505,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # guides B5 restent des how-to) + backfill des readmes init platform + user
     # depuis les ex-tables (org/group suivent au barreau 2). ON CONFLICT DO NOTHING
     # = idempotent, ne réécrit jamais une ligne guides déjà posée.
-    conn.execute("ALTER TABLE guides ADD COLUMN IF NOT EXISTS delivery TEXT NOT NULL DEFAULT 'on-demand'")
+    # (La colonne `delivery` elle-même est posée BEAUCOUP plus haut : les index
+    # de recherche la lisent dans leur prédicat — cf. le renvoi là-bas, #781.)
     conn.execute(
         "INSERT INTO guides (scope, owner_id, slug, delivery, body_md, created_at, updated_at) "
         "SELECT 'platform', 'platform', key, 'init', body_md, "
@@ -510,6 +536,19 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # le concept de guide. Une couche de contexte EST une page (0055-D4) → toutes
     # ces lignes deviennent `kind='page'`, et `delivery` (injecté / à la demande)
     # descend au rang de PROPRIÉTÉ. Détail et forme : `db/guides.py`, `_schema`.
+    #
+    # ⚠️ **La SEULE projection qui survit à l'arrêt de la recopie (2026-09-01).**
+    # Les cinq autres — projets, pages, procédures, tableaux, lignes — sont
+    # retirées plus bas ; celle-ci reste, et pour une raison qui n'est pas la
+    # symétrie : `db/guides.py` écrit ses cinq gestes DIRECTEMENT dans `nodes`,
+    # la table `guides` n'a donc plus d'écrivain applicatif — mais elle en garde
+    # UN, le seed `secret_sauce` semé quelques lignes plus haut, et ce seed est
+    # le seul chemin par lequel le readme plateforme arrive sur une base NEUVE.
+    # Mesuré en prod le 2026-09-01 : 23 lignes, toutes déjà dans `nodes`, aucune
+    # plus récente que son nœud — donc no-op stable sur la base vivante, et
+    # indispensable au premier boot d'une base vide.
+    # Elle s'en ira quand le seed sèmera nativement dans `nodes` ; la retirer
+    # avant, c'est retirer une chose sans lui donner de remplaçant.
     if conn.execute("SELECT to_regclass('guides') AS t").fetchone()["t"]:
         from .guides import CONVERT_GUIDES_TO_NODES_SQL
         conn.execute(CONVERT_GUIDES_TO_NODES_SQL)
@@ -528,8 +567,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # chantier procédures B1) : ils ont tourné en prod à chaque boot depuis le
     # 06/07, et celui d'équipe lisait `org_group_instructions` (jumelle vouée au
     # DROP — un boot post-drop aurait cassé).
-    # ADR 0032 §6 / 0029 (B6) : mode typé optionnel d'un namespace de datastore.
-    conn.execute("ALTER TABLE user_datastores ADD COLUMN IF NOT EXISTS schema JSONB")
+    # (ADR 0032 §6 / 0029, B6 : `user_datastores.schema` est posée BEAUCOUP plus
+    # haut — la conversion #317 la lit avant ce point. Cf. le renvoi là-bas, #781.)
     # gap #4a : partage public d'un doc (token de lien public, lookup indexé).
     conn.execute("ALTER TABLE docs ADD COLUMN IF NOT EXISTS public_token TEXT")
     # ADR 0032 (« stop using slug ») : id surrogate stable + globalement unique pour
@@ -815,6 +854,13 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS group_role TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_org_invitations_group "
                  "ON org_invitations(group_id) WHERE group_id IS NOT NULL")
+    # REFUS de l'invité (oto-backend#654) : jusqu'ici seul l'ÉMETTEUR pouvait retirer
+    # une invitation (révocation), l'invité ne pouvait que ne pas l'accepter — donc
+    # garder un badge qu'il ne pouvait pas éteindre. État PROPRE, jamais `accepted_at`
+    # (cf. le commentaire du DDL). Deux ADD COLUMN idempotents, sans réécriture de
+    # table : pas de travail au boot, la fenêtre du healthcheck n'en voit rien.
+    conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS declined_at TIMESTAMPTZ")
+    conn.execute("ALTER TABLE org_invitations ADD COLUMN IF NOT EXISTS declined_sub TEXT")
     # Primitive de ressource possédée (ADR 0030) : scope d'ownership porté par la
     # ressource (`owner_type` défaut 'user', `owner_id` = sub | org.id | group.id).
     # Phase H (cadrage 10/07) — B1 (promu prod 10/07) a purgé toute référence aux
@@ -912,11 +958,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS require_mfa BOOLEAN NOT NULL DEFAULT FALSE")
     conn.execute("ALTER TABLE orgs ADD COLUMN IF NOT EXISTS logto_org_id TEXT")
     # Front qui héberge l'org — oto-backend sert PLUSIEURS produits depuis une
-    # instance (oto, Tulina). NULL = oto (le défaut, l'écrasante majorité) ; posé
+    # instance (oto, un tenant tiers). NULL = oto (le défaut, l'écrasante majorité) ; posé
     # = l'org vit sous un front tiers, dont les liens sortants et la marque des
     # mails doivent porter SES couleurs, pas les nôtres :
-    #   front_base_url = base des liens publics (https://app.tulina.ai)
-    #   front_brand    = marque écrite dans les mails ("tulina")
+    #   front_base_url = base des liens publics (ex. https://app.<tenant>.ai)
+    #   front_brand    = marque écrite dans les mails (ex. "<tenant>")
     # Dérivé de l'org, JAMAIS déclaré par l'appelant : une invitation ne peut pas
     # prétendre venir d'un front auquel l'org n'appartient pas.
     # ⚠️ Provisoire assumé : cette information appartient au TENANT (ADR 0052),
@@ -1090,96 +1136,69 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
         # passe interrompue ne laisse pas une sentinelle qui prétend qu'ils ont eu
         # lieu.
         _conn_sel.mark_split_fanout(conn)
-    # === Lot M2 (blueprint ADR 0054/0063, #287) : projets et pages → NŒUDS ===
-    # PLACÉ EN FIN DE TRANSACTION, et c'est la même règle qu'au lot M1 : la
-    # conversion doit suivre TOUTE écriture de sa table source dans CE boot.
-    # Ici la liste est longue — `projects` et `docs` gagnent leurs colonnes par
-    # `ALTER` plus haut (`icon`, `context_org_id`, `is_template`, `description`,
-    # `position`, `public_token`) et `docs.position` reçoit même un backfill.
-    # Convertir avant, c'est lire des colonnes qui n'existent pas encore sur une
-    # base ancienne (boot KO) ou projeter un état que le boot vient de corriger.
+    # === Le nœud gagne sa DONNÉE et son BAIL (2026-09-01, ADR 0054/0063) ========
     #
-    # Copie legacy→cible à CHAQUE boot, gardée `to_regclass`
-    # (docs/live-migrations.md) : `projects`/`docs` restent la source de vérité
-    # et la cible des écritures de ce lot — la conversion est une PROJECTION,
-    # pas une bascule. Purement ADDITIF : rien n'est modifié ni supprimé côté
-    # legacy, la prod (qui tourne l'ancien code sur CETTE MÊME base) ne voit
-    # strictement rien. Le lot se défait en retirant ces deux appels.
+    # **Pourquoi une colonne et pas une clé de `props`.** Jusqu'ici, un nœud-ligne
+    # rangeait ses valeurs métier dans `props`, à côté du titre, de la position et
+    # des marques de la recopie. Deux natures très différentes s'y mélangeaient :
+    # ce que le nœud EST pour la plateforme (titre, épingle, schéma d'enfants —
+    # des clés qu'oto connaît et interprète) et ce que l'utilisateur y a MIS (les
+    # colonnes de son tableau — des clés dont oto ne sait rien et qu'il ne doit
+    # pas interpréter). Les tenir dans le même sac, c'est laisser une donnée
+    # utilisateur nommée `title` ou `position` écraser le sens d'un nœud, et
+    # obliger toute lecture à connaître la liste des clés réservées pour trier.
+    # La frontière est celle du datastore (« oto gère les types standards, jamais
+    # l'interprétation métier d'une valeur ») : elle mérite une colonne, pas une
+    # convention de nommage.
     #
-    # Ce que la conversion fait disparaître, au-delà du déménagement de lignes :
-    # **le projet en tant qu'objet** (0054-D5). Il devient une ÉPINGLE — un
-    # drapeau `props->>'pinned'` sur un nœud ordinaire, dont le brief est le
-    # corps et dont les pages seront l'arbre. Détail : `db/nodes.py`.
+    # `ADD COLUMN` avec un `DEFAULT` constant ne réécrit pas la table (PG >= 11) :
+    # instantané, aucun verrou long, aucun backfill — la base est partagée avec la
+    # production.
+    conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS data JSONB NOT NULL "
+                 "DEFAULT '{}'::jsonb")
+    # Le bail de la file de travail : `nodes` en portait DEUX colonnes sur cinq
+    # (posées à la création de la table, sans lecteur), `datastore_rows` les cinq.
+    # Un verrou qui ne sait pas sous quel run une ligne est réservée, ni combien de
+    # fois elle a été reprise, ni pourquoi elle a été abandonnée, n'est pas le même
+    # verrou — c'est celui d'avant les deux corrections qui l'ont rendu sûr
+    # (le run qui libère ses baux, le plafond de reprises). Les trois manquantes se
+    # posent ici pour que la file soit UNE mécanique servant deux tables, et non
+    # deux mécaniques qui divergeront au premier correctif appliqué d'un seul côté.
+    conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claimed_run TEXT")
+    conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS claims INTEGER NOT NULL DEFAULT 0")
+    conn.execute("ALTER TABLE nodes ADD COLUMN IF NOT EXISTS abandon_reason TEXT")
+    # ⚠️ **Pas d'index de bail ici**, et c'est délibéré : le chemin de réservation
+    # lit encore `datastore_rows`. Un index sur un prédicat que personne
+    # n'interroge est un coût d'écriture pur, et sa forme utile dépend d'un
+    # arbitrage de contrat (toute forme indexable en partiel change l'ordre
+    # observable de la file). Il se posera avec la requête qui le justifie.
+    # === La RECOPIE au boot est ARRÊTÉE (2026-09-01, ADR 0054/0063) ===
+    # Cinq conversions tournaient ici à chaque démarrage — projets, pages,
+    # procédures, tableaux, lignes — et déposaient dans `nodes` une IMAGE des
+    # tables historiques, marquée `props.legacy`. Elles avaient un sens tant que
+    # le plan était de faire LIRE `nodes` à l'ancienne surface : la copie
+    # préparait une bascule.
     #
-    # ⚠️ L'ORDRE des deux conversions n'est pas cosmétique : une page de premier
-    # niveau se rattache au NŒUD de son projet — s'il n'existe pas encore, la
-    # jointure ne rend rien et la page reste orpheline jusqu'au boot suivant.
-    # Un arbre à moitié posé, qu'aucune erreur ne signale.
-    if conn.execute("SELECT to_regclass('projects') AS t").fetchone()["t"]:
-        from .nodes import (convert_docs, convert_guides, convert_projects,
-                            convert_rows, convert_tables)
-        convert_projects(conn)
-        if conn.execute("SELECT to_regclass('docs') AS t").fetchone()["t"]:
-            convert_docs(conn)
-        # === Lot ⑧ : les PROCÉDURES → nœuds ===
-        # Indépendante des trois autres — une procédure n'a ni parent ni enfant
-        # dans l'arbre, elle est possédée par un scope et c'est tout. D'où sa
-        # place ici, sans contrainte d'ordre : rien ne la lit, rien ne dépend
-        # d'elle.
-        #
-        # Elle ferme un trou VISIBLE depuis la naissance du rail : un partage
-        # direct de procédure ne désignait aucun nœud, donc n'entrait pas dans
-        # la section « Partagé ». On le comptait plutôt que de le taire — cette
-        # conversion fait tomber ce compteur à zéro.
-        #
-        # ⚠️ Son propre garde : `org_instructions` peut ne pas exister sur une
-        # base fraîche, et sa colonne `id` est posée par une migration de CE
-        # module — la conversion filtre donc `id IS NOT NULL` plutôt que de
-        # supposer que le backfill a déjà tourné.
-        if conn.execute(
-                "SELECT to_regclass('org_instructions') AS t").fetchone()["t"]:
-            convert_guides(conn)
-        # === Lot M3 (#301) : les TABLEAUX → nœuds-tableaux ===
-        # Le namespace devient une POSITION dans l'arbre (0054-D4) : sous le
-        # nœud du projet qui lie le tableau, sinon à la racine de son
-        # propriétaire — d'où la place SOUS `convert_projects`, dont il lit les
-        # nœuds. Et le schéma de colonnes descend dans `props` : c'est la
-        # dimension de 0054-D4, ce qui fait d'un nœud un tableau.
-        #
-        # ⚠️ Sous le MÊME garde `projects` que les pages, et ce n'est pas un
-        # raccourci : le rattachement se résout par `project_links`, qui meurt
-        # avec `projects` (clé étrangère CASCADE). Le jour où ces tables
-        # disparaissent, il n'y a plus de rattachement legacy à projeter — la
-        # place d'un tableau vivra dans `nodes`, et cette conversion n'aura
-        # plus d'objet.
-        #
-        # === Lot M4 (#308) : les LIGNES → nœuds-lignes ===
-        # Le volume, en dernier (0063-D4) : 43 584 lignes, soixante fois tout le
-        # reste du contenu réuni. Sous le MÊME garde que les tableaux, et
-        # immédiatement APRÈS eux — une ligne se rattache au nœud de son tableau
-        # par une jointure interne, donc un tableau non encore converti fait
-        # simplement disparaître ses lignes de la projection de ce boot-ci.
-        #
-        # ⚠️ Le **bail** de la file de travail ne bouge toujours pas : il vit sur
-        # `datastore_rows`, qui reste la table de vérité jusqu'à la bascule de
-        # lecture (0063-D3). La projection ne le copie pas — un bail change sans
-        # passer par un boot, une colonne projetée mentirait entre deux.
-        if conn.execute(
-                "SELECT to_regclass('user_datastores') AS t").fetchone()["t"]:
-            convert_tables(conn)
-            convert_rows(conn)
-            # L'index d'ownership NU cède la place au partiel posé par `_SCHEMA`
-            # juste avant (`idx_nodes_owner_scoped`) — sans ce DROP, la base
-            # porterait les DEUX et paierait quand même le volume, ce qui vide
-            # le lot M-f de son objet. Après la conversion et pas avant : c'est
-            # l'ordre qui rend le remplacement invisible en production.
-            #
-            # Sûr malgré la base partagée avec la prod (docs/live-migrations.md) :
-            # la seule requête qui l'utilisait porte `kind = 'page'`, donc le
-            # partiel la couvre — vérifié au plan, pas supposé. L'autre lecture
-            # d'ownership de `nodes` (`db/aux_embed`) joint par clé primaire et
-            # ne s'en sert pas.
-            conn.execute("DROP INDEX IF EXISTS idx_nodes_owner")
+    # Ce plan est abandonné. Les deux univers vivent CÔTE À CÔTE — `oto_doc` et
+    # les tables historiques d'un côté, `oto_node` et son stockage natif de
+    # l'autre, chacun avec ses verbes, jusqu'au décommissionnement du premier.
+    # Rien ne traduit plus l'un vers l'autre : il n'y a donc plus rien à
+    # recopier, et l'image déjà déposée part par le travail de maintenance
+    # `residu-projete`, qui s'exécute HORS du boot (son coût suit la taille de
+    # la base — ADR 0065).
+    #
+    # ⚠️ Ce qui ne revient pas ici : la nouvelle surface part de VIDE et se
+    # remplit par ses propres verbes. Réactiver une conversion ferait rentrer
+    # ~70 000 nœuds sans lecteur, et rendrait à `props.legacy` un sens que le
+    # code n'a plus. Seules restent natives dans `nodes` les écritures de
+    # `db/guides.py`.
+    #
+    # Le DDL, lui, reste : l'index d'ownership NU cède la place au partiel posé
+    # par `_SCHEMA` (`idx_nodes_owner_scoped`) — sans ce DROP, la base porterait
+    # les DEUX et paierait le volume deux fois. Sorti de son garde `projects`
+    # avec la conversion : c'est un geste sur `nodes`, il ne dépend d'aucune
+    # table historique.
+    conn.execute("DROP INDEX IF EXISTS idx_nodes_owner")
     # === Lot L5 (blueprint ADR 0053) : les grants de clé plateforme deviennent
     # === des ARÊTES, un connecteur à la fois.
     # EN FIN DE TRANSACTION, comme les conversions M2/M3 et pour la même raison :

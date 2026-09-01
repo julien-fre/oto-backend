@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import Iterator, Optional
 
 from fastmcp.exceptions import NotFoundError
-from mcp.shared.exceptions import McpError
+from .mcp_errors import McpError
 from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST
 from pydantic import ValidationError
 

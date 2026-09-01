@@ -25,7 +25,7 @@ import asyncio
 from typing import Literal, Optional, get_args
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
@@ -80,13 +80,13 @@ def register(mcp: FastMCP) -> None:
     async def tasks_lists(create: Optional[str] = None, account: Optional[str] = None) -> dict:
         """List the user's Google Tasks lists — or create one.
 
+        Returns {tasklists: [{id, title, updated}], count} when listing. Use a
+        list `id` as the `tasklist` argument of `tasks_task`; omit it for '@default'.
+
         Args:
             create: if given (a title), CREATE a new task list and return it
                 instead of listing.
             account: email of the Google account to use (default if omitted).
-
-        Returns {tasklists: [{id, title, updated}], count} when listing. Use a
-        list `id` as the `tasklist` argument of `tasks_task`; omit it for '@default'.
         """
         client = _client_for_user(account)
         if create:

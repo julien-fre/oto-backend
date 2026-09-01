@@ -42,8 +42,8 @@ _OTO = tenants_db._shape_tenant(
      "orgs_archivees": 1, "comptes": 40, "comptes_actifs": 9, "appels": 300,
      "dernier_compte_at": None, "last_seen_at": None, "orgs_desalignees": 0})
 _TIERS = tenants_db._shape_tenant(
-    dict(_OTO, id=2, slug="tulina", name="Tulina",
-         issuer="https://auth.tulina.ai/oidc", hosts=["mcp.tulina.ai"],
+    dict(_OTO, id=2, slug="acme", name="Acme",
+         issuer="https://auth.acme.test/oidc", hosts=["mcp.acme.test"],
          orgs=3, comptes=10, comptes_actifs=2, appels=44, orgs_desalignees=2))
 
 
@@ -54,7 +54,7 @@ def test_the_shape_derives_what_authenticates_from_the_row():
     assert _OTO["issuer_source"] == "env" and _OTO["authenticates"] is True
     assert _TIERS["primary"] is False
     assert _TIERS["issuer_source"] == "db" and _TIERS["authenticates"] is True
-    muet = tenants_db._shape_tenant(dict(_TIERS, slug="acme", issuer=None))
+    muet = tenants_db._shape_tenant(dict(_TIERS, slug="globex", issuer=None))
     assert muet["issuer_source"] is None and muet["authenticates"] is False
 
 
@@ -154,8 +154,8 @@ def test_a_declared_tenant_absent_from_the_registry_is_flagged(monkeypatch):
     monkeypatch.setattr(tenancy, "_INSTALLED", _registry(), raising=False)
 
     par_slug = {t["slug"]: t for t in ta._tenants(CTX, ta.TenantsInput())["tenants"]}
-    assert par_slug["tulina"]["pending_restart"] is True
-    assert par_slug["tulina"]["loaded"] is False
+    assert par_slug["acme"]["pending_restart"] is True
+    assert par_slug["acme"]["loaded"] is False
     # Le primaire tient son émetteur de l'env : il est chargé, jamais « en attente ».
     assert par_slug["oto"]["loaded"] is True
     assert par_slug["oto"]["pending_restart"] is False
@@ -164,18 +164,18 @@ def test_a_declared_tenant_absent_from_the_registry_is_flagged(monkeypatch):
 def test_a_loaded_tenant_reports_the_hosts_the_process_serves(monkeypatch):
     monkeypatch.setattr(ta.db, "list_tenants_overview", lambda **kw: [dict(_TIERS)])
     monkeypatch.setattr(tenancy, "_INSTALLED", _registry(
-        {"slug": "tulina", "issuer": "https://auth.tulina.ai/oidc",
-         "hosts": ["mcp.tulina.ai"]}), raising=False)
+        {"slug": "acme", "issuer": "https://auth.acme.test/oidc",
+         "hosts": ["mcp.acme.test"]}), raising=False)
 
     t = ta._tenants(CTX, ta.TenantsInput())["tenants"][0]
     assert t["loaded"] is True and t["pending_restart"] is False
-    assert t["live_hosts"] == ["mcp.tulina.ai"]
+    assert t["live_hosts"] == ["mcp.acme.test"]
 
 
 def test_a_tenant_without_an_issuer_does_not_authenticate(monkeypatch):
     """Une ligne sans émetteur n'authentifie personne — et ce n'est PAS un
     « redémarrage en attente » : il n'y a rien à charger."""
-    orphelin = tenants_db._shape_tenant(dict(_TIERS, slug="acme", issuer=None, hosts=[]))
+    orphelin = tenants_db._shape_tenant(dict(_TIERS, slug="globex", issuer=None, hosts=[]))
     monkeypatch.setattr(ta.db, "list_tenants_overview", lambda **kw: [orphelin])
     monkeypatch.setattr(tenancy, "_INSTALLED", _registry(), raising=False)
 
@@ -224,6 +224,6 @@ def test_get_passes_the_slug_and_window_through(monkeypatch):
     monkeypatch.setattr(ta.db, "get_tenant_overview",
                         lambda slug, **kw: vu.update(slug=slug, **kw) or dict(_TIERS))
     monkeypatch.setattr(tenancy, "_INSTALLED", _registry(), raising=False)
-    out = ta._console(CTX, ta.TenantConsoleInput(op="get", slug="tulina", days=7))
-    assert vu == {"slug": "tulina", "days": 7}
-    assert out["tenant"]["slug"] == "tulina" and out["days"] == 7
+    out = ta._console(CTX, ta.TenantConsoleInput(op="get", slug="acme", days=7))
+    assert vu == {"slug": "acme", "days": 7}
+    assert out["tenant"]["slug"] == "acme" and out["days"] == 7

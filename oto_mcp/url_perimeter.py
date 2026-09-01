@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 from urllib.parse import unquote, urlsplit
 
-from mcp.shared.exceptions import McpError
+from .mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 # Nom de l'option de projet (colonne `projects.excluded_url_prefixes`). Le cliquet de

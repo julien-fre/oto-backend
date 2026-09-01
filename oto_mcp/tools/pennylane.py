@@ -29,7 +29,7 @@ from __future__ import annotations
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, file_source
@@ -176,7 +176,7 @@ def register(mcp: FastMCP) -> None:
     @mcp.tool()
     def pennylane_invoice(
         op: Literal["list", "find", "create", "credit_note", "update",
-                    "finalize", "send"] = "list",
+                    "finalize", "send", "delete"] = "list",
         invoice_id: Optional[int] = None,
         customer_id: Optional[int] = None,
         date: Optional[str] = None,
@@ -223,6 +223,11 @@ def register(mcp: FastMCP) -> None:
         - "send" (`invoice_id`) : envoie le document finalisé au client par email
           (email Pennylane du client). ⚠️ Envoi externe — après validation humaine
           explicite SEULEMENT.
+        - "delete" (`invoice_id`) : supprime un BROUILLON — ménage d'un brouillon
+          obsolète (remplacé, jamais finalisé) avant qu'il ne pollue la vue ou soit
+          finalisé par erreur. Pennylane refuse un document déjà FINALISÉ (il faut
+          l'annuler par avoir à la place) — le refus remonte tel quel, jamais un
+          fallback silencieux.
 
         ⚠️ Schéma de LIGNE strict pour create/credit_note (tout écart → 400 opaque
         `NotAnyOf`) — une ligne = UNE des 2 formes, aucun champ hors liste :
@@ -238,8 +243,8 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             op: "list" (défaut) | "find" | "create" | "credit_note" | "update" |
-                "finalize" | "send".
-            invoice_id: requis pour update / finalize / send.
+                "finalize" | "send" | "delete".
+            invoice_id: requis pour update / finalize / send / delete.
             customer_id: requis pour create / credit_note.
             date: date d'émission / de l'avoir (YYYY-MM-DD).
             deadline: date d'échéance (YYYY-MM-DD).
@@ -290,8 +295,13 @@ def register(mcp: FastMCP) -> None:
             return c.finalize_invoice(_need(invoice_id, "invoice_id", op))
         if op == "send":
             return c.send_invoice(_need(invoice_id, "invoice_id", op))
+        if op == "delete":
+            res = c.delete_invoice(_need(invoice_id, "invoice_id", op))
+            if isinstance(res, dict) and res.get("error"):
+                raise _bad(f"Pennylane invoice delete failed: {res.get('details', res)}")
+            return res
         raise _bad("op doit être 'list', 'find', 'create', 'credit_note', 'update', "
-                   "'finalize' ou 'send'")
+                   "'finalize', 'send' ou 'delete'")
 
     # --- achats : fournisseurs + factures d'achat ----------------------------
 

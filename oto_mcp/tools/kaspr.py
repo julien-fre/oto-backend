@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
@@ -49,6 +49,8 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Enrich a LinkedIn profile with emails and (optionally) phone numbers.
 
+        Cost: 1 credit per email, +1 per phone if `with_phone=True`.
+
         Args:
             linkedin_id: the person's LinkedIn handle. Either the bare slug
                 ("alexis-laporte") OR the full profile URL
@@ -56,10 +58,10 @@ def register(mcp: FastMCP) -> None:
                 slug is extracted automatically. NOT a name or a search query.
             name: Optional fallback name if the slug alone is ambiguous.
             with_phone: Request mobile/work phones (extra credits cost).
-            data_to_get: Subset of fields to retrieve (Kaspr-specific, e.g.
-                ["emails", "phones", "company"]). Defaults to all.
-
-        Cost: 1 credit per email, +1 per phone if `with_phone=True`.
+            data_to_get: Kaspr field names, from its own enum — "workEmail",
+                "directEmail", "phone". Kaspr answers 500 on a name it does not
+                know. Omitted, the call asks for ["workEmail", "phone"] — NOT
+                every field.
         """
         client, is_platform = _client()
         # with_phone=True → include "phone" in data_to_get (costs extra credits)
@@ -74,14 +76,36 @@ def register(mcp: FastMCP) -> None:
                 is_phone_required=with_phone,
                 data_to_get=effective_data,
             )
+        except ValueError as e:
+            # Refus LOCAL du client oto-core — un nom de `dataToGet` hors des
+            # trois que Kaspr accepte. Son message NOMME déjà les valeurs
+            # acceptées : on le rend tel quel plutôt que de le noyer sous une
+            # hypothèse de profil introuvable (même forme que `tools/cognism.py`).
+            raise McpError(ErrorData(code=INVALID_PARAMS, message=str(e)))
         except Exception as e:
-            # Distingue panne Kaspr (5xx upstream → réessayer) d'une mauvaise
-            # entrée → message actionnable plutôt qu'un 500 brut.
+            # ⚠️ Un 5xx de Kaspr NE PROUVE PAS une panne : Kaspr rend 500 sur au
+            # moins deux fautes d'entrée connues — une URL complète au lieu du
+            # slug nu (relevé le 15/06) et un `dataToGet` inconnu (reproduit le
+            # 01/09 : `["emails","phones","company"]` → 500 `TypeError: Cannot
+            # read properties of undefined (reading 'push')`). Le message disait
+            # « ce n'est pas ton entrée » : une affirmation qu'on ne peut pas
+            # faire, et qui fermait la seule piste correcte dans le cas le plus
+            # atteignable. Il NOMME donc les deux fautes, et borne la reprise.
+            #
+            # La reprise bornée à UNE tentative différée est cohérente avec le
+            # drapeau machine : cette McpError(INVALID_PARAMS) est classée
+            # `invalid_input` / `retryable: false` par `error_taxonomy`, où
+            # `retryable` veut dire « rejouable TEL QUEL ». Rejouer tel quel n'est
+            # justement pas le premier geste ici — c'est corriger l'entrée.
             resp = getattr(e, "response", None)
             status = getattr(resp, "status_code", None)
             if status and status >= 500:
-                msg = ("Kaspr est momentanément indisponible (erreur serveur Kaspr "
-                       f"{status}). Réessaie dans un moment — ce n'est pas ton entrée.")
+                msg = (f"Kaspr a rendu une erreur serveur ({status}) — ce qu'il rend "
+                       "AUSSI sur une requête malformée. Vérifie `linkedin_id` (slug "
+                       "nu ou URL de profil, jamais un nom ni une recherche) et "
+                       "`data_to_get` (seuls workEmail, directEmail et phone "
+                       "existent). Si l'entrée est correcte : une seule nouvelle "
+                       "tentative, différée.")
             else:
                 msg = (f"Kaspr n'a pas pu enrichir `{linkedin_id}` ({e}). Vérifie le "
                        f"profil LinkedIn (slug ou URL valide).")

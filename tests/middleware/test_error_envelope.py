@@ -7,7 +7,7 @@ en `McpError` structurée sans fuite (stacktrace / route interne / id technique)
 import asyncio
 
 import pytest
-from mcp.shared.exceptions import McpError
+from oto_mcp.mcp_errors import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS, INVALID_REQUEST
 
 from oto_mcp.error_taxonomy import ErrorInfo, classify, jsonrpc_code, scrub

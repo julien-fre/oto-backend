@@ -18,8 +18,7 @@ Sondes injectées, arêtes stubbées : aucune base.
 from __future__ import annotations
 
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access, credentials_store, grants_chain, tenancy, tenant_vault
 from oto_mcp.access import cascade, chain_resolution, chain_shadow, tenant_budget
 from oto_mcp.db import grants as db_grants

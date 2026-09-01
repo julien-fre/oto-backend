@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
@@ -46,21 +46,7 @@ def register(mcp: FastMCP) -> None:
         """Search for contacts and reveal their emails/phones in ONE call —
         up to 100 contacts per request.
 
-        Args:
-            contacts: one dict per contact to search, up to 100. Identify
-                each by ANY combination of: `id` (a Lusha contact id),
-                `linkedinUrl`, `email`, `firstName`+`lastName`+
-                (`companyName` or `companyDomain`). `clientReferenceId` is
-                an optional free-text tag you set yourself, echoed back on
-                the matching result — use it to correlate results when you
-                don't already have a stable Lusha `id`.
-            reveal: which fields to unlock — "emails", "phones", or both.
-                Omit to search/match contacts WITHOUT unlocking data
-                (billed as search-only, see Returns).
-            include_partial_profiles: include results Lusha considers
-                incomplete rather than dropping them.
-
-        Returns:
+        Returns —
             {requestId, results: [{id, firstName, lastName, fullName,
             jobTitle, location, tags, emails, phones, company, socialLinks,
             previousEmployment, updateDate, clientReferenceId, error?}],
@@ -74,6 +60,20 @@ def register(mcp: FastMCP) -> None:
             PLUS one per revealed field per contact.
             `billing.creditsCharged` is the actual total charged for THIS
             call — surface it back before repeating a large reveal.
+
+        Args:
+            contacts: one dict per contact to search, up to 100. Identify
+                each by ANY combination of: `id` (a Lusha contact id),
+                `linkedinUrl`, `email`, `firstName`+`lastName`+
+                (`companyName` or `companyDomain`). `clientReferenceId` is
+                an optional free-text tag you set yourself, echoed back on
+                the matching result — use it to correlate results when you
+                don't already have a stable Lusha `id`.
+            reveal: which fields to unlock — "emails", "phones", or both.
+                Omit to search/match contacts WITHOUT unlocking data
+                (billed as search-only, see Returns).
+            include_partial_profiles: include results Lusha considers
+                incomplete rather than dropping them.
         """
         if not contacts:
             raise _bad("contacts : au moins un contact requis.")

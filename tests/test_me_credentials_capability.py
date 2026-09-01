@@ -126,7 +126,7 @@ def test_pose_anonyme_la_ou_des_comptes_nommes_existent(monkeypatch, vault):
 
 def test_connecteur_restreint_refuse_la_pose(monkeypatch, vault):
     """RBAC (ADR 0025) : la pose suit l'usage — sinon on poserait une clé inerte."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from mcp.types import ErrorData, INVALID_PARAMS
     stub_authz(monkeypatch)
     monkeypatch.setattr(mc.access, "require_connector_access",
@@ -146,8 +146,7 @@ def test_sans_org_de_contexte(monkeypatch, vault):
 # --- Lecture et retrait -----------------------------------------------------
 
 def test_lecture_sans_credential(monkeypatch, vault):
-    stub_authz(monkeypatch)
-    monkeypatch.setattr(mc.credentials_store, "get_credential", lambda *a, **k: None)
+    stub_authz(monkeypatch)   # la fixture `vault` rend déjà un coffre vide
     code, out = call("me.credential.get", path_params={"provider": "serper"})
     assert code == 404 and out["error"] == "not_configured"
 

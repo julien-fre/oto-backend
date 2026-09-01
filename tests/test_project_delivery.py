@@ -31,7 +31,7 @@ def _wire(monkeypatch, *, governed=("11", "77")):
     """Câble un projet #7 lié aux entités LINKS ; l'acteur gouverne `governed`."""
     calls = {"grants": [], "transfers": [], "revokes": [], "copies": [], "repoints": []}
     monkeypatch.setattr(R.access, "is_platform_operator", lambda sub: False)
-    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "movinmotion"})
+    monkeypatch.setattr(R.org_store, "get_org", lambda oid: {"name": "acme"})
     monkeypatch.setattr(R.roles, "is_org_member", lambda sub, oid: True)
     monkeypatch.setattr(R.db, "list_project_links", lambda pid: list(LINKS))
     monkeypatch.setattr(R.db, "log_project_activity", lambda *a, **k: None)
@@ -52,9 +52,11 @@ def _wire(monkeypatch, *, governed=("11", "77")):
                         lambda rt, rid, ot, oid: calls["transfers"].append((rt, rid, ot, oid)))
     monkeypatch.setattr(R.ownership, "revoke",
                         lambda rt, rid, pt, pid: calls["revokes"].append((rt, rid, pt, pid)) or True)
-    monkeypatch.setattr(R.org_store, "copy_instruction_to_org",
-                        lambda iid, org, set_by=None:
-                        calls["copies"].append((iid, org)) or {"id": 501, "slug": "process-mutuelle", "org_id": org})
+    monkeypatch.setattr(R.org_store, "copy_instruction_to_owner",
+                        lambda iid, otype, oid, set_by=None:
+                        calls["copies"].append((iid, int(oid)))
+                        or {"id": 501, "slug": "process-mutuelle", "owner_type": otype,
+                            "owner_id": str(oid), "org_id": int(oid)})
     monkeypatch.setattr(R.db, "update_project_link_ref",
                         lambda pid, t, old, new: calls["repoints"].append((pid, t, old, new)) or 1)
     return calls
@@ -67,7 +69,7 @@ def test_share_to_org_principal(monkeypatch):
     out = R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
                                             resource_id="7", org_id=35))
     assert ("project", "7", "org", "35", "write") in calls["grants"]
-    assert out["shared_with"] == "movinmotion" and out["principal_type"] == "org"
+    assert out["shared_with"] == "acme" and out["principal_type"] == "org"
 
 
 def test_share_to_unknown_org_404(monkeypatch):
@@ -88,13 +90,31 @@ def test_share_to_user_still_works(monkeypatch):
     monkeypatch.setattr(R.email, "send_resource_shared_email",
                         lambda to, **kw: sent.update({"to": to, **kw}) or True)
     out = R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
-                                            resource_id="7", email="jb@x.co"))
+                                            resource_id="7", email="jane@x.co"))
     assert ("project", "7", "user", "u2", "write") in calls["grants"]
     assert out["principal_type"] == "user"
     # Le bénéficiaire user est notifié par email (best-effort, une seule fois).
     assert out["notified"] is True
-    assert sent["to"] == "jb@x.co" and sent["type_label"] == "projet"
+    assert sent["to"] == "jane@x.co" and sent["type_label"] == "projet"
     assert sent["name"] == "Campagne mutuelle" and sent["permission"] == "write"
+
+
+def test_share_to_user_passes_recipient_locale_and_english_label(monkeypatch):
+    """oto-backend#700 : la préférence `users.locale` du bénéficiaire suit
+    jusqu'au gabarit, ET le `type_label` passé est déjà dans SA langue — le
+    gabarit ne traduit pas un mot qu'on lui donne."""
+    _wire(monkeypatch)
+    monkeypatch.setattr(R.db, "get_user_by_email",
+                        lambda e: {"sub": "u2", "email": e, "locale": "en"})
+    monkeypatch.setattr(R.db, "get_user", lambda sub: {"email": "sharer@x.co"})
+    monkeypatch.setattr(R.db, "get_project_by_id", lambda pid: {"name": "Campagne mutuelle"})
+    sent = {}
+    monkeypatch.setattr(R.email, "send_resource_shared_email",
+                        lambda to, **kw: sent.update({"to": to, **kw}) or True)
+    R._resources(CTX, R.ResourceInput(op="share", resource_type="project",
+                                      resource_id="7", email="jane@x.co"))
+    assert sent["locale"] == "en"
+    assert sent["type_label"] == "project"   # pas "projet" : la langue du destinataire
 
 
 def test_transfer_to_user_emails_new_owner(monkeypatch):
@@ -106,9 +126,9 @@ def test_transfer_to_user_emails_new_owner(monkeypatch):
     monkeypatch.setattr(R.email, "send_resource_transferred_email",
                         lambda to, **kw: sent.update({"to": to, **kw}) or True)
     out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
-                                            resource_id="7", new_owner_email="jb@x.co"))
-    assert out["new_owner"] == "jb@x.co" and out["notified"] is True
-    assert sent["to"] == "jb@x.co" and sent["name"] == "Campagne mutuelle"
+                                            resource_id="7", new_owner_email="jane@x.co"))
+    assert out["new_owner"] == "jane@x.co" and out["notified"] is True
+    assert sent["to"] == "jane@x.co" and sent["name"] == "Campagne mutuelle"
 
 
 def test_share_to_org_does_not_email(monkeypatch):
@@ -169,7 +189,7 @@ def test_transfer_cascade_to_user_skips_guide(monkeypatch):
     calls = _wire(monkeypatch)
     monkeypatch.setattr(R.db, "get_user_by_email", lambda e: {"sub": "u2", "email": e})
     out = R._resources(CTX, R.ResourceInput(op="transfer", resource_type="project",
-                                            resource_id="7", new_owner_email="jb@x.co",
+                                            resource_id="7", new_owner_email="jane@x.co",
                                             cascade=True))
     assert calls["copies"] == []
     by_ref = {(e["target_type"], e["target_ref"]): e for e in out["cascade"]}
@@ -205,12 +225,19 @@ def test_unshare_cascade_revokes_linked(monkeypatch):
         {("tableau", "11"), ("procedure", "77")}
 
 
-# ── kind `guide` (ownership, owner dérivé d'org_id) ───────────────────────
+# ── kind `guide` (ownership : le propriétaire est LU, plus dérivé d'org_id) ──
 
-def test_guide_owner_derives_from_org(monkeypatch):
+def test_guide_owner_lit_les_colonnes_de_propriete(monkeypatch):
+    """#681 : `owner_type`/`owner_id` font foi. Dériver d'`org_id` rendait ('org', 42)
+    pour une procédure d'ÉQUIPE — 42 n'en est que l'org parente."""
     monkeypatch.setattr(ownership.org_store, "get_instruction_by_id",
-                        lambda i: {"id": 77, "org_id": 42, "slug": "process"})
+                        lambda i: {"id": 77, "org_id": 42, "owner_type": "org",
+                                   "owner_id": "42", "slug": "process"})
     assert ownership.owner_of("doctrine", "77") == ("org", "42")
+    monkeypatch.setattr(ownership.org_store, "get_instruction_by_id",
+                        lambda i: {"id": 77, "org_id": 42, "owner_type": "group",
+                                   "owner_id": "9", "slug": "process"})
+    assert ownership.owner_of("doctrine", "77") == ("group", "9")
 
 
 def test_guide_owner_none_for_slug_ref():
@@ -218,8 +245,12 @@ def test_guide_owner_none_for_slug_ref():
 
 
 def test_guide_reparent_rejects_user_owner():
-    with pytest.raises(ValueError):
+    """Le palier PERSONNEL reste fermé (phase 2 de #681 : `org_instructions.org_id` est
+    NOT NULL et une personne n'a pas d'org parente). Le refus doit nommer les paliers
+    ouverts — « un guide est un objet d'org » était devenu faux."""
+    with pytest.raises(ValueError) as e:
         ownership._guide_reparent("77", "user", "u1")
+    assert "org" in str(e.value) and "group" in str(e.value)
 
 
 def test_guide_listed_in_resource_ops():
@@ -230,7 +261,8 @@ def test_guide_listed_in_resource_ops():
 
 def _wire_guide_read(monkeypatch, *, can_access):
     monkeypatch.setattr(oi.org_store, "get_instruction_by_id",
-                        lambda i: {"id": 77, "org_id": 42, "slug": "process",
+                        lambda i: {"id": 77, "org_id": 42, "owner_type": "org",
+                                   "owner_id": "42", "slug": "process",
                                    "title": "T", "description": "d", "version": 3,
                                    "body_md": "corps"} if i == 77 else None)
     monkeypatch.setattr(ownership, "can_access",

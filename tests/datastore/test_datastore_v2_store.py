@@ -148,7 +148,8 @@ def test_claim_next_plumbs_filters_and_exposes_lease(store, monkeypatch):
                                         lease=lease_seconds, filters=filters) or
                             {"row_id": "r9", "created_at": "t", "updated_at": "t",
                              "data": {"fact_id": "f9", "status": "nouveau"},
-                             "claimed_by": worker, "claimed_until": "t+900"}))
+                             "claimed_by": worker, "claimed_until": "t+900",
+                             "claimed_run": None}))
     row = st.claim_next("leads", worker="w-13", filter={"status": "nouveau"},
                         lease_s=600)
     assert seen == {"ns_id": 7, "worker": "w-13", "lease": 600,

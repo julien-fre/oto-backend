@@ -34,7 +34,7 @@ import asyncio
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, file_content
@@ -253,15 +253,15 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Inspect or change who can access a file/folder.
 
+        No `email` → {permissions: [...], count}. With `email` → grants (or
+        revokes if `remove`) and returns the operation result.
+
         Args:
             email: the person to share with / revoke. OMIT to just LIST current access.
             role: "reader", "commenter" or "writer" (when granting).
             remove: True + `email` → revoke that person's access.
             notify: send Google's notification email (when granting).
             account: email of the Google account to use (default if omitted).
-
-        No `email` → {permissions: [...], count}. With `email` → grants (or
-        revokes if `remove`) and returns the operation result.
         """
         client = _client_for_user(account)
         if not email:

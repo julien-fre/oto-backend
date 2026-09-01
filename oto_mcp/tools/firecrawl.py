@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from typing import Any, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, url_perimeter
@@ -94,6 +94,8 @@ def register(mcp: FastMCP) -> None:
         Use this before crawling: it shows what the site contains, so you can scrape
         only the pages that matter instead of paying for a full crawl.
 
+        Returns: `{success, links: [{url, title?, description?}]}`.
+
         Args:
             url: site root (e.g. `https://acme.com`) — refused if under the
                 project's `excluded_url_prefixes`, which also drop matching links.
@@ -101,8 +103,6 @@ def register(mcp: FastMCP) -> None:
             limit: max URLs (API default 5000).
             include_subdomains: also list `blog.acme.com` (API default true).
             sitemap: `"include"` (default) | `"skip"` | `"only"`.
-
-        Returns: `{success, links: [{url, title?, description?}]}`.
         """
         per = url_perimeter.perimeter_of_call()
         url_perimeter.refuse_if_excluded(url, per)
@@ -129,6 +129,9 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Fetch ONE page as clean markdown (JavaScript rendered, nav/ads stripped).
 
+        Returns — `{success, data: {markdown?, html?, links?, screenshot?, json?,
+            metadata: {title, description, sourceURL, statusCode, …}}}`.
+
         Args:
             url: the page — refused if under the project's `excluded_url_prefixes`.
             formats: outputs wanted, default `["markdown"]`. Also accepts the API's
@@ -146,9 +149,6 @@ def register(mcp: FastMCP) -> None:
                 and cheaper than a fresh render when the page is stable.
             proxy: `"basic"` | `"stealth"` | `"auto"` — stealth costs more, use it
                 only when a site blocks the basic fetch.
-
-        Returns: `{success, data: {markdown?, html?, links?, screenshot?, json?,
-            metadata: {title, description, sourceURL, statusCode, …}}}`.
         """
         url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
         with _upstream():
@@ -177,6 +177,8 @@ def register(mcp: FastMCP) -> None:
         Under a project with `excluded_url_prefixes`, matching results are dropped
         and counted.
 
+        Returns: `{success, data: {web?, news?, images?}, creditsUsed}`.
+
         Args:
             query: max 500 chars; supports `"exact phrase"`, `-excluded`, `site:`,
                 `filetype:`.
@@ -188,8 +190,6 @@ def register(mcp: FastMCP) -> None:
                 exclusive on Firecrawl's side).
             scrape_options: pass `{"formats": ["markdown"]}` to get each result's
                 page content — without it you only get title/description/url.
-
-        Returns: `{success, data: {web?, news?, images?}, creditsUsed}`.
         """
         with _upstream():
             result = _client().search(
@@ -220,6 +220,8 @@ def register(mcp: FastMCP) -> None:
         Poll `firecrawl_crawl_status(job_id)` until `status == "completed"`. ALWAYS
         set `limit`: the API default is 10000 pages, and each page burns credits.
 
+        Returns: `{success, id, url}`.
+
         Args:
             url: start URL — refused if under the project's `excluded_url_prefixes`
                 (matching pages are also dropped from `firecrawl_crawl_status`).
@@ -233,8 +235,6 @@ def register(mcp: FastMCP) -> None:
             scrape_options: per-page scrape settings, same keys as
                 `firecrawl_scrape` but camelCase (e.g. `{"formats": ["markdown"],
                 "onlyMainContent": true}`).
-
-        Returns: `{success, id, url}`.
         """
         url_perimeter.refuse_if_excluded(url, url_perimeter.perimeter_of_call())
         with _upstream():
@@ -252,14 +252,14 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Check a crawl and read the pages extracted so far.
 
+        Returns — `{status: scraping|completed|failed, total, completed, creditsUsed,
+            next?, data: [pages]}`.
+
         Args:
             job_id: id returned by `firecrawl_crawl`.
             next_url: the `next` URL from a previous response. Responses are capped
                 at 10 MB, so a large crawl comes in slices — pass `next` back here
                 to get the following one (it supersedes `job_id`).
-
-        Returns: `{status: scraping|completed|failed, total, completed, creditsUsed,
-            next?, data: [pages]}`.
         """
         with _upstream():
             result = _client().crawl_status(crawl_id=job_id, next_url=next_url)
@@ -287,6 +287,8 @@ def register(mcp: FastMCP) -> None:
         `firecrawl_scrape` with `formats=[{"type": "json", "schema": {...}}]` is
         synchronous and cheaper.
 
+        Returns: `{success, id}`.
+
         Args:
             urls: pages to read; a trailing `/*` widens to the whole site
                 (e.g. `["https://acme.com/*"]`). The batch is refused if one is
@@ -295,8 +297,6 @@ def register(mcp: FastMCP) -> None:
             schema: JSON Schema of the wanted output — far more reliable than a
                 prompt alone, and it makes the result directly usable.
             enable_web_search: let Firecrawl look beyond the given URLs.
-
-        Returns: `{success, id}`.
         """
         url_perimeter.refuse_if_any_excluded(urls, url_perimeter.perimeter_of_call())
         with _upstream():

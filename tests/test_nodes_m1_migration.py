@@ -41,13 +41,23 @@ def _nodes_block() -> str:
 
 
 def test_nodes_carries_the_measured_shape():
-    """La forme B du banc, colonne pour colonne. Un ajout « au cas où » se paie cent
+    """La forme du banc, colonne pour colonne. Un ajout « au cas où » se paie cent
     mille fois sur un vivier (0063-D3 garde-fou 1) : il doit passer par une mesure,
-    donc par un échec de ce test plutôt que par une revue distraite."""
+    donc par un échec de ce test plutôt que par une revue distraite.
+
+    **Élargie le 2026-09-01, et le garde-fou a fonctionné** : il a fait échouer
+    l'ajout, qui est donc passé par un banc — 200 000 lignes-tableau de six champs
+    métier, deux passes en ordre inversé. `data` sépare la donnée utilisateur des
+    propriétés qu'oto interprète ; les trois colonnes de bail complètent les deux
+    qui étaient là, pour que la file de travail reste UNE mécanique. Coût mesuré :
+    **+4,7 % de volume** (46,5 Mo contre 44,4), et **14 % de moins en temps
+    d'écriture** — séparer évite la concaténation jsonb qu'imposait le mélange.
+    """
     body = _nodes_block()
     cols = {m.group(1) for m in re.finditer(r"^\s{4}([a-z_]+) ", body, re.M)}
     assert cols == {"id", "public_id", "parent_id", "position", "kind", "owner_type",
-                    "owner_id", "props", "claimed_by", "claimed_until",
+                    "owner_id", "props", "data", "claimed_by", "claimed_until",
+                    "claimed_run", "claims", "abandon_reason",
                     "created_at", "updated_at"}, sorted(cols)
 
 
@@ -215,11 +225,18 @@ def test_nothing_else_touches_nodes_yet():
     (déjà inscrit) — les procédures deviennent des nœuds. Elle ferme un trou visible
     depuis la naissance du rail : un partage direct de procédure ne désignait aucun
     nœud, donc n'entrait pas dans la section « Partagé ». Rien de neuf n'est lu ici —
-    c'est la même famille de conversion que les projets, les pages et les tableaux."""
+    c'est la même famille de conversion que les projets, les pages et les tableaux.
+
+    **Le 2026-09-01, un écrivain de plus, et c'est le premier qui ne convertit rien** :
+    `db/node_tables.py` — les tableaux et les lignes NATIFS. La recopie est arrêtée, la
+    nouvelle surface part de vide : elle n'a plus qu'une façon d'être remplie, ses
+    propres verbes. Ses bornes sont dans le module — jamais un nœud marqué par la
+    recopie (chaque écriture porte `props->>'legacy' IS NULL`), et la donnée métier va
+    dans la colonne `data`, jamais dans `props`."""
     allowed = {"oto_mcp/db/guides.py", "oto_mcp/db/_schema.py", "oto_mcp/db/_init.py",
                "oto_mcp/db/users.py", "oto_mcp/db/search.py", "oto_mcp/db/aux_embed.py",
                "oto_mcp/db/nodes.py", "oto_mcp/db/blocks.py", "oto_mcp/db/shell.py",
-               "oto_mcp/db/node_view.py"}
+               "oto_mcp/db/node_view.py", "oto_mcp/db/node_tables.py"}
     offenders = []
     for path in (_ROOT / "oto_mcp").rglob("*.py"):
         rel = str(path.relative_to(_ROOT))

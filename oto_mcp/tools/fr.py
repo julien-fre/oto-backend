@@ -8,10 +8,14 @@ from __future__ import annotations
 from typing import Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import INVALID_PARAMS, ErrorData
 
 from .. import access
+# Hors de `tools/` : ce module ne sert AUCUN outil, il porte la lecture du
+# registre des personnes. `tools/<m>.py` est réservé aux modules montés depuis
+# le registre de connecteurs (garde-fou `test_capabilities_drift`).
+from .. import fr_registre
 
 # Les annotations du bloc `finances` (0 = non déclaré, valeur illisible, montant
 # invraisemblable) sont posées par **FOD**, pas ici : elles sont vraies quel que soit
@@ -124,6 +128,12 @@ def register(mcp: FastMCP) -> None:
         Le bloc `finances` des résultats porte les mêmes réserves, marquées
         ligne à ligne (`alerte`) — cf. `finances_avertissement`.
 
+        Spoken legal forms: people say "the SCI Untel", but the register rarely writes
+        the form into the name — so a query like "SCI ASC" only matches companies
+        literally NAMED that. On page 1, this tool detects such a prefix and ALSO runs
+        the name alone filtered on that form, appending the extra hits (flagged
+        `matched_by="legal_form"`) and reporting what it did under `legal_form_retry`.
+
         Args:
             query: Full-text search (company name, SIREN, brand…).
             naf: NAF activity codes, comma-separated (e.g. "62.01Z,62.02A").
@@ -143,12 +153,6 @@ def register(mcp: FastMCP) -> None:
                 the API answer with the full list of valid ones.
             page: 1-based page number.
             per_page: Page size (max 25).
-
-        Spoken legal forms: people say "the SCI Untel", but the register rarely writes
-        the form into the name — so a query like "SCI ASC" only matches companies
-        literally NAMED that. On page 1, this tool detects such a prefix and ALSO runs
-        the name alone filtered on that form, appending the extra hits (flagged
-        `matched_by="legal_form"`) and reporting what it did under `legal_form_retry`.
         """
         def _search(q, nj, pg):
             return entreprises.search(
@@ -415,14 +419,67 @@ def register(mcp: FastMCP) -> None:
             profiles = list(pool.map(_one, cleaned))
         return {"profiles": profiles, "count": len(profiles)}
 
+    # Borne du lot `fr_directors` : 5× celle de `fr_get`, parce qu'une fiche y
+    # coûte UN appel amont (l'identité, dont on tire dirigeants ET forme
+    # juridique) là où un profil `fr_get` en ouvre trois à quatre. Le terrain
+    # qualifie par tranches de cent (#612).
+    _FR_DIRECTORS_BATCH_MAX = 100
+
     @mcp.tool()
-    def fr_directors(siren: str) -> list[dict]:
-        """List directors (dirigeants) of a French company.
+    def fr_directors(siren: str | None = None, sirens: list | None = None) -> dict:
+        """Directors declared at the French registry (RNE), for one company or a
+        LIST — `sirens=[…]` (max 100) returns `{entreprises, count, not_found,
+        synthese}`, one entry per SIREN in input order.
+
+        ⚠️ An empty `dirigeants` has THREE meanings, told apart by `registre`:
+        the SIREN is unknown (`error: "not_found"`), the legal form is not
+        registered so it declares nobody (`hors_registre` — association,
+        commune: the emptiness says nothing about the company), or the company
+        is registered with nobody on file (`attendu`). Never read an empty list
+        as "no director" without reading `registre`. `personnes_physiques`
+        counts the NAMED natural persons — a company whose only director is
+        another company scores 0.
 
         Args:
-            siren: SIREN number (9 digits).
+            siren: SIREN number (9 digits) — single-company mode.
+            sirens: list of SIREN numbers (max 100) — batch mode. Give one OR
+                the other, not both.
         """
-        return entreprises.get_directors(siren)
+        from concurrent.futures import ThreadPoolExecutor
+
+        if (siren is None) == (sirens is None):
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="donner `siren` (unitaire) OU `sirens` (batch), pas les deux"))
+        if sirens is None:
+            un = str(siren).strip()
+            return fr_registre.fiche(un, entreprises.get_by_siren(un))
+        cleaned = [str(s).strip() for s in sirens if str(s).strip()]
+        if not cleaned:
+            raise McpError(ErrorData(code=INVALID_PARAMS, message="`sirens` est vide"))
+        if len(cleaned) > _FR_DIRECTORS_BATCH_MAX:
+            raise McpError(ErrorData(
+                code=INVALID_PARAMS,
+                message=f"`sirens` est limité à {_FR_DIRECTORS_BATCH_MAX} par appel "
+                        f"(reçu {len(cleaned)}) — découpe en lots"))
+
+        def _one(s: str) -> dict:
+            try:
+                return fr_registre.fiche(s, entreprises.get_by_siren(s))
+            # noqa: SILENT — l'échec par siren est rendu dans la ligne de résultat
+            except Exception as exc:  # un SIREN en échec ne fait pas tomber le lot
+                return {"error": f"{type(exc).__name__}: {exc}", "siren": s}
+
+        # 4 en vol, comme le lot de `fr_get` : c'est la même API amont
+        # (Recherche Entreprises) et la même pression, mesurée en production.
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            fiches = list(pool.map(_one, cleaned))
+        return {
+            "entreprises": fiches,
+            "count": len(fiches),
+            # Les introuvables sont NOMMÉS deux fois : dans leur ligne, et ici —
+            # une liste de cent fiches ne se relit pas pour les retrouver.
+            "not_found": [f["siren"] for f in fiches if f.get("error") == "not_found"],
+            "synthese": fr_registre.synthese(fiches),
+        }
 
     # --- INSEE SIRENE (clé payante — passthrough via FOD) ---
     # Le backend résout la clé (vault : BYO membre/org → clé plateforme) + track le
@@ -842,18 +899,18 @@ def register(mcp: FastMCP) -> None:
         id — fetched on demand from Légifrance (the local ACCO index only has
         metadata). Chain after fr_accords_search / fr_accords_get.
 
+        Returns metadata + `texte` (extracted from the filed docx; may be empty
+        when no integral version was published) + `texte_chars`/`offset`/
+        `next_offset` + `permalien` (verifiable link, 404s honestly when the
+        text is absent) + `lien_construit` (best-effort Légifrance pattern,
+        not guaranteed to resolve).
+
         Args:
             acco_id: DILA id (ACCOTEXT000…) from fr_accords_search results.
             offset: start position in the text. Long agreements come back in
                 chunks: when `tronque` is true, call again with
                 offset=`next_offset` to get the rest (health/pension clauses and
                 final provisions usually sit at the END of a merger agreement).
-
-        Returns metadata + `texte` (extracted from the filed docx; may be empty
-        when no integral version was published) + `texte_chars`/`offset`/
-        `next_offset` + `permalien` (verifiable link, 404s honestly when the
-        text is absent) + `lien_construit` (best-effort Légifrance pattern,
-        not guaranteed to resolve).
         """
         from ..fod import ccn as fod_ccn
         return fod_ccn.accords_text(acco_id, offset=offset)

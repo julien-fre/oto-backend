@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, providers, session_org, status_hints
@@ -191,7 +191,7 @@ def _slim_search(res):
 def _canonical_li_identifier(identifier: str) -> str:
     """Canonicalise un `public_identifier` LinkedIn (vanity slug) : LinkedIn le
     génère TOUJOURS en ASCII (translittère les accents à la création, p. ex.
-    `nicolas-chéhanne` → `nicolas-chehanne`). Un slug accentué saisi par l'agent
+    `renée-lefèvre` → `renee-lefevre`). Un slug accentué saisi par l'agent
     fait renvoyer à l'API Unipile un 403 « Insufficient permissions » TROMPEUR
     (#180) → on retire les diacritiques avant l'appel. No-op sur un slug déjà ASCII
     ou un provider_id opaque (`ACoAA…`, sans accent) — idempotent."""
@@ -992,6 +992,9 @@ def register(mcp: FastMCP) -> None:
         `linkedin_unipile_search` (`location`/`company`/`industry` acceptent déjà les
         ids ; les autres facettes arrivent — cf. guide `linkedin-search`).
 
+        Renvoie `{facet_type, candidates: [{id, name}]}`. Résolution INDÉPENDANTE du
+        produit/contrat (marche même hors Recruiter/Sales Nav).
+
         Args:
             facet_type: type de facette, MAJUSCULES. Confirmés : `SKILL`, `LOCATION`,
                 `INDUSTRY`, `COMPANY`. D'autres existent (essaie `TITLE`, `SCHOOL`,
@@ -999,9 +1002,6 @@ def register(mcp: FastMCP) -> None:
                 erreur `Expected kind 'StringEnum'`.
             keywords: le libellé à résoudre (ex. « Microsoft Excel », « Paris »).
             limit: nb max de candidats (défaut 25).
-
-        Renvoie `{facet_type, candidates: [{id, name}]}`. Résolution INDÉPENDANTE du
-        produit/contrat (marche même hors Recruiter/Sales Nav).
         """
         cands = unipile_client().resolve_facet(str(facet_type).upper(), keywords, limit=limit)
         return {"facet_type": str(facet_type).upper(), "candidates": cands}
@@ -1554,7 +1554,7 @@ connector_flow.declare(
 # split devait laisser intact — `test_le_compte_garde_son_code_de_production` le
 # tient. Ce qui devait changer était côté ÉCRAN : le front rendait cette liste des
 # six sur les SEPT cartes, donc la carte WhatsApp proposait de connecter LinkedIn.
-# Corrigé là-bas (tulina-app-front v1.17.0, `hostedChannelOf`), en lisant
+# Corrigé là-bas (front tiers v1.17.0, `hostedChannelOf`), en lisant
 # `auth.hosted_channel` — la carte du compte garde ses six, chaque carte de canal
 # n'a plus que le sien.
 for _con in providers.REGISTRY.values():

@@ -34,10 +34,10 @@ def dept(monkeypatch):
                         lambda org, prov, account="": None)  # pas de secret ORG
     vault = {
         (FINANCE, "http"): pack_secret("http", {
-            "base_url": "https://mm-bridge.oto.zone/finance", "auth_mode": "bearer",
+            "base_url": "https://acme-bridge.oto.zone/finance", "auth_mode": "bearer",
             "token": "TOK-FIN"}),
         (SALES, "http"): pack_secret("http", {
-            "base_url": "https://mm-bridge.oto.zone/sales", "auth_mode": "bearer",
+            "base_url": "https://acme-bridge.oto.zone/sales", "auth_mode": "bearer",
             "token": "TOK-SALES"}),
     }
     monkeypatch.setattr(group_store, "get_group_secret",
@@ -75,7 +75,7 @@ def test_no_group_context_no_department_credential(dept, monkeypatch):
     # Hors contexte de groupe (pas de jeton, pas d'équipe maison) : le credential
     # départemental ne résout PAS — pas de fuite « au niveau org ».
     monkeypatch.setattr(access, "current_group", lambda sub: None)
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     with pytest.raises(McpError, match="Aucun credential"):
         access._resolve_credential_impl("http", "byo", "u")
 
@@ -83,7 +83,7 @@ def test_no_group_context_no_department_credential(dept, monkeypatch):
 def test_instance_ref_group_guard_refuses_non_reader(monkeypatch):
     # `instance=group:31:http` posé par un non-lecteur du groupe → refus (garde
     # partagée pose + binding).
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto_mcp import roles
     monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: False)
     ref = instance_refs.parse_ref(instance_refs.make_group_ref(FINANCE, "http"))

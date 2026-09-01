@@ -29,6 +29,51 @@ Quatre choses figées :
 
 Retirer volontairement un nom reste possible : on retire aussi sa ligne de
 `FROZEN`, et le diff dit alors ce qu'on a fait.
+
+⚠️ **Mise à jour du 31/08/2026 (oto-backend#681)** — la première depuis la découpe,
+et elle était PRÉVUE : les procédures étaient servies par DEUX jeux de fonctions
+concurrents sur la même table (`org_store.instructions` filtrait `owner_type='org'`
+en dur, `group_store` filtrait `owner_type='group'` en dur), déjà divergents. Les
+faire converger sur la clé que la table porte — `(owner_type, owner_id)` — DÉFORME
+huit signatures et retire trois noms devenus faux :
+
+  · `reparent_instruction(id, new_org_id)` → `move_instruction(id, type, id)` — le
+    déplacement n'est plus « vers une org » ;
+  · `copy_instruction_to_org` → `copy_instruction_to_owner` — idem ;
+  · `list_instructions_for_orgs(org_ids)` → `list_instructions_for_owners(pairs)` —
+    prenait une liste d'orgs, donc ne pouvait pas rendre une procédure d'équipe.
+
+Ce cliquet a donc fait exactement son travail : il a rendu le changement VISIBLE et
+obligé à l'expliquer ici. Ce qui ne serait PAS acceptable, c'est de le mettre à jour
+sans cette explication — la ligne retirée deviendrait indistinguable d'un oubli.
+
+⚠️ **Mise à jour du 01/09/2026 (oto-backend#662)** — `set_instruction` gagne deux
+paramètres nommés, `must_create` et `expected_version`, tous deux à valeur par défaut :
+la surface s'ÉLARGIT, aucun appelant existant ne bouge. Ils portent les deux refus
+anti-écrasement (`InstructionExists`, `InstructionVersionConflict`) qu'un front tiers
+a payés en découvrant qu'une création sur un slug pris remplaçait la procédure en
+place sans un mot. Ils vivent dans le store, sous le verrou advisory, parce que
+n'importe quel pré-check posé dehors laisserait passer deux créations simultanées.
+
+⚠️ **Mise à jour du 01/09/2026 (issue `oto`#27)** — une couture de PLUS dans le
+package : `instructions.py` touchait 499 lignes pour un plafond de 500 (le lot
+précédent avait raboté sa prose pour y tenir), donc plus rien ne pouvait s'y
+ajouter. Le fichier est coupé en deux sur la frontière qu'il portait déjà en
+bannière de section, et qui est celle d'ADR 0030 : `instructions` sert le plan
+CONTENU (lire / écrire / versionner / archiver, à la clé
+`(owner_type, owner_id, slug)`), `instruction_ownership` sert le plan GOUVERNANCE
+(identité par `id` surrogate, copie, déplacement, inventaires). Ce sont deux
+DROITS distincts depuis ADR 0030 (`can_access` vs `can_govern`) ; ce sont
+maintenant deux fichiers.
+
+**Déplacement pur, et c'est vérifiable** : `FROZEN` ne perd pas une ligne, aucune
+signature ne bouge, et les six noms déplacés (`get_instruction_by_id`,
+`_free_instruction_slug`, `copy_instruction_to_owner`, `move_instruction`,
+`list_instructions_for_owners`, `list_all_instructions`) restent servis en
+`org_store.<fn>` par le ré-export — c'est exactement ce que
+`test_aucun_nom_perdu` prouve ici. Le seul changement de forme est interne : les
+références croisées passent désormais par `instructions.<nom>`, la seule forme
+que `test_aucun_frere_importe_a_plat` admet.
 """
 from __future__ import annotations
 
@@ -40,14 +85,15 @@ import oto_mcp.org_store as org_store
 
 PKG = pathlib.Path(org_store.__file__).parent
 
-# Les 8 coutures, dans l'ordre du graphe (feuilles d'abord).
+# Les 9 coutures, dans l'ordre du graphe (feuilles d'abord).
 MODULES = ("orgs", "members", "vault", "settings", "instructions",
-           "personal", "invitations", "library")
+           "instruction_ownership", "personal", "invitations", "library")
 
 # Arêtes ATTENDUES du graphe interne : module -> modules frères importés.
 EXPECTED_EDGES = {
     "orgs": set(), "members": set(), "vault": set(), "settings": set(),
     "instructions": set(),
+    "instruction_ownership": {"instructions"},
     "personal": {"orgs", "members"},
     "invitations": {"orgs", "members"},
     "library": {"instructions"},
@@ -66,7 +112,7 @@ FROZEN = (
     'accept_invitation_by_code', 'add_org_member', 'annotations', 'archive_org',
     'backfill_org_front', 'backfill_personal_orgs', 'cancel_scheduled_email',
     'claim_kb_project', 'clear_kb_project', 'config',
-    'copy_instruction_to_org', 'count_orgs_created_by', 'create_invitation',
+    'count_orgs_created_by', 'create_invitation',
     'create_org', 'credentials_store', 'db', 'delete_instruction',
     'delete_org_secret', 'effective_logo_url', 'ensure_personal_org',
     'fork_into_org', 'get_active_org', 'get_instruction', 'get_instruction_by_id',
@@ -76,13 +122,13 @@ FROZEN = (
     'get_org_role', 'get_org_secret', 'get_personal_org', 'has_org_secret',
     'is_personal_org', 'json', 'list_all_instructions', 'list_all_orgs',
     'list_group_invitations', 'list_instruction_bodies',
-    'list_instruction_versions', 'list_instructions', 'list_instructions_for_orgs',
+    'list_instruction_versions', 'list_instructions',
     'list_invitations', 'list_library', 'list_org_members', 'list_org_secrets',
     'list_orgs_for_user', 'list_pending_invitations_for_email',
     'list_platform_invitations', 'list_scheduled_emails', 'logging', 'logodev',
     'normalize_domain', 'normalize_slug', 'org_email_quiet_hours', 'org_front',
     'preview_invitation', 'preview_invitation_by_code', 'publish_guide', 're',
-    'reconcile_signup_with_invitation', 'remove_org_member', 'reparent_instruction',
+    'reconcile_signup_with_invitation', 'remove_org_member',
     'resolve_org_for_user', 'resolve_sender', 'revoke_group_invitation',
     'revoke_invitation', 'revoke_platform_invitation', 'search_instructions',
     'secrets', 'set_active_org', 'set_instruction', 'set_org_default_connectors',
@@ -97,7 +143,8 @@ FROZEN_SIGNATURES = {
     '_accept_invitation_row': "(inv: 'dict', sub: 'str') -> 'dict'",
     '_connect': "() -> 'Iterator[psycopg.Connection]'",
     '_email_connectors_in_order': "(settings: 'dict') -> 'list[str]'",
-    '_free_instruction_slug': "(conn, org_id: 'int', slug: 'str') -> 'str'",
+    # #681 : la clé est la paire propriétaire, plus l'org — cf. l'en-tête.
+    '_free_instruction_slug': "(conn, owner_type: 'str', owner_id: 'int | str', slug: 'str') -> 'str'",
     '_gen_code': "(n: 'int' = 7) -> 'str'",
     '_get_invitation': "(pred: 'str', val) -> 'Optional[dict]'",
     '_hash_token': "(token: 'str') -> 'str'",
@@ -119,17 +166,16 @@ FROZEN_SIGNATURES = {
     'cancel_scheduled_email': "(org_id: 'int', email_id: 'int') -> 'bool'",
     'claim_kb_project': "(org_id: 'int', project_id: 'int') -> 'bool'",
     'clear_kb_project': "(org_id: 'int', expected_project_id: 'int') -> 'None'",
-    'copy_instruction_to_org': "(instruction_id: 'int', dest_org_id: 'int', set_by: 'Optional[str]' = None) -> 'dict'",
     'count_orgs_created_by': "(sub: 'str') -> 'int'",
     'create_invitation': "(org_id: 'Optional[int]', email: 'Optional[str]', org_role: 'str', invited_by: 'str', ttl_days: 'int' = 7, source: 'Optional[str]' = None, group_id: 'Optional[int]' = None, group_role: 'Optional[str]' = None) -> 'tuple[int, str, str]'",
     'create_org': "(name: 'str', created_by: 'Optional[str]' = None, front_base_url: 'Optional[str]' = None, front_brand: 'Optional[str]' = None, front_of: 'Optional[str]' = None) -> 'int'",
-    'delete_instruction': "(org_id: 'int', slug: 'str') -> 'bool'",
+    'delete_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str') -> 'bool'",
     'delete_org_secret': "(org_id: 'int', provider: 'str', account: 'str' = '') -> 'bool'",
     'effective_logo_url': "(org: 'dict') -> 'Optional[str]'",
     'ensure_personal_org': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None) -> 'int'",
     'fork_into_org': "(*, entry_id: 'int', org_id: 'int', new_slug: 'Optional[str]' = None, set_by: 'Optional[str]' = None) -> 'dict'",
     'get_active_org': "(sub: 'str') -> 'Optional[int]'",
-    'get_instruction': "(org_id: 'int', slug: 'str', version: 'Optional[int]' = None) -> 'Optional[dict]'",
+    'get_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str', version: 'Optional[int]' = None) -> 'Optional[dict]'",
     'get_instruction_by_id': "(instruction_id: 'int') -> 'Optional[dict]'",
     'get_invitation_by_code': "(code: 'str') -> 'Optional[dict]'",
     'get_invitation_by_token': "(token: 'str') -> 'Optional[dict]'",
@@ -148,10 +194,9 @@ FROZEN_SIGNATURES = {
     'list_all_instructions': "() -> 'list[dict]'",
     'list_all_orgs': "() -> 'list[dict]'",
     'list_group_invitations': "(group_id: 'int') -> 'list[dict]'",
-    'list_instruction_bodies': "(org_id: 'int') -> 'list[dict]'",
-    'list_instruction_versions': "(org_id: 'int', slug: 'str') -> 'list[dict]'",
-    'list_instructions': "(org_id: 'int', include_base: 'bool' = False) -> 'list[dict]'",
-    'list_instructions_for_orgs': "(org_ids: 'list[int]') -> 'list[dict]'",
+    'list_instruction_bodies': "(owner_type: 'str', owner_id: 'int | str') -> 'list[dict]'",
+    'list_instruction_versions': "(owner_type: 'str', owner_id: 'int | str', slug: 'str') -> 'list[dict]'",
+    'list_instructions': "(owner_type: 'str', owner_id: 'int | str', include_base: 'bool' = False) -> 'list[dict]'",
     'list_invitations': "(org_id: 'int') -> 'list[dict]'",
     'list_library': "(*, query: 'Optional[str]' = None, category: 'Optional[str]' = None, author_kind: 'Optional[str]' = None, author_org_id: 'Optional[int]' = None, include_unlisted: 'bool' = False, limit: 'int' = 100) -> 'list[dict]'",
     'list_org_members': "(org_id: 'int') -> 'list[dict]'",
@@ -169,15 +214,14 @@ FROZEN_SIGNATURES = {
     'publish_guide': "(*, slug: 'str', title: 'str' = '', description: 'str' = '', body_md: 'str', author_kind: 'str', author_org_id: 'Optional[int]' = None, author_display: 'str' = '', category: 'str' = '', tags: 'Optional[list]' = None, visibility: 'str' = 'public', source_org_id: 'Optional[int]' = None, source_slug: 'Optional[str]' = None, forked_from: 'Optional[int]' = None, published_by: 'Optional[str]' = None, slots: 'Optional[list]' = None) -> 'dict'",
     'reconcile_signup_with_invitation': "(sub: 'str', email: 'str') -> 'Optional[dict]'",
     'remove_org_member': "(org_id: 'int', sub: 'str') -> 'bool'",
-    'reparent_instruction': "(instruction_id: 'int', new_org_id: 'int') -> 'str'",
     'resolve_org_for_user': "(sub: 'str', org: 'str') -> 'int'",
     'resolve_sender': "(org_id: 'int', from_email: 'Optional[str]' = None) -> 'Optional[tuple[dict, str]]'",
     'revoke_group_invitation': "(group_id: 'int', inv_id: 'int') -> 'bool'",
     'revoke_invitation': "(org_id: 'int', inv_id: 'int') -> 'bool'",
     'revoke_platform_invitation': "(inv_id: 'int') -> 'bool'",
-    'search_instructions': "(org_id: 'int', query: 'str', include_base: 'bool' = False) -> 'list[dict]'",
+    'search_instructions': "(owner_type: 'str', owner_id: 'int | str', query: 'str', include_base: 'bool' = False) -> 'list[dict]'",
     'set_active_org': "(sub: 'str', org_id: 'int') -> 'bool'",
-    'set_instruction': "(org_id: 'int', slug: 'str', body_md: 'str', title: 'Optional[str]' = None, description: 'Optional[str]' = None, set_by: 'Optional[str]' = None, slots: 'Optional[list]' = None) -> 'int'",
+    'set_instruction': "(owner_type: 'str', owner_id: 'int | str', slug: 'str', body_md: 'str', title: 'Optional[str]' = None, description: 'Optional[str]' = None, set_by: 'Optional[str]' = None, slots: 'Optional[list]' = None, must_create: 'bool' = False, expected_version: 'Optional[int]' = None) -> 'int'",
     'set_org_default_connectors': "(org_id: 'int', connectors: 'Optional[list[str]]') -> 'bool'",
     'set_org_email_settings': "(org_id: 'int', connector: 'str', *, senders: 'Optional[list[dict]]' = None, quiet_hours: 'Optional[dict]' = None, clear_quiet_hours: 'bool' = False) -> 'bool'",
     'set_org_field_filters': "(org_id: 'int', service: 'str', block: 'Optional[dict]') -> 'bool'",
@@ -187,7 +231,7 @@ FROZEN_SIGNATURES = {
     'set_org_secret': "(org_id: 'int', provider: 'str', api_key: 'str', set_by: 'Optional[str]' = None, meta: 'Optional[dict]' = None, account: 'str' = '') -> 'None'",
     'unpublish_guide': "(entry_id: 'int') -> 'bool'",
     'update_org': "(org_id: 'int', name: 'Optional[str]' = None, description: 'Optional[str]' = None, domain: 'Optional[str]' = None, industry: 'Optional[str]' = None, location: 'Optional[str]' = None) -> 'bool'",
-    'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, iss: 'Optional[str]' = None) -> 'None'",
+    'upsert_user': "(sub: 'str', email: 'Optional[str]' = None, name: 'Optional[str]' = None, iss: 'Optional[str]' = None, locale: 'Optional[str]' = None) -> 'None'",
 }
 
 

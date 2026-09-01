@@ -11,13 +11,13 @@ le consentement.
 bumper `version` ici — sinon un doc modifié ne redemande pas l'acceptation (ou en
 redemande une périmée). Versions au 2026-07-09 : terms 3.0, cgv 2.0, dpa 2.0.
 
-**Un tenant tiers (Tulina…) a ses PROPRES documents, pas les nôtres** — même besoin
+**Un tenant tiers a ses PROPRES documents, pas les nôtres** — même besoin
 que `orgs.front_base_url`/`front_brand` (invitations) ou `guides` scope `tenant`
 (socle d'instructions) : une donnée servie à l'utilisateur qui ne peut pas rester
 celle de la plateforme primaire. `docs_for` en est le seam : un override par
 (tenant, slug) vit dans `tenant_legal_docs` (table, PAS le registre `tenancy.py` —
 lu en LIVE, sans redémarrage) ; absent, le slug garde son défaut `CURRENT_DOCS`
-tel quel. Un tenant sans override — le cas de Tulina aujourd'hui — voit donc
+tel quel. Un tenant sans override — le cas de la plupart d'entre eux aujourd'hui — voit donc
 exactement les documents d'oto, jusqu'à ce qu'une ligne soit posée pour lui.
 """
 from __future__ import annotations
@@ -104,7 +104,7 @@ def missing_docs(acceptances: dict, docs: dict, slugs: list[str]) -> list[dict]:
 def missing_for_sub(sub: Optional[str], context: str) -> list[dict]:
     """`missing_docs` pour CE sub et CE contexte — la version qui lit la base.
 
-    Les documents sont ceux de SON tenant (un sub Tulina doit les CGU de Tulina,
+    Les documents sont ceux de SON tenant (un sub d'un tenant tiers doit SES CGU,
     pas celles d'oto) ; les acceptations sont les siennes, à la ligne la plus
     récente de chaque doc.
 

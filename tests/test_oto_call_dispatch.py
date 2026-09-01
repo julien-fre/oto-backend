@@ -10,7 +10,7 @@ import asyncio
 
 import pytest
 from fastmcp.tools.tool import ToolResult
-from mcp.shared.exceptions import McpError
+from oto_mcp.mcp_errors import McpError
 from mcp.types import TextContent
 from oto.tools.common import FieldFilter
 
@@ -67,11 +67,11 @@ def _tool_result(payload: dict) -> ToolResult:
 
 
 _PROFILE = {
-    "first_name": "Jean-Baptiste",
-    "last_name": "Fleury",
-    "email": "jb.fleury@example.com",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "email": "jane.doe@example.com",
     "phone": "+33 6 12 34 56 78",
-    "photo_url": "https://media.licdn.com/jb.jpg",
+    "photo_url": "https://media.licdn.com/jane.jpg",
     "headline": "Head of Talent",
 }
 
@@ -102,11 +102,11 @@ def test_dispatch_redacts_pii_like_middleware(oto_call_fn, monkeypatch):
     sc = out.structured_content
     text = json.loads(out.content[0].text)
     for view in (sc, text):
-        assert view["first_name"] != "Jean-Baptiste" and view["first_name"]
-        assert view["last_name"] != "Fleury"
+        assert view["first_name"] != "Jane" and view["first_name"]
+        assert view["last_name"] != "Doe"
         assert "photo_url" not in view          # ré-identifiant direct supprimé
         assert view["headline"] == "Head of Talent"   # non sensible conservé
-    assert "Fleury" not in out.content[0].text
+    assert "Doe" not in out.content[0].text
 
 
 def test_dispatch_passthrough_when_no_policy(oto_call_fn, monkeypatch):

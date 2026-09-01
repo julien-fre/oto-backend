@@ -113,8 +113,10 @@ rend le résultat à FastMCP. Aucune retouche par outil.
 ⚠️ **Le vide MUET, le pire cas.** Un outil qui rend `[]` ou `None` ne produit
 **aucun bloc de contenu** (`_convert_to_content`, FastMCP 3.4.2) — là où `[1]` rend
 un bloc texte et un dict rend son JSON. Le modèle reçoit alors un tour littéralement
-sans contenu, et c'est cette absence qui le fait dérailler (`fr_directors` sur un
-SIREN sans dirigeant). La phrase remplace ce silence ; elle ne **fabrique jamais** de
+sans contenu, et c'est cette absence qui le fait dérailler (le cas fondateur :
+`fr_directors` sur un SIREN sans dirigeant — **il ne rend plus de liste nue depuis
+le 2026-09-01, #612**, mais le mode de panne, lui, reste ouvert pour tout outil qui
+rend une liste). La phrase remplace ce silence ; elle ne **fabrique jamais** de
 JSON pour le combler. Un retour `[1]` reste servi à l'identique.
 
 **Détection** (`redaction.is_empty_payload`) : un résultat est vide quand il

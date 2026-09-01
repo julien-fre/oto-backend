@@ -3,8 +3,7 @@ la clé gagnante de la cascade). Clé plateforme → DSN None (instance env/déf
 + #55 : le grant de compte partagé = SEULE exception au no-fallback anti-usurpation
 (pointeur « identité opérée » revalidé à chaque appel, pin projet accepté si accordé)."""
 import pytest
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access
 from oto_mcp.access import ResolvedCredential
 from oto_mcp.tools import unipile as unipile_tool

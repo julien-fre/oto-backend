@@ -11,7 +11,7 @@ import re
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_REQUEST
 
 from .. import access, output_projection, url_perimeter
@@ -253,6 +253,9 @@ def register(mcp: FastMCP) -> None:
         Coût : ~grid² × max_pages appels Serper (throttlés) — c'est le prix de
         l'exhaustivité ; commencer modeste et resserrer la grille si besoin.
 
+        Returns {query, count, places[], anchors_used, pages_fetched}. `count` =
+        total dédupliqué — à préférer à tout comptage d'un échantillon seul.
+
         Args:
             query: Ce qu'on énumère (e.g. "laverie automatique").
             center: Centre de zone "lat,lng" (e.g. "48.8566,2.3522"). Requis sauf ll_anchors.
@@ -263,9 +266,6 @@ def register(mcp: FastMCP) -> None:
             max_pages: Pages maxi paginées par ancre (défaut 3).
             country: Country code (default "fr").
             language: Language code (default "fr").
-
-        Returns {query, count, places[], anchors_used, pages_fetched}. `count` =
-        total dédupliqué — à préférer à tout comptage d'un échantillon seul.
         """
         return _run(
             "census_maps", query=query, center=center, radius_km=radius_km,

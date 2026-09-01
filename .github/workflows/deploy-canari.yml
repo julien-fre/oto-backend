@@ -35,6 +35,80 @@ jobs:
       - name: Compiler sous le Python le plus ancien supporté
         run: python -m compileall -q oto_mcp
 
+  # Ce dépôt est PUBLIC. La règle « jamais de nom de client ni de personne » a été
+  # appliquée à la main deux fois le 2026-09-01 (#709 sources, #747 tests, tronc à
+  # zéro) — et un lot mergé le même jour à 10:26 la cassait, dans un en-tête de
+  # module et un en-tête de test. Une règle qui ne tient que par la discipline ne
+  # tient pas. Cf. oto-private#85.
+  #
+  # La liste des termes N'EST PAS dans le dépôt, pas même hachée : un fichier
+  # d'empreintes commité dans un dépôt public est un oracle d'appartenance (hacher
+  # coûte au curieux ce qu'il nous coûte par candidat), donc il rendrait la liste
+  # non-greppable, pas confidentielle — or c'est l'appartenance qu'on protège. Elle
+  # vit dans le secret de dépôt OTO_NOMS_CLIENTS, un terme par ligne.
+  #
+  # Ce job ne gate AUCUN déploiement, délibérément : bloquer la préproduction ne
+  # dépublierait rien — le nom est public dès le push. Le moment qui engage est la
+  # PR, avant merge. Il tourne aussi sur `push main` pour juger l'état MERGÉ, qu'une
+  # PR verte prise isolément ne montre pas. Un tag part toujours d'un commit de main
+  # déjà jugé ici : `deploy.yml` n'a pas besoin de le refaire.
+  #
+  # ⚠️ CE JOB EST ROUGE-MAIS-NON-REQUIS, ET LES DEUX MOITIÉS SONT DÉLIBÉRÉES.
+  #
+  # Rouge : posé le 2026-09-01, ce job a rendu « success » sur TOUS ses runs — dont
+  # celui de sa propre fusion — alors que le secret n'a jamais été posé et qu'aucun
+  # jugement n'avait donc été rendu. L'annotation disait la vérité ; personne ne la
+  # lisait, parce que `gh pr checks`, la liste des checks et la coche verte de la PR
+  # ne lisent QUE la conclusion. Un garde-fou qui ne peut pas s'exécuter doit être
+  # ROUGE, jamais vert avec une note : l'état « pas jugé » rendu en vert est la pire
+  # forme d'un contrôle défaillant, parce qu'il fabrique une PREUVE POSITIVE — les
+  # autres formes se voient au moins quand on regarde. Ne pas remettre `exit 0` ici
+  # (`tests/test_lint_noms_clients.py` refuse la régression sur ce fichier même).
+  #
+  # Non requis : ne PAS l'ajouter aux contrôles requis de `main`. Un dispositif qui
+  # protège en bloquant les livraisons déplace son coût sur tout le monde — et le
+  # blocage n'achèterait rien, puisque le nom est public dès le push et que ce job
+  # ne gate aucun déploiement. L'objectif est qu'il soit impossible à CONFONDRE avec
+  # un succès, pas qu'il gèle le dépôt tant qu'un secret n'est pas posé.
+  #
+  # Une conclusion « neutral » a été écartée : un job de workflow ne peut pas en
+  # émettre (il ne dispose que de success/failure/cancelled/skipped — il faudrait
+  # un check-run tiers via l'API Checks), et surtout GitHub la compte comme NON
+  # bloquante et l'affiche comme un passage — elle reproduirait le défaut corrigé.
+  #
+  # Stdlib seule, ~1 s sur 1300 fichiers : ni setup-python, ni pip, ni service tiers.
+  noms-clients:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Refuser un nom de client dans le dépôt public
+        env:
+          OTO_NOMS_CLIENTS: ${{ secrets.OTO_NOMS_CLIENTS }}
+          # Vide sur un `push` ; « true » seulement pour une PR ouverte depuis un
+          # fork — le seul cas où l'absence du secret ne dit RIEN sur notre dépôt.
+          DEPUIS_UN_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          set -uo pipefail
+          code=0
+          python3 scripts/lint_noms_clients.py || code=$?
+          # TROIS états, comme `contrat-front` — et le troisième ROUGIT (cf. le
+          # commentaire du job). Il rougit AUSSI pour une PR de fork, qui n'a pas
+          # accès aux secrets : c'est correct, rien n'y a été jugé non plus. Mais le
+          # message doit alors dire au contributeur que son code n'est PAS en cause,
+          # sinon le garde-fou accuse un innocent.
+          if [ "$code" = "2" ]; then
+            if [ "${DEPUIS_UN_FORK:-}" = "true" ]; then
+              echo "::error title=Noms de clients NON confrontés — votre contribution n'est pas en cause::Une pull request ouverte depuis un fork n'a pas accès aux secrets de ce dépôt. La liste des termes était donc indisponible et AUCUN jugement n'a été rendu : ce contrôle n'a rien trouvé à redire à votre code, il n'a tout simplement pas pu s'exécuter. Rien ne vous est demandé — un mainteneur relira, ou rejouera ce contrôle depuis une branche du dépôt. Ce job échoue délibérément, parce qu'un contrôle qui n'a pas pu juger ne doit jamais se présenter comme un succès ; il n'a pas vocation à bloquer la fusion de votre PR."
+            else
+              echo "::error title=Noms de clients NON confrontés — le secret OTO_NOMS_CLIENTS est absent::La liste des termes est indisponible et AUCUN jugement n'a été rendu sur les noms de clients de ce dépôt PUBLIC. Poser le secret de dépôt OTO_NOMS_CLIENTS (un terme par ligne) rend à ce contrôle sa capacité de juger, et ce job repasse au vert. Il échoue délibérément tant que ce n'est pas fait : un vert ici serait une preuve fabriquée. Il ne gate aucun déploiement et n'a pas vocation à figurer dans les contrôles requis."
+            fi
+            exit 1
+          fi
+          if [ "$code" != "0" ]; then
+            echo "::error title=Un nom de client est apparu dans le dépôt PUBLIC::Remplacer par la convention du dépôt (acme, Jane Doe, prose générique, TLD .test), ou déclarer la dette avec '# noqa: CLIENT — <raison>' si la valeur est fonctionnelle. Détail dans le journal du job."
+            exit 1
+          fi
+
   test:
     runs-on: ubuntu-latest
     steps:
@@ -61,3 +135,182 @@ jobs:
     steps:
       - name: Deploy preprod (build serveur via script root-restreint)
         run: sudo /opt/deploy/oto-backend-canari.sh
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Le front de JB (`otomata-tech/oto-frontend`, servi sur dashboard.oto.ninja) épingle
+  # un extrait verbatim de notre OpenAPI et le confronte au vivant à chaque passage.
+  # Conséquence mesurée le 31/08/2026 : quand nous touchons l'une des 59 opérations
+  # qu'il consomme, c'est SA branche principale qui rougit et SA livraison qui se
+  # bloque — deux fois dans la journée — alors que le changement vient de nous.
+  # Ce job retourne la charge : celui qui casse l'apprend le premier, ici, juste après
+  # la préproduction, et non le lendemain dans le travail de quelqu'un d'autre.
+  #
+  # Il ne rougit QUE si ses appels cassent (opération disparue, entrée modifiée). Les
+  # écarts sans effet sur ses appels sortent en avertissement : un contrôle qui crie
+  # pour tout cesse d'être lu. Et il ne rougit JAMAIS pour un geste qui vient de lui —
+  # contrat déplacé, dépôt inaccessible : avertissement, avec le chemin cherché nommé.
+  # Rougir chez nous pour son fichier renommé, ce serait ce lot à l'envers.
+  contrat-front:
+    needs: [deploy-preprod]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, oto-platform]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Lire le contrat épinglé par le front
+        id: contrat
+        env:
+          CLE_LECTURE: ${{ secrets.OTO_FRONTEND_CONTRACT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLE_LECTURE:-}" ]; then
+            echo "::warning title=Contrat du front non confronté::Le secret OTO_FRONTEND_CONTRACT_KEY est absent — le contrat épinglé par oto-frontend N'A PAS été confronté. Aucun jugement n'a été rendu."
+            echo "lu=non" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TRAVAIL="$(mktemp -d)"
+          echo "travail=$TRAVAIL" >> "$GITHUB_OUTPUT"
+          umask 077
+          printf '%s\n' "$CLE_LECTURE" > "$TRAVAIL/cle"
+          # Empreinte ed25519 de github.com, épinglée : relevée et vérifiée le 31/08/2026
+          # (SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU). Épinglée et non découverte
+          # au vol : un known_hosts rempli à l'exécution accepte le premier venu.
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$TRAVAIL/hotes"
+          export GIT_SSH_COMMAND="ssh -i $TRAVAIL/cle -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$TRAVAIL/hotes"
+          # TROIS états, pas deux — et la distinction EST le sujet de ce job. Ne pas la
+          # perdre : ce lot existe parce qu'un geste de l'un rougissait la branche de
+          # l'autre. Rougir ICI parce que le fichier a bougé CHEZ LUI, ce serait le même
+          # défaut retourné. Donc : seul le CONTENU de son contrat peut nous faire rougir.
+          # Tout ce qui nous empêche de l'OBTENIR avertit — bruyamment, jamais un vert muet.
+          CONTRAT="$TRAVAIL/front/api/openapi-served.json"
+          # Clé de déploiement en LECTURE SEULE sur oto-frontend ; un seul fichier ramené.
+          if ! git clone --depth 1 --filter=blob:none --sparse --quiet \
+                 git@github.com:otomata-tech/oto-frontend.git "$TRAVAIL/front" 2>"$TRAVAIL/err"; then
+            echo "::warning title=Contrat du front inaccessible::Le dépôt otomata-tech/oto-frontend n'a pas pu être lu (clé révoquée, dépôt renommé ou déplacé) — le contrat N'A PAS été confronté, AUCUN jugement n'a été rendu. Détail : $(tr '\n' ' ' < "$TRAVAIL/err" | head -c 300)"
+            echo "lu=non" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git -C "$TRAVAIL/front" sparse-checkout set --no-cone /api/openapi-served.json || true
+          if [ ! -s "$CONTRAT" ]; then
+            echo "::warning title=Contrat du front introuvable::api/openapi-served.json est absent ou vide dans otomata-tech/oto-frontend — le fichier a probablement été renommé ou déplacé CHEZ LUI. Ce n'est pas un défaut de notre contrat : rien n'a été jugé. Corriger le chemin cherché dans ce job."
+            echo "lu=non" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "lu=oui" >> "$GITHUB_OUTPUT"
+
+      - name: Confronter au contrat servi par la préproduction
+        if: steps.contrat.outputs.lu == 'oui'
+        run: |
+          set -uo pipefail
+          COULEUR="$(cat /etc/oto-mcp/active-canari)"
+          case "$COULEUR" in
+            blue)  PORT=9105 ;;
+            green) PORT=9108 ;;
+            *) echo "::error title=Couleur de préproduction inconnue::/etc/oto-mcp/active-canari dit « $COULEUR » — rien n'a été confronté."; exit 1 ;;
+          esac
+          echo "préproduction : couleur $COULEUR, port $PORT"
+          code=0
+          python3 scripts/contrat-front.py \
+            "${{ steps.contrat.outputs.travail }}/front/api/openapi-served.json" \
+            "http://127.0.0.1:$PORT/api/openapi.json" || code=$?
+          if [ "$code" = "2" ]; then
+            echo "::error title=Confrontation impossible::L'un des deux documents est illisible — le contrat N'A PAS été jugé."
+            exit 1
+          fi
+          if [ "$code" != "0" ]; then
+            echo "::error title=Le front consommateur va casser::Une opération qu'il épingle a disparu ou changé d'entrée. Garder la compatibilité, ou le prévenir AVANT la mise en production."
+            exit 1
+          fi
+
+      - name: Effacer la clé de lecture
+        if: always()
+        run: rm -rf "${{ steps.contrat.outputs.travail }}"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # LE MÊME CONTRÔLE, MAIS AVANT LA FUSION.
+  #
+  # `contrat-front` (ci-dessus) juge ce qui est SERVI par la préproduction : il ne peut
+  # donc parler qu'APRÈS le déploiement, donc après la fusion. Un garde-fou qui refuse
+  # après coup laisse la rupture atteindre la préproduction — et l'état que le partenaire
+  # peut interroger — avant de le dire. Ce job-ci juge le contrat que le CODE DE LA PR
+  # produirait, sans rien déployer : `openapi.build()` dérive le document par simple
+  # import, sans serveur ni base (c'est déjà ce que fait tests/test_openapi.py).
+  #
+  # Les deux se complètent et ne font pas doublon : celui-ci dit « ce que tu t'apprêtes à
+  # fusionner casserait le partenaire », celui d'après dit « ce qui est réellement servi
+  # a divergé ». Le second reste nécessaire — un déploiement peut servir autre chose que
+  # ce que le code de la branche annonce.
+  #
+  # Mêmes règles de verdict, délibérément : seule une rupture d'appel bloque. Un ajout
+  # compatible sort en avertissement et n'empêche PAS de fusionner — sinon on ne pourrait
+  # plus livrer un champ de réponse supplémentaire.
+  contrat-front-pr:
+    name: Contrat du front consommateur (avant fusion)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install (deps + dev)
+        run: pip install -e ".[dev]"
+
+      - name: Dériver le contrat que CE code servirait
+        run: |
+          set -euo pipefail
+          python - <<'PY' > /tmp/openapi-de-la-pr.json
+          import json
+          from oto_mcp import openapi
+          print(json.dumps(openapi.build()))
+          PY
+          echo "contrat dérivé : $(wc -c < /tmp/openapi-de-la-pr.json) octets"
+
+      - name: Lire le contrat épinglé par le front
+        id: contrat
+        env:
+          CLE_LECTURE: ${{ secrets.OTO_FRONTEND_CONTRACT_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLE_LECTURE:-}" ]; then
+            echo "::warning title=Contrat du front non confronté::Le secret OTO_FRONTEND_CONTRACT_KEY est absent — aucun jugement n'a été rendu."
+            echo "lu=non" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          TRAVAIL="$(mktemp -d)"
+          echo "travail=$TRAVAIL" >> "$GITHUB_OUTPUT"
+          umask 077
+          printf '%s\n' "$CLE_LECTURE" > "$TRAVAIL/cle"
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$TRAVAIL/hotes"
+          export GIT_SSH_COMMAND="ssh -i $TRAVAIL/cle -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$TRAVAIL/hotes"
+          if ! git clone --depth 1 --filter=blob:none --sparse --quiet \
+                 git@github.com:otomata-tech/oto-frontend.git "$TRAVAIL/front" 2>"$TRAVAIL/err"; then
+            echo "::warning title=Contrat du front inaccessible::Dépôt illisible — aucun jugement rendu. $(tr '\n' ' ' < "$TRAVAIL/err" | head -c 200)"
+            echo "lu=non" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          git -C "$TRAVAIL/front" sparse-checkout set --no-cone /api/openapi-served.json || true
+          if [ ! -s "$TRAVAIL/front/api/openapi-served.json" ]; then
+            echo "::warning title=Contrat du front introuvable::api/openapi-served.json absent ou vide — renommé chez lui ? Aucun jugement rendu."
+            echo "lu=non" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "lu=oui" >> "$GITHUB_OUTPUT"
+
+      - name: Confronter
+        if: steps.contrat.outputs.lu == 'oui'
+        run: |
+          set -uo pipefail
+          code=0
+          python3 scripts/contrat-front.py \
+            "${{ steps.contrat.outputs.travail }}/front/api/openapi-served.json" \
+            /tmp/openapi-de-la-pr.json || code=$?
+          if [ "$code" = "2" ]; then
+            echo "::error title=Confrontation impossible::Document illisible — le contrat N'A PAS été jugé."; exit 1
+          fi
+          if [ "$code" != "0" ]; then
+            echo "::error title=Cette PR casserait le front consommateur::Une opération qu'il épingle disparaît ou change d'entrée. Garder la compatibilité, ou le prévenir AVANT de fusionner."; exit 1
+          fi
+
+      - name: Effacer la clé de lecture
+        if: always()
+        run: rm -rf "${{ steps.contrat.outputs.travail }}"

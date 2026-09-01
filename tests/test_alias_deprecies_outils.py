@@ -194,3 +194,41 @@ def test_le_retrait_est_une_date_a_venir_ou_le_lot_D_est_du():
         f"alias sont toujours servis : {sorted(deprecations.TOOLS)}. Retire-les "
         "(lot D, #526) ou décale RETRAIT en le décidant — mais ne sers plus une date "
         "dépassée à des intégrateurs qui la lisent.")
+
+# ── 6. Le préavis tient l'engagement CONTRACTUEL ────────────────────────────
+# L'Art 8.2 du contrat de service promet un préavis de deux mois avant toute rupture
+# d'interface (référence et constat d'écart : #767). Ces deux tests existent pour qu'on ne
+# puisse pas raccourcir ce préavis sans savoir ce qu'on touche — il a valu 30 jours du
+# 29/08 au 01/09/2026 (#767), et personne ne l'avait décidé contre l'article.
+
+
+def test_le_preavis_annonce_tient_les_deux_mois_ecrits_au_contrat():
+    """PLANCHER, pas égalité : allonger un préavis est toujours favorable à celui à
+    qui il est dû ; descendre sous deux mois est un manquement, pas un réglage."""
+    import datetime
+    assert deprecations.PREAVIS_MOIS >= 2, (
+        f"Le préavis servi est de {deprecations.PREAVIS_MOIS} mois. L'Art 8.2 en "
+        "promet DEUX avant toute rupture d'interface : ce chiffre n'est pas un "
+        "réglage d'opportunité, c'est ce qui a été écrit au client. Pour le "
+        "raccourcir, il faut d'abord amender l'engagement.")
+    plancher = deprecations._plus_de_mois(deprecations.ANNONCE, 2)
+    assert deprecations.RETRAIT >= plancher, (
+        f"Retrait annoncé le {deprecations.date_de_retrait()}, soit AVANT les deux "
+        f"mois dus depuis l'annonce du {deprecations.ANNONCE:%d/%m/%Y} (plancher : "
+        f"{plancher:%d/%m/%Y}).")
+
+
+def test_le_preavis_se_compte_en_mois_CALENDAIRES_jamais_en_jours():
+    """Deux mois ≠ 60 jours. L'approximation en jours tombe un jour trop tôt neuf
+    fois sur douze, et toujours du même côté : contre le consommateur. C'est la
+    famille d'écart de #767/#768 — un jour pris sans que personne l'ait décidé."""
+    import datetime
+    d = deprecations._plus_de_mois
+    assert d(datetime.date(2026, 8, 29), 2) == datetime.date(2026, 10, 29)
+    # ...et l'approximation, elle, aurait rendu la veille.
+    assert datetime.date(2026, 8, 29) + datetime.timedelta(days=60) \
+        == datetime.date(2026, 10, 28)
+    # fin de mois : on retombe sur le dernier jour existant, jamais sur un 31/02.
+    assert d(datetime.date(2026, 12, 31), 2) == datetime.date(2027, 2, 28)
+    assert d(datetime.date(2026, 11, 30), 2) == datetime.date(2027, 1, 30)
+

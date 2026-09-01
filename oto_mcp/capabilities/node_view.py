@@ -44,7 +44,7 @@ import json
 import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import ownership
@@ -53,6 +53,7 @@ from ..db import node_view as db_node
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, NotModified, ResolvedCtx, RestBinding
+from .node_keys import doc_id_de
 from .node_procedure_ref import ProcedureRef, procedure_ref_of
 from .registry import CAPABILITIES
 
@@ -76,6 +77,12 @@ class TrailSibling(BaseModel):
     id: str
     name: str
     type: str
+    # La procédure qu'un voisin `agent` exécute — même référence que sur le rail et
+    # sur la fiche (#417/#619), laissée ouverte ici jusqu'au 01/09. Le fil savait dire
+    # `type: "agent"` mais pas vers quoi : le voisin restait non cliquable alors que
+    # les deux autres surfaces l'ouvraient. `null` sur toute autre nature, et sur un
+    # agent sans référence lisible : jamais devinée.
+    procedure: Optional[ProcedureRef] = None
 
 
 class TrailCrumb(BaseModel):
@@ -86,6 +93,9 @@ class TrailCrumb(BaseModel):
     # fil n'a donc rien à redemander. Bornés : un dossier à 4 000 frères ferait du fil
     # la plus grosse partie de la réponse.
     siblings: list[TrailSibling] = []
+    # Le maillon lui-même peut être un agent (on ouvre une page rangée SOUS lui) —
+    # même règle, même source.
+    procedure: Optional[ProcedureRef] = None
 
 
 class ContentBlock(BaseModel):
@@ -134,7 +144,11 @@ class NodeOut(BaseModel):
     mais ne s'éditait ni ne se partageait.
 
     `rev` est l'empreinte du corps servi : elle a changé une fois pour tous les nœuds
-    à l'ajout de ces champs (un cache client se rafraîchit, puis retrouve ses 304)."""
+    à l'ajout de ces champs (un cache client se rafraîchit, puis retrouve ses 304).
+    **Même effet à l'ajout de `pinned` et `namespace` (01/09/2026)** — une seule vague
+    d'invalidation, connue et bornée. C'est le prix d'une empreinte calculée sur le
+    contenu servi, et c'est le bon prix : une empreinte qui ignorerait les champs neufs
+    laisserait un client sur une version qu'il croit à jour."""
     id: str
     name: str
     type: Literal["page", "table", "agent", "execution"]
@@ -144,6 +158,28 @@ class NodeOut(BaseModel):
     procedure: Optional[ProcedureRef] = None
     doc_id: Optional[int] = None
     project_id: Optional[int] = None
+    # L'ÉPINGLE (0054-D5) : ce nœud est-il une racine ? Le drapeau est posé depuis la
+    # conversion des projets et n'était **lu par personne** — dans le rail, une racine
+    # était donc indiscernable d'une page ordinaire. Servi ici parce que c'est la
+    # seule chose qui distingue les deux, et parce que le modèle a retiré le GENRE
+    # `project` exprès : l'épingle est ce qui reste pour le dire.
+    pinned: bool = False
+    # Tableau : le NOM DE NAMESPACE à repasser aux surfaces `data_*`.
+    #
+    # ⚠️ Il vaut aujourd'hui la même chose que `name`, et c'est une COÏNCIDENCE qu'on
+    # dissout exprès : la projection pose `title = namespace`, mais le modèle veut que
+    # le namespace devienne une position dans l'arbre, pas un nom. Le jour où c'est
+    # fait, un client qui lisait `name` comme une adresse casserait **sans que rien ne
+    # le prévienne**. La poignée est donc déclarée maintenant, tant qu'elle est facile
+    # à tenir — même geste que `doc_id`/`project_id`. Absent sur une page.
+    namespace: Optional[str] = Field(default=None, description=(
+        "Tableau : le nom de namespace à repasser aux surfaces `data_*`. `null` sur "
+        "une page. ⚠️ **C'est un NOM, et un nom peut désigner deux tableaux.** Les "
+        "écritures de lignes le résolvent dans le scope de l'appelant, où « vivier », "
+        "« leads » ou « contacts » existent souvent en plusieurs exemplaires (perso, "
+        "équipe, org) : deux homonymes atteignables suffisent à écrire dans l'autre, "
+        "sans erreur. Tant que l'écriture au grain du nœud n'existe pas, un client qui "
+        "enchaîne « ouvrir ce tableau » puis « y écrire » assume cette ambiguïté."))
     trail: list[TrailCrumb] = []
     modified: NodeModified
     # Page : le corps en blocs. Absent sur un tableau.
@@ -173,15 +209,24 @@ def _introuvable() -> AuthzDenied:
     return AuthzDenied(404, "not_found", "Aucun nœud de ce nom, ou aucun droit de le voir.")
 
 
-def _lisible(fiche: dict, principals: set, partages: set) -> bool:
+def _lisible(ctx: ResolvedCtx, fiche: dict, partages: set) -> bool:
     """Le nœud est-il à portée de cette personne ?
 
-    Deux voies, les mêmes que le rail : son propriétaire est un de mes principals
-    (l'org active, une de mes équipes, moi), ou il m'est partagé en direct. On réutilise
-    `ownership.active_org_principals` plutôt que de réécrire le scoping — une seconde
-    définition de « à portée » divergerait de la première au premier changement.
+    Deux voies : son propriétaire est à portée dans le contexte, ou le nœud m'est
+    partagé en direct. La première est `ownership.owner_in_scope` — **la règle de
+    portée de la plateforme, pas une seconde définition**.
+
+    Elle l'était, et elle avait divergé (#682) : ce test comparait le propriétaire à
+    `active_org_principals`, qui ne connaît ni le cran PLATEFORME ni l'escalade
+    d'équipe. Un guide de la bibliothèque était donc **invisible par `oto_node` et
+    lisible par `oto_resource`** — deux portes, deux réponses, pour la même page et la
+    même personne ; et un administrateur d'org voyait les tableaux de toutes ses
+    équipes mais pas leurs pages. Le commentaire d'origine annonçait le risque
+    (« une seconde définition divergerait de la première ») en le prenant quand même :
+    réutiliser le calcul des principals n'est pas réutiliser la règle.
     """
-    if (fiche["owner_type"], str(fiche["owner_id"])) in principals:
+    if ownership.owner_in_scope(ctx.sub, ctx.org_id,
+                                (fiche["owner_type"], str(fiche["owner_id"]))):
         return True
     return fiche["public_id"] in partages
 
@@ -198,7 +243,7 @@ def _source(props: dict, chaine: list[dict]) -> tuple[Optional[int], Optional[in
     qu'un entier deviné.
     """
     legacy, lid = props.get("legacy"), props.get("legacy_id")
-    doc_id = int(lid) if legacy == "doc" and lid is not None else None
+    doc_id = doc_id_de(legacy, lid)
     if legacy == "prj" and lid is not None:
         return doc_id, int(lid)
     if props.get("project_id") is not None:
@@ -227,13 +272,22 @@ def _fil(fiche: dict, chaine: list[dict]) -> list[TrailCrumb]:
     freres = db_node.siblings_of([c["parent_id"] for c in chaine],
                                  owner=(fiche["owner_type"], str(fiche["owner_id"])),
                                  cap=_FRERES_MAX)
+    # Le `scope` d'une référence est le PROPRIÉTAIRE du nœud, et le fil ne remonte que
+    # des ancêtres — la fratrie est d'ailleurs bornée à ce même propriétaire par la
+    # requête. Celui de la fiche vaut donc pour tous les maillons ; le relire par nœud
+    # coûterait une colonne de plus pour la même valeur.
+    proprietaire = fiche.get("owner_type")
     out = []
     for c in chaine:
         props = c.get("props") or {}
+        nature = _type_of(c["kind"], props)
         out.append(TrailCrumb(
-            id=c["public_id"], name=props.get("title") or "", type=_type_of(c["kind"], props),
+            id=c["public_id"], name=props.get("title") or "", type=nature,
+            procedure=procedure_ref_of(nature, proprietaire, props),
             siblings=[TrailSibling(id=s["public_id"], name=s.get("title") or "",
-                                   type=_type_of(s["kind"], s))
+                                   type=_type_of(s["kind"], s),
+                                   procedure=procedure_ref_of(
+                                       _type_of(s["kind"], s), proprietaire, s))
                       for s in freres.get(c["parent_id"], [])]))
     return out
 
@@ -251,16 +305,15 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
     if not fiche:
         raise _introuvable()
 
-    principals = {(t, str(i)) for t, i in
-                  ownership.active_org_principals(ctx.sub, ctx.org_id)}
     partages: set = set()
-    if (fiche["owner_type"], str(fiche["owner_id"])) not in principals:
+    if not ownership.owner_in_scope(ctx.sub, ctx.org_id,
+                                    (fiche["owner_type"], str(fiche["owner_id"]))):
         # Le second chemin ne se paie QUE s'il sert : la voie du propriétaire couvre la
         # quasi-totalité des ouvertures, et lire tous les grants d'une personne pour
         # confirmer ce qu'on sait déjà serait une requête par ouverture de page.
         par_id, _ = db_shell.resolve_grant_nodes(db_shell.direct_grants(ctx.sub))
         partages = set(par_id)
-    if not _lisible(fiche, principals, partages):
+    if not _lisible(ctx, fiche, partages):
         raise _introuvable()
 
     props = fiche.get("props") or {}
@@ -275,6 +328,10 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
         "procedure": ref.model_dump() if ref else None,
         "doc_id": doc_id,
         "project_id": project_id,
+        "pinned": bool(props.get("pinned")),
+        # Le point UNIQUE où le namespace se résout : le jour où `title` cesse d'être
+        # le namespace, c'est cette ligne qui change, et les clients ne bougent pas.
+        "namespace": (props.get("title") or None) if nature == "table" else None,
         "trail": [c.model_dump() for c in _fil(fiche, chaine)],
         "modified": NodeModified(
             at=str(fiche["updated_at"]) if fiche.get("updated_at") else None,

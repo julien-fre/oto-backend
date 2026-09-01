@@ -1,5 +1,7 @@
 GET,HEAD /favicon.svg -> favicon
 GET,HEAD /favicon.ico -> favicon
+GET,HEAD /api/version -> version
+OPTIONS /api/version -> options_handler
 GET,HEAD /api/mcp/catalog -> mcp_catalog
 OPTIONS /api/mcp/catalog -> options_handler
 GET,HEAD /openapi.json -> openapi_doc
@@ -131,6 +133,8 @@ DELETE /api/orgs/{id}/invitations/{inv} -> _handler
 OPTIONS /api/orgs/{id}/invitations/{inv} -> options_handler
 POST /api/me/invitations/accept -> _handler
 OPTIONS /api/me/invitations/accept -> options_handler
+POST /api/me/invitations/reject -> _handler
+OPTIONS /api/me/invitations/reject -> options_handler
 POST /api/admin/invitations -> _handler
 OPTIONS /api/admin/invitations -> options_handler
 GET,HEAD /api/admin/invitations -> _handler
@@ -286,6 +290,10 @@ OPTIONS /api/me/instructions/{slug}/versions -> options_handler
 GET,HEAD /api/me/instructions/{slug}/usage -> _handler
 OPTIONS /api/me/instructions/{slug}/usage -> options_handler
 PUT /api/me/instructions/{slug} -> _handler
+OPTIONS /api/me/instructions/{slug} -> options_handler
+POST /api/me/instructions -> _handler
+OPTIONS /api/me/instructions -> options_handler
+PATCH /api/me/instructions/{slug} -> _handler
 OPTIONS /api/me/instructions/{slug} -> options_handler
 DELETE /api/me/instructions/{slug} -> _handler
 OPTIONS /api/me/instructions/{slug} -> options_handler
@@ -501,6 +509,8 @@ GET,HEAD /api/orgs/{id}/monitoring/tool-quality -> _handler
 OPTIONS /api/orgs/{id}/monitoring/tool-quality -> options_handler
 POST /api/resources -> _handler
 OPTIONS /api/resources -> options_handler
+POST /api/resources/v2 -> _handler
+OPTIONS /api/resources/v2 -> options_handler
 GET,HEAD /api/admin/capabilities -> _handler
 OPTIONS /api/admin/capabilities -> options_handler
 GET,HEAD /api/me/agent-context -> _handler
@@ -555,6 +565,8 @@ GET,HEAD /api/me/inbox -> _handler
 OPTIONS /api/me/inbox -> options_handler
 GET,HEAD /api/me/shell -> _handler
 OPTIONS /api/me/shell -> options_handler
+POST /api/me/nodes/edit -> _handler
+OPTIONS /api/me/nodes/edit -> options_handler
 GET,HEAD /api/me/nodes/{node_id} -> _handler
 OPTIONS /api/me/nodes/{node_id} -> options_handler
 GET,HEAD /api/me/nodes/{node_id}/rows -> _handler
@@ -615,6 +627,8 @@ POST /api/me/runner/jobs -> _handler
 OPTIONS /api/me/runner/jobs -> options_handler
 POST /api/me/runner/triggers -> _handler
 OPTIONS /api/me/runner/triggers -> options_handler
+POST /api/me/runner/fleets -> _handler
+OPTIONS /api/me/runner/fleets -> options_handler
 POST /api/contact -> contact
 OPTIONS /api/contact -> options_handler
 POST /api/billing/webhook -> webhook

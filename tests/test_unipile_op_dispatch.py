@@ -12,9 +12,7 @@ import asyncio
 from unittest.mock import MagicMock
 
 import pytest
-from mcp.shared.exceptions import McpError
-
-
+from oto_mcp.mcp_errors import McpError
 def _tool(name: str):
     from fastmcp import FastMCP
     from oto_mcp.tools import unipile as U
@@ -60,8 +58,8 @@ def test_profile_ops_route_to_the_right_client_method(client, op, kwargs, method
 def test_profile_person_strips_diacritics(client):
     """LinkedIn génère ses slugs en ASCII : un slug accentué fait répondre un 403
     « Insufficient permissions » trompeur (#180)."""
-    _tool("linkedin_unipile_profile")(op="person", identifier="nicolas-chéhanne")
-    assert client.get_profile.call_args.args[0] == "nicolas-chehanne"
+    _tool("linkedin_unipile_profile")(op="person", identifier="chloé-dupré")
+    assert client.get_profile.call_args.args[0] == "chloe-dupre"
 
 
 def test_profile_company_is_cached(client):

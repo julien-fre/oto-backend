@@ -12,11 +12,11 @@ from oto_mcp import config, instructions
 def test_published_project_serves_its_own_prose(monkeypatch):
     import oto_mcp.db as db
     monkeypatch.setattr(db, "get_project_by_id", lambda pid: {
-        "id": pid, "name": "Mūcho — accords dormants",
+        "id": pid, "name": "Marché — accords dormants",
         "mcp_instructions_md": "Ce vivier liste les entreprises dont l'accord dort.",
     })
     out = instructions.compose_published_project(169)
-    assert "Mūcho" in out
+    assert "Marché" in out
     assert "accord dort" in out
     # Le socle plateforme n'a rien à faire chez un tiers.
     assert "run_start" not in out and "connecteur" not in out

@@ -21,6 +21,24 @@ import pytest
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+# La recopie des tables historiques vers `nodes` est ARRÊTÉE depuis le 2026-09-01 :
+# les deux univers vivent côte à côte, plus rien ne traduit l'un vers l'autre. Un
+# test qui ouvre par la nouvelle surface un contenu créé dans l'ancienne ne décrit
+# donc plus le système — il décrit le pont qu'on vient de retirer.
+#
+# **STRICT à dessein.** Le jour où l'un d'eux repasse au vert, c'est qu'une recopie
+# est revenue : ce fichier doit le CRIER, pas l'absorber en silence.
+#
+# ⚠️ Marqué, pas supprimé, et la nuance compte : l'identifiant dérivé et les
+# poignées `doc_id`/`project_id` sont SERVIS au front partenaire. Les retirer est un
+# changement de contrat qui appartient à un arbitrage en cours, pas à un déblaiement
+# de fin de chantier. Ces tests partent — ou sont réécrits sur du contenu natif —
+# quand cet arbitrage est rendu.
+_SANS_PROJECTION = pytest.mark.xfail(
+    strict=True,
+    reason="la recopie tables historiques → nodes est arrêtée (2026-09-01)",
+)
+
 
 class _Claims:
     def __init__(self, sub: str):
@@ -175,10 +193,12 @@ def test_la_meme_capacite_refuse_sur_la_face_mcp(org):
     assert set(e.value.details["invitation"]) == {"id", "created_at", "expires_at"}
 
 
-@pytest.mark.parametrize("sort", ["expiree", "consommee", "revoquee"])
+@pytest.mark.parametrize("sort", ["expiree", "consommee", "revoquee", "refusee"])
 def test_une_invitation_qui_ne_vaut_plus_ne_bloque_pas(client, org, sort):
-    """Expirée, consommée ou révoquée : la file ne la porte plus, une nouvelle
-    invitation est un 200 normal."""
+    """Expirée, consommée, révoquée ou REFUSÉE (#654) : la file ne la porte plus, une
+    nouvelle invitation est un 200 normal. Le refus rejoint la liste pour une raison
+    précise — c'est la seule reprise après un « non » : l'émetteur réinvite tout de
+    suite, sans avoir à révoquer d'abord ce qui le bloquerait (#624)."""
     from oto_mcp import org_store
     oid, admin = org["id"], org["admin"]
     adresse = f"{sort}@front-tiers.invalid"
@@ -192,6 +212,8 @@ def test_une_invitation_qui_ne_vaut_plus_ne_bloque_pas(client, org, sort):
                          "WHERE id = %s", (inv_id,))
     elif sort == "consommee":
         org_store._mark_invitation_accepted(inv_id, "usr_ft_quelqu_un")
+    elif sort == "refusee":
+        assert org_store.mark_invitation_declined(inv_id, "usr_ft_quelqu_un") is True
     else:
         r = client.delete(f"/api/orgs/{oid}/invitations/{inv_id}", headers=_h(admin))
         assert r.status_code == 200, r.text
@@ -208,6 +230,188 @@ def test_inviter_sans_adresse_reste_un_code_a_partager(client, org):
     r2 = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False}, headers=_h(admin))
     assert (r1.status_code, r2.status_code) == (200, 200), (r1.text, r2.text)
     assert r1.json()["email"] is None and r1.json()["code"] != r2.json()["code"]
+
+
+# ── POST /api/me/invitations/reject : l'invité refuse (#654) ─────────────────
+#
+# Demande du même front tiers : « seul `/api/me/invitations/accept` existe ». Sans
+# pendant négatif, une personne qui ne veut pas rejoindre gardait un badge qu'elle ne
+# pouvait pas éteindre — seul l'ÉMETTEUR pouvait retirer l'invitation, et il
+# n'apprenait jamais que c'était non.
+#
+# Le chemin est ADDITIF, et cette contrainte a décidé la forme : `accept` fait partie
+# des opérations que le contrat du front épingle, donc lui ajouter un `decision:
+# accept|reject` aurait déformé une entrée servie. Un verbe = un chemin.
+
+def _invite(client, oid, admin, adresse) -> str:
+    r = client.post(f"/api/orgs/{oid}/invitations",
+                    json={"email": adresse, "send_email": False}, headers=_h(admin))
+    assert r.status_code == 200, r.text
+    return r.json()["code"]
+
+
+def _sub(nom: str) -> str:
+    """Un compte dont l'adresse est celle que le vérifieur factice dérive du sub —
+    donc un compte que ses invitations peuvent viser nominativement."""
+    from oto_mcp import db
+    db.upsert_user(nom, email=f"{nom}@front-tiers.invalid", name=nom)
+    return nom
+
+
+def test_l_invite_refuse_et_l_invitation_quitte_les_deux_cotes(client, org):
+    """Le cas de l'issue, bout en bout : le badge s'éteint chez l'invité ET la file
+    de l'émetteur se vide — sans que personne ne rejoigne quoi que ce soit."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_refuseur")
+    code = _invite(client, oid, admin, "usr_ft_refuseur@front-tiers.invalid")
+
+    avant = client.get("/api/me/inbox", headers=_h(invite)).json()
+    assert [i["code"] for i in avant["invitations"]] == [code]
+    assert avant["count"] == 1
+
+    r = client.post("/api/me/invitations/reject", json={"code": code}, headers=_h(invite))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True, "declined": True, "scope": "org", "org_id": oid,
+                        "group_id": None, "name": "Org du front tiers"}
+
+    apres = client.get("/api/me/inbox", headers=_h(invite)).json()
+    assert apres["invitations"] == [] and apres["count"] == 0
+    assert "usr_ft_refuseur@front-tiers.invalid" not in [
+        i["email"] for i in _file(client, oid, admin)]
+    # Refuser n'est pas rejoindre à l'envers : aucune appartenance n'a été touchée.
+    assert org_store.get_org_role(oid, invite) is None
+
+
+def test_une_invitation_refusee_ne_peut_plus_etre_acceptee(client, org):
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_regret")
+    code = _invite(client, oid, admin, "usr_ft_regret@front-tiers.invalid")
+    assert client.post("/api/me/invitations/reject", json={"code": code},
+                       headers=_h(invite)).status_code == 200
+    r = client.post("/api/me/invitations/accept", json={"code": code}, headers=_h(invite))
+    assert (r.status_code, r.json()["error"]) == (410, "invalid_or_expired"), r.text
+
+
+def test_refuser_deux_fois_rend_la_meme_reponse(client, org):
+    """Idempotent comme l'acceptation : un double clic n'est pas une erreur."""
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_double")
+    code = _invite(client, oid, admin, "usr_ft_double@front-tiers.invalid")
+    corps = {"code": code}
+    r1 = client.post("/api/me/invitations/reject", json=corps, headers=_h(invite))
+    r2 = client.post("/api/me/invitations/reject", json=corps, headers=_h(invite))
+    assert (r1.status_code, r2.status_code) == (200, 200), (r1.text, r2.text)
+    assert r1.json() == r2.json()
+
+
+def test_detenir_le_code_ne_suffit_pas_a_refuser_l_invitation_d_un_autre(client, org):
+    """L'ASYMÉTRIE assumée avec l'acceptation. Accepter avec un code qu'on détient est
+    un geste sur soi ; refuser avec ce même code détruirait l'invitation d'un tiers —
+    un code partagé par erreur deviendrait une porte pour annuler l'onboarding de
+    quelqu'un d'autre, et sans appartenance créée, sans trace visible. Donc : seule
+    l'adresse invitée refuse. L'invitation, elle, doit rester intacte."""
+    oid, admin = org["id"], org["admin"]
+    cible = _sub("usr_ft_cible")
+    porteur = _sub("usr_ft_porteur")
+    code = _invite(client, oid, admin, "usr_ft_cible@front-tiers.invalid")
+
+    r = client.post("/api/me/invitations/reject", json={"code": code}, headers=_h(porteur))
+    assert (r.status_code, r.json()["error"]) == (403, "not_the_invitee"), r.text
+    assert r.json()["detail"]
+    # Rien n'a été écrit : elle est toujours dans la file, et la CIBLE peut la refuser.
+    assert "usr_ft_cible@front-tiers.invalid" in [i["email"] for i in _file(client, oid, admin)]
+    assert client.post("/api/me/invitations/reject", json={"code": code},
+                       headers=_h(cible)).status_code == 200
+
+
+def test_une_invitation_anonyme_ne_se_refuse_pas(client, org):
+    """Émise sans adresse (« code à partager soi-même ») : elle n'est adressée à
+    personne, elle n'allume aucun badge, et la retirer est le geste de son émetteur."""
+    oid, admin = org["id"], org["admin"]
+    r = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False},
+                    headers=_h(admin))
+    assert r.status_code == 200, r.text
+    r = client.post("/api/me/invitations/reject", json={"code": r.json()["code"]},
+                    headers=_h(_sub("usr_ft_curieux")))
+    assert (r.status_code, r.json()["error"]) == (403, "not_the_invitee"), r.text
+
+
+def test_refuser_sans_token_ni_code_rend_400(client, org):
+    r = client.post("/api/me/invitations/reject", json={}, headers=_h(org["admin"]))
+    assert (r.status_code, r.json()["error"]) == (400, "missing_token"), r.text
+
+
+def test_refuser_un_code_inconnu_rend_410(client, org):
+    r = client.post("/api/me/invitations/reject", json={"code": "ZZZZZZZ"},
+                    headers=_h(org["admin"]))
+    assert (r.status_code, r.json()["error"]) == (410, "invalid_or_expired"), r.text
+
+
+def test_le_refus_survit_a_l_inscription_par_la_meme_adresse(client, org):
+    """Le piège le plus facile à manquer. Une invitation en attente pour une adresse
+    est honorée AUTOMATIQUEMENT au premier signup avec cette adresse
+    (`reconcile_signup_with_invitation`). Si le refus n'y était pas filtré, créer son
+    compte après avoir dit non ferait rejoindre l'org quand même — le refus annulé
+    par une mécanique que personne n'a déclenchée."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    adresse = "usr_ft_signup@front-tiers.invalid"
+    invite = _sub("usr_ft_signup")
+    code = _invite(client, oid, admin, adresse)
+    assert client.post("/api/me/invitations/reject", json={"code": code},
+                       headers=_h(invite)).status_code == 200
+    assert org_store.reconcile_signup_with_invitation("usr_ft_nouveau_compte", adresse) is None
+
+
+def test_le_refus_par_token_mail_marche_aussi(client, org):
+    """Les deux façons de désigner l'invitation, comme sur l'acceptation. Le token
+    n'est rendu par aucune surface (seul son hash est stocké) : on le prend à la
+    source, comme le fait le lien du mail."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_token")
+    _, token, _code = org_store.create_invitation(
+        oid, "usr_ft_token@front-tiers.invalid", "org_member", invited_by=admin)
+    r = client.post("/api/me/invitations/reject", json={"token": token}, headers=_h(invite))
+    assert r.status_code == 200, r.text
+    assert r.json()["declined"] is True
+
+
+def test_le_refus_d_une_invitation_d_equipe_ne_rejoint_ni_l_org_ni_l_equipe(client, org):
+    """Un seul verbe pour les trois scopes de la cascade : l'invitation porte sa
+    cible, le refus n'a pas à la redemander."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_equipe")
+    r = client.post(f"/api/orgs/{oid}/groups", json={"name": "Refus"}, headers=_h(admin))
+    assert r.status_code == 200, r.text
+    gid = r.json()["group_id"]
+    r = client.post(f"/api/groups/{gid}/invitations",
+                    json={"email": "usr_ft_equipe@front-tiers.invalid", "send_email": False},
+                    headers=_h(admin))
+    assert r.status_code == 200, r.text
+    r = client.post("/api/me/invitations/reject", json={"code": r.json()["code"]},
+                    headers=_h(invite))
+    assert r.status_code == 200, r.text
+    assert (r.json()["scope"], r.json()["org_id"], r.json()["group_id"]) == ("team", oid, gid)
+    assert org_store.get_org_role(oid, invite) is None
+
+
+def test_la_meme_capacite_refuse_sur_la_face_mcp_654(client, org):
+    """`oto_org op=reject_invite` aboutit au même handler que la route — les deux
+    faces doivent refuser aux mêmes conditions, pas se ressembler."""
+    from oto_mcp.capabilities import org_console as oc
+    from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_mcp")
+    code = _invite(client, oid, admin, "usr_ft_mcp@front-tiers.invalid")
+    with pytest.raises(AuthzDenied) as e:
+        oc._org(ResolvedCtx(sub=admin, org_id=oid),
+                oc.OrgInput(op="reject_invite", code=code))
+    assert (e.value.status, e.value.code) == (403, "not_the_invitee")
+    out = oc._org(ResolvedCtx(sub=invite), oc.OrgInput(op="reject_invite", code=code))
+    assert out["ok"] is True and out["declined"] is True and out["org_id"] == oid
 
 
 # ── PUT /api/me/guides/{scope}/{slug} : 400 body_too_large, borne en OCTETS ───
@@ -289,6 +493,7 @@ def noeuds(live, org):
             "nod_doc": db_shell._public_id_derive("doc", str(did))}
 
 
+@_SANS_PROJECTION
 def test_une_page_ouverte_rend_ses_poignees_et_l_ordre_de_ses_listes(client, org, noeuds):
     r = client.get(f"/api/me/nodes/{noeuds['nod_doc']}", headers=_h(org["admin"]))
     assert r.status_code == 200, r.text
@@ -300,6 +505,7 @@ def test_une_page_ouverte_rend_ses_poignees_et_l_ordre_de_ses_listes(client, org
     assert all("ordered" not in b for b in out["body"] if b.get("role") != "list")
 
 
+@_SANS_PROJECTION
 def test_un_projet_ouvert_rend_son_project_id_sans_doc_id(client, org, noeuds):
     r = client.get(f"/api/me/nodes/{noeuds['nod_prj']}", headers=_h(org["admin"]))
     assert r.status_code == 200, r.text
@@ -319,3 +525,168 @@ def test_les_poignees_ouvrent_bien_les_autres_surfaces(client, org, noeuds):
                     json={"op": "backlinks", "doc_id": noeuds["did"]})
     assert r.status_code == 200, r.text
     assert r.json()["doc_id"] == noeuds["did"]
+
+
+# ── POST /api/me/instructions : créer sur un slug pris = 409 (#662) ────────────
+
+_PROC = ("> **Self-improvement digest** — jamais déroulée.\n\n"
+         "# Qualification\n\n```\n[Début] --> [Fin]\n```\n\nCorps.")
+
+
+def test_creer_une_procedure_sur_un_slug_pris_rend_409_sur_la_route_servie(client, org):
+    """Le signal du front tiers, rejoué au ras du fil.
+
+    Il fabriquait son slug côté client et appelait `PUT …/instructions/{slug}` faute
+    de verbe de création : un slug déjà pris répondait `200 ok` en ayant remplacé la
+    procédure d'org. Le `POST` refuse — et la procédure en place se relit inchangée,
+    ce qui est la moitié qui compte : un refus qui aurait déjà écrit ne vaudrait rien."""
+    admin = org["admin"]
+    r = client.post("/api/me/instructions", headers=_h(admin),
+                    json={"slug": "qualification", "body_md": _PROC, "title": "Qualif"})
+    assert r.status_code == 200, r.text
+    assert (r.json()["slug"], r.json()["version"]) == ("qualification", 1)
+
+    r = client.post("/api/me/instructions", headers=_h(admin),
+                    json={"slug": "qualification", "body_md": "AUTRE CORPS"})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"] == "slug_taken"
+    assert r.json()["detail"]                       # actionnable, pas un code nu
+    assert r.json()["details"]["version"] == 1
+
+    relue = client.get("/api/me/instructions/qualification", headers=_h(admin)).json()
+    assert (relue["body_md"], relue["version"]) == (_PROC, 1)
+
+    # …et le PUT, lui, édite toujours : le refus n'a pas fermé le geste d'édition.
+    r = client.put("/api/me/instructions/qualification", headers=_h(admin),
+                   json={"body_md": _PROC + "\n\nÉdité."})
+    assert (r.status_code, r.json()["version"]) == (200, 2)
+
+
+def test_editer_avec_une_version_perimee_rend_409_version_conflict(client, org):
+    """Le pendant sur le chemin d'ÉDITION : `expected_version` transforme
+    l'écrasement d'un éditeur concurrent en refus, comme `expected_rev` sur les pages."""
+    admin = org["admin"]
+    r = client.post("/api/me/instructions", headers=_h(admin),
+                    json={"slug": "relance-clients", "body_md": _PROC})
+    assert r.status_code == 200, r.text
+
+    r = client.put("/api/me/instructions/relance-clients", headers=_h(admin),
+                   json={"body_md": _PROC + "\n\nv2 posée par un autre."})
+    assert (r.status_code, r.json()["version"]) == (200, 2)
+
+    r = client.put("/api/me/instructions/relance-clients", headers=_h(admin),
+                   json={"body_md": "MA VERSION", "expected_version": 1})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"] == "version_conflict"
+    assert r.json()["details"]["current_version"] == 2
+    # Le travail de l'autre a survécu.
+    relue = client.get("/api/me/instructions/relance-clients", headers=_h(admin)).json()
+    assert relue["body_md"].endswith("v2 posée par un autre.")
+
+
+# ── GET /api/orgs/{id}/audit-log/export : la pièce dit sa complétude (#770) ────
+
+def test_l_export_d_audit_dit_son_total_sa_troncature_et_sa_borne(client, org):
+    """La chaîne ENTIÈRE, sur la route servie : table de routes, adaptateur, autz,
+    handler, store, enveloppe JSON. Un handler appelé à la main ne prouverait pas
+    que ces champs traversent l'adaptateur et le modèle de sortie.
+
+    Le journal d'audit est une pièce qu'un client produit pour se justifier. Ce qui
+    se rejoue ici est donc ce qui la rend opposable : le total de la fenêtre, le fait
+    que la réponse ne la porte pas toute, et la borne haute réellement appliquée.
+    """
+    from oto_mcp import db
+    oid, admin = org["id"], org["admin"]
+    for _ in range(5):
+        db.insert_tool_call({"sub": admin, "kind": "mcp", "tool": "fr_get",
+                             "ok": True, "org_id": oid, "duration_ms": 2})
+
+    r = client.get(f"/api/orgs/{oid}/audit-log/export?limit=2", headers=_h(admin))
+    assert r.status_code == 200, r.text
+    p1 = r.json()
+    assert p1["count"] == 2 and p1["total"] == 5
+    assert p1["truncated"] is True and p1["next_cursor"]
+    # `until` reste le réécho de ce qui a été reçu ; la borne appliquée est à côté.
+    assert p1["until"] is None and p1["until_effectif"].endswith("Z")
+    assert [c["namespace"] for c in p1["calls"]] == ["fr", "fr"]
+
+    # Le curseur se renvoie TEL QUEL, et la concaténation vaut exactement le total.
+    vus, cur, total = [c["id"] for c in p1["calls"]], p1["next_cursor"], p1["total"]
+    while cur:
+        page = client.get(f"/api/orgs/{oid}/audit-log/export?limit=2&cursor={cur}",
+                          headers=_h(admin)).json()
+        assert page["total"] == total, "la fenêtre gelée ne s'élargit pas en route"
+        vus += [c["id"] for c in page["calls"]]
+        cur = page["next_cursor"]
+    assert len(vus) == len(set(vus)) == total
+
+    # Une fenêtre qui tient dans une page ne se dit PAS tronquée.
+    entier = client.get(f"/api/orgs/{oid}/audit-log/export", headers=_h(admin)).json()
+    assert entier["count"] == entier["total"] == 5
+    assert entier["truncated"] is False and entier["next_cursor"] is None
+
+
+def test_les_deux_refus_declares_de_l_export_sont_rejoues(client, org):
+    """`DeclaredError` DÉCRIT, ne fait rien : une déclaration sans rejeu promettrait
+    un refus que le serveur ne rend pas."""
+    from oto_mcp import db
+    oid, admin = org["id"], org["admin"]
+    # Ses propres lignes : un test qui hérite des écritures de son voisin passe ou
+    # tombe selon l'ordre de collecte, pas selon ce qu'il prétend prouver.
+    for _ in range(2):
+        db.insert_tool_call({"sub": admin, "kind": "mcp", "tool": "oto_doc",
+                             "ok": True, "org_id": oid, "duration_ms": 1})
+
+    r = client.get(f"/api/orgs/{oid}/audit-log/export?cursor=pas-un-curseur",
+                   headers=_h(admin))
+    assert r.status_code == 400, r.text
+    assert r.json()["error"] == "invalid_cursor"
+    assert r.json()["detail"]                       # actionnable, pas un code nu
+
+    bon = client.get(f"/api/orgs/{oid}/audit-log/export?limit=1",
+                     headers=_h(admin)).json()["next_cursor"]
+    r = client.get(f"/api/orgs/{oid}/audit-log/export"
+                   f"?cursor={bon}&since=2026-08-01", headers=_h(admin))
+    assert r.status_code == 400, r.text
+    assert r.json()["error"] == "window_with_cursor"
+
+
+def test_un_simple_membre_ne_lit_pas_le_journal_de_l_org(client, org):
+    """Le gate n'a pas bougé : `ORG_ADMIN_OF`. On le rejoue parce que ce lot a
+    touché l'entrée de la capacité."""
+    r = client.get(f"/api/orgs/{org['id']}/audit-log/export", headers=_h(org["membre"]))
+    assert r.status_code in (403, 404), r.text
+
+
+# ── Les refus des capacités de connecteur, rejoués sur la route servie (#668) ──
+#
+# Quinze capacités déclarent désormais 37 refus nommés, là où le document n'en
+# portait que trois génériques (401/403 et les 400 de l'adaptateur). Le garde-fou
+# `test_capability_declared_errors.py` vérifie que chaque code est LEVÉ dans le
+# module et PUBLIÉ ; il ne peut pas vérifier qu'une route y mène vraiment.
+#
+# ⚠️ Deux rejeux ici, pas trente-sept, et c'est un choix assumé : ils couvrent les
+# deux FORMES de refus de ce périmètre — celui qui tombe avant toute lecture (une
+# demande qu'on ne sert jamais) et celui qui tombe sur un nom qu'on ne reconnaît
+# pas. Les autres suivent le même chemin de code ; les rejouer un par un
+# coûterait quinze montages pour la même démonstration.
+
+def test_demander_la_valeur_dune_cle_rend_403_secret_never_revealed(client, org):
+    """Le refus le plus important du lot : il dit qu'une valeur ne se relit JAMAIS,
+    au lieu de laisser croire à un droit manquant. Levé avant toute lecture du
+    coffre — un 200 au corps amputé se lirait « aucune clé posée »."""
+    oid, admin, _ = org
+    r = client.get("/api/settings/api-keys/serper", params={"reveal": "true"},
+                   headers=_h(admin))
+    assert (r.status_code, r.json()["error"]) == (403, "secret_never_revealed"), r.text
+
+
+def test_installer_un_connecteur_inconnu_rend_404_unknown_connector(client, org):
+    """Trois situations tombent ici — nom inconnu, connecteur non exposé pour l'org,
+    ou restreint par une règle. Le document les déclare sous ce seul code parce
+    qu'elles sont indistinguables côté membre, et qu'elles se règlent toutes par la
+    même demande à un admin."""
+    oid, admin, _ = org
+    r = client.post("/api/me/connectors/connecteur-qui-nexiste-pas/select",
+                    headers=_h(admin))
+    assert (r.status_code, r.json()["error"]) == (404, "unknown_connector"), r.text

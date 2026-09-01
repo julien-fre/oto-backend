@@ -4,7 +4,7 @@ Le poids d'un schéma d'outil ne se juge pas au fichier — il se juge MULTIPLI�
 jetons de contexte sont recopiés dans le schéma de chaque outil concerné : une phrase
 ajoutée ici est payée ~400 fois, à chaque tour, par chaque agent branché.
 
-Mesuré le 10/08 sur la mission Audiens (9 outils, function calling Mistral) : la reprise
+Mesuré le 10/08 sur la mission cliente (9 outils, function calling Mistral) : la reprise
 des schémas tels quels coûtait 94 $ sur le fichier complet, et la boîte entière ne tenait
 pas dans une fenêtre de 128 000 tokens. Re-mesuré le 14/08 : les axes pesaient encore
 424 744 c., soit 48,2 % des 880 520 c. servis — la coupe de l'issue #277 avait raccourci

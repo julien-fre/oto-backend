@@ -30,7 +30,7 @@ import asyncio
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
@@ -71,12 +71,12 @@ def register(mcp: FastMCP) -> None:
     async def calendar_calendars(account: Optional[str] = None) -> dict:
         """List the Google calendars the user can access.
 
-        Args:
-            account: email of the Google account to use (default if omitted).
-
         Returns {calendars: [{id, summary, primary, accessRole}]}. Use an `id`
         as the `calendar_id` argument of calendar_event; omit it for the user's
         main calendar ('primary').
+
+        Args:
+            account: email of the Google account to use (default if omitted).
         """
         client = _client_for_user(account)
         calendars = await asyncio.to_thread(client.list_calendars)

@@ -22,7 +22,7 @@ import asyncio
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
@@ -93,13 +93,13 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """List the Google Chat spaces (rooms + DMs) the user belongs to.
 
+        Returns {spaces: [{name, type, displayName, ...}], count}. Use a `name`
+        ('spaces/XXXX') as the `space` argument of `chat_message`.
+
         Args:
             space_type: optional filter — "SPACE" (rooms) or "DIRECT_MESSAGE" (DMs).
             max_results: cap on spaces returned.
             account: email of the Google account to use (default if omitted).
-
-        Returns {spaces: [{name, type, displayName, ...}], count}. Use a `name`
-        ('spaces/XXXX') as the `space` argument of `chat_message`.
         """
         client = _client_for_user(account)
         filter_ = f'spaceType = "{space_type}"' if space_type else None

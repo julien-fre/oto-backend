@@ -1,4 +1,4 @@
-"""Check CRM — thin connector over Julien's "enrichment" job-change-check API.
+"""Check CRM — thin connector over a partner's "enrichment" job-change-check API.
 
 Wraps `oto.tools.checkcrm.CheckCrmClient` (https://enrichment-two.vercel.app/v1).
 Key resolved per call via `access.resolve_api_key("checkcrm")` — byo-only (no
@@ -17,7 +17,7 @@ import time
 from typing import Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access

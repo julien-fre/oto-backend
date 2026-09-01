@@ -160,8 +160,10 @@ couche sur un vrai socket et la lit avec `requests` **sans toucher à
 ### Ce que ces relevés bornent
 
 - Le contexte injecté d'office doit être **bref** — deux raisons indépendantes convergent :
-  la troncature client et le coût par livraison. Garde-fou visé : un budget mesuré en CI,
-  seuils par couche, release cassée au-delà.
+  la troncature client et le coût par livraison. Garde-fou POSÉ le 2026-09-01 (#478) : le
+  socle (bloc A) est un résumé ≤ 2 000 c. dont le budget casse en CI
+  (`tests/test_instructions_budget.py`), la version intégrale vivant dans le guide
+  plateforme `notice`. Restent à borner : les couches suivantes (catalogue, bloc C).
 - Le catalogue des capacités (8 832 caractères, la moitié de la composition) est le premier
   candidat au retrait : déjà interrogeable à la demande (`oto_list_my_tools`,
   `oto_tool_schema`).

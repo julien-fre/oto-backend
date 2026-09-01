@@ -122,8 +122,7 @@ def test_applications_routes_by_job_candidate_or_listing():
 
 
 def test_applications_rejects_job_and_candidate_together():
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     key, cls = _with_fake_client()
     with key, cls:
         tool = _tool("spott_application")
@@ -154,7 +153,7 @@ def test_clients_switches_to_search_when_filters_given():
 # --- traduction des refus amont ----------------------------------------------
 
 def test_upstream_401_becomes_a_readable_tool_error():
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from oto.tools.common.errors import UpstreamHTTPError
 
     key, cls = _with_fake_client()
@@ -167,8 +166,7 @@ def test_upstream_401_becomes_a_readable_tool_error():
 
 
 def test_unknown_pipeline_is_a_param_error_not_a_crash():
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     key, cls = _with_fake_client()
     with key, cls as client_cls:
         client_cls.return_value.pipeline_stages.side_effect = ValueError(

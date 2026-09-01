@@ -119,8 +119,7 @@ def test_quota_divergence_is_journalled(vault, monkeypatch, caplog):
 def test_edge_quota_produces_the_same_refusal_as_before(vault, monkeypatch):
     """Quota épuisé ⟹ le MÊME refus qu'avant, mot pour mot : c'est le plafond porté
     par l'arête qui alimente le message historique, pas un nouveau chemin d'erreur."""
-    from mcp.shared.exceptions import McpError
-
+    from oto_mcp.mcp_errors import McpError
     monkeypatch.setattr(access, "require_connector_access", lambda *a, **k: None)
     monkeypatch.setattr(access.session_org, "current_call_instance", lambda: None)
     monkeypatch.setattr(access, "project_pinned_instance", lambda p, *a: None)
@@ -158,7 +157,7 @@ def test_org_scope_is_the_ACTIVE_org_never_membership():
 # se prend connecteur par connecteur, mesure de rayon en main — fullenrich seul l'a eue).
 FREE_TIER_OTHERS = ("serper", "hunter", "reddit", "sirene", "kaspr",
                     "unipile", "apollo", "serpapi", "searchapi",
-                    "tavily")  # 26/08 : socle recherche web, ouvert sans quota (GO Julien)
+                    "tavily")  # 26/08 : socle recherche web, ouvert sans quota (GO du partenaire)
 
 # Vague 2 (23/08) : chaînés SANS toucher leur flag — arêtes semées au boot, révocation
 # vraie, metering d'arête ; un appelant sans arête retombe sur le chemin ouvert.

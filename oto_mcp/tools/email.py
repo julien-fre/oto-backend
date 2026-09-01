@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastmcp import Context, FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
 
 from .. import access, db, email as mailer, org_store, providers, roles, scheduler
@@ -135,6 +135,9 @@ def register(mcp: FastMCP) -> None:
         Image de tête : `image_url` (https) + `image_alt` REQUIS ; l'URL publique
         vient de `oto_upload_url(target="image")` (un upload, réutilisable).
 
+        Renvoie {sent, to, subject, from, transport} en envoi immédiat ;
+        {scheduled, id, scheduled_at, ...} si différé ; +`html` si dry_run.
+
         Args:
             to: adresse email du destinataire.
             subject: objet (voix funnel oto : minuscules, vouvoiement).
@@ -158,9 +161,6 @@ def register(mcp: FastMCP) -> None:
                 Sans fuseau = fuseau de l'org. Passée = programme à cette heure.
             force_now: envoie tout de suite même dans la fenêtre quiet hours.
             dry_run: si vrai, REND le HTML sans envoyer — pour relire avant l'envoi.
-
-        Renvoie {sent, to, subject, from, transport} en envoi immédiat ;
-        {scheduled, id, scheduled_at, ...} si différé ; +`html` si dry_run.
         """
         to = (to or "").strip()
         subject = (subject or "").strip()

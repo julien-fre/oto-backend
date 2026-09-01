@@ -7,9 +7,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from mcp.shared.exceptions import McpError
-
-
+from oto_mcp.mcp_errors import McpError
 def _register_and_call(tool_name: str, **kwargs):
     from fastmcp import FastMCP
     from oto_mcp.tools import lusha as lusha_tool
@@ -43,10 +41,10 @@ def test_forwards_contacts_and_reveal_to_the_client(client_cls):
                                            "billing": {"creditsCharged": 1}}
     r = _register_and_call(
         "lusha_search_and_enrich",
-        contacts=[{"email": "orit.shilvock@lusha.com"}],
+        contacts=[{"email": "jane.doe@acme.test"}],
         reveal=["emails", "phones"])
     inst.search_and_enrich.assert_called_once_with(
-        [{"email": "orit.shilvock@lusha.com"}],
+        [{"email": "jane.doe@acme.test"}],
         reveal=["emails", "phones"], include_partial_profiles=None)
     assert r == {"requestId": "r1", "results": [], "billing": {"creditsCharged": 1}}
 

@@ -60,3 +60,38 @@ def test_un_jeu_de_bibliotheque_porte_son_mode_demploi():
             f"`{jeu.name}/` n'a pas de README.md. Il en faut un : c'est là qu'est "
             "écrit que ce dossier N'EST PAS semé au boot, et que son front-matter "
             "(slug/category/tags) n'est pas celui des guides plateforme.")
+
+
+# --------------------------------------------------------------------------- #
+# Un pointeur de docstring vers un guide doit désigner un guide QUI EXISTE
+# --------------------------------------------------------------------------- #
+#
+# Les docstrings des gros connecteurs renvoient au guide qui porte leur mode
+# d'emploi (`oto_guide op=read slug="…"`), pour ne pas payer la prose dans le
+# handshake de chaque tour. Le renvoi est du TEXTE : rien ne le relie au fichier,
+# et un guide renommé ou jamais écrit laisse une docstring qui envoie l'agent
+# vers une porte fermée — pire que pas de renvoi du tout, parce qu'il aura
+# dépensé un appel pour l'apprendre.
+#
+# Ce garde-fou est auto-maintenu : ajouter un guide et le citer le garde vert
+# sans y toucher ; il ne tombe que sur un renvoi orphelin.
+
+def test_tout_renvoi_de_docstring_vers_un_guide_designe_un_guide_existant():
+    import pathlib
+    import re
+
+    from oto_mcp import guide_store
+
+    slugs = {g["slug"] for g in guide_store.list_file_guides()}
+    motif = re.compile(r'oto_guide\s+op=read\s+slug="([^"]+)"')
+
+    orphelins = []
+    for f in sorted((pathlib.Path(__file__).parent.parent / "oto_mcp" / "tools")
+                    .glob("*.py")):
+        for slug in motif.findall(f.read_text(encoding="utf-8")):
+            if slug not in slugs:
+                orphelins.append(f"{f.name} → slug '{slug}'")
+
+    assert not orphelins, (
+        f"renvoi(s) vers un guide inexistant : {orphelins}. Les slugs de fichiers "
+        f"disponibles sont {sorted(slugs)}.")

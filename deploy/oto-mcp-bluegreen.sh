@@ -103,14 +103,38 @@ bg_install() {
   cd "$tree" || return 1
   git fetch --tags --force origin || return 1
   git reset --hard "$ref" || return 1
-  local tag
-  tag=$(grep -oP 'oto-core\.git@\K[^"]+' pyproject.toml) || return 1
-  # pip NE réinstalle PAS une dep VCS déjà présente -> force-reinstall d'oto-core
-  # depuis le tag LU du pyproject (source unique, pas de hardcode).
+  # pip NE réinstalle PAS une dépendance VCS déjà présente → force-reinstall d'oto-core.
+  # ⚠️ On relit la LIGNE ENTIÈRE du manifeste — extras COMPRIS — et non le seul tag.
+  # Le script forçait auparavant `oto-core[browser]` en dur, alors que le manifeste
+  # déclare `oto-core[anonymize]` et explique, juste à côté, que l'extra `browser` a été
+  # RETIRÉ exprès : il ne servait qu'à tirer patchright via o-browser, la bibliothèque du
+  # Chrome LOCAL, dont cette box ne veut pas (le backend pilote un Chrome hébergé par CDP).
+  # Le déploiement défaisait donc une décision délibérée à chaque passage, en silence.
+  # Corrigé le 01/09/2026 : une seule source de vérité, le manifeste.
+  local requis
+  requis=$(grep -oP '"\Koto-core(\[[^\]]*\])? @ git\+https://github\.com/otomata-tech/oto-core\.git@[^"]+' pyproject.toml | head -1)
+  if [ -z "$requis" ]; then
+    bg_log "ERREUR : dépendance oto-core introuvable dans pyproject.toml — rien n'est installé"
+    return 1
+  fi
+  bg_log "oto-core requis par le manifeste : ${requis%% @*}"
   ./.venv/bin/pip install -e . --quiet || return 1
-  ./.venv/bin/pip install --force-reinstall --quiet \
-    "oto-core[browser] @ git+https://github.com/otomata-tech/oto-core.git@${tag}" || return 1
+  ./.venv/bin/pip install --force-reinstall --quiet "$requis" || return 1
   BG_HEAD=$(git -C "$tree" rev-parse HEAD)
+  # --- Coordonnée de ce qui va TOURNER (oto#33). Écrite par celui qui installe,
+  # --- dans l'arbre qu'il vient d'écrire, AVANT que le processus ne démarre : le
+  # --- backend la lit une fois au boot et la sert sur /api/version, dans
+  # --- `info.version` de l'OpenAPI et en en-tête X-Oto-Version de chaque réponse.
+  # --- Pourquoi ici et pas côté workflow : un run vert dit qu'un déploiement a été
+  # --- LANCÉ, pas ce qui sert — `main` avance, une bascule échoue, un rollback
+  # --- rebascule. Ici, `$ref` est ce qui a été demandé et `$BG_HEAD` ce que le
+  # --- `git reset --hard` a réellement posé : les deux ensemble ne mentent pas.
+  # --- Non versionné, donc conservé par le `git reset --hard` de l'installation
+  # --- suivante jusqu'à sa réécriture ici. Un `--rollback` ne repasse PAS par
+  # --- `bg_install` : la couleur qu'il réactive garde le fichier de SA propre
+  # --- installation, ce qui est exactement la version qu'elle porte.
+  printf '{"ref": "%s", "commit": "%s", "deployed_at": "%s"}\n' \
+    "$ref" "$BG_HEAD" "$(date -Is)" > "$tree/.oto-deploy.json" || return 1
   bg_log "installé : ${BG_HEAD}"
 }
 

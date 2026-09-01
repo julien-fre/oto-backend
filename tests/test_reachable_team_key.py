@@ -1,6 +1,6 @@
 """Clé d'équipe « à portée » (non active) — hint de statut + erreur actionnable.
 
-Vécu 2026-07-16 (Zoho / movinmotion) : la clé vivait sur l'équipe sales (3 membres,
+Vécu 2026-07-16 (Zoho / un client) : la clé vivait sur l'équipe sales (3 membres,
 0 actif) → la cascade ne résout que le groupe ACTIF, l'user voyait « pas de clé »
 sec et le drawer un faux message RBAC. Couvre :
 - `access.reachable_team_key` : équipe dont le sub est membre + secret présent ;
@@ -12,8 +12,7 @@ sec et le drawer un faux message RBAC. Couvre :
 """
 import pytest
 
-from mcp.shared.exceptions import McpError
-
+from oto_mcp.mcp_errors import McpError
 from oto_mcp import access
 
 
@@ -63,14 +62,14 @@ def test_reachable_team_key_best_effort_on_db_error(monkeypatch):
 
 def test_reachable_instances_lists_teams_and_other_orgs(monkeypatch):
     _wire_reachable(monkeypatch,
-                    orgs=[{"org_id": 35, "name": "movinmotion"},
-                          {"org_id": 167, "name": "Movinmotion Test"}])
+                    orgs=[{"org_id": 35, "name": "acme"},
+                          {"org_id": 167, "name": "Acme Test"}])
     monkeypatch.setattr(access.org_store, "has_org_secret",
                         lambda oid, prov: oid == 167)
     monkeypatch.setattr(access.db, "has_member_api_key", lambda *a, **k: False)
     items = access.reachable_instances("u1", 35, "zoho")
     assert {"kind": "group", "id": 2, "name": "sales"} in items
-    assert {"kind": "org", "id": 167, "name": "Movinmotion Test"} in items
+    assert {"kind": "org", "id": 167, "name": "Acme Test"} in items
     # l'org ambiante (35) n'est jamais listée : elle est déjà dans la cascade
     assert not any(i["kind"] == "org" and i["id"] == 35 for i in items)
 
@@ -134,14 +133,14 @@ def test_resolution_failure_lists_other_org(monkeypatch):
     monkeypatch.setattr(access.credentials_store, "list_accounts", lambda *a, **k: [])
     monkeypatch.setattr(access.org_store, "get_org_secret", lambda oid, prov, account="": None)
     _wire_reachable(monkeypatch, secret_groups=(),
-                    orgs=[{"org_id": 167, "name": "Movinmotion Test"}])
+                    orgs=[{"org_id": 167, "name": "Acme Test"}])
     monkeypatch.setattr(access.org_store, "has_org_secret",
                         lambda oid, prov: oid == 167)
     monkeypatch.setattr(access.db, "has_member_api_key", lambda *a, **k: False)
     with pytest.raises(McpError) as e:
         access._resolve_credential_impl("zoho", "byo", "u1")
     assert "org=167" in str(e.value)
-    assert "Movinmotion Test" in str(e.value)
+    assert "Acme Test" in str(e.value)
 
 
 def test_resolution_failure_plain_without_team(monkeypatch):

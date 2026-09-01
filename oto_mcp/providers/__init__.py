@@ -188,6 +188,7 @@ _DECLARATIONS: tuple[str, ...] = (
     "snitcher",
     "waalaxy",
     "airtable",
+    "tally",
     # --- prospection téléphonique — câblé 2026-08-31 -------------------------
     "minari",
 )

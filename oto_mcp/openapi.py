@@ -28,7 +28,7 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from . import deprecations
+from . import deprecations, version
 from .capabilities import registry
 from .capabilities._types import Capability, RestBinding
 
@@ -345,7 +345,14 @@ def build(routes: Optional[Iterable] = None, *, server_url: Optional[str] = None
             }
     doc = {
         "openapi": "3.1.0",
-        "info": {"title": _TITLE, "version": "1", "description": _DESCRIPTION},
+        # `version` = la version SERVIE (oto#33), pas un numéro de contrat. Le
+        # document est dérivé du serveur à chaque requête : le figer à « 1 » revenait
+        # à publier une carte sans dire de quel jour elle date — et un intégrateur
+        # qui constate une dérive de forme n'avait rien pour la situer. Même
+        # étiquette que l'en-tête `X-Oto-Version` et que `GET /api/version`, pour
+        # qu'un descriptif et un journal d'appels se recoupent sans traduction.
+        "info": {"title": _TITLE, "version": version.version_servie(),
+                 "description": _DESCRIPTION},
         "paths": dict(sorted(paths.items())),
         "components": {
             "securitySchemes": {

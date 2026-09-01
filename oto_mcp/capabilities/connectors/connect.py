@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 
 from ...connectors import flow as connector_flow
 from .._authz import ORG_MEMBER
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 from ..registry import CAPABILITIES
 
 
@@ -57,8 +57,7 @@ class ConnectorConnectStarted(BaseModel):
 
 
 async def _connect(ctx: ResolvedCtx, inp: ConnectorConnectInput) -> dict:
-    from mcp.shared.exceptions import McpError
-
+    from ...mcp_errors import McpError
     from ... import access
     if not connector_flow.supports(inp.name):
         raise AuthzDenied(
@@ -84,6 +83,12 @@ CAPABILITIES += [
         authz=ORG_MEMBER,
         Output=ConnectorConnectStarted,
         mcp=None,     # les faces MCP par connecteur existent déjà (oto_zoho_connect…)
+        errors=(DeclaredError(400, "no_connection_flow",
+                              "ce connecteur n'a pas de flux de connexion : sa "
+                              "clé se POSE, elle ne se demande pas"),
+                DeclaredError(403, "connector_restricted",
+                              "une règle d'org ou d'équipe interdit ce "
+                              "connecteur à cet acteur"),),
         rest=RestBinding(verb="POST", path="/api/me/connectors/{name}/connect"),
         description=("Démarre le flux de connexion déclaré par ce connecteur et renvoie "
                      "l'URL de consentement à ouvrir. Les valeurs attendues sont "

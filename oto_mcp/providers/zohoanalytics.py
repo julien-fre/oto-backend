@@ -20,7 +20,7 @@ CONNECTOR = _c(
                         help="laisse vide si tu te connectes via Zoho"),
         CredentialField("org_id", "Org ID", secret=False),
         CredentialField("data_center", "Data center (com, eu, in, au, jp, ca, sa)",
-                        secret=False, reveal=True),
+                        secret=False),
     ),
 )
 

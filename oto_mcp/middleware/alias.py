@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from fastmcp.server.middleware import Middleware
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData
 
 from .. import deprecations, tool_alias
@@ -120,7 +120,7 @@ class ToolAliasMiddleware(Middleware):
 
     async def on_initialize(self, context, call_next):
         """`serverInfo` au nom du PRODUIT — le dernier recoin de la classe de défaut
-        que ce middleware ferme : les outils disaient `tulina_…` mais le handshake
+        que ce middleware ferme : les outils disaient `acme_…` mais le handshake
         annonçait encore `oto`. `name` suit le `tool_prefix` déclaré (l'identifiant,
         cohérent avec les noms d'outils), `title` le nom du tenant (le libellé
         humain). Rien de déclaré ⟹ l'annonce d'avant, à l'octet près (fail-open)."""

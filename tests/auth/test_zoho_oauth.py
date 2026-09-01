@@ -61,7 +61,7 @@ def test_app_fields_is_empty_before_any_credential(monkeypatch):
     lisait comme « pas de credential » et faisait basculer sur l'app d'éditeur oto).
     Même leçon que `test_we_call_an_api_that_actually_accepts_sub` ci-dessous : un
     stub qui ment sur la forme du réel masque le bug qu'on croit tester."""
-    from mcp.shared.exceptions import McpError
+    from oto_mcp.mcp_errors import McpError
     from mcp.types import ErrorData, INVALID_PARAMS
 
     def _aucun_credential(*a, **k):
@@ -97,8 +97,8 @@ def test_state_roundtrip():
 def test_state_carries_the_front_that_asked():
     """Le callback est appelé par Zoho, sans session : le state est la SEULE mémoire
     du demandeur qui survit à l'aller-retour."""
-    st = z.make_state("u1", 35, "zoho", DC, "tulina")
-    assert z.verify_state(st)["return_app"] == "tulina"
+    st = z.make_state("u1", 35, "zoho", DC, "acme")
+    assert z.verify_state(st)["return_app"] == "acme"
 
 
 def test_state_signed_before_the_field_still_verifies():

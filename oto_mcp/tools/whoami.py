@@ -15,7 +15,7 @@ import logging
 import os
 
 from fastmcp import Context, FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, org_store, session_org
@@ -57,7 +57,10 @@ def register(mcp: FastMCP) -> None:
         Renvoie : `account` (sub, email, name, rôle plateforme), `org` (org active —
         id, name, rôle ; tu es TOUJOURS dans une org), `group` (groupe actif éventuel),
         `knowledge` (KB native oto_kb : ancre kb_project_id), `connectors` (résumé des connecteurs
-        configurés), et un `summary` lisible. Lecture seule.
+        configurés — dont `platform_quotas`, le quota du jour `{used, limit,
+        remaining}` des connecteurs plateforme au quota plafonné : regarde-le avant
+        un lot d'appels qui dépensent, pour arbitrer sans découvrir la limite au
+        milieu du lot), et un `summary` lisible. Lecture seule.
 
         Pour agir sous une autre org/équipe/projet : passe le jeton `_org=` /
         `_group=` / `_project=` directement sur chaque appel de travail (aucun état
@@ -126,17 +129,31 @@ def register(mcp: FastMCP) -> None:
         except Exception as e:
             logger.warning("whoami: project lookup failed: %s", e)
 
-        # Connecteurs configurés (résumé, pas le détail des clés).
+        # Connecteurs configurés (résumé, pas le détail des clés). `platform_quotas`
+        # réutilise le calcul déjà fait par `status_for` (aucune marche en plus) :
+        # pour un connecteur en mode plateforme dont le quota jour est PLAFONNÉ
+        # (ex. apollo — cf. `access.platform_quota_hint`), regarder ici AVANT un
+        # lot d'appels qui dépensent évite de découvrir la limite au milieu d'un
+        # lot (oto-backend#710). `over_quota` reste listé — masquer le connecteur
+        # une fois épuisé dirait « pas configuré » à qui n'a que ça d'épuisé.
         configured: list[str] = []
         platform_ready: list[str] = []
+        platform_quotas: dict[str, dict] = {}
         try:
             providers = access.status_for(sub).get("providers", {})
             for name, st in sorted(providers.items()):
                 mode = st.get("mode")
                 if mode in ("user", "group", "org"):
                     configured.append(name)
-                elif mode == "platform":
+                elif mode in ("platform", "over_quota"):
                     platform_ready.append(name)
+                    limit = st.get("quota_daily")
+                    if limit:
+                        used = st.get("quota_used_today") or 0
+                        platform_quotas[name] = {
+                            "used": used, "limit": limit,
+                            "remaining": max(0, limit - used),
+                        }
         except Exception as e:
             logger.warning("whoami: status_for failed: %s", e)
 
@@ -176,6 +193,10 @@ def register(mcp: FastMCP) -> None:
             "connectors": {
                 "configured": configured,
                 "platform_available": platform_ready,
+                # {name: {used, limit, remaining}} pour les seuls connecteurs
+                # plateforme au quota PLAFONNÉ aujourd'hui — absent sinon (quota
+                # illimité, ou org sur un plan `unmetered`, ADR 0043).
+                "platform_quotas": platform_quotas,
             },
             "summary": summary,
             "dashboard_url": config.dashboard_url_for(sub),

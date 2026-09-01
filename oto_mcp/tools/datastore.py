@@ -16,7 +16,7 @@ import uuid
 from typing import Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, db, ownership
@@ -512,11 +512,23 @@ def register(mcp: FastMCP) -> None:
           required_when/max_length. A non-conforming write FAILS naming the culprit
           (max_length reports the actual length AND the bound; pattern reports the
           value it saw AND the motif).
-          Source columns: `field.readonly: true` refuses any write that CHANGES the
-          value in place (its layers stay open — what another source says goes in
-          `<field>.comment`), and `field.origine: "system"` makes the platform keep
-          the previous value in `<field>.origine` on the first write that changes it,
-          a layer no caller can write.
+          ⚠️ `strict` does NOT close the top level: a key no field declares still
+          CREATES a free column and the value persists — it is only REPORTED, in
+          `hors_schema`. That is how you explore a table before typing it, and it is
+          why `strict` refuses an undeclared attribute INSIDE a declared sub-record
+          but not a column beside it. Head key `"unknown_fields": "reject"` closes
+          the top level too (default `"report"` = the above): the write is REFUSED
+          and nothing is stored.
+          Fields the caller does NOT write — one question ("whose column is this?"),
+          and each refusal names the field, the reason and where the thing goes:
+          `field.readonly: true` refuses a write that CHANGES the value in place
+          (layers stay open — what another source says goes in `<field>.comment`);
+          `field.origine: "system"` has the platform keep the previous value in
+          `<field>.origine`; `field.system: "run.id"|"run.started_at"|"write.at"` has
+          the PLATFORM write the VALUE on every write — do not send that column, it
+          is stamped for you (a value you retype is what you believe, not what
+          happened). Re-sending the SAME value is never a write, so re-emitting a
+          record you just read always passes.
           Bound the fields meant to hold ONE short value (a job title, a city): a
           column that collects reasoning stops being groupable/filterable. The
           bound applies to the keys a write actually SETS, so rows already over it
@@ -546,9 +558,11 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             namespace: target namespace (must exist; you must have write access).
-            schema: the schema object, or null to clear it; a field may carry
-                `readonly: true` (value locked, layers open) or `origine: "system"`
-                (platform-kept `<field>.origine`).
+            schema: the schema object, or null to clear it. Head key
+                `unknown_fields: "report"|"reject"` decides an undeclared column's
+                fate; a field may carry `readonly: true` (value locked, layers open),
+                `origine: "system"` (platform-kept `<field>.origine`) or
+                `system: "<source>"` (platform-written value).
             semantic_search: true/false to toggle semantic row search; null = leave as is.
         """
         store = _acting_store()
@@ -616,10 +630,11 @@ def register(mcp: FastMCP) -> None:
 
         Args:
             namespace: target namespace (must already exist), `slot:<name>`, or
-                `@claimed` = the table your reservation is in.
+                `@claimed` = the table your reservation is in (open run only).
             row: single-row content as a dict (JSON-encoded automatically).
             id: omit = append a new row ; provided = partial update of that `_id` ;
-                `"@claimed"` = the row your run currently holds (no copying).
+                `"@claimed"` = the row your run holds — it resolves only while that
+                run is OPEN, `run_finish` releases what it held.
             rows: BATCH mode — a list of row dicts written in one call.
             key: business key field for batch upsert/dedup (else `schema.key`).
         """
@@ -742,7 +757,7 @@ def register(mcp: FastMCP) -> None:
         """Release a claimed row — the NORMAL end of processing one row, and the
         counterpart of data_claim_next. Guarded by `worker` (same label as at claim
         time). `id="@claimed"` (or `namespace="@claimed"`) releases the row your run
-        holds, without copying it.
+        holds, without copying it — only while that run is OPEN.
 
         ⚠️ Call it after EVERY row you finish, not only when abandoning: writing a
         "final" status no longer frees the row (#317). If you wrap your work in
@@ -952,7 +967,7 @@ def register(mcp: FastMCP) -> None:
         Returns `{results: [...]}` — each entry carries the `group_by` value (when set)
         plus one key per metric (`count`, `sum_<field>`, `avg_<field>`, or `label`).
 
-        Examples:
+        Examples —
             - total rows matching a filter: metrics omitted, filter={"statut":"qualified"}
             - MWc by department: group_by="departement",
               metrics=[{"op":"sum","field":"kwc_estime"}, {"op":"count"}]

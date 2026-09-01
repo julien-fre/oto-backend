@@ -1,4 +1,21 @@
-"""Ce que le journal d'appels n'écrit jamais en clair — et pourquoi par PROPRIÉTÉ.
+"""Les deux empreintes courtes d'un secret — celle du journal, celle du coffre.
+
+Un secret n'apparaît hors du serveur que sous une forme courte et non inversible.
+Ce module en porte les DEUX, et la clé unique qui les signe :
+
+- `mask()` — ce que le **journal** écrit à la place d'un jeton (`tool`, `args`).
+  Volontairement **corrélable** : deux lignes portant le même masque disent « le même
+  jeton, rejoué », sans jamais dire lequel.
+- `fingerprint()` — ce que la **lecture d'un credential** rend à la place de la valeur
+  (oto-backend#671, 2026-08-31). Volontairement **NON corrélable** : elle est liée à
+  la ligne du coffre, donc la même clé posée à deux endroits n'y donne pas la même
+  empreinte. C'est ce qui empêche un lecteur d'empreintes de confirmer une clé devinée
+  par ailleurs en la posant sur une ligne qu'il contrôle.
+
+Une seule clé pour les deux : un second secret à gérer n'apporterait rien, et les deux
+propriétés se lisent mieux côte à côte que dans deux modules.
+
+## Ce que le journal d'appels n'écrit jamais en clair — et pourquoi par PROPRIÉTÉ
 
 Le journal (`tool_calls`, ADR 0017) porte deux colonnes alimentées par des données
 d'appelant : `tool` (pour un geste REST : `MÉTHODE /route`) et `args`. Jusqu'au
@@ -49,6 +66,22 @@ logger = logging.getLogger(__name__)
 # routes, quels outils) en est dérivé.
 SECRET_PARAM_NAMES = frozenset({"token", "code"})
 
+# Les CONNECTEURS échappent à la dérivation ci-dessus (elle ne lit que le registre
+# de capacités), et masquer leurs arguments par le NOM seul serait faux : un
+# `code` métier n'est pas un secret. Un connecteur qui reçoit une VRAIE
+# credential la déclare donc ici, outil par outil. Volontairement nominatif : ce
+# n'est pas une heuristique sur « password », c'est une liste qu'on relit.
+#
+# `lemlist_mailbox` : `op="connect"` porte les mots de passe SMTP et IMAP d'une
+# boîte mail — dans un sous-dictionnaire `smtp_imap`, que `truncated_args` sait
+# traverser dès lors que le nom de la clé est déclaré. Sans cette ligne ils
+# partaient EN CLAIR dans `tool_calls`, table lue par les surfaces de supervision.
+# `lemlist_webhook` : `secret` signe les callbacks — qui l'a peut les forger.
+SECRET_TOOL_ARGS: dict[str, frozenset] = {
+    "lemlist_mailbox": frozenset({"smtp_password", "imap_password"}),
+    "lemlist_webhook": frozenset({"secret"}),
+}
+
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 
@@ -81,6 +114,34 @@ def mask(value) -> str:
     digest = hmac.new(_key(), str(value).encode("utf-8", "replace"),
                       hashlib.sha256).hexdigest()
     return "#" + digest[:12]
+
+
+def fingerprint(*parts: object) -> str:
+    """Empreinte de RECONNAISSANCE d'un secret posé : quatre caractères hexadécimaux,
+    non inversibles, et **liés à l'endroit** où le secret est rangé.
+
+    Elle répond à « est-ce toujours la même clé qu'hier ? » et « celle-ci ou l'autre ? »
+    sans rendre un seul caractère du secret. Le front l'affiche `•••• 3f7a`.
+
+    ⚠️ **Ce ne sont pas les derniers caractères de la clé.** Un suffixe DE LA CLÉ est un
+    morceau de secret : il identifie un compte chez le fournisseur, et il confirme une
+    clé devinée par ailleurs. Ici, quatre caractères d'un HMAC dont la clé ne sort pas
+    du serveur — indevinable hors ligne.
+
+    ⚠️ **Passer la LIGNE du coffre en premier, la valeur en dernier.** Sans les
+    coordonnées de la ligne, la même clé donnerait la même empreinte partout : qui lit
+    l'empreinte d'un palier pourrait poser un candidat sur une ligne à lui et comparer —
+    un oracle de confirmation à 1/65536. Liée à sa ligne, la seule façon de comparer est
+    d'écraser la clé qu'on cherchait à confirmer.
+
+    Résiduel assumé et borné : sur une MÊME ligne, quatre caractères laissent une chance
+    sur 65536 de collision — un lecteur peut donc croire inchangée une clé qui a été
+    rotée. C'est un défaut d'affichage, pas de confidentialité ; la source de vérité de
+    « quand a-t-elle changé » reste la date de pose servie à côté.
+    """
+    charge = "\x1f".join(str(p) for p in parts)
+    return hmac.new(_key(), charge.encode("utf-8", "replace"),
+                    hashlib.sha256).hexdigest()[-4:]
 
 
 # --------------------------------------------------------------------------- #
@@ -187,7 +248,12 @@ def _arg_names() -> dict[str, frozenset]:
     pas concerné — masquer par le nom seul y coûterait une lecture pour rien."""
     global _ARG_NAMES
     if _ARG_NAMES is None:
-        table: dict[str, frozenset] = {}
+        # Les déclarations de CONNECTEUR d'abord, et hors du try : elles ne
+        # dépendent d'aucun registre. Les poser après aurait rendu le masquage
+        # des credentials tributaire d'un import de capacités — un registre
+        # illisible aurait renvoyé les mots de passe SMTP en clair au journal,
+        # avec pour seul signal un warning parlant d'autre chose.
+        table: dict[str, frozenset] = dict(SECRET_TOOL_ARGS)
         try:
             import oto_mcp.capabilities  # noqa: F401 — peuple le registre
             from oto_mcp.capabilities.registry import caps_with_mcp
@@ -195,14 +261,17 @@ def _arg_names() -> dict[str, frozenset]:
                 champs = set(getattr(cap.Input, "model_fields", {}) or {})
                 secrets_ = champs & SECRET_PARAM_NAMES
                 if secrets_:
-                    table[cap.mcp] = frozenset(secrets_)
+                    table[cap.mcp] = table.get(cap.mcp, frozenset()) | secrets_
+
         except Exception:  # noqa: BLE001 — le journal ne casse jamais le service
             # Bruyant, et une seule fois : sans registre, le masquage des arguments
             # est INERTE. Un journal qui cesse de masquer sans le dire est
             # exactement le mode d'échec que ce module ferme.
             logger.warning("registre de capacités illisible : le masquage des "
-                           "arguments du journal est inactif", exc_info=True)
-            _ARG_NAMES = {}
+                           "arguments de CAPACITÉ est inactif (les credentials "
+                           "déclarées par connecteur restent masquées)",
+                           exc_info=True)
+            _ARG_NAMES = table
             return _ARG_NAMES
         _ARG_NAMES = table
     return _ARG_NAMES

@@ -1,6 +1,6 @@
 """Le DESSIN d'une procédure — la garde d'écriture (pendant de `slots.slots_check`).
 
-Depuis tulina-app-front#108, le schéma d'une procédure n'est plus une illustration :
+Depuis l'issue #108 d'un front tiers, le schéma d'une procédure n'est plus une illustration :
 c'est la **vue par défaut** de la page du process. Le front cherche UN bloc de code
 non tagué (``` sans langage) tracé en caractères semi-graphiques, le reparse en graphe
 et le redessine en cartes. Une procédure sans dessin s'affiche donc en état vide —

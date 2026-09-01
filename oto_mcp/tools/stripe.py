@@ -48,7 +48,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access
@@ -713,6 +713,12 @@ def register(mcp: FastMCP) -> None:
         (`update_promotion_code`, `active=false`) — the redemption rule stays on
         file but nothing more can be redeemed with it.
 
+        ⚠️ Verified live 2026-08-23: a promotion code's `expires_at` cannot be
+        LATER than its coupon's `redeem_by` — Stripe rejects it outright,
+        naming both timestamps. And on a promotion code object, the coupon it
+        applies is under `promotion.coupon` (with `promotion.type == "coupon"`),
+        NOT a top-level `coupon` field — that flat shape was retired.
+
         Args:
             op: "list_products" (default) and the other fifteen verbs.
             product_id: REQUIRED by "get_product"/"update_product"/"create_price";
@@ -750,12 +756,6 @@ def register(mcp: FastMCP) -> None:
                 `{"first_time_transaction": true}` or `{"minimum_amount": 5000,
                 "minimum_amount_currency": "eur"}`.
             limit/starting_after: list pagination.
-
-        ⚠️ Verified live 2026-08-23: a promotion code's `expires_at` cannot be
-        LATER than its coupon's `redeem_by` — Stripe rejects it outright,
-        naming both timestamps. And on a promotion code object, the coupon it
-        applies is under `promotion.coupon` (with `promotion.type == "coupon"`),
-        NOT a top-level `coupon` field — that flat shape was retired.
         """
         client = _client()
         if op == "list_products":

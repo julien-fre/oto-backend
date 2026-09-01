@@ -19,9 +19,7 @@ c'est-à-dire rien changé.
 import asyncio
 
 import pytest
-from mcp.shared.exceptions import McpError
-
-
+from oto_mcp.mcp_errors import McpError
 def _tool(name: str):
     from fastmcp import FastMCP
 
@@ -40,7 +38,7 @@ def wired(monkeypatch):
     from oto_mcp.connectors import readiness as connector_readiness
 
     state = {"accounts": [{"provider": "LINKEDIN", "account_id": "acc_1",
-                           "account_name": "Julien Frèche", "org_id": 196,
+                           "account_name": "Jane Doe", "org_id": 196,
                            "platform_seat": True,
                            "connected_at": "2026-08-22 16:56:33"}],
              "alive": True}
@@ -83,7 +81,7 @@ def test_op_status_existe_et_dit_le_compte_lie(wired):
     out = _tool("linkedin_unipile_account")(op="status")
     assert out["connected"] is True
     assert out["account_id"] == "acc_1"
-    assert out["account_name"] == "Julien Frèche"
+    assert out["account_name"] == "Jane Doe"
     assert out["channel"] == "LINKEDIN"
 
 

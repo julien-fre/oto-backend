@@ -8,6 +8,7 @@ site vitrine (`refresh-catalog.mjs` → catalog/connectors/bibliothèque/guides)
 de docs.oto.cx (`refresh-openapi.mjs` → openapi.json).
 
 - `GET /favicon.svg` + `/favicon.ico`      → mark de marque (l'endpoint MCP n'a pas de page racine)
+- `GET /api/version`                       → la version SERVIE (`version.py`)
 - `GET /api/mcp/catalog`                   → catalogue des tools MCP (autodoc)
 - `GET /openapi.json` + `/api/openapi.json` → descriptif REST dérivé (`openapi.py`)
 - `GET /api/connectors`                    → catalogue des connecteurs (auth OPTIONNELLE)
@@ -31,8 +32,10 @@ from starlette.requests import Request
 from starlette.responses import (HTMLResponse, JSONResponse, PlainTextResponse,
                                  Response)
 
-from .. import access, deprecations, providers, db, guide_store, openapi, org_store
+from .. import (access, deprecations, providers, db, guide_store, openapi,
+                org_store, version as oto_version)
 from ..connectors import activation as connector_activation
+from ..connectors import cardinality as connector_cardinality
 from .base import _authenticate, _json, _json_error
 
 
@@ -50,6 +53,26 @@ async def favicon(request: Request) -> Response:
         media_type="image/svg+xml",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+async def version(request: Request) -> JSONResponse:
+    """La version SERVIE par ce processus — publique, sans auth (oto#33).
+
+    Sans auth, et c'est le point : un consommateur qui constate un changement de
+    comportement doit pouvoir le dater **avant** d'avoir résolu quoi que ce soit
+    d'identité, et un contrôle externe (Uptime Kuma, un script de déploiement, un
+    agent) n'a pas de jeton. Le document ne porte AUCUNE valeur — un ref git, un
+    SHA, deux horodatages —, exactement comme `/api/openapi.json` et
+    `/api/mcp/catalog`.
+
+    Écrite à la main plutôt qu'en capacité (ADR 0009) pour la raison donnée en tête
+    de module : l'adaptateur REST des capacités authentifie TOUJOURS, une surface
+    anonyme ne peut pas y passer.
+
+    ⚠️ Ce que ce processus EXÉCUTE, pas ce que le dernier workflow a déployé — la
+    différence, et pourquoi elle mord, sont dans `oto_mcp/version.py`.
+    """
+    return _json(request, oto_version.instantane())
 
 
 async def mcp_catalog(request: Request, *, mcp_instance) -> JSONResponse:
@@ -108,26 +131,38 @@ async def connectors_catalog(request: Request, *, verifier: JWTVerifier) -> JSON
     dont les bridges client-sensibles ADR 0003, sont deny-by-default comme sur
     la face MCP) ; non-admin authentifié → + ceux dont un namespace est entitled
     pour le sub (override d'org appliqué via son org active).
+
+    Enfin, `auth.cardinality` : le registre est PUR, donc la ligne qu'il produit
+    porte le défaut du CODE. Dès qu'il y a un requérant, il y a une org de
+    contexte, donc une réponse EFFECTIVE — et c'est elle qu'on sert
+    (`connectors.cardinality.overlay_for_org`, oto-backend#732). Sans ça, une org
+    élargie par surcharge lisait « single » sur un connecteur dont le serveur
+    accepte un second compte : un geste offert par la base et jamais par l'écran.
     """
     cat = providers.public_catalog()
     if not request.headers.get("authorization"):
         exposed = connector_activation.exposed_connectors(None)
         cat = [c for c in cat if c["name"] in exposed]
         cat = [c for c in cat if c["availability"] != "platform_granted"]
-        return _json(request, {"connectors": cat})
+        # Aucun requérant ⟹ aucune org de contexte : la cardinalité servie ne peut
+        # être que le défaut du code (surchargeable seulement au cran PLATEFORME,
+        # que l'overlay applique aussi avec `org=None`). C'est la vitrine.
+        return _json(request, {"connectors": connector_cardinality.overlay_for_org(cat, None)})
     sub, err = await _authenticate(request, verifier)
     if err:
         return err
+    # Org de CONTEXTE (seam ADR 0023 : consultation X-Oto-Org > maison) — le
+    # catalogue suit l'org consultée au dashboard, comme status_for. Lue une fois :
+    # elle sert la visibilité ET la cardinalité, qui doivent parler de la même org.
+    org = access.current_org(sub)
     if not access.is_platform_operator(sub):
         # Visibilité par l'activation (master × override d'org). Un connecteur à
         # clé plateforme réservé (ex. scaleway) est tenu hors des orgs non
         # autorisées par son activation (master OFF + override org ON), plus par
         # un grant de namespace (retiré, ADR 0031).
-        # Org de CONTEXTE (seam ADR 0023 : consultation X-Oto-Org > maison) —
-        # le catalogue suit l'org consultée au dashboard, comme status_for.
-        exposed = connector_activation.exposed_connectors(access.current_org(sub))
+        exposed = connector_activation.exposed_connectors(org)
         cat = [c for c in cat if c["name"] in exposed]
-    return _json(request, {"connectors": cat})
+    return _json(request, {"connectors": connector_cardinality.overlay_for_org(cat, org)})
 
 
 async def guide_library_public(request: Request) -> JSONResponse:

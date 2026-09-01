@@ -199,7 +199,7 @@ def test_data_not_linked_is_404(monkeypatch):
 
 # Lien tableau par NOM (legacy, avant normalisation nom→id) : la page web doit le
 # résoudre contre le datastore de l'org propriétaire — sinon il était jeté par `isdigit()`
-# et le datastore n'apparaissait pas (régression vécue projet Mūcho #8).
+# et le datastore n'apparaissait pas (régression vécue projet Marché #8).
 _PROJECT_OWNED = {**_PROJECT, "owner_type": "org", "owner_id": "81"}
 _LINKS_BY_NAME = [
     {"target_type": "tableau", "target_ref": "accords_dormants", "label": "Vivier national"},

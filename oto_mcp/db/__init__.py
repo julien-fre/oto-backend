@@ -54,6 +54,7 @@ from . import (
     run_thread,
     runner_jobs,
     runner_triggers,
+    runner_fleets,
     journal_calls,
 )
 
@@ -65,7 +66,8 @@ _MODULES = (
     connector_instances, grants, keys, usage,
     platform_instructions, visibility, emails, google, datastore, projects,
     tokens, upload_tokens, billing, billing_invoices, guides, legal, search, aux_embed,
-    datastore_embed, run_thread, runner_jobs, runner_triggers, journal_calls,
+    datastore_embed, run_thread, runner_jobs, runner_triggers, runner_fleets,
+    journal_calls,
 )
 _g = globals()
 for _mod in _MODULES:

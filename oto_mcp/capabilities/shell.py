@@ -41,7 +41,7 @@ import json
 import logging
 from typing import Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import access, group_store, org_store, run_status
@@ -49,6 +49,7 @@ from ..connectors import selection as connector_selection
 from ..db import shell as db_shell
 from ._authz import ORG_MEMBER
 from ._types import Capability, NotModified, ResolvedCtx, RestBinding
+from .node_keys import doc_id_de
 from .node_procedure_ref import ProcedureRef, procedure_ref_of
 from .registry import CAPABILITIES
 
@@ -82,7 +83,22 @@ class ShellInput(BaseModel):
 
 
 class RailNode(BaseModel):
-    id: str
+    """Une ligne du rail de navigation.
+
+    ⚠️ **`id` ne désigne pas la même chose selon `type`, et c'est le piège de cette
+    surface.** Sur `page`, `table` et `agent`, c'est l'identifiant d'un nœud, celui
+    que `GET /api/me/nodes/{node_id}` prend. Sur `execution`, c'est un **identifiant
+    de déroulé** : ces lignes sont projetées depuis le journal, sans aucune ligne en
+    base (~60 000 par an seraient créées pour des objets qui sont des JOURNAUX), et
+    `GET /api/me/nodes/{cet id}` rend donc **404**. Un client qui traite toutes les
+    lignes du rail de la même façon casse sur celle-là ; l'identifiant d'une
+    exécution se porte aux surfaces de run.
+    """
+    id: str = Field(description=(
+        "Identifiant de la ligne. ⚠️ Sa NATURE dépend de `type` : identifiant de "
+        "nœud pour `page` / `table` / `agent` (accepté par "
+        "`GET /api/me/nodes/{node_id}`), identifiant de DÉROULÉ pour `execution` — "
+        "ce dernier n'a pas de fiche de nœud et rend 404 sur cette route."))
     name: str
     type: Literal["page", "table", "agent", "execution"]
     badge: Optional[str] = None
@@ -94,6 +110,14 @@ class RailNode(BaseModel):
     # La procédure qu'un nœud `agent` exécute — id stable, slug, scope (#417). Absente
     # sur toute autre nature, et sur un agent sans référence lisible : jamais devinée.
     procedure: Optional[ProcedureRef] = None
+    # La poignée vers la page d'origine, quand la ligne en vient (#650). La colonne
+    # était DÉJÀ lue par la requête du rail (`db/shell._COLS`) pour la référence de
+    # procédure, et jetée pour tout le reste : la servir ne coûte aucune requête de
+    # plus, et épargne un aller-retour `GET /api/me/nodes/{id}` par ligne à qui veut
+    # seulement ouvrir ce qu'il vient de créer.
+    # ⚠️ **Absente** (le rail omet les `None`) quand la ligne n'a pas de page derrière
+    # elle — un projet, un tableau natif, une exécution. Jamais devinée.
+    doc_id: Optional[int] = None
 
 
 class RailContext(BaseModel):
@@ -177,7 +201,8 @@ def _arbre(lignes: list[dict], *, shared_par: Optional[dict] = None) -> list[Rai
         budget["n"] += 1
         nature = _type_of(l.get("kind"), l)
         out = RailNode(id=l["public_id"], name=l.get("title") or "", type=nature,
-                       procedure=procedure_ref_of(nature, l.get("owner_type"), l))
+                       procedure=procedure_ref_of(nature, l.get("owner_type"), l),
+                       doc_id=doc_id_de(l.get("legacy"), l.get("legacy_id")))
         if shared_par is not None:
             out.sharedBy = shared_par.get(l["public_id"])
         enfants = par_parent.get(l["id"], [])
@@ -242,11 +267,12 @@ def _executions(sub: str, org_id: Optional[int]) -> list[RailNode]:
     un journal. Le rail montre ce qui ATTEND la personne, jamais des volumes : c'est la
     règle que le contrat pose déjà pour ses compteurs, et elle vaut ici.
 
-    Donc : **ouverts ET non périmés**, au sens que `run_status` porte déjà (48 h sans
-    signe de vie ⟹ un run cesse d'être annoncé « en cours », #311). Mesuré : 26 runs sur
-    toute la plateforme, médiane 1 par personne, maximum 24. Réutiliser ce seam plutôt
-    que d'inventer une fenêtre évite d'avoir deux définitions de « en cours » — et un
-    run périmé affiché ici serait le miroir exact du défaut que #311 a fermé.
+    Donc : **ouverts ET non périmés**, au sens que `run_status` porte déjà (24 h sans
+    signe de vie ⟹ un run cesse d'être annoncé « en cours » — #311, seuil re-daté par
+    #666). Mesuré : 26 runs sur toute la plateforme, médiane 1 par personne, maximum 24.
+    Réutiliser ce seam plutôt que d'inventer une fenêtre évite d'avoir deux définitions
+    de « en cours » — et un run périmé affiché ici serait le miroir exact du défaut que
+    #311 a fermé.
     """
     if org_id is None:
         return []

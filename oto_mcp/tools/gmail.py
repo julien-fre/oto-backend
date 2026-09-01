@@ -34,7 +34,7 @@ import tempfile
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, file_content, file_source
@@ -278,6 +278,10 @@ def register(mcp: FastMCP) -> None:
         the user can review; it does NOT leave the mailbox. Say plainly which one you did
         (read `kind` in the answer) — never report "sent" for a draft, or the reverse.
 
+        Returns `kind` — **"sent" (the mail LEFT) or "draft" (saved, not sent)** — plus
+        the message ids. Always read `kind` before reporting what you did: it is the
+        only field that states the act.
+
         Args:
             body: message body (rendered from markdown to HTML by default).
             mode: "draft" (default) saves for human review; "send" delivers it now.
@@ -296,10 +300,6 @@ def register(mcp: FastMCP) -> None:
                 - Gmail: `{"kind":"gmail","message_id":"<id>","filename":"<name>"}`
                 - URL:   `{"kind":"url","url":"https://…"}` — e.g. a signed URL from
                   `oto_upload_url` (upload a local PDF first) or drive_download.
-
-        Returns `kind` — **"sent" (the mail LEFT) or "draft" (saved, not sent)** — plus
-        the message ids. Always read `kind` before reporting what you did: it is the
-        only field that states the act.
         """
         if mode not in ("send", "draft"):
             raise _bad("mode doit être 'send' ou 'draft'.")

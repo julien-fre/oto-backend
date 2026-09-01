@@ -90,7 +90,7 @@ from threading import Lock
 from typing import Literal, Optional
 
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from oto.tools.common.errors import UpstreamHTTPError
@@ -729,6 +729,30 @@ def register(mcp: FastMCP) -> None:
         mixed list; `is_public` false = visible only to the assignees. Omit
         `assigned_users` and the task lands on the API key's owner.
 
+        Returns, per op —
+            search: {"entity", "count", "results"} — plus "when" and
+                "truncated" for interactions (and "past_count"/
+                "upcoming_count" when when="all").
+            get: the record.
+            create solo: the created record, or {"dry_run": true, "would_create": {...}}.
+            create bulk: {"total", "succeeded", "created": [{"index","id"}],
+                "failed": [...]}, or dry_run: {"dry_run": true, "total",
+                "would_create": [...], "failed": [...]}.
+            update/add_to_group solo: the updated record, or {"dry_run": true,
+                "id", "changes"|"fields", ...}.
+            update/add_to_group bulk: {"total", "succeeded", "failed":
+                [{"index","id","error"}]}, or dry_run: {"dry_run": true, "total",
+                "would_update"|"would_add": [...], "failed": [...]}.
+            delete solo: {} (or {"dry_run": true, "id", "would_delete", ...}).
+            delete bulk: {"total", "succeeded", "failed": [{"index","id","error"}]},
+                or dry_run: {"dry_run": true, "total", "would_delete": [...],
+                "failed": [...]}.
+            mark_done/mark_todo solo: the task, or {"dry_run": true, "id",
+                "would_mark", "current"}.
+            mark_done/mark_todo bulk: {"total", "succeeded", "failed":
+                [{"index","id","error"}]}, or dry_run: {"dry_run": true,
+                "total", "would_mark": [...], "failed": [...]}.
+
         Args:
             entity: "person" (a contact), "company", "deal" (or any other
                 custom object collection — see `object_type`), "note",
@@ -844,30 +868,6 @@ def register(mcp: FastMCP) -> None:
                 sans le "from". Une interaction, elle, a toujours son
                 `entity_id` (les trois ops l'exigent), donc son diff est
                 toujours réel.
-
-        Returns:
-            search: {"entity", "count", "results"} — plus "when" and
-                "truncated" for interactions (and "past_count"/
-                "upcoming_count" when when="all").
-            get: the record.
-            create solo: the created record, or {"dry_run": true, "would_create": {...}}.
-            create bulk: {"total", "succeeded", "created": [{"index","id"}],
-                "failed": [...]}, or dry_run: {"dry_run": true, "total",
-                "would_create": [...], "failed": [...]}.
-            update/add_to_group solo: the updated record, or {"dry_run": true,
-                "id", "changes"|"fields", ...}.
-            update/add_to_group bulk: {"total", "succeeded", "failed":
-                [{"index","id","error"}]}, or dry_run: {"dry_run": true, "total",
-                "would_update"|"would_add": [...], "failed": [...]}.
-            delete solo: {} (or {"dry_run": true, "id", "would_delete", ...}).
-            delete bulk: {"total", "succeeded", "failed": [{"index","id","error"}]},
-                or dry_run: {"dry_run": true, "total", "would_delete": [...],
-                "failed": [...]}.
-            mark_done/mark_todo solo: the task, or {"dry_run": true, "id",
-                "would_mark", "current"}.
-            mark_done/mark_todo bulk: {"total", "succeeded", "failed":
-                [{"index","id","error"}]}, or dry_run: {"dry_run": true,
-                "total", "would_mark": [...], "failed": [...]}.
         """
         def _require_deal_group() -> None:
             """Commun aux 5 ops qui acceptent entity="deal" (pas add_to_group,
@@ -1480,6 +1480,13 @@ def register(mcp: FastMCP) -> None:
         `groupId`, op="custom_fields" for the custom field name used in `path`)
         to get real workspace values — don't guess them.
 
+        Note: on create, the response's `signingSecret` is returned in FULL only
+        there — Folk only ever shows a redacted version afterwards, so save it
+        now if you need to verify payload signatures.
+
+        Note: filters only exist through this API — editing a webhook's events
+        from Folk's own settings UI afterwards silently drops them.
+
         Args:
             op: list (default) | create | update.
             webhook_id: op="update" — the webhook ID (wbk_…, from op="list").
@@ -1532,13 +1539,6 @@ def register(mcp: FastMCP) -> None:
                 (`would_create`), zero network calls; op="update" returns a diff
                 `{"changes": {field: {"from", "to"}}}` against the current
                 webhook.
-
-        Note: on create, the response's `signingSecret` is returned in FULL only
-        there — Folk only ever shows a redacted version afterwards, so save it
-        now if you need to verify payload signatures.
-
-        Note: filters only exist through this API — editing a webhook's events
-        from Folk's own settings UI afterwards silently drops them.
         """
         if op == "list":
             return {"webhooks": _client().list_webhooks()}

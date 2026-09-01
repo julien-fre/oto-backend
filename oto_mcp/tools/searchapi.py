@@ -25,7 +25,7 @@ from typing import Optional
 
 import httpx
 from fastmcp import FastMCP
-from mcp.shared.exceptions import McpError
+from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 
 from .. import access, url_perimeter
@@ -113,6 +113,8 @@ def register(mcp: FastMCP) -> None:
         The typed fields are the COMMON case, not a universal set: an engine
         that does not support one of them rejects the call upstream (4xx).
 
+        Either `query` or `params` must be provided.
+
         Args:
             engine: SearchApi engine id (see the list above). Required — no
                 default vertical is assumed.
@@ -127,8 +129,6 @@ def register(mcp: FastMCP) -> None:
                 given here overrides the typed field it duplicates. Use it for
                 engines whose input is not `q`, and for any filter without a
                 typed field (time range, sorting, ids…).
-
-        Either `query` or `params` must be provided.
         """
         if not engine or not engine.strip():
             raise _bad(
