@@ -275,10 +275,18 @@ def test_une_ecriture_EN_COUCHES_passe_toujours(table):
     assert _colonnes(ns_id) == {"siren", "site_web"}
 
 
-def test_une_colonne_json_n_est_pas_reinterpretee(table):
-    """Une colonne déclarée `json` est un objet métier assumé — même exemption que
-    `_refuse_mixed_layers`. On ne range rien dedans, et on ne l'enveloppe pas."""
-    from oto_mcp.datastore.core import RowValidationError
+def test_le_CONTENU_d_une_colonne_json_n_est_pas_reinterprete(table):
+    """Une colonne déclarée `json` est un objet métier assumé : on ne range rien DEDANS
+    — même exemption que `_refuse_mixed_layers` (#329).
+
+    ⚠️ **Amendé le 2026-09-01 (#728), et le nom du test avec.** L'exemption portait
+    aussi sur l'ADRESSE, et ce test y consentait : il exigeait un refus sur
+    `{"brut": …, "brut.comment": …}` **sans jamais lire le texte servi**. Ce refus
+    disait « `brut` n'est aucune colonne de ce tableau : ni dans cette écriture, ni sur
+    la ligne visée, ni au schéma » — d'une colonne déclarée deux lignes plus haut, et
+    nommée dans le geste. Un `pytest.raises` nu ne pouvait pas le voir : c'est
+    exactement ce qui a laissé le mensonge en place. L'annotation d'une colonne objet
+    se range désormais ; preuves dans `test_annotation_colonne_objet_libre_728.py`."""
     st, ns, ns_id = table
     st.set_schema(ns, {**SCHEMA,
                        "fields": SCHEMA["fields"] + [{"key": "brut", "type": "json"}]})
@@ -288,8 +296,11 @@ def test_une_colonne_json_n_est_pas_reinterpretee(table):
         brut = conn.execute("SELECT data FROM datastore_rows WHERE ns_id = %s",
                             (ns_id,)).fetchone()["data"]
     assert brut["brut"] == {"comment": "un champ métier", "a": 1}, "intacte"
-    with pytest.raises(RowValidationError):
-        st.append_row(ns, {"siren": "2", "brut": {"a": 1}, "brut.comment": "x"})
+
+    st.append_row(ns, {"siren": "2", "brut": {"a": 1}, "brut.comment": "x"})
+    lu = next(r for r in st.list_rows(ns) if r["siren"] == "2")
+    assert lu["brut"] == {"a": 1}, "le nom nu rend l'objet, jamais l'enveloppe"
+    assert lu["brut.comment"] == "x", "l'annotation est rangée, pas refusée"
 
 
 # ── Bout en bout : l'export du tableau de bord, réimporté ────────────────────

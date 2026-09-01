@@ -1275,11 +1275,18 @@ def _validate_reserved_def(f: dict, fpath: str, errors: list[str], *,
             f"la valeur en place) ; reçu {so!r}. Une origine écrite par l'agent ne se "
             f"déclare pas : c'est le défaut de départ")
     elif so == SYSTEM_ORIGIN and (ftype in COMPOSITE_TYPES or ftype == "json"):
+        # ⚠️ Motif REFORMULÉ le 2026-09-01 (#728) : il invoquait l'exemption `json` de
+        # la grammaire des couches, qui ne vaut plus pour l'ADRESSE — `brut.comment`
+        # s'écrit désormais. Le refus, lui, ne bouge pas : ce qui le fonde est la
+        # CAPTURE, pas l'exemption. Un motif qui survit à sa raison est un mensonge en
+        # attente.
         errors.append(
             f"{fpath}: origine: \"{SYSTEM_ORIGIN}\" ne se pose que sur une colonne "
-            f"scalaire (type={ftype}) — une colonne `json` est exempte de la "
-            f"grammaire des couches (#329), et un composite se pose par item, ce que "
-            f"la garde ne lit pas")
+            f"scalaire (type={ftype}) — la garde capture la valeur d'AVANT comme point "
+            f"de départ, et sur un objet libre elle rangerait l'objet entier dans la "
+            f"couche ; un composite, lui, se pose par item, ce que la garde ne lit "
+            f"pas. La couche `{f.get('key')}.origine` s'écrit à la main sur une "
+            f"colonne `json` : c'est sa pose AUTOMATIQUE qui ne s'y déclare pas")
     if not top and (ro is True or so == SYSTEM_ORIGIN):
         errors.append(
             f"{fpath}: readonly / origine: \"{SYSTEM_ORIGIN}\" ne se posent qu'au "
