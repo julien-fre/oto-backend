@@ -126,7 +126,8 @@ class SchemaOpsMixin:
                      remove: Optional[list] = None,
                      strict: Optional[bool] = None,
                      key: Optional[str] = None,
-                     key_required: Optional[bool] = None) -> dict:
+                     key_required: Optional[bool] = None,
+                     unknown_fields: Optional[str] = None) -> dict:
         """Modifie le schéma PAR CLÉ, sans réécrire la liste entière (#388).
 
         `data_set_schema` REMPLACE : c'est le bon geste pour poser un format, et un
@@ -140,7 +141,11 @@ class SchemaOpsMixin:
 
         `fields` = fusion par clé (complète l'existant, ajoute l'inconnu) ; `remove`
         = le retrait EXPLICITE, sans quoi on rendrait le nettoyage impossible ;
-        `strict`/`key`/`key_required` = les clés de tête, inchangées si omises. Le
+        `strict`/`key`/`key_required`/`unknown_fields` = les clés de tête, inchangées
+        si omises. `unknown_fields` (#614/#678) se pose ICI en priorité : un tableau
+        se ferme quand il a FINI d'être exploré, donc quand son schéma est long — et
+        le poser par `set` obligerait à réécrire quatre-vingts champs pour une clé de
+        tête, exactement le geste que ce patch existe pour éviter. Le
         schéma résultant repasse par `set_schema`, donc par ses gardes (doublons de
         clé métier, index UNIQUE, `key_required` sans `key`) et ses avertissements
         (file de travail, bornes, colonnes orphelines) — on ne double pas cette
@@ -157,10 +162,10 @@ class SchemaOpsMixin:
             raise ValueError("le schéma courant n'est pas un objet — repose-le avec "
                              "data_set_schema avant de le patcher")
         if (fields is None and remove is None and strict is None and key is None
-                and key_required is None):
+                and key_required is None and unknown_fields is None):
             raise ValueError(
                 "rien à patcher : passe `fields` (fusion par clé), `remove` (retrait "
-                "explicite), `strict`, `key` ou `key_required`")
+                "explicite), `strict`, `key`, `key_required` ou `unknown_fields`")
         merged = [f for f in (current.get("fields") or []) if isinstance(f, dict)]
         merged, added, updated = dsv2.merge_fields(merged, fields or [])
         merged, unknown = dsv2.remove_fields(merged, remove or [])
@@ -177,6 +182,12 @@ class SchemaOpsMixin:
             out_schema["key"] = key
         if key_required is not None:
             out_schema["key_required"] = bool(key_required)
+        if unknown_fields is not None:
+            # Écrit TEL QUEL, jamais normalisé : une valeur hors du couple fermé doit
+            # se faire refuser par `validate_schema_def` en nommant les deux modes.
+            # La replier sur le défaut ici rendrait un succès à qui croit avoir fermé
+            # son tableau — le défaut exact que ce cran corrige.
+            out_schema["unknown_fields"] = unknown_fields
         # Le patch NOMME ce qu'il retire (`removed`) : le relevé d'effacement n'a
         # donc rien à en redire. Il reste tendu pour tout le reste — c'est le seul
         # moyen de voir une fusion qui laisserait échapper quelque chose.

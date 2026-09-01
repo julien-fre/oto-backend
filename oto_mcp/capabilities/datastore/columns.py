@@ -90,6 +90,9 @@ class PatchSchemaInput(BaseModel):
     # par `set` obligerait à réécrire un schéma de 80 champs pour une clé de tête,
     # exactement le geste que ce patch existe pour éviter.
     key_required: Optional[bool] = None
+    # #614/#678 : `"report"` (défaut) / `"reject"`. Ici pour la même raison que
+    # `key_required` — un tableau se ferme quand son schéma est déjà long.
+    unknown_fields: Optional[str] = None
 
 
 class PatchSchemaResult(BaseModel):
@@ -123,7 +126,8 @@ def _patch_schema(ctx: ResolvedCtx, inp: PatchSchemaInput) -> dict:
     try:
         return make_store(ctx.sub).patch_schema(
             namespace, fields=inp.fields, remove=inp.remove,
-            strict=inp.strict, key=inp.key, key_required=inp.key_required)
+            strict=inp.strict, key=inp.key, key_required=inp.key_required,
+            unknown_fields=inp.unknown_fields)
     except NamespaceNotFound:
         raise AuthzDenied(404, "namespace_not_found")
     except NamespaceReadOnly:
@@ -179,13 +183,19 @@ CAPABILITIES += [
             "keys are appended. `remove: [\"key\", …]` is the explicit deletion (a "
             "wrong key is refused, never silently ignored) — it takes the field out of "
             "the SCHEMA; to erase the column from the rows' DATA, that is "
-            "`data_drop_column`. `strict`/`key`/`key_required` change the head keys, "
-            "untouched when omitted — `key_required: true` CLOSES the table (a write "
-            "designating no existing row is refused), `false` reopens it. Per field, "
-            "`readonly: true` locks the value in place (layers such as `.comment` stay "
-            "open) and `origine: \"system\"` makes the platform keep the previous "
-            "value in `<field>.origine` — `null` lifts either without touching the "
-            "rows. Field ORDER "
+            "`data_drop_column`. `strict`/`key`/`key_required`/`unknown_fields` "
+            "change the head keys, untouched when omitted — `key_required: true` "
+            "CLOSES the table (a write designating no existing row is refused), "
+            "`false` reopens it. `unknown_fields` decides what happens to a column "
+            "the schema does NOT declare: `\"report\"` (the default) CREATES it and "
+            "names it back in `hors_schema` — `strict` alone never refused it — while "
+            "`\"reject\"` refuses the write and stores nothing; set it on a table that "
+            "has FINISHED being explored. Per field, `readonly: true` locks the value "
+            "in place (layers such as `.comment` stay open), `origine: \"system\"` "
+            "makes the platform keep the previous value in `<field>.origine`, and "
+            "`system: \"run.id\"|\"run.started_at\"|\"write.at\"` makes the PLATFORM "
+            "write the value on every write (the caller is refused, by name) — `null` "
+            "lifts any of them without touching the rows. Field ORDER "
             "is never reshuffled. Returns the resulting schema "
             "plus `{added, updated, removed}` and any `warning` the schema raises."),
     ),
