@@ -29,6 +29,13 @@ from ._conn import _connect
 _BACKOFF_S = 30
 _LEASE_DEFAULT_S = 600  # ~3× la ligne la plus lente mesurée (180 s) — le tour d'un run
 
+# Plafond d'une page de file. Il existait déjà — enfoui dans le LIMIT, appliqué sans
+# être dit : `limit=1000` rendait 200 lignes et rien ne l'annonçait (#469). Il est
+# nommé ici parce que c'est là que le SQL le fait respecter, et déclaré au contrat
+# par la capacité, qui rend le total et le curseur sans lesquels une page pleine est
+# indiscernable d'une file épuisée.
+JOBS_PAGE_MAX = 200
+
 
 def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 run_id: Optional[str] = None, max_attempts: int = 3) -> dict:
@@ -164,24 +171,57 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
     return dict(row) if row else None
 
 
-def list_jobs(org_id: int, status: Optional[str] = None,
-              limit: int = 50) -> list[dict]:
-    """La file vue d'en haut (surveillance dashboard) : les jobs de l'org, du
-    plus récent au plus ancien, filtrables par statut. Le payload est rendu
-    (références seulement, par contrat d'enqueue) mais jamais tronqué en
-    silence — c'est une LISTE : elle rend de quoi écarter, le détail par get."""
-    q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
-         "       claimed_by, last_error, result, due_at, created_at, finished_at "
-         "FROM runner_jobs WHERE org_id = %s")
+def _filtre_de_file(org_id: int, status: Optional[str]) -> tuple[str, list]:
+    """Le WHERE commun à la page et à son compte — une seule définition de « la
+    file », sinon le total finit par décrire une autre population que les lignes
+    qu'il accompagne."""
+    q = " WHERE org_id = %s"
     params: list = [org_id]
     if status:
         q += " AND status = %s"
         params.append(status)
+    return q, params
+
+
+def list_jobs(org_id: int, status: Optional[str] = None,
+              limit: int = 50, before_id: Optional[int] = None) -> list[dict]:
+    """La file vue d'en haut (surveillance dashboard) : les jobs de l'org, du
+    plus récent au plus ancien, filtrables par statut. Le payload est rendu
+    (références seulement, par contrat d'enqueue) mais jamais tronqué en
+    silence — c'est une LISTE : elle rend de quoi écarter, le détail par get.
+
+    `before_id` = pagination keyset sur l'ordre servi (`id DESC`) : la page suivante
+    est « les jobs plus anciens que celui-ci ». Un keyset plutôt qu'un OFFSET parce
+    qu'une file bouge sous la marche — un job enfilé entre deux pages décalerait
+    tout un OFFSET et ferait sauter une ligne.
+
+    ⚠️ `JOBS_PAGE_MAX` reste appliqué ICI en dernier ressort, mais la borne qui
+    ENGAGE est celle du contrat (`capabilities/runner_jobs.py`) : c'est elle qui la
+    déclare et qui rend le total + le curseur qui la disent. Une borne connue du
+    seul SQL est exactement ce que #469 reprochait."""
+    ou, params = _filtre_de_file(org_id, status)
+    q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
+         "       claimed_by, last_error, result, due_at, created_at, finished_at "
+         "FROM runner_jobs") + ou
+    if before_id is not None:
+        q += " AND id < %s"
+        params.append(int(before_id))
     q += " ORDER BY id DESC LIMIT %s"
-    params.append(max(1, min(int(limit), 200)))
+    params.append(max(1, min(int(limit), JOBS_PAGE_MAX)))
     with _connect() as conn:
         rows = conn.execute(q, tuple(params)).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_jobs(org_id: int, status: Optional[str] = None) -> int:
+    """Le nombre de jobs de la file, MÊMES filtres que `list_jobs` et sans son
+    plafond : c'est le chiffre qu'un bilan de vague vient chercher, et celui qui
+    dit qu'une page est tronquée. Le curseur, lui, dit comment lire la suite."""
+    ou, params = _filtre_de_file(org_id, status)
+    with _connect() as conn:
+        row = conn.execute("SELECT count(*) AS n FROM runner_jobs" + ou,
+                           tuple(params)).fetchone()
+    return int(dict(row)["n"])
 
 
 def get_job(job_id: int, org_id: int) -> Optional[dict]:
