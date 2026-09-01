@@ -23,7 +23,7 @@ from ..mcp_errors import McpError
 from mcp.types import ErrorData, INVALID_PARAMS
 from pydantic import ValidationError
 
-from .. import (access, call_axes, db, deprecations, guide_run, providers,
+from .. import (access, call_axes, calllog, db, deprecations, guide_run, providers,
                 redaction, run_org, tool_alias, tool_registry)
 from ..auth.hooks import current_user_sub_from_token
 from ..tool_visibility import (
@@ -120,7 +120,14 @@ async def _trace_target_call(sub: Optional[str], name: str, args: dict, ok: bool
                              error: Optional[str], duration_ms: int) -> None:
     """Journalise l'appel dispatché SOUS LE NOM CIBLE (ADR 0036 §5 / 0017) : sans ça
     seul `oto_call` apparaît dans `tool_calls` et l'inventaire d'usage devient aveugle
-    au catalogue latent. Best-effort — jamais bloquant."""
+    au catalogue latent. Best-effort — jamais bloquant.
+
+    ⚠️ **Même fabrique d'arguments que le middleware** (`calllog.truncated_args`) : cette
+    ligne-ci est servie par les MÊMES surfaces (fiche d'un appel, timeline d'un déroulé),
+    qui annoncent toutes deux des arguments tronqués et masqués. Elle posait le
+    dictionnaire brut jusqu'au 2026-09-01 — 40 159 lignes en base, dont les 111 seules
+    dont une valeur dépassait la borne annoncée. Le nom CIBLE est celui qui déclare ses
+    secrets : c'est lui qu'on passe, jamais `oto_call`."""
     try:
         session_id, run_id = None, None
         try:
@@ -133,7 +140,8 @@ async def _trace_target_call(sub: Optional[str], name: str, args: dict, ok: bool
             pass
         row = {
             "server": "oto", "kind": "mcp", "sub": sub, "tool": name,
-            "args": args, "ok": ok, "error": error, "duration_ms": duration_ms,
+            "args": calllog.truncated_args(args, tool=name),
+            "ok": ok, "error": error, "duration_ms": duration_ms,
             "session_id": session_id, "run_id": run_id,
             "org_id": access.current_org(sub),
         }

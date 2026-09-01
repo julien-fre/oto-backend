@@ -59,15 +59,54 @@ La règle qui remplace la forme, source unique `oto_mcp/journal_secrets.py` :
   (`OTO_MCP_OAUTH_STATE_SECRET`), donc le masque reste stable d'un boot à l'autre ;
 - **la même propriété sur l'autre face** — le jeton d'invitation arrive aussi par
   `oto_org op=accept_invite`. Un argument de **capacité** portant un de ces noms est
-  masqué (`truncated_args(..., tool=)`), y compris via `oto_call` ; un argument de
-  **connecteur** qui s'appelle pareil ne l'est pas (`droit_article(code='CT')` n'est pas
-  un secret, et le cacher coûterait une lecture pour rien).
+  masqué (`truncated_args(..., tool=)`), y compris via `oto_call` (⚠️ **seulement depuis
+  le 2026-09-01** — cf. §suivant) ; un argument de **connecteur** qui s'appelle pareil ne
+  l'est pas (`droit_article(code='CT')` n'est pas un secret, et le cacher coûterait une
+  lecture pour rien).
 
 **Les lignes déjà écrites** se réparent à la main :
 `oto-mcp maintenance journal-tokens` (§Rétention).
 
 Cliquets : `tests/test_journal_secrets.py`, `tests/test_rest_call_logger.py`,
 `tests/test_journal_no_plaintext_secret.py`, `tests/test_journal_token_purge_558.py`.
+
+### Le dispatch universel écrivait hors de la fabrique (corrigé le 2026-09-01)
+
+⚠️ **`tool_calls` n'a pas un seul écrivain, il en a cinq** — et la règle ci-dessus n'est
+une propriété du journal que si tous passent par la même fabrique. Ce n'était pas le cas.
+Un appel dispatché par `oto_call` (ADR 0036 §5) produit **deux** lignes, et aucune des
+deux n'était sous la règle annoncée :
+
+- **la ligne du nom CIBLE** (`tools/meta._trace_target_call`, celle qui rend le catalogue
+  latent visible à l'inventaire d'usage) posait le dictionnaire d'arguments **tel quel** :
+  ni tronqué, ni masqué. Mesuré en base le 2026-09-01 : **40 159 des 268 016 lignes
+  `kind='mcp'`** viennent de là (6 664 avec un `run_id`, donc servies dans la timeline
+  d'un déroulé), et les **111** lignes dont une valeur dépasse la borne annoncée — jusqu'à
+  4 383 caractères — en viennent **toutes** ;
+- **la ligne d'enveloppe** (`tool='oto_call'`) reprenait bien la déclaration de l'outil
+  visé, mais ne masquait qu'**un** niveau de sous-dictionnaire. Le dispatch en ajoute un
+  (`{"name": …, "arguments": {…}}`), donc le seul secret déclaré à deux niveaux
+  (`lemlist_mailbox`, mots de passe SMTP/IMAP sous `smtp_imap`) repartait en clair — et
+  cet outil n'étant pas au registre servi, `oto_call` est le **seul** chemin par lequel il
+  s'appelle : la déclaration ne s'appliquait donc jamais.
+
+Aucun secret n'avait fuité en pratique (0 appel aux deux outils qui en déclarent, 0
+`token`/`code` non masqué sur `oto_org`) : défaut latent, pas incident. Les deux chemins
+passent désormais par `truncated_args`, dont le masquage traverse les sous-dictionnaires
+et les listes jusqu'à `MAX_MASK_DEPTH`.
+
+**Ce que le banc n'avait pas vu, et pourquoi.** Le cliquet de chaînage posé le matin même
+scannait `calllog` — le module qui se déclare « domicile unique du journal ». Il y avait
+raison, et c'est tout le problème : un garde-fou qui part du module DÉCLARÉ ne peut pas
+voir un écrivain qui ne s'y trouve pas. Il part maintenant des modules qui écrivent
+RÉELLEMENT, **découverts** (`tests/test_timeline_args_declare.py`) — avec trois exceptions
+nommées et comptées : le handshake, l'enrichissement du sink (il étend l'`args` déjà
+fabriqué), et la ligne de surface REST (elle ne porte que l'empreinte des jetons du
+chemin). ⚠️ Sa découverte cherche le nom NU : trois des cinq écrivains ne l'appellent pas,
+ils le passent (`asyncio.to_thread(db.insert_tool_call, row)`).
+
+Cliquets : `tests/test_journal_dispatch_universel.py`,
+`tests/test_timeline_args_declare.py`.
 
 **Extensions OTO-LOCALES** (hors contrat canonique, enrichies par le sink de
 `server.py`) — ce sont les axes d'**investigation** :
