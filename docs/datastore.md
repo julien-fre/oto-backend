@@ -753,6 +753,27 @@ pas ce qui l'accompagne (#326). Un refus dur a été écarté : 8 897 cellules �
 sur 59 tableaux en production le 28/08, plus 5 643 listes vides sur 11 — les refuser
 rétroactivement casserait des tableaux qui n'ont rien demandé.
 
+⚠️ **Préserver et le DIRE ne suffit pas quand l'écarté était TOUT le geste (01/09,
+#724).** Le 2026-09-01 entre 04:16 et 04:20, dix `data_write(id=…,
+row={'contacts': []})` sur des fiches clientes : dix `200`, zéro retrait, découverts
+en relisant les fiches. Le relevé `valeurs_ignorees` était bien dans la réponse — mais
+un témoin logé dans le corps d'un succès n'oblige personne à le lire, et le seul
+besoin réel de vider une liste est justement celui d'une fiche dont l'unique entrée
+est à retirer. **Une écriture qui ne pose plus RIEN après arbitrage est désormais
+REFUSÉE** (`datastore_columns.refuser_geste_sans_effet`, appelée par `update_row` et
+`_merge_into_row`), en nommant la colonne et le geste qui marche (`null`).
+
+La ligne de partage n'est PAS le type de la valeur — `[]` reste ce que rend une source
+muette, sur une liste comme ailleurs — mais **l'effet du geste** : si l'écriture pose
+autre chose (la fiche entière réémise, le gabarit à demi peuplé — le geste DOMINANT
+de la flotte, relevé le même jour dans `tool_calls`), rien ne change pour elle : on
+préserve et on relève. Ce partage n'est pas un hasard de rédaction, il garantit deux
+choses : un **LOT** ne peut pas casser dessus (une row de lot porte toujours sa clé
+métier, donc pose — l'objection qui avait fait écarter un refus dur en #608 ne
+s'applique pas ici), et **réécrire une valeur IDENTIQUE reste un no-op accepté**
+(elle est POSÉE, elle se trouve être la même — c'est le refus inverse qui avait
+arrêté la flotte, #623 → #625).
+
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
 du LLM. Un namespace peut déclarer une **clé métier** au schéma (`schema.key`, ex.

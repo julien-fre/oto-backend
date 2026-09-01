@@ -326,12 +326,33 @@ def test_la_chaine_vide_sur_un_champ_deja_vide_ne_dit_rien(table):
 def test_la_chaine_vide_nefface_pas_non_plus_par_id(table):
     """L'autre chemin d'écriture. Les deux ont déjà divergé une fois sur cette
     famille de règles (#322), et c'est le patch par `id` qui est le geste le plus
-    courant d'un agent : une règle câblée d'un seul côté ne protège personne."""
+    courant d'un agent : une règle câblée d'un seul côté ne protège personne.
+
+    ⚠️ Le vide est ici TOUT le geste : depuis #724 il n'est plus accepté-et-relevé,
+    il est REFUSÉ en nommant le champ et `null` — une écriture qui ne poserait rien
+    ne doit pas répondre comme un succès. Ce que le test verrouille n'a pas changé :
+    la valeur en place survit."""
     st, ns, ns_id, rid = table
 
-    st.update_row(ns, rid, {"origine_ligne": ""})
+    with pytest.raises(ValueError) as exc:
+        st.update_row(ns, rid, {"origine_ligne": ""})
+
+    assert "origine_ligne" in str(exc.value) and "null" in str(exc.value), exc.value
+    assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client", \
+        "un refus n'écrit rien — surtout pas l'effacement qu'il refuse"
+
+
+def test_la_chaine_vide_ACCOMPAGNEE_est_preservee_et_relevee_par_id_aussi(table):
+    """Le pendant du refus, sur le même chemin : dès que l'écriture pose autre chose,
+    c'est un gabarit à demi peuplé — le geste dominant des flottes — et #608
+    s'applique tel quel. C'est cette moitié-là qu'il ne faut pas emporter en fermant
+    l'autre : un refus qui mordrait ici arrêterait les campagnes."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"origine_ligne": "", "raison_sociale": "ACME"})
 
     assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client"
+    assert _donnees(ns_id, rid).get("raison_sociale") == "ACME"
     assert st.off_schema_report().get("valeurs_ignorees"), "et il le dit ici aussi"
 
 

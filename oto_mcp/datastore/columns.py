@@ -314,6 +314,48 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     return pose, effaces, ignores
 
 
+def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
+    """REFUSE une écriture qui, après arbitrage, ne pose plus RIEN (#724).
+
+    #608 préserve une valeur en place contre un vide non-`null`, et le DIT
+    (`valeurs_ignorees`). Il reste un cas où le dire ne suffit pas : quand l'écarté
+    était **tout** ce que l'écriture portait. L'appel n'a alors strictement aucun
+    effet, et il répond 200 — un succès qui n'a rien fait, dont le seul témoin est
+    une clé de la réponse que personne n'est obligé de lire. Mesuré en production le
+    2026-09-01 : dix retraits de contact perdus sur des fiches clientes, découverts
+    en relisant les fiches.
+
+    La ligne de partage n'est PAS le type de la valeur — `[]` reste ce que rend une
+    source muette, sur une liste comme ailleurs — mais **l'effet du geste** :
+
+      - l'écriture pose autre chose (la fiche entière réémise, le gabarit à demi
+        peuplé — le geste DOMINANT de la flotte) : elle fait quelque chose, on
+        préserve et on relève. Rien ne change pour elle ;
+      - l'écriture ne pose plus rien : elle ne demandait qu'à vider, elle ne le peut
+        pas par ce chemin, on refuse en nommant celui qui marche.
+
+    Ce que ce partage garantit, et qui n'est pas un hasard de rédaction : un LOT ne
+    peut pas casser dessus (une row de lot porte toujours sa clé métier, donc pose),
+    et réécrire une valeur IDENTIQUE reste un no-op accepté (elle est POSÉE, elle se
+    trouve être la même — c'est le refus inverse qui avait arrêté la flotte, #625).
+    """
+    if not ecartes:
+        return                       # rien n'a été écarté : rien à refuser
+    if any(cle not in _META_COLS for cle in (pose or {})):
+        return                       # le geste pose autre chose : il agit
+    champs = sorted({str(r.get("champ")) for r in ecartes})
+    cite = ", ".join(f"`{c}`" for c in champs)
+    exemple = champs[0]
+    raise ValueError(
+        f"écriture sans effet : {cite} porte une valeur VIDE non-`null` (liste "
+        "vide, chaîne vide, objet vide) sur une valeur déjà en place, et ton "
+        "écriture ne pose rien d'autre — elle ne changerait donc RIEN. Un vide "
+        "non-`null` ne déplace jamais une valeur : c'est ce que rend une source "
+        "muette ou un gabarit à demi peuplé, pas une demande d'effacement. Pour "
+        f"vider ce champ pour de bon, nomme-le avec `null` : "
+        f'{{"{exemple}": null}}. Pour le laisser intact, retire-le du corps.')
+
+
 def _valeur_rendue(valeur: Any) -> Any:
     """La valeur perdue, ou sa TAILLE quand la rendre coûterait la réponse."""
     n = len(valeur) if isinstance(valeur, str) else len(str(valeur))
