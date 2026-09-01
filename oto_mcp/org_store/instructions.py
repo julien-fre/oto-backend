@@ -51,6 +51,34 @@ OWNER_TYPES: tuple[str, ...] = ("org", "group")
 _OWNER_WHERE = "owner_type = %s AND owner_id = %s"
 
 
+class InstructionExists(Exception):
+    """Le slug visé porte DÉJÀ une procédure : une CRÉATION ne l'écrase pas (#662).
+    L'écriture est un upsert depuis toujours (la version monte, l'état antérieur part
+    en révision) — mais un client qui CRÉE, avec un slug fabriqué chez lui pour un
+    agent neuf, n'attend pas de remplacer la procédure d'org qui portait ce nom. Il
+    l'apprenait en relisant. D'où ce refus nommé. `archived` : slug pris par une
+    procédure ARCHIVÉE, donc absente des listings — sans la nuance le refus semblerait
+    porter sur rien, et écrire par-dessus ne désarchiverait pas la ligne (la
+    « création » naîtrait invisible)."""
+
+    def __init__(self, slug: str, version: int, archived: bool):
+        self.slug, self.version, self.archived = slug, version, archived
+        super().__init__(f"slug `{slug}` déjà pris (v{version})")
+
+
+class InstructionVersionConflict(Exception):
+    """Écriture optimiste refusée : la procédure a changé depuis la lecture du client.
+    `current_version` vaut `None` quand elle n'existe pas (ou plus) : annoncer une
+    version attendue, c'est affirmer avoir lu quelque chose, et l'absence dément cette
+    lecture autant qu'un numéro différent. Même parti pris qu'ADR 0044 pour les
+    instances de connecteur et qu'`expected_rev` côté pages (`db.DocConflict`) : le
+    second écrivain relit et rejoue, il n'écrase pas."""
+
+    def __init__(self, current_version: Optional[int]):
+        self.current_version = current_version
+        super().__init__("procédure modifiée depuis la lecture")
+
+
 def normalize_slug(slug: str) -> str:
     """Slug canonique : minuscules, [a-z0-9_-], séparateurs compactés. '' si vide."""
     return _SLUG_RE.sub("-", (slug or "").strip().lower()).strip("-_")
@@ -197,11 +225,21 @@ def search_instructions(owner_type: str, owner_id: int | str, query: str,
 
 def set_instruction(owner_type: str, owner_id: int | str, slug: str, body_md: str,
                     title: Optional[str] = None, description: Optional[str] = None,
-                    set_by: Optional[str] = None, slots: Optional[list] = None) -> int:
+                    set_by: Optional[str] = None, slots: Optional[list] = None,
+                    must_create: bool = False,
+                    expected_version: Optional[int] = None) -> int:
     """Crée/met à jour une instruction ; renvoie la NOUVELLE version et archive un
     snapshot. `title`/`description`/`slots` None = conserver l'existant ('' / [] à
     la création). `slots` = entités requises déclarées (ADR 0035, validées en amont
-    par `slots.validate_slots`). Sérialisé par (owner, slug) via verrou advisory."""
+    par `slots.validate_slots`). Sérialisé par (owner, slug) via verrou advisory.
+
+    Deux gardes anti-écrasement (#662), opt-in, vérifiées SOUS le verrou — qui
+    sérialise deux écritures simultanées sans empêcher la seconde d'écraser :
+    `must_create` veut le slug LIBRE (sinon `InstructionExists`, geste de création),
+    `expected_version` la version que le client a lue (sinon
+    `InstructionVersionConflict`, édition concurrente). Aucune par défaut : l'écriture
+    nue reste l'upsert que la console MCP et le dashboard exercent depuis toujours. Le
+    défaut corrigé est l'absence de tout moyen de NE PAS écraser, pas l'upsert."""
     otype, oid = _owner(owner_type, owner_id)
     slug = normalize_slug(slug)
     if not slug:
@@ -222,10 +260,18 @@ def set_instruction(owner_type: str, owner_id: int | str, slug: str, body_md: st
             conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
                          (f"oi:{otype}:{oid}:{slug}",))
             cur = conn.execute(
-                "SELECT version, title, description, slots FROM org_instructions "
-                f"WHERE {_OWNER_WHERE} AND slug = %s",
+                "SELECT version, title, description, slots, archived_at "
+                f"FROM org_instructions WHERE {_OWNER_WHERE} AND slug = %s",
                 (otype, oid, slug),
             ).fetchone()
+            # Gardes anti-écrasement DANS la transaction verrouillée : entre un
+            # pré-check hors verrou et l'INSERT, une écriture concurrente se glisse.
+            if must_create and cur is not None:
+                raise InstructionExists(slug, cur["version"],
+                                        cur["archived_at"] is not None)
+            if expected_version is not None and (
+                    cur is None or cur["version"] != expected_version):
+                raise InstructionVersionConflict(cur["version"] if cur else None)
             new_version = (cur["version"] + 1) if cur else 1
             new_title = title if title is not None else (cur["title"] if cur else "")
             new_desc = description if description is not None else (cur["description"] if cur else "")

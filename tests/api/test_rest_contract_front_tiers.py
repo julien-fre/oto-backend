@@ -525,3 +525,60 @@ def test_les_poignees_ouvrent_bien_les_autres_surfaces(client, org, noeuds):
                     json={"op": "backlinks", "doc_id": noeuds["did"]})
     assert r.status_code == 200, r.text
     assert r.json()["doc_id"] == noeuds["did"]
+
+
+# ── POST /api/me/instructions : créer sur un slug pris = 409 (#662) ────────────
+
+_PROC = ("> **Self-improvement digest** — jamais déroulée.\n\n"
+         "# Qualification\n\n```\n[Début] --> [Fin]\n```\n\nCorps.")
+
+
+def test_creer_une_procedure_sur_un_slug_pris_rend_409_sur_la_route_servie(client, org):
+    """Le signal du front tiers, rejoué au ras du fil.
+
+    Il fabriquait son slug côté client et appelait `PUT …/instructions/{slug}` faute
+    de verbe de création : un slug déjà pris répondait `200 ok` en ayant remplacé la
+    procédure d'org. Le `POST` refuse — et la procédure en place se relit inchangée,
+    ce qui est la moitié qui compte : un refus qui aurait déjà écrit ne vaudrait rien."""
+    admin = org["admin"]
+    r = client.post("/api/me/instructions", headers=_h(admin),
+                    json={"slug": "qualification", "body_md": _PROC, "title": "Qualif"})
+    assert r.status_code == 200, r.text
+    assert (r.json()["slug"], r.json()["version"]) == ("qualification", 1)
+
+    r = client.post("/api/me/instructions", headers=_h(admin),
+                    json={"slug": "qualification", "body_md": "AUTRE CORPS"})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"] == "slug_taken"
+    assert r.json()["detail"]                       # actionnable, pas un code nu
+    assert r.json()["details"]["version"] == 1
+
+    relue = client.get("/api/me/instructions/qualification", headers=_h(admin)).json()
+    assert (relue["body_md"], relue["version"]) == (_PROC, 1)
+
+    # …et le PUT, lui, édite toujours : le refus n'a pas fermé le geste d'édition.
+    r = client.put("/api/me/instructions/qualification", headers=_h(admin),
+                   json={"body_md": _PROC + "\n\nÉdité."})
+    assert (r.status_code, r.json()["version"]) == (200, 2)
+
+
+def test_editer_avec_une_version_perimee_rend_409_version_conflict(client, org):
+    """Le pendant sur le chemin d'ÉDITION : `expected_version` transforme
+    l'écrasement d'un éditeur concurrent en refus, comme `expected_rev` sur les pages."""
+    admin = org["admin"]
+    r = client.post("/api/me/instructions", headers=_h(admin),
+                    json={"slug": "relance-clients", "body_md": _PROC})
+    assert r.status_code == 200, r.text
+
+    r = client.put("/api/me/instructions/relance-clients", headers=_h(admin),
+                   json={"body_md": _PROC + "\n\nv2 posée par un autre."})
+    assert (r.status_code, r.json()["version"]) == (200, 2)
+
+    r = client.put("/api/me/instructions/relance-clients", headers=_h(admin),
+                   json={"body_md": "MA VERSION", "expected_version": 1})
+    assert r.status_code == 409, r.text
+    assert r.json()["error"] == "version_conflict"
+    assert r.json()["details"]["current_version"] == 2
+    # Le travail de l'autre a survécu.
+    relue = client.get("/api/me/instructions/relance-clients", headers=_h(admin)).json()
+    assert relue["body_md"].endswith("v2 posée par un autre.")
