@@ -206,11 +206,11 @@ def register(mcp: FastMCP) -> None:
                               export_attributes: Optional[list[str]] = None) -> dict:
         """Export **asynchrone** des contacts. Renvoie `{"processId": …}`, pas les données.
 
+        Pour lire des contacts directement, préférer `brevo_contact(op="list")` (paginé).
+
         Args:
             contact_filter: `{"listIds": [1]}` | `{"segmentId": 2}` |
                 `{"emailBlacklisted": true}`. Défaut = tous les contacts actifs.
-
-        Pour lire des contacts directement, préférer `brevo_contact(op="list")` (paginé).
         """
         return _client().export_contacts(
             contact_filter=contact_filter, export_attributes=export_attributes)
@@ -321,13 +321,13 @@ def register(mcp: FastMCP) -> None:
         - **template** : `template_id` + `params` (variables `{{params.NOM}}`) ;
         - **direct** : `subject` + `html_content` + `sender`.
 
+        Pour un envoi de masse à une liste, c'est une campagne — pas ce tool.
+
         Args:
             to: `[{"email": "a@b.c", "name": "Alex"}]` — max 99 destinataires.
             sender: `{"email": …, "name": …}`. Doit être un expéditeur **vérifié**
                 du compte (cf. `brevo_account`), sinon Brevo refuse l'envoi.
             scheduled_at: ISO 8601 UTC, jusqu'à 72 h dans le futur.
-
-        Pour un envoi de masse à une liste, c'est une campagne — pas ce tool.
         """
         return _client().send_email(
             to=to, subject=subject, html_content=html_content, sender=sender,

@@ -44,9 +44,9 @@ def test_state_roundtrip_carries_group_scope_and_group_id():
 
 
 def test_state_roundtrip_carries_return_app():
-    state = salesforce_oauth.make_state("sub-1", 7, "member", "v", return_app="tulina")
+    state = salesforce_oauth.make_state("sub-1", 7, "member", "v", return_app="acme")
     got = salesforce_oauth.verify_state(state)
-    assert got == ("sub-1", 7, "member", "v", None, "tulina")
+    assert got == ("sub-1", 7, "member", "v", None, "acme")
 
 
 def test_state_missing_app_key_defaults_to_empty_string():
@@ -137,15 +137,20 @@ def test_build_auth_url_uses_this_customers_own_client_id(monkeypatch):
 
 def test_build_auth_url_embeds_known_return_app(monkeypatch):
     from oto_mcp import access
+    from oto_mcp.auth import flow as oauth_flow
+    # Entrée FICTIVE dans la liste fermée : ce test porte sur le fait qu'une clé
+    # LISTÉE survit jusqu'au state, pas sur l'identité d'un front réel.
+    monkeypatch.setitem(oauth_flow.RETURN_APPS, "acme",
+                        ("https://app.acme.test", "/org/{org}/connectors"))
     monkeypatch.setattr(access, "current_org", lambda sub: 99)
     _stub_saved_fields(monkeypatch, {
         "client_id": "cid", "client_secret": "secret",
         "login_url": "https://acme.my.salesforce.com",
     })
-    url = salesforce_oauth.build_auth_url("sub-1", "member", return_app="tulina")
+    url = salesforce_oauth.build_auth_url("sub-1", "member", return_app="acme")
     state = parse_qs(urlparse(url).query)["state"][0]
     _, _, _, _, _, return_app = salesforce_oauth.verify_state(state)
-    assert return_app == "tulina"
+    assert return_app == "acme"
 
 
 def test_build_auth_url_unknown_return_app_is_reduced_to_empty(monkeypatch):

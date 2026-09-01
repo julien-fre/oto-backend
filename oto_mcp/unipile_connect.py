@@ -118,8 +118,8 @@ def _return_to(app: "str | None", org_id: "int | None", suffix: str) -> str:
     """Où Unipile dépose la personne à la fin du wizard hébergé.
 
     Le hosted-auth sort du site : c'est la SEULE chose qui décide sur quel front
-    on se réveille. Tant que c'était codé sur oto-dashboard, un utilisateur de
-    Tulina finissait sa connexion chez un autre produit — et pas seulement de
+    on se réveille. Tant que c'était codé sur oto-dashboard, un utilisateur d'un
+    tenant tiers finissait sa connexion chez un autre produit — et pas seulement de
     façon disgracieuse : la liaison du compte se fait par réconciliation, sous le
     JWT du front d'arrivée. Atterrir sur le mauvais front, c'est réconcilier sous
     un AUTRE sub, donc ne rien lier du tout (vécu le 2026-08-22).
@@ -233,7 +233,7 @@ async def hosted_auth_url(sub: str, channel: str = "linkedin",
         mine = db.seat_binding_elsewhere(sub, provider, exclude_org=org_id)
         if mine:
             # Ne ré-adopter QUE si la session est VIVANTE (sonde 401). Ré-adopter un
-            # compte mort laisse l'user « connecté » sur un 401 (vécu Alexandra :
+            # compte mort laisse l'user « connecté » sur un 401 (vécu en interne :
             # disconnect→connect ré-adoptait le cadavre au lieu d'ouvrir un login).
             # Compte mort ⟹ on tombe dans le wizard EN RECONNEXION de CE compte
             # (type=reconnect, même account_id — pas un doublon). Fail-soft : sonde

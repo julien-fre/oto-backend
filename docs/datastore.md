@@ -192,6 +192,40 @@ correctif de la lecture est un lot à part, avec sa propre mesure.
 place. Un tableau dont le statut n'a aucun état terminal est une file qui ne libère
 rien : `set_schema` le signale à la pose.
 
+**Le bail servi dit POUR QUEL RUN : `_claimed_run` (01/09/2026).** Les lignes servies
+portaient deux tiers du bail — à QUI (`_claimed_by`) et JUSQU'À QUAND
+(`_claimed_until`) — jamais POUR QUEL RUN, alors que `datastore_rows.claimed_run` le
+porte depuis #317. Une vue de surveillance voyait donc qu'un agent tenait une ligne et
+jamais **laquelle** : elle pouvait relier un travail à son TABLEAU, pas à sa LIGNE. Le
+serveur savait pourtant déjà répondre — l'alias `@claimed` résout run → ligne par cette
+même colonne — mais seulement au run **lui-même**, qui doit porter son jeton ; jamais à
+un tiers qui regarde la file.
+
+`_claimed_run` est désormais rendu partout où `_claimed_by` l'est (liste, fiche par id,
+les deux curseurs, `queue`, et le claim lui-même). **Trois états, pas deux :**
+
+| forme | sens |
+|---|---|
+| `_claimed_run: "<run>"` | ce run tient la ligne — l'adresse du travail en cours |
+| `_claimed_run: null` | le bail a été pris **sans run** (une personne sur la file du dashboard, un agent qui n'a pas passé `_run_id`) — un fait, pas un trou |
+| clé **absente** (comme `_claimed_by`) | pas de bail du tout ; sur des millions de lignes jamais réservées, trois `null` par ligne seraient du bruit dans toutes les lectures |
+
+⚠️ **Ce que `_claimed_run` ne dit PAS.** Il répond « sur quelle ligne ce run est-il
+MAINTENANT », jamais « quelle ligne ce run a-t-il travaillée » : rendre les lignes d'un
+run (`run_finish`, ou le runner concluant son job, #633) efface la colonne. Le lien
+avec un travail **conclu** ne peut donc pas venir d'ici — il doit venir du harnais, qui
+connaît sa ligne (et qui, sur le chemin « conversations », ne la connaît pas toujours :
+il la retrouve par alias, et ce recours échoue dès que la ligne est relâchée).
+
+⚠️ `datastore_release` n'efface pas `claimed_run` (#664), donc la colonne peut rester
+garnie sur une ligne libre. **Rien n'en sort** : la projection ne parle du run que sous
+`claimed_by IS NOT NULL`. Et `_row_to_dict` lit la colonne **par clé**, pas par `.get` :
+un chemin de lecture qui l'oublierait LÈVE au lieu de servir un faux « ce bail n'a pas
+de run ». La garde mécanique est
+`tests/datastore/test_claimed_run_projection.py::test_toute_projection_de_ligne_porte_claimed_run`
+— elle relit par AST les requêtes de `db/` et refuse celle qui projette une ligne avec
+`claimed_by` sans `claimed_run`.
+
 **Le plafond de reprises : distinguer « ça tourne » de « ça tourne à vide » (#433).**
 Depuis que la ligne réservée est liée au run, la conclusion d'un traitement la libère —
 c'est le design. Effet de bord mesuré au rodage d'une campagne : un agent qui réserve,
@@ -329,6 +363,29 @@ vraie réponse, et coûterait un parcours verrouillé de tout le namespace. ⚠�
 cacherait des données réelles, alors que le contrat 0016 promet qu'un champ libre
 *s'affiche* et que #294 vient de trancher « signaler, jamais refuser ni masquer ». On
 supprime la colonne ou on la déclare ; on ne la rend pas invisible.
+
+⚠️ **Une purge qui ne touche rien est un REFUS, plus un `rows: 0` (#680, 01/09/2026).**
+Le même zéro valait pour deux vérités opposées — « la colonne existait, aucune ligne ne
+la portait » et « ce nom n'est pas une colonne, rien n'a été fait ». Mesuré alors qu'une
+purge d'environ 190 noms hors schéma s'apprêtait à partir sur un fichier de production :
+elle était inoffensive, mais **personne ne pouvait le savoir avant de l'essayer**, et
+l'opérateur aurait coché comme retirés des noms jamais touchés — le contournement étant
+de recompter l'inventaire APRÈS coup au lieu de lire les réponses. Le succès porte donc
+toujours `rows >= 1` ; l'ambiguïté disparaît au lieu de se signaler. Le refus dit
+laquelle des deux choses il constate, et **le diagnostic se fait APRÈS la purge, jamais
+avant** : une clé pointée LITTÉRALE au premier niveau du blob (posée par un chemin qui a
+contourné la garde d'écriture, cf. #647) *est* une colonne, elle se retire, et refuser
+sur la seule forme du nom la rendrait inatteignable. Deux branches, donc :
+`site_web.comment` quand `site_web` existe pour de bon (en base — `datastore_has_column`,
+prédicat EXACT là où `datastore_row_keys` échantillonne — ou au schéma) est nommé pour ce
+qu'il est, une **annotation** servie à plat mais stockée sous sa colonne, avec le geste
+qui la retire (`data_write {"site_web": {"comment": null}}`, éprouvé au banc) ; sinon
+c'est « aucune colonne de ce nom », sans jamais nommer une colonne porteuse qui
+n'existe pas — **une destination inventée est pire qu'une destination absente**.
+⚠️ Corollaire au-delà de la purge : une colonne à couches a **trois formes** (écrite,
+stockée imbriquée, servie aplatie par `flat_layers`), donc tout contrôle qui compare les
+clés SERVIES aux `fields` déclarés compte chaque couche comme une colonne inventée — 304
+couches prises pour 304 colonnes fabriquées le 31/08.
 
 **Dire ce que cette version fait respecter (#389).** Quatrième signal du même jour sur
 `data_set_schema`, et celui qui rendait les trois autres dangereux : il ne demandait pas
@@ -512,12 +569,13 @@ donc geler aucune ligne existante. Un motif hérité qui ne passerait pas le gar
 INERTE à l'écriture (`pattern_of` est muette, comme `max_length_of` sur une borne mal
 formée) mais fait REFUSER la prochaine pose du schéma : c'est là qu'on peut encore corriger.
 
-**Les champs que l'appelant n'écrit pas (#586, #606, 29/08/2026).** Deux crans de
-colonne sous UNE garde (`dsv2.reserved_refusals`, le geste dans `datastore/reserves.py`),
-pour deux gestes mesurés sur la même campagne contre la donnée remise par le client —
-l'écraser, et détruire sa copie de secours. Même hiérarchie que #516 : le chemin
-n'existe pas > la machine refuse > un contrôle détecte > la consigne interdit ; jusqu'ici
-un contrôle de fin de passage détectait après coup.
+**Les champs que l'appelant n'écrit pas (#586, #606, #607 ; 29/08 → 01/09/2026).** Trois
+crans de colonne sous UNE garde (`dsv2.reserved_refusals`, le geste dans
+`datastore/reserves.py`), pour trois gestes mesurés sur la même campagne contre la
+donnée remise par le client — l'écraser, détruire sa copie de secours, et graver une
+déclaration à la place d'une trace. Même hiérarchie que #516 : le chemin n'existe pas >
+la machine refuse > un contrôle détecte > la consigne interdit ; jusqu'ici un contrôle
+de fin de passage détectait après coup.
 
 - **`readonly: true` — la colonne du fichier source.** Mesuré au 5ᵉ passage : **quatorze
   valeurs sur douze fiches par cent** (`adresse` ×9, `naf` ×3, `date_creation` ×2)
@@ -580,10 +638,47 @@ un contrôle de fin de passage détectait après coup.
   ⚠️ **La capture est PARESSEUSE, pas à la pose du schéma** : un format ne vaut que pour
   l'avenir et ne réécrit aucune ligne (doctrine de `_overlong_warning` et consorts) — et
   elle rend la MÊME valeur, puisque rien n'a bougé entre la pose et la première
-  modification. Refusé à la pose sur un composite ou un `json` (exempt de la grammaire
-  des couches, #329), sous un sous-record, sur une cible de couche ; se combine avec
+  modification. Refusé à la pose sur un composite ou un `json` (la capture rangerait
+  l'objet entier dans la couche — ⚠️ **motif reformulé le 2026-09-01, #728** : il
+  invoquait l'exemption `json` de la grammaire des couches, qui ne vaut plus pour
+  l'adresse ; c'est la pose AUTOMATIQUE qui ne s'y déclare pas, l'annotation elle-même
+  s'y écrit à la main), sous un sous-record, sur une cible de couche ; se combine avec
   `readonly` (valeur verrouillée ET couche d'origine fermée — la pose n'a jamais lieu
   tant que la valeur ne bouge pas, et joue le jour où le propriétaire lève `readonly`).
+- **`system: "<source>"` — la VALEUR posée par la plateforme (#607, 01/09/2026).** Une
+  colonne `modele` que l'agent remplissait de mémoire dérivait : `…2407` sur une fiche,
+  `…2511` sur une autre le lendemain, quand les 102 travaux enregistrés du run disaient
+  tous `…2512`. *Une valeur recopiée de mémoire est une déclaration, pas une trace.* Le
+  cran est le frère d'`origine: "system"` d'un cran plus haut : là la plateforme pose une
+  COUCHE une seule fois, ici elle pose la valeur de base **à chaque écriture**, sans que
+  l'appelant nomme la colonne — et toute écriture de l'appelant dessus est refusée en
+  nommant la source. Sources FERMÉES : `run.id`, `run.started_at`, `write.at`.
+  **Hors run, rien n'est posé et le refus reste** : une estampille devinée serait la
+  déclaration de mémoire qu'on remplace, avec le sceau de la plateforme en plus.
+  ⚠️ **`run.model` est REFUSÉ à la déclaration, et le refus dit pourquoi.** La source que
+  la demande visait n'existe nulle part côté serveur — `runs` n'a pas de colonne `model`,
+  `run_start` n'en reçoit pas, `runner_jobs.result` n'en porte pas, et le handshake ne
+  connaît qu'un nom de CLIENT (`claude.ai`, `Claude Code`), qui n'est pas un modèle. La
+  seule valeur disponible serait celle que l'appelant en dit : le cran aurait blanchi la
+  déclaration de mémoire au lieu de la remplacer. Ce qui est servi à la place est le
+  **pointeur** — `run.id` sur la ligne, et ce que le run sait se lit au run : *une valeur
+  qu'on rejoint ne dérive pas, une valeur qu'on recopie dérive.* Rouvrir `run.model`
+  demande d'abord une colonne `runs.model` et un point qui l'écrit ; c'est un lot, et il
+  traverse le contrat du runner.
+  **Une valeur identique reste un no-op**, comme pour ses deux sœurs — et il en faut
+  DEUX ici : celle qu'on s'apprête à poser (l'agent réémet l'estampille courante) et
+  celle DÉJÀ en base (une fiche lue sous le run A, réémise sous le run B — c'est notre
+  propre lecture qui revient). Refusée : celle qui ne vient d'aucune des deux.
+  Refusé à la pose sur un composite/`json`, sous un sous-record, sur la **clé métier**
+  (la plateforme déciderait de l'identité des lignes, et chaque écriture viserait une
+  ligne neuve) et **avec `readonly` sur la même colonne** : l'un dit « ne change
+  jamais », l'autre « reposée à chaque écriture » — ensemble l'un des deux ment, et le
+  schéma ne dit pas lequel. `run.started_at` lit `runs` une fois par run (cache borné,
+  même parti que `run_org`, la colonne étant immuable) ; `run.id` et `write.at` ne
+  coûtent aucune I/O.
+  ⚠️ **La pose n'entre pas dans les clés « écrites » que voit la validation** : la borne
+  de longueur et le motif se jugent sur ce que l'APPELANT pose, et un refus portant sur
+  une valeur qu'il ne contrôle pas serait inactionnable.
 
 ⚠️ **Le cran borne TOUT LE MONDE, faces humaine et REST comprises — et c'est dit.** Le
 store ne sait pas distinguer un agent d'un humain : il connaît un sub et une org, et le
@@ -602,10 +697,16 @@ readonly absente du corps compte comme changée). ⚠️ **Pas dans le registre 
 (#602)** : celui-ci juge AVANT la résolution, sans schéma ; un champ réservé est une
 propriété du TABLEAU et se juge là où le schéma est connu. Les deux se complètent —
 jeton mal placé : « il s'écrit dans tel champ » ; champ réservé : « il ne s'écrit pas,
-voici où va la chose ». ⚠️ **#607 (un champ posé depuis une source déclarée : modèle du
-run, identifiant, horodatage) reste à son issue** : la pose y lit le RUN à chaque
-écriture — une I/O sur le chemin chaud et un registre de sources —, ce que cette garde
-n'accueille pas sans grossir ; le seam de refus, lui, est prêt à l'accueillir.
+voici où va la chose ».
+
+⚠️ **Ce paragraphe a dit le contraire jusqu'au 2026-09-01.** Il annonçait « #607 reste à
+son issue : la pose y lit le RUN à chaque écriture — une I/O sur le chemin chaud —, ce
+que cette garde n'accueille pas sans grossir ». **Les deux moitiés étaient fausses** :
+le run de l'appel est une ContextVar (`_current_run`, aucune I/O), et la seule source
+qui touche la base (`run.started_at`) se cache derrière un cache par run, la colonne
+étant immuable. La conclusion « c'est un autre lot » reposait donc sur un coût supposé,
+jamais mesuré. *Une réserve de perf qu'on n'a pas mesurée est une opinion qui prend
+l'autorité d'un fait en étant écrite ici.*
 
 **Retoucher un schéma sans le détruire (#388).** `data_set_schema` REMPLACE — bon geste
 pour POSER un format, piège pour l'ÉDITER : deux appels indiscernables (même méthode,
@@ -674,6 +775,42 @@ en base ne doit pas ré-alerter à chaque patch), il agrège un lot en une entr�
 chemin (`contacts[].tel`), et il est **vide hors strict** — là, le champ libre est un
 droit explicite du contrat, pas une anomalie. Refuser franchement aurait été plus net,
 mais aurait cassé cette liberté : ce qui manquait était un signal, pas une barrière.
+
+**…et depuis le 01/09/2026, un tableau peut demander la barrière (#614/#678).** Le
+signal a tenu un an et il a une limite mesurée : `strict` **promettait** un refus et
+livrait un signalement, si bien qu'on a cessé de surveiller ce qu'on croyait gardé —
+douze clés inventées en vingt-deux occurrences au dernier relevé, dont trois dans des
+fiches clientes, et 162 colonnes hors schéma accumulées dans un fichier de production.
+*Une option qui promet plus qu'elle ne fait est pire qu'une option absente.* La réponse
+n'est pas de fermer le premier niveau — ce serait retirer un droit du contrat 0016 et
+casser l'exploration d'un tableau non encore typé — mais de le **paramétrer** :
+`unknown_fields` en clé de tête, `"report"` (le défaut, tout ce qui précède) ou
+`"reject"`. En `reject`, la colonne non déclarée est **refusée**, rien n'est stocké, et
+le refus nomme la colonne, le référentiel (borné à 15 noms) et le fait qu'**aucune
+colonne déclarée ne porte ce nom** — jamais une destination approchante : *une
+destination inventée est pire qu'une destination absente*, et une colonne inconnue n'en
+a aucune par construction.
+
+- **Clé distincte plutôt que `strict: "refuse"`** : `strict` est lu comme un BOOLÉEN à
+  cinq endroits (`validation_active`, `off_schema_keys`, `validate_row`,
+  `claimable.erreurs`, `_orphan_columns_warning`) — en changer le type ferait mentir
+  chaque lecture existante, en silence, et sur le chemin chaud.
+- **Le refus vit au même seam que le relevé** (`_check_row`) et partage son prédicat
+  (`_unknown_subkeys`) : le rapporteur et le refuseur ne peuvent pas diverger sur ce
+  qu'est « hors du référentiel ». Il couvre donc les six portes d'un coup, upload signé
+  compris.
+- **Il juge ce que le geste POSE, jamais le mergé** — c'est ce qui le rend tenable : un
+  tableau qui porte déjà 162 colonnes hors schéma reste écrivable, et un patch sur une
+  colonne sans rapport ne se fait pas refuser pour un défaut hérité (la faute de #284,
+  sur une autre règle).
+- **Un cran qui ne pourrait pas s'appliquer est refusé à la POSE** : `reject` sans
+  `strict` (rien n'est relevé hors strict — il ne parlerait jamais) ou sans aucun champ
+  déclaré (tout serait hors schéma — le tableau serait inécrivable d'un coup). Les deux
+  extrêmes du même trou, et refuser d'être inerte est la moitié du lot : reproduire en
+  le corrigeant le défaut qu'on corrige serait le comble.
+- Il se pose par `data_patch_schema(unknown_fields="reject")` — un tableau se ferme
+  quand il a FINI d'être exploré, donc quand son schéma est long, et le poser par `set`
+  obligerait à réécrire quatre-vingts champs pour une clé de tête. `enforced` l'annonce.
 
 **…mais DANS un composite déclaré, `strict` REFUSE (#544, 29/08/2026).** La liberté
 qu'on protège au premier niveau n'existe pas un cran plus bas, et c'est toute la
@@ -752,6 +889,67 @@ pose `{"valeur": "", "origine": …}` garde son origine — écarter la valeur v
 pas ce qui l'accompagne (#326). Un refus dur a été écarté : 8 897 cellules à chaîne vide
 sur 59 tableaux en production le 28/08, plus 5 643 listes vides sur 11 — les refuser
 rétroactivement casserait des tableaux qui n'ont rien demandé.
+
+⚠️ **Un vide qui ne pose RIEN d'autre est REFUSÉ, et le refus écrit la porte (#724,
+01/09/2026).** Entre 04:16 et 04:20 ce jour-là, dix `data_write(id=…,
+row={'contacts': []})` sur des fiches clientes : dix `200`, zéro retrait, découverts en
+relisant les fiches.
+
+**La porte existait, et la réponse la nommait déjà** : `contacts: null` efface, et
+`valeurs_ignorees_hint` disait mot pour mot « Pour vider un champ pour de bon, nomme-le
+avec `null` ». Elle n'a pas été empruntée — il n'y a eu **qu'une seule** écriture `null`
+explicite ce jour-là, sur une table d'**essai** jetable, jamais sur les fiches ratées,
+dont l'une porte encore le contact qu'on voulait retirer. C'est la réfutation de « il
+suffit de le dire » : **un témoin logé dans le corps d'une réponse réussie n'oblige
+personne à le lire.** Le refus, lui, ne se rate pas, et il arrive au moment où
+l'appelant peut encore corriger.
+
+**Deux options ont été écartées, et savoir pourquoi évite de les rejouer.**
+
+*Faire effacer la liste vide, comme `null`* : détruit la charge dominante, où `[]` veut
+dire « rien trouvé ». *Faire effacer la liste vide SEULE* : ferait dépendre un geste
+**destructeur** de ses voisines — « selon le contexte ta donnée disparaît » est une
+perte silencieuse, quand « selon le contexte ton appel échoue » est un désagrément qui
+enseigne. La contextualité d'un refus ne coûte pas ce que coûte celle d'un effacement.
+
+**La mesure qui fonde tout ça** — journal de production, 30 j glissants au 2026-09-01
+(`tool_calls` croisé avec `datastore_rows`) :
+
+| mesure | valeur |
+|---|---|
+| écritures unitaires `data_write` | 43 444 |
+| … portant une **liste vide** | **574** (chaînes vides : 296, population distincte) |
+| … qui **réémettent la fiche entière** | **562 — 98 %** |
+| … qui portent le **vide seul** | **12 — 2 %** |
+| couples (appel, colonne) résolubles en base | 324 |
+| … visant une colonne **encore peuplée** | **105 — 32 %**, dont **104 réémissions** |
+
+⚠️ **Trois réserves, et la troisième est une déduction, pas une mesure.** Les arguments
+journalisés sont tronqués à 300 caractères par valeur : les listes vides des longues
+fiches réémises sont coupées, donc **sous-comptées**. 250 couples n'ont pas pu être
+résolus (`id=@claimed`, ou identifiant de table absent des arguments). Enfin, la valeur
+« en place » est relue **aujourd'hui** : une colonne vidée depuis se présente comme
+« rien à perdre », ce qui a d'abord fait conclure que le vide seul ne visait qu'**une**
+colonne peuplée. C'est faux. Neuf des dix lignes du 01/09 portent aujourd'hui une valeur
+nulle alors qu'aucune liste vide n'y a jamais été écrite — si elles avaient été vides à
+l'instant de l'appel, elles porteraient `[]`. **Par quel geste elles sont passées à nul,
+le journal tronqué ne le dit pas ; ce qui est établi par élimination, c'est qu'elles
+étaient peuplées quand les appels ont échoué.** Le cas réel n'est donc pas « un appel
+par mois » mais neuf en quatre minutes.
+
+**La règle, portée par `datastore_columns.refuser_geste_sans_effet`** (appelée par
+`update_row` et `_merge_into_row`, donc les deux chemins, #322) : la ligne de partage
+est l'**effet du geste**, pas le type de la valeur.
+
+- l'écriture **pose autre chose** (fiche réémise, gabarit à demi peuplé) : inchangée —
+  la valeur en place survit et c'est dit (#608). **Cette branche protège les 104** ;
+- l'écriture **ne pose plus rien** : refus, et le message **écrit** `{"champ": null}`
+  en toutes lettres plutôt que de s'en remettre à un relevé.
+
+Conséquence structurelle : une row de **lot** porte toujours sa clé métier (c'est par
+elle que la fusion l'a trouvée), donc elle pose — un import de 500 lignes est par
+construction une réémission et ne peut pas casser sur ce refus. C'était l'objection qui
+avait fait écarter un refus dur en #608 ; elle ne s'applique pas ici.
 
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
@@ -873,6 +1071,22 @@ déploiement progressif ne doit pas perdre ce qu'un nœud plus récent a écrit)
 REFUSÉE par son nom à l'écriture (une couche mal orthographiée s'apprend tout de
 suite, pas six semaines plus tard). ⚠️ Un dict qui mêle une couche connue et une clé
 inconnue reste une donnée `json` métier — arbitré en #329.
+
+⚠️ **Une colonne déclarée `json` S'ANNOTE** (2026-09-01, #728). Elle ne s'annotait pas,
+et le refus **mentait sur ce qu'il avait regardé** : « `X` n'est aucune colonne de ce
+tableau : ni dans cette écriture, ni sur la ligne visée, ni au schéma » — alors que le
+geste écrivait `X` deux clés plus haut et que le schéma la déclare. L'exemption `json`
+(l'objet métier ne se réinterprète pas) portait aussi sur l'ADRESSE : l'annotation
+n'était jamais rangée, restait pointée, et tombait dans le refus réservé aux colonnes
+introuvables. Asymétrie qui a mis la puce à l'oreille : `effectif.comment`, colonne
+scalaire, passait dans la MÊME écriture. **L'exemption protège le CONTENU de l'objet,
+pas le droit d'annoter la colonne** — le lecteur ne l'a jamais exemptée (`flat_layers`
+sert `X.comment` pour toute colonne), donc l'écriture doit reprendre ce qu'il sert.
+Restent exempts : le contenu de l'objet, et la garde des couches mixtes ci-dessus.
+Une seule ambiguïté en découle, et elle se tranche sur la VALEUR : un objet métier qui
+porte un champ nommé `comment` est servi comme s'il portait l'annotation, donc une
+réémission renvoie les deux formes — même valeur ⟹ c'est la lecture qui revient, on ne
+touche à rien ; valeur différente ⟹ refus qui nomme les deux.
 
 **Le blob lu en TEXTE** (recherche plein-texte, extrait, embedding) est reconstruit
 avec les valeurs à la place des enveloppes (`ROW_VALUES_TEXT_SQL`), sinon `q=hunter`
@@ -1257,7 +1471,7 @@ un sens** — `oto_mcp/datastore/jetons.py` —, et les deux faces s'en servent.
 
 | jeton | ce qu'il désigne | champs qui l'acceptent |
 |---|---|---|
-| `@claimed` | la ligne que le run réserve, et son tableau | `namespace`, `id` |
+| `@claimed` | la ligne que le run réserve, et son tableau — **tant que le run est ouvert** (#645) | `namespace`, `id` |
 | `slot:<nom>` | le tableau bindé sous ce nom par le projet actif | `namespace` |
 | `*` | toutes les colonnes | `fields` |
 
@@ -1348,3 +1562,51 @@ sinon `bind_run`), best-effort, et rend `rows_released` avec **`0` explicite** �
 distingue « zéro ligne rendue » de « champ absent ». Détail et table des formes :
 `docs/runner-et-automatisations.md` § `complete`. Reste non couvert : l'agent
 conversationnel (hors runner) qui meurt — le bail seul.
+
+## `@claimed` après la clôture : un refus qui dit un MOMENT (#645, 30/08)
+
+**Suite directe du précédent, et son coût.** La clôture libère (#613) ; ce que personne
+n'avait dit, c'est que l'ADRESSE cesse de résoudre au même instant. Huitième passage du
+palier, 30/08/2026 : **99 refus sur 200 écritures**, tous « `@claimed` en tableau : ton
+travail ne tient aucune ligne en ce moment (aucune réservation active) » — émis sur des
+appels d'un harnais qui écrivait **après** `run_finish`. Le refus était exact et décrivait
+un **état** ; le problème était un **moment**.
+
+> **Un refus juste qui n'est pas le bon refus coûte autant qu'un refus faux** : il envoie
+> chercher une réservation oubliée là où c'est l'ordre des gestes qui est en cause. Deux
+> heures perdues, sur un mécanisme découvert deux fois à douze heures d'écart.
+
+**Ce qui change.** Quand le run de l'appel est clos, le refus le dit — « ton travail est
+CLOS depuis `<horodatage>` (`run_finish`), et sa clôture a libéré toutes ses lignes —
+l'alias ne désigne une ligne que TANT QUE le travail est ouvert, jamais après » — au lieu
+du texte de fin de file, qui reste servi quand le run est **ouvert** (c'est le cas normal,
+#517). L'heure y est parce que c'est elle qui fait le lien avec le geste précédent :
+« depuis 21:08:53 » se reconnaît dans un journal, « clos » ne se reconnaît pas.
+
+⚠️ **La clôture se lit du FAIT, jamais de l'index** — `db.run_closed_at` réutilise
+`_run_closure`, comme les lentilles. `runs.finished_at` est une écriture de confort que
+`finish_run` rate en silence quand l'index n'a pas été posé : un refus qui annoncerait
+une clôture d'après une colonne manquée mentirait exactement dans le cas qu'il est censé
+expliquer. Cas figés dans `tests/test_run_single_source.py`.
+
+⚠️ **Chemin d'ÉCHEC seulement**, et **le refus prime sur sa propre précision** : la
+requête n'est payée que lorsque le run ne tient rien (le nominal résout un bail sans y
+passer, test dédié), et si le journal est illisible on journalise puis on retombe sur le
+texte de fin de file — une erreur interne effacerait la conduite au moment précis où elle
+sert (`_adresse_reservee`).
+
+**Et la borne est dans la description servie**, là où le geste se construit : `data_write`
+la porte sur ses deux champs qui acceptent l'alias (`id` : « it resolves only while that
+run is OPEN, `run_finish` releases what it held » ; `namespace` : « open run only ») —
+l'asymétrie entre les deux est précisément ce qui avait coûté deux écritures le 29/08
+(#599) — et `data_release` sur sa phrase d'alias. Empreinte servie mesurée par
+`scripts/empreinte_servie.py --diff` : `data_release` description **+30**, `data_write`
+schéma **+72** ; aucune autre. Le refus ne prescrit **aucun outil de plus** : l'identifiant
+de la ligne est une valeur déjà reçue, pas un geste à exécuter (règle #613/#632,
+`docs/conventions.md`).
+
+Preuve de bout en bout dans `tests/datastore/test_claimed_run_clos_645.py` : réserver sous
+`_run_id=R`, clore R, écrire sous `@claimed` — contre PostgreSQL, par les outils montés
+par `register_all`, chaque appel dans sa propre session (le chemin de la flotte), avec un
+lecteur indépendant (`db.my_runs(open_only=True)`) qui atteste au passage que les faits
+écrits ont bien la forme d'une clôture.

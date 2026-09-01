@@ -377,8 +377,16 @@ CAPABILITIES += [
         Output=GuideView,
         errors=(DeclaredError(400, "body_too_large",
                               "`body_md` dépasse 65 536 octets UTF-8"),),
-        description=("Create/update a guide (scope=platform|org|group|user). "
-                     "`delivery='init'` writes that scope's injected readme (empty body clears it)."),
+        description=(
+            "Create/update a guide (scope=platform|org|group|user|tenant). "
+            "`delivery='init'` writes that scope's injected readme (empty body clears it). "
+            "WHO MAY WRITE, per scope — checked on the REAL target, not the active one: "
+            "`user` = yourself only; `org` = an admin of that org; `group` = that team's "
+            "lead (org admins escalate); `platform` and `tenant` = a platform admin. "
+            "⚠️ The flag to read before showing an editor is `can_edit` on the org or "
+            "team view — NEVER `can_write_instructions`, which governs PROCEDURES and "
+            "is true for any team MEMBER: reading it here shows an editor that the "
+            "server refuses."),
         rest=(RestBinding("PUT", "/api/me/guides/{scope}/{slug}"),
               RestBinding("PUT", "/api/orgs/{id}/guides/{scope}/{slug}", {"id": "owner_id"}),
               RestBinding("PUT", "/api/groups/{id}/guides/{scope}/{slug}", {"id": "owner_id"})),

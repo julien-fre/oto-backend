@@ -33,10 +33,18 @@ CLAIMED = "@claimed"
 
 
 def _store(monkeypatch, *, run="run-7", ns_id=7, noms=None):
-    """Un store dont le run courant et la résolution de noms sont tenus."""
+    """Un store dont le run courant et la résolution de noms sont tenus.
+
+    Le run y est OUVERT : depuis #645, le refus « ton travail ne tient rien » demande
+    au journal si le travail est clos, pour dire un MOMENT plutôt qu'un état. Tenu ici
+    plutôt qu'attrapé par le garde-fou du refus — un test qui passerait par le chemin
+    de secours prouverait le secours, pas la règle. Le cas clos vit dans
+    `test_claimed_run_clos_645.py`.
+    """
     noms = noms or {7: "copie-eval-palier100", 9: "edition-vivier"}
     s = D.DatastorePg("u1")
     monkeypatch.setattr(D, "_current_run", lambda: run)
+    monkeypatch.setattr(D.db, "run_closed_at", lambda _run: None, raising=False)
     monkeypatch.setattr(s, "_resolve", lambda ns, write=False:
                         next(i for i, n in noms.items() if n == ns))
     monkeypatch.setattr(s, "_ns_of", lambda i: {"namespace": noms[i]})
@@ -294,7 +302,7 @@ def test_the_hint_never_masks_the_refusal_when_it_cannot_be_built(monkeypatch):
 
 # ── `@claimed` mis dans le champ VOISIN — vécu à la première rencontre ───────
 #
-# 29/08, cinquième passage du palier Audiens, coupé à deux lignes : **les agents
+# 29/08, cinquième passage du palier de la campagne, coupé à deux lignes : **les agents
 # passent `@claimed` dans `namespace`, pas dans `id`.** Deux écritures refusées sur
 # cinq, en « namespace `@claimed` inconnu ».
 #

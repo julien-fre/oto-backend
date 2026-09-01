@@ -189,8 +189,12 @@ Logto → non implémentable côté serveur ; l'enforcement est donc au **login*
 > ⚠️ **`MCP_AUDIENCE_ALT` est une LISTE (virgules) : ÉTENDRE, jamais remplacer.** Un
 > `sed 's|^MCP_AUDIENCE_ALT=.*|…|'` écrase les audiences déjà déclarées — sans erreur au
 > boot, le service démarre : la casse ne se voit qu'au premier `invalid_token` d'un client.
-> Vécu 03/08 (Tulina) : la preprod portait `mcp-canari.oto.ninja/mcp`, l'écraser aurait coupé
+> Vécu 03/08 (un tenant tiers) : la preprod portait `mcp-canari.oto.ninja/mcp`, l'écraser aurait coupé
 > le canari. Chaque environnement a SA liste (`/opt/oto-mcp/.env` ≠ `/opt/oto-mcp-canari/.env`) :
 > poser une audience sur l'un ne la pose PAS sur l'autre — le symptôme est alors « ça marche en
 > prod, pas en preprod ». Même règle pour tout env-liste partagé (`OTO_MCP_CORS_ORIGINS`,
 > `MAILER_FROM_DOMAINS`, SPF, redirect URIs OAuth) : lire la valeur, y ajouter, réécrire.
+
+## Ligne de stack (reprise du CLAUDE.md, 2026-08-31)
+
+- Auth = JWT Logto (`RemoteAuthProvider + JWTVerifier(jwks_uri=…, algorithm="ES384")`)

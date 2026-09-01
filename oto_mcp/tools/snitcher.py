@@ -21,7 +21,7 @@ endpoints of the official OpenAPI spec (fetched 2026-08-23):
 **No param is silently ignored**: an op that doesn't use a provided argument
 REFUSES instead of ignoring it (silae `_refuse_ignored`).
 
-**Live-tested 2026-08-24** with a real trial token (workspace tulina.ai):
+**Live-tested 2026-08-24** with a real trial token (test workspace):
 24 of 27 endpoints exercised — every read, the full tag cycle, the full
 custom-field cycle (definitions + values, then cleaned up). NOT exercised:
 reveal_email (spends a credit), workspace create/delete/invite. Two findings
@@ -120,6 +120,17 @@ def register(mcp: FastMCP) -> None:
         Start here: op="list" gives the workspace uuids every other
         snitcher_* tool needs.
 
+        ⚠️ op="delete" DESTROYS the workspace and its collected visit
+        history — irreversible, confirm with the user before calling it.
+
+        Returns (live-confirmed shape, not just the spec's promise):
+            list: `{"success", "current_page", "last_page", "total", "data":
+                [...]}` — pagination fields sit at the TOP LEVEL, not under a
+                `meta` key. get/me/update/create_tag: `{"success", "data":
+                {...}}` — single object, still wrapped. create/delete/invite:
+                NOT live-verified (skipped — account-mutating); by pattern,
+                expect create wrapped like get, delete/invite empty.
+
         Args:
             op: "list" (default, your workspaces) | "get" | "me" (the
                 authenticated account profile) | "segments" (the workspace's
@@ -135,17 +146,6 @@ def register(mcp: FastMCP) -> None:
             tag_name: REQUIRED by "create_tag" — declares a tag; attach it to
                 a company with snitcher_organisation op="tag".
             page, size: op="list" only (size 1-1000).
-
-        ⚠️ op="delete" DESTROYS the workspace and its collected visit
-        history — irreversible, confirm with the user before calling it.
-
-        Returns (live-confirmed shape, not just the spec's promise):
-            list: `{"success", "current_page", "last_page", "total", "data":
-                [...]}` — pagination fields sit at the TOP LEVEL, not under a
-                `meta` key. get/me/update/create_tag: `{"success", "data":
-                {...}}` — single object, still wrapped. create/delete/invite:
-                NOT live-verified (skipped — account-mutating); by pattern,
-                expect create wrapped like get, delete/invite empty.
         """
         client = _client()
         if op == "list":
@@ -226,6 +226,13 @@ def register(mcp: FastMCP) -> None:
         """Companies Snitcher identified visiting the workspace's website —
         list them, filter them, fetch one, or tag/untag one.
 
+        Returns (live-confirmed): list/search: `{"success", "current_page",
+            "total", "data": [...]}`, top-level pagination, same as
+            snitcher_workspace's list. get: the organisation object BARE —
+            no `data`/`success` wrapper at all (confirmed live; a caller
+            reading `result["data"]` here gets a KeyError, not the org).
+            tag/untag: `{"success", "message"}` — no `data` either.
+
         Args:
             workspace_uuid: from snitcher_workspace op="list".
             op: "list" (default, simple filters) | "search" (advanced
@@ -254,13 +261,6 @@ def register(mcp: FastMCP) -> None:
             name: op="list" only — company-name contains-match.
             tag_name: REQUIRED by tag/untag.
             page, size: list/search pagination (size 1-1000).
-
-        Returns (live-confirmed): list/search: `{"success", "current_page",
-            "total", "data": [...]}`, top-level pagination, same as
-            snitcher_workspace's list. get: the organisation object BARE —
-            no `data`/`success` wrapper at all (confirmed live; a caller
-            reading `result["data"]` here gets a KeyError, not the org).
-            tag/untag: `{"success", "message"}` — no `data` either.
         """
         client = _client()
         if op == "list":
@@ -326,6 +326,11 @@ def register(mcp: FastMCP) -> None:
         un-hides that contact's address on the account. Confirm intent before
         calling it; listing is free.
 
+        Returns — a paged list `{"success", "current_page", "total", "data": [...]}`
+            (top-level pagination). reveal_email: NOT live-verified (skipped
+            — spends a credit); by pattern with other single-object PUTs
+            here, expect the bare contact object, not `{"data": ...}`.
+
         Args:
             workspace_uuid: from snitcher_workspace op="list".
             op: "list" (default) | "reveal_email".
@@ -335,11 +340,6 @@ def register(mcp: FastMCP) -> None:
                 company up by its website domain.
             contact_uuid: REQUIRED by "reveal_email" (from a prior list).
             page, size: op="list" pagination (size 1-1000).
-
-        Returns: list: `{"success", "current_page", "total", "data": [...]}`
-            (top-level pagination). reveal_email: NOT live-verified (skipped
-            — spends a credit); by pattern with other single-object PUTs
-            here, expect the bare contact object, not `{"data": ...}`.
         """
         client = _client()
         if op == "list":
@@ -384,6 +384,11 @@ def register(mcp: FastMCP) -> None:
         events, clicks and downloads. (The `views` array also present is
         deprecated — read `events`.)
 
+        Returns (live-confirmed, both branches): `{"success",
+            "current_page", "total", "data": [...]}` — top-level pagination,
+            same shape whether workspace-wide or narrowed to one
+            organisation.
+
         Args:
             workspace_uuid: from snitcher_workspace op="list".
             organisation_uuid: narrow to ONE company's sessions. Omitted =
@@ -397,11 +402,6 @@ def register(mcp: FastMCP) -> None:
             url: contains-match on the visited URL.
             referrer: contains-match on the referrer.
             page, size: pagination (size 1-1000).
-
-        Returns (live-confirmed, both branches): `{"success",
-            "current_page", "total", "data": [...]}` — top-level pagination,
-            same shape whether workspace-wide or narrowed to one
-            organisation.
         """
         client = _client()
         if date is not None and (date_from is not None or date_to is not None):
@@ -444,6 +444,24 @@ def register(mcp: FastMCP) -> None:
         schema: list/get/create/update/delete) and the VALUES they carry on
         one organisation (values/set/set_many/clear).
 
+        ⚠️ op="delete" drops the definition AND its values on every
+        organisation in the workspace.
+
+        Returns (live-confirmed — this tool has the SHARPEST envelope
+        inconsistency of the connector, don't assume one shape covers all
+        9 ops):
+            list, values: `{"success", "data": [...]}` — wrapped, no
+                top-level pagination fields here (unlike organisation/
+                session/contact lists).
+            get, create, update: the field-definition object BARE — no
+                `data`/`success` wrapper.
+            set (op="set", ONE field via PUT): the field-VALUE object BARE
+                — no wrapper.
+            set_many (op="set_many", bulk via PATCH): `{"success", "data":
+                [...]}` — WRAPPED, unlike its single-field sibling `set`.
+                Same "set a value" intent, different envelope by verb.
+            delete, clear: empty body → this tool returns `None`.
+
         Args:
             workspace_uuid: from snitcher_workspace op="list".
             op: definitions — "list" (default) | "get" | "create" | "update" |
@@ -466,24 +484,6 @@ def register(mcp: FastMCP) -> None:
             values: REQUIRED by "set_many" — {key: value, ...} (≤50 keys).
                 Unknown keys are CREATED automatically, type inferred. Empty
                 values are refused by the API — use op="clear" to remove one.
-
-        ⚠️ op="delete" drops the definition AND its values on every
-        organisation in the workspace.
-
-        Returns (live-confirmed — this tool has the SHARPEST envelope
-        inconsistency of the connector, don't assume one shape covers all
-        9 ops):
-            list, values: `{"success", "data": [...]}` — wrapped, no
-                top-level pagination fields here (unlike organisation/
-                session/contact lists).
-            get, create, update: the field-definition object BARE — no
-                `data`/`success` wrapper.
-            set (op="set", ONE field via PUT): the field-VALUE object BARE
-                — no wrapper.
-            set_many (op="set_many", bulk via PATCH): `{"success", "data":
-                [...]}` — WRAPPED, unlike its single-field sibling `set`.
-                Same "set a value" intent, different envelope by verb.
-            delete, clear: empty body → this tool returns `None`.
         """
         client = _client()
         defs_hint = "les ops de DÉFINITION ne prennent pas d'organisation"

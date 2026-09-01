@@ -23,6 +23,13 @@ from oto_mcp.connectors import verify as connector_verify
 from oto_mcp.tool_visibility import namespace_of
 from oto_mcp.tools import tally
 
+# Ce fichier confronte le connecteur à la surface d'oto-core : il est NON
+# CONCLUANT quand le venv n'exécute pas le tag épinglé — `oto.tools.tally`
+# n'existe simplement pas dans un oto-core antérieur à son ajout. Marqué au
+# MODULE et pas test par test : contre un mauvais oto-core, les assertions qui
+# passent ne valent pas mieux que celles qui échouent. Cf. `tests/_oto_core_pin.py`.
+pytestmark = pytest.mark.exige_pin_oto_core
+
 EXPECTED_TOOLS = {"tally_form", "tally_submission", "tally_analytics",
                   "tally_workspace", "tally_account", "tally_webhook"}
 

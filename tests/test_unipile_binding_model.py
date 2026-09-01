@@ -105,7 +105,7 @@ def test_connect_adopts_seat_from_other_org(monkeypatch):
 
 def test_connect_dead_seat_reconnects_not_adopt(monkeypatch):
     # Siège d'une autre org MORT (401) → PAS d'adoption du cadavre : wizard de
-    # RECONNEXION du même account_id (type=reconnect, pas un doublon). Vécu Alexandra.
+    # RECONNEXION du même account_id (type=reconnect, pas un doublon). Vécu en interne.
     links = []
     written = _connect_env(monkeypatch, alive=False, link_calls=links)
     out = asyncio.run(uc.hosted_auth_url("sub1", "linkedin"))

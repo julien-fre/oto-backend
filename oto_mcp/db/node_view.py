@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import Optional
 
 from ._conn import _connect
+from .nodes import ParentCycle
 
 _HORS_LIGNES = "n.kind <> 'ligne'"
 
@@ -53,10 +54,20 @@ def blocks_of(node_id: int) -> list[dict]:
 def ancestors_of(node_id: int, *, max_depth: int = 12) -> list[dict]:
     """La chaîne des parents, de la RACINE jusqu'au nœud inclus.
 
-    Récursive en SQL et BORNÉE : `nodes.parent_id` n'a pas de clé étrangère (arbitrage
-    M-e ouvert), donc rien en base n'empêche un cycle. Une remontée non bornée
-    tournerait jusqu'au timeout — la borne est là pour que la panne soit un fil tronqué,
-    pas un serveur qui pend.
+    Récursive en SQL, bornée DEUX FOIS, et pour deux raisons différentes :
+
+    - `max_depth` (`niveau < %s`) est un budget d'AFFICHAGE : le fil se rend à l'écran,
+      il ne remonte pas quarante maillons. Il tronque un arbre profond, et c'est voulu.
+    - la clause `CYCLE` est la borne de SÛRETÉ : `nodes.parent_id` n'a pas de clé
+      étrangère (arbitrage M-e ouvert), donc rien en base n'empêche une boucle.
+
+    ⚠️ **Un cycle se DIT, il ne se sert pas.** Avant, la seule borne était `max_depth` :
+    sur `A ← B ← A`, la remontée servait douze maillons `A, B, A, B…` et rendait un
+    succès. Un fil qui s'arrête sans le dire est un zéro qui ressemble à un résultat —
+    et c'est ce qui rendait un cycle déjà en base INVISIBLE à la lecture. On lève
+    désormais `ParentCycle`, qui est un constat de corruption : l'arbre ne peut pas
+    répondre à « où est ce nœud ». La boucle se défait en supprimant le nœud
+    (`db.nodes.delete_page`, borné lui aussi).
     """
     with _connect() as conn:
         rows = conn.execute(
@@ -67,8 +78,17 @@ def ancestors_of(node_id: int, *, max_depth: int = 12) -> list[dict]:
             "  SELECT p.id, p.public_id, p.parent_id, p.kind, p.props, c.niveau + 1"
             "    FROM nodes p JOIN chaine c ON p.id = c.parent_id"
             "   WHERE p.kind <> 'ligne' AND c.niveau < %s"
-            ") SELECT * FROM chaine ORDER BY niveau DESC", (node_id, max_depth)).fetchall()
-    return [dict(r) for r in rows]
+            ") CYCLE id SET boucle USING chemin "
+            "SELECT id, public_id, parent_id, kind, props, niveau, boucle FROM chaine "
+            "ORDER BY niveau DESC", (node_id, max_depth)).fetchall()
+    chaine = [dict(r) for r in rows]
+    # ⚠️ Pas de `any(c.pop(…) for c in chaine)` : `any` court-circuite au premier vrai
+    # et laisserait la clé sur les maillons suivants — la forme rendue dépendrait alors
+    # de l'endroit où la boucle se ferme.
+    marques = [bool(c.pop("boucle")) for c in chaine]
+    if any(marques):
+        raise ParentCycle(node_id)
+    return chaine
 
 
 def siblings_of(parent_ids: list[Optional[int]], *, owner: tuple[str, str],
@@ -78,6 +98,12 @@ def siblings_of(parent_ids: list[Optional[int]], *, owner: tuple[str, str],
     Le contrat du front veut la fratrie de CHAQUE maillon (« la réponse voyage avec la
     question, l'ouverture d'un popover ne demande rien »). Une requête par niveau
     ferait N+1 sur un chemin ouvert à chaque navigation ; un seul `IN` les rend toutes.
+
+    Les trois clés d'origine (`legacy`, `legacy_id`, `slug`) partent avec : elles
+    donnent la RÉFÉRENCE de procédure d'un voisin agent (#650 point 4), et ce sont
+    trois `props->>` de plus dans le même SELECT — ni jointure, ni requête par frère.
+    Sans elles, le fil sait dire qu'un voisin est un agent mais pas vers quoi il mène,
+    et l'écran le rend non cliquable alors que le rail l'ouvre.
 
     ⚠️ `owner` borne la fratrie au propriétaire du nœud : sans lui, deux organisations
     dont les arbres ont des racines `parent_id IS NULL` se verraient l'une l'autre dans
@@ -97,7 +123,8 @@ def siblings_of(parent_ids: list[Optional[int]], *, owner: tuple[str, str],
     with _connect() as conn:
         rows = conn.execute(
             "SELECT n.parent_id, n.public_id, n.kind, n.props->>'title' AS title, "
-            "n.props->>'role' AS role "
+            "n.props->>'role' AS role, n.props->>'legacy' AS legacy, "
+            "n.props->>'legacy_id' AS legacy_id, n.props->>'slug' AS slug "
             f"FROM nodes n WHERE {_HORS_LIGNES} AND ({' OR '.join(clauses)}) "
             "AND n.owner_type = %s AND n.owner_id = %s "
             "ORDER BY n.position NULLS LAST, n.props->>'title'", params).fetchall()

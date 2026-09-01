@@ -75,7 +75,7 @@ async def _appeler(corps: dict) -> tuple[int, dict]:
 @pytest.mark.asyncio
 async def test_un_champ_inconnu_est_refuse_et_nomme():
     """LE cas du 05/08 : la forme plate au lieu de l'imbriquée. Avant, 200 + silence."""
-    code, corps, vus = await _appeler({"name": "salesforce", "app": "tulina", "scope": "org"})
+    code, corps, vus = await _appeler({"name": "salesforce", "app": "acme", "scope": "org"})
     assert code == 400 and corps["error"] == "unknown_fields"
     assert "app" in corps["detail"] and "scope" in corps["detail"]
     assert not vus, "le handler a tourné alors que l'entrée était mal formée"
@@ -84,7 +84,7 @@ async def test_un_champ_inconnu_est_refuse_et_nomme():
 @pytest.mark.asyncio
 async def test_le_refus_dit_ce_qui_etait_attendu():
     """Sans les attendus, un client qui s'est trompé de FORME ne peut pas deviner."""
-    _, corps, _ = await _appeler({"name": "x", "app": "tulina"})
+    _, corps, _ = await _appeler({"name": "x", "app": "acme"})
     assert "params" in corps["detail"] and "name" in corps["detail"]
 
 

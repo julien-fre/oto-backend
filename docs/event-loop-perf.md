@@ -130,7 +130,7 @@ lente gèle depuis n'importe où**. Le threadpool borne la concurrence, pas la d
 charge, les threads occupés par la même requête lente refluent sur la boucle (attente de
 connexion au pool, sérialisation des callbacks), et `loop_watch` nomme la boucle tenue.
 
-**Ce que ça donnait** (prod, 08:28→08:47 le 2026-08-27) : `mcp.oto.cx` et `mcp.tulina.ai`
+**Ce que ça donnait** (prod, 08:28→08:47 le 2026-08-27) : `mcp.oto.cx` et l'hôte d'un tenant tiers
 injoignables, gels de **185 s toutes les ~3 min** — donc gelé en continu —, `PoolTimeout:
 couldn't get a connection after 5.00 sec` en cascade, 29 connexions en attente d'accept
 sur le socket, CPU calme. Les workers runner timeoutaient à 60 s et redémarraient, ce qui

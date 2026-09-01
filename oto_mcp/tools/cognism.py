@@ -107,8 +107,10 @@ def register(mcp: FastMCP) -> None:
             resp = getattr(e, "response", None)
             status = getattr(resp, "status_code", None)
             if status and status >= 500:
-                msg = ("Cognism est momentanément indisponible (erreur serveur "
-                       f"{status}). Réessaie dans un moment — ce n'est pas ton entrée.")
+                msg = (f"Cognism a rendu une erreur serveur ({status}). Un 5xx amont "
+                       "ne prouve pas une panne : vérifie d'abord les paramètres de "
+                       "l'appel. Si l'entrée est correcte : une seule nouvelle "
+                       "tentative, différée.")
             elif status == 401:
                 msg = "Clé Cognism invalide ou révoquée (401). Vérifie la clé posée."
             else:
@@ -136,6 +138,12 @@ def register(mcp: FastMCP) -> None:
         - **"account"**: search B2B companies by name/domain/industry/headcount/
           technologies + more.
 
+        Returns the raw Cognism page: `results[]` (contacts/companies with `has*`
+        boolean flags — NOT real email/phone), `totalResults`, `lastReturnedKey`
+        (cursor for the next page). Use `cognism_redeem` to reveal the real
+        email/phone (contact) or the full record (account) for a match — that one
+        SPENDS CREDITS, unlike this search.
+
         Args:
             op: contact | account.
             filters: nested filter dict matching Cognism's exact JSON shape.
@@ -157,12 +165,6 @@ def register(mcp: FastMCP) -> None:
             last_returned_key: cursor from the previous page's response. Empty
                 = first page. Cognism paginates SEQUENTIALLY only — you cannot
                 jump to an arbitrary page. Same for both targets.
-
-        Returns the raw Cognism page: `results[]` (contacts/companies with `has*`
-        boolean flags — NOT real email/phone), `totalResults`, `lastReturnedKey`
-        (cursor for the next page). Use `cognism_redeem` to reveal the real
-        email/phone (contact) or the full record (account) for a match — that one
-        SPENDS CREDITS, unlike this search.
         """
         target = _target(op)
         size = index_size if index_size is not None else _DEFAULT_INDEX_SIZE[target]
@@ -190,6 +192,8 @@ def register(mcp: FastMCP) -> None:
         - **"account"**: reveal full company data for accounts found via
           `cognism_search(op="account")`.
 
+        Returns `{"total": <int>, "result": [<full contact/account records>]}`.
+
         Args:
             op: contact | account.
             ids: contact ids (op="contact") / account ids (op="account") from a
@@ -201,8 +205,6 @@ def register(mcp: FastMCP) -> None:
                 supported by Cognism.
             merge_phones_and_locations: merge the phones/locations arrays in the
                 response.
-
-        Returns `{"total": <int>, "result": [<full contact/account records>]}`.
         """
         target = _target(op)
         if not ids and not redeem_ids:
@@ -235,6 +237,10 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Find ONE best-match contact from identity details, no search step (Cognism).
 
+        At least one identity field is required. Returns the matched contact
+        (shape depends on your entitlement) with a match score, or an empty
+        result if nothing scored above `min_match_score`.
+
         Args:
             email / sha256 / linkedin_url: unique identifiers — best accuracy
                 alone.
@@ -245,10 +251,6 @@ def register(mcp: FastMCP) -> None:
             min_match_score: minimum score to return a match (Cognism default
                 30; below ~27 is considered low quality). Provide as many
                 fields as you have — Cognism returns its best match.
-
-        At least one identity field is required. Returns the matched contact
-        (shape depends on your entitlement) with a match score, or an empty
-        result if nothing scored above `min_match_score`.
         """
         return _run(lambda c: c.enrich_contact(
             first_name=first_name, last_name=last_name, email=email,
@@ -271,6 +273,8 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Find ONE best-match company from identity details, no search step (Cognism).
 
+        At least one identity field is required.
+
         Args:
             website / domain / linkedin_url: unique identifiers — best
                 accuracy alone.
@@ -281,8 +285,6 @@ def register(mcp: FastMCP) -> None:
                 40 here — NOTE: different from `cognism_enrich_contact`'s
                 default of 30; below ~35 is considered low quality for
                 accounts).
-
-        At least one identity field is required.
         """
         return _run(lambda c: c.enrich_account(
             name=name, website=website, domain=domain, linkedin_url=linkedin_url,

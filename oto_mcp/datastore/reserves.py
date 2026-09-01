@@ -1,7 +1,7 @@
-"""Les champs que l'appelant n'écrit pas — le geste du store (#586, #606).
+"""Les champs que l'appelant n'écrit pas — le geste du store (#586, #606, #607).
 
-Deux crans de schéma, UNE garde. Ce qu'ils protègent est la donnée remise par le
-client, contre deux gestes mesurés sur la même campagne (29/08/2026) :
+Trois crans de schéma, UNE garde. Ce qu'ils protègent est la donnée remise par le
+client, contre trois gestes mesurés sur la même campagne (28-29/08/2026) :
 
 - **écraser** une colonne source (#606) : quatorze valeurs sur douze fiches par cent,
   à l'exact — l'agent « complète » l'adresse avec ce que dit le registre, et la valeur
@@ -12,7 +12,21 @@ client, contre deux gestes mesurés sur la même campagne (29/08/2026) :
   la valeur remise était écrite par l'agent, donc réécrite par lui — une fois sur
   quarante et une, et c'était l'unique copie. Cran `origine: "system"` : la plateforme
   la pose elle-même, à la première écriture qui change la valeur, une seule fois ; la
-  couche est fermée à l'appelant.
+  couche est fermée à l'appelant ;
+- **graver une déclaration à la place d'une trace** (#607) : une colonne `modele`
+  que l'agent remplit de mémoire dérive — `…2407` sur une fiche, `…2511` sur une
+  autre le lendemain, quand les 102 travaux enregistrés du run disent tous `…2512`.
+  Cran `system: "<source>"` : la plateforme pose la VALEUR à chaque écriture, depuis
+  ce qu'elle OBSERVE (le run de l'appel, son ouverture, l'instant de l'écriture) ;
+  l'appelant ne l'écrit pas. *Une valeur recopiée dit ce que l'agent croit ; une
+  valeur posée dit ce que le serveur sait.*
+
+**Les trois répondent à la même question dans le même ordre**, et c'est ce qui en
+fait une famille plutôt que trois drapeaux : *à qui appartient cette destination ?*
+— la colonne existe-t-elle (`unknown_fields`, #614/#678, jugé au seam de validation
+parce qu'il n'a besoin que du format) ; est-elle à moi (ici) ; la valeur est-elle
+recevable (la validation de type). Chaque refus dit les trois mêmes choses : le
+champ, la raison, où va la chose.
 
 La DÉCISION vit dans `schema.py` (`reserved_refusals`, à côté des autres
 déclarations, et sondée par `enforced_keys`) ; ce module en fait le geste : refuser en
@@ -40,13 +54,104 @@ from .columns import _existing_layers
 from .errors import RowValidationError
 
 
+def valeurs_systeme(schema: Optional[dict], *, run: Optional[str],
+                    maintenant: str) -> dict:
+    """Ce que la plateforme POSERAIT sur ce geste → `{colonne: valeur}` (#607).
+
+    Calculée AVANT le refus, parce que le refus s'en sert : une valeur identique à
+    celle qu'on s'apprête à poser est un non-geste, pas une invention.
+
+    ⚠️ **Hors run, on ne pose RIEN** — et surtout pas un repli. Le champ reste vide,
+    et le refus reste : une estampille devinée serait exactement la déclaration de
+    mémoire que ce cran remplace, avec le sceau de la plateforme en plus. Un champ
+    vide se voit ; une valeur fausse se croit."""
+    sources = dsv2.system_value_fields(schema)
+    if not sources:
+        return {}
+    out: dict = {}
+    depart = None
+    if run and "run.started_at" in sources.values():
+        depart = _ouverture_du_run(run)
+    for cle, source in sources.items():
+        if source == "write.at":
+            out[cle] = maintenant
+        elif source == "run.id" and run:
+            out[cle] = run
+        elif source == "run.started_at" and depart is not None:
+            out[cle] = depart
+    return out
+
+
+# run_id -> ouverture (ISO), ou None quand le run est inconnu de `runs`. Même parti
+# que `run_org._ORG_DU_RUN` et pour la même raison : `runs.started_at` est immuable
+# (seuls `outcome`/`note`/`finished_at` bougent après la pose), et sans cache chaque
+# écriture d'une campagne relirait la table sur le chemin chaud.
+_OUVERTURE_DU_RUN: dict = {}
+_CAP = 10_000
+
+
+def _ouverture_du_run(run: str):
+    """`runs.started_at` du run, en ISO — `None` si le run est inconnu.
+
+    Un run inconnu n'est PAS mis en cache : sa ligne peut naître après (`run_start`
+    la pose en best-effort), et mémoriser l'absence gèlerait la colonne à vide pour
+    toute la campagne."""
+    if run in _OUVERTURE_DU_RUN:
+        return _OUVERTURE_DU_RUN[run]
+    from .. import db
+    head = db.get_run_head(run) or {}
+    depart = head.get("started_at")
+    if depart is None:
+        return None
+    valeur = depart.isoformat() if hasattr(depart, "isoformat") else str(depart)
+    _OUVERTURE_DU_RUN[run] = valeur
+    while len(_OUVERTURE_DU_RUN) > _CAP:
+        del _OUVERTURE_DU_RUN[next(iter(_OUVERTURE_DU_RUN))]
+    return valeur
+
+
+def poser_valeurs_systeme(schema: Optional[dict], apres: dict,
+                          pose: Optional[dict]) -> list[str]:
+    """Écrit dans `apres` les valeurs que la plateforme pose (#607). Rend les
+    colonnes posées ; `apres` est modifiée en place.
+
+    Trois règles, chacune fermant une porte :
+
+    - **posée à CHAQUE écriture, sans que l'appelant nomme la colonne** — c'est
+      tout l'objet du cran : l'estampille ne doit dépendre ni de la mémoire de
+      l'agent, ni de ce qu'il a pensé à inclure dans son corps ;
+    - **la colonne plate reste plate** : on n'enveloppe en couches que ce qui l'est
+      déjà. Sans ça, poser une estampille sur un tableau à colonnes simples
+      changerait la forme SERVIE de toutes ses lignes — un dégât de format silencieux
+      pour un gain nul (même règle que `poser_origine_systeme`) ;
+    - **les couches en place survivent** : un `comment` posé sur l'estampille reste,
+      la valeur seule est remplacée.
+
+    ⚠️ La pose n'entre PAS dans les clés « écrites » que voit la validation : la
+    borne de longueur et le motif se jugent sur ce que l'APPELANT pose, et un refus
+    portant sur une valeur qu'il ne contrôle pas serait inactionnable — il ne
+    pourrait ni la corriger, ni s'en passer."""
+    posees: list[str] = []
+    for cle, valeur in sorted((pose or {}).items()):
+        couches = _existing_layers(apres.get(cle))
+        if len(couches) > 1 or dsv2.VALUE_LAYER not in couches:
+            couches[dsv2.VALUE_LAYER] = valeur
+            apres[cle] = couches
+        else:
+            apres[cle] = valeur
+        posees.append(cle)
+    return posees
+
+
 def refuser_champs_reserves(schema: Optional[dict], payload: Optional[dict], *,
-                            avant: Optional[dict] = None) -> None:
+                            avant: Optional[dict] = None,
+                            pose_systeme: Optional[dict] = None) -> None:
     """Refuse ce que l'appelant n'écrit pas — en nommant le champ, la raison et où
     va la chose. `RowValidationError`, donc `row_invalid` côté REST (avec
     `details.expected_column`, #545) et INVALID_PARAMS côté MCP : le code ne
     change pas, c'est le texte qui enseigne."""
-    errors, details = dsv2.reserved_refusals(schema, payload, avant)
+    errors, details = dsv2.reserved_refusals(schema, payload, avant,
+                                             pose_systeme=pose_systeme)
     if errors:
         raise RowValidationError(errors, details=details)
 

@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict
 from ... import access, credentials_store, status_hints
 from ...connectors import verify as connector_verify
 from .._authz import ORG_ADMIN, ORG_MEMBER
-from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from .._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx, RestBinding)
 
 
 class VerifyInput(BaseModel):
@@ -245,6 +245,12 @@ CAPABILITIES += [
         key="connectors.verify", handler=_verify, Input=VerifyInput, authz=ORG_MEMBER,
         Output=VerifyResult,
         description=CAP_DOC,
+        errors=(DeclaredError(400, "no_org_credential",
+                              "aucune clé d'org posée pour ce connecteur : il "
+                              "n'y a rien à vérifier"),
+                DeclaredError(400, "verify_unavailable",
+                              "ce connecteur ne déclare aucune sonde de "
+                              "vérification"),),
         rest=RestBinding("POST", "/api/me/connectors/{provider}/verify"),
     ),
     Capability(
@@ -252,6 +258,10 @@ CAPABILITIES += [
         Input=EffectForMemberInput, authz=ORG_ADMIN, Output=ConnectorEffectForMember,
         description="Org admin: replay a connector's verdict AS a given org member (M4). "
                     "Returns that member's ProviderStatus entry for {provider}, org scoped.",
+        errors=(DeclaredError(400, "no_active_org",
+                              "aucune org de contexte pour juger l'effet"),
+                DeclaredError(404, "not_a_member",
+                              "la personne visée n'est pas membre de cette org"),),
         rest=RestBinding("GET", "/api/me/connectors/{provider}/effect"),
     ),
 ]

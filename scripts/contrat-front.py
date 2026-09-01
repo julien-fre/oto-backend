@@ -31,12 +31,49 @@ Deux niveaux, délibérément distincts — un contrôle qui crie pour tout n'es
   confondre « pas de dérive » et « pas de mesure » est la façon habituelle de devenir
   aveugle.
 
+  ⚠️ LES RÉFÉRENCES SONT RÉSOLUES AVANT COMPARAISON, et c'est indispensable. Les opérations
+  épinglées portent 178 `$ref` vers `#/components/schemas/…` : comparer les opérations telles
+  quelles laisse passer TOUT changement vivant dans un composant partagé — le payload de
+  l'opération est identique à l'octet, seul le schéma référencé a bougé. Or hoisster une forme
+  en composant dès qu'elle devient réutilisable est le geste NORMAL : l'angle mort couvrait donc
+  le cas fréquent, pas un cas tordu. Constaté sur oto-backend#738, où 9 composants ajoutés et
+  10 316 octets de plus ne sortaient ni en rouge ni en avertissement.
+
 Usage : contrat-front.py <contrat-épinglé.json> <url-ou-fichier-du-spec-servi>
 """
 import json
 import sys
 import urllib.request
 
+
+
+def resoudre(doc: dict, noeud, chaine=()):
+    """Remplace les `$ref` internes par ce qu'elles désignent, récursivement.
+
+    Une référence déjà en cours d'expansion dans la même branche est laissée telle quelle :
+    les schémas récursifs existent, et les inliner sans fin ferait exploser la comparaison.
+    Le marqueur est identique des deux côtés, donc l'égalité reste juste.
+    """
+    if isinstance(noeud, dict):
+        ref = noeud.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/"):
+            if ref in chaine:
+                return {"$ref_cyclique": ref}
+            cible = doc
+            for part in ref[2:].split("/"):
+                part = part.replace("~1", "/").replace("~0", "~")
+                if not isinstance(cible, dict) or part not in cible:
+                    return {"$ref_introuvable": ref}
+                cible = cible[part]
+            fusion = resoudre(doc, cible, chaine + (ref,))
+            reste = {k: resoudre(doc, v, chaine) for k, v in noeud.items() if k != "$ref"}
+            if isinstance(fusion, dict):
+                return {**fusion, **reste}
+            return fusion
+        return {k: resoudre(doc, v, chaine) for k, v in noeud.items()}
+    if isinstance(noeud, list):
+        return [resoudre(doc, x, chaine) for x in noeud]
+    return noeud
 
 
 def charger(source: str) -> dict:
@@ -94,7 +131,29 @@ def casse_les_appels(epingle: dict, servie: dict) -> list:
         raisons.append("un corps de requête OBLIGATOIRE est apparu")
     elif corps_avant and corps_apres and corps_apres.get("required") and not corps_avant.get("required"):
         raisons.append("le corps de requête devient obligatoire")
+
+    # Les champs du corps. Les références étant résolues, un champ rendu obligatoire dans un
+    # schéma PARTAGÉ se voit ici — c'est le cas qui échappait entièrement au contrôle avant.
+    # Un champ AJOUTÉ facultatif ne casse rien ; un champ devenu obligatoire fait rejeter la
+    # charge que le front envoie déjà.
+    for type_mime, avant in _schemas_de_corps(corps_avant).items():
+        apres = _schemas_de_corps(corps_apres).get(type_mime)
+        if apres is None:
+            continue
+        nouveaux = set(apres.get("required") or []) - set(avant.get("required") or [])
+        for champ in sorted(nouveaux):
+            raisons.append(f"le champ « {champ} » du corps de requête devient obligatoire")
     return raisons
+
+
+def _schemas_de_corps(corps) -> dict:
+    """Le schéma (déjà résolu) de chaque type de contenu d'un corps de requête."""
+    if not isinstance(corps, dict):
+        return {}
+    return {
+        mime: (bloc or {}).get("schema") or {}
+        for mime, bloc in (corps.get("content") or {}).items()
+    }
 
 
 def main() -> int:
@@ -119,7 +178,10 @@ def main() -> int:
             nom = f"{methode.upper()} {chemin}"
             if vivante is None:
                 disparues.append(nom)
-            elif (raisons := casse_les_appels(op, vivante)):
+                continue
+            op = resoudre(epingle, op)
+            vivante = resoudre(servi, vivante)
+            if (raisons := casse_les_appels(op, vivante)):
                 entree_changee.append((nom, raisons))
             elif json.dumps(op, sort_keys=True) != json.dumps(vivante, sort_keys=True):
                 forme_changee.append(nom)

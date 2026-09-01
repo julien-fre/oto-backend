@@ -59,6 +59,73 @@ vit à côté de docs et part de vide »*.
 Rien ne traduit l'un vers l'autre. Un contenu créé dans l'ancien monde **n'apparaît
 pas** dans le nouveau, et c'est le comportement voulu, pas une régression.
 
+## Qui voit ces verbes
+
+Les trois verbes MCP — `oto_node`, `oto_node_rows`, `oto_node_edit` — sont réservés aux
+comptes **bêta** depuis le 2026-09-01 : un admin pose l'option `beta` sur l'utilisateur
+ou sur son org, sinon ils sont masqués. Ils étaient jusque-là exposés à tout le monde
+sans aucun gate — l'inverse de ce qu'on croyait, et zéro appel MCP en 30 jours explique
+que personne ne l'ait remarqué.
+
+Motif : la surface part de vide et son contrat est provisoire. La proposer à tous, c'est
+offrir à chaque agent une lecture qui ne trouve rien et une écriture dont l'utilisateur
+ignore la destination. Détail du grain, du fail-closed et de ses limites :
+`docs/tool-visibility.md`.
+
+⚠️ **La face REST n'est pas gatée** — le dashboard qui construit ce nouvel univers la
+consomme aujourd'hui. Écart assumé, refermé quand la surface cessera d'être provisoire.
+
+## L'arbre ne boucle pas — et ce qui le garantit
+
+`nodes.parent_id` n'a **aucune clé étrangère** (arbitrage M-e, toujours ouvert) : la
+base n'a rien pour refuser qu'un nœud soit rangé sous sa propre descendance. Jusqu'au
+**2026-09-01**, rien dans le code ne le refusait non plus.
+
+**Ce que ça coûtait, mesuré de bout en bout.** `move A sous B`, alors que B était déjà
+enfant de A, rendait **200**. Le `delete A` qui suivait jouait un
+`WITH RECURSIVE … UNION ALL` sans borne sur la boucle ainsi créée et ne terminait
+pas : il empilait dans `base/pgsql_tmp` jusqu'au `DiskFull`. Avec une borne
+artificielle posée à 20 000 niveaux, la requête produisait 20 001 lignes. **Cette base
+est partagée entre la préproduction et la production** (`docs/live-migrations.md`) :
+n'importe quel appel authentifié pouvait donc saturer le disque de la prod, et la box a
+déjà connu un disque plein — SSL et préproduction cassés à la clé.
+
+**Deux gestes, et il faut les deux.**
+
+| geste | où | ce qu'il protège |
+|---|---|---|
+| le **refus** — `move_page` lève `ParentCycle` si le parent demandé descend du nœud | `db/nodes.py` | les déplacements **à venir** |
+| la **borne** — chaque récursion sur l'arbre porte la clause SQL `CYCLE` | `db/nodes.py`, `db/node_view.py`, `db/projects.py` | ce qui serait **déjà en base** |
+
+Le second ne se déduit pas du premier : une garde amont ne défait pas rétroactivement
+une boucle écrite hier, et personne ne peut prouver qu'il n'y en a jamais eu. (Relevé
+en production le 2026-09-01, en lecture seule : **0** — 75 721 nœuds tous atteignables
+depuis une racine, 1 063 pages `docs` de même.)
+
+⚠️ **La borne est la clause `CYCLE`, jamais un plafond de profondeur.** Un plafond
+tronquerait un `DELETE` sur un arbre légitimement profond et laisserait des enfants
+accrochés à un identifiant disparu — on guérirait d'un mal en en posant un autre.
+`CYCLE id SET …` s'arrête à la **répétition** : chaque nœud est visité une fois, aucun
+arbre acyclique n'est tronqué. Un cliquet AST (`test_node_parent_cycle.py`) relève
+chaque `WITH RECURSIVE` de `db/` **au grain de la fonction** et exige sa clause.
+
+**La lecture DIT le cycle.** `ancestors_of` était bornée en profondeur (12) et servait,
+sur une boucle, douze maillons `A, B, A, B…` avec un succès : un cycle déjà en base
+était **invisible à la lecture**. Elle lève désormais `ParentCycle` — l'arbre ne peut
+pas répondre à « où est ce nœud », et un fil qui s'arrête sans le dire est un zéro qui
+ressemble à un résultat. La boucle se **défait** en supprimant le nœud (`delete_page`,
+borné, emporte les nœuds de la boucle).
+
+**Même défaut, une table plus loin.** `docs.parent_id` porte, lui, une FK auto-référente
+`ON DELETE CASCADE` — et elle n'empêche rien : une FK exige que la ligne visée existe,
+pas que l'arbre soit acyclique. `move_doc` et `move_doc_to_project` refusent donc le
+cycle (`DocParentCycle`), et les trois descentes de `db/projects.py` (compter,
+supprimer, déplacer) partagent une seule définition bornée.
+
+⚠️ **Ce que ce lot ne fait pas** : `capabilities/node_edit.py` ne rattrape pas encore
+`ParentCycle`, donc le refus sort en erreur interne plutôt qu'en 400 nommé. La garde
+est correcte — rien n'est écrit — mais la réponse servie ne dit pas encore pourquoi.
+
 ## La recopie, et pourquoi elle s'est arrêtée
 
 Jusqu'au 2026-09-01, **cinq conversions** tournaient à chaque démarrage — projets,
@@ -77,10 +144,72 @@ seed du readme plateforme — et cette projection est le seul chemin par lequel 
 atteint `nodes` sur une base **neuve**. Elle partira quand le seed sèmera nativement ;
 la retirer avant, c'est retirer sans remplaçant. Un contre-test l'exige.
 
+### ⚠️ La PURGE s'est arrêtée avec la recopie, et personne ne l'avait vu
+
+Constaté le **2026-09-01 au soir**, après coup — le lot d'arrêt ne l'avait ni prévu ni
+écrit. Chaque conversion ne faisait pas que copier : elle **finissait par sa purge**,
+dans la même fonction (`PURGE_*_NODES_SQL`, exécutés à la fin de chaque `convert_*`).
+Cette purge retirait la copie d'un objet dont l'original avait disparu de l'ancien
+stockage. Retirer l'appel à la conversion a donc emporté la purge avec elle, en
+silence.
+
+Ce que la purge faisait, et qu'on a perdu **des deux côtés** :
+
+- **sa raison d'être** — une page supprimée voyait sa copie disparaître ;
+- **son défaut** — elle supprimait le nœud **sans ses blocs**, laissant un corps
+  derrière elle. C'est l'origine des blocs orphelins (§ ci-dessous). Le défaut est
+  toujours dans le code ; il n'a simplement plus l'occasion de se produire.
+
+**Depuis, plus rien ne propage une suppression ni une édition vers `nodes`** — vérifié :
+`db/projects.py::delete_doc` ne touche pas au nouveau stockage, et aucun autre chemin ne
+le fait. Donc, tant que le résidu est là :
+
+- une page **supprimée** garde une copie **entière et lisible** — elle apparaît dans le
+  rail comme n'importe quelle page ;
+- une page **modifiée** garde une copie **périmée**, qui ne se resynchronise plus.
+
+⚠️ **C'est ce qui rend « garder le résidu jusqu'à la migration » coûteux** : ce n'est
+pas un miroir dormant, c'est un miroir qui diverge à chaque édition et survit à chaque
+suppression. Au 2026-09-01 il n'existe **aucune** copie fantôme (la dernière purge, à
+07:33 UTC, a fait son travail avant de s'éteindre) — la première page supprimée en
+créera une.
+
 ## Le résidu, et comment il se retire
 
-Ce que la dernière passe a laissé : **70 876 nœuds sur 70 927** et **29 174 blocs**
-(mesuré le 2026-09-01) ; les ~51 nœuds restants sont les couches de contexte, natives.
+Ce que la dernière passe a laissé, **mesuré le 2026-09-01 à 19:30 sur la base servie**
+: **75 668 nœuds sur 75 721** et **34 314 blocs**, dont 31 447 pendent à une copie.
+Les **53** nœuds restants sont natifs — tous des pages, dont 47 portent un corps.
+
+⚠️ **Un chiffre de résidu se DATE.** Ceux d'avant (70 876 / 29 174) étaient justes à
+leur heure et faux quatre heures plus tard : la recopie a continué de tourner jusqu'au
+déploiement de son arrêt, à **07:33 UTC** — dernière copie créée, rien depuis. Le stock
+est figé désormais, mais la leçon vaut pour le prochain : **recompter juste avant de
+jouer**, jamais réutiliser une mesure de la veille.
+
+Répartition des copies : 73 851 lignes de tableau, 1 057 pages, 334 projets, 289
+tableaux, 137 procédures. **Les 1 057 pages ont TOUTES leur original vivant dans
+`docs`** — joint un à un, pas échantillonné : retirer la copie ne perd rien.
+
+### Les 1 939 blocs orphelins ne sont PAS des copies
+
+Mesuré le 2026-09-01 : **1 939 blocs** ne pendent à aucun nœud, répartis sur **57**
+nœuds disparus, créés entre le 11 et le 28/08. Ils viennent du défaut de la purge —
+nœud retiré, corps laissé.
+
+⚠️ **Et leur original n'existe plus non plus.** La purge ne retirait une copie que si
+son original avait disparu de l'ancien stockage : ces corps sont donc les restes de
+pages **supprimées**. Mesuré, pas déduit — **2 seulement sur 57** retrouvent leur texte
+dans un `docs.body_md` actuel, quand le même contrôle sur 200 copies vivantes le
+retrouve **200 fois sur 200** (le contrôle voit donc bien ce qu'il cherche).
+
+**Ce n'est donc pas un contenu à sauver, c'est une suppression qui n'est pas allée
+jusqu'au bout** — et l'exporter avant de tirer reconstituerait, hors du système, ce que
+quelqu'un a demandé de supprimer. Ce qui ne peut pas être prouvé : que les 55 aient été
+supprimées volontairement plutôt que perdues autrement.
+
+⚠️ **Le stock est CLOS** (dernier orphelin le 28/08) : la purge ne tourne plus, donc
+plus aucun ne se crée. Ce que produit désormais une suppression est pire et différent —
+une copie **entière et lisible**, cf. le § précédent.
 
 Le retrait est le travail de maintenance **`residu-projete`** (`oto-mcp maintenance`).
 Trois choses le gouvernent :
@@ -108,7 +237,7 @@ propre**, et ne lit `nodes` que pour les couches de contexte.
 
 Trois surfaces lisent aujourd'hui le résidu et deviendront vides sans lui :
 
-1. **le contrat front partenaire** — ouvrir par la surface nœud un contenu créé dans
+1. **le contrat du dashboard** — ouvrir par la surface nœud un contenu créé dans
    l'ancienne. Trois tests sont marqués en échec **attendu strict** : s'ils repassent
    au vert, c'est qu'une recopie est revenue ;
 2. **`oto_node_rows` sur un tableau recopié** — il résout son namespace par
@@ -116,9 +245,15 @@ Trois surfaces lisent aujourd'hui le résidu et deviendront vides sans lui :
 3. **la référence de procédure** (`node_procedure_ref`), qui vise la famille produite
    par la conversion.
 
-⚠️ **L'identifiant dérivé et les poignées `doc_id`/`project_id` sont SERVIS** au front
-partenaire (`db/shell.py`). Les retirer est un **changement de contrat**, pas un
-déblaiement de fin de chantier : cela ne se décide pas ici.
+⚠️ **L'identifiant dérivé et les poignées `doc_id`/`project_id` sont SERVIS** au
+dashboard (`db/shell.py`), qui est le premier consommateur de ce nouvel univers. Les
+retirer est un **changement de contrat**, pas un déblaiement de fin de chantier : cela
+ne se décide pas ici.
+
+⚠️ **Vocabulaire.** Les tests parlent de « front tiers » : c'est un héritage, pas une
+description. Le consommateur de cette surface est **le nouveau dashboard produit**, et
+c'est pour lui qu'elle est construite — pas pour un intégrateur extérieur. Lire « tiers »
+comme « partenaire externe » fait surestimer le coût d'un changement de contrat.
 
 ## Ce qui n'est pas encore porté
 
@@ -131,6 +266,12 @@ déblaiement de fin de chantier : cela ne se décide pas ici.
 - **Filtre, recherche et tri sur un tableau natif.** Ils sont **refusés, pas ignorés** :
   les servir demanderait de fouiller la donnée métier, donc de l'interpréter. Les
   accepter en silence ferait croire à un filtre appliqué sur une page complète.
+  ⚠️ **Et depuis le 01/09 (#621), le chemin RECOPIÉ refuse pour la même raison** une
+  entrée de `filter` sans `:` (`400 invalid_filter`) : elle était ignorée, et la page
+  repartait non filtrée sans le dire — le geste que l'alinéa ci-dessus interdit,
+  commis sur l'autre provenance. Un curseur illisible y rend `400 invalid_cursor` (il
+  sortait en 500), et sous le MÊME code que le chemin natif : la provenance d'un
+  tableau n'est pas servie, un front ne peut donc pas prévoir lequel des deux il aura.
 
 ## Où vit quoi
 

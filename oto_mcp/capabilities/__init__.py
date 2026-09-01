@@ -116,6 +116,7 @@ from . import org_monitoring  # noqa: F401 — org.monitoring.* (oto_org_monitor
 # Gouvernance générique des ressources possédées (ADR 0030) — transfert/partage
 # d'un objet possédé (datastore pilote), owner ∪ escalade roles.py.
 from . import resources  # noqa: F401 — resources.govern (oto_resource)
+from . import resources_v2  # noqa: F401 — resources.govern.v2 (oto_resource_v2, BÊTA)
 # Catalogue du registre de capacités (ADR 0030) — alimente l'object-browser admin.
 from . import capabilities_catalog  # noqa: F401 — admin.capabilities (GET /api/admin/capabilities)
 # Vue de transparence « contexte agent » (otomata-private#49) — ce que Claude reçoit.
@@ -141,7 +142,7 @@ from . import shell  # noqa: F401 — me.shell (/shell v0, surface nœuds préco
 from . import node_edit  # noqa: F401 — me.node.edit (oto_node_edit)
 from . import node_view  # noqa: F401 — me.node (lecture d'un nœud, surface précoce)
 from . import node_rows  # noqa: F401 — me.node.rows (lignes d'un tableau, curseur)
-from . import docs  # noqa: F401 — me.doc (oto_doc, POST /api/me/docs) — pages d'un projet
+import oto_mcp.capabilities.docs.core  # noqa: F401 — me.doc (oto_doc, POST /api/me/docs) — pages d'un projet
 from . import uploads  # noqa: F401 — me.upload_url (oto_upload_url) — push out-of-bande de gros contenu (#105)
 # Journal de travail du datastore (ADR 0046 b4) — parcours d'une ligne + activité du tableau.
 import oto_mcp.capabilities.datastore.activity  # noqa: F401 — me.datastore.{row_activity,activity} (REST-only)
@@ -162,5 +163,6 @@ from . import automation  # noqa: F401 — me.automation.fire (MCP routine_fire 
 from . import run_thread  # noqa: F401 — runs.thread append/read (MCP oto_run_thread + REST) — chantier runner R1
 from . import runner_jobs  # noqa: F401 — runner.jobs (REST-only, worker) — chantier runner R2
 from . import runner_triggers  # noqa: F401 — runner.triggers (MCP oto_trigger + REST) — chantier runner R3
+from . import runner_fleets  # noqa: F401 — runner.fleets (MCP oto_fleet + REST) — chantier runner R4
 
 __all__ = ["registry", "_mcp_adapter", "_rest_adapter"]

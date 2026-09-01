@@ -1,6 +1,6 @@
 """Canonicalisation du public_identifier LinkedIn (#180).
 
-Un slug LinkedIn accentué (`nicolas-chéhanne`) fait renvoyer à l'API Unipile un 403
+Un slug LinkedIn accentué (`chloé-dupré`) fait renvoyer à l'API Unipile un 403
 « Insufficient permissions » trompeur — LinkedIn génère toujours des slugs ASCII.
 `_canonical_li_identifier` retire les diacritiques avant l'appel (idempotent sur un
 slug déjà ASCII ou un provider_id opaque).
@@ -11,7 +11,7 @@ from oto_mcp.tools.unipile import _canonical_li_identifier as canon
 
 
 def test_strips_accents_from_slug():
-    assert canon("nicolas-chéhanne") == "nicolas-chehanne"
+    assert canon("chloé-dupré") == "chloe-dupre"
     assert canon("éàüô-test") == "eauo-test"
 
 

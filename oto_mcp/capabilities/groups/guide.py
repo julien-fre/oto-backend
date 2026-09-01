@@ -109,7 +109,7 @@ class GroupInstructionsBundle(BaseModel):
 
     ⚠️ **Chaque clé est servie sous DEUX noms** le temps du préavis (#519) :
     `guide`/`guide_version` (aujourd'hui) et `doctrine`/`doctrine_version`, qui s'en
-    vont le 27/09/2026 — cf. `docs/alias-deprecies.md`.
+    vont le 29/10/2026 — cf. `docs/alias-deprecies.md`.
 
     ⚠️ **`guide` est le corps MARKDOWN BRUT, pas un objet de métadonnées** — c'est
     l'écart de forme avec le bundle d'org, qui rend là un `{exists, version,
@@ -145,8 +145,8 @@ class GroupInstructionsBundle(BaseModel):
     group_id: int
     guide: str
     guide_version: Optional[int] = None
-    doctrine: str                          # ALIAS déprécié (retrait 27/09/2026)
-    doctrine_version: Optional[int] = None  # ALIAS déprécié (retrait 27/09/2026)
+    doctrine: str                          # ALIAS déprécié (retrait 29/10/2026)
+    doctrine_version: Optional[int] = None  # ALIAS déprécié (retrait 29/10/2026)
     instructions: list[GroupInstructionIndexEntry]
     can_edit: bool
     # Les deux droits sur les procédures ci-dessus, chacun rendu par la règle d'autz
@@ -331,7 +331,7 @@ def _set(ctx: ResolvedCtx, inp: InstrSetInput) -> dict:
         "group", inp.group_id, slug, inp.body_md, title=inp.title,
         description=inp.description, set_by=ctx.sub)
     # Une procédure d'équipe est une procédure : même exigence de schéma qu'au grain org
-    # (tulina-app-front#108), même régime — un warning, jamais un refus.
+    # (front tiers, issue #108), même régime — un warning, jamais un refus.
     return {"group_id": inp.group_id, "slug": slug, "version": version, "set": True,
             **procedure_diagram.diagram_check(inp.body_md),
             **procedure_digest.digest_check(inp.body_md)}

@@ -47,9 +47,9 @@ import json
 
 import pytest
 
-from oto_mcp import doc_patch
-from oto_mcp.capabilities import docs as D
+from oto_mcp import db, doc_patch, ownership
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+from oto_mcp.capabilities.docs import core as D, view as docs_view
 
 CTX = ResolvedCtx(sub="u1", org_id=None)
 
@@ -96,11 +96,11 @@ def seams(monkeypatch):
     `db.update_doc` est le seul point stubbé : c'est lui qui porte le verrou optimiste
     et la pose de révision, et on veut voir ce que la capacité lui passe."""
     etat = {"body": GROS, "appels": []}
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
-    monkeypatch.setattr(D, "_public_doc_url", lambda tok, sub=None: None)
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda i: _page(etat["body"], i))
-    monkeypatch.setattr(D.db, "doc_rev", lambda t, b: "9f2c41a")
-    monkeypatch.setattr(D.db, "log_project_activity", lambda *a, **k: None)
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(docs_view, "public_doc_url", lambda tok, sub=None: None)
+    monkeypatch.setattr(db, "get_doc_by_id", lambda i: _page(etat["body"], i))
+    monkeypatch.setattr(db, "doc_rev", lambda t, b: "9f2c41a")
+    monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
 
     def _update(did, title=None, body_md=None, kind=None, edited_by=None,
                 description=None, expected_rev=None):
@@ -108,7 +108,7 @@ def seams(monkeypatch):
                                "edited_by": edited_by, "body_md": body_md})
         if body_md is not None:
             etat["body"] = body_md
-    monkeypatch.setattr(D.db, "update_doc", _update)
+    monkeypatch.setattr(db, "update_doc", _update)
     return etat
 
 
@@ -151,7 +151,7 @@ def test_le_cout_du_geste_ne_suit_PLUS_la_taille_de_la_page(seams, monkeypatch):
     """L'invariant derrière les trois signaux : le bandeau des pages LES PLUS LONGUES
     était le plus périmé, parce que le coût du geste suivait la taille de la page."""
     petite = _page_kb(3_000)
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda i: _page(petite, i))
+    monkeypatch.setattr(db, "get_doc_by_id", lambda i: _page(petite, i))
     D._doc(CTX, D.DocInput(op="patch", doc_id=692, region="preamble",
                            body_md=BANDEAU_A_JOUR))
     assert seams["body"].startswith(BANDEAU_A_JOUR)
@@ -229,8 +229,8 @@ def test_les_nouveaux_chemins_HONORENT_expected_rev(seams, champs):
 ])
 def test_un_conflit_reste_un_409_sur_les_nouveaux_chemins(seams, monkeypatch, champs):
     def _boom(*a, **k):
-        raise D.db.DocConflict("autre_rev")
-    monkeypatch.setattr(D.db, "update_doc", _boom)
+        raise db.DocConflict("autre_rev")
+    monkeypatch.setattr(db, "update_doc", _boom)
     with pytest.raises(AuthzDenied) as e:
         D._doc(CTX, D.DocInput(op="patch", doc_id=662, expected_rev="9f2c41a", **champs))
     assert e.value.status == 409 and e.value.code == "conflict"
@@ -257,7 +257,7 @@ def test_une_page_qui_a_VRAIMENT_une_section___preamble___la_sert(seams, monkeyp
     markdown valide. Avec un mot réservé dans `section`, cette page devenait
     inadressable ; avec deux axes, chacun désigne sa chose."""
     corps = ("bandeau.\n\n# T\n\n## __preamble__\n\nune vraie section ainsi nommée.\n")
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda i: _page(corps, i))
+    monkeypatch.setattr(db, "get_doc_by_id", lambda i: _page(corps, i))
     D._doc(CTX, D.DocInput(op="patch", doc_id=662, section="__preamble__",
                            body_md="contenu neuf."))
     assert "## __preamble__" in seams["body"] and "contenu neuf." in seams["body"]
@@ -304,7 +304,7 @@ def test_un_titre_dans_le_corps_du_preambule_est_REFUSE(seams):
 
 
 def test_supprimer_un_preambule_absent_est_REFUSE(seams, monkeypatch):
-    monkeypatch.setattr(D.db, "get_doc_by_id",
+    monkeypatch.setattr(db, "get_doc_by_id",
                         lambda i: _page("# T\n\nx\n", i))
     with pytest.raises(AuthzDenied) as e:
         D._doc(CTX, D.DocInput(op="patch", doc_id=662, region="preamble", mode="delete"))
@@ -314,7 +314,7 @@ def test_supprimer_un_preambule_absent_est_REFUSE(seams, monkeypatch):
 def test_supprimer_le_preambule_d_une_page_sans_aucun_titre_est_REFUSE(seams, monkeypatch):
     """Sans premier titre, « ce qui précède le premier titre » est la page entière :
     supprimer la viderait. Forme ambiguë ET destructrice → refus nommé, pas une devinette."""
-    monkeypatch.setattr(D.db, "get_doc_by_id",
+    monkeypatch.setattr(db, "get_doc_by_id",
                         lambda i: _page("juste du texte, aucun titre.\n", i))
     with pytest.raises(AuthzDenied) as e:
         D._doc(CTX, D.DocInput(op="patch", doc_id=662, region="preamble", mode="delete"))

@@ -22,7 +22,7 @@ def test_pin_granted_account_wins(monkeypatch):
     monkeypatch.setattr(db, "get_operated_account", lambda s, p: None)
     tok = session_org.set_call_account("acc_alexis")
     try:
-        assert ci.resolve_operated_account_id("alexandra", "LINKEDIN") == "acc_alexis"
+        assert ci.resolve_operated_account_id("jane", "LINKEDIN") == "acc_alexis"
     finally:
         session_org.reset_call_account(tok)
 

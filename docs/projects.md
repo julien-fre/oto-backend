@@ -10,8 +10,9 @@ Conteneur de travail **possédé** (owned resource ADR 0030) : un but + ses enti
 l'accès du projet — pas d'ownership propre), `project_activity` (journal best-effort).
 Capacités co-déclarées : **`oto_project`** (`capabilities/projects.py`, op create/list/get/
 update/archive/link/unlink/activity, `POST /api/me/projects`), **`oto_doc`** (`capabilities/
-docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/transfert via
-**`oto_resource`** (resource_type=`project` ajouté au dispatch `_OPS`).
+docs/`, op create/list/get/update/patch/delete/move/revisions/revert…, `POST /api/me/docs` —
+un package depuis le 01/09, dispatcher et descripteur dans `docs/core.py`).
+Partage/transfert via **`oto_resource`** (resource_type=`project` ajouté au dispatch `_OPS`).
 
 > **Une liste rend son INDEX, jamais les corps (14/08).** ⚠️ **Ce doc a laissé croire le
 > contraire jusqu'au 14/08** : `op=list` a longtemps rendu la fiche entière de chaque
@@ -32,6 +33,37 @@ docs.py`, op create/list/get/update/delete/move, `POST /api/me/docs`). Partage/t
 > 600 c. : deux cas limites sur cinq tranchés à l'aveugle). D'où la TAILLE, pas l'extrait.
 > Budget figé par `tests/test_list_view_budget.py` : le retour d'une liste croît avec le
 > NOMBRE d'éléments, jamais avec la taille de leur contenu.
+
+> **Revenir en arrière sur une page, et savoir ce qu'une suppression emporte (#657, 31/08).**
+> Le snapshot était pris depuis toujours (`update_doc` archive l'état antérieur dans
+> `doc_revisions`) et **rien ne le reposait** : le retour arrière se faisait à la main —
+> lire `op=revisions`, republier le corps par `op=update` — ce qu'un front tiers ne peut pas
+> offrir comme un geste. **`op=revert`** (`doc_id` + `revision_id` = le `id` d'une ligne de
+> `op=revisions` ; les pages ne portent **pas** de numéro de version, et un rang calculé sur
+> une liste plafonnée désignerait une autre version au prochain appel) restaure titre + corps
+> **EN AVANT** — même régime que `org.instruction.revert` : l'état courant est snapshotté à
+> son tour, donc rien n'est perdu et un revert se re-revert ; la réponse porte `reverted_from`.
+> Il passe par `update_doc` (donc backlinks re-résolus, renommage propagé) et honore
+> `expected_rev` → 409, ce que les instructions n'ont pas : restaurer sans garde écrase
+> l'édition d'un pair.
+> ⚠️ **`revert` ≠ annuler une suppression.** `op=delete` cascade sur tout le sous-arbre via la
+> FK auto-référente et emporte `doc_revisions`/`doc_change_requests`/`doc_links` avec lui :
+> après coup il n'y a plus de ligne à restaurer (prouvé, pas affirmé —
+> `tests/test_doc_revert_et_suppression_657.py`). Il n'y a **ni corbeille ni `deleted_at`**.
+> La cascade était en plus **muette** : l'accusé dit désormais combien de pages sont parties
+> (`descendants`, + un `warning` quand il y en a), et **`dry_run: true`** rend le même compte
+> **sans rien supprimer** — de quoi annoncer « ceci supprimera N pages » avant de le faire.
+> Le compte n'est pas une estimation prise à part : c'est le `RETURNING` de la suppression
+> récursive elle-même. Un `archive` non destructif (le vocabulaire déjà en place pour les
+> procédures et les projets) reste **à faire** : c'est un changement de modèle, hors de ce lot.
+> ⚠️ **La FK auto-référente n'interdit AUCUN cycle** (2026-09-01) : elle exige que la page
+> visée existe, pas que l'arbre soit acyclique — `UPDATE docs SET parent_id = <un
+> descendant>` passait, et les trois descentes récursives (compter, supprimer, déplacer)
+> tournaient alors sans fin en remplissant `pgsql_tmp`. `move_doc` et `move_doc_to_project`
+> **refusent** désormais de ranger une page sous sa propre descendance (`DocParentCycle`), et
+> les trois descentes partagent une définition unique **bornée** par la clause SQL `CYCLE`.
+> Le raisonnement complet, la mesure et le relevé de production (0 cycle) sont dans
+> `docs/noeuds.md` — même défaut, même correction, une table plus loin.
 
 > **Push out-of-bande de gros contenu par un agent (issue #105).** Écrire un GROS contenu
 > via `oto_doc(body_md=…)`/multipart le fait transiter INLINE par le contexte du LLM (coût

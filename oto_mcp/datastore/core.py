@@ -24,6 +24,7 @@ import contextvars
 
 import base64
 import binascii
+import logging
 import os
 import time
 import uuid
@@ -38,7 +39,12 @@ from . import claimable, hors_org
 # (`from .datastore.core import RowNotFound`) reste inchangé.
 from .claimable import RowOutsideClaimable  # noqa: F401
 from .schema_ops import SchemaOpsMixin
-from .reserves import poser_origine_systeme, refuser_champs_reserves
+from .reserves import (
+    poser_origine_systeme,
+    poser_valeurs_systeme,
+    refuser_champs_reserves,
+    valeurs_systeme,
+)
 from .errors import (  # noqa: F401
     BusinessKeyRequired,
     ClaimedRefUnresolved,
@@ -56,6 +62,7 @@ from .. import db, ownership, session_org
 from .. import config
 from ..db.query import ds_filter_specs as _filter_specs
 
+logger = logging.getLogger(__name__)
 
 
 # La colonne et ses couches : extraites dans `columns` (#325), ré-importées
@@ -72,6 +79,7 @@ from .columns import (  # noqa: E402,F401
     _to_path,
     _writes_layers,
     arbitrer_les_vides,
+    refuser_geste_sans_effet,
     effacements_report,
     ignores_report,
 )
@@ -213,7 +221,34 @@ def _backquote(noms) -> str:
     return ", ".join(f"`{n}`" for n in noms)
 
 
-def _refus_rien_tenu(ou: str = "") -> ClaimedRefUnresolved:
+def _refus_run_clos(ou: str, quand: object) -> ClaimedRefUnresolved:
+    """Le refus quand le travail est CLOS — un MOMENT, pas un état (#645).
+
+    Huitième passage, 30/08 : 99 refus sur 200 écritures, tous « ton travail ne tient
+    aucune ligne en ce moment ». Exact, et à côté de la question — les appels venaient
+    d'un harnais qui écrivait APRÈS `run_finish`, dont la clôture avait justement
+    libéré les baux. Le refus décrivait l'état constaté ; ce qu'il fallait dire est
+    **quand** la porte s'est fermée, parce que rien dans le nom de l'alias ni dans sa
+    description ne disait qu'il en avait une. Deux heures perdues, sur un mécanisme
+    découvert deux fois à douze heures d'écart.
+
+    > **Un refus juste qui n'est pas le bon refus coûte autant qu'un refus faux** : il
+    > envoie chercher une réservation oubliée là où c'est l'ordre des gestes qui est en
+    > cause.
+
+    L'heure y est parce que c'est elle qui fait le lien avec le geste précédent :
+    « depuis 21:08:53 » se reconnaît dans un journal, « clos » ne se reconnaît pas.
+    Et la sortie ne prescrit **aucun outil de plus** : l'identifiant de la ligne est
+    une valeur que l'appelant a déjà reçue (`docs/conventions.md`, la règle #613/#632)."""
+    return ClaimedRefUnresolved(
+        f"`{CLAIMED_REF}`{ou} : ton travail est CLOS depuis {str(quand)[:19]} "
+        "(`run_finish`), et sa clôture a libéré toutes ses lignes — l'alias ne désigne "
+        "une ligne que TANT QUE le travail est ouvert, jamais après. Il n'y a plus rien "
+        "à écrire sous cette adresse : si une écriture restait due, vise la ligne par "
+        "l'identifiant que `data_claim_next` t'avait rendu.")
+
+
+def _refus_rien_tenu(ou: str = "", *, run: Optional[str] = None) -> ClaimedRefUnresolved:
     """Le refus « ton travail ne tient rien » — et ce qu'il ne dit PLUS.
 
     Le 29/08 à 15:24, il finissait par « ou écris avec un identifiant explicite ». Le
@@ -222,7 +257,28 @@ def _refus_rien_tenu(ou: str = "") -> ClaimedRefUnresolved:
     fabriqué un identifiant sur le gabarit du refus suivant. Le cas NORMAL derrière ce
     refus est la fin de file, pas une réservation oubliée : on le nomme, et la conduite
     est de ne rien écrire — une invitation à fournir un identifiant, ici, est une
-    invitation à l'inventer."""
+    invitation à l'inventer.
+
+    ⚠️ **Sauf si le travail est CLOS** : la phrase ci-dessous serait alors vraie et
+    inutile (#645). On paie une requête pour le savoir, ici et nulle part ailleurs —
+    c'est un chemin d'échec, le nominal résout un bail sans y passer. `run=None` (hors
+    run) garde le texte de fin de file : sans run, il n'y a pas de clôture à raconter,
+    et c'est un autre refus, plus haut, qui parle.
+
+    ⚠️ **Et cette requête ne peut pas emporter le refus.** On est ici pour RENDRE une
+    conduite à l'agent (`_adresse_reservee` : « une erreur interne l'effacerait au
+    moment précis où elle sert ») ; une lecture de journal qui casse doit coûter la
+    précision du message, jamais le message. L'échec est journalisé — la dégradation
+    se voit — et on retombe sur le texte de fin de file, qui reste un refus juste."""
+    if run:
+        try:
+            clos = db.run_closed_at(run)
+        except Exception:  # noqa: BLE001 — le refus prime sur sa propre précision
+            logger.warning("clôture du run %s illisible : le refus `%s` retombe sur "
+                           "le texte de fin de file", run, CLAIMED_REF, exc_info=True)
+            clos = None
+        if clos is not None:
+            return _refus_run_clos(ou, clos)
     return ClaimedRefUnresolved(
         f"`{CLAIMED_REF}`{ou} : ton travail ne tient aucune ligne en ce moment (aucune "
         "réservation active). Si `data_claim_next` t'a rendu `row: null`, la file est "
@@ -373,7 +429,7 @@ class DatastorePg(SchemaOpsMixin):
                                             str(ns_id), "write"))
             if not ok:
                 raise NamespaceReadOnly(namespace)
-        # Le journal cite l'ENTITÉ, pas la chaîne tapée : `data_write("mucho-leads")`,
+        # Le journal cite l'ENTITÉ, pas la chaîne tapée : `data_write("leads-clients")`,
         # `data_write("160")` et `data_write("slot:vivier")` visent le même tableau.
         # Consigné APRÈS les gardes (un namespace refusé ne laisse pas de trace) ;
         # no-op hors appel MCP — la face REST tient déjà son propre relevé.
@@ -384,7 +440,8 @@ class DatastorePg(SchemaOpsMixin):
     def _row_to_dict(row: dict, schema: Optional[dict] = None) -> dict:
         """Ligne `datastore_rows` → row API (`_id`/`_created_at`/`_updated_at` à
         plat + champs user). Le bail de claim (ADR 0046 D) n'apparaît que s'il est
-        posé (les lectures ordinaires ne le SELECTent pas → absent, pas None)."""
+        posé (une ligne libre n'a aucune des trois clés `_claimed_*` → absentes,
+        pas None)."""
         data = row.get("data") or {}
         out = {
             "_id": row["row_id"],
@@ -427,6 +484,17 @@ class DatastorePg(SchemaOpsMixin):
         if row.get("claimed_by") is not None:
             out["_claimed_by"] = row["claimed_by"]
             out["_claimed_until"] = row.get("claimed_until")
+            # LE RUN qui tient ce bail — ce qui lie un travail à la LIGNE qu'il
+            # travaille. Sans lui, une vue de surveillance voit qu'un agent tient
+            # une ligne et jamais LAQUELLE : le serveur savait déjà répondre
+            # (l'alias `@claimed` résout run → ligne par cette même colonne), mais
+            # seulement au run LUI-MÊME, jamais à un tiers qui regarde.
+            #
+            # `null` = le bail a été pris SANS run (une personne sur la file du
+            # dashboard, un agent qui n'a pas passé `_run_id`) — un fait, pas un
+            # trou. Lu par CLÉ et non par `.get` : un chemin de lecture qui
+            # oublierait la colonne doit LEVER, pas servir un faux « sans run ».
+            out["_claimed_run"] = row["claimed_run"]
         # Ce que la file sait de la ligne (#433). Rendus SEULEMENT s'ils portent
         # quelque chose : un `_claims: 0` sur chaque ligne de chaque tableau serait
         # du bruit dans toutes les lectures, pour une file que la plupart n'ouvrent
@@ -509,6 +577,18 @@ class DatastorePg(SchemaOpsMixin):
                 return set((db.datastore_get_row(ns_id, rid) or {}).get("data") or {})
         return set()
 
+    @staticmethod
+    def _pose_systeme(schema: Optional[dict]) -> dict:
+        """Ce que la plateforme pose sur CE geste (#607) — `{}` quand le tableau ne
+        déclare aucune colonne `system:`, donc rien à payer pour qui ne s'en sert pas.
+
+        Calculée UNE fois par geste et passée aux deux temps qui en ont besoin (le
+        refus, puis la pose) : deux calculs encadrant la même écriture donneraient
+        deux horodatages, et l'appelant se ferait refuser une valeur identique à
+        celle qu'on venait de lui rendre — un refus impossible à comprendre et
+        impossible à reproduire."""
+        return valeurs_systeme(schema, run=_current_run(), maintenant=_now_iso())
+
     def _check_row(self, schema: Optional[dict], merged: dict, *,
                    prev_status=None, written: Optional[set] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
@@ -550,6 +630,25 @@ class DatastorePg(SchemaOpsMixin):
                 "ligne, ou passe le paramètre id=. Si `id` est une vraie colonne "
                 "de TES données, déclare-la au schéma (data_set_schema) puis "
                 "réécris.")
+        # #614/#678 : le TROISIÈME état de `strict` au premier niveau — refuser la
+        # colonne non déclarée, opt-in table par table (`unknown_fields: "reject"`).
+        #
+        # Posé ICI, contre `posed`, et les deux points comptent autant que le refus :
+        #   • ici, parce que c'est le seam qui calcule DÉJÀ le relevé, deux lignes
+        #     plus bas. Le rapporteur et le refuseur partagent donc le prédicat
+        #     (`_unknown_subkeys`), pas seulement l'intention — la divergence entre
+        #     un signal et un refus qui se veulent d'accord se paie chez l'appelant ;
+        #   • contre `posed`, jamais contre la ligne mergée : un tableau de
+        #     production porte 162 colonnes hors schéma accumulées avant la pose du
+        #     cran. Les juger rendrait la ligne inécrivable pour un patch sans
+        #     rapport — la faute de #284, sur une autre règle. Le cran juge le GESTE,
+        #     pas le passé qu'il hérite.
+        #
+        # Après le refus de l'`id` nu, qui est plus spécifique et plus utile : sur un
+        # tableau fermé, `id` serait sinon rendu comme une colonne inventée de plus.
+        hs_errors, hs_details = dsv2.off_schema_refusal(schema, posed)
+        if hs_errors:
+            raise RowValidationError(hs_errors, details=hs_details)
         self.off_schema.update(dsv2.off_schema_keys(schema, posed))
         # Valeurs hors des options DÉCLARÉES quand rien ne les fait respecter (#319) :
         # écrites quand même — le tableau est en régime souple — mais plus en silence.
@@ -840,7 +939,11 @@ class DatastorePg(SchemaOpsMixin):
         # #586 : la couche d'origine d'un champ système ne s'écrit pas, création
         # comprise — jugée sur le payload seul (le readonly, lui, se juge contre la
         # ligne en place, donc dans la fusion). Refusé AVANT le lookup de clé.
-        refuser_champs_reserves(schema, user_data)
+        # #607 : la colonne posée par la plateforme se juge du même geste, contre ce
+        # qu'on s'apprête à poser — sinon l'agent qui réémet l'estampille courante
+        # (le geste dominant) se ferait refuser sa propre lecture.
+        sys_pose = self._pose_systeme(schema)
+        refuser_champs_reserves(schema, user_data, pose_systeme=sys_pose)
         self._trace(trace, ns_id, ns)
         # La clé métier sort du MÊME schéma que ci-dessus (`declared_key` re-résolvait
         # le namespace et relisait la ligne pour le même résultat).
@@ -874,6 +977,10 @@ class DatastorePg(SchemaOpsMixin):
                 f"sera rapprochée par personne — ni une réécriture, ni un lot qui "
                 f"dédouble sur cette clé. Si elle visait une ligne existante, c'est "
                 f"data_write(id=…) ; sinon renseigne `{key}`.")
+        # #607 : la plateforme pose AVANT la validation — une colonne `system:`
+        # déclarée `required` est satisfaite par ce qu'elle pose, jamais par ce que
+        # l'appelant aurait dû deviner.
+        poser_valeurs_systeme(schema, user_data, sys_pose)
         self._check_row(schema, user_data)
         try:
             row = db.datastore_insert_row(ns_id, _new_id(), user_data)
@@ -925,7 +1032,7 @@ class DatastorePg(SchemaOpsMixin):
 
         **Le titulaire s'identifie de deux façons qui se recouvrent** — parce qu'une
         écriture ordinaire ne dit pas qui écrit, et que `claimed_by` est un libellé
-        libre (`'mucho-w8'`), jamais un compte :
+        libre (`'campagne-s8'`), jamais un compte :
 
         - **par le RUN** : écrire sous le run qui tient la ligne, c'est être le
           titulaire — rien à déclarer, le cas nominal est transparent ;
@@ -997,6 +1104,9 @@ class DatastorePg(SchemaOpsMixin):
         _refuse_dotted_names(user_data)
         _refuse_mixed_layers(schema, user_data)
         sk = (dsv2.status_field(schema) or {}).get("key")
+        # #607 : calculée HORS du `_apply`, qui peut être rejoué par le verrou — deux
+        # tours donneraient deux horodatages pour une seule écriture.
+        sys_pose = self._pose_systeme(schema)
 
         def _apply(current: dict) -> dict:
             merged = dict(current or {})
@@ -1008,6 +1118,14 @@ class DatastorePg(SchemaOpsMixin):
             # validation passée — un refus n'a rien effacé, l'annoncer ferait
             # chercher un dégât imaginaire.
             pose, vidages, ecartes = arbitrer_les_vides(current, user_data, row_id)
+            # #724 : préserver et le DIRE ne suffit pas quand l'écarté était TOUT ce
+            # que l'écriture portait — l'appel n'a alors aucun effet et répond 200.
+            # ⚠️ Par CE chemin le refus ne peut pas parler : on n'arrive ici (append
+            # promu, lot) qu'avec une valeur de clé métier non vide, donc posée — ce
+            # qui garantit qu'un LOT ne casse jamais dessus. Il y est quand même :
+            # les deux chemins d'écriture ont déjà divergé une fois sur cette famille
+            # de règles (#322), ils partagent la fonction, pas seulement l'intention.
+            refuser_geste_sans_effet(pose, ecartes)
             # Colonne par colonne, pour que l'origine survive à une écriture
             # ordinaire. Un `update` en bloc l'emporterait avec le reste — et
             # silencieusement, puisque remplacer une valeur est le geste normal.
@@ -1016,8 +1134,13 @@ class DatastorePg(SchemaOpsMixin):
             # #586/#606 : ce que l'appelant n'écrit pas — jugé sur le geste ENTIER
             # (payload, ligne en place, résultat), sous le verrou, avant que quoi
             # que ce soit ne parte. Puis la plateforme pose l'origine qu'elle doit.
-            refuser_champs_reserves(schema, pose, avant=current or {})
+            refuser_champs_reserves(schema, pose, avant=current or {},
+                                    pose_systeme=sys_pose)
             poser_origine_systeme(schema, current, merged, set(pose))
+            # #607 : l'estampille est reposée sur CHAQUE écriture — c'est le point du
+            # cran. Après l'origine : sur une colonne qui porterait les deux, la
+            # capture doit voir la valeur d'avant, pas celle qu'on vient de poser.
+            poser_valeurs_systeme(schema, merged, sys_pose)
             # ⚠️ `written` reste l'ensemble des clés que l'appelant a NOMMÉES, pas
             # celles qu'on a retenues : une borne de longueur ou un motif ne doit pas
             # se réarmer sur une colonne préservée, dont la valeur n'a pas bougé.
@@ -1057,7 +1180,9 @@ class DatastorePg(SchemaOpsMixin):
         _refuse_dotted_names(user_data)
         _refuse_mixed_layers(schema, user_data)
         valide = dsv2.validation_active(schema) or dsv2.lifecycle_of(schema)
-        reserves = bool(dsv2.readonly_fields(schema) or dsv2.system_origin_fields(schema))
+        sys_pose = self._pose_systeme(schema)
+        reserves = bool(dsv2.readonly_fields(schema)
+                        or dsv2.system_origin_fields(schema) or sys_pose)
         prev = db.datastore_get_row(ns_id, row_id) if (valide or reserves) else None
         prev_data = dict((prev or {}).get("data") or {}) if prev else None
         if reserves:
@@ -1066,9 +1191,13 @@ class DatastorePg(SchemaOpsMixin):
             # comme telle (le payload est complété des colonnes qui tomberaient).
             complet = {**{k: None for k in (prev_data or {}) if k not in user_data},
                        **user_data}
-            refuser_champs_reserves(schema, complet, avant=prev_data)
+            refuser_champs_reserves(schema, complet, avant=prev_data,
+                                    pose_systeme=sys_pose)
             if prev_data is not None:
                 poser_origine_systeme(schema, prev_data, user_data, set(complet))
+        # #607 : hors du `if reserves` — un remplacement qui n'emporte QUE l'estampille
+        # doit quand même la reposer, et `sys_pose` vide ne fait rien.
+        poser_valeurs_systeme(schema, user_data, sys_pose)
         if valide:
             sk = (dsv2.status_field(schema) or {}).get("key")
             prev_status = (prev_data or {}).get(sk) if sk else None
@@ -1179,7 +1308,12 @@ class DatastorePg(SchemaOpsMixin):
                     continue
                 # #586 : la création dans le LOT (même chemin que l'upload signé) —
                 # la couche d'origine d'un champ système ne s'écrit pas.
-                refuser_champs_reserves(schema, user_data)
+                # #607 : et l'estampille s'y pose comme partout ailleurs — c'est le
+                # chemin le plus volumineux, donc celui où un trou produirait le plus
+                # de lignes sans trace.
+                sys_pose = self._pose_systeme(schema)
+                refuser_champs_reserves(schema, user_data, pose_systeme=sys_pose)
+                poser_valeurs_systeme(schema, user_data, sys_pose)
                 self._check_row(schema, user_data)
                 try:
                     row = db.datastore_insert_row(ns_id, _new_id(), user_data)
@@ -1447,6 +1581,12 @@ class DatastorePg(SchemaOpsMixin):
         # d'écriture ont déjà divergé une fois sur cette famille de règles (#322) :
         # ils partagent donc la fonction, pas seulement l'intention.
         pose, vidages, ecartes = arbitrer_les_vides(data, patch, row_id)
+        # #724 : le patch par `id` est le chemin des dix retraits perdus du 01/09 —
+        # un vide SEUL y était accepté sans effet, et le relevé qui nommait déjà la
+        # porte n'a pas été lu. Refusé AVANT tout relevé : rien n'a été touché, il
+        # n'y a donc rien à annoncer — le message, lui, écrit la porte en toutes
+        # lettres, au moment où l'appelant peut encore corriger.
+        refuser_geste_sans_effet(pose, ecartes)
         avant = dict(data)
         written = set()
         for k, v in pose.items():
@@ -1459,8 +1599,12 @@ class DatastorePg(SchemaOpsMixin):
             written.add(k)
         # #586/#606 : MÊME garde que la fusion — le patch par `id` est le geste le
         # plus courant d'un agent, et celui qui a écrasé les quatorze valeurs.
-        refuser_champs_reserves(schema, pose, avant=avant)
+        sys_pose = self._pose_systeme(schema)
+        refuser_champs_reserves(schema, pose, avant=avant, pose_systeme=sys_pose)
         poser_origine_systeme(schema, avant, data, written)
+        # #607 : le patch par `id` est le geste le plus courant d'un agent — donc
+        # celui où une estampille manquante se verrait le plus.
+        poser_valeurs_systeme(schema, data, sys_pose)
         # Validation sur le RÉSULTAT mergé (un patch partiel ne doit pas échouer
         # sur un requis déjà présent) + transition de cycle de vie (ADR 0046 B/C).
         # Seule la borne de longueur se limite aux clés du patch (#383).
@@ -1642,7 +1786,9 @@ class DatastorePg(SchemaOpsMixin):
                 "`run_start`) sur cet appel — il n'est pas hérité —, ou écris avec "
                 "l'identifiant que `data_claim_next` t'a rendu.")
         if not ici and not ailleurs:
-            raise _refus_rien_tenu()
+            # `ici is None` a déjà écarté le hors-run : il y a donc bien un travail, et
+            # la question qui reste est s'il est encore ouvert (#645).
+            raise _refus_rien_tenu(run=_current_run())
         if len(ici) == 1:
             return ici[0]
         if not ici:
@@ -1683,7 +1829,7 @@ class DatastorePg(SchemaOpsMixin):
                 "`run_start`) — il n'est pas hérité —, ou nomme le tableau.")
         baux = self._baux_actifs(run, worker)
         if not baux:
-            raise _refus_rien_tenu(" en tableau")
+            raise _refus_rien_tenu(" en tableau", run=run)
         if len(baux) == 1:
             b = baux[0]
             return str(self._ns_of(b["ns_id"]).get("namespace") or b["ns_id"]), str(b["row_id"])

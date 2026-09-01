@@ -231,7 +231,15 @@ def residu_projete(*, dry_run: bool = True) -> dict:
     `props.legacy`. Elles préparaient une bascule de lecture qui n'aura pas lieu — les
     deux univers vivent désormais côte à côte, chacun avec ses verbes. La copie n'a
     donc plus ni écrivain (l'arrêt est dans `db/_init.py`) ni lecteur, et ce travail
-    la retire : 70 876 nœuds sur 70 927 et 29 174 blocs, mesurés le 2026-09-01.
+    la retire : 75 668 nœuds sur 75 721 et 34 314 blocs, mesurés le 2026-09-01 à
+    19:30 sur la base servie.
+
+    ⚠️ **Ce chiffre se DATE et se REFAIT avant de jouer.** Il valait 70 876 quatre
+    heures plus tôt : la recopie a tourné jusqu'au déploiement de son arrêt. Et
+    depuis cet arrêt, la PURGE ne tourne plus non plus (elle vivait dans la même
+    fonction) — donc une page supprimée laisse désormais une copie entière que
+    rien ne retire. Le décompte à blanc est là pour ça : on le relit, on ne le
+    récite pas.
 
     **Ici et pas au boot** : le coût suit la taille de la base, la fenêtre du
     healthcheck est finie (ADR 0065). Et **à blanc par défaut** : c'est un ACTE, pas

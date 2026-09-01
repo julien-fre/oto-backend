@@ -33,6 +33,13 @@ from pathlib import Path
 
 import pytest
 
+# La sonde compare les tools à l'oto-core ÉPINGLÉ : lancée contre un autre, elle ne
+# mesure rien — ni ses rouges (méthodes absentes d'un client périmé) ni ses verts
+# (méthodes présentes dans un client que le tronc n'épingle pas : le faux vert
+# symétrique). Donc NON CONCLUANTE en bloc, pas connecteur par connecteur.
+# Cf. `tests/_oto_core_pin.py`.
+pytestmark = pytest.mark.exige_pin_oto_core
+
 _TOOLS_DIR = Path(__file__).resolve().parent.parent / "oto_mcp" / "tools"
 
 # Modules sans `_client()` du tout (spine, dispatchers, connecteurs sans client

@@ -77,8 +77,8 @@ def list_member_projects(sub: str, org_id: int, *,
     """Projets PERSO de l'acteur (owner=('user', sub)) DANS le contexte de l'org `org_id`
     (scope membre `(sub, org)`, ADR 0030 amendé). Privés à leur propriétaire, listés dans
     LEUR org de contexte (pas un fourre-tout cross-org). Le contexte `(moi, org)` est la
-    demi-identité qui manquait : un projet perso créé « chez movinmotion » remonte chez
-    movinmotion, pas chez otomata. Filtre `context_org_id = org_id` (les perso legacy à
+    demi-identité qui manquait : un projet perso créé « chez un client » remonte chez
+    ce client, pas chez otomata. Filtre `context_org_id = org_id` (les perso legacy à
     contexte NULL n'y apparaissent pas — ils vivent dans l'org perso)."""
     sql = (f"SELECT {_PROJECT_COLS} FROM projects "
            "WHERE owner_type = 'user' AND owner_id = %s AND context_org_id = %s ")
@@ -702,6 +702,93 @@ def list_doc_revisions(doc_id: int, limit: int = 50) -> list[dict]:
         return [dict(r) for r in rows]
 
 
+def get_doc_revision(doc_id: int, revision_id: int) -> Optional[dict]:
+    """UNE version antérieure, adressée par le `id` que `list_doc_revisions` sert.
+
+    ⚠️ Le `doc_id` est dans le WHERE, pas seulement dans la signature : sans lui, un
+    id de révision appartenant à une AUTRE page restaurerait son contenu ici — une
+    fuite entre projets, dont l'autz du call-site (qui ne connaît que `doc_id`) ne
+    verrait rien passer. Une révision d'un autre doc rend donc None, comme une
+    inexistante."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT id, doc_id, title, body_md, edited_by, created_at FROM doc_revisions "
+            "WHERE id = %s AND doc_id = %s", (revision_id, doc_id)).fetchone()
+        return dict(row) if row else None
+
+
+# --- L'arbre des `docs` : mêmes deux gestes que pour les nœuds -----------------
+#
+# `docs.parent_id` porte une clé étrangère (`REFERENCES docs(id) ON DELETE CASCADE`),
+# et ça n'empêche RIEN ici : une FK auto-référente exige que la ligne visée existe,
+# pas que l'arbre soit acyclique. `UPDATE docs SET parent_id = <un descendant>` passe.
+#
+# Donc, comme sur `nodes` (voir le préambule de `db/nodes.py`, qui porte le raisonnement
+# complet et la mesure) : les déplacements refusent le cycle, et toute récursion porte
+# la clause `CYCLE`. La cascade de la FK, elle, gère les cycles toute seule ; c'est le
+# `WITH RECURSIVE … UNION ALL` qui ne terminait pas.
+
+
+class DocParentCycle(ValueError):
+    """Ranger cette page sous ce parent fermerait une boucle dans l'arbre du projet."""
+
+    def __init__(self, doc_id: int, parent_id: int):
+        super().__init__(
+            f"cycle_de_parente: la page {doc_id} ne peut pas être rangée sous "
+            f"{parent_id}, qui descend d'elle")
+        self.doc_id = doc_id
+        self.parent_id = parent_id
+
+
+# La descente, bornée par la clause `CYCLE`. Une seule définition pour les trois
+# usages : compter, supprimer, déplacer — trois copies, c'était trois occasions d'en
+# oublier une.
+_SOUS_ARBRE = (
+    "WITH RECURSIVE sub AS ("
+    "    SELECT id, parent_id FROM docs WHERE id = %s"
+    "  UNION ALL"
+    "    SELECT d.id, d.parent_id FROM docs d JOIN sub ON d.parent_id = sub.id"
+    ") CYCLE id SET boucle USING chemin "
+)
+
+# La remontée, pour la garde des déplacements — même arbitrage que sur `nodes` : on
+# paie la profondeur, pas le sous-arbre.
+_ASCENDANCE_DOC = (
+    "WITH RECURSIVE anc AS ("
+    "    SELECT id, parent_id FROM docs WHERE id = %s"
+    "  UNION ALL"
+    "    SELECT d.id, d.parent_id FROM docs d JOIN anc ON d.id = anc.parent_id"
+    ") CYCLE id SET boucle USING chemin "
+)
+
+
+def _refuse_le_cycle(conn, doc_id: int, new_parent_id: Optional[int]) -> None:
+    """Lève `DocParentCycle` si `new_parent_id` descend de `doc_id` (ou EST `doc_id`)."""
+    if new_parent_id is None:
+        return
+    if conn.execute(_ASCENDANCE_DOC + "SELECT 1 FROM anc WHERE id = %s LIMIT 1",
+                    (new_parent_id, doc_id)).fetchone() is not None:
+        raise DocParentCycle(doc_id, new_parent_id)
+
+
+_SUBTREE_SQL = _SOUS_ARBRE + "SELECT count(DISTINCT id) AS n FROM sub"
+
+
+def count_doc_descendants(doc_id: int) -> int:
+    """Combien de pages une suppression de `doc_id` emporterait EN PLUS d'elle-même.
+
+    La cascade vient de la FK auto-référente (`parent_id … ON DELETE CASCADE`) : elle
+    est correcte mais MUETTE, et un front ne peut pas annoncer « ceci supprimera N
+    pages » sans ce compte (#657). Le sous-arbre ENTIER, pas les seuls enfants directs.
+
+    ⚠️ Le compte EXCLUT la page elle-même. `_SOUS_ARBRE` s'amorce sur `doc_id` (une
+    seule définition de la descente pour les trois usages) là où la requête d'origine
+    s'amorçait sur ses enfants : d'où le `- 1`. La clause `CYCLE` peut ajouter une
+    ligne de répétition si l'arbre boucle — `count(DISTINCT id)` la neutralise."""
+    with _connect() as conn:
+        return max(0, int(conn.execute(_SUBTREE_SQL, (doc_id,)).fetchone()["n"]) - 1)
+
+
 # --- Demandes de modification (gap #4b, lecture seule → propose, owner tranche) --
 _DCR_COLS = ("id, doc_id, project_id, proposed_parent_id, proposed_kind, requested_by, "
              "proposed_title, proposed_body_md, message, "
@@ -797,11 +884,30 @@ def resolve_doc_change_request(request_id: int, status: str, resolved_by: Option
         )
 
 
-def delete_doc(doc_id: int) -> None:
-    # doc_links (Ship 4) : purgée en CASCADE (from_doc ET to_doc → docs ON DELETE
-    # CASCADE) — supprimer une page retire ses liens sortants ET les mentions vers elle.
+def delete_doc(doc_id: int) -> int:
+    """Supprime une page ET son sous-arbre. Retourne le nombre de DESCENDANTS partis
+    avec elle (#657) — 0 pour une feuille.
+
+    Le sous-arbre est ÉNUMÉRÉ par le DELETE lui-même (`RETURNING`) au lieu d'être
+    compté par une requête d'avant : un compte pris à part serait une ESTIMATION, et
+    un front qui l'affiche (« 4 pages supprimées ») afficherait un chiffre faux dès
+    qu'un pair ajoute une sous-page entre les deux requêtes. Ici, le nombre rendu est
+    celui des lignes que CE statement a retirées.
+
+    La FK auto-référente (`parent_id … ON DELETE CASCADE`) reste en place et reste le
+    filet : elle emporterait un descendant que l'énumération n'aurait pas vu. Elle
+    n'est simplement plus le seul chemin, parce qu'elle est MUETTE — c'était tout le
+    problème.
+
+    doc_links (Ship 4) est purgée en CASCADE des deux côtés (`from_doc` ET `to_doc`) :
+    supprimer une page retire ses liens sortants ET les mentions vers elle.
+    """
     with _connect() as conn:
-        conn.execute("DELETE FROM docs WHERE id = %s", (doc_id,))
+        rows = conn.execute(
+            _SOUS_ARBRE
+            + "DELETE FROM docs WHERE id IN (SELECT id FROM sub) RETURNING id",
+            (doc_id,)).fetchall()
+        return max(0, len(rows) - 1)   # la page elle-même n'est pas un descendant
 
 
 def doc_backlinks(doc_id: int) -> list[dict]:
@@ -869,12 +975,16 @@ def move_doc(doc_id: int, new_parent_id: Optional[int],
     """Reparente ET/OU réordonne (Ship 2). `position` = INDEX cible (0-based) dans la
     fratrie de destination ; None = fin. La fratrie est RÉINDEXÉE atomiquement
     (entiers espacés ×16, même transaction) — aucune collision possible, le
-    tie-break `title` du tri ne joue que sur des données pré-backfill."""
+    tie-break `title` du tri ne joue que sur des données pré-backfill.
+
+    Refuse de ranger une page sous sa propre descendance (`DocParentCycle`) : même
+    défaut, même correction que `db.nodes.move_page`."""
     with _connect() as conn:
         row = conn.execute("SELECT project_id FROM docs WHERE id = %s", (doc_id,)).fetchone()
         if row is None:
             return
         pid = row["project_id"]
+        _refuse_le_cycle(conn, doc_id, new_parent_id)
         conn.execute("UPDATE docs SET parent_id = %s, updated_at = NOW() WHERE id = %s",
                      (new_parent_id, doc_id))
         sibs = conn.execute(
@@ -898,11 +1008,10 @@ def move_doc_to_project(doc_id: int, target_project_id: int,
     RE-RÉSOUT les backlinks de chaque doc déplacé (précédence projet > KB change avec le
     contexte). Retourne le nombre de docs déplacés. Transaction unique (atomique)."""
     with _connect() as conn:
-        subtree = [r["id"] for r in conn.execute(
-            "WITH RECURSIVE sub AS ("
-            "  SELECT id, body_md FROM docs WHERE id = %s "
-            "  UNION ALL SELECT d.id, d.body_md FROM docs d JOIN sub ON d.parent_id = sub.id) "
-            "SELECT id FROM sub", (doc_id,)).fetchall()]
+        _refuse_le_cycle(conn, doc_id, new_parent_id)
+        subtree = list(dict.fromkeys(
+            r["id"] for r in conn.execute(
+                _SOUS_ARBRE + "SELECT id FROM sub", (doc_id,)).fetchall()))
         if not subtree:
             return 0
         conn.execute("UPDATE docs SET project_id = %s WHERE id = ANY(%s)",

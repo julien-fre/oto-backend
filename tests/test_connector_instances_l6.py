@@ -289,7 +289,7 @@ def test_inst_roundtrip():
 def test_les_refs_composes_restent_lisibles_a_l_identique():
     """Ils sont DÉJÀ distribués — bindings de slot, axe `_instance=`, `resource_id`
     des arêtes de `grants` — et ce lot n'en réécrit aucun."""
-    for ref in ("member:8:usr_x:zoho:alexandra", "group:3:hunter", "org:8:bridge:prod",
+    for ref in ("member:8:usr_x:zoho:jane", "group:3:hunter", "org:8:bridge:prod",
                 "platform:zoho:main"):
         assert instance_refs.format_ref(instance_refs.parse_ref(ref)) == ref
 

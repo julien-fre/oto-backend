@@ -56,7 +56,7 @@ def test_active_membership_tables_are_pre_treated():
     """Une table `(scope, sub)` avec un `is_active` UNIQUE par sub ne peut pas passer
     par l'UPDATE nu de `_SUB_COLUMNS`.
 
-    Vécu prod 2026-07-28 (julien@folk.app) : `UPDATE org_members SET sub=new` a fait
+    Vécu prod 2026-07-28 (un compte réel) : `UPDATE org_members SET sub=new` a fait
     porter DEUX appartenances actives au même sub → `UniqueViolation
     org_members_one_active`. Le merge échouait à CHAQUE requête de l'utilisateur (donc
     jamais fusionné, plus un round-trip Logto et un traceback par appel). Ces tables

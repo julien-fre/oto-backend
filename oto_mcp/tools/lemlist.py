@@ -233,6 +233,11 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """List the campaigns of the workspace.
 
+        Returns `{campaigns: [{id, name, status, senders, emoji, labels,
+        timezone, created_at, created_by, has_error, errors}], count,
+        truncated}`. `truncated: true` means the ceiling was hit and the list is
+        INCOMPLETE — do not conclude a campaign is absent from it.
+
         Args:
             status: Keep only `running`, `draft`, `archived`, `ended`, `paused`
                 or `errors`. A campaign can hold several at once (paused WITH
@@ -240,11 +245,6 @@ def register(mcp: FastMCP) -> None:
             created_by: Keep only campaigns created by a user id (`usr_…`).
             newest_first: Sort on creation date, most recent first.
             max_campaigns: Ceiling on the walk (lemlist pages 100 at a time).
-
-        Returns `{campaigns: [{id, name, status, senders, emoji, labels,
-        timezone, created_at, created_by, has_error, errors}], count,
-        truncated}`. `truncated: true` means the ceiling was hit and the list is
-        INCOMPLETE — do not conclude a campaign is absent from it.
         """
         client, is_platform = _client()
         filters = {}
@@ -511,14 +511,13 @@ def register(mcp: FastMCP) -> None:
         review-before-send. For anyone else, enrich the person with
         `lemlist_enrich` and write the result back yourself.
 
-        Args:
-            lead_id: the lead's `_id`, as returned by `lemlist_create_lead`.
-
-        
         Enrichment actions — at least one is required, and each spends lemlist
         credits: `find_email` finds a verified email, `verify_email` verifies the
         email you passed (debounce), `linkedin_enrichment` runs the LinkedIn
         enrichment, `find_phone` finds a phone number. Ask only for what you need.
+
+        Args:
+            lead_id: the lead's `_id`, as returned by `lemlist_create_lead`.
         """
         _require_action(
             find_email=find_email, verify_email=verify_email,
@@ -546,10 +545,6 @@ def register(mcp: FastMCP) -> None:
         Single status check per id, returns immediately — no waiting. If a
         result is not `done`, wait ~15-30s and call again.
 
-        Args:
-            enrichment_id: one id, or a list of ids (a bulk submit yields one id
-                per person, so pass them all here in one go).
-
         Returns `results`: one entry per id, `{enrichment_id, status, done,
         input, data, found}`. `status` is `done`, `in-progress` or `not-found`.
         `data` is lemlist's raw payload; `found` is the digest to read — only
@@ -562,6 +557,10 @@ def register(mcp: FastMCP) -> None:
         flips the status before the payload lands. Such an entry carries a
         `warning` and is NOT counted in `all_done` — poll it once more before
         concluding nothing was found (a poll costs no credits).
+
+        Args:
+            enrichment_id: one id, or a list of ids (a bulk submit yields one id
+                per person, so pass them all here in one go).
         """
         ids = [enrichment_id] if isinstance(enrichment_id, str) else list(enrichment_id)
         client, _ = _client()
@@ -620,6 +619,11 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Submit several enrichments in one call.
 
+        Returns `submitted`: one entry per person, in order, each carrying
+        either `enrichment_id` or `error` (e.g. `MISSING_INPUTS`). Unlike a
+        FullEnrich job, a bulk submit yields one id PER PERSON — pass the whole
+        list of ids to `lemlist_enrich_result`.
+
         Args:
             people: one entry per person. Identity keys (all optional, same
                 matching rules as `lemlist_enrich`): `email`, `linkedin_url`,
@@ -627,11 +631,6 @@ def register(mcp: FastMCP) -> None:
                 Plus `actions`: a list among `find_email`, `verify_email`,
                 `linkedin_enrichment`, `find_phone` — required, and each action
                 spends lemlist credits per person.
-
-        Returns `submitted`: one entry per person, in order, each carrying
-        either `enrichment_id` or `error` (e.g. `MISSING_INPUTS`). Unlike a
-        FullEnrich job, a bulk submit yields one id PER PERSON — pass the whole
-        list of ids to `lemlist_enrich_result`.
         """
         if not people:
             raise McpError(ErrorData(

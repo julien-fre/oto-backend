@@ -120,7 +120,7 @@ def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
     # magic-link minté sur NOTRE Logto — inerte contre l'émetteur du tenant. L'invité
     # se crée alors un compte CHEZ NOUS, accepte avec celui-là, et son compte du
     # tenant n'est membre de rien : deux identités pour une personne, et l'org
-    # inatteignable depuis son propre front (vécu le 15/08 sur une org Tulina).
+    # inatteignable depuis son propre front (vécu le 15/08 sur l'org d'un tenant tiers).
     # b6e1d27 a donné aux invitations la marque de l'org ; il manquait qui la pose.
     front_base_url, front_brand = config.front_for(ctx.sub)
     org_id = org_store.create_org(name, created_by=ctx.sub,
@@ -150,11 +150,11 @@ def _use_org(ctx: ResolvedCtx, inp: UseOrgInput) -> dict:
     o = org_store.get_org(org_id)
     return {
         "org": org_id, "name": o["name"] if o else None, "session_state": None,
-        "how_to": (f"Aucun état de session (ADR 0038) : passe `org={org_id}` sur chaque "
+        "how_to": (f"Aucun état de session (ADR 0038) : passe `_org={org_id}` sur chaque "
                    "appel scopé org (connecteurs, data_*, capacités l'acceptent). "
                    f"Puis recharge tes instructions contextuelles de cette org (readme "
                    f"d'org+équipe, guides, procédures — FIGÉES à la connexion, elles ne "
-                   f"suivent PAS seules) via `oto_context(org={org_id})`. "
+                   f"suivent PAS seules) via `oto_context(_org={org_id})`. "
                    "L'org par défaut (maison) ne se change que dans le dashboard — "
                    "jamais depuis l'agent."),
     }
@@ -212,10 +212,12 @@ CAPABILITIES += [
         description=(
             "Resolve an organization you belong to (by id or name) and get the "
             "RELIABLE way to act under it. This tool holds NO session state "
-            "(ADR 0038): to act under another org, pass `org=<id>` directly on "
+            "(ADR 0038): to act under another org, pass `_org=<id>` directly on "
             "each org-scoped call (connectors, data_*, capabilities all accept "
-            "it). Without a token, every call resolves your home org — which is "
-            "changed in the DASHBOARD only, never by the agent."
+            "it — the underscore prefix avoids clashing with a tool's own `org` "
+            "argument, e.g. this one's target). Without a token, every call "
+            "resolves your home org — which is changed in the DASHBOARD only, "
+            "never by the agent."
         ),
         mcp="oto_use_org",
     ),

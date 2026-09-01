@@ -27,18 +27,21 @@ from oto_mcp.db import usage as db_usage
 CTX = ResolvedCtx(sub="op-1", org_id=1)
 
 
-def _signal(i, sub, *, status="resolved", email="a@b.c", target="x_tool"):
-    return {"id": i, "sub": sub, "email": email, "name": None, "signal": "tool_feedback",
-            "kind": "bug", "target": target, "body": "ça casse", "created_at": "2026-08-17",
-            "status": status, "resolution": "corrigé", "resolved_at": "2026-08-27"}
+def _signal(i, sub, *, status="resolved", email="a@b.c", target="x_tool", locale=None):
+    return {"id": i, "sub": sub, "email": email, "name": None, "locale": locale,
+            "signal": "tool_feedback", "kind": "bug", "target": target, "body": "ça casse",
+            "created_at": "2026-08-17", "status": status, "resolution": "corrigé",
+            "resolved_at": "2026-08-27"}
 
 
 @pytest.fixture
 def bouchon(monkeypatch):
     """Le mailer et la base, remplacés — on juge le REGROUPEMENT et les gestes."""
     envois, marques = [], []
-    monkeypatch.setattr(cap.mailer, "send_signal_digest_email",
-                        lambda to, *, items, brand: (envois.append((to, len(items), brand)), True)[1])
+    monkeypatch.setattr(
+        cap.mailer, "send_signal_digest_email",
+        lambda to, *, items, brand, locale=None:
+            (envois.append((to, len(items), brand, locale)), True)[1])
     monkeypatch.setattr(cap.db, "mark_signals_notified", lambda ids: marques.append(list(ids)))
     monkeypatch.setattr(cap.config, "front_for", lambda sub: (None, None))
     return {"envois": envois, "marques": marques}
@@ -79,7 +82,7 @@ def test_l_apercu_n_envoie_rien_et_ne_marque_rien(monkeypatch, bouchon):
 def test_un_envoi_rate_ne_marque_pas(monkeypatch, bouchon):
     """Sinon un hoquet du mailer fait disparaître le retour, silencieusement."""
     monkeypatch.setattr(cap.mailer, "send_signal_digest_email",
-                        lambda to, *, items, brand: False)
+                        lambda to, *, items, brand, locale=None: False)
     monkeypatch.setattr(cap.db, "pending_signal_notices", lambda: [_signal(1, "sub-a")])
     out = cap._notify_reporters(CTX, cap.NotifyReportersInput(op="send"))
 
@@ -115,10 +118,29 @@ def test_only_restreint_l_envoi(monkeypatch, bouchon):
 def test_la_marque_est_celle_du_destinataire(monkeypatch, bouchon):
     """Écrire « oto » à l'utilisateur d'un partenaire est un faux, même quand tout le
     reste est juste — le destinataire ne nous connaît pas sous ce nom."""
-    monkeypatch.setattr(cap.config, "front_for", lambda sub: ("https://x", "Tulina"))
+    monkeypatch.setattr(cap.config, "front_for", lambda sub: ("https://x", "Acme"))
     monkeypatch.setattr(cap.db, "pending_signal_notices", lambda: [_signal(1, "sub-a")])
     cap._notify_reporters(CTX, cap.NotifyReportersInput(op="send"))
-    assert bouchon["envois"][0][2] == "Tulina"
+    assert bouchon["envois"][0][2] == "Acme"
+
+
+def test_la_locale_du_destinataire_suit_jusquau_mailer(monkeypatch, bouchon):
+    """oto-backend#700 : `users.locale`, jointe une fois dans
+    `pending_signal_notices`, doit atteindre le mailer sans aller-retour de plus."""
+    monkeypatch.setattr(cap.db, "pending_signal_notices",
+                        lambda: [_signal(1, "sub-a", locale="en")])
+    cap._notify_reporters(CTX, cap.NotifyReportersInput(op="send"))
+    assert bouchon["envois"][0][3] == "en"
+
+
+def test_locale_absente_ne_casse_rien(monkeypatch, bouchon):
+    """Un signal sans compte lié (`locale` absente du dict, pas seulement None)
+    ne doit pas lever — comportement d'avant ce lot (FR par défaut)."""
+    ligne = _signal(1, "sub-a")
+    del ligne["locale"]
+    monkeypatch.setattr(cap.db, "pending_signal_notices", lambda: [ligne])
+    cap._notify_reporters(CTX, cap.NotifyReportersInput(op="send"))
+    assert bouchon["envois"][0][3] is None
 
 
 # ── ce que la base doit garantir ──────────────────────────────────────────────

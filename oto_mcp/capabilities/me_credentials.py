@@ -29,7 +29,8 @@ from pydantic import BaseModel, ConfigDict
 
 from .. import access, providers, credentials_store, db, journal_secrets, roles
 from ._authz import SUB_ONLY
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
+                     RestBinding)
 from .registry import CAPABILITIES
 
 _PATH = "/api/settings/api-keys/{provider}"
@@ -403,23 +404,75 @@ _DOC_CLEAR = (
     "précis ; vide = le compte unique."
 )
 
+# Les refus du PALIER : les trois capacités résolvent `scope` par la même fonction,
+# donc les mêmes trois réponses. Déclarés une fois, épissés dans chacune — recopier
+# trois listes, c'est en laisser une derrière au premier changement.
+_REFUS_DE_PALIER = (
+    DeclaredError(400, "no_org_context",
+                  "`scope=org` alors qu'aucune org n'est le contexte de l'appel"),
+    DeclaredError(400, "no_group_context",
+                  "`scope=group` alors qu'aucune équipe n'est active"),
+    DeclaredError(403, "forbidden",
+                  "`scope=org` ou `group` sans être admin de ce palier — un membre "
+                  "ne lit ni ne retire la clé partagée d'un autre"),
+)
+_CONNECTEUR_INCONNU = DeclaredError(
+    404, "unknown_provider", "aucun connecteur de ce nom au registre")
+
+
 CAPABILITIES += [
     Capability(
         key="me.credential.get", handler=_get, Input=CredentialGetInput,
         authz=SUB_ONLY, Output=CredentialState, description=_DOC_GET,
         mcp=None,   # un secret ne passe pas en argument d'outil
+        errors=(*_REFUS_DE_PALIER, _CONNECTEUR_INCONNU,
+                DeclaredError(403, "secret_never_revealed",
+                              "`reveal=true` — la valeur d'un credential ne se relit "
+                              "à aucun palier ; la réponse porte de quoi la "
+                              "reconnaître, jamais de quoi la lire"),
+                DeclaredError(404, "not_configured",
+                              "aucune clé posée à ce palier pour ce connecteur")),
         rest=RestBinding("GET", _PATH),
     ),
     Capability(
         key="me.credential.set", handler=_set, Input=CredentialSetInput,
         authz=SUB_ONLY, Output=CredentialSaved, description=_DOC_SET,
         mcp=None,
+        # ⚠️ Pas les trois refus de palier : cette capacité n'a pas de `scope`, elle
+        # écrit TOUJOURS au palier membre (ADR 0033) — donc ni admin d'équipe, ni
+        # admin d'org à exiger. **Mais `no_org_context` reste**, et c'est le piège :
+        # la clé membre est posée DANS l'org de contexte, que le handler résout. Je
+        # l'avais retiré le 01/09 sur la déduction « pas de scope ⟹ pas de contexte
+        # d'org » ; le graphe d'appel dit l'inverse, et il a raison.
+        errors=(_CONNECTEUR_INCONNU, _REFUS_DE_PALIER[0],
+                DeclaredError(400, "single_account_connector",
+                              "un `account` nommé sur un connecteur qui n'en gère "
+                              "qu'un — la clé écraserait l'unique"),
+                DeclaredError(400, "verify_failed",
+                              "la clé a été refusée par le service : elle n'est PAS "
+                              "enregistrée, il n'y a rien à retirer"),
+                DeclaredError(403, "connector_restricted",
+                              "une règle d'org ou d'équipe interdit ce connecteur à "
+                              "cet acteur"),
+                DeclaredError(409, "account_required",
+                              "connecteur multi-compte sans `account` : il faut "
+                              "nommer le compte, sans quoi la pose est ambiguë"),
+                # Les deux refus de SAISIE, levés par le coffre et relayés tels quels.
+                # Ils étaient servis sans être déclarables : le garde-fou exigeait un
+                # code levé dans CE module, et l'a assoupli le 01/09 (#792) — il juge
+                # désormais l'atteignabilité par le chemin, ce qui les couvre.
+                DeclaredError(400, "invalid_field_value",
+                              "un champ à jeu fermé reçoit une valeur hors liste — "
+                              "refusé à la pose plutôt qu'au premier appel réel"),
+                DeclaredError(400, "missing_credentials",
+                              "aucun champ renseigné : il n'y a rien à poser")),
         rest=RestBinding("POST", _PATH, body_field="fields"),
     ),
     Capability(
         key="me.credential.clear", handler=_clear, Input=CredentialClearInput,
         authz=SUB_ONLY, Output=CredentialCleared, description=_DOC_CLEAR,
         mcp=None,
+        errors=(*_REFUS_DE_PALIER, _CONNECTEUR_INCONNU),
         rest=RestBinding("DELETE", _PATH),
     ),
 ]

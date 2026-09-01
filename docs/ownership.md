@@ -26,7 +26,23 @@ call-sites `owner_pairs()`. **org-owned activé** : `data_create_namespace` /
 `POST /api/datastore/namespaces` acceptent un `owner` (classeur d'équipe). Capacité
 générique **`oto_resource`** (`capabilities/resources.py`, op `list/get/transfer/share/
 unshare`, autz combinateur `RESOURCE_GOVERN`) = chemin de gouvernance MCP+REST + alimente
-l'object-browser admin. Catalogue du registre : **`GET /api/admin/capabilities`**
+l'object-browser admin.
+
+> ⚠️ **DEUX surfaces depuis le 2026-09-01, et un défaut connu conservé sur l'héritée.**
+> `oto_resource` / `POST /api/resources` donne à `resource_type` le défaut
+> `datastore_namespace` (relique du pilote ADR 0030). **Omettre le champ ne veut donc pas
+> dire « n'importe quel type »** : l'appel vise silencieusement un tableau, et sur
+> `op=transfer`/`op=share` il **agit sur une autre ressource que celle visée** (même id
+> numérique, autre famille). Le corriger en place a cassé de vrais appelants (#756,
+> reverté par #774) : le défaut est donc **conservé, et écrit dans la description
+> servie** — c'est le seul texte qu'un appelant relit à chaque appel.
+> La correction vit sur une surface **doublée** : `oto_resource_v2` / `POST
+> /api/resources/v2` (`capabilities/resources_v2.py`), où `resource_type` est obligatoire
+> et `resource_id` numérique. **Même handler, même autz, même forme de sortie** — seul le
+> contrat d'entrée diffère. Elle est en **bêta** (option `beta`, cf.
+> `docs/tool-visibility.md`) ; la migration se fait appelant par appelant, sans
+> date-couperet. Cliquet : `tests/test_resources_deux_surfaces.py` +
+> `tests/resources_input_legacy.json` figent le schéma d'entrée servi de l'héritée. Catalogue du registre : **`GET /api/admin/capabilities`**
 (`capabilities_catalog.py`, `PLATFORM_ADMIN`, JSON Schema dérivé des Input pydantic) →
 UI admin **dérivée**. ⚠️ **Migration en cours** : `user_datastores.sub` + colonnes Sheets
 sont des reliques nullable, **DROP différé** (Phase H) après cutover prod vérifié.

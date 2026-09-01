@@ -52,12 +52,23 @@ def test_aucun_champ_declare_nest_superflu(mode):
 
 def test_bearer_ne_montre_pas_les_champs_doauth2_et_de_basic():
     names = [f.name for f in CONNECTOR.fields_for({"auth_mode": "bearer"})]
-    assert names == ["base_url", "auth_mode", "label", "token"]
+    assert names == ["base_url", "auth_mode", "label", "doc_path", "token"]
 
 
 def test_none_ne_demande_aucun_secret():
     names = [f.name for f in CONNECTOR.fields_for({"auth_mode": "none"})]
-    assert names == ["base_url", "auth_mode", "label"]
+    assert names == ["base_url", "auth_mode", "label", "doc_path"]
+
+
+def test_doc_path_est_optionnel_et_pertinent_quel_que_soit_le_mode():
+    """`doc_path` n'est pas un secret, n'est requis dans aucun mode, et vaut pour
+    tous : le tool `http_doc` ne dépend pas de auth_mode."""
+    for mode in AUTH_MODES:
+        fields = CONNECTOR.fields_for({"auth_mode": mode})
+        by_name = {f.name: f for f in fields}
+        assert "doc_path" in by_name
+        assert by_name["doc_path"].required is False
+        assert by_name["doc_path"].secret is False
 
 
 def test_mode_absent_tout_reste_pertinent():

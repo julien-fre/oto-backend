@@ -14,7 +14,18 @@ scheduler.py) fait tout le cycle à intervalle horaire :
    pourquoi — un montant approximatif serait pire qu'un mois non prélevé.
 2. **Politique d'impayé** (dunning borné) : échec → retry à J+3 (tentatives
    trackées par le JOURNAL, pas un compteur mutable) ; 3 échecs → `past_due`
-   + grace 14 j. La notification org_admin = barreau ultérieur.
+   + grace 15 j (Art 9.4 — cf. `_GRACE`).
+
+   ⚠️ **Le PRÉAVIS avant suspension n'existe pas, et c'est un écart connu.** Le
+   même article promet un préavis de CINQ JOURS avant toute suspension (#768) :
+   aujourd'hui rien ne part, ni à l'échec d'un prélèvement, ni à l'entrée en
+   grâce, ni à la fermeture — le client découvre la suspension en la subissant.
+   Envoyer l'email serait à portée (`email_templates`, locale du destinataire) ;
+   ce qui manque est le reste de l'engagement : **désigner** le destinataire
+   (administrateur d'org ? identité de facturation ? le tenant qui répond du
+   client final ?) et **tracer** l'envoi pour pouvoir prouver qu'on a informé.
+   C'est exactement la primitive de notification absente de toute la plateforme
+   (#766) ; la bâtir ici seule en ferait un doublon. Suivi en #768.
 3. **Sweeps** : résiliations à période échue + graces consommées → `canceled`
    (c'est la fermeture d'entitlement ; les données ne bougent jamais).
 4. **Réconciliation** (`open_billing_payments`) : re-polle les paiements non
@@ -49,7 +60,22 @@ log = logging.getLogger("oto_mcp.billing_runner")
 _POLL_INTERVAL_S = 3600
 _RETRY_DELAY = timedelta(days=3)
 _MAX_ATTEMPTS = 3
-_GRACE = timedelta(days=14)
+
+# **Cette durée est un ENGAGEMENT CONTRACTUEL, pas un réglage.** L'Art 9.4 du contrat
+# de service promet la suspension après QUINZE JOURS d'impayé. C'est le délai qu'on a
+# écrit au client : le raccourcir, c'est le suspendre plus tôt que promis. Il a valu
+# 14 jours jusqu'au 01/09/2026 — un jour pris au client, et toujours dans ce sens-là.
+# L'écart, et la référence de l'article, sont dans oto-backend#768. Un test en fait un
+# plancher (`tests/test_billing_b3_runner.py`) : allonger la grâce reste libre,
+# descendre sous 15 jours rougit.
+#
+# ⚠️ Ce que ce compteur mesure vraiment : 15 jours à partir du passage en `past_due`,
+# c'est-à-dire du 3ᵉ échec — donc APRÈS les relances (J0, J+3, J+6). Le client dispose
+# ainsi de ces 15 jours plus une semaine environ, ce qui rend la lecture prudente quel
+# que soit le point de départ que retient l'article. Ce point de départ se tranche sur
+# la pièce, pas ici — et il ne peut pas se trancher tant que rien ne part vers le
+# client (cf. le PRÉAVIS manquant, en tête de module).
+_GRACE = timedelta(days=15)
 _INITIAL_INTENT_TTL = timedelta(hours=48)
 # Au-delà, un encaissement sans abonnement n'est plus une course mais un incident
 # ouvert : `confirm` le refuse (`no_mandate`) et le rejouer chaque heure n'apprend

@@ -43,7 +43,7 @@ RUNS = [
      "doctrine_version": 2, "org_id": 3, "project_id": None,
      "started_at": "2026-08-10 09:00:00", "finished_at": None, "outcome": None,
      "last_seen_at": "2026-08-10 09:30:00"},
-    {"run_id": "r-recent", "label": "Campagne Audiens", "doctrine": None,
+    {"run_id": "r-recent", "label": "Campagne cliente", "doctrine": None,
      "doctrine_version": None, "org_id": 7, "project_id": 152,
      "started_at": "2026-08-16 08:00:00", "finished_at": None, "outcome": None,
      "last_seen_at": "2026-08-16 08:05:00"},

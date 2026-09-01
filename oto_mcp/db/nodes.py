@@ -981,6 +981,77 @@ def update_page(node_id: int, *, title: Optional[str] = None,
     return True
 
 
+# --- Le cycle de parenté : refusé à l'écriture, borné partout ------------------
+#
+# `nodes.parent_id` n'a **pas** de clé étrangère (arbitrage M-e, ouvert) : rien en base
+# n'empêche un nœud d'être rangé sous sa propre descendance. Il faut DEUX gestes, et
+# ils ne se remplacent pas :
+#
+# - `move_page` **refuse** le cycle. C'est la correction — elle protège les
+#   déplacements à venir.
+# - toute récursion sur l'arbre porte la clause `CYCLE`. C'est la **borne** — elle
+#   protège de ce qui serait DÉJÀ en base, qu'aucune garde amont ne peut défaire
+#   rétroactivement.
+#
+# Sans la borne, `WITH RECURSIVE … UNION ALL` sur un cycle ne termine pas : il empile
+# dans `base/pgsql_tmp` jusqu'au `DiskFull`. Mesuré de bout en bout le 2026-09-01 —
+# `move A sous B` (B déjà enfant de A) rendait 200, puis `delete A` remplissait le
+# disque. **Cette base est partagée avec la production** (`docs/live-migrations.md`) :
+# un appel authentifié quelconque saturait donc le disque de la prod.
+#
+# ⚠️ **La borne est la clause `CYCLE`, jamais un plafond de profondeur.** Un plafond
+# tronquerait un `DELETE` sur un arbre légitimement profond et laisserait des enfants
+# accrochés à un identifiant disparu — on guérirait d'un mal en en posant un autre.
+# `CYCLE id SET …` s'arrête à la RÉPÉTITION : chaque nœud est visité une fois, et
+# aucun arbre acyclique n'est tronqué.
+
+
+class ParentCycle(RuntimeError):
+    """L'arbre boucle : `node_id` est son propre ancêtre par `parent_id`.
+
+    Levée à l'ÉCRITURE quand `move_page` refuse de fermer la boucle — `parent_id`
+    porte alors le parent demandé. Levée à la LECTURE quand la remontée du fil en
+    rencontre une déjà en base — `parent_id` vaut `None`, personne ne l'a demandée,
+    c'est un constat de corruption.
+    """
+
+    def __init__(self, node_id: int, parent_id: Optional[int] = None):
+        super().__init__(
+            f"cycle_de_parente: le nœud {node_id} est son propre ancêtre — "
+            "son fil ne peut pas être remonté"
+            if parent_id is None else
+            f"cycle_de_parente: le nœud {node_id} ne peut pas être rangé sous "
+            f"{parent_id}, qui descend de lui")
+        self.node_id = node_id
+        self.parent_id = parent_id
+
+
+# La DESCENTE : le nœud et toute sa descendance, une ligne par nœud, terminant même
+# si l'arbre porte déjà un cycle. La ligne de répétition sort en plus, marquée
+# `boucle` — un `IN (SELECT id …)` s'en moque, un identifiant en double ne supprime
+# pas deux fois.
+_DESCENDANCE = (
+    "WITH RECURSIVE descendance AS ("
+    "    SELECT id, parent_id FROM nodes WHERE id = %s"
+    "  UNION ALL"
+    "    SELECT n.id, n.parent_id FROM nodes n"
+    "      JOIN descendance d ON n.parent_id = d.id"
+    ") CYCLE id SET boucle USING chemin "
+)
+
+# La REMONTÉE : le nœud et ses ancêtres. C'est par elle que se pose la question de
+# `move_page`, et c'est délibéré — remonter coûte la PROFONDEUR de l'arbre, alors que
+# descendre coûterait le sous-arbre entier à chaque déplacement.
+_ASCENDANCE = (
+    "WITH RECURSIVE ascendance AS ("
+    "    SELECT id, parent_id FROM nodes WHERE id = %s"
+    "  UNION ALL"
+    "    SELECT n.id, n.parent_id FROM nodes n"
+    "      JOIN ascendance a ON n.id = a.parent_id"
+    ") CYCLE id SET boucle USING chemin "
+)
+
+
 def move_page(node_id: int, *, parent_id: Optional[int],
               after_id: Optional[int] = None) -> bool:
     """Déplace une page dans l'arbre — nouveau parent, et rang optionnel.
@@ -988,6 +1059,17 @@ def move_page(node_id: int, *, parent_id: Optional[int],
     Change le PARENT et la POSITION, jamais l'identité : c'est l'opération
     élémentaire du modèle, et c'est elle qui garantit mécaniquement que ce qui pend
     au nœud (ses blocs, ses enfants, ce qui le cite) survit au déplacement.
+
+    ⚠️ **Refuse de ranger un nœud sous sa propre descendance** (`ParentCycle`). Sans
+    ce refus, l'arbre acceptait une boucle, et la suppression qui la rencontrait ne
+    terminait pas — cf. le préambule de ce module. Le refus est levé, pas rendu en
+    valeur : `move_page` rend déjà `False` pour « ce nœud n'existe pas », et servir le
+    même `False` pour deux faits opposés donnerait à l'appelant un succès muet.
+
+    La question se pose PAR LE HAUT (`_ASCENDANCE` depuis le parent demandé) : si le
+    nœud déplacé y figure, la boucle se fermerait. Le cas `parent_id == node_id` est
+    couvert par le même geste — la remontée s'amorce sur le parent demandé, donc elle
+    le contient toujours.
     """
     with _connect() as conn:
         with conn.transaction():
@@ -996,6 +1078,10 @@ def move_page(node_id: int, *, parent_id: Optional[int],
                 " WHERE id = %s AND props->>'legacy' IS NULL", (node_id,)).fetchone()
             if row is None:
                 return False
+            if parent_id is not None and conn.execute(
+                    _ASCENDANCE + "SELECT 1 FROM ascendance WHERE id = %s LIMIT 1",
+                    (parent_id, node_id)).fetchone() is not None:
+                raise ParentCycle(node_id, parent_id)
             conn.execute("UPDATE nodes SET parent_id = %s, updated_at = NOW() "
                          " WHERE id = %s", (parent_id, node_id))
             place_after(conn, node_id, after_id=after_id, parent_id=parent_id,
@@ -1014,6 +1100,10 @@ def delete_page(node_id: int) -> bool:
     Même raisonnement, même absence de clé étrangère, une table plus loin : le CORPS
     de chaque page supprimée part avec elle (`blocks`), et il part EN PREMIER — le
     nœud disparu, plus rien ne relierait ses blocs à quoi que ce soit.
+
+    La descente est BORNÉE (`_DESCENDANCE`, clause `CYCLE`) : une boucle déjà en base
+    la faisait tourner jusqu'à remplir `pgsql_tmp`. Bornée, elle emporte au contraire
+    les nœuds de la boucle — c'est le seul geste qui défait un cycle existant.
     """
     with _connect() as conn:
         with conn.transaction():
@@ -1023,18 +1113,12 @@ def delete_page(node_id: int) -> bool:
             if row is None:
                 return False
             conn.execute(
-                "WITH RECURSIVE descendance AS ("
-                "    SELECT id FROM nodes WHERE id = %s "
-                "  UNION ALL "
-                "    SELECT n.id FROM nodes n JOIN descendance d ON n.parent_id = d.id) "
-                "DELETE FROM blocks WHERE node_id IN (SELECT id FROM descendance)",
+                _DESCENDANCE
+                + "DELETE FROM blocks WHERE node_id IN (SELECT id FROM descendance)",
                 (node_id,))
             conn.execute(
-                "WITH RECURSIVE descendance AS ("
-                "    SELECT id FROM nodes WHERE id = %s "
-                "  UNION ALL "
-                "    SELECT n.id FROM nodes n JOIN descendance d ON n.parent_id = d.id) "
-                "DELETE FROM nodes WHERE id IN (SELECT id FROM descendance)",
+                _DESCENDANCE
+                + "DELETE FROM nodes WHERE id IN (SELECT id FROM descendance)",
                 (node_id,))
     return True
 
@@ -1043,7 +1127,7 @@ def delete_page(node_id: int) -> bool:
 #
 # Cinq conversions déposaient à chaque boot dans `nodes` une image des tables
 # historiques, marquée `props.legacy`. Elles sont arrêtées (`db/_init.py`) : ce que
-# la dernière passe a laissé — 70 876 nœuds sur 70 927, mesuré en production le
+# la dernière passe a laissé — 75 668 nœuds sur 75 721, mesuré en production le
 # 2026-09-01 — n'a plus ni écrivain ni lecteur.
 #
 # ⚠️ **Arrêter et retirer sont deux gestes.** L'arrêt ne détruit rien et se déploie

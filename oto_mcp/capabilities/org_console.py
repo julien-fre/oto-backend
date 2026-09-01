@@ -37,9 +37,10 @@ def _need(val, code: str, msg: str):
     return val
 
 
-# ── oto_org : create / update / archive / invite / accept_invite ─────────────
+# ── oto_org : create / update / archive / invite / accept_invite / reject_invite ─
 class OrgInput(BaseModel):
-    op: Literal["create", "update", "archive", "invite", "accept_invite"]
+    op: Literal["create", "update", "archive", "invite",
+                "accept_invite", "reject_invite"]
     org_id: Optional[int] = None           # update/archive/invite
     name: Optional[str] = None             # create/update
     description: Optional[str] = None      # update
@@ -49,8 +50,8 @@ class OrgInput(BaseModel):
     email: Optional[str] = None            # invite : destinataire (None = lien nominatif)
     role: Optional[str] = None             # invite : org_member (défaut) | org_admin
     send_email: bool = True                # invite
-    token: Optional[str] = None            # accept_invite
-    code: Optional[str] = None             # accept_invite
+    token: Optional[str] = None            # accept_invite / reject_invite
+    code: Optional[str] = None             # accept_invite / reject_invite
     carrier: Optional[str] = None          # accept_invite
 
 
@@ -61,6 +62,11 @@ def _org(ctx: ResolvedCtx, inp: OrgInput) -> dict:
     if inp.op == "accept_invite":
         return orgs_invites._invite_accept(ctx, orgs_invites.InviteAcceptInput(
             token=inp.token, code=inp.code, carrier=inp.carrier))
+    if inp.op == "reject_invite":
+        # Même handler que `POST /api/me/invitations/reject` — pas une copie : les
+        # deux faces doivent refuser aux mêmes conditions (#654).
+        return orgs_invites._invite_reject(ctx, orgs_invites.InviteRejectInput(
+            token=inp.token, code=inp.code))
     oid = _need(inp.org_id, "missing_org", f"`org_id` requis pour {inp.op}.")
     if inp.op == "update":
         return orgs_update._update_org(ctx, orgs_update.UpdateOrgInput(
@@ -198,6 +204,10 @@ CAPABILITIES += [
         key="org.console", handler=_org, Input=OrgInput,
         authz=BY_OP({
             "create": SUB_ONLY, "accept_invite": SUB_ONLY,
+            # Refuser est le geste de l'INVITÉ, pas d'un administrateur : SUB_ONLY,
+            # et c'est le handler qui confronte l'adresse invitée à celle du compte
+            # (le refus n'est pas bearer, contrairement à l'acceptation — #654).
+            "reject_invite": SUB_ONLY,
             "update": ORG_ADMIN_OF("org_id"), "archive": ORG_ADMIN_OF("org_id"),
             "invite": ORG_ADMIN_OF("org_id"),
         }),
@@ -207,7 +217,9 @@ CAPABILITIES += [
             "update (`org_id` + name/description/domain/industry/location; empty string "
             "clears a field) / archive (`org_id`) / invite (`org_id`, optional `email` + "
             "`role` org_member|org_admin, send_email=false returns the link only) / "
-            "accept_invite (`token` or `code`). To switch org, use oto_use_org."),
+            "accept_invite (`token` or `code`) / reject_invite (`token` or `code` — "
+            "declines it without joining; only the invited address may decline). "
+            "To switch org, use oto_use_org."),
         mcp="oto_org",
     ),
     Capability(
