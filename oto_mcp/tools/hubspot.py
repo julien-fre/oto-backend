@@ -363,7 +363,7 @@ def register(mcp: FastMCP) -> None:
             record_id: op="record_lists" — the single record to look up.
             source_list_id: op="copy_from" — the list to copy members from.
             query: op="search" — name fragment.
-            include_filters: op="get"/"search" — also return criteria trees.
+            include_filters: op="get" — also return the list's criteria tree.
             limit: op="members" — page size.
             after: op="members" — pagination cursor from a previous response.
             dry_run: op="delete"/"clear_members"/"remove_members" — validate and
