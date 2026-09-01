@@ -245,8 +245,27 @@ rien ne rendait navigable et que rien ne tenait.
   aucune asymétrie), ce qui rendrait la liste non-greppable, pas confidentielle — or
   c'est l'appartenance qu'on protège. Elle vit dans le secret de dépôt
   `OTO_NOMS_CLIENTS` ; en local, `~/.otomata/noms-clients.txt`. Sans liste, le contrôle
-  sort **2** et la CI avertit bruyamment « rien n'a été jugé » : trois états, jamais un
-  vert muet (même idiome que `contrat-front`).
+  sort **2** = « pas jugé » : trois états, jamais un vert muet (même idiome que
+  `contrat-front`).
+  ⚠️ **Et l'état « pas jugé » ROUGIT — corrigé le 01/09, le jour même de sa pose.** Le
+  job traduisait `2` en `exit 0` + annotation. Conséquence mesurée : `noms-clients` a
+  rendu **`success` sur tous ses runs**, y compris celui de sa propre fusion, alors que
+  le secret n'a **jamais** été posé (ni `~/.otomata/noms-clients.txt` sur le poste) —
+  le garde-fou n'avait donc rendu **aucun** jugement, nulle part, tout en affichant une
+  coche verte. L'annotation disait vrai ; personne ne la lisait, parce que `gh pr
+  checks`, la liste des checks et la coche de la PR ne lisent **que la conclusion**.
+  **Règle : un garde-fou qui ne peut pas s'exécuter doit être ROUGE, jamais vert avec
+  une note.** C'est la forme la plus dangereuse d'un contrôle défaillant, parce qu'elle
+  produit une **preuve positive** — les autres se voient au moins quand on regarde. Une
+  conclusion `neutral` a été écartée : un job de workflow ne peut pas en émettre, et
+  GitHub la compte comme non bloquante en l'affichant comme un passage.
+  ⚠️ **Rouge, mais NON REQUIS** : `noms-clients` n'est dans les contrôles requis de
+  `main` (aujourd'hui : `test` seul) ni dans le `needs` d'aucun job, et ne doit pas y
+  entrer — bloquer ne dépublierait rien (le nom est public dès le push) et déplacerait
+  le coût du garde-fou sur toutes les livraisons. *Impossible à confondre avec un
+  succès* ≠ *gèle le dépôt*. Les deux moitiés sont tenues par
+  `tests/test_lint_noms_clients.py`, qui rejoue le script du job extrait du workflow
+  sur les trois codes et refuse qu'un `needs` apparaisse.
 - **Tree partagé entre sessions : deux sessions ne partagent JAMAIS un fichier — le
   séquencement prime, le staging n'est qu'un filet.** Vécu 13/08 (main rouge) : un
   `git add <chemin>` EXPLICITE a absorbé ~148 lignes du WIP d'une session voisine dans

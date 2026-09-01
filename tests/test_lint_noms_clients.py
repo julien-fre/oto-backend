@@ -220,6 +220,112 @@ def test_sortie_0_quand_le_depot_est_propre(tmp_path):
     assert r.returncode == 0, r.stderr
 
 
+# ── la COUTURE : ce que la CI fait des trois états ───────────────────────────
+#
+# Le script avait raison depuis le début ; c'est le job qui traduisait « 2 » en
+# `exit 0`. Résultat mesuré le 2026-09-01 : le job `noms-clients` a rendu
+# « success » sur TOUS ses runs depuis sa pose — dont celui de sa propre fusion —
+# alors que le secret n'avait jamais été posé. L'annotation disait la vérité, mais
+# `gh pr checks`, la liste des checks et la coche de la PR ne lisent QUE la
+# conclusion. Les trois tests ci-dessus prouvaient les morceaux ; aucun ne
+# regardait la couture, et le défaut était exactement là.
+#
+# Ces tests-ci exécutent le VRAI script shell du job, extrait du workflow, avec un
+# `lint_noms_clients.py` bouchonné sur chacun des trois codes. On teste ce qui
+# tourne, pas une reformulation de ce qu'on croit qu'il fait.
+
+WORKFLOW = RACINE / ".github" / "workflows" / "deploy-canari.yml"
+
+
+def _script_du_job() -> str:
+    """Le `run:` du job `noms-clients`, tel qu'Actions l'exécutera.
+
+    Extrait par un vrai parseur YAML : réécrire l'extraction à la main
+    reproduirait les bugs de ce qu'on prétend vérifier.
+    """
+    import yaml  # dép. dure via oto-core ; présente partout où la suite tourne
+
+    jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    steps = [s for s in jobs["noms-clients"]["steps"]
+             if "lint_noms_clients.py" in (s.get("run") or "")]
+    assert len(steps) == 1, (
+        "le job `noms-clients` ne porte plus exactement une étape qui lance "
+        "lint_noms_clients.py — ce banc ne vérifie plus rien, le réparer")
+    return steps[0]["run"]
+
+
+def _jouer_le_job(tmp_path: pathlib.Path, code_du_lint: int,
+                  depuis_un_fork: str = "") -> subprocess.CompletedProcess:
+    """Rejoue le script du job avec un lint bouchonné sur `code_du_lint`."""
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "lint_noms_clients.py").write_text(
+        f"import sys\nsys.exit({code_du_lint})\n", encoding="utf-8")
+    script = tmp_path / "job.sh"
+    script.write_text(_script_du_job(), encoding="utf-8")
+    env = {k: v for k, v in __import__("os").environ.items()
+           if not k.startswith(("OTO_NOMS_CLIENTS", "DEPUIS_UN_FORK"))}
+    if depuis_un_fork:
+        env["DEPUIS_UN_FORK"] = depuis_un_fork
+    # `bash -e <fichier>` = le shell par défaut d'Actions sur un runner Linux.
+    return subprocess.run(["bash", "-e", str(script)], cwd=tmp_path,
+                          capture_output=True, text=True, env=env)
+
+
+def test_le_job_ROUGIT_quand_il_n_a_PAS_pu_juger(tmp_path):
+    """L'état « pas jugé » (code 2) doit ÉCHOUER, jamais réussir avec une note.
+
+    C'est LE défaut corrigé : un garde-fou qui ne peut pas s'exécuter et sort vert
+    fabrique une preuve POSITIVE — la forme la plus dangereuse, parce que les
+    autres se voient au moins quand on regarde.
+    """
+    r = _jouer_le_job(tmp_path, 2)
+    assert r.returncode != 0, (
+        "le job sort vert alors qu'AUCUN jugement n'a été rendu — c'est "
+        "exactement la régression du 2026-09-01")
+    assert "OTO_NOMS_CLIENTS est absent" in r.stdout
+
+
+def test_une_PR_de_fork_rougit_SANS_accuser_le_contributeur(tmp_path):
+    """Un fork n'a pas accès aux secrets : rien n'est jugé, donc rouge aussi.
+
+    Mais le message doit dire que le code du contributeur n'est pas en cause —
+    un garde-fou qui rougit sans expliquer accuse un innocent.
+    """
+    r = _jouer_le_job(tmp_path, 2, depuis_un_fork="true")
+    assert r.returncode != 0
+    assert "fork" in r.stdout
+    assert "n'est pas en cause" in r.stdout
+    assert "Rien ne vous est demandé" in r.stdout
+
+
+def test_le_job_ROUGIT_quand_il_trouve(tmp_path):
+    r = _jouer_le_job(tmp_path, 1)
+    assert r.returncode != 0
+    assert "dépôt PUBLIC" in r.stdout
+
+
+def test_le_job_est_vert_seulement_quand_il_a_jugé_et_rien_trouvé(tmp_path):
+    r = _jouer_le_job(tmp_path, 0)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_le_job_ne_figure_dans_aucun_needs(tmp_path):
+    """Rouge, mais il ne retient RIEN : aucun job ne l'attend.
+
+    Le blocage n'achèterait rien — le nom est public dès le push — et déplacerait
+    le coût du garde-fou sur toutes les livraisons. Si un `needs` apparaît ici,
+    c'est une décision à prendre, pas un détail de câblage.
+    """
+    import yaml
+
+    jobs = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    attendeurs = [nom for nom, j in jobs.items()
+                  if "noms-clients" in (j.get("needs") or [])]
+    assert attendeurs == [], (
+        f"{attendeurs} attend(ent) `noms-clients` : ce job ne doit gater ni un "
+        "déploiement ni une livraison")
+
+
 # ── le VRAI tronc ────────────────────────────────────────────────────────────
 
 def test_le_tronc_reel_si_la_liste_est_disponible():

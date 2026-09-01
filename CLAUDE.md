@@ -206,8 +206,12 @@ main le 01/09 (#709 sources, #747 tests), **recassé le jour même à 10:26**, d
 ls-files`), exercé par `tests/test_lint_noms_clients.py`. Conventions : `acme`, `Jane Doe`, prose
 générique, TLD `.test` ; échappatoire `# noqa: CLIENT — <raison>`. ⚠️ **La liste des termes n'est
 pas dans le dépôt, pas même hachée** (des empreintes publiques = un oracle d'appartenance) : secret
-`OTO_NOMS_CLIENTS`, ou `~/.otomata/noms-clients.txt` en local ; sans elle le contrôle sort **2** et
-avertit — jamais un vert muet.
+`OTO_NOMS_CLIENTS`, ou `~/.otomata/noms-clients.txt` en local ; sans elle le contrôle sort **2**
+= « pas jugé », et le job **ÉCHOUE** (corrigé le 01/09, jour de sa pose : il sortait vert avec une
+annotation, donc *tous* ses runs — dont celui de sa propre fusion — ont dit « success » sans rien
+juger). ⚠️ **Un garde-fou qui ne peut pas s'exécuter doit être ROUGE, jamais vert avec une note** :
+seule la conclusion est lue, et un vert « pas jugé » fabrique une preuve POSITIVE. Il reste **hors
+des contrôles requis** — rouge et visible, jamais bloquant.
 
 ## Le démarrage (ADR 0065)
 
