@@ -60,6 +60,82 @@ CREATE TABLE IF NOT EXISTS run_messages (
     UNIQUE (run_id, seq)
 );
 
+-- Les FLOTTES du runner (chantier R4) : la CONFIGURATION DÉCLARÉE d'un passage —
+-- quelle procédure, sur quel tableau, dans quel périmètre, jusqu'où. Rien ne
+-- s'exécute ici : une flotte est ce que l'ordonnanceur LIT pour fabriquer des
+-- jobs, et ce qu'un opérateur INTERROGE pour savoir où en est son passage.
+-- Elle précède `runner_jobs` dans ce fragment parce que les jobs la référencent —
+-- l'ordre de ce fichier est une contrainte d'exécution, pas une mise en page.
+--
+-- ⚠️ POURQUOI une configuration déclarée plutôt qu'un verbe qui lance librement :
+-- c'est l'endroit où les GARDES vivent. Un lancement qui prend un tableau en
+-- argument n'a nulle part où accrocher une cible, un périmètre ni une borne — et
+-- la mise au point d'août 2026 a montré que ce qui a évité le désastre n'était
+-- pas la plateforme mais la discipline de l'équipe qui l'opérait. Déclarer n'est
+-- donc pas restreindre une fonctionnalité : c'est donner un domicile aux gardes,
+-- pour que le prochain opérateur reçoive la puissance AVEC les leçons.
+--
+-- `namespace` + `row_filter` = la CIBLE, constatée au lancement et jamais
+-- supposée. Un tableau copié hérite du périmètre de sa source : l'ordonnanceur
+-- annonce alors « plus de ligne à réserver » sur cent lignes disponibles — le
+-- message le plus trompeur de la chaîne, il décrit une file vide quand la file
+-- est pleine et la porte fermée.
+-- `provider`/`model` = le contexte d'exécution, UNIFORME sur tout le passage.
+-- C'est lui qui porte l'attribution d'une ligne écrite (quel modèle l'a produite) :
+-- l'agent ne sait pas ce qui le fait tourner et ne peut donc pas l'estampiller
+-- lui-même — un harnais qui écrirait par-dessus lui le pourrait, mais il ment
+-- dès qu'il se trompe. L'attribution appartient au passage, pas à l'agent.
+-- ⚠️ Ce n'est pas un champ de confort : c'est le PREMIER endroit où la plateforme
+-- CONNAÎT le modèle au lieu de se le faire RAPPORTER. Estampiller depuis ce que
+-- l'agent déclare de lui-même reviendrait à recopier sa parole en y ajoutant le
+-- sceau du serveur — une valeur qu'on rejoint ne dérive pas, une valeur qu'on
+-- recopie dérive.
+-- Les bornes sont d'EXPLOITATION (volume, budget, échecs enchaînés, plafond de
+-- jetons par ligne), jamais de métier : ce que vaut un enrichissement se juge sur
+-- la DONNÉE produite, pas ici. `max_tokens_per_row` est de PREMIER RANG et pas une
+-- conséquence du budget : un agent qui part en boucle sur une ligne consomme le
+-- budget de tout le passage avant qu'aucune autre borne ne s'en aperçoive.
+-- ⚠️ `heartbeat_at` distingue le VIVANT du RÉSIDU, et cette colonne vaut une
+-- garde : une flotte `running` qui ne bat plus n'est pas une concurrence à
+-- attendre, c'est un reste de passage mort. Sans elle, un second passage se
+-- heurte à un refus que rien ne justifie, quelqu'un désarme à la main — et
+-- désarmer devient le geste normal.
+CREATE TABLE IF NOT EXISTS runner_fleets (
+    id BIGSERIAL PRIMARY KEY,
+    org_id BIGINT NOT NULL,
+    sub TEXT NOT NULL,                   -- qui a déclaré la flotte (audit)
+    label TEXT NOT NULL,                 -- le nom qu'on prononce en exploitation
+    procedure TEXT NOT NULL,
+    project_id BIGINT,
+    tools JSONB NOT NULL,
+    input TEXT,
+    max_steps INT,
+    -- LA CIBLE : sur quoi les agents écrivent, et sur quelles lignes
+    namespace TEXT,
+    row_filter JSONB,
+    -- LE CONTEXTE D'EXÉCUTION, uniforme sur le passage — porte l'attribution
+    provider TEXT,
+    model TEXT,
+    -- LES BORNES : ce qui arrête un passage, et rien d'autre
+    workers INT NOT NULL DEFAULT 1,
+    max_rows INT,
+    max_cost_usd NUMERIC(10, 4),
+    max_consecutive_failures INT,
+    max_tokens_per_row INT,
+    -- L'ÉTAT : `stop_reason` est ÉCRIT, jamais déduit d'un statut — « arrêtée »
+    -- sans raison oblige l'opérateur à rouvrir les journaux pour savoir si le
+    -- budget a coupé, si la file s'est vidée, ou si un outil est tombé.
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'running', 'stopped', 'done', 'failed')),
+    stop_reason TEXT,
+    started_at TIMESTAMPTZ,
+    heartbeat_at TIMESTAMPTZ,
+    stopped_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_runner_fleets_org
+    ON runner_fleets(org_id, status);
+
 -- La file d'EXÉCUTIONS du runner (chantier runner R2) — de la PLOMBERIE plateforme,
 -- PAS une donnée du client : la file de LIGNES d'une campagne vit dans le datastore
 -- de l'org (namespace client, `data_claim_next`) ; mélanger les deux ferait de la
@@ -86,6 +162,11 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     due_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     finished_at TIMESTAMPTZ,
+    -- La FLOTTE dont ce job fait partie, quand il en vient d'une : c'est ce qui
+    -- rend un passage LISIBLE d'un bout à l'autre (avancement, coût, travaux morts)
+    -- sans corréler des horodatages à la main. NULL = job isolé (déclencheur, appel
+    -- direct) — la file sert les deux et ne les distingue qu'ici.
+    fleet_id BIGINT REFERENCES runner_fleets(id) ON DELETE SET NULL,
     -- Le RÉSULTAT déclaré par le worker à la conclusion (usage_tokens, stopped,
     -- steps…) : c'est ce qui rend le coût d'un job LISIBLE par un ordonnanceur
     -- de flotte (garde budget) sans parser la note libre d'un run.
@@ -93,6 +174,8 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_claim
     ON runner_jobs(org_id, due_at) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_fleet
+    ON runner_jobs(fleet_id) WHERE fleet_id IS NOT NULL;
 
 -- Les DÉCLENCHEURS du runner (chantier R3) : la CONFIG utilisateur qui FABRIQUE des
 -- jobs — le tick les enfile à l'échéance (jamais d'exécution ici), le worker les

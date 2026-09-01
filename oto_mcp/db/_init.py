@@ -192,6 +192,11 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # à sa conclusion (usage_tokens, stopped, steps…) — c'est ce qui rend le coût
     # lisible par un ordonnanceur de flotte (garde budget) sans parser une note.
     conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS result JSONB")
+    # Chantier runner R4 (fleet comme produit) : un job dit à quelle FLOTTE il
+    # appartient. La table `runner_fleets` est créée par le DDL ; sur une base qui
+    # existe déjà, seule la colonne manque — et sans elle un passage n'est lisible
+    # qu'en corrélant des horodatages à la main.
+    conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS fleet_id BIGINT")
     # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
     # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
     # portaient notre domaine : un client d'un partenaire recevait des liens vers

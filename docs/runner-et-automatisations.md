@@ -17,9 +17,10 @@ description: >-
 
 Le backend porte l'ÉTAT du runner d'agents hébergé ; la BOUCLE vit dans le repo
 public **`otomata-tech/oto-runner`** (worker = client pur MCP+REST, ordonnanceur
-de flotte `fleet.py` piloté par un YAML par campagne — AUCUN kind serveur, la
-file reste uniforme ; déployé `/opt/oto-runner` sur otomata-0, gaté par le cran
-`OTO_RUNNER_ARMED`). Trois tables + leurs capacités :
+de flotte `fleet.py` — AUCUN kind serveur, la file reste uniforme ; déployé
+`/opt/oto-runner` sur **`oto-platform`** (⚠️ cette carte a dit « otomata-0 »
+jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
+`OTO_RUNNER_ARMED`). Quatre tables + leurs capacités :
 - **fil des runs** `run_messages` — capacité `runs.thread` (MCP `oto_run_thread`
   + REST `/api/me/runs/thread`) : état d'exécution EFFAÇABLE (purge 30 j), append
   = propriétaire seul, read = org_admin en projection neutre (`include_raw` au
@@ -29,9 +30,28 @@ file reste uniforme ; déployé `/opt/oto-runner` sur otomata-0, gaté par le cr
   `result` JSONB déclaré à la conclusion (usage_tokens, `tool_counts` — le
   « tour perdu », un agent qui analyse sans écrire, se lit au grain job),
   op=list org-scopé (surveillance dashboard `/automations`).
+- **flottes** `runner_fleets` (R4, 01/09/2026) — la CONFIGURATION DÉCLARÉE d'un
+  passage : procédure, cible (`namespace` + `row_filter`), contexte d'exécution
+  (`provider`/`model`, uniforme sur le passage — c'est LUI qui porte l'attribution
+  d'une ligne écrite, l'agent ne sait pas ce qui le fait tourner), bornes
+  d'exploitation (`max_rows`, `max_cost_usd`, `max_consecutive_failures`,
+  `max_tokens_per_row`), état + `stop_reason` ÉCRIT. `runner_jobs.fleet_id`
+  rattache un travail à son passage. ⚠️ Une flotte vivait dans un YAML sur la
+  machine : rien n'en était visible du dashboard ni atteignable par un agent.
+  **Déclarer n'est pas restreindre — c'est donner un domicile aux gardes** : un
+  lancement qui prend son tableau en argument n'a nulle part où accrocher une
+  cible ni une borne. ⚠️ `heartbeat_at` distingue le VIVANT du RÉSIDU (une flotte
+  `running` qui ne bat plus n'est pas une concurrence à attendre), et la table est
+  créée AVANT `runner_jobs`, qui la référence.
 - **déclencheurs** `runner_triggers` — capacité + MCP `oto_trigger`, tick
   backend avec CAS sur `next_due` (prod/preprod partagent la base : un seul
   gagnant par échéance).
+⚠️ **« Arrêter » vise DEUX services distincts** (constaté le 01/09/2026) :
+l'ordonnanceur (`oto-fleet-<nom>`) cesse d'ENFILER, les agents (`oto-runner@1..N`,
+unités séparées) finissent ce qui est pris **et restent ARMÉS sur la file**.
+Arrêter le premier laisse les seconds prêts à repartir, et des écritures tombent
+jusqu'à plusieurs minutes après un « c'est arrêté » qui n'a regardé que
+l'ordonnanceur. **« Rien ne tourne » ne se dit qu'après avoir constaté les deux.**
 ⚠️ Les jetons de contexte (`_project`…) sont advertisés PAR TOOL : un client
 les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclaré
 fait refuser l'appel entier à la validation). Conception + état des preuves :

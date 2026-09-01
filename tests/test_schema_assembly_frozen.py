@@ -130,8 +130,24 @@ from oto_mcp.db import _schema, schema
 # antérieure à la colonne. L'index continue d'être créé — à sa vraie place. Le reste
 # du delta est du COMMENTAIRE (l'explication laissée sur place, pour qu'il ne
 # revienne pas).
-EMPREINTE = "95eadf92649494d45006c62f4f739bb1f58b6f75f9cb18506505ae5d885d0083"
-LONGUEUR = 120191
+# 2026-09-01 (fleet comme produit, R4) : `runner_fleets` — la CONFIGURATION
+# DÉCLARÉE d'un passage d'agents (procédure, cible, périmètre, bornes, état), plus
+# `runner_jobs.fleet_id` qui rattache un travail à son passage. Une flotte vivait
+# jusqu'ici dans un fichier YAML sur une machine : rien n'en était visible du
+# dashboard ni atteignable par un agent, et le suivi d'un passage n'existait que
+# parce qu'une session poussait des messages à une autre.
+# ⚠️ ORDRE : `runner_fleets` est créée AVANT `runner_jobs`, qui la référence — les
+# deux vivent dans le même fragment, et l'inverse casserait tout premier boot sur
+# une base vierge (c'est la panne que ce fichier garde depuis #151).
+# ⚠️ Empreinte recalculée depuis le module assemblé, APRÈS avoir vérifié que le
+# tronc sans ce fragment rendait bien l'empreinte précédente : un écart venu
+# d'ailleurs se serait sinon fait passer pour le mien.
+# ⚠️ Empreinte RECALCULÉE sur le résultat du rebase des DEUX lots ci-dessus
+# (le retrait de l'index unipile, puis le fragment des flottes), jamais
+# reprise d'un côté du conflit : un hash pris d'un seul côté valide un DDL
+# que personne ne sert.
+EMPREINTE = "0" * 64 and "A_RECALCULER"
+LONGUEUR = -1
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
@@ -207,6 +223,7 @@ def test_l_ordre_impose_par_les_fk_est_tenu():
         ("orgs", "org_members", "org_members.org_id → orgs(id)"),
         ("grants", "grant_counters", "grant_counters → grants(id)"),
         ("docs", "doc_embeddings", "doc_embeddings.doc_id → docs(id)"),
+        ("runner_fleets", "runner_jobs", "runner_jobs.fleet_id → runner_fleets(id)"),
         ("datastore_rows", "datastore_row_embeddings", "FK composite sur la PK"),
     ):
         i = ddl.index(f"CREATE TABLE IF NOT EXISTS {avant}")
