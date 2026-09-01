@@ -62,7 +62,7 @@ def _project_url(sub: Optional[str], pid: Optional[int], org: Optional[int]) -> 
 
 def _brand_of(sub: Optional[str]) -> str:
     """Le nom du produit sous lequel CE destinataire nous connaît. « ouvrir dans oto »
-    dans un email envoyé à un utilisateur Tulina est un faux, même quand l'URL est
+    dans un email envoyé à un utilisateur d'un tenant tiers est un faux, même quand l'URL est
     juste."""
     _base, marque = config.front_for(sub)
     return marque or "oto"

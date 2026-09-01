@@ -66,7 +66,7 @@ def _tool_prefix() -> str:
     Ces cinq tools prennent un NOM en argument : ce sont les seuls endroits où un nom
     traverse un HANDLER au lieu du bord du protocole, donc les seuls que le
     `ToolAliasMiddleware` ne couvre pas. Sans ce rappel, un compte de tenant tiers
-    lisait `tulina_doc` dans sa liste et se voyait répondre « Unknown tool » en le
+    lisait `acme_doc` dans sa liste et se voyait répondre « Unknown tool » en le
     passant à `oto_tool_schema` — le catalogue et le dispatch auraient parlé deux
     langues."""
     try:
@@ -241,7 +241,7 @@ def register(mcp: FastMCP) -> None:
             name: Exact tool name (e.g. `attio_create_deal`, `linkedin_unipile_search`).
         """
         sub = _require_sub()
-        # Le nom peut arriver sous la forme du tenant (`tulina_doc`) : la denylist,
+        # Le nom peut arriver sous la forme du tenant (`acme_doc`) : la denylist,
         # elle, s'écrit en canonique — sinon le même outil s'y retrouverait deux fois,
         # et le toggle ne mordrait plus après un changement de préfixe. Le retour
         # reprend la forme MONTRÉE, celle que l'agent vient de lire dans sa liste.
@@ -376,7 +376,7 @@ def register(mcp: FastMCP) -> None:
             pass
 
         # Le nom vient du catalogue, donc éventuellement sous la forme du tenant. Il
-        # redevient canonique AVANT le gate méta/spine : sans ça `tulina_doc` résout un
+        # redevient canonique AVANT le gate méta/spine : sans ça `acme_doc` résout un
         # namespace inconnu, échappe à `_NON_DISPATCHABLE`, et l'anti-boucle saute.
         demande, name = name, tool_alias.canonical(name, _tool_prefix())
         if namespace_of(name) in _NON_DISPATCHABLE:

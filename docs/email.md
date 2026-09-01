@@ -49,7 +49,7 @@ champ transport sur l'expéditeur).
 ## Front qui héberge l'org (invitations, 07/08)
 
 > **Front qui héberge l'org (invitations, 07/08).** oto-backend sert plusieurs produits
-> depuis une instance (oto, Tulina) : deux colonnes `orgs.front_base_url` / `front_brand`
+> depuis une instance (oto, un tenant tiers) : deux colonnes `orgs.front_base_url` / `front_brand`
 > (NULL = oto) portent le front d'une org, lues par `emit_invitation` — base du lien
 > `/invitation/<code>`, marque du texte du mail, **et pas de magic-link** dès qu'un front
 > tiers est posé (l'OTT est minté sur NOTRE Logto : il serait inerte sur l'émetteur dédié

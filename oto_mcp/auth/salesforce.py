@@ -97,8 +97,8 @@ def make_state(sub: str, org_id: int, scope: str, verifier: str,
     re-dérivées d'une session vivante. `group` est gelé ici — l'équipe active au clic
     est celle où l'on écrit, même si un autre onglet en change entre-temps.
 
-    `return_app` (payload `app`) porte quel FRONT a demandé la connexion (ex.
-    "tulina") — pas l'application Salesforce (`_APP`/`_read_app`, un tout autre
+    `return_app` (payload `app`) porte quel FRONT a demandé la connexion (ex. un
+    tenant tiers) — pas l'application Salesforce (`_APP`/`_read_app`, un tout autre
     sens du mot dans ce module). Toujours écrit, même vide : `oauth_flow.return_url`
     dégrade correctement une chaîne vide vers le défaut historique
     oto-dashboard. Déjà résolu/validé par l'appelant (`build_auth_url`) via
@@ -217,7 +217,7 @@ def build_auth_url(sub: str, scope: str = "member", return_app: Optional[str] = 
     Connect button can gate on) and `PermissionError` if `scope="org"`/`"group"`
     is requested by a non-admin.
 
-    `return_app` : clé de front déclarée par l'APPELANT (ex. "tulina"), jamais un
+    `return_app` : clé de front déclarée par l'APPELANT (ex. un tenant tiers), jamais un
     Origin sniffé (les capacités sont transport-agnostiques, ADR 0009). Validée
     ICI, une seule fois, AVANT `make_state` — `oauth_flow.resolve_return_app`
     réduit toute valeur hors de sa liste fermée à `""` : le state ne porte jamais

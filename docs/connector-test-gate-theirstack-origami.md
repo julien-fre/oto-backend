@@ -33,7 +33,7 @@ Assertions the new tests must carry (reject the PR if any is missing):
 
 ## 2. MCP layer with REAL keys, read-only — must succeed
 
-Keys come from `~/Desktop/Tulina outreach/.env` (`THEIRSTACK_API_KEY`, `ORIGAMI_API_KEY`). Never print them.
+Keys come from a local outreach `.env` file (`THEIRSTACK_API_KEY`, `ORIGAMI_API_KEY`). Never print them.
 Patch `oto_mcp.access.resolve_api_key` to return the env key, mount with `register_all`, call the tool `fn`s.
 
 TheirStack:

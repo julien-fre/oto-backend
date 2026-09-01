@@ -374,7 +374,7 @@ class DatastorePg(SchemaOpsMixin):
                                             str(ns_id), "write"))
             if not ok:
                 raise NamespaceReadOnly(namespace)
-        # Le journal cite l'ENTITÉ, pas la chaîne tapée : `data_write("mucho-leads")`,
+        # Le journal cite l'ENTITÉ, pas la chaîne tapée : `data_write("leads-clients")`,
         # `data_write("160")` et `data_write("slot:vivier")` visent le même tableau.
         # Consigné APRÈS les gardes (un namespace refusé ne laisse pas de trace) ;
         # no-op hors appel MCP — la face REST tient déjà son propre relevé.
@@ -926,7 +926,7 @@ class DatastorePg(SchemaOpsMixin):
 
         **Le titulaire s'identifie de deux façons qui se recouvrent** — parce qu'une
         écriture ordinaire ne dit pas qui écrit, et que `claimed_by` est un libellé
-        libre (`'mucho-w8'`), jamais un compte :
+        libre (`'campagne-s8'`), jamais un compte :
 
         - **par le RUN** : écrire sous le run qui tient la ligne, c'est être le
           titulaire — rien à déclarer, le cas nominal est transparent ;

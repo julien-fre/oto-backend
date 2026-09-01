@@ -1,5 +1,7 @@
 """Régression #110 : l'écho `_org` d'une réponse MCP reflète l'org EFFECTIVE
-APRÈS le handler, pas l'org résolue à l'autz avant lui.
+APRÈS le handler, pas l'org résolue à l'autz avant lui — SAUF quand `ctx.org_id`
+porte un pin métier explicite (`oto_procedure(org=<id>)`), auquel cas c'est LUI
+la vérité (régression signal 528 / oto-backend#712).
 
 `oto_use_org` bascule l'override de session DANS son handler ; l'écho `_org`
 était calculé depuis `ctx.org_id` (figé à l'autz) → il montrait l'org d'AVANT le
@@ -7,6 +9,7 @@ switch (réponse trompeuse `{active_org: 83, _org: {id: 2}}`), faisant croire qu
 la bascule avait échoué.
 """
 import asyncio
+from typing import Optional
 
 from pydantic import BaseModel
 
@@ -19,27 +22,31 @@ class _NoInput(BaseModel):
     pass
 
 
-def _make_switch_cap():
+def _make_switch_cap(handler):
     # authz fige org_id=2 (org d'avant) ; le handler « bascule » vers 83.
     def _authz(raw, inp):
         return ResolvedCtx(sub=raw.sub or "u", org_id=2)
 
-    def _handler(ctx, inp):
-        return {"active_org": 83, "name": "Ferme Solaire"}
-
     return Capability(
-        key="test.switch", handler=_handler, Input=_NoInput,
+        key="test.switch", handler=handler, Input=_NoInput,
         authz=_authz, mcp="test_switch", refresh_visibility=False,
     )
 
 
 def test_org_echo_reflects_post_handler_org(monkeypatch):
     monkeypatch.setattr(_mcp_adapter, "current_user_sub_from_token", lambda: "u")
-    # current_org lit l'override POSÉ par le handler → org effective = 83.
-    monkeypatch.setattr(access, "current_org", lambda sub: 83)
     monkeypatch.setattr(org_store, "get_org", lambda oid: {"name": f"org{oid}"})
+    # `current_org` lit un état MUTÉ par le handler (comme `oto_use_org` en vrai) :
+    # 2 avant l'appel, 83 après — l'écart vient d'une mutation faite PAR le handler,
+    # pas d'un pin métier (cf. test ci-dessous pour ce second cas).
+    state = {"org": 2}
+    monkeypatch.setattr(access, "current_org", lambda sub: state["org"])
 
-    tool = _mcp_adapter._make_tool(_make_switch_cap())
+    def _handler(ctx, inp):
+        state["org"] = 83   # bascule DANS le handler, comme `oto_use_org`
+        return {"active_org": 83, "name": "Ferme Solaire"}
+
+    tool = _mcp_adapter._make_tool(_make_switch_cap(_handler))
     result = asyncio.run(tool())
 
     assert result["active_org"] == 83
@@ -52,6 +59,39 @@ def test_org_echo_falls_back_when_effective_none(monkeypatch):
     monkeypatch.setattr(access, "current_org", lambda sub: None)
     monkeypatch.setattr(org_store, "get_org", lambda oid: {"name": f"org{oid}"})
 
-    tool = _mcp_adapter._make_tool(_make_switch_cap())
+    tool = _mcp_adapter._make_tool(_make_switch_cap(lambda ctx, inp: {"active_org": 83}))
     result = asyncio.run(tool())
     assert result["_org"]["id"] == 2, "repli sur ctx.org_id quand l'org effective est None"
+
+
+def test_org_echo_keeps_explicit_business_pin(monkeypatch):
+    """Régression signal 528 / oto-backend#712 : une capacité qui pin une lecture
+    CROSS-ORG via un champ métier explicite (ex. `oto_procedure(org=<id>)`) ne mute
+    RIEN de persistant — `access.current_org` reste sur la maison/session (FIGÉE sur
+    le premier org du contexte) tout du long. L'écho doit refléter le PIN
+    (`ctx.org_id`), pas la maison figée."""
+    monkeypatch.setattr(_mcp_adapter, "current_user_sub_from_token", lambda: "u")
+    monkeypatch.setattr(org_store, "get_org", lambda oid: {"name": f"org{oid}"})
+    # La maison/session reste sur 197 ("Rosbraz") tout du long — jamais mutée.
+    monkeypatch.setattr(access, "current_org", lambda sub: 197)
+
+    class _PinInput(BaseModel):
+        org: Optional[int] = None
+
+    def _authz(raw, inp):
+        # Miroir d'`ORG_MEMBER_OPT("org")` : un `org=` explicite PIN la lecture.
+        return ResolvedCtx(sub=raw.sub or "u", org_id=inp.org or 197)
+
+    def _handler(ctx, inp):
+        return {"org_id": ctx.org_id, "guides": []}
+
+    cap = Capability(
+        key="test.pin", handler=_handler, Input=_PinInput,
+        authz=_authz, mcp="test_pin", refresh_visibility=False,
+    )
+    tool = _mcp_adapter._make_tool(cap)
+    result = asyncio.run(tool(org=196))
+
+    assert result["org_id"] == 196
+    assert result["_org"]["id"] == 196, "l'écho doit refléter le PIN métier, pas la maison figée (197)"
+    assert result["_org"]["name"] == "org196"

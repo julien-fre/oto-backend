@@ -120,7 +120,7 @@ def _create_org(ctx: ResolvedCtx, inp: CreateOrgInput) -> dict:
     # magic-link minté sur NOTRE Logto — inerte contre l'émetteur du tenant. L'invité
     # se crée alors un compte CHEZ NOUS, accepte avec celui-là, et son compte du
     # tenant n'est membre de rien : deux identités pour une personne, et l'org
-    # inatteignable depuis son propre front (vécu le 15/08 sur une org Tulina).
+    # inatteignable depuis son propre front (vécu le 15/08 sur l'org d'un tenant tiers).
     # b6e1d27 a donné aux invitations la marque de l'org ; il manquait qui la pose.
     front_base_url, front_brand = config.front_for(ctx.sub)
     org_id = org_store.create_org(name, created_by=ctx.sub,

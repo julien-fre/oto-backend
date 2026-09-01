@@ -33,7 +33,7 @@ avec SA GED. Chaque tool prend un `company_id` **obligatoire** : aucun défaut
 mémorisé, pour ne jamais risquer d'écrire dans la GED du mauvais client.
 `pennylaneged_companies` liste les sociétés pour résoudre le `company_id` cible.
 
-Statut : flux RE **validé manuellement** (18/06, compte test Fidens) ; **reste à
+Statut : flux RE **validé manuellement** (18/06, compte test client) ; **reste à
 smoker en live** sur le substrat Browserbase (CSRF in-page + longévité de session).
 """
 from __future__ import annotations
