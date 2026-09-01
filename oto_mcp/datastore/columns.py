@@ -241,31 +241,6 @@ def _refuse_mixed_layers(schema: Optional[dict], user_data: Optional[dict]) -> N
 # imparfait coûte plus cher que la valeur qu'on préserve, et le tableau qui écrit
 # `""` depuis des mois n'a rien demandé (8 897 cellules vides mesurées en production
 # le 28/08, sur 59 tableaux — les refuser rétroactivement casserait 59 clients).
-#
-# ══ #724 (01/09/2026) : LA LISTE VIDE EST UNE VALEUR, ELLE ═══════════════════════
-#
-# Dix retraits de contact ont échoué en silence cette nuit-là (org 226, tableau
-# `edition-vivier`) : `contacts: []` — le geste JSON naturel pour « il ne reste
-# personne » — a été traité comme la chaîne vide d'un gabarit, et ignoré au même
-# titre. La distinction avec #608 tient à une question que la chaîne vide ne pose
-# jamais : **existe-t-il un AUTRE geste qui exprime la même intention ?**
-#
-#   - une chaîne vide a une source légitime et fréquente qui n'efface RIEN : un
-#     gabarit de lot à demi peuplé, une source muette (mesuré : 8 897 cellules).
-#     `null` reste alors la SEULE façon de dire « vide-le vraiment » ;
-#   - une liste vide n'a pas cet équivalent bénin. Le seul geste applicatif qui la
-#     produit est « retirer le dernier élément » — une intention aussi explicite
-#     que `null`, juste exprimée par le vocabulaire natif du type (`[]`, pas
-#     l'absence de valeur). Confondre les deux forçait `null` à faire le travail
-#     de `[]`, sur un type où le lecteur attend une LISTE, pas une absence.
-#
-# D'où l'exception, étroite : `[]` rejoint `null` dans les gestes qui EFFACENT
-# (`valeurs_effacees`), pas dans ceux qu'on écarte (`valeurs_ignorees`) — chaîne
-# vide et objet vide restent protégés par #608, inchangé. Un champ `required` que
-# `[]` viderait est refusé par la validation du merge (`champ requis manquant`),
-# pas par une garde dédiée ici : la même règle qui dit « le vide est une absence »
-# pour un requis dit maintenant « `[]` est une valeur » pour la fusion — deux
-# lectures cohérentes du même geste, à l'endroit où chacune sert.
 
 # Deux bornes, pour qu'un relevé reste lisible par un agent : le nombre
 # d'effacements nommés, et la taille d'une valeur rendue. Au-delà, on dit la TAILLE
@@ -312,11 +287,7 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     Le vide se juge DÉBALLÉ (`unwrap`) des deux côtés, comme tout ce qui juge une
     valeur : une colonne à couches dont la `valeur` tombe est vidée au même titre
     qu'un scalaire, et une colonne qui ne portait que son `origine` n'avait déjà
-    pas de valeur à perdre.
-
-    ⚠️ #724 : une LISTE vide EFFACE, au même titre que `null` — elle n'a pas
-    l'équivalent bénin (gabarit à demi peuplé) qui protège la chaîne vide et
-    l'objet vide de #608. Voir le bloc de commentaire au-dessus."""
+    pas de valeur à perdre."""
     pose: dict = {}
     effaces: list[dict] = []
     ignores: list[dict] = []
@@ -329,15 +300,13 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
         if dsv2._is_empty(ancienne):
             pose[cle] = neuf              # rien à perdre : on ne fait pas de bruit
             continue
-        if posee is None or posee == []:
-            # `null` NOMMÉ, ou LISTE VIDE (#724) : deux gestes d'effacement — le
-            # second dit la même chose que le premier, dans le vocabulaire du
-            # type. Tous deux s'exécutent, et tous deux se disent.
+        if posee is None:
+            # `null` NOMMÉ : le geste explicite d'effacement. Il s'exécute — vider
+            # une valeur fausse n'a pas d'autre porte — et il se dit.
             effaces.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
             pose[cle] = neuf
             continue
-        # Vide non-`null`, non-liste, sur une valeur en place : la valeur
-        # survit (#608) — chaîne vide, objet vide.
+        # Vide non-`null` sur une valeur en place : la valeur survit (#608).
         ignores.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
         reste = _sans_la_valeur(neuf)
         if reste is not None:
@@ -366,17 +335,14 @@ def effacements_report(records: list) -> dict:
 
     `{}` quand rien n'a été vidé — le cas normal ne porte pas de clé parasite.
 
-    ⚠️ Depuis #608, `null` était le SEUL vide qui arrivait ici — la phrase ne
-    citait donc pas la chaîne vide parmi les valeurs qui effacent, sous peine de
-    prescrire le geste qu'on venait de désarmer. **Depuis #724, une LISTE vide
-    (`[]`) le rejoint** : elle n'a pas l'équivalent bénin (gabarit à demi peuplé)
-    qui protège encore la chaîne vide et l'objet vide."""
+    ⚠️ Depuis #608, `null` est le SEUL vide qui arrive ici : la phrase ne cite donc
+    plus la chaîne vide parmi les valeurs qui effacent, sous peine de prescrire le
+    geste qu'on vient de désarmer."""
     if not records:
         return {}
     nommes, reste = _nommes(records)
-    hint = ("un `null` NOMMÉ dans le payload — ou une LISTE VIDE `[]` sur une "
-            "colonne de type liste — EFFACE la valeur en place — ce n'est PAS la "
-            "même chose que ne pas nommer le champ, qui le laisse intact. Si "
+    hint = ("un `null` NOMMÉ dans le payload EFFACE la valeur en place — ce n'est "
+            "PAS la même chose que ne pas nommer le champ, qui le laisse intact. Si "
             "l'effacement n'était pas voulu (variable non peuplée, gabarit à demi "
             "rempli), réécris les valeurs ci-dessus : elles ne sont plus en base.")
     if reste:
@@ -390,20 +356,15 @@ def ignores_report(records: list) -> dict:
     Clé DISTINCTE de `valeurs_effacees`, et c'est le point : celle-là nomme une
     valeur qui N'EST PLUS, celle-ci nomme une valeur qui EST ENCORE LÀ. Les
     confondre ferait réécrire des valeurs déjà en place — ou pire, ferait croire à
-    une perte.
-
-    ⚠️ Depuis #724, une LISTE vide n'atterrit plus ici (elle EFFACE désormais,
-    cf. `valeurs_effacees`) — le hint ne l'énumère donc plus parmi les vides
-    préservés."""
+    une perte."""
     if not records:
         return {}
     nommes, reste = _nommes(records)
-    hint = ("une valeur VIDE non-`null` (chaîne vide, objet vide) ne remplace pas "
-            "une valeur déjà en place : c'est ce que rend une source muette ou un "
-            "gabarit à demi peuplé, pas une demande d'effacement. Les valeurs "
-            "ci-dessus sont INTACTES en base — il n'y a rien à rétablir. Pour vider "
-            "un champ pour de bon, nomme-le avec `null` (une LISTE se vide aussi "
-            "avec `[]`).")
+    hint = ("une valeur VIDE non-`null` (chaîne vide, liste vide, objet vide) ne "
+            "remplace pas une valeur déjà en place : c'est ce que rend une source "
+            "muette ou un gabarit à demi peuplé, pas une demande d'effacement. Les "
+            "valeurs ci-dessus sont INTACTES en base — il n'y a rien à rétablir. "
+            "Pour vider un champ pour de bon, nomme-le avec `null`.")
     if reste:
         hint += f" {len(records)} champs préservés au total, {len(nommes)} nommés ici."
     return {"valeurs_ignorees": nommes, "valeurs_ignorees_hint": hint}

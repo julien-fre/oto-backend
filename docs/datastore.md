@@ -753,25 +753,6 @@ pas ce qui l'accompagne (#326). Un refus dur a été écarté : 8 897 cellules �
 sur 59 tableaux en production le 28/08, plus 5 643 listes vides sur 11 — les refuser
 rétroactivement casserait des tableaux qui n'ont rien demandé.
 
-⚠️ **Amendement 2026-09-01 (#724) — la liste vide EFFACE, elle ne s'écarte plus.** Dix
-retraits de contact ont échoué en silence (org 226, `edition-vivier`) : `contacts: []`,
-le geste JSON natif pour « il ne reste personne », suivait la règle de #608 et était
-écarté comme une chaîne vide de gabarit. La différence avec la chaîne vide : **il
-n'existe aucun geste bénin qui produise une liste vide sans le vouloir** — pas
-d'équivalent au gabarit à demi rempli, puisque le seul geste applicatif qui vide une
-liste est le retrait de son dernier élément. `arbitrer_les_vides` traite donc
-désormais `[]` comme `null` — il rejoint `valeurs_effacees`, pas `valeurs_ignorees` —
-tandis que chaîne vide et objet vide restent protégés par #608, inchangé. Un champ
-`required` que `[]` viderait est refusé par la validation qui suit (`champ requis
-manquant`), sans garde dédiée : c'est la même lecture de `_is_empty` qui décide déjà
-« absence » pour un requis, appliquée cette fois à un merge qui ne l'écarte plus.
-⚠️ Les deux faces d'écriture (`data_write` MCP, `PATCH /rows/{row_id}` REST) appellent
-le MÊME `store.update_row`/`_merge_into_row` — il n'y avait pas de divergence RÉELLE
-entre elles ni entre un tableau neuf et un tableau existant sur ce point : l'écart
-observé au signalement venait d'un tableau de test dont la colonne n'avait encore
-JAMAIS porté de valeur (le court-circuit « rien à perdre » ci-dessus, qui laisse
-toujours passer `[]` — à tort pris pour une preuve que « `[]` vide bien »).
-
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
 du LLM. Un namespace peut déclarer une **clé métier** au schéma (`schema.key`, ex.
