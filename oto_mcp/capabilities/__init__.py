@@ -163,5 +163,6 @@ from . import automation  # noqa: F401 — me.automation.fire (MCP routine_fire 
 from . import run_thread  # noqa: F401 — runs.thread append/read (MCP oto_run_thread + REST) — chantier runner R1
 from . import runner_jobs  # noqa: F401 — runner.jobs (REST-only, worker) — chantier runner R2
 from . import runner_triggers  # noqa: F401 — runner.triggers (MCP oto_trigger + REST) — chantier runner R3
+from . import runner_fleets  # noqa: F401 — runner.fleets (MCP oto_fleet + REST) — chantier runner R4
 
 __all__ = ["registry", "_mcp_adapter", "_rest_adapter"]
