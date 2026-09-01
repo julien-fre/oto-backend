@@ -21,6 +21,9 @@ le venv partagé en retard sur le pin — la CI, qui installe au tag, passe. **L
 depuis le 01/09/2026** : bannière `=== PIN oto-core ===` en tête ET en fin de run, qui nomme
 l'installé et l'épinglé, et les tests marqués `exige_pin_oto_core` deviennent NON CONCLUANTS en
 local (jamais en CI, où la garde version-skew doit mordre) — `tests/_oto_core_pin.py`.
+⚠️ **La bannière n'atteint pas un `| grep passed`** (#790) : le résumé final de pytest, lui, le
+fait — ces skips y sont comptés à part (`8924 passed, 98 non concluant(s) — venv ≠ pin oto-core
+vX.Y.Z, …`), distincts des skips ordinaires, même filtré.
 ⚠️ **Ne pas trier au message** : `No module named 'oto.tools.<x>'` n'attrape qu'un connecteur
 **AJOUTÉ** depuis la version installée, pas un connecteur **RABOUGRI** — dont les rouges (« méthodes
 absentes du client », « paramètre inexistant ») imitent trait pour trait une vraie régression de
