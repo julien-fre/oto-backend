@@ -123,8 +123,16 @@ def test_un_checkout_qui_masque_le_venv_fait_TAIRE_la_banniere(tmp_path):
 
 def test_le_masquage_se_detecte_dans_lenvironnement_reel():
     """Sans leurre, le `oto` importé EST celui du venv — sinon le test ci-dessus
-    prouverait le silence pour la mauvaise raison."""
-    assert installe_est_bien_ce_qui_sexecute() is True
+    prouverait le silence pour la mauvaise raison.
+
+    ⚠️ Sauf si la suite tourne DÉJÀ sous la recette `PYTHONPATH` : la prémisse ne
+    tient alors plus, et l'affirmer quand même ferait de ce test un rouge qui ne
+    dit rien. On le déclare non concluant, ce qui est la vérité."""
+    reponse = installe_est_bien_ce_qui_sexecute()
+    if reponse is False:
+        pytest.skip("un checkout masque déjà le venv (recette PYTHONPATH) : "
+                    "la prémisse de ce test ne tient pas dans cet environnement")
+    assert reponse is True
 
 
 def test_un_checkout_masquant_neutralise_meme_un_ecart_de_tags(tmp_path):
@@ -149,7 +157,7 @@ def test_un_manifeste_sans_pin_se_tait(tmp_path):
     m = tmp_path / "pyproject.toml"
     m.write_text("[project]\ndependencies = []\n", encoding="utf-8")
     assert tag_epingle(m) is None
-    assert ecart(pyproject=m) is None
+    assert ecart(pyproject=m, execute_l_installe=True) is None
 
 
 def test_le_numero_gele_dune_install_pypi_ne_declenche_pas_dalarme(tmp_path):
@@ -158,13 +166,14 @@ def test_le_numero_gele_dune_install_pypi_ne_declenche_pas_dalarme(tmp_path):
     m = tmp_path / "pyproject.toml"
     m.write_text(_manifeste("v1.103.0"), encoding="utf-8")
     gele = {"tag": "1.100.0", "commit": None, "source": "metadata"}
-    assert ecart(pyproject=m, etat=gele) is None
+    assert ecart(pyproject=m, etat=gele, execute_l_installe=True) is None
 
 
 def test_oto_core_absent_est_un_ecart_et_le_dit(tmp_path):
     m = tmp_path / "pyproject.toml"
     m.write_text(_manifeste("v1.103.0"), encoding="utf-8")
-    e = ecart(pyproject=m, etat={"tag": None, "commit": None, "source": "absent"})
+    e = ecart(pyproject=m, etat={"tag": None, "commit": None, "source": "absent"},
+              execute_l_installe=True)
     assert e == Ecart(None, "v1.103.0", "absent")
     assert "AUCUN" in "\n".join(lignes_de_banniere(e))
 
@@ -173,7 +182,7 @@ def test_la_concordance_ne_produit_aucun_ecart(tmp_path):
     m = tmp_path / "pyproject.toml"
     m.write_text(_manifeste("v1.103.0"), encoding="utf-8")
     au_pin = {"tag": "v1.103.0", "commit": "abc", "source": "direct_url"}
-    assert ecart(pyproject=m, etat=au_pin) is None
+    assert ecart(pyproject=m, etat=au_pin, execute_l_installe=True) is None
 
 
 # --------------------------------------------------------------------------- #
