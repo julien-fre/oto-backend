@@ -218,6 +218,35 @@ rien ne rendait navigable et que rien ne tenait.
   callback qui ne distingue jamais les causes d'un refus, ACK de webhook), les autres
   portent « dette déclarée … (#424, verdict C) » et attendent leur lot.
   **Détail : `docs/silences-2026-08-27.md`.**
+- **Ce dépôt est PUBLIC : aucun nom de client, de personne réelle ou de domaine client
+  (01/09).** La règle existait ; elle a été appliquée **à la main** deux fois le matin du
+  2026-09-01 — #709 pour les sources (42 fichiers), #747 pour les tests (~300 occurrences
+  dans 70 fichiers) — et le tronc était à **zéro**. Un lot mergé **le même jour à 10:26**
+  en a réintroduit : un en-tête de module (`tools/http.py`) et un en-tête de test
+  (`test_http_doc.py`). **Une règle qui ne tient que par la discipline ne tient pas** —
+  c'est la même leçon que les silences ci-dessus, à trois jours d'intervalle.
+  Garde-fou : `scripts/lint_noms_clients.py`, exercé par
+  `tests/test_lint_noms_clients.py` (qui prouve aussi qu'il MORD, sur onze formes que
+  prend un nom en vrai — casse, suffixe, concaténation, sous-domaine), et lancé par le
+  job CI `noms-clients` de `deploy-canari.yml` sur **PR et push `main`**.
+  Portée : **tout le dépôt** (`git ls-files` — sources, tests, docs, workflows,
+  manifestes), parce que les deux passes à la main n'avaient vu chacune qu'une moitié.
+  Conventions de remplacement, celles de #709/#747 : `acme` (et `globex` quand un
+  fichier distingue deux tenants), `Jane Doe` pour une personne, prose générique
+  (« un client », « un tenant tiers »), domaines sur le TLD réservé `.test`. Une valeur
+  **fonctionnelle** se renomme **des deux côtés** ou se déclare.
+  L'échappatoire est `# noqa: CLIENT — <raison>`, **la raison obligatoire**, même
+  grammaire que `# noqa: SILENT`. Elle couvre aujourd'hui deux sites : la liste CORS de
+  repli (`api/base.py`) et la table `RETURN_APPS` (`auth/flow.py`) — dette DÉCLARÉE, dont
+  la relocalisation vers la config privée est le **second volet de oto-private#85**.
+  ⚠️ **La liste des termes n'est PAS dans le dépôt, pas même hachée** : un fichier
+  d'empreintes commité dans un dépôt public est un **oracle d'appartenance** (hacher
+  coûte au curieux ce qu'il nous coûte par candidat, donc l'étirement de clé n'achète
+  aucune asymétrie), ce qui rendrait la liste non-greppable, pas confidentielle — or
+  c'est l'appartenance qu'on protège. Elle vit dans le secret de dépôt
+  `OTO_NOMS_CLIENTS` ; en local, `~/.otomata/noms-clients.txt`. Sans liste, le contrôle
+  sort **2** et la CI avertit bruyamment « rien n'a été jugé » : trois états, jamais un
+  vert muet (même idiome que `contrat-front`).
 - **Tree partagé entre sessions : deux sessions ne partagent JAMAIS un fichier — le
   séquencement prime, le staging n'est qu'un filet.** Vécu 13/08 (main rouge) : un
   `git add <chemin>` EXPLICITE a absorbé ~148 lignes du WIP d'une session voisine dans

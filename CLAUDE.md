@@ -180,6 +180,14 @@ budget d'un retour d'outil, **où vit un fichier**, ordre des middlewares, MONO-
 connecteur. ⚠️ **Le refus est bruyant, la divergence est muette — et le CI le vérifie** :
 `lint_silences.py` refuse un `except Exception` qui ne re-lève, ne journalise ni ne rend un refus
 nommé ; échappatoire unique `# noqa: SILENT — <raison>`. **`docs/silences-2026-08-27.md`.**
+⚠️ **Ce dépôt est PUBLIC : aucun nom de client, de personne ni de domaine client** — appliqué à la
+main le 01/09 (#709 sources, #747 tests), **recassé le jour même à 10:26**, donc désormais tenu par
+`lint_noms_clients.py` (job CI `noms-clients`, PR + push `main`, **tout le dépôt** via `git
+ls-files`), exercé par `tests/test_lint_noms_clients.py`. Conventions : `acme`, `Jane Doe`, prose
+générique, TLD `.test` ; échappatoire `# noqa: CLIENT — <raison>`. ⚠️ **La liste des termes n'est
+pas dans le dépôt, pas même hachée** (des empreintes publiques = un oracle d'appartenance) : secret
+`OTO_NOMS_CLIENTS`, ou `~/.otomata/noms-clients.txt` en local ; sans elle le contrôle sort **2** et
+avertit — jamais un vert muet.
 
 ## Le démarrage (ADR 0065)
 

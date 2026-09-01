@@ -35,6 +35,49 @@ jobs:
       - name: Compiler sous le Python le plus ancien supporté
         run: python -m compileall -q oto_mcp
 
+  # Ce dépôt est PUBLIC. La règle « jamais de nom de client ni de personne » a été
+  # appliquée à la main deux fois le 2026-09-01 (#709 sources, #747 tests, tronc à
+  # zéro) — et un lot mergé le même jour à 10:26 la cassait, dans un en-tête de
+  # module et un en-tête de test. Une règle qui ne tient que par la discipline ne
+  # tient pas. Cf. oto-private#85.
+  #
+  # La liste des termes N'EST PAS dans le dépôt, pas même hachée : un fichier
+  # d'empreintes commité dans un dépôt public est un oracle d'appartenance (hacher
+  # coûte au curieux ce qu'il nous coûte par candidat), donc il rendrait la liste
+  # non-greppable, pas confidentielle — or c'est l'appartenance qu'on protège. Elle
+  # vit dans le secret de dépôt OTO_NOMS_CLIENTS, un terme par ligne.
+  #
+  # Ce job ne gate AUCUN déploiement, délibérément : bloquer la préproduction ne
+  # dépublierait rien — le nom est public dès le push. Le moment qui engage est la
+  # PR, avant merge. Il tourne aussi sur `push main` pour juger l'état MERGÉ, qu'une
+  # PR verte prise isolément ne montre pas. Un tag part toujours d'un commit de main
+  # déjà jugé ici : `deploy.yml` n'a pas besoin de le refaire.
+  #
+  # Stdlib seule, ~1 s sur 1300 fichiers : ni setup-python, ni pip, ni service tiers.
+  noms-clients:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Refuser un nom de client dans le dépôt public
+        env:
+          OTO_NOMS_CLIENTS: ${{ secrets.OTO_NOMS_CLIENTS }}
+        run: |
+          set -uo pipefail
+          code=0
+          python3 scripts/lint_noms_clients.py || code=$?
+          # TROIS états, comme `contrat-front` : un contrôle qui ne peut pas juger le
+          # DIT. Une PR venue d'un fork n'a pas accès aux secrets — elle tombe ici, et
+          # c'est assumé : le risque visé est NOTRE réintroduction, et nos branches,
+          # elles, ont le secret. Le `push main` d'après-merge rejuge de toute façon.
+          if [ "$code" = "2" ]; then
+            echo "::warning title=Noms de clients non confrontés::Le secret OTO_NOMS_CLIENTS est absent (PR de fork, ou secret non posé) — AUCUN jugement n'a été rendu sur les noms de clients. Un mainteneur doit relire, ou relancer depuis une branche du dépôt."
+            exit 0
+          fi
+          if [ "$code" != "0" ]; then
+            echo "::error title=Un nom de client est apparu dans le dépôt PUBLIC::Remplacer par la convention du dépôt (acme, Jane Doe, prose générique, TLD .test), ou déclarer la dette avec '# noqa: CLIENT — <raison>' si la valeur est fonctionnelle. Détail dans le journal du job."
+            exit 1
+          fi
+
   test:
     runs-on: ubuntu-latest
     steps:
