@@ -40,9 +40,20 @@ juger doit le DIRE, jamais rendre un vert muet.
 
 - `0` — jugé, rien trouvé.
 - `1` — jugé, occurrence(s) trouvée(s).
-- `2` — **pas jugé** : aucune liste disponible. La CI en fait un avertissement
-  bruyant. C'est le cas d'une PR venue d'un fork, qui n'a pas accès aux secrets ;
-  le risque visé est notre propre réintroduction, et nos branches, elles, l'ont.
+- `2` — **pas jugé** : aucune liste disponible. C'est le cas d'une PR venue d'un
+  fork, qui n'a pas accès aux secrets ; le risque visé est notre propre
+  réintroduction, et nos branches, elles, l'ont.
+
+⚠️ **Le `2` fait ÉCHOUER le job CI, il ne se contente pas d'avertir** — corrigé le
+2026-09-01, le jour de sa pose. Le job traduisait « pas jugé » en `exit 0` avec une
+annotation ; résultat, il a rendu « success » sur tous ses runs, dont celui de sa
+propre fusion, alors que le secret n'a jamais été posé et qu'aucun jugement n'avait
+donc été rendu. L'annotation disait vrai, mais `gh pr checks`, la liste des checks
+et la coche de la PR ne lisent QUE la conclusion. **Un garde-fou qui ne peut pas
+s'exécuter doit être ROUGE, jamais vert avec une note** : l'état « pas jugé » rendu
+en vert fabrique une PREUVE POSITIVE, la pire forme d'un contrôle défaillant — les
+autres se voient au moins quand on regarde. Le job reste hors des contrôles requis :
+rouge et visible, pas bloquant.
 
 ## Portée
 

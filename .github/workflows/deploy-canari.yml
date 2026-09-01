@@ -53,6 +53,29 @@ jobs:
   # PR verte prise isolément ne montre pas. Un tag part toujours d'un commit de main
   # déjà jugé ici : `deploy.yml` n'a pas besoin de le refaire.
   #
+  # ⚠️ CE JOB EST ROUGE-MAIS-NON-REQUIS, ET LES DEUX MOITIÉS SONT DÉLIBÉRÉES.
+  #
+  # Rouge : posé le 2026-09-01, ce job a rendu « success » sur TOUS ses runs — dont
+  # celui de sa propre fusion — alors que le secret n'a jamais été posé et qu'aucun
+  # jugement n'avait donc été rendu. L'annotation disait la vérité ; personne ne la
+  # lisait, parce que `gh pr checks`, la liste des checks et la coche verte de la PR
+  # ne lisent QUE la conclusion. Un garde-fou qui ne peut pas s'exécuter doit être
+  # ROUGE, jamais vert avec une note : l'état « pas jugé » rendu en vert est la pire
+  # forme d'un contrôle défaillant, parce qu'il fabrique une PREUVE POSITIVE — les
+  # autres formes se voient au moins quand on regarde. Ne pas remettre `exit 0` ici
+  # (`tests/test_lint_noms_clients.py` refuse la régression sur ce fichier même).
+  #
+  # Non requis : ne PAS l'ajouter aux contrôles requis de `main`. Un dispositif qui
+  # protège en bloquant les livraisons déplace son coût sur tout le monde — et le
+  # blocage n'achèterait rien, puisque le nom est public dès le push et que ce job
+  # ne gate aucun déploiement. L'objectif est qu'il soit impossible à CONFONDRE avec
+  # un succès, pas qu'il gèle le dépôt tant qu'un secret n'est pas posé.
+  #
+  # Une conclusion « neutral » a été écartée : un job de workflow ne peut pas en
+  # émettre (il ne dispose que de success/failure/cancelled/skipped — il faudrait
+  # un check-run tiers via l'API Checks), et surtout GitHub la compte comme NON
+  # bloquante et l'affiche comme un passage — elle reproduirait le défaut corrigé.
+  #
   # Stdlib seule, ~1 s sur 1300 fichiers : ni setup-python, ni pip, ni service tiers.
   noms-clients:
     runs-on: ubuntu-latest
@@ -61,17 +84,25 @@ jobs:
       - name: Refuser un nom de client dans le dépôt public
         env:
           OTO_NOMS_CLIENTS: ${{ secrets.OTO_NOMS_CLIENTS }}
+          # Vide sur un `push` ; « true » seulement pour une PR ouverte depuis un
+          # fork — le seul cas où l'absence du secret ne dit RIEN sur notre dépôt.
+          DEPUIS_UN_FORK: ${{ github.event.pull_request.head.repo.fork }}
         run: |
           set -uo pipefail
           code=0
           python3 scripts/lint_noms_clients.py || code=$?
-          # TROIS états, comme `contrat-front` : un contrôle qui ne peut pas juger le
-          # DIT. Une PR venue d'un fork n'a pas accès aux secrets — elle tombe ici, et
-          # c'est assumé : le risque visé est NOTRE réintroduction, et nos branches,
-          # elles, ont le secret. Le `push main` d'après-merge rejuge de toute façon.
+          # TROIS états, comme `contrat-front` — et le troisième ROUGIT (cf. le
+          # commentaire du job). Il rougit AUSSI pour une PR de fork, qui n'a pas
+          # accès aux secrets : c'est correct, rien n'y a été jugé non plus. Mais le
+          # message doit alors dire au contributeur que son code n'est PAS en cause,
+          # sinon le garde-fou accuse un innocent.
           if [ "$code" = "2" ]; then
-            echo "::warning title=Noms de clients non confrontés::Le secret OTO_NOMS_CLIENTS est absent (PR de fork, ou secret non posé) — AUCUN jugement n'a été rendu sur les noms de clients. Un mainteneur doit relire, ou relancer depuis une branche du dépôt."
-            exit 0
+            if [ "${DEPUIS_UN_FORK:-}" = "true" ]; then
+              echo "::error title=Noms de clients NON confrontés — votre contribution n'est pas en cause::Une pull request ouverte depuis un fork n'a pas accès aux secrets de ce dépôt. La liste des termes était donc indisponible et AUCUN jugement n'a été rendu : ce contrôle n'a rien trouvé à redire à votre code, il n'a tout simplement pas pu s'exécuter. Rien ne vous est demandé — un mainteneur relira, ou rejouera ce contrôle depuis une branche du dépôt. Ce job échoue délibérément, parce qu'un contrôle qui n'a pas pu juger ne doit jamais se présenter comme un succès ; il n'a pas vocation à bloquer la fusion de votre PR."
+            else
+              echo "::error title=Noms de clients NON confrontés — le secret OTO_NOMS_CLIENTS est absent::La liste des termes est indisponible et AUCUN jugement n'a été rendu sur les noms de clients de ce dépôt PUBLIC. Poser le secret de dépôt OTO_NOMS_CLIENTS (un terme par ligne) rend à ce contrôle sa capacité de juger, et ce job repasse au vert. Il échoue délibérément tant que ce n'est pas fait : un vert ici serait une preuve fabriquée. Il ne gate aucun déploiement et n'a pas vocation à figurer dans les contrôles requis."
+            fi
+            exit 1
           fi
           if [ "$code" != "0" ]; then
             echo "::error title=Un nom de client est apparu dans le dépôt PUBLIC::Remplacer par la convention du dépôt (acme, Jane Doe, prose générique, TLD .test), ou déclarer la dette avec '# noqa: CLIENT — <raison>' si la valeur est fonctionnelle. Détail dans le journal du job."
