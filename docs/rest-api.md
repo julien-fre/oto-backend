@@ -281,7 +281,8 @@ il devient impossible d'ajouter une route à la main sans le déclarer.
     - **org** : `POST|GET /api/orgs/{id}/invitations` + `DELETE …/{inv}` (org_admin ; `oto_org` op=invite). Le POST refuse en 409 une adresse déjà membre (`already_member`) ou déjà invitée avec une invitation valide (`already_invited`, l'existante dans `details`) — #622, 29/08/2026.
     - **équipe** : `POST|GET /api/groups/{id}/invitations` + `DELETE …/{inv}` (group_admin ; `oto_group` op=invite). L'invité rejoint l'org parente PUIS l'équipe à l'acceptation.
     - **plateforme** : `POST|GET /api/admin/invitations` + `DELETE …/{inv}` (platform_admin ; `oto_admin_invite` op=create/list/revoke). `org_id` optionnel (vide = onboarding pur, sinon rattachement direct).
-    - **acceptation commune** : `POST /api/me/invitations/accept` (`SUB_ONLY`, token/code, match email vérifié + expiry). Email via `oto_mcp/email.py` (otomata-mailer `mailer.oto.zone/api/send`, env `OTO_MAILER_SEND_BEARER`, best-effort → `invite_url` en repli ; **plus de Resend**).
+    - **acceptation commune** : `POST /api/me/invitations/accept` (`SUB_ONLY`, token/code + expiry). ⚠️ **Modèle BEARER** : le secret suffit, l'identité de l'accepteur n'est PAS confrontée à l'email invité — cette ligne a longtemps dit « match email vérifié », ce qui était faux du code servi (corrigé le 2026-09-01, cf. le commentaire de `_invite_accept`). Email via `oto_mcp/email.py` (otomata-mailer `mailer.oto.zone/api/send`, env `OTO_MAILER_SEND_BEARER`, best-effort → `invite_url` en repli ; **plus de Resend**).
+    - **refus commun** : `POST /api/me/invitations/reject` (`SUB_ONLY`, token/code — mêmes entrées que l'acceptation ; `oto_org` op=reject_invite), depuis le 2026-09-01 (#654). Ferme l'invitation (`org_invitations.declined_at`/`.declined_sub`) **sans créer ni retirer aucune appartenance** : elle quitte l'inbox de l'invité, la file de l'émetteur, et plus rien ne peut la consommer — ni `accept`, ni la reprise automatique au signup par l'email (`reconcile_signup_with_invitation`). ⚠️ **Le refus n'est PAS bearer, contrairement à l'acceptation** : l'invitation doit être adressée à l'email du compte appelant (403 `not_the_invitee` sinon, invitation anonyme comprise) — accepter avec un secret qu'on détient est un geste sur soi, refuser détruirait l'invitation d'un tiers. Le refus **ne notifie pas** l'émetteur (aucune préférence de notification n'existe encore) et **ne bloque pas** une réinvitation : le 409 `already_invited` de #622 ne voit plus une invitation refusée.
   - **fiche admin user** : `GET /api/admin/users/{sub}` = identité + accès effectif par provider (`status_for`) + grants + namespaces + orgs (membership).
   - platform admin : `GET|POST /api/admin/orgs`, `GET /api/admin/orgs/{id}` (+ entitlements), `…/members*`, `…/secrets/{provider}`, `POST|DELETE /api/admin/orgs/{id}/entitlements/{namespace}`, `GET /api/admin/namespace-grants`, `POST|DELETE /api/admin/users/{sub}/namespace-grants/{namespace}`
   - secrets : jamais la clé en réponse (provider/base_url/set_at/set_by) ; providers per-user (slack/linkedin/google/whatsapp) refusés en `400` ; listing lu du coffre canonique `credentials_store` (legacy `org_secrets` plus dual-written sous chiffrement). Gating org_admin/membre via `org_store.get_org_role` (platform admin toujours autorisé). Révocation lazy sur sessions MCP ouvertes. Contrat front : `oto-app/docs/ORG_API_CONTRACT.md`.
@@ -392,6 +393,13 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   neuf** — la ligne du #618 (matin du même jour) qui déclarait ce 200 tel quel est
   remplacée par celle-ci. Accepter en étant déjà membre n'abaisse toujours pas le rôle
   (#297).
+- **`POST /api/me/invitations/reject` → 400 `missing_token`, 410 `invalid_or_expired`,
+  403 `not_the_invitee`**, dans l'ordre des gardes (#654, 2026-09-01). `410` couvre
+  d'un seul jeton l'inconnue, l'expirée, la déjà acceptée et la refusée par quelqu'un
+  d'autre — comme sur l'acceptation, et pour la même raison : ne pas dire à qui sonde
+  lequel des quatre. `403` couvre aussi l'invitation **anonyme** (émise sans adresse) :
+  elle n'est adressée à personne, donc à personne en particulier. Refuser deux fois la
+  même invitation est **idempotent** (200, même réponse).
 
 ## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
 

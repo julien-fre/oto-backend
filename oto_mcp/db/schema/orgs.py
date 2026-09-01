@@ -71,6 +71,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS org_members_one_active ON org_members(sub) WHE
 -- « code à partager soi-même » (sans envoi mail) peut être anonyme. `code` = code
 -- court lisible (lien /invitation/<code>), saisi/partagé à la main ; c'est le
 -- secret d'accès single-use (≠ token_hash legacy du lien mail).
+-- `declined_at`/`declined_sub` = le REFUS de l'invité (oto-backend#654), symétrique
+-- d'accepted_at/accepted_sub et surtout DISTINCT d'eux : une invitation refusée
+-- quitte la file d'attente sans créer d'appartenance. Écrire son refus dans
+-- `accepted_at` aurait rendu les deux gestes indiscernables partout — et
+-- `_idempotent_accept` aurait resservi un succès « tu as rejoint l'org » à qui
+-- vient de refuser. Colonnes ajoutées par ALTER dans _init pour les DB existantes.
 CREATE TABLE IF NOT EXISTS org_invitations (
     id BIGSERIAL PRIMARY KEY,
     org_id BIGINT REFERENCES orgs(id) ON DELETE CASCADE,
@@ -83,7 +89,9 @@ CREATE TABLE IF NOT EXISTS org_invitations (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL,
     accepted_at TIMESTAMPTZ,
-    accepted_sub TEXT
+    accepted_sub TEXT,
+    declined_at TIMESTAMPTZ,
+    declined_sub TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_org_invitations_org ON org_invitations(org_id);
 -- idx_org_invitations_code NON déclaré ici : `code` est ajouté par ALTER (DB

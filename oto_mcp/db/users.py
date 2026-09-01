@@ -252,6 +252,10 @@ _SUB_COLUMNS = [
     ("projects", "created_by"),
     ("orgs", "created_by"),
     ("org_invitations", "invited_by"), ("org_invitations", "accepted_sub"),
+    # Qui a REFUSÉ l'invitation (#654) : même nature qu'`accepted_sub`, donc même
+    # repointage — la trace du refus pointerait sinon un compte mort, et l'idempotence
+    # du refus (« déjà refusée par toi ») cesserait de reconnaître la personne.
+    ("org_invitations", "declined_sub"),
     ("org_groups", "created_by"), ("org_instructions", "set_by"),
     # ⚠️ La bibliothèque est le SEUL endroit du code qui nomme encore sa table plutôt
     # que sa vue `guide_library` (#519 lot B4), et c'est délibéré : cet inventaire est

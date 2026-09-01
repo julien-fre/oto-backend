@@ -146,7 +146,9 @@ CAPABILITIES += [
         description=(
             "YOUR inbox — two lists. `to_review`: change-request proposals awaiting "
             "your decision on projects you can write (resolve with oto_doc op=resolve) "
-            "+ pending org invitations. `recent`: YOUR own proposals now accepted/"
+            "+ pending org invitations (each carries a `code`: join with oto_org "
+            "op=accept_invite, or turn it down with op=reject_invite — declining "
+            "clears it from this list). `recent`: YOUR own proposals now accepted/"
             "rejected + projects freshly shared with you. `count` = items needing a "
             "decision. Check it to know what awaits you (the « readers propose / "
             "authors validate » loop) — no argument needed."),

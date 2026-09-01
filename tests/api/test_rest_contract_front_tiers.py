@@ -193,10 +193,12 @@ def test_la_meme_capacite_refuse_sur_la_face_mcp(org):
     assert set(e.value.details["invitation"]) == {"id", "created_at", "expires_at"}
 
 
-@pytest.mark.parametrize("sort", ["expiree", "consommee", "revoquee"])
+@pytest.mark.parametrize("sort", ["expiree", "consommee", "revoquee", "refusee"])
 def test_une_invitation_qui_ne_vaut_plus_ne_bloque_pas(client, org, sort):
-    """Expirée, consommée ou révoquée : la file ne la porte plus, une nouvelle
-    invitation est un 200 normal."""
+    """Expirée, consommée, révoquée ou REFUSÉE (#654) : la file ne la porte plus, une
+    nouvelle invitation est un 200 normal. Le refus rejoint la liste pour une raison
+    précise — c'est la seule reprise après un « non » : l'émetteur réinvite tout de
+    suite, sans avoir à révoquer d'abord ce qui le bloquerait (#624)."""
     from oto_mcp import org_store
     oid, admin = org["id"], org["admin"]
     adresse = f"{sort}@front-tiers.invalid"
@@ -210,6 +212,8 @@ def test_une_invitation_qui_ne_vaut_plus_ne_bloque_pas(client, org, sort):
                          "WHERE id = %s", (inv_id,))
     elif sort == "consommee":
         org_store._mark_invitation_accepted(inv_id, "usr_ft_quelqu_un")
+    elif sort == "refusee":
+        assert org_store.mark_invitation_declined(inv_id, "usr_ft_quelqu_un") is True
     else:
         r = client.delete(f"/api/orgs/{oid}/invitations/{inv_id}", headers=_h(admin))
         assert r.status_code == 200, r.text
@@ -226,6 +230,188 @@ def test_inviter_sans_adresse_reste_un_code_a_partager(client, org):
     r2 = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False}, headers=_h(admin))
     assert (r1.status_code, r2.status_code) == (200, 200), (r1.text, r2.text)
     assert r1.json()["email"] is None and r1.json()["code"] != r2.json()["code"]
+
+
+# ── POST /api/me/invitations/reject : l'invité refuse (#654) ─────────────────
+#
+# Demande du même front tiers : « seul `/api/me/invitations/accept` existe ». Sans
+# pendant négatif, une personne qui ne veut pas rejoindre gardait un badge qu'elle ne
+# pouvait pas éteindre — seul l'ÉMETTEUR pouvait retirer l'invitation, et il
+# n'apprenait jamais que c'était non.
+#
+# Le chemin est ADDITIF, et cette contrainte a décidé la forme : `accept` fait partie
+# des opérations que le contrat du front épingle, donc lui ajouter un `decision:
+# accept|reject` aurait déformé une entrée servie. Un verbe = un chemin.
+
+def _invite(client, oid, admin, adresse) -> str:
+    r = client.post(f"/api/orgs/{oid}/invitations",
+                    json={"email": adresse, "send_email": False}, headers=_h(admin))
+    assert r.status_code == 200, r.text
+    return r.json()["code"]
+
+
+def _sub(nom: str) -> str:
+    """Un compte dont l'adresse est celle que le vérifieur factice dérive du sub —
+    donc un compte que ses invitations peuvent viser nominativement."""
+    from oto_mcp import db
+    db.upsert_user(nom, email=f"{nom}@front-tiers.invalid", name=nom)
+    return nom
+
+
+def test_l_invite_refuse_et_l_invitation_quitte_les_deux_cotes(client, org):
+    """Le cas de l'issue, bout en bout : le badge s'éteint chez l'invité ET la file
+    de l'émetteur se vide — sans que personne ne rejoigne quoi que ce soit."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_refuseur")
+    code = _invite(client, oid, admin, "usr_ft_refuseur@front-tiers.invalid")
+
+    avant = client.get("/api/me/inbox", headers=_h(invite)).json()
+    assert [i["code"] for i in avant["invitations"]] == [code]
+    assert avant["count"] == 1
+
+    r = client.post("/api/me/invitations/reject", json={"code": code}, headers=_h(invite))
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ok": True, "declined": True, "scope": "org", "org_id": oid,
+                        "group_id": None, "name": "Org du front tiers"}
+
+    apres = client.get("/api/me/inbox", headers=_h(invite)).json()
+    assert apres["invitations"] == [] and apres["count"] == 0
+    assert "usr_ft_refuseur@front-tiers.invalid" not in [
+        i["email"] for i in _file(client, oid, admin)]
+    # Refuser n'est pas rejoindre à l'envers : aucune appartenance n'a été touchée.
+    assert org_store.get_org_role(oid, invite) is None
+
+
+def test_une_invitation_refusee_ne_peut_plus_etre_acceptee(client, org):
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_regret")
+    code = _invite(client, oid, admin, "usr_ft_regret@front-tiers.invalid")
+    assert client.post("/api/me/invitations/reject", json={"code": code},
+                       headers=_h(invite)).status_code == 200
+    r = client.post("/api/me/invitations/accept", json={"code": code}, headers=_h(invite))
+    assert (r.status_code, r.json()["error"]) == (410, "invalid_or_expired"), r.text
+
+
+def test_refuser_deux_fois_rend_la_meme_reponse(client, org):
+    """Idempotent comme l'acceptation : un double clic n'est pas une erreur."""
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_double")
+    code = _invite(client, oid, admin, "usr_ft_double@front-tiers.invalid")
+    corps = {"code": code}
+    r1 = client.post("/api/me/invitations/reject", json=corps, headers=_h(invite))
+    r2 = client.post("/api/me/invitations/reject", json=corps, headers=_h(invite))
+    assert (r1.status_code, r2.status_code) == (200, 200), (r1.text, r2.text)
+    assert r1.json() == r2.json()
+
+
+def test_detenir_le_code_ne_suffit_pas_a_refuser_l_invitation_d_un_autre(client, org):
+    """L'ASYMÉTRIE assumée avec l'acceptation. Accepter avec un code qu'on détient est
+    un geste sur soi ; refuser avec ce même code détruirait l'invitation d'un tiers —
+    un code partagé par erreur deviendrait une porte pour annuler l'onboarding de
+    quelqu'un d'autre, et sans appartenance créée, sans trace visible. Donc : seule
+    l'adresse invitée refuse. L'invitation, elle, doit rester intacte."""
+    oid, admin = org["id"], org["admin"]
+    cible = _sub("usr_ft_cible")
+    porteur = _sub("usr_ft_porteur")
+    code = _invite(client, oid, admin, "usr_ft_cible@front-tiers.invalid")
+
+    r = client.post("/api/me/invitations/reject", json={"code": code}, headers=_h(porteur))
+    assert (r.status_code, r.json()["error"]) == (403, "not_the_invitee"), r.text
+    assert r.json()["detail"]
+    # Rien n'a été écrit : elle est toujours dans la file, et la CIBLE peut la refuser.
+    assert "usr_ft_cible@front-tiers.invalid" in [i["email"] for i in _file(client, oid, admin)]
+    assert client.post("/api/me/invitations/reject", json={"code": code},
+                       headers=_h(cible)).status_code == 200
+
+
+def test_une_invitation_anonyme_ne_se_refuse_pas(client, org):
+    """Émise sans adresse (« code à partager soi-même ») : elle n'est adressée à
+    personne, elle n'allume aucun badge, et la retirer est le geste de son émetteur."""
+    oid, admin = org["id"], org["admin"]
+    r = client.post(f"/api/orgs/{oid}/invitations", json={"send_email": False},
+                    headers=_h(admin))
+    assert r.status_code == 200, r.text
+    r = client.post("/api/me/invitations/reject", json={"code": r.json()["code"]},
+                    headers=_h(_sub("usr_ft_curieux")))
+    assert (r.status_code, r.json()["error"]) == (403, "not_the_invitee"), r.text
+
+
+def test_refuser_sans_token_ni_code_rend_400(client, org):
+    r = client.post("/api/me/invitations/reject", json={}, headers=_h(org["admin"]))
+    assert (r.status_code, r.json()["error"]) == (400, "missing_token"), r.text
+
+
+def test_refuser_un_code_inconnu_rend_410(client, org):
+    r = client.post("/api/me/invitations/reject", json={"code": "ZZZZZZZ"},
+                    headers=_h(org["admin"]))
+    assert (r.status_code, r.json()["error"]) == (410, "invalid_or_expired"), r.text
+
+
+def test_le_refus_survit_a_l_inscription_par_la_meme_adresse(client, org):
+    """Le piège le plus facile à manquer. Une invitation en attente pour une adresse
+    est honorée AUTOMATIQUEMENT au premier signup avec cette adresse
+    (`reconcile_signup_with_invitation`). Si le refus n'y était pas filtré, créer son
+    compte après avoir dit non ferait rejoindre l'org quand même — le refus annulé
+    par une mécanique que personne n'a déclenchée."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    adresse = "usr_ft_signup@front-tiers.invalid"
+    invite = _sub("usr_ft_signup")
+    code = _invite(client, oid, admin, adresse)
+    assert client.post("/api/me/invitations/reject", json={"code": code},
+                       headers=_h(invite)).status_code == 200
+    assert org_store.reconcile_signup_with_invitation("usr_ft_nouveau_compte", adresse) is None
+
+
+def test_le_refus_par_token_mail_marche_aussi(client, org):
+    """Les deux façons de désigner l'invitation, comme sur l'acceptation. Le token
+    n'est rendu par aucune surface (seul son hash est stocké) : on le prend à la
+    source, comme le fait le lien du mail."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_token")
+    _, token, _code = org_store.create_invitation(
+        oid, "usr_ft_token@front-tiers.invalid", "org_member", invited_by=admin)
+    r = client.post("/api/me/invitations/reject", json={"token": token}, headers=_h(invite))
+    assert r.status_code == 200, r.text
+    assert r.json()["declined"] is True
+
+
+def test_le_refus_d_une_invitation_d_equipe_ne_rejoint_ni_l_org_ni_l_equipe(client, org):
+    """Un seul verbe pour les trois scopes de la cascade : l'invitation porte sa
+    cible, le refus n'a pas à la redemander."""
+    from oto_mcp import org_store
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_equipe")
+    r = client.post(f"/api/orgs/{oid}/groups", json={"name": "Refus"}, headers=_h(admin))
+    assert r.status_code == 200, r.text
+    gid = r.json()["group_id"]
+    r = client.post(f"/api/groups/{gid}/invitations",
+                    json={"email": "usr_ft_equipe@front-tiers.invalid", "send_email": False},
+                    headers=_h(admin))
+    assert r.status_code == 200, r.text
+    r = client.post("/api/me/invitations/reject", json={"code": r.json()["code"]},
+                    headers=_h(invite))
+    assert r.status_code == 200, r.text
+    assert (r.json()["scope"], r.json()["org_id"], r.json()["group_id"]) == ("team", oid, gid)
+    assert org_store.get_org_role(oid, invite) is None
+
+
+def test_la_meme_capacite_refuse_sur_la_face_mcp_654(client, org):
+    """`oto_org op=reject_invite` aboutit au même handler que la route — les deux
+    faces doivent refuser aux mêmes conditions, pas se ressembler."""
+    from oto_mcp.capabilities import org_console as oc
+    from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+    oid, admin = org["id"], org["admin"]
+    invite = _sub("usr_ft_mcp")
+    code = _invite(client, oid, admin, "usr_ft_mcp@front-tiers.invalid")
+    with pytest.raises(AuthzDenied) as e:
+        oc._org(ResolvedCtx(sub=admin, org_id=oid),
+                oc.OrgInput(op="reject_invite", code=code))
+    assert (e.value.status, e.value.code) == (403, "not_the_invitee")
+    out = oc._org(ResolvedCtx(sub=invite), oc.OrgInput(op="reject_invite", code=code))
+    assert out["ok"] is True and out["declined"] is True and out["org_id"] == oid
 
 
 # ── PUT /api/me/guides/{scope}/{slug} : 400 body_too_large, borne en OCTETS ───

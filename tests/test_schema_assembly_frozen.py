@@ -109,11 +109,20 @@ from oto_mcp.db import _schema, schema
 # nommaient un tenant tiers ou une personne réelle en clair (règle du meta-repo :
 # jamais de nom de client ni de personne dans un dépôt public). Remplacés par des
 # exemples génériques (« un tenant tiers », « le compte de Jane »).
+# 2026-09-01 (refus d'invitation, #654) : `org_invitations` gagne DEUX colonnes —
+# `declined_at`/`declined_sub`, le « non » de l'invité, jusqu'ici impossible à dire
+# (seul l'émetteur pouvait retirer une invitation). État PROPRE et non `accepted_at`
+# réutilisé : les deux gestes doivent rester discernables partout, et l'acceptation
+# idempotente (`_idempotent_accept`) aurait resservi un succès « tu as rejoint l'org »
+# à qui vient de refuser. ADDITIVE, sans index et sans réécriture (`ADD COLUMN` NULL
+# est instantané) ; la prod qui tourne l'ancien code ne les lit pas — elle continue
+# simplement de ne jamais en voir de renseignées.
 # ⚠️ Empreinte RECALCULÉE depuis le module assemblé sur le résultat du REBASE des
-# deux lots ci-dessus (scrub rebasé sur les quatre colonnes de `nodes`), jamais
-# recopiée d'un côté du conflit : les deux ont touché la chaîne le même jour.
-EMPREINTE = "70da617e920da5cc8f83cce1c2458407f3c2edad46f965c2e3d187000a3a8b25"
-LONGUEUR = 119166
+# TROIS lots ci-dessus (les quatre colonnes de `nodes`, puis le scrub, puis ces deux
+# colonnes), jamais recopiée d'un côté du conflit : trois lots ont touché la chaîne
+# le même jour, et un hash pris d'un seul côté valide un DDL que personne ne sert.
+EMPREINTE = "ad7a68a01c35fb926a58c355de2dfe2e4e160f203de75024eae781138e63bbc6"
+LONGUEUR = 119699
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
