@@ -216,7 +216,15 @@ def list_jobs(org_id: int, status: Optional[str] = None,
 def count_jobs(org_id: int, status: Optional[str] = None) -> int:
     """Le nombre de jobs de la file, MÊMES filtres que `list_jobs` et sans son
     plafond : c'est le chiffre qu'un bilan de vague vient chercher, et celui qui
-    dit qu'une page est tronquée. Le curseur, lui, dit comment lire la suite."""
+    dit qu'une page est tronquée. Le curseur, lui, dit comment lire la suite.
+
+    **Le coût a été mesuré avant d'être ajouté au chemin de la liste**, parce que ce
+    dépôt a déjà gelé sa boucle sur une requête lente : sur un banc de 200 000 jobs
+    répartis sur 50 orgs — ~20× le volume réel — le compte d'une org prend **7 ms**
+    (seq scan parallèle) contre 3 ms pour la page. Pas d'index posé pour ça : il
+    coûterait un DDL au boot et une empreinte de schéma pour économiser des
+    millisecondes sur une surface de surveillance. À revoir si la file change
+    d'ordre de grandeur."""
     ou, params = _filtre_de_file(org_id, status)
     with _connect() as conn:
         row = conn.execute("SELECT count(*) AS n FROM runner_jobs" + ou,
