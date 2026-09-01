@@ -77,6 +77,12 @@ class TrailSibling(BaseModel):
     id: str
     name: str
     type: str
+    # La procédure qu'un voisin `agent` exécute — même référence que sur le rail et
+    # sur la fiche (#417/#619), laissée ouverte ici jusqu'au 01/09. Le fil savait dire
+    # `type: "agent"` mais pas vers quoi : le voisin restait non cliquable alors que
+    # les deux autres surfaces l'ouvraient. `null` sur toute autre nature, et sur un
+    # agent sans référence lisible : jamais devinée.
+    procedure: Optional[ProcedureRef] = None
 
 
 class TrailCrumb(BaseModel):
@@ -87,6 +93,9 @@ class TrailCrumb(BaseModel):
     # fil n'a donc rien à redemander. Bornés : un dossier à 4 000 frères ferait du fil
     # la plus grosse partie de la réponse.
     siblings: list[TrailSibling] = []
+    # Le maillon lui-même peut être un agent (on ouvre une page rangée SOUS lui) —
+    # même règle, même source.
+    procedure: Optional[ProcedureRef] = None
 
 
 class ContentBlock(BaseModel):
@@ -256,13 +265,22 @@ def _fil(fiche: dict, chaine: list[dict]) -> list[TrailCrumb]:
     freres = db_node.siblings_of([c["parent_id"] for c in chaine],
                                  owner=(fiche["owner_type"], str(fiche["owner_id"])),
                                  cap=_FRERES_MAX)
+    # Le `scope` d'une référence est le PROPRIÉTAIRE du nœud, et le fil ne remonte que
+    # des ancêtres — la fratrie est d'ailleurs bornée à ce même propriétaire par la
+    # requête. Celui de la fiche vaut donc pour tous les maillons ; le relire par nœud
+    # coûterait une colonne de plus pour la même valeur.
+    proprietaire = fiche.get("owner_type")
     out = []
     for c in chaine:
         props = c.get("props") or {}
+        nature = _type_of(c["kind"], props)
         out.append(TrailCrumb(
-            id=c["public_id"], name=props.get("title") or "", type=_type_of(c["kind"], props),
+            id=c["public_id"], name=props.get("title") or "", type=nature,
+            procedure=procedure_ref_of(nature, proprietaire, props),
             siblings=[TrailSibling(id=s["public_id"], name=s.get("title") or "",
-                                   type=_type_of(s["kind"], s))
+                                   type=_type_of(s["kind"], s),
+                                   procedure=procedure_ref_of(
+                                       _type_of(s["kind"], s), proprietaire, s))
                       for s in freres.get(c["parent_id"], [])]))
     return out
 
