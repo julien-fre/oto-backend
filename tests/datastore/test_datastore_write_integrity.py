@@ -323,25 +323,26 @@ def test_la_chaine_vide_sur_un_champ_deja_vide_ne_dit_rien(table):
     assert "valeurs_ignorees" not in st.off_schema_report()
 
 
-def test_la_chaine_vide_SEULE_par_id_est_une_declaration_et_efface(table):
+def test_la_chaine_vide_SEULE_par_id_est_REFUSEE_en_nommant_la_porte(table):
     """L'autre chemin d'écriture. Les deux ont déjà divergé une fois sur cette
     famille de règles (#322), et c'est le patch par `id` qui est le geste le plus
     courant d'un agent : une règle câblée d'un seul côté ne protège personne.
 
-    ⚠️ Le vide est ici TOUT le geste, et depuis #724 c'est ce qui décide : rien
-    d'autre n'est posé, donc c'est une DÉCLARATION et elle prend effet. Le cas du
-    gabarit — un vide au milieu d'autres colonnes — est le test suivant, et c'est lui
-    qui porte l'invariant de #608."""
+    ⚠️ Le vide est ici TOUT le geste : l'appel ne changerait rien et répondrait comme
+    un succès. Depuis #724 il est REFUSÉ, et le refus ÉCRIT la porte en toutes lettres
+    — la nommer dans un relevé n'a pas suffi (dix retraits perdus le 01/09 malgré un
+    relevé qui disait déjà `null`). Ce que le test verrouille n'a pas changé : la
+    valeur en place survit."""
     st, ns, ns_id, rid = table
 
-    st.update_row(ns, rid, {"origine_ligne": ""})
+    with pytest.raises(ValueError) as exc:
+        st.update_row(ns, rid, {"origine_ligne": ""})
 
-    assert _donnees(ns_id, rid).get("origine_ligne") == "", \
-        "un vide seul déclare : le refuser rendait impossible de vider un champ"
-    effaces = st.off_schema_report().get("valeurs_effacees")
-    assert effaces and effaces[0]["champ"] == "origine_ligne", \
-        f"un effacement muet ne se retrouve pas : {st.off_schema_report()}"
-    assert effaces[0]["valeur"] == "fichier-client", "et il dit ce qu'il a emporté"
+    assert "origine_ligne" in str(exc.value), exc.value
+    assert '"origine_ligne": null' in str(exc.value), \
+        f"le refus doit écrire le geste qui marche, pas seulement le nommer : {exc.value}"
+    assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client", \
+        "un refus n'écrit rien — surtout pas l'effacement qu'il refuse"
 
 
 def test_la_chaine_vide_ACCOMPAGNEE_est_preservee_et_relevee_par_id_aussi(table):

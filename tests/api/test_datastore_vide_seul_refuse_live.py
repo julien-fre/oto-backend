@@ -1,29 +1,29 @@
-"""Le sens d'une liste vide dépend de CE QUI L'ACCOMPAGNE (#724, arbitré le 01/09/2026).
+"""Un vide qui ne pose RIEN d'autre est refusé, en nommant la porte (#724).
 
-Deux lectures s'affrontaient, chacune vraie sur une moitié de la population. La mesure
-du journal de production (30 jours glissants au 2026-09-01) les départage :
+Mesuré en production le 2026-09-01, entre 04:16 et 04:20 : dix `data_write(id=…,
+row={'contacts': []})` sur des fiches clientes, dix `200`, zéro retrait.
 
-  · **574** écritures unitaires portent une liste vide, sur 43 444 ;
-  · **562 (98 %)** réémettent la fiche ENTIÈRE — plusieurs colonnes dans le même
-    appel — et **12 (2 %)** ne portent que la liste vide, seule ;
-  · sur les 324 couples (appel, colonne) résolubles en base, **105 visaient une
-    colonne encore peuplée** — donc auraient effacé. Décomposés : **104 sont des
-    fiches réémises, 1 seule est une liste vide seule.**
+⚠️ **La porte existait déjà, et la réponse la nommait déjà.** `contacts: null` efface,
+et le relevé `valeurs_ignorees` disait mot pour mot « Pour vider un champ pour de bon,
+nomme-le avec `null` ». Elle n'a pas été empruntée : il n'y a eu ce jour-là **qu'une
+seule** écriture `null` explicite, sur une table d'ESSAI jetable — jamais sur les fiches
+ratées, dont l'une porte encore aujourd'hui le contact qu'on voulait retirer. C'est la
+réfutation de « il suffit de le dire » : un témoin logé dans le corps d'une réponse
+réussie n'oblige personne à le lire. **Le refus, lui, ne se rate pas.**
 
-D'où la règle, qui n'est ni « le vide efface » ni « le vide n'efface jamais » :
+Deux options ont été écartées, et savoir pourquoi évite de les rejouer :
 
-  **liste vide SEULE** (rien d'autre posé) ⟹ **déclaration** — « on a cherché, il n'y
-  a personne ». Elle PREND EFFET. Personne n'écrit `{contacts: []}` tout seul par
-  accident, et c'est le besoin d'origine : retirer le dernier contact d'une fiche.
+- **faire effacer la liste vide** (comme `null`) : détruit les 104 réémissions par mois
+  mesurées ci-dessous — c'est la charge dominante, où `[]` veut dire « rien trouvé » ;
+- **faire effacer la liste vide SEULE** : ferait dépendre un geste DESTRUCTEUR de ses
+  voisines. « Selon le contexte ta donnée disparaît » est une perte silencieuse ; le
+  refus, lui, dit « selon le contexte ton appel échoue » — un désagrément qui enseigne.
 
-  **liste vide DANS une fiche réémise** (d'autres colonnes posées) ⟹ « rien trouvé »,
-  ce que rend une source muette. Elle NE DÉPLACE PAS une valeur en place (#608). C'est
-  cette moitié-là qui protège les 104 — le test qui la garde vaut 104 appels par mois.
-
-L'effacement, quand il a lieu, est DIT (`valeurs_effacees` : la colonne et ce qu'elle
-portait). ⚠️ C'est une TRACE, pas un garde-fou : on vient d'établir qu'un relevé logé
-dans le corps d'une réponse réussie n'oblige personne à le lire. Le geste est
-légitime ; ce qu'on doit, c'est de quoi le retrouver.
+Mesure qui fonde la règle (journal de production, 30 j glissants au 2026-09-01) :
+574 écritures portent une liste vide sur 43 444 ; **562 (98 %) réémettent la fiche
+entière**, 12 portent le vide seul ; sur 324 couples (appel, colonne) résolubles,
+**105 visaient une colonne encore peuplée — 104 réémissions, et le reste des vides
+seuls**. Le détail et ses réserves sont dans `docs/datastore.md`.
 
 Les deux faces sont éprouvées, sur la table de routes réelle et sur le tool monté :
 un comportement vrai d'un seul côté est un comportement absent.
@@ -126,52 +126,72 @@ def _blob(ns_id: int, row_id: str) -> dict:
     return dict((r or {}).get("data") or {})
 
 
-# ── le cas SEUL : une déclaration, qui prend effet ────────────────────────────
+# ── le cas SEUL : refusé, et le refus ENSEIGNE ────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_face_MCP_une_liste_vide_SEULE_efface_et_le_dit(fiche, client, monkeypatch):
-    """Le geste des dix retraits perdus. Il ne pose rien d'autre : l'intention est
-    établie, donc il aboutit — et il nomme ce qu'il a emporté."""
+async def test_face_MCP_une_liste_vide_SEULE_est_refusee_en_nommant_la_porte(
+        fiche, client, monkeypatch):
+    """Le geste des dix retraits perdus. Il ne pose rien d'autre : il ne peut pas
+    aboutir par ce chemin, et il ne doit pas répondre comme un succès.
+
+    ⚠️ Le refus doit NOMMER exactement quoi écrire à la place. C'est tout son
+    intérêt sur un relevé : il arrive au moment où l'agent peut encore corriger."""
+    from oto_mcp.mcp_errors import McpError
+
     data_write = await _data_write(monkeypatch)
     ns, ns_id, rid = fiche
 
-    out = data_write(namespace=ns, id=rid, row={"contacts": []})
+    with pytest.raises(McpError) as e:
+        data_write(namespace=ns, id=rid, row={"contacts": []})
 
-    assert _blob(ns_id, rid)["contacts"] == [], \
-        "retirer le dernier contact d'une fiche DOIT aboutir — c'est l'issue elle-même"
-    effaces = out.get("valeurs_effacees")
-    assert effaces, f"un effacement muet ne se retrouve pas : {out}"
-    assert [(e["champ"], e["valeur"]) for e in effaces] \
-        == [("contacts", ["a@exemple.invalid"])], effaces
+    message = str(e.value)
+    assert "contacts" in message, message
+    assert "null" in message, f"le refus doit dire PAR QUOI vider : {message}"
+    assert '"contacts": null' in message, \
+        f"nommer la porte ne suffit pas, il faut l'écrire telle quelle : {message}"
+    assert _blob(ns_id, rid)["contacts"] == ["a@exemple.invalid"], \
+        "un refus n'écrit rien — surtout pas l'effacement qu'il refuse"
 
 
-def test_face_REST_une_liste_vide_SEULE_efface_et_le_dit(client, fiche):
+def test_face_REST_une_liste_vide_SEULE_rend_400_et_pas_200(client, fiche):
     ns, ns_id, rid = fiche
     r = client.patch(f"/api/datastore/namespaces/{ns}/rows/{rid}", headers=_h(),
                      json={"contacts": []})
-    assert r.status_code == 200, r.text
-    assert _blob(ns_id, rid)["contacts"] == []
-    assert r.json().get("valeurs_effacees"), r.json()
+    assert r.status_code == 400, r.text
+    detail = r.json().get("detail", "")
+    assert "contacts" in detail and '"contacts": null' in detail, detail
+    assert _blob(ns_id, rid)["contacts"] == ["a@exemple.invalid"]
 
 
-def test_la_chaine_vide_et_lobjet_vide_SEULS_declarent_pareil(client, fiche):
-    """La règle porte sur la FORME du geste, pas sur le type de la valeur : un vide
-    seul est une déclaration, qu'il soit `[]`, `""` ou `{}`."""
-    ns, ns_id, rid = fiche
-    r = client.patch(f"/api/datastore/namespaces/{ns}/rows/{rid}", headers=_h(),
-                     json={"statut": ""})
-    assert r.status_code == 200, r.text
-    assert _blob(ns_id, rid)["statut"] == "", r.text
+def test_la_chaine_vide_et_lobjet_vide_SEULS_sont_refuses_pareil(client, fiche):
+    """La règle porte sur la FORME du geste, pas sur le type de la valeur."""
+    ns, _ns_id, rid = fiche
+    for valeur in ("", {}):
+        r = client.patch(f"/api/datastore/namespaces/{ns}/rows/{rid}", headers=_h(),
+                         json={"statut": valeur})
+        assert r.status_code == 400, (valeur, r.text)
 
 
-def test_le_null_nomme_efface_toujours(client, fiche):
-    """L'autre porte reste ouverte, inchangée."""
+def test_le_null_nomme_EST_la_porte_et_elle_est_ouverte(client, fiche):
+    """Le refus ne vaut que si ce qu'il désigne fonctionne. C'est le besoin
+    d'origine de l'issue : retirer le dernier contact d'une fiche."""
     ns, ns_id, rid = fiche
     r = client.patch(f"/api/datastore/namespaces/{ns}/rows/{rid}", headers=_h(),
                      json={"contacts": None})
     assert r.status_code == 200, r.text
     assert _blob(ns_id, rid)["contacts"] is None
-    assert r.json().get("valeurs_effacees")
+    assert r.json().get("valeurs_effacees"), \
+        "un effacement réel se dit — c'est lui qui a détruit quelque chose"
+
+
+def test_deux_vides_ensemble_et_rien_dautre_sont_refuses_ensemble(client, fiche):
+    """« Rien d'autre posé » se juge sur le GESTE entier, pas colonne par colonne."""
+    ns, ns_id, rid = fiche
+    r = client.patch(f"/api/datastore/namespaces/{ns}/rows/{rid}", headers=_h(),
+                     json={"contacts": [], "statut": ""})
+    assert r.status_code == 400, r.text
+    blob = _blob(ns_id, rid)
+    assert blob["contacts"] == ["a@exemple.invalid"] and blob["statut"] == "nouveau"
 
 
 # ── le cas ACCOMPAGNÉ : 104 appels par mois en dépendent ──────────────────────
@@ -197,6 +217,8 @@ async def test_la_fiche_ENTIERE_reemise_avec_un_vide_NE_LEFFACE_PAS(
     assert out["contacts"] == ["a@exemple.invalid"], out
     assert out.get("valeurs_ignorees"), \
         "préserver en silence serait le défaut de #608 retourné"
+    assert "null" in (out.get("valeurs_ignorees_hint") or ""), \
+        "le relevé nomme la porte, ici aussi"
     assert "valeurs_effacees" not in out, "rien n'a été détruit ici"
     blob = _blob(ns_id, rid)
     assert blob["contacts"] == ["a@exemple.invalid"]
@@ -211,18 +233,6 @@ def test_face_REST_la_fiche_reemise_NE_LEFFACE_PAS_non_plus(client, fiche):
     assert _blob(ns_id, rid)["contacts"] == ["a@exemple.invalid"], r.text
     assert r.json().get("valeurs_ignorees"), r.json()
 
-
-def test_deux_vides_ensemble_et_rien_dautre_restent_une_declaration(client, fiche):
-    """« Rien d'autre posé » se juge sur le GESTE entier, pas colonne par colonne :
-    deux vides qui ne s'accompagnent que l'un l'autre déclarent tous les deux."""
-    ns, ns_id, rid = fiche
-    r = client.patch(f"/api/datastore/namespaces/{ns}/rows/{rid}", headers=_h(),
-                     json={"contacts": [], "statut": ""})
-    assert r.status_code == 200, r.text
-    blob = _blob(ns_id, rid)
-    assert blob["contacts"] == [] and blob["statut"] == "", blob
-
-
 # ── le voisinage qui ne doit pas bouger ───────────────────────────────────────
 
 def test_reecrire_la_valeur_IDENTIQUE_reste_un_no_op_accepte(client, fiche):
@@ -234,9 +244,9 @@ def test_reecrire_la_valeur_IDENTIQUE_reste_un_no_op_accepte(client, fiche):
     assert r.status_code == 200, r.text
 
 
-def test_un_vide_sur_une_colonne_DEJA_vide_ne_dit_rien(client, live):
-    """Rien à perdre, rien à annoncer : poser `[]` là où il n'y avait rien reste le
-    chemin normal de création depuis un gabarit, et ne produit aucun relevé."""
+def test_un_vide_sur_une_colonne_DEJA_vide_passe_et_ne_dit_rien(client, live):
+    """Rien à perdre, donc rien à refuser NI à annoncer : poser `[]` là où il n'y
+    avait rien reste le chemin normal de création depuis un gabarit."""
     from oto_mcp import db
     from oto_mcp.datastore.core import make_store
 
@@ -248,6 +258,7 @@ def test_un_vide_sur_une_colonne_DEJA_vide_ne_dit_rien(client, live):
     assert r.status_code == 200, r.text
     assert _blob(ns_id, rid)["contacts"] == []
     assert "valeurs_effacees" not in r.json(), r.json()
+    assert "valeurs_ignorees" not in r.json(), r.json()
 
 
 def test_un_LOT_qui_porte_la_cle_metier_est_une_REEMISSION_donc_preserve(live):

@@ -72,6 +72,7 @@ from .columns import (  # noqa: E402,F401
     _to_path,
     _writes_layers,
     arbitrer_les_vides,
+    refuser_geste_sans_effet,
     effacements_report,
     ignores_report,
 )
@@ -1007,11 +1008,15 @@ class DatastorePg(SchemaOpsMixin):
             # #608) et les deux relevés. Posés sur le store seulement une fois la
             # validation passée — un refus n'a rien effacé, l'annoncer ferait
             # chercher un dégât imaginaire.
-            # #724 : `arbitrer_les_vides` tranche aussi le SENS du vide — accompagné
-            # il préserve (#608), seul il déclare et prend effet. Par CE chemin
-            # (append promu, lot) la clé métier est toujours posée : une row de lot
-            # est donc par construction une réémission, jamais une déclaration.
             pose, vidages, ecartes = arbitrer_les_vides(current, user_data, row_id)
+            # #724 : préserver et le DIRE ne suffit pas quand l'écarté était TOUT ce
+            # que l'écriture portait — l'appel n'a alors aucun effet et répond 200.
+            # ⚠️ Par CE chemin le refus ne peut pas parler : on n'arrive ici (append
+            # promu, lot) qu'avec une valeur de clé métier non vide, donc posée — ce
+            # qui garantit qu'un LOT ne casse jamais dessus. Il y est quand même :
+            # les deux chemins d'écriture ont déjà divergé une fois sur cette famille
+            # de règles (#322), ils partagent la fonction, pas seulement l'intention.
+            refuser_geste_sans_effet(pose, ecartes)
             # Colonne par colonne, pour que l'origine survive à une écriture
             # ordinaire. Un `update` en bloc l'emporterait avec le reste — et
             # silencieusement, puisque remplacer une valeur est le geste normal.
@@ -1450,11 +1455,13 @@ class DatastorePg(SchemaOpsMixin):
         # #409). Fait avant la boucle, sur l'état lu en base. Les deux chemins
         # d'écriture ont déjà divergé une fois sur cette famille de règles (#322) :
         # ils partagent donc la fonction, pas seulement l'intention.
-        # #724 : le patch par `id` est le chemin des dix retraits perdus du 01/09 —
-        # un vide SEUL y était accepté sans effet. Il déclare désormais, et emprunte
-        # le même relevé que `null` : `valeurs_effacees` nomme la colonne et ce
-        # qu'elle portait. Accompagné d'autres colonnes, il préserve comme avant.
         pose, vidages, ecartes = arbitrer_les_vides(data, patch, row_id)
+        # #724 : le patch par `id` est le chemin des dix retraits perdus du 01/09 —
+        # un vide SEUL y était accepté sans effet, et le relevé qui nommait déjà la
+        # porte n'a pas été lu. Refusé AVANT tout relevé : rien n'a été touché, il
+        # n'y a donc rien à annoncer — le message, lui, écrit la porte en toutes
+        # lettres, au moment où l'appelant peut encore corriger.
+        refuser_geste_sans_effet(pose, ecartes)
         avant = dict(data)
         written = set()
         for k, v in pose.items():

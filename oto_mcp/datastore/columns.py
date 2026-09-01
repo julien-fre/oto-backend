@@ -289,12 +289,11 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
     qu'un scalaire, et une colonne qui ne portait que son `origine` n'avait déjà
     pas de valeur à perdre.
 
-    ⚠️ **Le sens d'un vide non-`null` dépend de CE QUI L'ACCOMPAGNE** (#724, arbitré
-    le 2026-09-01 sur le journal de production) — voir `_est_une_declaration`."""
+    ⚠️ Ce parcours ne décide QUE de la valeur : le sort du GESTE — quand il n'a plus
+    rien à poser — se juge après, sur ses trois sorties (`refuser_geste_sans_effet`)."""
     pose: dict = {}
     effaces: list[dict] = []
     ignores: list[dict] = []
-    ecartes_bruts: list[tuple] = []       # (clé, le vide TEL QUE POSÉ) — pour #724
     for cle, neuf in (user_data or {}).items():
         touche, posee = _valeur_posee(neuf)
         if (cle in _META_COLS or not touche or not dsv2._is_empty(posee)):
@@ -310,51 +309,56 @@ def arbitrer_les_vides(existing: Optional[dict], user_data: Optional[dict],
             effaces.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
             pose[cle] = neuf
             continue
-        # Vide non-`null` sur une valeur en place : la valeur survit (#608)…
+        # Vide non-`null` sur une valeur en place : la valeur survit (#608).
         ignores.append({"ligne": row_id, "champ": cle, "valeur": ancienne})
-        ecartes_bruts.append((cle, neuf))
         reste = _sans_la_valeur(neuf)
         if reste is not None:
             pose[cle] = reste
-    # …SAUF si le geste ne posait QUE ces vides : c'est alors une DÉCLARATION, elle
-    # prend effet, et elle rejoint le relevé de ce qui a été détruit (#724).
-    if _est_une_declaration(pose, ignores):
-        for cle, neuf in ecartes_bruts:
-            pose[cle] = neuf
-        effaces.extend(ignores)
-        ignores = []
     return pose, effaces, ignores
 
 
-def _est_une_declaration(pose: dict, ignores: list) -> bool:
-    """Le geste ne posait-il QUE des vides non-`null` ? (#724)
+def refuser_geste_sans_effet(pose: Optional[dict], ecartes: list) -> None:
+    """REFUSE une écriture qui, après arbitrage, ne pose plus RIEN (#724).
 
-    **Le sens d'un vide dépend de ce qui l'accompagne**, et ce n'est pas un arbitrage
-    de goût : c'est ce que dit le journal de production, 30 jours glissants au
-    2026-09-01 (le tableau des chiffres est dans `docs/datastore.md`). Sur 574
-    écritures portant une liste vide, **98 % réémettent la fiche entière** ; et sur
-    les 105 qui visaient une colonne encore peuplée — donc qui auraient effacé —
-    **104 sont des réémissions, 1 seule est un vide seul**.
+    #608 préserve une valeur en place contre un vide non-`null` et le DIT
+    (`valeurs_ignorees`). Il reste un cas où le dire ne suffit pas : quand l'écarté
+    était **tout** ce que l'écriture portait. L'appel n'a alors aucun effet et répond
+    `200` — un succès qui n'a rien fait, dont le seul témoin est une clé de la réponse.
 
-    - **vide ACCOMPAGNÉ** (d'autres colonnes posées) = « rien trouvé », ce que rend
-      une source muette ou un gabarit à demi peuplé : il ne déplace pas une valeur en
-      place (#608). **C'est cette branche qui protège les 104**, elle ne bouge pas ;
-    - **vide SEUL** (rien d'autre posé) = « on a cherché, il n'y a personne ».
-      Personne n'écrit `{contacts: []}` tout seul par accident : l'intention est
-      établie, le geste prend effet. Le refuser rendait impossible de retirer le
-      dernier contact d'une fiche — ce qui EST l'issue #724.
+    **Ce n'est pas une conjecture, c'est ce qui s'est passé** (2026-09-01, 04:16-04:20) :
+    dix `row={'contacts': []}` sur des fiches clientes, dix `200`, zéro retrait. La
+    porte `null` existait, et le relevé la nommait déjà mot pour mot — elle n'a pas été
+    empruntée : une seule écriture `null` ce jour-là, sur une table d'ESSAI, jamais sur
+    les fiches ratées, dont l'une porte encore le contact qu'on voulait retirer.
 
-    ⚠️ « Rien d'autre posé » se juge sur le GESTE ENTIER, pas colonne par colonne :
-    deux vides qui ne s'accompagnent que l'un l'autre déclarent tous les deux ; une
-    écriture en couches qui pose AUSSI une origine a posé quelque chose, donc elle
-    préserve — le parti le plus prudent sur le cas ambigu.
+    **Pourquoi refuser plutôt que faire effacer.** Faire effacer le vide SEUL ferait
+    dépendre un geste DESTRUCTEUR de ses voisines : « selon le contexte ta donnée
+    disparaît » est une perte silencieuse, quand « selon le contexte ton appel échoue »
+    est un désagrément qui enseigne. Le refus arrive au moment où l'appelant peut
+    encore corriger, et il **nomme exactement quoi écrire** — c'est ce qui le distingue
+    d'un relevé qu'on peut ne pas lire.
 
-    Conséquence structurelle à ne pas perdre : une row de LOT porte toujours sa clé
-    métier (c'est par elle que la fusion l'a trouvée), donc elle pose — un import de
-    500 lignes est par construction une réémission et ne peut pas vider une colonne
-    par son gabarit.
+    La ligne de partage est l'EFFET du geste, pas le type de la valeur : une écriture
+    qui pose autre chose (la fiche entière réémise, 98 % de la population mesurée) est
+    inchangée. Conséquence structurelle : une row de LOT porte toujours sa clé métier,
+    donc elle pose — un import de 500 lignes ne peut pas casser ici. Chiffres, fenêtre
+    et réserves : `docs/datastore.md`.
     """
-    return bool(ignores) and not any(c not in _META_COLS for c in (pose or {}))
+    if not ecartes:
+        return                       # rien n'a été écarté : rien à refuser
+    if any(cle not in _META_COLS for cle in (pose or {})):
+        return                       # le geste pose autre chose : il agit
+    champs = sorted({str(r.get("champ")) for r in ecartes})
+    cite = ", ".join(f"`{c}`" for c in champs)
+    porte = ", ".join(f'"{c}": null' for c in champs)
+    raise ValueError(
+        f"écriture sans effet : {cite} porte une valeur VIDE non-`null` (liste vide, "
+        "chaîne vide, objet vide) sur une valeur déjà en place, et ton écriture ne "
+        "pose rien d'autre — elle ne changerait donc RIEN, et te répondrait comme un "
+        "succès. Un vide non-`null` ne déplace jamais une valeur : c'est ce que rend "
+        "une source muette ou un gabarit à demi peuplé, pas une demande d'effacement. "
+        f"POUR VIDER POUR DE BON, écris exactement : {{{porte}}}. Pour laisser la "
+        "valeur intacte, retire ce champ de ton corps.")
 
 
 def _valeur_rendue(valeur: Any) -> Any:
@@ -378,23 +382,16 @@ def effacements_report(records: list) -> dict:
 
     `{}` quand rien n'a été vidé — le cas normal ne porte pas de clé parasite.
 
-    ⚠️ **Deux gestes arrivent ici depuis #724**, et la phrase doit les nommer tous
-    les deux, sans quoi elle prescrit à côté : le `null` NOMMÉ (toujours), et un vide
-    non-`null` posé SEUL — sans aucune autre colonne dans le même appel, ce qui en
-    fait une déclaration (« on a cherché, il n'y a personne »). Un vide non-`null`
-    ACCOMPAGNÉ d'autres colonnes, lui, n'efface rien : il sort sous
-    `valeurs_ignorees`, la clé d'à côté."""
+    ⚠️ Depuis #608, `null` est le SEUL vide qui arrive ici : la phrase ne cite donc
+    pas les autres vides parmi les valeurs qui effacent, sous peine de prescrire un
+    geste qui, lui, est REFUSÉ quand il est seul et ignoré quand il accompagne (#724)."""
     if not records:
         return {}
     nommes, reste = _nommes(records)
-    hint = ("les valeurs ci-dessus ne sont plus en base. Deux gestes effacent : un "
-            "`null` NOMMÉ dans le payload, et un vide non-`null` (`[]`, `\"\"`, `{}`) "
-            "posé SEUL — sans aucune autre colonne dans le même appel, il vaut "
-            "déclaration. Aucun des deux n'est la même chose que ne pas nommer le "
-            "champ, qui le laisse intact. Si l'effacement n'était pas voulu (variable "
-            "non peuplée, gabarit à demi rempli), réécris-les — et pour ne rien "
-            "toucher, nomme au moins une autre colonne dans le même appel : un vide "
-            "accompagné préserve la valeur en place.")
+    hint = ("un `null` NOMMÉ dans le payload EFFACE la valeur en place — ce n'est "
+            "PAS la même chose que ne pas nommer le champ, qui le laisse intact. Si "
+            "l'effacement n'était pas voulu (variable non peuplée, gabarit à demi "
+            "rempli), réécris les valeurs ci-dessus : elles ne sont plus en base.")
     if reste:
         hint += f" {len(records)} effacements au total, {len(nommes)} nommés ici."
     return {"valeurs_effacees": nommes, "valeurs_effacees_hint": hint}

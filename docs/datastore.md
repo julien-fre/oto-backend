@@ -753,16 +753,30 @@ pas ce qui l'accompagne (#326). Un refus dur a été écarté : 8 897 cellules �
 sur 59 tableaux en production le 28/08, plus 5 643 listes vides sur 11 — les refuser
 rétroactivement casserait des tableaux qui n'ont rien demandé.
 
-⚠️ **Le sens d'un vide non-`null` dépend de CE QUI L'ACCOMPAGNE (#724, arbitré le
-01/09/2026 sur le journal de production).** Le 2026-09-01 entre 04:16 et 04:20, dix
-`data_write(id=…, row={'contacts': []})` sur des fiches clientes : dix `200`, zéro
-retrait. Le relevé `valeurs_ignorees` était bien dans la réponse — mais un témoin logé
-dans le corps d'un succès n'oblige personne à le lire, et le seul besoin réel de vider
-une liste est celui d'une fiche dont l'unique entrée est à retirer.
+⚠️ **Un vide qui ne pose RIEN d'autre est REFUSÉ, et le refus écrit la porte (#724,
+01/09/2026).** Entre 04:16 et 04:20 ce jour-là, dix `data_write(id=…,
+row={'contacts': []})` sur des fiches clientes : dix `200`, zéro retrait, découverts en
+relisant les fiches.
 
-Deux lectures s'affrontaient — « le vide efface, comme `null` » et « le vide n'efface
-jamais » — chacune vraie sur une moitié. **La mesure les départage**, sur 30 jours
-glissants au 2026-09-01 (`tool_calls` croisé avec `datastore_rows`) :
+**La porte existait, et la réponse la nommait déjà** : `contacts: null` efface, et
+`valeurs_ignorees_hint` disait mot pour mot « Pour vider un champ pour de bon, nomme-le
+avec `null` ». Elle n'a pas été empruntée — il n'y a eu **qu'une seule** écriture `null`
+explicite ce jour-là, sur une table d'**essai** jetable, jamais sur les fiches ratées,
+dont l'une porte encore le contact qu'on voulait retirer. C'est la réfutation de « il
+suffit de le dire » : **un témoin logé dans le corps d'une réponse réussie n'oblige
+personne à le lire.** Le refus, lui, ne se rate pas, et il arrive au moment où
+l'appelant peut encore corriger.
+
+**Deux options ont été écartées, et savoir pourquoi évite de les rejouer.**
+
+*Faire effacer la liste vide, comme `null`* : détruit la charge dominante, où `[]` veut
+dire « rien trouvé ». *Faire effacer la liste vide SEULE* : ferait dépendre un geste
+**destructeur** de ses voisines — « selon le contexte ta donnée disparaît » est une
+perte silencieuse, quand « selon le contexte ton appel échoue » est un désagrément qui
+enseigne. La contextualité d'un refus ne coûte pas ce que coûte celle d'un effacement.
+
+**La mesure qui fonde tout ça** — journal de production, 30 j glissants au 2026-09-01
+(`tool_calls` croisé avec `datastore_rows`) :
 
 | mesure | valeur |
 |---|---|
@@ -771,32 +785,34 @@ glissants au 2026-09-01 (`tool_calls` croisé avec `datastore_rows`) :
 | … qui **réémettent la fiche entière** | **562 — 98 %** |
 | … qui portent le **vide seul** | **12 — 2 %** |
 | couples (appel, colonne) résolubles en base | 324 |
-| … visant une colonne **encore peuplée** (auraient effacé) | **105 — 32 %** |
-| … décomposés | **104 réémissions**, **1 vide seul** |
+| … visant une colonne **encore peuplée** | **105 — 32 %**, dont **104 réémissions** |
 
-D'où la règle, qui n'est ni l'une ni l'autre des deux intuitions :
+⚠️ **Trois réserves, et la troisième est une déduction, pas une mesure.** Les arguments
+journalisés sont tronqués à 300 caractères par valeur : les listes vides des longues
+fiches réémises sont coupées, donc **sous-comptées**. 250 couples n'ont pas pu être
+résolus (`id=@claimed`, ou identifiant de table absent des arguments). Enfin, la valeur
+« en place » est relue **aujourd'hui** : une colonne vidée depuis se présente comme
+« rien à perdre », ce qui a d'abord fait conclure que le vide seul ne visait qu'**une**
+colonne peuplée. C'est faux. Neuf des dix lignes du 01/09 portent aujourd'hui une valeur
+nulle alors qu'aucune liste vide n'y a jamais été écrite — si elles avaient été vides à
+l'instant de l'appel, elles porteraient `[]`. **Par quel geste elles sont passées à nul,
+le journal tronqué ne le dit pas ; ce qui est établi par élimination, c'est qu'elles
+étaient peuplées quand les appels ont échoué.** Le cas réel n'est donc pas « un appel
+par mois » mais neuf en quatre minutes.
 
-- **vide SEUL** (rien d'autre posé dans l'appel) ⟹ **déclaration** — « on a cherché, il
-  n'y a personne ». Il **prend effet**. Personne n'écrit `{contacts: []}` tout seul par
-  accident : l'intention est établie. Le refuser rendait impossible de retirer le
-  dernier contact d'une fiche, ce qui **est** l'issue ;
-- **vide ACCOMPAGNÉ** (d'autres colonnes posées) ⟹ « rien trouvé », ce que rend une
-  source muette. Il **ne déplace pas** une valeur en place — comportement #608
-  inchangé. **C'est cette branche qui protège les 104.**
+**La règle, portée par `datastore_columns.refuser_geste_sans_effet`** (appelée par
+`update_row` et `_merge_into_row`, donc les deux chemins, #322) : la ligne de partage
+est l'**effet du geste**, pas le type de la valeur.
 
-Porté par `datastore_columns._est_une_declaration`, consulté par le parcours unique
-`arbitrer_les_vides` (donc les deux chemins d'écriture, #322). « Rien d'autre posé » se
-juge sur le **geste entier** : deux vides qui ne s'accompagnent que l'un l'autre
-déclarent tous les deux ; une écriture en couches qui pose aussi une `origine` a posé
-quelque chose, donc elle préserve — le parti le plus prudent sur le cas ambigu.
-Conséquence structurelle : une row de **LOT** porte toujours sa clé métier (c'est par
+- l'écriture **pose autre chose** (fiche réémise, gabarit à demi peuplé) : inchangée —
+  la valeur en place survit et c'est dit (#608). **Cette branche protège les 104** ;
+- l'écriture **ne pose plus rien** : refus, et le message **écrit** `{"champ": null}`
+  en toutes lettres plutôt que de s'en remettre à un relevé.
+
+Conséquence structurelle : une row de **lot** porte toujours sa clé métier (c'est par
 elle que la fusion l'a trouvée), donc elle pose — un import de 500 lignes est par
-construction une réémission et ne peut pas vider une colonne par son gabarit.
-
-L'effacement déclaré emprunte le relevé de `null` : **`valeurs_effacees` nomme la
-colonne et ce qu'elle portait**. ⚠️ C'est une **trace, pas un garde-fou** — le geste est
-légitime, et on vient précisément d'établir qu'un relevé dans une `200` ne protège
-personne. Ce qu'il apporte est de quoi retrouver ce qui a été retiré.
+construction une réémission et ne peut pas casser sur ce refus. C'était l'objection qui
+avait fait écarter un refus dur en #608 ; elle ne s'applique pas ici.
 
 **Batch write + clé métier (2026-07-03).** `data_write` accepte un LOT `rows` (list[dict])
 écrit en un appel — importer un dataset sans faire transiter chaque ligne par le contexte
