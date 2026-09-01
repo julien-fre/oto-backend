@@ -21,11 +21,14 @@ réellement servi ». D'où ce module (oto#33).
   dépôt.
 - *`importlib.metadata.version("oto-core")`, donc `pip show`.* Il rend le champ
   `version` du `pyproject` d'oto-core, **gelé à 1.100.0** depuis que les tags ont
-  cessé de le bumper. Mesuré le 01/09/2026 dans le venv du backend : `pip show`
-  annonçait `1.100.0` là où l'installé était `v1.101.0` — il aurait annoncé la même
-  chose pour `v1.200.0`. La coordonnée fiable est ce que **pip écrit à
-  l'installation** : `direct_url.json` (PEP 610), qui porte la révision demandée
-  (le tag) et le commit résolu.
+  cessé de le bumper. Le 01/09/2026, le venv du backend portait le tag `v1.101.0`
+  et le manifeste épinglait `v1.103.0` : **les deux tags déclarent
+  `version = "1.100.0"`** (vérifié sur le dépôt distant, aux deux tags). `pip show`
+  rend donc le MÊME numéro pour l'installé périmé et pour le bon — l'instrument ne
+  peut pas voir l'écart qu'on lui demande de mesurer, et son silence se lit comme
+  une concordance. La coordonnée fiable est ce que **pip écrit à l'installation** :
+  `direct_url.json` (PEP 610), qui porte la révision demandée (le tag) et le commit
+  résolu.
 
 **Ce qu'on prend, donc.** Une coordonnée **écrite par celui qui installe, dans
 l'arbre qu'il vient d'écrire, avant que le processus ne démarre** — le

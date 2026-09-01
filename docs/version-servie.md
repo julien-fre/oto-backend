@@ -46,9 +46,12 @@ Chacune est la réponse évidente, et chacune a déjà menti :
   requête, c'est lire l'état d'un arbre à un instant sans rapport avec le démarrage
   du processus — et une image on-premise n'a ni git ni dépôt.
 - **`pip show oto-core`.** Il rend le champ `version` du `pyproject` d'oto-core,
-  **gelé à 1.100.0** depuis que les tags ont cessé de le bumper. Mesuré le 01/09/2026
-  dans le venv du backend : `1.100.0` annoncé pour un **`v1.101.0` installé** — il
-  aurait dit la même chose pour un `v1.200.0`.
+  **gelé à 1.100.0** depuis que les tags ont cessé de le bumper. Le 01/09/2026, le
+  venv portait le tag `v1.101.0` et le manifeste épinglait `v1.103.0` : **les deux
+  déclarent `version = "1.100.0"`** (vérifié sur le dépôt distant, aux deux tags).
+  `pip show` rend donc le **même numéro pour l'installé périmé et pour le bon** — il
+  ne peut pas voir l'écart qu'on lui demande de mesurer, et sa réponse identique se
+  lit comme une confirmation que tout va bien.
 
 ## D'où vient la coordonnée, alors
 
