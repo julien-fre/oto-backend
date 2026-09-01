@@ -509,6 +509,8 @@ GET,HEAD /api/orgs/{id}/monitoring/tool-quality -> _handler
 OPTIONS /api/orgs/{id}/monitoring/tool-quality -> options_handler
 POST /api/resources -> _handler
 OPTIONS /api/resources -> options_handler
+POST /api/resources/v2 -> _handler
+OPTIONS /api/resources/v2 -> options_handler
 GET,HEAD /api/admin/capabilities -> _handler
 OPTIONS /api/admin/capabilities -> options_handler
 GET,HEAD /api/me/agent-context -> _handler

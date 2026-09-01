@@ -59,11 +59,36 @@ se voit que si un admin a posé l'option `beta` sur l'UTILISATEUR ou sur son ORG
 (`oto_admin_set_option`, lue par le seam unique `access.has_option`) : l'utilisateur ne
 peut pas se l'accorder, et aucun override perso ne le lève.
 
-`BETA_TOOLS` (source unique, `tool_visibility.py`) porte aujourd'hui les trois verbes du
-nouvel univers de contenu — `oto_node`, `oto_node_rows`, `oto_node_edit`. Motif : cette
-surface part de VIDE (la recopie depuis l'ancien monde est arrêtée, cf. `docs/noeuds.md`)
-et son contrat est provisoire. La servir à tous, c'est proposer à chaque agent une
-lecture qui ne trouve rien et une écriture dont l'utilisateur ignore la destination.
+`BETA_TOOLS` (source unique, `tool_visibility.py`) porte **deux** familles, entrées pour
+des raisons différentes.
+
+**1. Les trois verbes du nouvel univers de contenu** — `oto_node`, `oto_node_rows`,
+`oto_node_edit`. Motif : cette surface part de VIDE (la recopie depuis l'ancien monde est
+arrêtée, cf. `docs/noeuds.md`) et son contrat est provisoire. La servir à tous, c'est
+proposer à chaque agent une lecture qui ne trouve rien et une écriture dont l'utilisateur
+ignore la destination.
+
+**2. `oto_resource_v2`, une surface DOUBLÉE — le régime que prend un contrat qu'on
+durcit.** C'est le second motif d'entrée dans `BETA_TOOLS`, et il vaut d'être nommé parce
+qu'il se réutilisera. Le 2026-09-01, #756 a rendu `resource_type` obligatoire sur
+`oto_resource` : correction juste sur le fond — un défaut implicite sur un DISCRIMINANT
+fait agir `transfer`/`share` sur une autre ressource que celle visée — mais le champ était
+déclaré sans défaut, donc obligatoire sur **toutes** les op, et le journal des appels a
+montré de vrais appelants dessus, dont un `op=list` qui serait passé de « fonctionne » à
+« refusé » sans préavis. Reverté (#774) avant le tag.
+
+> **Un contrat servi ne se durcit pas en place : il se double.** L'ancienne surface
+> continue de servir son défaut — **écrit dans sa description servie** comme défaut connu,
+> avec le nom de sa remplaçante — et la nouvelle exige le champ. La bêta lui donne une
+> population choisie pendant que les appelants migrent, **sans date-couperet** : c'est
+> l'inverse d'un alias déprécié (`docs/alias-deprecies.md`), où l'ancien nom part à une
+> date écrite. Ici l'ancien contrat reste tant que quelqu'un s'en sert.
+
+⚠️ **N'entrent dans `BETA_TOOLS` que des noms NEUFS.** Le bloc masque fail-closed : y
+poser le nom d'une surface vivante la retirerait d'un coup à tous les comptes sans
+l'option — la rupture de #756 en pire, parce que silencieuse. Cliquet :
+`tests/test_resources_deux_surfaces.py` garde que `oto_resource` n'y est pas, et fige le
+schéma d'entrée servi de l'héritée (`tests/resources_input_legacy.json`).
 
 ⚠️ **Ils étaient exposés à TOUT LE MONDE depuis leur création** — mesuré le 2026-09-01,
 aucun gate, et c'est l'inverse de ce qu'on croyait (on les pensait invisibles). Zéro
@@ -82,7 +107,10 @@ lire, palier du propriétaire pour écrire. Ce gate décide qui se les voit PROP
 
 ⚠️ **La face REST n'est pas gatée**, écart assumé : le dashboard qui construit ce nouvel
 univers la consomme aujourd'hui, et la couper arrêterait le travail qui justifie la
-surface. Il se referme quand la surface cesse d'être provisoire.
+surface. Il se referme quand la surface cesse d'être provisoire. Sur une surface
+**doublée**, l'écart est moins gênant : le chemin `/api/resources/v2` est lui-même
+l'opt-in, personne n'y arrive par accident — au contraire d'un verbe qui apparaîtrait
+dans une toolbox sans avoir été demandé.
 
 ## Méta-tools et `PROTECTED_TOOLS`
 

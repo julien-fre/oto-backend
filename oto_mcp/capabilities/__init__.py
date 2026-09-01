@@ -116,6 +116,7 @@ from . import org_monitoring  # noqa: F401 — org.monitoring.* (oto_org_monitor
 # Gouvernance générique des ressources possédées (ADR 0030) — transfert/partage
 # d'un objet possédé (datastore pilote), owner ∪ escalade roles.py.
 from . import resources  # noqa: F401 — resources.govern (oto_resource)
+from . import resources_v2  # noqa: F401 — resources.govern.v2 (oto_resource_v2, BÊTA)
 # Catalogue du registre de capacités (ADR 0030) — alimente l'object-browser admin.
 from . import capabilities_catalog  # noqa: F401 — admin.capabilities (GET /api/admin/capabilities)
 # Vue de transparence « contexte agent » (otomata-private#49) — ce que Claude reçoit.

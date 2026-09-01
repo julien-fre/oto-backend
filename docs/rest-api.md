@@ -416,6 +416,54 @@ ne disait pas, ou disait faux**. Tout est additif ; rien n'a changé de comporte
   lequel des quatre. `403` couvre aussi l'invitation **anonyme** (émise sans adresse) :
   elle n'est adressée à personne, donc à personne en particulier. Refuser deux fois la
   même invitation est **idempotent** (200, même réponse).
+- **`POST /api/resources` déclare sa 200 en UNION DISCRIMINÉE** (#659, 2026-09-01), plus
+  onze refus. La forme dépend de `resource_type` — `row_count` pour un tableau,
+  `archived_at` pour un projet, `version` pour un guide — donc le document rend un
+  `oneOf` + `discriminator: resource_type` pour `op=get`, à l'intérieur d'un `anyOf` qui
+  couvre les cinq verbes (six branches : `op=share` en a deux, grant vs publication).
+  Modèles dans `capabilities/resources_contract.py`. ⚠️ **Une union PLATE aurait déclaré
+  `row_count` sur un projet** : une carte qui ment est pire qu'une carte absente, un
+  client généré s'y branche. ⚠️ **`capability_output_debt.txt` avait classé cette
+  surface « indéclarable » le 11/08** sur une mesure JUSTE (l'intersection des sept
+  `return` est vide) mais qui répondait à une autre question : une intersection vide
+  disqualifie l'**enveloppe**, pas l'**union**. La leçon vaut pour `me.project` et
+  `me.doc`, qui restent en dette pour la même raison mal lue.
+- **Les deux pièges d'entrée sont corrigés sur une SURFACE DOUBLÉE, `POST
+  /api/resources/v2`** (2026-09-01) — pas sur `/api/resources`, qui ne bouge pas.
+  - `resource_type` y est **OBLIGATOIRE** (`Literal`, énuméré publié). Sur l'héritée il
+    vaut `datastore_namespace` par défaut, relique du pilote ADR 0030 : un appelant qui
+    vise un projet et omet le champ interroge silencieusement une autre famille, et sur
+    `transfer`/`share` **agit sur une autre ressource**.
+  - `resource_id` y porte un motif `^\d+$` **publié dans le schéma**. ⚠️ Ce défaut ne se
+    corrigeait PAS dans le handler, contrairement à ce que l'issue supposait : la levée
+    se produit dans la règle d'autz (`RESOURCE_GOVERN` → `ownership.can_govern` →
+    `int(rid)`), qui tourne AVANT lui — mesuré, `owner_getter('abc')` lève `ValueError`
+    pour un tableau et pour un projet (**500**, l'adaptateur REST ne rattrape
+    qu'`AuthzDenied`) et rend `None` pour un guide (**403**, son owner_getter a son
+    propre `isdigit()`).
+  - Les deux surfaces ne déclarent donc pas les mêmes refus : l'héritée seule publie
+    `unsupported_resource_type` (son champ est un `str` libre, la famille inconnue
+    atteint le handler) ; la stricte la refuse à la validation.
+
+  **Pourquoi doublée et pas durcie — et ce que la première version a raté.** #756 avait
+  rendu le champ obligatoire **sur `/api/resources`**. Le champ étant déclaré sans défaut
+  sur le modèle d'entrée, il devenait obligatoire sur **toutes** les op, pas seulement
+  `op=get` : plus large que ce que le lot annonçait. Le journal des appels a montré de
+  vrais appelants sur cette route, dont un `op=list` qui serait passé de « fonctionne » à
+  « refusé » sans préavis. Reverté (#774) avant d'atteindre un tag — la rupture n'a donc
+  jamais été servie en production. Arbitrage : **un contrat servi se double, il ne se
+  durcit pas en place**, et l'héritée porte son défaut connu **dans sa description
+  servie**, avec le nom de sa remplaçante.
+
+  ⚠️ **CORRECTION DATÉE (2026-09-01).** Cette page affirmait que rendre `resource_type`
+  obligatoire faisait *« sortir `scripts/contrat-front.py` en rouge »*. **C'est faux, et
+  la façon dont c'est faux compte** : le front consommateur épingle 63 opérations et
+  `/api/resources` n'en fait pas partie — mesuré, le contrôle rend le même verdict
+  (sortie 0, un seul avertissement préexistant sur `POST /api/me/docs`) avec ou sans la
+  rupture. **Un contrôle vert sur une route qu'il n'épingle pas ne dit rien de cette
+  route.** Ce qui a réellement attrapé la rupture est le journal des appels, pas ce
+  script ; et ce qui l'empêche de revenir est un cliquet dédié
+  (`tests/resources_input_legacy.json`, fige le schéma d'entrée servi de l'héritée).
 
 ## Une adresse web ne transporte pas de liste (#367, garde posée le 28/08)
 

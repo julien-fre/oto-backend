@@ -46,8 +46,13 @@ def test_new_capability_declares_its_output():
         "modèle pydantic de la RÉPONSE (`Output=…`) : c'est lui qui met un schéma "
         "sur la 200 de `/openapi.json`, donc ce qui rend la surface consommable "
         "par un tiers. Une réponse non déclarée n'est pas figeable, donc pas "
-        "opposable (ADR 0059). Si la forme varie selon `op`, déclarer l'enveloppe "
-        "commune plutôt que rien.")
+        "opposable (ADR 0059). Si la forme varie selon `op`, deux issues — et "
+        "l'enveloppe commune n'est que la première : soit les `op` partagent des "
+        "clés et on déclare l'enveloppe, soit l'intersection est vide et on déclare "
+        "l'UNION des verbes (`RootModel[Union[…]]`), discriminée quand un champ "
+        "sépare les formes. Cf. `capabilities/resources_contract.py` (#659) : une "
+        "intersection vide a longtemps été lue comme « indéclarable », elle ne "
+        "disqualifie que l'enveloppe.")
 
 
 def test_debt_list_does_not_lie():
@@ -60,7 +65,7 @@ def test_debt_list_does_not_lie():
 
 
 def test_output_debt_only_shrinks():
-    assert len(_debt()) <= 73, (
+    assert len(_debt()) <= 72, (
         f"la dette de sortie a grossi ({len(_debt())} capacités). Elle doit "
         "DÉCROÎTRE : déclare l'`Output` plutôt que d'élargir le plafond.")
 

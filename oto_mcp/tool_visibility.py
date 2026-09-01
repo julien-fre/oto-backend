@@ -79,7 +79,21 @@ DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
 # consomme aujourd'hui, et la couper arrêterait le travail qui justifie la
 # surface. C'est un écart assumé entre les deux faces, pas un oubli — et il se
 # referme le jour où cette surface cesse d'être provisoire.
-BETA_TOOLS: frozenset[str] = frozenset({"oto_node", "oto_node_rows", "oto_node_edit"})
+#
+# ⚠️ **N'y faire entrer que des noms NEUFS.** Ce bloc masque fail-CLOSED : y poser
+# le nom d'une surface vivante la retirerait d'un coup à tous les comptes sans
+# l'option, sans qu'un seul appelant soit prévenu. `oto_resource_v2` y est parce
+# qu'il naît ici ; `oto_resource`, la surface héritée qu'il double, n'y est pas et
+# n'y sera jamais (cliquet : `tests/test_resources_deux_surfaces.py`).
+BETA_TOOLS: frozenset[str] = frozenset({
+    "oto_node", "oto_node_rows", "oto_node_edit",
+    # Gouvernance de ressource au contrat d'entrée STRICT (`resources_v2`) : elle
+    # double `oto_resource` au lieu de le durcir, parce que le durcir a cassé de
+    # vrais appelants le 2026-09-01 (#756, reverté par #774). Le régime bêta lui
+    # donne une population choisie pendant que les appelants migrent, sans
+    # date-couperet — cf. `oto_mcp/capabilities/resources_v2.py`.
+    "oto_resource_v2",
+})
 
 # L'option qui ouvre `BETA_TOOLS`. Posée par un admin sur un UTILISATEUR ou sur
 # une ORG (`oto_admin_set_option`), lue par le seam unique `access.has_option`.
