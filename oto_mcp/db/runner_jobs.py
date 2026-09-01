@@ -31,17 +31,32 @@ _LEASE_DEFAULT_S = 600  # ~3× la ligne la plus lente mesurée (180 s) — le to
 
 
 def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
-                run_id: Optional[str] = None, max_attempts: int = 3) -> dict:
+                run_id: Optional[str] = None, max_attempts: int = 3,
+                fleet_id: Optional[int] = None) -> dict:
+    """Enfile un travail, éventuellement rattaché à une FLOTTE.
+
+    ⚠️ `fleet_id` est ce qui rend un passage lisible d'un bout à l'autre : sans
+    lui, `runner.fleets op=state` agrège sur un ensemble vide et répond
+    `no_jobs_attached` pour toute flotte, toujours. La colonne existait depuis R4
+    sans le moindre écrivain servi — une lecture complète à qui il manquait de
+    quoi lire (#791).
+
+    ⚠️ **L'APPARTENANCE de la flotte se vérifie AVANT**, chez l'appelant : la FK
+    garantit que la flotte EXISTE, pas qu'elle soit celle de cette org. Rattacher
+    un travail à la flotte d'autrui ferait entrer son coût et son avancement dans
+    l'état d'un passage étranger.
+    """
     with _connect() as conn:
         row = conn.execute(
             """
-            INSERT INTO runner_jobs (org_id, kind, payload, run_id, max_attempts)
-            VALUES (%s, %s, %s::jsonb, %s, %s)
-            RETURNING id, status, due_at
+            INSERT INTO runner_jobs (org_id, kind, payload, run_id, max_attempts,
+                                     fleet_id)
+            VALUES (%s, %s, %s::jsonb, %s, %s, %s)
+            RETURNING id, status, due_at, fleet_id
             """,
             (org_id, kind,
              json.dumps(payload, ensure_ascii=False) if payload is not None else None,
-             run_id, max(1, int(max_attempts))),
+             run_id, max(1, int(max_attempts)), fleet_id),
         ).fetchone()
     return dict(row)
 
@@ -177,7 +192,7 @@ def list_jobs(org_id: int, status: Optional[str] = None,
     La colonne porte la DATE ; c'est au lecteur de la comparer à l'heure qu'il est."""
     q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
          "       claimed_by, lease_until, last_error, result, due_at, created_at, "
-         "       finished_at "
+         "       finished_at, fleet_id "
          "FROM runner_jobs WHERE org_id = %s")
     params: list = [org_id]
     if status:
@@ -198,7 +213,8 @@ def get_job(job_id: int, org_id: int) -> Optional[dict]:
     with _connect() as conn:
         row = conn.execute(
             "SELECT id, kind, run_id, payload, status, attempts, max_attempts, result, "
-            "       claimed_by, lease_until, last_error, due_at, created_at, finished_at "
+            "       claimed_by, lease_until, last_error, due_at, created_at, "
+            "       finished_at, fleet_id "
             "FROM runner_jobs WHERE id = %s AND org_id = %s",
             (job_id, org_id),
         ).fetchone()

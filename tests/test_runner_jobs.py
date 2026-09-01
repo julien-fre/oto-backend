@@ -26,10 +26,16 @@ def _appel(ctx, **kw):
 @pytest.fixture
 def espion(monkeypatch):
     vu = {}
+    # ⚠️ La doublure suit la SIGNATURE SERVIE : `fleet_id` est entré avec le
+    # rattachement d'un travail à sa flotte (#791). Une doublure figée sur une
+    # ancienne signature ne protège plus rien — elle éclate en `TypeError`, ce qui
+    # est le bon comportement : c'est le contrat qui a bougé, pas le test.
     monkeypatch.setattr(RJ.db, "enqueue_job",
-                        lambda org_id, kind, payload=None, run_id=None, max_attempts=3:
-                        vu.update(org=org_id, kind=kind) or
-                        {"id": 7, "status": "pending", "due_at": "2026-08-13"})
+                        lambda org_id, kind, payload=None, run_id=None,
+                        max_attempts=3, fleet_id=None:
+                        vu.update(org=org_id, kind=kind, fleet=fleet_id) or
+                        {"id": 7, "status": "pending", "due_at": "2026-08-13",
+                         "fleet_id": fleet_id})
     monkeypatch.setattr(RJ.db, "claim_next_job",
                         lambda org_id, sub, lease_seconds=600:
                         vu.update(claim=(org_id, sub, lease_seconds)) or None)

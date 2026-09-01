@@ -38,7 +38,16 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   `max_tokens_per_row` — le budget se compte en JETONS, jamais en monnaie : les
   tarifs changent et une valeur monétaire figée en base devient fausse sans que
   rien ne le dise), état + `stop_reason` ÉCRIT. `runner_jobs.fleet_id`
-  rattache un travail à son passage. ⚠️ Une flotte vivait dans un YAML sur la
+  rattache un travail à son passage — **posé à l'`enqueue`** (`runner.jobs
+  op=enqueue fleet_id=`), rendu par `list`/`get`, et c'est lui qui rend
+  `op=state` capable d'agréger. ⚠️ **L'APPARTENANCE de la flotte se vérifie, pas
+  seulement son existence** : la FK dit qu'une flotte existe, pas à QUI elle est
+  — sans garde, le coût d'un travail entrerait dans l'état du passage d'une autre
+  org (`fleet_not_found`, même 404 sans oracle qu'un run étranger). ⚠️ Livré
+  d'abord SANS écrivain (R4) : la colonne, l'index, la FK et l'agrégat existaient
+  pendant que `state` répondait « aucun travail » pour toute flotte — *un harnais
+  qui prouve un chemin de lecture ne prouve pas qu'il existe un chemin d'écriture
+  pour ce qu'il lit* (#791, 01/09/2026). ⚠️ Une flotte vivait dans un YAML sur la
   machine : rien n'en était visible du dashboard ni atteignable par un agent.
   **Déclarer n'est pas restreindre — c'est donner un domicile aux gardes** : un
   lancement qui prend son tableau en argument n'a nulle part où accrocher une

@@ -25,7 +25,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .. import db
 from ._authz import ORG_MEMBER
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
+                     RestBinding)
 from .registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class JobsInput(BaseModel):
     payload: Optional[dict[str, Any]] = None
     run_id: Optional[str] = None
     max_attempts: int = 3
+    fleet_id: Optional[int] = None
     # claim / extend —
     lease_seconds: int = 600
     # bind_run / complete / extend / get —
@@ -105,6 +107,12 @@ class Job(BaseModel):
     id: int
     kind: Optional[str] = None
     run_id: Optional[str] = None
+    fleet_id: Optional[int] = Field(
+        None, description=(
+            "The FLEET this job belongs to, when it was enqueued for a declared "
+            "pass. Null for a standalone job (trigger, direct call). This is what "
+            "makes `runner.fleets op=state` able to aggregate a pass — without it "
+            "a pass is only readable by correlating timestamps by hand."))
     payload: Optional[dict[str, Any]] = None
     status: Optional[str] = None
     attempts: Optional[int] = None
@@ -131,6 +139,9 @@ class JobsOut(BaseModel):
     id: Optional[int] = None
     status: Optional[str] = None
     due_at: Optional[str] = None
+    # `enqueue` le RÉPÈTE : l'appelant sait ainsi que son rattachement a été pris,
+    # au lieu de le supposer et de découvrir au bilan qu'un passage est vide.
+    fleet_id: Optional[int] = None
     job: Optional[Job] = None
     jobs: Optional[list[Job]] = None
     ok: Optional[bool] = None
@@ -191,9 +202,19 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
             head = db.get_run_head(inp.run_id)
             if not head or head.get("sub") != ctx.sub:
                 raise AuthzDenied(404, "run_not_found", "run inconnu")
+        # ⚠️ L'APPARTENANCE, pas seulement l'existence. La FK vers `runner_fleets`
+        # garantit que la flotte existe — elle ne dit rien de QUI elle est. Sans
+        # cette vérification, un travail se rattacherait à la flotte d'une autre
+        # org et ferait entrer son coût et son avancement dans l'état d'un passage
+        # étranger : une fuite d'observabilité, et un état faux des deux côtés.
+        # Même 404 sans oracle que le gate propriétaire d'un run juste au-dessus.
+        if inp.fleet_id is not None and not db.get_fleet(inp.fleet_id, ctx.org_id):
+            raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
         res = db.enqueue_job(ctx.org_id, inp.kind, payload=inp.payload,
-                             run_id=inp.run_id, max_attempts=inp.max_attempts)
-        return {"id": res["id"], "status": res["status"], "due_at": str(res["due_at"])}
+                             run_id=inp.run_id, max_attempts=inp.max_attempts,
+                             fleet_id=inp.fleet_id)
+        return {"id": res["id"], "status": res["status"], "due_at": str(res["due_at"]),
+                "fleet_id": res.get("fleet_id")}
 
     if inp.op == "claim":
         job = db.claim_next_job(ctx.org_id, ctx.sub,
@@ -255,6 +276,15 @@ CAPABILITIES += [
         handler=_jobs,
         Input=JobsInput,
         Output=JobsOut,
+        # Déclaré parce qu'il est REJOUÉ (`tests/api/test_runner_jobs_fleet_rest.py`).
+        # La liste n'est pas exhaustive par construction — les autres refus de cette
+        # capacité entreront avec leur rejeu, pas avant : une déclaration sans rejeu
+        # promet un statut que le serveur ne rend peut-être pas.
+        errors=(
+            DeclaredError(404, "fleet_not_found",
+                          "`enqueue fleet_id=` désignant une flotte qui n'est pas "
+                          "celle de l'org du porteur"),
+        ),
         authz=ORG_MEMBER,
         mcp=None,   # worker-only : la plomberie d'exécution n'a pas de face agent
         rest=RestBinding(verb="POST", path="/api/me/runner/jobs"),
