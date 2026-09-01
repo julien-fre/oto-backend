@@ -84,19 +84,51 @@ def test_l_etat_declare_le_vide_au_lieu_de_rendre_des_zeros():
     """`aucun_travail_rattache` est un champ REQUIS du contrat : un lecteur ne peut
     pas confondre « aucun travail » avec « des travaux tous à zéro »."""
     champs = RF.FleetState.model_fields
-    assert champs["aucun_travail_rattache"].is_required()
+    assert champs["no_jobs_attached"].is_required()
     assert champs["jobs_total"].is_required()
     # les compteurs de détail, eux, ont le droit d'être absents
     assert not champs["pending"].is_required()
 
 
-def test_l_etat_ne_rend_aucun_cout_en_monnaie():
-    """Les tarifs changent et diffèrent par fournisseur : une valeur monétaire
-    figée en base devient fausse sans que rien ne le dise. L'état rend des JETONS,
-    la conversion appartient à qui lit, avec un tarif daté."""
-    champs = set(RF.FleetState.model_fields)
-    assert "usage_tokens" in champs
-    assert not [c for c in champs if "usd" in c or "cost" in c or "euro" in c]
+def test_aucun_modele_servi_ne_porte_de_monnaie():
+    """Les tarifs changent et diffèrent par fournisseur : une valeur monétaire figée
+    en base devient fausse sans que rien ne le dise. Et un NUMERIC servi tel quel
+    n'est même pas sérialisable en JSON — la flotte serait illisible dès qu'elle
+    porte une borne.
+
+    ⚠️ Ce test a d'abord porté sur `FleetState` SEUL, qui était propre : il passait
+    au vert pendant que `Fleet`, l'autre modèle du même fichier, servait un
+    `max_cost_usd`. Un test qui vise le bon principe et le mauvais objet est vert et
+    inutile. Il balaie maintenant TOUS les modèles servis."""
+    monnaie = ("usd", "cost", "euro", "eur", "price", "prix")
+    for modele in (RF.Fleet, RF.FleetState, RF.FleetInput, RF.FleetOut):
+        fautifs = [c for c in modele.model_fields if any(m in c for m in monnaie)]
+        assert not fautifs, f"{modele.__name__} porte de la monnaie : {fautifs}"
+    assert "usage_tokens" in RF.FleetState.model_fields
+    assert "max_tokens" in RF.Fleet.model_fields
+
+
+def test_le_contexte_dexecution_est_fige_comme_la_cible():
+    """Changer le modèle en vol rend FAUSSE l'attribution des lignes déjà écrites
+    sous le passage — exactement l'argument qui gèle la cible."""
+    for champ, valeur in (("provider", "openai"), ("model", "un-autre-modele")):
+        with pytest.raises(AuthzDenied) as e:
+            _appel(_ctx(), op="update", fleet_id=1, **{champ: valeur})
+        assert e.value.code == "context_is_frozen"
+    from oto_mcp import db
+    assert "provider" not in db.CHAMPS_MODIFIABLES
+    assert "model" not in db.CHAMPS_MODIFIABLES
+
+
+def test_status_ne_se_pose_pas_par_update_et_le_refus_le_dit():
+    """`status` figure dans l'entrée parce qu'il FILTRE `list`. Le laisser tomber en
+    silence rendrait 200 avec la flotte inchangée — et c'est précisément ce qu'un
+    agent privé de `stop` tenterait, en lisant un succès dans la réponse."""
+    with pytest.raises(AuthzDenied) as e:
+        _appel(_ctx(), op="update", fleet_id=1, status="stopped")
+    assert e.value.code == "status_not_settable"
+    from oto_mcp import db
+    assert "status" not in db.CHAMPS_MODIFIABLES
 
 
 # ── la capacité est bien servie, et sur les deux faces ────────────────────────

@@ -24,16 +24,20 @@ from typing import Any, Optional
 from ._conn import _connect
 
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
-         "namespace, row_filter, provider, model, workers, max_rows, max_cost_usd, "
+         "namespace, row_filter, provider, model, workers, max_rows, max_tokens, "
          "max_consecutive_failures, max_tokens_per_row, status, stop_reason, "
          "started_at, heartbeat_at, stopped_at, created_at")
 
 # Ce qu'un passage a le droit de changer une fois déclaré. La CIBLE n'en est pas :
 # rediriger un passage en vol vers un autre tableau est exactement le geste que la
 # configuration déclarée existe pour empêcher — on en déclare un autre.
+# ⚠️ `provider`/`model` n'en sont PAS, pour la raison exacte qui gèle la cible :
+# changer le modèle en vol rend FAUSSE l'attribution des lignes déjà écrites sous
+# le passage. Le contexte d'exécution est aussi peu mutable que ce qu'il vise.
+# `status` non plus : il se change par les gestes d'état, jamais par une retouche
+# de configuration — un `update` qui l'accepterait rendrait 200 sans rien faire.
 CHAMPS_MODIFIABLES = ("label", "tools", "input", "max_steps", "workers", "max_rows",
-                      "max_cost_usd", "max_consecutive_failures",
-                      "max_tokens_per_row", "provider", "model")
+                      "max_tokens", "max_consecutive_failures", "max_tokens_per_row")
 
 
 def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
@@ -42,7 +46,7 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
                  input: Optional[str] = None, max_steps: Optional[int] = None,
                  provider: Optional[str] = None, model: Optional[str] = None,
                  workers: int = 1, max_rows: Optional[int] = None,
-                 max_cost_usd: Optional[float] = None,
+                 max_tokens: Optional[int] = None,
                  max_consecutive_failures: Optional[int] = None,
                  max_tokens_per_row: Optional[int] = None) -> dict:
     with _connect() as conn:
@@ -51,7 +55,7 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
             INSERT INTO runner_fleets
                    (org_id, sub, label, procedure, project_id, tools, input,
                     max_steps, namespace, row_filter, provider, model, workers,
-                    max_rows, max_cost_usd, max_consecutive_failures,
+                    max_rows, max_tokens, max_consecutive_failures,
                     max_tokens_per_row)
             VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb, %s, %s,
                     %s, %s, %s, %s, %s)
@@ -61,7 +65,7 @@ def create_fleet(org_id: int, sub: str, *, label: str, procedure: str,
              json.dumps(list(tools), ensure_ascii=False), input, max_steps,
              namespace,
              json.dumps(row_filter, ensure_ascii=False) if row_filter is not None else None,
-             provider, model, workers, max_rows, max_cost_usd,
+             provider, model, workers, max_rows, max_tokens,
              max_consecutive_failures, max_tokens_per_row),
         ).fetchone()
     return dict(row)
@@ -172,10 +176,10 @@ def fleet_state(fleet_id: int, org_id: int) -> Optional[dict]:
                    COUNT(*) FILTER (WHERE status = 'done')             AS done,
                    COUNT(*) FILTER (WHERE status = 'failed')           AS failed,
                    COUNT(*) FILTER (WHERE status = 'failed'
-                                      AND attempts >= max_attempts)    AS abandonnes,
+                                      AND attempts >= max_attempts)    AS abandoned,
                    COALESCE(SUM((result->>'usage_tokens')::bigint), 0) AS usage_tokens,
-                   MAX((result->>'usage_tokens')::bigint)              AS max_tokens_ligne,
-                   MAX(finished_at)                                    AS dernier_fini
+                   MAX((result->>'usage_tokens')::bigint)              AS max_tokens_row,
+                   MAX(finished_at)                                    AS last_finished
               FROM runner_jobs
              WHERE fleet_id = %s AND org_id = %s
             """,
@@ -184,5 +188,5 @@ def fleet_state(fleet_id: int, org_id: int) -> Optional[dict]:
     etat = dict(agg)
     # Un passage sans aucun travail rattaché le DIT, au lieu de rendre des
     # compteurs à zéro qu'on lirait comme « rien ne s'est passé ».
-    etat["aucun_travail_rattache"] = etat["jobs_total"] == 0
+    etat["no_jobs_attached"] = etat["jobs_total"] == 0
     return {"fleet": fleet, "state": etat}

@@ -63,7 +63,7 @@ class FleetInput(BaseModel):
     model: Optional[str] = None
     workers: Optional[int] = None
     max_rows: Optional[int] = None
-    max_cost_usd: Optional[float] = None
+    max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
     max_tokens_per_row: Optional[int] = None
 
@@ -85,7 +85,7 @@ class Fleet(BaseModel):
     model: Optional[str] = None
     workers: Optional[int] = None
     max_rows: Optional[int] = None
-    max_cost_usd: Optional[float] = None
+    max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
     max_tokens_per_row: Optional[int] = None
     status: Optional[str] = None
@@ -99,7 +99,7 @@ class Fleet(BaseModel):
 class FleetState(BaseModel):
     """L'avancement d'un passage, agrégé sur ses travaux.
 
-    `aucun_travail_rattache` est DÉCLARÉ plutôt que déduit de compteurs à zéro :
+    `no_jobs_attached` est DÉCLARÉ plutôt que déduit de compteurs à zéro :
     un zéro qui peut vouloir dire « rien trouvé » ou « personne n'a regardé » est
     le défaut qui a coûté le plus cher sur ce chantier.
     """
@@ -108,11 +108,11 @@ class FleetState(BaseModel):
     claimed: Optional[int] = None
     done: Optional[int] = None
     failed: Optional[int] = None
-    abandonnes: Optional[int] = None
+    abandoned: Optional[int] = None
     usage_tokens: Optional[int] = None
-    max_tokens_ligne: Optional[int] = None
-    dernier_fini: Optional[str] = None
-    aucun_travail_rattache: bool
+    max_tokens_row: Optional[int] = None
+    last_finished: Optional[str] = None
+    no_jobs_attached: bool
 
 
 class FleetOut(BaseModel):
@@ -144,7 +144,7 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             tools=inp.tools, namespace=inp.namespace, row_filter=inp.row_filter,
             project_id=inp.project_id, input=inp.input, max_steps=inp.max_steps,
             provider=inp.provider, model=inp.model, workers=inp.workers or 1,
-            max_rows=inp.max_rows, max_cost_usd=inp.max_cost_usd,
+            max_rows=inp.max_rows, max_tokens=inp.max_tokens,
             max_consecutive_failures=inp.max_consecutive_failures,
             max_tokens_per_row=inp.max_tokens_per_row)}
 
@@ -174,6 +174,22 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             400, "target_is_frozen",
             "la cible d'un passage ne se modifie pas — `namespace` et `row_filter` "
             "sont figés à la déclaration. Un autre tableau, c'est une autre flotte.")
+    if inp.provider is not None or inp.model is not None:
+        raise AuthzDenied(
+            400, "context_is_frozen",
+            "le contexte d'exécution ne se modifie pas — `provider` et `model` sont "
+            "figés à la déclaration. Les changer en vol rendrait FAUSSE l'attribution "
+            "des lignes déjà écrites sous ce passage. Déclare une autre flotte.")
+    # ⚠️ `status` figure dans l'entrée parce qu'il FILTRE `list`. Le laisser tomber
+    # en silence ici rendrait 200 avec la flotte inchangée — et c'est précisément le
+    # geste qu'un agent privé de `stop` tenterait, en lisant un succès dans la
+    # réponse. Un vide ne doit jamais se lire comme un fait.
+    if inp.status is not None:
+        raise AuthzDenied(
+            400, "status_not_settable",
+            "l'état d'un passage ne se pose pas par `update` — `status` ne sert ici "
+            "qu'à FILTRER `list`. Démarrer et arrêter un passage appartiennent à "
+            "l'ordonnanceur, et ne sont servis par aucune face de cette capacité.")
     f = db.update_fleet(inp.fleet_id, ctx.org_id, champs)
     if not f:
         raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
@@ -194,14 +210,17 @@ CAPABILITIES += [
             "table, within which perimeter, and up to which limit. op=create "
             "(`label` + procedure slug + `tools` allowlist ; optional target "
             "`namespace` + `row_filter`, execution context `provider`/`model`, and "
-            "limits `max_rows` / `max_cost_usd` / `max_consecutive_failures` / "
-            "`max_tokens_per_row`) / list (optionally filtered by `status`) / get / "
+            "limits `max_rows` / `max_tokens` / `max_consecutive_failures` / "
+            "`max_tokens_per_row` — budgets are counted in TOKENS, never money) / "
+            "list (optionally filtered by `status`) / get / "
             "state / update. op=state returns the pass PROGRESS aggregated "
             "over its jobs — pending, claimed, done, failed, abandoned, tokens "
-            "consumed, largest single row — and says `aucun_travail_rattache` "
+            "consumed, largest single row — and says `no_jobs_attached` "
             "explicitly rather than returning zeros you would read as 'nothing "
             "happened'. The TARGET is frozen at declaration: redirecting a running "
-            "pass to another table is what declaring exists to prevent — declare "
+            "pass to another table is what declaring exists to prevent; the "
+            "execution context (`provider`/`model`) is frozen too, since changing it "
+            "mid-flight falsifies the attribution of rows already written — declare "
             "another fleet instead — duplicate, never switch. Launching AND stopping "
             "belong to the scheduler: this capability declares and reads only."
         ),

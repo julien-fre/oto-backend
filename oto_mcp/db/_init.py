@@ -196,7 +196,15 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # appartient. La table `runner_fleets` est créée par le DDL ; sur une base qui
     # existe déjà, seule la colonne manque — et sans elle un passage n'est lisible
     # qu'en corrélant des horodatages à la main.
-    conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS fleet_id BIGINT")
+    # ⚠️ La FK voyage AVEC l'ALTER, sinon une base fraîche (qui la reçoit par le
+    # CREATE TABLE) et la prod (qui ne reçoit que l'ALTER) divergent pour toujours,
+    # et rien ne le rattraperait. Même forme que `org_invitations.group_id`.
+    conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS fleet_id BIGINT "
+                 "REFERENCES runner_fleets(id) ON DELETE SET NULL")
+    # L'index SUIT l'ALTER : dans `_schema` il s'exécuterait avant que la colonne
+    # existe sur une base déjà construite, et le boot mourrait (piège du 20/07).
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runner_jobs_fleet "
+                 "ON runner_jobs(fleet_id) WHERE fleet_id IS NOT NULL")
     # (lot L3) L'adresse du tableau de bord DE CE TENANT. Les liens qu'on rend à
     # ses utilisateurs — un tableau, un retour de connexion, une page partagée —
     # portaient notre domaine : un client d'un partenaire recevait des liens vers

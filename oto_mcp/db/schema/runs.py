@@ -93,8 +93,8 @@ CREATE TABLE IF NOT EXISTS run_messages (
 -- l'agent déclare de lui-même reviendrait à recopier sa parole en y ajoutant le
 -- sceau du serveur — une valeur qu'on rejoint ne dérive pas, une valeur qu'on
 -- recopie dérive.
--- Les bornes sont d'EXPLOITATION (volume, budget, échecs enchaînés, plafond de
--- jetons par ligne), jamais de métier : ce que vaut un enrichissement se juge sur
+-- Les bornes sont d'EXPLOITATION (volume, jetons du passage, échecs enchaînés,
+-- plafond de jetons par ligne), jamais de métier : ce que vaut un enrichissement se juge sur
 -- la DONNÉE produite, pas ici. `max_tokens_per_row` est de PREMIER RANG et pas une
 -- conséquence du budget : un agent qui part en boucle sur une ligne consomme le
 -- budget de tout le passage avant qu'aucune autre borne ne s'en aperçoive.
@@ -119,10 +119,14 @@ CREATE TABLE IF NOT EXISTS runner_fleets (
     -- LE CONTEXTE D'EXÉCUTION, uniforme sur le passage — porte l'attribution
     provider TEXT,
     model TEXT,
-    -- LES BORNES : ce qui arrête un passage, et rien d'autre
+    -- LES BORNES : ce qui arrête un passage, et rien d'autre. ⚠️ Le budget se
+    -- compte en JETONS, jamais en monnaie — les tarifs changent, diffèrent par
+    -- fournisseur, et une valeur monétaire figée en base devient fausse sans que
+    -- rien ne le dise. (Un NUMERIC ne se sérialise même pas en JSON : la flotte
+    -- serait illisible dès qu'elle porte une borne.)
     workers INT NOT NULL DEFAULT 1,
     max_rows INT,
-    max_cost_usd NUMERIC(10, 4),
+    max_tokens BIGINT,
     max_consecutive_failures INT,
     max_tokens_per_row INT,
     -- L'ÉTAT : `stop_reason` est ÉCRIT, jamais déduit d'un statut — « arrêtée »
@@ -177,8 +181,11 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_claim
     ON runner_jobs(org_id, due_at) WHERE status = 'pending';
-CREATE INDEX IF NOT EXISTS idx_runner_jobs_fleet
-    ON runner_jobs(fleet_id) WHERE fleet_id IS NOT NULL;
+-- ⚠️ PAS d'index sur `fleet_id` ici : la colonne naît d'un ALTER dans `_init`, et
+-- sur une base qui existe déjà le CREATE TABLE ci-dessus est SAUTÉ — l'index
+-- s'exécuterait alors sur une colonne absente et tuerait le boot (piège du
+-- 20/07, `docs/live-migrations.md`). Il vit avec son ALTER.
+
 
 -- Les DÉCLENCHEURS du runner (chantier R3) : la CONFIG utilisateur qui FABRIQUE des
 -- jobs — le tick les enfile à l'échéance (jamais d'exécution ici), le worker les
