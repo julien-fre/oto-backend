@@ -314,6 +314,17 @@ rien ne rendait navigable et que rien ne tenait.
   permission, c'est une note de bas de page.* Une phrase par paramètre, et le delta
   passe par le script comme le reste — **le schéma d'entrée porte ces descriptions**,
   donc l'ajout se voit dans la colonne « schéma », pas dans « description ».
+  ⚠️ **Et la règle a été inapplicable à la moitié des outils pendant deux jours (#627).**
+  Un outil porté par une **capacité** perdait la description de ses paramètres : l'
+  adaptateur MCP ne recopiait qu'annotation et défaut, un `Field(description=…)` était
+  **accepté-inerte** — mesuré sur `data_patch_schema`, schéma servi 621 caractères avant,
+  621 après. La face REST, elle, la publiait : *la même consigne était un contrat d'un
+  côté et un commentaire de code de l'autre.* Corrigé le 2026-09-01 (`apply_flat_signature`
+  recopie la `description`, **et elle seule** — `tools/list` n'est pas le document REST) ;
+  cliquet `tests/test_param_description_servie.py`. **Un vide qui ne fait pas rougir un
+  test rend une convention décorative sans que personne ne le voie**, parce que la façon
+  normale de la vérifier — relire le code où la description est écrite — montre
+  exactement ce qu'on voulait écrire.
 - **Une description ou un refus ne prescrit pas un outil que le jeu servi peut ne pas
   contenir (29/08, #613 → #632).** Un endpoint publié sert un jeu d'outils à l'inclusion
   (`mcp_tools`) ; une flotte a lu « release with `data_release` » sans `data_release`
