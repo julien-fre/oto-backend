@@ -512,3 +512,13 @@ l'option :
 - `oto_mcp/db/_init.py` — l'objet de cette note.
 - ADR 0020 (stratégie de release) et CLAUDE.md racine §Déploiement — le modèle
   tronc unique et la fenêtre de healthcheck.
+
+## Le chiffre de boot depuis le lot 0
+
+> Reprise mot pour mot du `CLAUDE.md` (2026-08-31).
+
+Boot prod/préprod mesuré 36-39 s, dont **≈ 1,5 s de base** depuis le lot 0 — le reste est
+l'import Python et les deux `_build_mcp`. Un lot qui ajoute un travail one-shot au boot doit
+le mesurer **avant** de poser son tag.
+
+Le drapeau de module qui garde cet appel unique s'appelle `_PREPARED` (`server._prepare_database`).

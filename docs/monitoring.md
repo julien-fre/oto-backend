@@ -327,3 +327,10 @@ Un appel sur un tool HORS toolbox de session (la visibilité filtre `tools/list`
 pas `tools/call`) = erreur **GÉRÉE actionnable** `tool_not_mounted`
 (`error_taxonomy` : oto_call immédiat / `oto_connector op=select`), droppée de
 Sentry — plus jamais un « Erreur interne du serveur » opaque (vécu 16/07, #224/#225).
+
+## `client_id` — ce qu'il ne dit pas
+
+> Reprise mot pour mot du `CLAUDE.md` (2026-08-31).
+
+⚠️ **`client_id` n'identifie PAS le front d'où vient l'utilisateur** : énumérer avant d'en
+tirer une population.
