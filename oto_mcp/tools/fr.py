@@ -124,6 +124,12 @@ def register(mcp: FastMCP) -> None:
         Le bloc `finances` des résultats porte les mêmes réserves, marquées
         ligne à ligne (`alerte`) — cf. `finances_avertissement`.
 
+        Spoken legal forms: people say "the SCI Untel", but the register rarely writes
+        the form into the name — so a query like "SCI ASC" only matches companies
+        literally NAMED that. On page 1, this tool detects such a prefix and ALSO runs
+        the name alone filtered on that form, appending the extra hits (flagged
+        `matched_by="legal_form"`) and reporting what it did under `legal_form_retry`.
+
         Args:
             query: Full-text search (company name, SIREN, brand…).
             naf: NAF activity codes, comma-separated (e.g. "62.01Z,62.02A").
@@ -143,12 +149,6 @@ def register(mcp: FastMCP) -> None:
                 the API answer with the full list of valid ones.
             page: 1-based page number.
             per_page: Page size (max 25).
-
-        Spoken legal forms: people say "the SCI Untel", but the register rarely writes
-        the form into the name — so a query like "SCI ASC" only matches companies
-        literally NAMED that. On page 1, this tool detects such a prefix and ALSO runs
-        the name alone filtered on that form, appending the extra hits (flagged
-        `matched_by="legal_form"`) and reporting what it did under `legal_form_retry`.
         """
         def _search(q, nj, pg):
             return entreprises.search(
@@ -842,18 +842,18 @@ def register(mcp: FastMCP) -> None:
         id — fetched on demand from Légifrance (the local ACCO index only has
         metadata). Chain after fr_accords_search / fr_accords_get.
 
+        Returns metadata + `texte` (extracted from the filed docx; may be empty
+        when no integral version was published) + `texte_chars`/`offset`/
+        `next_offset` + `permalien` (verifiable link, 404s honestly when the
+        text is absent) + `lien_construit` (best-effort Légifrance pattern,
+        not guaranteed to resolve).
+
         Args:
             acco_id: DILA id (ACCOTEXT000…) from fr_accords_search results.
             offset: start position in the text. Long agreements come back in
                 chunks: when `tronque` is true, call again with
                 offset=`next_offset` to get the rest (health/pension clauses and
                 final provisions usually sit at the END of a merger agreement).
-
-        Returns metadata + `texte` (extracted from the filed docx; may be empty
-        when no integral version was published) + `texte_chars`/`offset`/
-        `next_offset` + `permalien` (verifiable link, 404s honestly when the
-        text is absent) + `lien_construit` (best-effort Légifrance pattern,
-        not guaranteed to resolve).
         """
         from ..fod import ccn as fod_ccn
         return fod_ccn.accords_text(acco_id, offset=offset)

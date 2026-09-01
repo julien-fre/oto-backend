@@ -363,10 +363,10 @@ def register(mcp: FastMCP) -> None:
           and returned as a short-lived signed URL: `{encoding: "url", url,
           expires_in}` (seconds). Fetch the URL to get the bytes.
 
+        Returns {filename, mimeType, size, encoding, content|url, expires_in?}.
+
         Args:
             file_id: Slack file id (e.g. F0BG…), from a message's `files[].id`.
-
-        Returns {filename, mimeType, size, encoding, content|url, expires_in?}.
         """
         client, is_platform = _client()
         with _traduit():

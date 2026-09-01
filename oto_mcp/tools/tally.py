@@ -301,6 +301,10 @@ def register(mcp: FastMCP) -> None:
     ) -> object:
         """Tally forms — list, read, author, and delete them.
 
+        Returns —
+            The Tally payload for reads; the created/updated object for
+            writes; a `{dry_run: true, ...}` preview when `dry_run` is set.
+
         Args:
             op: which action.
                 · "list" — the forms this key can see. `page` (1-based),
@@ -336,10 +340,6 @@ def register(mcp: FastMCP) -> None:
                 unrecoverable; use op="delete" instead.
             dry_run: validate and preview without writing. On "update" and
                 "delete" the preview is a real diff against the current form.
-
-        Returns:
-            The Tally payload for reads; the created/updated object for
-            writes; a `{dry_run: true, ...}` preview when `dry_run` is set.
         """
         c = _client()
 
@@ -468,6 +468,12 @@ def register(mcp: FastMCP) -> None:
         question titles are unique. Pass `raw=True` for Tally's untouched
         payload.
 
+        Returns —
+            "list" — `{page, limit, has_more, counts, questions, submissions}`
+            where each submission carries `answers`, `preview_url` and
+            `pdf_url`. File-upload questions answer with the uploaded file's
+            URL, so `answers` is also how you reach attachments.
+
         Args:
             op: which action.
                 · "list" — submissions of `form_id`.
@@ -487,12 +493,6 @@ def register(mcp: FastMCP) -> None:
                 per-filter counts without pulling any rows.
             raw: return Tally's payload as-is, skipping the join.
             dry_run: on "delete", preview the submission instead of deleting.
-
-        Returns:
-            "list" — `{page, limit, has_more, counts, questions, submissions}`
-            where each submission carries `answers`, `preview_url` and
-            `pdf_url`. File-upload questions answer with the uploaded file's
-            URL, so `answers` is also how you reach attachments.
         """
         c = _client()
 

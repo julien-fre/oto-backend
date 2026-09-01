@@ -205,6 +205,8 @@ def register(mcp: FastMCP) -> None:
           NOT include emails — use `linkedin_aiark_person(op="export")` for one.
         - **"companies"**: companies by firmographics.
 
+        Returns the AI Ark page: `content[]`, `totalElements`, `totalPages`.
+
         Args:
             op: "people" (default) | "companies".
             account: filters on the company. AI Ark nested DSL — each field takes an
@@ -237,8 +239,6 @@ def register(mcp: FastMCP) -> None:
             fields: keep ONLY these keys on each record; the envelope (totals,
                 pagination, trackId) always stays — without it you would think you
                 saw everything. Combine with `full=True` to project the raw record.
-
-        Returns the AI Ark page: `content[]`, `totalElements`, `totalPages`.
         """
         _reject_dead_filters(account=account, contact=contact)
         if op == "people":

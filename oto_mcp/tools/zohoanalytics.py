@@ -100,12 +100,12 @@ def register(mcp: FastMCP) -> None:
     ) -> dict:
         """Export the data of a view (synchronous).
 
+        Returns the parsed JSON for json, else {"data": <raw text>}.
+
         Args:
             response_format: json (default) | csv | xml | xls | pdf | html | image.
             criteria: Zoho row filter, e.g. '"Sales" > 500'.
             selected_columns: restrict to these column names.
-
-        Returns the parsed JSON for json, else {"data": <raw text>}.
         """
         out = _client().export_view(
             workspace_id, view_id, response_format=response_format,
@@ -119,12 +119,12 @@ def register(mcp: FastMCP) -> None:
         """Run a SQL SELECT query over a workspace's tables (async bulk export,
         resolved server-side: create job → poll → download).
 
+        Returns the parsed JSON for json, else {"data": <raw text>}.
+
         Args:
             sql_query: a SELECT statement over the workspace tables, e.g.
                 'select Region, sum("Sales") from "Sales" group by Region'.
             response_format: json (default) | csv.
-
-        Returns the parsed JSON for json, else {"data": <raw text>}.
         """
         out = _client().query_sql(
             workspace_id, sql_query, response_format=response_format)

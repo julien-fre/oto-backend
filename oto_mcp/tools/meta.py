@@ -155,6 +155,10 @@ def register(mcp: FastMCP) -> None:
         rather than guessing from the name, then read the exact arguments with
         `oto_tool_schema(name)` before calling.
 
+        Returns `{tools: [{name, description, enabled}], total, shown, disabled_count}`.
+        `enabled: false` = not mounted in your session — call it anyway with `oto_call`,
+        or install its connector durably with `oto_connector(op='select')`.
+
         Args:
             query: keywords to search the catalog (name + description + the connector's
                 catalog line), e.g. "entreprises françaises", "linkedin message",
@@ -163,10 +167,6 @@ def register(mcp: FastMCP) -> None:
                 and read the whole catalog", never "oto cannot do this": the response
                 then carries `namespaces`, the map of every capability of the platform.
             limit: cap the number of entries returned (default: all; 40 when searching).
-
-        Returns `{tools: [{name, description, enabled}], total, shown, disabled_count}`.
-        `enabled: false` = not mounted in your session — call it anyway with `oto_call`,
-        or install its connector durably with `oto_connector(op='select')`.
         """
         sub = _require_sub()
         org = _active_org(sub)
@@ -344,14 +344,6 @@ def register(mcp: FastMCP) -> None:
         call-time gates (credential, connector RBAC, activation, admin autz) and the
         org field-redaction policy apply exactly as for a direct call (ADR 0036).
 
-        Args:
-            name: Exact target tool name (e.g. `fr_ccn_search`).
-            arguments: Argument object passed to the target tool. `{}` if none.
-            _org: run the target tool under THIS organization (id) — resolves its
-                credentials/visibility/data for that org (ADR 0038 call token,
-                same membership guard as the flat `_org=` axis). Omit for your
-                current org.
-
         Call-context tokens (ADR 0038) are PREFIXED `_` — `_group`, `_project`,
         `_instance`, `_account`, `_run_id` — and may be included INSIDE `arguments`:
         they route the CALL CONTEXT (which org/team/credential-instance the target
@@ -364,6 +356,14 @@ def register(mcp: FastMCP) -> None:
         `account`/`org`/`project` in `arguments` is a BUSINESS argument of the target
         (e.g. `aiark_company_search(account=…)` is AI Ark's company filter) and is
         passed through untouched.
+
+        Args:
+            name: Exact target tool name (e.g. `fr_ccn_search`).
+            arguments: Argument object passed to the target tool. `{}` if none.
+            _org: run the target tool under THIS organization (id) — resolves its
+                credentials/visibility/data for that org (ADR 0038 call token,
+                same membership guard as the flat `_org=` axis). Omit for your
+                current org.
         """
         # Identité ambiante : le sub du JWT porte déjà l'appel (le handler cible
         # résout ses propres credentials dessus). Soft — sur stdio local il n'y a pas
