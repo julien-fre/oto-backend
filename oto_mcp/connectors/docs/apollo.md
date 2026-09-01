@@ -6,6 +6,13 @@ crée une clé api dans les réglages développeur/api de ton compte [apollo](ht
 - **seule la recherche/enrichissement d'entreprises et de personnes** (ci-dessous) admet
   une clé plateforme free-tier (quota quotidien) si tu n'en poses pas la tienne — elle
   interroge la base PARTAGÉE Apollo, la même pour tout le monde.
+- quota épuisé : `apollo_match_person` refuse en NOMMANT le compteur (`used/limit`) et
+  dit qu'il repart à minuit — la réponse d'un appel réussi porte aussi `platform_quota`
+  (`used`/`limit`/`remaining`) pour t'arrêter avant le refus au milieu d'un lot. Pose ta
+  propre clé pour lever la limite tout de suite, ou pour CE lead : `hunter_email_finder`
+  (email) et `kaspr_enrich_linkedin` / `fullenrich_enrich_linkedin` (téléphone,
+  historique LinkedIn) — source différente, pas de crédit brûlé sur un appel qui
+  échouerait de toute façon.
 - **contacts, séquences, emails et conversations sont BYO-only** — pas de repli plateforme
   sur ces outils-là, il te faut ta propre clé. Pas seulement pour écrire : même les lister
   ou les lire rend TES données (ton carnet de contacts, tes boîtes connectées, le contenu
