@@ -68,6 +68,9 @@ def register(mcp: FastMCP) -> None:
         call `dropcontact_result(request_id)` to collect (first try after ~30s,
         then again every ~20-30s until `done` is true).
 
+        Credits ("pay on success"): 1 credit per email found (refunded if none
+        found); 1 credit per email you sent in for pure verification.
+
         Args:
             contacts: 1-250 contacts in ONE batch (≤15kB each). Each item should
                 carry enough to identify a contact — `email`, OR `linkedin`, OR
@@ -83,9 +86,6 @@ def register(mcp: FastMCP) -> None:
                 company.
             language: `"en"` for English-language processing; omit for French
                 (Dropcontact's default).
-
-        Credits ("pay on success"): 1 credit per email found (refunded if none
-        found); 1 credit per email you sent in for pure verification.
         """
         client = _client()
         try:

@@ -94,6 +94,8 @@ def register(mcp: FastMCP) -> None:
         Returns ranked chunks with provenance (file, pages, scores) — NO LLM
         generation (compose the answer yourself, or use `lighton_ask`).
 
+        Billed: 1 retrieval credit per call.
+
         Args:
             query: natural-language query (max 1500 chars).
             workspace_ids: restrict to these workspaces. Default: the
@@ -103,8 +105,6 @@ def register(mcp: FastMCP) -> None:
             max_results: chunks returned after reranking (1-50).
             mode: "text" (default) or "vision" (searches VLM-embedded page
                 images — scanned docs, diagrams).
-
-        Billed: 1 retrieval credit per call.
         """
         return _strip_images(_run(lambda c, ws: c.search(
             query,
@@ -124,6 +124,9 @@ def register(mcp: FastMCP) -> None:
         relevant chunks then generates an LLM answer grounded in them, with
         source citations. Returns `{answer, results[]}`.
 
+        Billed: 1 retrieval credit per call. For chunks without generation
+        (cheaper composition by the agent), use `lighton_search`.
+
         Args:
             query: natural-language question (max 1500 chars).
             workspace_ids / file_ids: scoping — same rules as
@@ -132,9 +135,6 @@ def register(mcp: FastMCP) -> None:
             max_results: context chunks (1-50).
             model: generation LLM (e.g. "mistral-large-latest"); platform
                 default if omitted.
-
-        Billed: 1 retrieval credit per call. For chunks without generation
-        (cheaper composition by the agent), use `lighton_search`.
         """
         return _strip_images(_run(lambda c, ws: c.ask(
             query,
@@ -164,13 +164,13 @@ def register(mcp: FastMCP) -> None:
         """Extract structured fields from a document into a typed JSON Schema
         (LightOn). One-shot processing, document NOT indexed.
 
+        Sync limits: ~20 MB / 15 pages. Returns `{status, result, usage}`.
+
         Args:
             source: same shape as `lighton_parse` (drive/gmail/url).
             schema: JSON Schema object describing the fields to extract,
                 e.g. `{"type":"object","properties":{"invoice_number":
                 {"type":"string"}}}`.
-
-        Sync limits: ~20 MB / 15 pages. Returns `{status, result, usage}`.
         """
         rf = _resolve_source(source)
         return _run(lambda c, ws: c.extract_bytes(rf.data, rf.filename, schema))
@@ -186,15 +186,15 @@ def register(mcp: FastMCP) -> None:
         """List documents in the LightOn index (paginated). `search` orders
         results by semantic relevance (quick "find my doc").
 
+        Returns `{count, next, previous, results[]}` (id, filename, title,
+        workspace, status, total_pages…).
+
         Args:
             workspace_ids: filter by workspaces (default: the connector's
                 configured workspace if set, else all accessible).
             search: semantic relevance query.
             status: ingestion status filter (e.g. "pending,embedded").
             filename: case-insensitive partial filename match.
-
-        Returns `{count, next, previous, results[]}` (id, filename, title,
-        workspace, status, total_pages…).
         """
         return _run(lambda c, ws: c.list_files(
             workspace_ids=workspace_ids or ([ws] if ws else None),
@@ -210,14 +210,14 @@ def register(mcp: FastMCP) -> None:
         searchable via `lighton_search`/`lighton_ask` once its status reaches
         `embedded` (check with `lighton_files`).
 
+        Billed per ingested page.
+
         Args:
             source: same shape as `lighton_parse` (drive/gmail/url).
             workspace_id: destination workspace. REQUIRED unless the
                 connector instance has a configured default workspace.
                 List available ones with `lighton_workspaces`.
             title: display title (default: filename).
-
-        Billed per ingested page.
         """
         # gate workspace AVANT de résoudre la source (pas de download inutile)
         wid = workspace_id or _default_workspace(_creds())

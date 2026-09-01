@@ -557,6 +557,14 @@ rien ne rendait navigable et que rien ne tenait.
   param `fields`** (une lecture nue → 400, pas un scope-mismatch) → sonder via `list_records`
   (qui fournit les `DEFAULT_FIELDS`), pas un `GET /crm/v7/{module}` brut.
 - Docstrings = contrat LLM (le modèle choisit les tools là-dessus). Précis, pas verbeux.
+  ⚠️ **TOUTE la prose vit AVANT le bloc `Args:`, qui se place en DERNIER — et aucun
+  titre de section Google (`Returns:` multi-lignes, `Examples:`, `Note:`)** (2026-09-01,
+  #761). Le parsing fastmcp ne sert que la PREMIÈRE section de prose + les params :
+  un paragraphe après `Args:` ou une section `Returns:` est JETÉ en silence — 61
+  outils amputés (~9 600 c.), dont le paragraphe des jetons `_*` d'`oto_call`, jamais
+  parvenu à un agent. Un « Returns — `{…}` » en prose sert la même information sans
+  être découpé (`Returns: …` sur UNE ligne passe, avec continuation indentée non).
+  Tripwire sur le montage réel : `tests/test_docstring_prose_served.py`.
 - **Doc how-to d'un connecteur = un markdown**, `oto_mcp/connector_docs/<nom>.md`
   (nommé comme son module), sections `## <kind> — <titre>`, servie au catalogue et à
   toutes les fiches. Une URL de rappel ne s'y écrit JAMAIS en dur — marqueur

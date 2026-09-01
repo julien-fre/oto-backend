@@ -178,6 +178,13 @@ def register(mcp: FastMCP) -> None:
         rename, change privacy, assign a channel, share/revoke access, or
         get/confirm a direct-file-upload URL.
 
+        Note: the byte-PUT step between "create_upload_url" and
+        "confirm_upload" is NOT a tool here — a raw binary payload has no
+        natural fit for a JSON tool call (same reasoning as Grain's
+        `grain_recording_file`). `oto.tools.fireflies.client.FirefliesClient
+        .upload_file_bytes` is available for scripted use outside the agent
+        loop.
+
         Args:
             op: "list" (default, search) | "get" | "delete" | "upload"
                 (transcribe a PUBLIC URL) | "update_title" | "update_privacy" |
@@ -225,13 +232,6 @@ def register(mcp: FastMCP) -> None:
             file_size: REQUIRED by "create_upload_url" — size in bytes.
             meeting_id: REQUIRED by "confirm_upload" — the `meeting_id` a
                 prior "create_upload_url" call returned.
-
-        Note: the byte-PUT step between "create_upload_url" and
-        "confirm_upload" is NOT a tool here — a raw binary payload has no
-        natural fit for a JSON tool call (same reasoning as Grain's
-        `grain_recording_file`). `oto.tools.fireflies.client.FirefliesClient
-        .upload_file_bytes` is available for scripted use outside the agent
-        loop.
         """
         client = _client()
         if op == "list":

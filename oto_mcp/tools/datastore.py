@@ -967,7 +967,7 @@ def register(mcp: FastMCP) -> None:
         Returns `{results: [...]}` — each entry carries the `group_by` value (when set)
         plus one key per metric (`count`, `sum_<field>`, `avg_<field>`, or `label`).
 
-        Examples:
+        Examples —
             - total rows matching a filter: metrics omitted, filter={"statut":"qualified"}
             - MWc by department: group_by="departement",
               metrics=[{"op":"sum","field":"kwc_estime"}, {"op":"count"}]

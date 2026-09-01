@@ -992,6 +992,9 @@ def register(mcp: FastMCP) -> None:
         `linkedin_unipile_search` (`location`/`company`/`industry` acceptent déjà les
         ids ; les autres facettes arrivent — cf. guide `linkedin-search`).
 
+        Renvoie `{facet_type, candidates: [{id, name}]}`. Résolution INDÉPENDANTE du
+        produit/contrat (marche même hors Recruiter/Sales Nav).
+
         Args:
             facet_type: type de facette, MAJUSCULES. Confirmés : `SKILL`, `LOCATION`,
                 `INDUSTRY`, `COMPANY`. D'autres existent (essaie `TITLE`, `SCHOOL`,
@@ -999,9 +1002,6 @@ def register(mcp: FastMCP) -> None:
                 erreur `Expected kind 'StringEnum'`.
             keywords: le libellé à résoudre (ex. « Microsoft Excel », « Paris »).
             limit: nb max de candidats (défaut 25).
-
-        Renvoie `{facet_type, candidates: [{id, name}]}`. Résolution INDÉPENDANTE du
-        produit/contrat (marche même hors Recruiter/Sales Nav).
         """
         cands = unipile_client().resolve_facet(str(facet_type).upper(), keywords, limit=limit)
         return {"facet_type": str(facet_type).upper(), "candidates": cands}
