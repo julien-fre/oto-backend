@@ -134,7 +134,11 @@ class NodeOut(BaseModel):
     mais ne s'éditait ni ne se partageait.
 
     `rev` est l'empreinte du corps servi : elle a changé une fois pour tous les nœuds
-    à l'ajout de ces champs (un cache client se rafraîchit, puis retrouve ses 304)."""
+    à l'ajout de ces champs (un cache client se rafraîchit, puis retrouve ses 304).
+    **Même effet à l'ajout de `pinned` et `namespace` (01/09/2026)** — une seule vague
+    d'invalidation, connue et bornée. C'est le prix d'une empreinte calculée sur le
+    contenu servi, et c'est le bon prix : une empreinte qui ignorerait les champs neufs
+    laisserait un client sur une version qu'il croit à jour."""
     id: str
     name: str
     type: Literal["page", "table", "agent", "execution"]
@@ -144,6 +148,21 @@ class NodeOut(BaseModel):
     procedure: Optional[ProcedureRef] = None
     doc_id: Optional[int] = None
     project_id: Optional[int] = None
+    # L'ÉPINGLE (0054-D5) : ce nœud est-il une racine ? Le drapeau est posé depuis la
+    # conversion des projets et n'était **lu par personne** — dans le rail, une racine
+    # était donc indiscernable d'une page ordinaire. Servi ici parce que c'est la
+    # seule chose qui distingue les deux, et parce que le modèle a retiré le GENRE
+    # `project` exprès : l'épingle est ce qui reste pour le dire.
+    pinned: bool = False
+    # Tableau : le NOM DE NAMESPACE à repasser aux surfaces `data_*`.
+    #
+    # ⚠️ Il vaut aujourd'hui la même chose que `name`, et c'est une COÏNCIDENCE qu'on
+    # dissout exprès : la projection pose `title = namespace`, mais le modèle veut que
+    # le namespace devienne une position dans l'arbre, pas un nom. Le jour où c'est
+    # fait, un client qui lisait `name` comme une adresse casserait **sans que rien ne
+    # le prévienne**. La poignée est donc déclarée maintenant, tant qu'elle est facile
+    # à tenir — même geste que `doc_id`/`project_id`. Absent sur une page.
+    namespace: Optional[str] = None
     trail: list[TrailCrumb] = []
     modified: NodeModified
     # Page : le corps en blocs. Absent sur un tableau.
@@ -283,6 +302,10 @@ def _compose(ctx: ResolvedCtx, node_id: str) -> dict:
         "procedure": ref.model_dump() if ref else None,
         "doc_id": doc_id,
         "project_id": project_id,
+        "pinned": bool(props.get("pinned")),
+        # Le point UNIQUE où le namespace se résout : le jour où `title` cesse d'être
+        # le namespace, c'est cette ligne qui change, et les clients ne bougent pas.
+        "namespace": (props.get("title") or None) if nature == "table" else None,
         "trail": [c.model_dump() for c in _fil(fiche, chaine)],
         "modified": NodeModified(
             at=str(fiche["updated_at"]) if fiche.get("updated_at") else None,
