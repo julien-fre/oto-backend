@@ -493,6 +493,7 @@ def test_campaign_tools_registered_under_namespace(all_tools):
     assert all(namespace_of(t) == "lemlist" for t in CAMPAIGN_TOOLS)
 
 
+@pytest.mark.exige_pin_oto_core   # lit la vraie classe : faux si le venv retarde
 def test_client_exposes_methods_called_by_campaign_tools():
     """Garde version-skew : ces méthodes arrivent avec l'oto-core de la même
     fenêtre — tant que le pin n'est pas bumpé, c'est CE test qui le dit."""

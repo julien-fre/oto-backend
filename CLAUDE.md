@@ -16,10 +16,16 @@ Python 3.10 (`>=3.10`, ce qu'a tuls.me) · `fastmcp>=3.4.2` (plancher = dernier)
 `psycopg[binary]` + `psycopg-pool` (PG managé Scaleway `otomata-main`, DB `oto_mcp`) · JWT Logto ES384.
 ⚠️ **`oto-core[anonymize]` est PINNÉ sur un tag git** ; `pip` **ne réinstalle pas** une dép VCS déjà là,
 et **le pin est édité par TOUTES les sessions //** → bumper en **superset**, garder la haute.
-⚠️ **Une grappe de rouges en local sur les connecteurs les plus RÉCENTS, avec
-`No module named 'oto.tools.<connecteur>'` au fond, n'est PAS ton lot** : c'est le venv partagé en
-retard sur le pin — la CI, qui installe au tag, passe. Reconnaître et rejouer sur pristine sans
-muter le venv partagé : **`commands.md` §Pin oto-core → « Faux rouge »**.
+⚠️ **Une grappe de rouges en local sur les connecteurs les plus RÉCENTS n'est PAS ton lot** : c'est
+le venv partagé en retard sur le pin — la CI, qui installe au tag, passe. **La suite te le DIT
+depuis le 01/09/2026** : bannière `=== PIN oto-core ===` en tête ET en fin de run, qui nomme
+l'installé et l'épinglé, et les tests marqués `exige_pin_oto_core` deviennent NON CONCLUANTS en
+local (jamais en CI, où la garde version-skew doit mordre) — `tests/_oto_core_pin.py`.
+⚠️ **Ne pas trier au message** : `No module named 'oto.tools.<x>'` n'attrape qu'un connecteur
+**AJOUTÉ** depuis la version installée, pas un connecteur **RABOUGRI** — dont les rouges (« méthodes
+absentes du client », « paramètre inexistant ») imitent trait pour trait une vraie régression de
+version-skew, et accusent le dépôt. Sept sessions s'y sont laissé prendre le 01/09.
+Rejouer sur pristine sans muter le venv partagé : **`commands.md` §Pin oto-core → « Faux rouge »**.
 ⚠️ **Les rows PG sont des DICTS** — `r["col"]`, jamais `r[0]`.
 
 ## Architecture
