@@ -23,6 +23,10 @@ dependencies = [
     # (SHA backend + ce pin). PyPI ne reçoit pas chaque merge (publish manuel, lag) →
     # on tague oto-core et on bump CE pin par PR. Bump = éditer le tag ici ; rollback
     # = revert ce commit (ramène aussi le bon oto-core). Cf. ADR 0020 (deploy/canari).
+    # v1.102.0 = DEUX clients d'un coup, un seul tag : lemlist couvre l'API entière
+    # (141 routes — le client savait lire une campagne, pas en conduire une,
+    # oto-core#65) et tally arrive complet (38 opérations sur les formulaires,
+    # version d'API datée épinglée côté client, oto-core#66) ;
     # v1.101.0 = serper : le refus LinkedIn de scrape_page ne prescrit plus un outil MCP (#632, 30/08/2026).
     # v1.100.0 = slack : lecture des RÉPONSES d'un fil (conversations.replies —
     # signaux #567/#576/#584/#592, quatre en huit jours : history ne rend que le
@@ -114,7 +118,7 @@ dependencies = [
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.101.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.102.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome
