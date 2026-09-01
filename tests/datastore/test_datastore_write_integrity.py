@@ -88,6 +88,9 @@ SCHEMA = {
         {"key": "entreprise_email", "type": "email"},
         {"key": "moteur", "type": "enum", "enum": ["mistral", "sonnet"]},
         {"key": "origine_ligne", "type": "text"},
+        # #724 : la colonne `list` du signal — `edition-vivier`, org 226, un
+        # unique contact que le retrait n'a pas vidé.
+        {"key": "contacts", "type": "list", "of": {"type": "text"}},
     ],
 }
 
@@ -350,3 +353,84 @@ def test_la_valeur_vide_ecartee_nemporte_pas_lorigine_quelle_accompagne(table):
     assert apres.get("origine_ligne") == {"valeur": "fichier-client",
                                           "origine": "apollo"}, \
         "la valeur survit, l'origine s'écrit — chacune selon ce qui a été nommé"
+
+
+# ══ ⑤ la liste vide EFFACE, elle ne s'écarte plus (#724, 01/09/2026) ═══════
+#
+# Dix retraits de contact ratés en silence cette nuit-là, sur `edition-vivier`
+# (org 226) : `contacts: []` suivait la règle de #608 (une liste vide est un
+# vide « de gabarit », comme une chaîne vide) et se faisait écarter. Sauf
+# qu'une liste vide n'a pas l'équivalent bénin de la chaîne vide — il n'existe
+# aucun geste normal qui la produise sans le vouloir, seulement le retrait du
+# dernier élément. `[]` rejoint donc `null` parmi les gestes qui EFFACENT.
+
+def test_la_liste_vide_efface_par_id(table):
+    """LE défaut de #724 : `contacts: []` sur un contact réel doit le vider,
+    comme `null` viderait un scalaire — pas le laisser en place en silence."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"contacts": ["Jean Dupont"]})
+    assert _donnees(ns_id, rid).get("contacts") == ["Jean Dupont"]
+
+    st.update_row(ns, rid, {"contacts": []})
+
+    assert _donnees(ns_id, rid).get("contacts") == [], \
+        "vider le dernier contact n'a pas d'autre geste que `[]` — il doit passer"
+
+
+def test_la_liste_vide_effacee_le_dit(table):
+    """Même transparence qu'un `null` : la valeur perdue se nomme dans
+    `valeurs_effacees`, pas dans `valeurs_ignorees` (#608 reste pour les
+    chaînes/objets vides — seule la liste change de camp)."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"contacts": ["Jean Dupont"]})
+    st.update_row(ns, rid, {"contacts": []})
+    releve = st.off_schema_report()
+
+    efface = releve.get("valeurs_effacees")
+    assert efface, "un effacement de liste muet est le défaut de #724"
+    assert [(e["champ"], e["valeur"]) for e in efface] == [("contacts", ["Jean Dupont"])]
+    assert "valeurs_ignorees" not in releve, \
+        "la liste vide n'est plus un vide écarté — elle a changé de relevé"
+
+
+def test_la_liste_deja_vide_ne_dit_rien(table):
+    """Rien à perdre : vider une liste déjà vide reste silencieux, comme avant."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"contacts": []})
+    st.update_row(ns, rid, {"contacts": []})
+
+    assert "valeurs_effacees" not in st.off_schema_report()
+
+
+def test_la_liste_vide_efface_aussi_au_lot_par_cle_metier(table):
+    """Le même geste sur le chemin de fusion par clé (`_merge_into_row`) — les
+    deux chemins d'écriture ont déjà divergé une fois sur cette famille de
+    règles (#322/#608), d'où la vérification des deux."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"contacts": ["Jean Dupont"]})
+    st.write_rows(ns, [{"siren": "377768379", "contacts": []}], key="siren")
+
+    assert _donnees(ns_id, rid).get("contacts") == []
+
+
+def test_la_chaine_et_lobjet_vides_restent_ecartes_pas_la_liste(table):
+    """Le garde-fou anti-régression : #724 ne touche QUE la liste — une chaîne
+    vide (#608) doit continuer d'être préservée, pas confondue avec le
+    nouveau comportement de la liste."""
+    st, ns, ns_id, rid = table
+
+    st.update_row(ns, rid, {"origine_ligne": "encore-la", "contacts": ["A", "B"]})
+    st.update_row(ns, rid, {"origine_ligne": "", "contacts": []})
+    releve = st.off_schema_report()
+
+    apres = _donnees(ns_id, rid)
+    assert apres.get("origine_ligne") == "encore-la", "#608 : la chaîne vide n'efface pas"
+    assert apres.get("contacts") == [], "#724 : la liste vide efface"
+    assert [(e["champ"], e["valeur"]) for e in releve.get("valeurs_ignorees") or []] \
+        == [("origine_ligne", "encore-la")]
+    assert [(e["champ"], e["valeur"]) for e in releve.get("valeurs_effacees") or []] \
+        == [("contacts", ["A", "B"])]
