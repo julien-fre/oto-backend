@@ -225,7 +225,14 @@ des contrôles requis** — rouge et visible, jamais bloquant.
 ⚠️ **La fenêtre du healthcheck est FINIE : 120 s** — un travail one-shot ajouté au boot se mesure
 **avant** de poser son tag. **Ce qui n'a rien à faire au boot va en maintenance** (`oto-mcp
 maintenance …`, timer quotidien **prod seulement**) : *un coût qui suit la taille de la base n'est pas
-une migration, c'est un cron.* **`docs/migrations-versionnees.md` §1.**
+une migration, c'est un cron.*
+⚠️ **Le boot se juge sur une base QUI EXISTE DÉJÀ, jamais sur une base vierge** : c'est là qu'il
+meurt (`CREATE TABLE IF NOT EXISTS` sauté ⟹ la colonne d'un `ALTER` manque, et le DDL assemblé
+s'exécute AVANT les ALTER). `test_boot_order_replay.py` a été aveugle à ce piège — celui pour lequel
+il avait été écrit — jusqu'au **01/09/2026** (#781) ; il retire désormais du schéma neuf **chacune**
+des 132 colonnes posées par un `ALTER` (relevées sur le SQL exécuté, pas lues dans le source) et
+rejoue la séquence : le boot doit **passer** et le schéma **converger**. **`docs/live-migrations.md`,
+`docs/migrations-versionnees.md` §1.**
 
 ## Infra
 
