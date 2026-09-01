@@ -44,7 +44,7 @@ import json
 import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import ownership
@@ -172,7 +172,14 @@ class NodeOut(BaseModel):
     # fait, un client qui lisait `name` comme une adresse casserait **sans que rien ne
     # le prévienne**. La poignée est donc déclarée maintenant, tant qu'elle est facile
     # à tenir — même geste que `doc_id`/`project_id`. Absent sur une page.
-    namespace: Optional[str] = None
+    namespace: Optional[str] = Field(default=None, description=(
+        "Tableau : le nom de namespace à repasser aux surfaces `data_*`. `null` sur "
+        "une page. ⚠️ **C'est un NOM, et un nom peut désigner deux tableaux.** Les "
+        "écritures de lignes le résolvent dans le scope de l'appelant, où « vivier », "
+        "« leads » ou « contacts » existent souvent en plusieurs exemplaires (perso, "
+        "équipe, org) : deux homonymes atteignables suffisent à écrire dans l'autre, "
+        "sans erreur. Tant que l'écriture au grain du nœud n'existe pas, un client qui "
+        "enchaîne « ouvrir ce tableau » puis « y écrire » assume cette ambiguïté."))
     trail: list[TrailCrumb] = []
     modified: NodeModified
     # Page : le corps en blocs. Absent sur un tableau.

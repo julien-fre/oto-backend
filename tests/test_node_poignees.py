@@ -62,3 +62,21 @@ def test_lepingle_vient_des_props_et_pas_du_genre():
     assert 'props.get("pinned")' in src
     for interdit in ('kind == "project"', "kind == 'project'"):
         assert interdit not in src, "l'épingle est déduite du genre — le genre n'en a plus"
+
+
+def test_le_namespace_DIT_qu_un_nom_peut_etre_ambigu():
+    """Servir un nom sans dire qu'il peut en désigner deux, c'est transmettre le piège
+    avec la poignée.
+
+    Les écritures de lignes résolvent ce nom dans le scope de l'appelant, où les noms
+    banals (« vivier », « leads », « contacts ») existent souvent en plusieurs
+    exemplaires. Tant que l'écriture au grain du nœud n'existe pas, un client qui
+    enchaîne « ouvrir ce tableau » puis « y écrire » assume cette ambiguïté — il doit
+    au moins la connaître. Ajouté le 2026-09-01 (#650, point 1).
+    """
+    description = (NodeOut.model_json_schema()["properties"]["namespace"]
+                   .get("description") or "")
+    assert description.strip(), "`namespace` est servi sans description"
+    assert "NOM" in description, (
+        "la description ne dit pas que la poignée est un nom résolu dans un scope, "
+        "donc potentiellement ambigu")
