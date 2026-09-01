@@ -130,6 +130,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _maintenant_iso() -> str:
+    """L'instant présent au format des horodatages servis, pour juger un bail.
+
+    Comparé en TEXTE parce que les horodatages arrivent tantôt en `datetime`, tantôt
+    en chaîne selon le chemin de lecture : `str(x) > str(y)` est exact sur ce format
+    (ISO, même longueur, même fuseau) et ne dépend pas du type reçu."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _new_id() -> str:
     # uuid7-ish : timestamp ms + random. Construit à la main pour compat 3.10+.
     ms = int(time.time() * 1000) & ((1 << 48) - 1)
@@ -418,9 +428,26 @@ class DatastorePg(SchemaOpsMixin):
                 if isinstance(item, dict):
                     for attr, val in item.items():
                         out[dsv2.flat_name(gabarit, rang, attr)] = val
-        if row.get("claimed_by") is not None:
+        # ⚠️ Un bail EXPIRÉ n'est pas une réservation — mesuré le 01/09/2026 sur un
+        # fichier de production : **495 lignes sur 8 910 portaient `_claimed_by`, et
+        # les 495 étaient expirées**, la plus ancienne depuis dix-huit jours.
+        #
+        # La garde, elle, le sait : `datastore_active_lease` filtre sur
+        # `claimed_until > NOW()` et sa docstring dit « expiré compte pour libre ».
+        # *La lecture, non — elle servait le nom d'un travailleur mort comme une
+        # réservation en cours.* **Deux lectures voisines de la même donnée, une seule
+        # connaissait la règle.**
+        #
+        # Ce que ça coûtait : un relevé qui compte les lignes réservées en trouvait
+        # 495 sans qu'aucun travail ne tourne, et l'export destiné au client montrait
+        # le nom d'un worker à côté de chaque ligne d'une campagne close. *Le compteur
+        # de reprises (`claims`, plus bas) porte déjà la trace des tentatives : rien
+        # ne se perd à taire un bail que plus personne ne détient.*
+        _jusqua = row.get("claimed_until")
+        if row.get("claimed_by") is not None and _jusqua is not None \
+                and str(_jusqua) > _maintenant_iso():
             out["_claimed_by"] = row["claimed_by"]
-            out["_claimed_until"] = row.get("claimed_until")
+            out["_claimed_until"] = _jusqua
         # Ce que la file sait de la ligne (#433). Rendus SEULEMENT s'ils portent
         # quelque chose : un `_claims: 0` sur chaque ligne de chaque tableau serait
         # du bruit dans toutes les lectures, pour une file que la plupart n'ouvrent
