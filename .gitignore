@@ -3,6 +3,11 @@ __pycache__/
 *.egg-info/
 *.pyc
 .env
+# Coordonnée du déploiement (oto#33), écrite par deploy/oto-mcp-bluegreen.sh dans
+# l'arbre de la couleur. Non versionnée PAR CONSTRUCTION : `git reset --hard` ne
+# touche pas aux fichiers non suivis, donc elle survit exactement le temps que
+# l'arbre porte cette version — et un checkout local n'en fabrique jamais une.
+.oto-deploy.json
 dist/
 build/
 .pytest_cache/

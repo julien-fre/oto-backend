@@ -111,6 +111,20 @@ bg_install() {
   ./.venv/bin/pip install --force-reinstall --quiet \
     "oto-core[browser] @ git+https://github.com/otomata-tech/oto-core.git@${tag}" || return 1
   BG_HEAD=$(git -C "$tree" rev-parse HEAD)
+  # --- Coordonnée de ce qui va TOURNER (oto#33). Écrite par celui qui installe,
+  # --- dans l'arbre qu'il vient d'écrire, AVANT que le processus ne démarre : le
+  # --- backend la lit une fois au boot et la sert sur /api/version, dans
+  # --- `info.version` de l'OpenAPI et en en-tête X-Oto-Version de chaque réponse.
+  # --- Pourquoi ici et pas côté workflow : un run vert dit qu'un déploiement a été
+  # --- LANCÉ, pas ce qui sert — `main` avance, une bascule échoue, un rollback
+  # --- rebascule. Ici, `$ref` est ce qui a été demandé et `$BG_HEAD` ce que le
+  # --- `git reset --hard` a réellement posé : les deux ensemble ne mentent pas.
+  # --- Non versionné, donc conservé par le `git reset --hard` de l'installation
+  # --- suivante jusqu'à sa réécriture ici. Un `--rollback` ne repasse PAS par
+  # --- `bg_install` : la couleur qu'il réactive garde le fichier de SA propre
+  # --- installation, ce qui est exactement la version qu'elle porte.
+  printf '{"ref": "%s", "commit": "%s", "deployed_at": "%s"}\n' \
+    "$ref" "$BG_HEAD" "$(date -Is)" > "$tree/.oto-deploy.json" || return 1
   bg_log "installé : ${BG_HEAD}"
 }
 
