@@ -145,8 +145,14 @@ def register(mcp: FastMCP) -> None:
 
     def _run(fn):
         """Exécute un appel AI Ark : traduit une erreur HTTP en McpError
-        actionnable (5xx amont = réessayer ; sinon entrée invalide) et compte
-        l'usage plateforme sur succès."""
+        actionnable et compte l'usage plateforme sur succès.
+
+        ⚠️ Un 5xx amont n'innocente PAS l'entrée — le message ne l'affirme donc
+        plus (il le disait, mot pour mot comme le connecteur Kaspr, où c'était
+        faux : Kaspr rend 500 sur un `dataToGet` inconnu). La reprise est bornée
+        à une tentative différée, cohérent avec le `retryable: false` que rend la
+        taxonomie pour cette McpError : « rejouable tel quel » n'est pas le
+        premier geste quand l'entrée peut être en cause."""
         client, is_platform = _client()
         try:
             result = fn(client)
@@ -156,8 +162,10 @@ def register(mcp: FastMCP) -> None:
             resp = getattr(e, "response", None)
             status = getattr(resp, "status_code", None)
             if status and status >= 500:
-                msg = ("AI Ark est momentanément indisponible (erreur serveur "
-                       f"{status}). Réessaie dans un moment — ce n'est pas ton entrée.")
+                msg = (f"AI Ark a rendu une erreur serveur ({status}). Un 5xx amont "
+                       "ne prouve pas une panne : vérifie d'abord les paramètres de "
+                       "l'appel. Si l'entrée est correcte : une seule nouvelle "
+                       "tentative, différée.")
             elif status == 401:
                 msg = "Clé AI Ark invalide ou révoquée (401). Vérifie la clé posée."
             else:

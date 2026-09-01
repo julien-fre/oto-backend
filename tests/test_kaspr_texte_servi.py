@@ -97,6 +97,27 @@ def _message_du_500_aiark() -> str:
         return e.value.error.message
 
 
+def _message_du_500_cognism() -> str:
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import cognism
+
+    class _Stub:
+        def __init__(self, *a, **k):
+            pass
+
+        def enrich_contact(self, **k):
+            raise _Boom500()
+
+    with patch("oto.tools.cognism.client.CognismClient", _Stub), \
+            patch("oto_mcp.access.resolve_api_key", return_value=("k", False)):
+        m = FastMCP("t")
+        cognism.register(m)
+        fn = asyncio.run(m.get_tool("cognism_enrich_contact")).fn
+        with pytest.raises(McpError) as e:
+            fn(linkedin_url="https://www.linkedin.com/in/jane-doe/")
+        return e.value.error.message
+
+
 # --- ① le schéma servi nomme les champs que Kaspr accepte VRAIMENT -------------
 
 def test_le_schema_servi_nomme_les_trois_champs_kaspr():
@@ -153,3 +174,15 @@ def test_le_500_aiark_naffirme_plus_que_lentree_est_hors_de_cause():
 def test_le_500_aiark_borne_la_reprise():
     msg = _message_du_500_aiark().lower()
     assert "une seule" in msg, msg
+
+
+def test_le_500_cognism_naffirme_plus_que_lentree_est_hors_de_cause():
+    """Troisième copie de la même phrase, trouvée en la retirant des deux autres.
+    Rien ne l'avait recopiée sciemment : elle a été dupliquée d'un connecteur à
+    l'autre, avec sa certitude. Elle est fausse partout où on ne peut pas savoir."""
+    msg = _message_du_500_cognism()
+    assert "ce n'est pas ton entrée" not in msg.lower()
+
+
+def test_le_500_cognism_borne_la_reprise():
+    assert "une seule" in _message_du_500_cognism().lower()
