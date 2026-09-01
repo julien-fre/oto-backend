@@ -20,6 +20,14 @@ que ce module refuse explicitement plutôt que d'écrire une ligne bancale.
 ⚠️ À ne pas confondre avec `oto_mcp/instructions.py`, qui RÉSOUT les instructions
 à l'appel ; ici c'est le store.
 
+**Ce module sert le plan CONTENU** : la procédure qu'on lit, écrit, versionne et
+archive, à la clé `(owner_type, owner_id, slug)`. La procédure comme **ressource
+possédée** — identité par `id` surrogate, copie, déplacement, inventaires de
+gouvernance (ADR 0030) — vit chez `instruction_ownership.py`, séparée le
+01/09/2026 parce que ce fichier butait sur le plafond de 500 lignes. Les deux
+plans étaient déjà distincts en DROITS (`can_access` vs `can_govern`) ; ils le
+sont maintenant en fichiers.
+
 Feuille du package : n'importe aucun de ses frères — ni `group_store`, qui dépend
 de lui (l'org parente d'une équipe se lit en SQL direct sur `org_groups`, même
 parti pris que l'invariant org↔groupe dans `members.py`).
@@ -357,143 +365,3 @@ def delete_instruction(owner_type: str, owner_id: int | str, slug: str) -> bool:
                 (otype, oid, slug),
             )
     return removed
-
-
-# --- guide = ressource possédée (ADR 0030, épic « couverture des autres types »,
-# livraison de projet #52) : l'identité PUBLIQUE d'un guide est son `id` surrogate
-# (ADR 0032 « stop using slug ») ; son propriétaire est porté par `owner_type/owner_id`.
-# Ces fonctions alimentent le kind `doctrine` d'`ownership.py` + la cascade de
-# livraison d'un projet (`oto_resource`).
-
-def get_instruction_by_id(instruction_id: int) -> Optional[dict]:
-    """Une instruction par son id surrogate (identité publique). None si absente."""
-    with _connect() as conn:
-        row = conn.execute(
-            "SELECT id, org_id, owner_type, owner_id, slug, title, description, body_md, "
-            "slots, version, set_by, created_at, updated_at "
-            "FROM org_instructions WHERE id = %s",
-            (instruction_id,),
-        ).fetchone()
-        return dict(row) if row else None
-
-
-def _free_instruction_slug(conn, owner_type: str, owner_id: int | str, slug: str) -> str:
-    """Slug libre chez `(owner_type, owner_id)` : le slug tel quel, sinon suffixé
-    (-2, -3…). On ne remplace JAMAIS une procédure existante de la cible.
-
-    ⚠️ La sonde porte sur la clé d'unicité RÉELLE `(owner_type, owner_id, slug)`.
-    Jusqu'au 31/08/2026 elle sondait `owner_type='org' AND org_id=%s` : tant que
-    `owner_id = org_id::text` les deux coïncident, mais une seule ligne d'un autre
-    palier (ou d'une autre org parente) suffisait à faire répondre « libre » — et
-    l'`ON CONFLICT DO UPDATE` qui suit ÉCRASAIT la procédure en place, sans un mot.
-
-    Les RÉVISIONS sont sondées aussi : elles portent la même clé (+ version), donc un
-    slug libre côté table vivante mais pris côté historique ferait échouer l'insertion
-    du snapshot — et un déplacement ne peut pas emmener son historique sur une
-    collision."""
-    otype, oid = _owner(owner_type, owner_id)
-    candidate = slug
-    for i in range(2, 100):
-        taken = conn.execute(
-            f"SELECT 1 FROM org_instructions WHERE {_OWNER_WHERE} AND slug = %s "
-            "UNION ALL "
-            f"SELECT 1 FROM org_instruction_revisions WHERE {_OWNER_WHERE} AND slug = %s "
-            "LIMIT 1",
-            (otype, oid, candidate) * 2,
-        ).fetchone()
-        if taken is None:
-            return candidate
-        candidate = f"{slug}-{i}"
-    raise ValueError(f"aucun slug libre dérivé de `{slug}` chez {owner_type} {owner_id}")
-
-
-def copy_instruction_to_owner(instruction_id: int, owner_type: str, owner_id: int | str,
-                              set_by: Optional[str] = None) -> dict:
-    """Copie une procédure chez un AUTRE propriétaire (livraison par transfert de
-    projet, #52) : nouvelle procédure v1 chez la cible (slug suffixé si pris — jamais
-    d'écrasement), l'originale reste intacte chez la source. Renvoie
-    {id, slug, owner_type, owner_id, org_id} de la copie."""
-    otype, oid = _owner(owner_type, owner_id)
-    src = get_instruction_by_id(instruction_id)
-    if src is None:
-        raise ValueError(f"procédure #{instruction_id} introuvable")
-    with _connect() as conn:
-        dest_slug = _free_instruction_slug(conn, otype, oid, src["slug"])
-    set_instruction(otype, oid, dest_slug, src["body_md"],
-                    title=src.get("title"), description=src.get("description"),
-                    set_by=set_by, slots=src.get("slots") or [])
-    created = get_instruction(otype, oid, dest_slug)
-    return {"id": created["id"], "slug": dest_slug, "owner_type": otype,
-            "owner_id": oid, "org_id": created["org_id"]}
-
-
-def move_instruction(instruction_id: int, new_owner_type: str,
-                     new_owner_id: int | str) -> str:
-    """DÉPLACE une procédure d'un palier à l'autre — org ↔ équipe (#681).
-
-    L'`id` surrogate NE BOUGE PAS : c'est lui que `project_links.target_ref` et
-    `resource_grants.resource_id` désignent, donc c'est lui qui fait survivre le lien
-    de projet et les partages au déplacement. Les RÉVISIONS suivent dans la MÊME
-    transaction : une procédure et son historique ne se séparent pas (le chemin
-    précédent les déplaçait dans une seconde connexion et, sur collision, laissait
-    l'historique chez la source en n'écrivant qu'un warning — 26 versions perdues de
-    vue pour un slug déjà pris). Slug suffixé si pris chez la cible (sur la table
-    vivante ET l'historique). Renvoie le slug final."""
-    otype, oid = _owner(new_owner_type, new_owner_id)
-    src = get_instruction_by_id(instruction_id)
-    if src is None:
-        raise ValueError(f"procédure #{instruction_id} introuvable")
-    prev = (str(src["owner_type"]), str(src["owner_id"]))
-    if prev == (otype, oid):
-        return src["slug"]
-    with _connect() as conn:
-        with conn.transaction():
-            org_id = _parent_org_id(conn, otype, oid)
-            dest_slug = _free_instruction_slug(conn, otype, oid, src["slug"])
-            conn.execute(
-                "UPDATE org_instruction_revisions SET owner_type = %s, owner_id = %s, "
-                f"org_id = %s, slug = %s WHERE {_OWNER_WHERE} AND slug = %s",
-                (otype, oid, org_id, dest_slug, prev[0], prev[1], src["slug"]),
-            )
-            cur = conn.execute(
-                "UPDATE org_instructions SET owner_type = %s, owner_id = %s, org_id = %s, "
-                "slug = %s, updated_at = NOW() WHERE id = %s",
-                (otype, oid, org_id, dest_slug, instruction_id),
-            )
-            if (cur.rowcount or 0) != 1:
-                raise ValueError(f"procédure #{instruction_id} introuvable")
-    return dest_slug
-
-
-def list_instructions_for_owners(owners: list[tuple[str, str]]) -> list[dict]:
-    """Procédures (hors base) des propriétaires donnés — plan GOUVERNANCE
-    (métadonnées + propriétaire, sans body). Alimente
-    `oto_resource(op=list, resource_type='doctrine')`."""
-    if not owners:
-        return []
-    clause = " OR ".join([f"({_OWNER_WHERE})"] * len(owners))
-    params: tuple = tuple(str(x) for pair in owners for x in pair) + (BASE_SLUG,)
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, org_id, owner_type, owner_id, slug, title, description, "
-            f"version, updated_at FROM org_instructions WHERE ({clause}) AND slug <> %s "
-            # Archivée = hors service : elle ne se propose plus comme ressource
-            # à lier à un projet.
-            "AND archived_at IS NULL ORDER BY owner_type, owner_id, slug",
-            params,
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-
-def list_all_instructions() -> list[dict]:
-    """Toutes les procédures nommées, TOUS paliers (vue opérateur plateforme —
-    gouvernance). Le filtre `owner_type='org'` d'avant #681 cachait à l'opérateur
-    exactement les lignes qu'il est là pour voir."""
-    with _connect() as conn:
-        rows = conn.execute(
-            "SELECT id, org_id, owner_type, owner_id, slug, title, description, "
-            "version, updated_at FROM org_instructions WHERE slug <> %s "
-            "ORDER BY org_id, owner_type, owner_id, slug",
-            (BASE_SLUG,),
-        ).fetchall()
-        return [dict(r) for r in rows]

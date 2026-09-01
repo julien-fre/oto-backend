@@ -138,7 +138,10 @@ PLAFONDS: dict[str, int] = {
     #   des DONNÉES écrites, pas des noms.
     "oto_mcp/db/nodes.py": 2,
     "oto_mcp/db/shell.py": 2,
-    "oto_mcp/org_store/instructions.py": 2,
+    # Les 2 occurrences ont SUIVI leur code : `org_store/instructions.py` est passé à
+    # 0 le 01/09/2026 quand le plan GOUVERNANCE en est sorti (issue `oto`#27). Total
+    # inchangé — un déplacement, pas un ajout ni un remboursement.
+    "oto_mcp/org_store/instruction_ownership.py": 2,
     "oto_mcp/ownership.py": 1,
     # — Colonne `runs.doctrine`, clé `doctrine_version` des args journalisés, alias
     #   SQL `AS doctrine`/`AS doctrines` (donc clés de réponse).

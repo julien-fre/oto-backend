@@ -11,18 +11,21 @@ près, et aucun appelant n'a bougé.
     settings      les réglages en colonne JSONB : redaction, email, MFA
     personal      l'org perso (`personal_of`) + le rattrapage de boot
     invitations   plateforme / org / équipe : émission, listing, acceptation
-    instructions  les procédures d'org (`org_instructions`), versionnées
+    instructions  les procédures (`org_instructions`) versionnées — plan CONTENU
+    instruction_ownership  les mêmes, plan GOUVERNANCE (ADR 0030) : identité par
+                  `id` surrogate, copie, déplacement, inventaires
     library       la bibliothèque publique de guides (vue `guide_library`)
 
 Le graphe interne est un **DAG à deux étages**, sans cycle possible :
 
     étage 0 (feuilles) : orgs   members   vault   settings   instructions
-                          │  ╲   ╱   │                          │
-    étage 1              │   ╳      │                          │
-                       personal  invitations                library
+                          │  ╲   ╱   │                        │      │
+    étage 1              │   ╳      │                         │      │
+                       personal  invitations       instruction_ownership  library
 
 soit `personal → {orgs, members}`, `invitations → {orgs, members}`,
-`library → instructions`. Les feuilles n'importent aucun frère.
+`library → instructions`, `instruction_ownership → instructions`. Les feuilles
+n'importent aucun frère.
 
 ⚠️ **Aucun module du package n'importe `group_store`** (qui, lui, dépend
 d'org_store — l'importer ici ferait le cycle). L'invariant org↔groupe est tenu en
@@ -56,6 +59,7 @@ import sys as _sys
 from types import ModuleType as _ModuleType
 
 from . import (  # noqa: F401  (ré-exportés en masse ci-dessous)
+    instruction_ownership,
     instructions,
     invitations,
     library,
@@ -70,7 +74,8 @@ from . import (  # noqa: F401  (ré-exportés en masse ci-dessous)
 # `_connect`, importé par les 8). Sert au ré-export ET au report d'écriture.
 _OWNERS: dict = {}
 _g = globals()
-for _mod in (orgs, members, vault, settings, personal, invitations, instructions, library):
+for _mod in (orgs, members, vault, settings, personal, invitations, instructions,
+             instruction_ownership, library):
     for _name in dir(_mod):
         if not _name.startswith("__"):
             _g[_name] = getattr(_mod, _name)
