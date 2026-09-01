@@ -17,7 +17,11 @@ balayer ce qu'une session tuée a laissé (`pytest_sessionstart`).
 Ce fichier porte aussi le **forçage du pin oto-core** (`_oto_core_pin.py`) : quand
 le venv n'exécute pas le tag qu'épingle le manifeste, la suite le DIT en bannière
 — aux deux bouts du run — au lieu de laisser des rouges fidèles au venv passer
-pour des rouges du dépôt.
+pour des rouges du dépôt. ⚠️ **La bannière ne survit pas à un `| grep passed`**
+(#790, elle est écrite à côté de la ligne qui contient ce mot) : c'est pourquoi
+`pytest_report_teststatus` ci-dessous range EN PLUS ces skips sous une catégorie
+parlante, directement dans le résumé final de pytest — la ligne qui, elle,
+survit au filtre parce qu'elle contient déjà « passed ».
 """
 from __future__ import annotations
 
@@ -30,7 +34,8 @@ from typing import Iterator, NamedTuple, Optional
 
 import pytest
 
-from _oto_core_pin import (MARQUEUR, ecart, lignes_de_banniere, skips_autorises)
+from _oto_core_pin import (MARQUEUR, categorie_non_concluante, ecart,
+                           lignes_de_banniere, skips_autorises)
 from _pg_hygiene import Guard, docker_available, run_args, sweep_orphans
 
 
@@ -73,6 +78,29 @@ def pytest_collection_modifyitems(config: pytest.Config, items) -> None:
     for item in vises:
         item.add_marker(marque)
     config.stash_oto_core_skips = len(vises)   # type: ignore[attr-defined]
+
+
+def pytest_report_teststatus(report: pytest.TestReport, config: pytest.Config
+                              ) -> tuple[str, str, str] | None:
+    """#790 — le nombre survit déjà à `| grep passed` (il vit dans la MÊME ligne
+    que ce mot) ; ce qui lui manquait, c'est une phrase. On ne rajoute pas une
+    ligne (filtrable, comme la bannière) : on renomme la CATÉGORIE sous laquelle
+    pytest compte ces skips précis, donc le nom change directement dans le
+    résumé final que pytest imprime de toute façon.
+
+    Seuls les skips posés par `pytest_collection_modifyitems` ci-dessus
+    (marqueur `MARQUEUR`, phase setup) migrent vers cette catégorie — un skip
+    ORDINAIRE (docker absent, etc.) reste compté sous « skipped » : le but est
+    de séparer les deux effectifs, pas de maquiller l'un en l'autre.
+    """
+    if report.when != "setup" or not report.skipped:
+        return None
+    if MARQUEUR not in report.keywords:
+        return None
+    e = _ecart_de_session()
+    if e is None:
+        return None
+    return categorie_non_concluante(e), "s", "NON CONCLUANT"
 
 
 def _ecrire_banniere(reporter, config) -> None:
