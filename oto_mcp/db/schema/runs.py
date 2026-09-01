@@ -76,7 +76,10 @@ CREATE TABLE IF NOT EXISTS run_messages (
 -- pour que le prochain opérateur reçoive la puissance AVEC les leçons.
 --
 -- `namespace` + `row_filter` = la CIBLE, constatée au lancement et jamais
--- supposée. Un tableau copié hérite du périmètre de sa source : l'ordonnanceur
+-- supposée — et FIGÉE ensuite. Une cible mutable ne se contente pas d'ouvrir un
+-- geste dangereux : elle rend toute mesure INATTRIBUABLE, puisqu'un relevé de
+-- coût ou d'avancement ne dit plus sur quoi il a porté. Viser autre chose se fait
+-- en DUPLIQUANT la flotte, jamais en la faisant basculer. Un tableau copié hérite du périmètre de sa source : l'ordonnanceur
 -- annonce alors « plus de ligne à réserver » sur cent lignes disponibles — le
 -- message le plus trompeur de la chaîne, il décrit une file vide quand la file
 -- est pleine et la porte fermée.

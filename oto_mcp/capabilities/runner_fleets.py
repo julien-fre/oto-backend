@@ -18,9 +18,22 @@ n'est pas restreindre : c'est donner un domicile.
 
 ⚠️ **La CIBLE ne se modifie pas.** `namespace` et `row_filter` sont figés à la
 déclaration : rediriger un passage en vol vers un autre tableau est précisément
-ce contre quoi la déclaration existe. Un autre tableau, c'est une autre flotte —
-et cette frontière compte d'autant plus que les bancs d'essai et la production
-d'un client ne vivent pas dans la même org.
+ce contre quoi la déclaration existe. La frontière compte d'autant plus que les
+bancs d'essai et la production d'un client ne vivent pas dans la même org.
+Et il y a une raison de plus, qui vaut même sans malveillance : **une cible
+mutable rend toute mesure INATTRIBUABLE.** Un relevé de coût ou d'avancement ne
+veut plus rien dire si la cible a bougé entre le lancement et la lecture, et
+personne ne peut savoir après coup laquelle il a mesurée. Le besoin légitime de
+viser autre chose se règle comme partout ailleurs : **on duplique, on ne fait pas
+basculer** — une nouvelle flotte, pas une flotte modifiée.
+
+⚠️ **Ni lancer ni ARRÊTER.** Cette capacité déclare et lit ; les deux gestes qui
+agissent sur un passage en cours restent dehors. Ce n'est pas un oubli : les deux
+faces d'une capacité aboutissent au même handler et doivent se comporter pareil,
+donc servir `stop` ici le rendrait appelable par un AGENT — qui pourrait arrêter
+le passage qui le fait tourner, ou celui d'un autre. Arrêter est le geste
+symétrique de lancer : ils entreront ensemble, quand la question de qui a le
+droit sera tranchée.
 """
 from __future__ import annotations
 
@@ -33,11 +46,8 @@ from ._authz import ORG_MEMBER
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
 
-_ARRETS = ("stopped", "done", "failed")
-
-
 class FleetInput(BaseModel):
-    op: Literal["create", "list", "get", "state", "update", "stop"]
+    op: Literal["create", "list", "get", "state", "update"]
     fleet_id: Optional[int] = None
     status: Optional[str] = None
     # create —
@@ -56,8 +66,6 @@ class FleetInput(BaseModel):
     max_cost_usd: Optional[float] = None
     max_consecutive_failures: Optional[int] = None
     max_tokens_per_row: Optional[int] = None
-    # stop —
-    reason: Optional[str] = None
 
 
 class Fleet(BaseModel):
@@ -158,13 +166,6 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
         return etat
 
-    if inp.op == "stop":
-        f = db.set_status(inp.fleet_id, ctx.org_id, "stopped",
-                          inp.reason or "arrêt demandé")
-        if not f:
-            raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
-        return {"fleet": f}
-
     # update — partiel, et jamais sur la cible ni sur l'état.
     champs: dict[str, Any] = {c: getattr(inp, c) for c in db.CHAMPS_MODIFIABLES
                               if getattr(inp, c) is not None}
@@ -195,14 +196,14 @@ CAPABILITIES += [
             "`namespace` + `row_filter`, execution context `provider`/`model`, and "
             "limits `max_rows` / `max_cost_usd` / `max_consecutive_failures` / "
             "`max_tokens_per_row`) / list (optionally filtered by `status`) / get / "
-            "state / update / stop. op=state returns the pass PROGRESS aggregated "
+            "state / update. op=state returns the pass PROGRESS aggregated "
             "over its jobs — pending, claimed, done, failed, abandoned, tokens "
             "consumed, largest single row — and says `aucun_travail_rattache` "
             "explicitly rather than returning zeros you would read as 'nothing "
             "happened'. The TARGET is frozen at declaration: redirecting a running "
             "pass to another table is what declaring exists to prevent — declare "
-            "another fleet instead. Launching belongs to the scheduler; this "
-            "capability declares, reads and stops."
+            "another fleet instead — duplicate, never switch. Launching AND stopping "
+            "belong to the scheduler: this capability declares and reads only."
         ),
     ),
 ]

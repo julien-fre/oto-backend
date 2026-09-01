@@ -120,6 +120,19 @@ def test_les_operations_de_lecture_existent_avant_tout_lancement():
     assert "launch" not in ops and "start" not in ops
 
 
+def test_ni_lancer_ni_arreter_ne_sont_servis_ici():
+    """Arrêter est le geste SYMÉTRIQUE de lancer, et il doit sortir par la même
+    porte. Les deux faces d'une capacité aboutissent au même handler et doivent se
+    comporter pareil : servir `stop` ici le rendrait appelable par un AGENT, qui
+    pourrait arrêter le passage qui le fait tourner — ou celui d'un autre."""
+    ops = set(RF.FleetInput.model_fields["op"].annotation.__args__)
+    assert "stop" not in ops
+    # la mécanique existe au niveau de la donnée, pour l'ordonnanceur — c'est la
+    # SURFACE agent qui ne la sert pas.
+    from oto_mcp import db
+    assert callable(db.set_status)
+
+
 def test_une_flotte_est_org_scopee():
     with pytest.raises(AuthzDenied) as e:
         _appel(ResolvedCtx(sub="alexis", org_id=None), op="list")
