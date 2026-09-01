@@ -323,30 +323,34 @@ def test_la_chaine_vide_sur_un_champ_deja_vide_ne_dit_rien(table):
     assert "valeurs_ignorees" not in st.off_schema_report()
 
 
-def test_la_chaine_vide_nefface_pas_non_plus_par_id(table):
+def test_la_chaine_vide_SEULE_par_id_est_une_declaration_et_efface(table):
     """L'autre chemin d'écriture. Les deux ont déjà divergé une fois sur cette
     famille de règles (#322), et c'est le patch par `id` qui est le geste le plus
     courant d'un agent : une règle câblée d'un seul côté ne protège personne.
 
-    ⚠️ Le vide est ici TOUT le geste : depuis #724 il n'est plus accepté-et-relevé,
-    il est REFUSÉ en nommant le champ et `null` — une écriture qui ne poserait rien
-    ne doit pas répondre comme un succès. Ce que le test verrouille n'a pas changé :
-    la valeur en place survit."""
+    ⚠️ Le vide est ici TOUT le geste, et depuis #724 c'est ce qui décide : rien
+    d'autre n'est posé, donc c'est une DÉCLARATION et elle prend effet. Le cas du
+    gabarit — un vide au milieu d'autres colonnes — est le test suivant, et c'est lui
+    qui porte l'invariant de #608."""
     st, ns, ns_id, rid = table
 
-    with pytest.raises(ValueError) as exc:
-        st.update_row(ns, rid, {"origine_ligne": ""})
+    st.update_row(ns, rid, {"origine_ligne": ""})
 
-    assert "origine_ligne" in str(exc.value) and "null" in str(exc.value), exc.value
-    assert _donnees(ns_id, rid).get("origine_ligne") == "fichier-client", \
-        "un refus n'écrit rien — surtout pas l'effacement qu'il refuse"
+    assert _donnees(ns_id, rid).get("origine_ligne") == "", \
+        "un vide seul déclare : le refuser rendait impossible de vider un champ"
+    effaces = st.off_schema_report().get("valeurs_effacees")
+    assert effaces and effaces[0]["champ"] == "origine_ligne", \
+        f"un effacement muet ne se retrouve pas : {st.off_schema_report()}"
+    assert effaces[0]["valeur"] == "fichier-client", "et il dit ce qu'il a emporté"
 
 
 def test_la_chaine_vide_ACCOMPAGNEE_est_preservee_et_relevee_par_id_aussi(table):
-    """Le pendant du refus, sur le même chemin : dès que l'écriture pose autre chose,
-    c'est un gabarit à demi peuplé — le geste dominant des flottes — et #608
-    s'applique tel quel. C'est cette moitié-là qu'il ne faut pas emporter en fermant
-    l'autre : un refus qui mordrait ici arrêterait les campagnes."""
+    """LE test qui porte #608 sur ce chemin, et il vaut 104 appels par mois.
+
+    Dès que l'écriture pose autre chose, c'est un gabarit à demi peuplé — le geste
+    dominant des flottes, 98 % des écritures à liste vide mesurées sur 30 jours au
+    2026-09-01 — et la valeur en place survit. Élargir l'effacement du vide SEUL
+    (#724) à cette forme détruirait 104 valeurs clientes par mois."""
     st, ns, ns_id, rid = table
 
     st.update_row(ns, rid, {"origine_ligne": "", "raison_sociale": "ACME"})
