@@ -121,8 +121,11 @@ def _message_du_500_cognism() -> str:
 # --- ① le schéma servi nomme les champs que Kaspr accepte VRAIMENT -------------
 
 def test_le_schema_servi_nomme_les_trois_champs_kaspr():
+    """Les trois de l'enum publié par Kaspr — pas ceux de notre ancienne docstring.
+    C'est une docstring non vérifiée qui a produit l'incident : la source du texte
+    servi est désormais le contrat du fournisseur."""
     desc = _schema_servi()["properties"]["data_to_get"]["description"]
-    for champ in ("workEmail", "personalEmail", "phone"):
+    for champ in ("workEmail", "directEmail", "phone"):
         assert champ in desc, f"`{champ}` absent du texte servi : {desc!r}"
 
 
@@ -154,7 +157,7 @@ def test_le_500_kaspr_nomme_les_deux_fautes_dentree_atteignables():
     msg = _message_du_500_kaspr()
     assert "slug" in msg.lower(), msg
     assert "data_to_get" in msg, msg
-    for champ in ("workEmail", "personalEmail", "phone"):
+    for champ in ("workEmail", "directEmail", "phone"):
         assert champ in msg, msg
 
 

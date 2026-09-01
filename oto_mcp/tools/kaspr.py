@@ -58,9 +58,9 @@ def register(mcp: FastMCP) -> None:
                 slug is extracted automatically. NOT a name or a search query.
             name: Optional fallback name if the slug alone is ambiguous.
             with_phone: Request mobile/work phones (extra credits cost).
-            data_to_get: Kaspr field names, exactly "workEmail",
-                "personalEmail" and/or "phone" — Kaspr answers 500 on any other
-                name. Omitted, the call asks for ["workEmail", "phone"] — NOT
+            data_to_get: Kaspr field names, from its own enum — "workEmail",
+                "directEmail", "phone". Kaspr answers 500 on a name it does not
+                know. Omitted, the call asks for ["workEmail", "phone"] — NOT
                 every field.
         """
         client, is_platform = _client()
@@ -103,7 +103,7 @@ def register(mcp: FastMCP) -> None:
                 msg = (f"Kaspr a rendu une erreur serveur ({status}) — ce qu'il rend "
                        "AUSSI sur une requête malformée. Vérifie `linkedin_id` (slug "
                        "nu ou URL de profil, jamais un nom ni une recherche) et "
-                       "`data_to_get` (seuls workEmail, personalEmail et phone "
+                       "`data_to_get` (seuls workEmail, directEmail et phone "
                        "existent). Si l'entrée est correcte : une seule nouvelle "
                        "tentative, différée.")
             else:
