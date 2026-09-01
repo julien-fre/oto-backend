@@ -69,7 +69,7 @@ def _need(val, code: str, msg: str):
 
 
 class ProcedureInput(BaseModel):
-    op: Literal["get", "list", "create", "set", "delete",
+    op: Literal["get", "list", "create", "set", "describe", "delete",
                 "library_list", "library_get", "publish", "fork", "unpublish"]
     slug: Optional[str] = None
     guide_id: Optional[int] = None         # get : lecture par ID STABLE (ADR 0032)
@@ -79,8 +79,8 @@ class ProcedureInput(BaseModel):
     with_history: bool = False             # get
     query: Optional[str] = None            # list / library_list
     body_md: Optional[str] = None          # set
-    title: Optional[str] = None            # set / publish
-    description: Optional[str] = None      # set / publish
+    title: Optional[str] = None            # set / describe / publish
+    description: Optional[str] = None      # set / describe / publish
     from_version: Optional[int] = None     # set (revert)
     # set : verrou OPTIMISTE (#662) — la version lue par l'appelant. Différente de la
     # courante ⟹ 409 `version_conflict`, l'écriture n'a pas lieu.
@@ -118,6 +118,12 @@ async def _procedure(ctx: ResolvedCtx, inp: ProcedureInput) -> dict:
             description=inp.description, from_version=inp.from_version,
             expected_version=inp.expected_version,
             slots=inp.slots, org=inp.org, scope=inp.scope, group=inp.group))
+    if inp.op == "describe":
+        return oi._describe_instruction(ctx, oi.ConsoleInstrDescribeInput(
+            slug=_need(inp.slug, "missing_slug", "`slug` requis pour describe."),
+            title=inp.title, description=inp.description,
+            expected_version=inp.expected_version,
+            org=inp.org, scope=inp.scope, group=inp.group))
     if inp.op == "delete":
         return oi._delete_instruction(ctx, oi.ConsoleGuideDeleteInput(
             slug=_need(inp.slug, "missing_slug", "`slug` requis pour delete."),
@@ -153,7 +159,11 @@ CAPABILITIES += [
             "get": _LIRE, "list": _LIRE,
             # `create` partage la garde de `set` : créer n'est pas plus dangereux
             # qu'écrire — c'est le geste qui l'était trop peu, faute de savoir refuser.
-            "create": _ECRIRE, "set": _ECRIRE, "delete": _SUPPRIMER,
+            # `describe` partage la garde de `set` : corriger la vitrine est une
+            # écriture, réversible de la même façon (la version monte, `from_version`
+            # défait). Rien n'y justifierait un palier de droits différent.
+            "create": _ECRIRE, "set": _ECRIRE, "describe": _ECRIRE,
+            "delete": _SUPPRIMER,
             "library_list": SUB_ONLY, "library_get": SUB_ONLY,
             "publish": ORG_MEMBER, "fork": ORG_MEMBER, "unpublish": SUB_ONLY,
         }),
@@ -186,7 +196,13 @@ CAPABILITIES += [
             "one. The response carries `diagram_warning` when the body has none. "
             "`from_version` "
             "restores; `slots` = required entities referenced <slot:name> in the prose; `org` "
-            "pins an explicit org id) / delete (exact `slug`; same `scope`/`group`/`org` "
+            "pins an explicit org id) "
+            "/ describe (fix `title` and/or `description` ALONE — the body is carried "
+            "over untouched. Use this for a stale catalog line instead of re-sending the "
+            "whole body through `set`, which risks degrading prose you did not mean to "
+            "edit. Same `scope`/`group`/`org` axes and same permission as `set`; still "
+            "versioned, so `from_version` undoes it) "
+            "/ delete (exact `slug`; same `scope`/`group`/`org` "
             "axes as set, but DESTRUCTIVE — it takes the whole version history, so "
             "`scope='group'` needs the team LEAD) — and the PUBLIC library: "
             "op=library_list (browse/search, filter category/author_kind) / library_get (full "

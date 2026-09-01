@@ -54,6 +54,26 @@ anti-écrasement (`InstructionExists`, `InstructionVersionConflict`) qu'un front
 a payés en découvrant qu'une création sur un slug pris remplaçait la procédure en
 place sans un mot. Ils vivent dans le store, sous le verrou advisory, parce que
 n'importe quel pré-check posé dehors laisserait passer deux créations simultanées.
+
+⚠️ **Mise à jour du 01/09/2026 (issue `oto`#27)** — une couture de PLUS dans le
+package : `instructions.py` touchait 499 lignes pour un plafond de 500 (le lot
+précédent avait raboté sa prose pour y tenir), donc plus rien ne pouvait s'y
+ajouter. Le fichier est coupé en deux sur la frontière qu'il portait déjà en
+bannière de section, et qui est celle d'ADR 0030 : `instructions` sert le plan
+CONTENU (lire / écrire / versionner / archiver, à la clé
+`(owner_type, owner_id, slug)`), `instruction_ownership` sert le plan GOUVERNANCE
+(identité par `id` surrogate, copie, déplacement, inventaires). Ce sont deux
+DROITS distincts depuis ADR 0030 (`can_access` vs `can_govern`) ; ce sont
+maintenant deux fichiers.
+
+**Déplacement pur, et c'est vérifiable** : `FROZEN` ne perd pas une ligne, aucune
+signature ne bouge, et les six noms déplacés (`get_instruction_by_id`,
+`_free_instruction_slug`, `copy_instruction_to_owner`, `move_instruction`,
+`list_instructions_for_owners`, `list_all_instructions`) restent servis en
+`org_store.<fn>` par le ré-export — c'est exactement ce que
+`test_aucun_nom_perdu` prouve ici. Le seul changement de forme est interne : les
+références croisées passent désormais par `instructions.<nom>`, la seule forme
+que `test_aucun_frere_importe_a_plat` admet.
 """
 from __future__ import annotations
 
@@ -65,14 +85,15 @@ import oto_mcp.org_store as org_store
 
 PKG = pathlib.Path(org_store.__file__).parent
 
-# Les 8 coutures, dans l'ordre du graphe (feuilles d'abord).
+# Les 9 coutures, dans l'ordre du graphe (feuilles d'abord).
 MODULES = ("orgs", "members", "vault", "settings", "instructions",
-           "personal", "invitations", "library")
+           "instruction_ownership", "personal", "invitations", "library")
 
 # Arêtes ATTENDUES du graphe interne : module -> modules frères importés.
 EXPECTED_EDGES = {
     "orgs": set(), "members": set(), "vault": set(), "settings": set(),
     "instructions": set(),
+    "instruction_ownership": {"instructions"},
     "personal": {"orgs", "members"},
     "invitations": {"orgs", "members"},
     "library": {"instructions"},
