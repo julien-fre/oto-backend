@@ -168,7 +168,7 @@ en partie non francophones).
     dériver `dest_sub`/le front. `type_label` (« projet »/« project ») est choisi
     ICI, à la source (`_TYPE_LABELS` / `_TYPE_LABELS_EN`) : le gabarit ne traduit
     JAMAIS un mot qu'on lui donne.
-  - `docs.py::_notify_cr_created` / `_notify_cr_resolved` — `db.get_user(sub)` par
+  - `capabilities/docs/notify.py::cr_created` / `cr_resolved` — `db.get_user(sub)` par
     destinataire (`_locale_of`, même patron que `_email_of`/`_brand_of`) : chaque
     validateur ou proposeur peut vivre sous une langue différente.
   - `usage.py::_notify_reporters` — jointe UNE fois dans

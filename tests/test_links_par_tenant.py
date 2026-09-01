@@ -126,9 +126,9 @@ def test_le_lien_dun_tableau_disparait_chez_un_partenaire_sans_tableaux(registre
 
 
 def test_le_lien_public_dune_page_disparait_de_meme(registre):
-    from oto_mcp.capabilities.docs import _public_doc_url
-    assert _public_doc_url("tok", "acme:u") is None
-    assert _public_doc_url("tok", "bn01jfy76a5n") == f"{config.dashboard_url()}/p/d/tok"
+    from oto_mcp.capabilities.docs.view import public_doc_url
+    assert public_doc_url("tok", "acme:u") is None
+    assert public_doc_url("tok", "bn01jfy76a5n") == f"{config.dashboard_url()}/p/d/tok"
 
 
 def test_des_patrons_illisibles_valent_aucun_lien():

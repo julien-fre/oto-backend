@@ -35,8 +35,9 @@ import json
 
 import pytest
 
-from oto_mcp.capabilities import docs as D
+from oto_mcp import db, ownership
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
+from oto_mcp.capabilities.docs import core as D, view as docs_view
 
 CTX = ResolvedCtx(sub="u1", org_id=None)
 
@@ -70,20 +71,20 @@ def _page(body: str, doc_id: int = 662) -> dict:
 def seams(monkeypatch):
     """Le chemin réel d'une écriture, avec un corps de taille réaliste."""
     etat = {"body": GROS}
-    monkeypatch.setattr(D.ownership, "can_access", lambda sub, t, rid, want="read": True)
-    monkeypatch.setattr(D, "_public_doc_url", lambda tok, sub=None: None)
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda i: _page(etat["body"], i))
-    monkeypatch.setattr(D.db, "doc_rev", lambda t, b: "9f2c41a")
-    monkeypatch.setattr(D.db, "log_project_activity", lambda *a, **k: None)
-    monkeypatch.setattr(D.db, "list_doc_revisions", lambda did, limit=50: [])
-    monkeypatch.setattr(D.db, "move_doc", lambda did, p, position=None: None)
+    monkeypatch.setattr(ownership, "can_access", lambda sub, t, rid, want="read": True)
+    monkeypatch.setattr(docs_view, "public_doc_url", lambda tok, sub=None: None)
+    monkeypatch.setattr(db, "get_doc_by_id", lambda i: _page(etat["body"], i))
+    monkeypatch.setattr(db, "doc_rev", lambda t, b: "9f2c41a")
+    monkeypatch.setattr(db, "log_project_activity", lambda *a, **k: None)
+    monkeypatch.setattr(db, "list_doc_revisions", lambda did, limit=50: [])
+    monkeypatch.setattr(db, "move_doc", lambda did, p, position=None: None)
 
     def _update(did, title=None, body_md=None, kind=None, edited_by=None,
                 description=None, expected_rev=None):
         if body_md is not None:
             etat["body"] = body_md
-    monkeypatch.setattr(D.db, "update_doc", _update)
-    monkeypatch.setattr(D.db, "create_doc",
+    monkeypatch.setattr(db, "update_doc", _update)
+    monkeypatch.setattr(db, "create_doc",
                         lambda pid, title, parent_id=None, body_md="", kind="doc",
                         created_by=None, description=None: 662)
     return etat
@@ -121,7 +122,7 @@ def test_le_budget_d_une_ecriture_ne_suit_PAS_la_taille_de_la_page(seams, monkey
     """L'invariant, mesuré : deux pages de tailles très différentes, deux accusés de
     taille quasi identique. Un corps réintroduit dans l'accusé fait exploser l'écart."""
     gros = D._doc(CTX, D.DocInput(op="update", doc_id=662, body_md=GROS))
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda i: _page(PETIT, i))
+    monkeypatch.setattr(db, "get_doc_by_id", lambda i: _page(PETIT, i))
     petit = D._doc(CTX, D.DocInput(op="update", doc_id=692, body_md=PETIT))
     assert abs(_taille(gros) - _taille(petit)) < 20      # seuls id/ids diffèrent
 
@@ -139,7 +140,7 @@ def test_le_patch_garde_son_avertissement_de_sous_sections_perdues(seams, monkey
     du signal #334 (un `replace` emporte les sous-sections) ne doit pas tomber avec le
     corps : c'est justement l'information qu'on ne peut PAS redécouvrir sans relire."""
     corps = "# T\n\n## A\n\nvieux\n\n### A1\n\nsous\n\n## B\n\nb\n"
-    monkeypatch.setattr(D.db, "get_doc_by_id", lambda i: _page(corps, i))
+    monkeypatch.setattr(db, "get_doc_by_id", lambda i: _page(corps, i))
     out = D._doc(CTX, D.DocInput(op="patch", doc_id=662, section="A", body_md="neuf"))
     assert out["removed_subsections"] == ["A1"] and "A1" in out["warning"]
     assert "body_md" not in out

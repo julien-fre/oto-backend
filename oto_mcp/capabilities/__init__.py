@@ -141,7 +141,7 @@ from . import shell  # noqa: F401 — me.shell (/shell v0, surface nœuds préco
 from . import node_edit  # noqa: F401 — me.node.edit (oto_node_edit)
 from . import node_view  # noqa: F401 — me.node (lecture d'un nœud, surface précoce)
 from . import node_rows  # noqa: F401 — me.node.rows (lignes d'un tableau, curseur)
-from . import docs  # noqa: F401 — me.doc (oto_doc, POST /api/me/docs) — pages d'un projet
+import oto_mcp.capabilities.docs.core  # noqa: F401 — me.doc (oto_doc, POST /api/me/docs) — pages d'un projet
 from . import uploads  # noqa: F401 — me.upload_url (oto_upload_url) — push out-of-bande de gros contenu (#105)
 # Journal de travail du datastore (ADR 0046 b4) — parcours d'une ligne + activité du tableau.
 import oto_mcp.capabilities.datastore.activity  # noqa: F401 — me.datastore.{row_activity,activity} (REST-only)
