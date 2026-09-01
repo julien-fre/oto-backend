@@ -54,13 +54,23 @@ def base_dun_passage_anterieur(pg_dsn):
         from oto_mcp.db import init_db
         init_db()
         with dbconn._connect() as c:
+            # ⚠️ L'état d'une base VIERGE se relève AVANT de remonter le temps, et
+            # c'est la moitié qui manquait : sur une base vierge, `fleet_id` naît du
+            # CREATE TABLE, donc l'`ALTER … ADD COLUMN IF NOT EXISTS` ne fait RIEN et
+            # n'a aucune occasion de poser sa FK. Retirer la FK inline du CREATE
+            # TABLE ne rougirait donc nulle part si on ne regardait que la base
+            # ramenée — le miroir exact du défaut d'origine.
+            vierge = {r["conname"] for r in c.execute(
+                "SELECT conname FROM pg_constraint "
+                "WHERE conrelid = 'runner_jobs'::regclass AND contype = 'f'"
+            ).fetchall()}
             # ── on remonte le temps : l'état d'une base d'AVANT ce lot ──────────
             # `runner_jobs` existe (donc son CREATE TABLE sera sauté au rejeu),
             # mais elle ne connaît pas encore la flotte.
             c.execute("DROP INDEX IF EXISTS idx_runner_jobs_fleet")
             c.execute("ALTER TABLE runner_jobs DROP COLUMN IF EXISTS fleet_id")
             c.commit()
-            yield c
+            yield c, vierge
     finally:
         if dbconn._pool is not None:
             dbconn._pool.close()
@@ -83,7 +93,7 @@ def test_la_base_de_depart_est_bien_celle_davant(base_dun_passage_anterieur):
     """L'épreuve ne vaut que si son point de départ est le bon : `runner_jobs`
     présente, `fleet_id` absente. Un test qui part d'une base déjà à jour passerait
     au vert sans rien prouver — c'est exactement le défaut qu'on corrige ici."""
-    c = base_dun_passage_anterieur
+    c, _ = base_dun_passage_anterieur
     cols = _colonnes(c, "runner_jobs")
     assert cols, "runner_jobs doit exister — sinon le CREATE TABLE la reposerait"
     assert "fleet_id" not in cols
@@ -94,12 +104,25 @@ def test_le_boot_passe_et_la_colonne_revient_par_l_alter(base_dun_passage_anteri
     `init_db()` ici avec `UndefinedColumn` — vérifié en réintroduisant la faute."""
     from oto_mcp.db import init_db
     init_db()
-    c = base_dun_passage_anterieur
+    c, _ = base_dun_passage_anterieur
     assert "fleet_id" in _colonnes(c, "runner_jobs")
     index = {r["indexname"] for r in c.execute(
         "SELECT indexname FROM pg_indexes WHERE tablename = 'runner_jobs'").fetchall()}
     assert "idx_runner_jobs_fleet" in index, (
         "l'index doit suivre l'ALTER dans `_init`, pas vivre dans le DDL")
+
+
+def test_la_cle_etrangere_existe_aussi_sur_une_base_VIERGE(base_dun_passage_anterieur):
+    """L'autre moitié, et elle ne se voit que relevée avant le retour en arrière.
+
+    Sur une base vierge la colonne naît du `CREATE TABLE` : l'`ALTER … IF NOT
+    EXISTS` ne s'applique pas, donc il ne pose pas sa FK. La contrainte doit donc
+    être portée AUX DEUX endroits — inline pour la base neuve, par l'`ALTER` pour
+    celle qui existe — et retirer l'une des deux ne rougit qu'ici."""
+    _, vierge = base_dun_passage_anterieur
+    assert any("fleet" in f for f in vierge), (
+        "aucune FK vers runner_fleets sur une base VIERGE — la contrainte inline du "
+        f"CREATE TABLE manque. Trouvées : {sorted(vierge)}")
 
 
 def test_la_cle_etrangere_voyage_avec_l_alter(base_dun_passage_anterieur):
@@ -108,7 +131,7 @@ def test_la_cle_etrangere_voyage_avec_l_alter(base_dun_passage_anterieur):
     et seule l'une des deux refuse un `fleet_id` qui ne désigne rien."""
     from oto_mcp.db import init_db
     init_db()
-    c = base_dun_passage_anterieur
+    c, _ = base_dun_passage_anterieur
     fks = {r["conname"] for r in c.execute(
         "SELECT conname FROM pg_constraint "
         "WHERE conrelid = 'runner_jobs'::regclass AND contype = 'f'").fetchall()}

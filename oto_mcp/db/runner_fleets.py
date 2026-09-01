@@ -11,6 +11,12 @@ l'appelant sait que le vide est constaté et non déduit. Un zéro qui peut voul
 dire « rien trouvé » ou « rien de mesurable » est le défaut le plus coûteux qu'on
 ait payé sur ce chantier.
 
+⚠️ **Tout compteur servi est CASTÉ en entier.** Une agrégation PostgreSQL rend
+volontiers un `numeric` là où on attend un entier (`SUM` sur un bigint), donc un
+`Decimal` que JSON refuse — et la réponse entière part en 500. Le défaut ne se
+voit pas en lisant un modèle : il faut sérialiser une vraie réponse
+(`tests/api/test_runner_fleets_rest.py`).
+
 ⚠️ **Le coût est rendu en JETONS, jamais en monnaie.** Les tarifs changent, ils
 diffèrent par fournisseur, et une valeur monétaire figée en base devient fausse
 sans que rien ne le dise. Ce qui est mesuré ici est ce que le worker a déclaré ;
@@ -177,8 +183,16 @@ def fleet_state(fleet_id: int, org_id: int) -> Optional[dict]:
                    COUNT(*) FILTER (WHERE status = 'failed')           AS failed,
                    COUNT(*) FILTER (WHERE status = 'failed'
                                       AND attempts >= max_attempts)    AS abandoned,
-                   COALESCE(SUM((result->>'usage_tokens')::bigint), 0) AS usage_tokens,
-                   MAX((result->>'usage_tokens')::bigint)              AS max_tokens_row,
+                   -- ⚠️ `SUM` sur un bigint rend un NUMERIC en PostgreSQL, donc un
+                   -- Decimal côté client — que rien ne normalise et que JSON refuse.
+                   -- Sans ce cast, `state` rendait 500 sur TOUTE flotte, y compris
+                   -- vierge (COALESCE rend `Decimal('0')`). `MAX` conserve le type,
+                   -- mais on le caste aussi : la symétrie évite qu'un futur passage
+                   -- de MAX à SUM réintroduise la panne sans qu'on y pense.
+                   COALESCE(SUM((result->>'usage_tokens')::bigint), 0)::bigint
+                       AS usage_tokens,
+                   MAX((result->>'usage_tokens')::bigint)::bigint
+                       AS heaviest_row_tokens,
                    MAX(finished_at)                                    AS last_finished
               FROM runner_jobs
              WHERE fleet_id = %s AND org_id = %s

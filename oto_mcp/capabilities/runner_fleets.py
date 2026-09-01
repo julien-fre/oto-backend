@@ -43,8 +43,13 @@ from pydantic import BaseModel
 
 from .. import db
 from ._authz import ORG_MEMBER
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
+                     RestBinding)
 from .registry import CAPABILITIES
+
+# Ce qui pilote l'appel plutôt que la configuration : jamais « posé » par `update`,
+# donc jamais compté comme un champ inerte par la garde du seam.
+_STRUCTURELS = frozenset({"op", "fleet_id"})
 
 class FleetInput(BaseModel):
     op: Literal["create", "list", "get", "state", "update"]
@@ -110,7 +115,7 @@ class FleetState(BaseModel):
     failed: Optional[int] = None
     abandoned: Optional[int] = None
     usage_tokens: Optional[int] = None
-    max_tokens_row: Optional[int] = None
+    heaviest_row_tokens: Optional[int] = None
     last_finished: Optional[str] = None
     no_jobs_attached: bool
 
@@ -190,6 +195,21 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
             "l'état d'un passage ne se pose pas par `update` — `status` ne sert ici "
             "qu'à FILTRER `list`. Démarrer et arrêter un passage appartiennent à "
             "l'ordonnanceur, et ne sont servis par aucune face de cette capacité.")
+    # ⚠️ La garde appartient au SEAM, pas au champ. Écrite champ par champ, elle
+    # oublie exactement ceux auxquels personne n'a pensé : `procedure` — ce que la
+    # flotte EXÉCUTE — et `project_id` rendaient 200 sans le moindre effet. Tout
+    # champ d'entrée qui n'est ni STRUCTUREL ni modifiable aboutit, ou se refuse ;
+    # et le refus vaut aussi pour ceux qu'on ajoutera à l'entrée demain.
+    fournis = {c for c, v in inp.model_dump(exclude_none=True).items()
+               if c not in _STRUCTURELS}
+    inertes = sorted(fournis - set(db.CHAMPS_MODIFIABLES))
+    if inertes:
+        raise AuthzDenied(
+            400, "field_not_settable",
+            f"`update` ne pose pas : {', '.join(inertes)}. Ces champs se déclarent "
+            "à la création et ne se retouchent pas — une autre valeur, c'est une "
+            "autre flotte. Les champs modifiables sont : "
+            f"{', '.join(db.CHAMPS_MODIFIABLES)}.")
     f = db.update_fleet(inp.fleet_id, ctx.org_id, champs)
     if not f:
         raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
@@ -204,6 +224,34 @@ CAPABILITIES += [
         Output=FleetOut,
         authz=ORG_MEMBER,
         mcp="oto_fleet",
+        # Les refus PUBLIÉS. Un dashboard doit pouvoir GRISER un champ plutôt que
+        # laisser tenter un geste qui sera refusé — c'est exactement ce qu'un front
+        # tiers n'a pas pu faire le 29/08 sur une borne qui n'était écrite nulle
+        # part de servi. ⚠️ Chacun est REJOUÉ sur la route servie
+        # (`tests/api/test_runner_fleets_rest.py`) : une déclaration sans rejeu
+        # promet un statut que le serveur ne rend peut-être pas.
+        errors=(
+            DeclaredError(400, "missing_fields",
+                          "`create` sans `label`/`procedure`/`tools`, ou opération "
+                          "sur une flotte sans `fleet_id`"),
+            DeclaredError(400, "target_incomplete",
+                          "`row_filter` sans `namespace` — un périmètre suppose un "
+                          "tableau"),
+            DeclaredError(400, "target_is_frozen",
+                          "`namespace`/`row_filter` après la déclaration : la cible "
+                          "d'un passage ne se déplace pas"),
+            DeclaredError(400, "context_is_frozen",
+                          "`provider`/`model` après la déclaration : les changer "
+                          "falsifierait l'attribution des lignes déjà écrites"),
+            DeclaredError(400, "status_not_settable",
+                          "`update status=` — l'état ne se pose pas par une "
+                          "retouche de configuration"),
+            DeclaredError(400, "field_not_settable",
+                          "`update` sur un champ déclaré à la création "
+                          "(`procedure`, `project_id`…)"),
+            DeclaredError(404, "fleet_not_found",
+                          "flotte inconnue dans l'org du porteur"),
+        ),
         rest=RestBinding(verb="POST", path="/api/me/runner/fleets"),
         description=(
             "Declared configuration of an agent PASS — what a fleet runs, on which "
@@ -215,7 +263,7 @@ CAPABILITIES += [
             "list (optionally filtered by `status`) / get / "
             "state / update. op=state returns the pass PROGRESS aggregated "
             "over its jobs — pending, claimed, done, failed, abandoned, tokens "
-            "consumed, largest single row — and says `no_jobs_attached` "
+            "consumed, heaviest single row — and says `no_jobs_attached` "
             "explicitly rather than returning zeros you would read as 'nothing "
             "happened'. The TARGET is frozen at declaration: redirecting a running "
             "pass to another table is what declaring exists to prevent; the "

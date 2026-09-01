@@ -34,8 +34,10 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   passage : procédure, cible (`namespace` + `row_filter`), contexte d'exécution
   (`provider`/`model`, uniforme sur le passage — c'est LUI qui porte l'attribution
   d'une ligne écrite, l'agent ne sait pas ce qui le fait tourner), bornes
-  d'exploitation (`max_rows`, `max_cost_usd`, `max_consecutive_failures`,
-  `max_tokens_per_row`), état + `stop_reason` ÉCRIT. `runner_jobs.fleet_id`
+  d'exploitation (`max_rows`, `max_tokens`, `max_consecutive_failures`,
+  `max_tokens_per_row` — le budget se compte en JETONS, jamais en monnaie : les
+  tarifs changent et une valeur monétaire figée en base devient fausse sans que
+  rien ne le dise), état + `stop_reason` ÉCRIT. `runner_jobs.fleet_id`
   rattache un travail à son passage. ⚠️ Une flotte vivait dans un YAML sur la
   machine : rien n'en était visible du dashboard ni atteignable par un agent.
   **Déclarer n'est pas restreindre — c'est donner un domicile aux gardes** : un
