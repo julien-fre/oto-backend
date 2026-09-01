@@ -29,7 +29,8 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   `/api/me/runner/jobs`) : claim SKIP LOCKED + bail re-claimable, backoff,
   `result` JSONB déclaré à la conclusion (usage_tokens, `tool_counts` — le
   « tour perdu », un agent qui analyse sans écrire, se lit au grain job),
-  op=list org-scopé (surveillance dashboard `/automations`).
+  op=list org-scopé (surveillance dashboard `/automations`), **paginé et
+  DISANT sa borne** — voir ci-dessous.
 - **flottes** `runner_fleets` (R4, 01/09/2026) — la CONFIGURATION DÉCLARÉE d'un
   passage : procédure, cible (`namespace` + `row_filter`), contexte d'exécution
   (`provider`/`model`, uniforme sur le passage — c'est LUI qui porte l'attribution
@@ -67,6 +68,39 @@ l'ordonnanceur. **« Rien ne tourne » ne se dit qu'après avoir constaté les d
 les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclaré
 fait refuser l'appel entier à la validation). Conception + état des preuves :
 blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
+
+### `op=list` : la page dit ce qu'elle laisse dehors (#469, 01/09/2026)
+
+**Mesuré le 28/08** : `POST /api/me/runner/jobs {op: list, limit: 1000}` rendait
+**200** lignes. La borne était appliquée dans le `LIMIT` du SQL
+(`db/runner_jobs.py`), sans être déclarée nulle part et sans que la réponse ne
+l'annonce : ni total, ni curseur. Un poste de flotte qui faisait le bilan d'une vague
+de 150+ jobs lisait donc `len(jobs)` comme le compte de la file — et lisait faux.
+
+⚠️ **Un relevé plafonné SOUS-déclare : il rend moins d'anomalies que la réalité,
+jamais plus.** C'est la classe de défaut qui rassure exactement quand il ne faut pas,
+et c'est pour ça qu'elle vaut mieux qu'une gêne d'ergonomie. Le runner s'en était
+affranchi par un bilan natif côté client — une rustine qui masque le défaut au lieu
+de le fermer, et qui ne protège aucun autre consommateur de la route.
+
+La page porte donc deux champs, et ils vont ensemble :
+- **`total`** — le nombre de jobs de la file sous les MÊMES filtres (org + `status`),
+  indépendant de `limit` et de la position du curseur. C'est le dénominateur d'un
+  bilan ; il ne bouge pas d'une page à l'autre.
+- **`next_cursor`** — opaque, à renvoyer tel quel dans `cursor` pour lire la page
+  suivante (plus ancienne) ; `null` = fin de la file. **Une page pleine AVEC un
+  `next_cursor` dit que la lecture est tronquée ici.**
+
+Le curseur est un **keyset** sur l'ordre servi (`id DESC`), pas un OFFSET : une file
+bouge sous la marche, et un job enfilé entre deux pages décalerait tout un OFFSET —
+donc ferait sauter une ligne, c'est-à-dire recréerait la sous-déclaration qu'on
+ferme. Un curseur illisible est un **refus nommé** (`400 invalid_cursor`), jamais un
+repli muet sur le début de la file : rejouer la première page en boucle est
+indiscernable d'une marche qui progresse.
+
+La borne (`JOBS_PAGE_MAX = 200`) reste appliquée dans le SQL en dernier ressort, mais
+celle qui ENGAGE est désormais au contrat (`capabilities/runner_jobs.py`, patron
+`cap_limit` : on écrête, on ne refuse pas) — et l'écrêtage n'est plus muet.
 
 ### `complete` libère les baux du run et rend le compte — `0` écrit (#633, 29/08/2026)
 
