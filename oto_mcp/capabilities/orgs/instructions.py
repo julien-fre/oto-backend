@@ -116,7 +116,14 @@ class GuideView(BaseModel):
     version: Optional[int] = None
     body_md: Optional[str] = None
     # Entités requises déclarées (ADR 0035), citées `<slot:name>` dans la prose.
-    slots: Optional[list] = None
+    #
+    # ⚠️ Ce que ce champ dit et ne dit PAS (#658) : il porte ce qu'il FAUT brancher,
+    # jamais ce qui EST branché. Un slot n'a pas d'état de branchement dans l'absolu —
+    # il en a un PAR PROJET, et le binding nom→instance vit sur le projet
+    # (`project_links.slot`, écrit par `oto_project op=link`, lu par `oto_project
+    # op=get`). Une même procédure branchée dans deux projets a donc deux réponses,
+    # et cette fiche-ci n'en connaît aucune.
+    slots: Optional[list[slots_mod.SlotDecl]] = None
     referenced_tools: Optional[list[ReferencedTool]] = None
     # Forme 2 seulement : le readme d'org (prose plate), son org, son équipe active.
     org: Optional[str] = None
@@ -205,7 +212,7 @@ class InstructionView(BaseModel):
     description: Optional[str] = None
     version: int
     body_md: str
-    slots: list
+    slots: list[slots_mod.SlotDecl]
     set_by: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -295,13 +302,15 @@ class InstructionWritten(BaseModel):
     referenced_tools: Optional[list[ReferencedTool]] = None
     # Refs `<tool:>` qui ne désignent plus rien — l'écriture a quand même eu lieu.
     unresolved_tools: Optional[list[str]] = None
-    slots: Optional[list] = None
+    slots: Optional[list[slots_mod.SlotDecl]] = None
     # `<slot:name>` cité dans la prose sans déclaration correspondante.
     unresolved_slots: Optional[list[str]] = None
     # Déclaré mais jamais cité — l'inverse, tout aussi silencieux.
     unreferenced_slots: Optional[list[str]] = None
     slot_warnings: Optional[list[str]] = None
-    suggested_slots: Optional[list] = None
+    # Même forme qu'un slot, PLUS le motif — d'où un modèle à part : typer ce champ
+    # `list[SlotDecl]` tairait `reason`, qui est tout ce que la suggestion apporte.
+    suggested_slots: Optional[list[slots_mod.SuggestedSlot]] = None
     # Le SCHÉMA de la procédure (front tiers, issue #108) : le front en fait la vue par
     # défaut de la page du process, donc une procédure sans dessin s'y affiche vide.
     # `None` = le check a tourné et n'a rien à dire ; la clé est toujours présente,
@@ -408,11 +417,18 @@ class InstrSetInput(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     from_version: Optional[int] = None
-    # ADR 0035 : entités requises déclarées [{name, type: tableau|connecteur|base,
+    # ADR 0035 : entités requises déclarées [{name, type: tableau|connecteur|doc,
     # description?, connector?, schema?}] — référencées <slot:name> dans la prose.
     # `schema` (slots tableau, ADR 0046) = schéma CIBLE du tableau attendu (fields/
     # strict/lifecycle/key) : au binding du slot dans un projet, un namespace vierge
     # est PROVISIONNÉ avec, un schéma différent lève un warning. None = conserver.
+    #
+    # ⚠️ `Optional[list]` NU, et c'est délibéré (#658) : la SORTIE est typée
+    # `list[slots.SlotDecl]`, pas l'entrée. `slots.validate_slots` NORMALISE (minuscules,
+    # description tronquée, `connector` déduit du nom) là où un modèle refuserait, et
+    # rend un message actionnable par index de champ. Poser `SlotDecl` ici changerait ce
+    # que le serveur ACCEPTE sur une route déjà consommée — hors sujet d'un lot qui ne
+    # corrige que ce qu'il DIT. Le jour où on resserrera, ce sera une décision datée.
     slots: Optional[list] = None
     # #69 : épingle l'écriture à une org EXPLICITE (robuste au reset de session).
     # None = org active (self-service). Gardé org_admin sur l'org nommée.
@@ -518,7 +534,7 @@ class AdminInstrSetInput(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     from_version: Optional[int] = None
-    slots: Optional[list] = None
+    slots: Optional[list] = None        # nu comme `InstrSetInput.slots` — même raison
 
 
 class AdminSlugInput(BaseModel):
