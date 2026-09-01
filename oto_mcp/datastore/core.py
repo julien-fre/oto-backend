@@ -64,7 +64,6 @@ from .columns import (  # noqa: E402,F401
     _META_COLS,
     _existing_layers,
     _merge_column,
-    _refuse_dotted_names,
     _refuse_flat_writes,
     _refuse_mixed_layers,
     _resolve_filters,
@@ -75,6 +74,13 @@ from .columns import (  # noqa: E402,F401
     arbitrer_les_vides,
     effacements_report,
     ignores_report,
+)
+# Les noms POINTÉS (#684/#687) : `ranger_les_couches` referme l'aller-retour —
+# ce qu'on sert doit pouvoir être réécrit tel quel — et `_refuse_dotted_names`,
+# rétréci, ne tranche plus que ce qui reste sans adresse.
+from .points import (  # noqa: E402,F401
+    _refuse_dotted_names,
+    ranger_les_couches,
 )
 
 
@@ -478,6 +484,31 @@ class DatastorePg(SchemaOpsMixin):
         k = (schema or {}).get("key")
         return k if isinstance(k, str) and k else None
 
+    def _colonnes_de_la_ligne_visee(self, ns_id: int, schema: Optional[dict],
+                                    user_data: dict,
+                                    key: Optional[str] = None) -> set:
+        """Les colonnes DÉJÀ en place sur la ligne que cette écriture vise, si elle en
+        vise une par sa clé métier. Sinon l'ensemble vide.
+
+        ⚠️ **Appelée PARESSEUSEMENT** (`ranger_les_couches(colonnes_en_place=…)`) : seul
+        un nom pointé encore irrésolu la déclenche. Le chemin nominal — l'immense
+        majorité des écritures, dont les lots de huit mille lignes — ne paie donc aucun
+        aller-retour SQL de plus. Deux clés sont interrogées, la clé explicite du lot
+        puis la clé DÉCLARÉE, parce qu'un lot peut dédoubler sur une autre que celle
+        qui porte l'index."""
+        vues = []
+        for k in (key, self._declared_key_of(schema)):
+            if not k or k in vues:
+                continue
+            vues.append(k)
+            v = user_data.get(k)
+            if v is None or str(v) == "":
+                continue
+            rid = db.datastore_find_row_id_by_key(ns_id, k, v)
+            if rid is not None:
+                return set((db.datastore_get_row(ns_id, rid) or {}).get("data") or {})
+        return set()
+
     def _check_row(self, schema: Optional[dict], merged: dict, *,
                    prev_status=None, written: Optional[set] = None) -> None:
         """Valide la row TELLE QU'ÉCRITE (résultat mergé). No-op si le schéma ne
@@ -795,6 +826,15 @@ class DatastorePg(SchemaOpsMixin):
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
+        # CAS 1 avant le refus : une fiche relue et réémise entière porte
+        # `site_web` ET `site_web.comment`, et c'est notre propre lecture. On range
+        # l'annotation à sa place AVANT de juger quoi que ce soit — sinon les gardes
+        # qui suivent (champs réservés, schéma) jugeraient une adresse au lieu d'une
+        # colonne, et le geste dominant d'un agent se ferait refuser.
+        user_data = ranger_les_couches(
+            schema, user_data,
+            colonnes_en_place=lambda: self._colonnes_de_la_ligne_visee(
+                ns_id, schema, user_data))
         _refuse_dotted_names(user_data)
         _refuse_mixed_layers(schema, user_data)
         # #586 : la couche d'origine d'un champ système ne s'écrit pas, création
@@ -947,6 +987,13 @@ class DatastorePg(SchemaOpsMixin):
         if schema is None:
             schema = self._schema_of(ns_id)
         _refuse_flat_writes(schema, user_data)
+        # La ligne visée est connue ICI : ses colonnes comptent pour « colonne réelle »,
+        # ce qui rend `{"site_web.comment": …}` seul écrivable sur un tableau souple.
+        # Lue paresseusement — le chemin nominal ne la demande jamais.
+        user_data = ranger_les_couches(
+            schema, user_data,
+            colonnes_en_place=lambda: set(
+                (db.datastore_get_row(ns_id, row_id) or {}).get("data") or {}))
         _refuse_dotted_names(user_data)
         _refuse_mixed_layers(schema, user_data)
         sk = (dsv2.status_field(schema) or {}).get("key")
@@ -1003,6 +1050,10 @@ class DatastorePg(SchemaOpsMixin):
             ns_id = self._resolve(namespace, write=True)
         user_data = {k: v for k, v in data.items() if k not in _META_COLS}
         schema = self._schema_of(ns_id)
+        # ⚠️ Pas de `colonnes_en_place` ici, et c'est délibéré : l'upsert REMPLACE la
+        # ligne. Ranger une annotation sur une colonne qui n'est que dans l'ancienne
+        # ligne poserait une couche sur une valeur qui tombe dans le même geste.
+        user_data = ranger_les_couches(schema, user_data)
         _refuse_dotted_names(user_data)
         _refuse_mixed_layers(schema, user_data)
         valide = dsv2.validation_active(schema) or dsv2.lifecycle_of(schema)
@@ -1096,6 +1147,14 @@ class DatastorePg(SchemaOpsMixin):
                 # littérale du même nom ne part pas* — et se relisent ensuite comme des
                 # « couches orphelines », un objet qui n'existe pas dans le modèle.
                 # Deux sessions ont cherché le geste pendant une demi-journée.
+                # MÊME ordre que les quatre autres portes : on range, puis on refuse.
+                # C'est par ici que passent les imports — donc par ici que passe un
+                # export du tableau de bord réimporté, qui porte `champ.comment` par
+                # construction (#687).
+                user_data = ranger_les_couches(
+                    schema, user_data,
+                    colonnes_en_place=lambda: self._colonnes_de_la_ligne_visee(
+                        ns_id, schema, user_data, key))
                 _refuse_dotted_names(user_data)
                 kv = user_data.get(key) if key else None
                 existing_id = None
@@ -1373,6 +1432,10 @@ class DatastorePg(SchemaOpsMixin):
         ns = self._ns_of(ns_id)
         schema = ns.get("schema")
         _refuse_flat_writes(schema, patch)
+        # La ligne est déjà lue : ses colonnes sont « réelles » sans un aller-retour de
+        # plus. C'est la porte du round-trip #390 — relire une fiche et la repousser —
+        # donc celle où l'aller-retour DOIT se refermer.
+        patch = ranger_les_couches(schema, patch, colonnes_en_place=lambda: set(data))
         _refuse_dotted_names(patch)
         _refuse_mixed_layers(schema, patch)
         status_key = (dsv2.status_field(schema) or {}).get("key")

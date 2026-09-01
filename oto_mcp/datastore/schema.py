@@ -249,6 +249,30 @@ def flat_layers(key: str, value: Any) -> dict:
             if value.get(layer) not in (None, "")}
 
 
+def layer_address(name: Any):
+    """L'INVERSE de `flat_layers` : `"site_web.comment"` → `("site_web", "comment")`.
+
+    ⚠️ Elle vit ICI, collée à la fonction qu'elle inverse, parce que c'est la seule
+    façon que les deux ne divergent pas : `flat_layers` fabrique `f"{clé}.{couche}"`,
+    celle-ci le défait. **Ce qu'on sert doit pouvoir être réécrit tel quel** — et
+    l'aller-retour se referme exactement là où ces deux-là s'accordent.
+
+    Rend `None` dès que la forme n'est pas une adresse de couche, et les trois refus
+    sont volontaires : un suffixe qui n'est pas une couche connue (`champ.inexistant`)
+    n'en est pas une ; une base qui porte encore un point (`a.b.comment`) ne peut
+    désigner aucune colonne, puisqu'un nom de colonne n'en porte jamais ; une base
+    indexée (`contacts[0].email`) est un CHEMIN de lecture, pas une colonne.
+
+    `valeur` n'en fait pas partie : `flat_layers` ne la sert jamais à plat (le nom nu
+    la rend déjà), donc `champ.valeur` n'est le retour d'aucun aller."""
+    if not isinstance(name, str) or "." not in name:
+        return None
+    base, _, couche = name.rpartition(".")
+    if couche not in LAYER_KEYS or not base or "." in base or "[" in base:
+        return None
+    return base, couche
+
+
 def served_value(value: Any) -> Any:
     """Ce qu'un LECTEUR reçoit pour cette colonne (oto#22 §1-2).
 

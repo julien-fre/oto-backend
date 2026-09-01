@@ -21,6 +21,12 @@ colonne littérale fantôme — acceptée, persistée, invisible au filtre du m�
 nom (l'adresse lit la couche, jamais la colonne littérale). Refus nommant la
 forme imbriquée.
 
+⚠️ **Volet 2 rétréci le 01/09/2026 (#684/#687)** : le refus portait aussi sur
+ce que la LECTURE produit — `flat_layers` sert `naf` et `naf.comment` côte à
+côte — donc une fiche relue et réémise entière se faisait refuser. Une adresse
+d'annotation dont la colonne est réelle est désormais RANGÉE ; seul ce qui ne
+désigne aucune colonne reste refusé.
+
 Chemin réel (`DatastorePg.update_row`/`append_row`, banc de
 test_datastore_layer_directions) — pas la fonction de garde seule.
 """
@@ -129,13 +135,28 @@ def test_le_refus_vaut_aussi_a_la_creation(monkeypatch):
 
 # ── volet 2 : le point dans un nom de colonne ────────────────────────────────
 
-def test_un_nom_a_point_est_refuse_en_nommant_la_forme_imbriquee(monkeypatch):
+def test_un_nom_a_point_SANS_COLONNE_REELLE_est_refuse(monkeypatch):
+    """⚠️ **Rétréci le 01/09/2026 (#684/#687).** Le volet 2 refusait TOUT nom pointé —
+    y compris ce que notre propre lecture produit, puisque `flat_layers` sert
+    `naf.comment` à côté de `naf`. Ce qui reste refusé, et c'est le défaut de
+    production, c'est l'adresse dont **la colonne n'existe nulle part** : elle ne
+    désigne rien, donc elle fabriquerait la colonne littérale fantôme."""
     s, db = _monte(monkeypatch)
     with pytest.raises(RowValidationError) as e:
-        s.update_row("t", "r1", {"naf.comment": "vérifié"})
-    assert "naf" in str(e.value) and "imbriqu" in str(e.value)
-    assert "naf.comment" not in db.rows["r1"]["data"], \
+        s.update_row("t", "r1", {"fantome.comment": "vérifié"})
+    assert "fantome" in str(e.value) and "imbriqu" in str(e.value)
+    assert "fantome.comment" not in db.rows["r1"]["data"], \
         "la colonne fantôme — invisible au filtre du même nom — ne naît plus"
+
+
+def test_un_nom_a_point_SUR_UNE_COLONNE_REELLE_est_range(monkeypatch):
+    """Le pendant, et c'est l'aller-retour : `naf` est sur la ligne, donc
+    `naf.comment` est l'adresse de son annotation — on la range, on ne la refuse pas.
+    Sinon la fiche relue et repoussée (#390) se ferait rejeter."""
+    s, db = _monte(monkeypatch)
+    s.update_row("t", "r1", {"naf.comment": "vérifié"})
+    assert db.rows["r1"]["data"]["naf"] == {"valeur": "58.11Z", "comment": "vérifié"}
+    assert "naf.comment" not in db.rows["r1"]["data"], "rangée, pas littérale"
 
 
 def test_une_adresse_ditem_en_nom_de_colonne_est_refusee(monkeypatch):
