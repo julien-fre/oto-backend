@@ -285,31 +285,120 @@ def set_instruction(owner_type: str, owner_id: int | str, slug: str, body_md: st
             new_desc = description if description is not None else (cur["description"] if cur else "")
             new_slots = json.dumps(slots if slots is not None
                                    else ((cur["slots"] if cur else None) or []))
-            conn.execute(
-                """
-                INSERT INTO org_instructions
-                    (org_id, owner_type, owner_id, slug, title, description, body_md, slots,
-                     version, set_by, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
-                ON CONFLICT (owner_type, owner_id, slug) DO UPDATE SET
-                    title = EXCLUDED.title, description = EXCLUDED.description,
-                    body_md = EXCLUDED.body_md, slots = EXCLUDED.slots,
-                    version = EXCLUDED.version,
-                    set_by = EXCLUDED.set_by, updated_at = NOW()
-                """,
-                (org_id, otype, oid, slug, new_title, new_desc, body_md, new_slots,
-                 new_version, set_by),
-            )
-            conn.execute(
-                """
-                INSERT INTO org_instruction_revisions
-                    (org_id, owner_type, owner_id, slug, version, title, description,
-                     body_md, slots, set_by)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (org_id, otype, oid, slug, new_version, new_title, new_desc, body_md,
-                 new_slots, set_by),
-            )
+            _write_version(conn, org_id, otype, oid, slug, version=new_version,
+                           title=new_title, description=new_desc, body_md=body_md,
+                           slots_json=new_slots, set_by=set_by)
+            return new_version
+
+
+def _write_version(conn, org_id: int, otype: str, oid: str, slug: str, *, version: int,
+                   title: str, description: str, body_md: str, slots_json: str,
+                   set_by: Optional[str]) -> None:
+    """Pose UNE version : la ligne vivante + son snapshot d'historique, dans la
+    transaction (verrouillée) de l'appelant.
+
+    Les deux écritures ne se séparent pas — une ligne vivante sans sa révision, c'est
+    une version qu'aucun `from_version` ne restaurera. Elles vivent donc ici, en un
+    seul endroit, plutôt que recopiées par chaque geste d'écriture : `set_instruction`
+    (le corps) et `set_instruction_meta` (la vitrine) écrivent la MÊME chose, à ceci
+    près que le second reconduit le corps qu'il a lu."""
+    conn.execute(
+        """
+        INSERT INTO org_instructions
+            (org_id, owner_type, owner_id, slug, title, description, body_md, slots,
+             version, set_by, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (owner_type, owner_id, slug) DO UPDATE SET
+            title = EXCLUDED.title, description = EXCLUDED.description,
+            body_md = EXCLUDED.body_md, slots = EXCLUDED.slots,
+            version = EXCLUDED.version,
+            set_by = EXCLUDED.set_by, updated_at = NOW()
+        """,
+        (org_id, otype, oid, slug, title, description, body_md, slots_json,
+         version, set_by),
+    )
+    conn.execute(
+        """
+        INSERT INTO org_instruction_revisions
+            (org_id, owner_type, owner_id, slug, version, title, description,
+             body_md, slots, set_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """,
+        (org_id, otype, oid, slug, version, title, description, body_md,
+         slots_json, set_by),
+    )
+
+
+def set_instruction_meta(owner_type: str, owner_id: int | str, slug: str, *,
+                         title: Optional[str] = None,
+                         description: Optional[str] = None,
+                         set_by: Optional[str] = None,
+                         expected_version: Optional[int] = None) -> Optional[int]:
+    """Corrige le TITRE et/ou la DESCRIPTION d'une procédure **sans toucher au corps**.
+    Renvoie la nouvelle version, ou `None` si la procédure n'existe pas (issue `oto`#27).
+
+    Le geste qui manquait. `set_instruction` exige `body_md` : corriger la ligne que
+    l'agent lit dans le catalogue pour CHOISIR sa procédure obligeait donc à repasser
+    plusieurs milliers de caractères de prose qu'on ne voulait pas toucher — et une
+    retranscription peut dégrader ce qu'elle recopie. Le coût s'est payé en procédures
+    laissées avec une description périmée parce que le geste de correction était plus
+    risqué que le défaut. Une carte périmée est pire que pas de carte : elle est lue
+    avec confiance.
+
+    ⚠️ **Verbe à part, et non `body_md` rendu facultatif sur `set_instruction`** —
+    même parti pris que la CRÉATION (#662, cf. `InstrCreateInput`). `set` est
+    l'écriture DU CORPS : y accepter un corps vide échangerait un refus bruyant
+    (`body_md requis`) contre un glissement muet, où l'appelant qui voulait réécrire
+    le corps et n'a rien produit repartirait avec une simple retouche de vitrine, et
+    croirait avoir écrit.
+
+    Le corps courant est RECONDUIT tel quel dans la nouvelle version, ainsi que les
+    slots : chaque version reste un instantané complet, donc `from_version` restaure
+    toujours un état cohérent. La version monte comme pour toute autre écriture — une
+    correction de vitrine est une écriture, elle se voit dans l'historique et se
+    défait pareil.
+
+    `expected_version` : même verrou optimiste que `set_instruction`, vérifié SOUS le
+    verrou advisory (`InstructionVersionConflict`). `None` des deux champs à la fois
+    est refusé : une écriture qui ne change rien mais consomme une version est un
+    défaut, pas un no-op."""
+    otype, oid = _owner(owner_type, owner_id)
+    slug = normalize_slug(slug)
+    if not slug:
+        raise ValueError("slug requis")
+    if title is None and description is None:
+        raise ValueError("title et/ou description requis")
+    # Même frontière que `set_instruction` : le readme n'est pas une procédure.
+    if slug == BASE_SLUG:
+        raise ValueError(
+            f"`{BASE_SLUG}` est le readme, pas une procédure — écris-le via la "
+            f"surface guide (scope='{otype}', delivery='init').")
+    with _connect() as conn:
+        with conn.transaction():
+            org_id = _parent_org_id(conn, otype, oid)
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                         (f"oi:{otype}:{oid}:{slug}",))
+            # Le corps et les slots sont LUS sous le verrou pour être reconduits :
+            # les relire dehors les exposerait à une écriture concurrente glissée
+            # entre la lecture et l'INSERT, qui ressusciterait un corps périmé.
+            cur = conn.execute(
+                "SELECT version, title, description, body_md, slots "
+                f"FROM org_instructions WHERE {_OWNER_WHERE} AND slug = %s",
+                (otype, oid, slug),
+            ).fetchone()
+            if cur is None:
+                # Rien à décrire : il n'y a pas de création déguisée par ce chemin —
+                # créer, c'est fournir un corps.
+                return None
+            if expected_version is not None and cur["version"] != expected_version:
+                raise InstructionVersionConflict(cur["version"])
+            new_version = cur["version"] + 1
+            _write_version(
+                conn, org_id, otype, oid, slug, version=new_version,
+                title=title if title is not None else cur["title"],
+                description=description if description is not None else cur["description"],
+                body_md=cur["body_md"], slots_json=json.dumps(cur["slots"] or []),
+                set_by=set_by)
             return new_version
 
 

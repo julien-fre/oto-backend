@@ -321,6 +321,33 @@ class InstructionWritten(BaseModel):
     digest_warning: Optional[str] = None
 
 
+class InstructionDescribed(BaseModel):
+    """Correction de la VITRINE d'une procédure (titre / description), corps intact.
+
+    ⚠️ `version` est un numéro NEUF : corriger une description est une écriture, elle
+    monte la version et archive un instantané comme les autres. C'est ce qui la rend
+    réversible par `from_version` — et ce qui fait que la version lue avant la
+    correction ne vaut plus pour un `expected_version` ultérieur.
+
+    Pas de check croisé dans la réponse (`unresolved_slots`, `diagram_warning`,
+    `digest_warning`) : ils portent tous sur le CORPS, que ce geste ne touche pas.
+    Les rendre ici les ferait passer pour un verdict sur ce qui vient d'être écrit.
+
+    `title`/`description` sont l'état APRÈS correction — celui qui n'était pas fourni
+    est reconduit, donc l'écho dit la vitrine entière, pas seulement le champ changé.
+
+    ⚠️ Comme à l'écriture, la clé de scope change de nom : `org_id` en scope org,
+    `group_id` en scope équipe (#681)."""
+    ok: bool
+    org_id: Optional[int] = None
+    group_id: Optional[int] = None
+    scope: Optional[str] = None
+    slug: str
+    version: int
+    title: str
+    description: str
+
+
 class InstructionDeleted(BaseModel):
     """Suppression d'une procédure **et de tout son historique** — irréversible, aucune
     corbeille. `deleted` ne vaut jamais `false` (un slug absent lève un 404) : c'est
@@ -464,6 +491,33 @@ class InstrCreateInput(BaseModel):
     org: Optional[int] = None
 
 
+class InstrDescribeInput(BaseModel):
+    """CORRIGER la vitrine d'une procédure — titre et/ou description, corps INTACT.
+
+    Le geste que le domaine n'avait pas (issue `oto`#27). `title` et `description`
+    sont la ligne que l'agent lit dans le catalogue pour CHOISIR sa procédure ; les
+    corriger passait par `PUT`, qui exige `body_md`, donc par une retranscription de
+    plusieurs milliers de caractères qu'on ne voulait pas toucher. Deux procédures
+    dont le corps était juste et la description périmée sont restées en l'état parce
+    que le geste de correction était plus risqué que le défaut.
+
+    Verbe à part et non `body_md` rendu facultatif sur `set` — même raison que la
+    CRÉATION (cf. `InstrCreateInput`) : `set` est l'écriture DU CORPS, et y accepter
+    un corps vide échangerait un refus bruyant contre un glissement muet.
+
+    Pas de `slots` ni de `from_version` : les slots sont une propriété du CORPS (ils
+    en indexent la prose `<slot:name>`), et restaurer une version est un geste de
+    corps. Ce verbe ne fait qu'une chose."""
+    slug: str
+    title: Optional[str] = None
+    description: Optional[str] = None
+    # #69 : idem set — org explicite optionnelle (None = org active).
+    org: Optional[int] = None
+    # #662 : même verrou optimiste que `set`. La version LUE par le client ; différente
+    # de la courante ⟹ 409 `version_conflict`, la correction n'a pas lieu.
+    expected_version: Optional[int] = None
+
+
 class GuideDeleteInput(BaseModel):
     slug: str
     # #69 : idem set — org explicite optionnelle (None = org active).
@@ -493,6 +547,18 @@ class ConsoleInstrCreateInput(InstrCreateInput):
 
     Même garde que `set` (`_ECRIRE` côté console) : créer n'est pas plus dangereux
     qu'écrire — c'est le geste qui l'était trop peu, faute de pouvoir refuser."""
+    scope: Optional[str] = None
+    group: Optional[int] = None
+
+
+class ConsoleInstrDescribeInput(InstrDescribeInput):
+    """`InstrDescribeInput` + le même axe de palier que `ConsoleInstrSetInput`.
+
+    Même garde que `set` (`_ECRIRE` côté console) : corriger la vitrine est une
+    écriture, ni plus ni moins — au palier équipe, un MEMBRE la corrige, pour la même
+    raison qu'il corrige le corps (celui qui déroule la procédure est celui qui
+    l'améliore) et avec la même réversibilité (la version monte, `from_version`
+    défait)."""
     scope: Optional[str] = None
     group: Optional[int] = None
 
@@ -839,6 +905,52 @@ async def _create_instruction(ctx: ResolvedCtx, inp) -> dict:
     return await _set_instruction(ctx, inp, must_create=True)
 
 
+def _describe_instruction(ctx: ResolvedCtx, inp) -> dict:
+    """CORRIGE le titre / la description d'une procédure — le corps n'est pas touché.
+
+    Le geste manquant de l'issue `oto`#27 : la seule façon de changer une ligne de
+    vitrine était de repasser tout le corps par `_set_instruction`, et une
+    retranscription peut dégrader ce qu'elle recopie.
+
+    Le corps est reconduit DANS la transaction verrouillée du store, jamais relu ici
+    pour être renvoyé : entre une lecture faite dehors et l'écriture, une édition
+    concurrente se glisse — et on réécrirait alors par-dessus elle le corps d'avant,
+    ce que ce geste est précisément censé ne pas faire."""
+    owner = _owner_of(ctx, inp)
+    norm = org_store.normalize_slug(inp.slug)
+    if not norm:
+        raise AuthzDenied(400, "invalid_slug", "slug invalide (attendu [a-z0-9_-]).")
+    if inp.title is None and inp.description is None:
+        raise AuthzDenied(
+            400, "nothing_to_describe",
+            "Fournis `title` et/ou `description`. Une correction qui ne change rien "
+            "consommerait quand même une version — refusé plutôt que subi. Pour "
+            "changer le CORPS, c'est `op=set` (qui exige `body_md`).")
+    if norm == _BASE:
+        raise AuthzDenied(400, "reserved_slug",
+                          f"`{_BASE}` est le readme (prose injectée), pas une "
+                          "procédure — édite-le sur la surface guide "
+                          f"(scope='{owner[0]}', delivery='init').")
+    try:
+        version = org_store.set_instruction_meta(
+            *owner, norm, title=inp.title, description=inp.description,
+            set_by=ctx.sub, expected_version=inp.expected_version)
+    except org_store.InstructionVersionConflict as e:
+        raise AuthzDenied(
+            409, "version_conflict",
+            f"`{norm}` est en v{e.current_version}, tu as lu v{inp.expected_version}"
+            " : relis-la (`op=get`) et rejoue ta correction sur la version à jour.",
+            {"slug": norm, "current_version": e.current_version})
+    if version is None:
+        raise AuthzDenied(404, "not_found", f"Instruction `{norm}` absente.")
+    # L'écho porte la vitrine ENTIÈRE, pas seulement le champ corrigé : l'appelant qui
+    # n'a envoyé qu'une description voit le titre reconduit, donc ce que le catalogue
+    # affiche désormais — sans avoir à relire.
+    cur = org_store.get_instruction(*owner, norm) or {}
+    return {"ok": True, **_scope_ref(owner), "slug": norm, "version": version,
+            "title": cur.get("title") or "", "description": cur.get("description") or ""}
+
+
 def _delete_instruction(ctx: ResolvedCtx, inp) -> dict:
     owner = _owner_of(ctx, inp)
     norm = org_store.normalize_slug(inp.slug)
@@ -1047,6 +1159,34 @@ CAPABILITIES += [
                               "le slug porte déjà une procédure dans ce scope (y compris "
                               "archivée) — rien n'a été écrit"),),
         rest=RestBinding("POST", "/api/me/instructions"),
+    ),
+    # La CORRECTION DE VITRINE (issue `oto`#27). Troisième verbe d'écriture, pour la
+    # même raison que le deuxième : `PUT …/{slug}` exige `body_md`, donc corriger une
+    # description imposait de repasser tout le corps — un geste plus risqué que le
+    # défaut qu'il répare, et qu'on renonçait à faire.
+    Capability(
+        key="org.instruction.describe", handler=_describe_instruction,
+        Input=InstrDescribeInput,
+        authz=ORG_ADMIN_OPT("org"), Output=InstructionDescribed,
+        description=("Fix a procedure's TITLE and/or DESCRIPTION without resending its "
+                     "body (org_admin). These two fields are the line an agent reads in "
+                     "the catalog to CHOOSE a procedure, so they go stale fastest — and "
+                     "until now correcting them meant re-sending the whole `body_md` "
+                     "through PUT, which risks degrading prose you did not mean to "
+                     "touch. The body and slots are carried over UNCHANGED. This still "
+                     "bumps the version and snapshots the previous one, so a bad edit is "
+                     "undone with `from_version` like any other write. Pass at least one "
+                     "of `title` / `description`; `expected_version` (the version you "
+                     "read) turns a concurrent edit into a 409 instead of an overwrite. "
+                     "`org` pins to an explicit org id (default = active org). To change "
+                     "the BODY, use PUT /api/me/instructions/{slug}."),
+        errors=(DeclaredError(400, "nothing_to_describe",
+                              "ni `title` ni `description` fourni — rien n'a été écrit "
+                              "(une correction vide consommerait une version)"),
+                DeclaredError(409, "version_conflict",
+                              "`expected_version` fourni et ≠ version courante — la "
+                              "correction n'a pas eu lieu")),
+        rest=RestBinding("PATCH", "/api/me/instructions/{slug}"),
     ),
     Capability(
         key="org.instruction.delete", handler=_delete_instruction, Input=GuideDeleteInput,
