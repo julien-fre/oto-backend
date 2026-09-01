@@ -7,6 +7,8 @@ hubspot s'authentifie via un **token de private app**. dans les [réglages de to
 
 ⚠️ si ta private app date d'avant, elle n'a que les scopes `crm.objects.*` et `hubspot_list` répondra **403**. ça ne veut pas dire que ta clé est mauvaise : rouvre la private app et ajoute le scope, le token ne change pas.
 
+⚠️ le token attendu est l'**access token** de la private app (forme `pat-<région>-…`). si tu colles autre chose — typiquement un *refresh token* oauth, un long blob base64 qui commence par `Ci…` — hubspot répond **401 `EXPIRED_AUTHENTICATION`** avec un message trompeur du genre « expired 20697 day(s) ago » et une date d'expiration au 1er janvier 1970. rien n'a expiré : un refresh token n'a pas de champ d'expiration, donc envoyé en bearer il est lu comme expiré depuis l'epoch. ce message-là veut dire « ce n'est pas un access token », pas « ton token a vieilli ».
+
 - copie le **access token** généré
 - colle-le dans oto sur ton compte (`/account`), connecteur **hubspot**
 - byo uniquement : ta clé ou celle partagée de ton org, pas de clé plateforme
