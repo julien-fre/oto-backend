@@ -189,6 +189,8 @@ CAPABILITIES += [
                     "entirely. If you have not read it in this session, you are missing "
                     "rules your org expects you to follow — including when an action needs "
                     "human validation before it goes out.\n"
+                    "Platform-wide usage rules live in the `notice` guide — read it once "
+                    "per session too: `oto_guide op=read slug=notice`.\n"
                     "Call it again after you switch org/team/project — or pass "
                     "org=/project=/group= here: the toolbox and credentials follow the "
                     "switch, this prose does not.",

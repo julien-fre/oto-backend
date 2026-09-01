@@ -168,11 +168,15 @@ org du run ?? consultation ?? maison` ; **TOUTE résolution d'action passe par c
 **Agent readme** = prose libre **injectée à chaque session**, cumulée du général au spécifique
 (plateforme → org → équipe active → user) ; les 4 étages vivent dans `guides` delivery='init' et
 s'éditent par **UNE** surface : `me.guide{,s}` (ADR 0042) ; **procédure** = guide nommé, chargé à la
-demande. ⚠️ **Le produit dit « guide » depuis le 28/08/2026** (#519), l'ancien nom restant servi avec
-**une date de retrait écrite** (`docs/alias-deprecies.md`). ⚠️ Une procédure s'**OUVRE sur son digest**
-(jamais fabriqué — sourcé sur le journal des runs, ou rien) et **embarque son SCHÉMA** : deux sections
-requises. ⚠️ **La grammaire du dessin est un CONTRAT** (reparsé en graphe) : **UN** seul bloc fencé
-**non tagué** — guide plateforme `procedure-flowchart`. **`docs/guides.md`.**
+demande. ⚠️ **L'injection au handshake n'est PAS garantie** (#478 : Claude Code coupe l'artefact à
+2 048 c., claude.ai n'injecte rien) — le bloc A est depuis le 2026-09-01 un **socle-résumé
+≤ 2 000 c.** (budget CI `tests/test_instructions_budget.py`) qui pointe le guide plateforme `notice`
+(la version intégrale) et `oto_context`. ⚠️ **Le produit dit « guide » depuis le 28/08/2026** (#519),
+l'ancien nom restant servi avec **une date de retrait écrite** (`docs/alias-deprecies.md`). ⚠️ Une
+procédure s'**OUVRE sur son digest** (jamais fabriqué — sourcé sur le journal des runs, ou rien) et
+**embarque son SCHÉMA** : deux sections requises. ⚠️ **La grammaire du dessin est un CONTRAT**
+(reparsé en graphe) : **UN** seul bloc fencé **non tagué** — guide plateforme `procedure-flowchart`.
+**`docs/guides.md`.**
 
 ## Groupes & hiérarchie de droits (ADR 0012)
 
