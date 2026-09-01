@@ -179,10 +179,25 @@ disputeraient les mêmes lignes.
 
 ### Faux rouge : le venv partagé est en retard sur le pin
 
+> **Depuis le 01/09/2026, la suite te le DIT — tu n'as plus à reconnaître le motif.**
+> `tests/_oto_core_pin.py` compare le tag oto-core **installé** (lu dans `direct_url.json`) au
+> tag **épinglé** par le manifeste, et affiche une bannière `=== PIN oto-core ===` **aux deux
+> bouts du run** — au démarrage, et surtout en fin de run, contre les `FAILED`, là où on se
+> demande à qui sont ces rouges. Elle **nomme les deux versions** (« installé dans ce venv :
+> v1.101.0 / épinglé par pyproject : v1.103.0 ») : c'est le couple qui se comprend d'un coup,
+> pas le mot « divergence ». **En local**, les tests qui portent le marqueur
+> `exige_pin_oto_core` sont alors **passés comme non concluants** plutôt que rouges — un rouge
+> qui ne prouve rien vaut moins qu'un test explicitement non concluant. **En CI, jamais** : la
+> garde version-skew doit y rester mordante, c'est là qu'elle protège la prod.
+>
+> Ce qui suit reste vrai, et sert à comprendre ce que la bannière annonce.
+
 **Reconnaître AVANT d'enquêter.** Lancée depuis `/data/oto/backend` (ou avec son `.venv`), la
 suite sort une grappe de rouges concentrée sur les connecteurs **les plus récents** — jamais sur
 le domaine que ton lot touche. Relevé du **01/09/2026**, redécouvert le même jour par **six
-sessions** qui ont chacune payé l'enquête :
+sessions** qui ont chacune payé l'enquête (une **septième** l'a repayée le soir même, en le
+remontant cette fois comme « le tronc est rouge, plus aucune PR ne peut entrer » — la CI était
+verte de bout en bout ; c'est cette septième qui a fait poser la bannière) :
 
 ```
 FAILED tests/test_tally.py::…                                                        (22)
@@ -206,6 +221,24 @@ Au fond de la trace, l'un de ces trois messages :
 ⚠️ **Les deux derniers accusent la mauvaise pièce** : ils te disent « ton pin » ou « ta liste
 d'exceptions », alors que ce qui manque est **le client** dans l'oto-core installé. Ils sont
 écrits pour la CI, où oto-core est installé AU tag — là-bas leur accusation est juste.
+
+⚠️ **Et le discriminant « ça dit *No module named* » ne couvre que la MOITIÉ des cas.** C'est ce
+trou-là qui a fait mettre trois de ces rouges de côté comme « les vrais, distincts des faux
+rouges », pendant sept enquêtes. Il n'attrape qu'un connecteur **AJOUTÉ** après la version
+installée — `tally` n'existe nulle part dans un v1.101.0, donc l'import casse net et le message
+est sans ambiguïté. Un connecteur **déjà présent mais RABOUGRI** échoue tout autrement : le
+client `lemlist` fait **724 lignes en v1.101.0 et 2547 en v1.102.0** (le lot « exposer l'API
+entière »), donc en venv périmé les tools appellent un client d'avant son élargissement et le
+message devient « méthodes appelées mais absentes du client » / « exception(s) sur un paramètre
+inexistant » — trait pour trait **une vraie régression de version-skew**. Ne pas trier au
+message, donc, mais **compter** : 22 `tally` + 3 `lemlist_surface_coverage` + 3 autres = **28**,
+le compte exact du relevé ci-dessus. Tout ce qui est dans les 28 est environnemental.
+
+⚠️ **Corollaire, et c'est le piège coûteux** : `NON_EXPOSEES` / `PARAMETRES_NON_TRANSMIS` de
+`test_lemlist_surface_coverage.py` **ne se vident pas pour faire taire ces tests**. Le test
+accuse la liste, mais c'est le client qui manque : la vider rend vert tout de suite, détruit la
+couverture, et redevient rouge au prochain bump. Le test est juste — il est simplement exercé
+contre le mauvais oto-core.
 
 **La phrase qui tranche : ces rouges sont PRÉEXISTANTS et ENVIRONNEMENTAUX, ton lot ne les a pas
 causés.** Ne pas enquêter : **vérifier**, en rejouant sur `origin/main` **pristine** dans un clone
