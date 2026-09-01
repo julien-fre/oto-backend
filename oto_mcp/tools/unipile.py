@@ -191,7 +191,7 @@ def _slim_search(res):
 def _canonical_li_identifier(identifier: str) -> str:
     """Canonicalise un `public_identifier` LinkedIn (vanity slug) : LinkedIn le
     génère TOUJOURS en ASCII (translittère les accents à la création, p. ex.
-    `nicolas-chéhanne` → `nicolas-chehanne`). Un slug accentué saisi par l'agent
+    `renée-lefèvre` → `renee-lefevre`). Un slug accentué saisi par l'agent
     fait renvoyer à l'API Unipile un 403 « Insufficient permissions » TROMPEUR
     (#180) → on retire les diacritiques avant l'appel. No-op sur un slug déjà ASCII
     ou un provider_id opaque (`ACoAA…`, sans accent) — idempotent."""

@@ -11,7 +11,7 @@ Adaptateur mince (ADR 0037) : le moteur (auth + forward) vit dans oto-core
 en McpError. Trois tools : `http_get` (lecture), `http_post` (POST avec corps
 JSON — recherche paginée, écritures), `http_doc` (le contrat de l'API, si
 l'opérateur a renseigné `doc_path` sur la carte — ex. `/openapi.json` pour un
-bridge qui l'expose derrière le même auth que le reste, cf. movinmotion-bridge).
+bridge qui l'expose derrière le même auth que le reste).
 C'est un « nœud HTTP » (comme n8n/Zapier) :
 la protection SSRF est un contrôle d'egress réseau au niveau plateforme, pas du
 code par-connecteur ; ce qu'un POST est autorisé à faire relève de l'API cible

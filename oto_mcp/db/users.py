@@ -367,7 +367,7 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
         conn.execute("UPDATE user_account_profile SET sub=%s WHERE sub=%s", (new_sub, old_sub))
         # 2 bis. APPARTENANCES (org_members / org_group_members) : elles ne se repointent
         #    pas en bloc, à cause de DEUX invariants que l'`UPDATE … SET sub=` de l'étape 3
-        #    violerait. Vécu prod 2026-07-28 (julien@folk.app, 2 comptes) : merge en échec
+        #    violerait. Vécu prod 2026-07-28 (un user à 2 comptes) : merge en échec
         #    à CHAQUE requête de l'user, donc jamais fusionné + un round-trip Logto et un
         #    traceback par appel.
         #    (a) PK (org_id, sub) : si les deux comptes sont dans la MÊME org, repointer
