@@ -445,7 +445,14 @@ _SERVER_INSTRUCTIONS = instructions.render()
 #     `session_org.note_call_trace(instance=<ref de la ligne gagnante>)`. Tant qu'elle
 #     n'y est pas, cette clé n'apparaît dans AUCUNE ligne de journal : ne rien bâtir
 #     dessus sans avoir vérifié qu'elle se remplit.
-_TRACED_ARGS = ("ns_id", "doctrine_version", "instance")
+#
+# `readonly_forced` (#658, 02/09/2026) — les colonnes VERROUILLÉES qu'un appel a
+# remplacées de force, avec la ligne et la valeur d'avant. C'est la SEULE trace du
+# geste, tranchée comme telle : pas de colonne de plus sur la ligne. ⚠️ Le journal ne
+# remonte qu'à ~35 jours, donc la trace disparaît alors que la valeur forcée reste —
+# la question a été posée et fermée en connaissance de cause. Le « qui » n'est pas
+# répété ici : le sink stampe déjà `sub` et `org_id`.
+_TRACED_ARGS = ("ns_id", "doctrine_version", "instance", "readonly_forced")
 
 
 _PREPARED = False
