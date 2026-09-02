@@ -121,7 +121,8 @@ def _fields_list(fields: Any) -> list[str]:
 
 
 def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
-                  fields: Any = None, ok: bool = True, error: str | None = None,
+                  fields: Any = None, forced: Any = None, ok: bool = True,
+                  error: str | None = None,
                   org_id: int | None = None, duration_ms: int | None = None) -> None:
     """Journalise un GESTE fait depuis le dashboard (REST) dans le flux unifié.
 
@@ -133,6 +134,12 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
     `tool` doit nommer le geste dans le vocabulaire de la surface MCP (`data_write`,
     `data_delete_row`, `data_release`) : les lectures du journal (parcours d'une
     ligne, activité d'un tableau) filtrent là-dessus, pas sur la route HTTP.
+    `forced` (#658) = les colonnes verrouillées remplacées de force. Comme `fields`,
+    il rejoint la ligne APRÈS `truncated_args` et reste un VRAI tableau JSON : passé
+    dans `args`, il repartirait stringifié et coupé à 300 caractères, donc illisible
+    colonne par colonne — exactement ce que `_fields_list` existe pour éviter. Absent
+    quand rien n'a été forcé : un forçage se cherche par la PRÉSENCE de la clé.
+
     ⚠️ Distinct de la ligne de route posée par `api.routes.RestCallLogger`
     (`tool='PATCH /api/…'`, dont les `args` ne portent QUE l'empreinte des jetons
     du chemin, #558) : celle-là est de la télémétrie de surface, celle-ci porte le
@@ -143,7 +150,9 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
         "kind": "rest",
         "sub": sub,
         "tool": tool,
-        "args": {**(truncated_args(args, tool=tool) or {}), "fields": _fields_list(fields)},
+        "args": {**(truncated_args(args, tool=tool) or {}),
+                 "fields": _fields_list(fields),
+                 **({"readonly_forced": list(forced)} if forced else {})},
         "ok": bool(ok),
         "error": (str(error)[:MAX_ERROR_CHARS] if error else None),
         "org_id": org_id,

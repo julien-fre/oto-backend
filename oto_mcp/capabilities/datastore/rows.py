@@ -104,10 +104,21 @@ class RowRefInput(BaseModel):
     row_id: str
 
 
+# #658 : le corps EST la ligne (`RestBinding.body_field`) — le forçage ne peut donc
+# pas y vivre sans se confondre avec une colonne du tableau. Il passe en QUERY, ce que
+# l'adaptateur REST fait déjà de tout champ d'`Input` hors du corps libre, et ce que
+# l'OpenAPI publie tel quel. Additif : un client qui l'ignore garde le refus.
+_FORCAGE = Field(default=False, description=(
+    "Remplacer les colonnes verrouillées (`readonly`) que cet appel écrit, au lieu "
+    "d'être refusé. Réservé au propriétaire du tableau ou à qui le gouverne ; ne vaut "
+    "que pour cet appel ; journalisé (ligne, colonne, valeur remplacée)."))
+
+
 class AppendRowInput(BaseModel):
     namespace: str
     # Le corps ENTIER (cf. `RestBinding.body_field`) : les colonnes du tableau.
     row: dict = Field(default_factory=dict)
+    readonly_override: bool = _FORCAGE
 
 
 class UpdateRowInput(BaseModel):
@@ -115,6 +126,7 @@ class UpdateRowInput(BaseModel):
     row_id: str
     # Le corps ENTIER : les colonnes à écrire (patch partiel, jamais un remplacement).
     patch: dict = Field(default_factory=dict)
+    readonly_override: bool = _FORCAGE
 
 
 class ReleaseInput(BaseModel):
@@ -359,7 +371,8 @@ def _append_row(ctx: ResolvedCtx, inp: AppendRowInput) -> dict:
     trace: dict = {}
     store = make_store(ctx.sub)
     try:
-        created = store.append_row(ns, inp.row, trace=trace)
+        created = store.append_row(ns, inp.row, trace=trace,
+                                   readonly_override=inp.readonly_override)
     except NamespaceNotFound:
         raise ns_not_found(ctx.sub, ns)
     except NamespaceReadOnly:
@@ -369,7 +382,7 @@ def _append_row(ctx: ResolvedCtx, inp: AppendRowInput) -> dict:
     nsctx = datastore_journal.from_trace(trace, ns)
     datastore_journal.record(
         datastore_journal.TOOL_WRITE, sub=ctx.sub, ctx=nsctx, row_id=created.get("_id"),
-        fields=list(inp.row.keys()),
+        fields=list(inp.row.keys()), forced=store.off_forced,
         to_status=datastore_journal.status_of(created, nsctx))
     # Même relevé « hors schéma » que la face MCP (#294) : les deux faces ne doivent
     # pas diverger sur ce qu'elles signalent d'une écriture.
@@ -385,7 +398,8 @@ def _update_row(ctx: ResolvedCtx, inp: UpdateRowInput) -> dict:
     trace: dict = {}
     store = make_store(ctx.sub)
     try:
-        updated = store.update_row(ns, rid, inp.patch, trace=trace)
+        updated = store.update_row(ns, rid, inp.patch, trace=trace,
+                                   readonly_override=inp.readonly_override)
     except NamespaceNotFound:
         raise ns_not_found(ctx.sub, ns)
     except NamespaceReadOnly:
@@ -397,7 +411,8 @@ def _update_row(ctx: ResolvedCtx, inp: UpdateRowInput) -> dict:
     nsctx = datastore_journal.from_trace(trace, ns)
     datastore_journal.record(
         datastore_journal.TOOL_WRITE, sub=ctx.sub, ctx=nsctx, row_id=rid,
-        fields=list(inp.patch.keys()), from_status=trace.get("prev_status"),
+        fields=list(inp.patch.keys()), forced=store.off_forced,
+        from_status=trace.get("prev_status"),
         to_status=datastore_journal.status_of(updated, nsctx))
     return {**updated, **store.off_schema_report()}
 
@@ -482,7 +497,10 @@ CAPABILITIES += [
         mcp=None,
         # Corps LIBRE (les colonnes) + 201 : les deux contrats d'avant la migration.
         rest=RestBinding(verb="POST", path=_NS + "/rows", status=201, body_field="row"),
-        description="Ajoute une ligne à un tableau (le corps EST la ligne).",
+        description=("Ajoute une ligne à un tableau (le corps EST la ligne). "
+                     "`readonly_override=true` remplace les colonnes verrouillées "
+                     "de cet appel — propriétaire ou gouvernant du tableau seulement, "
+                     "et journalisé."),
     ),
     Capability(
         key="me.datastore.get_row",
@@ -502,7 +520,10 @@ CAPABILITIES += [
         authz=SUB_ONLY,
         mcp=None,
         rest=RestBinding(verb="PATCH", path=_NS + "/rows/{row_id}", body_field="patch"),
-        description="Modifie une ligne (patch partiel ; le corps EST le patch).",
+        description=("Modifie une ligne (patch partiel ; le corps EST le patch). "
+                     "`readonly_override=true` remplace les colonnes verrouillées "
+                     "de cet appel — propriétaire ou gouvernant du tableau seulement, "
+                     "et journalisé."),
     ),
     Capability(
         key="me.datastore.delete_row",

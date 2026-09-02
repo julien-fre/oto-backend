@@ -33,12 +33,19 @@ déclarations, et sondée par `enforced_keys`) ; ce module en fait le geste : re
 levant, et poser. Il est appelé aux cinq chemins d'écriture du store — création (ligne
 seule, lot, upload signé), fusion sous verrou, patch par identifiant, remplacement.
 
-⚠️ **Le cran borne TOUT LE MONDE, faces humaine et REST comprises.** Le store ne sait
-pas distinguer un agent d'un humain (il connaît un sub et une org ; le run n'est pas
-obligatoire sur toute écriture), et une exemption par défaut serait un trou. La sortie
-du propriétaire est le schéma — `data_patch_schema(fields=[{key, readonly: false}])`,
-deux gestes délibérés, comme le bail (#317) et `key_required` (#516). Il n'y a pas de
-« forcer » sur `data_write`, et le refus ne l'enseigne pas.
+⚠️ **Le cran borne TOUT LE MONDE PAR DÉFAUT, faces humaine et REST comprises.** Le
+store ne sait pas distinguer un agent d'un humain (il connaît un sub et une org ; le run
+n'est pas obligatoire sur toute écriture), et une exemption par défaut serait un trou.
+
+⚠️ **Amendement du 02/09/2026 (#658) — `readonly` seul.** La sortie du propriétaire
+était le schéma : `data_patch_schema(fields=[{key, readonly: false}])`, écrire,
+refermer. Cette manœuvre-là est le défaut, pas la sortie : *une exécution interrompue
+entre « lever » et « remettre » laisse le verrou ouvert sans aucun signal* (mesuré sur
+`key_required`, #668). Il existe donc un forçage `readonly_override` **sur l'appel**,
+ouvert au propriétaire du tableau ou à qui le gouverne, tracé au journal des appels —
+et le refus le NOMME. Rien à refermer, rien à oublier. La règle et le palier vivent
+dans `forcage.py` ; les deux autres crans (`origine`, `system`) ne se forcent pas :
+ils ferment ce que la PLATEFORME pose.
 
 ⚠️ Pas dans le registre des jetons (#602) : celui-ci juge AVANT la résolution, sans
 schéma ; un champ réservé est une propriété du TABLEAU, il se juge là où le schéma est
@@ -52,6 +59,7 @@ from typing import Optional
 from . import schema as dsv2
 from .columns import _existing_layers
 from .errors import RowValidationError
+from .forcage import Forcage
 
 
 def valeurs_systeme(schema: Optional[dict], *, run: Optional[str],
@@ -145,13 +153,19 @@ def poser_valeurs_systeme(schema: Optional[dict], apres: dict,
 
 def refuser_champs_reserves(schema: Optional[dict], payload: Optional[dict], *,
                             avant: Optional[dict] = None,
-                            pose_systeme: Optional[dict] = None) -> None:
+                            pose_systeme: Optional[dict] = None,
+                            forcage: Optional[Forcage] = None) -> None:
     """Refuse ce que l'appelant n'écrit pas — en nommant le champ, la raison et où
     va la chose. `RowValidationError`, donc `row_invalid` côté REST (avec
     `details.expected_column`, #545) et INVALID_PARAMS côté MCP : le code ne
-    change pas, c'est le texte qui enseigne."""
+    change pas, c'est le texte qui enseigne.
+
+    `forcage` (#658) = le forçage DEMANDÉ sur cet appel, déjà tranché par le store
+    (aucune lecture d'ownership ici : ce chemin passe sous un verrou de ligne). Il ne
+    lève que le cran `readonly`, et le relevé qu'il remplit part au journal."""
     errors, details = dsv2.reserved_refusals(schema, payload, avant,
-                                             pose_systeme=pose_systeme)
+                                             pose_systeme=pose_systeme,
+                                             forcage=forcage)
     if errors:
         raise RowValidationError(errors, details=details)
 

@@ -246,6 +246,23 @@ def can_access(sub: str, resource_type: str, resource_id: str, want: str = "read
     return want == "read" or best == "write"
 
 
+def owns(sub: str, resource_type: str, resource_id: str) -> bool:
+    """L'acteur est-il PROPRIÉTAIRE du contenu — lui, son org, son équipe — par
+    opposition à un tiers qui n'y accède que par un GRANT ?
+
+    Même prédicat que la branche owner de `can_access`, isolé parce qu'un cran a
+    désormais besoin de distinguer *à qui la donnée appartient* de *qui a le droit
+    d'y écrire* : le forçage d'une colonne verrouillée (#658). Sur un tableau partagé
+    en écriture, le partenaire ÉCRIT sans POSSÉDER — confondre les deux rendrait le
+    verrou inopérant, il ne protégerait plus de personne.
+
+    ⚠️ Ce n'est PAS `can_govern` et ça ne le remplace pas : les deux ensembles se
+    croisent sans s'inclure (un membre d'org possède sans gouverner ; un gérant
+    gouverne sans posséder). Un cran qui veut les deux les demande tous les deux."""
+    owner = owner_of(resource_type, resource_id)
+    return owner is not None and _owner_match_content(sub, owner[0], owner[1])
+
+
 def org_can_access(org_id: int, resource_type: str, resource_id: str,
                    want: str = "read") -> bool:
     """Plan CONTENU vu depuis un PRINCIPAL ORG (pas un user) — pendant `sub`-less de

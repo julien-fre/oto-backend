@@ -14,10 +14,16 @@ Hiérarchie : le chemin n'existe pas > la machine refuse > un contrôle détecte
 consigne interdit. Ces deux crans montent d'un étage : une ligne de schéma, un refus
 nommé, et pour l'origine la plateforme qui écrit à la place de l'agent.
 
-⚠️ **Le cran borne tout le monde**, faces humaine et REST comprises : le store ne sait
-pas distinguer un agent d'un humain, et une exemption par défaut serait un trou. La
-sortie du propriétaire est le schéma (`data_patch_schema(readonly=false)`), jamais un
-paramètre de `data_write`.
+⚠️ **Le cran borne tout le monde PAR DÉFAUT**, faces humaine et REST comprises : le
+store ne sait pas distinguer un agent d'un humain, et une exemption par défaut serait un
+trou. Ce que ce fichier fige est donc le régime SANS demande — et il n'a pas bougé.
+
+⚠️ Ce qui a bougé le 02/09/2026 (#658) : la sortie du propriétaire n'est plus le schéma
+(`data_patch_schema(readonly=false)`, écrire, refermer — une exécution interrompue entre
+les deux laisse le verrou ouvert sans signal, mesuré sur `key_required`/#668) mais
+`readonly_override=true` **sur l'appel**, sous palier et tracé. Il s'éprouve dans
+`test_forcage_readonly_658.py` ; ici, aucun appel n'en demande, donc tout doit rester
+refusé exactement comme avant.
 """
 from __future__ import annotations
 
