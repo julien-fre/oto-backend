@@ -110,6 +110,28 @@ sinon `linkedin_unipile_*` et `linkedin_aiark_*` tomberaient sous un même gate 
 `sender→connecteur→transport`. ⚠️ Le front qui héberge une org est **dérivé de l'org CIBLE**.
 ⚠️ **Les 6 gabarits transactionnels servent `users.locale` du DESTINATAIRE** (`'en'`, FR par défaut,
 01/09/2026) — texte extrait dans `email_templates.py` pour tenir sous 500 lignes (`docs/email.md`).
+**Relance des comptes jamais actifs** (02/09/2026) : `oto_admin_outreach` nomme et écrit à ceux que
+le funnel savait seulement compter. ⚠️ **Compté par COMPTE, jamais par org** (64 des 78 orgs vivantes
+sont des espaces perso d'office). ⚠️ **Les comptes d'un tenant partenaire sont écartés PAR LA
+REQUÊTE**, en amont de tout critère — `orgs.tenant_id` est INERTE, le discriminant est la
+qualification du sub ∪ l'appartenance à une org au tenant effectif primaire. ⚠️ **Aucun signal fiable
+de langue n'existe** : `users.locale` est posée sur 2 des 40 comptes visés, `billing_identities` est
+à 0 ligne — l'opérateur CHOISIT la langue par défaut, on ne la devine pas. Cinq garde-fous mécaniques
+(essai obligatoire, `confirm=N`, plafond sur le total, index unique, lien de désinscription signé).
+`docs/relance-comptes.md`.
+**Facturation & avantages offerts** (02/09/2026) : **deux façons d'offrir**, et une seule se voyait —
+`admin_set_plan` écrit un abonnement `comp` (badge, état soigné, **zéro org concernée**), le **don
+d'option** n'écrit rien, donc ses 32 bénéficiaires voyaient un catalogue leur vendre ce qu'ils avaient
+déjà. `billing.status` porte désormais `granted[]` **dans les deux branches**. ⚠️ **L'avantage se
+NOMME** (dérivé du connecteur porteur) et **est un avantage ce qui est VENDU** (dérivé des `options`
+des paliers) — un drapeau de population comme `beta` n'est jamais un cadeau. ⚠️ **`expires_at` mord
+dans le SEAM** (`has_option_comp` ignore une ligne échue) ; `list_option_comps` ne filtre pas (voir un
+don échu pour le rouvrir) ; **omettre la date ne l'efface pas** (`db.KEEP_EXPIRY`).
+⚠️⚠️ **PÉRIMÈTRE, mécanique** : rien qui s'adresse au titulaire d'une org ne touche une org d'un
+**tenant tiers** — et **`orgs.tenant_id` est INERTE** (160/160 au tenant primaire, dont les 61
+hébergées ailleurs) : le discriminant est `db.org_tenant_slug`, **union** de trois axes.
+⚠️ **L'usage inclus (1000 appels/mois/org) ne REFUSE rien** (journal best-effort) et **ne sert aucun
+ratio** — à 25 sur 1000, un pourcentage dit « sans fin ». `docs/billing.md`.
 **Recherche & KB** : `oto_search` = LE verbe « retrouver », fusion RRF lexicale + sémantique.
 ⚠️ **Invariant « cherchable ⇔ lisible »**, tripwire par source = critère de merge
 (`docs/search-and-kb.md`).
@@ -272,6 +294,7 @@ key en Secret Manager au boot, 0 plaintext) ; S3 pour avatars/logos.
 - `unipile.md` — split compte/canaux, DSN, identités
 - `browser-automation.md` — Browserbase, cookie-bound
 - `email.md` — envoi per-org, quiet hours
+- `relance-comptes.md` — relancer qui n'a jamais rien fait : le comptage, l'exclusion partenaire, l'absence de signal de langue
 - `federation.md` — mount vs remote/bridge
 - `mcp-apps.md` — `prefab_ui`, convention `*_app`
 - `mcp-spec-watch.md` — les SEP, pas les specs
@@ -285,4 +308,4 @@ key en Secret Manager au boot, 0 plaintext) ; S3 pour avatars/logos.
 - `migrations-versionnees.md` — ce que le boot exécute
 - `sirene-stock.md` — DuckDB sur parquet INSEE
 - `connector-test-gate-theirstack-origami.md` — porte de test locale
-- `billing.md` — abonnement par org, Mollie, TVA
+- `billing.md` — abonnement par org, Mollie, TVA, **avantage offert / échéance / usage inclus**
