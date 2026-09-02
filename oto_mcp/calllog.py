@@ -152,9 +152,22 @@ def log_rest_call(tool: str, *, sub: str | None, args: dict | None = None,
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
-        # Appelé hors event loop (contexte synchrone) : on insère en direct, même
-        # chemin d'insertion — le journal reste best-effort, pas de file d'attente.
-        _insert_rest(row)
+        # Appelé hors event loop : on insère EN DIRECT, même chemin d'insertion — le
+        # journal reste best-effort, pas de file d'attente.
+        #
+        # ⚠️ Ce `try` n'est pas décoratif, et il manquait. Les deux branches promettent
+        # la même chose (« un échec se log en warning et n'échoue JAMAIS la requête
+        # métier ») mais une seule la tenait : la branche asynchrone est gardée par
+        # `_emit_rest`, celle-ci ne l'était que par les gardes INTERNES d'`_insert_rest`
+        # — donc pas du tout dès que le sink lui-même défaille. L'asymétrie était
+        # invisible tant que ce chemin ne servait qu'en CLI et en test ; depuis que les
+        # handlers de capacité tournent en threadpool (incident du 2026-09-01), c'est
+        # le chemin de PRODUCTION de toute écriture datastore faite en REST.
+        try:
+            _insert_rest(row)
+        except Exception:  # noqa: BLE001 — le journal ne casse jamais le service
+            logger.warning("journalisation rest en échec (%s)", row.get("tool"),
+                           exc_info=True)
         return
     task = loop.create_task(_emit_rest(row))
     _REST_PENDING.add(task)
