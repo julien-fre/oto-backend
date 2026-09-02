@@ -155,3 +155,70 @@ def test_un_travail_neuf_reste_reclamable(client, org, declencheur):
     assert pris is not None, "un travail frais doit partir — sinon le test précédent ne prouve rien"
     assert pris["payload"]["trigger_id"] == declencheur["id"]
     assert pris["lease_until"] is not None
+
+
+# ── un déclencheur qui ne TIQUE plus ne périme plus : les deux gestes qui l'arrêtent
+
+def test_desactiver_perime_ce_qui_reste_en_attente(client, org, declencheur):
+    """⚠️ Le trou que la mécanique du tick laissait ouvert. La péremption passe par
+    le tick DU déclencheur — l'éteindre le fait sortir de la boucle, donc ses
+    occurrences en attente devenaient ÉTERNELLES.
+
+    Et le geste qui les rendait éternelles était précisément celui par lequel
+    quelqu'un cherchait à arrêter les dégâts : **le seul geste de réparation
+    disponible aggravait la panne, en silence.**"""
+    from oto_mcp import db
+
+    db.enqueue_job(org["id"], "start",
+                   payload={"procedure": "veille", "trigger_id": declencheur["id"]})
+    db.update_trigger(declencheur["id"], org["id"], {"enabled": False})
+
+    r = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "get", "trigger_id": declencheur["id"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["trigger"]["expired_count"] >= 3, "l'occupation en attente a péri"
+    # Et elle ne repartira pas le jour où des agents arrivent.
+    assert db.claim_next_job(org["id"], "un-worker") is None
+
+
+def test_rallumer_ne_perime_rien(client, org, declencheur):
+    """⚠️ Le contrôle symétrique : seul le passage à ÉTEINT périme. Périmer aussi
+    au rallumage effacerait une occurrence toute fraîche — et une garde qui mord
+    dans les deux sens ne se distingue pas d'une purge."""
+    from oto_mcp import db
+
+    db.update_trigger(declencheur["id"], org["id"], {"enabled": True})
+    db.enqueue_job(org["id"], "start",
+                   payload={"procedure": "veille", "trigger_id": declencheur["id"]})
+    db.update_trigger(declencheur["id"], org["id"], {"label": "un autre nom"})
+    pris = db.claim_next_job(org["id"], "un-worker")
+    assert pris is not None, "une retouche de libellé n'a rien à périmer"
+
+
+def test_supprimer_perime_avant_de_supprimer(client, org):
+    """⚠️ Le pire des deux cas : sans déclencheur, les occurrences deviennent
+    INVISIBLES en même temps qu'éternelles — le compteur de pertes se lit SUR le
+    déclencheur, qui n'existe plus. Elles partiraient pourtant le jour où des
+    agents arrivent, pour un déclencheur que plus personne n'a.
+
+    *« Ne pas toucher » n'est une conservation que si quelque chose garantit la
+    cible* : ici il n'y a aucune clé étrangère entre un travail et son
+    déclencheur, seulement un identifiant recopié dans la charge."""
+    import datetime
+
+    from oto_mcp import db
+
+    t = db.create_trigger(
+        org["id"], org["membre"], procedure="veille-jetable", cron="0 9 * * *",
+        tz="Europe/Paris",
+        next_due=datetime.datetime.now(datetime.timezone.utc),
+        tools=["data_write"], label="à supprimer")
+    db.enqueue_job(org["id"], "start",
+                   payload={"procedure": "veille-jetable", "trigger_id": t["id"]})
+
+    assert db.delete_trigger(t["id"], org["id"]) is True
+    # Le fait qui compte : plus rien à réclamer.
+    assert db.claim_next_job(org["id"], "un-worker") is None
+    # Et la trace demeure, avec sa raison — l'état n'est pas une suppression.
+    compte = db.comptage_perime(org["id"], t["id"])
+    assert compte["expired_count"] == 1

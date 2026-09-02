@@ -251,6 +251,29 @@ une perte connue. `expired_count: 0` est un vrai zéro, servi, pas une absence d
 mesure. **Deux dates et pas une** : une perte ancienne qui a cessé n'appelle pas
 le même geste qu'une perte qui continue ce matin.
 
+⚠️ **Un déclencheur qui ne TIQUE plus ne périme plus** — et les deux gestes qui
+l'arrêtent laissaient donc leurs occurrences éternelles. **Éteindre** (`enabled =
+false`) le sort de la boucle du tick ; **supprimer** est pire encore, puisque le
+compteur de pertes se lit SUR le déclencheur : elles devenaient *invisibles en
+même temps qu'éternelles*, tout en restant réclamables le jour où des agents
+arrivent — pour un déclencheur que plus personne n'a.
+
+> ⚠️ **Le geste de réparation aggravait la panne.** Quelqu'un qui constate qu'une
+> automatisation ne tourne pas l'éteint : c'est exactement ce qu'a fait
+> l'utilisateur du 26/08, et c'était le seul geste à sa portée. Il figeait la file
+> au lieu de la vider.
+
+Les deux périment donc avant d'agir, avec **leur propre raison** — « le cycle a
+tourné », « le déclencheur a été supprimé » et « il a été désactivé » n'envoient
+pas au même geste. ⚠️ Et seul le passage à ÉTEINT périme : périmer aussi au
+rallumage effacerait une occurrence fraîche, et *une garde qui mord dans les deux
+sens ne se distingue pas d'une purge*.
+
+**La forme générale du piège**, qui vaut au-delà d'ici : *« ne pas toucher » n'est
+une conservation que si quelque chose garantit la cible.* Rien ne la garantit
+entre un travail et son déclencheur — il n'y a pas de clé étrangère, seulement un
+identifiant recopié dans la charge.
+
 ⚠️ **L'hygiène ne coupe jamais le service** : une péremption qui échoue est
 journalisée et l'enfilage continue. L'inverse ferait qu'un défaut d'entretien
 arrête les automatisations de tout le monde — et le pire qu'on risque en la

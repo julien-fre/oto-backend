@@ -68,7 +68,12 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     return dict(row)
 
 
-def perimer_travaux_du_declencheur(trigger_id: int, org_id: int) -> int:
+_RAISON_CYCLE = ("occurrence non prise dans son cycle : le déclencheur a enfilé "
+                 "la suivante. Aucun agent ne dessert cette organisation.")
+
+
+def perimer_travaux_du_declencheur(trigger_id: int, org_id: int,
+                                   raison: str = _RAISON_CYCLE) -> int:
     """Périme les travaux `pending` d'un déclencheur que personne n'a pris.
 
     Appelée quand le tick enfile l'occurrence SUIVANTE : ce qui restait en
@@ -95,13 +100,11 @@ def perimer_travaux_du_declencheur(trigger_id: int, org_id: int) -> int:
             """
             UPDATE runner_jobs
                SET status = 'expired', finished_at = NOW(),
-                   last_error = 'occurrence non prise dans son cycle : le '
-                                'déclencheur a enfilé la suivante. Aucun agent '
-                                'ne dessert cette organisation.'
+                   last_error = %s
              WHERE org_id = %s AND status = 'pending'
                AND payload->>'trigger_id' = %s
             """,
-            (org_id, str(trigger_id)),
+            (raison, org_id, str(trigger_id)),
         )
         return cur.rowcount or 0
 
