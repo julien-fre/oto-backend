@@ -13,10 +13,18 @@ from __future__ import annotations
 from oto_mcp import providers
 
 
-def _sans_logo() -> set[str]:
+def _sans_logo(tous_kinds: bool = False) -> set[str]:
+    """Les connecteurs qui n'affichent aucun logo.
+
+    `tous_kinds` élargit aux connecteurs FÉDÉRÉS (`kind="mount"`). Le tripwire
+    d'oubli ci-dessous garde son périmètre historique — les connecteurs `tools` ;
+    le ratchet d'entrée morte, lui, doit voir tout le registre (cf. sa docstring).
+    ⚠️ Ce que le périmètre historique ne regarde donc pas : `folkmcp`, monté sans
+    domaine de logo et sans déclaration d'absence. Constat, pas décision.
+    """
     return {
         n for n, c in providers.REGISTRY.items()
-        if c.kind == "tools"
+        if (tous_kinds or c.kind == "tools")
         and not providers._LOGO_DOMAIN_BY_CONNECTOR.get(n)
         and not c.logo_url
     }
@@ -33,8 +41,14 @@ def test_seuls_les_connecteurs_sans_marque_nont_pas_de_logo():
 def test_la_liste_des_exceptions_ne_se_perime_pas():
     """RATCHET. Une exception qui ne correspond plus à aucun connecteur sans logo est
     soit un connecteur supprimé, soit un logo ajouté sans nettoyer la liste — dans les
-    deux cas la liste ment sur ce qu'elle protège."""
-    perimees = sorted(providers._SANS_LOGO_DE_MARQUE - _sans_logo())
+    deux cas la liste ment sur ce qu'elle protège.
+
+    ⚠️ Se juge sur TOUT le registre, pas sur les seuls `kind="tools"`. Un connecteur
+    fédéré a le droit de déclarer l'absence : `planity` monte NOTRE serveur, la marque
+    Planity n'est pas celle du service rendu (2026-09-02). Calculé sur les seuls tools,
+    ce ratchet accusait cette déclaration d'être morte alors qu'elle décrit exactement
+    le connecteur qu'elle nomme."""
+    perimees = sorted(providers._SANS_LOGO_DE_MARQUE - _sans_logo(tous_kinds=True))
     assert not perimees, (
         f"{perimees} : entrées mortes dans `_SANS_LOGO_DE_MARQUE` — à retirer.")
 

@@ -32,6 +32,19 @@ Package pur (aucun import oto_mcp, comme `tool_visibility.py`). Une dataclass `C
 - `providers/<nom>.py` — le **domicile unique** d'un connecteur : `CONNECTOR = _c(…)`, ses commentaires, et ses constantes curées `CATEGORY` / `PUBLISHER` / `DESCRIPTION` / `LOGO_DOMAIN` / `SANS_LOGO_DE_MARQUE`. Le module porte le nom du connecteur (vérifié à l'import).
 - `providers/_model.py` — la **forme** : `CredentialField`, `Connector`, la factory `_c`. Un nouveau CHAMP par connecteur s'ajoute ici, puis se renseigne dans le module du connecteur — jamais dans une liste transverse indexée par nom (c'est ce qu'ont acté `account_noun` puis `cardinality`, cf. ci-dessous).
 
+### Ce que la fiche DIT — l'éditeur nomme qui reçoit l'appel
+
+Tranché par Alexis le **2026-09-02** : *« dire la vérité sur les deux »*. Les champs curés décrivent le service **rendu**, jamais la marque dont on emprunte le nom :
+
+- **`PUBLISHER` = qui reçoit réellement l'appel.** Une passerelle tierce se nomme (`reddit` → `redditapis.com`, l'API de Reddit étant fermée en self-serve) ; un service qu'on opère soi-même se nomme aussi (`planity` → `Otomata`, le mount est NOTRE serveur).
+- **`help` dit qu'un intermédiaire existe**, en une clause et sans jargon — avant l'installation, pas après. Et quand la connexion se fait avec les **identifiants du service** (planity : email + mot de passe rejoués par notre mount), l'aide le dit : c'est ce que la fiche engage de plus lourd.
+- **`LOGO_DOMAIN` ne pose pas une marque tierce sur un service qui n'est pas le sien.** L'absence se DÉCLARE (`SANS_LOGO_DE_MARQUE = True`), elle ne s'invente pas.
+- Le **NOM** du connecteur et de ses tools ne bouge pas pour autant : des appelants s'y accrochent (`docs/alias-deprecies.md`).
+
+⚠️ **Les deux fautes vont en sens OPPOSÉS**, et une seule relecture les confond : jusqu'au 2026-09-02, `reddit` s'attribuait le produit d'un tiers (éditeur « Reddit », logo reddit.com, alors que l'appel part chez un revendeur) pendant que `planity` attribuait le nôtre à un tiers (éditeur « Planity », logo planity.com, pour un serveur que nous opérons). Chercher « à qui l'appel arrive-t-il ? » attrape les deux ; chercher « la marque est-elle la bonne ? » n'en attrape aucune.
+
+⚠️ Le ratchet `tests/test_connector_logos.py` juge l'**entrée morte** sur TOUT le registre (un connecteur fédéré a le droit de déclarer l'absence), mais ne cherche l'**oubli** que parmi les `kind="tools"` — `folkmcp` reste hors de son champ.
+
 ### La cardinalité d'auth — dérivée, déclarée, et plus jamais listée
 
 Tranché par Alexis le 2026-08-27 : *« ce qui gêne, c'est la LISTE elle-même »*. Trois
