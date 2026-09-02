@@ -83,4 +83,9 @@ class ProviderStatus(BaseModel):
         "La clé est posée mais le connecteur ne répond plus (session expirée, jeton "
         "révoqué…), constaté par la sonde de vérification et **persistant** jusqu'à "
         "une reconnexion ou un test réussi. Absent tant que rien n'a été constaté."))
-    health_reason: Optional[str] = None
+    health_reason: Optional[str] = Field(default=None, description=(
+        "Pourquoi la clé ne répond plus, quand la sonde a su le dire — son texte, "
+        "tel quel. ⚠️ Peut être `null` **alors même que `health_ko` est vrai** : on "
+        "sait que ça ne répond plus, sans savoir pourquoi. Afficher l'état sans "
+        "inventer la cause — un message fabriqué enverrait chercher au mauvais "
+        "endroit."))

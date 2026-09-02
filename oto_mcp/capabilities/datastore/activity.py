@@ -164,8 +164,15 @@ class ActivityEntry(BaseModel):
     # (la ligne se corrèle alors par sa clé métier), une lecture de tableau non plus.
     row_id: Optional[str] = None
     row_title: Optional[str] = None              # posé sur le parcours d'UNE ligne
-    # Les champs touchés par l'écriture — les NOMS, jamais les valeurs.
-    fields: list[str] = []
+    fields: list[str] = Field(default=[], description=(
+        "Les NOMS des champs touchés par l'écriture — **jamais leurs valeurs**. "
+        "Bornés à 50 noms, chacun tronqué à 64 caractères : le journal dit ce qui a "
+        "changé, il n'est pas une copie de la donnée. `[]` sur un geste qui ne touche "
+        "aucun champ (une lecture) et sur les lignes antérieures à ce relevé. "
+        "⚠️ **Le delta n'est pas servi** : pour savoir ce que valait une colonne "
+        "avant, il y a `from_status`/`to_status` sur le statut, et rien pour les "
+        "autres champs — c'est un choix, pas un oubli (un journal qui porterait les "
+        "deux états serait un second domicile pour une donnée qui en a déjà un)."))
     # La transition de statut, relevée PENDANT la mutation et non relue après : une
     # relecture courrait avec une écriture concurrente, et le cockpit proposerait
     # d'annuler vers un état que la ligne n'a jamais eu (cf. `rows.py::_update_row`).

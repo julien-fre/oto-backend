@@ -291,6 +291,12 @@ class RunCall(BaseModel):
     un client prudent affichait « arguments journalisés » sans savoir de quoi il
     parlait.
     """
+    id: Optional[int] = Field(default=None, description=(
+        "L'identifiant de CET appel — celui que prend `GET …/monitoring/calls/"
+        "{call_id}` et `op=call`. ⚠️ Sans lui, une ligne de la timeline était une "
+        "impasse : on voyait qu'un appel avait eu lieu sans pouvoir l'ouvrir. C'est "
+        "le MÊME identifiant que `CallDetail.id` — la timeline et la fiche parlent de "
+        "la même ligne de journal, elles la nomment donc pareil."))
     created_at: Optional[str] = None
     tool: Optional[str] = None
     args: Optional[dict] = Field(default=None, description=(

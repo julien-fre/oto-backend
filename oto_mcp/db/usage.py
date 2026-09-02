@@ -671,7 +671,7 @@ def get_run(run_id: str, *, org_id: Optional[int] = None) -> list[dict]:
     with _connect() as conn:
         return [dict(r) for r in conn.execute(
             f"""
-            SELECT created_at, tool, args, ok, error, duration_ms
+            SELECT id, created_at, tool, args, ok, error, duration_ms
             FROM tool_calls WHERE {" AND ".join(clauses)} ORDER BY created_at
             """,
             tuple(params),
