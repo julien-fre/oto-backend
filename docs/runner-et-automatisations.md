@@ -199,6 +199,41 @@ les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclar�
 fait refuser l'appel entier à la validation). Conception + état des preuves :
 blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
 
+### Un travail porte l'identité de qui l'a demandé (02/09/2026)
+
+**Premier barreau du chantier « agents autonomes », et le préalable de tout le
+reste.** Aujourd'hui un agent s'authentifie avec le jeton d'une ORGANISATION :
+c'est ce qui impose mécaniquement **un worker par organisation**. Ce n'est pas un
+choix d'architecture qu'on pourrait discuter — c'est un empêchement, et c'est lui
+qui a laissé 41 travaux programmés sans personne pour les prendre.
+
+**Un travail qui porte son identité dispense le worker d'en avoir une par
+organisation.** `runner_jobs.sub` répond donc à « au nom de QUI l'agent agira »,
+pas à « qui a cliqué » : ce n'est pas une trace d'audit.
+
+```
+déclencheur   →  l'identité est celle de son CRÉATEUR
+                 (le tick n'a pas d'identité propre : c'est une horloge,
+                  pas un acteur)
+appel direct  →  l'identité vient de `ctx.sub`, l'état SERVEUR
+                 ⚠️ jamais d'un champ d'entrée — un travail dont l'appelant
+                 choisirait le porteur serait une usurpation en une ligne de
+                 JSON, et elle passerait inaperçue puisque le travail
+                 s'exécuterait normalement, sous un autre nom
+```
+
+⚠️ **NULLABLE, et ça le reste.** Les travaux enfilés avant le 02/09 n'ont pas de
+créateur connu. Leur en inventer un — le premier admin, un compte de service —
+donnerait un nom qui **se lirait comme un fait**. Un « je ne sais pas » explicite
+vaut mieux qu'une réponse fausse : c'est celui-là qu'on pourra corriger.
+
+**Ce que ce barreau ne fait PAS encore** : rien n'est changé à l'authentification.
+Le worker présente toujours son jeton et le claim reste scopé à son organisation.
+La délégation — le worker agissant AU NOM du porteur — est le barreau suivant, et
+c'est lui qui rendra le worker mutualisable. ⚠️ Le paramétrage de l'identité vers
+un autre membre (validé le 02/09) passera par une garde d'appartenance, jamais
+par la confiance faite au corps de la requête.
+
 ### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
 
 Le refus de poser un déclencheur sans agent ferme la porte d'entrée. **Il ne fait

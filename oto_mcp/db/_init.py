@@ -208,6 +208,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # `expired` (02/09) : un travail programmé que personne n'a pris dans son
     # cycle. ⚠️ Le CHECK d'une base existante refuserait la valeur — et le refus
     # tomberait au TICK, pas au boot, donc loin de sa cause.
+    # `sub` (02/09) : l'identité que l'agent porte en exécutant ce travail.
+    conn.execute("ALTER TABLE runner_jobs ADD COLUMN IF NOT EXISTS sub TEXT")
     conn.execute("ALTER TABLE runner_jobs DROP CONSTRAINT IF EXISTS "
                  "runner_jobs_status_check")
     conn.execute("ALTER TABLE runner_jobs ADD CONSTRAINT runner_jobs_status_check "
