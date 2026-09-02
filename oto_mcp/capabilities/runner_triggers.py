@@ -21,7 +21,8 @@ from pydantic import BaseModel
 
 from .. import db, runner_tick
 from ._authz import ORG_MEMBER
-from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
+from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
+                     RestBinding)
 from .registry import CAPABILITIES
 
 _TZ_DEFAUT = "Europe/Paris"
@@ -63,10 +64,60 @@ class Trigger(BaseModel):
     created_at: Optional[str] = None
 
 
+class RunnerArme(BaseModel):
+    """La présence d'un runner pour l'org — SERVIE avec les déclencheurs.
+
+    ⚠️ Elle accompagne `list`/`get` parce qu'un déclencheur ne porte pas en
+    lui-même de quoi savoir s'il sera joué : c'est une propriété de l'ORG, et
+    elle manquait exactement là où on la cherche. Sans elle, la seule trace
+    qu'un déclencheur ne s'exécute pas a été, le 26/08, une phrase tapée dans
+    son propre LIBELLÉ."""
+    armed: bool
+    workers: int
+    #: `None` = aucun worker n'est JAMAIS venu ; une date = il s'est tu depuis.
+    #: Les deux n'appellent pas le même geste, et un seul booléen les confondrait.
+    last_seen: Optional[str] = None
+
+
 class TriggerOut(BaseModel):
     trigger: Optional[Trigger] = None
     triggers: Optional[list[Trigger]] = None
     ok: Optional[bool] = None
+    runner: Optional[RunnerArme] = None
+
+
+def _exige_un_runner(org_id: int) -> None:
+    """Refuse de PROMETTRE une exécution que personne n'assure.
+
+    ⚠️ La garde suit le VERBE, pas l'objet — le motif que `runner_fleets` a
+    établi pour `launch`/`stop`. Poser un déclencheur (ou en rallumer un) est le
+    geste qui MENT : il rend un `next_due`, que l'agent rapporte comme une
+    promesse tenue. Lire, corriger et supprimer restent ouverts, précisément
+    parce que c'est ce dont a besoin quelqu'un qui découvre un déclencheur mort.
+
+    Fermer `create` derrière la présence d'un worker n'ôte donc rien à personne :
+    ce qui existe reste gérable, et ce qui n'aurait jamais tourné ne se crée
+    plus en silence."""
+    etat = db.runner_arme(org_id)
+    if etat["armed"]:
+        return
+    if etat["last_seen"] is None:
+        detail = ("aucun worker n'a jamais sondé la file de cette org : rien "
+                  "n'exécuterait ce déclencheur")
+    else:
+        detail = (f"le dernier worker de cette org s'est tu le "
+                  f"{etat['last_seen']} — au-delà de "
+                  f"{db.ARME_FENETRE_S // 60} minutes on ne le tient plus pour "
+                  f"présent")
+    raise AuthzDenied(
+        400, "no_runner_armed",
+        f"aucun runner armé pour cette org ({detail}). Le tick ENFILE un job à "
+        "chaque échéance ; l'exécution appartient au worker, et sans worker le "
+        "job resterait `pending` pour toujours, sans erreur — le déclencheur "
+        "aurait l'air de marcher. Arme un worker pour cette org "
+        "(`OTO_RUNNER_ARMED=1` + un jeton de l'org, cf. otomata-tech/oto-runner), "
+        "puis repose le déclencheur. Lecture, modification et suppression des "
+        "déclencheurs existants restent ouvertes.")
 
 
 def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
@@ -84,6 +135,11 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
             runner_tick.validate_cron(inp.cron, tz)
         except ValueError as e:
             raise AuthzDenied(400, "invalid_schedule", str(e))
+        # Après la validation du cadencement, avant l'écriture : un cron fautif
+        # se corrige, une org sans runner appelle un autre geste — les deux
+        # refus ne se remplacent pas, et celui qu'on lit d'abord est celui qu'on
+        # peut réparer sans quitter l'appel.
+        _exige_un_runner(ctx.org_id)
         t = db.create_trigger(
             ctx.org_id, ctx.sub, procedure=inp.procedure, cron=inp.cron, tz=tz,
             next_due=runner_tick.next_due(inp.cron, tz), tools=inp.tools,
@@ -92,7 +148,8 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         return {"trigger": t}
 
     if inp.op == "list":
-        return {"triggers": db.list_triggers(ctx.org_id)}
+        return {"triggers": db.list_triggers(ctx.org_id),
+                "runner": db.runner_arme(ctx.org_id)}
 
     if inp.trigger_id is None:
         raise AuthzDenied(400, "missing_fields", f"{inp.op} exige `trigger_id`")
@@ -101,7 +158,7 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         t = db.get_trigger(inp.trigger_id, ctx.org_id)
         if not t:
             raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
-        return {"trigger": t}
+        return {"trigger": t, "runner": db.runner_arme(ctx.org_id)}
 
     if inp.op == "delete":
         if not db.delete_trigger(inp.trigger_id, ctx.org_id):
@@ -127,6 +184,11 @@ def _triggers(ctx: ResolvedCtx, inp: TriggerInput) -> dict:
         except ValueError as e:
             raise AuthzDenied(400, "invalid_schedule", str(e))
         champs.update(cron=cron, tz=tz, next_due=runner_tick.next_due(cron, tz))
+    # Rallumer, c'est promettre à nouveau : même geste, même garde. Éteindre,
+    # renommer ou corriger un cron ne promet rien et passe toujours — sinon un
+    # déclencheur mort deviendrait impossible à ranger.
+    if champs.get("enabled") is True:
+        _exige_un_runner(ctx.org_id)
     t = db.update_trigger(inp.trigger_id, ctx.org_id, champs)
     if not t:
         raise AuthzDenied(404, "trigger_not_found", "déclencheur inconnu")
@@ -141,6 +203,24 @@ CAPABILITIES += [
         Output=TriggerOut,
         authz=ORG_MEMBER,
         mcp="oto_trigger",
+        # Les refus PUBLIÉS — un dashboard doit pouvoir GRISER « nouveau
+        # déclencheur » et dire pourquoi, plutôt que laisser tenter un geste qui
+        # sera refusé (le motif de `runner_fleets`).
+        errors=(
+            DeclaredError(400, "missing_fields",
+                          "`create` sans `procedure`/`cron`/`tools`, ou une "
+                          "opération sur un déclencheur sans `trigger_id`"),
+            DeclaredError(400, "invalid_schedule",
+                          "cron malformé, fuseau inconnu, ou deux occurrences "
+                          "espacées de moins de 5 minutes"),
+            DeclaredError(400, "no_runner_armed",
+                          "aucun worker ne sonde la file de cette org : "
+                          "`create`, et `update enabled=true`, sont refusés "
+                          "plutôt que de promettre une exécution qui n'aurait "
+                          "pas lieu"),
+            DeclaredError(404, "trigger_not_found",
+                          "déclencheur inconnu dans l'org du porteur"),
+        ),
         rest=RestBinding(verb="POST", path="/api/me/runner/triggers"),
         description=(
             "Scheduled triggers for hosted runs — the product's /schedule. op=create "
@@ -149,7 +229,11 @@ CAPABILITIES += [
             "you mean) / list / get / update (editing cron or tz revalidates and "
             "recomputes the next due) / delete. The tick only ENQUEUES a job at "
             "each due time; execution belongs to the worker. Floor between two "
-            "occurrences: 5 minutes — a run is not a ping."
+            "occurrences: 5 minutes — a run is not a ping. `create` (and "
+            "`update enabled=true`) is REFUSED when no worker polls this org's "
+            "queue — a trigger nothing executes would enqueue forever without an "
+            "error; `list`/`get` carry `runner` (armed, workers, last_seen) so an "
+            "existing trigger can be told apart from a live one."
         ),
     ),
 ]

@@ -29,7 +29,8 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   `/api/me/runner/jobs`) : claim SKIP LOCKED + bail re-claimable, backoff,
   `result` JSONB déclaré à la conclusion (usage_tokens, `tool_counts` — le
   « tour perdu », un agent qui analyse sans écrire, se lit au grain job),
-  op=list org-scopé (surveillance dashboard `/automations`).
+  op=list org-scopé (surveillance dashboard `/automations`), **paginé et
+  DISANT sa borne** — voir ci-dessous.
 - **flottes** `runner_fleets` (R4, 01/09/2026) — la CONFIGURATION DÉCLARÉE d'un
   passage : procédure, cible (`namespace` + `row_filter`), contexte d'exécution
   (`provider`/`model`, uniforme sur le passage — c'est LUI qui porte l'attribution
@@ -56,7 +57,58 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   créée AVANT `runner_jobs`, qui la référence.
 - **déclencheurs** `runner_triggers` — capacité + MCP `oto_trigger`, tick
   backend avec CAS sur `next_due` (prod/preprod partagent la base : un seul
-  gagnant par échéance).
+  gagnant par échéance). ⚠️ **Poser (et rallumer) exige un runner ARMÉ pour
+  l'org** — voir ci-dessous.
+- **workers vus** `runner_workers` — la présence d'un runner pour une org,
+  inscrite à CHAQUE sondage de la file (`op=claim`, y compris à vide).
+
+### Ne pas promettre une exécution que personne n'assure (02/09/2026)
+
+Le tick ENFILE, le worker EXÉCUTE. Sans worker armé pour l'org, le job reste
+`pending` **pour toujours, sans une erreur** — pendant que le déclencheur rend un
+`next_due` que l'agent rapporte comme une promesse tenue. C'est le pire des deux
+malentendus : **ça ressemble à un succès.**
+
+**Ce qui l'a daté.** Relevé le 02/09 dans l'org 196 : cinq déclencheurs actifs
+enfilent chaque matin (dernier enfilement le jour même à 07:00), et un sixième
+porte son autopsie **dans son propre libellé** — « DISABLED 26 Aug, oto_trigger
+jobs do not execute ». Quelqu'un a diagnostiqué la panne et n'a eu que le NOM de
+l'objet pour l'écrire : le produit ne disait rien, nulle part.
+
+**La garde suit le VERBE, pas l'objet** — le motif que `runner_fleets` a établi
+pour `launch`/`stop` :
+
+```
+create              REFUSÉ sans runner armé   c'est le geste qui MENT
+update enabled=true REFUSÉ sans runner armé   rallumer, c'est promettre à nouveau
+list / get          ouverts, + `runner`       et c'est là qu'on cherche la réponse
+update (autre) /
+delete              TOUJOURS ouverts          ranger un déclencheur mort
+```
+
+Fermer aussi la lecture ou la suppression enfermerait l'utilisateur avec l'objet
+qui lui ment — or c'est exactement la personne qui a besoin d'agir.
+
+**Le signal, et pourquoi une table.** Un claim sur file VIDE n'écrit rien :
+`runner_jobs.claimed_by` ne distingue donc pas « aucun worker » de « un worker
+qui n'a rien eu à faire ». Et cette lecture se BOUCLE au démarrage — aucun job ne
+peut exister avant un déclencheur, aucun déclencheur ne pourrait alors se poser.
+Le **sondage** prouve la présence même à vide : c'est le seul signal qui parle
+avant le premier job. D'où `runner_workers`, écrite en tête de `claim_next_job`.
+
+**La fenêtre est asymétrique, et c'est elle qui fixe la valeur**
+(`ARME_FENETRE_S`, 15 min). Un refus à tort se répare tout seul — le message dit
+quoi faire, et reposer le déclencheur trente secondes plus tard marche. Une
+acceptation à tort fabrique une promesse qui ment TOUS LES JOURS jusqu'à ce que
+quelqu'un s'aperçoive que le rapport n'arrive pas. On refuse du bon côté, avec
+une fenêtre assez large pour qu'un redéploiement ne la morde pas.
+
+⚠️ **`list`/`get` portent `runner` {armed, workers, last_seen} — DÉCLARÉ, pas
+déduit.** `last_seen: null` (aucun worker n'est jamais venu) et une date ancienne
+(il s'est tu) n'appellent pas le même geste : monter un runner, ou aller voir
+pourquoi celui qui existe s'est tu. Un seul booléen les confondrait. C'est aussi
+la seule chose qui distingue, pour les déclencheurs **déjà posés**, un vivant
+d'un mort — le refus, lui, ne protège que les nouveaux.
 ⚠️ **« Arrêter » vise DEUX services distincts** (constaté le 01/09/2026) :
 l'ordonnanceur (`oto-fleet-<nom>`) cesse d'ENFILER, les agents (`oto-runner@1..N`,
 unités séparées) finissent ce qui est pris **et restent ARMÉS sur la file**.
@@ -67,6 +119,39 @@ l'ordonnanceur. **« Rien ne tourne » ne se dit qu'après avoir constaté les d
 les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclaré
 fait refuser l'appel entier à la validation). Conception + état des preuves :
 blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
+
+### `op=list` : la page dit ce qu'elle laisse dehors (#469, 01/09/2026)
+
+**Mesuré le 28/08** : `POST /api/me/runner/jobs {op: list, limit: 1000}` rendait
+**200** lignes. La borne était appliquée dans le `LIMIT` du SQL
+(`db/runner_jobs.py`), sans être déclarée nulle part et sans que la réponse ne
+l'annonce : ni total, ni curseur. Un poste de flotte qui faisait le bilan d'une vague
+de 150+ jobs lisait donc `len(jobs)` comme le compte de la file — et lisait faux.
+
+⚠️ **Un relevé plafonné SOUS-déclare : il rend moins d'anomalies que la réalité,
+jamais plus.** C'est la classe de défaut qui rassure exactement quand il ne faut pas,
+et c'est pour ça qu'elle vaut mieux qu'une gêne d'ergonomie. Le runner s'en était
+affranchi par un bilan natif côté client — une rustine qui masque le défaut au lieu
+de le fermer, et qui ne protège aucun autre consommateur de la route.
+
+La page porte donc deux champs, et ils vont ensemble :
+- **`total`** — le nombre de jobs de la file sous les MÊMES filtres (org + `status`),
+  indépendant de `limit` et de la position du curseur. C'est le dénominateur d'un
+  bilan ; il ne bouge pas d'une page à l'autre.
+- **`next_cursor`** — opaque, à renvoyer tel quel dans `cursor` pour lire la page
+  suivante (plus ancienne) ; `null` = fin de la file. **Une page pleine AVEC un
+  `next_cursor` dit que la lecture est tronquée ici.**
+
+Le curseur est un **keyset** sur l'ordre servi (`id DESC`), pas un OFFSET : une file
+bouge sous la marche, et un job enfilé entre deux pages décalerait tout un OFFSET —
+donc ferait sauter une ligne, c'est-à-dire recréerait la sous-déclaration qu'on
+ferme. Un curseur illisible est un **refus nommé** (`400 invalid_cursor`), jamais un
+repli muet sur le début de la file : rejouer la première page en boucle est
+indiscernable d'une marche qui progresse.
+
+La borne (`JOBS_PAGE_MAX = 200`) reste appliquée dans le SQL en dernier ressort, mais
+celle qui ENGAGE est désormais au contrat (`capabilities/runner_jobs.py`, patron
+`cap_limit` : on écrête, on ne refuse pas) — et l'écrêtage n'est plus muet.
 
 ### `complete` libère les baux du run et rend le compte — `0` écrit (#633, 29/08/2026)
 

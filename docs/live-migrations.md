@@ -52,6 +52,27 @@ détruisant que ce que le code prod COURANT ne référence plus.
   `owner_type='…'` — chercher en priorité les requêtes SANS filtre (list_all, by_id).
 - **Seed gardé sur le sous-ensemble sémantique** (ex. lignes `scope='platform'`), pas
   sur `COUNT(*)` global : une table unifiée non vide n'implique pas que le seed a tourné.
+- **Poser une clé étrangère sur une table déjà peuplée : `NOT VALID`, puis valider**
+  (vécu le 01/09 sur `blocks.node_id`, #800). Une FK VALIDE d'emblée parcourt la table
+  et **refuse de se poser** si une seule ligne viole la contrainte — sur une base
+  partagée, c'est le boot qui échoue, pour un état hérité qu'on ne contrôle pas au
+  moment du déploiement. `ADD CONSTRAINT … NOT VALID` se pose toujours et **n'est pas un
+  demi-geste** (vérifié, pas déduit) : PostgreSQL crée les triggers référentiels dans
+  tous les cas, donc le `ON DELETE CASCADE` joue et une insertion violante est refusée
+  dès la pose ; seule la vérification des lignes DÉJÀ là est différée. Le boot suivant
+  tente `VALIDATE CONSTRAINT` — après avoir compté les violations, jamais en attrapant
+  son échec — et la sonde `pg_constraint.convalidated` fait sortir le geste au premier
+  aller-retour une fois validé.
+  ⚠️ **Une FK a DEUX naissances, et il faut les deux** : inline dans le `CREATE TABLE`
+  pour une base vierge (où l'`ALTER` ne s'applique pas), et par `_init.py` pour une base
+  qui existe (où le `CREATE TABLE` est sauté). Retirer l'une ne rougit nulle part
+  ailleurs : prod et install fraîche divergent alors en silence, les deux « marchent »,
+  seule l'une contraint. Cf. `tests/test_blocs_cascade.py` et
+  `tests/test_runner_fleets_boot_base_existante.py`.
+  ⚠️ Et **le CASCADE se paie sur l'index de la colonne RÉFÉRENÇANTE** : chaque
+  suppression du parent la parcourt. Vérifier qu'elle est indexée avant de poser la
+  contrainte (`idx_blocks_node` l'était) ; sans index, c'est un parcours séquentiel de
+  la table enfant par ligne parente supprimée.
 
 ## Les pièges
 

@@ -43,7 +43,10 @@ def test_claim_row_returns_the_row_with_its_lease(monkeypatch):
         # qui lève en production.
         return {"row_id": "r1", "created_at": "c", "updated_at": "u",
                 "data": {"nom": "ACME"}, "claimed_by": "sarah",
-                "claimed_until": "t+15", "claimed_run": None}
+                "claimed_until": "t+15", "claimed_run": None,
+                # La fraîcheur du bail vient désormais du SELECT (`claim_active`) :
+                # un faux qui l'omet lève, exactement comme en production.
+                "claim_active": True}
 
     monkeypatch.setattr(D.db, "datastore_claim_row", _claim)
     out = _store(monkeypatch).claim_row("vivier", "r1", worker="sarah", lease_s=300)
@@ -86,7 +89,8 @@ def test_claim_row_needs_write_access(monkeypatch):
 
     monkeypatch.setattr(D.db, "datastore_claim_row", lambda *a, **k: {
         "row_id": "r1", "created_at": "c", "updated_at": "u", "data": {},
-        "claimed_by": "sarah", "claimed_until": "t", "claimed_run": None})
+        "claimed_by": "sarah", "claimed_until": "t", "claimed_run": None,
+        "claim_active": True})
     s = D.DatastorePg("u1")
     monkeypatch.setattr(s, "_resolve", _resolve)
     monkeypatch.setattr(s, "_ns_of", lambda _id: {"namespace": "vivier", "schema": None})
@@ -99,7 +103,8 @@ def test_claims_report_the_configuration_that_breaks_auto_release(monkeypatch):
     tableau sans état terminal ne se libère jamais toute seule."""
     monkeypatch.setattr(D.db, "datastore_claim_row", lambda *a, **k: {
         "row_id": "r1", "created_at": "c", "updated_at": "u", "data": {},
-        "claimed_by": "sarah", "claimed_until": "t", "claimed_run": None})
+        "claimed_by": "sarah", "claimed_until": "t", "claimed_run": None,
+        "claim_active": True})
     monkeypatch.setattr(D.dsv2, "queue_release_warning", lambda schema: "pas d'état terminal")
     warnings: list = []
     _store(monkeypatch).claim_row("vivier", "r1", worker="sarah", warnings=warnings)

@@ -16,7 +16,8 @@ CONNECTOR = _c(
     default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
     secret_kind="api_key",
     label="Firecrawl",
-    help="pages web en markdown propre — scrape, crawl d'un site, map, search",
+    help="convertir un site entier en markdown propre à donner à un agent — "
+         "scrape, crawl, map ; pas un moteur de recherche",
     href="https://firecrawl.dev",
 )
 

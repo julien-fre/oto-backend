@@ -981,6 +981,77 @@ def update_page(node_id: int, *, title: Optional[str] = None,
     return True
 
 
+# --- Le cycle de parenté : refusé à l'écriture, borné partout ------------------
+#
+# `nodes.parent_id` n'a **pas** de clé étrangère (arbitrage M-e, ouvert) : rien en base
+# n'empêche un nœud d'être rangé sous sa propre descendance. Il faut DEUX gestes, et
+# ils ne se remplacent pas :
+#
+# - `move_page` **refuse** le cycle. C'est la correction — elle protège les
+#   déplacements à venir.
+# - toute récursion sur l'arbre porte la clause `CYCLE`. C'est la **borne** — elle
+#   protège de ce qui serait DÉJÀ en base, qu'aucune garde amont ne peut défaire
+#   rétroactivement.
+#
+# Sans la borne, `WITH RECURSIVE … UNION ALL` sur un cycle ne termine pas : il empile
+# dans `base/pgsql_tmp` jusqu'au `DiskFull`. Mesuré de bout en bout le 2026-09-01 —
+# `move A sous B` (B déjà enfant de A) rendait 200, puis `delete A` remplissait le
+# disque. **Cette base est partagée avec la production** (`docs/live-migrations.md`) :
+# un appel authentifié quelconque saturait donc le disque de la prod.
+#
+# ⚠️ **La borne est la clause `CYCLE`, jamais un plafond de profondeur.** Un plafond
+# tronquerait un `DELETE` sur un arbre légitimement profond et laisserait des enfants
+# accrochés à un identifiant disparu — on guérirait d'un mal en en posant un autre.
+# `CYCLE id SET …` s'arrête à la RÉPÉTITION : chaque nœud est visité une fois, et
+# aucun arbre acyclique n'est tronqué.
+
+
+class ParentCycle(RuntimeError):
+    """L'arbre boucle : `node_id` est son propre ancêtre par `parent_id`.
+
+    Levée à l'ÉCRITURE quand `move_page` refuse de fermer la boucle — `parent_id`
+    porte alors le parent demandé. Levée à la LECTURE quand la remontée du fil en
+    rencontre une déjà en base — `parent_id` vaut `None`, personne ne l'a demandée,
+    c'est un constat de corruption.
+    """
+
+    def __init__(self, node_id: int, parent_id: Optional[int] = None):
+        super().__init__(
+            f"cycle_de_parente: le nœud {node_id} est son propre ancêtre — "
+            "son fil ne peut pas être remonté"
+            if parent_id is None else
+            f"cycle_de_parente: le nœud {node_id} ne peut pas être rangé sous "
+            f"{parent_id}, qui descend de lui")
+        self.node_id = node_id
+        self.parent_id = parent_id
+
+
+# La DESCENTE : le nœud et toute sa descendance, une ligne par nœud, terminant même
+# si l'arbre porte déjà un cycle. La ligne de répétition sort en plus, marquée
+# `boucle` — un `IN (SELECT id …)` s'en moque, un identifiant en double ne supprime
+# pas deux fois.
+_DESCENDANCE = (
+    "WITH RECURSIVE descendance AS ("
+    "    SELECT id, parent_id FROM nodes WHERE id = %s"
+    "  UNION ALL"
+    "    SELECT n.id, n.parent_id FROM nodes n"
+    "      JOIN descendance d ON n.parent_id = d.id"
+    ") CYCLE id SET boucle USING chemin "
+)
+
+# La REMONTÉE : le nœud et ses ancêtres. C'est par elle que se pose la question de
+# `move_page`, et c'est délibéré — remonter coûte la PROFONDEUR de l'arbre, alors que
+# descendre coûterait le sous-arbre entier à chaque déplacement.
+_ASCENDANCE = (
+    "WITH RECURSIVE ascendance AS ("
+    "    SELECT id, parent_id FROM nodes WHERE id = %s"
+    "  UNION ALL"
+    "    SELECT n.id, n.parent_id FROM nodes n"
+    "      JOIN ascendance a ON n.id = a.parent_id"
+    ") CYCLE id SET boucle USING chemin "
+)
+
+
 def move_page(node_id: int, *, parent_id: Optional[int],
               after_id: Optional[int] = None) -> bool:
     """Déplace une page dans l'arbre — nouveau parent, et rang optionnel.
@@ -988,6 +1059,17 @@ def move_page(node_id: int, *, parent_id: Optional[int],
     Change le PARENT et la POSITION, jamais l'identité : c'est l'opération
     élémentaire du modèle, et c'est elle qui garantit mécaniquement que ce qui pend
     au nœud (ses blocs, ses enfants, ce qui le cite) survit au déplacement.
+
+    ⚠️ **Refuse de ranger un nœud sous sa propre descendance** (`ParentCycle`). Sans
+    ce refus, l'arbre acceptait une boucle, et la suppression qui la rencontrait ne
+    terminait pas — cf. le préambule de ce module. Le refus est levé, pas rendu en
+    valeur : `move_page` rend déjà `False` pour « ce nœud n'existe pas », et servir le
+    même `False` pour deux faits opposés donnerait à l'appelant un succès muet.
+
+    La question se pose PAR LE HAUT (`_ASCENDANCE` depuis le parent demandé) : si le
+    nœud déplacé y figure, la boucle se fermerait. Le cas `parent_id == node_id` est
+    couvert par le même geste — la remontée s'amorce sur le parent demandé, donc elle
+    le contient toujours.
     """
     with _connect() as conn:
         with conn.transaction():
@@ -996,6 +1078,10 @@ def move_page(node_id: int, *, parent_id: Optional[int],
                 " WHERE id = %s AND props->>'legacy' IS NULL", (node_id,)).fetchone()
             if row is None:
                 return False
+            if parent_id is not None and conn.execute(
+                    _ASCENDANCE + "SELECT 1 FROM ascendance WHERE id = %s LIMIT 1",
+                    (parent_id, node_id)).fetchone() is not None:
+                raise ParentCycle(node_id, parent_id)
             conn.execute("UPDATE nodes SET parent_id = %s, updated_at = NOW() "
                          " WHERE id = %s", (parent_id, node_id))
             place_after(conn, node_id, after_id=after_id, parent_id=parent_id,
@@ -1006,14 +1092,21 @@ def move_page(node_id: int, *, parent_id: Optional[int],
 def delete_page(node_id: int) -> bool:
     """Supprime une page native ET sa descendance.
 
-    L'arbre n'a **pas** de clé étrangère (arbitrage M-e, ouvert) : la descendance se
-    ramasse ici, par le code. Sans ça, supprimer un parent laisserait des enfants
-    rattachés à un identifiant disparu — des orphelins qu'aucun lecteur ne trouve et
-    qu'aucune purge ne voit.
+    L'arbre n'a **pas** de clé étrangère (arbitrage M-e, encore ouvert pour
+    `parent_id`) : la descendance se ramasse ici, par le code. Sans ça,
+    supprimer un parent laisserait des enfants rattachés à un identifiant disparu —
+    des orphelins qu'aucun lecteur ne trouve et qu'aucune purge ne voit.
 
-    Même raisonnement, même absence de clé étrangère, une table plus loin : le CORPS
-    de chaque page supprimée part avec elle (`blocks`), et il part EN PREMIER — le
-    nœud disparu, plus rien ne relierait ses blocs à quoi que ce soit.
+    ⚠️ **Une table plus loin, la réponse a changé** (2026-09-01, #800) : le corps ne
+    dépend plus de ce que fait l'appelant. `blocks.node_id` porte désormais une clé
+    étrangère `ON DELETE CASCADE` — supprimer le nœud emporte ses blocs, ici comme
+    partout ailleurs. Le `DELETE FROM blocks` explicite ci-dessous reste, et pour une
+    raison de COÛT et non d'intégrité : il retire le corps de toute la descendance en
+    UNE instruction ensembliste, là où la cascade referait le geste nœud par nœud.
+
+    La descente est BORNÉE (`_DESCENDANCE`, clause `CYCLE`) : une boucle déjà en base
+    la faisait tourner jusqu'à remplir `pgsql_tmp`. Bornée, elle emporte au contraire
+    les nœuds de la boucle — c'est le seul geste qui défait un cycle existant.
     """
     with _connect() as conn:
         with conn.transaction():
@@ -1023,18 +1116,12 @@ def delete_page(node_id: int) -> bool:
             if row is None:
                 return False
             conn.execute(
-                "WITH RECURSIVE descendance AS ("
-                "    SELECT id FROM nodes WHERE id = %s "
-                "  UNION ALL "
-                "    SELECT n.id FROM nodes n JOIN descendance d ON n.parent_id = d.id) "
-                "DELETE FROM blocks WHERE node_id IN (SELECT id FROM descendance)",
+                _DESCENDANCE
+                + "DELETE FROM blocks WHERE node_id IN (SELECT id FROM descendance)",
                 (node_id,))
             conn.execute(
-                "WITH RECURSIVE descendance AS ("
-                "    SELECT id FROM nodes WHERE id = %s "
-                "  UNION ALL "
-                "    SELECT n.id FROM nodes n JOIN descendance d ON n.parent_id = d.id) "
-                "DELETE FROM nodes WHERE id IN (SELECT id FROM descendance)",
+                _DESCENDANCE
+                + "DELETE FROM nodes WHERE id IN (SELECT id FROM descendance)",
                 (node_id,))
     return True
 
@@ -1052,11 +1139,15 @@ def delete_page(node_id: int) -> bool:
 # dans `maintenance.residu_projete`.
 #
 # Ce qui pend à un nœud — mesuré en production avant d'écrire ces lignes, pas
-# supposé : **aucune clé étrangère** ne pointe `nodes` (rien ne casse, mais rien ne
-# cascade non plus — d'où la suppression explicite des blocs) ; **0** embedding sur
-# un nœud recopié (les 22 embeddings de nœuds sont tous natifs) ; **aucun** partage
-# ne désigne un nœud ; et **0** nœud natif n'a pour parent un nœud recopié — le
-# retrait ne détache donc aucun enfant vivant.
+# supposé : **0** embedding sur un nœud recopié (les 22 embeddings de nœuds sont tous
+# natifs) ; **aucun** partage ne désigne un nœud ; et **0** nœud natif n'a pour parent
+# un nœud recopié — le retrait ne détache donc aucun enfant vivant.
+#
+# ⚠️ Une phrase de ce paragraphe est PÉRIMÉE depuis le 2026-09-01 (#800) et vaut
+# d'être datée plutôt qu'effacée : « aucune clé étrangère ne pointe `nodes` ». Il y
+# en a une maintenant — `blocks_node_fk`, `ON DELETE CASCADE`. C'est ce qui rend
+# `delete_orphan_blocks()` sans objet : le mode d'échec qu'il ramassait ne peut plus
+# se produire, et il balayait TOUT bloc sans nœud, marqué ou non.
 
 
 def count_projected_nodes() -> int:
@@ -1064,6 +1155,21 @@ def count_projected_nodes() -> int:
     with _connect() as conn:
         return conn.execute(
             "SELECT count(*) AS n FROM nodes WHERE props ? 'legacy'"
+        ).fetchone()["n"]
+
+
+def count_projected_blocks() -> int:
+    """Combien de blocs pendent à un nœud recopié — donc partiraient AVEC lui.
+
+    C'est la moitié de l'inventaire qui manquait au mode à blanc (#800) : il
+    annonçait les nœuds et les orphelins, et taisait les 34 314 blocs attachés que
+    `--apply` emportait. Un inventaire dont le rôle est de dire ce qu'on s'apprête à
+    détruire et qui en tait la plus grosse part donne confiance à tort.
+    """
+    with _connect() as conn:
+        return conn.execute(
+            "SELECT count(*) AS n FROM blocks b "
+            " JOIN nodes n ON n.id = b.node_id WHERE n.props ? 'legacy'"
         ).fetchone()["n"]
 
 
@@ -1076,9 +1182,10 @@ def delete_projected_nodes(*, batch_size: int = 2000, max_batches: int = 100) ->
     (`docs/live-migrations.md`). Un lot interrompu laisse simplement du résidu, que
     la passe suivante reprend : le geste se REPREND, il ne se répare pas.
 
-    **Les blocs d'abord, par jointure sur le nœud** : `blocks.node_id` ne porte
-    aucune clé étrangère, donc supprimer le nœud en premier rendrait ses blocs
-    introuvables — des orphelins que plus aucune requête ne relie à rien.
+    **Les blocs d'abord**, mais plus pour la raison d'origine : depuis #800,
+    `blocks.node_id` porte une clé étrangère `ON DELETE CASCADE`, donc l'ordre ne
+    décide plus de l'intégrité. Il décide du COÛT — un `DELETE` ensembliste sur le
+    lot entier, plutôt qu'une cascade rejouée nœud par nœud.
 
     ⚠️ **Cette fonction ne rend RIEN de comptable, et c'est délibéré.** Le nombre de
     lignes qu'un `DELETE` déclare avoir touchées ne distingue pas un retrait qui a
@@ -1100,22 +1207,23 @@ def delete_projected_nodes(*, batch_size: int = 2000, max_batches: int = 100) ->
 
 
 def count_orphan_blocks() -> int:
-    """Blocs dont le nœud n'existe plus.
+    """Blocs dont le nœud n'existe plus — un TÉMOIN, plus une liste de travail.
 
-    C'est le mode d'échec que l'ordre ci-dessus évite ; on veut pouvoir le
-    CONSTATER si un autre chemin l'a produit, plutôt que le supposer absent.
+    Depuis #800 la contrainte `blocks_node_fk` rend ce mode d'échec impossible : ce
+    compte doit valoir 0, et un non-zéro ne dit plus « il y a du ménage à faire »
+    mais **« la contrainte n'est pas posée sur cette base »**. C'est la seule
+    lecture qui reste juste, et elle vaut d'être servie dans l'inventaire.
+
+    ⚠️ **Il n'y a plus de `delete_orphan_blocks()`, et son retrait est le point ③ de
+    #800.** Le balai n'avait aucun prédicat `legacy` : il emportait tout bloc sans
+    nœud, quelle qu'en fût l'origine — y compris le corps d'une page NATIVE dont le
+    nœud venait d'être supprimé par le défaut que cette même issue corrige. Le
+    borner « au résidu marqué » est impossible : un orphelin n'a plus de nœud, donc
+    plus de marque. La contrainte, elle, supprime la question — ce qu'un balai
+    bornerait, elle l'empêche de naître.
     """
     with _connect() as conn:
         return conn.execute(
             "SELECT count(*) AS n FROM blocks b "
             " WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = b.node_id)"
         ).fetchone()["n"]
-
-
-def delete_orphan_blocks() -> None:
-    """Même règle qu'au-dessus : on retire ici, on compte ailleurs."""
-    with _connect() as conn:
-        with conn.transaction():
-            conn.execute(
-                "DELETE FROM blocks b WHERE NOT EXISTS "
-                "(SELECT 1 FROM nodes n WHERE n.id = b.node_id)")

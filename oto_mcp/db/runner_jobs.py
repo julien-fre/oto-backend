@@ -29,6 +29,13 @@ from ._conn import _connect
 _BACKOFF_S = 30
 _LEASE_DEFAULT_S = 600  # ~3× la ligne la plus lente mesurée (180 s) — le tour d'un run
 
+# Plafond d'une page de file. Il existait déjà — enfoui dans le LIMIT, appliqué sans
+# être dit : `limit=1000` rendait 200 lignes et rien ne l'annonçait (#469). Il est
+# nommé ici parce que c'est là que le SQL le fait respecter, et déclaré au contrat
+# par la capacité, qui rend le total et le curseur sans lesquels une page pleine est
+# indiscernable d'une file épuisée.
+JOBS_PAGE_MAX = 200
+
 
 def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
                 run_id: Optional[str] = None, max_attempts: int = 3,
@@ -68,6 +75,19 @@ def claim_next_job(org_id: int, worker_sub: str,
     Marque d'abord `failed` les épaves (bail mort + tentatives épuisées) : elles
     deviennent VISIBLES au lieu d'être re-servies pour rien."""
     with _connect() as conn:
+        # Le SONDAGE vaut présence — avant même de savoir s'il y a du travail. Un
+        # claim sur file vide n'écrit rien d'autre : sans cette ligne, une org
+        # servie par un worker bien vivant serait indistinguable d'une org sans
+        # runner, et `runner_arme` refuserait le premier déclencheur pour rien.
+        conn.execute(
+            """
+            INSERT INTO runner_workers (org_id, worker_sub, last_seen_at)
+                 VALUES (%s, %s, NOW())
+            ON CONFLICT (org_id, worker_sub)
+              DO UPDATE SET last_seen_at = NOW()
+            """,
+            (org_id, worker_sub),
+        )
         conn.execute(
             """
             UPDATE runner_jobs
@@ -179,8 +199,20 @@ def complete_job(job_id: int, worker_sub: str, ok: bool,
     return dict(row) if row else None
 
 
+def _filtre_de_file(org_id: int, status: Optional[str]) -> tuple[str, list]:
+    """Le WHERE commun à la page et à son compte — une seule définition de « la
+    file », sinon le total finit par décrire une autre population que les lignes
+    qu'il accompagne."""
+    q = " WHERE org_id = %s"
+    params: list = [org_id]
+    if status:
+        q += " AND status = %s"
+        params.append(status)
+    return q, params
+
+
 def list_jobs(org_id: int, status: Optional[str] = None,
-              limit: int = 50) -> list[dict]:
+              limit: int = 50, before_id: Optional[int] = None) -> list[dict]:
     """La file vue d'en haut (surveillance dashboard) : les jobs de l'org, du
     plus récent au plus ancien, filtrables par statut. Le payload est rendu
     (références seulement, par contrat d'enqueue) mais jamais tronqué en
@@ -189,20 +221,50 @@ def list_jobs(org_id: int, status: Optional[str] = None,
     ⚠️ `lease_until` en fait partie, et ce n'est pas un champ de plus : sans lui,
     « ce bail a expiré » ne se lit pas — il se DEVINE à un seuil sur l'ancienneté,
     et un seuil dérivé range dans la même case un travail lent et un travail mort.
-    La colonne porte la DATE ; c'est au lecteur de la comparer à l'heure qu'il est."""
+    La colonne porte la DATE ; c'est au lecteur de la comparer à l'heure qu'il est.
+    `fleet_id` dit à quel PASSAGE le travail appartient (R4).
+
+    `before_id` = pagination keyset sur l'ordre servi (`id DESC`) : la page suivante
+    est « les jobs plus anciens que celui-ci ». Un keyset plutôt qu'un OFFSET parce
+    qu'une file bouge sous la marche — un job enfilé entre deux pages décalerait
+    tout un OFFSET et ferait sauter une ligne.
+
+    ⚠️ `JOBS_PAGE_MAX` reste appliqué ICI en dernier ressort, mais la borne qui
+    ENGAGE est celle du contrat (`capabilities/runner_jobs.py`) : c'est elle qui la
+    déclare et qui rend le total + le curseur qui la disent. Une borne connue du
+    seul SQL est exactement ce que #469 reprochait."""
+    ou, params = _filtre_de_file(org_id, status)
     q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
          "       claimed_by, lease_until, last_error, result, due_at, created_at, "
          "       finished_at, fleet_id "
-         "FROM runner_jobs WHERE org_id = %s")
-    params: list = [org_id]
-    if status:
-        q += " AND status = %s"
-        params.append(status)
+         "FROM runner_jobs") + ou
+    if before_id is not None:
+        q += " AND id < %s"
+        params.append(int(before_id))
     q += " ORDER BY id DESC LIMIT %s"
-    params.append(max(1, min(int(limit), 200)))
+    params.append(max(1, min(int(limit), JOBS_PAGE_MAX)))
     with _connect() as conn:
         rows = conn.execute(q, tuple(params)).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_jobs(org_id: int, status: Optional[str] = None) -> int:
+    """Le nombre de jobs de la file, MÊMES filtres que `list_jobs` et sans son
+    plafond : c'est le chiffre qu'un bilan de vague vient chercher, et celui qui
+    dit qu'une page est tronquée. Le curseur, lui, dit comment lire la suite.
+
+    **Le coût a été mesuré avant d'être ajouté au chemin de la liste**, parce que ce
+    dépôt a déjà gelé sa boucle sur une requête lente : sur un banc de 200 000 jobs
+    répartis sur 50 orgs — ~20× le volume réel — le compte d'une org prend **7 ms**
+    (seq scan parallèle) contre 3 ms pour la page. Pas d'index posé pour ça : il
+    coûterait un DDL au boot et une empreinte de schéma pour économiser des
+    millisecondes sur une surface de surveillance. À revoir si la file change
+    d'ordre de grandeur."""
+    ou, params = _filtre_de_file(org_id, status)
+    with _connect() as conn:
+        row = conn.execute("SELECT count(*) AS n FROM runner_jobs" + ou,
+                           tuple(params)).fetchone()
+    return int(dict(row)["n"])
 
 
 def get_job(job_id: int, org_id: int) -> Optional[dict]:
@@ -219,3 +281,44 @@ def get_job(job_id: int, org_id: int) -> Optional[dict]:
             (job_id, org_id),
         ).fetchone()
     return dict(row) if row else None
+
+
+# ── Le runner est-il ARMÉ pour cette org ? ───────────────────────────────────
+# La fenêtre au-delà de laquelle un worker n'est plus tenu pour présent. Un worker
+# sonde en continu (le claim revient `None` sur file vide et il repart) : quinze
+# minutes laissent passer un redéploiement ou un reboot sans crier au loup.
+#
+# ⚠️ Le choix du sens de l'erreur est ASYMÉTRIQUE, et c'est lui qui fixe la valeur.
+# Un refus à tort se répare tout seul — le message dit quoi faire, et poser le
+# déclencheur trente secondes plus tard marche. Une acceptation à tort fabrique
+# une promesse qui ment TOUS LES JOURS, sans une erreur, jusqu'à ce que quelqu'un
+# s'aperçoive que le rapport n'arrive pas. On refuse donc du bon côté, avec une
+# fenêtre assez large pour qu'un aléa d'exploitation ne la morde pas.
+ARME_FENETRE_S = 15 * 60
+
+
+def runner_arme(org_id: int) -> dict:
+    """Ce que l'org peut dire de ses workers : présence, ancienneté, nombre.
+
+    ⚠️ Rendu DÉCLARÉ, jamais déduit de compteurs à zéro par l'appelant : `armed`
+    est un booléen que le serveur pose, et `last_seen` distingue « aucun worker
+    n'est jamais venu » (None) de « il en est venu un, il y a trop longtemps ».
+    Les deux appellent des gestes différents — monter un runner, ou aller voir
+    pourquoi celui qui existe s'est tu."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FILTER (
+                       WHERE last_seen_at > NOW() - make_interval(secs => %s)
+                   ) AS vivants,
+                   MAX(last_seen_at) AS dernier
+              FROM runner_workers
+             WHERE org_id = %s
+            """,
+            (ARME_FENETRE_S, org_id),
+        ).fetchone()
+    vivants = int(row["vivants"] or 0) if row else 0
+    dernier = row["dernier"] if row else None
+    return {"armed": vivants > 0,
+            "workers": vivants,
+            "last_seen": str(dernier) if dernier else None}

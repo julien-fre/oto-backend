@@ -13,7 +13,7 @@ from ._model import _c
 CONNECTOR = _c(
     "hubspot", ["hubspot"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="HubSpot",
-    help="CRM (contacts, companies, deals, tickets, notes)",
+    help="CRM (contacts, companies, deals, tickets, notes, listes/segments, propriétés)",
     href="https://app.hubspot.com",
 )
 

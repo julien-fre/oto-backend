@@ -16,9 +16,14 @@ CONNECTOR = _c(
     default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
     secret_kind="api_key",
     label="Topograph",
-    help="KYB — données & documents entreprise (registres européens)",
+    # Le sigle « KYB » ouvrait l'aide sans être explicité (2026-09-02).
+    help="fiches et documents officiels d'entreprises européennes, issus des "
+         "registres publics — vérifier un client, un fournisseur (KYB)",
     href="https://www.topograph.co",
 )
 
 CATEGORY = "Prospection"
+# L'éditeur affiché retombait sur le défaut « Otomata » alors que la carte
+# porte le logo de topograph.co — deux affirmations contraires au même endroit.
+PUBLISHER = "Topograph"
 LOGO_DOMAIN = "topograph.co"

@@ -75,6 +75,57 @@ ignore la destination. Détail du grain, du fail-closed et de ses limites :
 ⚠️ **La face REST n'est pas gatée** — le dashboard qui construit ce nouvel univers la
 consomme aujourd'hui. Écart assumé, refermé quand la surface cessera d'être provisoire.
 
+## L'arbre ne boucle pas — et ce qui le garantit
+
+`nodes.parent_id` n'a **aucune clé étrangère** (arbitrage M-e, toujours ouvert) : la
+base n'a rien pour refuser qu'un nœud soit rangé sous sa propre descendance. Jusqu'au
+**2026-09-01**, rien dans le code ne le refusait non plus.
+
+**Ce que ça coûtait, mesuré de bout en bout.** `move A sous B`, alors que B était déjà
+enfant de A, rendait **200**. Le `delete A` qui suivait jouait un
+`WITH RECURSIVE … UNION ALL` sans borne sur la boucle ainsi créée et ne terminait
+pas : il empilait dans `base/pgsql_tmp` jusqu'au `DiskFull`. Avec une borne
+artificielle posée à 20 000 niveaux, la requête produisait 20 001 lignes. **Cette base
+est partagée entre la préproduction et la production** (`docs/live-migrations.md`) :
+n'importe quel appel authentifié pouvait donc saturer le disque de la prod, et la box a
+déjà connu un disque plein — SSL et préproduction cassés à la clé.
+
+**Deux gestes, et il faut les deux.**
+
+| geste | où | ce qu'il protège |
+|---|---|---|
+| le **refus** — `move_page` lève `ParentCycle` si le parent demandé descend du nœud | `db/nodes.py` | les déplacements **à venir** |
+| la **borne** — chaque récursion sur l'arbre porte la clause SQL `CYCLE` | `db/nodes.py`, `db/node_view.py`, `db/projects.py` | ce qui serait **déjà en base** |
+
+Le second ne se déduit pas du premier : une garde amont ne défait pas rétroactivement
+une boucle écrite hier, et personne ne peut prouver qu'il n'y en a jamais eu. (Relevé
+en production le 2026-09-01, en lecture seule : **0** — 75 721 nœuds tous atteignables
+depuis une racine, 1 063 pages `docs` de même.)
+
+⚠️ **La borne est la clause `CYCLE`, jamais un plafond de profondeur.** Un plafond
+tronquerait un `DELETE` sur un arbre légitimement profond et laisserait des enfants
+accrochés à un identifiant disparu — on guérirait d'un mal en en posant un autre.
+`CYCLE id SET …` s'arrête à la **répétition** : chaque nœud est visité une fois, aucun
+arbre acyclique n'est tronqué. Un cliquet AST (`test_node_parent_cycle.py`) relève
+chaque `WITH RECURSIVE` de `db/` **au grain de la fonction** et exige sa clause.
+
+**La lecture DIT le cycle.** `ancestors_of` était bornée en profondeur (12) et servait,
+sur une boucle, douze maillons `A, B, A, B…` avec un succès : un cycle déjà en base
+était **invisible à la lecture**. Elle lève désormais `ParentCycle` — l'arbre ne peut
+pas répondre à « où est ce nœud », et un fil qui s'arrête sans le dire est un zéro qui
+ressemble à un résultat. La boucle se **défait** en supprimant le nœud (`delete_page`,
+borné, emporte les nœuds de la boucle).
+
+**Même défaut, une table plus loin.** `docs.parent_id` porte, lui, une FK auto-référente
+`ON DELETE CASCADE` — et elle n'empêche rien : une FK exige que la ligne visée existe,
+pas que l'arbre soit acyclique. `move_doc` et `move_doc_to_project` refusent donc le
+cycle (`DocParentCycle`), et les trois descentes de `db/projects.py` (compter,
+supprimer, déplacer) partagent une seule définition bornée.
+
+⚠️ **Ce que ce lot ne fait pas** : `capabilities/node_edit.py` ne rattrape pas encore
+`ParentCycle`, donc le refus sort en erreur interne plutôt qu'en 400 nommé. La garde
+est correcte — rien n'est écrit — mais la réponse servie ne dit pas encore pourquoi.
+
 ## La recopie, et pourquoi elle s'est arrêtée
 
 Jusqu'au 2026-09-01, **cinq conversions** tournaient à chaque démarrage — projets,
@@ -125,9 +176,22 @@ créera une.
 
 ## Le résidu, et comment il se retire
 
-Ce que la dernière passe a laissé, **mesuré le 2026-09-01 à 19:30 sur la base servie**
-: **75 668 nœuds sur 75 721** et **34 314 blocs**, dont 31 447 pendent à une copie.
-Les **53** nœuds restants sont natifs — tous des pages, dont 47 portent un corps.
+⚠️ **Le stock N'EST PLUS LÀ.** Relevé en lecture seule sur la base servie le
+**2026-09-01 à 21:27 UTC** : **0 nœud marqué `props.legacy`**, **0 bloc orphelin**,
+53 nœuds vivants (tous natifs, tous des pages) et 928 blocs, tous rattachés. Ce qui suit
+décrit donc un état révolu ; on le garde parce que le geste, lui, reste, et que ses
+chiffres disent ce qu'il a coûté. **Ne jamais recopier un de ces nombres dans une
+décision** : c'est le mode à blanc qui dit l'état du jour.
+
+⚠️ **Et l'heure des chiffres ci-dessous ne tient pas.** Ils sont annoncés « mesurés le
+2026-09-01 à 19:30 », dans un commit **écrit à 18:01** (`cac8fae3`) : aucune lecture de
+19:30 ne peut y figurer, quelle que soit la lecture du fuseau. Les COMPTES restent
+utiles — ils disent l'ordre de grandeur de ce qui a été retiré ; l'HEURE, elle, ne
+permet d'ordonner aucun événement, et personne ne doit s'en servir pour ça.
+
+Ce que la dernière passe avait laissé : **75 668 nœuds sur 75 721** et **34 314 blocs**,
+dont 31 447 pendent à une copie. Les **53** nœuds restants sont natifs — tous des pages,
+dont 47 portent un corps.
 
 ⚠️ **Un chiffre de résidu se DATE.** Ceux d'avant (70 876 / 29 174) étaient justes à
 leur heure et faux quatre heures plus tard : la recopie a continué de tourner jusqu'au
@@ -156,9 +220,41 @@ jusqu'au bout** — et l'exporter avant de tirer reconstituerait, hors du systè
 quelqu'un a demandé de supprimer. Ce qui ne peut pas être prouvé : que les 55 aient été
 supprimées volontairement plutôt que perdues autrement.
 
-⚠️ **Le stock est CLOS** (dernier orphelin le 28/08) : la purge ne tourne plus, donc
-plus aucun ne se crée. Ce que produit désormais une suppression est pire et différent —
-une copie **entière et lisible**, cf. le § précédent.
+### ⚠️ « Le stock est CLOS » était FAUX — corrigé le 2026-09-01 au soir (#800)
+
+Ce paragraphe a dit, pendant quelques heures : *« le stock est CLOS (dernier orphelin le
+28/08) : la purge ne tourne plus, donc plus aucun ne se crée »*. Il est conservé ici en
+toutes lettres parce qu'une carte qu'on efface ne s'apprend pas.
+
+**Depuis quand c'était faux** : depuis le **2026-08-12**. Ce n'est pas la purge qui a
+ouvert la fuite, c'est la conjonction de deux lots — le **10/08**, les guides se
+dissolvent dans `nodes` et `db/guides.py::delete_guide_db` devient une suppression de
+**nœud** ; le **12/08** (lot M2), le corps d'un nœud se projette en blocs, donc ces
+nœuds-là ont un corps à laisser derrière eux. Un orphelin natif est possible depuis ce
+jour-là, et l'était encore au moment où la phrase a été écrite.
+
+**Pourquoi on l'a cru** : l'enquête portait sur le RÉSIDU de la recopie, et elle a
+trouvé son producteur — la purge. De « le mécanisme que j'ai trouvé est arrêté » on a
+conclu « plus rien n'en produit », sans jamais énumérer les AUTRES chemins qui
+suppriment un nœud. Ils sont six (`grep 'DELETE FROM nodes'`) ; un seul touche un nœud
+qui porte un corps sans emporter ses blocs, et il vivait dans le module le plus proche
+du sujet. La leçon se range à côté de « énumérer avant une opération de masse » : **un
+stock ne se déclare clos qu'après l'inventaire de ses entrées, jamais après l'arrêt
+d'une seule d'entre elles.**
+
+**Ce qui l'a fermé pour de bon** : plus une discipline d'appelant — c'est elle qui a
+manqué deux fois — mais une contrainte. `blocks.node_id` porte depuis le 2026-09-01 une
+clé étrangère **`blocks_node_fk … ON DELETE CASCADE`** vers `nodes`. Le corps part avec
+son nœud quel que soit le chemin, et un bloc ne peut plus naître orphelin.
+
+⚠️ Elle se pose **`NOT VALID`** sur une base qui existe (`db/_init.py::_pose_cascade_blocs`)
+et VALIDE dans le `CREATE TABLE` d'une base neuve. Les deux moitiés sont nécessaires et
+retirer l'une ne rougit qu'à un seul endroit (`tests/test_blocs_cascade.py`). `NOT VALID`
+n'est pas un demi-geste : PostgreSQL crée les triggers référentiels dans tous les cas,
+donc **la cascade joue dès la pose** ; seule la vérification des lignes DÉJÀ là est
+différée, et elle est refusée tant qu'un orphelin traîne. C'est ce qui permet de poser la
+contrainte sur une base partagée prod/preprod sans faire échouer le boot sur un état
+qu'on ne contrôle pas au moment du déploiement.
 
 Le retrait est le travail de maintenance **`residu-projete`** (`oto-mcp maintenance`).
 Trois choses le gouvernent :
@@ -169,15 +265,30 @@ Trois choses le gouvernent :
   ni dans la passe quotidienne, et `--apply` seul écrit ;
 - **le compte est un DIFFÉRENTIEL d'inventaire**, jamais la réponse du geste. Un
   `DELETE` qui ne trouve rien annonce « zéro ligne » exactement comme un `DELETE` qui
-  vient de tout prendre.
+  vient de tout prendre ;
+- **le mode à blanc annonce TOUTE la surface** qu'`--apply` emporterait — nœuds
+  recopiés **et blocs attachés** (`blocs_attaches`). Il taisait les seconds, soit
+  34 314 lignes au 01/09, la plus grosse part de ce qui partait : un inventaire dont le
+  rôle est de dire ce qu'on s'apprête à détruire et qui en tait l'essentiel donne
+  confiance à tort (#800, point ②).
 
-⚠️ **Les blocs partent AVANT leur nœud.** `blocks.node_id` ne porte aucune clé
-étrangère — aucune ne pointe `nodes` — donc rien ne cascade : le nœud supprimé en
-premier, plus rien ne relierait ses blocs à quoi que ce soit.
+⚠️ **Les blocs partent AVANT leur nœud** — mais depuis le 2026-09-01 c'est une
+question de COÛT, plus d'intégrité : la clé étrangère les emporterait de toute façon,
+un nœud à la fois, là où un `DELETE` ensembliste prend le lot entier.
 
-Ce qui pend à un nœud a été **mesuré** avant d'écrire le retrait : aucune clé
-étrangère, aucun partage ne désigne un nœud, les 22 embeddings de nœuds sont tous
-natifs, et aucun nœud natif n'a pour parent un nœud recopié.
+⚠️ **Ce travail ne balaie plus les blocs ORPHELINS**, et c'est le point ③ de #800. Il le
+faisait sans aucun prédicat de provenance : il emportait tout bloc sans nœud, y compris
+le corps d'une page **native** dont le nœud venait d'être supprimé par la fuite ci-dessus
+— sous un nom qui promettait de ne toucher qu'à la copie. Le borner « au résidu marqué »
+est impossible : un orphelin n'a plus de nœud, donc plus de marque. La contrainte règle
+la question autrement — ce qu'un balai aurait dû borner, elle l'empêche de naître.
+`blocs_orphelins` reste dans l'inventaire, mais comme **témoin** : il doit valoir 0, et un
+non-zéro dit que la contrainte manque sur cette base.
+
+Ce qui pend à un nœud a été **mesuré** avant d'écrire le retrait : aucun partage ne
+désigne un nœud, les 22 embeddings de nœuds sont tous natifs, et aucun nœud natif n'a
+pour parent un nœud recopié. (La ligne « aucune clé étrangère » de ce relevé est périmée
+depuis le 2026-09-01 : il y en a une, `blocks_node_fk`.)
 
 La recherche ne perd rien : elle indexe `docs`, `projects` et `datastore_rows` **en
 propre**, et ne lit `nodes` que pour les couches de contexte.
@@ -226,7 +337,8 @@ comme « partenaire externe » fait surestimer le coût d'un changement de contr
 
 | module | rôle |
 |---|---|
-| `db/schema/nodes.py` | le DDL : la table, ses colonnes, ses **deux** index de requête |
+| `db/schema/nodes.py` | le DDL : la table, ses colonnes, ses **deux** index de requête, et la clé étrangère `blocks_node_fk` d'une base neuve |
+| `db/_init.py::_pose_cascade_blocs` | la même clé étrangère, pour une base qui existe déjà |
 | `db/nodes.py` | pages natives, position dans la fratrie, retrait du résidu |
 | `db/node_tables.py` | tableaux et lignes **natifs** — écriture et pagination |
 | `db/node_view.py` | ouvrir UN nœud |

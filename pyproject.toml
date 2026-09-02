@@ -23,11 +23,17 @@ dependencies = [
     # (SHA backend + ce pin). PyPI ne reçoit pas chaque merge (publish manuel, lag) →
     # on tague oto-core et on bump CE pin par PR. Bump = éditer le tag ici ; rollback
     # = revert ce commit (ramène aussi le bon oto-core). Cf. ADR 0020 (deploy/canari).
-    # v1.104.0 = MinariClient (oto.tools.minari) : prospection téléphonique — journal
-    # d'appels transcrits, listes CSV, analytics d'équipe ; écrit sur le contrat OpenAPI
-    # publié, sans sonde live (oto-core#67). Emporte aussi hubspot (les listes = les
-    # segments, et le référentiel des propriétés — oto-core#72) et kaspr (un `dataToGet`
-    # inconnu est refusé ICI en nommant les valeurs acceptées, oto-core#73) ;
+    # ⚠️ EXCEPTION — une PR venue d'un FORK bumpe le pin SUR LE TRONC, pas dans la
+    # branche : on n'écrit pas dans le dépôt d'autrui (l'API Contents rend 404 dessus).
+    # Le mainteneur bump ici, puis `update-branch` la PR. L'atomicité du revert cède
+    # devant ça. Cf. docs/contributions-forks.md (amendement du 2026-09-01).
+    # v1.104.0 = minari : MinariClient (oto.tools.minari), prospection téléphonique —
+    # journal d'appels transcrits, listes CSV, analytics d'équipe, écrit sur le contrat
+    # OpenAPI publié sans sonde live (oto-core#67, sert oto-backend#699) ; hubspot : les
+    # listes (= les segments) et le référentiel des propriétés, 21 méthodes ajoutées au
+    # client (oto-core#72, sert oto-backend#745) ; kaspr : un `dataToGet` inconnu est
+    # refusé ICI en nommant les valeurs acceptées, au lieu de partir sur le fil, la liste
+    # de référence étant l'enum de Kaspr et non notre docstring (oto-core#73) ;
     # v1.103.0 = slack : un jeton PUREMENT numérique entre deux `:` n'est plus lu comme
     # un emoji (une heure « 20:02 to 20:51 » se faisait avaler ses chiffres, signaux
     # #711/#575) et un texte au-delà des 4 000 caractères recommandés est SPLIT en

@@ -1199,6 +1199,8 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # avec la conversion : c'est un geste sur `nodes`, il ne dépend d'aucune
     # table historique.
     conn.execute("DROP INDEX IF EXISTS idx_nodes_owner")
+    # === La suppression d'un nœud emporte son CORPS — par contrainte (#800) ===
+    _pose_cascade_blocs(conn)
     # === Lot L5 (blueprint ADR 0053) : les grants de clé plateforme deviennent
     # === des ARÊTES, un connecteur à la fois.
     # EN FIN DE TRANSACTION, comme les conversions M2/M3 et pour la même raison :
@@ -1248,6 +1250,60 @@ def apply_boot_schema(conn: psycopg.Connection) -> None:
     # mesuré, pas supposé, et rejoué par le garde-fou.
     conn.execute("CREATE OR REPLACE VIEW guide_library AS "
                  "SELECT * FROM doctrine_library")
+
+
+def _pose_cascade_blocs(conn: psycopg.Connection) -> None:
+    """`blocks.node_id` devient une clé étrangère `ON DELETE CASCADE` vers `nodes`.
+
+    **Ce que ça ferme** : un nœud supprimé sans ses blocs laisse un corps que plus
+    aucune requête ne relie à rien — toute lecture de `blocks` part de `node_id`.
+    Deux chemins l'ont produit : la purge des conversions, arrêtée le 2026-09-01 en
+    même temps que la recopie qui l'hébergeait, puis `db/guides.py::delete_guide_db`
+    — la suppression d'une couche de contexte NATIVE, ouverte depuis le 2026-08-12 et
+    encore ouverte le jour où #800 a été écrite. Le second chemin est la preuve que la
+    discipline d'appelant ne tient pas cette arête : elle a manqué deux fois, la
+    seconde sur du contenu dont rien n'est copie.
+
+    **`NOT VALID`, et c'est le cœur du geste.** La base est PARTAGÉE prod/preprod
+    (`docs/live-migrations.md`) : une contrainte posée ici s'applique instantanément
+    à la production. Une contrainte VALIDE d'emblée refuserait de se poser tant qu'un
+    seul orphelin traîne — donc ferait ÉCHOUER le boot, sur un état qu'on ne contrôle
+    pas au moment du déploiement. `NOT VALID` se pose toujours, et — vérifié, pas
+    supposé — **il enclenche quand même la cascade** : PostgreSQL crée les triggers
+    référentiels dans tous les cas, `NOT VALID` ne saute que le parcours de
+    vérification des lignes DÉJÀ là. Une insertion violante est refusée elle aussi.
+    La fuite est donc fermée dès la pose, orphelins ou pas.
+
+    **La validation vient ensuite, et seulement si elle peut.** `VALIDATE CONSTRAINT`
+    échoue tant qu'un orphelin existe ; on ne le tente donc qu'après avoir compté, et
+    on laisse la contrainte `NOT VALID` sinon — en le DISANT. Ce n'est pas un repli :
+    dans les deux cas la fuite est fermée, seule la promesse sur le stock existant
+    diffère. Une fois validée, la sonde de tête sort au premier aller-retour et ce
+    code ne coûte plus rien au boot.
+    """
+    etat = conn.execute(
+        "SELECT convalidated FROM pg_constraint "
+        "WHERE conrelid = 'blocks'::regclass AND conname = 'blocks_node_fk'"
+    ).fetchone()
+    if etat is not None and etat["convalidated"]:
+        return
+    if etat is None:
+        conn.execute(
+            "ALTER TABLE blocks ADD CONSTRAINT blocks_node_fk "
+            "FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE NOT VALID")
+    orphelins = conn.execute(
+        "SELECT count(*) AS n FROM blocks b "
+        "WHERE NOT EXISTS (SELECT 1 FROM nodes n WHERE n.id = b.node_id)"
+    ).fetchone()["n"]
+    if orphelins:
+        logger.warning(
+            "boot: blocks_node_fk posée NOT VALID — %d bloc(s) orphelin(s) d'AVANT "
+            "la contrainte. La cascade joue déjà et plus rien n'en produit ; ce stock "
+            "est clos. Aucun travail de maintenance ne le retire, et c'est délibéré "
+            "(#800 ③ : un balai sans provenance emportait du natif). Le boot qui "
+            "suivra son retrait validera la contrainte.", orphelins)
+        return
+    conn.execute("ALTER TABLE blocks VALIDATE CONSTRAINT blocks_node_fk")
 
 
 def _drop_legacy_org_subscriptions(conn: psycopg.Connection) -> None:

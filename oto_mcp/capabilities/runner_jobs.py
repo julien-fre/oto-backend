@@ -17,16 +17,17 @@ serait un coffre parallèle.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .. import db
 from ._authz import ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
-                     RestBinding)
+                     RestBinding, cap_limit)
 from .registry import CAPABILITIES
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,18 @@ class JobsInput(BaseModel):
     # list — surveillance dashboard : la file de l'org, du plus récent au plus ancien.
     status: Optional[Literal["pending", "claimed", "done", "failed"]] = None
     limit: int = 50
+    # list — la page suivante, telle que la réponse précédente l'a rendue. Opaque :
+    # sa composition nous appartient (même parti que `data_rows` et les lignes d'un
+    # nœud), le worker la renvoie telle quelle.
+    cursor: Optional[str] = None
+
+    @field_validator("limit")
+    @classmethod
+    def _cap_limit(cls, v):
+        # Écrêter, pas refuser (patron `cap_limit`, #300) — mais l'écrêtage n'est
+        # plus muet : `total` et `next_cursor` disent ce qui reste. La borne est
+        # DÉCLARÉE ici, au contrat, et non plus seulement dans le LIMIT du SQL.
+        return cap_limit(v, db.JOBS_PAGE_MAX)
 
 
 class JobResult(BaseModel):
@@ -134,7 +147,8 @@ class Job(BaseModel):
 
 
 class JobsOut(BaseModel):
-    # enqueue → id/status/due_at ; claim → job (ou null, file vide) ; list → jobs ;
+    # enqueue → id/status/due_at ; claim → job (ou null, file vide) ;
+    # list → jobs + total + next_cursor ;
     # complete → ok/status + run_id/rows_released/release ; les autres → ok.
     id: Optional[int] = None
     status: Optional[str] = None
@@ -145,6 +159,19 @@ class JobsOut(BaseModel):
     job: Optional[Job] = None
     jobs: Optional[list[Job]] = None
     ok: Optional[bool] = None
+    # list (#469) — les deux champs sans lesquels une page pleine est indiscernable
+    # d'une file épuisée. Un relevé tronqué SOUS-DÉCLARE : il rassure exactement
+    # quand il ne faut pas.
+    total: Optional[int] = Field(
+        None, description=(
+            "list: how many jobs the queue holds under the SAME filters (org + "
+            "`status`), regardless of `limit` and of where the cursor is. This is "
+            "the number a fleet report wants; `len(jobs)` is only one page of it."))
+    next_cursor: Optional[str] = Field(
+        None, description=(
+            "list: pass it back as `cursor` to read the next (older) page — opaque, "
+            "do not parse. null = this page is the end of the queue. A full page "
+            "WITH a next_cursor means the reading is truncated here."))
     # complete (#633) — le témoin que la clôture du travail rend à un poste de flotte.
     run_id: Optional[str] = Field(
         None, description=(
@@ -161,6 +188,31 @@ class JobsOut(BaseModel):
             "complete: outcome of the release step — ok (count in rows_released), "
             "no_run (no run known to this job), failed (the release itself errored; "
             "the job is concluded anyway, the leases expire on their own)."))
+
+
+def _curseur(dernier_id: int) -> str:
+    """Le curseur servi : l'id du dernier job de la page, encodé. Opaque par
+    CONTRAT — pas par secret : ce qu'il encode peut changer (un tri neuf changerait
+    sa clé), et un worker qui l'aurait décodé casserait ce jour-là."""
+    return base64.urlsafe_b64encode(f"job:{dernier_id}".encode()).decode()
+
+
+def _depuis_curseur(cursor: str) -> int:
+    """L'inverse — et un REFUS NOMMÉ si le curseur est abîmé. Repartir du début en
+    silence reservirait la première page en boucle : une marche qui ne progresse pas
+    et personne pour le voir."""
+    try:
+        brut = base64.urlsafe_b64decode(cursor.encode()).decode()
+        prefixe, _, valeur = brut.partition(":")
+        if prefixe != "job":
+            raise ValueError(prefixe)
+        return int(valeur)
+    except Exception:  # noqa: BLE001
+        raise AuthzDenied(
+            400, "invalid_cursor",
+            "`cursor` illisible — reprends celui que la réponse précédente a rendu "
+            "dans `next_cursor`, ou omets-le pour repartir du début de la file."
+        ) from None
 
 
 def _release_run_rows(run_id: Optional[str]) -> dict:
@@ -224,8 +276,23 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
     if inp.op == "list":
         # Surveillance (page Automatisations) : lecture org-scopée, jamais un
         # geste — la liste rend de quoi écarter, le détail se demande par get.
-        return {"jobs": db.list_jobs(ctx.org_id, status=inp.status,
-                                     limit=inp.limit)}
+        #
+        # #469 : la page DIT ce qu'elle laisse dehors. `total` compte la file sous
+        # les mêmes filtres (il ne bouge pas d'une page à l'autre : c'est le
+        # dénominateur d'un bilan) ; `next_cursor` dit comment lire la suite. Sans
+        # eux, un bilan de vague lisait `len(jobs)` comme le compte de la file et
+        # sous-déclarait — un relevé tronqué rend MOINS que la réalité, jamais plus.
+        avant = _depuis_curseur(inp.cursor) if inp.cursor else None
+        jobs = db.list_jobs(ctx.org_id, status=inp.status, limit=inp.limit,
+                            before_id=avant)
+        # Une page pleine ⇒ il reste peut-être des lignes : on rend un curseur. Il
+        # peut mener à une page vide (la file s'arrêtait pile) — la convention des
+        # autres surfaces paginées du dépôt, et la seule qui ne coûte pas une
+        # requête de plus par page.
+        suite = _curseur(jobs[-1]["id"]) if jobs and len(jobs) >= inp.limit else None
+        return {"jobs": jobs,
+                "total": db.count_jobs(ctx.org_id, status=inp.status),
+                "next_cursor": suite}
 
     # Les quatre verbes de la prise exigent le job — et le db-layer les scope au
     # CLAIMANT : un pair qui tente de conclure le job d'un autre obtient le même
