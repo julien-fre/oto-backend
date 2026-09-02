@@ -20,7 +20,8 @@ CONNECTOR = channel(
     "telegram",
     hosted_channel="TELEGRAM",
     label="Telegram",
-    help="Ton Telegram — lire tes conversations et envoyer des messages",
+    help="Ton Telegram — lire tes conversations et envoyer des messages. "
+         "Ton compte se connecte chez Unipile, notre prestataire, qui détient la session.",
     href="https://telegram.org",
 )
 
