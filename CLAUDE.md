@@ -118,7 +118,9 @@ qualification du sub ∪ l'appartenance à une org au tenant effectif primaire. 
 de langue n'existe** : `users.locale` est posée sur 2 des 40 comptes visés, `billing_identities` est
 à 0 ligne — l'opérateur CHOISIT la langue par défaut, on ne la devine pas. Cinq garde-fous mécaniques
 (essai obligatoire, `confirm=N`, plafond sur le total, index unique, lien de désinscription signé).
-`docs/relance-comptes.md`.
+⚠️ **« Jamais actif » cache DEUX intentions** : 16 des 39 sont VENUS puis repartis (dashboard ouvert ou
+client branché), 23 n'ont jamais laissé la moindre trace — un seul texte ne peut pas servir les deux, et
+le sélecteur ne les distingue pas encore. `docs/relance-comptes.md`.
 **Facturation & avantages offerts** (02/09/2026) : **deux façons d'offrir**, et une seule se voyait —
 `admin_set_plan` écrit un abonnement `comp` (badge, état soigné, **zéro org concernée**), le **don
 d'option** n'écrit rien, donc ses 32 bénéficiaires voyaient un catalogue leur vendre ce qu'ils avaient

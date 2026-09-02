@@ -27,8 +27,39 @@ demandé, et le message n'a alors aucun sens pour lui.
 | `dormant` | a appelé, puis plus rien depuis `dormant_days` | 10 à 7 j, 6 à 14 j, **0** à 30 j |
 
 Le message n'est pas le même, donc les deux ne se mélangent pas dans une audience.
+
+## ⚠️ « Jamais actif » cache DEUX intentions différentes — à lire avant de rédiger
+
 Une trace `kind='rest'` ou `'protocol'` (dashboard ouvert, handshake MCP) **ne compte
-pas** comme un usage : 17 des 40 sont dans ce cas — venus, repartis sans rien demander.
+pas** comme un usage — c'est juste. Mais elle n'est pas rien non plus, et sur l'audience
+exacte du 2026-09-02 (39 comptes) elle sépare deux populations qu'un même texte ne peut
+pas servir :
+
+| | combien | ce qu'ils ont fait | ce que le texte doit faire |
+|---|---|---|---|
+| **venus puis repartis** | **16** | ouvert le tableau de bord, ou branché leur client MCP — puis plus rien | ils ont eu une INTENTION et se sont arrêtés quelque part. Le texte doit lever un obstacle (« voilà la première chose à faire »), pas présenter le produit |
+| **aucune trace du tout** | **23** | inscrits, jamais revenus | ils n'ont jamais vu le produit. Le texte doit donner une raison de venir |
+
+Écrire un seul message pour les deux, c'est expliquer à quelqu'un qui a déjà ouvert
+l'outil ce qu'est l'outil, et donner à quelqu'un qui n'y est jamais entré des
+instructions pour un écran qu'il n'a pas vu.
+
+⚠️ **La distinction est dans les données, PAS dans le sélecteur.** `status` ne connaît
+que `never_active` et `dormant` ; il n'y a aujourd'hui aucune valeur pour « venu puis
+reparti ». Deux façons de faire en attendant : passer `only` avec la liste des subs
+concernés (deux campagnes distinctes, donc deux `campaign` — ce qui est de toute façon
+la bonne granularité pour deux textes différents), ou ajouter un troisième `status`.
+Le partage se relit par :
+
+```sql
+-- sur l'audience servie : qui a laissé une trace non-outil, qui n'a rien laissé
+CASE WHEN EXISTS (SELECT 1 FROM tool_calls c WHERE c.sub = n.sub)
+     THEN 'venu puis reparti' ELSE 'aucune trace du tout' END
+```
+
+⚠️ Et **ne pas recopier les 16/23 d'un relevé fait sur une autre population** : le même
+partage valait 17/23 avant le filtre « adresse email connue ». Un chiffre juste sur
+40 comptes est faux sur 39.
 
 ## L'exclusion du tenant partenaire est dans la REQUÊTE
 
