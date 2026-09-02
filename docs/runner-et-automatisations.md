@@ -55,6 +55,23 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   cible ni une borne. ⚠️ `heartbeat_at` distingue le VIVANT du RÉSIDU (une flotte
   `running` qui ne bat plus n'est pas une concurrence à attendre), et la table est
   créée AVANT `runner_jobs`, qui la référence.
+  ⚠️ **SEPT états, parce que deux d'entre eux séparent une INTENTION d'un FAIT**
+  (R4b, 01/09/2026) : `armed` (on a DEMANDÉ que ça tourne, `op=launch`) ≠
+  `running` (un ordonnanceur l'a PRISE et donne signe) ; `stopping` (arrêt
+  demandé, `op=stop`) ≠ `stopped` (l'ordonnanceur a ACCUSÉ réception). *Une
+  intention déclarée et un fait constaté ne partagent jamais une colonne* — sans
+  `armed`, une flotte que personne n'a réclamée se lirait « en cours » ; sans
+  `stopping`, un arrêt demandé se lirait « arrêté », et **croire qu'on a coupé
+  une dépense qui continue est pire que croire qu'on a lancé un passage qui ne
+  tourne pas**. L'écart entre les deux EST le diagnostic : un `stopping` qui ne
+  devient jamais `stopped` désigne un ordonnanceur mort.
+  ⚠️ **Deux planchers, parce que la garde suit ce que le geste ENGAGE** :
+  `launch` est réservé aux **admins** de l'org (il engage une dépense et des
+  écritures chez un tiers, irréversibles) ; `stop` est ouvert à **tout membre**
+  (un passage qui part en vrille doit pouvoir être stoppé par la première
+  personne qui le voit). Deux gardes distinctes : *un déroulé ne LANCE pas* (un
+  agent qui se relance dépense en boucle) et *un déroulé n'arrête pas CELLE QUI
+  L'EXÉCUTE* — nommée, plutôt que de fermer le verbe à tout le monde.
 - **déclencheurs** `runner_triggers` — capacité + MCP `oto_trigger`, tick
   backend avec CAS sur `next_due` (prod/preprod partagent la base : un seul
   gagnant par échéance). ⚠️ **Poser (et rallumer) exige un runner ARMÉ pour

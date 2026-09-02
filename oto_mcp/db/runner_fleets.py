@@ -32,7 +32,7 @@ from ._conn import _connect
 _COLS = ("id, org_id, sub, label, procedure, project_id, tools, input, max_steps, "
          "namespace, row_filter, provider, model, workers, max_rows, max_tokens, "
          "max_consecutive_failures, max_tokens_per_row, status, stop_reason, "
-         "started_at, heartbeat_at, stopped_at, created_at")
+         "armed_at, started_at, stopping_at, heartbeat_at, stopped_at, created_at")
 
 # Ce qu'un passage a le droit de changer une fois déclaré. La CIBLE n'en est pas :
 # rediriger un passage en vol vers un autre tableau est exactement le geste que la
@@ -144,6 +144,112 @@ def set_status(fleet_id: int, org_id: int, statut: str,
             tuple(args),
         ).fetchone()
     return dict(row) if row else None
+
+
+# ── Les gestes d'ÉTAT, nommés — et la transition qu'ils exigent ──────────────
+# ⚠️ Chacun est CONDITIONNEL sur l'état de départ, dans le même UPDATE. Sans ça,
+# deux appels concurrents (un opérateur et un ordonnanceur) écriraient l'un sur
+# l'autre, et le dernier gagnerait — y compris pour ressusciter un passage arrêté.
+# Rendre `False` quand la transition n'était pas permise laisse l'appelant DIRE
+# qu'il n'a rien changé, au lieu de croire qu'il a agi.
+
+def armer(fleet_id: int, org_id: int) -> Optional[dict]:
+    """`draft`/`stopped`/`done`/`failed` → `armed` : on DEMANDE que ça tourne.
+
+    ⚠️ Ce n'est PAS `running`. Une intention déclarée et un fait constaté ne
+    partagent jamais une colonne : `running` veut dire qu'un ordonnanceur l'a
+    PRISE et donne signe. Une flotte armée que personne n'a réclamée doit se lire
+    « armée, personne ne l'a prise » — pas « en cours ».
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            f"UPDATE runner_fleets SET status = 'armed', armed_at = NOW(), "
+            f"    stop_reason = NULL, stopping_at = NULL "
+            f"WHERE id = %s AND org_id = %s "
+            f"  AND status IN ('draft', 'stopped', 'done', 'failed') "
+            f"RETURNING {_COLS}",
+            (fleet_id, org_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def prendre(fleet_id: int, org_id: int) -> Optional[dict]:
+    """`armed` → `running` : un ordonnanceur l'a prise. C'est le FAIT."""
+    with _connect() as conn:
+        row = conn.execute(
+            f"UPDATE runner_fleets SET status = 'running', started_at = NOW(), "
+            f"    heartbeat_at = NOW() "
+            f"WHERE id = %s AND org_id = %s AND status = 'armed' "
+            f"RETURNING {_COLS}",
+            (fleet_id, org_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def demander_arret(fleet_id: int, org_id: int, raison: str) -> Optional[dict]:
+    """`armed`/`running` → `stopping` : l'arrêt est DEMANDÉ, pas encore effectif.
+
+    ⚠️ Entre cet appel et la lecture par la boucle, le passage CONTINUE — il
+    réserve, il appelle, il dépense. Écrire `stopped` ici annoncerait un arrêt qui
+    n'a pas eu lieu, et **croire qu'on a coupé une dépense qui continue est pire
+    que croire qu'on a lancé un passage qui ne tourne pas** : dans un cas on
+    attend, dans l'autre on part tranquille pendant que ça brûle.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            f"UPDATE runner_fleets SET status = 'stopping', stopping_at = NOW(), "
+            f"    stop_reason = %s "
+            f"WHERE id = %s AND org_id = %s AND status IN ('armed', 'running') "
+            f"RETURNING {_COLS}",
+            (raison, fleet_id, org_id),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def accuser_arret(fleet_id: int, org_id: int, raison: Optional[str] = None) -> bool:
+    """`stopping`/`running` → `stopped` : l'ordonnanceur a accusé réception.
+
+    ⚠️ C'est LUI qui pose ce statut, jamais l'opérateur — sans quoi l'écart entre
+    « demandé » et « effectif » disparaîtrait, et avec lui le seul diagnostic d'un
+    ordonnanceur mort : *un arrêt demandé qui ne devient jamais un arrêt effectif*.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "UPDATE runner_fleets SET status = 'stopped', stopped_at = NOW(), "
+            "    stop_reason = COALESCE(%s, stop_reason) "
+            "WHERE id = %s AND org_id = %s AND status IN ('stopping', 'running') "
+            "RETURNING id",
+            (raison, fleet_id, org_id),
+        ).fetchone()
+    return row is not None
+
+
+def arret_demande(fleet_id: int, org_id: int) -> bool:
+    """L'ordonnanceur demande : « dois-je m'arrêter ? » — une lecture, pas un état
+    local. C'est ce qui rend `op=stop` RÉEL au lieu d'être une écriture que
+    personne ne lit."""
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT status FROM runner_fleets WHERE id = %s AND org_id = %s",
+            (fleet_id, org_id),
+        ).fetchone()
+    return bool(row) and dict(row)["status"] in ("stopping", "stopped")
+
+
+def run_appartient_a_flotte(run_id: str, fleet_id: int) -> bool:
+    """Ce déroulé tourne-t-il POUR cette flotte ?
+
+    ⚠️ La question n'est pas « ce run existe-t-il » mais « est-ce CELUI qu'on
+    voudrait couper ». Un agent doit pouvoir arrêter une AUTRE flotte de son org —
+    c'est même le cas utile : un opérateur qui pilote par la conversation. Ce
+    qu'on interdit, c'est qu'il coupe celle qui l'exécute.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM runner_jobs WHERE run_id = %s AND fleet_id = %s LIMIT 1",
+            (run_id, fleet_id),
+        ).fetchone()
+    return row is not None
 
 
 def battre(fleet_id: int, org_id: int) -> bool:

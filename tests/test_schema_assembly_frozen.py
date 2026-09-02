@@ -156,8 +156,19 @@ from oto_mcp.db import _schema, schema
 # la cascade joue quand même — c'est la vérification des lignes DÉJÀ là qui est
 # différée, pas l'effet — et le boot ne peut donc pas échouer sur un orphelin
 # hérité. Empreinte recalculée sur le module assemblé.
-EMPREINTE = "19065a044d19cefbf93cc2fbc0452c1fda6eeaf8fa27b260b8fe53fa4b88e8b7"
-LONGUEUR = 128822
+# 2026-09-01 (R4b — l'intention se sépare du fait) : `runner_fleets.status` passe
+# à SEPT valeurs, plus `armed_at`/`stopping_at`. `armed` (on a DEMANDÉ que ça
+# tourne) ≠ `running` (un ordonnanceur l'a PRISE) ; `stopping` (arrêt demandé) ≠
+# `stopped` (arrêt accusé). Sans cette séparation, une flotte armée que personne
+# n'a réclamée se lirait « en cours », et un arrêt demandé se lirait « arrêté » —
+# or croire qu'on a coupé une dépense qui continue est le plus coûteux des deux.
+# ⚠️ La contrainte CHECK est REMPLACÉE dans `_init` : un `CREATE TABLE IF NOT
+# EXISTS` ne la met pas à jour sur une base existante, et le boot passerait vert
+# pendant que la base refuse les deux nouveaux états.
+# ⚠️ Empreinte recalculée APRÈS avoir vérifié que le tronc sans ce fragment rend
+# bien c05cd85f… / 125769.
+EMPREINTE = "17add8d8dede7a767dcaa21dc2aaa76f135721568014da2bf7ac8458e2966cb2"
+LONGUEUR = 130526
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -194,3 +194,40 @@ def test_l_etat_du_voisin_ne_voit_rien_de_ces_travaux(client, voisin, maison, fl
     r = client.post(FLEETS, headers=_h(voisin["sub"]),
                     json={"op": "state", "fleet_id": flotte["id"]})
     assert (r.status_code, r.json().get("error")) == (404, "fleet_not_found")
+
+
+# ── le cœur de la garde « un déroulé n'arrête pas celle qui l'exécute » ───────
+#
+# ⚠️ La garde complète vit dans la capacité et ne mord que sur la face MCP : en
+# REST il n'y a pas de déroulé, donc `_run_courant()` y rend toujours `None`.
+# Tester le refus par HTTP prouverait qu'un appel sans run n'est pas bloqué —
+# vrai, et sans rapport. Ce qui se teste ici, c'est le PRÉDICAT sur lequel elle
+# repose : ce déroulé tourne-t-il pour CETTE flotte ?
+
+def test_le_predicat_distingue_SA_flotte_des_autres(client, maison, flotte):
+    """Un agent doit pouvoir arrêter une AUTRE flotte de son org — c'est même le
+    cas utile : un opérateur qui pilote par la conversation. Ce qu'on interdit,
+    c'est qu'il coupe celle qui l'exécute. Un prédicat trop large fermerait les
+    deux."""
+    from oto_mcp import db
+    from oto_mcp.db._conn import _connect
+
+    autre = client.post(FLEETS, headers=_h(maison["sub"]), json={
+        "op": "create", "label": "une-autre", "procedure": "p",
+        "tools": ["oto_kb"]}).json()["fleet"]
+
+    with _connect() as c:
+        c.execute("INSERT INTO runs (run_id, sub, org_id, label) "
+                  "VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                  ("run-garde", maison["sub"], maison["id"], "garde"))
+        c.execute("INSERT INTO runner_jobs (org_id, kind, run_id, fleet_id) "
+                  "VALUES (%s, 'start', %s, %s)",
+                  (maison["id"], "run-garde", flotte["id"]))
+        c.commit()
+
+    assert db.run_appartient_a_flotte("run-garde", flotte["id"]) is True, (
+        "le déroulé tourne bien POUR cette flotte — il ne doit pas pouvoir la couper")
+    assert db.run_appartient_a_flotte("run-garde", autre["id"]) is False, (
+        "mais il doit pouvoir arrêter une AUTRE flotte : un prédicat trop large "
+        "fermerait le cas utile en même temps que le cas dangereux")
+    assert db.run_appartient_a_flotte("run-inconnu", flotte["id"]) is False

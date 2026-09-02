@@ -266,3 +266,135 @@ def test_update_ne_peut_pas_annuler_ce_que_create_exige(client, org, flotte):
     f = client.post(ROUTE, headers=_h(org["membre"]),
                     json={"op": "get", "fleet_id": flotte["id"]}).json()["fleet"]
     assert f["tools"] == ["oto_kb"]
+
+
+# ── LANCER et ARRÊTER : deux verbes, deux planchers, deux gardes ─────────────
+#
+# ⚠️ Ils ne sont PAS symétriques, et c'est tout le point. Ils entrent par la même
+# porte mais n'engagent pas la même chose :
+#
+#   lancer   de l'argent et des effets externes IRRÉVERSIBLES — des lignes
+#            écrites chez un tiers ⟹ plancher ADMIN
+#   arrêter  une interruption et un travail à reprendre ⟹ tout MEMBRE, parce
+#            qu'un passage qui part en vrille doit pouvoir être stoppé par la
+#            première personne qui le voit
+#
+# ⚠️ Et aucun des deux ne pose un FAIT : `launch` arme (on a demandé), `stop`
+# demande l'arrêt (la boucle ne l'a pas lu). Une intention déclarée et un fait
+# constaté ne partagent jamais une colonne.
+
+@pytest.fixture(scope="module")
+def flotte_a_piloter(client, org):
+    r = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "pilotage", "procedure": "p", "tools": ["oto_kb"]})
+    assert r.status_code == 200, r.text
+    return r.json()["fleet"]
+
+
+def test_lancer_ARME_et_ne_pretend_pas_que_ca_tourne(client, org, flotte_a_piloter):
+    """⚠️ LE point : `armed`, jamais `running`.
+
+    `running` veut dire qu'un ordonnanceur l'a PRISE et donne signe. Poser
+    `running` ici ferait lire « en cours » un passage que personne n'exécute —
+    et une flotte armée que nul n'a réclamée doit se DIRE, pas se confondre."""
+    r = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "launch", "fleet_id": flotte_a_piloter["id"]})
+    assert r.status_code == 200, r.text
+    f = r.json()["fleet"]
+    assert f["status"] == "armed", "une intention, pas un fait"
+    assert f["armed_at"] and not f["started_at"]
+
+
+def test_arreter_DEMANDE_et_ne_pretend_pas_que_c_est_fait(client, org, flotte_a_piloter):
+    """⚠️ Le mensonge symétrique, et il est PIRE.
+
+    Entre cet appel et la lecture par la boucle, le passage continue : il réserve,
+    il appelle, il dépense. Annoncer `stopped` ferait croire qu'on a coupé une
+    dépense qui continue — on part tranquille pendant que ça brûle."""
+    r = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "stop", "fleet_id": flotte_a_piloter["id"],
+                          "reason": "ça part en vrille"})
+    assert r.status_code == 200, r.text
+    f = r.json()["fleet"]
+    assert f["status"] == "stopping", "l'ordre est posé, la boucle ne l'a pas lu"
+    assert f["stopping_at"] and not f["stopped_at"]
+    assert f["stop_reason"] == "ça part en vrille", "la raison est ÉCRITE"
+
+
+def test_l_ecart_entre_demande_et_effectif_est_le_diagnostic(client, org, flotte_a_piloter):
+    """Un `stopping` qui ne devient jamais `stopped` désigne un ordonnanceur mort.
+    Fondu dans un seul état, ce cas ressemblerait à un arrêt réussi."""
+    from oto_mcp import db
+    assert db.accuser_arret(flotte_a_piloter["id"], org["id"], None) is True
+    f = client.post(ROUTE, headers=_h(org["membre"]),
+                    json={"op": "get", "fleet_id": flotte_a_piloter["id"]}
+                    ).json()["fleet"]
+    assert f["status"] == "stopped" and f["stopped_at"]
+    # et la raison posée à la demande SURVIT à l'accusé de réception
+    assert f["stop_reason"] == "ça part en vrille"
+
+
+def test_on_n_arme_pas_ce_qui_tourne_deja(client, org, flotte_a_piloter):
+    """Relancer un passage en cours en ouvrirait un second sur la même cible."""
+    client.post(ROUTE, headers=_h(org["membre"]),
+                json={"op": "launch", "fleet_id": flotte_a_piloter["id"]})
+    statut, code = _refus(client, org, {"op": "launch",
+                                        "fleet_id": flotte_a_piloter["id"]})
+    assert (statut, code) == (409, "not_launchable")
+
+
+def test_on_n_arrete_pas_ce_qui_ne_tourne_pas(client, org):
+    """Un refus qui NOMME l'état, plutôt qu'un 200 qui laisserait croire à un
+    arrêt sur un passage jamais lancé."""
+    r = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "jamais-lancee", "procedure": "p",
+        "tools": ["oto_kb"]})
+    fid = r.json()["fleet"]["id"]
+    assert _refus(client, org, {"op": "stop", "fleet_id": fid}) == (409, "not_stoppable")
+
+
+@pytest.fixture(scope="module")
+def simple_membre(client, org):
+    """Un membre SANS le rôle admin — sans lui, le plancher n'est pas éprouvé :
+    la fixture `org` crée son porteur en `org_admin`."""
+    from oto_mcp import db, org_store
+    sub = "usr_fleets_simple"
+    db.upsert_user(sub, email=f"{sub}@fleets.invalid", name=sub)
+    org_store.add_org_member(org["id"], sub, "org_member")
+    org_store.set_active_org(sub, org["id"])
+    return sub
+
+
+def test_un_simple_membre_ne_LANCE_pas(client, org, simple_membre):
+    """⚠️ Le plancher, éprouvé sur quelqu'un qui n'est PAS admin.
+
+    Lancer engage une dépense et des écritures chez un tiers. Le refus dit aussi
+    ce qui reste ouvert — un refus qui n'enseigne rien pousse à chercher un
+    contournement."""
+    r = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "plancher", "procedure": "p", "tools": ["oto_kb"]})
+    fid = r.json()["fleet"]["id"]
+    rr = client.post(ROUTE, headers=_h(simple_membre),
+                     json={"op": "launch", "fleet_id": fid})
+    assert (rr.status_code, rr.json().get("error")) == (403, "org_admin_required")
+    # La phrase du refus est servie sous `detail` (enveloppe REST), pas `message`.
+    assert "ARRÊTER" in rr.json().get("detail", ""), (
+        "un refus qui n'enseigne pas ce qui RESTE ouvert pousse à chercher un "
+        "contournement — ici, que tout membre peut arrêter")
+
+
+def test_un_simple_membre_ARRÊTE(client, org, simple_membre):
+    """L'autre moitié, et c'est le choix de conception : un passage qui part en
+    vrille doit pouvoir être stoppé par la première personne qui le voit, pas par
+    celle qui a le bon rôle. Attendre un admin pendant qu'une flotte dépense est
+    le mauvais échange."""
+    r = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "arret-par-membre", "procedure": "p",
+        "tools": ["oto_kb"]})
+    fid = r.json()["fleet"]["id"]
+    assert client.post(ROUTE, headers=_h(org["membre"]),
+                       json={"op": "launch", "fleet_id": fid}).status_code == 200
+    rr = client.post(ROUTE, headers=_h(simple_membre),
+                     json={"op": "stop", "fleet_id": fid, "reason": "vu passer"})
+    assert rr.status_code == 200, rr.text
+    assert rr.json()["fleet"]["status"] == "stopping"

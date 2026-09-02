@@ -47,6 +47,17 @@ from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
 from .registry import CAPABILITIES
 
+
+def _run_courant() -> Optional[str]:
+    """Le déroulé qui porte CET appel, ou None hors d'un run.
+
+    ⚠️ `ResolvedCtx` ne porte PAS le run : le lire depuis `ctx` rendrait toujours
+    `None` et les gardes anti-agent seraient DÉCORATIVES — vertes, et inertes.
+    Il vit dans le contexte d'appel, posé par l'axe `_run_id`.
+    """
+    from .. import session_org
+    return session_org.current_call_run()
+
 # Ce qui pilote l'appel plutôt que la configuration : jamais « posé », donc jamais
 # compté comme un champ inerte par les gardes de seam.
 _STRUCTURELS = frozenset({"op", "fleet_id"})
@@ -69,7 +80,7 @@ def _bornes_valides(inp: "FleetInput") -> None:
             + ", ".join(f"`{c}`={v}" for c, v in sorted(fautives.items())))
 
 class FleetInput(BaseModel):
-    op: Literal["create", "list", "get", "state", "update"]
+    op: Literal["create", "list", "get", "state", "update", "launch", "stop"]
     fleet_id: Optional[int] = None
     status: Optional[str] = None
     # create —
@@ -88,6 +99,9 @@ class FleetInput(BaseModel):
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
     max_tokens_per_row: Optional[int] = None
+    # stop — la raison est ÉCRITE : « arrêtée » sans raison oblige à rouvrir les
+    # journaux pour savoir si c'était un incident, un budget ou une décision.
+    reason: Optional[str] = None
 
 
 class Fleet(BaseModel):
@@ -112,7 +126,9 @@ class Fleet(BaseModel):
     max_tokens_per_row: Optional[int] = None
     status: Optional[str] = None
     stop_reason: Optional[str] = None
+    armed_at: Optional[str] = None
     started_at: Optional[str] = None
+    stopping_at: Optional[str] = None
     heartbeat_at: Optional[str] = None
     stopped_at: Optional[str] = None
     created_at: Optional[str] = None
@@ -195,6 +211,63 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
         f = db.get_fleet(inp.fleet_id, ctx.org_id)
         if not f:
             raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+        return {"fleet": f}
+
+    if inp.op == "launch":
+        # ⚠️ PLANCHER ADMIN — et il ne suit pas le geste, il suit ce que le geste
+        # ENGAGE. Lancer emporte des effets externes irréversibles : de l'argent
+        # dépensé, des lignes écrites chez un tiers. Arrêter coûte une reprise.
+        # Le dépôt tient déjà ce motif ailleurs (écrire ouvert, supprimer au chef)
+        # : la garde suit le VERBE, pas l'objet.
+        from .. import roles
+        if not roles.is_org_admin(ctx.sub, ctx.org_id):
+            raise AuthzDenied(
+                403, "org_admin_required",
+                "lancer un passage est réservé aux administrateurs de l'org : il "
+                "engage une dépense et des écritures chez un tiers. L'ARRÊTER, en "
+                "revanche, est ouvert à tout membre.")
+        # ⚠️ Un déroulé ne LANCE pas. Un agent qui se relance lui-même coûte un
+        # budget en boucle — pire qu'un arrêt de trop, qui ne coûte qu'une reprise.
+        if _run_courant():
+            raise AuthzDenied(
+                403, "not_from_a_run",
+                "un déroulé ne lance pas de passage — un agent qui se relance "
+                "lui-même dépense en boucle.")
+        f = db.armer(inp.fleet_id, ctx.org_id)
+        if not f:
+            actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
+            if not actuelle:
+                raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+            raise AuthzDenied(
+                409, "not_launchable",
+                f"ce passage est `{actuelle['status']}` — on n'arme que ce qui ne "
+                "tourne pas. Arrête-le d'abord, ou déclare une autre flotte.")
+        return {"fleet": f}
+
+    if inp.op == "stop":
+        # Ouvert à TOUT MEMBRE : un passage qui part en vrille doit pouvoir être
+        # stoppé par la première personne qui le voit, pas par celle qui a le bon
+        # rôle. Attendre un admin pendant qu'une flotte dépense est le mauvais
+        # échange.
+        # ⚠️ Mais un déroulé n'arrête pas CELLE QUI L'EXÉCUTE : la garde nomme le
+        # cas plutôt que de fermer le verbe à tout le monde — fermer, ce serait
+        # payer le prix sur tous les usages légitimes.
+        run = _run_courant()
+        if run and db.run_appartient_a_flotte(run, inp.fleet_id):
+            raise AuthzDenied(
+                403, "not_your_own_fleet",
+                "un déroulé ne peut pas arrêter le passage qui l'exécute.")
+        f = db.demander_arret(inp.fleet_id, ctx.org_id,
+                              inp.reason or "arrêt demandé")
+        if not f:
+            actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
+            if not actuelle:
+                raise AuthzDenied(404, "fleet_not_found", "flotte inconnue")
+            raise AuthzDenied(
+                409, "not_stoppable",
+                f"ce passage est `{actuelle['status']}` — il n'y a rien à arrêter.")
+        # ⚠️ `stopping`, pas `stopped` : l'ordre est POSÉ, la boucle ne l'a pas
+        # encore lu. Le passage continue jusqu'à ce qu'elle accuse réception.
         return {"fleet": f}
 
     if inp.op == "state":
