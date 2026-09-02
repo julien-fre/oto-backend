@@ -69,6 +69,101 @@ ensemble et rendus ensemble :
 Le tunnel répare avec `POST /api/me/billing/identity` puis
 `POST /api/me/legal/accept {"context": "purchase"}`, et relance `subscribe`.
 
+## Deux façons d'offrir, et une seule était visible (2026-09-02)
+
+Un droit payant peut s'ouvrir **sans** abonnement, et c'est là que le produit mentait.
+
+| chemin | ce qu'il écrit | ce que `billing.status` en disait |
+| --- | --- | --- |
+| **abonnement offert** — `admin_set_plan` | une ligne `org_subscriptions` `provider='comp'` | `comp: true`, badge « offert par Otomata », pas de bouton résilier |
+| **don d'option** — `admin.option.set` | une ligne `option_comps` | **rien** |
+
+Le second n'écrit aucune ligne d'abonnement, et l'écran lit l'abonnement : son
+bénéficiaire voyait donc un catalogue lui vendre, prix affichés et bouton armé,
+**exactement ce qu'il possédait déjà**. Mesuré le 2026-09-02 : **32 dons vivants**
+(20 orgs, 12 comptes), **un seul abonnement payant** sur toute la plateforme, et
+**zéro** org en abonnement offert — donc l'état soigné existait pour un cas qui
+n'arrivait jamais, et manquait pour le seul qui arrivait.
+
+`billing.status` porte désormais `granted[]` dans les **deux** branches
+(`billing_grants.granted_benefits`). Trois règles qui portent le sens :
+
+- **l'avantage se NOMME** (`label`, dérivé du connecteur porteur) — il n'y a pas que
+  la messagerie qui coûte, et un badge « offert par Otomata » sans complément
+  deviendrait faux au deuxième avantage ;
+- **est un avantage ce qui est VENDU** : le catalogue se dérive des `options` des
+  paliers de `PLANS`. Une option qui n'est dans aucun palier (`beta`, un drapeau de
+  population) n'est pas un cadeau et ne s'affiche jamais comme tel ;
+- **le catalogue de paliers reste servi** à côté du don. Un don n'est pas un
+  abonnement ; refermer la voie de souscription serait perdre la conversion.
+
+### L'échéance d'un don (`option_comps.expires_at`)
+
+`NULL` = perpétuel, l'état de tous les dons antérieurs au 2026-09-02 : la colonne
+est additive au sens du droit, elle ne retire rien. Une date se pose **ligne par
+ligne**, par un acte admin explicite (`oto_admin_set_option expires_at=…`), et
+s'efface en repassant une chaîne vide.
+
+- **Elle mord dans le seam** : `db.has_option_comp` ignore une ligne échue, donc les
+  surfaces d'entitlement tombent d'accord sans qu'aucune connaisse la règle. Une
+  échéance qu'aucun chemin n'applique serait pire que pas d'échéance.
+- **`list_option_comps` ne filtre PAS** : une console admin doit voir le don échu,
+  sinon il devient invisible donc irrécupérable.
+- **Omettre `expires_at` ne l'efface pas** (sentinelle `db.KEEP_EXPIRY`) : deux
+  surfaces re-posent un don sans rien savoir des dates, leur geste anodin ne doit pas
+  retirer une borne posée ailleurs.
+- `YYYY-MM-DD` = **fin** de la journée : « offert jusqu'au 31 octobre » couvre le 31.
+
+### Le périmètre : les clients d'un partenaire ne sont pas les nôtres
+
+⚠️ **Aucun dispositif qui S'ADRESSE au titulaire d'une org — badge, échéance,
+compteur, relance — ne touche une org hébergée par un tenant tiers.** Ce sont les
+clients d'un partenaire, sur ses données, dans son produit. C'est une limite de
+périmètre, donc elle est **mécanique** : `billing_grants.org_is_ours`, et
+`tests/test_billing_grants_offert.py` rougit si elle cède.
+
+**Le discriminant n'est PAS `orgs.tenant_id`** — mesuré **inerte** le 2026-09-02 :
+les 160 orgs portent le tenant primaire, **y compris les 61 qui vivent chez un
+partenaire**, parce que le provisioning ne l'écrit pas. Un filtre bâti dessus
+n'aurait rattrapé aucune des **11 orgs gratifiées sur 20** qui appartiennent au
+partenaire. `db.org_tenant_slug` prend l'**union de trois axes** (rattachement
+déclaré, `orgs.front_brand` dérivé de l'émetteur à la création, préfixe du sub d'un
+membre) ; les deux derniers rendent le même ensemble de 61 orgs, **zéro désaccord**,
+et se couvrent mutuellement les angles morts. Le refus est **fail-closed** : une
+lecture qui échoue referme le dispositif.
+
+### L'usage inclus (`usage`)
+
+**1000 appels d'outil d'agent par mois et par org** (cadre Alexis, 2026-09-02),
+servi à tout le monde — abonné ou non, gratifié ou non.
+
+⚠️ **Ce n'est pas un plafond de refus.** Le journal est best-effort et non
+transactionnel : bâtir un refus dessus couperait un service sur une donnée qui a le
+droit de manquer. Un dépassement s'affiche, il ne coupe pas, et il ne facture pas.
+
+- **La valeur ne mord sur personne, délibérément** : sur août 2026 (clients directs,
+  partenaire écarté), 16 orgs actives, maximum 516 appels, **médiane 25**. Le
+  compteur rend l'usage visible et pose qu'oto a une limite ; il ne la fait pas sentir.
+- **Aucun ratio n'est servi.** À 25 sur 1000, un pourcentage ou une barre dit « c'est
+  gratuit et sans fin » — l'inverse de l'effet cherché. On rend le nombre et le
+  plafond, on ne les divise pas.
+- **`kind='mcp'` et `tool_calls.org_id`** : les appels d'agent, par le rattachement
+  RÉEL. Jamais un préfixe de nom d'outil (les noms ne portent pas l'org, et un tenant
+  peut les voir préfixés autrement).
+- **Mois en cours SEULEMENT** : la purge du journal ne garde qu'environ 35 jours (la
+  politique en annonce 90 — écart corrigé le 2026-08-28). Le mois précédent n'est pas
+  calculable ; ne pas bâtir de comparaison dessus.
+
+### « Cette org a-t-elle l'option » : une question, trois réponses (corrigé)
+
+Trois fonctions y répondaient avec trois règles. Conséquence mesurée : **une org qui
+PAYAIT s'affichait « non souscrite »** dans son cockpit d'activation, dont la lecture
+ne regardait que le don admin et jamais le plan. La moitié org du seam est désormais
+nommée — `access.org_has_option` — et `capabilities/connectors/activation` l'appelle.
+`access.has_option` reste le seam complet (comp user > comp org > plan) ;
+`access.views.option_open` reste au-dessus (il croise avec le BYO). Un nouveau chemin
+passe par l'un des trois, **jamais par les sources**.
+
 ### Ce qui ne demande PAS de consentement
 
 Un **abonnement offert** (`admin_set_plan`, `comp`) : rien n'y est vendu ni débité.

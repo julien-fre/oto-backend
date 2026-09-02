@@ -12,11 +12,13 @@ accepte un email OU un sub (côté REST le `{sub}` du path mappe vers `target`).
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-from .. import access, providers, credentials_store, db, group_store, org_store
+from .. import (access, billing_grants, providers, credentials_store, db,
+                group_store, org_store)
 from ._authz import PLATFORM_ADMIN, SUPER_ADMIN
 from ._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from .registry import CAPABILITIES
@@ -79,6 +81,11 @@ class OptionInput(BaseModel):
     entity_id: str
     option: str
     on: bool
+    # Échéance du don, `YYYY-MM-DD` (fin de journée UTC) ou horodatage ISO. OMIS =
+    # l'échéance en place n'est PAS touchée — deux autres surfaces re-posent un don
+    # sans rien savoir des dates, et leur geste anodin ne doit pas effacer la
+    # borne posée ici. Chaîne VIDE = don perpétuel (efface une échéance).
+    expires_at: Optional[str] = None
 
 
 # ── Handlers (core, (ctx, inp) -> dict) ──────────────────────────────────────
@@ -168,6 +175,44 @@ def _revoke_org_key(ctx: ResolvedCtx, inp: OrgRevokeKeyInput) -> dict:
     return {"ok": True, "org_id": inp.org_id, "provider": inp.provider}
 
 
+def _parse_expiry(inp: "OptionInput", eid: str) -> object:
+    """L'échéance demandée, vers ce qu'attend `db.set_option_comp`.
+
+    Trois valeurs d'entrée, trois sens distincts — et c'est le `None` qui est piégeux,
+    d'où l'explicite : `None`/omis = **ne touche pas** à l'échéance en place (les
+    surfaces qui re-posent un don ne doivent pas l'effacer sans le savoir) ; `""` =
+    don perpétuel ; une date = borne.
+
+    ⚠️ **Refuse de borner le don d'une org hébergée par un tenant tiers.** Poser une
+    échéance sur les clients d'un partenaire, c'est décider à sa place de ce qu'il
+    leur retire et quand. Le refus est ici, sur l'ÉCRITURE, et pas seulement sur
+    l'affichage : une limite de périmètre qui ne vit que dans un écran finit par être
+    contournée par la première console qui écrit sans passer par l'écran.
+    """
+    if inp.expires_at is None:
+        return db.KEEP_EXPIRY
+    brut = inp.expires_at.strip()
+    if not brut:
+        return None
+    if inp.entity_type == "org" and not billing_grants.org_is_ours(int(eid)):
+        raise AuthzDenied(
+            409, "partner_org_out_of_scope",
+            f"L'org #{eid} est hébergée par un tenant tiers : ses titulaires sont les "
+            "clients de ce partenaire. Une échéance ne se pose pas sur eux depuis ici. "
+            "Le don lui-même reste posable, sans terme.")
+    try:
+        # `YYYY-MM-DD` seul = FIN de la journée : « offert jusqu'au 31 octobre » veut
+        # dire que le 31 octobre est encore couvert. Minuit couperait un jour trop tôt.
+        if len(brut) == 10:
+            return datetime.strptime(brut, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        return datetime.fromisoformat(brut.replace("Z", "+00:00"))
+    except ValueError:
+        raise AuthzDenied(400, "invalid_body",
+                          f"expires_at invalide : {inp.expires_at!r}. Attendu "
+                          "'YYYY-MM-DD' ou un horodatage ISO 8601.")
+
+
 def _set_option(ctx: ResolvedCtx, inp: OptionInput) -> dict:
     eid = str(inp.entity_id)
     if inp.entity_type == "user" and not db.get_user(eid):
@@ -179,7 +224,8 @@ def _set_option(ctx: ResolvedCtx, inp: OptionInput) -> dict:
         except (ValueError, TypeError):
             raise AuthzDenied(400, "invalid_body", "entity_id d'org doit être un entier.")
     if inp.on:
-        db.set_option_comp(inp.entity_type, eid, inp.option, granted_by=ctx.sub)
+        db.set_option_comp(inp.entity_type, eid, inp.option, granted_by=ctx.sub,
+                           expires_at=_parse_expiry(inp, eid))
         key = _compose_platform_grant(ctx, inp, eid)
     else:
         db.clear_option_comp(inp.entity_type, eid, inp.option)
@@ -325,7 +371,14 @@ CAPABILITIES += [
                     "byo_inert / revoked). An option can also GATE tools (e.g. 'beta'), and a tool "
                     "list is computed at handshake: `visible_next_session: true` means the change "
                     "lands on a session other than yours and shows up when its owner reconnects — "
-                    "false means your own tool list was just refreshed. Neither is a failure.",
+                    "false means your own tool list was just refreshed. Neither is a failure. "
+                    "`expires_at` bounds the gift ('YYYY-MM-DD' = end of that day UTC, so the "
+                    "date itself is still covered; ISO timestamp also accepted). OMITTED leaves "
+                    "any existing deadline UNTOUCHED — re-granting never silently clears one; "
+                    "empty string makes the gift open-ended. Past the deadline the option stops "
+                    "being granted, the row stays, and clearing the date reopens it. Refused "
+                    "with 409 `partner_org_out_of_scope` on an org hosted by a third-party "
+                    "tenant: its owners are that partner's customers, not ours.",
         mcp="oto_admin_set_option",
         rest=RestBinding("POST", "/api/admin/option-comps", {}),
     ),

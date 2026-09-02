@@ -19,7 +19,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from ... import access, db, group_store, org_store, providers
+from ... import access, group_store, org_store, providers
 from ...connectors import activation as connector_activation
 from .._authz import GROUP_ADMIN_OF, GROUP_MEMBER_OF, ORG_ADMIN_OF, ORG_MEMBER_OF
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
@@ -35,10 +35,18 @@ _GID = {"id": "group_id"}   # placeholder {id} → champ Input group_id
 
 
 def _org_subscribed(org_id: int, option: str) -> bool:
-    """L'org a-t-elle l'option `option` débloquée (comp admin) ? Best-effort (ne fait
-    jamais échouer la lecture de la liste)."""
+    """L'org a-t-elle l'option `option` débloquée ? Best-effort (ne fait jamais
+    échouer la lecture de la liste).
+
+    ⚠️ **Corrigé le 2026-09-02** : lisait `db.has_option_comp('org', …)` en direct,
+    donc ne voyait QUE le don admin. Une org qui PAYAIT un palier incluant l'option
+    s'affichait « non souscrite » dans son propre cockpit de gouvernance — le plan
+    d'abonnement, deuxième source de l'entitlement depuis ADR 0043, n'était regardé
+    par personne ici. Passe désormais par la moitié org du seam
+    (`access.org_has_option`), qui lit les deux sources. Grain org VOULU : le cockpit
+    décrit l'espace, pas le comp personnel de qui l'ouvre."""
     try:
-        return db.has_option_comp("org", str(org_id), option)
+        return access.org_has_option(org_id, option)
     # noqa: SILENT — option payante illisible ⇒ non souscrite (fail-closed du payant)
     except Exception:
         return False

@@ -85,6 +85,37 @@ def call_filter_clauses(
     return clauses, params
 
 
+def count_org_mcp_calls(org_id: int, *, since: datetime) -> int:
+    """Appels d'OUTIL D'AGENT émis sous `org_id` depuis `since`. Le compteur d'usage.
+
+    Deux choix qui font tout, et qu'il ne faut pas défaire :
+
+    - **`kind = 'mcp'`** : on compte ce qu'un agent exécute, pas la navigation dans le
+      tableau de bord (`kind='rest'`) ni les handshakes (`'protocol'`). Les deux
+      volumes n'ont rien à voir — mélangés, le compteur mesurerait surtout le fait
+      d'avoir un onglet ouvert.
+    - **`l.org_id`**, le rattachement RÉEL posé par le seam `current_org` au moment de
+      l'appel. Jamais un préfixe de nom d'outil : un raccourci de ce genre a déjà
+      produit un faux résultat (les noms d'outils ne portent pas l'org, et un tenant
+      peut même les voir préfixés autrement, cf. `tool_alias`).
+
+    ⚠️ Plancher connu, hérité du scope d'org (cf. l'en-tête de ce module) : un appel
+    d'un run de l'org résolu sous une AUTRE org n'est pas compté ici. Le compteur
+    sous-estime donc plutôt qu'il ne surestime — ce qui est le bon sens de l'erreur
+    pour un chiffre montré à quelqu'un, et l'écart se mesure avec
+    `count_calls_of_org_runs_elsewhere`.
+
+    `since` OBLIGATOIRE, même raison que ci-dessous : le coût est linéaire en fenêtre.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM tool_calls l "
+            "WHERE l.kind = 'mcp' AND l.org_id = %s AND l.created_at >= %s",
+            (int(org_id), since),
+        ).fetchone()
+    return int(row["n"]) if row else 0
+
+
 def count_calls_of_org_runs_elsewhere(org_id: int, *, since: datetime,
                                       **filters: Any) -> int:
     """Combien d'appels des runs de `org_id` ont été résolus sous une autre org depuis

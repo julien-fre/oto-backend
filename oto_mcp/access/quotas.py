@@ -57,6 +57,25 @@ def has_option(sub: str, option: str, *, org: "int | None | object" = scope._UNS
     if db.has_option_comp("user", sub, option):
         return True
     org = scope.current_org(sub) if org is scope._UNSET else org
+    return org_has_option(org, option)
+
+
+def org_has_option(org: "int | None", option: str) -> bool:
+    """La moitié ORG du seam — « cet ESPACE a-t-il l'option », sans acteur.
+
+    Extrait de `has_option` (dont elle est la fin), pas recopié : les deux sources
+    d'org (comp admin, plan de l'abonnement actif) restent écrites UNE fois. Elle
+    existe parce que certaines surfaces posent la question sur une org **sans que
+    l'appelant soit concerné** — un cockpit de gouvernance décrit l'espace, pas son
+    lecteur. Y appeler `has_option` ferait fuiter le comp PERSONNEL du requérant dans
+    l'état affiché de l'org (un admin gratifié verrait toutes les orgs souscrites).
+
+    ⚠️ Le motif de son existence : jusqu'au 2026-09-02, le cockpit d'activation d'org
+    lisait `db.has_option_comp('org', …)` **en direct** — donc une org qui PAYAIT s'y
+    affichait « non souscrite », son plan n'étant regardé par personne. Troisième
+    règle pour une même question, troisième réponse. Un nouveau chemin passe par ici
+    ou par `has_option`, jamais par les sources.
+    """
     if org is None:
         return False
     if db.has_option_comp("org", str(org), option):

@@ -27,7 +27,7 @@ def calls(monkeypatch):
     monkeypatch.setattr(ua.db, "get_user", lambda eid: {"sub": eid})
     monkeypatch.setattr(ua.org_store, "get_org", lambda oid: {"id": oid})
     monkeypatch.setattr(ua.db, "set_option_comp",
-                        lambda et, eid, opt, granted_by=None: rec["comp"].append((et, eid, opt)))
+                        lambda et, eid, opt, granted_by=None, expires_at=None: rec["comp"].append((et, eid, opt)))
     monkeypatch.setattr(ua.db, "clear_option_comp",
                         lambda et, eid, opt: rec["clear"].append((et, eid, opt)))
     monkeypatch.setattr(ua.credentials_store, "platform_grant",

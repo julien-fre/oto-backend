@@ -241,15 +241,34 @@ def set_org_unipile_limit(org_id: int, limit: Optional[int]) -> None:
         )
 
 
+# Sentinelle de `set_option_comp(expires_at=…)` : « ne touche pas à l'échéance ».
+# Elle existe parce que le défaut naturel (None) est déjà PORTEUR DE SENS — None veut
+# dire « perpétuel » — et que deux appelants re-posent un don sans rien savoir des
+# échéances (console connecteur, fiche user). Sans sentinelle, leur geste anodin
+# effacerait en silence une date posée ailleurs : le don resterait, l'échéance non.
+KEEP_EXPIRY = object()
+
+
 def set_option_comp(entity_type: str, entity_id: str, option: str,
-                    *, granted_by: Optional[str] = None) -> None:
-    """Offre (comp gratuit) une option de connecteur à une entité user|org. Idempotent."""
+                    *, granted_by: Optional[str] = None,
+                    expires_at: object = KEEP_EXPIRY) -> None:
+    """Offre (comp gratuit) une option de connecteur à une entité user|org. Idempotent.
+
+    `expires_at` : omis = l'échéance existante est CONSERVÉE (cf. `KEEP_EXPIRY`) ;
+    `None` explicite = don perpétuel (efface une date) ; un datetime = don qui se
+    ferme à cette date — `has_option_comp` cesse alors de l'accorder, sans qu'aucune
+    ligne ne soit supprimée (donc réversible en effaçant la date)."""
+    keep = expires_at is KEEP_EXPIRY
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO option_comps (entity_type, entity_id, option, granted_by) "
-            "VALUES (%s,%s,%s,%s) ON CONFLICT (entity_type, entity_id, option) "
-            "DO UPDATE SET granted_by = EXCLUDED.granted_by, granted_at = NOW()",
-            (entity_type, str(entity_id), option, granted_by),
+            "INSERT INTO option_comps (entity_type, entity_id, option, granted_by, "
+            "expires_at) VALUES (%s,%s,%s,%s,%s) "
+            "ON CONFLICT (entity_type, entity_id, option) "
+            "DO UPDATE SET granted_by = EXCLUDED.granted_by, granted_at = NOW(), "
+            + ("expires_at = option_comps.expires_at" if keep
+               else "expires_at = EXCLUDED.expires_at"),
+            (entity_type, str(entity_id), option, granted_by,
+             None if keep else expires_at),
         )
 
 
@@ -264,18 +283,42 @@ def clear_option_comp(entity_type: str, entity_id: str, option: str) -> bool:
 
 
 def has_option_comp(entity_type: str, entity_id: str, option: str) -> bool:
+    """Un don VIVANT accorde-t-il cette option ? Une ligne échue (`expires_at` passé)
+    ne compte pas — c'est ICI que l'échéance mord, une fois, pour tout le monde :
+    `access.has_option` est le seul lecteur de cette fonction, et toutes les surfaces
+    d'entitlement passent par lui. Le filtre est en SQL (`NOW()`), pas en Python :
+    l'horloge de la base est la même pour les trois processus qui la lisent."""
     with _connect() as conn:
         return conn.execute(
-            "SELECT 1 FROM option_comps WHERE entity_type=%s AND entity_id=%s AND option=%s",
+            "SELECT 1 FROM option_comps WHERE entity_type=%s AND entity_id=%s "
+            "AND option=%s AND (expires_at IS NULL OR expires_at > NOW())",
             (entity_type, str(entity_id), option),
         ).fetchone() is not None
 
 
 def list_option_comps(entity_type: str, entity_id: str) -> list[str]:
-    """Options offertes (comp) à cette entité — pour l'affichage admin."""
+    """Options offertes (comp) à cette entité — pour l'affichage admin.
+
+    ⚠️ **Ne filtre PAS l'échéance**, à la différence de `has_option_comp` : une
+    console admin doit voir le don échu, sinon il devient invisible et donc
+    irrécupérable (on ne rouvre pas ce qu'on ne voit plus). Deux questions
+    différentes, deux règles assumées — `list_option_comp_rows` rend la date pour
+    qui veut les distinguer."""
     with _connect() as conn:
         return [r["option"] for r in conn.execute(
             "SELECT option FROM option_comps WHERE entity_type=%s AND entity_id=%s",
+            (entity_type, str(entity_id)),
+        )]
+
+
+def list_option_comp_rows(entity_type: str, entity_id: str) -> list[dict]:
+    """Les dons de cette entité AVEC leur date de pose et leur échéance. Pendant
+    détaillé de `list_option_comps` (qui ne rend que des noms, contrat du dashboard) :
+    ce que lit l'écran d'abonnement pour nommer l'avantage et annoncer sa fin."""
+    with _connect() as conn:
+        return [dict(r) for r in conn.execute(
+            "SELECT option, granted_by, granted_at, expires_at FROM option_comps "
+            "WHERE entity_type=%s AND entity_id=%s ORDER BY option",
             (entity_type, str(entity_id)),
         )]
 

@@ -173,6 +173,78 @@ def _tenant_counts_sql(where_tenant: str = "") -> str:
     """
 
 
+# Le tenant EFFECTIF d'une org, en UNE requête — l'UNION des trois axes qui peuvent
+# la rattacher à un tenant tiers, dans l'ordre du plus déclaré au plus dérivé. Union
+# et non « le meilleur axe » : chacun a un angle mort connu, et le coût d'un faux
+# négatif (traiter l'org d'un partenaire comme la nôtre) est ce qu'on refuse.
+#
+#   1. `orgs.tenant_id` — le rattachement DÉCLARÉ (ADR 0052 L1). ⚠️ Mesuré INERTE le
+#      2026-09-02 : 160 orgs sur 160 portent le tenant primaire, y compris les 61 qui
+#      vivent chez un partenaire. Le provisioning ne l'écrit pas. Un filtre bâti sur
+#      ce seul axe ne rattrape RIEN — il est gardé parce qu'il ne coûte rien et qu'il
+#      redeviendra vrai le jour où une bascule L3bis l'alimentera.
+#   2. `orgs.front_brand` — le front qui HÉBERGE l'org, dérivé de l'émetteur du jeton
+#      de son créateur à l'INSERT (`config.front_for`, écrivain unique dans
+#      `org_store.create_org`). Non déclarable par l'appelant, donc non revendicable.
+#      C'est l'axe qui porte. ⚠️ Son angle mort est historique : avant que la
+#      dérivation soit confiée à l'écrivain unique, deux des trois créateurs d'org
+#      repartaient à NULL — des orgs de partenaire ont donc pu naître sans marque.
+#   3. Le PRÉFIXE du sub d'un membre (`tenancy.qualify` : `<slug>:<sub>`), qui suit
+#      l'émetteur du jeton et rien d'autre. C'est lui qui couvre l'angle mort de (2).
+#      ⚠️ Son propre angle mort : une org de partenaire sans aucun membre qualifié
+#      (invitée depuis notre front) — que (2) couvre. Les deux se tiennent.
+#
+# Croisement mesuré le 2026-09-02 sur les 160 orgs : (2) et (3) rendent le MÊME
+# ensemble de 61 orgs, zéro désaccord dans les deux sens. Deux dérivations
+# indépendantes qui concordent, c'est ce qui permet d'affirmer l'absence de faux
+# négatif aujourd'hui ; l'union est ce qui la maintient demain.
+#
+# L'EXPRESSION est exportée à part de la requête : tout dispositif qui trie une
+# POPULATION d'orgs (et pas une seule) doit trancher avec exactement les mêmes trois
+# axes — sinon deux définitions du « chez le partenaire » divergent, et la seconde
+# sera la moins prudente. Aujourd'hui : `db/outreach.py` (l'audience d'une relance).
+# `o` est l'alias attendu pour `orgs`, `%(primary)s` le slug du tenant primaire.
+_ORG_TENANT_EXPR = """COALESCE(
+      (SELECT t.slug FROM tenants t
+        WHERE t.id = o.tenant_id AND t.slug <> %(primary)s),
+      NULLIF(btrim(COALESCE(o.front_brand, '')), ''),
+      (SELECT p.slug
+         FROM org_members om
+         JOIN (SELECT slug, slug || ':' AS pfx FROM tenants
+                WHERE slug <> %(primary)s) p ON om.sub LIKE p.pfx || '%%'
+        WHERE om.org_id = o.id
+        ORDER BY length(p.pfx) DESC LIMIT 1),
+      %(primary)s)"""
+
+_ORG_TENANT_SQL = f"""
+    SELECT {_ORG_TENANT_EXPR} AS slug
+      FROM orgs o WHERE o.id = %(oid)s
+"""
+
+
+def org_tenant_slug(org_id: int) -> str:
+    """Le tenant EFFECTIF d'une organisation : `'oto'` (la nôtre) ou le slug du
+    tenant tiers qui l'héberge. Union des trois axes ci-dessus, sans arbitrage.
+
+    Sert à répondre à « cette organisation est-elle NOTRE cliente, ou celle d'un
+    partenaire hébergé ? » — la question que doit poser tout dispositif qui
+    S'ADRESSE au titulaire de l'org (badge, échéance, relance). Les clients d'un
+    partenaire ne sont pas les nôtres : leur écrire dans son produit, c'est parler
+    par-dessus lui.
+
+    Org inconnue ⇒ tenant primaire : il n'y a personne à protéger derrière un id qui
+    ne désigne rien, et rendre un tiers ici masquerait le vrai défaut (l'id est faux).
+    Le fail-closed sur erreur appartient à l'appelant, pas à la lecture.
+
+    ⚠️ Ce n'est PAS `front_brand` : la marque n'est qu'un des trois axes, et l'axe
+    qui a un trou historique. Lire la colonne en direct rouvrirait ce trou.
+    """
+    with _connect() as conn:
+        row = conn.execute(_ORG_TENANT_SQL,
+                           {"primary": tenancy.PRIMARY_SLUG, "oid": int(org_id)}).fetchone()
+    return (row and row["slug"]) or tenancy.PRIMARY_SLUG
+
+
 def _shape_tenant(row: dict) -> dict:
     """Forme servie : les compteurs en entiers, et l'ÉTAT D'ÉMETTEUR dérivé ici —
     une seule dérivation, partagée par la liste et la fiche."""

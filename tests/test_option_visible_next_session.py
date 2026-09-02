@@ -37,7 +37,7 @@ def sans_db(monkeypatch):
     monkeypatch.setattr(ua.db, "get_user", lambda eid: {"sub": eid})
     monkeypatch.setattr(ua.org_store, "get_org", lambda oid: {"id": oid})
     monkeypatch.setattr(ua.db, "set_option_comp",
-                        lambda et, eid, opt, granted_by=None: None)
+                        lambda et, eid, opt, granted_by=None, expires_at=None: None)
     monkeypatch.setattr(ua.db, "clear_option_comp", lambda et, eid, opt: None)
     monkeypatch.setattr(ua.providers, "connector_for_provider", lambda p: None)
     monkeypatch.setattr(ua.credentials_store, "list_platform_instances", lambda p: [])
