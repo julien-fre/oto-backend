@@ -57,7 +57,58 @@ jusqu'au 01/09/2026 : c'est faux et constaté sur la machine), gaté par le cran
   créée AVANT `runner_jobs`, qui la référence.
 - **déclencheurs** `runner_triggers` — capacité + MCP `oto_trigger`, tick
   backend avec CAS sur `next_due` (prod/preprod partagent la base : un seul
-  gagnant par échéance).
+  gagnant par échéance). ⚠️ **Poser (et rallumer) exige un runner ARMÉ pour
+  l'org** — voir ci-dessous.
+- **workers vus** `runner_workers` — la présence d'un runner pour une org,
+  inscrite à CHAQUE sondage de la file (`op=claim`, y compris à vide).
+
+### Ne pas promettre une exécution que personne n'assure (02/09/2026)
+
+Le tick ENFILE, le worker EXÉCUTE. Sans worker armé pour l'org, le job reste
+`pending` **pour toujours, sans une erreur** — pendant que le déclencheur rend un
+`next_due` que l'agent rapporte comme une promesse tenue. C'est le pire des deux
+malentendus : **ça ressemble à un succès.**
+
+**Ce qui l'a daté.** Relevé le 02/09 dans l'org 196 : cinq déclencheurs actifs
+enfilent chaque matin (dernier enfilement le jour même à 07:00), et un sixième
+porte son autopsie **dans son propre libellé** — « DISABLED 26 Aug, oto_trigger
+jobs do not execute ». Quelqu'un a diagnostiqué la panne et n'a eu que le NOM de
+l'objet pour l'écrire : le produit ne disait rien, nulle part.
+
+**La garde suit le VERBE, pas l'objet** — le motif que `runner_fleets` a établi
+pour `launch`/`stop` :
+
+```
+create              REFUSÉ sans runner armé   c'est le geste qui MENT
+update enabled=true REFUSÉ sans runner armé   rallumer, c'est promettre à nouveau
+list / get          ouverts, + `runner`       et c'est là qu'on cherche la réponse
+update (autre) /
+delete              TOUJOURS ouverts          ranger un déclencheur mort
+```
+
+Fermer aussi la lecture ou la suppression enfermerait l'utilisateur avec l'objet
+qui lui ment — or c'est exactement la personne qui a besoin d'agir.
+
+**Le signal, et pourquoi une table.** Un claim sur file VIDE n'écrit rien :
+`runner_jobs.claimed_by` ne distingue donc pas « aucun worker » de « un worker
+qui n'a rien eu à faire ». Et cette lecture se BOUCLE au démarrage — aucun job ne
+peut exister avant un déclencheur, aucun déclencheur ne pourrait alors se poser.
+Le **sondage** prouve la présence même à vide : c'est le seul signal qui parle
+avant le premier job. D'où `runner_workers`, écrite en tête de `claim_next_job`.
+
+**La fenêtre est asymétrique, et c'est elle qui fixe la valeur**
+(`ARME_FENETRE_S`, 15 min). Un refus à tort se répare tout seul — le message dit
+quoi faire, et reposer le déclencheur trente secondes plus tard marche. Une
+acceptation à tort fabrique une promesse qui ment TOUS LES JOURS jusqu'à ce que
+quelqu'un s'aperçoive que le rapport n'arrive pas. On refuse du bon côté, avec
+une fenêtre assez large pour qu'un redéploiement ne la morde pas.
+
+⚠️ **`list`/`get` portent `runner` {armed, workers, last_seen} — DÉCLARÉ, pas
+déduit.** `last_seen: null` (aucun worker n'est jamais venu) et une date ancienne
+(il s'est tu) n'appellent pas le même geste : monter un runner, ou aller voir
+pourquoi celui qui existe s'est tu. Un seul booléen les confondrait. C'est aussi
+la seule chose qui distingue, pour les déclencheurs **déjà posés**, un vivant
+d'un mort — le refus, lui, ne protège que les nouveaux.
 ⚠️ **« Arrêter » vise DEUX services distincts** (constaté le 01/09/2026) :
 l'ordonnanceur (`oto-fleet-<nom>`) cesse d'ENFILER, les agents (`oto-runner@1..N`,
 unités séparées) finissent ce qui est pris **et restent ARMÉS sur la file**.

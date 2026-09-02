@@ -231,8 +231,11 @@ def residu_projete(*, dry_run: bool = True) -> dict:
     `props.legacy`. Elles préparaient une bascule de lecture qui n'aura pas lieu — les
     deux univers vivent désormais côte à côte, chacun avec ses verbes. La copie n'a
     donc plus ni écrivain (l'arrêt est dans `db/_init.py`) ni lecteur, et ce travail
-    la retire : 75 668 nœuds sur 75 721 et 34 314 blocs, mesurés le 2026-09-01 à
-    19:30 sur la base servie.
+    la retirait : 75 668 nœuds sur 75 721 et 34 314 blocs à son plus haut, le
+    2026-09-01. ⚠️ **Le stock n'est plus là** — relevé en lecture seule sur la base
+    servie le 2026-09-01 à 21:27 UTC : 0 nœud recopié, 0 bloc orphelin. Le geste
+    reste, son stock est fait. C'est le mode à blanc qui dit l'état du jour, et
+    **jamais** un chiffre recopié d'ici.
 
     ⚠️ **Ce chiffre se DATE et se REFAIT avant de jouer.** Il valait 70 876 quatre
     heures plus tôt : la recopie a tourné jusqu'au déploiement de son arrêt. Et
@@ -254,19 +257,35 @@ def residu_projete(*, dry_run: bool = True) -> dict:
     ⚠️ **Une passe peut ne pas tout prendre** et c'est voulu : `delete_projected_nodes`
     a un plafond de lots. Le retour porte `restants` — non nul, il dit de rappeler,
     pas que quelque chose a échoué.
+
+    ⚠️ **Le mode à blanc annonce TOUTE la surface qu'`--apply` emporterait**, blocs
+    attachés compris (#800). Il n'annonçait que les nœuds et les orphelins et taisait
+    les blocs qui pendent aux nœuds recopiés — 34 314 au 2026-09-01, la plus grosse
+    part de ce qui partait. Un inventaire incomplet est pire qu'aucun inventaire : il
+    donne confiance à tort.
+
+    ⚠️ **Ce travail ne touche plus RIEN qui ne soit marqué `props.legacy`** (#800,
+    point ③). Il balayait aussi les blocs orphelins, sans prédicat de provenance —
+    donc du contenu NATIF dont le nœud avait pu être supprimé par erreur, sous un nom
+    qui promettait le contraire. `blocs_orphelins` reste dans l'inventaire, mais comme
+    TÉMOIN : la contrainte `blocks_node_fk` rend l'orphelin impossible, ce compte doit
+    valoir 0, et un non-zéro dit que la contrainte manque sur cette base — pas qu'il
+    reste du ménage.
     """
     from .db import nodes as db_nodes
     avant = db_nodes.count_projected_nodes()
-    orphelins_avant = db_nodes.count_orphan_blocks()
+    blocs_avant = db_nodes.count_projected_blocks()
+    orphelins = db_nodes.count_orphan_blocks()
     if dry_run:
-        return {"projetes": avant, "blocs_orphelins": orphelins_avant}
+        return {"projetes": avant, "blocs_attaches": blocs_avant,
+                "blocs_orphelins": orphelins}
     db_nodes.delete_projected_nodes()
-    db_nodes.delete_orphan_blocks()
     apres = db_nodes.count_projected_nodes()
     return {
         "retires": avant - apres,
         "restants": apres,
-        "blocs_orphelins_retires": orphelins_avant - db_nodes.count_orphan_blocks(),
+        "blocs_attaches_retires": blocs_avant - db_nodes.count_projected_blocks(),
+        "blocs_orphelins": db_nodes.count_orphan_blocks(),
     }
 
 

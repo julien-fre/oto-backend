@@ -16,7 +16,8 @@ CONNECTOR = _c(
     default_quota=0, platform_key_open=False,  # clé plateforme sur grant explicite (données achetées au crédit)
     secret_kind="api_key",
     label="Cloro",
-    help="veille AI-search (ChatGPT, Gemini, Perplexity…) + SERP Google JSON",
+    help="ce que ChatGPT, Gemini ou Perplexity répondent sur une marque — veille "
+         "de visibilité IA, plus la SERP Google en JSON",
     href="https://cloro.dev",
 )
 

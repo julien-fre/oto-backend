@@ -10,7 +10,13 @@ from ._model import _c
 CONNECTOR = _c(
     "serper", ["serper"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=200, platform_key_open=True,
-    label="Serper", help="recherche web", href="https://serper.dev",
+    # Trois marques à un caractère près (serper/serpapi/searchapi) et quatre
+    # périmètres voisins (cloro/firecrawl/tavily/brightdata) : chaque aide dit
+    # depuis le 2026-09-02 CE QUI LA DISTINGUE des autres, pas ce qu'elle est.
+    label="Serper",
+    help="Google en JSON — web, images, Maps et avis, Lens, plus le scraping "
+         "d'une page ; le moteur généraliste par défaut d'oto",
+    href="https://serper.dev",
 )
 
 CATEGORY = "Prospection"

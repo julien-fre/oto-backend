@@ -218,54 +218,9 @@ rien ne rendait navigable et que rien ne tenait.
   callback qui ne distingue jamais les causes d'un refus, ACK de webhook), les autres
   portent « dette déclarée … (#424, verdict C) » et attendent leur lot.
   **Détail : `docs/silences-2026-08-27.md`.**
-- **Ce dépôt est PUBLIC : aucun nom de client, de personne réelle ou de domaine client
-  (01/09).** La règle existait ; elle a été appliquée **à la main** deux fois le matin du
-  2026-09-01 — #709 pour les sources (42 fichiers), #747 pour les tests (~300 occurrences
-  dans 70 fichiers) — et le tronc était à **zéro**. Un lot mergé **le même jour à 10:26**
-  en a réintroduit : un en-tête de module (`tools/http.py`) et un en-tête de test
-  (`test_http_doc.py`). **Une règle qui ne tient que par la discipline ne tient pas** —
-  c'est la même leçon que les silences ci-dessus, à trois jours d'intervalle.
-  Garde-fou : `scripts/lint_noms_clients.py`, exercé par
-  `tests/test_lint_noms_clients.py` (qui prouve aussi qu'il MORD, sur onze formes que
-  prend un nom en vrai — casse, suffixe, concaténation, sous-domaine), et lancé par le
-  job CI `noms-clients` de `deploy-canari.yml` sur **PR et push `main`**.
-  Portée : **tout le dépôt** (`git ls-files` — sources, tests, docs, workflows,
-  manifestes), parce que les deux passes à la main n'avaient vu chacune qu'une moitié.
-  Conventions de remplacement, celles de #709/#747 : `acme` (et `globex` quand un
-  fichier distingue deux tenants), `Jane Doe` pour une personne, prose générique
-  (« un client », « un tenant tiers »), domaines sur le TLD réservé `.test`. Une valeur
-  **fonctionnelle** se renomme **des deux côtés** ou se déclare.
-  L'échappatoire est `# noqa: CLIENT — <raison>`, **la raison obligatoire**, même
-  grammaire que `# noqa: SILENT`. Elle couvre aujourd'hui deux sites : la liste CORS de
-  repli (`api/base.py`) et la table `RETURN_APPS` (`auth/flow.py`) — dette DÉCLARÉE, dont
-  la relocalisation vers la config privée est le **second volet de oto-private#85**.
-  ⚠️ **La liste des termes n'est PAS dans le dépôt, pas même hachée** : un fichier
-  d'empreintes commité dans un dépôt public est un **oracle d'appartenance** (hacher
-  coûte au curieux ce qu'il nous coûte par candidat, donc l'étirement de clé n'achète
-  aucune asymétrie), ce qui rendrait la liste non-greppable, pas confidentielle — or
-  c'est l'appartenance qu'on protège. Elle vit dans le secret de dépôt
-  `OTO_NOMS_CLIENTS` ; en local, `~/.otomata/noms-clients.txt`. Sans liste, le contrôle
-  sort **2** = « pas jugé » : trois états, jamais un vert muet (même idiome que
-  `contrat-front`).
-  ⚠️ **Et l'état « pas jugé » ROUGIT — corrigé le 01/09, le jour même de sa pose.** Le
-  job traduisait `2` en `exit 0` + annotation. Conséquence mesurée : `noms-clients` a
-  rendu **`success` sur tous ses runs**, y compris celui de sa propre fusion, alors que
-  le secret n'a **jamais** été posé (ni `~/.otomata/noms-clients.txt` sur le poste) —
-  le garde-fou n'avait donc rendu **aucun** jugement, nulle part, tout en affichant une
-  coche verte. L'annotation disait vrai ; personne ne la lisait, parce que `gh pr
-  checks`, la liste des checks et la coche de la PR ne lisent **que la conclusion**.
-  **Règle : un garde-fou qui ne peut pas s'exécuter doit être ROUGE, jamais vert avec
-  une note.** C'est la forme la plus dangereuse d'un contrôle défaillant, parce qu'elle
-  produit une **preuve positive** — les autres se voient au moins quand on regarde. Une
-  conclusion `neutral` a été écartée : un job de workflow ne peut pas en émettre, et
-  GitHub la compte comme non bloquante en l'affichant comme un passage.
-  ⚠️ **Rouge, mais NON REQUIS** : `noms-clients` n'est dans les contrôles requis de
-  `main` (aujourd'hui : `test` seul) ni dans le `needs` d'aucun job, et ne doit pas y
-  entrer — bloquer ne dépublierait rien (le nom est public dès le push) et déplacerait
-  le coût du garde-fou sur toutes les livraisons. *Impossible à confondre avec un
-  succès* ≠ *gèle le dépôt*. Les deux moitiés sont tenues par
-  `tests/test_lint_noms_clients.py`, qui rejoue le script du job extrait du workflow
-  sur les trois codes et refuse qu'un `needs` apparaisse.
+- **Ce dépôt est PUBLIC : aucun nom de client, de personne réelle ou de domaine client.**
+  Remplacer par `acme`, `Jane Doe`, de la prose générique, un TLD `.test`. La règle se tient
+  **à la relecture** : il n'existe aucun contrôle automatique, et aucun n'est souhaité.
 - **Tree partagé entre sessions : deux sessions ne partagent JAMAIS un fichier — le
   séquencement prime, le staging n'est qu'un filet.** Vécu 13/08 (main rouge) : un
   `git add <chemin>` EXPLICITE a absorbé ~148 lignes du WIP d'une session voisine dans

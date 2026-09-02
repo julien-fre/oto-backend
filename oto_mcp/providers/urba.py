@@ -17,4 +17,9 @@ DESCRIPTION = (
     "règlements, risques naturels, argiles, QPV et proximité, EPFIF, "
     "socio-démographie communale."
 )
+# Open data de l'État (Géoportail de l'urbanisme, Géorisques, INSEE…), pas un
+# connecteur maison : l'éditeur retombait sur « Otomata » et la carte était rangée
+# dans « Autres » — même famille que `foncier` (2026-09-02).
+CATEGORY = "Data FR"
+PUBLISHER = "État (open data)"
 LOGO_DOMAIN = "geoportail-urbanisme.gouv.fr"

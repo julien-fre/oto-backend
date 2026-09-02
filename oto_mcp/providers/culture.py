@@ -9,8 +9,11 @@ from ._model import _c
 
 CONNECTOR = _c(
     "culture", ["culture"], secret_kind="none",
-    label="Culture (open data)",
-    help="entreprises du spectacle vivant — open data Ministère de la Culture",
+    # Le connecteur ne couvre QUE le spectacle vivant : « Culture » promettait
+    # patrimoine, musées, audiovisuel (2026-09-02).
+    label="Spectacle vivant",
+    help="entreprises titulaires d'une licence d'entrepreneur de spectacle — "
+         "open data Ministère de la Culture",
 )
 
 CATEGORY = "Data FR"

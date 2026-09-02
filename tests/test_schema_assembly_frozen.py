@@ -146,8 +146,18 @@ from oto_mcp.db import _schema, schema
 # (le retrait de l'index unipile, puis le fragment des flottes), jamais
 # reprise d'un côté du conflit : un hash pris d'un seul côté valide un DDL
 # que personne ne sert.
-EMPREINTE = "c05cd85fa8529bace0645d9ae58624d56bef531513614efe9073b99f0c845c28"
-LONGUEUR = 125769
+# 2026-09-01 (#800) : `blocks.node_id` devient une clé étrangère
+# (`blocks_node_fk … ON DELETE CASCADE` vers `nodes`). Deux naissances, et il faut
+# les deux : INLINE ici pour une base VIERGE (le `CREATE TABLE` s'y applique), par
+# `_init.py::_pose_cascade_blocs` pour une base qui existe déjà (le `CREATE TABLE`
+# y est sauté). Retirer l'une des deux ne rougirait que dans
+# `tests/test_blocs_cascade.py`, et prod et install fraîche divergeraient en
+# silence. ⚠️ Sur la base PARTAGÉE prod/preprod, la contrainte se pose `NOT VALID` :
+# la cascade joue quand même — c'est la vérification des lignes DÉJÀ là qui est
+# différée, pas l'effet — et le boot ne peut donc pas échouer sur un orphelin
+# hérité. Empreinte recalculée sur le module assemblé.
+EMPREINTE = "19065a044d19cefbf93cc2fbc0452c1fda6eeaf8fa27b260b8fe53fa4b88e8b7"
+LONGUEUR = 128822
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

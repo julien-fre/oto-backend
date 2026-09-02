@@ -15,7 +15,8 @@ CONNECTOR = _c(
     "searchapi", ["searchapi"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=200, platform_key_open=True,
     label="SearchApi",
-    help="recherche multi-moteurs (Google verticals, YouTube, Bing, jobs, news, maps, scholar…)",
+    help="même périmètre multi-moteurs que SerpApi (Google, YouTube, Bing, jobs, "
+         "news, maps, scholar) — à poser si ta clé est chez SearchApi",
     href="https://www.searchapi.io",
 )
 

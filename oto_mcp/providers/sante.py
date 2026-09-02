@@ -9,7 +9,10 @@ from ._model import _c
 
 CONNECTOR = _c(
     "sante", ["sante"], secret_kind="none",
-    label="Santé", help="établissements FINESS + évaluations ESSMS HAS (open data)",
+    # « Santé » promettait un domaine ; c'est un annuaire d'établissements (2026-09-02).
+    label="Établissements de santé",
+    help="annuaire FINESS des établissements de santé et médico-sociaux + "
+         "évaluations ESSMS de la HAS (open data)",
 )
 
 CATEGORY = "Data FR"

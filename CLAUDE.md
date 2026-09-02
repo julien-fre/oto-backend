@@ -209,18 +209,9 @@ budget d'un retour d'outil, **où vit un fichier**, ordre des middlewares, MONO-
 connecteur. ⚠️ **Le refus est bruyant, la divergence est muette — et le CI le vérifie** :
 `lint_silences.py` refuse un `except Exception` qui ne re-lève, ne journalise ni ne rend un refus
 nommé ; échappatoire unique `# noqa: SILENT — <raison>`. **`docs/silences-2026-08-27.md`.**
-⚠️ **Ce dépôt est PUBLIC : aucun nom de client, de personne ni de domaine client** — appliqué à la
-main le 01/09 (#709 sources, #747 tests), **recassé le jour même à 10:26**, donc désormais tenu par
-`lint_noms_clients.py` (job CI `noms-clients`, PR + push `main`, **tout le dépôt** via `git
-ls-files`), exercé par `tests/test_lint_noms_clients.py`. Conventions : `acme`, `Jane Doe`, prose
-générique, TLD `.test` ; échappatoire `# noqa: CLIENT — <raison>`. ⚠️ **La liste des termes n'est
-pas dans le dépôt, pas même hachée** (des empreintes publiques = un oracle d'appartenance) : secret
-`OTO_NOMS_CLIENTS`, ou `~/.otomata/noms-clients.txt` en local ; sans elle le contrôle sort **2**
-= « pas jugé », et le job **ÉCHOUE** (corrigé le 01/09, jour de sa pose : il sortait vert avec une
-annotation, donc *tous* ses runs — dont celui de sa propre fusion — ont dit « success » sans rien
-juger). ⚠️ **Un garde-fou qui ne peut pas s'exécuter doit être ROUGE, jamais vert avec une note** :
-seule la conclusion est lue, et un vert « pas jugé » fabrique une preuve POSITIVE. Il reste **hors
-des contrôles requis** — rouge et visible, jamais bloquant.
+⚠️ **Ce dépôt est PUBLIC : aucun nom de client, de personne ni de domaine client.** Conventions
+de remplacement : `acme`, `Jane Doe`, prose générique, TLD `.test`. Règle d'hygiène tenue à la
+relecture — il n'y a **aucun contrôle automatique** et il n'y en a jamais eu de demandé.
 
 ## Le démarrage (ADR 0065)
 

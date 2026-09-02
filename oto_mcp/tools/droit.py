@@ -10,7 +10,8 @@ carte de connecteur (`droit` au registre, `providers/droit.py`) :
 
 Toutes ces sources sont servies par le **service FOD** (`fod/juris`/`fod/loi`/`fod/ccn`
 → HTTP, `FOD_BASE_URL`), pas par un client lib en direct. Extraites du connecteur
-`sirene`/`fr` (elles y étaient crammées sous « INSEE SIRENE », publisher trompeur).
+`sirene`/`fr` (elles y étaient crammées sous le libellé de l'époque « INSEE SIRENE »,
+éditeur « INSEE » — trompeur pour elles ; ce libellé-là a été corrigé le 2026-09-02).
 
 Connecteur open-data : pas de credential. Gaté par activation DB (ADR 0010).
 
