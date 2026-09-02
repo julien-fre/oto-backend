@@ -10,8 +10,10 @@ le rendu SERVI et les refus, pas l'intention :
 - **`https://` seul** ;
 - **URL et alt échappés en attribut** (guillemets compris : `_esc` ne les traite pas,
   et un `"` dans l'alt refermerait l'attribut) ;
-- **sans image, le rendu est celui d'avant, à l'octet** (golden calculé sur `main`
-  avant ce lot) ;
+- **l'image s'AJOUTE, elle ne remplace rien** : le rendu sans elle est celui avec,
+  moins son bloc — vérifié par différence plutôt que par un golden figé, qui aurait
+  gelé la charte (`email_brand.py`) au passage et rendu tout changement de gabarit
+  faussement rouge ;
 - le mailer Otomata et la file d'envoi différé portent l'image comme l'envoi direct.
 """
 from __future__ import annotations
@@ -25,36 +27,27 @@ from oto_mcp import email as E
 _URL = "https://media.exemple.test/images/u1/0123456789abcdef0123456789abcdef.png"
 _BODY = "bonjour,\n\nligne 1\nligne 2"
 
-# Rendu de `render_composed_email(_BODY, cta_text="ouvrir", cta_url="https://exemple.test/x")`
-# par le code d'AVANT ce lot (origin/main) — le gabarit sans image ne bouge pas d'un octet.
-_GOLDEN_SANS_IMAGE = (
-    '<div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#2c2112">'
-    '<p style="font-size:16px;line-height:1.6;margin:0 0 16px">bonjour,</p>'
-    '<p style="font-size:16px;line-height:1.6;margin:0 0 16px">ligne 1<br>ligne 2</p>'
-    '<p style="padding:8px 0"><a href="https://exemple.test/x" style="display:inline-block;'
-    'background:#2c2112;color:#fefcf5;text-decoration:none;padding:10px 20px;'
-    'border-radius:999px;font-weight:600">ouvrir</a></p>'
-    '<hr style="border:none;border-top:1px solid #ece4d0;margin:24px 0 16px">'
-    '<p style="color:#7a6c50;font-size:13px">oto, par otomata · oto.cx<br>'
-    'vous recevez ce message car vous avez un compte oto — répondez à cet email pour '
-    'nous parler, ou pour ne plus en recevoir.</p></div>'
-)
+_LARGEUR_IMG = 536  # `email_brand.LARGEUR` (600) moins les deux gouttières de 32px
 
 
 # --- le gabarit -------------------------------------------------------------
 
-def test_sans_image_le_rendu_est_celui_d_avant_a_l_octet():
+def test_sans_image_aucune_balise_img_et_le_corps_est_servi():
     html = E.render_composed_email(_BODY, cta_text="ouvrir", cta_url="https://exemple.test/x")
-    assert html == _GOLDEN_SANS_IMAGE
     assert "<img" not in html
+    assert "bonjour," in html and "ligne 1<br>ligne 2" in html
+    assert 'href="https://exemple.test/x"' in html
 
 
 def test_avec_image_elle_precede_le_corps_a_la_largeur_du_gabarit():
     html = E.render_composed_email(_BODY, image_url=_URL, image_alt="visuel de bienvenue")
     img = html.index("<img")
-    assert img < html.index("bonjour,"), "l'image est en TÊTE, avant le premier paragraphe"
+    # Le premier « bonjour, » du document est la ligne d'APERÇU (bloc caché de tête) :
+    # celui du corps est le suivant, et c'est de lui qu'on parle ici.
+    corps = html.index("bonjour,", html.index("bonjour,") + 1)
+    assert img < corps, "l'image est en TÊTE, avant le premier paragraphe"
     assert f'src="{_URL}"' in html and 'alt="visuel de bienvenue"' in html
-    assert 'width="480"' in html
+    assert f'width="{_LARGEUR_IMG}"' in html
     assert 'style="max-width:100%;height:auto;display:block;border:0"' in html
     # Le reste du mail est intact : l'image s'ajoute, elle ne remplace rien.
     assert html.replace(html[html.index("<p style=\"margin:0 0 16px\"><img"):html.index("</p>") + 4], "") \
@@ -136,12 +129,14 @@ def _appel(outil, **kw):
 def test_dry_run_rend_le_html_avec_l_image(outil):
     out = _appel(outil, image_url=_URL, image_alt="visuel", dry_run=True)
     assert out["dry_run"] is True and out["sent"] is False
-    assert f'<img src="{_URL}" alt="visuel" width="480"' in out["html"]
+    assert f'<img src="{_URL}" alt="visuel" width="{_LARGEUR_IMG}"' in out["html"]
 
 
-def test_dry_run_sans_image_rend_le_html_d_avant(outil):
+def test_dry_run_rend_le_html_du_gabarit_sans_image(outil):
     out = _appel(outil, cta_text="ouvrir", cta_url="https://exemple.test/x", dry_run=True)
-    assert out["html"] == _GOLDEN_SANS_IMAGE
+    assert out["html"] == E.render_composed_email(
+        _BODY, cta_text="ouvrir", cta_url="https://exemple.test/x")
+    assert "<img" not in out["html"]
 
 
 @pytest.mark.parametrize("params, attendu", [

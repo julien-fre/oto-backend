@@ -17,6 +17,26 @@ dans le compte de l'org, ce qui rend #64 caduque) + `resend` (BYOK,
 `providers.EMAIL_CONNECTOR_TRANSPORT={scaleway:scaleway, resend:resend}` (pas de
 champ transport sur l'expéditeur).
 
+- **Le DESSIN suit la marque du destinataire** (`email_brand.py`, 2026-09-02). Le
+  texte des gabarits écrivait le nom du produit du destinataire depuis 7d10a798,
+  mais la couleur restait celle d'oto pour tout le monde : un client de Tulina lisait
+  « sur tulina » en brun otomata, puis cliquait vers une application blanc-et-ardoise.
+  `email_brand.MARQUES[<slug>]` (le MÊME slug que le texte : `orgs.front_brand` /
+  `config.front_for`) porte nom, site et palette ; `page()` rend le document complet
+  et `bouton()` le CTA. Un slug **inconnu** prend un gabarit neutre **portant son
+  nom** — jamais un repli sur oto, qui serait le faux qu'on répare. Contraintes de
+  client mail portées par le gabarit et gardées par `tests/test_email_charte.py` :
+  tables imbriquées (Outlook ne met en page que ça), styles en LIGNE uniquement
+  (pas de `<style>`, pas de variable CSS, pas de flex/grid), `color-scheme: light`
+  déclaré (sinon Outlook mobile repeint le fond et laisse le texte), preheader caché
+  (sinon la boîte affiche « ou collez ce lien : https://… » en ligne d'aperçu).
+  Répartition : `email.py` = transport, `email_templates.py` = texte + locale,
+  `email_brand.py` = dessin. Les trois modules s'importent **par module**, jamais par
+  nom à plat — le cycle est mutuel et seul l'import de module le rend inoffensif.
+  ⚠️ **L'EXPÉDITEUR, lui, reste `Oto <oto@otomata.tech>`** pour toutes les marques :
+  l'allowlist `MAILER_FROM_DOMAINS` vit dans `otomata-tech/otomata-auth-mailer`, pas
+  ici, et un domaine hors allowlist rend un 403 que le best-effort avale en silence.
+  Poser `tulina.ai` là-bas est le seul geste qui manque.
 - `email_send` (`tools/email.py`) = **spine** (pas un connecteur) : route
   `sender→connecteur→transport` ; autz dynamique (membre d'org pour une adresse
   déclarée ; super_admin pour le repli marque `oto@otomata.tech`). `email.py` =

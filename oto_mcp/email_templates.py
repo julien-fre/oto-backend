@@ -6,8 +6,14 @@ gabarit l'aurait fait déborder. Le TRANSPORT (`_send`, l'anti-injection d'en-t�
 les envois BYO Resend/Scaleway TEM) reste dans `email.py` ; le TEXTE des 6
 gabarits vit ici.
 
+**Le TEXTE, pas le DESSIN.** Les couleurs, le gabarit de page et le bouton vivent
+dans `email_brand.py` : un gabarit d'ici assemble des `<p>` et les confie à
+`_charte.page(...)`, qui les habille à la marque du DESTINATAIRE. Écrire une balise
+de mise en forme ici serait rouvrir la faute que ce découpage ferme — le mot suivait
+le tenant depuis 7d10a798, la couleur non.
+
 ⚠️ **`import email as _email`, jamais `from .email import _send`.** On appelle
-`_email._send(...)`, `_email._esc(...)`, `_email._bouton(...)`, `_email._BTN`
+`_email._send(...)`, `_email._esc(...)`, `_email._bouton(...)`
 etc. — TOUJOURS qualifiés par le module, jamais des noms importés à plat.
 `from .email import _send` capturerait la RÉFÉRENCE au moment de l'import, une
 copie figée que `monkeypatch.setattr(email, "_send", ...)` (ou l'assignation
@@ -37,6 +43,7 @@ quel de `email.py`)."""
 from __future__ import annotations
 
 from . import email as _email
+from . import email_brand as _charte
 
 
 def send_invite_email(to: str, target_name: str | None, invite_url: str,
@@ -46,39 +53,37 @@ def send_invite_email(to: str, target_name: str | None, invite_url: str,
 
     `target_name` = ce qu'on rejoint (nom d'org OU d'équipe) ; None = invitation
     plateforme (onboarding pur → « rejoindre {brand} »). `brand` = le produit sous
-    lequel l'org vit (`orgs.front_brand`, défaut oto) — la marque du TEXTE seulement :
-    l'expéditeur reste le nôtre, un domaine d'envoi tiers supposerait sa vérification
-    chez Scaleway TEM. `locale` = préférence du DESTINATAIRE (`users.locale`) ;
-    voix funnel dans les deux langues : vouvoiement/« you » + minuscules."""
+    lequel l'org vit (`orgs.front_brand`, défaut oto) — il porte désormais le TEXTE
+    **et** le dessin (`email_brand.marque`) ; seul l'expéditeur reste le nôtre, un
+    domaine d'envoi tiers supposerait sa vérification chez Scaleway TEM. `locale` =
+    préférence du DESTINATAIRE (`users.locale`) ; voix funnel dans les deux langues :
+    vouvoiement/« you » + minuscules."""
+    m = _charte.marque(brand)
     if locale == "en":
         lead = f"{_email._esc(inviter)} invites you" if inviter else "you're invited"
-        where = (f"<strong>{_email._esc(target_name)}</strong> on {_email._esc(brand)}" if target_name
-                 else _email._esc(brand))
-        subject = (f"invitation to join {target_name} on {brand}" if target_name
-                   else f"invitation to join {brand}")
-        html = (
-            f'<div style="{_email._WRAP}">'
-            f'<p>{lead} to join {where}.</p>'
-            f'<p><a href="{_email._esc(invite_url)}" style="{_email._BTN}">join</a></p>'
-            f'<p style="{_email._FAINT}">or paste this link: {_email._esc(invite_url)}</p>'
-            f'</div>'
-        )
-        return _email._send(to, subject, html)
-    lead = f"{_email._esc(inviter)} vous invite" if inviter else "vous êtes invité·e"
-    # `brand` échappé pour le corps HTML, brut pour le sujet (qui n'est pas du HTML —
-    # même traitement que `target_name` juste en dessous ; `_send` neutralise les CRLF).
-    where = (f"<strong>{_email._esc(target_name)}</strong> sur {_email._esc(brand)}" if target_name
-             else _email._esc(brand))
-    subject = (f"invitation à rejoindre {target_name} sur {brand}" if target_name
-               else f"invitation à rejoindre {brand}")
-    html = (
-        f'<div style="{_email._WRAP}">'
-        f'<p>{lead} à rejoindre {where}.</p>'
-        f'<p><a href="{_email._esc(invite_url)}" style="{_email._BTN}">rejoindre</a></p>'
-        f'<p style="{_email._FAINT}">ou collez ce lien : {_email._esc(invite_url)}</p>'
-        f'</div>'
-    )
-    return _email._send(to, subject, html)
+        where = (f"<strong>{_email._esc(target_name)}</strong> on {_email._esc(m.nom)}"
+                 if target_name else _email._esc(m.nom))
+        subject = (f"invitation to join {target_name} on {m.nom}" if target_name
+                   else f"invitation to join {m.nom}")
+        apercu = (f"{target_name} is waiting for you on {m.nom}" if target_name
+                  else f"your account on {m.nom} is one click away")
+        contenu = (f'<p style="{_charte.PARA}">{lead} to join {where}.</p>'
+                   + _email._bouton(invite_url, "join", brand))
+    else:
+        lead = f"{_email._esc(inviter)} vous invite" if inviter else "vous êtes invité·e"
+        # `m.nom` échappé pour le corps HTML, brut pour le sujet (qui n'est pas du
+        # HTML — même traitement que `target_name` ; `_send` neutralise les CRLF).
+        where = (f"<strong>{_email._esc(target_name)}</strong> sur {_email._esc(m.nom)}"
+                 if target_name else _email._esc(m.nom))
+        subject = (f"invitation à rejoindre {target_name} sur {m.nom}" if target_name
+                   else f"invitation à rejoindre {m.nom}")
+        apercu = (f"{target_name} vous attend sur {m.nom}" if target_name
+                  else f"votre compte {m.nom} est à un clic")
+        contenu = (f'<p style="{_charte.PARA}">{lead} à rejoindre {where}.</p>'
+                   + _email._bouton(invite_url, "rejoindre", brand))
+    return _email._send(to, subject, _charte.page(
+        m, contenu, preheader=apercu,
+        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
 
 def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
@@ -90,33 +95,31 @@ def send_resource_shared_email(to: str, *, type_label: str, name: str | None,
     jamais le partage. `type_label` DOIT déjà être dans la langue de `locale` —
     ce gabarit ne traduit pas un mot qu'on lui donne. Voix funnel dans les deux
     langues : vouvoiement/« you » + minuscules."""
+    m = _charte.marque(brand)
     if locale == "en":
         droit = "read access" if permission == "read" else "write access"
         titre = f"{type_label} “{name}”" if name else f"a {type_label}"
         who = f"{_email._esc(sharer)} shared" if sharer else "someone shared"
-        subject = (f"{name} — {type_label} shared with you on {brand}" if name
-                   else f"a {type_label} shared with you on {brand}")
-        html = (
-            f'<div style="{_email._WRAP}">'
-            f'<p>{who} {_email._esc(titre)} with you ({droit}) on {_email._esc(brand)}.</p>'
-            f'<p><a href="{_email._esc(app_url)}" style="{_email._BTN}">open in {_email._esc(brand)}</a></p>'
-            f'<p style="{_email._FAINT}">{_email._esc(app_url)}</p>'
-            f'</div>'
-        )
-        return _email._send(to, subject, html)
-    droit = "en lecture" if permission == "read" else "en écriture"
-    titre = f"{type_label} « {name} »" if name else f"un {type_label}"
-    who = f"{_email._esc(sharer)} a partagé" if sharer else "on a partagé"
-    subject = (f"{name} — {type_label} partagé avec vous sur {brand}" if name
-               else f"un {type_label} partagé avec vous sur {brand}")
-    html = (
-        f'<div style="{_email._WRAP}">'
-        f'<p>{who} avec vous {_email._esc(titre)} ({droit}) sur {_email._esc(brand)}.</p>'
-        f'<p><a href="{_email._esc(app_url)}" style="{_email._BTN}">ouvrir dans {_email._esc(brand)}</a></p>'
-        f'<p style="{_email._FAINT}">{_email._esc(app_url)}</p>'
-        f'</div>'
-    )
-    return _email._send(to, subject, html)
+        subject = (f"{name} — {type_label} shared with you on {m.nom}" if name
+                   else f"a {type_label} shared with you on {m.nom}")
+        apercu = f"{sharer} gave you {droit}" if sharer else f"you were given {droit}"
+        contenu = (f'<p style="{_charte.PARA}">{who} {_email._esc(titre)} with you '
+                   f'({droit}) on {_email._esc(m.nom)}.</p>'
+                   + _email._bouton(app_url, f"open in {m.nom}", brand))
+    else:
+        droit = "en lecture" if permission == "read" else "en écriture"
+        titre = f"{type_label} « {name} »" if name else f"un {type_label}"
+        who = f"{_email._esc(sharer)} a partagé" if sharer else "on a partagé"
+        subject = (f"{name} — {type_label} partagé avec vous sur {m.nom}" if name
+                   else f"un {type_label} partagé avec vous sur {m.nom}")
+        apercu = (f"{sharer} vous a donné l'accès {droit}" if sharer
+                  else f"vous avez reçu l'accès {droit}")
+        contenu = (f'<p style="{_charte.PARA}">{who} avec vous {_email._esc(titre)} '
+                   f'({droit}) sur {_email._esc(m.nom)}.</p>'
+                   + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
+    return _email._send(to, subject, _charte.page(
+        m, contenu, preheader=apercu,
+        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
 
 def send_resource_transferred_email(to: str, *, type_label: str, name: str | None,
@@ -127,33 +130,30 @@ def send_resource_transferred_email(to: str, *, type_label: str, name: str | Non
     ressource (ADR 0030). Best-effort. `type_label` déjà dans la langue de
     `locale`, cf. `send_resource_shared_email`. Voix funnel dans les deux
     langues : vouvoiement/« you » + minuscules."""
+    m = _charte.marque(brand)
     if locale == "en":
         titre = f"{type_label} “{name}”" if name else f"a {type_label}"
         who = f"{_email._esc(sharer)} transferred" if sharer else "someone transferred"
-        subject = (f"{name} — {type_label} transferred to you on {brand}" if name
-                   else f"a {type_label} transferred to you on {brand}")
-        html = (
-            f'<div style="{_email._WRAP}">'
-            f'<p>{who} ownership of <strong>{_email._esc(titre)}</strong> on {_email._esc(brand)} to '
-            f'you — you are now the owner.</p>'
-            f'<p><a href="{_email._esc(app_url)}" style="{_email._BTN}">open in {_email._esc(brand)}</a></p>'
-            f'<p style="{_email._FAINT}">{_email._esc(app_url)}</p>'
-            f'</div>'
-        )
-        return _email._send(to, subject, html)
-    titre = f"{type_label} « {name} »" if name else f"un {type_label}"
-    who = f"{_email._esc(sharer)} vous a transféré" if sharer else "on vous a transféré"
-    subject = (f"{name} — {type_label} transféré à vous sur {brand}" if name
-               else f"un {type_label} transféré à vous sur {brand}")
-    html = (
-        f'<div style="{_email._WRAP}">'
-        f'<p>{who} la propriété de <strong>{_email._esc(titre)}</strong> sur {_email._esc(brand)} — '
-        f'vous en êtes désormais propriétaire.</p>'
-        f'<p><a href="{_email._esc(app_url)}" style="{_email._BTN}">ouvrir dans {_email._esc(brand)}</a></p>'
-        f'<p style="{_email._FAINT}">{_email._esc(app_url)}</p>'
-        f'</div>'
-    )
-    return _email._send(to, subject, html)
+        subject = (f"{name} — {type_label} transferred to you on {m.nom}" if name
+                   else f"a {type_label} transferred to you on {m.nom}")
+        apercu = f"you are now the owner of {name or type_label}"
+        contenu = (f'<p style="{_charte.PARA}">{who} ownership of '
+                   f'<strong>{_email._esc(titre)}</strong> on {_email._esc(m.nom)} to '
+                   f'you — you are now the owner.</p>'
+                   + _email._bouton(app_url, f"open in {m.nom}", brand))
+    else:
+        titre = f"{type_label} « {name} »" if name else f"un {type_label}"
+        who = f"{_email._esc(sharer)} vous a transféré" if sharer else "on vous a transféré"
+        subject = (f"{name} — {type_label} transféré à vous sur {m.nom}" if name
+                   else f"un {type_label} transféré à vous sur {m.nom}")
+        apercu = f"vous êtes désormais propriétaire de {name or type_label}"
+        contenu = (f'<p style="{_charte.PARA}">{who} la propriété de '
+                   f'<strong>{_email._esc(titre)}</strong> sur {_email._esc(m.nom)} — '
+                   f'vous en êtes désormais propriétaire.</p>'
+                   + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
+    return _email._send(to, subject, _charte.page(
+        m, contenu, preheader=apercu,
+        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
 
 def send_change_request_email(to: str, *, project_name: str | None, doc_title: str | None,
@@ -163,31 +163,32 @@ def send_change_request_email(to: str, *, project_name: str | None, doc_title: s
     """Email à un VALIDATEUR : une proposition de modification attend sa décision
     (« les lecteurs proposent / les auteurs valident », oto/#6). Best-effort. Voix
     funnel dans les deux langues : vouvoiement/« you » + minuscules."""
+    m = _charte.marque(brand)
     if locale == "en":
         what = ("a new page" if is_create else
                 f"a change to “{doc_title}”" if doc_title else "a change")
         where = f" in “{project_name}”" if project_name else ""
         who = f"{_email._esc(proposer)} is proposing" if proposer else "someone is proposing"
-        subject = f"proposal to review on {brand}{f' — {project_name}' if project_name else ''}"
-        html = (
-            f'<div style="{_email._WRAP}">'
-            f'<p>{who} {_email._esc(what)}{_email._esc(where)} on {_email._esc(brand)} — your review is '
-            f'needed.</p>'
-            f'{_email._bouton(app_url, "review and decide")}'
-            f'</div>'
-        )
-        return _email._send(to, subject, html)
-    what = "une nouvelle page" if is_create else f"une modification de « {doc_title} »" if doc_title else "une modification"
-    where = f" dans « {project_name} »" if project_name else ""
-    who = f"{_email._esc(proposer)} propose" if proposer else "on propose"
-    subject = f"proposition à valider sur {brand}{f' — {project_name}' if project_name else ''}"
-    html = (
-        f'<div style="{_email._WRAP}">'
-        f'<p>{who} {_email._esc(what)}{_email._esc(where)} sur {_email._esc(brand)} — votre validation est attendue.</p>'
-        f'{_email._bouton(app_url, "revoir et décider")}'
-        f'</div>'
-    )
-    return _email._send(to, subject, html)
+        subject = f"proposal to review on {m.nom}{f' — {project_name}' if project_name else ''}"
+        apercu = f"{proposer or 'someone'} is waiting on your review"
+        contenu = (f'<p style="{_charte.PARA}">{who} {_email._esc(what)}'
+                   f'{_email._esc(where)} on {_email._esc(m.nom)} — your review is '
+                   f'needed.</p>'
+                   + _email._bouton(app_url, "review and decide", brand))
+    else:
+        what = ("une nouvelle page" if is_create else
+                f"une modification de « {doc_title} »" if doc_title else "une modification")
+        where = f" dans « {project_name} »" if project_name else ""
+        who = f"{_email._esc(proposer)} propose" if proposer else "on propose"
+        subject = f"proposition à valider sur {m.nom}{f' — {project_name}' if project_name else ''}"
+        apercu = f"{proposer or 'quelqu’un'} attend votre décision"
+        contenu = (f'<p style="{_charte.PARA}">{who} {_email._esc(what)}'
+                   f'{_email._esc(where)} sur {_email._esc(m.nom)} — votre validation '
+                   f'est attendue.</p>'
+                   + _email._bouton(app_url, "revoir et décider", brand))
+    return _email._send(to, subject, _charte.page(
+        m, contenu, preheader=apercu,
+        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
 
 def send_change_request_resolved_email(to: str, *, project_name: str | None, doc_title: str | None,
@@ -196,29 +197,28 @@ def send_change_request_resolved_email(to: str, *, project_name: str | None, doc
                                        locale: str | None = None) -> bool:
     """Email au PROPOSEUR : sa proposition a été acceptée ou refusée (oto/#6).
     Best-effort. Voix funnel dans les deux langues : vouvoiement/« you » + minuscules."""
+    m = _charte.marque(brand)
     if locale == "en":
         verdict = "accepted" if accepted else "declined"
         what = f"your proposal on “{doc_title}”" if doc_title else "your proposal"
         where = f" in “{project_name}”" if project_name else ""
-        subject = f"proposal {verdict} on {brand}{f' — {project_name}' if project_name else ''}"
-        html = (
-            f'<div style="{_email._WRAP}">'
-            f'<p>{_email._esc(what)}{_email._esc(where)} was <strong>{verdict}</strong> on {_email._esc(brand)}.</p>'
-            f'{_email._bouton(app_url, f"open in {brand}")}'
-            f'</div>'
-        )
-        return _email._send(to, subject, html)
-    verdict = "acceptée" if accepted else "refusée"
-    what = f"votre proposition sur « {doc_title} »" if doc_title else "votre proposition"
-    where = f" dans « {project_name} »" if project_name else ""
-    subject = f"proposition {verdict} sur {brand}{f' — {project_name}' if project_name else ''}"
-    html = (
-        f'<div style="{_email._WRAP}">'
-        f'<p>{_email._esc(what)}{_email._esc(where)} a été <strong>{verdict}</strong> sur {_email._esc(brand)}.</p>'
-        f'{_email._bouton(app_url, f"ouvrir dans {brand}")}'
-        f'</div>'
-    )
-    return _email._send(to, subject, html)
+        subject = f"proposal {verdict} on {m.nom}{f' — {project_name}' if project_name else ''}"
+        apercu = f"the page you proposed was {verdict}"
+        contenu = (f'<p style="{_charte.PARA}">{_email._esc(what)}{_email._esc(where)} '
+                   f'was <strong>{verdict}</strong> on {_email._esc(m.nom)}.</p>'
+                   + _email._bouton(app_url, f"open in {m.nom}", brand))
+    else:
+        verdict = "acceptée" if accepted else "refusée"
+        what = f"votre proposition sur « {doc_title} »" if doc_title else "votre proposition"
+        where = f" dans « {project_name} »" if project_name else ""
+        subject = f"proposition {verdict} sur {m.nom}{f' — {project_name}' if project_name else ''}"
+        apercu = f"la page que vous proposiez a été {verdict}"
+        contenu = (f'<p style="{_charte.PARA}">{_email._esc(what)}{_email._esc(where)} '
+                   f'a été <strong>{verdict}</strong> sur {_email._esc(m.nom)}.</p>'
+                   + _email._bouton(app_url, f"ouvrir dans {m.nom}", brand))
+    return _email._send(to, subject, _charte.page(
+        m, contenu, preheader=apercu,
+        mention=_charte.mention_transactionnelle(m, locale), locale=locale))
 
 
 # Ce qu'un état d'arbitrage DIT à celui qui a signalé — pas le mot interne, dans
@@ -256,13 +256,14 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
     écrite par un agent, jamais traduite (ni FR ni EN)."""
     if not items:
         return False
+    m = _charte.marque(brand)
     en = locale == "en"
     n = len(items)
     if en:
-        subject = (f"{n} update{'s' if n > 1 else ''} from your agents on {brand}: "
+        subject = (f"{n} update{'s' if n > 1 else ''} from your agents on {m.nom}: "
                    f"what happened")
     else:
-        subject = (f"{n} retour{'s' if n > 1 else ''} de vos agents sur {brand} : "
+        subject = (f"{n} retour{'s' if n > 1 else ''} de vos agents sur {m.nom} : "
                    f"ce qu'il en est")
     # ⚠️ Aucune f-string imbriquée portant un backslash ici : la box tourne en
     # **Python 3.10**, où « f-string expression part cannot include a backslash » est
@@ -313,32 +314,38 @@ def send_signal_digest_email(to: str, *, items: list, brand: str = "oto",
         else:
             compte = " (%s)" % _email._esc(dates[0]) if dates else ""
 
-        date_html = f'<span style="{_email._FAINT}">{compte}</span>' if compte else ""
+        faible = _charte.discret(m)
+        date_html = f'<span style="{faible}">{compte}</span>' if compte else ""
         guillemet = "“%s…”" if en else "« %s… »"
-        extrait_html = (f'<br><span style="{_email._FAINT}">{guillemet % extrait}</span>'
+        extrait_html = (f'<br><span style="{faible}">{guillemet % extrait}</span>'
                         if extrait else "")
         note_html = f"<br>{note}" if note else ""
+        # Un FILET par entrée, pas une marge : cinquante arbitrages d'affilée (le
+        # régime que ce gabarit existe pour tenir) forment sinon un pavé où l'œil ne
+        # trouve plus où commence la ligne suivante.
         lignes.append(
-            f'<p style="margin:0 0 14px"><strong>{puce} {_email._esc(verdict)}</strong> — '
-            f'{cible}{date_html}{extrait_html}{note_html}</p>')
+            f'<div style="padding:14px 0;border-top:1px solid {m.filet}">'
+            f'<strong>{puce} {_email._esc(verdict)}</strong> — '
+            f'{cible}{date_html}{extrait_html}{note_html}</div>')
 
     # Ce qu'on annonce en tête est le nombre de RETOURS reçus, pas le nombre de
     # paragraphes : la personne compte ce qu'elle a envoyé, pas ce qu'on a su ranger.
     if en:
         intro = (f"your agents flagged {n} item{'s' if n > 1 else ''} on "
-                 f"{_email._esc(brand)}. here's what happened.")
+                 f"{_email._esc(m.nom)}. here's what happened.")
+        apercu = f"{n} report{'s' if n > 1 else ''} arbitrated"
         pied = ("these updates are sent automatically by your agents when a tool "
                 "misbehaves or a capability is missing. reply to this email if one "
                 "of them deserves another look.")
     else:
         intro = (f'vos agents ont remonté {n} retour{"s" if n > 1 else ""} sur '
-                 f'{_email._esc(brand)}. voici ce qu\'il en est advenu.')
+                 f'{_email._esc(m.nom)}. voici ce qu\'il en est advenu.')
+        apercu = f'{n} signalement{"s" if n > 1 else ""} arbitré{"s" if n > 1 else ""}'
         pied = ("ces retours sont émis automatiquement par vos agents quand un outil se "
                 "comporte mal ou qu\'une capacité leur manque. répondez à ce mail si "
                 "l\'un d\'eux mérite d\'être rouvert.")
-    html = (f'<div style="{_email._WRAP}">'
-            f'<p>{intro}</p>'
-            + "".join(lignes)
-            + f'<p style="{_email._FAINT}">{pied}</p>'
-            f'</div>')
-    return _email._send(to, subject, html)
+    contenu = f'<p style="{_charte.PARA}">{intro}</p>' + "".join(lignes)
+    # `pied` DIT pourquoi ce mail arrive : c'est la mention de pied du gabarit, pas
+    # un paragraphe de plus à la fin du corps.
+    return _email._send(to, subject, _charte.page(
+        m, contenu, preheader=apercu, mention=pied, locale=locale))

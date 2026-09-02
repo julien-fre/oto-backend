@@ -31,7 +31,7 @@ from fastmcp import Context, FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
 
-from .. import access, db, email as mailer, org_store, providers, roles, scheduler
+from .. import access, config, db, email as mailer, org_store, providers, roles, scheduler
 from ..auth.hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
@@ -172,16 +172,28 @@ def register(mcp: FastMCP) -> None:
             raise _err("`body` est requis.")
         if cta_text and not cta_url:
             raise _err("`cta_url` est requis avec `cta_text`.")
-        # Le gabarit porte les refus de l'image (alt manquant, `http://`) : on le rend
-        # AVANT de résoudre la route, pour que le refus d'un paramètre précède celui
-        # d'une autorisation — comme les vérifications juste au-dessus.
+        # Le gabarit porte les refus de l'image (alt manquant, `http://`) : on les
+        # déclenche AVANT de résoudre la route, pour que le refus d'un paramètre
+        # précède celui d'une autorisation — comme les vérifications juste au-dessus.
+        # La fonction est PURE : la rappeler au rendu ne coûte rien, et c'est ce qui
+        # permet de garder cet ordre tout en rendant, plus bas, à la bonne marque.
         try:
-            html = mailer.render_composed_email(body, cta_text=cta_text, cta_url=cta_url,
-                                                image_url=image_url, image_alt=image_alt)
+            mailer._image_html(image_url, image_alt)
         except ValueError as e:
             raise _err(str(e))
 
         sub, route = _resolve_route((from_email or "").strip() or None)
+        # La marque de CELUI QUI ENVOIE : un client de Tulina dont l'agent écrit à un
+        # prospect signait « oto, par otomata · oto.cx » en pied — le pied d'un
+        # produit qu'il n'a jamais vu, sous son propre nom de domaine d'envoi.
+        #
+        # ⚠️ Dérivée du `sub` que la route vient d'authentifier, JAMAIS d'un appel
+        # d'auth de plus : celui-ci lèverait avant les refus de paramètre ci-dessus et
+        # inverserait l'ordre des erreurs de cet outil.
+        marque_expediteur = config.front_for(sub)[1] or "oto"
+        html = mailer.render_composed_email(body, cta_text=cta_text, cta_url=cta_url,
+                                            image_url=image_url, image_alt=image_alt,
+                                            brand=marque_expediteur)
         org_id = route["org_id"]
         from_hdr = mailer.format_from(route["from_email"], route["from_name"]) or mailer._MAIL_FROM
         transport = route["transport"]
@@ -237,7 +249,7 @@ def register(mcp: FastMCP) -> None:
             ok = mailer.send_composed_email(
                 to, subject, body, cta_text=cta_text, cta_url=cta_url, reply_to=rt,
                 from_email=route["from_email"], from_name=route["from_name"],
-                image_url=image_url, image_alt=image_alt)
+                image_url=image_url, image_alt=image_alt, brand=marque_expediteur)
 
         if not ok:
             hint = ("clé Resend invalide/absente" if transport == "resend"
