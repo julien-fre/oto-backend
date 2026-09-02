@@ -13,19 +13,20 @@ from __future__ import annotations
 from oto_mcp import providers
 
 
-def _sans_logo(tous_kinds: bool = False) -> set[str]:
-    """Les connecteurs qui n'affichent aucun logo.
+def _sans_logo() -> set[str]:
+    """Les connecteurs qui n'affichent aucun logo — TOUT le registre.
 
-    `tous_kinds` élargit aux connecteurs FÉDÉRÉS (`kind="mount"`). Le tripwire
-    d'oubli ci-dessous garde son périmètre historique — les connecteurs `tools` ;
-    le ratchet d'entrée morte, lui, doit voir tout le registre (cf. sa docstring).
-    ⚠️ Ce que le périmètre historique ne regarde donc pas : `folkmcp`, monté sans
-    domaine de logo et sans déclaration d'absence. Constat, pas décision.
+    ⚠️ Ce calcul a exclu les connecteurs FÉDÉRÉS (`kind="mount"`) du 2026-08-02 au
+    2026-09-02, dans ses deux directions, et l'angle mort coûtait aux deux : côté
+    oubli, `folkmcp` — le MCP *officiel* de Folk — est resté sans logo et sans
+    éditeur déclaré, donc servi sous le défaut « Otomata » ; côté entrée morte, une
+    absence légitimement déclarée sur un mount (`planity`, dont le service monté est
+    le NÔTRE) se faisait accuser d'être périmée. Un mount est un connecteur comme un
+    autre du point de vue de la fiche : il n'y a rien à filtrer ici.
     """
     return {
         n for n, c in providers.REGISTRY.items()
-        if (tous_kinds or c.kind == "tools")
-        and not providers._LOGO_DOMAIN_BY_CONNECTOR.get(n)
+        if not providers._LOGO_DOMAIN_BY_CONNECTOR.get(n)
         and not c.logo_url
     }
 
@@ -43,12 +44,11 @@ def test_la_liste_des_exceptions_ne_se_perime_pas():
     soit un connecteur supprimé, soit un logo ajouté sans nettoyer la liste — dans les
     deux cas la liste ment sur ce qu'elle protège.
 
-    ⚠️ Se juge sur TOUT le registre, pas sur les seuls `kind="tools"`. Un connecteur
-    fédéré a le droit de déclarer l'absence : `planity` monte NOTRE serveur, la marque
-    Planity n'est pas celle du service rendu (2026-09-02). Calculé sur les seuls tools,
-    ce ratchet accusait cette déclaration d'être morte alors qu'elle décrit exactement
-    le connecteur qu'elle nomme."""
-    perimees = sorted(providers._SANS_LOGO_DE_MARQUE - _sans_logo(tous_kinds=True))
+    ⚠️ Un connecteur FÉDÉRÉ a le droit de déclarer l'absence : `planity` monte NOTRE
+    serveur, la marque Planity n'est pas celle du service rendu (2026-09-02). Tant que
+    ce calcul excluait les mounts, ce ratchet accusait cette déclaration d'être morte
+    alors qu'elle décrit exactement le connecteur qu'elle nomme."""
+    perimees = sorted(providers._SANS_LOGO_DE_MARQUE - _sans_logo())
     assert not perimees, (
         f"{perimees} : entrées mortes dans `_SANS_LOGO_DE_MARQUE` — à retirer.")
 

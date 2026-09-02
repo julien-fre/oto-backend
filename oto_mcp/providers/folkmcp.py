@@ -25,3 +25,14 @@ CONNECTOR = _c(
     help="CRM Folk via son MCP officiel (fédéré, OAuth per-user)",
     href="https://folk.app",
 )
+
+# ⚠️ L'ÉDITEUR, C'EST FOLK — et le DÉFAUT disait « Otomata » (corrigé le
+# 2026-09-02). Ce module ne déclarait ni `PUBLISHER` ni `LOGO_DOMAIN` : faute de
+# constante, `publisher_name` retombe sur « Otomata », donc la fiche servait le
+# MCP *officiel* de Folk sous NOTRE nom — l'appropriation du produit d'un tiers,
+# alors que l'appel part chez `mcp.folk.app` (cf. `mount_url` ci-dessus). Un
+# défaut qui PARLE à la place d'une déclaration absente rend l'omission
+# indiscernable du choix ; ici il a menti. Mêmes constantes que le connecteur
+# natif `folk` : même éditeur, même marque.
+PUBLISHER = "Folk"
+LOGO_DOMAIN = "folk.app"

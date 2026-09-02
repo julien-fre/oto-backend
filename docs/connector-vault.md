@@ -37,13 +37,22 @@ Package pur (aucun import oto_mcp, comme `tool_visibility.py`). Une dataclass `C
 Tranché par Alexis le **2026-09-02** : *« dire la vérité sur les deux »*. Les champs curés décrivent le service **rendu**, jamais la marque dont on emprunte le nom :
 
 - **`PUBLISHER` = qui reçoit réellement l'appel.** Une passerelle tierce se nomme (`reddit` → `redditapis.com`, l'API de Reddit étant fermée en self-serve) ; un service qu'on opère soi-même se nomme aussi (`planity` → `Otomata`, le mount est NOTRE serveur).
+- ⚠️ **Et un DÉFAUT ne parle pas à la place d'une déclaration absente.** Sans constante `PUBLISHER`, `publisher_name` retombe sur « Otomata » : une omission devient indiscernable du choix « connecteur maison ». C'est ce qui a fait servir le MCP **officiel de Folk** sous notre nom (`folkmcp`, corrigé le 2026-09-02 — éditeur `Folk`, logo `folk.app`, comme le natif `folk`). Déclarer l'éditeur même quand il vaut le défaut.
 - **`help` dit qu'un intermédiaire existe**, en une clause et sans jargon — avant l'installation, pas après. Et quand la connexion se fait avec les **identifiants du service** (planity : email + mot de passe rejoués par notre mount), l'aide le dit : c'est ce que la fiche engage de plus lourd.
 - **`LOGO_DOMAIN` ne pose pas une marque tierce sur un service qui n'est pas le sien.** L'absence se DÉCLARE (`SANS_LOGO_DE_MARQUE = True`), elle ne s'invente pas.
 - Le **NOM** du connecteur et de ses tools ne bouge pas pour autant : des appelants s'y accrochent (`docs/alias-deprecies.md`).
 
-⚠️ **Les deux fautes vont en sens OPPOSÉS**, et une seule relecture les confond : jusqu'au 2026-09-02, `reddit` s'attribuait le produit d'un tiers (éditeur « Reddit », logo reddit.com, alors que l'appel part chez un revendeur) pendant que `planity` attribuait le nôtre à un tiers (éditeur « Planity », logo planity.com, pour un serveur que nous opérons). Chercher « à qui l'appel arrive-t-il ? » attrape les deux ; chercher « la marque est-elle la bonne ? » n'en attrape aucune.
+⚠️ **Les fautes vont dans des sens DIFFÉRENTS, et une seule relecture les confond.** Les trois du 2026-09-02, corrigées ensemble :
 
-⚠️ Le ratchet `tests/test_connector_logos.py` juge l'**entrée morte** sur TOUT le registre (un connecteur fédéré a le droit de déclarer l'absence), mais ne cherche l'**oubli** que parmi les `kind="tools"` — `folkmcp` reste hors de son champ.
+| connecteur | ce que la fiche disait | qui rend le service | le sens de la faute |
+|---|---|---|---|
+| `reddit` | éditeur « Reddit », logo reddit.com | `api.redditapis.com`, un revendeur | on crédite une marque tierce d'un service qu'elle ne rend pas, et l'intermédiaire disparaît |
+| `planity` | éditeur « Planity », logo planity.com | `planity-mcp.oto.zone`, NOTRE serveur | on crédite un tiers de ce qu'on opère — ça se lit comme une intégration officielle |
+| `folkmcp` | éditeur « Otomata » (le défaut) | `mcp.folk.app`, le MCP officiel de Folk | on se crédite du produit d'un tiers |
+
+Chercher « à qui l'appel arrive-t-il ? » attrape les trois ; chercher « la marque est-elle la bonne ? » n'en attrape aucune.
+
+⚠️ Le ratchet `tests/test_connector_logos.py` a filtré `kind == "tools"` du 2026-08-02 au 2026-09-02, dans ses **deux** directions — donc aucun connecteur fédéré n'était jugé. L'angle mort a coûté aux deux sens : `folkmcp` est resté sans logo ni éditeur déclaré (servi « Otomata »), et la déclaration d'absence légitime de `planity` passait pour une entrée morte. Le filtre est retiré : du point de vue de la fiche, un mount est un connecteur comme un autre.
 
 ### La cardinalité d'auth — dérivée, déclarée, et plus jamais listée
 
