@@ -41,6 +41,29 @@ def test_list_platform_mode_includes_granted_with_owner_label(monkeypatch):
     assert "Anna" in g["label"] and g["channel"] == "LINKEDIN"
 
 
+def test_list_group_grant_shows_team_label_and_via_group(monkeypatch):
+    """Ergonomie (oto#40) : un compte reçu via un GROUPE s'identifie par l'équipe,
+    pas par le nom de qui l'a historiquement connecté — un membre qui ne connaît
+    pas ce nom reconnaît quand même « l'équipe Croissance »."""
+    grant = {**_GRANT, "via_group_id": 42, "via_group_name": "Croissance"}
+    _wire_platform(monkeypatch, grants=[grant])
+    ids = connector_identities.list_identities("grantee", "unipile")
+    g = {i["id"]: i for i in ids}["OWNER_ACC"]
+    assert g["via_group"] == {"id": 42, "name": "Croissance"}
+    # "Anna K" (le nom du COMPTE) reste affiché — c'est "compte de {owner}" qui
+    # cède la place à l'équipe, pas le nom du profil lui-même.
+    assert g["label"] == "Anna K — compte d'équipe (Croissance)"
+    assert "compte de" not in g["label"]
+
+
+def test_list_nominative_grant_has_no_via_group(monkeypatch):
+    _wire_platform(monkeypatch, grants=[_GRANT])
+    ids = connector_identities.list_identities("grantee", "unipile")
+    g = {i["id"]: i for i in ids}["OWNER_ACC"]
+    assert g["via_group"] is None
+    assert "Anna" in g["label"]
+
+
 def test_list_platform_mode_shows_own_account_without_grants(monkeypatch):
     # Revente sans grant : le compte PROPRE connecté est listé (feedback #132 —
     # l'ancien [] était un faux négatif : l'agent concluait « aucun compte »

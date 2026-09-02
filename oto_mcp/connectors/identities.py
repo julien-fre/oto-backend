@@ -13,7 +13,10 @@ seul — l'unification est au niveau surface, pas stockage) :
 
 Contrat commun `Identity` = `{id, label, status, is_default, channel}` (`channel` None
 hors multi-canal — fuite assumée : unipile est par-canal, Google par-service). Champs
-additifs pour un compte PARTAGÉ (#55) : `granted=True` + `owner={sub,email,name}`.
+additifs pour un compte PARTAGÉ (#55) : `granted=True` + `owner={sub,email,name}`, plus
+`via_group={id,name}` si l'accès vient d'un groupe (extension 2026-09, `None` sinon) —
+le `label` le préfère à `owner` quand présent : « équipe Croissance » identifie mieux
+un compte partagé que le nom de qui l'a historiquement connecté.
 
 **Comptes accordés (otomata-private#55)** : un compte dont le propriétaire a accordé
 l'opération au user (`connector_account_grants`) apparaît dans la liste et peut être
@@ -288,20 +291,32 @@ def _unipile_list(sub: str, canal: str | None = None) -> list[dict]:
         owner = {"sub": g["owner_sub"], "email": g.get("owner_email"),
                  "name": g.get("owner_name"),
                  "org": g.get("owner_org_id"), "org_name": g.get("owner_org_name")}
+        # Reçu via un groupe (extension #55, 2026-09) : dit CE QUI porte l'accès,
+        # pas seulement qui possède le compte — un membre qui ne connaît pas le
+        # propriétaire sait quand même reconnaître « l'équipe Croissance ». None
+        # sur un grant nominatif (`via_group_id` absent ou vide, ex. #55 originel).
+        via_group_id = g.get("via_group_id")
+        via_group = ({"id": via_group_id, "name": g.get("via_group_name")}
+                     if via_group_id else None)
         existing = seen.get(g["account_id"])
         if existing is not None:
             existing["granted"] = True
             existing["owner"] = owner
+            existing["via_group"] = via_group
             continue
-        who = g.get("owner_name") or g.get("owner_email") or g["owner_sub"]
+        if via_group:
+            libelle = f"compte d'équipe ({via_group['name'] or via_group_id})"
+        else:
+            libelle = f"compte de {g.get('owner_name') or g.get('owner_email') or g['owner_sub']}"
         out.append({
             "id": g["account_id"],
-            "label": f"{g.get('account_name') or g['account_id']} — compte de {who}",
+            "label": f"{g.get('account_name') or g['account_id']} — {libelle}",
             "status": _live_status(g["account_id"]),
             "is_default": g["account_id"] == _unipile_chosen(sub, g["provider"]),
             "channel": g["provider"],
             "granted": True,
             "owner": owner,
+            "via_group": via_group,
         })
     if canal:
         # Filtre APRÈS l'annotation des comptes accordés : un compte accordé du bon
