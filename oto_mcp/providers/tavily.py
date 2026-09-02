@@ -17,7 +17,8 @@ CONNECTOR = _c(
     "tavily", ["tavily"], auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
     secret_kind="api_key", default_quota=100, platform_key_open=True,
     label="Tavily",
-    help="recherche web pour agent (réponse sourcée), extract, crawl et map de site",
+    help="une réponse rédigée et sourcée à une question, plutôt qu'une liste de "
+         "liens — plus extract, crawl et map de site",
     href="https://app.tavily.com",
 )
 

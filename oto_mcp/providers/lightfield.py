@@ -19,7 +19,8 @@ CONNECTOR = _c(
     "lightfield", ["lightfield"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key",
     label="Lightfield",
-    help="CRM agent-native : comptes, contacts, opportunités, notes, emails",
+    help="CRM dont les champs sont propres à chaque espace de travail — comptes, "
+         "contacts, opportunités, notes et envoi d'emails",
     href="https://lightfield.app",
 )
 

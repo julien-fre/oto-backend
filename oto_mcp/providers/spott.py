@@ -14,7 +14,8 @@ from ._model import _c
 CONNECTOR = _c(
     "spott", ["spott"], auth_modes={"byo_user", "byo_org"}, keyed=True,
     secret_kind="api_key", label="Spott",
-    help="ATS/CRM recrutement — candidats, jobs, candidatures, clients, placements",
+    help="ATS et CRM des cabinets de recrutement — candidats, offres et "
+         "candidatures, mais aussi clients et placements",
     href="https://spott.io",
 )
 
