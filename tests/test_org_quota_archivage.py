@@ -83,9 +83,14 @@ def conn(pg_dsn):
     # sur le seul type que le code historique suppose.
     with psycopg.connect(pg_dsn, row_factory=_conn_mod._str_dict_row,
                          autocommit=True) as c:
-        for t in ("org_group_members", "org_groups", "org_members", "orgs", "users"):
+        for t in ("org_subscriptions", "option_comps", "org_group_members",
+                  "org_groups", "org_members", "orgs", "users"):
             c.execute(f"DROP TABLE IF EXISTS {t} CASCADE")
-        for t in ("users", "orgs", "org_members", "org_groups", "org_group_members"):
+        # `option_comps` + `org_subscriptions` : la liste de mes espaces dit
+        # désormais, par org, si le compte est bêta (`access.has_option`) — le
+        # banc porte les tables que le code servi LIT, toujours en DDL réel.
+        for t in ("users", "orgs", "org_members", "org_groups", "org_group_members",
+                  "option_comps", "org_subscriptions"):
             c.execute(_real_ddl(t))
         for stmt in _real_orgs_migrations():
             c.execute(stmt)

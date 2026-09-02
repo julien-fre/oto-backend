@@ -14,6 +14,8 @@ from typing import Optional
 
 from pydantic import BaseModel
 
+import logging
+
 from ... import access, billing, db, org_store
 from ...tool_visibility import BETA_OPTION
 from .._authz import ORG_MEMBER_OF, PLATFORM_ADMIN, SUB_ONLY
@@ -183,6 +185,21 @@ def _members(org_id: int) -> list[dict]:
     return out
 
 
+logger = logging.getLogger(__name__)
+
+
+def _beta_dans(sub: str, org_id: int) -> bool:
+    """`beta` par org — fail-CLOSED et TRACÉ. C'est l'appel d'amorçage du front :
+    une panne du seam des options ne doit pas blanchir le sélecteur d'espaces,
+    et une bêta qui s'ouvrirait sur un hoquet ne se verrait pas."""
+    try:
+        return access.has_option(sub, BETA_OPTION, org=org_id)
+    except Exception:
+        logger.warning("beta lookup fail-CLOSED for %s in org %s", sub, org_id,
+                       exc_info=True)
+        return False
+
+
 def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
     orgs, active = [], None
     for o in org_store.list_orgs_for_user(ctx.sub):
@@ -196,7 +213,7 @@ def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
             "my_role": o["org_role"], "role": o["org_role"], "active": o["is_active"],
             # `org=` EXPLICITE : calcul contre CETTE org, jamais contre current_org
             # (le seam le prévoit pour la fiche admin — même besoin ici).
-            "beta": access.has_option(ctx.sub, BETA_OPTION, org=o["org_id"]),
+            "beta": _beta_dans(ctx.sub, o["org_id"]),
         })
     # Le quota voyage avec la liste : c'est l'outil par lequel un agent regarde ses
     # espaces, donc le seul endroit où il peut apprendre qu'il approche du mur sans
