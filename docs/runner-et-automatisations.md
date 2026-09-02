@@ -199,6 +199,64 @@ les pose d'après le schéma du tool, jamais à l'aveugle (un jeton non déclar�
 fait refuser l'appel entier à la validation). Conception + état des preuves :
 blueprint `chantier-runner.md` ; pilote = une campagne cliente (fusion R5, 14/08).
 
+### Une occurrence que personne ne prend PÉRIME, et ça se dit (#814, 02/09/2026)
+
+Le refus de poser un déclencheur sans agent ferme la porte d'entrée. **Il ne fait
+rien pour ceux qui sont déjà dedans** — et c'est là qu'était le vrai trou.
+
+**Ce qui l'a daté.** 41 travaux programmés attendaient dans la file, sur quatre
+organisations, `attempts = 0` : jamais pris, pas même une fois pour échouer. Le
+plus ancien datait de treize jours, le plus récent du matin même — donc *ça
+continuait*. Les déclencheurs enfilaient, les agents prenaient ce qu'ils
+pouvaient voir, le périmètre par organisation protégeait : **chaque pièce faisait
+exactement son travail, et leur composition fabriquait le trou.** Rien ne le
+disait, parce qu'**un travail « en attente » ressemble à un travail qui va
+partir**.
+
+⚠️ **Et le pire cas n'était pas l'attente, c'était la réparation naïve** : le jour
+où quelqu'un pointe des agents sur cette organisation, treize jours d'occurrences
+partent d'un coup, avec la procédure et le contexte de leur époque. **Un travail
+qui attend n'est pas gratuit, il est daté** — une veille quotidienne jouée treize
+jours plus tard ne rend pas un résultat en retard, elle rend un résultat FAUX.
+
+**La règle : une occurrence périme quand la SUIVANTE arrive.** Le tick périme les
+`pending` du déclencheur juste avant d'enfiler.
+
+⚠️ **La définition vient du cadencement, jamais d'un délai choisi.** Un délai fixe
+serait faux des deux côtés à la fois — trop court pour une veille mensuelle,
+absurde pour une horaire — et surtout, *un réglage est une chose qui se périme
+elle-même*. Ici il n'y a rien à tenir à jour : c'est un garde-fou sans gardien.
+
+**Périmer ne SUPPRIME rien** — nouvel état `expired`, distinct de `failed` :
+
+```
+pending   enfilé, personne ne l'a encore pris
+claimed   un agent l'a réservé
+done      exécuté
+failed    a TOURNÉ et a échoué        ⟹ va lire l'erreur
+expired   n'a JAMAIS tourné            ⟹ va voir qui dessert cette org
+```
+
+⚠️ Les confondre coûte un faux aiguillage : « échoué » envoie chercher une erreur
+d'exécution **qui n'existe pas**. Et purger au lieu de marquer remplacerait un
+trou silencieux par un pire — *il effacerait la preuve du premier*. Ces 41
+travaux ont été le seul indice qu'une automatisation ne tournait pas ; purgés à
+mesure, personne n'aurait jamais rien vu.
+
+**La perte se lit sur le DÉCLENCHEUR** (`list`/`get` portent `expired_count`,
+`expired_since`, `expired_last`) — là où on la cherche, et non dans une file que
+personne n'ouvre. Ces 41 occurrences ont été découvertes **par hasard**, en
+préparant autre chose : une perte que seule une requête manuelle révèle n'est pas
+une perte connue. `expired_count: 0` est un vrai zéro, servi, pas une absence de
+mesure. **Deux dates et pas une** : une perte ancienne qui a cessé n'appelle pas
+le même geste qu'une perte qui continue ce matin.
+
+⚠️ **L'hygiène ne coupe jamais le service** : une péremption qui échoue est
+journalisée et l'enfilage continue. L'inverse ferait qu'un défaut d'entretien
+arrête les automatisations de tout le monde — et le pire qu'on risque en la
+ratant est ce qu'on avait déjà, un travail de trop en attente. *(Défaut trouvé
+par son propre test avant d'être servi.)*
+
 ### `op=list` : la page dit ce qu'elle laisse dehors (#469, 01/09/2026)
 
 **Mesuré le 28/08** : `POST /api/me/runner/jobs {op: list, limit: 1000}` rendait

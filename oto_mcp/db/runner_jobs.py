@@ -68,6 +68,68 @@ def enqueue_job(org_id: int, kind: str, payload: Optional[dict] = None,
     return dict(row)
 
 
+def perimer_travaux_du_declencheur(trigger_id: int, org_id: int) -> int:
+    """Périme les travaux `pending` d'un déclencheur que personne n'a pris.
+
+    Appelée quand le tick enfile l'occurrence SUIVANTE : ce qui restait en
+    attente n'a pas été pris **dans son cycle**, et ne le sera plus utilement.
+
+    ⚠️ **La définition du « trop tard » vient du cron lui-même**, pas d'un délai
+    choisi. Un délai fixe serait faux des deux côtés à la fois : trop court pour
+    une veille mensuelle, absurdement long pour une veille horaire. Ici, une
+    occurrence périme exactement quand la suivante arrive — la règle est la même
+    pour toutes les cadences et il n'y a aucun réglage à tenir à jour.
+
+    ⚠️ **Et elle ne SUPPRIME rien.** Un travail qui disparaît remplacerait un
+    trou silencieux par un pire : il effacerait la preuve du premier. 41 travaux
+    empilés depuis treize jours ont été le seul indice qu'une automatisation ne
+    tournait pas (02/09) ; purgés à mesure, personne n'aurait jamais rien vu.
+    L'état `expired` est ce qui rend la perte COMPTABLE.
+
+    ⚠️ `expired` n'est pas `failed` : ce travail n'a jamais tourné. « Échoué »
+    envoie chercher une erreur d'exécution qui n'existe pas, quand le fait est
+    « personne n'est venu le prendre » — et les deux ne se réparent pas pareil.
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            """
+            UPDATE runner_jobs
+               SET status = 'expired', finished_at = NOW(),
+                   last_error = 'occurrence non prise dans son cycle : le '
+                                'déclencheur a enfilé la suivante. Aucun agent '
+                                'ne dessert cette organisation.'
+             WHERE org_id = %s AND status = 'pending'
+               AND payload->>'trigger_id' = %s
+            """,
+            (org_id, str(trigger_id)),
+        )
+        return cur.rowcount or 0
+
+
+def comptage_perime(org_id: int, trigger_id: int) -> dict:
+    """Ce qu'un déclencheur a PERDU : combien d'occurrences, et depuis quand.
+
+    ⚠️ Dérivé de la file, jamais recopié sur le déclencheur : un compteur tenu à
+    part diverge de ce qu'il compte, et c'est alors le compteur qu'on croit.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*)::int AS expired_count,
+                   MIN(due_at)   AS expired_since,
+                   MAX(due_at)   AS expired_last
+              FROM runner_jobs
+             WHERE org_id = %s AND status = 'expired'
+               AND payload->>'trigger_id' = %s
+            """,
+            (org_id, str(trigger_id)),
+        ).fetchone()
+    d = dict(row) if row else {}
+    return {"expired_count": d.get("expired_count") or 0,
+            "expired_since": d.get("expired_since"),
+            "expired_last": d.get("expired_last")}
+
+
 def claim_next_job(org_id: int, worker_sub: str,
                    lease_seconds: int = _LEASE_DEFAULT_S) -> Optional[dict]:
     """Le prochain job de l'org, bail posé — ou None (file vide).

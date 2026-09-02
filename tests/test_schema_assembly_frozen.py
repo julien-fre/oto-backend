@@ -175,13 +175,8 @@ from oto_mcp.db import _schema, schema
 # `schema.unipile.UNIPILE_GROUP_GRANTS`, un fragment à part posé juste après
 # `schema.orgs.GROUPS` dans `_schema.ASSEMBLAGE`. ADDITIF : rien n'est retiré ni
 # contraint sur les tables existantes.
-# 2026-09-02 — ajout du domaine « outreach » (`schema/outreach.py`, posé juste
-# après `schema.emails.EMAILS`) : `outreach_sends` (journal des relances de
-# plateforme, index unique partiel `(campaign, sub) WHERE kind='send'`) et
-# `outreach_optouts` (refus de recevoir, PK `sub`). ADDITIF : rien n'est retiré
-# ni contraint sur les tables existantes.
-EMPREINTE = "9b57331accae7cca87d8c8d6cad6dc57e83dfceef88bcf8cae7b7b571d2bc7d4"
-LONGUEUR = 134714
+EMPREINTE = "__A_CALCULER__"
+LONGUEUR = 0
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
