@@ -155,3 +155,15 @@ def test_la_source_est_declaree_sur_le_contrat_servi():
     champ = RJ.JobsInput.model_fields["source"]
     assert champ.default is None
     assert "scheduled" in str(champ.annotation)
+
+
+def test_le_filtre_par_declencheur_lit_le_payload_et_entre_dans_le_total():
+    """`trigger_id` n'a pas de colonne (le tick le pose dans le payload) ;
+    demandé par Alexis au même titre que `fleet_id` : un historique trié côté
+    client donne un total qui ne sert pas de dénominateur."""
+    ou, params = JOBS._filtre_de_file(196, None, None, fleet_id=None, trigger_id=14)
+    assert "payload->>'trigger_id'" in ou and params == [196, 14]
+    import inspect
+    for fn in (JOBS.list_jobs, JOBS.count_jobs):
+        assert "trigger_id" in inspect.signature(fn).parameters, fn.__name__
+    assert "trigger_id" in RJ.JobsInput.model_fields

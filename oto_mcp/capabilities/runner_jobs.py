@@ -44,6 +44,9 @@ class JobsInput(BaseModel):
     # restreint la page (et son `total`) aux travaux de CE passage — l'historique
     # d'un passage se lit ainsi sans balayer la file de l'org.
     fleet_id: Optional[int] = None
+    # list : les travaux enfilés par CE déclencheur (lu dans le payload, où le
+    # tick le pose). Servi pour la même raison que `fleet_id`.
+    trigger_id: Optional[int] = None
     # claim / extend —
     lease_seconds: int = 600
     # bind_run / complete / extend / get —
@@ -298,7 +301,7 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         avant = _depuis_curseur(inp.cursor) if inp.cursor else None
         jobs = db.list_jobs(ctx.org_id, status=inp.status, limit=inp.limit,
                             before_id=avant, source=inp.source,
-                            fleet_id=inp.fleet_id)
+                            fleet_id=inp.fleet_id, trigger_id=inp.trigger_id)
         # Une page pleine ⇒ il reste peut-être des lignes : on rend un curseur. Il
         # peut mener à une page vide (la file s'arrêtait pile) — la convention des
         # autres surfaces paginées du dépôt, et la seule qui ne coûte pas une
@@ -306,7 +309,8 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         suite = _curseur(jobs[-1]["id"]) if jobs and len(jobs) >= inp.limit else None
         return {"jobs": jobs,
                 "total": db.count_jobs(ctx.org_id, status=inp.status,
-                                       source=inp.source, fleet_id=inp.fleet_id),
+                                       source=inp.source, fleet_id=inp.fleet_id,
+                                       trigger_id=inp.trigger_id),
                 "next_cursor": suite}
 
     # Les quatre verbes de la prise exigent le job — et le db-layer les scope au

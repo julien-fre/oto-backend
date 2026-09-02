@@ -215,7 +215,8 @@ _SOURCES = {
 
 def _filtre_de_file(org_id: int, status: Optional[str],
                     source: Optional[str] = None,
-                    fleet_id: Optional[int] = None) -> tuple[str, list]:
+                    fleet_id: Optional[int] = None,
+                    trigger_id: Optional[int] = None) -> tuple[str, list]:
     """Le WHERE commun à la page et à son compte — une seule définition de « la
     file », sinon le total finit par décrire une autre population que les lignes
     qu'il accompagne. `source` et `fleet_id` en font partie pour cette raison
@@ -234,13 +235,21 @@ def _filtre_de_file(org_id: int, status: Optional[str],
     if fleet_id is not None:
         q += " AND fleet_id = %s"
         params.append(int(fleet_id))
+    # Le déclencheur n'a pas de colonne : le tick le pose dans le payload
+    # (`runner_tick.py`). Même raison que `fleet_id` — l'historique d'un
+    # déclencheur trié côté client donne un total qui ne peut pas servir de
+    # dénominateur, donc des taux faux sans que rien ne le signale.
+    if trigger_id is not None:
+        q += " AND (payload->>'trigger_id')::bigint = %s"
+        params.append(int(trigger_id))
     return q, params
 
 
 def list_jobs(org_id: int, status: Optional[str] = None,
               limit: int = 50, before_id: Optional[int] = None,
               source: Optional[str] = None,
-              fleet_id: Optional[int] = None) -> list[dict]:
+              fleet_id: Optional[int] = None,
+              trigger_id: Optional[int] = None) -> list[dict]:
     """La file vue d'en haut (surveillance dashboard) : les jobs de l'org, du
     plus récent au plus ancien, filtrables par statut. Le payload est rendu
     (références seulement, par contrat d'enqueue) mais jamais tronqué en
@@ -261,7 +270,7 @@ def list_jobs(org_id: int, status: Optional[str] = None,
     ENGAGE est celle du contrat (`capabilities/runner_jobs.py`) : c'est elle qui la
     déclare et qui rend le total + le curseur qui la disent. Une borne connue du
     seul SQL est exactement ce que #469 reprochait."""
-    ou, params = _filtre_de_file(org_id, status, source, fleet_id)
+    ou, params = _filtre_de_file(org_id, status, source, fleet_id, trigger_id)
     q = ("SELECT id, kind, run_id, payload, status, attempts, max_attempts, "
          "       claimed_by, lease_until, last_error, result, due_at, created_at, "
          "       finished_at, fleet_id "
@@ -278,7 +287,8 @@ def list_jobs(org_id: int, status: Optional[str] = None,
 
 def count_jobs(org_id: int, status: Optional[str] = None,
                source: Optional[str] = None,
-               fleet_id: Optional[int] = None) -> int:
+               fleet_id: Optional[int] = None,
+               trigger_id: Optional[int] = None) -> int:
     """Le nombre de jobs de la file, MÊMES filtres que `list_jobs` et sans son
     plafond : c'est le chiffre qu'un bilan de vague vient chercher, et celui qui
     dit qu'une page est tronquée. Le curseur, lui, dit comment lire la suite.
@@ -290,7 +300,7 @@ def count_jobs(org_id: int, status: Optional[str] = None,
     coûterait un DDL au boot et une empreinte de schéma pour économiser des
     millisecondes sur une surface de surveillance. À revoir si la file change
     d'ordre de grandeur."""
-    ou, params = _filtre_de_file(org_id, status, source, fleet_id)
+    ou, params = _filtre_de_file(org_id, status, source, fleet_id, trigger_id)
     with _connect() as conn:
         row = conn.execute("SELECT count(*) AS n FROM runner_jobs" + ou,
                            tuple(params)).fetchone()
