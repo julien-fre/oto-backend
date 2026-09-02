@@ -457,7 +457,24 @@ CAPABILITIES += [
             "op=optouts → who refused. op=optout_clear (`target`) → lift a refusal, on "
             "that person's explicit request only. `only` = restrict to these "
             "emails/subs, to roll out in stages."),
-        mcp="oto_admin_outreach",
+        # ⚠️ **REST SEULE — opt-out MCP explicite, décidé le 2026-09-02.**
+        #
+        # Ce verbe pesait 3 138 caractères dans la surface servie à CHAQUE compte
+        # plateforme (18 de nom + 1 616 de description + 1 504 de schéma), soit 14,2 %
+        # du poids cumulé des 17 outils `oto_admin_*`. Piloter une campagne n'est pas
+        # une raison assez forte pour ça : la surface conversationnelle se paie à
+        # chaque handshake, par tout le monde, et elle n'a pas de bouton « replier ».
+        #
+        # ⚠️ **Ce qu'on perd, et il faut le savoir avant d'en avoir besoin** : il n'y a
+        # plus AUCUN diagnostic depuis une conversation. Ni lire l'audience, ni lancer
+        # l'essai, ni voir pourquoi un envoi est refusé — tout passe par l'écran
+        # d'administration, **y compris le jour où l'écran ne marche pas**. Le repli
+        # est alors un appel REST à la main (jeton porté, cf. `docs/relance-comptes.md`
+        # §« Quand l'écran ne répond pas »), pas une session d'agent.
+        #
+        # Le rétablir est une ligne : `mcp="oto_admin_outreach"`. Ne pas le faire sans
+        # remesurer le poids — c'est le chiffre qui a tranché, pas le principe.
+        mcp=None,
         rest=RestBinding("POST", "/api/admin/outreach"),
     ),
 ]
