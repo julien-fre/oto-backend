@@ -13,6 +13,68 @@ description: >-
 > La carte garde le résumé + le pointeur ; le détail (schémas, incidents datés et leurs
 > leçons) vit ici.
 
+## ⚠️ DIRECTION ARRÊTÉE LE 02/09/2026 — ce qui suit décrit l'ÉTAT, pas la CIBLE
+
+**Le chantier fleet est GELÉ le temps que la nouvelle direction soit portée.** Ce
+qui est décrit plus bas fonctionne et reste servi ; ce n'est plus vers quoi on va.
+Une carte qui décrirait la cible périmée serait pire que rien : elle est lue avec
+confiance.
+
+**Ce qu'on abandonne** : « déclarer une campagne, puis la lancer » comme point
+d'entrée produit, et **un worker = un jeton d'org**.
+
+**Ce vers quoi on va, arrêté avec Alexis :**
+
+```
+LE POINT D'ENTRÉE   depuis le dashboard, sur une PROCÉDURE ou un NŒUD, un bouton
+                    bascule l'objet en agent programmé et récurrent. L'agent
+                    autonome est une PROPRIÉTÉ de ce qui existe déjà, pas un
+                    objet séparé qu'on déclare.
+L'INSTRUCTION       minime — « lis l'objet numéro X ». La boucle agentique fait
+                    le reste PAR LE MCP, comme un agent qui travaille avec le
+                    connecteur oto branché. ⚠️ Elle cesse d'être un second
+                    domicile du métier : celui d'une flotte contredisait la
+                    consigne servie depuis six jours sans que personne ne le voie.
+LE WORKER           le NÔTRE, mutualisé — puis notre flotte de workers. Il fait
+                    partie du back, MÊME NIVEAU DE SÉCURITÉ, donc le même droit
+                    de lire les clés que les orgs ont posées. Personne ne pose un
+                    worker pour un client ; qu'une org y ait droit est une
+                    question de TARIFICATION, pas de déploiement.
+```
+
+**Les quatre points tranchés le 02/09, dans l'ordre où ils ont été posés :**
+
+**① L'IDENTITÉ que l'agent porte** = celle du créateur du déclencheur par défaut,
+**paramétrable** vers un autre membre. ⚠️ Et un agent dont l'identité n'est plus
+valide **s'arrête EN LE DISANT** — ni mort silencieuse, ni poursuite sous un
+compte désactivé. C'est le cas qu'on découvre six mois plus tard.
+
+⚠️ **C'est aussi le préalable TECHNIQUE du worker mutualisé** : si le travail
+porte son identité, le worker n'a plus besoin d'un jeton par org. Les deux sujets
+n'en font qu'un.
+
+**② UN SEUL OBJET**, avec le parallélisme en paramètre. Un déclencheur lance un
+agent, une campagne en lance N sur les lignes d'un tableau : c'est la même chose
+avec un « combien en parallèle ». Deux mécaniques qui font 90 % la même chose
+divergent, et l'une prend du retard sur l'autre.
+
+**③ UNE BORNE PAR DÉFAUT, NON NULLE, IMPOSÉE** — relevable si l'offre le permet.
+*Un agent récurrent sans plafond, c'est une facture qu'on découvre au relevé :
+65 571 jetons mesurés sur UNE ligne le 01/09.* La borne vit dans l'agent depuis
+`oto-runner b37daf6`, donc elle s'applique quel que soit le chemin d'enfilage.
+
+**④ LE MODÈLE : nous décidons de la voie, l'org fournit la clé.** Le modèle
+s'expose comme une préférence, jamais comme la mécanique — sinon on vend un
+curseur dont l'utilisateur ne peut pas prévoir l'effet. *Mesuré : la voie
+Conversations coûte ~26 k jetons par fiche, plate au rang ; en boucle locale la
+5ᵉ fiche d'un fil coûte 6,6× la première.*
+
+⚠️ **Et ce que le champ `provider`/`model` de `runner_fleets` promet est FAUX
+aujourd'hui** : `fleet.py` lit `OTO_RUNNER_MODEL` et ignore la déclaration. Le
+schéma affirme pourtant que ces champs portent l'attribution d'une ligne. Un
+champ inerte est un défaut ; un champ qui PROMET ce qui n'arrive pas en est un
+autre, plus coûteux.
+
 ## Runner hébergé — l'état ici, la boucle dehors (chantier R1-R5, ADR 0064 au blueprint)
 
 Le backend porte l'ÉTAT du runner d'agents hébergé ; la BOUCLE vit dans le repo
