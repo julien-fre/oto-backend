@@ -80,6 +80,9 @@ _DECLARATIONS: tuple[str, ...] = (
     "lemlist",
     "kaspr",
     "pennylane",
+    # Voisin de `pennylane` : même catégorie Finance, et l'ordre gouverne
+    # l'affichage du catalogue.
+    "finkare",
     "slack",
     "fullenrich",
     "dropcontact",
