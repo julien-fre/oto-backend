@@ -40,7 +40,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .. import access, db
 from ..tool_visibility import BETA_OPTION
@@ -50,6 +50,8 @@ from ._authz import ORG_MEMBER
 from ._types import (AuthzDenied, Capability, DeclaredError, ResolvedCtx,
                      RestBinding)
 from .registry import CAPABILITIES
+
+logger = logging.getLogger(__name__)
 
 
 def _run_courant() -> Optional[str]:
@@ -125,6 +127,15 @@ class Fleet(BaseModel):
     provider: Optional[str] = None
     model: Optional[str] = None
     workers: Optional[int] = None
+    rows_at_launch: Optional[int] = Field(
+        None,
+        description=(
+            "Combien de lignes visaient le passage au moment de l'armement — le "
+            "DÉNOMINATEUR de son avancement, relu à chaque armement. Ce n'est pas "
+            "une borne (`max_rows` est le plafond déclaré) : c'est ce que la table "
+            "contenait vraiment. `null` = pas de cible, ou compte illisible — "
+            "« inconnu », jamais zéro."),
+    )
     max_rows: Optional[int] = None
     max_tokens: Optional[int] = None
     max_consecutive_failures: Optional[int] = None
@@ -167,6 +178,31 @@ class FleetOut(BaseModel):
     beat_taken: Optional[bool] = None
     fleets: Optional[list[Fleet]] = None
     state: Optional[FleetState] = None
+
+
+def _lignes_visees(ctx: ResolvedCtx, fleet_id: int) -> Optional[int]:
+    """Combien de lignes le passage vise MAINTENANT — lu sur la table, avec le
+    `row_filter` figé à la déclaration, au moment de l'armer.
+
+    C'est le seul instant où ce compte est vrai : les agents le font baisser dès
+    la première ligne traitée, donc personne ne peut le reconstituer après coup.
+
+    ⚠️ Fail-OPEN, et tracé. Une table supprimée ou un filtre devenu invalide ne
+    doit pas empêcher d'armer : le passage part avec un dénominateur inconnu, ce
+    que l'écran sait dire. Refuser ici transformerait un défaut d'affichage en
+    panne de lancement.
+    """
+    f = db.get_fleet(fleet_id, ctx.org_id)
+    if not f or not f.get("namespace"):
+        return None
+    try:
+        from ..datastore.core import make_store
+        return make_store(ctx.sub).count_rows(f["namespace"],
+                                              filter=f.get("row_filter") or None)
+    except Exception:
+        logger.warning("compte de lignes illisible pour la flotte %s (table %s)",
+                       fleet_id, f.get("namespace"), exc_info=True)
+        return None
 
 
 def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
@@ -262,7 +298,8 @@ def _fleets(ctx: ResolvedCtx, inp: FleetInput) -> dict:
                 403, "not_from_a_run",
                 "un déroulé ne lance pas de passage — un agent qui se relance "
                 "lui-même dépense en boucle.")
-        f = db.armer(inp.fleet_id, ctx.org_id)
+        f = db.armer(inp.fleet_id, ctx.org_id,
+                     rows_at_launch=_lignes_visees(ctx, inp.fleet_id))
         if not f:
             actuelle = db.get_fleet(inp.fleet_id, ctx.org_id)
             if not actuelle:

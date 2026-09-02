@@ -40,6 +40,9 @@ class JobsInput(BaseModel):
     payload: Optional[dict[str, Any]] = None
     run_id: Optional[str] = None
     max_attempts: int = 3
+    # enqueue : la flotte à laquelle rattacher le travail. `list` : le filtre qui
+    # restreint la page (et son `total`) aux travaux de CE passage — l'historique
+    # d'un passage se lit ainsi sans balayer la file de l'org.
     fleet_id: Optional[int] = None
     # claim / extend —
     lease_seconds: int = 600
@@ -52,6 +55,16 @@ class JobsInput(BaseModel):
     result: Optional[dict[str, Any]] = None
     # list — surveillance dashboard : la file de l'org, du plus récent au plus ancien.
     status: Optional[Literal["pending", "claimed", "done", "failed"]] = None
+    source: Optional[Literal["batch", "scheduled", "manual"]] = Field(
+        None,
+        description=(
+            "D'OÙ vient le travail, sur `list` : `batch` (un passage de flotte), "
+            "`scheduled` (un déclencheur programmé), `manual` (un appel direct). "
+            "Servi côté serveur À DESSEIN — la file est paginée et un passage de "
+            "2 000 lignes remplit une page à lui seul : trié côté client, "
+            "`scheduled` rendrait vide sur une org qui en joue un chaque matin. "
+            "`total` compte sous le MÊME filtre."),
+    )
     limit: int = 50
     # list — la page suivante, telle que la réponse précédente l'a rendue. Opaque :
     # sa composition nous appartient (même parti que `data_rows` et les lignes d'un
@@ -284,14 +297,16 @@ def _jobs(ctx: ResolvedCtx, inp: JobsInput) -> dict:
         # sous-déclarait — un relevé tronqué rend MOINS que la réalité, jamais plus.
         avant = _depuis_curseur(inp.cursor) if inp.cursor else None
         jobs = db.list_jobs(ctx.org_id, status=inp.status, limit=inp.limit,
-                            before_id=avant)
+                            before_id=avant, source=inp.source,
+                            fleet_id=inp.fleet_id)
         # Une page pleine ⇒ il reste peut-être des lignes : on rend un curseur. Il
         # peut mener à une page vide (la file s'arrêtait pile) — la convention des
         # autres surfaces paginées du dépôt, et la seule qui ne coûte pas une
         # requête de plus par page.
         suite = _curseur(jobs[-1]["id"]) if jobs and len(jobs) >= inp.limit else None
         return {"jobs": jobs,
-                "total": db.count_jobs(ctx.org_id, status=inp.status),
+                "total": db.count_jobs(ctx.org_id, status=inp.status,
+                                       source=inp.source, fleet_id=inp.fleet_id),
                 "next_cursor": suite}
 
     # Les quatre verbes de la prise exigent le job — et le db-layer les scope au

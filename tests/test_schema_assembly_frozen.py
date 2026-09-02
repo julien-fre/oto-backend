@@ -180,8 +180,8 @@ from oto_mcp.db import _schema, schema
 # plateforme, index unique partiel `(campaign, sub) WHERE kind='send'`) et
 # `outreach_optouts` (refus de recevoir, PK `sub`). ADDITIF : rien n'est retiré
 # ni contraint sur les tables existantes.
-EMPREINTE = "9b57331accae7cca87d8c8d6cad6dc57e83dfceef88bcf8cae7b7b571d2bc7d4"
-LONGUEUR = 134714
+EMPREINTE = "000d2c73bd6c4a0645155b3abafb9a0cb2d9a273d04e3fc83fd2af278941f70b"
+LONGUEUR = 135367
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)
