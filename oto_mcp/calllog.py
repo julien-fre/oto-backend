@@ -33,10 +33,39 @@ logger = logging.getLogger("oto_mcp.calllog")
 MAX_ARG_CHARS = 300
 MAX_ERROR_CHARS = 500
 
+# Profondeur de traversée du masquage. Deux niveaux suffisent aujourd'hui (le dispatch
+# universel en ajoute un, `smtp_imap` en ajoute un autre) ; la borne existe pour qu'une
+# charge pathologique ne fasse pas tomber une journalisation qui est best-effort mais
+# pas facultative. Au-delà, la valeur est stringifiée puis coupée comme le reste.
+MAX_MASK_DEPTH = 6
+
 Sink = Callable[[dict], Awaitable[None]]
 
 # Références fortes sur les écritures en tâche de fond (anti-GC asyncio).
 _PENDING: set = set()
+
+
+def _masque_en_profondeur(valeur: Any, caches, profondeur: int) -> Any:
+    """Remplace par une empreinte toute valeur portée par une clé DÉCLARÉE secrète,
+    quelle que soit sa profondeur d'imbrication.
+
+    Une déclaration porte sur un NOM de champ, pas sur une place : `smtp_password` est
+    un secret qu'il arrive à la racine des arguments, dans le sous-dictionnaire d'un
+    outil composite, ou sous l'enveloppe du dispatch universel (`oto_call` range les
+    arguments de l'outil visé sous `arguments`, ce qui ajoute un niveau). Ne masquer
+    qu'un niveau faisait tenir la déclaration sur le chemin direct et tomber sur le
+    dispatch — c'est-à-dire, pour un outil hors du registre servi, sur le seul chemin
+    par lequel il est appelé (mesuré le 2026-09-01).
+    """
+    if profondeur <= 0:
+        return valeur
+    if isinstance(valeur, dict):
+        return {k: (journal_secrets.mask(v) if k in caches and v is not None
+                    else _masque_en_profondeur(v, caches, profondeur - 1))
+                for k, v in valeur.items()}
+    if isinstance(valeur, list):
+        return [_masque_en_profondeur(v, caches, profondeur - 1) for v in valeur]
+    return valeur
 
 
 def truncated_args(arguments: dict | None, max_chars: int = MAX_ARG_CHARS,
@@ -65,9 +94,8 @@ def truncated_args(arguments: dict | None, max_chars: int = MAX_ARG_CHARS,
         if k in caches and v is not None:
             out[k] = journal_secrets.mask(v)
             continue
-        if caches and isinstance(v, dict):
-            v = {kk: (journal_secrets.mask(vv) if kk in caches and vv is not None else vv)
-                 for kk, vv in v.items()}
+        if caches:
+            v = _masque_en_profondeur(v, caches, MAX_MASK_DEPTH)
         if not (v is None or isinstance(v, (int, float, bool))):
             v = str(v)
             if len(v) > max_chars:

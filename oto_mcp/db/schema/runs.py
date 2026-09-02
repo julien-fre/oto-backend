@@ -241,4 +241,29 @@ CREATE TABLE IF NOT EXISTS runner_triggers (
 );
 CREATE INDEX IF NOT EXISTS idx_runner_triggers_due
     ON runner_triggers(next_due) WHERE enabled;
+
+
+-- Les WORKERS VUS : la présence d'un runner armé pour une org, constatée à chaque
+-- sondage de la file. Elle existe pour qu'on cesse de PROMETTRE une exécution que
+-- personne n'assure — un déclencheur posé dans une org sans worker s'enfile tous
+-- les matins et n'est jamais joué, sans une erreur (vécu : org 196, un
+-- déclencheur désactivé le 26/08 dont le seul témoignage tient dans son LIBELLÉ,
+-- « oto_trigger jobs do not execute »).
+--
+-- ⚠️ Pourquoi une table, et pas une lecture de `runner_jobs.claimed_by`. Un claim
+-- sur file VIDE n'écrit rien : « aucun job n'a jamais été claimé » ne distingue
+-- pas « aucun worker » de « un worker qui n'a rien eu à faire ». Et surtout elle
+-- se BOUCLE au démarrage — aucun job ne peut exister avant un déclencheur, aucun
+-- déclencheur ne pourrait alors se poser. Le SONDAGE, lui, prouve la présence
+-- même à vide : c'est le seul signal qui parle avant le premier job.
+--
+-- Clé (org, worker) plutôt qu'org seule : « un worker = un jeton d'org » en V1,
+-- mais N processus font la batterie (cf. oto-runner) — compter les pairs armés
+-- est gratuit ici et impossible à reconstituer après coup.
+CREATE TABLE IF NOT EXISTS runner_workers (
+    org_id BIGINT NOT NULL,
+    worker_sub TEXT NOT NULL,
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (org_id, worker_sub)
+);
 """

@@ -12,7 +12,11 @@ from ._model import _c
 # donc absents du seed initial → OFF par défaut (deny-by-default).
 CONNECTOR = _c(
     "foncier", ["foncier"], secret_kind="none",
-    label="Foncier", help="géocodage, cadastre, bâti, risques/ICPE, solaire, immobilier (open data)",
+    # « Foncier » seul mentait sur la moitié de la boîte : géocodage, isochrones,
+    # permis et consommation électrique ne sont pas du foncier (2026-09-02).
+    label="Foncier & territoire",
+    help="adresses et parcelles, bâti, prix au m² (DVF), DPE et conso élec, "
+         "risques et ICPE, permis, isochrones — open data",
 )
 
 CATEGORY = "Data FR"

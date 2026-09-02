@@ -197,9 +197,23 @@ CREATE TABLE IF NOT EXISTS blocks (
     -- (`write_node_blocks` réattribue l'identité d'un bloc reconnaissable), pas par
     -- une formule.
     public_id TEXT NOT NULL,
-    -- PAS de clé étrangère vers `nodes`, comme `nodes.parent_id` n'en a pas : le
-    -- même arbitrage (contrainte, ou intégrité portée par le code ?) est ouvert
-    -- pour tout le chantier — il se tranche une fois, avant M4, pas deux fois ici.
+    -- ⚠️ L'arbitrage M-e (« contrainte, ou intégrité portée par le code ? ») est
+    -- TRANCHÉ ICI, et par les faits (2026-09-01, #800) : c'est une CONTRAINTE
+    -- (`blocks_node_fk`, plus bas). L'intégrité portée par le code a échoué DEUX
+    -- fois sur cette arête — la purge des conversions retirait le nœud sans son
+    -- corps, puis `db/guides.py::delete_guide_db` a refait le même geste sur du
+    -- contenu NATIF — et chaque échec laisse un bloc que plus aucune requête ne
+    -- relie à rien (toute lecture de `blocks` part de `node_id`). Une discipline
+    -- d'appelant qui a manqué deux fois ne se re-décrète pas, elle se remplace.
+    -- ⚠️ L'arbitrage reste OUVERT pour `nodes.parent_id`, et ce lot ne le tranche
+    -- pas : ce qui tranche ICI n'est pas un raisonnement transposable, ce sont deux
+    -- fuites constatées sur CETTE arête. L'arbre n'a rien à montrer de comparable —
+    -- et pour une raison qui rend l'observation SANS VALEUR : au 2026-09-01, en
+    -- production, **0 nœud a un parent** (mesuré, base servie). Sa descendance est
+    -- ramassée par `db/nodes.delete_page` ; le jour où on voudra l'y remplacer, ce
+    -- sera sur des mesures faites sur un arbre qui existe.
+    -- (Le CASCADE ne coûte rien de plus ici : `idx_blocks_node` couvre la colonne
+    -- référençante, ce qu'une cascade parcourt à chaque suppression du parent.)
     node_id BIGINT NOT NULL,
     position BIGINT NOT NULL,   -- ordre dans le corps (entiers espacés ×16)
     -- 0054-D2 : texte · code · image · référence. Le lot M2 n'en produit que deux
@@ -213,7 +227,15 @@ CREATE TABLE IF NOT EXISTS blocks (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     -- Contrainte NOMMÉE (docs/live-migrations.md), même raison que `nodes`.
-    CONSTRAINT blocks_public_id_key UNIQUE (public_id)
+    CONSTRAINT blocks_public_id_key UNIQUE (public_id),
+    -- Le corps part avec son nœud, et c'est la BASE qui le garantit (#800).
+    -- ⚠️ Sur une base qui EXISTE DÉJÀ ce `CREATE TABLE` est sauté : la même
+    -- contrainte, sous le même nom, se pose par `_init.py`. Retirer l'une des deux
+    -- ne rougirait nulle part ailleurs et ferait diverger la production d'une
+    -- install fraîche en silence — les deux « marchent », seule l'une emporte le
+    -- corps. Les deux naissances sont gardées par `tests/test_blocs_cascade.py`.
+    CONSTRAINT blocks_node_fk FOREIGN KEY (node_id)
+        REFERENCES nodes(id) ON DELETE CASCADE
 );
 -- UN index de requête : le corps d'un nœud, dans l'ordre. C'est la seule question
 -- qu'on pose à cette table. Table et index naissent ensemble ⟹ leur place est ici

@@ -3,8 +3,9 @@
 Wraps `oto.tools.checkcrm.CheckCrmClient` (https://enrichment-two.vercel.app/v1).
 Key resolved per call via `access.resolve_api_key("checkcrm")` — byo-only (no
 platform key). Named `checkcrm` (one token) rather than `check_crm` so
-`namespace_of` (first underscore-separated token) resolves correctly; the
-user-facing label in the registry is still "Check CRM".
+`namespace_of` (first underscore-separated token) resolves correctly. The NAME is
+frozen; the user-facing label is not — it reads "Changement de poste & filiales"
+since 2026-09-02 ("Check CRM" described neither a CRM nor a check of one).
 
 Fire-and-forget: `checkcrm_send_contacts` triggers an async job-change check on
 enrichment's side and returns only `{checkId, contactCount, skippedCount}` —

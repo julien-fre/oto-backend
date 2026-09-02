@@ -8,9 +8,12 @@ Trois choses s'y vérifient, et aucune ne se déduit du code :
 
 1. **le retrait ne prend QUE le résidu** — les nœuds natifs (les couches de
    contexte, seules écritures directes de `db/guides.py`) et leurs blocs survivent ;
-2. **les blocs partent avec leur nœud** — `blocks.node_id` n'a aucune clé étrangère,
-   donc rien ne cascade : un nœud supprimé sans ses blocs laisse des orphelins qu'aucune
-   requête ne relie plus à rien. C'est le mode d'échec qui ne se voit pas ;
+2. **les blocs partent avec leur nœud** — un nœud supprimé sans ses blocs laisse des
+   orphelins qu'aucune requête ne relie plus à rien. C'est le mode d'échec qui ne se
+   voit pas. ⚠️ Depuis #800 (2026-09-01) il ne dépend plus de ce que fait l'appelant :
+   `blocks.node_id` porte une clé étrangère `ON DELETE CASCADE`, gardée par
+   `tests/test_blocs_cascade.py`. Ce test-ci reste, et il vérifie autre chose de ce
+   même geste — que le retrait n'emporte QUE le résidu ;
 3. **le compte est un DIFFÉRENTIEL d'inventaire, pas la réponse du geste.** Un
    `DELETE` qui ne trouve rien répond « zéro ligne » exactement comme un `DELETE` qui
    vient de tout prendre. Le troisième test neutralise le retrait et exige que le
@@ -103,8 +106,7 @@ def test_les_blocs_partent_avec_leur_noeud(live):
 
     blocs = {r["node_id"] for r in _sql("SELECT node_id FROM blocks")}
     assert recopie not in blocs, (
-        "le nœud est parti, son bloc est resté : un orphelin que plus rien ne "
-        "relie — `blocks.node_id` n'a pas de clé étrangère, rien ne cascade")
+        "le nœud est parti, son bloc est resté : un orphelin que plus rien ne relie")
     assert natif in blocs, "le corps d'un nœud natif a disparu"
     assert db_nodes.count_orphan_blocks() == 0
 
@@ -141,8 +143,79 @@ def test_a_blanc_par_defaut(live):
 
     rapport = maintenance.residu_projete()
     assert rapport["projetes"] == avant
+    assert set(rapport) == {"projetes", "blocs_attaches", "blocs_orphelins"}, (
+        "l'inventaire à blanc doit nommer TOUTE la surface qu'`--apply` emporterait, "
+        f"blocs attachés compris (#800) — {rapport}")
     assert db_nodes.count_projected_nodes() == avant, "le mode à blanc a écrit"
     assert maintenance._TRAVAUX["residu-projete"] is maintenance.residu_projete
     assert "residu-projete" in maintenance._ACTES
     assert "residu-projete" not in maintenance._ALL, (
         "un acte destructif est entré dans la routine quotidienne")
+
+
+# --- Ce que le retrait ANNONCE, et ce qu'il ne doit plus emporter (#800) ------
+
+def test_le_mode_a_blanc_annonce_les_blocs_attaches(live):
+    """Point ② : l'inventaire taisait la plus grosse part de ce qu'il détruirait.
+
+    ~34 000 blocs pendaient aux nœuds recopiés ; le mode à blanc n'annonçait que les
+    nœuds et les orphelins. Un inventaire dont le rôle est de dire ce qu'on s'apprête
+    à détruire, et qui en tait l'essentiel, donne confiance à tort — il vaut moins que
+    pas d'inventaire du tout, puisqu'il rassure.
+    """
+    from oto_mcp import maintenance
+
+    recopies = [_pose("doc", "recopiée A"), _pose("row", "recopiée B")]
+    natif = _pose(None, "couche de contexte")
+
+    rapport = maintenance.residu_projete()
+    attendus = _sql("SELECT count(*) AS n FROM blocks b JOIN nodes n ON n.id = b.node_id "
+                    "WHERE n.props ? 'legacy'")[0]["n"]
+    assert rapport["blocs_attaches"] == attendus >= 2, (
+        f"le mode à blanc ne dit pas les blocs qu'`--apply` emporterait — {rapport}")
+
+    _sql("DELETE FROM nodes WHERE id = ANY(%s)", (recopies + [natif],))
+
+
+def test_le_retrait_ne_balaie_plus_un_bloc_NATIF(live):
+    """Point ③ : `delete_orphan_blocks()` n'avait aucun prédicat de provenance.
+
+    Il supprimait TOUT bloc sans nœud — donc le corps d'une page **native** dont le
+    nœud venait d'être supprimé par la fuite que #800 corrige par ailleurs, sous un nom
+    (« résidu projeté ») qui promettait de ne toucher qu'à la copie. On le met dans la
+    position exacte où il débordait : un orphelin natif présent quand le retrait joue.
+
+    ⚠️ Le borner « au résidu marqué » est **impossible** : un orphelin n'a plus de
+    nœud, donc plus de marque — rien ne distingue en base le corps d'une copie de celui
+    d'une page native. Il est donc retiré, et c'est la clé étrangère
+    (`tests/test_blocs_cascade.py`) qui empêche de naître ce qu'un balai aurait dû
+    borner. Pour reconstituer un orphelin, ce test doit d'abord la déposer.
+    """
+    import json
+    from oto_mcp import maintenance
+    from oto_mcp.db import init_db, nodes as db_nodes
+
+    assert not hasattr(db_nodes, "delete_orphan_blocks"), (
+        "un balai sans prédicat de provenance a été remis dans `db/nodes.py`")
+
+    _sql("ALTER TABLE blocks DROP CONSTRAINT IF EXISTS blocks_node_fk")
+    natif = _pose(None, "page native supprimée par erreur")
+    orphelin = _sql("SELECT public_id FROM blocks WHERE node_id = %s",
+                    (natif,))[0]["public_id"]
+    _sql("DELETE FROM nodes WHERE id = %s", (natif,))
+    recopie = _pose("doc", "résidu à retirer")
+
+    rapport = maintenance.residu_projete(dry_run=False)
+
+    assert _sql("SELECT count(*) AS n FROM blocks WHERE public_id = %s",
+                (orphelin,))[0]["n"] == 1, (
+        "le retrait du résidu a emporté le corps d'une page NATIVE — le débordement "
+        "du point ③")
+    assert rapport["retires"] >= 1, rapport
+    assert rapport["blocs_orphelins"] == 1, (
+        "le témoin doit RENDRE l'orphelin qu'il ne retire pas : c'est ce qui dit que "
+        f"la contrainte manque sur cette base, pas qu'il reste du ménage — {rapport}")
+
+    _sql("DELETE FROM blocks WHERE public_id = %s", (orphelin,))
+    _sql("DELETE FROM nodes WHERE id = %s", (recopie,))
+    init_db()

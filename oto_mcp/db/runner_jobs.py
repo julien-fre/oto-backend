@@ -75,6 +75,19 @@ def claim_next_job(org_id: int, worker_sub: str,
     Marque d'abord `failed` les épaves (bail mort + tentatives épuisées) : elles
     deviennent VISIBLES au lieu d'être re-servies pour rien."""
     with _connect() as conn:
+        # Le SONDAGE vaut présence — avant même de savoir s'il y a du travail. Un
+        # claim sur file vide n'écrit rien d'autre : sans cette ligne, une org
+        # servie par un worker bien vivant serait indistinguable d'une org sans
+        # runner, et `runner_arme` refuserait le premier déclencheur pour rien.
+        conn.execute(
+            """
+            INSERT INTO runner_workers (org_id, worker_sub, last_seen_at)
+                 VALUES (%s, %s, NOW())
+            ON CONFLICT (org_id, worker_sub)
+              DO UPDATE SET last_seen_at = NOW()
+            """,
+            (org_id, worker_sub),
+        )
         conn.execute(
             """
             UPDATE runner_jobs
@@ -268,3 +281,44 @@ def get_job(job_id: int, org_id: int) -> Optional[dict]:
             (job_id, org_id),
         ).fetchone()
     return dict(row) if row else None
+
+
+# ── Le runner est-il ARMÉ pour cette org ? ───────────────────────────────────
+# La fenêtre au-delà de laquelle un worker n'est plus tenu pour présent. Un worker
+# sonde en continu (le claim revient `None` sur file vide et il repart) : quinze
+# minutes laissent passer un redéploiement ou un reboot sans crier au loup.
+#
+# ⚠️ Le choix du sens de l'erreur est ASYMÉTRIQUE, et c'est lui qui fixe la valeur.
+# Un refus à tort se répare tout seul — le message dit quoi faire, et poser le
+# déclencheur trente secondes plus tard marche. Une acceptation à tort fabrique
+# une promesse qui ment TOUS LES JOURS, sans une erreur, jusqu'à ce que quelqu'un
+# s'aperçoive que le rapport n'arrive pas. On refuse donc du bon côté, avec une
+# fenêtre assez large pour qu'un aléa d'exploitation ne la morde pas.
+ARME_FENETRE_S = 15 * 60
+
+
+def runner_arme(org_id: int) -> dict:
+    """Ce que l'org peut dire de ses workers : présence, ancienneté, nombre.
+
+    ⚠️ Rendu DÉCLARÉ, jamais déduit de compteurs à zéro par l'appelant : `armed`
+    est un booléen que le serveur pose, et `last_seen` distingue « aucun worker
+    n'est jamais venu » (None) de « il en est venu un, il y a trop longtemps ».
+    Les deux appellent des gestes différents — monter un runner, ou aller voir
+    pourquoi celui qui existe s'est tu."""
+    with _connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FILTER (
+                       WHERE last_seen_at > NOW() - make_interval(secs => %s)
+                   ) AS vivants,
+                   MAX(last_seen_at) AS dernier
+              FROM runner_workers
+             WHERE org_id = %s
+            """,
+            (ARME_FENETRE_S, org_id),
+        ).fetchone()
+    vivants = int(row["vivants"] or 0) if row else 0
+    dernier = row["dernier"] if row else None
+    return {"armed": vivants > 0,
+            "workers": vivants,
+            "last_seen": str(dernier) if dernier else None}

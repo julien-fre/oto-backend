@@ -92,7 +92,18 @@ def test_no_index_on_a_column_added_by_migration():
     """Piège déjà payé (docs/live-migrations.md, 20/07) : `_init` exécute `_SCHEMA`
     PUIS les ALTER, donc un `CREATE INDEX` posé dans `_schema.py` sur une colonne
     ajoutée par migration s'exécute contre l'ANCIENNE table — init_db KO, service
-    down. `blocks` naît entière ici (table + index ensemble), et rien ne l'ALTER."""
-    assert not re.search(r"ALTER TABLE blocks\b", _INIT_SRC), (
+    down. `blocks` naît entière ici (table + index ensemble).
+
+    ⚠️ **Le refus porte sur une COLONNE, pas sur tout `ALTER`** — rétréci le
+    2026-09-01 (#800), qui pose `blocks_node_fk` par un `ALTER TABLE blocks ADD
+    CONSTRAINT` (la contrainte doit voyager avec le boot, sinon une base qui existe
+    déjà — la production — ne l'aura jamais). Le piège gardé ici est un `CREATE
+    INDEX` de `_schema.py` sur une colonne qui n'existe pas encore : une contrainte
+    ne porte aucun index de requête et ne peut donc pas le déclencher. Refuser tout
+    `ALTER` interdisait un geste sûr sans rien protéger de plus — et faisait passer
+    pour une garde ce qui n'était qu'une formulation trop large.
+    """
+    assert not re.search(r"ALTER TABLE blocks\s+(?:ADD|DROP)\s+COLUMN", _INIT_SRC,
+                         re.I), (
         "une colonne ajoutée à `blocks` par migration : son index doit alors vivre "
         "dans _init.py APRÈS l'ALTER, jamais dans _schema.py.")

@@ -29,6 +29,7 @@ import inspect
 import pytest
 
 from oto_mcp.capabilities import guides
+from oto_mcp.capabilities._types import AuthzDenied
 from oto_mcp.capabilities.registry import CAPABILITIES
 
 
@@ -83,3 +84,45 @@ def test_les_deux_droits_restent_distincts_au_palier_equipe():
     assert "GROUP_MEMBER_OF" in repr(ecriture.authz), repr(ecriture.authz)
     # Le readme s'autorise sur l'ADMINISTRATION, en aval, dans la garde par scope.
     assert "can_admin_group" in inspect.getsource(guides._owner_for_write)
+
+
+def test_la_garde_S_EXECUTE_sur_le_chemin_du_readme(monkeypatch):
+    """Le test décisif, et il regarde ailleurs que les trois précédents.
+
+    Ceux-ci lisent la SOURCE de `_owner_for_write`. Ils resteraient verts le jour où
+    l'écriture d'un readme cesserait d'y passer — c'est exactement le défaut qu'on
+    venait de mesurer sur le journal : une seconde voie, sous une autre règle, que le
+    banc ne voit pas parce qu'il regarde la première. Le readme (`delivery='init'`)
+    n'appelle d'ailleurs pas `_owner_for_write` en direct : il passe par `_init_ref`.
+    On exécute donc le geste servi, membre puis chef.
+
+    Éprouvé rouge le 2026-09-01 : `_init_ref` branché sur le résolveur de LECTURE ⟹ le
+    membre écrit le readme de son équipe, et les trois tests ci-dessus restent verts.
+    """
+    from oto_mcp import roles
+
+    GID, CHEF, MEMBRE = 42, "u-chef", "u-membre"
+    monkeypatch.setattr(roles, "can_admin_group", lambda sub, gid: sub == CHEF)
+    monkeypatch.setattr(roles, "can_read_group", lambda sub, gid: sub in (CHEF, MEMBRE))
+    ecrits: dict = {}
+
+    def _pose(scope, ident, body):
+        ecrits[(scope, ident)] = body
+        return {"body_md": body, "updated_at": "2026-09-01T00:00:00Z"}
+
+    monkeypatch.setattr(guides.guide_store, "set_init_guide", _pose)
+
+    class Ctx:
+        def __init__(self, sub): self.sub = sub
+
+    def _ecrire(sub):
+        return guides._set(Ctx(sub), guides.GuideSetInput(
+            scope="group", delivery="init", owner_id=str(GID), body_md="# readme"))
+
+    with pytest.raises(AuthzDenied) as refus:
+        _ecrire(MEMBRE)
+    assert refus.value.status == 403, refus.value
+    assert not ecrits, "un membre simple a écrit le readme de son équipe"
+
+    assert _ecrire(CHEF)["delivery"] == "init"
+    assert ecrits, "le chef d'équipe ne peut plus écrire le readme"
