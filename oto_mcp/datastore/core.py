@@ -315,21 +315,45 @@ def _refus_de_creation(namespace: str, key: str,
       fabriqué une entreprise fictive. La valeur refusée est DITE — sans elle, il
       reste à deviner si c'est la valeur ou le tableau qui est en cause.
 
-    Les deux nomment la clé ET le geste de sortie : viser la ligne par son
-    identifiant. Un refus qui ne dit que « non » fait deviner (cf. `errors.py`)."""
+    Les deux nomment la clé ET les DEUX gestes de sortie : viser la ligne par son
+    identifiant, et — si la ligne doit vraiment naître — lever le cran. Un refus qui
+    ne dit que « non » fait deviner (cf. `errors.py`).
+
+    ⚠️ **La seconde sortie n'est pas un confort** (#668, 02/09/2026). « Vise-la par
+    son identifiant » est vrai et IMPRATICABLE dans le cas qui déclenche le refus :
+    la ligne n'existe pas, et sur un tableau fermé encore vide il n'y a aucun `_id`
+    à viser — le tableau ne peut alors plus recevoir sa première ligne par aucune
+    écriture. Le journal a daté les deux moitiés du coût, sur la MÊME procédure de
+    journalisation : le 01/09 (run `493e624c…`) l'agent refusé relit le schéma,
+    trouve seul la manœuvre — ouvrir, écrire, refermer — et pose les 47 lignes du
+    tableau ; le 02/09 (run `a2da6c1e…`) un autre passage ne la retrouve pas, essaie
+    les trois formes d'écriture, et s'arrête sur 19 lignes non journalisées. La
+    sortie existait, documentée dans `docs/datastore.md` et dans la description de
+    `data_patch_schema` — nulle part où la lit celui qui vient d'être refusé.
+
+    Le cran ne bouge pas pour autant : la sortie passe par le SCHÉMA, jamais par un
+    paramètre « forcer » sur l'écriture (#516 — un bouton force devient un réflexe,
+    et le cran redevient une étiquette)."""
     ferme = ("ce tableau n'accepte que les écritures qui visent une ligne EXISTANTE "
              "(`key_required`) — rien n'a été créé.")
     sortie = ("Vise-la par son identifiant : data_write(id=…, row={…}) — son `_id` "
               "est rendu par data_rows et data_claim_next.")
+    naissance = (
+        f"Si cette ligne doit VRAIMENT naître, c'est une décision de SCHÉMA et pas "
+        f"d'écriture — le cran a été posé sur ce tableau : "
+        f"data_patch_schema(namespace='{namespace}', key_required=false), ton "
+        f"écriture, puis data_patch_schema(namespace='{namespace}', "
+        f"key_required=true) pour refermer.")
     if value is None or str(value) == "":
         return BusinessKeyRequired(
             f"`{key}`, la clé métier de `{namespace}`, n'est pas renseigné : {ferme} "
-            f"{sortie} Sinon renseigne `{key}` avec la valeur que porte la ligne visée.",
+            f"{sortie} Sinon renseigne `{key}` avec la valeur que porte la ligne "
+            f"visée. {naissance}",
             key=key, namespace=namespace)
     return BusinessKeyRequired(
         f"aucune ligne de `{namespace}` ne porte `{key}` = {str(value)!r} : {ferme} "
         f"Vérifie la valeur (une clé inventée créerait une ligne que rien ne "
-        f"rapproche). {sortie}",
+        f"rapproche). {sortie} {naissance}",
         key=key, namespace=namespace, value=value)
 
 
