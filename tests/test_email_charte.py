@@ -75,7 +75,13 @@ def test_un_email_tulina_ne_porte_aucune_couleur_d_oto(envoye):
     """La propriété qui compte : chez un destinataire Tulina, RIEN du dessin d'oto ne
     doit ressortir. Assertion par l'absence, parce que c'est l'absence qui manquait."""
     oto, tulina = B.MARQUES["oto"], B.MARQUES["tulina"]
-    couleurs_oto = {oto.fond, oto.surface, oto.encre, oto.discret, oto.filet}
+    couleurs_oto = {oto.fond, oto.surface, oto.encre, oto.discret, oto.filet,
+                    oto.bouton_fond, oto.bouton_encre}
+    couleurs_tulina = {tulina.fond, tulina.surface, tulina.encre, tulina.discret,
+                       tulina.filet, tulina.bouton_fond, tulina.bouton_encre}
+    # Sans ça, l'assertion par l'absence ci-dessous serait plus faible qu'elle n'en a
+    # l'air : une couleur commune aux deux palettes la rendrait vraie pour rien.
+    assert not (couleurs_oto & couleurs_tulina)
     for envoi in _tous_les_envois("tulina"):
         envoi()
         html = envoye["html"]
@@ -112,10 +118,13 @@ def test_sans_marque_c_est_oto_le_defaut():
     assert B.marque("TULINA") is B.MARQUES["tulina"]
 
 
-def test_une_marque_sans_site_ne_signe_pas_un_domaine_invente(envoye):
-    E.send_invite_email("q@e.test", "Acme", _URL, brand="partenaire")
-    pied = envoye["html"].rsplit("<tr>", 1)[-1]
-    assert "·" not in pied, "une signature « nom · site » sans site connu"
+def test_une_marque_sans_site_ne_signe_pas_un_domaine_invente():
+    """« nom · site » suppose un site. Sans lui, la ligne disparaît — on n'invente pas
+    le domaine d'un partenaire, et un pied qui n'aurait plus rien ne se rend pas."""
+    assert "·" not in B._pied(B.marque("partenaire"), "une raison")
+    assert "·" in B._pied(B.MARQUES["tulina"], "une raison")
+    assert B._pied(B.marque("partenaire"), "") == ""
+    assert B._pied(B.MARQUES["tulina"], None) == ""
 
 
 # --- ce qu'un client mail sait rendre ---------------------------------------
@@ -195,3 +204,33 @@ def test_les_sept_gabarits_sont_couverts():
     """Un gabarit ajouté sans être ajouté à `_tous_les_envois` échapperait à TOUTES les
     propriétés ci-dessus, en silence. Le compte est donc vérifié, pas supposé."""
     assert len(_tous_les_envois("oto")) == 7
+
+
+# --- l'email libre d'un agent part à la marque de CELUI QUI ENVOIE --------------
+
+def test_email_send_signe_la_marque_de_l_expediteur_pas_la_notre(monkeypatch):
+    """Un client de Tulina dont l'agent écrit à un prospect signait « oto, par otomata
+    · oto.cx » — le pied d'un produit que son destinataire n'a jamais vu, sous son
+    propre domaine d'envoi. La marque vient du tenant de l'expéditeur, et elle est
+    dérivée du `sub` que la route a authentifié : un appel d'auth de plus lèverait
+    AVANT les refus de paramètre et inverserait l'ordre des erreurs de l'outil."""
+    import asyncio
+
+    from fastmcp import FastMCP
+    from oto_mcp.tools import email as T
+
+    route = {"org_id": None, "connector": None, "from_email": None, "from_name": None,
+             "transport": "mailer", "reply_to": None, "quiet_hours": None}
+    monkeypatch.setattr(T, "_resolve_route", lambda from_email: ("tulina:u1", route))
+    monkeypatch.setattr(T.config, "front_for",
+                        lambda sub: ("https://app.tulina.ai", "tulina")
+                        if sub == "tulina:u1" else (None, None))
+    m = FastMCP("t")
+    T.register(m)
+    outil = asyncio.run(m.get_tool("email_send"))
+
+    out = outil.fn(ctx=None, to="q@e.test", subject="objet", body="bonjour,",
+                   dry_run=True)
+    assert "Tulina · tulina.ai" in out["html"]
+    assert "oto.cx" not in out["html"]
+    assert B.MARQUES["oto"].encre not in out["html"]
