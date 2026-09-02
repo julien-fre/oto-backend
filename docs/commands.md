@@ -87,6 +87,25 @@ uv pip install --python .venv/bin/python "pytest>=8.0" "pytest-asyncio>=0.24"
 # `_connector_blocked`/seams) + les gardes de capacité par stub ; le chemin SQL est vérifié
 # au déploiement (le job `test` du CI tourne le vrai suite avec toutes les deps).
 
+# ── AVANT DE POUSSER : l'arbre du COMMIT s'importe-t-il ? ────────────────────
+# Une référence poussée SANS SON OBJET (`from . import x` commité, `x.py` jamais
+# `git add`é) est invisible pour son auteur et visible pour tous les autres : son
+# répertoire de travail complète le commit, donc chez lui tout s'importe. Vécu le
+# 02/09/2026 — toute la suite échouait à la COLLECTE, préproduction sautée, plus rien
+# ne pouvait partir en prod. La classe NAÎT du staging sélectif, qu'on impose pourtant
+# pour protéger le WIP des sessions voisines : rien, au moment du commit, ne dit qu'on
+# vient de pousser un import sans son fichier.
+.venv/bin/python scripts/arbre-importable.py          # juge HEAD, pas le répertoire
+.venv/bin/python scripts/arbre-importable.py <ref>    # juge n'importe quelle ref
+# Il extrait l'arbre par `git archive`, l'importe DE LÀ, et vérifie module par module
+# que ce qui entre dans `sys.modules` sort bien de cet arbre — il embarque donc la
+# parade au finder editable décrite plus haut, sans `sitecustomize.py` à poser.
+# Sorties : 0 = s'importe · 1 = référence sans objet (le message nomme le `git add`)
+#           2 = RIEN N'A PU ÊTRE JUGÉ (jamais un vert muet).
+# ⚠️ « 9 607 tests collectés chez moi » ne prouve RIEN sur le commit : c'est le disque
+# qu'on mesure. Le même contrôle tourne en CI (job `arbre-importable`, sur les PR ET
+# sur le tronc) et gate `deploy-preprod`.
+
 # Deploy — modèle tronc unique (refonte 2026-07-20, ADR 0020) :
 #   push `main`  → PREPROD (« Deploy preprod », deploy-canari.yml, script serveur
 #                  oto-backend-canari.sh : git reset --hard origin/main → preprod)
