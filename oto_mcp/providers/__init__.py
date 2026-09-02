@@ -84,7 +84,6 @@ _DECLARATIONS: tuple[str, ...] = (
     "fullenrich",
     "dropcontact",
     "folk",
-    "checkcrm",
     "aiark",
     "unipile",
     # Les six CONNEXIONS du compte unipile ci-dessus (split 2026-08-28) : chacune
