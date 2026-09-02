@@ -141,6 +141,24 @@ def test_resolution_member_instance_with_account(resolution):
     assert rc.account == "jane"
 
 
+def test_resolution_member_instance_lent_to_a_peer_reads_the_OWNERS_row(resolution):
+    """Régression (2026-09-02) : un ref `member` prêté (share_side, ADR 0044) porte
+    `ref.sub` = le PROPRIÉTAIRE (ici "boss"), le caller ("u", via la fixture `_sub`)
+    n'est que l'EMPRUNTEUR. La ligne à lire est celle du propriétaire, jamais celle
+    de l'emprunteur — confondre les deux faisait échouer TOUT prêt membre-à-membre
+    avec un « l'instance ne résout plus » trompeur (la ligne existait, cherchée sous
+    la mauvaise identité)."""
+    owner_eid = credentials_store.member_id(8, "boss")
+    resolution[(credentials_store.MEMBER, owner_eid, "zoho", "")] = "SECRET-DU-BOSS"
+    tok = _pin("member:8:boss:zoho")
+    try:
+        rc = access._resolve_credential_impl("zoho", "auto", "u")
+    finally:
+        session_org.reset_call_instance(tok)
+    assert rc.secret == "SECRET-DU-BOSS" and rc.mode == "user"
+    assert (rc.entity_type, rc.entity_id) == (credentials_store.MEMBER, owner_eid)
+
+
 def test_resolution_missing_instance_hard_error_no_fallback(resolution, monkeypatch):
     # La ligne n'existe plus : erreur actionnable, PAS de repli vers un autre palier
     # (l'org 5 a pourtant un secret… d'un autre compte — il ne doit PAS servir).
