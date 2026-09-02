@@ -162,6 +162,20 @@ def test_dead_filter_website_is_refused():
     assert "domain" in str(e.value)          # l'erreur NOMME le remplaçant
 
 
+def test_dead_filter_linkedin_url_is_refused():
+    """Même pathologie que `website`, mesurée le 02/09/2026 : `account.linkedin_url`
+    est avalé et rend `totalElements` 72 508 445 — la base entière servie comme un
+    résultat filtré. Rien dans la réponse ne le signale, d'où le refus."""
+    from oto_mcp.mcp_errors import McpError
+    from oto_mcp.tools import aiark
+
+    with pytest.raises(McpError) as e:
+        aiark._reject_dead_filters(
+            account={"linkedin_url": {"any": {"include": [
+                "https://linkedin.com/company/clopinette/"]}}}, contact=None)
+    assert "domain" in str(e.value)          # l'erreur NOMME le remplaçant
+
+
 def test_dead_filter_title_is_refused():
     from oto_mcp.mcp_errors import McpError
     from oto_mcp.tools import aiark

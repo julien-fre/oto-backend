@@ -786,6 +786,10 @@ def register(mcp: FastMCP) -> None:
                 Un champ custom passé à plat (`{"Status": …}`) est rejeté (422
                 "Unrecognized key"). La structure se découvre via op="search"
                 (customFieldValues groupée par group_id).
+                ⚠️ Un champ custom peut porter une valeur que tu n'as jamais
+                envoyée : folk remplit tout seul ses « AI fields » (notamment
+                quand une fiche entre dans un groupe), réglage invisible depuis
+                l'API. Relis la fiche si la valeur t'engage.
             filters: op="search" — Field → value, matched with `like` (e.g.
                 {"fullName": "Dupont", "emails": "@otomata.tech"} for people,
                 {"name": "Otomata"} for companies). For another operator, pass

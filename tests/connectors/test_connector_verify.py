@@ -13,7 +13,7 @@ from mcp.types import ErrorData, INVALID_PARAMS
 from oto_mcp.connectors import verify as connector_verify
 from oto_mcp.capabilities.connectors import verify as cv
 from oto_mcp.capabilities._types import AuthzDenied, ResolvedCtx
-from oto_mcp.tools import zoho
+from oto_mcp.tools import serper, zoho
 
 
 # --- registre -----------------------------------------------------------------
@@ -239,7 +239,65 @@ def test_zoho_verify_missing_data_center_is_mcperror():
 
 def test_catalog_marks_zoho_verifiable():
     connector_verify.register("zoho", zoho._verify)  # register_all le fait au boot
+    connector_verify.register("serper", serper._verify)  # idem
     from oto_mcp.providers import public_catalog
     cat = {c["name"]: c for c in public_catalog()}
     assert cat["zoho"]["verifiable"] is True
-    assert cat["serper"]["verifiable"] is False  # pas de sonde
+    # `serper` servait d'exemple « pas de sonde » — il en a une depuis le signal
+    # #654 (une clé révoquée ne se découvrait qu'en brûlant un vrai appel). Le
+    # contre-exemple est donc PRIS DANS LE REGISTRE plutôt que nommé en dur :
+    # ce que ce test doit prouver est que le flag SUIT les sondes enregistrées,
+    # pas qu'un connecteur donné en manque encore.
+    assert cat["serper"]["verifiable"] is True
+    sans_sonde = sorted(n for n in cat if not connector_verify.supports(n))
+    assert sans_sonde, ("plus aucun connecteur sans sonde : `verifiable` ne "
+                        "discrimine plus rien, ce test ne prouve plus rien")
+    assert cat[sans_sonde[0]]["verifiable"] is False
+
+
+# --- serper : le préflight qui n'existait pas (#654) --------------------------
+
+def test_serper_probe_hits_the_same_endpoint_the_tool_uses(monkeypatch):
+    """Une org a reçu `Serper search 403: Unauthorized` sur CHAQUE appel, trois
+    jours durant, sans pouvoir le sonder : `connectors.verify` répondait « pas de
+    test de connexion pour serper ». La seule façon d'apprendre qu'une clé ne vaut
+    plus rien était de brûler un vrai appel dans un run.
+
+    La sonde prend le MÊME endpoint que `serper_search` — un `/search` à un
+    résultat. Sonder un autre endpoint testerait une autre autorisation et pourrait
+    dire vert là où le tool dit 403.
+    """
+    from oto_mcp.tools import serper
+
+    vus = {}
+
+    class _Client:
+        def __init__(self, api_key=None, **k):
+            vus["key"] = api_key
+
+        def search(self, query, **kw):
+            vus["query"], vus["kw"] = query, kw
+            return {"organic": []}
+
+    monkeypatch.setattr("oto.tools.serper.SerperClient", _Client)
+    assert serper._verify({"key": "sk-test"}, {}) is None
+    assert vus["key"] == "sk-test"
+    assert vus["kw"].get("num") == 1, "la sonde doit demander UN résultat, pas dix"
+
+
+def test_serper_probe_surfaces_the_refusal(monkeypatch):
+    """L'échec d'auth EST le résultat : la sonde LÈVE, la capacité traduit en
+    `{ok:false}`. Une sonde qui avalerait le 403 rendrait un vert menteur — pire
+    que l'absence de sonde qu'elle remplace."""
+    from oto_mcp.tools import serper
+
+    class _Client:
+        def __init__(self, **k):
+            pass
+
+        def search(self, query, **kw):
+            raise RuntimeError("Serper search 403: Unauthorized.")
+
+    monkeypatch.setattr("oto.tools.serper.SerperClient", _Client)
+    with pytest.raises(RuntimeError, match="403"):
+        serper._verify({"key": "revoquee"}, {})

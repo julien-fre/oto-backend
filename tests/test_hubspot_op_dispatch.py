@@ -274,3 +274,73 @@ def test_none_stays_none_on_both_shapes(client):
     _tool("hubspot_object")(op="get", object_type="contacts", object_id="1")
     kw = client.get_object.call_args.kwargs
     assert kw["properties"] is None and kw["associations"] is None
+
+
+# --- 403 MISSING_SCOPES : le message du fournisseur est trompeur ---------------
+
+_MISSING_SCOPES = {
+    "status": "error",
+    "message": ("The scope needed for this API call isn't available for public use. "
+                "If you have questions, contact support or post in our developer forum."),
+    "correlationId": "01a05fa6-a5e7-777d-920d-a20f800f478b",
+    "category": "MISSING_SCOPES",
+}
+
+
+def test_missing_scopes_is_translated_into_the_gesture_to_make(client):
+    """HubSpot dit « isn't available for public use » — ce qui se lit « ce scope ne
+    t'est pas accessible ». C'est FAUX : HubSpot documente `tickets` comme
+    « Available to all accounts », il se coche dans l'app privée. Le corps brut
+    partait tel quel, et la même procédure quotidienne a redéposé le MÊME signal à
+    l'identique deux jours de suite (#636 le 01/09, #649 le 02/09) — le seul geste
+    utile n'était nommé nulle part.
+    """
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    client.search_objects.side_effect = UpstreamHTTPError(
+        403, _MISSING_SCOPES, service="hubspot")
+    with pytest.raises(McpError) as e:
+        _tool("hubspot_object")(op="search", object_type="tickets")
+    msg = e.value.error.message
+    assert "tickets" in msg                     # l'objet refusé est nommé
+    assert "Scopes" in msg                      # …et l'écran où le corriger
+    assert "trompeur" in msg                    # …et que le message amont ment
+    # le corps brut du fournisseur ne part plus tel quel
+    assert "correlationId" not in msg
+
+
+def test_another_upstream_refusal_keeps_its_own_shape(client):
+    """La traduction ne mord QUE sur MISSING_SCOPES : un 403 d'une autre nature —
+    et tout autre statut — garde sa forme et sa trace. Un filet posé trop large
+    ferait passer une clé invalide pour une case à cocher."""
+    from oto.tools.common.errors import UpstreamHTTPError
+
+    client.search_objects.side_effect = UpstreamHTTPError(
+        401, {"category": "INVALID_AUTHENTICATION"}, service="hubspot")
+    with pytest.raises(UpstreamHTTPError):
+        _tool("hubspot_object")(op="search", object_type="tickets")
+
+    client.search_objects.side_effect = UpstreamHTTPError(
+        403, {"category": "BANNED"}, service="hubspot")
+    with pytest.raises(UpstreamHTTPError):
+        _tool("hubspot_object")(op="search", object_type="tickets")
+
+
+def test_the_operator_list_served_is_hubspots_own(client):
+    """La liste servie annonçait NEUF opérateurs comme LA liste ; HubSpot en
+    documente treize. `NOT_HAS_PROPERTY` manquait — et c'est celui dont un agent
+    avait besoin pour la branche « aucune adresse d'envoi » : il a lu la liste au
+    pied de la lettre, conclu que le contrôle était impossible, et l'a sauté
+    (#656). Rien ici ne valide l'opérateur : le texte servi est le seul garde-fou.
+    """
+    from fastmcp import FastMCP
+    from oto_mcp.tools import hubspot as H
+
+    m = FastMCP("t")
+    H.register(m)
+    schema = asyncio.run(m.get_tool("hubspot_object")).parameters
+    servi = schema["properties"]["filters"]["description"]
+    for op in ("EQ", "NEQ", "LT", "LTE", "GT", "GTE", "BETWEEN", "IN", "NOT_IN",
+               "HAS_PROPERTY", "NOT_HAS_PROPERTY", "CONTAINS_TOKEN",
+               "NOT_CONTAINS_TOKEN"):
+        assert op in servi, f"opérateur HubSpot absent du texte servi : {op}"

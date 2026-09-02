@@ -65,3 +65,52 @@ def test_the_contract_warns_that_a_domain_is_worldwide():
     doc = asyncio.run(m.get_tool("apollo_search_people")).description or ""
     assert "DOMAIN IS WORLDWIDE" in doc
     assert "person_locations" in doc
+
+
+# --- projection de sortie : `fields` sur la recherche d'organisations ---------
+
+_PAGE = {
+    "pagination": {"page": 1, "total_entries": 490},
+    "organizations": [{"name": "Acme", "primary_domain": "acme.fr",
+                       "logo_url": "https://…", "sic_codes": [], "intent_strength": None}],
+    # `mixed_companies/search` rend DEUX listes : les sociétés déjà présentes dans
+    # le compte Apollo arrivent sous `accounts`, avec la même graisse.
+    "accounts": [{"name": "Beta", "primary_domain": "beta.fr",
+                  "logo_url": "https://…", "owned_by_organization_id": None}],
+}
+
+
+def _search_orgs(monkeypatch, **kwargs):
+    import oto.tools.apollo.client as apollo_client
+    from fastmcp import FastMCP
+    from oto_mcp import access
+    from oto_mcp.tools import apollo as apollo_tool
+
+    client = MagicMock()
+    client.search_organizations.return_value = _PAGE
+    monkeypatch.setattr(access, "resolve_api_key", lambda *a, **k: ("k", False))
+    monkeypatch.setattr(apollo_client, "ApolloClient", lambda **kw: client)
+    m = FastMCP("t")
+    apollo_tool.register(m)
+    return asyncio.run(m.get_tool("apollo_search_organizations")).fn(**kwargs)
+
+
+def test_without_fields_the_payload_is_untouched(monkeypatch):
+    """`fields` est opt-in STRICT : omis, on ne retire rien. Le défaut n'est pas
+    l'objet de ce lot — le choisir demanderait de mesurer ce qui ne sert jamais."""
+    assert _search_orgs(monkeypatch, name="acme") == _PAGE
+
+
+def test_fields_projects_BOTH_lists_and_keeps_the_envelope(monkeypatch):
+    """Une page à `per_page=100` pèse ~113 000 c. et dépasse la limite de sortie de
+    certains clients MCP : l'appel devient inexploitable directement (#645).
+
+    Le piège gardé ici est `accounts` : projeter la seule liste `organizations`
+    laisserait `fields` sans effet visible sur la moitié du payload — un paramètre
+    d'économie à moitié inerte est pire qu'absent, parce qu'on le croit appliqué.
+    """
+    out = _search_orgs(monkeypatch, name="acme", fields=["name", "primary_domain"])
+    assert out["organizations"] == [{"name": "Acme", "primary_domain": "acme.fr"}]
+    assert out["accounts"] == [{"name": "Beta", "primary_domain": "beta.fr"}]
+    # l'enveloppe reste : sans elle, l'agent croit avoir tout vu
+    assert out["pagination"] == {"page": 1, "total_entries": 490}
