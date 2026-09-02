@@ -25,7 +25,7 @@ from typing import Optional
 
 from . import schema as dsv2
 from .. import db
-from .errors import RowValidationError
+from .errors import ColumnAbsent, RowValidationError
 from .columns import _META_COLS
 
 
@@ -385,7 +385,7 @@ class SchemaOpsMixin:
         # que la purge a touché.
         rows = db.datastore_drop_column(ns_id, key)
         if not rows:
-            raise ValueError(self._rien_purge(ns_id, schema, namespace, key))
+            raise ColumnAbsent(self._rien_purge(ns_id, schema, namespace, key))
         return {"namespace": namespace, "key": key, "rows": rows}
 
     def _rien_purge(self, ns_id: int, schema, namespace: str, key: str) -> str:
