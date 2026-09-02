@@ -25,4 +25,10 @@ CONNECTOR = _c(
          "tourne chez Browserbase",
 )
 
+# Éditeur : le connecteur est le NÔTRE — on l'a écrit, et c'est nous qui recevons
+# l'appel (le cookie du site vit dans notre coffre ; la session tourne sur notre compte
+# Browserbase, une infra, pas une passerelle qui détiendrait le compte de la personne).
+# DÉCLARÉ, et pas dérivé d'un défaut : depuis le 2026-09-02 il n'y a plus de défaut, et
+# une omission ne doit pas pouvoir se lire comme un choix (`Connector.publisher_name`).
+PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True

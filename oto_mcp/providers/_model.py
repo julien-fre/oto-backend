@@ -92,9 +92,12 @@ class Connector:
     label: str = ""
     help: str = ""
     href: str | None = None
-    # Éditeur du connecteur (affiché au catalogue). Vide → dérivé de
-    # la constante `PUBLISHER` du module de déclaration (cf. `publisher_name`),
-    # défaut "Otomata".
+    # Éditeur du connecteur (affiché au catalogue). Vide → dérivé de la constante
+    # `PUBLISHER` du module de déclaration (cf. `publisher_name`). Vide des DEUX
+    # côtés ⟹ la fiche n'affiche AUCUN éditeur : il n'y a plus de défaut (2026-09-02).
+    # Le champ sert quand l'éditeur est une propriété PARTAGÉE par plusieurs entrées
+    # construites par une même factory (les six canaux hébergés, cf. `unipile.channel`) ;
+    # sinon, le domicile normal est la constante du module.
     publisher: str = ""
     # URL publique du logo de l'éditeur. None → dérivée du CDN logo.dev à partir
     # du domaine de marque curé `LOGO_DOMAIN` du module de déclaration
@@ -268,12 +271,34 @@ class Connector:
     @property
     def publisher_name(self) -> str:
         """Éditeur affiché au catalogue — override champ si renseigné, sinon la
-        constante curée `PUBLISHER` du module de déclaration, sinon "Otomata"
-        (connecteur maison)."""
+        constante curée `PUBLISHER` du module de déclaration. **Sinon RIEN.**
+
+        ⚠️ Ce repli valait « Otomata » jusqu'au 2026-09-02 : une omission de
+        déclaration était alors indiscernable du choix « connecteur maison », et le
+        défaut nous attribuait le produit d'un tiers — le MCP *officiel* de Folk a
+        été servi sous notre nom pendant un mois, et six canaux de messagerie
+        envoyaient des messages via une passerelle tierce sous notre nom.
+
+        **Une absence se voit et se corrige ; une attribution fausse se croit.**
+
+        Le vide servi est la chaîne vide, **pas `None`**. Mesuré le 2026-09-02 en
+        rendant les composants du dashboard : les cinq surfaces qui affichent
+        l'éditeur traitent `""` et `null` à l'IDENTIQUE — elles masquent
+        (`v-if`, `filter(Boolean)`) ou coercent (`(c.publisher || "")`,
+        `[…].join(" ")`), aucune ne rend « undefined » ni ne casse. Le départage
+        est donc le CONTRAT, pas le rendu : oto-dashboard déclare
+        `publisher: string` (`types/api.ts`) et la capacité `MyConnectors` sert la
+        clé sur toutes ses lignes verbeuses ; `None` ferait mentir le premier sans
+        rien gagner sur le second.
+
+        Le ratchet `tests/test_connector_publisher.py` fait que ce vide ne DOIT
+        jamais être atteint depuis le registre : il exige une déclaration par
+        connecteur, tout le registre, sans filtre de famille. Le vide reste le
+        comportement d'une entrée construite AILLEURS — c'est là qu'il protège."""
         if self.publisher:
             return self.publisher
         from . import _PUBLISHER_BY_CONNECTOR
-        return _PUBLISHER_BY_CONNECTOR.get(self.name, "Otomata")
+        return _PUBLISHER_BY_CONNECTOR.get(self.name, "")
 
     def logo_url_for(self) -> str | None:
         """URL publique du logo de l'éditeur. Override `logo_url` si présent,
