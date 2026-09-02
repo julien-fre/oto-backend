@@ -211,3 +211,120 @@ def test_pk_sub_tables_reste_matches_the_real_primary_key():
         + "\n  ".join(problems)
         + "\nLe DELETE de l'étape 2 ter supprimerait trop (reste incomplet) ou rien "
           "(reste en trop, puis UniqueViolation à l'UPDATE).")
+
+
+# `CREATE UNIQUE INDEX [CONCURRENTLY] [IF NOT EXISTS] nom ON table(cols) [WHERE pred]`.
+# Deux sources, et c'est LE point : le DDL déclaratif de `_schema.py`, ET les
+# `conn.execute(...)` de `_init.py`. Aucune garde ne regardait la seconde — or DIX des
+# QUATORZE index uniques du schéma y sont créés (dont quatre des huit qui couvrent une
+# colonne porteuse de sub), `uq_user_datastores_owner_ns` compris. C'est là que le trou
+# est resté.
+_UNIQUE_INDEX = re.compile(
+    r"CREATE\s+UNIQUE\s+INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"\w+\s+ON\s+(\w+)\s*\(([^)]*)\)", re.I | re.S)
+
+
+def _index_uniques(source: str) -> set[tuple[str, str]]:
+    """{(table, colonne)} couvertes par un index unique. Les DDL de `_init.py` sont
+    des littéraux Python parfois concaténés implicitement sur deux lignes : on les
+    recolle avant de lire, sinon `ON <table>(...)` tombe hors de la chaîne trouvée."""
+    recolle = re.sub(r'"\s*\n\s*"', "", source)
+    couvertes = set()
+    for m in _UNIQUE_INDEX.finditer(recolle):
+        table = m.group(1)
+        for col in m.group(2).split(","):
+            couvertes.add((table, col.strip()))
+    return couvertes
+
+
+def test_toute_colonne_sub_sous_index_unique_est_pre_traitee():
+    """Le VRAI critère du pré-traitement : « un UPDATE nu peut-il lever une violation
+    d'unicité ? » — et pas « la colonne est-elle dans la PK ? ».
+
+    `test_pk_sub_tables_reste_matches_the_real_primary_key` juge le bac de la clé
+    PRIMAIRE, et il a raison de le faire : son `reste` sert à bâtir un DELETE, un
+    `reste` incomplet l'ÉLARGIT. Mais il ne répond qu'à une moitié de la question.
+    L'autre moitié n'était gardée par personne : une colonne repointée par l'UPDATE
+    nu de `_SUB_COLUMNS` alors qu'un index UNIQUE la couvre. L'UPDATE lève alors
+    `UniqueViolation`, et cette exception fait échouer **tout** le merge — mode
+    d'échec vécu en prod le 2026-07-28 sur `org_members` (merge en échec à CHAQUE
+    requête de l'utilisateur, donc jamais fusionné).
+
+    `test_active_membership_tables_are_pre_treated` ne ferme que la forme
+    `ON <table>(sub) WHERE is_active`, écrite en dur, et seulement dans `_SCHEMA`.
+    Ici on ferme la CLASSE : n'importe quel index unique, partiel ou non, sur
+    n'importe quelle colonne porteuse de sub, déclaré dans `_schema.py` OU créé par
+    `_init.py`.
+
+    Le critère est volontairement conservateur : un index unique PARTIEL est retenu
+    sans regarder son prédicat. Deux lignes peuvent ne jamais y tomber ensemble —
+    mais le démontrer se fait à la main, dans l'allowlist ci-dessous, jamais par
+    omission silencieuse.
+
+    Portée : seules les colonnes de `_SUB_COLUMNS` sont concernées. Une colonne qui
+    n'est PAS repointée (`connector_instances.owner_id`, `orgs.personal_of`) ne subit
+    aucun UPDATE nu, donc aucune violation — elle sort d'elle-même, sans exception à
+    écrire.
+    """
+    from oto_mcp.db.users import (_MEMBERSHIP_TABLES, _PK_SUB_TABLES,
+                                  _SUB_COLUMNS, _UNIQUE_INDEX_SUB_TABLES)
+
+    du_schema = _index_uniques(_SCHEMA)
+    du_init = _index_uniques(_INIT_SRC)
+    assert du_schema, "le parse ne trouve plus d'index unique dans _schema.py"
+    assert du_init, (
+        "le parse ne trouve plus d'index unique dans _init.py — or c'est la moitié "
+        "que les gardes précédentes ne regardaient pas ; sans elle ce test redevient "
+        "la décoration qu'il remplace.")
+    sous_index = du_schema | du_init
+
+    pre_traitees = ({(t, c) for t, c, _r in _PK_SUB_TABLES}
+                    | {(t, "sub") for t, _k in _MEMBERSHIP_TABLES}
+                    | {(t, c) for t, c, _a, _p in _UNIQUE_INDEX_SUB_TABLES})
+
+    # Sous index unique, repointée en UPDATE nu, et pourtant NON pré-traitée — chaque
+    # entrée avec sa raison, et la raison ne peut pas être « on verra ».
+    allow = {
+        # ⚠️ TROU RÉEL, PAS UNE EXCEPTION DE CONFORT — ouvert, daté du 2026-09-02.
+        # `uq_user_datastores_owner_ns (owner_type, owner_id, namespace)` n'est PAS
+        # partiel : deux comptes d'une même personne qui ont chacun un namespace du
+        # même nom (« prospects »…) font lever `UniqueViolation` à l'étape 3 et
+        # échouer TOUT le merge. Reproduit sur base réelle le 2026-09-02.
+        #
+        # Il n'est pas corrigé ICI parce que le geste mécanique des autres familles —
+        # DELETE de la ligne en trop — serait PIRE que la panne : `datastore_rows` est
+        # en `ON DELETE CASCADE` sur `user_datastores(id)`, donc supprimer le
+        # namespace de l'ancien compte détruit ses LIGNES. Un merge qui échoue est
+        # bruyant et rejouable ; des lignes effacées en silence ne se rattrapent pas.
+        # La résolution correcte est probablement de RENOMMER le namespace repris,
+        # ce qui suppose une décision de produit (le nom que verra l'utilisateur),
+        # pas un choix de tuyauterie. → à trancher, puis retirer cette entrée.
+        ("user_datastores", "owner_id"),
+    }
+
+    manquantes = sorted(
+        (t, c) for t, c in set(_SUB_COLUMNS)
+        if (t, c) in sous_index and (t, c) not in pre_traitees and (t, c) not in allow)
+    assert not manquantes, (
+        "colonnes repointées par un UPDATE NU alors qu'un index UNIQUE les couvre :\n  "
+        + "\n  ".join(f"{t}.{c}" for t, c in manquantes)
+        + "\nL'UPDATE de l'étape 3 y lèvera `UniqueViolation` dès que les deux comptes "
+          "portent la même ligne, et fera échouer TOUT le merge (vécu le 2026-07-28 "
+          "sur `org_members`). Les pré-traiter (`_PK_SUB_TABLES` si la clé est la PK, "
+          "`_UNIQUE_INDEX_SUB_TABLES` si c'est un autre index unique, "
+          "`_MEMBERSHIP_TABLES` pour une appartenance), ou les allowlister ICI avec "
+          "la DÉMONSTRATION que les deux lignes ne peuvent pas coexister.")
+
+    # Une allowlist ne se périme jamais toute seule : c'est le mode de panne de ce
+    # genre de liste. Trois façons de devenir sans objet — la colonne quitte
+    # `_SUB_COLUMNS`, son index unique disparaît, ou le trou est enfin BOUCHÉ — et
+    # la troisième est celle qu'on oublierait, puisqu'elle ne casse rien.
+    mortes = sorted(e for e in allow
+                    if e not in sous_index
+                    or e not in set(_SUB_COLUMNS)
+                    or e in pre_traitees)
+    assert not mortes, (
+        f"entrées d'allowlist devenues sans objet : {mortes} — la colonne a quitté "
+        "`_SUB_COLUMNS`, son index unique a disparu, ou elle est désormais "
+        "PRÉ-TRAITÉE. Retirer l'entrée : une exception qui survit à sa raison finit "
+        "par couvrir un trou qu'on croit fermé.")
