@@ -98,6 +98,14 @@ RETRAIT = _plus_de_mois(ANNONCE, PREAVIS_MOIS)
 # `<tool:slug>` continuent de voir un seul nom pour un seul outil.
 TOOLS: dict = {
     "oto_admin_doctrine": "oto_admin_guide",
+    # Deux verbes de CONNEXION rangés sous le préfixe transverse (02/09/2026) : le
+    # gate par connecteur résout au namespace du NOM, donc `oto_…` les servait à
+    # tous les comptes — y compris ceux qui n'ont ni Salesforce ni Zoho. C'est ce
+    # qu'Alexis a repéré en trouvant dans ses outils un connecteur qu'il n'utilise
+    # pas. Renommés sous leur connecteur ; l'ancien nom reste appelable parce
+    # qu'une procédure d'org le référence (mesuré, pas supposé).
+    "oto_salesforce_connect": "salesforce_connect",
+    "oto_zoho_connect": "zoho_connect",
 }
 
 

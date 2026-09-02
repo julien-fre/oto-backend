@@ -42,7 +42,7 @@ def test_l_occurrence_precedente_est_perimee_avant_la_suivante(monkeypatch):
     monkeypatch.setattr(runner_tick.db, "perimer_travaux_du_declencheur",
                         lambda t, o: ordre.append(("perime", t, o)) or 3)
     monkeypatch.setattr(runner_tick.db, "enqueue_job",
-                        lambda org, kind, payload=None: ordre.append(("enfile", org))
+                        lambda org, kind, payload=None, **_: ordre.append(("enfile", org))
                         or {"id": 9})
     assert runner_tick._tick() == 1
     assert [g for g, *_ in ordre] == ["perime", "enfile"], (
@@ -78,7 +78,7 @@ def test_une_peremption_qui_echoue_n_empeche_pas_le_reste(monkeypatch):
 
     monkeypatch.setattr(runner_tick.db, "perimer_travaux_du_declencheur", _perime)
     monkeypatch.setattr(runner_tick.db, "enqueue_job",
-                        lambda org, kind, payload=None: enfile.append(
+                        lambda org, kind, payload=None, **_: enfile.append(
                             payload["trigger_id"]) or {"id": 9})
     assert runner_tick._tick() == 2
     assert enfile == [1, 2], "les DEUX déclencheurs ont enfilé malgré l'échec"
