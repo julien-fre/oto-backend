@@ -379,7 +379,12 @@ rien ne rendait navigable et que rien ne tenait.
   (2) un fichier **`providers/<service>.py`** portant sa **déclaration de registre**
   (`CONNECTOR = _c(…)` + ses constantes curées `CATEGORY`/`PUBLISHER`/`DESCRIPTION`/
   `LOGO_DOMAIN`), (3) **une ligne dans `_DECLARATIONS`** (`providers/__init__.py`),
-  qui fixe l'ordre. ⚠️ **La déclaration ne va PAS dans `tools/<service>.py`** : ce
+  qui fixe l'ordre. ⚠️ **`PUBLISHER` est OBLIGATOIRE depuis le 2026-09-02** et son
+  absence rougit (`tests/test_connector_publisher.py`) : la question qui donne sa
+  valeur est « **à qui l'appel arrive-t-il ?** » — une passerelle tierce se nomme,
+  un service qu'on opère aussi (`PUBLISHER = "Otomata"`, écrit, jamais sous-entendu).
+  Il n'y a **plus de défaut** : il valait « Otomata » et nous a fait servir le produit
+  d'un tiers sous notre nom. `docs/connector-vault.md` §« Ce que la fiche DIT ». ⚠️ **La déclaration ne va PAS dans `tools/<service>.py`** : ce
   module importe `..access` (qui importe le registre — cycle) et `register_all` le
   charge en try/except, donc une dép optionnelle manquante retirerait le connecteur
   du CATALOGUE, pas seulement ses outils. Le registre reste pur, sans dépendance ;
@@ -471,7 +476,9 @@ rien ne rendait navigable et que rien ne tenait.
   middleware masque les tools d'un connecteur non activé pour l'org → (dés)activer
   prend effet à la session suivante **sans restart**, override par org OK. Filtre
   aussi `/api/connectors` (catalogue) ; overlays catalogue `family` (dérivée) +
-  `category` (curée) + `publisher` (curé, `_PUBLISHER_BY_CONNECTOR`) + `logo_url`
+  `category` (curée) + `publisher` (curé, `_PUBLISHER_BY_CONNECTOR` **ou** le champ
+  `publisher` de l'entrée — deux chemins, et l'absence des deux ne retombe plus sur
+  rien depuis le 2026-09-02 : le champ servi est vide, et le cliquet le refuse) + `logo_url`
   (dérivé du **CDN logo.dev** par `Connector.logo_url_for` : domaine de marque curé
   `_LOGO_DOMAIN_BY_CONNECTOR` + token publishable `LOGODEV_TOKEN` en env ; pas de S3,
   pas de seed. L'absence est DÉCLARÉE dans `_SANS_LOGO_DE_MARQUE` (générique/maison :

@@ -86,13 +86,25 @@ def channel(name: str, *, hosted_channel: str, label: str, help: str,
     donc les comptes accordés (#55). Les deux ne répondent pas à la même question.
 
     `href` est celui de la MARQUE du canal, jamais du fournisseur : ce que la
-    personne connecte, c'est son LinkedIn ou son WhatsApp. Unipile est notre
-    plomberie — elle reste nommée sur la carte `unipile`, qui EST le compte."""
+    personne connecte, c'est son LinkedIn ou son WhatsApp.
+
+    ⚠️ `publisher` est le SEUL champ de la carte qui nomme le fournisseur, et c'est
+    sa définition qui l'exige : l'éditeur nomme **qui reçoit l'appel**
+    (`docs/connector-vault.md` §« Ce que la fiche DIT », 2026-09-02). Un
+    `whatsapp_chat(op=send)` part chez Unipile, qui détient la session du compte
+    opéré — le message est envoyé PAR une passerelle tierce. Jusqu'au 2026-09-02
+    ces six cartes retombaient sur le défaut « Otomata » : nous nous attribuions
+    l'envoi. Il est déclaré ICI, en un exemplaire, parce que c'est une propriété du
+    COMPTE (comme la clé, le quota, l'option) et pas du canal — le recopier six
+    fois, ce serait se donner cinq occasions de le faire diverger. Même forme que
+    `reddit` → `redditapis.com` : la passerelle se nomme, la marque garde le
+    libellé, le logo et le `href`."""
     return _c(
         name, [name],
         auth_modes={"byo_user", "byo_org", "platform"}, keyed=True,
         secret_kind="api_key", hosted_auth=True, personal_cross_org=True,
         credential_of="unipile", hosted_channel=hosted_channel,
+        publisher="Unipile",
         label=label, help=help, href=href,
         modules=modules or (name,),
     )

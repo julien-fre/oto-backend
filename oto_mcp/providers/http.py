@@ -81,4 +81,10 @@ CONNECTOR = _c(
     ),
 )
 
+# Éditeur : le connecteur est le NÔTRE, et il n'y a pas d'intermédiaire à nommer — oto
+# détient le secret et tape DIRECTEMENT l'API que l'org a configurée (pas de service
+# distant). Le host appelé est celui du `base_url` de chaque credential : il n'existe
+# pas au niveau du registre, et rien ne se fait passer pour rien. DÉCLARÉ, et pas dérivé
+# d'un défaut : depuis le 2026-09-02 il n'y en a plus (`Connector.publisher_name`).
+PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True
