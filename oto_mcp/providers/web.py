@@ -20,4 +20,8 @@ CONNECTOR = _c(
 )
 
 CATEGORY = "Web"
+# Éditeur : capacité NUE et maison — c'est notre cascade qui rend le service, et aucun
+# de ses crans n'est un service que l'appelant choisit. DÉCLARÉ, et pas dérivé d'un
+# défaut : depuis le 2026-09-02 il n'y en a plus (`Connector.publisher_name`).
+PUBLISHER = "Otomata"
 SANS_LOGO_DE_MARQUE = True

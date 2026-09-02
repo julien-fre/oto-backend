@@ -318,9 +318,12 @@ def test_le_gate_dacces_porte_le_nom_NU_pas_celui_du_porteur(monkeypatch):
 
 class _RefEpingle:
     """Ref d'instance membre pointant la ligne du COMPTE — la seule qui existe :
-    un canal n'a pas de ligne au coffre, c'est tout le sens de la délégation."""
+    un canal n'a pas de ligne au coffre, c'est tout le sens de la délégation.
+    `sub="u1"` = le PROPRIÉTAIRE de la ligne (ici le même que l'appelant : ces
+    tests portent sur la délégation de canal, pas sur un prêt à un pair)."""
     level = "member"
     org_id = 1
+    sub = "u1"
     group_id = None
     account = ""
     connector = "unipile"

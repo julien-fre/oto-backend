@@ -410,7 +410,15 @@ def _resolve_pinned_instance(provider: str, sub: str, ref) -> ResolvedCredential
     interdit)."""
     from .. import instance_refs
     if ref.level == "member":
-        etype, eid = credentials_store.MEMBER, credentials_store.member_id(ref.org_id, sub)
+        # ⚠️ `ref.sub`, PAS le `sub` courant : un ref `member` prêté à un pair
+        # (share_side, ADR 0044) porte l'identité du PROPRIÉTAIRE, pas de
+        # l'emprunteur — l'emprunteur garde son propre contexte d'org ailleurs
+        # (`guard_instance_access` en co-pose l'org), mais la ligne du coffre à
+        # LIRE reste celle du propriétaire. Bug trouvé le 2026-09-02 : `sub`
+        # ici pointait l'emprunteur, donc TOUT prêt membre-à-membre échouait
+        # avec « l'instance ne résout plus » — message trompeur, la ligne
+        # existait, elle était juste cherchée sous la mauvaise identité.
+        etype, eid = credentials_store.MEMBER, credentials_store.member_id(ref.org_id, ref.sub)
         mode = "user"
     elif ref.level == "group":
         etype, eid, mode = "group", str(ref.group_id), "group"

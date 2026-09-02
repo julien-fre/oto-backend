@@ -79,16 +79,48 @@ def update_trigger(trigger_id: int, org_id: int, champs: dict[str, Any]) -> Opti
             f"WHERE id = %s AND org_id = %s RETURNING {_COLS}",
             (*vals, trigger_id, org_id),
         ).fetchone()
+    # ⚠️ ÉTEINDRE, c'est aussi cesser de tiquer — donc cesser de périmer. Un
+    # déclencheur désactivé laissait ses occurrences en attente pour toujours,
+    # et le geste qui les rendait éternelles était précisément celui par lequel
+    # quelqu'un cherchait à arrêter les dégâts. **Le seul geste de réparation
+    # disponible aggravait la panne, en silence.**
+    if row and champs.get("enabled") is False:
+        from .runner_jobs import perimer_travaux_du_declencheur
+        perimer_travaux_du_declencheur(
+            trigger_id, org_id,
+            raison="déclencheur désactivé : ses occurrences en attente ne seront "
+                   "jamais exécutées.")
     return dict(row) if row else None
 
 
 def delete_trigger(trigger_id: int, org_id: int) -> bool:
+    """Supprime le déclencheur — et PÉRIME d'abord ce qu'il a laissé en attente.
+
+    ⚠️ **La péremption ordinaire passe par le TICK du déclencheur : un déclencheur
+    qui ne tique plus ne périme plus rien.** Supprimé, il laissait donc ses
+    occupations en `pending` pour toujours — et pire qu'avant, puisque le
+    compteur de pertes se lit SUR le déclencheur : elles devenaient invisibles en
+    même temps qu'éternelles. Le jour où des agents arrivent sur cette org, elles
+    partiraient, pour un déclencheur que plus personne n'a.
+
+    C'est la forme générale du piège : *« ne pas toucher » n'est une conservation
+    que si quelque chose garantit la cible.* Ici rien ne la garantit — il n'y a
+    pas de clé étrangère entre un travail et son déclencheur, seulement un
+    identifiant recopié dans la charge.
+    """
+    from .runner_jobs import perimer_travaux_du_declencheur
     with _connect() as conn:
         cur = conn.execute(
             "DELETE FROM runner_triggers WHERE id = %s AND org_id = %s",
             (trigger_id, org_id),
         )
-        return bool(cur.rowcount)
+        supprime = bool(cur.rowcount)
+    if supprime:
+        perimer_travaux_du_declencheur(
+            trigger_id, org_id,
+            raison="déclencheur supprimé : ses occurrences en attente ne seront "
+                   "jamais exécutées.")
+    return supprime
 
 
 def due_triggers(limit: int = 50) -> list[dict]:

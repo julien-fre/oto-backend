@@ -84,6 +84,33 @@ def _tick() -> int:
             "max_steps": t.get("max_steps"),
             "trigger_id": t["id"],
         }
+        # ⚠️ PÉRIMER AVANT D'ENFILER. Ce qui restait en attente pour ce
+        # déclencheur n'a pas été pris dans son cycle : une veille quotidienne
+        # exécutée treize jours plus tard ne rend pas un résultat en retard, elle
+        # rend un résultat FAUX. Et si on ne périmait pas, le jour où des agents
+        # arrivent enfin sur cette org, treize jours d'occurrences partiraient
+        # d'un coup — avec la procédure et le contexte de leur époque.
+        #
+        # Constaté le 02/09 : 41 travaux jamais pris depuis treize jours, sur
+        # quatre organisations, `attempts = 0`. Chaque pièce faisait exactement
+        # son travail ; c'est leur COMPOSITION qui fabriquait le trou, et rien ne
+        # le disait — un travail « en attente » ressemble à un travail qui va
+        # partir.
+        try:
+            perimes = db.perimer_travaux_du_declencheur(t["id"], t["org_id"])
+        except Exception as e:  # noqa: BLE001 — voir ci-dessous
+            # ⚠️ La péremption est un geste d'HYGIÈNE, l'enfilage est le SERVICE.
+            # Si elle casse, le service continue : l'inverse ferait qu'un défaut
+            # d'entretien arrête les automatisations de tout le monde. Le pire
+            # qu'on risque en la ratant est ce qu'on avait déjà — un travail de
+            # trop en attente.
+            log.warning("déclencheur %s : péremption impossible (%s) — l'enfilage "
+                        "continue", t["id"], e)
+            perimes = 0
+        if perimes:
+            log.warning("déclencheur %s (org %s) : %d occurrence(s) périmée(s) — "
+                        "aucun agent ne dessert cette organisation",
+                        t["id"], t["org_id"], perimes)
         db.enqueue_job(t["org_id"], "start",
                        payload={k: v for k, v in payload.items() if v is not None})
         enfiles += 1

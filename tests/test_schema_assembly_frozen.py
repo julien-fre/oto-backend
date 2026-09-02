@@ -175,13 +175,17 @@ from oto_mcp.db import _schema, schema
 # `schema.unipile.UNIPILE_GROUP_GRANTS`, un fragment à part posé juste après
 # `schema.orgs.GROUPS` dans `_schema.ASSEMBLAGE`. ADDITIF : rien n'est retiré ni
 # contraint sur les tables existantes.
-# 2026-09-02 — ajout du domaine « outreach » (`schema/outreach.py`, posé juste
-# après `schema.emails.EMAILS`) : `outreach_sends` (journal des relances de
-# plateforme, index unique partiel `(campaign, sub) WHERE kind='send'`) et
-# `outreach_optouts` (refus de recevoir, PK `sub`). ADDITIF : rien n'est retiré
-# ni contraint sur les tables existantes.
-EMPREINTE = "000d2c73bd6c4a0645155b3abafb9a0cb2d9a273d04e3fc83fd2af278941f70b"
-LONGUEUR = 135367
+# 2026-09-02 (#836) : `runner_fleets.rows_at_launch`, une colonne NULLABLE — le
+# DÉNOMINATEUR de l'avancement d'un passage, relu sur la table à chaque armement.
+# ADDITIF : rien n'est retiré ni contraint sur les tables existantes. Elle existe
+# aussi en `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` dans `_init.py` : la base est
+# PARTAGÉE prod/preprod, le `CREATE TABLE` ne sert qu'aux installs vierges.
+# ⚠️ Empreinte RECALCULÉE sur le DDL FUSIONNÉ, pas recopiée d'un des deux côtés du
+# conflit : ce lot (+653) et le tronc du 02/09 (+964 : état `expired` et
+# `idx_runner_jobs_expired`) touchent tous deux `schema/runs.py`, dans deux régions
+# distinctes. 134714 (socle commun) + 964 + 653 = 136331.
+EMPREINTE = "b1aab531d43ccbd12dbf79e67c6a4fc77ce99aaa40284fb95aaed80030349d70"
+LONGUEUR = 136331
 
 
 _CREATE_TABLE = re.compile(r"^CREATE TABLE IF NOT EXISTS (\w+)", re.M)

@@ -195,8 +195,12 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
     kind TEXT NOT NULL CHECK (kind IN ('start', 'continue')),
     run_id TEXT REFERENCES runs(run_id) ON DELETE CASCADE,  -- NULL : start pas encore lié à son run
     payload JSONB,                       -- références SEULEMENT (procédure, projet, message) — jamais un secret
+    -- ⚠️ `expired` n'est PAS `failed` : un travail périmé n'a jamais tourné.
+    -- Les confondre effacerait la seule distinction qui compte au diagnostic —
+    -- « ça a échoué » envoie lire une erreur qui n'existe pas, quand le fait est
+    -- « personne n'est venu le prendre ». Trois états, jamais deux.
     status TEXT NOT NULL DEFAULT 'pending'
-        CHECK (status IN ('pending', 'claimed', 'done', 'failed')),
+        CHECK (status IN ('pending', 'claimed', 'done', 'failed', 'expired')),
     attempts INT NOT NULL DEFAULT 0,
     max_attempts INT NOT NULL DEFAULT 3,
     claimed_by TEXT,
@@ -217,6 +221,16 @@ CREATE TABLE IF NOT EXISTS runner_jobs (
 );
 CREATE INDEX IF NOT EXISTS idx_runner_jobs_claim
     ON runner_jobs(org_id, due_at) WHERE status = 'pending';
+-- Le comptage des occurrences PERDUES est lu à chaque `runner.triggers op=list`,
+-- donc à chaque ouverture de l'écran des automatisations. Sans cet index il
+-- balaye toute la file — une lecture d'affichage qui grossit avec l'historique
+-- de la plateforme entière. L'index partiel ne coûte que les lignes périmées,
+-- qui sont par construction rares.
+-- ⚠️ Sûr sur une base existante, contrairement au piège du 20/07 : il porte sur
+-- `status` et `org_id`, deux colonnes du CREATE TABLE d'origine, pas sur une
+-- colonne née d'un ALTER.
+CREATE INDEX IF NOT EXISTS idx_runner_jobs_expired
+    ON runner_jobs(org_id) WHERE status = 'expired';
 -- ⚠️ PAS d'index sur `fleet_id` ici : la colonne naît d'un ALTER dans `_init`, et
 -- sur une base qui existe déjà le CREATE TABLE ci-dessus est SAUTÉ — l'index
 -- s'exécuterait alors sur une colonne absente et tuerait le boot (piège du
