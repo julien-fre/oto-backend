@@ -121,6 +121,23 @@ description: >-
 > pré-traitée ou allowlistée AVEC sa raison — une colonne neuve arrive rouge. Restent
 > hors repointage, par construction : `connector_credentials.entity_id` (AAD) et la
 > mécanique du merge lui-même (`sub_aliases`, `users.sub`, `orgs.personal_of`).
+>
+> ⚠️ **Une TROISIÈME famille depuis le 2026-09-02 : `_UNIQUE_INDEX_SUB_TABLES`** (étape
+> 2 quinquies). Elle existe parce que les deux premières répondent à des questions
+> différentes, et qu'une table peut n'entrer dans aucune : `outreach_sends` a pour clé
+> primaire un `id` BIGSERIAL, mais son unicité réelle est un index **partiel**
+> (`(campaign, sub) WHERE kind='send'`). Rangée d'abord dans `_PK_SUB_TABLES`, elle
+> aurait fait prendre `kind` pour une colonne de clé et **supprimé des essais que rien
+> ne menaçait** ; rangée dans `_SUB_COLUMNS` seule, l'UPDATE nu aurait levé
+> `UniqueViolation` dès que les deux comptes d'une personne ont reçu la même campagne —
+> et fait échouer TOUT le merge. La famille dédoublonne donc sur les colonnes de
+> l'INDEX, prédicat partiel reporté sur les deux côtés, puis laisse l'UPDATE nu de
+> l'étape 3 repointer (d'où l'obligation d'être AUSSI dans `_SUB_COLUMNS`).
+> Garde-fous dérivés du DDL : `test_migrate_sub_unique_index.py` (l'index existe, avec
+> ces colonnes et ce prédicat ; l'entrée a son repointage ; elle n'est pas dans deux
+> bacs). **Le classement reste manuel, et c'est le vrai défaut** : deux erreurs
+> symétriques en quatre heures le 02/09 (deux colonnes de clé mises en repointage
+> simple le matin, une colonne hors clé mise en patron PK le soir).
 
 ## La clé de connecteur du tenant (L-clés PR 1 — 2026-08-29)
 
