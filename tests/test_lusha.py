@@ -1,5 +1,5 @@
 """lusha_search_and_enrich — one native batch call (up to 100 contacts), NOT
-a `_bulk_run`-style loop like folk/checkcrm (Lusha's own endpoint already
+a `_bulk_run`-style loop like folk (Lusha's own endpoint already
 accepts an array). Locks: validation (empty/over-cap/unknown reveal value)
 happens before any client call, and the tool forwards args through as-is.
 """

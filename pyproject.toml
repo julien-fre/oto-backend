@@ -145,12 +145,17 @@ dependencies = [
     # régresser ce pin ; v1.62.0 = SpottClient (ATS/CRM recrutement) ; v1.61.0 = CheckCrmClient
     # (job-change check) + DropcontactClient (enrichissement
     # bulk async) — un SEUL tag pour les deux, pour qu'aucun ordre de merge des PR
-    # backend ne puisse faire régresser ce pin ; v1.22.0 = AiArkClient (oto.tools.aiark,
+    # backend ne puisse faire régresser ce pin.
+    # ⚠️ `checkcrm` est RETIRÉ depuis le 2026-09-02 (backend + oto-core) : les deux
+    # raisons ci-dessus qui le nomment (v1.71.0, v1.61.0) ne tiennent plus le
+    # plancher. Ce qui le tient encore : lemlist/folk pour v1.71.0,
+    # DropcontactClient pour v1.61.0.
+    # v1.22.0 = AiArkClient (oto.tools.aiark,
     # requalification mount→API #160) ; v1.19.0 = serper reviews_all (recensement avis,
     # ADR 0045 B2) ; v1.18.0 = serper census_maps (ADR 0045 B1 — ⚠️ le pin avait régressé
     # à v1.17.0 via un commit concurrent, v1.19.0 le restaure) ; v1.17.0 = fixes Unipile
     # API v2 ; v1.15.0 = cursor limit override unipile_relations (#179) ; 1.14 = status_code.
-    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.105.0",
+    "oto-core[anonymize] @ git+https://github.com/otomata-tech/oto-core.git@v1.106.0",
     # Patchright = client CDP qui pilote le Chrome HÉBERGÉ Browserbase (connect_over_cdp)
     # pour les connecteurs d'API privée cookie-bound (tools/brevo.py, tools/crunchbase.py).
     # AUCUN browser local sur la box (connect_over_cdp ne lance rien → pas de binaire Chrome

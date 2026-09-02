@@ -80,11 +80,13 @@ _DECLARATIONS: tuple[str, ...] = (
     "lemlist",
     "kaspr",
     "pennylane",
+    # Voisin de `pennylane` : même catégorie Finance, et l'ordre gouverne
+    # l'affichage du catalogue.
+    "finkare",
     "slack",
     "fullenrich",
     "dropcontact",
     "folk",
-    "checkcrm",
     "aiark",
     "unipile",
     # Les six CONNEXIONS du compte unipile ci-dessus (split 2026-08-28) : chacune

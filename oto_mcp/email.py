@@ -140,24 +140,23 @@ def send_via_scaleway_tem(to: str, subject: str, html: str, *, secret_key: str,
         return False
 
 
-_BTN = ('display:inline-block;background:#2c2112;color:#fefcf5;text-decoration:none;'
-        'padding:10px 20px;border-radius:999px;font-weight:600')
-_WRAP = 'font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;color:#2c2112'
-_FAINT = 'color:#7a6c50;font-size:13px'
+# Le DESSIN (marques, palettes, gabarit de page, bouton) vit dans `email_brand.py`
+# — ce module-ci garde le TRANSPORT. Import de MODULE, jamais `from .email_brand
+# import page` : le cycle est mutuel (email_brand appelle `_esc`/`_esc_attr` d'ici)
+# et seul un import de module le rend inoffensif dans les deux sens, aucun des deux
+# ne touchant un attribut de l'autre au moment de l'import.
+from . import email_brand as _charte  # noqa: E402
 
 
-def _bouton(app_url: str | None, libelle: str) -> str:
-    """Le bouton d'ouverture, ou RIEN.
+def _bouton(app_url: str | None, libelle: str, brand: str = "oto") -> str:
+    """Le bouton d'ouverture à la marque du DESTINATAIRE, ou RIEN.
 
     Le lien d'un projet dépend d'un patron déclaré par le tenant : le produit du
     partenaire n'a pas forcément cette vue, et coller NOTRE chemin sous SON domaine
     fabriquerait un lien mort — pire qu'une absence, parce qu'un lien mort ne se
     diagnostique pas, il se subit (cf. `links.py`). Un email est un lien AFFICHÉ, pas
     une redirection : on n'écrit rien plutôt que d'envoyer quelque part."""
-    if not app_url:
-        return ""
-    return (f'<p><a href="{_esc(app_url)}" style="{_BTN}">{_esc(libelle)}</a></p>'
-            f'<p style="{_FAINT}">{_esc(app_url)}</p>')
+    return _charte.bouton(_charte.marque(brand), app_url, libelle)
 
 
 # Les 6 gabarits transactionnels (texte + locale FR/EN) vivent dans
@@ -165,7 +164,7 @@ def _bouton(app_url: str | None, libelle: str) -> str:
 # version anglaise ajoutée (oto-backend#700). Réexposés ICI pour que
 # `email.send_invite_email` etc. restent des attributs du module `email`
 # (c'est ce que les tests monkeypatchent) — import placé APRÈS `_send`,
-# `_esc`, `_bouton` et les styles ci-dessus, dont `email_templates` dépend.
+# `_esc` et `_bouton` ci-dessus, dont `email_templates` dépend.
 from .email_templates import (  # noqa: E402,F401 — réexport intentionnel
     send_change_request_email,
     send_change_request_resolved_email,
@@ -176,10 +175,14 @@ from .email_templates import (  # noqa: E402,F401 — réexport intentionnel
 )
 
 
-# Largeur utile du gabarit (`_WRAP` : max-width 480px). L'image s'y contraint par
-# l'attribut `width` (lu par les clients qui ignorent le CSS) ET par `max-width:100%`
-# (affichage réduit : l'image suit la colonne au lieu de la déborder).
-_IMG_WIDTH = 480
+# L'image se contraint à la largeur utile de la colonne (`email_brand.LARGEUR_UTILE`)
+# par l'attribut `width` (lu par les clients qui ignorent le CSS) ET par
+# `max-width:100%` (affichage réduit : l'image suit la colonne au lieu de la déborder).
+#
+# ⚠️ Lu À L'APPEL, jamais au niveau module : `email_brand` importe `email` en retour,
+# donc lire un attribut de l'un pendant l'exécution du corps de l'autre casse l'import
+# dès qu'on entre par `email_brand` (vécu ici même). Le cycle n'est inoffensif QUE
+# tant que les deux modules ne se touchent qu'au moment de l'appel.
 _IMG_STYLE = "max-width:100%;height:auto;display:block;border:0"
 
 
@@ -202,8 +205,8 @@ def _image_html(image_url: str | None, image_alt: str | None) -> str:
         raise ValueError("`image_alt` sans `image_url` : rien à décrire.")
     if not url.startswith("https://"):
         raise ValueError(f"`image_url` doit commencer par https:// (reçu : {url[:24]!r}).")
-    return (f'<p style="margin:0 0 16px"><img src="{_esc_attr(url)}" alt="{_esc_attr(alt)}" '
-            f'width="{_IMG_WIDTH}" style="{_IMG_STYLE}"></p>')
+    return (f'<p style="{_charte.PARA}"><img src="{_esc_attr(url)}" alt="{_esc_attr(alt)}" '
+            f'width="{_charte.LARGEUR_UTILE}" style="{_IMG_STYLE}"></p>')
 
 
 def render_composed_email(
@@ -214,37 +217,37 @@ def render_composed_email(
     footer: bool = True,
     image_url: str | None = None,
     image_alt: str | None = None,
+    brand: str = "oto",
 ) -> str:
-    """Rend le HTML à la charte « manuscrit chaud » d'un email dont le **contenu
-    est fourni par l'agent** (prose brute + CTA optionnel + UNE image de tête).
+    """Rend le HTML, à la charte de `brand`, d'un email dont le **contenu est fourni
+    par l'agent** (prose brute + CTA optionnel + UNE image de tête).
 
     `body` = texte brut : les lignes vides séparent des paragraphes, les sauts de
     ligne simples deviennent des `<br>`. Échappé (jamais de HTML injecté par
     l'agent). `footer` ajoute la signature de marque + l'opt-out par réponse.
     `image_url` + `image_alt` (les deux, ou aucun) placent une image AVANT le corps ;
-    voir `_image_html` pour ce qui est refusé (`ValueError`)."""
+    voir `_image_html` pour ce qui est refusé (`ValueError`).
+
+    La ligne d'aperçu de la boîte de réception est le PREMIER PARAGRAPHE, pas le
+    sujet : Gmail affiche « sujet — aperçu » côte à côte, et y répéter le sujet ne
+    dit rien de plus. C'est aussi ce qui évite l'aperçu d'avant, où la boîte allait
+    chercher le premier texte venu (« ou collez ce lien »)."""
+    m = _charte.marque(brand)
     image_html = _image_html(image_url, image_alt)
     paras = [p.strip() for p in (body or "").split("\n\n") if p.strip()]
     body_html = "".join(
-        f'<p style="font-size:16px;line-height:1.6;margin:0 0 16px">'
-        f'{_esc(p).replace(chr(10), "<br>")}</p>'
+        f'<p style="{_charte.PARA}">{_esc(p).replace(chr(10), "<br>")}</p>'
         for p in paras
     )
-    cta_html = ""
-    if cta_text and cta_url:
-        cta_html = (
-            f'<p style="padding:8px 0"><a href="{_esc_attr(cta_url)}" style="{_BTN}">'
-            f'{_esc(cta_text)}</a></p>'
-        )
-    footer_html = ""
-    if footer:
-        footer_html = (
-            '<hr style="border:none;border-top:1px solid #ece4d0;margin:24px 0 16px">'
-            f'<p style="{_FAINT}">oto, par otomata · oto.cx<br>'
-            'vous recevez ce message car vous avez un compte oto — '
-            'répondez à cet email pour nous parler, ou pour ne plus en recevoir.</p>'
-        )
-    return f'<div style="{_WRAP}">{image_html}{body_html}{cta_html}{footer_html}</div>'
+    cta_html = _charte.bouton(m, cta_url, cta_text) if (cta_text and cta_url) else ""
+    # Le pied MARKETING (pourquoi vous recevez ça, comment ne plus le recevoir) —
+    # celui d'un transactionnel dit autre chose, cf. `email_templates`.
+    mention = (f"vous recevez ce message car vous avez un compte {m.nom} — "
+               "répondez à cet email pour nous parler, ou pour ne plus en recevoir."
+               ) if footer else None
+    apercu = paras[0] if paras else m.nom
+    return _charte.page(m, image_html + body_html + cta_html,
+                        preheader=apercu, mention=mention, locale=None)
 
 
 def format_from(from_email: str | None, from_name: str | None = None) -> str | None:
@@ -268,16 +271,17 @@ def send_composed_email(
     from_name: str | None = None,
     image_url: str | None = None,
     image_alt: str | None = None,
+    brand: str = "oto",
 ) -> bool:
-    """Envoie un email à contenu libre (fourni par l'agent), rendu à la charte, via
-    le mailer Otomata (Scaleway TEM).
+    """Envoie un email à contenu libre (fourni par l'agent), rendu à la charte de
+    `brand`, via le mailer Otomata (Scaleway TEM).
 
     `from_email`/`from_name` = adresse expéditrice (défaut = marque `_MAIL_FROM`) ;
     le domaine doit être dans l'allowlist du service. `reply_to` défaut = la boîte
     du studio (`OTO_CONTACT_TO`). `image_url`/`image_alt` = l'image de tête (cf.
     `render_composed_email`). True si envoyé, False sinon (best-effort)."""
     html = render_composed_email(body, cta_text=cta_text, cta_url=cta_url, footer=footer,
-                                 image_url=image_url, image_alt=image_alt)
+                                 image_url=image_url, image_alt=image_alt, brand=brand)
     rt = reply_to or os.environ.get("OTO_CONTACT_TO", "alexis@otomata.tech")
     return _send(to, subject, html, reply_to=rt, from_email=format_from(from_email, from_name))
 
@@ -286,16 +290,19 @@ def send_contact_email(name: str, email: str, message: str) -> bool:
     """Message du formulaire de contact d'otomata.tech → boîte du studio.
 
     `reply_to` = l'email du visiteur pour répondre en un clic. Destinataire
-    configurable via `OTO_CONTACT_TO` (défaut alexis@otomata.tech)."""
+    configurable via `OTO_CONTACT_TO` (défaut alexis@otomata.tech). Pas de pied :
+    ce mail-ci part chez NOUS, il n'a personne à qui expliquer pourquoi il arrive."""
     to = os.environ.get("OTO_CONTACT_TO", "alexis@otomata.tech")
     subject = f"otomata.tech — message de {name}"
-    body = _esc(message).replace("\n", "<br>")
-    html = (
-        f'<div style="{_WRAP}">'
-        f'<p style="{_FAINT}">nouveau message via otomata.tech</p>'
-        f'<p><strong>{_esc(name)}</strong> &lt;{_esc(email)}&gt;</p>'
-        f'<hr style="border:none;border-top:1px solid #ece4d0;margin:16px 0">'
-        f'<p>{body}</p>'
-        f'</div>'
+    m = _charte.marque("oto")
+    corps = _esc(message).replace("\n", "<br>")
+    contenu = (
+        f'<p style="{_charte.PARA};{_charte.discret(m)}">nouveau message via '
+        f'otomata.tech</p>'
+        f'<p style="{_charte.PARA}"><strong>{_esc(name)}</strong> '
+        f'&lt;{_esc(email)}&gt;</p>'
+        f'<div style="border-top:1px solid {m.filet};margin:0 0 16px"></div>'
+        f'<p style="{_charte.PARA}">{corps}</p>'
     )
+    html = _charte.page(m, contenu, preheader=f"message de {name}", mention=None)
     return _send(to, subject, html, reply_to=email)
