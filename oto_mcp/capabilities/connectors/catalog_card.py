@@ -88,9 +88,14 @@ class AuthDescriptor(BaseModel):
     servies au 2026-09-01 : `hosted` | `remote` | `oauth` | `cookie` | `none` |
     `secret` (cf. `providers/_model.py::auth_method`, qui en est le domicile)."""
     method: str
-    # `multi_account` | `single`. DÉRIVÉ, pas déclaré par le connecteur (sauf
-    # exception motivée) : cf. `Connector.auth_multi_account`.
-    cardinality: str
+    cardinality: str = Field(description=(
+        "`multi_account` | `single` — ce connecteur accepte-t-il PLUSIEURS comptes "
+        "pour une même entité ? C'est cette clé qui décide si l'on propose « ajouter "
+        "un compte ». Dérivée du connecteur, pas déclarée par lui. ⚠️ **Servie ici "
+        "avec le réglage de l'org appliqué** : une org peut ouvrir le multi-compte "
+        "sur un connecteur qui ne l'a pas par défaut. Le catalogue PUBLIC, lui, rend "
+        "le défaut du registre — les deux surfaces peuvent donc différer pour le même "
+        "connecteur, et c'est celle-ci qui vaut pour l'acteur qui la lit."))
     # Le MOT que l'utilisateur emploie pour un compte de CE connecteur, quand
     # « compte » est faux chez lui (un compte Slack du coffre EST un workspace). Le
     # front l'affiche tel quel. Toujours renseigné — défaut « compte ».
@@ -102,14 +107,18 @@ class AuthDescriptor(BaseModel):
         "pertinents : le serveur ne masque rien avant que la saisie ait tranché, "
         "parce que masquer serait deviner. Un formulaire qui filtrerait dès "
         "l'ouverture cacherait des champs que la pose exige."))
-    # Le canal hébergé de ce connecteur, quand il en porte un (les six canaux
-    # unipile). `null` = ce connecteur n'est pas un canal hébergé — sans lui, une
-    # carte « connecter un compte » ne peut pas savoir lequel des six elle représente.
-    hosted_channel: Optional[str] = None
-    # Le connecteur qui DÉTIENT le credential, quand ce n'est pas celui-ci. `null` =
-    # il détient le sien. Un connecteur qui délègue n'a aucun champ à saisir : c'est
-    # le porteur nommé ici que l'écran doit envoyer poser la clé.
-    credential_of: Optional[str] = None
+    hosted_channel: Optional[str] = Field(default=None, description=(
+        "Le canal hébergé que cette carte représente (`LINKEDIN`, `WHATSAPP`…), "
+        "quand elle en est un. `null` = ce n'est pas une carte de canal. ⚠️ Le canal "
+        "est ainsi DÉRIVABLE de la carte : le flux de connexion se déclare sans "
+        "paramètre et l'écran n'a aucun sélecteur de canal à rendre — **la carte EST "
+        "le canal**."))
+    credential_of: Optional[str] = Field(default=None, description=(
+        "Le connecteur qui DÉTIENT le credential, quand ce n'est pas celui-ci. "
+        "`null` = il détient le sien. ⚠️ Un connecteur qui délègue n'a **aucun champ "
+        "à saisir**, et poser une clé sous son nom est REFUSÉ — sans quoi deux clés "
+        "diraient le contraire l'une de l'autre. C'est le porteur nommé ici qu'il "
+        "faut envoyer connecter."))
     # Schéma de saisie. Vide hors `method=secret` (les autres mécanismes ont leur flux
     # dédié, cf. `connect`).
     fields: list[CredentialField] = []

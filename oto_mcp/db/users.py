@@ -222,16 +222,34 @@ _PK_SUB_TABLES = (
     # la personne : ne pas le repointer la ré-abonnerait en silence à la fusion,
     # ce qui est exactement ce qu'un opt-out interdit.
     ("outreach_optouts", "sub", ()),
-    # Les relances DÉJÀ reçues. ⚠️ Ici la contrainte n'est PAS une PK (`id`
-    # BIGSERIAL) mais l'index unique PARTIEL `(campaign, sub) WHERE kind='send'`
-    # — le mécanisme requis est pourtant le même, et c'est lui le critère de
-    # cette liste : un UPDATE nu lève `UniqueViolation` dès que les deux comptes
-    # de la personne ont reçu la même campagne, et fait échouer TOUT le merge.
-    # Le « reste » est donc la clé de l'index, `kind` compris : sans lui on
-    # jetterait un essai en croyant dédupliquer un envoi. Ne pas repointer ferait
-    # ressortir le compte fusionné comme « jamais relancé » — il recevrait le
-    # même mail une seconde fois, ce que la campagne promet d'éviter.
-    ("outreach_sends", "sub", ("campaign", "kind")),
+)
+
+# Colonnes de sub sous un INDEX UNIQUE qui n'est PAS la clé primaire — partiel ou
+# non. Troisième famille, et elle existe parce que les deux premières répondent à des
+# questions différentes : `_PK_SUB_TABLES` dédoublonne sur la PK (garde-fou
+# `test_pk_sub_tables_reste_matches_the_real_primary_key`, qui refuse à juste titre
+# une entrée dont la PK ne porte pas le sub), et `_SUB_COLUMNS` fait un UPDATE nu qui
+# lèverait `UniqueViolation` ici. Y ranger une table par défaut d'un meilleur bac,
+# c'était se tromper deux fois : le DELETE de l'étape 2 ter aurait supprimé TROP (il
+# aurait pris `kind` pour une colonne de clé et jeté un essai en croyant dédupliquer
+# un envoi).
+#
+# `(table, colonne de sub, AUTRES colonnes de l'index, prédicat partiel ou None)`.
+# Le prédicat est un GABARIT : `{a}` reçoit l'alias de la ligne examinée, pour que la
+# même chaîne serve les deux côtés du DELETE.
+#
+# ⚠️ Chaque entrée DOIT s'accompagner de son `(table, colonne)` dans `_SUB_COLUMNS` :
+# cette liste ne fait que RETIRER la ligne en trop, c'est l'UPDATE nu qui repointe.
+# Sans le doublon, on supprimerait sans jamais repointer — garde-fou
+# `test_migrate_sub_unique_index.py`.
+_UNIQUE_INDEX_SUB_TABLES = (
+    # Les relances déjà reçues : `idx_outreach_once` = `(campaign, sub) WHERE
+    # kind='send'`. Une trace d'envoi SUIT la personne — la FK est en CASCADE, donc
+    # ne pas la repointer ne la « conserve » pas, elle la supprime à l'étape 4 : le
+    # compte fusionné ressortirait « jamais relancé » et recevrait une seconde fois
+    # le même mail, ce que la campagne promet d'éviter. Les lignes `kind='test'` ne
+    # sont sous aucune unicité et suivent toutes, sans dédoublonnage.
+    ("outreach_sends", "sub", ("campaign",), "{a}.kind = 'send'"),
 )
 
 # Inventaire des colonnes keyed-by-sub à repointer (issue oto-backend#56). Plain
@@ -263,6 +281,17 @@ _SUB_COLUMNS = [
     # existe encore et la prod y écrit pendant la fenêtre : les DEUX se repointent,
     # sinon une bascule de tenant orphelinerait ce que la conversion recopiera après.
     ("guides", "owner_id"), ("nodes", "owner_id"),
+    # L'identité qu'un travail programmé PORTE — celle au nom de laquelle l'agent
+    # agira (chantier agents autonomes, 02/09). Elle se repointe pour la même
+    # raison que le reste : un travail `pending` doit s'exécuter au nom de la
+    # PERSONNE, qui existe toujours sous son nouveau compte.
+    # ⚠️ Et ne pas repointer ne conserverait RIEN : il n'y a pas de clé étrangère
+    # entre un travail et son porteur, donc la ligne survivrait en désignant un
+    # compte disparu. On ne préserverait pas une trace historique, on
+    # fabriquerait un pointeur mort — et l'agent s'arrêterait en disant que
+    # l'identité n'est plus valide, alors qu'elle l'est, sous un autre nom.
+    # Hors PK (`runner_jobs` a `id` pour clé) : UPDATE nu, pas de `_PK_SUB_TABLES`.
+    ("runner_jobs", "sub"),
     # l'HISTORIQUE de la personne (dossier du 23/08 — ces lignes survivaient au merge
     # rattachées à un identifiant mort, donc invisibles au compte fusionné : déroulés
     # et activité perdus de vue, déclencheurs orphelins) :
@@ -320,9 +349,10 @@ _SUB_COLUMNS = [
     ("connector_settings", "set_by"),
     # Qui a déclaré un admin de tenant (L-clés PR 2) — colonne d'auteur.
     ("tenant_admins", "granted_by"),
-    # Qui a DÉCLENCHÉ une relance — colonne d'auteur (le TITULAIRE, lui, est
-    # sous contrainte d'unicité → `_PK_SUB_TABLES`).
-    ("outreach_sends", "sent_by"),
+    # Les relances reçues, et qui les a déclenchées. Le TITULAIRE (`sub`) est sous
+    # index unique partiel : l'UPDATE nu ci-dessous ne suffit pas seul, il est
+    # précédé du retrait de l'étape 2 quinquies (`_UNIQUE_INDEX_SUB_TABLES`).
+    ("outreach_sends", "sub"), ("outreach_sends", "sent_by"),
 ]
 
 
@@ -450,6 +480,22 @@ def migrate_sub(old_sub: str, new_sub: str, *, operator_source: str = "") -> boo
                 (old_sub, new_sub))
             conn.execute(f"UPDATE {table} SET {col}=%s WHERE {col}=%s",
                          (new_sub, old_sub))
+        # 2 quinquies. Colonnes de sub sous un INDEX UNIQUE qui n'est PAS la PK.
+        #    Même geste qu'en 2 ter, mais la clé de « la même ligne » est celle de
+        #    l'INDEX, pas celle de la table : la ranger en 2 ter aurait pris ses
+        #    colonnes de prédicat (`kind`) pour des colonnes de clé et supprimé des
+        #    lignes qu'aucune contrainte ne menaçait. Le prédicat partiel est
+        #    reporté sur LES DEUX côtés — sans lui, on dédoublonnerait des lignes
+        #    que l'index ne regarde même pas.
+        #    Le repointage lui-même reste l'UPDATE nu de l'étape 3.
+        for table, col, autres, predicat in _UNIQUE_INDEX_SUB_TABLES:
+            meme_ligne = " AND ".join(f"a.{c} = b.{c}" for c in autres) or "TRUE"
+            filtre_a = f" AND {predicat.format(a='a')}" if predicat else ""
+            filtre_b = f" AND {predicat.format(a='b')}" if predicat else ""
+            conn.execute(
+                f"DELETE FROM {table} a WHERE a.{col}=%s{filtre_a} AND EXISTS ("
+                f"SELECT 1 FROM {table} b WHERE b.{col}=%s{filtre_b} AND {meme_ligne})",
+                (old_sub, new_sub))
         # 2 quater. La MARQUE d'espace personnel (`orgs.personal_of`) : hors de
         #    `_SUB_COLUMNS` parce qu'un UPDATE nu y violerait l'index unique
         #    `uq_orgs_personal_of` — et pas dans un cas tordu, dans le cas NOMINAL :

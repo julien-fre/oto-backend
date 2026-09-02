@@ -126,7 +126,7 @@ def test_le_tick_enfile_quand_il_gagne_le_cas(monkeypatch):
     monkeypatch.setattr(runner_tick.db, "perimer_travaux_du_declencheur",
                         lambda t, o: 0)
     monkeypatch.setattr(runner_tick.db, "enqueue_job",
-                        lambda org, kind, payload=None: enfile.update(
+                        lambda org, kind, payload=None, **_: enfile.update(
                             org=org, kind=kind, payload=payload) or {"id": 9})
     assert runner_tick._tick() == 1
     assert enfile["org"] == 2 and enfile["kind"] == "start"
@@ -155,6 +155,6 @@ def test_un_cron_devenu_invalide_ne_bloque_pas_les_autres(monkeypatch):
     monkeypatch.setattr(runner_tick.db, "perimer_travaux_du_declencheur",
                         lambda t, o: 0)
     monkeypatch.setattr(runner_tick.db, "enqueue_job",
-                        lambda org, kind, payload=None: bons.update(t=payload["trigger_id"]))
+                        lambda org, kind, payload=None, **_: bons.update(t=payload["trigger_id"]))
     assert runner_tick._tick() == 1
     assert bons["t"] == 2, "le déclencheur sain du tour est passé malgré le cassé"

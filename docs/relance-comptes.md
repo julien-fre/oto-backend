@@ -185,6 +185,46 @@ est idempotente et strictement soustractive.
 Sans `OTO_MCP_OAUTH_STATE_SECRET`, `lien()` **lève** — plutôt qu'un lien mort dans le
 pied de page de dizaines de mails.
 
+## ⚠️ REST SEULE — ce qu'on a perdu en retirant le verbe conversationnel (2026-09-02)
+
+`oto_admin_outreach` **n'existe plus côté MCP** (`mcp=None`). Motif, mesuré : le verbe
+pesait **3 138 caractères** dans la surface servie à CHAQUE compte plateforme (18 de
+nom + 1 616 de description + 1 504 de schéma), soit **14,2 % du poids cumulé des 17
+outils `oto_admin_*`**. Piloter une campagne n'est pas une raison assez forte : cette
+surface se paie à chaque handshake, par tout le monde, et elle n'a pas de bouton
+« replier ». Après retrait : 16 outils, 18 916 caractères.
+
+**Le coût, en clair, pour qu'il ne se découvre pas le jour où il fait mal :**
+
+> **Il n'y a plus aucun diagnostic depuis une conversation.** Ni lire l'audience, ni
+> lancer l'essai, ni voir pourquoi un envoi est refusé. **Tout passe par l'écran
+> d'administration — y compris le jour où l'écran ne marche pas.**
+
+C'est un vrai renoncement, et il est asymétrique : l'écran sert le cas nominal, la
+conversation servait le cas dégradé. On a gardé le premier.
+
+### Quand l'écran ne répond pas
+
+Le repli est un appel REST à la main, pas une session d'agent. Un jeton d'API suffit
+(`allow_api_token` est vrai sur ce binding) :
+
+```bash
+curl -sS -X POST https://mcp.oto.ninja/api/admin/outreach \
+  -H "Authorization: Bearer $OTO_TOKEN" -H "Content-Type: application/json" \
+  -d '{"op":"audience","campaign":"onboarding-2026-09"}'
+```
+
+Toutes les `op` passent par ce chemin, refus compris — c'est la même capacité, la même
+autorisation, le même handler. `op=preview` rend le HTML des deux langues sans rien
+envoyer ; `op=test` écrit à l'appelant. **Aucune n'exige l'écran.**
+
+### Le rétablir
+
+Une ligne (`mcp="oto_admin_outreach"` dans `capabilities/outreach.py`). ⚠️ Ne pas le
+faire sans **remesurer le poids** : c'est le chiffre qui a tranché, pas le principe, et
+la surface aura bougé. `tests/test_outreach_rest_face.py` fige les deux moitiés — le
+verbe absent, et la route qui aboutit quand même en 200.
+
 ## Autorisation
 
 `oto_admin_outreach`, plancher `operator`. Lectures (`audience`, `preview`, `journal`,

@@ -159,11 +159,6 @@ PLANCHERS = {
     "oto_admin_key_grant": "operator",     # list PLATFORM, grant/revoke SUPER
     "oto_admin_monitoring": "operator",
     "oto_admin_org": "operator",           # list/get PLATFORM, create/archive SUPER
-    # Lire l'audience d'une relance et les désinscriptions = lentille de
-    # supervision ; faire PARTIR un mail sous notre marque (test/send) ou lever
-    # le refus de quelqu'un est SUPER — le plancher reste donc `operator`, le
-    # plus bas des branches, et le combinateur op-aware refuse le reste.
-    "oto_admin_outreach": "operator",
     "oto_admin_org_member": None,          # 4 ops ORG_ADMIN_OF, list PLATFORM
     "oto_admin_platform_instructions": "operator",
     "oto_admin_set_option": "super",

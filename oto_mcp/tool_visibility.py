@@ -45,10 +45,25 @@ from __future__ import annotations
 # une campagne en auto-review fait partir tout lead ajouté, ce qui ferait de
 # `lemlist_create_lead` (visible) un chemin d'envoi. Le champ reste atteignable :
 # c'est le geste qui demande une activation explicite. Même logique graduée.
+# `oto_run_thread` / `oto_scheduled_emails` : deux consoles de SOUS-SYSTÈME (le fil
+# d'une exécution hébergée, la file d'envois différés d'une org) servies à tout compte
+# alors qu'elles ne parlent qu'à qui pilote ces sous-systèmes. Masquées le 2026-09-02
+# sur décision d'Alexis (« resserre »), après relevé de la liste des 64 outils qu'un
+# compte nu recevait.
+# ⚠️ **Elles n'ont pas de connecteur d'accueil** — c'est ce qui les distingue des deux
+# verbes de connexion rangés le même jour sous `salesforce`/`zoho` : un sous-système
+# n'est pas un connecteur, il n'y a pas de namespace où les faire tomber. D'où ce
+# grain-ci, qui est de la DÉCOUVRABILITÉ et pas un contrôle : `oto_enable_tool` les
+# rend à qui les veut.
+# ⚠️ **`oto_trigger` n'y est PAS**, et c'est mesuré : 112 appels, 10 acteurs, dont le
+# jour même de la décision. Le masquer le rendrait injoignable (le masquage filtre
+# aussi `get_tool`, pas seulement la liste) pour dix personnes qui s'en servent — et
+# la décision a été prise sans ce chiffre. Cf. le journal des appels avant de l'ajouter.
 DEFAULT_HIDDEN_TOOLS: frozenset[str] = frozenset(
     {"email_send", "fr_egapro_declaration", "browser_eval", "lemlist_launch_lead",
      "lemlist_campaign_start", "lemlist_inbox_send",
-     "lemlist_campaign_auto_review"})
+     "lemlist_campaign_auto_review",
+     "oto_run_thread", "oto_scheduled_emails"})
 
 # --- Réservé aux comptes BÊTA (2026-09-01) -----------------------------------
 #
