@@ -138,6 +138,36 @@ description: >-
 > bacs). **Le classement reste manuel, et c'est le vrai défaut** : deux erreurs
 > symétriques en quatre heures le 02/09 (deux colonnes de clé mises en repointage
 > simple le matin, une colonne hors clé mise en patron PK le soir).
+>
+> ⚠️ **Et le classement manuel a un second trou, celui-là JAMAIS gardé** : les trois
+> familles répondent toutes à la même question — *un UPDATE nu peut-il lever une
+> violation d'unicité ?* — mais rien ne vérifiait qu'une colonne à qui la réponse est
+> OUI soit bien rangée quelque part. `test_pk_sub_tables_reste_matches_the_real_primary_
+> key` juge les entrées DÉCLARÉES ; il ne va jamais chercher les MANQUANTES.
+> `test_active_membership_tables_are_pre_treated` ne ferme qu'une forme écrite en dur
+> (`ON <table>(sub) WHERE is_active`), et seulement dans `_schema.py`.
+>
+> `test_toute_colonne_sub_sous_index_unique_est_pre_traitee` (2026-09-02) ferme la
+> CLASSE : toute colonne de `_SUB_COLUMNS` couverte par un index unique — partiel ou
+> non, déclaré dans `_schema.py` **ou créé par `_init.py`** — doit être pré-traitée ou
+> allowlistée avec sa raison. La moitié `_init.py` est le cœur du sujet : **dix des
+> quatorze index uniques du schéma y sont créés, et aucune garde ne les avait jamais
+> lus** — dont quatre des huit qui couvrent une colonne porteuse de sub.
+> Une colonne qui n'est PAS repointée (`connector_instances.owner_id`,
+> `orgs.personal_of`) sort d'elle-même du critère : pas d'UPDATE nu, pas de violation.
+>
+> 🔴 **Ce que la garde a trouvé, et qui reste OUVERT : `user_datastores.owner_id`.**
+> `uq_user_datastores_owner_ns (owner_type, owner_id, namespace)` n'est pas partiel ;
+> deux comptes d'une même personne ayant chacun un namespace du même nom font lever
+> `UniqueViolation` à l'étape 3 et échouer TOUT le merge — le mode d'échec du 28/07,
+> encore ouvert, reproduit sur base réelle le 2026-09-02. Il n'est pas corrigé avec la
+> garde parce que le geste mécanique des autres familles (DELETE de la ligne en trop)
+> serait PIRE que la panne : `datastore_rows` est en `ON DELETE CASCADE` sur
+> `user_datastores(id)`, donc jeter le namespace de l'ancien compte détruit ses
+> LIGNES. Un merge qui échoue est bruyant et rejouable ; des lignes effacées en
+> silence, non. La résolution correcte est probablement de RENOMMER le namespace
+> repris — le nom que verra l'utilisateur est une décision de produit, pas de
+> tuyauterie. Entrée d'allowlist datée, à retirer une fois tranché.
 
 ## La clé de connecteur du tenant (L-clés PR 1 — 2026-08-29)
 
