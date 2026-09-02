@@ -14,7 +14,10 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-from ... import billing, db, org_store
+import logging
+
+from ... import access, billing, db, org_store
+from ...tool_visibility import BETA_OPTION
 from .._authz import ORG_MEMBER_OF, PLATFORM_ADMIN, SUB_ONLY
 # Le quota de création vit avec la capacité qui REFUSE (`org.create`) : le lire ici
 # plutôt que le recalculer est ce qui garantit que la liste et le refus ne pourront
@@ -58,6 +61,13 @@ class MyOrgEntry(BaseModel):
     # `true` sur l'org MAISON (le défaut persistant), jamais sur une org « de
     # session » — ADR 0038 a retiré tout état de session côté serveur.
     active: bool
+    # Le compte est-il BÊTA dans cette org (option `beta`, seam `access.has_option` :
+    # comp user OU comp org OU plan) ? Par ORG et non sur /api/me : le front consulte
+    # l'org de l'URL, pas l'org maison. C'est ce qui décide si une surface bêta
+    # (Agents : `oto_fleet`, cf. `BETA_TOOLS`) se MONTRE — la visibilité MCP masque
+    # la liste d'outils, mais un front ne lit pas cette liste ; sans ce champ il ne
+    # peut que tout montrer ou rien.
+    beta: bool = False
 
 
 class OrgQuota(BaseModel):
@@ -175,6 +185,21 @@ def _members(org_id: int) -> list[dict]:
     return out
 
 
+logger = logging.getLogger(__name__)
+
+
+def _beta_dans(sub: str, org_id: int) -> bool:
+    """`beta` par org — fail-CLOSED et TRACÉ. C'est l'appel d'amorçage du front :
+    une panne du seam des options ne doit pas blanchir le sélecteur d'espaces,
+    et une bêta qui s'ouvrirait sur un hoquet ne se verrait pas."""
+    try:
+        return access.has_option(sub, BETA_OPTION, org=org_id)
+    except Exception:
+        logger.warning("beta lookup fail-CLOSED for %s in org %s", sub, org_id,
+                       exc_info=True)
+        return False
+
+
 def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
     orgs, active = [], None
     for o in org_store.list_orgs_for_user(ctx.sub):
@@ -186,6 +211,9 @@ def _list_my_orgs(ctx: ResolvedCtx, inp: NoInput) -> dict:
             "logo_url": org_store.effective_logo_url(o),
             "member_count": len(org_store.list_org_members(o["org_id"])),
             "my_role": o["org_role"], "role": o["org_role"], "active": o["is_active"],
+            # `org=` EXPLICITE : calcul contre CETTE org, jamais contre current_org
+            # (le seam le prévoit pour la fiche admin — même besoin ici).
+            "beta": _beta_dans(ctx.sub, o["org_id"]),
         })
     # Le quota voyage avec la liste : c'est l'outil par lequel un agent regarde ses
     # espaces, donc le seul endroit où il peut apprendre qu'il approche du mur sans
