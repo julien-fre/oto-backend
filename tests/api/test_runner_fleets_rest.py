@@ -398,3 +398,76 @@ def test_un_simple_membre_ARRÊTE(client, org, simple_membre):
                      json={"op": "stop", "fleet_id": fid, "reason": "vu passer"})
     assert rr.status_code == 200, rr.text
     assert rr.json()["fleet"]["status"] == "stopping"
+
+
+# ── LE CYCLE COMPLET : l'intention devient un fait, et par qui ───────────────
+#
+# ⚠️ C'est ce cycle qui rend `op=stop` RÉEL. Sans lui, l'arrêt est une écriture
+# que personne ne lit — et `stopping` resterait éternellement `stopping`, ce qui
+# est exactement le symptôme qu'on veut pouvoir DIAGNOSTIQUER.
+
+@pytest.fixture(scope="module")
+def flotte_cycle(client, org):
+    r = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "cycle", "procedure": "p", "tools": ["oto_kb"]})
+    return r.json()["fleet"]
+
+
+def test_le_cycle_armee_prise_arret_demande_arret_accuse(client, org, flotte_cycle):
+    """Les quatre pas, dans l'ordre, et chacun par qui a le droit de le poser."""
+    fid = flotte_cycle["id"]
+    h = _h(org["membre"])
+
+    armee = client.post(ROUTE, headers=h, json={"op": "launch", "fleet_id": fid}).json()["fleet"]
+    assert armee["status"] == "armed" and not armee["started_at"]
+
+    prise = client.post(ROUTE, headers=h, json={"op": "take", "fleet_id": fid}).json()["fleet"]
+    assert prise["status"] == "running" and prise["started_at"], (
+        "c'est l'ordonnanceur qui pose le FAIT `running`, en prenant la flotte")
+
+    demande = client.post(ROUTE, headers=h, json={
+        "op": "stop", "fleet_id": fid, "reason": "budget"}).json()["fleet"]
+    assert demande["status"] == "stopping", "l'ordre est posé, pas encore exécuté"
+
+    # l'ordonnanceur LIT l'ordre en battant — c'est ce qui rend `stop` réel
+    beat = client.post(ROUTE, headers=h, json={"op": "beat", "fleet_id": fid}).json()
+    assert beat["stop_requested"] is True
+
+    acc = client.post(ROUTE, headers=h, json={"op": "ack_stop", "fleet_id": fid}).json()["fleet"]
+    assert acc["status"] == "stopped" and acc["stopped_at"]
+    assert acc["stop_reason"] == "budget", "la raison de la DEMANDE survit à l'accusé"
+
+
+def test_un_battement_sans_ordre_ne_dit_pas_qu_il_faut_s_arreter(client, org):
+    """Le cas nominal doit être aussi net que le cas d'arrêt : un ordonnanceur qui
+    lirait « arrête-toi » par défaut s'éteindrait en boucle."""
+    fid = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "battement", "procedure": "p",
+        "tools": ["oto_kb"]}).json()["fleet"]["id"]
+    client.post(ROUTE, headers=_h(org["membre"]), json={"op": "launch", "fleet_id": fid})
+    client.post(ROUTE, headers=_h(org["membre"]), json={"op": "take", "fleet_id": fid})
+    beat = client.post(ROUTE, headers=_h(org["membre"]),
+                       json={"op": "beat", "fleet_id": fid}).json()
+    assert beat["stop_requested"] is False and beat["beat_taken"] is True
+
+
+def test_deux_ordonnanceurs_ne_prennent_pas_la_meme_flotte(client, org):
+    """⚠️ Le second doit l'APPRENDRE, pas partir en croyant l'avoir prise —
+    sinon le passage double et son état ne dit la vérité pour aucun des deux."""
+    fid = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "concurrence", "procedure": "p",
+        "tools": ["oto_kb"]}).json()["fleet"]["id"]
+    client.post(ROUTE, headers=_h(org["membre"]), json={"op": "launch", "fleet_id": fid})
+    assert client.post(ROUTE, headers=_h(org["membre"]),
+                       json={"op": "take", "fleet_id": fid}).status_code == 200
+    assert _refus(client, org, {"op": "take", "fleet_id": fid}) == (409, "not_takeable")
+
+
+def test_on_n_accuse_pas_un_arret_qui_n_a_pas_ete_demande(client, org):
+    """Un accusé sans demande effacerait la distinction : `stopped` ne voudrait
+    plus dire « l'ordonnanceur a obéi » mais « quelqu'un a écrit stopped »."""
+    fid = client.post(ROUTE, headers=_h(org["membre"]), json={
+        "op": "create", "label": "sans-demande", "procedure": "p",
+        "tools": ["oto_kb"]}).json()["fleet"]["id"]
+    assert _refus(client, org, {"op": "ack_stop", "fleet_id": fid}
+                  ) == (409, "nothing_to_acknowledge")
