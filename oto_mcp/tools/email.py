@@ -31,7 +31,7 @@ from fastmcp import Context, FastMCP
 from ..mcp_errors import McpError
 from mcp.types import ErrorData, INTERNAL_ERROR, INVALID_PARAMS
 
-from .. import access, db, email as mailer, org_store, providers, roles, scheduler
+from .. import access, config, db, email as mailer, org_store, providers, roles, scheduler
 from ..auth.hooks import current_user_sub_from_token
 
 logger = logging.getLogger(__name__)
@@ -175,9 +175,15 @@ def register(mcp: FastMCP) -> None:
         # Le gabarit porte les refus de l'image (alt manquant, `http://`) : on le rend
         # AVANT de résoudre la route, pour que le refus d'un paramètre précède celui
         # d'une autorisation — comme les vérifications juste au-dessus.
+        # La marque de CELUI QUI ENVOIE : un client de Tulina dont l'agent écrit à un
+        # prospect signait « oto, par otomata · oto.cx » en pied — le pied d'un
+        # produit qu'il n'a jamais vu, sous son propre nom de domaine d'envoi.
+        marque_expediteur = config.front_for(
+            current_user_sub_from_token())[1] or "oto"
         try:
             html = mailer.render_composed_email(body, cta_text=cta_text, cta_url=cta_url,
-                                                image_url=image_url, image_alt=image_alt)
+                                                image_url=image_url, image_alt=image_alt,
+                                                brand=marque_expediteur)
         except ValueError as e:
             raise _err(str(e))
 
@@ -237,7 +243,7 @@ def register(mcp: FastMCP) -> None:
             ok = mailer.send_composed_email(
                 to, subject, body, cta_text=cta_text, cta_url=cta_url, reply_to=rt,
                 from_email=route["from_email"], from_name=route["from_name"],
-                image_url=image_url, image_alt=image_alt)
+                image_url=image_url, image_alt=image_alt, brand=marque_expediteur)
 
         if not ok:
             hint = ("clé Resend invalide/absente" if transport == "resend"

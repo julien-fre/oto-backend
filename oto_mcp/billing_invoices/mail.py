@@ -22,7 +22,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from ..email import _BTN, _FAINT, _WRAP, _esc, _send
+from .. import email_brand as _charte
+from ..email import _bouton, _esc, _send
 
 logger = logging.getLogger(__name__)
 
@@ -47,37 +48,40 @@ def send_invoice_email(to: str, invoice: dict, *, app_url: Optional[str] = None,
     Best-effort, comme tout l'envoi transactionnel du dépôt : un e-mail non parti
     ne remet pas en cause la facture, qui est émise, numérotée et téléchargeable.
     L'échec se lit à `emailed_at IS NULL` sur la ligne."""
+    m = _charte.marque(brand)
     avoir = invoice.get("kind") == "credit_note"
     quoi = "avoir" if avoir else "facture"
     numero = invoice.get("number") or ""
     titre = f"{quoi} {numero}".strip()
-    subject = f"votre {quoi} {numero} — {brand}".replace("  ", " ").strip()
+    subject = f"votre {quoi} {numero} — {m.nom}".replace("  ", " ").strip()
 
     periode = ""
     debut, fin = _jour(invoice.get("period_start")), _jour(invoice.get("period_end"))
     if debut and fin:
-        periode = f"<p>période du {_esc(debut)} au {_esc(fin)}.</p>"
+        periode = (f'<p style="{_charte.PARA}">période du {_esc(debut)} '
+                   f'au {_esc(fin)}.</p>')
 
     mention = _esc(invoice.get("vat_mention") or "")
-    bloc_mention = f'<p style="{_FAINT}">{mention}</p>' if mention else ""
+    bloc_mention = (f'<p style="{_charte.PARA_FIN};{_charte.discret(m)}">{mention}</p>'
+                    if mention else "")
 
-    bouton = ""
-    if app_url:
-        bouton = (f'<p><a href="{_esc(app_url)}" style="{_BTN}">'
-                  f'télécharger le pdf</a></p>'
-                  f'<p style="{_FAINT}">{_esc(app_url)}</p>')
-
-    html = (
-        f'<div style="{_WRAP}">'
-        f'<p>votre {_esc(quoi)} <strong>{_esc(numero)}</strong> est disponible.</p>'
-        f'<p>{_esc(_euros(invoice.get("amount_ht")))} ht'
+    contenu = (
+        f'<p style="{_charte.PARA}">votre {_esc(quoi)} '
+        f'<strong>{_esc(numero)}</strong> est disponible.</p>'
+        f'<p style="{_charte.PARA}">{_esc(_euros(invoice.get("amount_ht")))} ht'
         f' · tva {_esc(_euros(invoice.get("vat_amount")))}'
         f' · <strong>{_esc(_euros(invoice.get("amount_ttc")))} ttc</strong></p>'
         f'{periode}'
-        f'{bouton}'
+        f'{_bouton(app_url, "télécharger le pdf", brand)}'
         f'{bloc_mention}'
-        f'</div>'
     )
+    html = _charte.page(
+        m, contenu,
+        preheader=f"{_euros(invoice.get('amount_ttc'))} ttc — {titre}",
+        # Une facture ne se désabonne pas : la mention de pied dit d'où elle vient,
+        # pas comment ne plus la recevoir.
+        mention=f"document émis par {m.nom} pour votre abonnement.",
+        locale=None)
     envoye = _send(to, subject, html)
     if not envoye:
         logger.warning("facturation: e-mail de la %s %s non parti (destinataire %s)",
