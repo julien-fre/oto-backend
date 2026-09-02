@@ -43,6 +43,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ... import access
 from ...datastore.core import NamespaceNotFound, NamespaceReadOnly, make_store
+from ...datastore.errors import ColumnAbsent
 from .._authz import SUB_ONLY
 from .._types import AuthzDenied, Capability, ResolvedCtx, RestBinding
 from ..registry import CAPABILITIES
@@ -84,6 +85,11 @@ def _drop_column(ctx: ResolvedCtx, inp: DropColumnInput) -> dict:
         raise AuthzDenied(404, "namespace_not_found")
     except NamespaceReadOnly:
         raise AuthzDenied(403, "namespace_read_only")
+    except ColumnAbsent as e:
+        # Code à PART (cf. `ColumnAbsent`) : « rien à purger » est un refus qu'un
+        # appelant en deux temps — le cockpit, qui retire d'abord le champ du schéma —
+        # doit pouvoir reconnaître comme abouti sans lire la phrase.
+        raise AuthzDenied(400, "drop_column_no_rows", str(e))
     except ValueError as e:
         raise AuthzDenied(400, "invalid_drop_column", str(e))
 

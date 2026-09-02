@@ -19,19 +19,26 @@ import pytest
 from _datastore_rest import call, stub_authz
 
 from oto_mcp.capabilities.datastore import columns as dsc
+from oto_mcp.datastore.errors import ColumnAbsent
 
 
 class _Store:
-    """Le store réduit à ce que la route en attend : l'appel qu'elle lui passe."""
+    """Le store réduit à ce que la route en attend : l'appel qu'elle lui passe.
 
-    def __init__(self):
+    `rien` rejoue le refus #680 — une purge qui n'a touché aucune ligne."""
+
+    def __init__(self, rien: bool = False):
         self.vu = []
+        self.rien = rien
 
     def drop_column(self, namespace, key, *, confirm):
         self.vu.append((namespace, key, confirm))
         if not confirm:
             raise ValueError(
                 f"purge de la colonne `{key}` non confirmée — c'est irréversible")
+        if self.rien:
+            raise ColumnAbsent(
+                f"`{key}` n'a été purgée d'aucune ligne : aucune colonne de ce nom")
         return {"namespace": namespace, "key": key, "rows": 12}
 
 
@@ -79,3 +86,17 @@ def test_un_champ_inconnu_est_refuse_jamais_ignore(store):
                          body={"column": "actualite_sociale", "confirm": True})
     assert status == 400
     assert store.vu == []
+
+
+def test_rien_a_purger_porte_son_propre_code(monkeypatch):
+    """Le cockpit supprime une colonne en DEUX temps — champ retiré du schéma, puis
+    données purgées. Une colonne ajoutée puis retirée sans qu'une ligne l'ait jamais
+    portée finit donc ici, et c'est un geste ABOUTI, pas une panne : le code le dit,
+    pour que le front n'ait pas à reconnaître la phrase."""
+    stub_authz(monkeypatch)
+    monkeypatch.setattr(dsc, "make_store", lambda sub: _Store(rien=True))
+    status, corps = call("me.datastore.drop_column",
+                         path_params={"namespace": "160"},
+                         body={"key": "notes", "confirm": True})
+    assert (status, corps["error"]) == (400, "drop_column_no_rows")
+    assert corps["detail"]
